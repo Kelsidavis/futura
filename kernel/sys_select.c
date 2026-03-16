@@ -687,11 +687,6 @@ long sys_ppoll(void *fds, unsigned int nfds, void *tmo_p, const void *sigmask) {
     void *local_tmo_p = tmo_p;
     const void *local_sigmask = sigmask;
 
-    (void)local_sigmask;  /* Ignore signal mask for now */
-
-    fut_printf("[PPOLL] ppoll(fds=%p, nfds=%u, tmo_p=%p, sigmask=%p)\n",
-               local_fds, local_nfds, local_tmo_p, local_sigmask);
-
     /* Validate parameters */
     if (!local_fds && local_nfds > 0) {
         fut_printf("[PPOLL] ppoll(fds=NULL, nfds=%u) -> EINVAL (NULL fds with non-zero nfds)\n",
@@ -725,7 +720,37 @@ long sys_ppoll(void *fds, unsigned int nfds, void *tmo_p, const void *sigmask) {
         timeout_ms = (ms > (uint64_t)2147483647) ? 2147483647 : (int)ms;
     }
 
+    /* Install signal mask if provided (atomically replace, then restore after poll) */
+    fut_task_t *task = fut_task_current();
+    sigset_t saved_mask = {0};
+    bool mask_applied = false;
+
+    if (local_sigmask && task) {
+        sigset_t requested_mask = {0};
+
+        if (IS_KPTR(local_sigmask)) {
+            memcpy(&requested_mask, local_sigmask, sizeof(requested_mask));
+        } else {
+            if (fut_copy_from_user(&requested_mask, local_sigmask, sizeof(requested_mask)) != 0) {
+                return -EFAULT;
+            }
+        }
+
+        int mret = fut_signal_procmask(task, SIGPROCMASK_SETMASK, &requested_mask, &saved_mask);
+        if (mret < 0) {
+            return mret;
+        }
+        mask_applied = true;
+    }
+
     /* Reuse sys_poll which already handles FD validation and readiness checking */
     extern long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout);
-    return sys_poll((struct pollfd *)local_fds, (unsigned long)local_nfds, timeout_ms);
+    long ret = sys_poll((struct pollfd *)local_fds, (unsigned long)local_nfds, timeout_ms);
+
+    /* Restore original signal mask */
+    if (mask_applied) {
+        fut_signal_procmask(task, SIGPROCMASK_SETMASK, &saved_mask, NULL);
+    }
+
+    return ret;
 }

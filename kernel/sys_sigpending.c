@@ -120,10 +120,5 @@ long sys_sigpending(sigset_t *set) {
         return -EFAULT;
     }
 
-    fut_printf("[SIGPENDING] sigpending(set=%p) -> 0 (pending=0x%llx, mask=0x%llx, "
-               "deliverable=0x%llx, pid=%u)\n",
-               set, cur_pending, cur_mask,
-               pending.__mask, current->pid);
-
     return 0;
 }

@@ -18,17 +18,6 @@
 
 #include <kernel/kprintf.h>
 
-/* Helper function to count set bits in signal mask */
-static int count_signals_in_mask(uint64_t mask) {
-    int count = 0;
-    for (int i = 0; i < 64; i++) {
-        if (mask & (1ULL << i)) {
-            count++;
-        }
-    }
-    return count;
-}
-
 /**
  * sigprocmask() - Examine and change blocked signal mask
  *
@@ -161,18 +150,6 @@ long sys_sigprocmask(int how, const sigset_t *set, sigset_t *oldset) {
             return -EINVAL;
     }
 
-    /* Phase 2: Get old mask for logging before modification */
-    uint64_t old_mask_value = __atomic_load_n(&current->signal_mask, __ATOMIC_ACQUIRE);
-    int old_signal_count = count_signals_in_mask(old_mask_value);
-
-    /* Phase 2: Log new mask if provided */
-    uint64_t new_mask_value = 0;
-    int new_signal_count = 0;
-    if (set) {
-        new_mask_value = set->__mask;
-        new_signal_count = count_signals_in_mask(new_mask_value);
-    }
-
     /* Call core implementation */
     int ret = fut_signal_procmask(current, how, set, oldset);
 
@@ -197,33 +174,6 @@ long sys_sigprocmask(int how, const sigset_t *set, sigset_t *oldset) {
                    oldset ? "provided" : "NULL",
                    current->pid, ret, error_desc);
         return ret;
-    }
-
-    /* Phase 2: Get final mask after modification for logging */
-    uint64_t final_mask_value = __atomic_load_n(&current->signal_mask, __ATOMIC_ACQUIRE);
-    int final_signal_count = count_signals_in_mask(final_mask_value);
-
-    /* Phase 2: Detailed success logging */
-    if (set) {
-        /* Mask was modified */
-        fut_printf("[SIGPROCMASK] sigprocmask(how=%d [%s: %s], "
-                   "set=0x%llx [%d signals], oldset=%s, "
-                   "old_mask=0x%llx [%d signals], new_mask=0x%llx [%d signals], "
-                   "pid=%u) -> 0 (mask updated, Phase 3: Signal set validation)\n",
-                   how, how_category, how_description,
-                   new_mask_value, new_signal_count,
-                   oldset ? "provided" : "NULL",
-                   old_mask_value, old_signal_count,
-                   final_mask_value, final_signal_count,
-                   current->pid);
-    } else {
-        /* Just querying current mask */
-        fut_printf("[SIGPROCMASK] sigprocmask(how=%d [%s: %s], set=NULL, "
-                   "current_mask=0x%llx [%d signals], pid=%u) -> 0 "
-                   "(query only, Phase 3: Signal set validation)\n",
-                   how, how_category, how_description,
-                   old_mask_value, old_signal_count,
-                   current->pid);
     }
 
     return 0;

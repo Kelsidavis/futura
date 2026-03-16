@@ -129,9 +129,6 @@ long sys_sigaction(int signum, const struct sigaction *act, struct sigaction *ol
             return -EFAULT;
         }
 
-        fut_printf("[SIGACTION] Retrieved old action for signal %d: handler=%p mask=0x%llx flags=0x%x "
-                   "(bounds validation)\n",
-                   signum, old.sa_handler, old.sa_mask, old.sa_flags);
     }
 
     /* If act is provided, install the new action */
@@ -147,10 +144,6 @@ long sys_sigaction(int signum, const struct sigaction *act, struct sigaction *ol
         current->signal_handlers[signum - 1] = new_act.sa_handler;
         current->signal_handler_masks[signum - 1] = new_act.sa_mask;
         current->signal_handler_flags[signum - 1] = new_act.sa_flags;
-
-        fut_printf("[SIGACTION] Installed new action for signal %d: handler=%p mask=0x%llx flags=0x%x "
-                   "(bounds validation)\n",
-                   signum, new_act.sa_handler, new_act.sa_mask, new_act.sa_flags);
     }
 
     return 0;

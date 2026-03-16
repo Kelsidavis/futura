@@ -280,6 +280,7 @@ extern long sys_capset(void *hdrp, const void *datap);
 extern long sys_personality(unsigned long persona);
 extern long sys_prctl(int option, unsigned long a2, unsigned long a3,
                       unsigned long a4, unsigned long a5);
+extern long sys_getrandom(void *buf, size_t buflen, unsigned int flags);
 extern long sys_unshare(unsigned long flags);
 
 /* Process accounting and thread management */
@@ -2358,6 +2359,13 @@ static int64_t sys_mount_wrapper(uint64_t source, uint64_t target, uint64_t file
                      (unsigned long)mountflags, (const void *)data);
 }
 
+/* sys_getrandom_wrapper - generate random bytes */
+static int64_t sys_getrandom_wrapper(uint64_t buf, uint64_t buflen, uint64_t flags,
+                                      uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg3; (void)arg4; (void)arg5;
+    return sys_getrandom((void *)buf, (size_t)buflen, (unsigned int)flags);
+}
+
 /* sys_prctl_wrapper - process control operations */
 static int64_t sys_prctl_wrapper(uint64_t option, uint64_t arg2, uint64_t arg3,
                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
@@ -2588,6 +2596,7 @@ struct syscall_entry {
 #define __NR_munlockall     231
 #define __NR_mincore        232
 #define __NR_madvise        233
+#define __NR_getrandom      278
 #define __NR_wait4          260  /* wait4/waitpid */
 #define __NR_prlimit64      261
 
@@ -2794,6 +2803,8 @@ static void arm64_syscall_table_init(void) {
     syscall_table[__NR_personality].name = "personality";
     syscall_table[__NR_prctl].handler = (syscall_fn_t)sys_prctl_wrapper;
     syscall_table[__NR_prctl].name = "prctl";
+    syscall_table[__NR_getrandom].handler = (syscall_fn_t)sys_getrandom_wrapper;
+    syscall_table[__NR_getrandom].name = "getrandom";
     syscall_table[__NR_exit].handler = (syscall_fn_t)sys_exit;
     syscall_table[__NR_exit].name = "exit";
     syscall_table[__NR_exit_group].handler = (syscall_fn_t)sys_exit;

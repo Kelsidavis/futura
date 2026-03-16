@@ -627,6 +627,63 @@ static void test_prctl_invalid(void) {
     fut_test_pass();
 }
 
+extern long sys_getrandom(void *buf, size_t buflen, unsigned int flags);
+
+/* ============================================================
+ * Test 15: getrandom fills buffer with non-zero data
+ * ============================================================ */
+static void test_getrandom(void) {
+    fut_printf("[MISC-TEST] Test 15: getrandom fills buffer with random data\n");
+
+    uint8_t buf[32];
+    memset(buf, 0, sizeof(buf));
+
+    long ret = sys_getrandom(buf, sizeof(buf), 0);
+    if (ret != 32) {
+        fut_printf("[MISC-TEST] ✗ getrandom returned %ld (expected 32)\n", ret);
+        fut_test_fail(15);
+        return;
+    }
+
+    /* Check that at least some bytes are non-zero (probability of all-zero: 2^-256) */
+    int nonzero = 0;
+    for (int i = 0; i < 32; i++) {
+        if (buf[i] != 0) nonzero++;
+    }
+
+    if (nonzero == 0) {
+        fut_printf("[MISC-TEST] ✗ getrandom returned all zeros (statistically impossible)\n");
+        fut_test_fail(15);
+        return;
+    }
+
+    /* Verify two calls produce different output */
+    uint8_t buf2[32];
+    sys_getrandom(buf2, sizeof(buf2), 0);
+
+    int same = 1;
+    for (int i = 0; i < 32; i++) {
+        if (buf[i] != buf2[i]) { same = 0; break; }
+    }
+
+    if (same) {
+        fut_printf("[MISC-TEST] ✗ getrandom returned identical data twice\n");
+        fut_test_fail(15);
+        return;
+    }
+
+    /* Test invalid flags */
+    ret = sys_getrandom(buf, sizeof(buf), 0xFFFF);
+    if (ret != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ getrandom(invalid flags) returned %ld (expected EINVAL)\n", ret);
+        fut_test_fail(15);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ getrandom: 32 bytes, %d non-zero, different each call\n", nonzero);
+    fut_test_pass();
+}
+
 /* ============================================================
  * Test entry point
  * ============================================================ */
@@ -651,6 +708,7 @@ void fut_misc_test_thread(void *arg) {
     test_prctl_dumpable();      /* Test 12: prctl dumpable */
     test_prctl_no_new_privs();  /* Test 13: prctl no_new_privs */
     test_prctl_invalid();       /* Test 14: prctl invalid option */
+    test_getrandom();           /* Test 15: getrandom */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

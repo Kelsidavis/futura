@@ -629,6 +629,10 @@ static void test_prctl_invalid(void) {
 
 extern long sys_getrandom(void *buf, size_t buflen, unsigned int flags);
 extern long sys_fadvise64(int fd, int64_t offset, int64_t len, int advice);
+extern long sys_copy_file_range(int fd_in, int64_t *off_in,
+                                 int fd_out, int64_t *off_out,
+                                 size_t len, unsigned int flags);
+extern long sys_membarrier(int cmd, unsigned int flags, int cpu_id);
 extern long sys_sched_getaffinity(int pid, unsigned int len, void *user_mask);
 extern long sys_sched_setaffinity(int pid, unsigned int len, const void *user_mask);
 
@@ -794,6 +798,114 @@ static void test_sched_affinity(void) {
 }
 
 /* ============================================================
+ * Test 18: copy_file_range copies data between fds
+ * ============================================================ */
+static void test_copy_file_range(void) {
+    fut_printf("[MISC-TEST] Test 18: copy_file_range copies data between fds\n");
+
+    /* Create source file with known content */
+    int src = fut_vfs_open("/cfr_src.txt", 0x42, 0644);  /* O_RDWR|O_CREAT */
+    if (src < 0) {
+        fut_printf("[MISC-TEST] ✗ open src failed: %d\n", src);
+        fut_test_fail(18);
+        return;
+    }
+
+    const char *data = "Hello copy_file_range!";
+    fut_vfs_write(src, data, 22);
+
+    /* Rewind source */
+    extern int64_t fut_vfs_lseek(int fd, int64_t offset, int whence);
+    fut_vfs_lseek(src, 0, 0);  /* SEEK_SET */
+
+    /* Create destination file */
+    int dst = fut_vfs_open("/cfr_dst.txt", 0x42, 0644);
+    if (dst < 0) {
+        fut_printf("[MISC-TEST] ✗ open dst failed: %d\n", dst);
+        fut_vfs_close(src);
+        fut_test_fail(18);
+        return;
+    }
+
+    /* Copy data */
+    long copied = sys_copy_file_range(src, NULL, dst, NULL, 22, 0);
+    if (copied != 22) {
+        fut_printf("[MISC-TEST] ✗ copy_file_range returned %ld (expected 22)\n", copied);
+        fut_vfs_close(dst);
+        fut_vfs_close(src);
+        fut_test_fail(18);
+        return;
+    }
+
+    /* Read back from destination */
+    fut_vfs_lseek(dst, 0, 0);
+    char buf[32] = {0};
+    ssize_t nread = fut_vfs_read(dst, buf, sizeof(buf));
+    if (nread != 22 || memcmp(buf, data, 22) != 0) {
+        fut_printf("[MISC-TEST] ✗ readback mismatch: nread=%zd buf='%s'\n", nread, buf);
+        fut_vfs_close(dst);
+        fut_vfs_close(src);
+        fut_test_fail(18);
+        return;
+    }
+
+    /* Invalid flags should fail */
+    long ret = sys_copy_file_range(src, NULL, dst, NULL, 10, 1);
+    if (ret != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ copy_file_range(flags=1) returned %ld\n", ret);
+        fut_vfs_close(dst);
+        fut_vfs_close(src);
+        fut_test_fail(18);
+        return;
+    }
+
+    fut_vfs_close(dst);
+    fut_vfs_close(src);
+    fut_printf("[MISC-TEST] ✓ copy_file_range: copied 22 bytes, verified content\n");
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 19: membarrier CMD_QUERY returns supported commands
+ * ============================================================ */
+static void test_membarrier(void) {
+    fut_printf("[MISC-TEST] Test 19: membarrier CMD_QUERY\n");
+
+    long supported = sys_membarrier(0 /* CMD_QUERY */, 0, 0);
+    if (supported < 0) {
+        fut_printf("[MISC-TEST] ✗ membarrier(CMD_QUERY) returned %ld\n", supported);
+        fut_test_fail(19);
+        return;
+    }
+
+    /* Should support at least CMD_GLOBAL (bit 0) */
+    if (!(supported & 1)) {
+        fut_printf("[MISC-TEST] ✗ CMD_GLOBAL not in supported mask: 0x%lx\n", supported);
+        fut_test_fail(19);
+        return;
+    }
+
+    /* CMD_GLOBAL should succeed */
+    long ret = sys_membarrier(1 /* CMD_GLOBAL */, 0, 0);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ membarrier(CMD_GLOBAL) returned %ld\n", ret);
+        fut_test_fail(19);
+        return;
+    }
+
+    /* Invalid flags should fail */
+    ret = sys_membarrier(0, 1, 0);
+    if (ret != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ membarrier(flags=1) returned %ld\n", ret);
+        fut_test_fail(19);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ membarrier: supported=0x%lx, CMD_GLOBAL works\n", supported);
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -820,6 +932,8 @@ void fut_misc_test_thread(void *arg) {
     test_getrandom();           /* Test 15: getrandom */
     test_fadvise64();           /* Test 16: fadvise64 */
     test_sched_affinity();      /* Test 17: sched_affinity */
+    test_copy_file_range();     /* Test 18: copy_file_range */
+    test_membarrier();          /* Test 19: membarrier */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

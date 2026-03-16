@@ -279,6 +279,8 @@
 #define SYS_renameat2       317  /* Linux: 316 — extended range, no conflict */
 #define SYS_getrandom       318  /* Linux: 318 */
 #define SYS_membarrier      324  /* Linux: 324 */
+#define SYS_copy_file_range 326  /* Linux: 326 */
+#define SYS_rseq            334  /* Linux: 334 */
 
 #ifndef SYS_time_millis
 #define SYS_time_millis  400
@@ -1454,6 +1456,23 @@ static int64_t sys_personality_handler(uint64_t persona, uint64_t arg2, uint64_t
     (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
     extern long sys_personality(unsigned long persona);
     return sys_personality((unsigned long)persona);
+}
+
+static int64_t sys_copy_file_range_handler(uint64_t fd_in, uint64_t off_in, uint64_t fd_out,
+                                            uint64_t off_out, uint64_t len, uint64_t flags) {
+    extern long sys_copy_file_range(int fd_in, int64_t *off_in,
+                                     int fd_out, int64_t *off_out,
+                                     size_t len, unsigned int flags);
+    return sys_copy_file_range((int)fd_in, (int64_t *)off_in,
+                                (int)fd_out, (int64_t *)off_out,
+                                (size_t)len, (unsigned int)flags);
+}
+
+static int64_t sys_rseq_handler(uint64_t rseq, uint64_t rseq_len, uint64_t flags,
+                                 uint64_t sig, uint64_t arg5, uint64_t arg6) {
+    (void)arg5; (void)arg6;
+    extern long sys_rseq(void *rseq, uint32_t rseq_len, int flags, uint32_t sig);
+    return sys_rseq((void *)rseq, (uint32_t)rseq_len, (int)flags, (uint32_t)sig);
 }
 
 static int64_t sys_membarrier_handler(uint64_t cmd, uint64_t flags, uint64_t cpu_id,
@@ -2836,6 +2855,8 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_renameat2]         = sys_renameat2_handler,
     [SYS_getrandom]         = sys_getrandom_handler,
     [SYS_membarrier]        = sys_membarrier_handler,
+    [SYS_copy_file_range]   = sys_copy_file_range_handler,
+    [SYS_rseq]              = sys_rseq_handler,
     [SYS_set_tid_address]   = sys_set_tid_address_handler,
     [SYS_timer_create]      = sys_timer_create_handler,
     [SYS_timer_settime]     = sys_timer_settime_handler,

@@ -737,8 +737,6 @@ long sys_adjtimex(struct timex *txc) {
         /* Convert microsecond fraction to seconds (round toward zero) */
         delta_sec += delta_us / 1000000;
         g_realtime_offset_sec += delta_sec;
-        fut_printf("[ADJTIMEX] adjtimex(ADJ_SETOFFSET, delta=%llds %ldus) -> offset applied\n",
-                   (long long)delta_sec, tx.time.tv_usec % 1000000);
     } else if (modes & ADJ_OFFSET) {
         /* Phase 3: Accumulate full (whole + sub-second) NTP offset */
         int64_t delta_us = (int64_t)tx.offset;
@@ -754,20 +752,16 @@ long sys_adjtimex(struct timex *txc) {
             g_realtime_offset_sec--;
             g_ntp_adj_usec += 1000000;
         }
-        fut_printf("[ADJTIMEX] adjtimex(ADJ_OFFSET, offset=%ldus) -> %lld sec + %lld us applied (Phase 3)\n",
-                   tx.offset, (long long)delta_sec, (long long)rem_us);
     }
 
     /* Phase 3: ADJ_FREQUENCY — store frequency correction (ppm * FREQ_SCALE) */
     if (modes & ADJ_FREQUENCY) {
         g_ntp_freq_ppm = (int32_t)tx.freq;
-        fut_printf("[ADJTIMEX] adjtimex(ADJ_FREQUENCY, freq=%d) -> stored (Phase 3)\n", g_ntp_freq_ppm);
     }
 
     /* Phase 3: ADJ_STATUS — update NTP clock status */
     if (modes & ADJ_STATUS) {
         g_ntp_status = (int32_t)tx.status;
-        fut_printf("[ADJTIMEX] adjtimex(ADJ_STATUS, status=%d) -> stored (Phase 3)\n", g_ntp_status);
     }
     /* ADJ_TICK: accepted, not acted on (kernel tick rate is fixed at HZ=100) */
 

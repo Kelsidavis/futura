@@ -1511,6 +1511,12 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
             }
         }
 
+        /* Close epoll instances marked EPOLL_CLOEXEC */
+        if (caller_task) {
+            extern void epoll_close_cloexec(uint64_t pid);
+            epoll_close_cloexec(caller_task->pid);
+        }
+
         /* Open /dev/console only for stdio fds that are still unset */
         fut_task_t *saved_task = cur ? cur->task : NULL;
         if (cur) cur->task = task;
@@ -2669,6 +2675,12 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
                     task->fd_table[i] = f;
                 }
             }
+        }
+
+        /* Close epoll instances marked EPOLL_CLOEXEC */
+        if (caller_task) {
+            extern void epoll_close_cloexec(uint64_t pid);
+            epoll_close_cloexec(caller_task->pid);
         }
 
         fut_task_t *saved_task = current ? current->task : NULL;

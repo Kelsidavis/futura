@@ -283,6 +283,7 @@ struct epoll_set {
     struct epoll_fd_entry fds[MAX_EPOLL_FDS];  /* Registered FDs */
     int count;                                   /* Number of registered FDs */
     bool active;                                 /* Whether this epoll set is in use */
+    bool cloexec;                                /* Close-on-exec flag (EPOLL_CLOEXEC) */
     uint64_t owner_pid;                          /* PID of task that created this instance */
     fut_waitq_t epoll_waitq;                     /* Wait queue for event-driven wakeup */
 };
@@ -313,6 +314,24 @@ void epoll_notify_fd_close(int fd) {
                 memset(&epoll_instances[i].fds[j], 0,
                        sizeof(epoll_instances[i].fds[j]));
             }
+        }
+    }
+}
+
+/**
+ * epoll_close_cloexec - Close all epoll instances marked EPOLL_CLOEXEC for a PID
+ *
+ * Called from execve to honor close-on-exec semantics for epoll file descriptors.
+ * Since epoll FDs are not in the task's fd_table, they need separate cleanup.
+ */
+void epoll_close_cloexec(uint64_t pid) {
+    for (int i = 0; i < MAX_EPOLL_INSTANCES; i++) {
+        if (epoll_instances[i].active &&
+            epoll_instances[i].owner_pid == pid &&
+            epoll_instances[i].cloexec) {
+            epoll_instances[i].active = false;
+            epoll_instances[i].count = 0;
+            memset(epoll_instances[i].fds, 0, sizeof(epoll_instances[i].fds));
         }
     }
 }
@@ -576,52 +595,10 @@ long sys_epoll_create1(int flags) {
         return -ENOMEM;
     }
 
-    /* Phase 2: Categorize epoll FD range */
-    const char *epfd_category;
-    if (set->epfd >= 4000 && set->epfd < 5000) {
-        epfd_category = "epoll range (4000-4999)";
-    } else if (set->epfd >= 5000 && set->epfd < 6000) {
-        epfd_category = "epoll high range (5000-5999)";
-    } else {
-        epfd_category = "epoll very high (≥6000)";
+    /* Apply EPOLL_CLOEXEC flag */
+    if (flags & EPOLL_CLOEXEC) {
+        set->cloexec = true;
     }
-
-    /* Phase 2: Detailed success logging */
-    char msg[256];
-    int pos = 0;
-    const char *text = "[EPOLL_CREATE1] epoll_create1(flags=";
-    while (*text) { msg[pos++] = *text++; }
-    while (*flags_desc) { msg[pos++] = *flags_desc++; }
-    text = ", epfd=";
-    while (*text) { msg[pos++] = *text++; }
-
-    /* Convert epfd to string */
-    char epfd_str[16];
-    int epfd_pos = 0;
-    int epfd_val = set->epfd;
-    if (epfd_val == 0) {
-        epfd_str[epfd_pos++] = '0';
-    } else {
-        char temp[16];
-        int temp_pos = 0;
-        while (epfd_val > 0) {
-            temp[temp_pos++] = '0' + (epfd_val % 10);
-            epfd_val /= 10;
-        }
-        while (temp_pos > 0) {
-            epfd_str[epfd_pos++] = temp[--temp_pos];
-        }
-    }
-    epfd_str[epfd_pos] = '\0';
-
-    for (int i = 0; epfd_str[i]; i++) { msg[pos++] = epfd_str[i]; }
-    text = " [";
-    while (*text) { msg[pos++] = *text++; }
-    while (*epfd_category) { msg[pos++] = *epfd_category++; }
-    text = "]) -> 0 (epoll instance created, Phase 4: Memory pooling and scalability improvements)\n";
-    while (*text) { msg[pos++] = *text++; }
-    msg[pos] = '\0';
-    fut_printf("%s", msg);
 
     return set->epfd;
 }

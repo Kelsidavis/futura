@@ -558,11 +558,6 @@ static int ramfs_lookup(struct fut_vnode *dir, const char *name, struct fut_vnod
 
     /* Search directory entries with corruption detection */
     struct ramfs_dirent *entry = node->dir.entries;
-    /* Temporary debug */
-    if (!entry && node == (void*)0xffffffff805ad7c8ULL) {
-        fut_printf("[ramfs-dbg] lookup: dir=%p node=%p &entries=%p entries=%p\n",
-                   (void*)dir, (void*)node, (void*)&node->dir.entries, (void*)entry);
-    }
     int safety_counter = 0;
 
     while (entry) {
@@ -625,17 +620,6 @@ static int ramfs_lookup(struct fut_vnode *dir, const char *name, struct fut_vnod
         entry = entry->next;
     }
 
-    /* Debug: dump entries when failing to find name (temporary) */
-    {
-        struct ramfs_dirent *e = node->dir.entries;
-        int n = 0;
-        while (e && n < 20) {
-            fut_printf("[ramfs-miss] entry[%d]='%s' vnode=%p\n", n, e->name, (void*)e->vnode);
-            e = e->next; n++;
-        }
-        if (!n) fut_printf("[ramfs-miss] dir=%p fs_data=%p no entries (looking for '%s')\n",
-                           (void*)dir, (void*)dir->fs_data, name);
-    }
     return -ENOENT;
 }
 

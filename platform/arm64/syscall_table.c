@@ -1259,24 +1259,18 @@ static int64_t sys_rt_sigreturn_wrapper(uint64_t arg0, uint64_t arg1, uint64_t a
     return 0;
 }
 
-/* sys_tkill_wrapper - send signal to specific thread
- * x0 = tid, x1 = sig
- * Simplified: Delegates to kill (send signal to process)
- */
+/* sys_tkill_wrapper - send signal to specific thread */
 static int64_t sys_tkill_wrapper(uint64_t tid, uint64_t sig, uint64_t arg2,
                                   uint64_t arg3, uint64_t arg4, uint64_t arg5) {
     (void)arg2; (void)arg3; (void)arg4; (void)arg5;
-    return sys_kill((int)tid, (int)sig);
+    return sys_tkill((int)tid, (int)sig);
 }
 
-/* sys_tgkill_wrapper - send signal to specific thread in thread group
- * x0 = tgid, x1 = tid, x2 = sig
- * Simplified: Delegates to kill (send signal to process)
- */
+/* sys_tgkill_wrapper - send signal to specific thread in thread group */
 static int64_t sys_tgkill_wrapper(uint64_t tgid, uint64_t tid, uint64_t sig,
                                    uint64_t arg3, uint64_t arg4, uint64_t arg5) {
-    (void)tgid; (void)arg3; (void)arg4; (void)arg5;
-    return sys_kill((int)tid, (int)sig);
+    (void)arg3; (void)arg4; (void)arg5;
+    return sys_tgkill((int)tgid, (int)tid, (int)sig);
 }
 
 /* sys_timer_create_wrapper - create a POSIX per-process timer
@@ -2410,19 +2404,6 @@ static int64_t sys_statx_wrapper(uint64_t dirfd, uint64_t pathname, uint64_t fla
                      (unsigned int)mask, (void *)statxbuf);
 }
 
-/* sys_tgkill_wrapper - thread-directed signal delivery */
-static int64_t sys_tgkill_wrapper(uint64_t tgid, uint64_t tid, uint64_t sig,
-                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
-    (void)arg4; (void)arg5; (void)arg6;
-    return sys_tgkill((int)tgid, (int)tid, (int)sig);
-}
-
-/* sys_tkill_wrapper - legacy thread signal delivery */
-static int64_t sys_tkill_wrapper(uint64_t tid, uint64_t sig, uint64_t arg3,
-                                  uint64_t arg4, uint64_t arg5, uint64_t arg6) {
-    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
-    return sys_tkill((int)tid, (int)sig);
-}
 
 /* sys_syslog_wrapper - kernel log buffer */
 static int64_t sys_syslog_wrapper(uint64_t type, uint64_t buf, uint64_t len,
@@ -2915,10 +2896,6 @@ static void arm64_syscall_table_init(void) {
     syscall_table[__NR_rseq].name = "rseq";
     syscall_table[__NR_statx].handler = (syscall_fn_t)sys_statx_wrapper;
     syscall_table[__NR_statx].name = "statx";
-    syscall_table[__NR_tgkill].handler = (syscall_fn_t)sys_tgkill_wrapper;
-    syscall_table[__NR_tgkill].name = "tgkill";
-    syscall_table[__NR_tkill].handler = (syscall_fn_t)sys_tkill_wrapper;
-    syscall_table[__NR_tkill].name = "tkill";
     syscall_table[__NR_syslog].handler = (syscall_fn_t)sys_syslog_wrapper;
     syscall_table[__NR_syslog].name = "syslog";
     syscall_table[__NR_fadvise64].handler = (syscall_fn_t)sys_fadvise64_wrapper;

@@ -19,6 +19,8 @@
 #include <kernel/uaccess.h>
 #include <kernel/eventfd.h>
 #include <kernel/fut_socket.h>
+#include <kernel/fut_thread.h>
+#include <kernel/fut_timer.h>
 #include <kernel/signal.h>
 #include <sys/epoll.h>
 
@@ -307,72 +309,120 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
 
     int ready_count = 0;
 
-    for (int fd = 0; fd < local_nfds; fd++) {
-        int check_read  = local_readfds  && fd_isset(fd, &k_readfds);
-        int check_write = local_writefds && fd_isset(fd, &k_writefds);
-        int check_except = local_exceptfds && fd_isset(fd, &k_exceptfds);
+    /* Compute timeout deadline in ticks.
+     * timeout == NULL → infinite; timeout->tv_sec==0 && tv_usec==0 → immediate */
+    int has_timeout = 0;
+    int is_immediate = 0;
+    uint64_t deadline_ticks = 0;
 
-        if (!check_read && !check_write && !check_except)
-            continue;
+    if (local_timeout) {
+        fut_timeval_t ktv;
+        if (IS_KPTR(local_timeout))
+            memcpy(&ktv, local_timeout, sizeof(ktv));
+        else if (fut_copy_from_user(&ktv, local_timeout, sizeof(ktv)) != 0)
+            return -EFAULT;
 
-        /* Validate FD */
-        if (fd >= (int)task->max_fds || !task->fd_table || !task->fd_table[fd]) {
-            return -EBADF;
+        if (ktv.tv_sec == 0 && ktv.tv_usec == 0) {
+            is_immediate = 1;
+        } else {
+            has_timeout = 1;
+            uint64_t timeout_ms = (uint64_t)ktv.tv_sec * 1000 + (uint64_t)ktv.tv_usec / 1000;
+            uint64_t timeout_ticks = timeout_ms / 10;
+            if (timeout_ms % 10 != 0) timeout_ticks++;
+            if (timeout_ticks == 0) timeout_ticks = 1;
+            deadline_ticks = fut_get_ticks() + timeout_ticks;
         }
+    }
 
-        /* Phase 3: Actual readiness checking via driver/VFS layer */
-        struct fut_file *file = task->fd_table[fd];
-        uint32_t epoll_req = 0;
-        if (check_read)  epoll_req |= EPOLLIN;
-        if (check_write) epoll_req |= EPOLLOUT;
+    /* Scan-and-block loop */
+    for (;;) {
+        ready_count = 0;
+        memset(&r_readfds, 0, sizeof(fd_set));
+        memset(&r_writefds, 0, sizeof(fd_set));
+        memset(&r_exceptfds, 0, sizeof(fd_set));
 
-        uint32_t epoll_ready = 0;
-        bool handled = false;
+        for (int fd = 0; fd < local_nfds; fd++) {
+            int check_read  = local_readfds  && fd_isset(fd, &k_readfds);
+            int check_write = local_writefds && fd_isset(fd, &k_writefds);
+            int check_except = local_exceptfds && fd_isset(fd, &k_exceptfds);
 
-        if (!handled && fut_eventfd_poll(file, epoll_req, &epoll_ready))
-            handled = true;
-        if (!handled && fut_timerfd_poll(file, epoll_req, &epoll_ready))
-            handled = true;
-        if (!handled && fut_signalfd_poll(file, epoll_req, &epoll_ready))
-            handled = true;
-        if (!handled && fut_pipe_poll(file, epoll_req, &epoll_ready))
-            handled = true;
-        if (!handled) {
-            fut_socket_t *socket = get_socket_from_fd(fd);
-            if (socket) {
-                int poll_events = 0;
-                if (check_read)  poll_events |= 0x1;
-                if (check_write) poll_events |= 0x4;
-                int socket_ready = fut_socket_poll(socket, poll_events);
-                if (socket_ready & 0x1) epoll_ready |= EPOLLIN;
-                if (socket_ready & 0x4) epoll_ready |= EPOLLOUT;
+            if (!check_read && !check_write && !check_except)
+                continue;
+
+            if (fd >= (int)task->max_fds || !task->fd_table || !task->fd_table[fd])
+                return -EBADF;
+
+            struct fut_file *file = task->fd_table[fd];
+            uint32_t epoll_req = 0;
+            if (check_read)  epoll_req |= EPOLLIN;
+            if (check_write) epoll_req |= EPOLLOUT;
+
+            uint32_t epoll_ready = 0;
+            bool handled = false;
+
+            if (!handled && fut_eventfd_poll(file, epoll_req, &epoll_ready))
+                handled = true;
+            if (!handled && fut_timerfd_poll(file, epoll_req, &epoll_ready))
+                handled = true;
+            if (!handled && fut_signalfd_poll(file, epoll_req, &epoll_ready))
+                handled = true;
+            if (!handled && fut_pipe_poll(file, epoll_req, &epoll_ready))
+                handled = true;
+            if (!handled) {
+                fut_socket_t *socket = get_socket_from_fd(fd);
+                if (socket) {
+                    int poll_events = 0;
+                    if (check_read)  poll_events |= 0x1;
+                    if (check_write) poll_events |= 0x4;
+                    int socket_ready = fut_socket_poll(socket, poll_events);
+                    if (socket_ready & 0x1) epoll_ready |= EPOLLIN;
+                    if (socket_ready & 0x4) epoll_ready |= EPOLLOUT;
+                    handled = true;
+                }
+            }
+            if (!handled && file->vnode && file->vnode->type == VN_REG) {
+                if (epoll_req & EPOLLIN)  epoll_ready |= EPOLLIN;
+                if (epoll_req & EPOLLOUT) epoll_ready |= EPOLLOUT;
                 handled = true;
             }
-        }
-        if (!handled && file->vnode && file->vnode->type == VN_REG) {
-            if (epoll_req & EPOLLIN)  epoll_ready |= EPOLLIN;
-            if (epoll_req & EPOLLOUT) epoll_ready |= EPOLLOUT;
-            handled = true;
-        }
-        if (!handled) {
-            /* Pipes, char devs, etc.: assume ready */
-            if (epoll_req & EPOLLIN)  epoll_ready |= EPOLLIN;
-            if (epoll_req & EPOLLOUT) epoll_ready |= EPOLLOUT;
+            if (!handled) {
+                if (epoll_req & EPOLLIN)  epoll_ready |= EPOLLIN;
+                if (epoll_req & EPOLLOUT) epoll_ready |= EPOLLOUT;
+            }
+
+            int counted = 0;
+            if (check_read && (epoll_ready & EPOLLIN)) {
+                fd_setbit(fd, &r_readfds);
+                counted = 1;
+            }
+            if (check_write && (epoll_ready & EPOLLOUT)) {
+                fd_setbit(fd, &r_writefds);
+                counted = 1;
+            }
+            if (counted)
+                ready_count++;
         }
 
-        int counted = 0;
-        if (check_read && (epoll_ready & EPOLLIN)) {
-            fd_setbit(fd, &r_readfds);
-            counted = 1;
-        }
-        if (check_write && (epoll_ready & EPOLLOUT)) {
-            fd_setbit(fd, &r_writefds);
-            counted = 1;
-        }
-        /* Exceptions (out-of-band data): not reported here */
+        /* If FDs are ready or immediate mode, break */
+        if (ready_count > 0 || is_immediate)
+            break;
 
-        if (counted)
-            ready_count++;
+        /* No timeout and no FDs given → immediate return */
+        if (!has_timeout && local_timeout)
+            break;
+
+        /* Check for pending signals → EINTR */
+        uint64_t pending = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
+        uint64_t blocked = task->signal_mask;
+        if (pending & ~blocked)
+            return -EINTR;
+
+        /* Check timeout expiry */
+        if (has_timeout && fut_get_ticks() >= deadline_ticks)
+            break;
+
+        /* Sleep 10ms then retry */
+        fut_thread_sleep(10);
     }
 
     /* Copy result sets back to userspace (or kernel buffer for self-tests) */

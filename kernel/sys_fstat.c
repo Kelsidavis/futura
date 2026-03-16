@@ -219,70 +219,12 @@ long sys_fstat(int fd, struct fut_stat *statbuf) {
         kernel_stat.st_ctime_nsec = 0;
     }
 
-    /* Phase 2: Identify file type from mode */
-    const char *file_type;
-    uint32_t mode = kernel_stat.st_mode;
-    if ((mode & 0170000) == 0100000) {          /* S_IFREG */
-        file_type = "regular file";
-    } else if ((mode & 0170000) == 0040000) {   /* S_IFDIR */
-        file_type = "directory";
-    } else if ((mode & 0170000) == 0020000) {   /* S_IFCHR */
-        file_type = "character device";
-    } else if ((mode & 0170000) == 0060000) {   /* S_IFBLK */
-        file_type = "block device";
-    } else if ((mode & 0170000) == 0010000) {   /* S_IFIFO */
-        file_type = "FIFO/pipe";
-    } else if ((mode & 0170000) == 0140000) {   /* S_IFSOCK */
-        file_type = "socket";
-    } else if ((mode & 0170000) == 0120000) {   /* S_IFLNK */
-        file_type = "symbolic link";
-    } else {
-        file_type = "unknown type";
-    }
-
-    /* Phase 2: Categorize file size */
-    const char *size_category;
-    uint64_t size = kernel_stat.st_size;
-    if (size == 0) {
-        size_category = "empty (0 bytes)";
-    } else if (size <= 1024) {
-        size_category = "tiny (≤1 KB)";
-    } else if (size <= 64 * 1024) {
-        size_category = "small (≤64 KB)";
-    } else if (size <= 1024 * 1024) {
-        size_category = "medium (≤1 MB)";
-    } else if (size <= 100 * 1024 * 1024) {
-        size_category = "large (≤100 MB)";
-    } else {
-        size_category = "very large (>100 MB)";
-    }
-
     /* Copy stat buffer to userspace */
     if (fut_copy_to_user(local_statbuf, &kernel_stat, sizeof(struct fut_stat)) != 0) {
-        fut_printf("[FSTAT] fstat(fd=%d [%s], type=%s, ino=%llu) -> EFAULT (copy_to_user failed)\n",
-                   local_fd, fd_category, file_type, kernel_stat.st_ino);
+        fut_printf("[FSTAT] fstat(fd=%d [%s], ino=%llu) -> EFAULT (copy_to_user failed)\n",
+                   local_fd, fd_category, kernel_stat.st_ino);
         return -EFAULT;
     }
 
-    /* Phase 3: Extended attributes (xattr) support and file handle metadata */
-    const char *handle_stability;
-    if (kernel_stat.st_nlink > 1) {
-        handle_stability = "hard-linked (multiple refs)";
-    } else if (kernel_stat.st_nlink == 1) {
-        handle_stability = "stable (single ref)";
-    } else {
-        handle_stability = "unlinked (pending deletion)";
-    }
-
-    /* Note: Device major/minor not logged in this simplified implementation */
-
-    /* Phase 3: Detailed success logging with extended metadata and handle info */
-    fut_printf("[FSTAT] fstat(fd=%d [%s], type=%s, size=%llu [%s], mode=%o, ino=%llu, "
-               "nlinks=%u (handle=%s), blocks=%llu, blksize=%u, uid=%u, gid=%u) -> 0 "
-               "(xattr ready, handle stable, Phase 4: statx and security labels)\n",
-               local_fd, fd_category, file_type, size, size_category,
-               kernel_stat.st_mode, kernel_stat.st_ino,
-               kernel_stat.st_nlink, handle_stability, kernel_stat.st_blocks, kernel_stat.st_blksize,
-               kernel_stat.st_uid, kernel_stat.st_gid);
     return 0;
 }

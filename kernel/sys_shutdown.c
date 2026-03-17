@@ -15,6 +15,7 @@
 
 #include <kernel/fut_task.h>
 #include <kernel/fut_socket.h>
+#include <kernel/fut_waitq.h>
 #include <kernel/errno.h>
 #include <stdint.h>
 
@@ -183,48 +184,36 @@ long sys_shutdown(int sockfd, int how) {
         return -ENOTCONN;
     }
 
-    /* Phase 2: Identify socket type */
-    const char *socket_type_desc;
-    switch (socket->socket_type) {
-        case 1:  // SOCK_STREAM
-            socket_type_desc = "SOCK_STREAM";
-            break;
-        case 2:  // SOCK_DGRAM
-            socket_type_desc = "SOCK_DGRAM";
-            break;
-        case 5:  // SOCK_SEQPACKET
-            socket_type_desc = "SOCK_SEQPACKET";
-            break;
-        default:
-            socket_type_desc = "unknown type";
-            break;
-    }
-
-    /* Phase 4: Implement shutdown enforcement by setting shutdown flags
-     * These flags are checked by send/recv operations to enforce semantics */
+    /* Set shutdown flags checked by send/recv operations */
     switch (local_how) {
         case SHUT_RD:
             socket->shutdown_rd = true;
-            fut_printf("[SHUTDOWN] shutdown(sockfd=%d, socket_id=%u, type=%s, state=%s, how=SHUT_RD) "
-                       "-> 0 (Phase 4: recv() will return 0 EOF, send() still works)\n",
-                       local_sockfd, socket->socket_id, socket_type_desc, socket_state_desc);
             break;
 
         case SHUT_WR:
             socket->shutdown_wr = true;
-            fut_printf("[SHUTDOWN] shutdown(sockfd=%d, socket_id=%u, type=%s, state=%s, how=SHUT_WR) "
-                       "-> 0 (Phase 4: send() will return -EPIPE, recv() still works)\n",
-                       local_sockfd, socket->socket_id, socket_type_desc, socket_state_desc);
             break;
 
         case SHUT_RDWR:
             socket->shutdown_rd = true;
             socket->shutdown_wr = true;
-            fut_printf("[SHUTDOWN] shutdown(sockfd=%d, socket_id=%u, type=%s, state=%s, how=SHUT_RDWR) "
-                       "-> 0 (Phase 4: both send() and recv() will fail)\n",
-                       local_sockfd, socket->socket_id, socket_type_desc, socket_state_desc);
             break;
     }
+
+    /* Wake peer so blocked recv/send see the shutdown */
+    if (socket->pair && socket->pair->recv_waitq)
+        fut_waitq_wake_all(socket->pair->recv_waitq);
+    if (socket->pair && socket->pair->send_waitq)
+        fut_waitq_wake_all(socket->pair->send_waitq);
+    if (socket->pair_reverse && socket->pair_reverse->recv_waitq)
+        fut_waitq_wake_all(socket->pair_reverse->recv_waitq);
+    if (socket->pair_reverse && socket->pair_reverse->send_waitq)
+        fut_waitq_wake_all(socket->pair_reverse->send_waitq);
+    /* Wake epoll on shutdown */
+    if (socket->pair && socket->pair->epoll_notify)
+        fut_waitq_wake_one(socket->pair->epoll_notify);
+    if (socket->pair_reverse && socket->pair_reverse->epoll_notify)
+        fut_waitq_wake_one(socket->pair_reverse->epoll_notify);
 
     /* Note: Send/recv syscalls must check socket->shutdown_rd and socket->shutdown_wr
      * to enforce these semantics. Future enhancement: signal peer for Unix sockets */

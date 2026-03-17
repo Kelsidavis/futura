@@ -133,13 +133,12 @@ long sys_waitid(int idtype, int id, siginfo_t *infop, int options,
             return -EINVAL;
     }
 
-    /* Build waitpid flags.
-     * WNOHANG: pass through.
-     * WNOWAIT: pass through to fut_task_waitpid_ex (peek without reaping).
-     * WSTOPPED/WCONTINUED: not tracked yet; ignore those bits. */
+    /* Build waitpid flags — pass through WNOHANG, WNOWAIT, WSTOPPED, WCONTINUED */
     int wait_flags = 0;
-    if (options & WNOHANG)  wait_flags |= WNOHANG;   /* WNOHANG  = 0x1       */
-    if (options & WNOWAIT)  wait_flags |= WNOWAIT;   /* WNOWAIT  = 0x01000000 */
+    if (options & WNOHANG)    wait_flags |= WNOHANG;     /* 0x1 */
+    if (options & WNOWAIT)    wait_flags |= WNOWAIT;     /* 0x01000000 */
+    if (options & WSTOPPED)   wait_flags |= 2;           /* WUNTRACED = 0x2 */
+    if (options & WCONTINUED) wait_flags |= WCONTINUED;  /* 0x8 */
 
     /* Call the extended wait implementation (returns uid for si_uid) */
     int status = 0;
@@ -170,12 +169,21 @@ long sys_waitid(int idtype, int id, siginfo_t *infop, int options,
     memset(&info, 0, sizeof(info));
     info.si_signum = SIGCHLD;
 
+#define CLD_STOPPED   5   /* Child stopped by a signal */
+#define CLD_CONTINUED 6   /* Stopped child was continued */
+
     if (WIFEXITED(status)) {
         info.si_code   = CLD_EXITED;
         info.si_status = WEXITSTATUS(status);
     } else if (WIFSIGNALED(status)) {
         info.si_code   = CLD_KILLED;
         info.si_status = WTERMSIG(status);
+    } else if (WIFSTOPPED(status)) {
+        info.si_code   = CLD_STOPPED;
+        info.si_status = WSTOPSIG(status);
+    } else if (status == 0xffff) {  /* WCONTINUED */
+        info.si_code   = CLD_CONTINUED;
+        info.si_status = SIGCONT;
     } else {
         info.si_code   = CLD_EXITED;
         info.si_status = 0;

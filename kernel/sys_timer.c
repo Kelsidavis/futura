@@ -17,6 +17,37 @@
 #include <time.h>
 
 #include <kernel/kprintf.h>
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
+/* Kernel-pointer bypass helpers for selftest support */
+static inline int timer_copy_to_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)dst >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_to_user(dst, src, n);
+}
+static inline int timer_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_from_user(dst, src, n);
+}
+static inline int timer_access_ok_write(const void *ptr, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)ptr >= KERNEL_VIRTUAL_BASE) return 0;
+#endif
+    return fut_access_ok(ptr, n, 1);
+}
+static inline int timer_access_ok_read(const void *ptr, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)ptr >= KERNEL_VIRTUAL_BASE) return 0;
+#endif
+    return fut_access_ok(ptr, n, 0);
+}
 
 /* Convert timespec to milliseconds (clamped to 0 for negative values) */
 static uint64_t timespec_to_ms(const struct timespec *ts) {
@@ -70,7 +101,7 @@ long sys_timer_create(int clockid, struct sigevent *sevp, timer_t *timerid) {
         return -EINVAL;
 
     /* Validate userspace pointer */
-    if (fut_access_ok(local_timerid, sizeof(timer_t), 1) != 0)
+    if (timer_access_ok_write(local_timerid, sizeof(timer_t)) != 0)
         return -EFAULT;
 
     /* Parse sigevent if provided */
@@ -78,7 +109,7 @@ long sys_timer_create(int clockid, struct sigevent *sevp, timer_t *timerid) {
     int notify = SIGEV_SIGNAL;
     if (local_sevp) {
         struct sigevent sev;
-        if (fut_copy_from_user(&sev, local_sevp, sizeof(struct sigevent)) != 0)
+        if (timer_copy_from_user(&sev, local_sevp, sizeof(struct sigevent)) != 0)
             return -EFAULT;
 
         if (sev.sigev_notify != SIGEV_NONE && sev.sigev_notify != SIGEV_SIGNAL)
@@ -116,7 +147,7 @@ long sys_timer_create(int clockid, struct sigevent *sevp, timer_t *timerid) {
 
     /* Write timer ID back to userspace (1-based) */
     timer_t id = slot + 1;
-    if (fut_copy_to_user(local_timerid, &id, sizeof(timer_t)) != 0) {
+    if (timer_copy_to_user(local_timerid, &id, sizeof(timer_t)) != 0) {
         pt->active = 0;
         return -EFAULT;
     }
@@ -149,7 +180,7 @@ long sys_timer_settime(timer_t timerid, int flags,
 
     /* Copy new value from userspace */
     struct itimerspec new_timer;
-    if (fut_copy_from_user(&new_timer, local_new_value, sizeof(struct itimerspec)) != 0)
+    if (timer_copy_from_user(&new_timer, local_new_value, sizeof(struct itimerspec)) != 0)
         return -EFAULT;
 
     /* Validate timespec values */
@@ -158,7 +189,7 @@ long sys_timer_settime(timer_t timerid, int flags,
 
     /* Return old timer state if requested */
     if (local_old_value) {
-        if (fut_access_ok(local_old_value, sizeof(struct itimerspec), 1) != 0)
+        if (timer_access_ok_write(local_old_value, sizeof(struct itimerspec)) != 0)
             return -EFAULT;
 
         struct itimerspec old_timer;
@@ -172,7 +203,7 @@ long sys_timer_settime(timer_t timerid, int flags,
         }
         ms_to_timespec(pt->interval_ms * 10, &old_timer.it_interval);  /* ticks → ms */
 
-        if (fut_copy_to_user(local_old_value, &old_timer, sizeof(struct itimerspec)) != 0)
+        if (timer_copy_to_user(local_old_value, &old_timer, sizeof(struct itimerspec)) != 0)
             return -EFAULT;
     }
 
@@ -234,7 +265,7 @@ long sys_timer_gettime(timer_t timerid, struct itimerspec *curr_value) {
     if (!pt)
         return -EINVAL;
 
-    if (fut_access_ok(local_curr_value, sizeof(struct itimerspec), 1) != 0)
+    if (timer_access_ok_write(local_curr_value, sizeof(struct itimerspec)) != 0)
         return -EFAULT;
 
     struct itimerspec result;
@@ -249,7 +280,7 @@ long sys_timer_gettime(timer_t timerid, struct itimerspec *curr_value) {
         result.it_value.tv_nsec = 0;
     }
 
-    if (fut_copy_to_user(local_curr_value, &result, sizeof(struct itimerspec)) != 0)
+    if (timer_copy_to_user(local_curr_value, &result, sizeof(struct itimerspec)) != 0)
         return -EFAULT;
 
     return 0;

@@ -5629,6 +5629,171 @@ static void test_procfs_sysctl_overcommit(void) {
 }
 
 /* ============================================================
+ * POSIX timer tests (111-115)
+ * ============================================================ */
+#include <shared/fut_sigevent.h>
+
+extern long sys_timer_create(int clockid, struct sigevent *sevp, timer_t *timerid);
+extern long sys_timer_settime(timer_t timerid, int flags,
+                               const struct itimerspec *new_value,
+                               struct itimerspec *old_value);
+extern long sys_timer_gettime(timer_t timerid, struct itimerspec *curr_value);
+extern long sys_timer_getoverrun(timer_t timerid);
+extern long sys_timer_delete(timer_t timerid);
+
+/* Test 111: timer_create + timer_delete basic cycle */
+static void test_posix_timer_create_delete(void) {
+    fut_printf("[MISC-TEST] Test 111: POSIX timer_create/delete\n");
+    timer_t tid = 0;
+    long rc = sys_timer_create(1 /* CLOCK_MONOTONIC */, NULL, &tid);
+    if (rc != 0) {
+        fut_printf("[MISC-TEST] ✗ timer_create returned %ld\n", rc);
+        fut_test_fail(111); return;
+    }
+    if (tid < 1) {
+        fut_printf("[MISC-TEST] ✗ timer_create: bad timer id %d\n", tid);
+        fut_test_fail(111); return;
+    }
+    rc = sys_timer_delete(tid);
+    if (rc != 0) {
+        fut_printf("[MISC-TEST] ✗ timer_delete returned %ld\n", rc);
+        fut_test_fail(111); return;
+    }
+    /* Double-delete should fail */
+    rc = sys_timer_delete(tid);
+    if (rc == 0) {
+        fut_printf("[MISC-TEST] ✗ timer_delete after delete returned 0 (expected EINVAL)\n");
+        fut_test_fail(111); return;
+    }
+    fut_printf("[MISC-TEST] ✓ timer_create/delete: id=%d, double-delete→EINVAL\n", tid);
+    fut_test_pass();
+}
+
+/* Test 112: timer_settime arms timer, timer_gettime shows remaining */
+static void test_posix_timer_settime_gettime(void) {
+    fut_printf("[MISC-TEST] Test 112: POSIX timer_settime/gettime\n");
+    timer_t tid = 0;
+    long rc = sys_timer_create(1 /* CLOCK_MONOTONIC */, NULL, &tid);
+    if (rc != 0) {
+        fut_printf("[MISC-TEST] ✗ timer_create returned %ld\n", rc);
+        fut_test_fail(112); return;
+    }
+    /* Arm: 500ms one-shot */
+    struct itimerspec its;
+    its.it_value.tv_sec = 0; its.it_value.tv_nsec = 500000000; /* 500ms */
+    its.it_interval.tv_sec = 0; its.it_interval.tv_nsec = 0;
+    rc = sys_timer_settime(tid, 0, &its, NULL);
+    if (rc != 0) {
+        fut_printf("[MISC-TEST] ✗ timer_settime returned %ld\n", rc);
+        sys_timer_delete(tid);
+        fut_test_fail(112); return;
+    }
+    /* Gettime: should show non-zero remaining */
+    struct itimerspec cur;
+    cur.it_value.tv_sec = -1; cur.it_value.tv_nsec = -1;
+    rc = sys_timer_gettime(tid, &cur);
+    if (rc != 0) {
+        fut_printf("[MISC-TEST] ✗ timer_gettime returned %ld\n", rc);
+        sys_timer_delete(tid);
+        fut_test_fail(112); return;
+    }
+    if (cur.it_value.tv_sec < 0 ||
+        (cur.it_value.tv_sec == 0 && cur.it_value.tv_nsec <= 0)) {
+        fut_printf("[MISC-TEST] ✗ timer_gettime: remaining=%lld.%09ld (expected >0)\n",
+                   (long long)cur.it_value.tv_sec, cur.it_value.tv_nsec);
+        sys_timer_delete(tid);
+        fut_test_fail(112); return;
+    }
+    /* Disarm */
+    its.it_value.tv_sec = 0; its.it_value.tv_nsec = 0;
+    sys_timer_settime(tid, 0, &its, NULL);
+    /* After disarm: gettime should show 0 */
+    sys_timer_gettime(tid, &cur);
+    if (cur.it_value.tv_sec != 0 || cur.it_value.tv_nsec != 0) {
+        fut_printf("[MISC-TEST] ✗ timer_gettime after disarm: remaining=%lld.%09ld\n",
+                   (long long)cur.it_value.tv_sec, cur.it_value.tv_nsec);
+        sys_timer_delete(tid);
+        fut_test_fail(112); return;
+    }
+    sys_timer_delete(tid);
+    fut_printf("[MISC-TEST] ✓ timer_settime/gettime: armed, remaining >0, disarmed→0\n");
+    fut_test_pass();
+}
+
+/* Test 113: timer_create fills all slots, returns EAGAIN on overflow */
+static void test_posix_timer_slot_exhaustion(void) {
+    fut_printf("[MISC-TEST] Test 113: POSIX timer slot exhaustion\n");
+    timer_t ids[8];
+    int created = 0;
+    for (int i = 0; i < 8; i++) {
+        long rc = sys_timer_create(1, NULL, &ids[i]);
+        if (rc != 0) break;
+        created++;
+    }
+    /* One more should fail with EAGAIN */
+    timer_t extra = 0;
+    long rc = sys_timer_create(1, NULL, &extra);
+    /* Clean up first */
+    for (int i = 0; i < created; i++)
+        sys_timer_delete(ids[i]);
+    if (rc != -EAGAIN) {
+        fut_printf("[MISC-TEST] ✗ timer_create overflow: expected -EAGAIN got %ld (created=%d)\n",
+                   rc, created);
+        fut_test_fail(113); return;
+    }
+    fut_printf("[MISC-TEST] ✓ timer_create exhaustion: filled %d slots, overflow→EAGAIN\n", created);
+    fut_test_pass();
+}
+
+/* Test 114: timer_create with invalid clockid returns EINVAL */
+static void test_posix_timer_invalid_clockid(void) {
+    fut_printf("[MISC-TEST] Test 114: POSIX timer invalid clockid\n");
+    timer_t tid = 0;
+    /* CLOCK_PROCESS_CPUTIME_ID=2 and CLOCK_THREAD_CPUTIME_ID=3 are not valid for timer_create */
+    long rc = sys_timer_create(999, NULL, &tid);
+    if (rc != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ timer_create(999) expected -EINVAL got %ld\n", rc);
+        if (rc == 0) sys_timer_delete(tid);
+        fut_test_fail(114); return;
+    }
+    /* CLOCK_REALTIME=0 should work */
+    rc = sys_timer_create(0, NULL, &tid);
+    if (rc != 0) {
+        fut_printf("[MISC-TEST] ✗ timer_create(CLOCK_REALTIME) returned %ld\n", rc);
+        fut_test_fail(114); return;
+    }
+    sys_timer_delete(tid);
+    fut_printf("[MISC-TEST] ✓ timer_create: bad clockid→EINVAL, CLOCK_REALTIME OK\n");
+    fut_test_pass();
+}
+
+/* Test 115: timer_getoverrun returns 0 on fresh timer */
+static void test_posix_timer_overrun(void) {
+    fut_printf("[MISC-TEST] Test 115: POSIX timer_getoverrun\n");
+    timer_t tid = 0;
+    long rc = sys_timer_create(1, NULL, &tid);
+    if (rc != 0) {
+        fut_printf("[MISC-TEST] ✗ timer_create returned %ld\n", rc);
+        fut_test_fail(115); return;
+    }
+    long overrun = sys_timer_getoverrun(tid);
+    if (overrun != 0) {
+        fut_printf("[MISC-TEST] ✗ timer_getoverrun fresh timer: expected 0 got %ld\n", overrun);
+        sys_timer_delete(tid);
+        fut_test_fail(115); return;
+    }
+    /* Invalid timer id should return EINVAL */
+    long bad = sys_timer_getoverrun(999);
+    sys_timer_delete(tid);
+    if (bad != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ timer_getoverrun(999): expected -EINVAL got %ld\n", bad);
+        fut_test_fail(115); return;
+    }
+    fut_printf("[MISC-TEST] ✓ timer_getoverrun: fresh=0, invalid→EINVAL\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -5748,6 +5913,11 @@ void fut_misc_test_thread(void *arg) {
     test_procfs_sysctl_ostype();    /* Test 108: /proc/sys/kernel/ostype = Linux */
     test_procfs_sysctl_osrelease(); /* Test 109: /proc/sys/kernel/osrelease */
     test_procfs_sysctl_overcommit();/* Test 110: /proc/sys/vm/overcommit_memory */
+    test_posix_timer_create_delete();      /* Test 111: timer_create/delete */
+    test_posix_timer_settime_gettime();    /* Test 112: timer_settime/gettime */
+    test_posix_timer_slot_exhaustion();    /* Test 113: timer slot exhaustion */
+    test_posix_timer_invalid_clockid();    /* Test 114: invalid clockid EINVAL */
+    test_posix_timer_overrun();            /* Test 115: timer_getoverrun */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

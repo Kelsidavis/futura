@@ -31,7 +31,7 @@
 #include <stdint.h>
 #include <stddef.h>
 
-/* Standard POSIX signals */
+/* Standard POSIX signals (1-31) */
 #define SIGHUP   1   /* Hangup detected on controlling terminal */
 #define SIGINT   2   /* Interrupt (Ctrl+C) */
 #define SIGQUIT  3   /* Quit from keyboard */
@@ -61,8 +61,15 @@
 #define SIGWINCH 28  /* Window size change */
 #define SIGIO    29  /* I/O now possible */
 #define SIGPWR   30  /* Power failure */
+#define SIGSYS   31  /* Bad system call (seccomp, ptrace) */
 
-#define _NSIG    31  /* Number of signals */
+/* Real-time signals (32-64) — used by NPTL/pthreads for internal management */
+#define SIGRTMIN 32  /* First real-time signal */
+#define SIGRTMAX 64  /* Last real-time signal */
+
+/* _NSIG: total signal count + 1 (signals are 1-based).
+ * Supports signals 1-64: 1-31 standard POSIX + 32-64 real-time (SIGRT). */
+#define _NSIG    65
 
 /* Signal handler type - function called when signal delivered */
 typedef void (*sighandler_t)(int);

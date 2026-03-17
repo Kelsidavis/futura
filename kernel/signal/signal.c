@@ -30,8 +30,8 @@ enum {
 /* Default action for each signal (indexed by signal number, 0 is unused placeholder)
  *
  * security: Array is indexed by signum directly (1-based), so element [0]
- * is a placeholder to avoid off-by-one. Array has _NSIG (31) elements so that
- * signum values 1..30 are all valid indices. */
+ * is a placeholder to avoid off-by-one. Array has _NSIG (65) elements so that
+ * signum values 1..64 are all valid indices (1-31 standard, 32-64 real-time). */
 static const int signal_default_action[_NSIG] = {
     [0]  = SIG_ACTION_TERM,  /* placeholder - never accessed (signum >= 1) */
     [1]  = SIG_ACTION_TERM,  /* SIGHUP */
@@ -49,7 +49,7 @@ static const int signal_default_action[_NSIG] = {
     [13] = SIG_ACTION_TERM,  /* SIGPIPE */
     [14] = SIG_ACTION_TERM,  /* SIGALRM */
     [15] = SIG_ACTION_TERM,  /* SIGTERM */
-    [16] = SIG_ACTION_IGN,   /* (unused) */
+    [16] = SIG_ACTION_IGN,   /* (reserved) */
     [17] = SIG_ACTION_IGN,   /* SIGCHLD */
     [18] = SIG_ACTION_CONT,  /* SIGCONT */
     [19] = SIG_ACTION_STOP,  /* SIGSTOP (cannot be caught) */
@@ -64,6 +64,19 @@ static const int signal_default_action[_NSIG] = {
     [28] = SIG_ACTION_IGN,   /* SIGWINCH */
     [29] = SIG_ACTION_IGN,   /* SIGIO */
     [30] = SIG_ACTION_TERM,  /* SIGPWR */
+    [31] = SIG_ACTION_CORE,  /* SIGSYS */
+    /* Real-time signals 32-64: default action is terminate (POSIX) */
+    [32] = SIG_ACTION_TERM,  [33] = SIG_ACTION_TERM,  [34] = SIG_ACTION_TERM,
+    [35] = SIG_ACTION_TERM,  [36] = SIG_ACTION_TERM,  [37] = SIG_ACTION_TERM,
+    [38] = SIG_ACTION_TERM,  [39] = SIG_ACTION_TERM,  [40] = SIG_ACTION_TERM,
+    [41] = SIG_ACTION_TERM,  [42] = SIG_ACTION_TERM,  [43] = SIG_ACTION_TERM,
+    [44] = SIG_ACTION_TERM,  [45] = SIG_ACTION_TERM,  [46] = SIG_ACTION_TERM,
+    [47] = SIG_ACTION_TERM,  [48] = SIG_ACTION_TERM,  [49] = SIG_ACTION_TERM,
+    [50] = SIG_ACTION_TERM,  [51] = SIG_ACTION_TERM,  [52] = SIG_ACTION_TERM,
+    [53] = SIG_ACTION_TERM,  [54] = SIG_ACTION_TERM,  [55] = SIG_ACTION_TERM,
+    [56] = SIG_ACTION_TERM,  [57] = SIG_ACTION_TERM,  [58] = SIG_ACTION_TERM,
+    [59] = SIG_ACTION_TERM,  [60] = SIG_ACTION_TERM,  [61] = SIG_ACTION_TERM,
+    [62] = SIG_ACTION_TERM,  [63] = SIG_ACTION_TERM,  [64] = SIG_ACTION_TERM,
 };
 
 /**

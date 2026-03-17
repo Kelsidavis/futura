@@ -1036,12 +1036,15 @@ int fut_socket_poll(fut_socket_t *socket, int events) {
             ready |= 0x1;
         }
     } else if (socket->state == FUT_SOCK_CONNECTED && socket->pair && socket->pair_reverse) {
-        if ((events & 0x1)) {  /* POLLIN - readable if data available in pair_reverse (receive buffer) */
-            /* If shutdown_rd is set, socket is always readable (recv returns EOF) */
+        /* Check for peer closure → POLLHUP (always reported) */
+        if (!socket->pair_reverse->peer) {
+            ready |= 0x10;  /* POLLHUP */
+            ready |= 0x1;   /* POLLIN (EOF is readable) */
+        }
+        if ((events & 0x1)) {  /* POLLIN - readable if data available in pair_reverse */
             if (socket->shutdown_rd) {
                 ready |= 0x1;
             } else {
-                /* With separate sockets, we only check pair_reverse (our receive direction) */
                 uint32_t recv_available = (socket->pair_reverse->recv_head + socket->pair_reverse->recv_size -
                                            socket->pair_reverse->recv_tail) % socket->pair_reverse->recv_size;
                 if (recv_available > 0) {

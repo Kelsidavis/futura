@@ -2580,12 +2580,17 @@ int fut_vfs_chdir(const char *path) {
     fut_task_t *task = fut_task_current();
     if (task) {
         task->current_dir_ino = vnode->ino;
-        size_t len = 0;
-        while (path[len] && len < 255) {
-            task->cwd_cache_buf[len] = path[len];
-            len++;
+        /* Build canonical path from vnode parent chain (normalizes '..' etc.) */
+        char *built = fut_vnode_build_path(vnode, task->cwd_cache_buf, 256);
+        if (!built || task->cwd_cache_buf[0] == '\0') {
+            /* Fallback: copy raw path */
+            size_t len = 0;
+            while (path[len] && len < 255) {
+                task->cwd_cache_buf[len] = path[len];
+                len++;
+            }
+            task->cwd_cache_buf[len] = '\0';
         }
-        task->cwd_cache_buf[len] = '\0';
         task->cwd_cache = task->cwd_cache_buf;
     }
 

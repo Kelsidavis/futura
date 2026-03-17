@@ -36,6 +36,7 @@
 #define VFS_TEST_UMOUNT_EXPIRE 10
 #define VFS_TEST_DOTDOT     11
 #define VFS_TEST_EISDIR     12
+#define VFS_TEST_CHDIR_DOTDOT 13
 
 /* Use kernel-level VFS functions (no copy_from_user) */
 #define sys_mkdir(path, mode)           fut_vfs_mkdir(path, (uint32_t)(mode))
@@ -813,6 +814,69 @@ static void test_read_dir_eisdir(void) {
     fut_test_pass();
 }
 
+/* sys_chdir is already defined as a macro to fut_vfs_chdir */
+
+/* Test 13: chdir with '..' normalizes path and getcwd returns clean result */
+static void test_chdir_with_dotdot(void) {
+    fut_printf("[VFS-TEST] Test 13: chdir with '..' normalization\n");
+
+    /* Ensure directories exist (reuse from dotdot test) */
+    fut_vfs_mkdir("/cd_test", 0755);
+    fut_vfs_mkdir("/cd_test/sub", 0755);
+
+    /* chdir into the subdirectory */
+    long ret = sys_chdir("/cd_test/sub");
+    if (ret != 0) {
+        fut_printf("[VFS-TEST] ✗ chdir(/cd_test/sub) failed: %ld\n", ret);
+        sys_chdir("/");
+        fut_test_fail(VFS_TEST_CHDIR_DOTDOT);
+        return;
+    }
+
+    /* Create a file using relative path to verify we're in the right place */
+    int fd = fut_vfs_open("marker.txt", O_WRONLY | O_CREAT, 0644);
+    if (fd < 0) {
+        fut_printf("[VFS-TEST] ✗ relative create in sub failed: %d\n", fd);
+        sys_chdir("/");
+        fut_test_fail(VFS_TEST_CHDIR_DOTDOT);
+        return;
+    }
+    fut_vfs_write(fd, "SUB", 3);
+    fut_vfs_close(fd);
+
+    /* chdir to parent via '..' */
+    ret = sys_chdir("..");
+    if (ret != 0) {
+        fut_printf("[VFS-TEST] ✗ chdir(..) failed: %ld\n", ret);
+        sys_chdir("/");
+        fut_test_fail(VFS_TEST_CHDIR_DOTDOT);
+        return;
+    }
+
+    /* Verify we're in /cd_test by opening sub/marker.txt relatively */
+    fd = fut_vfs_open("sub/marker.txt", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[VFS-TEST] ✗ relative open after chdir(..) failed: %d\n", fd);
+        sys_chdir("/");
+        fut_test_fail(VFS_TEST_CHDIR_DOTDOT);
+        return;
+    }
+    char buf[4] = {0};
+    ssize_t nr = fut_vfs_read(fd, buf, 3);
+    fut_vfs_close(fd);
+
+    sys_chdir("/");
+
+    if (nr != 3 || memcmp(buf, "SUB", 3) != 0) {
+        fut_printf("[VFS-TEST] ✗ content mismatch after chdir(..): nr=%zd\n", nr);
+        fut_test_fail(VFS_TEST_CHDIR_DOTDOT);
+        return;
+    }
+
+    fut_printf("[VFS-TEST] ✓ chdir(..): navigated up, relative paths work correctly\n");
+    fut_test_pass();
+}
+
 void fut_vfs_test_thread(void *arg) {
     (void)arg;
 
@@ -830,6 +894,7 @@ void fut_vfs_test_thread(void *arg) {
     test_renameat2();
     test_dotdot();
     test_read_dir_eisdir();
+    test_chdir_with_dotdot();
 
     fut_printf("[VFS-TEST] VFS correctness tests complete\n");
 }

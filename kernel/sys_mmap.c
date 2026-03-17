@@ -183,6 +183,11 @@ long sys_munmap(void *addr, size_t len) {
         return -EINVAL;
     }
 
+    /* Address must be page-aligned */
+    if ((uintptr_t)addr % PAGE_SIZE != 0) {
+        return -EINVAL;
+    }
+
     /* Validate length is within reasonable bounds (matching mmap)
      * Without size limits, attacker can request unbounded unmap operations:
      *   - munmap(addr, SIZE_MAX)

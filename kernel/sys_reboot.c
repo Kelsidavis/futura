@@ -101,8 +101,11 @@ long sys_reboot(unsigned int magic1, unsigned int magic2,
                 __asm__ volatile("lidt %0; int3" :: "m"(null_idt));
             }
 #elif defined(__aarch64__)
-            /* PSCI SYSTEM_RESET */
-            __asm__ volatile("mov x0, #0x84000009; hvc #0");
+            /* PSCI SYSTEM_RESET (0x84000009) */
+            {
+                register uint64_t x0 __asm__("x0") = 0x84000009ULL;
+                __asm__ volatile("hvc #0" :: "r"(x0));
+            }
 #endif
             /* Should not reach here */
             for (;;) {

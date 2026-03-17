@@ -2310,7 +2310,7 @@ static int64_t sys_vmsplice_handler(uint64_t fd, uint64_t iov, uint64_t nr_segs,
 static int64_t sys_unimplemented(uint64_t arg1, uint64_t arg2, uint64_t arg3,
                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
-    return -1;  /* ENOSYS */
+    return -38;  /* -ENOSYS: Function not implemented */
 }
 
 static int64_t sys_getcwd_handler(uint64_t buf, uint64_t size, uint64_t arg3,
@@ -3084,7 +3084,7 @@ int64_t posix_syscall_dispatch(uint64_t syscall_num,
     /* Validate syscall number */
     if (syscall_num >= MAX_SYSCALL) {
         fut_printf("[DISPATCHER] ERROR: syscall %lu >= MAX_SYSCALL %d\n", syscall_num, MAX_SYSCALL);
-        return -1;  /* ENOSYS */
+        return -38;  /* -ENOSYS: Function not implemented */
     }
 
     /* Get handler from table */
@@ -3404,12 +3404,7 @@ long syscall_entry_c(uint64_t nr,
     fut_task_t *current = fut_task_current();
     if (current && current->pending_signals != 0 && frame_ptr) {
         fut_interrupt_frame_t *frame = (fut_interrupt_frame_t *)frame_ptr;
-        int sig_delivered = check_and_deliver_pending_signals(current, frame);
-        if (sig_delivered != 0) {
-            fut_printf("[SIGNAL] Signal %d will be delivered upon return to user\n",
-                      sig_delivered);
-            /* Return value is overwritten by signal handler, or returned if handler exits */
-        }
+        check_and_deliver_pending_signals(current, frame);
     }
 
     return ret;

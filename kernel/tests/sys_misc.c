@@ -3641,6 +3641,59 @@ static void test_socket_read_eof(void) {
     fut_test_pass();
 }
 
+extern long sys_shutdown(int sockfd, int how);
+
+/* ============================================================
+ * Test 85: shutdown(SHUT_WR) causes peer read to return EOF
+ * ============================================================ */
+static void test_shutdown_wr_eof(void) {
+    fut_printf("[MISC-TEST] Test 85: shutdown(SHUT_WR) → peer EOF\n");
+
+    int sv[2] = {-1, -1};
+    long ret = sys_socketpair(1, 1, 0, sv);
+    if (ret != 0) { fut_test_fail(85); return; }
+
+    /* Write data, then shutdown write end */
+    fut_vfs_write(sv[0], "msg", 3);
+    ret = sys_shutdown(sv[0], 1 /* SHUT_WR */);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ shutdown: %ld\n", ret);
+        fut_vfs_close(sv[0]); fut_vfs_close(sv[1]);
+        fut_test_fail(85); return;
+    }
+
+    /* Peer should read buffered data first */
+    char buf[8] = {0};
+    ssize_t nr = fut_vfs_read(sv[1], buf, sizeof(buf));
+    if (nr != 3 || __builtin_memcmp(buf, "msg", 3) != 0) {
+        fut_printf("[MISC-TEST] ✗ read1: %zd\n", nr);
+        fut_vfs_close(sv[0]); fut_vfs_close(sv[1]);
+        fut_test_fail(85); return;
+    }
+
+    /* Write on shutdown end should fail with EPIPE */
+    ssize_t nw = fut_vfs_write(sv[0], "x", 1);
+    if (nw != -EPIPE) {
+        fut_printf("[MISC-TEST] ✗ write after SHUT_WR: %zd\n", nw);
+        fut_vfs_close(sv[0]); fut_vfs_close(sv[1]);
+        fut_test_fail(85); return;
+    }
+
+    /* Peer can still write (only WR shutdown, not RD) */
+    nw = fut_vfs_write(sv[1], "reply", 5);
+
+    fut_vfs_close(sv[0]);
+    fut_vfs_close(sv[1]);
+
+    if (nw != 5) {
+        fut_printf("[MISC-TEST] ✗ peer write: %zd\n", nw);
+        fut_test_fail(85); return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ shutdown(WR): peer reads data+EOF, sender gets EPIPE, peer still writes\n");
+    fut_test_pass();
+}
+
 /* ============================================================
  * Test 52: write on O_RDONLY fd returns EBADF
  * ============================================================ */
@@ -4525,6 +4578,7 @@ void fut_misc_test_thread(void *arg) {
     test_isatty_tcgets();       /* Test 82: isatty via TCGETS */
     test_socket_write_epipe();  /* Test 83: write to closed socket → EPIPE */
     test_socket_read_eof();     /* Test 84: read from closed socket → EOF */
+    test_shutdown_wr_eof();     /* Test 85: shutdown(SHUT_WR) → peer reads EOF */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

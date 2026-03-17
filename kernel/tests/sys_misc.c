@@ -5454,6 +5454,112 @@ static void test_procfs_pid_readdir(void) {
 }
 
 /* ============================================================
+ * Test 105: /proc/loadavg has correct format
+ * ============================================================ */
+static void test_procfs_loadavg(void) {
+    fut_printf("[MISC-TEST] Test 105: /proc/loadavg format\n");
+
+    int fd = fut_vfs_open("/proc/loadavg", 0, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open /proc/loadavg failed: %d\n", fd);
+        fut_test_fail(105);
+        return;
+    }
+    char buf[128];
+    __builtin_memset(buf, 0, sizeof(buf));
+    ssize_t n = fut_vfs_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    if (n <= 0) {
+        fut_printf("[MISC-TEST] ✗ read /proc/loadavg returned %ld\n", (long)n);
+        fut_test_fail(105);
+        return;
+    }
+    /* Verify 5 space-separated tokens: 3 floats, R/T, last_pid */
+    int tokens = 0, in_word = 0;
+    for (ssize_t i = 0; i < n; i++) {
+        char c = buf[i];
+        int printable = (c >= '0' && c <= '9') || c == '.' || c == '/';
+        if (printable) { if (!in_word) { tokens++; in_word = 1; } }
+        else { in_word = 0; }
+    }
+    if (tokens < 5) {
+        fut_printf("[MISC-TEST] ✗ /proc/loadavg: only %d tokens: '%s'\n", tokens, buf);
+        fut_test_fail(105);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ /proc/loadavg: %d tokens, content: '%s'", tokens, buf);
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 106: /proc/mounts is non-empty
+ * ============================================================ */
+static void test_procfs_mounts(void) {
+    fut_printf("[MISC-TEST] Test 106: /proc/mounts non-empty\n");
+
+    int fd = fut_vfs_open("/proc/mounts", 0, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open /proc/mounts failed: %d\n", fd);
+        fut_test_fail(106);
+        return;
+    }
+    char buf[512];
+    __builtin_memset(buf, 0, sizeof(buf));
+    ssize_t n = fut_vfs_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    if (n <= 0) {
+        fut_printf("[MISC-TEST] ✗ read /proc/mounts returned %ld\n", (long)n);
+        fut_test_fail(106);
+        return;
+    }
+    /* Should have at least one newline */
+    int found_nl = 0;
+    for (ssize_t i = 0; i < n; i++) { if (buf[i] == '\n') { found_nl = 1; break; } }
+    if (!found_nl) {
+        fut_printf("[MISC-TEST] ✗ /proc/mounts: no newline found\n");
+        fut_test_fail(106);
+        return;
+    }
+    /* Truncate for display */
+    if (n > 60) { buf[60] = '.'; buf[61] = '.'; buf[62] = '.'; buf[63] = '\0'; }
+    fut_printf("[MISC-TEST] ✓ /proc/mounts: %ld bytes\n", (long)n);
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 107: /proc/self/comm returns current task name
+ * ============================================================ */
+static void test_procfs_self_comm(void) {
+    fut_printf("[MISC-TEST] Test 107: /proc/self/comm\n");
+
+    int fd = fut_vfs_open("/proc/self/comm", 0, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open /proc/self/comm failed: %d\n", fd);
+        fut_test_fail(107);
+        return;
+    }
+    char buf[64];
+    __builtin_memset(buf, 0, sizeof(buf));
+    ssize_t n = fut_vfs_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    if (n <= 0) {
+        fut_printf("[MISC-TEST] ✗ read /proc/self/comm returned %ld\n", (long)n);
+        fut_test_fail(107);
+        return;
+    }
+    /* Should end with newline and contain at least one non-newline char */
+    if (n < 2) {
+        fut_printf("[MISC-TEST] ✗ /proc/self/comm: too short (%ld bytes)\n", (long)n);
+        fut_test_fail(107);
+        return;
+    }
+    /* Strip trailing newline for display */
+    if (buf[n - 1] == '\n') buf[n - 1] = '\0';
+    fut_printf("[MISC-TEST] ✓ /proc/self/comm: '%s'\n", buf);
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -5567,6 +5673,9 @@ void fut_misc_test_thread(void *arg) {
     test_procfs_self_statm();       /* Test 102: /proc/self/statm 7 tokens */
     test_procfs_cpuinfo();          /* Test 103: /proc/cpuinfo processor line */
     test_procfs_pid_readdir();      /* Test 104: /proc lists live PIDs */
+    test_procfs_loadavg();          /* Test 105: /proc/loadavg format */
+    test_procfs_mounts();           /* Test 106: /proc/mounts non-empty */
+    test_procfs_self_comm();        /* Test 107: /proc/self/comm = task name */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

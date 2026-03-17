@@ -27,6 +27,7 @@
 #include <kernel/fut_mm.h>
 #include <kernel/fut_memory.h>
 #include <kernel/fut_timer.h>
+#include <kernel/fut_stats.h>
 #include <kernel/fut_lock.h>
 #include <kernel/vfs_credentials.h>
 #include <kernel/errno.h>
@@ -60,6 +61,9 @@ enum procfs_kind {
     PROC_STAT,       /* /proc/<pid>/stat */
     PROC_STATM,      /* /proc/<pid>/statm */
     PROC_CPUINFO,    /* /proc/cpuinfo */
+    PROC_LOADAVG,    /* /proc/loadavg */
+    PROC_MOUNTS,     /* /proc/mounts */
+    PROC_COMM,       /* /proc/<pid>/comm */
 };
 
 typedef struct {
@@ -78,6 +82,8 @@ typedef struct {
 #define PROC_INO_VERSION  4ULL
 #define PROC_INO_UPTIME   5ULL
 #define PROC_INO_CPUINFO  6ULL
+#define PROC_INO_LOADAVG  7ULL
+#define PROC_INO_MOUNTS   8ULL
 
 /* Per-PID: pid * 100 + offset */
 #define PROC_INO_PID_DIR(p)    (1000ULL + (uint64_t)(p) * 100 + 0)
@@ -89,6 +95,7 @@ typedef struct {
 #define PROC_INO_PID_CWD(p)    (1000ULL + (uint64_t)(p) * 100 + 6)
 #define PROC_INO_PID_STAT(p)   (1000ULL + (uint64_t)(p) * 100 + 7)
 #define PROC_INO_PID_STATM(p)  (1000ULL + (uint64_t)(p) * 100 + 8)
+#define PROC_INO_PID_COMM(p)   (1000ULL + (uint64_t)(p) * 100 + 9)
 /* fd entries: use high range to avoid collision */
 #define PROC_INO_FD_ENTRY(p,n) (100000000ULL + (uint64_t)(p) * 1000 + (uint64_t)(n))
 
@@ -535,6 +542,87 @@ static size_t gen_cpuinfo(char *buf, size_t cap) {
     return b.pos;
 }
 
+/*
+ * gen_loadavg() — /proc/loadavg
+ *
+ * Format: "1.00 5.00 15.00 R/T last_pid\n"
+ * R = running threads, T = total threads, last_pid = newest PID.
+ * Load averages are in 16.16 fixed-point from fut_get_load_avg().
+ */
+static size_t gen_loadavg(char *buf, size_t cap) {
+    unsigned long loads[3] = {0, 0, 0};
+    fut_get_load_avg(loads);
+
+    /* Convert 16.16 fixed-point to integer + two decimal places */
+    struct pbuf b = { buf, 0, cap };
+    for (int i = 0; i < 3; i++) {
+        uint64_t v = (uint64_t)loads[i];
+        uint64_t int_part  = v >> 16;
+        uint64_t frac_100  = ((v & 0xFFFFULL) * 100ULL) >> 16;
+        pb_u64(&b, int_part);
+        pb_char(&b, '.');
+        if (frac_100 < 10) pb_char(&b, '0');
+        pb_u64(&b, frac_100);
+        pb_char(&b, (i < 2) ? ' ' : ' ');
+    }
+    /* running/total threads */
+    uint64_t running = 0, total = 0;
+    fut_task_t *t = fut_task_list;
+    while (t) {
+        total++;
+        if (t->state == FUT_TASK_RUNNING) running++;
+        t = t->next;
+    }
+    pb_u64(&b, running ? running : 1); pb_char(&b, '/');
+    pb_u64(&b, total ? total : 1); pb_char(&b, ' ');
+    /* last pid: find max pid */
+    uint64_t last_pid = 0;
+    t = fut_task_list;
+    while (t) { if (t->pid > last_pid) last_pid = t->pid; t = t->next; }
+    pb_u64(&b, last_pid);
+    pb_char(&b, '\n');
+    return b.pos;
+}
+
+/*
+ * gen_mounts() — /proc/mounts (== /proc/self/mounts)
+ *
+ * One line per mount:
+ *   device mountpoint fstype options 0 0
+ */
+static size_t gen_mounts(char *buf, size_t cap) {
+    struct pbuf b = { buf, 0, cap };
+    struct fut_mount *m = fut_vfs_first_mount();
+    while (m) {
+        const char *dev = (m->device && m->device[0]) ? m->device : "none";
+        const char *mp  = (m->mountpoint && m->mountpoint[0]) ? m->mountpoint : "/";
+        const char *fs  = (m->fs && m->fs->name) ? m->fs->name : "unknown";
+        pb_str(&b, dev); pb_char(&b, ' ');
+        pb_str(&b, mp);  pb_char(&b, ' ');
+        pb_str(&b, fs);  pb_str(&b, " rw,relatime 0 0\n");
+        m = m->next;
+    }
+    if (b.pos == 0) {
+        /* Fallback: at least show rootfs */
+        pb_str(&b, "rootfs / rootfs rw 0 0\n");
+    }
+    return b.pos;
+}
+
+/*
+ * gen_comm() — /proc/<pid>/comm
+ *
+ * Single line: process name + newline.
+ */
+static size_t gen_comm(char *buf, size_t cap, fut_task_t *task) {
+    if (!task) return 0;
+    const char *name = task->comm[0] ? task->comm : "?";
+    struct pbuf b = { buf, 0, cap };
+    pb_str(&b, name);
+    pb_char(&b, '\n');
+    return b.pos;
+}
+
 /* ============================================================
  *   File Operations
  * ============================================================ */
@@ -582,6 +670,17 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
         case PROC_CPUINFO:
             total = gen_cpuinfo(tmp, GEN_BUF);
             break;
+        case PROC_LOADAVG:
+            total = gen_loadavg(tmp, GEN_BUF);
+            break;
+        case PROC_MOUNTS:
+            total = gen_mounts(tmp, GEN_BUF);
+            break;
+        case PROC_COMM: {
+            fut_task_t *task = fut_task_by_pid(n->pid);
+            total = task ? gen_comm(tmp, GEN_BUF, task) : 0;
+            break;
+        }
         default:
             fut_free(tmp);
             return -EINVAL;
@@ -753,6 +852,16 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0100444, PROC_CPUINFO, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "loadavg")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_LOADAVG,
+                                          0100444, PROC_LOADAVG, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "mounts")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_MOUNTS,
+                                          0100444, PROC_MOUNTS, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         /* Try numeric PID */
         uint64_t pid = parse_dec(name);
         if (pid != (uint64_t)-1 && pid > 0) {
@@ -807,6 +916,11 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0100444, PROC_STATM, pid, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "comm")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_COMM(pid),
+                                          0100644, PROC_COMM, pid, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         return -ENOENT;
     }
 
@@ -836,22 +950,23 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
     uint64_t idx = *cookie;
 
     if (dn->kind == PROC_ROOT) {
-        /* Fixed entries: ., .., self, meminfo, version, uptime, cpuinfo */
+        /* Fixed entries: ., .., self, meminfo, version, uptime, cpuinfo, loadavg, mounts */
         static const char *fixed[] = {
-            ".", "..", "self", "meminfo", "version", "uptime", "cpuinfo"
+            ".", "..", "self", "meminfo", "version", "uptime", "cpuinfo",
+            "loadavg", "mounts"
         };
         static const uint8_t fixed_type[] = {
             FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
             FUT_VDIR_TYPE_SYMLINK,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
-            FUT_VDIR_TYPE_REG
+            FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG
         };
         static const uint64_t fixed_ino[] = {
             PROC_INO_ROOT, PROC_INO_ROOT,
             PROC_INO_SELF, PROC_INO_MEMINFO, PROC_INO_VERSION, PROC_INO_UPTIME,
-            PROC_INO_CPUINFO
+            PROC_INO_CPUINFO, PROC_INO_LOADAVG, PROC_INO_MOUNTS
         };
-        if (idx < 7) {
+        if (idx < 9) {
             de->d_ino    = fixed_ino[idx];
             de->d_off    = idx + 1;
             de->d_type   = fixed_type[idx];
@@ -874,7 +989,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
          * increasing; newly-forked tasks will appear if their PID is
          * greater than the last-seen PID.
          */
-        uint64_t min_pid = idx - 7;  /* start scanning for pid > min_pid */
+        uint64_t min_pid = idx - 9;  /* start scanning for pid > min_pid */
         fut_task_t *best = NULL;
         uint64_t   best_pid = (uint64_t)-1;
         fut_task_t *t = fut_task_list;
@@ -899,42 +1014,44 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         pidname[pn] = '\0';
 
         de->d_ino    = PROC_INO_PID_DIR(best->pid);
-        de->d_off    = 7 + best->pid + 1;
+        de->d_off    = 9 + best->pid + 1;
         de->d_type   = FUT_VDIR_TYPE_DIR;
         de->d_reclen = sizeof(*de);
         size_t nl = (size_t)pn;
         if (nl > FUT_VFS_NAME_MAX) nl = FUT_VFS_NAME_MAX;
         __builtin_memcpy(de->d_name, pidname, nl);
         de->d_name[nl] = '\0';
-        *cookie = 7 + best->pid + 1;  /* resume after this pid */
+        *cookie = 9 + best->pid + 1;  /* resume after this pid */
         return 0;
     }
 
     if (dn->kind == PROC_PID_DIR) {
         static const char *entries[] = {
-            ".", "..", "status", "maps", "cmdline", "fd", "exe", "cwd", "stat", "statm"
+            ".", "..", "status", "maps", "cmdline", "fd", "exe", "cwd",
+            "stat", "statm", "comm"
         };
         static const uint8_t etypes[] = {
             FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
             FUT_VDIR_TYPE_DIR,
             FUT_VDIR_TYPE_SYMLINK, FUT_VDIR_TYPE_SYMLINK,
-            FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG
+            FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG
         };
         uint64_t pid = dn->pid;
-        if (idx < 10) {
+        if (idx < 11) {
             uint64_t ino;
             switch (idx) {
-                case 0: ino = PROC_INO_PID_DIR(pid);     break;
-                case 1: ino = PROC_INO_ROOT;              break;
-                case 2: ino = PROC_INO_PID_STATUS(pid);  break;
-                case 3: ino = PROC_INO_PID_MAPS(pid);    break;
-                case 4: ino = PROC_INO_PID_CMDLINE(pid); break;
-                case 5: ino = PROC_INO_PID_FD(pid);      break;
-                case 6: ino = PROC_INO_PID_EXE(pid);     break;
-                case 7: ino = PROC_INO_PID_CWD(pid);     break;
-                case 8: ino = PROC_INO_PID_STAT(pid);    break;
-                case 9: ino = PROC_INO_PID_STATM(pid);   break;
+                case 0:  ino = PROC_INO_PID_DIR(pid);     break;
+                case 1:  ino = PROC_INO_ROOT;              break;
+                case 2:  ino = PROC_INO_PID_STATUS(pid);  break;
+                case 3:  ino = PROC_INO_PID_MAPS(pid);    break;
+                case 4:  ino = PROC_INO_PID_CMDLINE(pid); break;
+                case 5:  ino = PROC_INO_PID_FD(pid);      break;
+                case 6:  ino = PROC_INO_PID_EXE(pid);     break;
+                case 7:  ino = PROC_INO_PID_CWD(pid);     break;
+                case 8:  ino = PROC_INO_PID_STAT(pid);    break;
+                case 9:  ino = PROC_INO_PID_STATM(pid);   break;
+                case 10: ino = PROC_INO_PID_COMM(pid);    break;
                 default: ino = 0; break;
             }
             de->d_ino    = ino;

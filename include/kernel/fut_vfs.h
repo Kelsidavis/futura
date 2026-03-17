@@ -831,6 +831,12 @@ int fut_vfs_close(int fd);
 struct fut_file *fut_vfs_get_file(int fd);
 
 /**
+ * Return the head of the global mount list (for procfs /proc/mounts).
+ * Callers must not modify the list; it is read-only.
+ */
+struct fut_mount *fut_vfs_first_mount(void);
+
+/**
  * Get file structure from file descriptor (exported for syscalls).
  *
  * @param fd File descriptor

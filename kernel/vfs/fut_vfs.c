@@ -2906,3 +2906,7 @@ int fut_vfs_rename(const char *oldpath, const char *newpath) {
     fut_vnode_unref(new_parent);
     return ret;
 }
+
+
+/* Iterate the mount list — used by procfs to generate /proc/mounts */
+struct fut_mount *fut_vfs_first_mount(void) { return mount_list; }

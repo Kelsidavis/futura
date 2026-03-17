@@ -1440,7 +1440,7 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
 #endif
                     if (socket_ready & 0x1)  events_ready |= EPOLLIN | EPOLLRDNORM;
                     if (socket_ready & 0x4)  events_ready |= EPOLLOUT | EPOLLWRNORM;
-                    if (socket_ready & 0x10) events_ready |= EPOLLHUP;
+                    if (socket_ready & 0x10) events_ready |= EPOLLHUP | EPOLLRDHUP;
                     if (socket_ready & 0x8)  events_ready |= EPOLLERR;
                     handled = true;
                 }
@@ -1471,7 +1471,7 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
                     int socket_ready = fut_socket_poll(socket, poll_events);
                     if (socket_ready & 0x1)  events_ready |= EPOLLIN | EPOLLRDNORM;
                     if (socket_ready & 0x4)  events_ready |= EPOLLOUT | EPOLLWRNORM;
-                    if (socket_ready & 0x10) events_ready |= EPOLLHUP;
+                    if (socket_ready & 0x10) events_ready |= EPOLLHUP | EPOLLRDHUP;
                     if (socket_ready & 0x8)  events_ready |= EPOLLERR;
                 }
                 handled = true;

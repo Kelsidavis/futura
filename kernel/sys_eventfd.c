@@ -1514,8 +1514,6 @@ long sys_timerfd_create(int clockid, int flags) {
         file->fd_flags |= FD_CLOEXEC;
     }
 
-    fut_printf("[TIMERFD_CREATE] timerfd_create(clockid=%d, flags=0x%x) -> fd=%d\n",
-               clockid, flags, fd);
     return fd;
 }
 
@@ -1581,7 +1579,7 @@ long sys_timerfd_settime(int ufd, int flags,
         ctx->armed = false;
         ctx->next_expiry_ms = 0;
         fut_spinlock_release(&ctx->lock);
-        fut_printf("[TIMERFD_SETTIME] timerfd_settime(ufd=%d) -> disarmed\n", ufd);
+        /* Timer disarmed */
         return 0;
     }
 
@@ -1617,8 +1615,6 @@ long sys_timerfd_settime(int ufd, int flags,
 
     fut_timer_start(delay_ticks, timerfd_timer_cb, ctx);
 
-    fut_printf("[TIMERFD_SETTIME] timerfd_settime(ufd=%d, delay=%llu, interval=%llu) -> armed\n",
-               ufd, (unsigned long long)delay_ticks, (unsigned long long)interval_ticks);
     return 0;
 }
 

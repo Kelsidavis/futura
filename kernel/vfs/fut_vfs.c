@@ -2740,6 +2740,10 @@ int fut_vfs_rename(const char *oldpath, const char *newpath) {
     if (!oldpath || !newpath || oldpath[0] == '\0' || newpath[0] == '\0')
         return -EINVAL;
 
+    /* POSIX: rename(path, path) is a no-op */
+    if (strcmp(oldpath, newpath) == 0)
+        return 0;
+
     /* Find last slash to split parent dir / filename */
     size_t old_len = strlen(oldpath);
     size_t new_len = strlen(newpath);

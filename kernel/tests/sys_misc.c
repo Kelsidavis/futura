@@ -2384,6 +2384,45 @@ static void test_pipe_access_mode(void) {
     fut_test_pass();
 }
 
+extern int fut_vfs_rename(const char *oldpath, const char *newpath);
+
+/* ============================================================
+ * Test 54: rename same file is a no-op
+ * ============================================================ */
+static void test_rename_same_file(void) {
+    fut_printf("[MISC-TEST] Test 54: rename same file\n");
+
+    /* Create a test file */
+    int fd = fut_vfs_open("/rename_same.txt", 0x42, 0644);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ create failed: %d\n", fd);
+        fut_test_fail(54);
+        return;
+    }
+    fut_vfs_write(fd, "data", 4);
+    fut_vfs_close(fd);
+
+    /* Rename to itself — should succeed as no-op */
+    long ret = fut_vfs_rename("/rename_same.txt", "/rename_same.txt");
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ rename(same, same) returned %ld\n", ret);
+        fut_test_fail(54);
+        return;
+    }
+
+    /* Verify file still exists */
+    fd = fut_vfs_open("/rename_same.txt", 0x00, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ file missing after rename-to-self: %d\n", fd);
+        fut_test_fail(54);
+        return;
+    }
+    fut_vfs_close(fd);
+
+    fut_printf("[MISC-TEST] ✓ rename(same, same): no-op succeeds, file intact\n");
+    fut_test_pass();
+}
+
 /* ============================================================
  * Test 38: setrlimit hard limit can be raised by root, denied for non-root
  * ============================================================ */
@@ -2815,6 +2854,7 @@ void fut_misc_test_thread(void *arg) {
     test_getdents64_small_buf(); /* Test 51: getdents64 small buffer */
     test_rdonly_write_ebadf();   /* Test 52: write on O_RDONLY fd returns EBADF */
     test_pipe_access_mode();    /* Test 53: pipe access mode enforcement */
+    test_rename_same_file();    /* Test 54: rename same file no-op */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

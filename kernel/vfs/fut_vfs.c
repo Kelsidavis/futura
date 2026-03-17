@@ -2082,6 +2082,12 @@ ssize_t fut_vfs_write(int fd, const void *buf, size_t size) {
         if (ret > 0) {
             file->offset = (uint64_t)pos;
         }
+        /* POSIX: deliver SIGPIPE on broken pipe/socket write */
+        if (ret == -EPIPE) {
+            fut_task_t *wr_task = fut_task_current();
+            if (wr_task)
+                fut_signal_send(wr_task, 13 /* SIGPIPE */);
+        }
         return ret;
     }
 

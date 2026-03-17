@@ -121,45 +121,14 @@ long sys_alarm(unsigned int seconds) {
         /* Schedule new alarm: convert seconds to ticks (100 ticks/sec) */
         task->alarm_expires_ms = current_ticks + ((uint64_t)seconds * 100);
 
-        /* Phase 3: Categorize alarm duration for logging */
-        const char *duration_category;
-        if (seconds < 1) {
-            duration_category = "sub-second";
-        } else if (seconds <= 10) {
-            duration_category = "short (≤10s)";
-        } else if (seconds <= 60) {
-            duration_category = "medium (≤60s)";
-        } else if (seconds <= 3600) {
-            duration_category = "long (≤1h)";
-        } else {
-            duration_category = "very long (>1h)";
-        }
-
-        fut_printf("[ALARM] alarm(%u [%s]) set by task %llu, expires at %llu ms (previous remaining: %u s, "
-                   "overflow prevention)\n",
-                   seconds, duration_category, task->pid, task->alarm_expires_ms, remaining_seconds);
-
-        /* Phase 3: Attempt immediate SIGALRM delivery if condition met
-         * Check if alarm has already expired (clock adjustment scenario) */
+        /* Immediate delivery if alarm already expired (clock adjustment scenario) */
         if (task->alarm_expires_ms <= current_ticks) {
             fut_signal_send(task, SIGALRM);
-            fut_printf("[ALARM] Signal delivery: SIGALRM queued immediately (alarm expired during setup)\n");
         }
     } else {
         /* Cancel pending alarm for this task */
         if (task->alarm_expires_ms > 0) {
-            /* Phase 3: Calculate and categorize previously scheduled duration */
-            uint64_t prev_duration_ticks = task->alarm_expires_ms - current_ticks;
-            unsigned int prev_duration_s = (unsigned int)((prev_duration_ticks + 99) / 100);
-            const char *prev_category = (prev_duration_s > 3600) ? "very long" :
-                                       (prev_duration_s > 60) ? "long" :
-                                       (prev_duration_s > 10) ? "medium" : "short";
-
-            fut_printf("[ALARM] alarm(0) - canceled %s alarm for task %llu (was %u s remaining)\n",
-                       prev_category, task->pid, remaining_seconds);
             task->alarm_expires_ms = 0;
-        } else {
-            fut_printf("[ALARM] alarm(0) - no alarm to cancel for task %llu\n", task->pid);
         }
     }
 

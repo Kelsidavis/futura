@@ -2563,6 +2563,50 @@ static void test_mmap_anonymous(void) {
 }
 
 /* ============================================================
+ * Test 66: close/read/write on invalid fd returns EBADF
+ * ============================================================ */
+static void test_close_ebadf(void) {
+    fut_printf("[MISC-TEST] Test 66: invalid fd EBADF\n");
+
+    /* close(-1) → EBADF */
+    extern long sys_close(int fd);
+    long ret = sys_close(-1);
+    if (ret != -EBADF) {
+        fut_printf("[MISC-TEST] ✗ close(-1) returned %ld\n", ret);
+        fut_test_fail(66);
+        return;
+    }
+
+    /* close(999) → EBADF */
+    ret = sys_close(999);
+    if (ret != -EBADF) {
+        fut_printf("[MISC-TEST] ✗ close(999) returned %ld\n", ret);
+        fut_test_fail(66);
+        return;
+    }
+
+    /* read(999, ...) → EBADF */
+    char buf[4];
+    ssize_t nr = fut_vfs_read(999, buf, sizeof(buf));
+    if (nr != -EBADF) {
+        fut_printf("[MISC-TEST] ✗ read(999) returned %zd\n", nr);
+        fut_test_fail(66);
+        return;
+    }
+
+    /* write(999, ...) → EBADF */
+    ssize_t nw = fut_vfs_write(999, "x", 1);
+    if (nw != -EBADF) {
+        fut_printf("[MISC-TEST] ✗ write(999) returned %zd\n", nw);
+        fut_test_fail(66);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ invalid fd: close/read/write all return EBADF\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test 52: write on O_RDONLY fd returns EBADF
  * ============================================================ */
 static void test_rdonly_write_ebadf(void) {
@@ -3430,6 +3474,7 @@ void fut_misc_test_thread(void *arg) {
     test_fcntl_getfl();         /* Test 63: fcntl F_GETFL */
     test_pipe2_nonblock();      /* Test 64: pipe2 O_NONBLOCK */
     test_mmap_anonymous();      /* Test 65: mmap anonymous memory */
+    test_close_ebadf();         /* Test 66: close invalid fd */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

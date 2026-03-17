@@ -15,6 +15,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/fut_thread.h>
 #include <kernel/fut_percpu.h>
+#include <poll.h>
 #include <kernel/fut_vfs.h>
 #include <kernel/errno.h>
 #include <kernel/kprintf.h>
@@ -1616,6 +1617,40 @@ static void test_dev_urandom(void) {
 }
 
 extern long sys_pipe(int pipefd[2]);
+extern long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout);
+
+/* ============================================================
+ * Test 39: /dev/null is always poll-ready (POLLIN|POLLOUT)
+ * ============================================================ */
+static void test_dev_null_poll(void) {
+    fut_printf("[MISC-TEST] Test 39: /dev/null poll readiness\n");
+
+    int fd = fut_vfs_open("/dev/null", 0x02, 0);  /* O_RDWR */
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open /dev/null: %d\n", fd);
+        fut_test_fail(39);
+        return;
+    }
+
+    struct pollfd pfd = { .fd = fd, .events = POLLIN | POLLOUT, .revents = 0 };
+    long ret = sys_poll(&pfd, 1, 0);  /* Immediate check */
+    fut_vfs_close(fd);
+
+    if (ret != 1) {
+        fut_printf("[MISC-TEST] ✗ poll returned %ld (expected 1)\n", ret);
+        fut_test_fail(39);
+        return;
+    }
+
+    if (!(pfd.revents & POLLIN) || !(pfd.revents & POLLOUT)) {
+        fut_printf("[MISC-TEST] ✗ revents=0x%x (expected POLLIN|POLLOUT)\n", pfd.revents);
+        fut_test_fail(39);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ /dev/null: poll returns POLLIN|POLLOUT immediately\n");
+    fut_test_pass();
+}
 /* ============================================================
  * Test 38: setrlimit hard limit can be raised by root, denied for non-root
  * ============================================================ */
@@ -2032,6 +2067,7 @@ void fut_misc_test_thread(void *arg) {
     test_umask_enforcement();   /* Test 36: umask applied on file creation */
     test_fstat_pipe();          /* Test 37: fstat on pipe fd */
     test_setrlimit_hard();      /* Test 38: setrlimit hard limit enforcement */
+    test_dev_null_poll();       /* Test 39: /dev/null always poll-ready */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

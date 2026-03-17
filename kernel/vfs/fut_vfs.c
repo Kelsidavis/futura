@@ -23,6 +23,7 @@
 #include <sys/stat.h>
 
 #include <kernel/kprintf.h>
+#include <kernel/fut_socket.h>
 
 /* Permission checking functions (vfs_check_*_perm) provided by fut_vfs.h */
 
@@ -2137,6 +2138,10 @@ int fut_vfs_close(int fd) {
     if (task->fd_table && fd >= 0 && fd < task->max_fds) {
         task->fd_table[fd] = NULL;
     }
+
+    /* Clear socket tracking table so stale socket pointers don't pollute
+     * poll/select for FDs reused by non-socket files (e.g. /dev/null). */
+    release_socket_fd(fd);
 
     /* Atomically decrement refcount. Only perform resource cleanup (vnode release,
      * chr_ops release, file struct free) on the LAST reference.

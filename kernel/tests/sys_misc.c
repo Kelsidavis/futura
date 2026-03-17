@@ -2175,6 +2175,86 @@ static void test_pipe_read_eintr(void) {
 }
 
 /* ============================================================
+ * Test 49: eventfd read returns EINTR when signal pending
+ * ============================================================ */
+static void test_eventfd_eintr(void) {
+    fut_printf("[MISC-TEST] Test 49: eventfd read EINTR\n");
+
+    /* Create eventfd with counter=0 (would block on read) */
+    extern long sys_eventfd2(unsigned int initval, int flags);
+    long fd = sys_eventfd2(0, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ eventfd2 returned %ld\n", fd);
+        fut_test_fail(49);
+        return;
+    }
+
+    /* Set signal pending */
+    fut_task_t *task = fut_task_current();
+    __atomic_or_fetch(&task->pending_signals, (1ULL << 9), __ATOMIC_RELEASE);
+
+    /* Read from eventfd with counter=0 — should return EINTR */
+    uint64_t val = 0;
+    ssize_t nr = fut_vfs_read((int)fd, &val, sizeof(val));
+
+    /* Clear signal */
+    __atomic_and_fetch(&task->pending_signals, ~(1ULL << 9), __ATOMIC_RELEASE);
+
+    fut_vfs_close((int)fd);
+
+    if (nr != -EINTR) {
+        fut_printf("[MISC-TEST] ✗ eventfd read returned %zd (expected EINTR)\n", nr);
+        fut_test_fail(49);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ eventfd read: EINTR on pending signal\n");
+    fut_test_pass();
+}
+
+extern long sys_epoll_create1(int flags);
+extern long sys_epoll_ctl(int epfd, int op, int fd, void *event);
+extern long sys_epoll_wait(int epfd, void *events, int maxevents, int timeout);
+
+/* ============================================================
+ * Test 50: epoll_wait returns EINTR when signal pending
+ * ============================================================ */
+static void test_epoll_wait_eintr(void) {
+    fut_printf("[MISC-TEST] Test 50: epoll_wait EINTR\n");
+
+    long epfd = sys_epoll_create1(0);
+    if (epfd < 0) {
+        fut_printf("[MISC-TEST] ✗ epoll_create1 returned %ld\n", epfd);
+        fut_test_fail(50);
+        return;
+    }
+
+    /* Set signal pending before calling epoll_wait */
+    fut_task_t *task = fut_task_current();
+    __atomic_or_fetch(&task->pending_signals, (1ULL << 9), __ATOMIC_RELEASE);
+
+    /* epoll_wait with 100ms timeout — should return EINTR immediately */
+    struct { uint32_t events; uint64_t data; } __attribute__((packed)) ev;
+    long ret = sys_epoll_wait((int)epfd, &ev, 1, 100);
+
+    /* Clear signal */
+    __atomic_and_fetch(&task->pending_signals, ~(1ULL << 9), __ATOMIC_RELEASE);
+
+    /* Close epoll */
+    extern long sys_close(int fd);
+    sys_close((int)epfd);
+
+    if (ret != -EINTR) {
+        fut_printf("[MISC-TEST] ✗ epoll_wait returned %ld (expected EINTR)\n", ret);
+        fut_test_fail(50);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ epoll_wait: EINTR on pending signal\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test 38: setrlimit hard limit can be raised by root, denied for non-root
  * ============================================================ */
 static void test_setrlimit_hard(void) {
@@ -2600,6 +2680,8 @@ void fut_misc_test_thread(void *arg) {
     test_memfd_ftruncate();     /* Test 46: memfd ftruncate */
     test_memfd_pread_pwrite();  /* Test 47: pread64/pwrite64 on memfd */
     test_pipe_read_eintr();     /* Test 48: pipe read EINTR */
+    test_eventfd_eintr();       /* Test 49: eventfd read EINTR */
+    test_epoll_wait_eintr();    /* Test 50: epoll_wait EINTR */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -1276,26 +1276,12 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
         return -EINVAL;
     }
 
-    /* Verify events array is writable */
+    /* Verify events array is writable (skip for kernel buffers) */
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)events < KERNEL_VIRTUAL_BASE)
+#endif
     if (fut_access_ok(events, maxevents * sizeof(struct epoll_event), 1) != 0) {
-        char msg[128];
-        int pos = 0;
-        const char *text = "[EPOLL_WAIT] epoll_wait(epfd=";
-        while (*text) { msg[pos++] = *text++; }
-
-        char num[16]; int num_pos = 0; int val = epfd;
-        if (val == 0) { num[num_pos++] = '0'; }
-        else { char temp[16]; int temp_pos = 0;
-            while (val > 0) { temp[temp_pos++] = '0' + (val % 10); val /= 10; }
-            while (temp_pos > 0) { num[num_pos++] = temp[--temp_pos]; } }
-        num[num_pos] = '\0';
-        for (int i = 0; num[i]; i++) { msg[pos++] = num[i]; }
-
-        text = ") -> EFAULT (events array not writable)\n";
-        while (*text) { msg[pos++] = *text++; }
-        msg[pos] = '\0';
-        fut_printf("%s", msg);
-
+        fut_printf("[EPOLL_WAIT] epoll_wait(epfd=%d) -> EFAULT (events not writable)\n", epfd);
         return -EFAULT;
     }
 
@@ -1573,6 +1559,18 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
         /* Check positive timeout before sleeping */
         if (timeout > 0 && fut_get_ticks() >= deadline_ticks) {
             return 0;  /* Timeout expired */
+        }
+
+        /* Check for pending unblocked signals before blocking → EINTR */
+        {
+            fut_task_t *sig_task = fut_task_current();
+            if (sig_task) {
+                uint64_t pending = __atomic_load_n(&sig_task->pending_signals, __ATOMIC_ACQUIRE);
+                uint64_t blocked = sig_task->signal_mask;
+                if (pending & ~blocked) {
+                    return -EINTR;
+                }
+            }
         }
 
         /* Sleep on epoll waitqueue - socket sends and new connections will wake us.

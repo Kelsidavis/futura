@@ -288,27 +288,52 @@ static size_t gen_status(char *buf, size_t cap, fut_task_t *task) {
         rss_kb = bytes / 1024;
     }
 
+    /* Compute SigIgn and SigCgt bitmasks from signal_handlers[] */
+    uint64_t sig_ign = 0, sig_cgt = 0;
+    for (int i = 0; i < 64 && i < _NSIG - 1; i++) {
+        sighandler_t h = task->signal_handlers[i];
+        if (h == SIG_IGN)
+            sig_ign |= (1ULL << i);
+        else if (h != SIG_DFL && h != NULL)
+            sig_cgt |= (1ULL << i);
+    }
+
     uint64_t ppid = task->parent ? task->parent->pid : 0;
 
     struct pbuf b = { buf, 0, cap };
-    pb_str(&b, "Name:\t");    pb_str(&b, task->comm[0] ? task->comm : "?"); pb_char(&b, '\n');
-    pb_str(&b, "State:\t");   pb_str(&b, state_str); pb_char(&b, '\n');
-    pb_str(&b, "Tgid:\t");    pb_u64(&b, task->pid); pb_char(&b, '\n');
-    pb_str(&b, "Pid:\t");     pb_u64(&b, task->pid); pb_char(&b, '\n');
-    pb_str(&b, "PPid:\t");    pb_u64(&b, ppid);       pb_char(&b, '\n');
-    pb_str(&b, "Uid:\t");     pb_u64(&b, task->ruid); pb_char(&b, '\t');
-                               pb_u64(&b, task->uid);  pb_char(&b, '\t');
-                               pb_u64(&b, task->suid); pb_char(&b, '\t');
-                               pb_u64(&b, task->uid);  pb_char(&b, '\n');
-    pb_str(&b, "Gid:\t");     pb_u64(&b, task->rgid); pb_char(&b, '\t');
-                               pb_u64(&b, task->gid);  pb_char(&b, '\t');
-                               pb_u64(&b, task->sgid); pb_char(&b, '\t');
-                               pb_u64(&b, task->gid);  pb_char(&b, '\n');
-    pb_str(&b, "Threads:\t"); pb_u64(&b, task->thread_count); pb_char(&b, '\n');
-    pb_str(&b, "VmRSS:\t");   pb_u64(&b, rss_kb); pb_str(&b, " kB\n");
-    pb_str(&b, "VmSize:\t");  pb_u64(&b, rss_kb); pb_str(&b, " kB\n");
-    pb_str(&b, "SigPnd:\t");  pb_hex16(&b, task->pending_signals); pb_char(&b, '\n');
-    pb_str(&b, "SigBlk:\t");  pb_hex16(&b, task->signal_mask);     pb_char(&b, '\n');
+    pb_str(&b, "Name:\t");       pb_str(&b, task->comm[0] ? task->comm : "?"); pb_char(&b, '\n');
+    pb_str(&b, "State:\t");      pb_str(&b, state_str); pb_char(&b, '\n');
+    pb_str(&b, "Tgid:\t");       pb_u64(&b, task->pid); pb_char(&b, '\n');
+    pb_str(&b, "Pid:\t");        pb_u64(&b, task->pid); pb_char(&b, '\n');
+    pb_str(&b, "PPid:\t");       pb_u64(&b, ppid);       pb_char(&b, '\n');
+    pb_str(&b, "TracerPid:\t");  pb_u64(&b, 0);          pb_char(&b, '\n');
+    pb_str(&b, "Uid:\t");        pb_u64(&b, task->ruid); pb_char(&b, '\t');
+                                  pb_u64(&b, task->uid);  pb_char(&b, '\t');
+                                  pb_u64(&b, task->suid); pb_char(&b, '\t');
+                                  pb_u64(&b, task->uid);  pb_char(&b, '\n');
+    pb_str(&b, "Gid:\t");        pb_u64(&b, task->rgid); pb_char(&b, '\t');
+                                  pb_u64(&b, task->gid);  pb_char(&b, '\t');
+                                  pb_u64(&b, task->sgid); pb_char(&b, '\t');
+                                  pb_u64(&b, task->gid);  pb_char(&b, '\n');
+    pb_str(&b, "FDSize:\t");     pb_u64(&b, (uint64_t)task->max_fds); pb_char(&b, '\n');
+    pb_str(&b, "Groups:\t");     pb_char(&b, '\n');
+    pb_str(&b, "Threads:\t");    pb_u64(&b, task->thread_count); pb_char(&b, '\n');
+    pb_str(&b, "VmPeak:\t");     pb_u64(&b, rss_kb); pb_str(&b, " kB\n");
+    pb_str(&b, "VmSize:\t");     pb_u64(&b, rss_kb); pb_str(&b, " kB\n");
+    pb_str(&b, "VmRSS:\t");      pb_u64(&b, rss_kb); pb_str(&b, " kB\n");
+    pb_str(&b, "VmHWM:\t");      pb_u64(&b, rss_kb); pb_str(&b, " kB\n");
+    pb_str(&b, "SigPnd:\t");     pb_hex16(&b, task->pending_signals); pb_char(&b, '\n');
+    pb_str(&b, "ShdPnd:\t");     pb_hex16(&b, 0);                      pb_char(&b, '\n');
+    pb_str(&b, "SigBlk:\t");     pb_hex16(&b, task->signal_mask);     pb_char(&b, '\n');
+    pb_str(&b, "SigIgn:\t");     pb_hex16(&b, sig_ign);               pb_char(&b, '\n');
+    pb_str(&b, "SigCgt:\t");     pb_hex16(&b, sig_cgt);               pb_char(&b, '\n');
+    pb_str(&b, "CapInh:\t");     pb_hex16(&b, task->cap_inheritable); pb_char(&b, '\n');
+    pb_str(&b, "CapPrm:\t");     pb_hex16(&b, task->cap_permitted);   pb_char(&b, '\n');
+    pb_str(&b, "CapEff:\t");     pb_hex16(&b, task->cap_effective);   pb_char(&b, '\n');
+    pb_str(&b, "CapBnd:\t");     pb_hex16(&b, 0);                      pb_char(&b, '\n');
+    pb_str(&b, "CapAmb:\t");     pb_hex16(&b, 0);                      pb_char(&b, '\n');
+    pb_str(&b, "NoNewPrivs:\t"); pb_u64(&b, task->no_new_privs ? 1 : 0); pb_char(&b, '\n');
+    pb_str(&b, "Seccomp:\t");    pb_u64(&b, 0);                        pb_char(&b, '\n');
     return b.pos;
 }
 

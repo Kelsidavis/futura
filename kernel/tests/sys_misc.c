@@ -5912,6 +5912,98 @@ static void test_procfs_task_tid_status(void) {
 }
 
 /* ============================================================
+ * Helper: search for a field prefix in a buffer
+ * ============================================================ */
+static int status_has_field(const char *buf, ssize_t n, const char *field) {
+    size_t flen = 0;
+    while (field[flen]) flen++;
+    for (ssize_t i = 0; i + (ssize_t)flen <= n; i++) {
+        int ok = 1;
+        for (size_t j = 0; j < flen; j++) {
+            if (buf[i + j] != field[j]) { ok = 0; break; }
+        }
+        if (ok) return 1;
+    }
+    return 0;
+}
+
+/* ============================================================
+ * Test 119: /proc/self/status has TracerPid: field
+ * ============================================================ */
+static void test_procfs_status_tracerpid(void) {
+    fut_printf("[MISC-TEST] Test 119: /proc/self/status has TracerPid:\n");
+    int fd = fut_vfs_open("/proc/self/status", 0, 0);
+    if (fd < 0) { fut_test_fail(119); return; }
+    char buf[1024];
+    __builtin_memset(buf, 0, sizeof(buf));
+    ssize_t n = fut_vfs_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    if (n <= 0 || !status_has_field(buf, n, "TracerPid:")) {
+        fut_printf("[MISC-TEST] ✗ /proc/self/status: no TracerPid: field\n");
+        fut_test_fail(119); return;
+    }
+    fut_printf("[MISC-TEST] ✓ /proc/self/status: TracerPid: present\n");
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 120: /proc/self/status has SigIgn: and SigCgt: fields
+ * ============================================================ */
+static void test_procfs_status_sigmasks(void) {
+    fut_printf("[MISC-TEST] Test 120: /proc/self/status has SigIgn:/SigCgt:\n");
+    int fd = fut_vfs_open("/proc/self/status", 0, 0);
+    if (fd < 0) { fut_test_fail(120); return; }
+    char buf[1024];
+    __builtin_memset(buf, 0, sizeof(buf));
+    ssize_t n = fut_vfs_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    if (n <= 0 || !status_has_field(buf, n, "SigIgn:") || !status_has_field(buf, n, "SigCgt:")) {
+        fut_printf("[MISC-TEST] ✗ /proc/self/status: SigIgn/SigCgt missing\n");
+        fut_test_fail(120); return;
+    }
+    fut_printf("[MISC-TEST] ✓ /proc/self/status: SigIgn: and SigCgt: present\n");
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 121: /proc/self/status has CapEff: field
+ * ============================================================ */
+static void test_procfs_status_capeff(void) {
+    fut_printf("[MISC-TEST] Test 121: /proc/self/status has CapEff:\n");
+    int fd = fut_vfs_open("/proc/self/status", 0, 0);
+    if (fd < 0) { fut_test_fail(121); return; }
+    char buf[1024];
+    __builtin_memset(buf, 0, sizeof(buf));
+    ssize_t n = fut_vfs_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    if (n <= 0 || !status_has_field(buf, n, "CapEff:")) {
+        fut_printf("[MISC-TEST] ✗ /proc/self/status: no CapEff: field\n");
+        fut_test_fail(121); return;
+    }
+    fut_printf("[MISC-TEST] ✓ /proc/self/status: CapEff: present\n");
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 122: /proc/self/status has NoNewPrivs: and FDSize: fields
+ * ============================================================ */
+static void test_procfs_status_nnp_fdsize(void) {
+    fut_printf("[MISC-TEST] Test 122: /proc/self/status has NoNewPrivs:/FDSize:\n");
+    int fd = fut_vfs_open("/proc/self/status", 0, 0);
+    if (fd < 0) { fut_test_fail(122); return; }
+    char buf[1024];
+    __builtin_memset(buf, 0, sizeof(buf));
+    ssize_t n = fut_vfs_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    if (n <= 0 || !status_has_field(buf, n, "NoNewPrivs:") || !status_has_field(buf, n, "FDSize:")) {
+        fut_printf("[MISC-TEST] ✗ /proc/self/status: NoNewPrivs/FDSize missing\n");
+        fut_test_fail(122); return;
+    }
+    fut_printf("[MISC-TEST] ✓ /proc/self/status: NoNewPrivs: and FDSize: present\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -6039,6 +6131,10 @@ void fut_misc_test_thread(void *arg) {
     test_procfs_task_dir_exists();         /* Test 116: /proc/self/task is a dir */
     test_procfs_task_readdir();            /* Test 117: /proc/self/task readdir */
     test_procfs_task_tid_status();         /* Test 118: /proc/self/task/<tid>/status */
+    test_procfs_status_tracerpid();        /* Test 119: status has TracerPid: */
+    test_procfs_status_sigmasks();         /* Test 120: status has SigIgn:/SigCgt: */
+    test_procfs_status_capeff();           /* Test 121: status has CapEff: */
+    test_procfs_status_nnp_fdsize();       /* Test 122: status has NoNewPrivs:/FDSize: */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

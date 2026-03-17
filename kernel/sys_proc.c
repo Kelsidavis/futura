@@ -631,6 +631,14 @@ long sys_setrlimit(int resource, const struct rlimit *rlim) {
     /* Phase 4: Store limits in task->rlimits so getrlimit can retrieve them */
     fut_task_t *task = fut_task_current();
     if (task) {
+        /* Raising hard limit requires root or CAP_SYS_RESOURCE */
+        if (new_limit.rlim_max > task->rlimits[resource].rlim_max &&
+            new_limit.rlim_max != RLIM_INFINITY) {
+            if (task->uid != 0 &&
+                !(task->cap_effective & (1ULL << 24 /* CAP_SYS_RESOURCE */))) {
+                return -EPERM;
+            }
+        }
         task->rlimits[resource].rlim_cur = new_limit.rlim_cur;
         task->rlimits[resource].rlim_max = new_limit.rlim_max;
     }

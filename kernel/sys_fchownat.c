@@ -340,6 +340,20 @@ long sys_fchownat(int dirfd, const char *pathname, uint32_t uid, uint32_t gid, i
         return -ENOENT;
     }
 
+    /* Permission check: changing owner requires root or CAP_CHOWN.
+     * Non-privileged users can only change group if they own the file. */
+    fut_task_t *task = fut_task_current();
+    if (task && task->ruid != 0 && !(task->cap_effective & (1ULL << 0 /* CAP_CHOWN */))) {
+        if (uid != (uint32_t)-1 && uid != vnode->uid) {
+            fut_vnode_unref(vnode);
+            return -EPERM;
+        }
+        if (gid != (uint32_t)-1 && gid != vnode->gid && task->ruid != vnode->uid) {
+            fut_vnode_unref(vnode);
+            return -EPERM;
+        }
+    }
+
     /* Check if filesystem supports ownership changes */
     if (!vnode->ops || !vnode->ops->setattr) {
         fut_printf("[FCHOWNAT] fchownat(dirfd=%d [%s], path='%s' [%s], vnode_ino=%lu, "

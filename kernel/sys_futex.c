@@ -401,8 +401,6 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
             }
 
             /* Sleep on wait queue (releases bucket lock) */
-            fut_printf("[FUTEX] FUTEX_WAIT - sleeping on futex at %p (timeout=%s)\n",
-                       uaddr, has_timeout ? "yes" : "infinite");
             fut_waitq_sleep_locked(&bucket->waiters, &bucket->lock, FUT_THREAD_BLOCKED);
 
             /* Cancel timeout timer if set (harmless if already fired) */
@@ -415,11 +413,20 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
             thread->futex_addr = NULL;
 
             if (timed_out) {
-                fut_printf("[FUTEX] FUTEX_WAIT - timed out\n");
                 return -ETIMEDOUT;
             }
 
-            fut_printf("[FUTEX] FUTEX_WAIT - woken up\n");
+            /* Check for pending signals → EINTR */
+            {
+                fut_task_t *sig_task = fut_task_current();
+                if (sig_task) {
+                    uint64_t pending = __atomic_load_n(&sig_task->pending_signals, __ATOMIC_ACQUIRE);
+                    uint64_t blocked = sig_task->signal_mask;
+                    if (pending & ~blocked) {
+                        return -EINTR;
+                    }
+                }
+            }
             return 0;
         }
 
@@ -458,8 +465,6 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
                     thread->state = FUT_THREAD_READY;
                     fut_sched_add_thread(thread);
                     woken++;
-
-                    fut_printf("[FUTEX] FUTEX_WAKE - woke thread %p\n", (void*)thread);
                 } else {
                     prev = thread;
                 }
@@ -469,7 +474,6 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
 
             fut_spinlock_release(&bucket->lock);
 
-            fut_printf("[FUTEX] FUTEX_WAKE - woke %d threads\n", woken);
             return woken;
         }
 
@@ -580,7 +584,7 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
                 fut_spinlock_release(&bucket1->lock);
             }
 
-            fut_printf("[FUTEX] FUTEX_REQUEUE - woke %d, requeued %d threads\n", woken, requeued);
+            (void)requeued;  /* Used for debugging only */
             return woken + requeued;
         }
 
@@ -713,7 +717,7 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
                 fut_spinlock_release(&bucket1->lock);
             }
 
-            fut_printf("[FUTEX] FUTEX_CMP_REQUEUE - woke %d, requeued %d threads\n", woken, requeued);
+            (void)requeued;
             return woken + requeued;
         }
 
@@ -883,8 +887,6 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
                 fut_spinlock_release(&bucket1->lock);
             }
 
-            fut_printf("[FUTEX] FUTEX_WAKE_OP - woke %d at uaddr, %d at uaddr2 (cmp=%d)\n",
-                       woken1, woken2, cmp_result ? 1 : 0);
             return woken1 + woken2;
         }
 

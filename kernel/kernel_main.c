@@ -1209,7 +1209,7 @@ void fut_kernel_main(void) {
         planned_tests += 14u; /* clock_sched: getres, sched_param, sched_policy, itimer, rusage, times, getpriority, setpriority, getpriority(-who), setpriority(-who), unshare(0), unshare(invalid), rr_get_interval, clock_gettime */
         planned_tests += 12u; /* vfs: O_TRUNC, O_APPEND, relpath, dir_mtime, readlink, hardlink, mount, renameat2, inotify, umount expire, dotdot, eisdir */
         planned_tests += 13u; /* poll: file ready, eventfd not-ready, eventfd ready, POLLNVAL, select file, select pipe, pselect6 pipe, pselect6 sigmask restore, timeout-only sleep, timerfd readiness, signalfd readiness, pipe EOF, select pipe EOF */
-        planned_tests += 32u; /* misc: getuid, cred_fields, personality(2), uname_null, rlimits, personality_stored, fcntl(3), prctl(4), getrandom, fadvise64, sched_affinity, copy_file_range, membarrier, statx(2), tgkill, getcpu, readahead, groups, socketpair, open_cloexec, mmap_validation, dev_null_zero, dev_urandom, cap_enforcement, vfs_permission */
+        planned_tests += 33u; /* misc(33): creds, personality, uname, rlimits, fcntl, prctl, getrandom, fadvise, affinity, cfr, membarrier, statx, tgkill, getcpu, readahead, groups, socketpair, cloexec, mmap, devs, caps, perms, dev_full */
         // planned_tests += 1u; /* block */
         // planned_tests += 1u; /* futfs */
         // planned_tests += 1u; /* net */

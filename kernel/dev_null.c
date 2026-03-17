@@ -70,8 +70,23 @@ static const struct fut_file_ops urandom_fops = {
     .mmap = NULL,
 };
 
+/* /dev/full: read returns zero bytes (like /dev/zero), write returns ENOSPC */
+static ssize_t full_write(void *inode, void *priv, const void *buf, size_t n, off_t *pos) {
+    (void)inode; (void)priv; (void)buf; (void)n; (void)pos;
+    return -28;  /* -ENOSPC: No space left on device */
+}
+
+static const struct fut_file_ops full_fops = {
+    .read = zero_read,     /* Same as /dev/zero — returns zeroes */
+    .write = full_write,
+    .open = NULL,
+    .release = NULL,
+    .ioctl = NULL,
+    .mmap = NULL,
+};
+
 /**
- * Initialize /dev/null, /dev/zero, and /dev/urandom devices.
+ * Initialize /dev/null, /dev/zero, /dev/full, and /dev/urandom devices.
  * Call from kernel_main during boot.
  */
 void dev_null_init(void) {
@@ -82,6 +97,10 @@ void dev_null_init(void) {
     chrdev_register(1, 5, &zero_fops, "zero", NULL);
     devfs_create_chr("/dev/zero", 1, 5);
 
+    /* /dev/full = (1,7): like /dev/zero but write returns ENOSPC */
+    chrdev_register(1, 7, &full_fops, "full", NULL);
+    devfs_create_chr("/dev/full", 1, 7);
+
     /* /dev/urandom = (1,9), /dev/random = (1,8) — both use same PRNG */
     chrdev_register(1, 9, &urandom_fops, "urandom", NULL);
     devfs_create_chr("/dev/urandom", 1, 9);
@@ -89,5 +108,5 @@ void dev_null_init(void) {
     chrdev_register(1, 8, &urandom_fops, "random", NULL);
     devfs_create_chr("/dev/random", 1, 8);
 
-    fut_printf("[DEV] /dev/null, /dev/zero, /dev/urandom, /dev/random registered\n");
+    fut_printf("[DEV] /dev/null, /dev/zero, /dev/full, /dev/urandom, /dev/random registered\n");
 }

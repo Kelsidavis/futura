@@ -1616,6 +1616,44 @@ static void test_dev_urandom(void) {
 }
 
 /* ============================================================
+ * Test 33: /dev/full returns ENOSPC on write
+ * ============================================================ */
+static void test_dev_full(void) {
+    fut_printf("[MISC-TEST] Test 33: /dev/full ENOSPC on write\n");
+
+    int fd = fut_vfs_open("/dev/full", 0x02, 0);  /* O_RDWR */
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open /dev/full failed: %d\n", fd);
+        fut_test_fail(33);
+        return;
+    }
+
+    /* Read should return zeros (like /dev/zero) */
+    uint8_t buf[4];
+    memset(buf, 0xFF, sizeof(buf));
+    ssize_t nr = fut_vfs_read(fd, buf, 4);
+    if (nr != 4 || buf[0] != 0 || buf[1] != 0) {
+        fut_printf("[MISC-TEST] ✗ /dev/full read: nr=%zd buf[0]=%u\n", nr, buf[0]);
+        fut_vfs_close(fd);
+        fut_test_fail(33);
+        return;
+    }
+
+    /* Write should return ENOSPC */
+    ssize_t nw = fut_vfs_write(fd, "test", 4);
+    fut_vfs_close(fd);
+    if (nw != -ENOSPC) {
+        fut_printf("[MISC-TEST] ✗ /dev/full write returned %zd (expected -ENOSPC=%d)\n",
+                   nw, -ENOSPC);
+        fut_test_fail(33);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ /dev/full: read=zeros, write=ENOSPC\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test 32: VFS file permission checks (owner/group/other)
  * ============================================================ */
 static void test_vfs_permission(void) {
@@ -1722,6 +1760,7 @@ void fut_misc_test_thread(void *arg) {
     test_dev_urandom();         /* Test 30: /dev/urandom */
     test_cap_enforcement();     /* Test 31: capability enforcement */
     test_vfs_permission();      /* Test 32: file permission checks */
+    test_dev_full();            /* Test 33: /dev/full ENOSPC */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

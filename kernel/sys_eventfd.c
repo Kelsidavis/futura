@@ -684,6 +684,19 @@ static ssize_t eventfd_read(void *inode, void *priv, void *u_buf, size_t len, of
             return -EAGAIN;
         }
 
+        /* Check for pending signals → EINTR */
+        {
+            fut_task_t *stask = fut_task_current();
+            if (stask) {
+                uint64_t pending = __atomic_load_n(&stask->pending_signals, __ATOMIC_ACQUIRE);
+                uint64_t blocked = stask->signal_mask;
+                if (pending & ~blocked) {
+                    fut_spinlock_release(&ctx->lock);
+                    return -EINTR;
+                }
+            }
+        }
+
         fut_waitq_sleep_locked(&ctx->read_waitq, &ctx->lock, FUT_THREAD_BLOCKED);
         /* Lock released by fut_waitq_sleep_locked; loop to reacquire */
     }
@@ -807,6 +820,19 @@ static ssize_t eventfd_write(void *inode, void *priv, const void *u_buf, size_t 
         if (eventfd_is_nonblock(efile)) {
             fut_spinlock_release(&ctx->lock);
             return -EAGAIN;
+        }
+
+        /* Check for pending signals → EINTR */
+        {
+            fut_task_t *stask = fut_task_current();
+            if (stask) {
+                uint64_t pending = __atomic_load_n(&stask->pending_signals, __ATOMIC_ACQUIRE);
+                uint64_t blocked = stask->signal_mask;
+                if (pending & ~blocked) {
+                    fut_spinlock_release(&ctx->lock);
+                    return -EINTR;
+                }
+            }
         }
 
         fut_waitq_sleep_locked(&ctx->write_waitq, &ctx->lock, FUT_THREAD_BLOCKED);
@@ -1071,6 +1097,16 @@ static ssize_t signalfd_read_op(void *inode, void *priv,
             if (total > 0) break;  /* Already returned some - don't block */
             if (sfile->file && (sfile->file->flags & O_NONBLOCK))
                 return -EAGAIN;
+            /* Check for pending process signals → EINTR */
+            {
+                fut_task_t *stask = fut_task_current();
+                if (stask) {
+                    uint64_t ppend = __atomic_load_n(&stask->pending_signals, __ATOMIC_ACQUIRE);
+                    uint64_t blocked = stask->signal_mask;
+                    if (ppend & ~blocked)
+                        return -EINTR;
+                }
+            }
             /* Block until a matching signal arrives */
             fut_spinlock_acquire(&ctx->lock);
             fut_waitq_sleep_locked(&ctx->read_waitq, &ctx->lock, FUT_THREAD_BLOCKED);
@@ -1329,6 +1365,18 @@ static ssize_t timerfd_read_op(void *inode, void *priv, void *u_buf, size_t len,
         if (nonblock) {
             fut_spinlock_release(&ctx->lock);
             return -EAGAIN;
+        }
+        /* Check for pending signals → EINTR */
+        {
+            fut_task_t *stask = fut_task_current();
+            if (stask) {
+                uint64_t pending = __atomic_load_n(&stask->pending_signals, __ATOMIC_ACQUIRE);
+                uint64_t blocked = stask->signal_mask;
+                if (pending & ~blocked) {
+                    fut_spinlock_release(&ctx->lock);
+                    return -EINTR;
+                }
+            }
         }
         fut_waitq_sleep_locked(&ctx->read_waitq, &ctx->lock, FUT_THREAD_BLOCKED);
     }

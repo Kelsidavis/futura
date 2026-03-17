@@ -8,6 +8,7 @@
 
 #include <kernel/fut_task.h>
 #include <kernel/fut_vfs.h>
+#include <kernel/fut_socket.h>
 #include <kernel/chrdev.h>
 #include <kernel/errno.h>
 #include <fcntl.h>
@@ -792,6 +793,14 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
                 file->flags |= O_NONBLOCK;
             else
                 file->flags &= ~O_NONBLOCK;
+            /* Propagate to socket object so socket-layer checks see the flag */
+            fut_socket_t *sock = get_socket_from_fd(fd);
+            if (sock) {
+                if (nb_flag)
+                    sock->flags |= O_NONBLOCK;
+                else
+                    sock->flags &= ~O_NONBLOCK;
+            }
             return 0;
         }
         case FIOCLEX:

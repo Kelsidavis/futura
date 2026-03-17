@@ -109,16 +109,23 @@ static int alloc_fd_for_task(fut_task_t *task, struct fut_file *file) {
         return -EINVAL;
     }
 
-    /* Find first available FD */
-    for (int i = 0; i < task->max_fds; i++) {
+    /* Enforce RLIMIT_NOFILE soft limit (resource index 7) */
+    uint64_t nofile_limit = task->rlimits[7].rlim_cur;
+    int max = task->max_fds;
+    if (nofile_limit > 0 && nofile_limit < (uint64_t)max) {
+        max = (int)nofile_limit;
+    }
+
+    /* Find first available FD within limit */
+    for (int i = 0; i < max; i++) {
         if (task->fd_table[i] == NULL) {
             task->fd_table[i] = file;
             return i;
         }
     }
 
-    /* FD table is full - could expand here in future */
-    return -EMFILE;  /* Too many open files */
+    /* FD table is full or RLIMIT_NOFILE reached */
+    return -EMFILE;
 }
 
 /**

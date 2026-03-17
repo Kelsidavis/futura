@@ -68,10 +68,16 @@ long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset) 
         return -EINVAL;
     }
 
-    /* Validate flags don't mix MAP_SHARED and MAP_PRIVATE */
+    /* Validate MAP_SHARED/MAP_PRIVATE: exactly one must be set */
     if ((flags & MAP_SHARED) && (flags & MAP_PRIVATE)) {
         fut_printf("[MMAP] mmap(addr=%p, len=%zu, flags=0x%x) -> EINVAL "
                    "(MAP_SHARED and MAP_PRIVATE are mutually exclusive)\n",
+                   addr, len, flags);
+        return -EINVAL;
+    }
+    if (!(flags & (MAP_SHARED | MAP_PRIVATE))) {
+        fut_printf("[MMAP] mmap(addr=%p, len=%zu, flags=0x%x) -> EINVAL "
+                   "(neither MAP_SHARED nor MAP_PRIVATE set)\n",
                    addr, len, flags);
         return -EINVAL;
     }
@@ -127,6 +133,12 @@ long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset) 
         fut_printf("[MMAP] mmap(addr=%p, len=%zu, offset=%ld) -> EINVAL "
                    "(offset + len would overflow SIZE_MAX)\n",
                    addr, len, offset);
+        return -EINVAL;
+    }
+
+    /* File-backed mappings require page-aligned offset */
+    if (!(flags & MAP_ANONYMOUS) && (offset % PAGE_SIZE != 0)) {
+        fut_printf("[MMAP] mmap(offset=%ld) -> EINVAL (offset not page-aligned)\n", offset);
         return -EINVAL;
     }
 

@@ -17,8 +17,9 @@ static inline void cpu_relax(void) {
 uint64_t fut_rdtsc(void) {
     unsigned int lo = 0;
     unsigned int hi = 0;
-    unsigned int aux = 0;
-    __asm__ volatile("rdtscp" : "=a"(lo), "=d"(hi), "=c"(aux) :: "memory");
+    /* rdtsc is universally supported on x86_64; rdtscp requires CPUID feature
+     * bit and fails as #UD on some QEMU CPU models. lfence serialises. */
+    __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi) :: "memory");
     __asm__ volatile("lfence" ::: "memory");
     return ((uint64_t)hi << 32) | lo;
 }

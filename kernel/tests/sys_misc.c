@@ -2646,6 +2646,71 @@ static void test_clock_gettime_monotonic(void) {
 }
 
 /* ============================================================
+ * Test 60: socketpair with SOCK_NONBLOCK and SOCK_CLOEXEC flags
+ * ============================================================ */
+#define SOCK_NONBLOCK_FLAG 0x800
+#define SOCK_CLOEXEC_FLAG  0x80000
+
+static void test_socketpair_flags(void) {
+    fut_printf("[MISC-TEST] Test 60: socketpair NONBLOCK|CLOEXEC\n");
+
+    int sv[2] = {-1, -1};
+    /* AF_UNIX=1, SOCK_STREAM=1, SOCK_NONBLOCK|SOCK_CLOEXEC */
+    long ret = sys_socketpair(1, 1 | SOCK_NONBLOCK_FLAG | SOCK_CLOEXEC_FLAG, 0, sv);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ socketpair returned %ld\n", ret);
+        fut_test_fail(60);
+        return;
+    }
+
+    if (sv[0] < 0 || sv[1] < 0 || sv[0] == sv[1]) {
+        fut_printf("[MISC-TEST] ✗ bad fds: %d, %d\n", sv[0], sv[1]);
+        fut_vfs_close(sv[0]);
+        fut_vfs_close(sv[1]);
+        fut_test_fail(60);
+        return;
+    }
+
+    /* Verify FD_CLOEXEC is set on both */
+    long flags0 = sys_fcntl(sv[0], F_GETFD, 0);
+    long flags1 = sys_fcntl(sv[1], F_GETFD, 0);
+    if (!(flags0 & FD_CLOEXEC) || !(flags1 & FD_CLOEXEC)) {
+        fut_printf("[MISC-TEST] ✗ CLOEXEC not set: fd0=0x%lx fd1=0x%lx\n", flags0, flags1);
+        fut_vfs_close(sv[0]);
+        fut_vfs_close(sv[1]);
+        fut_test_fail(60);
+        return;
+    }
+
+    /* Verify O_NONBLOCK is set on both */
+    long fl0 = sys_fcntl(sv[0], F_GETFL, 0);
+    long fl1 = sys_fcntl(sv[1], F_GETFL, 0);
+    if (!(fl0 & 00004000) || !(fl1 & 00004000)) {  /* O_NONBLOCK */
+        fut_printf("[MISC-TEST] ✗ NONBLOCK not set: fl0=0x%lx fl1=0x%lx\n", fl0, fl1);
+        fut_vfs_close(sv[0]);
+        fut_vfs_close(sv[1]);
+        fut_test_fail(60);
+        return;
+    }
+
+    /* Data transfer should still work */
+    fut_vfs_write(sv[0], "x", 1);
+    char buf[2] = {0};
+    ssize_t nr = fut_vfs_read(sv[1], buf, 1);
+    fut_vfs_close(sv[0]);
+    fut_vfs_close(sv[1]);
+
+    if (nr != 1 || buf[0] != 'x') {
+        fut_printf("[MISC-TEST] ✗ data transfer: nr=%zd buf[0]=%d\n", nr, buf[0]);
+        fut_test_fail(60);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ socketpair: NONBLOCK+CLOEXEC set, data works\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test 38: setrlimit hard limit can be raised by root, denied for non-root
  * ============================================================ */
 static void test_setrlimit_hard(void) {
@@ -3082,6 +3147,7 @@ void fut_misc_test_thread(void *arg) {
     test_lseek_pipe_espipe();   /* Test 57: lseek pipe ESPIPE */
     test_o_append();            /* Test 58: O_APPEND writes to end */
     test_clock_gettime_monotonic(); /* Test 59: clock_gettime */
+    test_socketpair_flags();    /* Test 60: socketpair with NONBLOCK|CLOEXEC */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

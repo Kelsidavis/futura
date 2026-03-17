@@ -2464,6 +2464,62 @@ static void test_fcntl_getfl(void) {
     fut_test_pass();
 }
 
+extern long sys_pipe2(int pipefd[2], int flags);
+
+/* ============================================================
+ * Test 64: pipe2 with O_NONBLOCK returns EAGAIN
+ * ============================================================ */
+static void test_pipe2_nonblock(void) {
+    fut_printf("[MISC-TEST] Test 64: pipe2 O_NONBLOCK\n");
+
+    int pipefd[2];
+    long ret = sys_pipe2(pipefd, 00004000);  /* O_NONBLOCK */
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ pipe2(O_NONBLOCK) returned %ld\n", ret);
+        fut_test_fail(64);
+        return;
+    }
+
+    /* Read from empty nonblocking pipe should return EAGAIN */
+    char buf[4];
+    ssize_t nr = fut_vfs_read(pipefd[0], buf, sizeof(buf));
+    if (nr != -EAGAIN) {
+        fut_printf("[MISC-TEST] ✗ read(empty NB pipe) returned %zd (expected EAGAIN)\n", nr);
+        fut_vfs_close(pipefd[0]);
+        fut_vfs_close(pipefd[1]);
+        fut_test_fail(64);
+        return;
+    }
+
+    /* Fill the pipe buffer (4096 bytes) */
+    char fill[4096];
+    __builtin_memset(fill, 'X', sizeof(fill));
+    ssize_t nw = fut_vfs_write(pipefd[1], fill, sizeof(fill));
+    if (nw != 4096) {
+        fut_printf("[MISC-TEST] ✗ fill write returned %zd\n", nw);
+        fut_vfs_close(pipefd[0]);
+        fut_vfs_close(pipefd[1]);
+        fut_test_fail(64);
+        return;
+    }
+
+    /* Write to full nonblocking pipe should return EAGAIN */
+    nw = fut_vfs_write(pipefd[1], "x", 1);
+    if (nw != -EAGAIN) {
+        fut_printf("[MISC-TEST] ✗ write(full NB pipe) returned %zd (expected EAGAIN)\n", nw);
+        fut_vfs_close(pipefd[0]);
+        fut_vfs_close(pipefd[1]);
+        fut_test_fail(64);
+        return;
+    }
+
+    fut_vfs_close(pipefd[0]);
+    fut_vfs_close(pipefd[1]);
+
+    fut_printf("[MISC-TEST] ✓ pipe2 O_NONBLOCK: EAGAIN on empty read and full write\n");
+    fut_test_pass();
+}
+
 /* ============================================================
  * Test 52: write on O_RDONLY fd returns EBADF
  * ============================================================ */
@@ -3330,6 +3386,7 @@ void fut_misc_test_thread(void *arg) {
     test_getdents64_read();     /* Test 61: getdents64 reads entries */
     test_dup_and_dupfd_cloexec(); /* Test 62: dup + F_DUPFD_CLOEXEC */
     test_fcntl_getfl();         /* Test 63: fcntl F_GETFL */
+    test_pipe2_nonblock();      /* Test 64: pipe2 O_NONBLOCK */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

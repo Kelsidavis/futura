@@ -707,21 +707,6 @@ long sys_pipe2(int pipefd[2], int flags) {
         }
     }
 
-    const char *flags_desc = "";
-    if ((flags & O_NONBLOCK) && (flags & O_CLOEXEC)) {
-        flags_desc = "O_NONBLOCK|O_CLOEXEC";
-    } else if (flags & O_NONBLOCK) {
-        flags_desc = "O_NONBLOCK";
-    } else if (flags & O_CLOEXEC) {
-        flags_desc = "O_CLOEXEC";
-    } else {
-        flags_desc = "none";
-    }
-
-    fut_printf("[PIPE2] pipe2(read_fd=%d, write_fd=%d, flags=0x%x [%s], buf_size=%u) -> 0 "
-               "(pipe created with flags, Phase 4)\n",
-               read_fd, write_fd, flags, flags_desc, PIPE_BUF_SIZE);
-
     return 0;
 }
 

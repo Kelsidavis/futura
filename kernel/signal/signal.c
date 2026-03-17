@@ -540,10 +540,16 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
                            task->pid, signum);
                 fut_task_signal_exit(signum);
                 return signum;
-            case SIG_ACTION_STOP:
-            case SIG_ACTION_CONT:
-                /* Not yet implemented */
+            case SIG_ACTION_STOP: {
+                extern void fut_task_do_stop(struct fut_task *t, int sig);
+                fut_task_do_stop(task, signum);
                 return signum;
+            }
+            case SIG_ACTION_CONT: {
+                extern void fut_task_do_cont(struct fut_task *t);
+                fut_task_do_cont(task);
+                return signum;
+            }
             case SIG_ACTION_IGN:
             default:
                 return signum;

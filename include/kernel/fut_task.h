@@ -65,6 +65,7 @@ struct fut_task {
     enum {
         FUT_TASK_RUNNING = 0,
         FUT_TASK_ZOMBIE,
+        FUT_TASK_STOPPED,    /* stopped by SIGSTOP/SIGTSTP/SIGTTIN/SIGTTOU */
     } state;
 
     int exit_code;                     // Exit status (8-bit in low byte)
@@ -106,6 +107,8 @@ struct fut_task {
     uint64_t pending_signals;          // Bitmask of pending signals awaiting delivery
     fut_waitq_t signal_waitq;          // Wait queue for pause() blocking until signal
     struct sigaltstack sig_altstack;   // Alternate signal stack configuration
+    fut_waitq_t stop_waitq;            // Wait queue for SIGSTOP/SIGCONT
+    int stop_signal;                   // Signal that caused the stop (SIGSTOP, SIGTSTP, etc.)
 
     /* Alarm timer (also used as ITIMER_REAL one-shot backing store) */
     uint64_t alarm_expires_ms;         // Alarm expiration time in milliseconds (0 = no alarm)
@@ -241,6 +244,8 @@ void fut_task_exit_current(int status);
 int fut_task_waitpid(int pid, int *status_out, int flags);
 int fut_task_waitpid_ex(int pid, int *status_out, int flags, uint32_t *uid_out);
 void fut_task_signal_exit(int signal);
+void fut_task_do_stop(fut_task_t *task, int sig);
+void fut_task_do_cont(fut_task_t *task);
 
 /**
  * Look up a task by PID.

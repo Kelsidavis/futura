@@ -3195,14 +3195,16 @@ static bool posix_deliver_signal(fut_task_t *current, int signum,
                            current->pid, signum);
                 fut_task_signal_exit(signum);
                 return true;
-            case 2:  /* SIG_ACTION_STOP */
-                fut_printf("[SIGNAL] Default action: stop task %llu on signal %d (not implemented)\n",
-                           current->pid, signum);
+            case 2: {  /* SIG_ACTION_STOP */
+                extern void fut_task_do_stop(fut_task_t *t, int sig);
+                fut_task_do_stop(current, signum);
                 return true;
-            case 3:  /* SIG_ACTION_CONT */
-                fut_printf("[SIGNAL] Default action: continue task %llu on signal %d (not implemented)\n",
-                           current->pid, signum);
+            }
+            case 3: {  /* SIG_ACTION_CONT */
+                extern void fut_task_do_cont(fut_task_t *t);
+                fut_task_do_cont(current);
                 return true;
+            }
             case 4:  /* SIG_ACTION_IGN */
             default:
                 return true;  /* Signal was "handled" by default ignore */

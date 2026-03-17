@@ -161,6 +161,7 @@ fut_task_t *fut_task_create(void) {
     }
 
     fut_waitq_init(&task->child_waiters);
+    fut_waitq_init(&task->stop_waitq);
     fut_spinlock_init(&task->cap_recv_lock);
     fut_waitq_init(&task->cap_recv_waitq);
 
@@ -517,6 +518,41 @@ static int encode_wait_status(const fut_task_t *task) {
     return (task->exit_code & EXIT_CODE_MASK) << WAIT_STATUS_SHIFT;
 }
 
+/**
+ * fut_task_do_stop() - Stop a task due to SIGSTOP/SIGTSTP/SIGTTIN/SIGTTOU.
+ * Sets the task state to FUT_TASK_STOPPED, records the stop signal, notifies
+ * the parent (for WUNTRACED), then sleeps the current thread on stop_waitq.
+ */
+void fut_task_do_stop(fut_task_t *task, int sig) {
+    if (!task) return;
+    fut_spinlock_acquire(&task_list_lock);
+    task->state = FUT_TASK_STOPPED;
+    task->stop_signal = sig;
+    if (task->parent)
+        fut_waitq_wake_all(&task->parent->child_waiters);
+    fut_spinlock_release(&task_list_lock);
+    /* Block current thread until SIGCONT wakes the stop_waitq */
+    fut_waitq_sleep_locked(&task->stop_waitq, NULL, FUT_THREAD_BLOCKED);
+}
+
+/**
+ * fut_task_do_cont() - Resume a stopped task due to SIGCONT.
+ * Wakes all threads sleeping on stop_waitq and notifies the parent
+ * (for WCONTINUED).
+ */
+void fut_task_do_cont(fut_task_t *task) {
+    if (!task) return;
+    fut_spinlock_acquire(&task_list_lock);
+    if (task->state == FUT_TASK_STOPPED) {
+        task->state = FUT_TASK_RUNNING;
+        task->stop_signal = -1;  /* sentinel: just continued */
+        if (task->parent)
+            fut_waitq_wake_all(&task->parent->child_waiters);
+    }
+    fut_spinlock_release(&task_list_lock);
+    fut_waitq_wake_all(&task->stop_waitq);
+}
+
 int fut_task_waitpid(int pid, int *status_out, int flags) {
     fut_task_t *parent = fut_task_current();
     if (!parent) {
@@ -551,6 +587,25 @@ int fut_task_waitpid(int pid, int *status_out, int flags) {
                 if (child->state == FUT_TASK_ZOMBIE) {
                     match = child;
                     break;
+                }
+                /* WUNTRACED (0x2): report stopped children */
+                if ((flags & 2) && child->state == FUT_TASK_STOPPED) {
+                    int stop_status = 0x7f | ((child->stop_signal & 0xff) << 8);
+                    uint64_t child_pid = child->pid;
+                    /* Clear stopped state so we don't report it again */
+                    child->state = FUT_TASK_RUNNING;
+                    fut_spinlock_release(&task_list_lock);
+                    if (status_out) *status_out = stop_status;
+                    return (int)child_pid;
+                }
+                /* WCONTINUED (0x8): report children continued with SIGCONT */
+                if ((flags & 8) && child->stop_signal == -1) {
+                    int cont_status = 0xffff;  /* WIFCONTINUED encoding */
+                    uint64_t child_pid = child->pid;
+                    child->stop_signal = 0;
+                    fut_spinlock_release(&task_list_lock);
+                    if (status_out) *status_out = cont_status;
+                    return (int)child_pid;
                 }
             }
             child = child->sibling;

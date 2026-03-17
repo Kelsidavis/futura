@@ -1920,6 +1920,98 @@ static void test_memfd_create(void) {
     fut_test_pass();
 }
 
+extern long sys_mprotect(void *addr, size_t len, int prot);
+extern long sys_rt_sigtimedwait(const uint64_t *uthese, void *uinfo,
+                                const void *uts, size_t sigsetsize);
+
+/* ============================================================
+ * Test 44: mprotect validates args and accepts valid ranges
+ * ============================================================ */
+static void test_mprotect_basic(void) {
+    fut_printf("[MISC-TEST] Test 44: mprotect parameter validation\n");
+
+    /* Unaligned address → EINVAL */
+    long ret = sys_mprotect((void *)0x1001, 4096, 0x1 /* PROT_READ */);
+    if (ret != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ mprotect(unaligned) returned %ld\n", ret);
+        fut_test_fail(44);
+        return;
+    }
+
+    /* Invalid prot flags → EINVAL */
+    ret = sys_mprotect((void *)0x1000, 4096, 0xFF);
+    if (ret != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ mprotect(bad prot) returned %ld\n", ret);
+        fut_test_fail(44);
+        return;
+    }
+
+    /* Zero length → success (no-op) */
+    ret = sys_mprotect((void *)0x1000, 0, 0x1);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ mprotect(len=0) returned %ld\n", ret);
+        fut_test_fail(44);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ mprotect: EINVAL for unaligned/bad prot, len=0 succeeds\n");
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 45: rt_sigtimedwait dequeues pending signal
+ * ============================================================ */
+static void test_sigtimedwait(void) {
+    fut_printf("[MISC-TEST] Test 45: rt_sigtimedwait\n");
+
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        fut_printf("[MISC-TEST] ✗ no task\n");
+        fut_test_fail(45);
+        return;
+    }
+
+    /* Set SIGUSR1 (signal 10) pending */
+    __atomic_or_fetch(&task->pending_signals, (1ULL << 9), __ATOMIC_RELEASE);
+
+    /* Wait for SIGUSR1 with zero timeout (immediate check) */
+    uint64_t mask = (1ULL << 9);  /* bit 9 = signal 10 */
+    struct { int64_t tv_sec; long tv_nsec; } ts = { 0, 0 };
+    long ret = sys_rt_sigtimedwait(&mask, NULL, &ts, sizeof(uint64_t));
+    if (ret != 10) {
+        fut_printf("[MISC-TEST] ✗ rt_sigtimedwait returned %ld (expected 10)\n", ret);
+        fut_test_fail(45);
+        return;
+    }
+
+    /* Verify signal was dequeued */
+    uint64_t pending = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
+    if (pending & (1ULL << 9)) {
+        fut_printf("[MISC-TEST] ✗ SIGUSR1 still pending after dequeue\n");
+        fut_test_fail(45);
+        return;
+    }
+
+    /* No matching signal + zero timeout → EAGAIN */
+    ret = sys_rt_sigtimedwait(&mask, NULL, &ts, sizeof(uint64_t));
+    if (ret != -EAGAIN) {
+        fut_printf("[MISC-TEST] ✗ rt_sigtimedwait(none pending) returned %ld\n", ret);
+        fut_test_fail(45);
+        return;
+    }
+
+    /* Invalid sigsetsize → EINVAL */
+    ret = sys_rt_sigtimedwait(&mask, NULL, &ts, 4);
+    if (ret != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ rt_sigtimedwait(bad sigsetsize) returned %ld\n", ret);
+        fut_test_fail(45);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ rt_sigtimedwait: dequeue SIGUSR1, EAGAIN on empty, EINVAL\n");
+    fut_test_pass();
+}
+
 /* ============================================================
  * Test 38: setrlimit hard limit can be raised by root, denied for non-root
  * ============================================================ */
@@ -2341,6 +2433,8 @@ void fut_misc_test_thread(void *arg) {
     test_o_directory();         /* Test 41: O_DIRECTORY enforcement */
     test_reboot_validation();   /* Test 42: reboot validation */
     test_memfd_create();        /* Test 43: memfd_create */
+    test_mprotect_basic();      /* Test 44: mprotect validation */
+    test_sigtimedwait();        /* Test 45: rt_sigtimedwait */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

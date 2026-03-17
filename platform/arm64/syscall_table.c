@@ -1800,6 +1800,17 @@ static int64_t sys_reboot_wrapper(uint64_t magic1, uint64_t magic2, uint64_t cmd
                       (unsigned int)cmd, (void *)arg);
 }
 
+/* sys_rt_sigtimedwait_wrapper */
+extern long sys_rt_sigtimedwait(const uint64_t *uthese, void *uinfo,
+                                const void *uts, size_t sigsetsize);
+static int64_t sys_rt_sigtimedwait_wrapper(uint64_t uthese, uint64_t uinfo,
+                                            uint64_t uts, uint64_t sigsetsize,
+                                            uint64_t arg4, uint64_t arg5) {
+    (void)arg4; (void)arg5;
+    return sys_rt_sigtimedwait((const uint64_t *)uthese, (void *)uinfo,
+                               (const void *)uts, (size_t)sigsetsize);
+}
+
 /* sys_memfd_create_wrapper */
 extern long sys_memfd_create(const char *uname, unsigned int flags);
 static int64_t sys_memfd_create_wrapper(uint64_t uname, uint64_t flags, uint64_t arg2,
@@ -2587,9 +2598,10 @@ struct syscall_entry {
 #define __NR_getcwd         17
 #define __NR_dup            23
 #define __NR_dup3           24
-#define __NR_reboot         142
-#define __NR_memfd_create   279
-#define __NR_sethostname    161
+#define __NR_reboot             142
+#define __NR_memfd_create       279
+#define __NR_rt_sigtimedwait    137
+#define __NR_sethostname        161
 #define __NR_gettid         178
 #define __NR_setdomainname  162
 #define __NR_accept4        242
@@ -3073,6 +3085,8 @@ static void arm64_syscall_table_init(void) {
     syscall_table[__NR_reboot].name = "reboot";
     syscall_table[__NR_memfd_create].handler = (syscall_fn_t)sys_memfd_create_wrapper;
     syscall_table[__NR_memfd_create].name = "memfd_create";
+    syscall_table[__NR_rt_sigtimedwait].handler = (syscall_fn_t)sys_rt_sigtimedwait_wrapper;
+    syscall_table[__NR_rt_sigtimedwait].name = "rt_sigtimedwait";
     syscall_table[__NR_sethostname].handler = (syscall_fn_t)sys_sethostname_wrapper;
     syscall_table[__NR_sethostname].name = "sethostname";
     syscall_table[__NR_setdomainname].handler = (syscall_fn_t)sys_setdomainname_wrapper;

@@ -161,9 +161,10 @@
 #define SYS_getdents64   217
 #define SYS_fadvise64    221
 /* Signal syscalls */
-#define SYS_sigpending   127
-#define SYS_sigsuspend   130
-#define SYS_sigaltstack  131
+#define SYS_sigpending       127
+#define SYS_rt_sigtimedwait  128
+#define SYS_sigsuspend       130
+#define SYS_sigaltstack      131
 /* pselect6/ppoll */
 #define SYS_pselect6     270
 #define SYS_ppoll        271
@@ -1594,6 +1595,16 @@ static int64_t sys_syslog_handler(uint64_t type, uint64_t buf, uint64_t len,
     return sys_syslog((int)type, (char *)buf, (int)len);
 }
 
+static int64_t sys_rt_sigtimedwait_handler(uint64_t uthese, uint64_t uinfo,
+                                           uint64_t uts, uint64_t sigsetsize,
+                                           uint64_t arg5, uint64_t arg6) {
+    (void)arg5; (void)arg6;
+    extern long sys_rt_sigtimedwait(const uint64_t *uthese, void *uinfo,
+                                    const void *uts, size_t sigsetsize);
+    return sys_rt_sigtimedwait((const uint64_t *)uthese, (void *)uinfo,
+                               (const void *)uts, (size_t)sigsetsize);
+}
+
 static int64_t sys_memfd_create_handler(uint64_t uname, uint64_t flags, uint64_t arg3,
                                         uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     (void)arg3; (void)arg4; (void)arg5; (void)arg6;
@@ -2969,6 +2980,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_pivot_root]        = sys_pivot_root_handler,
     [SYS_prctl]             = sys_prctl_handler,
     [SYS_syslog]            = sys_syslog_handler,
+    [SYS_rt_sigtimedwait]   = sys_rt_sigtimedwait_handler,
     [SYS_reboot]            = sys_reboot_handler,
     [SYS_memfd_create]      = sys_memfd_create_handler,
     [SYS_sched_setaffinity] = sys_sched_setaffinity_handler,

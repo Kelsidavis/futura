@@ -189,10 +189,16 @@ long sys_dup2(int oldfd, int newfd) {
     }
 
     if (local_newfd >= (int)task->max_fds) {
-        DUP2_LOG("[DUP2] dup2(oldfd=%d, newfd=%d, max_fds=%u) -> EINVAL "
+        DUP2_LOG("[DUP2] dup2(oldfd=%d, newfd=%d, max_fds=%u) -> EBADF "
                    "(newfd exceeds max_fds, FD bounds validation)\n",
                    local_oldfd, local_newfd, task->max_fds);
-        return -EINVAL;
+        return -EBADF;
+    }
+
+    /* Enforce RLIMIT_NOFILE: newfd must be below the soft limit */
+    uint64_t nofile_limit = task->rlimits[7].rlim_cur;  /* RLIMIT_NOFILE */
+    if (nofile_limit > 0 && (uint64_t)local_newfd >= nofile_limit) {
+        return -EBADF;
     }
 
     /* Phase 2: Categorize FD range */
@@ -366,10 +372,18 @@ long sys_dup3(int oldfd, int newfd, int flags) {
 
     /* Validate newfd upper bound */
     if (local_newfd >= (int)task->max_fds) {
-        fut_printf("[DUP3] dup3(oldfd=%d, newfd=%d, max_fds=%u, flags=0x%x) -> EINVAL "
+        fut_printf("[DUP3] dup3(oldfd=%d, newfd=%d, max_fds=%u, flags=0x%x) -> EBADF "
                    "(newfd exceeds max_fds, FD bounds validation)\n",
                    local_oldfd, local_newfd, task->max_fds, local_flags);
-        return -EINVAL;
+        return -EBADF;
+    }
+
+    /* Enforce RLIMIT_NOFILE */
+    {
+        uint64_t nofile_limit = task->rlimits[7].rlim_cur;
+        if (nofile_limit > 0 && (uint64_t)local_newfd >= nofile_limit) {
+            return -EBADF;
+        }
     }
 
     /* Get the file structure for oldfd */

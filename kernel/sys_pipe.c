@@ -52,6 +52,7 @@ struct pipe_buffer {
     fut_waitq_t read_waitq;  /* Readers waiting for data */
     fut_waitq_t write_waitq; /* Writers waiting for space */
     fut_spinlock_t lock;     /* Protects pipe state */
+    fut_waitq_t *epoll_notify; /* Wakes epoll_wait on data/HUP */
 };
 
 /* File operations for pipe read/write ends */
@@ -127,6 +128,7 @@ static struct pipe_buffer *pipe_buffer_create(void) {
     pipe->read_closed = false;
     pipe->read_nonblock = false;
     pipe->write_nonblock = false;
+    pipe->epoll_notify = NULL;
 
     /* Initialize wait queues and lock */
     fut_waitq_init(&pipe->read_waitq);
@@ -267,6 +269,9 @@ static ssize_t pipe_write(void *inode, void *priv, const void *buf, size_t len, 
 
     /* Wake up any readers waiting for data */
     fut_waitq_wake_one(&pipe->read_waitq);
+    /* Wake any epoll instance monitoring this pipe */
+    if (pipe->epoll_notify)
+        fut_waitq_wake_one(pipe->epoll_notify);
 
     return (ssize_t)bytes_written;
 }
@@ -317,6 +322,9 @@ static int pipe_release_write(void *inode, void *priv) {
 
     /* Wake any readers - they'll see write_closed and return EOF */
     fut_waitq_wake_all(&pipe->read_waitq);
+    /* Wake epoll (EPOLLHUP on read end) */
+    if (pipe->epoll_notify)
+        fut_waitq_wake_one(pipe->epoll_notify);
 
     if (remaining == 0) {
         pipe_buffer_destroy(pipe);
@@ -732,6 +740,19 @@ bool fut_pipe_poll(struct fut_file *file, uint32_t requested, uint32_t *ready_ou
     if (ready_out)
         *ready_out = ready;
     return true;
+}
+
+/**
+ * Set the epoll notification waitqueue on a pipe.
+ * Called from epoll_ctl ADD to enable pipe→epoll wakeup.
+ */
+void fut_pipe_set_epoll_notify(struct fut_file *file, fut_waitq_t *wq) {
+    if (!file || !file->chr_private)
+        return;
+    if (file->chr_ops != &pipe_read_fops && file->chr_ops != &pipe_write_fops)
+        return;
+    struct pipe_buffer *pipe = (struct pipe_buffer *)file->chr_private;
+    pipe->epoll_notify = wq;
 }
 
 /**

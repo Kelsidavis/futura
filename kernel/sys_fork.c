@@ -869,8 +869,9 @@ long sys_fork(void) {
     }
 
     /* Enforce RLIMIT_NPROC to prevent fork bombs (Attack Scenario 3) */
-    /* Root (UID 0) is exempt from the limit to allow admin recovery */
-    if (parent_task->uid != 0) {
+    /* Root, or CAP_SYS_RESOURCE holders, are exempt from the limit */
+    if (parent_task->uid != 0 &&
+        !(parent_task->cap_effective & (1ULL << 24 /* CAP_SYS_RESOURCE */))) {
         uint64_t rlim_nproc = parent_task->rlimits[RLIMIT_NPROC].rlim_cur;
         int current_count = fut_task_count_by_uid(parent_task->uid);
 

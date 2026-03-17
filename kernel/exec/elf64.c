@@ -374,6 +374,12 @@ static int map_segment(fut_mm_t *mm, int fd, const elf64_phdr_t *phdr) {
     return 0;
 }
 
+/* ELF metadata for auxiliary vector — set by exec code before build_user_stack */
+static uint64_t g_exec_entry = 0;
+static uint64_t g_exec_phdr = 0;
+static uint16_t g_exec_phent = 0;
+static uint16_t g_exec_phnum = 0;
+
 static int build_user_stack(fut_mm_t *mm,
                             const char *const argv_in[],
                             size_t argc_in,
@@ -467,6 +473,10 @@ static int build_user_stack(fut_mm_t *mm,
     {
         struct { uint64_t key; uint64_t val; } auxv[] = {
             { 6 /* AT_PAGESZ */, PAGE_SIZE },
+            { 9 /* AT_ENTRY */,  g_exec_entry },
+            { 3 /* AT_PHDR */,   g_exec_phdr },
+            { 4 /* AT_PHENT */,  g_exec_phent },
+            { 5 /* AT_PHNUM */,  g_exec_phnum },
             { 11 /* AT_UID */,   0 },
             { 12 /* AT_EUID */,  0 },
             { 13 /* AT_GID */,   0 },
@@ -1482,6 +1492,28 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     uint64_t user_rsp = 0;
     uint64_t user_argv = 0;
     uint64_t user_argc = 0;
+    /* Set ELF metadata globals for auxv in build_user_stack */
+    g_exec_entry = ehdr.e_entry;
+    g_exec_phent = ehdr.e_phentsize;
+    g_exec_phnum = ehdr.e_phnum;
+    /* Find PT_PHDR or compute phdr address from first PT_LOAD */
+    g_exec_phdr = 0;
+    for (uint16_t i = 0; i < ehdr.e_phnum; i++) {
+        if (phdrs[i].p_type == 6 /* PT_PHDR */) {
+            g_exec_phdr = phdrs[i].p_vaddr;
+            break;
+        }
+    }
+    if (g_exec_phdr == 0 && ehdr.e_phnum > 0) {
+        /* Fallback: first loadable segment vaddr + phoff */
+        for (uint16_t i = 0; i < ehdr.e_phnum; i++) {
+            if (phdrs[i].p_type == 1 /* PT_LOAD */) {
+                g_exec_phdr = phdrs[i].p_vaddr + ehdr.e_phoff - phdrs[i].p_offset;
+                break;
+            }
+        }
+    }
+
     /* Use the kernel copies of argv/envp that we made at the start */
     execdbg_printf("[EXEC-DEBUG] About to build_user_stack: argc=%zu envc=%zu kargv=%p kenvp=%p\n",
                argc, envc, kargv, kenvp);
@@ -2036,6 +2068,10 @@ static int build_user_stack(fut_mm_t *mm,
 
     struct { uint64_t key; uint64_t val; } auxv_entries[] = {
         { AT_PAGESZ, PAGE_SIZE },
+        { AT_ENTRY,  g_exec_entry },
+        { AT_PHDR,   g_exec_phdr },
+        { AT_PHENT,  g_exec_phent },
+        { AT_PHNUM,  g_exec_phnum },
         { AT_UID,    0 },  /* root */
         { AT_EUID,   0 },
         { AT_GID,    0 },

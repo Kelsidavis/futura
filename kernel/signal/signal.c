@@ -136,9 +136,17 @@ int fut_signal_send(struct fut_task *task, int signum) {
 
     uint64_t signal_bit = (1ULL << (signum - 1));
 
-    /* security: Use atomic OR to queue the signal. pending_signals
-     * can be read/cleared by the target task on another CPU during signal
-     * delivery. Non-atomic |= is a read-modify-write race on SMP. */
+    /* SIG_IGN: don't queue ignored signals (except SIGKILL/SIGSTOP which
+     * cannot be ignored). POSIX: "Setting a signal action to SIG_IGN for
+     * a signal that is pending shall cause the pending signal to be
+     * discarded." We prevent new ones from being queued. */
+    if (signum != 9 /* SIGKILL */ && signum != 19 /* SIGSTOP */ &&
+        task->signal_handlers[signum - 1] == SIG_IGN) {
+        return 0;
+    }
+
+    /* Atomic OR to queue the signal. pending_signals can be read/cleared
+     * by the target task on another CPU during signal delivery. */
     __atomic_or_fetch(&task->pending_signals, signal_bit, __ATOMIC_RELEASE);
 
     /* Handle default signal actions for unblocked, uncaught signals.

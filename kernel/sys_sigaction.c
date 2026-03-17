@@ -144,6 +144,22 @@ long sys_sigaction(int signum, const struct sigaction *act, struct sigaction *ol
         current->signal_handlers[signum - 1] = new_act.sa_handler;
         current->signal_handler_masks[signum - 1] = new_act.sa_mask;
         current->signal_handler_flags[signum - 1] = new_act.sa_flags;
+
+        /* POSIX: setting to SIG_IGN discards any pending instance */
+        if (new_act.sa_handler == SIG_IGN) {
+            __atomic_and_fetch(&current->pending_signals,
+                               ~(1ULL << (signum - 1)), __ATOMIC_RELEASE);
+        }
+
+        /* Setting to SIG_DFL: if signal's default is ignore (SIGCHLD, SIGURG,
+         * SIGWINCH), also discard pending per POSIX */
+        if (new_act.sa_handler == SIG_DFL) {
+            int default_action = fut_signal_get_default_action(signum);
+            if (default_action == 0 /* SIG_ACTION_IGN */) {
+                __atomic_and_fetch(&current->pending_signals,
+                                   ~(1ULL << (signum - 1)), __ATOMIC_RELEASE);
+            }
+        }
     }
 
     return 0;

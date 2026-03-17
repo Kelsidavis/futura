@@ -696,6 +696,17 @@ static int64_t sys_dup2_wrapper(uint64_t oldfd, uint64_t newfd, uint64_t arg2,
     return sys_dup2((int)oldfd, (int)newfd);
 }
 
+/* sys_dup3_wrapper - duplicate fd with flags (O_CLOEXEC)
+ * x0 = oldfd, x1 = newfd, x2 = flags
+ * NOTE: dup3 returns EINVAL when oldfd==newfd (unlike dup2 which is no-op)
+ */
+extern long sys_dup3(int oldfd, int newfd, int flags);
+static int64_t sys_dup3_wrapper(uint64_t oldfd, uint64_t newfd, uint64_t flags,
+                                uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg3; (void)arg4; (void)arg5;
+    return sys_dup3((int)oldfd, (int)newfd, (int)flags);
+}
+
 /* sys_kill_wrapper - send signal to process
  * x0 = pid, x1 = sig
  */
@@ -1799,6 +1810,24 @@ static int64_t sys_setgroups_wrapper(uint64_t size, uint64_t list, uint64_t arg2
     return sys_setgroups((int)size, (const uint32_t *)list);
 }
 
+/* sys_close_range_wrapper */
+extern long sys_close_range(unsigned int first, unsigned int last, unsigned int flags);
+static int64_t sys_close_range_wrapper(uint64_t first, uint64_t last, uint64_t flags,
+                                        uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg3; (void)arg4; (void)arg5;
+    return sys_close_range((unsigned int)first, (unsigned int)last, (unsigned int)flags);
+}
+
+/* sys_renameat2_wrapper */
+extern long sys_renameat2(int olddirfd, const char *oldpath,
+                          int newdirfd, const char *newpath, unsigned int flags);
+static int64_t sys_renameat2_wrapper(uint64_t olddirfd, uint64_t oldpath, uint64_t newdirfd,
+                                      uint64_t newpath, uint64_t flags, uint64_t arg6) {
+    (void)arg6;
+    return sys_renameat2((int)olddirfd, (const char *)oldpath,
+                         (int)newdirfd, (const char *)newpath, (unsigned int)flags);
+}
+
 /* sys_socketpair_wrapper */
 static int64_t sys_socketpair_wrapper(uint64_t domain, uint64_t type, uint64_t protocol,
                                        uint64_t sv, uint64_t arg5, uint64_t arg6) {
@@ -2552,6 +2581,8 @@ struct syscall_entry {
 #define __NR_getcwd         17
 #define __NR_dup            23
 #define __NR_dup3           24
+#define __NR_renameat2      276
+#define __NR_close_range    436
 #define __NR_fcntl          25
 #define __NR_ioctl          29
 /* I/O priority - syscalls 30-31 */
@@ -2737,7 +2768,7 @@ struct syscall_entry {
 #define __NR_fipc_connect   406
 
 /* Maximum syscall number */
-#define MAX_SYSCALL         410
+#define MAX_SYSCALL         440
 
 /* Syscall table - sparse array indexed by syscall number */
 /* Syscall table - initialized at runtime to avoid ARM64 relocation issues */
@@ -2787,8 +2818,8 @@ static void arm64_syscall_table_init(void) {
     syscall_table[__NR_getcwd].name = "getcwd";
     syscall_table[__NR_dup].handler = (syscall_fn_t)sys_dup_wrapper;
     syscall_table[__NR_dup].name = "dup";
-    syscall_table[__NR_dup3].handler = (syscall_fn_t)sys_dup2_wrapper;
-    syscall_table[__NR_dup3].name = "dup3/dup2";
+    syscall_table[__NR_dup3].handler = (syscall_fn_t)sys_dup3_wrapper;
+    syscall_table[__NR_dup3].name = "dup3";
     syscall_table[__NR_fcntl].handler = (syscall_fn_t)sys_fcntl_wrapper;
     syscall_table[__NR_fcntl].name = "fcntl";
     /* File monitoring (inotify) - syscalls 26-28 */
@@ -3011,6 +3042,10 @@ static void arm64_syscall_table_init(void) {
     syscall_table[__NR_readahead].name = "readahead";
     syscall_table[__NR_socketpair].handler = (syscall_fn_t)sys_socketpair_wrapper;
     syscall_table[__NR_socketpair].name = "socketpair";
+    syscall_table[__NR_renameat2].handler = (syscall_fn_t)sys_renameat2_wrapper;
+    syscall_table[__NR_renameat2].name = "renameat2";
+    syscall_table[__NR_close_range].handler = (syscall_fn_t)sys_close_range_wrapper;
+    syscall_table[__NR_close_range].name = "close_range";
     syscall_table[__NR_getgroups].handler = (syscall_fn_t)sys_getgroups_wrapper;
     syscall_table[__NR_getgroups].name = "getgroups";
     syscall_table[__NR_setgroups].handler = (syscall_fn_t)sys_setgroups_wrapper;

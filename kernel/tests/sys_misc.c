@@ -4677,6 +4677,65 @@ static void test_fstat_type_bits(void) {
 }
 
 /* ============================================================
+ * Test 89: sigpending returns blocked pending signals
+ * ============================================================ */
+extern long sys_kill(int pid, int sig);
+extern long sys_sigprocmask(int how, const sigset_t *set, sigset_t *oldset);
+extern long sys_sigpending(sigset_t *set);
+extern long sys_getpid(void);
+
+static void test_sigpending_blocked(void) {
+    fut_printf("[MISC-TEST] Test 89: sigpending returns blocked pending\n");
+
+    /* Block SIGUSR1 (signal 10) */
+    sigset_t block_set = { .__mask = (1ULL << (10 - 1)) };  /* SIGUSR1 */
+    sigset_t old_set = {0};
+    long ret = sys_sigprocmask(0 /* SIG_BLOCK */, &block_set, &old_set);
+    if (ret < 0) {
+        fut_printf("[MISC-TEST] ✗ sigprocmask(SIG_BLOCK) failed: %ld\n", ret);
+        fut_test_fail(89);
+        return;
+    }
+
+    /* Send SIGUSR1 to self — should be queued since blocked */
+    long pid = sys_getpid();
+    ret = sys_kill((int)pid, 10 /* SIGUSR1 */);
+    if (ret < 0) {
+        fut_printf("[MISC-TEST] ✗ kill(self, SIGUSR1) failed: %ld\n", ret);
+        sys_sigprocmask(2 /* SIG_SETMASK */, &old_set, NULL);
+        fut_test_fail(89);
+        return;
+    }
+
+    /* sigpending should show SIGUSR1 is pending */
+    sigset_t pending = {0};
+    ret = sys_sigpending(&pending);
+    if (ret < 0) {
+        fut_printf("[MISC-TEST] ✗ sigpending failed: %ld\n", ret);
+        sys_sigprocmask(2 /* SIG_SETMASK */, &old_set, NULL);
+        fut_test_fail(89);
+        return;
+    }
+
+    /* Clear the pending signal before unblocking to avoid delivery */
+    fut_task_t *task = fut_task_current();
+    __atomic_and_fetch(&task->pending_signals, ~(1ULL << (10 - 1)), __ATOMIC_ACQ_REL);
+
+    /* Restore original signal mask */
+    sys_sigprocmask(2 /* SIG_SETMASK */, &old_set, NULL);
+
+    if (!(pending.__mask & (1ULL << (10 - 1)))) {
+        fut_printf("[MISC-TEST] ✗ sigpending: SIGUSR1 not in pending set (mask=0x%llx)\n",
+                   (unsigned long long)pending.__mask);
+        fut_test_fail(89);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ sigpending: blocked SIGUSR1 correctly reported as pending\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -4774,6 +4833,7 @@ void fut_misc_test_thread(void *arg) {
     test_perfd_cloexec_independence(); /* Test 86: per-FD cloexec after dup */
     test_chmod_fchown();            /* Test 87: chmod/fchmod/fchown */
     test_fstat_type_bits();         /* Test 88: fstat S_IFREG type bits */
+    test_sigpending_blocked();      /* Test 89: sigpending blocked signal */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

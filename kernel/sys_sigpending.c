@@ -15,6 +15,25 @@
 
 #include <kernel/kprintf.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
+static inline int sigpend_access_ok_write(const void *ptr, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)ptr >= KERNEL_VIRTUAL_BASE) return 0;
+#endif
+    return fut_access_ok(ptr, n, 1);
+}
+static inline int sigpend_copy_to_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)dst >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_to_user(dst, src, n);
+}
+
 /**
  * sigpending() - Get set of pending signals
  *
@@ -102,7 +121,7 @@ long sys_sigpending(sigset_t *set) {
      * ATTACK: Attacker provides read-only or unmapped set buffer
      * IMPACT: Kernel page fault when writing pending signal set
      * DEFENSE: Check write permission before processing */
-    if (fut_access_ok(set, sizeof(sigset_t), 1) != 0) {
+    if (sigpend_access_ok_write(set, sizeof(sigset_t)) != 0) {
         fut_printf("[SIGPENDING] sigpending(set=%p) -> EFAULT (buffer not writable for %zu bytes)\n",
                    set, sizeof(sigset_t));
         return -EFAULT;
@@ -115,7 +134,7 @@ long sys_sigpending(sigset_t *set) {
     pending.__mask = cur_pending;
 
     /* Copy result to user space */
-    if (fut_copy_to_user(set, &pending, sizeof(sigset_t)) != 0) {
+    if (sigpend_copy_to_user(set, &pending, sizeof(sigset_t)) != 0) {
         fut_printf("[SIGPENDING] sigpending(set=%p) -> EFAULT (invalid memory)\n", set);
         return -EFAULT;
     }

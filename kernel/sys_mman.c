@@ -321,8 +321,6 @@ long sys_munlock(const void *addr, size_t len) {
     /* Phase 2: Clear VM_LOCKED flag from VMAs */
     /* Phase 2 (Completed): Added overflow and wraparound checks */
 
-    fut_printf("[MUNLOCK] munlock(addr=%p, len=%zu) -> 0 (pages unlocked)\n",
-               local_addr, local_len);
     return 0;
 }
 
@@ -541,10 +539,6 @@ long sys_mlockall(int flags) {
     /* MCL_FUTURE: future mappings will be locked at mmap/brk time (tracked via mm->locked_vm) */
     /* MCL_ONFAULT deferred locking: requires fault handler integration (complex, deferred) */
 
-    fut_printf("[MLOCKALL] mlockall(flags=0x%x) -> 0 "
-               "(Phase 3: %d VMAs, %llu bytes, %zu pages locked, limit=%llu)\n",
-               local_flags, vma_count, (unsigned long long)total_bytes,
-               total_pages, (unsigned long long)memlock_limit);
     return 0;
 }
 
@@ -565,18 +559,16 @@ long sys_munlockall(void) {
         return -ESRCH;
     }
 
-    fut_printf("[MUNLOCKALL] munlockall()\n");
-
-    /* Reset cumulative locked-page counter so future mlock() calls start from zero */
+    /* Reset locked-page counter and clear VMA_LOCKED from all VMAs */
     fut_mm_t *mm = fut_task_get_mm(task);
-    if (mm && mm->locked_vm > 0) {
-        fut_printf("[MUNLOCKALL] munlockall(pid=%d) -> cleared locked_vm (%zu pages)\n",
-                   task->pid, mm->locked_vm);
+    if (mm) {
         mm->locked_vm = 0;
+        struct fut_vma *vma = mm->vma_list;
+        while (vma) {
+            vma->flags &= ~VMA_LOCKED;
+            vma = vma->next;
+        }
     }
 
-    /* Phase 3: Walk VMAs and clear VM_LOCKED flag from each */
-
-    fut_printf("[MUNLOCKALL] munlockall(pid=%d) -> 0\n", task->pid);
     return 0;
 }

@@ -5794,6 +5794,124 @@ static void test_posix_timer_overrun(void) {
 }
 
 /* ============================================================
+ * /proc/<pid>/task/ tests (116-118)
+ * ============================================================ */
+
+/* Test 116: /proc/self/task exists and is a directory */
+static void test_procfs_task_dir_exists(void) {
+    fut_printf("[MISC-TEST] Test 116: /proc/self/task exists\n");
+    int fd = fut_vfs_open("/proc/self/task", 00200000 /* O_DIRECTORY */, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open /proc/self/task failed: %d\n", fd);
+        fut_test_fail(116); return;
+    }
+    fut_vfs_close(fd);
+    fut_printf("[MISC-TEST] ✓ /proc/self/task is a directory\n");
+    fut_test_pass();
+}
+
+/* Test 117: /proc/self/task/ readdir has at least one numeric TID entry */
+static void test_procfs_task_readdir(void) {
+    fut_printf("[MISC-TEST] Test 117: /proc/self/task readdir\n");
+    uint64_t cookie = 0;
+    struct fut_vdirent de;
+    int found_tid = 0;
+    int iters = 0;
+    while (iters < 32) {
+        int r = fut_vfs_readdir("/proc/self/task", &cookie, &de);
+        if (r < 0) break;
+        iters++;
+        /* Check if name is numeric (TID directory) */
+        const char *p = de.d_name;
+        if (*p >= '1' && *p <= '9') {
+            int all_digits = 1;
+            for (int i = 1; de.d_name[i]; i++) {
+                if (de.d_name[i] < '0' || de.d_name[i] > '9') { all_digits = 0; break; }
+            }
+            if (all_digits && de.d_type == FUT_VDIR_TYPE_DIR) {
+                found_tid = 1;
+                fut_printf("[MISC-TEST] /proc/self/task has TID dir: %s\n", de.d_name);
+                break;
+            }
+        }
+    }
+    if (!found_tid) {
+        fut_printf("[MISC-TEST] ✗ /proc/self/task: no TID dir found (%d entries)\n", iters);
+        fut_test_fail(117); return;
+    }
+    fut_printf("[MISC-TEST] ✓ /proc/self/task readdir: found TID directory\n");
+    fut_test_pass();
+}
+
+/* Test 118: /proc/self/task/<tid>/status is readable */
+static void test_procfs_task_tid_status(void) {
+    fut_printf("[MISC-TEST] Test 118: /proc/self/task/<tid>/status\n");
+    /* Find a TID from readdir */
+    uint64_t cookie = 0;
+    struct fut_vdirent de;
+    char tid_str[32];
+    int found = 0;
+    int iters = 0;
+    while (iters < 32) {
+        int r = fut_vfs_readdir("/proc/self/task", &cookie, &de);
+        if (r < 0) break;
+        iters++;
+        const char *p = de.d_name;
+        if (*p >= '1' && *p <= '9') {
+            int all_digits = 1;
+            for (int i = 1; de.d_name[i]; i++) {
+                if (de.d_name[i] < '0' || de.d_name[i] > '9') { all_digits = 0; break; }
+            }
+            if (all_digits && de.d_type == FUT_VDIR_TYPE_DIR) {
+                size_t n = 0;
+                while (de.d_name[n]) n++;
+                __builtin_memcpy(tid_str, de.d_name, n + 1);
+                found = 1; break;
+            }
+        }
+    }
+    if (!found) {
+        fut_printf("[MISC-TEST] ✗ task/status: no TID found in task dir\n");
+        fut_test_fail(118); return;
+    }
+    /* Build path /proc/self/task/<tid>/status */
+    char path[64];
+    size_t off = 0;
+    const char *prefix = "/proc/self/task/";
+    while (prefix[off]) { path[off] = prefix[off]; off++; }
+    for (int i = 0; tid_str[i]; i++) path[off++] = tid_str[i];
+    const char *suffix = "/status";
+    for (int i = 0; suffix[i]; i++) path[off++] = suffix[i];
+    path[off] = '\0';
+    int fd = fut_vfs_open(path, 0, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open %s failed: %d\n", path, fd);
+        fut_test_fail(118); return;
+    }
+    char buf[256];
+    __builtin_memset(buf, 0, sizeof(buf));
+    ssize_t n = fut_vfs_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    if (n <= 0) {
+        fut_printf("[MISC-TEST] ✗ read %s returned %ld\n", path, (long)n);
+        fut_test_fail(118); return;
+    }
+    /* Should contain "Pid:" or "Name:" */
+    int found_pid_line = 0;
+    for (ssize_t i = 0; i < n - 3; i++) {
+        if (buf[i] == 'P' && buf[i+1] == 'i' && buf[i+2] == 'd' && buf[i+3] == ':') {
+            found_pid_line = 1; break;
+        }
+    }
+    if (!found_pid_line) {
+        fut_printf("[MISC-TEST] ✗ %s: no 'Pid:' line found\n", path);
+        fut_test_fail(118); return;
+    }
+    fut_printf("[MISC-TEST] ✓ /proc/self/task/%s/status has 'Pid:' line\n", tid_str);
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -5918,6 +6036,9 @@ void fut_misc_test_thread(void *arg) {
     test_posix_timer_slot_exhaustion();    /* Test 113: timer slot exhaustion */
     test_posix_timer_invalid_clockid();    /* Test 114: invalid clockid EINVAL */
     test_posix_timer_overrun();            /* Test 115: timer_getoverrun */
+    test_procfs_task_dir_exists();         /* Test 116: /proc/self/task is a dir */
+    test_procfs_task_readdir();            /* Test 117: /proc/self/task readdir */
+    test_procfs_task_tid_status();         /* Test 118: /proc/self/task/<tid>/status */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

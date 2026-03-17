@@ -75,6 +75,8 @@ enum procfs_kind {
     PROC_SYS_PID_MAX,      /* /proc/sys/kernel/pid_max */
     PROC_SYS_OVERCOMMIT,   /* /proc/sys/vm/overcommit_memory */
     PROC_SYS_FILE_MAX,     /* /proc/sys/fs/file-max */
+    PROC_TASK_DIR,         /* /proc/<pid>/task/ */
+    PROC_TID_DIR,          /* /proc/<pid>/task/<tid>/ */
 };
 
 typedef struct {
@@ -118,8 +120,11 @@ typedef struct {
 #define PROC_INO_PID_STAT(p)   (1000ULL + (uint64_t)(p) * 100 + 7)
 #define PROC_INO_PID_STATM(p)  (1000ULL + (uint64_t)(p) * 100 + 8)
 #define PROC_INO_PID_COMM(p)   (1000ULL + (uint64_t)(p) * 100 + 9)
+#define PROC_INO_PID_TASK(p)   (1000ULL + (uint64_t)(p) * 100 + 10)
 /* fd entries: use high range to avoid collision */
 #define PROC_INO_FD_ENTRY(p,n) (100000000ULL + (uint64_t)(p) * 1000 + (uint64_t)(n))
+/* task/<tid> entries: separate high range */
+#define PROC_INO_TID_DIR(p,t)  (200000000ULL + (uint64_t)(p) * 10000 + (uint64_t)(t))
 
 /* ============================================================
  *   Simple Buffer Writer (no libc snprintf needed)
@@ -974,6 +979,59 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0100644, PROC_COMM, pid, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "task")) {
+            *result = procfs_alloc_vnode(mnt, VN_DIR, PROC_INO_PID_TASK(pid),
+                                          0040555, PROC_TASK_DIR, pid, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        return -ENOENT;
+    }
+
+    if (dn->kind == PROC_TASK_DIR) {
+        /* Lookup a TID sub-directory under /proc/<pid>/task/<tid>/ */
+        uint64_t pid = dn->pid;
+        /* Parse TID from name */
+        uint64_t tid = 0;
+        const char *p = name;
+        if (!*p) return -ENOENT;
+        while (*p >= '0' && *p <= '9') { tid = tid * 10 + (*p - '0'); p++; }
+        if (*p != '\0' || tid == 0) return -ENOENT;
+        /* Validate that this TID belongs to this task */
+        fut_task_t *task = fut_task_by_pid(pid);
+        if (!task) return -ENOENT;
+        bool found = false;
+        for (fut_thread_t *t = task->threads; t; t = t->next) {
+            if (t->tid == tid) { found = true; break; }
+        }
+        if (!found) return -ENOENT;
+        *result = procfs_alloc_vnode(mnt, VN_DIR, PROC_INO_TID_DIR(pid, tid),
+                                      0040555, PROC_TID_DIR, pid, (int)tid);
+        return *result ? 0 : -ENOMEM;
+    }
+
+    if (dn->kind == PROC_TID_DIR) {
+        /* /proc/<pid>/task/<tid>/ exposes the same files as /proc/<pid>/ */
+        uint64_t pid = dn->pid;
+        if (STREQ(name, "status"))
+            { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_STATUS(pid), 0100444, PROC_STATUS, pid, 0); return *result ? 0 : -ENOMEM; }
+        if (STREQ(name, "maps"))
+            { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_MAPS(pid),   0100444, PROC_MAPS,   pid, 0); return *result ? 0 : -ENOMEM; }
+        if (STREQ(name, "cmdline"))
+            { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_CMDLINE(pid),0100444, PROC_CMDLINE,pid, 0); return *result ? 0 : -ENOMEM; }
+        if (STREQ(name, "fd"))
+            { *result = procfs_alloc_vnode(mnt, VN_DIR, PROC_INO_PID_FD(pid),     0040500, PROC_FD_DIR, pid, 0); return *result ? 0 : -ENOMEM; }
+        if (STREQ(name, "exe"))
+            { *result = procfs_alloc_vnode(mnt, VN_LNK, PROC_INO_PID_EXE(pid),    0120777, PROC_EXE,    pid, 0); return *result ? 0 : -ENOMEM; }
+        if (STREQ(name, "cwd"))
+            { *result = procfs_alloc_vnode(mnt, VN_LNK, PROC_INO_PID_CWD(pid),    0120777, PROC_CWD,    pid, 0); return *result ? 0 : -ENOMEM; }
+        if (STREQ(name, "stat"))
+            { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_STAT(pid),   0100444, PROC_STAT,   pid, 0); return *result ? 0 : -ENOMEM; }
+        if (STREQ(name, "statm"))
+            { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_STATM(pid),  0100444, PROC_STATM,  pid, 0); return *result ? 0 : -ENOMEM; }
+        if (STREQ(name, "comm"))
+            { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_COMM(pid),   0100644, PROC_COMM,   pid, 0); return *result ? 0 : -ENOMEM; }
+        if (STREQ(name, "task"))
+            { *result = procfs_alloc_vnode(mnt, VN_DIR, PROC_INO_PID_TASK(pid),   0040555, PROC_TASK_DIR,pid,0); return *result ? 0 : -ENOMEM; }
         return -ENOENT;
     }
 
@@ -1140,20 +1198,21 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         return 0;
     }
 
-    if (dn->kind == PROC_PID_DIR) {
+    if (dn->kind == PROC_PID_DIR || dn->kind == PROC_TID_DIR) {
         static const char *entries[] = {
             ".", "..", "status", "maps", "cmdline", "fd", "exe", "cwd",
-            "stat", "statm", "comm"
+            "stat", "statm", "comm", "task"
         };
         static const uint8_t etypes[] = {
             FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
             FUT_VDIR_TYPE_DIR,
             FUT_VDIR_TYPE_SYMLINK, FUT_VDIR_TYPE_SYMLINK,
-            FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG
+            FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+            FUT_VDIR_TYPE_DIR
         };
         uint64_t pid = dn->pid;
-        if (idx < 11) {
+        if (idx < 12) {
             uint64_t ino;
             switch (idx) {
                 case 0:  ino = PROC_INO_PID_DIR(pid);     break;
@@ -1167,6 +1226,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                 case 8:  ino = PROC_INO_PID_STAT(pid);    break;
                 case 9:  ino = PROC_INO_PID_STATM(pid);   break;
                 case 10: ino = PROC_INO_PID_COMM(pid);    break;
+                case 11: ino = PROC_INO_PID_TASK(pid);    break;
                 default: ino = 0; break;
             }
             de->d_ino    = ino;
@@ -1182,6 +1242,48 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             return 0;
         }
         return -ENOENT;
+    }
+
+    if (dn->kind == PROC_TASK_DIR) {
+        /* Enumerate threads: . and .. first, then TID entries */
+        uint64_t pid = dn->pid;
+        if (idx == 0) {
+            de->d_ino = PROC_INO_PID_TASK(pid);
+            de->d_off = 1; de->d_type = FUT_VDIR_TYPE_DIR;
+            de->d_reclen = sizeof(*de);
+            de->d_name[0] = '.'; de->d_name[1] = '\0';
+            *cookie = 1; return 0;
+        }
+        if (idx == 1) {
+            de->d_ino = PROC_INO_PID_DIR(pid);
+            de->d_off = 2; de->d_type = FUT_VDIR_TYPE_DIR;
+            de->d_reclen = sizeof(*de);
+            de->d_name[0] = '.'; de->d_name[1] = '.'; de->d_name[2] = '\0';
+            *cookie = 2; return 0;
+        }
+        /* TID enumeration: cookie >= 2 → find thread at position idx-2 */
+        fut_task_t *task = fut_task_by_pid(pid);
+        if (!task) return -ENOENT;
+        fut_thread_t *t = task->threads;
+        uint64_t pos = 0;
+        uint64_t target = (uint64_t)idx - 2;
+        while (t && pos < target) { t = t->next; pos++; }
+        if (!t) return -ENOENT;
+        /* Build TID string */
+        char tidname[21];
+        uint64_t v = t->tid; int n = 0;
+        if (v == 0) { tidname[n++] = '0'; }
+        else { char tmp[20]; int k = 0; while (v) { tmp[k++] = '0' + (v % 10); v /= 10; } for (int i = k-1; i >= 0; i--) tidname[n++] = tmp[i]; }
+        tidname[n] = '\0';
+        de->d_ino = PROC_INO_TID_DIR(pid, t->tid);
+        de->d_off = idx + 1; de->d_type = FUT_VDIR_TYPE_DIR;
+        de->d_reclen = sizeof(*de);
+        size_t nl = (size_t)n;
+        if (nl > FUT_VFS_NAME_MAX) nl = FUT_VFS_NAME_MAX;
+        __builtin_memcpy(de->d_name, tidname, nl);
+        de->d_name[nl] = '\0';
+        *cookie = idx + 1;
+        return 0;
     }
 
     /* Generic readdir helper for small fixed-entry directories */

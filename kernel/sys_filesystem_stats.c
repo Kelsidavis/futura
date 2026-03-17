@@ -481,15 +481,15 @@ long sys_sysinfo(struct fut_linux_sysinfo *info) {
     const uint64_t fs_page_size = 4096;
     uint64_t total_pages = fut_pmm_total_pages();
     uint64_t free_pages  = fut_pmm_free_pages();
-    uint64_t uptime_ms   = fut_get_ticks();
-    uint32_t nprocs      = fut_task_get_global_count();
+    uint64_t uptime_ticks = fut_get_ticks();
+    uint32_t nprocs       = fut_task_get_global_count();
 
     /* Phase 3: Get load averages from EWMA tracker in fut_stats */
     unsigned long loads[3];
     fut_get_load_avg(loads);
 
     struct fut_linux_sysinfo real_info = {
-        .uptime    = (long)(uptime_ms / 1000),
+        .uptime    = (long)(uptime_ticks / 100),  /* ticks (100 Hz) → seconds */
         .loads     = {loads[0], loads[1], loads[2]},
         .totalram  = total_pages * fs_page_size,
         .freeram   = free_pages  * fs_page_size,
@@ -514,7 +514,7 @@ long sys_sysinfo(struct fut_linux_sysinfo *info) {
                "(uptime=%lus, load=%lu.%02lu/%lu.%02lu/%lu.%02lu, "
                "totalram=%lluMB, freeram=%lluMB, procs=%u, Phase3)\n",
                task->pid,
-               (unsigned long)(uptime_ms / 1000),
+               (unsigned long)(uptime_ticks / 100),
                loads[0] >> 16, ((loads[0] & 0xffff) * 100) >> 16,
                loads[1] >> 16, ((loads[1] & 0xffff) * 100) >> 16,
                loads[2] >> 16, ((loads[2] & 0xffff) * 100) >> 16,

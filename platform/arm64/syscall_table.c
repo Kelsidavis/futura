@@ -1811,6 +1811,24 @@ static int64_t sys_rt_sigtimedwait_wrapper(uint64_t uthese, uint64_t uinfo,
                                (const void *)uts, (size_t)sigsetsize);
 }
 
+/* sys_sigsuspend_wrapper */
+extern long sys_sigsuspend(const void *mask);
+static int64_t sys_sigsuspend_wrapper(uint64_t mask, uint64_t arg1, uint64_t arg2,
+                                       uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+    return sys_sigsuspend((const void *)mask);
+}
+
+/* sys_mremap_wrapper */
+extern long sys_mremap(void *old_address, size_t old_size, size_t new_size,
+                       int flags, void *new_address);
+static int64_t sys_mremap_wrapper(uint64_t old_addr, uint64_t old_size, uint64_t new_size,
+                                   uint64_t flags, uint64_t new_addr, uint64_t arg5) {
+    (void)arg5;
+    return sys_mremap((void *)old_addr, (size_t)old_size, (size_t)new_size,
+                      (int)flags, (void *)new_addr);
+}
+
 /* sys_sendmsg_wrapper */
 extern ssize_t sys_sendmsg(int sockfd, const void *msg, int flags);
 static int64_t sys_sendmsg_wrapper(uint64_t sockfd, uint64_t msg, uint64_t flags,
@@ -2640,6 +2658,8 @@ struct syscall_entry {
 #define __NR_getpeername    205
 #define __NR_sendmsg        211
 #define __NR_recvmsg        212
+#define __NR_sigsuspend     133
+#define __NR_mremap         216
 #define __NR_accept4        242
 #define __NR_syncfs         267
 #define __NR_renameat2      276
@@ -3111,6 +3131,10 @@ static void arm64_syscall_table_init(void) {
     /* faccessat2 (439) = same as faccessat since our wrapper already passes flags */
     syscall_table[__NR_faccessat2].handler = (syscall_fn_t)sys_faccessat_wrapper;
     syscall_table[__NR_faccessat2].name = "faccessat2";
+    syscall_table[__NR_sigsuspend].handler = (syscall_fn_t)sys_sigsuspend_wrapper;
+    syscall_table[__NR_sigsuspend].name = "sigsuspend";
+    syscall_table[__NR_mremap].handler = (syscall_fn_t)sys_mremap_wrapper;
+    syscall_table[__NR_mremap].name = "mremap";
     syscall_table[__NR_sendmsg].handler = (syscall_fn_t)sys_sendmsg_wrapper;
     syscall_table[__NR_sendmsg].name = "sendmsg";
     syscall_table[__NR_recvmsg].handler = (syscall_fn_t)sys_recvmsg_wrapper;

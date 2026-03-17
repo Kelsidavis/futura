@@ -1616,6 +1616,51 @@ static void test_dev_urandom(void) {
 }
 
 /* ============================================================
+ * Test 36: umask is applied during file creation
+ * ============================================================ */
+static void test_umask_enforcement(void) {
+    fut_printf("[MISC-TEST] Test 36: umask enforcement on file creation\n");
+
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        fut_printf("[MISC-TEST] ✗ no task\n");
+        fut_test_fail(36);
+        return;
+    }
+
+    /* Set umask to 0077 (owner-only) */
+    uint32_t saved_umask = task->umask;
+    task->umask = 0077;
+
+    /* Create file with mode 0666 — should become 0600 after umask */
+    int fd = fut_vfs_open("/umask_test.txt", 0x42, 0666);  /* O_RDWR|O_CREAT */
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ create failed: %d\n", fd);
+        task->umask = saved_umask;
+        fut_test_fail(36);
+        return;
+    }
+
+    /* Check the file's actual mode via fstat */
+    struct fut_file *file = fut_vfs_get_file(fd);
+    uint32_t actual_mode = file && file->vnode ? (file->vnode->mode & 0777) : 0xFFFF;
+    fut_vfs_close(fd);
+
+    /* Restore umask */
+    task->umask = saved_umask;
+
+    /* Mode should be 0666 & ~0077 = 0600 */
+    if (actual_mode != 0600) {
+        fut_printf("[MISC-TEST] ✗ file mode=0%o (expected 0600 with umask=0077)\n", actual_mode);
+        fut_test_fail(36);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ umask: 0666 & ~0077 = 0%o (correct)\n", actual_mode);
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test 35: VFS write permission denied for non-owner on 0600 file
  * ============================================================ */
 static void test_access_real_uid(void) {
@@ -1879,7 +1924,8 @@ void fut_misc_test_thread(void *arg) {
     test_vfs_permission();      /* Test 32: file permission checks */
     test_dev_full();            /* Test 33: /dev/full ENOSPC */
     test_rlimit_nofile();       /* Test 34: RLIMIT_NOFILE enforcement */
-    test_access_real_uid();     /* Test 35: access() uses real UID */
+    test_access_real_uid();     /* Test 35: write permission denied */
+    test_umask_enforcement();   /* Test 36: umask applied on file creation */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

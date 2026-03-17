@@ -8,6 +8,7 @@
  */
 
 #include "../../include/kernel/fut_task.h"
+#include "../../include/kernel/fut_thread.h"
 #include "../../include/kernel/fut_personality.h"
 #include "../../include/kernel/fut_sched.h"
 #include "../../include/kernel/fut_mm.h"
@@ -648,7 +649,11 @@ int fut_task_waitpid(int pid, int *status_out, int flags) {
         /* Check for pending unblocked signals → EINTR */
         {
             uint64_t pending = __atomic_load_n(&parent->pending_signals, __ATOMIC_ACQUIRE);
-            if (pending & ~parent->signal_mask) {
+            fut_thread_t *wp_thr = fut_thread_current();
+            uint64_t wp_mask = wp_thr ?
+                __atomic_load_n(&wp_thr->signal_mask, __ATOMIC_ACQUIRE) :
+                __atomic_load_n(&parent->signal_mask, __ATOMIC_ACQUIRE);
+            if (pending & ~wp_mask) {
                 fut_spinlock_release(&task_list_lock);
                 return -EINTR;
             }
@@ -771,7 +776,11 @@ int fut_task_waitpid_ex(int pid, int *status_out, int flags, uint32_t *uid_out) 
         /* Check for pending unblocked signals → EINTR */
         {
             uint64_t pending = __atomic_load_n(&parent->pending_signals, __ATOMIC_ACQUIRE);
-            if (pending & ~parent->signal_mask) {
+            fut_thread_t *wp_thr = fut_thread_current();
+            uint64_t wp_mask = wp_thr ?
+                __atomic_load_n(&wp_thr->signal_mask, __ATOMIC_ACQUIRE) :
+                __atomic_load_n(&parent->signal_mask, __ATOMIC_ACQUIRE);
+            if (pending & ~wp_mask) {
                 fut_spinlock_release(&task_list_lock);
                 return -EINTR;
             }

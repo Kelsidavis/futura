@@ -11,6 +11,7 @@
 #include "../../include/kernel/fut_memory.h"
 #include "../../include/kernel/fut_vfs.h"
 #include "../../include/kernel/fut_task.h"
+#include "../../include/kernel/fut_thread.h"
 #include "../../include/kernel/fut_waitq.h"
 #include "../../include/kernel/fut_sched.h"
 #include "../../include/kernel/fut_timer.h"
@@ -217,10 +218,11 @@ void fut_socket_system_init(void) {
  * Create a new socket object in CREATED state.
  */
 fut_socket_t *fut_socket_create(int family, int type) {
-    if (family != 1) {  /* AF_UNIX */
+    if (family != AF_UNIX) {
         return NULL;
     }
-    if (type != 1) {  /* SOCK_STREAM */
+    /* Support SOCK_STREAM (byte-stream) and SOCK_DGRAM (datagram) for AF_UNIX */
+    if (type != SOCK_STREAM && type != SOCK_DGRAM) {
         return NULL;
     }
 
@@ -811,7 +813,10 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
             fut_task_t *stask = fut_task_current();
             if (stask) {
                 uint64_t pending = __atomic_load_n(&stask->pending_signals, __ATOMIC_ACQUIRE);
-                uint64_t blocked = stask->signal_mask;
+                fut_thread_t *scur_thr = fut_thread_current();
+                uint64_t blocked = scur_thr ?
+                    __atomic_load_n(&scur_thr->signal_mask, __ATOMIC_ACQUIRE) :
+                    __atomic_load_n(&stask->signal_mask, __ATOMIC_ACQUIRE);
                 if (pending & ~blocked) {
                     fut_spinlock_release(&pair->lock);
                     return -EINTR;
@@ -918,7 +923,10 @@ ssize_t fut_socket_recv(fut_socket_t *socket, void *buf, size_t len) {
             fut_task_t *stask = fut_task_current();
             if (stask) {
                 uint64_t pending = __atomic_load_n(&stask->pending_signals, __ATOMIC_ACQUIRE);
-                uint64_t blocked = stask->signal_mask;
+                fut_thread_t *scur_thr = fut_thread_current();
+                uint64_t blocked = scur_thr ?
+                    __atomic_load_n(&scur_thr->signal_mask, __ATOMIC_ACQUIRE) :
+                    __atomic_load_n(&stask->signal_mask, __ATOMIC_ACQUIRE);
                 if (pending & ~blocked) {
                     fut_spinlock_release(&pair->lock);
                     return -EINTR;

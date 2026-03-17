@@ -421,7 +421,10 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
                 fut_task_t *sig_task = fut_task_current();
                 if (sig_task) {
                     uint64_t pending = __atomic_load_n(&sig_task->pending_signals, __ATOMIC_ACQUIRE);
-                    uint64_t blocked = sig_task->signal_mask;
+                    fut_thread_t *scur_thr = fut_thread_current();
+                    uint64_t blocked = scur_thr ?
+                        __atomic_load_n(&scur_thr->signal_mask, __ATOMIC_ACQUIRE) :
+                        __atomic_load_n(&sig_task->signal_mask, __ATOMIC_ACQUIRE);
                     if (pending & ~blocked) {
                         return -EINTR;
                     }

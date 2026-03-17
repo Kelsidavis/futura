@@ -416,6 +416,7 @@
 #include <kernel/fut_memory.h>
 #include <kernel/fut_sched.h>
 #include <kernel/fut_task.h>
+#include <kernel/fut_thread.h>
 #include <kernel/fut_timer.h>
 #include <kernel/fut_vfs.h>
 #include <kernel/fut_waitq.h>
@@ -689,7 +690,10 @@ static ssize_t eventfd_read(void *inode, void *priv, void *u_buf, size_t len, of
             fut_task_t *stask = fut_task_current();
             if (stask) {
                 uint64_t pending = __atomic_load_n(&stask->pending_signals, __ATOMIC_ACQUIRE);
-                uint64_t blocked = stask->signal_mask;
+                fut_thread_t *scur_thr = fut_thread_current();
+                uint64_t blocked = scur_thr ?
+                    __atomic_load_n(&scur_thr->signal_mask, __ATOMIC_ACQUIRE) :
+                    __atomic_load_n(&stask->signal_mask, __ATOMIC_ACQUIRE);
                 if (pending & ~blocked) {
                     fut_spinlock_release(&ctx->lock);
                     return -EINTR;
@@ -827,7 +831,10 @@ static ssize_t eventfd_write(void *inode, void *priv, const void *u_buf, size_t 
             fut_task_t *stask = fut_task_current();
             if (stask) {
                 uint64_t pending = __atomic_load_n(&stask->pending_signals, __ATOMIC_ACQUIRE);
-                uint64_t blocked = stask->signal_mask;
+                fut_thread_t *scur_thr = fut_thread_current();
+                uint64_t blocked = scur_thr ?
+                    __atomic_load_n(&scur_thr->signal_mask, __ATOMIC_ACQUIRE) :
+                    __atomic_load_n(&stask->signal_mask, __ATOMIC_ACQUIRE);
                 if (pending & ~blocked) {
                     fut_spinlock_release(&ctx->lock);
                     return -EINTR;
@@ -1104,7 +1111,10 @@ static ssize_t signalfd_read_op(void *inode, void *priv,
                 fut_task_t *stask = fut_task_current();
                 if (stask) {
                     uint64_t ppend = __atomic_load_n(&stask->pending_signals, __ATOMIC_ACQUIRE);
-                    uint64_t blocked = stask->signal_mask;
+                    fut_thread_t *scur_thr = fut_thread_current();
+                uint64_t blocked = scur_thr ?
+                    __atomic_load_n(&scur_thr->signal_mask, __ATOMIC_ACQUIRE) :
+                    __atomic_load_n(&stask->signal_mask, __ATOMIC_ACQUIRE);
                     if (ppend & ~blocked)
                         return -EINTR;
                 }
@@ -1372,7 +1382,10 @@ static ssize_t timerfd_read_op(void *inode, void *priv, void *u_buf, size_t len,
             fut_task_t *stask = fut_task_current();
             if (stask) {
                 uint64_t pending = __atomic_load_n(&stask->pending_signals, __ATOMIC_ACQUIRE);
-                uint64_t blocked = stask->signal_mask;
+                fut_thread_t *scur_thr = fut_thread_current();
+                uint64_t blocked = scur_thr ?
+                    __atomic_load_n(&scur_thr->signal_mask, __ATOMIC_ACQUIRE) :
+                    __atomic_load_n(&stask->signal_mask, __ATOMIC_ACQUIRE);
                 if (pending & ~blocked) {
                     fut_spinlock_release(&ctx->lock);
                     return -EINTR;

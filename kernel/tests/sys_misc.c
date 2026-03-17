@@ -6152,6 +6152,47 @@ static void test_per_thread_signal_mask(void) {
     fut_test_pass();
 }
 
+/* Test 126: socketpair(AF_UNIX, SOCK_DGRAM) — datagram socket pairs */
+static void test_socketpair_dgram(void) {
+    fut_printf("[MISC-TEST] Test 126: socketpair(AF_UNIX, SOCK_DGRAM)\n");
+
+    int sv[2] = {-1, -1};
+    long ret = sys_socketpair(1 /* AF_UNIX */, 2 /* SOCK_DGRAM */, 0, sv);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ socketpair(SOCK_DGRAM) returned %ld\n", ret);
+        fut_test_fail(126); return;
+    }
+
+    if (sv[0] < 0 || sv[1] < 0) {
+        fut_printf("[MISC-TEST] ✗ invalid fds: sv[0]=%d sv[1]=%d\n", sv[0], sv[1]);
+        sys_close(sv[0]); sys_close(sv[1]);
+        fut_test_fail(126); return;
+    }
+
+    /* Send a datagram from sv[0] to sv[1] using fut_vfs_write/read
+     * (kernel test: buffers are on kernel stack, bypass copy_from_user) */
+    const char msg[] = "dgram";
+    ssize_t nw = fut_vfs_write(sv[0], msg, sizeof(msg));
+    if (nw != (ssize_t)sizeof(msg)) {
+        fut_printf("[MISC-TEST] ✗ write returned %zd\n", nw);
+        sys_close(sv[0]); sys_close(sv[1]);
+        fut_test_fail(126); return;
+    }
+
+    char buf[16] = {0};
+    ssize_t nr = fut_vfs_read(sv[1], buf, sizeof(buf));
+    if (nr != (ssize_t)sizeof(msg) || __builtin_memcmp(buf, msg, sizeof(msg)) != 0) {
+        fut_printf("[MISC-TEST] ✗ read returned %zd, got '%s'\n", nr, buf);
+        sys_close(sv[0]); sys_close(sv[1]);
+        fut_test_fail(126); return;
+    }
+
+    sys_close(sv[0]);
+    sys_close(sv[1]);
+    fut_printf("[MISC-TEST] ✓ socketpair(SOCK_DGRAM): created and transferred datagram\n");
+    fut_test_pass();
+}
+
 /* ============================================================
  * Test entry point
  * ============================================================ */
@@ -6287,6 +6328,7 @@ void fut_misc_test_thread(void *arg) {
     test_clone_thread_validation();        /* Test 123: clone(CLONE_THREAD) EINVAL */
     test_tgkill_per_thread_pending();      /* Test 124: tgkill sets thread_pending_signals */
     test_per_thread_signal_mask();         /* Test 125: sigprocmask updates thread mask not task mask */
+    test_socketpair_dgram();               /* Test 126: socketpair(AF_UNIX, SOCK_DGRAM) */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -85,6 +85,7 @@ extern long sys_timerfd_settime(int ufd, int flags,
 #define POLL_TEST_TIMERFD_READY   10
 #define POLL_TEST_SIGNALFD_READY  11
 #define POLL_TEST_PIPE_EOF        12
+#define POLL_TEST_SELECT_PIPE_EOF 13
 
 /* fd_set helpers (must match sys_select.c) */
 #define FD_SETSIZE 1024
@@ -699,6 +700,48 @@ static void test_poll_pipe_eof(void) {
 }
 
 /* ============================================================
+ * Test 13: select() detects pipe EOF (write end closed → read ready)
+ * ============================================================ */
+static void test_select_pipe_eof(void) {
+    fut_printf("[POLL-TEST] Test 13: select() pipe EOF detection\n");
+
+    int pipefd[2];
+    long ret = sys_pipe(pipefd);
+    if (ret != 0) {
+        fut_printf("[POLL-TEST] ✗ pipe() failed: %ld\n", ret);
+        fut_test_fail(POLL_TEST_SELECT_PIPE_EOF);
+        return;
+    }
+
+    /* Close write end */
+    fut_vfs_close(pipefd[1]);
+
+    /* select should report read end as ready (EOF is readable) */
+    local_fd_set rfds;
+    local_fd_set_zero(&rfds);
+    local_fd_set_bit(pipefd[0], &rfds);
+
+    ret = sys_select(pipefd[0] + 1, &rfds, NULL, NULL, NULL);
+    if (ret <= 0) {
+        fut_printf("[POLL-TEST] ✗ select on EOF pipe returned %ld\n", ret);
+        fut_vfs_close(pipefd[0]);
+        fut_test_fail(POLL_TEST_SELECT_PIPE_EOF);
+        return;
+    }
+
+    if (!local_fd_is_set(pipefd[0], &rfds)) {
+        fut_printf("[POLL-TEST] ✗ select: pipe read end not in readfds after EOF\n");
+        fut_vfs_close(pipefd[0]);
+        fut_test_fail(POLL_TEST_SELECT_PIPE_EOF);
+        return;
+    }
+
+    fut_vfs_close(pipefd[0]);
+    fut_printf("[POLL-TEST] ✓ select detects pipe EOF as readable\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Main test harness
  * ============================================================ */
 void fut_poll_test_thread(void *arg) {
@@ -720,6 +763,7 @@ void fut_poll_test_thread(void *arg) {
     test_poll_timerfd_ready();
     test_poll_signalfd_ready();
     test_poll_pipe_eof();
+    test_select_pipe_eof();
 
     fut_printf("[POLL-TEST] ========================================\n");
     fut_printf("[POLL-TEST] All poll/select tests done\n");

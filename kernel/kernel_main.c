@@ -1204,7 +1204,7 @@ void fut_kernel_main(void) {
         planned_tests += 7u; /* splice: statfs, sysinfo, pipe→file, file→pipe, EINVAL, vmsplice, fallocate */
         planned_tests += 14u; /* clock_sched: getres, sched_param, sched_policy, itimer, rusage, times, getpriority, setpriority, getpriority(-who), setpriority(-who), unshare(0), unshare(invalid), rr_get_interval, clock_gettime */
         planned_tests += 11u; /* vfs: O_TRUNC, O_APPEND, relpath, dir_mtime, readlink, hardlink, mount, renameat2, inotify, umount expire, dotdot */
-        planned_tests += 12u; /* poll: file ready, eventfd not-ready, eventfd ready, POLLNVAL, select file, select pipe, pselect6 pipe, pselect6 sigmask restore, timeout-only sleep, timerfd readiness, signalfd readiness, pipe EOF */
+        planned_tests += 13u; /* poll: file ready, eventfd not-ready, eventfd ready, POLLNVAL, select file, select pipe, pselect6 pipe, pselect6 sigmask restore, timeout-only sleep, timerfd readiness, signalfd readiness, pipe EOF, select pipe EOF */
         planned_tests += 26u; /* misc: getuid, cred_fields, personality(2), uname_null, rlimits, personality_stored, fcntl(3), prctl(4), getrandom, fadvise64, sched_affinity, copy_file_range, membarrier, statx(2), tgkill, getcpu, readahead, groups, socketpair */
         // planned_tests += 1u; /* block */
         // planned_tests += 1u; /* futfs */

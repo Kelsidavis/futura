@@ -598,8 +598,21 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
     switch (request) {
         case TCGETS:
         case TCSETS:
-        case TIOCGWINSZ:
+        case TIOCGWINSZ: {
+            /* Return default terminal window size (24x80).
+             * Programs like vim, tmux, less query this on startup. */
+            if (!argp) {
+                return -EFAULT;
+            }
+            struct { uint16_t ws_row; uint16_t ws_col;
+                     uint16_t ws_xpixel; uint16_t ws_ypixel; } ws = {
+                .ws_row = 24, .ws_col = 80,
+                .ws_xpixel = 0, .ws_ypixel = 0
+            };
+            if (fut_copy_to_user(argp, &ws, sizeof(ws)) != 0)
+                return -EFAULT;
             return 0;
+        }
         case FIONREAD: {
             /* FIONREAD - Return number of bytes available for reading
              * Phase 4: Full implementation for pipes, sockets, and regular files

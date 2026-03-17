@@ -180,8 +180,9 @@ long sys_clock_settime(int clock_id, const fut_timespec_t *tp) {
      * Compute and store realtime offset: the difference between the requested
      * wall-clock time and the current uptime. CLOCK_REALTIME = uptime + offset.
      */
-    uint64_t now_ms = fut_get_ticks();
-    int64_t now_sec = (int64_t)(now_ms / 1000);
+    /* fut_get_ticks() returns ticks at 100 Hz (10ms each) */
+    uint64_t now_ticks = fut_get_ticks();
+    int64_t now_sec = (int64_t)(now_ticks / 100);
     g_realtime_offset_sec = time.tv_sec - now_sec;
 
     return 0;
@@ -683,9 +684,10 @@ long sys_settimeofday(const fut_timeval_t *tv, const void *tz) {
         return -EINVAL;
     }
 
-    /* Store wall clock offset (seconds precision) */
-    uint64_t now_ms = fut_get_ticks();
-    int64_t now_sec = (int64_t)(now_ms / 1000);
+    /* Store wall clock offset (seconds precision).
+     * fut_get_ticks() returns ticks at 100 Hz (10ms each). */
+    uint64_t now_ticks = fut_get_ticks();
+    int64_t now_sec = (int64_t)(now_ticks / 100);
     g_realtime_offset_sec = (int64_t)time.tv_sec - now_sec;
 
     return 0;

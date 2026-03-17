@@ -407,8 +407,9 @@ uint64_t fut_get_time_ns(void) {
     extern uint64_t fut_cycles_to_ns(uint64_t cycles);
     return fut_cycles_to_ns(fut_rdtsc());
 #else
-    /* Fallback to millisecond precision on non-x86_64 platforms */
-    return fut_get_ticks() * 1000000ULL;
+    /* Fallback to tick precision on non-x86_64 platforms.
+     * Each tick = 10ms = 10,000,000 ns at 100 Hz. */
+    return fut_get_ticks() * 10000000ULL;
 #endif
 }
 

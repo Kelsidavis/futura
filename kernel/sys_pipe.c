@@ -707,16 +707,24 @@ bool fut_pipe_poll(struct fut_file *file, uint32_t requested, uint32_t *ready_ou
     fut_spinlock_acquire(&pipe->lock);
 
     if (is_read_end) {
+        /* Data available or write end closed → EPOLLIN (read won't block).
+         * Write end closed → EPOLLHUP.
+         * Linux reports both EPOLLIN|EPOLLHUP when write end is closed. */
         if (pipe->count > 0 && (requested & EPOLLIN))
             ready |= EPOLLIN;
-        if (pipe->write_closed)
+        if (pipe->write_closed) {
             ready |= EPOLLHUP;
+            /* EOF is readable — report EPOLLIN so poll detects it */
+            if (requested & EPOLLIN)
+                ready |= EPOLLIN;
+        }
     } else {
-        /* write end */
-        if (pipe->count < pipe->size && (requested & EPOLLOUT))
+        /* write end: space available → EPOLLOUT.
+         * Read end closed → EPOLLHUP | EPOLLERR (Linux behavior). */
+        if (pipe->count < pipe->size && !pipe->read_closed && (requested & EPOLLOUT))
             ready |= EPOLLOUT;
         if (pipe->read_closed)
-            ready |= EPOLLERR;
+            ready |= EPOLLHUP | EPOLLERR;
     }
 
     fut_spinlock_release(&pipe->lock);

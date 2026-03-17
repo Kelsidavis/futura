@@ -3291,6 +3291,56 @@ static void test_openat_dirfd(void) {
 }
 
 /* ============================================================
+ * Test 78: CLOCK_PROCESS_CPUTIME_ID and CLOCK_THREAD_CPUTIME_ID
+ * ============================================================ */
+#include <shared/fut_timespec.h>
+extern long sys_clock_gettime(int clock_id, fut_timespec_t *tp);
+static void test_cputime_clocks(void) {
+    fut_printf("[MISC-TEST] Test 78: CPU time clocks\n");
+
+    fut_timespec_t ts = {0};
+
+    /* CLOCK_PROCESS_CPUTIME_ID (2) */
+    long ret = sys_clock_gettime(2, &ts);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ PROCESS_CPUTIME: %ld\n", ret);
+        fut_test_fail(78);
+        return;
+    }
+    if (ts.tv_sec < 0 || ts.tv_nsec < 0 || ts.tv_nsec >= 1000000000LL) {
+        fut_printf("[MISC-TEST] ✗ PROCESS_CPUTIME invalid: %lld.%09lld\n",
+                   (long long)ts.tv_sec, (long long)ts.tv_nsec);
+        fut_test_fail(78);
+        return;
+    }
+
+    /* CLOCK_THREAD_CPUTIME_ID (3) */
+    ret = sys_clock_gettime(3, &ts);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ THREAD_CPUTIME: %ld\n", ret);
+        fut_test_fail(78);
+        return;
+    }
+    if (ts.tv_sec < 0 || ts.tv_nsec < 0 || ts.tv_nsec >= 1000000000LL) {
+        fut_printf("[MISC-TEST] ✗ THREAD_CPUTIME invalid: %lld.%09lld\n",
+                   (long long)ts.tv_sec, (long long)ts.tv_nsec);
+        fut_test_fail(78);
+        return;
+    }
+
+    /* CLOCK_BOOTTIME (7) should also work */
+    ret = sys_clock_gettime(7, &ts);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ BOOTTIME: %ld\n", ret);
+        fut_test_fail(78);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ CPU time clocks: PROCESS, THREAD, BOOTTIME all valid\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test 52: write on O_RDONLY fd returns EBADF
  * ============================================================ */
 static void test_rdonly_write_ebadf(void) {
@@ -3585,9 +3635,6 @@ static void test_o_append(void) {
     fut_printf("[MISC-TEST] ✓ O_APPEND: writes appended correctly\n");
     fut_test_pass();
 }
-
-#include <shared/fut_timespec.h>
-extern long sys_clock_gettime(int clock_id, fut_timespec_t *tp);
 
 /* ============================================================
  * Test 59: clock_gettime MONOTONIC returns advancing time
@@ -4170,6 +4217,7 @@ void fut_misc_test_thread(void *arg) {
     test_pipe_short_write();    /* Test 75: pipe short write on partial buffer */
     test_socketpair_pollhup();  /* Test 76: socketpair POLLHUP on peer close */
     test_openat_dirfd();        /* Test 77: openat with real dirfd */
+    test_cputime_clocks();      /* Test 78: CLOCK_PROCESS/THREAD_CPUTIME_ID */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

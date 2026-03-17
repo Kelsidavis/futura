@@ -223,6 +223,14 @@ long sys_exit(int status) {
      *   - Clearing capabilities
      *   - Transitioning to zombie state
      */
+    /* POSIX: sys_exit (nr 60) exits only the calling thread when the task has
+     * multiple threads (CLONE_THREAD).  The task continues until all threads exit
+     * or exit_group() is called.  Secondary threads must NOT close FDs or run
+     * exit hooks — other threads still share those resources. */
+    if (task && task->thread_count > 1) {
+        fut_thread_exit();  /* noreturn */
+    }
+
     int fds_closed = 0;
     int hooks_executed = 0;
 
@@ -245,27 +253,49 @@ long sys_exit(int status) {
             }
         }
 
-        /* Phase 3: Log resource cleanup statistics */
         EXIT_LOG("[EXIT] exit(status=%d, pid=%u) resource cleanup: "
                    "fds_closed=%d, hooks_executed=%d\n",
                    status, task->pid, fds_closed, hooks_executed);
     }
 
-    /* Phase 3: Clear exit hooks array after execution */
     exit_hooks.count = 0;
 
-    /* If this task has multiple threads (CLONE_THREAD), exit only this thread.
-     * The task continues until all threads exit or exit_group() is called.
-     * POSIX: sys_exit (nr 60) exits the calling thread; sys_exit_group (nr 231)
-     * kills all threads and the process. */
-    if (task && task->thread_count > 1) {
-        /* Secondary thread: don't close FDs or free MM — other threads still use them */
-        fut_thread_exit();  /* noreturn — removes thread from scheduler */
-    }
-
-    /* Main/last thread or single-threaded process: full task cleanup */
+    /* Last/only thread: full task cleanup */
     fut_task_exit_current(status);
 
     /* Never reached - exit never returns */
     return 0;
+}
+
+/**
+ * sys_exit_group - Terminate all threads in the task (Linux syscall 231).
+ *
+ * Unlike sys_exit (nr 60) which exits only the calling thread when multi-
+ * threaded, sys_exit_group always terminates the entire task (all threads).
+ * This is what glibc/musl call from exit() and main() return.
+ */
+long sys_exit_group(int status) {
+    fut_task_t *task = fut_task_current();
+
+    EXIT_LOG("[EXIT] exit_group(status=%d, pid=%u) — terminating all threads\n",
+               status, task ? task->pid : 0);
+
+    /* Close FDs and run hooks before killing the task */
+    if (task) {
+        if (task->fd_table) {
+            for (int i = 0; i < task->max_fds; i++) {
+                if (task->fd_table[i] != NULL)
+                    fut_vfs_close(i);
+            }
+        }
+        for (int i = 0; i < exit_hooks.count && i < MAX_EXIT_HOOKS; i++) {
+            if (exit_hooks.hooks[i].cleanup_fn != NULL)
+                exit_hooks.hooks[i].cleanup_fn(exit_hooks.hooks[i].arg);
+        }
+        exit_hooks.count = 0;
+    }
+
+    /* Kill the whole task regardless of thread count */
+    fut_task_exit_current(status);
+    return 0;  /* Never reached */
 }

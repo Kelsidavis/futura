@@ -1612,8 +1612,8 @@ static int64_t sys_readahead_handler(uint64_t fd, uint64_t offset, uint64_t coun
 static int64_t sys_exit_group_handler(uint64_t status, uint64_t arg2, uint64_t arg3,
                                        uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
-    extern long sys_exit(int status);
-    return sys_exit((int)status);
+    extern long sys_exit_group(int status);
+    return sys_exit_group((int)status);
 }
 
 static int64_t sys_getcpu_handler(uint64_t cpup, uint64_t nodep, uint64_t unused,

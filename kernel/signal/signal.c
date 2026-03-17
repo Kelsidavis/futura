@@ -447,11 +447,13 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
     f->x[1] = sp + offsetof(struct rt_sigframe, info);
     f->x[2] = sp + offsetof(struct rt_sigframe, uc);
 
-    /* Block the delivered signal while handler is running.
-     * Also apply sa_mask: additional signals to block during handler. */
-    uint64_t new_mask_bits = signal_bit |
-                             (task->signal_handler_masks[signum - 1] & ~((1ULL << (SIGKILL - 1)) |
-                                                                          (1ULL << (SIGSTOP - 1))));
+    /* Block signals during handler: sa_mask + the delivered signal itself.
+     * SA_NODEFER: don't block the delivered signal (allow recursive delivery). */
+    uint64_t new_mask_bits = task->signal_handler_masks[signum - 1] &
+                             ~((1ULL << (SIGKILL - 1)) | (1ULL << (SIGSTOP - 1)));
+    if (!(handler_flags & 0x40000000 /* SA_NODEFER */)) {
+        new_mask_bits |= signal_bit;
+    }
     __atomic_or_fetch(&task->signal_mask, new_mask_bits, __ATOMIC_ACQ_REL);
 
     /* SA_RESETHAND: reset handler to SIG_DFL after delivery */
@@ -459,9 +461,6 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
         task->signal_handlers[signum - 1] = SIG_DFL;
         task->signal_handler_flags[signum - 1] = 0;
     }
-
-    fut_printf("[SIGNAL] Delivered signal %d to task %llu (handler=%p, sp=%llx)\n",
-               signum, task->pid, handler, sp);
 
     return signum;
 }
@@ -637,11 +636,14 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
     f->rsi = sp + offsetof(struct rt_sigframe, info);
     f->rdx = sp + offsetof(struct rt_sigframe, uc);
 
-    /* Block the delivered signal plus sa_mask while handler is running */
+    /* Block signals during handler: sa_mask + the delivered signal itself.
+     * SA_NODEFER: don't block the delivered signal (allow recursive delivery). */
     int handler_flags_x86 = task->signal_handler_flags[signum - 1];
-    uint64_t new_mask_bits_x86 = signal_bit |
-                                 (task->signal_handler_masks[signum - 1] & ~((1ULL << (SIGKILL - 1)) |
-                                                                               (1ULL << (SIGSTOP - 1))));
+    uint64_t new_mask_bits_x86 = task->signal_handler_masks[signum - 1] &
+                                 ~((1ULL << (SIGKILL - 1)) | (1ULL << (SIGSTOP - 1)));
+    if (!(handler_flags_x86 & 0x40000000 /* SA_NODEFER */)) {
+        new_mask_bits_x86 |= signal_bit;
+    }
     __atomic_or_fetch(&task->signal_mask, new_mask_bits_x86, __ATOMIC_ACQ_REL);
 
     /* SA_RESETHAND: reset handler to SIG_DFL after delivery */
@@ -649,9 +651,6 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
         task->signal_handlers[signum - 1] = SIG_DFL;
         task->signal_handler_flags[signum - 1] = 0;
     }
-
-    fut_printf("[SIGNAL] Delivered signal %d to task %llu (handler=%p, sp=%llx)\n",
-               signum, task->pid, handler, sp);
 
     return signum;
 }

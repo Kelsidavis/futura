@@ -199,6 +199,7 @@ long sys_fstat(int fd, struct fut_stat *statbuf) {
         } else {
             kernel_stat.st_mode = 0140000 | 0600;  /* S_IFSOCK | rw------- */
         }
+        kernel_stat.st_dev = 0;  /* Anonymous device (pipes, sockets) */
         kernel_stat.st_nlink = 1;
         kernel_stat.st_blksize = 4096;
         kernel_stat.st_ino = (uint64_t)(uintptr_t)file;
@@ -235,7 +236,7 @@ long sys_fstat(int fd, struct fut_stat *statbuf) {
     } else {
         /* Fill basic stat info from vnode */
         kernel_stat.st_ino = vnode->ino;
-        kernel_stat.st_mode = vnode->mode;
+        kernel_stat.st_mode = vnode_type_to_stat_mode(vnode->type) | (vnode->mode & 07777);
         kernel_stat.st_nlink = vnode->nlinks;
         kernel_stat.st_size = vnode->size;
         kernel_stat.st_dev = vnode->mount ? vnode->mount->st_dev : 0;

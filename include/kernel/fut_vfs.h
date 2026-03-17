@@ -59,6 +59,20 @@ enum fut_vnode_type {
     VN_SOCK        /* Socket */
 };
 
+/** Convert vnode type enum to S_IF* file type bits for stat st_mode */
+static inline uint32_t vnode_type_to_stat_mode(enum fut_vnode_type type) {
+    switch (type) {
+        case VN_REG:  return 0100000;  /* S_IFREG */
+        case VN_DIR:  return 0040000;  /* S_IFDIR */
+        case VN_CHR:  return 0020000;  /* S_IFCHR */
+        case VN_BLK:  return 0060000;  /* S_IFBLK */
+        case VN_FIFO: return 0010000;  /* S_IFIFO */
+        case VN_LNK:  return 0120000;  /* S_IFLNK */
+        case VN_SOCK: return 0140000;  /* S_IFSOCK */
+        default:      return 0;
+    }
+}
+
 /* ============================================================
  *   VNode (Virtual Node) - Represents a file/directory
  * ============================================================ */

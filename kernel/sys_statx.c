@@ -144,18 +144,8 @@ struct fut_statx {
 #endif
 
 /* Helper: convert vnode type to S_IF* mode bits */
-static uint16_t vnode_type_to_mode(enum fut_vnode_type type) {
-    switch (type) {
-        case VN_REG:  return 0100000;  /* S_IFREG */
-        case VN_DIR:  return 0040000;  /* S_IFDIR */
-        case VN_CHR:  return 0020000;  /* S_IFCHR */
-        case VN_BLK:  return 0060000;  /* S_IFBLK */
-        case VN_FIFO: return 0010000;  /* S_IFIFO */
-        case VN_LNK:  return 0120000;  /* S_IFLNK */
-        case VN_SOCK: return 0140000;  /* S_IFSOCK */
-        default:      return 0;
-    }
-}
+/* Use vnode_type_to_stat_mode() from fut_vfs.h */
+#define vnode_type_to_mode(t) ((uint16_t)vnode_type_to_stat_mode(t))
 
 /* Fill statx from a vnode */
 static void fill_statx_from_vnode(struct fut_vnode *vnode, struct fut_statx *sx,

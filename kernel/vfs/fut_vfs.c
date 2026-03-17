@@ -2296,7 +2296,7 @@ int fut_vfs_stat(const char *path, struct fut_stat *stat) {
     } else {
         /* Fill basic stat info from vnode */
         stat->st_ino = vnode->ino;
-        stat->st_mode = vnode->mode;
+        stat->st_mode = vnode_type_to_stat_mode(vnode->type) | (vnode->mode & 07777);
         stat->st_nlink = vnode->nlinks;
         stat->st_size = vnode->size;
         stat->st_dev = vnode->mount ? vnode->mount->st_dev : 0;
@@ -2369,7 +2369,7 @@ int fut_vfs_lstat(const char *path, struct fut_stat *stat) {
     } else {
         /* Fill basic stat info from vnode */
         stat->st_ino = vnode->ino;
-        stat->st_mode = vnode->mode;
+        stat->st_mode = vnode_type_to_stat_mode(vnode->type) | (vnode->mode & 07777);
         stat->st_nlink = vnode->nlinks;
         stat->st_size = vnode->size;
         stat->st_dev = vnode->mount ? vnode->mount->st_dev : 0;

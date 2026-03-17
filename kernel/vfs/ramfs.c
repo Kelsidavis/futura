@@ -1155,21 +1155,9 @@ static int ramfs_getattr(struct fut_vnode *vnode, struct fut_stat *stat) {
     stat->st_dev = 1;               /* Device ID for ramfs */
     stat->st_ino = vnode->ino;      /* Inode number */
 
-    /* Combine file type bits from vnode->type with permission bits from vnode->mode.
-     * vnode->mode stores only permission/special bits (07777).
-     * S_IF* type bits must be derived from the vnode type enum. */
-    uint32_t type_bits = 0;
-    switch (vnode->type) {
-        case VN_REG:  type_bits = 0100000; break;  /* S_IFREG */
-        case VN_DIR:  type_bits = 0040000; break;  /* S_IFDIR */
-        case VN_LNK:  type_bits = 0120000; break;  /* S_IFLNK */
-        case VN_FIFO: type_bits = 0010000; break;  /* S_IFIFO */
-        case VN_SOCK: type_bits = 0140000; break;  /* S_IFSOCK */
-        case VN_CHR:  type_bits = 0020000; break;  /* S_IFCHR */
-        case VN_BLK:  type_bits = 0060000; break;  /* S_IFBLK */
-        default: break;
-    }
-    stat->st_mode = type_bits | (vnode->mode & 07777);
+    /* Combine S_IF* file type bits from vnode->type with permission bits.
+     * vnode->mode stores only permission/special bits (07777). */
+    stat->st_mode = vnode_type_to_stat_mode(vnode->type) | (vnode->mode & 07777);
 
     stat->st_nlink = vnode->nlinks; /* Number of hard links */
     stat->st_uid = vnode->uid;      /* User ID */

@@ -413,7 +413,17 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
         sframe.uc.uc_mcontext.gregs.x[i] = f->x[i];
     }
     sframe.uc.uc_mcontext.gregs.sp = f->sp;
-    sframe.uc.uc_mcontext.gregs.pc = f->pc;
+    /* SA_RESTART: if syscall was interrupted (x0 == -EINTR) and handler
+     * has SA_RESTART, rewind PC to 'svc' instruction (4 bytes back) so
+     * the syscall is transparently restarted after the handler returns. */
+    {
+        int64_t ret_val = (int64_t)f->x[0];
+        if ((handler_flags & SA_RESTART) && ret_val == -EINTR) {
+            sframe.uc.uc_mcontext.gregs.pc = f->pc - 4;
+        } else {
+            sframe.uc.uc_mcontext.gregs.pc = f->pc;
+        }
+    }
     sframe.uc.uc_mcontext.gregs.pstate = f->pstate;
     sframe.uc.uc_mcontext.gregs.fault_address = f->far;
 

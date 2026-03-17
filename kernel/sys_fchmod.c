@@ -165,6 +165,13 @@ long sys_fchmod(int fd, uint32_t mode) {
         return -ESRCH;
     }
 
+    /* Permission check: only owner, root, or CAP_FOWNER can fchmod */
+    if (task->ruid != 0 &&
+        !(task->cap_effective & (1ULL << 3 /* CAP_FOWNER */)) &&
+        task->ruid != vnode->uid) {
+        return -EPERM;
+    }
+
     /* Phase 3: Capability check for special bits (CAP_SETFCAP equivalent) */
     const char *capability_status = "none required";
     if (local_mode & (04000 | 02000 | 01000)) {

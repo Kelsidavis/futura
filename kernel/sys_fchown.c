@@ -91,8 +91,10 @@ long sys_fchown(int fd, uint32_t uid, uint32_t gid) {
     /* Capability checks for ownership transfer */
     const char *capability_status = "none required";
     if (local_uid != (uint32_t)-1 && local_uid != vnode->uid) {
-        /* Changing owner requires CAP_CHOWN or owner matches */
-        if (task->uid != 0 && task->uid != vnode->uid) {
+        /* Changing owner requires root, CAP_CHOWN, or being the current owner */
+        if (task->uid != 0 &&
+            !(task->cap_effective & (1ULL << 0 /* CAP_CHOWN */)) &&
+            task->uid != vnode->uid) {
             fut_printf("[FCHOWN] fchown(fd=%d [%s], vnode_ino=%lu, uid=%u [%s], gid=%u [%s]) "
                        "-> EPERM (user %u cannot change owner from %u to %u without CAP_CHOWN)\n",
                        local_fd, fd_category, vnode->ino, local_uid, uid_desc, local_gid, gid_desc,

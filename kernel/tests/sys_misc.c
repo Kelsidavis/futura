@@ -1793,6 +1793,62 @@ static void test_o_directory(void) {
     fut_test_pass();
 }
 
+extern long sys_reboot(unsigned int magic1, unsigned int magic2,
+                       unsigned int cmd, void *arg);
+
+/* ============================================================
+ * Test 42: reboot() validates magic numbers and capabilities
+ * ============================================================ */
+static void test_reboot_validation(void) {
+    fut_printf("[MISC-TEST] Test 42: reboot validation\n");
+
+    /* Bad magic1 → EINVAL */
+    long ret = sys_reboot(0, 0, 0, NULL);
+    if (ret != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ reboot(bad magic1) returned %ld\n", ret);
+        fut_test_fail(42);
+        return;
+    }
+
+    /* Good magic1, bad magic2 → EINVAL */
+    ret = sys_reboot(0xfee1dead, 0, 0, NULL);
+    if (ret != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ reboot(bad magic2) returned %ld\n", ret);
+        fut_test_fail(42);
+        return;
+    }
+
+    /* Good magic, invalid cmd → EINVAL */
+    ret = sys_reboot(0xfee1dead, 672274793, 0xDEAD, NULL);
+    if (ret != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ reboot(bad cmd) returned %ld\n", ret);
+        fut_test_fail(42);
+        return;
+    }
+
+    /* Non-root without CAP_SYS_BOOT → EPERM */
+    fut_task_t *task = fut_task_current();
+    uint32_t saved_uid = task->uid;
+    uint64_t saved_caps = task->cap_effective;
+    task->uid = 1000;
+    task->cap_effective = 0;
+
+    ret = sys_reboot(0xfee1dead, 672274793, 0x4321FEDC, NULL);  /* POWER_OFF */
+    task->uid = saved_uid;
+    task->cap_effective = saved_caps;
+
+    if (ret != -EPERM) {
+        fut_printf("[MISC-TEST] ✗ reboot(non-root) returned %ld (expected EPERM)\n", ret);
+        fut_test_fail(42);
+        return;
+    }
+
+    /* NOTE: We don't test valid reboot commands as root since they'd shut down the system */
+
+    fut_printf("[MISC-TEST] ✓ reboot: EINVAL for bad magic/cmd, EPERM for non-root\n");
+    fut_test_pass();
+}
+
 /* ============================================================
  * Test 38: setrlimit hard limit can be raised by root, denied for non-root
  * ============================================================ */
@@ -2212,6 +2268,7 @@ void fut_misc_test_thread(void *arg) {
     test_dev_null_poll();       /* Test 39: /dev/null always poll-ready */
     test_ioctl_fd_ops();        /* Test 40: ioctl FIONBIO/FIOCLEX/FIONCLEX */
     test_o_directory();         /* Test 41: O_DIRECTORY enforcement */
+    test_reboot_validation();   /* Test 42: reboot validation */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -153,6 +153,7 @@
 #define SYS_setrlimit    160
 #define SYS_time         201
 #define SYS_syslog       103
+#define SYS_reboot       169
 #define SYS_futex        202
 #define SYS_sched_setaffinity 203
 #define SYS_sched_getaffinity 204
@@ -1592,6 +1593,15 @@ static int64_t sys_syslog_handler(uint64_t type, uint64_t buf, uint64_t len,
     return sys_syslog((int)type, (char *)buf, (int)len);
 }
 
+static int64_t sys_reboot_handler(uint64_t magic1, uint64_t magic2, uint64_t cmd,
+                                   uint64_t arg, uint64_t arg5, uint64_t arg6) {
+    (void)arg5; (void)arg6;
+    extern long sys_reboot(unsigned int magic1, unsigned int magic2,
+                           unsigned int cmd, void *arg);
+    return sys_reboot((unsigned int)magic1, (unsigned int)magic2,
+                      (unsigned int)cmd, (void *)arg);
+}
+
 static int64_t sys_fadvise64_handler(uint64_t fd, uint64_t offset, uint64_t len,
                                       uint64_t advice, uint64_t arg5, uint64_t arg6) {
     (void)arg5; (void)arg6;
@@ -2951,6 +2961,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_pivot_root]        = sys_pivot_root_handler,
     [SYS_prctl]             = sys_prctl_handler,
     [SYS_syslog]            = sys_syslog_handler,
+    [SYS_reboot]            = sys_reboot_handler,
     [SYS_sched_setaffinity] = sys_sched_setaffinity_handler,
     [SYS_sched_getaffinity] = sys_sched_getaffinity_handler,
     [SYS_fadvise64]         = sys_fadvise64_handler,

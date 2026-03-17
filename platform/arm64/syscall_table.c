@@ -1790,6 +1790,16 @@ static int64_t sys_setdomainname_wrapper(uint64_t name, uint64_t len, uint64_t a
     return sys_setdomainname((const char *)name, (int)len);
 }
 
+/* sys_reboot_wrapper */
+extern long sys_reboot(unsigned int magic1, unsigned int magic2,
+                       unsigned int cmd, void *arg);
+static int64_t sys_reboot_wrapper(uint64_t magic1, uint64_t magic2, uint64_t cmd,
+                                   uint64_t arg, uint64_t arg4, uint64_t arg5) {
+    (void)arg4; (void)arg5;
+    return sys_reboot((unsigned int)magic1, (unsigned int)magic2,
+                      (unsigned int)cmd, (void *)arg);
+}
+
 /* sys_syncfs_wrapper */
 extern long sys_syncfs(int fd);
 static int64_t sys_syncfs_wrapper(uint64_t fd, uint64_t arg1, uint64_t arg2,
@@ -2569,6 +2579,7 @@ struct syscall_entry {
 #define __NR_getcwd         17
 #define __NR_dup            23
 #define __NR_dup3           24
+#define __NR_reboot         142
 #define __NR_sethostname    161
 #define __NR_gettid         178
 #define __NR_setdomainname  162
@@ -3049,6 +3060,8 @@ static void arm64_syscall_table_init(void) {
     syscall_table[__NR_syncfs].name = "syncfs";
     syscall_table[__NR_gettid].handler = (syscall_fn_t)sys_gettid_wrapper;
     syscall_table[__NR_gettid].name = "gettid";
+    syscall_table[__NR_reboot].handler = (syscall_fn_t)sys_reboot_wrapper;
+    syscall_table[__NR_reboot].name = "reboot";
     syscall_table[__NR_sethostname].handler = (syscall_fn_t)sys_sethostname_wrapper;
     syscall_table[__NR_sethostname].name = "sethostname";
     syscall_table[__NR_setdomainname].handler = (syscall_fn_t)sys_setdomainname_wrapper;

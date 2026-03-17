@@ -323,15 +323,21 @@ long sys_chdir(const char *pathname) {
                "-> 0 (cwd changed, path truncation detection)\n",
                kpath, path_type, old_dir_ino, vnode->ino);
 
-    /* Phase 3: Cache the directory path in task structure for faster lookup */
+    /* Cache canonical directory path by walking vnode->parent chain.
+     * This normalizes away any '..' or '.' in the original path so getcwd()
+     * returns a clean absolute path. Falls back to raw path on failure. */
     char *cache_path = task->cwd_cache_buf;
     if (cache_path) {
-        size_t path_len = 0;
-        while (kpath[path_len] && path_len < 255) {
-            cache_path[path_len] = kpath[path_len];
-            path_len++;
+        char *built = fut_vnode_build_path(vnode, cache_path, 256);
+        if (!built || cache_path[0] == '\0') {
+            /* Fallback: copy raw path if vnode chain doesn't work */
+            size_t path_len = 0;
+            while (kpath[path_len] && path_len < 255) {
+                cache_path[path_len] = kpath[path_len];
+                path_len++;
+            }
+            cache_path[path_len] = '\0';
         }
-        cache_path[path_len] = '\0';
         task->cwd_cache = cache_path;
     }
 

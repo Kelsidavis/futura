@@ -152,6 +152,14 @@ fut_task_t *fut_task_create(void) {
         .dupfd_reset_time_ms = 0,  /* Will be set on first F_DUPFD call */
         .next = NULL
     };
+    /* Root tasks (uid=0) get all capabilities by default.
+     * On Linux, init starts with full caps; child processes inherit them. */
+    if (task->uid == 0) {
+        task->cap_effective   = 0xFFFFFFFFFFFFFFFFULL;  /* All 64 capability bits */
+        task->cap_permitted   = 0xFFFFFFFFFFFFFFFFULL;
+        task->cap_inheritable = 0xFFFFFFFFFFFFFFFFULL;
+    }
+
     fut_waitq_init(&task->child_waiters);
     fut_spinlock_init(&task->cap_recv_lock);
     fut_waitq_init(&task->cap_recv_waitq);

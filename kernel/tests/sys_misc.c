@@ -4892,6 +4892,47 @@ static void test_write_past_eof_zerofill(void) {
 }
 
 /* ============================================================
+ * Test 92: dup2 to same fd is no-op (preserves cloexec)
+ * ============================================================ */
+extern long sys_dup2(int oldfd, int newfd);
+
+static void test_dup2_same_fd_noop(void) {
+    fut_printf("[MISC-TEST] Test 92: dup2(fd, fd) is no-op\n");
+
+    int fd = (int)fut_vfs_open("/test_dup2_noop.txt", O_CREAT | O_RDWR, 0644);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open failed: %d\n", fd);
+        fut_test_fail(92);
+        return;
+    }
+
+    /* Set cloexec */
+    sys_fcntl(fd, 2 /* F_SETFD */, 1 /* FD_CLOEXEC */);
+
+    /* dup2(fd, fd) should be a no-op — doesn't clear cloexec */
+    long ret = sys_dup2(fd, fd);
+    if (ret != fd) {
+        fut_printf("[MISC-TEST] ✗ dup2(fd,fd) returned %ld (expected %d)\n", ret, fd);
+        fut_vfs_close(fd);
+        fut_test_fail(92);
+        return;
+    }
+
+    /* Verify cloexec is preserved (POSIX: dup2 to same fd is no-op) */
+    long flags = sys_fcntl(fd, 1 /* F_GETFD */, 0);
+    fut_vfs_close(fd);
+
+    if (!(flags & 1)) {
+        fut_printf("[MISC-TEST] ✗ dup2(fd,fd) cleared cloexec: flags=0x%lx\n", flags);
+        fut_test_fail(92);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ dup2(fd,fd): no-op, cloexec preserved\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -4992,6 +5033,7 @@ void fut_misc_test_thread(void *arg) {
     test_sigpending_blocked();      /* Test 89: sigpending blocked signal */
     test_ftruncate_regular();       /* Test 90: ftruncate grow/shrink */
     test_write_past_eof_zerofill(); /* Test 91: write past EOF zero-fills gap */
+    test_dup2_same_fd_noop();       /* Test 92: dup2(fd,fd) preserves cloexec */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

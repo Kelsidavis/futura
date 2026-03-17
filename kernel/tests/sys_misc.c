@@ -1616,6 +1616,64 @@ static void test_dev_urandom(void) {
 }
 
 /* ============================================================
+ * Test 34: RLIMIT_NOFILE enforcement
+ * ============================================================ */
+static void test_rlimit_nofile(void) {
+    fut_printf("[MISC-TEST] Test 34: RLIMIT_NOFILE enforcement\n");
+
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        fut_printf("[MISC-TEST] ✗ no task\n");
+        fut_test_fail(34);
+        return;
+    }
+
+    /* Save original limit */
+    uint64_t saved_cur = task->rlimits[7].rlim_cur;
+
+    /* Set a very low limit (5 fds — 0,1,2 are stdin/stdout/stderr) */
+    task->rlimits[7].rlim_cur = 5;
+
+    /* Open files until we hit the limit */
+    int fds[10];
+    int opened = 0;
+    for (int i = 0; i < 10; i++) {
+        char path[32];
+        path[0] = '/'; path[1] = 'r'; path[2] = 'l'; path[3] = '_';
+        path[4] = '0' + (char)i; path[5] = '.'; path[6] = 't'; path[7] = '\0';
+        fds[i] = fut_vfs_open(path, 0x42, 0644);  /* O_RDWR|O_CREAT */
+        if (fds[i] < 0) break;
+        opened++;
+    }
+
+    /* Should have hit EMFILE before opening all 10 */
+    int last_err = (opened < 10) ? fds[opened] : 0;
+
+    /* Close all opened fds */
+    for (int i = 0; i < opened; i++) {
+        fut_vfs_close(fds[i]);
+    }
+
+    /* Restore original limit */
+    task->rlimits[7].rlim_cur = saved_cur;
+
+    if (opened >= 5) {
+        fut_printf("[MISC-TEST] ✗ opened %d fds (expected <5 with rlimit=5)\n", opened);
+        fut_test_fail(34);
+        return;
+    }
+
+    if (last_err != -EMFILE) {
+        fut_printf("[MISC-TEST] ✗ expected EMFILE, got %d\n", last_err);
+        fut_test_fail(34);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ RLIMIT_NOFILE: opened %d fds, then EMFILE\n", opened);
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test 33: /dev/full returns ENOSPC on write
  * ============================================================ */
 static void test_dev_full(void) {
@@ -1761,6 +1819,7 @@ void fut_misc_test_thread(void *arg) {
     test_cap_enforcement();     /* Test 31: capability enforcement */
     test_vfs_permission();      /* Test 32: file permission checks */
     test_dev_full();            /* Test 33: /dev/full ENOSPC */
+    test_rlimit_nofile();       /* Test 34: RLIMIT_NOFILE enforcement */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

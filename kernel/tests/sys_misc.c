@@ -2465,6 +2465,8 @@ static void test_fcntl_getfl(void) {
 }
 
 extern long sys_pipe2(int pipefd[2], int flags);
+extern long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset);
+extern long sys_munmap(void *addr, size_t len);
 
 /* ============================================================
  * Test 64: pipe2 with O_NONBLOCK returns EAGAIN
@@ -2517,6 +2519,46 @@ static void test_pipe2_nonblock(void) {
     fut_vfs_close(pipefd[1]);
 
     fut_printf("[MISC-TEST] ✓ pipe2 O_NONBLOCK: EAGAIN on empty read and full write\n");
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 65: mmap anonymous memory is usable
+ * ============================================================ */
+#define MAP_PRIVATE_  0x02
+#define MAP_ANONYMOUS_ 0x20
+#define PROT_READ_  0x1
+#define PROT_WRITE_ 0x2
+
+static void test_mmap_anonymous(void) {
+    fut_printf("[MISC-TEST] Test 65: mmap validation\n");
+
+    /* mmap without MAP_SHARED or MAP_PRIVATE → EINVAL */
+    long ret = sys_mmap(NULL, 4096, PROT_READ_ | PROT_WRITE_, MAP_ANONYMOUS_, -1, 0);
+    if (ret != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ mmap(no SHARED/PRIVATE) returned %ld\n", ret);
+        if (ret > 0) sys_munmap((void *)(uintptr_t)ret, 4096);
+        fut_test_fail(65);
+        return;
+    }
+
+    /* mmap with len=0 → EINVAL */
+    ret = sys_mmap(NULL, 0, PROT_READ_, MAP_PRIVATE_ | MAP_ANONYMOUS_, -1, 0);
+    if (ret != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ mmap(len=0) returned %ld\n", ret);
+        fut_test_fail(65);
+        return;
+    }
+
+    /* munmap with unaligned addr → EINVAL */
+    ret = sys_munmap((void *)0x1001, 4096);
+    if (ret != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ munmap(unaligned) returned %ld\n", ret);
+        fut_test_fail(65);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ mmap validation: EINVAL for missing flags, zero len, unaligned munmap\n");
     fut_test_pass();
 }
 
@@ -3387,6 +3429,7 @@ void fut_misc_test_thread(void *arg) {
     test_dup_and_dupfd_cloexec(); /* Test 62: dup + F_DUPFD_CLOEXEC */
     test_fcntl_getfl();         /* Test 63: fcntl F_GETFL */
     test_pipe2_nonblock();      /* Test 64: pipe2 O_NONBLOCK */
+    test_mmap_anonymous();      /* Test 65: mmap anonymous memory */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

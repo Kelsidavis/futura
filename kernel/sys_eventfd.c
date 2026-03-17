@@ -1203,8 +1203,6 @@ long sys_signalfd4(int ufd, const void *mask, size_t sizemask, int flags) {
         fut_spinlock_acquire(&sfile->ctx->lock);
         sfile->ctx->sigmask = sigmask;
         fut_spinlock_release(&sfile->ctx->lock);
-        fut_printf("[SIGNALFD4] signalfd4(ufd=%d, mask=0x%llx) -> mask updated\n",
-                   ufd, (unsigned long long)sigmask);
         return ufd;
     }
 
@@ -1243,8 +1241,6 @@ long sys_signalfd4(int ufd, const void *mask, size_t sizemask, int flags) {
     if (flags & SFD_NONBLOCK) sfile->file->flags    |= O_NONBLOCK;
     if (flags & SFD_CLOEXEC)  sfile->file->fd_flags |= FD_CLOEXEC;
 
-    fut_printf("[SIGNALFD4] signalfd4(mask=0x%llx, flags=0x%x) -> fd=%d\n",
-               (unsigned long long)sigmask, flags, fd);
     return fd;
 }
 

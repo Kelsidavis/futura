@@ -104,6 +104,8 @@ static struct poll_scan_stats poll_scan_fds(struct pollfd *kfds, unsigned long n
         if (epoll_ready & EPOLLIN)  kfds[i].revents |= POLLIN;
         if (epoll_ready & EPOLLOUT) kfds[i].revents |= POLLOUT;
         if (epoll_ready & EPOLLPRI) kfds[i].revents |= POLLPRI;
+        if (epoll_ready & EPOLLHUP) kfds[i].revents |= POLLHUP;
+        if (epoll_ready & EPOLLERR) kfds[i].revents |= POLLERR;
 
         if (kfds[i].revents != 0) {
             stats.ready_count++;

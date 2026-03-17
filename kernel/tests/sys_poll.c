@@ -84,6 +84,7 @@ extern long sys_timerfd_settime(int ufd, int flags,
 #define POLL_TEST_TIMEOUT_ONLY    9
 #define POLL_TEST_TIMERFD_READY   10
 #define POLL_TEST_SIGNALFD_READY  11
+#define POLL_TEST_PIPE_EOF        12
 
 /* fd_set helpers (must match sys_select.c) */
 #define FD_SETSIZE 1024
@@ -641,6 +642,63 @@ static void test_poll_signalfd_ready(void) {
 }
 
 /* ============================================================
+ * Test 12: pipe EOF detection via poll (EPOLLHUP + EPOLLIN)
+ * ============================================================ */
+static void test_poll_pipe_eof(void) {
+    fut_printf("[POLL-TEST] Test 12: pipe EOF detection via poll\n");
+
+    int pipefd[2];
+    long ret = sys_pipe(pipefd);
+    if (ret != 0) {
+        fut_printf("[POLL-TEST] ✗ pipe() failed: %ld\n", ret);
+        fut_test_fail(POLL_TEST_PIPE_EOF);
+        return;
+    }
+
+    /* Close write end — read end should now report HUP + readable (EOF) */
+    fut_vfs_close(pipefd[1]);
+
+    struct pollfd pfd = { .fd = pipefd[0], .events = POLLIN, .revents = 0 };
+    ret = sys_poll(&pfd, 1, 0);
+
+    if (ret <= 0) {
+        fut_printf("[POLL-TEST] ✗ poll on EOF pipe returned %ld (expected 1)\n", ret);
+        fut_vfs_close(pipefd[0]);
+        fut_test_fail(POLL_TEST_PIPE_EOF);
+        return;
+    }
+
+    /* Should have POLLIN (EOF is readable) and POLLHUP */
+    if (!(pfd.revents & POLLIN)) {
+        fut_printf("[POLL-TEST] ✗ EOF pipe missing POLLIN: revents=0x%x\n", pfd.revents);
+        fut_vfs_close(pipefd[0]);
+        fut_test_fail(POLL_TEST_PIPE_EOF);
+        return;
+    }
+
+    if (!(pfd.revents & POLLHUP)) {
+        fut_printf("[POLL-TEST] ✗ EOF pipe missing POLLHUP: revents=0x%x\n", pfd.revents);
+        fut_vfs_close(pipefd[0]);
+        fut_test_fail(POLL_TEST_PIPE_EOF);
+        return;
+    }
+
+    /* Verify read returns 0 (EOF) */
+    char buf[4];
+    ssize_t nr = fut_vfs_read(pipefd[0], buf, sizeof(buf));
+    if (nr != 0) {
+        fut_printf("[POLL-TEST] ✗ read on EOF pipe returned %zd (expected 0)\n", nr);
+        fut_vfs_close(pipefd[0]);
+        fut_test_fail(POLL_TEST_PIPE_EOF);
+        return;
+    }
+
+    fut_vfs_close(pipefd[0]);
+    fut_printf("[POLL-TEST] ✓ pipe EOF: POLLIN|POLLHUP detected, read returns 0\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Main test harness
  * ============================================================ */
 void fut_poll_test_thread(void *arg) {
@@ -661,6 +719,7 @@ void fut_poll_test_thread(void *arg) {
     test_poll_timeout_only();
     test_poll_timerfd_ready();
     test_poll_signalfd_ready();
+    test_poll_pipe_eof();
 
     fut_printf("[POLL-TEST] ========================================\n");
     fut_printf("[POLL-TEST] All poll/select tests done\n");

@@ -3147,6 +3147,46 @@ static void test_epoll_oneshot(void) {
 }
 
 /* ============================================================
+ * Test 75: pipe short write when buffer partially full
+ * ============================================================ */
+static void test_pipe_short_write(void) {
+    fut_printf("[MISC-TEST] Test 75: pipe short write\n");
+
+    int pipefd[2];
+    long ret = sys_pipe(pipefd);
+    if (ret != 0) { fut_test_fail(75); return; }
+
+    /* Fill pipe buffer almost completely (4096 - 10 = 4086 bytes) */
+    char fill[4086];
+    __builtin_memset(fill, 'A', sizeof(fill));
+    ssize_t nw = fut_vfs_write(pipefd[1], fill, sizeof(fill));
+    if (nw != 4086) {
+        fut_printf("[MISC-TEST] ✗ fill write: %zd\n", nw);
+        fut_vfs_close(pipefd[0]); fut_vfs_close(pipefd[1]);
+        fut_test_fail(75); return;
+    }
+
+    /* Write 100 bytes — only 10 should fit (short write) */
+    char extra[100];
+    __builtin_memset(extra, 'B', sizeof(extra));
+    nw = fut_vfs_write(pipefd[1], extra, sizeof(extra));
+
+    /* Drain and close */
+    char drain[4096];
+    fut_vfs_read(pipefd[0], drain, sizeof(drain));
+    fut_vfs_close(pipefd[0]);
+    fut_vfs_close(pipefd[1]);
+
+    if (nw != 10) {
+        fut_printf("[MISC-TEST] ✗ short write: %zd (expected 10)\n", nw);
+        fut_test_fail(75); return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ pipe short write: 100 requested, 10 written (buffer had 10 free)\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test 52: write on O_RDONLY fd returns EBADF
  * ============================================================ */
 static void test_rdonly_write_ebadf(void) {
@@ -4023,6 +4063,7 @@ void fut_misc_test_thread(void *arg) {
     test_pipe_epoll();          /* Test 72: pipe + epoll integration */
     test_epoll_et();            /* Test 73: EPOLLET edge-triggered */
     test_epoll_oneshot();       /* Test 74: EPOLLONESHOT */
+    test_pipe_short_write();    /* Test 75: pipe short write on partial buffer */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

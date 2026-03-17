@@ -155,8 +155,6 @@ int fut_signal_send(struct fut_task *task, int signum) {
         t = t->next;
     }
 
-    fut_printf("[SIGNAL] Queued signal %d for task %llu\n", signum, task->pid);
-
     return 0;
 }
 
@@ -179,9 +177,6 @@ int fut_signal_set_handler(struct fut_task *task, int signum, sighandler_t handl
     }
 
     task->signal_handlers[signum - 1] = handler;
-
-    fut_printf("[SIGNAL] Set handler for signal %d in task %llu to %p\n",
-               signum, task->pid, handler);
 
     return 0;
 }

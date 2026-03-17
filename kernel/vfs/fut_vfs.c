@@ -161,6 +161,9 @@ static void close_fd_in_task(fut_task_t *task, int fd) {
 
     task->fd_table[fd] = NULL;
 
+    /* Clear socket tracking table to prevent stale entries */
+    release_socket_fd(fd);
+
     /* Atomically decrement refcount and clean up on last reference */
     uint32_t remaining = __atomic_sub_fetch(&file->refcount, 1, __ATOMIC_ACQ_REL);
     if (remaining > 0) {

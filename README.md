@@ -16,13 +16,15 @@ Licensed under Mozilla Public License 2.0 — see [LICENSE](LICENSE)
 
 Futura OS is a capability-based nanokernel that keeps the core minimal (time, scheduling, IPC, and hardware mediation) and pushes policy into userland services connected via FIPC (Futura Inter-Process Communication). The repository includes the kernel, userland services, host tooling, and test harnesses used to validate the end-to-end stack.
 
-### Status Snapshot — Updated Jan 22 2026
+### Status Snapshot — Updated Mar 17 2026
 
-- **Kernel core**: Capability-backed object model, scheduler + wait queues, per-task MMU contexts, COW fork, file-backed mmap, and a broad Linux-like syscall surface in `kernel/`.
-- **Storage + VFS**: RamFS + devfs in the kernel; FuturaFS tooling and log-structured experiments in `tools/` and `subsystems/`.
+- **Kernel core**: Capability-backed object model, priority-aware scheduler (nice + RT), per-task MMU contexts, COW fork, file-backed mmap, VMA_LOCKED tracking, and 147 syscall implementation files in `kernel/`.
+- **Linux compat**: 173 automated kernel self-tests across 11 test groups. Broad POSIX coverage: signals (SA_NODEFER, SA_RESETHAND, sigpending, signalfd, sigsuspend, sigtimedwait), epoll (EPOLLET, EPOLLONESHOT, EPOLLRDHUP), pipes (F_SETPIPE_SZ resize, poll POLLHUP, short writes), sockets (MSG_PEEK, SO_PEERCRED, SCM_RIGHTS, SOCK_CLOEXEC), timers (timerfd, POSIX timers, alarm, itimer), file I/O (O_APPEND, O_CLOEXEC per-fd, ftruncate, readv/writev, splice/tee, sendfile), process lifecycle (fork, waitpid, execve with ELF loading, clone).
+- **Storage + VFS**: RamFS (full POSIX: chmod/chown/utimensat, symlinks, hardlinks, xattrs, inotify) + devfs (/dev/null, /dev/zero, /dev/full, /dev/urandom, /dev/console, /dev/tty, /dev/stdin/stdout/stderr); FuturaFS tooling in `tools/`.
 - **Userland**: `init`, `fsd`, `posixd`, `netd`, `svc_registryd`, and `libfutura` under `src/user/`, plus a Unix-like shell with pipes, redirection, and job control.
 - **Graphics**: Legacy window server (`services/winsrv` + `apps/winstub`) and a Wayland compositor (`src/user/compositor/futura-wayland`) with demo clients in `src/user/clients/`.
-- **Platforms**: x86-64 is the reference build; ARM64 port and Apple Silicon bring-up live under `platform/arm64/`.
+- **Platforms**: x86-64 is the reference build; ARM64 port passes all 173 tests. Apple Silicon bring-up under `platform/arm64/`.
+- **CI**: GitHub Actions with x86_64 + ARM64 QEMU test runners, both green.
 
 For deeper status notes see `docs/CURRENT_STATUS.md` and `docs/ARM64_STATUS.md`.
 

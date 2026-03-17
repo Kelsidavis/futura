@@ -2086,6 +2086,26 @@ ssize_t fut_vfs_write(int fd, const void *buf, size_t size) {
         file->offset = file->vnode->size;
     }
 
+    /* Enforce RLIMIT_FSIZE: limit maximum file size (resource index 1).
+     * If the write would extend the file beyond the limit, cap the size
+     * or return EFBIG. On Linux, SIGXFSZ is also sent. */
+    {
+        fut_task_t *wr_task = fut_task_current();
+        if (wr_task) {
+            uint64_t fsize_limit = wr_task->rlimits[1].rlim_cur;
+            if (fsize_limit != (uint64_t)-1 && fsize_limit > 0) {
+                uint64_t write_end = file->offset + size;
+                if (write_end > fsize_limit) {
+                    if (file->offset >= fsize_limit) {
+                        return -27;  /* EFBIG */
+                    }
+                    /* Truncate write to fit within limit */
+                    size = (size_t)(fsize_limit - file->offset);
+                }
+            }
+        }
+    }
+
     VFSDBG("[vfs-write] calling vnode->ops->write\n");
     ssize_t ret = file->vnode->ops->write(file->vnode, buf, size, file->offset);
     VFSDBG("[vfs-write] vnode->ops->write returned %lld\n", (long long)ret);

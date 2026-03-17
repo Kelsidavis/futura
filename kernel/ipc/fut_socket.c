@@ -897,15 +897,16 @@ ssize_t fut_socket_recv(fut_socket_t *socket, void *buf, size_t len) {
 
     fut_spinlock_acquire(&pair->lock);
 
-    /* Check peer under lock to avoid TOCTOU race with close */
-    if (!pair->peer) {
-        fut_spinlock_release(&pair->lock);
-        return 0;  /* EOF - peer closed */
-    }
-
-    /* Block until data is available (or socket is non-blocking) */
+    /* Check for data first, then peer status.
+     * Must return buffered data even after peer close. */
     uint32_t available = (pair->recv_head + pair->recv_size - pair->recv_tail) %
                          pair->recv_size;
+
+    /* EOF: peer closed AND no buffered data */
+    if (!pair->peer && available == 0) {
+        fut_spinlock_release(&pair->lock);
+        return 0;  /* EOF */
+    }
 
     while (available == 0) {
         if (socket->flags & 0x800) {  /* O_NONBLOCK */
@@ -929,14 +930,15 @@ ssize_t fut_socket_recv(fut_socket_t *socket, void *buf, size_t len) {
         /* When we wake up, reacquire the lock */
         fut_spinlock_acquire(&pair->lock);
 
-        /* Check again - peer might have closed while we were sleeping */
-        if (!pair->peer) {
-            fut_spinlock_release(&pair->lock);
-            return 0;  /* EOF - peer closed */
-        }
-
+        /* Recompute available data, then check peer status */
         available = (pair->recv_head + pair->recv_size - pair->recv_tail) %
                     pair->recv_size;
+
+        /* EOF: peer closed AND no buffered data */
+        if (!pair->peer && available == 0) {
+            fut_spinlock_release(&pair->lock);
+            return 0;
+        }
     }
 
     size_t to_read = (len > available) ? available : len;

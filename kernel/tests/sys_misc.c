@@ -3604,6 +3604,44 @@ static void test_socket_write_epipe(void) {
 }
 
 /* ============================================================
+ * Test 84: read from socket after peer close returns 0 (EOF)
+ * ============================================================ */
+static void test_socket_read_eof(void) {
+    fut_printf("[MISC-TEST] Test 84: socket read EOF\n");
+
+    int sv[2] = {-1, -1};
+    long ret = sys_socketpair(1, 1, 0, sv);
+    if (ret != 0) { fut_test_fail(84); return; }
+
+    /* Write some data, then close peer */
+    fut_vfs_write(sv[1], "data", 4);
+    fut_vfs_close(sv[1]);
+
+    /* First read: should get the buffered data */
+    char buf[8] = {0};
+    ssize_t nr = fut_vfs_read(sv[0], buf, sizeof(buf));
+    if (nr != 4 || __builtin_memcmp(buf, "data", 4) != 0) {
+        fut_printf("[MISC-TEST] ✗ first read: %zd\n", nr);
+        fut_vfs_close(sv[0]);
+        fut_test_fail(84);
+        return;
+    }
+
+    /* Second read: peer closed, no more data → EOF (0) */
+    nr = fut_vfs_read(sv[0], buf, sizeof(buf));
+    fut_vfs_close(sv[0]);
+
+    if (nr != 0) {
+        fut_printf("[MISC-TEST] ✗ read after peer close: %zd (expected 0 EOF)\n", nr);
+        fut_test_fail(84);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ socket: read buffered data, then EOF after peer close\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test 52: write on O_RDONLY fd returns EBADF
  * ============================================================ */
 static void test_rdonly_write_ebadf(void) {
@@ -4486,6 +4524,7 @@ void fut_misc_test_thread(void *arg) {
     test_eventfd_semaphore();   /* Test 81: eventfd EFD_SEMAPHORE mode */
     test_isatty_tcgets();       /* Test 82: isatty via TCGETS */
     test_socket_write_epipe();  /* Test 83: write to closed socket → EPIPE */
+    test_socket_read_eof();     /* Test 84: read from closed socket → EOF */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -3458,6 +3458,79 @@ static void test_nanosleep_basic(void) {
 }
 
 /* ============================================================
+ * Test 81: eventfd EFD_SEMAPHORE mode
+ * ============================================================ */
+#define EFD_SEMAPHORE_FLAG 1
+
+static void test_eventfd_semaphore(void) {
+    fut_printf("[MISC-TEST] Test 81: eventfd EFD_SEMAPHORE\n");
+
+    extern long sys_eventfd2(unsigned int initval, int flags);
+
+    /* Create semaphore eventfd with initial count=3 */
+    long efd = sys_eventfd2(3, EFD_SEMAPHORE_FLAG);
+    if (efd < 0) {
+        fut_printf("[MISC-TEST] ✗ eventfd2(3, SEM): %ld\n", efd);
+        fut_test_fail(81);
+        return;
+    }
+
+    /* Semaphore read: should return 1 and decrement counter */
+    uint64_t val = 0;
+    ssize_t nr = fut_vfs_read((int)efd, &val, sizeof(val));
+    if (nr != 8 || val != 1) {
+        fut_printf("[MISC-TEST] ✗ sem read1: nr=%zd val=%llu\n", nr, (unsigned long long)val);
+        fut_vfs_close((int)efd);
+        fut_test_fail(81);
+        return;
+    }
+
+    /* Second read: counter was 2, returns 1, now counter=1 */
+    val = 0;
+    nr = fut_vfs_read((int)efd, &val, sizeof(val));
+    if (nr != 8 || val != 1) {
+        fut_printf("[MISC-TEST] ✗ sem read2: nr=%zd val=%llu\n", nr, (unsigned long long)val);
+        fut_vfs_close((int)efd);
+        fut_test_fail(81);
+        return;
+    }
+
+    /* Third read: counter was 1, returns 1, now counter=0 */
+    val = 0;
+    nr = fut_vfs_read((int)efd, &val, sizeof(val));
+    if (nr != 8 || val != 1) {
+        fut_printf("[MISC-TEST] ✗ sem read3: nr=%zd val=%llu\n", nr, (unsigned long long)val);
+        fut_vfs_close((int)efd);
+        fut_test_fail(81);
+        return;
+    }
+
+    /* Write 5 to increment counter */
+    uint64_t wval = 5;
+    ssize_t nw = fut_vfs_write((int)efd, &wval, sizeof(wval));
+    if (nw != 8) {
+        fut_printf("[MISC-TEST] ✗ sem write: %zd\n", nw);
+        fut_vfs_close((int)efd);
+        fut_test_fail(81);
+        return;
+    }
+
+    /* Read should still return 1 (semaphore mode) */
+    val = 0;
+    nr = fut_vfs_read((int)efd, &val, sizeof(val));
+    fut_vfs_close((int)efd);
+
+    if (nr != 8 || val != 1) {
+        fut_printf("[MISC-TEST] ✗ sem read4: nr=%zd val=%llu (expected 1)\n", nr, (unsigned long long)val);
+        fut_test_fail(81);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ eventfd semaphore: reads return 1, counter decrements\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test 52: write on O_RDONLY fd returns EBADF
  * ============================================================ */
 static void test_rdonly_write_ebadf(void) {
@@ -4337,6 +4410,7 @@ void fut_misc_test_thread(void *arg) {
     test_cputime_clocks();      /* Test 78: CLOCK_PROCESS/THREAD_CPUTIME_ID */
     test_writev_readv();        /* Test 79: writev/readv scatter-gather */
     test_nanosleep_basic();     /* Test 80: nanosleep basic + EINTR */
+    test_eventfd_semaphore();   /* Test 81: eventfd EFD_SEMAPHORE mode */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -1581,11 +1581,25 @@ static int check_file_permission(struct fut_vnode *vnode, fut_task_t *task, bool
         /* Process is the file owner - check owner permissions */
         perm_bits = (mode >> 6) & 7;  /* Owner: bits 6-8 */
     } else if (task_gid == file_gid) {
-        /* Process is in the file's group - check group permissions */
+        /* Process primary GID matches - check group permissions */
         perm_bits = (mode >> 3) & 7;  /* Group: bits 3-5 */
     } else {
-        /* Process is neither owner nor in group - check other permissions */
-        perm_bits = mode & 7;          /* Other: bits 0-2 */
+        /* Check supplementary groups */
+        int in_group = 0;
+        if (task) {
+            for (int i = 0; i < task->ngroups; i++) {
+                if (task->groups[i] == file_gid) {
+                    in_group = 1;
+                    break;
+                }
+            }
+        }
+        if (in_group) {
+            perm_bits = (mode >> 3) & 7;  /* Group: bits 3-5 */
+        } else {
+            /* Process is neither owner nor in any matching group */
+            perm_bits = mode & 7;          /* Other: bits 0-2 */
+        }
     }
 
     /* Check for the required permission bit */

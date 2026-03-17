@@ -744,10 +744,19 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
         return newfd;
     }
 
+    case 1032: /* F_GETPIPE_SZ */
+        /* Return pipe buffer capacity for chr_ops files */
+        if (file->chr_ops && !file->vnode)
+            return 4096;
+        return -EINVAL;
+
     case F_GET_SEALS:
         return (long)file->seals;
 
-    case F_ADD_SEALS: {
+    case F_ADD_SEALS: { /* Also F_SETPIPE_SZ (same value: 1033) */
+        /* For pipe fds, accept requested size but keep at 4096 */
+        if (file->chr_ops && !file->vnode)
+            return 4096;
         uint32_t new_seals = (uint32_t)local_arg;
         uint32_t valid_mask = F_SEAL_SEAL | F_SEAL_SHRINK | F_SEAL_GROW |
                               F_SEAL_WRITE | F_SEAL_FUTURE_WRITE;

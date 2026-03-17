@@ -2423,6 +2423,37 @@ static void test_rename_same_file(void) {
     fut_test_pass();
 }
 
+#define F_GETPIPE_SZ 1032
+
+/* ============================================================
+ * Test 55: F_GETPIPE_SZ returns pipe buffer capacity
+ * ============================================================ */
+static void test_pipe_sz(void) {
+    fut_printf("[MISC-TEST] Test 55: F_GETPIPE_SZ\n");
+
+    int pipefd[2];
+    long ret = sys_pipe(pipefd);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ pipe() returned %ld\n", ret);
+        fut_test_fail(55);
+        return;
+    }
+
+    /* F_GETPIPE_SZ on read end should return buffer capacity */
+    long sz = sys_fcntl(pipefd[0], F_GETPIPE_SZ, 0);
+    fut_vfs_close(pipefd[0]);
+    fut_vfs_close(pipefd[1]);
+
+    if (sz < 4096) {
+        fut_printf("[MISC-TEST] ✗ F_GETPIPE_SZ returned %ld (expected >= 4096)\n", sz);
+        fut_test_fail(55);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ F_GETPIPE_SZ: %ld bytes\n", sz);
+    fut_test_pass();
+}
+
 /* ============================================================
  * Test 38: setrlimit hard limit can be raised by root, denied for non-root
  * ============================================================ */
@@ -2855,6 +2886,7 @@ void fut_misc_test_thread(void *arg) {
     test_rdonly_write_ebadf();   /* Test 52: write on O_RDONLY fd returns EBADF */
     test_pipe_access_mode();    /* Test 53: pipe access mode enforcement */
     test_rename_same_file();    /* Test 54: rename same file no-op */
+    test_pipe_sz();             /* Test 55: F_GETPIPE_SZ */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

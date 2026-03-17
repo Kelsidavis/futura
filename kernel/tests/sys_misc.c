@@ -2286,6 +2286,81 @@ static void test_getdents64_small_buf(void) {
 }
 
 /* ============================================================
+ * Test 61: getdents64 reads actual directory entries
+ * ============================================================ */
+struct test_dirent64 {
+    uint64_t d_ino;
+    uint64_t d_off;
+    uint16_t d_reclen;
+    uint8_t  d_type;
+    char     d_name[];
+} __attribute__((packed));
+
+static void test_getdents64_read(void) {
+    fut_printf("[MISC-TEST] Test 61: getdents64 reads entries\n");
+
+    /* Create a known file in root so we have at least one entry */
+    int tmp = fut_vfs_open("/getdents_marker.txt", 0x42, 0644);
+    if (tmp >= 0) {
+        fut_vfs_write(tmp, "x", 1);
+        fut_vfs_close(tmp);
+    }
+
+    /* Open root directory */
+    int fd = fut_vfs_open("/", 00200000, 0);  /* O_DIRECTORY */
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open / failed: %d\n", fd);
+        fut_test_fail(61);
+        return;
+    }
+
+    /* Read entries */
+    char buf[1024];
+    long nread = sys_getdents64((unsigned int)fd, buf, sizeof(buf));
+    fut_vfs_close(fd);
+
+    if (nread <= 0) {
+        fut_printf("[MISC-TEST] ✗ getdents64 returned %ld (expected > 0)\n", nread);
+        fut_test_fail(61);
+        return;
+    }
+
+    /* Walk entries and count them */
+    int count = 0;
+    long pos = 0;
+    while (pos < nread) {
+        struct test_dirent64 *d = (struct test_dirent64 *)(buf + pos);
+        if (d->d_reclen == 0) break;
+        count++;
+        pos += d->d_reclen;
+    }
+
+    if (count < 1) {
+        fut_printf("[MISC-TEST] ✗ parsed %d entries (expected >= 1)\n", count);
+        fut_test_fail(61);
+        return;
+    }
+
+    /* Drain all entries and verify EOF */
+    fd = fut_vfs_open("/", 00200000, 0);
+    if (fd >= 0) {
+        long r;
+        int loops = 0;
+        while ((r = sys_getdents64((unsigned int)fd, buf, sizeof(buf))) > 0 && loops < 100)
+            loops++;
+        fut_vfs_close(fd);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ getdents64 EOF returned %ld\n", r);
+            fut_test_fail(61);
+            return;
+        }
+    }
+
+    fut_printf("[MISC-TEST] ✓ getdents64: read %d entries, EOF on second call\n", count);
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test 52: write on O_RDONLY fd returns EBADF
  * ============================================================ */
 static void test_rdonly_write_ebadf(void) {
@@ -3148,6 +3223,7 @@ void fut_misc_test_thread(void *arg) {
     test_o_append();            /* Test 58: O_APPEND writes to end */
     test_clock_gettime_monotonic(); /* Test 59: clock_gettime */
     test_socketpair_flags();    /* Test 60: socketpair with NONBLOCK|CLOEXEC */
+    test_getdents64_read();     /* Test 61: getdents64 reads entries */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

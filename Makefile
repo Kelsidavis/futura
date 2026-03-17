@@ -574,6 +574,7 @@ KERNEL_SOURCES := \
     kernel/sys_dup.c \
     kernel/sys_dup2.c \
     kernel/sys_waitpid.c \
+    kernel/sys_rt_sigqueue.c \
     kernel/sys_brk.c \
     kernel/sys_mmap.c \
     kernel/sys_mprotect.c \

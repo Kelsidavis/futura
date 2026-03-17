@@ -70,8 +70,9 @@
 #define SYS_readv       19
 #define SYS_writev      20
 #define SYS_pipe        22
-#define SYS_preadv      295
-#define SYS_pwritev     296
+#define SYS_preadv              295
+#define SYS_pwritev             296
+#define SYS_rt_tgsigqueueinfo   297
 #define SYS_select      23
 #define SYS_sched_yield 24
 #define SYS_mremap      25
@@ -163,8 +164,9 @@
 #define SYS_fadvise64    221
 /* Signal syscalls */
 #define SYS_sigpending       127
-#define SYS_rt_sigtimedwait  128
-#define SYS_sigsuspend       130
+#define SYS_rt_sigtimedwait   128
+#define SYS_rt_sigqueueinfo   129
+#define SYS_sigsuspend        130
 #define SYS_sigaltstack      131
 /* pselect6/ppoll */
 #define SYS_pselect6     270
@@ -1632,6 +1634,21 @@ static int64_t sys_rt_sigtimedwait_handler(uint64_t uthese, uint64_t uinfo,
                                (const void *)uts, (size_t)sigsetsize);
 }
 
+static int64_t sys_rt_sigqueueinfo_handler(uint64_t tgid, uint64_t sig, uint64_t uinfo,
+                                           uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_rt_sigqueueinfo(int tgid, int sig, const void *uinfo);
+    return sys_rt_sigqueueinfo((int)tgid, (int)sig, (const void *)(uintptr_t)uinfo);
+}
+
+static int64_t sys_rt_tgsigqueueinfo_handler(uint64_t tgid, uint64_t tid, uint64_t sig,
+                                              uint64_t uinfo, uint64_t arg5, uint64_t arg6) {
+    (void)arg5; (void)arg6;
+    extern long sys_rt_tgsigqueueinfo(int tgid, int tid, int sig, const void *uinfo);
+    return sys_rt_tgsigqueueinfo((int)tgid, (int)tid, (int)sig,
+                                  (const void *)(uintptr_t)uinfo);
+}
+
 static int64_t sys_memfd_create_handler(uint64_t uname, uint64_t flags, uint64_t arg3,
                                         uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     (void)arg3; (void)arg4; (void)arg5; (void)arg6;
@@ -2982,8 +2999,9 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_tee]          = sys_tee_handler,
     [SYS_vmsplice]     = sys_vmsplice_handler,
     [SYS_inotify_init1] = sys_inotify_init1_handler,
-    [SYS_preadv]       = sys_preadv_handler,
-    [SYS_pwritev]      = sys_pwritev_handler,
+    [SYS_preadv]              = sys_preadv_handler,
+    [SYS_pwritev]             = sys_pwritev_handler,
+    [SYS_rt_tgsigqueueinfo]   = sys_rt_tgsigqueueinfo_handler,
     /* time / itimer / clock */
     [SYS_getitimer]         = sys_getitimer_handler,
     [SYS_setitimer]         = sys_setitimer_handler,
@@ -3008,7 +3026,8 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_pivot_root]        = sys_pivot_root_handler,
     [SYS_prctl]             = sys_prctl_handler,
     [SYS_syslog]            = sys_syslog_handler,
-    [SYS_rt_sigtimedwait]   = sys_rt_sigtimedwait_handler,
+    [SYS_rt_sigtimedwait]      = sys_rt_sigtimedwait_handler,
+    [SYS_rt_sigqueueinfo]      = sys_rt_sigqueueinfo_handler,
     [SYS_reboot]            = sys_reboot_handler,
     [SYS_memfd_create]      = sys_memfd_create_handler,
     [SYS_sched_setaffinity] = sys_sched_setaffinity_handler,
@@ -3167,7 +3186,8 @@ void posix_syscall_init(void) {
 /* syscall_ret: the return value of the interrupted syscall, or LONG_MAX if
  * not called from a syscall context. Used to implement SA_RESTART. */
 static bool posix_deliver_signal(fut_task_t *current, int signum,
-                                 fut_interrupt_frame_t *frame, long syscall_ret) {
+                                 fut_interrupt_frame_t *frame, long syscall_ret,
+                                 fut_thread_t *from_thread_info) {
 
     if (!current || !frame) {
         return false;
@@ -3235,17 +3255,17 @@ static bool posix_deliver_signal(fut_task_t *current, int signum,
     /* Build signal frame in kernel memory */
     struct rt_sigframe sigframe = {};
 
-    /* Fill in signal info with proper UID tracking */
+    /* Use stored per-signal siginfo_t (set by fut_signal_send_with_info for
+     * rt_sigqueueinfo, or defaulted to SI_USER/SI_TKILL by fut_signal_send). */
+    if (from_thread_info) {
+        __builtin_memcpy(&sigframe.info,
+                         &from_thread_info->thread_sig_queue_info[signum - 1],
+                         sizeof(siginfo_t));
+    } else {
+        __builtin_memcpy(&sigframe.info, &current->sig_queue_info[signum - 1],
+                         sizeof(siginfo_t));
+    }
     sigframe.info.si_signum = signum;
-    sigframe.info.si_errno = 0;
-    sigframe.info.si_code = 0;  /* SI_USER */
-    sigframe.info.si_pid = current->pid;
-    sigframe.info.si_uid = current->uid;  /* ✓ Now tracking actual UID */
-    sigframe.info.si_status = 0;
-    sigframe.info.si_addr = NULL;
-    sigframe.info.si_value = 0;
-    sigframe.info.si_overrun = 0;
-    sigframe.info.si_timerid = 0;
 
     /* Fill in machine context (CPU registers at time of interruption) */
 #ifdef __x86_64__
@@ -3429,7 +3449,7 @@ static int check_and_deliver_pending_signals(fut_task_t *current,
                 __atomic_and_fetch(&cur_thread->thread_pending_signals, ~bit, __ATOMIC_ACQ_REL);
                 /* Also clear task-wide bit in case of concurrent kill() */
                 __atomic_and_fetch(&current->pending_signals, ~bit, __ATOMIC_ACQ_REL);
-                if (posix_deliver_signal(current, signum, frame, syscall_ret)) {
+                if (posix_deliver_signal(current, signum, frame, syscall_ret, cur_thread)) {
                     return signum;
                 }
                 break;
@@ -3440,7 +3460,7 @@ static int check_and_deliver_pending_signals(fut_task_t *current,
     /* 2. Task-wide signals (kill/alarm/SIGCHLD/etc.) */
     for (int signum = 1; signum < _NSIG; signum++) {
         if (fut_signal_is_pending(current, signum)) {
-            if (posix_deliver_signal(current, signum, frame, syscall_ret)) {
+            if (posix_deliver_signal(current, signum, frame, syscall_ret, NULL)) {
                 return signum;
             }
         }

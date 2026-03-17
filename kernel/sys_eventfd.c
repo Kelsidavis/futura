@@ -1144,7 +1144,10 @@ static ssize_t signalfd_read_op(void *inode, void *priv,
         __builtin_memset(&info, 0, sizeof(info));
         info.ssi_signo = (uint32_t)signo;
         info.ssi_pid   = (uint32_t)task->pid;
-        info.ssi_uid   = 0;  /* UID not tracked per-task yet */
+        info.ssi_uid   = (uint32_t)task->uid;
+        /* Copy si_code and si_int/si_ptr from per-signal queue info */
+        info.ssi_code  = task->sig_queue_info[signo - 1].si_code;
+        info.ssi_int   = (int32_t)task->sig_queue_info[signo - 1].si_value;
 
         if (fut_copy_to_user(out, &info, sizeof(info)) != 0)
             return total > 0 ? total : -EFAULT;

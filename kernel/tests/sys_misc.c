@@ -6250,6 +6250,134 @@ static void test_sa_nocldwait(void) {
     fut_test_pass();
 }
 
+static void test_rt_sigqueueinfo(void) {
+    fut_printf("[MISC-TEST] Test 130: rt_sigqueueinfo stores SI_QUEUE siginfo in sig_queue_info\n");
+
+    fut_task_t *task = fut_task_current();
+    if (!task) { fut_test_fail(130); return; }
+
+    /* Build a siginfo_t with SI_QUEUE and a test si_value */
+    siginfo_t info;
+    __builtin_memset(&info, 0, sizeof(info));
+    info.si_signum = SIGUSR1;
+    info.si_code   = SI_QUEUE;  /* -1: userspace rt_sigqueueinfo code */
+    info.si_pid    = (int64_t)task->pid;
+    info.si_uid    = (uint32_t)task->uid;
+    info.si_value  = 0xDEADBEEF;
+
+    /* Use fut_signal_send_with_info to store into sig_queue_info[SIGUSR1-1] */
+    extern int fut_signal_send_with_info(struct fut_task *task, int signum, const void *info);
+    int rc = fut_signal_send_with_info(task, SIGUSR1, &info);
+    if (rc != 0) {
+        fut_printf("[MISC-TEST] ✗ fut_signal_send_with_info returned %d\n", rc);
+        fut_test_fail(130); return;
+    }
+
+    /* Verify sig_queue_info was populated correctly */
+    siginfo_t *qi = &task->sig_queue_info[SIGUSR1 - 1];
+    if (qi->si_code != SI_QUEUE) {
+        fut_printf("[MISC-TEST] ✗ si_code=%d expected SI_QUEUE=%d\n", qi->si_code, SI_QUEUE);
+        /* Clear pending and fail */
+        __atomic_and_fetch(&task->pending_signals, ~(1ULL << (SIGUSR1 - 1)), __ATOMIC_ACQ_REL);
+        fut_test_fail(130); return;
+    }
+    if ((long)qi->si_value != (long)0xDEADBEEF) {
+        fut_printf("[MISC-TEST] ✗ si_value=0x%lx expected 0xDEADBEEF\n", (long)qi->si_value);
+        __atomic_and_fetch(&task->pending_signals, ~(1ULL << (SIGUSR1 - 1)), __ATOMIC_ACQ_REL);
+        fut_test_fail(130); return;
+    }
+    if (qi->si_signum != SIGUSR1) {
+        fut_printf("[MISC-TEST] ✗ si_signum=%d expected %d\n", qi->si_signum, SIGUSR1);
+        __atomic_and_fetch(&task->pending_signals, ~(1ULL << (SIGUSR1 - 1)), __ATOMIC_ACQ_REL);
+        fut_test_fail(130); return;
+    }
+
+    /* Clear the pending signal we just queued */
+    __atomic_and_fetch(&task->pending_signals, ~(1ULL << (SIGUSR1 - 1)), __ATOMIC_ACQ_REL);
+
+    fut_printf("[MISC-TEST] ✓ rt_sigqueueinfo: SI_QUEUE si_code and si_value=0xDEADBEEF stored\n");
+    fut_test_pass();
+}
+
+static void test_rt_sigqueueinfo_security(void) {
+    fut_printf("[MISC-TEST] Test 131: rt_sigqueueinfo rejects si_code > 0 without CAP_KILL\n");
+
+    extern long sys_rt_sigqueueinfo(int tgid, int sig, const void *uinfo);
+
+    fut_task_t *task = fut_task_current();
+    if (!task) { fut_test_fail(131); return; }
+
+    /* Build siginfo_t with positive si_code (kernel-reserved) */
+    siginfo_t info;
+    __builtin_memset(&info, 0, sizeof(info));
+    info.si_signum = SIGUSR2;
+    info.si_code   = 1;  /* SI_KERNEL-like, positive value — should be rejected */
+    info.si_value  = 0;
+
+    /* Temporarily clear CAP_KILL from effective caps (bit 5) */
+    uint64_t orig_caps = task->cap_effective;
+    task->cap_effective &= ~(1ULL << 5);  /* drop CAP_KILL */
+
+    long rc = sys_rt_sigqueueinfo((int)task->pid, SIGUSR2, &info);
+    task->cap_effective = orig_caps;  /* restore */
+
+    if (rc != -EPERM) {
+        fut_printf("[MISC-TEST] ✗ rt_sigqueueinfo with si_code>0 and no CAP_KILL returned %ld (expected -EPERM)\n", rc);
+        /* Clear any pending SIGUSR2 if signal was accidentally queued */
+        __atomic_and_fetch(&task->pending_signals, ~(1ULL << (SIGUSR2 - 1)), __ATOMIC_ACQ_REL);
+        fut_test_fail(131); return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ rt_sigqueueinfo: si_code>0 without CAP_KILL → EPERM\n");
+    fut_test_pass();
+}
+
+static void test_rt_tgsigqueueinfo(void) {
+    fut_printf("[MISC-TEST] Test 132: rt_tgsigqueueinfo stores SI_TKILL-like info in thread queue\n");
+
+    extern int fut_signal_send_thread_with_info(struct fut_thread *thread, int signum,
+                                                 const void *info);
+
+    fut_task_t *task = fut_task_current();
+    if (!task) { fut_test_fail(132); return; }
+    fut_thread_t *thread = fut_thread_current();
+    if (!thread) { fut_test_fail(132); return; }
+
+    /* Build siginfo_t for a thread-directed signal */
+    siginfo_t info;
+    __builtin_memset(&info, 0, sizeof(info));
+    info.si_signum = SIGUSR1;
+    info.si_code   = SI_TKILL;  /* -6: thread-kill code */
+    info.si_pid    = (int64_t)task->pid;
+    info.si_uid    = (uint32_t)task->uid;
+    info.si_value  = 42;
+
+    int rc = fut_signal_send_thread_with_info(thread, SIGUSR1, &info);
+    if (rc != 0) {
+        fut_printf("[MISC-TEST] ✗ fut_signal_send_thread_with_info returned %d\n", rc);
+        fut_test_fail(132); return;
+    }
+
+    /* Verify thread_sig_queue_info was populated */
+    siginfo_t *qi = &thread->thread_sig_queue_info[SIGUSR1 - 1];
+    if (qi->si_code != SI_TKILL) {
+        fut_printf("[MISC-TEST] ✗ si_code=%d expected SI_TKILL=%d\n", qi->si_code, SI_TKILL);
+        __atomic_and_fetch(&thread->thread_pending_signals, ~(1ULL << (SIGUSR1 - 1)), __ATOMIC_ACQ_REL);
+        fut_test_fail(132); return;
+    }
+    if (qi->si_value != 42) {
+        fut_printf("[MISC-TEST] ✗ si_value=%ld expected 42\n", (long)qi->si_value);
+        __atomic_and_fetch(&thread->thread_pending_signals, ~(1ULL << (SIGUSR1 - 1)), __ATOMIC_ACQ_REL);
+        fut_test_fail(132); return;
+    }
+
+    /* Clear pending thread signal */
+    __atomic_and_fetch(&thread->thread_pending_signals, ~(1ULL << (SIGUSR1 - 1)), __ATOMIC_ACQ_REL);
+
+    fut_printf("[MISC-TEST] ✓ rt_tgsigqueueinfo: SI_TKILL si_code and si_value=42 stored in thread queue\n");
+    fut_test_pass();
+}
+
 static void test_proc_environ(void) {
     fut_printf("[MISC-TEST] Test 128: /proc/self/environ round-trip\n");
 
@@ -6479,6 +6607,9 @@ void fut_misc_test_thread(void *arg) {
     test_proc_cmdline();                   /* Test 127: /proc/self/cmdline has full argv */
     test_proc_environ();                   /* Test 128: /proc/self/environ round-trip */
     test_sa_nocldwait();                   /* Test 129: SIGCHLD suppressed when SIG_IGN */
+    test_rt_sigqueueinfo();                /* Test 130: rt_sigqueueinfo stores SI_QUEUE siginfo */
+    test_rt_sigqueueinfo_security();       /* Test 131: rt_sigqueueinfo rejects si_code > 0 without CAP_KILL */
+    test_rt_tgsigqueueinfo();              /* Test 132: rt_tgsigqueueinfo stores siginfo in thread queue */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -13,6 +13,8 @@
 #include <stddef.h>
 #include <stdbool.h>
 #include "fut_stats.h"
+#include "signal.h"
+#include "signal_frame.h"
 #if defined(__x86_64__)
 #include <platform/x86_64/regs.h>
 #elif defined(__aarch64__)
@@ -115,6 +117,10 @@ struct fut_thread {
      * independent signal mask (pthread_sigmask).  Initialized to 0 (no
      * signals blocked); CLONE_THREAD inherits the creator's mask. */
     uint64_t signal_mask;                 // Per-thread signal mask
+
+    /* Per-signal siginfo_t for thread-directed signals (rt_tgsigqueueinfo / tgkill).
+     * Indexed by signal number (0 unused; valid range 1..._NSIG-1). */
+    siginfo_t thread_sig_queue_info[_NSIG];
 };
 
 /* ============================================================

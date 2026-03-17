@@ -1235,7 +1235,7 @@ void fut_kernel_main(void) {
         planned_tests += 14u; /* clock_sched: getres, sched_param, sched_policy, itimer, rusage, times, getpriority, setpriority, getpriority(-who), setpriority(-who), unshare(0), unshare(invalid), rr_get_interval, clock_gettime */
         planned_tests += 13u; /* vfs: O_TRUNC, O_APPEND, relpath, dir_mtime, readlink, hardlink, mount, renameat2, inotify, umount expire, dotdot, eisdir, chdir_dotdot */
         planned_tests += 13u; /* poll: file ready, eventfd not-ready, eventfd ready, POLLNVAL, select file, select pipe, pselect6 pipe, pselect6 sigmask restore, timeout-only sleep, timerfd readiness, signalfd readiness, pipe EOF, select pipe EOF */
-        planned_tests += 129u; /* misc(129): +SA_NOCLDWAIT SIGCHLD suppression */
+        planned_tests += 132u; /* misc(132): +rt_sigqueueinfo SI_QUEUE/security/thread tests */
         // planned_tests += 1u; /* block */
         // planned_tests += 1u; /* futfs */
         // planned_tests += 1u; /* net */

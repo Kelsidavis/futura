@@ -14,6 +14,7 @@
 #include "fut_thread.h"
 #include "fut_waitq.h"
 #include "signal.h"
+#include "signal_frame.h"
 
 struct fut_mm;
 
@@ -185,6 +186,11 @@ struct fut_task {
 
     /* Accumulated CPU ticks from reaped children (for tms_cutime in sys_times) */
     uint64_t child_cpu_ticks;
+
+    /* Per-signal siginfo_t storage for rt_sigqueueinfo / SA_SIGINFO delivery.
+     * Indexed by signal number (0 unused; valid range 1..._NSIG-1).
+     * Filled by fut_signal_send_with_info(); defaulted to SI_USER by fut_signal_send(). */
+    siginfo_t sig_queue_info[_NSIG];
 
     /* Capability handle receive queue (for fut_cap_handle_recv / fut_cap_handle_send IPC) */
 #define FUT_CAP_RECV_QUEUE_SIZE 8

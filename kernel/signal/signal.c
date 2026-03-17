@@ -6,6 +6,7 @@
  */
 
 #include <kernel/signal.h>
+#include <kernel/signal_frame.h>
 #include <kernel/fut_task.h>
 #include <kernel/fut_thread.h>
 #include <kernel/fut_timer.h>
@@ -158,6 +159,22 @@ int fut_signal_send(struct fut_task *task, int signum) {
         return 0;
     }
 
+    /* Fill default siginfo_t (SI_USER) for SA_SIGINFO handlers.
+     * Overwritten by fut_signal_send_with_info() for rt_sigqueueinfo. */
+    {
+        siginfo_t *qi = &task->sig_queue_info[signum - 1];
+        qi->si_signum  = signum;
+        qi->si_errno   = 0;
+        qi->si_code    = SI_USER;
+        qi->si_pid     = (int64_t)task->pid;
+        qi->si_uid     = (uint32_t)task->uid;
+        qi->si_status  = 0;
+        qi->si_addr    = (void *)0;
+        qi->si_value   = 0;
+        qi->si_overrun = 0;
+        qi->si_timerid = 0;
+    }
+
     /* Atomic OR to queue the signal. pending_signals can be read/cleared
      * by the target task on another CPU during signal delivery. */
     __atomic_or_fetch(&task->pending_signals, signal_bit, __ATOMIC_RELEASE);
@@ -216,6 +233,37 @@ int fut_signal_send(struct fut_task *task, int signum) {
 }
 
 /**
+ * Send a signal with explicit siginfo_t (rt_sigqueueinfo semantics).
+ * Stores the caller-provided info, then delegates to fut_signal_send().
+ *
+ * @param task   Target task
+ * @param signum Signal number (1-64)
+ * @param info   Pointer to siginfo_t with si_code/si_value filled by caller
+ * @return 0 on success, -EINVAL on bad args
+ */
+int fut_signal_send_with_info(struct fut_task *task, int signum, const void *info) {
+    if (!task || signum < 1 || signum >= _NSIG)
+        return -EINVAL;
+
+    /* Call fut_signal_send() first to handle pending-bit, wakeup, and
+     * default siginfo fill.  Then overwrite the default with the caller's
+     * siginfo_t so the correct si_code/si_value reach the handler.
+     * Signal delivery only happens when returning to userspace, so there
+     * is no race between setting the pending bit and storing the info. */
+    int rc = fut_signal_send(task, signum);
+    if (rc != 0)
+        return rc;
+
+    if (info) {
+        __builtin_memcpy(&task->sig_queue_info[signum - 1], info, sizeof(siginfo_t));
+        /* Ensure si_signum is correct regardless of what caller provided */
+        task->sig_queue_info[signum - 1].si_signum = signum;
+    }
+
+    return 0;
+}
+
+/**
  * Send a thread-directed signal (tgkill/tkill semantics).
  *
  * Sets the signal bit in thread->thread_pending_signals rather than the
@@ -244,6 +292,21 @@ int fut_signal_send_thread(struct fut_thread *thread, int signum) {
     /* SIG_IGN: don't queue */
     if (task->signal_handlers[signum - 1] == SIG_IGN)
         return 0;
+
+    /* Fill default SI_TKILL siginfo_t for SA_SIGINFO delivery. */
+    {
+        siginfo_t *qi = &thread->thread_sig_queue_info[signum - 1];
+        qi->si_signum  = signum;
+        qi->si_errno   = 0;
+        qi->si_code    = SI_TKILL;
+        qi->si_pid     = (int64_t)task->pid;
+        qi->si_uid     = (uint32_t)task->uid;
+        qi->si_status  = 0;
+        qi->si_addr    = (void *)0;
+        qi->si_value   = 0;
+        qi->si_overrun = 0;
+        qi->si_timerid = 0;
+    }
 
     /* Set the per-thread pending bit atomically */
     __atomic_or_fetch(&thread->thread_pending_signals, signal_bit, __ATOMIC_RELEASE);
@@ -275,6 +338,32 @@ int fut_signal_send_thread(struct fut_thread *thread, int signum) {
 
     /* Also wake signal waitq (for pause/sigsuspend/signalfd) */
     fut_waitq_wake_all(&task->signal_waitq);
+
+    return 0;
+}
+
+/**
+ * Send a thread-directed signal with explicit siginfo_t (rt_tgsigqueueinfo).
+ *
+ * @param thread Target thread
+ * @param signum Signal number (1-64)
+ * @param info   Pointer to siginfo_t; if NULL, falls back to fut_signal_send_thread()
+ * @return 0 on success, -EINVAL on bad args
+ */
+int fut_signal_send_thread_with_info(struct fut_thread *thread, int signum, const void *info) {
+    if (!thread || signum < 1 || signum >= _NSIG)
+        return -EINVAL;
+
+    /* Same ordering as fut_signal_send_with_info: send first (fills SI_TKILL
+     * default), then overwrite with caller's siginfo_t. */
+    int rc = fut_signal_send_thread(thread, signum);
+    if (rc != 0)
+        return rc;
+
+    if (info) {
+        __builtin_memcpy(&thread->thread_sig_queue_info[signum - 1], info, sizeof(siginfo_t));
+        thread->thread_sig_queue_info[signum - 1].si_signum = signum;
+    }
 
     return 0;
 }
@@ -490,13 +579,19 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
     struct rt_sigframe sframe;
     memset(&sframe, 0, sizeof(sframe));
 
-    /* Fill siginfo_t */
+    /* Fill siginfo_t from stored per-signal info (set by fut_signal_send_with_info
+     * or defaulted to SI_USER/SI_TKILL by fut_signal_send/fut_signal_send_thread).
+     * For thread-directed signals use thread's queue; else use task's. */
+    if (from_thread_arm64 && cur_thread_arm64) {
+        __builtin_memcpy(&sframe.info, &cur_thread_arm64->thread_sig_queue_info[signum - 1],
+                         sizeof(siginfo_t));
+    } else {
+        __builtin_memcpy(&sframe.info, &task->sig_queue_info[signum - 1], sizeof(siginfo_t));
+    }
+    /* Always override si_signum for safety; si_addr uses fault address for SIGSEGV etc. */
     sframe.info.si_signum = signum;
-    sframe.info.si_errno = 0;
-    sframe.info.si_code = SI_USER;
-    sframe.info.si_pid = 0;
-    sframe.info.si_uid = 0;
-    sframe.info.si_addr = (void *)f->far;
+    if (sframe.info.si_code == SI_KERNEL || sframe.info.si_code == SI_USER)
+        sframe.info.si_addr = (void *)f->far;
 
     /* Fill ucontext_t */
     sframe.uc.uc_flags = 0;
@@ -700,13 +795,15 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
     struct rt_sigframe sframe;
     memset(&sframe, 0, sizeof(sframe));
 
-    /* Fill siginfo_t */
+    /* Fill siginfo_t from stored per-signal info (set by fut_signal_send_with_info
+     * or defaulted to SI_USER/SI_TKILL by fut_signal_send/fut_signal_send_thread). */
+    if (from_thread_x86 && cur_thread_x86) {
+        __builtin_memcpy(&sframe.info, &cur_thread_x86->thread_sig_queue_info[signum - 1],
+                         sizeof(siginfo_t));
+    } else {
+        __builtin_memcpy(&sframe.info, &task->sig_queue_info[signum - 1], sizeof(siginfo_t));
+    }
     sframe.info.si_signum = signum;
-    sframe.info.si_errno = 0;
-    sframe.info.si_code = SI_USER;
-    sframe.info.si_pid = 0;
-    sframe.info.si_uid = 0;
-    sframe.info.si_addr = NULL;
 
     /* Fill ucontext_t */
     sframe.uc.uc_flags = 0;

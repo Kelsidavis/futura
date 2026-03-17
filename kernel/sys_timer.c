@@ -197,7 +197,16 @@ long sys_timer_settime(timer_t timerid, int flags,
 
     uint64_t now = fut_get_ticks();
     if (local_flags & 1 /* TIMER_ABSTIME */) {
-        pt->expiry_ms = value_ticks;  /* absolute ticks */
+        /* For CLOCK_REALTIME, convert wall-clock absolute to monotonic ticks */
+        if (pt->clockid == 0 /* CLOCK_REALTIME */) {
+            extern volatile int64_t g_realtime_offset_sec;
+            int64_t offset_ticks = g_realtime_offset_sec * 100;
+            if (offset_ticks >= 0 && value_ticks >= (uint64_t)offset_ticks)
+                value_ticks -= (uint64_t)offset_ticks;
+            else if (offset_ticks < 0)
+                value_ticks += (uint64_t)(-offset_ticks);
+        }
+        pt->expiry_ms = value_ticks;  /* absolute monotonic ticks */
     } else {
         pt->expiry_ms = now + value_ticks;
     }

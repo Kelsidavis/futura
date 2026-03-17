@@ -136,22 +136,19 @@ long sys_gettimeofday(fut_timeval_t *tv, void *tz) {
         return -EINVAL;
     }
 
-    /* Get current time: convert ticks (100 Hz) to real time */
-    uint64_t ticks = fut_get_ticks();
-    uint64_t total_ms = ticks * 10;  /* ticks → milliseconds */
+    /* Get current monotonic time in nanoseconds for sub-tick precision,
+     * then add wall-clock offset for CLOCK_REALTIME. */
+    uint64_t now_ns = fut_get_time_ns();
 
     /* Convert to timeval (seconds + microseconds), add realtime offset */
     fut_timeval_t kernel_tv;
-    kernel_tv.tv_sec  = (int64_t)(total_ms / 1000) + g_realtime_offset_sec;
-    kernel_tv.tv_usec = (int64_t)((total_ms % 1000) * 1000);
+    kernel_tv.tv_sec  = (int64_t)(now_ns / 1000000000ULL) + g_realtime_offset_sec;
+    kernel_tv.tv_usec = (int64_t)((now_ns % 1000000000ULL) / 1000);
 
     /* Copy to userspace (or kernel buffer for internal callers) */
     if (time_copy_to_user(tv, &kernel_tv, sizeof(fut_timeval_t)) != 0) {
         return -EFAULT;
     }
-
-    fut_printf("[TIME] gettimeofday() -> %lld.%06lld\n",
-               kernel_tv.tv_sec, kernel_tv.tv_usec);
 
     return 0;
 }

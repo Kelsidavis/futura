@@ -1611,8 +1611,17 @@ long sys_timerfd_settime(int ufd, int flags,
     uint64_t delay_ticks;
 
     if (flags & TFD_TIMER_ABSTIME) {
-        /* value_ticks is absolute time */
+        /* value_ticks is absolute time in the timer's clock domain.
+         * For CLOCK_REALTIME, convert wall-clock to monotonic ticks. */
         uint64_t abs_ticks = value_ticks;
+        if (ctx->clockid == 0 /* CLOCK_REALTIME */) {
+            extern volatile int64_t g_realtime_offset_sec;
+            int64_t offset_ticks = g_realtime_offset_sec * 100;
+            if (offset_ticks >= 0 && abs_ticks >= (uint64_t)offset_ticks)
+                abs_ticks -= (uint64_t)offset_ticks;
+            else if (offset_ticks < 0)
+                abs_ticks += (uint64_t)(-offset_ticks);
+        }
         if (abs_ticks > now) {
             delay_ticks = abs_ticks - now;
         } else {

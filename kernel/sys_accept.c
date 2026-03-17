@@ -15,7 +15,10 @@
  */
 
 #include <kernel/fut_task.h>
+#include <kernel/fut_thread.h>
+#include <kernel/fut_timer.h>
 #include <kernel/fut_socket.h>
+#include <kernel/fut_waitq.h>
 #include <kernel/errno.h>
 #include <kernel/uaccess.h>
 #include <kernel/syscalls.h>
@@ -474,34 +477,43 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
             break;
     }
 
-    /* Accept connection using kernel socket layer */
+    /* Accept connection using kernel socket layer, with blocking retry */
     fut_socket_t *accepted_socket = NULL;
-    int ret = fut_socket_accept(listen_socket, &accepted_socket);
+    int ret;
 
-    /* Phase 2: Handle error cases with detailed logging */
-    if (ret < 0) {
-        const char *error_desc;
-        switch (ret) {
-            case -EINVAL:
-                error_desc = "invalid socket state or not listening";
-                break;
-            case -EAGAIN:
-                error_desc = "no pending connections (would block)";
-                break;
-            case -ENOMEM:
-                error_desc = "insufficient memory for new socket";
-                break;
-            case -ENOTSUP:
-                error_desc = "socket type does not support accept";
-                break;
-            default:
-                error_desc = "unknown error";
-                break;
+    while (1) {
+        ret = fut_socket_accept(listen_socket, &accepted_socket);
+        if (ret != -EAGAIN)
+            break;  /* Success or non-retriable error */
+
+        /* EAGAIN: no pending connections */
+        if (listen_socket->flags & 0x800) {  /* O_NONBLOCK */
+            return -EAGAIN;
         }
 
-        accept_printf("[ACCEPT] accept(local_sockfd=%d, type=%s, state=%s, socket_id=%u, addr_request=%s) -> %d (%s)\n",
-                   local_sockfd, socket_type_desc, socket_state_desc, listen_socket->socket_id,
-                   addr_request, ret, error_desc);
+        /* Check for pending signals → EINTR */
+        {
+            fut_task_t *sig_task = fut_task_current();
+            if (sig_task) {
+                uint64_t pending = __atomic_load_n(&sig_task->pending_signals, __ATOMIC_ACQUIRE);
+                uint64_t blocked = sig_task->signal_mask;
+                if (pending & ~blocked)
+                    return -EINTR;
+            }
+        }
+
+        /* Block on accept wait queue until a connection arrives */
+        if (listen_socket->listener && listen_socket->listener->accept_waitq) {
+            fut_waitq_sleep_locked(listen_socket->listener->accept_waitq,
+                                   NULL, FUT_THREAD_BLOCKED);
+        } else {
+            /* No wait queue — sleep briefly and retry */
+            fut_thread_sleep(10);
+        }
+    }
+
+    if (ret < 0) {
+        accept_printf("[ACCEPT] accept(sockfd=%d) -> %d\n", local_sockfd, ret);
         return ret;
     }
 

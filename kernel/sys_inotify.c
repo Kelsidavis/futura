@@ -271,6 +271,18 @@ static ssize_t inotify_read_op(void *inode, void *priv, void *u_buf, size_t len,
                 fut_spinlock_release(&inst->lock);
                 return -EAGAIN;
             }
+            /* Check for pending signals → EINTR */
+            {
+                fut_task_t *stask = fut_task_current();
+                if (stask) {
+                    uint64_t pending = __atomic_load_n(&stask->pending_signals, __ATOMIC_ACQUIRE);
+                    uint64_t blocked = stask->signal_mask;
+                    if (pending & ~blocked) {
+                        fut_spinlock_release(&inst->lock);
+                        return -EINTR;
+                    }
+                }
+            }
             /* Block until an event arrives */
             fut_waitq_sleep_locked(&inst->read_waitq, &inst->lock, FUT_THREAD_BLOCKED);
             continue;

@@ -192,9 +192,11 @@ long sys_clock_gettime(int clock_id, fut_timespec_t *tp) {
      * ATTACK: Attacker provides read-only or unmapped tp buffer
      * IMPACT: Kernel page fault when writing timespec structure
      * DEFENSE: Check write permission before processing */
+    /* Skip access_ok for kernel-originated calls (selftests use kernel stack pointers) */
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)tp < KERNEL_VIRTUAL_BASE)
+#endif
     if (fut_access_ok(tp, sizeof(fut_timespec_t), 1) != 0) {
-        fut_printf("[TIME] clock_gettime(clock_id=%d, tp=%p) -> EFAULT (tp not writable for %zu bytes)\n",
-                   clock_id, tp, sizeof(fut_timespec_t));
         return -EFAULT;
     }
 

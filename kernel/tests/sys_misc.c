@@ -2581,6 +2581,70 @@ static void test_o_append(void) {
     fut_test_pass();
 }
 
+#include <shared/fut_timespec.h>
+extern long sys_clock_gettime(int clock_id, fut_timespec_t *tp);
+
+/* ============================================================
+ * Test 59: clock_gettime MONOTONIC returns advancing time
+ * ============================================================ */
+static void test_clock_gettime_monotonic(void) {
+    fut_printf("[MISC-TEST] Test 59: clock_gettime MONOTONIC\n");
+
+    fut_timespec_t t1 = {0}, t2 = {0};
+
+    /* CLOCK_MONOTONIC = 1 */
+    long ret = sys_clock_gettime(1, &t1);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ clock_gettime(MONOTONIC) returned %ld\n", ret);
+        fut_test_fail(59);
+        return;
+    }
+
+    /* Time should be non-negative */
+    if (t1.tv_sec < 0 || t1.tv_nsec < 0 || t1.tv_nsec >= 1000000000LL) {
+        fut_printf("[MISC-TEST] ✗ invalid timespec: sec=%lld nsec=%lld\n",
+                   (long long)t1.tv_sec, (long long)t1.tv_nsec);
+        fut_test_fail(59);
+        return;
+    }
+
+    /* Get a second reading — should be >= first (monotonic) */
+    ret = sys_clock_gettime(1, &t2);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ second clock_gettime returned %ld\n", ret);
+        fut_test_fail(59);
+        return;
+    }
+
+    if (t2.tv_sec < t1.tv_sec ||
+        (t2.tv_sec == t1.tv_sec && t2.tv_nsec < t1.tv_nsec)) {
+        fut_printf("[MISC-TEST] ✗ time went backwards: %lld.%09lld -> %lld.%09lld\n",
+                   (long long)t1.tv_sec, (long long)t1.tv_nsec,
+                   (long long)t2.tv_sec, (long long)t2.tv_nsec);
+        fut_test_fail(59);
+        return;
+    }
+
+    /* CLOCK_REALTIME (0) should also work */
+    ret = sys_clock_gettime(0, &t1);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ clock_gettime(REALTIME) returned %ld\n", ret);
+        fut_test_fail(59);
+        return;
+    }
+
+    /* Invalid clock should fail */
+    ret = sys_clock_gettime(999, &t1);
+    if (ret != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ clock_gettime(999) returned %ld\n", ret);
+        fut_test_fail(59);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ clock_gettime: MONOTONIC non-decreasing, REALTIME works, invalid rejected\n");
+    fut_test_pass();
+}
+
 /* ============================================================
  * Test 38: setrlimit hard limit can be raised by root, denied for non-root
  * ============================================================ */
@@ -3017,6 +3081,7 @@ void fut_misc_test_thread(void *arg) {
     test_fionread_pipe();       /* Test 56: FIONREAD on pipe */
     test_lseek_pipe_espipe();   /* Test 57: lseek pipe ESPIPE */
     test_o_append();            /* Test 58: O_APPEND writes to end */
+    test_clock_gettime_monotonic(); /* Test 59: clock_gettime */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

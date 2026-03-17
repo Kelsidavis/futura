@@ -2520,6 +2520,12 @@ int fut_exec_elf_memory(const void *elf_data, size_t elf_size, char *const argv[
         while (envp[envc]) envc++;
     }
 
+    /* Set ELF metadata for auxv */
+    g_exec_entry = ehdr->e_entry;
+    g_exec_phent = ehdr->e_phentsize;
+    g_exec_phnum = ehdr->e_phnum;
+    g_exec_phdr = 0;
+
     fut_serial_puts("[EXEC-MEM] Building user stack\n");
     rc = build_user_stack(new_mm, (const char *const *)argv, argc,
                          (const char *const *)envp, envc, &user_sp);
@@ -2770,6 +2776,26 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     if (argv) {
         while (argv[argc]) argc++;
     }
+    /* Set ELF metadata globals for auxv in build_user_stack */
+    g_exec_entry = ehdr.e_entry;
+    g_exec_phent = ehdr.e_phentsize;
+    g_exec_phnum = ehdr.e_phnum;
+    g_exec_phdr = 0;
+    for (uint16_t pi = 0; pi < ehdr.e_phnum; pi++) {
+        if (phdrs[pi].p_type == 6 /* PT_PHDR */) {
+            g_exec_phdr = phdrs[pi].p_vaddr;
+            break;
+        }
+    }
+    if (g_exec_phdr == 0 && ehdr.e_phnum > 0) {
+        for (uint16_t pi = 0; pi < ehdr.e_phnum; pi++) {
+            if (phdrs[pi].p_type == 1 /* PT_LOAD */) {
+                g_exec_phdr = phdrs[pi].p_vaddr + ehdr.e_phoff - phdrs[pi].p_offset;
+                break;
+            }
+        }
+    }
+
     EXEC_DEBUG("[EXEC] Before build_user_stack: task=%p task->threads=%p\n", task, task->threads);
     rc = build_user_stack(mm, (const char *const *)argv, argc, (const char *const *)envp, 0, &user_sp);
     EXEC_DEBUG("[EXEC] After build_user_stack: task=%p task->threads=%p user_sp=0x%llx\n",

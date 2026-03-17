@@ -157,86 +157,9 @@ long sys_umask(uint32_t mask) {
         return -ESRCH;
     }
 
-    /* Phase 2: Only use the permission bits (0777 octal = 511 decimal) */
     uint32_t new_mask = mask & 0777;
-
-    /* Phase 3: Get previous mask value from per-task umask */
     uint32_t old_mask = task->umask;
-
-    /* Phase 2: Categorize old mask */
-    const char *old_mask_desc;
-    if (old_mask == 0022) {
-        old_mask_desc = "0022 (typical default, owner rw, others r)";
-    } else if (old_mask == 0002) {
-        old_mask_desc = "0002 (group writable)";
-    } else if (old_mask == 0077) {
-        old_mask_desc = "0077 (private, owner only)";
-    } else if (old_mask == 0000) {
-        old_mask_desc = "0000 (permissive, no restrictions)";
-    } else if (old_mask == 0027) {
-        old_mask_desc = "0027 (group readable, others none)";
-    } else {
-        old_mask_desc = "custom";
-    }
-
-    /* Phase 2: Categorize new mask */
-    const char *new_mask_desc;
-    if (new_mask == 0022) {
-        new_mask_desc = "0022 (typical default, owner rw, others r)";
-    } else if (new_mask == 0002) {
-        new_mask_desc = "0002 (group writable)";
-    } else if (new_mask == 0077) {
-        new_mask_desc = "0077 (private, owner only)";
-    } else if (new_mask == 0000) {
-        new_mask_desc = "0000 (permissive, no restrictions)";
-    } else if (new_mask == 0027) {
-        new_mask_desc = "0027 (group readable, others none)";
-    } else {
-        new_mask_desc = "custom";
-    }
-
-    /* Phase 2: Determine operation type */
-    const char *operation_type;
-    if (new_mask == 0 && old_mask != 0) {
-        operation_type = "query (set to 0 to read)";
-    } else if (new_mask == old_mask) {
-        operation_type = "no change (same value)";
-    } else if (new_mask > old_mask) {
-        operation_type = "more restrictive";
-    } else {
-        operation_type = "less restrictive";
-    }
-
-    /* Phase 2: Build octal string for old mask */
-    char old_octal[8];
-    char *p = old_octal;
-    *p++ = '0';
-    if (old_mask >= 0100) {
-        *p++ = '0' + ((old_mask >> 6) & 7);
-    }
-    *p++ = '0' + ((old_mask >> 3) & 7);
-    *p++ = '0' + (old_mask & 7);
-    *p = '\0';
-
-    /* Phase 2: Build octal string for new mask */
-    char new_octal[8];
-    p = new_octal;
-    *p++ = '0';
-    if (new_mask >= 0100) {
-        *p++ = '0' + ((new_mask >> 6) & 7);
-    }
-    *p++ = '0' + ((new_mask >> 3) & 7);
-    *p++ = '0' + (new_mask & 7);
-    *p = '\0';
-
-    /* Phase 3: Set new mask in per-task structure */
     task->umask = new_mask;
-
-    /* Phase 3: Detailed success logging */
-    fut_printf("[UMASK] umask(mask=%s [%s]) -> %s [%s] (op=%s, Phase 3: Per-task umask isolation)\n",
-               new_octal, new_mask_desc, old_octal, old_mask_desc, operation_type);
-
-    /* Return previous mask */
     return (long)old_mask;
 }
 

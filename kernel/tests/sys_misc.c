@@ -2324,6 +2324,67 @@ static void test_rdonly_write_ebadf(void) {
 }
 
 /* ============================================================
+ * Test 53: pipe access mode enforcement (read/write ends)
+ * ============================================================ */
+static void test_pipe_access_mode(void) {
+    fut_printf("[MISC-TEST] Test 53: pipe access mode enforcement\n");
+
+    int pipefd[2];
+    long ret = sys_pipe(pipefd);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ pipe() returned %ld\n", ret);
+        fut_test_fail(53);
+        return;
+    }
+
+    /* Write to read end should fail with EBADF */
+    ssize_t wr = fut_vfs_write(pipefd[0], "x", 1);
+    if (wr != -EBADF) {
+        fut_printf("[MISC-TEST] ✗ write(read_end) returned %zd (expected EBADF)\n", wr);
+        fut_vfs_close(pipefd[0]);
+        fut_vfs_close(pipefd[1]);
+        fut_test_fail(53);
+        return;
+    }
+
+    /* Read from write end should fail with EBADF */
+    char buf[4];
+    ssize_t rd = fut_vfs_read(pipefd[1], buf, sizeof(buf));
+    if (rd != -EBADF) {
+        fut_printf("[MISC-TEST] ✗ read(write_end) returned %zd (expected EBADF)\n", rd);
+        fut_vfs_close(pipefd[0]);
+        fut_vfs_close(pipefd[1]);
+        fut_test_fail(53);
+        return;
+    }
+
+    /* Normal pipe I/O should still work */
+    wr = fut_vfs_write(pipefd[1], "hi", 2);
+    if (wr != 2) {
+        fut_printf("[MISC-TEST] ✗ normal pipe write returned %zd\n", wr);
+        fut_vfs_close(pipefd[0]);
+        fut_vfs_close(pipefd[1]);
+        fut_test_fail(53);
+        return;
+    }
+
+    rd = fut_vfs_read(pipefd[0], buf, 2);
+    if (rd != 2 || buf[0] != 'h' || buf[1] != 'i') {
+        fut_printf("[MISC-TEST] ✗ normal pipe read returned %zd\n", rd);
+        fut_vfs_close(pipefd[0]);
+        fut_vfs_close(pipefd[1]);
+        fut_test_fail(53);
+        return;
+    }
+
+    fut_vfs_close(pipefd[0]);
+    fut_vfs_close(pipefd[1]);
+
+    fut_printf("[MISC-TEST] ✓ pipe access: write(read_end)=EBADF, read(write_end)=EBADF, normal I/O works\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test 38: setrlimit hard limit can be raised by root, denied for non-root
  * ============================================================ */
 static void test_setrlimit_hard(void) {
@@ -2753,6 +2814,7 @@ void fut_misc_test_thread(void *arg) {
     test_epoll_wait_eintr();    /* Test 50: epoll_wait EINTR */
     test_getdents64_small_buf(); /* Test 51: getdents64 small buffer */
     test_rdonly_write_ebadf();   /* Test 52: write on O_RDONLY fd returns EBADF */
+    test_pipe_access_mode();    /* Test 53: pipe access mode enforcement */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

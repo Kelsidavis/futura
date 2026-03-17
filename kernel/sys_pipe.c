@@ -551,8 +551,16 @@ long sys_pipe(int pipefd[2]) {
         return write_fd;
     }
 
-    /* Copy file descriptors to userspace safely
-     * Validate write access IMMEDIATELY before use to prevent TOCTOU */
+    /* Fix file access modes: read end is O_RDONLY, write end is O_WRONLY */
+    {
+        extern struct fut_file *vfs_get_file(int fd);
+        struct fut_file *rfile = vfs_get_file(read_fd);
+        struct fut_file *wfile = vfs_get_file(write_fd);
+        if (rfile) rfile->flags = O_RDONLY;
+        if (wfile) wfile->flags = O_WRONLY;
+    }
+
+    /* Copy file descriptors to userspace safely */
     int fds[2];
     fds[0] = read_fd;
     fds[1] = write_fd;
@@ -653,16 +661,23 @@ long sys_pipe2(int pipefd[2], int flags) {
         return write_fd;
     }
 
+    /* Fix file access modes: read end is O_RDONLY, write end is O_WRONLY */
+    {
+        extern struct fut_file *vfs_get_file(int fd);
+        struct fut_file *rfile = vfs_get_file(read_fd);
+        struct fut_file *wfile = vfs_get_file(write_fd);
+        if (rfile) rfile->flags = O_RDONLY;
+        if (wfile) wfile->flags = O_WRONLY;
+    }
+
     /* Apply O_NONBLOCK flag if requested */
     if (flags & O_NONBLOCK) {
-        /* Set non-blocking mode on both FDs via fcntl */
         sys_fcntl(read_fd, F_SETFL, O_NONBLOCK);
         sys_fcntl(write_fd, F_SETFL, O_NONBLOCK);
     }
 
     /* Apply O_CLOEXEC flag if requested */
     if (flags & O_CLOEXEC) {
-        /* Set close-on-exec on both FDs via fcntl */
         sys_fcntl(read_fd, F_SETFD, FD_CLOEXEC);
         sys_fcntl(write_fd, F_SETFD, FD_CLOEXEC);
     }

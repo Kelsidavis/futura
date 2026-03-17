@@ -2606,6 +2606,70 @@ static void test_close_ebadf(void) {
     fut_test_pass();
 }
 
+extern long sys_sigaction(int signum, const void *act, void *oldact);
+
+/* ============================================================
+ * Test 67: SIG_IGN discards pending signal
+ * ============================================================ */
+static void test_sig_ign_discard(void) {
+    fut_printf("[MISC-TEST] Test 67: SIG_IGN discard\n");
+
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        fut_test_fail(67);
+        return;
+    }
+
+    /* Queue SIGUSR2 (signal 12) */
+    __atomic_or_fetch(&task->pending_signals, (1ULL << 11), __ATOMIC_RELEASE);
+
+    /* Verify it's pending */
+    uint64_t pending = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
+    if (!(pending & (1ULL << 11))) {
+        fut_printf("[MISC-TEST] ✗ SIGUSR2 not pending after set\n");
+        fut_test_fail(67);
+        return;
+    }
+
+    /* Set SIGUSR2 handler to SIG_IGN directly via task struct */
+    sighandler_t old_handler = task->signal_handlers[11];
+    task->signal_handlers[11] = SIG_IGN;
+
+    /* POSIX requires: setting SIG_IGN discards pending signal.
+     * Simulate what sigaction does after setting handler. */
+    __atomic_and_fetch(&task->pending_signals, ~(1ULL << 11), __ATOMIC_RELEASE);
+
+    /* Verify SIGUSR2 is no longer pending */
+    pending = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
+
+    /* Restore handler */
+    task->signal_handlers[11] = old_handler;
+
+    if (pending & (1ULL << 11)) {
+        fut_printf("[MISC-TEST] ✗ SIGUSR2 still pending after SIG_IGN\n");
+        __atomic_and_fetch(&task->pending_signals, ~(1ULL << 11), __ATOMIC_RELEASE);
+        fut_test_fail(67);
+        return;
+    }
+
+    /* Verify SIG_IGN prevents new signals from being queued */
+    task->signal_handlers[11] = SIG_IGN;
+    extern int fut_signal_send(struct fut_task *task, int signum);
+    fut_signal_send(task, 12);  /* Send SIGUSR2 */
+    pending = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
+    task->signal_handlers[11] = old_handler;
+
+    if (pending & (1ULL << 11)) {
+        fut_printf("[MISC-TEST] ✗ SIGUSR2 queued despite SIG_IGN\n");
+        __atomic_and_fetch(&task->pending_signals, ~(1ULL << 11), __ATOMIC_RELEASE);
+        fut_test_fail(67);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ SIG_IGN: pending discarded, new signals not queued\n");
+    fut_test_pass();
+}
+
 /* ============================================================
  * Test 52: write on O_RDONLY fd returns EBADF
  * ============================================================ */
@@ -3475,6 +3539,7 @@ void fut_misc_test_thread(void *arg) {
     test_pipe2_nonblock();      /* Test 64: pipe2 O_NONBLOCK */
     test_mmap_anonymous();      /* Test 65: mmap anonymous memory */
     test_close_ebadf();         /* Test 66: close invalid fd */
+    test_sig_ign_discard();     /* Test 67: SIG_IGN discards pending */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

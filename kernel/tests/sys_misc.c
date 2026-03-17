@@ -1616,6 +1616,71 @@ static void test_dev_urandom(void) {
 }
 
 /* ============================================================
+ * Test 32: VFS file permission checks (owner/group/other)
+ * ============================================================ */
+static void test_vfs_permission(void) {
+    fut_printf("[MISC-TEST] Test 32: VFS file permission checks\n");
+
+    /* Create a file as root with mode 0600 (owner rw only) */
+    int fd = fut_vfs_open("/perm_test.txt", 0x42, 0600);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ create failed: %d\n", fd);
+        fut_test_fail(32);
+        return;
+    }
+    fut_vfs_write(fd, "secret", 6);
+    fut_vfs_close(fd);
+
+    /* As root, reading should succeed (CAP_DAC_OVERRIDE) */
+    fd = fut_vfs_open("/perm_test.txt", 0x00, 0);  /* O_RDONLY */
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ root read failed: %d\n", fd);
+        fut_test_fail(32);
+        return;
+    }
+    char buf[8] = {0};
+    ssize_t nr = fut_vfs_read(fd, buf, 6);
+    fut_vfs_close(fd);
+    if (nr != 6 || memcmp(buf, "secret", 6) != 0) {
+        fut_printf("[MISC-TEST] ✗ root read mismatch: nr=%zd\n", nr);
+        fut_test_fail(32);
+        return;
+    }
+
+    /* Become non-root (uid=1000), drop all caps */
+    fut_task_t *task = fut_task_current();
+    uint32_t saved_uid = task->uid;
+    uint32_t saved_ruid = task->ruid;
+    uint64_t saved_caps = task->cap_effective;
+    task->uid = 1000;
+    task->ruid = 1000;
+    task->cap_effective = 0;
+
+    /* Try to write — file is 0600 owned by root, so "other" has no access */
+    fd = fut_vfs_open("/perm_test.txt", 0x01, 0);  /* O_WRONLY */
+    /* Should either fail to open or fail to write */
+    ssize_t write_ret = -EACCES;
+    if (fd >= 0) {
+        write_ret = fut_vfs_write(fd, "hack", 4);
+        fut_vfs_close(fd);
+    }
+
+    /* Restore root */
+    task->uid = saved_uid;
+    task->ruid = saved_ruid;
+    task->cap_effective = saved_caps;
+
+    if (fd >= 0 && write_ret >= 0) {
+        fut_printf("[MISC-TEST] ✗ non-owner write succeeded on 0600 file\n");
+        fut_test_fail(32);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ file permissions: root reads, non-owner denied\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -1656,6 +1721,7 @@ void fut_misc_test_thread(void *arg) {
     test_dev_null_zero();       /* Test 29: /dev/null and /dev/zero */
     test_dev_urandom();         /* Test 30: /dev/urandom */
     test_cap_enforcement();     /* Test 31: capability enforcement */
+    test_vfs_permission();      /* Test 32: file permission checks */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

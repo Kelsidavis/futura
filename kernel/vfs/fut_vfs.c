@@ -1623,8 +1623,12 @@ int fut_vfs_open(const char *path, int flags, int mode) {
         return chr_fd;
     }
 
-    /* Lookup vnode */
-    ret = lookup_vnode(path, &vnode);
+    /* Lookup vnode. O_NOFOLLOW: don't follow final symlink component. */
+    if (flags & O_NOFOLLOW) {
+        ret = fut_vfs_lookup_nofollow(path, &vnode);
+    } else {
+        ret = lookup_vnode(path, &vnode);
+    }
     if (ret < 0) {
         /* If O_CREAT is set and parent exists, create new file */
         if ((flags & O_CREAT) && (ret == -ENOENT || ret == -2)) {
@@ -1676,6 +1680,12 @@ int fut_vfs_open(const char *path, int flags, int mode) {
             release_lookup_ref(vnode);
             return -EEXIST;
         }
+    }
+
+    /* O_NOFOLLOW: reject if final component is a symbolic link */
+    if ((flags & O_NOFOLLOW) && vnode->type == VN_LNK) {
+        release_lookup_ref(vnode);
+        return -ELOOP;
     }
 
     /* Check if trying to open directory with write flags */

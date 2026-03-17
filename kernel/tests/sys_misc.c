@@ -3007,6 +3007,75 @@ static void test_pipe_epoll(void) {
 }
 
 /* ============================================================
+ * Test 73: EPOLLET edge-triggered mode
+ * ============================================================ */
+#define EPOLLET_FLAG (1U << 31)
+
+static void test_epoll_et(void) {
+    fut_printf("[MISC-TEST] Test 73: EPOLLET edge-triggered\n");
+
+    /* Create pipe and write data */
+    int pipefd[2];
+    long ret = sys_pipe(pipefd);
+    if (ret != 0) {
+        fut_test_fail(73);
+        return;
+    }
+    fut_vfs_write(pipefd[1], "hello", 5);
+
+    /* Create epoll with EPOLLIN|EPOLLET on read end */
+    long epfd = sys_epoll_create1(0);
+    if (epfd < 0) {
+        fut_vfs_close(pipefd[0]);
+        fut_vfs_close(pipefd[1]);
+        fut_test_fail(73);
+        return;
+    }
+
+    struct { uint32_t events; uint64_t data; } __attribute__((packed)) ev = {
+        .events = 0x001 | EPOLLET_FLAG, /* EPOLLIN | EPOLLET */
+        .data = 55
+    };
+    ret = sys_epoll_ctl((int)epfd, 1, pipefd[0], &ev);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ epoll_ctl(EPOLLET): %ld\n", ret);
+        sys_close((int)epfd);
+        fut_vfs_close(pipefd[0]);
+        fut_vfs_close(pipefd[1]);
+        fut_test_fail(73);
+        return;
+    }
+
+    /* First epoll_wait: should see EPOLLIN (data available) */
+    struct { uint32_t events; uint64_t data; } __attribute__((packed)) out = {0};
+    ret = sys_epoll_wait((int)epfd, &out, 1, 0);
+    if (ret != 1) {
+        fut_printf("[MISC-TEST] ✗ first epoll_wait: %ld\n", ret);
+        sys_close((int)epfd);
+        fut_vfs_close(pipefd[0]);
+        fut_vfs_close(pipefd[1]);
+        fut_test_fail(73);
+        return;
+    }
+
+    /* Second epoll_wait WITHOUT reading: edge-triggered should NOT re-report */
+    ret = sys_epoll_wait((int)epfd, &out, 1, 0);
+
+    sys_close((int)epfd);
+    fut_vfs_close(pipefd[0]);
+    fut_vfs_close(pipefd[1]);
+
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ second epoll_wait(ET): %ld (expected 0, edge already reported)\n", ret);
+        fut_test_fail(73);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ EPOLLET: first wait=1, second wait=0 (edge consumed)\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test 52: write on O_RDONLY fd returns EBADF
  * ============================================================ */
 static void test_rdonly_write_ebadf(void) {
@@ -3881,6 +3950,7 @@ void fut_misc_test_thread(void *arg) {
     test_timerfd_epoll();       /* Test 70: timerfd + epoll integration */
     test_eventfd_epoll();       /* Test 71: eventfd + epoll integration */
     test_pipe_epoll();          /* Test 72: pipe + epoll integration */
+    test_epoll_et();            /* Test 73: EPOLLET edge-triggered */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

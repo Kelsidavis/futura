@@ -431,14 +431,7 @@ static void task_cleanup_and_exit(fut_task_t *task, int status, int signal) {
         /* Write 0 to the tid address */
         int zero = 0;
         if (fut_copy_to_user(task->clear_child_tid, &zero, sizeof(int)) == 0) {
-            /* Successfully wrote 0, now wake futex waiter */
             futex_wake_one((uint32_t *)task->clear_child_tid);
-            fut_printf("[TASK] clear_child_tid: wrote 0 to %p and woke futex (Phase 4)\n",
-                       (void *)task->clear_child_tid);
-        } else {
-            /* Failed to write - userspace address may be invalid, just log and continue */
-            fut_printf("[TASK] clear_child_tid: failed to write to %p (invalid address?)\n",
-                       (void *)task->clear_child_tid);
         }
         task->clear_child_tid = NULL;  /* Clear the address so we don't do this twice */
     }

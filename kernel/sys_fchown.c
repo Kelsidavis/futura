@@ -162,10 +162,5 @@ long sys_fchown(int fd, uint32_t uid, uint32_t gid) {
         return ret;
     }
 
-    fut_printf("[FCHOWN] fchown(fd=%d [%s], vnode_ino=%lu, uid=%u [%s], gid=%u [%s], "
-               "cap=%s, caller_uid=%u) -> 0 (ownership changed)\n",
-               local_fd, fd_category, vnode->ino, local_uid, uid_desc, local_gid, gid_desc,
-               capability_status, task->uid);
-
     return 0;
 }

@@ -235,46 +235,8 @@ long sys_ftruncate(int fd, uint64_t length) {
         return -ERANGE;
     }
 
-    /* Phase 2: Track old size for before/after comparison */
-    uint64_t old_size = vnode->size;
-
-    /* Phase 2: Categorize operation type */
-    const char *operation_type;
-    const char *operation_desc;
-    int64_t size_delta;
-
-    if (length == old_size) {
-        operation_type = "no-op";
-        operation_desc = "size unchanged, no truncation needed";
-        size_delta = 0;
-
-        fut_printf("[FTRUNCATE] ftruncate(fd=%d [%s], length=%llu [%s], old_size=%llu, "
-                   "op=%s) -> 0 (%s, Phase 2)\n",
-                   fd, fd_category, length, length_category, old_size, operation_type,
-                   operation_desc);
-        return 0;
-    } else if (length < old_size) {
-        operation_type = "shrink";
-        operation_desc = "reducing file size (Phase 3: will deallocate blocks)";
-        size_delta = (int64_t)length - (int64_t)old_size;
-    } else {
-        operation_type = "extend";
-        operation_desc = "increasing file size (Phase 3: will zero-fill new area)";
-        size_delta = (int64_t)length - (int64_t)old_size;
-    }
-
-    /* Phase 2: Categorize size delta magnitude */
-    const char *delta_category;
-    int64_t abs_delta = (size_delta < 0) ? -size_delta : size_delta;
-
-    if (abs_delta < 4096) {
-        delta_category = "small change (< 4KB)";
-    } else if (abs_delta < 1024 * 1024) {
-        delta_category = "medium change (< 1MB)";
-    } else if (abs_delta < 100 * 1024 * 1024) {
-        delta_category = "large change (< 100MB)";
-    } else {
-        delta_category = "very large change (>= 100MB)";
+    if (length == vnode->size) {
+        return 0;  /* No-op: size unchanged */
     }
 
     /*
@@ -306,19 +268,11 @@ long sys_ftruncate(int fd, uint64_t length) {
                     error_desc = "truncate operation failed";
                     break;
             }
-            fut_printf("[FTRUNCATE] ftruncate(fd=%d [%s], length=%llu [%s], old_size=%llu, "
-                       "delta=%lld [%s], op=%s, ino=%lu) -> %d (%s, Phase 3)\n",
-                       fd, fd_category, length, length_category, old_size, size_delta,
-                       delta_category, operation_type, vnode->ino, ret, error_desc);
+            fut_printf("[FTRUNCATE] ftruncate(fd=%d, length=%llu, ino=%lu) -> %d (%s)\n",
+                       fd, (unsigned long long)length, vnode->ino, ret, error_desc);
             return ret;
         }
 
-        /* Phase 3: Success - blocks allocated/deallocated and size updated */
-        const char *alloc_strategy = (length > old_size) ? "zero-fill" : "dealloc";
-        fut_printf("[FTRUNCATE] ftruncate(fd=%d [%s], length=%llu [%s], old_size=%llu, "
-                   "delta=%lld [%s], op=%s, ino=%lu, strategy=%s) -> 0 (%s, Phase 4: Sparse files)\n",
-                   fd, fd_category, length, length_category, old_size, size_delta,
-                   delta_category, operation_type, vnode->ino, alloc_strategy, operation_desc);
         return 0;
     }
 
@@ -333,11 +287,5 @@ long sys_ftruncate(int fd, uint64_t length) {
      *   - Lazy allocation for extends (reduce immediate I/O cost)
      */
     vnode->size = length;
-
-    fut_printf("[FTRUNCATE] ftruncate(fd=%d [%s], length=%llu [%s], old_size=%llu, "
-               "delta=%lld [%s], op=%s, ino=%lu) -> 0 (no truncate operation, size updated only, Phase 4: Preallocation hints)\n",
-               fd, fd_category, length, length_category, old_size, size_delta,
-               delta_category, operation_type, vnode->ino);
-
     return 0;
 }

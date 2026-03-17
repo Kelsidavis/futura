@@ -415,7 +415,10 @@ void *fut_mm_map_anonymous(fut_mm_t *mm, uintptr_t hint, size_t len, int prot, i
 
     /* MAP_FIXED: unmap any existing mappings in the target range first */
     if ((flags & 0x10) && hint) {
-        fut_mm_unmap(mm, base, aligned);
+        int unmap_ret = fut_mm_unmap(mm, base, aligned);
+        if (unmap_ret < 0 && unmap_ret != -EINVAL) {
+            return (void *)(intptr_t)unmap_ret;
+        }
     }
 
     size_t pages = aligned / PAGE_SIZE;
@@ -702,7 +705,10 @@ void *fut_mm_map_file(fut_mm_t *mm, struct fut_vnode *vnode, uintptr_t hint,
 
     /* MAP_FIXED: unmap any existing mappings in the target range first */
     if ((flags & 0x10) && hint) {
-        fut_mm_unmap(mm, base, aligned);
+        int unmap_ret = fut_mm_unmap(mm, base, aligned);
+        if (unmap_ret < 0 && unmap_ret != -EINVAL) {
+            return (void *)(intptr_t)unmap_ret;
+        }
     }
 
     /* Create VMA to track this mapping without allocating physical pages yet */
@@ -1189,7 +1195,10 @@ void *fut_mm_map_anonymous(fut_mm_t *mm, uintptr_t hint, size_t len, int prot, i
 
     /* MAP_FIXED: unmap any existing mappings in the target range first */
     if ((flags & 0x10) && hint) {
-        fut_mm_unmap(mm, base, aligned);
+        int unmap_ret = fut_mm_unmap(mm, base, aligned);
+        if (unmap_ret < 0 && unmap_ret != -EINVAL) {
+            return (void *)(intptr_t)unmap_ret;
+        }
     }
 
     /* Create VMA to track this mapping */
@@ -1435,7 +1444,10 @@ void *fut_mm_map_file(fut_mm_t *mm, struct fut_vnode *vnode, uintptr_t hint,
 
     /* MAP_FIXED: unmap any existing mappings in the target range first */
     if ((flags & 0x10) && hint) {
-        fut_mm_unmap(mm, base, aligned);
+        int unmap_ret = fut_mm_unmap(mm, base, aligned);
+        if (unmap_ret < 0 && unmap_ret != -EINVAL) {
+            return (void *)(intptr_t)unmap_ret;
+        }
     }
 
     /* Create VMA to track this mapping without allocating physical pages yet */

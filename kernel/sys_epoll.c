@@ -1067,86 +1067,6 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
             }
         }
 
-        /* Phase 2: Categorize events */
-        char events_desc[128];
-        int desc_pos = 0;
-        int has_event = 0;
-
-        if (ev.events & EPOLLIN) {
-            const char *s = "EPOLLIN"; while (*s) { events_desc[desc_pos++] = *s++; }
-            has_event = 1;
-        }
-        if (ev.events & EPOLLOUT) {
-            if (has_event) { events_desc[desc_pos++] = '|'; }
-            const char *s = "EPOLLOUT"; while (*s) { events_desc[desc_pos++] = *s++; }
-            has_event = 1;
-        }
-        if (ev.events & EPOLLERR) {
-            if (has_event) { events_desc[desc_pos++] = '|'; }
-            const char *s = "EPOLLERR"; while (*s) { events_desc[desc_pos++] = *s++; }
-            has_event = 1;
-        }
-        if (ev.events & EPOLLHUP) {
-            if (has_event) { events_desc[desc_pos++] = '|'; }
-            const char *s = "EPOLLHUP"; while (*s) { events_desc[desc_pos++] = *s++; }
-            has_event = 1;
-        }
-        if (!has_event) {
-            const char *s = "none"; while (*s) { events_desc[desc_pos++] = *s++; }
-        }
-        events_desc[desc_pos] = '\0';
-
-        /* Phase 3: Categorize edge-triggered and oneshot modes */
-        const char *mode_desc;
-        if (set->fds[slot].edge_triggered && set->fds[slot].oneshot) {
-            mode_desc = "ET|ONESHOT";
-        } else if (set->fds[slot].edge_triggered) {
-            mode_desc = "ET";
-        } else if (set->fds[slot].oneshot) {
-            mode_desc = "ONESHOT";
-        } else {
-            mode_desc = "level-triggered";
-        }
-
-        /* Success logging */
-        char msg[512];
-        int pos = 0;
-        const char *text = "[EPOLL_CTL] epoll_ctl(epfd=";
-        while (*text) { msg[pos++] = *text++; }
-
-        char num[16]; int num_pos = 0; int val = epfd;
-        if (val == 0) { num[num_pos++] = '0'; }
-        else { char temp[16]; int temp_pos = 0;
-            while (val > 0) { temp[temp_pos++] = '0' + (val % 10); val /= 10; }
-            while (temp_pos > 0) { num[num_pos++] = temp[--temp_pos]; } }
-        num[num_pos] = '\0';
-        for (int j = 0; num[j]; j++) { msg[pos++] = num[j]; }
-
-        text = ", op=ADD, fd=";
-        while (*text) { msg[pos++] = *text++; }
-
-        num_pos = 0; val = fd;
-        if (val == 0) { num[num_pos++] = '0'; }
-        else { char temp[16]; int temp_pos = 0;
-            while (val > 0) { temp[temp_pos++] = '0' + (val % 10); val /= 10; }
-            while (temp_pos > 0) { num[num_pos++] = temp[--temp_pos]; } }
-        num[num_pos] = '\0';
-        for (int j = 0; num[j]; j++) { msg[pos++] = num[j]; }
-
-        text = " [";
-        while (*text) { msg[pos++] = *text++; }
-        while (*fd_category) { msg[pos++] = *fd_category++; }
-        text = "], events=";
-        while (*text) { msg[pos++] = *text++; }
-        for (int j = 0; events_desc[j]; j++) { msg[pos++] = events_desc[j]; }
-        text = ", mode=";
-        while (*text) { msg[pos++] = *text++; }
-        while (*mode_desc) { msg[pos++] = *mode_desc++; }
-        text = ") -> 0 (fd registered, Phase 3)\n";
-        while (*text) { msg[pos++] = *text++; }
-        msg[pos] = '\0';
-        fut_printf("%s", msg);
-
         return 0;
     }
 
@@ -1167,104 +1087,9 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
                 uint32_t base_events = ev.events & ~(EPOLL_ET | EPOLL_ONESHOT);
                 set->fds[i].events = base_events;
 
-                /* Phase 2: Categorize events */
-                char events_desc[128];
-                int desc_pos = 0;
-                int has_event = 0;
-
-                if (ev.events & EPOLLIN) {
-                    const char *s = "EPOLLIN"; while (*s) { events_desc[desc_pos++] = *s++; }
-                    has_event = 1;
-                }
-                if (ev.events & EPOLLOUT) {
-                    if (has_event) { events_desc[desc_pos++] = '|'; }
-                    const char *s = "EPOLLOUT"; while (*s) { events_desc[desc_pos++] = *s++; }
-                    has_event = 1;
-                }
-                if (ev.events & EPOLLERR) {
-                    if (has_event) { events_desc[desc_pos++] = '|'; }
-                    const char *s = "EPOLLERR"; while (*s) { events_desc[desc_pos++] = *s++; }
-                    has_event = 1;
-                }
-                if (ev.events & EPOLLHUP) {
-                    if (has_event) { events_desc[desc_pos++] = '|'; }
-                    const char *s = "EPOLLHUP"; while (*s) { events_desc[desc_pos++] = *s++; }
-                    has_event = 1;
-                }
-                if (!has_event) {
-                    const char *s = "none"; while (*s) { events_desc[desc_pos++] = *s++; }
-                }
-                events_desc[desc_pos] = '\0';
-
-                /* Success logging */
-                char msg[512];
-                int pos = 0;
-                const char *text = "[EPOLL_CTL] epoll_ctl(epfd=";
-                while (*text) { msg[pos++] = *text++; }
-
-                char num[16]; int num_pos = 0; int val = epfd;
-                if (val == 0) { num[num_pos++] = '0'; }
-                else { char temp[16]; int temp_pos = 0;
-                    while (val > 0) { temp[temp_pos++] = '0' + (val % 10); val /= 10; }
-                    while (temp_pos > 0) { num[num_pos++] = temp[--temp_pos]; } }
-                num[num_pos] = '\0';
-                for (int j = 0; num[j]; j++) { msg[pos++] = num[j]; }
-
-                text = ", op=MOD, fd=";
-                while (*text) { msg[pos++] = *text++; }
-
-                num_pos = 0; val = fd;
-                if (val == 0) { num[num_pos++] = '0'; }
-                else { char temp[16]; int temp_pos = 0;
-                    while (val > 0) { temp[temp_pos++] = '0' + (val % 10); val /= 10; }
-                    while (temp_pos > 0) { num[num_pos++] = temp[--temp_pos]; } }
-                num[num_pos] = '\0';
-                for (int j = 0; num[j]; j++) { msg[pos++] = num[j]; }
-
-                text = " [";
-                while (*text) { msg[pos++] = *text++; }
-                while (*fd_category) { msg[pos++] = *fd_category++; }
-                text = "], events=";
-                while (*text) { msg[pos++] = *text++; }
-                for (int j = 0; events_desc[j]; j++) { msg[pos++] = events_desc[j]; }
-                text = ") -> 0 (events modified, Phase 2)\n";
-                while (*text) { msg[pos++] = *text++; }
-                msg[pos] = '\0';
-                fut_printf("%s", msg);
-
                 return 0;
             }
         }
-
-        /* FD not found */
-        char msg[256];
-        int pos = 0;
-        const char *text = "[EPOLL_CTL] epoll_ctl(epfd=";
-        while (*text) { msg[pos++] = *text++; }
-
-        char num[16]; int num_pos = 0; int val = epfd;
-        if (val == 0) { num[num_pos++] = '0'; }
-        else { char temp[16]; int temp_pos = 0;
-            while (val > 0) { temp[temp_pos++] = '0' + (val % 10); val /= 10; }
-            while (temp_pos > 0) { num[num_pos++] = temp[--temp_pos]; } }
-        num[num_pos] = '\0';
-        for (int j = 0; num[j]; j++) { msg[pos++] = num[j]; }
-
-        text = ", op=MOD, fd=";
-        while (*text) { msg[pos++] = *text++; }
-
-        num_pos = 0; val = fd;
-        if (val == 0) { num[num_pos++] = '0'; }
-        else { char temp[16]; int temp_pos = 0;
-            while (val > 0) { temp[temp_pos++] = '0' + (val % 10); val /= 10; }
-            while (temp_pos > 0) { num[num_pos++] = temp[--temp_pos]; } }
-        num[num_pos] = '\0';
-        for (int j = 0; num[j]; j++) { msg[pos++] = num[j]; }
-
-        text = ") -> ENOENT (fd not registered)\n";
-        while (*text) { msg[pos++] = *text++; }
-        msg[pos] = '\0';
-        fut_printf("%s", msg);
 
         return -ENOENT;
     }
@@ -1276,73 +1101,9 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
                 set->fds[i].registered = false;
                 set->count--;
                 memset(&set->fds[i], 0, sizeof(set->fds[i]));
-
-                /* Success logging */
-                char msg[256];
-                int pos = 0;
-                const char *text = "[EPOLL_CTL] epoll_ctl(epfd=";
-                while (*text) { msg[pos++] = *text++; }
-
-                char num[16]; int num_pos = 0; int val = epfd;
-                if (val == 0) { num[num_pos++] = '0'; }
-                else { char temp[16]; int temp_pos = 0;
-                    while (val > 0) { temp[temp_pos++] = '0' + (val % 10); val /= 10; }
-                    while (temp_pos > 0) { num[num_pos++] = temp[--temp_pos]; } }
-                num[num_pos] = '\0';
-                for (int j = 0; num[j]; j++) { msg[pos++] = num[j]; }
-
-                text = ", op=DEL, fd=";
-                while (*text) { msg[pos++] = *text++; }
-
-                num_pos = 0; val = fd;
-                if (val == 0) { num[num_pos++] = '0'; }
-                else { char temp[16]; int temp_pos = 0;
-                    while (val > 0) { temp[temp_pos++] = '0' + (val % 10); val /= 10; }
-                    while (temp_pos > 0) { num[num_pos++] = temp[--temp_pos]; } }
-                num[num_pos] = '\0';
-                for (int j = 0; num[j]; j++) { msg[pos++] = num[j]; }
-
-                text = " [";
-                while (*text) { msg[pos++] = *text++; }
-                while (*fd_category) { msg[pos++] = *fd_category++; }
-                text = "]) -> 0 (fd unregistered, Phase 2)\n";
-                while (*text) { msg[pos++] = *text++; }
-                msg[pos] = '\0';
-                fut_printf("%s", msg);
-
                 return 0;
             }
         }
-
-        /* FD not found */
-        char msg[256];
-        int pos = 0;
-        const char *text = "[EPOLL_CTL] epoll_ctl(epfd=";
-        while (*text) { msg[pos++] = *text++; }
-
-        char num[16]; int num_pos = 0; int val = epfd;
-        if (val == 0) { num[num_pos++] = '0'; }
-        else { char temp[16]; int temp_pos = 0;
-            while (val > 0) { temp[temp_pos++] = '0' + (val % 10); val /= 10; }
-            while (temp_pos > 0) { num[num_pos++] = temp[--temp_pos]; } }
-        num[num_pos] = '\0';
-        for (int j = 0; num[j]; j++) { msg[pos++] = num[j]; }
-
-        text = ", op=DEL, fd=";
-        while (*text) { msg[pos++] = *text++; }
-
-        num_pos = 0; val = fd;
-        if (val == 0) { num[num_pos++] = '0'; }
-        else { char temp[16]; int temp_pos = 0;
-            while (val > 0) { temp[temp_pos++] = '0' + (val % 10); val /= 10; }
-            while (temp_pos > 0) { num[num_pos++] = temp[--temp_pos]; } }
-        num[num_pos] = '\0';
-        for (int j = 0; num[j]; j++) { msg[pos++] = num[j]; }
-
-        text = ") -> ENOENT (fd not registered)\n";
-        while (*text) { msg[pos++] = *text++; }
-        msg[pos] = '\0';
-        fut_printf("%s", msg);
 
         return -ENOENT;
     }

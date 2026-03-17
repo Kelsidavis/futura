@@ -689,8 +689,17 @@ static int ramfs_create(struct fut_vnode *dir, const char *name, uint32_t mode, 
     vnode->ops = dir->ops;  /* Same ops as parent */
     vnode->uid = 0;  /* Will be set by vfs_init_vnode_ownership */
     vnode->gid = 0;  /* Will be set by vfs_init_vnode_ownership */
-    vnode->parent = NULL;
-    vnode->name = NULL;
+    vnode->parent = dir;  /* Link to parent for '..' traversal */
+    /* Store name for path reconstruction */
+    {
+        size_t nlen = 0;
+        while (name[nlen]) nlen++;
+        char *name_copy = fut_malloc(nlen + 1);
+        if (name_copy) {
+            for (size_t k = 0; k <= nlen; k++) name_copy[k] = name[k];
+        }
+        vnode->name = name_copy;
+    }
 
     /* Initialize vnode ownership based on creating process and parent directory */
     vfs_init_vnode_ownership(vnode, dir, mode);
@@ -801,8 +810,17 @@ static int ramfs_mkdir(struct fut_vnode *dir, const char *name, uint32_t mode) {
     vnode->ops = dir->ops;
     vnode->uid = 0;  /* Will be set by vfs_init_vnode_ownership */
     vnode->gid = 0;  /* Will be set by vfs_init_vnode_ownership */
-    vnode->parent = NULL;
-    vnode->name = NULL;
+    vnode->parent = dir;  /* Link to parent for '..' traversal */
+    /* Store name for path reconstruction (getcwd) */
+    {
+        size_t nlen = 0;
+        while (name[nlen]) nlen++;
+        char *name_copy = fut_malloc(nlen + 1);
+        if (name_copy) {
+            for (size_t k = 0; k <= nlen; k++) name_copy[k] = name[k];
+        }
+        vnode->name = name_copy;
+    }
 
     /* Initialize vnode ownership based on creating process and parent directory */
     vfs_init_vnode_ownership(vnode, dir, mode);

@@ -768,8 +768,16 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
         }
 
         if (component[0] == '.' && component[1] == '.' && component[2] == '\0') {
-            /* Parent traversal not yet supported - stay within current vnode */
-            VFSDBG("[vfs]  '..' component ignored (unsupported)\n");
+            /* Parent directory traversal via vnode->parent link */
+            if (current->parent && current != effective_root) {
+                struct fut_vnode *parent = current->parent;
+                /* Ref parent before releasing current */
+                if (parent != root_vnode_base)
+                    fut_vnode_ref(parent);
+                release_lookup_ref(current);
+                current = parent;
+            }
+            /* At root or no parent: stay at current (can't go above root) */
             i++;
             continue;
         }

@@ -34,6 +34,7 @@
 #define VFS_TEST_RENAME2    8
 #define VFS_TEST_INOTIFY    9
 #define VFS_TEST_UMOUNT_EXPIRE 10
+#define VFS_TEST_DOTDOT     11
 
 /* Use kernel-level VFS functions (no copy_from_user) */
 #define sys_mkdir(path, mode)           fut_vfs_mkdir(path, (uint32_t)(mode))
@@ -718,6 +719,73 @@ static void test_inotify(void) {
 
 /* ------------------------------------------------------------------ */
 
+/* Test 11: .. path resolution traverses to parent directory */
+static void test_dotdot(void) {
+    fut_printf("[VFS-TEST] Test 11: '..' parent directory traversal\n");
+
+    /* Create /dotdot_test/sub/file.txt */
+    int ret = fut_vfs_mkdir("/dotdot_test", 0755);
+    if (ret != 0 && ret != -EEXIST) {
+        fut_printf("[VFS-TEST] ✗ mkdir /dotdot_test failed: %d\n", ret);
+        fut_test_fail(VFS_TEST_DOTDOT);
+        return;
+    }
+    ret = fut_vfs_mkdir("/dotdot_test/sub", 0755);
+    if (ret != 0 && ret != -EEXIST) {
+        fut_printf("[VFS-TEST] ✗ mkdir /dotdot_test/sub failed: %d\n", ret);
+        fut_test_fail(VFS_TEST_DOTDOT);
+        return;
+    }
+
+    int fd = fut_vfs_open("/dotdot_test/marker.txt", O_WRONLY | O_CREAT, 0644);
+    if (fd < 0) {
+        fut_printf("[VFS-TEST] ✗ create marker.txt failed: %d\n", fd);
+        fut_test_fail(VFS_TEST_DOTDOT);
+        return;
+    }
+    fut_vfs_write(fd, "MARK", 4);
+    fut_vfs_close(fd);
+
+    /* Access marker.txt via /dotdot_test/sub/../marker.txt */
+    fd = fut_vfs_open("/dotdot_test/sub/../marker.txt", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[VFS-TEST] ✗ open via '..' path failed: %d\n", fd);
+        fut_test_fail(VFS_TEST_DOTDOT);
+        return;
+    }
+
+    char buf[8] = {0};
+    ssize_t nr = fut_vfs_read(fd, buf, sizeof(buf));
+    fut_vfs_close(fd);
+
+    if (nr != 4 || memcmp(buf, "MARK", 4) != 0) {
+        fut_printf("[VFS-TEST] ✗ read via '..' path: nr=%zd buf='%s'\n", nr, buf);
+        fut_test_fail(VFS_TEST_DOTDOT);
+        return;
+    }
+
+    /* Also verify /../dotdot_test/marker.txt (.. at root stays at root) */
+    fd = fut_vfs_open("/../dotdot_test/marker.txt", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[VFS-TEST] ✗ open via '/..' path failed: %d\n", fd);
+        fut_test_fail(VFS_TEST_DOTDOT);
+        return;
+    }
+
+    memset(buf, 0, sizeof(buf));
+    nr = fut_vfs_read(fd, buf, sizeof(buf));
+    fut_vfs_close(fd);
+
+    if (nr != 4 || memcmp(buf, "MARK", 4) != 0) {
+        fut_printf("[VFS-TEST] ✗ read via '/..' path: nr=%zd\n", nr);
+        fut_test_fail(VFS_TEST_DOTDOT);
+        return;
+    }
+
+    fut_printf("[VFS-TEST] ✓ '..' path resolution: single and double parent traversal works\n");
+    fut_test_pass();
+}
+
 void fut_vfs_test_thread(void *arg) {
     (void)arg;
 
@@ -733,6 +801,7 @@ void fut_vfs_test_thread(void *arg) {
     test_mount();
     test_umount_expire();
     test_renameat2();
+    test_dotdot();
 
     fut_printf("[VFS-TEST] VFS correctness tests complete\n");
 }

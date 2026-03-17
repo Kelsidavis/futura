@@ -2670,6 +2670,46 @@ static void test_sig_ign_discard(void) {
     fut_test_pass();
 }
 
+extern long sys_socket(int domain, int type, int protocol);
+extern long sys_close(int fd);
+
+/* ============================================================
+ * Test 68: socket() error codes for unsupported types
+ * ============================================================ */
+static void test_socket_errors(void) {
+    fut_printf("[MISC-TEST] Test 68: socket error codes\n");
+
+    /* AF_INET (2) not supported → EAFNOSUPPORT */
+    long ret = sys_socket(2, 1, 0);  /* AF_INET, SOCK_STREAM */
+    if (ret != -97) {  /* EAFNOSUPPORT */
+        fut_printf("[MISC-TEST] ✗ socket(AF_INET) returned %ld (expected -97)\n", ret);
+        if (ret >= 0) sys_close((int)ret);
+        fut_test_fail(68);
+        return;
+    }
+
+    /* AF_UNIX + SOCK_RAW not supported → ENOTSUP */
+    ret = sys_socket(1, 3, 0);  /* AF_UNIX, SOCK_RAW */
+    if (ret >= 0) {
+        sys_close((int)ret);
+        fut_printf("[MISC-TEST] ✗ socket(AF_UNIX, SOCK_RAW) succeeded\n");
+        fut_test_fail(68);
+        return;
+    }
+
+    /* AF_UNIX + SOCK_STREAM should succeed */
+    ret = sys_socket(1, 1, 0);
+    if (ret < 0) {
+        fut_printf("[MISC-TEST] ✗ socket(AF_UNIX, SOCK_STREAM) returned %ld\n", ret);
+        fut_test_fail(68);
+        return;
+    }
+    sys_close((int)ret);
+
+    fut_printf("[MISC-TEST] ✓ socket: EAFNOSUPPORT for AF_INET, AF_UNIX SOCK_STREAM works\n");
+    fut_test_pass();
+}
+
 /* ============================================================
  * Test 52: write on O_RDONLY fd returns EBADF
  * ============================================================ */
@@ -3540,6 +3580,7 @@ void fut_misc_test_thread(void *arg) {
     test_mmap_anonymous();      /* Test 65: mmap anonymous memory */
     test_close_ebadf();         /* Test 66: close invalid fd */
     test_sig_ign_discard();     /* Test 67: SIG_IGN discards pending */
+    test_socket_errors();       /* Test 68: socket error codes */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

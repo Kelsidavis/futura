@@ -4736,6 +4736,97 @@ static void test_sigpending_blocked(void) {
 }
 
 /* ============================================================
+ * Test 90: ftruncate grow/shrink on regular file
+ * ============================================================ */
+extern long sys_lseek(int fd, int64_t offset, int whence);
+
+static void test_ftruncate_regular(void) {
+    fut_printf("[MISC-TEST] Test 90: ftruncate grow/shrink\n");
+
+    int fd = (int)fut_vfs_open("/test_ftruncate.txt", O_CREAT | O_RDWR, 0644);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open failed: %d\n", fd);
+        fut_test_fail(90);
+        return;
+    }
+
+    /* Write 10 bytes */
+    const char *data = "0123456789";
+    fut_vfs_write(fd, data, 10);
+
+    /* Truncate to 5 bytes */
+    long ret = sys_ftruncate(fd, 5);
+    if (ret < 0) {
+        fut_printf("[MISC-TEST] ✗ ftruncate(5) failed: %ld\n", ret);
+        fut_vfs_close(fd);
+        fut_test_fail(90);
+        return;
+    }
+
+    /* Verify size via fstat */
+    struct fut_stat st = {0};
+    sys_fstat(fd, &st);
+    if (st.st_size != 5) {
+        fut_printf("[MISC-TEST] ✗ after truncate(5): size=%llu\n", (unsigned long long)st.st_size);
+        fut_vfs_close(fd);
+        fut_test_fail(90);
+        return;
+    }
+
+    /* Read from beginning — should get 5 bytes */
+    sys_lseek(fd, 0, 0 /* SEEK_SET */);
+    char buf[16] = {0};
+    long n = fut_vfs_read(fd, buf, sizeof(buf));
+    if (n != 5 || buf[0] != '0' || buf[4] != '4') {
+        fut_printf("[MISC-TEST] ✗ read after truncate: n=%ld buf='%.5s'\n", n, buf);
+        fut_vfs_close(fd);
+        fut_test_fail(90);
+        return;
+    }
+
+    /* Grow to 20 bytes (extension should zero-fill) */
+    ret = sys_ftruncate(fd, 20);
+    if (ret < 0) {
+        fut_printf("[MISC-TEST] ✗ ftruncate(20) failed: %ld\n", ret);
+        fut_vfs_close(fd);
+        fut_test_fail(90);
+        return;
+    }
+
+    sys_fstat(fd, &st);
+    if (st.st_size != 20) {
+        fut_printf("[MISC-TEST] ✗ after truncate(20): size=%llu\n", (unsigned long long)st.st_size);
+        fut_vfs_close(fd);
+        fut_test_fail(90);
+        return;
+    }
+
+    /* Read byte at offset 10 — should be zero (extended region) */
+    sys_lseek(fd, 10, 0 /* SEEK_SET */);
+    char zbuf[1] = {(char)0xFF};
+    n = fut_vfs_read(fd, zbuf, 1);
+    if (n != 1 || zbuf[0] != 0) {
+        fut_printf("[MISC-TEST] ✗ extended region not zeroed: byte=%d\n", (int)(unsigned char)zbuf[0]);
+        fut_vfs_close(fd);
+        fut_test_fail(90);
+        return;
+    }
+
+    /* Test lseek SEEK_END */
+    long pos = sys_lseek(fd, -5, 2 /* SEEK_END */);
+    if (pos != 15) {
+        fut_printf("[MISC-TEST] ✗ SEEK_END(-5): pos=%ld (expected 15)\n", pos);
+        fut_vfs_close(fd);
+        fut_test_fail(90);
+        return;
+    }
+
+    fut_vfs_close(fd);
+    fut_printf("[MISC-TEST] ✓ ftruncate: shrink/grow/zero-fill/SEEK_END all correct\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -4834,6 +4925,7 @@ void fut_misc_test_thread(void *arg) {
     test_chmod_fchown();            /* Test 87: chmod/fchmod/fchown */
     test_fstat_type_bits();         /* Test 88: fstat S_IFREG type bits */
     test_sigpending_blocked();      /* Test 89: sigpending blocked signal */
+    test_ftruncate_regular();       /* Test 90: ftruncate grow/shrink */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

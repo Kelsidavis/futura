@@ -35,6 +35,7 @@
 #define VFS_TEST_INOTIFY    9
 #define VFS_TEST_UMOUNT_EXPIRE 10
 #define VFS_TEST_DOTDOT     11
+#define VFS_TEST_EISDIR     12
 
 /* Use kernel-level VFS functions (no copy_from_user) */
 #define sys_mkdir(path, mode)           fut_vfs_mkdir(path, (uint32_t)(mode))
@@ -786,6 +787,32 @@ static void test_dotdot(void) {
     fut_test_pass();
 }
 
+/* Test 12: read() on directory returns EISDIR */
+static void test_read_dir_eisdir(void) {
+    fut_printf("[VFS-TEST] Test 12: read() on directory returns EISDIR\n");
+
+    int fd = fut_vfs_open("/", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[VFS-TEST] ✗ open('/') failed: %d\n", fd);
+        fut_test_fail(VFS_TEST_EISDIR);
+        return;
+    }
+
+    char buf[16];
+    ssize_t nr = fut_vfs_read(fd, buf, sizeof(buf));
+    fut_vfs_close(fd);
+
+    if (nr != -EISDIR) {
+        fut_printf("[VFS-TEST] ✗ read(dir_fd) returned %zd (expected -EISDIR=%d)\n",
+                   nr, -EISDIR);
+        fut_test_fail(VFS_TEST_EISDIR);
+        return;
+    }
+
+    fut_printf("[VFS-TEST] ✓ read() on directory correctly returns EISDIR\n");
+    fut_test_pass();
+}
+
 void fut_vfs_test_thread(void *arg) {
     (void)arg;
 
@@ -802,6 +829,7 @@ void fut_vfs_test_thread(void *arg) {
     test_umount_expire();
     test_renameat2();
     test_dotdot();
+    test_read_dir_eisdir();
 
     fut_printf("[VFS-TEST] VFS correctness tests complete\n");
 }

@@ -2925,6 +2925,88 @@ static void test_eventfd_epoll(void) {
 }
 
 /* ============================================================
+ * Test 72: pipe + epoll wakeup (write wakes read-end epoll)
+ * ============================================================ */
+static void test_pipe_epoll(void) {
+    fut_printf("[MISC-TEST] Test 72: pipe + epoll\n");
+
+    int pipefd[2];
+    long ret = sys_pipe(pipefd);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ pipe: %ld\n", ret);
+        fut_test_fail(72);
+        return;
+    }
+
+    /* Create epoll and add pipe read end */
+    long epfd = sys_epoll_create1(0);
+    if (epfd < 0) {
+        fut_printf("[MISC-TEST] ✗ epoll_create1: %ld\n", epfd);
+        fut_vfs_close(pipefd[0]);
+        fut_vfs_close(pipefd[1]);
+        fut_test_fail(72);
+        return;
+    }
+
+    struct { uint32_t events; uint64_t data; } __attribute__((packed)) ev = {
+        .events = 0x001, /* EPOLLIN */
+        .data = 77
+    };
+    ret = sys_epoll_ctl((int)epfd, 1 /* ADD */, pipefd[0], &ev);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ epoll_ctl: %ld\n", ret);
+        sys_close((int)epfd);
+        fut_vfs_close(pipefd[0]);
+        fut_vfs_close(pipefd[1]);
+        fut_test_fail(72);
+        return;
+    }
+
+    /* Empty pipe — epoll_wait with timeout=0 should return 0 (no events) */
+    struct { uint32_t events; uint64_t data; } __attribute__((packed)) out = {0};
+    ret = sys_epoll_wait((int)epfd, &out, 1, 0);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ epoll_wait(empty pipe) returned %ld\n", ret);
+        sys_close((int)epfd);
+        fut_vfs_close(pipefd[0]);
+        fut_vfs_close(pipefd[1]);
+        fut_test_fail(72);
+        return;
+    }
+
+    /* Write to pipe — should make read end ready */
+    fut_vfs_write(pipefd[1], "hello", 5);
+
+    /* Now epoll_wait should return 1 with EPOLLIN */
+    ret = sys_epoll_wait((int)epfd, &out, 1, 0);
+    sys_close((int)epfd);
+
+    if (ret != 1 || !(out.events & 0x001) || out.data != 77) {
+        fut_printf("[MISC-TEST] ✗ epoll_wait(data pipe) ret=%ld events=0x%x data=%llu\n",
+                   ret, out.events, (unsigned long long)out.data);
+        fut_vfs_close(pipefd[0]);
+        fut_vfs_close(pipefd[1]);
+        fut_test_fail(72);
+        return;
+    }
+
+    /* Read the data */
+    char buf[8];
+    ssize_t nr = fut_vfs_read(pipefd[0], buf, 5);
+    fut_vfs_close(pipefd[0]);
+    fut_vfs_close(pipefd[1]);
+
+    if (nr != 5) {
+        fut_printf("[MISC-TEST] ✗ pipe read: %zd\n", nr);
+        fut_test_fail(72);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ pipe+epoll: empty=0 events, write woke EPOLLIN, data=77\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test 52: write on O_RDONLY fd returns EBADF
  * ============================================================ */
 static void test_rdonly_write_ebadf(void) {
@@ -3798,6 +3880,7 @@ void fut_misc_test_thread(void *arg) {
     test_zero_length_io();      /* Test 69: zero-length read/write */
     test_timerfd_epoll();       /* Test 70: timerfd + epoll integration */
     test_eventfd_epoll();       /* Test 71: eventfd + epoll integration */
+    test_pipe_epoll();          /* Test 72: pipe + epoll integration */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -171,10 +171,17 @@ long sys_fstat(int fd, struct fut_stat *statbuf) {
     /* Handle fds without vnodes: pipes, eventfds, sockets, etc. */
     if (!vnode) {
         struct fut_stat kernel_stat = {0};
-        kernel_stat.st_mode = 0010000 | 0600;  /* S_IFIFO | rw------- */
+        /* Determine file type from access mode:
+         * Pipes have O_RDONLY or O_WRONLY, sockets/eventfds/etc have O_RDWR */
+        int accmode = file->flags & 03;  /* O_ACCMODE */
+        if (accmode == 0 || accmode == 1) {
+            kernel_stat.st_mode = 0010000 | 0600;  /* S_IFIFO | rw------- */
+        } else {
+            kernel_stat.st_mode = 0140000 | 0600;  /* S_IFSOCK | rw------- */
+        }
         kernel_stat.st_nlink = 1;
         kernel_stat.st_blksize = 4096;
-        kernel_stat.st_ino = (uint64_t)(uintptr_t)file;  /* Use file pointer as inode */
+        kernel_stat.st_ino = (uint64_t)(uintptr_t)file;
         if (fut_copy_to_user(local_statbuf, &kernel_stat, sizeof(struct fut_stat)) != 0) {
             return -EFAULT;
         }

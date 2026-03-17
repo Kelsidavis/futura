@@ -64,6 +64,17 @@ enum procfs_kind {
     PROC_LOADAVG,    /* /proc/loadavg */
     PROC_MOUNTS,     /* /proc/mounts */
     PROC_COMM,       /* /proc/<pid>/comm */
+    /* /proc/sys/ subtree */
+    PROC_SYS_DIR,          /* /proc/sys/ */
+    PROC_SYS_KERNEL_DIR,   /* /proc/sys/kernel/ */
+    PROC_SYS_VM_DIR,       /* /proc/sys/vm/ */
+    PROC_SYS_FS_DIR,       /* /proc/sys/fs/ */
+    PROC_SYS_OSTYPE,       /* /proc/sys/kernel/ostype */
+    PROC_SYS_OSRELEASE,    /* /proc/sys/kernel/osrelease */
+    PROC_SYS_HOSTNAME,     /* /proc/sys/kernel/hostname */
+    PROC_SYS_PID_MAX,      /* /proc/sys/kernel/pid_max */
+    PROC_SYS_OVERCOMMIT,   /* /proc/sys/vm/overcommit_memory */
+    PROC_SYS_FILE_MAX,     /* /proc/sys/fs/file-max */
 };
 
 typedef struct {
@@ -84,6 +95,17 @@ typedef struct {
 #define PROC_INO_CPUINFO  6ULL
 #define PROC_INO_LOADAVG  7ULL
 #define PROC_INO_MOUNTS   8ULL
+/* /proc/sys/ inode range: 200-299 */
+#define PROC_INO_SYS_DIR        200ULL
+#define PROC_INO_SYS_KERNEL_DIR 201ULL
+#define PROC_INO_SYS_VM_DIR     202ULL
+#define PROC_INO_SYS_FS_DIR     203ULL
+#define PROC_INO_SYS_OSTYPE     210ULL
+#define PROC_INO_SYS_OSRELEASE  211ULL
+#define PROC_INO_SYS_HOSTNAME   212ULL
+#define PROC_INO_SYS_PID_MAX    213ULL
+#define PROC_INO_SYS_OVERCOMMIT 220ULL
+#define PROC_INO_SYS_FILE_MAX   230ULL
 
 /* Per-PID: pid * 100 + offset */
 #define PROC_INO_PID_DIR(p)    (1000ULL + (uint64_t)(p) * 100 + 0)
@@ -623,6 +645,14 @@ static size_t gen_comm(char *buf, size_t cap, fut_task_t *task) {
     return b.pos;
 }
 
+/* /proc/sys/kernel/ and /proc/sys/vm/ file generators */
+static size_t gen_sysctl_str(char *buf, size_t cap, const char *value) {
+    struct pbuf b = { buf, 0, cap };
+    pb_str(&b, value);
+    pb_char(&b, '\n');
+    return b.pos;
+}
+
 /* ============================================================
  *   File Operations
  * ============================================================ */
@@ -681,6 +711,24 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             total = task ? gen_comm(tmp, GEN_BUF, task) : 0;
             break;
         }
+        case PROC_SYS_OSTYPE:
+            total = gen_sysctl_str(tmp, GEN_BUF, "Linux");
+            break;
+        case PROC_SYS_OSRELEASE:
+            total = gen_sysctl_str(tmp, GEN_BUF, "6.1.0-futura");
+            break;
+        case PROC_SYS_HOSTNAME:
+            total = gen_sysctl_str(tmp, GEN_BUF, "futura");
+            break;
+        case PROC_SYS_PID_MAX:
+            total = gen_sysctl_str(tmp, GEN_BUF, "32768");
+            break;
+        case PROC_SYS_OVERCOMMIT:
+            total = gen_sysctl_str(tmp, GEN_BUF, "0");
+            break;
+        case PROC_SYS_FILE_MAX:
+            total = gen_sysctl_str(tmp, GEN_BUF, "1048576");
+            break;
         default:
             fut_free(tmp);
             return -EINVAL;
@@ -862,6 +910,11 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0100444, PROC_MOUNTS, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "sys")) {
+            *result = procfs_alloc_vnode(mnt, VN_DIR, PROC_INO_SYS_DIR,
+                                          0040555, PROC_SYS_DIR, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         /* Try numeric PID */
         uint64_t pid = parse_dec(name);
         if (pid != (uint64_t)-1 && pid > 0) {
@@ -924,6 +977,67 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
         return -ENOENT;
     }
 
+    if (dn->kind == PROC_SYS_DIR) {
+        if (STREQ(name, "kernel")) {
+            *result = procfs_alloc_vnode(mnt, VN_DIR, PROC_INO_SYS_KERNEL_DIR,
+                                          0040555, PROC_SYS_KERNEL_DIR, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "vm")) {
+            *result = procfs_alloc_vnode(mnt, VN_DIR, PROC_INO_SYS_VM_DIR,
+                                          0040555, PROC_SYS_VM_DIR, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "fs")) {
+            *result = procfs_alloc_vnode(mnt, VN_DIR, PROC_INO_SYS_FS_DIR,
+                                          0040555, PROC_SYS_FS_DIR, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        return -ENOENT;
+    }
+
+    if (dn->kind == PROC_SYS_KERNEL_DIR) {
+        if (STREQ(name, "ostype")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_OSTYPE,
+                                          0100444, PROC_SYS_OSTYPE, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "osrelease")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_OSRELEASE,
+                                          0100444, PROC_SYS_OSRELEASE, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "hostname")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_HOSTNAME,
+                                          0100644, PROC_SYS_HOSTNAME, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "pid_max")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_PID_MAX,
+                                          0100644, PROC_SYS_PID_MAX, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        return -ENOENT;
+    }
+
+    if (dn->kind == PROC_SYS_VM_DIR) {
+        if (STREQ(name, "overcommit_memory")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_OVERCOMMIT,
+                                          0100644, PROC_SYS_OVERCOMMIT, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        return -ENOENT;
+    }
+
+    if (dn->kind == PROC_SYS_FS_DIR) {
+        if (STREQ(name, "file-max")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_FILE_MAX,
+                                          0100644, PROC_SYS_FILE_MAX, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        return -ENOENT;
+    }
+
     if (dn->kind == PROC_FD_DIR) {
         uint64_t pid = dn->pid;
         uint64_t fd  = parse_dec(name);
@@ -950,23 +1064,24 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
     uint64_t idx = *cookie;
 
     if (dn->kind == PROC_ROOT) {
-        /* Fixed entries: ., .., self, meminfo, version, uptime, cpuinfo, loadavg, mounts */
+        /* Fixed entries: ., .., self, meminfo, version, uptime, cpuinfo, loadavg, mounts, sys */
         static const char *fixed[] = {
             ".", "..", "self", "meminfo", "version", "uptime", "cpuinfo",
-            "loadavg", "mounts"
+            "loadavg", "mounts", "sys"
         };
         static const uint8_t fixed_type[] = {
             FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
             FUT_VDIR_TYPE_SYMLINK,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
-            FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG
+            FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+            FUT_VDIR_TYPE_DIR
         };
         static const uint64_t fixed_ino[] = {
             PROC_INO_ROOT, PROC_INO_ROOT,
             PROC_INO_SELF, PROC_INO_MEMINFO, PROC_INO_VERSION, PROC_INO_UPTIME,
-            PROC_INO_CPUINFO, PROC_INO_LOADAVG, PROC_INO_MOUNTS
+            PROC_INO_CPUINFO, PROC_INO_LOADAVG, PROC_INO_MOUNTS, PROC_INO_SYS_DIR
         };
-        if (idx < 9) {
+        if (idx < 10) {
             de->d_ino    = fixed_ino[idx];
             de->d_off    = idx + 1;
             de->d_type   = fixed_type[idx];
@@ -989,7 +1104,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
          * increasing; newly-forked tasks will appear if their PID is
          * greater than the last-seen PID.
          */
-        uint64_t min_pid = idx - 9;  /* start scanning for pid > min_pid */
+        uint64_t min_pid = idx - 10;  /* start scanning for pid > min_pid */
         fut_task_t *best = NULL;
         uint64_t   best_pid = (uint64_t)-1;
         fut_task_t *t = fut_task_list;
@@ -1014,14 +1129,14 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         pidname[pn] = '\0';
 
         de->d_ino    = PROC_INO_PID_DIR(best->pid);
-        de->d_off    = 9 + best->pid + 1;
+        de->d_off    = 10 + best->pid + 1;
         de->d_type   = FUT_VDIR_TYPE_DIR;
         de->d_reclen = sizeof(*de);
         size_t nl = (size_t)pn;
         if (nl > FUT_VFS_NAME_MAX) nl = FUT_VFS_NAME_MAX;
         __builtin_memcpy(de->d_name, pidname, nl);
         de->d_name[nl] = '\0';
-        *cookie = 9 + best->pid + 1;  /* resume after this pid */
+        *cookie = 10 + best->pid + 1;  /* resume after this pid */
         return 0;
     }
 
@@ -1068,6 +1183,59 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         }
         return -ENOENT;
     }
+
+    /* Generic readdir helper for small fixed-entry directories */
+#define SYS_DIR_ENTRY(nm, tp, ino)  do { \
+    de->d_ino = (ino); de->d_off = idx + 1; de->d_type = (tp); \
+    de->d_reclen = sizeof(*de); \
+    size_t _nl = 0; while ((nm)[_nl]) _nl++; \
+    if (_nl > FUT_VFS_NAME_MAX) _nl = FUT_VFS_NAME_MAX; \
+    __builtin_memcpy(de->d_name, (nm), _nl); de->d_name[_nl] = '\0'; \
+    *cookie = idx + 1; return 0; \
+} while (0)
+
+    if (dn->kind == PROC_SYS_DIR) {
+        static const char *e[] = { ".", "..", "kernel", "vm", "fs" };
+        static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
+                                     FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR };
+        static const uint64_t i[] = { PROC_INO_SYS_DIR, PROC_INO_ROOT,
+                                      PROC_INO_SYS_KERNEL_DIR, PROC_INO_SYS_VM_DIR,
+                                      PROC_INO_SYS_FS_DIR };
+        if (idx < 5) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+        return -ENOENT;
+    }
+
+    if (dn->kind == PROC_SYS_KERNEL_DIR) {
+        static const char *e[] = { ".", "..", "ostype", "osrelease", "hostname", "pid_max" };
+        static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG };
+        static const uint64_t i[] = { PROC_INO_SYS_KERNEL_DIR, PROC_INO_SYS_DIR,
+                                      PROC_INO_SYS_OSTYPE, PROC_INO_SYS_OSRELEASE,
+                                      PROC_INO_SYS_HOSTNAME, PROC_INO_SYS_PID_MAX };
+        if (idx < 6) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+        return -ENOENT;
+    }
+
+    if (dn->kind == PROC_SYS_VM_DIR) {
+        static const char *e[] = { ".", "..", "overcommit_memory" };
+        static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_REG };
+        static const uint64_t i[] = { PROC_INO_SYS_VM_DIR, PROC_INO_SYS_DIR,
+                                      PROC_INO_SYS_OVERCOMMIT };
+        if (idx < 3) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+        return -ENOENT;
+    }
+
+    if (dn->kind == PROC_SYS_FS_DIR) {
+        static const char *e[] = { ".", "..", "file-max" };
+        static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_REG };
+        static const uint64_t i[] = { PROC_INO_SYS_FS_DIR, PROC_INO_SYS_DIR,
+                                      PROC_INO_SYS_FILE_MAX };
+        if (idx < 3) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+        return -ENOENT;
+    }
+
+#undef SYS_DIR_ENTRY
 
     if (dn->kind == PROC_FD_DIR) {
         uint64_t pid = dn->pid;

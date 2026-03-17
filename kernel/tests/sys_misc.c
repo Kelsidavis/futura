@@ -5560,6 +5560,75 @@ static void test_procfs_self_comm(void) {
 }
 
 /* ============================================================
+ * Helper: read a procfs sysctl file and return length (< 0 on error)
+ * ============================================================ */
+static ssize_t read_sysctl(const char *path, char *buf, size_t bufsz) {
+    int fd = fut_vfs_open(path, 0, 0);
+    if (fd < 0) return fd;
+    ssize_t n = fut_vfs_read(fd, buf, bufsz - 1);
+    fut_vfs_close(fd);
+    if (n > 0) buf[n] = '\0';
+    return n;
+}
+
+/* ============================================================
+ * Test 108: /proc/sys/kernel/ostype == "Linux"
+ * ============================================================ */
+static void test_procfs_sysctl_ostype(void) {
+    fut_printf("[MISC-TEST] Test 108: /proc/sys/kernel/ostype\n");
+    char buf[64]; __builtin_memset(buf, 0, sizeof(buf));
+    ssize_t n = read_sysctl("/proc/sys/kernel/ostype", buf, sizeof(buf));
+    if (n < 5) {
+        fut_printf("[MISC-TEST] ✗ ostype: short read (%ld)\n", (long)n);
+        fut_test_fail(108); return;
+    }
+    /* buf should start with "Linux" */
+    if (buf[0]!='L'||buf[1]!='i'||buf[2]!='n'||buf[3]!='u'||buf[4]!='x') {
+        fut_printf("[MISC-TEST] ✗ ostype: unexpected '%s'\n", buf);
+        fut_test_fail(108); return;
+    }
+    if (buf[n-1] == '\n') buf[n-1] = '\0';
+    fut_printf("[MISC-TEST] ✓ /proc/sys/kernel/ostype: '%s'\n", buf);
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 109: /proc/sys/kernel/osrelease non-empty
+ * ============================================================ */
+static void test_procfs_sysctl_osrelease(void) {
+    fut_printf("[MISC-TEST] Test 109: /proc/sys/kernel/osrelease\n");
+    char buf[64]; __builtin_memset(buf, 0, sizeof(buf));
+    ssize_t n = read_sysctl("/proc/sys/kernel/osrelease", buf, sizeof(buf));
+    if (n <= 0) {
+        fut_printf("[MISC-TEST] ✗ osrelease: read failed (%ld)\n", (long)n);
+        fut_test_fail(109); return;
+    }
+    if (buf[n-1] == '\n') buf[n-1] = '\0';
+    fut_printf("[MISC-TEST] ✓ /proc/sys/kernel/osrelease: '%s'\n", buf);
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 110: /proc/sys/vm/overcommit_memory is "0"
+ * ============================================================ */
+static void test_procfs_sysctl_overcommit(void) {
+    fut_printf("[MISC-TEST] Test 110: /proc/sys/vm/overcommit_memory\n");
+    char buf[16]; __builtin_memset(buf, 0, sizeof(buf));
+    ssize_t n = read_sysctl("/proc/sys/vm/overcommit_memory", buf, sizeof(buf));
+    if (n <= 0) {
+        fut_printf("[MISC-TEST] ✗ overcommit_memory: read failed (%ld)\n", (long)n);
+        fut_test_fail(110); return;
+    }
+    if (buf[0] < '0' || buf[0] > '2') {
+        fut_printf("[MISC-TEST] ✗ overcommit_memory: unexpected '%s'\n", buf);
+        fut_test_fail(110); return;
+    }
+    if (buf[n-1] == '\n') buf[n-1] = '\0';
+    fut_printf("[MISC-TEST] ✓ /proc/sys/vm/overcommit_memory: '%s'\n", buf);
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -5676,6 +5745,9 @@ void fut_misc_test_thread(void *arg) {
     test_procfs_loadavg();          /* Test 105: /proc/loadavg format */
     test_procfs_mounts();           /* Test 106: /proc/mounts non-empty */
     test_procfs_self_comm();        /* Test 107: /proc/self/comm = task name */
+    test_procfs_sysctl_ostype();    /* Test 108: /proc/sys/kernel/ostype = Linux */
+    test_procfs_sysctl_osrelease(); /* Test 109: /proc/sys/kernel/osrelease */
+    test_procfs_sysctl_overcommit();/* Test 110: /proc/sys/vm/overcommit_memory */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

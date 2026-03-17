@@ -568,8 +568,31 @@ static fut_thread_t *select_next_thread(void) {
 
     fut_spinlock_acquire(&percpu->queue_lock);
 
+    /* Scan ready queue for highest-priority thread (lowest nice value).
+     * RT threads (SCHED_FIFO/SCHED_RR) always preempt normal threads.
+     * Among normal threads, lower nice = higher priority. */
     fut_thread_t *next = percpu->ready_queue_head;
+    fut_thread_t *best = next;
+    if (next) {
+        int best_prio = 40;  /* Worst possible (nice 19 + 20 offset) */
+        if (best->task) best_prio = best->task->nice;
+        if (best->sched_policy == 1 || best->sched_policy == 2)  /* SCHED_FIFO/RR */
+            best_prio = -100 - best->rt_priority;  /* RT always wins */
 
+        fut_thread_t *t = next->next;
+        while (t) {
+            int prio = 40;
+            if (t->task) prio = t->task->nice;
+            if (t->sched_policy == 1 || t->sched_policy == 2)
+                prio = -100 - t->rt_priority;
+            if (prio < best_prio) {
+                best_prio = prio;
+                best = t;
+            }
+            t = t->next;
+        }
+        next = best;
+    }
 
     // If no ready threads locally, try work-stealing
     if (!next) {
@@ -587,13 +610,15 @@ static fut_thread_t *select_next_thread(void) {
         return next ? next : percpu->idle_thread;
     }
 
-    // Remove from head of ready queue (local thread available)
-    percpu->ready_queue_head = next->next;
-    if (percpu->ready_queue_head) {
-        percpu->ready_queue_head->prev = NULL;
-    } else {
-        percpu->ready_queue_tail = NULL;
-    }
+    /* Remove selected thread from ready queue (may not be at head) */
+    if (next->prev)
+        next->prev->next = next->next;
+    else
+        percpu->ready_queue_head = next->next;
+    if (next->next)
+        next->next->prev = next->prev;
+    else
+        percpu->ready_queue_tail = next->prev;
 
     next->next = NULL;
     next->prev = NULL;
@@ -627,21 +652,13 @@ void fut_schedule(void) {
     fut_percpu_t *percpu = fut_percpu_get();
     fut_thread_t *idle = percpu ? percpu->idle_thread : NULL;
 
-    if (!next) {
+    if (!next)
         next = idle;
-#if defined(__aarch64__)
-        fut_printf("[SCHED] No next thread, using idle=%p\n", (void*)idle);
-#endif
-    }
 
-    // If scheduler not initialized yet (no idle thread), just return
-    // This can happen if timer IRQs fire during early boot
-    if (!next) {
-#if defined(__aarch64__)
-        fut_printf("[SCHED] No threads available, returning early\n");
-#endif
+    /* If scheduler not initialized yet (no idle thread), just return.
+     * Can happen if timer IRQs fire during early boot. */
+    if (!next)
         return;
-    }
 
     /* CRITICAL: Disable local interrupts to close the race window between
      * select_next_thread() (which already removed 'next' from the ready queue)

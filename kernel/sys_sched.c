@@ -56,8 +56,6 @@ long sys_sched_yield(void) {
     /* Get current thread for yield statistics tracking */
     fut_thread_t *thread = fut_thread_current();
 
-    fut_printf("[SCHED] sched_yield() pid=%llu\n", task->pid);
-
     /* Trigger a reschedule, allowing other threads to run.
      * The scheduler will select the next runnable thread. */
     fut_schedule();

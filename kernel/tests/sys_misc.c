@@ -2254,6 +2254,37 @@ static void test_epoll_wait_eintr(void) {
     fut_test_pass();
 }
 
+extern long sys_getdents64(unsigned int fd, void *dirp, unsigned int count);
+
+/* ============================================================
+ * Test 51: getdents64 rejects too-small buffer with EINVAL
+ * ============================================================ */
+static void test_getdents64_small_buf(void) {
+    fut_printf("[MISC-TEST] Test 51: getdents64 small buffer\n");
+
+    /* Open root directory */
+    int fd = fut_vfs_open("/", 00200000, 0);  /* O_DIRECTORY */
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open / failed: %d\n", fd);
+        fut_test_fail(51);
+        return;
+    }
+
+    /* Buffer too small for one aligned dirent64 (< 24 bytes) → EINVAL */
+    char buf[16];
+    long ret = sys_getdents64((unsigned int)fd, buf, 16);
+    fut_vfs_close(fd);
+
+    if (ret != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ getdents64(count=16) returned %ld (expected EINVAL)\n", ret);
+        fut_test_fail(51);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ getdents64: EINVAL for buffer < 24 bytes\n");
+    fut_test_pass();
+}
+
 /* ============================================================
  * Test 38: setrlimit hard limit can be raised by root, denied for non-root
  * ============================================================ */
@@ -2682,6 +2713,7 @@ void fut_misc_test_thread(void *arg) {
     test_pipe_read_eintr();     /* Test 48: pipe read EINTR */
     test_eventfd_eintr();       /* Test 49: eventfd read EINTR */
     test_epoll_wait_eintr();    /* Test 50: epoll_wait EINTR */
+    test_getdents64_small_buf(); /* Test 51: getdents64 small buffer */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -113,9 +113,6 @@ long sys_sched_setparam(int pid, const struct sched_param *param) {
         target_thread->rt_priority = kparam.sched_priority;
     }
 
-    fut_printf("[SCHED] sched_setparam(pid=%d, priority=%d) -> 0\n",
-               pid, kparam.sched_priority);
-
     return 0;
 }
 
@@ -314,20 +311,16 @@ long sys_sched_getscheduler(int pid) {
  */
 long sys_sched_get_priority_max(int policy) {
     int max_priority;
-    const char *policy_name;
 
     switch (policy) {
         case SCHED_OTHER:
         case SCHED_BATCH:
         case SCHED_IDLE:
-            policy_name = (policy == SCHED_OTHER) ? "SCHED_OTHER" :
-                         (policy == SCHED_BATCH) ? "SCHED_BATCH" : "SCHED_IDLE";
             max_priority = 0;  /* Non-RT policies only support priority 0 */
             break;
 
         case SCHED_FIFO:
         case SCHED_RR:
-            policy_name = (policy == SCHED_FIFO) ? "SCHED_FIFO" : "SCHED_RR";
             max_priority = 99;  /* RT policies support 1-99 */
             break;
 
@@ -336,9 +329,6 @@ long sys_sched_get_priority_max(int policy) {
                        "(invalid policy)\n", policy);
             return -EINVAL;
     }
-
-    fut_printf("[SCHED] sched_get_priority_max(policy=%s) -> %d\n",
-               policy_name, max_priority);
 
     return max_priority;
 }
@@ -357,21 +347,17 @@ long sys_sched_get_priority_max(int policy) {
  */
 long sys_sched_get_priority_min(int policy) {
     int min_priority;
-    const char *policy_name;
 
     switch (policy) {
         case SCHED_OTHER:
         case SCHED_BATCH:
         case SCHED_IDLE:
-            policy_name = (policy == SCHED_OTHER) ? "SCHED_OTHER" :
-                         (policy == SCHED_BATCH) ? "SCHED_BATCH" : "SCHED_IDLE";
-            min_priority = 0;  /* Non-RT policies only support priority 0 */
+            min_priority = 0;
             break;
 
         case SCHED_FIFO:
         case SCHED_RR:
-            policy_name = (policy == SCHED_FIFO) ? "SCHED_FIFO" : "SCHED_RR";
-            min_priority = 1;  /* RT policies support 1-99 */
+            min_priority = 1;
             break;
 
         default:
@@ -379,9 +365,6 @@ long sys_sched_get_priority_min(int policy) {
                        "(invalid policy)\n", policy);
             return -EINVAL;
     }
-
-    fut_printf("[SCHED] sched_get_priority_min(policy=%s) -> %d\n",
-               policy_name, min_priority);
 
     return min_priority;
 }

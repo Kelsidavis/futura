@@ -152,10 +152,7 @@ long sys_getpriority(int which, int who) {
         fut_printf("[SCHED] getpriority(%s, who=%d) -> ESRCH\n", which_desc, who);
         return -ESRCH;
     }
-    int return_value = 20 - best_nice;
-    fut_printf("[SCHED] getpriority(%s, who=%d) -> %d (nice=%d)\n",
-               which_desc, who, return_value, best_nice);
-    return return_value;
+    return 20 - best_nice;
 }
 
 /**
@@ -212,20 +209,6 @@ long sys_setpriority(int which, int who, int prio) {
         fut_printf("[SCHED] setpriority(which=%s, who=%d, prio=%d) -> EINVAL (prio out of range [%d, %d])\n",
                    which_desc, who, prio, PRIO_MIN, PRIO_MAX);
         return -EINVAL;
-    }
-
-    /* Determine priority description */
-    const char *prio_desc;
-    if (prio < -10) {
-        prio_desc = "very high priority";
-    } else if (prio < 0) {
-        prio_desc = "high priority";
-    } else if (prio == 0) {
-        prio_desc = "normal priority";
-    } else if (prio < 10) {
-        prio_desc = "low priority";
-    } else {
-        prio_desc = "very low priority";
     }
 
     extern fut_task_t *fut_task_list;
@@ -305,7 +288,5 @@ long sys_setpriority(int which, int who, int prio) {
         return -ESRCH;
     }
 
-    fut_printf("[SCHED] setpriority(%s, who=%d, prio=%d [%s]) -> 0\n",
-               which_desc, who, prio, prio_desc);
     return 0;
 }

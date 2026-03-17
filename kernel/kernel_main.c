@@ -1166,6 +1166,17 @@ void fut_kernel_main(void) {
     extern void dev_null_init(void);
     dev_null_init();
 
+    /* Create /dev/stdin, /dev/stdout, /dev/stderr as device aliases.
+     * Many programs and shell scripts expect these to exist.
+     * On Linux these are symlinks to /proc/self/fd/N. Since we don't have
+     * procfs, register them as chrdev aliases to the console device. */
+    {
+        extern int devfs_create_chr(const char *path, unsigned major, unsigned minor);
+        devfs_create_chr("/dev/stdin",  4, 0);   /* Same as /dev/console */
+        devfs_create_chr("/dev/stdout", 4, 0);
+        devfs_create_chr("/dev/stderr", 4, 0);
+    }
+
     fut_printf("[INIT] Root filesystem mounted (ramfs at /)\n");
 
     /* Create /tmp directory for temporary files */
@@ -1209,7 +1220,7 @@ void fut_kernel_main(void) {
         planned_tests += 14u; /* clock_sched: getres, sched_param, sched_policy, itimer, rusage, times, getpriority, setpriority, getpriority(-who), setpriority(-who), unshare(0), unshare(invalid), rr_get_interval, clock_gettime */
         planned_tests += 13u; /* vfs: O_TRUNC, O_APPEND, relpath, dir_mtime, readlink, hardlink, mount, renameat2, inotify, umount expire, dotdot, eisdir, chdir_dotdot */
         planned_tests += 13u; /* poll: file ready, eventfd not-ready, eventfd ready, POLLNVAL, select file, select pipe, pselect6 pipe, pselect6 sigmask restore, timeout-only sleep, timerfd readiness, signalfd readiness, pipe EOF, select pipe EOF */
-        planned_tests += 92u; /* misc(92): +fork_fd_flags_independence */
+        planned_tests += 93u; /* misc(93): +dev_stdio_symlinks */
         // planned_tests += 1u; /* block */
         // planned_tests += 1u; /* futfs */
         // planned_tests += 1u; /* net */

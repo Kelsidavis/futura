@@ -4933,6 +4933,44 @@ static void test_dup2_same_fd_noop(void) {
 }
 
 /* ============================================================
+ * Test 93: /dev/stdin, /dev/stdout, /dev/stderr symlinks exist
+ * ============================================================ */
+static void test_dev_stdio_symlinks(void) {
+    fut_printf("[MISC-TEST] Test 93: /dev/stdin,stdout,stderr devices\n");
+
+    /* All three should be openable as console aliases */
+    int fd0 = (int)fut_vfs_open("/dev/stdin", O_RDWR, 0);
+    int fd1 = (int)fut_vfs_open("/dev/stdout", O_RDWR, 0);
+    int fd2 = (int)fut_vfs_open("/dev/stderr", O_RDWR, 0);
+
+    if (fd0 < 0 || fd1 < 0 || fd2 < 0) {
+        fut_printf("[MISC-TEST] ✗ open /dev/stdin=%d /dev/stdout=%d /dev/stderr=%d\n",
+                   fd0, fd1, fd2);
+        if (fd0 >= 0) fut_vfs_close(fd0);
+        if (fd1 >= 0) fut_vfs_close(fd1);
+        if (fd2 >= 0) fut_vfs_close(fd2);
+        fut_test_fail(93);
+        return;
+    }
+
+    /* Writing to /dev/stdout should succeed (console) */
+    const char *msg = "x";
+    long n = fut_vfs_write(fd1, msg, 1);
+    fut_vfs_close(fd0);
+    fut_vfs_close(fd1);
+    fut_vfs_close(fd2);
+
+    if (n != 1) {
+        fut_printf("[MISC-TEST] ✗ write to /dev/stdout: %ld\n", n);
+        fut_test_fail(93);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ /dev/stdin,stdout,stderr: openable console aliases\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -5034,6 +5072,7 @@ void fut_misc_test_thread(void *arg) {
     test_ftruncate_regular();       /* Test 90: ftruncate grow/shrink */
     test_write_past_eof_zerofill(); /* Test 91: write past EOF zero-fills gap */
     test_dup2_same_fd_noop();       /* Test 92: dup2(fd,fd) preserves cloexec */
+    test_dev_stdio_symlinks();      /* Test 93: /dev/stdin,stdout,stderr */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

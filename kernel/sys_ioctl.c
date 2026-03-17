@@ -37,6 +37,8 @@
 #define TIOCGSID    0x5429
 #define FIOCLEX     0x5451
 #define FIONCLEX    0x5450
+#define TCSETSW     0x5403  /* set termios, drain output first */
+#define TCSETSF     0x5404  /* set termios, drain + flush input first */
 
 /* Global terminal window size — shared by all TTY fds */
 static struct {
@@ -45,6 +47,42 @@ static struct {
     uint16_t ws_xpixel;
     uint16_t ws_ypixel;
 } g_winsize = { .ws_row = 24, .ws_col = 80, .ws_xpixel = 0, .ws_ypixel = 0 };
+
+/*
+ * Global termios state — 60-byte raw buffer matching Linux struct termios layout:
+ *   offset  0: c_iflag (4 bytes)
+ *   offset  4: c_oflag (4 bytes)
+ *   offset  8: c_cflag (4 bytes)
+ *   offset 12: c_lflag (4 bytes)
+ *   offset 16: c_line  (1 byte, line discipline)
+ *   offset 17: c_cc[19] (19 bytes)
+ * Initialized to canonical mode with ICANON|ECHO|ISIG.
+ */
+static char g_termios[60];
+
+static void termios_init(void) {
+    static int done = 0;
+    if (done) return;
+    done = 1;
+    __builtin_memset(g_termios, 0, sizeof(g_termios));
+    /* c_iflag: ICRNL(0x100) | BRKINT(0x002) */
+    uint32_t iflag = 0x102;
+    /* c_oflag: OPOST(0x01) | ONLCR(0x04) */
+    uint32_t oflag = 0x05;
+    /* c_cflag: B38400(0x0F) | CS8(0x30) | CREAD(0x80) | CLOCAL(0x800) */
+    uint32_t cflag = 0x8BF;
+    /* c_lflag: ISIG|ICANON|ECHO|ECHOE|ECHOK|ECHOCTL|ECHOKE|IEXTEN */
+    uint32_t lflag = 0x8A3B;
+    static const unsigned char kcc[19] = {
+        3, 28, 127, 21, 4, 0, 1, 0, 17, 19, 26, 0, 18, 15, 23, 22, 0, 0, 0,
+    };
+    __builtin_memcpy(g_termios +  0, &iflag, 4);
+    __builtin_memcpy(g_termios +  4, &oflag, 4);
+    __builtin_memcpy(g_termios +  8, &cflag, 4);
+    __builtin_memcpy(g_termios + 12, &lflag, 4);
+    /* c_line = 0 (N_TTY) */
+    __builtin_memcpy(g_termios + 17, kcc, 19);
+}
 
 /* ============================================================================
  * IOCTL Direction and Size Extraction Macros
@@ -420,6 +458,8 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
             request_name = "TCGETS";
             break;
         case TCSETS:
+        case TCSETSW:
+        case TCSETSF:
             request_name = "TCSETS";
             break;
         case TIOCGWINSZ:
@@ -566,6 +606,8 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
                     requires_write = 1;
                     break;
                 case TCSETS:      /* Set terminal settings - reads termios from argp */
+                case TCSETSW:
+                case TCSETSF:
                 case FIONBIO:     /* Set non-blocking - reads int from argp */
                 case TIOCSPGRP:   /* Set foreground pgrp - reads pid_t from argp */
                     requires_read = 1;
@@ -643,7 +685,9 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
         if (request != FIONREAD && request != FIONBIO &&
             request != FIOCLEX && request != FIONCLEX &&
             request != TCGETS && request != TCSETS &&
-            request != TIOCGWINSZ && request != TIOCGPGRP &&
+            request != TCSETSW && request != TCSETSF &&
+            request != TIOCGWINSZ && request != TIOCSWINSZ &&
+            request != TIOCGPGRP &&
             request != TIOCSPGRP && request != TIOCGSID &&
             request != TIOCSCTTY && request != TIOCNOTTY) {
             return file->chr_ops->ioctl(file->chr_inode, file->chr_private, request, (unsigned long)argp);
@@ -677,56 +721,25 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
              * Return canonical-mode settings matching a freshly-opened Linux
              * terminal so that applications see a sane line-discipline state.
              */
-            /* c_iflag: ICRNL(0x100) | BRKINT(0x002) */
-            uint32_t iflag = 0x102;
-            /* c_oflag: OPOST(0x01) | ONLCR(0x04) */
-            uint32_t oflag = 0x05;
-            /* c_cflag: B38400(0x0F) | CS8(0x30) | CREAD(0x80) | CLOCAL(0x800) */
-            uint32_t cflag = 0x8BF;
-            /* c_lflag: ISIG(0x1) | ICANON(0x2) | ECHO(0x8) | ECHOE(0x10) |
-             *          ECHOK(0x20) | ECHOCTL(0x200) | ECHOKE(0x800) | IEXTEN(0x8000) */
-            uint32_t lflag = 0x8A3B;
-
-            /* c_cc control characters (indices per POSIX) */
-            static const unsigned char kcc[19] = {
-                3,   /* VINTR  = ^C */
-                28,  /* VQUIT  = ^\ */
-                127, /* VERASE = DEL */
-                21,  /* VKILL  = ^U */
-                4,   /* VEOF   = ^D */
-                0,   /* VTIME  */
-                1,   /* VMIN   */
-                0,   /* VSWTC  */
-                17,  /* VSTART = ^Q */
-                19,  /* VSTOP  = ^S */
-                26,  /* VSUSP  = ^Z */
-                0,   /* VEOL   */
-                18,  /* VREPRINT = ^R */
-                15,  /* VDISCARD = ^O */
-                23,  /* VWERASE  = ^W */
-                22,  /* VLNEXT   = ^V */
-                0,   /* VEOL2  */
-                0,
-                0,
-            };
-
-            char termios_buf[60];
-            __builtin_memset(termios_buf, 0, sizeof(termios_buf));
-            __builtin_memcpy(termios_buf +  0, &iflag, 4);
-            __builtin_memcpy(termios_buf +  4, &oflag, 4);
-            __builtin_memcpy(termios_buf +  8, &cflag, 4);
-            __builtin_memcpy(termios_buf + 12, &lflag, 4);
-            /* c_line at offset 16 = 0 (N_TTY line discipline) */
-            __builtin_memcpy(termios_buf + 17, kcc, 19);
-
-            if (fut_copy_to_user(argp, termios_buf, sizeof(termios_buf)) != 0)
+            termios_init();
+            if (fut_copy_to_user(argp, g_termios, sizeof(g_termios)) != 0)
                 return -EFAULT;
             return 0;
         }
         case TCSETS:
+        case TCSETSW:
+        case TCSETSF: {
             if (!file->chr_ops || (file->flags & 03) != 02)
                 return -ENOTTY;
+            if (!argp)
+                return -EFAULT;
+            termios_init();
+            char new_termios[60];
+            if (fut_copy_from_user(new_termios, argp, sizeof(new_termios)) != 0)
+                return -EFAULT;
+            __builtin_memcpy(g_termios, new_termios, sizeof(g_termios));
             return 0;
+        }
         case TIOCGWINSZ: {
             if (!file->chr_ops || (file->flags & 03) != 02)
                 return -ENOTTY;

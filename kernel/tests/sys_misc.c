@@ -2360,6 +2360,110 @@ static void test_getdents64_read(void) {
     fut_test_pass();
 }
 
+extern long sys_dup(int oldfd);
+
+/* ============================================================
+ * Test 62: dup() returns lowest available fd and F_DUPFD_CLOEXEC
+ * ============================================================ */
+static void test_dup_and_dupfd_cloexec(void) {
+    fut_printf("[MISC-TEST] Test 62: dup and F_DUPFD_CLOEXEC\n");
+
+    /* Open a test file */
+    int fd = fut_vfs_open("/dup_test.txt", 0x42, 0644);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open: %d\n", fd);
+        fut_test_fail(62);
+        return;
+    }
+
+    /* dup() should return a new fd */
+    long newfd = sys_dup(fd);
+    if (newfd < 0) {
+        fut_printf("[MISC-TEST] ✗ dup returned %ld\n", newfd);
+        fut_vfs_close(fd);
+        fut_test_fail(62);
+        return;
+    }
+    if (newfd == fd) {
+        fut_printf("[MISC-TEST] ✗ dup returned same fd %ld\n", newfd);
+        fut_vfs_close(fd);
+        fut_test_fail(62);
+        return;
+    }
+
+    /* Both fds should be usable */
+    fut_vfs_write(fd, "test", 4);
+    fut_vfs_close((int)newfd);
+
+    /* F_DUPFD_CLOEXEC: dup to fd >= 10 with CLOEXEC */
+    long clofd = sys_fcntl(fd, 1030 /* F_DUPFD_CLOEXEC */, 10);
+    if (clofd < 10) {
+        fut_printf("[MISC-TEST] ✗ F_DUPFD_CLOEXEC returned %ld (expected >= 10)\n", clofd);
+        fut_vfs_close(fd);
+        fut_test_fail(62);
+        return;
+    }
+
+    /* Verify the new fd has FD_CLOEXEC set */
+    long fd_flags = sys_fcntl((int)clofd, F_GETFD, 0);
+    fut_vfs_close((int)clofd);
+    fut_vfs_close(fd);
+
+    if (!(fd_flags & FD_CLOEXEC)) {
+        fut_printf("[MISC-TEST] ✗ F_DUPFD_CLOEXEC fd missing CLOEXEC: flags=0x%lx\n", fd_flags);
+        fut_test_fail(62);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ dup: returns new fd, F_DUPFD_CLOEXEC sets CLOEXEC\n");
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 63: fcntl F_GETFL returns correct access mode
+ * ============================================================ */
+static void test_fcntl_getfl(void) {
+    fut_printf("[MISC-TEST] Test 63: fcntl F_GETFL\n");
+
+    /* Open O_RDONLY */
+    int fd = fut_vfs_open("/dup_test.txt", 0x00, 0);  /* O_RDONLY */
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open O_RDONLY: %d\n", fd);
+        fut_test_fail(63);
+        return;
+    }
+
+    long fl = sys_fcntl(fd, F_GETFL, 0);
+    fut_vfs_close(fd);
+
+    /* O_ACCMODE bits should be O_RDONLY (0) */
+    if ((fl & 03) != 0) {  /* O_ACCMODE = 03 */
+        fut_printf("[MISC-TEST] ✗ F_GETFL on O_RDONLY: 0x%lx (accmode=%ld)\n", fl, fl & 03);
+        fut_test_fail(63);
+        return;
+    }
+
+    /* Open O_RDWR */
+    fd = fut_vfs_open("/dup_test.txt", 0x02, 0);  /* O_RDWR */
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open O_RDWR: %d\n", fd);
+        fut_test_fail(63);
+        return;
+    }
+
+    fl = sys_fcntl(fd, F_GETFL, 0);
+    fut_vfs_close(fd);
+
+    if ((fl & 03) != 02) {  /* O_RDWR = 02 */
+        fut_printf("[MISC-TEST] ✗ F_GETFL on O_RDWR: 0x%lx (accmode=%ld)\n", fl, fl & 03);
+        fut_test_fail(63);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ F_GETFL: O_RDONLY=0, O_RDWR=2\n");
+    fut_test_pass();
+}
+
 /* ============================================================
  * Test 52: write on O_RDONLY fd returns EBADF
  * ============================================================ */
@@ -3224,6 +3328,8 @@ void fut_misc_test_thread(void *arg) {
     test_clock_gettime_monotonic(); /* Test 59: clock_gettime */
     test_socketpair_flags();    /* Test 60: socketpair with NONBLOCK|CLOEXEC */
     test_getdents64_read();     /* Test 61: getdents64 reads entries */
+    test_dup_and_dupfd_cloexec(); /* Test 62: dup + F_DUPFD_CLOEXEC */
+    test_fcntl_getfl();         /* Test 63: fcntl F_GETFL */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -87,6 +87,7 @@
 #define SYS_fdatasync   75
 #define SYS_truncate    76
 #define SYS_ftruncate   77
+#define SYS_clone       56
 #define SYS_fork        57
 #define SYS_execve      59
 #ifndef SYS_exit
@@ -267,6 +268,7 @@
 #define SYS_timerfd_gettime 287
 #define SYS_prlimit64       302
 #define SYS_syncfs          306
+#define SYS_clone3           435  /* Linux: 435 */
 #define SYS_close_range      436
 #define SYS_sethostname      170
 #define SYS_setdomainname    171
@@ -872,6 +874,33 @@ static int64_t sys_fork_handler(uint64_t arg1, uint64_t arg2, uint64_t arg3,
                                  uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
     return (int64_t)posix_fork();
+}
+
+/* clone() — Linux process/thread creation syscall.
+ * glibc/musl use clone(SIGCHLD, 0, ...) to implement fork().
+ * Full thread creation (CLONE_VM|CLONE_FS|...) is not yet supported.
+ * clone3() (syscall 435) is the newer interface; also handled here. */
+static int64_t sys_clone_handler(uint64_t flags, uint64_t stack, uint64_t parent_tid,
+                                  uint64_t child_tid, uint64_t tls, uint64_t arg6) {
+    (void)stack; (void)parent_tid; (void)child_tid; (void)tls; (void)arg6;
+    /* SIGCHLD-only clone = fork (most common case from libc fork()) */
+    uint64_t clone_flags = flags & ~0xFFULL;  /* Strip signal from low byte */
+    if (clone_flags == 0) {
+        /* Plain fork: clone(SIGCHLD, 0, NULL, NULL, 0) */
+        return (int64_t)posix_fork();
+    }
+    /* Thread creation not yet supported */
+    fut_printf("[CLONE] clone(flags=0x%llx) -> ENOSYS (only fork-style clone supported)\n",
+               (unsigned long long)flags);
+    return -38;  /* -ENOSYS */
+}
+
+/* clone3() — newer clone interface using struct clone_args */
+static int64_t sys_clone3_handler(uint64_t cl_args, uint64_t size, uint64_t arg3,
+                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)cl_args; (void)size; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    /* Return ENOSYS so libc falls back to clone() */
+    return -38;  /* -ENOSYS */
 }
 
 static int64_t sys_execve_handler(uint64_t pathname, uint64_t argv, uint64_t envp,
@@ -2822,6 +2851,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_poll]       = sys_poll_handler,
     [SYS_access]     = sys_access_handler,
     [SYS_lseek]      = sys_lseek_handler,
+    [SYS_clone]      = sys_clone_handler,
     [SYS_fork]       = sys_fork_handler,
     [SYS_execve]     = sys_execve_handler,
     [SYS_exit]       = sys_exit_handler,
@@ -3031,6 +3061,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_timerfd_gettime]   = sys_timerfd_gettime_handler,
     [SYS_prlimit64]         = sys_prlimit64_handler,
     [SYS_syncfs]            = sys_syncfs_handler,
+    [SYS_clone3]            = sys_clone3_handler,
     [SYS_close_range]       = sys_close_range_handler,
     [SYS_sethostname]       = sys_sethostname_handler,
     [SYS_setdomainname]     = sys_setdomainname_handler,

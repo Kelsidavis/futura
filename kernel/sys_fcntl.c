@@ -700,9 +700,6 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
             return -EMFILE;
         }
 
-        /* Phase 2: Categorize newfd range */
-        const char *newfd_category = fut_fd_category(newfd);
-
         /* Allocate newfd pointing to same file in task's FD table */
         int ret = vfs_alloc_specific_fd_for_task(task, newfd, file);
         if (ret < 0) {
@@ -734,23 +731,16 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
         }
 
         /* Set close-on-exec if F_DUPFD_CLOEXEC */
-        const char *cloexec_status = "FD_CLOEXEC not set";
         if (local_cmd == F_DUPFD_CLOEXEC) {
             struct fut_file *new_file = vfs_get_file_from_task(task, newfd);
             if (new_file) {
                 new_file->fd_flags |= FD_CLOEXEC;
-                cloexec_status = "FD_CLOEXEC set atomically";
             }
         }
 
         /* Propagate socket ownership if oldfd is a socket */
         propagate_socket_dup(local_fd, newfd);
 
-        /* Phase 2: Detailed success logging */
-        fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s], minfd=%d [%s]) -> %d "
-                   "(newfd=%d [%s], refcount=%u, %s, Phase 4: Optimized FD pooling)\n",
-                   local_fd, fd_category, cmd_name, cmd_category, minfd, minfd_category, newfd,
-                   newfd, newfd_category, file->refcount, cloexec_status);
         return newfd;
     }
 

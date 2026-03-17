@@ -2286,6 +2286,44 @@ static void test_getdents64_small_buf(void) {
 }
 
 /* ============================================================
+ * Test 52: write on O_RDONLY fd returns EBADF
+ * ============================================================ */
+static void test_rdonly_write_ebadf(void) {
+    fut_printf("[MISC-TEST] Test 52: write on O_RDONLY fd\n");
+
+    /* Create a test file */
+    int fd = fut_vfs_open("/rdonly_test.txt", 0x42, 0644);  /* O_RDWR|O_CREAT */
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ create failed: %d\n", fd);
+        fut_test_fail(52);
+        return;
+    }
+    fut_vfs_write(fd, "data", 4);
+    fut_vfs_close(fd);
+
+    /* Reopen as O_RDONLY */
+    fd = fut_vfs_open("/rdonly_test.txt", 0x00, 0);  /* O_RDONLY */
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open O_RDONLY failed: %d\n", fd);
+        fut_test_fail(52);
+        return;
+    }
+
+    /* Write should fail with EBADF */
+    ssize_t ret = fut_vfs_write(fd, "hack", 4);
+    fut_vfs_close(fd);
+
+    if (ret != -EBADF) {
+        fut_printf("[MISC-TEST] ✗ write on O_RDONLY returned %zd (expected EBADF)\n", ret);
+        fut_test_fail(52);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ write on O_RDONLY: EBADF\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test 38: setrlimit hard limit can be raised by root, denied for non-root
  * ============================================================ */
 static void test_setrlimit_hard(void) {
@@ -2714,6 +2752,7 @@ void fut_misc_test_thread(void *arg) {
     test_eventfd_eintr();       /* Test 49: eventfd read EINTR */
     test_epoll_wait_eintr();    /* Test 50: epoll_wait EINTR */
     test_getdents64_small_buf(); /* Test 51: getdents64 small buffer */
+    test_rdonly_write_ebadf();   /* Test 52: write on O_RDONLY fd returns EBADF */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -1988,6 +1988,12 @@ ssize_t fut_vfs_read(int fd, void *buf, size_t size) {
         return -EBADF;
     }
 
+    /* Check that fd was opened for reading */
+    int access_mode = file->flags & O_ACCMODE;
+    if (access_mode == O_WRONLY) {
+        return -EBADF;
+    }
+
     if (file->chr_ops) {
 #if DEBUG_READ
         fut_printf("[vfs-read] chr_ops path, read=%p\n", (void*)(uintptr_t)file->chr_ops->read);
@@ -2044,6 +2050,12 @@ ssize_t fut_vfs_write(int fd, const void *buf, size_t size) {
     struct fut_file *file = get_file_from_task(task, fd);
     VFSDBG("[vfs-write] get_file_from_task returned %p\n", (void*)file);
     if (!file) {
+        return -EBADF;
+    }
+
+    /* Check that fd was opened for writing */
+    int access_mode = file->flags & O_ACCMODE;
+    if (access_mode == O_RDONLY) {
         return -EBADF;
     }
 

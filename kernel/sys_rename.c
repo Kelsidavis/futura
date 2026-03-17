@@ -211,6 +211,11 @@ long sys_rename(const char *oldpath, const char *newpath) {
         new_path_type = "relative";
     }
 
+    /* POSIX: rename(path, path) is a no-op when both paths refer to the same file */
+    if (strcmp(old_buf, new_buf) == 0) {
+        return 0;
+    }
+
     /* Phase 2: Calculate path lengths */
     size_t old_len = strlen(old_buf);
     size_t new_len = strlen(new_buf);

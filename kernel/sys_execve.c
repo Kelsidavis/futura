@@ -756,6 +756,24 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
     msg[pos] = '\0';
     fut_printf("%s", msg);
 
+    /* Check setuid/setgid bits on the executable and update credentials.
+     * POSIX: if the file has S_ISUID set, effective UID becomes file owner.
+     * If S_ISGID set, effective GID becomes file group.
+     * Blocked by no_new_privs (prctl PR_SET_NO_NEW_PRIVS). */
+    if (!(task->no_new_privs)) {
+        struct fut_stat exec_stat;
+        if (fut_vfs_stat(kernel_pathname, &exec_stat) == 0) {
+            if (exec_stat.st_mode & 04000) {  /* S_ISUID */
+                task->suid = task->uid;
+                task->uid = exec_stat.st_uid;
+            }
+            if (exec_stat.st_mode & 02000) {  /* S_ISGID */
+                task->sgid = task->gid;
+                task->gid = exec_stat.st_gid;
+            }
+        }
+    }
+
     /* Call ELF loader with kernel-space argv/envp
      * This prevents TOCTOU race: userspace can no longer modify arguments after validation.
      * kernel_argv, kernel_envp, and kernel_pathname are immutable kernel copies. */

@@ -167,7 +167,13 @@ long sys_getrusage(int who, struct rusage *usage) {
         ru.ru_utime.tv_usec = (long)(usec_total % 1000000UL);
         ru.ru_nvcsw = (long)total_switches;
     }
-    /* RUSAGE_CHILDREN: zeroed until wait4()/waitpid() accumulates child stats */
+    if (who == RUSAGE_CHILDREN) {
+        /* child_cpu_ticks is accumulated by waitpid when reaping zombie children */
+        uint64_t child_ticks = task->child_cpu_ticks;
+        uint64_t child_usec = child_ticks * (1000000UL / FUT_TIMER_HZ);
+        ru.ru_utime.tv_sec  = (long)(child_usec / 1000000UL);
+        ru.ru_utime.tv_usec = (long)(child_usec % 1000000UL);
+    }
 
     /*
      * Phase 5: Compute ru_maxrss from the task's VMA list.

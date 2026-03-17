@@ -2129,6 +2129,52 @@ static void test_memfd_pread_pwrite(void) {
 }
 
 /* ============================================================
+ * Test 48: pipe read returns EINTR when signal is pending
+ * ============================================================ */
+static void test_pipe_read_eintr(void) {
+    fut_printf("[MISC-TEST] Test 48: pipe read EINTR on pending signal\n");
+
+    int pipefd[2];
+    long ret = sys_pipe(pipefd);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ pipe() returned %ld\n", ret);
+        fut_test_fail(48);
+        return;
+    }
+
+    /* Set a signal pending (SIGUSR1 = signal 10, bit 9) */
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        fut_printf("[MISC-TEST] ✗ no current task\n");
+        fut_vfs_close(pipefd[0]);
+        fut_vfs_close(pipefd[1]);
+        fut_test_fail(48);
+        return;
+    }
+
+    __atomic_or_fetch(&task->pending_signals, (1ULL << 9), __ATOMIC_RELEASE);
+
+    /* Read from empty pipe — should return EINTR because signal is pending */
+    char buf[4];
+    ssize_t nr = fut_vfs_read(pipefd[0], buf, sizeof(buf));
+
+    /* Clear the signal */
+    __atomic_and_fetch(&task->pending_signals, ~(1ULL << 9), __ATOMIC_RELEASE);
+
+    fut_vfs_close(pipefd[0]);
+    fut_vfs_close(pipefd[1]);
+
+    if (nr != -EINTR) {
+        fut_printf("[MISC-TEST] ✗ pipe read returned %zd (expected -EINTR=%d)\n", nr, -EINTR);
+        fut_test_fail(48);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ pipe read: returns EINTR when signal is pending\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test 38: setrlimit hard limit can be raised by root, denied for non-root
  * ============================================================ */
 static void test_setrlimit_hard(void) {
@@ -2553,6 +2599,7 @@ void fut_misc_test_thread(void *arg) {
     test_sigtimedwait();        /* Test 45: rt_sigtimedwait */
     test_memfd_ftruncate();     /* Test 46: memfd ftruncate */
     test_memfd_pread_pwrite();  /* Test 47: pread64/pwrite64 on memfd */
+    test_pipe_read_eintr();     /* Test 48: pipe read EINTR */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

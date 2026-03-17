@@ -2858,7 +2858,11 @@ static struct syscall_entry syscall_table[MAX_SYSCALL];
 static bool syscall_table_initialized = false;
 
 /* Stub that returns -ENOSYS (used for clone3 so libc probes fall back silently) */
-static long sys_enosys_stub(void) { return -ENOSYS; }
+static int64_t sys_enosys_stub(uint64_t a1, uint64_t a2, uint64_t a3,
+                                uint64_t a4, uint64_t a5, uint64_t a6) {
+    (void)a1; (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
+    return -ENOSYS;
+}
 
 /* Initialize syscall table at runtime to avoid ARM64 relocation issues */
 static void arm64_syscall_table_init(void) {

@@ -1616,6 +1616,65 @@ static void test_dev_urandom(void) {
 }
 
 /* ============================================================
+ * Test 35: VFS write permission denied for non-owner on 0600 file
+ * ============================================================ */
+static void test_access_real_uid(void) {
+    fut_printf("[MISC-TEST] Test 35: write permission denied for non-owner\n");
+
+    /* Create a root-owned file with mode 0600 */
+    int fd = fut_vfs_open("/write_perm_test.txt", 0x42, 0600);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ create failed: %d\n", fd);
+        fut_test_fail(35);
+        return;
+    }
+    fut_vfs_write(fd, "data", 4);
+    fut_vfs_close(fd);
+
+    /* As root, write should succeed */
+    fd = fut_vfs_open("/write_perm_test.txt", 0x01, 0);  /* O_WRONLY */
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ root open(O_WRONLY) failed: %d\n", fd);
+        fut_test_fail(35);
+        return;
+    }
+    ssize_t nw = fut_vfs_write(fd, "root", 4);
+    fut_vfs_close(fd);
+    if (nw != 4) {
+        fut_printf("[MISC-TEST] ✗ root write returned %zd\n", nw);
+        fut_test_fail(35);
+        return;
+    }
+
+    /* Become non-root (uid=1000), drop caps */
+    fut_task_t *task = fut_task_current();
+    uint32_t saved_ruid = task->ruid;
+    uint32_t saved_uid = task->uid;
+    uint64_t saved_caps = task->cap_effective;
+    task->ruid = 1000;
+    task->uid = 1000;
+    task->cap_effective = 0;
+
+    /* Open for write on root-owned 0600 file should be denied */
+    fd = fut_vfs_open("/write_perm_test.txt", 0x01, 0);
+
+    /* Restore root */
+    task->ruid = saved_ruid;
+    task->uid = saved_uid;
+    task->cap_effective = saved_caps;
+
+    if (fd >= 0) {
+        fut_vfs_close(fd);
+        fut_printf("[MISC-TEST] ✗ non-owner open(O_WRONLY) succeeded on 0600 file\n");
+        fut_test_fail(35);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ write permission: root writes, non-owner denied (err=%d)\n", fd);
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test 34: RLIMIT_NOFILE enforcement
  * ============================================================ */
 static void test_rlimit_nofile(void) {
@@ -1820,6 +1879,7 @@ void fut_misc_test_thread(void *arg) {
     test_vfs_permission();      /* Test 32: file permission checks */
     test_dev_full();            /* Test 33: /dev/full ENOSPC */
     test_rlimit_nofile();       /* Test 34: RLIMIT_NOFILE enforcement */
+    test_access_real_uid();     /* Test 35: access() uses real UID */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

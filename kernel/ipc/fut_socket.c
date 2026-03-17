@@ -949,6 +949,9 @@ ssize_t fut_socket_recv(fut_socket_t *socket, void *buf, size_t len) {
 
     /* Wake sender */
     fut_waitq_wake_one(pair->send_waitq);
+    /* Wake epoll on the sending socket (EPOLLOUT — space available) */
+    if (pair->epoll_notify)
+        fut_waitq_wake_one(pair->epoll_notify);
 
     fut_spinlock_release(&pair->lock);
 
@@ -1002,6 +1005,12 @@ int fut_socket_close(fut_socket_t *socket) {
             fut_waitq_wake_all(socket->pair_reverse->recv_waitq);
         }
     }
+
+    /* Wake epoll instances monitoring this socket or its peer (EPOLLHUP) */
+    if (socket->pair && socket->pair->epoll_notify)
+        fut_waitq_wake_one(socket->pair->epoll_notify);
+    if (socket->pair_reverse && socket->pair_reverse->epoll_notify)
+        fut_waitq_wake_one(socket->pair_reverse->epoll_notify);
 
     SOCKET_LOG("[SOCKET] Socket %u closed\n", socket->socket_id);
     fut_socket_unref(socket);

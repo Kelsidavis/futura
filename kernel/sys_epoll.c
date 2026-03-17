@@ -1438,12 +1438,10 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
                     fut_printf("[EPOLL-DBG] fd=%d poll_events=0x%x socket_ready=0x%x state=%d\n",
                                set->fds[i].fd, poll_events, socket_ready, socket->state);
 #endif
-                    if (socket_ready & 0x1) {  /* POLLIN */
-                        events_ready |= EPOLLIN | EPOLLRDNORM;
-                    }
-                    if (socket_ready & 0x4) {  /* POLLOUT */
-                        events_ready |= EPOLLOUT | EPOLLWRNORM;
-                    }
+                    if (socket_ready & 0x1)  events_ready |= EPOLLIN | EPOLLRDNORM;
+                    if (socket_ready & 0x4)  events_ready |= EPOLLOUT | EPOLLWRNORM;
+                    if (socket_ready & 0x10) events_ready |= EPOLLHUP;
+                    if (socket_ready & 0x8)  events_ready |= EPOLLERR;
                     handled = true;
                 }
             }
@@ -1471,12 +1469,10 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
                         poll_events |= 0x4;
                     }
                     int socket_ready = fut_socket_poll(socket, poll_events);
-                    if (socket_ready & 0x1) {
-                        events_ready |= EPOLLIN | EPOLLRDNORM;
-                    }
-                    if (socket_ready & 0x4) {
-                        events_ready |= EPOLLOUT | EPOLLWRNORM;
-                    }
+                    if (socket_ready & 0x1)  events_ready |= EPOLLIN | EPOLLRDNORM;
+                    if (socket_ready & 0x4)  events_ready |= EPOLLOUT | EPOLLWRNORM;
+                    if (socket_ready & 0x10) events_ready |= EPOLLHUP;
+                    if (socket_ready & 0x8)  events_ready |= EPOLLERR;
                 }
                 handled = true;
             }

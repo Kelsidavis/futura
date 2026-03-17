@@ -328,14 +328,20 @@ long sys_access(const char *pathname, int mode) {
 
     /* Root (real uid=0) always has access */
     if (check_uid != 0) {
-        /* Determine permission bits based on real uid/gid */
+        /* Determine permission bits based on real uid/gid + supplementary groups */
         uint32_t perm;
-        if (check_uid == vnode->uid)
+        if (check_uid == vnode->uid) {
             perm = (file_mode >> 6) & 7;
-        else if (check_gid == vnode->gid)
+        } else if (check_gid == vnode->gid) {
             perm = (file_mode >> 3) & 7;
-        else
-            perm = file_mode & 7;
+        } else {
+            /* Check supplementary groups */
+            int in_group = 0;
+            for (int i = 0; i < task->ngroups; i++) {
+                if (task->groups[i] == vnode->gid) { in_group = 1; break; }
+            }
+            perm = in_group ? ((file_mode >> 3) & 7) : (file_mode & 7);
+        }
 
         if ((local_mode & R_OK) && !(perm & 4)) {
             fut_vnode_unref(vnode);

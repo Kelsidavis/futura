@@ -363,11 +363,25 @@ long sys_faccessat(int dirfd, const char *pathname, int mode, int flags) {
             /* Owner permissions (bits 8-6) */
             perm_bits = (file_mode >> 6) & 7;
         } else if (check_gid == st.st_gid) {
-            /* Group permissions (bits 5-3) */
+            /* Primary group permissions (bits 5-3) */
             perm_bits = (file_mode >> 3) & 7;
         } else {
-            /* Other permissions (bits 2-0) */
-            perm_bits = file_mode & 7;
+            /* Check supplementary groups */
+            int in_group = 0;
+            if (task) {
+                for (int i = 0; i < task->ngroups; i++) {
+                    if (task->groups[i] == st.st_gid) {
+                        in_group = 1;
+                        break;
+                    }
+                }
+            }
+            if (in_group) {
+                perm_bits = (file_mode >> 3) & 7;
+            } else {
+                /* Other permissions (bits 2-0) */
+                perm_bits = file_mode & 7;
+            }
         }
 
         /* Check requested permissions against available permissions */

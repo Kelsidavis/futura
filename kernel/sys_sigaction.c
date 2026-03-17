@@ -121,8 +121,9 @@ long sys_sigaction(int signum, const struct sigaction *act, struct sigaction *ol
 
         /* Retrieve current action from task structure */
         old.sa_handler = current->signal_handlers[signum - 1];
-        old.sa_mask = current->signal_handler_masks[signum - 1];
+        old.sa_mask.__mask = current->signal_handler_masks[signum - 1];
         old.sa_flags = current->signal_handler_flags[signum - 1];
+        old.sa_restorer = NULL;
 
         /* Copy to userspace */
         if (fut_copy_to_user(oldact, &old, sizeof(struct sigaction)) != 0) {
@@ -142,7 +143,7 @@ long sys_sigaction(int signum, const struct sigaction *act, struct sigaction *ol
 
         /* Install the new action in task structure */
         current->signal_handlers[signum - 1] = new_act.sa_handler;
-        current->signal_handler_masks[signum - 1] = new_act.sa_mask;
+        current->signal_handler_masks[signum - 1] = new_act.sa_mask.__mask;
         current->signal_handler_flags[signum - 1] = new_act.sa_flags;
 
         /* POSIX: setting to SIG_IGN discards any pending instance */

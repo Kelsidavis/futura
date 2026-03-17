@@ -3283,7 +3283,7 @@ static bool posix_deliver_signal(fut_task_t *current, int signum,
      * value is not written until syscall_entry_c returns), so re-execution
      * is automatic. */
     {
-        int h_flags = current->signal_handler_flags[signum - 1];
+        unsigned long h_flags = current->signal_handler_flags[signum - 1];
         if ((h_flags & SA_RESTART) && syscall_ret == -EINTR) {
             mctx->gregs.rip = frame->rip - 2;  /* rewind to syscall insn */
         }
@@ -3309,7 +3309,7 @@ static bool posix_deliver_signal(fut_task_t *current, int signum,
     mctx->gregs.pc = frame->pc;            /* Program counter (ELR_EL1) */
     /* SA_RESTART on ARM64: rewind PC to 'svc' instruction (4 bytes) */
     {
-        int h_flags = current->signal_handler_flags[signum - 1];
+        unsigned long h_flags = current->signal_handler_flags[signum - 1];
         if ((h_flags & SA_RESTART) && syscall_ret == -EINTR) {
             mctx->gregs.pc = frame->pc - 4;
         }

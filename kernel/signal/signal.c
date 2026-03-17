@@ -372,7 +372,7 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
 
     /* Phase 2: Select signal stack — use alternate stack if SA_ONSTACK set
      * and the alternate stack is active (not disabled, not already on it). */
-    int handler_flags = task->signal_handler_flags[signum - 1];
+    unsigned long handler_flags = task->signal_handler_flags[signum - 1];
     uint64_t sp;
     if ((handler_flags & SA_ONSTACK) &&
         !(task->sig_altstack.ss_flags & SS_DISABLE) &&
@@ -667,7 +667,7 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
 
     /* Block signals during handler: sa_mask + the delivered signal itself.
      * SA_NODEFER: don't block the delivered signal (allow recursive delivery). */
-    int handler_flags_x86 = task->signal_handler_flags[signum - 1];
+    unsigned long handler_flags_x86 = task->signal_handler_flags[signum - 1];
     uint64_t new_mask_bits_x86 = task->signal_handler_masks[signum - 1] &
                                  ~((1ULL << (SIGKILL - 1)) | (1ULL << (SIGSTOP - 1)));
     if (!(handler_flags_x86 & SA_NODEFER)) {

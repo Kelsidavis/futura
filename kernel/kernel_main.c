@@ -1162,6 +1162,10 @@ void fut_kernel_main(void) {
     fut_console_init();
     fut_printf("[INIT] Console device registered at /dev/console\n");
 
+    /* Register /dev/null and /dev/zero pseudo-devices */
+    extern void dev_null_init(void);
+    dev_null_init();
+
     fut_printf("[INIT] Root filesystem mounted (ramfs at /)\n");
 
     /* Create /tmp directory for temporary files */
@@ -1205,7 +1209,7 @@ void fut_kernel_main(void) {
         planned_tests += 14u; /* clock_sched: getres, sched_param, sched_policy, itimer, rusage, times, getpriority, setpriority, getpriority(-who), setpriority(-who), unshare(0), unshare(invalid), rr_get_interval, clock_gettime */
         planned_tests += 12u; /* vfs: O_TRUNC, O_APPEND, relpath, dir_mtime, readlink, hardlink, mount, renameat2, inotify, umount expire, dotdot, eisdir */
         planned_tests += 13u; /* poll: file ready, eventfd not-ready, eventfd ready, POLLNVAL, select file, select pipe, pselect6 pipe, pselect6 sigmask restore, timeout-only sleep, timerfd readiness, signalfd readiness, pipe EOF, select pipe EOF */
-        planned_tests += 28u; /* misc: getuid, cred_fields, personality(2), uname_null, rlimits, personality_stored, fcntl(3), prctl(4), getrandom, fadvise64, sched_affinity, copy_file_range, membarrier, statx(2), tgkill, getcpu, readahead, groups, socketpair, open_cloexec, mmap_validation */
+        planned_tests += 29u; /* misc: getuid, cred_fields, personality(2), uname_null, rlimits, personality_stored, fcntl(3), prctl(4), getrandom, fadvise64, sched_affinity, copy_file_range, membarrier, statx(2), tgkill, getcpu, readahead, groups, socketpair, open_cloexec, mmap_validation, dev_null_zero */
         // planned_tests += 1u; /* block */
         // planned_tests += 1u; /* futfs */
         // planned_tests += 1u; /* net */

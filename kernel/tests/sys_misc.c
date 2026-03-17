@@ -1422,6 +1422,70 @@ extern long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long o
 extern long sys_munmap(void *addr, size_t len);
 
 /* ============================================================
+ * Test 29: /dev/null and /dev/zero
+ * ============================================================ */
+static void test_dev_null_zero(void) {
+    fut_printf("[MISC-TEST] Test 29: /dev/null and /dev/zero\n");
+
+    /* Open /dev/null */
+    int fd = fut_vfs_open("/dev/null", 0x02, 0);  /* O_RDWR */
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open /dev/null failed: %d\n", fd);
+        fut_test_fail(29);
+        return;
+    }
+
+    /* Write to /dev/null should succeed and return the byte count */
+    const char *msg = "hello null";
+    ssize_t nw = fut_vfs_write(fd, msg, 10);
+    if (nw != 10) {
+        fut_printf("[MISC-TEST] ✗ write to /dev/null returned %zd (expected 10)\n", nw);
+        fut_vfs_close(fd);
+        fut_test_fail(29);
+        return;
+    }
+
+    /* Read from /dev/null should return 0 (EOF) */
+    char buf[8];
+    ssize_t nr = fut_vfs_read(fd, buf, sizeof(buf));
+    if (nr != 0) {
+        fut_printf("[MISC-TEST] ✗ read from /dev/null returned %zd (expected 0)\n", nr);
+        fut_vfs_close(fd);
+        fut_test_fail(29);
+        return;
+    }
+    fut_vfs_close(fd);
+
+    /* Open /dev/zero */
+    fd = fut_vfs_open("/dev/zero", 0x02, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open /dev/zero failed: %d\n", fd);
+        fut_test_fail(29);
+        return;
+    }
+
+    /* Read from /dev/zero should return zero bytes */
+    memset(buf, 0xFF, sizeof(buf));
+    nr = fut_vfs_read(fd, buf, 4);
+    if (nr != 4) {
+        fut_printf("[MISC-TEST] ✗ read from /dev/zero returned %zd (expected 4)\n", nr);
+        fut_vfs_close(fd);
+        fut_test_fail(29);
+        return;
+    }
+    if (buf[0] != 0 || buf[1] != 0 || buf[2] != 0 || buf[3] != 0) {
+        fut_printf("[MISC-TEST] ✗ /dev/zero returned non-zero data\n");
+        fut_vfs_close(fd);
+        fut_test_fail(29);
+        return;
+    }
+
+    fut_vfs_close(fd);
+    fut_printf("[MISC-TEST] ✓ /dev/null: write=10 read=EOF, /dev/zero: read=zeros\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test 28: mmap/munmap parameter validation
  * ============================================================ */
 static void test_mmap_munmap_validation(void) {
@@ -1501,6 +1565,7 @@ void fut_misc_test_thread(void *arg) {
     test_socketpair();          /* Test 26: socketpair */
     test_open_cloexec();        /* Test 27: O_CLOEXEC */
     test_mmap_munmap_validation(); /* Test 28: mmap/munmap validation */
+    test_dev_null_zero();       /* Test 29: /dev/null and /dev/zero */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

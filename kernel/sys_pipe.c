@@ -748,6 +748,9 @@ bool fut_pipe_poll(struct fut_file *file, uint32_t requested, uint32_t *ready_ou
             ready |= EPOLLIN;
         if (pipe->write_closed) {
             ready |= EPOLLHUP;
+            /* EPOLLRDHUP: peer closed write half (if caller asked for it) */
+            if (requested & EPOLLRDHUP)
+                ready |= EPOLLRDHUP;
             /* EOF is readable — report EPOLLIN so poll detects it */
             if (requested & EPOLLIN)
                 ready |= EPOLLIN;

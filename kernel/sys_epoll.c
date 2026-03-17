@@ -945,7 +945,8 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
 
         /* Validate event mask doesn't contain invalid bits */
         uint32_t valid_events = EPOLLIN | EPOLLOUT | EPOLLERR | EPOLLHUP |
-                               EPOLLRDNORM | EPOLLRDBAND | EPOLLWRNORM | EPOLLWRBAND |
+                               EPOLLRDHUP | EPOLLRDNORM | EPOLLRDBAND |
+                               EPOLLWRNORM | EPOLLWRBAND |
                                EPOLL_ET | EPOLL_ONESHOT;
         if (ev.events & ~valid_events) {
             uint32_t invalid_bits = ev.events & ~valid_events;

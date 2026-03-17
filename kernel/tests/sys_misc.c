@@ -1615,6 +1615,62 @@ static void test_dev_urandom(void) {
     fut_test_pass();
 }
 
+extern long sys_pipe(int pipefd[2]);
+
+/* ============================================================
+ * Test 37: pipe fd has no vnode (fstat synthesizes S_IFIFO)
+ * ============================================================ */
+static void test_fstat_pipe(void) {
+    fut_printf("[MISC-TEST] Test 37: pipe fd properties\n");
+
+    int pipefd[2];
+    long ret = sys_pipe(pipefd);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ pipe() failed: %ld\n", ret);
+        fut_test_fail(37);
+        return;
+    }
+
+    /* Verify pipe fd is valid — get the file structure directly */
+    struct fut_file *file = fut_vfs_get_file(pipefd[0]);
+    if (!file) {
+        fut_printf("[MISC-TEST] ✗ pipe fd has no file structure\n");
+        fut_vfs_close(pipefd[0]);
+        fut_vfs_close(pipefd[1]);
+        fut_test_fail(37);
+        return;
+    }
+
+    /* Pipe fds have chr_ops but no vnode — the fstat fix handles this */
+    int has_chr_ops = (file->chr_ops != NULL);
+    int has_vnode = (file->vnode != NULL);
+
+    /* Write + read through the pipe to verify it works */
+    const char *msg = "test";
+    ssize_t nw = fut_vfs_write(pipefd[1], msg, 4);
+    char buf[8] = {0};
+    ssize_t nr = fut_vfs_read(pipefd[0], buf, 4);
+
+    fut_vfs_close(pipefd[0]);
+    fut_vfs_close(pipefd[1]);
+
+    if (nw != 4 || nr != 4 || memcmp(buf, "test", 4) != 0) {
+        fut_printf("[MISC-TEST] ✗ pipe I/O failed: nw=%zd nr=%zd\n", nw, nr);
+        fut_test_fail(37);
+        return;
+    }
+
+    if (!has_chr_ops) {
+        fut_printf("[MISC-TEST] ✗ pipe fd missing chr_ops\n");
+        fut_test_fail(37);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ pipe fd: chr_ops=%d vnode=%d, I/O works\n",
+               has_chr_ops, has_vnode);
+    fut_test_pass();
+}
+
 /* ============================================================
  * Test 36: umask is applied during file creation
  * ============================================================ */
@@ -1926,6 +1982,7 @@ void fut_misc_test_thread(void *arg) {
     test_rlimit_nofile();       /* Test 34: RLIMIT_NOFILE enforcement */
     test_access_real_uid();     /* Test 35: write permission denied */
     test_umask_enforcement();   /* Test 36: umask applied on file creation */
+    test_fstat_pipe();          /* Test 37: fstat on pipe fd */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

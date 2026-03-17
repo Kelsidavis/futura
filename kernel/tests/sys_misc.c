@@ -1418,6 +1418,51 @@ static void test_open_cloexec(void) {
     fut_test_pass();
 }
 
+extern long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset);
+extern long sys_munmap(void *addr, size_t len);
+
+/* ============================================================
+ * Test 28: mmap/munmap parameter validation
+ * ============================================================ */
+static void test_mmap_munmap_validation(void) {
+    fut_printf("[MISC-TEST] Test 28: mmap/munmap parameter validation\n");
+
+    /* mmap without MAP_SHARED or MAP_PRIVATE → EINVAL */
+    long ret = sys_mmap(NULL, 4096, 3 /* PROT_READ|PROT_WRITE */, 0x20 /* MAP_ANONYMOUS only */, -1, 0);
+    if (ret != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ mmap(no SHARED/PRIVATE) returned %ld (expected EINVAL)\n", ret);
+        fut_test_fail(28);
+        return;
+    }
+
+    /* mmap with zero length → EINVAL */
+    ret = sys_mmap(NULL, 0, 3, 0x22 /* MAP_ANONYMOUS|MAP_PRIVATE */, -1, 0);
+    if (ret != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ mmap(len=0) returned %ld (expected EINVAL)\n", ret);
+        fut_test_fail(28);
+        return;
+    }
+
+    /* munmap with unaligned address → EINVAL */
+    long ret2 = sys_munmap((void *)0x1001, 4096);
+    if (ret2 != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ munmap(unaligned) returned %ld (expected EINVAL)\n", ret2);
+        fut_test_fail(28);
+        return;
+    }
+
+    /* munmap with zero length → EINVAL */
+    ret2 = sys_munmap((void *)0x1000, 0);
+    if (ret2 != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ munmap(len=0) returned %ld (expected EINVAL)\n", ret2);
+        fut_test_fail(28);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ mmap/munmap: validation checks correct\n");
+    fut_test_pass();
+}
+
 /* ============================================================
  * Test entry point
  * ============================================================ */
@@ -1455,6 +1500,7 @@ void fut_misc_test_thread(void *arg) {
     test_groups();              /* Test 25: getgroups/setgroups */
     test_socketpair();          /* Test 26: socketpair */
     test_open_cloexec();        /* Test 27: O_CLOEXEC */
+    test_mmap_munmap_validation(); /* Test 28: mmap/munmap validation */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -16,6 +16,7 @@
 #include <kernel/errno.h>
 #include <kernel/fut_socket.h>
 #include <sys/socket.h>  /* For struct msghdr, cmsghdr, socklen_t, SCM_RIGHTS */
+#include <fcntl.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -424,6 +425,10 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
                     int newfd = vfs_alloc_fd_for_task((struct fut_task *)task, file);
                     if (newfd >= 0) {
                         new_fds[nfds++] = newfd;
+                        /* MSG_CMSG_CLOEXEC: set FD_CLOEXEC on received fds */
+                        if ((local_flags & 0x40000000) && file) {  /* MSG_CMSG_CLOEXEC */
+                            file->fd_flags |= FD_CLOEXEC;
+                        }
                         RECVMSG_LOG("[RECVMSG] SCM_RIGHTS: installed file=%p as fd=%d in receiver\n",
                                    file, newfd);
                     } else {

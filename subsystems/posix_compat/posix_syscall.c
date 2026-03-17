@@ -450,11 +450,10 @@ fut_socket_t *get_socket_from_fd(int fd) {
     if (socket_fd_table[fd] == NULL) {
         return NULL;
     }
-    /* Check ownership - only allow access to sockets owned by current thread */
-    uint64_t tid = get_current_tid();
-    if (socket_fd_owner[fd] != tid) {
-        return NULL;  /* Socket belongs to a different thread/process */
-    }
+    /* Note: ownership check removed. VFS fd_table provides per-task isolation,
+     * and release_socket_fd() in fut_vfs_close clears stale entries. The old
+     * ownership check broke fork() — child inherited VFS fds but couldn't
+     * access parent's socket_fd_table entries due to different thread IDs. */
     return socket_fd_table[fd];
 }
 

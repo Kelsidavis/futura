@@ -185,11 +185,11 @@ long sys_getdents64(unsigned int fd, void *dirp, unsigned int count) {
         return -EFAULT;
     }
 
-    /* Phase 2: Validate buffer size */
-    if (count < sizeof(struct linux_dirent64) + 1) {
-        fut_printf("[GETDENTS64] getdents64(fd=%u, dirp=?, count=%u) -> EINVAL "
-                   "(buffer too small, min=%zu)\n",
-                   fd, count, sizeof(struct linux_dirent64) + 1);
+    /* Validate buffer can hold at least one 8-byte-aligned dirent64 entry.
+     * Header is 19 bytes (packed) + 1 byte min name + padding to 8-byte
+     * alignment = 24 bytes minimum. */
+    #define MIN_DIRENT64_SIZE 24
+    if (count < MIN_DIRENT64_SIZE) {
         return -EINVAL;
     }
 

@@ -413,10 +413,6 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
         if (ready_count > 0 || is_immediate)
             break;
 
-        /* No timeout and no FDs given → immediate return */
-        if (!has_timeout && local_timeout)
-            break;
-
         /* Check for pending signals → EINTR */
         uint64_t pending = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
         uint64_t blocked = task->signal_mask;

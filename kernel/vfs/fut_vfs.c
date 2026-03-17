@@ -1959,6 +1959,11 @@ ssize_t fut_vfs_read(int fd, void *buf, size_t size) {
         return ret;
     }
 
+    /* Directories cannot be read with read() — use getdents64 */
+    if (file->vnode && file->vnode->type == VN_DIR) {
+        return -EISDIR;
+    }
+
     /* Call vnode read operation */
     if (!file->vnode || !file->vnode->ops || !file->vnode->ops->read) {
         return -EINVAL;
@@ -2008,6 +2013,11 @@ ssize_t fut_vfs_write(int fd, const void *buf, size_t size) {
             file->offset = (uint64_t)pos;
         }
         return ret;
+    }
+
+    /* Directories cannot be written with write() */
+    if (file->vnode && file->vnode->type == VN_DIR) {
+        return -EISDIR;
     }
 
     /* Call vnode write operation */

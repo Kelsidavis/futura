@@ -108,11 +108,11 @@ long sys_sigpending(sigset_t *set) {
         return -EFAULT;
     }
 
-    /* Get pending signals that are unblocked (deliverable) */
+    /* POSIX: sigpending returns ALL pending signals, including blocked ones.
+     * This lets applications check what's queued before unblocking. */
     sigset_t pending;
     uint64_t cur_pending = __atomic_load_n(&current->pending_signals, __ATOMIC_ACQUIRE);
-    uint64_t cur_mask = __atomic_load_n(&current->signal_mask, __ATOMIC_ACQUIRE);
-    pending.__mask = cur_pending & ~cur_mask;
+    pending.__mask = cur_pending;
 
     /* Copy result to user space */
     if (fut_copy_to_user(set, &pending, sizeof(sigset_t)) != 0) {

@@ -451,7 +451,7 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
      * SA_NODEFER: don't block the delivered signal (allow recursive delivery). */
     uint64_t new_mask_bits = task->signal_handler_masks[signum - 1] &
                              ~((1ULL << (SIGKILL - 1)) | (1ULL << (SIGSTOP - 1)));
-    if (!(handler_flags & 0x40000000 /* SA_NODEFER */)) {
+    if (!(handler_flags & SA_NODEFER)) {
         new_mask_bits |= signal_bit;
     }
     __atomic_or_fetch(&task->signal_mask, new_mask_bits, __ATOMIC_ACQ_REL);
@@ -641,7 +641,7 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
     int handler_flags_x86 = task->signal_handler_flags[signum - 1];
     uint64_t new_mask_bits_x86 = task->signal_handler_masks[signum - 1] &
                                  ~((1ULL << (SIGKILL - 1)) | (1ULL << (SIGSTOP - 1)));
-    if (!(handler_flags_x86 & 0x40000000 /* SA_NODEFER */)) {
+    if (!(handler_flags_x86 & SA_NODEFER)) {
         new_mask_bits_x86 |= signal_bit;
     }
     __atomic_or_fetch(&task->signal_mask, new_mask_bits_x86, __ATOMIC_ACQ_REL);

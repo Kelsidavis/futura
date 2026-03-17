@@ -442,10 +442,5 @@ long sys_dup3(int oldfd, int newfd, int flags) {
     /* Propagate socket ownership if oldfd is a socket */
     propagate_socket_dup(local_oldfd, local_newfd);
 
-    const char *flags_desc = (local_flags & O_CLOEXEC) ? "O_CLOEXEC" : "none";
-
-    fut_printf("[DUP3] dup3(oldfd=%d, newfd=%d, flags=0x%x [%s]) -> %d (Phase 4: atomic dup with flags)\n",
-               local_oldfd, local_newfd, local_flags, flags_desc, local_newfd);
-
     return local_newfd;
 }

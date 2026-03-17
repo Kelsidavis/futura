@@ -441,8 +441,6 @@ long sys_vmsplice(int fd, const void *iov, size_t nr_segs, unsigned int flags) {
         if ((size_t)nwritten < seg.iov_len) break;  /* Pipe full */
     }
 
-    fut_printf("[VMSPLICE] vmsplice(fd=%d, nr_segs=%zu, pid=%d) -> %zd bytes\n",
-               local_fd, local_nr_segs, task->pid, total);
     return total;
 }
 

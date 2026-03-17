@@ -112,20 +112,16 @@ long sys_getrusage(int who, struct rusage *usage) {
 
     /* Phase 2: Validate and identify 'who' parameter */
     const char *who_desc;
-    const char *target_desc;
 
     switch (who) {
         case RUSAGE_SELF:
             who_desc = "RUSAGE_SELF";
-            target_desc = "calling process";
             break;
         case RUSAGE_CHILDREN:
             who_desc = "RUSAGE_CHILDREN";
-            target_desc = "terminated children";
             break;
         case RUSAGE_THREAD:
             who_desc = "RUSAGE_THREAD";
-            target_desc = "calling thread";
             break;
         default:
             fut_printf("[RUSAGE] getrusage(who=%d, usage=%p) -> EINVAL (invalid who parameter)\n",
@@ -199,11 +195,6 @@ long sys_getrusage(int who, struct rusage *usage) {
                    who_desc, usage);
         return -EFAULT;
     }
-
-    fut_printf("[RUSAGE] getrusage(who=%s [%s], usage=%p) -> 0 "
-               "(utime=%ld.%06lds nvcsw=%ld maxrss=%ldKB)\n",
-               who_desc, target_desc, usage,
-               ru.ru_utime.tv_sec, ru.ru_utime.tv_usec, ru.ru_nvcsw, ru.ru_maxrss);
 
     return 0;
 }

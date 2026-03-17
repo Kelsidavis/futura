@@ -149,12 +149,6 @@ long sys_statfs(const char *path, struct fut_linux_statfs *buf) {
         return -EFAULT;
     }
 
-    fut_printf("[STATFS] statfs(path='%s%s', len=%zu, pid=%d) -> 0 "
-               "(blocks=%llu, free=%llu, Phase 2)\n",
-               path_preview, (path_len > 64) ? "..." : "", path_len, task->pid,
-               (unsigned long long)real_stats.f_blocks,
-               (unsigned long long)real_stats.f_bfree);
-
     return 0;
 }
 
@@ -223,12 +217,6 @@ long sys_fstatfs(int fd, struct fut_linux_statfs *buf) {
                    fd, task->pid);
         return -EFAULT;
     }
-
-    fut_printf("[FSTATFS] fstatfs(fd=%d, pid=%d) -> 0 "
-               "(type=ramfs, blocks=%llu, free=%llu)\n",
-               fd, task->pid,
-               (unsigned long long)stats.f_blocks,
-               (unsigned long long)stats.f_bfree);
 
     return 0;
 }
@@ -378,9 +366,6 @@ long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
                                fd, offset, len, task->pid, ret);
                     return ret;
                 }
-                fut_printf("[FALLOCATE] fallocate(fd=%d, mode=0, offset=%lu, len=%lu, pid=%d) -> 0 "
-                           "(extended to %llu bytes)\n",
-                           fd, offset, len, task->pid, (unsigned long long)new_size);
                 return 0;
             }
         }
@@ -439,10 +424,6 @@ long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
                    size_category, task->pid, (unsigned long long)clamp_len);
         return 0;
     }
-
-    /* KEEP_SIZE (reserve without extending) and COLLAPSE_RANGE: accept as no-op */
-    fut_printf("[FALLOCATE] fallocate(fd=%d, mode=0x%x [%s], offset=%lu, len=%lu [%s], pid=%d) -> 0\n",
-               fd, mode, op_type, offset, len, size_category, task->pid);
 
     return 0;
 }
@@ -509,18 +490,6 @@ long sys_sysinfo(struct fut_linux_sysinfo *info) {
         fut_printf("[SYSINFO] sysinfo(pid=%d) -> EFAULT (copy_to_user failed)\n", task->pid);
         return -EFAULT;
     }
-
-    fut_printf("[SYSINFO] sysinfo(pid=%d) -> 0 "
-               "(uptime=%lus, load=%lu.%02lu/%lu.%02lu/%lu.%02lu, "
-               "totalram=%lluMB, freeram=%lluMB, procs=%u, Phase3)\n",
-               task->pid,
-               (unsigned long)(uptime_ticks / 100),
-               loads[0] >> 16, ((loads[0] & 0xffff) * 100) >> 16,
-               loads[1] >> 16, ((loads[1] & 0xffff) * 100) >> 16,
-               loads[2] >> 16, ((loads[2] & 0xffff) * 100) >> 16,
-               (unsigned long long)(total_pages * fs_page_size / (1024 * 1024)),
-               (unsigned long long)(free_pages  * fs_page_size / (1024 * 1024)),
-               nprocs);
 
     return 0;
 }

@@ -64,6 +64,7 @@ enum procfs_kind {
     PROC_LOADAVG,    /* /proc/loadavg */
     PROC_MOUNTS,     /* /proc/mounts */
     PROC_COMM,       /* /proc/<pid>/comm */
+    PROC_ENVIRON,    /* /proc/<pid>/environ */
     /* /proc/sys/ subtree */
     PROC_SYS_DIR,          /* /proc/sys/ */
     PROC_SYS_KERNEL_DIR,   /* /proc/sys/kernel/ */
@@ -121,6 +122,7 @@ typedef struct {
 #define PROC_INO_PID_STATM(p)  (1000ULL + (uint64_t)(p) * 100 + 8)
 #define PROC_INO_PID_COMM(p)   (1000ULL + (uint64_t)(p) * 100 + 9)
 #define PROC_INO_PID_TASK(p)   (1000ULL + (uint64_t)(p) * 100 + 10)
+#define PROC_INO_PID_ENVIRON(p)(1000ULL + (uint64_t)(p) * 100 + 11)
 /* fd entries: use high range to avoid collision */
 #define PROC_INO_FD_ENTRY(p,n) (100000000ULL + (uint64_t)(p) * 1000 + (uint64_t)(n))
 /* task/<tid> entries: separate high range */
@@ -725,6 +727,16 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             total = task ? gen_cmdline(tmp, GEN_BUF, task) : 0;
             break;
         }
+        case PROC_ENVIRON: {
+            fut_task_t *task = fut_task_by_pid(n->pid);
+            if (task && task->proc_environ_len > 0) {
+                size_t n_bytes = task->proc_environ_len;
+                if (n_bytes > GEN_BUF) n_bytes = GEN_BUF;
+                __builtin_memcpy(tmp, task->proc_environ, n_bytes);
+                total = n_bytes;
+            }
+            break;
+        }
         case PROC_STAT: {
             fut_task_t *task = fut_task_by_pid(n->pid);
             total = task ? gen_stat(tmp, GEN_BUF, task) : 0;
@@ -982,6 +994,11 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0100444, PROC_CMDLINE, pid, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "environ")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_ENVIRON(pid),
+                                          0100400, PROC_ENVIRON, pid, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         if (STREQ(name, "fd")) {
             *result = procfs_alloc_vnode(mnt, VN_DIR, PROC_INO_PID_FD(pid),
                                           0040500, PROC_FD_DIR, pid, 0);
@@ -1051,6 +1068,8 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
             { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_MAPS(pid),   0100444, PROC_MAPS,   pid, 0); return *result ? 0 : -ENOMEM; }
         if (STREQ(name, "cmdline"))
             { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_CMDLINE(pid),0100444, PROC_CMDLINE,pid, 0); return *result ? 0 : -ENOMEM; }
+        if (STREQ(name, "environ"))
+            { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_ENVIRON(pid),0100400, PROC_ENVIRON,pid, 0); return *result ? 0 : -ENOMEM; }
         if (STREQ(name, "fd"))
             { *result = procfs_alloc_vnode(mnt, VN_DIR, PROC_INO_PID_FD(pid),     0040500, PROC_FD_DIR, pid, 0); return *result ? 0 : -ENOMEM; }
         if (STREQ(name, "exe"))
@@ -1233,12 +1252,13 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
 
     if (dn->kind == PROC_PID_DIR || dn->kind == PROC_TID_DIR) {
         static const char *entries[] = {
-            ".", "..", "status", "maps", "cmdline", "fd", "exe", "cwd",
+            ".", "..", "status", "maps", "cmdline", "environ", "fd", "exe", "cwd",
             "stat", "statm", "comm", "task"
         };
         static const uint8_t etypes[] = {
             FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+            FUT_VDIR_TYPE_REG,
             FUT_VDIR_TYPE_DIR,
             FUT_VDIR_TYPE_SYMLINK, FUT_VDIR_TYPE_SYMLINK,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,

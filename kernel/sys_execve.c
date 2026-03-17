@@ -796,6 +796,22 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
         task->proc_cmdline_len = (uint16_t)(pos < cap ? pos : cap);
     }
 
+    /* Record full envp for /proc/self/environ (null-separated Linux format) */
+    {
+        char *dst = task->proc_environ;
+        size_t cap = sizeof(task->proc_environ);
+        size_t pos = 0;
+        if (kernel_envp) {
+            for (int i = 0; i < envc && pos < cap - 1; i++) {
+                const char *env = kernel_envp[i];
+                while (*env && pos < cap - 1)
+                    dst[pos++] = *env++;
+                dst[pos++] = '\0';  /* null separator */
+            }
+        }
+        task->proc_environ_len = (uint16_t)(pos < cap ? pos : cap);
+    }
+
     /* Call ELF loader with kernel-space argv/envp
      * This prevents TOCTOU race: userspace can no longer modify arguments after validation.
      * kernel_argv, kernel_envp, and kernel_pathname are immutable kernel copies. */

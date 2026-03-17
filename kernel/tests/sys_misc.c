@@ -6193,6 +6193,49 @@ static void test_socketpair_dgram(void) {
     fut_test_pass();
 }
 
+static void test_proc_environ(void) {
+    fut_printf("[MISC-TEST] Test 128: /proc/self/environ round-trip\n");
+
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        fut_printf("[MISC-TEST] ✗ no current task\n");
+        fut_test_fail(128); return;
+    }
+
+    /* Set synthetic environment: "PATH=/bin\0HOME=/root\0" */
+    static const char synthetic[] = "PATH=/bin\0HOME=/root\0";
+    const size_t synth_len = sizeof(synthetic) - 1;
+    __builtin_memcpy(task->proc_environ, synthetic, synth_len);
+    task->proc_environ_len = (uint16_t)synth_len;
+
+    int fd = fut_vfs_open("/proc/self/environ", 0 /* O_RDONLY */, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open(/proc/self/environ) returned %d\n", fd);
+        task->proc_environ_len = 0;
+        fut_test_fail(128); return;
+    }
+
+    char buf[64];
+    __builtin_memset(buf, 0xff, sizeof(buf));
+    ssize_t nr = fut_vfs_read(fd, buf, sizeof(buf));
+    fut_vfs_close(fd);
+
+    /* Restore */
+    task->proc_environ_len = 0;
+
+    if (nr != (ssize_t)synth_len) {
+        fut_printf("[MISC-TEST] ✗ read %zd bytes, expected %zu\n", nr, synth_len);
+        fut_test_fail(128); return;
+    }
+    if (__builtin_memcmp(buf, synthetic, synth_len) != 0) {
+        fut_printf("[MISC-TEST] ✗ environ content mismatch\n");
+        fut_test_fail(128); return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ /proc/self/environ: %zd bytes, first='PATH=/bin'\n", nr);
+    fut_test_pass();
+}
+
 static void test_proc_cmdline(void) {
     fut_printf("[MISC-TEST] Test 127: /proc/self/cmdline full argv round-trip\n");
 
@@ -6377,6 +6420,7 @@ void fut_misc_test_thread(void *arg) {
     test_per_thread_signal_mask();         /* Test 125: sigprocmask updates thread mask not task mask */
     test_socketpair_dgram();               /* Test 126: socketpair(AF_UNIX, SOCK_DGRAM) */
     test_proc_cmdline();                   /* Test 127: /proc/self/cmdline has full argv */
+    test_proc_environ();                   /* Test 128: /proc/self/environ round-trip */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

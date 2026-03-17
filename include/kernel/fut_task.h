@@ -139,6 +139,8 @@ struct fut_task {
     char exe_path[256];                // Path to executable image (/proc/self/exe target)
     char proc_cmdline[512];            // /proc/self/cmdline: null-separated argv (Linux format)
     uint16_t proc_cmdline_len;         // Number of valid bytes in proc_cmdline
+    char proc_environ[2048];           // /proc/self/environ: null-separated envp (Linux format)
+    uint16_t proc_environ_len;         // Number of valid bytes in proc_environ
     int pdeathsig;                     // Signal to send on parent death (PR_SET_PDEATHSIG, 0=none)
     unsigned long no_new_privs;        // PR_SET_NO_NEW_PRIVS flag (sticky, prevents execve setuid)
     int dumpable;                      // PR_SET_DUMPABLE (1=dumpable, 0=not, default 1)

@@ -462,6 +462,27 @@ static int build_user_stack(fut_mm_t *mm,
 
     uint64_t zero = 0;
 
+    /* Push ELF auxiliary vector (auxv) — highest address, after envp NULL.
+     * musl and glibc read these to discover page size, UID, etc. */
+    {
+        struct { uint64_t key; uint64_t val; } auxv[] = {
+            { 6 /* AT_PAGESZ */, PAGE_SIZE },
+            { 11 /* AT_UID */,   0 },
+            { 12 /* AT_EUID */,  0 },
+            { 13 /* AT_GID */,   0 },
+            { 14 /* AT_EGID */,  0 },
+            { 23 /* AT_SECURE */, 0 },
+            { 16 /* AT_HWCAP */,  0 },
+            { 0 /* AT_NULL */,   0 },
+        };
+        for (int ai = (int)(sizeof(auxv)/sizeof(auxv[0])) - 1; ai >= 0; ai--) {
+            sp -= sizeof(uint64_t);
+            exec_copy_to_user(mm, sp, &auxv[ai].val, sizeof(uint64_t));
+            sp -= sizeof(uint64_t);
+            exec_copy_to_user(mm, sp, &auxv[ai].key, sizeof(uint64_t));
+        }
+    }
+
     /* Push envp terminator (NULL pointer) */
     sp -= sizeof(uint64_t);
     if (exec_copy_to_user(mm, sp, &zero, sizeof(zero)) != 0) {
@@ -1983,15 +2004,63 @@ static int build_user_stack(fut_mm_t *mm,
 
     /* Build stack layout (working backwards from high to low addresses):
      * [sp] = argc
-     * [sp+8] = argv[0]
-     * [sp+16] = NULL (argv terminator)
-     * [sp+24] = envp[0]
-     * [sp+32] = envp[1] (if present)
-     * [sp+...] = NULL (envp terminator)
-     * [sp+...] = strings...
+     * [sp+8] = argv[0] ... argv[n-1]
+     * [...] = NULL (argv terminator)
+     * [...] = envp[0] ... envp[m-1]
+     * [...] = NULL (envp terminator)
+     * [...] = auxv entries (key, value pairs)
+     * [...] = AT_NULL, 0 (auxv terminator)
+     * [...] = strings...
+     *
+     * We push in reverse order (auxv first, then envp, then argv, then argc).
      */
 
     uint64_t zero = 0;
+
+    /* Push ELF auxiliary vector (auxv).
+     * musl and glibc read these to discover page size, UID, etc.
+     * Pushed FIRST because it's at the highest address (after envp NULL). */
+    #define AT_NULL   0
+    #define AT_PHDR   3   /* Program headers address */
+    #define AT_PHENT  4   /* Size of program header entry */
+    #define AT_PHNUM  5   /* Number of program headers */
+    #define AT_PAGESZ 6   /* System page size */
+    #define AT_ENTRY  9   /* Program entry point */
+    #define AT_UID    11  /* Real UID */
+    #define AT_EUID   12  /* Effective UID */
+    #define AT_GID    13  /* Real GID */
+    #define AT_EGID   14  /* Effective GID */
+    #define AT_SECURE 23  /* Secure mode (setuid) */
+    #define AT_RANDOM 25  /* Address of 16 random bytes */
+    #define AT_HWCAP  16  /* Machine-dependent hints */
+
+    struct { uint64_t key; uint64_t val; } auxv_entries[] = {
+        { AT_PAGESZ, PAGE_SIZE },
+        { AT_UID,    0 },  /* root */
+        { AT_EUID,   0 },
+        { AT_GID,    0 },
+        { AT_EGID,   0 },
+        { AT_SECURE, 0 },
+        { AT_HWCAP,  0 },
+        { AT_NULL,   0 },  /* Terminator */
+    };
+    size_t auxv_count = sizeof(auxv_entries) / sizeof(auxv_entries[0]);
+
+    /* Push auxv in reverse (AT_NULL goes to highest address) */
+    for (size_t i = auxv_count; i-- > 0;) {
+        sp -= sizeof(uint64_t);
+        if (exec_copy_to_user(mm, sp, &auxv_entries[i].val, sizeof(uint64_t)) != 0) {
+            if (envp_ptrs) fut_free(envp_ptrs);
+            fut_free(argv_ptrs);
+            return -EFAULT;
+        }
+        sp -= sizeof(uint64_t);
+        if (exec_copy_to_user(mm, sp, &auxv_entries[i].key, sizeof(uint64_t)) != 0) {
+            if (envp_ptrs) fut_free(envp_ptrs);
+            fut_free(argv_ptrs);
+            return -EFAULT;
+        }
+    }
 
     /* Push envp terminator */
     sp -= sizeof(uint64_t);

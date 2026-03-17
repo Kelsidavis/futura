@@ -291,6 +291,7 @@
 #define SYS_getgroups        115  /* Linux: 115 */
 #define SYS_setgroups        116  /* Linux: 116 */
 #define SYS_utimes           235  /* Linux: 235 */
+#define SYS_vfork            58   /* Linux: 58 */
 #define SYS_socketpair       320  /* Linux: 53 — Futura: 320 (53 used by connect) */
 
 #ifndef SYS_time_millis
@@ -2970,6 +2971,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_statx]             = sys_statx_handler,
     [SYS_tgkill]            = sys_tgkill_handler,
     [SYS_tkill]             = sys_tkill_handler,
+    [SYS_vfork]             = sys_fork_handler,  /* vfork = fork (no shared MM) */
     [SYS_exit_group]        = sys_exit_group_handler,
     [SYS_getcpu]            = sys_getcpu_handler,
     [SYS_readahead]         = sys_readahead_handler,

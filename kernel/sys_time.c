@@ -200,73 +200,19 @@ long sys_clock_gettime(int clock_id, fut_timespec_t *tp) {
         return -EFAULT;
     }
 
-    /* Phase 2: Identify clock type for logging */
-    const char *clock_name = "UNKNOWN";
-    const char *clock_desc = "unknown clock";
-    const char *clock_characteristics = "";
-    int is_supported = 1;
-
+    /* Validate clock_id */
     switch (clock_id) {
         case CLOCK_REALTIME:
-            clock_name = "CLOCK_REALTIME";
-            clock_desc = "system-wide real-time clock";
-            clock_characteristics = "wall clock time, affected by time adjustments";
-            break;
-
         case CLOCK_MONOTONIC:
-            clock_name = "CLOCK_MONOTONIC";
-            clock_desc = "monotonic time";
-            clock_characteristics = "never goes backwards, unaffected by time adjustments";
-            break;
-
         case CLOCK_BOOTTIME:
-            clock_name = "CLOCK_BOOTTIME";
-            clock_desc = "monotonic time including suspend";
-            clock_characteristics = "like MONOTONIC but includes time spent suspended";
-            break;
-
         case CLOCK_REALTIME_COARSE:
-            clock_name = "CLOCK_REALTIME_COARSE";
-            clock_desc = "fast low-resolution real-time clock";
-            clock_characteristics = "faster but less precise than CLOCK_REALTIME";
-            break;
-
         case CLOCK_MONOTONIC_COARSE:
-            clock_name = "CLOCK_MONOTONIC_COARSE";
-            clock_desc = "fast low-resolution monotonic clock";
-            clock_characteristics = "faster but less precise than CLOCK_MONOTONIC";
-            break;
-
         case CLOCK_MONOTONIC_RAW:
-            clock_name = "CLOCK_MONOTONIC_RAW";
-            clock_desc = "hardware-based monotonic clock";
-            clock_characteristics = "raw hardware time, not subject to NTP adjustments";
-            break;
-
         case CLOCK_PROCESS_CPUTIME_ID:
-            clock_name = "CLOCK_PROCESS_CPUTIME_ID";
-            clock_desc = "per-process CPU time clock";
-            clock_characteristics = "measures CPU time consumed by process";
-            break;
-
         case CLOCK_THREAD_CPUTIME_ID:
-            clock_name = "CLOCK_THREAD_CPUTIME_ID";
-            clock_desc = "per-thread CPU time clock";
-            clock_characteristics = "measures CPU time consumed by thread";
             break;
-
         default:
-            fut_printf("[TIME] clock_gettime(clock_id=%d, tp=%p) -> EINVAL (unknown clock_id)\n",
-                       clock_id, tp);
             return -EINVAL;
-    }
-
-    /* Check if clock is supported */
-    if (!is_supported) {
-        fut_printf("[TIME] clock_gettime(clock_id=%s [%s], tp=%p) -> EINVAL "
-                   "(%s not yet supported, Phase 4)\n",
-                   clock_name, clock_desc, tp, clock_characteristics);
-        return -EINVAL;
     }
 
     fut_timespec_t kernel_tp;

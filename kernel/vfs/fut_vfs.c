@@ -48,11 +48,10 @@ int fut_vfs_sync_fs(struct fut_mount *mount);
 #define MAX_FS_TYPES 16
 #define MAX_MOUNTS 32
 #define MAX_OPEN_FILES 256
-/* Reduced to 4 to prevent stack overflow. Since fut_vfs_open() calls both
- * lookup_vnode() AND lookup_parent_and_name(), and each allocates
- * components[MAX_PATH_COMPONENTS][256], we need: 4 * 256 = 1KB per function.
- * Total stack usage: 2KB instead of 4KB. Most paths have 2-3 components anyway. */
-#define MAX_PATH_COMPONENTS 4
+/* Heap-allocated per lookup call (fut_malloc), so depth can be generous.
+ * 16 * 256 = 4KB per allocation; supports paths like /proc/self/task/<tid>/status
+ * which have 5 components, plus room for deeply-nested filesystem paths. */
+#define MAX_PATH_COMPONENTS 16
 
 static const struct fut_fs_type *registered_fs[MAX_FS_TYPES];
 static int num_fs_types = 0;

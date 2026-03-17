@@ -479,9 +479,27 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
         return -EFAULT;
     }
 
+    /* Apply MSG_DONTWAIT: temporarily set O_NONBLOCK on the socket */
+    bool dontwait_applied = false;
+    if (local_flags & MSG_DONTWAIT) {
+        extern fut_socket_t *get_socket_from_fd(int fd);
+        fut_socket_t *sock = get_socket_from_fd(local_sockfd);
+        if (sock && !(sock->flags & 0x800)) {
+            sock->flags |= 0x800;
+            dontwait_applied = true;
+        }
+    }
+
     /* Write to socket via VFS */
     ssize_t ret = fut_vfs_write(local_sockfd, kbuf, local_len);
     fut_free(kbuf);
+
+    /* Restore O_NONBLOCK if we temporarily set it */
+    if (dontwait_applied) {
+        extern fut_socket_t *get_socket_from_fd(int fd);
+        fut_socket_t *sock = get_socket_from_fd(local_sockfd);
+        if (sock) sock->flags &= ~0x800;
+    }
 
     /* Phase 4: Consume bytes from I/O budget if write succeeded */
     if (ret > 0) {

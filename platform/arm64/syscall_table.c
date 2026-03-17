@@ -884,73 +884,44 @@ static int64_t sys_unlink_wrapper(uint64_t pathname, uint64_t arg1, uint64_t arg
  * x0 = dirfd, x1 = pathname, x2 = mode
  * For ARM64, only AT_FDCWD is supported (acts like mkdir)
  */
+extern long sys_mkdirat(int dirfd, const char *pathname, uint32_t mode);
 static int64_t sys_mkdirat_wrapper(uint64_t dirfd, uint64_t pathname, uint64_t mode,
                                     uint64_t arg3, uint64_t arg4, uint64_t arg5) {
     (void)arg3; (void)arg4; (void)arg5;
-    /* Only support AT_FDCWD for now */
-    if ((int)dirfd != AT_FDCWD) {
-        return -EBADF;
-    }
-    return sys_mkdir((const char *)pathname, (uint32_t)mode);
+    return sys_mkdirat((int)dirfd, (const char *)pathname, (uint32_t)mode);
 }
 
-/* sys_unlinkat_wrapper - delete file/directory
- * x0 = dirfd, x1 = pathname, x2 = flags
- * For ARM64, only AT_FDCWD is supported (acts like unlink)
- */
+extern long sys_unlinkat(int dirfd, const char *pathname, int flags);
 static int64_t sys_unlinkat_wrapper(uint64_t dirfd, uint64_t pathname, uint64_t flags,
                                      uint64_t arg3, uint64_t arg4, uint64_t arg5) {
-    (void)flags; (void)arg3; (void)arg4; (void)arg5;
-    /* Only support AT_FDCWD for now */
-    if ((int)dirfd != AT_FDCWD) {
-        return -EBADF;
-    }
-    return sys_unlink((const char *)pathname);
+    (void)arg3; (void)arg4; (void)arg5;
+    return sys_unlinkat((int)dirfd, (const char *)pathname, (int)flags);
 }
 
-/* sys_renameat_wrapper - rename file
- * x0 = olddirfd, x1 = oldpath, x2 = newdirfd, x3 = newpath
- * For ARM64, only AT_FDCWD is supported (acts like rename)
- */
+extern long sys_renameat(int olddirfd, const char *oldpath,
+                         int newdirfd, const char *newpath);
 static int64_t sys_renameat_wrapper(uint64_t olddirfd, uint64_t oldpath,
                                      uint64_t newdirfd, uint64_t newpath,
                                      uint64_t arg4, uint64_t arg5) {
     (void)arg4; (void)arg5;
-    /* Only support AT_FDCWD for now */
-    if ((int)olddirfd != AT_FDCWD || (int)newdirfd != AT_FDCWD) {
-        return -EBADF;
-    }
-    return sys_rename((const char *)oldpath, (const char *)newpath);
+    return sys_renameat((int)olddirfd, (const char *)oldpath,
+                        (int)newdirfd, (const char *)newpath);
 }
 
-/* sys_fstatat_wrapper - get file status
- * x0 = dirfd, x1 = pathname, x2 = statbuf, x3 = flags
- * For ARM64, only AT_FDCWD is supported (acts like stat)
- */
+extern long sys_fstatat(int dirfd, const char *pathname, void *statbuf, int flags);
 static int64_t sys_fstatat_wrapper(uint64_t dirfd, uint64_t pathname,
                                     uint64_t statbuf, uint64_t flags,
                                     uint64_t arg4, uint64_t arg5) {
-    (void)flags; (void)arg4; (void)arg5;
-    /* Only support AT_FDCWD for now */
-    if ((int)dirfd != AT_FDCWD) {
-        return -EBADF;
-    }
-    return sys_stat((const char *)pathname, (void *)statbuf);
+    (void)arg4; (void)arg5;
+    return sys_fstatat((int)dirfd, (const char *)pathname, (void *)statbuf, (int)flags);
 }
 
-/* sys_fchmodat_wrapper - change file mode
- * x0 = dirfd, x1 = pathname, x2 = mode, x3 = flags
- * For ARM64, only AT_FDCWD is supported (acts like chmod)
- */
+extern long sys_fchmodat(int dirfd, const char *pathname, uint32_t mode, int flags);
 static int64_t sys_fchmodat_wrapper(uint64_t dirfd, uint64_t pathname,
                                      uint64_t mode, uint64_t flags,
                                      uint64_t arg4, uint64_t arg5) {
-    (void)flags; (void)arg4; (void)arg5;
-    /* Only support AT_FDCWD for now */
-    if ((int)dirfd != AT_FDCWD) {
-        return -EBADF;
-    }
-    return sys_chmod((const char *)pathname, (uint32_t)mode);
+    (void)arg4; (void)arg5;
+    return sys_fchmodat((int)dirfd, (const char *)pathname, (uint32_t)mode, (int)flags);
 }
 
 /* sys_faccessat_wrapper - check file access permissions
@@ -964,49 +935,30 @@ static int64_t sys_faccessat_wrapper(uint64_t dirfd, uint64_t pathname,
     return sys_faccessat((int)dirfd, (const char *)pathname, (int)mode, (int)flags);
 }
 
-/* sys_linkat_wrapper - create hard link
- * x0 = olddirfd, x1 = oldpath, x2 = newdirfd, x3 = newpath, x4 = flags
- * For ARM64, only AT_FDCWD is supported (acts like link)
- */
+extern long sys_linkat(int olddirfd, const char *oldpath,
+                       int newdirfd, const char *newpath, int flags);
 static int64_t sys_linkat_wrapper(uint64_t olddirfd, uint64_t oldpath,
                                    uint64_t newdirfd, uint64_t newpath,
                                    uint64_t flags, uint64_t arg5) {
-    (void)flags; (void)arg5;
-    /* Only support AT_FDCWD for now */
-    if ((int)olddirfd != AT_FDCWD || (int)newdirfd != AT_FDCWD) {
-        return -EBADF;
-    }
-    return sys_link((const char *)oldpath, (const char *)newpath);
+    (void)arg5;
+    return sys_linkat((int)olddirfd, (const char *)oldpath,
+                      (int)newdirfd, (const char *)newpath, (int)flags);
 }
 
-/* sys_symlinkat_wrapper - create symbolic link
- * x0 = target, x1 = newdirfd, x2 = linkpath
- * For ARM64, only AT_FDCWD is supported (acts like symlink)
- */
+extern long sys_symlinkat(const char *target, int newdirfd, const char *linkpath);
 static int64_t sys_symlinkat_wrapper(uint64_t target, uint64_t newdirfd,
                                       uint64_t linkpath, uint64_t arg3,
                                       uint64_t arg4, uint64_t arg5) {
     (void)arg3; (void)arg4; (void)arg5;
-    /* Only support AT_FDCWD for now */
-    if ((int)newdirfd != AT_FDCWD) {
-        return -EBADF;
-    }
-    return sys_symlink((const char *)target, (const char *)linkpath);
+    return sys_symlinkat((const char *)target, (int)newdirfd, (const char *)linkpath);
 }
 
-/* sys_readlinkat_wrapper - read symbolic link
- * x0 = dirfd, x1 = pathname, x2 = buf, x3 = bufsiz
- * For ARM64, only AT_FDCWD is supported (acts like readlink)
- */
+extern long sys_readlinkat(int dirfd, const char *pathname, char *buf, size_t bufsiz);
 static int64_t sys_readlinkat_wrapper(uint64_t dirfd, uint64_t pathname,
                                        uint64_t buf, uint64_t bufsiz,
                                        uint64_t arg4, uint64_t arg5) {
     (void)arg4; (void)arg5;
-    /* Only support AT_FDCWD for now */
-    if ((int)dirfd != AT_FDCWD) {
-        return -EBADF;
-    }
-    return sys_readlink((const char *)pathname, (char *)buf, (size_t)bufsiz);
+    return sys_readlinkat((int)dirfd, (const char *)pathname, (char *)buf, (size_t)bufsiz);
 }
 
 /* sys_epoll_create1_wrapper - create epoll file descriptor

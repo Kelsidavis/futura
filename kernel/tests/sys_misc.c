@@ -5417,6 +5417,43 @@ static void test_procfs_cpuinfo(void) {
 }
 
 /* ============================================================
+ * Test 104: readdir /proc enumerates live PID directories
+ * ============================================================ */
+static void test_procfs_pid_readdir(void) {
+    fut_printf("[MISC-TEST] Test 104: /proc enumerates live PIDs\n");
+
+    uint64_t cookie = 0;
+    struct fut_vdirent de;
+    int found_pid = 0;
+    int iters = 0;
+
+    while (iters < 256) {
+        int r = fut_vfs_readdir("/proc", &cookie, &de);
+        if (r < 0) break;
+        iters++;
+        /* Check if name is purely numeric (a PID directory) */
+        int all_digits = (de.d_name[0] >= '1' && de.d_name[0] <= '9');
+        for (int i = 1; all_digits && de.d_name[i]; i++) {
+            if (de.d_name[i] < '0' || de.d_name[i] > '9') all_digits = 0;
+        }
+        if (all_digits && de.d_type == FUT_VDIR_TYPE_DIR) {
+            found_pid = 1;
+            fut_printf("[MISC-TEST] /proc has PID dir: %s\n", de.d_name);
+            break;
+        }
+    }
+
+    if (!found_pid) {
+        fut_printf("[MISC-TEST] ✗ /proc readdir: no numeric PID dir found (%d entries)\n",
+                   iters);
+        fut_test_fail(104);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ /proc readdir: found live PID directory\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -5529,6 +5566,7 @@ void fut_misc_test_thread(void *arg) {
     test_procfs_self_stat();        /* Test 101: /proc/self/stat format */
     test_procfs_self_statm();       /* Test 102: /proc/self/statm 7 tokens */
     test_procfs_cpuinfo();          /* Test 103: /proc/cpuinfo processor line */
+    test_procfs_pid_readdir();      /* Test 104: /proc lists live PIDs */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

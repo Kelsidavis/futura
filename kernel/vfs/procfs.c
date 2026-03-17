@@ -36,6 +36,9 @@
 #include <stdint.h>
 #include <string.h>
 
+/* Global task list (defined in kernel/threading/fut_task.c) */
+extern fut_task_t *fut_task_list;
+
 /* ============================================================
  *   Procfs Node Kind (stored in fs_data)
  * ============================================================ */
@@ -861,7 +864,50 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             *cookie = idx + 1;
             return 0;
         }
-        return -ENOENT;  /* end of directory */
+
+        /*
+         * PID enumeration: cookie >= 7 means "find the first task with
+         * pid > (cookie - 7)".  After returning a PID entry we set
+         * cookie = 7 + that_pid, so the next call resumes after it.
+         *
+         * This is stable as long as PIDs are unique and monotonically
+         * increasing; newly-forked tasks will appear if their PID is
+         * greater than the last-seen PID.
+         */
+        uint64_t min_pid = idx - 7;  /* start scanning for pid > min_pid */
+        fut_task_t *best = NULL;
+        uint64_t   best_pid = (uint64_t)-1;
+        fut_task_t *t = fut_task_list;
+        while (t) {
+            if (t->pid > min_pid && t->pid < best_pid) {
+                best = t;
+                best_pid = t->pid;
+            }
+            t = t->next;
+        }
+        if (!best) return -ENOENT;  /* no more tasks */
+
+        /* Format pid as decimal name */
+        char pidname[20]; int pn = 0;
+        uint64_t pv = best->pid;
+        if (pv == 0) { pidname[pn++] = '0'; }
+        else {
+            char rev[20]; int rn = 0;
+            while (pv) { rev[rn++] = '0' + (int)(pv % 10); pv /= 10; }
+            for (int i = rn - 1; i >= 0; i--) pidname[pn++] = rev[i];
+        }
+        pidname[pn] = '\0';
+
+        de->d_ino    = PROC_INO_PID_DIR(best->pid);
+        de->d_off    = 7 + best->pid + 1;
+        de->d_type   = FUT_VDIR_TYPE_DIR;
+        de->d_reclen = sizeof(*de);
+        size_t nl = (size_t)pn;
+        if (nl > FUT_VFS_NAME_MAX) nl = FUT_VFS_NAME_MAX;
+        __builtin_memcpy(de->d_name, pidname, nl);
+        de->d_name[nl] = '\0';
+        *cookie = 7 + best->pid + 1;  /* resume after this pid */
+        return 0;
     }
 
     if (dn->kind == PROC_PID_DIR) {

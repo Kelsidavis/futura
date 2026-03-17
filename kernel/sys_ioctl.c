@@ -30,6 +30,8 @@
 #define TIOCSPGRP   0x5410
 #define TIOCGPGRP   0x540F
 #define TIOCSCTTY   0x540E
+#define TIOCNOTTY   0x5422
+#define TIOCGSID    0x5429
 #define FIOCLEX     0x5451
 #define FIONCLEX    0x5450
 
@@ -433,6 +435,12 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
         case TIOCSCTTY:
             request_name = "TIOCSCTTY";
             break;
+        case TIOCNOTTY:
+            request_name = "TIOCNOTTY";
+            break;
+        case TIOCGSID:
+            request_name = "TIOCGSID";
+            break;
         default:
             request_name = "UNKNOWN";
             break;
@@ -543,6 +551,7 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
                 case TIOCGWINSZ:  /* Get window size - writes winsize to argp */
                 case FIONREAD:    /* Get bytes available - writes int to argp */
                 case TIOCGPGRP:   /* Get foreground pgrp - writes pid_t to argp */
+                case TIOCGSID:    /* Get session ID - writes pid_t to argp */
                     requires_write = 1;
                     break;
                 case TCSETS:      /* Set terminal settings - reads termios from argp */
@@ -810,6 +819,25 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
             /* TIOCSCTTY - Make this terminal the controlling terminal.
              * argp is the "steal" flag (0 or 1). Accept silently. */
             return 0;
+        case TIOCNOTTY:
+            /* TIOCNOTTY - Detach from controlling terminal. Accept silently. */
+            return 0;
+        case TIOCGSID: {
+            /* TIOCGSID - Get session ID of the controlling terminal.
+             * Returns the session leader's PID. */
+            if (!argp)
+                return -EFAULT;
+            fut_task_t *sid_task = fut_task_current();
+            int sid = sid_task ? (int)sid_task->sid : 0;
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
+                __builtin_memcpy(argp, &sid, sizeof(int));
+            else
+#endif
+            if (fut_copy_to_user(argp, &sid, sizeof(int)) != 0)
+                return -EFAULT;
+            return 0;
+        }
         default:
             fut_printf("[IOCTL] ioctl(fd=%d, request=0x%lx [%s], argp=%p) -> ENOTTY (no ioctl op)\n",
                        fd, request, request_name, argp);

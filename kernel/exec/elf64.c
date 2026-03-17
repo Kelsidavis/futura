@@ -482,6 +482,13 @@ static int build_user_stack(fut_mm_t *mm,
     /* Push ELF auxiliary vector (auxv) — highest address, after envp NULL.
      * musl and glibc read these to discover page size, UID, etc. */
     {
+        fut_task_t *auxv_task = fut_task_current();
+        uint64_t uid  = auxv_task ? auxv_task->ruid : 0;
+        uint64_t euid = auxv_task ? auxv_task->uid  : 0;
+        uint64_t gid  = auxv_task ? auxv_task->rgid : 0;
+        uint64_t egid = auxv_task ? auxv_task->gid  : 0;
+        uint64_t secure = (uid != euid || gid != egid) ? 1 : 0;
+
         struct { uint64_t key; uint64_t val; } auxv[] = {
             { 6 /* AT_PAGESZ */, PAGE_SIZE },
             { 9 /* AT_ENTRY */,  g_exec_entry },
@@ -489,11 +496,12 @@ static int build_user_stack(fut_mm_t *mm,
             { 4 /* AT_PHENT */,  g_exec_phent },
             { 5 /* AT_PHNUM */,  g_exec_phnum },
             { 25 /* AT_RANDOM */, random_addr },
-            { 11 /* AT_UID */,   0 },
-            { 12 /* AT_EUID */,  0 },
-            { 13 /* AT_GID */,   0 },
-            { 14 /* AT_EGID */,  0 },
-            { 23 /* AT_SECURE */, 0 },
+            { 17 /* AT_CLKTCK */, 100 },
+            { 11 /* AT_UID */,   uid },
+            { 12 /* AT_EUID */,  euid },
+            { 13 /* AT_GID */,   gid },
+            { 14 /* AT_EGID */,  egid },
+            { 23 /* AT_SECURE */, secure },
             { 16 /* AT_HWCAP */,  0 },
             { 0 /* AT_NULL */,   0 },
         };
@@ -2101,6 +2109,7 @@ static int build_user_stack(fut_mm_t *mm,
         { AT_PHENT,  g_exec_phent },
         { AT_PHNUM,  g_exec_phnum },
         { AT_RANDOM, rand_addr },
+        { 17 /* AT_CLKTCK */, 100 },
         { AT_UID,    0 },  /* root */
         { AT_EUID,   0 },
         { AT_GID,    0 },

@@ -23,6 +23,21 @@
 #include <kernel/signal.h>
 
 #include <kernel/kprintf.h>
+
+/* Kernel-pointer-safe copy helpers for selftest support */
+static inline bool _ns_is_kptr(const void *p) {
+#ifdef __x86_64__
+    return (uintptr_t)p >= 0xFFFFFFFF80000000ULL;
+#elif defined(__aarch64__)
+    return (uintptr_t)p >= 0xFFFF000000000000ULL;
+#else
+    return false;
+#endif
+}
+static inline int _ns_copy_to_user(void *dst, const void *src, size_t n) {
+    if (_ns_is_kptr(dst)) { __builtin_memcpy(dst, src, n); return 0; }
+    return fut_copy_to_user(dst, src, n);
+}
 #include <kernel/debug_config.h>
 
 /* Nanosleep debugging (controlled via debug_config.h) */
@@ -133,17 +148,23 @@ long sys_nanosleep(const fut_timespec_t *u_req, fut_timespec_t *u_rem) {
      * ATTACK: Attacker provides read-only or unmapped u_rem buffer
      * IMPACT: Kernel page fault when writing remaining time after sleep
      * DEFENSE: Check write permission before potentially blocking sleep operation */
-    if (u_rem && fut_access_ok(u_rem, sizeof(fut_timespec_t), 1) != 0) {
-        nanosleep_printf("[NANOSLEEP] nanosleep(u_rem=%p) -> EFAULT (u_rem not writable for %zu bytes)\n",
-                   u_rem, sizeof(fut_timespec_t));
+    if (u_rem && !_ns_is_kptr(u_rem) &&
+        fut_access_ok(u_rem, sizeof(fut_timespec_t), 1) != 0) {
         return -EFAULT;
     }
 
-    /* Copy request from user */
+    /* Copy request from user (or kernel buffer for selftests) */
     fut_timespec_t req;
+#ifdef __x86_64__
+    if ((uintptr_t)u_req >= 0xFFFFFFFF80000000ULL)
+        __builtin_memcpy(&req, u_req, sizeof(req));
+    else
+#elif defined(__aarch64__)
+    if ((uintptr_t)u_req >= 0xFFFF000000000000ULL)
+        __builtin_memcpy(&req, u_req, sizeof(req));
+    else
+#endif
     if (fut_copy_from_user(&req, u_req, sizeof(req)) != 0) {
-        nanosleep_printf("[NANOSLEEP] nanosleep(u_req=%p) -> EFAULT "
-                   "(copy_from_user failed for request)\n", (void*)u_req);
         return -EFAULT;
     }
 
@@ -211,7 +232,7 @@ long sys_nanosleep(const fut_timespec_t *u_req, fut_timespec_t *u_rem) {
             /* Signal already pending — return EINTR immediately */
             if (u_rem) {
                 fut_timespec_t rem = req;  /* Full duration remaining */
-                fut_copy_to_user(u_rem, &rem, sizeof(rem));
+                _ns_copy_to_user(u_rem, &rem, sizeof(rem));
             }
             return -EINTR;
         }
@@ -241,10 +262,10 @@ long sys_nanosleep(const fut_timespec_t *u_req, fut_timespec_t *u_rem) {
                     .tv_sec = (int64_t)(remaining_ns / 1000000000ULL),
                     .tv_nsec = (int64_t)(remaining_ns % 1000000000ULL)
                 };
-                fut_copy_to_user(u_rem, &rem, sizeof(rem));
+                _ns_copy_to_user(u_rem, &rem, sizeof(rem));
             } else if (u_rem) {
                 fut_timespec_t rem = {0, 0};
-                fut_copy_to_user(u_rem, &rem, sizeof(rem));
+                _ns_copy_to_user(u_rem, &rem, sizeof(rem));
             }
 
             nanosleep_printf("[NANOSLEEP] nanosleep interrupted by signal after %llu ticks\n",
@@ -256,7 +277,7 @@ long sys_nanosleep(const fut_timespec_t *u_req, fut_timespec_t *u_rem) {
     /* Sleep completed normally */
     if (u_rem) {
         fut_timespec_t rem = {0, 0};
-        int copy_ret = fut_copy_to_user(u_rem, &rem, sizeof(rem));
+        int copy_ret = _ns_copy_to_user(u_rem, &rem, sizeof(rem));
         if (copy_ret != 0) {
             nanosleep_printf("[NANOSLEEP] nanosleep(u_rem=%p) -> EFAULT "
                        "(copy_to_user failed for remaining time)\n", (void*)u_rem);

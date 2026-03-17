@@ -3402,6 +3402,61 @@ static void test_writev_readv(void) {
     fut_test_pass();
 }
 
+extern long sys_nanosleep(const fut_timespec_t *req, fut_timespec_t *rem);
+
+/* ============================================================
+ * Test 80: nanosleep basic timing and EINTR
+ * ============================================================ */
+static void test_nanosleep_basic(void) {
+    fut_printf("[MISC-TEST] Test 80: nanosleep\n");
+
+    /* Sleep for 10ms (1 tick at 100Hz) */
+    fut_timespec_t req = { .tv_sec = 0, .tv_nsec = 10000000 };  /* 10ms */
+    fut_timespec_t rem = { .tv_sec = -1, .tv_nsec = -1 };
+
+    fut_timespec_t before = {0};
+    sys_clock_gettime(1 /* CLOCK_MONOTONIC */, &before);
+
+    long ret = sys_nanosleep(&req, &rem);
+
+    fut_timespec_t after = {0};
+    sys_clock_gettime(1, &after);
+
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ nanosleep returned %ld\n", ret);
+        fut_test_fail(80);
+        return;
+    }
+
+    /* Verify some time passed (at least 1 tick = 10ms) */
+    int64_t elapsed_ns = (after.tv_sec - before.tv_sec) * 1000000000LL +
+                          (after.tv_nsec - before.tv_nsec);
+    if (elapsed_ns < 5000000) {  /* At least 5ms */
+        fut_printf("[MISC-TEST] ✗ elapsed=%lldns (expected >= 5ms)\n", (long long)elapsed_ns);
+        fut_test_fail(80);
+        return;
+    }
+
+    /* Test EINTR: set signal pending, then nanosleep */
+    fut_task_t *task = fut_task_current();
+    __atomic_or_fetch(&task->pending_signals, (1ULL << 9), __ATOMIC_RELEASE);
+
+    req.tv_sec = 1;  /* 1 second — should be interrupted */
+    req.tv_nsec = 0;
+    ret = sys_nanosleep(&req, &rem);
+
+    __atomic_and_fetch(&task->pending_signals, ~(1ULL << 9), __ATOMIC_RELEASE);
+
+    if (ret != -EINTR) {
+        fut_printf("[MISC-TEST] ✗ nanosleep(EINTR) returned %ld\n", ret);
+        fut_test_fail(80);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ nanosleep: 10ms sleep works, EINTR on pending signal\n");
+    fut_test_pass();
+}
+
 /* ============================================================
  * Test 52: write on O_RDONLY fd returns EBADF
  * ============================================================ */
@@ -4281,6 +4336,7 @@ void fut_misc_test_thread(void *arg) {
     test_openat_dirfd();        /* Test 77: openat with real dirfd */
     test_cputime_clocks();      /* Test 78: CLOCK_PROCESS/THREAD_CPUTIME_ID */
     test_writev_readv();        /* Test 79: writev/readv scatter-gather */
+    test_nanosleep_basic();     /* Test 80: nanosleep basic + EINTR */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -256,8 +256,9 @@ long sys_setuid(uint32_t uid) {
     const char *old_euid_category = categorize_id(task->uid);
     const char *old_ruid_category = categorize_id(task->ruid);
 
-    /* Check if process is privileged (euid=0) */
-    int is_privileged = (task->uid == 0);
+    /* Check if process is privileged (euid=0 or CAP_SETUID) */
+    int is_privileged = (task->uid == 0) ||
+                        (task->cap_effective & (1ULL << 7 /* CAP_SETUID */));
 
     if (is_privileged) {
         /* Root can set both IDs to any value */
@@ -404,8 +405,9 @@ long sys_setgid(uint32_t gid) {
     const char *old_egid_category = categorize_id(task->gid);
     const char *old_rgid_category = categorize_id(task->rgid);
 
-    /* Check if process is privileged (egid=0) */
-    int is_privileged = (task->gid == 0);
+    /* Check if process is privileged (egid=0 or CAP_SETGID) */
+    int is_privileged = (task->gid == 0) ||
+                        (task->cap_effective & (1ULL << 6 /* CAP_SETGID */));
 
     if (is_privileged) {
         /* Root group can set both GIDs to any value */

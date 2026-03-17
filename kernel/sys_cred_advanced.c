@@ -32,7 +32,8 @@
  * A task is privileged if its effective UID is 0 (root).
  */
 static inline int cred_is_privileged(fut_task_t *task) {
-    return task->uid == ROOT_UID;
+    return task->uid == ROOT_UID ||
+           (task->cap_effective & (1ULL << 7 /* CAP_SETUID */));
 }
 
 /**

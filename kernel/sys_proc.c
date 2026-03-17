@@ -8,6 +8,7 @@
  */
 
 #include <kernel/fut_task.h>
+#include <kernel/fut_thread.h>
 #include <kernel/errno.h>
 #include <sys/resource.h>
 #include <stdint.h>
@@ -61,12 +62,17 @@ long sys_getpid(void) {
  *   - Thread ID of the calling thread (always succeeds)
  */
 long sys_gettid(void) {
+    /* For multi-threaded processes (CLONE_THREAD), each thread has its own TID.
+     * Return the current thread's TID, which differs from the task PID for
+     * secondary threads. The main thread gets the same TID as the process PID
+     * on the first task creation, but that's handled by the bootstrap path. */
+    fut_thread_t *thread = fut_thread_current();
+    if (thread)
+        return (long)thread->tid;
     fut_task_t *task = fut_task_current();
-    if (!task) {
-        return 1;  /* Default to init TID */
-    }
-
-    return task->pid;
+    if (task)
+        return (long)task->pid;
+    return 1;
 }
 
 /**

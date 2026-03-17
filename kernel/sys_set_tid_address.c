@@ -13,6 +13,7 @@
  */
 
 #include <kernel/fut_task.h>
+#include <kernel/fut_thread.h>
 #include <kernel/errno.h>
 #include <stdint.h>
 
@@ -79,29 +80,20 @@
  */
 long sys_set_tid_address(int *tidptr) {
     fut_task_t *task = fut_task_current();
-    if (!task) {
-        /* Should never happen, but return error if no task */
+    if (!task)
         return -ESRCH;
-    }
 
-    /* Phase 2: Categorize operation type */
-    const char *op_type;
-    if (tidptr == NULL) {
-        op_type = "disable clear_child_tid";
-    } else {
-        op_type = "set clear_child_tid address";
-    }
-
-    /* Get current TID (in our system, TID == PID for main thread) */
-    int current_tid = task->pid;
-
-    /* Phase 3: Store tidptr in task structure for clear_child_tid behavior */
+    /* For CLONE_THREAD threads, store in the per-thread field so that only
+     * THIS thread's exit clears the address (not the whole task's exit).
+     * For single-threaded processes, also update task->clear_child_tid as
+     * a fallback for the task_cleanup_and_exit() path. */
+    fut_thread_t *thread = fut_thread_current();
+    if (thread)
+        thread->clear_child_tid = tidptr;
     task->clear_child_tid = tidptr;
 
-    /* Phase 4: Enhanced logging with operation categorization */
-    fut_printf("[SET_TID_ADDR] set_tid_address(tidptr=%p [%s], pid=%d) -> %d "
-               "(Phase 4: tidptr stored, will clear and wake futex on exit)\n",
-               tidptr, op_type, task->pid, current_tid);
-
-    return current_tid;
+    /* Return the calling thread's TID.  For secondary threads (CLONE_THREAD)
+     * this differs from the process PID (= TGID). */
+    uint64_t tid = thread ? thread->tid : (uint64_t)task->pid;
+    return (long)tid;
 }

@@ -5125,6 +5125,119 @@ static void test_setpipe_sz(void) {
 }
 
 /* ============================================================
+ * Test 96: /proc/uptime is readable and contains a number
+ * ============================================================ */
+static void test_procfs_uptime(void) {
+    fut_printf("[MISC-TEST] Test 96: /proc/uptime readable\n");
+
+    int fd = fut_vfs_open("/proc/uptime", 0 /* O_RDONLY */, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open /proc/uptime failed: %d\n", fd);
+        fut_test_fail(96);
+        return;
+    }
+
+    char buf[64];
+    __builtin_memset(buf, 0, sizeof(buf));
+    ssize_t n = fut_vfs_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+
+    if (n <= 0) {
+        fut_printf("[MISC-TEST] ✗ read /proc/uptime returned %ld\n", (long)n);
+        fut_test_fail(96);
+        return;
+    }
+    /* Should start with a digit (seconds since boot) */
+    if (buf[0] < '0' || buf[0] > '9') {
+        fut_printf("[MISC-TEST] ✗ /proc/uptime first char='%c' (expected digit)\n", buf[0]);
+        fut_test_fail(96);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ /proc/uptime: '%s'\n", buf);
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 97: /proc/self/status contains Pid: line
+ * ============================================================ */
+static void test_procfs_self_status(void) {
+    fut_printf("[MISC-TEST] Test 97: /proc/self/status has Pid: line\n");
+
+    int fd = fut_vfs_open("/proc/self/status", 0 /* O_RDONLY */, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open /proc/self/status failed: %d\n", fd);
+        fut_test_fail(97);
+        return;
+    }
+
+    char buf[512];
+    __builtin_memset(buf, 0, sizeof(buf));
+    ssize_t n = fut_vfs_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+
+    if (n <= 0) {
+        fut_printf("[MISC-TEST] ✗ read /proc/self/status returned %ld\n", (long)n);
+        fut_test_fail(97);
+        return;
+    }
+
+    /* Search for "Pid:\t" substring */
+    int found = 0;
+    for (ssize_t i = 0; i + 4 < n; i++) {
+        if (buf[i] == 'P' && buf[i+1] == 'i' && buf[i+2] == 'd' && buf[i+3] == ':')
+            { found = 1; break; }
+    }
+    if (!found) {
+        fut_printf("[MISC-TEST] ✗ /proc/self/status: no 'Pid:' found in output\n");
+        fut_test_fail(97);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ /proc/self/status: Pid: line present (%ld bytes)\n", (long)n);
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 98: /proc/meminfo contains MemTotal:
+ * ============================================================ */
+static void test_procfs_meminfo(void) {
+    fut_printf("[MISC-TEST] Test 98: /proc/meminfo has MemTotal:\n");
+
+    int fd = fut_vfs_open("/proc/meminfo", 0 /* O_RDONLY */, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open /proc/meminfo failed: %d\n", fd);
+        fut_test_fail(98);
+        return;
+    }
+
+    char buf[512];
+    __builtin_memset(buf, 0, sizeof(buf));
+    ssize_t n = fut_vfs_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+
+    if (n <= 0) {
+        fut_printf("[MISC-TEST] ✗ read /proc/meminfo returned %ld\n", (long)n);
+        fut_test_fail(98);
+        return;
+    }
+
+    /* Search for "MemTotal:" */
+    int found = 0;
+    for (ssize_t i = 0; i + 8 < n; i++) {
+        if (buf[i]   == 'M' && buf[i+1] == 'e' && buf[i+2] == 'm' &&
+            buf[i+3] == 'T' && buf[i+4] == 'o' && buf[i+5] == 't' &&
+            buf[i+6] == 'a' && buf[i+7] == 'l' && buf[i+8] == ':')
+            { found = 1; break; }
+    }
+    if (!found) {
+        fut_printf("[MISC-TEST] ✗ /proc/meminfo: 'MemTotal:' not found\n");
+        fut_test_fail(98);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ /proc/meminfo: MemTotal: present (%ld bytes)\n", (long)n);
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -5229,6 +5342,9 @@ void fut_misc_test_thread(void *arg) {
     test_dev_stdio_symlinks();      /* Test 93: /dev/stdin,stdout,stderr */
     test_socket_msg_peek();         /* Test 94: MSG_PEEK on socket */
     test_setpipe_sz();              /* Test 95: F_SETPIPE_SZ resize */
+    test_procfs_uptime();           /* Test 96: /proc/uptime readable */
+    test_procfs_self_status();      /* Test 97: /proc/self/status has Pid: line */
+    test_procfs_meminfo();          /* Test 98: /proc/meminfo has MemTotal: */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

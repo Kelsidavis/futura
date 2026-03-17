@@ -1196,6 +1196,20 @@ void fut_kernel_main(void) {
         fut_printf("[WARN] ✗ Failed to mount ramfs at /tmp (error %d)\n", tmp_mount_ret);
     }
 
+    /* Initialize and mount procfs at /proc */
+    {
+        extern void fut_procfs_init(void);
+        fut_procfs_init();
+        int proc_mkdir_ret = fut_vfs_mkdir("/proc", 0555);
+        if (proc_mkdir_ret < 0 && proc_mkdir_ret != -EEXIST)
+            fut_printf("[WARN] Failed to create /proc directory (error %d)\n", proc_mkdir_ret);
+        int proc_mount_ret = fut_vfs_mount(NULL, "/proc", "proc", 0, NULL, FUT_INVALID_HANDLE);
+        if (proc_mount_ret == 0)
+            fut_printf("[INIT] ✓ Mounted procfs at /proc\n");
+        else
+            fut_printf("[WARN] ✗ Failed to mount procfs at /proc (error %d)\n", proc_mount_ret);
+    }
+
     bool run_async_selftests = boot_flag_enabled("async-tests", false);
 
     /* VFS and exec double tests are DISABLED (too much memory), don't count them */
@@ -1221,7 +1235,7 @@ void fut_kernel_main(void) {
         planned_tests += 14u; /* clock_sched: getres, sched_param, sched_policy, itimer, rusage, times, getpriority, setpriority, getpriority(-who), setpriority(-who), unshare(0), unshare(invalid), rr_get_interval, clock_gettime */
         planned_tests += 13u; /* vfs: O_TRUNC, O_APPEND, relpath, dir_mtime, readlink, hardlink, mount, renameat2, inotify, umount expire, dotdot, eisdir, chdir_dotdot */
         planned_tests += 13u; /* poll: file ready, eventfd not-ready, eventfd ready, POLLNVAL, select file, select pipe, pselect6 pipe, pselect6 sigmask restore, timeout-only sleep, timerfd readiness, signalfd readiness, pipe EOF, select pipe EOF */
-        planned_tests += 95u; /* misc(95): +setpipe_sz */
+        planned_tests += 98u; /* misc(98): +procfs tests */
         // planned_tests += 1u; /* block */
         // planned_tests += 1u; /* futfs */
         // planned_tests += 1u; /* net */

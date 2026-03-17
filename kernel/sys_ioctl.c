@@ -655,13 +655,60 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
             }
             if (!argp)
                 return -EFAULT;
-            /* struct termios: c_iflag, c_oflag, c_cflag, c_lflag, c_line,
-             * c_cc[19], padding — total ~60 bytes. Zero-fill for raw mode. */
+            /*
+             * struct termios layout (asm/termbits.h):
+             *   offset  0: c_iflag (u32)
+             *   offset  4: c_oflag (u32)
+             *   offset  8: c_cflag (u32)
+             *   offset 12: c_lflag (u32)
+             *   offset 16: c_line  (u8)
+             *   offset 17: c_cc[19] (u8 × 19) — NCCS=19 on Linux
+             *
+             * Return canonical-mode settings matching a freshly-opened Linux
+             * terminal so that applications see a sane line-discipline state.
+             */
+            /* c_iflag: ICRNL(0x100) | BRKINT(0x002) */
+            uint32_t iflag = 0x102;
+            /* c_oflag: OPOST(0x01) | ONLCR(0x04) */
+            uint32_t oflag = 0x05;
+            /* c_cflag: B38400(0x0F) | CS8(0x30) | CREAD(0x80) | CLOCAL(0x800) */
+            uint32_t cflag = 0x8BF;
+            /* c_lflag: ISIG(0x1) | ICANON(0x2) | ECHO(0x8) | ECHOE(0x10) |
+             *          ECHOK(0x20) | ECHOCTL(0x200) | ECHOKE(0x800) | IEXTEN(0x8000) */
+            uint32_t lflag = 0x8A3B;
+
+            /* c_cc control characters (indices per POSIX) */
+            static const unsigned char kcc[19] = {
+                3,   /* VINTR  = ^C */
+                28,  /* VQUIT  = ^\ */
+                127, /* VERASE = DEL */
+                21,  /* VKILL  = ^U */
+                4,   /* VEOF   = ^D */
+                0,   /* VTIME  */
+                1,   /* VMIN   */
+                0,   /* VSWTC  */
+                17,  /* VSTART = ^Q */
+                19,  /* VSTOP  = ^S */
+                26,  /* VSUSP  = ^Z */
+                0,   /* VEOL   */
+                18,  /* VREPRINT = ^R */
+                15,  /* VDISCARD = ^O */
+                23,  /* VWERASE  = ^W */
+                22,  /* VLNEXT   = ^V */
+                0,   /* VEOL2  */
+                0,
+                0,
+            };
+
             char termios_buf[60];
             __builtin_memset(termios_buf, 0, sizeof(termios_buf));
-            /* c_cflag: CS8 | CREAD (8-bit, receiver enabled) */
-            uint32_t cflag = 0x00B0 | 0x80;
-            __builtin_memcpy(termios_buf + 8, &cflag, 4);
+            __builtin_memcpy(termios_buf +  0, &iflag, 4);
+            __builtin_memcpy(termios_buf +  4, &oflag, 4);
+            __builtin_memcpy(termios_buf +  8, &cflag, 4);
+            __builtin_memcpy(termios_buf + 12, &lflag, 4);
+            /* c_line at offset 16 = 0 (N_TTY line discipline) */
+            __builtin_memcpy(termios_buf + 17, kcc, 19);
+
             if (fut_copy_to_user(argp, termios_buf, sizeof(termios_buf)) != 0)
                 return -EFAULT;
             return 0;

@@ -206,9 +206,14 @@ long sys_dup(int oldfd) {
         return -EBADF;
     }
 
-    /* Phase 2: Find the lowest available FD in the task's FD table */
+    /* Phase 2: Find the lowest available FD, respecting RLIMIT_NOFILE */
+    int max = task->max_fds;
+    uint64_t nofile_limit = task->rlimits[7].rlim_cur;  /* RLIMIT_NOFILE */
+    if (nofile_limit > 0 && nofile_limit < (uint64_t)max) {
+        max = (int)nofile_limit;
+    }
     int newfd = -1;
-    for (int i = 0; i < task->max_fds; i++) {
+    for (int i = 0; i < max; i++) {
         if (task->fd_table[i] == NULL) {
             newfd = i;
             break;

@@ -2096,6 +2096,9 @@ ssize_t fut_vfs_write(int fd, const void *buf, size_t size) {
                 uint64_t write_end = file->offset + size;
                 if (write_end > fsize_limit) {
                     if (file->offset >= fsize_limit) {
+                        /* Send SIGXFSZ (signal 25) per POSIX */
+                        extern int fut_signal_send(struct fut_task *t, int sig);
+                        fut_signal_send(wr_task, 25 /* SIGXFSZ */);
                         return -27;  /* EFBIG */
                     }
                     /* Truncate write to fit within limit */

@@ -367,6 +367,14 @@ static size_t gen_maps(char *buf, size_t cap, fut_task_t *task) {
 
 static size_t gen_cmdline(char *buf, size_t cap, fut_task_t *task) {
     if (!task) return 0;
+    /* Prefer saved full argv (null-separated, Linux /proc/pid/cmdline format) */
+    if (task->proc_cmdline_len > 0) {
+        size_t n = task->proc_cmdline_len;
+        if (n > cap) n = cap;
+        __builtin_memcpy(buf, task->proc_cmdline, n);
+        return n;
+    }
+    /* Fallback: return comm as single null-terminated arg */
     const char *name = task->comm[0] ? task->comm : "?";
     size_t n = 0;
     while (name[n]) n++;

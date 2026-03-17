@@ -6193,6 +6193,53 @@ static void test_socketpair_dgram(void) {
     fut_test_pass();
 }
 
+static void test_proc_cmdline(void) {
+    fut_printf("[MISC-TEST] Test 127: /proc/self/cmdline full argv round-trip\n");
+
+    /* The selftest task is not launched via execve, so proc_cmdline is empty.
+     * Directly set a synthetic null-separated cmdline in the current task
+     * (kernel privilege), then read it back via /proc/self/cmdline to verify
+     * the procfs gen_cmdline() path. */
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        fut_printf("[MISC-TEST] ✗ no current task\n");
+        fut_test_fail(127); return;
+    }
+
+    /* Pack "selftest\0--run\0" into proc_cmdline */
+    static const char synthetic[] = "selftest\0--run\0";
+    const size_t synth_len = sizeof(synthetic) - 1; /* exclude final '\0' of string literal */
+    __builtin_memcpy(task->proc_cmdline, synthetic, synth_len);
+    task->proc_cmdline_len = (uint16_t)synth_len;
+
+    int fd = fut_vfs_open("/proc/self/cmdline", 0 /* O_RDONLY */, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open(/proc/self/cmdline) returned %d\n", fd);
+        task->proc_cmdline_len = 0;
+        fut_test_fail(127); return;
+    }
+
+    char buf[64];
+    __builtin_memset(buf, 0xff, sizeof(buf));
+    ssize_t nr = fut_vfs_read(fd, buf, sizeof(buf));
+    fut_vfs_close(fd);
+
+    /* Restore */
+    task->proc_cmdline_len = 0;
+
+    if (nr != (ssize_t)synth_len) {
+        fut_printf("[MISC-TEST] ✗ read %zd bytes, expected %zu\n", nr, synth_len);
+        fut_test_fail(127); return;
+    }
+    if (__builtin_memcmp(buf, synthetic, synth_len) != 0) {
+        fut_printf("[MISC-TEST] ✗ cmdline content mismatch\n");
+        fut_test_fail(127); return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ /proc/self/cmdline: %zd bytes, argv[0]='selftest'\n", nr);
+    fut_test_pass();
+}
+
 /* ============================================================
  * Test entry point
  * ============================================================ */
@@ -6329,6 +6376,7 @@ void fut_misc_test_thread(void *arg) {
     test_tgkill_per_thread_pending();      /* Test 124: tgkill sets thread_pending_signals */
     test_per_thread_signal_mask();         /* Test 125: sigprocmask updates thread mask not task mask */
     test_socketpair_dgram();               /* Test 126: socketpair(AF_UNIX, SOCK_DGRAM) */
+    test_proc_cmdline();                   /* Test 127: /proc/self/cmdline has full argv */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

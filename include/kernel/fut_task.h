@@ -137,6 +137,8 @@ struct fut_task {
     /* prctl state */
     char comm[16];                     // Process name (PR_SET_NAME/PR_GET_NAME, max 15 chars + null)
     char exe_path[256];                // Path to executable image (/proc/self/exe target)
+    char proc_cmdline[512];            // /proc/self/cmdline: null-separated argv (Linux format)
+    uint16_t proc_cmdline_len;         // Number of valid bytes in proc_cmdline
     int pdeathsig;                     // Signal to send on parent death (PR_SET_PDEATHSIG, 0=none)
     unsigned long no_new_privs;        // PR_SET_NO_NEW_PRIVS flag (sticky, prevents execve setuid)
     int dumpable;                      // PR_SET_DUMPABLE (1=dumpable, 0=not, default 1)

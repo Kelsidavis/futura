@@ -27,6 +27,9 @@
 #define TIOCGWINSZ  0x5413
 #define FIONREAD    0x541B
 #define FIONBIO     0x5421
+#define TIOCSPGRP   0x5410
+#define TIOCGPGRP   0x540F
+#define TIOCSCTTY   0x540E
 #define FIOCLEX     0x5451
 #define FIONCLEX    0x5450
 
@@ -421,6 +424,15 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
         case FIONCLEX:
             request_name = "FIONCLEX";
             break;
+        case TIOCGPGRP:
+            request_name = "TIOCGPGRP";
+            break;
+        case TIOCSPGRP:
+            request_name = "TIOCSPGRP";
+            break;
+        case TIOCSCTTY:
+            request_name = "TIOCSCTTY";
+            break;
         default:
             request_name = "UNKNOWN";
             break;
@@ -530,10 +542,12 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
                 case TCGETS:      /* Get terminal settings - writes termios to argp */
                 case TIOCGWINSZ:  /* Get window size - writes winsize to argp */
                 case FIONREAD:    /* Get bytes available - writes int to argp */
+                case TIOCGPGRP:   /* Get foreground pgrp - writes pid_t to argp */
                     requires_write = 1;
                     break;
                 case TCSETS:      /* Set terminal settings - reads termios from argp */
                 case FIONBIO:     /* Set non-blocking - reads int from argp */
+                case TIOCSPGRP:   /* Set foreground pgrp - reads pid_t from argp */
                     requires_read = 1;
                     break;
                 default:
@@ -759,6 +773,42 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
         case FIONCLEX:
             /* FIONCLEX - Clear close-on-exec flag on the file descriptor */
             file->fd_flags &= ~FD_CLOEXEC;
+            return 0;
+        case TIOCGPGRP: {
+            /* TIOCGPGRP - Get foreground process group of terminal.
+             * Returns the process group ID of the foreground process group. */
+            if (!argp)
+                return -EFAULT;
+            fut_task_t *task = fut_task_current();
+            int pgid = task ? (int)task->pgid : 0;
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
+                __builtin_memcpy(argp, &pgid, sizeof(int));
+            else
+#endif
+            if (fut_copy_to_user(argp, &pgid, sizeof(int)) != 0)
+                return -EFAULT;
+            return 0;
+        }
+        case TIOCSPGRP: {
+            /* TIOCSPGRP - Set foreground process group of terminal.
+             * Reads the new pgrp from argp. */
+            if (!argp)
+                return -EFAULT;
+            int new_pgid = 0;
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
+                __builtin_memcpy(&new_pgid, argp, sizeof(int));
+            else
+#endif
+            if (fut_copy_from_user(&new_pgid, argp, sizeof(int)) != 0)
+                return -EFAULT;
+            /* Accept but don't enforce — basic stub for shell compatibility */
+            return 0;
+        }
+        case TIOCSCTTY:
+            /* TIOCSCTTY - Make this terminal the controlling terminal.
+             * argp is the "steal" flag (0 or 1). Accept silently. */
             return 0;
         default:
             fut_printf("[IOCTL] ioctl(fd=%d, request=0x%lx [%s], argp=%p) -> ENOTTY (no ioctl op)\n",

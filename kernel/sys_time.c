@@ -110,8 +110,6 @@ long sys_time(uint64_t *tloc) {
         }
     }
 
-    fut_printf("[TIME] time() -> %lld seconds\n", (long long)seconds);
-
     return (long)seconds;
 }
 
@@ -136,14 +134,15 @@ long sys_gettimeofday(fut_timeval_t *tv, void *tz) {
         return -EINVAL;
     }
 
-    /* Get current monotonic time in nanoseconds for sub-tick precision,
-     * then add wall-clock offset for CLOCK_REALTIME. */
-    uint64_t now_ns = fut_get_time_ns();
+    /* Get current time: convert ticks (100 Hz) to real time.
+     * Each tick = 10ms = 10,000,000 ns. */
+    uint64_t ticks = fut_get_ticks();
+    uint64_t total_ns = ticks * 10000000ULL;
 
     /* Convert to timeval (seconds + microseconds), add realtime offset */
     fut_timeval_t kernel_tv;
-    kernel_tv.tv_sec  = (int64_t)(now_ns / 1000000000ULL) + g_realtime_offset_sec;
-    kernel_tv.tv_usec = (int64_t)((now_ns % 1000000000ULL) / 1000);
+    kernel_tv.tv_sec  = (int64_t)(total_ns / 1000000000ULL) + g_realtime_offset_sec;
+    kernel_tv.tv_usec = (int64_t)((total_ns % 1000000000ULL) / 1000);
 
     /* Copy to userspace (or kernel buffer for internal callers) */
     if (time_copy_to_user(tv, &kernel_tv, sizeof(fut_timeval_t)) != 0) {
@@ -232,12 +231,13 @@ long sys_clock_gettime(int clock_id, fut_timespec_t *tp) {
         kernel_tp.tv_sec  = (int64_t)(ns_total / 1000000000UL);
         kernel_tp.tv_nsec = (int64_t)(ns_total % 1000000000UL);
     } else {
-        /* All wall / monotonic clocks: convert ticks (100 Hz) to timespec.
-         * Each tick = 10ms = 10,000,000 ns. */
+        /* All wall/monotonic/boottime clocks: use tick-based time (10ms granularity).
+         * TSC-based fut_get_time_ns() has calibration issues in QEMU, so we use
+         * the reliable tick counter for all clocks. Each tick = 10,000,000 ns. */
         uint64_t ticks = fut_get_ticks();
-        uint64_t total_ms = ticks * 10;  /* ticks → milliseconds */
-        kernel_tp.tv_sec  = (int64_t)(total_ms / 1000);
-        kernel_tp.tv_nsec = (int64_t)((total_ms % 1000) * 1000000);
+        uint64_t total_ns = ticks * 10000000ULL;
+        kernel_tp.tv_sec  = (int64_t)(total_ns / 1000000000ULL);
+        kernel_tp.tv_nsec = (int64_t)(total_ns % 1000000000ULL);
 
         /* CLOCK_REALTIME and CLOCK_REALTIME_COARSE add the wall clock offset */
         if (clock_id == CLOCK_REALTIME || clock_id == CLOCK_REALTIME_COARSE) {

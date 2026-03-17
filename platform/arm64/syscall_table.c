@@ -2662,6 +2662,7 @@ struct syscall_entry {
 #define __NR_accept4        242
 #define __NR_syncfs         267
 #define __NR_renameat2      276
+#define __NR_clone3         435
 #define __NR_close_range    436
 #define __NR_faccessat2     439
 #define __NR_fcntl          25
@@ -2855,6 +2856,9 @@ struct syscall_entry {
 /* Syscall table - initialized at runtime to avoid ARM64 relocation issues */
 static struct syscall_entry syscall_table[MAX_SYSCALL];
 static bool syscall_table_initialized = false;
+
+/* Stub that returns -ENOSYS (used for clone3 so libc probes fall back silently) */
+static long sys_enosys_stub(void) { return -ENOSYS; }
 
 /* Initialize syscall table at runtime to avoid ARM64 relocation issues */
 static void arm64_syscall_table_init(void) {
@@ -3125,6 +3129,9 @@ static void arm64_syscall_table_init(void) {
     syscall_table[__NR_socketpair].name = "socketpair";
     syscall_table[__NR_renameat2].handler = (syscall_fn_t)sys_renameat2_wrapper;
     syscall_table[__NR_renameat2].name = "renameat2";
+    /* clone3: ENOSYS so libc falls back to clone() (fork-compat) */
+    syscall_table[__NR_clone3].handler = (syscall_fn_t)sys_enosys_stub;
+    syscall_table[__NR_clone3].name = "clone3";
     syscall_table[__NR_close_range].handler = (syscall_fn_t)sys_close_range_wrapper;
     syscall_table[__NR_close_range].name = "close_range";
     /* faccessat2 (439) = same as faccessat since our wrapper already passes flags */

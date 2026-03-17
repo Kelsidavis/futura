@@ -1420,6 +1420,54 @@ static void test_open_cloexec(void) {
 
 extern long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset);
 extern long sys_munmap(void *addr, size_t len);
+/* ============================================================
+ * Test 31: capability enforcement (setuid permission check)
+ * ============================================================ */
+static void test_cap_enforcement(void) {
+    fut_printf("[MISC-TEST] Test 31: capability enforcement\n");
+
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        fut_printf("[MISC-TEST] ✗ no task\n");
+        fut_test_fail(31);
+        return;
+    }
+
+    /* Save credentials */
+    uint32_t saved_ruid = task->ruid;
+    uint32_t saved_uid = task->uid;
+    uint64_t saved_caps = task->cap_effective;
+
+    /* As root, setuid(1000) should succeed */
+    extern long sys_setuid(uint32_t uid);
+    long ret = sys_setuid(1000);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ setuid(1000) as root failed: %ld\n", ret);
+        task->ruid = saved_ruid;
+        task->uid = saved_uid;
+        task->cap_effective = saved_caps;
+        fut_test_fail(31);
+        return;
+    }
+
+    /* Now we're uid=1000. setuid(2000) should fail (not root, no CAP_SETUID) */
+    task->cap_effective = 0;  /* Drop all capabilities */
+    ret = sys_setuid(2000);
+
+    /* Restore root credentials */
+    task->ruid = saved_ruid;
+    task->uid = saved_uid;
+    task->cap_effective = saved_caps;
+
+    if (ret != -EPERM) {
+        fut_printf("[MISC-TEST] ✗ setuid(2000) as uid=1000 returned %ld (expected EPERM)\n", ret);
+        fut_test_fail(31);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ capabilities: root setuid succeeds, non-root gets EPERM\n");
+    fut_test_pass();
+}
 
 /* ============================================================
  * Test 29: /dev/null and /dev/zero
@@ -1607,6 +1655,7 @@ void fut_misc_test_thread(void *arg) {
     test_mmap_munmap_validation(); /* Test 28: mmap/munmap validation */
     test_dev_null_zero();       /* Test 29: /dev/null and /dev/zero */
     test_dev_urandom();         /* Test 30: /dev/urandom */
+    test_cap_enforcement();     /* Test 31: capability enforcement */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

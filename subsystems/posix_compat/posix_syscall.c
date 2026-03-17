@@ -3165,8 +3165,10 @@ void posix_syscall_init(void) {
  * @param frame Interrupt frame to modify
  * @return true if signal was delivered, false if handler not available
  */
+/* syscall_ret: the return value of the interrupted syscall, or LONG_MAX if
+ * not called from a syscall context. Used to implement SA_RESTART. */
 static bool posix_deliver_signal(fut_task_t *current, int signum,
-                                 fut_interrupt_frame_t *frame) {
+                                 fut_interrupt_frame_t *frame, long syscall_ret) {
 
     if (!current || !frame) {
         return false;
@@ -3266,6 +3268,19 @@ static bool posix_deliver_signal(fut_task_t *current, int signum,
     mctx->gregs.rcx = frame->rcx;
     mctx->gregs.rsp = frame->rsp;  /* Original RSP before sigframe */
     mctx->gregs.rip = frame->rip;  /* Original RIP to return to */
+    /* SA_RESTART: if the syscall was interrupted (EINTR) and the handler
+     * has SA_RESTART set, rewind RIP to the 'syscall' instruction so that
+     * after the handler returns via rt_sigreturn, the syscall is re-executed.
+     * The 'syscall' instruction (0F 05) is 2 bytes, so rip-2 is the restart PC.
+     * RAX in the saved frame still contains the syscall number (the return
+     * value is not written until syscall_entry_c returns), so re-execution
+     * is automatic. */
+    {
+        int h_flags = current->signal_handler_flags[signum - 1];
+        if ((h_flags & SA_RESTART) && syscall_ret == -EINTR) {
+            mctx->gregs.rip = frame->rip - 2;  /* rewind to syscall insn */
+        }
+    }
     mctx->gregs.eflags = frame->rflags;
     mctx->gregs.cs = frame->cs;
     mctx->gregs.gs = frame->gs;
@@ -3285,6 +3300,13 @@ static bool posix_deliver_signal(fut_task_t *current, int signum,
     /* Copy special ARM64 registers */
     mctx->gregs.sp = frame->sp;            /* Stack pointer (SP_EL0) */
     mctx->gregs.pc = frame->pc;            /* Program counter (ELR_EL1) */
+    /* SA_RESTART on ARM64: rewind PC to 'svc' instruction (4 bytes) */
+    {
+        int h_flags = current->signal_handler_flags[signum - 1];
+        if ((h_flags & SA_RESTART) && syscall_ret == -EINTR) {
+            mctx->gregs.pc = frame->pc - 4;
+        }
+    }
     mctx->gregs.pstate = frame->pstate;    /* Processor state (SPSR_EL1) */
     mctx->gregs.fault_address = frame->far; /* Fault address (FAR_EL1) */
 
@@ -3384,7 +3406,8 @@ static bool posix_deliver_signal(fut_task_t *current, int signum,
  * @return Signal number if one was delivered, 0 if no signals pending
  */
 static int check_and_deliver_pending_signals(fut_task_t *current,
-                                             fut_interrupt_frame_t *frame) {
+                                             fut_interrupt_frame_t *frame,
+                                             long syscall_ret) {
     if (!current || !frame) {
         return 0;
     }
@@ -3392,7 +3415,7 @@ static int check_and_deliver_pending_signals(fut_task_t *current,
     /* Iterate through all possible signals and deliver the first one found */
     for (int signum = 1; signum < _NSIG; signum++) {
         if (fut_signal_is_pending(current, signum)) {
-            if (posix_deliver_signal(current, signum, frame)) {
+            if (posix_deliver_signal(current, signum, frame, syscall_ret)) {
                 return signum;
             }
         }
@@ -3437,7 +3460,7 @@ long syscall_entry_c(uint64_t nr,
     fut_task_t *current = fut_task_current();
     if (current && current->pending_signals != 0 && frame_ptr) {
         fut_interrupt_frame_t *frame = (fut_interrupt_frame_t *)frame_ptr;
-        check_and_deliver_pending_signals(current, frame);
+        check_and_deliver_pending_signals(current, frame, ret);
     }
 
     return ret;

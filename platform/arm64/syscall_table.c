@@ -779,6 +779,14 @@ static int64_t sys_accept_wrapper(uint64_t sockfd, uint64_t addr, uint64_t addrl
     return sys_accept((int)sockfd, (void *)addr, (uint32_t *)addrlen);
 }
 
+/* sys_accept4_wrapper - accept connection with flags (SOCK_CLOEXEC, SOCK_NONBLOCK) */
+extern long sys_accept4(int sockfd, void *addr, uint32_t *addrlen, int flags);
+static int64_t sys_accept4_wrapper(uint64_t sockfd, uint64_t addr, uint64_t addrlen,
+                                    uint64_t flags, uint64_t arg4, uint64_t arg5) {
+    (void)arg4; (void)arg5;
+    return sys_accept4((int)sockfd, (void *)addr, (uint32_t *)addrlen, (int)flags);
+}
+
 /* sys_connect_wrapper - connect socket
  * x0 = sockfd, x1 = addr, x2 = addrlen
  */
@@ -1810,6 +1818,14 @@ static int64_t sys_setgroups_wrapper(uint64_t size, uint64_t list, uint64_t arg2
     return sys_setgroups((int)size, (const uint32_t *)list);
 }
 
+/* sys_syncfs_wrapper */
+extern long sys_syncfs(int fd);
+static int64_t sys_syncfs_wrapper(uint64_t fd, uint64_t arg1, uint64_t arg2,
+                                   uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+    return sys_syncfs((int)fd);
+}
+
 /* sys_close_range_wrapper */
 extern long sys_close_range(unsigned int first, unsigned int last, unsigned int flags);
 static int64_t sys_close_range_wrapper(uint64_t first, uint64_t last, uint64_t flags,
@@ -2581,6 +2597,8 @@ struct syscall_entry {
 #define __NR_getcwd         17
 #define __NR_dup            23
 #define __NR_dup3           24
+#define __NR_accept4        242
+#define __NR_syncfs         267
 #define __NR_renameat2      276
 #define __NR_close_range    436
 #define __NR_fcntl          25
@@ -3046,6 +3064,10 @@ static void arm64_syscall_table_init(void) {
     syscall_table[__NR_renameat2].name = "renameat2";
     syscall_table[__NR_close_range].handler = (syscall_fn_t)sys_close_range_wrapper;
     syscall_table[__NR_close_range].name = "close_range";
+    syscall_table[__NR_accept4].handler = (syscall_fn_t)sys_accept4_wrapper;
+    syscall_table[__NR_accept4].name = "accept4";
+    syscall_table[__NR_syncfs].handler = (syscall_fn_t)sys_syncfs_wrapper;
+    syscall_table[__NR_syncfs].name = "syncfs";
     syscall_table[__NR_getgroups].handler = (syscall_fn_t)sys_getgroups_wrapper;
     syscall_table[__NR_getgroups].name = "getgroups";
     syscall_table[__NR_setgroups].handler = (syscall_fn_t)sys_setgroups_wrapper;

@@ -2303,7 +2303,7 @@ int fut_vfs_stat(const char *path, struct fut_stat *stat) {
         stat->st_uid = vnode->uid;
         stat->st_gid = vnode->gid;
         stat->st_blksize = 4096;
-        stat->st_blocks = vnode->size / 4096 + (vnode->size % 4096 ? 1 : 0);
+        stat->st_blocks = (vnode->size + 511) / 512;  /* 512-byte units per POSIX */
 
         /* Set timestamps using tick-based time to avoid calibration deadlock.
          * fut_get_ticks() returns ticks at 100 Hz (10ms each). */
@@ -2376,7 +2376,7 @@ int fut_vfs_lstat(const char *path, struct fut_stat *stat) {
         stat->st_uid = vnode->uid;
         stat->st_gid = vnode->gid;
         stat->st_blksize = 4096;
-        stat->st_blocks = vnode->size / 4096 + (vnode->size % 4096 ? 1 : 0);
+        stat->st_blocks = (vnode->size + 511) / 512;  /* 512-byte units per POSIX */
 
         /* Set timestamps */
         uint64_t now_ns = fut_get_time_ns();

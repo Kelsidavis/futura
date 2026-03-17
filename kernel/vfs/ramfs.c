@@ -859,6 +859,9 @@ static int ramfs_mkdir(struct fut_vnode *dir, const char *name, uint32_t mode) {
     new_entry->next = dir_node->dir.entries;
     dir_node->dir.entries = new_entry;
 
+    /* Parent gains a link from new child's ".." entry */
+    dir->nlinks++;
+
     /* Update parent directory mtime and ctime (new subdirectory added) */
     uint64_t dir_now = fut_get_ticks();
     dir_node->mtime_ms = dir_now;
@@ -1034,6 +1037,9 @@ static int ramfs_rmdir(struct fut_vnode *dir, const char *name) {
 
             /* Free the vnode */
             fut_free(vnode);
+
+            /* Parent loses a link (child's ".." no longer references it) */
+            if (dir->nlinks > 0) dir->nlinks--;
 
             /* Update parent directory mtime and ctime (subdirectory removed) */
             uint64_t rmdir_now = fut_get_ticks();

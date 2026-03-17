@@ -243,7 +243,7 @@ long sys_fstat(int fd, struct fut_stat *statbuf) {
         kernel_stat.st_uid = vnode->uid;
         kernel_stat.st_gid = vnode->gid;
         kernel_stat.st_blksize = 4096;
-        kernel_stat.st_blocks = (vnode->size + 4095) / 4096;
+        kernel_stat.st_blocks = (vnode->size + 511) / 512;  /* 512-byte units per POSIX */
 
         /* Set timestamps */
         uint64_t now_ns = fut_get_time_ns();

@@ -1834,10 +1834,9 @@ int fut_vfs_open(const char *path, int flags, int mode) {
         return fd;
     }
 
-    /* Store mode for newly created files */
-    if (created) {
-        vnode->mode = mode & 0777;  /* Use provided mode, mask to permission bits only */
-    }
+    /* Note: mode for newly created files is set by the filesystem's create
+     * operation via vfs_init_vnode_ownership(), which applies umask. No
+     * additional mode setting needed here. */
 
     /* Handle O_CLOEXEC — set FD_CLOEXEC on the file descriptor */
     if (flags & 02000000 /* O_CLOEXEC */) {

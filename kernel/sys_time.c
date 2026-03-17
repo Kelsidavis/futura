@@ -312,13 +312,8 @@ long sys_clock_gettime(int clock_id, fut_timespec_t *tp) {
 
     /* Copy to userspace (or kernel buffer for internal callers) */
     if (time_copy_to_user(tp, &kernel_tp, sizeof(fut_timespec_t)) != 0) {
-        fut_printf("[TIME] clock_gettime(clock_id=%s [%s], tp=%p) -> EFAULT (copy_to_user failed)\n",
-                   clock_name, clock_desc, tp);
         return -EFAULT;
     }
-
-    fut_printf("[TIME] clock_gettime(clock_id=%s, tp=%p) -> 0 (%lld.%09lld s)\n",
-               clock_name, tp, kernel_tp.tv_sec, kernel_tp.tv_nsec);
 
     return 0;
 }

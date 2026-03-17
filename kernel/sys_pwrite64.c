@@ -15,6 +15,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
 #include <kernel/fut_vfs.h>
+#include <kernel/chrdev.h>
 #include <kernel/fut_fd_util.h>
 #include <stdint.h>
 
@@ -197,11 +198,23 @@ long sys_pwrite64(unsigned int fd, const void *buf, size_t count, int64_t offset
     }
 
     /* pwrite() not supported on character devices, pipes, or sockets */
+    /* Handle chr_ops files: dispatch to chr_ops->write with given offset.
+     * Seekable chr_ops files (memfd, devfs) support positional I/O. */
     if (file->chr_ops) {
-        fut_printf("[PWRITE64] pwrite64(fd=%u [%s], type=character device, count=%zu [%s], "
-                   "offset=%ld [%s]) -> ESPIPE (not seekable, pid=%d)\n",
-                   local_fd, fd_category, local_count, count_category, local_offset, offset_category, task->pid);
-        return -ESPIPE;
+        if (file->chr_ops->write) {
+            void *kbuf = fut_malloc(local_count);
+            if (!kbuf) return -ENOMEM;
+            if (fut_copy_from_user(kbuf, local_buf, local_count) != 0) {
+                fut_free(kbuf);
+                return -EFAULT;
+            }
+            off_t pos = (off_t)local_offset;
+            ssize_t ret = file->chr_ops->write(file->chr_inode, file->chr_private,
+                                                kbuf, local_count, &pos);
+            fut_free(kbuf);
+            return ret;
+        }
+        return -EINVAL;
     }
 
     /* Check if this is a directory */

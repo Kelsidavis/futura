@@ -15,6 +15,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
 #include <kernel/fut_vfs.h>
+#include <kernel/chrdev.h>
 #include <kernel/fut_fd_util.h>
 #include <stdint.h>
 
@@ -249,21 +250,31 @@ long sys_pread64(unsigned int fd, void *buf, size_t count, int64_t offset) {
         return -EISDIR;
     }
 
+    /* Handle chr_ops files (memfd, etc.) — call chr_ops->read with given offset */
+    if (file->chr_ops && file->chr_ops->read) {
+        off_t pos = (off_t)offset;
+        void *kbuf = fut_malloc(count);
+        if (!kbuf) return -ENOMEM;
+        ssize_t ret = file->chr_ops->read(file->chr_inode, file->chr_private,
+                                           kbuf, count, &pos);
+        if (ret > 0) {
+            if (fut_copy_to_user(buf, kbuf, (size_t)ret) != 0) {
+                fut_free(kbuf);
+                return -EFAULT;
+            }
+        }
+        fut_free(kbuf);
+        return ret;
+    }
+
     /* Phase 2: Validate vnode and read operation */
     if (!file->vnode || !file->vnode->ops || !file->vnode->ops->read) {
-        fut_printf("[PREAD64] pread64(fd=%u [%s], count=%zu [%s], offset=%ld [%s]) -> EINVAL "
-                   "(no read operation, pid=%d)\n",
-                   fd, fd_category, count, count_category, offset, offset_category, task->pid);
         return -EINVAL;
     }
 
     /* Allocate kernel buffer */
     void *kbuf = fut_malloc(count);
     if (!kbuf) {
-        fut_printf("[PREAD64] pread64(fd=%u [%s], ino=%lu, count=%zu [%s], offset=%ld [%s]) -> ENOMEM "
-                   "(kernel buffer allocation failed, pid=%d)\n",
-                   fd, fd_category, file->vnode->ino, count, count_category,
-                   offset, offset_category, task->pid);
         return -ENOMEM;
     }
 

@@ -21,6 +21,7 @@
 #define DUP2_TEST_STDOUT_REDIRECT 1
 #define DUP2_TEST_INVALID_FDS 2
 #define DUP2_TEST_SAME_FD 3
+#define DUP2_TEST_DUP3    4
 
 /* Helper: Create a test file */
 static int create_test_file(const char *path) {
@@ -252,6 +253,54 @@ static void test_same_fd(void) {
     fut_test_pass();
 }
 
+extern long sys_dup3(int oldfd, int newfd, int flags);
+
+/* Test 5: dup3 same-fd returns EINVAL, dup3 with O_CLOEXEC works */
+static void test_dup3(void) {
+    fut_printf("[DUP2-TEST] Test 5: dup3() EINVAL on same fd, O_CLOEXEC support\n");
+
+    int fd = fut_vfs_open("/test_dup3.txt", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) {
+        fut_printf("[DUP2-TEST] ✗ open failed: %d\n", fd);
+        fut_test_fail(DUP2_TEST_DUP3);
+        return;
+    }
+
+    /* dup3(fd, fd, 0) must return EINVAL (unlike dup2 which returns fd) */
+    long ret = sys_dup3(fd, fd, 0);
+    if (ret != -EINVAL) {
+        fut_printf("[DUP2-TEST] ✗ dup3(fd, fd, 0) returned %ld (expected -EINVAL)\n", ret);
+        fut_vfs_close(fd);
+        fut_test_fail(DUP2_TEST_DUP3);
+        return;
+    }
+
+    /* dup3 to a different fd with O_CLOEXEC should succeed */
+    extern long sys_fcntl(int fd, int cmd, uint64_t arg);
+    long newfd = sys_dup3(fd, 30, 0x80000 /* O_CLOEXEC */);
+    if (newfd < 0) {
+        fut_printf("[DUP2-TEST] ✗ dup3(fd, 30, O_CLOEXEC) returned %ld\n", newfd);
+        fut_vfs_close(fd);
+        fut_test_fail(DUP2_TEST_DUP3);
+        return;
+    }
+
+    /* Verify O_CLOEXEC was set */
+    long flags = sys_fcntl((int)newfd, 1 /* F_GETFD */, 0);
+    if (!(flags & 1 /* FD_CLOEXEC */)) {
+        fut_printf("[DUP2-TEST] ✗ dup3 O_CLOEXEC not set: flags=0x%lx\n", flags);
+        fut_vfs_close((int)newfd);
+        fut_vfs_close(fd);
+        fut_test_fail(DUP2_TEST_DUP3);
+        return;
+    }
+
+    fut_vfs_close((int)newfd);
+    fut_vfs_close(fd);
+    fut_printf("[DUP2-TEST] ✓ dup3: EINVAL on same fd, O_CLOEXEC works\n");
+    fut_test_pass();
+}
+
 /* Main test harness thread */
 void fut_dup2_test_thread(void *arg) {
     (void)arg;
@@ -265,6 +314,7 @@ void fut_dup2_test_thread(void *arg) {
     test_invalid_fds();
     test_actual_stdout_redirect();
     test_same_fd();
+    test_dup3();
 
     fut_printf("[DUP2-TEST] ========================================\n");
     fut_printf("[DUP2-TEST] All dup2() tests completed\n");

@@ -402,6 +402,17 @@ long sys_chmod(const char *pathname, uint32_t mode) {
     }
 
     /* Phase 2: Store old mode for before/after comparison */
+    /* Permission check: only owner, root, or CAP_FOWNER can chmod */
+    {
+        fut_task_t *task = fut_task_current();
+        if (task && task->ruid != 0 &&
+            !(task->cap_effective & (1ULL << 3 /* CAP_FOWNER */)) &&
+            task->ruid != vnode->uid) {
+            fut_vnode_unref(vnode);
+            return -EPERM;
+        }
+    }
+
     uint32_t old_mode = vnode->mode & 07777;  // Permissions + special bits
     uint32_t old_perms = old_mode & 0777;      // Permissions only
 

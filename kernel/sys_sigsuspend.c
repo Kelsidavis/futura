@@ -8,6 +8,7 @@
  */
 
 #include <kernel/fut_task.h>
+#include <kernel/fut_thread.h>
 #include <kernel/fut_waitq.h>
 #include <kernel/signal.h>
 #include <kernel/errno.h>
@@ -125,9 +126,12 @@ long sys_sigsuspend(const sigset_t *mask) {
     /* Hold signal_waitq lock across check + enqueue to avoid lost wakeups. */
     fut_spinlock_acquire(&current->signal_waitq.lock);
 
-    uint64_t unblocked =
-        __atomic_load_n(&current->pending_signals, __ATOMIC_ACQUIRE) &
-        ~newmask.__mask;
+    /* Check both task-wide and per-thread pending (tgkill) */
+    uint64_t task_p = __atomic_load_n(&current->pending_signals, __ATOMIC_ACQUIRE);
+    fut_thread_t *cur_thread = fut_thread_current();
+    uint64_t thread_p = cur_thread ?
+        __atomic_load_n(&cur_thread->thread_pending_signals, __ATOMIC_ACQUIRE) : 0;
+    uint64_t unblocked = (task_p | thread_p) & ~newmask.__mask;
 
     if (unblocked == 0) {
         fut_printf("[SIGSUSPEND] sigsuspend(pid=%u, old_mask=0x%llx, new_mask=0x%llx) -> blocking\n",

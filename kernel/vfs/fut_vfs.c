@@ -161,6 +161,10 @@ static void close_fd_in_task(fut_task_t *task, int fd) {
 
     task->fd_table[fd] = NULL;
 
+    /* Notify epoll instances that this fd is closing */
+    extern void epoll_notify_fd_close(int fd);
+    epoll_notify_fd_close(fd);
+
     /* Clear socket tracking table to prevent stale entries */
     release_socket_fd(fd);
 

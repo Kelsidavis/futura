@@ -135,12 +135,19 @@ long sys_rt_sigtimedwait(const uint64_t *uthese, void *uinfo,
         if (deadline_ticks >= 0 && (int64_t)fut_get_ticks() >= deadline_ticks)
             return -EAGAIN;
 
-        /* Zero timeout = immediate return */
-        if (uts && deadline_ticks >= 0 &&
-            (int64_t)fut_get_ticks() >= deadline_ticks)
-            return -EAGAIN;
-
-        /* Sleep for 1 tick (10ms) then re-check */
-        fut_thread_sleep(10);
+        /* Block on signal waitq — woken immediately by fut_signal_send().
+         * If timeout is set, limit sleep to remaining time. */
+        if (deadline_ticks >= 0) {
+            int64_t remain = deadline_ticks - (int64_t)fut_get_ticks();
+            if (remain <= 0)
+                return -EAGAIN;
+            /* Sleep with timed wakeup; fut_signal_send wakes sleeping threads early */
+            fut_thread_sleep((uint64_t)remain);
+        } else {
+            /* No timeout — block indefinitely on signal waitq */
+            fut_spinlock_acquire(&task->signal_waitq.lock);
+            fut_waitq_sleep_locked(&task->signal_waitq, &task->signal_waitq.lock,
+                                   FUT_THREAD_BLOCKED);
+        }
     }
 }

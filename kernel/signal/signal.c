@@ -174,10 +174,10 @@ int fut_signal_send(struct fut_task *task, int signum) {
         }
     }
 
-    /* Wake task if it's blocked on pause() syscall.
-     * When the task wakes, sys_pause() will check pending_signals
-     * and return -EINTR to deliver the signal. */
-    fut_waitq_wake_one(&task->signal_waitq);
+    /* Wake all threads blocked on the signal waitq (pause, sigsuspend,
+     * signalfd read). Using wake_all ensures both pause() and signalfd
+     * readers are notified when a signal arrives. */
+    fut_waitq_wake_all(&task->signal_waitq);
 
     /* Wake any sleeping or blocked threads in this task for EINTR delivery.
      * SLEEPING threads: interrupted nanosleep/poll/select via fut_thread_wake_sleeping.

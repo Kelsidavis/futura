@@ -1109,9 +1109,9 @@ static ssize_t signalfd_read_op(void *inode, void *priv,
                         return -EINTR;
                 }
             }
-            /* Block until a matching signal arrives */
-            fut_spinlock_acquire(&ctx->lock);
-            fut_waitq_sleep_locked(&ctx->read_waitq, &ctx->lock, FUT_THREAD_BLOCKED);
+            /* Block on task's signal waitq — woken by fut_signal_send() */
+            fut_spinlock_acquire(&task->signal_waitq.lock);
+            fut_waitq_sleep_locked(&task->signal_waitq, &task->signal_waitq.lock, FUT_THREAD_BLOCKED);
             continue;
         }
 

@@ -390,13 +390,19 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
                 if (epoll_req & EPOLLOUT) epoll_ready |= EPOLLOUT;
             }
 
+            /* Linux: EPOLLHUP and EPOLLERR are always reported to any
+             * monitored fd (read or write). EOF is "readable". */
             int counted = 0;
-            if (check_read && (epoll_ready & EPOLLIN)) {
+            if (check_read && (epoll_ready & (EPOLLIN | EPOLLHUP | EPOLLERR))) {
                 fd_setbit(fd, &r_readfds);
                 counted = 1;
             }
-            if (check_write && (epoll_ready & EPOLLOUT)) {
+            if (check_write && (epoll_ready & (EPOLLOUT | EPOLLERR | EPOLLHUP))) {
                 fd_setbit(fd, &r_writefds);
+                counted = 1;
+            }
+            if (check_except && (epoll_ready & EPOLLERR)) {
+                fd_setbit(fd, &r_exceptfds);
                 counted = 1;
             }
             if (counted)
@@ -670,12 +676,16 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
             }
 
             int counted = 0;
-            if (check_read && (epoll_ready & EPOLLIN)) {
+            if (check_read && (epoll_ready & (EPOLLIN | EPOLLHUP | EPOLLERR))) {
                 fd_setbit(fd, &r_readfds);
                 counted = 1;
             }
-            if (check_write && (epoll_ready & EPOLLOUT)) {
+            if (check_write && (epoll_ready & (EPOLLOUT | EPOLLERR | EPOLLHUP))) {
                 fd_setbit(fd, &r_writefds);
+                counted = 1;
+            }
+            if (check_except && (epoll_ready & EPOLLERR)) {
+                fd_setbit(fd, &r_exceptfds);
                 counted = 1;
             }
 

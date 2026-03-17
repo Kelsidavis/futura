@@ -3076,6 +3076,77 @@ static void test_epoll_et(void) {
 }
 
 /* ============================================================
+ * Test 74: EPOLLONESHOT disables after one report
+ * ============================================================ */
+#define EPOLLONESHOT_FLAG (1U << 30)
+
+static void test_epoll_oneshot(void) {
+    fut_printf("[MISC-TEST] Test 74: EPOLLONESHOT\n");
+
+    int pipefd[2];
+    long ret = sys_pipe(pipefd);
+    if (ret != 0) { fut_test_fail(74); return; }
+
+    /* Write data */
+    fut_vfs_write(pipefd[1], "abc", 3);
+
+    /* Create epoll with EPOLLIN|EPOLLONESHOT */
+    long epfd = sys_epoll_create1(0);
+    if (epfd < 0) {
+        fut_vfs_close(pipefd[0]); fut_vfs_close(pipefd[1]);
+        fut_test_fail(74); return;
+    }
+
+    struct { uint32_t events; uint64_t data; } __attribute__((packed)) ev = {
+        .events = 0x001 | EPOLLONESHOT_FLAG, /* EPOLLIN | EPOLLONESHOT */
+        .data = 88
+    };
+    ret = sys_epoll_ctl((int)epfd, 1, pipefd[0], &ev);
+    if (ret != 0) {
+        sys_close((int)epfd); fut_vfs_close(pipefd[0]); fut_vfs_close(pipefd[1]);
+        fut_test_fail(74); return;
+    }
+
+    /* First epoll_wait: should report EPOLLIN */
+    struct { uint32_t events; uint64_t data; } __attribute__((packed)) out = {0};
+    ret = sys_epoll_wait((int)epfd, &out, 1, 0);
+    if (ret != 1) {
+        fut_printf("[MISC-TEST] ✗ first wait: %ld\n", ret);
+        sys_close((int)epfd); fut_vfs_close(pipefd[0]); fut_vfs_close(pipefd[1]);
+        fut_test_fail(74); return;
+    }
+
+    /* Second epoll_wait: ONESHOT should have disabled events → return 0 */
+    ret = sys_epoll_wait((int)epfd, &out, 1, 0);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ second wait(ONESHOT): %ld (expected 0)\n", ret);
+        sys_close((int)epfd); fut_vfs_close(pipefd[0]); fut_vfs_close(pipefd[1]);
+        fut_test_fail(74); return;
+    }
+
+    /* Re-arm via EPOLL_CTL_MOD: should allow reporting again */
+    ev.events = 0x001 | EPOLLONESHOT_FLAG;
+    ret = sys_epoll_ctl((int)epfd, 3 /* MOD */, pipefd[0], &ev);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ epoll_ctl(MOD): %ld\n", ret);
+        sys_close((int)epfd); fut_vfs_close(pipefd[0]); fut_vfs_close(pipefd[1]);
+        fut_test_fail(74); return;
+    }
+
+    /* Third epoll_wait after re-arm: should report again */
+    ret = sys_epoll_wait((int)epfd, &out, 1, 0);
+    sys_close((int)epfd); fut_vfs_close(pipefd[0]); fut_vfs_close(pipefd[1]);
+
+    if (ret != 1) {
+        fut_printf("[MISC-TEST] ✗ third wait(re-armed): %ld (expected 1)\n", ret);
+        fut_test_fail(74); return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ EPOLLONESHOT: 1st=reported, 2nd=disabled, MOD=re-armed, 3rd=reported\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test 52: write on O_RDONLY fd returns EBADF
  * ============================================================ */
 static void test_rdonly_write_ebadf(void) {
@@ -3951,6 +4022,7 @@ void fut_misc_test_thread(void *arg) {
     test_eventfd_epoll();       /* Test 71: eventfd + epoll integration */
     test_pipe_epoll();          /* Test 72: pipe + epoll integration */
     test_epoll_et();            /* Test 73: EPOLLET edge-triggered */
+    test_epoll_oneshot();       /* Test 74: EPOLLONESHOT */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

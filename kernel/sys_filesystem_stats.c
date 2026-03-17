@@ -316,22 +316,6 @@ long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
         return -EINVAL;
     }
 
-    /* Categorize allocation size */
-    const char *size_category;
-    if (len == 0) {
-        size_category = "zero (no-op)";
-    } else if (len < 4096) {
-        size_category = "tiny (<4KB)";
-    } else if (len < 1048576) {
-        size_category = "small (4KB-1MB)";
-    } else if (len < 104857600) {
-        size_category = "medium (1MB-100MB)";
-    } else if (len < 1073741824) {
-        size_category = "large (100MB-1GB)";
-    } else {
-        size_category = "huge (≥1GB)";
-    }
-
     /* Determine operation type */
     const char *op_type;
     if (mode & FALLOC_FL_PUNCH_HOLE) {
@@ -418,10 +402,6 @@ long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
             remaining -= (uint64_t)written;
         }
 
-        fut_printf("[FALLOCATE] fallocate(fd=%d, mode=0x%x [%s], offset=%lu, len=%llu [%s], pid=%d) "
-                   "-> 0 (Phase 3: zeroed %llu bytes)\n",
-                   fd, mode, op_type, offset, (unsigned long long)clamp_len,
-                   size_category, task->pid, (unsigned long long)clamp_len);
         return 0;
     }
 

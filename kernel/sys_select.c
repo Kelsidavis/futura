@@ -401,7 +401,7 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
                 fd_setbit(fd, &r_writefds);
                 counted = 1;
             }
-            if (check_except && (epoll_ready & EPOLLERR)) {
+            if (check_except && (epoll_ready & (EPOLLERR | EPOLLPRI))) {
                 fd_setbit(fd, &r_exceptfds);
                 counted = 1;
             }
@@ -684,7 +684,7 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
                 fd_setbit(fd, &r_writefds);
                 counted = 1;
             }
-            if (check_except && (epoll_ready & EPOLLERR)) {
+            if (check_except && (epoll_ready & (EPOLLERR | EPOLLPRI))) {
                 fd_setbit(fd, &r_exceptfds);
                 counted = 1;
             }

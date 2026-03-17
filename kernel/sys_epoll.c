@@ -1817,6 +1817,18 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
             fut_timer_cancel(epoll_timeout_wakeup, &set->epoll_waitq);
         }
 
+        /* Check for pending unblocked signals → EINTR */
+        {
+            fut_task_t *sig_task = fut_task_current();
+            if (sig_task) {
+                uint64_t pending = __atomic_load_n(&sig_task->pending_signals, __ATOMIC_ACQUIRE);
+                uint64_t blocked = sig_task->signal_mask;
+                if (pending & ~blocked) {
+                    return -EINTR;
+                }
+            }
+        }
+
         iteration++;
     }
 
@@ -1907,16 +1919,6 @@ long sys_epoll_pwait(int epfd, struct epoll_event *events, int maxevents,
         saved_mask = __atomic_load_n(&task->signal_mask, __ATOMIC_ACQUIRE);
         __atomic_store_n(&task->signal_mask, newmask.__mask, __ATOMIC_RELEASE);
         mask_installed = true;
-
-        fut_printf("[EPOLL_PWAIT] epoll_pwait(epfd=%d, maxevents=%d, timeout=%d, "
-                   "sigmask=0x%llx) old_mask=0x%llx\n",
-                   epfd, maxevents, timeout,
-                   (unsigned long long)newmask.__mask,
-                   (unsigned long long)saved_mask);
-    } else {
-        fut_printf("[EPOLL_PWAIT] epoll_pwait(epfd=%d, maxevents=%d, timeout=%d, "
-                   "sigmask=NULL) -> no mask change\n",
-                   epfd, maxevents, timeout);
     }
 
     long ret = sys_epoll_wait(epfd, events, maxevents, timeout);

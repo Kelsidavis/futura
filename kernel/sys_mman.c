@@ -228,12 +228,21 @@ long sys_mlock(const void *addr, size_t len) {
         }
     }
 
-    /* Phase 3 Full: Update cumulative locked pages counter */
+    /* Update cumulative locked pages counter */
     mm->locked_vm += new_pages;
 
-    fut_printf("[MLOCK] mlock(addr=%p, len=%zu, new_pages=%zu) -> 0 "
-               "(Phase 3 Full: cumulative locked_vm now %zu pages)\n",
-               local_addr, local_len, new_pages, mm->locked_vm);
+    /* Mark VMAs in the range as locked */
+    {
+        uintptr_t lock_start = (uintptr_t)local_addr;
+        uintptr_t lock_end = lock_start + local_len;
+        struct fut_vma *vma = mm->vma_list;
+        while (vma) {
+            if (vma->start < lock_end && vma->end > lock_start)
+                vma->flags |= VMA_LOCKED;
+            vma = vma->next;
+        }
+    }
+
     return 0;
 }
 
@@ -290,7 +299,7 @@ long sys_munlock(const void *addr, size_t len) {
         return -ENOMEM;
     }
 
-    /* Decrement cumulative locked pages counter to match mlock() accounting */
+    /* Decrement cumulative locked pages counter and clear VMA_LOCKED */
     fut_mm_t *mm = fut_task_get_mm(task);
     if (mm) {
         size_t unlock_pages = (local_len + PAGE_SIZE - 1) / PAGE_SIZE;
@@ -298,6 +307,13 @@ long sys_munlock(const void *addr, size_t len) {
             mm->locked_vm -= unlock_pages;
         } else {
             mm->locked_vm = 0;
+        }
+        /* Clear VMA_LOCKED on affected VMAs */
+        struct fut_vma *vma = mm->vma_list;
+        while (vma) {
+            if (vma->start < end_addr && vma->end > addr_val)
+                vma->flags &= ~VMA_LOCKED;
+            vma = vma->next;
         }
     }
 

@@ -558,6 +558,15 @@ int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len) {
             /* Case 1: Entire VMA is unmapped - remove it */
             *link = vma->next;
 
+            /* Decrement locked_vm if this VMA was locked */
+            if (vma->flags & VMA_LOCKED) {
+                size_t pages = (vma->end - vma->start) / PAGE_SIZE;
+                if (mm->locked_vm >= pages)
+                    mm->locked_vm -= pages;
+                else
+                    mm->locked_vm = 0;
+            }
+
             /* Writeback dirty pages to file for MAP_SHARED mappings before unmapping */
             vma_writeback_pages(vma);
 
@@ -1283,6 +1292,15 @@ int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len) {
         if (overlap_start <= vma->start && overlap_end >= vma->end) {
             /* Case 1: Entire VMA is unmapped - remove it */
             *link = vma->next;
+
+            /* Decrement locked_vm if this VMA was locked */
+            if (vma->flags & VMA_LOCKED) {
+                size_t pages = (vma->end - vma->start) / PAGE_SIZE;
+                if (mm->locked_vm >= pages)
+                    mm->locked_vm -= pages;
+                else
+                    mm->locked_vm = 0;
+            }
 
             /* Writeback dirty pages to file for MAP_SHARED mappings before unmapping */
             vma_writeback_pages(vma);

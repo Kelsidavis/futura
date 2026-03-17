@@ -2711,6 +2711,44 @@ static void test_socket_errors(void) {
 }
 
 /* ============================================================
+ * Test 69: zero-length read/write returns 0
+ * ============================================================ */
+static void test_zero_length_io(void) {
+    fut_printf("[MISC-TEST] Test 69: zero-length I/O\n");
+
+    int fd = fut_vfs_open("/zero_io_test.txt", 0x42, 0644);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open: %d\n", fd);
+        fut_test_fail(69);
+        return;
+    }
+    fut_vfs_write(fd, "data", 4);
+
+    /* write(fd, buf, 0) should return 0 */
+    ssize_t nw = fut_vfs_write(fd, "x", 0);
+    if (nw != 0) {
+        fut_printf("[MISC-TEST] ✗ write(0) returned %zd\n", nw);
+        fut_vfs_close(fd);
+        fut_test_fail(69);
+        return;
+    }
+
+    /* read(fd, buf, 0) should return 0 */
+    char buf[4];
+    ssize_t nr = fut_vfs_read(fd, buf, 0);
+    fut_vfs_close(fd);
+
+    if (nr != 0) {
+        fut_printf("[MISC-TEST] ✗ read(0) returned %zd\n", nr);
+        fut_test_fail(69);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ zero-length I/O: read(0)=0, write(0)=0\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test 52: write on O_RDONLY fd returns EBADF
  * ============================================================ */
 static void test_rdonly_write_ebadf(void) {
@@ -3581,6 +3619,7 @@ void fut_misc_test_thread(void *arg) {
     test_close_ebadf();         /* Test 66: close invalid fd */
     test_sig_ign_discard();     /* Test 67: SIG_IGN discards pending */
     test_socket_errors();       /* Test 68: socket error codes */
+    test_zero_length_io();      /* Test 69: zero-length read/write */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

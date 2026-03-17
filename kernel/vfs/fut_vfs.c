@@ -1976,6 +1976,8 @@ int fut_vfs_resolve_at(fut_task_t *task, int dirfd, const char *path, char *out,
 }
 
 ssize_t fut_vfs_read(int fd, void *buf, size_t size) {
+    /* POSIX: read with count=0 returns 0 */
+    if (size == 0) return 0;
 #if DEBUG_READ
     fut_printf("[vfs-read] fd=%d buf=%p size=%zu\n", fd, buf, size);
 #endif
@@ -2045,6 +2047,8 @@ ssize_t fut_vfs_read(int fd, void *buf, size_t size) {
 }
 
 ssize_t fut_vfs_write(int fd, const void *buf, size_t size) {
+    /* POSIX: write with count=0 returns 0 */
+    if (size == 0) return 0;
     VFSDBG("[vfs-write] enter fd=%d size=%llu\n", fd, (unsigned long long)size);
     fut_task_t *task = fut_task_current();
     if (!task) {

@@ -80,8 +80,9 @@ long sys_tgkill(int tgid, int tid, int sig) {
     if (sig == 0)
         return 0;
 
-    /* Deliver signal to the thread's parent task */
-    int result = fut_signal_send(thread->task, sig);
+    /* Deliver thread-directed signal: sets thread->thread_pending_signals,
+     * wakes only the target thread (unlike fut_signal_send which wakes all). */
+    int result = fut_signal_send_thread(thread, sig);
     if (result != 0) {
         fut_printf("[TGKILL] tgkill(tgid=%d, tid=%d, sig=%d) -> %d (signal delivery failed)\n",
                    tgid, tid, sig, result);
@@ -136,6 +137,6 @@ long sys_tkill(int tid, int sig) {
     if (sig == 0)
         return 0;
 
-    /* Deliver signal to the thread's parent task */
-    return fut_signal_send(thread->task, sig);
+    /* Thread-directed delivery (same as tgkill, but without tgid check) */
+    return fut_signal_send_thread(thread, sig);
 }

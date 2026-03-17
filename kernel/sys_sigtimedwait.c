@@ -102,10 +102,22 @@ long sys_rt_sigtimedwait(const uint64_t *uthese, void *uinfo,
     if (!task)
         return -ESRCH;
 
-    /* Poll for matching pending signal */
+    fut_thread_t *cur_thread = fut_thread_current();
+
+    /* Poll for matching pending signal (per-thread first, then task-wide) */
     for (;;) {
-        uint64_t pending = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
-        uint64_t matching = pending & these;
+        /* Check per-thread pending (tgkill) first */
+        uint64_t matching = 0;
+        bool from_thread = false;
+        if (cur_thread) {
+            uint64_t tp = __atomic_load_n(&cur_thread->thread_pending_signals, __ATOMIC_ACQUIRE);
+            matching = tp & these;
+            if (matching) from_thread = true;
+        }
+        if (!matching) {
+            uint64_t pending = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
+            matching = pending & these;
+        }
 
         if (matching) {
             /* Find lowest-numbered matching signal */
@@ -113,9 +125,12 @@ long sys_rt_sigtimedwait(const uint64_t *uthese, void *uinfo,
             if (signo < 1 || signo > 64)
                 signo = 1;
 
-            /* Dequeue it */
-            __atomic_and_fetch(&task->pending_signals,
-                               ~(1ULL << (signo - 1)), __ATOMIC_RELEASE);
+            /* Dequeue from the right bitmask */
+            uint64_t bit = (1ULL << (signo - 1));
+            if (from_thread && cur_thread)
+                __atomic_and_fetch(&cur_thread->thread_pending_signals, ~bit, __ATOMIC_RELEASE);
+            else
+                __atomic_and_fetch(&task->pending_signals, ~bit, __ATOMIC_RELEASE);
 
             /* Fill siginfo if requested */
             if (uinfo) {

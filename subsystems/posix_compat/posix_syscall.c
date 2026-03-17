@@ -3184,9 +3184,9 @@ static bool posix_deliver_signal(fut_task_t *current, int signum,
     /* Get the handler for this signal */
     sighandler_t handler = fut_signal_get_handler(current, signum);
 
-    /* Clear this signal from pending */
+    /* Clear this signal from pending (task-wide; caller may also clear per-thread) */
     uint64_t signal_bit = (1ULL << (signum - 1));
-    current->pending_signals &= ~signal_bit;
+    __atomic_and_fetch(&current->pending_signals, ~signal_bit, __ATOMIC_ACQ_REL);
 
     /* Handle SIG_IGN - just ignore the signal */
     if (handler == SIG_IGN) {
@@ -3419,7 +3419,29 @@ static int check_and_deliver_pending_signals(fut_task_t *current,
         return 0;
     }
 
-    /* Iterate through all possible signals and deliver the first one found */
+    uint64_t signal_mask = __atomic_load_n(&current->signal_mask, __ATOMIC_ACQUIRE);
+    fut_thread_t *cur_thread = fut_thread_current();
+
+    /* 1. Thread-directed signals (tgkill/tkill) have priority over task-wide */
+    if (cur_thread) {
+        uint64_t tp = __atomic_load_n(&cur_thread->thread_pending_signals, __ATOMIC_ACQUIRE);
+        uint64_t deliverable = tp & ~signal_mask;
+        for (int signum = 1; signum < _NSIG && deliverable; signum++) {
+            uint64_t bit = (1ULL << (signum - 1));
+            if (deliverable & bit) {
+                /* Clear per-thread bit BEFORE delivery to prevent re-delivery */
+                __atomic_and_fetch(&cur_thread->thread_pending_signals, ~bit, __ATOMIC_ACQ_REL);
+                /* Also clear task-wide bit in case of concurrent kill() */
+                __atomic_and_fetch(&current->pending_signals, ~bit, __ATOMIC_ACQ_REL);
+                if (posix_deliver_signal(current, signum, frame, syscall_ret)) {
+                    return signum;
+                }
+                break;
+            }
+        }
+    }
+
+    /* 2. Task-wide signals (kill/alarm/SIGCHLD/etc.) */
     for (int signum = 1; signum < _NSIG; signum++) {
         if (fut_signal_is_pending(current, signum)) {
             if (posix_deliver_signal(current, signum, frame, syscall_ret)) {
@@ -3465,9 +3487,16 @@ long syscall_entry_c(uint64_t nr,
     extern fut_task_t *fut_task_current(void);
 
     fut_task_t *current = fut_task_current();
-    if (current && current->pending_signals != 0 && frame_ptr) {
-        fut_interrupt_frame_t *frame = (fut_interrupt_frame_t *)frame_ptr;
-        check_and_deliver_pending_signals(current, frame, ret);
+    if (current && frame_ptr) {
+        /* Check both task-wide pending and per-thread pending (tgkill) */
+        fut_thread_t *cur_thread = fut_thread_current();
+        bool has_thread_pending = cur_thread &&
+            (__atomic_load_n(&cur_thread->thread_pending_signals, __ATOMIC_ACQUIRE) != 0);
+        bool has_task_pending = (__atomic_load_n(&current->pending_signals, __ATOMIC_ACQUIRE) != 0);
+        if (has_thread_pending || has_task_pending) {
+            fut_interrupt_frame_t *frame = (fut_interrupt_frame_t *)frame_ptr;
+            check_and_deliver_pending_signals(current, frame, ret);
+        }
     }
 
     return ret;

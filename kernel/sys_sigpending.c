@@ -9,6 +9,7 @@
  */
 
 #include <kernel/fut_task.h>
+#include <kernel/fut_thread.h>
 #include <kernel/signal.h>
 #include <kernel/errno.h>
 #include <kernel/uaccess.h>
@@ -128,9 +129,13 @@ long sys_sigpending(sigset_t *set) {
     }
 
     /* POSIX: sigpending returns ALL pending signals, including blocked ones.
-     * This lets applications check what's queued before unblocking. */
+     * Include both task-wide (kill) and per-thread (tgkill) pending. */
     sigset_t pending;
     uint64_t cur_pending = __atomic_load_n(&current->pending_signals, __ATOMIC_ACQUIRE);
+    /* OR in per-thread directed signals for the calling thread */
+    fut_thread_t *cur_thread = fut_thread_current();
+    if (cur_thread)
+        cur_pending |= __atomic_load_n(&cur_thread->thread_pending_signals, __ATOMIC_ACQUIRE);
     pending.__mask = cur_pending;
 
     /* Copy result to user space */

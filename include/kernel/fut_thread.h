@@ -104,6 +104,12 @@ struct fut_thread {
 
     /* CLONE_CHILD_CLEARTID: address to write 0 + futex-wake on thread exit */
     int *clear_child_tid;                 // Set by clone(CLONE_CHILD_CLEARTID); cleared on exit
+
+    /* Per-thread pending signals: used by tgkill/tkill to direct a signal
+     * to a specific thread rather than the whole process.  Process-wide
+     * signals are still stored in task->pending_signals.  Signal delivery
+     * checks BOTH this field AND task->pending_signals. */
+    uint64_t thread_pending_signals;      // Thread-directed pending signal bitmask
 };
 
 /* ============================================================

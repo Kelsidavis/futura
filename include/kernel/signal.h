@@ -136,8 +136,9 @@ struct sigaltstack {
 /* Minimum signal stack size (4 KiB) */
 #define MINSIGSTKSZ 4096
 
-/* Forward declaration */
+/* Forward declarations */
 struct fut_task;
+struct fut_thread;
 
 /* Kernel signal handling initialization */
 void fut_signal_init(void);
@@ -157,6 +158,9 @@ sighandler_t fut_signal_get_handler(struct fut_task *task, int signum);
 /* Set signal mask for a task (block/unblock signals) */
 int fut_signal_procmask(struct fut_task *task, int how,
                         const sigset_t *set, sigset_t *oldset);
+
+/* Queue a thread-directed signal (tgkill/tkill); sets per-thread pending */
+int fut_signal_send_thread(struct fut_thread *thread, int signum);
 
 /* Internal: Check if signal should be delivered to a task */
 int fut_signal_is_pending(struct fut_task *task, int signum);

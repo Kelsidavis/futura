@@ -6032,6 +6032,67 @@ static void test_clone_thread_validation(void) {
 }
 
 /* ============================================================
+ * Test 124: tgkill sets per-thread pending (not task-wide)
+ * ============================================================ */
+static void test_tgkill_per_thread_pending(void) {
+    fut_printf("[MISC-TEST] Test 124: tgkill sets per-thread pending signals\n");
+
+    fut_task_t *task = fut_task_current();
+    fut_thread_t *thread = fut_thread_current();
+    if (!task || !thread) {
+        fut_printf("[MISC-TEST] ✗ no task/thread\n");
+        fut_test_fail(124); return;
+    }
+
+    /* Clear any existing per-thread pending */
+    __atomic_store_n(&thread->thread_pending_signals, 0ULL, __ATOMIC_RELEASE);
+    uint64_t old_task_pending = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
+
+    /* Block SIGUSR1 so it doesn't get delivered and clear the bit immediately */
+    uint64_t block_bit = (1ULL << (SIGUSR1 - 1));
+    uint64_t old_mask = task->signal_mask;
+    __atomic_or_fetch(&task->signal_mask, block_bit, __ATOMIC_ACQ_REL);
+
+    /* tgkill to self with SIGUSR1 should set per-thread pending */
+    int pid = (int)task->pid;
+    int tid = (int)thread->tid;
+    long ret = sys_tgkill(pid, tid, SIGUSR1);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ tgkill returned %ld\n", ret);
+        task->signal_mask = old_mask;
+        __atomic_store_n(&thread->thread_pending_signals, 0ULL, __ATOMIC_RELEASE);
+        fut_test_fail(124); return;
+    }
+
+    /* Verify: per-thread pending should have SIGUSR1 bit set */
+    uint64_t tp = __atomic_load_n(&thread->thread_pending_signals, __ATOMIC_ACQUIRE);
+    if (!(tp & block_bit)) {
+        fut_printf("[MISC-TEST] ✗ thread_pending_signals=0x%llx, expected SIGUSR1 bit set\n",
+                   (unsigned long long)tp);
+        task->signal_mask = old_mask;
+        __atomic_store_n(&thread->thread_pending_signals, 0ULL, __ATOMIC_RELEASE);
+        fut_test_fail(124); return;
+    }
+
+    /* Verify: task-wide pending should NOT have SIGUSR1 (it's thread-directed) */
+    uint64_t task_p = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
+    /* It should be the same as before tgkill (no task-wide bit set by tgkill) */
+    if ((task_p & block_bit) && !(old_task_pending & block_bit)) {
+        fut_printf("[MISC-TEST] ✗ tgkill wrongly set task->pending_signals SIGUSR1 bit\n");
+        task->signal_mask = old_mask;
+        __atomic_store_n(&thread->thread_pending_signals, 0ULL, __ATOMIC_RELEASE);
+        fut_test_fail(124); return;
+    }
+
+    /* Cleanup: restore mask and clear per-thread pending */
+    task->signal_mask = old_mask;
+    __atomic_store_n(&thread->thread_pending_signals, 0ULL, __ATOMIC_RELEASE);
+
+    fut_printf("[MISC-TEST] ✓ tgkill: per-thread pending set, task-wide not polluted\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -6164,6 +6225,7 @@ void fut_misc_test_thread(void *arg) {
     test_procfs_status_capeff();           /* Test 121: status has CapEff: */
     test_procfs_status_nnp_fdsize();       /* Test 122: status has NoNewPrivs:/FDSize: */
     test_clone_thread_validation();        /* Test 123: clone(CLONE_THREAD) EINVAL */
+    test_tgkill_per_thread_pending();      /* Test 124: tgkill sets thread_pending_signals */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

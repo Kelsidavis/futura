@@ -216,6 +216,69 @@ int fut_signal_send(struct fut_task *task, int signum) {
 }
 
 /**
+ * Send a thread-directed signal (tgkill/tkill semantics).
+ *
+ * Sets the signal bit in thread->thread_pending_signals rather than the
+ * task-wide pending_signals. Delivery checks both per-thread and task-wide
+ * pending when looking for signals to deliver to a given thread.
+ * This is the POSIX model: tgkill() targets a specific thread only.
+ *
+ * @param thread Target thread
+ * @param signum Signal number (1-64)
+ * @return 0 on success, -EINVAL on bad args
+ */
+int fut_signal_send_thread(struct fut_thread *thread, int signum) {
+    if (!thread || signum < 1 || signum >= _NSIG)
+        return -EINVAL;
+
+    fut_task_t *task = thread->task;
+    if (!task)
+        return -EINVAL;
+
+    uint64_t signal_bit = (1ULL << (signum - 1));
+
+    /* SIGKILL/SIGSTOP: always deliver to whole task, not thread-directed */
+    if (signum == SIGKILL || signum == SIGSTOP)
+        return fut_signal_send(task, signum);
+
+    /* SIG_IGN: don't queue */
+    if (task->signal_handlers[signum - 1] == SIG_IGN)
+        return 0;
+
+    /* Set the per-thread pending bit atomically */
+    __atomic_or_fetch(&thread->thread_pending_signals, signal_bit, __ATOMIC_RELEASE);
+
+    /* Handle default TERM/CORE action for unblocked, uncaught signals */
+    if (task->signal_handlers[signum - 1] == SIG_DFL) {
+        uint64_t blocked = __atomic_load_n(&task->signal_mask, __ATOMIC_ACQUIRE);
+        if (!(blocked & signal_bit)) {
+            int action = signal_default_action[signum];
+            if (action == SIG_ACTION_TERM || action == SIG_ACTION_CORE) {
+                task->exit_code = 0;
+                task->term_signal = signum;
+            }
+        }
+    }
+
+    /* Wake the specific target thread if sleeping or blocked */
+    if (thread->state == FUT_THREAD_SLEEPING) {
+        fut_thread_wake_sleeping(thread);
+    } else if (thread->state == FUT_THREAD_BLOCKED && thread->blocked_waitq) {
+        extern bool fut_waitq_remove_thread(fut_waitq_t *q, fut_thread_t *t);
+        if (fut_waitq_remove_thread(thread->blocked_waitq, thread)) {
+            thread->blocked_waitq = NULL;
+            thread->state = FUT_THREAD_READY;
+            fut_sched_add_thread(thread);
+        }
+    }
+
+    /* Also wake signal waitq (for pause/sigsuspend/signalfd) */
+    fut_waitq_wake_all(&task->signal_waitq);
+
+    return 0;
+}
+
+/**
  * Register a signal handler for a task.
  *
  * @param task Target task
@@ -339,17 +402,25 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
 
     arm64_frame_t *f = (arm64_frame_t *)frame;
 
-    /* Find first pending, unblocked signal — use atomic loads since
-     * signals can be queued from other threads/IRQ context concurrently. */
+    /* Find first pending, unblocked signal.
+     * Check per-thread pending first (tgkill), then task-wide (kill). */
     int signum = 0;
-    uint64_t cur_pending = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
+    bool from_thread_arm64 = false;
+    fut_thread_t *cur_thread_arm64 = fut_thread_current();
     uint64_t cur_mask = __atomic_load_n(&task->signal_mask, __ATOMIC_ACQUIRE);
-    for (int i = 1; i < _NSIG; i++) {
-        uint64_t signal_bit = (1ULL << (i - 1));
-        if ((cur_pending & signal_bit) &&
-            !(cur_mask & signal_bit)) {
-            signum = i;
-            break;
+
+    if (cur_thread_arm64) {
+        uint64_t tp = __atomic_load_n(&cur_thread_arm64->thread_pending_signals, __ATOMIC_ACQUIRE);
+        for (int i = 1; i < _NSIG; i++) {
+            uint64_t bit = (1ULL << (i - 1));
+            if ((tp & bit) && !(cur_mask & bit)) { signum = i; from_thread_arm64 = true; break; }
+        }
+    }
+    if (!signum) {
+        uint64_t cur_pending = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
+        for (int i = 1; i < _NSIG; i++) {
+            uint64_t bit = (1ULL << (i - 1));
+            if ((cur_pending & bit) && !(cur_mask & bit)) { signum = i; break; }
         }
     }
 
@@ -361,9 +432,12 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
     /* Get handler for this signal */
     sighandler_t handler = fut_signal_get_handler(task, signum);
 
-    /* Clear pending signal bit first */
+    /* Clear pending signal bit from the appropriate bitmask */
     uint64_t signal_bit = (1ULL << (signum - 1));
-    __atomic_and_fetch(&task->pending_signals, ~signal_bit, __ATOMIC_ACQ_REL);
+    if (from_thread_arm64 && cur_thread_arm64)
+        __atomic_and_fetch(&cur_thread_arm64->thread_pending_signals, ~signal_bit, __ATOMIC_ACQ_REL);
+    else
+        __atomic_and_fetch(&task->pending_signals, ~signal_bit, __ATOMIC_ACQ_REL);
 
     /* If handler is SIG_DFL or SIG_IGN, don't deliver frame */
     if (handler == SIG_DFL || handler == SIG_IGN) {
@@ -522,17 +596,25 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
         return 0;  /* Returning to kernel mode, don't deliver */
     }
 
-    /* Find first pending, unblocked signal — use atomic loads since
-     * signals can be queued from other threads/IRQ context concurrently. */
+    /* Find first pending, unblocked signal.
+     * Check per-thread pending first (tgkill), then task-wide (kill). */
     int signum = 0;
-    uint64_t cur_pending = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
+    bool from_thread_x86 = false;
+    fut_thread_t *cur_thread_x86 = fut_thread_current();
     uint64_t cur_mask = __atomic_load_n(&task->signal_mask, __ATOMIC_ACQUIRE);
-    for (int i = 1; i < _NSIG; i++) {
-        uint64_t signal_bit = (1ULL << (i - 1));
-        if ((cur_pending & signal_bit) &&
-            !(cur_mask & signal_bit)) {
-            signum = i;
-            break;
+
+    if (cur_thread_x86) {
+        uint64_t tp = __atomic_load_n(&cur_thread_x86->thread_pending_signals, __ATOMIC_ACQUIRE);
+        for (int i = 1; i < _NSIG; i++) {
+            uint64_t bit = (1ULL << (i - 1));
+            if ((tp & bit) && !(cur_mask & bit)) { signum = i; from_thread_x86 = true; break; }
+        }
+    }
+    if (!signum) {
+        uint64_t cur_pending = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
+        for (int i = 1; i < _NSIG; i++) {
+            uint64_t bit = (1ULL << (i - 1));
+            if ((cur_pending & bit) && !(cur_mask & bit)) { signum = i; break; }
         }
     }
 
@@ -544,9 +626,12 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
     /* Get handler for this signal */
     sighandler_t handler = fut_signal_get_handler(task, signum);
 
-    /* Clear pending signal bit first */
+    /* Clear pending signal bit from the appropriate bitmask */
     uint64_t signal_bit = (1ULL << (signum - 1));
-    __atomic_and_fetch(&task->pending_signals, ~signal_bit, __ATOMIC_ACQ_REL);
+    if (from_thread_x86 && cur_thread_x86)
+        __atomic_and_fetch(&cur_thread_x86->thread_pending_signals, ~signal_bit, __ATOMIC_ACQ_REL);
+    else
+        __atomic_and_fetch(&task->pending_signals, ~signal_bit, __ATOMIC_ACQ_REL);
 
     /* Handle SIG_IGN - just ignore the signal */
     if (handler == SIG_IGN) {

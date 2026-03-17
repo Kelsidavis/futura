@@ -1566,9 +1566,14 @@ static int check_file_permission(struct fut_vnode *vnode, fut_task_t *task, bool
     uint32_t task_uid = task ? task->uid : 0;
     uint32_t task_gid = task ? task->gid : 0;
 
-    /* For now, assume all files are owned by root (uid 0, gid 0) */
-    uint32_t file_uid = 0;
-    uint32_t file_gid = 0;
+    /* Root or CAP_DAC_OVERRIDE bypasses all file permission checks */
+    if (task_uid == 0 || (task && (task->cap_effective & (1ULL << 1 /* CAP_DAC_OVERRIDE */)))) {
+        return 0;
+    }
+
+    /* Get actual file ownership from vnode */
+    uint32_t file_uid = vnode->uid;
+    uint32_t file_gid = vnode->gid;
     uint32_t perm_bits = 0;
 
     /* Determine which permission bits to check: owner, group, or other */

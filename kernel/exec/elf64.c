@@ -1701,6 +1701,12 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
 #define ELF_LOG(...) fut_printf(__VA_ARGS__)
 #define stack_printf(...) do { fut_printf(__VA_ARGS__); } while(0)
 
+/* ELF metadata for auxiliary vector (also defined in x86_64 section) */
+static uint64_t g_exec_entry = 0;
+static uint64_t g_exec_phdr = 0;
+static uint16_t g_exec_phent = 0;
+static uint16_t g_exec_phnum = 0;
+
 /* FD_CLOEXEC - close-on-exec flag for file descriptors. */
 #ifndef FD_CLOEXEC
 #define FD_CLOEXEC      1

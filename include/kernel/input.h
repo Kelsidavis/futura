@@ -20,6 +20,7 @@
 #include <kernel/fut_memory.h>
 #include <kernel/fut_timer.h>
 #include <kernel/fut_vfs.h>
+#include <kernel/fut_task.h>
 #include <futura/input_event.h>
 
 #define FUT_INPUT_QUEUE_SIZE 128u
@@ -90,6 +91,13 @@ static inline ssize_t fut_input_queue_read(fut_input_queue_t *q,
             }
             if (flags & O_NONBLOCK) {
                 return -EAGAIN;
+            }
+            /* Check for pending unblocked signals → EINTR */
+            fut_task_t *_t = fut_task_current();
+            if (_t) {
+                uint64_t _p = __atomic_load_n(&_t->pending_signals, __ATOMIC_ACQUIRE);
+                if (_p & ~_t->signal_mask)
+                    return -EINTR;
             }
             fut_waitq_sleep_locked(&q->wait, &q->lock, FUT_THREAD_BLOCKED);
             fut_spinlock_acquire(&q->lock);

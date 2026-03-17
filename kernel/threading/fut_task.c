@@ -590,6 +590,15 @@ int fut_task_waitpid(int pid, int *status_out, int flags) {
             return 0;
         }
 
+        /* Check for pending unblocked signals → EINTR */
+        {
+            uint64_t pending = __atomic_load_n(&parent->pending_signals, __ATOMIC_ACQUIRE);
+            if (pending & ~parent->signal_mask) {
+                fut_spinlock_release(&task_list_lock);
+                return -EINTR;
+            }
+        }
+
         fut_waitq_sleep_locked(&parent->child_waiters, &task_list_lock, FUT_THREAD_BLOCKED);
     }
 }
@@ -681,6 +690,15 @@ int fut_task_waitpid_ex(int pid, int *status_out, int flags, uint32_t *uid_out) 
         if (nohang) {
             fut_spinlock_release(&task_list_lock);
             return 0;
+        }
+
+        /* Check for pending unblocked signals → EINTR */
+        {
+            uint64_t pending = __atomic_load_n(&parent->pending_signals, __ATOMIC_ACQUIRE);
+            if (pending & ~parent->signal_mask) {
+                fut_spinlock_release(&task_list_lock);
+                return -EINTR;
+            }
         }
 
         fut_waitq_sleep_locked(&parent->child_waiters, &task_list_lock, FUT_THREAD_BLOCKED);

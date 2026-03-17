@@ -149,6 +149,7 @@ struct fut_task {
 
     /* File descriptor table (per-task, for process isolation) */
     struct fut_file **fd_table;        // Array of file pointers
+    int *fd_flags;                     // Per-FD flags (FD_CLOEXEC), parallel to fd_table
     int max_fds;                       // Allocated size of fd_table
     int next_fd;                       // Next FD index to allocate
 

@@ -492,6 +492,9 @@ void fut_thread_init_bootstrap(void) {
             return;
         }
         memset(bootstrap_task.fd_table, 0, sizeof(struct fut_file *) * bootstrap_task.max_fds);
+        bootstrap_task.fd_flags = fut_malloc(sizeof(int) * bootstrap_task.max_fds);
+        if (bootstrap_task.fd_flags)
+            memset(bootstrap_task.fd_flags, 0, sizeof(int) * bootstrap_task.max_fds);
         bootstrap_task.next_fd = 0;
 
         memset(&bootstrap_thread, 0, sizeof(bootstrap_thread));

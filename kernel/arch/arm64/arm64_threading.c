@@ -63,6 +63,12 @@ void arm64_init_boot_thread(void) {
     for (int i = 0; i < FUT_FD_TABLE_INITIAL_SIZE; i++) {
         boot_task->fd_table[i] = NULL;
     }
+    boot_task->fd_flags = (int *)fut_malloc(FUT_FD_TABLE_INITIAL_SIZE * sizeof(int));
+    if (boot_task->fd_flags) {
+        for (int i = 0; i < FUT_FD_TABLE_INITIAL_SIZE; i++) {
+            boot_task->fd_flags[i] = 0;
+        }
+    }
     boot_task->next_fd = 0;
 
     /* Allocate minimal thread structure directly */

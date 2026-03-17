@@ -437,11 +437,17 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
     }
 
     switch (local_cmd) {
-    case F_GETFD:
-        return file->fd_flags;
+    case F_GETFD: {
+        /* Per-FD flags are stored in task->fd_flags[], not file->fd_flags */
+        if (task->fd_flags)
+            return task->fd_flags[local_fd];
+        return 0;
+    }
 
     case F_SETFD: {
-        file->fd_flags = ((int)local_arg & FD_CLOEXEC);
+        /* Per-FD flags are stored in task->fd_flags[], not file->fd_flags */
+        if (task->fd_flags)
+            task->fd_flags[local_fd] = ((int)local_arg & FD_CLOEXEC);
         return 0;
     }
 
@@ -723,12 +729,10 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
             return ret;
         }
 
-        /* Set close-on-exec if F_DUPFD_CLOEXEC */
+        /* Set close-on-exec if F_DUPFD_CLOEXEC (per-FD flag) */
         if (local_cmd == F_DUPFD_CLOEXEC) {
-            struct fut_file *new_file = vfs_get_file_from_task(task, newfd);
-            if (new_file) {
-                new_file->fd_flags |= FD_CLOEXEC;
-            }
+            if (task->fd_flags)
+                task->fd_flags[newfd] |= FD_CLOEXEC;
         }
 
         /* Propagate socket ownership if oldfd is a socket */

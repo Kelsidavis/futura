@@ -4485,6 +4485,55 @@ static void test_vfs_permission(void) {
 }
 
 /* ============================================================
+ * Test 86: per-FD cloexec independence (dup'd fds don't share cloexec)
+ * ============================================================ */
+static void test_perfd_cloexec_independence(void) {
+    fut_printf("[MISC-TEST] Test 86: per-FD cloexec independence\n");
+
+    /* Open a file */
+    int fd1 = (int)fut_vfs_open("/test_perfd_cloexec.txt", O_CREAT | O_RDWR, 0644);
+    if (fd1 < 0) {
+        fut_printf("[MISC-TEST] ✗ open failed: %d\n", fd1);
+        fut_test_fail(86);
+        return;
+    }
+
+    /* dup() — new fd should NOT inherit cloexec */
+    long fd2 = sys_dup(fd1);
+    if (fd2 < 0) {
+        fut_printf("[MISC-TEST] ✗ dup failed: %ld\n", fd2);
+        fut_vfs_close(fd1);
+        fut_test_fail(86);
+        return;
+    }
+
+    /* Set cloexec on fd1 only */
+    sys_fcntl(fd1, 2 /* F_SETFD */, 1 /* FD_CLOEXEC */);
+
+    /* fd1 should have cloexec */
+    long flags1 = sys_fcntl(fd1, 1 /* F_GETFD */, 0);
+    /* fd2 should NOT have cloexec (per-FD independence) */
+    long flags2 = sys_fcntl((int)fd2, 1 /* F_GETFD */, 0);
+
+    fut_vfs_close(fd1);
+    fut_vfs_close((int)fd2);
+
+    if (!(flags1 & 1)) {
+        fut_printf("[MISC-TEST] ✗ fd1 should have FD_CLOEXEC: flags=0x%lx\n", flags1);
+        fut_test_fail(86);
+        return;
+    }
+    if (flags2 & 1) {
+        fut_printf("[MISC-TEST] ✗ fd2 should NOT have FD_CLOEXEC: flags=0x%lx\n", flags2);
+        fut_test_fail(86);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ per-FD cloexec: dup'd fds have independent FD_CLOEXEC\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -4579,6 +4628,7 @@ void fut_misc_test_thread(void *arg) {
     test_socket_write_epipe();  /* Test 83: write to closed socket → EPIPE */
     test_socket_read_eof();     /* Test 84: read from closed socket → EOF */
     test_shutdown_wr_eof();     /* Test 85: shutdown(SHUT_WR) → peer reads EOF */
+    test_perfd_cloexec_independence(); /* Test 86: per-FD cloexec after dup */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

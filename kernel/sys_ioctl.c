@@ -795,12 +795,12 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
             return 0;
         }
         case FIOCLEX:
-            /* FIOCLEX - Set close-on-exec flag on the file descriptor */
-            file->fd_flags |= FD_CLOEXEC;
+            /* FIOCLEX - Set close-on-exec flag (per-FD, not per-file) */
+            if (task->fd_flags) task->fd_flags[fd] |= FD_CLOEXEC;
             return 0;
         case FIONCLEX:
-            /* FIONCLEX - Clear close-on-exec flag on the file descriptor */
-            file->fd_flags &= ~FD_CLOEXEC;
+            /* FIONCLEX - Clear close-on-exec flag (per-FD, not per-file) */
+            if (task->fd_flags) task->fd_flags[fd] &= ~FD_CLOEXEC;
             return 0;
         case TIOCGPGRP: {
             /* TIOCGPGRP - Get foreground process group of terminal.

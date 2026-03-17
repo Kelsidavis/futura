@@ -1009,6 +1009,9 @@ long sys_fork(void) {
 
                 /* Child inherits the same file object at the same FD */
                 child_task->fd_table[i] = parent_file;
+                /* Copy per-FD flags (FD_CLOEXEC is per-descriptor, inherited on fork) */
+                if (child_task->fd_flags && parent_task->fd_flags)
+                    child_task->fd_flags[i] = parent_task->fd_flags[i];
             }
         }
     }

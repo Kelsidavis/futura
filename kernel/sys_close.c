@@ -328,12 +328,12 @@ long sys_close_range(unsigned int first, unsigned int last, unsigned int flags) 
     int closed = 0;
 
     if (flags & CLOSE_RANGE_CLOEXEC) {
-        /* Set FD_CLOEXEC on every open FD in the range instead of closing */
+        /* Set FD_CLOEXEC on every open FD in the range (per-FD flag) */
         for (unsigned int fd = first; fd <= upper; fd++) {
             struct fut_file *file = vfs_get_file_from_task(task, (int)fd);
             if (!file)
                 continue;
-            file->fd_flags |= FD_CLOEXEC;
+            if (task->fd_flags) task->fd_flags[fd] |= FD_CLOEXEC;
             closed++;
         }
         fut_printf("[CLOSE_RANGE] close_range(%u, %u, CLOEXEC, pid=%d) -> 0 (%d fds marked)\n",

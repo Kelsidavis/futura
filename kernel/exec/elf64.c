@@ -1573,16 +1573,18 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
         fut_thread_t *cur = fut_thread_current();
         fut_task_t *caller_task = cur ? cur->task : NULL;
 
-        /* Copy non-CLOEXEC fds from caller to new task */
+        /* Copy non-CLOEXEC fds from caller to new task (per-FD flags) */
         if (caller_task && caller_task->fd_table && task->fd_table) {
             int max = caller_task->max_fds;
             if (max > (int)task->max_fds) max = (int)task->max_fds;
             int inherited = 0;
             for (int i = 0; i < max; i++) {
                 struct fut_file *f = caller_task->fd_table[i];
-                if (f && !(f->fd_flags & FD_CLOEXEC)) {
+                int cloexec = (caller_task->fd_flags && (caller_task->fd_flags[i] & FD_CLOEXEC));
+                if (f && !cloexec) {
                     vfs_file_ref(f);
                     task->fd_table[i] = f;
+                    if (task->fd_flags) task->fd_flags[i] = 0;
                     inherited++;
                 }
             }
@@ -2847,9 +2849,11 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
             if (max > (int)task->max_fds) max = (int)task->max_fds;
             for (int i = 0; i < max; i++) {
                 struct fut_file *f = caller_task->fd_table[i];
-                if (f && !(f->fd_flags & FD_CLOEXEC)) {
+                int cloexec = (caller_task->fd_flags && (caller_task->fd_flags[i] & FD_CLOEXEC));
+                if (f && !cloexec) {
                     vfs_file_ref(f);
                     task->fd_table[i] = f;
+                    if (task->fd_flags) task->fd_flags[i] = 0;
                 }
             }
         }

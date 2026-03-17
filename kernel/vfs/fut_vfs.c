@@ -121,6 +121,7 @@ static int alloc_fd_for_task(fut_task_t *task, struct fut_file *file) {
     for (int i = 0; i < max; i++) {
         if (task->fd_table[i] == NULL) {
             task->fd_table[i] = file;
+            if (task->fd_flags) task->fd_flags[i] = 0;
             return i;
         }
     }
@@ -160,6 +161,7 @@ static void close_fd_in_task(fut_task_t *task, int fd) {
     }
 
     task->fd_table[fd] = NULL;
+    if (task->fd_flags) task->fd_flags[fd] = 0;
 
     /* Notify epoll instances that this fd is closing */
     extern void epoll_notify_fd_close(int fd);
@@ -227,6 +229,7 @@ static int alloc_specific_fd_for_task(fut_task_t *task, int target_fd, struct fu
     }
 
     task->fd_table[target_fd] = file;
+    if (task->fd_flags) task->fd_flags[target_fd] = 0;
     return target_fd;
 }
 
@@ -1852,9 +1855,9 @@ int fut_vfs_open(const char *path, int flags, int mode) {
      * operation via vfs_init_vnode_ownership(), which applies umask. No
      * additional mode setting needed here. */
 
-    /* Handle O_CLOEXEC — set FD_CLOEXEC on the file descriptor */
-    if (flags & 02000000 /* O_CLOEXEC */) {
-        file->fd_flags |= 1;  /* FD_CLOEXEC */
+    /* Handle O_CLOEXEC — set FD_CLOEXEC on the per-fd flags */
+    if ((flags & 02000000 /* O_CLOEXEC */) && task->fd_flags) {
+        task->fd_flags[fd] |= 1;  /* FD_CLOEXEC */
     }
 
 #if DEBUG_VFS

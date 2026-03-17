@@ -344,12 +344,11 @@ long sys_open(const char *pathname, int flags, int mode) {
         }
     }
 
-    /* Set FD_CLOEXEC if O_CLOEXEC was requested */
+    /* Set FD_CLOEXEC if O_CLOEXEC was requested (per-FD flag) */
     if (result >= 0 && (local_flags & O_CLOEXEC)) {
-        struct fut_file *file = fut_vfs_get_file(result);
-        if (file) {
-            file->fd_flags |= FD_CLOEXEC;
-        }
+        fut_task_t *task = fut_task_current();
+        if (task && task->fd_flags && result < task->max_fds)
+            task->fd_flags[result] |= FD_CLOEXEC;
     }
 
     /* Phase 2: Handle error cases with detailed logging */

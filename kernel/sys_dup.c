@@ -231,8 +231,9 @@ long sys_dup(int oldfd) {
     /* Increment reference count on the file since we're creating another reference */
     vfs_file_ref(old_file);
 
-    /* Assign the file to the new FD */
+    /* Assign the file to the new FD (dup() clears FD_CLOEXEC per POSIX) */
     task->fd_table[newfd] = old_file;
+    if (task->fd_flags) task->fd_flags[newfd] = 0;
 
     /* Propagate socket ownership if oldfd is a socket */
     propagate_socket_dup(local_oldfd, newfd);

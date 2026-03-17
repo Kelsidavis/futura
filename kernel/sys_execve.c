@@ -649,22 +649,20 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
         argc_category = "many (>20)";
     }
 
-    /* Phase 2: Count FDs to close */
+    /* Phase 2: Count FDs to close (per-FD flags in task->fd_flags[]) */
     int cloexec_count = 0;
-    if (task->fd_table) {
+    if (task->fd_table && task->fd_flags) {
         for (int i = 0; i < task->max_fds; i++) {
-            struct fut_file *file = task->fd_table[i];
-            if (file != NULL && (file->fd_flags & FD_CLOEXEC)) {
+            if (task->fd_table[i] != NULL && (task->fd_flags[i] & FD_CLOEXEC)) {
                 cloexec_count++;
             }
         }
     }
 
     /* Close all FDs marked with FD_CLOEXEC before executing new binary */
-    if (task->fd_table) {
+    if (task->fd_table && task->fd_flags) {
         for (int i = 0; i < task->max_fds; i++) {
-            struct fut_file *file = task->fd_table[i];
-            if (file != NULL && (file->fd_flags & FD_CLOEXEC)) {
+            if (task->fd_table[i] != NULL && (task->fd_flags[i] & FD_CLOEXEC)) {
                 /* Close this FD (CLOEXEC means "close on exec") */
                 fut_vfs_close(i);
                 /* Note: fut_vfs_close will remove from task's FD table */

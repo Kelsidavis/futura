@@ -434,9 +434,10 @@ long sys_dup3(int oldfd, int newfd, int flags) {
         return ret;
     }
 
-    /* Apply O_CLOEXEC if requested */
+    /* Apply O_CLOEXEC if requested (set per-FD flag directly) */
     if (local_flags & O_CLOEXEC) {
-        sys_fcntl(local_newfd, F_SETFD, FD_CLOEXEC);
+        if (task->fd_flags)
+            task->fd_flags[local_newfd] |= FD_CLOEXEC;
     }
 
     /* Propagate socket ownership if oldfd is a socket */

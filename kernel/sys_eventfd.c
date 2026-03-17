@@ -1006,7 +1006,9 @@ long sys_eventfd2(unsigned int initval, int flags) {
         file->flags |= O_NONBLOCK;
     }
     if (flags & EFD_CLOEXEC) {
-        file->fd_flags |= FD_CLOEXEC;
+        fut_task_t *efd_task = fut_task_current();
+        if (efd_task && efd_task->fd_flags && fd < efd_task->max_fds)
+            efd_task->fd_flags[fd] |= FD_CLOEXEC;
     }
 
     return fd;
@@ -1239,7 +1241,10 @@ long sys_signalfd4(int ufd, const void *mask, size_t sizemask, int flags) {
     }
 
     if (flags & SFD_NONBLOCK) sfile->file->flags    |= O_NONBLOCK;
-    if (flags & SFD_CLOEXEC)  sfile->file->fd_flags |= FD_CLOEXEC;
+    if (flags & SFD_CLOEXEC) {
+        if (task->fd_flags && fd < task->max_fds)
+            task->fd_flags[fd] |= FD_CLOEXEC;
+    }
 
     return fd;
 }
@@ -1515,7 +1520,9 @@ long sys_timerfd_create(int clockid, int flags) {
         file->flags |= O_NONBLOCK;
     }
     if (flags & TFD_CLOEXEC) {
-        file->fd_flags |= FD_CLOEXEC;
+        fut_task_t *tfd_task = fut_task_current();
+        if (tfd_task && tfd_task->fd_flags && fd < tfd_task->max_fds)
+            tfd_task->fd_flags[fd] |= FD_CLOEXEC;
     }
 
     return fd;

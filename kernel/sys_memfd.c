@@ -212,14 +212,11 @@ long sys_memfd_create(const char *uname, unsigned int flags) {
         return fd;
     }
 
-    /* Set FD_CLOEXEC if requested */
+    /* Set FD_CLOEXEC if requested (per-FD flag) */
     if (flags & MFD_CLOEXEC) {
         fut_task_t *task = fut_task_current();
-        if (task && task->fd_table && fd < task->max_fds) {
-            struct fut_file *file = task->fd_table[fd];
-            if (file)
-                file->fd_flags |= FD_CLOEXEC;
-        }
+        if (task && task->fd_flags && fd < task->max_fds)
+            task->fd_flags[fd] |= FD_CLOEXEC;
     }
 
     return fd;

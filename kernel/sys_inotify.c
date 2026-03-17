@@ -399,7 +399,10 @@ long sys_inotify_init1(int flags) {
     if (task->fd_table && fd < task->max_fds && task->fd_table[fd]) {
         inst->file = task->fd_table[fd];
         if (flags & IN_NONBLOCK) inst->file->flags |= O_NONBLOCK;
-        if (flags & IN_CLOEXEC)  inst->file->fd_flags |= FD_CLOEXEC;
+        if (flags & IN_CLOEXEC) {
+            if (task->fd_flags && fd < task->max_fds)
+                task->fd_flags[fd] |= FD_CLOEXEC;
+        }
     }
 
     return fd;

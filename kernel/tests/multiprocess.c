@@ -197,42 +197,34 @@ static void test_close_on_exec_flag(void) {
         return;
     }
 
-    /* Verify file has fd_flags field (should be 0 by default) */
-    struct fut_file *file = task->fd_table[fd];
-    if (!file) {
-        /* Diagnostic: check if a fresh fut_task_current() differs */
-        fut_task_t *cur = fut_task_current();
-        struct fut_file *file2 = (cur && cur->fd_table && fd < cur->max_fds)
-                                 ? cur->fd_table[fd] : NULL;
-        fut_printf("[MULTIPROCESS-TEST] ✗ File not in FD table"
-                   " fd=%d task=%p cur=%p task->ft[fd]=%p cur->ft[fd]=%p\n",
-                   fd, (void*)task, (void*)cur,
-                   (void*)file, (void*)file2);
+    /* Verify per-FD flags (task->fd_flags[]) default to 0 */
+    if (!task->fd_flags) {
+        fut_printf("[MULTIPROCESS-TEST] ✗ task->fd_flags is NULL\n");
         fut_vfs_close(fd);
         fut_test_fail(MULTIPROCESS_TEST_CLOEXEC);
         return;
     }
 
-    if (file->fd_flags != 0) {
-        fut_printf("[MULTIPROCESS-TEST] ✗ File should have fd_flags=0 initially, got %d\n",
-                   file->fd_flags);
+    if (task->fd_flags[fd] != 0) {
+        fut_printf("[MULTIPROCESS-TEST] ✗ fd_flags should be 0 initially, got %d\n",
+                   task->fd_flags[fd]);
         fut_vfs_close(fd);
         fut_test_fail(MULTIPROCESS_TEST_CLOEXEC);
         return;
     }
 
-    /* Simulate FD_CLOEXEC flag (note: actual flag setting would require fcntl) */
-    /* For now, just verify the flag infrastructure exists */
-    file->fd_flags = 1;  /* FD_CLOEXEC = 1 */
+    /* Set FD_CLOEXEC via per-FD flags and verify */
+    extern long sys_fcntl(int fd, int cmd, unsigned long arg);
+    sys_fcntl(fd, 2 /* F_SETFD */, 1 /* FD_CLOEXEC */);
 
-    if (file->fd_flags != 1) {
-        fut_printf("[MULTIPROCESS-TEST] ✗ Failed to set fd_flags\n");
+    if (task->fd_flags[fd] != 1) {
+        fut_printf("[MULTIPROCESS-TEST] ✗ Failed to set fd_flags via fcntl\n");
         fut_vfs_close(fd);
         fut_test_fail(MULTIPROCESS_TEST_CLOEXEC);
         return;
     }
 
-    fut_printf("[MULTIPROCESS-TEST] ✓ FD_CLOEXEC flag infrastructure verified (fd_flags can be set)\n");
+    fut_printf("[MULTIPROCESS-TEST] ✓ FD_CLOEXEC per-FD flag verified (set/get via fcntl)\n");
 
     /* Clean up */
     fut_vfs_close(fd);

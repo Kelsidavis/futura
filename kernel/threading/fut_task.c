@@ -209,9 +209,16 @@ fut_task_t *fut_task_create(void) {
         fut_free(task);
         return NULL;
     }
-    /* Zero out the FD table */
+    task->fd_flags = (int *)fut_malloc(FUT_FD_TABLE_INITIAL_SIZE * sizeof(int));
+    if (!task->fd_flags) {
+        fut_free(task->fd_table);
+        fut_free(task);
+        return NULL;
+    }
+    /* Zero out the FD table and flags */
     for (int i = 0; i < FUT_FD_TABLE_INITIAL_SIZE; i++) {
         task->fd_table[i] = NULL;
+        task->fd_flags[i] = 0;
     }
     task->next_fd = 0;
 

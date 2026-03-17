@@ -425,9 +425,9 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
                     int newfd = vfs_alloc_fd_for_task((struct fut_task *)task, file);
                     if (newfd >= 0) {
                         new_fds[nfds++] = newfd;
-                        /* MSG_CMSG_CLOEXEC: set FD_CLOEXEC on received fds */
-                        if ((local_flags & 0x40000000) && file) {  /* MSG_CMSG_CLOEXEC */
-                            file->fd_flags |= FD_CLOEXEC;
+                        /* MSG_CMSG_CLOEXEC: set FD_CLOEXEC on received fds (per-FD) */
+                        if ((local_flags & 0x40000000) && task->fd_flags) {  /* MSG_CMSG_CLOEXEC */
+                            task->fd_flags[newfd] |= FD_CLOEXEC;
                         }
                         RECVMSG_LOG("[RECVMSG] SCM_RIGHTS: installed file=%p as fd=%d in receiver\n",
                                    file, newfd);

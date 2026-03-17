@@ -132,12 +132,10 @@ long sys_openat(int dirfd, const char *pathname, int flags, int mode) {
     fut_task_t *open_task = fut_task_current();
     int result = fut_vfs_open_at(open_task, local_dirfd, kpath, local_flags, local_mode);
 
-    /* Set FD_CLOEXEC if O_CLOEXEC was requested */
+    /* Set FD_CLOEXEC if O_CLOEXEC was requested (per-FD flag) */
     if (result >= 0 && (local_flags & O_CLOEXEC)) {
-        struct fut_file *file = fut_vfs_get_file(result);
-        if (file) {
-            file->fd_flags |= FD_CLOEXEC;
-        }
+        if (open_task && open_task->fd_flags && result < open_task->max_fds)
+            open_task->fd_flags[result] |= FD_CLOEXEC;
     }
 
     if (result < 0) {

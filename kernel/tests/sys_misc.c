@@ -4966,7 +4966,23 @@ static void test_dev_stdio_symlinks(void) {
         return;
     }
 
-    fut_printf("[MISC-TEST] ✓ /dev/stdin,stdout,stderr: openable console aliases\n");
+    /* Also test that symlinks to device files work (symlink→chrdev resolution) */
+    fut_vfs_symlink("/dev/null", "/tmp/null_link");
+    int fd_link = (int)fut_vfs_open("/tmp/null_link", O_WRONLY, 0);
+    if (fd_link < 0) {
+        fut_printf("[MISC-TEST] ✗ symlink to /dev/null failed: %d\n", fd_link);
+        fut_test_fail(93);
+        return;
+    }
+    long nw = fut_vfs_write(fd_link, "discard", 7);
+    fut_vfs_close(fd_link);
+    if (nw != 7) {
+        fut_printf("[MISC-TEST] ✗ write through symlink: %ld\n", nw);
+        fut_test_fail(93);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ /dev/stdin,stdout,stderr + symlink→chrdev resolution\n");
     fut_test_pass();
 }
 

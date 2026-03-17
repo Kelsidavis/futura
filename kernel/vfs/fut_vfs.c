@@ -1666,6 +1666,26 @@ int fut_vfs_open(const char *path, int flags, int mode) {
     } else {
         ret = lookup_vnode(path, &vnode);
     }
+    if (ret == -ENOENT && !(flags & O_NOFOLLOW)) {
+        /* VFS lookup failed — the path might be a symlink pointing to a chrdev.
+         * Try looking up the symlink itself and following it to a chrdev. */
+        struct fut_vnode *link_vnode = NULL;
+        if (fut_vfs_lookup_nofollow(path, &link_vnode) == 0 &&
+            link_vnode && link_vnode->type == VN_LNK &&
+            link_vnode->ops && link_vnode->ops->readlink) {
+            char link_target[256];
+            int link_len = link_vnode->ops->readlink(link_vnode, link_target, sizeof(link_target) - 1);
+            release_lookup_ref(link_vnode);
+            if (link_len > 0) {
+                link_target[link_len] = '\0';
+                int chr_fd2 = try_open_chrdev(link_target, flags);
+                if (chr_fd2 != -ENOENT)
+                    return chr_fd2;
+            }
+        } else if (link_vnode) {
+            release_lookup_ref(link_vnode);
+        }
+    }
     if (ret < 0) {
         /* If O_CREAT is set and parent exists, create new file */
         if ((flags & O_CREAT) && (ret == -ENOENT || ret == -2)) {

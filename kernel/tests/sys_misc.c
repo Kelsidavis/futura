@@ -2748,6 +2748,93 @@ static void test_zero_length_io(void) {
     fut_test_pass();
 }
 
+extern long sys_timerfd_create(int clockid, int flags);
+extern long sys_timerfd_settime(int ufd, int flags, const void *new_value, void *old_value);
+
+/* ============================================================
+ * Test 70: timerfd + epoll wakeup integration
+ * ============================================================ */
+static void test_timerfd_epoll(void) {
+    fut_printf("[MISC-TEST] Test 70: timerfd + epoll\n");
+
+    /* Create timerfd (CLOCK_MONOTONIC=1) */
+    long tfd = sys_timerfd_create(1, 0);
+    if (tfd < 0) {
+        fut_printf("[MISC-TEST] ✗ timerfd_create: %ld\n", tfd);
+        fut_test_fail(70);
+        return;
+    }
+
+    /* Create epoll */
+    long epfd = sys_epoll_create1(0);
+    if (epfd < 0) {
+        fut_printf("[MISC-TEST] ✗ epoll_create1: %ld\n", epfd);
+        fut_vfs_close((int)tfd);
+        fut_test_fail(70);
+        return;
+    }
+
+    /* Add timerfd to epoll */
+    struct { uint32_t events; uint64_t data; } __attribute__((packed)) ev = {
+        .events = 0x001, /* EPOLLIN */
+        .data = 42
+    };
+    long ret = sys_epoll_ctl((int)epfd, 1 /* EPOLL_CTL_ADD */, (int)tfd, &ev);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ epoll_ctl(ADD): %ld\n", ret);
+        sys_close((int)epfd);
+        fut_vfs_close((int)tfd);
+        fut_test_fail(70);
+        return;
+    }
+
+    /* Arm timer: 10ms one-shot (1 tick at 100Hz) */
+    struct {
+        struct { int64_t tv_sec; long tv_nsec; } it_interval;
+        struct { int64_t tv_sec; long tv_nsec; } it_value;
+    } its = {
+        .it_interval = { 0, 0 },
+        .it_value = { 0, 10000000 }  /* 10ms */
+    };
+
+    ret = sys_timerfd_settime((int)tfd, 0, &its, NULL);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ timerfd_settime: %ld\n", ret);
+        sys_close((int)epfd);
+        fut_vfs_close((int)tfd);
+        fut_test_fail(70);
+        return;
+    }
+
+    /* Wait for timer via epoll (100ms timeout) */
+    struct { uint32_t events; uint64_t data; } __attribute__((packed)) out_ev = {0};
+    ret = sys_epoll_wait((int)epfd, &out_ev, 1, 100);
+
+    sys_close((int)epfd);
+
+    if (ret < 1) {
+        fut_printf("[MISC-TEST] ✗ epoll_wait returned %ld (expected 1)\n", ret);
+        fut_vfs_close((int)tfd);
+        fut_test_fail(70);
+        return;
+    }
+
+    /* Read the timerfd to confirm expiration */
+    uint64_t expirations = 0;
+    ssize_t nr = fut_vfs_read((int)tfd, &expirations, sizeof(expirations));
+    fut_vfs_close((int)tfd);
+
+    if (nr != 8 || expirations < 1) {
+        fut_printf("[MISC-TEST] ✗ timerfd read: nr=%zd exp=%llu\n", nr, (unsigned long long)expirations);
+        fut_test_fail(70);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ timerfd+epoll: timer fired, epoll woke, read=%llu expirations\n",
+               (unsigned long long)expirations);
+    fut_test_pass();
+}
+
 /* ============================================================
  * Test 52: write on O_RDONLY fd returns EBADF
  * ============================================================ */
@@ -3620,6 +3707,7 @@ void fut_misc_test_thread(void *arg) {
     test_sig_ign_discard();     /* Test 67: SIG_IGN discards pending */
     test_socket_errors();       /* Test 68: socket error codes */
     test_zero_length_io();      /* Test 69: zero-length read/write */
+    test_timerfd_epoll();       /* Test 70: timerfd + epoll integration */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

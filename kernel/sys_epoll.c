@@ -1534,17 +1534,14 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
 
         /* If we have events, copy to user and return */
         if (ready_count > 0) {
-            fut_printf("[EPOLL_WAIT] returning count=%d events_ptr=%p size=%zu\n",
-                       ready_count, events,
-                       (size_t)(ready_count * sizeof(struct epoll_event)));
-            for (int dbg = 0; dbg < ready_count && dbg < 4; dbg++) {
-                fut_printf("[EPOLL_WAIT]   ep[%d] events=0x%x data=0x%lx\n",
-                           dbg, ready_events[dbg].events,
-                           (unsigned long)ready_events[dbg].data.u64);
-            }
-            if (fut_copy_to_user(events, ready_events,
-                                ready_count * sizeof(struct epoll_event)) != 0) {
-                fut_printf("[EPOLL_WAIT] epoll_wait() -> EFAULT (copy_to_user failed)\n");
+            /* Copy ready events to userspace (or kernel buffer) */
+            size_t copy_size = ready_count * sizeof(struct epoll_event);
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)events >= KERNEL_VIRTUAL_BASE) {
+                __builtin_memcpy(events, ready_events, copy_size);
+            } else
+#endif
+            if (fut_copy_to_user(events, ready_events, copy_size) != 0) {
                 return -EFAULT;
             }
             return ready_count;

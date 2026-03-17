@@ -1377,7 +1377,15 @@ static ssize_t timerfd_read_op(void *inode, void *priv, void *u_buf, size_t len,
         fut_waitq_sleep_locked(&ctx->read_waitq, &ctx->lock, FUT_THREAD_BLOCKED);
     }
 
-    if (fut_copy_to_user(u_buf, &value, sizeof(value)) != 0) {
+    int tfd_copy;
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)u_buf >= KERNEL_VIRTUAL_BASE) {
+        __builtin_memcpy(u_buf, &value, sizeof(value));
+        tfd_copy = 0;
+    } else
+#endif
+    tfd_copy = fut_copy_to_user(u_buf, &value, sizeof(value));
+    if (tfd_copy != 0) {
         /* Restore counter on copy failure */
         fut_spinlock_acquire(&ctx->lock);
         ctx->counter += value;
@@ -1523,8 +1531,13 @@ long sys_timerfd_settime(int ufd, int flags,
     if (ufd < 0) return -EBADF;
     if (flags & ~TFD_TIMER_ABSTIME) return -EINVAL;
 
-    /* Copy itimerspec from user space */
+    /* Copy itimerspec from user space (or kernel buffer for selftests) */
     struct itimerspec kits;
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)new_value >= KERNEL_VIRTUAL_BASE)
+        __builtin_memcpy(&kits, new_value, sizeof(kits));
+    else
+#endif
     if (fut_copy_from_user(&kits, new_value, sizeof(kits)) != 0) {
         return -EFAULT;
     }

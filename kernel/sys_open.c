@@ -29,6 +29,9 @@
 /* copy_user_string provided by subsystems/posix_syscall.h */
 /* O_ACCMODE, O_DIRECTORY, O_SYNC provided by fcntl.h */
 /* O_CLOEXEC is defined in fut_vfs.h */
+#ifndef FD_CLOEXEC
+#define FD_CLOEXEC 1
+#endif
 
 /**
  * open() - Open file and return file descriptor
@@ -338,6 +341,14 @@ long sys_open(const char *pathname, int flags, int mode) {
             open_printf("[OPEN] open(path='%s' [%s], O_DIRECTORY) -> ENOTDIR (file is not a directory)\n",
                        kpath, path_type);
             return -ENOTDIR;
+        }
+    }
+
+    /* Set FD_CLOEXEC if O_CLOEXEC was requested */
+    if (result >= 0 && (local_flags & O_CLOEXEC)) {
+        struct fut_file *file = fut_vfs_get_file(result);
+        if (file) {
+            file->fd_flags |= FD_CLOEXEC;
         }
     }
 

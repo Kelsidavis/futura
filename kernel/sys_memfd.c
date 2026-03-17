@@ -1,0 +1,188 @@
+/* kernel/sys_memfd.c - memfd_create() syscall implementation
+ *
+ * Copyright (c) 2025 Kelsi Davis
+ * Licensed under the MPL v2.0 — see LICENSE for details.
+ *
+ * Creates an anonymous file in memory (no directory entry), accessible
+ * only via the returned file descriptor. Used by Wayland compositors,
+ * shared memory IPC, and programs needing temporary file-like objects.
+ */
+
+#include <kernel/fut_task.h>
+#include <kernel/fut_memory.h>
+#include <kernel/chrdev.h>
+#include <kernel/fut_vfs.h>
+#include <kernel/errno.h>
+#include <kernel/kprintf.h>
+#include <kernel/uaccess.h>
+#include <fcntl.h>
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+#include <stddef.h>
+#include <stdint.h>
+#include <string.h>
+
+/* memfd_create flags */
+#define MFD_CLOEXEC       0x0001U
+#define MFD_ALLOW_SEALING 0x0002U
+
+/* Maximum name length (Linux uses 249) */
+#define MEMFD_NAME_MAX 249
+
+/* memfd private data: dynamic buffer */
+struct memfd {
+    char    name[MEMFD_NAME_MAX + 1];
+    uint8_t *data;
+    size_t  size;      /* current file size (as set by ftruncate) */
+    size_t  capacity;  /* allocated buffer capacity */
+    unsigned int flags;
+};
+
+#define MEMFD_INIT_CAP 4096
+
+static ssize_t memfd_read(void *inode, void *priv, void *buf, size_t n, off_t *pos) {
+    (void)inode;
+    struct memfd *mf = (struct memfd *)priv;
+    if (!mf || !pos)
+        return -EINVAL;
+
+    off_t offset = *pos;
+    if (offset < 0 || (size_t)offset >= mf->size)
+        return 0;  /* EOF */
+
+    size_t avail = mf->size - (size_t)offset;
+    if (n > avail)
+        n = avail;
+
+    memcpy(buf, mf->data + offset, n);
+    *pos += (off_t)n;
+    return (ssize_t)n;
+}
+
+static ssize_t memfd_write(void *inode, void *priv, const void *buf, size_t n, off_t *pos) {
+    (void)inode;
+    struct memfd *mf = (struct memfd *)priv;
+    if (!mf || !pos)
+        return -EINVAL;
+
+    off_t offset = *pos;
+    if (offset < 0)
+        return -EINVAL;
+
+    size_t end = (size_t)offset + n;
+
+    /* Grow buffer if needed */
+    if (end > mf->capacity) {
+        size_t new_cap = mf->capacity;
+        while (new_cap < end)
+            new_cap = new_cap ? new_cap * 2 : MEMFD_INIT_CAP;
+
+        uint8_t *new_data = fut_malloc(new_cap);
+        if (!new_data)
+            return -ENOMEM;
+
+        if (mf->data) {
+            memcpy(new_data, mf->data, mf->size);
+            fut_free(mf->data);
+        }
+        /* Zero-fill gap between old size and new capacity */
+        if (new_cap > mf->size)
+            memset(new_data + mf->size, 0, new_cap - mf->size);
+
+        mf->data = new_data;
+        mf->capacity = new_cap;
+    }
+
+    memcpy(mf->data + offset, buf, n);
+    *pos += (off_t)n;
+
+    if (end > mf->size)
+        mf->size = end;
+
+    return (ssize_t)n;
+}
+
+static int memfd_release(void *inode, void *priv) {
+    (void)inode;
+    struct memfd *mf = (struct memfd *)priv;
+    if (mf) {
+        if (mf->data)
+            fut_free(mf->data);
+        fut_free(mf);
+    }
+    return 0;
+}
+
+static const struct fut_file_ops memfd_fops = {
+    .read    = memfd_read,
+    .write   = memfd_write,
+    .release = memfd_release,
+    .open    = NULL,
+    .ioctl   = NULL,
+    .mmap    = NULL,
+};
+
+/**
+ * memfd_create - Create an anonymous file in memory
+ *
+ * @param uname  Name for debugging (shown in /proc/PID/fd/N symlinks)
+ * @param flags  MFD_CLOEXEC | MFD_ALLOW_SEALING
+ *
+ * Returns file descriptor on success, negative error on failure.
+ */
+long sys_memfd_create(const char *uname, unsigned int flags) {
+    if (flags & ~(MFD_CLOEXEC | MFD_ALLOW_SEALING))
+        return -EINVAL;
+
+    /* Allocate memfd state */
+    struct memfd *mf = fut_malloc(sizeof(struct memfd));
+    if (!mf)
+        return -ENOMEM;
+
+    memset(mf, 0, sizeof(*mf));
+    mf->flags = flags;
+
+    /* Copy name (best-effort, kernel pointer or user pointer) */
+    if (uname) {
+#ifdef KERNEL_VIRTUAL_BASE
+        /* For kernel self-tests: direct copy */
+        if ((uintptr_t)uname >= KERNEL_VIRTUAL_BASE) {
+            size_t len = strlen(uname);
+            if (len > MEMFD_NAME_MAX) len = MEMFD_NAME_MAX;
+            memcpy(mf->name, uname, len);
+            mf->name[len] = '\0';
+        } else
+#endif
+        {
+            if (fut_copy_from_user(mf->name, uname, MEMFD_NAME_MAX) != 0) {
+                /* Name copy failed - use default */
+                memcpy(mf->name, "memfd", 6);
+            }
+            mf->name[MEMFD_NAME_MAX] = '\0';
+        }
+    } else {
+        memcpy(mf->name, "memfd", 6);
+    }
+
+    /* Allocate fd */
+    int fd = chrdev_alloc_fd(&memfd_fops, NULL, mf);
+    if (fd < 0) {
+        fut_free(mf);
+        return fd;
+    }
+
+    /* Set FD_CLOEXEC if requested */
+    if (flags & MFD_CLOEXEC) {
+        fut_task_t *task = fut_task_current();
+        if (task && task->fd_table && fd < task->max_fds) {
+            struct fut_file *file = task->fd_table[fd];
+            if (file)
+                file->fd_flags |= FD_CLOEXEC;
+        }
+    }
+
+    return fd;
+}

@@ -2207,9 +2207,9 @@ int64_t fut_vfs_lseek(int fd, int64_t offset, int whence) {
         return -EBADF;
     }
 
-    if (file->chr_ops) {
-        return -ESPIPE;
-    }
+    /* chr_ops files (memfd, devfs) may or may not be seekable.
+     * We allow lseek on all files; non-seekable callbacks (pipes, sockets)
+     * simply ignore the offset in their read/write implementations. */
 
     uint64_t new_offset = file->offset;
 

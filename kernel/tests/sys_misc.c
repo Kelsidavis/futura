@@ -1795,6 +1795,7 @@ static void test_o_directory(void) {
 
 extern long sys_reboot(unsigned int magic1, unsigned int magic2,
                        unsigned int cmd, void *arg);
+extern long sys_memfd_create(const char *uname, unsigned int flags);
 
 /* ============================================================
  * Test 42: reboot() validates magic numbers and capabilities
@@ -1846,6 +1847,76 @@ static void test_reboot_validation(void) {
     /* NOTE: We don't test valid reboot commands as root since they'd shut down the system */
 
     fut_printf("[MISC-TEST] ✓ reboot: EINVAL for bad magic/cmd, EPERM for non-root\n");
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 43: memfd_create creates a writable anonymous fd
+ * ============================================================ */
+static void test_memfd_create(void) {
+    fut_printf("[MISC-TEST] Test 43: memfd_create\n");
+
+    /* Create memfd */
+    long fd = sys_memfd_create("test_memfd", 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ memfd_create returned %ld\n", fd);
+        fut_test_fail(43);
+        return;
+    }
+
+    /* Write data */
+    const char *data = "hello memfd";
+    ssize_t nw = fut_vfs_write((int)fd, data, 11);
+    if (nw != 11) {
+        fut_printf("[MISC-TEST] ✗ write returned %zd\n", nw);
+        fut_vfs_close((int)fd);
+        fut_test_fail(43);
+        return;
+    }
+
+    /* Seek back to start and read */
+    extern int64_t fut_vfs_lseek(int fd, int64_t offset, int whence);
+    fut_vfs_lseek((int)fd, 0, 0);  /* SEEK_SET */
+
+    char buf[16] = {0};
+    ssize_t nr = fut_vfs_read((int)fd, buf, sizeof(buf));
+    if (nr != 11 || memcmp(buf, "hello memfd", 11) != 0) {
+        fut_printf("[MISC-TEST] ✗ read returned %zd buf='%s'\n", nr, buf);
+        fut_vfs_close((int)fd);
+        fut_test_fail(43);
+        return;
+    }
+
+    /* MFD_CLOEXEC flag */
+    long fd2 = sys_memfd_create("cloexec_test", 0x0001);  /* MFD_CLOEXEC */
+    if (fd2 < 0) {
+        fut_printf("[MISC-TEST] ✗ memfd_create(MFD_CLOEXEC) returned %ld\n", fd2);
+        fut_vfs_close((int)fd);
+        fut_test_fail(43);
+        return;
+    }
+    /* Verify cloexec is set */
+    long flags = sys_fcntl((int)fd2, F_GETFD, 0);
+    fut_vfs_close((int)fd2);
+    if (!(flags & FD_CLOEXEC)) {
+        fut_printf("[MISC-TEST] ✗ MFD_CLOEXEC: fd_flags=0x%lx (no CLOEXEC)\n", flags);
+        fut_vfs_close((int)fd);
+        fut_test_fail(43);
+        return;
+    }
+
+    /* Invalid flags → EINVAL */
+    long ret = sys_memfd_create("bad", 0xFFFF);
+    if (ret != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ memfd_create(bad flags) returned %ld\n", ret);
+        if (ret >= 0) fut_vfs_close((int)ret);
+        fut_vfs_close((int)fd);
+        fut_test_fail(43);
+        return;
+    }
+
+    fut_vfs_close((int)fd);
+    fut_printf("[MISC-TEST] ✓ memfd_create: write/read round-trip, MFD_CLOEXEC, EINVAL\n");
     fut_test_pass();
 }
 
@@ -2269,6 +2340,7 @@ void fut_misc_test_thread(void *arg) {
     test_ioctl_fd_ops();        /* Test 40: ioctl FIONBIO/FIOCLEX/FIONCLEX */
     test_o_directory();         /* Test 41: O_DIRECTORY enforcement */
     test_reboot_validation();   /* Test 42: reboot validation */
+    test_memfd_create();        /* Test 43: memfd_create */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

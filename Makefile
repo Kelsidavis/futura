@@ -510,6 +510,7 @@ KERNEL_SOURCES := \
     kernel/sys_sched_affinity.c \
     kernel/sys_syslog.c \
     kernel/sys_reboot.c \
+    kernel/sys_memfd.c \
     kernel/sys_membarrier.c \
     kernel/sys_copy_file_range.c \
     kernel/sys_rseq.c \

@@ -154,6 +154,7 @@
 #define SYS_time         201
 #define SYS_syslog       103
 #define SYS_reboot       169
+#define SYS_memfd_create 321
 #define SYS_futex        202
 #define SYS_sched_setaffinity 203
 #define SYS_sched_getaffinity 204
@@ -1593,6 +1594,13 @@ static int64_t sys_syslog_handler(uint64_t type, uint64_t buf, uint64_t len,
     return sys_syslog((int)type, (char *)buf, (int)len);
 }
 
+static int64_t sys_memfd_create_handler(uint64_t uname, uint64_t flags, uint64_t arg3,
+                                        uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_memfd_create(const char *uname, unsigned int flags);
+    return sys_memfd_create((const char *)uname, (unsigned int)flags);
+}
+
 static int64_t sys_reboot_handler(uint64_t magic1, uint64_t magic2, uint64_t cmd,
                                    uint64_t arg, uint64_t arg5, uint64_t arg6) {
     (void)arg5; (void)arg6;
@@ -2962,6 +2970,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_prctl]             = sys_prctl_handler,
     [SYS_syslog]            = sys_syslog_handler,
     [SYS_reboot]            = sys_reboot_handler,
+    [SYS_memfd_create]      = sys_memfd_create_handler,
     [SYS_sched_setaffinity] = sys_sched_setaffinity_handler,
     [SYS_sched_getaffinity] = sys_sched_getaffinity_handler,
     [SYS_fadvise64]         = sys_fadvise64_handler,

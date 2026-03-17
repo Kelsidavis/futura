@@ -67,6 +67,15 @@ long sys_tgkill(int tgid, int tid, int sig) {
         return -ESRCH;
     }
 
+    /* Permission check: same UID, root, or CAP_KILL required */
+    if (thread->task != current &&
+        current->ruid != 0 &&
+        !(current->cap_effective & (1ULL << 5 /* CAP_KILL */)) &&
+        current->ruid != thread->task->ruid &&
+        current->uid  != thread->task->ruid) {
+        return -EPERM;
+    }
+
     /* Signal 0: permission check only */
     if (sig == 0)
         return 0;
@@ -113,6 +122,15 @@ long sys_tkill(int tid, int sig) {
     fut_thread_t *thread = fut_thread_find((uint64_t)tid);
     if (!thread || !thread->task)
         return -ESRCH;
+
+    /* Permission check */
+    if (thread->task != current &&
+        current->ruid != 0 &&
+        !(current->cap_effective & (1ULL << 5 /* CAP_KILL */)) &&
+        current->ruid != thread->task->ruid &&
+        current->uid  != thread->task->ruid) {
+        return -EPERM;
+    }
 
     /* Signal 0: permission check only */
     if (sig == 0)

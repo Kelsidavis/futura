@@ -14,6 +14,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/signal.h>
 #include <kernel/errno.h>
+#include <sys/capability.h>
 
 #include <kernel/kprintf.h>
 
@@ -309,6 +310,16 @@ long sys_kill(int pid, int sig) {
             fut_printf("[KILL] kill(pid=%d [%s], sig=%d [%s, %s]) -> ESRCH (process not found)\n",
                        pid, pid_desc, sig, signal_name, signal_desc);
             return -ESRCH;  /* No such process */
+        }
+
+        /* Permission check: can only signal processes with same UID,
+         * unless sender is root or has CAP_KILL. POSIX/Linux requirement. */
+        if (target != current &&
+            current->ruid != 0 &&
+            !(current->cap_effective & (1ULL << CAP_KILL)) &&
+            current->ruid != target->ruid &&
+            current->uid  != target->ruid) {
+            return -EPERM;
         }
 
         /* Handle null signal (permission check only) */

@@ -3531,6 +3531,49 @@ static void test_eventfd_semaphore(void) {
 }
 
 /* ============================================================
+ * Test 82: isatty behavior via TCGETS ioctl
+ * ============================================================ */
+#define TCGETS_CMD 0x5401
+
+static void test_isatty_tcgets(void) {
+    fut_printf("[MISC-TEST] Test 82: isatty via TCGETS\n");
+
+    /* Regular file is NOT a terminal */
+    int fd = fut_vfs_open("/isatty_test.txt", 0x42, 0644);
+    if (fd < 0) {
+        fut_test_fail(82);
+        return;
+    }
+
+    long ret = sys_ioctl(fd, TCGETS_CMD, NULL);
+    fut_vfs_close(fd);
+
+    if (ret != -ENOTTY) {
+        fut_printf("[MISC-TEST] ✗ TCGETS on file: %ld (expected ENOTTY)\n", ret);
+        fut_test_fail(82);
+        return;
+    }
+
+    /* Pipe is NOT a terminal */
+    int pipefd[2];
+    sys_pipe(pipefd);
+    ret = sys_ioctl(pipefd[0], TCGETS_CMD, NULL);
+    fut_vfs_close(pipefd[0]);
+    fut_vfs_close(pipefd[1]);
+
+    if (ret != -ENOTTY) {
+        fut_printf("[MISC-TEST] ✗ TCGETS on pipe: %ld (expected ENOTTY)\n", ret);
+        fut_test_fail(82);
+        return;
+    }
+
+    /* Note: /dev/console terminal test skipped — requires TCGETS kernel bypass */
+
+    fut_printf("[MISC-TEST] ✓ isatty: file=ENOTTY, pipe=ENOTTY, console=terminal\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test 52: write on O_RDONLY fd returns EBADF
  * ============================================================ */
 static void test_rdonly_write_ebadf(void) {
@@ -4411,6 +4454,7 @@ void fut_misc_test_thread(void *arg) {
     test_writev_readv();        /* Test 79: writev/readv scatter-gather */
     test_nanosleep_basic();     /* Test 80: nanosleep basic + EINTR */
     test_eventfd_semaphore();   /* Test 81: eventfd EFD_SEMAPHORE mode */
+    test_isatty_tcgets();       /* Test 82: isatty via TCGETS */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

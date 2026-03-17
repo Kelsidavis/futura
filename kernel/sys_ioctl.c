@@ -631,8 +631,10 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
         /* For built-in ioctls, skip device dispatch and use kernel handler */
         if (request != FIONREAD && request != FIONBIO &&
             request != FIOCLEX && request != FIONCLEX &&
-            request != TIOCGPGRP && request != TIOCSPGRP &&
-            request != TIOCGSID && request != TIOCSCTTY && request != TIOCNOTTY) {
+            request != TCGETS && request != TCSETS &&
+            request != TIOCGWINSZ && request != TIOCGPGRP &&
+            request != TIOCSPGRP && request != TIOCGSID &&
+            request != TIOCSCTTY && request != TIOCNOTTY) {
             return file->chr_ops->ioctl(file->chr_inode, file->chr_private, request, (unsigned long)argp);
         }
     }
@@ -640,10 +642,14 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
     /* Built-in ioctl implementations */
     switch (request) {
         case TCGETS: {
-            /* Only terminals (character devices) support TCGETS.
-             * Return ENOTTY for regular files, pipes, sockets, etc.
-             * This makes isatty() return false for non-terminal fds. */
-            if (!file->chr_ops && !(file->vnode && file->vnode->type == VN_CHR)) {
+            /* Only terminal character devices support TCGETS. Return ENOTTY
+             * for regular files and non-device chr_ops files (pipes, etc.).
+             * Devices opened via devfs have chr_ops; pipes have O_RDONLY/O_WRONLY. */
+            if (!file->chr_ops) {
+                return -ENOTTY;  /* Regular file */
+            }
+            /* Pipes have O_RDONLY or O_WRONLY, terminals have O_RDWR */
+            if ((file->flags & 03) != 02) {  /* Not O_RDWR */
                 return -ENOTTY;
             }
             if (!argp)
@@ -660,13 +666,11 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
             return 0;
         }
         case TCSETS:
-            /* Only terminals support TCSETS */
-            if (!file->chr_ops && !(file->vnode && file->vnode->type == VN_CHR))
+            if (!file->chr_ops || (file->flags & 03) != 02)
                 return -ENOTTY;
             return 0;
         case TIOCGWINSZ: {
-            /* Only terminals support TIOCGWINSZ */
-            if (!file->chr_ops && !(file->vnode && file->vnode->type == VN_CHR))
+            if (!file->chr_ops || (file->flags & 03) != 02)
                 return -ENOTTY;
             if (!argp)
                 return -EFAULT;

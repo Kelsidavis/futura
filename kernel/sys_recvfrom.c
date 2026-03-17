@@ -25,6 +25,25 @@
 
 #include <kernel/kprintf.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
+static inline int recv_access_ok_write(const void *ptr, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)ptr >= KERNEL_VIRTUAL_BASE) return 0;
+#endif
+    return fut_access_ok(ptr, n, 1);
+}
+static inline int recv_copy_to_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)dst >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_to_user(dst, src, n);
+}
+
 /* Message flags (MSG_*) provided by fut_socket.h */
 
 /**
@@ -424,7 +443,7 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
     }
 
     /* Validate buf write permission early (kernel writes received data) */
-    if (local_buf && local_len > 0 && fut_access_ok(local_buf, local_len, 1) != 0) {
+    if (local_buf && local_len > 0 && recv_access_ok_write(local_buf, local_len) != 0) {
         fut_printf("[RECVFROM] recvfrom(sockfd=%d, len=%zu) -> EFAULT (buf not writable)\n",
                    local_sockfd, local_len);
         return -EFAULT;
@@ -458,8 +477,19 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
         }
     }
 
-    /* Read from socket via VFS */
-    ssize_t ret = fut_vfs_read(local_sockfd, kbuf, local_len);
+    /* Read from socket — use peek path for MSG_PEEK */
+    ssize_t ret;
+    if (local_flags & MSG_PEEK) {
+        extern fut_socket_t *get_socket_from_fd(int fd);
+        fut_socket_t *sock = get_socket_from_fd(local_sockfd);
+        if (sock) {
+            ret = fut_socket_recv_peek(sock, kbuf, local_len);
+        } else {
+            ret = fut_vfs_read(local_sockfd, kbuf, local_len);
+        }
+    } else {
+        ret = fut_vfs_read(local_sockfd, kbuf, local_len);
+    }
 
     /* Restore O_NONBLOCK if we temporarily set it */
     if (dontwait_applied) {
@@ -489,7 +519,7 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
 
     /* Copy to userspace */
     if (ret > 0) {
-        if (fut_copy_to_user(local_buf, kbuf, (size_t)ret) != 0) {
+        if (recv_copy_to_user(local_buf, kbuf, (size_t)ret) != 0) {
             fut_free(kbuf);
             fut_printf("[RECVFROM] recvfrom(sockfd=%d [%s], len=%zu [%s], pid=%u) -> EFAULT "
                        "(copy_to_user failed)\n",

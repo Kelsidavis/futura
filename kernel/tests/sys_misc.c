@@ -4987,6 +4987,57 @@ static void test_dev_stdio_symlinks(void) {
 }
 
 /* ============================================================
+ * Test 94: MSG_PEEK on socket (read without consuming)
+ * ============================================================ */
+extern long sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
+                          void *src_addr, void *addrlen);
+
+static void test_socket_msg_peek(void) {
+    fut_printf("[MISC-TEST] Test 94: MSG_PEEK on socket\n");
+
+    /* Create socketpair */
+    int sv[2] = {-1, -1};
+    long ret = sys_socketpair(1 /* AF_UNIX */, 1 /* SOCK_STREAM */, 0, sv);
+    if (ret < 0) {
+        fut_printf("[MISC-TEST] ✗ socketpair failed: %ld\n", ret);
+        fut_test_fail(94);
+        return;
+    }
+
+    /* Write data to one end */
+    const char *msg = "PEEK";
+    fut_vfs_write(sv[0], msg, 4);
+
+    /* Peek at data — should return it without consuming */
+    char peek_buf[8] = {0};
+    long n = sys_recvfrom(sv[1], peek_buf, sizeof(peek_buf), 0x02 /* MSG_PEEK */,
+                           NULL, NULL);
+    if (n != 4 || peek_buf[0] != 'P') {
+        fut_printf("[MISC-TEST] ✗ peek: n=%ld buf='%.4s'\n", n, peek_buf);
+        fut_vfs_close(sv[0]);
+        fut_vfs_close(sv[1]);
+        fut_test_fail(94);
+        return;
+    }
+
+    /* Read again without peek — should still get the same data */
+    char read_buf[8] = {0};
+    n = sys_recvfrom(sv[1], read_buf, sizeof(read_buf), 0, NULL, NULL);
+    if (n != 4 || read_buf[0] != 'P') {
+        fut_printf("[MISC-TEST] ✗ read after peek: n=%ld buf='%.4s'\n", n, read_buf);
+        fut_vfs_close(sv[0]);
+        fut_vfs_close(sv[1]);
+        fut_test_fail(94);
+        return;
+    }
+
+    fut_vfs_close(sv[0]);
+    fut_vfs_close(sv[1]);
+    fut_printf("[MISC-TEST] ✓ MSG_PEEK: data peeked then consumed correctly\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -5089,6 +5140,7 @@ void fut_misc_test_thread(void *arg) {
     test_write_past_eof_zerofill(); /* Test 91: write past EOF zero-fills gap */
     test_dup2_same_fd_noop();       /* Test 92: dup2(fd,fd) preserves cloexec */
     test_dev_stdio_symlinks();      /* Test 93: /dev/stdin,stdout,stderr */
+    test_socket_msg_peek();         /* Test 94: MSG_PEEK on socket */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

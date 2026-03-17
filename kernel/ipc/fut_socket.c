@@ -961,6 +961,58 @@ ssize_t fut_socket_recv(fut_socket_t *socket, void *buf, size_t len) {
     return (ssize_t)to_read;
 }
 
+/**
+ * Peek at data on connected socket (MSG_PEEK: read without consuming).
+ */
+ssize_t fut_socket_recv_peek(fut_socket_t *socket, void *buf, size_t len) {
+    if (!socket || !buf) return -EINVAL;
+    if (socket->state != FUT_SOCK_CONNECTED || !socket->pair_reverse)
+        return -ENOTCONN;
+    if (socket->shutdown_rd) return 0;
+
+    fut_socket_pair_t *pair = socket->pair_reverse;
+    fut_spinlock_acquire(&pair->lock);
+
+    uint32_t available = (pair->recv_head + pair->recv_size - pair->recv_tail) %
+                         pair->recv_size;
+
+    if (!pair->peer && available == 0) {
+        fut_spinlock_release(&pair->lock);
+        return 0;  /* EOF */
+    }
+
+    if (available == 0) {
+        if (socket->flags & 0x800) {  /* O_NONBLOCK */
+            fut_spinlock_release(&pair->lock);
+            return -EAGAIN;
+        }
+        /* Block until data arrives */
+        fut_waitq_sleep_locked(pair->recv_waitq, &pair->lock, FUT_THREAD_BLOCKED);
+        fut_spinlock_acquire(&pair->lock);
+        available = (pair->recv_head + pair->recv_size - pair->recv_tail) %
+                    pair->recv_size;
+        if (!pair->peer && available == 0) {
+            fut_spinlock_release(&pair->lock);
+            return 0;
+        }
+        if (available == 0) {
+            fut_spinlock_release(&pair->lock);
+            return -EAGAIN;
+        }
+    }
+
+    size_t to_read = (len > available) ? available : len;
+    if (to_read > (pair->recv_size - pair->recv_tail)) {
+        to_read = pair->recv_size - pair->recv_tail;
+    }
+
+    /* Copy data but do NOT advance recv_tail — data stays in buffer */
+    memcpy(buf, &pair->recv_buf[pair->recv_tail], to_read);
+
+    fut_spinlock_release(&pair->lock);
+    return (ssize_t)to_read;
+}
+
 /* ============================================================
  *   Socket Closing
  * ============================================================ */

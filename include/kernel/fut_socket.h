@@ -399,6 +399,11 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len);
 ssize_t fut_socket_recv(fut_socket_t *socket, void *buf, size_t len);
 
 /**
+ * Peek at data without consuming (MSG_PEEK).
+ */
+ssize_t fut_socket_recv_peek(fut_socket_t *socket, void *buf, size_t len);
+
+/**
  * Close socket and clean up resources.
  * Transitions to CLOSED state, frees buffers and listeners.
  *

@@ -117,14 +117,15 @@ long sys_times(struct tms *buf) {
         return -EFAULT;
     }
 
-    /* Return elapsed time in clock ticks since boot
-     * Current time is in milliseconds, convert to clock ticks */
-    uint64_t current_ms = fut_get_ticks();
-    clock_t elapsed_ticks = (clock_t)((current_ms * USER_HZ) / 1000);
+    /* Return elapsed time in clock ticks since boot.
+     * fut_get_ticks() returns ticks at 100 Hz (10ms each).
+     * USER_HZ is the userspace tick rate (typically 100). */
+    uint64_t kernel_ticks = fut_get_ticks();
+    clock_t elapsed_ticks = (clock_t)((kernel_ticks * USER_HZ) / 100);
 
     /* Phase 2: Categorize elapsed time for better diagnostics */
     const char *elapsed_category;
-    uint64_t elapsed_seconds = current_ms / 1000;
+    uint64_t elapsed_seconds = kernel_ticks / 100;
 
     if (elapsed_seconds < 10) {
         elapsed_category = "very recent boot";

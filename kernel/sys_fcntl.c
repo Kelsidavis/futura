@@ -588,12 +588,12 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
          * - Process monopolizing syscall handler time
          */
         if (task->dupfd_ops_per_sec > 0) {  /* 0 = unlimited (disabled) */
-            uint64_t now_ms = fut_get_ticks();
+            uint64_t now_ticks = fut_get_ticks();
 
-            /* Reset counter if 1 second has passed since last reset */
-            if (now_ms - task->dupfd_reset_time_ms >= 1000) {
+            /* Reset counter if 1 second (100 ticks) has passed since last reset */
+            if (now_ticks - task->dupfd_reset_time_ms >= 100) {
                 task->dupfd_ops_current = 0;
-                task->dupfd_reset_time_ms = now_ms;
+                task->dupfd_reset_time_ms = now_ticks;
             }
 
             /* Check if rate limit exceeded */

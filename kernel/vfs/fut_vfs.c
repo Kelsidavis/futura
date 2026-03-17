@@ -2176,10 +2176,11 @@ int fut_vfs_stat(const char *path, struct fut_stat *stat) {
         stat->st_blksize = 4096;
         stat->st_blocks = vnode->size / 4096 + (vnode->size % 4096 ? 1 : 0);
 
-        /* Set timestamps using tick-based time to avoid calibration deadlock */
+        /* Set timestamps using tick-based time to avoid calibration deadlock.
+         * fut_get_ticks() returns ticks at 100 Hz (10ms each). */
         extern uint64_t fut_get_ticks(void);
-        uint64_t now_ms = fut_get_ticks();
-        uint64_t now_ns = now_ms * 1000000ULL;
+        uint64_t now_ticks = fut_get_ticks();
+        uint64_t now_ns = now_ticks * 10000000ULL;  /* ticks → ns */
         stat->st_atime = now_ns;
         stat->st_atime_nsec = 0;
         stat->st_mtime = now_ns;

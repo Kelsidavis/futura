@@ -725,7 +725,7 @@ int fut_socket_connect(fut_socket_t *socket, const char *target_path) {
     queue->queue[tail].peer_socket = socket;
     queue->queue[tail].flags = 0;
     /* Skip high-resolution timestamp - it blocks during calibration on first use */
-    queue->queue[tail].timestamp_ns = fut_get_ticks() * 1000000ULL;  /* ms -> ns */
+    queue->queue[tail].timestamp_ns = fut_get_ticks() * 10000000ULL;  /* ticks (10ms) -> ns */
     queue->queue_count++;
 
     socket->state = FUT_SOCK_CONNECTING;

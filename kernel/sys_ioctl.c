@@ -11,6 +11,7 @@
 #include <kernel/fut_socket.h>
 #include <kernel/chrdev.h>
 #include <kernel/errno.h>
+#include <kernel/signal.h>
 #include <fcntl.h>
 
 #include <kernel/kprintf.h>
@@ -26,6 +27,7 @@
 #define TCGETS      0x5401
 #define TCSETS      0x5402
 #define TIOCGWINSZ  0x5413
+#define TIOCSWINSZ  0x5414
 #define FIONREAD    0x541B
 #define FIONBIO     0x5421
 #define TIOCSPGRP   0x5410
@@ -35,6 +37,14 @@
 #define TIOCGSID    0x5429
 #define FIOCLEX     0x5451
 #define FIONCLEX    0x5450
+
+/* Global terminal window size — shared by all TTY fds */
+static struct {
+    uint16_t ws_row;
+    uint16_t ws_col;
+    uint16_t ws_xpixel;
+    uint16_t ws_ypixel;
+} g_winsize = { .ws_row = 24, .ws_col = 80, .ws_xpixel = 0, .ws_ypixel = 0 };
 
 /* ============================================================================
  * IOCTL Direction and Size Extraction Macros
@@ -722,13 +732,28 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
                 return -ENOTTY;
             if (!argp)
                 return -EFAULT;
-            struct { uint16_t ws_row; uint16_t ws_col;
-                     uint16_t ws_xpixel; uint16_t ws_ypixel; } ws = {
-                .ws_row = 24, .ws_col = 80,
-                .ws_xpixel = 0, .ws_ypixel = 0
-            };
-            if (fut_copy_to_user(argp, &ws, sizeof(ws)) != 0)
+            if (fut_copy_to_user(argp, &g_winsize, sizeof(g_winsize)) != 0)
                 return -EFAULT;
+            return 0;
+        }
+        case TIOCSWINSZ: {
+            if (!file->chr_ops || (file->flags & 03) != 02)
+                return -ENOTTY;
+            if (!argp)
+                return -EFAULT;
+            struct { uint16_t ws_row; uint16_t ws_col;
+                     uint16_t ws_xpixel; uint16_t ws_ypixel; } new_ws;
+            if (fut_copy_from_user(&new_ws, argp, sizeof(new_ws)) != 0)
+                return -EFAULT;
+            /* Update stored window size */
+            g_winsize.ws_row    = new_ws.ws_row;
+            g_winsize.ws_col    = new_ws.ws_col;
+            g_winsize.ws_xpixel = new_ws.ws_xpixel;
+            g_winsize.ws_ypixel = new_ws.ws_ypixel;
+            /* Send SIGWINCH to the foreground process group of this terminal */
+            extern long sys_kill(int pid, int sig);
+            if (task && task->pgid)
+                sys_kill(-(int)task->pgid, SIGWINCH);
             return 0;
         }
         case FIONREAD: {

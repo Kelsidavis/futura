@@ -878,19 +878,26 @@ static int64_t sys_fork_handler(uint64_t arg1, uint64_t arg2, uint64_t arg3,
 
 /* clone() — Linux process/thread creation syscall.
  * glibc/musl use clone(SIGCHLD, 0, ...) to implement fork().
- * Full thread creation (CLONE_VM|CLONE_FS|...) is not yet supported.
  * clone3() (syscall 435) is the newer interface; also handled here. */
 static int64_t sys_clone_handler(uint64_t flags, uint64_t stack, uint64_t parent_tid,
                                   uint64_t child_tid, uint64_t tls, uint64_t arg6) {
-    (void)stack; (void)parent_tid; (void)child_tid; (void)tls; (void)arg6;
-    /* SIGCHLD-only clone = fork (most common case from libc fork()) */
-    uint64_t clone_flags = flags & ~0xFFULL;  /* Strip signal from low byte */
-    if (clone_flags == 0) {
-        /* Plain fork: clone(SIGCHLD, 0, NULL, NULL, 0) */
+    (void)arg6;
+    uint64_t clone_flags = flags & ~0xFFULL;  /* Strip exit-signal from low byte */
+
+    /* Plain fork: clone(SIGCHLD, 0, NULL, NULL, 0) — most common from libc fork() */
+    if (clone_flags == 0)
         return (int64_t)posix_fork();
+
+    /* Thread creation: CLONE_THREAD (bit 16) set */
+    if (clone_flags & 0x10000ULL /* CLONE_THREAD */) {
+        extern long sys_clone_thread(uint64_t flags, uint64_t child_stack,
+                                      uint64_t parent_tid_ptr, uint64_t child_tid_ptr,
+                                      uint64_t tls);
+        return (int64_t)sys_clone_thread(flags, stack, parent_tid, child_tid, tls);
     }
-    /* Thread creation not yet supported */
-    fut_printf("[CLONE] clone(flags=0x%llx) -> ENOSYS (only fork-style clone supported)\n",
+
+    /* Unhandled clone flags (vfork, new namespaces, etc.) */
+    fut_printf("[CLONE] clone(flags=0x%llx) -> ENOSYS (unhandled clone flags)\n",
                (unsigned long long)flags);
     return -38;  /* -ENOSYS */
 }

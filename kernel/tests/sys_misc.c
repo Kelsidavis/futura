@@ -6004,6 +6004,34 @@ static void test_procfs_status_nnp_fdsize(void) {
 }
 
 /* ============================================================
+ * Test 123: clone(CLONE_THREAD) input validation
+ * ============================================================ */
+static void test_clone_thread_validation(void) {
+    fut_printf("[MISC-TEST] Test 123: clone(CLONE_THREAD) input validation\n");
+    extern long sys_clone_thread(uint64_t flags, uint64_t child_stack,
+                                  uint64_t parent_tid_ptr, uint64_t child_tid_ptr,
+                                  uint64_t tls);
+
+    /* CLONE_THREAD alone (missing CLONE_VM|CLONE_SIGHAND) must return EINVAL */
+    long r1 = sys_clone_thread(0x10000ULL /* CLONE_THREAD only */, 0x1000, 0, 0, 0);
+    if (r1 != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ CLONE_THREAD-only: expected EINVAL, got %ld\n", r1);
+        fut_test_fail(123); return;
+    }
+
+    /* Missing child stack must return EINVAL */
+    /* CLONE_VM|CLONE_THREAD|CLONE_SIGHAND = 0x100|0x10000|0x800 = 0x10900 */
+    long r2 = sys_clone_thread(0x10900ULL, 0 /* no stack */, 0, 0, 0);
+    if (r2 != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ no child_stack: expected EINVAL, got %ld\n", r2);
+        fut_test_fail(123); return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ clone(CLONE_THREAD) validation: EINVAL for bad args\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -6135,6 +6163,7 @@ void fut_misc_test_thread(void *arg) {
     test_procfs_status_sigmasks();         /* Test 120: status has SigIgn:/SigCgt: */
     test_procfs_status_capeff();           /* Test 121: status has CapEff: */
     test_procfs_status_nnp_fdsize();       /* Test 122: status has NoNewPrivs:/FDSize: */
+    test_clone_thread_validation();        /* Test 123: clone(CLONE_THREAD) EINVAL */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

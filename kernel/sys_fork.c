@@ -482,6 +482,17 @@
 #include <kernel/debug_config.h>
 extern fut_interrupt_frame_t *fut_current_frame;
 
+/* clone() flag bits used for thread creation */
+#define CLONE_VM             0x00000100ULL  /* Share virtual memory */
+#define CLONE_FS             0x00000200ULL  /* Share filesystem state */
+#define CLONE_FILES          0x00000400ULL  /* Share file descriptor table */
+#define CLONE_SIGHAND        0x00000800ULL  /* Share signal handlers */
+#define CLONE_THREAD         0x00010000ULL  /* Same thread group (share PID/TGID) */
+#define CLONE_SETTLS         0x00080000ULL  /* New TLS from tls argument */
+#define CLONE_PARENT_SETTID  0x00100000ULL  /* Write child TID to parent_tid pointer */
+#define CLONE_CHILD_CLEARTID 0x00200000ULL  /* Clear child_tid on thread exit + futex wake */
+#define CLONE_CHILD_SETTID   0x01000000ULL  /* Write child TID into child_tid address */
+
 /* Fork debugging (controlled via debug_config.h) */
 #if FORK_DEBUG
 #define FORK_LOG(...) fut_printf(__VA_ARGS__)
@@ -1647,4 +1658,101 @@ static fut_thread_t *clone_thread(fut_thread_t *parent_thread, fut_task_t *child
 #endif
 
     return child_thread;
+}
+
+/**
+ * sys_clone_thread - Create a new thread in the current task via clone(CLONE_THREAD).
+ *
+ * Handles the thread-creation path of clone(): the new thread shares the caller's
+ * virtual memory, file descriptors, and signal handlers (CLONE_VM|CLONE_SIGHAND
+ * required).  On x86_64, the child starts at the same RIP as the parent (the
+ * syscall return site) but with rax=0 and the user-supplied child stack.
+ *
+ * ARM64: returns ENOSYS until the ARM64 context-switch path is extended.
+ */
+long sys_clone_thread(uint64_t flags, uint64_t child_stack,
+                       uint64_t parent_tid_ptr, uint64_t child_tid_ptr,
+                       uint64_t tls) {
+#ifndef __x86_64__
+    (void)flags; (void)child_stack; (void)parent_tid_ptr;
+    (void)child_tid_ptr; (void)tls;
+    return -ENOSYS;
+#else
+    /* CLONE_VM + CLONE_THREAD + CLONE_SIGHAND are the minimal required set */
+    if (!(flags & CLONE_VM) || !(flags & CLONE_THREAD) || !(flags & CLONE_SIGHAND))
+        return -EINVAL;
+
+    /* A child stack is mandatory — threads cannot share the parent's stack */
+    if (!child_stack)
+        return -EINVAL;
+
+    /* Snapshot the interrupt frame before any potential context switches */
+    fut_interrupt_frame_t *saved_frame = fut_current_frame;
+    if (!saved_frame)
+        return -EINVAL;
+
+    fut_thread_t *parent_thread = fut_thread_current();
+    if (!parent_thread)
+        return -ESRCH;
+
+    fut_task_t *task = parent_thread->task;
+    if (!task)
+        return -ESRCH;
+
+    /* Allocate a child interrupt frame — copy of parent's return state */
+    fut_interrupt_frame_t *child_frame =
+        (fut_interrupt_frame_t *)fut_malloc(sizeof(fut_interrupt_frame_t));
+    if (!child_frame)
+        return -ENOMEM;
+    memcpy(child_frame, saved_frame, sizeof(fut_interrupt_frame_t));
+    child_frame->rax = 0;            /* clone() returns 0 in the child thread */
+    child_frame->rsp = child_stack;  /* child uses the provided user stack */
+    child_frame->rflags |= 0x200;    /* ensure IF is set in child (preemptible) */
+
+    /* Create the thread in the SAME task (shared VM, FDs, signal handlers) */
+    fut_thread_t *child_thread = fut_thread_create(
+        task,
+        fork_child_return,
+        child_frame,
+        parent_thread->stack_size,
+        parent_thread->priority
+    );
+    if (!child_thread) {
+        fut_free(child_frame);
+        return -EAGAIN;
+    }
+
+    /* TLS: use the caller-supplied base, or inherit the parent's */
+    if (flags & CLONE_SETTLS)
+        child_thread->fs_base = tls;
+    else
+        child_thread->fs_base = parent_thread->fs_base;
+
+    uint64_t child_tid = child_thread->tid;
+
+    /* CLONE_PARENT_SETTID: write child TID into caller's address space now */
+    if ((flags & CLONE_PARENT_SETTID) && parent_tid_ptr) {
+        int tid32 = (int)child_tid;
+        fut_copy_to_user((void *)parent_tid_ptr, &tid32, sizeof(int));
+    }
+
+    /* CLONE_CHILD_SETTID: write child TID into the child_tid address.
+     * Done here (before the thread runs) since we hold the child TID. */
+    if ((flags & CLONE_CHILD_SETTID) && child_tid_ptr) {
+        int tid32 = (int)child_tid;
+        fut_copy_to_user((void *)child_tid_ptr, &tid32, sizeof(int));
+    }
+
+    /* CLONE_CHILD_CLEARTID: on thread exit, write 0 + futex-wake at child_tid_ptr */
+    if ((flags & CLONE_CHILD_CLEARTID) && child_tid_ptr)
+        child_thread->clear_child_tid = (int *)child_tid_ptr;
+
+    FORK_LOG("[CLONE] thread tid=%llu rip=0x%llx rsp=0x%llx fs_base=0x%llx\n",
+             (unsigned long long)child_tid,
+             (unsigned long long)child_frame->rip,
+             (unsigned long long)child_frame->rsp,
+             (unsigned long long)child_thread->fs_base);
+
+    return (long)child_tid;
+#endif
 }

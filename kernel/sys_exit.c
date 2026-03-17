@@ -254,7 +254,16 @@ long sys_exit(int status) {
     /* Phase 3: Clear exit hooks array after execution */
     exit_hooks.count = 0;
 
-    /* Terminate the current task */
+    /* If this task has multiple threads (CLONE_THREAD), exit only this thread.
+     * The task continues until all threads exit or exit_group() is called.
+     * POSIX: sys_exit (nr 60) exits the calling thread; sys_exit_group (nr 231)
+     * kills all threads and the process. */
+    if (task && task->thread_count > 1) {
+        /* Secondary thread: don't close FDs or free MM — other threads still use them */
+        fut_thread_exit();  /* noreturn — removes thread from scheduler */
+    }
+
+    /* Main/last thread or single-threaded process: full task cleanup */
     fut_task_exit_current(status);
 
     /* Never reached - exit never returns */

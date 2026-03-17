@@ -101,6 +101,9 @@ struct fut_thread {
     /* Futex support */
     void *futex_addr;                     // Address of futex we're waiting on (NULL if not waiting)
     void *robust_list;                    // Userspace robust futex list head (set_robust_list)
+
+    /* CLONE_CHILD_CLEARTID: address to write 0 + futex-wake on thread exit */
+    int *clear_child_tid;                 // Set by clone(CLONE_CHILD_CLEARTID); cleared on exit
 };
 
 /* ============================================================

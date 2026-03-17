@@ -22,6 +22,7 @@
 #endif
 #include <string.h>
 #include <stdatomic.h>
+#include <kernel/uaccess.h>
 
 [[noreturn]] static void fut_thread_trampoline(void (*entry)(void *), void *arg) __attribute__((used));
 
@@ -366,6 +367,17 @@ extern void exit_robust_list(fut_thread_t *thread);
     /* Phase 3: Release any held robust futexes before the thread disappears.
      * Must happen while userspace memory is still accessible (before mm teardown). */
     exit_robust_list(self);
+
+    /* Handle CLONE_CHILD_CLEARTID: write 0 to the tid address and wake a futex waiter.
+     * This is the per-thread cleartid set by clone(CLONE_CHILD_CLEARTID), distinct
+     * from the per-task clear_child_tid set by set_tid_address(). */
+    if (self->clear_child_tid) {
+        extern int futex_wake_one(uint32_t *uaddr);
+        int zero = 0;
+        if (fut_copy_to_user(self->clear_child_tid, &zero, sizeof(int)) == 0)
+            futex_wake_one((uint32_t *)self->clear_child_tid);
+        self->clear_child_tid = NULL;
+    }
 
     // Mark as terminated
     self->state = FUT_THREAD_TERMINATED;

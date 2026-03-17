@@ -141,6 +141,31 @@ int fut_signal_send(struct fut_task *task, int signum) {
      * delivery. Non-atomic |= is a read-modify-write race on SMP. */
     __atomic_or_fetch(&task->pending_signals, signal_bit, __ATOMIC_RELEASE);
 
+    /* Handle default signal actions for unblocked, uncaught signals.
+     * SIGKILL and SIGSTOP cannot be caught or blocked.
+     * For signals with SIG_DFL whose default is terminate, mark the task. */
+    if (signum == 9 /* SIGKILL */) {
+        /* SIGKILL: unconditional termination */
+        task->exit_code = 0;
+        task->term_signal = 9;
+        /* Mark all threads for termination so they exit at next opportunity */
+        fut_thread_t *kt = task->threads;
+        while (kt) {
+            kt->state = FUT_THREAD_TERMINATED;
+            kt = kt->next;
+        }
+    } else if (task->signal_handlers[signum - 1] == SIG_DFL) {
+        /* Check if blocked — blocked signals defer default action */
+        uint64_t blocked = task->signal_mask;
+        if (!(blocked & signal_bit)) {
+            int action = signal_default_action[signum];
+            if (action == SIG_ACTION_TERM || action == SIG_ACTION_CORE) {
+                task->exit_code = 0;
+                task->term_signal = signum;
+            }
+        }
+    }
+
     /* Wake task if it's blocked on pause() syscall.
      * When the task wakes, sys_pause() will check pending_signals
      * and return -EINTR to deliver the signal. */

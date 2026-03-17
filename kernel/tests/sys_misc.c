@@ -2533,6 +2533,55 @@ static void test_lseek_pipe_espipe(void) {
 }
 
 /* ============================================================
+ * Test 58: O_APPEND writes to end of file
+ * ============================================================ */
+static void test_o_append(void) {
+    fut_printf("[MISC-TEST] Test 58: O_APPEND\n");
+
+    /* Create file with initial content */
+    int fd = fut_vfs_open("/append_test.txt", 0x42, 0644);  /* O_RDWR|O_CREAT */
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ create: %d\n", fd);
+        fut_test_fail(58);
+        return;
+    }
+    fut_vfs_write(fd, "hello", 5);
+    fut_vfs_close(fd);
+
+    /* Reopen with O_APPEND */
+    fd = fut_vfs_open("/append_test.txt", 0x402, 0);  /* O_RDWR|O_APPEND */
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open O_APPEND: %d\n", fd);
+        fut_test_fail(58);
+        return;
+    }
+
+    /* Write should go to end regardless of offset */
+    fut_vfs_write(fd, " world", 6);
+    fut_vfs_close(fd);
+
+    /* Read back and verify */
+    fd = fut_vfs_open("/append_test.txt", 0x00, 0);  /* O_RDONLY */
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ reopen: %d\n", fd);
+        fut_test_fail(58);
+        return;
+    }
+    char buf[16] = {0};
+    ssize_t nr = fut_vfs_read(fd, buf, sizeof(buf));
+    fut_vfs_close(fd);
+
+    if (nr != 11 || memcmp(buf, "hello world", 11) != 0) {
+        fut_printf("[MISC-TEST] ✗ read back: nr=%zd buf='%s'\n", nr, buf);
+        fut_test_fail(58);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ O_APPEND: writes appended correctly\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test 38: setrlimit hard limit can be raised by root, denied for non-root
  * ============================================================ */
 static void test_setrlimit_hard(void) {
@@ -2967,6 +3016,7 @@ void fut_misc_test_thread(void *arg) {
     test_pipe_sz();             /* Test 55: F_GETPIPE_SZ */
     test_fionread_pipe();       /* Test 56: FIONREAD on pipe */
     test_lseek_pipe_espipe();   /* Test 57: lseek pipe ESPIPE */
+    test_o_append();            /* Test 58: O_APPEND writes to end */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

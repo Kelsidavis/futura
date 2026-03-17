@@ -4635,6 +4635,48 @@ static void test_chmod_fchown(void) {
 }
 
 /* ============================================================
+ * Test 88: fstat returns correct S_IF* type bits
+ * ============================================================ */
+static void test_fstat_type_bits(void) {
+    fut_printf("[MISC-TEST] Test 88: fstat S_IF* type bits\n");
+
+    /* Open a regular file */
+    int fd = (int)fut_vfs_open("/test_fstat_type.txt", O_CREAT | O_RDWR, 0644);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open failed: %d\n", fd);
+        fut_test_fail(88);
+        return;
+    }
+
+    struct fut_stat st = {0};
+    long ret = sys_fstat(fd, &st);
+    fut_vfs_close(fd);
+
+    if (ret < 0) {
+        fut_printf("[MISC-TEST] ✗ fstat failed: %ld\n", ret);
+        fut_test_fail(88);
+        return;
+    }
+
+    /* Check S_IFREG (0100000) is set */
+    if ((st.st_mode & 0170000) != 0100000) {
+        fut_printf("[MISC-TEST] ✗ fstat: st_mode=0%o, expected S_IFREG (0100xxx)\n", st.st_mode);
+        fut_test_fail(88);
+        return;
+    }
+
+    /* Check permission bits are preserved */
+    if ((st.st_mode & 07777) != 0644) {
+        fut_printf("[MISC-TEST] ✗ fstat: perms=0%o (expected 0644)\n", st.st_mode & 07777);
+        fut_test_fail(88);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ fstat: st_mode=0%o has S_IFREG + correct perms\n", st.st_mode);
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -4731,6 +4773,7 @@ void fut_misc_test_thread(void *arg) {
     test_shutdown_wr_eof();     /* Test 85: shutdown(SHUT_WR) → peer reads EOF */
     test_perfd_cloexec_independence(); /* Test 86: per-FD cloexec after dup */
     test_chmod_fchown();            /* Test 87: chmod/fchmod/fchown */
+    test_fstat_type_bits();         /* Test 88: fstat S_IFREG type bits */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

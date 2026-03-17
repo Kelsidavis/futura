@@ -244,18 +244,27 @@ long sys_truncate(const char *path, uint64_t length) {
     uint32_t task_gid = task->gid;
     int has_write_perm = 0;
 
-    if (task_uid == 0) {
-        /* Root can truncate any file */
+    if (task_uid == 0 || (task->cap_effective & (1ULL << 1 /* CAP_DAC_OVERRIDE */))) {
+        /* Root or CAP_DAC_OVERRIDE can truncate any file */
         has_write_perm = 1;
     } else if (task_uid == vnode->uid) {
         /* Owner - check owner write permission */
         has_write_perm = (vnode->mode & 0200) != 0;
     } else if (task_gid == vnode->gid) {
-        /* Group member - check group write permission */
+        /* Primary group - check group write permission */
         has_write_perm = (vnode->mode & 0020) != 0;
     } else {
-        /* Other - check other write permission */
-        has_write_perm = (vnode->mode & 0002) != 0;
+        /* Check supplementary groups */
+        int in_group = 0;
+        for (int i = 0; i < task->ngroups; i++) {
+            if (task->groups[i] == vnode->gid) { in_group = 1; break; }
+        }
+        if (in_group) {
+            has_write_perm = (vnode->mode & 0020) != 0;
+        } else {
+            /* Other - check other write permission */
+            has_write_perm = (vnode->mode & 0002) != 0;
+        }
     }
 
     if (!has_write_perm) {

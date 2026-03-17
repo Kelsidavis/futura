@@ -13,6 +13,7 @@
  */
 
 #include <kernel/fut_task.h>
+#include <sys/capability.h>
 #include <kernel/errno.h>
 #include <kernel/fut_vfs.h>
 #include <stdint.h>
@@ -277,6 +278,22 @@ long sys_chown(const char *pathname, uint32_t uid, uint32_t gid) {
      */
     uint32_t old_uid = vnode->uid;
     uint32_t old_gid = vnode->gid;
+
+    /* Permission check: changing owner requires root or CAP_CHOWN.
+     * Non-privileged users can only change group (to one of their groups). */
+    fut_task_t *task = fut_task_current();
+    if (task && task->ruid != 0 && !(task->cap_effective & (1ULL << CAP_CHOWN))) {
+        /* Non-privileged: cannot change UID at all */
+        if (local_uid != CHOWN_UNCHANGED && local_uid != old_uid) {
+            fut_vnode_unref(vnode);
+            return -EPERM;
+        }
+        /* Non-privileged: can only change GID if file owner */
+        if (local_gid != CHOWN_UNCHANGED && local_gid != old_gid && task->ruid != old_uid) {
+            fut_vnode_unref(vnode);
+            return -EPERM;
+        }
+    }
 
     /* Phase 2: Build ownership change description */
     char ownership_change_buf[128];

@@ -5038,6 +5038,84 @@ static void test_socket_msg_peek(void) {
 }
 
 /* ============================================================
+ * Test 95: F_SETPIPE_SZ resizes pipe buffer
+ * ============================================================ */
+extern long sys_pipe(int pipefd[2]);
+#define F_GETPIPE_SZ 1032
+#define F_SETPIPE_SZ 1033
+
+static void test_setpipe_sz(void) {
+    fut_printf("[MISC-TEST] Test 95: F_SETPIPE_SZ resize\n");
+
+    int fds[2] = {-1, -1};
+    long ret = sys_pipe(fds);
+    if (ret < 0) {
+        fut_printf("[MISC-TEST] ✗ pipe failed: %ld\n", ret);
+        fut_test_fail(95);
+        return;
+    }
+
+    /* Default size should be 4096 */
+    long sz = sys_fcntl(fds[0], F_GETPIPE_SZ, 0);
+    if (sz != 4096) {
+        fut_printf("[MISC-TEST] ✗ default pipe size=%ld (expected 4096)\n", sz);
+        fut_vfs_close(fds[0]);
+        fut_vfs_close(fds[1]);
+        fut_test_fail(95);
+        return;
+    }
+
+    /* Resize to 16384 */
+    long new_sz = sys_fcntl(fds[0], F_SETPIPE_SZ, 16384);
+    if (new_sz != 16384) {
+        fut_printf("[MISC-TEST] ✗ F_SETPIPE_SZ(16384) returned %ld\n", new_sz);
+        fut_vfs_close(fds[0]);
+        fut_vfs_close(fds[1]);
+        fut_test_fail(95);
+        return;
+    }
+
+    /* Verify via F_GETPIPE_SZ */
+    sz = sys_fcntl(fds[0], F_GETPIPE_SZ, 0);
+    if (sz != 16384) {
+        fut_printf("[MISC-TEST] ✗ after resize: size=%ld (expected 16384)\n", sz);
+        fut_vfs_close(fds[0]);
+        fut_vfs_close(fds[1]);
+        fut_test_fail(95);
+        return;
+    }
+
+    /* Write more than 4096 bytes to verify the larger buffer works */
+    char wbuf[8192];
+    for (int i = 0; i < 8192; i++) wbuf[i] = (char)(i & 0xFF);
+    long nw = fut_vfs_write(fds[1], wbuf, 8192);
+    if (nw != 8192) {
+        fut_printf("[MISC-TEST] ✗ write 8192 to resized pipe: %ld\n", nw);
+        fut_vfs_close(fds[0]);
+        fut_vfs_close(fds[1]);
+        fut_test_fail(95);
+        return;
+    }
+
+    /* Read it back */
+    char rbuf[8192];
+    long nr = fut_vfs_read(fds[0], rbuf, 8192);
+    if (nr != 8192 || rbuf[0] != 0 || rbuf[4095] != (char)0xFF) {
+        fut_printf("[MISC-TEST] ✗ read back: nr=%ld r[0]=%d r[4095]=%d\n",
+                   nr, (int)(unsigned char)rbuf[0], (int)(unsigned char)rbuf[4095]);
+        fut_vfs_close(fds[0]);
+        fut_vfs_close(fds[1]);
+        fut_test_fail(95);
+        return;
+    }
+
+    fut_vfs_close(fds[0]);
+    fut_vfs_close(fds[1]);
+    fut_printf("[MISC-TEST] ✓ F_SETPIPE_SZ: resize 4096→16384, write/read 8192 bytes\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -5141,6 +5219,7 @@ void fut_misc_test_thread(void *arg) {
     test_dup2_same_fd_noop();       /* Test 92: dup2(fd,fd) preserves cloexec */
     test_dev_stdio_symlinks();      /* Test 93: /dev/stdin,stdout,stderr */
     test_socket_msg_peek();         /* Test 94: MSG_PEEK on socket */
+    test_setpipe_sz();              /* Test 95: F_SETPIPE_SZ resize */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

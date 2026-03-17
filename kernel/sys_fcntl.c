@@ -212,6 +212,7 @@
 #include <kernel/fut_timer.h>
 #include <kernel/fut_socket.h>
 #include <kernel/fut_lock.h>
+#include <kernel/fut_memory.h>
 #include <subsystems/posix_syscall.h>
 #include <stdint.h>
 #include <sys/resource.h>
@@ -742,18 +743,65 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
     }
 
     case 1032: /* F_GETPIPE_SZ */
-        /* Return pipe buffer capacity for chr_ops files */
-        if (file->chr_ops && !file->vnode)
-            return 4096;
+        /* Return actual pipe buffer capacity for chr_ops files */
+        if (file->chr_ops && !file->vnode) {
+            struct pipe_sz_hdr { uint8_t *data; size_t size; };
+            struct pipe_sz_hdr *p = (struct pipe_sz_hdr *)file->chr_private;
+            return p ? (long)p->size : 4096;
+        }
         return -EINVAL;
 
     case F_GET_SEALS:
         return (long)file->seals;
 
     case F_ADD_SEALS: { /* Also F_SETPIPE_SZ (same value: 1033) */
-        /* For pipe fds, accept requested size but keep at 4096 */
-        if (file->chr_ops && !file->vnode)
-            return 4096;
+        /* For pipe fds: F_SETPIPE_SZ — resize the pipe buffer */
+        if (file->chr_ops && !file->vnode) {
+            /* Get pipe_buffer from private data */
+            struct pipe_buffer_hdr {
+                uint8_t *data; size_t size; size_t read_pos;
+                size_t write_pos; size_t count;
+            };
+            struct pipe_buffer_hdr *pipe = (struct pipe_buffer_hdr *)file->chr_private;
+            if (!pipe) return -EBADF;
+
+            /* Round requested size to power of 2, minimum 4096 (PIPE_BUF) */
+            size_t req = (size_t)local_arg;
+            if (req < 4096) req = 4096;
+            if (req > 1048576) req = 1048576;  /* Cap at 1MB */
+            size_t new_size = 4096;
+            while (new_size < req) new_size <<= 1;
+
+            if (new_size == pipe->size)
+                return (long)pipe->size;
+
+            /* Cannot shrink below current data count */
+            if (new_size < pipe->count)
+                return -EBUSY;
+
+            /* Allocate new buffer and linearize existing data */
+            uint8_t *new_data = fut_malloc(new_size);
+            if (!new_data) return -ENOMEM;
+
+            if (pipe->count > 0) {
+                /* Copy from read_pos, wrapping around if needed */
+                size_t first = pipe->size - pipe->read_pos;
+                if (first > pipe->count) first = pipe->count;
+                for (size_t i = 0; i < first; i++)
+                    new_data[i] = pipe->data[pipe->read_pos + i];
+                size_t second = pipe->count - first;
+                for (size_t i = 0; i < second; i++)
+                    new_data[first + i] = pipe->data[i];
+            }
+
+            fut_free(pipe->data);
+            pipe->data = new_data;
+            pipe->size = new_size;
+            pipe->read_pos = 0;
+            pipe->write_pos = pipe->count;
+
+            return (long)new_size;
+        }
         uint32_t new_seals = (uint32_t)local_arg;
         uint32_t valid_mask = F_SEAL_SEAL | F_SEAL_SHRINK | F_SEAL_GROW |
                               F_SEAL_WRITE | F_SEAL_FUTURE_WRITE;

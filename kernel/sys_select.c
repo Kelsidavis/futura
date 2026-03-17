@@ -375,8 +375,10 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
                     if (check_read)  poll_events |= 0x1;
                     if (check_write) poll_events |= 0x4;
                     int socket_ready = fut_socket_poll(socket, poll_events);
-                    if (socket_ready & 0x1) epoll_ready |= EPOLLIN;
-                    if (socket_ready & 0x4) epoll_ready |= EPOLLOUT;
+                    if (socket_ready & 0x1)  epoll_ready |= EPOLLIN;
+                    if (socket_ready & 0x4)  epoll_ready |= EPOLLOUT;
+                    if (socket_ready & 0x10) epoll_ready |= EPOLLHUP;
+                    if (socket_ready & 0x8)  epoll_ready |= EPOLLERR;
                     handled = true;
                 }
             }
@@ -656,8 +658,10 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
                     if (check_read)  poll_events |= 0x1;
                     if (check_write) poll_events |= 0x4;
                     int socket_ready = fut_socket_poll(socket, poll_events);
-                    if (socket_ready & 0x1) epoll_ready |= EPOLLIN;
-                    if (socket_ready & 0x4) epoll_ready |= EPOLLOUT;
+                    if (socket_ready & 0x1)  epoll_ready |= EPOLLIN;
+                    if (socket_ready & 0x4)  epoll_ready |= EPOLLOUT;
+                    if (socket_ready & 0x10) epoll_ready |= EPOLLHUP;
+                    if (socket_ready & 0x8)  epoll_ready |= EPOLLERR;
                     handled = true;
                 }
             }

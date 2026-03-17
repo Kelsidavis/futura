@@ -3187,6 +3187,54 @@ static void test_pipe_short_write(void) {
 }
 
 /* ============================================================
+ * Test 76: socketpair POLLHUP when peer closes
+ * ============================================================ */
+static void test_socketpair_pollhup(void) {
+    fut_printf("[MISC-TEST] Test 76: socketpair POLLHUP\n");
+
+    int sv[2] = {-1, -1};
+    long ret = sys_socketpair(1, 1, 0, sv);  /* AF_UNIX, SOCK_STREAM */
+    if (ret != 0 || sv[0] < 0 || sv[1] < 0) {
+        fut_printf("[MISC-TEST] ✗ socketpair: %ld\n", ret);
+        fut_test_fail(76);
+        return;
+    }
+
+    /* Before close: poll sv[0] for POLLIN should return 0 (no data) */
+    struct pollfd pfd = { .fd = sv[0], .events = POLLIN, .revents = 0 };
+    ret = sys_poll(&pfd, 1, 0);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ poll before close: %ld\n", ret);
+        fut_vfs_close(sv[0]); fut_vfs_close(sv[1]);
+        fut_test_fail(76);
+        return;
+    }
+
+    /* Close peer sv[1] */
+    fut_vfs_close(sv[1]);
+
+    /* After close: poll sv[0] should report POLLHUP */
+    pfd.revents = 0;
+    ret = sys_poll(&pfd, 1, 0);
+    fut_vfs_close(sv[0]);
+
+    if (ret != 1) {
+        fut_printf("[MISC-TEST] ✗ poll after peer close: %ld (expected 1)\n", ret);
+        fut_test_fail(76);
+        return;
+    }
+
+    if (!(pfd.revents & POLLHUP)) {
+        fut_printf("[MISC-TEST] ✗ revents=0x%x (expected POLLHUP)\n", pfd.revents);
+        fut_test_fail(76);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ socketpair POLLHUP: detected peer close via poll\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test 52: write on O_RDONLY fd returns EBADF
  * ============================================================ */
 static void test_rdonly_write_ebadf(void) {
@@ -4064,6 +4112,7 @@ void fut_misc_test_thread(void *arg) {
     test_epoll_et();            /* Test 73: EPOLLET edge-triggered */
     test_epoll_oneshot();       /* Test 74: EPOLLONESHOT */
     test_pipe_short_write();    /* Test 75: pipe short write on partial buffer */
+    test_socketpair_pollhup();  /* Test 76: socketpair POLLHUP on peer close */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

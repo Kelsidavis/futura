@@ -84,8 +84,10 @@ static struct poll_scan_stats poll_scan_fds(struct pollfd *kfds, unsigned long n
                 if (kfds[i].events & POLLIN)  poll_events |= 0x1;
                 if (kfds[i].events & POLLOUT) poll_events |= 0x4;
                 int socket_ready = fut_socket_poll(socket, poll_events);
-                if (socket_ready & 0x1) epoll_ready |= EPOLLIN;
-                if (socket_ready & 0x4) epoll_ready |= EPOLLOUT;
+                if (socket_ready & 0x1)  epoll_ready |= EPOLLIN;
+                if (socket_ready & 0x4)  epoll_ready |= EPOLLOUT;
+                if (socket_ready & 0x10) epoll_ready |= EPOLLHUP;
+                if (socket_ready & 0x8)  epoll_ready |= EPOLLERR;
                 handled = true;
             }
         }

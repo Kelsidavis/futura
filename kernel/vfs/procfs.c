@@ -17,6 +17,9 @@
  *   /proc/<pid>/cmdline   -> process command line (null-separated)
  *   /proc/<pid>/fd/       -> open file descriptor directory
  *   /proc/<pid>/fd/<n>    -> symlinks (currently ENOENT for unresolved paths)
+ *   /proc/<pid>/stat      -> machine-readable process statistics (ps/top format)
+ *   /proc/<pid>/statm     -> memory statistics (size resident shared text lib data dt)
+ *   /proc/cpuinfo         -> CPU model/features
  */
 
 #include <kernel/fut_vfs.h>
@@ -51,6 +54,9 @@ enum procfs_kind {
     PROC_FD_ENTRY,   /* /proc/<pid>/fd/<n> symlink */
     PROC_EXE,        /* /proc/<pid>/exe symlink */
     PROC_CWD,        /* /proc/<pid>/cwd symlink */
+    PROC_STAT,       /* /proc/<pid>/stat */
+    PROC_STATM,      /* /proc/<pid>/statm */
+    PROC_CPUINFO,    /* /proc/cpuinfo */
 };
 
 typedef struct {
@@ -68,6 +74,7 @@ typedef struct {
 #define PROC_INO_MEMINFO  3ULL
 #define PROC_INO_VERSION  4ULL
 #define PROC_INO_UPTIME   5ULL
+#define PROC_INO_CPUINFO  6ULL
 
 /* Per-PID: pid * 100 + offset */
 #define PROC_INO_PID_DIR(p)    (1000ULL + (uint64_t)(p) * 100 + 0)
@@ -77,6 +84,8 @@ typedef struct {
 #define PROC_INO_PID_FD(p)     (1000ULL + (uint64_t)(p) * 100 + 4)
 #define PROC_INO_PID_EXE(p)    (1000ULL + (uint64_t)(p) * 100 + 5)
 #define PROC_INO_PID_CWD(p)    (1000ULL + (uint64_t)(p) * 100 + 6)
+#define PROC_INO_PID_STAT(p)   (1000ULL + (uint64_t)(p) * 100 + 7)
+#define PROC_INO_PID_STATM(p)  (1000ULL + (uint64_t)(p) * 100 + 8)
 /* fd entries: use high range to avoid collision */
 #define PROC_INO_FD_ENTRY(p,n) (100000000ULL + (uint64_t)(p) * 1000 + (uint64_t)(n))
 
@@ -305,6 +314,224 @@ static size_t gen_cmdline(char *buf, size_t cap, fut_task_t *task) {
     return n + 1;
 }
 
+/*
+ * gen_stat() — /proc/<pid>/stat
+ *
+ * Fields follow Linux /proc/<pid>/stat layout (man 5 proc).
+ * Only the fields that can be derived from kernel state are accurate;
+ * the rest are zeroed as permitted by the spec.
+ *
+ * Key fields consumed by ps/top/glibc:
+ *   1=pid, 2=(comm), 3=state, 4=ppid, 5=pgrp, 6=session,
+ *   13/14=utime/stime (USER_HZ=100 ticks), 17=priority, 18=nice,
+ *   19=num_threads, 21=starttime, 22=vsize (bytes), 23=rss (pages)
+ */
+static size_t gen_stat(char *buf, size_t cap, fut_task_t *task) {
+    if (!task) return 0;
+
+    /* State character */
+    char state_c;
+    switch (task->state) {
+        case FUT_TASK_RUNNING: state_c = 'R'; break;
+        case FUT_TASK_ZOMBIE:  state_c = 'Z'; break;
+        case FUT_TASK_STOPPED: state_c = 'T'; break;
+        default:               state_c = 'S'; break;
+    }
+
+    uint64_t ppid = task->parent ? task->parent->pid : 0;
+    uint64_t pgrp = task->pgid;
+    uint64_t session = task->sid;
+
+    /* CPU time in USER_HZ (100 Hz) ticks — sum all threads */
+    uint64_t utime = 0, stime = 0;
+    if (task->threads) {
+        /* Accumulate cpu_ticks across all threads of this task */
+        fut_thread_t *t = task->threads;
+        while (t) {
+            utime += t->stats.cpu_ticks;
+            t = t->next;
+        }
+    }
+    /* Accumulated child times */
+    uint64_t cutime = task->child_cpu_ticks;
+    uint64_t cstime = 0;
+
+    /* Priority in Linux terms: priority = 20 - nice (range 1..40 for SCHED_OTHER) */
+    int nice = task->nice;
+    long priority = (long)(20 - nice);  /* maps nice -20..19 → priority 40..1 */
+
+    /* Virtual memory size in bytes; RSS in pages */
+    uint64_t vsize = 0, rss_pages = 0;
+    if (task->mm) {
+        struct fut_vma *vma = task->mm->vma_list;
+        while (vma) { vsize += vma->end - vma->start; vma = vma->next; }
+        rss_pages = vsize / 4096;
+    }
+
+    /* Starttime: ticks since boot at task creation — not stored, approximate as 0 */
+    uint64_t starttime = 0;
+
+    struct pbuf b = { buf, 0, cap };
+
+    /* Field 1: pid */
+    pb_u64(&b, task->pid); pb_char(&b, ' ');
+    /* Field 2: comm in parens */
+    pb_char(&b, '(');
+    pb_str(&b, task->comm[0] ? task->comm : "?");
+    pb_char(&b, ')'); pb_char(&b, ' ');
+    /* Field 3: state */
+    pb_char(&b, state_c); pb_char(&b, ' ');
+    /* Field 4: ppid */
+    pb_u64(&b, ppid); pb_char(&b, ' ');
+    /* Field 5: pgrp */
+    pb_u64(&b, pgrp); pb_char(&b, ' ');
+    /* Field 6: session */
+    pb_u64(&b, session); pb_char(&b, ' ');
+    /* Field 7: tty_nr (0 = no controlling terminal) */
+    pb_char(&b, '0'); pb_char(&b, ' ');
+    /* Field 8: tpgid (-1 = no terminal foreground group) */
+    pb_char(&b, '-'); pb_char(&b, '1'); pb_char(&b, ' ');
+    /* Field 9: flags */
+    pb_char(&b, '0'); pb_char(&b, ' ');
+    /* Fields 10-12: minflt cminflt majflt cmajflt (0) */
+    pb_char(&b, '0'); pb_char(&b, ' ');
+    pb_char(&b, '0'); pb_char(&b, ' ');
+    pb_char(&b, '0'); pb_char(&b, ' ');
+    pb_char(&b, '0'); pb_char(&b, ' ');
+    /* Fields 13-16: utime stime cutime cstime */
+    pb_u64(&b, utime);  pb_char(&b, ' ');
+    pb_u64(&b, stime);  pb_char(&b, ' ');
+    pb_u64(&b, cutime); pb_char(&b, ' ');
+    pb_u64(&b, cstime); pb_char(&b, ' ');
+    /* Field 17: priority */
+    if (priority < 0) { pb_char(&b, '-'); pb_u64(&b, (uint64_t)(-priority)); }
+    else pb_u64(&b, (uint64_t)priority);
+    pb_char(&b, ' ');
+    /* Field 18: nice */
+    if (nice < 0) { pb_char(&b, '-'); pb_u64(&b, (uint64_t)(-nice)); }
+    else pb_u64(&b, (uint64_t)nice);
+    pb_char(&b, ' ');
+    /* Field 19: num_threads */
+    pb_u64(&b, task->thread_count ? task->thread_count : 1); pb_char(&b, ' ');
+    /* Field 20: itrealvalue (obsolete, 0) */
+    pb_char(&b, '0'); pb_char(&b, ' ');
+    /* Field 21: starttime */
+    pb_u64(&b, starttime); pb_char(&b, ' ');
+    /* Field 22: vsize */
+    pb_u64(&b, vsize); pb_char(&b, ' ');
+    /* Field 23: rss */
+    pb_u64(&b, rss_pages); pb_char(&b, ' ');
+    /* Field 24: rsslim (RLIM_INFINITY) */
+    pb_str(&b, "4294967295"); pb_char(&b, ' ');
+    /* Fields 25-28: startcode endcode startstack kstkesp (0) */
+    pb_char(&b, '0'); pb_char(&b, ' ');
+    pb_char(&b, '0'); pb_char(&b, ' ');
+    pb_char(&b, '0'); pb_char(&b, ' ');
+    pb_char(&b, '0'); pb_char(&b, ' ');
+    /* Field 29: kstkeip (0) */
+    pb_char(&b, '0'); pb_char(&b, ' ');
+    /* Fields 30-34: signal blocked sigignore sigcatch wchan (0) */
+    pb_char(&b, '0'); pb_char(&b, ' ');
+    pb_char(&b, '0'); pb_char(&b, ' ');
+    pb_char(&b, '0'); pb_char(&b, ' ');
+    pb_char(&b, '0'); pb_char(&b, ' ');
+    pb_char(&b, '0'); pb_char(&b, ' ');
+    /* Fields 35-37: nswap cnswap exit_signal */
+    pb_char(&b, '0'); pb_char(&b, ' ');
+    pb_char(&b, '0'); pb_char(&b, ' ');
+    pb_str(&b, "17");  pb_char(&b, ' '); /* SIGCHLD = 17 */
+    /* Field 39: processor (CPU 0) */
+    pb_char(&b, '0'); pb_char(&b, ' ');
+    /* Fields 40-41: rt_priority policy */
+    pb_char(&b, '0'); pb_char(&b, ' ');
+    pb_char(&b, '0'); pb_char(&b, '\n');
+
+    return b.pos;
+}
+
+/*
+ * gen_statm() — /proc/<pid>/statm
+ *
+ * Seven space-separated values in pages:
+ *   size resident shared text 0 data 0
+ */
+static size_t gen_statm(char *buf, size_t cap, fut_task_t *task) {
+    if (!task) return 0;
+
+    uint64_t size = 0, resident = 0;
+    if (task->mm) {
+        struct fut_vma *vma = task->mm->vma_list;
+        while (vma) { size += vma->end - vma->start; vma = vma->next; }
+        resident = size;  /* simplified: all mapped pages resident */
+    }
+    uint64_t size_pg = size / 4096;
+    uint64_t res_pg  = resident / 4096;
+
+    struct pbuf b = { buf, 0, cap };
+    pb_u64(&b, size_pg); pb_char(&b, ' ');  /* size */
+    pb_u64(&b, res_pg);  pb_char(&b, ' ');  /* resident */
+    pb_char(&b, '0');    pb_char(&b, ' ');  /* shared */
+    pb_char(&b, '0');    pb_char(&b, ' ');  /* text */
+    pb_char(&b, '0');    pb_char(&b, ' ');  /* lib (always 0) */
+    pb_u64(&b, size_pg); pb_char(&b, ' ');  /* data */
+    pb_char(&b, '0');    pb_char(&b, '\n'); /* dt (dirty) */
+    return b.pos;
+}
+
+/*
+ * gen_cpuinfo() — /proc/cpuinfo
+ *
+ * Provides minimal CPU info compatible with Linux /proc/cpuinfo.
+ * Architecture is detected at compile time.
+ */
+static size_t gen_cpuinfo(char *buf, size_t cap) {
+    struct pbuf b = { buf, 0, cap };
+    pb_str(&b, "processor\t: 0\n");
+#ifdef __x86_64__
+    pb_str(&b, "vendor_id\t: GenuineIntel\n");
+    pb_str(&b, "cpu family\t: 6\n");
+    pb_str(&b, "model\t\t: 142\n");
+    pb_str(&b, "model name\t: Futura Virtual Processor (x86_64)\n");
+    pb_str(&b, "stepping\t: 10\n");
+    pb_str(&b, "microcode\t: 0x0\n");
+    pb_str(&b, "cpu MHz\t\t: 2400.000\n");
+    pb_str(&b, "cache size\t: 4096 KB\n");
+    pb_str(&b, "physical id\t: 0\n");
+    pb_str(&b, "siblings\t: 1\n");
+    pb_str(&b, "core id\t\t: 0\n");
+    pb_str(&b, "cpu cores\t: 1\n");
+    pb_str(&b, "apicid\t\t: 0\n");
+    pb_str(&b, "initial apicid\t: 0\n");
+    pb_str(&b, "fpu\t\t: yes\n");
+    pb_str(&b, "fpu_exception\t: yes\n");
+    pb_str(&b, "cpuid level\t: 22\n");
+    pb_str(&b, "wp\t\t: yes\n");
+    pb_str(&b, "flags\t\t: fpu vme de pse tsc msr pae mce cx8 apic sep mtrr "
+               "pge mca cmov pat pse36 clflush mmx fxsr sse sse2 syscall nx "
+               "lm rep_good nopl xtopology cpuid pni pclmulqdq ssse3 cx16 "
+               "pcid sse4_1 sse4_2 x2apic movbe popcnt tsc_deadline_timer "
+               "aes xsave avx f16c rdrand hypervisor lahf_lm abm 3dnowprefetch\n");
+    pb_str(&b, "bugs\t\t:\n");
+    pb_str(&b, "bogomips\t: 4800.00\n");
+    pb_str(&b, "clflush size\t: 64\n");
+    pb_str(&b, "cache_alignment\t: 64\n");
+    pb_str(&b, "address sizes\t: 39 bits physical, 48 bits virtual\n");
+#elif defined(__aarch64__)
+    pb_str(&b, "CPU implementer\t: 0x41\n");
+    pb_str(&b, "CPU architecture: 8\n");
+    pb_str(&b, "CPU variant\t: 0x0\n");
+    pb_str(&b, "CPU part\t: 0xd08\n");
+    pb_str(&b, "CPU revision\t: 3\n");
+    pb_str(&b, "Features\t: fp asimd evtstrm aes pmull sha1 sha2 crc32 "
+               "atomics fphp asimdhp cpuid asimdrdm lrcpc dcpop asimddp\n");
+    pb_str(&b, "BogoMIPS\t: 125.00\n");
+#else
+    pb_str(&b, "model name\t: Futura Virtual Processor\n");
+#endif
+    pb_char(&b, '\n');
+    return b.pos;
+}
+
 /* ============================================================
  *   File Operations
  * ============================================================ */
@@ -339,6 +566,19 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             total = task ? gen_cmdline(tmp, GEN_BUF, task) : 0;
             break;
         }
+        case PROC_STAT: {
+            fut_task_t *task = fut_task_by_pid(n->pid);
+            total = task ? gen_stat(tmp, GEN_BUF, task) : 0;
+            break;
+        }
+        case PROC_STATM: {
+            fut_task_t *task = fut_task_by_pid(n->pid);
+            total = task ? gen_statm(tmp, GEN_BUF, task) : 0;
+            break;
+        }
+        case PROC_CPUINFO:
+            total = gen_cpuinfo(tmp, GEN_BUF);
+            break;
         default:
             fut_free(tmp);
             return -EINVAL;
@@ -505,6 +745,11 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0100444, PROC_UPTIME, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "cpuinfo")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_CPUINFO,
+                                          0100444, PROC_CPUINFO, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         /* Try numeric PID */
         uint64_t pid = parse_dec(name);
         if (pid != (uint64_t)-1 && pid > 0) {
@@ -549,6 +794,16 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0120777, PROC_CWD, pid, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "stat")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_STAT(pid),
+                                          0100444, PROC_STAT, pid, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "statm")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_STATM(pid),
+                                          0100444, PROC_STATM, pid, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         return -ENOENT;
     }
 
@@ -578,18 +833,22 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
     uint64_t idx = *cookie;
 
     if (dn->kind == PROC_ROOT) {
-        /* Fixed entries: ., .., self, meminfo, version, uptime */
-        static const char *fixed[] = { ".", "..", "self", "meminfo", "version", "uptime" };
+        /* Fixed entries: ., .., self, meminfo, version, uptime, cpuinfo */
+        static const char *fixed[] = {
+            ".", "..", "self", "meminfo", "version", "uptime", "cpuinfo"
+        };
         static const uint8_t fixed_type[] = {
             FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
             FUT_VDIR_TYPE_SYMLINK,
-            FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG
+            FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+            FUT_VDIR_TYPE_REG
         };
         static const uint64_t fixed_ino[] = {
             PROC_INO_ROOT, PROC_INO_ROOT,
-            PROC_INO_SELF, PROC_INO_MEMINFO, PROC_INO_VERSION, PROC_INO_UPTIME
+            PROC_INO_SELF, PROC_INO_MEMINFO, PROC_INO_VERSION, PROC_INO_UPTIME,
+            PROC_INO_CPUINFO
         };
-        if (idx < 6) {
+        if (idx < 7) {
             de->d_ino    = fixed_ino[idx];
             de->d_off    = idx + 1;
             de->d_type   = fixed_type[idx];
@@ -602,37 +861,38 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             *cookie = idx + 1;
             return 0;
         }
-        /* Then iterate live PIDs — not implemented as full iteration here,
-         * but let the loop fall through to end-of-directory. */
         return -ENOENT;  /* end of directory */
     }
 
     if (dn->kind == PROC_PID_DIR) {
         static const char *entries[] = {
-            ".", "..", "status", "maps", "cmdline", "fd", "exe", "cwd"
+            ".", "..", "status", "maps", "cmdline", "fd", "exe", "cwd", "stat", "statm"
         };
         static const uint8_t etypes[] = {
             FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
             FUT_VDIR_TYPE_DIR,
-            FUT_VDIR_TYPE_SYMLINK, FUT_VDIR_TYPE_SYMLINK
+            FUT_VDIR_TYPE_SYMLINK, FUT_VDIR_TYPE_SYMLINK,
+            FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG
         };
         uint64_t pid = dn->pid;
-        if (idx < 8) {
+        if (idx < 10) {
             uint64_t ino;
             switch (idx) {
-                case 0: ino = PROC_INO_PID_DIR(pid); break;
-                case 1: ino = PROC_INO_ROOT; break;
-                case 2: ino = PROC_INO_PID_STATUS(pid); break;
-                case 3: ino = PROC_INO_PID_MAPS(pid); break;
+                case 0: ino = PROC_INO_PID_DIR(pid);     break;
+                case 1: ino = PROC_INO_ROOT;              break;
+                case 2: ino = PROC_INO_PID_STATUS(pid);  break;
+                case 3: ino = PROC_INO_PID_MAPS(pid);    break;
                 case 4: ino = PROC_INO_PID_CMDLINE(pid); break;
-                case 5: ino = PROC_INO_PID_FD(pid); break;
-                case 6: ino = PROC_INO_PID_EXE(pid); break;
-                case 7: ino = PROC_INO_PID_CWD(pid); break;
+                case 5: ino = PROC_INO_PID_FD(pid);      break;
+                case 6: ino = PROC_INO_PID_EXE(pid);     break;
+                case 7: ino = PROC_INO_PID_CWD(pid);     break;
+                case 8: ino = PROC_INO_PID_STAT(pid);    break;
+                case 9: ino = PROC_INO_PID_STATM(pid);   break;
                 default: ino = 0; break;
             }
             de->d_ino    = ino;
-            de->d_off    = idx + 1;
+            de->d_off    = (uint64_t)(idx + 1);
             de->d_type   = etypes[idx];
             de->d_reclen = sizeof(*de);
             const char *nm = entries[idx];

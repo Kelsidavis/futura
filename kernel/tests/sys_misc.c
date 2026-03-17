@@ -5294,6 +5294,129 @@ static void test_procfs_self_cwd(void) {
 }
 
 /* ============================================================
+ * Test 101: /proc/self/stat is readable and has expected format
+ * ============================================================ */
+static void test_procfs_self_stat(void) {
+    fut_printf("[MISC-TEST] Test 101: /proc/self/stat readable\n");
+
+    int fd = fut_vfs_open("/proc/self/stat", 0 /* O_RDONLY */, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open /proc/self/stat failed: %d\n", fd);
+        fut_test_fail(101);
+        return;
+    }
+
+    char buf[512];
+    __builtin_memset(buf, 0, sizeof(buf));
+    ssize_t n = fut_vfs_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+
+    if (n <= 0) {
+        fut_printf("[MISC-TEST] ✗ read /proc/self/stat returned %ld\n", (long)n);
+        fut_test_fail(101);
+        return;
+    }
+
+    /* Field 1 must be a digit (pid), and there must be a '(' for the comm field */
+    int ok = 0;
+    if (buf[0] >= '1' && buf[0] <= '9') {
+        for (ssize_t i = 0; i < n - 1; i++) {
+            if (buf[i] == ' ' && buf[i+1] == '(') { ok = 1; break; }
+        }
+    }
+    if (!ok) {
+        fut_printf("[MISC-TEST] ✗ /proc/self/stat: unexpected format: '%.40s'\n", buf);
+        fut_test_fail(101);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ /proc/self/stat: readable, %ld bytes, pid+comm ok\n", (long)n);
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 102: /proc/self/statm is readable (7 space-separated values)
+ * ============================================================ */
+static void test_procfs_self_statm(void) {
+    fut_printf("[MISC-TEST] Test 102: /proc/self/statm readable\n");
+
+    int fd = fut_vfs_open("/proc/self/statm", 0 /* O_RDONLY */, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open /proc/self/statm failed: %d\n", fd);
+        fut_test_fail(102);
+        return;
+    }
+
+    char buf[128];
+    __builtin_memset(buf, 0, sizeof(buf));
+    ssize_t n = fut_vfs_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+
+    if (n <= 0) {
+        fut_printf("[MISC-TEST] ✗ read /proc/self/statm returned %ld\n", (long)n);
+        fut_test_fail(102);
+        return;
+    }
+
+    /* Count numeric tokens — expect exactly 7 */
+    int tokens = 0, in_word = 0;
+    for (ssize_t i = 0; i < n; i++) {
+        if (buf[i] >= '0' && buf[i] <= '9') {
+            if (!in_word) { tokens++; in_word = 1; }
+        } else {
+            in_word = 0;
+        }
+    }
+    if (tokens < 7) {
+        fut_printf("[MISC-TEST] ✗ /proc/self/statm: only %d tokens (want >=7): '%s'\n",
+                   tokens, buf);
+        fut_test_fail(102);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ /proc/self/statm: %d tokens, %ld bytes\n", tokens, (long)n);
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 103: /proc/cpuinfo is readable and has 'processor' line
+ * ============================================================ */
+static void test_procfs_cpuinfo(void) {
+    fut_printf("[MISC-TEST] Test 103: /proc/cpuinfo readable\n");
+
+    int fd = fut_vfs_open("/proc/cpuinfo", 0 /* O_RDONLY */, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open /proc/cpuinfo failed: %d\n", fd);
+        fut_test_fail(103);
+        return;
+    }
+
+    char buf[1024];
+    __builtin_memset(buf, 0, sizeof(buf));
+    ssize_t n = fut_vfs_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+
+    if (n <= 0) {
+        fut_printf("[MISC-TEST] ✗ read /proc/cpuinfo returned %ld\n", (long)n);
+        fut_test_fail(103);
+        return;
+    }
+
+    /* Find "processor" substring */
+    int found = 0;
+    for (ssize_t i = 0; i + 8 < n; i++) {
+        if (buf[i]=='p' && buf[i+1]=='r' && buf[i+2]=='o' && buf[i+3]=='c' &&
+            buf[i+4]=='e' && buf[i+5]=='s' && buf[i+6]=='s' && buf[i+7]=='o' &&
+            buf[i+8]=='r') { found = 1; break; }
+    }
+    if (!found) {
+        fut_printf("[MISC-TEST] ✗ /proc/cpuinfo: no 'processor' line found\n");
+        fut_test_fail(103);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ /proc/cpuinfo: 'processor' line present (%ld bytes)\n", (long)n);
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -5403,6 +5526,9 @@ void fut_misc_test_thread(void *arg) {
     test_procfs_meminfo();          /* Test 98: /proc/meminfo has MemTotal: */
     test_procfs_self_exe();         /* Test 99: /proc/self/exe symlink */
     test_procfs_self_cwd();         /* Test 100: /proc/self/cwd symlink */
+    test_procfs_self_stat();        /* Test 101: /proc/self/stat format */
+    test_procfs_self_statm();       /* Test 102: /proc/self/statm 7 tokens */
+    test_procfs_cpuinfo();          /* Test 103: /proc/cpuinfo processor line */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -210,17 +210,13 @@ long sys_socket(int domain, int type, int protocol) {
         protocol_desc = "custom";
     }
 
-    /* Phase 2: Validate address family (only AF_UNIX supported) */
+    /* Validate address family (only AF_UNIX supported) */
     if (local_domain != AF_UNIX) {
-        socket_printf("[SOCKET] socket(domain=%d [%s, %s], type=%d [%s, %s], flags=%s, protocol=%d [%s]) -> ENOTSUP (only AF_UNIX supported in Phase 2)\n",
-                   local_domain, domain_name, domain_desc, base_type, type_name, type_desc, flags_desc, local_protocol, protocol_desc);
-        return -ENOTSUP;
+        return -EAFNOSUPPORT;
     }
 
-    /* Phase 2: Validate socket type (only SOCK_STREAM supported) */
-    if (base_type != SOCK_STREAM) {
-        socket_printf("[SOCKET] socket(domain=%s, type=%d [%s, %s], flags=%s, protocol=%d [%s]) -> ENOTSUP (only SOCK_STREAM supported in Phase 2)\n",
-                   domain_name, base_type, type_name, type_desc, flags_desc, local_protocol, protocol_desc);
+    /* Validate socket type (SOCK_STREAM and SOCK_DGRAM for AF_UNIX) */
+    if (base_type != SOCK_STREAM && base_type != SOCK_DGRAM) {
         return -ENOTSUP;
     }
 

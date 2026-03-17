@@ -1766,6 +1766,22 @@ static int64_t sys_setgroups_wrapper(uint64_t size, uint64_t list, uint64_t arg2
     return sys_setgroups((int)size, (const uint32_t *)list);
 }
 
+/* sys_sethostname_wrapper */
+extern long sys_sethostname(const char *name, int len);
+static int64_t sys_sethostname_wrapper(uint64_t name, uint64_t len, uint64_t arg2,
+                                        uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+    return sys_sethostname((const char *)name, (int)len);
+}
+
+/* sys_setdomainname_wrapper */
+extern long sys_setdomainname(const char *name, int len);
+static int64_t sys_setdomainname_wrapper(uint64_t name, uint64_t len, uint64_t arg2,
+                                          uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+    return sys_setdomainname((const char *)name, (int)len);
+}
+
 /* sys_syncfs_wrapper */
 extern long sys_syncfs(int fd);
 static int64_t sys_syncfs_wrapper(uint64_t fd, uint64_t arg1, uint64_t arg2,
@@ -2545,6 +2561,8 @@ struct syscall_entry {
 #define __NR_getcwd         17
 #define __NR_dup            23
 #define __NR_dup3           24
+#define __NR_sethostname    161
+#define __NR_setdomainname  162
 #define __NR_accept4        242
 #define __NR_syncfs         267
 #define __NR_renameat2      276
@@ -3020,6 +3038,10 @@ static void arm64_syscall_table_init(void) {
     syscall_table[__NR_accept4].name = "accept4";
     syscall_table[__NR_syncfs].handler = (syscall_fn_t)sys_syncfs_wrapper;
     syscall_table[__NR_syncfs].name = "syncfs";
+    syscall_table[__NR_sethostname].handler = (syscall_fn_t)sys_sethostname_wrapper;
+    syscall_table[__NR_sethostname].name = "sethostname";
+    syscall_table[__NR_setdomainname].handler = (syscall_fn_t)sys_setdomainname_wrapper;
+    syscall_table[__NR_setdomainname].name = "setdomainname";
     syscall_table[__NR_getgroups].handler = (syscall_fn_t)sys_getgroups_wrapper;
     syscall_table[__NR_getgroups].name = "getgroups";
     syscall_table[__NR_setgroups].handler = (syscall_fn_t)sys_setgroups_wrapper;

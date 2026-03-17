@@ -2502,6 +2502,37 @@ static void test_fionread_pipe(void) {
 }
 
 /* ============================================================
+ * Test 57: lseek on pipe returns ESPIPE
+ * ============================================================ */
+static void test_lseek_pipe_espipe(void) {
+    fut_printf("[MISC-TEST] Test 57: lseek on pipe returns ESPIPE\n");
+
+    int pipefd[2];
+    long ret = sys_pipe(pipefd);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ pipe() returned %ld\n", ret);
+        fut_test_fail(57);
+        return;
+    }
+
+    /* lseek on read end should fail */
+    extern int64_t fut_vfs_lseek(int fd, int64_t offset, int whence);
+    int64_t pos = fut_vfs_lseek(pipefd[0], 0, 1);  /* SEEK_CUR */
+    fut_vfs_close(pipefd[0]);
+    fut_vfs_close(pipefd[1]);
+
+    if (pos != -ESPIPE) {
+        fut_printf("[MISC-TEST] ✗ lseek(pipe) returned %lld (expected -ESPIPE=%d)\n",
+                   (long long)pos, -ESPIPE);
+        fut_test_fail(57);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ lseek on pipe: ESPIPE\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test 38: setrlimit hard limit can be raised by root, denied for non-root
  * ============================================================ */
 static void test_setrlimit_hard(void) {
@@ -2935,6 +2966,7 @@ void fut_misc_test_thread(void *arg) {
     test_rename_same_file();    /* Test 54: rename same file no-op */
     test_pipe_sz();             /* Test 55: F_GETPIPE_SZ */
     test_fionread_pipe();       /* Test 56: FIONREAD on pipe */
+    test_lseek_pipe_espipe();   /* Test 57: lseek pipe ESPIPE */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

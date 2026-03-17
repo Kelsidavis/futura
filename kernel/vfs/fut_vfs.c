@@ -2226,9 +2226,14 @@ int64_t fut_vfs_lseek(int fd, int64_t offset, int whence) {
         return -EBADF;
     }
 
-    /* chr_ops files (memfd, devfs) may or may not be seekable.
-     * We allow lseek on all files; non-seekable callbacks (pipes, sockets)
-     * simply ignore the offset in their read/write implementations. */
+    /* Pipes are non-seekable: return ESPIPE per POSIX.
+     * Pipe fds are identified by having chr_ops with O_RDONLY or O_WRONLY
+     * (set by pipe()/pipe2()). Seekable chr_ops files (memfd, devfs) use O_RDWR. */
+    if (file->chr_ops && !file->vnode) {
+        int mode = file->flags & O_ACCMODE;
+        if (mode == O_RDONLY || mode == O_WRONLY)
+            return -ESPIPE;
+    }
 
     uint64_t new_offset = file->offset;
 

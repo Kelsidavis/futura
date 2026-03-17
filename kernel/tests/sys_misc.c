@@ -2836,6 +2836,95 @@ static void test_timerfd_epoll(void) {
 }
 
 /* ============================================================
+ * Test 71: eventfd + epoll wakeup integration
+ * ============================================================ */
+static void test_eventfd_epoll(void) {
+    fut_printf("[MISC-TEST] Test 71: eventfd + epoll\n");
+
+    /* Create eventfd with counter=0 */
+    extern long sys_eventfd2(unsigned int initval, int flags);
+    long efd = sys_eventfd2(0, 0);
+    if (efd < 0) {
+        fut_printf("[MISC-TEST] ✗ eventfd2: %ld\n", efd);
+        fut_test_fail(71);
+        return;
+    }
+
+    /* Create epoll and add eventfd */
+    long epfd = sys_epoll_create1(0);
+    if (epfd < 0) {
+        fut_printf("[MISC-TEST] ✗ epoll_create1: %ld\n", epfd);
+        fut_vfs_close((int)efd);
+        fut_test_fail(71);
+        return;
+    }
+
+    struct { uint32_t events; uint64_t data; } __attribute__((packed)) ev = {
+        .events = 0x001, /* EPOLLIN */
+        .data = 99
+    };
+    long ret = sys_epoll_ctl((int)epfd, 1 /* ADD */, (int)efd, &ev);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ epoll_ctl: %ld\n", ret);
+        sys_close((int)epfd);
+        fut_vfs_close((int)efd);
+        fut_test_fail(71);
+        return;
+    }
+
+    /* Write value to eventfd (makes it readable) */
+    uint64_t val = 1;
+    ssize_t nw = fut_vfs_write((int)efd, &val, sizeof(val));
+    if (nw != 8) {
+        fut_printf("[MISC-TEST] ✗ eventfd write: %zd\n", nw);
+        sys_close((int)epfd);
+        fut_vfs_close((int)efd);
+        fut_test_fail(71);
+        return;
+    }
+
+    /* epoll_wait should return immediately (eventfd is readable) */
+    struct { uint32_t events; uint64_t data; } __attribute__((packed)) out = {0};
+    ret = sys_epoll_wait((int)epfd, &out, 1, 0);  /* timeout=0 */
+    sys_close((int)epfd);
+
+    if (ret != 1) {
+        fut_printf("[MISC-TEST] ✗ epoll_wait: %ld (expected 1)\n", ret);
+        fut_vfs_close((int)efd);
+        fut_test_fail(71);
+        return;
+    }
+
+    if (!(out.events & 0x001)) {
+        fut_printf("[MISC-TEST] ✗ events=0x%x (expected EPOLLIN)\n", out.events);
+        fut_vfs_close((int)efd);
+        fut_test_fail(71);
+        return;
+    }
+
+    if (out.data != 99) {
+        fut_printf("[MISC-TEST] ✗ data=%llu (expected 99)\n", (unsigned long long)out.data);
+        fut_vfs_close((int)efd);
+        fut_test_fail(71);
+        return;
+    }
+
+    /* Read the eventfd to consume the event */
+    uint64_t rval = 0;
+    ssize_t nr = fut_vfs_read((int)efd, &rval, sizeof(rval));
+    fut_vfs_close((int)efd);
+
+    if (nr != 8 || rval != 1) {
+        fut_printf("[MISC-TEST] ✗ eventfd read: nr=%zd val=%llu\n", nr, (unsigned long long)rval);
+        fut_test_fail(71);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ eventfd+epoll: write woke epoll, read consumed, data=99\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test 52: write on O_RDONLY fd returns EBADF
  * ============================================================ */
 static void test_rdonly_write_ebadf(void) {
@@ -3708,6 +3797,7 @@ void fut_misc_test_thread(void *arg) {
     test_socket_errors();       /* Test 68: socket error codes */
     test_zero_length_io();      /* Test 69: zero-length read/write */
     test_timerfd_epoll();       /* Test 70: timerfd + epoll integration */
+    test_eventfd_epoll();       /* Test 71: eventfd + epoll integration */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

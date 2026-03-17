@@ -14,6 +14,7 @@
 #include <kernel/fut_thread.h>
 #include <kernel/fut_vfs.h>
 #include <kernel/errno.h>
+#include <kernel/signal.h>
 #include <kernel/syscalls.h>
 #include <kernel/uaccess.h>
 #include "tests/test_api.h"
@@ -154,7 +155,7 @@ static void test_pipe_epipe(void) {
     /* Close read end */
     fut_vfs_close(read_fd);
 
-    /* Try to write to pipe - should get EPIPE */
+    /* Try to write to pipe - should get EPIPE (and SIGPIPE delivered) */
     const char *test_msg = "This should fail";
     ssize_t write_ret = fut_vfs_write(write_fd, test_msg, 16);
 
@@ -166,7 +167,21 @@ static void test_pipe_epipe(void) {
         return;
     }
 
-    fut_printf("[PIPE-TEST] ✓ EPIPE correctly returned when writing to closed read end\n");
+    /* Verify SIGPIPE was delivered (POSIX requirement) */
+    fut_task_t *task = fut_task_current();
+    if (task) {
+        uint64_t sigpipe_bit = (1ULL << (SIGPIPE - 1));
+        uint64_t pending = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
+        if (!(pending & sigpipe_bit)) {
+            fut_printf("[PIPE-TEST] ✗ SIGPIPE not pending after EPIPE write\n");
+            fut_test_fail(PIPE_TEST_EPIPE);
+            return;
+        }
+        /* Clear SIGPIPE so it doesn't interfere with later tests */
+        __atomic_and_fetch(&task->pending_signals, ~sigpipe_bit, __ATOMIC_RELEASE);
+    }
+
+    fut_printf("[PIPE-TEST] ✓ EPIPE + SIGPIPE correctly delivered on broken pipe write\n");
     fut_test_pass();
 }
 

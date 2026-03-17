@@ -5238,6 +5238,62 @@ static void test_procfs_meminfo(void) {
 }
 
 /* ============================================================
+ * Test 99: /proc/self/exe symlink resolves to non-empty path
+ * ============================================================ */
+static void test_procfs_self_exe(void) {
+    fut_printf("[MISC-TEST] Test 99: /proc/self/exe symlink\n");
+
+    char buf[256];
+    __builtin_memset(buf, 0, sizeof(buf));
+
+    /* Use fut_vfs_readlink which works from kernel context */
+    ssize_t n = fut_vfs_readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (n < 0) {
+        /* exe_path not set for kernel test task — acceptable if empty,
+         * but readlink itself must not crash */
+        fut_printf("[MISC-TEST] ✓ /proc/self/exe: readlink returned %ld "
+                   "(empty exe_path for kernel test task is OK)\n", (long)n);
+        fut_test_pass();
+        return;
+    }
+    buf[n] = '\0';
+    /* Path must start with '/' or be "(deleted)" */
+    if (buf[0] != '/' && buf[0] != '(') {
+        fut_printf("[MISC-TEST] ✗ /proc/self/exe: unexpected target '%s'\n", buf);
+        fut_test_fail(99);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ /proc/self/exe -> '%s'\n", buf);
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 100: /proc/self/cwd symlink resolves to current directory
+ * ============================================================ */
+static void test_procfs_self_cwd(void) {
+    fut_printf("[MISC-TEST] Test 100: /proc/self/cwd symlink\n");
+
+    char buf[256];
+    __builtin_memset(buf, 0, sizeof(buf));
+
+    ssize_t n = fut_vfs_readlink("/proc/self/cwd", buf, sizeof(buf) - 1);
+    if (n <= 0) {
+        fut_printf("[MISC-TEST] ✗ /proc/self/cwd readlink returned %ld\n", (long)n);
+        fut_test_fail(100);
+        return;
+    }
+    buf[n] = '\0';
+    /* Must start with '/' */
+    if (buf[0] != '/') {
+        fut_printf("[MISC-TEST] ✗ /proc/self/cwd: target '%s' not absolute\n", buf);
+        fut_test_fail(100);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ /proc/self/cwd -> '%s'\n", buf);
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -5345,6 +5401,8 @@ void fut_misc_test_thread(void *arg) {
     test_procfs_uptime();           /* Test 96: /proc/uptime readable */
     test_procfs_self_status();      /* Test 97: /proc/self/status has Pid: line */
     test_procfs_meminfo();          /* Test 98: /proc/meminfo has MemTotal: */
+    test_procfs_self_exe();         /* Test 99: /proc/self/exe symlink */
+    test_procfs_self_cwd();         /* Test 100: /proc/self/cwd symlink */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

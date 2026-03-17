@@ -772,6 +772,14 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
         }
     }
 
+    /* Record executable path for /proc/self/exe */
+    {
+        size_t plen = 0;
+        while (kernel_pathname[plen] && plen < sizeof(task->exe_path) - 1) plen++;
+        __builtin_memcpy(task->exe_path, kernel_pathname, plen);
+        task->exe_path[plen] = '\0';
+    }
+
     /* Call ELF loader with kernel-space argv/envp
      * This prevents TOCTOU race: userspace can no longer modify arguments after validation.
      * kernel_argv, kernel_envp, and kernel_pathname are immutable kernel copies. */

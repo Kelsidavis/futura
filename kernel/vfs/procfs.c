@@ -49,6 +49,8 @@ enum procfs_kind {
     PROC_CMDLINE,    /* /proc/<pid>/cmdline */
     PROC_FD_DIR,     /* /proc/<pid>/fd/ */
     PROC_FD_ENTRY,   /* /proc/<pid>/fd/<n> symlink */
+    PROC_EXE,        /* /proc/<pid>/exe symlink */
+    PROC_CWD,        /* /proc/<pid>/cwd symlink */
 };
 
 typedef struct {
@@ -73,6 +75,8 @@ typedef struct {
 #define PROC_INO_PID_MAPS(p)   (1000ULL + (uint64_t)(p) * 100 + 2)
 #define PROC_INO_PID_CMDLINE(p)(1000ULL + (uint64_t)(p) * 100 + 3)
 #define PROC_INO_PID_FD(p)     (1000ULL + (uint64_t)(p) * 100 + 4)
+#define PROC_INO_PID_EXE(p)    (1000ULL + (uint64_t)(p) * 100 + 5)
+#define PROC_INO_PID_CWD(p)    (1000ULL + (uint64_t)(p) * 100 + 6)
 /* fd entries: use high range to avoid collision */
 #define PROC_INO_FD_ENTRY(p,n) (100000000ULL + (uint64_t)(p) * 1000 + (uint64_t)(n))
 
@@ -373,25 +377,70 @@ static ssize_t procfs_link_readlink(struct fut_vnode *vnode, char *buf, size_t s
     procfs_node_t *n = (procfs_node_t *)vnode->fs_data;
     if (!n) return -EIO;
 
-    char tmp[64];
+    char tmp[256];
     size_t len = 0;
 
-    if (n->kind == PROC_SELF) {
-        /* Resolve to /proc/<current_pid> */
-        fut_task_t *cur = fut_task_current();
-        uint64_t cpid = cur ? cur->pid : 1;
-        struct pbuf b = { tmp, 0, sizeof(tmp) };
-        pb_str(&b, "/proc/");
-        pb_u64(&b, cpid);
-        len = b.pos;
-    } else if (n->kind == PROC_FD_ENTRY) {
-        /* /proc/<pid>/fd/<n>: stub — just return the fd number as path */
-        struct pbuf b = { tmp, 0, sizeof(tmp) };
-        pb_str(&b, "/dev/fd/");
-        pb_u64(&b, (uint64_t)n->fd);
-        len = b.pos;
-    } else {
-        return -EINVAL;
+    switch (n->kind) {
+        case PROC_SELF: {
+            /* Resolve to /proc/<current_pid> */
+            fut_task_t *cur = fut_task_current();
+            uint64_t cpid = cur ? cur->pid : 1;
+            struct pbuf b = { tmp, 0, sizeof(tmp) };
+            pb_str(&b, "/proc/");
+            pb_u64(&b, cpid);
+            len = b.pos;
+            break;
+        }
+        case PROC_EXE: {
+            /* Executable path stored at exec time */
+            fut_task_t *task = fut_task_by_pid(n->pid);
+            if (!task) return -ESRCH;
+            const char *ep = task->exe_path[0] ? task->exe_path : "(deleted)";
+            while (ep[len] && len < sizeof(tmp) - 1) { tmp[len] = ep[len]; len++; }
+            break;
+        }
+        case PROC_CWD: {
+            /* Current working directory */
+            fut_task_t *task = fut_task_by_pid(n->pid);
+            if (!task) return -ESRCH;
+            const char *cwd = (task->cwd_cache && task->cwd_cache[0]) ?
+                               task->cwd_cache : "/";
+            while (cwd[len] && len < sizeof(tmp) - 1) { tmp[len] = cwd[len]; len++; }
+            break;
+        }
+        case PROC_FD_ENTRY: {
+            /* Use file->path if available, else vnode path, else /dev/fd/<n> */
+            fut_task_t *task = fut_task_by_pid(n->pid);
+            if (!task) return -ESRCH;
+            if (n->fd >= 0 && n->fd < task->max_fds && task->fd_table[n->fd]) {
+                struct fut_file *file = task->fd_table[n->fd];
+                const char *fpath = NULL;
+                if (file->path && file->path[0]) {
+                    fpath = file->path;
+                } else if (file->vnode) {
+                    /* Build path from vnode chain */
+                    char *built = fut_vnode_build_path(file->vnode, tmp, sizeof(tmp));
+                    if (built) {
+                        len = 0;
+                        while (tmp[len] && len < sizeof(tmp) - 1) len++;
+                        break;
+                    }
+                }
+                if (fpath) {
+                    while (fpath[len] && len < sizeof(tmp) - 1)
+                        { tmp[len] = fpath[len]; len++; }
+                    break;
+                }
+            }
+            /* Fallback */
+            struct pbuf b = { tmp, 0, sizeof(tmp) };
+            pb_str(&b, "/dev/fd/");
+            pb_u64(&b, (uint64_t)n->fd);
+            len = b.pos;
+            break;
+        }
+        default:
+            return -EINVAL;
     }
 
     if (len > size) len = size;
@@ -490,6 +539,16 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0040500, PROC_FD_DIR, pid, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "exe")) {
+            *result = procfs_alloc_vnode(mnt, VN_LNK, PROC_INO_PID_EXE(pid),
+                                          0120777, PROC_EXE, pid, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "cwd")) {
+            *result = procfs_alloc_vnode(mnt, VN_LNK, PROC_INO_PID_CWD(pid),
+                                          0120777, PROC_CWD, pid, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         return -ENOENT;
     }
 
@@ -549,14 +608,17 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
     }
 
     if (dn->kind == PROC_PID_DIR) {
-        static const char *entries[] = { ".", "..", "status", "maps", "cmdline", "fd" };
+        static const char *entries[] = {
+            ".", "..", "status", "maps", "cmdline", "fd", "exe", "cwd"
+        };
         static const uint8_t etypes[] = {
             FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
-            FUT_VDIR_TYPE_DIR
+            FUT_VDIR_TYPE_DIR,
+            FUT_VDIR_TYPE_SYMLINK, FUT_VDIR_TYPE_SYMLINK
         };
         uint64_t pid = dn->pid;
-        if (idx < 6) {
+        if (idx < 8) {
             uint64_t ino;
             switch (idx) {
                 case 0: ino = PROC_INO_PID_DIR(pid); break;
@@ -565,6 +627,8 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                 case 3: ino = PROC_INO_PID_MAPS(pid); break;
                 case 4: ino = PROC_INO_PID_CMDLINE(pid); break;
                 case 5: ino = PROC_INO_PID_FD(pid); break;
+                case 6: ino = PROC_INO_PID_EXE(pid); break;
+                case 7: ino = PROC_INO_PID_CWD(pid); break;
                 default: ino = 0; break;
             }
             de->d_ino    = ino;

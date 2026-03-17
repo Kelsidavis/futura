@@ -2703,28 +2703,71 @@ ssize_t fut_vfs_readlink(const char *path, char *buf, size_t bufsiz) {
         return -EINVAL;
     }
 
-    /* Look up the symlink vnode without following the final component */
+    /* Split path into parent directory and leaf name.
+     * Use lookup_vnode() for the parent so intermediate symlinks are followed
+     * (e.g. /proc/self/cwd: "self" is a symlink and must be resolved first). */
+    char abs_buf[FUT_VFS_PATH_BUFFER_SIZE];
+    path = resolve_path_to_abs(path, abs_buf);
+
+    /* Find last '/' to split parent/leaf */
+    int slash = -1;
+    for (int i = 0; path[i]; i++) {
+        if (path[i] == '/') slash = i;
+    }
+
+    char leaf[FUT_VFS_NAME_MAX + 1];
     struct fut_vnode *parent = NULL;
-    char name[FUT_VFS_NAME_MAX + 1];
-    int ret = lookup_parent_and_name(path, &parent, name);
-    if (ret < 0) {
-        return ret;
+    int ret;
+
+    if (slash <= 0) {
+        /* No slash or only root slash: parent is root, leaf is path (or "") */
+        if (slash == 0) {
+            /* path is "/<name>" */
+            size_t nl = 0;
+            while (path[1 + nl] && nl < FUT_VFS_NAME_MAX) { leaf[nl] = path[1 + nl]; nl++; }
+            leaf[nl] = '\0';
+        } else {
+            /* relative path with no slash — use cwd */
+            size_t nl = 0;
+            while (path[nl] && nl < FUT_VFS_NAME_MAX) { leaf[nl] = path[nl]; nl++; }
+            leaf[nl] = '\0';
+        }
+        parent = root_vnode;
+        /* root_vnode is never freed; no need to ref */
+        if (!parent) return -ENOENT;
+    } else {
+        /* Build parent path string */
+        char parent_path[FUT_VFS_PATH_BUFFER_SIZE];
+        if (slash == 0) {
+            parent_path[0] = '/'; parent_path[1] = '\0';
+        } else {
+            size_t pi = 0;
+            while (pi < (size_t)slash && pi < sizeof(parent_path) - 1)
+                { parent_path[pi] = path[pi]; pi++; }
+            parent_path[pi] = '\0';
+        }
+        /* Copy leaf */
+        size_t nl = 0;
+        const char *lp = path + slash + 1;
+        while (*lp && nl < FUT_VFS_NAME_MAX) { leaf[nl++] = *lp++; }
+        leaf[nl] = '\0';
+
+        /* Resolve parent, following intermediate symlinks */
+        ret = lookup_vnode(parent_path, &parent);
+        if (ret < 0) return ret;
+        if (!parent) return -ENOENT;
     }
 
     if (!parent->ops || !parent->ops->lookup) {
-        release_lookup_ref(parent);
+        if (parent != root_vnode) release_lookup_ref(parent);
         return -ENOENT;
     }
 
     struct fut_vnode *vnode = NULL;
-    ret = parent->ops->lookup(parent, name, &vnode);
-    release_lookup_ref(parent);
-    if (ret < 0) {
-        return ret;
-    }
-    if (!vnode) {
-        return -ENOENT;
-    }
+    ret = parent->ops->lookup(parent, leaf, &vnode);
+    if (parent != root_vnode) release_lookup_ref(parent);
+    if (ret < 0) return ret;
+    if (!vnode) return -ENOENT;
 
     if (vnode->type != VN_LNK) {
         fut_vnode_unref(vnode);

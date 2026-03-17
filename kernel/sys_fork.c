@@ -965,8 +965,9 @@ long sys_fork(void) {
     child_task->no_new_privs  = parent_task->no_new_privs;
     /* pdeathsig is NOT inherited — cleared on fork (Linux behavior) */
     child_task->pdeathsig     = 0;
-    /* comm is inherited (child starts with same name) */
+    /* comm and exe_path are inherited (child starts with same name/exe) */
     __builtin_memcpy(child_task->comm, parent_task->comm, sizeof(child_task->comm));
+    __builtin_memcpy(child_task->exe_path, parent_task->exe_path, sizeof(child_task->exe_path));
 
     /* Inherit I/O priority */
     child_task->ioprio       = parent_task->ioprio;

@@ -488,6 +488,12 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
         fut_io_budget_consume_bytes(task, (uint64_t)ret);
     }
 
+    /* Deliver SIGPIPE on broken connection unless MSG_NOSIGNAL */
+    if (ret == -EPIPE && !(local_flags & 0x4000 /* MSG_NOSIGNAL */)) {
+        extern int fut_signal_send(struct fut_task *task, int signum);
+        fut_signal_send(task, 13 /* SIGPIPE */);
+    }
+
     if (ret < 0) {
         const char *error_desc;
         switch (ret) {

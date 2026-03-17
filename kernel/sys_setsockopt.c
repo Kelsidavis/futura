@@ -455,165 +455,46 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
 
             case SO_REUSEADDR:
             case SO_REUSEPORT:
-                /* Address/port reuse options
-                 * Phase 2: Validate and accept, but not enforced (Unix sockets don't have port conflicts)
-                 * Enforce strict optlen validation */
-                {
-                    /* Security hardening: Validate optlen exactly matches sizeof(int)
-                     * Without strict validation, attacker can pass oversized optlen:
-                     *   - setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &value, 1024)
-                     *   - Early check (line 284) allows optlen up to 1024 bytes
-                     *   - Cached optlen could be used later in buffer allocations
-                     *   - Defense: Reject optlen that doesn't match expected size */
-                    if (optlen != sizeof(int)) {
-                        fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, SOL_SOCKET, optname=%d, optlen=%u) -> EINVAL "
-                                   "(expected exactly %zu bytes, got %u)\n",
-                                   sockfd, optname, sizeof(int), optlen);
-                        return -EINVAL;
-                    }
-                    int value;
-                    if (fut_copy_from_user(&value, optval, sizeof(int)) != 0) {
-                        return -EFAULT;
-                    }
-                    fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, SOL_SOCKET, optname=%d, value=%d) -> 0 (accepted, not enforced)\n",
-                               sockfd, optname, value);
-                    return 0;
-                }
+                /* Accept without enforcement (AF_UNIX doesn't have port conflicts) */
+                if (optlen < sizeof(int)) return -EINVAL;
+                return 0;
 
             case SO_KEEPALIVE:
             case SO_BROADCAST:
             case SO_OOBINLINE:
             case SO_DONTROUTE:
             case SO_DEBUG:
-                /* Boolean options - accept but not enforced
-                 * Enforce strict optlen validation */
-                {
-                    /* Security hardening: Validate optlen exactly matches sizeof(int) */
-                    if (optlen != sizeof(int)) {
-                        fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, SOL_SOCKET, optname=%d, optlen=%u) -> EINVAL "
-                                   "(expected exactly %zu bytes, got %u)\n",
-                                   sockfd, optname, sizeof(int), optlen);
-                        return -EINVAL;
-                    }
-                    int value;
-                    if (fut_copy_from_user(&value, optval, sizeof(int)) != 0) {
-                        return -EFAULT;
-                    }
-                    fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, SOL_SOCKET, optname=%d, value=%d) -> 0 (accepted, not enforced)\n",
-                               sockfd, optname, value);
-                    return 0;
-                }
+                /* Boolean options — accept without enforcement */
+                if (optlen < sizeof(int)) return -EINVAL;
+                return 0;
 
             case SO_SNDBUF:
             case SO_RCVBUF:
-                /* Buffer size options
-                 * Phase 2: Validate value, but buffer sizes are fixed at FUT_SOCKET_BUFSIZE
-                 * Enforce strict optlen validation */
-                {
-                    /* Security hardening: Validate optlen exactly matches sizeof(int) */
-                    if (optlen != sizeof(int)) {
-                        fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, SOL_SOCKET, optname=%d, optlen=%u) -> EINVAL "
-                                   "(expected exactly %zu bytes, got %u)\n",
-                                   sockfd, optname, sizeof(int), optlen);
-                        return -EINVAL;
-                    }
-                    int value;
-                    if (fut_copy_from_user(&value, optval, sizeof(int)) != 0) {
-                        return -EFAULT;
-                    }
-                    if (value < 0) {
-                        return -EINVAL;
-                    }
-                    fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, SOL_SOCKET, optname=%d, value=%d) -> 0 (accepted, buffer fixed at %d)\n",
-                               sockfd, optname, value, FUT_SOCKET_BUFSIZE);
-                    return 0;
-                }
+                /* Buffer size — accept without enforcement (fixed internally) */
+                if (optlen < sizeof(int)) return -EINVAL;
+                return 0;
 
             case SO_RCVLOWAT:
             case SO_SNDLOWAT:
-                /* Low-water mark options - require int value
-                 * Accept but not enforced (always uses default of 1) */
-                {
-                    if (optlen != sizeof(int)) {
-                        fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, SOL_SOCKET, optname=%d, optlen=%u) -> EINVAL "
-                                   "(expected exactly %zu bytes, got %u)\n",
-                                   sockfd, optname, sizeof(int), optlen);
-                        return -EINVAL;
-                    }
-                    int value;
-                    if (fut_copy_from_user(&value, optval, sizeof(int)) != 0) {
-                        return -EFAULT;
-                    }
-                    fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, SOL_SOCKET, optname=%d, value=%d) -> 0 (accepted, not enforced)\n",
-                               sockfd, optname, value);
-                    return 0;
-                }
+                /* Low-water mark — accept without enforcement */
+                if (optlen < sizeof(int)) return -EINVAL;
+                return 0;
 
             case SO_RCVTIMEO:
             case SO_SNDTIMEO:
-                /* Timeout options - require struct timeval
-                 * Accept but not enforced (sockets have no timeout) */
-                {
-                    struct timeval {
-                        long tv_sec;
-                        long tv_usec;
-                    };
-                    if (optlen != sizeof(struct timeval)) {
-                        fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, SOL_SOCKET, optname=%d, optlen=%u) -> EINVAL "
-                                   "(expected exactly %zu bytes, got %u)\n",
-                                   sockfd, optname, sizeof(struct timeval), optlen);
-                        return -EINVAL;
-                    }
-                    struct timeval tv;
-                    if (fut_copy_from_user(&tv, optval, sizeof(struct timeval)) != 0) {
-                        return -EFAULT;
-                    }
-                    fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, SOL_SOCKET, optname=%d, tv_sec=%ld, tv_usec=%ld) -> 0 (accepted, not enforced)\n",
-                               sockfd, optname, tv.tv_sec, tv.tv_usec);
-                    return 0;
-                }
+                /* Timeout — accept without enforcement */
+                if (optlen < (socklen_t)(2 * sizeof(long))) return -EINVAL;
+                return 0;
 
             case SO_LINGER:
-                /* Linger option - requires struct linger
-                 * Accept but not enforced (close is always immediate) */
-                {
-                    struct linger {
-                        int l_onoff;
-                        int l_linger;
-                    };
-                    if (optlen != sizeof(struct linger)) {
-                        fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, SOL_SOCKET, SO_LINGER, optlen=%u) -> EINVAL "
-                                   "(expected exactly %zu bytes, got %u)\n",
-                                   sockfd, sizeof(struct linger), optlen);
-                        return -EINVAL;
-                    }
-                    struct linger ling;
-                    if (fut_copy_from_user(&ling, optval, sizeof(struct linger)) != 0) {
-                        return -EFAULT;
-                    }
-                    fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, SOL_SOCKET, SO_LINGER, l_onoff=%d, l_linger=%d) -> 0 (accepted, not enforced)\n",
-                               sockfd, ling.l_onoff, ling.l_linger);
-                    return 0;
-                }
+                /* Linger — accept without enforcement */
+                if (optlen < (socklen_t)(2 * sizeof(int))) return -EINVAL;
+                return 0;
 
             case SO_TIMESTAMP:
-                /* Timestamp option - requires int value
-                 * Accept but not enforced (no timestamp support) */
-                {
-                    if (optlen != sizeof(int)) {
-                        fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, SOL_SOCKET, SO_TIMESTAMP, optlen=%u) -> EINVAL "
-                                   "(expected exactly %zu bytes, got %u)\n",
-                                   sockfd, sizeof(int), optlen);
-                        return -EINVAL;
-                    }
-                    int value;
-                    if (fut_copy_from_user(&value, optval, sizeof(int)) != 0) {
-                        return -EFAULT;
-                    }
-                    fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, SOL_SOCKET, SO_TIMESTAMP, value=%d) -> 0 (accepted, not enforced)\n",
-                               sockfd, value);
-                    return 0;
-                }
+                /* Timestamp — accept without enforcement */
+                if (optlen < sizeof(int)) return -EINVAL;
+                return 0;
 
             default:
                 /* Unknown option */

@@ -146,12 +146,23 @@ int fut_signal_send(struct fut_task *task, int signum) {
      * and return -EINTR to deliver the signal. */
     fut_waitq_wake_one(&task->signal_waitq);
 
-    /* Wake any sleeping threads in this task for EINTR delivery.
-     * This interrupts nanosleep/poll/select so they can return -EINTR. */
+    /* Wake any sleeping or blocked threads in this task for EINTR delivery.
+     * SLEEPING threads: interrupted nanosleep/poll/select via fut_thread_wake_sleeping.
+     * BLOCKED threads: interrupted pipe read/socket recv/futex wait via wait queue removal. */
     fut_thread_t *t = task->threads;
     while (t) {
-        if (t->state == FUT_THREAD_SLEEPING)
+        if (t->state == FUT_THREAD_SLEEPING) {
             fut_thread_wake_sleeping(t);
+        } else if (t->state == FUT_THREAD_BLOCKED && t->blocked_waitq) {
+            /* Remove from wait queue and make ready so the blocking syscall
+             * can check pending_signals and return -EINTR. */
+            extern bool fut_waitq_remove_thread(fut_waitq_t *q, fut_thread_t *thread);
+            if (fut_waitq_remove_thread(t->blocked_waitq, t)) {
+                t->blocked_waitq = NULL;
+                t->state = FUT_THREAD_READY;
+                fut_sched_add_thread(t);
+            }
+        }
         t = t->next;
     }
 

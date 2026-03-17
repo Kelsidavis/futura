@@ -91,6 +91,7 @@ struct fut_thread {
     fut_thread_t *next;                   // Next in scheduler ready queue
     fut_thread_t *prev;                   // Previous in scheduler ready queue
     fut_thread_t *wait_next;              // Next in wait queue (also used by futex)
+    struct fut_waitq *blocked_waitq;      // Wait queue this thread is blocked on (for signal EINTR)
     fut_thread_t *global_next;            // Next in global thread list
 
     /* POSIX scheduling policy and RT priority */

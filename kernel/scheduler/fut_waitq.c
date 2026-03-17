@@ -49,6 +49,7 @@ void fut_waitq_sleep_locked(fut_waitq_t *q, fut_spinlock_t *released_lock,
         state = FUT_THREAD_BLOCKED;
     }
     thread->state = state;
+    thread->blocked_waitq = q;
 
     // Check if released_lock is the same as q->lock to avoid double-acquire deadlock
     // This can happen when caller already holds the wait queue lock
@@ -86,6 +87,7 @@ static void fut_waitq_make_ready(fut_thread_t *thread) {
     if (!thread) {
         return;
     }
+    thread->blocked_waitq = NULL;
     thread->state = FUT_THREAD_READY;
     fut_sched_add_thread(thread);
 }

@@ -10,6 +10,7 @@
 #include "../../include/kernel/fut_socket.h"
 #include "../../include/kernel/fut_memory.h"
 #include "../../include/kernel/fut_vfs.h"
+#include "../../include/kernel/fut_task.h"
 #include "../../include/kernel/fut_waitq.h"
 #include "../../include/kernel/fut_sched.h"
 #include "../../include/kernel/fut_timer.h"
@@ -805,6 +806,18 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
             fut_spinlock_release(&pair->lock);
             return -EAGAIN;
         }
+        /* Check for pending signals → EINTR */
+        {
+            fut_task_t *stask = fut_task_current();
+            if (stask) {
+                uint64_t pending = __atomic_load_n(&stask->pending_signals, __ATOMIC_ACQUIRE);
+                uint64_t blocked = stask->signal_mask;
+                if (pending & ~blocked) {
+                    fut_spinlock_release(&pair->lock);
+                    return -EINTR;
+                }
+            }
+        }
         /* Blocking socket: wait for receiver to read data */
         fut_waitq_sleep_locked(pair->send_waitq, &pair->lock, FUT_THREAD_BLOCKED);
         /* When we wake up, reacquire the lock */
@@ -898,6 +911,18 @@ ssize_t fut_socket_recv(fut_socket_t *socket, void *buf, size_t len) {
         if (socket->flags & 0x800) {  /* O_NONBLOCK */
             fut_spinlock_release(&pair->lock);
             return -EAGAIN;
+        }
+        /* Check for pending signals → EINTR */
+        {
+            fut_task_t *stask = fut_task_current();
+            if (stask) {
+                uint64_t pending = __atomic_load_n(&stask->pending_signals, __ATOMIC_ACQUIRE);
+                uint64_t blocked = stask->signal_mask;
+                if (pending & ~blocked) {
+                    fut_spinlock_release(&pair->lock);
+                    return -EINTR;
+                }
+            }
         }
         /* Blocking socket: wait for sender to write data */
         fut_waitq_sleep_locked(pair->recv_waitq, &pair->lock, FUT_THREAD_BLOCKED);

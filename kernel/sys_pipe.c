@@ -172,6 +172,16 @@ static ssize_t pipe_read(void *inode, void *priv, void *buf, size_t len, off_t *
 
     /* Block until data is available */
     while (pipe->count == 0 && !pipe->write_closed) {
+        /* Check for pending signals → EINTR */
+        fut_task_t *task = fut_task_current();
+        if (task) {
+            uint64_t pending = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
+            uint64_t blocked = task->signal_mask;
+            if (pending & ~blocked) {
+                fut_spinlock_release(&pipe->lock);
+                return -EINTR;
+            }
+        }
         /* Pipe is empty and write end is still open - block */
         fut_waitq_sleep_locked(&pipe->read_waitq, &pipe->lock, FUT_THREAD_BLOCKED);
         /* When we wake up, reacquire the lock */
@@ -236,6 +246,16 @@ static ssize_t pipe_write(void *inode, void *priv, const void *buf, size_t len, 
 
     /* Block until space is available */
     while (pipe->count >= pipe->size && !pipe->read_closed) {
+        /* Check for pending signals → EINTR */
+        fut_task_t *stask = fut_task_current();
+        if (stask) {
+            uint64_t pending = __atomic_load_n(&stask->pending_signals, __ATOMIC_ACQUIRE);
+            uint64_t blocked = stask->signal_mask;
+            if (pending & ~blocked) {
+                fut_spinlock_release(&pipe->lock);
+                return -EINTR;
+            }
+        }
         /* Pipe is full and read end is still open - block */
         fut_waitq_sleep_locked(&pipe->write_waitq, &pipe->lock, FUT_THREAD_BLOCKED);
         /* When we wake up, reacquire the lock */

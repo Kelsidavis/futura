@@ -199,7 +199,8 @@ fut_thread_t *fut_thread_create(
         .stats = {0},                 // Initialize performance counters to zero
         .next = NULL,
         .prev = NULL,
-        .wait_next = NULL
+        .wait_next = NULL,
+        .blocked_waitq = NULL
     };
 
 #if defined(__x86_64__)

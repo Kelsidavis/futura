@@ -1175,6 +1175,7 @@ void fut_kernel_main(void) {
         devfs_create_chr("/dev/stdin",  4, 0);   /* Same as /dev/console */
         devfs_create_chr("/dev/stdout", 4, 0);
         devfs_create_chr("/dev/stderr", 4, 0);
+        devfs_create_chr("/dev/tty",    4, 0);   /* Controlling terminal */
     }
 
     fut_printf("[INIT] Root filesystem mounted (ramfs at /)\n");

@@ -4966,6 +4966,15 @@ static void test_dev_stdio_symlinks(void) {
         return;
     }
 
+    /* Test /dev/tty (controlling terminal alias) */
+    int fd_tty = (int)fut_vfs_open("/dev/tty", O_RDWR, 0);
+    if (fd_tty < 0) {
+        fut_printf("[MISC-TEST] ✗ /dev/tty open failed: %d\n", fd_tty);
+        fut_test_fail(93);
+        return;
+    }
+    fut_vfs_close(fd_tty);
+
     /* Also test that symlinks to device files work (symlink→chrdev resolution) */
     fut_vfs_symlink("/dev/null", "/tmp/null_link");
     int fd_link = (int)fut_vfs_open("/tmp/null_link", O_WRONLY, 0);

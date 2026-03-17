@@ -955,17 +955,13 @@ static int64_t sys_fchmodat_wrapper(uint64_t dirfd, uint64_t pathname,
 
 /* sys_faccessat_wrapper - check file access permissions
  * x0 = dirfd, x1 = pathname, x2 = mode, x3 = flags
- * For ARM64, only AT_FDCWD is supported (acts like access)
  */
+extern long sys_faccessat(int dirfd, const char *pathname, int mode, int flags);
 static int64_t sys_faccessat_wrapper(uint64_t dirfd, uint64_t pathname,
                                       uint64_t mode, uint64_t flags,
                                       uint64_t arg4, uint64_t arg5) {
-    (void)flags; (void)arg4; (void)arg5;
-    /* Only support AT_FDCWD for now */
-    if ((int)dirfd != AT_FDCWD) {
-        return -EBADF;
-    }
-    return sys_access((const char *)pathname, (int)mode);
+    (void)arg4; (void)arg5;
+    return sys_faccessat((int)dirfd, (const char *)pathname, (int)mode, (int)flags);
 }
 
 /* sys_linkat_wrapper - create hard link
@@ -2601,6 +2597,7 @@ struct syscall_entry {
 #define __NR_syncfs         267
 #define __NR_renameat2      276
 #define __NR_close_range    436
+#define __NR_faccessat2     439
 #define __NR_fcntl          25
 #define __NR_ioctl          29
 /* I/O priority - syscalls 30-31 */
@@ -3064,6 +3061,9 @@ static void arm64_syscall_table_init(void) {
     syscall_table[__NR_renameat2].name = "renameat2";
     syscall_table[__NR_close_range].handler = (syscall_fn_t)sys_close_range_wrapper;
     syscall_table[__NR_close_range].name = "close_range";
+    /* faccessat2 (439) = same as faccessat since our wrapper already passes flags */
+    syscall_table[__NR_faccessat2].handler = (syscall_fn_t)sys_faccessat_wrapper;
+    syscall_table[__NR_faccessat2].name = "faccessat2";
     syscall_table[__NR_accept4].handler = (syscall_fn_t)sys_accept4_wrapper;
     syscall_table[__NR_accept4].name = "accept4";
     syscall_table[__NR_syncfs].handler = (syscall_fn_t)sys_syncfs_wrapper;

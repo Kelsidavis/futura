@@ -597,25 +597,34 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
     /* Phase 3: Terminal ioctl implementations with parameter validation */
     switch (request) {
         case TCGETS: {
-            /* Return default termios settings for a raw serial terminal */
+            /* Only terminals (character devices) support TCGETS.
+             * Return ENOTTY for regular files, pipes, sockets, etc.
+             * This makes isatty() return false for non-terminal fds. */
+            if (!file->chr_ops && !(file->vnode && file->vnode->type == VN_CHR)) {
+                return -ENOTTY;
+            }
             if (!argp)
                 return -EFAULT;
             /* struct termios: c_iflag, c_oflag, c_cflag, c_lflag, c_line,
              * c_cc[19], padding — total ~60 bytes. Zero-fill for raw mode. */
             char termios_buf[60];
             __builtin_memset(termios_buf, 0, sizeof(termios_buf));
-            /* c_cflag: CS8 | CREAD | B38400 (8-bit, receiver enabled) */
-            uint32_t cflag = 0x00B0 | 0x80; /* CS8 | CREAD */
+            /* c_cflag: CS8 | CREAD (8-bit, receiver enabled) */
+            uint32_t cflag = 0x00B0 | 0x80;
             __builtin_memcpy(termios_buf + 8, &cflag, 4);
             if (fut_copy_to_user(argp, termios_buf, sizeof(termios_buf)) != 0)
                 return -EFAULT;
             return 0;
         }
         case TCSETS:
-            /* Accept and ignore — no real terminal to configure */
+            /* Only terminals support TCSETS */
+            if (!file->chr_ops && !(file->vnode && file->vnode->type == VN_CHR))
+                return -ENOTTY;
             return 0;
         case TIOCGWINSZ: {
-            /* Return default terminal window size (24x80). */
+            /* Only terminals support TIOCGWINSZ */
+            if (!file->chr_ops && !(file->vnode && file->vnode->type == VN_CHR))
+                return -ENOTTY;
             if (!argp)
                 return -EFAULT;
             struct { uint16_t ws_row; uint16_t ws_col;

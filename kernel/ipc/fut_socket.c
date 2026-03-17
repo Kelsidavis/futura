@@ -794,7 +794,7 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
 
     if (!pair->peer) {
         fut_spinlock_release(&pair->lock);
-        return 0;  /* Peer closed */
+        return -EPIPE;  /* Peer closed — broken pipe */
     }
 
     /* Block until send buffer has space (or socket is non-blocking) */
@@ -826,7 +826,7 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
         /* Check again - peer might have closed while we were sleeping */
         if (!pair->peer) {
             fut_spinlock_release(&pair->lock);
-            return 0;  /* Peer closed */
+            return -EPIPE;  /* Peer closed — broken pipe */
         }
 
         available = pair->recv_size -

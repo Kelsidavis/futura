@@ -3574,6 +3574,36 @@ static void test_isatty_tcgets(void) {
 }
 
 /* ============================================================
+ * Test 83: write to socket after peer close returns EPIPE
+ * ============================================================ */
+static void test_socket_write_epipe(void) {
+    fut_printf("[MISC-TEST] Test 83: socket write EPIPE\n");
+
+    int sv[2] = {-1, -1};
+    long ret = sys_socketpair(1, 1, 0, sv);
+    if (ret != 0) {
+        fut_test_fail(83);
+        return;
+    }
+
+    /* Close peer end */
+    fut_vfs_close(sv[1]);
+
+    /* Write to remaining end — peer is closed, should get EPIPE */
+    ssize_t nw = fut_vfs_write(sv[0], "hello", 5);
+    fut_vfs_close(sv[0]);
+
+    if (nw != -EPIPE) {
+        fut_printf("[MISC-TEST] ✗ write(closed peer) returned %zd (expected EPIPE)\n", nw);
+        fut_test_fail(83);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ socket write after peer close: EPIPE\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test 52: write on O_RDONLY fd returns EBADF
  * ============================================================ */
 static void test_rdonly_write_ebadf(void) {
@@ -4455,6 +4485,7 @@ void fut_misc_test_thread(void *arg) {
     test_nanosleep_basic();     /* Test 80: nanosleep basic + EINTR */
     test_eventfd_semaphore();   /* Test 81: eventfd EFD_SEMAPHORE mode */
     test_isatty_tcgets();       /* Test 82: isatty via TCGETS */
+    test_socket_write_epipe();  /* Test 83: write to closed socket → EPIPE */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

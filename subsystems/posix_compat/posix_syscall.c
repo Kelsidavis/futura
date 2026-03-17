@@ -927,19 +927,9 @@ static int64_t sys_exit_handler(uint64_t status, uint64_t arg2, uint64_t arg3,
 static int64_t sys_wait4_handler(uint64_t pid, uint64_t status, uint64_t options,
                                    uint64_t rusage, uint64_t arg5, uint64_t arg6) {
     (void)arg5; (void)arg6;
-    int64_t ret = (int64_t)sys_waitpid((int)pid, (int *)(uintptr_t)status, (int)options);
-
-    /* If wait succeeded and rusage was requested, zero-fill it.
-     * Proper child rusage requires tracking in the zombie task before reap,
-     * which is complex. For now, zero is valid (programs check for NULL rusage). */
-    if (ret > 0 && rusage != 0) {
-        /* struct rusage is 144 bytes (18 longs). Zero-fill for correctness. */
-        char zero_rusage[144];
-        __builtin_memset(zero_rusage, 0, sizeof(zero_rusage));
-        fut_copy_to_user((void *)(uintptr_t)rusage, zero_rusage, sizeof(zero_rusage));
-    }
-
-    return ret;
+    extern long sys_wait4(int pid, int *u_status, int flags, void *rusage_ptr);
+    return (int64_t)sys_wait4((int)pid, (int *)(uintptr_t)status, (int)options,
+                               (void *)(uintptr_t)rusage);
 }
 
 static int64_t sys_nanosleep_handler(uint64_t req, uint64_t rem, uint64_t arg3,

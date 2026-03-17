@@ -554,7 +554,7 @@ void fut_task_do_cont(fut_task_t *task) {
     fut_waitq_wake_all(&task->stop_waitq);
 }
 
-int fut_task_waitpid(int pid, int *status_out, int flags) {
+int fut_task_waitpid(int pid, int *status_out, int flags, uint64_t *child_ticks_out) {
     fut_task_t *parent = fut_task_current();
     if (!parent) {
         return -ECHILD;
@@ -627,13 +627,17 @@ int fut_task_waitpid(int pid, int *status_out, int flags) {
             for (fut_thread_t *t = match->threads; t; t = t->next) {
                 child_ticks += t->stats.cpu_ticks;
             }
-            parent->child_cpu_ticks += child_ticks + match->child_cpu_ticks;
+            uint64_t total_child_ticks = child_ticks + match->child_cpu_ticks;
+            parent->child_cpu_ticks += total_child_ticks;
 
             task_detach_child(parent, match);
             fut_spinlock_release(&task_list_lock);
 
             if (status_out) {
                 *status_out = status;
+            }
+            if (child_ticks_out) {
+                *child_ticks_out = total_child_ticks;
             }
 
             fut_task_destroy(match);

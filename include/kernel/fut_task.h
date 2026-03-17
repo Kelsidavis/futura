@@ -244,7 +244,9 @@ struct fut_mm *fut_task_get_mm(const fut_task_t *task);
 
 fut_task_t *fut_task_current(void);
 void fut_task_exit_current(int status);
-int fut_task_waitpid(int pid, int *status_out, int flags);
+/* child_ticks_out: if non-NULL, receives child's total CPU ticks at reap time
+ * (used by wait4 to populate struct rusage ru_utime). */
+int fut_task_waitpid(int pid, int *status_out, int flags, uint64_t *child_ticks_out);
 int fut_task_waitpid_ex(int pid, int *status_out, int flags, uint32_t *uid_out);
 void fut_task_signal_exit(int signal);
 void fut_task_do_stop(fut_task_t *task, int sig);

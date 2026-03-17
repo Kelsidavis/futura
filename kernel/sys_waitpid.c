@@ -23,6 +23,13 @@
 
 #include <kernel/kprintf.h>
 
+/* Architecture-specific paging headers for KERNEL_VIRTUAL_BASE bypass */
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
 /* Wait options (WNOHANG, WUNTRACED, WCONTINUED) and status macros
  * (WIFEXITED, WEXITSTATUS, WIFSIGNALED, WTERMSIG, WIFSTOPPED, WSTOPSIG)
  * are provided by sys/wait.h */
@@ -184,7 +191,7 @@ long sys_waitpid(int pid, int *u_status, int flags) {
 
     /* Call kernel waitpid implementation */
     int status = 0;
-    int rc = fut_task_waitpid(local_pid, &status, local_flags);
+    int rc = fut_task_waitpid(local_pid, &status, local_flags, NULL);
 
     /* Phase 2: Handle error cases with detailed logging */
     if (rc < 0) {
@@ -328,6 +335,87 @@ long sys_waitpid(int pid, int *u_status, int flags) {
                    "(child pid, %s, status encoding validation)\n",
                    local_pid, pid_category, pid_meaning, local_flags, flags_desc, rc,
                    status_category);
+    }
+
+    return rc;
+}
+
+/*
+ * sys_wait4 - Wait for child, optionally returning resource usage
+ *
+ * Extends sys_waitpid by filling struct rusage with the child's CPU time
+ * when rusage_ptr is non-NULL.  FUT_TIMER_HZ = 100 → 1 tick = 10,000 µs.
+ */
+#define FUT_TIMER_HZ  100           /* Scheduler tick rate (ticks per second) */
+#define USEC_PER_TICK (1000000ULL / FUT_TIMER_HZ)
+
+long sys_wait4(int pid, int *u_status, int flags, void *rusage_ptr) {
+    /* Kernel-pointer bypass for rusage: same pattern as other syscalls */
+#ifdef KERNEL_VIRTUAL_BASE
+    int use_memcpy_rusage = rusage_ptr && ((uintptr_t)rusage_ptr >= KERNEL_VIRTUAL_BASE);
+#else
+    int use_memcpy_rusage = 0;
+#endif
+
+    /* Validate rusage pointer if provided */
+    if (rusage_ptr && !use_memcpy_rusage) {
+        /* struct rusage is 144 bytes; check writability */
+        if (fut_access_ok(rusage_ptr, 144, 1) != 0) {
+            return -EFAULT;
+        }
+    }
+
+    /* Validate u_status pointer */
+    if (u_status) {
+        int bypass = 0;
+#ifdef KERNEL_VIRTUAL_BASE
+        bypass = ((uintptr_t)u_status >= KERNEL_VIRTUAL_BASE);
+#endif
+        if (!bypass && fut_access_ok(u_status, sizeof(int), 1) != 0)
+            return -EFAULT;
+    }
+
+    int status = 0;
+    uint64_t child_ticks = 0;
+    int rc = fut_task_waitpid(pid, &status, flags, &child_ticks);
+
+    if (rc <= 0)
+        return rc;
+
+    /* Write exit status to userspace */
+    if (u_status) {
+#ifdef KERNEL_VIRTUAL_BASE
+        if ((uintptr_t)u_status >= KERNEL_VIRTUAL_BASE)
+            __builtin_memcpy(u_status, &status, sizeof(status));
+        else
+#endif
+        if (fut_copy_to_user(u_status, &status, sizeof(status)) != 0)
+            return -EFAULT;
+    }
+
+    /* Fill struct rusage if requested */
+    if (rusage_ptr) {
+        /* struct rusage layout (Linux ABI, 144 bytes):
+         *   timeval ru_utime (16 bytes: tv_sec int64, tv_usec int64)
+         *   timeval ru_stime (16 bytes)
+         *   ... 112 bytes of other fields (zero-filled) */
+        char rusage_buf[144];
+        __builtin_memset(rusage_buf, 0, sizeof(rusage_buf));
+
+        /* Convert CPU ticks → microseconds for ru_utime */
+        uint64_t usec = child_ticks * USEC_PER_TICK;
+        int64_t tv_sec  = (int64_t)(usec / 1000000ULL);
+        int64_t tv_usec = (int64_t)(usec % 1000000ULL);
+
+        /* Write ru_utime at offset 0: two int64 fields */
+        __builtin_memcpy(rusage_buf + 0,  &tv_sec,  8);
+        __builtin_memcpy(rusage_buf + 8,  &tv_usec, 8);
+        /* ru_stime at offset 16: zero (no kernel/user distinction) */
+
+        if (use_memcpy_rusage)
+            __builtin_memcpy(rusage_ptr, rusage_buf, sizeof(rusage_buf));
+        else
+            fut_copy_to_user(rusage_ptr, rusage_buf, sizeof(rusage_buf));
     }
 
     return rc;

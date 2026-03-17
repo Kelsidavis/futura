@@ -232,12 +232,9 @@ static ssize_t pipe_write(void *inode, void *priv, const void *buf, size_t len, 
 
     fut_spinlock_acquire(&pipe->lock);
 
-    /* If read end is closed, deliver SIGPIPE and return EPIPE (POSIX) */
+    /* If read end is closed, return EPIPE (VFS layer delivers SIGPIPE) */
     if (pipe->read_closed) {
         fut_spinlock_release(&pipe->lock);
-        fut_task_t *task = fut_task_current();
-        if (task)
-            fut_signal_send(task, SIGPIPE);
         return -EPIPE;
     }
 
@@ -265,12 +262,9 @@ static ssize_t pipe_write(void *inode, void *priv, const void *buf, size_t len, 
         fut_spinlock_acquire(&pipe->lock);
     }
 
-    /* Check again after waking up - deliver SIGPIPE if broken */
+    /* Check again after waking up — EPIPE if broken (VFS delivers SIGPIPE) */
     if (pipe->read_closed) {
         fut_spinlock_release(&pipe->lock);
-        fut_task_t *task = fut_task_current();
-        if (task)
-            fut_signal_send(task, SIGPIPE);
         return -EPIPE;
     }
 

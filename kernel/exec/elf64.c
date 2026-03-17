@@ -468,6 +468,17 @@ static int build_user_stack(fut_mm_t *mm,
 
     uint64_t zero = 0;
 
+    /* Push 16 random bytes for AT_RANDOM (used by musl for stack canary).
+     * Place them above the auxv so we know the address before building auxv. */
+    uint8_t random_bytes[16];
+    {
+        extern long sys_getrandom(void *buf, size_t buflen, unsigned int flags);
+        sys_getrandom(random_bytes, 16, 0);
+    }
+    sp -= 16;
+    uint64_t random_addr = sp;
+    exec_copy_to_user(mm, sp, random_bytes, 16);
+
     /* Push ELF auxiliary vector (auxv) — highest address, after envp NULL.
      * musl and glibc read these to discover page size, UID, etc. */
     {
@@ -477,6 +488,7 @@ static int build_user_stack(fut_mm_t *mm,
             { 3 /* AT_PHDR */,   g_exec_phdr },
             { 4 /* AT_PHENT */,  g_exec_phent },
             { 5 /* AT_PHNUM */,  g_exec_phnum },
+            { 25 /* AT_RANDOM */, random_addr },
             { 11 /* AT_UID */,   0 },
             { 12 /* AT_EUID */,  0 },
             { 13 /* AT_GID */,   0 },
@@ -2066,12 +2078,23 @@ static int build_user_stack(fut_mm_t *mm,
     #define AT_RANDOM 25  /* Address of 16 random bytes */
     #define AT_HWCAP  16  /* Machine-dependent hints */
 
+    /* Push 16 random bytes for AT_RANDOM (stack canary seed) */
+    uint8_t rand_bytes[16];
+    {
+        extern long sys_getrandom(void *buf, size_t buflen, unsigned int flags);
+        sys_getrandom(rand_bytes, 16, 0);
+    }
+    sp -= 16;
+    uint64_t rand_addr = sp;
+    exec_copy_to_user(mm, sp, rand_bytes, 16);
+
     struct { uint64_t key; uint64_t val; } auxv_entries[] = {
         { AT_PAGESZ, PAGE_SIZE },
         { AT_ENTRY,  g_exec_entry },
         { AT_PHDR,   g_exec_phdr },
         { AT_PHENT,  g_exec_phent },
         { AT_PHNUM,  g_exec_phnum },
+        { AT_RANDOM, rand_addr },
         { AT_UID,    0 },  /* root */
         { AT_EUID,   0 },
         { AT_GID,    0 },

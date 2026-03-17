@@ -859,10 +859,6 @@ static int ramfs_mkdir(struct fut_vnode *dir, const char *name, uint32_t mode) {
     new_entry->next = dir_node->dir.entries;
     dir_node->dir.entries = new_entry;
 
-    fut_printf("[ramfs-mkdir] dir=%p fs_data=%p &entries=%p entries=%p added '%s'\n",
-               (void*)dir, (void*)dir->fs_data, (void*)&dir_node->dir.entries,
-               (void*)dir_node->dir.entries, name);
-
     /* Update parent directory mtime and ctime (new subdirectory added) */
     uint64_t dir_now = fut_get_ticks();
     dir_node->mtime_ms = dir_now;

@@ -1726,6 +1726,12 @@ int fut_vfs_open(const char *path, int flags, int mode) {
         return -EISDIR;
     }
 
+    /* O_DIRECTORY: fail with ENOTDIR if path is not a directory */
+    if ((flags & O_DIRECTORY) && vtype != VN_DIR) {
+        release_lookup_ref(vnode);
+        return -ENOTDIR;
+    }
+
     /* Permission checks based on access mode (unless we just created the file) */
     if (!created) {
         int access_mode = flags & O_ACCMODE;

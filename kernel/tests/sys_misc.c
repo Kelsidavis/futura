@@ -1749,6 +1749,51 @@ static void test_ioctl_fd_ops(void) {
 }
 
 /* ============================================================
+ * Test 41: O_DIRECTORY enforcement on open
+ * ============================================================ */
+static void test_o_directory(void) {
+    fut_printf("[MISC-TEST] Test 41: O_DIRECTORY enforcement\n");
+
+    /* Opening a regular file with O_DIRECTORY should fail with ENOTDIR */
+    int fd = fut_vfs_open("/o_dir_test.txt", 0x42, 0644);  /* O_RDWR|O_CREAT */
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ create test file failed: %d\n", fd);
+        fut_test_fail(41);
+        return;
+    }
+    fut_vfs_close(fd);
+
+    /* Re-open with O_DIRECTORY — should fail since it's a regular file */
+    fd = fut_vfs_open("/o_dir_test.txt", 00200000, 0);  /* O_DIRECTORY */
+    if (fd >= 0) {
+        fut_printf("[MISC-TEST] ✗ O_DIRECTORY on regular file succeeded (fd=%d)\n", fd);
+        fut_vfs_close(fd);
+        fut_test_fail(41);
+        return;
+    }
+    if (fd != -ENOTDIR) {
+        fut_printf("[MISC-TEST] ✗ expected ENOTDIR, got %d\n", fd);
+        fut_test_fail(41);
+        return;
+    }
+
+    /* Opening a directory with O_DIRECTORY should succeed */
+    extern int fut_vfs_mkdir(const char *path, uint32_t mode);
+    fut_vfs_mkdir("/o_dir_testdir", 0755);
+
+    fd = fut_vfs_open("/o_dir_testdir", 00200000, 0);  /* O_DIRECTORY */
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ O_DIRECTORY on directory failed: %d\n", fd);
+        fut_test_fail(41);
+        return;
+    }
+    fut_vfs_close(fd);
+
+    fut_printf("[MISC-TEST] ✓ O_DIRECTORY: rejects file, accepts directory\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test 38: setrlimit hard limit can be raised by root, denied for non-root
  * ============================================================ */
 static void test_setrlimit_hard(void) {
@@ -2166,6 +2211,7 @@ void fut_misc_test_thread(void *arg) {
     test_setrlimit_hard();      /* Test 38: setrlimit hard limit enforcement */
     test_dev_null_poll();       /* Test 39: /dev/null always poll-ready */
     test_ioctl_fd_ops();        /* Test 40: ioctl FIONBIO/FIOCLEX/FIONCLEX */
+    test_o_directory();         /* Test 41: O_DIRECTORY enforcement */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

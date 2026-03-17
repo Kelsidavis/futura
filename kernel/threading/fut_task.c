@@ -406,9 +406,19 @@ static void task_mark_exit(fut_task_t *task, int status, int signal) {
     fut_spinlock_release(&task_list_lock);
 
     if (parent) {
-        /* Send SIGCHLD to parent (POSIX: child exit/stop/continue → SIGCHLD) */
-        fut_signal_send(parent, SIGCHLD);
-        /* Wake any waitpid/wait4 blockers */
+        /* SA_NOCLDWAIT / SIGCHLD=SIG_IGN: suppress SIGCHLD delivery on exit.
+         * POSIX: if SIGCHLD is SIG_IGN or SA_NOCLDWAIT is set, do NOT send
+         * SIGCHLD to the parent when a child exits.  The zombie is still
+         * created (waitpid will return -ECHILD for these parents since they
+         * typically don't call waitpid, and init will eventually reap it). */
+        sighandler_t chld_handler = parent->signal_handlers[SIGCHLD - 1];
+        unsigned long chld_flags  = parent->signal_handler_flags[SIGCHLD - 1];
+        bool suppress_chld = (chld_handler == SIG_IGN) ||
+                             (chld_flags & SA_NOCLDWAIT);
+        if (!suppress_chld) {
+            fut_signal_send(parent, SIGCHLD);
+        }
+        /* Always wake waitpid/wait4 blockers */
         fut_waitq_wake_all(&parent->child_waiters);
     }
 }
@@ -529,9 +539,18 @@ void fut_task_do_stop(fut_task_t *task, int sig) {
     fut_spinlock_acquire(&task_list_lock);
     task->state = FUT_TASK_STOPPED;
     task->stop_signal = sig;
-    if (task->parent)
+    if (task->parent) {
+        /* SA_NOCLDSTOP: don't send SIGCHLD for stop events if parent set this flag.
+         * Wake waitpid blockers (WUNTRACED) regardless. */
+        unsigned long chld_flags = task->parent->signal_handler_flags[SIGCHLD - 1];
+        bool send_sigchld = !(chld_flags & SA_NOCLDSTOP);
         fut_waitq_wake_all(&task->parent->child_waiters);
-    fut_spinlock_release(&task_list_lock);
+        fut_spinlock_release(&task_list_lock);
+        if (send_sigchld)
+            fut_signal_send(task->parent, SIGCHLD);
+    } else {
+        fut_spinlock_release(&task_list_lock);
+    }
     /* Block current thread until SIGCONT wakes the stop_waitq */
     fut_waitq_sleep_locked(&task->stop_waitq, NULL, FUT_THREAD_BLOCKED);
 }
@@ -543,14 +562,23 @@ void fut_task_do_stop(fut_task_t *task, int sig) {
  */
 void fut_task_do_cont(fut_task_t *task) {
     if (!task) return;
+    fut_task_t *parent = NULL;
+    bool send_sigchld = false;
     fut_spinlock_acquire(&task_list_lock);
     if (task->state == FUT_TASK_STOPPED) {
         task->state = FUT_TASK_RUNNING;
         task->stop_signal = -1;  /* sentinel: just continued */
-        if (task->parent)
-            fut_waitq_wake_all(&task->parent->child_waiters);
+        parent = task->parent;
+        if (parent) {
+            /* SA_NOCLDSTOP also suppresses SIGCHLD on continue */
+            unsigned long chld_flags = parent->signal_handler_flags[SIGCHLD - 1];
+            send_sigchld = !(chld_flags & SA_NOCLDSTOP);
+            fut_waitq_wake_all(&parent->child_waiters);
+        }
     }
     fut_spinlock_release(&task_list_lock);
+    if (parent && send_sigchld)
+        fut_signal_send(parent, SIGCHLD);
     fut_waitq_wake_all(&task->stop_waitq);
 }
 

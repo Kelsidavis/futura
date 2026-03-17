@@ -1373,6 +1373,52 @@ static void test_socketpair(void) {
 }
 
 /* ============================================================
+ * Test 27: O_CLOEXEC sets FD_CLOEXEC on open
+ * ============================================================ */
+static void test_open_cloexec(void) {
+    fut_printf("[MISC-TEST] Test 27: O_CLOEXEC sets FD_CLOEXEC on open\n");
+
+    /* Open with O_CLOEXEC (0x80000) */
+    int fd = fut_vfs_open("/cloexec_test.txt", 0x80042, 0644);  /* O_RDWR|O_CREAT|O_CLOEXEC */
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open with O_CLOEXEC failed: %d\n", fd);
+        fut_test_fail(27);
+        return;
+    }
+
+    /* Verify FD_CLOEXEC is set */
+    extern long sys_fcntl(int fd, int cmd, uint64_t arg);
+    long flags = sys_fcntl(fd, 1 /* F_GETFD */, 0);
+    fut_vfs_close(fd);
+
+    if (!(flags & 1 /* FD_CLOEXEC */)) {
+        fut_printf("[MISC-TEST] ✗ O_CLOEXEC open: FD_CLOEXEC not set (flags=0x%lx)\n", flags);
+        fut_test_fail(27);
+        return;
+    }
+
+    /* Open without O_CLOEXEC — FD_CLOEXEC should NOT be set */
+    fd = fut_vfs_open("/cloexec_test2.txt", 0x42, 0644);  /* O_RDWR|O_CREAT */
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open without O_CLOEXEC failed: %d\n", fd);
+        fut_test_fail(27);
+        return;
+    }
+
+    flags = sys_fcntl(fd, 1 /* F_GETFD */, 0);
+    fut_vfs_close(fd);
+
+    if (flags & 1 /* FD_CLOEXEC */) {
+        fut_printf("[MISC-TEST] ✗ non-CLOEXEC open has FD_CLOEXEC set (flags=0x%lx)\n", flags);
+        fut_test_fail(27);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ O_CLOEXEC: sets FD_CLOEXEC, absent without flag\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -1408,6 +1454,7 @@ void fut_misc_test_thread(void *arg) {
     test_readahead();           /* Test 24: readahead */
     test_groups();              /* Test 25: getgroups/setgroups */
     test_socketpair();          /* Test 26: socketpair */
+    test_open_cloexec();        /* Test 27: O_CLOEXEC */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

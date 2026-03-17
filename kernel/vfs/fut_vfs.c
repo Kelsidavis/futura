@@ -1803,6 +1803,11 @@ int fut_vfs_open(const char *path, int flags, int mode) {
         vnode->mode = mode & 0777;  /* Use provided mode, mask to permission bits only */
     }
 
+    /* Handle O_CLOEXEC — set FD_CLOEXEC on the file descriptor */
+    if (flags & 02000000 /* O_CLOEXEC */) {
+        file->fd_flags |= 1;  /* FD_CLOEXEC */
+    }
+
 #if DEBUG_VFS
     fut_printf("[VFS-OPEN] SUCCESS: opened '%s' as fd=%d (mode=0%o)\n", path, fd, vnode->mode);
 #endif

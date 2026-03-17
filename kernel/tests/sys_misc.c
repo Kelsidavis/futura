@@ -2424,6 +2424,7 @@ static void test_rename_same_file(void) {
 }
 
 #define F_GETPIPE_SZ 1032
+#define TEST_FIONREAD 0x541B
 
 /* ============================================================
  * Test 55: F_GETPIPE_SZ returns pipe buffer capacity
@@ -2451,6 +2452,52 @@ static void test_pipe_sz(void) {
     }
 
     fut_printf("[MISC-TEST] ✓ F_GETPIPE_SZ: %ld bytes\n", sz);
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 56: FIONREAD on pipe returns bytes available
+ * ============================================================ */
+static void test_fionread_pipe(void) {
+    fut_printf("[MISC-TEST] Test 56: FIONREAD on pipe\n");
+
+    int pipefd[2];
+    long ret = sys_pipe(pipefd);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ pipe() returned %ld\n", ret);
+        fut_test_fail(56);
+        return;
+    }
+
+    /* Empty pipe should have 0 bytes */
+    int avail = -1;
+    ret = sys_ioctl(pipefd[0], TEST_FIONREAD, &avail);
+    if (ret != 0 || avail != 0) {
+        fut_printf("[MISC-TEST] ✗ FIONREAD(empty pipe) returned %ld avail=%d\n", ret, avail);
+        fut_vfs_close(pipefd[0]);
+        fut_vfs_close(pipefd[1]);
+        fut_test_fail(56);
+        return;
+    }
+
+    /* Write 5 bytes */
+    fut_vfs_write(pipefd[1], "hello", 5);
+
+    /* Should now have 5 bytes */
+    avail = -1;
+    ret = sys_ioctl(pipefd[0], TEST_FIONREAD, &avail);
+    if (ret != 0 || avail != 5) {
+        fut_printf("[MISC-TEST] ✗ FIONREAD(5 bytes) returned %ld avail=%d\n", ret, avail);
+        fut_vfs_close(pipefd[0]);
+        fut_vfs_close(pipefd[1]);
+        fut_test_fail(56);
+        return;
+    }
+
+    fut_vfs_close(pipefd[0]);
+    fut_vfs_close(pipefd[1]);
+
+    fut_printf("[MISC-TEST] ✓ FIONREAD on pipe: 0 when empty, 5 after write\n");
     fut_test_pass();
 }
 
@@ -2887,6 +2934,7 @@ void fut_misc_test_thread(void *arg) {
     test_pipe_access_mode();    /* Test 53: pipe access mode enforcement */
     test_rename_same_file();    /* Test 54: rename same file no-op */
     test_pipe_sz();             /* Test 55: F_GETPIPE_SZ */
+    test_fionread_pipe();       /* Test 56: FIONREAD on pipe */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

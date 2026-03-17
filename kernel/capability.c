@@ -29,8 +29,8 @@
  * @return Minutes since system boot (0-65535 wraps)
  */
 static uint16_t get_current_time_minutes(void) {
-    uint64_t ticks_ms = fut_get_ticks();
-    return (uint16_t)(ticks_ms / 60000);  /* ms -> minutes */
+    uint64_t ticks = fut_get_ticks();
+    return (uint16_t)(ticks / 6000);  /* ticks (100 Hz) -> minutes */
 }
 
 /**

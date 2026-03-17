@@ -41,7 +41,7 @@ struct ramfs_xattr {
 struct ramfs_node {
     uint64_t magic_guard_before;    /* Guard value to detect overflow into structure */
     uint32_t open_count;            /* Reference count: number of open file descriptors */
-    /* Timestamps in milliseconds since boot (from fut_get_ticks()) */
+    /* Timestamps in ticks since boot (from fut_get_ticks(), 100 Hz = 10ms each) */
     uint64_t atime_ms;              /* Last access time */
     uint64_t mtime_ms;              /* Last modification time */
     uint64_t ctime_ms;              /* Last status change time */
@@ -1152,11 +1152,11 @@ static int ramfs_getattr(struct fut_vnode *vnode, struct fut_stat *stat) {
     stat->st_blksize = 4096;        /* Filesystem block size */
     stat->st_blocks = (stat->st_size + 511) / 512;  /* Number of 512-byte blocks */
 
-    /* Timestamps - stored in ramfs_node as milliseconds since boot.
-     * Using tick-based time to avoid TSC calibration deadlock. */
-    uint64_t atime_ns = node->atime_ms * 1000000ULL;
-    uint64_t mtime_ns = node->mtime_ms * 1000000ULL;
-    uint64_t ctime_ns = node->ctime_ms * 1000000ULL;
+    /* Timestamps - stored in ramfs_node as ticks (100 Hz = 10ms each).
+     * Convert to nanoseconds: each tick = 10,000,000 ns. */
+    uint64_t atime_ns = node->atime_ms * 10000000ULL;
+    uint64_t mtime_ns = node->mtime_ms * 10000000ULL;
+    uint64_t ctime_ns = node->ctime_ms * 10000000ULL;
     stat->st_atime = atime_ns / 1000000000;
     stat->st_atime_nsec = (uint32_t)(atime_ns % 1000000000);
     stat->st_mtime = mtime_ns / 1000000000;

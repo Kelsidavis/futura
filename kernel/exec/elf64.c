@@ -464,6 +464,9 @@ static int build_user_stack(fut_mm_t *mm,
         string_ptrs[i] = (uint8_t *)(uintptr_t)sp;
     }
 
+    /* Save argv[0] address for AT_EXECFN (program invocation name) */
+    uint64_t execfn_addr = (argc > 0) ? (uint64_t)(uintptr_t)string_ptrs[0] : 0;
+
     sp &= ~0xFULL;
 
     uint64_t zero = 0;
@@ -497,6 +500,7 @@ static int build_user_stack(fut_mm_t *mm,
             { 5 /* AT_PHNUM */,  g_exec_phnum },
             { 25 /* AT_RANDOM */, random_addr },
             { 17 /* AT_CLKTCK */, 100 },
+            { 31 /* AT_EXECFN */, execfn_addr },
             { 11 /* AT_UID */,   uid },
             { 12 /* AT_EUID */,  euid },
             { 13 /* AT_GID */,   gid },
@@ -2057,6 +2061,9 @@ static int build_user_stack(fut_mm_t *mm,
         }
     }
 
+    /* Save argv[0] address for AT_EXECFN */
+    uint64_t execfn_addr = (argc > 0) ? (uint64_t)(uintptr_t)argv_ptrs[0] : 0;
+
     /* Align stack to 16-byte boundary for ARM64 ABI */
     sp &= ~0xFULL;
 
@@ -2110,6 +2117,7 @@ static int build_user_stack(fut_mm_t *mm,
         { AT_PHNUM,  g_exec_phnum },
         { AT_RANDOM, rand_addr },
         { 17 /* AT_CLKTCK */, 100 },
+        { 31 /* AT_EXECFN */, execfn_addr },
         { AT_UID,    0 },  /* root */
         { AT_EUID,   0 },
         { AT_GID,    0 },

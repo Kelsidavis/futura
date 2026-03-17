@@ -1811,12 +1811,11 @@ static int64_t sys_rt_sigtimedwait_wrapper(uint64_t uthese, uint64_t uinfo,
                                (const void *)uts, (size_t)sigsetsize);
 }
 
-/* sys_sigsuspend_wrapper */
-extern long sys_sigsuspend(const void *mask);
+/* sys_sigsuspend_wrapper - uses existing extern at top of file */
 static int64_t sys_sigsuspend_wrapper(uint64_t mask, uint64_t arg1, uint64_t arg2,
                                        uint64_t arg3, uint64_t arg4, uint64_t arg5) {
     (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
-    return sys_sigsuspend((const void *)mask);
+    return sys_sigsuspend((const sigset_t *)mask);
 }
 
 /* sys_mremap_wrapper */

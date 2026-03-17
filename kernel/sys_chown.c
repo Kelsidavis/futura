@@ -389,6 +389,7 @@ long sys_chown(const char *pathname, uint32_t uid, uint32_t gid) {
     /* Create a stat structure with the new ownership.
      * Timestamps use (uint64_t)-1 sentinel to avoid resetting them. */
     struct fut_stat stat = {0};
+    stat.st_mode = (uint32_t)-1;  /* Don't change mode */
     stat.st_uid = local_uid;
     stat.st_gid = local_gid;
     stat.st_atime = (uint64_t)-1;

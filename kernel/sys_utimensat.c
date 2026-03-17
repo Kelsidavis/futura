@@ -233,6 +233,7 @@ long sys_utimensat(int dirfd, const char *pathname, const fut_timespec_t *times,
         /* Build stat structure with new timestamps.
          * uid/gid use (uint32_t)-1 as "don't change" sentinel. */
         struct fut_stat stat = {0};
+        stat.st_mode = (uint32_t)-1;  /* Don't change mode */
         stat.st_uid = (uint32_t)-1;
         stat.st_gid = (uint32_t)-1;
 
@@ -461,8 +462,9 @@ long sys_utimensat(int dirfd, const char *pathname, const fut_timespec_t *times,
     }
 
     /* Build stat structure with new timestamps.
-     * uid/gid use (uint32_t)-1 as "don't change" sentinel. */
+     * mode/uid/gid use (uint32_t)-1 as "don't change" sentinel. */
     struct fut_stat stat = {0};
+    stat.st_mode = (uint32_t)-1;  /* Don't change mode */
     stat.st_uid = (uint32_t)-1;
     stat.st_gid = (uint32_t)-1;
 

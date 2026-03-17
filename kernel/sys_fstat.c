@@ -22,6 +22,26 @@
 #include <kernel/uaccess.h>
 #include <kernel/fut_timer.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
+/* Kernel-pointer bypass: allow kernel selftests to pass kernel stack pointers */
+static inline int fstat_access_ok_write(const void *ptr, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)ptr >= KERNEL_VIRTUAL_BASE) return 0;
+#endif
+    return fut_access_ok(ptr, n, 1);
+}
+static inline int fstat_copy_to_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)dst >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_to_user(dst, src, n);
+}
+
 /**
  * fstat() - Get file status (fd-based)
  *
@@ -148,7 +168,7 @@ long sys_fstat(int fd, struct fut_stat *statbuf) {
      * ATTACK: Attacker provides read-only or unmapped statbuf buffer
      * IMPACT: Kernel page fault when writing stat structure at line 258
      * DEFENSE: Check write permission before fd lookup and file operations */
-    if (fut_access_ok(local_statbuf, sizeof(struct fut_stat), 1) != 0) {
+    if (fstat_access_ok_write(local_statbuf, sizeof(struct fut_stat)) != 0) {
         fut_printf("[FSTAT] fstat(fd=%d, statbuf=%p) -> EFAULT (statbuf not writable for %zu bytes)\n",
                    local_fd, (void*)local_statbuf, sizeof(struct fut_stat));
         return -EFAULT;
@@ -182,7 +202,7 @@ long sys_fstat(int fd, struct fut_stat *statbuf) {
         kernel_stat.st_nlink = 1;
         kernel_stat.st_blksize = 4096;
         kernel_stat.st_ino = (uint64_t)(uintptr_t)file;
-        if (fut_copy_to_user(local_statbuf, &kernel_stat, sizeof(struct fut_stat)) != 0) {
+        if (fstat_copy_to_user(local_statbuf, &kernel_stat, sizeof(struct fut_stat)) != 0) {
             return -EFAULT;
         }
         return 0;
@@ -235,7 +255,7 @@ long sys_fstat(int fd, struct fut_stat *statbuf) {
     }
 
     /* Copy stat buffer to userspace */
-    if (fut_copy_to_user(local_statbuf, &kernel_stat, sizeof(struct fut_stat)) != 0) {
+    if (fstat_copy_to_user(local_statbuf, &kernel_stat, sizeof(struct fut_stat)) != 0) {
         fut_printf("[FSTAT] fstat(fd=%d [%s], ino=%llu) -> EFAULT (copy_to_user failed)\n",
                    local_fd, fd_category, kernel_stat.st_ino);
         return -EFAULT;

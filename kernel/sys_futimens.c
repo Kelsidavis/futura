@@ -227,6 +227,7 @@ long sys_futimens(int fd, const fut_timespec_t *times) {
      * uid/gid use (uint32_t)-1 as "don't change" sentinel so futimens
      * doesn't accidentally reset ownership to root. */
     struct fut_stat stat_buf = {0};
+    stat_buf.st_mode = (uint32_t)-1;  /* Don't change mode */
     stat_buf.st_uid = (uint32_t)-1;
     stat_buf.st_gid = (uint32_t)-1;
 

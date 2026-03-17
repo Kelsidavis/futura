@@ -4534,6 +4534,107 @@ static void test_perfd_cloexec_independence(void) {
 }
 
 /* ============================================================
+ * Test 87: chmod/fchmod/fchown on ramfs
+ * ============================================================ */
+extern long sys_fchmod(int fd, uint32_t mode);
+extern long sys_fchown(int fd, uint32_t uid, uint32_t gid);
+extern long sys_fstat(int fd, struct fut_stat *statbuf);
+
+static void test_chmod_fchown(void) {
+    fut_printf("[MISC-TEST] Test 87: fchmod/fchown on ramfs\n");
+
+    /* Create a test file */
+    int fd = (int)fut_vfs_open("/test_chmod.txt", O_CREAT | O_RDWR, 0644);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open failed: %d\n", fd);
+        fut_test_fail(87);
+        return;
+    }
+
+    /* Test fchmod: change to 0755 */
+    long ret = sys_fchmod(fd, 0755);
+    if (ret < 0) {
+        fut_printf("[MISC-TEST] ✗ fchmod(0755) failed: %ld\n", ret);
+        fut_vfs_close(fd);
+        fut_test_fail(87);
+        return;
+    }
+
+    /* Verify via fstat */
+    struct fut_stat st = {0};
+    sys_fstat(fd, &st);
+    if ((st.st_mode & 07777) != 0755) {
+        fut_printf("[MISC-TEST] ✗ fchmod(0755): mode=0%o (expected 0755)\n", st.st_mode & 07777);
+        fut_vfs_close(fd);
+        fut_test_fail(87);
+        return;
+    }
+
+    /* Test fchmod to 0600 */
+    ret = sys_fchmod(fd, 0600);
+    if (ret < 0) {
+        fut_printf("[MISC-TEST] ✗ fchmod(0600) failed: %ld\n", ret);
+        fut_vfs_close(fd);
+        fut_test_fail(87);
+        return;
+    }
+
+    sys_fstat(fd, &st);
+    if ((st.st_mode & 07777) != 0600) {
+        fut_printf("[MISC-TEST] ✗ fchmod(0600): mode=0%o (expected 0600)\n", st.st_mode & 07777);
+        fut_vfs_close(fd);
+        fut_test_fail(87);
+        return;
+    }
+
+    /* Test fchmod to mode 0 (all permissions removed — must not be treated as "don't change") */
+    ret = sys_fchmod(fd, 0);
+    if (ret < 0) {
+        fut_printf("[MISC-TEST] ✗ fchmod(0) failed: %ld\n", ret);
+        fut_vfs_close(fd);
+        fut_test_fail(87);
+        return;
+    }
+
+    sys_fstat(fd, &st);
+    if ((st.st_mode & 07777) != 0) {
+        fut_printf("[MISC-TEST] ✗ fchmod(0): mode=0%o (expected 0)\n", st.st_mode & 07777);
+        fut_vfs_close(fd);
+        fut_test_fail(87);
+        return;
+    }
+
+    /* Test fchown: change owner to uid=1000, gid=1000 */
+    ret = sys_fchown(fd, 1000, 1000);
+    if (ret < 0) {
+        fut_printf("[MISC-TEST] ✗ fchown(1000,1000) failed: %ld\n", ret);
+        fut_vfs_close(fd);
+        fut_test_fail(87);
+        return;
+    }
+
+    sys_fstat(fd, &st);
+    if (st.st_uid != 1000 || st.st_gid != 1000) {
+        fut_printf("[MISC-TEST] ✗ fchown: uid=%u gid=%u (expected 1000/1000)\n", st.st_uid, st.st_gid);
+        fut_vfs_close(fd);
+        fut_test_fail(87);
+        return;
+    }
+
+    /* Verify fchown doesn't clobber the mode */
+    if ((st.st_mode & 07777) != 0) {
+        fut_printf("[MISC-TEST] ✗ fchown clobbered mode: 0%o (expected 0)\n", st.st_mode & 07777);
+        fut_vfs_close(fd);
+        fut_test_fail(87);
+        return;
+    }
+
+    fut_vfs_close(fd);
+    fut_printf("[MISC-TEST] ✓ fchmod/fchown: mode+owner changes verified, mode=0 works\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -4629,6 +4730,7 @@ void fut_misc_test_thread(void *arg) {
     test_socket_read_eof();     /* Test 84: read from closed socket → EOF */
     test_shutdown_wr_eof();     /* Test 85: shutdown(SHUT_WR) → peer reads EOF */
     test_perfd_cloexec_independence(); /* Test 86: per-FD cloexec after dup */
+    test_chmod_fchown();            /* Test 87: chmod/fchmod/fchown */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

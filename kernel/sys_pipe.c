@@ -211,6 +211,9 @@ static ssize_t pipe_read(void *inode, void *priv, void *buf, size_t len, off_t *
 
     /* Wake up any writers waiting for space */
     fut_waitq_wake_one(&pipe->write_waitq);
+    /* Wake epoll (space available on write end) */
+    if (pipe->epoll_notify)
+        fut_waitq_wake_one(pipe->epoll_notify);
 
     return (ssize_t)bytes_read;
 }
@@ -315,6 +318,9 @@ static int pipe_release_read(void *inode, void *priv) {
 
     /* Wake any writers - they'll see read_closed and return EPIPE */
     fut_waitq_wake_all(&pipe->write_waitq);
+    /* Wake epoll (EPOLLHUP|EPOLLERR on write end) */
+    if (pipe->epoll_notify)
+        fut_waitq_wake_one(pipe->epoll_notify);
 
     if (remaining == 0) {
         pipe_buffer_destroy(pipe);

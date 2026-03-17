@@ -1811,6 +1811,38 @@ static int64_t sys_rt_sigtimedwait_wrapper(uint64_t uthese, uint64_t uinfo,
                                (const void *)uts, (size_t)sigsetsize);
 }
 
+/* sys_sendmsg_wrapper */
+extern ssize_t sys_sendmsg(int sockfd, const void *msg, int flags);
+static int64_t sys_sendmsg_wrapper(uint64_t sockfd, uint64_t msg, uint64_t flags,
+                                    uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg3; (void)arg4; (void)arg5;
+    return (int64_t)sys_sendmsg((int)sockfd, (const void *)msg, (int)flags);
+}
+
+/* sys_recvmsg_wrapper */
+extern ssize_t sys_recvmsg(int sockfd, void *msg, int flags);
+static int64_t sys_recvmsg_wrapper(uint64_t sockfd, uint64_t msg, uint64_t flags,
+                                    uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg3; (void)arg4; (void)arg5;
+    return (int64_t)sys_recvmsg((int)sockfd, (void *)msg, (int)flags);
+}
+
+/* sys_getsockname_wrapper */
+extern long sys_getsockname(int sockfd, void *addr, socklen_t *addrlen);
+static int64_t sys_getsockname_wrapper(uint64_t sockfd, uint64_t addr, uint64_t addrlen,
+                                        uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg3; (void)arg4; (void)arg5;
+    return sys_getsockname((int)sockfd, (void *)addr, (socklen_t *)addrlen);
+}
+
+/* sys_getpeername_wrapper */
+extern long sys_getpeername(int sockfd, void *addr, socklen_t *addrlen);
+static int64_t sys_getpeername_wrapper(uint64_t sockfd, uint64_t addr, uint64_t addrlen,
+                                        uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg3; (void)arg4; (void)arg5;
+    return sys_getpeername((int)sockfd, (void *)addr, (socklen_t *)addrlen);
+}
+
 /* sys_memfd_create_wrapper */
 extern long sys_memfd_create(const char *uname, unsigned int flags);
 static int64_t sys_memfd_create_wrapper(uint64_t uname, uint64_t flags, uint64_t arg2,
@@ -2604,6 +2636,10 @@ struct syscall_entry {
 #define __NR_sethostname        161
 #define __NR_gettid         178
 #define __NR_setdomainname  162
+#define __NR_getsockname    204
+#define __NR_getpeername    205
+#define __NR_sendmsg        211
+#define __NR_recvmsg        212
 #define __NR_accept4        242
 #define __NR_syncfs         267
 #define __NR_renameat2      276
@@ -3075,6 +3111,14 @@ static void arm64_syscall_table_init(void) {
     /* faccessat2 (439) = same as faccessat since our wrapper already passes flags */
     syscall_table[__NR_faccessat2].handler = (syscall_fn_t)sys_faccessat_wrapper;
     syscall_table[__NR_faccessat2].name = "faccessat2";
+    syscall_table[__NR_sendmsg].handler = (syscall_fn_t)sys_sendmsg_wrapper;
+    syscall_table[__NR_sendmsg].name = "sendmsg";
+    syscall_table[__NR_recvmsg].handler = (syscall_fn_t)sys_recvmsg_wrapper;
+    syscall_table[__NR_recvmsg].name = "recvmsg";
+    syscall_table[__NR_getsockname].handler = (syscall_fn_t)sys_getsockname_wrapper;
+    syscall_table[__NR_getsockname].name = "getsockname";
+    syscall_table[__NR_getpeername].handler = (syscall_fn_t)sys_getpeername_wrapper;
+    syscall_table[__NR_getpeername].name = "getpeername";
     syscall_table[__NR_accept4].handler = (syscall_fn_t)sys_accept4_wrapper;
     syscall_table[__NR_accept4].name = "accept4";
     syscall_table[__NR_syncfs].handler = (syscall_fn_t)sys_syncfs_wrapper;

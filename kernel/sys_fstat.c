@@ -167,10 +167,18 @@ long sys_fstat(int fd, struct fut_stat *statbuf) {
 
     /* Get the vnode from the file */
     struct fut_vnode *vnode = file->vnode;
+
+    /* Handle fds without vnodes: pipes, eventfds, sockets, etc. */
     if (!vnode) {
-        fut_printf("[FSTAT] fstat(fd=%d [%s]) -> EBADF (no vnode attached)\n",
-                   local_fd, fd_category);
-        return -EBADF;
+        struct fut_stat kernel_stat = {0};
+        kernel_stat.st_mode = 0010000 | 0600;  /* S_IFIFO | rw------- */
+        kernel_stat.st_nlink = 1;
+        kernel_stat.st_blksize = 4096;
+        kernel_stat.st_ino = (uint64_t)(uintptr_t)file;  /* Use file pointer as inode */
+        if (fut_copy_to_user(local_statbuf, &kernel_stat, sizeof(struct fut_stat)) != 0) {
+            return -EFAULT;
+        }
+        return 0;
     }
 
     /* Build stat structure */

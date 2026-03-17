@@ -56,8 +56,8 @@ long sys_alarm(unsigned int seconds) {
      * 1. Attacker calls alarm(UINT_MAX) or alarm(0xFFFFFFFF)
      * 2. Line 72: seconds * 1000 = 4,294,967,295 * 1000
      * 3. Result: 4,294,967,295,000 (4.29 trillion milliseconds)
-     * 4. Addition: current_ms + 4,294,967,295,000
-     * 5. If current_ms is large, sum could exceed UINT64_MAX
+     * 4. Addition: current_ticks + 4,294,967,295,000
+     * 5. If current_ticks is large, sum could exceed UINT64_MAX
      * 6. Overflow wraps to small value or past timestamp
      * 7. Alarm expires immediately or never fires
      * 8. Timing-based security bypassed
@@ -69,7 +69,7 @@ long sys_alarm(unsigned int seconds) {
      * - Timing attack: Predictable alarm timing compromised
      *
      * ROOT CAUSE:
-     * Line 72: task->alarm_expires_ms = current_ms + ((uint64_t)seconds * 1000)
+     * Line 72: task->alarm_expires_ms = current_ticks + ((uint64_t)seconds * 1000)
      * - Multiplying seconds by 1000 can overflow even in uint64_t
      * - No validation that seconds is reasonable
      * - No check for overflow before addition
@@ -103,24 +103,23 @@ long sys_alarm(unsigned int seconds) {
         return -EINVAL;
     }
 
-    /* Get current time in milliseconds */
-    uint64_t current_ms = fut_get_ticks();
+    /* Get current time in ticks (100 Hz = 10ms/tick) */
+    uint64_t current_ticks = fut_get_ticks();
 
     /* Calculate remaining time from previous alarm (if any) */
     unsigned int remaining_seconds = 0;
     if (task->alarm_expires_ms > 0) {
-        /* Alarm is for this task, calculate remaining time */
-        if (task->alarm_expires_ms > current_ms) {
-            uint64_t remaining_ms = task->alarm_expires_ms - current_ms;
-            /* Round up to nearest second (POSIX requirement) */
-            remaining_seconds = (unsigned int)((remaining_ms + 999) / 1000);
+        if (task->alarm_expires_ms > current_ticks) {
+            uint64_t remaining_ticks = task->alarm_expires_ms - current_ticks;
+            /* Convert ticks to seconds, round up (POSIX requirement) */
+            remaining_seconds = (unsigned int)((remaining_ticks + 99) / 100);
         }
         /* If alarm already expired, remaining_seconds stays 0 */
     }
 
     if (seconds > 0) {
-        /* Schedule new alarm (safe after validation) */
-        task->alarm_expires_ms = current_ms + ((uint64_t)seconds * 1000);
+        /* Schedule new alarm: convert seconds to ticks (100 ticks/sec) */
+        task->alarm_expires_ms = current_ticks + ((uint64_t)seconds * 100);
 
         /* Phase 3: Categorize alarm duration for logging */
         const char *duration_category;
@@ -142,7 +141,7 @@ long sys_alarm(unsigned int seconds) {
 
         /* Phase 3: Attempt immediate SIGALRM delivery if condition met
          * Check if alarm has already expired (clock adjustment scenario) */
-        if (task->alarm_expires_ms <= current_ms) {
+        if (task->alarm_expires_ms <= current_ticks) {
             fut_signal_send(task, SIGALRM);
             fut_printf("[ALARM] Signal delivery: SIGALRM queued immediately (alarm expired during setup)\n");
         }
@@ -150,8 +149,8 @@ long sys_alarm(unsigned int seconds) {
         /* Cancel pending alarm for this task */
         if (task->alarm_expires_ms > 0) {
             /* Phase 3: Calculate and categorize previously scheduled duration */
-            uint64_t prev_duration_ms = task->alarm_expires_ms - current_ms;
-            unsigned int prev_duration_s = (unsigned int)((prev_duration_ms + 999) / 1000);
+            uint64_t prev_duration_ticks = task->alarm_expires_ms - current_ticks;
+            unsigned int prev_duration_s = (unsigned int)((prev_duration_ticks + 99) / 100);
             const char *prev_category = (prev_duration_s > 3600) ? "very long" :
                                        (prev_duration_s > 60) ? "long" :
                                        (prev_duration_s > 10) ? "medium" : "short";

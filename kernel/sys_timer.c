@@ -164,13 +164,13 @@ long sys_timer_settime(timer_t timerid, int flags,
         struct itimerspec old_timer;
         if (pt->armed && pt->expiry_ms > 0) {
             uint64_t now = fut_get_ticks();
-            uint64_t remaining = (pt->expiry_ms > now) ? (pt->expiry_ms - now) : 0;
-            ms_to_timespec(remaining, &old_timer.it_value);
+            uint64_t remaining_ticks = (pt->expiry_ms > now) ? (pt->expiry_ms - now) : 0;
+            ms_to_timespec(remaining_ticks * 10, &old_timer.it_value);  /* ticks → ms */
         } else {
             old_timer.it_value.tv_sec = 0;
             old_timer.it_value.tv_nsec = 0;
         }
-        ms_to_timespec(pt->interval_ms, &old_timer.it_interval);
+        ms_to_timespec(pt->interval_ms * 10, &old_timer.it_interval);  /* ticks → ms */
 
         if (fut_copy_to_user(local_old_value, &old_timer, sizeof(struct itimerspec)) != 0)
             return -EFAULT;
@@ -185,15 +185,21 @@ long sys_timer_settime(timer_t timerid, int flags,
         return 0;
     }
 
-    /* Set interval */
-    pt->interval_ms = timespec_to_ms(&new_timer.it_interval);
+    /* Set interval: convert ms to ticks (100 Hz = 10ms/tick) */
+    uint64_t intv_ms = timespec_to_ms(&new_timer.it_interval);
+    pt->interval_ms = intv_ms / 10;
+    if (intv_ms % 10 != 0) pt->interval_ms++;
 
-    /* Arm timer */
+    /* Arm timer: convert value_ms to ticks */
+    uint64_t value_ticks = value_ms / 10;
+    if (value_ms % 10 != 0) value_ticks++;
+    if (value_ticks == 0 && value_ms > 0) value_ticks = 1;
+
     uint64_t now = fut_get_ticks();
     if (local_flags & 1 /* TIMER_ABSTIME */) {
-        pt->expiry_ms = value_ms;
+        pt->expiry_ms = value_ticks;  /* absolute ticks */
     } else {
-        pt->expiry_ms = now + value_ms;
+        pt->expiry_ms = now + value_ticks;
     }
     pt->armed = 1;
     pt->overrun = 0;
@@ -223,12 +229,12 @@ long sys_timer_gettime(timer_t timerid, struct itimerspec *curr_value) {
         return -EFAULT;
 
     struct itimerspec result;
-    ms_to_timespec(pt->interval_ms, &result.it_interval);
+    ms_to_timespec(pt->interval_ms * 10, &result.it_interval);  /* ticks → ms */
 
     if (pt->armed && pt->expiry_ms > 0) {
         uint64_t now = fut_get_ticks();
-        uint64_t remaining = (pt->expiry_ms > now) ? (pt->expiry_ms - now) : 0;
-        ms_to_timespec(remaining, &result.it_value);
+        uint64_t remaining_ticks = (pt->expiry_ms > now) ? (pt->expiry_ms - now) : 0;
+        ms_to_timespec(remaining_ticks * 10, &result.it_value);  /* ticks → ms */
     } else {
         result.it_value.tv_sec = 0;
         result.it_value.tv_nsec = 0;

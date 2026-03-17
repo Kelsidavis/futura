@@ -449,16 +449,18 @@ long sys_getitimer(int which, struct itimerval *value) {
     memset(&timer, 0, sizeof(timer));
 
     if (local_which == ITIMER_REAL) {
-        /* Compute remaining value from alarm_expires_ms */
-        uint64_t now_ms = fut_get_ticks();
-        if (task->alarm_expires_ms > 0 && task->alarm_expires_ms > now_ms) {
-            uint64_t rem_ms = task->alarm_expires_ms - now_ms;
-            timer.it_value.tv_sec  = (long)(rem_ms / 1000);
-            timer.it_value.tv_usec = (long)((rem_ms % 1000) * 1000);
+        /* Compute remaining value from alarm_expires_ms (stored in ticks, 10ms each) */
+        uint64_t now_ticks = fut_get_ticks();
+        if (task->alarm_expires_ms > 0 && task->alarm_expires_ms > now_ticks) {
+            uint64_t rem_ticks = task->alarm_expires_ms - now_ticks;
+            uint64_t rem_real_ms = rem_ticks * 10;  /* ticks → ms */
+            timer.it_value.tv_sec  = (long)(rem_real_ms / 1000);
+            timer.it_value.tv_usec = (long)((rem_real_ms % 1000) * 1000);
         }
-        uint64_t intv = task->itimer_real_interval_ms;
-        timer.it_interval.tv_sec  = (long)(intv / 1000);
-        timer.it_interval.tv_usec = (long)((intv % 1000) * 1000);
+        uint64_t intv_ticks = task->itimer_real_interval_ms;
+        uint64_t intv_real_ms = intv_ticks * 10;  /* ticks → ms */
+        timer.it_interval.tv_sec  = (long)(intv_real_ms / 1000);
+        timer.it_interval.tv_usec = (long)((intv_real_ms % 1000) * 1000);
     } else if (local_which == ITIMER_VIRTUAL) {
         uint64_t val = task->itimer_virt_value_ms;
         timer.it_value.tv_sec  = (long)(val / 1000);
@@ -554,21 +556,24 @@ long sys_setitimer(int which, const struct itimerval *value, struct itimerval *o
         return -EINVAL;
     }
 
-    uint64_t now_ms = fut_get_ticks();
+    uint64_t now_ticks = fut_get_ticks();
 
     /* Capture old timer value before modifying */
     if (local_ovalue) {
         struct itimerval old_timer;
         memset(&old_timer, 0, sizeof(old_timer));
         if (local_which == ITIMER_REAL) {
-            if (task->alarm_expires_ms > 0 && task->alarm_expires_ms > now_ms) {
-                uint64_t rem = task->alarm_expires_ms - now_ms;
-                old_timer.it_value.tv_sec  = (long)(rem / 1000);
-                old_timer.it_value.tv_usec = (long)((rem % 1000) * 1000);
+            /* alarm_expires_ms and itimer_real_interval_ms are in ticks (10ms each) */
+            if (task->alarm_expires_ms > 0 && task->alarm_expires_ms > now_ticks) {
+                uint64_t rem_ticks = task->alarm_expires_ms - now_ticks;
+                uint64_t rem_real_ms = rem_ticks * 10;
+                old_timer.it_value.tv_sec  = (long)(rem_real_ms / 1000);
+                old_timer.it_value.tv_usec = (long)((rem_real_ms % 1000) * 1000);
             }
-            uint64_t intv = task->itimer_real_interval_ms;
-            old_timer.it_interval.tv_sec  = (long)(intv / 1000);
-            old_timer.it_interval.tv_usec = (long)((intv % 1000) * 1000);
+            uint64_t intv_ticks = task->itimer_real_interval_ms;
+            uint64_t intv_real_ms = intv_ticks * 10;
+            old_timer.it_interval.tv_sec  = (long)(intv_real_ms / 1000);
+            old_timer.it_interval.tv_usec = (long)((intv_real_ms % 1000) * 1000);
         } else if (local_which == ITIMER_VIRTUAL) {
             old_timer.it_value.tv_sec  = (long)(task->itimer_virt_value_ms / 1000);
             old_timer.it_value.tv_usec = (long)((task->itimer_virt_value_ms % 1000) * 1000);
@@ -587,16 +592,23 @@ long sys_setitimer(int which, const struct itimerval *value, struct itimerval *o
         }
     }
 
-    /* Arm / disarm the timer */
+    /* Arm / disarm the timer.
+     * Convert user-provided ms values to ticks (100 Hz = 10ms/tick). */
     uint64_t value_ms = (uint64_t)new_timer.it_value.tv_sec * 1000 +
                         (uint64_t)new_timer.it_value.tv_usec / 1000;
     uint64_t intv_ms  = (uint64_t)new_timer.it_interval.tv_sec * 1000 +
                         (uint64_t)new_timer.it_interval.tv_usec / 1000;
 
     if (local_which == ITIMER_REAL) {
-        task->itimer_real_interval_ms = intv_ms;
+        /* Convert ms to ticks for storage */
+        uint64_t intv_ticks = intv_ms / 10;
+        if (intv_ms % 10 != 0) intv_ticks++;
+        task->itimer_real_interval_ms = intv_ticks;
         if (value_ms > 0) {
-            task->alarm_expires_ms = now_ms + value_ms;
+            uint64_t value_ticks = value_ms / 10;
+            if (value_ms % 10 != 0) value_ticks++;
+            if (value_ticks == 0) value_ticks = 1;
+            task->alarm_expires_ms = now_ticks + value_ticks;
         } else {
             task->alarm_expires_ms     = 0;
             task->itimer_real_interval_ms = 0;

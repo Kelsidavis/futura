@@ -116,12 +116,50 @@ static int memfd_release(void *inode, void *priv) {
     return 0;
 }
 
+/* Private ioctl for ftruncate support (used by sys_ftruncate) */
+#define MEMFD_IOC_TRUNCATE 0xFE10
+
+static int memfd_ioctl(void *inode, void *priv, unsigned long req, unsigned long arg) {
+    (void)inode;
+    struct memfd *mf = (struct memfd *)priv;
+    if (!mf)
+        return -EINVAL;
+
+    if (req == MEMFD_IOC_TRUNCATE) {
+        size_t new_size = (size_t)arg;
+        if (new_size > mf->capacity) {
+            /* Grow */
+            size_t new_cap = mf->capacity;
+            while (new_cap < new_size)
+                new_cap = new_cap ? new_cap * 2 : MEMFD_INIT_CAP;
+            uint8_t *new_data = fut_malloc(new_cap);
+            if (!new_data)
+                return -ENOMEM;
+            if (mf->data) {
+                memcpy(new_data, mf->data, mf->size);
+                fut_free(mf->data);
+            }
+            if (new_cap > mf->size)
+                memset(new_data + mf->size, 0, new_cap - mf->size);
+            mf->data = new_data;
+            mf->capacity = new_cap;
+        } else if (new_size < mf->size && mf->data) {
+            /* Shrink: zero out truncated region */
+            memset(mf->data + new_size, 0, mf->size - new_size);
+        }
+        mf->size = new_size;
+        return 0;
+    }
+
+    return -EINVAL;
+}
+
 static const struct fut_file_ops memfd_fops = {
     .read    = memfd_read,
     .write   = memfd_write,
     .release = memfd_release,
     .open    = NULL,
-    .ioctl   = NULL,
+    .ioctl   = memfd_ioctl,
     .mmap    = NULL,
 };
 

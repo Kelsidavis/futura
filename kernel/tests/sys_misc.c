@@ -2012,6 +2012,70 @@ static void test_sigtimedwait(void) {
     fut_test_pass();
 }
 
+extern long sys_ftruncate(int fd, uint64_t length);
+
+/* ============================================================
+ * Test 46: memfd ftruncate resizes buffer
+ * ============================================================ */
+static void test_memfd_ftruncate(void) {
+    fut_printf("[MISC-TEST] Test 46: memfd ftruncate\n");
+
+    long fd = sys_memfd_create("trunc_test", 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ memfd_create: %ld\n", fd);
+        fut_test_fail(46);
+        return;
+    }
+
+    /* Write some data */
+    fut_vfs_write((int)fd, "hello world!", 12);
+
+    /* Truncate to 5 bytes */
+    long ret = sys_ftruncate((int)fd, 5);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ ftruncate(5) returned %ld\n", ret);
+        fut_vfs_close((int)fd);
+        fut_test_fail(46);
+        return;
+    }
+
+    /* Seek to start and read — should get only 5 bytes */
+    extern int64_t fut_vfs_lseek(int fd, int64_t offset, int whence);
+    fut_vfs_lseek((int)fd, 0, 0);
+
+    char buf[16] = {0};
+    ssize_t nr = fut_vfs_read((int)fd, buf, sizeof(buf));
+    if (nr != 5 || memcmp(buf, "hello", 5) != 0) {
+        fut_printf("[MISC-TEST] ✗ after truncate(5): read=%zd buf='%s'\n", nr, buf);
+        fut_vfs_close((int)fd);
+        fut_test_fail(46);
+        return;
+    }
+
+    /* Extend to 10 bytes — new bytes should be zero */
+    ret = sys_ftruncate((int)fd, 10);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ ftruncate(10) returned %ld\n", ret);
+        fut_vfs_close((int)fd);
+        fut_test_fail(46);
+        return;
+    }
+
+    fut_vfs_lseek((int)fd, 5, 0);
+    unsigned char zbuf[5] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+    nr = fut_vfs_read((int)fd, zbuf, 5);
+    if (nr != 5 || zbuf[0] != 0 || zbuf[4] != 0) {
+        fut_printf("[MISC-TEST] ✗ extended region not zero: nr=%zd [0]=%d\n", nr, zbuf[0]);
+        fut_vfs_close((int)fd);
+        fut_test_fail(46);
+        return;
+    }
+
+    fut_vfs_close((int)fd);
+    fut_printf("[MISC-TEST] ✓ memfd ftruncate: shrink to 5, extend to 10 (zero-filled)\n");
+    fut_test_pass();
+}
+
 /* ============================================================
  * Test 38: setrlimit hard limit can be raised by root, denied for non-root
  * ============================================================ */
@@ -2435,6 +2499,7 @@ void fut_misc_test_thread(void *arg) {
     test_memfd_create();        /* Test 43: memfd_create */
     test_mprotect_basic();      /* Test 44: mprotect validation */
     test_sigtimedwait();        /* Test 45: rt_sigtimedwait */
+    test_memfd_ftruncate();     /* Test 46: memfd ftruncate */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

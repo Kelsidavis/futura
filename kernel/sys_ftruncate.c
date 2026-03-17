@@ -15,6 +15,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
 #include <kernel/fut_vfs.h>
+#include <kernel/chrdev.h>
 #include <kernel/fut_fd_util.h>
 #include <stdint.h>
 #include <fcntl.h>
@@ -132,6 +133,16 @@ long sys_ftruncate(int fd, uint64_t length) {
     /* Enforce file seals */
     if (file->seals & 0x0008 /* F_SEAL_WRITE */) {
         return -EPERM;
+    }
+
+    /* Handle chr_ops files (memfd, etc.) via truncate ioctl */
+    if (file->chr_ops && !file->vnode) {
+        if (file->chr_ops->ioctl) {
+            return file->chr_ops->ioctl(file->chr_inode, file->chr_private,
+                                        0xFE10 /* MEMFD_IOC_TRUNCATE */,
+                                        (unsigned long)length);
+        }
+        return -EINVAL;
     }
 
     /* Get the vnode from the file */

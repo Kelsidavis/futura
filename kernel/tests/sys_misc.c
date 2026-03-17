@@ -3340,6 +3340,68 @@ static void test_cputime_clocks(void) {
     fut_test_pass();
 }
 
+struct iovec { void *iov_base; size_t iov_len; };
+extern ssize_t sys_writev(int fd, const struct iovec *iov, int iovcnt);
+extern ssize_t sys_readv(int fd, const struct iovec *iov, int iovcnt);
+
+/* ============================================================
+ * Test 79: writev/readv scatter-gather I/O
+ * ============================================================ */
+static void test_writev_readv(void) {
+    fut_printf("[MISC-TEST] Test 79: writev/readv\n");
+
+    int fd = fut_vfs_open("/writev_test.txt", 0x42, 0644);
+    if (fd < 0) {
+        fut_test_fail(79);
+        return;
+    }
+
+    /* writev: scatter write from two buffers */
+    char buf1[] = "Hello";
+    char buf2[] = " World";
+    struct iovec wv[2] = {
+        { .iov_base = buf1, .iov_len = 5 },
+        { .iov_base = buf2, .iov_len = 6 }
+    };
+    ssize_t nw = sys_writev(fd, wv, 2);
+    if (nw != 11) {
+        fut_printf("[MISC-TEST] ✗ writev: %zd (expected 11)\n", nw);
+        fut_vfs_close(fd);
+        fut_test_fail(79);
+        return;
+    }
+
+    /* Seek back to start */
+    extern int64_t fut_vfs_lseek(int fd, int64_t offset, int whence);
+    fut_vfs_lseek(fd, 0, 0);
+
+    /* readv: gather read into two buffers */
+    char rb1[5] = {0};
+    char rb2[6] = {0};
+    struct iovec rv[2] = {
+        { .iov_base = rb1, .iov_len = 5 },
+        { .iov_base = rb2, .iov_len = 6 }
+    };
+    ssize_t nr = sys_readv(fd, rv, 2);
+    fut_vfs_close(fd);
+
+    if (nr != 11) {
+        fut_printf("[MISC-TEST] ✗ readv: %zd (expected 11)\n", nr);
+        fut_test_fail(79);
+        return;
+    }
+
+    if (__builtin_memcmp(rb1, "Hello", 5) != 0 ||
+        __builtin_memcmp(rb2, " World", 6) != 0) {
+        fut_printf("[MISC-TEST] ✗ readv data mismatch\n");
+        fut_test_fail(79);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ writev/readv: scatter-gather 'Hello World' round-trip\n");
+    fut_test_pass();
+}
+
 /* ============================================================
  * Test 52: write on O_RDONLY fd returns EBADF
  * ============================================================ */
@@ -4218,6 +4280,7 @@ void fut_misc_test_thread(void *arg) {
     test_socketpair_pollhup();  /* Test 76: socketpair POLLHUP on peer close */
     test_openat_dirfd();        /* Test 77: openat with real dirfd */
     test_cputime_clocks();      /* Test 78: CLOCK_PROCESS/THREAD_CPUTIME_ID */
+    test_writev_readv();        /* Test 79: writev/readv scatter-gather */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

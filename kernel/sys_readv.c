@@ -17,6 +17,12 @@
 #include <kernel/fut_memory.h>
 #include <kernel/fut_vfs.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
 /* ============================================================================
  * PHASE 5 SECURITY HARDENING: readv() - Scatter-Gather I/O Vector Validation
  * ============================================================================
@@ -428,7 +434,15 @@ ssize_t sys_readv(int fd, const struct iovec *iov, int iovcnt) {
         return -ENOMEM;
     }
 
-    if (fut_copy_from_user(kernel_iov, iov, iovcnt * sizeof(struct iovec)) != 0) {
+    int rv_copy_ret;
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)iov >= KERNEL_VIRTUAL_BASE) {
+        __builtin_memcpy(kernel_iov, iov, iovcnt * sizeof(struct iovec));
+        rv_copy_ret = 0;
+    } else
+#endif
+    rv_copy_ret = fut_copy_from_user(kernel_iov, iov, iovcnt * sizeof(struct iovec));
+    if (rv_copy_ret != 0) {
         fut_printf("[READV] readv(fd=%d, iov=%p, iovcnt=%d) -> EFAULT (copy_from_user failed)\n",
                    fd, iov, iovcnt);
         fut_free(kernel_iov);
@@ -447,11 +461,11 @@ ssize_t sys_readv(int fd, const struct iovec *iov, int iovcnt) {
                 fut_free(kernel_iov);
                 return -EFAULT;
             }
-            /* Verify buffer is writable before doing any I/O */
+            /* Verify buffer is writable (skip for kernel buffers) */
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)kernel_iov[i].iov_base < KERNEL_VIRTUAL_BASE)
+#endif
             if (fut_access_ok(kernel_iov[i].iov_base, kernel_iov[i].iov_len, 1) != 0) {
-                fut_printf("[READV] readv(fd=%d, iov=%p, iovcnt=%d) -> EFAULT "
-                           "(iov_base[%d] not writable, fail-fast)\n",
-                           fd, iov, iovcnt, i);
                 fut_free(kernel_iov);
                 return -EFAULT;
             }
@@ -545,24 +559,8 @@ ssize_t sys_readv(int fd, const struct iovec *iov, int iovcnt) {
         }
     }
 
-    /* Categorize I/O pattern for diagnostics */
-    const char *io_pattern;
-    if (iovcnt == 1) {
-        io_pattern = "single buffer (equivalent to read)";
-    } else if (iovcnt == 2) {
-        io_pattern = "dual buffer (e.g., header+payload)";
-    } else if (iovcnt <= 10) {
-        io_pattern = "small scatter-gather";
-    } else if (iovcnt <= 100) {
-        io_pattern = "medium scatter-gather";
-    } else {
-        io_pattern = "large scatter-gather";
-    }
-
-    /* Phase 2: Iterate over iovecs and call read for each
-     * Phase 3 will optimize this with direct VFS scatter-gather support */
+    /* Iterate over iovecs and call read for each */
     ssize_t total_read = 0;
-    int iovecs_read = 0;
     for (int i = 0; i < iovcnt; i++) {
         if (kernel_iov[i].iov_len == 0) {
             continue;  /* Skip zero-length buffers */
@@ -585,36 +583,13 @@ ssize_t sys_readv(int fd, const struct iovec *iov, int iovcnt) {
         }
 
         total_read += n;
-        iovecs_read++;
+        /* iovec consumed */
 
         /* Check for EOF or partial read */
         if (n < (ssize_t)kernel_iov[i].iov_len) {
             /* EOF or partial read, stop here */
             break;
         }
-    }
-
-    /* Phase 2: Detailed logging with I/O statistics */
-    const char *completion_status;
-    if (total_read == 0) {
-        completion_status = "EOF";
-    } else if ((size_t)total_read < total_size) {
-        completion_status = "partial";
-    } else {
-        completion_status = "complete";
-    }
-
-    if (zero_len_count > 0) {
-        fut_printf("[READV] readv(fd=%d, iovcnt=%d [%s], total_requested=%zu bytes) -> %ld bytes "
-                   "(%s, %d/%d iovecs filled, %d zero-len skipped, min=%zu max=%zu, validation & malloc)\n",
-                   fd, iovcnt, io_pattern, total_size, total_read,
-                   completion_status, iovecs_read, iovcnt - zero_len_count, zero_len_count,
-                   min_iov_len, max_iov_len);
-    } else {
-        fut_printf("[READV] readv(fd=%d, iovcnt=%d [%s], total_requested=%zu bytes) -> %ld bytes "
-                   "(%s, %d/%d iovecs filled, min=%zu max=%zu, validation & malloc)\n",
-                   fd, iovcnt, io_pattern, total_size, total_read,
-                   completion_status, iovecs_read, iovcnt, min_iov_len, max_iov_len);
     }
 
     fut_free(kernel_iov);

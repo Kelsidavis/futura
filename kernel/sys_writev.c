@@ -17,6 +17,12 @@
 #include <kernel/fut_memory.h>
 #include <kernel/fut_vfs.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
 /* ============================================================================
  * PHASE 5 SECURITY HARDENING: writev() - Scatter-Gather Write Vector Validation
  * ============================================================================
@@ -401,9 +407,15 @@ ssize_t sys_writev(int fd, const struct iovec *iov, int iovcnt) {
         return -ENOMEM;
     }
 
-    if (fut_copy_from_user(kernel_iov, iov, iovcnt * sizeof(struct iovec)) != 0) {
-        fut_printf("[WRITEV] writev(fd=%d, iov=%p, iovcnt=%d) -> EFAULT (copy_from_user failed)\n",
-                   fd, iov, iovcnt);
+    int iov_copy_ret;
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)iov >= KERNEL_VIRTUAL_BASE) {
+        __builtin_memcpy(kernel_iov, iov, iovcnt * sizeof(struct iovec));
+        iov_copy_ret = 0;
+    } else
+#endif
+    iov_copy_ret = fut_copy_from_user(kernel_iov, iov, iovcnt * sizeof(struct iovec));
+    if (iov_copy_ret != 0) {
         fut_free(kernel_iov);
         return -EFAULT;
     }
@@ -420,11 +432,11 @@ ssize_t sys_writev(int fd, const struct iovec *iov, int iovcnt) {
                 fut_free(kernel_iov);
                 return -EFAULT;
             }
-            /* Verify buffer is readable before doing any I/O */
+            /* Verify buffer is readable (skip for kernel buffers) */
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)kernel_iov[i].iov_base < KERNEL_VIRTUAL_BASE)
+#endif
             if (fut_access_ok(kernel_iov[i].iov_base, kernel_iov[i].iov_len, 0) != 0) {
-                fut_printf("[WRITEV] writev(fd=%d, iov=%p, iovcnt=%d) -> EFAULT "
-                           "(iov_base[%d] not readable, fail-fast)\n",
-                           fd, iov, iovcnt, i);
                 fut_free(kernel_iov);
                 return -EFAULT;
             }
@@ -517,22 +529,7 @@ ssize_t sys_writev(int fd, const struct iovec *iov, int iovcnt) {
         }
     }
 
-    /* Categorize I/O pattern for diagnostics */
-    const char *io_pattern;
-    if (iovcnt == 1) {
-        io_pattern = "single buffer (equivalent to write)";
-    } else if (iovcnt == 2) {
-        io_pattern = "dual buffer (e.g., header+payload)";
-    } else if (iovcnt <= 10) {
-        io_pattern = "small scatter-gather";
-    } else if (iovcnt <= 100) {
-        io_pattern = "medium scatter-gather";
-    } else {
-        io_pattern = "large scatter-gather";
-    }
-
-    /* Phase 2: Iterate over iovecs and call write for each
-     * Phase 3 will optimize this with direct VFS scatter-gather support */
+    /* Iterate over iovecs and call write for each */
     ssize_t total_written = 0;
     int iovecs_written = 0;
     for (int i = 0; i < iovcnt; i++) {
@@ -564,29 +561,6 @@ ssize_t sys_writev(int fd, const struct iovec *iov, int iovcnt) {
             /* Partial write, stop here */
             break;
         }
-    }
-
-    /* Phase 2: Detailed logging with I/O statistics */
-    const char *completion_status;
-    if (total_written == 0) {
-        completion_status = "nothing written";
-    } else if ((size_t)total_written < total_size) {
-        completion_status = "partial";
-    } else {
-        completion_status = "complete";
-    }
-
-    if (zero_len_count > 0) {
-        fut_printf("[WRITEV] writev(fd=%d, iovcnt=%d [%s], total_requested=%zu bytes) -> %ld bytes "
-                   "(%s, %d/%d iovecs written, %d zero-len skipped, min=%zu max=%zu, validation & malloc)\n",
-                   fd, iovcnt, io_pattern, total_size, total_written,
-                   completion_status, iovecs_written, iovcnt - zero_len_count, zero_len_count,
-                   min_iov_len, max_iov_len);
-    } else {
-        fut_printf("[WRITEV] writev(fd=%d, iovcnt=%d [%s], total_requested=%zu bytes) -> %ld bytes "
-                   "(%s, %d/%d iovecs written, min=%zu max=%zu, validation & malloc)\n",
-                   fd, iovcnt, io_pattern, total_size, total_written,
-                   completion_status, iovecs_written, iovcnt, min_iov_len, max_iov_len);
     }
 
     fut_free(kernel_iov);

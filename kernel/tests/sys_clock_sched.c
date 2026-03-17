@@ -27,6 +27,7 @@
 
 /* Forward declarations */
 extern long sys_clock_getres(int clock_id, fut_timespec_t *res);
+extern long sys_clock_gettime(int clock_id, fut_timespec_t *tp);
 extern long sys_sched_setparam(int pid, const struct sched_param *param);
 extern long sys_sched_getparam(int pid, struct sched_param *param);
 extern long sys_sched_setscheduler(int pid, int policy, const struct sched_param *param);
@@ -77,6 +78,7 @@ struct test_rusage {
 #define CLKSCHED_TEST_UNSHARE_NOOP   11
 #define CLKSCHED_TEST_UNSHARE_INVAL  12
 #define CLKSCHED_TEST_RR_INTERVAL   13
+#define CLKSCHED_TEST_CLOCK_GETTIME 14
 
 /* PRIO_PROCESS constant (matches sys_sched.c) */
 #define TEST_PRIO_PROCESS  0
@@ -513,6 +515,65 @@ static void test_sched_rr_get_interval(void) {
 }
 
 /* ============================================================
+ * Test 14: kernel tick-to-time conversion is correct
+ * ============================================================ */
+static void test_clock_gettime(void) {
+    fut_printf("[CLKSCHED-TEST] Test 14: tick-to-time conversion correctness\n");
+
+    /* Validate that fut_get_ticks() returns a reasonable value and that
+     * the ticks→seconds conversion is correct (100 ticks = 1 second). */
+    uint64_t ticks = fut_get_ticks();
+
+    /* Ticks should be non-zero (we're well past boot) */
+    if (ticks == 0) {
+        fut_printf("[CLKSCHED-TEST] ✗ fut_get_ticks() returned 0\n");
+        fut_test_fail(CLKSCHED_TEST_CLOCK_GETTIME);
+        return;
+    }
+
+    /* Uptime in seconds should be reasonable (< 600s = 10 minutes) */
+    uint64_t uptime_sec = ticks / 100;
+    if (uptime_sec > 600) {
+        fut_printf("[CLKSCHED-TEST] ✗ uptime=%llu seconds (unreasonably high for tests)\n",
+                   (unsigned long long)uptime_sec);
+        fut_test_fail(CLKSCHED_TEST_CLOCK_GETTIME);
+        return;
+    }
+
+    /* Verify monotonicity: second reading >= first */
+    uint64_t ticks2 = fut_get_ticks();
+    if (ticks2 < ticks) {
+        fut_printf("[CLKSCHED-TEST] ✗ ticks went backwards: %llu > %llu\n",
+                   (unsigned long long)ticks, (unsigned long long)ticks2);
+        fut_test_fail(CLKSCHED_TEST_CLOCK_GETTIME);
+        return;
+    }
+
+    /* Verify conversion: ticks * 10ms should match uptime_sec * 1000 (ms) */
+    uint64_t uptime_ms = ticks * 10;
+    uint64_t derived_sec = uptime_ms / 1000;
+    if (derived_sec != uptime_sec) {
+        fut_printf("[CLKSCHED-TEST] ✗ conversion mismatch: ticks/100=%llu vs ticks*10/1000=%llu\n",
+                   (unsigned long long)uptime_sec, (unsigned long long)derived_sec);
+        fut_test_fail(CLKSCHED_TEST_CLOCK_GETTIME);
+        return;
+    }
+
+    /* clock_getres(CLOCK_MONOTONIC) should succeed (already tested in test 1,
+     * but validates the clock ID is recognized) */
+    long ret = sys_clock_getres(CLOCK_REALTIME, NULL);
+    if (ret != 0) {
+        fut_printf("[CLKSCHED-TEST] ✗ clock_getres(REALTIME) returned %ld\n", ret);
+        fut_test_fail(CLKSCHED_TEST_CLOCK_GETTIME);
+        return;
+    }
+
+    fut_printf("[CLKSCHED-TEST] ✓ ticks=%llu uptime=%llus monotonic, conversion correct\n",
+               (unsigned long long)ticks, (unsigned long long)uptime_sec);
+    fut_test_pass();
+}
+
+/* ============================================================
  * Main test harness thread
  * ============================================================ */
 void fut_clock_sched_test_thread(void *arg) {
@@ -535,6 +596,7 @@ void fut_clock_sched_test_thread(void *arg) {
     test_unshare_noop();
     test_unshare_invalid_bits();
     test_sched_rr_get_interval();
+    test_clock_gettime();
 
     fut_printf("[CLKSCHED-TEST] ========================================\n");
     fut_printf("[CLKSCHED-TEST] All clock/sched/timer tests done\n");

@@ -2076,6 +2076,58 @@ static void test_memfd_ftruncate(void) {
     fut_test_pass();
 }
 
+extern long sys_pread64(unsigned int fd, void *buf, size_t count, long offset);
+extern long sys_pwrite64(unsigned int fd, const void *buf, size_t count, long offset);
+
+/* ============================================================
+ * Test 47: pread64/pwrite64 on memfd at specific offsets
+ * ============================================================ */
+static void test_memfd_pread_pwrite(void) {
+    fut_printf("[MISC-TEST] Test 47: pread64/pwrite64 on memfd\n");
+
+    long fd = sys_memfd_create("preadtest", 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ memfd_create: %ld\n", fd);
+        fut_test_fail(47);
+        return;
+    }
+
+    /* pwrite64 at offset 10 */
+    const char *data = "HELLO";
+    long ret = sys_pwrite64((unsigned int)fd, data, 5, 10);
+    if (ret != 5) {
+        fut_printf("[MISC-TEST] ✗ pwrite64 returned %ld\n", ret);
+        fut_vfs_close((int)fd);
+        fut_test_fail(47);
+        return;
+    }
+
+    /* pread64 at offset 10 */
+    char buf[8] = {0};
+    ret = sys_pread64((unsigned int)fd, buf, 5, 10);
+    if (ret != 5 || memcmp(buf, "HELLO", 5) != 0) {
+        fut_printf("[MISC-TEST] ✗ pread64 returned %ld buf='%s'\n", ret, buf);
+        fut_vfs_close((int)fd);
+        fut_test_fail(47);
+        return;
+    }
+
+    /* Verify file offset wasn't changed by pread/pwrite */
+    extern int64_t fut_vfs_lseek(int fd, int64_t offset, int whence);
+    int64_t pos = fut_vfs_lseek((int)fd, 0, 1);  /* SEEK_CUR */
+    if (pos != 0) {
+        fut_printf("[MISC-TEST] ✗ file offset changed to %lld (expected 0)\n",
+                   (long long)pos);
+        fut_vfs_close((int)fd);
+        fut_test_fail(47);
+        return;
+    }
+
+    fut_vfs_close((int)fd);
+    fut_printf("[MISC-TEST] ✓ pread64/pwrite64 on memfd: positional I/O, offset preserved\n");
+    fut_test_pass();
+}
+
 /* ============================================================
  * Test 38: setrlimit hard limit can be raised by root, denied for non-root
  * ============================================================ */
@@ -2500,6 +2552,7 @@ void fut_misc_test_thread(void *arg) {
     test_mprotect_basic();      /* Test 44: mprotect validation */
     test_sigtimedwait();        /* Test 45: rt_sigtimedwait */
     test_memfd_ftruncate();     /* Test 46: memfd ftruncate */
+    test_memfd_pread_pwrite();  /* Test 47: pread64/pwrite64 on memfd */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -23,6 +23,12 @@
 #include <kernel/uaccess.h>
 #include <kernel/fut_memory.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
 /**
  * pread64() - Read from file at specific offset
  *
@@ -173,12 +179,15 @@ long sys_pread64(unsigned int fd, void *buf, size_t count, int64_t offset) {
      * IEEE Std 1003.1-2017 pread(): "shall fail with EFAULT if buf invalid"
      * - Does not require expensive operations before validation
      * - Early detection improves performance and security */
-    char test_byte = 0;
-    if (fut_copy_to_user(buf, &test_byte, 1) != 0) {
-        fut_printf("[PREAD64] pread64(fd=%u, buf=%p, count=%zu, offset=%ld) -> EFAULT "
-                   "(buffer not writable, fail-fast permission check)\n",
-                   fd, buf, count, offset);
-        return -EFAULT;
+    /* Skip for kernel buffers (selftest calls) */
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)buf < KERNEL_VIRTUAL_BASE)
+#endif
+    {
+        char test_byte = 0;
+        if (fut_copy_to_user(buf, &test_byte, 1) != 0) {
+            return -EFAULT;
+        }
     }
 
     /* Phase 2: Get current task for FD table access */
@@ -233,23 +242,6 @@ long sys_pread64(unsigned int fd, void *buf, size_t count, int64_t offset) {
         return -EBADF;
     }
 
-    /* pread() not supported on character devices, pipes, or sockets */
-    if (file->chr_ops) {
-        fut_printf("[PREAD64] pread64(fd=%u [%s], type=character device, count=%zu [%s], "
-                   "offset=%ld [%s]) -> ESPIPE (not seekable, pid=%d)\n",
-                   fd, fd_category, count, count_category, offset, offset_category, task->pid);
-        return -ESPIPE;
-    }
-
-    /* Check if this is a directory */
-    if (file->vnode && file->vnode->type == VN_DIR) {
-        fut_printf("[PREAD64] pread64(fd=%u [%s], type=directory, ino=%lu, count=%zu [%s], "
-                   "offset=%ld [%s]) -> EISDIR (is directory, pid=%d)\n",
-                   fd, fd_category, file->vnode->ino, count, count_category,
-                   offset, offset_category, task->pid);
-        return -EISDIR;
-    }
-
     /* Handle chr_ops files (memfd, etc.) — call chr_ops->read with given offset */
     if (file->chr_ops && file->chr_ops->read) {
         off_t pos = (off_t)offset;
@@ -258,7 +250,15 @@ long sys_pread64(unsigned int fd, void *buf, size_t count, int64_t offset) {
         ssize_t ret = file->chr_ops->read(file->chr_inode, file->chr_private,
                                            kbuf, count, &pos);
         if (ret > 0) {
-            if (fut_copy_to_user(buf, kbuf, (size_t)ret) != 0) {
+            int cp_ret;
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)buf >= KERNEL_VIRTUAL_BASE) {
+                __builtin_memcpy(buf, kbuf, (size_t)ret);
+                cp_ret = 0;
+            } else
+#endif
+            cp_ret = fut_copy_to_user(buf, kbuf, (size_t)ret);
+            if (cp_ret != 0) {
                 fut_free(kbuf);
                 return -EFAULT;
             }

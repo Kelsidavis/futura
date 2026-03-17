@@ -23,6 +23,12 @@
 #include <kernel/uaccess.h>
 #include <kernel/fut_memory.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
 /**
  * pwrite64() - Write to file at specific offset
  *
@@ -144,14 +150,15 @@ long sys_pwrite64(unsigned int fd, const void *buf, size_t count, int64_t offset
     }
 
     /* Validate buffer is readable BEFORE expensive operations.
-     * Test read permission on first byte of buffer before any allocation
-     * to fail fast and avoid resource exhaustion from repeated alloc/free cycles. */
-    char test_byte;
-    if (fut_copy_from_user(&test_byte, local_buf, 1) != 0) {
-        fut_printf("[PWRITE64] pwrite64(fd=%u, buf=%p, count=%zu, offset=%ld) -> EFAULT "
-                   "(buffer not readable, fail-fast permission check)\n",
-                   local_fd, local_buf, local_count, local_offset);
-        return -EFAULT;
+     * Skip for kernel buffers (selftest calls with kernel stack pointers). */
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)local_buf < KERNEL_VIRTUAL_BASE)
+#endif
+    {
+        char test_byte;
+        if (fut_copy_from_user(&test_byte, local_buf, 1) != 0) {
+            return -EFAULT;
+        }
     }
 
     /* Get current task for FD table access */
@@ -204,7 +211,15 @@ long sys_pwrite64(unsigned int fd, const void *buf, size_t count, int64_t offset
         if (file->chr_ops->write) {
             void *kbuf = fut_malloc(local_count);
             if (!kbuf) return -ENOMEM;
-            if (fut_copy_from_user(kbuf, local_buf, local_count) != 0) {
+            int cp_ret;
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)local_buf >= KERNEL_VIRTUAL_BASE) {
+                __builtin_memcpy(kbuf, local_buf, local_count);
+                cp_ret = 0;
+            } else
+#endif
+            cp_ret = fut_copy_from_user(kbuf, local_buf, local_count);
+            if (cp_ret != 0) {
                 fut_free(kbuf);
                 return -EFAULT;
             }

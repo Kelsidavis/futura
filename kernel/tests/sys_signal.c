@@ -136,11 +136,18 @@ static void test_signal_mask(void) {
         return;
     }
 
-    /* Verify signal is blocked */
-    if (!(__atomic_load_n(&task->signal_mask, __ATOMIC_ACQUIRE) & (1ULL << (SIGUSR1 - 1)))) {
-        fut_printf("[SIGNAL-TEST] ✗ Signal SIGUSR1 not blocked in mask\n");
-        fut_test_fail(SIG_TEST_MASK);
-        return;
+    /* Verify signal is blocked — check per-thread mask (POSIX: per-thread masks) */
+    {
+        extern fut_thread_t *fut_thread_current(void);
+        fut_thread_t *cur_thr = fut_thread_current();
+        uint64_t effective_mask = cur_thr ?
+            __atomic_load_n(&cur_thr->signal_mask, __ATOMIC_ACQUIRE) :
+            __atomic_load_n(&task->signal_mask, __ATOMIC_ACQUIRE);
+        if (!(effective_mask & (1ULL << (SIGUSR1 - 1)))) {
+            fut_printf("[SIGNAL-TEST] ✗ Signal SIGUSR1 not blocked in mask\n");
+            fut_test_fail(SIG_TEST_MASK);
+            return;
+        }
     }
 
     /* Unblock SIGUSR1 */
@@ -151,11 +158,18 @@ static void test_signal_mask(void) {
         return;
     }
 
-    /* Verify signal is unblocked */
-    if (__atomic_load_n(&task->signal_mask, __ATOMIC_ACQUIRE) & (1ULL << (SIGUSR1 - 1))) {
-        fut_printf("[SIGNAL-TEST] ✗ Signal SIGUSR1 still blocked after unblock\n");
-        fut_test_fail(SIG_TEST_MASK);
-        return;
+    /* Verify signal is unblocked — check per-thread mask */
+    {
+        extern fut_thread_t *fut_thread_current(void);
+        fut_thread_t *cur_thr = fut_thread_current();
+        uint64_t effective_mask = cur_thr ?
+            __atomic_load_n(&cur_thr->signal_mask, __ATOMIC_ACQUIRE) :
+            __atomic_load_n(&task->signal_mask, __ATOMIC_ACQUIRE);
+        if (effective_mask & (1ULL << (SIGUSR1 - 1))) {
+            fut_printf("[SIGNAL-TEST] ✗ Signal SIGUSR1 still blocked after unblock\n");
+            fut_test_fail(SIG_TEST_MASK);
+            return;
+        }
     }
 
     fut_printf("[SIGNAL-TEST] ✓ Signal masking working correctly\n");

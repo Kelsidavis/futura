@@ -248,9 +248,10 @@ int fut_signal_send_thread(struct fut_thread *thread, int signum) {
     /* Set the per-thread pending bit atomically */
     __atomic_or_fetch(&thread->thread_pending_signals, signal_bit, __ATOMIC_RELEASE);
 
-    /* Handle default TERM/CORE action for unblocked, uncaught signals */
+    /* Handle default TERM/CORE action for unblocked, uncaught signals.
+     * Use the target thread's mask (not task-wide) for blocked check. */
     if (task->signal_handlers[signum - 1] == SIG_DFL) {
-        uint64_t blocked = __atomic_load_n(&task->signal_mask, __ATOMIC_ACQUIRE);
+        uint64_t blocked = __atomic_load_n(&thread->signal_mask, __ATOMIC_ACQUIRE);
         if (!(blocked & signal_bit)) {
             int action = signal_default_action[signum];
             if (action == SIG_ACTION_TERM || action == SIG_ACTION_CORE) {
@@ -332,9 +333,15 @@ int fut_signal_procmask(struct fut_task *task, int how,
         return -EINVAL;
     }
 
+    /* POSIX: each thread has its own signal mask.  Prefer the current
+     * thread's mask; fall back to the task-wide mask for early-boot or
+     * contexts where no thread is scheduled yet. */
+    fut_thread_t *cur_thread = fut_thread_current();
+    uint64_t *mask_ptr = cur_thread ? &cur_thread->signal_mask : &task->signal_mask;
+
     /* Save old mask if requested */
     if (oldset) {
-        oldset->__mask = __atomic_load_n(&task->signal_mask, __ATOMIC_ACQUIRE);
+        oldset->__mask = __atomic_load_n(mask_ptr, __ATOMIC_ACQUIRE);
     }
 
     /* security: SIGKILL and SIGSTOP cannot be blocked (POSIX requirement).
@@ -348,13 +355,13 @@ int fut_signal_procmask(struct fut_task *task, int how,
         uint64_t sanitized = set->__mask & ~unblockable;
         switch (how) {
             case SIGPROCMASK_BLOCK:
-                __atomic_or_fetch(&task->signal_mask, sanitized, __ATOMIC_ACQ_REL);
+                __atomic_or_fetch(mask_ptr, sanitized, __ATOMIC_ACQ_REL);
                 break;
             case SIGPROCMASK_UNBLOCK:
-                __atomic_and_fetch(&task->signal_mask, ~sanitized, __ATOMIC_ACQ_REL);
+                __atomic_and_fetch(mask_ptr, ~sanitized, __ATOMIC_ACQ_REL);
                 break;
             case SIGPROCMASK_SETMASK:
-                __atomic_store_n(&task->signal_mask, sanitized, __ATOMIC_RELEASE);
+                __atomic_store_n(mask_ptr, sanitized, __ATOMIC_RELEASE);
                 break;
             default:
                 return -EINVAL;
@@ -403,11 +410,14 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
     arm64_frame_t *f = (arm64_frame_t *)frame;
 
     /* Find first pending, unblocked signal.
-     * Check per-thread pending first (tgkill), then task-wide (kill). */
+     * Check per-thread pending first (tgkill), then task-wide (kill).
+     * Use current thread's per-thread signal mask (POSIX per-thread masks). */
     int signum = 0;
     bool from_thread_arm64 = false;
     fut_thread_t *cur_thread_arm64 = fut_thread_current();
-    uint64_t cur_mask = __atomic_load_n(&task->signal_mask, __ATOMIC_ACQUIRE);
+    uint64_t cur_mask = cur_thread_arm64 ?
+        __atomic_load_n(&cur_thread_arm64->signal_mask, __ATOMIC_ACQUIRE) :
+        __atomic_load_n(&task->signal_mask, __ATOMIC_ACQUIRE);
 
     if (cur_thread_arm64) {
         uint64_t tp = __atomic_load_n(&cur_thread_arm64->thread_pending_signals, __ATOMIC_ACQUIRE);
@@ -523,8 +533,8 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
     sframe.uc.uc_mcontext.gregs.fpsr = f->fpsr;
     sframe.uc.uc_mcontext.gregs.fpcr = f->fpcr;
 
-    /* Signal mask for restoration */
-    sframe.uc.uc_sigmask.__mask = __atomic_load_n(&task->signal_mask, __ATOMIC_ACQUIRE);
+    /* Signal mask for restoration — save current thread's mask */
+    sframe.uc.uc_sigmask.__mask = cur_mask;
 
     /* Copy rt_sigframe to user stack */
     if (fut_copy_to_user((void *)sp, &sframe, sizeof(sframe)) != 0) {
@@ -545,13 +555,16 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
     f->x[2] = sp + offsetof(struct rt_sigframe, uc);
 
     /* Block signals during handler: sa_mask + the delivered signal itself.
-     * SA_NODEFER: don't block the delivered signal (allow recursive delivery). */
+     * SA_NODEFER: don't block the delivered signal (allow recursive delivery).
+     * Update the current thread's mask (per-thread signal mask semantics). */
     uint64_t new_mask_bits = task->signal_handler_masks[signum - 1] &
                              ~((1ULL << (SIGKILL - 1)) | (1ULL << (SIGSTOP - 1)));
     if (!(handler_flags & SA_NODEFER)) {
         new_mask_bits |= signal_bit;
     }
-    __atomic_or_fetch(&task->signal_mask, new_mask_bits, __ATOMIC_ACQ_REL);
+    uint64_t *mask_ptr_arm64 = cur_thread_arm64 ?
+        &cur_thread_arm64->signal_mask : &task->signal_mask;
+    __atomic_or_fetch(mask_ptr_arm64, new_mask_bits, __ATOMIC_ACQ_REL);
 
     /* SA_RESETHAND: reset handler to SIG_DFL after delivery */
     if (handler_flags & SA_RESETHAND) {
@@ -597,11 +610,14 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
     }
 
     /* Find first pending, unblocked signal.
-     * Check per-thread pending first (tgkill), then task-wide (kill). */
+     * Check per-thread pending first (tgkill), then task-wide (kill).
+     * Use current thread's per-thread signal mask (POSIX per-thread masks). */
     int signum = 0;
     bool from_thread_x86 = false;
     fut_thread_t *cur_thread_x86 = fut_thread_current();
-    uint64_t cur_mask = __atomic_load_n(&task->signal_mask, __ATOMIC_ACQUIRE);
+    uint64_t cur_mask = cur_thread_x86 ?
+        __atomic_load_n(&cur_thread_x86->signal_mask, __ATOMIC_ACQUIRE) :
+        __atomic_load_n(&task->signal_mask, __ATOMIC_ACQUIRE);
 
     if (cur_thread_x86) {
         uint64_t tp = __atomic_load_n(&cur_thread_x86->thread_pending_signals, __ATOMIC_ACQUIRE);
@@ -724,8 +740,8 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
     sframe.uc.uc_mcontext.gregs.err = f->error_code;
     sframe.uc.uc_mcontext.gregs.trapno = f->vector;
 
-    /* Signal mask for restoration */
-    sframe.uc.uc_sigmask.__mask = __atomic_load_n(&task->signal_mask, __ATOMIC_ACQUIRE);
+    /* Signal mask for restoration — save current thread's mask */
+    sframe.uc.uc_sigmask.__mask = cur_mask;
 
     /* Set return address to NULL - handler should call sigreturn explicitly */
     sframe.return_address = NULL;
@@ -751,14 +767,17 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
     f->rdx = sp + offsetof(struct rt_sigframe, uc);
 
     /* Block signals during handler: sa_mask + the delivered signal itself.
-     * SA_NODEFER: don't block the delivered signal (allow recursive delivery). */
+     * SA_NODEFER: don't block the delivered signal (allow recursive delivery).
+     * Update the current thread's mask (per-thread signal mask semantics). */
     unsigned long handler_flags_x86 = task->signal_handler_flags[signum - 1];
     uint64_t new_mask_bits_x86 = task->signal_handler_masks[signum - 1] &
                                  ~((1ULL << (SIGKILL - 1)) | (1ULL << (SIGSTOP - 1)));
     if (!(handler_flags_x86 & SA_NODEFER)) {
         new_mask_bits_x86 |= signal_bit;
     }
-    __atomic_or_fetch(&task->signal_mask, new_mask_bits_x86, __ATOMIC_ACQ_REL);
+    uint64_t *mask_ptr_x86 = cur_thread_x86 ?
+        &cur_thread_x86->signal_mask : &task->signal_mask;
+    __atomic_or_fetch(mask_ptr_x86, new_mask_bits_x86, __ATOMIC_ACQ_REL);
 
     /* SA_RESETHAND: reset handler to SIG_DFL after delivery */
     if (handler_flags_x86 & SA_RESETHAND) {

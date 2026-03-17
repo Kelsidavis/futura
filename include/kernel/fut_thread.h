@@ -110,6 +110,11 @@ struct fut_thread {
      * signals are still stored in task->pending_signals.  Signal delivery
      * checks BOTH this field AND task->pending_signals. */
     uint64_t thread_pending_signals;      // Thread-directed pending signal bitmask
+
+    /* Per-thread signal mask: POSIX requires each thread to have its own
+     * independent signal mask (pthread_sigmask).  Initialized to 0 (no
+     * signals blocked); CLONE_THREAD inherits the creator's mask. */
+    uint64_t signal_mask;                 // Per-thread signal mask
 };
 
 /* ============================================================

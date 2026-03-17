@@ -1546,6 +1546,10 @@ static fut_thread_t *clone_thread(fut_thread_t *parent_thread, fut_task_t *child
      * Without this, child will have fs_base=0 and fault at FS:0x28 */
     child_thread->fs_base = parent_thread->fs_base;
 
+    /* Inherit parent thread's per-thread signal mask (POSIX: fork child
+     * inherits the calling thread's signal mask). */
+    child_thread->signal_mask = __atomic_load_n(&parent_thread->signal_mask, __ATOMIC_ACQUIRE);
+
     FORK_LOG("[FORK] Child thread tid=%llu entry=fork_child_return frame_rip=0x%llx\n",
              (unsigned long long)child_thread->tid,
              (unsigned long long)child_frame->rip);
@@ -1746,6 +1750,10 @@ long sys_clone_thread(uint64_t flags, uint64_t child_stack,
     /* CLONE_CHILD_CLEARTID: on thread exit, write 0 + futex-wake at child_tid_ptr */
     if ((flags & CLONE_CHILD_CLEARTID) && child_tid_ptr)
         child_thread->clear_child_tid = (int *)child_tid_ptr;
+
+    /* Inherit parent thread's per-thread signal mask (POSIX: CLONE_THREAD
+     * child starts with the same signal mask as the creating thread). */
+    child_thread->signal_mask = __atomic_load_n(&parent_thread->signal_mask, __ATOMIC_ACQUIRE);
 
     FORK_LOG("[CLONE] thread tid=%llu rip=0x%llx rsp=0x%llx fs_base=0x%llx\n",
              (unsigned long long)child_tid,

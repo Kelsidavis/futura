@@ -1216,10 +1216,12 @@ static int64_t sys_sigreturn_handler(uint64_t frame_ptr, uint64_t arg2, uint64_t
         return -EFAULT;
     }
 
-    /* Restore the signal mask from the ucontext
-     * The signal mask was saved when the signal handler was entered */
-    if (sigframe.uc.uc_sigmask.__mask != 0) {
-        current->signal_mask = sigframe.uc.uc_sigmask.__mask;
+    /* Restore the per-thread signal mask from the ucontext.
+     * The mask was saved (per-thread) when the signal handler was entered. */
+    {
+        fut_thread_t *cur_thr = fut_thread_current();
+        uint64_t *mptr = cur_thr ? &cur_thr->signal_mask : &current->signal_mask;
+        __atomic_store_n(mptr, sigframe.uc.uc_sigmask.__mask, __ATOMIC_RELEASE);
     }
 
     /* Restore all general purpose registers from the saved context
@@ -3337,18 +3339,19 @@ static bool posix_deliver_signal(fut_task_t *current, int signum,
     sigframe.uc.uc_stack.ss_sp = NULL;
     sigframe.uc.uc_stack.ss_flags = 0;
     sigframe.uc.uc_stack.ss_size = 0;
-    /* Save the CURRENT signal mask so sigreturn can restore it */
-    sigframe.uc.uc_sigmask.__mask = current->signal_mask;
-
-    /* Apply the handler's sa_mask during delivery:
-     * Block additional signals specified in the handler's sa_mask */
-    if (signum > 0 && signum < _NSIG) {
-        uint64_t handler_mask = current->signal_handler_masks[signum - 1];
-        uint64_t saved_mask = current->signal_mask;
-        current->signal_mask |= handler_mask;  /* Block these signals during handler */
-
-        /* Save the original mask in the frame so sigreturn can restore it */
+    /* Save the CURRENT per-thread signal mask so sigreturn can restore it */
+    {
+        fut_thread_t *cur_thr = fut_thread_current();
+        uint64_t *mptr = cur_thr ? &cur_thr->signal_mask : &current->signal_mask;
+        uint64_t saved_mask = __atomic_load_n(mptr, __ATOMIC_ACQUIRE);
         sigframe.uc.uc_sigmask.__mask = saved_mask;
+
+        /* Apply the handler's sa_mask during delivery:
+         * Block additional signals specified in the handler's sa_mask */
+        if (signum > 0 && signum < _NSIG) {
+            uint64_t handler_mask = current->signal_handler_masks[signum - 1];
+            __atomic_or_fetch(mptr, handler_mask, __ATOMIC_ACQ_REL);
+        }
     }
 
     /* Set return address (for when handler calls sigreturn) */
@@ -3419,8 +3422,11 @@ static int check_and_deliver_pending_signals(fut_task_t *current,
         return 0;
     }
 
-    uint64_t signal_mask = __atomic_load_n(&current->signal_mask, __ATOMIC_ACQUIRE);
     fut_thread_t *cur_thread = fut_thread_current();
+    /* POSIX: use current thread's per-thread signal mask */
+    uint64_t signal_mask = cur_thread ?
+        __atomic_load_n(&cur_thread->signal_mask, __ATOMIC_ACQUIRE) :
+        __atomic_load_n(&current->signal_mask, __ATOMIC_ACQUIRE);
 
     /* 1. Thread-directed signals (tgkill/tkill) have priority over task-wide */
     if (cur_thread) {

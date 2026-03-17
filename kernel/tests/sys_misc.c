@@ -6048,10 +6048,11 @@ static void test_tgkill_per_thread_pending(void) {
     __atomic_store_n(&thread->thread_pending_signals, 0ULL, __ATOMIC_RELEASE);
     uint64_t old_task_pending = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
 
-    /* Block SIGUSR1 so it doesn't get delivered and clear the bit immediately */
+    /* Block SIGUSR1 so it doesn't get delivered and clear the bit immediately.
+     * Use per-thread signal mask (POSIX: each thread has own mask). */
     uint64_t block_bit = (1ULL << (SIGUSR1 - 1));
-    uint64_t old_mask = task->signal_mask;
-    __atomic_or_fetch(&task->signal_mask, block_bit, __ATOMIC_ACQ_REL);
+    uint64_t old_mask = __atomic_load_n(&thread->signal_mask, __ATOMIC_ACQUIRE);
+    __atomic_or_fetch(&thread->signal_mask, block_bit, __ATOMIC_ACQ_REL);
 
     /* tgkill to self with SIGUSR1 should set per-thread pending */
     int pid = (int)task->pid;
@@ -6069,7 +6070,7 @@ static void test_tgkill_per_thread_pending(void) {
     if (!(tp & block_bit)) {
         fut_printf("[MISC-TEST] ✗ thread_pending_signals=0x%llx, expected SIGUSR1 bit set\n",
                    (unsigned long long)tp);
-        task->signal_mask = old_mask;
+        __atomic_store_n(&thread->signal_mask, old_mask, __ATOMIC_RELEASE);
         __atomic_store_n(&thread->thread_pending_signals, 0ULL, __ATOMIC_RELEASE);
         fut_test_fail(124); return;
     }
@@ -6079,16 +6080,75 @@ static void test_tgkill_per_thread_pending(void) {
     /* It should be the same as before tgkill (no task-wide bit set by tgkill) */
     if ((task_p & block_bit) && !(old_task_pending & block_bit)) {
         fut_printf("[MISC-TEST] ✗ tgkill wrongly set task->pending_signals SIGUSR1 bit\n");
-        task->signal_mask = old_mask;
+        __atomic_store_n(&thread->signal_mask, old_mask, __ATOMIC_RELEASE);
         __atomic_store_n(&thread->thread_pending_signals, 0ULL, __ATOMIC_RELEASE);
         fut_test_fail(124); return;
     }
 
     /* Cleanup: restore mask and clear per-thread pending */
-    task->signal_mask = old_mask;
+    __atomic_store_n(&thread->signal_mask, old_mask, __ATOMIC_RELEASE);
     __atomic_store_n(&thread->thread_pending_signals, 0ULL, __ATOMIC_RELEASE);
 
     fut_printf("[MISC-TEST] ✓ tgkill: per-thread pending set, task-wide not polluted\n");
+    fut_test_pass();
+}
+
+/* Test 125: per-thread signal mask is independent from task->signal_mask */
+static void test_per_thread_signal_mask(void) {
+    fut_printf("[MISC-TEST] Test 125: per-thread signal mask independent of task mask\n");
+
+    fut_task_t *task = fut_task_current();
+    fut_thread_t *thread = fut_thread_current();
+    if (!task || !thread) {
+        fut_printf("[MISC-TEST] ✗ no task/thread\n");
+        fut_test_fail(125); return;
+    }
+
+    /* Save original masks */
+    uint64_t orig_thread_mask = __atomic_load_n(&thread->signal_mask, __ATOMIC_ACQUIRE);
+    uint64_t orig_task_mask   = __atomic_load_n(&task->signal_mask, __ATOMIC_ACQUIRE);
+
+    /* Clear both to known state */
+    __atomic_store_n(&thread->signal_mask, 0ULL, __ATOMIC_RELEASE);
+    __atomic_store_n(&task->signal_mask,   0ULL, __ATOMIC_RELEASE);
+
+    /* sigprocmask(SIG_BLOCK, SIGUSR2) via the syscall path */
+    extern long sys_sigprocmask(int how, const sigset_t *set, sigset_t *oldset);
+    sigset_t block_set;
+    block_set.__mask = (1ULL << (SIGUSR2 - 1));
+    long ret = sys_sigprocmask(0 /* SIG_BLOCK */, &block_set, NULL);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ sigprocmask returned %ld\n", ret);
+        __atomic_store_n(&thread->signal_mask, orig_thread_mask, __ATOMIC_RELEASE);
+        __atomic_store_n(&task->signal_mask,   orig_task_mask,   __ATOMIC_RELEASE);
+        fut_test_fail(125); return;
+    }
+
+    /* Verify thread mask updated, task mask NOT modified */
+    uint64_t new_thread_mask = __atomic_load_n(&thread->signal_mask, __ATOMIC_ACQUIRE);
+    uint64_t new_task_mask   = __atomic_load_n(&task->signal_mask,   __ATOMIC_ACQUIRE);
+    uint64_t bit = (1ULL << (SIGUSR2 - 1));
+
+    if (!(new_thread_mask & bit)) {
+        fut_printf("[MISC-TEST] ✗ SIGUSR2 not set in thread->signal_mask (0x%llx)\n",
+                   (unsigned long long)new_thread_mask);
+        __atomic_store_n(&thread->signal_mask, orig_thread_mask, __ATOMIC_RELEASE);
+        __atomic_store_n(&task->signal_mask,   orig_task_mask,   __ATOMIC_RELEASE);
+        fut_test_fail(125); return;
+    }
+    if (new_task_mask & bit) {
+        fut_printf("[MISC-TEST] ✗ sigprocmask leaked to task->signal_mask (0x%llx)\n",
+                   (unsigned long long)new_task_mask);
+        __atomic_store_n(&thread->signal_mask, orig_thread_mask, __ATOMIC_RELEASE);
+        __atomic_store_n(&task->signal_mask,   orig_task_mask,   __ATOMIC_RELEASE);
+        fut_test_fail(125); return;
+    }
+
+    /* Restore original masks */
+    __atomic_store_n(&thread->signal_mask, orig_thread_mask, __ATOMIC_RELEASE);
+    __atomic_store_n(&task->signal_mask,   orig_task_mask,   __ATOMIC_RELEASE);
+
+    fut_printf("[MISC-TEST] ✓ per-thread mask updated; task mask unchanged\n");
     fut_test_pass();
 }
 
@@ -6226,6 +6286,7 @@ void fut_misc_test_thread(void *arg) {
     test_procfs_status_nnp_fdsize();       /* Test 122: status has NoNewPrivs:/FDSize: */
     test_clone_thread_validation();        /* Test 123: clone(CLONE_THREAD) EINVAL */
     test_tgkill_per_thread_pending();      /* Test 124: tgkill sets thread_pending_signals */
+    test_per_thread_signal_mask();         /* Test 125: sigprocmask updates thread mask not task mask */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

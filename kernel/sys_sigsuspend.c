@@ -117,18 +117,19 @@ long sys_sigsuspend(const sigset_t *mask) {
         return -EFAULT;
     }
 
-    /* Save current mask for restoration */
-    oldmask.__mask = __atomic_load_n(&current->signal_mask, __ATOMIC_ACQUIRE);
+    /* Save current per-thread mask for restoration */
+    fut_thread_t *cur_thread = fut_thread_current();
+    uint64_t *mask_ptr = cur_thread ? &cur_thread->signal_mask : &current->signal_mask;
+    oldmask.__mask = __atomic_load_n(mask_ptr, __ATOMIC_ACQUIRE);
 
-    /* Install new mask */
-    __atomic_store_n(&current->signal_mask, newmask.__mask, __ATOMIC_RELEASE);
+    /* Install new mask atomically on current thread */
+    __atomic_store_n(mask_ptr, newmask.__mask, __ATOMIC_RELEASE);
 
     /* Hold signal_waitq lock across check + enqueue to avoid lost wakeups. */
     fut_spinlock_acquire(&current->signal_waitq.lock);
 
     /* Check both task-wide and per-thread pending (tgkill) */
     uint64_t task_p = __atomic_load_n(&current->pending_signals, __ATOMIC_ACQUIRE);
-    fut_thread_t *cur_thread = fut_thread_current();
     uint64_t thread_p = cur_thread ?
         __atomic_load_n(&cur_thread->thread_pending_signals, __ATOMIC_ACQUIRE) : 0;
     uint64_t unblocked = (task_p | thread_p) & ~newmask.__mask;
@@ -145,8 +146,8 @@ long sys_sigsuspend(const sigset_t *mask) {
                    current->pid, unblocked);
     }
 
-    /* Restore original signal mask before returning */
-    __atomic_store_n(&current->signal_mask, oldmask.__mask, __ATOMIC_RELEASE);
+    /* Restore original per-thread signal mask before returning */
+    __atomic_store_n(mask_ptr, oldmask.__mask, __ATOMIC_RELEASE);
 
     /* sigsuspend always returns -EINTR */
     return -EINTR;

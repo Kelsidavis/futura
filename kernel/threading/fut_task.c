@@ -14,6 +14,7 @@
 #include "../../include/kernel/fut_memory.h"
 #include "../../include/kernel/fut_vfs.h"
 #include "../../include/kernel/errno.h"
+#include <kernel/signal.h>
 #include "../../include/kernel/uaccess.h"
 #include <kernel/kprintf.h>
 #include <stdatomic.h>
@@ -388,6 +389,9 @@ static void task_mark_exit(fut_task_t *task, int status, int signal) {
     fut_spinlock_release(&task_list_lock);
 
     if (parent) {
+        /* Send SIGCHLD to parent (POSIX: child exit/stop/continue → SIGCHLD) */
+        fut_signal_send(parent, SIGCHLD);
+        /* Wake any waitpid/wait4 blockers */
         fut_waitq_wake_all(&parent->child_waiters);
     }
 }
@@ -448,10 +452,14 @@ static void task_cleanup_and_exit(fut_task_t *task, int status, int signal) {
         }
 
         if (init_task && init_task != task) {
-            /* Move all children to init */
+            /* Move all children to init. Deliver pdeathsig if configured. */
             fut_task_t *child = task->first_child;
             while (child) {
                 fut_task_t *next = child->sibling;
+                /* Deliver parent-death signal if child requested one via prctl */
+                if (child->pdeathsig > 0 && child->state != FUT_TASK_ZOMBIE) {
+                    fut_signal_send(child, child->pdeathsig);
+                }
                 child->parent = init_task;
                 child->sibling = init_task->first_child;
                 init_task->first_child = child;

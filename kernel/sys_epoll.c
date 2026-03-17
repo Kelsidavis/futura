@@ -1762,10 +1762,11 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
                 ready_events[ready_count].data.u64 = set->fds[i].data;
                 ready_count++;
 
-                /* Phase 3: Handle oneshot mode - auto-unregister after reporting */
+                /* Phase 3: Handle oneshot mode - disable events after reporting.
+                 * The FD stays registered but stops reporting until re-armed
+                 * via EPOLL_CTL_MOD. This matches Linux behavior. */
                 if (set->fds[i].oneshot) {
-                    set->fds[i].registered = false;
-                    set->count--;
+                    set->fds[i].events = 0;  /* Disable all events */
                 }
             }
         }

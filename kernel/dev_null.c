@@ -53,8 +53,25 @@ static const struct fut_file_ops zero_fops = {
     .mmap = NULL,
 };
 
+/* /dev/urandom: read returns random bytes (from getrandom), write succeeds */
+static ssize_t urandom_read(void *inode, void *priv, void *buf, size_t n, off_t *pos) {
+    (void)inode; (void)priv; (void)pos;
+    extern long sys_getrandom(void *buf, size_t buflen, unsigned int flags);
+    long ret = sys_getrandom(buf, n, 0);
+    return (ret < 0) ? ret : (ssize_t)ret;
+}
+
+static const struct fut_file_ops urandom_fops = {
+    .read = urandom_read,
+    .write = null_write,  /* Accept and discard (seeds entropy pool) */
+    .open = NULL,
+    .release = NULL,
+    .ioctl = NULL,
+    .mmap = NULL,
+};
+
 /**
- * Initialize /dev/null and /dev/zero devices.
+ * Initialize /dev/null, /dev/zero, and /dev/urandom devices.
  * Call from kernel_main during boot.
  */
 void dev_null_init(void) {
@@ -65,5 +82,12 @@ void dev_null_init(void) {
     chrdev_register(1, 5, &zero_fops, "zero", NULL);
     devfs_create_chr("/dev/zero", 1, 5);
 
-    fut_printf("[DEV] /dev/null and /dev/zero registered\n");
+    /* /dev/urandom = (1,9), /dev/random = (1,8) — both use same PRNG */
+    chrdev_register(1, 9, &urandom_fops, "urandom", NULL);
+    devfs_create_chr("/dev/urandom", 1, 9);
+
+    chrdev_register(1, 8, &urandom_fops, "random", NULL);
+    devfs_create_chr("/dev/random", 1, 8);
+
+    fut_printf("[DEV] /dev/null, /dev/zero, /dev/urandom, /dev/random registered\n");
 }

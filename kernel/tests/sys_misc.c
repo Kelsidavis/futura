@@ -1528,6 +1528,46 @@ static void test_mmap_munmap_validation(void) {
 }
 
 /* ============================================================
+ * Test 30: /dev/urandom returns random data
+ * ============================================================ */
+static void test_dev_urandom(void) {
+    fut_printf("[MISC-TEST] Test 30: /dev/urandom random data\n");
+
+    int fd = fut_vfs_open("/dev/urandom", 0x00, 0);  /* O_RDONLY */
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open /dev/urandom failed: %d\n", fd);
+        fut_test_fail(30);
+        return;
+    }
+
+    uint8_t buf[16];
+    memset(buf, 0, sizeof(buf));
+    ssize_t nr = fut_vfs_read(fd, buf, sizeof(buf));
+    if (nr != 16) {
+        fut_printf("[MISC-TEST] ✗ read /dev/urandom returned %zd (expected 16)\n", nr);
+        fut_vfs_close(fd);
+        fut_test_fail(30);
+        return;
+    }
+
+    /* At least some bytes should be non-zero */
+    int nonzero = 0;
+    for (int i = 0; i < 16; i++)
+        if (buf[i] != 0) nonzero++;
+
+    if (nonzero == 0) {
+        fut_printf("[MISC-TEST] ✗ /dev/urandom returned all zeros\n");
+        fut_vfs_close(fd);
+        fut_test_fail(30);
+        return;
+    }
+
+    fut_vfs_close(fd);
+    fut_printf("[MISC-TEST] ✓ /dev/urandom: 16 bytes, %d non-zero\n", nonzero);
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -1566,6 +1606,7 @@ void fut_misc_test_thread(void *arg) {
     test_open_cloexec();        /* Test 27: O_CLOEXEC */
     test_mmap_munmap_validation(); /* Test 28: mmap/munmap validation */
     test_dev_null_zero();       /* Test 29: /dev/null and /dev/zero */
+    test_dev_urandom();         /* Test 30: /dev/urandom */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

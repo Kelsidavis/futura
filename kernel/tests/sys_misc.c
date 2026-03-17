@@ -4827,6 +4827,71 @@ static void test_ftruncate_regular(void) {
 }
 
 /* ============================================================
+ * Test 91: write past EOF zero-fills the gap
+ * ============================================================ */
+static void test_write_past_eof_zerofill(void) {
+    fut_printf("[MISC-TEST] Test 91: write past EOF zero-fills gap\n");
+
+    int fd = (int)fut_vfs_open("/test_zerofill.txt", O_CREAT | O_RDWR, 0644);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open failed: %d\n", fd);
+        fut_test_fail(91);
+        return;
+    }
+
+    /* Write 4 bytes at offset 0 */
+    fut_vfs_write(fd, "ABCD", 4);
+
+    /* Seek to offset 100 and write — gap bytes 4..99 must be zero */
+    sys_lseek(fd, 100, 0 /* SEEK_SET */);
+    fut_vfs_write(fd, "EFGH", 4);
+
+    /* Verify file size is 104 */
+    struct fut_stat st = {0};
+    sys_fstat(fd, &st);
+    if (st.st_size != 104) {
+        fut_printf("[MISC-TEST] ✗ size=%llu (expected 104)\n", (unsigned long long)st.st_size);
+        fut_vfs_close(fd);
+        fut_test_fail(91);
+        return;
+    }
+
+    /* Read the gap region (bytes 4..11) — should be all zeros */
+    sys_lseek(fd, 4, 0 /* SEEK_SET */);
+    char gap[8] = {1,1,1,1,1,1,1,1};
+    fut_vfs_read(fd, gap, 8);
+    int gap_ok = 1;
+    for (int i = 0; i < 8; i++) {
+        if (gap[i] != 0) { gap_ok = 0; break; }
+    }
+    if (!gap_ok) {
+        fut_printf("[MISC-TEST] ✗ gap not zeroed: %d %d %d %d %d %d %d %d\n",
+                   gap[0], gap[1], gap[2], gap[3], gap[4], gap[5], gap[6], gap[7]);
+        fut_vfs_close(fd);
+        fut_test_fail(91);
+        return;
+    }
+
+    /* Verify the written data is intact */
+    char head[4] = {0};
+    char tail[4] = {0};
+    sys_lseek(fd, 0, 0);
+    fut_vfs_read(fd, head, 4);
+    sys_lseek(fd, 100, 0);
+    fut_vfs_read(fd, tail, 4);
+    if (head[0] != 'A' || head[3] != 'D' || tail[0] != 'E' || tail[3] != 'H') {
+        fut_printf("[MISC-TEST] ✗ data corrupted: head='%.4s' tail='%.4s'\n", head, tail);
+        fut_vfs_close(fd);
+        fut_test_fail(91);
+        return;
+    }
+
+    fut_vfs_close(fd);
+    fut_printf("[MISC-TEST] ✓ write past EOF: gap zero-filled, data intact\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -4926,6 +4991,7 @@ void fut_misc_test_thread(void *arg) {
     test_fstat_type_bits();         /* Test 88: fstat S_IFREG type bits */
     test_sigpending_blocked();      /* Test 89: sigpending blocked signal */
     test_ftruncate_regular();       /* Test 90: ftruncate grow/shrink */
+    test_write_past_eof_zerofill(); /* Test 91: write past EOF zero-fills gap */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

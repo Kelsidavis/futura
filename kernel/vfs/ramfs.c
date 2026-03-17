@@ -485,6 +485,16 @@ static ssize_t ramfs_write(struct fut_vnode *vnode, const void *buf, size_t size
     }
 #endif
 
+    /* POSIX: zero-fill the gap between current file end and write offset.
+     * If writing past EOF, bytes between old size and offset must be zero. */
+    if (offset > vnode->size) {
+        size_t gap_start = (size_t)vnode->size;
+        size_t gap_end = (size_t)offset;
+        for (size_t i = gap_start; i < gap_end; i++) {
+            node->file.data[i] = 0;
+        }
+    }
+
     for (size_t i = 0; i < size; i++) {
         node->file.data[(size_t)offset + i] = src[i];
     }

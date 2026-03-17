@@ -319,41 +319,37 @@ long sys_access(const char *pathname, int mode) {
 
     uint32_t file_mode = vnode->mode;
 
-    /* Phase 4: Check permissions using real uid/gid-aware permission checks
-     * Uses vfs_check_*_perm functions that properly check owner/group/other */
+    /* POSIX: access() checks permissions using REAL uid/gid (not effective).
+     * This differs from open/read/write which use effective credentials.
+     * Critical for setuid programs to check invoking user's permissions. */
+    fut_task_t *task = fut_task_current();
+    uint32_t check_uid = task ? task->ruid : 0;
+    uint32_t check_gid = task ? task->rgid : 0;
 
-    if (local_mode & R_OK) {
-        int ret = vfs_check_read_perm(vnode);
-        if (ret < 0) {
-            fut_printf("[ACCESS] access(path='%s' [%s], mode=%s, file_mode=0%o, uid=%u, gid=%u, "
-                       "checking=%s) -> EACCES (read permission denied)\n",
-                       path_buf, path_type, mode_desc, file_mode, vnode->uid, vnode->gid, perm_check_buf);
+    /* Root (real uid=0) always has access */
+    if (check_uid != 0) {
+        /* Determine permission bits based on real uid/gid */
+        uint32_t perm;
+        if (check_uid == vnode->uid)
+            perm = (file_mode >> 6) & 7;
+        else if (check_gid == vnode->gid)
+            perm = (file_mode >> 3) & 7;
+        else
+            perm = file_mode & 7;
+
+        if ((local_mode & R_OK) && !(perm & 4)) {
             fut_vnode_unref(vnode);
             return -EACCES;
         }
-    }
-
-    if (local_mode & W_OK) {
-        int ret = vfs_check_write_perm(vnode);
-        if (ret < 0) {
-            fut_printf("[ACCESS] access(path='%s' [%s], mode=%s, file_mode=0%o, uid=%u, gid=%u, "
-                       "checking=%s) -> EACCES (write permission denied)\n",
-                       path_buf, path_type, mode_desc, file_mode, vnode->uid, vnode->gid, perm_check_buf);
+        if ((local_mode & W_OK) && !(perm & 2)) {
             fut_vnode_unref(vnode);
             return -EACCES;
         }
-    }
-
-    if (local_mode & X_OK) {
-        int ret = vfs_check_exec_perm(vnode);
-        if (ret < 0) {
-            fut_printf("[ACCESS] access(path='%s' [%s], mode=%s, file_mode=0%o, uid=%u, gid=%u, "
-                       "checking=%s) -> EACCES (execute permission denied)\n",
-                       path_buf, path_type, mode_desc, file_mode, vnode->uid, vnode->gid, perm_check_buf);
+        if ((local_mode & X_OK) && !(perm & 1)) {
             fut_vnode_unref(vnode);
             return -EACCES;
         }
-    }
+    }  /* end non-root permission check */
 
     /* Security hardening WARNING: TOCTOU Race Condition
      *

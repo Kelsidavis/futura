@@ -10,6 +10,7 @@
 #include <kernel/fut_vfs.h>
 #include <kernel/chrdev.h>
 #include <kernel/errno.h>
+#include <fcntl.h>
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
@@ -25,6 +26,9 @@
 #define TCSETS      0x5402
 #define TIOCGWINSZ  0x5413
 #define FIONREAD    0x541B
+#define FIONBIO     0x5421
+#define FIOCLEX     0x5451
+#define FIONCLEX    0x5450
 
 /* ============================================================================
  * IOCTL Direction and Size Extraction Macros
@@ -408,6 +412,15 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
         case FIONREAD:
             request_name = "FIONREAD";
             break;
+        case FIONBIO:
+            request_name = "FIONBIO";
+            break;
+        case FIOCLEX:
+            request_name = "FIOCLEX";
+            break;
+        case FIONCLEX:
+            request_name = "FIONCLEX";
+            break;
         default:
             request_name = "UNKNOWN";
             break;
@@ -520,6 +533,7 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
                     requires_write = 1;
                     break;
                 case TCSETS:      /* Set terminal settings - reads termios from argp */
+                case FIONBIO:     /* Set non-blocking - reads int from argp */
                     requires_read = 1;
                     break;
                 default:
@@ -719,6 +733,33 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
             /* Success */
             return 0;
         }
+        case FIONBIO: {
+            /* FIONBIO - Set/clear non-blocking I/O on the file description.
+             * argp points to an int: non-zero = set O_NONBLOCK, zero = clear. */
+            if (!argp)
+                return -EFAULT;
+            int nb_flag = 0;
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
+                __builtin_memcpy(&nb_flag, argp, sizeof(int));
+            else
+#endif
+            if (fut_copy_from_user(&nb_flag, argp, sizeof(int)) != 0)
+                return -EFAULT;
+            if (nb_flag)
+                file->flags |= O_NONBLOCK;
+            else
+                file->flags &= ~O_NONBLOCK;
+            return 0;
+        }
+        case FIOCLEX:
+            /* FIOCLEX - Set close-on-exec flag on the file descriptor */
+            file->fd_flags |= FD_CLOEXEC;
+            return 0;
+        case FIONCLEX:
+            /* FIONCLEX - Clear close-on-exec flag on the file descriptor */
+            file->fd_flags &= ~FD_CLOEXEC;
+            return 0;
         default:
             fut_printf("[IOCTL] ioctl(fd=%d, request=0x%lx [%s], argp=%p) -> ENOTTY (no ioctl op)\n",
                        fd, request, request_name, argp);

@@ -1651,6 +1651,103 @@ static void test_dev_null_poll(void) {
     fut_printf("[MISC-TEST] ✓ /dev/null: poll returns POLLIN|POLLOUT immediately\n");
     fut_test_pass();
 }
+
+extern long sys_ioctl(int fd, unsigned long request, void *argp);
+
+/* ============================================================
+ * Test 40: ioctl FIONBIO / FIOCLEX / FIONCLEX
+ * ============================================================ */
+#define TEST_FIONBIO  0x5421
+#define TEST_FIOCLEX  0x5451
+#define TEST_FIONCLEX 0x5450
+
+static void test_ioctl_fd_ops(void) {
+    fut_printf("[MISC-TEST] Test 40: ioctl FIONBIO/FIOCLEX/FIONCLEX\n");
+
+    int fd = fut_vfs_open("/ioctl_test.txt", 0x42, 0644);  /* O_RDWR|O_CREAT */
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open failed: %d\n", fd);
+        fut_test_fail(40);
+        return;
+    }
+
+    /* FIOCLEX: set close-on-exec */
+    long ret = sys_ioctl(fd, TEST_FIOCLEX, NULL);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ FIOCLEX returned %ld\n", ret);
+        fut_vfs_close(fd);
+        fut_test_fail(40);
+        return;
+    }
+
+    /* Verify via fcntl F_GETFD */
+    long flags = sys_fcntl(fd, F_GETFD, 0);
+    if (!(flags & FD_CLOEXEC)) {
+        fut_printf("[MISC-TEST] ✗ F_GETFD after FIOCLEX: 0x%lx (no CLOEXEC)\n", flags);
+        fut_vfs_close(fd);
+        fut_test_fail(40);
+        return;
+    }
+
+    /* FIONCLEX: clear close-on-exec */
+    ret = sys_ioctl(fd, TEST_FIONCLEX, NULL);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ FIONCLEX returned %ld\n", ret);
+        fut_vfs_close(fd);
+        fut_test_fail(40);
+        return;
+    }
+
+    flags = sys_fcntl(fd, F_GETFD, 0);
+    if (flags & FD_CLOEXEC) {
+        fut_printf("[MISC-TEST] ✗ F_GETFD after FIONCLEX: 0x%lx (CLOEXEC still set)\n", flags);
+        fut_vfs_close(fd);
+        fut_test_fail(40);
+        return;
+    }
+
+    /* FIONBIO: set non-blocking */
+    int nb = 1;
+    ret = sys_ioctl(fd, TEST_FIONBIO, &nb);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ FIONBIO(1) returned %ld\n", ret);
+        fut_vfs_close(fd);
+        fut_test_fail(40);
+        return;
+    }
+
+    /* Verify via fcntl F_GETFL */
+    flags = sys_fcntl(fd, F_GETFL, 0);
+    if (!(flags & 00004000)) {  /* O_NONBLOCK */
+        fut_printf("[MISC-TEST] ✗ F_GETFL after FIONBIO(1): 0x%lx (no O_NONBLOCK)\n", flags);
+        fut_vfs_close(fd);
+        fut_test_fail(40);
+        return;
+    }
+
+    /* Clear non-blocking */
+    nb = 0;
+    ret = sys_ioctl(fd, TEST_FIONBIO, &nb);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ FIONBIO(0) returned %ld\n", ret);
+        fut_vfs_close(fd);
+        fut_test_fail(40);
+        return;
+    }
+
+    flags = sys_fcntl(fd, F_GETFL, 0);
+    if (flags & 00004000) {
+        fut_printf("[MISC-TEST] ✗ F_GETFL after FIONBIO(0): 0x%lx (O_NONBLOCK still set)\n", flags);
+        fut_vfs_close(fd);
+        fut_test_fail(40);
+        return;
+    }
+
+    fut_vfs_close(fd);
+    fut_printf("[MISC-TEST] ✓ ioctl: FIOCLEX/FIONCLEX/FIONBIO all work\n");
+    fut_test_pass();
+}
+
 /* ============================================================
  * Test 38: setrlimit hard limit can be raised by root, denied for non-root
  * ============================================================ */
@@ -2068,6 +2165,7 @@ void fut_misc_test_thread(void *arg) {
     test_fstat_pipe();          /* Test 37: fstat on pipe fd */
     test_setrlimit_hard();      /* Test 38: setrlimit hard limit enforcement */
     test_dev_null_poll();       /* Test 39: /dev/null always poll-ready */
+    test_ioctl_fd_ops();        /* Test 40: ioctl FIONBIO/FIOCLEX/FIONCLEX */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

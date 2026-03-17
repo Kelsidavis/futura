@@ -3234,6 +3234,62 @@ static void test_socketpair_pollhup(void) {
     fut_test_pass();
 }
 
+extern int fut_vfs_open_at(fut_task_t *task, int dirfd, const char *path, int flags, int mode);
+extern int fut_vfs_mkdir(const char *path, uint32_t mode);
+
+/* ============================================================
+ * Test 77: openat with real directory fd (not AT_FDCWD)
+ * ============================================================ */
+static void test_openat_dirfd(void) {
+    fut_printf("[MISC-TEST] Test 77: openat with dirfd\n");
+
+    /* Create a subdirectory */
+    fut_vfs_mkdir("/openat_testdir", 0755);
+
+    /* Create a file inside it */
+    int fd = fut_vfs_open("/openat_testdir/inner.txt", 0x42, 0644);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ create inner: %d\n", fd);
+        fut_test_fail(77);
+        return;
+    }
+    fut_vfs_write(fd, "inside", 6);
+    fut_vfs_close(fd);
+
+    /* Open the directory as a dirfd */
+    int dirfd = fut_vfs_open("/openat_testdir", 00200000, 0);  /* O_DIRECTORY */
+    if (dirfd < 0) {
+        fut_printf("[MISC-TEST] ✗ open dir: %d\n", dirfd);
+        fut_test_fail(77);
+        return;
+    }
+
+    /* Open the file relative to dirfd */
+    fut_task_t *task = fut_task_current();
+    int relfd = fut_vfs_open_at(task, dirfd, "inner.txt", 0x00, 0);  /* O_RDONLY */
+    fut_vfs_close(dirfd);
+
+    if (relfd < 0) {
+        fut_printf("[MISC-TEST] ✗ openat(dirfd, 'inner.txt'): %d\n", relfd);
+        fut_test_fail(77);
+        return;
+    }
+
+    /* Read and verify */
+    char buf[8] = {0};
+    ssize_t nr = fut_vfs_read(relfd, buf, 6);
+    fut_vfs_close(relfd);
+
+    if (nr != 6 || __builtin_memcmp(buf, "inside", 6) != 0) {
+        fut_printf("[MISC-TEST] ✗ read: nr=%zd buf='%s'\n", nr, buf);
+        fut_test_fail(77);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ openat(dirfd, 'inner.txt'): relative path resolved correctly\n");
+    fut_test_pass();
+}
+
 /* ============================================================
  * Test 52: write on O_RDONLY fd returns EBADF
  * ============================================================ */
@@ -4113,6 +4169,7 @@ void fut_misc_test_thread(void *arg) {
     test_epoll_oneshot();       /* Test 74: EPOLLONESHOT */
     test_pipe_short_write();    /* Test 75: pipe short write on partial buffer */
     test_socketpair_pollhup();  /* Test 76: socketpair POLLHUP on peer close */
+    test_openat_dirfd();        /* Test 77: openat with real dirfd */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

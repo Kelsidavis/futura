@@ -1067,6 +1067,18 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
             }
         }
 
+        /* Wire up epoll notification on eventfd and timerfd */
+        {
+            fut_task_t *ctl_task = fut_task_current();
+            if (ctl_task && ctl_task->fd_table && fd < ctl_task->max_fds) {
+                struct fut_file *ctl_file = ctl_task->fd_table[fd];
+                extern void fut_eventfd_set_epoll_notify(struct fut_file *file, fut_waitq_t *wq);
+                extern void fut_timerfd_set_epoll_notify(struct fut_file *file, fut_waitq_t *wq);
+                fut_eventfd_set_epoll_notify(ctl_file, &set->epoll_waitq);
+                fut_timerfd_set_epoll_notify(ctl_file, &set->epoll_waitq);
+            }
+        }
+
         return 0;
     }
 

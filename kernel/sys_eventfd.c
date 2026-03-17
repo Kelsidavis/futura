@@ -542,6 +542,7 @@ struct eventfd_ctx {
     fut_spinlock_t lock;
     fut_waitq_t read_waitq;
     fut_waitq_t write_waitq;
+    fut_waitq_t *epoll_notify;  /* Wakes epoll_wait when counter changes */
 };
 
 struct eventfd_file {
@@ -588,6 +589,7 @@ static struct eventfd_ctx *eventfd_ctx_create(unsigned int initval, bool semapho
     }
     ctx->counter = (uint64_t)initval;
     ctx->semaphore = semaphore;
+    ctx->epoll_notify = NULL;
     fut_spinlock_init(&ctx->lock);
     fut_waitq_init(&ctx->read_waitq);
     fut_waitq_init(&ctx->write_waitq);
@@ -811,6 +813,9 @@ static ssize_t eventfd_write(void *inode, void *priv, const void *u_buf, size_t 
     }
 
     fut_waitq_wake_one(&ctx->read_waitq);
+    /* Wake any epoll instance monitoring this eventfd */
+    if (ctx->epoll_notify)
+        fut_waitq_wake_one(ctx->epoll_notify);
     return (ssize_t)sizeof(value);
 }
 
@@ -862,6 +867,18 @@ bool fut_eventfd_poll(struct fut_file *file, uint32_t requested, uint32_t *ready
         *ready_out = ready;
     }
     return true;
+}
+
+/**
+ * Set the epoll notification waitqueue on an eventfd.
+ * Called from epoll_ctl ADD to enable eventfd→epoll wakeup.
+ */
+void fut_eventfd_set_epoll_notify(struct fut_file *file, fut_waitq_t *wq) {
+    if (!file || file->chr_ops != &eventfd_fops || !file->chr_private)
+        return;
+    struct eventfd_file *efile = (struct eventfd_file *)file->chr_private;
+    if (efile->ctx)
+        efile->ctx->epoll_notify = wq;
 }
 
 /**
@@ -1226,6 +1243,7 @@ struct timerfd_ctx {
     bool armed;                /* Whether timer is currently armed */
     fut_spinlock_t lock;
     fut_waitq_t read_waitq;    /* Threads blocked on read() */
+    fut_waitq_t *epoll_notify; /* Wakes epoll_wait on expiry */
 };
 
 struct timerfd_file {
@@ -1281,6 +1299,9 @@ static void timerfd_timer_cb(void *arg) {
 
     /* Wake any threads blocked on read() */
     fut_waitq_wake_all(&ctx->read_waitq);
+    /* Wake any epoll instance monitoring this timerfd */
+    if (ctx->epoll_notify)
+        fut_waitq_wake_one(ctx->epoll_notify);
 }
 
 static ssize_t timerfd_read_op(void *inode, void *priv, void *u_buf, size_t len, off_t *pos) {
@@ -1406,6 +1427,7 @@ long sys_timerfd_create(int clockid, int flags) {
     ctx->interval_ms = 0;
     ctx->next_expiry_ms = 0;
     ctx->armed = false;
+    ctx->epoll_notify = NULL;
     fut_spinlock_init(&ctx->lock);
     fut_waitq_init(&ctx->read_waitq);
 
@@ -1583,4 +1605,16 @@ long sys_timerfd_gettime(int ufd, struct itimerspec *curr_value) {
         return -EFAULT;
     }
     return 0;
+}
+
+/**
+ * Set the epoll notification waitqueue on a timerfd.
+ * Called from epoll_ctl ADD to enable timerfd→epoll wakeup.
+ */
+void fut_timerfd_set_epoll_notify(struct fut_file *file, fut_waitq_t *wq) {
+    if (!file || file->chr_ops != &timerfd_fops || !file->chr_private)
+        return;
+    struct timerfd_file *tfile = (struct timerfd_file *)file->chr_private;
+    if (tfile->ctx)
+        tfile->ctx->epoll_notify = wq;
 }

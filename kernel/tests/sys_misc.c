@@ -1305,6 +1305,73 @@ static void test_groups(void) {
     fut_test_pass();
 }
 
+extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+
+/* ============================================================
+ * Test 26: socketpair creates connected AF_UNIX pair
+ * ============================================================ */
+static void test_socketpair(void) {
+    fut_printf("[MISC-TEST] Test 26: socketpair creates connected pair\n");
+
+    int sv[2] = {-1, -1};
+    long ret = sys_socketpair(1 /* AF_UNIX */, 1 /* SOCK_STREAM */, 0, sv);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ socketpair returned %ld\n", ret);
+        fut_test_fail(26);
+        return;
+    }
+
+    if (sv[0] < 0 || sv[1] < 0) {
+        fut_printf("[MISC-TEST] ✗ invalid fds: %d, %d\n", sv[0], sv[1]);
+        fut_test_fail(26);
+        return;
+    }
+
+    if (sv[0] == sv[1]) {
+        fut_printf("[MISC-TEST] ✗ both fds are the same: %d\n", sv[0]);
+        fut_vfs_close(sv[0]);
+        fut_test_fail(26);
+        return;
+    }
+
+    /* Write on sv[0], read on sv[1] */
+    const char *msg = "hello";
+    ssize_t nw = fut_vfs_write(sv[0], msg, 5);
+    if (nw != 5) {
+        fut_printf("[MISC-TEST] ✗ write returned %zd\n", nw);
+        fut_vfs_close(sv[0]);
+        fut_vfs_close(sv[1]);
+        fut_test_fail(26);
+        return;
+    }
+
+    char buf[8] = {0};
+    ssize_t nr = fut_vfs_read(sv[1], buf, sizeof(buf));
+    if (nr != 5 || memcmp(buf, "hello", 5) != 0) {
+        fut_printf("[MISC-TEST] ✗ read returned %zd buf='%s'\n", nr, buf);
+        fut_vfs_close(sv[0]);
+        fut_vfs_close(sv[1]);
+        fut_test_fail(26);
+        return;
+    }
+
+    /* Unsupported domain → EAFNOSUPPORT */
+    int sv2[2];
+    ret = sys_socketpair(2 /* AF_INET */, 1, 0, sv2);
+    if (ret != -EAFNOSUPPORT) {
+        fut_printf("[MISC-TEST] ✗ socketpair(AF_INET) returned %ld (expected EAFNOSUPPORT)\n", ret);
+        fut_vfs_close(sv[0]);
+        fut_vfs_close(sv[1]);
+        fut_test_fail(26);
+        return;
+    }
+
+    fut_vfs_close(sv[0]);
+    fut_vfs_close(sv[1]);
+    fut_printf("[MISC-TEST] ✓ socketpair: created pair, sent/received 'hello'\n");
+    fut_test_pass();
+}
+
 /* ============================================================
  * Test entry point
  * ============================================================ */
@@ -1340,6 +1407,7 @@ void fut_misc_test_thread(void *arg) {
     test_getcpu();              /* Test 23: getcpu */
     test_readahead();           /* Test 24: readahead */
     test_groups();              /* Test 25: getgroups/setgroups */
+    test_socketpair();          /* Test 26: socketpair */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

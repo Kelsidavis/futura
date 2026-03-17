@@ -291,6 +291,7 @@
 #define SYS_getgroups        115  /* Linux: 115 */
 #define SYS_setgroups        116  /* Linux: 116 */
 #define SYS_utimes           235  /* Linux: 235 */
+#define SYS_socketpair       320  /* Linux: 53 — Futura: 320 (53 used by connect) */
 
 #ifndef SYS_time_millis
 #define SYS_time_millis  400
@@ -1534,6 +1535,13 @@ static int64_t sys_futimesat_handler(uint64_t dirfd, uint64_t pathname, uint64_t
     (void)arg4; (void)arg5; (void)arg6;
     extern long sys_futimesat(int dirfd, const char *pathname, const void *times);
     return sys_futimesat((int)dirfd, (const char *)pathname, (const void *)times);
+}
+
+static int64_t sys_socketpair_handler(uint64_t domain, uint64_t type, uint64_t protocol,
+                                       uint64_t sv, uint64_t arg5, uint64_t arg6) {
+    (void)arg5; (void)arg6;
+    extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+    return sys_socketpair((int)domain, (int)type, (int)protocol, (int *)sv);
 }
 
 static int64_t sys_utimes_handler(uint64_t pathname, uint64_t times, uint64_t arg3,
@@ -2957,6 +2965,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_getgroups]         = sys_getgroups_handler,
     [SYS_setgroups]         = sys_setgroups_handler,
     [SYS_utimes]            = sys_utimes_handler,
+    [SYS_socketpair]        = sys_socketpair_handler,
     [SYS_set_tid_address]   = sys_set_tid_address_handler,
     [SYS_timer_create]      = sys_timer_create_handler,
     [SYS_timer_settime]     = sys_timer_settime_handler,

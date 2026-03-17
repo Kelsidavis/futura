@@ -299,6 +299,7 @@ extern long sys_getcpu(unsigned int *cpup, unsigned int *nodep, void *unused);
 extern long sys_readahead(int fd, int64_t offset, size_t count);
 extern long sys_getgroups(int size, uint32_t *list);
 extern long sys_setgroups(int size, const uint32_t *list);
+extern long sys_socketpair(int domain, int type, int protocol, int *sv);
 extern long sys_unshare(unsigned long flags);
 
 /* Process accounting and thread management */
@@ -1798,6 +1799,13 @@ static int64_t sys_setgroups_wrapper(uint64_t size, uint64_t list, uint64_t arg2
     return sys_setgroups((int)size, (const uint32_t *)list);
 }
 
+/* sys_socketpair_wrapper */
+static int64_t sys_socketpair_wrapper(uint64_t domain, uint64_t type, uint64_t protocol,
+                                       uint64_t sv, uint64_t arg5, uint64_t arg6) {
+    (void)arg5; (void)arg6;
+    return sys_socketpair((int)domain, (int)type, (int)protocol, (int *)sv);
+}
+
 /* sys_readahead_wrapper - read-ahead hint */
 static int64_t sys_readahead_wrapper(uint64_t fd, uint64_t offset, uint64_t count,
                                       uint64_t arg3, uint64_t arg4, uint64_t arg5) {
@@ -2642,6 +2650,7 @@ struct syscall_entry {
 #define __NR_sched_rr_get_interval 127
 #define __NR_getcpu         168
 #define __NR_readahead      213
+#define __NR_socketpair     199
 #define __NR_getgroups      158
 #define __NR_setgroups      159
 #define __NR_kill           129
@@ -3000,6 +3009,8 @@ static void arm64_syscall_table_init(void) {
     syscall_table[__NR_getcpu].name = "getcpu";
     syscall_table[__NR_readahead].handler = (syscall_fn_t)sys_readahead_wrapper;
     syscall_table[__NR_readahead].name = "readahead";
+    syscall_table[__NR_socketpair].handler = (syscall_fn_t)sys_socketpair_wrapper;
+    syscall_table[__NR_socketpair].name = "socketpair";
     syscall_table[__NR_getgroups].handler = (syscall_fn_t)sys_getgroups_wrapper;
     syscall_table[__NR_getgroups].name = "getgroups";
     syscall_table[__NR_setgroups].handler = (syscall_fn_t)sys_setgroups_wrapper;

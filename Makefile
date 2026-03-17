@@ -379,21 +379,24 @@ endif
 
 RUST_PROFILE := release
 RUST_ROOT := drivers/rust
-RUST_VIRTIO_BLK_DIR := $(RUST_ROOT)/virtio_blk
-RUST_VIRTIO_NET_DIR := $(RUST_ROOT)/virtio_net
-RUST_VIRTIO_GPU_DIR := $(RUST_ROOT)/virtio_gpu
-RUST_BUILD_DIR_BLK := $(RUST_VIRTIO_BLK_DIR)/target/$(RUST_TARGET)/$(RUST_PROFILE)
-RUST_BUILD_DIR_NET := $(RUST_VIRTIO_NET_DIR)/target/$(RUST_TARGET)/$(RUST_PROFILE)
-RUST_BUILD_DIR_GPU := $(RUST_VIRTIO_GPU_DIR)/target/$(RUST_TARGET)/$(RUST_PROFILE)
-RUST_LIB_VIRTIO_BLK := $(RUST_BUILD_DIR_BLK)/libvirtio_blk.a
-RUST_LIB_VIRTIO_NET := $(RUST_BUILD_DIR_NET)/libvirtio_net.a
-RUST_LIB_VIRTIO_GPU := $(RUST_BUILD_DIR_GPU)/libvirtio_gpu.a
+RUST_VIRTIO_BLK_DIR   := $(RUST_ROOT)/virtio_blk
+RUST_VIRTIO_NET_DIR   := $(RUST_ROOT)/virtio_net
+RUST_VIRTIO_GPU_DIR   := $(RUST_ROOT)/virtio_gpu
+RUST_VIRTIO_INPUT_DIR := $(RUST_ROOT)/virtio_input
+RUST_BUILD_DIR_BLK   := $(RUST_VIRTIO_BLK_DIR)/target/$(RUST_TARGET)/$(RUST_PROFILE)
+RUST_BUILD_DIR_NET   := $(RUST_VIRTIO_NET_DIR)/target/$(RUST_TARGET)/$(RUST_PROFILE)
+RUST_BUILD_DIR_GPU   := $(RUST_VIRTIO_GPU_DIR)/target/$(RUST_TARGET)/$(RUST_PROFILE)
+RUST_BUILD_DIR_INPUT := $(RUST_VIRTIO_INPUT_DIR)/target/$(RUST_TARGET)/$(RUST_PROFILE)
+RUST_LIB_VIRTIO_BLK   := $(RUST_BUILD_DIR_BLK)/libvirtio_blk.a
+RUST_LIB_VIRTIO_NET   := $(RUST_BUILD_DIR_NET)/libvirtio_net.a
+RUST_LIB_VIRTIO_GPU   := $(RUST_BUILD_DIR_GPU)/libvirtio_gpu.a
+RUST_LIB_VIRTIO_INPUT := $(RUST_BUILD_DIR_INPUT)/libvirtio_input.a
 
 # Platform-specific Rust drivers
 ifeq ($(PLATFORM),x86_64)
-RUST_LIBS := $(RUST_LIB_VIRTIO_BLK) $(RUST_LIB_VIRTIO_NET)
+RUST_LIBS := $(RUST_LIB_VIRTIO_BLK) $(RUST_LIB_VIRTIO_NET) $(RUST_LIB_VIRTIO_INPUT)
 else ifeq ($(PLATFORM),arm64)
-RUST_LIBS := $(RUST_LIB_VIRTIO_GPU) $(RUST_LIB_VIRTIO_NET) $(RUST_LIB_VIRTIO_BLK)
+RUST_LIBS := $(RUST_LIB_VIRTIO_GPU) $(RUST_LIB_VIRTIO_NET) $(RUST_LIB_VIRTIO_BLK) $(RUST_LIB_VIRTIO_INPUT)
 else
 RUST_LIBS :=
 endif
@@ -714,7 +717,8 @@ endif
 # Subsystem sources (POSIX compat)
 SUBSYSTEM_SOURCES := \
     subsystems/posix_compat/posix_shim.c \
-    subsystems/posix_compat/posix_syscall.c
+    subsystems/posix_compat/posix_syscall.c \
+    kernel/input/virtio_input_ffi.c
 
 # All sources
 ALL_SOURCES := $(KERNEL_SOURCES) $(PLATFORM_SOURCES) $(SUBSYSTEM_SOURCES)
@@ -874,6 +878,15 @@ $(RUST_LIB_VIRTIO_GPU): $(RUST_SOURCES)
 	@cd $(RUST_VIRTIO_GPU_DIR) && RUSTFLAGS="-C panic=abort -C force-unwind-tables=no $(RUSTFLAGS)" $(CARGO) build --release --target $(RUST_TARGET)
 	@tmpdir=$$(mktemp -d); \
 	cd $$tmpdir && $(AR) x $(abspath $(RUST_LIB_VIRTIO_GPU)) && for obj in *.o; do $(OBJCOPY) --remove-section='.gcc_except_table*' --remove-section='.eh_frame*' $$obj >/dev/null 2>&1 || true; done && $(AR) rcs $(abspath $(RUST_LIB_VIRTIO_GPU)) *.o; \
+	rm -rf $$tmpdir
+
+$(RUST_LIB_VIRTIO_INPUT): $(RUST_SOURCES)
+	@$(RUSTC) --print target-list | grep -q $(RUST_TARGET) >/dev/null || { \
+		echo "error: rust target '$(RUST_TARGET)' not installed for $(RUSTC)." >&2; exit 1; }
+	@echo "CARGO virtio_input ($(RUST_PROFILE))"
+	@cd $(RUST_VIRTIO_INPUT_DIR) && RUSTFLAGS="-C panic=abort -C force-unwind-tables=no $(RUSTFLAGS)" $(CARGO) build --release --target $(RUST_TARGET)
+	@tmpdir=$$(mktemp -d); \
+	cd $$tmpdir && $(AR) x $(abspath $(RUST_LIB_VIRTIO_INPUT)) && for obj in *.o; do $(OBJCOPY) --remove-section='.gcc_except_table*' --remove-section='.eh_frame*' $$obj >/dev/null 2>&1 || true; done && $(AR) rcs $(abspath $(RUST_LIB_VIRTIO_INPUT)) *.o; \
 	rm -rf $$tmpdir
 else
 rust-drivers:

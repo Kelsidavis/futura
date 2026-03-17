@@ -120,9 +120,11 @@ static inline uint64_t fut_input_now_ns(void) {
 #if defined(__x86_64__)
 int fut_input_hw_init(bool want_keyboard, bool want_mouse);
 #else
+/* ARM64: virtio-input driver handles keyboard and mouse */
+#include <kernel/virtio_input.h>
 static inline int fut_input_hw_init(bool want_keyboard, bool want_mouse) {
     (void)want_keyboard;
     (void)want_mouse;
-    return -ENOTSUP;
+    return virtio_input_hw_init();
 }
 #endif

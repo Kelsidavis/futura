@@ -37,6 +37,7 @@
 #define VFS_TEST_DOTDOT     11
 #define VFS_TEST_EISDIR     12
 #define VFS_TEST_CHDIR_DOTDOT 13
+#define VFS_TEST_INOTIFY_RENAME 14
 
 /* Use kernel-level VFS functions (no copy_from_user) */
 #define sys_mkdir(path, mode)           fut_vfs_mkdir(path, (uint32_t)(mode))
@@ -60,9 +61,12 @@ struct test_inotify_event {
     uint32_t cookie;
     uint32_t len;
 };
-#define IN_CREATE  0x00000100U
-#define IN_MODIFY  0x00000002U
-#define IN_DELETE  0x00000200U
+#define IN_CREATE     0x00000100U
+#define IN_MODIFY     0x00000002U
+#define IN_DELETE     0x00000200U
+#define IN_MOVED_FROM 0x00000040U
+#define IN_MOVED_TO   0x00000080U
+#define IN_MOVE       (IN_MOVED_FROM | IN_MOVED_TO)
 #define IN_NONBLOCK 00004000
 #define RENAME_NOREPLACE (1U << 0)
 #define RENAME_EXCHANGE  (1U << 1)
@@ -738,6 +742,126 @@ static void test_inotify(void) {
 
 /* ------------------------------------------------------------------ */
 
+/*
+ * Test 14: inotify IN_MOVED_FROM/IN_MOVED_TO events with matching cookie
+ * on rename within a watched directory.
+ */
+static void test_inotify_rename(void) {
+    fut_printf("[VFS-TEST] Test 14: inotify IN_MOVED_FROM/IN_MOVED_TO with cookie\n");
+
+    const char *watch_dir  = "/";
+    const char *src_path   = "/inotify_rename_src.txt";
+    const char *dst_path   = "/inotify_rename_dst.txt";
+    const char *src_name   = "inotify_rename_src.txt";
+    const char *dst_name   = "inotify_rename_dst.txt";
+
+    /* Create the source file */
+    fut_vfs_unlink(src_path);
+    fut_vfs_unlink(dst_path);
+    int fd = fut_vfs_open(src_path, O_CREAT | O_RDWR, 0644);
+    if (fd < 0) {
+        fut_printf("[VFS-TEST] ✗ inotify_rename: create src failed %d\n", fd);
+        fut_test_fail(VFS_TEST_INOTIFY_RENAME);
+        return;
+    }
+    fut_vfs_close(fd);
+
+    /* Create inotify fd watching for IN_MOVE */
+    int ifd = (int)sys_inotify_init1(IN_NONBLOCK);
+    if (ifd < 0) {
+        fut_printf("[VFS-TEST] ✗ inotify_rename: inotify_init1 returned %d\n", ifd);
+        fut_vfs_unlink(src_path);
+        fut_test_fail(VFS_TEST_INOTIFY_RENAME);
+        return;
+    }
+
+    int wd = (int)sys_inotify_add_watch(ifd, watch_dir, IN_MOVE);
+    if (wd < 0) {
+        fut_printf("[VFS-TEST] ✗ inotify_rename: inotify_add_watch returned %d\n", wd);
+        fut_vfs_close(ifd);
+        fut_vfs_unlink(src_path);
+        fut_test_fail(VFS_TEST_INOTIFY_RENAME);
+        return;
+    }
+
+    /* Perform the rename — should fire IN_MOVED_FROM then IN_MOVED_TO */
+    extern long sys_rename(const char *oldpath, const char *newpath);
+    int ret = (int)sys_rename(src_path, dst_path);
+    if (ret != 0) {
+        fut_printf("[VFS-TEST] ✗ inotify_rename: rename returned %d\n", ret);
+        sys_inotify_rm_watch(ifd, wd);
+        fut_vfs_close(ifd);
+        fut_vfs_unlink(src_path);
+        fut_test_fail(VFS_TEST_INOTIFY_RENAME);
+        return;
+    }
+
+    /* Read both events — buffer for two events with names */
+    char buf[2 * (sizeof(struct test_inotify_event) + 256)];
+    ssize_t n = fut_vfs_read(ifd, buf, sizeof(buf));
+    sys_inotify_rm_watch(ifd, wd);
+    fut_vfs_close(ifd);
+    fut_vfs_unlink(dst_path);
+
+    if (n < (ssize_t)(2 * sizeof(struct test_inotify_event))) {
+        fut_printf("[VFS-TEST] ✗ inotify_rename: read returned %ld (need at least 2 events)\n", n);
+        fut_test_fail(VFS_TEST_INOTIFY_RENAME);
+        return;
+    }
+
+    /* First event must be IN_MOVED_FROM with src_name */
+    struct test_inotify_event *ev1 = (struct test_inotify_event *)buf;
+    if (!(ev1->mask & IN_MOVED_FROM)) {
+        fut_printf("[VFS-TEST] ✗ inotify_rename: first event mask=0x%x missing IN_MOVED_FROM\n",
+                   ev1->mask);
+        fut_test_fail(VFS_TEST_INOTIFY_RENAME);
+        return;
+    }
+    const char *name1 = buf + sizeof(struct test_inotify_event);
+    if (strcmp(name1, src_name) != 0) {
+        fut_printf("[VFS-TEST] ✗ inotify_rename: MOVED_FROM name='%s' expected '%s'\n",
+                   name1, src_name);
+        fut_test_fail(VFS_TEST_INOTIFY_RENAME);
+        return;
+    }
+
+    /* Second event must be IN_MOVED_TO with dst_name */
+    size_t ev1_size = sizeof(struct test_inotify_event) + ev1->len;
+    if ((ssize_t)(ev1_size + sizeof(struct test_inotify_event)) > n) {
+        fut_printf("[VFS-TEST] ✗ inotify_rename: buffer too small for second event\n");
+        fut_test_fail(VFS_TEST_INOTIFY_RENAME);
+        return;
+    }
+    struct test_inotify_event *ev2 = (struct test_inotify_event *)(buf + ev1_size);
+    if (!(ev2->mask & IN_MOVED_TO)) {
+        fut_printf("[VFS-TEST] ✗ inotify_rename: second event mask=0x%x missing IN_MOVED_TO\n",
+                   ev2->mask);
+        fut_test_fail(VFS_TEST_INOTIFY_RENAME);
+        return;
+    }
+    const char *name2 = buf + ev1_size + sizeof(struct test_inotify_event);
+    if (strcmp(name2, dst_name) != 0) {
+        fut_printf("[VFS-TEST] ✗ inotify_rename: MOVED_TO name='%s' expected '%s'\n",
+                   name2, dst_name);
+        fut_test_fail(VFS_TEST_INOTIFY_RENAME);
+        return;
+    }
+
+    /* Cookies must match and be non-zero */
+    if (ev1->cookie == 0 || ev1->cookie != ev2->cookie) {
+        fut_printf("[VFS-TEST] ✗ inotify_rename: cookie mismatch: from=%u to=%u\n",
+                   ev1->cookie, ev2->cookie);
+        fut_test_fail(VFS_TEST_INOTIFY_RENAME);
+        return;
+    }
+
+    fut_printf("[VFS-TEST] ✓ inotify rename: MOVED_FROM='%s' cookie=%u, MOVED_TO='%s' cookie=%u\n",
+               name1, ev1->cookie, name2, ev2->cookie);
+    fut_test_pass();
+}
+
+/* ------------------------------------------------------------------ */
+
 /* Test 11: .. path resolution traverses to parent directory */
 static void test_dotdot(void) {
     fut_printf("[VFS-TEST] Test 11: '..' parent directory traversal\n");
@@ -906,6 +1030,7 @@ void fut_vfs_test_thread(void *arg) {
     test_readlink();
     test_hardlink();
     test_inotify();
+    test_inotify_rename();
     test_mount();
     test_umount_expire();
     test_renameat2();

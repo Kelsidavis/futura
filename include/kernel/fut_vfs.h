@@ -945,8 +945,11 @@ char *fut_vnode_build_path(struct fut_vnode *vnode, char *buf, size_t buf_size);
  * @param dir_path  Absolute path of the directory where the event occurred
  * @param mask      inotify event mask (IN_CREATE, IN_DELETE, IN_MODIFY, etc.)
  * @param filename  Basename of the affected file (may be NULL for self-events)
+ * @param cookie    Rename cookie linking IN_MOVED_FROM/IN_MOVED_TO pairs (0 for non-rename)
  */
-void inotify_dispatch_event(const char *dir_path, uint32_t mask, const char *filename);
+void inotify_dispatch_event(const char *dir_path, uint32_t mask, const char *filename,
+                            uint32_t cookie);
+uint32_t inotify_next_rename_cookie(void);
 
 /* Per-task FD management (for multi-process isolation) */
 struct fut_file *vfs_get_file_from_task(struct fut_task *task, int fd);

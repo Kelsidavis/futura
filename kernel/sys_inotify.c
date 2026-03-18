@@ -184,17 +184,29 @@ static void inotify_registry_remove(struct inotify_instance *inst) {
     fut_spinlock_release(&g_inotify_registry_lock);
 }
 
+/* Phase 5: Global rename cookie counter — odd non-zero values link MOVED_FROM/TO pairs */
+static uint32_t g_inotify_rename_cookie = 0;
+
+uint32_t inotify_next_rename_cookie(void) {
+    /* Simple increment; ensure non-zero (skip 0) */
+    uint32_t c = ++g_inotify_rename_cookie;
+    if (c == 0) c = ++g_inotify_rename_cookie;
+    return c;
+}
+
 /**
- * inotify_dispatch_event - Phase 4: Deliver a VFS event to all registered watchers
+ * inotify_dispatch_event - Phase 5: Deliver a VFS event to all registered watchers
  *
- * Called by the VFS (ramfs) on file create/delete/modify/mkdir.
+ * Called by the VFS (ramfs) on file create/delete/modify/mkdir/rename.
  * Walks all registered inotify instances and queues events for matching watches.
  *
  * @param dir_path   Absolute path of the directory containing the file
- * @param mask       Event mask (IN_CREATE, IN_DELETE, IN_MODIFY, etc.)
+ * @param mask       Event mask (IN_CREATE, IN_DELETE, IN_MODIFY, IN_MOVED_FROM, etc.)
  * @param filename   Basename of the affected file (NULL for self-events)
+ * @param cookie     Rename cookie linking IN_MOVED_FROM/IN_MOVED_TO pairs (0 for non-rename)
  */
-void inotify_dispatch_event(const char *dir_path, uint32_t mask, const char *filename) {
+void inotify_dispatch_event(const char *dir_path, uint32_t mask, const char *filename,
+                            uint32_t cookie) {
     if (!g_inotify_registry_init || !g_inotify_registry) return;
     if (!dir_path) return;
 
@@ -218,7 +230,7 @@ void inotify_dispatch_event(const char *dir_path, uint32_t mask, const char *fil
                 int tail = inst->ev_tail;
                 inst->events[tail].wd     = w->wd;
                 inst->events[tail].mask   = mask;
-                inst->events[tail].cookie = 0;
+                inst->events[tail].cookie = cookie;
                 /* Phase 5: copy entry basename into event for directory watches */
                 if (filename && filename[0] != '\0') {
                     size_t flen = strlen(filename);

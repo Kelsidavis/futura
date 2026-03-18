@@ -548,7 +548,7 @@ static ssize_t ramfs_write(struct fut_vnode *vnode, const void *buf, size_t size
         char dir_path[256];
         if (fut_vnode_build_path(vnode->parent, dir_path, sizeof(dir_path))) {
             inotify_dispatch_event(dir_path, 0x00000002 /* IN_MODIFY */,
-                                   vnode->name ? vnode->name : "");
+                                   vnode->name ? vnode->name : "", 0);
         }
     }
 
@@ -766,7 +766,7 @@ static int ramfs_create(struct fut_vnode *dir, const char *name, uint32_t mode, 
     {
         char dir_path[256];
         if (fut_vnode_build_path(dir, dir_path, sizeof(dir_path))) {
-            inotify_dispatch_event(dir_path, 0x00000100 /* IN_CREATE */, name);
+            inotify_dispatch_event(dir_path, 0x00000100 /* IN_CREATE */, name, 0);
         }
     }
 
@@ -881,7 +881,7 @@ static int ramfs_mkdir(struct fut_vnode *dir, const char *name, uint32_t mode) {
     {
         char dir_path[256];
         if (fut_vnode_build_path(dir, dir_path, sizeof(dir_path))) {
-            inotify_dispatch_event(dir_path, 0x00000100 | 0x40000000 /* IN_CREATE|IN_ISDIR */, name);
+            inotify_dispatch_event(dir_path, 0x00000100 | 0x40000000 /* IN_CREATE|IN_ISDIR */, name, 0);
         }
     }
 
@@ -975,7 +975,7 @@ static int ramfs_unlink(struct fut_vnode *dir, const char *name) {
             {
                 char dir_path[256];
                 if (fut_vnode_build_path(dir, dir_path, sizeof(dir_path))) {
-                    inotify_dispatch_event(dir_path, 0x00000200 /* IN_DELETE */, name);
+                    inotify_dispatch_event(dir_path, 0x00000200 /* IN_DELETE */, name, 0);
                 }
             }
 
@@ -1728,9 +1728,22 @@ static int ramfs_rename(struct fut_vnode *parent, const char *oldname, const cha
         return -ENAMETOOLONG;
     }
 
+    /* Phase 5: Dispatch inotify IN_MOVED_FROM/IN_MOVED_TO with shared cookie */
+    uint32_t move_cookie = inotify_next_rename_cookie();
+    char dir_path[256];
+    bool have_dir_path = fut_vnode_build_path(parent, dir_path, sizeof(dir_path));
+
+    if (have_dir_path) {
+        inotify_dispatch_event(dir_path, 0x00000040 /* IN_MOVED_FROM */, oldname, move_cookie);
+    }
+
     /* Copy new name into the old entry */
     for (size_t i = 0; i <= newname_len; i++) {
         old_entry->name[i] = newname[i];
+    }
+
+    if (have_dir_path) {
+        inotify_dispatch_event(dir_path, 0x00000080 /* IN_MOVED_TO */, newname, move_cookie);
     }
 
     return 0;

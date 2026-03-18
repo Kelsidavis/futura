@@ -27,6 +27,9 @@ extern long sys_splice(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
 extern long sys_vmsplice(int fd, const void *iov, size_t nr_segs, unsigned int flags);
 extern long sys_pipe(int pipefd[2]);
 extern long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len);
+extern long sys_tee(int fd_in, int fd_out, size_t len, unsigned int flags);
+extern long sys_read(int fd, void *buf, size_t count);
+extern long sys_write(int fd, const void *buf, size_t count);
 
 /* Test IDs */
 #define SPLICE_TEST_STATFS           1
@@ -36,6 +39,7 @@ extern long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len);
 #define SPLICE_TEST_EINVAL_NO_PIPE   5
 #define SPLICE_TEST_VMSPLICE         6
 #define SPLICE_TEST_FALLOCATE        7
+#define SPLICE_TEST_TEE              8
 
 /* Scratch files */
 #define SPLICE_SCRATCH_A  "/tmp/splice_test_a"
@@ -447,6 +451,66 @@ static void test_fallocate(void) {
 }
 
 /* ============================================================
+ * Test 8: tee(fd_in, fd_out) duplicates data without consuming
+ * ============================================================ */
+static void test_tee_basic(void) {
+    fut_printf("[SPLICE-TEST] Test 8: tee pipe-to-pipe without consuming\n");
+
+    /* Create two pipes: src and dst */
+    int src[2], dst[2];
+    if (sys_pipe(src) != 0 || sys_pipe(dst) != 0) {
+        fut_printf("[SPLICE-TEST] ✗ pipe() failed\n");
+        fut_test_fail(SPLICE_TEST_TEE);
+        return;
+    }
+
+    /* Write "TEEME" into src write end */
+    const char *msg = "TEEME";
+    long nw = sys_write(src[1], msg, 5);
+    fut_vfs_close(src[1]);
+    if (nw != 5) {
+        fut_printf("[SPLICE-TEST] ✗ write to src pipe: %ld\n", nw);
+        fut_vfs_close(src[0]); fut_vfs_close(dst[0]); fut_vfs_close(dst[1]);
+        fut_test_fail(SPLICE_TEST_TEE);
+        return;
+    }
+
+    /* tee: copy 5 bytes from src read end to dst write end (non-consuming) */
+    long n = sys_tee(src[0], dst[1], 5, 0);
+    fut_vfs_close(dst[1]);
+    if (n != 5) {
+        fut_printf("[SPLICE-TEST] ✗ tee returned %ld (want 5)\n", n);
+        fut_vfs_close(src[0]); fut_vfs_close(dst[0]);
+        fut_test_fail(SPLICE_TEST_TEE);
+        return;
+    }
+
+    /* Read from dst: should contain "TEEME" */
+    char dst_buf[8] = {0};
+    long rd = sys_read(dst[0], dst_buf, sizeof(dst_buf) - 1);
+    fut_vfs_close(dst[0]);
+    if (rd != 5 || __builtin_memcmp(dst_buf, msg, 5) != 0) {
+        fut_printf("[SPLICE-TEST] ✗ dst read: %ld bytes, data='%s'\n", rd, dst_buf);
+        fut_vfs_close(src[0]);
+        fut_test_fail(SPLICE_TEST_TEE);
+        return;
+    }
+
+    /* src pipe should still have the original data (not consumed) */
+    char src_buf[8] = {0};
+    rd = sys_read(src[0], src_buf, sizeof(src_buf) - 1);
+    fut_vfs_close(src[0]);
+    if (rd != 5 || __builtin_memcmp(src_buf, msg, 5) != 0) {
+        fut_printf("[SPLICE-TEST] ✗ src still readable: rd=%ld data='%s'\n", rd, src_buf);
+        fut_test_fail(SPLICE_TEST_TEE);
+        return;
+    }
+
+    fut_printf("[SPLICE-TEST] ✓ tee: 5 bytes duplicated, src still readable\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Main test harness thread
  * ============================================================ */
 void fut_splice_test_thread(void *arg) {
@@ -463,6 +527,7 @@ void fut_splice_test_thread(void *arg) {
     test_splice_einval_no_pipe();
     test_vmsplice();
     test_fallocate();
+    test_tee_basic();
 
     fut_printf("[SPLICE-TEST] ========================================\n");
     fut_printf("[SPLICE-TEST] All splice/statfs/sysinfo tests done\n");

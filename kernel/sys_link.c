@@ -22,6 +22,18 @@
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+static inline int link_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_from_user(dst, src, n);
+}
+
 /**
  * link() - Create a hard link to an existing file
  *
@@ -210,7 +222,7 @@ long sys_link(const char *oldpath, const char *newpath) {
      * - CVE-2017-7889: Linux mount path truncation
      */
     char old_buf[256];
-    if (fut_copy_from_user(old_buf, local_oldpath, sizeof(old_buf)) != 0) {
+    if (link_copy_from_user(old_buf, local_oldpath, sizeof(old_buf)) != 0) {
         fut_printf("[LINK] link(oldpath=?, newpath=?) -> EFAULT "
                    "(copy_from_user failed for oldpath)\n");
         return -EFAULT;
@@ -225,7 +237,7 @@ long sys_link(const char *oldpath, const char *newpath) {
 
     /* Copy newpath with truncation detection */
     char new_buf[256];
-    if (fut_copy_from_user(new_buf, local_newpath, sizeof(new_buf)) != 0) {
+    if (link_copy_from_user(new_buf, local_newpath, sizeof(new_buf)) != 0) {
         fut_printf("[LINK] link(oldpath='%s', newpath=?) -> EFAULT "
                    "(copy_from_user failed for newpath)\n", old_buf);
         return -EFAULT;

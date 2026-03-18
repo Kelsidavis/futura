@@ -7684,6 +7684,90 @@ static void test_rename_basic(void) {
     fut_test_pass();
 }
 
+static void test_link_symlink_basic(void) {
+    fut_printf("[MISC-TEST] Test 163: sys_link/symlink basic\n");
+    extern long sys_link(const char *oldpath, const char *newpath);
+    extern long sys_symlink(const char *target, const char *linkpath);
+    extern long sys_unlink(const char *path);
+
+    /* Create source file */
+    int fd = (int)fut_vfs_open("/test_link_src.txt", O_CREAT | O_RDWR, 0644);
+    if (fd >= 0) {
+        fut_vfs_write(fd, "linktest", 8);
+        fut_vfs_close(fd);
+    }
+
+    /* Create hard link */
+    long ret = sys_link("/test_link_src.txt", "/test_link_hard.txt");
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ link: %ld\n", ret);
+        fut_test_fail(163);
+        return;
+    }
+    /* Create symlink */
+    ret = sys_symlink("/test_link_src.txt", "/test_link_sym");
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ symlink: %ld\n", ret);
+        fut_test_fail(163);
+        return;
+    }
+    /* link with non-existent source → ENOENT */
+    ret = sys_link("/this_does_not_exist_link", "/test_link_ghost.txt");
+    if (ret != -ENOENT) {
+        fut_printf("[MISC-TEST] ✗ link(missing): expected ENOENT, got %ld\n", ret);
+        fut_test_fail(163);
+        return;
+    }
+    /* Cleanup */
+    sys_unlink("/test_link_src.txt");
+    sys_unlink("/test_link_hard.txt");
+    sys_unlink("/test_link_sym");
+    fut_printf("[MISC-TEST] ✓ link: hard link created; symlink created; missing→ENOENT\n");
+    fut_test_pass();
+}
+
+static void test_readlink_basic(void) {
+    fut_printf("[MISC-TEST] Test 164: sys_readlink basic\n");
+    extern long sys_readlink(const char *path, char *buf, size_t bufsiz);
+    extern long sys_symlink(const char *target, const char *linkpath);
+    extern long sys_unlink(const char *path);
+
+    /* Create a symlink */
+    sys_symlink("/proc/self", "/test_readlink_sym");
+
+    /* Read it back */
+    char buf[64] = {0};
+    long ret = sys_readlink("/test_readlink_sym", buf, sizeof(buf));
+    if (ret < 0) {
+        fut_printf("[MISC-TEST] ✗ readlink: %ld\n", ret);
+        sys_unlink("/test_readlink_sym");
+        fut_test_fail(164);
+        return;
+    }
+    /* Verify target starts with '/' */
+    if (buf[0] != '/') {
+        fut_printf("[MISC-TEST] ✗ readlink: result='%s' doesn't start with /\n", buf);
+        sys_unlink("/test_readlink_sym");
+        fut_test_fail(164);
+        return;
+    }
+    /* readlink on non-symlink → EINVAL */
+    int fd2 = (int)fut_vfs_open("/test_readlink_reg.txt", O_CREAT | O_RDWR, 0644);
+    if (fd2 >= 0) fut_vfs_close(fd2);
+    ret = sys_readlink("/test_readlink_reg.txt", buf, sizeof(buf));
+    if (ret != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ readlink(non-symlink): expected EINVAL, got %ld\n", ret);
+        sys_unlink("/test_readlink_sym");
+        sys_unlink("/test_readlink_reg.txt");
+        fut_test_fail(164);
+        return;
+    }
+    sys_unlink("/test_readlink_sym");
+    sys_unlink("/test_readlink_reg.txt");
+    fut_printf("[MISC-TEST] ✓ readlink: target starts with '/', regular file→EINVAL\n");
+    fut_test_pass();
+}
+
 /* ============================================================
  * Test entry point
  * ============================================================ */
@@ -7856,6 +7940,8 @@ void fut_misc_test_thread(void *arg) {
     test_chmod_basic();                    /* Test 160: sys_chmod mode change + verify */
     test_unlink_rmdir_basic();             /* Test 161: sys_unlink/rmdir remove + ENOENT */
     test_rename_basic();                   /* Test 162: sys_rename src→dst + ENOENT */
+    test_link_symlink_basic();             /* Test 163: sys_link hard link + sys_symlink */
+    test_readlink_basic();                 /* Test 164: sys_readlink symlink→target */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

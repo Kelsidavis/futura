@@ -22,6 +22,24 @@
 #include <kernel/uaccess.h>
 #include <kernel/fut_memory.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+static inline int readlink_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_from_user(dst, src, n);
+}
+static inline int readlink_copy_to_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)dst >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_to_user(dst, src, n);
+}
+
 /**
  * readlink() - Read value of a symbolic link
  *
@@ -190,7 +208,7 @@ long sys_readlink(const char *path, char *buf, size_t bufsiz) {
 
     /* Phase 2: Copy path from userspace to validate it */
     char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
-    if (fut_copy_from_user(path_buf, local_path, sizeof(path_buf)) != 0) {
+    if (readlink_copy_from_user(path_buf, local_path, sizeof(path_buf)) != 0) {
         fut_printf("[READLINK] readlink(path=?, buf=?, bufsiz=%zu [%s]) -> EFAULT "
                    "(path copy_from_user failed)\n", local_bufsiz, bufsiz_category);
         return -EFAULT;
@@ -321,7 +339,7 @@ long sys_readlink(const char *path, char *buf, size_t bufsiz) {
     }
 
     /* Copy result to userspace buffer */
-    if (fut_copy_to_user(local_buf, target_buf, len) != 0) {
+    if (readlink_copy_to_user(local_buf, target_buf, len) != 0) {
         fut_free(target_buf);
         return -EFAULT;
     }

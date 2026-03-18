@@ -21,6 +21,18 @@
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+static inline int symlink_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_from_user(dst, src, n);
+}
+
 /**
  * symlink() - Create a symbolic link
  *
@@ -92,7 +104,7 @@ long sys_symlink(const char *target, const char *linkpath) {
      * Matches sys_openat/sys_truncate pattern (commits f68ce63, cc20d22)
      */
     char target_buf[256];
-    if (fut_copy_from_user(target_buf, local_target, sizeof(target_buf)) != 0) {
+    if (symlink_copy_from_user(target_buf, local_target, sizeof(target_buf)) != 0) {
         fut_printf("[SYMLINK] symlink(target=?, linkpath=?) -> EFAULT (copy_from_user target failed)\n");
         return -EFAULT;
     }
@@ -108,7 +120,7 @@ long sys_symlink(const char *target, const char *linkpath) {
     /* Copy linkpath from userspace with truncation detection
      * Same vulnerability as target path - linkpath could be truncated */
     char linkpath_buf[256];
-    if (fut_copy_from_user(linkpath_buf, local_linkpath, sizeof(linkpath_buf)) != 0) {
+    if (symlink_copy_from_user(linkpath_buf, local_linkpath, sizeof(linkpath_buf)) != 0) {
         fut_printf("[SYMLINK] symlink(target='%s', linkpath=?) -> EFAULT (copy_from_user linkpath failed)\n",
                    target_buf);
         return -EFAULT;

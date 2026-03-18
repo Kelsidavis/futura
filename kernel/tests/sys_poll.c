@@ -86,6 +86,7 @@ extern long sys_timerfd_settime(int ufd, int flags,
 #define POLL_TEST_SIGNALFD_READY  11
 #define POLL_TEST_PIPE_EOF        12
 #define POLL_TEST_SELECT_PIPE_EOF 13
+#define POLL_TEST_SELECT_TIMERFD  14
 
 /* fd_set helpers (must match sys_select.c) */
 #define FD_SETSIZE 1024
@@ -742,6 +743,68 @@ static void test_select_pipe_eof(void) {
 }
 
 /* ============================================================
+ * Test 14: select() blocks until timerfd fires (Phase 4 wakeup)
+ * Verifies that the waitq-based blocking in sys_select correctly
+ * wakes when a monitored timerfd expires.
+ * ============================================================ */
+static void test_select_timerfd_wakeup(void) {
+    fut_printf("[POLL-TEST] Test 14: select() blocks until timerfd fires\n");
+
+    long tfd = sys_timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK);
+    if (tfd < 0) {
+        fut_printf("[POLL-TEST] ✗ timerfd_create failed: %ld\n", tfd);
+        fut_test_fail(POLL_TEST_SELECT_TIMERFD);
+        return;
+    }
+
+    /* Verify not ready before arming */
+    local_fd_set rfds;
+    local_fd_set_zero(&rfds);
+    local_fd_set_bit((int)tfd, &rfds);
+    struct { long tv_sec; long tv_usec; } tv0 = { 0, 0 };
+    long ret = sys_select((int)tfd + 1, &rfds, NULL, NULL, &tv0);
+    if (ret != 0) {
+        fut_printf("[POLL-TEST] ✗ disarmed timerfd unexpectedly ready: %ld\n", ret);
+        fut_vfs_close((int)tfd);
+        fut_test_fail(POLL_TEST_SELECT_TIMERFD);
+        return;
+    }
+
+    /* Arm timerfd for 20ms */
+    struct itimerspec arm = {0};
+    arm.it_value.tv_nsec = 20 * 1000 * 1000;  /* 20ms one-shot */
+    ret = sys_timerfd_settime((int)tfd, 0, &arm, NULL);
+    if (ret != 0) {
+        fut_printf("[POLL-TEST] ✗ timerfd_settime failed: %ld\n", ret);
+        fut_vfs_close((int)tfd);
+        fut_test_fail(POLL_TEST_SELECT_TIMERFD);
+        return;
+    }
+
+    /* select() with 200ms timeout: should block then wake when timerfd fires */
+    local_fd_set_zero(&rfds);
+    local_fd_set_bit((int)tfd, &rfds);
+    struct { long tv_sec; long tv_usec; } tv = { 0, 200 * 1000 };  /* 200ms */
+    ret = sys_select((int)tfd + 1, &rfds, NULL, NULL, &tv);
+    if (ret <= 0) {
+        fut_printf("[POLL-TEST] ✗ select on timerfd returned %ld (expected >0)\n", ret);
+        fut_vfs_close((int)tfd);
+        fut_test_fail(POLL_TEST_SELECT_TIMERFD);
+        return;
+    }
+    if (!local_fd_is_set((int)tfd, &rfds)) {
+        fut_printf("[POLL-TEST] ✗ select: timerfd not in readfds after expiry\n");
+        fut_vfs_close((int)tfd);
+        fut_test_fail(POLL_TEST_SELECT_TIMERFD);
+        return;
+    }
+
+    fut_vfs_close((int)tfd);
+    fut_printf("[POLL-TEST] ✓ select() woke on timerfd expiry (Phase 4 blocking)\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Main test harness
  * ============================================================ */
 void fut_poll_test_thread(void *arg) {
@@ -764,6 +827,7 @@ void fut_poll_test_thread(void *arg) {
     test_poll_signalfd_ready();
     test_poll_pipe_eof();
     test_select_pipe_eof();
+    test_select_timerfd_wakeup();    /* Test 14: select() wakes on timerfd (Phase 4) */
 
     fut_printf("[POLL-TEST] ========================================\n");
     fut_printf("[POLL-TEST] All poll/select tests done\n");

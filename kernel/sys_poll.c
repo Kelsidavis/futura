@@ -34,6 +34,58 @@
 /* Poll debugging (controlled via debug_config.h) */
 #define poll_printf(...) do { if (POLL_DEBUG) fut_printf(__VA_ARGS__); } while(0)
 
+/* Phase 4: per-call wait queue wakeup callback */
+static void poll_waitq_wakeup(void *arg) {
+    fut_waitq_t *wq = (fut_waitq_t *)arg;
+    if (wq) fut_waitq_wake_all(wq);
+}
+
+/* Wire all monitored FDs to a wait queue so any I/O event wakes us. */
+static void poll_wire_fds(struct pollfd *kfds, unsigned long nfds,
+                          fut_task_t *task, fut_waitq_t *wq) {
+    extern void fut_eventfd_set_epoll_notify(struct fut_file *f, fut_waitq_t *wq);
+    extern void fut_timerfd_set_epoll_notify(struct fut_file *f, fut_waitq_t *wq);
+    extern void fut_pipe_set_epoll_notify(struct fut_file *f, fut_waitq_t *wq);
+    for (unsigned long i = 0; i < nfds; i++) {
+        int fd = kfds[i].fd;
+        if (fd < 0 || fd >= (int)task->max_fds || !task->fd_table || !task->fd_table[fd])
+            continue;
+        struct fut_file *file = task->fd_table[fd];
+        fut_eventfd_set_epoll_notify(file, wq);
+        fut_timerfd_set_epoll_notify(file, wq);
+        fut_pipe_set_epoll_notify(file, wq);
+        fut_socket_t *sock = get_socket_from_fd(fd);
+        if (sock) {
+            if (sock->pair_reverse) sock->pair_reverse->epoll_notify = wq;
+            if (sock->listener)    sock->listener->epoll_notify = wq;
+        }
+    }
+}
+
+/* Clear epoll_notify pointers we set; leaves other watchers untouched. */
+static void poll_unwire_fds(struct pollfd *kfds, unsigned long nfds,
+                             fut_task_t *task, fut_waitq_t *wq) {
+    extern void fut_eventfd_set_epoll_notify(struct fut_file *f, fut_waitq_t *wq);
+    extern void fut_timerfd_set_epoll_notify(struct fut_file *f, fut_waitq_t *wq);
+    extern void fut_pipe_set_epoll_notify(struct fut_file *f, fut_waitq_t *wq);
+    for (unsigned long i = 0; i < nfds; i++) {
+        int fd = kfds[i].fd;
+        if (fd < 0 || fd >= (int)task->max_fds || !task->fd_table || !task->fd_table[fd])
+            continue;
+        struct fut_file *file = task->fd_table[fd];
+        fut_eventfd_set_epoll_notify(file, NULL);
+        fut_timerfd_set_epoll_notify(file, NULL);
+        fut_pipe_set_epoll_notify(file, NULL);
+        fut_socket_t *sock = get_socket_from_fd(fd);
+        if (sock) {
+            if (sock->pair_reverse && sock->pair_reverse->epoll_notify == wq)
+                sock->pair_reverse->epoll_notify = NULL;
+            if (sock->listener && sock->listener->epoll_notify == wq)
+                sock->listener->epoll_notify = NULL;
+        }
+    }
+}
+
 struct poll_scan_stats {
     int ready_count;
     int invalid_count;
@@ -378,9 +430,24 @@ long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout) {
             if (timeout > 0 && fut_get_ticks() >= deadline)
                 break;
 
-            /* Sleep for 1 tick (10ms) then re-scan */
-            fut_thread_sleep(10);  /* 10ms */
+            /* Phase 4: wire FDs to a per-call waitq, rescan, then sleep until
+             * an I/O event (or timer) wakes us — avoids the 10ms polling spin. */
+            fut_waitq_t poll_wq;
+            fut_waitq_init(&poll_wq);
+            poll_wire_fds(kfds, nfds, task, &poll_wq);
 
+            /* Rescan after wiring: catches events that arrived during setup */
+            stats = poll_scan_fds(kfds, nfds, task);
+            if (stats.ready_count == 0) {
+                uint64_t now = fut_get_ticks();
+                /* Use caller's deadline; fall back to 50ms for infinite-timeout */
+                uint64_t wake_ticks = (timeout > 0 && deadline > now)
+                                      ? (deadline - now) : 5u;
+                fut_timer_start(wake_ticks, poll_waitq_wakeup, &poll_wq);
+                fut_waitq_sleep_locked(&poll_wq, NULL, FUT_THREAD_BLOCKED);
+                fut_timer_cancel(poll_waitq_wakeup, &poll_wq);
+            }
+            poll_unwire_fds(kfds, nfds, task, &poll_wq);
             stats = poll_scan_fds(kfds, nfds, task);
         }
     }

@@ -155,6 +155,18 @@
 #ifndef SYS_fchown
 #define SYS_fchown      93
 #endif
+#ifndef SYS_lchown
+#define SYS_lchown      94
+#endif
+#ifndef SYS_creat
+#define SYS_creat       85
+#endif
+#ifndef SYS_setfsuid
+#define SYS_setfsuid    122
+#endif
+#ifndef SYS_setfsgid
+#define SYS_setfsgid    123
+#endif
 #ifndef SYS_getuid
 #define SYS_getuid      102
 #endif
@@ -2968,6 +2980,34 @@ static int64_t sys_fchown_handler(uint64_t fd, uint64_t uid, uint64_t gid,
     return sys_fchown((int)fd, (uint32_t)uid, (uint32_t)gid);
 }
 
+static int64_t sys_lchown_handler(uint64_t path, uint64_t uid, uint64_t gid,
+                                  uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_lchown(const char *path, uint32_t uid, uint32_t gid);
+    return sys_lchown((const char *)(uintptr_t)path, (uint32_t)uid, (uint32_t)gid);
+}
+
+static int64_t sys_creat_handler(uint64_t path, uint64_t mode, uint64_t arg3,
+                                 uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_creat(const char *pathname, int mode);
+    return sys_creat((const char *)(uintptr_t)path, (int)mode);
+}
+
+static int64_t sys_setfsuid_handler(uint64_t fsuid, uint64_t arg2, uint64_t arg3,
+                                    uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_setfsuid(uint32_t fsuid);
+    return sys_setfsuid((uint32_t)fsuid);
+}
+
+static int64_t sys_setfsgid_handler(uint64_t fsgid, uint64_t arg2, uint64_t arg3,
+                                    uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_setfsgid(uint32_t fsgid);
+    return sys_setfsgid((uint32_t)fsgid);
+}
+
 static int64_t sys_truncate_handler(uint64_t path, uint64_t length, uint64_t arg3,
                                     uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     (void)arg3; (void)arg4; (void)arg5; (void)arg6;
@@ -3328,6 +3368,10 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_fchmod]     = sys_fchmod_handler,
     [SYS_chown]      = sys_chown_handler,
     [SYS_fchown]     = sys_fchown_handler,
+    [SYS_lchown]     = sys_lchown_handler,
+    [SYS_creat]      = sys_creat_handler,
+    [SYS_setfsuid]   = sys_setfsuid_handler,
+    [SYS_setfsgid]   = sys_setfsgid_handler,
     [SYS_getdents64] = sys_getdents64_handler,
     [SYS_getpid]     = sys_getpid_handler,
     [SYS_sigaction]  = sys_sigaction_handler,

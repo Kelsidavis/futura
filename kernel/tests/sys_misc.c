@@ -17726,6 +17726,81 @@ static void test_proc_status_vm_fields(void) {
 }
 
 /* ============================================================
+ * Test 378: creat() creates and truncates a file
+ * ============================================================ */
+static void test_creat_syscall(void) {
+    fut_printf("[MISC-TEST] Test 378: creat() syscall\n");
+    /* creat(path, mode) = open(path, O_CREAT|O_WRONLY|O_TRUNC, mode) */
+    extern long sys_creat(const char *pathname, int mode);
+    int fd = (int)sys_creat("/test_creat_378.txt", 0644);
+    if (fd < 0) { fut_printf("[MISC-TEST] ✗ Test 378: creat failed: %d\n", fd); fut_test_fail(378); return; }
+    /* Write something */
+    const char *data = "creat-test";
+    long n = fut_vfs_write(fd, data, 10);
+    fut_vfs_close(fd);
+    if (n != 10) { fut_printf("[MISC-TEST] ✗ Test 378: write returned %ld\n", n); fut_test_fail(378); return; }
+    /* Re-creat to truncate */
+    fd = (int)sys_creat("/test_creat_378.txt", 0644);
+    if (fd < 0) { fut_printf("[MISC-TEST] ✗ Test 378: re-creat failed: %d\n", fd); fut_test_fail(378); return; }
+    fut_vfs_close(fd);
+    /* Verify file is truncated (size 0) */
+    struct fut_stat fst;
+    long r = sys_stat("/test_creat_378.txt", &fst);
+    fut_vfs_unlink("/test_creat_378.txt");
+    if (r < 0) { fut_printf("[MISC-TEST] ✗ Test 378: stat failed: %ld\n", r); fut_test_fail(378); return; }
+    if (fst.st_size != 0) { fut_printf("[MISC-TEST] ✗ Test 378: size %llu not 0 after re-creat\n", (unsigned long long)fst.st_size); fut_test_fail(378); return; }
+    fut_printf("[MISC-TEST] ✓ Test 378: creat() creates and truncates file\n");
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 379: lchown() changes symlink ownership without following it
+ * ============================================================ */
+static void test_lchown_syscall(void) {
+    fut_printf("[MISC-TEST] Test 379: lchown() symlink ownership\n");
+    extern long sys_lchown(const char *path, uint32_t uid, uint32_t gid);
+    /* Create a target file and a symlink to it */
+    int fd = (int)fut_vfs_open("/test_lchown_target.txt", O_CREAT | O_RDWR, 0644);
+    if (fd < 0) { fut_printf("[MISC-TEST] ✗ Test 379: create target failed: %d\n", fd); fut_test_fail(379); return; }
+    fut_vfs_close(fd);
+    long r = fut_vfs_symlink("/test_lchown_target.txt", "/test_lchown_link");
+    if (r < 0) { fut_printf("[MISC-TEST] ✗ Test 379: symlink failed: %ld\n", r); fut_test_fail(379); return; }
+    /* lchown on symlink — should not error (root can always change ownership) */
+    r = sys_lchown("/test_lchown_link", 0, 0);
+    fut_vfs_unlink("/test_lchown_link");
+    fut_vfs_unlink("/test_lchown_target.txt");
+    if (r < 0) { fut_printf("[MISC-TEST] ✗ Test 379: lchown returned %ld\n", r); fut_test_fail(379); return; }
+    fut_printf("[MISC-TEST] ✓ Test 379: lchown() on symlink succeeded\n");
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 380: setfsuid/setfsgid return previous ID
+ * ============================================================ */
+static void test_setfsuid_setfsgid(void) {
+    fut_printf("[MISC-TEST] Test 380: setfsuid/setfsgid return previous ID\n");
+    extern long sys_setfsuid(uint32_t fsuid);
+    extern long sys_setfsgid(uint32_t fsgid);
+    /* Get current UID/GID via getuid/getgid */
+    extern long sys_getuid(void);
+    extern long sys_getgid(void);
+    uint32_t cur_uid = (uint32_t)sys_getuid();
+    uint32_t cur_gid = (uint32_t)sys_getgid();
+    /* setfsuid should return the previous value (current euid) */
+    long prev_uid = sys_setfsuid(cur_uid);
+    long prev_gid = sys_setfsgid(cur_gid);
+    if (prev_uid < 0) { fut_printf("[MISC-TEST] ✗ Test 380: setfsuid returned %ld\n", prev_uid); fut_test_fail(380); return; }
+    if (prev_gid < 0) { fut_printf("[MISC-TEST] ✗ Test 380: setfsgid returned %ld\n", prev_gid); fut_test_fail(380); return; }
+    /* Return values should be the previous uid/gid (which was cur_uid/cur_gid) */
+    if ((uint32_t)prev_uid != cur_uid) {
+        fut_printf("[MISC-TEST] ✗ Test 380: setfsuid prev=%ld != cur_uid=%u\n", prev_uid, cur_uid);
+        fut_test_fail(380); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 380: setfsuid/setfsgid return previous ID\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test 367: /proc/self/net/unix readable (same content as /proc/net/unix)
  * ============================================================ */
 static void test_proc_pid_net_unix(void) {
@@ -18302,6 +18377,9 @@ void fut_misc_test_thread(void *arg) {
     test_proc_buddyinfo();               /* Test 375: /proc/buddyinfo has Node header */
     test_proc_meminfo_hugepages();       /* Test 376: /proc/meminfo has HugePages_Total */
     test_proc_status_vm_fields();        /* Test 377: /proc/self/status has VmData/VmStk/RssAnon */
+    test_creat_syscall();                /* Test 378: creat() creates/truncates file */
+    test_lchown_syscall();               /* Test 379: lchown() changes symlink ownership */
+    test_setfsuid_setfsgid();            /* Test 380: setfsuid/setfsgid return previous ID */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

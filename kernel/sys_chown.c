@@ -26,6 +26,7 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
+#include <fcntl.h>
 #include <string.h>
 
 static inline int chown_copy_from_user(void *dst, const void *src, size_t n) {
@@ -452,4 +453,18 @@ long sys_chown(const char *pathname, uint32_t uid, uint32_t gid) {
 
     fut_vnode_unref(vnode);
     return 0;
+}
+
+/**
+ * lchown() - Change file ownership without following symlinks.
+ *
+ * Identical to chown() but does not dereference the final path component
+ * if it is a symbolic link; instead operates on the symlink itself.
+ *
+ * Implemented as fchownat(AT_FDCWD, pathname, uid, gid, AT_SYMLINK_NOFOLLOW).
+ */
+long sys_lchown(const char *pathname, uint32_t uid, uint32_t gid) {
+    extern long sys_fchownat(int dirfd, const char *pathname, uint32_t uid,
+                             uint32_t gid, int flags);
+    return sys_fchownat(AT_FDCWD, pathname, uid, gid, AT_SYMLINK_NOFOLLOW);
 }

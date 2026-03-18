@@ -402,3 +402,13 @@ long sys_open(const char *pathname, int flags, int mode) {
 
     return (long)result;
 }
+
+/**
+ * creat() - Create or truncate a file.
+ *
+ * Equivalent to open(pathname, O_CREAT|O_WRONLY|O_TRUNC, mode).
+ * Provided for compatibility with old programs that call creat() directly.
+ */
+long sys_creat(const char *pathname, int mode) {
+    return sys_open(pathname, O_CREAT | O_WRONLY | O_TRUNC, mode);
+}

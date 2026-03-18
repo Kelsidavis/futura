@@ -610,3 +610,42 @@ long sys_getresgid(uint32_t *rgid, uint32_t *egid, uint32_t *sgid) {
 
     return 0;
 }
+
+/**
+ * setfsuid() - Set filesystem user ID.
+ *
+ * Sets the filesystem UID used for VFS permission checks independently of the
+ * effective UID. Used by NFS/SMB servers to temporarily switch credentials.
+ *
+ * Returns the previous filesystem UID (always the effective UID in Futura).
+ * Unlike setuid(), this never fails for any caller.
+ */
+long sys_setfsuid(uint32_t fsuid) {
+    fut_task_t *task = fut_task_current();
+    uint32_t prev = task ? task->uid : 0;
+
+    if (task) {
+        bool is_root = (task->uid == 0 || task->ruid == 0 || task->suid == 0);
+        if (is_root || fsuid == task->ruid || fsuid == task->uid || fsuid == task->suid)
+            task->uid = fsuid;
+    }
+    return (long)(uint32_t)prev;
+}
+
+/**
+ * setfsgid() - Set filesystem group ID.
+ *
+ * Sets the filesystem GID used for VFS permission checks independently of the
+ * effective GID. Returns the previous filesystem GID.
+ */
+long sys_setfsgid(uint32_t fsgid) {
+    fut_task_t *task = fut_task_current();
+    uint32_t prev = task ? task->gid : 0;
+
+    if (task) {
+        bool is_root = (task->uid == 0 || task->ruid == 0 || task->suid == 0);
+        if (is_root || fsgid == task->rgid || fsgid == task->gid || fsgid == task->sgid)
+            task->gid = fsgid;
+    }
+    return (long)(uint32_t)prev;
+}

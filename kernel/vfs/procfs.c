@@ -569,13 +569,42 @@ static size_t gen_status(char *buf, size_t cap, fut_task_t *task) {
         }
     }
 
-    /* VmRSS: total bytes from VMA list */
-    uint64_t rss_kb = 0;
+    /* Compute Vm* fields from VMA list */
+    uint64_t rss_kb = 0, vm_exe_kb = 0, vm_lib_kb = 0;
+    uint64_t vm_data_kb = 0, vm_stk_kb = 0;
+    uint64_t rss_anon_kb = 0, rss_file_kb = 0, rss_shmem_kb = 0;
+    uint64_t vm_lck_kb = 0;
     if (task->mm) {
         struct fut_vma *vma = task->mm->vma_list;
-        uint64_t bytes = 0;
-        while (vma) { bytes += vma->end - vma->start; vma = vma->next; }
-        rss_kb = bytes / 1024;
+        while (vma) {
+            uint64_t sz = (vma->end - vma->start) / 1024;
+            rss_kb += sz;
+            if (vma->vnode) {
+                /* File-backed */
+                if (vma->prot & PROT_EXEC)
+                    vm_exe_kb += sz;
+                else
+                    vm_lib_kb += sz;
+                rss_file_kb += sz;
+            } else if (vma->flags & VMA_SHARED) {
+                /* Shared anonymous (shmem/tmpfs) */
+                vm_data_kb += sz;
+                rss_shmem_kb += sz;
+            } else if (vma->flags & VMA_STACK) {
+                vm_stk_kb += sz;
+                rss_anon_kb += sz;
+            } else {
+                /* Private anonymous: heap + mmap */
+                vm_data_kb += sz;
+                rss_anon_kb += sz;
+            }
+            if (vma->flags & VMA_LOCKED)
+                vm_lck_kb += sz;
+            vma = vma->next;
+        }
+        /* VmLck from mm->locked_vm (pages) if not already counted */
+        if (vm_lck_kb == 0 && task->mm->locked_vm)
+            vm_lck_kb = (uint64_t)task->mm->locked_vm * 4; /* pages → kB */
     }
 
     /* Compute SigIgn and SigCgt bitmasks from signal_handlers[] */
@@ -613,10 +642,26 @@ static size_t gen_status(char *buf, size_t cap, fut_task_t *task) {
     }
     pb_char(&b, '\n');
     pb_str(&b, "Threads:\t");    pb_u64(&b, task->thread_count); pb_char(&b, '\n');
-    pb_str(&b, "VmPeak:\t");     pb_u64(&b, rss_kb); pb_str(&b, " kB\n");
-    pb_str(&b, "VmSize:\t");     pb_u64(&b, rss_kb); pb_str(&b, " kB\n");
-    pb_str(&b, "VmRSS:\t");      pb_u64(&b, rss_kb); pb_str(&b, " kB\n");
-    pb_str(&b, "VmHWM:\t");      pb_u64(&b, rss_kb); pb_str(&b, " kB\n");
+    pb_str(&b, "VmPeak:\t");     pb_u64(&b, rss_kb);      pb_str(&b, " kB\n");
+    pb_str(&b, "VmSize:\t");     pb_u64(&b, rss_kb);      pb_str(&b, " kB\n");
+    pb_str(&b, "VmLck:\t");      pb_u64(&b, vm_lck_kb);   pb_str(&b, " kB\n");
+    pb_str(&b, "VmPin:\t");      pb_u64(&b, 0);            pb_str(&b, " kB\n");
+    pb_str(&b, "VmHWM:\t");      pb_u64(&b, rss_kb);      pb_str(&b, " kB\n");
+    pb_str(&b, "VmRSS:\t");      pb_u64(&b, rss_kb);      pb_str(&b, " kB\n");
+    pb_str(&b, "RssAnon:\t");    pb_u64(&b, rss_anon_kb); pb_str(&b, " kB\n");
+    pb_str(&b, "RssFile:\t");    pb_u64(&b, rss_file_kb); pb_str(&b, " kB\n");
+    pb_str(&b, "RssShmem:\t");   pb_u64(&b, rss_shmem_kb);pb_str(&b, " kB\n");
+    pb_str(&b, "VmData:\t");     pb_u64(&b, vm_data_kb);  pb_str(&b, " kB\n");
+    pb_str(&b, "VmStk:\t");      pb_u64(&b, vm_stk_kb);   pb_str(&b, " kB\n");
+    pb_str(&b, "VmExe:\t");      pb_u64(&b, vm_exe_kb);   pb_str(&b, " kB\n");
+    pb_str(&b, "VmLib:\t");      pb_u64(&b, vm_lib_kb);   pb_str(&b, " kB\n");
+    {
+        /* VmPTE: page table overhead ≈ 1 entry per 4 kB page = rss_kb/512 kB */
+        uint64_t vm_pte_kb = (rss_kb + 511) / 512;
+        pb_str(&b, "VmPTE:\t");  pb_u64(&b, vm_pte_kb);   pb_str(&b, " kB\n");
+    }
+    pb_str(&b, "VmSwap:\t");     pb_u64(&b, 0);            pb_str(&b, " kB\n");
+    pb_str(&b, "HugetlbPages:\t");pb_u64(&b, 0);           pb_str(&b, " kB\n");
     pb_str(&b, "SigPnd:\t");     pb_hex16(&b, task->pending_signals); pb_char(&b, '\n');
     pb_str(&b, "ShdPnd:\t");     pb_hex16(&b, 0);                      pb_char(&b, '\n');
     pb_str(&b, "SigBlk:\t");     pb_hex16(&b, task->signal_mask);     pb_char(&b, '\n');

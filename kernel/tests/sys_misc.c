@@ -17702,6 +17702,30 @@ static void test_proc_meminfo_hugepages(void) {
 }
 
 /* ============================================================
+ * Test 377: /proc/self/status has VmData, VmStk, RssAnon fields
+ * ============================================================ */
+static void test_proc_status_vm_fields(void) {
+    fut_printf("[MISC-TEST] Test 377: /proc/self/status VmData/VmStk/RssAnon fields\n");
+    int fd = fut_vfs_open("/proc/self/status", O_RDONLY, 0);
+    if (fd < 0) { fut_printf("[MISC-TEST] ✗ Test 377: open failed: %d\n", fd); fut_test_fail(377); return; }
+    char buf[4096]; long n = fut_vfs_read(fd, buf, sizeof(buf)-1); fut_vfs_close(fd);
+    if (n <= 0) { fut_printf("[MISC-TEST] ✗ Test 377: read returned %ld\n", n); fut_test_fail(377); return; }
+    buf[n] = '\0';
+    /* Check for VmData, VmStk, RssAnon fields */
+    int found_data = 0, found_stk = 0, found_rss_anon = 0;
+    for (long i = 0; i < n - 6; i++) {
+        if (buf[i] == 'V' && buf[i+1] == 'm' && buf[i+2] == 'D' && buf[i+3] == 'a') found_data = 1;
+        if (buf[i] == 'V' && buf[i+1] == 'm' && buf[i+2] == 'S' && buf[i+3] == 't') found_stk = 1;
+        if (buf[i] == 'R' && buf[i+1] == 's' && buf[i+2] == 's' && buf[i+3] == 'A') found_rss_anon = 1;
+    }
+    if (!found_data)    { fut_printf("[MISC-TEST] ✗ Test 377: VmData not found\n");    fut_test_fail(377); return; }
+    if (!found_stk)     { fut_printf("[MISC-TEST] ✗ Test 377: VmStk not found\n");     fut_test_fail(377); return; }
+    if (!found_rss_anon){ fut_printf("[MISC-TEST] ✗ Test 377: RssAnon not found\n");   fut_test_fail(377); return; }
+    fut_printf("[MISC-TEST] ✓ Test 377: /proc/self/status has VmData, VmStk, RssAnon\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test 367: /proc/self/net/unix readable (same content as /proc/net/unix)
  * ============================================================ */
 static void test_proc_pid_net_unix(void) {
@@ -18277,6 +18301,7 @@ void fut_misc_test_thread(void *arg) {
     test_proc_attr_current();            /* Test 374: /proc/self/attr/current = unconfined */
     test_proc_buddyinfo();               /* Test 375: /proc/buddyinfo has Node header */
     test_proc_meminfo_hugepages();       /* Test 376: /proc/meminfo has HugePages_Total */
+    test_proc_status_vm_fields();        /* Test 377: /proc/self/status has VmData/VmStk/RssAnon */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

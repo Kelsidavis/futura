@@ -705,9 +705,17 @@ static size_t gen_status(char *buf, size_t cap, fut_task_t *task) {
     }
     pb_str(&b, "VmSwap:\t");     pb_u64(&b, 0);            pb_str(&b, " kB\n");
     pb_str(&b, "HugetlbPages:\t");pb_u64(&b, 0);           pb_str(&b, " kB\n");
-    pb_str(&b, "SigPnd:\t");     pb_hex16(&b, task->pending_signals); pb_char(&b, '\n');
-    pb_str(&b, "ShdPnd:\t");     pb_hex16(&b, 0);                      pb_char(&b, '\n');
-    pb_str(&b, "SigBlk:\t");     pb_hex16(&b, task->signal_mask);     pb_char(&b, '\n');
+    /* SigPnd: thread-directed signals for the main thread.
+     * ShdPnd: task-wide (process) pending signals.
+     * SigBlk: main thread's blocked signal mask (per POSIX each thread has its own). */
+    {
+        fut_thread_t *mt = task->threads;
+        uint64_t thr_pnd = mt ? mt->thread_pending_signals : 0;
+        uint64_t thr_blk = mt ? mt->signal_mask : task->signal_mask;
+        pb_str(&b, "SigPnd:\t"); pb_hex16(&b, thr_pnd);              pb_char(&b, '\n');
+        pb_str(&b, "ShdPnd:\t"); pb_hex16(&b, task->pending_signals); pb_char(&b, '\n');
+        pb_str(&b, "SigBlk:\t"); pb_hex16(&b, thr_blk);              pb_char(&b, '\n');
+    }
     pb_str(&b, "SigIgn:\t");     pb_hex16(&b, sig_ign);               pb_char(&b, '\n');
     pb_str(&b, "SigCgt:\t");     pb_hex16(&b, sig_cgt);               pb_char(&b, '\n');
     pb_str(&b, "CapInh:\t");     pb_hex16(&b, task->cap_inheritable); pb_char(&b, '\n');
@@ -717,8 +725,15 @@ static size_t gen_status(char *buf, size_t cap, fut_task_t *task) {
     pb_str(&b, "CapAmb:\t");     pb_hex16(&b, 0);                      pb_char(&b, '\n');
     pb_str(&b, "NoNewPrivs:\t"); pb_u64(&b, task->no_new_privs ? 1 : 0); pb_char(&b, '\n');
     pb_str(&b, "Seccomp:\t");    pb_u64(&b, 0);                        pb_char(&b, '\n');
+    pb_str(&b, "Seccomp_filters:\t"); pb_u64(&b, 0);                   pb_char(&b, '\n');
     /* Umask (Linux 4.7+): file creation mask in octal */
     pb_str(&b, "Umask:\t");      pb_oct(&b, task->umask & 0777);       pb_char(&b, '\n');
+    /* NStgid/NSpid/NSpgid/NSsid (Linux 4.1+): PID as seen in each namespace.
+     * Futura has no PID namespaces — report the same PID at all levels. */
+    pb_str(&b, "NStgid:\t"); pb_u64(&b, task->pid); pb_char(&b, '\n');
+    pb_str(&b, "NSpid:\t");  pb_u64(&b, task->pid); pb_char(&b, '\n');
+    pb_str(&b, "NSpgid:\t"); pb_u64(&b, task->pgid); pb_char(&b, '\n');
+    pb_str(&b, "NSsid:\t");  pb_u64(&b, task->sid);  pb_char(&b, '\n');
     return b.pos;
 }
 

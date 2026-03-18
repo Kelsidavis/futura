@@ -18068,6 +18068,41 @@ static void test_proc_fdinfo_eventfd(void) {
 }
 
 /* ============================================================
+ * Test 388: /proc/self/status has NSpid and NStgid fields
+ * ============================================================ */
+static void test_proc_status_nspid(void) {
+    fut_printf("[MISC-TEST] Test 388: /proc/self/status has NSpid/NStgid\n");
+    int fd = fut_vfs_open("/proc/self/status", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 388: open /proc/self/status failed: %d\n", fd);
+        fut_test_fail(388); return;
+    }
+    char buf[2048];
+    long nr = fut_vfs_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    if (nr <= 0) {
+        fut_printf("[MISC-TEST] ✗ Test 388: read returned %ld\n", nr);
+        fut_test_fail(388); return;
+    }
+    buf[nr] = '\0';
+    /* Check for NSpid and NStgid */
+    int found_nspid = 0, found_nstgid = 0;
+    for (long i = 0; i + 6 <= nr; i++) {
+        if (buf[i]=='N' && buf[i+1]=='S' && buf[i+2]=='p' && buf[i+3]=='i' && buf[i+4]=='d' && buf[i+5]==':')
+            found_nspid = 1;
+        if (buf[i]=='N' && buf[i+1]=='S' && buf[i+2]=='t' && buf[i+3]=='g' && buf[i+4]=='i' && buf[i+5]=='d')
+            found_nstgid = 1;
+    }
+    if (!found_nspid || !found_nstgid) {
+        fut_printf("[MISC-TEST] ✗ Test 388: missing NSpid=%d NStgid=%d in status\n",
+                   found_nspid, found_nstgid);
+        fut_test_fail(388); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 388: NSpid and NStgid present in /proc/self/status\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test 367: /proc/self/net/unix readable (same content as /proc/net/unix)
  * ============================================================ */
 static void test_proc_pid_net_unix(void) {
@@ -18654,6 +18689,7 @@ void fut_misc_test_thread(void *arg) {
     test_getdents_legacy();              /* Test 385: getdents(78) lists directory */
     test_swapon_iopl_eperm();            /* Test 386: swapon/swapoff/iopl/ioperm -> EPERM */
     test_proc_fdinfo_eventfd();          /* Test 387: /proc/self/fdinfo/<n> has eventfd-count */
+    test_proc_status_nspid();           /* Test 388: /proc/self/status has NSpid/NStgid */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

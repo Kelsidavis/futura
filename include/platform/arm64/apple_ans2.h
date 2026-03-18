@@ -356,4 +356,37 @@ void apple_ans2_ring_admin_doorbell(apple_ans2_ctrl_t *ctrl, int tag);
  */
 void apple_ans2_ring_io_doorbell(apple_ans2_ctrl_t *ctrl, int tag);
 
+/* ============================================================
+ *   Rust driver FFI (drivers/rust/apple_ans2)
+ * ============================================================ */
+
+typedef struct Ans2Ctrl Ans2Ctrl;
+
+/** Allocate and initialise ANS2 controller at @mmio_base with RTKit
+ *  mailbox at @mailbox_base.  Returns non-null on success, null on failure. */
+Ans2Ctrl *rust_ans2_init(uint64_t mmio_base, uint64_t mailbox_base);
+
+/** Free an Ans2Ctrl previously returned by rust_ans2_init. */
+void rust_ans2_free(Ans2Ctrl *ctrl);
+
+/** Read @count sectors from @lba into @buf.
+ *  Returns sectors-read on success, -1 on error. */
+int rust_ans2_read(Ans2Ctrl *ctrl, uint64_t lba, uint32_t count, uint8_t *buf);
+
+/** Write @count sectors from @buf to @lba.
+ *  Returns sectors-written on success, -1 on error. */
+int rust_ans2_write(Ans2Ctrl *ctrl, uint64_t lba, uint32_t count, const uint8_t *buf);
+
+/** Returns 1 if the controller initialised successfully. */
+int rust_ans2_is_ready(const Ans2Ctrl *ctrl);
+
+/** Return the maximum LBA (0 if not yet identified). */
+uint64_t rust_ans2_max_lba(const Ans2Ctrl *ctrl);
+
+/** Return the logical sector size in bytes (0 if not yet identified). */
+uint32_t rust_ans2_sector_size(const Ans2Ctrl *ctrl);
+
+/** Poll the RTKit RX FIFO and dispatch pending ANS2 messages. */
+void rust_ans2_poll(Ans2Ctrl *ctrl);
+
 #endif /* __FUTURA_ARM64_APPLE_ANS2_H__ */

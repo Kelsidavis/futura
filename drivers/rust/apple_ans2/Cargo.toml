@@ -1,0 +1,11 @@
+[package]
+name = "apple_ans2"
+version = "0.1.0"
+edition = "2024"
+license = "MPL-2.0"
+description = "Apple ANS2 NVMe storage controller driver for Futura OS (ARM64)"
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]

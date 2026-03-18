@@ -12,6 +12,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <platform/arm64/dtb.h>
 
 /* ============================================================
@@ -178,5 +179,27 @@ void fut_apple_uart_puts(const fut_platform_info_t *info, const char *str);
  * @param info: Platform information
  */
 void fut_apple_uart_platform_init(const fut_platform_info_t *info);
+
+/* ============================================================
+ *   Rust driver FFI (drivers/rust/apple_uart)
+ *
+ *   These replace the C implementations when the Rust driver is linked.
+ *   All functions take the MMIO base address directly instead of a
+ *   platform_info pointer, making them re-entrant and testable in
+ *   isolation.
+ * ============================================================ */
+
+int      rust_apple_uart_init(uint64_t base, uint32_t baudrate);
+void     rust_apple_uart_putc(uint64_t base, uint8_t ch);
+int      rust_apple_uart_getc(uint64_t base);
+void     rust_apple_uart_write(uint64_t base, const uint8_t *ptr, size_t len);
+void     rust_apple_uart_puts(uint64_t base, const uint8_t *s);
+int      rust_apple_uart_tx_ready(uint64_t base);
+int      rust_apple_uart_rx_ready(uint64_t base);
+void     rust_apple_uart_enable_rx_irq(uint64_t base);
+void     rust_apple_uart_enable_tx_irq(uint64_t base);
+void     rust_apple_uart_disable_tx_irq(uint64_t base);
+uint32_t rust_apple_uart_intp(uint64_t base);
+void     rust_apple_uart_clear_interrupts(uint64_t base, uint32_t mask);
 
 #endif /* __FUTURA_ARM64_APPLE_UART_H__ */

@@ -14167,6 +14167,58 @@ struct test_mmsghdr {
 };
 #endif
 
+/* ============================================================
+ * Test 311: FUTEX_WAIT_BITSET absolute-timeout semantics
+ *
+ * FUTEX_WAIT uses a relative timeout; FUTEX_WAIT_BITSET uses an absolute
+ * timeout (CLOCK_MONOTONIC by default, CLOCK_REALTIME with FUTEX_CLOCK_REALTIME).
+ * Before this fix, sys_futex() treated both as relative — a future absolute
+ * deadline would be interpreted as a huge relative duration (≈forever).
+ * ============================================================ */
+#define FUTEX_WAIT_BITSET_TEST      9
+#define FUTEX_CLOCK_REALTIME_TEST   256
+
+static void test_futex_wait_bitset_abs_timeout(void) {
+    fut_printf("[MISC-TEST] Test 311: FUTEX_WAIT_BITSET absolute timeout semantics\n");
+
+    /* 1: value mismatch → EAGAIN regardless of timeout */
+    uint32_t futex_val = 42;
+    long r = sys_futex(&futex_val,
+                       FUTEX_WAIT_BITSET_TEST | FUTEX_PRIVATE_FLAG_TEST,
+                       99, NULL, NULL, 0xFFFFFFFF);
+    if (r != -EAGAIN) {
+        fut_printf("[MISC-TEST] ✗ WAIT_BITSET mismatch: got %ld want -EAGAIN\n", r);
+        fut_test_fail(311); return;
+    }
+
+    /* 2: CLOCK_MONOTONIC, absolute deadline = {0, 10 ns} — always in the past.
+     * With the old (relative) interpretation: 0ms → rounds up to 1ms → waits.
+     * With the new (absolute) interpretation: 10 ns < uptime → ETIMEDOUT at once. */
+    futex_val = 0;
+    fut_timespec_t abs_past = { .tv_sec = 0, .tv_nsec = 10L };
+    r = sys_futex(&futex_val,
+                  FUTEX_WAIT_BITSET_TEST | FUTEX_PRIVATE_FLAG_TEST,
+                  0, &abs_past, NULL, 0xFFFFFFFF);
+    if (r != -ETIMEDOUT && r != -EINTR) {
+        fut_printf("[MISC-TEST] ✗ WAIT_BITSET abs past: got %ld want -ETIMEDOUT\n", r);
+        fut_test_fail(311); return;
+    }
+
+    /* 3: CLOCK_REALTIME variant — same past deadline */
+    futex_val = 0;
+    r = sys_futex(&futex_val,
+                  FUTEX_WAIT_BITSET_TEST | FUTEX_PRIVATE_FLAG_TEST |
+                  FUTEX_CLOCK_REALTIME_TEST,
+                  0, &abs_past, NULL, 0xFFFFFFFF);
+    if (r != -ETIMEDOUT && r != -EINTR) {
+        fut_printf("[MISC-TEST] ✗ WAIT_BITSET abs past REALTIME: got %ld want -ETIMEDOUT\n", r);
+        fut_test_fail(311); return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ FUTEX_WAIT_BITSET: mismatch→EAGAIN, past abs deadline→ETIMEDOUT\n");
+    fut_test_pass();
+}
+
 static void test_sendmmsg_recvmmsg(void) {
     fut_printf("[MISC-TEST] Test 310: sendmmsg/recvmmsg multi-message batch\n");
     extern long sys_socketpair(int domain, int type, int protocol, int *sv);
@@ -14690,6 +14742,7 @@ void fut_misc_test_thread(void *arg) {
     test_so_passcred();                  /* Test 308: SO_PASSCRED attaches SCM_CREDENTIALS on recvmsg */
     test_unix_dgram_sendto();            /* Test 309: AF_UNIX SOCK_DGRAM sendto/recvfrom with address */
     test_sendmmsg_recvmmsg();            /* Test 310: sendmmsg/recvmmsg multi-message batch */
+    test_futex_wait_bitset_abs_timeout(); /* Test 311: FUTEX_WAIT_BITSET absolute timeout */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

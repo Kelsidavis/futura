@@ -241,7 +241,9 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
         return -ESRCH;
     }
 
-    /* Mask out flags to get base operation */
+    /* Mask out flags to get base operation.
+     * Save modifier flags before stripping for use in timeout handling. */
+    bool use_realtime_clock = (op & FUTEX_CLOCK_REALTIME) != 0;
     int cmd = op & 0x7F;
 
     fut_printf("[FUTEX] futex(uaddr=%p, op=%d, val=%u, timeout=%p, uaddr2=%p, val3=%u)\n",
@@ -363,7 +365,17 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
             /* FUTEX_WAIT: Atomically check *uaddr == val, then sleep
              * This is the core primitive for userspace mutexes/condvars */
 
-            /* Parse and validate timeout if specified */
+            /* Parse and validate timeout if specified.
+             *
+             * FUTEX_WAIT    uses a RELATIVE timeout (duration from now).
+             * FUTEX_WAIT_BITSET uses an ABSOLUTE timeout on either
+             *   CLOCK_MONOTONIC (default) or CLOCK_REALTIME (FUTEX_CLOCK_REALTIME).
+             *
+             * glibc pthread_cond_timedwait uses FUTEX_WAIT_BITSET|FUTEX_PRIVATE_FLAG
+             * with an absolute CLOCK_REALTIME deadline (or CLOCK_MONOTONIC for
+             * pthread_condattr_setclock).  Treating it as relative would yield
+             * an enormous (wrong) sleep duration.
+             */
             bool has_timeout = false;
             uint64_t timeout_ms = 0;
             if (timeout) {
@@ -374,9 +386,34 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
                 if (ts.tv_sec < 0 || ts.tv_nsec < 0 || ts.tv_nsec >= 1000000000) {
                     return -EINVAL;
                 }
-                timeout_ms = (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
-                if (timeout_ms == 0 && ts.tv_nsec > 0) {
-                    timeout_ms = 1; /* Round up sub-millisecond to 1ms */
+
+                if (cmd == FUTEX_WAIT_BITSET) {
+                    /* Absolute timeout: convert to relative by subtracting now. */
+                    extern uint64_t fut_get_ticks(void);
+                    extern volatile int64_t g_realtime_offset_sec;
+                    uint64_t now_ticks = fut_get_ticks();
+                    /* 100 Hz timer → each tick is 10 ms = 10 000 000 ns */
+                    uint64_t now_ns = now_ticks * 10000000ULL;
+                    if (use_realtime_clock) {
+                        /* Add realtime offset (seconds converted to ns) */
+                        now_ns += (uint64_t)((int64_t)g_realtime_offset_sec * 1000000000LL);
+                    }
+                    uint64_t abs_ns = (uint64_t)ts.tv_sec * 1000000000ULL +
+                                      (uint64_t)ts.tv_nsec;
+                    if (abs_ns <= now_ns) {
+                        /* Already expired (bucket lock not yet held here) */
+                        return -ETIMEDOUT;
+                    }
+                    uint64_t remaining_ns = abs_ns - now_ns;
+                    timeout_ms = remaining_ns / 1000000;
+                    if (remaining_ns % 1000000 != 0) timeout_ms++;
+                } else {
+                    /* FUTEX_WAIT: relative timeout */
+                    timeout_ms = (uint64_t)ts.tv_sec * 1000 +
+                                 (uint64_t)ts.tv_nsec / 1000000;
+                    if (timeout_ms == 0 && ts.tv_nsec > 0) {
+                        timeout_ms = 1; /* Round up sub-millisecond to 1ms */
+                    }
                 }
                 has_timeout = true;
             }

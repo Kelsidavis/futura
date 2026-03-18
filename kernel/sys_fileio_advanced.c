@@ -17,6 +17,25 @@
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
+static inline int fileio_copy_to_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)dst >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_to_user(dst, src, n);
+}
+static inline int fileio_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_from_user(dst, src, n);
+}
+
 /**
  * sys_chroot - Change root directory
  *
@@ -194,7 +213,7 @@ long sys_sendfile(int out_fd, int in_fd, uint64_t *offset, size_t count) {
     uint64_t start_offset = 0;
     if (local_offset) {
         /* Copy offset from userspace */
-        if (fut_copy_from_user(&start_offset, local_offset, sizeof(uint64_t)) != 0) {
+        if (fileio_copy_from_user(&start_offset, local_offset, sizeof(uint64_t)) != 0) {
             fut_printf("[SENDFILE] sendfile(out_fd=%d, in_fd=%d, count=%zu, pid=%d) -> EFAULT "
                        "(invalid offset pointer)\n",
                        local_out_fd, local_in_fd, local_count, task->pid);
@@ -267,7 +286,7 @@ long sys_sendfile(int out_fd, int in_fd, uint64_t *offset, size_t count) {
 
     /* Update offset for caller; propagate write-back failure */
     if (local_offset) {
-        if (fut_copy_to_user(local_offset, &read_offset, sizeof(uint64_t)) != 0) {
+        if (fileio_copy_to_user(local_offset, &read_offset, sizeof(uint64_t)) != 0) {
             return -EFAULT;
         }
     } else {

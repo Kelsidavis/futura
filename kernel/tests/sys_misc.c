@@ -76,6 +76,8 @@ extern long sys_munlock(const void *addr, size_t len);
 extern long sys_getcwd(char *buf, size_t size);
 extern long sys_prlimit64(int pid, int resource, const void *new_limit, void *old_limit);
 extern long sys_mincore(void *addr, size_t length, unsigned char *vec);
+extern long sys_sendfile(int out_fd, int in_fd, uint64_t *offset, size_t count);
+extern long sys_msync(void *addr, size_t length, int flags);
 
 /* fcntl commands */
 #define F_DUPFD         0
@@ -7079,6 +7081,105 @@ static void test_mincore_basic(void) {
 }
 
 /* ============================================================
+ * Test 149: sendfile copies data between file descriptors
+ * ============================================================ */
+static void test_sendfile_basic(void) {
+    fut_printf("[MISC-TEST] Test 149: sendfile file→file copy\n");
+
+    /* Create source file with known content */
+    int src = (int)fut_vfs_open("/test_sf_src.txt", O_CREAT | O_RDWR, 0644);
+    if (src < 0) { fut_test_fail(149); return; }
+    const char *data = "sendfile test data";
+    fut_vfs_write(src, data, 18);
+    /* seek back to start */
+    extern long sys_lseek(int fd, int64_t offset, int whence);
+    sys_lseek(src, 0, 0 /* SEEK_SET */);
+
+    /* Create destination file */
+    int dst = (int)fut_vfs_open("/test_sf_dst.txt", O_CREAT | O_RDWR, 0644);
+    if (dst < 0) { fut_vfs_close(src); fut_test_fail(149); return; }
+
+    /* sendfile with NULL offset (uses in_fd position) */
+    long n = sys_sendfile(dst, src, NULL, 18);
+    if (n != 18) {
+        fut_printf("[MISC-TEST] ✗ sendfile: returned %ld, expected 18\n", n);
+        fut_vfs_close(src); fut_vfs_close(dst);
+        fut_test_fail(149);
+        return;
+    }
+
+    /* Verify content in dst */
+    sys_lseek(dst, 0, 0);
+    char buf[32] = { 0 };
+    fut_vfs_read(dst, buf, sizeof(buf)-1);
+    if (__builtin_memcmp(buf, data, 18) != 0) {
+        fut_printf("[MISC-TEST] ✗ sendfile: content mismatch\n");
+        fut_vfs_close(src); fut_vfs_close(dst);
+        fut_test_fail(149);
+        return;
+    }
+
+    /* sendfile with explicit offset parameter */
+    uint64_t off = 0;
+    sys_lseek(dst, 0, 0);
+    sys_lseek(src, 0, 0);
+    n = sys_sendfile(dst, src, &off, 5);
+    if (n != 5 || off != 5) {
+        fut_printf("[MISC-TEST] ✗ sendfile with offset: n=%ld off=%llu\n",
+                   n, (unsigned long long)off);
+        fut_vfs_close(src); fut_vfs_close(dst);
+        fut_test_fail(149);
+        return;
+    }
+
+    fut_vfs_close(src);
+    fut_vfs_close(dst);
+    fut_printf("[MISC-TEST] ✓ sendfile: 18-byte copy and offset-based copy OK\n");
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 150: msync on anonymous mapping is a no-op success
+ * ============================================================ */
+#define MS_ASYNC_TEST   1
+#define MS_SYNC_TEST    4
+#define MS_INVALIDATE_TEST 2
+
+static void test_msync_basic(void) {
+    fut_printf("[MISC-TEST] Test 150: msync basic\n");
+
+    long addr = sys_mmap(NULL, 4096, PROT_RW_TEST,
+                         MAP_PRIVATE_TEST | MAP_ANONYMOUS_TEST, -1, 0);
+    if (addr < 0) {
+        fut_printf("[MISC-TEST] ✗ msync: mmap failed: %ld\n", addr);
+        fut_test_fail(150);
+        return;
+    }
+
+    /* MS_ASYNC on anonymous mapping = no-op */
+    long ret = sys_msync((void *)addr, 4096, MS_ASYNC_TEST);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ msync(MS_ASYNC): %ld\n", ret);
+        sys_munmap((void *)addr, 4096);
+        fut_test_fail(150);
+        return;
+    }
+
+    /* MS_SYNC on anonymous mapping = no-op */
+    ret = sys_msync((void *)addr, 4096, MS_SYNC_TEST);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ msync(MS_SYNC): %ld\n", ret);
+        sys_munmap((void *)addr, 4096);
+        fut_test_fail(150);
+        return;
+    }
+
+    sys_munmap((void *)addr, 4096);
+    fut_printf("[MISC-TEST] ✓ msync: MS_ASYNC and MS_SYNC both return 0\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -7236,6 +7337,8 @@ void fut_misc_test_thread(void *arg) {
     test_proc_self_maps();                 /* Test 146: /proc/self/maps readable */
     test_prlimit64_basic();                /* Test 147: prlimit64 self RLIMIT_NOFILE */
     test_mincore_basic();                  /* Test 148: mincore on anonymous mapping */
+    test_sendfile_basic();                 /* Test 149: sendfile file→file copy */
+    test_msync_basic();                    /* Test 150: msync no-op on anonymous mapping */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

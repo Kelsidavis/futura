@@ -223,11 +223,14 @@ long sys_nanosleep(const fut_timespec_t *u_req, fut_timespec_t *u_rem) {
                req.tv_sec, req.tv_nsec, duration_category, duration_desc,
                total_ns, millis);
 
-    /* Check for pending unblocked signals before sleeping */
+    /* Check for pending unblocked signals before sleeping (use thread mask) */
     fut_task_t *task = fut_task_current();
     if (task) {
+        fut_thread_t *ns_thr = fut_thread_current();
         uint64_t pending = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
-        uint64_t blocked = task->signal_mask;
+        uint64_t blocked = ns_thr ?
+            __atomic_load_n(&ns_thr->signal_mask, __ATOMIC_ACQUIRE) :
+            task->signal_mask;
         if (pending & ~blocked) {
             /* Signal already pending — return EINTR immediately */
             if (u_rem) {
@@ -244,10 +247,13 @@ long sys_nanosleep(const fut_timespec_t *u_req, fut_timespec_t *u_rem) {
     /* Perform the sleep (may be interrupted by signal delivery) */
     fut_thread_sleep(millis);
 
-    /* Check if we were woken early by a signal */
+    /* Check if we were woken early by a signal (use thread mask) */
     if (task) {
+        fut_thread_t *ns_thr = fut_thread_current();
         uint64_t pending = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
-        uint64_t blocked = task->signal_mask;
+        uint64_t blocked = ns_thr ?
+            __atomic_load_n(&ns_thr->signal_mask, __ATOMIC_ACQUIRE) :
+            task->signal_mask;
         if (pending & ~blocked) {
             /* Interrupted by signal — calculate remaining time.
              * fut_get_ticks() and millis are in the same units (timer ticks,

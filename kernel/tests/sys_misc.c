@@ -16058,6 +16058,43 @@ static void test_so_peercred(void) {
     fut_test_pass();
 }
 
+/*
+ * Test 336: lseek on socket returns ESPIPE
+ *
+ * POSIX requires lseek on a socket to return ESPIPE.  Previously
+ * Futura returned the new (meaningless) offset because sockets are
+ * O_RDWR chr_ops files and bypassed the pipe ESPIPE check.
+ */
+static void test_lseek_socket_espipe(void) {
+    fut_printf("[MISC-TEST] Test 336: lseek on socket returns ESPIPE\n");
+
+    extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+    extern long sys_lseek(int fd, long offset, int whence);
+
+    int sv[2] = { -1, -1 };
+    long r = sys_socketpair(1 /*AF_UNIX*/, 1 /*SOCK_STREAM*/, 0, sv);
+    if (r < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 336: socketpair failed: %ld\n", r);
+        fut_test_fail(1);
+        return;
+    }
+
+    long pos = sys_lseek(sv[0], 0, 0 /*SEEK_SET*/);
+    if (pos != -ESPIPE) {
+        fut_printf("[MISC-TEST] ✗ Test 336: lseek(socket) returned %ld (expected -ESPIPE=%d)\n",
+                   pos, -ESPIPE);
+        sys_close(sv[0]);
+        sys_close(sv[1]);
+        fut_test_fail(1);
+        return;
+    }
+
+    sys_close(sv[0]);
+    sys_close(sv[1]);
+    fut_printf("[MISC-TEST] ✓ Test 336: lseek on socket returns ESPIPE\n");
+    fut_test_pass();
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -16401,6 +16438,7 @@ void fut_misc_test_thread(void *arg) {
     test_epollrdhup_peer_shutdown();     /* Test 333: EPOLLRDHUP fires on peer shutdown(SHUT_WR) */
     test_msg_nosignal();                 /* Test 334: MSG_NOSIGNAL suppresses SIGPIPE */
     test_so_peercred();                  /* Test 335: SO_PEERCRED returns correct credentials */
+    test_lseek_socket_espipe();          /* Test 336: lseek on socket returns ESPIPE */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

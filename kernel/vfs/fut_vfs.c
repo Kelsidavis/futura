@@ -1521,7 +1521,7 @@ int chrdev_alloc_fd(const struct fut_file_ops *ops, void *inode, void *priv) {
 
     file->vnode = NULL;
     file->offset = 0;
-    file->flags = O_RDWR;
+    file->flags = O_RDWR | FUT_F_UNSEEKABLE;
     file->refcount = 1;
     file->chr_ops = ops;
     file->chr_inode = inode;
@@ -2287,12 +2287,15 @@ int64_t fut_vfs_lseek(int fd, int64_t offset, int whence) {
         return -EBADF;
     }
 
-    /* Pipes are non-seekable: return ESPIPE per POSIX.
-     * Pipe fds are identified by having chr_ops with O_RDONLY or O_WRONLY
-     * (set by pipe()/pipe2()). Seekable chr_ops files (memfd, devfs) use O_RDWR. */
+    /* Non-seekable chr_ops files return ESPIPE per POSIX.
+     * Pipes use O_RDONLY/O_WRONLY (set by pipe()/pipe2()).
+     * Sockets, eventfd, timerfd, signalfd, pidfd, and mqueue use
+     * FUT_F_UNSEEKABLE (set by chrdev_alloc_fd()).
+     * Device files opened by path (try_open_chrdev) and memfd are seekable. */
     if (file->chr_ops && !file->vnode) {
         int mode = file->flags & O_ACCMODE;
-        if (mode == O_RDONLY || mode == O_WRONLY)
+        if ((mode == O_RDONLY || mode == O_WRONLY) ||
+            (file->flags & FUT_F_UNSEEKABLE))
             return -ESPIPE;
     }
 

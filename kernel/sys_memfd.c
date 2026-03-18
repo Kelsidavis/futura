@@ -243,6 +243,13 @@ long sys_memfd_create(const char *uname, unsigned int flags) {
         return fd;
     }
 
+    /* memfd is seekable: clear the FUT_F_UNSEEKABLE flag set by chrdev_alloc_fd */
+    {
+        fut_task_t *mf_task = fut_task_current();
+        if (mf_task && mf_task->fd_table && fd < mf_task->max_fds && mf_task->fd_table[fd])
+            mf_task->fd_table[fd]->flags &= ~FUT_F_UNSEEKABLE;
+    }
+
     /* Set FD_CLOEXEC if requested (per-FD flag) */
     if (flags & MFD_CLOEXEC) {
         fut_task_t *task = fut_task_current();

@@ -1001,6 +1001,12 @@ int vfs_check_modify_perm(struct fut_vnode *vnode);
 #define O_CLOEXEC   0x80000  /* Close on exec */
 #endif
 
+/* Internal kernel-only flag stored in fut_file.flags.
+ * Set by chrdev_alloc_fd() on programmatically-created chr_ops files
+ * (sockets, eventfd, timerfd, signalfd, pidfd, mqueue) to mark them
+ * as non-seekable.  Cleared by memfd after allocation. */
+#define FUT_F_UNSEEKABLE 0x40000000
+
 /* Error codes */
 #define ENOENT      2       /* No such file or directory */
 #define EIO         5       /* I/O error */

@@ -200,6 +200,8 @@
 #define SYS_sched_get_priority_max  146
 #define SYS_sched_get_priority_min  147
 #define SYS_sched_rr_get_interval  148
+#define SYS_sched_setattr          439  /* Linux: 314 — Futura: 439 (314/315 used by clock_getres/nanosleep) */
+#define SYS_sched_getattr          440  /* Linux: 315 — Futura: 440 */
 
 /* xattr syscalls (Linux x86_64 188-199) */
 #define SYS_setxattr     188
@@ -1712,6 +1714,21 @@ static int64_t sys_rt_tgsigqueueinfo_handler(uint64_t tgid, uint64_t tid, uint64
                                   (const void *)(uintptr_t)uinfo);
 }
 
+static int64_t sys_sched_setattr_handler(uint64_t pid, uint64_t uattr, uint64_t flags,
+                                          uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_sched_setattr(int pid, const void *uattr, unsigned int flags);
+    return sys_sched_setattr((int)pid, (const void *)(uintptr_t)uattr, (unsigned int)flags);
+}
+
+static int64_t sys_sched_getattr_handler(uint64_t pid, uint64_t uattr, uint64_t usize,
+                                          uint64_t flags, uint64_t arg5, uint64_t arg6) {
+    (void)arg5; (void)arg6;
+    extern long sys_sched_getattr(int pid, void *uattr, unsigned int usize, unsigned int flags);
+    return sys_sched_getattr((int)pid, (void *)(uintptr_t)uattr, (unsigned int)usize,
+                             (unsigned int)flags);
+}
+
 static int64_t sys_pidfd_open_handler(uint64_t pid, uint64_t flags, uint64_t arg3,
                                       uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     (void)arg3; (void)arg4; (void)arg5; (void)arg6;
@@ -3119,6 +3136,8 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_process_vm_writev]   = sys_process_vm_writev_handler,
     [SYS_pidfd_open]          = sys_pidfd_open_handler,
     [SYS_pidfd_send_signal]   = sys_pidfd_send_signal_handler,
+    [SYS_sched_setattr]       = sys_sched_setattr_handler,
+    [SYS_sched_getattr]       = sys_sched_getattr_handler,
     /* time / itimer / clock */
     [SYS_getitimer]         = sys_getitimer_handler,
     [SYS_setitimer]         = sys_setitimer_handler,

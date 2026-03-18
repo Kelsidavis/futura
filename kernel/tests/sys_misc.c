@@ -10592,6 +10592,137 @@ static void test_pidfd_errors(void) {
 }
 
 /* ============================================================
+ * Tests 223-225: sched_getattr / sched_setattr
+ * ============================================================ */
+
+struct test_sched_attr {
+    unsigned int  size;
+    unsigned int  sched_policy;
+    unsigned long sched_flags;
+    int           sched_nice;
+    unsigned int  sched_priority;
+    unsigned long sched_runtime;
+    unsigned long sched_deadline;
+    unsigned long sched_period;
+};
+
+#define TEST_SCHED_OTHER  0
+#define TEST_SCHED_RR     2
+#define TEST_SCHED_ATTR_SIZE_VER0 48
+
+/* Test 223: sched_getattr returns policy and priority for self */
+static void test_sched_getattr_basic(void) {
+    fut_printf("[MISC-TEST] Test 223: sched_getattr returns policy/priority for self\n");
+    extern long sys_sched_getattr(int pid, void *uattr, unsigned int usize,
+                                  unsigned int flags);
+
+    struct test_sched_attr attr;
+    __builtin_memset(&attr, 0xff, sizeof(attr));
+    long r = sys_sched_getattr(0, &attr, TEST_SCHED_ATTR_SIZE_VER0, 0);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ sched_getattr failed: %ld\n", r);
+        fut_test_fail(223); return;
+    }
+    if (attr.size != TEST_SCHED_ATTR_SIZE_VER0) {
+        fut_printf("[MISC-TEST] ✗ sched_getattr size=%u (want %u)\n",
+                   attr.size, TEST_SCHED_ATTR_SIZE_VER0);
+        fut_test_fail(223); return;
+    }
+    /* policy must be a known value */
+    if (attr.sched_policy > 6) {
+        fut_printf("[MISC-TEST] ✗ sched_getattr: unexpected policy=%u\n", attr.sched_policy);
+        fut_test_fail(223); return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ sched_getattr: policy=%u priority=%u nice=%d\n",
+               attr.sched_policy, attr.sched_priority, attr.sched_nice);
+    fut_test_pass();
+}
+
+/* Test 224: sched_setattr changes policy round-trip */
+static void test_sched_setattr_basic(void) {
+    fut_printf("[MISC-TEST] Test 224: sched_setattr SCHED_OTHER round-trip\n");
+    extern long sys_sched_getattr(int pid, void *uattr, unsigned int usize,
+                                  unsigned int flags);
+    extern long sys_sched_setattr(int pid, const void *uattr, unsigned int flags);
+
+    /* Get current attrs */
+    struct test_sched_attr orig;
+    __builtin_memset(&orig, 0, sizeof(orig));
+    long r = sys_sched_getattr(0, &orig, TEST_SCHED_ATTR_SIZE_VER0, 0);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ sched_getattr (before) failed: %ld\n", r);
+        fut_test_fail(224); return;
+    }
+
+    /* Set nice=-5, SCHED_OTHER */
+    struct test_sched_attr set;
+    __builtin_memset(&set, 0, sizeof(set));
+    set.size         = TEST_SCHED_ATTR_SIZE_VER0;
+    set.sched_policy = TEST_SCHED_OTHER;
+    set.sched_nice   = -5;
+    set.sched_priority = 0;
+    r = sys_sched_setattr(0, &set, 0);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ sched_setattr failed: %ld\n", r);
+        fut_test_fail(224); return;
+    }
+
+    /* Verify */
+    struct test_sched_attr got;
+    __builtin_memset(&got, 0, sizeof(got));
+    r = sys_sched_getattr(0, &got, TEST_SCHED_ATTR_SIZE_VER0, 0);
+    if (r != 0 || got.sched_policy != TEST_SCHED_OTHER || got.sched_nice != -5) {
+        fut_printf("[MISC-TEST] ✗ after setattr: policy=%u nice=%d (want %u, -5)\n",
+                   got.sched_policy, got.sched_nice, TEST_SCHED_OTHER);
+        fut_test_fail(224); return;
+    }
+
+    /* Restore original */
+    sys_sched_setattr(0, &orig, 0);
+
+    fut_printf("[MISC-TEST] ✓ sched_setattr: SCHED_OTHER nice=-5 round-trip OK\n");
+    fut_test_pass();
+}
+
+/* Test 225: sched_getattr/setattr error paths */
+static void test_sched_attr_errors(void) {
+    fut_printf("[MISC-TEST] Test 225: sched_getattr/setattr error paths\n");
+    extern long sys_sched_getattr(int pid, void *uattr, unsigned int usize,
+                                  unsigned int flags);
+    extern long sys_sched_setattr(int pid, const void *uattr, unsigned int flags);
+
+    /* flags != 0 → EINVAL */
+    struct test_sched_attr attr;
+    __builtin_memset(&attr, 0, sizeof(attr));
+    long r = sys_sched_getattr(0, &attr, TEST_SCHED_ATTR_SIZE_VER0, 1);
+    if (r != -22 /* -EINVAL */) {
+        fut_printf("[MISC-TEST] ✗ sched_getattr flags!=0 expected EINVAL, got %ld\n", r);
+        fut_test_fail(225); return;
+    }
+
+    /* usize too small → EINVAL */
+    r = sys_sched_getattr(0, &attr, 4, 0);
+    if (r != -22) {
+        fut_printf("[MISC-TEST] ✗ sched_getattr small usize expected EINVAL, got %ld\n", r);
+        fut_test_fail(225); return;
+    }
+
+    /* setattr with invalid policy → EINVAL */
+    attr.size        = TEST_SCHED_ATTR_SIZE_VER0;
+    attr.sched_policy = 99;  /* invalid */
+    attr.sched_priority = 0;
+    r = sys_sched_setattr(0, &attr, 0);
+    if (r != -22) {
+        fut_printf("[MISC-TEST] ✗ sched_setattr bad policy expected EINVAL, got %ld\n", r);
+        fut_test_fail(225); return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ sched_getattr/setattr: error paths correct\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -10823,6 +10954,9 @@ void fut_misc_test_thread(void *arg) {
     test_pidfd_open_basic();               /* Test 220: pidfd_open creates FD for self */
     test_pidfd_send_signal_zero();         /* Test 221: pidfd_send_signal sig=0 existence check */
     test_pidfd_errors();                   /* Test 222: pidfd_open/send_signal error paths */
+    test_sched_getattr_basic();            /* Test 223: sched_getattr returns policy/priority */
+    test_sched_setattr_basic();            /* Test 224: sched_setattr changes policy round-trip */
+    test_sched_attr_errors();              /* Test 225: sched_getattr/setattr error paths */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

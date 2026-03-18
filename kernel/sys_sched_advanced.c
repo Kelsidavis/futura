@@ -416,3 +416,132 @@ long sys_sched_rr_get_interval(int pid, fut_timespec_t *interval) {
 
     return 0;
 }
+
+/* ============================================================
+ * sched_getattr / sched_setattr (Linux 3.14+)
+ * Syscall numbers: 315 (getattr), 314 (setattr)
+ * ============================================================ */
+
+/* sched_attr is defined in <sched.h> (included above) */
+#define SCHED_ATTR_SIZE_VER0   48  /* initial struct size (8 fields × 4/8 bytes) */
+
+/**
+ * sys_sched_getattr - Get extended scheduling attributes.
+ *
+ * @param pid     Target PID (0 = self)
+ * @param uattr   Output sched_attr pointer
+ * @param usize   Size of buffer provided by caller
+ * @param flags   Must be 0
+ * @return 0 on success, -errno on error
+ */
+long sys_sched_getattr(int pid, struct sched_attr *uattr, unsigned int usize,
+                       unsigned int flags) {
+    if (flags != 0)
+        return -EINVAL;
+    if (!uattr)
+        return -EINVAL;
+    if (usize < SCHED_ATTR_SIZE_VER0)
+        return -EINVAL;
+
+    fut_task_t *current = fut_task_current();
+    if (!current) return -ESRCH;
+
+    fut_task_t *target;
+    if (pid == 0) {
+        target = current;
+    } else if (pid < 0) {
+        return -EINVAL;
+    } else {
+        target = fut_task_by_pid((uint64_t)pid);
+        if (!target)
+            return -ESRCH;
+    }
+
+    /* Get scheduling info from the first thread */
+    fut_thread_t *thr = target->threads;
+    int policy = thr ? thr->sched_policy : 0;
+    int prio   = thr ? thr->rt_priority  : 0;
+
+    struct sched_attr attr;
+    __builtin_memset(&attr, 0, sizeof(attr));
+    attr.size          = SCHED_ATTR_SIZE_VER0;
+    attr.sched_policy  = (uint32_t)policy;
+    attr.sched_nice    = target->nice;
+    attr.sched_priority = (uint32_t)(prio > 0 ? prio : 0);
+    /* Deadline fields: 0 (not a DEADLINE task) */
+
+    /* Write only min(usize, sizeof(attr)) bytes */
+    size_t copy_size = usize < sizeof(attr) ? usize : sizeof(attr);
+    if (sched_copy_to_user(uattr, &attr, copy_size) != 0)
+        return -EFAULT;
+
+    return 0;
+}
+
+/**
+ * sys_sched_setattr - Set extended scheduling attributes.
+ *
+ * @param pid     Target PID (0 = self)
+ * @param uattr   Input sched_attr pointer
+ * @param flags   Must be 0
+ * @return 0 on success, -errno on error
+ */
+long sys_sched_setattr(int pid, const struct sched_attr *uattr, unsigned int flags) {
+    if (flags != 0)
+        return -EINVAL;
+    if (!uattr)
+        return -EINVAL;
+
+    struct sched_attr attr;
+    __builtin_memset(&attr, 0, sizeof(attr));
+    if (sched_copy_from_user(&attr, uattr, sizeof(attr)) != 0)
+        return -EFAULT;
+
+    /* Caller's size must be at least the version-0 struct size */
+    if (attr.size < SCHED_ATTR_SIZE_VER0)
+        return -EINVAL;
+
+    fut_task_t *current = fut_task_current();
+    if (!current) return -ESRCH;
+
+    fut_task_t *target;
+    if (pid == 0) {
+        target = current;
+    } else if (pid < 0) {
+        return -EINVAL;
+    } else {
+        target = fut_task_by_pid((uint64_t)pid);
+        if (!target)
+            return -ESRCH;
+    }
+
+    /* Validate policy */
+    int policy = (int)attr.sched_policy;
+    if (policy != SCHED_OTHER && policy != SCHED_FIFO &&
+        policy != SCHED_RR   && policy != SCHED_BATCH &&
+        policy != SCHED_IDLE)
+        return -EINVAL;
+
+    /* Validate priority */
+    int prio = (int)attr.sched_priority;
+    if ((policy == SCHED_FIFO || policy == SCHED_RR) && (prio < 1 || prio > 99))
+        return -EINVAL;
+    if ((policy == SCHED_OTHER || policy == SCHED_BATCH || policy == SCHED_IDLE)
+        && prio != 0)
+        return -EINVAL;
+
+    /* Apply to all threads of the task */
+    fut_thread_t *thr = target->threads;
+    while (thr) {
+        thr->sched_policy  = policy;
+        thr->rt_priority   = prio;
+        thr = thr->next;
+    }
+    /* Apply nice value (clamp to -20..19) */
+    int nice = (int)attr.sched_nice;
+    if (nice < -20) nice = -20;
+    if (nice >  19) nice =  19;
+    target->nice = nice;
+
+    return 0;
+}

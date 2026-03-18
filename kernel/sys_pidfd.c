@@ -93,6 +93,27 @@ long sys_pidfd_open(int pid, unsigned int flags) {
 }
 
 /**
+ * pidfd_get_pid - Extract the PID from a pidfd file descriptor.
+ *
+ * Used by waitid(P_PIDFD, fd, ...) to convert a pidfd to a PID.
+ *
+ * @param fd  File descriptor returned by pidfd_open()
+ * @return    PID (> 0) on success, -EBADF if fd is not a valid pidfd
+ */
+int pidfd_get_pid(int fd) {
+    fut_task_t *task = fut_task_current();
+    if (!task || !task->fd_table || fd < 0 || fd >= task->max_fds)
+        return -EBADF;
+    struct fut_file *file = task->fd_table[fd];
+    if (!file || file->chr_ops != &pidfd_fops)
+        return -EBADF;
+    struct pidfd_ctx *ctx = (struct pidfd_ctx *)file->chr_private;
+    if (!ctx)
+        return -EBADF;
+    return ctx->pid;
+}
+
+/**
  * sys_pidfd_send_signal - Send a signal to a process via its pidfd.
  *
  * @param pidfd  File descriptor from pidfd_open

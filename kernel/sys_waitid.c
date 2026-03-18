@@ -105,10 +105,20 @@ long sys_waitid(int idtype, int id, siginfo_t *infop, int options,
             return -EINVAL;
     }
 
-    /* P_PIDFD is not supported yet */
+    /* P_PIDFD: resolve pidfd to PID, then proceed as P_PID */
     if (idtype == P_PIDFD) {
-        fut_printf("[WAITID] waitid(P_PIDFD) -> EINVAL (PID file descriptors not supported)\n");
-        return -EINVAL;
+        extern int pidfd_get_pid(int fd);
+        int pidfd_fd = id;
+        int resolved_pid = pidfd_get_pid(pidfd_fd);
+        if (resolved_pid < 0) {
+            fut_printf("[WAITID] waitid(P_PIDFD, fd=%d) -> EBADF (fd is not a valid pidfd)\n",
+                       pidfd_fd);
+            return -EBADF;
+        }
+        fut_printf("[WAITID] waitid(P_PIDFD, fd=%d) -> resolved pid=%d\n", pidfd_fd, resolved_pid);
+        idtype = P_PID;
+        id = resolved_pid;
+        idtype_desc = "P_PIDFD->P_PID";
     }
 
     /* options must include at least one event type */

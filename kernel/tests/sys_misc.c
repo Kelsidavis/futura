@@ -13507,6 +13507,56 @@ static void test_getsockopt_domain(void) {
     fut_test_pass();
 }
 
+/*
+ * Test 300: waitid(P_PIDFD, ...) resolves a pidfd to a PID and uses it.
+ *
+ * We open a pidfd for ourself, then call waitid(P_PIDFD, fd, WEXITED|WNOHANG).
+ * Since the test process has no child matching itself, we expect -ECHILD,
+ * confirming the pidfd was resolved (not just rejected with EINVAL/EBADF).
+ * Also verifies that a non-pidfd fd returns EBADF.
+ */
+static void test_waitid_p_pidfd(void) {
+    fut_printf("[MISC-TEST] Test 300: waitid(P_PIDFD) resolves pidfd to PID\n");
+    extern long sys_pidfd_open(int pid, unsigned int flags);
+    extern long sys_waitid(int idtype, int id, void *infop, int options, void *rusage);
+    extern long sys_getpid(void);
+
+    long pid = sys_getpid();
+    long fd = sys_pidfd_open((int)pid, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ pidfd_open failed: %ld\n", fd);
+        fut_test_fail(300); return;
+    }
+
+    /* waitid(P_PIDFD, fd, info, WEXITED|WNOHANG) — self is not a child of self → ECHILD */
+    char info_buf[128];
+    __builtin_memset(info_buf, 0, sizeof(info_buf));
+    long r = sys_waitid(3 /*P_PIDFD*/, (int)fd, info_buf, 4 | 1 /*WEXITED|WNOHANG*/, NULL);
+    fut_vfs_close((int)fd);
+
+    /* Expect ECHILD (no such child) — proves pidfd was resolved, not rejected */
+    if (r != -10 /*-ECHILD*/) {
+        fut_printf("[MISC-TEST] ✗ waitid(P_PIDFD): expected -ECHILD (-10) got %ld\n", r);
+        fut_test_fail(300); return;
+    }
+
+    /* Also verify: passing a regular file fd as the pidfd → EBADF */
+    int tmp_fd = fut_vfs_open("/waitid_pidfd_tmp.txt", O_CREAT | O_RDWR, 0600);
+    if (tmp_fd >= 0) {
+        r = sys_waitid(3 /*P_PIDFD*/, tmp_fd, info_buf, 4 | 1, NULL);
+        fut_vfs_close(tmp_fd);
+        fut_vfs_unlink("/waitid_pidfd_tmp.txt");
+        if (r != -9 /*-EBADF*/) {
+            fut_printf("[MISC-TEST] ✗ waitid(P_PIDFD, non-pidfd-fd): expected -EBADF (-9) got %ld\n",
+                       r);
+            fut_test_fail(300); return;
+        }
+    }
+
+    fut_printf("[MISC-TEST] ✓ waitid(P_PIDFD): pidfd resolved, ECHILD; bad fd → EBADF\n");
+    fut_test_pass();
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -13813,6 +13863,7 @@ void fut_misc_test_thread(void *arg) {
     test_getsockopt_acceptconn();        /* Test 297: SO_ACCEPTCONN: 0 before listen, 1 after */
     test_getsockopt_protocol();          /* Test 298: SO_PROTOCOL: 0 for AF_UNIX */
     test_getsockopt_domain();            /* Test 299: SO_DOMAIN: AF_UNIX=1 */
+    test_waitid_p_pidfd();               /* Test 300: waitid(P_PIDFD) resolves pidfd to PID */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

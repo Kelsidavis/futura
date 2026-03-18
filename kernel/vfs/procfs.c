@@ -94,6 +94,7 @@ enum procfs_kind {
     PROC_TID_DIR,          /* /proc/<pid>/task/<tid>/ */
     PROC_LIMITS,           /* /proc/<pid>/limits */
     PROC_IO,               /* /proc/<pid>/io */
+    PROC_SMAPS,            /* /proc/<pid>/smaps */
 };
 
 typedef struct {
@@ -155,6 +156,7 @@ typedef struct {
 #define PROC_INO_PID_ENVIRON(p)(1000ULL + (uint64_t)(p) * 100 + 11)
 #define PROC_INO_PID_LIMITS(p) (1000ULL + (uint64_t)(p) * 100 + 12)
 #define PROC_INO_PID_IO(p)     (1000ULL + (uint64_t)(p) * 100 + 13)
+#define PROC_INO_PID_SMAPS(p)  (1000ULL + (uint64_t)(p) * 100 + 14)
 /* fd entries: use high range to avoid collision */
 #define PROC_INO_FD_ENTRY(p,n) (100000000ULL + (uint64_t)(p) * 1000 + (uint64_t)(n))
 /* task/<tid> entries: separate high range */
@@ -479,6 +481,86 @@ static size_t gen_maps(char *buf, size_t cap, fut_task_t *task) {
         if (vma->vnode && vma->vnode->name)
             pb_str(&b, vma->vnode->name);
         pb_char(&b, '\n');
+        vma = vma->next;
+    }
+    return b.pos;
+}
+
+/*
+ * gen_smaps() — /proc/<pid>/smaps
+ *
+ * Extended memory map with per-VMA statistics, compatible with Linux
+ * /proc/pid/smaps format. Used by Go runtime (RSS/GC), Python tracemalloc,
+ * Valgrind, heaptrack, and many system monitoring tools.
+ *
+ * For Futura (ramfs, all pages in RAM): RSS = Size for anonymous mappings;
+ * file-backed mappings report RSS = 0 (no page-tracking infrastructure yet).
+ * All pages are Private_Clean (no swap, no shared dirty).
+ */
+static size_t gen_smaps(char *buf, size_t cap, fut_task_t *task) {
+    if (!task) return 0;
+    fut_mm_t *mm = task->mm ? task->mm : fut_mm_current();
+    if (!mm) return 0;
+
+    struct pbuf b = { buf, 0, cap };
+    struct fut_vma *vma = mm->vma_list;
+    while (vma) {
+        size_t vma_size = (vma->end - vma->start) / 1024;  /* kB */
+        int is_anon = (vma->vnode == NULL);
+
+        /* Header line: same format as /proc/maps */
+        pb_hex(&b, vma->start); pb_char(&b, '-');
+        pb_hex(&b, vma->end);   pb_char(&b, ' ');
+        pb_char(&b, (vma->prot & PROT_READ)  ? 'r' : '-');
+        pb_char(&b, (vma->prot & PROT_WRITE) ? 'w' : '-');
+        pb_char(&b, (vma->prot & PROT_EXEC)  ? 'x' : '-');
+        pb_char(&b, 'p');
+        pb_char(&b, ' ');
+        pb_hex16(&b, vma->file_offset); pb_char(&b, ' ');
+        pb_str(&b, "00:00 0 ");
+        if (vma->vnode && vma->vnode->name)
+            pb_str(&b, vma->vnode->name);
+        pb_char(&b, '\n');
+
+        /* Size: total VMA size in kB */
+        pb_str(&b, "Size:            "); pb_u64(&b, (uint64_t)vma_size); pb_str(&b, " kB\n");
+        /* KernelPageSize / MMUPageSize: 4 kB on x86_64/arm64 */
+        pb_str(&b, "KernelPageSize:        4 kB\n");
+        pb_str(&b, "MMUPageSize:           4 kB\n");
+        /* Rss: for anonymous mappings all pages are resident in Futura's RAM model */
+        size_t rss = is_anon ? vma_size : 0;
+        pb_str(&b, "Rss:             "); pb_u64(&b, (uint64_t)rss); pb_str(&b, " kB\n");
+        /* Pss = Rss (no sharing, all private) */
+        pb_str(&b, "Pss:             "); pb_u64(&b, (uint64_t)rss); pb_str(&b, " kB\n");
+        pb_str(&b, "Pss_Dirty:             0 kB\n");
+        pb_str(&b, "Shared_Clean:          0 kB\n");
+        pb_str(&b, "Shared_Dirty:          0 kB\n");
+        /* Private_Clean = rss for anon (all pages writable but unmodified by model) */
+        pb_str(&b, "Private_Clean:   "); pb_u64(&b, (uint64_t)rss); pb_str(&b, " kB\n");
+        pb_str(&b, "Private_Dirty:         0 kB\n");
+        pb_str(&b, "Referenced:      "); pb_u64(&b, (uint64_t)rss); pb_str(&b, " kB\n");
+        /* Anonymous: size of anonymous portion */
+        pb_str(&b, "Anonymous:       "); pb_u64(&b, is_anon ? (uint64_t)vma_size : 0ULL);
+        pb_str(&b, " kB\n");
+        pb_str(&b, "KSM:                   0 kB\n");
+        pb_str(&b, "LazyFree:              0 kB\n");
+        pb_str(&b, "AnonHugePages:         0 kB\n");
+        pb_str(&b, "ShmemPmdMapped:        0 kB\n");
+        pb_str(&b, "FilePmdMapped:         0 kB\n");
+        pb_str(&b, "Shared_Hugetlb:        0 kB\n");
+        pb_str(&b, "Private_Hugetlb:       0 kB\n");
+        pb_str(&b, "Swap:                  0 kB\n");
+        pb_str(&b, "SwapPss:               0 kB\n");
+        pb_str(&b, "Locked:                0 kB\n");
+        pb_str(&b, "THPeligible:           0\n");
+        /* VmFlags: encode prot bits as Linux vm flags */
+        pb_str(&b, "VmFlags:");
+        if (vma->prot & PROT_READ)  pb_str(&b, " rd");
+        if (vma->prot & PROT_WRITE) pb_str(&b, " wr");
+        if (vma->prot & PROT_EXEC)  pb_str(&b, " ex");
+        pb_str(&b, " mr mw me");  /* mapped, may_read, may_write, may_exec */
+        pb_char(&b, '\n');
+
         vma = vma->next;
     }
     return b.pos;
@@ -1097,6 +1179,11 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             total = task ? gen_io(tmp, GEN_BUF, task) : 0;
             break;
         }
+        case PROC_SMAPS: {
+            fut_task_t *task = fut_task_by_pid(n->pid);
+            total = task ? gen_smaps(tmp, GEN_BUF, task) : 0;
+            break;
+        }
         case PROC_SYS_OSTYPE:
             total = gen_sysctl_str(tmp, GEN_BUF, "Linux");
             break;
@@ -1412,6 +1499,11 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0100400, PROC_IO, pid, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "smaps")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_SMAPS(pid),
+                                          0100444, PROC_SMAPS, pid, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         return -ENOENT;
     }
 
@@ -1466,6 +1558,8 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
             { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_LIMITS(pid), 0100444, PROC_LIMITS,  pid,0); return *result ? 0 : -ENOMEM; }
         if (STREQ(name, "io"))
             { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_IO(pid),     0100400, PROC_IO,      pid,0); return *result ? 0 : -ENOMEM; }
+        if (STREQ(name, "smaps"))
+            { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_SMAPS(pid),  0100444, PROC_SMAPS,   pid,0); return *result ? 0 : -ENOMEM; }
         return -ENOENT;
     }
 
@@ -1697,7 +1791,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
     if (dn->kind == PROC_PID_DIR || dn->kind == PROC_TID_DIR) {
         static const char *entries[] = {
             ".", "..", "status", "maps", "cmdline", "environ", "fd", "exe", "cwd",
-            "stat", "statm", "comm", "task", "limits", "io"
+            "stat", "statm", "comm", "task", "limits", "io", "smaps"
         };
         static const uint8_t etypes[] = {
             FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
@@ -1707,10 +1801,10 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             FUT_VDIR_TYPE_SYMLINK, FUT_VDIR_TYPE_SYMLINK,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
             FUT_VDIR_TYPE_DIR,
-            FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG
+            FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG
         };
         uint64_t pid = dn->pid;
-        if (idx < 14) {
+        if (idx < 15) {
             uint64_t ino;
             switch (idx) {
                 case 0:  ino = PROC_INO_PID_DIR(pid);     break;
@@ -1727,6 +1821,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                 case 11: ino = PROC_INO_PID_TASK(pid);    break;
                 case 12: ino = PROC_INO_PID_LIMITS(pid);  break;
                 case 13: ino = PROC_INO_PID_IO(pid);      break;
+                case 14: ino = PROC_INO_PID_SMAPS(pid);   break;
                 default: ino = 0; break;
             }
             de->d_ino    = ino;

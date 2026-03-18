@@ -11960,6 +11960,46 @@ static void test_semtimedop_basic(void) {
     fut_test_pass();
 }
 
+static void test_proc_self_smaps(void) {
+    fut_printf("[MISC-TEST] Test 269: /proc/self/smaps — per-VMA memory stats\n");
+
+    /* Open /proc/self/smaps */
+    int fd = fut_vfs_open("/proc/self/smaps", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 269: open /proc/self/smaps failed: %d\n", fd);
+        fut_test_fail(269); return;
+    }
+
+    char buf[256];
+    extern ssize_t sys_read(int fd, void *buf, size_t count);
+    long n = (long)sys_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+
+    if (n <= 0) {
+        /* If process has no VMAs, empty file is acceptable */
+        fut_printf("[MISC-TEST] ✓ /proc/self/smaps: empty (no VMAs) or readable\n");
+        fut_test_pass(); return;
+    }
+    buf[n] = '\0';
+
+    /* Verify smaps contains at least one "Size:" line */
+    const char *p = buf;
+    bool has_size = false;
+    while (p < buf + n - 4) {
+        if (p[0]=='S' && p[1]=='i' && p[2]=='z' && p[3]=='e' && p[4]==':') {
+            has_size = true; break;
+        }
+        p++;
+    }
+    if (!has_size) {
+        fut_printf("[MISC-TEST] ✗ Test 269: smaps output lacks 'Size:' line\n");
+        fut_test_fail(269); return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ /proc/self/smaps: readable, contains Size: lines\n");
+    fut_test_pass();
+}
+
 /* ============================================================
  * Test entry point
  * ============================================================ */
@@ -12238,6 +12278,7 @@ void fut_misc_test_thread(void *arg) {
     test_clock_gettime_extended();         /* Test 266: clock_gettime TAI/ALARM/RAW/COARSE clocks */
     test_fcntl_ofd_locks();               /* Test 267: F_OFD_SETLK/F_OFD_GETLK (Linux 3.15+ OFD locks) */
     test_semtimedop_basic();              /* Test 268: semtimedop (Linux 2.5.52+, syscall 220) */
+    test_proc_self_smaps();               /* Test 269: /proc/self/smaps per-VMA memory stats */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

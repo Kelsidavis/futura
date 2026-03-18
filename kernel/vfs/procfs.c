@@ -184,6 +184,9 @@ enum procfs_kind {
     /* Additional /proc/sys/kernel/ entries */
     PROC_SYS_CORE_PATTERN,          /* /proc/sys/kernel/core_pattern */
     PROC_SYS_CORE_USES_PID,         /* /proc/sys/kernel/core_uses_pid */
+    PROC_SYS_SUID_DUMPABLE,         /* /proc/sys/kernel/suid_dumpable */
+    PROC_SYS_TAINTED,               /* /proc/sys/kernel/tainted */
+    PROC_SYS_VERSION,               /* /proc/sys/kernel/version */
 };
 
 typedef struct {
@@ -289,6 +292,9 @@ typedef struct {
 #define PROC_INO_SYS_FS_PIPE_MAX_SIZE  294ULL
 #define PROC_INO_SYS_CORE_PATTERN      295ULL
 #define PROC_INO_SYS_CORE_USES_PID     296ULL
+#define PROC_INO_SYS_SUID_DUMPABLE     297ULL
+#define PROC_INO_SYS_TAINTED           298ULL
+#define PROC_INO_SYS_VERSION_KERNEL    299ULL
 
 /* Per-PID: pid * 100 + offset */
 #define PROC_INO_PID_DIR(p)    (1000ULL + (uint64_t)(p) * 100 + 0)
@@ -1659,6 +1665,29 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             total = b.pos;
             break;
         }
+        case PROC_SYS_SUID_DUMPABLE: {
+            /* 1 = suid programs are dumpable (readable by owner, default Linux value) */
+            struct pbuf b = { tmp, 0, GEN_BUF };
+            pb_str(&b, "1\n");
+            total = b.pos;
+            break;
+        }
+        case PROC_SYS_TAINTED: {
+            /* 0 = kernel not tainted */
+            struct pbuf b = { tmp, 0, GEN_BUF };
+            pb_str(&b, "0\n");
+            total = b.pos;
+            break;
+        }
+        case PROC_SYS_VERSION: {
+            /* /proc/sys/kernel/version — same as /proc/version format */
+            struct pbuf b = { tmp, 0, GEN_BUF };
+            pb_str(&b, "Linux version 6.8.0-futura (futura@localhost) (gcc) #1 SMP ");
+            pb_str(&b, __DATE__); pb_char(&b, ' ');
+            pb_str(&b, __TIME__); pb_char(&b, '\n');
+            total = b.pos;
+            break;
+        }
         case PROC_FDINFO_ENTRY: {
             /* /proc/<pid>/fdinfo/<n>: pos, flags (octal), mnt_id */
             fut_task_t *ftask = fut_task_by_pid(n->pid);
@@ -1958,6 +1987,9 @@ static ssize_t procfs_file_write(struct fut_vnode *vnode, const void *buf,
 
         case PROC_SYS_CORE_PATTERN:
         case PROC_SYS_CORE_USES_PID:
+        case PROC_SYS_SUID_DUMPABLE:
+        case PROC_SYS_TAINTED:
+        case PROC_SYS_VERSION:
             return (ssize_t)size;  /* accept silently */
 
         default:
@@ -2702,6 +2734,21 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0100644, PROC_SYS_CORE_USES_PID, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "suid_dumpable")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_SUID_DUMPABLE,
+                                          0100644, PROC_SYS_SUID_DUMPABLE, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "tainted")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_TAINTED,
+                                          0100644, PROC_SYS_TAINTED, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "version")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_VERSION_KERNEL,
+                                          0100444, PROC_SYS_VERSION, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         return -ENOENT;
     }
 
@@ -3216,7 +3263,8 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                    "randomize_va_space", "domainname",
                                    "perf_event_paranoid", "kptr_restrict",
                                    "dmesg_restrict",
-                                   "core_pattern", "core_uses_pid" };
+                                   "core_pattern", "core_uses_pid",
+                                   "suid_dumpable", "tainted", "version" };
         static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
@@ -3231,7 +3279,9 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG,
-                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG };
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_REG };
         static const uint64_t i[] = { PROC_INO_SYS_KERNEL_DIR, PROC_INO_SYS_DIR,
                                       PROC_INO_SYS_OSTYPE, PROC_INO_SYS_OSRELEASE,
                                       PROC_INO_SYS_HOSTNAME, PROC_INO_SYS_PID_MAX,
@@ -3246,8 +3296,10 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                       PROC_INO_SYS_RANDOMIZE_VA, PROC_INO_SYS_DOMAINNAME,
                                       PROC_INO_SYS_PERF_PARANOID, PROC_INO_SYS_KPTR_RESTRICT,
                                       PROC_INO_SYS_DMESG_RESTRICT,
-                                      PROC_INO_SYS_CORE_PATTERN, PROC_INO_SYS_CORE_USES_PID };
-        if (idx < 26) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+                                      PROC_INO_SYS_CORE_PATTERN, PROC_INO_SYS_CORE_USES_PID,
+                                      PROC_INO_SYS_SUID_DUMPABLE, PROC_INO_SYS_TAINTED,
+                                      PROC_INO_SYS_VERSION_KERNEL };
+        if (idx < 29) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
         return -ENOENT;
     }
 

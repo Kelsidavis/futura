@@ -17562,6 +17562,51 @@ static void test_proc_core_uses_pid(void) {
 }
 
 /* ============================================================
+ * Test 368: /proc/sys/kernel/suid_dumpable = "1"
+ * ============================================================ */
+static void test_proc_suid_dumpable(void) {
+    fut_printf("[MISC-TEST] Test 368: /proc/sys/kernel/suid_dumpable\n");
+    int fd = fut_vfs_open("/proc/sys/kernel/suid_dumpable", O_RDONLY, 0);
+    if (fd < 0) { fut_printf("[MISC-TEST] ✗ Test 368: open failed: %d\n", fd); fut_test_fail(368); return; }
+    char buf[8]; long n = fut_vfs_read(fd, buf, sizeof(buf)-1); fut_vfs_close(fd);
+    if (n <= 0) { fut_printf("[MISC-TEST] ✗ Test 368: read returned %ld\n", n); fut_test_fail(368); return; }
+    buf[n] = '\0';
+    if (buf[0] != '1') { fut_printf("[MISC-TEST] ✗ Test 368: expected '1', got '%s'\n", buf); fut_test_fail(368); return; }
+    fut_printf("[MISC-TEST] ✓ Test 368: /proc/sys/kernel/suid_dumpable = '%s'\n", buf);
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 369: /proc/sys/kernel/tainted = "0"
+ * ============================================================ */
+static void test_proc_tainted(void) {
+    fut_printf("[MISC-TEST] Test 369: /proc/sys/kernel/tainted\n");
+    int fd = fut_vfs_open("/proc/sys/kernel/tainted", O_RDONLY, 0);
+    if (fd < 0) { fut_printf("[MISC-TEST] ✗ Test 369: open failed: %d\n", fd); fut_test_fail(369); return; }
+    char buf[8]; long n = fut_vfs_read(fd, buf, sizeof(buf)-1); fut_vfs_close(fd);
+    if (n <= 0) { fut_printf("[MISC-TEST] ✗ Test 369: read returned %ld\n", n); fut_test_fail(369); return; }
+    buf[n] = '\0';
+    if (buf[0] != '0') { fut_printf("[MISC-TEST] ✗ Test 369: expected '0', got '%s'\n", buf); fut_test_fail(369); return; }
+    fut_printf("[MISC-TEST] ✓ Test 369: /proc/sys/kernel/tainted = '%s'\n", buf);
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 370: /proc/sys/kernel/version contains "Linux version"
+ * ============================================================ */
+static void test_proc_kernel_version(void) {
+    fut_printf("[MISC-TEST] Test 370: /proc/sys/kernel/version\n");
+    int fd = fut_vfs_open("/proc/sys/kernel/version", O_RDONLY, 0);
+    if (fd < 0) { fut_printf("[MISC-TEST] ✗ Test 370: open failed: %d\n", fd); fut_test_fail(370); return; }
+    char buf[64]; long n = fut_vfs_read(fd, buf, sizeof(buf)-1); fut_vfs_close(fd);
+    if (n <= 0) { fut_printf("[MISC-TEST] ✗ Test 370: read returned %ld\n", n); fut_test_fail(370); return; }
+    buf[n] = '\0';
+    if (buf[0] != 'L' || buf[1] != 'i') { fut_printf("[MISC-TEST] ✗ Test 370: no 'Linux' prefix: '%s'\n", buf); fut_test_fail(370); return; }
+    fut_printf("[MISC-TEST] ✓ Test 370: /proc/sys/kernel/version starts with 'Li'\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test 367: /proc/self/net/unix readable (same content as /proc/net/unix)
  * ============================================================ */
 static void test_proc_pid_net_unix(void) {
@@ -18128,6 +18173,9 @@ void fut_misc_test_thread(void *arg) {
     test_proc_core_pattern();            /* Test 365: /proc/sys/kernel/core_pattern */
     test_proc_core_uses_pid();           /* Test 366: /proc/sys/kernel/core_uses_pid */
     test_proc_pid_net_unix();            /* Test 367: /proc/self/net/unix readable */
+    test_proc_suid_dumpable();           /* Test 368: /proc/sys/kernel/suid_dumpable */
+    test_proc_tainted();                 /* Test 369: /proc/sys/kernel/tainted */
+    test_proc_kernel_version();          /* Test 370: /proc/sys/kernel/version */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

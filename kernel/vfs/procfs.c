@@ -196,6 +196,27 @@ enum procfs_kind {
     PROC_ATTR_CURRENT,              /* /proc/<pid>/attr/current */
     PROC_BUDDYINFO,                 /* /proc/buddyinfo */
     PROC_ZONEINFO,                  /* /proc/zoneinfo */
+    /* Additional /proc/sys/vm/ entries (commonly written by databases/containers) */
+    PROC_SYS_VM_DROP_CACHES,        /* /proc/sys/vm/drop_caches */
+    PROC_SYS_VM_DIRTY_EXPIRE,       /* /proc/sys/vm/dirty_expire_centisecs */
+    PROC_SYS_VM_DIRTY_WRITEBACK,    /* /proc/sys/vm/dirty_writeback_centisecs */
+    PROC_SYS_VM_OVERCOMMIT_KB,      /* /proc/sys/vm/overcommit_kbytes */
+    PROC_SYS_VM_OOM_KILL_ALLOC,     /* /proc/sys/vm/oom_kill_allocating_task */
+    PROC_SYS_VM_PANIC_ON_OOM,       /* /proc/sys/vm/panic_on_oom */
+    PROC_SYS_VM_ZONE_RECLAIM,       /* /proc/sys/vm/zone_reclaim_mode */
+    PROC_SYS_VM_WATERMARK_BOOST,    /* /proc/sys/vm/watermark_boost_factor */
+    PROC_SYS_VM_WATERMARK_SCALE,    /* /proc/sys/vm/watermark_scale_factor */
+    PROC_SYS_VM_PAGE_CLUSTER,       /* /proc/sys/vm/page-cluster */
+    /* Additional /proc/sys/fs/ entries */
+    PROC_SYS_FS_AIO_MAX_NR,         /* /proc/sys/fs/aio-max-nr */
+    PROC_SYS_FS_AIO_NR,             /* /proc/sys/fs/aio-nr */
+    PROC_SYS_FS_PROTECTED_HL,       /* /proc/sys/fs/protected_hardlinks */
+    PROC_SYS_FS_PROTECTED_SL,       /* /proc/sys/fs/protected_symlinks */
+    /* Additional /proc/sys/kernel/ entries */
+    PROC_SYS_KERNEL_NMI_WD,         /* /proc/sys/kernel/nmi_watchdog */
+    PROC_SYS_KERNEL_WATCHDOG,       /* /proc/sys/kernel/watchdog */
+    PROC_SYS_KERNEL_WATCHDOG_THRESH,/* /proc/sys/kernel/watchdog_thresh */
+    PROC_SYS_KERNEL_HUNG_TASK,      /* /proc/sys/kernel/hung_task_timeout_secs */
 };
 
 typedef struct {
@@ -313,6 +334,27 @@ typedef struct {
 #define PROC_INO_PID_ATTR_CUR(p)       (1000ULL + (uint64_t)(p) * 100 + 25)
 #define PROC_INO_BUDDYINFO             26ULL
 #define PROC_INO_ZONEINFO              27ULL
+/* /proc/sys/vm/ extended range: 350-379 */
+#define PROC_INO_SYS_VM_DROP_CACHES    350ULL
+#define PROC_INO_SYS_VM_DIRTY_EXPIRE   351ULL
+#define PROC_INO_SYS_VM_DIRTY_WB       352ULL
+#define PROC_INO_SYS_VM_OVERCOMMIT_KB  353ULL
+#define PROC_INO_SYS_VM_OOM_KILL_ALLOC 354ULL
+#define PROC_INO_SYS_VM_PANIC_ON_OOM   355ULL
+#define PROC_INO_SYS_VM_ZONE_RECLAIM   356ULL
+#define PROC_INO_SYS_VM_WATERMARK_BST  357ULL
+#define PROC_INO_SYS_VM_WATERMARK_SCL  358ULL
+#define PROC_INO_SYS_VM_PAGE_CLUSTER   359ULL
+/* /proc/sys/fs/ extended range: 380-399 */
+#define PROC_INO_SYS_FS_AIO_MAX_NR     380ULL
+#define PROC_INO_SYS_FS_AIO_NR         381ULL
+#define PROC_INO_SYS_FS_PROT_HL        382ULL
+#define PROC_INO_SYS_FS_PROT_SL        383ULL
+/* /proc/sys/kernel/ extended range: 400-429 */
+#define PROC_INO_SYS_KERNEL_NMI_WD     400ULL
+#define PROC_INO_SYS_KERNEL_WATCHDOG   401ULL
+#define PROC_INO_SYS_KERNEL_WD_THRESH  402ULL
+#define PROC_INO_SYS_KERNEL_HUNG_TASK  403ULL
 
 /* Per-PID: pid * 100 + offset */
 #define PROC_INO_PID_DIR(p)    (1000ULL + (uint64_t)(p) * 100 + 0)
@@ -2176,6 +2218,66 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             /* 1048576 = max pipe buffer size (1 MiB, default on Linux) */
             total = gen_sysctl_str(tmp, GEN_BUF, "1048576");
             break;
+        /* /proc/sys/vm/ extended entries */
+        case PROC_SYS_VM_DROP_CACHES:
+            total = gen_sysctl_str(tmp, GEN_BUF, "0");
+            break;
+        case PROC_SYS_VM_DIRTY_EXPIRE:
+            /* 3000 centisecs = 30 seconds */
+            total = gen_sysctl_str(tmp, GEN_BUF, "3000");
+            break;
+        case PROC_SYS_VM_DIRTY_WRITEBACK:
+            /* 500 centisecs = 5 seconds */
+            total = gen_sysctl_str(tmp, GEN_BUF, "500");
+            break;
+        case PROC_SYS_VM_OVERCOMMIT_KB:
+            total = gen_sysctl_str(tmp, GEN_BUF, "0");
+            break;
+        case PROC_SYS_VM_OOM_KILL_ALLOC:
+            total = gen_sysctl_str(tmp, GEN_BUF, "0");
+            break;
+        case PROC_SYS_VM_PANIC_ON_OOM:
+            total = gen_sysctl_str(tmp, GEN_BUF, "0");
+            break;
+        case PROC_SYS_VM_ZONE_RECLAIM:
+            total = gen_sysctl_str(tmp, GEN_BUF, "0");
+            break;
+        case PROC_SYS_VM_WATERMARK_BOOST:
+            total = gen_sysctl_str(tmp, GEN_BUF, "0");
+            break;
+        case PROC_SYS_VM_WATERMARK_SCALE:
+            total = gen_sysctl_str(tmp, GEN_BUF, "10");
+            break;
+        case PROC_SYS_VM_PAGE_CLUSTER:
+            total = gen_sysctl_str(tmp, GEN_BUF, "3");
+            break;
+        /* /proc/sys/fs/ extended entries */
+        case PROC_SYS_FS_AIO_MAX_NR:
+            total = gen_sysctl_str(tmp, GEN_BUF, "65536");
+            break;
+        case PROC_SYS_FS_AIO_NR:
+            total = gen_sysctl_str(tmp, GEN_BUF, "0");
+            break;
+        case PROC_SYS_FS_PROTECTED_HL:
+            total = gen_sysctl_str(tmp, GEN_BUF, "0");
+            break;
+        case PROC_SYS_FS_PROTECTED_SL:
+            total = gen_sysctl_str(tmp, GEN_BUF, "0");
+            break;
+        /* /proc/sys/kernel/ extended entries */
+        case PROC_SYS_KERNEL_NMI_WD:
+            total = gen_sysctl_str(tmp, GEN_BUF, "0");
+            break;
+        case PROC_SYS_KERNEL_WATCHDOG:
+            total = gen_sysctl_str(tmp, GEN_BUF, "1");
+            break;
+        case PROC_SYS_KERNEL_WATCHDOG_THRESH:
+            total = gen_sysctl_str(tmp, GEN_BUF, "10");
+            break;
+        case PROC_SYS_KERNEL_HUNG_TASK:
+            /* 120 seconds hung task timeout (Linux default) */
+            total = gen_sysctl_str(tmp, GEN_BUF, "120");
+            break;
         default:
             fut_free(tmp);
             return -EINVAL;
@@ -2271,7 +2373,7 @@ static ssize_t procfs_file_write(struct fut_vnode *vnode, const void *buf,
 
         default:
             /* Accept writes to all /proc/sys/ files silently (sysctl tuning) */
-            if (n->kind >= PROC_SYS_DIR && n->kind <= PROC_SYS_FS_PIPE_MAX_SIZE)
+            if (n->kind >= PROC_SYS_DIR && n->kind <= PROC_SYS_KERNEL_HUNG_TASK)
                 return (ssize_t)size;
             return -EPERM;
     }
@@ -3075,6 +3177,26 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0100444, PROC_SYS_VERSION, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "nmi_watchdog")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_KERNEL_NMI_WD,
+                                          0100644, PROC_SYS_KERNEL_NMI_WD, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "watchdog")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_KERNEL_WATCHDOG,
+                                          0100644, PROC_SYS_KERNEL_WATCHDOG, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "watchdog_thresh")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_KERNEL_WD_THRESH,
+                                          0100644, PROC_SYS_KERNEL_WATCHDOG_THRESH, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "hung_task_timeout_secs")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_KERNEL_HUNG_TASK,
+                                          0100644, PROC_SYS_KERNEL_HUNG_TASK, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         return -ENOENT;
     }
 
@@ -3192,6 +3314,56 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0100644, PROC_SYS_VM_VFS_CACHE_PRESSURE, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "drop_caches")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_VM_DROP_CACHES,
+                                          0100200, PROC_SYS_VM_DROP_CACHES, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "dirty_expire_centisecs")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_VM_DIRTY_EXPIRE,
+                                          0100644, PROC_SYS_VM_DIRTY_EXPIRE, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "dirty_writeback_centisecs")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_VM_DIRTY_WB,
+                                          0100644, PROC_SYS_VM_DIRTY_WRITEBACK, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "overcommit_kbytes")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_VM_OVERCOMMIT_KB,
+                                          0100644, PROC_SYS_VM_OVERCOMMIT_KB, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "oom_kill_allocating_task")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_VM_OOM_KILL_ALLOC,
+                                          0100644, PROC_SYS_VM_OOM_KILL_ALLOC, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "panic_on_oom")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_VM_PANIC_ON_OOM,
+                                          0100644, PROC_SYS_VM_PANIC_ON_OOM, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "zone_reclaim_mode")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_VM_ZONE_RECLAIM,
+                                          0100644, PROC_SYS_VM_ZONE_RECLAIM, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "watermark_boost_factor")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_VM_WATERMARK_BST,
+                                          0100644, PROC_SYS_VM_WATERMARK_BOOST, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "watermark_scale_factor")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_VM_WATERMARK_SCL,
+                                          0100644, PROC_SYS_VM_WATERMARK_SCALE, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "page-cluster")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_VM_PAGE_CLUSTER,
+                                          0100644, PROC_SYS_VM_PAGE_CLUSTER, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         return -ENOENT;
     }
 
@@ -3219,6 +3391,26 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
         if (STREQ(name, "pipe-max-size")) {
             *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_FS_PIPE_MAX_SIZE,
                                           0100644, PROC_SYS_FS_PIPE_MAX_SIZE, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "aio-max-nr")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_FS_AIO_MAX_NR,
+                                          0100444, PROC_SYS_FS_AIO_MAX_NR, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "aio-nr")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_FS_AIO_NR,
+                                          0100444, PROC_SYS_FS_AIO_NR, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "protected_hardlinks")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_FS_PROT_HL,
+                                          0100644, PROC_SYS_FS_PROTECTED_HL, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "protected_symlinks")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_FS_PROT_SL,
+                                          0100644, PROC_SYS_FS_PROTECTED_SL, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
         return -ENOENT;
@@ -3596,7 +3788,9 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                    "perf_event_paranoid", "kptr_restrict",
                                    "dmesg_restrict",
                                    "core_pattern", "core_uses_pid",
-                                   "suid_dumpable", "tainted", "version" };
+                                   "suid_dumpable", "tainted", "version",
+                                   "nmi_watchdog", "watchdog",
+                                   "watchdog_thresh", "hung_task_timeout_secs" };
         static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
@@ -3613,7 +3807,9 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                      FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
-                                     FUT_VDIR_TYPE_REG };
+                                     FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG };
         static const uint64_t i[] = { PROC_INO_SYS_KERNEL_DIR, PROC_INO_SYS_DIR,
                                       PROC_INO_SYS_OSTYPE, PROC_INO_SYS_OSRELEASE,
                                       PROC_INO_SYS_HOSTNAME, PROC_INO_SYS_PID_MAX,
@@ -3630,8 +3826,12 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                       PROC_INO_SYS_DMESG_RESTRICT,
                                       PROC_INO_SYS_CORE_PATTERN, PROC_INO_SYS_CORE_USES_PID,
                                       PROC_INO_SYS_SUID_DUMPABLE, PROC_INO_SYS_TAINTED,
-                                      PROC_INO_SYS_VERSION_KERNEL };
-        if (idx < 29) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+                                      PROC_INO_SYS_VERSION_KERNEL,
+                                      PROC_INO_SYS_KERNEL_NMI_WD,
+                                      PROC_INO_SYS_KERNEL_WATCHDOG,
+                                      PROC_INO_SYS_KERNEL_WD_THRESH,
+                                      PROC_INO_SYS_KERNEL_HUNG_TASK };
+        if (idx < 33) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
         return -ENOENT;
     }
 
@@ -3692,8 +3892,18 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                    "swappiness", "dirty_ratio",
                                    "dirty_background_ratio", "min_free_kbytes",
                                    "nr_hugepages", "nr_overcommit_hugepages",
-                                   "mmap_min_addr", "vfs_cache_pressure" };
+                                   "mmap_min_addr", "vfs_cache_pressure",
+                                   "drop_caches", "dirty_expire_centisecs",
+                                   "dirty_writeback_centisecs", "overcommit_kbytes",
+                                   "oom_kill_allocating_task", "panic_on_oom",
+                                   "zone_reclaim_mode", "watermark_boost_factor",
+                                   "watermark_scale_factor", "page-cluster" };
         static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
@@ -3705,24 +3915,42 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                       PROC_INO_SYS_DIRTY_BG_RATIO, PROC_INO_SYS_MIN_FREE_KB,
                                       PROC_INO_SYS_NR_HUGEPAGES, PROC_INO_SYS_NR_OC_HUGEPAGES,
                                       PROC_INO_SYS_VM_MMAP_MIN_ADDR,
-                                      PROC_INO_SYS_VM_VFS_CACHE_PRESS };
-        if (idx < 12) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+                                      PROC_INO_SYS_VM_VFS_CACHE_PRESS,
+                                      PROC_INO_SYS_VM_DROP_CACHES,
+                                      PROC_INO_SYS_VM_DIRTY_EXPIRE,
+                                      PROC_INO_SYS_VM_DIRTY_WB,
+                                      PROC_INO_SYS_VM_OVERCOMMIT_KB,
+                                      PROC_INO_SYS_VM_OOM_KILL_ALLOC,
+                                      PROC_INO_SYS_VM_PANIC_ON_OOM,
+                                      PROC_INO_SYS_VM_ZONE_RECLAIM,
+                                      PROC_INO_SYS_VM_WATERMARK_BST,
+                                      PROC_INO_SYS_VM_WATERMARK_SCL,
+                                      PROC_INO_SYS_VM_PAGE_CLUSTER };
+        if (idx < 22) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
         return -ENOENT;
     }
 
     if (dn->kind == PROC_SYS_FS_DIR) {
         static const char *e[] = { ".", "..", "file-max", "file-nr", "inotify",
-                                   "nr_open", "pipe-max-size" };
+                                   "nr_open", "pipe-max-size",
+                                   "aio-max-nr", "aio-nr",
+                                   "protected_hardlinks", "protected_symlinks" };
         static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_DIR,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG };
         static const uint64_t i[] = { PROC_INO_SYS_FS_DIR, PROC_INO_SYS_DIR,
                                       PROC_INO_SYS_FILE_MAX, PROC_INO_SYS_FILE_NR,
                                       PROC_INO_SYS_INOTIFY_DIR,
                                       PROC_INO_SYS_FS_NR_OPEN,
-                                      PROC_INO_SYS_FS_PIPE_MAX_SIZE };
-        if (idx < 7) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+                                      PROC_INO_SYS_FS_PIPE_MAX_SIZE,
+                                      PROC_INO_SYS_FS_AIO_MAX_NR,
+                                      PROC_INO_SYS_FS_AIO_NR,
+                                      PROC_INO_SYS_FS_PROT_HL,
+                                      PROC_INO_SYS_FS_PROT_SL };
+        if (idx < 11) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
         return -ENOENT;
     }
 

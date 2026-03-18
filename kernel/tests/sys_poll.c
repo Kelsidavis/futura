@@ -87,6 +87,7 @@ extern long sys_timerfd_settime(int ufd, int flags,
 #define POLL_TEST_PIPE_EOF        12
 #define POLL_TEST_SELECT_PIPE_EOF 13
 #define POLL_TEST_SELECT_TIMERFD  14
+#define POLL_TEST_NEGATIVE_FD     15
 
 /* fd_set helpers (must match sys_select.c) */
 #define FD_SETSIZE 1024
@@ -805,6 +806,45 @@ static void test_select_timerfd_wakeup(void) {
 }
 
 /* ============================================================
+ * Test 15: negative fd in pollfd array is silently ignored
+ *   revents must be 0 and poll return value must not count it
+ * ============================================================ */
+static void test_poll_negative_fd(void) {
+    fut_printf("[POLL-TEST] Test 15: poll() negative fd silently ignored\n");
+
+    /* One real ready fd (eventfd with value=1) + one entry with fd=-1 */
+    long efd = sys_eventfd2(1, 0);
+    if (efd < 0) {
+        fut_printf("[POLL-TEST] ✗ eventfd2 failed: %ld\n", efd);
+        fut_test_fail(POLL_TEST_NEGATIVE_FD);
+        return;
+    }
+
+    struct pollfd pfds[2] = {
+        { .fd = (int)efd, .events = POLLIN, .revents = 0 },
+        { .fd = -1,        .events = POLLIN, .revents = 0 },
+    };
+    long ret = sys_poll(pfds, 2, 0);
+
+    if (ret != 1) {
+        fut_printf("[POLL-TEST] ✗ poll returned %ld (expected 1, only the eventfd should count)\n", ret);
+        fut_vfs_close((int)efd);
+        fut_test_fail(POLL_TEST_NEGATIVE_FD);
+        return;
+    }
+    if (pfds[1].revents != 0) {
+        fut_printf("[POLL-TEST] ✗ fd=-1 entry has revents=0x%x (expected 0)\n", pfds[1].revents);
+        fut_vfs_close((int)efd);
+        fut_test_fail(POLL_TEST_NEGATIVE_FD);
+        return;
+    }
+
+    fut_vfs_close((int)efd);
+    fut_printf("[POLL-TEST] ✓ poll() negative fd ignored (revents=0, not counted)\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Main test harness
  * ============================================================ */
 void fut_poll_test_thread(void *arg) {
@@ -828,6 +868,7 @@ void fut_poll_test_thread(void *arg) {
     test_poll_pipe_eof();
     test_select_pipe_eof();
     test_select_timerfd_wakeup();    /* Test 14: select() wakes on timerfd (Phase 4) */
+    test_poll_negative_fd();         /* Test 15: negative fd silently ignored (revents=0) */
 
     fut_printf("[POLL-TEST] ========================================\n");
     fut_printf("[POLL-TEST] All poll/select tests done\n");

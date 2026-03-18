@@ -106,7 +106,13 @@ static struct poll_scan_stats poll_scan_fds(struct pollfd *kfds, unsigned long n
     for (unsigned long i = 0; i < nfds; i++) {
         kfds[i].revents = 0;
 
-        if (kfds[i].fd < 0 || kfds[i].fd >= task->max_fds) {
+        /* Negative fd: silently ignored per POSIX — revents=0, not counted */
+        if (kfds[i].fd < 0) {
+            kfds[i].revents = 0;
+            continue;
+        }
+
+        if (kfds[i].fd >= (int)task->max_fds) {
             kfds[i].revents = POLLNVAL;
             stats.ready_count++;
             stats.invalid_count++;

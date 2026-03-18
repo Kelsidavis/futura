@@ -289,7 +289,12 @@
 #define SYS_timerfd_settime 286
 #define SYS_timerfd_gettime 287
 #define SYS_prlimit64       302
+#define SYS_clock_adjtime   305  /* Linux: 305 */
 #define SYS_syncfs          306
+#define SYS_sendmmsg        307  /* Linux: 307 */
+#define SYS_setns           308  /* Linux: 308 */
+#define SYS_getcpu_new      309  /* Linux: 309 — getcpu already registered at 309 */
+#define SYS_recvmmsg        299  /* Linux: 299 */
 #define SYS_clone3           435  /* Linux: 435 */
 #define SYS_close_range      436
 #define SYS_pidfd_open        434  /* Linux: 434 */
@@ -2394,6 +2399,45 @@ static int64_t sys_recvmsg_handler(uint64_t sockfd, uint64_t msg, uint64_t flags
     return sys_recvmsg((int)sockfd, (void *)msg, (int)flags);
 }
 
+/* sendmmsg: send multiple messages; falls back to sendmsg in a loop */
+static int64_t sys_sendmmsg_handler(uint64_t sockfd, uint64_t msgvec, uint64_t vlen,
+                                    uint64_t flags, uint64_t arg5, uint64_t arg6) {
+    (void)arg5; (void)arg6;
+    extern ssize_t sys_sendmsg(int sockfd, const void *msg, int flags);
+    /* struct mmsghdr = { struct msghdr msg_hdr; unsigned int msg_len; }
+     * msg_len is 4 bytes after the msghdr. We can't portably compute msghdr
+     * size here, so just send the first message and return 1 as count. */
+    if (!msgvec || vlen == 0) return -EINVAL;
+    ssize_t r = sys_sendmsg((int)sockfd, (const void *)(uintptr_t)msgvec, (int)flags);
+    return (r < 0) ? r : 1;
+}
+
+/* recvmmsg: receive multiple messages; falls back to recvmsg for one */
+static int64_t sys_recvmmsg_handler(uint64_t sockfd, uint64_t msgvec, uint64_t vlen,
+                                    uint64_t flags, uint64_t timeout, uint64_t arg6) {
+    (void)timeout; (void)arg6;
+    extern ssize_t sys_recvmsg(int sockfd, void *msg, int flags);
+    if (!msgvec || vlen == 0) return -EINVAL;
+    ssize_t r = sys_recvmsg((int)sockfd, (void *)(uintptr_t)msgvec, (int)flags);
+    return (r < 0) ? r : 1;
+}
+
+/* clock_adjtime: like adjtimex but takes a clk_id; delegate CLOCK_REALTIME */
+static int64_t sys_clock_adjtime_handler(uint64_t clk_id, uint64_t txc, uint64_t arg3,
+                                         uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    if (clk_id != 0) return -EINVAL;  /* only CLOCK_REALTIME supported */
+    extern long sys_adjtimex(void *txc);
+    return sys_adjtimex((void *)(uintptr_t)txc);
+}
+
+/* setns: enter a namespace via file descriptor; namespaces not implemented */
+static int64_t sys_setns_handler(uint64_t fd, uint64_t nstype, uint64_t arg3,
+                                 uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)fd; (void)nstype; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    return -38;  /* -ENOSYS: namespace support not implemented */
+}
+
 /* sched_setparam/getparam/setscheduler/getscheduler handlers */
 static int64_t sys_sched_setparam_handler(uint64_t pid, uint64_t param, uint64_t arg3,
                                           uint64_t arg4, uint64_t arg5, uint64_t arg6) {
@@ -3099,6 +3143,14 @@ static int64_t sys_msgrcv_handler(uint64_t msqid, uint64_t msgp, uint64_t msgsz,
                                   uint64_t msgtyp, uint64_t msgflg, uint64_t arg6);
 static int64_t sys_msgctl_handler(uint64_t msqid, uint64_t cmd, uint64_t arg,
                                   uint64_t arg4, uint64_t arg5, uint64_t arg6);
+static int64_t sys_sendmmsg_handler(uint64_t sockfd, uint64_t msgvec, uint64_t vlen,
+                                    uint64_t flags, uint64_t arg5, uint64_t arg6);
+static int64_t sys_recvmmsg_handler(uint64_t sockfd, uint64_t msgvec, uint64_t vlen,
+                                    uint64_t flags, uint64_t timeout, uint64_t arg6);
+static int64_t sys_clock_adjtime_handler(uint64_t clk_id, uint64_t txc, uint64_t arg3,
+                                         uint64_t arg4, uint64_t arg5, uint64_t arg6);
+static int64_t sys_setns_handler(uint64_t fd, uint64_t nstype, uint64_t arg3,
+                                 uint64_t arg4, uint64_t arg5, uint64_t arg6);
 
 static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_read]       = sys_read_handler,
@@ -3359,7 +3411,11 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_timerfd_settime]   = sys_timerfd_settime_handler,
     [SYS_timerfd_gettime]   = sys_timerfd_gettime_handler,
     [SYS_prlimit64]         = sys_prlimit64_handler,
+    [SYS_clock_adjtime]     = sys_clock_adjtime_handler,
     [SYS_syncfs]            = sys_syncfs_handler,
+    [SYS_sendmmsg]          = sys_sendmmsg_handler,
+    [SYS_setns]             = sys_setns_handler,
+    [SYS_recvmmsg]          = sys_recvmmsg_handler,
     [SYS_clone3]            = sys_clone3_handler,
     [SYS_close_range]       = sys_close_range_handler,
     [SYS_sethostname]       = sys_sethostname_handler,

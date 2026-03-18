@@ -151,6 +151,18 @@ enum procfs_kind {
     PROC_SYS_DMESG_RESTRICT,/* /proc/sys/kernel/dmesg_restrict */
     PROC_SYS_NET_IP_FORWARD, /* /proc/sys/net/ipv4/ip_forward */
     PROC_NET_ARP,          /* /proc/net/arp */
+    /* /proc/sys/net/ipv6/ subtree */
+    PROC_SYS_NET_IPV6_DIR,          /* /proc/sys/net/ipv6/ */
+    PROC_SYS_NET_IPV6_CONF_DIR,     /* /proc/sys/net/ipv6/conf/ */
+    PROC_SYS_NET_IPV6_CONF_ALL_DIR, /* /proc/sys/net/ipv6/conf/all/ */
+    PROC_SYS_NET_IPV6_DISABLE,      /* /proc/sys/net/ipv6/conf/all/disable_ipv6 */
+    PROC_SYS_NET_IPV6_FORWARD,      /* /proc/sys/net/ipv6/conf/all/forwarding */
+    /* Additional /proc/sys/vm/ entries */
+    PROC_SYS_VM_MMAP_MIN_ADDR,      /* /proc/sys/vm/mmap_min_addr */
+    PROC_SYS_VM_VFS_CACHE_PRESSURE, /* /proc/sys/vm/vfs_cache_pressure */
+    /* Additional /proc/sys/fs/ entries */
+    PROC_SYS_FS_NR_OPEN,            /* /proc/sys/fs/nr_open */
+    PROC_SYS_FS_PIPE_MAX_SIZE,      /* /proc/sys/fs/pipe-max-size */
 };
 
 typedef struct {
@@ -245,6 +257,15 @@ typedef struct {
 #define PROC_INO_NET_UNIX            19ULL
 #define PROC_INO_NET_SOCKSTAT        20ULL
 #define PROC_INO_NET_ARP             21ULL
+#define PROC_INO_SYS_NET_IPV6_DIR      286ULL
+#define PROC_INO_SYS_NET_IPV6_CONF_DIR 287ULL
+#define PROC_INO_SYS_NET_IPV6_ALL_DIR  288ULL
+#define PROC_INO_SYS_NET_IPV6_DISABLE  289ULL
+#define PROC_INO_SYS_NET_IPV6_FORWARD  290ULL
+#define PROC_INO_SYS_VM_MMAP_MIN_ADDR  291ULL
+#define PROC_INO_SYS_VM_VFS_CACHE_PRESS 292ULL
+#define PROC_INO_SYS_FS_NR_OPEN        293ULL
+#define PROC_INO_SYS_FS_PIPE_MAX_SIZE  294ULL
 
 /* Per-PID: pid * 100 + offset */
 #define PROC_INO_PID_DIR(p)    (1000ULL + (uint64_t)(p) * 100 + 0)
@@ -1562,6 +1583,30 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
         case PROC_NET_ARP:
             total = gen_net_arp(tmp, GEN_BUF);
             break;
+        case PROC_SYS_NET_IPV6_DISABLE:
+            /* 1 = IPv6 disabled (no IPv6 stack) */
+            total = gen_sysctl_str(tmp, GEN_BUF, "1");
+            break;
+        case PROC_SYS_NET_IPV6_FORWARD:
+            /* 0 = IPv6 forwarding disabled */
+            total = gen_sysctl_str(tmp, GEN_BUF, "0");
+            break;
+        case PROC_SYS_VM_MMAP_MIN_ADDR:
+            /* 65536 = minimum mmap address (security default, matches typical Linux) */
+            total = gen_sysctl_str(tmp, GEN_BUF, "65536");
+            break;
+        case PROC_SYS_VM_VFS_CACHE_PRESSURE:
+            /* 100 = default VFS cache pressure */
+            total = gen_sysctl_str(tmp, GEN_BUF, "100");
+            break;
+        case PROC_SYS_FS_NR_OPEN:
+            /* 1048576 = system-wide open file descriptor limit */
+            total = gen_sysctl_str(tmp, GEN_BUF, "1048576");
+            break;
+        case PROC_SYS_FS_PIPE_MAX_SIZE:
+            /* 1048576 = max pipe buffer size (1 MiB, default on Linux) */
+            total = gen_sysctl_str(tmp, GEN_BUF, "1048576");
+            break;
         default:
             fut_free(tmp);
             return -EINVAL;
@@ -2050,6 +2095,43 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0040555, PROC_SYS_NET_IPV4_DIR, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "ipv6")) {
+            *result = procfs_alloc_vnode(mnt, VN_DIR, PROC_INO_SYS_NET_IPV6_DIR,
+                                          0040555, PROC_SYS_NET_IPV6_DIR, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        return -ENOENT;
+    }
+
+    if (dn->kind == PROC_SYS_NET_IPV6_DIR) {
+        if (STREQ(name, "conf")) {
+            *result = procfs_alloc_vnode(mnt, VN_DIR, PROC_INO_SYS_NET_IPV6_CONF_DIR,
+                                          0040555, PROC_SYS_NET_IPV6_CONF_DIR, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        return -ENOENT;
+    }
+
+    if (dn->kind == PROC_SYS_NET_IPV6_CONF_DIR) {
+        if (STREQ(name, "all")) {
+            *result = procfs_alloc_vnode(mnt, VN_DIR, PROC_INO_SYS_NET_IPV6_ALL_DIR,
+                                          0040555, PROC_SYS_NET_IPV6_CONF_ALL_DIR, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        return -ENOENT;
+    }
+
+    if (dn->kind == PROC_SYS_NET_IPV6_CONF_ALL_DIR) {
+        if (STREQ(name, "disable_ipv6")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_NET_IPV6_DISABLE,
+                                          0100644, PROC_SYS_NET_IPV6_DISABLE, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "forwarding")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_NET_IPV6_FORWARD,
+                                          0100644, PROC_SYS_NET_IPV6_FORWARD, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         return -ENOENT;
     }
 
@@ -2334,6 +2416,16 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0100644, PROC_SYS_NR_OC_HUGEPAGES, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "mmap_min_addr")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_VM_MMAP_MIN_ADDR,
+                                          0100644, PROC_SYS_VM_MMAP_MIN_ADDR, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "vfs_cache_pressure")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_VM_VFS_CACHE_PRESS,
+                                          0100644, PROC_SYS_VM_VFS_CACHE_PRESSURE, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         return -ENOENT;
     }
 
@@ -2351,6 +2443,16 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
         if (STREQ(name, "inotify")) {
             *result = procfs_alloc_vnode(mnt, VN_DIR, PROC_INO_SYS_INOTIFY_DIR,
                                           0040555, PROC_SYS_INOTIFY_DIR, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "nr_open")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_FS_NR_OPEN,
+                                          0100644, PROC_SYS_FS_NR_OPEN, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "pipe-max-size")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_FS_PIPE_MAX_SIZE,
+                                          0100644, PROC_SYS_FS_PIPE_MAX_SIZE, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
         return -ENOENT;
@@ -2626,11 +2728,46 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
     }
 
     if (dn->kind == PROC_SYS_NET_DIR) {
-        static const char *e[] = { ".", "..", "core", "ipv4" };
+        static const char *e[] = { ".", "..", "core", "ipv4", "ipv6" };
         static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
-                                     FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR };
+                                     FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
+                                     FUT_VDIR_TYPE_DIR };
         static const uint64_t i[] = { PROC_INO_SYS_NET_DIR, PROC_INO_SYS_DIR,
-                                      PROC_INO_SYS_NET_CORE_DIR, PROC_INO_SYS_NET_IPV4_DIR };
+                                      PROC_INO_SYS_NET_CORE_DIR, PROC_INO_SYS_NET_IPV4_DIR,
+                                      PROC_INO_SYS_NET_IPV6_DIR };
+        if (idx < 5) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+        return -ENOENT;
+    }
+
+    if (dn->kind == PROC_SYS_NET_IPV6_DIR) {
+        static const char *e[] = { ".", "..", "conf" };
+        static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
+                                     FUT_VDIR_TYPE_DIR };
+        static const uint64_t i[] = { PROC_INO_SYS_NET_IPV6_DIR, PROC_INO_SYS_NET_DIR,
+                                      PROC_INO_SYS_NET_IPV6_CONF_DIR };
+        if (idx < 3) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+        return -ENOENT;
+    }
+
+    if (dn->kind == PROC_SYS_NET_IPV6_CONF_DIR) {
+        static const char *e[] = { ".", "..", "all" };
+        static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
+                                     FUT_VDIR_TYPE_DIR };
+        static const uint64_t i[] = { PROC_INO_SYS_NET_IPV6_CONF_DIR,
+                                      PROC_INO_SYS_NET_IPV6_DIR,
+                                      PROC_INO_SYS_NET_IPV6_ALL_DIR };
+        if (idx < 3) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+        return -ENOENT;
+    }
+
+    if (dn->kind == PROC_SYS_NET_IPV6_CONF_ALL_DIR) {
+        static const char *e[] = { ".", "..", "disable_ipv6", "forwarding" };
+        static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG };
+        static const uint64_t i[] = { PROC_INO_SYS_NET_IPV6_ALL_DIR,
+                                      PROC_INO_SYS_NET_IPV6_CONF_DIR,
+                                      PROC_INO_SYS_NET_IPV6_DISABLE,
+                                      PROC_INO_SYS_NET_IPV6_FORWARD };
         if (idx < 4) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
         return -ENOENT;
     }
@@ -2753,8 +2890,10 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         static const char *e[] = { ".", "..", "overcommit_memory", "max_map_count",
                                    "swappiness", "dirty_ratio",
                                    "dirty_background_ratio", "min_free_kbytes",
-                                   "nr_hugepages", "nr_overcommit_hugepages" };
+                                   "nr_hugepages", "nr_overcommit_hugepages",
+                                   "mmap_min_addr", "vfs_cache_pressure" };
         static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
@@ -2763,20 +2902,26 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                       PROC_INO_SYS_OVERCOMMIT, PROC_INO_SYS_MAX_MAP_COUNT,
                                       PROC_INO_SYS_SWAPPINESS, PROC_INO_SYS_DIRTY_RATIO,
                                       PROC_INO_SYS_DIRTY_BG_RATIO, PROC_INO_SYS_MIN_FREE_KB,
-                                      PROC_INO_SYS_NR_HUGEPAGES, PROC_INO_SYS_NR_OC_HUGEPAGES };
-        if (idx < 10) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+                                      PROC_INO_SYS_NR_HUGEPAGES, PROC_INO_SYS_NR_OC_HUGEPAGES,
+                                      PROC_INO_SYS_VM_MMAP_MIN_ADDR,
+                                      PROC_INO_SYS_VM_VFS_CACHE_PRESS };
+        if (idx < 12) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
         return -ENOENT;
     }
 
     if (dn->kind == PROC_SYS_FS_DIR) {
-        static const char *e[] = { ".", "..", "file-max", "file-nr", "inotify" };
+        static const char *e[] = { ".", "..", "file-max", "file-nr", "inotify",
+                                   "nr_open", "pipe-max-size" };
         static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
-                                     FUT_VDIR_TYPE_DIR };
+                                     FUT_VDIR_TYPE_DIR,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG };
         static const uint64_t i[] = { PROC_INO_SYS_FS_DIR, PROC_INO_SYS_DIR,
                                       PROC_INO_SYS_FILE_MAX, PROC_INO_SYS_FILE_NR,
-                                      PROC_INO_SYS_INOTIFY_DIR };
-        if (idx < 5) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+                                      PROC_INO_SYS_INOTIFY_DIR,
+                                      PROC_INO_SYS_FS_NR_OPEN,
+                                      PROC_INO_SYS_FS_PIPE_MAX_SIZE };
+        if (idx < 7) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
         return -ENOENT;
     }
 

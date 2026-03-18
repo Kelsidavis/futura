@@ -12674,6 +12674,114 @@ static void test_proc_sys_security_net(void) {
     fut_test_pass();
 }
 
+static void test_proc_sys_net_ipv6(void) {
+    fut_printf("[MISC-TEST] Test 285: /proc/sys/net/ipv6/conf/all/{disable_ipv6,forwarding}\n");
+
+    extern ssize_t sys_read(int fd, void *buf, size_t count);
+    char buf[32];
+
+    /* disable_ipv6: should be a single digit (1 = disabled) */
+    int fd = fut_vfs_open("/proc/sys/net/ipv6/conf/all/disable_ipv6", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 285: open disable_ipv6 failed: %d\n", fd);
+        fut_test_fail(285); return;
+    }
+    long n = (long)sys_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    if (n <= 0 || buf[0] < '0' || buf[0] > '9') {
+        fut_printf("[MISC-TEST] ✗ Test 285: disable_ipv6 bad value\n");
+        fut_test_fail(285); return;
+    }
+    buf[n] = '\0';
+    fut_printf("[MISC-TEST] ✓ /proc/sys/net/ipv6/conf/all/disable_ipv6 = %s", buf);
+
+    /* forwarding: should be a single digit (0 = disabled) */
+    fd = fut_vfs_open("/proc/sys/net/ipv6/conf/all/forwarding", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 285: open forwarding failed: %d\n", fd);
+        fut_test_fail(285); return;
+    }
+    n = (long)sys_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    if (n <= 0 || buf[0] < '0' || buf[0] > '9') {
+        fut_printf("[MISC-TEST] ✗ Test 285: forwarding bad value\n");
+        fut_test_fail(285); return;
+    }
+    buf[n] = '\0';
+    fut_printf("[MISC-TEST] ✓ /proc/sys/net/ipv6/conf/all/forwarding = %s", buf);
+
+    fut_test_pass();
+}
+
+static void test_proc_sys_vm_fs_extras(void) {
+    fut_printf("[MISC-TEST] Test 286: /proc/sys/vm/{mmap_min_addr,vfs_cache_pressure} + /proc/sys/fs/{nr_open,pipe-max-size}\n");
+
+    extern ssize_t sys_read(int fd, void *buf, size_t count);
+    char buf[32];
+
+    /* mmap_min_addr: should be a non-empty numeric string */
+    int fd = fut_vfs_open("/proc/sys/vm/mmap_min_addr", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 286: open mmap_min_addr failed: %d\n", fd);
+        fut_test_fail(286); return;
+    }
+    long n = (long)sys_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    if (n <= 0 || buf[0] < '0' || buf[0] > '9') {
+        fut_printf("[MISC-TEST] ✗ Test 286: mmap_min_addr bad value\n");
+        fut_test_fail(286); return;
+    }
+    buf[n] = '\0';
+    fut_printf("[MISC-TEST] ✓ /proc/sys/vm/mmap_min_addr = %s", buf);
+
+    /* vfs_cache_pressure: should be a numeric string */
+    fd = fut_vfs_open("/proc/sys/vm/vfs_cache_pressure", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 286: open vfs_cache_pressure failed: %d\n", fd);
+        fut_test_fail(286); return;
+    }
+    n = (long)sys_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    if (n <= 0 || buf[0] < '0' || buf[0] > '9') {
+        fut_printf("[MISC-TEST] ✗ Test 286: vfs_cache_pressure bad value\n");
+        fut_test_fail(286); return;
+    }
+    buf[n] = '\0';
+    fut_printf("[MISC-TEST] ✓ /proc/sys/vm/vfs_cache_pressure = %s", buf);
+
+    /* nr_open: should be a non-empty numeric string */
+    fd = fut_vfs_open("/proc/sys/fs/nr_open", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 286: open nr_open failed: %d\n", fd);
+        fut_test_fail(286); return;
+    }
+    n = (long)sys_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    if (n <= 0 || buf[0] < '0' || buf[0] > '9') {
+        fut_printf("[MISC-TEST] ✗ Test 286: nr_open bad value\n");
+        fut_test_fail(286); return;
+    }
+    buf[n] = '\0';
+    fut_printf("[MISC-TEST] ✓ /proc/sys/fs/nr_open = %s", buf);
+
+    /* pipe-max-size: should be a numeric string */
+    fd = fut_vfs_open("/proc/sys/fs/pipe-max-size", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 286: open pipe-max-size failed: %d\n", fd);
+        fut_test_fail(286); return;
+    }
+    n = (long)sys_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    if (n <= 0 || buf[0] < '0' || buf[0] > '9') {
+        fut_printf("[MISC-TEST] ✗ Test 286: pipe-max-size bad value\n");
+        fut_test_fail(286); return;
+    }
+    buf[n] = '\0';
+    fut_printf("[MISC-TEST] ✓ /proc/sys/fs/pipe-max-size = %s", buf);
+
+    fut_test_pass();
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -12965,6 +13073,8 @@ void fut_misc_test_thread(void *arg) {
     test_proc_sys_kernel_misc();          /* Test 282: randomize_va_space + domainname */
     test_proc_net_unix_sockstat();        /* Test 283: /proc/net/unix + /proc/net/sockstat */
     test_proc_sys_security_net();         /* Test 284: perf_event_paranoid, kptr_restrict, arp */
+    test_proc_sys_net_ipv6();             /* Test 285: /proc/sys/net/ipv6/conf/all/{disable_ipv6,forwarding} */
+    test_proc_sys_vm_fs_extras();         /* Test 286: mmap_min_addr, vfs_cache_pressure, nr_open, pipe-max-size */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

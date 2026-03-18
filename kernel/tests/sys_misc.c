@@ -12080,6 +12080,53 @@ static void test_mmap_prot_sem(void) {
     fut_test_pass();
 }
 
+static void test_proc_sys_fs_inotify(void) {
+    fut_printf("[MISC-TEST] Test 273: /proc/sys/fs/inotify/ limits\n");
+
+    extern ssize_t sys_read(int fd, void *buf, size_t count);
+    char buf[32];
+
+    /* max_user_watches — commonly read by webpack, jest, VSCode */
+    int fd = fut_vfs_open("/proc/sys/fs/inotify/max_user_watches", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 273: open max_user_watches failed: %d\n", fd);
+        fut_test_fail(273); return;
+    }
+    long n = (long)sys_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    if (n <= 0 || buf[0] < '1') {
+        fut_printf("[MISC-TEST] ✗ Test 273: max_user_watches read failed\n");
+        fut_test_fail(273); return;
+    }
+    buf[n] = '\0';
+    fut_printf("[MISC-TEST] ✓ /proc/sys/fs/inotify/max_user_watches = %s", buf);
+
+    /* file-nr — "allocated free max" tab-separated */
+    fd = fut_vfs_open("/proc/sys/fs/file-nr", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 273: open /proc/sys/fs/file-nr failed: %d\n", fd);
+        fut_test_fail(273); return;
+    }
+    char nrbuf[48];
+    n = (long)sys_read(fd, nrbuf, sizeof(nrbuf) - 1);
+    fut_vfs_close(fd);
+    if (n <= 0) {
+        fut_printf("[MISC-TEST] ✗ Test 273: file-nr read empty\n");
+        fut_test_fail(273); return;
+    }
+    nrbuf[n] = '\0';
+    /* Verify tab-separated format with at least 2 tabs */
+    int tabs = 0;
+    for (long i = 0; i < n; i++) if (nrbuf[i] == '\t') tabs++;
+    if (tabs < 2) {
+        fut_printf("[MISC-TEST] ✗ Test 273: file-nr missing fields (tabs=%d)\n", tabs);
+        fut_test_fail(273); return;
+    }
+    fut_printf("[MISC-TEST] ✓ /proc/sys/fs/file-nr = %s", nrbuf);
+
+    fut_test_pass();
+}
+
 static void test_proc_sys_net(void) {
     fut_printf("[MISC-TEST] Test 272: /proc/sys/net/ sysctl entries\n");
 
@@ -12409,6 +12456,7 @@ void fut_misc_test_thread(void *arg) {
     test_proc_sys_kernel_ipc();           /* Test 270: /proc/sys/kernel/{shmmax,shmall,shmmni,sem,msgmni} */
     test_mmap_prot_sem();                 /* Test 271: mmap with PROT_SEM (0x8) accepted by Linux */
     test_proc_sys_net();                  /* Test 272: /proc/sys/net/core/somaxconn + ipv4/ip_local_port_range */
+    test_proc_sys_fs_inotify();           /* Test 273: /proc/sys/fs/inotify/max_user_watches + file-nr */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

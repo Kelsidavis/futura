@@ -78,6 +78,11 @@ enum procfs_kind {
     PROC_SYS_PID_MAX,      /* /proc/sys/kernel/pid_max */
     PROC_SYS_OVERCOMMIT,   /* /proc/sys/vm/overcommit_memory */
     PROC_SYS_FILE_MAX,     /* /proc/sys/fs/file-max */
+    PROC_SYS_FILE_NR,      /* /proc/sys/fs/file-nr */
+    PROC_SYS_INOTIFY_DIR,  /* /proc/sys/fs/inotify/ */
+    PROC_SYS_INOTIFY_MAX_WATCHES,    /* /proc/sys/fs/inotify/max_user_watches */
+    PROC_SYS_INOTIFY_MAX_INSTANCES,  /* /proc/sys/fs/inotify/max_user_instances */
+    PROC_SYS_INOTIFY_MAX_QUEUED,     /* /proc/sys/fs/inotify/max_queued_events */
     PROC_SYS_RANDOM_DIR,   /* /proc/sys/kernel/random/ */
     PROC_SYS_BOOT_ID,      /* /proc/sys/kernel/random/boot_id */
     PROC_SYS_UUID,         /* /proc/sys/kernel/random/uuid */
@@ -154,6 +159,11 @@ typedef struct {
 #define PROC_INO_SYS_PID_MAX    213ULL
 #define PROC_INO_SYS_OVERCOMMIT    220ULL
 #define PROC_INO_SYS_FILE_MAX      230ULL
+#define PROC_INO_SYS_FILE_NR       231ULL
+#define PROC_INO_SYS_INOTIFY_DIR   232ULL
+#define PROC_INO_SYS_INOTIFY_MAX_WATCHES   233ULL
+#define PROC_INO_SYS_INOTIFY_MAX_INSTANCES 234ULL
+#define PROC_INO_SYS_INOTIFY_MAX_QUEUED    235ULL
 #define PROC_INO_SYS_RANDOM_DIR    204ULL
 #define PROC_INO_SYS_BOOT_ID       240ULL
 #define PROC_INO_SYS_UUID          241ULL
@@ -1240,6 +1250,19 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
         case PROC_SYS_FILE_MAX:
             total = gen_sysctl_str(tmp, GEN_BUF, "1048576");
             break;
+        case PROC_SYS_FILE_NR:
+            /* "allocated free max" — for our simple model, all 3 same */
+            total = gen_sysctl_str(tmp, GEN_BUF, "0\t0\t1048576");
+            break;
+        case PROC_SYS_INOTIFY_MAX_WATCHES:
+            total = gen_sysctl_str(tmp, GEN_BUF, "524288");
+            break;
+        case PROC_SYS_INOTIFY_MAX_INSTANCES:
+            total = gen_sysctl_str(tmp, GEN_BUF, "128");
+            break;
+        case PROC_SYS_INOTIFY_MAX_QUEUED:
+            total = gen_sysctl_str(tmp, GEN_BUF, "16384");
+            break;
         case PROC_SYS_BOOT_ID:
             total = gen_boot_id(tmp, GEN_BUF);
             break;
@@ -1868,6 +1891,35 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0100644, PROC_SYS_FILE_MAX, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "file-nr")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_FILE_NR,
+                                          0100444, PROC_SYS_FILE_NR, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "inotify")) {
+            *result = procfs_alloc_vnode(mnt, VN_DIR, PROC_INO_SYS_INOTIFY_DIR,
+                                          0040555, PROC_SYS_INOTIFY_DIR, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        return -ENOENT;
+    }
+
+    if (dn->kind == PROC_SYS_INOTIFY_DIR) {
+        if (STREQ(name, "max_user_watches")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_INOTIFY_MAX_WATCHES,
+                                          0100644, PROC_SYS_INOTIFY_MAX_WATCHES, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "max_user_instances")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_INOTIFY_MAX_INSTANCES,
+                                          0100644, PROC_SYS_INOTIFY_MAX_INSTANCES, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "max_queued_events")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_INOTIFY_MAX_QUEUED,
+                                          0100644, PROC_SYS_INOTIFY_MAX_QUEUED, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         return -ENOENT;
     }
 
@@ -2191,11 +2243,28 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
     }
 
     if (dn->kind == PROC_SYS_FS_DIR) {
-        static const char *e[] = { ".", "..", "file-max" };
-        static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_REG };
+        static const char *e[] = { ".", "..", "file-max", "file-nr", "inotify" };
+        static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_DIR };
         static const uint64_t i[] = { PROC_INO_SYS_FS_DIR, PROC_INO_SYS_DIR,
-                                      PROC_INO_SYS_FILE_MAX };
-        if (idx < 3) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+                                      PROC_INO_SYS_FILE_MAX, PROC_INO_SYS_FILE_NR,
+                                      PROC_INO_SYS_INOTIFY_DIR };
+        if (idx < 5) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+        return -ENOENT;
+    }
+
+    if (dn->kind == PROC_SYS_INOTIFY_DIR) {
+        static const char *e[] = { ".", "..", "max_user_watches",
+                                   "max_user_instances", "max_queued_events" };
+        static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_REG };
+        static const uint64_t i[] = { PROC_INO_SYS_INOTIFY_DIR, PROC_INO_SYS_FS_DIR,
+                                      PROC_INO_SYS_INOTIFY_MAX_WATCHES,
+                                      PROC_INO_SYS_INOTIFY_MAX_INSTANCES,
+                                      PROC_INO_SYS_INOTIFY_MAX_QUEUED };
+        if (idx < 5) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
         return -ENOENT;
     }
 

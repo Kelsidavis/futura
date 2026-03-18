@@ -2455,16 +2455,77 @@ static ssize_t procfs_link_readlink(struct fut_vnode *vnode, char *buf, size_t s
             break;
         }
         case PROC_FD_ENTRY: {
-            /* Use file->path if available, else vnode path, else /dev/fd/<n> */
+            /* Generate Linux-style symlink target:
+             *  - Regular file with path: the path
+             *  - Pipe:    "pipe:[<ino>]"
+             *  - Socket:  "socket:[<ino>]"
+             *  - eventfd/timerfd/signalfd: "anon_inode:[<type>]"
+             *  - Fallback: "/dev/fd/<n>"  */
             fut_task_t *task = fut_task_by_pid(n->pid);
             if (!task) return -ESRCH;
             if (n->fd >= 0 && n->fd < task->max_fds && task->fd_table[n->fd]) {
                 struct fut_file *file = task->fd_table[n->fd];
-                const char *fpath = NULL;
+
+                /* 1. Regular file path */
                 if (file->path && file->path[0]) {
-                    fpath = file->path;
-                } else if (file->vnode) {
-                    /* Build path from vnode chain */
+                    const char *fp = file->path;
+                    while (fp[len] && len < sizeof(tmp) - 1)
+                        { tmp[len] = fp[len]; len++; }
+                    break;
+                }
+
+                /* 2. Pipe fd */
+                {
+                    extern bool fut_pipe_poll(struct fut_file *, uint32_t, uint32_t *);
+                    uint32_t dummy = 0;
+                    if (fut_pipe_poll(file, 0, &dummy)) {
+                        uint64_t ino = file->vnode ? file->vnode->ino : (uint64_t)n->fd;
+                        struct pbuf b = { tmp, 0, sizeof(tmp) };
+                        pb_str(&b, "pipe:[");
+                        pb_u64(&b, ino);
+                        pb_str(&b, "]");
+                        len = b.pos;
+                        break;
+                    }
+                }
+
+                /* 3. Socket fd (tracked in posix_compat socket table) */
+                {
+                    extern struct fut_socket *get_socket_from_fd(int fd);
+                    if (get_socket_from_fd(n->fd)) {
+                        uint64_t ino = file->vnode ? file->vnode->ino : (uint64_t)n->fd;
+                        struct pbuf b = { tmp, 0, sizeof(tmp) };
+                        pb_str(&b, "socket:[");
+                        pb_u64(&b, ino);
+                        pb_str(&b, "]");
+                        len = b.pos;
+                        break;
+                    }
+                }
+
+                /* 4. eventfd / timerfd / signalfd — anon_inode:[type] */
+                {
+                    extern bool fut_eventfd_poll(struct fut_file *, uint32_t, uint32_t *);
+                    extern bool fut_timerfd_poll(struct fut_file *, uint32_t, uint32_t *);
+                    extern bool fut_signalfd_poll(struct fut_file *, uint32_t, uint32_t *);
+                    uint32_t dummy = 0;
+                    const char *anon_type = NULL;
+                    if      (fut_eventfd_poll(file, 0, &dummy))  anon_type = "eventfd";
+                    else if (fut_timerfd_poll(file, 0, &dummy))  anon_type = "timerfd";
+                    else if (fut_signalfd_poll(file, 0, &dummy)) anon_type = "signalfd";
+                    else if (file->chr_ops)                      anon_type = "anon";
+                    if (anon_type) {
+                        struct pbuf b = { tmp, 0, sizeof(tmp) };
+                        pb_str(&b, "anon_inode:[");
+                        pb_str(&b, anon_type);
+                        pb_str(&b, "]");
+                        len = b.pos;
+                        break;
+                    }
+                }
+
+                /* 5. Vnode path fallback */
+                if (file->vnode) {
                     char *built = fut_vnode_build_path(file->vnode, tmp, sizeof(tmp));
                     if (built) {
                         len = 0;
@@ -2472,17 +2533,14 @@ static ssize_t procfs_link_readlink(struct fut_vnode *vnode, char *buf, size_t s
                         break;
                     }
                 }
-                if (fpath) {
-                    while (fpath[len] && len < sizeof(tmp) - 1)
-                        { tmp[len] = fpath[len]; len++; }
-                    break;
-                }
             }
-            /* Fallback */
-            struct pbuf b = { tmp, 0, sizeof(tmp) };
-            pb_str(&b, "/dev/fd/");
-            pb_u64(&b, (uint64_t)n->fd);
-            len = b.pos;
+            /* Final fallback */
+            {
+                struct pbuf b = { tmp, 0, sizeof(tmp) };
+                pb_str(&b, "/dev/fd/");
+                pb_u64(&b, (uint64_t)n->fd);
+                len = b.pos;
+            }
             break;
         }
         default:

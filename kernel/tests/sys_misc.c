@@ -17890,6 +17890,54 @@ static void test_aio_uring_enosys(void) {
 }
 
 /* ============================================================
+ * Test 384: /proc/self/fd/<n> shows "pipe:[ino]" for pipe fds
+ * ============================================================ */
+static void test_proc_fd_pipe_symlink(void) {
+    fut_printf("[MISC-TEST] Test 384: /proc/self/fd/<n> shows pipe:[ino] for pipe fds\n");
+    extern long sys_pipe2(int pipefd[2], int flags);
+    extern long sys_readlink(const char *path, char *buf, size_t bufsiz);
+
+    int pipefd[2];
+    long r = sys_pipe2(pipefd, 0);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 384: pipe2 failed: %ld\n", r);
+        fut_test_fail(384); return;
+    }
+
+    /* Build /proc/self/fd/<readfd> path */
+    char fdpath[64];
+    /* pipefd[0] is read end */
+    int fd = pipefd[0];
+    {
+        char *p = fdpath;
+        const char *prefix = "/proc/self/fd/";
+        while (*prefix) *p++ = *prefix++;
+        int tmp = fd;
+        char num[16]; int ni = 0;
+        do { num[ni++] = '0' + (tmp % 10); tmp /= 10; } while (tmp > 0);
+        for (int i = ni - 1; i >= 0; i--) *p++ = num[i];
+        *p = '\0';
+    }
+
+    char target[128];
+    long n = sys_readlink(fdpath, target, sizeof(target) - 1);
+    fut_vfs_close(pipefd[0]);
+    fut_vfs_close(pipefd[1]);
+    if (n <= 0) {
+        fut_printf("[MISC-TEST] ✗ Test 384: readlink %s failed: %ld\n", fdpath, n);
+        fut_test_fail(384); return;
+    }
+    target[n] = '\0';
+    /* Must start with "pipe:[" */
+    if (target[0] != 'p' || target[1] != 'i' || target[2] != 'p' || target[3] != 'e') {
+        fut_printf("[MISC-TEST] ✗ Test 384: expected 'pipe:[...]', got '%s'\n", target);
+        fut_test_fail(384); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 384: /proc/self/fd pipe symlink = '%s'\n", target);
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test 367: /proc/self/net/unix readable (same content as /proc/net/unix)
  * ============================================================ */
 static void test_proc_pid_net_unix(void) {
@@ -18472,6 +18520,7 @@ void fut_misc_test_thread(void *arg) {
     test_mknod_fifo();                   /* Test 381: mknod() creates FIFO */
     test_utime_syscall();                /* Test 382: utime() sets mtime */
     test_aio_uring_enosys();             /* Test 383: io_setup/io_uring_setup return ENOSYS */
+    test_proc_fd_pipe_symlink();         /* Test 384: /proc/self/fd/<n> shows pipe:[ino] */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

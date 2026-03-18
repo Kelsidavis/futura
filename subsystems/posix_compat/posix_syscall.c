@@ -97,6 +97,10 @@
 #define SYS_wait4       61
 #define SYS_kill        62
 #define SYS_uname       63
+#define SYS_shmget      29   /* Linux: 29 */
+#define SYS_shmat       30   /* Linux: 30 */
+#define SYS_shmctl      31   /* Linux: 31 */
+#define SYS_shmdt       67   /* Linux: 67 */
 #define SYS_semget      64   /* Linux: 64 */
 #define SYS_semop       65   /* Linux: 65 */
 #define SYS_semctl      66   /* Linux: 66 */
@@ -409,6 +413,35 @@ static struct fut_file_ops socket_fops = {
     .ioctl = socket_ioctl,
     .mmap = NULL
 };
+
+/* SysV shared memory handlers */
+static int64_t sys_shmget_handler(uint64_t key, uint64_t size, uint64_t shmflg,
+                                  uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_shmget(long key, size_t size, int shmflg);
+    return sys_shmget((long)key, (size_t)size, (int)shmflg);
+}
+
+static int64_t sys_shmat_handler(uint64_t shmid, uint64_t shmaddr, uint64_t shmflg,
+                                 uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_shmat(int shmid, const void *shmaddr, int shmflg);
+    return sys_shmat((int)shmid, (const void *)(uintptr_t)shmaddr, (int)shmflg);
+}
+
+static int64_t sys_shmdt_handler(uint64_t shmaddr, uint64_t arg2, uint64_t arg3,
+                                 uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_shmdt(const void *shmaddr);
+    return sys_shmdt((const void *)(uintptr_t)shmaddr);
+}
+
+static int64_t sys_shmctl_handler(uint64_t shmid, uint64_t cmd, uint64_t buf,
+                                  uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_shmctl(int shmid, int cmd, void *buf);
+    return sys_shmctl((int)shmid, (int)cmd, (void *)(uintptr_t)buf);
+}
 
 /* SysV semaphore handlers */
 static int64_t sys_semget_handler(uint64_t key, uint64_t nsems, uint64_t semflg,
@@ -2855,6 +2888,14 @@ static int64_t sys_sendto_handler(uint64_t sockfd, uint64_t buf, uint64_t len,
                                   uint64_t flags, uint64_t addr, uint64_t addrlen);
 static int64_t sys_recvfrom_handler(uint64_t sockfd, uint64_t buf, uint64_t len,
                                     uint64_t flags, uint64_t addr, uint64_t addrlen);
+static int64_t sys_shmget_handler(uint64_t key, uint64_t size, uint64_t shmflg,
+                                  uint64_t arg4, uint64_t arg5, uint64_t arg6);
+static int64_t sys_shmat_handler(uint64_t shmid, uint64_t shmaddr, uint64_t shmflg,
+                                 uint64_t arg4, uint64_t arg5, uint64_t arg6);
+static int64_t sys_shmdt_handler(uint64_t shmaddr, uint64_t arg2, uint64_t arg3,
+                                 uint64_t arg4, uint64_t arg5, uint64_t arg6);
+static int64_t sys_shmctl_handler(uint64_t shmid, uint64_t cmd, uint64_t buf,
+                                  uint64_t arg4, uint64_t arg5, uint64_t arg6);
 static int64_t sys_semget_handler(uint64_t key, uint64_t nsems, uint64_t semflg,
                                   uint64_t arg4, uint64_t arg5, uint64_t arg6);
 static int64_t sys_semop_handler(uint64_t semid, uint64_t sops, uint64_t nsops,
@@ -3128,6 +3169,10 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_signalfd4]    = sys_signalfd4_handler,
     [SYS_dup3]         = sys_dup3_handler,
     [SYS_accept4]      = sys_accept4_handler,
+    [SYS_shmget]       = sys_shmget_handler,
+    [SYS_shmat]        = sys_shmat_handler,
+    [SYS_shmdt]        = sys_shmdt_handler,
+    [SYS_shmctl]       = sys_shmctl_handler,
     [SYS_semget]       = sys_semget_handler,
     [SYS_semop]        = sys_semop_handler,
     [SYS_semctl]       = sys_semctl_handler,

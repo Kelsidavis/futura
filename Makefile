@@ -517,6 +517,7 @@ KERNEL_SOURCES := \
     kernel/sys_memfd.c \
     kernel/sys_semaphore.c \
     kernel/sys_msgqueue.c \
+    kernel/sys_shm.c \
     kernel/sys_sigtimedwait.c \
     kernel/sys_membarrier.c \
     kernel/sys_copy_file_range.c \

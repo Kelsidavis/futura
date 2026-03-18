@@ -9995,6 +9995,187 @@ static void test_msgctl_stat(void) {
 }
 
 /* ============================================================
+ * Tests 211-213: SysV shared memory — shmget/shmat/shmdt/shmctl
+ *
+ * Uses inline shmid_ds to avoid header conflicts.
+ * ============================================================ */
+
+/* Inline shmid_ds for IPC_STAT test */
+struct test_shmid_ds {
+    struct {
+        int          key;
+        unsigned int uid, gid, cuid, cgid;
+        unsigned int mode;
+        unsigned short seq, pad;
+    } shm_perm;
+    size_t        shm_segsz;
+    unsigned long shm_atime;
+    unsigned long shm_dtime;
+    unsigned long shm_ctime;
+    int           shm_cpid;
+    int           shm_lpid;
+    unsigned long shm_nattch;
+};
+
+/* Test 211: shmget/shmat/shmdt basic write-read round-trip */
+static void test_shmget_basic(void) {
+    fut_printf("[MISC-TEST] Test 211: shmget/shmat/shmdt basic\n");
+    extern long sys_shmget(long key, size_t size, int shmflg);
+    extern long sys_shmat(int shmid, const void *shmaddr, int shmflg);
+    extern long sys_shmdt(const void *shmaddr);
+    extern long sys_shmctl(int shmid, int cmd, void *buf);
+
+    /* Create a private 4096-byte shared memory segment */
+    long shmid = sys_shmget(TEST_IPC_PRIVATE, 4096, 0666 | TEST_IPC_CREAT);
+    if (shmid < 0) {
+        fut_printf("[MISC-TEST] ✗ shmget failed: %ld\n", shmid);
+        fut_test_fail(211); return;
+    }
+
+    /* Attach — shmat returns a kernel pointer (large unsigned value that appears
+     * negative as signed long). Errors return small negative errno. */
+    unsigned long addr = (unsigned long)sys_shmat((int)shmid, NULL, 0);
+    if (addr <= 0x1000UL) {
+        fut_printf("[MISC-TEST] ✗ shmat failed: %ld\n", (long)addr);
+        sys_shmctl((int)shmid, TEST_IPC_RMID, NULL);
+        fut_test_fail(211); return;
+    }
+
+    /* Write a pattern into the shared memory */
+    char *ptr = (char *)addr;
+    for (int i = 0; i < 16; i++)
+        ptr[i] = (char)(i + 1);
+
+    /* Read it back and verify */
+    for (int i = 0; i < 16; i++) {
+        if (ptr[i] != (char)(i + 1)) {
+            fut_printf("[MISC-TEST] ✗ shm data[%d]=%d want %d\n", i, ptr[i], i+1);
+            sys_shmdt(ptr);
+            sys_shmctl((int)shmid, TEST_IPC_RMID, NULL);
+            fut_test_fail(211); return;
+        }
+    }
+
+    /* Detach */
+    long r = sys_shmdt(ptr);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ shmdt failed: %ld\n", r);
+        sys_shmctl((int)shmid, TEST_IPC_RMID, NULL);
+        fut_test_fail(211); return;
+    }
+
+    sys_shmctl((int)shmid, TEST_IPC_RMID, NULL);
+    fut_printf("[MISC-TEST] ✓ shmget/shmat/shmdt: 4096-byte segment write/read OK\n");
+    fut_test_pass();
+}
+
+/* Test 212: shmctl IPC_STAT reports correct size and nattch */
+static void test_shmctl_stat(void) {
+    fut_printf("[MISC-TEST] Test 212: shmctl IPC_STAT size/nattch\n");
+    extern long sys_shmget(long key, size_t size, int shmflg);
+    extern long sys_shmat(int shmid, const void *shmaddr, int shmflg);
+    extern long sys_shmdt(const void *shmaddr);
+    extern long sys_shmctl(int shmid, int cmd, void *buf);
+
+    long shmid = sys_shmget(TEST_IPC_PRIVATE, 8192, 0666 | TEST_IPC_CREAT);
+    if (shmid < 0) {
+        fut_printf("[MISC-TEST] ✗ shmget(8192) failed: %ld\n", shmid);
+        fut_test_fail(212); return;
+    }
+
+    /* IPC_STAT before attach: nattch should be 0 */
+    struct test_shmid_ds ds;
+    __builtin_memset(&ds, 0, sizeof(ds));
+    long r = sys_shmctl((int)shmid, TEST_IPC_STAT, &ds);
+    if (r != 0 || ds.shm_nattch != 0) {
+        fut_printf("[MISC-TEST] ✗ IPC_STAT before attach: r=%ld nattch=%lu\n",
+                   r, ds.shm_nattch);
+        sys_shmctl((int)shmid, TEST_IPC_RMID, NULL);
+        fut_test_fail(212); return;
+    }
+    /* segsz should be >= 8192 (rounded up to page) */
+    if (ds.shm_segsz < 8192) {
+        fut_printf("[MISC-TEST] ✗ IPC_STAT segsz=%zu (want >= 8192)\n", ds.shm_segsz);
+        sys_shmctl((int)shmid, TEST_IPC_RMID, NULL);
+        fut_test_fail(212); return;
+    }
+
+    /* Attach and check nattch == 1 */
+    unsigned long addr = (unsigned long)sys_shmat((int)shmid, NULL, 0);
+    if (addr <= 0x1000UL) {
+        fut_printf("[MISC-TEST] ✗ shmat failed: %ld\n", (long)addr);
+        sys_shmctl((int)shmid, TEST_IPC_RMID, NULL);
+        fut_test_fail(212); return;
+    }
+    __builtin_memset(&ds, 0, sizeof(ds));
+    r = sys_shmctl((int)shmid, TEST_IPC_STAT, &ds);
+    if (r != 0 || ds.shm_nattch != 1) {
+        fut_printf("[MISC-TEST] ✗ IPC_STAT after attach: r=%ld nattch=%lu (want 1)\n",
+                   r, ds.shm_nattch);
+        sys_shmdt((void *)addr);
+        sys_shmctl((int)shmid, TEST_IPC_RMID, NULL);
+        fut_test_fail(212); return;
+    }
+
+    sys_shmdt((void *)addr);
+    sys_shmctl((int)shmid, TEST_IPC_RMID, NULL);
+    fut_printf("[MISC-TEST] ✓ shmctl IPC_STAT: segsz and nattch correct\n");
+    fut_test_pass();
+}
+
+/* Test 213: IPC_RMID deferred free (pending_rmid with nattach > 0) */
+static void test_shm_deferred_rmid(void) {
+    fut_printf("[MISC-TEST] Test 213: shmctl IPC_RMID deferred free\n");
+    extern long sys_shmget(long key, size_t size, int shmflg);
+    extern long sys_shmat(int shmid, const void *shmaddr, int shmflg);
+    extern long sys_shmdt(const void *shmaddr);
+    extern long sys_shmctl(int shmid, int cmd, void *buf);
+
+    long shmid = sys_shmget(TEST_IPC_PRIVATE, 4096, 0666 | TEST_IPC_CREAT);
+    if (shmid < 0) {
+        fut_printf("[MISC-TEST] ✗ shmget failed: %ld\n", shmid);
+        fut_test_fail(213); return;
+    }
+
+    /* Attach the segment */
+    unsigned long addr = (unsigned long)sys_shmat((int)shmid, NULL, 0);
+    if (addr <= 0x1000UL) {
+        fut_printf("[MISC-TEST] ✗ shmat failed: %lu\n", addr);
+        sys_shmctl((int)shmid, TEST_IPC_RMID, NULL);
+        fut_test_fail(213); return;
+    }
+
+    /* Write to memory while attached */
+    char *ptr = (char *)(uintptr_t)addr;
+    ptr[0] = 'Z';
+
+    /* IPC_RMID while still attached: should succeed (deferred) */
+    long r = sys_shmctl((int)shmid, TEST_IPC_RMID, NULL);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ IPC_RMID (while attached) failed: %ld\n", r);
+        sys_shmdt(ptr);
+        fut_test_fail(213); return;
+    }
+
+    /* Memory should still be accessible after deferred IPC_RMID */
+    if (ptr[0] != 'Z') {
+        fut_printf("[MISC-TEST] ✗ memory inaccessible after deferred IPC_RMID\n");
+        sys_shmdt(ptr);
+        fut_test_fail(213); return;
+    }
+
+    /* Detach: should actually free the segment now */
+    r = sys_shmdt(ptr);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ shmdt after deferred IPC_RMID: %ld\n", r);
+        fut_test_fail(213); return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ shmctl IPC_RMID deferred free: memory accessible until detach\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test 199: /proc/stat — cpu line and ctxt/btime present
  * ============================================================ */
 static void test_proc_stat_global(void) {
@@ -10302,6 +10483,9 @@ void fut_misc_test_thread(void *arg) {
     test_msgget_basic();                   /* Test 208: msgget/msgsnd/msgrcv basic round-trip */
     test_msgrcv_type_select();             /* Test 209: msgrcv type-selective receive */
     test_msgctl_stat();                    /* Test 210: msgctl IPC_STAT qnum/cbytes */
+    test_shmget_basic();                   /* Test 211: shmget/shmat/shmdt write/read */
+    test_shmctl_stat();                    /* Test 212: shmctl IPC_STAT segsz/nattch */
+    test_shm_deferred_rmid();              /* Test 213: IPC_RMID deferred free */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

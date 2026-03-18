@@ -17607,6 +17607,64 @@ static void test_proc_kernel_version(void) {
 }
 
 /* ============================================================
+ * Test 371: /proc/cmdline readable
+ * ============================================================ */
+static void test_proc_cmdline_global(void) {
+    fut_printf("[MISC-TEST] Test 371: /proc/cmdline\n");
+    int fd = fut_vfs_open("/proc/cmdline", O_RDONLY, 0);
+    if (fd < 0) { fut_printf("[MISC-TEST] ✗ Test 371: open failed: %d\n", fd); fut_test_fail(371); return; }
+    char buf[16]; long n = fut_vfs_read(fd, buf, sizeof(buf)-1); fut_vfs_close(fd);
+    if (n < 0) { fut_printf("[MISC-TEST] ✗ Test 371: read failed: %ld\n", n); fut_test_fail(371); return; }
+    fut_printf("[MISC-TEST] ✓ Test 371: /proc/cmdline readable (%ld bytes)\n", n);
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 372: /proc/swaps has header
+ * ============================================================ */
+static void test_proc_swaps(void) {
+    fut_printf("[MISC-TEST] Test 372: /proc/swaps\n");
+    int fd = fut_vfs_open("/proc/swaps", O_RDONLY, 0);
+    if (fd < 0) { fut_printf("[MISC-TEST] ✗ Test 372: open failed: %d\n", fd); fut_test_fail(372); return; }
+    char buf[64]; long n = fut_vfs_read(fd, buf, sizeof(buf)-1); fut_vfs_close(fd);
+    if (n <= 0) { fut_printf("[MISC-TEST] ✗ Test 372: read returned %ld\n", n); fut_test_fail(372); return; }
+    buf[n] = '\0';
+    if (buf[0] != 'F' || buf[1] != 'i') { fut_printf("[MISC-TEST] ✗ Test 372: wrong header: '%.10s'\n", buf); fut_test_fail(372); return; }
+    fut_printf("[MISC-TEST] ✓ Test 372: /proc/swaps has 'Filename' header\n");
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 373: /proc/devices has 'Character devices' header
+ * ============================================================ */
+static void test_proc_devices(void) {
+    fut_printf("[MISC-TEST] Test 373: /proc/devices\n");
+    int fd = fut_vfs_open("/proc/devices", O_RDONLY, 0);
+    if (fd < 0) { fut_printf("[MISC-TEST] ✗ Test 373: open failed: %d\n", fd); fut_test_fail(373); return; }
+    char buf[64]; long n = fut_vfs_read(fd, buf, sizeof(buf)-1); fut_vfs_close(fd);
+    if (n <= 0) { fut_printf("[MISC-TEST] ✗ Test 373: read returned %ld\n", n); fut_test_fail(373); return; }
+    buf[n] = '\0';
+    if (buf[0] != 'C') { fut_printf("[MISC-TEST] ✗ Test 373: no 'Character devices' header\n"); fut_test_fail(373); return; }
+    fut_printf("[MISC-TEST] ✓ Test 373: /proc/devices has 'Character devices' header\n");
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 374: /proc/self/attr/current returns "unconfined"
+ * ============================================================ */
+static void test_proc_attr_current(void) {
+    fut_printf("[MISC-TEST] Test 374: /proc/self/attr/current\n");
+    int fd = fut_vfs_open("/proc/self/attr/current", O_RDONLY, 0);
+    if (fd < 0) { fut_printf("[MISC-TEST] ✗ Test 374: open failed: %d\n", fd); fut_test_fail(374); return; }
+    char buf[32]; long n = fut_vfs_read(fd, buf, sizeof(buf)-1); fut_vfs_close(fd);
+    if (n <= 0) { fut_printf("[MISC-TEST] ✗ Test 374: read returned %ld\n", n); fut_test_fail(374); return; }
+    buf[n] = '\0';
+    if (buf[0] != 'u' || buf[1] != 'n') { fut_printf("[MISC-TEST] ✗ Test 374: unexpected: '%.12s'\n", buf); fut_test_fail(374); return; }
+    fut_printf("[MISC-TEST] ✓ Test 374: /proc/self/attr/current = '%s'\n", buf);
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test 367: /proc/self/net/unix readable (same content as /proc/net/unix)
  * ============================================================ */
 static void test_proc_pid_net_unix(void) {
@@ -18176,6 +18234,10 @@ void fut_misc_test_thread(void *arg) {
     test_proc_suid_dumpable();           /* Test 368: /proc/sys/kernel/suid_dumpable */
     test_proc_tainted();                 /* Test 369: /proc/sys/kernel/tainted */
     test_proc_kernel_version();          /* Test 370: /proc/sys/kernel/version */
+    test_proc_cmdline_global();          /* Test 371: /proc/cmdline readable */
+    test_proc_swaps();                   /* Test 372: /proc/swaps has Filename header */
+    test_proc_devices();                 /* Test 373: /proc/devices has Character devices */
+    test_proc_attr_current();            /* Test 374: /proc/self/attr/current = unconfined */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

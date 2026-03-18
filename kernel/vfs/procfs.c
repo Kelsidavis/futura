@@ -187,6 +187,13 @@ enum procfs_kind {
     PROC_SYS_SUID_DUMPABLE,         /* /proc/sys/kernel/suid_dumpable */
     PROC_SYS_TAINTED,               /* /proc/sys/kernel/tainted */
     PROC_SYS_VERSION,               /* /proc/sys/kernel/version */
+
+    PROC_CMDLINE_GLOBAL,            /* /proc/cmdline */
+    PROC_SWAPS,                     /* /proc/swaps */
+    PROC_DEVICES,                   /* /proc/devices */
+    PROC_MISC_FILE,                 /* /proc/misc */
+    PROC_ATTR_DIR,                  /* /proc/<pid>/attr/ */
+    PROC_ATTR_CURRENT,              /* /proc/<pid>/attr/current */
 };
 
 typedef struct {
@@ -295,6 +302,13 @@ typedef struct {
 #define PROC_INO_SYS_SUID_DUMPABLE     297ULL
 #define PROC_INO_SYS_TAINTED           298ULL
 #define PROC_INO_SYS_VERSION_KERNEL    299ULL
+
+#define PROC_INO_CMDLINE_GLOBAL        22ULL
+#define PROC_INO_SWAPS                 23ULL
+#define PROC_INO_DEVICES               24ULL
+#define PROC_INO_MISC_FILE             25ULL
+#define PROC_INO_PID_ATTR(p)           (1000ULL + (uint64_t)(p) * 100 + 24)
+#define PROC_INO_PID_ATTR_CUR(p)       (1000ULL + (uint64_t)(p) * 100 + 25)
 
 /* Per-PID: pid * 100 + offset */
 #define PROC_INO_PID_DIR(p)    (1000ULL + (uint64_t)(p) * 100 + 0)
@@ -1204,6 +1218,59 @@ static size_t gen_schedstat(char *buf, size_t cap, fut_task_t *task) {
 }
 
 /*
+ * gen_cmdline_global() — /proc/cmdline
+ *
+ * Returns the kernel command-line (empty; Futura boots without a cmdline).
+ */
+static size_t gen_cmdline_global(char *buf, size_t cap) {
+    struct pbuf b = { buf, 0, cap };
+    pb_char(&b, '\n');
+    return b.pos;
+}
+
+/*
+ * gen_swaps() — /proc/swaps
+ *
+ * Swap table header with no swap entries (no swap space configured).
+ */
+static size_t gen_swaps(char *buf, size_t cap) {
+    struct pbuf b = { buf, 0, cap };
+    pb_str(&b, "Filename\t\t\t\tType\t\tSize\t\tUsed\t\tPriority\n");
+    return b.pos;
+}
+
+/*
+ * gen_devices() — /proc/devices
+ *
+ * List of registered character and block devices (minimal).
+ */
+static size_t gen_devices(char *buf, size_t cap) {
+    struct pbuf b = { buf, 0, cap };
+    pb_str(&b, "Character devices:\n");
+    pb_str(&b, "  1 mem\n");
+    pb_str(&b, "  4 /dev/vc/0\n");
+    pb_str(&b, "  5 /dev/tty\n");
+    pb_str(&b, "  5 /dev/console\n");
+    pb_str(&b, "  5 /dev/ptmx\n");
+    pb_str(&b, "  7 vcs\n");
+    pb_str(&b, " 10 misc\n");
+    pb_str(&b, "\nBlock devices:\n");
+    return b.pos;
+}
+
+/*
+ * gen_misc_dev() — /proc/misc
+ *
+ * List of misc character devices (minimal).
+ */
+static size_t gen_misc_dev(char *buf, size_t cap) {
+    struct pbuf b = { buf, 0, cap };
+    pb_str(&b, "227 hpet\n");
+    pb_str(&b, "236 device-mapper\n");
+    return b.pos;
+}
+
+/*
  * gen_comm() — /proc/<pid>/comm
  *
  * Single line: process name + newline.
@@ -1688,6 +1755,25 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             total = b.pos;
             break;
         }
+        case PROC_CMDLINE_GLOBAL:
+            total = gen_cmdline_global(tmp, GEN_BUF);
+            break;
+        case PROC_SWAPS:
+            total = gen_swaps(tmp, GEN_BUF);
+            break;
+        case PROC_DEVICES:
+            total = gen_devices(tmp, GEN_BUF);
+            break;
+        case PROC_MISC_FILE:
+            total = gen_misc_dev(tmp, GEN_BUF);
+            break;
+        case PROC_ATTR_CURRENT: {
+            /* /proc/<pid>/attr/current — LSM label; "unconfined" when no LSM */
+            struct pbuf b = { tmp, 0, GEN_BUF };
+            pb_str(&b, "unconfined\n");
+            total = b.pos;
+            break;
+        }
         case PROC_FDINFO_ENTRY: {
             /* /proc/<pid>/fdinfo/<n>: pos, flags (octal), mnt_id */
             fut_task_t *ftask = fut_task_by_pid(n->pid);
@@ -1990,6 +2076,7 @@ static ssize_t procfs_file_write(struct fut_vnode *vnode, const void *buf,
         case PROC_SYS_SUID_DUMPABLE:
         case PROC_SYS_TAINTED:
         case PROC_SYS_VERSION:
+        case PROC_ATTR_CURRENT:   /* LSM label write — accepted silently */
             return (ssize_t)size;  /* accept silently */
 
         default:
@@ -2217,6 +2304,26 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0040555, PROC_SYS_DIR, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "cmdline")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_CMDLINE_GLOBAL,
+                                          0100444, PROC_CMDLINE_GLOBAL, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "swaps")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SWAPS,
+                                          0100444, PROC_SWAPS, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "devices")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_DEVICES,
+                                          0100444, PROC_DEVICES, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "misc")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_MISC_FILE,
+                                          0100444, PROC_MISC_FILE, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         /* Try numeric PID */
         uint64_t pid = parse_dec(name);
         if (pid != (uint64_t)-1 && pid > 0) {
@@ -2350,6 +2457,23 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
         if (STREQ(name, "net")) {
             *result = procfs_alloc_vnode(mnt, VN_DIR, PROC_INO_NET_DIR,
                                           0040555, PROC_NET_DIR, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "attr")) {
+            *result = procfs_alloc_vnode(mnt, VN_DIR, PROC_INO_PID_ATTR(pid),
+                                          0040555, PROC_ATTR_DIR, pid, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        return -ENOENT;
+    }
+
+    if (dn->kind == PROC_ATTR_DIR) {
+        /* /proc/<pid>/attr/{current,exec,prev,...} — LSM context files */
+        uint64_t pid = dn->pid;
+        if (STREQ(name, "current") || STREQ(name, "exec") || STREQ(name, "prev") ||
+            STREQ(name, "fscreate") || STREQ(name, "keycreate") || STREQ(name, "sockcreate")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_ATTR_CUR(pid),
+                                          0100644, PROC_ATTR_CURRENT, pid, 0);
             return *result ? 0 : -ENOMEM;
         }
         return -ENOENT;
@@ -2943,11 +3067,11 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
     uint64_t idx = *cookie;
 
     if (dn->kind == PROC_ROOT) {
-        /* Fixed entries: ., .., self, meminfo, version, uptime, cpuinfo, loadavg, mounts, sys */
+        /* Fixed entries: ., .., self, meminfo, version, uptime, cpuinfo, loadavg, mounts, sys, ... */
         static const char *fixed[] = {
             ".", "..", "self", "meminfo", "version", "uptime", "cpuinfo",
             "loadavg", "mounts", "sys", "stat", "filesystems", "vmstat", "net",
-            "interrupts"
+            "interrupts", "cmdline", "swaps", "devices", "misc"
         };
         static const uint8_t fixed_type[] = {
             FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
@@ -2957,7 +3081,8 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             FUT_VDIR_TYPE_DIR,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_DIR,
-            FUT_VDIR_TYPE_REG
+            FUT_VDIR_TYPE_REG,
+            FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG
         };
         static const uint64_t fixed_ino[] = {
             PROC_INO_ROOT, PROC_INO_ROOT,
@@ -2965,9 +3090,10 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             PROC_INO_CPUINFO, PROC_INO_LOADAVG, PROC_INO_MOUNTS, PROC_INO_SYS_DIR,
             PROC_INO_STAT_GLOBAL, PROC_INO_FILESYSTEMS,
             PROC_INO_VMSTAT, PROC_INO_NET_DIR,
-            PROC_INO_INTERRUPTS
+            PROC_INO_INTERRUPTS,
+            PROC_INO_CMDLINE_GLOBAL, PROC_INO_SWAPS, PROC_INO_DEVICES, PROC_INO_MISC_FILE
         };
-        if (idx < 15) {
+        if (idx < 19) {
             de->d_ino    = fixed_ino[idx];
             de->d_off    = idx + 1;
             de->d_type   = fixed_type[idx];
@@ -2982,15 +3108,15 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         }
 
         /*
-         * PID enumeration: after the 15 fixed entries, cookies encode
-         * "find first task with pid > (cookie - 15)".  After returning
-         * a PID entry we set cookie = 15 + that_pid + 1.
+         * PID enumeration: after the 19 fixed entries, cookies encode
+         * "find first task with pid > (cookie - 19)".  After returning
+         * a PID entry we set cookie = 19 + that_pid + 1.
          *
          * This is stable as long as PIDs are unique and monotonically
          * increasing; newly-forked tasks will appear if their PID is
          * greater than the last-seen PID.
          */
-        uint64_t min_pid = idx >= 15 ? idx - 15 : 0;  /* start scanning for pid > min_pid */
+        uint64_t min_pid = idx >= 19 ? idx - 19 : 0;  /* start scanning for pid > min_pid */
         fut_task_t *best = NULL;
         uint64_t   best_pid = (uint64_t)-1;
         fut_task_t *t = fut_task_list;
@@ -3022,7 +3148,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         if (nl > FUT_VFS_NAME_MAX) nl = FUT_VFS_NAME_MAX;
         __builtin_memcpy(de->d_name, pidname, nl);
         de->d_name[nl] = '\0';
-        *cookie = 15 + best->pid + 1;  /* resume after this pid */
+        *cookie = 19 + best->pid + 1;  /* resume after this pid */
         return 0;
     }
 
@@ -3031,7 +3157,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             ".", "..", "status", "maps", "cmdline", "environ", "fd", "exe", "cwd",
             "stat", "statm", "comm", "task", "limits", "io", "smaps",
             "oom_score", "oom_score_adj", "cgroup", "ns", "fdinfo",
-            "wchan", "mountinfo", "coredump_filter", "schedstat", "net"
+            "wchan", "mountinfo", "coredump_filter", "schedstat", "net", "attr"
         };
         static const uint8_t etypes[] = {
             FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
@@ -3045,10 +3171,10 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
             FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
-            FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_DIR
+            FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR
         };
         uint64_t pid = dn->pid;
-        if (idx < 26) {
+        if (idx < 27) {
             uint64_t ino;
             switch (idx) {
                 case 0:  ino = PROC_INO_PID_DIR(pid);        break;
@@ -3077,6 +3203,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                 case 23: ino = PROC_INO_PID_COREDUMP(pid);   break;
                 case 24: ino = PROC_INO_PID_SCHEDSTAT(pid);  break;
                 case 25: ino = PROC_INO_NET_DIR;              break;
+                case 26: ino = PROC_INO_PID_ATTR(pid);       break;
                 default: ino = 0; break;
             }
             de->d_ino    = ino;
@@ -3322,6 +3449,19 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                       PROC_INO_SYS_PTRACE_SCOPE };
         if (idx < 3) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
         return -ENOENT;
+    }
+
+    if (dn->kind == PROC_ATTR_DIR) {
+        static const char *e[] = { ".", "..", "current", "exec", "prev",
+                                   "fscreate", "keycreate", "sockcreate" };
+        static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG };
+        uint64_t pid = dn->pid;
+        if (idx >= 8) return -ENOENT;
+        uint64_t ino = (idx <= 1) ? PROC_INO_PID_ATTR(pid) : PROC_INO_PID_ATTR_CUR(pid);
+        SYS_DIR_ENTRY(e[idx], t[idx], ino);
     }
 
     if (dn->kind == PROC_NS_DIR) {

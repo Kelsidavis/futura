@@ -364,30 +364,22 @@ long sys_getsockname(int sockfd, void *addr, socklen_t *addrlen) {
         return -EBADF;
     }
 
-    /* Phase 2: Unix domain socket support
-     * Build sockaddr_un structure with socket's bound path */
+    /* Build sockaddr_un with socket's bound address.
+     * Use bound_path_len (not strnlen) — abstract paths start with '\0'. */
     struct sockaddr_un sock_addr;
-    memset(&sock_addr, 0, sizeof(sock_addr));
+    __builtin_memset(&sock_addr, 0, sizeof(sock_addr));
     sock_addr.sun_family = AF_UNIX;
 
-    /* Copy bound path if socket is bound */
-    if (socket->bound_path) {
-        size_t path_len = strnlen(socket->bound_path, sizeof(sock_addr.sun_path) - 1);
-
-        memcpy(sock_addr.sun_path, socket->bound_path, path_len);
-        sock_addr.sun_path[path_len] = '\0';
-
-        fut_printf("[GETSOCKNAME] getsockname(sockfd=%d) -> path='%s'\n",
-                   local_sockfd, socket->bound_path);
-    } else {
-        /* Unbound socket - return empty path */
-        sock_addr.sun_path[0] = '\0';
-        fut_printf("[GETSOCKNAME] getsockname(sockfd=%d) -> unbound (empty path)\n",
-                   local_sockfd);
+    size_t path_len = 0;
+    if (socket->bound_path && socket->bound_path_len > 0) {
+        path_len = socket->bound_path_len;
+        if (path_len > sizeof(sock_addr.sun_path))
+            path_len = sizeof(sock_addr.sun_path);
+        __builtin_memcpy(sock_addr.sun_path, socket->bound_path, path_len);
     }
 
-    /* Calculate actual address size */
-    socklen_t actual_len = sizeof(struct sockaddr_un);
+    /* Linux returns addrlen = sizeof(sun_family) + actual path bytes, not sizeof(sockaddr_un). */
+    socklen_t actual_len = (socklen_t)(2u + path_len);
 
     /* Copy as much as fits in user buffer */
     socklen_t copy_len = (len < actual_len) ? len : actual_len;
@@ -397,16 +389,11 @@ long sys_getsockname(int sockfd, void *addr, socklen_t *addrlen) {
         return -EFAULT;
     }
 
-    /* Update addrlen with actual size (may be larger than buffer) */
+    /* Update addrlen with actual size */
     if (getsockname_copy_to_user(local_addrlen, &actual_len, sizeof(socklen_t)) != 0) {
         fut_printf("[GETSOCKNAME] getsockname(sockfd=%d) -> EFAULT (copy addrlen failed)\n",
                    local_sockfd);
         return -EFAULT;
-    }
-
-    if (len < actual_len) {
-        fut_printf("[GETSOCKNAME] getsockname(sockfd=%d) -> 0 (truncated: %u < %u)\n",
-                   local_sockfd, len, actual_len);
     }
 
     return 0;

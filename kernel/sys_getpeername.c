@@ -305,48 +305,52 @@ long sys_getpeername(int sockfd, void *addr, socklen_t *addrlen) {
         return -EBADF;
     }
 
-    /* Check socket is connected */
-    if (socket->state != FUT_SOCK_CONNECTED) {
-        fut_printf("[GETPEERNAME] getpeername(sockfd=%d) -> ENOTCONN (socket not connected, state=%d)\n",
-                   local_sockfd, socket->state);
-        return -ENOTCONN;
+    /* Determine peer path and length based on socket type */
+    const char *peer_path = NULL;
+    size_t peer_path_len = 0;
+
+    if (socket->socket_type == SOCK_DGRAM) {
+        /* SOCK_DGRAM: peer is the address stored by connect() */
+        if (socket->dgram_peer_path_len == 0) {
+            fut_printf("[GETPEERNAME] getpeername(sockfd=%d) -> ENOTCONN (DGRAM not connected)\n",
+                       local_sockfd);
+            return -ENOTCONN;
+        }
+        peer_path = socket->dgram_peer_path;
+        peer_path_len = socket->dgram_peer_path_len;
+    } else {
+        /* SOCK_STREAM / SOCK_SEQPACKET: peer is the other end of the pair */
+        if (socket->state != FUT_SOCK_CONNECTED) {
+            fut_printf("[GETPEERNAME] getpeername(sockfd=%d) -> ENOTCONN (state=%d)\n",
+                       local_sockfd, socket->state);
+            return -ENOTCONN;
+        }
+        fut_socket_t *peer = socket->pair ? socket->pair->peer : NULL;
+        if (!peer) {
+            fut_printf("[GETPEERNAME] getpeername(sockfd=%d) -> ENOTCONN (no peer)\n", local_sockfd);
+            return -ENOTCONN;
+        }
+        /* Use bound_path_len — abstract paths start with '\0', strnlen would return 0 */
+        if (peer->bound_path && peer->bound_path_len > 0) {
+            peer_path = peer->bound_path;
+            peer_path_len = peer->bound_path_len;
+        }
     }
 
-    /* Get peer socket from connection pair */
-    fut_socket_t *peer = NULL;
-    if (socket->pair) {
-        peer = socket->pair->peer;
-    }
-
-    if (!peer) {
-        fut_printf("[GETPEERNAME] getpeername(sockfd=%d) -> ENOTCONN (no peer socket)\n", local_sockfd);
-        return -ENOTCONN;
-    }
-
-    /* Phase 2: Unix domain socket support
-     * Build sockaddr_un structure with peer's bound path */
+    /* Build sockaddr_un with peer address */
     struct sockaddr_un peer_addr;
-    memset(&peer_addr, 0, sizeof(peer_addr));
+    __builtin_memset(&peer_addr, 0, sizeof(peer_addr));
     peer_addr.sun_family = AF_UNIX;
 
-    /* Copy peer's bound path if available */
-    if (peer->bound_path) {
-        size_t path_len = strnlen(peer->bound_path, sizeof(peer_addr.sun_path) - 1);
-
-        memcpy(peer_addr.sun_path, peer->bound_path, path_len);
-        peer_addr.sun_path[path_len] = '\0';
-
-        fut_printf("[GETPEERNAME] getpeername(sockfd=%d) -> peer path='%s'\n",
-                   local_sockfd, peer->bound_path);
-    } else {
-        /* Peer not bound to a path (anonymous connection) - return empty path */
-        peer_addr.sun_path[0] = '\0';
-        fut_printf("[GETPEERNAME] getpeername(sockfd=%d) -> peer unbound (empty path)\n",
-                   local_sockfd);
+    if (peer_path && peer_path_len > 0) {
+        size_t copy_path = peer_path_len;
+        if (copy_path > sizeof(peer_addr.sun_path))
+            copy_path = sizeof(peer_addr.sun_path);
+        __builtin_memcpy(peer_addr.sun_path, peer_path, copy_path);
     }
 
-    /* Calculate actual address size */
-    socklen_t actual_len = sizeof(struct sockaddr_un);
+    /* Linux returns addrlen = sizeof(sun_family) + actual path bytes */
+    socklen_t actual_len = (socklen_t)(2u + peer_path_len);
 
     /* Copy as much as fits in user buffer */
     socklen_t copy_len = (len < actual_len) ? len : actual_len;
@@ -356,16 +360,11 @@ long sys_getpeername(int sockfd, void *addr, socklen_t *addrlen) {
         return -EFAULT;
     }
 
-    /* Update addrlen with actual size (may be larger than buffer) */
+    /* Update addrlen with actual size */
     if (getpeername_copy_to_user(local_addrlen, &actual_len, sizeof(socklen_t)) != 0) {
         fut_printf("[GETPEERNAME] getpeername(sockfd=%d) -> EFAULT (copy addrlen failed)\n",
                    local_sockfd);
         return -EFAULT;
-    }
-
-    if (len < actual_len) {
-        fut_printf("[GETPEERNAME] getpeername(sockfd=%d) -> 0 (truncated: %u < %u)\n",
-                   local_sockfd, len, actual_len);
     }
 
     return 0;

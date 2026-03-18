@@ -14281,6 +14281,78 @@ static void test_unix_dgram_connect(void) {
     fut_test_pass();
 }
 
+/* ============================================================
+ * Test 313: getsockname/getpeername return correct addrlen for abstract sockets
+ *
+ * Abstract AF_UNIX paths start with '\0', so strnlen() returns 0 — wrong.
+ * Linux returns addrlen = 2 (sun_family) + path_len (including leading '\0').
+ * getpeername on a connected SOCK_DGRAM socket returns the peer's abstract addr.
+ * ============================================================ */
+static void test_getsockname_getpeername_abstract(void) {
+    fut_printf("[MISC-TEST] Test 313: getsockname/getpeername abstract socket addrlen\n");
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_bind(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_connect(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_getsockname(int sockfd, void *addr, unsigned int *addrlen);
+    extern long sys_getpeername(int sockfd, void *addr, unsigned int *addrlen);
+
+    /* Abstract address: \0gsn313 (7 bytes including leading NUL) */
+    struct { unsigned short fam; char path[8]; } saddr, caddr;
+
+    saddr.fam = 1;
+    saddr.path[0] = '\0'; saddr.path[1] = 'g'; saddr.path[2] = 's';
+    saddr.path[3] = 'n'; saddr.path[4] = '3'; saddr.path[5] = '1';
+    saddr.path[6] = '3'; saddr.path[7] = '\0';
+    unsigned int saddr_len = 2u + 7u;
+
+    caddr.fam = 1;
+    caddr.path[0] = '\0'; caddr.path[1] = 'g'; caddr.path[2] = 'p';
+    caddr.path[3] = 'n'; caddr.path[4] = '3'; caddr.path[5] = '1';
+    caddr.path[6] = '3'; caddr.path[7] = '\0';
+    unsigned int caddr_len = 2u + 7u;
+
+    long srv = sys_socket(1 /*AF_UNIX*/, 2 /*SOCK_DGRAM*/, 0);
+    if (srv < 0) { fut_printf("[MISC-TEST] ✗ socket(srv) failed: %ld\n", srv); fut_test_fail(313); return; }
+    long cli = sys_socket(1 /*AF_UNIX*/, 2 /*SOCK_DGRAM*/, 0);
+    if (cli < 0) { sys_close((int)srv); fut_printf("[MISC-TEST] ✗ socket(cli) failed: %ld\n", cli); fut_test_fail(313); return; }
+
+    long r = sys_bind((int)srv, &saddr, saddr_len);
+    if (r != 0) { fut_printf("[MISC-TEST] ✗ bind(srv) failed: %ld\n", r); sys_close((int)srv); sys_close((int)cli); fut_test_fail(313); return; }
+
+    r = sys_bind((int)cli, &caddr, caddr_len);
+    if (r != 0) { fut_printf("[MISC-TEST] ✗ bind(cli) failed: %ld\n", r); sys_close((int)srv); sys_close((int)cli); fut_test_fail(313); return; }
+
+    /* getsockname on server: should return saddr_len=9 and \0gsn313 */
+    struct { unsigned short fam; char path[16]; } out;
+    unsigned int out_len = (unsigned int)sizeof(out);
+    r = sys_getsockname((int)srv, &out, &out_len);
+    if (r != 0) { fut_printf("[MISC-TEST] ✗ getsockname(srv) failed: %ld\n", r); sys_close((int)srv); sys_close((int)cli); fut_test_fail(313); return; }
+    if (out_len != saddr_len) { fut_printf("[MISC-TEST] ✗ getsockname addrlen=%u want %u\n", out_len, saddr_len); sys_close((int)srv); sys_close((int)cli); fut_test_fail(313); return; }
+    if (out.fam != 1 || out.path[0] != '\0' || out.path[1] != 'g' || out.path[6] != '3') {
+        fut_printf("[MISC-TEST] ✗ getsockname path mismatch\n");
+        sys_close((int)srv); sys_close((int)cli); fut_test_fail(313); return;
+    }
+
+    /* connect client to server, then getpeername should return server's abstract addr */
+    r = sys_connect((int)cli, &saddr, saddr_len);
+    if (r != 0) { fut_printf("[MISC-TEST] ✗ connect failed: %ld\n", r); sys_close((int)srv); sys_close((int)cli); fut_test_fail(313); return; }
+
+    struct { unsigned short fam; char path[16]; } peer;
+    unsigned int peer_len = (unsigned int)sizeof(peer);
+    r = sys_getpeername((int)cli, &peer, &peer_len);
+    if (r != 0) { fut_printf("[MISC-TEST] ✗ getpeername failed: %ld\n", r); sys_close((int)srv); sys_close((int)cli); fut_test_fail(313); return; }
+    if (peer_len != saddr_len) { fut_printf("[MISC-TEST] ✗ getpeername addrlen=%u want %u\n", peer_len, saddr_len); sys_close((int)srv); sys_close((int)cli); fut_test_fail(313); return; }
+    if (peer.fam != 1 || peer.path[0] != '\0' || peer.path[1] != 'g' || peer.path[3] != 'n') {
+        fut_printf("[MISC-TEST] ✗ getpeername path mismatch\n");
+        sys_close((int)srv); sys_close((int)cli); fut_test_fail(313); return;
+    }
+
+    sys_close((int)srv);
+    sys_close((int)cli);
+    fut_printf("[MISC-TEST] ✓ getsockname/getpeername: correct addrlen and abstract path for DGRAM\n");
+    fut_test_pass();
+}
+
 static void test_sendmmsg_recvmmsg(void) {
     fut_printf("[MISC-TEST] Test 310: sendmmsg/recvmmsg multi-message batch\n");
     extern long sys_socketpair(int domain, int type, int protocol, int *sv);
@@ -14806,6 +14878,7 @@ void fut_misc_test_thread(void *arg) {
     test_sendmmsg_recvmmsg();            /* Test 310: sendmmsg/recvmmsg multi-message batch */
     test_futex_wait_bitset_abs_timeout(); /* Test 311: FUTEX_WAIT_BITSET absolute timeout */
     test_unix_dgram_connect();           /* Test 312: SOCK_DGRAM connect() sets default peer */
+    test_getsockname_getpeername_abstract(); /* Test 313: getsockname/getpeername abstract addrlen */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

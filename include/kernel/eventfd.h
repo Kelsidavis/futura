@@ -12,6 +12,7 @@
 #include <stdint.h>
 
 struct fut_file;
+struct fut_waitq;
 
 /**
  * fut_eventfd_poll - Query readiness for an eventfd file descriptor.
@@ -59,3 +60,25 @@ bool fut_signalfd_poll(struct fut_file *file, uint32_t requested, uint32_t *read
  * @return true if @file refers to a pipe (read or write end), false otherwise.
  */
 bool fut_pipe_poll(struct fut_file *file, uint32_t requested, uint32_t *ready_out);
+
+/* ---- fdinfo helpers ---------------------------------------------------- */
+
+/** Return eventfd counter, or -1 if @file is not an eventfd. */
+int64_t fut_eventfd_get_count(struct fut_file *file);
+
+/**
+ * Fill timerfd metadata.  Returns 0 on success, -1 if not a timerfd.
+ * NULL out-pointers are silently ignored.
+ */
+int fut_timerfd_get_info(struct fut_file *file,
+                         int *clockid_out, uint64_t *ticks_out,
+                         uint64_t *interval_ms_out);
+
+/** Return signalfd sigmask, or 0 if @file is not a signalfd. */
+uint64_t fut_signalfd_get_sigmask(struct fut_file *file);
+
+/**
+ * Set the epoll notify waitqueue on a timerfd file.
+ * No-op if @file is not a timerfd.
+ */
+void fut_timerfd_set_epoll_notify(struct fut_file *file, struct fut_waitq *wq);

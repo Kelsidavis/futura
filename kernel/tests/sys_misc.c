@@ -18010,6 +18010,64 @@ static void test_swapon_iopl_eperm(void) {
 }
 
 /* ============================================================
+ * Test 387: /proc/self/fdinfo/<n> contains "eventfd-count:" for eventfd
+ * ============================================================ */
+static void test_proc_fdinfo_eventfd(void) {
+    fut_printf("[MISC-TEST] Test 387: /proc/self/fdinfo/<n> has eventfd-count\n");
+    extern long sys_eventfd2(unsigned int initval, int flags);
+
+    long efd = sys_eventfd2(42, 0);
+    if (efd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 387: eventfd2 failed: %ld\n", efd);
+        fut_test_fail(387); return;
+    }
+
+    /* Build /proc/self/fdinfo/<n> path */
+    char path[64];
+    path[0] = '/'; path[1] = 'p'; path[2] = 'r'; path[3] = 'o'; path[4] = 'c';
+    path[5] = '/'; path[6] = 's'; path[7] = 'e'; path[8] = 'l'; path[9] = 'f';
+    path[10] = '/'; path[11] = 'f'; path[12] = 'd'; path[13] = 'i';
+    path[14] = 'n'; path[15] = 'f'; path[16] = 'o'; path[17] = '/';
+    /* append fd number */
+    int n = (int)efd;
+    if (n >= 10) { path[18] = (char)('0' + n/10); path[19] = (char)('0' + n%10); path[20] = '\0'; }
+    else         { path[18] = (char)('0' + n);      path[19] = '\0'; }
+
+    int info_fd = fut_vfs_open(path, O_RDONLY, 0);
+    if (info_fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 387: open %s failed: %d\n", path, info_fd);
+        fut_vfs_close((int)efd);
+        fut_test_fail(387); return;
+    }
+    char buf[256];
+    long nr = fut_vfs_read(info_fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(info_fd);
+    fut_vfs_close((int)efd);
+
+    if (nr <= 0) {
+        fut_printf("[MISC-TEST] ✗ Test 387: read fdinfo returned %ld\n", nr);
+        fut_test_fail(387); return;
+    }
+    buf[nr] = '\0';
+    /* Check for "eventfd-count:" */
+    const char *needle = "eventfd-count:";
+    int found = 0;
+    for (long i = 0; i + 14 <= nr; i++) {
+        int match = 1;
+        for (int j = 0; j < 14; j++) {
+            if (buf[i+j] != needle[j]) { match = 0; break; }
+        }
+        if (match) { found = 1; break; }
+    }
+    if (!found) {
+        fut_printf("[MISC-TEST] ✗ Test 387: 'eventfd-count:' not in fdinfo: '%s'\n", buf);
+        fut_test_fail(387); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 387: /proc/self/fdinfo eventfd-count present\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test 367: /proc/self/net/unix readable (same content as /proc/net/unix)
  * ============================================================ */
 static void test_proc_pid_net_unix(void) {
@@ -18595,6 +18653,7 @@ void fut_misc_test_thread(void *arg) {
     test_proc_fd_pipe_symlink();         /* Test 384: /proc/self/fd/<n> shows pipe:[ino] */
     test_getdents_legacy();              /* Test 385: getdents(78) lists directory */
     test_swapon_iopl_eperm();            /* Test 386: swapon/swapoff/iopl/ioperm -> EPERM */
+    test_proc_fdinfo_eventfd();          /* Test 387: /proc/self/fdinfo/<n> has eventfd-count */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

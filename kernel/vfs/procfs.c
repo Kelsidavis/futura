@@ -31,6 +31,7 @@
 #include <kernel/fut_lock.h>
 #include <kernel/vfs_credentials.h>
 #include <kernel/fut_socket.h>
+#include <kernel/eventfd.h>
 #include <kernel/errno.h>
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
@@ -2007,7 +2008,7 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             total = gen_zoneinfo(tmp, GEN_BUF);
             break;
         case PROC_FDINFO_ENTRY: {
-            /* /proc/<pid>/fdinfo/<n>: pos, flags (octal), mnt_id */
+            /* /proc/<pid>/fdinfo/<n>: pos, flags, mnt_id, type-specific fields */
             fut_task_t *ftask = fut_task_by_pid(n->pid);
             if (!ftask || n->fd < 0 || n->fd >= ftask->max_fds || !ftask->fd_table[n->fd]) {
                 total = 0; break;
@@ -2017,6 +2018,41 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             pb_str(&b, "pos:\t");  pb_u64(&b, file->offset); pb_char(&b, '\n');
             pb_str(&b, "flags:\t0"); pb_oct(&b, (uint32_t)file->flags); pb_char(&b, '\n');
             pb_str(&b, "mnt_id:\t25\n");
+            /* eventfd: eventfd-count */
+            int64_t ev_count = fut_eventfd_get_count(file);
+            if (ev_count >= 0) {
+                pb_str(&b, "eventfd-count:\t");
+                pb_u64(&b, (uint64_t)ev_count);
+                pb_char(&b, '\n');
+            }
+            /* timerfd: clockid, ticks, settime flags, it_value, it_interval */
+            int tfd_clockid = 0;
+            uint64_t tfd_ticks = 0, tfd_interval_ms = 0;
+            if (fut_timerfd_get_info(file, &tfd_clockid, &tfd_ticks,
+                                     &tfd_interval_ms) == 0) {
+                pb_str(&b, "clockid:\t"); pb_u64(&b, (uint64_t)tfd_clockid); pb_char(&b, '\n');
+                pb_str(&b, "ticks:\t"); pb_u64(&b, tfd_ticks); pb_char(&b, '\n');
+                pb_str(&b, "settime flags:\t0\n");
+                /* it_value / it_interval in sec nsec format */
+                uint64_t val_sec  = tfd_ticks;       /* approximate */
+                uint64_t int_sec  = tfd_interval_ms / 1000;
+                uint64_t int_nsec = (tfd_interval_ms % 1000) * 1000000ULL;
+                pb_str(&b, "it_value:\t");  pb_u64(&b, val_sec);  pb_str(&b, " 0\n");
+                pb_str(&b, "it_interval:\t"); pb_u64(&b, int_sec); pb_char(&b, ' ');
+                pb_u64(&b, int_nsec); pb_char(&b, '\n');
+            }
+            /* signalfd: sigmask (16-char zero-padded hex) */
+            {
+                uint32_t dummy = 0;
+                if (fut_signalfd_poll(file, 0, &dummy)) {
+                    uint64_t sfd_mask = fut_signalfd_get_sigmask(file);
+                    pb_str(&b, "sigmask:\t");
+                    static const char hx[] = "0123456789abcdef";
+                    for (int si = 60; si >= 0; si -= 4)
+                        pb_char(&b, hx[(sfd_mask >> si) & 0xf]);
+                    pb_char(&b, '\n');
+                }
+            }
             total = b.pos;
             break;
         }

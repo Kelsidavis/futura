@@ -1781,3 +1781,52 @@ void fut_timerfd_set_epoll_notify(struct fut_file *file, fut_waitq_t *wq) {
     if (tfile->ctx)
         tfile->ctx->epoll_notify = wq;
 }
+
+/* ---- fdinfo helpers (used by procfs) ----------------------------------- */
+
+/**
+ * fut_eventfd_get_count() - Read eventfd counter for /proc/<pid>/fdinfo/<n>.
+ * Returns the current counter value, or -1 if file is not an eventfd.
+ */
+int64_t fut_eventfd_get_count(struct fut_file *file) {
+    if (!file || file->chr_ops != &eventfd_fops || !file->chr_private)
+        return -1;
+    struct eventfd_file *efile = (struct eventfd_file *)file->chr_private;
+    if (!efile->ctx)
+        return -1;
+    return (int64_t)efile->ctx->counter;
+}
+
+/**
+ * fut_timerfd_get_info() - Retrieve timerfd metadata for fdinfo.
+ * @clockid_out: filled with the clock ID (CLOCK_MONOTONIC / CLOCK_REALTIME).
+ * @ticks_out:   filled with expiration count since last read.
+ * @interval_ms_out: filled with repeat interval in ms (0 = one-shot).
+ * Returns 0 on success, -1 if file is not a timerfd.
+ */
+int fut_timerfd_get_info(struct fut_file *file,
+                         int *clockid_out, uint64_t *ticks_out,
+                         uint64_t *interval_ms_out) {
+    if (!file || file->chr_ops != &timerfd_fops || !file->chr_private)
+        return -1;
+    struct timerfd_file *tfile = (struct timerfd_file *)file->chr_private;
+    if (!tfile->ctx)
+        return -1;
+    if (clockid_out)     *clockid_out     = tfile->ctx->clockid;
+    if (ticks_out)       *ticks_out       = tfile->ctx->counter;
+    if (interval_ms_out) *interval_ms_out = tfile->ctx->interval_ms;
+    return 0;
+}
+
+/**
+ * fut_signalfd_get_sigmask() - Read signalfd sigmask for fdinfo.
+ * Returns the signal mask as a 64-bit word, or 0 if not a signalfd.
+ */
+uint64_t fut_signalfd_get_sigmask(struct fut_file *file) {
+    if (!file || file->chr_ops != &signalfd_fops || !file->chr_private)
+        return 0;
+    struct signalfd_file *sfile = (struct signalfd_file *)file->chr_private;
+    if (!sfile->ctx)
+        return 0;
+    return sfile->ctx->sigmask;
+}

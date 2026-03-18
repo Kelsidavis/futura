@@ -13383,6 +13383,130 @@ static void test_lseek_seek_empty(void) {
     fut_test_pass();
 }
 
+/* -----------------------------------------------------------------------
+ * Tests 297-299: getsockopt SO_ACCEPTCONN, SO_PROTOCOL, SO_DOMAIN
+ * ----------------------------------------------------------------------- */
+
+/*
+ * Test 297: SO_ACCEPTCONN reports 0 for non-listening socket, 1 after listen().
+ */
+static void test_getsockopt_acceptconn(void) {
+    fut_printf("[MISC-TEST] Test 297: getsockopt SO_ACCEPTCONN\n");
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_getsockopt(int sockfd, int level, int optname,
+                               void *optval, unsigned int *optlen);
+    extern long sys_listen(int sockfd, int backlog);
+
+    long s = sys_socket(1 /*AF_UNIX*/, 1 /*SOCK_STREAM*/, 0);
+    if (s < 0) {
+        fut_printf("[MISC-TEST] ✗ socket: %ld\n", s);
+        fut_test_fail(1);
+        return;
+    }
+
+    int val = -1;
+    unsigned int vlen = sizeof(val);
+    /* Before listen: SO_ACCEPTCONN should be 0 */
+    long r = sys_getsockopt((int)s, 1 /*SOL_SOCKET*/, 30 /*SO_ACCEPTCONN*/,
+                            &val, &vlen);
+    if (r != 0 || val != 0) {
+        fut_printf("[MISC-TEST] ✗ SO_ACCEPTCONN before listen: r=%ld val=%d (want 0)\n", r, val);
+        sys_close((int)s);
+        fut_test_fail(1);
+        return;
+    }
+
+    /* Bind a path and listen */
+    const char *spath = "/tmp/so_acceptconn_297.sock";
+    struct { unsigned short fam; char path[108]; } addr;
+    addr.fam = 1;
+    size_t plen = 0; while (spath[plen]) plen++;
+    for (size_t i = 0; i < plen + 1; i++) addr.path[i] = spath[i];
+    extern long sys_bind(int sockfd, const void *addr, unsigned int addrlen);
+    sys_bind((int)s, &addr, (unsigned int)(2 + plen + 1));
+    sys_listen((int)s, 5);
+
+    val = -1; vlen = sizeof(val);
+    r = sys_getsockopt((int)s, 1 /*SOL_SOCKET*/, 30 /*SO_ACCEPTCONN*/,
+                       &val, &vlen);
+    if (r != 0 || val != 1) {
+        fut_printf("[MISC-TEST] ✗ SO_ACCEPTCONN after listen: r=%ld val=%d (want 1)\n", r, val);
+        sys_close((int)s);
+        fut_vfs_unlink(spath);
+        fut_test_fail(1);
+        return;
+    }
+
+    sys_close((int)s);
+    fut_vfs_unlink(spath);
+    fut_printf("[MISC-TEST] ✓ SO_ACCEPTCONN: 0 before listen, 1 after listen\n");
+    fut_test_pass();
+}
+
+/*
+ * Test 298: SO_PROTOCOL returns 0 for AF_UNIX socket.
+ */
+static void test_getsockopt_protocol(void) {
+    fut_printf("[MISC-TEST] Test 298: getsockopt SO_PROTOCOL\n");
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_getsockopt(int sockfd, int level, int optname,
+                               void *optval, unsigned int *optlen);
+
+    long s = sys_socket(1 /*AF_UNIX*/, 1 /*SOCK_STREAM*/, 0);
+    if (s < 0) {
+        fut_printf("[MISC-TEST] ✗ socket: %ld\n", s);
+        fut_test_fail(1);
+        return;
+    }
+
+    int proto = -1;
+    unsigned int plen = sizeof(proto);
+    long r = sys_getsockopt((int)s, 1 /*SOL_SOCKET*/, 38 /*SO_PROTOCOL*/,
+                            &proto, &plen);
+    if (r != 0 || proto != 0) {
+        fut_printf("[MISC-TEST] ✗ SO_PROTOCOL: r=%ld proto=%d (want 0)\n", r, proto);
+        sys_close((int)s);
+        fut_test_fail(1);
+        return;
+    }
+
+    sys_close((int)s);
+    fut_printf("[MISC-TEST] ✓ SO_PROTOCOL: 0 for AF_UNIX\n");
+    fut_test_pass();
+}
+
+/*
+ * Test 299: SO_DOMAIN returns AF_UNIX (1) for an AF_UNIX socket.
+ */
+static void test_getsockopt_domain(void) {
+    fut_printf("[MISC-TEST] Test 299: getsockopt SO_DOMAIN\n");
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_getsockopt(int sockfd, int level, int optname,
+                               void *optval, unsigned int *optlen);
+
+    long s = sys_socket(1 /*AF_UNIX*/, 1 /*SOCK_STREAM*/, 0);
+    if (s < 0) {
+        fut_printf("[MISC-TEST] ✗ socket: %ld\n", s);
+        fut_test_fail(1);
+        return;
+    }
+
+    int dom = -1;
+    unsigned int dlen = sizeof(dom);
+    long r = sys_getsockopt((int)s, 1 /*SOL_SOCKET*/, 39 /*SO_DOMAIN*/,
+                            &dom, &dlen);
+    if (r != 0 || dom != 1 /*AF_UNIX*/) {
+        fut_printf("[MISC-TEST] ✗ SO_DOMAIN: r=%ld dom=%d (want 1/AF_UNIX)\n", r, dom);
+        sys_close((int)s);
+        fut_test_fail(1);
+        return;
+    }
+
+    sys_close((int)s);
+    fut_printf("[MISC-TEST] ✓ SO_DOMAIN: AF_UNIX=1\n");
+    fut_test_pass();
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -13686,6 +13810,9 @@ void fut_misc_test_thread(void *arg) {
     test_lseek_seek_hole();              /* Test 294: lseek SEEK_HOLE returns file_size (implicit EOF hole) */
     test_lseek_seek_enxio();             /* Test 295: SEEK_DATA/SEEK_HOLE past EOF → ENXIO */
     test_lseek_seek_empty();             /* Test 296: SEEK_DATA/SEEK_HOLE on empty file */
+    test_getsockopt_acceptconn();        /* Test 297: SO_ACCEPTCONN: 0 before listen, 1 after */
+    test_getsockopt_protocol();          /* Test 298: SO_PROTOCOL: 0 for AF_UNIX */
+    test_getsockopt_domain();            /* Test 299: SO_DOMAIN: AF_UNIX=1 */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

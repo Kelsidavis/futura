@@ -15847,6 +15847,79 @@ static void test_proc_net_unix(void) {
     fut_test_pass();
 }
 
+/* ============================================================
+ * Test 333: EPOLLRDHUP fires on peer shutdown(SHUT_WR)
+ *
+ * Verifies that when one end of a connected AF_UNIX socket pair
+ * calls shutdown(SHUT_WR), epoll_wait on the peer end returns
+ * EPOLLRDHUP (peer half-closed the write side).
+ * ============================================================ */
+static void test_epollrdhup_peer_shutdown(void) {
+    fut_printf("[MISC-TEST] Test 333: EPOLLRDHUP on peer shutdown(SHUT_WR)\n");
+
+    extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+    extern long sys_epoll_create1(int flags);
+    extern long sys_epoll_ctl(int epfd, int op, int fd, void *event);
+    extern long sys_epoll_wait(int epfd, void *events, int maxevents, int timeout);
+    extern long sys_shutdown(int sockfd, int how);
+    extern long sys_close(int fd);
+
+    int sv[2] = { -1, -1 };
+    long r = sys_socketpair(1 /*AF_UNIX*/, 1 /*SOCK_STREAM*/, 0, sv);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 333: socketpair failed: %ld\n", r);
+        fut_test_fail(333); return;
+    }
+
+    long epfd = sys_epoll_create1(0);
+    if (epfd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 333: epoll_create1 failed: %ld\n", epfd);
+        sys_close(sv[0]); sys_close(sv[1]); fut_test_fail(333); return;
+    }
+
+    /* Watch sv[1] for EPOLLIN | EPOLLRDHUP */
+    struct { uint32_t events; uint64_t data; } __attribute__((packed)) ev;
+    ev.events = 0x1 /*EPOLLIN*/ | 0x2000 /*EPOLLRDHUP*/;
+    ev.data   = (uint64_t)sv[1];
+    r = sys_epoll_ctl((int)epfd, 1 /*EPOLL_CTL_ADD*/, sv[1], &ev);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 333: epoll_ctl failed: %ld\n", r);
+        sys_close((int)epfd); sys_close(sv[0]); sys_close(sv[1]);
+        fut_test_fail(333); return;
+    }
+
+    /* Peer half-closes its write side: sv[1] should see EPOLLRDHUP */
+    r = sys_shutdown(sv[0], 1 /*SHUT_WR*/);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 333: shutdown(SHUT_WR) failed: %ld\n", r);
+        sys_close((int)epfd); sys_close(sv[0]); sys_close(sv[1]);
+        fut_test_fail(333); return;
+    }
+
+    /* epoll_wait should return immediately with EPOLLRDHUP */
+    struct { uint32_t events; uint64_t data; } __attribute__((packed)) out;
+    out.events = 0; out.data = 0;
+    long n = sys_epoll_wait((int)epfd, &out, 1, 100 /*ms timeout*/);
+    if (n != 1) {
+        fut_printf("[MISC-TEST] ✗ Test 333: epoll_wait returned %ld (expected 1)\n", n);
+        sys_close((int)epfd); sys_close(sv[0]); sys_close(sv[1]);
+        fut_test_fail(333); return;
+    }
+    if (!(out.events & 0x2000 /*EPOLLRDHUP*/)) {
+        fut_printf("[MISC-TEST] ✗ Test 333: EPOLLRDHUP not in events: 0x%x\n",
+                   (unsigned)out.events);
+        sys_close((int)epfd); sys_close(sv[0]); sys_close(sv[1]);
+        fut_test_fail(333); return;
+    }
+
+    sys_close((int)epfd);
+    sys_close(sv[0]);
+    sys_close(sv[1]);
+    fut_printf("[MISC-TEST] ✓ Test 333: EPOLLRDHUP fired on peer SHUT_WR (events=0x%x)\n",
+               (unsigned)out.events);
+    fut_test_pass();
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -16187,6 +16260,7 @@ void fut_misc_test_thread(void *arg) {
     test_sendfile_socket();              /* Test 330: sendfile(socket, file, ...) delivers data via socket */
     test_linkat_empty_path();            /* Test 331: linkat AT_EMPTY_PATH promotes O_TMPFILE to named file */
     test_proc_net_unix();                /* Test 332: /proc/net/unix lists bound AF_UNIX sockets */
+    test_epollrdhup_peer_shutdown();     /* Test 333: EPOLLRDHUP fires on peer shutdown(SHUT_WR) */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

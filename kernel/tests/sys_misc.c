@@ -6690,50 +6690,44 @@ extern long sys_mremap(void *old_address, size_t old_size, size_t new_size,
                        int flags, void *new_address);
 
 static void test_mremap_shrink(void) {
-    fut_printf("[MISC-TEST] Test 140: mremap shrink memfd-backed mapping\n");
-    extern long sys_memfd_create(const char *uname, unsigned int flags);
-    extern long sys_ftruncate(int fd, uint64_t length);
-    extern long sys_close(int fd);
+    fut_printf("[MISC-TEST] Test 140: mremap shrink anonymous mapping\n");
 
-    /* Create a 8KB memfd */
-    long mfd = sys_memfd_create("mremap_test", 0);
-    if (mfd < 0) {
-        fut_printf("[MISC-TEST] ✗ memfd_create: %ld\n", mfd);
-        fut_test_fail(140);
-        return;
-    }
-    long ret = sys_ftruncate((int)mfd, 8192);
-    if (ret != 0) {
-        fut_printf("[MISC-TEST] ✗ ftruncate: %ld\n", ret);
-        sys_close((int)mfd);
-        fut_test_fail(140);
-        return;
-    }
-
-    /* Map 8KB MAP_SHARED */
+    /* MAP_ANONYMOUS|MAP_PRIVATE = 0x22 */
     long maddr = sys_mmap(NULL, 8192, 3 /* PROT_READ|PROT_WRITE */,
-                          0x01 /* MAP_SHARED */, (int)mfd, 0);
+                          0x22, -1, 0);
     if (maddr < 0) {
         fut_printf("[MISC-TEST] ✗ mmap for mremap: %ld\n", maddr);
-        sys_close((int)mfd);
         fut_test_fail(140);
         return;
     }
     void *addr = (void *)(uintptr_t)maddr;
 
-    /* Shrink to 4KB — same address, flags=0 (no MREMAP_MAYMOVE) */
+    /* Write sentinel to first byte */
+    volatile uint8_t *p = (volatile uint8_t *)addr;
+    p[0] = 0xAB;
+
+    /* Shrink to 4KB — same address, flags=0 (no MREMAP_MAYMOVE needed) */
     long naddr = sys_mremap(addr, 8192, 4096, 0, NULL);
     if (naddr < 0) {
         fut_printf("[MISC-TEST] ✗ mremap shrink: got %ld\n", naddr);
         sys_munmap(addr, 8192);
-        sys_close((int)mfd);
+        fut_test_fail(140);
+        return;
+    }
+
+    /* Sentinel should still be there after shrink */
+    volatile uint8_t *q = (volatile uint8_t *)(uintptr_t)naddr;
+    if (q[0] != 0xAB) {
+        fut_printf("[MISC-TEST] ✗ mremap shrink: data corrupted (got 0x%02x)\n",
+                   (unsigned)q[0]);
+        sys_munmap((void *)(uintptr_t)naddr, 4096);
         fut_test_fail(140);
         return;
     }
 
     sys_munmap((void *)(uintptr_t)naddr, 4096);
-    sys_close((int)mfd);
-    fut_printf("[MISC-TEST] ✓ mremap: 8KB→4KB shrink returned 0x%lx\n", naddr);
+    fut_printf("[MISC-TEST] ✓ mremap: 8KB→4KB shrink, sentinel at 0x%lx preserved\n",
+               naddr);
     fut_test_pass();
 }
 

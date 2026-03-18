@@ -150,6 +150,10 @@ long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset) 
 
         fut_mm_t *mm = fut_task_get_mm(task);
         if (!mm) {
+            /* Fall back to kernel_mm for kernel threads (same as fut_mm_current()) */
+            mm = fut_mm_current();
+        }
+        if (!mm) {
             return -ENOMEM;
         }
 

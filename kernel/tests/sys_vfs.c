@@ -42,6 +42,8 @@
 #define VFS_TEST_INOTIFY_CLOSE   16
 #define VFS_TEST_INOTIFY_ACCESS  17
 #define VFS_TEST_INOTIFY_MODIFY  18
+#define VFS_TEST_INOTIFY_FTRUNC  19
+#define VFS_TEST_INOTIFY_UTIMENS 20
 
 /* Use kernel-level VFS functions (no copy_from_user) */
 #define sys_mkdir(path, mode)           fut_vfs_mkdir(path, (uint32_t)(mode))
@@ -54,6 +56,8 @@
 extern long sys_inotify_init1(int flags);
 extern long sys_inotify_add_watch(int fd, const char *pathname, uint32_t mask);
 extern long sys_inotify_rm_watch(int fd, int wd);
+extern long sys_ftruncate(int fd, uint64_t length);
+extern long sys_utimensat(int dirfd, const char *pathname, const void *times, int flags);
 extern long sys_renameat2(int olddirfd, const char *oldpath,
                           int newdirfd, const char *newpath,
                           unsigned int flags);
@@ -1345,6 +1349,136 @@ static void test_inotify_modify(void) {
     fut_test_pass();
 }
 
+static void test_inotify_ftruncate(void) {
+    fut_printf("[VFS-TEST] Test 19: inotify IN_MODIFY event on ftruncate\n");
+
+    const char *watch_dir = "/";
+    const char *filepath  = "/ftrunc_inotify.txt";
+
+    /* Create file with some content */
+    fut_vfs_unlink(filepath);
+    int fd = fut_vfs_open(filepath, O_CREAT | O_RDWR, 0644);
+    if (fd < 0) {
+        fut_printf("[VFS-TEST] ✗ inotify_ftruncate: create failed %d\n", fd);
+        fut_test_fail(VFS_TEST_INOTIFY_FTRUNC);
+        return;
+    }
+    fut_vfs_write(fd, "hello world", 11);
+
+    /* Set up inotify watch before truncate */
+    int ifd = (int)sys_inotify_init1(IN_NONBLOCK);
+    if (ifd < 0) {
+        fut_vfs_close(fd);
+        fut_vfs_unlink(filepath);
+        fut_printf("[VFS-TEST] ✗ inotify_ftruncate: inotify_init1 failed %d\n", ifd);
+        fut_test_fail(VFS_TEST_INOTIFY_FTRUNC);
+        return;
+    }
+    int wd = (int)sys_inotify_add_watch(ifd, watch_dir, IN_MODIFY);
+    if (wd < 0) {
+        fut_vfs_close(ifd);
+        fut_vfs_close(fd);
+        fut_vfs_unlink(filepath);
+        fut_printf("[VFS-TEST] ✗ inotify_ftruncate: add_watch failed %d\n", wd);
+        fut_test_fail(VFS_TEST_INOTIFY_FTRUNC);
+        return;
+    }
+
+    /* Truncate should fire IN_MODIFY */
+    long ret = sys_ftruncate(fd, 5);
+    fut_vfs_close(fd);
+
+    if (ret != 0) {
+        fut_vfs_close(ifd);
+        fut_vfs_unlink(filepath);
+        fut_printf("[VFS-TEST] ✗ inotify_ftruncate: ftruncate returned %ld\n", ret);
+        fut_test_fail(VFS_TEST_INOTIFY_FTRUNC);
+        return;
+    }
+
+    char buf[sizeof(struct test_inotify_event) + 64];
+    long n = fut_vfs_read(ifd, buf, sizeof(buf));
+    fut_vfs_close(ifd);
+    fut_vfs_unlink(filepath);
+
+    if (n < (long)sizeof(struct test_inotify_event)) {
+        fut_printf("[VFS-TEST] ✗ inotify_ftruncate: no event (read=%ld)\n", n);
+        fut_test_fail(VFS_TEST_INOTIFY_FTRUNC);
+        return;
+    }
+    struct test_inotify_event *ev = (struct test_inotify_event *)buf;
+    if (!(ev->mask & IN_MODIFY)) {
+        fut_printf("[VFS-TEST] ✗ inotify_ftruncate: mask=0x%x missing IN_MODIFY\n", ev->mask);
+        fut_test_fail(VFS_TEST_INOTIFY_FTRUNC);
+        return;
+    }
+    fut_printf("[VFS-TEST] ✓ inotify ftruncate: IN_MODIFY mask=0x%x\n", ev->mask);
+    fut_test_pass();
+}
+
+static void test_inotify_utimensat(void) {
+    fut_printf("[VFS-TEST] Test 20: inotify IN_ATTRIB event on utimensat\n");
+
+    const char *watch_dir = "/";
+    const char *filepath  = "/utimens_inotify.txt";
+
+    /* Create file */
+    fut_vfs_unlink(filepath);
+    int fd = fut_vfs_open(filepath, O_CREAT | O_RDWR, 0644);
+    if (fd < 0) {
+        fut_printf("[VFS-TEST] ✗ inotify_utimensat: create failed %d\n", fd);
+        fut_test_fail(VFS_TEST_INOTIFY_UTIMENS);
+        return;
+    }
+    fut_vfs_close(fd);
+
+    int ifd = (int)sys_inotify_init1(IN_NONBLOCK);
+    if (ifd < 0) {
+        fut_vfs_unlink(filepath);
+        fut_printf("[VFS-TEST] ✗ inotify_utimensat: inotify_init1 failed %d\n", ifd);
+        fut_test_fail(VFS_TEST_INOTIFY_UTIMENS);
+        return;
+    }
+    int wd = (int)sys_inotify_add_watch(ifd, watch_dir, IN_ATTRIB);
+    if (wd < 0) {
+        fut_vfs_close(ifd);
+        fut_vfs_unlink(filepath);
+        fut_printf("[VFS-TEST] ✗ inotify_utimensat: add_watch failed %d\n", wd);
+        fut_test_fail(VFS_TEST_INOTIFY_UTIMENS);
+        return;
+    }
+
+    /* utimensat with NULL times sets to current time → IN_ATTRIB */
+    long ret = sys_utimensat(-100 /* AT_FDCWD */, filepath, NULL, 0);
+
+    if (ret != 0) {
+        fut_vfs_close(ifd);
+        fut_vfs_unlink(filepath);
+        fut_printf("[VFS-TEST] ✗ inotify_utimensat: utimensat returned %ld\n", ret);
+        fut_test_fail(VFS_TEST_INOTIFY_UTIMENS);
+        return;
+    }
+
+    char buf[sizeof(struct test_inotify_event) + 64];
+    long n = fut_vfs_read(ifd, buf, sizeof(buf));
+    fut_vfs_close(ifd);
+    fut_vfs_unlink(filepath);
+
+    if (n < (long)sizeof(struct test_inotify_event)) {
+        fut_printf("[VFS-TEST] ✗ inotify_utimensat: no event (read=%ld)\n", n);
+        fut_test_fail(VFS_TEST_INOTIFY_UTIMENS);
+        return;
+    }
+    struct test_inotify_event *ev = (struct test_inotify_event *)buf;
+    if (!(ev->mask & IN_ATTRIB)) {
+        fut_printf("[VFS-TEST] ✗ inotify_utimensat: mask=0x%x missing IN_ATTRIB\n", ev->mask);
+        fut_test_fail(VFS_TEST_INOTIFY_UTIMENS);
+        return;
+    }
+    fut_printf("[VFS-TEST] ✓ inotify utimensat: IN_ATTRIB mask=0x%x\n", ev->mask);
+    fut_test_pass();
+}
+
 void fut_vfs_test_thread(void *arg) {
     (void)arg;
 
@@ -1362,6 +1496,8 @@ void fut_vfs_test_thread(void *arg) {
     test_inotify_close();
     test_inotify_access();
     test_inotify_modify();
+    test_inotify_ftruncate();
+    test_inotify_utimensat();
     test_mount();
     test_umount_expire();
     test_renameat2();

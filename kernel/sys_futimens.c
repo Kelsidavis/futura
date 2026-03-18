@@ -307,6 +307,14 @@ long sys_futimens(int fd, const fut_timespec_t *times) {
         return ret;
     }
 
+    /* Dispatch IN_ATTRIB: timestamp change is a metadata modification */
+    struct fut_vnode *vnode = file->vnode;
+    if (vnode->parent && vnode->name) {
+        char dir_path[256];
+        if (fut_vnode_build_path(vnode->parent, dir_path, sizeof(dir_path)))
+            inotify_dispatch_event(dir_path, 0x00000004 /* IN_ATTRIB */, vnode->name, 0);
+    }
+
     /* Success */
     fut_printf("[FUTIMENS] futimens(fd=%d [%s], times=%p, op=%s, ino=%lu) -> 0 (success)\n",
                local_fd, fd_desc, local_times, operation_type, file->vnode->ino);

@@ -553,6 +553,13 @@ long sys_utimensat(int dirfd, const char *pathname, const fut_timespec_t *times,
         return ret;
     }
 
+    /* Dispatch IN_ATTRIB: timestamp change is a metadata modification */
+    if (vnode->parent && vnode->name) {
+        char dir_path[256];
+        if (fut_vnode_build_path(vnode->parent, dir_path, sizeof(dir_path)))
+            inotify_dispatch_event(dir_path, 0x00000004 /* IN_ATTRIB */, vnode->name, 0);
+    }
+
     /* Success */
     fut_printf("[UTIMENSAT] utimensat(dirfd=%d [%s], path='%s' [%s, %s, len=%zu], "
                "vnode_ino=%lu, times=%s, flags=%s, pid=%d) -> 0 (Phase 3: Directory FD resolution + timestamp updates)\n",

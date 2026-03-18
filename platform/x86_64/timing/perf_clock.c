@@ -48,7 +48,10 @@ uint64_t fut_cycles_per_ms(void) {
     }
 
     uint64_t end_cycles = fut_rdtsc();
-    uint64_t elapsed_ms = fut_get_ticks() - start_tick;
+    /* fut_get_ticks() returns timer ticks, not milliseconds.
+     * Convert: ticks × (1000 ms/s ÷ FUT_TIMER_HZ ticks/s) = ticks × 10 ms. */
+    uint64_t elapsed_ticks = fut_get_ticks() - start_tick;
+    uint64_t elapsed_ms = elapsed_ticks * (1000u / FUT_TIMER_HZ);
     if (elapsed_ms == 0) {
         elapsed_ms = 1;
     }

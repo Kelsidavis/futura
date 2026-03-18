@@ -45,6 +45,7 @@
 #define VFS_TEST_INOTIFY_FTRUNC  19
 #define VFS_TEST_INOTIFY_UTIMENS 20
 #define VFS_TEST_INOTIFY_TRUNC   21
+#define VFS_TEST_INOTIFY_DELETE  22
 
 /* Use kernel-level VFS functions (no copy_from_user) */
 #define sys_mkdir(path, mode)           fut_vfs_mkdir(path, (uint32_t)(mode))
@@ -1545,6 +1546,77 @@ static void test_inotify_truncate(void) {
     fut_test_pass();
 }
 
+static void test_inotify_delete(void) {
+    fut_printf("[VFS-TEST] Test 22: inotify IN_DELETE event on unlink\n");
+
+    const char *watch_dir = "/";
+    const char *filepath  = "/inotify_delete_test.txt";
+    const char *fname     = "inotify_delete_test.txt";
+
+    /* Create the file first */
+    fut_vfs_unlink(filepath);
+    int fd = fut_vfs_open(filepath, O_CREAT | O_RDWR, 0644);
+    if (fd < 0) {
+        fut_printf("[VFS-TEST] ✗ inotify_delete: create failed %d\n", fd);
+        fut_test_fail(VFS_TEST_INOTIFY_DELETE);
+        return;
+    }
+    fut_vfs_close(fd);
+
+    int ifd = (int)sys_inotify_init1(IN_NONBLOCK);
+    if (ifd < 0) {
+        fut_vfs_unlink(filepath);
+        fut_printf("[VFS-TEST] ✗ inotify_delete: inotify_init1 failed %d\n", ifd);
+        fut_test_fail(VFS_TEST_INOTIFY_DELETE);
+        return;
+    }
+    int wd = (int)sys_inotify_add_watch(ifd, watch_dir, IN_DELETE);
+    if (wd < 0) {
+        fut_vfs_close(ifd);
+        fut_vfs_unlink(filepath);
+        fut_printf("[VFS-TEST] ✗ inotify_delete: add_watch failed %d\n", wd);
+        fut_test_fail(VFS_TEST_INOTIFY_DELETE);
+        return;
+    }
+
+    /* Unlink the file — should fire IN_DELETE */
+    long ret = fut_vfs_unlink(filepath);
+    if (ret != 0) {
+        fut_vfs_close(ifd);
+        fut_printf("[VFS-TEST] ✗ inotify_delete: unlink returned %ld\n", ret);
+        fut_test_fail(VFS_TEST_INOTIFY_DELETE);
+        return;
+    }
+
+    char buf[sizeof(struct test_inotify_event) + 64];
+    long n = fut_vfs_read(ifd, buf, sizeof(buf));
+    fut_vfs_close(ifd);
+
+    if (n < (long)sizeof(struct test_inotify_event)) {
+        fut_printf("[VFS-TEST] ✗ inotify_delete: no event (read=%ld)\n", n);
+        fut_test_fail(VFS_TEST_INOTIFY_DELETE);
+        return;
+    }
+    struct test_inotify_event *ev = (struct test_inotify_event *)buf;
+    if (!(ev->mask & IN_DELETE)) {
+        fut_printf("[VFS-TEST] ✗ inotify_delete: mask=0x%x missing IN_DELETE\n", ev->mask);
+        fut_test_fail(VFS_TEST_INOTIFY_DELETE);
+        return;
+    }
+    /* Verify filename */
+    if (ev->len > 0) {
+        const char *got_name = buf + sizeof(struct test_inotify_event);
+        if (strcmp(got_name, fname) != 0) {
+            fut_printf("[VFS-TEST] ✗ inotify_delete: name='%s' expected '%s'\n", got_name, fname);
+            fut_test_fail(VFS_TEST_INOTIFY_DELETE);
+            return;
+        }
+    }
+    fut_printf("[VFS-TEST] ✓ inotify delete: IN_DELETE mask=0x%x name='%s'\n",
+               ev->mask, ev->len ? buf + sizeof(struct test_inotify_event) : "(none)");
+    fut_test_pass();
+}
+
 void fut_vfs_test_thread(void *arg) {
     (void)arg;
 
@@ -1565,6 +1637,7 @@ void fut_vfs_test_thread(void *arg) {
     test_inotify_ftruncate();
     test_inotify_utimensat();
     test_inotify_truncate();
+    test_inotify_delete();
     test_mount();
     test_umount_expire();
     test_renameat2();

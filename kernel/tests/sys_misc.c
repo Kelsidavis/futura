@@ -7768,6 +7768,103 @@ static void test_readlink_basic(void) {
     fut_test_pass();
 }
 
+static void test_read_write_basic(void) {
+    fut_printf("[MISC-TEST] Test 165: sys_read/write basic\n");
+    extern ssize_t sys_write(int fd, const void *buf, size_t count);
+    extern ssize_t sys_read(int fd, void *buf, size_t count);
+    extern long sys_unlink(const char *path);
+
+    /* Create a file and write via sys_write */
+    int fd = (int)fut_vfs_open("/test_read_write.txt", O_CREAT | O_RDWR, 0644);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ read/write: create failed: %d\n", fd);
+        fut_test_fail(165);
+        return;
+    }
+
+    const char wdata[] = "ReadWrite";
+    ssize_t nw = sys_write(fd, wdata, 9);
+    if (nw != 9) {
+        fut_printf("[MISC-TEST] ✗ sys_write: returned %zd\n", nw);
+        fut_vfs_close(fd);
+        fut_test_fail(165);
+        return;
+    }
+    /* Seek back to start via lseek */
+    extern int64_t fut_vfs_lseek(int fd, int64_t offset, int whence);
+    fut_vfs_lseek(fd, 0, 0);
+
+    /* Read back via sys_read */
+    char rbuf[16] = {0};
+    ssize_t nr = sys_read(fd, rbuf, 9);
+    fut_vfs_close(fd);
+    sys_unlink("/test_read_write.txt");
+
+    if (nr != 9) {
+        fut_printf("[MISC-TEST] ✗ sys_read: returned %zd\n", nr);
+        fut_test_fail(165);
+        return;
+    }
+    if (rbuf[0] != 'R' || rbuf[8] != 'e') {
+        fut_printf("[MISC-TEST] ✗ sys_read: content mismatch: '%c...%c'\n", rbuf[0], rbuf[8]);
+        fut_test_fail(165);
+        return;
+    }
+    /* EBADF on invalid fd */
+    nw = sys_write(-1, wdata, 1);
+    if (nw != -EBADF) {
+        fut_printf("[MISC-TEST] ✗ sys_write(-1): expected EBADF, got %zd\n", nw);
+        fut_test_fail(165);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ sys_read/write: 9 bytes write+read roundtrip, EBADF on -1\n");
+    fut_test_pass();
+}
+
+static void test_pread_pwrite_basic(void) {
+    fut_printf("[MISC-TEST] Test 166: sys_pread64/pwrite64 basic\n");
+    extern long sys_pwrite64(unsigned int fd, const void *buf, size_t count, int64_t offset);
+    extern long sys_pread64(unsigned int fd, void *buf, size_t count, int64_t offset);
+    extern long sys_unlink(const char *path);
+
+    int fd = (int)fut_vfs_open("/test_pread_pwrite.txt", O_CREAT | O_RDWR, 0644);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ pread/pwrite: create failed: %d\n", fd);
+        fut_test_fail(166);
+        return;
+    }
+
+    /* Write at offset 4 */
+    const char data[] = "HELLO";
+    ssize_t nw = sys_pwrite64(fd, data, 5, 4);
+    if (nw != 5) {
+        fut_printf("[MISC-TEST] ✗ pwrite64: returned %zd\n", nw);
+        fut_vfs_close(fd);
+        fut_test_fail(166);
+        return;
+    }
+
+    /* Read back at offset 4 (without changing file position) */
+    char rbuf[8] = {0};
+    ssize_t nr = sys_pread64(fd, rbuf, 5, 4);
+    fut_vfs_close(fd);
+    sys_unlink("/test_pread_pwrite.txt");
+
+    if (nr != 5) {
+        fut_printf("[MISC-TEST] ✗ pread64: returned %zd\n", nr);
+        fut_test_fail(166);
+        return;
+    }
+    if (rbuf[0] != 'H' || rbuf[4] != 'O') {
+        fut_printf("[MISC-TEST] ✗ pread64: content='%c%c%c%c%c'\n",
+                   rbuf[0], rbuf[1], rbuf[2], rbuf[3], rbuf[4]);
+        fut_test_fail(166);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ pread64/pwrite64: at-offset roundtrip ok\n");
+    fut_test_pass();
+}
+
 /* ============================================================
  * Test entry point
  * ============================================================ */
@@ -7942,6 +8039,8 @@ void fut_misc_test_thread(void *arg) {
     test_rename_basic();                   /* Test 162: sys_rename src→dst + ENOENT */
     test_link_symlink_basic();             /* Test 163: sys_link hard link + sys_symlink */
     test_readlink_basic();                 /* Test 164: sys_readlink symlink→target */
+    test_read_write_basic();               /* Test 165: sys_read/write direct roundtrip */
+    test_pread_pwrite_basic();             /* Test 166: sys_pread64/pwrite64 offset I/O */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

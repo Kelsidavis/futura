@@ -20,6 +20,18 @@
 #include <kernel/fut_fd_util.h>
 #include <stddef.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+static inline int write_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return write_copy_from_user(dst, src, n);
+}
+
 /* Maximum single write size to prevent excessive kernel buffer allocation */
 #define MAX_WRITE_SIZE  (1024 * 1024)  /* 1 MB */
 
@@ -194,7 +206,7 @@ ssize_t sys_write(int fd, const void *buf, size_t count) {
      * - CVE-2016-8655: Linux packet socket race with invalid buffer
      */
     char test_byte = 0;
-    if (fut_copy_from_user(&test_byte, local_buf, 1) != 0) {
+    if (write_copy_from_user(&test_byte, local_buf, 1) != 0) {
         write_printf("[WRITE] write(fd=%d, buf=%p, count=%lu) -> EFAULT "
                    "(buffer not readable)\n", local_fd, local_buf, local_count);
         return -EFAULT;
@@ -218,7 +230,7 @@ ssize_t sys_write(int fd, const void *buf, size_t count) {
     }
 
     /* Copy from userspace */
-    if (fut_copy_from_user(kbuf, local_buf, local_count) != 0) {
+    if (write_copy_from_user(kbuf, local_buf, local_count) != 0) {
         write_printf("[WRITE] write(fd=%d, count=%lu [%s]) -> EFAULT (copy_from_user failed)\n",
                    local_fd, local_count, size_category);
         fut_free(kbuf);

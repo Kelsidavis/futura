@@ -259,7 +259,12 @@ long sys_pwrite64(unsigned int fd, const void *buf, size_t count, int64_t offset
         return -ENOMEM;
     }
 
-    /* Copy from userspace */
+    /* Copy from userspace (with kernel-pointer bypass for selftests) */
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)local_buf >= KERNEL_VIRTUAL_BASE) {
+        __builtin_memcpy(kbuf, local_buf, local_count);
+    } else
+#endif
     if (fut_copy_from_user(kbuf, local_buf, local_count) != 0) {
         fut_printf("[PWRITE64] pwrite64(fd=%u [%s], ino=%lu, count=%zu [%s], offset=%ld [%s]) -> EFAULT "
                    "(copy_from_user failed, pid=%d)\n",

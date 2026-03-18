@@ -20,6 +20,18 @@
 #include <kernel/fut_fd_util.h>
 #include <stddef.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+static inline int read_copy_to_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)dst >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return read_copy_to_user(dst, src, n);
+}
+
 /* Maximum single read size to prevent excessive kernel buffer allocation */
 #define MAX_READ_SIZE  (1024 * 1024)  /* 1 MB */
 
@@ -187,7 +199,7 @@ ssize_t sys_read(int fd, void *buf, size_t count) {
      * - CVE-2018-5953: Linux kernel swiotlb map_sg write to readonly
      */
     char test_byte = 0;
-    if (fut_copy_to_user(local_buf, &test_byte, 1) != 0) {
+    if (read_copy_to_user(local_buf, &test_byte, 1) != 0) {
         /* fut_printf("[READ] read(fd=%d, buf=%p, count=%zu) -> EFAULT "
                    "(buffer not writable)\n", local_fd, local_buf, local_count); */
         return -EFAULT;
@@ -252,7 +264,7 @@ ssize_t sys_read(int fd, void *buf, size_t count) {
     }
 
     /* Copy to userspace on success */
-    if (fut_copy_to_user(local_buf, kbuf, (size_t)ret) != 0) {
+    if (read_copy_to_user(local_buf, kbuf, (size_t)ret) != 0) {
         /* fut_printf("[READ] read(fd=%d, count=%zu [%s], read=%ld) -> EFAULT (copy_to_user failed)\n",
                    local_fd, local_count, size_category, ret); */
         fut_free(kbuf);

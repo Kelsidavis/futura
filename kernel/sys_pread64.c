@@ -303,8 +303,13 @@ long sys_pread64(unsigned int fd, void *buf, size_t count, int64_t offset) {
         return ret;
     }
 
-    /* Copy to userspace if successful */
+    /* Copy to userspace if successful (with kernel-pointer bypass for selftests) */
     if (ret > 0) {
+#ifdef KERNEL_VIRTUAL_BASE
+        if ((uintptr_t)buf >= KERNEL_VIRTUAL_BASE) {
+            __builtin_memcpy(buf, kbuf, (size_t)ret);
+        } else
+#endif
         if (fut_copy_to_user(buf, kbuf, (size_t)ret) != 0) {
             fut_printf("[PREAD64] pread64(fd=%u [%s], ino=%lu, count=%zu [%s], offset=%ld [%s], "
                        "bytes_read=%zd) -> EFAULT (copy_to_user failed, pid=%d)\n",

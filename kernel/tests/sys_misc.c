@@ -12978,6 +12978,235 @@ static void test_proc_sys_vm_fs_extras(void) {
     fut_test_pass();
 }
 
+/* ============================================================
+ * Test 290: AF_UNIX named socket bind/listen/connect/accept/send/recv
+ * ============================================================ */
+static void test_unix_named_socket(void) {
+    fut_printf("[MISC-TEST] Test 290: AF_UNIX named socket bind/listen/connect/accept\n");
+
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_bind(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_listen(int sockfd, int backlog);
+    extern long sys_connect(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_accept(int sockfd, void *addr, unsigned int *addrlen);
+    extern long sys_close(int fd);
+    extern ssize_t sys_write(int fd, const void *buf, size_t count);
+    extern ssize_t sys_read(int fd, void *buf, size_t count);
+
+    const char *sock_path = "/tmp/test_unix_named.sock";
+    /* struct sockaddr_un: uint16_t sun_family + char sun_path[108] */
+    struct {
+        unsigned short sun_family;
+        char sun_path[108];
+    } addr;
+    addr.sun_family = 1; /* AF_UNIX */
+    size_t path_len = 0;
+    while (sock_path[path_len]) { addr.sun_path[path_len] = sock_path[path_len]; path_len++; }
+    addr.sun_path[path_len] = '\0';
+    unsigned int addrlen = (unsigned int)(2 + path_len + 1);
+
+    /* Clean up any leftover socket file */
+    fut_vfs_unlink(sock_path);
+
+    /* Create server socket */
+    long server_fd = sys_socket(1 /*AF_UNIX*/, 1 /*SOCK_STREAM*/, 0);
+    if (server_fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 290: socket(server) failed: %ld\n", server_fd);
+        fut_test_fail(290); return;
+    }
+
+    /* Bind */
+    long r = sys_bind((int)server_fd, &addr, addrlen);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 290: bind failed: %ld\n", r);
+        sys_close((int)server_fd); fut_test_fail(290); return;
+    }
+
+    /* Listen */
+    r = sys_listen((int)server_fd, 5);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 290: listen failed: %ld\n", r);
+        sys_close((int)server_fd); fut_vfs_unlink(sock_path); fut_test_fail(290); return;
+    }
+
+    /* Create client socket and connect */
+    long client_fd = sys_socket(1, 1, 0);
+    if (client_fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 290: socket(client) failed: %ld\n", client_fd);
+        sys_close((int)server_fd); fut_vfs_unlink(sock_path); fut_test_fail(290); return;
+    }
+    r = sys_connect((int)client_fd, &addr, addrlen);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 290: connect failed: %ld\n", r);
+        sys_close((int)client_fd); sys_close((int)server_fd);
+        fut_vfs_unlink(sock_path); fut_test_fail(290); return;
+    }
+
+    /* Accept the connection on server */
+    long conn_fd = sys_accept((int)server_fd, NULL, NULL);
+    if (conn_fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 290: accept failed: %ld\n", conn_fd);
+        sys_close((int)client_fd); sys_close((int)server_fd);
+        fut_vfs_unlink(sock_path); fut_test_fail(290); return;
+    }
+    fut_printf("[MISC-TEST] ✓ bind/listen/connect/accept: server=%ld client=%ld conn=%ld\n",
+               server_fd, client_fd, conn_fd);
+
+    /* Send from client, receive on server */
+    const char *msg = "hello-unix";
+    ssize_t nw = sys_write((int)client_fd, msg, 10);
+    if (nw != 10) {
+        fut_printf("[MISC-TEST] ✗ Test 290: send failed: %zd\n", nw);
+        sys_close((int)conn_fd); sys_close((int)client_fd); sys_close((int)server_fd);
+        fut_vfs_unlink(sock_path); fut_test_fail(290); return;
+    }
+    char rbuf[16] = {0};
+    ssize_t nr = sys_read((int)conn_fd, rbuf, sizeof(rbuf));
+    if (nr != 10 || __builtin_memcmp(rbuf, "hello-unix", 10) != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 290: recv failed: nr=%zd buf='%.*s'\n", nr, (int)nr, rbuf);
+        sys_close((int)conn_fd); sys_close((int)client_fd); sys_close((int)server_fd);
+        fut_vfs_unlink(sock_path); fut_test_fail(290); return;
+    }
+    fut_printf("[MISC-TEST] ✓ send/recv over named unix socket: '%.*s'\n", (int)nr, rbuf);
+
+    sys_close((int)conn_fd);
+    sys_close((int)client_fd);
+    sys_close((int)server_fd);
+    fut_vfs_unlink(sock_path);
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 291: AF_UNIX named socket error cases
+ * ============================================================ */
+static void test_unix_named_errors(void) {
+    fut_printf("[MISC-TEST] Test 291: AF_UNIX named socket error paths\n");
+
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_bind(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_listen(int sockfd, int backlog);
+    extern long sys_connect(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_close(int fd);
+
+    struct {
+        unsigned short sun_family;
+        char sun_path[108];
+    } addr;
+
+    /* connect to non-existent socket → ECONNREFUSED */
+    addr.sun_family = 1;
+    const char *no_path = "/tmp/no_such_socket_291.sock";
+    size_t plen = 0;
+    while (no_path[plen]) { addr.sun_path[plen] = no_path[plen]; plen++; }
+    addr.sun_path[plen] = '\0';
+    long fd = sys_socket(1, 1, 0);
+    if (fd < 0) { fut_printf("[MISC-TEST] ✗ Test 291: socket failed\n"); fut_test_fail(291); return; }
+    long r = sys_connect((int)fd, &addr, (unsigned int)(2 + plen + 1));
+    if (r != -111 /* ECONNREFUSED */) {
+        fut_printf("[MISC-TEST] ✗ Test 291: connect nonexistent = %ld (want ECONNREFUSED)\n", r);
+        sys_close((int)fd); fut_test_fail(291); return;
+    }
+    sys_close((int)fd);
+    fut_printf("[MISC-TEST] ✓ connect to non-existent → ECONNREFUSED\n");
+
+    /* bind twice → EINVAL (already bound) */
+    const char *dup_path = "/tmp/test_unix_dup_291.sock";
+    fut_vfs_unlink(dup_path);
+    fd = sys_socket(1, 1, 0);
+    if (fd < 0) { fut_printf("[MISC-TEST] ✗ Test 291: socket failed\n"); fut_test_fail(291); return; }
+    plen = 0;
+    while (dup_path[plen]) { addr.sun_path[plen] = dup_path[plen]; plen++; }
+    addr.sun_path[plen] = '\0';
+    unsigned int alen = (unsigned int)(2 + plen + 1);
+    r = sys_bind((int)fd, &addr, alen);
+    if (r != 0) { fut_printf("[MISC-TEST] ✗ Test 291: first bind failed: %ld\n", r); sys_close((int)fd); fut_vfs_unlink(dup_path); fut_test_fail(291); return; }
+    r = sys_bind((int)fd, &addr, alen);
+    if (r != -22 /* EINVAL */) {
+        fut_printf("[MISC-TEST] ✗ Test 291: double bind = %ld (want EINVAL)\n", r);
+        sys_close((int)fd); fut_vfs_unlink(dup_path); fut_test_fail(291); return;
+    }
+    sys_close((int)fd);
+    fut_vfs_unlink(dup_path);
+    fut_printf("[MISC-TEST] ✓ double bind → EINVAL\n");
+
+    /* listen without bind is still allowed in futura (server socket created) */
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 292: getsockname/getpeername on AF_UNIX named socket
+ * ============================================================ */
+static void test_unix_sockname(void) {
+    fut_printf("[MISC-TEST] Test 292: getsockname/getpeername on AF_UNIX named socket\n");
+
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_bind(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_listen(int sockfd, int backlog);
+    extern long sys_connect(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_accept(int sockfd, void *addr, unsigned int *addrlen);
+    extern long sys_getsockname(int sockfd, void *addr, unsigned int *addrlen);
+    extern long sys_getpeername(int sockfd, void *addr, unsigned int *addrlen);
+    extern long sys_close(int fd);
+
+    const char *sock_path = "/tmp/test_sockname_292.sock";
+    struct {
+        unsigned short sun_family;
+        char sun_path[108];
+    } addr, out_addr;
+    addr.sun_family = 1;
+    size_t plen = 0;
+    while (sock_path[plen]) { addr.sun_path[plen] = sock_path[plen]; plen++; }
+    addr.sun_path[plen] = '\0';
+    unsigned int addrlen = (unsigned int)(2 + plen + 1);
+
+    fut_vfs_unlink(sock_path);
+
+    long server_fd = sys_socket(1, 1, 0);
+    if (server_fd < 0) { fut_printf("[MISC-TEST] ✗ Test 292: socket failed\n"); fut_test_fail(292); return; }
+    long r = sys_bind((int)server_fd, &addr, addrlen);
+    if (r != 0) { fut_printf("[MISC-TEST] ✗ Test 292: bind failed: %ld\n", r); sys_close((int)server_fd); fut_vfs_unlink(sock_path); fut_test_fail(292); return; }
+    sys_listen((int)server_fd, 2);
+
+    /* getsockname on bound server socket */
+    unsigned int out_len = sizeof(out_addr);
+    r = sys_getsockname((int)server_fd, &out_addr, &out_len);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 292: getsockname failed: %ld\n", r);
+        sys_close((int)server_fd); fut_vfs_unlink(sock_path); fut_test_fail(292); return;
+    }
+    if (out_addr.sun_family != 1 /* AF_UNIX */) {
+        fut_printf("[MISC-TEST] ✗ Test 292: getsockname family=%u (want 1)\n", out_addr.sun_family);
+        sys_close((int)server_fd); fut_vfs_unlink(sock_path); fut_test_fail(292); return;
+    }
+    fut_printf("[MISC-TEST] ✓ getsockname: family=%u path='%s'\n",
+               out_addr.sun_family, out_addr.sun_path);
+
+    /* Connect client and check getpeername */
+    long client_fd = sys_socket(1, 1, 0);
+    if (client_fd < 0) { sys_close((int)server_fd); fut_vfs_unlink(sock_path); fut_printf("[MISC-TEST] ✗ Test 292: client socket failed\n"); fut_test_fail(292); return; }
+    r = sys_connect((int)client_fd, &addr, addrlen);
+    if (r != 0) { fut_printf("[MISC-TEST] ✗ Test 292: connect failed: %ld\n", r); sys_close((int)client_fd); sys_close((int)server_fd); fut_vfs_unlink(sock_path); fut_test_fail(292); return; }
+    long conn_fd = sys_accept((int)server_fd, NULL, NULL);
+    if (conn_fd < 0) { fut_printf("[MISC-TEST] ✗ Test 292: accept failed: %ld\n", conn_fd); sys_close((int)client_fd); sys_close((int)server_fd); fut_vfs_unlink(sock_path); fut_test_fail(292); return; }
+
+    /* getpeername on accepted connection should return server's address or empty */
+    out_len = sizeof(out_addr);
+    r = sys_getpeername((int)conn_fd, &out_addr, &out_len);
+    if (r != 0 && r != -ENOTCONN) {
+        fut_printf("[MISC-TEST] ✗ Test 292: getpeername failed: %ld\n", r);
+        sys_close((int)conn_fd); sys_close((int)client_fd); sys_close((int)server_fd);
+        fut_vfs_unlink(sock_path); fut_test_fail(292); return;
+    }
+    fut_printf("[MISC-TEST] ✓ getpeername on accepted conn: r=%ld family=%u\n",
+               r, out_addr.sun_family);
+
+    sys_close((int)conn_fd);
+    sys_close((int)client_fd);
+    sys_close((int)server_fd);
+    fut_vfs_unlink(sock_path);
+    fut_test_pass();
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -13274,6 +13503,9 @@ void fut_misc_test_thread(void *arg) {
     test_mqueue_basic();                  /* Test 287: mq_open/mq_timedsend/mq_timedreceive priority ordering */
     test_mqueue_errors();                 /* Test 288: mq error paths (ENOENT, EEXIST, EMSGSIZE, EBADF) */
     test_mqueue_getsetattr();             /* Test 289: mq_getsetattr attrs and mq_notify */
+    test_unix_named_socket();            /* Test 290: AF_UNIX named socket bind/listen/connect/accept/send/recv */
+    test_unix_named_errors();            /* Test 291: AF_UNIX named socket error paths */
+    test_unix_sockname();                /* Test 292: getsockname/getpeername on AF_UNIX named socket */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

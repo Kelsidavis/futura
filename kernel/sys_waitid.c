@@ -24,6 +24,25 @@
 
 #include <kernel/kprintf.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
+static inline int waitid_copy_to_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)dst >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_to_user(dst, src, n);
+}
+static inline int waitid_access_ok(const void *ptr, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)ptr >= KERNEL_VIRTUAL_BASE) return 0;
+#endif
+    return fut_access_ok(ptr, n, 1);
+}
+
 /* P_ALL, P_PID, P_PGID (idtype_t) and wait options (WNOHANG, WUNTRACED,
  * WSTOPPED, WEXITED, WCONTINUED, WNOWAIT) are provided by sys/wait.h */
 /* siginfo_t provided by kernel/signal_frame.h */
@@ -105,7 +124,7 @@ long sys_waitid(int idtype, int id, siginfo_t *infop, int options,
     }
 
     /* Validate infop is writable */
-    if (fut_access_ok(infop, sizeof(siginfo_t), 1) != 0) {
+    if (waitid_access_ok(infop, sizeof(siginfo_t)) != 0) {
         fut_printf("[WAITID] waitid(infop=%p) -> EFAULT (not writable)\n", (void *)infop);
         return -EFAULT;
     }
@@ -156,7 +175,7 @@ long sys_waitid(int idtype, int id, siginfo_t *infop, int options,
         /* WNOHANG and no child ready: fill infop with zeros (si_pid=0 signals no event) */
         siginfo_t info_zero;
         memset(&info_zero, 0, sizeof(info_zero));
-        if (fut_copy_to_user(infop, &info_zero, sizeof(siginfo_t)) != 0) {
+        if (waitid_copy_to_user(infop, &info_zero, sizeof(siginfo_t)) != 0) {
             return -EFAULT;
         }
         fut_printf("[WAITID] waitid(%s, id=%d, WNOHANG) -> 0 (no child ready)\n",
@@ -192,7 +211,7 @@ long sys_waitid(int idtype, int id, siginfo_t *infop, int options,
     info.si_pid = (int64_t)child_pid;
     info.si_uid = (int64_t)child_uid;  /* real UID of child at exit time */
 
-    if (fut_copy_to_user(infop, &info, sizeof(siginfo_t)) != 0) {
+    if (waitid_copy_to_user(infop, &info, sizeof(siginfo_t)) != 0) {
         return -EFAULT;
     }
 

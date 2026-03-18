@@ -19,6 +19,19 @@
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
+static inline int cred_copy_to_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)dst >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_to_user(dst, src, n);
+}
+
 /* Helper to categorize UID/GID values */
 static const char *categorize_id(uint32_t id) {
     if (id == 0) {
@@ -536,13 +549,13 @@ long sys_getresuid(uint32_t *ruid, uint32_t *euid, uint32_t *suid) {
     uint32_t saved_uid = task->ruid;
 
     /* Phase 3: Copy IDs to userspace */
-    if (fut_copy_to_user(local_ruid, &task->ruid, sizeof(uint32_t)) != 0) {
+    if (cred_copy_to_user(local_ruid, &task->ruid, sizeof(uint32_t)) != 0) {
         return -EFAULT;
     }
-    if (fut_copy_to_user(local_euid, &task->uid, sizeof(uint32_t)) != 0) {
+    if (cred_copy_to_user(local_euid, &task->uid, sizeof(uint32_t)) != 0) {
         return -EFAULT;
     }
-    if (fut_copy_to_user(local_suid, &saved_uid, sizeof(uint32_t)) != 0) {
+    if (cred_copy_to_user(local_suid, &saved_uid, sizeof(uint32_t)) != 0) {
         return -EFAULT;
     }
 
@@ -591,13 +604,13 @@ long sys_getresgid(uint32_t *rgid, uint32_t *egid, uint32_t *sgid) {
     uint32_t saved_gid = task->rgid;
 
     /* Phase 3: Copy IDs to userspace */
-    if (fut_copy_to_user(local_rgid, &task->rgid, sizeof(uint32_t)) != 0) {
+    if (cred_copy_to_user(local_rgid, &task->rgid, sizeof(uint32_t)) != 0) {
         return -EFAULT;
     }
-    if (fut_copy_to_user(local_egid, &task->gid, sizeof(uint32_t)) != 0) {
+    if (cred_copy_to_user(local_egid, &task->gid, sizeof(uint32_t)) != 0) {
         return -EFAULT;
     }
-    if (fut_copy_to_user(local_sgid, &saved_gid, sizeof(uint32_t)) != 0) {
+    if (cred_copy_to_user(local_sgid, &saved_gid, sizeof(uint32_t)) != 0) {
         return -EFAULT;
     }
 

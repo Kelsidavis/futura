@@ -7957,6 +7957,59 @@ static void test_fchownat_basic(void) {
     fut_test_pass();
 }
 
+static void test_getresuid_syscall(void) {
+    fut_printf("[MISC-TEST] Test 173: sys_getresuid/getresgid direct\n");
+    extern long sys_getresuid(uint32_t *ruid, uint32_t *euid, uint32_t *suid);
+    extern long sys_getresgid(uint32_t *rgid, uint32_t *egid, uint32_t *sgid);
+
+    uint32_t ruid = 99, euid = 99, suid = 99;
+    long ret = sys_getresuid(&ruid, &euid, &suid);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ getresuid: returned %ld\n", ret);
+        fut_test_fail(173);
+        return;
+    }
+    if (ruid != 0 || euid != 0) {
+        fut_printf("[MISC-TEST] ✗ getresuid: ruid=%u euid=%u (expected 0:0)\n", ruid, euid);
+        fut_test_fail(173);
+        return;
+    }
+
+    uint32_t rgid = 99, egid = 99, sgid = 99;
+    long ret2 = sys_getresgid(&rgid, &egid, &sgid);
+    if (ret2 != 0) {
+        fut_printf("[MISC-TEST] ✗ getresgid: returned %ld\n", ret2);
+        fut_test_fail(173);
+        return;
+    }
+    if (rgid != 0 || egid != 0) {
+        fut_printf("[MISC-TEST] ✗ getresgid: rgid=%u egid=%u (expected 0:0)\n", rgid, egid);
+        fut_test_fail(173);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ sys_getresuid/getresgid: ruid=euid=suid=0, rgid=egid=sgid=0\n");
+    fut_test_pass();
+}
+
+static void test_waitid_nohang(void) {
+    fut_printf("[MISC-TEST] Test 174: sys_waitid WNOHANG no children\n");
+    extern long sys_waitid(int idtype, int id, void *infop, int options, void *rusage);
+
+    /* We have no children to wait on, so waitid with WNOHANG should return ECHILD */
+    uint8_t info_buf[128];
+    __builtin_memset(info_buf, 0, sizeof(info_buf));
+    /* P_ALL=0, WNOHANG=1, WEXITED=4 */
+    long ret = sys_waitid(0, 0, info_buf, 1 | 4, NULL);
+    if (ret != -ECHILD && ret != 0) {
+        fut_printf("[MISC-TEST] ✗ waitid WNOHANG: expected ECHILD or 0, got %ld\n", ret);
+        fut_test_fail(174);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ sys_waitid WNOHANG: no children -> %s\n",
+               ret == -ECHILD ? "ECHILD" : "0 (no child ready)");
+    fut_test_pass();
+}
+
 static void test_readlinkat_basic(void) {
     fut_printf("[MISC-TEST] Test 169: sys_readlinkat basic\n");
     extern long sys_readlinkat(int dirfd, const char *pathname, char *buf, size_t bufsiz);
@@ -8269,6 +8322,8 @@ void fut_misc_test_thread(void *arg) {
     test_mkdirat_basic();                  /* Test 170: sys_mkdirat create/EEXIST/ENOENT */
     test_fchmodat_basic();                 /* Test 171: sys_fchmodat mode change + verify */
     test_faccessat_basic();                /* Test 172: sys_faccessat F_OK + ENOENT */
+    test_getresuid_syscall();              /* Test 173: sys_getresuid/getresgid direct call */
+    test_waitid_nohang();                  /* Test 174: sys_waitid WNOHANG no children */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

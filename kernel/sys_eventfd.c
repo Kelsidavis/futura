@@ -1595,6 +1595,11 @@ long sys_timerfd_settime(int ufd, int flags,
             old_its.it_value.tv_nsec = (long)((remain_ms % 1000) * 1000000);
         }
         /* Check copy_to_user return to avoid silently ignoring EFAULT */
+#ifdef KERNEL_VIRTUAL_BASE
+        if ((uintptr_t)old_value >= KERNEL_VIRTUAL_BASE)
+            __builtin_memcpy(old_value, &old_its, sizeof(old_its));
+        else
+#endif
         if (fut_copy_to_user(old_value, &old_its, sizeof(old_its)) != 0) {
             return -EFAULT;
         }
@@ -1676,16 +1681,25 @@ long sys_timerfd_gettime(int ufd, struct itimerspec *curr_value) {
 
     struct itimerspec kits = {0};
     fut_spinlock_acquire(&ctx->lock);
-    kits.it_interval.tv_sec = (long)(ctx->interval_ms / 1000);
-    kits.it_interval.tv_nsec = (long)((ctx->interval_ms % 1000) * 1000000);
+    /* ctx->interval_ms stores ticks (10ms/tick); convert to real ms first */
+    uint64_t interval_ms = ctx->interval_ms * 10;
+    kits.it_interval.tv_sec = (long)(interval_ms / 1000);
+    kits.it_interval.tv_nsec = (long)((interval_ms % 1000) * 1000000);
     if (ctx->armed) {
         uint64_t now = fut_get_ticks();
-        uint64_t remain = (ctx->next_expiry_ms > now) ? (ctx->next_expiry_ms - now) : 0;
-        kits.it_value.tv_sec = (long)(remain / 1000);
-        kits.it_value.tv_nsec = (long)((remain % 1000) * 1000000);
+        uint64_t remain_ticks = (ctx->next_expiry_ms > now) ? (ctx->next_expiry_ms - now) : 0;
+        uint64_t remain_ms = remain_ticks * 10;  /* ticks → ms */
+        kits.it_value.tv_sec = (long)(remain_ms / 1000);
+        kits.it_value.tv_nsec = (long)((remain_ms % 1000) * 1000000);
     }
     fut_spinlock_release(&ctx->lock);
 
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)curr_value >= KERNEL_VIRTUAL_BASE) {
+        __builtin_memcpy(curr_value, &kits, sizeof(kits));
+        return 0;
+    }
+#endif
     if (fut_copy_to_user(curr_value, &kits, sizeof(kits)) != 0) {
         return -EFAULT;
     }

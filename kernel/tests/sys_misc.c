@@ -6512,6 +6512,79 @@ static void test_memfd_mmap(void) {
 }
 
 /* ============================================================
+ * Test 134: timerfd_gettime returns correct interval and remaining time
+ * ============================================================ */
+extern long sys_timerfd_gettime(int ufd, void *curr_value);
+
+static void test_timerfd_gettime(void) {
+    fut_printf("[MISC-TEST] Test 134: timerfd_gettime reports correct interval\n");
+
+    /* Create timerfd (CLOCK_MONOTONIC=1) */
+    long tfd = sys_timerfd_create(1, 0);
+    if (tfd < 0) {
+        fut_printf("[MISC-TEST] ✗ timerfd_create: %ld\n", tfd);
+        fut_test_fail(134);
+        return;
+    }
+
+    /* Arm: 1000ms initial + 500ms interval */
+    struct {
+        struct { int64_t tv_sec; long tv_nsec; } it_interval;
+        struct { int64_t tv_sec; long tv_nsec; } it_value;
+    } its = {
+        .it_interval = { 0, 500000000L }, /* 500ms */
+        .it_value    = { 1, 0 }           /* 1000ms */
+    };
+    long ret = sys_timerfd_settime((int)tfd, 0, &its, NULL);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ timerfd_settime: %ld\n", ret);
+        fut_vfs_close((int)tfd);
+        fut_test_fail(134);
+        return;
+    }
+
+    /* timerfd_gettime: verify interval and remaining */
+    struct {
+        struct { int64_t tv_sec; long tv_nsec; } it_interval;
+        struct { int64_t tv_sec; long tv_nsec; } it_value;
+    } cur = {0};
+    ret = sys_timerfd_gettime((int)tfd, &cur);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ timerfd_gettime: %ld\n", ret);
+        fut_vfs_close((int)tfd);
+        fut_test_fail(134);
+        return;
+    }
+
+    /* Interval should be 500ms (allow ±10ms tick rounding) */
+    long interval_ms = cur.it_interval.tv_sec * 1000L +
+                       cur.it_interval.tv_nsec / 1000000L;
+    if (interval_ms < 490L || interval_ms > 510L) {
+        fut_printf("[MISC-TEST] ✗ timerfd_gettime interval=%ldms (expected ~500ms)\n",
+                   interval_ms);
+        fut_vfs_close((int)tfd);
+        fut_test_fail(134);
+        return;
+    }
+
+    /* Remaining value should be <= 1000ms and > 0 */
+    long remain_ms = cur.it_value.tv_sec * 1000L +
+                     cur.it_value.tv_nsec / 1000000L;
+    if (remain_ms <= 0L || remain_ms > 1000L) {
+        fut_printf("[MISC-TEST] ✗ timerfd_gettime remain=%ldms (expected 0<x<=1000ms)\n",
+                   remain_ms);
+        fut_vfs_close((int)tfd);
+        fut_test_fail(134);
+        return;
+    }
+
+    fut_vfs_close((int)tfd);
+    fut_printf("[MISC-TEST] ✓ timerfd_gettime: interval=%ldms remain=%ldms\n",
+               interval_ms, remain_ms);
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -6654,6 +6727,7 @@ void fut_misc_test_thread(void *arg) {
     test_rt_sigqueueinfo_security();       /* Test 131: rt_sigqueueinfo rejects si_code > 0 without CAP_KILL */
     test_rt_tgsigqueueinfo();              /* Test 132: rt_tgsigqueueinfo stores siginfo in thread queue */
     test_memfd_mmap();                     /* Test 133: mmap on memfd returns valid mapping */
+    test_timerfd_gettime();                /* Test 134: timerfd_gettime reports correct interval */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

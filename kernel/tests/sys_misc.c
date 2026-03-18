@@ -17478,6 +17478,90 @@ static void test_proc_sys_hostname_write(void) {
 }
 
 /* ============================================================
+ * Test 364: /proc/self/schedstat format
+ * Linux: "<cpu_ns> <wait_ns> <timeslices>\n"
+ * ============================================================ */
+static void test_proc_schedstat(void) {
+    fut_printf("[MISC-TEST] Test 364: /proc/self/schedstat\n");
+    int fd = fut_vfs_open("/proc/self/schedstat", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 364: open /proc/self/schedstat failed: %d\n", fd);
+        fut_test_fail(364); return;
+    }
+    char buf[64];
+    long n = fut_vfs_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    if (n <= 0) {
+        fut_printf("[MISC-TEST] ✗ Test 364: read returned %ld\n", n);
+        fut_test_fail(364); return;
+    }
+    buf[n] = '\0';
+    /* Must contain at least two spaces (three fields) */
+    int spaces = 0;
+    for (int i = 0; i < n; i++) if (buf[i] == ' ') spaces++;
+    if (spaces < 2) {
+        fut_printf("[MISC-TEST] ✗ Test 364: schedstat missing fields: '%s'\n", buf);
+        fut_test_fail(364); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 364: /proc/self/schedstat = '%s'\n", buf);
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 365: /proc/sys/kernel/core_pattern readable, returns "core"
+ * ============================================================ */
+static void test_proc_core_pattern(void) {
+    fut_printf("[MISC-TEST] Test 365: /proc/sys/kernel/core_pattern\n");
+    int fd = fut_vfs_open("/proc/sys/kernel/core_pattern", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 365: open failed: %d\n", fd);
+        fut_test_fail(365); return;
+    }
+    char buf[32];
+    long n = fut_vfs_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    if (n <= 0) {
+        fut_printf("[MISC-TEST] ✗ Test 365: read returned %ld\n", n);
+        fut_test_fail(365); return;
+    }
+    buf[n] = '\0';
+    /* Expect "core" as first 4 bytes */
+    if (buf[0] != 'c' || buf[1] != 'o' || buf[2] != 'r' || buf[3] != 'e') {
+        fut_printf("[MISC-TEST] ✗ Test 365: unexpected core_pattern: '%s'\n", buf);
+        fut_test_fail(365); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 365: /proc/sys/kernel/core_pattern = '%s'\n", buf);
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 366: /proc/sys/kernel/core_uses_pid readable, returns "0"
+ * ============================================================ */
+static void test_proc_core_uses_pid(void) {
+    fut_printf("[MISC-TEST] Test 366: /proc/sys/kernel/core_uses_pid\n");
+    int fd = fut_vfs_open("/proc/sys/kernel/core_uses_pid", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 366: open failed: %d\n", fd);
+        fut_test_fail(366); return;
+    }
+    char buf[16];
+    long n = fut_vfs_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    if (n <= 0) {
+        fut_printf("[MISC-TEST] ✗ Test 366: read returned %ld\n", n);
+        fut_test_fail(366); return;
+    }
+    buf[n] = '\0';
+    /* Expect "0" as first char */
+    if (buf[0] != '0') {
+        fut_printf("[MISC-TEST] ✗ Test 366: unexpected core_uses_pid: '%s'\n", buf);
+        fut_test_fail(366); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 366: /proc/sys/kernel/core_uses_pid = '%s'\n", buf);
+    fut_test_pass();
+}
+
+/* ============================================================
  * Tests 352-353: SO_SNDBUF / SO_RCVBUF set/get round-trip
  * ============================================================ */
 static void test_so_sndbuf_roundtrip(void) {
@@ -18013,6 +18097,9 @@ void fut_misc_test_thread(void *arg) {
     test_proc_mountinfo();               /* Test 361: /proc/self/mountinfo has ' - ' separator */
     test_proc_coredump_filter();         /* Test 362: /proc/self/coredump_filter returns hex value */
     test_proc_sys_hostname_write();      /* Test 363: /proc/sys/kernel/hostname write+read round-trip */
+    test_proc_schedstat();               /* Test 364: /proc/self/schedstat format */
+    test_proc_core_pattern();            /* Test 365: /proc/sys/kernel/core_pattern */
+    test_proc_core_uses_pid();           /* Test 366: /proc/sys/kernel/core_uses_pid */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

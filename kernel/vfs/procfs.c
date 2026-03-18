@@ -180,6 +180,10 @@ enum procfs_kind {
     PROC_WCHAN,                     /* /proc/<pid>/wchan */
     PROC_MOUNTINFO,                 /* /proc/<pid>/mountinfo */
     PROC_COREDUMP_FILTER,           /* /proc/<pid>/coredump_filter */
+    PROC_SCHEDSTAT,                 /* /proc/<pid>/schedstat */
+    /* Additional /proc/sys/kernel/ entries */
+    PROC_SYS_CORE_PATTERN,          /* /proc/sys/kernel/core_pattern */
+    PROC_SYS_CORE_USES_PID,         /* /proc/sys/kernel/core_uses_pid */
 };
 
 typedef struct {
@@ -283,6 +287,8 @@ typedef struct {
 #define PROC_INO_SYS_VM_VFS_CACHE_PRESS 292ULL
 #define PROC_INO_SYS_FS_NR_OPEN        293ULL
 #define PROC_INO_SYS_FS_PIPE_MAX_SIZE  294ULL
+#define PROC_INO_SYS_CORE_PATTERN      295ULL
+#define PROC_INO_SYS_CORE_USES_PID     296ULL
 
 /* Per-PID: pid * 100 + offset */
 #define PROC_INO_PID_DIR(p)    (1000ULL + (uint64_t)(p) * 100 + 0)
@@ -308,6 +314,7 @@ typedef struct {
 #define PROC_INO_PID_WCHAN(p)     (1000ULL + (uint64_t)(p) * 100 + 20)
 #define PROC_INO_PID_MOUNTINFO(p) (1000ULL + (uint64_t)(p) * 100 + 21)
 #define PROC_INO_PID_COREDUMP(p)  (1000ULL + (uint64_t)(p) * 100 + 22)
+#define PROC_INO_PID_SCHEDSTAT(p) (1000ULL + (uint64_t)(p) * 100 + 23)
 /* ns/ entries: 7 namespaces (pid/mnt/net/user/uts/ipc/cgroup), index 0-6 */
 #define PROC_INO_NS_ENTRY(p,n)    (300000000ULL + (uint64_t)(p) * 100 + (uint64_t)(n))
 /* fdinfo/ entries: per-fd */
@@ -1164,6 +1171,33 @@ static size_t gen_coredump_filter(char *buf, size_t cap) {
 }
 
 /*
+ * gen_schedstat() — /proc/<pid>/schedstat
+ *
+ * Linux format: "<time_on_cpu_ns> <time_waiting_ns> <nr_timeslices>\n"
+ *
+ * We derive cpu_ns from thread cpu_ticks (FUT_TIMER_HZ = 100 → 10ms each).
+ * Wait time is not tracked; report 0. Timeslices = context_switches.
+ */
+static size_t gen_schedstat(char *buf, size_t cap, fut_task_t *task) {
+    struct pbuf b = { buf, 0, cap };
+    if (!task) { pb_str(&b, "0 0 0\n"); return b.pos; }
+
+    uint64_t cpu_ticks = 0;
+    uint64_t nr_switches = 0;
+    for (fut_thread_t *t = task->threads; t; t = t->next) {
+        cpu_ticks  += t->stats.cpu_ticks;
+        nr_switches += t->stats.context_switches;
+    }
+    /* Convert ticks to nanoseconds: FUT_TIMER_HZ=100 → 10,000,000 ns/tick */
+    uint64_t cpu_ns = cpu_ticks * 10000000ULL;
+
+    pb_u64(&b, cpu_ns);    pb_char(&b, ' ');
+    pb_u64(&b, 0);          pb_char(&b, ' ');   /* wait_sum: not tracked */
+    pb_u64(&b, nr_switches); pb_char(&b, '\n');
+    return b.pos;
+}
+
+/*
  * gen_comm() — /proc/<pid>/comm
  *
  * Single line: process name + newline.
@@ -1608,6 +1642,23 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
         case PROC_COREDUMP_FILTER:
             total = gen_coredump_filter(tmp, GEN_BUF);
             break;
+        case PROC_SCHEDSTAT: {
+            fut_task_t *stask = fut_task_by_pid(n->pid);
+            total = gen_schedstat(tmp, GEN_BUF, stask);
+            break;
+        }
+        case PROC_SYS_CORE_PATTERN: {
+            struct pbuf b = { tmp, 0, GEN_BUF };
+            pb_str(&b, "core\n");
+            total = b.pos;
+            break;
+        }
+        case PROC_SYS_CORE_USES_PID: {
+            struct pbuf b = { tmp, 0, GEN_BUF };
+            pb_str(&b, "0\n");
+            total = b.pos;
+            break;
+        }
         case PROC_FDINFO_ENTRY: {
             /* /proc/<pid>/fdinfo/<n>: pos, flags (octal), mnt_id */
             fut_task_t *ftask = fut_task_by_pid(n->pid);
@@ -1904,6 +1955,10 @@ static ssize_t procfs_file_write(struct fut_vnode *vnode, const void *buf,
             }
             return (ssize_t)size;
         }
+
+        case PROC_SYS_CORE_PATTERN:
+        case PROC_SYS_CORE_USES_PID:
+            return (ssize_t)size;  /* accept silently */
 
         default:
             /* Accept writes to all /proc/sys/ files silently (sysctl tuning) */
@@ -2254,6 +2309,11 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0100644, PROC_COREDUMP_FILTER, pid, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "schedstat")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_SCHEDSTAT(pid),
+                                          0100444, PROC_SCHEDSTAT, pid, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         return -ENOENT;
     }
 
@@ -2326,6 +2386,8 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
             { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_MOUNTINFO(pid), 0100444, PROC_MOUNTINFO,       pid,0); return *result ? 0 : -ENOMEM; }
         if (STREQ(name, "coredump_filter"))
             { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_COREDUMP(pid),  0100644, PROC_COREDUMP_FILTER, pid,0); return *result ? 0 : -ENOMEM; }
+        if (STREQ(name, "schedstat"))
+            { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_SCHEDSTAT(pid), 0100444, PROC_SCHEDSTAT,       pid,0); return *result ? 0 : -ENOMEM; }
         return -ENOENT;
     }
 
@@ -2622,6 +2684,16 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0100644, PROC_SYS_DMESG_RESTRICT, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "core_pattern")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_CORE_PATTERN,
+                                          0100644, PROC_SYS_CORE_PATTERN, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "core_uses_pid")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_CORE_USES_PID,
+                                          0100644, PROC_SYS_CORE_USES_PID, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         return -ENOENT;
     }
 
@@ -2904,7 +2976,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             ".", "..", "status", "maps", "cmdline", "environ", "fd", "exe", "cwd",
             "stat", "statm", "comm", "task", "limits", "io", "smaps",
             "oom_score", "oom_score_adj", "cgroup", "ns", "fdinfo",
-            "wchan", "mountinfo", "coredump_filter"
+            "wchan", "mountinfo", "coredump_filter", "schedstat"
         };
         static const uint8_t etypes[] = {
             FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
@@ -2917,10 +2989,11 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
             FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
-            FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG
+            FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+            FUT_VDIR_TYPE_REG
         };
         uint64_t pid = dn->pid;
-        if (idx < 24) {
+        if (idx < 25) {
             uint64_t ino;
             switch (idx) {
                 case 0:  ino = PROC_INO_PID_DIR(pid);        break;
@@ -2947,6 +3020,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                 case 21: ino = PROC_INO_PID_WCHAN(pid);      break;
                 case 22: ino = PROC_INO_PID_MOUNTINFO(pid);  break;
                 case 23: ino = PROC_INO_PID_COREDUMP(pid);   break;
+                case 24: ino = PROC_INO_PID_SCHEDSTAT(pid);  break;
                 default: ino = 0; break;
             }
             de->d_ino    = ino;
@@ -3132,7 +3206,8 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                    "threads-max", "printk", "yama",
                                    "randomize_va_space", "domainname",
                                    "perf_event_paranoid", "kptr_restrict",
-                                   "dmesg_restrict" };
+                                   "dmesg_restrict",
+                                   "core_pattern", "core_uses_pid" };
         static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
@@ -3146,7 +3221,8 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                      FUT_VDIR_TYPE_DIR,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
-                                     FUT_VDIR_TYPE_REG };
+                                     FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG };
         static const uint64_t i[] = { PROC_INO_SYS_KERNEL_DIR, PROC_INO_SYS_DIR,
                                       PROC_INO_SYS_OSTYPE, PROC_INO_SYS_OSRELEASE,
                                       PROC_INO_SYS_HOSTNAME, PROC_INO_SYS_PID_MAX,
@@ -3160,8 +3236,9 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                       PROC_INO_SYS_YAMA_DIR,
                                       PROC_INO_SYS_RANDOMIZE_VA, PROC_INO_SYS_DOMAINNAME,
                                       PROC_INO_SYS_PERF_PARANOID, PROC_INO_SYS_KPTR_RESTRICT,
-                                      PROC_INO_SYS_DMESG_RESTRICT };
-        if (idx < 24) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+                                      PROC_INO_SYS_DMESG_RESTRICT,
+                                      PROC_INO_SYS_CORE_PATTERN, PROC_INO_SYS_CORE_USES_PID };
+        if (idx < 26) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
         return -ENOENT;
     }
 

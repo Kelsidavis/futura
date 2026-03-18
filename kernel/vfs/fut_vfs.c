@@ -1879,6 +1879,13 @@ int fut_vfs_open(const char *path, int flags, int mode) {
         task->fd_flags[fd] |= 1;  /* FD_CLOEXEC */
     }
 
+    /* Dispatch IN_OPEN inotify event */
+    if (vnode->parent && vnode->name) {
+        char dir_path[256];
+        if (fut_vnode_build_path(vnode->parent, dir_path, sizeof(dir_path)))
+            inotify_dispatch_event(dir_path, 0x00000020 /* IN_OPEN */, vnode->name, 0);
+    }
+
 #if DEBUG_VFS
     fut_printf("[VFS-OPEN] SUCCESS: opened '%s' as fd=%d (mode=0%o)\n", path, fd, vnode->mode);
 #endif
@@ -2220,6 +2227,16 @@ int fut_vfs_close(int fd) {
         if (file->path) { fut_free(file->path); }
         fut_free(file);
         return 0;
+    }
+
+    /* Dispatch IN_CLOSE_WRITE or IN_CLOSE_NOWRITE inotify event */
+    if (file->vnode && file->vnode->parent && file->vnode->name) {
+        int writable = file->flags & (01 /* O_WRONLY */ | 02 /* O_RDWR */);
+        uint32_t mask = writable ? 0x00000008 /* IN_CLOSE_WRITE */
+                                 : 0x00000010 /* IN_CLOSE_NOWRITE */;
+        char dir_path[256];
+        if (fut_vnode_build_path(file->vnode->parent, dir_path, sizeof(dir_path)))
+            inotify_dispatch_event(dir_path, mask, file->vnode->name, 0);
     }
 
     VFSDBG("[vfs-close] vnode path, file->vnode=%p\n", (void*)file->vnode);

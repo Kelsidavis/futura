@@ -38,7 +38,8 @@
 #define VFS_TEST_EISDIR     12
 #define VFS_TEST_CHDIR_DOTDOT 13
 #define VFS_TEST_INOTIFY_RENAME 14
-#define VFS_TEST_INOTIFY_ATTRIB 15
+#define VFS_TEST_INOTIFY_ATTRIB  15
+#define VFS_TEST_INOTIFY_CLOSE   16
 
 /* Use kernel-level VFS functions (no copy_from_user) */
 #define sys_mkdir(path, mode)           fut_vfs_mkdir(path, (uint32_t)(mode))
@@ -68,7 +69,10 @@ struct test_inotify_event {
 #define IN_MOVED_FROM 0x00000040U
 #define IN_MOVED_TO   0x00000080U
 #define IN_MOVE       (IN_MOVED_FROM | IN_MOVED_TO)
-#define IN_ATTRIB     0x00000004U
+#define IN_ATTRIB          0x00000004U
+#define IN_CLOSE_WRITE     0x00000008U
+#define IN_CLOSE_NOWRITE   0x00000010U
+#define IN_OPEN            0x00000020U
 #define IN_NONBLOCK 00004000
 #define RENAME_NOREPLACE (1U << 0)
 #define RENAME_EXCHANGE  (1U << 1)
@@ -1109,6 +1113,89 @@ static void test_inotify_attrib(void) {
     fut_test_pass();
 }
 
+/*
+ * Test 16: inotify IN_OPEN / IN_CLOSE_WRITE events on open/close
+ *
+ * Watches a directory, opens+closes a file for writing, verifies
+ * IN_OPEN and IN_CLOSE_WRITE are dispatched with the correct name.
+ */
+static void test_inotify_close(void) {
+    fut_printf("[VFS-TEST] Test 16: inotify IN_OPEN / IN_CLOSE_WRITE on open/close\n");
+
+    const char *watch_dir = "/";
+    const char *filepath  = "/close_test.txt";
+
+    fut_vfs_unlink(filepath);
+
+    /* Watch root for IN_OPEN | IN_CLOSE_WRITE | IN_CLOSE_NOWRITE */
+    int ifd = (int)sys_inotify_init1(IN_NONBLOCK);
+    if (ifd < 0) {
+        fut_printf("[VFS-TEST] ✗ inotify_close: inotify_init1 failed %d\n", ifd);
+        fut_test_fail(VFS_TEST_INOTIFY_CLOSE);
+        return;
+    }
+
+    uint32_t watch_mask = IN_OPEN | IN_CLOSE_WRITE | IN_CLOSE_NOWRITE;
+    int wd = (int)sys_inotify_add_watch(ifd, watch_dir, watch_mask);
+    if (wd < 0) {
+        fut_printf("[VFS-TEST] ✗ inotify_close: add_watch failed %d\n", wd);
+        fut_vfs_close(ifd);
+        fut_test_fail(VFS_TEST_INOTIFY_CLOSE);
+        return;
+    }
+
+    /* Open file for writing → should generate IN_OPEN */
+    int fd = fut_vfs_open(filepath, O_CREAT | O_WRONLY, 0644);
+    if (fd < 0) {
+        fut_printf("[VFS-TEST] ✗ inotify_close: open failed %d\n", fd);
+        fut_vfs_close(ifd);
+        fut_test_fail(VFS_TEST_INOTIFY_CLOSE);
+        return;
+    }
+
+    /* Close the file → should generate IN_CLOSE_WRITE */
+    fut_vfs_close(fd);
+
+    /* Read events: expect at least IN_OPEN and IN_CLOSE_WRITE */
+    char buf[4 * (sizeof(struct test_inotify_event) + 64)];
+    long n = fut_vfs_read(ifd, buf, sizeof(buf));
+    if (n < (long)sizeof(struct test_inotify_event)) {
+        fut_printf("[VFS-TEST] ✗ inotify_close: read returned %ld\n", n);
+        fut_vfs_close(ifd);
+        fut_vfs_unlink(filepath);
+        fut_test_fail(VFS_TEST_INOTIFY_CLOSE);
+        return;
+    }
+
+    /* Walk events and check for IN_OPEN and IN_CLOSE_WRITE */
+    uint32_t seen = 0;
+    char *p = buf;
+    char *end = buf + n;
+    while (p + (long)sizeof(struct test_inotify_event) <= end) {
+        struct test_inotify_event *ev = (struct test_inotify_event *)p;
+        if (ev->mask & (IN_OPEN | IN_CLOSE_WRITE | IN_CLOSE_NOWRITE))
+            seen |= ev->mask & (IN_OPEN | IN_CLOSE_WRITE | IN_CLOSE_NOWRITE);
+        p += sizeof(struct test_inotify_event) + ev->len;
+    }
+
+    fut_vfs_close(ifd);
+    fut_vfs_unlink(filepath);
+
+    if (!(seen & IN_OPEN)) {
+        fut_printf("[VFS-TEST] ✗ inotify_close: IN_OPEN not seen (seen=0x%x)\n", seen);
+        fut_test_fail(VFS_TEST_INOTIFY_CLOSE);
+        return;
+    }
+    if (!(seen & IN_CLOSE_WRITE)) {
+        fut_printf("[VFS-TEST] ✗ inotify_close: IN_CLOSE_WRITE not seen (seen=0x%x)\n", seen);
+        fut_test_fail(VFS_TEST_INOTIFY_CLOSE);
+        return;
+    }
+
+    fut_printf("[VFS-TEST] ✓ inotify open/close: IN_OPEN and IN_CLOSE_WRITE both seen (0x%x)\n", seen);
+    fut_test_pass();
+}
+
 void fut_vfs_test_thread(void *arg) {
     (void)arg;
 
@@ -1123,6 +1210,7 @@ void fut_vfs_test_thread(void *arg) {
     test_inotify();
     test_inotify_rename();
     test_inotify_attrib();
+    test_inotify_close();
     test_mount();
     test_umount_expire();
     test_renameat2();

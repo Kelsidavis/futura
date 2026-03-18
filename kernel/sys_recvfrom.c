@@ -476,15 +476,23 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
     {
         extern fut_socket_t *get_socket_from_fd(int fd);
         fut_socket_t *dgsock = get_socket_from_fd(local_sockfd);
-        if (dgsock && dgsock->socket_type == 2 /* SOCK_DGRAM */ && dgsock->dgram_queue) {
+        if (dgsock && dgsock->socket_type == 2 /* SOCK_DGRAM */ &&
+            !dgsock->pair && dgsock->dgram_queue) {
             char sender_path[108];
             uint16_t sender_path_len = 0;
             size_t actual_dgram_len = 0;
             if (local_flags & MSG_DONTWAIT)
                 dgsock->flags |= 0x800;
-            ssize_t dg_ret = fut_socket_recvfrom_dgram(dgsock, kbuf, local_len,
-                                                       sender_path, &sender_path_len,
-                                                       &actual_dgram_len);
+            ssize_t dg_ret;
+            if (local_flags & MSG_PEEK) {
+                dg_ret = fut_socket_peek_dgram(dgsock, kbuf, local_len,
+                                               sender_path, &sender_path_len,
+                                               &actual_dgram_len);
+            } else {
+                dg_ret = fut_socket_recvfrom_dgram(dgsock, kbuf, local_len,
+                                                   sender_path, &sender_path_len,
+                                                   &actual_dgram_len);
+            }
             if (local_flags & MSG_DONTWAIT)
                 dgsock->flags &= ~0x800;
             if (dg_ret < 0) {

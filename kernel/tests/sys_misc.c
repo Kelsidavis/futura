@@ -14412,6 +14412,67 @@ static void test_socket_errno_correctness(void) {
 }
 
 /**
+ * Test 324: MSG_PEEK on DGRAM socket sees datagram without consuming it.
+ *
+ * Send one datagram; peek should return the data and leave it in queue;
+ * a second non-peek recv should return the same datagram again.
+ */
+static void test_dgram_msg_peek(void) {
+    fut_printf("[MISC-TEST] Test 324: MSG_PEEK on DGRAM socket\n");
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_bind(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_sendto(int sockfd, const void *buf, size_t len, int flags,
+                           const void *dest_addr, int addrlen);
+    extern long sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
+                             void *src_addr, void *addrlen);
+
+    long recvfd = sys_socket(1, 2, 0);
+    long sendfd = sys_socket(1, 2, 0);
+    if (recvfd < 0 || sendfd < 0) {
+        if (recvfd >= 0) sys_close((int)recvfd);
+        if (sendfd >= 0) sys_close((int)sendfd);
+        fut_test_fail(324); return;
+    }
+
+    struct { unsigned short family; char path[16]; } addr = {0};
+    addr.family = 1;
+    addr.path[0] = '\0';
+    addr.path[1] = 't'; addr.path[2] = '3'; addr.path[3] = '2'; addr.path[4] = '4';
+    addr.path[5] = 'p'; addr.path[6] = 'e'; addr.path[7] = 'e'; addr.path[8] = 'k';
+    unsigned int alen = 2 + 9;
+
+    if (sys_bind((int)recvfd, &addr, alen) != 0) {
+        sys_close((int)recvfd); sys_close((int)sendfd); fut_test_fail(324); return;
+    }
+
+    char msg[] = "peek-test";
+    if (sys_sendto((int)sendfd, msg, 9, 0, &addr, (int)alen) != 9) {
+        sys_close((int)recvfd); sys_close((int)sendfd); fut_test_fail(324); return;
+    }
+    sys_close((int)sendfd);
+
+    /* MSG_PEEK (0x02): returns data without consuming */
+    char peekbuf[32] = {0};
+    long r1 = sys_recvfrom((int)recvfd, peekbuf, sizeof(peekbuf), 0x02 /*MSG_PEEK*/, NULL, NULL);
+    if (r1 != 9 || __builtin_memcmp(peekbuf, msg, 9) != 0) {
+        fut_printf("[MISC-TEST] ✗ peek returned %ld\n", r1);
+        sys_close((int)recvfd); fut_test_fail(324); return;
+    }
+
+    /* Normal recv: should return the same datagram again */
+    char recvbuf[32] = {0};
+    long r2 = sys_recvfrom((int)recvfd, recvbuf, sizeof(recvbuf), 0, NULL, NULL);
+    sys_close((int)recvfd);
+
+    if (r2 != 9 || __builtin_memcmp(recvbuf, msg, 9) != 0) {
+        fut_printf("[MISC-TEST] ✗ second recv returned %ld after peek\n", r2);
+        fut_test_fail(324); return;
+    }
+    fut_printf("[MISC-TEST] ✓ MSG_PEEK on DGRAM: peek saw data; recv consumed it\n");
+    fut_test_pass();
+}
+
+/**
  * Test 322: sendmsg with msg_name delivers datagram to destination.
  *
  * Creates two DGRAM sockets; uses sendmsg with msg_name (dest addr) to send
@@ -15570,6 +15631,7 @@ void fut_misc_test_thread(void *arg) {
     test_dgram_write_connected();        /* Test 321: write() on connected DGRAM socket */
     test_sendmsg_dgram_msgname();        /* Test 322: sendmsg with msg_name routes DGRAM */
     test_recvmsg_dgram_msgname();        /* Test 323: recvmsg fills msg_name with sender addr */
+    test_dgram_msg_peek();               /* Test 324: MSG_PEEK on DGRAM leaves datagram in queue */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

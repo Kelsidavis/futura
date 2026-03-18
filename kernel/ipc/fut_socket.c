@@ -1466,3 +1466,49 @@ ssize_t fut_socket_recvfrom_dgram(fut_socket_t *socket, void *buf, size_t len,
 
     return (ssize_t)copy_len;
 }
+
+/**
+ * Peek at the next datagram without consuming it (MSG_PEEK).
+ * Same as fut_socket_recvfrom_dgram but leaves the datagram in the queue.
+ */
+ssize_t fut_socket_peek_dgram(fut_socket_t *socket, void *buf, size_t len,
+                               char *sender_path_out, uint16_t *sender_path_len_out,
+                               size_t *actual_datagram_len_out) {
+    if (!socket || !buf)
+        return -EINVAL;
+    if (!socket->dgram_queue)
+        return -ENOTCONN;
+
+    fut_dgram_queue_t *dq = socket->dgram_queue;
+    fut_spinlock_acquire(&dq->lock);
+
+    if (dq->count == 0) {
+        if (socket->flags & 0x800) { /* O_NONBLOCK */
+            fut_spinlock_release(&dq->lock);
+            return -EAGAIN;
+        }
+        /* Block until a datagram arrives */
+        while (dq->count == 0) {
+            fut_waitq_sleep_locked(dq->recv_waitq, &dq->lock, FUT_THREAD_BLOCKED);
+            fut_spinlock_acquire(&dq->lock);
+        }
+    }
+
+    fut_dgram_entry_t *entry = &dq->msgs[dq->head];
+    size_t dgram_len = entry->data_len;
+    size_t copy_len = (len < dgram_len) ? len : dgram_len;
+    memcpy(buf, entry->data, copy_len);
+
+    if (sender_path_out && sender_path_len_out) {
+        if (entry->sender_path_len > 0)
+            memcpy(sender_path_out, entry->sender_path, entry->sender_path_len);
+        *sender_path_len_out = entry->sender_path_len;
+    }
+    if (actual_datagram_len_out)
+        *actual_datagram_len_out = dgram_len;
+
+    /* Do NOT advance head — MSG_PEEK leaves datagram in queue */
+    fut_spinlock_release(&dq->lock);
+
+    return (ssize_t)copy_len;
+}

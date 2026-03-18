@@ -18,9 +18,22 @@
 #include <stdint.h>
 #include <string.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
 #include <fcntl.h>
+
+static inline int fchownat_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_from_user(dst, src, n);
+}
 
 /* Special value for unchanged uid/gid */
 #define CHOWN_UNCHANGED ((uint32_t)-1)
@@ -169,7 +182,7 @@ long sys_fchownat(int dirfd, const char *pathname, uint32_t uid, uint32_t gid, i
 
     /* Copy pathname from userspace to kernel space */
     char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
-    if (fut_copy_from_user(path_buf, pathname, sizeof(path_buf)) != 0) {
+    if (fchownat_copy_from_user(path_buf, pathname, sizeof(path_buf)) != 0) {
         fut_printf("[FCHOWNAT] fchownat(dirfd=%d [%s], pathname=?, uid=%s, gid=%s, "
                    "op=%s, flags=%s) -> EFAULT (copy_from_user failed)\n",
                    dirfd, dirfd_desc, uid_desc, gid_desc, operation_type, flags_desc);

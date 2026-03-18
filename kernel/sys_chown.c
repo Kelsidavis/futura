@@ -18,9 +18,22 @@
 #include <kernel/fut_vfs.h>
 #include <stdint.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
 #include <string.h>
+
+static inline int chown_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_from_user(dst, src, n);
+}
 
 /* Special value indicating "don't change" */
 #define CHOWN_UNCHANGED ((uint32_t)-1)
@@ -201,7 +214,7 @@ long sys_chown(const char *pathname, uint32_t uid, uint32_t gid) {
 
     /* Copy pathname from userspace to kernel space */
     char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
-    if (fut_copy_from_user(path_buf, local_pathname, sizeof(path_buf)) != 0) {
+    if (chown_copy_from_user(path_buf, local_pathname, sizeof(path_buf)) != 0) {
         fut_printf("[CHOWN] chown(pathname=?, uid=%s, gid=%s, op=%s) -> EFAULT "
                    "(copy_from_user failed)\n", uid_desc, gid_desc, operation_type);
         return -EFAULT;

@@ -7865,6 +7865,98 @@ static void test_pread_pwrite_basic(void) {
     fut_test_pass();
 }
 
+static void test_chown_basic(void) {
+    fut_printf("[MISC-TEST] Test 167: sys_chown basic\n");
+    extern long sys_chown(const char *pathname, uint32_t uid, uint32_t gid);
+    extern long sys_unlink(const char *path);
+
+    /* Create a test file */
+    int fd = (int)fut_vfs_open("/test_chown.txt", O_CREAT | O_RDWR, 0644);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ chown: create failed: %d\n", fd);
+        fut_test_fail(167);
+        return;
+    }
+    fut_vfs_close(fd);
+
+    /* Change ownership to uid=1000, gid=1000 */
+    long ret = sys_chown("/test_chown.txt", 1000, 1000);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ chown: expected 0, got %ld\n", ret);
+        sys_unlink("/test_chown.txt");
+        fut_test_fail(167);
+        return;
+    }
+
+    /* Verify ownership changed via stat */
+    struct fut_stat st;
+    int sr = fut_vfs_stat("/test_chown.txt", &st);
+    if (sr != 0 || st.st_uid != 1000 || st.st_gid != 1000) {
+        fut_printf("[MISC-TEST] ✗ chown: stat uid=%u gid=%u (expected 1000:1000), sr=%d\n",
+                   st.st_uid, st.st_gid, sr);
+        sys_unlink("/test_chown.txt");
+        fut_test_fail(167);
+        return;
+    }
+
+    /* ENOENT on missing file */
+    long en = sys_chown("/no_such_chown_file", 0, 0);
+    sys_unlink("/test_chown.txt");
+    if (en != -ENOENT) {
+        fut_printf("[MISC-TEST] ✗ chown missing: expected ENOENT, got %ld\n", en);
+        fut_test_fail(167);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ sys_chown: uid/gid changed, ENOENT on missing\n");
+    fut_test_pass();
+}
+
+static void test_fchownat_basic(void) {
+    fut_printf("[MISC-TEST] Test 168: sys_fchownat basic\n");
+    extern long sys_fchownat(int dirfd, const char *pathname, uint32_t uid, uint32_t gid, int flags);
+    extern long sys_unlink(const char *path);
+
+    /* Create a test file */
+    int fd = (int)fut_vfs_open("/test_fchownat.txt", O_CREAT | O_RDWR, 0644);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ fchownat: create failed: %d\n", fd);
+        fut_test_fail(168);
+        return;
+    }
+    fut_vfs_close(fd);
+
+    /* Change ownership via fchownat(AT_FDCWD=-100, ...) */
+    long ret = sys_fchownat(-100, "/test_fchownat.txt", 500, 500, 0);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ fchownat: expected 0, got %ld\n", ret);
+        sys_unlink("/test_fchownat.txt");
+        fut_test_fail(168);
+        return;
+    }
+
+    /* Verify ownership via stat */
+    struct fut_stat st;
+    int sr = fut_vfs_stat("/test_fchownat.txt", &st);
+    if (sr != 0 || st.st_uid != 500 || st.st_gid != 500) {
+        fut_printf("[MISC-TEST] ✗ fchownat: stat uid=%u gid=%u (expected 500:500), sr=%d\n",
+                   st.st_uid, st.st_gid, sr);
+        sys_unlink("/test_fchownat.txt");
+        fut_test_fail(168);
+        return;
+    }
+
+    /* ENOENT on missing file */
+    long en = sys_fchownat(-100, "/no_such_fchownat_file", 0, 0, 0);
+    sys_unlink("/test_fchownat.txt");
+    if (en != -ENOENT) {
+        fut_printf("[MISC-TEST] ✗ fchownat missing: expected ENOENT, got %ld\n", en);
+        fut_test_fail(168);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ sys_fchownat: uid/gid changed via AT_FDCWD, ENOENT on missing\n");
+    fut_test_pass();
+}
+
 /* ============================================================
  * Test entry point
  * ============================================================ */
@@ -8041,6 +8133,8 @@ void fut_misc_test_thread(void *arg) {
     test_readlink_basic();                 /* Test 164: sys_readlink symlink→target */
     test_read_write_basic();               /* Test 165: sys_read/write direct roundtrip */
     test_pread_pwrite_basic();             /* Test 166: sys_pread64/pwrite64 offset I/O */
+    test_chown_basic();                    /* Test 167: sys_chown uid/gid change + ENOENT */
+    test_fchownat_basic();                 /* Test 168: sys_fchownat AT_FDCWD + ENOENT */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

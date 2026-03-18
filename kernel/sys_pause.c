@@ -7,6 +7,7 @@
  */
 
 #include <kernel/fut_task.h>
+#include <kernel/fut_thread.h>
 #include <kernel/signal.h>
 #include <kernel/errno.h>
 
@@ -65,9 +66,12 @@ long sys_pause(void) {
     /* Hold signal_waitq lock across check + enqueue to avoid lost wakeups. */
     fut_spinlock_acquire(&task->signal_waitq.lock);
 
+    fut_thread_t *pause_thr = fut_thread_current();
+    uint64_t cur_mask = pause_thr ?
+        __atomic_load_n(&pause_thr->signal_mask, __ATOMIC_ACQUIRE) :
+        __atomic_load_n(&task->signal_mask, __ATOMIC_ACQUIRE);
     uint64_t unblocked_pending =
-        __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE) &
-        ~__atomic_load_n(&task->signal_mask, __ATOMIC_ACQUIRE);
+        __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE) & ~cur_mask;
 
     if (unblocked_pending != 0) {
         fut_spinlock_release(&task->signal_waitq.lock);

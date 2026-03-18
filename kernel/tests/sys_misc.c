@@ -7958,6 +7958,73 @@ static void test_fchownat_basic(void) {
     fut_test_pass();
 }
 
+static void test_unlinkat_basic(void) {
+    fut_printf("[MISC-TEST] Test 182: sys_unlinkat basic\n");
+    extern long sys_unlinkat(int dirfd, const char *pathname, int flags);
+
+    /* Create a test file */
+    int fd = (int)fut_vfs_open("/test_unlinkat.txt", O_CREAT | O_RDWR, 0644);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ unlinkat: create failed: %d\n", fd);
+        fut_test_fail(182);
+        return;
+    }
+    fut_vfs_close(fd);
+
+    /* Unlink via AT_FDCWD */
+    long ret = sys_unlinkat(-100, "/test_unlinkat.txt", 0);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ unlinkat: expected 0, got %ld\n", ret);
+        fut_vfs_unlink("/test_unlinkat.txt");
+        fut_test_fail(182);
+        return;
+    }
+
+    /* Verify gone */
+    struct fut_stat st;
+    int sr = fut_vfs_stat("/test_unlinkat.txt", &st);
+    if (sr != -ENOENT) {
+        fut_printf("[MISC-TEST] ✗ unlinkat: file still exists after unlink (sr=%d)\n", sr);
+        fut_test_fail(182);
+        return;
+    }
+
+    /* ENOENT on already-deleted */
+    long en = sys_unlinkat(-100, "/test_unlinkat.txt", 0);
+    if (en != -ENOENT) {
+        fut_printf("[MISC-TEST] ✗ unlinkat ENOENT: expected ENOENT, got %ld\n", en);
+        fut_test_fail(182);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ sys_unlinkat: file deleted, ENOENT on re-delete\n");
+    fut_test_pass();
+}
+
+static void test_mknodat_basic(void) {
+    fut_printf("[MISC-TEST] Test 183: sys_mknodat basic\n");
+    extern long sys_mknodat(int dirfd, const char *pathname, unsigned int mode, unsigned int dev);
+
+    /* Create a regular file via mknodat (mode=S_IFREG|0644) */
+    long ret = sys_mknodat(-100, "/test_mknodat.txt", 0100644, 0);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ mknodat S_IFREG: expected 0, got %ld\n", ret);
+        fut_test_fail(183);
+        return;
+    }
+
+    /* Verify file exists */
+    struct fut_stat st;
+    int sr = fut_vfs_stat("/test_mknodat.txt", &st);
+    fut_vfs_unlink("/test_mknodat.txt");
+    if (sr != 0) {
+        fut_printf("[MISC-TEST] ✗ mknodat: stat failed: %d\n", sr);
+        fut_test_fail(183);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ sys_mknodat: S_IFREG file created\n");
+    fut_test_pass();
+}
+
 static void test_syslog_basic(void) {
     fut_printf("[MISC-TEST] Test 181: sys_syslog basic\n");
     extern long sys_syslog(int type, char *buf, int len);
@@ -8545,6 +8612,8 @@ void fut_misc_test_thread(void *arg) {
     test_utimensat_basic();                /* Test 179: sys_utimensat NULL times via AT_FDCWD */
     test_fstatat_basic();                  /* Test 180: sys_fstatat /proc + ENOENT */
     test_syslog_basic();                   /* Test 181: sys_syslog SIZE_BUFFER + READ_ALL */
+    test_unlinkat_basic();                 /* Test 182: sys_unlinkat delete + ENOENT */
+    test_mknodat_basic();                  /* Test 183: sys_mknodat S_IFREG creation */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

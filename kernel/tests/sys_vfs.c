@@ -38,6 +38,7 @@
 #define VFS_TEST_EISDIR     12
 #define VFS_TEST_CHDIR_DOTDOT 13
 #define VFS_TEST_INOTIFY_RENAME 14
+#define VFS_TEST_INOTIFY_ATTRIB 15
 
 /* Use kernel-level VFS functions (no copy_from_user) */
 #define sys_mkdir(path, mode)           fut_vfs_mkdir(path, (uint32_t)(mode))
@@ -67,6 +68,7 @@ struct test_inotify_event {
 #define IN_MOVED_FROM 0x00000040U
 #define IN_MOVED_TO   0x00000080U
 #define IN_MOVE       (IN_MOVED_FROM | IN_MOVED_TO)
+#define IN_ATTRIB     0x00000004U
 #define IN_NONBLOCK 00004000
 #define RENAME_NOREPLACE (1U << 0)
 #define RENAME_EXCHANGE  (1U << 1)
@@ -1018,6 +1020,95 @@ static void test_chdir_with_dotdot(void) {
     fut_test_pass();
 }
 
+/*
+ * Test 15: inotify IN_ATTRIB event on chmod
+ *
+ * Creates a file, watches its parent directory for IN_ATTRIB, calls chmod,
+ * then reads the inotify event and verifies mask and filename.
+ */
+static void test_inotify_attrib(void) {
+    fut_printf("[VFS-TEST] Test 15: inotify IN_ATTRIB event on chmod\n");
+    extern long sys_chmod(const char *pathname, uint32_t mode);
+
+    const char *watch_dir  = "/";
+    const char *filepath   = "/attrib_test.txt";
+    const char *filename   = "attrib_test.txt";
+
+    /* Create the file */
+    fut_vfs_unlink(filepath);
+    int fd = fut_vfs_open(filepath, O_CREAT | O_RDWR, 0644);
+    if (fd < 0) {
+        fut_printf("[VFS-TEST] ✗ inotify_attrib: create file failed %d\n", fd);
+        fut_test_fail(VFS_TEST_INOTIFY_ATTRIB);
+        return;
+    }
+    fut_vfs_close(fd);
+
+    /* Watch root for IN_ATTRIB */
+    int ifd = (int)sys_inotify_init1(IN_NONBLOCK);
+    if (ifd < 0) {
+        fut_printf("[VFS-TEST] ✗ inotify_attrib: inotify_init1 failed %d\n", ifd);
+        fut_vfs_unlink(filepath);
+        fut_test_fail(VFS_TEST_INOTIFY_ATTRIB);
+        return;
+    }
+
+    int wd = (int)sys_inotify_add_watch(ifd, watch_dir, IN_ATTRIB);
+    if (wd < 0) {
+        fut_printf("[VFS-TEST] ✗ inotify_attrib: add_watch failed %d\n", wd);
+        fut_vfs_close(ifd);
+        fut_vfs_unlink(filepath);
+        fut_test_fail(VFS_TEST_INOTIFY_ATTRIB);
+        return;
+    }
+
+    /* chmod the file */
+    long ret = sys_chmod(filepath, 0600);
+    if (ret != 0) {
+        fut_printf("[VFS-TEST] ✗ inotify_attrib: chmod failed %ld\n", ret);
+        fut_vfs_close(ifd);
+        fut_vfs_unlink(filepath);
+        fut_test_fail(VFS_TEST_INOTIFY_ATTRIB);
+        return;
+    }
+
+    /* Read the inotify event */
+    char buf[sizeof(struct test_inotify_event) + 64];
+    long n = fut_vfs_read(ifd, buf, sizeof(buf));
+    if (n < (long)sizeof(struct test_inotify_event)) {
+        fut_printf("[VFS-TEST] ✗ inotify_attrib: read returned %ld\n", n);
+        fut_vfs_close(ifd);
+        fut_vfs_unlink(filepath);
+        fut_test_fail(VFS_TEST_INOTIFY_ATTRIB);
+        return;
+    }
+
+    struct test_inotify_event *ev = (struct test_inotify_event *)buf;
+    if (!(ev->mask & IN_ATTRIB)) {
+        fut_printf("[VFS-TEST] ✗ inotify_attrib: mask=0x%x missing IN_ATTRIB\n", ev->mask);
+        fut_vfs_close(ifd);
+        fut_vfs_unlink(filepath);
+        fut_test_fail(VFS_TEST_INOTIFY_ATTRIB);
+        return;
+    }
+
+    const char *got_name = buf + sizeof(struct test_inotify_event);
+    if (ev->len > 0 && __builtin_strcmp(got_name, filename) != 0) {
+        fut_printf("[VFS-TEST] ✗ inotify_attrib: name='%s' expected '%s'\n",
+                   got_name, filename);
+        fut_vfs_close(ifd);
+        fut_vfs_unlink(filepath);
+        fut_test_fail(VFS_TEST_INOTIFY_ATTRIB);
+        return;
+    }
+
+    fut_vfs_close(ifd);
+    fut_vfs_unlink(filepath);
+    fut_printf("[VFS-TEST] ✓ inotify IN_ATTRIB: chmod generated mask=0x%x name='%s'\n",
+               ev->mask, ev->len > 0 ? got_name : "(none)");
+    fut_test_pass();
+}
+
 void fut_vfs_test_thread(void *arg) {
     (void)arg;
 
@@ -1031,6 +1122,7 @@ void fut_vfs_test_thread(void *arg) {
     test_hardlink();
     test_inotify();
     test_inotify_rename();
+    test_inotify_attrib();
     test_mount();
     test_umount_expire();
     test_renameat2();

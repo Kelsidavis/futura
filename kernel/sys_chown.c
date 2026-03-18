@@ -443,6 +443,13 @@ long sys_chown(const char *pathname, uint32_t uid, uint32_t gid) {
                path_buf, path_type, vnode->ino, ownership_change_buf,
                uid_desc, gid_desc, operation_type);
 
+    /* Dispatch IN_ATTRIB inotify event so watchers see the ownership change */
+    if (vnode->parent && vnode->name) {
+        char dir_path[256];
+        if (fut_vnode_build_path(vnode->parent, dir_path, sizeof(dir_path)))
+            inotify_dispatch_event(dir_path, 0x00000004 /* IN_ATTRIB */, vnode->name, 0);
+    }
+
     fut_vnode_unref(vnode);
     return 0;
 }

@@ -189,6 +189,13 @@ long sys_getrusage(int who, struct rusage *usage) {
         }
     }
 
+    /* Phase 6: Populate I/O block accounting from per-task syscall counters.
+     * Linux uses disk block operations; we approximate with syscall counts. */
+    if (who == RUSAGE_SELF || who == RUSAGE_THREAD) {
+        ru.ru_inblock  = (long)task->io_syscr;
+        ru.ru_oublock  = (long)task->io_syscw;
+    }
+
     /* Copy to userspace */
     if (rusage_copy_to_user(usage, &ru, sizeof(struct rusage)) != 0) {
         fut_printf("[RUSAGE] getrusage(who=%s, usage=%p) -> EFAULT (copy_to_user failed)\n",

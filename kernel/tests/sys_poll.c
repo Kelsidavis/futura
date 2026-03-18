@@ -88,6 +88,7 @@ extern long sys_timerfd_settime(int ufd, int flags,
 #define POLL_TEST_SELECT_PIPE_EOF 13
 #define POLL_TEST_SELECT_TIMERFD  14
 #define POLL_TEST_NEGATIVE_FD     15
+#define POLL_TEST_POLLRDNORM      16
 
 /* fd_set helpers (must match sys_select.c) */
 #define FD_SETSIZE 1024
@@ -845,6 +846,42 @@ static void test_poll_negative_fd(void) {
 }
 
 /* ============================================================
+ * Test 16: POLLRDNORM / POLLWRNORM are handled like POLLIN / POLLOUT
+ * ============================================================ */
+static void test_poll_pollrdnorm(void) {
+    fut_printf("[POLL-TEST] Test 16: POLLRDNORM/POLLWRNORM synonymous with POLLIN/POLLOUT\n");
+
+    /* eventfd with counter=1: POLLRDNORM request should report ready */
+    long efd = sys_eventfd2(1, 0);
+    if (efd < 0) {
+        fut_printf("[POLL-TEST] ✗ eventfd2 failed: %ld\n", efd);
+        fut_test_fail(POLL_TEST_POLLRDNORM);
+        return;
+    }
+
+    /* Request POLLRDNORM (0x0040) only — not POLLIN */
+    struct pollfd pfd = { .fd = (int)efd, .events = POLLRDNORM, .revents = 0 };
+    long ret = sys_poll(&pfd, 1, 0);
+
+    if (ret != 1) {
+        fut_printf("[POLL-TEST] ✗ poll(POLLRDNORM) returned %ld (expected 1)\n", ret);
+        fut_vfs_close((int)efd);
+        fut_test_fail(POLL_TEST_POLLRDNORM);
+        return;
+    }
+    if (!(pfd.revents & POLLRDNORM)) {
+        fut_printf("[POLL-TEST] ✗ POLLRDNORM not in revents: 0x%x\n", pfd.revents);
+        fut_vfs_close((int)efd);
+        fut_test_fail(POLL_TEST_POLLRDNORM);
+        return;
+    }
+
+    fut_vfs_close((int)efd);
+    fut_printf("[POLL-TEST] ✓ POLLRDNORM request returns POLLRDNORM in revents\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Main test harness
  * ============================================================ */
 void fut_poll_test_thread(void *arg) {
@@ -869,6 +906,7 @@ void fut_poll_test_thread(void *arg) {
     test_select_pipe_eof();
     test_select_timerfd_wakeup();    /* Test 14: select() wakes on timerfd (Phase 4) */
     test_poll_negative_fd();         /* Test 15: negative fd silently ignored (revents=0) */
+    test_poll_pollrdnorm();          /* Test 16: POLLRDNORM/POLLWRNORM handled as POLLIN/POLLOUT */
 
     fut_printf("[POLL-TEST] ========================================\n");
     fut_printf("[POLL-TEST] All poll/select tests done\n");

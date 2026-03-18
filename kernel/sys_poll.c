@@ -128,9 +128,9 @@ static struct poll_scan_stats poll_scan_fds(struct pollfd *kfds, unsigned long n
         }
 
         uint32_t epoll_req = 0;
-        if (kfds[i].events & POLLIN)  epoll_req |= EPOLLIN;
-        if (kfds[i].events & POLLOUT) epoll_req |= EPOLLOUT;
-        if (kfds[i].events & POLLPRI) epoll_req |= EPOLLPRI;
+        if (kfds[i].events & (POLLIN | POLLRDNORM))  epoll_req |= EPOLLIN | EPOLLRDNORM;
+        if (kfds[i].events & (POLLOUT | POLLWRNORM)) epoll_req |= EPOLLOUT | EPOLLWRNORM;
+        if (kfds[i].events & POLLPRI)                epoll_req |= EPOLLPRI;
 
         uint32_t epoll_ready = 0;
         bool handled = false;
@@ -148,8 +148,8 @@ static struct poll_scan_stats poll_scan_fds(struct pollfd *kfds, unsigned long n
             fut_socket_t *socket = get_socket_from_fd(kfds[i].fd);
             if (socket) {
                 int poll_events = 0;
-                if (kfds[i].events & POLLIN)  poll_events |= 0x1;
-                if (kfds[i].events & POLLOUT) poll_events |= 0x4;
+                if (kfds[i].events & (POLLIN | POLLRDNORM))  poll_events |= 0x1;
+                if (kfds[i].events & (POLLOUT | POLLWRNORM)) poll_events |= 0x4;
                 int socket_ready = fut_socket_poll(socket, poll_events);
                 if (socket_ready & 0x1)  epoll_ready |= EPOLLIN;
                 if (socket_ready & 0x4)  epoll_ready |= EPOLLOUT;
@@ -170,12 +170,14 @@ static struct poll_scan_stats poll_scan_fds(struct pollfd *kfds, unsigned long n
             if (epoll_req & EPOLLOUT) epoll_ready |= EPOLLOUT;
         }
 
-        if (epoll_ready & EPOLLIN)    kfds[i].revents |= POLLIN;
-        if (epoll_ready & EPOLLOUT)   kfds[i].revents |= POLLOUT;
-        if (epoll_ready & EPOLLPRI)   kfds[i].revents |= POLLPRI;
-        if (epoll_ready & EPOLLHUP)   kfds[i].revents |= POLLHUP;
-        if (epoll_ready & EPOLLERR)   kfds[i].revents |= POLLERR;
-        if (epoll_ready & EPOLLRDHUP) kfds[i].revents |= 0x2000; /* POLLRDHUP */
+        if (epoll_ready & EPOLLIN)     kfds[i].revents |= POLLIN;
+        if (epoll_ready & EPOLLRDNORM) kfds[i].revents |= POLLRDNORM;
+        if (epoll_ready & EPOLLOUT)    kfds[i].revents |= POLLOUT;
+        if (epoll_ready & EPOLLWRNORM) kfds[i].revents |= POLLWRNORM;
+        if (epoll_ready & EPOLLPRI)    kfds[i].revents |= POLLPRI;
+        if (epoll_ready & EPOLLHUP)    kfds[i].revents |= POLLHUP;
+        if (epoll_ready & EPOLLERR)    kfds[i].revents |= POLLERR;
+        if (epoll_ready & EPOLLRDHUP)  kfds[i].revents |= 0x2000; /* POLLRDHUP */
 
         if (kfds[i].revents != 0) {
             stats.ready_count++;

@@ -543,14 +543,8 @@ static ssize_t ramfs_write(struct fut_vnode *vnode, const void *buf, size_t size
     }
 #endif
 
-    /* Phase 4: Dispatch IN_MODIFY inotify event to watchers on the file's parent */
-    if (size > 0 && vnode->parent) {
-        char dir_path[256];
-        if (fut_vnode_build_path(vnode->parent, dir_path, sizeof(dir_path))) {
-            inotify_dispatch_event(dir_path, 0x00000002 /* IN_MODIFY */,
-                                   vnode->name ? vnode->name : "", 0);
-        }
-    }
+    /* IN_MODIFY is dispatched by fut_vfs_write() after calling this op,
+     * so we do not dispatch it here to avoid duplicate events. */
 
     return (ssize_t)size;
 }

@@ -1677,7 +1677,7 @@ static fut_thread_t *clone_thread(fut_thread_t *parent_thread, fut_task_t *child
 long sys_clone_thread(uint64_t flags, uint64_t child_stack,
                        uint64_t parent_tid_ptr, uint64_t child_tid_ptr,
                        uint64_t tls) {
-#ifndef __x86_64__
+#if !defined(__x86_64__) && !defined(__aarch64__)
     (void)flags; (void)child_stack; (void)parent_tid_ptr;
     (void)child_tid_ptr; (void)tls;
     return -ENOSYS;
@@ -1703,6 +1703,7 @@ long sys_clone_thread(uint64_t flags, uint64_t child_stack,
     if (!task)
         return -ESRCH;
 
+#ifdef __x86_64__
     /* Allocate a child interrupt frame — copy of parent's return state */
     fut_interrupt_frame_t *child_frame =
         (fut_interrupt_frame_t *)fut_malloc(sizeof(fut_interrupt_frame_t));
@@ -1725,6 +1726,72 @@ long sys_clone_thread(uint64_t flags, uint64_t child_stack,
         fut_free(child_frame);
         return -EAGAIN;
     }
+#elif defined(__aarch64__)
+    /*
+     * ARM64: Create the thread with dummy_entry (same as fork), then overwrite
+     * the context to point at userspace.  fut_restore_context will ERET to
+     * EL0 on the child's first run, using the fields we set below.
+     */
+    fut_thread_t *child_thread = fut_thread_create(
+        task,
+        dummy_entry,
+        NULL,
+        parent_thread->stack_size,
+        parent_thread->priority
+    );
+    if (!child_thread)
+        return -EAGAIN;
+
+    /* Copy all general-purpose registers from parent's interrupt frame */
+    child_thread->context.x0 = 0;                  /* clone() returns 0 in child */
+    child_thread->context.x1 = saved_frame->x[1];
+    child_thread->context.x2 = saved_frame->x[2];
+    child_thread->context.x3 = saved_frame->x[3];
+    child_thread->context.x4 = saved_frame->x[4];
+    child_thread->context.x5 = saved_frame->x[5];
+    child_thread->context.x6 = saved_frame->x[6];
+    child_thread->context.x7 = saved_frame->x[7];
+    child_thread->context.x8 = saved_frame->x[8];
+    child_thread->context.x9 = saved_frame->x[9];
+    child_thread->context.x10 = saved_frame->x[10];
+    child_thread->context.x11 = saved_frame->x[11];
+    child_thread->context.x12 = saved_frame->x[12];
+    child_thread->context.x13 = saved_frame->x[13];
+    child_thread->context.x14 = saved_frame->x[14];
+    child_thread->context.x15 = saved_frame->x[15];
+    child_thread->context.x16 = saved_frame->x[16];
+    child_thread->context.x17 = saved_frame->x[17];
+    child_thread->context.x18 = saved_frame->x[18];
+    child_thread->context.x19 = saved_frame->x[19];
+    child_thread->context.x20 = saved_frame->x[20];
+    child_thread->context.x21 = saved_frame->x[21];
+    child_thread->context.x22 = saved_frame->x[22];
+    child_thread->context.x23 = saved_frame->x[23];
+    child_thread->context.x24 = saved_frame->x[24];
+    child_thread->context.x25 = saved_frame->x[25];
+    child_thread->context.x26 = saved_frame->x[26];
+    child_thread->context.x27 = saved_frame->x[27];
+    child_thread->context.x28 = saved_frame->x[28];
+    child_thread->context.x29_fp = saved_frame->x[29];
+    child_thread->context.x30_lr = saved_frame->x[30];
+
+    /* Return to the same syscall return PC as parent */
+    child_thread->context.pc = saved_frame->pc;
+
+    /* EL0t with DAIF masked — same as ARM64 fork */
+    child_thread->context.pstate = 0x3C0;
+
+    /* Child uses the supplied user stack */
+    child_thread->context.sp_el0 = child_stack;
+
+    /* Threads share the parent's address space (CLONE_VM) — same TTBR0 */
+    child_thread->context.ttbr0_el1 = parent_thread->context.ttbr0_el1;
+
+    FORK_LOG("[CLONE] ARM64 thread tid=%llu pc=0x%llx sp_el0=0x%llx\n",
+             (unsigned long long)child_thread->tid,
+             (unsigned long long)child_thread->context.pc,
+             (unsigned long long)child_thread->context.sp_el0);
+#endif /* __aarch64__ */
 
     /* TLS: use the caller-supplied base, or inherit the parent's */
     if (flags & CLONE_SETTLS)
@@ -1755,11 +1822,13 @@ long sys_clone_thread(uint64_t flags, uint64_t child_stack,
      * child starts with the same signal mask as the creating thread). */
     child_thread->signal_mask = __atomic_load_n(&parent_thread->signal_mask, __ATOMIC_ACQUIRE);
 
+#ifdef __x86_64__
     FORK_LOG("[CLONE] thread tid=%llu rip=0x%llx rsp=0x%llx fs_base=0x%llx\n",
              (unsigned long long)child_tid,
              (unsigned long long)child_frame->rip,
              (unsigned long long)child_frame->rsp,
              (unsigned long long)child_thread->fs_base);
+#endif
 
     return (long)child_tid;
 #endif

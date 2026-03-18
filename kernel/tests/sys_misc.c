@@ -11090,6 +11090,82 @@ static void test_preadv2_bad_flags(void) {
 }
 
 /* ============================================================
+ * Tests 247-249: MAP_FIXED_NOREPLACE
+ * ============================================================ */
+#define TEST_MAP_FIXED_NOREPLACE 0x100000
+#define TEST_MAP_FIXED           0x10
+#define TEST_MAP_ANONYMOUS       0x20
+#define TEST_MAP_PRIVATE         0x02
+#define TEST_PROT_RW             3  /* PROT_READ|PROT_WRITE */
+
+static void test_map_fixed_noreplace_ok(void) {
+    fut_printf("[MISC-TEST] Test 247: MAP_FIXED_NOREPLACE with NULL addr (no conflict)\n");
+    extern long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long off);
+    extern long sys_munmap(void *addr, size_t len);
+
+    /* MAP_FIXED_NOREPLACE with addr=NULL: no conflict check, allocates normally */
+    void *p = (void *)sys_mmap(NULL, 4096, TEST_PROT_RW,
+                               TEST_MAP_PRIVATE | TEST_MAP_ANONYMOUS | TEST_MAP_FIXED_NOREPLACE,
+                               -1, 0);
+    if (!p || (long)(uintptr_t)p < 0) {
+        fut_printf("[MISC-TEST] ✗ MAP_FIXED_NOREPLACE NULL addr: %ld\n", (long)(uintptr_t)p);
+        fut_test_fail(247); return;
+    }
+    sys_munmap(p, 4096);
+    fut_printf("[MISC-TEST] ✓ MAP_FIXED_NOREPLACE NULL addr → allocated at %p\n", p);
+    fut_test_pass();
+}
+
+static void test_map_fixed_noreplace_conflict(void) {
+    fut_printf("[MISC-TEST] Test 248: MAP_FIXED_NOREPLACE over existing mapping → EEXIST\n");
+    extern long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long off);
+    extern long sys_munmap(void *addr, size_t len);
+
+    /* Allocate a base mapping */
+    void *base = (void *)sys_mmap(NULL, 8192, TEST_PROT_RW,
+                                  TEST_MAP_PRIVATE | TEST_MAP_ANONYMOUS, -1, 0);
+    if (!base || (long)(uintptr_t)base < 0) { fut_test_fail(248); return; }
+
+    /* Attempt MAP_FIXED_NOREPLACE over the occupied range → EEXIST */
+    long r = sys_mmap(base, 4096, TEST_PROT_RW,
+                      TEST_MAP_PRIVATE | TEST_MAP_ANONYMOUS | TEST_MAP_FIXED_NOREPLACE,
+                      -1, 0);
+    sys_munmap(base, 8192);
+
+    if (r != -17 /* -EEXIST */) {
+        fut_printf("[MISC-TEST] ✗ MAP_FIXED_NOREPLACE conflict: expected -EEXIST, got %ld\n", r);
+        fut_test_fail(248); return;
+    }
+    fut_printf("[MISC-TEST] ✓ MAP_FIXED_NOREPLACE over occupied range → EEXIST\n");
+    fut_test_pass();
+}
+
+static void test_map_fixed_noreplace_partial(void) {
+    fut_printf("[MISC-TEST] Test 249: MAP_FIXED_NOREPLACE partial overlap → EEXIST\n");
+    extern long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long off);
+    extern long sys_munmap(void *addr, size_t len);
+
+    /* Allocate 8192 bytes */
+    void *base = (void *)sys_mmap(NULL, 8192, TEST_PROT_RW,
+                                  TEST_MAP_PRIVATE | TEST_MAP_ANONYMOUS, -1, 0);
+    if (!base || (long)(uintptr_t)base < 0) { fut_test_fail(249); return; }
+
+    /* Try to MAP_FIXED_NOREPLACE at base+4096 for 8192 bytes (partially overlaps) */
+    void *overlap = (void *)((uintptr_t)base + 4096);
+    long r = sys_mmap(overlap, 8192, TEST_PROT_RW,
+                      TEST_MAP_PRIVATE | TEST_MAP_ANONYMOUS | TEST_MAP_FIXED_NOREPLACE,
+                      -1, 0);
+    sys_munmap(base, 8192);
+
+    if (r != -17 /* -EEXIST */) {
+        fut_printf("[MISC-TEST] ✗ MAP_FIXED_NOREPLACE partial: expected -EEXIST, got %ld\n", r);
+        fut_test_fail(249); return;
+    }
+    fut_printf("[MISC-TEST] ✓ MAP_FIXED_NOREPLACE partial overlap → EEXIST\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Tests 244-246: openat2
  * ============================================================ */
 struct test_open_how {
@@ -11555,6 +11631,9 @@ void fut_misc_test_thread(void *arg) {
     test_openat2_basic();                  /* Test 244: openat2 basic O_RDONLY */
     test_openat2_resolve_flags();          /* Test 245: openat2 RESOLVE_NO_XDEV|CACHED accepted */
     test_openat2_errors();                 /* Test 246: openat2 error paths (usize, resolve, enoent) */
+    test_map_fixed_noreplace_ok();         /* Test 247: MAP_FIXED_NOREPLACE at free addr succeeds */
+    test_map_fixed_noreplace_conflict();   /* Test 248: MAP_FIXED_NOREPLACE over occupied → EEXIST */
+    test_map_fixed_noreplace_partial();    /* Test 249: MAP_FIXED_NOREPLACE partial overlap → EEXIST */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

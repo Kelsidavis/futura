@@ -157,6 +157,23 @@ long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset) 
             return -ENOMEM;
         }
 
+        /* MAP_FIXED_NOREPLACE: fail with EEXIST if range [addr, addr+len) overlaps
+         * any existing VMA, instead of silently unmapping the existing mapping. */
+        if ((flags & MAP_FIXED_NOREPLACE) && addr) {
+            uintptr_t req_start = (uintptr_t)addr;
+            uintptr_t req_end   = req_start + len;
+            struct fut_vma *vma = mm->vma_list;
+            while (vma) {
+                if (vma->start < req_end && vma->end > req_start) {
+                    /* Overlap detected */
+                    return -EEXIST;
+                }
+                vma = vma->next;
+            }
+            /* No overlap: treat as MAP_FIXED */
+            flags = (flags & ~MAP_FIXED_NOREPLACE) | MAP_FIXED;
+        }
+
         /* Check VMA count limit to prevent VMA fragmentation attacks.
          * An attacker could create millions of tiny mappings to:
          * - Exhaust kernel memory with VMA structures

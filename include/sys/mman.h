@@ -76,6 +76,9 @@
 #ifndef MAP_HUGETLB
 #define MAP_HUGETLB     0x40000 /* Create huge page mapping */
 #endif
+#ifndef MAP_FIXED_NOREPLACE
+#define MAP_FIXED_NOREPLACE 0x100000 /* MAP_FIXED but fail with EEXIST if range is occupied */
+#endif
 
 /* Return value for mmap on failure */
 #ifndef MAP_FAILED

@@ -182,71 +182,27 @@ long sys_close(int fd) {
      * Prevents use-after-free when the FD number is reused later. */
     epoll_notify_fd_close(local_fd);
 
-    /* Phase 2: Identify FD type (socket vs file) */
+    /* Route all FD closes through fut_vfs_close.
+     * fut_vfs_close calls release_socket_fd() to clear the socket tracking
+     * table, decrements the file refcount, and when it reaches zero calls
+     * chr_ops->release (socket_release → fut_socket_close) to null the peer
+     * pointers and wake waiters.  The old socket-bypass path skipped
+     * fut_vfs_close, leaving pair->peer non-NULL so sends returned bytes
+     * instead of -EPIPE after the peer FD was closed. */
+
+    /* Identify FD type for diagnostics */
     const char *fd_type;
     const char *fd_desc;
     int ret;
 
-    /* Check if FD is a socket first */
     fut_socket_t *socket = get_socket_from_fd(local_fd);
     if (socket) {
-        /* Phase 2: Identify socket state for diagnostics */
-        const char *socket_state;
-        switch (socket->state) {
-            case FUT_SOCK_CREATED:
-                socket_state = "created (unbound)";
-                break;
-            case FUT_SOCK_BOUND:
-                socket_state = "bound";
-                break;
-            case FUT_SOCK_LISTENING:
-                socket_state = "listening";
-                break;
-            case FUT_SOCK_CONNECTING:
-                socket_state = "connecting";
-                break;
-            case FUT_SOCK_CONNECTED:
-                socket_state = "connected";
-                break;
-            case FUT_SOCK_CLOSED:
-                socket_state = "already closed";
-                break;
-            default:
-                socket_state = "unknown state";
-                break;
-        }
-
         fd_type = "socket";
-        fd_desc = socket_state;
-
-        /* Release socket */
-        ret = release_socket_fd(local_fd);
-        if (ret < 0) {
-            const char *error_desc;
-            switch (ret) {
-                case -EBADF:
-                    error_desc = "invalid socket fd";
-                    break;
-                case -EINVAL:
-                    error_desc = "invalid socket state";
-                    break;
-                default:
-                    error_desc = "unknown error";
-                    break;
-            }
-            close_printf("[CLOSE] close(fd=%d, type=%s [%s], socket_id=%u) -> %d (%s)\n",
-                       local_fd, fd_type, fd_desc, socket->socket_id, ret, error_desc);
-            return (long)ret;
-        }
-
-        close_printf("[CLOSE] close(fd=%d, type=%s [%s], socket_id=%u) -> 0 (Phase 2)\n",
-                   local_fd, fd_type, fd_desc, socket->socket_id);
-        return 0;
+        fd_desc = "connected";
+    } else {
+        fd_type = "file";
+        fd_desc = "regular file or special device";
     }
-
-    /* Phase 2: Otherwise, close as a regular file descriptor */
-    fd_type = "file";
-    fd_desc = "regular file or special device";
 
     ret = fut_vfs_close(local_fd);
     if (ret < 0) {

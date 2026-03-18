@@ -399,29 +399,50 @@ void fut_socket_unref(fut_socket_t *socket) {
             }
             fut_free(socket->listener);
         }
+        /* Release pair buffer with refcounting.
+         * Both socket->pair and socket->pair_reverse reference pair buffers
+         * that are shared with the peer socket (pair_fwd->refcount starts at 2).
+         * Only free when refcount reaches 0 to prevent use-after-free when the
+         * peer socket closes concurrently or sequentially. */
         if (socket->pair) {
-            /* Drop references on any in-flight FDs in the FD queue */
-            while (socket->pair->fd_queue_count > 0) {
-                uint32_t head = socket->pair->fd_queue_head;
-                struct fut_file *f = socket->pair->fd_queue[head];
-                socket->pair->fd_queue[head] = NULL;
-                socket->pair->fd_queue_head = (head + 1) % FUT_SOCKET_FD_QUEUE_MAX;
-                socket->pair->fd_queue_count--;
-                if (f && f->refcount > 0) __atomic_sub_fetch(&f->refcount, 1, __ATOMIC_ACQ_REL);
+            uint32_t pair_remaining = __atomic_sub_fetch(&socket->pair->refcount, 1,
+                                                         __ATOMIC_ACQ_REL);
+            if (pair_remaining == 0) {
+                /* Drop references on any in-flight FDs in the FD queue */
+                while (socket->pair->fd_queue_count > 0) {
+                    uint32_t head = socket->pair->fd_queue_head;
+                    struct fut_file *f = socket->pair->fd_queue[head];
+                    socket->pair->fd_queue[head] = NULL;
+                    socket->pair->fd_queue_head = (head + 1) % FUT_SOCKET_FD_QUEUE_MAX;
+                    socket->pair->fd_queue_count--;
+                    if (f && f->refcount > 0) __atomic_sub_fetch(&f->refcount, 1, __ATOMIC_ACQ_REL);
+                }
+                if (socket->pair->send_buf)  fut_free(socket->pair->send_buf);
+                if (socket->pair->recv_buf)  fut_free(socket->pair->recv_buf);
+                if (socket->pair->send_waitq) fut_free(socket->pair->send_waitq);
+                if (socket->pair->recv_waitq) fut_free(socket->pair->recv_waitq);
+                fut_free(socket->pair);
             }
-            if (socket->pair->send_buf) {
-                fut_free(socket->pair->send_buf);
+        }
+        /* Release the reverse-pair reference too (the buffer that the peer sends into) */
+        if (socket->pair_reverse) {
+            uint32_t rev_remaining = __atomic_sub_fetch(&socket->pair_reverse->refcount, 1,
+                                                        __ATOMIC_ACQ_REL);
+            if (rev_remaining == 0) {
+                while (socket->pair_reverse->fd_queue_count > 0) {
+                    uint32_t head = socket->pair_reverse->fd_queue_head;
+                    struct fut_file *f = socket->pair_reverse->fd_queue[head];
+                    socket->pair_reverse->fd_queue[head] = NULL;
+                    socket->pair_reverse->fd_queue_head = (head + 1) % FUT_SOCKET_FD_QUEUE_MAX;
+                    socket->pair_reverse->fd_queue_count--;
+                    if (f && f->refcount > 0) __atomic_sub_fetch(&f->refcount, 1, __ATOMIC_ACQ_REL);
+                }
+                if (socket->pair_reverse->send_buf)  fut_free(socket->pair_reverse->send_buf);
+                if (socket->pair_reverse->recv_buf)  fut_free(socket->pair_reverse->recv_buf);
+                if (socket->pair_reverse->send_waitq) fut_free(socket->pair_reverse->send_waitq);
+                if (socket->pair_reverse->recv_waitq) fut_free(socket->pair_reverse->recv_waitq);
+                fut_free(socket->pair_reverse);
             }
-            if (socket->pair->recv_buf) {
-                fut_free(socket->pair->recv_buf);
-            }
-            if (socket->pair->send_waitq) {
-                fut_free(socket->pair->send_waitq);
-            }
-            if (socket->pair->recv_waitq) {
-                fut_free(socket->pair->recv_waitq);
-            }
-            fut_free(socket->pair);
         }
         if (socket->close_waitq) {
             fut_free(socket->close_waitq);
@@ -502,6 +523,7 @@ int fut_socket_bind(fut_socket_t *socket, const char *path, size_t path_len) {
             SOCKET_LOG("[SOCKET] Socket %u VFS inode creation failed (non-fatal), path: %s\n",
                        socket->socket_id, path);
         } else {
+            fut_vnode_ref(inode);  /* socket holds its own reference; VFS tree has refcount=1 */
             socket->path_vnode = inode;
             SOCKET_LOG("[SOCKET] Socket %u created VFS inode, path: %s\n",
                        socket->socket_id, path);
@@ -722,10 +744,6 @@ int fut_socket_accept(fut_socket_t *listener, fut_socket_t **out_socket) {
      * accepted->pair_reverse = pair_forward means: server RECEIVES from pair_forward (client sends) */
     accepted->pair = peer->pair_reverse;  /* server sends here, client receives */
     accepted->pair_reverse = peer->pair;  /* server receives from here, client sends */
-
-    /* Increment refcounts on the pairs since they're now used by both sockets */
-    __atomic_add_fetch(&peer->pair->refcount, 1, __ATOMIC_ACQ_REL);
-    __atomic_add_fetch(&peer->pair_reverse->refcount, 1, __ATOMIC_ACQ_REL);
 
     /* IMPORTANT: Listener socket REMAINS in LISTENING state!
      * Only the accepted peer becomes CONNECTED.

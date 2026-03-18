@@ -15920,6 +15920,90 @@ static void test_epollrdhup_peer_shutdown(void) {
     fut_test_pass();
 }
 
+/* ============================================================
+ * Test 334: MSG_NOSIGNAL suppresses SIGPIPE on broken socket
+ *
+ * Verifies that sending on a socket whose peer is closed:
+ *   - Without MSG_NOSIGNAL: returns -EPIPE AND queues SIGPIPE
+ *   - With    MSG_NOSIGNAL: returns -EPIPE but does NOT queue SIGPIPE
+ * ============================================================ */
+static void test_msg_nosignal(void) {
+    fut_printf("[MISC-TEST] Test 334: MSG_NOSIGNAL suppresses SIGPIPE\n");
+
+    extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+    extern long sys_sendto(int sockfd, const void *buf, size_t len, int flags,
+                           const void *dest_addr, int addrlen);
+    extern long sys_close(int fd);
+
+    /* ---- Part A: without MSG_NOSIGNAL, SIGPIPE is raised ---- */
+    int svA[2] = { -1, -1 };
+    long r = sys_socketpair(1 /*AF_UNIX*/, 1 /*SOCK_STREAM*/, 0, svA);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 334: socketpair A failed: %ld\n", r);
+        fut_test_fail(334); return;
+    }
+    sys_close(svA[1]);                    /* break the connection */
+
+    /* Ignore SIGPIPE so default TERM action doesn't kill the test thread */
+    fut_task_t *task = fut_task_current();
+    uint64_t old_mask = task->signal_mask;
+    task->signal_mask |= (1ULL << 12);   /* block SIGPIPE (signal 13, bit 12) */
+
+    /* Clear any pre-existing SIGPIPE pending bit */
+    __atomic_and_fetch(&task->pending_signals, ~(1ULL << 12), __ATOMIC_RELEASE);
+
+    const char msg[] = "hi";
+    long ret = sys_sendto(svA[0], msg, 2, 0 /*no MSG_NOSIGNAL*/, NULL, 0);
+
+    int got_sigpipe = (__atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE) >> 12) & 1;
+    __atomic_and_fetch(&task->pending_signals, ~(1ULL << 12), __ATOMIC_RELEASE);
+
+    sys_close(svA[0]);
+
+    if (ret != -EPIPE) {
+        fut_printf("[MISC-TEST] ✗ Test 334A: send without MSG_NOSIGNAL returned %ld (expected -EPIPE)\n", ret);
+        task->signal_mask = old_mask;
+        fut_test_fail(334); return;
+    }
+    if (!got_sigpipe) {
+        fut_printf("[MISC-TEST] ✗ Test 334A: SIGPIPE not raised without MSG_NOSIGNAL\n");
+        task->signal_mask = old_mask;
+        fut_test_fail(334); return;
+    }
+
+    /* ---- Part B: with MSG_NOSIGNAL, SIGPIPE is suppressed ---- */
+    int svB[2] = { -1, -1 };
+    r = sys_socketpair(1 /*AF_UNIX*/, 1 /*SOCK_STREAM*/, 0, svB);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 334: socketpair B failed: %ld\n", r);
+        task->signal_mask = old_mask;
+        fut_test_fail(334); return;
+    }
+    sys_close(svB[1]);
+
+    __atomic_and_fetch(&task->pending_signals, ~(1ULL << 12), __ATOMIC_RELEASE);
+
+    ret = sys_sendto(svB[0], msg, 2, 0x4000 /*MSG_NOSIGNAL*/, NULL, 0);
+
+    got_sigpipe = (__atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE) >> 12) & 1;
+    __atomic_and_fetch(&task->pending_signals, ~(1ULL << 12), __ATOMIC_RELEASE);
+
+    task->signal_mask = old_mask;
+    sys_close(svB[0]);
+
+    if (ret != -EPIPE) {
+        fut_printf("[MISC-TEST] ✗ Test 334B: send with MSG_NOSIGNAL returned %ld (expected -EPIPE)\n", ret);
+        fut_test_fail(334); return;
+    }
+    if (got_sigpipe) {
+        fut_printf("[MISC-TEST] ✗ Test 334B: SIGPIPE was raised despite MSG_NOSIGNAL\n");
+        fut_test_fail(334); return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ Test 334: MSG_NOSIGNAL suppresses SIGPIPE; plain send raises it\n");
+    fut_test_pass();
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -16261,6 +16345,7 @@ void fut_misc_test_thread(void *arg) {
     test_linkat_empty_path();            /* Test 331: linkat AT_EMPTY_PATH promotes O_TMPFILE to named file */
     test_proc_net_unix();                /* Test 332: /proc/net/unix lists bound AF_UNIX sockets */
     test_epollrdhup_peer_shutdown();     /* Test 333: EPOLLRDHUP fires on peer shutdown(SHUT_WR) */
+    test_msg_nosignal();                 /* Test 334: MSG_NOSIGNAL suppresses SIGPIPE */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

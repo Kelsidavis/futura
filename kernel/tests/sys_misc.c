@@ -18168,6 +18168,105 @@ static void test_proc_smaps_rollup(void) {
 }
 
 /* ============================================================
+ * Test 392: /proc/net/tcp6 has IPv6 header line
+ * ============================================================ */
+static void test_proc_net_tcp6(void) {
+    fut_printf("[MISC-TEST] Test 392: /proc/net/tcp6 has header\n");
+    int fd = fut_vfs_open("/proc/net/tcp6", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 392: open failed: %d\n", fd);
+        fut_test_fail(392); return;
+    }
+    char buf[256];
+    long nr = fut_vfs_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    if (nr <= 0) {
+        fut_printf("[MISC-TEST] ✗ Test 392: read returned %ld\n", nr);
+        fut_test_fail(392); return;
+    }
+    buf[nr] = '\0';
+    /* Header must contain "local_address" */
+    int found = 0;
+    for (long i = 0; i + 13 <= nr; i++) {
+        if (buf[i]=='l' && buf[i+1]=='o' && buf[i+2]=='c' && buf[i+3]=='a' &&
+            buf[i+4]=='l' && buf[i+5]=='_' && buf[i+6]=='a' && buf[i+7]=='d' &&
+            buf[i+8]=='d' && buf[i+9]=='r' && buf[i+10]=='e' && buf[i+11]=='s' &&
+            buf[i+12]=='s')
+            found = 1;
+    }
+    if (!found) {
+        fut_printf("[MISC-TEST] ✗ Test 392: local_address not found\n");
+        fut_test_fail(392); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 392: /proc/net/tcp6 readable with header\n");
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 393: /proc/net/snmp has "Tcp:" line
+ * ============================================================ */
+static void test_proc_net_snmp(void) {
+    fut_printf("[MISC-TEST] Test 393: /proc/net/snmp has Tcp:\n");
+    int fd = fut_vfs_open("/proc/net/snmp", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 393: open failed: %d\n", fd);
+        fut_test_fail(393); return;
+    }
+    char buf[512];
+    long nr = fut_vfs_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    if (nr <= 0) {
+        fut_printf("[MISC-TEST] ✗ Test 393: read returned %ld\n", nr);
+        fut_test_fail(393); return;
+    }
+    buf[nr] = '\0';
+    int found = 0;
+    for (long i = 0; i + 4 <= nr; i++) {
+        if (buf[i]=='T' && buf[i+1]=='c' && buf[i+2]=='p' && buf[i+3]==':')
+            found = 1;
+    }
+    if (!found) {
+        fut_printf("[MISC-TEST] ✗ Test 393: Tcp: not found\n");
+        fut_test_fail(393); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 393: /proc/net/snmp has Tcp:\n");
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 394: /proc/net/fib_trie is readable (has "Local:" or "Main:")
+ * ============================================================ */
+static void test_proc_net_fib_trie(void) {
+    fut_printf("[MISC-TEST] Test 394: /proc/net/fib_trie readable\n");
+    int fd = fut_vfs_open("/proc/net/fib_trie", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 394: open failed: %d\n", fd);
+        fut_test_fail(394); return;
+    }
+    char buf[128];
+    long nr = fut_vfs_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    if (nr <= 0) {
+        fut_printf("[MISC-TEST] ✗ Test 394: read returned %ld\n", nr);
+        fut_test_fail(394); return;
+    }
+    buf[nr] = '\0';
+    /* Must contain "Local:" */
+    int found = 0;
+    for (long i = 0; i + 6 <= nr; i++) {
+        if (buf[i]=='L' && buf[i+1]=='o' && buf[i+2]=='c' &&
+            buf[i+3]=='a' && buf[i+4]=='l' && buf[i+5]==':')
+            found = 1;
+    }
+    if (!found) {
+        fut_printf("[MISC-TEST] ✗ Test 394: Local: not found\n");
+        fut_test_fail(394); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 394: /proc/net/fib_trie readable\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test 367: /proc/self/net/unix readable (same content as /proc/net/unix)
  * ============================================================ */
 static void test_proc_pid_net_unix(void) {
@@ -18757,6 +18856,9 @@ void fut_misc_test_thread(void *arg) {
     test_proc_status_nspid();           /* Test 388: /proc/self/status has NSpid/NStgid */
     test_prctl_seccomp();               /* Test 389-390: PR_GET_SECCOMP/PR_SET_SECCOMP */
     test_proc_smaps_rollup();           /* Test 391: /proc/self/smaps_rollup has Rss: */
+    test_proc_net_tcp6();               /* Test 392: /proc/net/tcp6 has header */
+    test_proc_net_snmp();               /* Test 393: /proc/net/snmp has Tcp: */
+    test_proc_net_fib_trie();           /* Test 394: /proc/net/fib_trie readable */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -219,6 +219,13 @@ enum procfs_kind {
     PROC_SYS_KERNEL_WATCHDOG_THRESH,/* /proc/sys/kernel/watchdog_thresh */
     PROC_SYS_KERNEL_HUNG_TASK,      /* /proc/sys/kernel/hung_task_timeout_secs */
     PROC_SMAPS_ROLLUP,              /* /proc/<pid>/smaps_rollup */
+    PROC_NET_TCP6,                  /* /proc/net/tcp6 */
+    PROC_NET_UDP6,                  /* /proc/net/udp6 */
+    PROC_NET_RAW,                   /* /proc/net/raw */
+    PROC_NET_FIB_TRIE,              /* /proc/net/fib_trie */
+    PROC_NET_SNMP,                  /* /proc/net/snmp */
+    PROC_NET_NETSTAT,               /* /proc/net/netstat */
+    PROC_NET_PACKET,                /* /proc/net/packet */
 };
 
 typedef struct {
@@ -313,6 +320,13 @@ typedef struct {
 #define PROC_INO_NET_UNIX            19ULL
 #define PROC_INO_NET_SOCKSTAT        20ULL
 #define PROC_INO_NET_ARP             21ULL
+#define PROC_INO_NET_TCP6            22ULL
+#define PROC_INO_NET_UDP6            23ULL
+#define PROC_INO_NET_RAW             24ULL
+#define PROC_INO_NET_FIB_TRIE        25ULL
+#define PROC_INO_NET_SNMP            26ULL
+#define PROC_INO_NET_NETSTAT         27ULL
+#define PROC_INO_NET_PACKET          28ULL
 #define PROC_INO_SYS_NET_IPV6_DIR      286ULL
 #define PROC_INO_SYS_NET_IPV6_CONF_DIR 287ULL
 #define PROC_INO_SYS_NET_IPV6_ALL_DIR  288ULL
@@ -1712,6 +1726,78 @@ static size_t gen_net_if_inet6(char *buf, size_t cap) {
     return 0;
 }
 
+static size_t gen_net_tcp6(char *buf, size_t cap) {
+    struct pbuf b = { buf, 0, cap };
+    pb_str(&b, "  sl  local_address                         remote_address"
+               "                        st tx_queue rx_queue tr tm->when retrnsmt"
+               "   uid  timeout inode\n");
+    return b.pos;
+}
+
+static size_t gen_net_raw(char *buf, size_t cap) {
+    struct pbuf b = { buf, 0, cap };
+    pb_str(&b, "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when"
+               " retrnsmt   uid  timeout inode ref pointer drops\n");
+    return b.pos;
+}
+
+static size_t gen_net_fib_trie(char *buf, size_t cap) {
+    struct pbuf b = { buf, 0, cap };
+    pb_str(&b, "Local:\n"
+               "  +-- 0.0.0.0/0 1 0 0\n"
+               "Main:\n"
+               "  +-- 0.0.0.0/0 1 0 0\n");
+    return b.pos;
+}
+
+static size_t gen_net_snmp(char *buf, size_t cap) {
+    struct pbuf b = { buf, 0, cap };
+    pb_str(&b, "Ip: Forwarding DefaultTTL InReceives InHdrErrors InAddrErrors"
+               " ForwDatagrams InUnknownProtos InDiscards InDelivers OutRequests"
+               " OutDiscards OutNoRoutes ReasmTimeout ReasmReqds ReasmOKs ReasmFails"
+               " FragOKs FragFails FragCreates\n"
+               "Ip: 2 64 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n"
+               "Icmp: InMsgs InErrors InCsumErrors InDestUnreachs InTimeExcds"
+               " InParmProbs InSrcQuenchs InRedirects InEchos InEchoReps"
+               " OutMsgs OutErrors OutDestUnreachs OutTimeExcds OutParmProbs\n"
+               "Icmp: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n"
+               "Tcp: RtoAlgorithm RtoMin RtoMax MaxConn ActiveOpens PassiveOpens"
+               " AttemptFails EstabResets CurrEstab InSegs OutSegs RetransSegs"
+               " InErrs OutRsts InCsumErrors\n"
+               "Tcp: 1 200 120000 -1 0 0 0 0 0 0 0 0 0 0 0\n"
+               "Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors"
+               " SndbufErrors InCsumErrors IgnoredMulti\n"
+               "Udp: 0 0 0 0 0 0 0 0\n"
+               "UdpLite: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors"
+               " SndbufErrors InCsumErrors IgnoredMulti\n"
+               "UdpLite: 0 0 0 0 0 0 0 0\n");
+    return b.pos;
+}
+
+static size_t gen_net_netstat(char *buf, size_t cap) {
+    struct pbuf b = { buf, 0, cap };
+    pb_str(&b, "TcpExt: SyncookiesSent SyncookiesRecv SyncookiesFailed EmbryonicRsts"
+               " PruneCalled RcvPruned OfoPruned OutOfWindowIcmps LockDroppedIcmps"
+               " TW TWRecycled TWKilled PAWSActive PAWSEstab DelayedACKs"
+               " DelayedACKLocked DelayedACKLost ListenOverflows ListenDrops"
+               " TCPHPHits TCPPureAcks TCPHPAcks TCPRenoRecovery TCPSackRecovery"
+               " TCPFACKReorder TCPSACKReorder TCPRenoReorder TCPTSReorder"
+               " TCPFullUndo TCPPartialUndo TCPDSACKUndo TCPLossUndo TCPRetransFail"
+               " TCPSackFailures TCPLossFailures TCPSchedulerFailed TCPRcvCollapsed\n"
+               "TcpExt: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n"
+               "IpExt: InNoRoutes InTruncatedPkts InMcastPkts OutMcastPkts"
+               " InBcastPkts OutBcastPkts InOctets OutOctets InMcastOctets"
+               " OutMcastOctets InBcastOctets OutBcastOctets InCsumErrors\n"
+               "IpExt: 0 0 0 0 0 0 0 0 0 0 0 0 0\n");
+    return b.pos;
+}
+
+static size_t gen_net_packet(char *buf, size_t cap) {
+    struct pbuf b = { buf, 0, cap };
+    pb_str(&b, "sk               RefCnt Type Proto  Iface R Rmem   User   Inode\n");
+    return b.pos;
+}
+
 /* Helper struct passed as arg to net_unix_emit_one() callback. */
 struct net_unix_ctx { struct pbuf *b; };
 
@@ -1952,6 +2038,25 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
         case PROC_NET_TCP:
         case PROC_NET_UDP:
             total = gen_net_tcp(tmp, GEN_BUF);
+            break;
+        case PROC_NET_TCP6:
+        case PROC_NET_UDP6:
+            total = gen_net_tcp6(tmp, GEN_BUF);
+            break;
+        case PROC_NET_RAW:
+            total = gen_net_raw(tmp, GEN_BUF);
+            break;
+        case PROC_NET_PACKET:
+            total = gen_net_packet(tmp, GEN_BUF);
+            break;
+        case PROC_NET_FIB_TRIE:
+            total = gen_net_fib_trie(tmp, GEN_BUF);
+            break;
+        case PROC_NET_SNMP:
+            total = gen_net_snmp(tmp, GEN_BUF);
+            break;
+        case PROC_NET_NETSTAT:
+            total = gen_net_netstat(tmp, GEN_BUF);
             break;
         case PROC_NET_IF_INET6:
             total = gen_net_if_inet6(tmp, GEN_BUF);
@@ -3076,6 +3181,34 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0100444, PROC_NET_ARP, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "tcp6")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_NET_TCP6,   0100444, PROC_NET_TCP6,     0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "udp6")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_NET_UDP6,   0100444, PROC_NET_UDP6,     0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "raw") || STREQ(name, "raw6")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_NET_RAW,    0100444, PROC_NET_RAW,      0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "fib_trie") || STREQ(name, "fib_triestat")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_NET_FIB_TRIE, 0100444, PROC_NET_FIB_TRIE, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "snmp") || STREQ(name, "snmp6")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_NET_SNMP,   0100444, PROC_NET_SNMP,     0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "netstat")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_NET_NETSTAT, 0100444, PROC_NET_NETSTAT,  0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "packet")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_NET_PACKET, 0100444, PROC_NET_PACKET,   0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         return -ENOENT;
     }
 
@@ -3851,18 +3984,28 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
 
     if (dn->kind == PROC_NET_DIR) {
         static const char *e[] = { ".", "..", "dev", "route", "tcp", "udp",
-                                   "if_inet6", "unix", "sockstat", "arp" };
+                                   "if_inet6", "unix", "sockstat", "arp",
+                                   "tcp6", "udp6", "raw", "fib_trie",
+                                   "snmp", "netstat", "packet" };
         static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
-                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG };
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_REG };
         static const uint64_t i[] = { PROC_INO_NET_DIR, PROC_INO_ROOT,
                                       PROC_INO_NET_DEV, PROC_INO_NET_ROUTE,
                                       PROC_INO_NET_TCP, PROC_INO_NET_UDP,
                                       PROC_INO_NET_IF6, PROC_INO_NET_UNIX,
-                                      PROC_INO_NET_SOCKSTAT, PROC_INO_NET_ARP };
-        if (idx < 10) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+                                      PROC_INO_NET_SOCKSTAT, PROC_INO_NET_ARP,
+                                      PROC_INO_NET_TCP6, PROC_INO_NET_UDP6,
+                                      PROC_INO_NET_RAW, PROC_INO_NET_FIB_TRIE,
+                                      PROC_INO_NET_SNMP, PROC_INO_NET_NETSTAT,
+                                      PROC_INO_NET_PACKET };
+        if (idx < 17) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
         return -ENOENT;
     }
 

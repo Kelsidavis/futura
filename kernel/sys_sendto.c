@@ -620,20 +620,5 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
         return ret;
     }
 
-    /* Phase 2: Determine destination hint (stub - not yet implemented) */
-    const char *dest_hint;
-    if (local_dest_addr && local_addrlen > 0) {
-        dest_hint = "destination specified (AF_INET/AF_UNIX)";
-    } else {
-        dest_hint = "no destination (connected socket)";
-    }
-
-    /* Phase 3: Detailed success logging */
-    fut_printf("[SENDTO] sendto(sockfd=%d [%s], buf=%p, len=%zu [%s], "
-               "flags=0x%x [%s], dest=%s, bytes_sent=%zd, pid=%u) -> %zd "
-               "(sent successfully, Phase 3: Destination address handling with MSG flags)\n",
-               local_sockfd, fd_category, local_buf, local_len, size_category,
-               local_flags, flags_description, dest_hint, ret, task->pid, ret);
-
     return ret;
 }

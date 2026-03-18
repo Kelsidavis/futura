@@ -1399,8 +1399,23 @@ ssize_t fut_socket_recvfrom_dgram(fut_socket_t *socket, void *buf, size_t len,
     fut_dgram_queue_t *dq = socket->dgram_queue;
     fut_spinlock_acquire(&dq->lock);
 
+    /* SO_RCVTIMEO: set up a one-shot timer if a receive timeout is configured */
+    sock_timeout_ctx_t dg_tmo_ctx = {0};
+    bool dg_has_timeout = (socket->rcvtimeo_ms > 0);
+    if (dg_has_timeout && dq->count == 0) {
+        uint64_t ticks = socket->rcvtimeo_ms / 10;
+        if (socket->rcvtimeo_ms % 10 != 0) ticks++;
+        if (ticks == 0) ticks = 1;
+        dg_tmo_ctx.thread = fut_thread_current();
+        dg_tmo_ctx.waitq  = dq->recv_waitq;
+        dg_tmo_ctx.lock   = &dq->lock;
+        dg_tmo_ctx.fired  = false;
+        fut_timer_start(ticks, sock_timeout_callback, &dg_tmo_ctx);
+    }
+
     while (dq->count == 0) {
         if (socket->flags & 0x800) {  /* O_NONBLOCK */
+            if (dg_has_timeout) fut_timer_cancel(sock_timeout_callback, &dg_tmo_ctx);
             fut_spinlock_release(&dq->lock);
             return -EAGAIN;
         }
@@ -1414,6 +1429,7 @@ ssize_t fut_socket_recvfrom_dgram(fut_socket_t *socket, void *buf, size_t len,
                     __atomic_load_n(&thr->signal_mask, __ATOMIC_ACQUIRE) :
                     __atomic_load_n(&t->signal_mask, __ATOMIC_ACQUIRE);
                 if (pending & ~blocked) {
+                    if (dg_has_timeout) fut_timer_cancel(sock_timeout_callback, &dg_tmo_ctx);
                     fut_spinlock_release(&dq->lock);
                     return -EINTR;
                 }
@@ -1421,7 +1437,13 @@ ssize_t fut_socket_recvfrom_dgram(fut_socket_t *socket, void *buf, size_t len,
         }
         fut_waitq_sleep_locked(dq->recv_waitq, &dq->lock, FUT_THREAD_BLOCKED);
         fut_spinlock_acquire(&dq->lock);
+        if (dg_has_timeout && dg_tmo_ctx.fired) {
+            fut_spinlock_release(&dq->lock);
+            return -EAGAIN;
+        }
     }
+
+    if (dg_has_timeout) fut_timer_cancel(sock_timeout_callback, &dg_tmo_ctx);
 
     fut_dgram_entry_t *entry = &dq->msgs[dq->head];
     size_t copy_len = (len < entry->data_len) ? len : entry->data_len;

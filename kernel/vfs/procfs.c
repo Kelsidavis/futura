@@ -142,6 +142,10 @@ enum procfs_kind {
     PROC_SYS_TCP_RMEM,     /* /proc/sys/net/ipv4/tcp_rmem */
     PROC_SYS_TCP_WMEM,     /* /proc/sys/net/ipv4/tcp_wmem */
     PROC_INTERRUPTS,       /* /proc/interrupts */
+    PROC_SYS_RANDOMIZE_VA, /* /proc/sys/kernel/randomize_va_space */
+    PROC_SYS_DOMAINNAME,   /* /proc/sys/kernel/domainname */
+    PROC_NET_UNIX,         /* /proc/net/unix */
+    PROC_NET_SOCKSTAT,     /* /proc/net/sockstat */
 };
 
 typedef struct {
@@ -227,6 +231,10 @@ typedef struct {
 #define PROC_INO_SYS_NET_SYNCOOKIES  277ULL
 #define PROC_INO_SYS_NET_TCP_RMEM    278ULL
 #define PROC_INO_SYS_NET_TCP_WMEM    279ULL
+#define PROC_INO_SYS_RANDOMIZE_VA    280ULL
+#define PROC_INO_SYS_DOMAINNAME      281ULL
+#define PROC_INO_NET_UNIX            19ULL
+#define PROC_INO_NET_SOCKSTAT        20ULL
 
 /* Per-PID: pid * 100 + offset */
 #define PROC_INO_PID_DIR(p)    (1000ULL + (uint64_t)(p) * 100 + 0)
@@ -291,12 +299,13 @@ static void pb_hex16(struct pbuf *b, uint64_t v) {
         pb_char(b, hex[(v >> i) & 0xf]);
 }
 
-static void pb_hex(struct pbuf *b, uint64_t v) {
-    /* Print minimum hex digits */
-    if (v == 0) { pb_char(b, '0'); return; }
+static void pb_hex8(struct pbuf *b, uint64_t v) {
+    /* Print hex padded to at least 8 digits (Linux %08lx format for /proc/maps) */
     static const char hex[] = "0123456789abcdef";
     char tmp[16]; int n = 0;
-    while (v) { tmp[n++] = hex[v & 0xf]; v >>= 4; }
+    uint64_t w = v;
+    do { tmp[n++] = hex[w & 0xf]; w >>= 4; } while (w);
+    while (n < 8) tmp[n++] = '0';
     for (int i = n - 1; i >= 0; i--) pb_char(b, tmp[i]);
 }
 
@@ -568,22 +577,27 @@ static size_t gen_maps(char *buf, size_t cap, fut_task_t *task) {
     struct pbuf b = { buf, 0, cap };
     struct fut_vma *vma = mm->vma_list;
     while (vma) {
-        /* address range */
-        pb_hex(&b, vma->start); pb_char(&b, '-');
-        pb_hex(&b, vma->end);   pb_char(&b, ' ');
+        /* address range — Linux uses %08lx (at least 8 hex chars) */
+        pb_hex8(&b, vma->start); pb_char(&b, '-');
+        pb_hex8(&b, vma->end);   pb_char(&b, ' ');
         /* permissions */
         pb_char(&b, (vma->prot & PROT_READ)  ? 'r' : '-');
         pb_char(&b, (vma->prot & PROT_WRITE) ? 'w' : '-');
         pb_char(&b, (vma->prot & PROT_EXEC)  ? 'x' : '-');
-        pb_char(&b, 'p');  /* private (simplified) */
+        pb_char(&b, (vma->flags & VMA_SHARED) ? 's' : 'p');
         pb_char(&b, ' ');
-        /* offset */
-        pb_hex16(&b, vma->file_offset); pb_char(&b, ' ');
-        /* dev 00:00, inode 0 */
-        pb_str(&b, "00:00 0 ");
-        /* pathname */
-        if (vma->vnode && vma->vnode->name)
+        /* offset — exactly 8 hex chars (Linux %08llx) */
+        pb_hex8(&b, vma->file_offset); pb_char(&b, ' ');
+        /* dev 00:00, inode 0, then pathname */
+        pb_str(&b, "00:00 0");
+        /* pathname: file-backed uses vnode name; anonymous uses region label */
+        if (vma->vnode && vma->vnode->name) {
+            pb_char(&b, '\t');
             pb_str(&b, vma->vnode->name);
+        } else if (mm->brk_start && vma->start >= mm->brk_start &&
+                   vma->end <= mm->brk_current + 0x1000) {
+            pb_str(&b, "\t[heap]");
+        }
         pb_char(&b, '\n');
         vma = vma->next;
     }
@@ -613,17 +627,21 @@ static size_t gen_smaps(char *buf, size_t cap, fut_task_t *task) {
         int is_anon = (vma->vnode == NULL);
 
         /* Header line: same format as /proc/maps */
-        pb_hex(&b, vma->start); pb_char(&b, '-');
-        pb_hex(&b, vma->end);   pb_char(&b, ' ');
+        pb_hex8(&b, vma->start); pb_char(&b, '-');
+        pb_hex8(&b, vma->end);   pb_char(&b, ' ');
         pb_char(&b, (vma->prot & PROT_READ)  ? 'r' : '-');
         pb_char(&b, (vma->prot & PROT_WRITE) ? 'w' : '-');
         pb_char(&b, (vma->prot & PROT_EXEC)  ? 'x' : '-');
-        pb_char(&b, 'p');
+        pb_char(&b, (vma->flags & VMA_SHARED) ? 's' : 'p');
         pb_char(&b, ' ');
-        pb_hex16(&b, vma->file_offset); pb_char(&b, ' ');
-        pb_str(&b, "00:00 0 ");
-        if (vma->vnode && vma->vnode->name)
-            pb_str(&b, vma->vnode->name);
+        pb_hex8(&b, vma->file_offset); pb_char(&b, ' ');
+        pb_str(&b, "00:00 0");
+        if (vma->vnode && vma->vnode->name) {
+            pb_char(&b, '\t'); pb_str(&b, vma->vnode->name);
+        } else if (mm->brk_start && vma->start >= mm->brk_start &&
+                   vma->end <= mm->brk_current + 0x1000) {
+            pb_str(&b, "\t[heap]");
+        }
         pb_char(&b, '\n');
 
         /* Size: total VMA size in kB */
@@ -1119,6 +1137,28 @@ static size_t gen_net_if_inet6(char *buf, size_t cap) {
     return 0;
 }
 
+static size_t gen_net_unix(char *buf, size_t cap) {
+    /* /proc/net/unix — Unix domain socket table.
+     * Tools: ss -x, lsof, netstat -x, systemd socket activation checks.
+     * Header matches Linux kernel format exactly. */
+    struct pbuf b = { buf, 0, cap };
+    pb_str(&b, "Num       RefCount Protocol Flags    Type St Inode Path\n");
+    return b.pos;
+}
+
+static size_t gen_net_sockstat(char *buf, size_t cap) {
+    /* /proc/net/sockstat — socket usage statistics.
+     * Read by ss, netstat, systemd, and glibc resolver. */
+    struct pbuf b = { buf, 0, cap };
+    pb_str(&b, "sockets: used 0\n");
+    pb_str(&b, "TCP: inuse 0 orphan 0 tw 0 alloc 0 mem 0\n");
+    pb_str(&b, "UDP: inuse 0 mem 0\n");
+    pb_str(&b, "UDPLITE: inuse 0\n");
+    pb_str(&b, "RAW: inuse 0\n");
+    pb_str(&b, "FRAG: inuse 0 memory 0\n");
+    return b.pos;
+}
+
 /* ============================================================
  *   /proc/stat — global CPU / system statistics
  * ============================================================ */
@@ -1267,6 +1307,12 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             break;
         case PROC_NET_IF_INET6:
             total = gen_net_if_inet6(tmp, GEN_BUF);
+            break;
+        case PROC_NET_UNIX:
+            total = gen_net_unix(tmp, GEN_BUF);
+            break;
+        case PROC_NET_SOCKSTAT:
+            total = gen_net_sockstat(tmp, GEN_BUF);
             break;
         case PROC_COMM: {
             fut_task_t *task = fut_task_by_pid(n->pid);
@@ -1470,6 +1516,14 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             total = b.pos;
             break;
         }
+        case PROC_SYS_RANDOMIZE_VA:
+            /* 2 = full ASLR (default on Linux) */
+            total = gen_sysctl_str(tmp, GEN_BUF, "2");
+            break;
+        case PROC_SYS_DOMAINNAME:
+            /* NIS domain name — "(none)" when not configured */
+            total = gen_sysctl_str(tmp, GEN_BUF, "(none)");
+            break;
         default:
             fut_free(tmp);
             return -EINVAL;
@@ -1905,6 +1959,16 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0100444, PROC_NET_IF_INET6, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "unix")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_NET_UNIX,
+                                          0100444, PROC_NET_UNIX, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "sockstat")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_NET_SOCKSTAT,
+                                          0100444, PROC_NET_SOCKSTAT, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         return -ENOENT;
     }
 
@@ -2088,6 +2152,16 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
         if (STREQ(name, "yama")) {
             *result = procfs_alloc_vnode(mnt, VN_DIR, PROC_INO_SYS_YAMA_DIR,
                                           0040555, PROC_SYS_YAMA_DIR, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "randomize_va_space")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_RANDOMIZE_VA,
+                                          0100644, PROC_SYS_RANDOMIZE_VA, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "domainname")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_DOMAINNAME,
+                                          0100644, PROC_SYS_DOMAINNAME, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
         return -ENOENT;
@@ -2460,16 +2534,19 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
 } while (0)
 
     if (dn->kind == PROC_NET_DIR) {
-        static const char *e[] = { ".", "..", "dev", "route", "tcp", "udp", "if_inet6" };
+        static const char *e[] = { ".", "..", "dev", "route", "tcp", "udp",
+                                   "if_inet6", "unix", "sockstat" };
         static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG };
         static const uint64_t i[] = { PROC_INO_NET_DIR, PROC_INO_ROOT,
                                       PROC_INO_NET_DEV, PROC_INO_NET_ROUTE,
                                       PROC_INO_NET_TCP, PROC_INO_NET_UDP,
-                                      PROC_INO_NET_IF6 };
-        if (idx < 7) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+                                      PROC_INO_NET_IF6, PROC_INO_NET_UNIX,
+                                      PROC_INO_NET_SOCKSTAT };
+        if (idx < 9) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
         return -ENOENT;
     }
 
@@ -2532,7 +2609,8 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                    "shmmax", "shmall", "shmmni", "sem",
                                    "msgmax", "msgmnb", "msgmni",
                                    "ngroups_max", "cap_last_cap",
-                                   "threads-max", "printk", "yama" };
+                                   "threads-max", "printk", "yama",
+                                   "randomize_va_space", "domainname" };
         static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
@@ -2543,7 +2621,8 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                      FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
-                                     FUT_VDIR_TYPE_DIR };
+                                     FUT_VDIR_TYPE_DIR,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG };
         static const uint64_t i[] = { PROC_INO_SYS_KERNEL_DIR, PROC_INO_SYS_DIR,
                                       PROC_INO_SYS_OSTYPE, PROC_INO_SYS_OSRELEASE,
                                       PROC_INO_SYS_HOSTNAME, PROC_INO_SYS_PID_MAX,
@@ -2554,8 +2633,9 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                       PROC_INO_SYS_MSGMNI,
                                       PROC_INO_SYS_NGROUPS_MAX, PROC_INO_SYS_CAP_LAST_CAP,
                                       PROC_INO_SYS_THREADS_MAX, PROC_INO_SYS_PRINTK,
-                                      PROC_INO_SYS_YAMA_DIR };
-        if (idx < 19) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+                                      PROC_INO_SYS_YAMA_DIR,
+                                      PROC_INO_SYS_RANDOMIZE_VA, PROC_INO_SYS_DOMAINNAME };
+        if (idx < 21) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
         return -ENOENT;
     }
 

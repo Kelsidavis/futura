@@ -12464,6 +12464,157 @@ static void test_proc_sys_kernel_caps(void) {
     fut_test_pass();
 }
 
+static void test_proc_maps_format(void) {
+    fut_printf("[MISC-TEST] Test 281: /proc/self/maps offset is 8 hex chars, not 16\n");
+
+    extern ssize_t sys_read(int fd, void *buf, size_t count);
+    char buf[512];
+    int fd = fut_vfs_open("/proc/self/maps", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 281: open /proc/self/maps failed: %d\n", fd);
+        fut_test_fail(281); return;
+    }
+    long n = (long)sys_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    if (n <= 0) {
+        fut_printf("[MISC-TEST] ✗ Test 281: /proc/self/maps empty\n");
+        fut_test_fail(281); return;
+    }
+    buf[n] = '\0';
+
+    /* Find the offset field: after the perm field "r--p " or similar, we should
+     * see exactly 8 hex chars followed by a space, not 16.
+     * The line format is: addr-addr perms offset dev inode [name]
+     * Look for the perms pattern (4 chars + space) then parse offset length. */
+    const char *p = buf;
+    /* Skip to first newline or end — scan for 'r' or '-' perm pattern */
+    while (*p && *p != '\n') {
+        /* Check if this position looks like perms: 4 chars then space */
+        if ((p[0] == 'r' || p[0] == '-') &&
+            (p[1] == 'w' || p[1] == '-') &&
+            (p[2] == 'x' || p[2] == '-') &&
+            (p[3] == 'p' || p[3] == 's') &&
+            p[4] == ' ') {
+            /* p+5 is the offset field — count hex chars until space */
+            const char *off = p + 5;
+            int off_len = 0;
+            while ((*off >= '0' && *off <= '9') ||
+                   (*off >= 'a' && *off <= 'f') ||
+                   (*off >= 'A' && *off <= 'F')) {
+                off_len++; off++;
+            }
+            if (*off != ' ') {
+                fut_printf("[MISC-TEST] ✗ Test 281: offset not followed by space (got '%c')\n", *off);
+                fut_test_fail(281); return;
+            }
+            /* Offset should be exactly 8 hex chars (not 16) */
+            if (off_len != 8) {
+                fut_printf("[MISC-TEST] ✗ Test 281: offset len=%d want 8 (got '%.20s')\n",
+                           off_len, p + 5);
+                fut_test_fail(281); return;
+            }
+            fut_printf("[MISC-TEST] ✓ /proc/self/maps offset field is 8 hex chars\n");
+            fut_test_pass();
+            return;
+        }
+        p++;
+    }
+    fut_printf("[MISC-TEST] ✗ Test 281: could not find perm field in maps line: %.64s\n", buf);
+    fut_test_fail(281);
+}
+
+static void test_proc_sys_kernel_misc(void) {
+    fut_printf("[MISC-TEST] Test 282: /proc/sys/kernel/{randomize_va_space,domainname}\n");
+
+    extern ssize_t sys_read(int fd, void *buf, size_t count);
+    char buf[32];
+
+    /* randomize_va_space: should contain "2" (full ASLR) */
+    int fd = fut_vfs_open("/proc/sys/kernel/randomize_va_space", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 282: open randomize_va_space failed: %d\n", fd);
+        fut_test_fail(282); return;
+    }
+    long n = (long)sys_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    if (n <= 0 || buf[0] < '0' || buf[0] > '9') {
+        fut_printf("[MISC-TEST] ✗ Test 282: randomize_va_space bad value\n");
+        fut_test_fail(282); return;
+    }
+    buf[n] = '\0';
+    fut_printf("[MISC-TEST] ✓ /proc/sys/kernel/randomize_va_space = %s", buf);
+
+    /* domainname: should be readable and non-empty */
+    fd = fut_vfs_open("/proc/sys/kernel/domainname", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 282: open domainname failed: %d\n", fd);
+        fut_test_fail(282); return;
+    }
+    n = (long)sys_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    if (n <= 0) {
+        fut_printf("[MISC-TEST] ✗ Test 282: domainname empty\n");
+        fut_test_fail(282); return;
+    }
+    buf[n] = '\0';
+    fut_printf("[MISC-TEST] ✓ /proc/sys/kernel/domainname = %s", buf);
+
+    fut_test_pass();
+}
+
+static void test_proc_net_unix_sockstat(void) {
+    fut_printf("[MISC-TEST] Test 283: /proc/net/unix and /proc/net/sockstat readable\n");
+
+    extern ssize_t sys_read(int fd, void *buf, size_t count);
+    char buf[256];
+
+    /* /proc/net/unix should have a header line */
+    int fd = fut_vfs_open("/proc/net/unix", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 283: open /proc/net/unix failed: %d\n", fd);
+        fut_test_fail(283); return;
+    }
+    long n = (long)sys_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    if (n <= 0) {
+        fut_printf("[MISC-TEST] ✗ Test 283: /proc/net/unix empty\n");
+        fut_test_fail(283); return;
+    }
+    buf[n] = '\0';
+    /* Check for header */
+    int has_num = 0;
+    for (int i = 0; i + 2 < n; i++) {
+        if (buf[i] == 'N' && buf[i+1] == 'u' && buf[i+2] == 'm') { has_num = 1; break; }
+    }
+    if (!has_num) {
+        fut_printf("[MISC-TEST] ✗ Test 283: /proc/net/unix missing 'Num' header\n");
+        fut_test_fail(283); return;
+    }
+    fut_printf("[MISC-TEST] ✓ /proc/net/unix has header\n");
+
+    /* /proc/net/sockstat should have socket stats */
+    fd = fut_vfs_open("/proc/net/sockstat", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 283: open /proc/net/sockstat failed: %d\n", fd);
+        fut_test_fail(283); return;
+    }
+    n = (long)sys_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    if (n <= 0) {
+        fut_printf("[MISC-TEST] ✗ Test 283: /proc/net/sockstat empty\n");
+        fut_test_fail(283); return;
+    }
+    buf[n] = '\0';
+    /* Should start with "sockets:" */
+    if (buf[0] != 's' || buf[1] != 'o' || buf[2] != 'c') {
+        fut_printf("[MISC-TEST] ✗ Test 283: /proc/net/sockstat bad format: %.32s\n", buf);
+        fut_test_fail(283); return;
+    }
+    fut_printf("[MISC-TEST] ✓ /proc/net/sockstat readable\n");
+
+    fut_test_pass();
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -12751,6 +12902,9 @@ void fut_misc_test_thread(void *arg) {
     test_proc_pid_fdinfo();               /* Test 278: /proc/self/fdinfo/<n> fd info files */
     test_proc_status_capbnd();            /* Test 279: /proc/self/status CapBnd non-zero */
     test_proc_yama_interrupts();          /* Test 280: yama/ptrace_scope + /proc/interrupts + nr_hugepages */
+    test_proc_maps_format();              /* Test 281: /proc/self/maps offset is 8 hex chars */
+    test_proc_sys_kernel_misc();          /* Test 282: randomize_va_space + domainname */
+    test_proc_net_unix_sockstat();        /* Test 283: /proc/net/unix + /proc/net/sockstat */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

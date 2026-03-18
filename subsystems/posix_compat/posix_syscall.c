@@ -385,6 +385,10 @@ static ssize_t socket_read(void *inode, void *private_data, void *u_buf, size_t 
     if (!socket) {
         return -EBADF;
     }
+    /* DGRAM sockets use the datagram queue, not the stream pair */
+    if (socket->socket_type == SOCK_DGRAM && socket->dgram_queue) {
+        return fut_socket_recvfrom_dgram(socket, u_buf, n, NULL, NULL, NULL);
+    }
     ssize_t result = fut_socket_recv(socket, u_buf, n);
     return result;
 }

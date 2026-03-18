@@ -14412,6 +14412,215 @@ static void test_socket_errno_correctness(void) {
 }
 
 /**
+ * Test 318: MSG_TRUNC in recvfrom returns actual datagram size.
+ *
+ * Send a 100-byte datagram; recv into 50-byte buffer with MSG_TRUNC flag.
+ * Must return 100 (actual datagram length), not 50 (bytes copied).
+ */
+static void test_msg_trunc_recvfrom(void) {
+    fut_printf("[MISC-TEST] Test 318: MSG_TRUNC recvfrom returns actual datagram size\n");
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_bind(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_sendto(int sockfd, const void *buf, size_t len, int flags,
+                           const void *dest_addr, int addrlen);
+    extern long sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
+                             void *src_addr, void *addrlen);
+
+    /* Create sender and receiver DGRAM sockets */
+    long recvfd = sys_socket(1 /*AF_UNIX*/, 2 /*SOCK_DGRAM*/, 0);
+    long sendfd = sys_socket(1 /*AF_UNIX*/, 2 /*SOCK_DGRAM*/, 0);
+    if (recvfd < 0 || sendfd < 0) {
+        fut_printf("[MISC-TEST] ✗ socket() failed: %ld %ld\n", recvfd, sendfd);
+        if (recvfd >= 0) sys_close((int)recvfd);
+        if (sendfd >= 0) sys_close((int)sendfd);
+        fut_test_fail(318); return;
+    }
+
+    struct { unsigned short family; char path[16]; } addr = {0};
+    addr.family = 1; /* AF_UNIX */
+    /* Abstract path "\0t318trunc" */
+    addr.path[0] = '\0';
+    addr.path[1] = 't'; addr.path[2] = '3'; addr.path[3] = '1'; addr.path[4] = '8';
+    addr.path[5] = 't'; addr.path[6] = 'r'; addr.path[7] = 'u'; addr.path[8] = 'n'; addr.path[9] = 'c';
+    unsigned int alen = 2 + 10;
+
+    long r = sys_bind((int)recvfd, &addr, alen);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ bind failed: %ld\n", r);
+        sys_close((int)recvfd); sys_close((int)sendfd);
+        fut_test_fail(318); return;
+    }
+
+    /* Send 100-byte datagram */
+    char sendbuf[100];
+    for (int i = 0; i < 100; i++) sendbuf[i] = (char)(i + 1);
+    r = sys_sendto((int)sendfd, sendbuf, 100, 0, &addr, alen);
+    if (r != 100) {
+        fut_printf("[MISC-TEST] ✗ sendto failed: %ld\n", r);
+        sys_close((int)recvfd); sys_close((int)sendfd);
+        fut_test_fail(318); return;
+    }
+
+    /* Recv into 50-byte buffer with MSG_TRUNC (0x20) */
+    char recvbuf[50];
+    long ret = sys_recvfrom((int)recvfd, recvbuf, 50, 0x20 /*MSG_TRUNC*/, NULL, NULL);
+    sys_close((int)recvfd); sys_close((int)sendfd);
+
+    if (ret != 100) {
+        fut_printf("[MISC-TEST] ✗ recvfrom(MSG_TRUNC) returned %ld, want 100\n", ret);
+        fut_test_fail(318); return;
+    }
+    /* Verify first 50 bytes of recv buffer are correct */
+    for (int i = 0; i < 50; i++) {
+        if (recvbuf[i] != (char)(i + 1)) {
+            fut_printf("[MISC-TEST] ✗ recvbuf[%d]=%d, want %d\n", i, (int)recvbuf[i], i + 1);
+            fut_test_fail(318); return;
+        }
+    }
+    fut_printf("[MISC-TEST] ✓ MSG_TRUNC: recvfrom returned 100 (actual size) with 50-byte buffer\n");
+    fut_test_pass();
+}
+
+/**
+ * Test 319: MSG_TRUNC set in recvmsg msg_flags when datagram is truncated.
+ *
+ * Send a 100-byte datagram; recvmsg with 50-byte iovec.
+ * Must return 50 (bytes copied) and set MSG_TRUNC in msg_flags.
+ */
+static void test_msg_trunc_recvmsg(void) {
+    fut_printf("[MISC-TEST] Test 319: MSG_TRUNC set in recvmsg msg_flags\n");
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_bind(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_sendto(int sockfd, const void *buf, size_t len, int flags,
+                           const void *dest_addr, int addrlen);
+    extern long sys_recvmsg(int sockfd, struct test_msghdr *msg, int flags);
+
+    long recvfd = sys_socket(1 /*AF_UNIX*/, 2 /*SOCK_DGRAM*/, 0);
+    long sendfd = sys_socket(1 /*AF_UNIX*/, 2 /*SOCK_DGRAM*/, 0);
+    if (recvfd < 0 || sendfd < 0) {
+        fut_printf("[MISC-TEST] ✗ socket() failed: %ld %ld\n", recvfd, sendfd);
+        if (recvfd >= 0) sys_close((int)recvfd);
+        if (sendfd >= 0) sys_close((int)sendfd);
+        fut_test_fail(319); return;
+    }
+
+    struct { unsigned short family; char path[16]; } addr = {0};
+    addr.family = 1;
+    addr.path[0] = '\0';
+    addr.path[1] = 't'; addr.path[2] = '3'; addr.path[3] = '1'; addr.path[4] = '9';
+    addr.path[5] = 't'; addr.path[6] = 'r'; addr.path[7] = 'u'; addr.path[8] = 'n'; addr.path[9] = 'c';
+    unsigned int alen = 2 + 10;
+
+    long r = sys_bind((int)recvfd, &addr, alen);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ bind failed: %ld\n", r);
+        sys_close((int)recvfd); sys_close((int)sendfd);
+        fut_test_fail(319); return;
+    }
+
+    char sendbuf[100];
+    for (int i = 0; i < 100; i++) sendbuf[i] = (char)(i + 10);
+    r = sys_sendto((int)sendfd, sendbuf, 100, 0, &addr, alen);
+    if (r != 100) {
+        fut_printf("[MISC-TEST] ✗ sendto failed: %ld\n", r);
+        sys_close((int)recvfd); sys_close((int)sendfd);
+        fut_test_fail(319); return;
+    }
+
+    char recvbuf[50];
+    struct iovec iov = { .iov_base = recvbuf, .iov_len = 50 };
+    struct test_msghdr msg = {
+        .msg_name = NULL, .msg_namelen = 0,
+        .msg_iov = &iov, .msg_iovlen = 1,
+        .msg_control = NULL, .msg_controllen = 0,
+        .msg_flags = 0,
+    };
+
+    long ret = sys_recvmsg((int)recvfd, &msg, 0);
+    sys_close((int)recvfd); sys_close((int)sendfd);
+
+    if (ret != 50) {
+        fut_printf("[MISC-TEST] ✗ recvmsg returned %ld, want 50\n", ret);
+        fut_test_fail(319); return;
+    }
+    /* msg_flags must have MSG_TRUNC (0x20) set */
+    if (!(msg.msg_flags & 0x20 /*MSG_TRUNC*/)) {
+        fut_printf("[MISC-TEST] ✗ msg_flags=0x%x, MSG_TRUNC (0x20) not set\n", msg.msg_flags);
+        fut_test_fail(319); return;
+    }
+    /* Verify content of the 50 bytes received */
+    for (int i = 0; i < 50; i++) {
+        if (recvbuf[i] != (char)(i + 10)) {
+            fut_printf("[MISC-TEST] ✗ recvbuf[%d]=%d, want %d\n", i, (int)recvbuf[i], i + 10);
+            fut_test_fail(319); return;
+        }
+    }
+    fut_printf("[MISC-TEST] ✓ MSG_TRUNC: recvmsg returned 50 with MSG_TRUNC set in msg_flags\n");
+    fut_test_pass();
+}
+
+/**
+ * Test 320: plain read() works on AF_UNIX SOCK_DGRAM socket.
+ *
+ * Previously, socket_read → fut_socket_recv returned -ENOTCONN for DGRAM.
+ * After fix, socket_read routes DGRAM to fut_socket_recvfrom_dgram.
+ */
+static void test_dgram_read_syscall(void) {
+    fut_printf("[MISC-TEST] Test 320: read() on DGRAM socket\n");
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_bind(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_sendto(int sockfd, const void *buf, size_t len, int flags,
+                           const void *dest_addr, int addrlen);
+    extern long sys_read(int fd, void *buf, size_t count);
+
+    long recvfd = sys_socket(1 /*AF_UNIX*/, 2 /*SOCK_DGRAM*/, 0);
+    long sendfd = sys_socket(1 /*AF_UNIX*/, 2 /*SOCK_DGRAM*/, 0);
+    if (recvfd < 0 || sendfd < 0) {
+        fut_printf("[MISC-TEST] ✗ socket() failed: %ld %ld\n", recvfd, sendfd);
+        if (recvfd >= 0) sys_close((int)recvfd);
+        if (sendfd >= 0) sys_close((int)sendfd);
+        fut_test_fail(320); return;
+    }
+
+    struct { unsigned short family; char path[16]; } addr = {0};
+    addr.family = 1;
+    addr.path[0] = '\0';
+    addr.path[1] = 't'; addr.path[2] = '3'; addr.path[3] = '2'; addr.path[4] = '0';
+    addr.path[5] = 'r'; addr.path[6] = 'e'; addr.path[7] = 'a'; addr.path[8] = 'd';
+    unsigned int alen = 2 + 9;
+
+    long r = sys_bind((int)recvfd, &addr, alen);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ bind failed: %ld\n", r);
+        sys_close((int)recvfd); sys_close((int)sendfd);
+        fut_test_fail(320); return;
+    }
+
+    char msg[] = "hello-dgram-read";
+    r = sys_sendto((int)sendfd, msg, 16, 0, &addr, alen);
+    if (r != 16) {
+        fut_printf("[MISC-TEST] ✗ sendto failed: %ld\n", r);
+        sys_close((int)recvfd); sys_close((int)sendfd);
+        fut_test_fail(320); return;
+    }
+
+    char recvbuf[32];
+    long ret = sys_read((int)recvfd, recvbuf, sizeof(recvbuf));
+    sys_close((int)recvfd); sys_close((int)sendfd);
+
+    if (ret != 16) {
+        fut_printf("[MISC-TEST] ✗ read() returned %ld, want 16\n", ret);
+        fut_test_fail(320); return;
+    }
+    if (__builtin_memcmp(recvbuf, msg, 16) != 0) {
+        fut_printf("[MISC-TEST] ✗ read() content mismatch\n");
+        fut_test_fail(320); return;
+    }
+    fut_printf("[MISC-TEST] ✓ read() on DGRAM socket received 16 bytes correctly\n");
+    fut_test_pass();
+}
+
+/**
  * Test 316: MSG_WAITALL forces recvfrom to loop until all bytes received.
  *
  * Scenario: sender writes 100 bytes in two 50-byte sends.
@@ -15143,6 +15352,10 @@ void fut_misc_test_thread(void *arg) {
     test_so_rcvtimeo();                  /* Test 315: SO_RCVTIMEO enforced on blocking recv */
     test_msg_waitall();                  /* Test 316: MSG_WAITALL loops until full buffer received */
     test_socket_errno_correctness();     /* Test 317: EALREADY/listen-idempotent errno correctness */
+
+    test_msg_trunc_recvfrom();           /* Test 318: MSG_TRUNC returns actual datagram size */
+    test_msg_trunc_recvmsg();            /* Test 319: MSG_TRUNC set in msg_flags by recvmsg */
+    test_dgram_read_syscall();           /* Test 320: plain read() works on DGRAM socket */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

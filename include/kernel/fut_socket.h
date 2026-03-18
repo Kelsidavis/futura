@@ -549,4 +549,5 @@ ssize_t fut_socket_sendto_dgram(const char *dest_path, size_t dest_path_len,
  * @return Number of data bytes returned, 0 if nothing, or negative error.
  */
 ssize_t fut_socket_recvfrom_dgram(fut_socket_t *socket, void *buf, size_t len,
-                                  char *sender_path_out, uint16_t *sender_path_len_out);
+                                  char *sender_path_out, uint16_t *sender_path_len_out,
+                                  size_t *actual_datagram_len_out);

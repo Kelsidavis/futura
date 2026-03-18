@@ -332,6 +332,10 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
     /* Phase 2: Iterate through iovecs and read each buffer */
     ssize_t total_received = 0;
     int iovecs_filled = 0;
+    bool msg_trunc_set = false;
+    /* Identify DGRAM socket once; used for MSG_TRUNC and direct dgram recv path */
+    fut_socket_t *dgsock = get_socket_from_fd(local_sockfd);
+    bool is_dgram_sock = (dgsock && dgsock->socket_type == SOCK_DGRAM && dgsock->dgram_queue != NULL);
     for (size_t i = 0; i < kmsg.msg_iovlen; i++) {
         struct iovec iov;
         if (recvmsg_copy_from_user(&iov, &kmsg.msg_iov[i], sizeof(struct iovec)) != 0) {
@@ -384,27 +388,27 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
         }
 
         /* Read from socket.
+         * DGRAM: use fut_socket_recvfrom_dgram directly to track MSG_TRUNC.
          * MSG_WAITALL: loop until the full iovec is filled (stream sockets only). */
         bool do_waitall = (local_flags & MSG_WAITALL) && !(local_flags & MSG_DONTWAIT);
         ssize_t ret;
-        if (do_waitall) {
-            extern fut_socket_t *get_socket_from_fd(int fd);
-            fut_socket_t *wtsock = get_socket_from_fd(local_sockfd);
-            bool is_dgram = wtsock && wtsock->socket_type == 2;
-            if (is_dgram) {
-                ret = fut_vfs_read(local_sockfd, kbuf, iov.iov_len);
-            } else {
-                ssize_t got = 0;
-                ret = 0;
-                while ((size_t)got < iov.iov_len) {
-                    ssize_t rc = fut_vfs_read(local_sockfd,
-                                              (char *)kbuf + got,
-                                              iov.iov_len - (size_t)got);
-                    if (rc < 0) { ret = (got > 0) ? got : rc; break; }
-                    if (rc == 0) { ret = got; break; }
-                    got += rc;
-                    ret = got;
-                }
+        if (is_dgram_sock) {
+            size_t actual_len = 0;
+            ret = fut_socket_recvfrom_dgram(dgsock, kbuf, iov.iov_len,
+                                            NULL, NULL, &actual_len);
+            if (ret >= 0 && actual_len > iov.iov_len)
+                msg_trunc_set = true;
+        } else if (do_waitall) {
+            ssize_t got = 0;
+            ret = 0;
+            while ((size_t)got < iov.iov_len) {
+                ssize_t rc = fut_vfs_read(local_sockfd,
+                                          (char *)kbuf + got,
+                                          iov.iov_len - (size_t)got);
+                if (rc < 0) { ret = (got > 0) ? got : rc; break; }
+                if (rc == 0) { ret = got; break; }
+                got += rc;
+                ret = got;
             }
         } else {
             ret = fut_vfs_read(local_sockfd, kbuf, iov.iov_len);
@@ -431,14 +435,18 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
             break;
         }
 
+        /* DGRAM: each recvmsg reads exactly one datagram; stop after first iovec */
+        if (is_dgram_sock) {
+            break;
+        }
+
         /* Short read (only if MSG_WAITALL not set) */
         if (!do_waitall && (size_t)ret < iov.iov_len) {
             break;
         }
     }
 
-    /* Set msg_flags to 0 for now */
-    kmsg.msg_flags = 0;
+    kmsg.msg_flags = msg_trunc_set ? MSG_TRUNC : 0;
 
     /* Phase 4: SCM_RIGHTS - dequeue FDs from socket pair and deliver to receiver */
     kmsg.msg_controllen = 0;  /* Default: no ancillary data */

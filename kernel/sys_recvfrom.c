@@ -479,10 +479,12 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
         if (dgsock && dgsock->socket_type == 2 /* SOCK_DGRAM */ && dgsock->dgram_queue) {
             char sender_path[108];
             uint16_t sender_path_len = 0;
+            size_t actual_dgram_len = 0;
             if (local_flags & MSG_DONTWAIT)
                 dgsock->flags |= 0x800;
             ssize_t dg_ret = fut_socket_recvfrom_dgram(dgsock, kbuf, local_len,
-                                                       sender_path, &sender_path_len);
+                                                       sender_path, &sender_path_len,
+                                                       &actual_dgram_len);
             if (local_flags & MSG_DONTWAIT)
                 dgsock->flags &= ~0x800;
             if (dg_ret < 0) {
@@ -515,6 +517,9 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
                     recv_copy_to_user(local_addrlen, &actual_len, sizeof(socklen_t));
                 }
             }
+            /* MSG_TRUNC: return actual datagram length even if buffer was too small */
+            if ((local_flags & MSG_TRUNC) && actual_dgram_len > (size_t)local_len)
+                return (ssize_t)actual_dgram_len;
             return dg_ret;
         }
     }

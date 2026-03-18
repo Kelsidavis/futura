@@ -1390,7 +1390,8 @@ ssize_t fut_socket_sendto_dgram(const char *dest_path, size_t dest_path_len,
  * Receive datagram from this socket's dgram_queue.
  */
 ssize_t fut_socket_recvfrom_dgram(fut_socket_t *socket, void *buf, size_t len,
-                                  char *sender_path_out, uint16_t *sender_path_len_out) {
+                                  char *sender_path_out, uint16_t *sender_path_len_out,
+                                  size_t *actual_datagram_len_out) {
     if (!socket || !buf)
         return -EINVAL;
     if (!socket->dgram_queue)
@@ -1446,7 +1447,8 @@ ssize_t fut_socket_recvfrom_dgram(fut_socket_t *socket, void *buf, size_t len,
     if (dg_has_timeout) fut_timer_cancel(sock_timeout_callback, &dg_tmo_ctx);
 
     fut_dgram_entry_t *entry = &dq->msgs[dq->head];
-    size_t copy_len = (len < entry->data_len) ? len : entry->data_len;
+    size_t dgram_len = entry->data_len;
+    size_t copy_len = (len < dgram_len) ? len : dgram_len;
     memcpy(buf, entry->data, copy_len);
 
     if (sender_path_out && sender_path_len_out) {
@@ -1454,6 +1456,9 @@ ssize_t fut_socket_recvfrom_dgram(fut_socket_t *socket, void *buf, size_t len,
             memcpy(sender_path_out, entry->sender_path, entry->sender_path_len);
         *sender_path_len_out = entry->sender_path_len;
     }
+
+    if (actual_datagram_len_out)
+        *actual_datagram_len_out = dgram_len;
 
     dq->head = (dq->head + 1) % FUT_DGRAM_QUEUE_MAX;
     dq->count--;

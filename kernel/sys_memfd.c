@@ -10,6 +10,7 @@
 
 #include <kernel/fut_task.h>
 #include <kernel/fut_memory.h>
+#include <kernel/fut_mm.h>
 #include <kernel/chrdev.h>
 #include <kernel/fut_vfs.h>
 #include <kernel/errno.h>
@@ -154,13 +155,43 @@ static int memfd_ioctl(void *inode, void *priv, unsigned long req, unsigned long
     return -EINVAL;
 }
 
+static void *memfd_mmap(void *inode, void *priv, void *u_addr,
+                        size_t len, off_t off, int prot, int flags) {
+    (void)inode;
+    struct memfd *mf = (struct memfd *)priv;
+    if (!mf)
+        return (void *)(intptr_t)(-EINVAL);
+    if (off < 0 || (size_t)off > mf->size)
+        return (void *)(intptr_t)(-EINVAL);
+
+    fut_mm_t *mm = fut_mm_current();
+    if (!mm)
+        return (void *)(intptr_t)(-ENOMEM);
+
+    /* Allocate anonymous pages for the mapping */
+    void *vaddr = fut_mm_map_anonymous(mm, (uintptr_t)u_addr, len, prot, flags);
+    if ((intptr_t)vaddr < 0)
+        return vaddr;
+
+    /* Copy existing content into the mapping */
+    size_t avail = (mf->size > (size_t)off) ? (mf->size - (size_t)off) : 0;
+    if (avail > len)
+        avail = len;
+    if (avail > 0 && mf->data) {
+        /* fut_copy_to_user handles SMAP; ignore errors (mapping still valid) */
+        fut_copy_to_user(vaddr, mf->data + (size_t)off, avail);
+    }
+
+    return vaddr;
+}
+
 static const struct fut_file_ops memfd_fops = {
     .read    = memfd_read,
     .write   = memfd_write,
     .release = memfd_release,
     .open    = NULL,
     .ioctl   = memfd_ioctl,
-    .mmap    = NULL,
+    .mmap    = memfd_mmap,
 };
 
 /**

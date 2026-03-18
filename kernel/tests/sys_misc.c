@@ -6469,6 +6469,49 @@ static void test_proc_cmdline(void) {
 }
 
 /* ============================================================
+ * Test 133: mmap on memfd returns a valid mapping (not ENODEV)
+ * ============================================================ */
+static void test_memfd_mmap(void) {
+    fut_printf("[MISC-TEST] Test 133: mmap on memfd returns valid mapping\n");
+
+#define MAP_PRIVATE_  0x02
+#define MAP_SHARED_   0x01
+
+    long fd = sys_memfd_create("mmap_test", 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ memfd_create returned %ld\n", fd);
+        fut_test_fail(133);
+        return;
+    }
+
+    /* Size the file to 4096 bytes */
+    long ret = sys_ftruncate((int)fd, 4096);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ ftruncate returned %ld\n", ret);
+        sys_close((int)fd);
+        fut_test_fail(133);
+        return;
+    }
+
+    /* MAP_SHARED mmap — should not return ENODEV or other error */
+    long addr = sys_mmap(NULL, 4096, 3 /* PROT_READ|PROT_WRITE */,
+                         MAP_SHARED_, (int)fd, 0);
+    if (addr < 0) {
+        fut_printf("[MISC-TEST] ✗ mmap(memfd, MAP_SHARED) returned %ld\n", addr);
+        sys_close((int)fd);
+        fut_test_fail(133);
+        return;
+    }
+
+    /* Unmap and close */
+    sys_munmap((void *)(uintptr_t)addr, 4096);
+    sys_close((int)fd);
+
+    fut_printf("[MISC-TEST] ✓ mmap(memfd, MAP_SHARED) returned valid mapping 0x%lx\n", addr);
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -6610,6 +6653,7 @@ void fut_misc_test_thread(void *arg) {
     test_rt_sigqueueinfo();                /* Test 130: rt_sigqueueinfo stores SI_QUEUE siginfo */
     test_rt_sigqueueinfo_security();       /* Test 131: rt_sigqueueinfo rejects si_code > 0 without CAP_KILL */
     test_rt_tgsigqueueinfo();              /* Test 132: rt_tgsigqueueinfo stores siginfo in thread queue */
+    test_memfd_mmap();                     /* Test 133: mmap on memfd returns valid mapping */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

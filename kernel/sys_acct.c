@@ -24,6 +24,19 @@
 #include <kernel/uaccess.h>
 #include <string.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
+static inline int acct_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_from_user(dst, src, n);
+}
+
 /* ============================================================
  *   Accounting Record Format
  * ============================================================ */
@@ -191,7 +204,7 @@ long sys_acct(const char *filename) {
      * leaving the last byte uninitialized and making truncation detection unreliable.
      * DEFENSE: Copy full buffer size so all bytes are initialized for memchr check. */
     char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
-    if (fut_copy_from_user(path_buf, filename, sizeof(path_buf)) != 0) {
+    if (acct_copy_from_user(path_buf, filename, sizeof(path_buf)) != 0) {
         fut_printf("[ACCT] acct(filename=?, pid=%llu) -> EFAULT "
                    "(filename copy_from_user failed)\n",
                    (unsigned long long)task->pid);

@@ -21,6 +21,25 @@
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
+static inline int sys_quotactl_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_from_user(dst, src, n);
+}
+static inline int sys_quotactl_copy_to_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)dst >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_to_user(dst, src, n);
+}
+
 /* Quota commands (high-level operations) */
 #define Q_SYNC       0x800001  /* Sync disk copy of quota */
 #define Q_QUOTAON    0x800002  /* Turn quotas on */
@@ -346,7 +365,7 @@ long sys_quotactl(unsigned int cmd, const char *special, int id, void *addr) {
      * - CVE-2017-7889: Linux mount path truncation
      */
     char special_buf[256];
-    if (fut_copy_from_user(special_buf, special, sizeof(special_buf)) != 0) {
+    if (sys_quotactl_copy_from_user(special_buf, special, sizeof(special_buf)) != 0) {
         fut_printf("[QUOTACTL] quotactl(cmd=0x%x, special=?, id=%d, addr=%p, pid=%d) -> EFAULT "
                    "(special copy_from_user failed)\n",
                    cmd, id, addr, task->pid);
@@ -534,7 +553,7 @@ long sys_quotactl(unsigned int cmd, const char *special, int id, void *addr) {
         struct dqblk dqb;
 
         /* Copy dqblk from userspace for validation */
-        if (fut_copy_from_user(&dqb, (const void *)addr, sizeof(dqb)) != 0) {
+        if (sys_quotactl_copy_from_user(&dqb, (const void *)addr, sizeof(dqb)) != 0) {
             fut_printf("[QUOTACTL] quotactl(cmd=%s) -> EFAULT (failed to copy dqblk from userspace)\n",
                        cmd_desc);
             return -EFAULT;

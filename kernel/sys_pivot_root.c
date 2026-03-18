@@ -20,6 +20,25 @@
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
+static inline int sys_pivot_root_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_from_user(dst, src, n);
+}
+static inline int sys_pivot_root_copy_to_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)dst >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_to_user(dst, src, n);
+}
+
 /**
  * pivot_root() - Change root filesystem
  *
@@ -193,7 +212,7 @@ long sys_pivot_root(const char *new_root, const char *put_old) {
      * leaving the last byte uninitialized and making truncation detection unreliable.
      * DEFENSE: Copy full buffer size so all bytes are initialized for memchr check. */
     char new_root_buf[256];
-    if (fut_copy_from_user(new_root_buf, new_root, sizeof(new_root_buf)) != 0) {
+    if (sys_pivot_root_copy_from_user(new_root_buf, new_root, sizeof(new_root_buf)) != 0) {
         fut_printf("[PIVOT_ROOT] pivot_root(new_root=?, put_old=%p, pid=%d) -> EFAULT "
                    "(new_root copy_from_user failed)\n",
                    put_old, task->pid);
@@ -222,7 +241,7 @@ long sys_pivot_root(const char *new_root, const char *put_old) {
 
     /* Copy put_old from userspace (full buffer to detect truncation) */
     char put_old_buf[256];
-    if (fut_copy_from_user(put_old_buf, put_old, sizeof(put_old_buf)) != 0) {
+    if (sys_pivot_root_copy_from_user(put_old_buf, put_old, sizeof(put_old_buf)) != 0) {
         fut_printf("[PIVOT_ROOT] pivot_root(new_root='%s', put_old=?, pid=%d) -> EFAULT "
                    "(put_old copy_from_user failed)\n",
                    new_root_buf, task->pid);

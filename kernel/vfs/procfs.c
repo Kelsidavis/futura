@@ -90,6 +90,18 @@ enum procfs_kind {
     PROC_SYS_MSGMAX,       /* /proc/sys/kernel/msgmax */
     PROC_SYS_MSGMNB,       /* /proc/sys/kernel/msgmnb */
     PROC_SYS_MSGMNI,       /* /proc/sys/kernel/msgmni */
+    /* /proc/sys/net/ subtree */
+    PROC_SYS_NET_DIR,      /* /proc/sys/net/ */
+    PROC_SYS_NET_CORE_DIR, /* /proc/sys/net/core/ */
+    PROC_SYS_NET_IPV4_DIR, /* /proc/sys/net/ipv4/ */
+    PROC_SYS_NET_SOMAXCONN,     /* /proc/sys/net/core/somaxconn */
+    PROC_SYS_NET_RMEM_MAX,      /* /proc/sys/net/core/rmem_max */
+    PROC_SYS_NET_WMEM_MAX,      /* /proc/sys/net/core/wmem_max */
+    PROC_SYS_NET_RMEM_DEFAULT,  /* /proc/sys/net/core/rmem_default */
+    PROC_SYS_NET_WMEM_DEFAULT,  /* /proc/sys/net/core/wmem_default */
+    PROC_SYS_NET_PORT_RANGE,    /* /proc/sys/net/ipv4/ip_local_port_range */
+    PROC_SYS_NET_FIN_TIMEOUT,   /* /proc/sys/net/ipv4/tcp_fin_timeout */
+    PROC_SYS_NET_SYNCOOKIES,    /* /proc/sys/net/ipv4/tcp_syncookies */
     PROC_VMSTAT,           /* /proc/vmstat */
     PROC_NET_DIR,          /* /proc/net/ */
     PROC_NET_DEV,          /* /proc/net/dev */
@@ -154,6 +166,18 @@ typedef struct {
 #define PROC_INO_SYS_MSGMAX        254ULL
 #define PROC_INO_SYS_MSGMNB        255ULL
 #define PROC_INO_SYS_MSGMNI        256ULL
+/* /proc/sys/net/ inode range: 260-290 */
+#define PROC_INO_SYS_NET_DIR         260ULL
+#define PROC_INO_SYS_NET_CORE_DIR    261ULL
+#define PROC_INO_SYS_NET_IPV4_DIR    262ULL
+#define PROC_INO_SYS_NET_SOMAXCONN   270ULL
+#define PROC_INO_SYS_NET_RMEM_MAX    271ULL
+#define PROC_INO_SYS_NET_WMEM_MAX    272ULL
+#define PROC_INO_SYS_NET_RMEM_DEFAULT 273ULL
+#define PROC_INO_SYS_NET_WMEM_DEFAULT 274ULL
+#define PROC_INO_SYS_NET_PORT_RANGE  275ULL
+#define PROC_INO_SYS_NET_FIN_TIMEOUT 276ULL
+#define PROC_INO_SYS_NET_SYNCOOKIES  277ULL
 
 /* Per-PID: pid * 100 + offset */
 #define PROC_INO_PID_DIR(p)    (1000ULL + (uint64_t)(p) * 100 + 0)
@@ -1252,6 +1276,31 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
         case PROC_SYS_MSGMNI:
             total = gen_sysctl_str(tmp, GEN_BUF, "32");
             break;
+        /* Network sysctls */
+        case PROC_SYS_NET_SOMAXCONN:
+            total = gen_sysctl_str(tmp, GEN_BUF, "4096");
+            break;
+        case PROC_SYS_NET_RMEM_MAX:
+            total = gen_sysctl_str(tmp, GEN_BUF, "16777216");
+            break;
+        case PROC_SYS_NET_WMEM_MAX:
+            total = gen_sysctl_str(tmp, GEN_BUF, "16777216");
+            break;
+        case PROC_SYS_NET_RMEM_DEFAULT:
+            total = gen_sysctl_str(tmp, GEN_BUF, "212992");
+            break;
+        case PROC_SYS_NET_WMEM_DEFAULT:
+            total = gen_sysctl_str(tmp, GEN_BUF, "212992");
+            break;
+        case PROC_SYS_NET_PORT_RANGE:
+            total = gen_sysctl_str(tmp, GEN_BUF, "1024\t65535");
+            break;
+        case PROC_SYS_NET_FIN_TIMEOUT:
+            total = gen_sysctl_str(tmp, GEN_BUF, "60");
+            break;
+        case PROC_SYS_NET_SYNCOOKIES:
+            total = gen_sysctl_str(tmp, GEN_BUF, "1");
+            break;
         default:
             fut_free(tmp);
             return -EINVAL;
@@ -1646,6 +1695,73 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0040555, PROC_SYS_FS_DIR, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "net")) {
+            *result = procfs_alloc_vnode(mnt, VN_DIR, PROC_INO_SYS_NET_DIR,
+                                          0040555, PROC_SYS_NET_DIR, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        return -ENOENT;
+    }
+
+    if (dn->kind == PROC_SYS_NET_DIR) {
+        if (STREQ(name, "core")) {
+            *result = procfs_alloc_vnode(mnt, VN_DIR, PROC_INO_SYS_NET_CORE_DIR,
+                                          0040555, PROC_SYS_NET_CORE_DIR, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "ipv4")) {
+            *result = procfs_alloc_vnode(mnt, VN_DIR, PROC_INO_SYS_NET_IPV4_DIR,
+                                          0040555, PROC_SYS_NET_IPV4_DIR, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        return -ENOENT;
+    }
+
+    if (dn->kind == PROC_SYS_NET_CORE_DIR) {
+        if (STREQ(name, "somaxconn")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_NET_SOMAXCONN,
+                                          0100644, PROC_SYS_NET_SOMAXCONN, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "rmem_max")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_NET_RMEM_MAX,
+                                          0100644, PROC_SYS_NET_RMEM_MAX, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "wmem_max")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_NET_WMEM_MAX,
+                                          0100644, PROC_SYS_NET_WMEM_MAX, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "rmem_default")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_NET_RMEM_DEFAULT,
+                                          0100644, PROC_SYS_NET_RMEM_DEFAULT, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "wmem_default")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_NET_WMEM_DEFAULT,
+                                          0100644, PROC_SYS_NET_WMEM_DEFAULT, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        return -ENOENT;
+    }
+
+    if (dn->kind == PROC_SYS_NET_IPV4_DIR) {
+        if (STREQ(name, "ip_local_port_range")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_NET_PORT_RANGE,
+                                          0100644, PROC_SYS_NET_PORT_RANGE, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "tcp_fin_timeout")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_NET_FIN_TIMEOUT,
+                                          0100644, PROC_SYS_NET_FIN_TIMEOUT, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "tcp_syncookies")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_NET_SYNCOOKIES,
+                                          0100644, PROC_SYS_NET_SYNCOOKIES, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         return -ENOENT;
     }
 
@@ -1979,12 +2095,51 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
     }
 
     if (dn->kind == PROC_SYS_DIR) {
-        static const char *e[] = { ".", "..", "kernel", "vm", "fs" };
+        static const char *e[] = { ".", "..", "kernel", "vm", "fs", "net" };
         static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
-                                     FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR };
+                                     FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
+                                     FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR };
         static const uint64_t i[] = { PROC_INO_SYS_DIR, PROC_INO_ROOT,
                                       PROC_INO_SYS_KERNEL_DIR, PROC_INO_SYS_VM_DIR,
-                                      PROC_INO_SYS_FS_DIR };
+                                      PROC_INO_SYS_FS_DIR, PROC_INO_SYS_NET_DIR };
+        if (idx < 6) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+        return -ENOENT;
+    }
+
+    if (dn->kind == PROC_SYS_NET_DIR) {
+        static const char *e[] = { ".", "..", "core", "ipv4" };
+        static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
+                                     FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR };
+        static const uint64_t i[] = { PROC_INO_SYS_NET_DIR, PROC_INO_SYS_DIR,
+                                      PROC_INO_SYS_NET_CORE_DIR, PROC_INO_SYS_NET_IPV4_DIR };
+        if (idx < 4) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+        return -ENOENT;
+    }
+
+    if (dn->kind == PROC_SYS_NET_CORE_DIR) {
+        static const char *e[] = { ".", "..", "somaxconn", "rmem_max", "wmem_max",
+                                   "rmem_default", "wmem_default" };
+        static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_REG };
+        static const uint64_t i[] = { PROC_INO_SYS_NET_CORE_DIR, PROC_INO_SYS_NET_DIR,
+                                      PROC_INO_SYS_NET_SOMAXCONN, PROC_INO_SYS_NET_RMEM_MAX,
+                                      PROC_INO_SYS_NET_WMEM_MAX, PROC_INO_SYS_NET_RMEM_DEFAULT,
+                                      PROC_INO_SYS_NET_WMEM_DEFAULT };
+        if (idx < 7) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+        return -ENOENT;
+    }
+
+    if (dn->kind == PROC_SYS_NET_IPV4_DIR) {
+        static const char *e[] = { ".", "..", "ip_local_port_range",
+                                   "tcp_fin_timeout", "tcp_syncookies" };
+        static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_REG };
+        static const uint64_t i[] = { PROC_INO_SYS_NET_IPV4_DIR, PROC_INO_SYS_NET_DIR,
+                                      PROC_INO_SYS_NET_PORT_RANGE, PROC_INO_SYS_NET_FIN_TIMEOUT,
+                                      PROC_INO_SYS_NET_SYNCOOKIES };
         if (idx < 5) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
         return -ENOENT;
     }

@@ -145,6 +145,17 @@ long sys_socketpair(int domain, int type, int protocol, int *sv) {
     s1->pair_reverse = pair_fwd;
     s1->state = FUT_SOCK_CONNECTED;
 
+    /* SO_PEERCRED: for socketpair(), both ends belong to the same creating task */
+    {
+        fut_task_t *task = fut_task_current();
+        uint32_t spid = task ? task->pid : 0;
+        uint32_t suid = task ? task->uid : 0;
+        uint32_t sgid = task ? task->gid : 0;
+        s0->peer_pid = s1->peer_pid = spid;
+        s0->peer_uid = s1->peer_uid = suid;
+        s0->peer_gid = s1->peer_gid = sgid;
+    }
+
     /* Allocate FDs */
     int fd0 = allocate_socket_fd(s0);
     if (fd0 < 0) {

@@ -745,6 +745,19 @@ int fut_socket_accept(fut_socket_t *listener, fut_socket_t **out_socket) {
     accepted->pair = peer->pair_reverse;  /* server sends here, client receives */
     accepted->pair_reverse = peer->pair;  /* server receives from here, client sends */
 
+    /* SO_PEERCRED: server side gets the client's credentials (captured at connect() time) */
+    accepted->peer_pid = entry->peer_pid;
+    accepted->peer_uid = entry->peer_uid;
+    accepted->peer_gid = entry->peer_gid;
+
+    /* SO_PEERCRED: client side gets the server's credentials (current accepting task) */
+    {
+        fut_task_t *at = fut_task_current();
+        peer->peer_pid = at ? at->pid : 0;
+        peer->peer_uid = at ? at->uid : 0;
+        peer->peer_gid = at ? at->gid : 0;
+    }
+
     /* IMPORTANT: Listener socket REMAINS in LISTENING state!
      * Only the accepted peer becomes CONNECTED.
      * The listener must stay in LISTENING to accept more connections.
@@ -848,6 +861,15 @@ int fut_socket_connect(fut_socket_t *socket, const char *target_path, size_t pat
     queue->queue[tail].flags = 0;
     /* Skip high-resolution timestamp - it blocks during calibration on first use */
     queue->queue[tail].timestamp_ns = fut_get_ticks() * 10000000ULL;  /* ticks (10ms) -> ns */
+
+    /* Capture connecting task credentials for SO_PEERCRED on the server side */
+    {
+        fut_task_t *ct = fut_task_current();
+        queue->queue[tail].peer_pid = ct ? ct->pid : 0;
+        queue->queue[tail].peer_uid = ct ? ct->uid : 0;
+        queue->queue[tail].peer_gid = ct ? ct->gid : 0;
+    }
+
     queue->queue_count++;
 
     socket->state = FUT_SOCK_CONNECTING;

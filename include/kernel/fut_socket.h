@@ -204,6 +204,10 @@ typedef struct fut_socket_connection_entry {
     struct fut_socket *peer_socket;         /* Connected peer socket */
     uint32_t flags;                         /* Connection flags */
     uint64_t timestamp_ns;                  /* Connection time */
+    /* Peer credentials captured at connect() time for SO_PEERCRED */
+    uint32_t peer_pid;
+    uint32_t peer_uid;
+    uint32_t peer_gid;
 } fut_socket_connection_entry_t;
 
 #define FUT_SOCKET_QUEUE_MAX 16  /* Maximum pending connections in backlog */
@@ -353,6 +357,11 @@ typedef struct fut_socket {
     /* SO_RCVTIMEO / SO_SNDTIMEO: 0 = no timeout (block forever) */
     uint64_t rcvtimeo_ms;               /* Receive timeout in milliseconds */
     uint64_t sndtimeo_ms;               /* Send timeout in milliseconds */
+
+    /* SO_PEERCRED: credentials of the connected peer (set at connect/accept time) */
+    uint32_t peer_pid;
+    uint32_t peer_uid;
+    uint32_t peer_gid;
 
     /* Refcounting and lifecycle */
     uint64_t refcount;                      /* Reference count */

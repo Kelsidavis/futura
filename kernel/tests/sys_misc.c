@@ -16004,6 +16004,60 @@ static void test_msg_nosignal(void) {
     fut_test_pass();
 }
 
+/* ============================================================
+ * Test 335: SO_PEERCRED returns correct credentials
+ *
+ * Verifies that getsockopt(SO_PEERCRED) on a socketpair returns
+ * the creating task's PID/UID/GID (not zeroes and not the caller's
+ * current creds guessed from context).
+ * ============================================================ */
+static void test_so_peercred(void) {
+    fut_printf("[MISC-TEST] Test 335: SO_PEERCRED returns correct peer credentials\n");
+
+    extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+    extern long sys_getsockopt(int sockfd, int level, int optname,
+                               void *optval, unsigned int *optlen);
+    extern long sys_close(int fd);
+
+    int sv[2] = { -1, -1 };
+    long r = sys_socketpair(1 /*AF_UNIX*/, 1 /*SOCK_STREAM*/, 0, sv);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 335: socketpair failed: %ld\n", r);
+        fut_test_fail(335); return;
+    }
+
+    /* ucred struct as defined by Linux */
+    struct { int32_t pid; uint32_t uid; uint32_t gid; } cred;
+    __builtin_memset(&cred, 0xff, sizeof(cred)); /* poison so zeroes stand out */
+    unsigned int optlen = (unsigned int)sizeof(cred);
+
+    r = sys_getsockopt(sv[0], 1 /*SOL_SOCKET*/, 17 /*SO_PEERCRED*/,
+                       &cred, &optlen);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 335: getsockopt(SO_PEERCRED) failed: %ld\n", r);
+        sys_close(sv[0]); sys_close(sv[1]);
+        fut_test_fail(335); return;
+    }
+
+    fut_task_t *task = fut_task_current();
+    uint32_t want_pid = task ? task->pid : 0;
+    uint32_t want_uid = task ? task->uid : 0;
+    uint32_t want_gid = task ? task->gid : 0;
+
+    if ((uint32_t)cred.pid != want_pid || cred.uid != want_uid || cred.gid != want_gid) {
+        fut_printf("[MISC-TEST] ✗ Test 335: SO_PEERCRED got pid=%d uid=%u gid=%u, want pid=%u uid=%u gid=%u\n",
+                   cred.pid, cred.uid, cred.gid, want_pid, want_uid, want_gid);
+        sys_close(sv[0]); sys_close(sv[1]);
+        fut_test_fail(335); return;
+    }
+
+    sys_close(sv[0]);
+    sys_close(sv[1]);
+    fut_printf("[MISC-TEST] ✓ Test 335: SO_PEERCRED pid=%d uid=%u gid=%u correct\n",
+               cred.pid, cred.uid, cred.gid);
+    fut_test_pass();
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -16346,6 +16400,7 @@ void fut_misc_test_thread(void *arg) {
     test_proc_net_unix();                /* Test 332: /proc/net/unix lists bound AF_UNIX sockets */
     test_epollrdhup_peer_shutdown();     /* Test 333: EPOLLRDHUP fires on peer shutdown(SHUT_WR) */
     test_msg_nosignal();                 /* Test 334: MSG_NOSIGNAL suppresses SIGPIPE */
+    test_so_peercred();                  /* Test 335: SO_PEERCRED returns correct credentials */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

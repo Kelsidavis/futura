@@ -706,7 +706,7 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
                 }
 
             case 17: /* SO_PEERCRED */ {
-                /* Return peer credentials for connected AF_UNIX sockets */
+                /* Return credentials of the connected peer (captured at connect/accept time) */
                 struct ucred {
                     int32_t pid;
                     uint32_t uid;
@@ -714,12 +714,10 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
                 };
                 if (socket->state != FUT_SOCK_CONNECTED) return -ENOTCONN;
 
-                /* For socketpair, peer credentials are the creating process */
-                fut_task_t *task = fut_task_current();
                 struct ucred cred = {
-                    .pid = task ? (int32_t)task->pid : 0,
-                    .uid = task ? task->uid : 0,
-                    .gid = task ? task->gid : 0,
+                    .pid = (int32_t)socket->peer_pid,
+                    .uid = socket->peer_uid,
+                    .gid = socket->peer_gid,
                 };
                 value_len = sizeof(struct ucred);
                 copy_len = (len < value_len) ? len : value_len;

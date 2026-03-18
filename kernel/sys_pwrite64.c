@@ -304,6 +304,10 @@ long sys_pwrite64(unsigned int fd, const void *buf, size_t count, int64_t offset
 
     fut_free(kbuf);
 
+    /* I/O accounting for /proc/<pid>/io */
+    task->io_wchar += (uint64_t)ret;
+    task->io_syscw++;
+
     /* Detailed success logging */
     fut_printf("[PWRITE64] pwrite64(fd=%u [%s], ino=%lu, count=%zu [%s], offset=%ld [%s], "
                "bytes_written=%zd) -> %zd (VFS write operation delegation)\n",

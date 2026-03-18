@@ -322,6 +322,12 @@ long sys_pread64(unsigned int fd, void *buf, size_t count, int64_t offset) {
 
     fut_free(kbuf);
 
+    /* I/O accounting for /proc/<pid>/io */
+    if (ret > 0) {
+        task->io_rchar += (uint64_t)ret;
+        task->io_syscr++;
+    }
+
     /* Phase 2: Detailed success logging */
     const char *eof_marker = (ret == 0) ? " (EOF)" : "";
     fut_printf("[PREAD64] pread64(fd=%u [%s], ino=%lu, count=%zu [%s], offset=%ld [%s], "

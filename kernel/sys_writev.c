@@ -587,5 +587,10 @@ ssize_t sys_writev(int fd, const struct iovec *iov, int iovcnt) {
      * Zero-copy optimization for page-aligned buffers
      */
 
+    /* I/O accounting for /proc/<pid>/io */
+    if (total_written > 0) {
+        task->io_wchar += (uint64_t)total_written;
+        task->io_syscw++;
+    }
     return total_written;
 }

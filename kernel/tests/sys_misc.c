@@ -10723,6 +10723,87 @@ static void test_sched_attr_errors(void) {
 }
 
 /* ============================================================
+ * Tests 226-228: seccomp()
+ * ============================================================ */
+
+#define TEST_SECCOMP_SET_MODE_STRICT    0
+#define TEST_SECCOMP_SET_MODE_FILTER    1
+#define TEST_SECCOMP_GET_ACTION_AVAIL   2
+#define TEST_SECCOMP_RET_ALLOW          0x7fff0000U
+#define TEST_SECCOMP_RET_ERRNO          0x00050000U
+
+/* Test 226: SECCOMP_SET_MODE_STRICT is accepted (no-op in kernel context) */
+static void test_seccomp_strict_mode(void) {
+    fut_printf("[MISC-TEST] Test 226: seccomp STRICT mode no-op\n");
+    extern long sys_seccomp(unsigned int operation, unsigned int flags,
+                            const void *uargs);
+
+    long r = sys_seccomp(TEST_SECCOMP_SET_MODE_STRICT, 0, NULL);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ seccomp STRICT returned %ld (want 0)\n", r);
+        fut_test_fail(226); return;
+    }
+
+    /* flags != 0 → EINVAL */
+    r = sys_seccomp(TEST_SECCOMP_SET_MODE_STRICT, 1, NULL);
+    if (r != -22 /* -EINVAL */) {
+        fut_printf("[MISC-TEST] ✗ seccomp STRICT flags=1 expected EINVAL, got %ld\n", r);
+        fut_test_fail(226); return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ seccomp STRICT: no-op returns 0, bad flags → EINVAL\n");
+    fut_test_pass();
+}
+
+/* Test 227: SECCOMP_SET_MODE_FILTER returns ENOSYS (BPF not implemented) */
+static void test_seccomp_filter_enosys(void) {
+    fut_printf("[MISC-TEST] Test 227: seccomp FILTER returns ENOSYS\n");
+    extern long sys_seccomp(unsigned int operation, unsigned int flags,
+                            const void *uargs);
+
+    long r = sys_seccomp(TEST_SECCOMP_SET_MODE_FILTER, 0, NULL);
+    if (r != -38 /* -ENOSYS */) {
+        fut_printf("[MISC-TEST] ✗ seccomp FILTER expected ENOSYS, got %ld\n", r);
+        fut_test_fail(227); return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ seccomp FILTER → ENOSYS\n");
+    fut_test_pass();
+}
+
+/* Test 228: SECCOMP_GET_ACTION_AVAIL returns 0 for known actions */
+static void test_seccomp_action_avail(void) {
+    fut_printf("[MISC-TEST] Test 228: seccomp GET_ACTION_AVAIL\n");
+    extern long sys_seccomp(unsigned int operation, unsigned int flags,
+                            const void *uargs);
+
+    unsigned int action = TEST_SECCOMP_RET_ALLOW;
+    long r = sys_seccomp(TEST_SECCOMP_GET_ACTION_AVAIL, 0, &action);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ GET_ACTION_AVAIL(ALLOW) expected 0, got %ld\n", r);
+        fut_test_fail(228); return;
+    }
+
+    action = TEST_SECCOMP_RET_ERRNO;
+    r = sys_seccomp(TEST_SECCOMP_GET_ACTION_AVAIL, 0, &action);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ GET_ACTION_AVAIL(ERRNO) expected 0, got %ld\n", r);
+        fut_test_fail(228); return;
+    }
+
+    /* Unknown action → -EOPNOTSUPP (-95) */
+    action = 0xDEADBEEF;
+    r = sys_seccomp(TEST_SECCOMP_GET_ACTION_AVAIL, 0, &action);
+    if (r != -95 /* -EOPNOTSUPP */) {
+        fut_printf("[MISC-TEST] ✗ GET_ACTION_AVAIL(unknown) expected EOPNOTSUPP, got %ld\n", r);
+        fut_test_fail(228); return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ seccomp GET_ACTION_AVAIL: known actions OK, unknown → EOPNOTSUPP\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -10957,6 +11038,9 @@ void fut_misc_test_thread(void *arg) {
     test_sched_getattr_basic();            /* Test 223: sched_getattr returns policy/priority */
     test_sched_setattr_basic();            /* Test 224: sched_setattr changes policy round-trip */
     test_sched_attr_errors();              /* Test 225: sched_getattr/setattr error paths */
+    test_seccomp_strict_mode();            /* Test 226: seccomp STRICT no-op returns 0 */
+    test_seccomp_filter_enosys();          /* Test 227: seccomp FILTER returns ENOSYS */
+    test_seccomp_action_avail();           /* Test 228: seccomp GET_ACTION_AVAIL */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

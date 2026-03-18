@@ -219,6 +219,10 @@
 #define ENOMSG      42   /* No message of desired type */
 #endif
 
+#ifndef EOPNOTSUPP
+#define EOPNOTSUPP  95   /* Operation not supported on socket */
+#endif
+
 #ifndef ERANGE
 #define ERANGE      34   /* Math result not representable */
 #endif

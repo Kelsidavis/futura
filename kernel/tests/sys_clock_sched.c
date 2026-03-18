@@ -24,6 +24,9 @@
 #include <stdint.h>
 #include <string.h>
 #include "tests/test_api.h"
+#include <kernel/signal.h>
+#include <kernel/signal_frame.h>
+#include <shared/fut_sigevent.h>
 
 /* Forward declarations */
 extern long sys_clock_getres(int clock_id, fut_timespec_t *res);
@@ -40,6 +43,10 @@ extern long sys_getpriority(int which, int who);
 extern long sys_setpriority(int which, int who, int prio);
 extern long sys_unshare(unsigned long flags);
 extern long sys_sched_rr_get_interval(int pid, fut_timespec_t *interval);
+extern long sys_timer_create(int clockid, struct sigevent *sevp, timer_t *timerid);
+extern long sys_timer_settime(timer_t timerid, int flags, const struct itimerspec *new_value, struct itimerspec *old_value);
+extern long sys_timer_delete(timer_t timerid);
+extern int  fut_signal_send_with_info(fut_task_t *task, int signum, const void *info);
 
 /* rusage structure (mirrored from sys_rusage.c) */
 struct test_rusage {
@@ -77,8 +84,10 @@ struct test_rusage {
 #define CLKSCHED_TEST_SETPRIO_NEGWHO 10
 #define CLKSCHED_TEST_UNSHARE_NOOP   11
 #define CLKSCHED_TEST_UNSHARE_INVAL  12
-#define CLKSCHED_TEST_RR_INTERVAL   13
-#define CLKSCHED_TEST_CLOCK_GETTIME 14
+#define CLKSCHED_TEST_RR_INTERVAL        13
+#define CLKSCHED_TEST_CLOCK_GETTIME      14
+#define CLKSCHED_TEST_TIMER_SIGEV_VALUE  15
+#define CLKSCHED_TEST_TIMER_SI_TIMER     16
 
 /* PRIO_PROCESS constant (matches sys_sched.c) */
 #define TEST_PRIO_PROCESS  0
@@ -574,6 +583,154 @@ static void test_clock_gettime(void) {
 }
 
 /* ============================================================
+ * Test 15: timer_create stores sigev_value in posix_timers slot
+ * ============================================================ */
+static void test_posix_timer_sigev_value(void) {
+    fut_printf("[CLKSCHED-TEST] Test 15: timer_create stores sigev_value in posix_timers slot\n");
+
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        fut_printf("[CLKSCHED-TEST] ✗ no current task\n");
+        fut_test_fail(CLKSCHED_TEST_TIMER_SIGEV_VALUE);
+        return;
+    }
+
+    /* Create a timer with SIGUSR1, sigev_value=0xCAFE */
+    struct sigevent sev;
+    memset(&sev, 0, sizeof(sev));
+    sev.sigev_notify    = SIGEV_SIGNAL;
+    sev.sigev_signo     = SIGUSR1;
+    sev.sigev_value.sival_int = 0xCAFE;
+
+    timer_t tid = 0;
+    long ret = sys_timer_create(CLOCK_MONOTONIC, &sev, &tid);
+    if (ret != 0) {
+        fut_printf("[CLKSCHED-TEST] ✗ timer_create returned %ld\n", ret);
+        fut_test_fail(CLKSCHED_TEST_TIMER_SIGEV_VALUE);
+        return;
+    }
+
+    /* Verify the slot has the right sigev_value */
+    int slot = tid - 1;  /* IDs are 1-based */
+    if (slot < 0 || slot >= FUT_POSIX_TIMER_MAX) {
+        fut_printf("[CLKSCHED-TEST] ✗ timer id %d out of range\n", (int)tid);
+        sys_timer_delete(tid);
+        fut_test_fail(CLKSCHED_TEST_TIMER_SIGEV_VALUE);
+        return;
+    }
+
+    fut_posix_timer_t *pt = &task->posix_timers[slot];
+    if (!pt->active) {
+        fut_printf("[CLKSCHED-TEST] ✗ timer slot not active\n");
+        sys_timer_delete(tid);
+        fut_test_fail(CLKSCHED_TEST_TIMER_SIGEV_VALUE);
+        return;
+    }
+
+    if (pt->sigev_value != (long)0xCAFE) {
+        fut_printf("[CLKSCHED-TEST] ✗ sigev_value=0x%lx expected 0xCAFE\n",
+                   (unsigned long)pt->sigev_value);
+        sys_timer_delete(tid);
+        fut_test_fail(CLKSCHED_TEST_TIMER_SIGEV_VALUE);
+        return;
+    }
+
+    if (pt->signo != SIGUSR1) {
+        fut_printf("[CLKSCHED-TEST] ✗ signo=%d expected SIGUSR1=%d\n", pt->signo, SIGUSR1);
+        sys_timer_delete(tid);
+        fut_test_fail(CLKSCHED_TEST_TIMER_SIGEV_VALUE);
+        return;
+    }
+
+    sys_timer_delete(tid);
+    fut_printf("[CLKSCHED-TEST] ✓ timer_create stored sigev_value=0xCAFE, signo=SIGUSR1\n");
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 16: POSIX timer expiry delivers SI_TIMER siginfo
+ * ============================================================ */
+static void test_posix_timer_si_timer(void) {
+    fut_printf("[CLKSCHED-TEST] Test 16: POSIX timer expiry delivers SI_TIMER siginfo\n");
+
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        fut_printf("[CLKSCHED-TEST] ✗ no current task\n");
+        fut_test_fail(CLKSCHED_TEST_TIMER_SI_TIMER);
+        return;
+    }
+
+    /* Create a timer with SIGUSR2 and sigev_value=0xBEEF */
+    struct sigevent sev;
+    memset(&sev, 0, sizeof(sev));
+    sev.sigev_notify          = SIGEV_SIGNAL;
+    sev.sigev_signo           = SIGUSR2;
+    sev.sigev_value.sival_int = 0xBEEF;
+
+    timer_t tid = 0;
+    long ret = sys_timer_create(CLOCK_MONOTONIC, &sev, &tid);
+    if (ret != 0) {
+        fut_printf("[CLKSCHED-TEST] ✗ timer_create returned %ld\n", ret);
+        fut_test_fail(CLKSCHED_TEST_TIMER_SI_TIMER);
+        return;
+    }
+
+    /* Simulate timer-tick expiry: build the exact siginfo_t that fut_timer.c sends */
+    siginfo_t sinfo;
+    __builtin_memset(&sinfo, 0, sizeof(sinfo));
+    sinfo.si_signum  = SIGUSR2;
+    sinfo.si_code    = SI_TIMER;   /* -2 */
+    sinfo.si_timerid = (int)tid;
+    sinfo.si_overrun = 0;
+    sinfo.si_pid     = (int64_t)task->pid;
+    sinfo.si_uid     = (uint32_t)task->uid;
+    sinfo.si_value   = 0xBEEF;
+
+    ret = (long)fut_signal_send_with_info(task, SIGUSR2, &sinfo);
+    if (ret != 0) {
+        fut_printf("[CLKSCHED-TEST] ✗ fut_signal_send_with_info returned %ld\n", ret);
+        sys_timer_delete(tid);
+        fut_test_fail(CLKSCHED_TEST_TIMER_SI_TIMER);
+        return;
+    }
+
+    /* Verify sig_queue_info was populated with SI_TIMER fields */
+    siginfo_t *qi = &task->sig_queue_info[SIGUSR2 - 1];
+
+    if (qi->si_code != SI_TIMER) {
+        fut_printf("[CLKSCHED-TEST] ✗ si_code=%d expected SI_TIMER=%d\n",
+                   qi->si_code, SI_TIMER);
+        sys_timer_delete(tid);
+        fut_test_fail(CLKSCHED_TEST_TIMER_SI_TIMER);
+        return;
+    }
+
+    if (qi->si_timerid != (int)tid) {
+        fut_printf("[CLKSCHED-TEST] ✗ si_timerid=%d expected %d\n",
+                   qi->si_timerid, (int)tid);
+        sys_timer_delete(tid);
+        fut_test_fail(CLKSCHED_TEST_TIMER_SI_TIMER);
+        return;
+    }
+
+    if ((long)qi->si_value != (long)0xBEEF) {
+        fut_printf("[CLKSCHED-TEST] ✗ si_value=0x%lx expected 0xBEEF\n",
+                   (unsigned long)qi->si_value);
+        sys_timer_delete(tid);
+        fut_test_fail(CLKSCHED_TEST_TIMER_SI_TIMER);
+        return;
+    }
+
+    /* Clear pending signal to avoid delivery during subsequent tests */
+    task->pending_signals &= ~(1ULL << (SIGUSR2 - 1));
+
+    sys_timer_delete(tid);
+    fut_printf("[CLKSCHED-TEST] ✓ SI_TIMER: si_code=SI_TIMER, si_timerid=%d, si_value=0xBEEF\n",
+               (int)tid);
+    fut_test_pass();
+}
+
+/* ============================================================
  * Main test harness thread
  * ============================================================ */
 void fut_clock_sched_test_thread(void *arg) {
@@ -597,6 +754,8 @@ void fut_clock_sched_test_thread(void *arg) {
     test_unshare_invalid_bits();
     test_sched_rr_get_interval();
     test_clock_gettime();
+    test_posix_timer_sigev_value();
+    test_posix_timer_si_timer();
 
     fut_printf("[CLKSCHED-TEST] ========================================\n");
     fut_printf("[CLKSCHED-TEST] All clock/sched/timer tests done\n");

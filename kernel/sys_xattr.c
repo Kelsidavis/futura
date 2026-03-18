@@ -23,6 +23,25 @@
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
+static inline int xattr_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_from_user(dst, src, n);
+}
+static inline int xattr_copy_to_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)dst >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_to_user(dst, src, n);
+}
+
 /* ============================================================================
  * Internal VFS helpers for xattr dispatch
  * ============================================================================ */
@@ -256,7 +275,7 @@ static inline long xattr_copy_path_and_name(const char *path, const char *name,
     /* Copy path from userspace (full buffer to detect truncation)
      * VULNERABILITY: Path Truncation Attack
      * DEFENSE: Copy full buffer and check for null terminator presence */
-    if (fut_copy_from_user(path_buf, path, FUT_VFS_PATH_BUFFER_SIZE) != 0) {
+    if (xattr_copy_from_user(path_buf, path, FUT_VFS_PATH_BUFFER_SIZE) != 0) {
         fut_printf("[XATTR] %s(path=? [bad addr], name=%p, pid=%d) -> EFAULT\n",
                    syscall, name, pid);
         return -EFAULT;
@@ -269,7 +288,7 @@ static inline long xattr_copy_path_and_name(const char *path, const char *name,
     }
 
     /* Copy name from userspace (full buffer to detect truncation) */
-    if (fut_copy_from_user(name_buf, name, XATTR_NAME_MAX + 1) != 0) {
+    if (xattr_copy_from_user(name_buf, name, XATTR_NAME_MAX + 1) != 0) {
         fut_printf("[XATTR] %s(path='%s', name=? [bad addr], pid=%d) -> EFAULT\n",
                    syscall, path_buf, pid);
         return -EFAULT;
@@ -307,7 +326,7 @@ static inline long xattr_copy_name(const char *name, char *name_buf,
     fut_task_t *task = fut_task_current();
     int64_t pid = task ? (int64_t)task->pid : -1;
 
-    if (fut_copy_from_user(name_buf, name, XATTR_NAME_MAX + 1) != 0) {
+    if (xattr_copy_from_user(name_buf, name, XATTR_NAME_MAX + 1) != 0) {
         fut_printf("[XATTR] %s(fd=%d, name=? [bad addr], pid=%d) -> EFAULT\n",
                    syscall, fd, pid);
         return -EFAULT;
@@ -403,7 +422,7 @@ static inline long xattr_copy_path(const char *path, char *path_buf,
     fut_task_t *task = fut_task_current();
     int64_t pid = task ? (int64_t)task->pid : -1;
 
-    if (fut_copy_from_user(path_buf, path, FUT_VFS_PATH_BUFFER_SIZE) != 0) {
+    if (xattr_copy_from_user(path_buf, path, FUT_VFS_PATH_BUFFER_SIZE) != 0) {
         fut_printf("[XATTR] %s(path=? [bad addr], pid=%d) -> EFAULT\n",
                    syscall, pid);
         return -EFAULT;
@@ -475,7 +494,7 @@ long sys_setxattr(const char *path, const char *name, const void *value,
     if (size > 0 && value) {
         kvalue = fut_malloc(size);
         if (!kvalue) return -ENOMEM;
-        if (fut_copy_from_user(kvalue, value, size) != 0) {
+        if (xattr_copy_from_user(kvalue, value, size) != 0) {
             fut_free(kvalue);
             return -EFAULT;
         }
@@ -520,7 +539,7 @@ long sys_lsetxattr(const char *path, const char *name, const void *value,
     if (size > 0 && value) {
         kvalue = fut_malloc(size);
         if (!kvalue) return -ENOMEM;
-        if (fut_copy_from_user(kvalue, value, size) != 0) {
+        if (xattr_copy_from_user(kvalue, value, size) != 0) {
             fut_free(kvalue);
             return -EFAULT;
         }
@@ -571,7 +590,7 @@ long sys_fsetxattr(int fd, const char *name, const void *value,
     if (size > 0 && value) {
         kvalue = fut_malloc(size);
         if (!kvalue) return -ENOMEM;
-        if (fut_copy_from_user(kvalue, value, size) != 0) {
+        if (xattr_copy_from_user(kvalue, value, size) != 0) {
             fut_free(kvalue);
             return -EFAULT;
         }
@@ -627,7 +646,7 @@ long sys_getxattr(const char *path, const char *name, void *value, size_t size) 
     if (!kbuf) return -ENOMEM;
     ssize_t got = vnode_getxattr_by_path(path_buf, name_buf, kbuf, (size_t)attr_size);
     if (got < 0) { fut_free(kbuf); return (long)got; }
-    if (value && fut_copy_to_user(value, kbuf, (size_t)got) != 0) {
+    if (value && xattr_copy_to_user(value, kbuf, (size_t)got) != 0) {
         fut_free(kbuf); return -EFAULT;
     }
     fut_free(kbuf);
@@ -664,7 +683,7 @@ long sys_lgetxattr(const char *path, const char *name, void *value, size_t size)
     if (!kbuf) return -ENOMEM;
     ssize_t got = vnode_getxattr_nofollow(path_buf, name_buf, kbuf, (size_t)attr_size);
     if (got < 0) { fut_free(kbuf); return (long)got; }
-    if (value && fut_copy_to_user(value, kbuf, (size_t)got) != 0) {
+    if (value && xattr_copy_to_user(value, kbuf, (size_t)got) != 0) {
         fut_free(kbuf); return -EFAULT;
     }
     fut_free(kbuf);
@@ -707,7 +726,7 @@ long sys_fgetxattr(int fd, const char *name, void *value, size_t size) {
     if (!kbuf) return -ENOMEM;
     ssize_t got = vnode->ops->getxattr(vnode, name_buf, kbuf, (size_t)attr_size);
     if (got < 0) { fut_free(kbuf); return (long)got; }
-    if (value && fut_copy_to_user(value, kbuf, (size_t)got) != 0) {
+    if (value && xattr_copy_to_user(value, kbuf, (size_t)got) != 0) {
         fut_free(kbuf); return -EFAULT;
     }
     fut_free(kbuf);
@@ -755,7 +774,7 @@ long sys_listxattr(const char *path, char *list, size_t size) {
     if (!kbuf) return -ENOMEM;
     ssize_t got = vnode_listxattr_by_path(path_buf, kbuf, (size_t)total);
     if (got < 0) { fut_free(kbuf); return (long)got; }
-    if (got > 0 && list && fut_copy_to_user(list, kbuf, (size_t)got) != 0) {
+    if (got > 0 && list && xattr_copy_to_user(list, kbuf, (size_t)got) != 0) {
         fut_free(kbuf); return -EFAULT;
     }
     fut_free(kbuf);
@@ -791,7 +810,7 @@ long sys_llistxattr(const char *path, char *list, size_t size) {
     if (!kbuf) return -ENOMEM;
     ssize_t got = vnode_listxattr_nofollow(path_buf, kbuf, (size_t)total);
     if (got < 0) { fut_free(kbuf); return (long)got; }
-    if (got > 0 && list && fut_copy_to_user(list, kbuf, (size_t)got) != 0) {
+    if (got > 0 && list && xattr_copy_to_user(list, kbuf, (size_t)got) != 0) {
         fut_free(kbuf); return -EFAULT;
     }
     fut_free(kbuf);
@@ -824,7 +843,7 @@ long sys_flistxattr(int fd, char *list, size_t size) {
     if (!kbuf) return -ENOMEM;
     ssize_t got = vnode->ops->listxattr(vnode, kbuf, (size_t)total);
     if (got < 0) { fut_free(kbuf); return (long)got; }
-    if (got > 0 && list && fut_copy_to_user(list, kbuf, (size_t)got) != 0) {
+    if (got > 0 && list && xattr_copy_to_user(list, kbuf, (size_t)got) != 0) {
         fut_free(kbuf); return -EFAULT;
     }
     fut_free(kbuf);

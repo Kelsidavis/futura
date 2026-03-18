@@ -7450,6 +7450,79 @@ static void test_truncate_basic(void) {
     fut_test_pass();
 }
 
+static void test_access_basic(void) {
+    fut_printf("[MISC-TEST] Test 157: sys_access basic\n");
+    extern long sys_access(const char *pathname, int mode);
+#define F_OK_TEST  0
+#define R_OK_TEST  4
+#define W_OK_TEST  2
+
+    /* /proc exists and is accessible */
+    long ret = sys_access("/proc", F_OK_TEST);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ access(\"/proc\", F_OK): %ld\n", ret);
+        fut_test_fail(157);
+        return;
+    }
+    /* Non-existent path → ENOENT */
+    ret = sys_access("/this_does_not_exist_access_test", F_OK_TEST);
+    if (ret != -ENOENT) {
+        fut_printf("[MISC-TEST] ✗ access(missing, F_OK): expected ENOENT, got %ld\n", ret);
+        fut_test_fail(157);
+        return;
+    }
+    /* Create a readable/writable file and check R_OK and W_OK */
+    int fd = (int)fut_vfs_open("/test_access.txt", O_CREAT | O_RDWR, 0644);
+    if (fd >= 0) fut_vfs_close(fd);
+    ret = sys_access("/test_access.txt", R_OK_TEST);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ access(file, R_OK): %ld\n", ret);
+        fut_test_fail(157);
+        return;
+    }
+    ret = sys_access("/test_access.txt", W_OK_TEST);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ access(file, W_OK): %ld\n", ret);
+        fut_test_fail(157);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ access: /proc F_OK=0, missing→ENOENT, file R_OK/W_OK=0\n");
+    fut_test_pass();
+}
+
+static void test_chdir_basic(void) {
+    fut_printf("[MISC-TEST] Test 158: sys_chdir basic\n");
+    extern long sys_chdir(const char *pathname);
+
+    /* chdir to /proc (valid directory) */
+    long ret = sys_chdir("/proc");
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ chdir(\"/proc\"): %ld\n", ret);
+        fut_test_fail(158);
+        return;
+    }
+    /* chdir to non-existent path → ENOENT */
+    ret = sys_chdir("/this_does_not_exist_chdir_test");
+    if (ret != -ENOENT) {
+        fut_printf("[MISC-TEST] ✗ chdir(missing): expected ENOENT, got %ld\n", ret);
+        fut_test_fail(158);
+        return;
+    }
+    /* chdir to a regular file → ENOTDIR */
+    int fd = (int)fut_vfs_open("/test_chdir_file.txt", O_CREAT | O_RDWR, 0644);
+    if (fd >= 0) fut_vfs_close(fd);
+    ret = sys_chdir("/test_chdir_file.txt");
+    if (ret != -ENOTDIR) {
+        fut_printf("[MISC-TEST] ✗ chdir(file): expected ENOTDIR, got %ld\n", ret);
+        fut_test_fail(158);
+        return;
+    }
+    /* Restore to / */
+    sys_chdir("/");
+    fut_printf("[MISC-TEST] ✓ chdir: /proc=0, missing→ENOENT, file→ENOTDIR\n");
+    fut_test_pass();
+}
+
 /* ============================================================
  * Test entry point
  * ============================================================ */
@@ -7616,6 +7689,8 @@ void fut_misc_test_thread(void *arg) {
     test_pwritev_basic();                  /* Test 154: sys_pwritev scatter write */
     test_uname_content();                  /* Test 155: sys_uname returns non-empty fields */
     test_truncate_basic();                 /* Test 156: sys_truncate shrinks file */
+    test_access_basic();                   /* Test 157: sys_access F_OK/R_OK/W_OK */
+    test_chdir_basic();                    /* Test 158: sys_chdir dir/missing/file */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

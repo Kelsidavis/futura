@@ -20,6 +20,19 @@
 
 #include <kernel/kprintf.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
+static inline int chdir_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_from_user(dst, src, n);
+}
+
 /**
  * chdir() - Change current working directory
  *
@@ -199,7 +212,7 @@ long sys_chdir(const char *pathname) {
      * - sys_lstat (lines 77-108): path truncation detection
      */
     char kpath[256];
-    if (fut_copy_from_user(kpath, local_pathname, sizeof(kpath)) != 0) {
+    if (chdir_copy_from_user(kpath, local_pathname, sizeof(kpath)) != 0) {
         fut_printf("[CHDIR] chdir(pathname=?) -> EFAULT (copy_from_user failed)\n");
         return -EFAULT;
     }

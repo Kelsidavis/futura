@@ -9,6 +9,7 @@
 
 #include <kernel/fut_task.h>
 #include <kernel/fut_vfs.h>
+#include <kernel/fut_socket.h>
 #include <kernel/chrdev.h>
 #include <kernel/errno.h>
 #include <stdint.h>
@@ -231,10 +232,16 @@ long sys_sendfile(int out_fd, int in_fd, uint64_t *offset, size_t count) {
         }
     }
 
-    /* Validate out_file supports writing */
-    if (!out_file->vnode || !out_file->vnode->ops || !out_file->vnode->ops->write) {
-        if (!out_file->chr_ops || !out_file->chr_ops->write) {
-            return -EINVAL;
+    /* Check if out_fd is a socket — socket sends use fut_socket_send, not vnode write */
+    extern fut_socket_t *get_socket_from_fd(int fd);
+    fut_socket_t *out_sock = get_socket_from_fd(local_out_fd);
+
+    /* Validate out_file supports writing (sockets are always writable) */
+    if (!out_sock) {
+        if (!out_file->vnode || !out_file->vnode->ops || !out_file->vnode->ops->write) {
+            if (!out_file->chr_ops || !out_file->chr_ops->write) {
+                return -EINVAL;
+            }
         }
     }
 
@@ -262,9 +269,12 @@ long sys_sendfile(int out_fd, int in_fd, uint64_t *offset, size_t count) {
         if (nread <= 0)
             break;
 
-        /* Write to output file at its current offset */
+        /* Write to output fd — socket path or regular file path */
         ssize_t nwritten;
-        if (out_file->chr_ops && out_file->chr_ops->write) {
+        if (out_sock) {
+            nwritten = fut_socket_send(out_sock, kbuf, (size_t)nread);
+
+        } else if (out_file->chr_ops && out_file->chr_ops->write) {
             off_t pos = (off_t)out_file->offset;
             nwritten = out_file->chr_ops->write(out_file->chr_inode, out_file->chr_private,
                                                 kbuf, (size_t)nread, &pos);

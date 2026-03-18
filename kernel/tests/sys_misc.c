@@ -15545,6 +15545,61 @@ static void test_unix_dgram_sendto(void) {
     fut_test_pass();
 }
 
+static void test_sendfile_socket(void) {
+    fut_printf("[MISC-TEST] Test 330: sendfile file→socket\n");
+    extern long sys_sendfile(int out_fd, int in_fd, uint64_t *offset, size_t count);
+    extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+    extern ssize_t sys_read(int fd, void *buf, size_t count);
+    extern long sys_unlink(const char *path);
+
+    /* Create a source file with known content */
+    const char data[] = "sendfile-socket";
+    int src = (int)fut_vfs_open("/test_sf_sock_src.txt", O_CREAT | O_RDWR, 0644);
+    if (src < 0) {
+        fut_printf("[MISC-TEST] ✗ sendfile-socket: create src failed: %d\n", src);
+        fut_test_fail(330); return;
+    }
+    fut_vfs_write(src, data, 15);
+    extern int64_t fut_vfs_lseek(int fd, int64_t offset, int whence);
+    fut_vfs_lseek(src, 0, 0);
+
+    /* Create a connected socketpair */
+    int sv[2] = { -1, -1 };
+    long r = sys_socketpair(1 /*AF_UNIX*/, 1 /*SOCK_STREAM*/, 0, sv);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ sendfile-socket: socketpair failed: %ld\n", r);
+        fut_vfs_close(src);
+        sys_unlink("/test_sf_sock_src.txt");
+        fut_test_fail(330); return;
+    }
+
+    /* sendfile: src file → sv[0] socket */
+    long n = sys_sendfile(sv[0], src, NULL, 15);
+    if (n != 15) {
+        fut_printf("[MISC-TEST] ✗ sendfile-socket: sent %ld, expected 15\n", n);
+        fut_vfs_close(src); fut_vfs_close(sv[0]); fut_vfs_close(sv[1]);
+        sys_unlink("/test_sf_sock_src.txt");
+        fut_test_fail(330); return;
+    }
+
+    /* Receive on sv[1] */
+    char rbuf[32] = {0};
+    ssize_t nr = sys_read(sv[1], rbuf, 15);
+    if (nr != 15 || __builtin_memcmp(rbuf, data, 15) != 0) {
+        fut_printf("[MISC-TEST] ✗ sendfile-socket: recv %zd, data='%s'\n", nr, rbuf);
+        fut_vfs_close(src); fut_vfs_close(sv[0]); fut_vfs_close(sv[1]);
+        sys_unlink("/test_sf_sock_src.txt");
+        fut_test_fail(330); return;
+    }
+
+    fut_vfs_close(src);
+    fut_vfs_close(sv[0]);
+    fut_vfs_close(sv[1]);
+    sys_unlink("/test_sf_sock_src.txt");
+    fut_printf("[MISC-TEST] ✓ sendfile file→socket: 15 bytes delivered correctly\n");
+    fut_test_pass();
+}
+
 static void test_o_tmpfile_basic(void) {
     fut_printf("[MISC-TEST] Test 329: O_TMPFILE anonymous file\n");
     extern long sys_openat(int dirfd, const char *pathname, int flags, int mode);
@@ -15950,6 +16005,7 @@ void fut_misc_test_thread(void *arg) {
     test_seqpacket_connect_accept();     /* Test 327: SEQPACKET connect/accept path boundary preservation */
     test_shutdown_shut_wr_eof();         /* Test 328: shutdown(SHUT_WR) signals EOF to peer's recv() */
     test_o_tmpfile_basic();              /* Test 329: O_TMPFILE creates anonymous file, survives close */
+    test_sendfile_socket();              /* Test 330: sendfile(socket, file, ...) delivers data via socket */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

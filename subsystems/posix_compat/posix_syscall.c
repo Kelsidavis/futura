@@ -434,30 +434,31 @@ static int64_t sys_semctl_handler(uint64_t semid, uint64_t semnum, uint64_t cmd,
 
 static int64_t sys_msgget_handler(uint64_t key, uint64_t msgflg, uint64_t arg3,
                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
-    (void)key; (void)msgflg; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
-    fut_printf("[SYSCALL] msgget called but not implemented\n");
-    return -ENOSYS;
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_msgget(long key, int msgflg);
+    return sys_msgget((long)key, (int)msgflg);
 }
 
 static int64_t sys_msgsnd_handler(uint64_t msqid, uint64_t msgp, uint64_t msgsz,
                                   uint64_t msgflg, uint64_t arg5, uint64_t arg6) {
-    (void)msqid; (void)msgp; (void)msgsz; (void)msgflg; (void)arg5; (void)arg6;
-    fut_printf("[SYSCALL] msgsnd called but not implemented\n");
-    return -ENOSYS;
+    (void)arg5; (void)arg6;
+    extern long sys_msgsnd(int msqid, const void *msgp, size_t msgsz, int msgflg);
+    return sys_msgsnd((int)msqid, (const void *)(uintptr_t)msgp, (size_t)msgsz, (int)msgflg);
 }
 
 static int64_t sys_msgrcv_handler(uint64_t msqid, uint64_t msgp, uint64_t msgsz,
                                   uint64_t msgtyp, uint64_t msgflg, uint64_t arg6) {
-    (void)msqid; (void)msgp; (void)msgsz; (void)msgtyp; (void)msgflg; (void)arg6;
-    fut_printf("[SYSCALL] msgrcv called but not implemented\n");
-    return -ENOSYS;
+    (void)arg6;
+    extern long sys_msgrcv(int msqid, void *msgp, size_t msgsz, long msgtyp, int msgflg);
+    return sys_msgrcv((int)msqid, (void *)(uintptr_t)msgp, (size_t)msgsz,
+                      (long)msgtyp, (int)msgflg);
 }
 
-static int64_t sys_msgctl_handler(uint64_t msqid, uint64_t cmd, uint64_t arg,
+static int64_t sys_msgctl_handler(uint64_t msqid, uint64_t cmd, uint64_t buf,
                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
-    (void)msqid; (void)cmd; (void)arg; (void)arg4; (void)arg5; (void)arg6;
-    fut_printf("[SYSCALL] msgctl called but not implemented\n");
-    return -ENOSYS;
+    (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_msgctl(int msqid, int cmd, void *buf);
+    return sys_msgctl((int)msqid, (int)cmd, (void *)(uintptr_t)buf);
 }
 
 static inline uint64_t get_current_tid(void) {

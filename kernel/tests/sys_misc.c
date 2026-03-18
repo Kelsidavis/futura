@@ -9837,6 +9837,164 @@ static void test_semctl_getall_setall(void) {
 }
 
 /* ============================================================
+ * Tests 208-210: SysV message queues — msgget/msgsnd/msgrcv/msgctl
+ *
+ * Uses inline struct msgbuf to avoid header conflicts.
+ * ============================================================ */
+
+/* Inline msqid_ds for IPC_STAT test */
+struct test_msqid_ds {
+    struct {
+        int          key;
+        unsigned int uid, gid, cuid, cgid;
+        unsigned int mode;
+        unsigned short seq, pad;
+    } msg_perm;
+    unsigned long msg_stime;
+    unsigned long msg_rtime;
+    unsigned long msg_ctime;
+    unsigned long msg_cbytes;
+    unsigned long msg_qnum;
+    unsigned long msg_qbytes;
+    int           msg_lspid;
+    int           msg_lrpid;
+};
+
+#define TEST_MSG_NOERROR  0x1000
+#define TEST_MSG_NOWAIT   TEST_IPC_NOWAIT  /* 0x0800 */
+
+/* Test 208: msgget/msgsnd/msgrcv basic round-trip */
+static void test_msgget_basic(void) {
+    fut_printf("[MISC-TEST] Test 208: msgget/msgsnd/msgrcv basic\n");
+    extern long sys_msgget(long key, int msgflg);
+    extern long sys_msgsnd(int msqid, const void *msgp, size_t msgsz, int msgflg);
+    extern long sys_msgrcv(int msqid, void *msgp, size_t msgsz, long msgtyp, int msgflg);
+    extern long sys_msgctl(int msqid, int cmd, void *buf);
+
+    long mqid = sys_msgget(TEST_IPC_PRIVATE, 0666 | TEST_IPC_CREAT);
+    if (mqid < 0) {
+        fut_printf("[MISC-TEST] ✗ msgget failed: %ld\n", mqid);
+        fut_test_fail(208); return;
+    }
+
+    /* Send a message: struct { long mtype; char body[12]; } */
+    struct { long mtype; char body[12]; } snd = { .mtype = 1 };
+    __builtin_memcpy(snd.body, "hello_world\0", 12);
+    long r = sys_msgsnd((int)mqid, &snd, 12, 0);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ msgsnd failed: %ld\n", r);
+        sys_msgctl((int)mqid, TEST_IPC_RMID, NULL);
+        fut_test_fail(208); return;
+    }
+
+    /* Receive the message */
+    struct { long mtype; char body[16]; } rcv;
+    __builtin_memset(&rcv, 0, sizeof(rcv));
+    r = sys_msgrcv((int)mqid, &rcv, 16, 0 /* any type */, 0);
+    if (r != 12) {
+        fut_printf("[MISC-TEST] ✗ msgrcv returned %ld (want 12)\n", r);
+        sys_msgctl((int)mqid, TEST_IPC_RMID, NULL);
+        fut_test_fail(208); return;
+    }
+    if (rcv.mtype != 1) {
+        fut_printf("[MISC-TEST] ✗ mtype=%ld (want 1)\n", rcv.mtype);
+        sys_msgctl((int)mqid, TEST_IPC_RMID, NULL);
+        fut_test_fail(208); return;
+    }
+    /* Verify body matches */
+    for (int i = 0; i < 12; i++) {
+        if (rcv.body[i] != snd.body[i]) {
+            fut_printf("[MISC-TEST] ✗ body mismatch at %d\n", i);
+            sys_msgctl((int)mqid, TEST_IPC_RMID, NULL);
+            fut_test_fail(208); return;
+        }
+    }
+
+    sys_msgctl((int)mqid, TEST_IPC_RMID, NULL);
+    fut_printf("[MISC-TEST] ✓ msgget/msgsnd/msgrcv: basic send/receive OK\n");
+    fut_test_pass();
+}
+
+/* Test 209: msgrcv type-selective receive */
+static void test_msgrcv_type_select(void) {
+    fut_printf("[MISC-TEST] Test 209: msgrcv type-selective receive\n");
+    extern long sys_msgget(long key, int msgflg);
+    extern long sys_msgsnd(int msqid, const void *msgp, size_t msgsz, int msgflg);
+    extern long sys_msgrcv(int msqid, void *msgp, size_t msgsz, long msgtyp, int msgflg);
+    extern long sys_msgctl(int msqid, int cmd, void *buf);
+
+    long mqid = sys_msgget(TEST_IPC_PRIVATE, 0666 | TEST_IPC_CREAT);
+    if (mqid < 0) {
+        fut_printf("[MISC-TEST] ✗ msgget failed: %ld\n", mqid);
+        fut_test_fail(209); return;
+    }
+
+    /* Send 3 messages with types 2, 1, 3 */
+    struct { long mtype; char val; } m1 = {2, 'B'};
+    struct { long mtype; char val; } m2 = {1, 'A'};
+    struct { long mtype; char val; } m3 = {3, 'C'};
+    sys_msgsnd((int)mqid, &m1, 1, 0);
+    sys_msgsnd((int)mqid, &m2, 1, 0);
+    sys_msgsnd((int)mqid, &m3, 1, 0);
+
+    /* Receive type==1 (should get m2='A') */
+    struct { long mtype; char val; } rcv = {0, 0};
+    long r = sys_msgrcv((int)mqid, &rcv, 1, 1 /* type==1 */, 0);
+    if (r != 1 || rcv.mtype != 1 || rcv.val != 'A') {
+        fut_printf("[MISC-TEST] ✗ type=1 rcv: r=%ld mtype=%ld val='%c'\n",
+                   r, rcv.mtype, rcv.val);
+        sys_msgctl((int)mqid, TEST_IPC_RMID, NULL);
+        fut_test_fail(209); return;
+    }
+
+    /* Receive ENOMSG for non-existent type 5 with IPC_NOWAIT */
+    r = sys_msgrcv((int)mqid, &rcv, 1, 5, TEST_MSG_NOWAIT);
+    if (r != -42 /* -ENOMSG */) {
+        fut_printf("[MISC-TEST] ✗ type=5 NOWAIT: got %ld (want -ENOMSG=-42)\n", r);
+        sys_msgctl((int)mqid, TEST_IPC_RMID, NULL);
+        fut_test_fail(209); return;
+    }
+
+    sys_msgctl((int)mqid, TEST_IPC_RMID, NULL);
+    fut_printf("[MISC-TEST] ✓ msgrcv: type-selective and ENOMSG correct\n");
+    fut_test_pass();
+}
+
+/* Test 210: msgctl IPC_STAT */
+static void test_msgctl_stat(void) {
+    fut_printf("[MISC-TEST] Test 210: msgctl IPC_STAT\n");
+    extern long sys_msgget(long key, int msgflg);
+    extern long sys_msgsnd(int msqid, const void *msgp, size_t msgsz, int msgflg);
+    extern long sys_msgctl(int msqid, int cmd, void *buf);
+
+    long mqid = sys_msgget(TEST_IPC_PRIVATE, 0666 | TEST_IPC_CREAT);
+    if (mqid < 0) {
+        fut_printf("[MISC-TEST] ✗ msgget failed: %ld\n", mqid);
+        fut_test_fail(210); return;
+    }
+
+    /* Send 2 messages */
+    struct { long mtype; char body[4]; } msg = {1, "abc"};
+    sys_msgsnd((int)mqid, &msg, 4, 0);
+    sys_msgsnd((int)mqid, &msg, 4, 0);
+
+    /* IPC_STAT: should show qnum=2, cbytes=8 */
+    struct test_msqid_ds ds;
+    __builtin_memset(&ds, 0, sizeof(ds));
+    long r = sys_msgctl((int)mqid, TEST_IPC_STAT, &ds);
+    if (r != 0 || ds.msg_qnum != 2 || ds.msg_cbytes != 8) {
+        fut_printf("[MISC-TEST] ✗ IPC_STAT: r=%ld qnum=%lu cbytes=%lu\n",
+                   r, ds.msg_qnum, ds.msg_cbytes);
+        sys_msgctl((int)mqid, TEST_IPC_RMID, NULL);
+        fut_test_fail(210); return;
+    }
+
+    sys_msgctl((int)mqid, TEST_IPC_RMID, NULL);
+    fut_printf("[MISC-TEST] ✓ msgctl IPC_STAT: qnum=2, cbytes=8 correct\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test 199: /proc/stat — cpu line and ctxt/btime present
  * ============================================================ */
 static void test_proc_stat_global(void) {
@@ -10141,6 +10299,9 @@ void fut_misc_test_thread(void *arg) {
     test_semget_basic();                   /* Test 205: semget/SETVAL/GETVAL/IPC_RMID round-trip */
     test_semop_basic();                    /* Test 206: semop inc/dec/EAGAIN */
     test_semctl_getall_setall();           /* Test 207: semctl GETALL/SETALL bulk ops */
+    test_msgget_basic();                   /* Test 208: msgget/msgsnd/msgrcv basic round-trip */
+    test_msgrcv_type_select();             /* Test 209: msgrcv type-selective receive */
+    test_msgctl_stat();                    /* Test 210: msgctl IPC_STAT qnum/cbytes */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

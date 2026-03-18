@@ -215,6 +215,14 @@
 #define ENODATA     61   /* No data available (for xattr) */
 #endif
 
+#ifndef ENOMSG
+#define ENOMSG      42   /* No message of desired type */
+#endif
+
+#ifndef ERANGE
+#define ERANGE      34   /* Math result not representable */
+#endif
+
 #ifndef phys_addr_t
 #include <stdint.h>
 typedef uint64_t phys_addr_t;

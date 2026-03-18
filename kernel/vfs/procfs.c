@@ -78,6 +78,7 @@ enum procfs_kind {
     PROC_SYS_FILE_MAX,     /* /proc/sys/fs/file-max */
     PROC_TASK_DIR,         /* /proc/<pid>/task/ */
     PROC_TID_DIR,          /* /proc/<pid>/task/<tid>/ */
+    PROC_LIMITS,           /* /proc/<pid>/limits */
 };
 
 typedef struct {
@@ -123,6 +124,7 @@ typedef struct {
 #define PROC_INO_PID_COMM(p)   (1000ULL + (uint64_t)(p) * 100 + 9)
 #define PROC_INO_PID_TASK(p)   (1000ULL + (uint64_t)(p) * 100 + 10)
 #define PROC_INO_PID_ENVIRON(p)(1000ULL + (uint64_t)(p) * 100 + 11)
+#define PROC_INO_PID_LIMITS(p) (1000ULL + (uint64_t)(p) * 100 + 12)
 /* fd entries: use high range to avoid collision */
 #define PROC_INO_FD_ENTRY(p,n) (100000000ULL + (uint64_t)(p) * 1000 + (uint64_t)(n))
 /* task/<tid> entries: separate high range */
@@ -336,6 +338,75 @@ static size_t gen_status(char *buf, size_t cap, fut_task_t *task) {
     pb_str(&b, "CapAmb:\t");     pb_hex16(&b, 0);                      pb_char(&b, '\n');
     pb_str(&b, "NoNewPrivs:\t"); pb_u64(&b, task->no_new_privs ? 1 : 0); pb_char(&b, '\n');
     pb_str(&b, "Seccomp:\t");    pb_u64(&b, 0);                        pb_char(&b, '\n');
+    return b.pos;
+}
+
+/* Write a right-padded string into pbuf to achieve fixed column width */
+static void pb_pad(struct pbuf *b, const char *s, int width) {
+    int n = 0;
+    while (s[n]) { pb_char(b, s[n]); n++; }
+    while (n < width) { pb_char(b, ' '); n++; }
+}
+
+/* Write a rlim value as decimal or "unlimited" padded to width */
+static void pb_rlim(struct pbuf *b, uint64_t v, int width) {
+    char tmp[24]; int n = 0;
+    if (v == (uint64_t)-1ULL) {
+        const char *s = "unlimited";
+        int sn = 0; while (s[sn]) { pb_char(b, s[sn++]); }
+        while (sn < width) { pb_char(b, ' '); sn++; }
+    } else {
+        uint64_t vv = v;
+        if (vv == 0) { tmp[n++] = '0'; }
+        else { while (vv) { tmp[n++] = '0' + (int)(vv % 10); vv /= 10; } }
+        /* reverse */
+        for (int i = 0, j = n - 1; i < j; i++, j--) {
+            char t = tmp[i]; tmp[i] = tmp[j]; tmp[j] = t;
+        }
+        for (int i = 0; i < n; i++) pb_char(b, tmp[i]);
+        while (n < width) { pb_char(b, ' '); n++; }
+    }
+}
+
+static size_t gen_limits(char *buf, size_t cap, fut_task_t *task) {
+    if (!task) return 0;
+    struct pbuf b = { buf, 0, cap };
+
+    /* Header line matches Linux format */
+    pb_str(&b, "Limit                     Soft Limit           Hard Limit           Units     \n");
+
+    static const struct {
+        const char *name;
+        int         rlimit_idx;
+        const char *units;
+    } rows[] = {
+        { "Max cpu time",        0  /* RLIMIT_CPU */,       "seconds"   },
+        { "Max file size",       1  /* RLIMIT_FSIZE */,     "bytes"     },
+        { "Max data size",       2  /* RLIMIT_DATA */,      "bytes"     },
+        { "Max stack size",      3  /* RLIMIT_STACK */,     "bytes"     },
+        { "Max core file size",  4  /* RLIMIT_CORE */,      "bytes"     },
+        { "Max resident set",    5  /* RLIMIT_RSS */,       "bytes"     },
+        { "Max processes",       6  /* RLIMIT_NPROC */,     "processes" },
+        { "Max open files",      7  /* RLIMIT_NOFILE */,    "files"     },
+        { "Max locked memory",   8  /* RLIMIT_MEMLOCK */,   "bytes"     },
+        { "Max address space",   9  /* RLIMIT_AS */,        "bytes"     },
+        { "Max file locks",      10 /* RLIMIT_LOCKS */,     "locks"     },
+        { "Max pending signals", 11 /* RLIMIT_SIGPENDING */, "signals"  },
+        { "Max msgqueue size",   12 /* RLIMIT_MSGQUEUE */,  "bytes"     },
+        { "Max nice priority",   13 /* RLIMIT_NICE */,      ""          },
+        { "Max realtime priority", 14 /* RLIMIT_RTPRIO */, ""           },
+        { "Max realtime timeout",  15 /* RLIMIT_RTTIME */, "us"         },
+    };
+
+    for (int i = 0; i < (int)(sizeof(rows)/sizeof(rows[0])); i++) {
+        uint64_t soft = task->rlimits[rows[i].rlimit_idx].rlim_cur;
+        uint64_t hard = task->rlimits[rows[i].rlimit_idx].rlim_max;
+        pb_pad(&b, rows[i].name, 26);
+        pb_rlim(&b, soft, 21);
+        pb_rlim(&b, hard, 21);
+        pb_str(&b, rows[i].units);
+        pb_char(&b, '\n');
+    }
     return b.pos;
 }
 
@@ -763,6 +834,11 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             total = task ? gen_comm(tmp, GEN_BUF, task) : 0;
             break;
         }
+        case PROC_LIMITS: {
+            fut_task_t *task = fut_task_by_pid(n->pid);
+            total = task ? gen_limits(tmp, GEN_BUF, task) : 0;
+            break;
+        }
         case PROC_SYS_OSTYPE:
             total = gen_sysctl_str(tmp, GEN_BUF, "Linux");
             break;
@@ -1036,6 +1112,11 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0040555, PROC_TASK_DIR, pid, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "limits")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_LIMITS(pid),
+                                          0100444, PROC_LIMITS, pid, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         return -ENOENT;
     }
 
@@ -1086,6 +1167,8 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
             { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_COMM(pid),   0100644, PROC_COMM,   pid, 0); return *result ? 0 : -ENOMEM; }
         if (STREQ(name, "task"))
             { *result = procfs_alloc_vnode(mnt, VN_DIR, PROC_INO_PID_TASK(pid),   0040555, PROC_TASK_DIR,pid,0); return *result ? 0 : -ENOMEM; }
+        if (STREQ(name, "limits"))
+            { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_LIMITS(pid), 0100444, PROC_LIMITS,  pid,0); return *result ? 0 : -ENOMEM; }
         return -ENOENT;
     }
 
@@ -1255,7 +1338,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
     if (dn->kind == PROC_PID_DIR || dn->kind == PROC_TID_DIR) {
         static const char *entries[] = {
             ".", "..", "status", "maps", "cmdline", "environ", "fd", "exe", "cwd",
-            "stat", "statm", "comm", "task"
+            "stat", "statm", "comm", "task", "limits"
         };
         static const uint8_t etypes[] = {
             FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
@@ -1264,10 +1347,11 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             FUT_VDIR_TYPE_DIR,
             FUT_VDIR_TYPE_SYMLINK, FUT_VDIR_TYPE_SYMLINK,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
-            FUT_VDIR_TYPE_DIR
+            FUT_VDIR_TYPE_DIR,
+            FUT_VDIR_TYPE_REG
         };
         uint64_t pid = dn->pid;
-        if (idx < 12) {
+        if (idx < 13) {
             uint64_t ino;
             switch (idx) {
                 case 0:  ino = PROC_INO_PID_DIR(pid);     break;
@@ -1282,6 +1366,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                 case 9:  ino = PROC_INO_PID_STATM(pid);   break;
                 case 10: ino = PROC_INO_PID_COMM(pid);    break;
                 case 11: ino = PROC_INO_PID_TASK(pid);    break;
+                case 12: ino = PROC_INO_PID_LIMITS(pid);  break;
                 default: ino = 0; break;
             }
             de->d_ino    = ino;

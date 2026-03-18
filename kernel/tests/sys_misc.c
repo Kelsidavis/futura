@@ -8723,6 +8723,178 @@ static void test_pipe_nonblock(void) {
 }
 
 /* ============================================================
+ * Test 188: /proc/self/limits readable and contains NOFILE limit
+ * ============================================================ */
+static void test_proc_self_limits(void) {
+    fut_printf("[MISC-TEST] Test 188: /proc/self/limits readable\n");
+
+    int fd = fut_vfs_open("/proc/self/limits", 0x00, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open /proc/self/limits failed: %d\n", fd);
+        fut_test_fail(188);
+        return;
+    }
+
+    char buf[2048];
+    extern long sys_read(int fd, void *buf, size_t count);
+    long n = sys_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+
+    if (n <= 0) {
+        fut_printf("[MISC-TEST] ✗ read /proc/self/limits returned %ld\n", n);
+        fut_test_fail(188);
+        return;
+    }
+    buf[n] = '\0';
+
+    /* Must start with the header line */
+    if (buf[0] != 'L') {
+        fut_printf("[MISC-TEST] ✗ limits content doesn't start with 'L': '%c'\n", buf[0]);
+        fut_test_fail(188);
+        return;
+    }
+
+    /* Must contain "Max open files" */
+    bool found = false;
+    for (int i = 0; i + 13 < (int)n; i++) {
+        if (buf[i] == 'M' && buf[i+1] == 'a' && buf[i+2] == 'x' && buf[i+3] == ' ' &&
+            buf[i+4] == 'o' && buf[i+5] == 'p' && buf[i+6] == 'e' && buf[i+7] == 'n') {
+            found = true;
+            break;
+        }
+    }
+    if (!found) {
+        fut_printf("[MISC-TEST] ✗ 'Max open files' not found in /proc/self/limits\n");
+        fut_test_fail(188);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ /proc/self/limits: readable, contains resource limit table\n");
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 189: close_range(first, last, 0) closes FDs in range
+ * ============================================================ */
+static void test_close_range_bulk(void) {
+    fut_printf("[MISC-TEST] Test 189: close_range bulk close\n");
+    extern long sys_close_range(unsigned int first, unsigned int last, unsigned int flags);
+
+    /* Open several files to get FDs in a known range */
+    int fd0 = fut_vfs_open("/cr_bulk0.txt", 0x42, 0644);
+    int fd1 = fut_vfs_open("/cr_bulk1.txt", 0x42, 0644);
+    int fd2 = fut_vfs_open("/cr_bulk2.txt", 0x42, 0644);
+
+    if (fd0 < 0 || fd1 < 0 || fd2 < 0) {
+        fut_printf("[MISC-TEST] ✗ open failed: %d %d %d\n", fd0, fd1, fd2);
+        if (fd0 >= 0) fut_vfs_close(fd0);
+        if (fd1 >= 0) fut_vfs_close(fd1);
+        if (fd2 >= 0) fut_vfs_close(fd2);
+        fut_test_fail(189);
+        return;
+    }
+
+    /* All three FDs should be the highest-numbered, in order */
+    unsigned int lo = (unsigned int)(fd0 < fd1 ? fd0 : fd1);
+    unsigned int hi = (unsigned int)(fd2 > fd1 ? fd2 : fd1);
+    if (fd0 > (int)hi) hi = (unsigned int)fd0;
+
+    /* close_range closes [lo, hi] inclusive */
+    long ret = sys_close_range(lo, hi, 0);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ close_range(%u, %u, 0) returned %ld\n", lo, hi, ret);
+        fut_test_fail(189);
+        return;
+    }
+
+    /* Verify the FDs are now closed: fcntl(F_GETFD) should return EBADF */
+    extern long sys_fcntl(int fd, int cmd, uint64_t arg);
+    long r = sys_fcntl(fd0, 1 /* F_GETFD */, 0);
+    if (r != -EBADF) {
+        fut_printf("[MISC-TEST] ✗ fd0=%d not closed after close_range (fcntl=%ld)\n", fd0, r);
+        fut_test_fail(189);
+        return;
+    }
+
+    /* close_range(first > last) → EINVAL */
+    ret = sys_close_range(10, 5, 0);
+    if (ret != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ close_range(first>last) returned %ld (expected EINVAL)\n", ret);
+        fut_test_fail(189);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ close_range: bulk close [%u,%u] succeeded, EINVAL on invalid range\n",
+               lo, hi);
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 190: close_range with CLOSE_RANGE_CLOEXEC sets FD_CLOEXEC
+ * ============================================================ */
+#define TEST190_CLOSE_RANGE_CLOEXEC (1U << 2)
+
+static void test_close_range_cloexec(void) {
+    fut_printf("[MISC-TEST] Test 190: close_range CLOSE_RANGE_CLOEXEC\n");
+    extern long sys_close_range(unsigned int first, unsigned int last, unsigned int flags);
+    extern long sys_fcntl(int fd, int cmd, uint64_t arg);
+
+    /* Open two files without O_CLOEXEC */
+    int fd0 = fut_vfs_open("/cr_cloexec0.txt", 0x42, 0644);
+    int fd1 = fut_vfs_open("/cr_cloexec1.txt", 0x42, 0644);
+    if (fd0 < 0 || fd1 < 0) {
+        fut_printf("[MISC-TEST] ✗ open failed: %d %d\n", fd0, fd1);
+        if (fd0 >= 0) fut_vfs_close(fd0);
+        if (fd1 >= 0) fut_vfs_close(fd1);
+        fut_test_fail(190);
+        return;
+    }
+
+    /* Verify neither has FD_CLOEXEC initially */
+    long f0 = sys_fcntl(fd0, 1 /* F_GETFD */, 0);
+    if (f0 & FD_CLOEXEC) {
+        fut_printf("[MISC-TEST] ✗ fd0 unexpectedly has FD_CLOEXEC before close_range\n");
+        fut_vfs_close(fd0); fut_vfs_close(fd1);
+        fut_test_fail(190);
+        return;
+    }
+
+    unsigned int lo = (unsigned int)(fd0 < fd1 ? fd0 : fd1);
+    unsigned int hi = (unsigned int)(fd0 > fd1 ? fd0 : fd1);
+
+    /* Apply CLOSE_RANGE_CLOEXEC to set FD_CLOEXEC without closing */
+    long ret = sys_close_range(lo, hi, TEST190_CLOSE_RANGE_CLOEXEC);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ close_range(CLOEXEC) returned %ld\n", ret);
+        fut_vfs_close(fd0); fut_vfs_close(fd1);
+        fut_test_fail(190);
+        return;
+    }
+
+    /* FDs must still be valid (not closed) */
+    long r0 = sys_fcntl(fd0, 1 /* F_GETFD */, 0);
+    long r1 = sys_fcntl(fd1, 1 /* F_GETFD */, 0);
+    if (r0 == -EBADF || r1 == -EBADF) {
+        fut_printf("[MISC-TEST] ✗ FDs closed by CLOSE_RANGE_CLOEXEC (should stay open)\n");
+        fut_test_fail(190);
+        return;
+    }
+
+    /* Both must now have FD_CLOEXEC set */
+    if (!(r0 & FD_CLOEXEC) || !(r1 & FD_CLOEXEC)) {
+        fut_printf("[MISC-TEST] ✗ FD_CLOEXEC not set: fd0_flags=0x%lx fd1_flags=0x%lx\n", r0, r1);
+        fut_vfs_close(fd0); fut_vfs_close(fd1);
+        fut_test_fail(190);
+        return;
+    }
+
+    fut_vfs_close(fd0);
+    fut_vfs_close(fd1);
+    fut_printf("[MISC-TEST] ✓ close_range CLOEXEC: FD_CLOEXEC set on range, FDs remain open\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -8919,6 +9091,9 @@ void fut_misc_test_thread(void *arg) {
     test_setsid_setpgid();                 /* Test 185: setsid/setpgid session semantics */
     test_procfs_fd_symlink();              /* Test 186: /proc/self/fd/<n> readlink */
     test_pipe_nonblock();                  /* Test 187: O_NONBLOCK pipe EAGAIN on empty read */
+    test_proc_self_limits();               /* Test 188: /proc/self/limits readable */
+    test_close_range_bulk();               /* Test 189: close_range bulk close */
+    test_close_range_cloexec();            /* Test 190: close_range CLOEXEC */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -7958,6 +7958,37 @@ static void test_fchownat_basic(void) {
     fut_test_pass();
 }
 
+static void test_fstatat_basic(void) {
+    fut_printf("[MISC-TEST] Test 180: sys_fstatat basic\n");
+    extern long sys_fstatat(int dirfd, const char *pathname, struct fut_stat *statbuf, int flags);
+
+    struct fut_stat st;
+    __builtin_memset(&st, 0, sizeof(st));
+
+    /* fstatat on /proc via AT_FDCWD=-100 */
+    long ret = sys_fstatat(-100, "/proc", &st, 0);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ fstatat /proc: expected 0, got %ld\n", ret);
+        fut_test_fail(180);
+        return;
+    }
+    if (st.st_ino == 0) {
+        fut_printf("[MISC-TEST] ✗ fstatat: st_ino=0 (expected non-zero)\n");
+        fut_test_fail(180);
+        return;
+    }
+
+    /* ENOENT on missing path */
+    long en = sys_fstatat(-100, "/no_such_fstatat_path", &st, 0);
+    if (en != -ENOENT) {
+        fut_printf("[MISC-TEST] ✗ fstatat ENOENT: expected ENOENT, got %ld\n", en);
+        fut_test_fail(180);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ sys_fstatat: /proc ino=%lu, ENOENT on missing\n", st.st_ino);
+    fut_test_pass();
+}
+
 static void test_futimens_basic(void) {
     fut_printf("[MISC-TEST] Test 178: sys_futimens basic\n");
     extern long sys_futimens(int fd, const void *times);
@@ -8488,6 +8519,7 @@ void fut_misc_test_thread(void *arg) {
     test_symlinkat_basic();                /* Test 177: sys_symlinkat creates symlink */
     test_futimens_basic();                 /* Test 178: sys_futimens NULL times → current */
     test_utimensat_basic();                /* Test 179: sys_utimensat NULL times via AT_FDCWD */
+    test_fstatat_basic();                  /* Test 180: sys_fstatat /proc + ENOENT */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

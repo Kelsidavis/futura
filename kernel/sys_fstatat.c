@@ -23,6 +23,25 @@
 #include <string.h>
 #include <fcntl.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
+static inline int fstatat_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_from_user(dst, src, n);
+}
+static inline int fstatat_access_ok(const void *ptr, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)ptr >= KERNEL_VIRTUAL_BASE) return 0;
+#endif
+    return fut_access_ok(ptr, n, 1);
+}
+
 /* AT_* constants provided by fcntl.h */
 
 /**
@@ -139,7 +158,7 @@ long sys_fstatat(int dirfd, const char *pathname, void *statbuf, int flags) {
      * ATTACK: Attacker provides read-only or unmapped statbuf buffer
      * IMPACT: Kernel page fault when writing stat structure
      * DEFENSE: Check write permission before path resolution and VFS operations */
-    if (fut_access_ok(local_statbuf, sizeof(struct fut_stat), 1) != 0) {
+    if (fstatat_access_ok(local_statbuf, sizeof(struct fut_stat)) != 0) {
         fut_printf("[FSTATAT] fstatat(dirfd=%d, statbuf=%p) -> EFAULT (statbuf not writable for %zu bytes)\n",
                    local_dirfd, local_statbuf, sizeof(struct fut_stat));
         return -EFAULT;
@@ -154,7 +173,7 @@ long sys_fstatat(int dirfd, const char *pathname, void *statbuf, int flags) {
 
     /* Copy pathname from userspace */
     char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
-    if (fut_copy_from_user(path_buf, local_pathname, sizeof(path_buf)) != 0) {
+    if (fstatat_copy_from_user(path_buf, local_pathname, sizeof(path_buf)) != 0) {
         fut_printf("[FSTATAT] fstatat(dirfd=%d) -> EFAULT (copy_from_user failed)\n",
                    local_dirfd);
         return -EFAULT;

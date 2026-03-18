@@ -14354,6 +14354,64 @@ static void test_getsockname_getpeername_abstract(void) {
 }
 
 /**
+ * Test 316: MSG_WAITALL forces recvfrom to loop until all bytes received.
+ *
+ * Scenario: sender writes 100 bytes in two 50-byte sends.
+ * recvfrom with MSG_WAITALL and len=100 must return exactly 100 bytes
+ * rather than stopping after the first 50-byte chunk.
+ */
+static void test_msg_waitall(void) {
+    fut_printf("[MISC-TEST] Test 316: MSG_WAITALL accumulates partial reads\n");
+    extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+    extern long sys_write(int fd, const void *buf, size_t count);
+
+    int sv[2] = {-1, -1};
+    long r = sys_socketpair(1 /*AF_UNIX*/, 1 /*SOCK_STREAM*/, 0, sv);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ socketpair failed: %ld\n", r);
+        fut_test_fail(316); return;
+    }
+
+    /* Write 100 bytes total in two 50-byte chunks */
+    char wbuf[100];
+    for (int i = 0; i < 100; i++) wbuf[i] = (char)(0xA0 + (i & 0x1f));
+
+    long n = sys_write(sv[0], wbuf, 50);
+    if (n != 50) {
+        fut_printf("[MISC-TEST] ✗ write(50) returned %ld\n", n);
+        sys_close(sv[0]); sys_close(sv[1]); fut_test_fail(316); return;
+    }
+    n = sys_write(sv[0], wbuf + 50, 50);
+    if (n != 50) {
+        fut_printf("[MISC-TEST] ✗ write(50) returned %ld\n", n);
+        sys_close(sv[0]); sys_close(sv[1]); fut_test_fail(316); return;
+    }
+
+    /* recvfrom with MSG_WAITALL: must get all 100 bytes */
+    char rbuf[100];
+    extern long sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
+                             void *src_addr, void *addrlen);
+    n = sys_recvfrom(sv[1], rbuf, 100, 0x100 /*MSG_WAITALL*/, NULL, NULL);
+    if (n != 100) {
+        fut_printf("[MISC-TEST] ✗ recvfrom(MSG_WAITALL) returned %ld, want 100\n", n);
+        sys_close(sv[0]); sys_close(sv[1]); fut_test_fail(316); return;
+    }
+
+    /* Verify data integrity */
+    for (int i = 0; i < 100; i++) {
+        if (rbuf[i] != wbuf[i]) {
+            fut_printf("[MISC-TEST] ✗ data mismatch at byte %d: got 0x%02x want 0x%02x\n",
+                       i, (unsigned char)rbuf[i], (unsigned char)wbuf[i]);
+            sys_close(sv[0]); sys_close(sv[1]); fut_test_fail(316); return;
+        }
+    }
+
+    sys_close(sv[0]); sys_close(sv[1]);
+    fut_printf("[MISC-TEST] ✓ MSG_WAITALL: 100 bytes received from two 50-byte sends\n");
+    fut_test_pass();
+}
+
+/**
  * Test 315: SO_RCVTIMEO enforced on blocking recv.
  *
  * Set a 50ms receive timeout on one end of a socketpair.
@@ -15025,6 +15083,7 @@ void fut_misc_test_thread(void *arg) {
     test_getsockname_getpeername_abstract(); /* Test 313: getsockname/getpeername abstract addrlen */
     test_socket_circ_wrap();             /* Test 314: circular buffer wrap-around send/recv */
     test_so_rcvtimeo();                  /* Test 315: SO_RCVTIMEO enforced on blocking recv */
+    test_msg_waitall();                  /* Test 316: MSG_WAITALL loops until full buffer received */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

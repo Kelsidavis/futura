@@ -383,8 +383,32 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
             return total_received > 0 ? total_received : -ENOMEM;
         }
 
-        /* Read from socket */
-        ssize_t ret = fut_vfs_read(local_sockfd, kbuf, iov.iov_len);
+        /* Read from socket.
+         * MSG_WAITALL: loop until the full iovec is filled (stream sockets only). */
+        bool do_waitall = (local_flags & MSG_WAITALL) && !(local_flags & MSG_DONTWAIT);
+        ssize_t ret;
+        if (do_waitall) {
+            extern fut_socket_t *get_socket_from_fd(int fd);
+            fut_socket_t *wtsock = get_socket_from_fd(local_sockfd);
+            bool is_dgram = wtsock && wtsock->socket_type == 2;
+            if (is_dgram) {
+                ret = fut_vfs_read(local_sockfd, kbuf, iov.iov_len);
+            } else {
+                ssize_t got = 0;
+                ret = 0;
+                while ((size_t)got < iov.iov_len) {
+                    ssize_t rc = fut_vfs_read(local_sockfd,
+                                              (char *)kbuf + got,
+                                              iov.iov_len - (size_t)got);
+                    if (rc < 0) { ret = (got > 0) ? got : rc; break; }
+                    if (rc == 0) { ret = got; break; }
+                    got += rc;
+                    ret = got;
+                }
+            }
+        } else {
+            ret = fut_vfs_read(local_sockfd, kbuf, iov.iov_len);
+        }
 
         if (ret > 0) {
             /* Copy to userspace */
@@ -407,8 +431,8 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
             break;
         }
 
-        /* Short read */
-        if ((size_t)ret < iov.iov_len) {
+        /* Short read (only if MSG_WAITALL not set) */
+        if (!do_waitall && (size_t)ret < iov.iov_len) {
             break;
         }
     }

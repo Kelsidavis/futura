@@ -530,7 +530,7 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
         }
     }
 
-    /* Read from socket — use peek path for MSG_PEEK */
+    /* Read from socket — use peek path for MSG_PEEK, loop for MSG_WAITALL */
     ssize_t ret;
     if (local_flags & MSG_PEEK) {
         extern fut_socket_t *get_socket_from_fd(int fd);
@@ -539,6 +539,41 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
             ret = fut_socket_recv_peek(sock, kbuf, local_len);
         } else {
             ret = fut_vfs_read(local_sockfd, kbuf, local_len);
+        }
+    } else if ((local_flags & MSG_WAITALL) && !(local_flags & MSG_DONTWAIT)) {
+        /* MSG_WAITALL: keep reading until the full buffer is filled, EOF, or error.
+         * Only applies to SOCK_STREAM (connection-oriented); datagram sockets
+         * ignore MSG_WAITALL (each recv is one datagram).
+         * We detect SOCK_STREAM by checking that this is not a DGRAM socket. */
+        extern fut_socket_t *get_socket_from_fd(int fd);
+        fut_socket_t *wtsock = get_socket_from_fd(local_sockfd);
+        bool is_dgram = wtsock && wtsock->socket_type == 2 /* SOCK_DGRAM */;
+
+        if (is_dgram) {
+            /* DGRAM: single receive, MSG_WAITALL ignored */
+            ret = fut_vfs_read(local_sockfd, kbuf, local_len);
+        } else {
+            /* STREAM: loop until full */
+            ssize_t total = 0;
+            ret = 0;
+            while ((size_t)total < local_len) {
+                ssize_t rc = fut_vfs_read(local_sockfd,
+                                          (char *)kbuf + total,
+                                          local_len - (size_t)total);
+                if (rc < 0) {
+                    /* Error: return partial data already received, or the error */
+                    ret = (total > 0) ? total : rc;
+                    goto waitall_done;
+                }
+                if (rc == 0) {
+                    /* EOF */
+                    ret = total;
+                    goto waitall_done;
+                }
+                total += rc;
+            }
+            ret = total;
+            waitall_done:;
         }
     } else {
         ret = fut_vfs_read(local_sockfd, kbuf, local_len);

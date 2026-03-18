@@ -545,9 +545,6 @@ long sys_getresuid(uint32_t *ruid, uint32_t *euid, uint32_t *suid) {
         return -EFAULT;
     }
 
-    /* Phase 3: Retrieve saved set-user-ID (typically same as real) */
-    uint32_t saved_uid = task->ruid;
-
     /* Phase 3: Copy IDs to userspace */
     if (cred_copy_to_user(local_ruid, &task->ruid, sizeof(uint32_t)) != 0) {
         return -EFAULT;
@@ -555,7 +552,7 @@ long sys_getresuid(uint32_t *ruid, uint32_t *euid, uint32_t *suid) {
     if (cred_copy_to_user(local_euid, &task->uid, sizeof(uint32_t)) != 0) {
         return -EFAULT;
     }
-    if (cred_copy_to_user(local_suid, &saved_uid, sizeof(uint32_t)) != 0) {
+    if (cred_copy_to_user(local_suid, &task->suid, sizeof(uint32_t)) != 0) {
         return -EFAULT;
     }
 
@@ -600,9 +597,6 @@ long sys_getresgid(uint32_t *rgid, uint32_t *egid, uint32_t *sgid) {
         return -EFAULT;
     }
 
-    /* Phase 3: Retrieve saved set-group-ID (typically same as real) */
-    uint32_t saved_gid = task->rgid;
-
     /* Phase 3: Copy IDs to userspace */
     if (cred_copy_to_user(local_rgid, &task->rgid, sizeof(uint32_t)) != 0) {
         return -EFAULT;
@@ -610,7 +604,7 @@ long sys_getresgid(uint32_t *rgid, uint32_t *egid, uint32_t *sgid) {
     if (cred_copy_to_user(local_egid, &task->gid, sizeof(uint32_t)) != 0) {
         return -EFAULT;
     }
-    if (cred_copy_to_user(local_sgid, &saved_gid, sizeof(uint32_t)) != 0) {
+    if (cred_copy_to_user(local_sgid, &task->sgid, sizeof(uint32_t)) != 0) {
         return -EFAULT;
     }
 

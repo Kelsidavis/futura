@@ -9029,6 +9029,76 @@ static void test_ioprio_basic(void) {
 }
 
 /* ============================================================
+ * Test 193: setresuid/setresgid round-trip as root
+ * ============================================================ */
+static void test_setresuid_setresgid(void) {
+    fut_printf("[MISC-TEST] Test 193: setresuid/setresgid round-trip\n");
+    extern long sys_setresuid(uint32_t ruid, uint32_t euid, uint32_t suid);
+    extern long sys_setresgid(uint32_t rgid, uint32_t egid, uint32_t sgid);
+    extern long sys_getresuid(uint32_t *ruid, uint32_t *euid, uint32_t *suid);
+    extern long sys_getresgid(uint32_t *rgid, uint32_t *egid, uint32_t *sgid);
+
+    /* Save current state */
+    fut_task_t *task = fut_task_current();
+    if (!task) { fut_test_fail(193); return; }
+    uint32_t saved_ruid = task->ruid, saved_uid = task->uid, saved_suid = task->suid;
+    uint32_t saved_rgid = task->rgid, saved_gid = task->gid, saved_sgid = task->sgid;
+
+    /* As root: setresuid(500, 600, 700) */
+    long ret = sys_setresuid(500, 600, 700);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ setresuid(500,600,700) returned %ld\n", ret);
+        task->ruid = saved_ruid; task->uid = saved_uid; task->suid = saved_suid;
+        fut_test_fail(193); return;
+    }
+
+    uint32_t ruid, euid, suid;
+    ret = sys_getresuid(&ruid, &euid, &suid);
+    if (ret != 0 || ruid != 500 || euid != 600 || suid != 700) {
+        fut_printf("[MISC-TEST] ✗ getresuid returned %ld r=%u e=%u s=%u\n", ret, ruid, euid, suid);
+        task->ruid = saved_ruid; task->uid = saved_uid; task->suid = saved_suid;
+        fut_test_fail(193); return;
+    }
+
+    /* Restore UIDs */
+    task->ruid = saved_ruid; task->uid = saved_uid; task->suid = saved_suid;
+
+    /* setresgid round-trip */
+    ret = sys_setresgid(501, 601, 701);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ setresgid(501,601,701) returned %ld\n", ret);
+        task->rgid = saved_rgid; task->gid = saved_gid; task->sgid = saved_sgid;
+        fut_test_fail(193); return;
+    }
+
+    uint32_t rgid, egid, sgid;
+    ret = sys_getresgid(&rgid, &egid, &sgid);
+    if (ret != 0 || rgid != 501 || egid != 601 || sgid != 701) {
+        fut_printf("[MISC-TEST] ✗ getresgid returned %ld r=%u e=%u s=%u\n", ret, rgid, egid, sgid);
+        task->rgid = saved_rgid; task->gid = saved_gid; task->sgid = saved_sgid;
+        fut_test_fail(193); return;
+    }
+
+    /* setresuid with UID_NO_CHANGE (-1) only changes specified fields */
+    task->ruid = 100; task->uid = 200; task->suid = 300;
+    ret = sys_setresuid((uint32_t)-1, 250, (uint32_t)-1);
+    if (ret != 0 || task->ruid != 100 || task->uid != 250 || task->suid != 300) {
+        fut_printf("[MISC-TEST] ✗ setresuid(-1,250,-1): ruid=%u euid=%u suid=%u\n",
+                   task->ruid, task->uid, task->suid);
+        task->ruid = saved_ruid; task->uid = saved_uid; task->suid = saved_suid;
+        task->rgid = saved_rgid; task->gid = saved_gid; task->sgid = saved_sgid;
+        fut_test_fail(193); return;
+    }
+
+    /* Restore all */
+    task->ruid = saved_ruid; task->uid = saved_uid; task->suid = saved_suid;
+    task->rgid = saved_rgid; task->gid = saved_gid; task->sgid = saved_sgid;
+
+    fut_printf("[MISC-TEST] ✓ setresuid/setresgid: round-trips OK, -1 preserves unchanged fields\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -9230,6 +9300,7 @@ void fut_misc_test_thread(void *arg) {
     test_close_range_cloexec();            /* Test 190: close_range CLOEXEC */
     test_proc_self_io();                   /* Test 191: /proc/self/io I/O counters */
     test_ioprio_basic();                   /* Test 192: ioprio_set/get round-trip */
+    test_setresuid_setresgid();            /* Test 193: setresuid/setresgid round-trip */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -14353,6 +14353,91 @@ static void test_getsockname_getpeername_abstract(void) {
     fut_test_pass();
 }
 
+/**
+ * Test 314: Circular buffer wrap-around send/recv correctness.
+ *
+ * The socket receive buffer is 4096 bytes. To force wrap-around:
+ *   1. Write 3800 bytes → head = 3800, tail = 0, available = 3800
+ *   2. Read  3800 bytes → head = 3800, tail = 3800, available = 0
+ *   3. Write  500 bytes → head wraps: data at [3800..4095] (296 bytes)
+ *                                     then  [0..203]      (204 bytes)
+ *      head = 204, tail = 3800, available = 500
+ *   4. Read   500 bytes → must reassemble both chunks correctly
+ */
+static void test_socket_circ_wrap(void) {
+    fut_printf("[MISC-TEST] Test 314: circular buffer wrap-around\n");
+    extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+
+    extern long sys_write(int fd, const void *buf, size_t count);
+    extern long sys_read(int fd, void *buf, size_t count);
+
+    int sv[2] = {-1, -1};
+    long r = sys_socketpair(1 /*AF_UNIX*/, 1 /*SOCK_STREAM*/, 0, sv);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ socketpair failed: %ld\n", r);
+        fut_test_fail(314); return;
+    }
+
+    /* Step 1: write 3800 bytes (fill most of buffer) */
+    static char wbuf[3800];
+    static char rbuf[500];
+    for (int i = 0; i < 3800; i++) wbuf[i] = (char)(i & 0xff);
+
+    long n = sys_write(sv[0], wbuf, 3800);
+    if (n != 3800) {
+        fut_printf("[MISC-TEST] ✗ write(3800) returned %ld\n", n);
+        sys_close(sv[0]); sys_close(sv[1]); fut_test_fail(314); return;
+    }
+
+    /* Step 2: read all 3800 bytes (tail now at 3800) */
+    static char rbuf_big[3800];
+    long got = 0;
+    while (got < 3800) {
+        long rc = sys_read(sv[1], rbuf_big + got, 3800 - got);
+        if (rc <= 0) break;
+        got += rc;
+    }
+    if (got != 3800) {
+        fut_printf("[MISC-TEST] ✗ read(3800) returned %ld\n", got);
+        sys_close(sv[0]); sys_close(sv[1]); fut_test_fail(314); return;
+    }
+
+    /* Step 3: write 500 bytes — this wraps head around the buffer end */
+    char wbuf2[500];
+    for (int i = 0; i < 500; i++) wbuf2[i] = (char)(0x42 + (i & 0x3f));
+
+    n = sys_write(sv[0], wbuf2, 500);
+    if (n != 500) {
+        fut_printf("[MISC-TEST] ✗ write(500 wrap) returned %ld\n", n);
+        sys_close(sv[0]); sys_close(sv[1]); fut_test_fail(314); return;
+    }
+
+    /* Step 4: read 500 bytes — must cross buffer boundary correctly */
+    got = 0;
+    while (got < 500) {
+        long rc = sys_read(sv[1], rbuf + got, 500 - got);
+        if (rc <= 0) break;
+        got += rc;
+    }
+    if (got != 500) {
+        fut_printf("[MISC-TEST] ✗ read(500 wrap) returned %ld\n", got);
+        sys_close(sv[0]); sys_close(sv[1]); fut_test_fail(314); return;
+    }
+
+    /* Verify data integrity */
+    for (int i = 0; i < 500; i++) {
+        if (rbuf[i] != wbuf2[i]) {
+            fut_printf("[MISC-TEST] ✗ data mismatch at byte %d: got 0x%02x want 0x%02x\n",
+                       i, (unsigned char)rbuf[i], (unsigned char)wbuf2[i]);
+            sys_close(sv[0]); sys_close(sv[1]); fut_test_fail(314); return;
+        }
+    }
+
+    sys_close(sv[0]); sys_close(sv[1]);
+    fut_printf("[MISC-TEST] ✓ circular buffer wrap-around: 500-byte cross-boundary read correct\n");
+    fut_test_pass();
+}
+
 static void test_sendmmsg_recvmmsg(void) {
     fut_printf("[MISC-TEST] Test 310: sendmmsg/recvmmsg multi-message batch\n");
     extern long sys_socketpair(int domain, int type, int protocol, int *sv);
@@ -14879,6 +14964,7 @@ void fut_misc_test_thread(void *arg) {
     test_futex_wait_bitset_abs_timeout(); /* Test 311: FUTEX_WAIT_BITSET absolute timeout */
     test_unix_dgram_connect();           /* Test 312: SOCK_DGRAM connect() sets default peer */
     test_getsockname_getpeername_abstract(); /* Test 313: getsockname/getpeername abstract addrlen */
+    test_socket_circ_wrap();             /* Test 314: circular buffer wrap-around send/recv */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

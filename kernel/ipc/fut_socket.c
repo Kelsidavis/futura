@@ -873,11 +873,15 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
     }
 
     size_t to_write = (len > available) ? available : len;
-    if (to_write > (pair->recv_size - pair->recv_head)) {
-        to_write = pair->recv_size - pair->recv_head;
-    }
 
-    memcpy(&pair->recv_buf[pair->recv_head], buf, to_write);
+    /* Handle circular buffer wrap-around with two-chunk copy */
+    size_t first_chunk = pair->recv_size - pair->recv_head;
+    if (to_write <= first_chunk) {
+        memcpy(&pair->recv_buf[pair->recv_head], buf, to_write);
+    } else {
+        memcpy(&pair->recv_buf[pair->recv_head], buf, first_chunk);
+        memcpy(&pair->recv_buf[0], (const char *)buf + first_chunk, to_write - first_chunk);
+    }
     pair->recv_head = (pair->recv_head + to_write) % pair->recv_size;
 
     /* Wake receiver */
@@ -984,11 +988,14 @@ ssize_t fut_socket_recv(fut_socket_t *socket, void *buf, size_t len) {
     }
 
     size_t to_read = (len > available) ? available : len;
-    if (to_read > (pair->recv_size - pair->recv_tail)) {
-        to_read = pair->recv_size - pair->recv_tail;
+    /* Handle circular buffer wrap-around with two-chunk copy */
+    size_t first_chunk = pair->recv_size - pair->recv_tail;
+    if (to_read <= first_chunk) {
+        memcpy(buf, &pair->recv_buf[pair->recv_tail], to_read);
+    } else {
+        memcpy(buf, &pair->recv_buf[pair->recv_tail], first_chunk);
+        memcpy((char *)buf + first_chunk, &pair->recv_buf[0], to_read - first_chunk);
     }
-
-    memcpy(buf, &pair->recv_buf[pair->recv_tail], to_read);
     pair->recv_tail = (pair->recv_tail + to_read) % pair->recv_size;
 
     /* Wake sender */
@@ -1044,12 +1051,16 @@ ssize_t fut_socket_recv_peek(fut_socket_t *socket, void *buf, size_t len) {
     }
 
     size_t to_read = (len > available) ? available : len;
-    if (to_read > (pair->recv_size - pair->recv_tail)) {
-        to_read = pair->recv_size - pair->recv_tail;
-    }
+    /* Handle circular buffer wrap-around with two-chunk copy */
+    size_t first_chunk = pair->recv_size - pair->recv_tail;
 
     /* Copy data but do NOT advance recv_tail — data stays in buffer */
-    memcpy(buf, &pair->recv_buf[pair->recv_tail], to_read);
+    if (to_read <= first_chunk) {
+        memcpy(buf, &pair->recv_buf[pair->recv_tail], to_read);
+    } else {
+        memcpy(buf, &pair->recv_buf[pair->recv_tail], first_chunk);
+        memcpy((char *)buf + first_chunk, &pair->recv_buf[0], to_read - first_chunk);
+    }
 
     fut_spinlock_release(&pair->lock);
     return (ssize_t)to_read;

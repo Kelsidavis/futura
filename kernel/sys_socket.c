@@ -215,8 +215,9 @@ long sys_socket(int domain, int type, int protocol) {
         return -EAFNOSUPPORT;
     }
 
-    /* Validate socket type (SOCK_STREAM and SOCK_DGRAM for AF_UNIX) */
-    if (base_type != SOCK_STREAM && base_type != SOCK_DGRAM) {
+    /* Validate socket type (SOCK_STREAM, SOCK_DGRAM, SOCK_SEQPACKET for AF_UNIX).
+     * SOCK_SEQPACKET is connection-oriented like SOCK_STREAM with message boundaries. */
+    if (base_type != SOCK_STREAM && base_type != SOCK_DGRAM && base_type != SOCK_SEQPACKET) {
         return -ENOTSUP;
     }
 

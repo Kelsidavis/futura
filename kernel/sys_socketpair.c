@@ -57,7 +57,7 @@ long sys_socketpair(int domain, int type, int protocol, int *sv) {
     int base_type = type & 0xFF;
     int type_flags = type & ~0xFF;
 
-    if (base_type != SOCK_STREAM && base_type != SOCK_DGRAM)
+    if (base_type != SOCK_STREAM && base_type != SOCK_DGRAM && base_type != SOCK_SEQPACKET)
         return -EINVAL;
 
     if (protocol != 0)

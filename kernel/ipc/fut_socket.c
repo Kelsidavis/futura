@@ -221,8 +221,10 @@ fut_socket_t *fut_socket_create(int family, int type) {
     if (family != AF_UNIX) {
         return NULL;
     }
-    /* Support SOCK_STREAM (byte-stream) and SOCK_DGRAM (datagram) for AF_UNIX */
-    if (type != SOCK_STREAM && type != SOCK_DGRAM) {
+    /* Support SOCK_STREAM, SOCK_DGRAM, and SOCK_SEQPACKET for AF_UNIX.
+     * SOCK_SEQPACKET is connection-oriented like SOCK_STREAM; treat it with
+     * stream semantics internally (same buffer layout, same state machine). */
+    if (type != SOCK_STREAM && type != SOCK_DGRAM && type != SOCK_SEQPACKET) {
         return NULL;
     }
 

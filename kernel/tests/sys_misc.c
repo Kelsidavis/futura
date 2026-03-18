@@ -13838,6 +13838,64 @@ static void test_close_range_basic(void) {
     fut_test_pass();
 }
 
+/* Test 305: AF_UNIX SOCK_SEQPACKET socket creation
+ *
+ * socket(AF_UNIX, SOCK_SEQPACKET, 0) must succeed — SOCK_SEQPACKET is
+ * connection-oriented like SOCK_STREAM and is supported by AF_UNIX.
+ * socketpair(AF_UNIX, SOCK_SEQPACKET, 0) must also succeed and produce
+ * a usable connected pair for send/recv.
+ * socket(AF_UNIX, SOCK_SEQPACKET|SOCK_CLOEXEC, 0) must set FD_CLOEXEC.
+ */
+static void test_unix_seqpacket(void) {
+    fut_printf("[MISC-TEST] Test 305: AF_UNIX SOCK_SEQPACKET\n");
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+    extern long sys_sendto(int sockfd, const void *buf, size_t len, int flags, const void *dest_addr, int addrlen);
+    extern long sys_recvfrom(int sockfd, void *buf, size_t len, int flags, void *src_addr, void *addrlen);
+
+    /* SOCK_SEQPACKET (5) must be creatable for AF_UNIX */
+    long fd = sys_socket(1 /*AF_UNIX*/, 5 /*SOCK_SEQPACKET*/, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ socket(AF_UNIX, SOCK_SEQPACKET) returned %ld\n", fd);
+        fut_test_fail(305); return;
+    }
+    fut_vfs_close((int)fd);
+
+    /* SOCK_SEQPACKET|SOCK_CLOEXEC must set FD_CLOEXEC */
+    fd = sys_socket(1 /*AF_UNIX*/, 5 | 0x80000 /*SOCK_SEQPACKET|SOCK_CLOEXEC*/, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ socket(AF_UNIX, SOCK_SEQPACKET|SOCK_CLOEXEC) returned %ld\n", fd);
+        fut_test_fail(305); return;
+    }
+    long flags = sys_fcntl((int)fd, F_GETFD, 0);
+    fut_vfs_close((int)fd);
+    if (!(flags & FD_CLOEXEC)) {
+        fut_printf("[MISC-TEST] ✗ SOCK_SEQPACKET|SOCK_CLOEXEC: FD_CLOEXEC not set (flags=%ld)\n", flags);
+        fut_test_fail(305); return;
+    }
+
+    /* socketpair(AF_UNIX, SOCK_SEQPACKET) must produce a working connected pair */
+    int sv[2] = { -1, -1 };
+    long r = sys_socketpair(1 /*AF_UNIX*/, 5 /*SOCK_SEQPACKET*/, 0, sv);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ socketpair(AF_UNIX, SOCK_SEQPACKET) returned %ld\n", r);
+        fut_test_fail(305); return;
+    }
+    const char msg[] = "seqpkt";
+    long sent = sys_sendto(sv[0], msg, sizeof(msg) - 1, 0, NULL, 0);
+    char buf[16] = {0};
+    long recvd = sys_recvfrom(sv[1], buf, sizeof(buf) - 1, 0, NULL, NULL);
+    fut_vfs_close(sv[0]);
+    fut_vfs_close(sv[1]);
+    if (sent != (long)(sizeof(msg) - 1) || recvd != sent) {
+        fut_printf("[MISC-TEST] ✗ SOCK_SEQPACKET pair: sent=%ld recvd=%ld\n", sent, recvd);
+        fut_test_fail(305); return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ SOCK_SEQPACKET: create, CLOEXEC, socketpair send/recv\n");
+    fut_test_pass();
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -14149,6 +14207,7 @@ void fut_misc_test_thread(void *arg) {
     test_mqueue_notify();                /* Test 302: mq_notify SIGEV_SIGNAL one-shot delivery */
     test_rseq_basic();                   /* Test 303: rseq register/unregister/error paths */
     test_close_range_basic();            /* Test 304: close_range bulk close + CLOEXEC */
+    test_unix_seqpacket();               /* Test 305: AF_UNIX SOCK_SEQPACKET create/pair/send/recv */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -10,6 +10,8 @@
 #include "../../include/kernel/fut_mm.h"
 #include "../../include/kernel/fut_memory.h"
 #include "../../include/kernel/fut_stats.h"
+#include <kernel/signal.h>
+#include <kernel/fut_timer.h>
 #if defined(__x86_64__)
 #include <platform/x86_64/gdt.h>
 #include <platform/x86_64/memory/paging.h>
@@ -938,9 +940,37 @@ void fut_sched_tick(void) {
         return;
     }
 
-    // Future enhancements:
-    // - Decrement time slices
-    // - Handle deadline scheduling
+    /* RLIMIT_CPU enforcement: check once per second (every FUT_TIMER_HZ ticks).
+     * Sum cpu_ticks across all threads in the current task and signal if over limit. */
+    fut_task_t *cpu_task = curr ? curr->task : NULL;
+    if (cpu_task) {
+        uint64_t cpu_soft = cpu_task->rlimits[0 /* RLIMIT_CPU */].rlim_cur;
+        uint64_t cpu_hard = cpu_task->rlimits[0 /* RLIMIT_CPU */].rlim_max;
+        uint64_t rlim_inf = (uint64_t)-1;  /* RLIM64_INFINITY */
+
+        if (cpu_soft != rlim_inf || cpu_hard != rlim_inf) {
+            /* Accumulate cpu_ticks from all threads in this task */
+            uint64_t total_ticks = 0;
+            fut_thread_t *t = cpu_task->threads;
+            while (t) {
+                total_ticks += t->stats.cpu_ticks;
+                t = t->next;
+            }
+            uint64_t cpu_sec = total_ticks / FUT_TIMER_HZ;
+
+            /* Hard limit: SIGKILL */
+            if (cpu_hard != rlim_inf && cpu_sec >= cpu_hard) {
+                fut_signal_send(cpu_task, 9 /* SIGKILL */);
+            }
+            /* Soft limit: SIGXCPU each new second over limit */
+            else if (cpu_soft != rlim_inf && cpu_sec >= cpu_soft) {
+                if (cpu_sec != cpu_task->rlimit_cpu_last_sec) {
+                    cpu_task->rlimit_cpu_last_sec = cpu_sec;
+                    fut_signal_send(cpu_task, 24 /* SIGXCPU */);
+                }
+            }
+        }
+    }
 
     // Trigger preemptive reschedule
     fut_schedule();

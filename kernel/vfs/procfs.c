@@ -83,6 +83,13 @@ enum procfs_kind {
     PROC_SYS_UUID,         /* /proc/sys/kernel/random/uuid */
     PROC_SYS_ENTROPY_AVAIL,/* /proc/sys/kernel/random/entropy_avail */
     PROC_SYS_POOLSIZE,     /* /proc/sys/kernel/random/poolsize */
+    PROC_SYS_SHMMAX,       /* /proc/sys/kernel/shmmax */
+    PROC_SYS_SHMALL,       /* /proc/sys/kernel/shmall */
+    PROC_SYS_SHMMNI,       /* /proc/sys/kernel/shmmni */
+    PROC_SYS_SEM,          /* /proc/sys/kernel/sem */
+    PROC_SYS_MSGMAX,       /* /proc/sys/kernel/msgmax */
+    PROC_SYS_MSGMNB,       /* /proc/sys/kernel/msgmnb */
+    PROC_SYS_MSGMNI,       /* /proc/sys/kernel/msgmni */
     PROC_VMSTAT,           /* /proc/vmstat */
     PROC_NET_DIR,          /* /proc/net/ */
     PROC_NET_DEV,          /* /proc/net/dev */
@@ -140,6 +147,13 @@ typedef struct {
 #define PROC_INO_SYS_UUID          241ULL
 #define PROC_INO_SYS_ENTROPY_AVAIL 242ULL
 #define PROC_INO_SYS_POOLSIZE      243ULL
+#define PROC_INO_SYS_SHMMAX        250ULL
+#define PROC_INO_SYS_SHMALL        251ULL
+#define PROC_INO_SYS_SHMMNI        252ULL
+#define PROC_INO_SYS_SEM           253ULL
+#define PROC_INO_SYS_MSGMAX        254ULL
+#define PROC_INO_SYS_MSGMNB        255ULL
+#define PROC_INO_SYS_MSGMNI        256ULL
 
 /* Per-PID: pid * 100 + offset */
 #define PROC_INO_PID_DIR(p)    (1000ULL + (uint64_t)(p) * 100 + 0)
@@ -1214,6 +1228,30 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
         case PROC_SYS_POOLSIZE:
             total = gen_sysctl_str(tmp, GEN_BUF, "4096");
             break;
+        /* SysV IPC limits */
+        case PROC_SYS_SHMMAX:
+            total = gen_sysctl_str(tmp, GEN_BUF, "67108864");
+            break;
+        case PROC_SYS_SHMALL:
+            /* SHMMNI(32) * SHMMAX(64M) / PAGE_SIZE(4096) = 524288 pages */
+            total = gen_sysctl_str(tmp, GEN_BUF, "524288");
+            break;
+        case PROC_SYS_SHMMNI:
+            total = gen_sysctl_str(tmp, GEN_BUF, "32");
+            break;
+        case PROC_SYS_SEM:
+            /* SEMMSL SEMMNS SEMOPM SEMMNI */
+            total = gen_sysctl_str(tmp, GEN_BUF, "64\t4096\t500\t64");
+            break;
+        case PROC_SYS_MSGMAX:
+            total = gen_sysctl_str(tmp, GEN_BUF, "65536");
+            break;
+        case PROC_SYS_MSGMNB:
+            total = gen_sysctl_str(tmp, GEN_BUF, "65536");
+            break;
+        case PROC_SYS_MSGMNI:
+            total = gen_sysctl_str(tmp, GEN_BUF, "32");
+            break;
         default:
             fut_free(tmp);
             return -EINVAL;
@@ -1637,6 +1675,41 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0040555, PROC_SYS_RANDOM_DIR, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "shmmax")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_SHMMAX,
+                                          0100644, PROC_SYS_SHMMAX, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "shmall")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_SHMALL,
+                                          0100644, PROC_SYS_SHMALL, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "shmmni")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_SHMMNI,
+                                          0100644, PROC_SYS_SHMMNI, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "sem")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_SEM,
+                                          0100444, PROC_SYS_SEM, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "msgmax")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_MSGMAX,
+                                          0100644, PROC_SYS_MSGMAX, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "msgmnb")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_MSGMNB,
+                                          0100644, PROC_SYS_MSGMNB, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "msgmni")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_MSGMNI,
+                                          0100644, PROC_SYS_MSGMNI, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         return -ENOENT;
     }
 
@@ -1917,16 +1990,27 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
     }
 
     if (dn->kind == PROC_SYS_KERNEL_DIR) {
-        static const char *e[] = { ".", "..", "ostype", "osrelease", "hostname", "pid_max", "random" };
+        static const char *e[] = { ".", "..", "ostype", "osrelease", "hostname",
+                                   "pid_max", "random",
+                                   "shmmax", "shmall", "shmmni", "sem",
+                                   "msgmax", "msgmnb", "msgmni" };
         static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
-                                     FUT_VDIR_TYPE_DIR };
+                                     FUT_VDIR_TYPE_DIR,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_REG };
         static const uint64_t i[] = { PROC_INO_SYS_KERNEL_DIR, PROC_INO_SYS_DIR,
                                       PROC_INO_SYS_OSTYPE, PROC_INO_SYS_OSRELEASE,
                                       PROC_INO_SYS_HOSTNAME, PROC_INO_SYS_PID_MAX,
-                                      PROC_INO_SYS_RANDOM_DIR };
-        if (idx < 7) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+                                      PROC_INO_SYS_RANDOM_DIR,
+                                      PROC_INO_SYS_SHMMAX, PROC_INO_SYS_SHMALL,
+                                      PROC_INO_SYS_SHMMNI, PROC_INO_SYS_SEM,
+                                      PROC_INO_SYS_MSGMAX, PROC_INO_SYS_MSGMNB,
+                                      PROC_INO_SYS_MSGMNI };
+        if (idx < 14) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
         return -ENOENT;
     }
 

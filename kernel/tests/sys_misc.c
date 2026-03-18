@@ -12000,6 +12000,86 @@ static void test_proc_self_smaps(void) {
     fut_test_pass();
 }
 
+static void test_proc_sys_kernel_ipc(void) {
+    fut_printf("[MISC-TEST] Test 270: /proc/sys/kernel/ IPC limits\n");
+
+    /* Read /proc/sys/kernel/shmmax — should be "67108864\n" */
+    int fd = fut_vfs_open("/proc/sys/kernel/shmmax", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 270: open /proc/sys/kernel/shmmax failed: %d\n", fd);
+        fut_test_fail(270); return;
+    }
+    char buf[32];
+    extern ssize_t sys_read(int fd, void *buf, size_t count);
+    long n = (long)sys_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    if (n <= 0 || buf[0] < '1' || buf[0] > '9') {
+        fut_printf("[MISC-TEST] ✗ Test 270: shmmax read failed or empty\n");
+        fut_test_fail(270); return;
+    }
+    buf[n] = '\0';
+    fut_printf("[MISC-TEST] ✓ /proc/sys/kernel/shmmax = %s", buf);
+
+    /* Read /proc/sys/kernel/sem — should contain 4 tab-separated values */
+    fd = fut_vfs_open("/proc/sys/kernel/sem", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 270: open /proc/sys/kernel/sem failed: %d\n", fd);
+        fut_test_fail(270); return;
+    }
+    char sembuf[64];
+    n = (long)sys_read(fd, sembuf, sizeof(sembuf) - 1);
+    fut_vfs_close(fd);
+    if (n <= 0) {
+        fut_printf("[MISC-TEST] ✗ Test 270: sem read empty\n");
+        fut_test_fail(270); return;
+    }
+    sembuf[n] = '\0';
+    /* Verify there are at least 3 tab characters (4 fields) */
+    int tabs = 0;
+    for (long i = 0; i < n; i++) if (sembuf[i] == '\t') tabs++;
+    if (tabs < 3) {
+        fut_printf("[MISC-TEST] ✗ Test 270: /proc/sys/kernel/sem missing fields (tabs=%d)\n", tabs);
+        fut_test_fail(270); return;
+    }
+    fut_printf("[MISC-TEST] ✓ /proc/sys/kernel/sem = %s", sembuf);
+
+    /* Read /proc/sys/kernel/msgmni */
+    fd = fut_vfs_open("/proc/sys/kernel/msgmni", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 270: open /proc/sys/kernel/msgmni failed: %d\n", fd);
+        fut_test_fail(270); return;
+    }
+    n = (long)sys_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    if (n <= 0) {
+        fut_printf("[MISC-TEST] ✗ Test 270: msgmni read empty\n");
+        fut_test_fail(270); return;
+    }
+    buf[n] = '\0';
+    fut_printf("[MISC-TEST] ✓ /proc/sys/kernel/msgmni = %s", buf);
+
+    fut_test_pass();
+}
+
+static void test_mmap_prot_sem(void) {
+    fut_printf("[MISC-TEST] Test 271: mmap with PROT_SEM (0x8) accepted\n");
+
+    /* Linux accepts PROT_SEM (0x8) silently — should not return EINVAL.
+     * PROT_READ|PROT_WRITE|PROT_SEM = 0x1|0x2|0x8 = 0xB */
+    extern long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long off);
+    extern long sys_munmap(void *addr, size_t len);
+    long ret = sys_mmap(NULL, 4096, 0x0B, TEST_MAP_PRIVATE | TEST_MAP_ANONYMOUS, -1, 0);
+    if (ret == -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ Test 271: mmap(PROT_SEM) rejected with EINVAL\n");
+        fut_test_fail(271); return;
+    }
+    /* Unmap if we got a valid address */
+    if (ret > 0) sys_munmap((void *)(uintptr_t)ret, 4096);
+
+    fut_printf("[MISC-TEST] ✓ mmap(PROT_SEM=0x8) accepted\n");
+    fut_test_pass();
+}
+
 /* ============================================================
  * Test entry point
  * ============================================================ */
@@ -12279,6 +12359,8 @@ void fut_misc_test_thread(void *arg) {
     test_fcntl_ofd_locks();               /* Test 267: F_OFD_SETLK/F_OFD_GETLK (Linux 3.15+ OFD locks) */
     test_semtimedop_basic();              /* Test 268: semtimedop (Linux 2.5.52+, syscall 220) */
     test_proc_self_smaps();               /* Test 269: /proc/self/smaps per-VMA memory stats */
+    test_proc_sys_kernel_ipc();           /* Test 270: /proc/sys/kernel/{shmmax,shmall,shmmni,sem,msgmni} */
+    test_mmap_prot_sem();                 /* Test 271: mmap with PROT_SEM (0x8) accepted by Linux */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -58,8 +58,9 @@ long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset) 
         return -EINVAL;
     }
 
-    /* Validate prot flags don't contain unsupported bits */
-    int valid_prot = PROT_NONE | PROT_READ | PROT_WRITE | PROT_EXEC;
+    /* Validate prot flags don't contain unsupported bits.
+     * PROT_SEM (0x8) is accepted by Linux but ignored — include it as valid. */
+    int valid_prot = PROT_NONE | PROT_READ | PROT_WRITE | PROT_EXEC | PROT_SEM;
     if (prot & ~valid_prot) {
         int invalid_bits = prot & ~valid_prot;
         fut_printf("[MMAP] mmap(addr=%p, len=%zu, prot=0x%x) -> EINVAL "

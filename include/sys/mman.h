@@ -30,6 +30,9 @@
 #ifndef PROT_EXEC
 #define PROT_EXEC   0x4     /* Page can be executed */
 #endif
+#ifndef PROT_SEM
+#define PROT_SEM    0x8     /* Page may be used for atomic ops (ignored by kernel) */
+#endif
 
 /* ============================================================
  *   Mapping Type Flags (for mmap)

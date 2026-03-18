@@ -9099,6 +9099,66 @@ static void test_setresuid_setresgid(void) {
 }
 
 /* ============================================================
+ * Test 194: alarm() set/cancel/remaining semantics
+ * ============================================================ */
+static void test_alarm_basic(void) {
+    fut_printf("[MISC-TEST] Test 194: alarm() set/cancel semantics\n");
+    extern long sys_alarm(unsigned int seconds);
+    extern long sys_sigprocmask(int how, const sigset_t *set, sigset_t *oldset);
+
+    /* Block SIGALRM (signal 14) to prevent test disruption */
+    sigset_t alrm_mask = { (1ULL << (14 - 1)) };
+    sigset_t old_mask;
+    sys_sigprocmask(0 /* SIG_BLOCK */, &alrm_mask, &old_mask);
+
+    /* No previous alarm: alarm(0) returns 0 */
+    long r = sys_alarm(0);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ alarm(0) returned %ld (expected 0, no prior alarm)\n", r);
+        sys_sigprocmask(2 /* SIG_SETMASK */, &old_mask, NULL);
+        fut_test_fail(194); return;
+    }
+
+    /* Set 10-second alarm: no prior alarm → returns 0 */
+    r = sys_alarm(10);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ alarm(10) returned %ld (expected 0)\n", r);
+        sys_alarm(0);
+        sys_sigprocmask(2 /* SIG_SETMASK */, &old_mask, NULL);
+        fut_test_fail(194); return;
+    }
+
+    /* Replace with 5-second alarm: returns remaining from 10s alarm (should be ~10) */
+    r = sys_alarm(5);
+    if (r < 1 || r > 10) {
+        fut_printf("[MISC-TEST] ✗ alarm(5) returned %ld (expected 1-10 remaining from 10s)\n", r);
+        sys_alarm(0);
+        sys_sigprocmask(2 /* SIG_SETMASK */, &old_mask, NULL);
+        fut_test_fail(194); return;
+    }
+
+    /* Cancel alarm: returns remaining from 5s alarm (should be ~5) */
+    r = sys_alarm(0);
+    if (r < 1 || r > 5) {
+        fut_printf("[MISC-TEST] ✗ alarm(0) cancel returned %ld (expected 1-5 remaining from 5s)\n", r);
+        sys_sigprocmask(2 /* SIG_SETMASK */, &old_mask, NULL);
+        fut_test_fail(194); return;
+    }
+
+    /* No alarm now: alarm(0) returns 0 */
+    r = sys_alarm(0);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ alarm(0) after cancel returned %ld (expected 0)\n", r);
+        sys_sigprocmask(2 /* SIG_SETMASK */, &old_mask, NULL);
+        fut_test_fail(194); return;
+    }
+
+    sys_sigprocmask(2 /* SIG_SETMASK */, &old_mask, NULL);
+    fut_printf("[MISC-TEST] ✓ alarm: set/replace/cancel semantics correct\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -9301,6 +9361,7 @@ void fut_misc_test_thread(void *arg) {
     test_proc_self_io();                   /* Test 191: /proc/self/io I/O counters */
     test_ioprio_basic();                   /* Test 192: ioprio_set/get round-trip */
     test_setresuid_setresgid();            /* Test 193: setresuid/setresgid round-trip */
+    test_alarm_basic();                    /* Test 194: alarm() set/cancel semantics */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

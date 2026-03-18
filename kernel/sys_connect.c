@@ -560,9 +560,9 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
     }
 
     if (socket->state == FUT_SOCK_CONNECTING) {
-        connect_printf("[CONNECT] connect(sockfd=%d, family=%s, path='%s', state=%s) -> EINVAL (connection already in progress)\n",
+        connect_printf("[CONNECT] connect(sockfd=%d, family=%s, path='%s', state=%s) -> EALREADY\n",
                    local_sockfd, family_name, sock_path, socket_state_desc);
-        return -EINVAL;  /* EALREADY semantics, using EINVAL until EALREADY defined */
+        return -EALREADY;
     }
 
     if (socket->state == FUT_SOCK_CLOSED) {

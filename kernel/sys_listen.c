@@ -151,9 +151,11 @@ long sys_listen(int sockfd, int backlog) {
 
     /* Phase 2: Enhanced error messages based on socket state */
     if (socket->state == FUT_SOCK_LISTENING) {
-        listen_printf("[LISTEN] listen(sockfd=%d, backlog=%d [%s]) -> EINVAL (socket already listening)\n",
-                   local_sockfd, local_backlog, backlog_desc);
-        return -EINVAL;
+        /* Linux allows listen() on an already-listening socket to update the backlog */
+        if (socket->listener) socket->listener->backlog = effective_backlog;
+        listen_printf("[LISTEN] listen(sockfd=%d, backlog=%d) -> 0 (already listening, backlog updated)\n",
+                   local_sockfd, local_backlog);
+        return 0;
     }
 
     if (socket->state == FUT_SOCK_CONNECTED) {

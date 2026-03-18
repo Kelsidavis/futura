@@ -327,11 +327,29 @@ long sys_clock_nanosleep(int clock_id, int flags,
 
     const char *clock_name;
 
+    /* Classify clock_id into REALTIME-domain or MONOTONIC-domain.
+     * Extended clocks accepted (Linux 3.0+):
+     *   Realtime domain: CLOCK_REALTIME(0), CLOCK_REALTIME_COARSE(5), CLOCK_TAI(11),
+     *                    CLOCK_REALTIME_ALARM(8)
+     *   Monotonic domain: CLOCK_MONOTONIC(1), CLOCK_MONOTONIC_RAW(4),
+     *                     CLOCK_MONOTONIC_COARSE(6), CLOCK_BOOTTIME(7),
+     *                     CLOCK_BOOTTIME_ALARM(9)
+     * Futura has no suspend, so BOOTTIME == MONOTONIC and *_ALARM == base clock. */
+    bool is_realtime_clock;
     switch (local_clock_id) {
         case CLOCK_REALTIME:
+        case CLOCK_REALTIME_COARSE:   /* 5: low-res realtime */
+        case CLOCK_TAI:               /* 11: TAI (no leap second offset in Futura) */
+        case CLOCK_REALTIME_ALARM:    /* 8: realtime + wakeup (no alarm hw) */
+            is_realtime_clock = true;
             clock_name = "CLOCK_REALTIME";
             break;
         case CLOCK_MONOTONIC:
+        case CLOCK_MONOTONIC_RAW:     /* 4: raw hardware monotonic */
+        case CLOCK_MONOTONIC_COARSE:  /* 6: low-res monotonic */
+        case CLOCK_BOOTTIME:          /* 7: monotonic + suspend time (= monotonic here) */
+        case CLOCK_BOOTTIME_ALARM:    /* 9: boottime + wakeup (no alarm hw) */
+            is_realtime_clock = false;
             clock_name = "CLOCK_MONOTONIC";
             break;
         default:
@@ -358,7 +376,7 @@ long sys_clock_nanosleep(int clock_id, int flags,
         /* For CLOCK_REALTIME: convert wall-clock target to monotonic by
          * subtracting the realtime offset so remain_ns is a pure monotonic delay. */
         uint64_t target_monotonic_ns = target_ns;
-        if (local_clock_id == CLOCK_REALTIME) {
+        if (is_realtime_clock) {
             int64_t offset_ns = g_realtime_offset_sec * (int64_t)1000000000LL;
             /* target_monotonic = target_wall - offset */
             if (offset_ns >= 0) {

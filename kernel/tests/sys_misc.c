@@ -11685,6 +11685,106 @@ static void test_epoll_pwait2_null_timeout(void) {
 }
 
 /* ============================================================
+ * Tests 262-265: clock compat (clock_nanosleep/timerfd_create/timer_create
+ * with CLOCK_BOOTTIME et al.) and madvise WIPEONFORK/COLD/PAGEOUT
+ * ============================================================ */
+
+static void test_clock_nanosleep_boottime(void) {
+    fut_printf("[MISC-TEST] Test 262: clock_nanosleep(CLOCK_BOOTTIME) accepted\n");
+    extern long sys_clock_nanosleep(int clock_id, int flags,
+                                    const fut_timespec_t *req, fut_timespec_t *rem);
+    /* Sleep for 0 nanoseconds — just validates clock acceptance */
+    fut_timespec_t ts = {0, 0};
+    long r = sys_clock_nanosleep(7 /* CLOCK_BOOTTIME */, 0, &ts, NULL);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ clock_nanosleep(CLOCK_BOOTTIME): %ld\n", r);
+        fut_test_fail(262); return;
+    }
+    /* Also check CLOCK_MONOTONIC_RAW(4), CLOCK_REALTIME_COARSE(5) */
+    long r4 = sys_clock_nanosleep(4, 0, &ts, NULL);
+    long r5 = sys_clock_nanosleep(5, 0, &ts, NULL);
+    if (r4 != 0 || r5 != 0) {
+        fut_printf("[MISC-TEST] ✗ clock_nanosleep ext: raw=%ld coarse=%ld\n", r4, r5);
+        fut_test_fail(262); return;
+    }
+    fut_printf("[MISC-TEST] ✓ clock_nanosleep(CLOCK_BOOTTIME/RAW/COARSE) → 0\n");
+    fut_test_pass();
+}
+
+static void test_timerfd_create_boottime(void) {
+    fut_printf("[MISC-TEST] Test 263: timerfd_create(CLOCK_BOOTTIME) accepted\n");
+    extern long sys_timerfd_create(int clockid, int flags);
+
+    int fd = (int)sys_timerfd_create(7 /* CLOCK_BOOTTIME */, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ timerfd_create(CLOCK_BOOTTIME): %d\n", fd);
+        fut_test_fail(263); return;
+    }
+    extern long sys_close(int fd);
+    sys_close(fd);
+
+    /* CLOCK_REALTIME_ALARM(8) and CLOCK_BOOTTIME_ALARM(9) */
+    int fd8 = (int)sys_timerfd_create(8, 0);
+    int fd9 = (int)sys_timerfd_create(9, 0);
+    if (fd8 < 0 || fd9 < 0) {
+        fut_printf("[MISC-TEST] ✗ timerfd_create alarm: alarm8=%d alarm9=%d\n", fd8, fd9);
+        if (fd8 >= 0) sys_close(fd8);
+        if (fd9 >= 0) sys_close(fd9);
+        fut_test_fail(263); return;
+    }
+    sys_close(fd8);
+    sys_close(fd9);
+    fut_printf("[MISC-TEST] ✓ timerfd_create(CLOCK_BOOTTIME/ALARM) accepted\n");
+    fut_test_pass();
+}
+
+static void test_timer_create_boottime(void) {
+    fut_printf("[MISC-TEST] Test 264: timer_create(CLOCK_BOOTTIME/TAI) accepted\n");
+    extern long sys_timer_create(int clockid, struct sigevent *sevp, timer_t *timerid);
+
+    /* NULL sevp → SIGALRM by default; timer_t is just an int */
+    int tid1 = -1, tid2 = -1;
+    long r7 = sys_timer_create(7 /* CLOCK_BOOTTIME */, NULL, &tid1);
+    long r11 = sys_timer_create(11 /* CLOCK_TAI */, NULL, &tid2);
+
+    extern long sys_timer_delete(int timerid);
+    if (tid1 >= 0) sys_timer_delete(tid1);
+    if (tid2 >= 0) sys_timer_delete(tid2);
+
+    if (r7 != 0 || r11 != 0) {
+        fut_printf("[MISC-TEST] ✗ timer_create: boottime=%ld tai=%ld\n", r7, r11);
+        fut_test_fail(264); return;
+    }
+    fut_printf("[MISC-TEST] ✓ timer_create(CLOCK_BOOTTIME/TAI) → 0\n");
+    fut_test_pass();
+}
+
+static void test_madvise_wipeonfork(void) {
+    fut_printf("[MISC-TEST] Test 265: madvise WIPEONFORK/KEEPONFORK/COLD/PAGEOUT accepted\n");
+    extern long sys_madvise(void *addr, size_t length, int advice);
+    extern long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long off);
+    extern long sys_munmap(void *addr, size_t len);
+
+    void *p = (void *)sys_mmap(NULL, 4096, TEST_PROT_RW,
+                               TEST_MAP_PRIVATE | TEST_MAP_ANONYMOUS, -1, 0);
+    if (!p || (long)(uintptr_t)p < 0) { fut_test_fail(265); return; }
+
+    long r18 = sys_madvise(p, 4096, 18); /* MADV_WIPEONFORK */
+    long r19 = sys_madvise(p, 4096, 19); /* MADV_KEEPONFORK */
+    long r20 = sys_madvise(p, 4096, 20); /* MADV_COLD */
+    long r21 = sys_madvise(p, 4096, 21); /* MADV_PAGEOUT */
+    sys_munmap(p, 4096);
+
+    if (r18 != 0 || r19 != 0 || r20 != 0 || r21 != 0) {
+        fut_printf("[MISC-TEST] ✗ madvise ext: 18→%ld 19→%ld 20→%ld 21→%ld\n",
+                   r18, r19, r20, r21);
+        fut_test_fail(265); return;
+    }
+    fut_printf("[MISC-TEST] ✓ madvise(WIPEONFORK/KEEPONFORK/COLD/PAGEOUT) → 0\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -11955,6 +12055,10 @@ void fut_misc_test_thread(void *arg) {
     test_pidfd_getfd_errors();             /* Test 259: pidfd_getfd error paths */
     test_epoll_pwait2_timeout0();          /* Test 260: epoll_pwait2 timeout=0 immediate poll */
     test_epoll_pwait2_null_timeout();      /* Test 261: epoll_pwait2 ready eventfd → 1 event */
+    test_clock_nanosleep_boottime();       /* Test 262: clock_nanosleep CLOCK_BOOTTIME/RAW/COARSE */
+    test_timerfd_create_boottime();        /* Test 263: timerfd_create CLOCK_BOOTTIME/ALARM */
+    test_timer_create_boottime();          /* Test 264: timer_create CLOCK_BOOTTIME/TAI */
+    test_madvise_wipeonfork();             /* Test 265: madvise WIPEONFORK/COLD/PAGEOUT */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -96,9 +96,22 @@ long sys_timer_create(int clockid, struct sigevent *sevp, timer_t *timerid) {
     if (!local_timerid)
         return -EINVAL;
 
-    /* Validate clock ID */
-    if (local_clockid != CLOCK_REALTIME && local_clockid != CLOCK_MONOTONIC)
-        return -EINVAL;
+    /* Validate clock ID — accept all Linux timer_create-compatible clocks.
+     * Extended set: CLOCK_BOOTTIME(7) == MONOTONIC here; TAI(11) and alarm
+     * clocks (8,9) accepted (no suspend/alarm hardware in Futura). */
+    switch (local_clockid) {
+        case CLOCK_REALTIME:          /* 0 */
+        case CLOCK_MONOTONIC:         /* 1 */
+        case CLOCK_PROCESS_CPUTIME_ID:/* 2 */
+        case CLOCK_THREAD_CPUTIME_ID: /* 3 */
+        case CLOCK_BOOTTIME:          /* 7 */
+        case CLOCK_REALTIME_ALARM:    /* 8 */
+        case CLOCK_BOOTTIME_ALARM:    /* 9 */
+        case CLOCK_TAI:               /* 11 */
+            break;
+        default:
+            return -EINVAL;
+    }
 
     /* Validate userspace pointer */
     if (timer_access_ok_write(local_timerid, sizeof(timer_t)) != 0)

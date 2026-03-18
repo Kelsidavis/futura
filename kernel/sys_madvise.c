@@ -131,7 +131,7 @@ long sys_madvise(void *addr, size_t length, int advice) {
 
     /* Validate advice code using explicit switch.
      * Linux advice values are non-contiguous: valid set is
-     * {0-4, 8-17}; values 5, 6, 7 are unused gaps → EINVAL. */
+     * {0-4, 8-21}; values 5, 6, 7 are unused gaps → EINVAL. */
     switch (advice) {
     case MADV_NORMAL:       /* 0: default behavior */
     case MADV_RANDOM:       /* 1: expect random access */
@@ -148,6 +148,10 @@ long sys_madvise(void *addr, size_t length, int advice) {
     case MADV_NOHUGEPAGE:   /* 15: do not back with hugepages */
     case MADV_DONTDUMP:     /* 16: exclude from core dump */
     case MADV_DODUMP:       /* 17: include in core dump */
+    case 18:                /* MADV_WIPEONFORK: wipe on fork (Linux 4.14+) */
+    case 19:                /* MADV_KEEPONFORK: keep on fork (Linux 4.14+) */
+    case 20:                /* MADV_COLD: deactivate pages (Linux 5.4+) */
+    case 21:                /* MADV_PAGEOUT: reclaim pages now (Linux 5.4+) */
         return 0;
     default:
         return -EINVAL;

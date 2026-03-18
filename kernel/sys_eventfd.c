@@ -1493,9 +1493,18 @@ long sys_timerfd_create(int clockid, int flags) {
         return -ESRCH;
     }
 
-    /* Validate clockid */
-    if (clockid != CLOCK_REALTIME && clockid != CLOCK_MONOTONIC) {
-        return -EINVAL;
+    /* Validate clockid — accept all Linux timerfd-compatible clocks.
+     * Futura has no suspend, so BOOTTIME == MONOTONIC; alarm clocks
+     * are accepted but never wake from suspend (no alarm hardware). */
+    switch (clockid) {
+        case CLOCK_REALTIME:          /* 0 */
+        case CLOCK_MONOTONIC:         /* 1 */
+        case CLOCK_BOOTTIME:          /* 7 */
+        case CLOCK_REALTIME_ALARM:    /* 8 */
+        case CLOCK_BOOTTIME_ALARM:    /* 9 */
+            break;
+        default:
+            return -EINVAL;
     }
 
     /* Validate flags */

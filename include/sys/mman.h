@@ -162,6 +162,18 @@
 #ifndef MADV_DODUMP
 #define MADV_DODUMP         17  /* Include in core dump (default) */
 #endif
+#ifndef MADV_WIPEONFORK
+#define MADV_WIPEONFORK     18  /* Zero pages on fork (Linux 4.14+) */
+#endif
+#ifndef MADV_KEEPONFORK
+#define MADV_KEEPONFORK     19  /* Keep pages on fork (Linux 4.14+) */
+#endif
+#ifndef MADV_COLD
+#define MADV_COLD           20  /* Deactivate pages (Linux 5.4+) */
+#endif
+#ifndef MADV_PAGEOUT
+#define MADV_PAGEOUT        21  /* Reclaim pages now (Linux 5.4+) */
+#endif
 
 /* ============================================================
  *   Memory Lock Flags (for mlockall)

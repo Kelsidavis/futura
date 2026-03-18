@@ -17421,6 +17421,63 @@ static void test_proc_coredump_filter(void) {
 }
 
 /* ============================================================
+ * Test 363: write to /proc/sys/kernel/hostname persists in read-back
+ * ============================================================ */
+static void test_proc_sys_hostname_write(void) {
+    fut_printf("[MISC-TEST] Test 363: /proc/sys/kernel/hostname write+read\n");
+
+    /* Write a new hostname */
+    int fd = fut_vfs_open("/proc/sys/kernel/hostname", O_WRONLY, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 363: open /proc/sys/kernel/hostname O_WRONLY failed: %d\n", fd);
+        fut_test_fail(363);
+        return;
+    }
+    const char *new_name = "testhost";
+    long w = fut_vfs_write(fd, new_name, 8);
+    fut_vfs_close(fd);
+    if (w != 8) {
+        fut_printf("[MISC-TEST] ✗ Test 363: write hostname returned %ld\n", w);
+        fut_test_fail(363);
+        return;
+    }
+
+    /* Read it back and confirm it changed */
+    fd = fut_vfs_open("/proc/sys/kernel/hostname", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 363: re-open for read failed: %d\n", fd);
+        fut_test_fail(363);
+        return;
+    }
+    char buf[64];
+    long n = fut_vfs_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    if (n <= 0) {
+        fut_printf("[MISC-TEST] ✗ Test 363: read returned %ld\n", n);
+        fut_test_fail(363);
+        return;
+    }
+    buf[n] = '\0';
+    /* Strip trailing newline for comparison */
+    while (n > 0 && (buf[n-1] == '\n' || buf[n-1] == '\r')) { n--; buf[n] = '\0'; }
+
+    if (buf[0] != 't' || buf[1] != 'e' || buf[2] != 's' || buf[3] != 't') {
+        fut_printf("[MISC-TEST] ✗ Test 363: hostname not updated, got '%s'\n", buf);
+        fut_test_fail(363);
+        /* Restore original hostname */
+        fd = fut_vfs_open("/proc/sys/kernel/hostname", O_WRONLY, 0);
+        if (fd >= 0) { fut_vfs_write(fd, "futura", 6); fut_vfs_close(fd); }
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 363: /proc/sys/kernel/hostname write persisted: '%s'\n", buf);
+    fut_test_pass();
+
+    /* Restore original hostname */
+    fd = fut_vfs_open("/proc/sys/kernel/hostname", O_WRONLY, 0);
+    if (fd >= 0) { fut_vfs_write(fd, "futura", 6); fut_vfs_close(fd); }
+}
+
+/* ============================================================
  * Tests 352-353: SO_SNDBUF / SO_RCVBUF set/get round-trip
  * ============================================================ */
 static void test_so_sndbuf_roundtrip(void) {
@@ -17955,6 +18012,7 @@ void fut_misc_test_thread(void *arg) {
     test_proc_wchan();                   /* Test 360: /proc/self/wchan readable */
     test_proc_mountinfo();               /* Test 361: /proc/self/mountinfo has ' - ' separator */
     test_proc_coredump_filter();         /* Test 362: /proc/self/coredump_filter returns hex value */
+    test_proc_sys_hostname_write();      /* Test 363: /proc/sys/kernel/hostname write+read round-trip */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -50,8 +50,8 @@ static inline int uname_access_ok(const void *ptr, size_t n, int write) {
 #define HOSTNAME_MAX  65
 #define DOMAINNAME_MAX 65
 
-static char g_hostname[HOSTNAME_MAX]   = "futura";
-static char g_domainname[DOMAINNAME_MAX] = "(none)";
+char g_hostname[HOSTNAME_MAX]   = "futura";
+char g_domainname[DOMAINNAME_MAX] = "(none)";
 
 /**
  * uname() syscall - Get system information.

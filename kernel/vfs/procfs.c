@@ -33,13 +33,25 @@
 #include <kernel/fut_socket.h>
 #include <kernel/errno.h>
 #include <kernel/kprintf.h>
+#include <kernel/uaccess.h>
 #include <sys/mman.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
 
+/* Architecture-specific paging headers for KERNEL_VIRTUAL_BASE */
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
 /* Global task list (defined in kernel/threading/fut_task.c) */
 extern fut_task_t *fut_task_list;
+
+/* Hostname and domainname — writable via sethostname/setdomainname and /proc/sys/kernel */
+extern char g_hostname[];
+extern char g_domainname[];
 
 /* ============================================================
  *   Procfs Node Kind (stored in fs_data)
@@ -1600,7 +1612,7 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             total = gen_sysctl_str(tmp, GEN_BUF, "6.1.0-futura");
             break;
         case PROC_SYS_HOSTNAME:
-            total = gen_sysctl_str(tmp, GEN_BUF, "futura");
+            total = gen_sysctl_str(tmp, GEN_BUF, g_hostname);
             break;
         case PROC_SYS_PID_MAX:
             total = gen_sysctl_str(tmp, GEN_BUF, "32768");
@@ -1745,8 +1757,8 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             total = gen_sysctl_str(tmp, GEN_BUF, "2");
             break;
         case PROC_SYS_DOMAINNAME:
-            /* NIS domain name — "(none)" when not configured */
-            total = gen_sysctl_str(tmp, GEN_BUF, "(none)");
+            /* NIS domain name — backed by g_domainname (setdomainname syscall) */
+            total = gen_sysctl_str(tmp, GEN_BUF, g_domainname);
             break;
         case PROC_SYS_PERF_PARANOID:
             /* 2 = only unprivileged userspace sampling; checked by gdb/sanitizers */
@@ -1805,6 +1817,83 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
     }
     fut_free(tmp);
     return ret;
+}
+
+/* ============================================================
+ *   /proc Write Support (hostname, domainname, sysctl no-ops)
+ * ============================================================ */
+
+/*
+ * procfs_file_write() — handle writes to select /proc files.
+ *
+ * Writable files:
+ *   PROC_SYS_HOSTNAME    — updates g_hostname (sethostname backing)
+ *   PROC_SYS_DOMAINNAME  — updates g_domainname (setdomainname backing)
+ *   PROC_OOM_ADJ         — accepted silently (oom_score_adj per-process tuning)
+ *   Any PROC_SYS_*       — accepted silently (sysctl tuning no-ops)
+ *
+ * All other /proc files return -EPERM.
+ */
+static ssize_t procfs_file_write(struct fut_vnode *vnode, const void *buf,
+                                  size_t size, uint64_t offset) {
+    (void)offset;
+    if (!vnode || !buf || size == 0) return -EINVAL;
+    procfs_node_t *n = (procfs_node_t *)vnode->fs_data;
+    if (!n) return -EIO;
+
+    /* Copy data from caller (user or kernel pointer) into a kernel buffer */
+    char kbuf[256];
+    size_t copy_len = size < sizeof(kbuf) - 1 ? size : sizeof(kbuf) - 1;
+
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)buf >= KERNEL_VIRTUAL_BASE)
+        __builtin_memcpy(kbuf, buf, copy_len);
+    else
+#endif
+    if (fut_copy_from_user(kbuf, buf, copy_len) != 0)
+        return -EFAULT;
+
+    /* Strip trailing newline / whitespace */
+    while (copy_len > 0 && (kbuf[copy_len - 1] == '\n' || kbuf[copy_len - 1] == '\r' ||
+                             kbuf[copy_len - 1] == ' '))
+        copy_len--;
+    kbuf[copy_len] = '\0';
+
+    switch (n->kind) {
+        case PROC_SYS_HOSTNAME:
+            if (copy_len > 63) copy_len = 63;  /* HOSTNAME_MAX-1 = 64 */
+            __builtin_memcpy(g_hostname, kbuf, copy_len);
+            g_hostname[copy_len] = '\0';
+            return (ssize_t)size;
+
+        case PROC_SYS_DOMAINNAME:
+            if (copy_len > 63) copy_len = 63;  /* DOMAINNAME_MAX-1 = 64 */
+            __builtin_memcpy(g_domainname, kbuf, copy_len);
+            g_domainname[copy_len] = '\0';
+            return (ssize_t)size;
+
+        case PROC_OOM_ADJ: {
+            /* oom_score_adj: accept the write, store per-task if task is found */
+            fut_task_t *task = fut_task_by_pid(n->pid);
+            if (task) {
+                long val = 0;
+                for (size_t i = 0; i < copy_len; i++) {
+                    if (kbuf[i] >= '0' && kbuf[i] <= '9')
+                        val = val * 10 + (kbuf[i] - '0');
+                    else if (i == 0 && kbuf[i] == '-')
+                        val = -(long)(kbuf[1] - '0'); /* approximate */
+                }
+                (void)val; /* not acted on in our simple OOM policy */
+            }
+            return (ssize_t)size;
+        }
+
+        default:
+            /* Accept writes to all /proc/sys/ files silently (sysctl tuning) */
+            if (n->kind >= PROC_SYS_DIR && n->kind <= PROC_SYS_FS_PIPE_MAX_SIZE)
+                return (ssize_t)size;
+            return -EPERM;
+    }
 }
 
 static int procfs_file_getattr(struct fut_vnode *vnode, struct fut_stat *st) {
@@ -3263,6 +3352,7 @@ static int procfs_dir_getattr(struct fut_vnode *vnode, struct fut_stat *st) {
 
 static const struct fut_vnode_ops procfs_file_ops = {
     .read    = procfs_file_read,
+    .write   = procfs_file_write,
     .getattr = procfs_file_getattr,
 };
 

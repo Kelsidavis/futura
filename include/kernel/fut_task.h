@@ -111,6 +111,7 @@ struct fut_task {
     struct sigaltstack sig_altstack;   // Alternate signal stack configuration
     fut_waitq_t stop_waitq;            // Wait queue for SIGSTOP/SIGCONT
     int stop_signal;                   // Signal that caused the stop (SIGSTOP, SIGTSTP, etc.)
+    int stop_reported;                 // 1 after waitpid(WUNTRACED) consumed the stop event
 
     /* Alarm timer (also used as ITIMER_REAL one-shot backing store) */
     uint64_t alarm_expires_ms;         // Alarm expiration time in milliseconds (0 = no alarm)

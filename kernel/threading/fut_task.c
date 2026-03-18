@@ -539,6 +539,7 @@ void fut_task_do_stop(fut_task_t *task, int sig) {
     fut_spinlock_acquire(&task_list_lock);
     task->state = FUT_TASK_STOPPED;
     task->stop_signal = sig;
+    task->stop_reported = 0;  /* new stop — reset so WUNTRACED can report it */
     if (task->parent) {
         /* SA_NOCLDSTOP: don't send SIGCHLD for stop events if parent set this flag.
          * Wake waitpid blockers (WUNTRACED) regardless. */
@@ -568,6 +569,7 @@ void fut_task_do_cont(fut_task_t *task) {
     if (task->state == FUT_TASK_STOPPED) {
         task->state = FUT_TASK_RUNNING;
         task->stop_signal = -1;  /* sentinel: just continued */
+        task->stop_reported = 0;
         parent = task->parent;
         if (parent) {
             /* SA_NOCLDSTOP also suppresses SIGCHLD on continue */
@@ -618,11 +620,12 @@ int fut_task_waitpid(int pid, int *status_out, int flags, uint64_t *child_ticks_
                     break;
                 }
                 /* WUNTRACED (0x2): report stopped children */
-                if ((flags & 2) && child->state == FUT_TASK_STOPPED) {
+                if ((flags & 2) && child->state == FUT_TASK_STOPPED &&
+                    !child->stop_reported) {
                     int stop_status = 0x7f | ((child->stop_signal & 0xff) << 8);
                     uint64_t child_pid = child->pid;
-                    /* Clear stopped state so we don't report it again */
-                    child->state = FUT_TASK_RUNNING;
+                    /* Mark as reported so we don't re-report until next stop */
+                    child->stop_reported = 1;
                     fut_spinlock_release(&task_list_lock);
                     if (status_out) *status_out = stop_status;
                     return (int)child_pid;
@@ -741,11 +744,12 @@ int fut_task_waitpid_ex(int pid, int *status_out, int flags, uint32_t *uid_out) 
                     break;
                 }
                 /* WUNTRACED/WSTOPPED (0x2): report stopped children */
-                if ((flags & 2) && child->state == FUT_TASK_STOPPED) {
+                if ((flags & 2) && child->state == FUT_TASK_STOPPED &&
+                    !child->stop_reported) {
                     int stop_status = 0x7f | ((child->stop_signal & 0xff) << 8);
                     uint64_t child_pid = child->pid;
                     uint32_t child_uid = child->ruid;
-                    child->state = FUT_TASK_RUNNING;
+                    child->stop_reported = 1;
                     fut_spinlock_release(&task_list_lock);
                     if (status_out) *status_out = stop_status;
                     if (uid_out)    *uid_out    = child_uid;

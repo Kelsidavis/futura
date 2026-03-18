@@ -34,6 +34,19 @@
  * (WIFEXITED, WEXITSTATUS, WIFSIGNALED, WTERMSIG, WIFSTOPPED, WSTOPSIG)
  * are provided by sys/wait.h */
 
+static inline int waitpid_copy_to_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)dst >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_to_user(dst, src, n);
+}
+static inline int waitpid_access_ok_write(const void *ptr, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)ptr >= KERNEL_VIRTUAL_BASE) return 0;
+#endif
+    return fut_access_ok(ptr, n, 1);
+}
+
 /**
  * waitpid() syscall - Wait for child process to change state
  *
@@ -151,7 +164,7 @@ long sys_waitpid(int pid, int *u_status, int flags) {
      * ATTACK: Attacker provides read-only or unmapped u_status buffer
      * IMPACT: Kernel page fault when writing exit status after potentially blocking wait
      * DEFENSE: Check write permission before blocking on fut_task_waitpid */
-    if (local_u_status && fut_access_ok(local_u_status, sizeof(int), 1) != 0) {
+    if (local_u_status && waitpid_access_ok_write(local_u_status, sizeof(int)) != 0) {
         fut_printf("[WAITPID] waitpid(pid=%d, u_status=%p) -> EFAULT (u_status not writable for %zu bytes)\n",
                    local_pid, local_u_status, sizeof(int));
         return -EFAULT;
@@ -220,7 +233,7 @@ long sys_waitpid(int pid, int *u_status, int flags) {
 
     /* Copy status to userspace if requested */
     if (local_u_status) {
-        if (fut_copy_to_user(local_u_status, &status, sizeof(status)) != 0) {
+        if (waitpid_copy_to_user(local_u_status, &status, sizeof(status)) != 0) {
             fut_printf("[WAITPID] waitpid(pid=%d [%s], child_pid=%d) -> EFAULT "
                        "(copy_to_user failed, Phase 2)\n",
                        local_pid, pid_category, rc);
@@ -360,7 +373,7 @@ long sys_wait4(int pid, int *u_status, int flags, void *rusage_ptr) {
     /* Validate rusage pointer if provided */
     if (rusage_ptr && !use_memcpy_rusage) {
         /* struct rusage is 144 bytes; check writability */
-        if (fut_access_ok(rusage_ptr, 144, 1) != 0) {
+        if (waitpid_access_ok_write(rusage_ptr, 144) != 0) {
             return -EFAULT;
         }
     }
@@ -371,7 +384,7 @@ long sys_wait4(int pid, int *u_status, int flags, void *rusage_ptr) {
 #ifdef KERNEL_VIRTUAL_BASE
         bypass = ((uintptr_t)u_status >= KERNEL_VIRTUAL_BASE);
 #endif
-        if (!bypass && fut_access_ok(u_status, sizeof(int), 1) != 0)
+        if (!bypass && waitpid_access_ok_write(u_status, sizeof(int)) != 0)
             return -EFAULT;
     }
 
@@ -389,7 +402,7 @@ long sys_wait4(int pid, int *u_status, int flags, void *rusage_ptr) {
             __builtin_memcpy(u_status, &status, sizeof(status));
         else
 #endif
-        if (fut_copy_to_user(u_status, &status, sizeof(status)) != 0)
+        if (waitpid_copy_to_user(u_status, &status, sizeof(status)) != 0)
             return -EFAULT;
     }
 
@@ -415,7 +428,7 @@ long sys_wait4(int pid, int *u_status, int flags, void *rusage_ptr) {
         if (use_memcpy_rusage)
             __builtin_memcpy(rusage_ptr, rusage_buf, sizeof(rusage_buf));
         else
-            fut_copy_to_user(rusage_ptr, rusage_buf, sizeof(rusage_buf));
+            waitpid_copy_to_user(rusage_ptr, rusage_buf, sizeof(rusage_buf));
     }
 
     return rc;

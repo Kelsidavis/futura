@@ -25,6 +25,7 @@
 #include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/capability.h>
+#include <sys/wait.h>
 #include <stdint.h>
 #include <string.h>
 #include "tests/test_api.h"
@@ -8025,6 +8026,109 @@ static void test_mknodat_basic(void) {
     fut_test_pass();
 }
 
+static void test_wuntraced_wcontinued(void) {
+    fut_printf("[MISC-TEST] Test 184: WUNTRACED/WCONTINUED stop_reported semantics\n");
+    extern long sys_waitpid(int pid, int *status, int flags);
+    extern fut_task_t *fut_task_create(void);
+    extern void fut_task_do_cont(fut_task_t *task);
+
+    /* Create a synthetic child task attached to the current task as parent */
+    fut_task_t *child = fut_task_create();
+    if (!child) {
+        fut_printf("[MISC-TEST] ✗ wuntraced: fut_task_create failed\n");
+        fut_test_fail(184);
+        return;
+    }
+    int child_pid = (int)child->pid;
+
+    /* Put child in STOPPED state (SIGSTOP = 19) */
+#define TEST_SIGSTOP 19
+    child->state = FUT_TASK_STOPPED;
+    child->stop_signal = TEST_SIGSTOP;
+    child->stop_reported = 0;
+
+    /* WUNTRACED|WNOHANG: should return child_pid with WIFSTOPPED status */
+    int status = 0;
+    long rc = sys_waitpid(child_pid, &status, 2 | 1); /* WUNTRACED|WNOHANG */
+    if (rc != (long)child_pid) {
+        fut_printf("[MISC-TEST] ✗ wuntraced: expected child_pid=%d, got %ld\n", child_pid, rc);
+        child->state = FUT_TASK_ZOMBIE;
+        sys_waitpid(child_pid, &status, 1); /* reap */
+        fut_test_fail(184);
+        return;
+    }
+    if (!WIFSTOPPED(status)) {
+        fut_printf("[MISC-TEST] ✗ wuntraced: WIFSTOPPED false, status=0x%x\n", status);
+        child->state = FUT_TASK_ZOMBIE;
+        sys_waitpid(child_pid, &status, 1);
+        fut_test_fail(184);
+        return;
+    }
+    if (WSTOPSIG(status) != TEST_SIGSTOP) {
+        fut_printf("[MISC-TEST] ✗ wuntraced: WSTOPSIG=%d expected %d\n",
+                   WSTOPSIG(status), TEST_SIGSTOP);
+        child->state = FUT_TASK_ZOMBIE;
+        sys_waitpid(child_pid, &status, 1);
+        fut_test_fail(184);
+        return;
+    }
+
+    /* Second WUNTRACED call: stop already reported → WNOHANG returns 0 */
+    status = 0;
+    long rc2 = sys_waitpid(child_pid, &status, 2 | 1); /* WUNTRACED|WNOHANG */
+    if (rc2 != 0) {
+        fut_printf("[MISC-TEST] ✗ wuntraced: double-report: expected 0, got %ld\n", rc2);
+        child->state = FUT_TASK_ZOMBIE;
+        sys_waitpid(child_pid, &status, 1);
+        fut_test_fail(184);
+        return;
+    }
+
+    /* Simulate SIGCONT: resume the child */
+    fut_task_do_cont(child);
+    /* After cont: state=RUNNING, stop_signal=-1 */
+    if (child->state != FUT_TASK_RUNNING || child->stop_signal != -1) {
+        fut_printf("[MISC-TEST] ✗ wuntraced: fut_task_do_cont did not resume child\n");
+        child->state = FUT_TASK_ZOMBIE;
+        sys_waitpid(child_pid, &status, 1);
+        fut_test_fail(184);
+        return;
+    }
+
+    /* WCONTINUED|WNOHANG: should return child_pid with WIFCONTINUED status */
+    status = 0;
+    long rc3 = sys_waitpid(child_pid, &status, 8 | 1); /* WCONTINUED|WNOHANG */
+    if (rc3 != (long)child_pid) {
+        fut_printf("[MISC-TEST] ✗ wcontinued: expected child_pid=%d, got %ld\n", child_pid, rc3);
+        child->state = FUT_TASK_ZOMBIE;
+        sys_waitpid(child_pid, &status, 1);
+        fut_test_fail(184);
+        return;
+    }
+    if (!WIFCONTINUED(status)) {
+        fut_printf("[MISC-TEST] ✗ wcontinued: WIFCONTINUED false, status=0x%x\n", status);
+        child->state = FUT_TASK_ZOMBIE;
+        sys_waitpid(child_pid, &status, 1);
+        fut_test_fail(184);
+        return;
+    }
+
+    /* Reap child: mark zombie and let waitpid clean up */
+    child->state = FUT_TASK_ZOMBIE;
+    child->exit_code = 0;
+    child->term_signal = 0;
+    status = 0;
+    long rc4 = sys_waitpid(child_pid, &status, 0);
+    if (rc4 != (long)child_pid) {
+        fut_printf("[MISC-TEST] ✗ wuntraced: reap failed: expected %d, got %ld\n", child_pid, rc4);
+        fut_test_fail(184);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ WUNTRACED/WCONTINUED: stop_reported prevents double-report, SIGCONT works\n");
+    fut_test_pass();
+}
+
 static void test_syslog_basic(void) {
     fut_printf("[MISC-TEST] Test 181: sys_syslog basic\n");
     extern long sys_syslog(int type, char *buf, int len);
@@ -8614,6 +8718,7 @@ void fut_misc_test_thread(void *arg) {
     test_syslog_basic();                   /* Test 181: sys_syslog SIZE_BUFFER + READ_ALL */
     test_unlinkat_basic();                 /* Test 182: sys_unlinkat delete + ENOENT */
     test_mknodat_basic();                  /* Test 183: sys_mknodat S_IFREG creation */
+    test_wuntraced_wcontinued();           /* Test 184: WUNTRACED/WCONTINUED stop_reported fix */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

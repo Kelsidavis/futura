@@ -796,6 +796,19 @@ static size_t gen_stat(char *buf, size_t cap, fut_task_t *task) {
     /* Starttime: ticks since boot at task creation — not stored, approximate as 0 */
     uint64_t starttime = 0;
 
+    /* Signal bitmask fields (fields 31-34):
+     * Compute sigignore and sigcatch from the signal handler table. */
+    uint64_t pending_sig  = task->pending_signals;
+    uint64_t blocked_sig  = task->signal_mask;
+    uint64_t sigignore = 0, sigcatch = 0;
+    for (int signo = 1; signo < _NSIG && signo <= 64; signo++) {
+        sighandler_t h = task->signal_handlers[signo - 1];  /* handlers indexed 0-based */
+        if (h == SIG_IGN)
+            sigignore |= (1ULL << (signo - 1));
+        else if (h != SIG_DFL)
+            sigcatch  |= (1ULL << (signo - 1));
+    }
+
     struct pbuf b = { buf, 0, cap };
 
     /* Field 1: pid */
@@ -855,12 +868,12 @@ static size_t gen_stat(char *buf, size_t cap, fut_task_t *task) {
     pb_char(&b, '0'); pb_char(&b, ' ');
     /* Field 29: kstkeip (0) */
     pb_char(&b, '0'); pb_char(&b, ' ');
-    /* Fields 30-34: signal blocked sigignore sigcatch wchan (0) */
-    pb_char(&b, '0'); pb_char(&b, ' ');
-    pb_char(&b, '0'); pb_char(&b, ' ');
-    pb_char(&b, '0'); pb_char(&b, ' ');
-    pb_char(&b, '0'); pb_char(&b, ' ');
-    pb_char(&b, '0'); pb_char(&b, ' ');
+    /* Fields 31-35: signal blocked sigignore sigcatch wchan */
+    pb_u64(&b, pending_sig);  pb_char(&b, ' ');
+    pb_u64(&b, blocked_sig);  pb_char(&b, ' ');
+    pb_u64(&b, sigignore);    pb_char(&b, ' ');
+    pb_u64(&b, sigcatch);     pb_char(&b, ' ');
+    pb_char(&b, '0');         pb_char(&b, ' ');  /* wchan (0) */
     /* Fields 35-37: nswap cnswap exit_signal */
     pb_char(&b, '0'); pb_char(&b, ' ');
     pb_char(&b, '0'); pb_char(&b, ' ');

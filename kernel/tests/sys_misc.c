@@ -16906,6 +16906,98 @@ static void test_tiocswinsz_roundtrip(void) {
 }
 
 /* ============================================================
+ * Test 354: /proc/self/stat sigcatch field reflects installed handlers
+ * ============================================================ */
+void test_proc_stat_dummy_handler(int sig) { (void)sig; }
+
+static void test_proc_stat_sigmask(void) {
+    fut_printf("[MISC-TEST] Test 354: /proc/self/stat sigcatch signal handler bitmask\n");
+
+    extern long sys_sigaction(int signum, const void *act, void *oldact);
+
+    /* Install a SIGUSR1 (signal 10) handler so sigcatch bit 9 becomes set */
+    struct {
+        void (*sa_handler)(int);
+        unsigned long sa_flags;
+        void (*sa_restorer)(void);
+        uint64_t sa_mask;
+    } act = { NULL, 0, 0, 0 };
+
+    extern void test_proc_stat_dummy_handler(int);
+    act.sa_handler = test_proc_stat_dummy_handler;
+    act.sa_flags   = 0;
+    act.sa_mask    = 0;
+
+    long r = sys_sigaction(10 /* SIGUSR1 */, &act, NULL);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 354: rt_sigaction returned %ld\n", r);
+        fut_test_fail(354); return;
+    }
+
+    /* Read /proc/self/stat */
+    int fd = fut_vfs_open("/proc/self/stat", 0 /* O_RDONLY */, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 354: open /proc/self/stat: %d\n", fd);
+        fut_test_fail(354); return;
+    }
+    char buf[512];
+    __builtin_memset(buf, 0, sizeof(buf));
+    ssize_t n = fut_vfs_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    if (n <= 0) {
+        fut_printf("[MISC-TEST] ✗ Test 354: read /proc/self/stat: %ld\n", (long)n);
+        fut_test_fail(354); return;
+    }
+
+    /* Parse: skip past the closing ')' of the comm field, then count
+     * space-separated fields.  After ')' the layout is:
+     *   field3 field4 ... field34(sigcatch) ...
+     * We want field 34 which is the 32nd token after ')'. */
+    char *p = buf;
+    while (*p && *p != ')') p++;
+    if (*p == ')') p++;  /* skip ')' */
+    /* Skip optional space after ')' */
+    while (*p == ' ') p++;
+
+    /* Fields after comm: 3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,
+     *                    21,22,23,24,25,26,27,28,29,30,31,32,33,34,...
+     * We want field 34 = 32nd field after ')'.
+     * Skip 31 space-delimited tokens, then read the 32nd. */
+    int skip = 31;
+    for (int i = 0; i < skip && *p; i++) {
+        while (*p && *p != ' ') p++;  /* skip token */
+        while (*p == ' ') p++;        /* skip spaces */
+    }
+    /* Now p points at field 34 (sigcatch) */
+    uint64_t sigcatch = 0;
+    while (*p >= '0' && *p <= '9') {
+        sigcatch = sigcatch * 10 + (uint64_t)(*p - '0');
+        p++;
+    }
+
+    /* SIGUSR1 = signal 10 → bit index 9 → value 2^9 = 512 */
+    uint64_t expected_bit = (1ULL << (10 - 1));  /* bit 9 */
+
+    /* Restore the original handler (SIG_DFL = 0) */
+    struct {
+        void (*sa_handler)(int);
+        unsigned long sa_flags;
+        void (*sa_restorer)(void);
+        uint64_t sa_mask;
+    } restore = { 0, 0, 0, 0 };
+    sys_sigaction(10 /* SIGUSR1 */, &restore, NULL);
+
+    if (!(sigcatch & expected_bit)) {
+        fut_printf("[MISC-TEST] ✗ Test 354: sigcatch=%llu, SIGUSR1 bit (0x%llx) not set\n",
+                   (unsigned long long)sigcatch, (unsigned long long)expected_bit);
+        fut_test_fail(354); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 354: /proc/self/stat sigcatch=0x%llx has SIGUSR1 bit\n",
+               (unsigned long long)sigcatch);
+    fut_test_pass();
+}
+
+/* ============================================================
  * Tests 352-353: SO_SNDBUF / SO_RCVBUF set/get round-trip
  * ============================================================ */
 static void test_so_sndbuf_roundtrip(void) {
@@ -17431,6 +17523,7 @@ void fut_misc_test_thread(void *arg) {
     test_tiocswinsz_roundtrip();         /* Test 351: TIOCSWINSZ set/get round-trip */
     test_so_sndbuf_roundtrip();          /* Test 352: SO_SNDBUF setsockopt→getsockopt doubles value */
     test_so_rcvbuf_roundtrip();          /* Test 353: SO_RCVBUF setsockopt→getsockopt doubles value */
+    test_proc_stat_sigmask();            /* Test 354: /proc/self/stat sigcatch field reflects handlers */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

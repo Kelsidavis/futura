@@ -12266,6 +12266,71 @@ static void test_proc_sys_net(void) {
 /* ============================================================
  * Test entry point
  * ============================================================ */
+static void test_proc_pid_fdinfo(void) {
+    fut_printf("[MISC-TEST] Test 278: /proc/self/fdinfo/<n> file descriptor info\n");
+
+    extern ssize_t sys_read(int fd, void *buf, size_t count);
+    char buf[128];
+
+    /* Open a known file so FD 0 exists (stdin should already be FD 0, but ensure) */
+    /* Try reading /proc/self/fdinfo/0 — stdin/stdout/stderr should be open */
+    int fd = fut_vfs_open("/proc/self/fdinfo/0", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 278: open /proc/self/fdinfo/0 failed: %d\n", fd);
+        fut_test_fail(278); return;
+    }
+    long n = (long)sys_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    if (n <= 0) {
+        fut_printf("[MISC-TEST] ✗ Test 278: read fdinfo/0 returned %ld\n", n);
+        fut_test_fail(278); return;
+    }
+    buf[n] = '\0';
+    /* Verify "pos:" prefix */
+    if (buf[0] != 'p' || buf[1] != 'o' || buf[2] != 's' || buf[3] != ':') {
+        fut_printf("[MISC-TEST] ✗ Test 278: fdinfo format unexpected: %.32s\n", buf);
+        fut_test_fail(278); return;
+    }
+    fut_printf("[MISC-TEST] ✓ /proc/self/fdinfo/0: %s", buf);
+    fut_test_pass();
+}
+
+static void test_proc_status_capbnd(void) {
+    fut_printf("[MISC-TEST] Test 279: /proc/self/status CapBnd shows all caps set\n");
+
+    extern ssize_t sys_read(int fd, void *buf, size_t count);
+    char buf[1024];
+
+    int fd = fut_vfs_open("/proc/self/status", O_RDONLY, 0);
+    if (fd < 0) { fut_printf("[MISC-TEST] ✗ Test 279: open status failed\n"); fut_test_fail(279); return; }
+    long n = (long)sys_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    if (n <= 0) { fut_printf("[MISC-TEST] ✗ Test 279: read status failed\n"); fut_test_fail(279); return; }
+    buf[n] = '\0';
+
+    /* Find "CapBnd:" in the output */
+    const char *p = buf;
+    while (*p) {
+        if (p[0]=='C' && p[1]=='a' && p[2]=='p' && p[3]=='B' && p[4]=='n' && p[5]=='d' && p[6]==':') {
+            p += 7;
+            while (*p == '\t' || *p == ' ') p++;
+            /* Should be "000001ffffffffff" (41 caps = 0x1ffffffffff) */
+            /* At minimum, check it's non-zero and starts with meaningful hex */
+            if (p[0] == '0' && p[1] == '0' && p[2] == '0') {
+                fut_printf("[MISC-TEST] ✓ CapBnd: %.16s\n", p);
+                fut_test_pass();
+                return;
+            }
+            fut_printf("[MISC-TEST] ✗ Test 279: CapBnd value unexpected: %.16s\n", p);
+            fut_test_fail(279); return;
+        }
+        while (*p && *p != '\n') p++;
+        if (*p == '\n') p++;
+    }
+    fut_printf("[MISC-TEST] ✗ Test 279: CapBnd field not found in /proc/self/status\n");
+    fut_test_fail(279);
+}
+
 static void test_proc_pid_ns(void) {
     fut_printf("[MISC-TEST] Test 276: /proc/self/ns/ namespace symlinks\n");
 
@@ -12634,6 +12699,8 @@ void fut_misc_test_thread(void *arg) {
     test_proc_pid_oom_cgroup();           /* Test 275: /proc/self/oom_score + oom_score_adj + cgroup */
     test_proc_pid_ns();                   /* Test 276: /proc/self/ns/{pid,mnt} namespace symlinks */
     test_proc_sys_kernel_caps();          /* Test 277: /proc/sys/kernel/ngroups_max + cap_last_cap + printk */
+    test_proc_pid_fdinfo();               /* Test 278: /proc/self/fdinfo/<n> fd info files */
+    test_proc_status_capbnd();            /* Test 279: /proc/self/status CapBnd non-zero */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

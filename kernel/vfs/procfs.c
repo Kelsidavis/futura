@@ -129,6 +129,8 @@ enum procfs_kind {
     PROC_CGROUP,           /* /proc/<pid>/cgroup */
     PROC_NS_DIR,           /* /proc/<pid>/ns/ directory */
     PROC_NS_ENTRY,         /* /proc/<pid>/ns/<name> symlink (fd = ns type index) */
+    PROC_FDINFO_DIR,       /* /proc/<pid>/fdinfo/ directory */
+    PROC_FDINFO_ENTRY,     /* /proc/<pid>/fdinfo/<n> file (fd = fd number) */
     PROC_SYS_NGROUPS_MAX,  /* /proc/sys/kernel/ngroups_max */
     PROC_SYS_CAP_LAST_CAP, /* /proc/sys/kernel/cap_last_cap */
     PROC_SYS_THREADS_MAX,  /* /proc/sys/kernel/threads-max */
@@ -232,8 +234,11 @@ typedef struct {
 #define PROC_INO_PID_OOM_ADJ(p)   (1000ULL + (uint64_t)(p) * 100 + 16)
 #define PROC_INO_PID_CGROUP(p)    (1000ULL + (uint64_t)(p) * 100 + 17)
 #define PROC_INO_PID_NS(p)        (1000ULL + (uint64_t)(p) * 100 + 18)
+#define PROC_INO_PID_FDINFO(p)    (1000ULL + (uint64_t)(p) * 100 + 19)
 /* ns/ entries: 7 namespaces (pid/mnt/net/user/uts/ipc/cgroup), index 0-6 */
 #define PROC_INO_NS_ENTRY(p,n)    (300000000ULL + (uint64_t)(p) * 100 + (uint64_t)(n))
+/* fdinfo/ entries: per-fd */
+#define PROC_INO_FDINFO_ENTRY(p,n) (400000000ULL + (uint64_t)(p) * 1000 + (uint64_t)(n))
 /* fd entries: use high range to avoid collision */
 #define PROC_INO_FD_ENTRY(p,n) (100000000ULL + (uint64_t)(p) * 1000 + (uint64_t)(n))
 /* task/<tid> entries: separate high range */
@@ -278,6 +283,14 @@ static void pb_hex(struct pbuf *b, uint64_t v) {
     static const char hex[] = "0123456789abcdef";
     char tmp[16]; int n = 0;
     while (v) { tmp[n++] = hex[v & 0xf]; v >>= 4; }
+    for (int i = n - 1; i >= 0; i--) pb_char(b, tmp[i]);
+}
+
+static void pb_oct(struct pbuf *b, uint32_t v) {
+    /* Print minimum octal digits (for fdinfo flags) */
+    if (v == 0) { pb_char(b, '0'); return; }
+    char tmp[12]; int n = 0;
+    while (v) { tmp[n++] = '0' + (int)(v & 7); v >>= 3; }
     for (int i = n - 1; i >= 0; i--) pb_char(b, tmp[i]);
 }
 
@@ -443,7 +456,7 @@ static size_t gen_status(char *buf, size_t cap, fut_task_t *task) {
     pb_str(&b, "CapInh:\t");     pb_hex16(&b, task->cap_inheritable); pb_char(&b, '\n');
     pb_str(&b, "CapPrm:\t");     pb_hex16(&b, task->cap_permitted);   pb_char(&b, '\n');
     pb_str(&b, "CapEff:\t");     pb_hex16(&b, task->cap_effective);   pb_char(&b, '\n');
-    pb_str(&b, "CapBnd:\t");     pb_hex16(&b, 0);                      pb_char(&b, '\n');
+    pb_str(&b, "CapBnd:\t");     pb_hex16(&b, (2ULL << 40) - 1);      pb_char(&b, '\n');
     pb_str(&b, "CapAmb:\t");     pb_hex16(&b, 0);                      pb_char(&b, '\n');
     pb_str(&b, "NoNewPrivs:\t"); pb_u64(&b, task->no_new_privs ? 1 : 0); pb_char(&b, '\n');
     pb_str(&b, "Seccomp:\t");    pb_u64(&b, 0);                        pb_char(&b, '\n');
@@ -1282,6 +1295,20 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             total = b.pos;
             break;
         }
+        case PROC_FDINFO_ENTRY: {
+            /* /proc/<pid>/fdinfo/<n>: pos, flags (octal), mnt_id */
+            fut_task_t *ftask = fut_task_by_pid(n->pid);
+            if (!ftask || n->fd < 0 || n->fd >= ftask->max_fds || !ftask->fd_table[n->fd]) {
+                total = 0; break;
+            }
+            struct fut_file *file = ftask->fd_table[n->fd];
+            struct pbuf b = { tmp, 0, GEN_BUF };
+            pb_str(&b, "pos:\t");  pb_u64(&b, file->offset); pb_char(&b, '\n');
+            pb_str(&b, "flags:\t0"); pb_oct(&b, (uint32_t)file->flags); pb_char(&b, '\n');
+            pb_str(&b, "mnt_id:\t25\n");
+            total = b.pos;
+            break;
+        }
         case PROC_SYS_OSTYPE:
             total = gen_sysctl_str(tmp, GEN_BUF, "Linux");
             break;
@@ -1733,6 +1760,11 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0040511, PROC_NS_DIR, pid, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "fdinfo")) {
+            *result = procfs_alloc_vnode(mnt, VN_DIR, PROC_INO_PID_FDINFO(pid),
+                                          0040500, PROC_FDINFO_DIR, pid, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         return -ENOENT;
     }
 
@@ -1797,6 +1829,8 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
             { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_CGROUP(pid),    0100444, PROC_CGROUP,    pid,0); return *result ? 0 : -ENOMEM; }
         if (STREQ(name, "ns"))
             { *result = procfs_alloc_vnode(mnt, VN_DIR, PROC_INO_PID_NS(pid), 0040511, PROC_NS_DIR, pid, 0); return *result ? 0 : -ENOMEM; }
+        if (STREQ(name, "fdinfo"))
+            { *result = procfs_alloc_vnode(mnt, VN_DIR, PROC_INO_PID_FDINFO(pid), 0040500, PROC_FDINFO_DIR, pid, 0); return *result ? 0 : -ENOMEM; }
         return -ENOENT;
     }
 
@@ -2014,6 +2048,21 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
         return -ENOENT;
     }
 
+    if (dn->kind == PROC_FDINFO_DIR) {
+        uint64_t pid = dn->pid;
+        uint64_t fdnum = 0;
+        const char *p = name;
+        if (!*p) return -ENOENT;
+        while (*p >= '0' && *p <= '9') { fdnum = fdnum * 10 + (uint64_t)(*p - '0'); p++; }
+        if (*p != '\0') return -ENOENT;
+        fut_task_t *ftask = fut_task_by_pid(pid);
+        if (!ftask) return -ESRCH;
+        if ((int)fdnum >= ftask->max_fds || !ftask->fd_table[fdnum]) return -ENOENT;
+        *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_FDINFO_ENTRY(pid, fdnum),
+                                      0100400, PROC_FDINFO_ENTRY, pid, (int)fdnum);
+        return *result ? 0 : -ENOMEM;
+    }
+
     if (dn->kind == PROC_SYS_RANDOM_DIR) {
         if (STREQ(name, "boot_id")) {
             *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_BOOT_ID,
@@ -2220,7 +2269,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         static const char *entries[] = {
             ".", "..", "status", "maps", "cmdline", "environ", "fd", "exe", "cwd",
             "stat", "statm", "comm", "task", "limits", "io", "smaps",
-            "oom_score", "oom_score_adj", "cgroup", "ns"
+            "oom_score", "oom_score_adj", "cgroup", "ns", "fdinfo"
         };
         static const uint8_t etypes[] = {
             FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
@@ -2232,10 +2281,10 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             FUT_VDIR_TYPE_DIR,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
-            FUT_VDIR_TYPE_DIR
+            FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR
         };
         uint64_t pid = dn->pid;
-        if (idx < 20) {
+        if (idx < 21) {
             uint64_t ino;
             switch (idx) {
                 case 0:  ino = PROC_INO_PID_DIR(pid);        break;
@@ -2258,6 +2307,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                 case 17: ino = PROC_INO_PID_OOM_ADJ(pid);    break;
                 case 18: ino = PROC_INO_PID_CGROUP(pid);     break;
                 case 19: ino = PROC_INO_PID_NS(pid);         break;
+                case 20: ino = PROC_INO_PID_FDINFO(pid);     break;
                 default: ino = 0; break;
             }
             de->d_ino    = ino;
@@ -2540,6 +2590,46 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         de->d_ino    = PROC_INO_FD_ENTRY(pid, scan);
         de->d_off    = idx + 1;
         de->d_type   = FUT_VDIR_TYPE_SYMLINK;
+        de->d_reclen = sizeof(*de);
+        __builtin_memcpy(de->d_name, tmp, tn + 1);
+        *cookie = (uint64_t)(scan + 2 + 1);
+        return 0;
+    }
+
+    if (dn->kind == PROC_FDINFO_DIR) {
+        uint64_t pid = dn->pid;
+        fut_task_t *task = fut_task_by_pid(pid);
+        if (!task) return -ENOENT;
+
+        if (idx == 0) {
+            de->d_ino = PROC_INO_PID_FDINFO(pid); de->d_off = 1;
+            de->d_type = FUT_VDIR_TYPE_DIR; de->d_reclen = sizeof(*de);
+            de->d_name[0] = '.'; de->d_name[1] = '\0'; *cookie = 1; return 0;
+        }
+        if (idx == 1) {
+            de->d_ino = PROC_INO_PID_DIR(pid); de->d_off = 2;
+            de->d_type = FUT_VDIR_TYPE_DIR; de->d_reclen = sizeof(*de);
+            de->d_name[0] = '.'; de->d_name[1] = '.'; de->d_name[2] = '\0'; *cookie = 2; return 0;
+        }
+        /* Scan for open fds (same layout as PROC_FD_DIR) */
+        int scan = (int)(idx - 2);
+        while (scan < task->max_fds) {
+            if (task->fd_table[scan]) break;
+            scan++;
+        }
+        if (scan >= task->max_fds) return -ENOENT;
+        char tmp[12]; int tn = 0;
+        int v = scan;
+        if (v == 0) { tmp[tn++] = '0'; }
+        else {
+            char rev[10]; int rn = 0;
+            while (v) { rev[rn++] = '0' + (v % 10); v /= 10; }
+            for (int i = rn - 1; i >= 0; i--) tmp[tn++] = rev[i];
+        }
+        tmp[tn] = '\0';
+        de->d_ino = PROC_INO_FDINFO_ENTRY(pid, (uint64_t)scan);
+        de->d_off = idx + 1;
+        de->d_type = FUT_VDIR_TYPE_REG;
         de->d_reclen = sizeof(*de);
         __builtin_memcpy(de->d_name, tmp, tn + 1);
         *cookie = (uint64_t)(scan + 2 + 1);

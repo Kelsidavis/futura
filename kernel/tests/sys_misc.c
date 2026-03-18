@@ -24,6 +24,7 @@
 #include <sys/utsname.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
+#include <sys/capability.h>
 #include <stdint.h>
 #include <string.h>
 #include "tests/test_api.h"
@@ -7957,6 +7958,31 @@ static void test_fchownat_basic(void) {
     fut_test_pass();
 }
 
+static void test_capget_basic(void) {
+    fut_printf("[MISC-TEST] Test 175: sys_capget/capset basic\n");
+    extern long sys_capget(void *hdrp, void *datap);
+    extern long sys_capset(void *hdrp, const void *datap);
+
+    struct __user_cap_header_struct hdr = { _LINUX_CAPABILITY_VERSION_2, 0 };
+    struct __user_cap_data_struct data[2];
+    __builtin_memset(data, 0, sizeof(data));
+
+    long ret = sys_capget(&hdr, data);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ capget: returned %ld\n", ret);
+        fut_test_fail(175);
+        return;
+    }
+    /* Root kernel thread should have all effective capabilities set */
+    if (data[0].effective == 0) {
+        fut_printf("[MISC-TEST] ✗ capget: effective=0 (expected non-zero for root)\n");
+        fut_test_fail(175);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ sys_capget: effective=0x%x (root has caps)\n", data[0].effective);
+    fut_test_pass();
+}
+
 static void test_getresuid_syscall(void) {
     fut_printf("[MISC-TEST] Test 173: sys_getresuid/getresgid direct\n");
     extern long sys_getresuid(uint32_t *ruid, uint32_t *euid, uint32_t *suid);
@@ -8324,6 +8350,7 @@ void fut_misc_test_thread(void *arg) {
     test_faccessat_basic();                /* Test 172: sys_faccessat F_OK + ENOENT */
     test_getresuid_syscall();              /* Test 173: sys_getresuid/getresgid direct call */
     test_waitid_nohang();                  /* Test 174: sys_waitid WNOHANG no children */
+    test_capget_basic();                   /* Test 175: sys_capget effective caps for root */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

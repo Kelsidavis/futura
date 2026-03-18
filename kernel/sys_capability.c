@@ -21,6 +21,31 @@
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
+static inline int cap_copy_to_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)dst >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_to_user(dst, src, n);
+}
+static inline int cap_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_from_user(dst, src, n);
+}
+static inline int cap_access_ok(const void *ptr, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)ptr >= KERNEL_VIRTUAL_BASE) return 0;
+#endif
+    return fut_access_ok(ptr, n, 1);
+}
+
 /* Capability version */
 #define _LINUX_CAPABILITY_VERSION_1  0x19980330
 #define _LINUX_CAPABILITY_VERSION_2  0x20071026
@@ -157,7 +182,7 @@ long sys_capget(struct __user_cap_header_struct *hdrp,
      * ATTACK: Attacker provides read-only or unmapped datap buffer
      * IMPACT: Kernel page fault when writing capability data
      * DEFENSE: Check write permission before processing */
-    if (fut_access_ok(datap, sizeof(struct __user_cap_data_struct), 1) != 0) {
+    if (cap_access_ok(datap, sizeof(struct __user_cap_data_struct)) != 0) {
         fut_printf("[CAPABILITY] capget(hdrp=%p, datap=%p) -> EFAULT (datap not writable for %zu bytes)\n",
                    hdrp, datap, sizeof(struct __user_cap_data_struct));
         return -EFAULT;
@@ -165,7 +190,7 @@ long sys_capget(struct __user_cap_header_struct *hdrp,
 
     /* Phase 2: Copy capability header from userspace */
     struct __user_cap_header_struct hdr;
-    if (fut_copy_from_user(&hdr, hdrp, sizeof(hdr)) != 0) {
+    if (cap_copy_from_user(&hdr, hdrp, sizeof(hdr)) != 0) {
         fut_printf("[CAPABILITY] capget(hdrp=?, datap=%p, pid=%d) -> EFAULT "
                    "(header copy_from_user failed)\n", datap, task->pid);
         return -EFAULT;
@@ -221,7 +246,7 @@ long sys_capget(struct __user_cap_header_struct *hdrp,
     }
 
     /* Phase 3: Copy capability data to userspace */
-    if (fut_copy_to_user(datap, &cap_data, sizeof(cap_data)) != 0) {
+    if (cap_copy_to_user(datap, &cap_data, sizeof(cap_data)) != 0) {
         fut_printf("[CAPABILITY] capget(hdrp=? [version=%s, pid=%s], datap=%p, caller_pid=%d) "
                    "-> EFAULT (failed to copy capability data to userspace)\n",
                    version_desc, pid_desc, datap, task->pid);
@@ -294,7 +319,7 @@ long sys_capset(struct __user_cap_header_struct *hdrp,
 
     /* Phase 2: Copy capability header from userspace */
     struct __user_cap_header_struct hdr;
-    if (fut_copy_from_user(&hdr, hdrp, sizeof(hdr)) != 0) {
+    if (cap_copy_from_user(&hdr, hdrp, sizeof(hdr)) != 0) {
         fut_printf("[CAPABILITY] capset(hdrp=?, datap=%p, pid=%d) -> EFAULT "
                    "(header copy_from_user failed)\n", datap, task->pid);
         return -EFAULT;
@@ -302,7 +327,7 @@ long sys_capset(struct __user_cap_header_struct *hdrp,
 
     /* Phase 2: Copy capability data from userspace */
     struct __user_cap_data_struct data;
-    if (fut_copy_from_user(&data, datap, sizeof(data)) != 0) {
+    if (cap_copy_from_user(&data, datap, sizeof(data)) != 0) {
         fut_printf("[CAPABILITY] capset(hdrp=?, datap=?, pid=%d) -> EFAULT "
                    "(data copy_from_user failed)\n", task->pid);
         return -EFAULT;

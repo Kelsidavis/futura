@@ -63,8 +63,6 @@ long sys_mlock(const void *addr, size_t len) {
         return -ESRCH;
     }
 
-    fut_printf("[MLOCK] mlock(addr=%p, len=%zu)\n", local_addr, local_len);
-
     /* Document validation and security requirements
      * VULNERABILITY: Memory Exhaustion and RLIMIT_MEMLOCK Bypass
      *
@@ -191,8 +189,9 @@ long sys_mlock(const void *addr, size_t len) {
     /* Phase 3 Full: Cumulative RLIMIT_MEMLOCK enforcement with locked_vm tracking */
     fut_mm_t *mm = fut_task_get_mm(task);
     if (!mm) {
-        fut_printf("[MLOCK] mlock(addr=%p, len=%zu) -> ENOMEM (no MM context)\n",
-                   local_addr, local_len);
+        mm = fut_mm_current();  /* Fall back to kernel_mm for kernel threads */
+    }
+    if (!mm) {
         return -ENOMEM;
     }
 
@@ -270,8 +269,6 @@ long sys_munlock(const void *addr, size_t len) {
     if (!task) {
         return -ESRCH;
     }
-
-    fut_printf("[MUNLOCK] munlock(addr=%p, len=%zu)\n", local_addr, local_len);
 
     /* Validate address alignment */
     if ((uintptr_t)local_addr & 0xFFF) {
@@ -351,8 +348,6 @@ long sys_mlockall(int flags) {
     if (!task) {
         return -ESRCH;
     }
-
-    fut_printf("[MLOCKALL] mlockall(flags=0x%x)\n", local_flags);
 
     /* Validate flags */
     int valid_flags = MCL_CURRENT | MCL_FUTURE | MCL_ONFAULT;
@@ -478,7 +473,9 @@ long sys_mlockall(int flags) {
     /* Phase 2: VMA count and RLIMIT_MEMLOCK validation */
     fut_mm_t *mm = fut_task_get_mm(task);
     if (!mm) {
-        fut_printf("[MLOCKALL] mlockall(flags=0x%x) -> ENOMEM (no mm)\n", local_flags);
+        mm = fut_mm_current();  /* Fall back to kernel_mm for kernel threads */
+    }
+    if (!mm) {
         return -ENOMEM;
     }
 

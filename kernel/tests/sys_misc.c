@@ -68,6 +68,12 @@ extern long sys_uname(struct utsname *buf);
 extern long sys_getrlimit(int resource, struct rlimit *rlim);
 extern long sys_setrlimit(int resource, const struct rlimit *rlim);
 extern long sys_fcntl(int fd, int cmd, uint64_t arg);
+extern long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset);
+extern long sys_munmap(void *addr, size_t len);
+extern long sys_madvise(void *addr, size_t length, int advice);
+extern long sys_mlock(const void *addr, size_t len);
+extern long sys_munlock(const void *addr, size_t len);
+extern long sys_getcwd(char *buf, size_t size);
 
 /* fcntl commands */
 #define F_DUPFD         0
@@ -6828,6 +6834,179 @@ static void test_prctl_subreaper(void) {
 }
 
 /* ============================================================
+ * Test 143: madvise basic advice hints
+ * ============================================================ */
+#define MADV_NORMAL_TEST    0
+#define MADV_DONTNEED_TEST  4
+#define MAP_ANONYMOUS_TEST  0x20
+#define MAP_PRIVATE_TEST    0x2
+#define PROT_RW_TEST        (0x1 | 0x2)  /* PROT_READ | PROT_WRITE */
+
+static void test_madvise_basic(void) {
+    fut_printf("[MISC-TEST] Test 143: madvise basic hints\n");
+
+    /* Map a page to give madvise a valid address */
+    long addr = sys_mmap(NULL, 4096, PROT_RW_TEST,
+                         MAP_PRIVATE_TEST | MAP_ANONYMOUS_TEST, -1, 0);
+    if (addr < 0) {
+        fut_printf("[MISC-TEST] ✗ madvise: mmap failed: %ld\n", addr);
+        fut_test_fail(143);
+        return;
+    }
+
+    /* MADV_NORMAL on a valid mapped region */
+    long ret = sys_madvise((void *)addr, 4096, MADV_NORMAL_TEST);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ madvise(MADV_NORMAL): %ld\n", ret);
+        sys_munmap((void *)addr, 4096);
+        fut_test_fail(143);
+        return;
+    }
+
+    /* MADV_DONTNEED on a valid mapped region */
+    ret = sys_madvise((void *)addr, 4096, MADV_DONTNEED_TEST);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ madvise(MADV_DONTNEED): %ld\n", ret);
+        sys_munmap((void *)addr, 4096);
+        fut_test_fail(143);
+        return;
+    }
+
+    /* EINVAL for unknown advice code */
+    ret = sys_madvise((void *)addr, 4096, 999);
+    if (ret != -22 /* EINVAL */) {
+        fut_printf("[MISC-TEST] ✗ madvise(bad advice): got %ld, want EINVAL\n", ret);
+        sys_munmap((void *)addr, 4096);
+        fut_test_fail(143);
+        return;
+    }
+
+    sys_munmap((void *)addr, 4096);
+    fut_printf("[MISC-TEST] ✓ madvise: NORMAL, DONTNEED, EINVAL all correct\n");
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 144: mlock/munlock on anonymous mapping
+ * ============================================================ */
+static void test_mlock_munlock(void) {
+    fut_printf("[MISC-TEST] Test 144: mlock/munlock basic\n");
+
+    long addr = sys_mmap(NULL, 4096, PROT_RW_TEST,
+                         MAP_PRIVATE_TEST | MAP_ANONYMOUS_TEST, -1, 0);
+    if (addr < 0) {
+        fut_printf("[MISC-TEST] ✗ mlock: mmap failed: %ld\n", addr);
+        fut_test_fail(144);
+        return;
+    }
+
+    /* mlock the page */
+    long ret = sys_mlock((const void *)addr, 4096);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ mlock: returned %ld\n", ret);
+        sys_munmap((void *)addr, 4096);
+        fut_test_fail(144);
+        return;
+    }
+
+    /* munlock the page */
+    ret = sys_munlock((const void *)addr, 4096);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ munlock: returned %ld\n", ret);
+        sys_munmap((void *)addr, 4096);
+        fut_test_fail(144);
+        return;
+    }
+
+    /* mlock(NULL) → EINVAL (unaligned) */
+    ret = sys_mlock((const void *)0x1, 4096);
+    if (ret != -22 /* EINVAL */) {
+        fut_printf("[MISC-TEST] ✗ mlock(unaligned): got %ld, want EINVAL\n", ret);
+        sys_munmap((void *)addr, 4096);
+        fut_test_fail(144);
+        return;
+    }
+
+    sys_munmap((void *)addr, 4096);
+    fut_printf("[MISC-TEST] ✓ mlock/munlock: lock/unlock cycle OK\n");
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 145: getcwd returns a path starting with '/'
+ * ============================================================ */
+static void test_getcwd_basic(void) {
+    fut_printf("[MISC-TEST] Test 145: getcwd basic\n");
+
+    char buf[256];
+    long ret = sys_getcwd(buf, sizeof(buf));
+    /* getcwd returns the buffer pointer on success (kernel addr → negative as long);
+     * real errors are in [-4095, -1] */
+    if (ret >= -4095 && ret < 0) {
+        fut_printf("[MISC-TEST] ✗ getcwd: returned %ld\n", ret);
+        fut_test_fail(145);
+        return;
+    }
+
+    if (buf[0] != '/') {
+        fut_printf("[MISC-TEST] ✗ getcwd: path '%s' doesn't start with '/'\n", buf);
+        fut_test_fail(145);
+        return;
+    }
+
+    /* ERANGE for buffer too small */
+    char tiny[1];
+    ret = sys_getcwd(tiny, sizeof(tiny));
+    if (ret != -34 /* ERANGE */) {
+        fut_printf("[MISC-TEST] ✗ getcwd(tiny): got %ld, want ERANGE\n", ret);
+        fut_test_fail(145);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ getcwd: path='%s', ERANGE for tiny buffer\n", buf);
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 146: /proc/self/maps is readable and non-empty
+ * ============================================================ */
+static void test_proc_self_maps(void) {
+    fut_printf("[MISC-TEST] Test 146: /proc/self/maps readable\n");
+
+    int fd = fut_vfs_open("/proc/self/maps", 0 /* O_RDONLY */, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open /proc/self/maps: %d\n", fd);
+        fut_test_fail(146);
+        return;
+    }
+
+    char buf[256];
+    long n = fut_vfs_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+
+    if (n <= 0) {
+        fut_printf("[MISC-TEST] ✗ read /proc/self/maps: %ld\n", n);
+        fut_test_fail(146);
+        return;
+    }
+
+    buf[n] = '\0';
+    /* Maps format: "addr-addr perm offset dev ino path\n" - must contain '-' */
+    int found_dash = 0;
+    for (long i = 0; i < n; i++) {
+        if (buf[i] == '-') { found_dash = 1; break; }
+    }
+    if (!found_dash) {
+        fut_printf("[MISC-TEST] ✗ /proc/self/maps: no '-' in output\n");
+        fut_test_fail(146);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ /proc/self/maps: readable, %ld bytes, has VMA entries\n", n);
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -6979,6 +7158,10 @@ void fut_misc_test_thread(void *arg) {
     test_mremap_shrink();                  /* Test 140: mremap shrink anonymous mapping */
     test_prctl_securebits();               /* Test 141: prctl securebits/keepcaps */
     test_prctl_subreaper();                /* Test 142: prctl PR_SET/GET_CHILD_SUBREAPER */
+    test_madvise_basic();                  /* Test 143: madvise NORMAL/DONTNEED/EINVAL */
+    test_mlock_munlock();                  /* Test 144: mlock/munlock cycle */
+    test_getcwd_basic();                   /* Test 145: getcwd returns '/' path */
+    test_proc_self_maps();                 /* Test 146: /proc/self/maps readable */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

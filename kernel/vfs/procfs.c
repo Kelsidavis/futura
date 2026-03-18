@@ -340,10 +340,12 @@ static size_t gen_status(char *buf, size_t cap, fut_task_t *task) {
 }
 
 static size_t gen_maps(char *buf, size_t cap, fut_task_t *task) {
-    if (!task || !task->mm) return 0;
+    if (!task) return 0;
+    fut_mm_t *mm = task->mm ? task->mm : fut_mm_current();
+    if (!mm) return 0;
 
     struct pbuf b = { buf, 0, cap };
-    struct fut_vma *vma = task->mm->vma_list;
+    struct fut_vma *vma = mm->vma_list;
     while (vma) {
         /* address range */
         pb_hex(&b, vma->start); pb_char(&b, '-');

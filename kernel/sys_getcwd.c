@@ -20,6 +20,19 @@
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
+static inline int getcwd_copy_to_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)dst >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_to_user(dst, src, n);
+}
+
 /**
  * getcwd() - Get current working directory
  *
@@ -184,7 +197,7 @@ long sys_getcwd(char *buf, size_t size) {
         /* Probe buffer write permission with 1-byte test write
          * Use fut_copy_to_user to safely check write access without faulting */
         char probe = '\0';
-        if (fut_copy_to_user(local_buf, &probe, 1) != 0) {
+        if (getcwd_copy_to_user(local_buf, &probe, 1) != 0) {
             fut_printf("[GETCWD] getcwd(buf=%p, size=%zu) -> EFAULT "
                        "(buffer not writable write permission validation)\n",
                        (void *)local_buf, local_size);
@@ -192,30 +205,8 @@ long sys_getcwd(char *buf, size_t size) {
         }
     }
 
-    /* Phase 2: Categorize buffer size */
-    const char *size_category;
-    const char *size_desc;
-    if (local_size < 2) {
-        size_category = "invalid (too small)";
-        size_desc = "insufficient for minimum path '/'";
-    } else if (local_size < 64) {
-        size_category = "tiny (2-63 bytes)";
-        size_desc = "minimal, only very short paths";
-    } else if (local_size < 256) {
-        size_category = "small (64-255 bytes)";
-        size_desc = "adequate for simple paths";
-    } else if (local_size < 1024) {
-        size_category = "typical (256-1023 bytes)";
-        size_desc = "standard buffer size";
-    } else {
-        size_category = "large (1024+ bytes)";
-        size_desc = "generous for deep hierarchies";
-    }
-
     /* Validate minimum buffer size (need at least 2 bytes for "/" + null) */
     if (local_size < 2) {
-        fut_printf("[GETCWD] getcwd(buf=%p, size=%zu [%s]) -> ERANGE (%s)\n",
-                   (void *)local_buf, local_size, size_category, size_desc);
         return -ERANGE;
     }
 
@@ -232,16 +223,6 @@ long sys_getcwd(char *buf, size_t size) {
      * and updated by chdir() when the working directory changes.
      */
     uint64_t cwd_inode = task->current_dir_ino;
-
-    /* Pre-emptive validation for future path resolution
-     * Ensure buffer is large enough for at least "/" + null terminator
-     * Prevents buffer overflow when VFS path resolution is added */
-    if (local_size < 2) {  /* Minimum: "/" + '\0' */
-        fut_printf("[GETCWD] getcwd(buf=%p, size=%zu) -> ERANGE "
-                   "(buffer too small for minimum path)\n",
-                   (void *)local_buf, local_size);
-        return -ERANGE;
-    }
 
     /* Phase 3: Build path from current directory
      * For root directory, return "/" directly.
@@ -273,46 +254,12 @@ long sys_getcwd(char *buf, size_t size) {
     }
 
     /* Copy path to user buffer (including null terminator) */
-    if (fut_copy_to_user(local_buf, path_str, path_len + 1) != 0) {
+    if (getcwd_copy_to_user(local_buf, path_str, path_len + 1) != 0) {
         fut_printf("[GETCWD] getcwd(buf=%p, size=%zu) -> EFAULT "
                    "(copy_to_user failed)\n",
                    (void *)local_buf, local_size);
         return -EFAULT;
     }
-
-    /* Phase 3: Categorize path length */
-    const char *path_category;
-    if (path_len == 1) {
-        path_category = "root (1 char)";
-    } else if (path_len < 64) {
-        path_category = "short (2-63 chars)";
-    } else if (path_len < 256) {
-        path_category = "medium (64-255 chars)";
-    } else {
-        path_category = "long (256+ chars)";
-    }
-
-    /* Phase 2: Calculate buffer utilization */
-    const size_t utilization_pct = ((path_len + 1) * 100) / local_size;
-    const char *utilization_desc;
-    if (utilization_pct < 25) {
-        utilization_desc = "plenty of space";
-    } else if (utilization_pct < 50) {
-        utilization_desc = "comfortable";
-    } else if (utilization_pct < 75) {
-        utilization_desc = "adequate";
-    } else if (utilization_pct < 90) {
-        utilization_desc = "tight";
-    } else {
-        utilization_desc = "very tight";
-    }
-
-    /* Phase 2: Detailed success logging */
-    fut_printf("[GETCWD] getcwd(buf=%p, size=%zu [%s], cwd_inode=%lu) -> %p "
-               "(path='%s', len=%zu [%s], util=%zu%% [%s])\n",
-               (void *)local_buf, local_size, size_category, (unsigned long)cwd_inode,
-               (void *)local_buf, path_str, path_len, path_category,
-               utilization_pct, utilization_desc);
 
     return (long)(uintptr_t)local_buf;
 }

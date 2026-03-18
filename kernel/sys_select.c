@@ -1057,8 +1057,12 @@ long sys_ppoll(void *fds, unsigned int nfds, void *tmo_p, const void *sigmask) {
     int timeout_ms = -1;  /* Default: block indefinitely */
     if (local_tmo_p) {
         struct fut_timespec kts;
-        if (fut_copy_from_user(&kts, local_tmo_p, sizeof(kts)) != 0)
-            return -EFAULT;
+        if (IS_KPTR(local_tmo_p)) {
+            memcpy(&kts, local_tmo_p, sizeof(kts));
+        } else {
+            if (fut_copy_from_user(&kts, local_tmo_p, sizeof(kts)) != 0)
+                return -EFAULT;
+        }
         if (kts.tv_sec < 0 || kts.tv_nsec < 0 || kts.tv_nsec >= 1000000000L)
             return -EINVAL;
         /* Convert to ms, cap at INT_MAX */

@@ -16777,6 +16777,51 @@ static void test_getdents64_dot_dotdot(void) {
 }
 
 /* ============================================================
+ * Test 349: ppoll() POLLIN on pipe (kernel-stack timespec IS_KPTR bypass)
+ * ============================================================ */
+static void test_ppoll_basic(void) {
+    fut_printf("[MISC-TEST] Test 349: ppoll() POLLIN on pipe with kernel-stack timespec\n");
+
+    extern long sys_ppoll(void *fds, unsigned int nfds, void *tmo_p, const void *sigmask);
+    extern long sys_pipe(int pipefd[2]);
+    extern long sys_write(int fd, const void *buf, size_t count);
+    extern long sys_close(int fd);
+
+    int pipefd[2];
+    if (sys_pipe(pipefd) != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 349: pipe() failed\n");
+        fut_test_fail(349); return;
+    }
+
+    /* Kernel-stack timespec — tests the IS_KPTR bypass in sys_ppoll */
+    struct fut_timespec ts_zero = { .tv_sec = 0, .tv_nsec = 0 };
+
+    struct pollfd pfd = { .fd = pipefd[0], .events = POLLIN, .revents = 0 };
+
+    /* Poll with no data in pipe and timeout=0: should return 0 immediately */
+    long r = sys_ppoll(&pfd, 1, &ts_zero, NULL);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 349: expected 0 on empty pipe, got %ld\n", r);
+        sys_close(pipefd[0]); sys_close(pipefd[1]);
+        fut_test_fail(349); return;
+    }
+
+    /* Write data to pipe, then poll: should return 1 with POLLIN set */
+    sys_write(pipefd[1], "x", 1);
+    pfd.revents = 0;
+    r = sys_ppoll(&pfd, 1, &ts_zero, NULL);
+    sys_close(pipefd[0]); sys_close(pipefd[1]);
+
+    if (r != 1 || !(pfd.revents & POLLIN)) {
+        fut_printf("[MISC-TEST] ✗ Test 349: expected 1+POLLIN, got %ld revents=0x%x\n",
+                   r, (unsigned)pfd.revents);
+        fut_test_fail(349); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 349: ppoll() POLLIN on pipe with kernel-stack timespec\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test 347: mmap MAP_SHARED|PROT_WRITE on O_RDONLY fd -> EACCES
  * ============================================================ */
 static void test_mmap_rdonly_shared_write(void) {
@@ -17217,6 +17262,7 @@ void fut_misc_test_thread(void *arg) {
     test_writev_pipe_gather();           /* Test 346: writev on pipe gathers all iovecs atomically */
     test_mmap_rdonly_shared_write();     /* Test 347: mmap MAP_SHARED|PROT_WRITE on O_RDONLY fd -> EACCES */
     test_getdents64_dot_dotdot();        /* Test 348: getdents64 includes . and .. entries */
+    test_ppoll_basic();                  /* Test 349: ppoll() POLLIN on pipe with kernel-stack timespec */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

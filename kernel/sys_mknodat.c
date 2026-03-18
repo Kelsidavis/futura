@@ -342,3 +342,14 @@ long sys_mknodat(int dirfd, const char *pathname, uint32_t mode, uint32_t dev) {
 
     return -EINVAL;
 }
+
+/**
+ * mknod() - Create a special or ordinary file.
+ *
+ * Equivalent to mknodat(AT_FDCWD, pathname, mode, dev).
+ * Used by mkfifo(3), mknod(1), and programs that create named pipes
+ * or device files via the mknod(2) syscall directly.
+ */
+long sys_mknod(const char *pathname, uint32_t mode, uint32_t dev) {
+    return sys_mknodat(AT_FDCWD, pathname, mode, dev);
+}

@@ -36,6 +36,7 @@
 #define SYS_close       3
 #define SYS_openat      257
 #define SYS_mkdirat     258
+#define SYS_mknod       133
 #define SYS_mknodat     259
 #define SYS_fchownat    260
 #define SYS_futimesat   261  /* futimesat (not futimensat) - deprecated */
@@ -875,6 +876,13 @@ static int64_t sys_mknodat_handler(uint64_t dirfd, uint64_t pathname, uint64_t m
     (void)arg5; (void)arg6;
     extern long sys_mknodat(int dirfd, const char *pathname, uint32_t mode, uint32_t dev);
     return sys_mknodat((int)dirfd, (const char *)(uintptr_t)pathname, (uint32_t)mode, (uint32_t)dev);
+}
+
+static int64_t sys_mknod_handler(uint64_t pathname, uint64_t mode, uint64_t dev,
+                                  uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_mknod(const char *pathname, uint32_t mode, uint32_t dev);
+    return sys_mknod((const char *)(uintptr_t)pathname, (uint32_t)mode, (uint32_t)dev);
 }
 
 static int64_t sys_fchownat_handler(uint64_t dirfd, uint64_t pathname, uint64_t uid,
@@ -3303,6 +3311,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_open]       = sys_open_handler,
     [SYS_openat]     = sys_openat_handler,
     [SYS_openat2]    = sys_openat2_handler,
+    [SYS_mknod]      = sys_mknod_handler,
     /* *at family (Linux x86_64 258-269, 280) */
     [SYS_mkdirat]    = sys_mkdirat_handler,
     [SYS_mknodat]    = sys_mknodat_handler,

@@ -17801,6 +17801,29 @@ static void test_setfsuid_setfsgid(void) {
 }
 
 /* ============================================================
+ * Test 381: mknod() creates a FIFO
+ * ============================================================ */
+static void test_mknod_fifo(void) {
+    fut_printf("[MISC-TEST] Test 381: mknod() creates FIFO\n");
+    extern long sys_mknod(const char *pathname, uint32_t mode, uint32_t dev);
+    /* S_IFIFO = 0010000 = 0x1000 = 4096 */
+    const uint32_t S_IFIFO_VAL = 0010000u;
+    long r = sys_mknod("/test_mknod_fifo_381", S_IFIFO_VAL | 0644, 0);
+    if (r < 0) { fut_printf("[MISC-TEST] ✗ Test 381: mknod FIFO failed: %ld\n", r); fut_test_fail(381); return; }
+    /* Verify it was created as a FIFO */
+    struct fut_stat fst;
+    r = sys_stat("/test_mknod_fifo_381", &fst);
+    fut_vfs_unlink("/test_mknod_fifo_381");
+    if (r < 0) { fut_printf("[MISC-TEST] ✗ Test 381: stat failed: %ld\n", r); fut_test_fail(381); return; }
+    if ((fst.st_mode & 0170000u) != S_IFIFO_VAL) {
+        fut_printf("[MISC-TEST] ✗ Test 381: mode 0x%x not FIFO\n", fst.st_mode);
+        fut_test_fail(381); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 381: mknod() created FIFO successfully\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test 367: /proc/self/net/unix readable (same content as /proc/net/unix)
  * ============================================================ */
 static void test_proc_pid_net_unix(void) {
@@ -18380,6 +18403,7 @@ void fut_misc_test_thread(void *arg) {
     test_creat_syscall();                /* Test 378: creat() creates/truncates file */
     test_lchown_syscall();               /* Test 379: lchown() changes symlink ownership */
     test_setfsuid_setfsgid();            /* Test 380: setfsuid/setfsgid return previous ID */
+    test_mknod_fifo();                   /* Test 381: mknod() creates FIFO */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

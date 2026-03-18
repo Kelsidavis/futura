@@ -90,27 +90,33 @@ long sys_socketpair(int domain, int type, int protocol, int *sv) {
     memset(pair_fwd, 0, sizeof(*pair_fwd));
     memset(pair_rev, 0, sizeof(*pair_rev));
 
-    pair_fwd->send_buf = fut_malloc(FUT_SOCKET_BUFSIZE);
-    pair_fwd->recv_buf = fut_malloc(FUT_SOCKET_BUFSIZE);
+    /* Allocate buffers and waitqueues for both directions.
+     * Each allocation is checked within 4 lines to satisfy the
+     * static-analysis checker; cleanup is shared via goto. */
+    pair_fwd->send_buf   = fut_malloc(FUT_SOCKET_BUFSIZE);
+    pair_fwd->recv_buf   = fut_malloc(FUT_SOCKET_BUFSIZE);
     pair_fwd->send_waitq = fut_malloc(sizeof(fut_waitq_t));
+    if (!pair_fwd->send_buf || !pair_fwd->recv_buf || !pair_fwd->send_waitq)
+        goto pair_alloc_fail;
     pair_fwd->recv_waitq = fut_malloc(sizeof(fut_waitq_t));
+    if (!pair_fwd->recv_waitq) goto pair_alloc_fail;
 
-    pair_rev->send_buf = fut_malloc(FUT_SOCKET_BUFSIZE);
-    pair_rev->recv_buf = fut_malloc(FUT_SOCKET_BUFSIZE);
+    pair_rev->send_buf   = fut_malloc(FUT_SOCKET_BUFSIZE);
+    pair_rev->recv_buf   = fut_malloc(FUT_SOCKET_BUFSIZE);
     pair_rev->send_waitq = fut_malloc(sizeof(fut_waitq_t));
+    if (!pair_rev->send_buf || !pair_rev->recv_buf || !pair_rev->send_waitq)
+        goto pair_alloc_fail;
     pair_rev->recv_waitq = fut_malloc(sizeof(fut_waitq_t));
+    if (!pair_rev->recv_waitq) goto pair_alloc_fail;
 
-    if (!pair_fwd->send_buf || !pair_fwd->recv_buf ||
-        !pair_fwd->send_waitq || !pair_fwd->recv_waitq ||
-        !pair_rev->send_buf || !pair_rev->recv_buf ||
-        !pair_rev->send_waitq || !pair_rev->recv_waitq) {
-        /* Cleanup on allocation failure */
-        if (pair_fwd->send_buf) fut_free(pair_fwd->send_buf);
-        if (pair_fwd->recv_buf) fut_free(pair_fwd->recv_buf);
+    if (0) {
+pair_alloc_fail:
+        if (pair_fwd->send_buf)   fut_free(pair_fwd->send_buf);
+        if (pair_fwd->recv_buf)   fut_free(pair_fwd->recv_buf);
         if (pair_fwd->send_waitq) fut_free(pair_fwd->send_waitq);
         if (pair_fwd->recv_waitq) fut_free(pair_fwd->recv_waitq);
-        if (pair_rev->send_buf) fut_free(pair_rev->send_buf);
-        if (pair_rev->recv_buf) fut_free(pair_rev->recv_buf);
+        if (pair_rev->send_buf)   fut_free(pair_rev->send_buf);
+        if (pair_rev->recv_buf)   fut_free(pair_rev->recv_buf);
         if (pair_rev->send_waitq) fut_free(pair_rev->send_waitq);
         if (pair_rev->recv_waitq) fut_free(pair_rev->recv_waitq);
         fut_free(pair_fwd);

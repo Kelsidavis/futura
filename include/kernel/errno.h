@@ -223,6 +223,10 @@
 #define EOPNOTSUPP  95   /* Operation not supported on socket */
 #endif
 
+#ifndef EDESTADDRREQ
+#define EDESTADDRREQ 89  /* Destination address required */
+#endif
+
 #ifndef ERANGE
 #define ERANGE      34   /* Math result not representable */
 #endif

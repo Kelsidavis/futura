@@ -543,8 +543,9 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
             break;
     }
 
-    /* Phase 2: Validate socket state (should be CREATED or BOUND) */
-    if (socket->state == FUT_SOCK_CONNECTED) {
+    /* Phase 2: Validate socket state (should be CREATED or BOUND)
+     * SOCK_DGRAM allows reconnect (to change default peer) */
+    if (socket->state == FUT_SOCK_CONNECTED && socket->socket_type != SOCK_DGRAM) {
         connect_printf("[CONNECT] connect(sockfd=%d, family=%s, path='%s', state=%s) -> EISCONN (socket already connected to '%s')\n",
                    local_sockfd, family_name, sock_path, socket_state_desc,
                    socket->pair && socket->pair->peer && socket->pair->peer->bound_path ?

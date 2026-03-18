@@ -346,6 +346,10 @@ typedef struct fut_socket {
     /* Datagram receive queue (SOCK_DGRAM only, allocated on bind) */
     fut_dgram_queue_t *dgram_queue;
 
+    /* SOCK_DGRAM connected peer (set by connect(), cleared by connect(AF_UNSPEC)) */
+    char dgram_peer_path[108];          /* Peer path (may start with '\0' for abstract) */
+    uint16_t dgram_peer_path_len;       /* 0 = not connected */
+
     /* Refcounting and lifecycle */
     uint64_t refcount;                      /* Reference count */
     struct fut_waitq *close_waitq;          /* Wait queue for close completion */

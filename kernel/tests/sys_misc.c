@@ -14219,6 +14219,68 @@ static void test_futex_wait_bitset_abs_timeout(void) {
     fut_test_pass();
 }
 
+/* ============================================================
+ * Test 312: AF_UNIX SOCK_DGRAM connect() sets default peer
+ *
+ * Linux allows connect() on a SOCK_DGRAM socket to set a default peer
+ * address so that subsequent send() / sendto(NULL,0) calls are routed
+ * to that peer without an explicit destination each time.
+ * ============================================================ */
+static void test_unix_dgram_connect(void) {
+    fut_printf("[MISC-TEST] Test 312: AF_UNIX SOCK_DGRAM connect() sets default peer\n");
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_bind(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_connect(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_sendto(int sockfd, const void *buf, size_t len, int flags,
+                           const void *dest_addr, int addrlen);
+    extern long sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
+                             void *src_addr, void *addrlen);
+
+    /* Create server and client DGRAM sockets */
+    long srv = sys_socket(1 /*AF_UNIX*/, 2 /*SOCK_DGRAM*/, 0);
+    if (srv < 0) { fut_printf("[MISC-TEST] ✗ socket(srv) failed: %ld\n", srv); fut_test_fail(312); return; }
+    long cli = sys_socket(1 /*AF_UNIX*/, 2 /*SOCK_DGRAM*/, 0);
+    if (cli < 0) { sys_close((int)srv); fut_printf("[MISC-TEST] ✗ socket(cli) failed: %ld\n", cli); fut_test_fail(312); return; }
+
+    /* Bind server to abstract address \0dgc312 (len=7 including leading NUL) */
+    struct { unsigned short fam; char path[8]; } saddr;
+    saddr.fam = 1;
+    saddr.path[0] = '\0'; saddr.path[1] = 'd'; saddr.path[2] = 'g';
+    saddr.path[3] = 'c'; saddr.path[4] = '3'; saddr.path[5] = '1';
+    saddr.path[6] = '2'; saddr.path[7] = '\0';
+    long r = sys_bind((int)srv, &saddr, 2 + 7);
+    if (r != 0) { fut_printf("[MISC-TEST] ✗ bind(srv) failed: %ld\n", r); sys_close((int)srv); sys_close((int)cli); fut_test_fail(312); return; }
+
+    /* Bind client to abstract address \0dge312 so server can reply */
+    struct { unsigned short fam; char path[8]; } caddr;
+    caddr.fam = 1;
+    caddr.path[0] = '\0'; caddr.path[1] = 'd'; caddr.path[2] = 'g';
+    caddr.path[3] = 'e'; caddr.path[4] = '3'; caddr.path[5] = '1';
+    caddr.path[6] = '2'; caddr.path[7] = '\0';
+    r = sys_bind((int)cli, &caddr, 2 + 7);
+    if (r != 0) { fut_printf("[MISC-TEST] ✗ bind(cli) failed: %ld\n", r); sys_close((int)srv); sys_close((int)cli); fut_test_fail(312); return; }
+
+    /* Client connects to server — this should store the peer address */
+    r = sys_connect((int)cli, &saddr, 2 + 7);
+    if (r != 0) { fut_printf("[MISC-TEST] ✗ connect(cli→srv) failed: %ld\n", r); sys_close((int)srv); sys_close((int)cli); fut_test_fail(312); return; }
+
+    /* send() with NULL dest should route to connected peer */
+    const char msg[] = "dgc312";
+    r = sys_sendto((int)cli, msg, 6, 0, (void *)0, 0);
+    if (r != 6) { fut_printf("[MISC-TEST] ✗ send via connected DGRAM returned %ld (want 6)\n", r); sys_close((int)srv); sys_close((int)cli); fut_test_fail(312); return; }
+
+    /* Server receives the datagram */
+    char rbuf[16] = {0};
+    r = sys_recvfrom((int)srv, rbuf, sizeof(rbuf), 0x40 /*MSG_DONTWAIT*/, (void *)0, (void *)0);
+    if (r != 6) { fut_printf("[MISC-TEST] ✗ server recvfrom returned %ld (want 6)\n", r); sys_close((int)srv); sys_close((int)cli); fut_test_fail(312); return; }
+    if (__builtin_memcmp(rbuf, "dgc312", 6) != 0) { fut_printf("[MISC-TEST] ✗ wrong payload\n"); sys_close((int)srv); sys_close((int)cli); fut_test_fail(312); return; }
+
+    sys_close((int)srv);
+    sys_close((int)cli);
+    fut_printf("[MISC-TEST] ✓ DGRAM connect() sets default peer; send() routes correctly\n");
+    fut_test_pass();
+}
+
 static void test_sendmmsg_recvmmsg(void) {
     fut_printf("[MISC-TEST] Test 310: sendmmsg/recvmmsg multi-message batch\n");
     extern long sys_socketpair(int domain, int type, int protocol, int *sv);
@@ -14743,6 +14805,7 @@ void fut_misc_test_thread(void *arg) {
     test_unix_dgram_sendto();            /* Test 309: AF_UNIX SOCK_DGRAM sendto/recvfrom with address */
     test_sendmmsg_recvmmsg();            /* Test 310: sendmmsg/recvmmsg multi-message batch */
     test_futex_wait_bitset_abs_timeout(); /* Test 311: FUTEX_WAIT_BITSET absolute timeout */
+    test_unix_dgram_connect();           /* Test 312: SOCK_DGRAM connect() sets default peer */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

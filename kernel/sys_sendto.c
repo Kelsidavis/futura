@@ -539,6 +539,33 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
         }
     }
 
+    /* SOCK_DGRAM with no explicit dest_addr: route to connected peer, or error */
+    {
+        extern fut_socket_t *get_socket_from_fd(int fd);
+        fut_socket_t *dgsock = get_socket_from_fd(local_sockfd);
+        if (dgsock && dgsock->socket_type == 2 /* SOCK_DGRAM */) {
+            if (dgsock->dgram_peer_path_len > 0) {
+                /* Connected DGRAM: deliver to stored peer */
+                const char *sender_path = "";
+                size_t sender_path_len = 0;
+                if (dgsock->bound_path && dgsock->bound_path_len > 0) {
+                    sender_path = dgsock->bound_path;
+                    sender_path_len = dgsock->bound_path_len;
+                }
+                ssize_t ret = fut_socket_sendto_dgram(dgsock->dgram_peer_path,
+                                                      dgsock->dgram_peer_path_len,
+                                                      sender_path, sender_path_len,
+                                                      kbuf, local_len);
+                fut_free(kbuf);
+                return ret;
+            } else {
+                /* Unconnected DGRAM, no dest: EDESTADDRREQ */
+                fut_free(kbuf);
+                return -EDESTADDRREQ;
+            }
+        }
+    }
+
     /* Apply MSG_DONTWAIT: temporarily set O_NONBLOCK on the socket */
     bool dontwait_applied = false;
     if (local_flags & MSG_DONTWAIT) {

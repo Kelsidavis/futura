@@ -723,6 +723,17 @@ int fut_socket_connect(fut_socket_t *socket, const char *target_path, size_t pat
         return -EINVAL;
     }
 
+    /* SOCK_DGRAM: connect() just stores the default peer address; no listener required */
+    if (socket->socket_type == SOCK_DGRAM) {
+        if (path_len > 108) return -EINVAL;
+        __builtin_memcpy(socket->dgram_peer_path, target_path, path_len);
+        socket->dgram_peer_path_len = (uint16_t)path_len;
+        socket->state = FUT_SOCK_CONNECTED;
+        SOCKET_LOG("[SOCKET] DGRAM socket %u connected to peer (path_len=%zu)\n",
+                   socket->socket_id, path_len);
+        return 0;
+    }
+
     /* Find listening socket */
     fut_socket_t *listener = fut_socket_find_listener(target_path, path_len);
     if (!listener) {

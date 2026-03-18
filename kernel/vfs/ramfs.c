@@ -1096,11 +1096,39 @@ static int ramfs_readdir(struct fut_vnode *dir, uint64_t *cookie, struct fut_vdi
         return -EIO;
     }
 
-    /* Iterate to the entry at position *cookie */
+    /* Emit "." and ".." as the first two entries (cookie 0 and 1).
+     * Actual directory entries start at cookie 2. */
+    if (*cookie == 0) {
+        /* "." — current directory */
+        dirent->d_ino    = dir->ino;
+        dirent->d_off    = 1;
+        dirent->d_reclen = sizeof(struct fut_vdirent);
+        dirent->d_type   = FUT_VDIR_TYPE_DIR;
+        dirent->d_name[0] = '.';
+        dirent->d_name[1] = '\0';
+        *cookie = 1;
+        return 1;
+    }
+    if (*cookie == 1) {
+        /* ".." — parent directory (same inode as "." for root) */
+        struct fut_vnode *parent = dir->parent ? dir->parent : dir;
+        dirent->d_ino    = parent->ino;
+        dirent->d_off    = 2;
+        dirent->d_reclen = sizeof(struct fut_vdirent);
+        dirent->d_type   = FUT_VDIR_TYPE_DIR;
+        dirent->d_name[0] = '.';
+        dirent->d_name[1] = '.';
+        dirent->d_name[2] = '\0';
+        *cookie = 2;
+        return 1;
+    }
+
+    /* Iterate to the real entry at position (*cookie - 2) */
     struct ramfs_dirent *entry = node->dir.entries;
     uint64_t index = 0;
+    uint64_t real_idx = *cookie - 2;
 
-    while (entry && index < *cookie) {
+    while (entry && index < real_idx) {
         entry = entry->next;
         index++;
     }

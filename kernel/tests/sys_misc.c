@@ -16736,6 +16736,47 @@ static void test_copy_file_range_offsets(void) {
 }
 
 /* ============================================================
+ * Test 348: getdents64 includes . and .. entries
+ * ============================================================ */
+static void test_getdents64_dot_dotdot(void) {
+    fut_printf("[MISC-TEST] Test 348: getdents64 returns . and ..\n");
+
+    /* Create a subdirectory so we have a fresh directory to list */
+    extern long sys_mkdir(const char *path, unsigned int mode);
+    sys_mkdir("/dotdot_test_dir", 0755);
+
+    int fd = fut_vfs_open("/dotdot_test_dir", 00200000 /* O_DIRECTORY */, 0);
+    if (fd < 0) { fut_test_fail(348); return; }
+
+    char buf[1024];
+    long nread = sys_getdents64((unsigned int)fd, buf, sizeof(buf));
+    fut_vfs_close(fd);
+
+    if (nread <= 0) {
+        fut_printf("[MISC-TEST] ✗ Test 348: getdents64 returned %ld\n", nread);
+        fut_test_fail(348); return;
+    }
+
+    /* Scan for "." and ".." entries */
+    int found_dot = 0, found_dotdot = 0;
+    long pos = 0;
+    while (pos < nread) {
+        struct test_dirent64 *d = (struct test_dirent64 *)(buf + pos);
+        if (d->d_reclen == 0) break;
+        if (d->d_name[0] == '.' && d->d_name[1] == '\0')  found_dot = 1;
+        if (d->d_name[0] == '.' && d->d_name[1] == '.' && d->d_name[2] == '\0') found_dotdot = 1;
+        pos += d->d_reclen;
+    }
+
+    if (!found_dot || !found_dotdot) {
+        fut_printf("[MISC-TEST] ✗ Test 348: dot=%d dotdot=%d\n", found_dot, found_dotdot);
+        fut_test_fail(348); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 348: getdents64 includes . and .. entries\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test 347: mmap MAP_SHARED|PROT_WRITE on O_RDONLY fd -> EACCES
  * ============================================================ */
 static void test_mmap_rdonly_shared_write(void) {
@@ -17175,6 +17216,7 @@ void fut_misc_test_thread(void *arg) {
     test_copy_file_range_offsets();      /* Test 345: copy_file_range off_in/off_out pread/pwrite semantics */
     test_writev_pipe_gather();           /* Test 346: writev on pipe gathers all iovecs atomically */
     test_mmap_rdonly_shared_write();     /* Test 347: mmap MAP_SHARED|PROT_WRITE on O_RDONLY fd -> EACCES */
+    test_getdents64_dot_dotdot();        /* Test 348: getdents64 includes . and .. entries */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

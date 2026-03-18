@@ -9,12 +9,15 @@
  * Phase 3 (Completed): semget/semop/semctl with GETVAL/SETVAL/GETALL/SETALL/
  *                      GETNCNT/GETZCNT/GETPID/IPC_STAT/IPC_SET/IPC_RMID.
  *                      semop: non-blocking + EAGAIN for blocking operations.
+ * Phase 4 (Completed): semtimedop — timed variant of semop (Linux 2.5.52+).
  */
 
 #include <kernel/fut_task.h>
+#include <kernel/fut_timer.h>
 #include <kernel/errno.h>
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
+#include <shared/fut_timespec.h>
 #include <stdint.h>
 #include <stddef.h>
 
@@ -376,4 +379,95 @@ long sys_semctl(int semid, int semnum, int cmd, unsigned long arg) {
     default:
         return -EINVAL;
     }
+}
+
+/* ============================================================
+ *   semtimedop(2) - semop with timeout (Linux 2.5.52+, syscall 220)
+ * ============================================================ */
+
+/**
+ * semtimedop - Atomically perform operations on a semaphore set with timeout.
+ *
+ * Like semop(), but if the operation would block, waits at most @timeout
+ * before returning -EAGAIN (POSIX: -ETIMEDOUT). If @timeout is NULL, behaves
+ * like semop() without IPC_NOWAIT (blocks indefinitely — Futura returns EAGAIN
+ * since true blocking semop is not yet implemented). If @timeout is {0,0},
+ * returns EAGAIN immediately if the operation would block (same as IPC_NOWAIT).
+ *
+ * @param semid    Semaphore set ID
+ * @param sops     Array of struct sembuf operations
+ * @param nsops    Number of operations
+ * @param timeout  Max wait time (NULL = infinite; Futura: EAGAIN on block)
+ * @return 0 on success, -errno on error
+ *
+ * Phase 4 (Completed): timed variant; Futura returns EAGAIN for blocking ops
+ *   regardless of timeout since blocking semop is not yet implemented. Timeout
+ *   of {0,0} is validated and treated as non-blocking (correct Linux behavior).
+ */
+long sys_semtimedop(int semid, void *sops, unsigned int nsops,
+                    const fut_timespec_t *timeout)
+{
+    if (!sops)
+        return -EFAULT;
+    if (nsops == 0)
+        return -EINVAL;
+    if (nsops > SEM_E2BIG_NSOPS)
+        return -E2BIG;
+
+    /* Validate timeout if provided */
+    if (timeout) {
+        fut_timespec_t ts;
+        if (sem_copy_from_user(&ts, timeout, sizeof(ts)) != 0)
+            return -EFAULT;
+        if (ts.tv_sec < 0 || ts.tv_nsec < 0 || ts.tv_nsec >= 1000000000LL)
+            return -EINVAL;
+        /* Store validated timeout for potential future blocking implementation */
+        (void)ts;
+    }
+
+    struct sem_set *s = semtable_find_by_id(semid);
+    if (!s)
+        return -EINVAL;
+
+    /* Copy operations from user */
+    struct sem_sembuf ops[SEM_E2BIG_NSOPS > SEMMSL ? SEMMSL : SEM_E2BIG_NSOPS];
+    unsigned int copy_n = nsops < (unsigned int)SEMMSL ? nsops : (unsigned int)SEMMSL;
+    if (sem_copy_from_user(ops, sops, copy_n * sizeof(struct sem_sembuf)) != 0)
+        return -EFAULT;
+
+    /* Validate semaphore indices */
+    for (unsigned int i = 0; i < copy_n; i++) {
+        if (ops[i].sem_num >= (unsigned short)s->nsems)
+            return -E2BIG;
+    }
+
+    /* Check whether all operations can proceed without blocking */
+    for (unsigned int i = 0; i < copy_n; i++) {
+        int cur = s->sems[ops[i].sem_num].semval;
+        int op  = ops[i].sem_op;
+        if (op > 0) {
+            if (cur + op > SEMVMX)
+                return -ERANGE;
+        } else if (op < 0) {
+            if (cur + op < 0) {
+                /* Would block: semtimedop returns EAGAIN (timeout expired) */
+                return -EAGAIN;
+            }
+        } else {
+            /* sem_op == 0: wait for zero */
+            if (cur != 0)
+                return -EAGAIN;
+        }
+    }
+
+    /* All operations can proceed — apply atomically */
+    fut_task_t *task = fut_task_current();
+    int pid = task ? (int)task->pid : 1;
+
+    for (unsigned int i = 0; i < copy_n; i++) {
+        s->sems[ops[i].sem_num].semval += ops[i].sem_op;
+        s->sems[ops[i].sem_num].sempid  = pid;
+    }
+
+    return 0;
 }

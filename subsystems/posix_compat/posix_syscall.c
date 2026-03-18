@@ -111,6 +111,7 @@
 #define SYS_semget      64   /* Linux: 64 */
 #define SYS_semop       65   /* Linux: 65 */
 #define SYS_semctl      66   /* Linux: 66 */
+#define SYS_semtimedop  220  /* Linux: 220 */
 #define SYS_sigaction   13
 #define SYS_sigprocmask 14
 #define SYS_sigreturn   15
@@ -482,6 +483,15 @@ static int64_t sys_semctl_handler(uint64_t semid, uint64_t semnum, uint64_t cmd,
     (void)arg5; (void)arg6;
     extern long sys_semctl(int semid, int semnum, int cmd, unsigned long arg);
     return sys_semctl((int)semid, (int)semnum, (int)cmd, (unsigned long)arg);
+}
+
+static int64_t sys_semtimedop_handler(uint64_t semid, uint64_t sops, uint64_t nsops,
+                                      uint64_t timeout, uint64_t arg5, uint64_t arg6) {
+    (void)arg5; (void)arg6;
+    extern long sys_semtimedop(int semid, void *sops, unsigned int nsops,
+                               const void *timeout);
+    return sys_semtimedop((int)semid, (void *)(uintptr_t)sops, (unsigned int)nsops,
+                          (const void *)(uintptr_t)timeout);
 }
 
 static int64_t sys_msgget_handler(uint64_t key, uint64_t msgflg, uint64_t arg3,
@@ -3079,6 +3089,8 @@ static int64_t sys_semop_handler(uint64_t semid, uint64_t sops, uint64_t nsops,
                                  uint64_t arg4, uint64_t arg5, uint64_t arg6);
 static int64_t sys_semctl_handler(uint64_t semid, uint64_t semnum, uint64_t cmd,
                                   uint64_t arg, uint64_t arg5, uint64_t arg6);
+static int64_t sys_semtimedop_handler(uint64_t semid, uint64_t sops, uint64_t nsops,
+                                      uint64_t timeout, uint64_t arg5, uint64_t arg6);
 static int64_t sys_msgget_handler(uint64_t key, uint64_t msgflg, uint64_t arg3,
                                   uint64_t arg4, uint64_t arg5, uint64_t arg6);
 static int64_t sys_msgsnd_handler(uint64_t msqid, uint64_t msgp, uint64_t msgsz,
@@ -3372,6 +3384,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_semget]       = sys_semget_handler,
     [SYS_semop]        = sys_semop_handler,
     [SYS_semctl]       = sys_semctl_handler,
+    [SYS_semtimedop]   = sys_semtimedop_handler,
     [SYS_msgget]       = sys_msgget_handler,
     [SYS_msgsnd]       = sys_msgsnd_handler,
     [SYS_msgrcv]       = sys_msgrcv_handler,

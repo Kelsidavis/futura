@@ -11883,6 +11883,83 @@ static void test_fcntl_ofd_locks(void) {
     fut_test_pass();
 }
 
+static void test_semtimedop_basic(void) {
+    fut_printf("[MISC-TEST] Test 268: semtimedop (Linux 2.5.52+, syscall 220)\n");
+
+    extern long sys_semget(long key, int nsems, int semflg);
+    extern long sys_semctl(int semid, int semnum, int cmd, unsigned long arg);
+    extern long sys_semtimedop(int semid, void *sops, unsigned int nsops,
+                               const void *timeout);
+
+#define TEST268_IPC_PRIVATE  0L
+#define TEST268_IPC_CREAT    0x0200
+#define TEST268_IPC_RMID     0
+#define TEST268_SEM_SETVAL   16
+#define TEST268_IPC_NOWAIT   0x0800
+
+    /* Create a semaphore set with 1 semaphore */
+    long semid = sys_semget(TEST268_IPC_PRIVATE, 1, TEST268_IPC_CREAT | 0600);
+    if (semid < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 268 semget failed: %ld\n", semid);
+        fut_test_fail(268); return;
+    }
+
+    /* Set semaphore value to 1 */
+    long rc = sys_semctl((int)semid, 0, TEST268_SEM_SETVAL, 1UL);
+    if (rc != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 268 SETVAL failed: %ld\n", rc);
+        sys_semctl((int)semid, 0, TEST268_IPC_RMID, 0);
+        fut_test_fail(268); return;
+    }
+
+    /* semtimedop: decrement by 1 with zero timeout — should succeed (val 1→0) */
+    struct { unsigned short sem_num; short sem_op; short sem_flg; } decr = {0, -1, 0};
+    struct { long tv_sec; long tv_nsec; } ts0 = {0, 0};  /* zero timeout */
+    rc = sys_semtimedop((int)semid, &decr, 1, &ts0);
+    if (rc != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 268 decrement failed: %ld\n", rc);
+        sys_semctl((int)semid, 0, TEST268_IPC_RMID, 0);
+        fut_test_fail(268); return;
+    }
+
+    /* semtimedop: decrement again (val=0) with zero timeout → EAGAIN */
+    rc = sys_semtimedop((int)semid, &decr, 1, &ts0);
+    if (rc != -11 /* -EAGAIN */) {
+        fut_printf("[MISC-TEST] ✗ Test 268 expected -EAGAIN on blocked op, got %ld\n", rc);
+        sys_semctl((int)semid, 0, TEST268_IPC_RMID, 0);
+        fut_test_fail(268); return;
+    }
+
+    /* semtimedop: NULL timeout (no block) with val=0 decrement → EAGAIN */
+    rc = sys_semtimedop((int)semid, &decr, 1, (void *)0);
+    if (rc != -11 /* -EAGAIN */) {
+        fut_printf("[MISC-TEST] ✗ Test 268 expected -EAGAIN on NULL timeout, got %ld\n", rc);
+        sys_semctl((int)semid, 0, TEST268_IPC_RMID, 0);
+        fut_test_fail(268); return;
+    }
+
+    /* semtimedop: invalid timeout (negative nsec) → EINVAL */
+    struct { long tv_sec; long tv_nsec; } ts_bad = {0, -1};
+    rc = sys_semtimedop((int)semid, &decr, 1, &ts_bad);
+    if (rc != -22 /* -EINVAL */) {
+        fut_printf("[MISC-TEST] ✗ Test 268 expected -EINVAL on bad timeout, got %ld\n", rc);
+        sys_semctl((int)semid, 0, TEST268_IPC_RMID, 0);
+        fut_test_fail(268); return;
+    }
+
+    /* semtimedop: invalid semid → EINVAL */
+    rc = sys_semtimedop(-1, &decr, 1, &ts0);
+    if (rc != -22 /* -EINVAL */) {
+        fut_printf("[MISC-TEST] ✗ Test 268 expected -EINVAL on bad semid, got %ld\n", rc);
+        sys_semctl((int)semid, 0, TEST268_IPC_RMID, 0);
+        fut_test_fail(268); return;
+    }
+
+    sys_semctl((int)semid, 0, TEST268_IPC_RMID, 0);
+    fut_printf("[MISC-TEST] ✓ semtimedop: decrement, EAGAIN on block, EINVAL on bad args\n");
+    fut_test_pass();
+}
+
 /* ============================================================
  * Test entry point
  * ============================================================ */
@@ -12160,6 +12237,7 @@ void fut_misc_test_thread(void *arg) {
     test_madvise_wipeonfork();             /* Test 265: madvise WIPEONFORK/COLD/PAGEOUT */
     test_clock_gettime_extended();         /* Test 266: clock_gettime TAI/ALARM/RAW/COARSE clocks */
     test_fcntl_ofd_locks();               /* Test 267: F_OFD_SETLK/F_OFD_GETLK (Linux 3.15+ OFD locks) */
+    test_semtimedop_basic();              /* Test 268: semtimedop (Linux 2.5.52+, syscall 220) */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

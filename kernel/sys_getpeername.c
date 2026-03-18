@@ -22,6 +22,31 @@
 
 #include <kernel/kprintf.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
+static inline int getpeername_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_from_user(dst, src, n);
+}
+static inline int getpeername_copy_to_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)dst >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_to_user(dst, src, n);
+}
+static inline int getpeername_access_ok(const void *ptr, size_t n, int write) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)ptr >= KERNEL_VIRTUAL_BASE) return 0;
+#endif
+    return fut_access_ok(ptr, n, write);
+}
+
 /* Address family constants (AF_*) provided by fut_socket.h */
 /* struct sockaddr_un provided by sys/un.h */
 
@@ -245,7 +270,7 @@ long sys_getpeername(int sockfd, void *addr, socklen_t *addrlen) {
     }
 
     /* Validate addrlen write permission early (kernel writes back actual size) */
-    if (fut_access_ok(local_addrlen, sizeof(socklen_t), 1) != 0) {
+    if (getpeername_access_ok(local_addrlen, sizeof(socklen_t), 1) != 0) {
         fut_printf("[GETPEERNAME] getpeername(sockfd=%d) -> EFAULT (addrlen not writable)\n",
                    local_sockfd);
         return -EFAULT;
@@ -253,14 +278,14 @@ long sys_getpeername(int sockfd, void *addr, socklen_t *addrlen) {
 
     /* Read addrlen from userspace */
     socklen_t len;
-    if (fut_copy_from_user(&len, local_addrlen, sizeof(socklen_t)) != 0) {
+    if (getpeername_copy_from_user(&len, local_addrlen, sizeof(socklen_t)) != 0) {
         fut_printf("[GETPEERNAME] getpeername(sockfd=%d) -> EFAULT (copy_from_user addrlen failed)\n",
                    local_sockfd);
         return -EFAULT;
     }
 
     /* Validate addr write permission early (kernel writes peer address) */
-    if (len > 0 && fut_access_ok(local_addr, len, 1) != 0) {
+    if (len > 0 && getpeername_access_ok(local_addr, len, 1) != 0) {
         fut_printf("[GETPEERNAME] getpeername(sockfd=%d, addrlen=%u) -> EFAULT (addr not writable for %u bytes)\n",
                    local_sockfd, len, len);
         return -EFAULT;
@@ -325,14 +350,14 @@ long sys_getpeername(int sockfd, void *addr, socklen_t *addrlen) {
 
     /* Copy as much as fits in user buffer */
     socklen_t copy_len = (len < actual_len) ? len : actual_len;
-    if (fut_copy_to_user(local_addr, &peer_addr, copy_len) != 0) {
+    if (getpeername_copy_to_user(local_addr, &peer_addr, copy_len) != 0) {
         fut_printf("[GETPEERNAME] getpeername(sockfd=%d) -> EFAULT (copy_to_user failed)\n",
                    local_sockfd);
         return -EFAULT;
     }
 
     /* Update addrlen with actual size (may be larger than buffer) */
-    if (fut_copy_to_user(local_addrlen, &actual_len, sizeof(socklen_t)) != 0) {
+    if (getpeername_copy_to_user(local_addrlen, &actual_len, sizeof(socklen_t)) != 0) {
         fut_printf("[GETPEERNAME] getpeername(sockfd=%d) -> EFAULT (copy addrlen failed)\n",
                    local_sockfd);
         return -EFAULT;

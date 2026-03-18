@@ -24,6 +24,19 @@
 #include <stdint.h>
 
 #include <kernel/kprintf.h>
+
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
+static inline int sendto_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_from_user(dst, src, n);
+}
 /* fut_io_budget_check_bytes and fut_io_budget_consume_bytes provided by fut_io_budget.h */
 
 /* Message flags (MSG_*) provided by fut_socket.h */
@@ -417,7 +430,7 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
      * Prevents kernel page fault from invalid userspace pointer */
     if (local_dest_addr && local_addrlen > 0) {
         uint8_t addr_test_byte;
-        if (fut_copy_from_user(&addr_test_byte, local_dest_addr, 1) != 0) {
+        if (sendto_copy_from_user(&addr_test_byte, local_dest_addr, 1) != 0) {
             fut_printf("[SENDTO] sendto(sockfd=%d [%s], dest_addr=%p, addrlen=%u) -> EFAULT "
                        "(destination address not readable)\n",
                        local_sockfd, fd_category, local_dest_addr, local_addrlen);
@@ -471,7 +484,7 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
     }
 
     /* Copy from userspace */
-    if (fut_copy_from_user(kbuf, local_buf, local_len) != 0) {
+    if (sendto_copy_from_user(kbuf, local_buf, local_len) != 0) {
         fut_free(kbuf);
         fut_printf("[SENDTO] sendto(sockfd=%d [%s], len=%zu [%s], pid=%u) -> EFAULT "
                    "(copy_from_user failed)\n",

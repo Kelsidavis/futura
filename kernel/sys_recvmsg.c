@@ -24,6 +24,25 @@
 #include <kernel/kprintf.h>
 #include <kernel/debug_config.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
+static inline int recvmsg_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_from_user(dst, src, n);
+}
+static inline int recvmsg_copy_to_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)dst >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_to_user(dst, src, n);
+}
+
 /* Recvmsg debugging (controlled via debug_config.h) */
 #if RECVMSG_DEBUG
 #define RECVMSG_LOG(...) fut_printf(__VA_ARGS__)
@@ -117,7 +136,7 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
 
     /* Copy msghdr from userspace */
     struct msghdr kmsg;
-    if (fut_copy_from_user(&kmsg, local_msg, sizeof(struct msghdr)) != 0) {
+    if (recvmsg_copy_from_user(&kmsg, local_msg, sizeof(struct msghdr)) != 0) {
         return -EFAULT;
     }
 
@@ -234,7 +253,7 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
     /* First pass: gather statistics */
     for (size_t i = 0; i < kmsg.msg_iovlen; i++) {
         struct iovec iov;
-        if (fut_copy_from_user(&iov, &kmsg.msg_iov[i], sizeof(struct iovec)) != 0) {
+        if (recvmsg_copy_from_user(&iov, &kmsg.msg_iov[i], sizeof(struct iovec)) != 0) {
             RECVMSG_LOG("[RECVMSG] recvmsg(sockfd=%d, iovlen=%zu) -> EFAULT (copy_from_user iovec %zu failed)\n",
                        local_sockfd, kmsg.msg_iovlen, i);
             return -EFAULT;
@@ -315,7 +334,7 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
     int iovecs_filled = 0;
     for (size_t i = 0; i < kmsg.msg_iovlen; i++) {
         struct iovec iov;
-        if (fut_copy_from_user(&iov, &kmsg.msg_iov[i], sizeof(struct iovec)) != 0) {
+        if (recvmsg_copy_from_user(&iov, &kmsg.msg_iov[i], sizeof(struct iovec)) != 0) {
             return total_received > 0 ? total_received : -EFAULT;
         }
 
@@ -350,8 +369,8 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
 
         /* Probe write permission with 1-byte test */
         uint8_t test_byte;
-        if (fut_copy_from_user(&test_byte, iov.iov_base, 1) != 0 ||
-            fut_copy_to_user(iov.iov_base, &test_byte, 1) != 0) {
+        if (recvmsg_copy_from_user(&test_byte, iov.iov_base, 1) != 0 ||
+            recvmsg_copy_to_user(iov.iov_base, &test_byte, 1) != 0) {
             RECVMSG_LOG("[RECVMSG] recvmsg(sockfd=%d) -> EFAULT "
                        "(iov_base[%zu] not writable, len=%zu)\n",
                        local_sockfd, i, iov.iov_len);
@@ -369,7 +388,7 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
 
         if (ret > 0) {
             /* Copy to userspace */
-            if (fut_copy_to_user(iov.iov_base, kbuf, (size_t)ret) != 0) {
+            if (recvmsg_copy_to_user(iov.iov_base, kbuf, (size_t)ret) != 0) {
                 fut_free(kbuf);
                 return total_received > 0 ? total_received : -EFAULT;
             }
@@ -445,7 +464,7 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
                 /* Check if caller's buffer is big enough; read original controllen */
                 size_t orig_controllen = 0;
                 struct msghdr user_msg;
-                if (fut_copy_from_user(&user_msg, local_msg, sizeof(struct msghdr)) == 0) {
+                if (recvmsg_copy_from_user(&user_msg, local_msg, sizeof(struct msghdr)) == 0) {
                     orig_controllen = user_msg.msg_controllen;
                 }
 
@@ -468,7 +487,7 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
                         }
 
                         /* Copy to userspace control buffer */
-                        if (fut_copy_to_user(kmsg.msg_control, kcontrol, cmsg_size) == 0) {
+                        if (recvmsg_copy_to_user(kmsg.msg_control, kcontrol, cmsg_size) == 0) {
                             kmsg.msg_controllen = cmsg_size;
                         }
                         fut_free(kcontrol);
@@ -482,7 +501,7 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
     }
 
     /* Write updated msghdr back to userspace */
-    if (fut_copy_to_user(local_msg, &kmsg, sizeof(struct msghdr)) != 0) {
+    if (recvmsg_copy_to_user(local_msg, &kmsg, sizeof(struct msghdr)) != 0) {
         return total_received > 0 ? total_received : -EFAULT;
     }
 

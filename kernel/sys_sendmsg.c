@@ -22,6 +22,19 @@
 #include <kernel/kprintf.h>
 #include <kernel/debug_config.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
+static inline int sendmsg_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_from_user(dst, src, n);
+}
+
 /* Sendmsg debugging (controlled via debug_config.h) */
 #if SENDMSG_DEBUG
 #define SENDMSG_LOG(...) fut_printf(__VA_ARGS__)
@@ -115,7 +128,7 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
 
     /* Copy msghdr from userspace */
     struct msghdr kmsg;
-    if (fut_copy_from_user(&kmsg, local_msg, sizeof(struct msghdr)) != 0) {
+    if (sendmsg_copy_from_user(&kmsg, local_msg, sizeof(struct msghdr)) != 0) {
         return -EFAULT;
     }
 
@@ -232,7 +245,7 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
     /* First pass: gather statistics */
     for (size_t i = 0; i < kmsg.msg_iovlen; i++) {
         struct iovec iov;
-        if (fut_copy_from_user(&iov, &kmsg.msg_iov[i], sizeof(struct iovec)) != 0) {
+        if (sendmsg_copy_from_user(&iov, &kmsg.msg_iov[i], sizeof(struct iovec)) != 0) {
             SENDMSG_LOG("[SENDMSG] sendmsg(sockfd=%d, iovlen=%zu) -> EFAULT (copy_from_user iovec %zu failed)\n",
                        local_sockfd, kmsg.msg_iovlen, i);
             return -EFAULT;
@@ -326,7 +339,7 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
     int iovecs_sent = 0;
     for (size_t i = 0; i < kmsg.msg_iovlen; i++) {
         struct iovec iov;
-        if (fut_copy_from_user(&iov, &kmsg.msg_iov[i], sizeof(struct iovec)) != 0) {
+        if (sendmsg_copy_from_user(&iov, &kmsg.msg_iov[i], sizeof(struct iovec)) != 0) {
             return total_sent > 0 ? total_sent : -EFAULT;
         }
 
@@ -345,7 +358,7 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
 
         /* Validate iov_base is readable before allocating kernel buffer */
         uint8_t test_byte;
-        if (fut_copy_from_user(&test_byte, iov.iov_base, 1) != 0) {
+        if (sendmsg_copy_from_user(&test_byte, iov.iov_base, 1) != 0) {
             SENDMSG_LOG("[SENDMSG] sendmsg(sockfd=%d) -> EFAULT "
                        "(iov_base[%zu] not accessible, len=%zu)\n",
                        local_sockfd, i, iov.iov_len);
@@ -359,7 +372,7 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
         }
 
         /* Copy from userspace */
-        if (fut_copy_from_user(kbuf, iov.iov_base, iov.iov_len) != 0) {
+        if (sendmsg_copy_from_user(kbuf, iov.iov_base, iov.iov_len) != 0) {
             fut_free(kbuf);
             return total_sent > 0 ? total_sent : -EFAULT;
         }
@@ -421,7 +434,7 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
             /* Copy control data from userspace */
             void *kcontrol = fut_malloc(kmsg.msg_controllen);
             if (kcontrol) {
-                if (fut_copy_from_user(kcontrol, kmsg.msg_control, kmsg.msg_controllen) == 0) {
+                if (sendmsg_copy_from_user(kcontrol, kmsg.msg_control, kmsg.msg_controllen) == 0) {
                     /* Parse control messages */
                     struct msghdr ctrl_msg;
                     ctrl_msg.msg_control = kcontrol;

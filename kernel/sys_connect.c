@@ -212,6 +212,19 @@
 #include <kernel/kprintf.h>
 #include <kernel/debug_config.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
+static inline int connect_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_from_user(dst, src, n);
+}
+
 /* Connect debugging (controlled via debug_config.h) */
 #define connect_printf(...) do { if (CONNECT_DEBUG) fut_printf(__VA_ARGS__); } while(0)
 
@@ -326,7 +339,7 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
     /* Copy address family from userspace */
     uint16_t sa_family;
     connect_printf("[CONNECT-DBG] calling fut_copy_from_user for sa_family (addr=%p)\n", local_addr);
-    int copy_rc = fut_copy_from_user(&sa_family, local_addr, 2);
+    int copy_rc = connect_copy_from_user(&sa_family, local_addr, 2);
     connect_printf("[CONNECT-DBG] fut_copy_from_user returned %d, sa_family=%u\n", copy_rc, (unsigned)sa_family);
     if (copy_rc != 0) {
         connect_printf("[CONNECT] connect(sockfd=%d, addrlen=%u) -> EFAULT (failed to copy sa_family)\n",
@@ -422,7 +435,7 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
 
     if (path_len > 0) {
         connect_printf("[CONNECT-DBG] copying path from addr+2=%p len=%zu\n", (const char *)local_addr + 2, path_len);
-        int path_rc = fut_copy_from_user(sock_path, (const char *)local_addr + 2, path_len);
+        int path_rc = connect_copy_from_user(sock_path, (const char *)local_addr + 2, path_len);
         connect_printf("[CONNECT-DBG] path copy returned %d\n", path_rc);
         if (path_rc != 0) {
             connect_printf("[CONNECT] connect(sockfd=%d, family=%s, path_len=%zu) -> EFAULT (failed to copy sun_path)\n",

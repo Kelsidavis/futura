@@ -29,6 +29,31 @@
 #include <kernel/kprintf.h>
 #include <kernel/debug_config.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
+static inline int accept_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_from_user(dst, src, n);
+}
+static inline int accept_copy_to_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)dst >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_to_user(dst, src, n);
+}
+static inline int accept_access_ok(const void *ptr, size_t n, int write) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)ptr >= KERNEL_VIRTUAL_BASE) return 0;
+#endif
+    return fut_access_ok(ptr, n, write);
+}
+
 /* Accept debugging (controlled via debug_config.h) */
 #define accept_printf(...) do { if (ACCEPT_DEBUG) fut_printf(__VA_ARGS__); } while(0)
 
@@ -369,7 +394,7 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
      */
     socklen_t len = 0;
     if (local_addrlen != NULL) {
-        if (fut_copy_from_user(&len, local_addrlen, sizeof(socklen_t)) != 0) {
+        if (accept_copy_from_user(&len, local_addrlen, sizeof(socklen_t)) != 0) {
             accept_printf("[ACCEPT] accept(local_sockfd=%d, addr_request=%s) -> EFAULT (copy_from_user local_addrlen failed)\n",
                        local_sockfd, addr_request);
             return -EFAULT;
@@ -395,7 +420,7 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
         }
 
         /* Validate addr write permission early (before accepting connection) */
-        if (local_addr && fut_access_ok(local_addr, len, 1) != 0) {
+        if (local_addr && accept_access_ok(local_addr, len, 1) != 0) {
             accept_printf("[ACCEPT] accept(local_sockfd=%d) -> EFAULT (addr not writable for %u bytes)\n",
                        local_sockfd, len);
             return -EFAULT;
@@ -563,7 +588,7 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
 
             /* Copy address to userspace (truncate if buffer too small) */
             socklen_t copy_len = (actual_len < len) ? actual_len : len;
-            if (fut_copy_to_user(local_addr, &peer_addr, copy_len) != 0) {
+            if (accept_copy_to_user(local_addr, &peer_addr, copy_len) != 0) {
                 accept_printf("[ACCEPT] accept(local_sockfd=%d, newfd=%d) -> warning: failed to copy peer address (connection established)\n",
                            local_sockfd, newfd);
                 /* Not fatal - connection is established, just couldn't return address */
@@ -578,7 +603,7 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
         }
 
         /* Write back actual address length */
-        if (fut_copy_to_user(local_addrlen, &actual_len, sizeof(socklen_t)) != 0) {
+        if (accept_copy_to_user(local_addrlen, &actual_len, sizeof(socklen_t)) != 0) {
             accept_printf("[ACCEPT] accept(local_sockfd=%d, newfd=%d) -> warning: failed to update addrlen (connection established)\n",
                        local_sockfd, newfd);
             /* Not fatal - connection is established, just couldn't return address length */

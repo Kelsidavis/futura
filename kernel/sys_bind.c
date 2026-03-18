@@ -208,6 +208,19 @@
 #include <kernel/kprintf.h>
 #include <kernel/debug_config.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
+static inline int bind_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_from_user(dst, src, n);
+}
+
 /* Bind debugging (controlled via debug_config.h) */
 #define bind_printf(...) do { if (BIND_DEBUG) fut_printf(__VA_ARGS__); } while(0)
 
@@ -345,7 +358,7 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
 
     /* Copy address family from userspace */
     uint16_t sa_family;
-    if (fut_copy_from_user(&sa_family, local_addr, 2) != 0) {
+    if (bind_copy_from_user(&sa_family, local_addr, 2) != 0) {
         bind_printf("[BIND] bind(sockfd=%d, addrlen=%u) -> EFAULT (failed to copy sa_family)\n",
                    local_sockfd, (unsigned)local_addrlen);
         return -EFAULT;
@@ -394,7 +407,7 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
     /* Phase 3: Handle AF_INET (IPv4) addresses */
     if (sa_family == AF_INET) {
         sockaddr_in_t inet_addr = {0};
-        if (fut_copy_from_user(&inet_addr, local_addr, sizeof(inet_addr)) != 0) {
+        if (bind_copy_from_user(&inet_addr, local_addr, sizeof(inet_addr)) != 0) {
             bind_printf("[BIND] bind(sockfd=%d, family=%s, addrlen=%u) -> EFAULT (failed to copy AF_INET address)\n",
                        local_sockfd, family_name, local_addrlen);
             return -EFAULT;
@@ -420,7 +433,7 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
     /* Phase 3: Handle AF_INET6 (IPv6) addresses */
     if (sa_family == AF_INET6) {
         sockaddr_in6_t inet6_addr = {0};
-        if (fut_copy_from_user(&inet6_addr, local_addr, sizeof(inet6_addr)) != 0) {
+        if (bind_copy_from_user(&inet6_addr, local_addr, sizeof(inet6_addr)) != 0) {
             bind_printf("[BIND] bind(sockfd=%d, family=%s, addrlen=%u) -> EFAULT (failed to copy AF_INET6 address)\n",
                        local_sockfd, family_name, local_addrlen);
             return -EFAULT;
@@ -468,7 +481,7 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
     }
 
     if (path_len > 0) {
-        if (fut_copy_from_user(sock_path, (const char *)local_addr + 2, path_len) != 0) {
+        if (bind_copy_from_user(sock_path, (const char *)local_addr + 2, path_len) != 0) {
             bind_printf("[BIND] bind(sockfd=%d, family=%s, path_len=%zu) -> EFAULT (failed to copy sun_path)\n",
                        local_sockfd, family_name, path_len);
             return -EFAULT;

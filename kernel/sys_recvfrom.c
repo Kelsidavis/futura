@@ -31,6 +31,12 @@
 #include <platform/arm64/memory/paging.h>
 #endif
 
+static inline int recv_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_from_user(dst, src, n);
+}
 static inline int recv_access_ok_write(const void *ptr, size_t n) {
 #ifdef KERNEL_VIRTUAL_BASE
     if ((uintptr_t)ptr >= KERNEL_VIRTUAL_BASE) return 0;
@@ -538,7 +544,7 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
     if (local_src_addr && local_addrlen) {
         /* Atomic copy of addrlen to prevent TOCTOU race */
         socklen_t len = 0;
-        if (fut_copy_from_user(&len, local_addrlen, sizeof(socklen_t)) != 0) {
+        if (recv_copy_from_user(&len, local_addrlen, sizeof(socklen_t)) != 0) {
             fut_printf("[RECVFROM] recvfrom(sockfd=%d) -> EFAULT (failed to read addrlen)\n",
                        local_sockfd);
             return -EFAULT;
@@ -574,7 +580,7 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
 
                 /* Copy address to userspace (truncate if buffer too small) */
                 socklen_t copy_len = (actual_len < len) ? actual_len : len;
-                if (fut_copy_to_user(local_src_addr, &peer_addr, copy_len) != 0) {
+                if (recv_copy_to_user(local_src_addr, &peer_addr, copy_len) != 0) {
                     fut_printf("[RECVFROM] recvfrom(sockfd=%d) -> EFAULT (failed to copy peer address)\n",
                                local_sockfd);
                     /* Note: We already received data successfully, so we can't fail now.
@@ -583,7 +589,7 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
                 }
 
                 /* Write back actual address length */
-                if (fut_copy_to_user(local_addrlen, &actual_len, sizeof(socklen_t)) != 0) {
+                if (recv_copy_to_user(local_addrlen, &actual_len, sizeof(socklen_t)) != 0) {
                     fut_printf("[RECVFROM] recvfrom(sockfd=%d) -> warning: failed to write back addrlen\n",
                                local_sockfd);
                     /* Non-fatal: data was received successfully */

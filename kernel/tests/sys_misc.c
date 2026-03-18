@@ -16140,6 +16140,128 @@ static void test_pread_pwrite_socket_espipe(void) {
     fut_test_pass();
 }
 
+/*
+ * Test 338: shutdown(SHUT_RD) causes recv() to return 0 (EOF)
+ *
+ * After calling shutdown(SHUT_RD) on a socket, all subsequent recv()
+ * calls on that socket must return 0 (EOF) immediately, even if the
+ * peer has data queued.  The local send direction remains open.
+ */
+static void test_shutdown_shut_rd(void) {
+    fut_printf("[MISC-TEST] Test 338: shutdown(SHUT_RD) recv returns 0\n");
+
+    extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+    extern long sys_shutdown(int sockfd, int how);
+    extern long sys_write(int fd, const void *buf, size_t count);
+    extern long sys_read(int fd, void *buf, size_t count);
+
+    int sv[2] = { -1, -1 };
+    long r = sys_socketpair(1 /*AF_UNIX*/, 1 /*SOCK_STREAM*/, 0, sv);
+    if (r < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 338: socketpair failed: %ld\n", r);
+        fut_test_fail(1);
+        return;
+    }
+
+    /* Peer sends data before SHUT_RD */
+    char msg[] = "hello";
+    long nw = sys_write(sv[1], msg, sizeof(msg));
+    if (nw < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 338: write failed: %ld\n", nw);
+        sys_close(sv[0]); sys_close(sv[1]);
+        fut_test_fail(1);
+        return;
+    }
+
+    /* Shut down the read side of sv[0] */
+    r = sys_shutdown(sv[0], 0 /*SHUT_RD*/);
+    if (r < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 338: shutdown(SHUT_RD) failed: %ld\n", r);
+        sys_close(sv[0]); sys_close(sv[1]);
+        fut_test_fail(1);
+        return;
+    }
+
+    /* recv() on sv[0] must return 0 (EOF) regardless of buffered data */
+    char buf[16];
+    long nr = sys_read(sv[0], buf, sizeof(buf));
+    if (nr != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 338: recv after SHUT_RD returned %ld (expected 0)\n", nr);
+        sys_close(sv[0]); sys_close(sv[1]);
+        fut_test_fail(1);
+        return;
+    }
+
+    /* Send direction of sv[0] still open: write to sv[0] should succeed */
+    long nw2 = sys_write(sv[0], "ok", 2);
+    if (nw2 < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 338: write after SHUT_RD failed: %ld\n", nw2);
+        sys_close(sv[0]); sys_close(sv[1]);
+        fut_test_fail(1);
+        return;
+    }
+
+    sys_close(sv[0]);
+    sys_close(sv[1]);
+    fut_printf("[MISC-TEST] ✓ Test 338: shutdown(SHUT_RD): recv=0 (EOF), send still works\n");
+    fut_test_pass();
+}
+
+/*
+ * Test 339: shutdown(SHUT_RDWR) closes both directions
+ *
+ * After shutdown(SHUT_RDWR): recv() returns 0, send() returns -EPIPE.
+ */
+static void test_shutdown_shut_rdwr(void) {
+    fut_printf("[MISC-TEST] Test 339: shutdown(SHUT_RDWR) both directions\n");
+
+    extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+    extern long sys_shutdown(int sockfd, int how);
+    extern long sys_write(int fd, const void *buf, size_t count);
+    extern long sys_read(int fd, void *buf, size_t count);
+
+    int sv[2] = { -1, -1 };
+    long r = sys_socketpair(1 /*AF_UNIX*/, 1 /*SOCK_STREAM*/, 0, sv);
+    if (r < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 339: socketpair failed: %ld\n", r);
+        fut_test_fail(1);
+        return;
+    }
+
+    r = sys_shutdown(sv[0], 2 /*SHUT_RDWR*/);
+    if (r < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 339: shutdown(SHUT_RDWR) failed: %ld\n", r);
+        sys_close(sv[0]); sys_close(sv[1]);
+        fut_test_fail(1);
+        return;
+    }
+
+    /* recv() must return 0 (EOF) */
+    char buf[8];
+    long nr = sys_read(sv[0], buf, sizeof(buf));
+    if (nr != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 339: recv after SHUT_RDWR returned %ld (expected 0)\n", nr);
+        sys_close(sv[0]); sys_close(sv[1]);
+        fut_test_fail(1);
+        return;
+    }
+
+    /* send() must return -EPIPE */
+    long nw = sys_write(sv[0], "x", 1);
+    if (nw != -EPIPE) {
+        fut_printf("[MISC-TEST] ✗ Test 339: write after SHUT_RDWR returned %ld (expected -EPIPE=%d)\n",
+                   nw, -EPIPE);
+        sys_close(sv[0]); sys_close(sv[1]);
+        fut_test_fail(1);
+        return;
+    }
+
+    sys_close(sv[0]);
+    sys_close(sv[1]);
+    fut_printf("[MISC-TEST] ✓ Test 339: shutdown(SHUT_RDWR): recv=EOF, send=EPIPE\n");
+    fut_test_pass();
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -16485,6 +16607,8 @@ void fut_misc_test_thread(void *arg) {
     test_so_peercred();                  /* Test 335: SO_PEERCRED returns correct credentials */
     test_lseek_socket_espipe();          /* Test 336: lseek on socket returns ESPIPE */
     test_pread_pwrite_socket_espipe();   /* Test 337: pread64/pwrite64 on socket returns ESPIPE */
+    test_shutdown_shut_rd();             /* Test 338: shutdown(SHUT_RD) causes recv to return 0 */
+    test_shutdown_shut_rdwr();           /* Test 339: shutdown(SHUT_RDWR) closes both directions */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -17253,6 +17253,60 @@ static void test_proc_status_umask(void) {
 }
 
 /* ============================================================
+ * Test 359: /proc/self/stat starttime field is non-zero
+ * ============================================================ */
+static void test_proc_stat_starttime(void) {
+    fut_printf("[MISC-TEST] Test 359: /proc/self/stat starttime field is non-zero\n");
+
+    int fd = fut_vfs_open("/proc/self/stat", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 359: open /proc/self/stat failed: %d\n", fd);
+        fut_test_fail(359);
+        return;
+    }
+
+    char buf[512];
+    long n = fut_vfs_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+
+    if (n <= 0) {
+        fut_printf("[MISC-TEST] ✗ Test 359: read /proc/self/stat failed: %ld\n", n);
+        fut_test_fail(359);
+        return;
+    }
+    buf[n] = '\0';
+
+    /* /proc/pid/stat field 22 is starttime.
+     * Skip past ')' (end of comm field), then skip 19 more space-delimited fields. */
+    const char *p = buf;
+    while (*p && *p != ')') p++;
+    if (*p == ')') p++;
+    /* fields 3..21 = 19 fields to skip to reach field 22 */
+    int skip = 19;
+    while (skip > 0 && *p) {
+        while (*p == ' ') p++;  /* skip leading spaces */
+        while (*p && *p != ' ') p++;  /* skip field value */
+        skip--;
+    }
+    while (*p == ' ') p++;  /* skip space before starttime */
+
+    /* Parse the starttime value */
+    unsigned long long starttime = 0;
+    while (*p >= '0' && *p <= '9') {
+        starttime = starttime * 10 + (unsigned long long)(*p - '0');
+        p++;
+    }
+
+    if (starttime == 0) {
+        fut_printf("[MISC-TEST] ✗ Test 359: starttime is 0 (should be non-zero after boot)\n");
+        fut_test_fail(359);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 359: /proc/self/stat starttime=%llu (non-zero)\n", starttime);
+    fut_test_pass();
+}
+
+/* ============================================================
  * Tests 352-353: SO_SNDBUF / SO_RCVBUF set/get round-trip
  * ============================================================ */
 static void test_so_sndbuf_roundtrip(void) {
@@ -17783,6 +17837,7 @@ void fut_misc_test_thread(void *arg) {
     test_proc_maps_anon_devino();        /* Test 356: /proc/self/maps anonymous entries have dev:inode format */
     test_proc_status_groups();           /* Test 357: /proc/self/status Groups: lists supplementary GIDs */
     test_proc_status_umask();            /* Test 358: /proc/self/status Umask: matches current umask */
+    test_proc_stat_starttime();          /* Test 359: /proc/self/stat starttime field is non-zero */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

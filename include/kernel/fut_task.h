@@ -195,6 +195,9 @@ struct fut_task {
     /* Accumulated CPU ticks from reaped children (for tms_cutime in sys_times) */
     uint64_t child_cpu_ticks;
 
+    /* Monotonic tick count when the task was created (for /proc/pid/stat starttime field) */
+    uint64_t start_ticks;
+
     /* RLIMIT_CPU enforcement: last CPU-second at which SIGXCPU was sent */
     uint64_t rlimit_cpu_last_sec;
 

@@ -826,8 +826,8 @@ static size_t gen_stat(char *buf, size_t cap, fut_task_t *task) {
         rss_pages = vsize / 4096;
     }
 
-    /* Starttime: ticks since boot at task creation — not stored, approximate as 0 */
-    uint64_t starttime = 0;
+    /* Starttime: ticks since boot at task creation (FUT_TIMER_HZ ticks per second = USER_HZ=100) */
+    uint64_t starttime = task->start_ticks;
 
     /* Signal bitmask fields (fields 31-34):
      * Compute sigignore and sigcatch from the signal handler table. */

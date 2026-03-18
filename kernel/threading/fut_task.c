@@ -208,6 +208,9 @@ fut_task_t *fut_task_create(void) {
      * even a soft limit of 0 fires SIGXCPU on the very first timer tick. */
     task->rlimit_cpu_last_sec = (uint64_t)-1;
 
+    /* Record creation time for /proc/pid/stat starttime field */
+    { extern uint64_t fut_get_ticks(void); task->start_ticks = fut_get_ticks(); }
+
     /* Initialize per-task file descriptor table */
     task->max_fds = FUT_FD_TABLE_INITIAL_SIZE;
     task->fd_table = (struct fut_file **)fut_malloc(FUT_FD_TABLE_INITIAL_SIZE * sizeof(struct fut_file *));

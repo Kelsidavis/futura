@@ -7957,6 +7957,136 @@ static void test_fchownat_basic(void) {
     fut_test_pass();
 }
 
+static void test_readlinkat_basic(void) {
+    fut_printf("[MISC-TEST] Test 169: sys_readlinkat basic\n");
+    extern long sys_readlinkat(int dirfd, const char *pathname, char *buf, size_t bufsiz);
+    extern long sys_unlink(const char *path);
+
+    /* Create a symlink pointing to /proc */
+    int ret = (int)fut_vfs_symlink("/proc", "/test_readlinkat_sym");
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ readlinkat: symlink create failed: %d\n", ret);
+        fut_test_fail(169);
+        return;
+    }
+
+    char buf[64] = {0};
+    long n = sys_readlinkat(-100, "/test_readlinkat_sym", buf, sizeof(buf));
+    fut_vfs_unlink("/test_readlinkat_sym");
+
+    if (n < 0) {
+        fut_printf("[MISC-TEST] ✗ readlinkat: returned %ld\n", n);
+        fut_test_fail(169);
+        return;
+    }
+    if (buf[0] != '/') {
+        fut_printf("[MISC-TEST] ✗ readlinkat: target '%s' doesn't start with '/'\n", buf);
+        fut_test_fail(169);
+        return;
+    }
+
+    /* ENOENT on missing symlink */
+    long en = sys_readlinkat(-100, "/no_such_readlinkat_sym", buf, sizeof(buf));
+    if (en != -ENOENT) {
+        fut_printf("[MISC-TEST] ✗ readlinkat missing: expected ENOENT, got %ld\n", en);
+        fut_test_fail(169);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ sys_readlinkat: symlink target ok, ENOENT on missing\n");
+    fut_test_pass();
+}
+
+static void test_mkdirat_basic(void) {
+    fut_printf("[MISC-TEST] Test 170: sys_mkdirat basic\n");
+    extern long sys_mkdirat(int dirfd, const char *pathname, unsigned int mode);
+
+    /* Create directory via AT_FDCWD */
+    long ret = sys_mkdirat(-100, "/test_mkdirat_dir", 0755);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ mkdirat: expected 0, got %ld\n", ret);
+        fut_test_fail(170);
+        return;
+    }
+
+    /* EEXIST on duplicate */
+    long ee = sys_mkdirat(-100, "/test_mkdirat_dir", 0755);
+    fut_vfs_rmdir("/test_mkdirat_dir");
+    if (ee != -EEXIST) {
+        fut_printf("[MISC-TEST] ✗ mkdirat EEXIST: expected EEXIST, got %ld\n", ee);
+        fut_test_fail(170);
+        return;
+    }
+
+    /* ENOENT on missing parent */
+    long en = sys_mkdirat(-100, "/no_parent/test_mkdirat_dir", 0755);
+    if (en != -ENOENT) {
+        fut_printf("[MISC-TEST] ✗ mkdirat ENOENT: expected ENOENT, got %ld\n", en);
+        fut_test_fail(170);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ sys_mkdirat: dir created, EEXIST, ENOENT on bad parent\n");
+    fut_test_pass();
+}
+
+static void test_fchmodat_basic(void) {
+    fut_printf("[MISC-TEST] Test 171: sys_fchmodat basic\n");
+    extern long sys_fchmodat(int dirfd, const char *pathname, unsigned int mode, int flags);
+
+    /* Create a test file */
+    int fd = (int)fut_vfs_open("/test_fchmodat.txt", O_CREAT | O_RDWR, 0644);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ fchmodat: create failed: %d\n", fd);
+        fut_test_fail(171);
+        return;
+    }
+    fut_vfs_close(fd);
+
+    /* Change mode to 0400 */
+    long ret = sys_fchmodat(-100, "/test_fchmodat.txt", 0400, 0);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ fchmodat: expected 0, got %ld\n", ret);
+        fut_vfs_unlink("/test_fchmodat.txt");
+        fut_test_fail(171);
+        return;
+    }
+
+    /* Verify via stat */
+    struct fut_stat st;
+    int sr = fut_vfs_stat("/test_fchmodat.txt", &st);
+    fut_vfs_unlink("/test_fchmodat.txt");
+    if (sr != 0 || (st.st_mode & 0777) != 0400) {
+        fut_printf("[MISC-TEST] ✗ fchmodat: mode=0%o (expected 0400), sr=%d\n",
+                   st.st_mode & 0777, sr);
+        fut_test_fail(171);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ sys_fchmodat: mode 0644→0400 via AT_FDCWD\n");
+    fut_test_pass();
+}
+
+static void test_faccessat_basic(void) {
+    fut_printf("[MISC-TEST] Test 172: sys_faccessat basic\n");
+    extern long sys_faccessat(int dirfd, const char *pathname, int mode, int flags);
+
+    /* F_OK=0 on /proc should succeed */
+    long ret = sys_faccessat(-100, "/proc", 0, 0);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ faccessat F_OK /proc: expected 0, got %ld\n", ret);
+        fut_test_fail(172);
+        return;
+    }
+
+    /* ENOENT on missing path */
+    long en = sys_faccessat(-100, "/no_such_faccessat_path", 0, 0);
+    if (en != -ENOENT) {
+        fut_printf("[MISC-TEST] ✗ faccessat ENOENT: expected ENOENT, got %ld\n", en);
+        fut_test_fail(172);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ sys_faccessat: F_OK /proc ok, ENOENT on missing\n");
+    fut_test_pass();
+}
+
 /* ============================================================
  * Test entry point
  * ============================================================ */
@@ -8135,6 +8265,10 @@ void fut_misc_test_thread(void *arg) {
     test_pread_pwrite_basic();             /* Test 166: sys_pread64/pwrite64 offset I/O */
     test_chown_basic();                    /* Test 167: sys_chown uid/gid change + ENOENT */
     test_fchownat_basic();                 /* Test 168: sys_fchownat AT_FDCWD + ENOENT */
+    test_readlinkat_basic();               /* Test 169: sys_readlinkat symlink target */
+    test_mkdirat_basic();                  /* Test 170: sys_mkdirat create/EEXIST/ENOENT */
+    test_fchmodat_basic();                 /* Test 171: sys_fchmodat mode change + verify */
+    test_faccessat_basic();                /* Test 172: sys_faccessat F_OK + ENOENT */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

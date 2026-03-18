@@ -22,6 +22,19 @@
 #include <kernel/syscalls.h>
 #include <fcntl.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
+static inline int symlinkat_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return symlinkat_copy_from_user(dst, src, n);
+}
+
 /* AT_* constants provided by fcntl.h */
 
 /**
@@ -115,7 +128,7 @@ long sys_symlinkat(const char *target, int newdirfd, const char *linkpath) {
 
     /* Copy target from userspace */
     char target_buf[256];
-    if (fut_copy_from_user(target_buf, local_target, sizeof(target_buf)) != 0) {
+    if (symlinkat_copy_from_user(target_buf, local_target, sizeof(target_buf)) != 0) {
         fut_printf("[SYMLINKAT] symlinkat(newdirfd=%d) -> EFAULT (copy_from_user target failed)\n",
                    local_newdirfd);
         return -EFAULT;
@@ -129,7 +142,7 @@ long sys_symlinkat(const char *target, int newdirfd, const char *linkpath) {
 
     /* Copy linkpath from userspace */
     char linkpath_buf[256];
-    if (fut_copy_from_user(linkpath_buf, local_linkpath, sizeof(linkpath_buf)) != 0) {
+    if (symlinkat_copy_from_user(linkpath_buf, local_linkpath, sizeof(linkpath_buf)) != 0) {
         fut_printf("[SYMLINKAT] symlinkat(newdirfd=%d) -> EFAULT (copy_from_user linkpath failed)\n",
                    local_newdirfd);
         return -EFAULT;

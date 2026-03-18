@@ -22,6 +22,19 @@
 #include <kernel/uaccess.h>
 #include <fcntl.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
+static inline int linkat_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return linkat_copy_from_user(dst, src, n);
+}
+
 /* AT_* constants provided by fcntl.h */
 
 /**
@@ -136,7 +149,7 @@ long sys_linkat(int olddirfd, const char *oldpath, int newdirfd, const char *new
 
     /* Copy oldpath from userspace */
     char oldpath_buf[256];
-    if (fut_copy_from_user(oldpath_buf, local_oldpath, sizeof(oldpath_buf)) != 0) {
+    if (linkat_copy_from_user(oldpath_buf, local_oldpath, sizeof(oldpath_buf)) != 0) {
         fut_printf("[LINKAT] linkat(olddirfd=%d) -> EFAULT (copy_from_user oldpath failed)\n",
                    local_olddirfd);
         return -EFAULT;
@@ -150,7 +163,7 @@ long sys_linkat(int olddirfd, const char *oldpath, int newdirfd, const char *new
 
     /* Copy newpath from userspace */
     char newpath_buf[256];
-    if (fut_copy_from_user(newpath_buf, local_newpath, sizeof(newpath_buf)) != 0) {
+    if (linkat_copy_from_user(newpath_buf, local_newpath, sizeof(newpath_buf)) != 0) {
         fut_printf("[LINKAT] linkat(newdirfd=%d) -> EFAULT (copy_from_user newpath failed)\n",
                    local_newdirfd);
         return -EFAULT;

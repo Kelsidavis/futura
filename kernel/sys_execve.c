@@ -17,6 +17,29 @@
 #include <kernel/errno.h>
 #include <kernel/uaccess.h>
 #include <stddef.h>
+#include <string.h>
+
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
+static inline int execve_is_kptr(const void *p) {
+#ifdef KERNEL_VIRTUAL_BASE
+    return (uintptr_t)p >= KERNEL_VIRTUAL_BASE;
+#else
+    return 0;
+#endif
+}
+static inline int execve_copy_from_user(void *dst, const void *src, size_t n) {
+    if (execve_is_kptr(src)) { __builtin_memcpy(dst, src, n); return 0; }
+    return fut_copy_from_user(dst, src, n);
+}
+static inline int execve_access_ok(const void *ptr, size_t n) {
+    if (execve_is_kptr(ptr)) return 0;
+    return fut_access_ok(ptr, n, 0);
+}
 
 /* FD_CLOEXEC flag value */
 #define FD_CLOEXEC 1
@@ -189,7 +212,7 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
     }
 
     /* Validate that pathname is a valid userspace pointer (readable) */
-    if (fut_access_ok(local_pathname, 1, 0) != 0) {
+    if (execve_access_ok(local_pathname, 1) != 0) {
         char msg[128];
         int pos = 0;
         const char *text = "[EXECVE] execve(path=?) -> EFAULT (pathname not accessible, pid=";
@@ -215,7 +238,7 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
     size_t path_len = 0;
     char ch = 1;
     while (path_len < 255) {
-        if (fut_copy_from_user(&ch, local_pathname + path_len, 1) != 0) {
+        if (execve_copy_from_user(&ch, local_pathname + path_len, 1) != 0) {
             break;
         }
         kernel_pathname[path_len] = ch;
@@ -227,13 +250,13 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
     kernel_pathname[path_len] = '\0';  /* Ensure null termination */
 
     /* Validate that argv is a valid userspace pointer (readable) */
-    if (local_argv && fut_access_ok(local_argv, sizeof(char *), 0) != 0) {
+    if (local_argv && execve_access_ok(local_argv, sizeof(char *)) != 0) {
         EXECVE_LOG("[EXECVE] execve(path=%s) -> EFAULT (argv not accessible)\n", kernel_pathname);
         return -EFAULT;
     }
 
     /* Validate that envp is a valid userspace pointer (readable) if provided */
-    if (local_envp && fut_access_ok(local_envp, sizeof(char *), 0) != 0) {
+    if (local_envp && execve_access_ok(local_envp, sizeof(char *)) != 0) {
         EXECVE_LOG("[EXECVE] execve(path=%s) -> EFAULT (envp not accessible)\n", kernel_pathname);
         return -EFAULT;
     }
@@ -375,7 +398,7 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
     if (local_argv) {
         char *ptr = NULL;
         while (argc < 1000) {
-            if (fut_copy_from_user(&ptr, &local_argv[argc], sizeof(char *)) != 0) {
+            if (execve_copy_from_user(&ptr, &local_argv[argc], sizeof(char *)) != 0) {
                 break;  /* Access error - stop counting */
             }
             if (ptr == NULL) {
@@ -389,7 +412,7 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
     if (local_envp) {
         char *ptr = NULL;
         while (envc < 1000) {
-            if (fut_copy_from_user(&ptr, &local_envp[envc], sizeof(char *)) != 0) {
+            if (execve_copy_from_user(&ptr, &local_envp[envc], sizeof(char *)) != 0) {
                 break;  /* Access error - stop counting */
             }
             if (ptr == NULL) {
@@ -425,7 +448,7 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
         for (int i = 0; i < argc && i < EXEC_ARGC_MAX; i++) {
             /* SMAP FIX: Read argv[i] pointer using safe copy */
             const char *ptr = NULL;
-            if (fut_copy_from_user((void *)&ptr, &local_argv[i], sizeof(char *)) != 0) {
+            if (execve_copy_from_user((void *)&ptr, &local_argv[i], sizeof(char *)) != 0) {
                 execve_free_argv(kernel_argv, i);
                 EXECVE_LOG("[EXECVE] execve() -> EFAULT (argv[%d] pointer read failed)\n", i);
                 return -EFAULT;
@@ -442,7 +465,7 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
             size_t arg_len = 0;
             char ch = 1;
             while (arg_len < EXEC_ARG_LEN_MAX) {
-                if (fut_copy_from_user(&ch, ptr + arg_len, 1) != 0) {
+                if (execve_copy_from_user(&ch, ptr + arg_len, 1) != 0) {
                     break;  /* Access error */
                 }
                 if (ch == '\0') {
@@ -482,7 +505,7 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
             }
 
             /* Use fut_copy_from_user for safe copy with proper fault handling */
-            if (fut_copy_from_user(kernel_argv[i], ptr, arg_len + 1) != 0) {
+            if (execve_copy_from_user(kernel_argv[i], ptr, arg_len + 1) != 0) {
                 execve_free_argv(kernel_argv, i + 1);  /* i+1 to include current allocation */
                 EXECVE_LOG("[EXECVE] execve() -> EFAULT (argv[%d] copy failed)\n", i);
                 return -EFAULT;
@@ -524,7 +547,7 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
         for (int i = 0; i < envc && i < EXEC_ENVC_MAX; i++) {
             /* SMAP FIX: Read envp[i] pointer using safe copy */
             const char *ptr = NULL;
-            if (fut_copy_from_user((void *)&ptr, &local_envp[i], sizeof(char *)) != 0) {
+            if (execve_copy_from_user((void *)&ptr, &local_envp[i], sizeof(char *)) != 0) {
                 execve_free_envp(kernel_envp, i);
                 execve_free_argv(kernel_argv, argc);
                 EXECVE_LOG("[EXECVE] execve() -> EFAULT (envp[%d] pointer read failed)\n", i);
@@ -542,7 +565,7 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
             size_t env_len = 0;
             char ch = 1;
             while (env_len < EXEC_ARG_LEN_MAX) {
-                if (fut_copy_from_user(&ch, ptr + env_len, 1) != 0) {
+                if (execve_copy_from_user(&ch, ptr + env_len, 1) != 0) {
                     break;  /* Access error */
                 }
                 if (ch == '\0') {
@@ -584,7 +607,7 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
             }
 
             /* Use fut_copy_from_user for safe copy */
-            if (fut_copy_from_user(kernel_envp[i], ptr, env_len + 1) != 0) {
+            if (execve_copy_from_user(kernel_envp[i], ptr, env_len + 1) != 0) {
                 execve_free_envp(kernel_envp, i + 1);  /* i+1 to include current allocation */
                 execve_free_argv(kernel_argv, argc);
                 EXECVE_LOG("[EXECVE] execve() -> EFAULT (envp[%d] copy failed)\n", i);

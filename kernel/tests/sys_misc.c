@@ -13726,6 +13726,118 @@ static void test_rlimit_cpu_enforcement(void) {
     fut_test_pass();
 }
 
+/*
+ * Test 303: rseq() registration/unregistration and error paths.
+ *
+ * glibc 2.35+ calls sys_rseq() on startup to register its restartable-
+ * sequence descriptor. We verify: valid registration returns 0, NULL pointer
+ * with register flag returns EFAULT, short struct size returns EINVAL, and
+ * unknown flags return EINVAL.
+ */
+static void test_rseq_basic(void) {
+    fut_printf("[MISC-TEST] Test 303: rseq registration/error paths\n");
+    extern long sys_rseq(void *rseq, uint32_t rseq_len, int flags, uint32_t sig);
+
+    /* Minimum 32-byte rseq struct (Linux ABI v1) */
+    static char rseq_buf[32];
+    __builtin_memset(rseq_buf, 0, sizeof(rseq_buf));
+
+    /* Valid registration */
+    long r = sys_rseq(rseq_buf, 32, 0, 0);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ rseq register: expected 0, got %ld\n", r);
+        fut_test_fail(303); return;
+    }
+
+    /* Unregistration */
+    r = sys_rseq(rseq_buf, 32, 1 /*RSEQ_FLAG_UNREGISTER*/, 0);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ rseq unregister: expected 0, got %ld\n", r);
+        fut_test_fail(303); return;
+    }
+
+    /* NULL pointer with register → EFAULT */
+    r = sys_rseq(NULL, 32, 0, 0);
+    if (r != -14 /*-EFAULT*/) {
+        fut_printf("[MISC-TEST] ✗ rseq(NULL): expected -EFAULT (-14), got %ld\n", r);
+        fut_test_fail(303); return;
+    }
+
+    /* Struct too small → EINVAL */
+    r = sys_rseq(rseq_buf, 16, 0, 0);
+    if (r != -22 /*-EINVAL*/) {
+        fut_printf("[MISC-TEST] ✗ rseq(small): expected -EINVAL (-22), got %ld\n", r);
+        fut_test_fail(303); return;
+    }
+
+    /* Unknown flags → EINVAL */
+    r = sys_rseq(rseq_buf, 32, 0xFFFF, 0);
+    if (r != -22 /*-EINVAL*/) {
+        fut_printf("[MISC-TEST] ✗ rseq(bad_flags): expected -EINVAL (-22), got %ld\n", r);
+        fut_test_fail(303); return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ rseq: register=0, unregister=0, NULL→EFAULT, small→EINVAL, bad_flags→EINVAL\n");
+    fut_test_pass();
+}
+
+/*
+ * Test 304: close_range() — close or CLOEXEC a range of FDs.
+ *
+ * Opens a few FDs, then uses close_range() to close them in bulk.
+ * Also tests CLOSE_RANGE_CLOEXEC (flag=2) to mark a range cloexec.
+ * Verifies invalid parameter (first > last) returns EINVAL.
+ */
+static void test_close_range_basic(void) {
+    fut_printf("[MISC-TEST] Test 304: close_range basic\n");
+    extern long sys_close_range(unsigned int first, unsigned int last, unsigned int flags);
+
+    /* Open 3 temp files to get consecutive FDs */
+    int fd1 = fut_vfs_open("/cr_test1.txt", O_CREAT | O_RDWR, 0600);
+    int fd2 = fut_vfs_open("/cr_test2.txt", O_CREAT | O_RDWR, 0600);
+    int fd3 = fut_vfs_open("/cr_test3.txt", O_CREAT | O_RDWR, 0600);
+    if (fd1 < 0 || fd2 < 0 || fd3 < 0) {
+        fut_printf("[MISC-TEST] ✗ close_range: open failed %d %d %d\n", fd1, fd2, fd3);
+        if (fd1 >= 0) fut_vfs_close(fd1);
+        if (fd2 >= 0) fut_vfs_close(fd2);
+        if (fd3 >= 0) fut_vfs_close(fd3);
+        fut_vfs_unlink("/cr_test1.txt");
+        fut_vfs_unlink("/cr_test2.txt");
+        fut_vfs_unlink("/cr_test3.txt");
+        fut_test_fail(304); return;
+    }
+
+    /* close_range on the three FDs */
+    int lo = fd1 < fd2 ? (fd1 < fd3 ? fd1 : fd3) : (fd2 < fd3 ? fd2 : fd3);
+    int hi = fd1 > fd2 ? (fd1 > fd3 ? fd1 : fd3) : (fd2 > fd3 ? fd2 : fd3);
+    long r = sys_close_range((unsigned int)lo, (unsigned int)hi, 0);
+    fut_vfs_unlink("/cr_test1.txt");
+    fut_vfs_unlink("/cr_test2.txt");
+    fut_vfs_unlink("/cr_test3.txt");
+
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ close_range(%d..%d, 0): expected 0, got %ld\n", lo, hi, r);
+        fut_test_fail(304); return;
+    }
+
+    /* first > last → EINVAL */
+    r = sys_close_range(100, 50, 0);
+    if (r != -22 /*-EINVAL*/) {
+        fut_printf("[MISC-TEST] ✗ close_range(100,50): expected -EINVAL, got %ld\n", r);
+        fut_test_fail(304); return;
+    }
+
+    /* CLOSE_RANGE_CLOEXEC (1<<2 = 4) on an empty range — returns 0 with no FDs open */
+    r = sys_close_range(1000, 1100, 4 /*CLOSE_RANGE_CLOEXEC*/);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ close_range(CLOEXEC, empty range): expected 0, got %ld\n", r);
+        fut_test_fail(304); return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ close_range: bulk close, EINVAL(first>last), CLOEXEC\n");
+    fut_test_pass();
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -14035,6 +14147,8 @@ void fut_misc_test_thread(void *arg) {
     test_waitid_p_pidfd();               /* Test 300: waitid(P_PIDFD) resolves pidfd to PID */
     test_rlimit_cpu_enforcement();       /* Test 301: RLIMIT_CPU enforcement (SIGXCPU/SIGKILL) */
     test_mqueue_notify();                /* Test 302: mq_notify SIGEV_SIGNAL one-shot delivery */
+    test_rseq_basic();                   /* Test 303: rseq register/unregister/error paths */
+    test_close_range_basic();            /* Test 304: close_range bulk close + CLOEXEC */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

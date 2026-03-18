@@ -16608,6 +16608,66 @@ static void test_signalfd_poll_ready(void) {
     fut_test_pass();
 }
 
+/* ============================================================
+ * Test 344: O_NONBLOCK pipe: writes <= PIPE_BUF (4096) are atomic
+ *   If the pipe doesn't have space for the full write, return EAGAIN
+ *   (not a partial write).
+ * ============================================================ */
+static void test_pipe_nb_atomic_write(void) {
+    fut_printf("[MISC-TEST] Test 344: pipe O_NONBLOCK atomic PIPE_BUF write\n");
+
+    int pipefd[2];
+    long ret = sys_pipe2(pipefd, 00004000); /* O_NONBLOCK */
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ pipe2 failed: %ld\n", ret);
+        fut_test_fail(344);
+        return;
+    }
+
+    /* Fill pipe to within 10 bytes of capacity (65536-10 = 65526) */
+    char fill[4096];
+    __builtin_memset(fill, 'A', sizeof(fill));
+    ssize_t total = 0;
+    while (total < 65526) {
+        size_t want = 65526 - (size_t)total;
+        if (want > sizeof(fill)) want = sizeof(fill);
+        ssize_t nw = fut_vfs_write(pipefd[1], fill, want);
+        if (nw <= 0) break;
+        total += nw;
+    }
+    if (total != 65526) {
+        fut_printf("[MISC-TEST] ✗ fill write: %zd (expected 65526)\n", total);
+        fut_vfs_close(pipefd[0]); fut_vfs_close(pipefd[1]);
+        fut_test_fail(344);
+        return;
+    }
+
+    /* Pipe has 10 bytes free.  Try to write 100 bytes (< PIPE_BUF=4096).
+     * Must return EAGAIN — not a partial write of 10 bytes. */
+    char extra[100];
+    __builtin_memset(extra, 'B', sizeof(extra));
+    ssize_t nw = fut_vfs_write(pipefd[1], extra, sizeof(extra));
+    if (nw != -EAGAIN) {
+        fut_printf("[MISC-TEST] ✗ atomic NB write (100 bytes, 10 free): returned %zd (expected EAGAIN)\n", nw);
+        fut_vfs_close(pipefd[0]); fut_vfs_close(pipefd[1]);
+        fut_test_fail(344);
+        return;
+    }
+
+    /* A write of exactly 10 bytes (fits) must succeed */
+    ssize_t nw2 = fut_vfs_write(pipefd[1], extra, 10);
+    if (nw2 != 10) {
+        fut_printf("[MISC-TEST] ✗ exact-fit NB write (10 bytes, 10 free): returned %zd (expected 10)\n", nw2);
+        fut_vfs_close(pipefd[0]); fut_vfs_close(pipefd[1]);
+        fut_test_fail(344);
+        return;
+    }
+
+    fut_vfs_close(pipefd[0]); fut_vfs_close(pipefd[1]);
+    fut_printf("[MISC-TEST] ✓ Test 344: pipe PIPE_BUF atomic O_NONBLOCK: EAGAIN for partial, success for exact fit\n");
+    fut_test_pass();
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -16959,6 +17019,7 @@ void fut_misc_test_thread(void *arg) {
     test_epoll_connecting_socket();      /* Test 341: epoll_wait() on CONNECTING socket wakes after accept() */
     test_signalfd_epoll_ready();         /* Test 342: signalfd in epoll: EPOLLIN when signal pending */
     test_signalfd_poll_ready();          /* Test 343: signalfd in poll: POLLIN when signal pending */
+    test_pipe_nb_atomic_write();         /* Test 344: pipe O_NONBLOCK write <= PIPE_BUF is atomic */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

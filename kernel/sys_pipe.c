@@ -35,8 +35,9 @@
 
 #include <kernel/kprintf.h>
 
-/* Pipe buffer size */
-#define PIPE_BUF_SIZE 65536
+/* Pipe buffer size (capacity) and POSIX atomic-write guarantee */
+#define PIPE_BUF_SIZE    65536
+#define PIPE_BUF_ATOMIC   4096  /* writes <= this size are atomic per POSIX */
 
 /* Pipe buffer structure */
 struct pipe_buffer {
@@ -242,10 +243,24 @@ static ssize_t pipe_write(void *inode, void *priv, const void *buf, size_t len, 
         return -EPIPE;
     }
 
-    /* Return EAGAIN if non-blocking and no space available */
-    if (pipe->count >= pipe->size && !pipe->read_closed && pipe->write_nonblock) {
-        fut_spinlock_release(&pipe->lock);
-        return -EAGAIN;
+    /* Non-blocking: enforce POSIX atomicity for writes <= PIPE_BUF.
+     * writes <= PIPE_BUF must complete entirely or return EAGAIN (never partial).
+     * writes > PIPE_BUF are non-atomic; EAGAIN only when pipe is completely full. */
+    if (pipe->write_nonblock) {
+        size_t space = pipe->size - pipe->count;
+        if (len <= PIPE_BUF_ATOMIC) {
+            /* Atomic write: need room for the entire write */
+            if (space < len) {
+                fut_spinlock_release(&pipe->lock);
+                return -EAGAIN;
+            }
+        } else {
+            /* Large write: EAGAIN only when no space at all */
+            if (space == 0) {
+                fut_spinlock_release(&pipe->lock);
+                return -EAGAIN;
+            }
+        }
     }
 
     /* Block until space is available */

@@ -203,6 +203,7 @@
 #define SYS_sched_setattr          439  /* Linux: 314 — Futura: 439 (314/315 used by clock_getres/nanosleep) */
 #define SYS_sched_getattr          440  /* Linux: 315 — Futura: 440 */
 #define SYS_seccomp                441  /* Linux: 317 — Futura: 441 (317 used by renameat2) */
+#define SYS_kcmp                   442  /* Linux: 312 — Futura: 442 (312 used by capget) */
 
 /* xattr syscalls (Linux x86_64 188-199) */
 #define SYS_setxattr     188
@@ -1715,6 +1716,15 @@ static int64_t sys_rt_tgsigqueueinfo_handler(uint64_t tgid, uint64_t tid, uint64
                                   (const void *)(uintptr_t)uinfo);
 }
 
+static int64_t sys_kcmp_handler(uint64_t pid1, uint64_t pid2, uint64_t type,
+                                 uint64_t idx1, uint64_t idx2, uint64_t arg6) {
+    (void)arg6;
+    extern long sys_kcmp(int pid1, int pid2, int type,
+                         unsigned long idx1, unsigned long idx2);
+    return sys_kcmp((int)pid1, (int)pid2, (int)type,
+                    (unsigned long)idx1, (unsigned long)idx2);
+}
+
 static int64_t sys_seccomp_handler(uint64_t operation, uint64_t flags, uint64_t uargs,
                                     uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     (void)arg4; (void)arg5; (void)arg6;
@@ -3148,6 +3158,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_sched_setattr]       = sys_sched_setattr_handler,
     [SYS_sched_getattr]       = sys_sched_getattr_handler,
     [SYS_seccomp]             = sys_seccomp_handler,
+    [SYS_kcmp]                = sys_kcmp_handler,
     /* time / itimer / clock */
     [SYS_getitimer]         = sys_getitimer_handler,
     [SYS_setitimer]         = sys_setitimer_handler,

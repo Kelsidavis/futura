@@ -10804,6 +10804,115 @@ static void test_seccomp_action_avail(void) {
 }
 
 /* ============================================================
+ * Tests 229-231: kcmp()
+ * ============================================================ */
+
+#define TEST_KCMP_FILE    0
+#define TEST_KCMP_VM      1
+#define TEST_KCMP_FILES   2
+
+/* Test 229: kcmp KCMP_FILE same FD (dup'd) returns 0 */
+static void test_kcmp_file_same(void) {
+    fut_printf("[MISC-TEST] Test 229: kcmp KCMP_FILE same file object → 0\n");
+    extern long sys_kcmp(int pid1, int pid2, int type,
+                         unsigned long idx1, unsigned long idx2);
+    extern long sys_getpid(void);
+    extern long sys_dup(int oldfd);
+    extern long sys_unlink(const char *path);
+
+    int fd = fut_vfs_open("/kcmp_test.txt", O_CREAT | O_RDWR, 0644);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open failed: %d\n", fd);
+        fut_test_fail(229); return;
+    }
+    int fd2 = (int)sys_dup(fd);
+    if (fd2 < 0) {
+        fut_printf("[MISC-TEST] ✗ dup failed: %d\n", fd2);
+        fut_vfs_close(fd);
+        fut_test_fail(229); return;
+    }
+
+    long pid = sys_getpid();
+    long r = sys_kcmp((int)pid, (int)pid, TEST_KCMP_FILE, (unsigned long)fd, (unsigned long)fd2);
+    fut_vfs_close(fd); fut_vfs_close(fd2);
+    sys_unlink("/kcmp_test.txt");
+
+    /* dup'd FDs reference the same file object */
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ kcmp(same file via dup) expected 0, got %ld\n", r);
+        fut_test_fail(229); return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ kcmp KCMP_FILE: dup'd FDs → 0\n");
+    fut_test_pass();
+}
+
+/* Test 230: kcmp KCMP_FILE different files → nonzero */
+static void test_kcmp_file_different(void) {
+    fut_printf("[MISC-TEST] Test 230: kcmp KCMP_FILE different files → nonzero\n");
+    extern long sys_kcmp(int pid1, int pid2, int type,
+                         unsigned long idx1, unsigned long idx2);
+    extern long sys_getpid(void);
+    extern long sys_unlink(const char *path);
+
+    int fa = fut_vfs_open("/kcmp_a.txt", O_CREAT | O_RDWR, 0644);
+    int fb = fut_vfs_open("/kcmp_b.txt", O_CREAT | O_RDWR, 0644);
+    if (fa < 0 || fb < 0) {
+        fut_printf("[MISC-TEST] ✗ open failed\n");
+        if (fa >= 0) fut_vfs_close(fa);
+        if (fb >= 0) fut_vfs_close(fb);
+        fut_test_fail(230); return;
+    }
+
+    long pid = sys_getpid();
+    long r = sys_kcmp((int)pid, (int)pid, TEST_KCMP_FILE, (unsigned long)fa, (unsigned long)fb);
+    fut_vfs_close(fa); fut_vfs_close(fb);
+    sys_unlink("/kcmp_a.txt"); sys_unlink("/kcmp_b.txt");
+
+    if (r == 0) {
+        fut_printf("[MISC-TEST] ✗ kcmp(different files) returned 0 (should be nonzero)\n");
+        fut_test_fail(230); return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ kcmp KCMP_FILE: different files → %ld (nonzero)\n", r);
+    fut_test_pass();
+}
+
+/* Test 231: kcmp error paths */
+static void test_kcmp_errors(void) {
+    fut_printf("[MISC-TEST] Test 231: kcmp error paths\n");
+    extern long sys_kcmp(int pid1, int pid2, int type,
+                         unsigned long idx1, unsigned long idx2);
+    extern long sys_getpid(void);
+
+    long pid = sys_getpid();
+
+    /* Invalid type → EINVAL */
+    long r = sys_kcmp((int)pid, (int)pid, 99, 0, 0);
+    if (r != -22 /* -EINVAL */) {
+        fut_printf("[MISC-TEST] ✗ kcmp bad type expected EINVAL, got %ld\n", r);
+        fut_test_fail(231); return;
+    }
+
+    /* pid1=0 → EINVAL */
+    r = sys_kcmp(0, (int)pid, TEST_KCMP_VM, 0, 0);
+    if (r != -22) {
+        fut_printf("[MISC-TEST] ✗ kcmp pid1=0 expected EINVAL, got %ld\n", r);
+        fut_test_fail(231); return;
+    }
+
+    /* KCMP_VM on same pid → 0 */
+    r = sys_kcmp((int)pid, (int)pid, TEST_KCMP_VM, 0, 0);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ kcmp VM same pid expected 0, got %ld\n", r);
+        fut_test_fail(231); return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ kcmp: error paths and VM compare correct\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -11041,6 +11150,9 @@ void fut_misc_test_thread(void *arg) {
     test_seccomp_strict_mode();            /* Test 226: seccomp STRICT no-op returns 0 */
     test_seccomp_filter_enosys();          /* Test 227: seccomp FILTER returns ENOSYS */
     test_seccomp_action_avail();           /* Test 228: seccomp GET_ACTION_AVAIL */
+    test_kcmp_file_same();                 /* Test 229: kcmp KCMP_FILE same FD → 0 */
+    test_kcmp_file_different();            /* Test 230: kcmp KCMP_FILE different files → nonzero */
+    test_kcmp_errors();                    /* Test 231: kcmp error paths */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

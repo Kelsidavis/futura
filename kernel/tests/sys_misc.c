@@ -7256,6 +7256,116 @@ static void test_lstat_symlink(void) {
     fut_test_pass();
 }
 
+static void test_preadv_basic(void) {
+    fut_printf("[MISC-TEST] Test 153: sys_preadv basic\n");
+    extern ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset);
+
+    /* Create a file with known content */
+    int fd = (int)fut_vfs_open("/test_preadv.txt", O_CREAT | O_RDWR, 0644);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ preadv: create file failed: %d\n", fd);
+        fut_test_fail(153);
+        return;
+    }
+    /* Write "Hello, World!" via vfs */
+    const char content[] = "Hello, World!";
+    fut_vfs_write(fd, content, sizeof(content) - 1);
+    fut_vfs_close(fd);
+
+    /* Re-open for reading */
+    fd = (int)fut_vfs_open("/test_preadv.txt", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ preadv: reopen failed: %d\n", fd);
+        fut_test_fail(153);
+        return;
+    }
+
+    /* Read into two buffers: first 5 bytes and next 8 bytes */
+    char buf1[5] = {0};
+    char buf2[8] = {0};
+    struct iovec iov[2];
+    iov[0].iov_base = buf1;
+    iov[0].iov_len  = 5;
+    iov[1].iov_base = buf2;
+    iov[1].iov_len  = 8;
+
+    long ret = sys_preadv(fd, (const struct iovec *)iov, 2, 0);
+    fut_vfs_close(fd);
+
+    if (ret < 0) {
+        fut_printf("[MISC-TEST] ✗ preadv: %ld\n", ret);
+        fut_test_fail(153);
+        return;
+    }
+    /* Verify first 5 bytes = "Hello" */
+    if (buf1[0] != 'H' || buf1[4] != 'o') {
+        fut_printf("[MISC-TEST] ✗ preadv: buf1 mismatch: '%c%c%c%c%c'\n",
+                   buf1[0], buf1[1], buf1[2], buf1[3], buf1[4]);
+        fut_test_fail(153);
+        return;
+    }
+    /* Verify negative iovcnt returns EINVAL */
+    ret = sys_preadv(0, (const struct iovec *)iov, -1, 0);
+    if (ret != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ preadv(iovcnt=-1): expected EINVAL, got %ld\n", ret);
+        fut_test_fail(153);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ preadv: scatter read ok, invalid iovcnt → EINVAL\n");
+    fut_test_pass();
+}
+
+static void test_pwritev_basic(void) {
+    fut_printf("[MISC-TEST] Test 154: sys_pwritev basic\n");
+    extern ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset);
+
+    int fd = (int)fut_vfs_open("/test_pwritev.txt", O_CREAT | O_RDWR, 0644);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ pwritev: create failed: %d\n", fd);
+        fut_test_fail(154);
+        return;
+    }
+
+    /* Write two buffers at offset 0 */
+    const char part1[] = "Futura";
+    const char part2[] = "OS";
+    struct iovec iov[2];
+    iov[0].iov_base = (void *)part1;
+    iov[0].iov_len  = 6;
+    iov[1].iov_base = (void *)part2;
+    iov[1].iov_len  = 2;
+
+    long ret = sys_pwritev(fd, (const struct iovec *)iov, 2, 0);
+    if (ret < 0) {
+        fut_printf("[MISC-TEST] ✗ pwritev: %ld\n", ret);
+        fut_vfs_close(fd);
+        fut_test_fail(154);
+        return;
+    }
+    if (ret != 8) {
+        fut_printf("[MISC-TEST] ✗ pwritev: wrote %ld, expected 8\n", ret);
+        fut_vfs_close(fd);
+        fut_test_fail(154);
+        return;
+    }
+
+    /* Read back and verify */
+    extern int64_t fut_vfs_lseek(int fd, int64_t offset, int whence);
+    char rbuf[8] = {0};
+    fut_vfs_lseek(fd, 0, 0 /* SEEK_SET */);
+    int nr = fut_vfs_read(fd, rbuf, 8);
+    fut_vfs_close(fd);
+
+    if (nr != 8 || rbuf[0] != 'F' || rbuf[5] != 'a' || rbuf[6] != 'O') {
+        fut_printf("[MISC-TEST] ✗ pwritev: readback failed: nr=%d '%c%c%c%c%c%c%c%c'\n",
+                   nr, rbuf[0], rbuf[1], rbuf[2], rbuf[3], rbuf[4], rbuf[5], rbuf[6], rbuf[7]);
+        fut_test_fail(154);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ pwritev: scatter write + readback ok\n");
+    fut_test_pass();
+}
+
 /* ============================================================
  * Test entry point
  * ============================================================ */
@@ -7418,6 +7528,8 @@ void fut_misc_test_thread(void *arg) {
     test_msync_basic();                    /* Test 150: msync no-op on anonymous mapping */
     test_stat_basic();                     /* Test 151: sys_stat directory + ENOENT */
     test_lstat_symlink();                  /* Test 152: sys_lstat symlink type check */
+    test_preadv_basic();                   /* Test 153: sys_preadv scatter read */
+    test_pwritev_basic();                  /* Test 154: sys_pwritev scatter write */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

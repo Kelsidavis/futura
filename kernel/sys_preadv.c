@@ -17,6 +17,31 @@
 #include <kernel/uaccess.h>
 #include <kernel/fut_memory.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
+static inline int preadv_copy_to_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)dst >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_to_user(dst, src, n);
+}
+static inline int preadv_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_from_user(dst, src, n);
+}
+static inline int preadv_access_ok(const void *ptr, size_t n, int write) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)ptr >= KERNEL_VIRTUAL_BASE) return 0;
+#endif
+    return fut_access_ok(ptr, n, write);
+}
+
 /**
  * preadv() - Read data into multiple buffers from specific offset
  *
@@ -368,7 +393,7 @@ ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) 
         return -ENOMEM;
     }
 
-    if (fut_copy_from_user(kernel_iov, iov, iovcnt * sizeof(struct iovec)) != 0) {
+    if (preadv_copy_from_user(kernel_iov, iov, iovcnt * sizeof(struct iovec)) != 0) {
         fut_printf("[PREADV] preadv(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EFAULT (copy_from_user failed)\n",
                    fd, iov, iovcnt, offset);
         fut_free(kernel_iov);
@@ -388,7 +413,7 @@ ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) 
                 return -EFAULT;
             }
             /* Verify buffer is writable before doing any I/O */
-            if (fut_access_ok(kernel_iov[i].iov_base, kernel_iov[i].iov_len, 1) != 0) {
+            if (preadv_access_ok(kernel_iov[i].iov_base, kernel_iov[i].iov_len, 1) != 0) {
                 fut_printf("[PREADV] preadv(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EFAULT "
                            "(iov_base[%d] not writable, fail-fast)\n",
                            fd, iov, iovcnt, offset, i);
@@ -571,7 +596,7 @@ ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) 
 
         /* Copy to userspace if successful */
         if (n > 0) {
-            if (fut_copy_to_user(kernel_iov[i].iov_base, kbuf, (size_t)n) != 0) {
+            if (preadv_copy_to_user(kernel_iov[i].iov_base, kbuf, (size_t)n) != 0) {
                 fut_free(kbuf);
                 if (total_read > 0) {
                     break;  /* Return bytes read so far */

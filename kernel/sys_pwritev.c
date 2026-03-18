@@ -17,6 +17,25 @@
 #include <kernel/uaccess.h>
 #include <kernel/fut_memory.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
+static inline int pwritev_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_from_user(dst, src, n);
+}
+static inline int pwritev_access_ok(const void *ptr, size_t n, int write) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)ptr >= KERNEL_VIRTUAL_BASE) return 0;
+#endif
+    return fut_access_ok(ptr, n, write);
+}
+
 /* ============================================================================
  * PHASE 5 SECURITY HARDENING: pwritev() - Position-Based Scatter-Gather Write
  * ============================================================================
@@ -381,7 +400,7 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
         return -ENOMEM;
     }
 
-    if (fut_copy_from_user(kernel_iov, iov, iovcnt * sizeof(struct iovec)) != 0) {
+    if (pwritev_copy_from_user(kernel_iov, iov, iovcnt * sizeof(struct iovec)) != 0) {
         fut_printf("[PWRITEV] pwritev(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EFAULT (copy_from_user iovec failed)\n",
                    fd, iov, iovcnt, offset);
         fut_free(kernel_iov);
@@ -401,7 +420,7 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
                 return -EFAULT;
             }
             /* Verify buffer is readable before doing any I/O */
-            if (fut_access_ok(kernel_iov[i].iov_base, kernel_iov[i].iov_len, 0) != 0) {
+            if (pwritev_access_ok(kernel_iov[i].iov_base, kernel_iov[i].iov_len, 0) != 0) {
                 fut_printf("[PWRITEV] pwritev(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EFAULT "
                            "(iov_base[%d] not readable, fail-fast)\n",
                            fd, iov, iovcnt, offset, i);
@@ -549,7 +568,7 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
         }
 
         /* Copy from userspace */
-        if (fut_copy_from_user(kbuf, kernel_iov[i].iov_base, kernel_iov[i].iov_len) != 0) {
+        if (pwritev_copy_from_user(kbuf, kernel_iov[i].iov_base, kernel_iov[i].iov_len) != 0) {
             fut_free(kbuf);
             if (total_written > 0) {
                 break;  /* Return bytes written so far */

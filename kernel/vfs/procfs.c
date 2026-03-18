@@ -83,6 +83,13 @@ enum procfs_kind {
     PROC_SYS_UUID,         /* /proc/sys/kernel/random/uuid */
     PROC_SYS_ENTROPY_AVAIL,/* /proc/sys/kernel/random/entropy_avail */
     PROC_SYS_POOLSIZE,     /* /proc/sys/kernel/random/poolsize */
+    PROC_VMSTAT,           /* /proc/vmstat */
+    PROC_NET_DIR,          /* /proc/net/ */
+    PROC_NET_DEV,          /* /proc/net/dev */
+    PROC_NET_ROUTE,        /* /proc/net/route */
+    PROC_NET_TCP,          /* /proc/net/tcp */
+    PROC_NET_UDP,          /* /proc/net/udp */
+    PROC_NET_IF_INET6,     /* /proc/net/if_inet6 */
     PROC_TASK_DIR,         /* /proc/<pid>/task/ */
     PROC_TID_DIR,          /* /proc/<pid>/task/<tid>/ */
     PROC_LIMITS,           /* /proc/<pid>/limits */
@@ -109,6 +116,13 @@ typedef struct {
 #define PROC_INO_MOUNTS      8ULL
 #define PROC_INO_STAT_GLOBAL 9ULL
 #define PROC_INO_FILESYSTEMS 10ULL
+#define PROC_INO_VMSTAT      11ULL
+#define PROC_INO_NET_DIR     12ULL
+#define PROC_INO_NET_DEV     13ULL
+#define PROC_INO_NET_ROUTE   14ULL
+#define PROC_INO_NET_TCP     15ULL
+#define PROC_INO_NET_UDP     16ULL
+#define PROC_INO_NET_IF6     17ULL
 /* /proc/sys/ inode range: 200-299 */
 #define PROC_INO_SYS_DIR        200ULL
 #define PROC_INO_SYS_KERNEL_DIR 201ULL
@@ -858,6 +872,68 @@ static size_t gen_boot_id(char *buf, size_t cap) {
 }
 
 /* ============================================================
+ *   /proc/vmstat — VM statistics
+ * ============================================================ */
+static size_t gen_vmstat(char *buf, size_t cap) {
+    struct pbuf b = { buf, 0, cap };
+    uint64_t total_kb  = fut_pmm_total_pages() * 4;
+    uint64_t free_kb   = fut_pmm_free_pages()  * 4;
+    uint64_t total_pg  = total_kb / 4;
+    uint64_t free_pg   = free_kb  / 4;
+    uint64_t used_pg   = total_pg > free_pg ? total_pg - free_pg : 0;
+
+    pb_str(&b, "nr_free_pages ");       pb_u64(&b, free_pg);  pb_char(&b, '\n');
+    pb_str(&b, "nr_inactive_anon ");    pb_u64(&b, 0);         pb_char(&b, '\n');
+    pb_str(&b, "nr_active_anon ");      pb_u64(&b, used_pg);   pb_char(&b, '\n');
+    pb_str(&b, "nr_inactive_file ");    pb_u64(&b, 0);         pb_char(&b, '\n');
+    pb_str(&b, "nr_active_file ");      pb_u64(&b, 0);         pb_char(&b, '\n');
+    pb_str(&b, "nr_anon_pages ");       pb_u64(&b, used_pg);   pb_char(&b, '\n');
+    pb_str(&b, "nr_mapped ");           pb_u64(&b, 0);         pb_char(&b, '\n');
+    pb_str(&b, "nr_file_pages ");       pb_u64(&b, 0);         pb_char(&b, '\n');
+    pb_str(&b, "nr_dirty ");            pb_u64(&b, 0);         pb_char(&b, '\n');
+    pb_str(&b, "nr_writeback ");        pb_u64(&b, 0);         pb_char(&b, '\n');
+    pb_str(&b, "nr_slab_reclaimable "); pb_u64(&b, 0);         pb_char(&b, '\n');
+    pb_str(&b, "nr_slab_unreclaimable "); pb_u64(&b, 0);       pb_char(&b, '\n');
+    pb_str(&b, "pgpgin 0\n");
+    pb_str(&b, "pgpgout 0\n");
+    pb_str(&b, "pgfault 0\n");
+    pb_str(&b, "pgmajfault 0\n");
+    return b.pos;
+}
+
+/* ============================================================
+ *   /proc/net/ file generators
+ * ============================================================ */
+static size_t gen_net_dev(char *buf, size_t cap) {
+    struct pbuf b = { buf, 0, cap };
+    pb_str(&b, "Inter-|   Receive                                                |  Transmit\n");
+    pb_str(&b, " face |bytes    packets errs drop fifo frame compressed multicast|"
+               "bytes    packets errs drop fifo colls carrier compressed\n");
+    pb_str(&b, "    lo:       0       0    0    0    0     0          0         0"
+               "        0       0    0    0    0     0       0          0\n");
+    return b.pos;
+}
+
+static size_t gen_net_route(char *buf, size_t cap) {
+    struct pbuf b = { buf, 0, cap };
+    pb_str(&b, "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n");
+    return b.pos;
+}
+
+static size_t gen_net_tcp(char *buf, size_t cap) {
+    struct pbuf b = { buf, 0, cap };
+    pb_str(&b, "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt"
+               "   uid  timeout inode\n");
+    return b.pos;
+}
+
+static size_t gen_net_if_inet6(char *buf, size_t cap) {
+    /* Empty — no IPv6 interfaces */
+    (void)buf; (void)cap;
+    return 0;
+}
+
+/* ============================================================
  *   /proc/stat — global CPU / system statistics
  * ============================================================ */
 static size_t gen_proc_stat(char *buf, size_t cap) {
@@ -989,6 +1065,22 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             break;
         case PROC_FILESYSTEMS:
             total = gen_filesystems(tmp, GEN_BUF);
+            break;
+        case PROC_VMSTAT:
+            total = gen_vmstat(tmp, GEN_BUF);
+            break;
+        case PROC_NET_DEV:
+            total = gen_net_dev(tmp, GEN_BUF);
+            break;
+        case PROC_NET_ROUTE:
+            total = gen_net_route(tmp, GEN_BUF);
+            break;
+        case PROC_NET_TCP:
+        case PROC_NET_UDP:
+            total = gen_net_tcp(tmp, GEN_BUF);
+            break;
+        case PROC_NET_IF_INET6:
+            total = gen_net_if_inet6(tmp, GEN_BUF);
             break;
         case PROC_COMM: {
             fut_task_t *task = fut_task_by_pid(n->pid);
@@ -1226,6 +1318,16 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0100444, PROC_FILESYSTEMS, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "vmstat")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_VMSTAT,
+                                          0100444, PROC_VMSTAT, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "net")) {
+            *result = procfs_alloc_vnode(mnt, VN_DIR, PROC_INO_NET_DIR,
+                                          0040555, PROC_NET_DIR, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         if (STREQ(name, "sys")) {
             *result = procfs_alloc_vnode(mnt, VN_DIR, PROC_INO_SYS_DIR,
                                           0040555, PROC_SYS_DIR, 0, 0);
@@ -1367,6 +1469,35 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
         return -ENOENT;
     }
 
+    if (dn->kind == PROC_NET_DIR) {
+        if (STREQ(name, "dev")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_NET_DEV,
+                                          0100444, PROC_NET_DEV, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "route")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_NET_ROUTE,
+                                          0100444, PROC_NET_ROUTE, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "tcp")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_NET_TCP,
+                                          0100444, PROC_NET_TCP, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "udp")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_NET_UDP,
+                                          0100444, PROC_NET_UDP, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "if_inet6")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_NET_IF6,
+                                          0100444, PROC_NET_IF_INET6, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        return -ENOENT;
+    }
+
     if (dn->kind == PROC_SYS_DIR) {
         if (STREQ(name, "kernel")) {
             *result = procfs_alloc_vnode(mnt, VN_DIR, PROC_INO_SYS_KERNEL_DIR,
@@ -1486,7 +1617,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         /* Fixed entries: ., .., self, meminfo, version, uptime, cpuinfo, loadavg, mounts, sys */
         static const char *fixed[] = {
             ".", "..", "self", "meminfo", "version", "uptime", "cpuinfo",
-            "loadavg", "mounts", "sys", "stat", "filesystems"
+            "loadavg", "mounts", "sys", "stat", "filesystems", "vmstat", "net"
         };
         static const uint8_t fixed_type[] = {
             FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
@@ -1494,15 +1625,17 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
             FUT_VDIR_TYPE_DIR,
-            FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG
+            FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+            FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_DIR
         };
         static const uint64_t fixed_ino[] = {
             PROC_INO_ROOT, PROC_INO_ROOT,
             PROC_INO_SELF, PROC_INO_MEMINFO, PROC_INO_VERSION, PROC_INO_UPTIME,
             PROC_INO_CPUINFO, PROC_INO_LOADAVG, PROC_INO_MOUNTS, PROC_INO_SYS_DIR,
-            PROC_INO_STAT_GLOBAL, PROC_INO_FILESYSTEMS
+            PROC_INO_STAT_GLOBAL, PROC_INO_FILESYSTEMS,
+            PROC_INO_VMSTAT, PROC_INO_NET_DIR
         };
-        if (idx < 12) {
+        if (idx < 14) {
             de->d_ino    = fixed_ino[idx];
             de->d_off    = idx + 1;
             de->d_type   = fixed_type[idx];
@@ -1662,6 +1795,20 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
     __builtin_memcpy(de->d_name, (nm), _nl); de->d_name[_nl] = '\0'; \
     *cookie = idx + 1; return 0; \
 } while (0)
+
+    if (dn->kind == PROC_NET_DIR) {
+        static const char *e[] = { ".", "..", "dev", "route", "tcp", "udp", "if_inet6" };
+        static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_REG };
+        static const uint64_t i[] = { PROC_INO_NET_DIR, PROC_INO_ROOT,
+                                      PROC_INO_NET_DEV, PROC_INO_NET_ROUTE,
+                                      PROC_INO_NET_TCP, PROC_INO_NET_UDP,
+                                      PROC_INO_NET_IF6 };
+        if (idx < 7) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+        return -ENOENT;
+    }
 
     if (dn->kind == PROC_SYS_DIR) {
         static const char *e[] = { ".", "..", "kernel", "vm", "fs" };

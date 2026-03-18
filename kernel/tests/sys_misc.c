@@ -9365,6 +9365,104 @@ static void test_proc_random_uuid(void) {
 }
 
 /* ============================================================
+ * Test 201: /proc/vmstat — nr_free_pages present
+ * ============================================================ */
+static void test_proc_vmstat(void) {
+    fut_printf("[MISC-TEST] Test 201: /proc/vmstat nr_free_pages present\n");
+    extern long sys_read(int fd, void *buf, size_t count);
+
+    int fd = fut_vfs_open("/proc/vmstat", 0x00, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open /proc/vmstat failed: %d\n", fd);
+        fut_test_fail(201); return;
+    }
+    char buf[512];
+    __builtin_memset(buf, 0, sizeof(buf));
+    long r = sys_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    if (r <= 0) {
+        fut_printf("[MISC-TEST] ✗ read /proc/vmstat returned %ld\n", r);
+        fut_test_fail(201); return;
+    }
+    buf[r] = '\0';
+
+    /* Must contain "nr_free_pages" */
+    int found = 0;
+    for (int i = 0; i < (int)r - 12; i++) {
+        if (buf[i]=='n' && buf[i+1]=='r' && buf[i+2]=='_' && buf[i+3]=='f' &&
+            buf[i+4]=='r' && buf[i+5]=='e' && buf[i+6]=='e') { found = 1; break; }
+    }
+    if (!found) {
+        fut_printf("[MISC-TEST] ✗ /proc/vmstat missing nr_free_pages\n");
+        fut_test_fail(201); return;
+    }
+    fut_printf("[MISC-TEST] ✓ /proc/vmstat: nr_free_pages present\n");
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 202: /proc/net/dev — readable, header present
+ * ============================================================ */
+static void test_proc_net_dev(void) {
+    fut_printf("[MISC-TEST] Test 202: /proc/net/dev readable\n");
+    extern long sys_read(int fd, void *buf, size_t count);
+
+    int fd = fut_vfs_open("/proc/net/dev", 0x00, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open /proc/net/dev failed: %d\n", fd);
+        fut_test_fail(202); return;
+    }
+    char buf[512];
+    __builtin_memset(buf, 0, sizeof(buf));
+    long r = sys_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    if (r <= 0) {
+        fut_printf("[MISC-TEST] ✗ read /proc/net/dev returned %ld\n", r);
+        fut_test_fail(202); return;
+    }
+    /* Must contain "Inter-" header */
+    if (buf[0] != 'I') {
+        fut_printf("[MISC-TEST] ✗ /proc/net/dev doesn't start with 'I'\n");
+        fut_test_fail(202); return;
+    }
+    fut_printf("[MISC-TEST] ✓ /proc/net/dev: header present\n");
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 203: /proc/net/tcp — readable, header present
+ * ============================================================ */
+static void test_proc_net_tcp(void) {
+    fut_printf("[MISC-TEST] Test 203: /proc/net/tcp readable\n");
+    extern long sys_read(int fd, void *buf, size_t count);
+
+    int fd = fut_vfs_open("/proc/net/tcp", 0x00, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open /proc/net/tcp failed: %d\n", fd);
+        fut_test_fail(203); return;
+    }
+    char buf[256];
+    __builtin_memset(buf, 0, sizeof(buf));
+    long r = sys_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    if (r <= 0) {
+        fut_printf("[MISC-TEST] ✗ read /proc/net/tcp returned %ld\n", r);
+        fut_test_fail(203); return;
+    }
+    /* Must contain "sl" header */
+    int found = 0;
+    for (int i = 0; i < (int)r - 1; i++) {
+        if (buf[i]==' ' && buf[i+1]==' ' && buf[i+2]=='s' && buf[i+3]=='l') { found = 1; break; }
+    }
+    if (!found) {
+        fut_printf("[MISC-TEST] ✗ /proc/net/tcp missing 'sl' header\n");
+        fut_test_fail(203); return;
+    }
+    fut_printf("[MISC-TEST] ✓ /proc/net/tcp: sl header present\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test 199: /proc/stat — cpu line and ctxt/btime present
  * ============================================================ */
 static void test_proc_stat_global(void) {
@@ -9662,6 +9760,9 @@ void fut_misc_test_thread(void *arg) {
     test_proc_random_uuid();               /* Test 198: /proc/sys/kernel/random/uuid new each read */
     test_proc_stat_global();               /* Test 199: /proc/stat cpu/ctxt/btime present */
     test_proc_filesystems();               /* Test 200: /proc/filesystems lists proc and tmpfs */
+    test_proc_vmstat();                    /* Test 201: /proc/vmstat nr_free_pages present */
+    test_proc_net_dev();                   /* Test 202: /proc/net/dev readable */
+    test_proc_net_tcp();                   /* Test 203: /proc/net/tcp readable */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

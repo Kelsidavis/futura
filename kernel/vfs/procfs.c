@@ -135,6 +135,13 @@ enum procfs_kind {
     PROC_SYS_CAP_LAST_CAP, /* /proc/sys/kernel/cap_last_cap */
     PROC_SYS_THREADS_MAX,  /* /proc/sys/kernel/threads-max */
     PROC_SYS_PRINTK,       /* /proc/sys/kernel/printk */
+    PROC_SYS_YAMA_DIR,     /* /proc/sys/kernel/yama/ directory */
+    PROC_SYS_PTRACE_SCOPE, /* /proc/sys/kernel/yama/ptrace_scope */
+    PROC_SYS_NR_HUGEPAGES, /* /proc/sys/vm/nr_hugepages */
+    PROC_SYS_NR_OC_HUGEPAGES, /* /proc/sys/vm/nr_overcommit_hugepages */
+    PROC_SYS_TCP_RMEM,     /* /proc/sys/net/ipv4/tcp_rmem */
+    PROC_SYS_TCP_WMEM,     /* /proc/sys/net/ipv4/tcp_wmem */
+    PROC_INTERRUPTS,       /* /proc/interrupts */
 };
 
 typedef struct {
@@ -164,6 +171,7 @@ typedef struct {
 #define PROC_INO_NET_TCP     15ULL
 #define PROC_INO_NET_UDP     16ULL
 #define PROC_INO_NET_IF6     17ULL
+#define PROC_INO_INTERRUPTS  18ULL
 /* /proc/sys/ inode range: 200-299 */
 #define PROC_INO_SYS_DIR        200ULL
 #define PROC_INO_SYS_KERNEL_DIR 201ULL
@@ -177,12 +185,16 @@ typedef struct {
 #define PROC_INO_SYS_CAP_LAST_CAP   215ULL
 #define PROC_INO_SYS_THREADS_MAX    216ULL
 #define PROC_INO_SYS_PRINTK         217ULL
+#define PROC_INO_SYS_YAMA_DIR       218ULL
+#define PROC_INO_SYS_PTRACE_SCOPE   219ULL
 #define PROC_INO_SYS_OVERCOMMIT       220ULL
 #define PROC_INO_SYS_MAX_MAP_COUNT    221ULL
 #define PROC_INO_SYS_SWAPPINESS       222ULL
 #define PROC_INO_SYS_DIRTY_RATIO      223ULL
 #define PROC_INO_SYS_DIRTY_BG_RATIO   224ULL
 #define PROC_INO_SYS_MIN_FREE_KB      225ULL
+#define PROC_INO_SYS_NR_HUGEPAGES     226ULL
+#define PROC_INO_SYS_NR_OC_HUGEPAGES  227ULL
 #define PROC_INO_SYS_FILE_MAX      230ULL
 #define PROC_INO_SYS_FILE_NR       231ULL
 #define PROC_INO_SYS_INOTIFY_DIR   232ULL
@@ -213,6 +225,8 @@ typedef struct {
 #define PROC_INO_SYS_NET_PORT_RANGE  275ULL
 #define PROC_INO_SYS_NET_FIN_TIMEOUT 276ULL
 #define PROC_INO_SYS_NET_SYNCOOKIES  277ULL
+#define PROC_INO_SYS_NET_TCP_RMEM    278ULL
+#define PROC_INO_SYS_NET_TCP_WMEM    279ULL
 
 /* Per-PID: pid * 100 + offset */
 #define PROC_INO_PID_DIR(p)    (1000ULL + (uint64_t)(p) * 100 + 0)
@@ -1430,6 +1444,32 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             /* current default boot-time min loglevel format */
             total = gen_sysctl_str(tmp, GEN_BUF, "4\t4\t1\t7");
             break;
+        case PROC_SYS_PTRACE_SCOPE:
+            /* 0 = classic ptrace, no restrictions */
+            total = gen_sysctl_str(tmp, GEN_BUF, "0");
+            break;
+        case PROC_SYS_NR_HUGEPAGES:
+        case PROC_SYS_NR_OC_HUGEPAGES:
+            total = gen_sysctl_str(tmp, GEN_BUF, "0");
+            break;
+        case PROC_SYS_TCP_RMEM:
+            /* min default max — match Linux default */
+            total = gen_sysctl_str(tmp, GEN_BUF, "4096\t87380\t16777216");
+            break;
+        case PROC_SYS_TCP_WMEM:
+            total = gen_sysctl_str(tmp, GEN_BUF, "4096\t65536\t16777216");
+            break;
+        case PROC_INTERRUPTS: {
+            /* Minimal stub: 1 CPU, timer interrupt only */
+            struct pbuf b = { tmp, 0, GEN_BUF };
+            pb_str(&b, "           CPU0\n");
+            pb_str(&b, "  0:       1234   IO-APIC    2-edge      timer\n");
+            pb_str(&b, "  1:          0   IO-APIC    1-edge      i8042\n");
+            pb_str(&b, "NMI:          0   Non-maskable interrupts\n");
+            pb_str(&b, "LOC:       1234   Local timer interrupts\n");
+            total = b.pos;
+            break;
+        }
         default:
             fut_free(tmp);
             return -EINVAL;
@@ -1644,6 +1684,11 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
         if (STREQ(name, "vmstat")) {
             *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_VMSTAT,
                                           0100444, PROC_VMSTAT, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "interrupts")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_INTERRUPTS,
+                                          0100444, PROC_INTERRUPTS, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
         if (STREQ(name, "net")) {
@@ -1946,6 +1991,16 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0100644, PROC_SYS_NET_SYNCOOKIES, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "tcp_rmem")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_NET_TCP_RMEM,
+                                          0100644, PROC_SYS_TCP_RMEM, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "tcp_wmem")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_NET_TCP_WMEM,
+                                          0100644, PROC_SYS_TCP_WMEM, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         return -ENOENT;
     }
 
@@ -2028,6 +2083,20 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
         if (STREQ(name, "printk")) {
             *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_PRINTK,
                                           0100644, PROC_SYS_PRINTK, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "yama")) {
+            *result = procfs_alloc_vnode(mnt, VN_DIR, PROC_INO_SYS_YAMA_DIR,
+                                          0040555, PROC_SYS_YAMA_DIR, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        return -ENOENT;
+    }
+
+    if (dn->kind == PROC_SYS_YAMA_DIR) {
+        if (STREQ(name, "ptrace_scope")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_PTRACE_SCOPE,
+                                          0100644, PROC_SYS_PTRACE_SCOPE, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
         return -ENOENT;
@@ -2118,6 +2187,16 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0100644, PROC_SYS_MIN_FREE_KB, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "nr_hugepages")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_NR_HUGEPAGES,
+                                          0100644, PROC_SYS_NR_HUGEPAGES, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "nr_overcommit_hugepages")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_NR_OC_HUGEPAGES,
+                                          0100644, PROC_SYS_NR_OC_HUGEPAGES, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         return -ENOENT;
     }
 
@@ -2188,7 +2267,8 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         /* Fixed entries: ., .., self, meminfo, version, uptime, cpuinfo, loadavg, mounts, sys */
         static const char *fixed[] = {
             ".", "..", "self", "meminfo", "version", "uptime", "cpuinfo",
-            "loadavg", "mounts", "sys", "stat", "filesystems", "vmstat", "net"
+            "loadavg", "mounts", "sys", "stat", "filesystems", "vmstat", "net",
+            "interrupts"
         };
         static const uint8_t fixed_type[] = {
             FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
@@ -2197,16 +2277,18 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
             FUT_VDIR_TYPE_DIR,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
-            FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_DIR
+            FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_DIR,
+            FUT_VDIR_TYPE_REG
         };
         static const uint64_t fixed_ino[] = {
             PROC_INO_ROOT, PROC_INO_ROOT,
             PROC_INO_SELF, PROC_INO_MEMINFO, PROC_INO_VERSION, PROC_INO_UPTIME,
             PROC_INO_CPUINFO, PROC_INO_LOADAVG, PROC_INO_MOUNTS, PROC_INO_SYS_DIR,
             PROC_INO_STAT_GLOBAL, PROC_INO_FILESYSTEMS,
-            PROC_INO_VMSTAT, PROC_INO_NET_DIR
+            PROC_INO_VMSTAT, PROC_INO_NET_DIR,
+            PROC_INO_INTERRUPTS
         };
-        if (idx < 14) {
+        if (idx < 15) {
             de->d_ino    = fixed_ino[idx];
             de->d_off    = idx + 1;
             de->d_type   = fixed_type[idx];
@@ -2221,15 +2303,15 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         }
 
         /*
-         * PID enumeration: cookie >= 7 means "find the first task with
-         * pid > (cookie - 7)".  After returning a PID entry we set
-         * cookie = 7 + that_pid, so the next call resumes after it.
+         * PID enumeration: after the 15 fixed entries, cookies encode
+         * "find first task with pid > (cookie - 15)".  After returning
+         * a PID entry we set cookie = 15 + that_pid + 1.
          *
          * This is stable as long as PIDs are unique and monotonically
          * increasing; newly-forked tasks will appear if their PID is
          * greater than the last-seen PID.
          */
-        uint64_t min_pid = idx - 10;  /* start scanning for pid > min_pid */
+        uint64_t min_pid = idx >= 15 ? idx - 15 : 0;  /* start scanning for pid > min_pid */
         fut_task_t *best = NULL;
         uint64_t   best_pid = (uint64_t)-1;
         fut_task_t *t = fut_task_list;
@@ -2261,7 +2343,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         if (nl > FUT_VFS_NAME_MAX) nl = FUT_VFS_NAME_MAX;
         __builtin_memcpy(de->d_name, pidname, nl);
         de->d_name[nl] = '\0';
-        *cookie = 10 + best->pid + 1;  /* resume after this pid */
+        *cookie = 15 + best->pid + 1;  /* resume after this pid */
         return 0;
     }
 
@@ -2430,14 +2512,17 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
 
     if (dn->kind == PROC_SYS_NET_IPV4_DIR) {
         static const char *e[] = { ".", "..", "ip_local_port_range",
-                                   "tcp_fin_timeout", "tcp_syncookies" };
+                                   "tcp_fin_timeout", "tcp_syncookies",
+                                   "tcp_rmem", "tcp_wmem" };
         static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
-                                     FUT_VDIR_TYPE_REG };
+                                     FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG };
         static const uint64_t i[] = { PROC_INO_SYS_NET_IPV4_DIR, PROC_INO_SYS_NET_DIR,
                                       PROC_INO_SYS_NET_PORT_RANGE, PROC_INO_SYS_NET_FIN_TIMEOUT,
-                                      PROC_INO_SYS_NET_SYNCOOKIES };
-        if (idx < 5) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+                                      PROC_INO_SYS_NET_SYNCOOKIES,
+                                      PROC_INO_SYS_NET_TCP_RMEM, PROC_INO_SYS_NET_TCP_WMEM };
+        if (idx < 7) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
         return -ENOENT;
     }
 
@@ -2447,7 +2532,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                    "shmmax", "shmall", "shmmni", "sem",
                                    "msgmax", "msgmnb", "msgmni",
                                    "ngroups_max", "cap_last_cap",
-                                   "threads-max", "printk" };
+                                   "threads-max", "printk", "yama" };
         static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
@@ -2457,7 +2542,8 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
-                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG };
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_DIR };
         static const uint64_t i[] = { PROC_INO_SYS_KERNEL_DIR, PROC_INO_SYS_DIR,
                                       PROC_INO_SYS_OSTYPE, PROC_INO_SYS_OSRELEASE,
                                       PROC_INO_SYS_HOSTNAME, PROC_INO_SYS_PID_MAX,
@@ -2467,8 +2553,9 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                       PROC_INO_SYS_MSGMAX, PROC_INO_SYS_MSGMNB,
                                       PROC_INO_SYS_MSGMNI,
                                       PROC_INO_SYS_NGROUPS_MAX, PROC_INO_SYS_CAP_LAST_CAP,
-                                      PROC_INO_SYS_THREADS_MAX, PROC_INO_SYS_PRINTK };
-        if (idx < 18) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+                                      PROC_INO_SYS_THREADS_MAX, PROC_INO_SYS_PRINTK,
+                                      PROC_INO_SYS_YAMA_DIR };
+        if (idx < 19) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
         return -ENOENT;
     }
 
@@ -2481,6 +2568,15 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                       PROC_INO_SYS_BOOT_ID, PROC_INO_SYS_UUID,
                                       PROC_INO_SYS_ENTROPY_AVAIL, PROC_INO_SYS_POOLSIZE };
         if (idx < 6) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+        return -ENOENT;
+    }
+
+    if (dn->kind == PROC_SYS_YAMA_DIR) {
+        static const char *e[] = { ".", "..", "ptrace_scope" };
+        static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_REG };
+        static const uint64_t i[] = { PROC_INO_SYS_YAMA_DIR, PROC_INO_SYS_KERNEL_DIR,
+                                      PROC_INO_SYS_PTRACE_SCOPE };
+        if (idx < 3) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
         return -ENOENT;
     }
 
@@ -2505,16 +2601,19 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
     if (dn->kind == PROC_SYS_VM_DIR) {
         static const char *e[] = { ".", "..", "overcommit_memory", "max_map_count",
                                    "swappiness", "dirty_ratio",
-                                   "dirty_background_ratio", "min_free_kbytes" };
+                                   "dirty_background_ratio", "min_free_kbytes",
+                                   "nr_hugepages", "nr_overcommit_hugepages" };
         static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG };
         static const uint64_t i[] = { PROC_INO_SYS_VM_DIR, PROC_INO_SYS_DIR,
                                       PROC_INO_SYS_OVERCOMMIT, PROC_INO_SYS_MAX_MAP_COUNT,
                                       PROC_INO_SYS_SWAPPINESS, PROC_INO_SYS_DIRTY_RATIO,
-                                      PROC_INO_SYS_DIRTY_BG_RATIO, PROC_INO_SYS_MIN_FREE_KB };
-        if (idx < 8) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+                                      PROC_INO_SYS_DIRTY_BG_RATIO, PROC_INO_SYS_MIN_FREE_KB,
+                                      PROC_INO_SYS_NR_HUGEPAGES, PROC_INO_SYS_NR_OC_HUGEPAGES };
+        if (idx < 10) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
         return -ENOENT;
     }
 

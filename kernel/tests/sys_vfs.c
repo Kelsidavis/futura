@@ -41,6 +41,7 @@
 #define VFS_TEST_INOTIFY_ATTRIB  15
 #define VFS_TEST_INOTIFY_CLOSE   16
 #define VFS_TEST_INOTIFY_ACCESS  17
+#define VFS_TEST_INOTIFY_MODIFY  18
 
 /* Use kernel-level VFS functions (no copy_from_user) */
 #define sys_mkdir(path, mode)           fut_vfs_mkdir(path, (uint32_t)(mode))
@@ -1275,6 +1276,75 @@ static void test_inotify_access(void) {
     fut_test_pass();
 }
 
+static void test_inotify_modify(void) {
+    fut_printf("[VFS-TEST] Test 18: inotify IN_MODIFY event on write\n");
+
+    const char *watch_dir = "/";
+    const char *filepath  = "/modify_test.txt";
+
+    /* Create the file */
+    fut_vfs_unlink(filepath);
+    int fd = fut_vfs_open(filepath, O_CREAT | O_WRONLY, 0644);
+    if (fd < 0) {
+        fut_printf("[VFS-TEST] ✗ inotify_modify: create failed %d\n", fd);
+        fut_test_fail(VFS_TEST_INOTIFY_MODIFY);
+        return;
+    }
+    fut_vfs_close(fd);
+
+    /* Watch for IN_MODIFY */
+    int ifd = (int)sys_inotify_init1(IN_NONBLOCK);
+    if (ifd < 0) {
+        fut_printf("[VFS-TEST] ✗ inotify_modify: inotify_init1 failed %d\n", ifd);
+        fut_vfs_unlink(filepath);
+        fut_test_fail(VFS_TEST_INOTIFY_MODIFY);
+        return;
+    }
+
+    int wd = (int)sys_inotify_add_watch(ifd, watch_dir, IN_MODIFY);
+    if (wd < 0) {
+        fut_printf("[VFS-TEST] ✗ inotify_modify: add_watch failed %d\n", wd);
+        fut_vfs_close(ifd);
+        fut_vfs_unlink(filepath);
+        fut_test_fail(VFS_TEST_INOTIFY_MODIFY);
+        return;
+    }
+
+    /* Write to the file — should generate IN_MODIFY */
+    int wfd = fut_vfs_open(filepath, O_WRONLY, 0);
+    if (wfd < 0) {
+        fut_printf("[VFS-TEST] ✗ inotify_modify: open for write failed %d\n", wfd);
+        fut_vfs_close(ifd);
+        fut_vfs_unlink(filepath);
+        fut_test_fail(VFS_TEST_INOTIFY_MODIFY);
+        return;
+    }
+    fut_vfs_write(wfd, "data", 4);
+    fut_vfs_close(wfd);
+
+    /* Check for IN_MODIFY event */
+    char buf[sizeof(struct test_inotify_event) + 64];
+    long n = fut_vfs_read(ifd, buf, sizeof(buf));
+    fut_vfs_close(ifd);
+    fut_vfs_unlink(filepath);
+
+    if (n < (long)sizeof(struct test_inotify_event)) {
+        fut_printf("[VFS-TEST] ✗ inotify_modify: no event (read returned %ld)\n", n);
+        fut_test_fail(VFS_TEST_INOTIFY_MODIFY);
+        return;
+    }
+
+    struct test_inotify_event *ev = (struct test_inotify_event *)buf;
+    if (!(ev->mask & IN_MODIFY)) {
+        fut_printf("[VFS-TEST] ✗ inotify_modify: mask=0x%x missing IN_MODIFY\n", ev->mask);
+        fut_test_fail(VFS_TEST_INOTIFY_MODIFY);
+        return;
+    }
+
+    fut_printf("[VFS-TEST] ✓ inotify IN_MODIFY: write generated mask=0x%x\n", ev->mask);
+    fut_test_pass();
+}
+
 void fut_vfs_test_thread(void *arg) {
     (void)arg;
 
@@ -1291,6 +1361,7 @@ void fut_vfs_test_thread(void *arg) {
     test_inotify_attrib();
     test_inotify_close();
     test_inotify_access();
+    test_inotify_modify();
     test_mount();
     test_umount_expire();
     test_renameat2();

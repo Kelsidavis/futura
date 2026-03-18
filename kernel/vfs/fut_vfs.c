@@ -2184,6 +2184,12 @@ ssize_t fut_vfs_write(int fd, const void *buf, size_t size) {
     VFSDBG("[vfs-write] vnode->ops->write returned %lld\n", (long long)ret);
     if (ret > 0) {
         file->offset += ret;
+        /* Dispatch IN_MODIFY so inotify watchers see writes */
+        if (file->vnode->parent && file->vnode->name) {
+            char dir_path[256];
+            if (fut_vnode_build_path(file->vnode->parent, dir_path, sizeof(dir_path)))
+                inotify_dispatch_event(dir_path, 0x00000002 /* IN_MODIFY */, file->vnode->name, 0);
+        }
     }
 
     VFSDBG("[vfs-write] returning %lld\n", (long long)ret);

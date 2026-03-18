@@ -1066,6 +1066,9 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
                 if (sock->listener) {
                     sock->listener->epoll_notify = &set->epoll_waitq;
                 }
+                /* CONNECTING socket: wire connect_notify so epoll_wait wakes when accept() completes */
+                if (sock->state == FUT_SOCK_CONNECTING)
+                    sock->connect_notify = &set->epoll_waitq;
             }
         }
 
@@ -1117,6 +1120,12 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
                 set->fds[i].registered = false;
                 set->count--;
                 memset(&set->fds[i], 0, sizeof(set->fds[i]));
+                /* Clear connect_notify if we had wired it */
+                {
+                    fut_socket_t *sock = get_socket_from_fd(fd);
+                    if (sock && sock->connect_notify == &set->epoll_waitq)
+                        sock->connect_notify = NULL;
+                }
                 return 0;
             }
         }

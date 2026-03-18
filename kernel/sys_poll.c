@@ -58,6 +58,9 @@ static void poll_wire_fds(struct pollfd *kfds, unsigned long nfds,
         if (sock) {
             if (sock->pair_reverse) sock->pair_reverse->epoll_notify = wq;
             if (sock->listener)    sock->listener->epoll_notify = wq;
+            /* CONNECTING socket: wire connect_notify so poll wakes when accept() completes */
+            if (sock->state == FUT_SOCK_CONNECTING)
+                sock->connect_notify = wq;
         }
     }
 }
@@ -82,6 +85,8 @@ static void poll_unwire_fds(struct pollfd *kfds, unsigned long nfds,
                 sock->pair_reverse->epoll_notify = NULL;
             if (sock->listener && sock->listener->epoll_notify == wq)
                 sock->listener->epoll_notify = NULL;
+            if (sock->connect_notify == wq)
+                sock->connect_notify = NULL;
         }
     }
 }

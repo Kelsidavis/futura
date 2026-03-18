@@ -16262,6 +16262,189 @@ static void test_shutdown_shut_rdwr(void) {
     fut_test_pass();
 }
 
+/*
+ * Test 340: poll() on CONNECTING socket wakes when accept() completes
+ *
+ * After connect() returns 0, socket is in CONNECTING state.
+ * poll(POLLOUT, timeout=0) should return 0 events (not ready).
+ * After accept(), socket is CONNECTED.
+ * poll(POLLOUT, timeout=0) should return POLLOUT (writable).
+ */
+static void test_poll_connecting_socket(void) {
+    fut_printf("[MISC-TEST] Test 340: poll() on CONNECTING socket wakes after accept()\n");
+
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_bind(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_listen(int sockfd, int backlog);
+    extern long sys_connect(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_accept(int sockfd, void *addr, unsigned int *addrlen);
+    extern long sys_close(int fd);
+
+    const char *sock_path = "/tmp/test_poll_connecting.sock";
+    struct { unsigned short sun_family; char sun_path[108]; } addr;
+    addr.sun_family = 1;
+    size_t plen = 0;
+    while (sock_path[plen]) { addr.sun_path[plen] = sock_path[plen]; plen++; }
+    addr.sun_path[plen] = '\0';
+    unsigned int alen = (unsigned int)(2 + plen + 1);
+
+    fut_vfs_unlink(sock_path);
+
+    long srv = sys_socket(1, 1, 0);
+    if (srv < 0) { fut_printf("[MISC-TEST] ✗ Test 340: socket(srv) failed\n"); fut_test_fail(1); return; }
+
+    if (sys_bind((int)srv, &addr, alen) != 0 || sys_listen((int)srv, 5) != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 340: bind/listen failed\n");
+        sys_close((int)srv); fut_vfs_unlink(sock_path); fut_test_fail(1); return;
+    }
+
+    long cli = sys_socket(1, 1, 0);
+    if (cli < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 340: socket(cli) failed\n");
+        sys_close((int)srv); fut_vfs_unlink(sock_path); fut_test_fail(1); return;
+    }
+
+    /* connect() queues connection; socket enters CONNECTING state */
+    long r = sys_connect((int)cli, &addr, alen);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 340: connect failed: %ld\n", r);
+        sys_close((int)cli); sys_close((int)srv); fut_vfs_unlink(sock_path); fut_test_fail(1); return;
+    }
+
+    /* poll with timeout=0: CONNECTING socket should not report POLLOUT yet */
+    struct pollfd pfd;
+    pfd.fd = (int)cli;
+    pfd.events = POLLOUT;
+    pfd.revents = 0;
+    long np = sys_poll(&pfd, 1, 0);
+    if (np != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 340: poll before accept returned %ld (expected 0, revents=0x%x)\n",
+                   np, (unsigned)pfd.revents);
+        sys_close((int)cli); sys_close((int)srv); fut_vfs_unlink(sock_path); fut_test_fail(1); return;
+    }
+
+    /* accept() completes the connection */
+    long conn = sys_accept((int)srv, NULL, NULL);
+    if (conn < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 340: accept failed: %ld\n", conn);
+        sys_close((int)cli); sys_close((int)srv); fut_vfs_unlink(sock_path); fut_test_fail(1); return;
+    }
+
+    /* poll with timeout=0: now CONNECTED, should report POLLOUT */
+    pfd.fd = (int)cli;
+    pfd.events = POLLOUT;
+    pfd.revents = 0;
+    np = sys_poll(&pfd, 1, 0);
+    if (np < 1 || !(pfd.revents & POLLOUT)) {
+        fut_printf("[MISC-TEST] ✗ Test 340: poll after accept returned %ld, revents=0x%x (expected POLLOUT)\n",
+                   np, (unsigned)pfd.revents);
+        sys_close((int)conn); sys_close((int)cli); sys_close((int)srv); fut_vfs_unlink(sock_path);
+        fut_test_fail(1); return;
+    }
+
+    sys_close((int)conn);
+    sys_close((int)cli);
+    sys_close((int)srv);
+    fut_vfs_unlink(sock_path);
+    fut_printf("[MISC-TEST] ✓ Test 340: CONNECTING socket poll: not-ready before accept, POLLOUT after\n");
+    fut_test_pass();
+}
+
+/*
+ * Test 341: epoll_wait() on CONNECTING socket gets EPOLLOUT after accept()
+ */
+static void test_epoll_connecting_socket(void) {
+    fut_printf("[MISC-TEST] Test 341: epoll_wait() on CONNECTING socket wakes after accept()\n");
+
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_bind(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_listen(int sockfd, int backlog);
+    extern long sys_connect(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_accept(int sockfd, void *addr, unsigned int *addrlen);
+    extern long sys_epoll_create1(int flags);
+    extern long sys_epoll_ctl(int epfd, int op, int fd, void *event);
+    extern long sys_epoll_wait(int epfd, void *events, int maxevents, int timeout);
+    extern long sys_close(int fd);
+
+    const char *sock_path = "/tmp/test_epoll_connecting.sock";
+    struct { unsigned short sun_family; char sun_path[108]; } addr;
+    addr.sun_family = 1;
+    size_t plen = 0;
+    while (sock_path[plen]) { addr.sun_path[plen] = sock_path[plen]; plen++; }
+    addr.sun_path[plen] = '\0';
+    unsigned int alen = (unsigned int)(2 + plen + 1);
+
+    fut_vfs_unlink(sock_path);
+
+    long srv = sys_socket(1, 1, 0);
+    if (srv < 0) { fut_printf("[MISC-TEST] ✗ Test 341: socket(srv) failed\n"); fut_test_fail(1); return; }
+
+    if (sys_bind((int)srv, &addr, alen) != 0 || sys_listen((int)srv, 5) != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 341: bind/listen failed\n");
+        sys_close((int)srv); fut_vfs_unlink(sock_path); fut_test_fail(1); return;
+    }
+
+    long cli = sys_socket(1, 1, 0);
+    if (cli < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 341: socket(cli) failed\n");
+        sys_close((int)srv); fut_vfs_unlink(sock_path); fut_test_fail(1); return;
+    }
+
+    long r = sys_connect((int)cli, &addr, alen);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 341: connect failed: %ld\n", r);
+        sys_close((int)cli); sys_close((int)srv); fut_vfs_unlink(sock_path); fut_test_fail(1); return;
+    }
+
+    long epfd = sys_epoll_create1(0);
+    if (epfd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 341: epoll_create1 failed: %ld\n", epfd);
+        sys_close((int)cli); sys_close((int)srv); fut_vfs_unlink(sock_path); fut_test_fail(1); return;
+    }
+
+    /* epoll_event: events=EPOLLIN|EPOLLOUT, data.fd=cli */
+    struct { unsigned int events; unsigned long long data; } ev;
+    ev.events = 0x1 | 0x4; /* EPOLLIN | EPOLLOUT */
+    ev.data = (unsigned long long)(unsigned int)cli;
+    r = sys_epoll_ctl((int)epfd, 1 /*EPOLL_CTL_ADD*/, (int)cli, &ev);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 341: epoll_ctl ADD failed: %ld\n", r);
+        sys_close((int)epfd); sys_close((int)cli); sys_close((int)srv); fut_vfs_unlink(sock_path); fut_test_fail(1); return;
+    }
+
+    /* epoll_wait with timeout=0: CONNECTING, should return 0 events */
+    struct { unsigned int events; unsigned long long data; } out[4];
+    long ne = sys_epoll_wait((int)epfd, out, 4, 0);
+    if (ne != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 341: epoll_wait before accept returned %ld (expected 0)\n", ne);
+        sys_close((int)epfd); sys_close((int)cli); sys_close((int)srv); fut_vfs_unlink(sock_path); fut_test_fail(1); return;
+    }
+
+    /* accept() completes the connection, should also wake connect_notify */
+    long conn = sys_accept((int)srv, NULL, NULL);
+    if (conn < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 341: accept failed: %ld\n", conn);
+        sys_close((int)epfd); sys_close((int)cli); sys_close((int)srv); fut_vfs_unlink(sock_path); fut_test_fail(1); return;
+    }
+
+    /* epoll_wait with timeout=0: now CONNECTED, EPOLLOUT should fire */
+    ne = sys_epoll_wait((int)epfd, out, 4, 0);
+    if (ne < 1 || !(out[0].events & 0x4 /*EPOLLOUT*/)) {
+        fut_printf("[MISC-TEST] ✗ Test 341: epoll_wait after accept returned %ld, events=0x%x (expected EPOLLOUT)\n",
+                   ne, ne > 0 ? out[0].events : 0u);
+        sys_close((int)conn); sys_close((int)epfd); sys_close((int)cli); sys_close((int)srv); fut_vfs_unlink(sock_path);
+        fut_test_fail(1); return;
+    }
+
+    sys_close((int)conn);
+    sys_close((int)epfd);
+    sys_close((int)cli);
+    sys_close((int)srv);
+    fut_vfs_unlink(sock_path);
+    fut_printf("[MISC-TEST] ✓ Test 341: CONNECTING socket epoll: no events before accept, EPOLLOUT after\n");
+    fut_test_pass();
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -16609,6 +16792,8 @@ void fut_misc_test_thread(void *arg) {
     test_pread_pwrite_socket_espipe();   /* Test 337: pread64/pwrite64 on socket returns ESPIPE */
     test_shutdown_shut_rd();             /* Test 338: shutdown(SHUT_RD) causes recv to return 0 */
     test_shutdown_shut_rdwr();           /* Test 339: shutdown(SHUT_RDWR) closes both directions */
+    test_poll_connecting_socket();       /* Test 340: poll() on CONNECTING socket wakes after accept() */
+    test_epoll_connecting_socket();      /* Test 341: epoll_wait() on CONNECTING socket wakes after accept() */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

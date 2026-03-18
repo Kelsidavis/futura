@@ -778,6 +778,14 @@ int fut_socket_accept(fut_socket_t *listener, fut_socket_t **out_socket) {
         fut_waitq_wake_all(peer->connect_waitq);
     }
 
+    /* Notify poll/epoll instances that were waiting for CONNECTING→CONNECTED */
+    if (peer->connect_notify) {
+        /* Propagate to the newly created pair so future I/O events also wake the watcher */
+        peer->pair_reverse->epoll_notify = peer->connect_notify;
+        fut_waitq_wake_one(peer->connect_notify);
+        peer->connect_notify = NULL;
+    }
+
     *out_socket = accepted;
     SOCKET_LOG("[SOCKET] Socket %u accepted connection from %u\n",
                listener->socket_id, peer->socket_id);

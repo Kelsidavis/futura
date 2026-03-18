@@ -367,6 +367,7 @@ typedef struct fut_socket {
     uint64_t refcount;                      /* Reference count */
     struct fut_waitq *close_waitq;          /* Wait queue for close completion */
     struct fut_waitq *connect_waitq;        /* Wait queue for connect() completion */
+    struct fut_waitq *connect_notify;       /* epoll/poll wait queue to wake when CONNECTING→CONNECTED */
 } fut_socket_t;
 
 /* ============================================================

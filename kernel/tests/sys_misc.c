@@ -6732,6 +6732,102 @@ static void test_mremap_shrink(void) {
 }
 
 /* ============================================================
+ * Test 141: prctl PR_GET/SET_SECUREBITS and PR_GET/SET_KEEPCAPS
+ * ============================================================ */
+#define PR_GET_SECUREBITS_TEST  27
+#define PR_SET_SECUREBITS_TEST  28
+#define PR_GET_KEEPCAPS_TEST     7
+#define PR_SET_KEEPCAPS_TEST     8
+
+static void test_prctl_securebits(void) {
+    fut_printf("[MISC-TEST] Test 141: prctl securebits/keepcaps\n");
+
+    /* PR_GET_SECUREBITS: should return 0 (no bits set by default) */
+    long bits = sys_prctl(PR_GET_SECUREBITS_TEST, 0, 0, 0, 0);
+    if (bits != 0) {
+        fut_printf("[MISC-TEST] ✗ PR_GET_SECUREBITS: got %ld, expected 0\n", bits);
+        fut_test_fail(141);
+        return;
+    }
+
+    /* PR_SET_SECUREBITS: accept any value */
+    long ret = sys_prctl(PR_SET_SECUREBITS_TEST, 0, 0, 0, 0);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ PR_SET_SECUREBITS: got %ld, expected 0\n", ret);
+        fut_test_fail(141);
+        return;
+    }
+
+    /* PR_GET_KEEPCAPS: should return 0 */
+    ret = sys_prctl(PR_GET_KEEPCAPS_TEST, 0, 0, 0, 0);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ PR_GET_KEEPCAPS: got %ld, expected 0\n", ret);
+        fut_test_fail(141);
+        return;
+    }
+
+    /* PR_SET_KEEPCAPS(0): succeed */
+    ret = sys_prctl(PR_SET_KEEPCAPS_TEST, 0, 0, 0, 0);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ PR_SET_KEEPCAPS(0): got %ld, expected 0\n", ret);
+        fut_test_fail(141);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ prctl securebits/keepcaps: all accepted\n");
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 142: prctl PR_SET/GET_CHILD_SUBREAPER
+ * ============================================================ */
+#define PR_SET_CHILD_SUBREAPER_TEST 36
+#define PR_GET_CHILD_SUBREAPER_TEST 37
+
+static void test_prctl_subreaper(void) {
+    fut_printf("[MISC-TEST] Test 142: prctl PR_SET/GET_CHILD_SUBREAPER\n");
+
+    /* Set ourselves as subreaper */
+    long ret = sys_prctl(PR_SET_CHILD_SUBREAPER_TEST, 1, 0, 0, 0);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ PR_SET_CHILD_SUBREAPER(1): got %ld\n", ret);
+        fut_test_fail(142);
+        return;
+    }
+
+    /* Get subreaper status: should be 1 */
+    unsigned long is_sub = 0;
+    ret = sys_prctl(PR_GET_CHILD_SUBREAPER_TEST, (unsigned long)&is_sub, 0, 0, 0);
+    if (ret != 0 || is_sub != 1) {
+        fut_printf("[MISC-TEST] ✗ PR_GET_CHILD_SUBREAPER: ret=%ld is_sub=%lu\n",
+                   ret, is_sub);
+        fut_test_fail(142);
+        return;
+    }
+
+    /* Clear subreaper */
+    ret = sys_prctl(PR_SET_CHILD_SUBREAPER_TEST, 0, 0, 0, 0);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ PR_SET_CHILD_SUBREAPER(0): got %ld\n", ret);
+        fut_test_fail(142);
+        return;
+    }
+
+    /* Confirm cleared */
+    is_sub = 1;  /* Set to 1 to verify it gets cleared to 0 */
+    ret = sys_prctl(PR_GET_CHILD_SUBREAPER_TEST, (unsigned long)&is_sub, 0, 0, 0);
+    if (ret != 0 || is_sub != 0) {
+        fut_printf("[MISC-TEST] ✗ PR_GET_CHILD_SUBREAPER after clear: ret=%ld is_sub=%lu\n",
+                   ret, is_sub);
+        fut_test_fail(142);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ prctl subreaper: set/get/clear cycle works\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -6881,6 +6977,8 @@ void fut_misc_test_thread(void *arg) {
     test_clock_nanosleep_relative();       /* Test 138: clock_nanosleep relative sleep */
     test_clock_nanosleep_abstime_past();   /* Test 139: clock_nanosleep TIMER_ABSTIME in past */
     test_mremap_shrink();                  /* Test 140: mremap shrink anonymous mapping */
+    test_prctl_securebits();               /* Test 141: prctl securebits/keepcaps */
+    test_prctl_subreaper();                /* Test 142: prctl PR_SET/GET_CHILD_SUBREAPER */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

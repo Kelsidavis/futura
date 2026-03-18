@@ -434,6 +434,19 @@
 #define KERNEL_VIRTUAL_BASE 0xFFFFFFFF80000000ULL
 #endif
 
+static inline int sfd_copy_to_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)dst >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_to_user(dst, src, n);
+}
+static inline int sfd_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_from_user(dst, src, n);
+}
+
 /* System-wide eventfd limit (prevents kernel heap exhaustion via mass creation) */
 #define MAX_EVENTFDS            4096
 /* Per-user eventfd limit (prevents single user from monopolising slots) */
@@ -1149,7 +1162,7 @@ static ssize_t signalfd_read_op(void *inode, void *priv,
         info.ssi_code  = task->sig_queue_info[signo - 1].si_code;
         info.ssi_int   = (int32_t)task->sig_queue_info[signo - 1].si_value;
 
-        if (fut_copy_to_user(out, &info, sizeof(info)) != 0)
+        if (sfd_copy_to_user(out, &info, sizeof(info)) != 0)
             return total > 0 ? total : -EFAULT;
 
         out    += sizeof(info);
@@ -1200,7 +1213,7 @@ long sys_signalfd4(int ufd, const void *mask, size_t sizemask, int flags) {
     if (!mask || sizemask < 4) return -EINVAL;
     uint64_t sigmask = 0;
     size_t copy_bytes = (sizemask >= 8) ? 8 : 4;
-    if (fut_copy_from_user(&sigmask, mask, copy_bytes) != 0) return -EFAULT;
+    if (sfd_copy_from_user(&sigmask, mask, copy_bytes) != 0) return -EFAULT;
     if (copy_bytes == 4) sigmask &= 0xFFFFFFFFULL;
 
     /* SIGKILL and SIGSTOP cannot be caught via signalfd */

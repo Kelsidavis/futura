@@ -10176,6 +10176,165 @@ static void test_shm_deferred_rmid(void) {
 }
 
 /* ============================================================
+ * Tests 214-216: signalfd4
+ * ============================================================ */
+
+/* signalfd_siginfo — 128 bytes, matches Linux x86-64 layout */
+struct test_signalfd_siginfo {
+    unsigned int  ssi_signo;
+    int           ssi_errno;
+    int           ssi_code;
+    unsigned int  ssi_pid;
+    unsigned int  ssi_uid;
+    int           ssi_fd;
+    unsigned int  ssi_tid;
+    unsigned int  ssi_band;
+    unsigned int  ssi_overrun;
+    unsigned int  ssi_trapno;
+    int           ssi_status;
+    int           ssi_int;
+    long long     ssi_ptr;
+    long long     ssi_utime;
+    long long     ssi_stime;
+    long long     ssi_addr;
+    unsigned short ssi_addr_lsb;
+    unsigned short __pad2;
+    int           ssi_syscall;
+    long long     ssi_call_addr;
+    unsigned int  ssi_arch;
+    unsigned char __pad[28];
+};
+
+#define TEST_SFD_NONBLOCK 0x800
+#define TEST_SIGUSR1      10
+
+/* Test 214: signalfd4 create, raise SIGUSR1, read signalfd_siginfo */
+static void test_signalfd_basic(void) {
+    fut_printf("[MISC-TEST] Test 214: signalfd4 create and read after raise\n");
+    extern long sys_signalfd4(int ufd, const void *mask, size_t sizemask, int flags);
+    extern long sys_kill(int pid, int sig);
+    extern long sys_read(int fd, void *buf, size_t count);
+    extern long sys_getpid(void);
+
+    /* Build mask: watch SIGUSR1 (bit 9, signal 10) */
+    uint64_t mask = 1ULL << (TEST_SIGUSR1 - 1);
+
+    int sfd = (int)sys_signalfd4(-1, &mask, sizeof(mask), TEST_SFD_NONBLOCK);
+    if (sfd < 0) {
+        fut_printf("[MISC-TEST] ✗ signalfd4 failed: %d\n", sfd);
+        fut_test_fail(214); return;
+    }
+
+    /* Send SIGUSR1 to ourselves */
+    long pid = sys_getpid();
+    long r = sys_kill((int)pid, TEST_SIGUSR1);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ kill(SIGUSR1) failed: %ld\n", r);
+        fut_vfs_close(sfd);
+        fut_test_fail(214); return;
+    }
+
+    /* Read one signalfd_siginfo */
+    struct test_signalfd_siginfo info;
+    __builtin_memset(&info, 0, sizeof(info));
+    long n = sys_read(sfd, &info, sizeof(info));
+    fut_vfs_close(sfd);
+
+    if (n != (long)sizeof(info)) {
+        fut_printf("[MISC-TEST] ✗ signalfd read returned %ld (want %zu)\n",
+                   n, sizeof(info));
+        fut_test_fail(214); return;
+    }
+    if (info.ssi_signo != TEST_SIGUSR1) {
+        fut_printf("[MISC-TEST] ✗ ssi_signo=%u (want %d)\n",
+                   info.ssi_signo, TEST_SIGUSR1);
+        fut_test_fail(214); return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ signalfd4: raised SIGUSR1, read ssi_signo=%u\n",
+               info.ssi_signo);
+    fut_test_pass();
+}
+
+/* Test 215: signalfd4 with SFD_NONBLOCK returns EAGAIN when no signal */
+static void test_signalfd_nonblock_eagain(void) {
+    fut_printf("[MISC-TEST] Test 215: signalfd4 SFD_NONBLOCK EAGAIN when empty\n");
+    extern long sys_signalfd4(int ufd, const void *mask, size_t sizemask, int flags);
+    extern long sys_read(int fd, void *buf, size_t count);
+
+    uint64_t mask = 1ULL << (TEST_SIGUSR1 - 1);
+    int sfd = (int)sys_signalfd4(-1, &mask, sizeof(mask), TEST_SFD_NONBLOCK);
+    if (sfd < 0) {
+        fut_printf("[MISC-TEST] ✗ signalfd4 failed: %d\n", sfd);
+        fut_test_fail(215); return;
+    }
+
+    struct test_signalfd_siginfo info;
+    long n = sys_read(sfd, &info, sizeof(info));
+    fut_vfs_close(sfd);
+
+    if (n != -11 /* -EAGAIN */) {
+        fut_printf("[MISC-TEST] ✗ expected EAGAIN, got %ld\n", n);
+        fut_test_fail(215); return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ signalfd4 SFD_NONBLOCK: EAGAIN when no signal pending\n");
+    fut_test_pass();
+}
+
+/* Test 216: signalfd4 mask update via ufd != -1 */
+static void test_signalfd_mask_update(void) {
+    fut_printf("[MISC-TEST] Test 216: signalfd4 mask update with ufd != -1\n");
+    extern long sys_signalfd4(int ufd, const void *mask, size_t sizemask, int flags);
+    extern long sys_kill(int pid, int sig);
+    extern long sys_read(int fd, void *buf, size_t count);
+    extern long sys_getpid(void);
+
+    /* Start with empty mask (no signals watched) */
+    uint64_t mask = 0;
+    int sfd = (int)sys_signalfd4(-1, &mask, sizeof(mask), TEST_SFD_NONBLOCK);
+    if (sfd < 0) {
+        fut_printf("[MISC-TEST] ✗ signalfd4 create failed: %d\n", sfd);
+        fut_test_fail(216); return;
+    }
+
+    /* Send SIGUSR1 - should NOT appear because mask is empty */
+    long pid = sys_getpid();
+    sys_kill((int)pid, TEST_SIGUSR1);
+
+    struct test_signalfd_siginfo info;
+    long n = sys_read(sfd, &info, sizeof(info));
+    if (n != -11 /* -EAGAIN */) {
+        fut_printf("[MISC-TEST] ✗ expected EAGAIN with empty mask, got %ld\n", n);
+        fut_vfs_close(sfd);
+        fut_test_fail(216); return;
+    }
+
+    /* Now update mask to watch SIGUSR1; resend the signal */
+    mask = 1ULL << (TEST_SIGUSR1 - 1);
+    long r = sys_signalfd4(sfd, &mask, sizeof(mask), 0);
+    if (r != sfd) {
+        fut_printf("[MISC-TEST] ✗ signalfd4 mask update failed: %ld\n", r);
+        fut_vfs_close(sfd);
+        fut_test_fail(216); return;
+    }
+
+    sys_kill((int)pid, TEST_SIGUSR1);
+    __builtin_memset(&info, 0, sizeof(info));
+    n = sys_read(sfd, &info, sizeof(info));
+    fut_vfs_close(sfd);
+
+    if (n != (long)sizeof(info) || info.ssi_signo != TEST_SIGUSR1) {
+        fut_printf("[MISC-TEST] ✗ after mask update: n=%ld ssi_signo=%u\n",
+                   n, info.ssi_signo);
+        fut_test_fail(216); return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ signalfd4 mask update: correctly filtered then delivered SIGUSR1\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test 199: /proc/stat — cpu line and ctxt/btime present
  * ============================================================ */
 static void test_proc_stat_global(void) {
@@ -10486,6 +10645,9 @@ void fut_misc_test_thread(void *arg) {
     test_shmget_basic();                   /* Test 211: shmget/shmat/shmdt write/read */
     test_shmctl_stat();                    /* Test 212: shmctl IPC_STAT segsz/nattch */
     test_shm_deferred_rmid();              /* Test 213: IPC_RMID deferred free */
+    test_signalfd_basic();                 /* Test 214: signalfd4 create/raise/read */
+    test_signalfd_nonblock_eagain();       /* Test 215: SFD_NONBLOCK EAGAIN when empty */
+    test_signalfd_mask_update();           /* Test 216: signalfd4 mask update via ufd != -1 */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -14412,6 +14412,62 @@ static void test_socket_errno_correctness(void) {
 }
 
 /**
+ * Test 328: shutdown(SHUT_WR) signals EOF to peer's blocking recv().
+ *
+ * After one end calls shutdown(SHUT_WR), the peer's recv() should return 0
+ * (EOF) once all buffered data has been consumed, without the peer needing
+ * to close the socket entirely.
+ */
+static void test_shutdown_shut_wr_eof(void) {
+    fut_printf("[MISC-TEST] Test 328: shutdown(SHUT_WR) signals EOF to peer\n");
+    extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+    extern long sys_shutdown(int sockfd, int how);
+    extern long sys_sendto(int sockfd, const void *buf, size_t len, int flags, const void *dest_addr, int addrlen);
+    extern long sys_recvfrom(int sockfd, void *buf, size_t len, int flags, void *src_addr, void *addrlen);
+
+    int sv[2] = { -1, -1 };
+    long r = sys_socketpair(1 /*AF_UNIX*/, 1 /*SOCK_STREAM*/, 0, sv);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ socketpair failed: %ld\n", r);
+        fut_test_fail(328); return;
+    }
+
+    /* Send data from sv[0], then shutdown write side */
+    const char msg[] = "endofstream";
+    long s = sys_sendto(sv[0], msg, 11, 0, NULL, 0);
+    if (s != 11) {
+        fut_printf("[MISC-TEST] ✗ send failed: %ld\n", s);
+        fut_vfs_close(sv[0]); fut_vfs_close(sv[1]); fut_test_fail(328); return;
+    }
+
+    /* Shut down write side of sv[0] — sv[1] should get EOF after consuming data */
+    r = sys_shutdown(sv[0], 1 /*SHUT_WR*/);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ shutdown(SHUT_WR) failed: %ld\n", r);
+        fut_vfs_close(sv[0]); fut_vfs_close(sv[1]); fut_test_fail(328); return;
+    }
+
+    /* sv[1] receives the buffered data first */
+    char buf[64] = {0};
+    long r1 = sys_recvfrom(sv[1], buf, sizeof(buf), 0, NULL, NULL);
+    if (r1 != 11) {
+        fut_printf("[MISC-TEST] ✗ first recv: %ld (expected 11)\n", r1);
+        fut_vfs_close(sv[0]); fut_vfs_close(sv[1]); fut_test_fail(328); return;
+    }
+
+    /* sv[1] must now get EOF (0) — no more data from sv[0] */
+    long r2 = sys_recvfrom(sv[1], buf, sizeof(buf), 0, NULL, NULL);
+    if (r2 != 0) {
+        fut_printf("[MISC-TEST] ✗ EOF recv: %ld (expected 0)\n", r2);
+        fut_vfs_close(sv[0]); fut_vfs_close(sv[1]); fut_test_fail(328); return;
+    }
+
+    fut_vfs_close(sv[0]); fut_vfs_close(sv[1]);
+    fut_printf("[MISC-TEST] ✓ shutdown(SHUT_WR): data received (%ld bytes), then EOF (0)\n", r1);
+    fut_test_pass();
+}
+
+/**
  * Test 327: SOCK_SEQPACKET via connect/accept preserves boundaries.
  *
  * Unlike socketpair, this exercises the full bind/listen/connect/accept
@@ -15824,6 +15880,7 @@ void fut_misc_test_thread(void *arg) {
     test_seqpacket_boundaries();         /* Test 325: SEQPACKET preserves message boundaries */
     test_seqpacket_truncation();         /* Test 326: SEQPACKET truncates to buffer; discards remainder */
     test_seqpacket_connect_accept();     /* Test 327: SEQPACKET connect/accept path boundary preservation */
+    test_shutdown_shut_wr_eof();         /* Test 328: shutdown(SHUT_WR) signals EOF to peer's recv() */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

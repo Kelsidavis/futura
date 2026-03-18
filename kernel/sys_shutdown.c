@@ -192,11 +192,25 @@ long sys_shutdown(int sockfd, int how) {
 
         case SHUT_WR:
             socket->shutdown_wr = true;
+            /* Signal EOF to the peer's blocking recv() by nulling our send-pair's peer
+             * pointer. The peer's recv loop checks !pair->peer to detect EOF.
+             * safe: send() checks shutdown_wr before checking pair->peer, so our own
+             * subsequent sends still get -EPIPE from the shutdown_wr check. */
+            if (socket->pair) {
+                fut_spinlock_acquire(&socket->pair->lock);
+                socket->pair->peer = NULL;
+                fut_spinlock_release(&socket->pair->lock);
+            }
             break;
 
         case SHUT_RDWR:
             socket->shutdown_rd = true;
             socket->shutdown_wr = true;
+            if (socket->pair) {
+                fut_spinlock_acquire(&socket->pair->lock);
+                socket->pair->peer = NULL;
+                fut_spinlock_release(&socket->pair->lock);
+            }
             break;
     }
 
@@ -214,9 +228,6 @@ long sys_shutdown(int sockfd, int how) {
         fut_waitq_wake_one(socket->pair->epoll_notify);
     if (socket->pair_reverse && socket->pair_reverse->epoll_notify)
         fut_waitq_wake_one(socket->pair_reverse->epoll_notify);
-
-    /* Note: Send/recv syscalls must check socket->shutdown_rd and socket->shutdown_wr
-     * to enforce these semantics. Future enhancement: signal peer for Unix sockets */
 
     return 0;
 }

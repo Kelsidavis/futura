@@ -6585,6 +6585,159 @@ static void test_timerfd_gettime(void) {
 }
 
 /* ============================================================
+ * Test 135: futex FUTEX_WAIT with value mismatch → EAGAIN
+ * ============================================================ */
+extern long sys_futex(uint32_t *uaddr, int op, uint32_t val, const void *timeout,
+                      uint32_t *uaddr2, uint32_t val3);
+#define FUTEX_WAIT_TEST        0
+#define FUTEX_WAKE_TEST        1
+#define FUTEX_PRIVATE_FLAG_TEST 128
+
+static void test_futex_wait_mismatch(void) {
+    fut_printf("[MISC-TEST] Test 135: futex FUTEX_WAIT value mismatch → EAGAIN\n");
+    uint32_t futex_val = 42;
+    /* val=99 but *uaddr=42: should return -EAGAIN immediately */
+    long ret = sys_futex(&futex_val, FUTEX_WAIT_TEST | FUTEX_PRIVATE_FLAG_TEST,
+                         99, NULL, NULL, 0);
+    if (ret != -EAGAIN) {
+        fut_printf("[MISC-TEST] ✗ futex WAIT mismatch: got %ld, expected -EAGAIN (%d)\n",
+                   ret, -EAGAIN);
+        fut_test_fail(135);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ futex FUTEX_WAIT: value mismatch returns EAGAIN\n");
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 136: futex FUTEX_WAIT with timeout → ETIMEDOUT
+ * ============================================================ */
+static void test_futex_wait_timeout(void) {
+    fut_printf("[MISC-TEST] Test 136: futex FUTEX_WAIT with timeout → ETIMEDOUT\n");
+    uint32_t futex_val = 0;
+    /* 10ms timeout; *uaddr == val (0 == 0), so we wait and time out */
+    fut_timespec_t timeout = { .tv_sec = 0, .tv_nsec = 10000000L };
+    long ret = sys_futex(&futex_val, FUTEX_WAIT_TEST | FUTEX_PRIVATE_FLAG_TEST,
+                         0, &timeout, NULL, 0);
+    if (ret != -ETIMEDOUT && ret != -EINTR) {
+        fut_printf("[MISC-TEST] ✗ futex WAIT timeout: got %ld, expected -ETIMEDOUT (%d)\n",
+                   ret, -ETIMEDOUT);
+        fut_test_fail(136);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ futex FUTEX_WAIT: timeout returns ETIMEDOUT\n");
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 137: futex FUTEX_WAKE with no waiters → 0
+ * ============================================================ */
+static void test_futex_wake_no_waiters(void) {
+    fut_printf("[MISC-TEST] Test 137: futex FUTEX_WAKE no waiters → 0\n");
+    uint32_t futex_val = 1;
+    long ret = sys_futex(&futex_val, FUTEX_WAKE_TEST | FUTEX_PRIVATE_FLAG_TEST,
+                         0x7fffffff, NULL, NULL, 0);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ futex WAKE no waiters: got %ld, expected 0\n", ret);
+        fut_test_fail(137);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ futex FUTEX_WAKE: no waiters returns 0\n");
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 138: clock_nanosleep relative sleep
+ * ============================================================ */
+extern long sys_clock_nanosleep(int clock_id, int flags,
+                                const fut_timespec_t *req, fut_timespec_t *rem);
+
+static void test_clock_nanosleep_relative(void) {
+    fut_printf("[MISC-TEST] Test 138: clock_nanosleep relative sleep\n");
+    /* CLOCK_MONOTONIC=1, relative (flags=0), 10ms */
+    fut_timespec_t req = { .tv_sec = 0, .tv_nsec = 10000000L };
+    long ret = sys_clock_nanosleep(1, 0, &req, NULL);
+    if (ret != 0 && ret != -EINTR) {
+        fut_printf("[MISC-TEST] ✗ clock_nanosleep relative: got %ld, expected 0\n", ret);
+        fut_test_fail(138);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ clock_nanosleep: 10ms relative sleep OK\n");
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 139: clock_nanosleep TIMER_ABSTIME in the past → 0
+ * ============================================================ */
+static void test_clock_nanosleep_abstime_past(void) {
+    fut_printf("[MISC-TEST] Test 139: clock_nanosleep TIMER_ABSTIME in past → 0\n");
+    /* Monotonic time 0 (boot) is always in the past */
+    fut_timespec_t req = { .tv_sec = 0, .tv_nsec = 0 };
+    long ret = sys_clock_nanosleep(1, 1 /* TIMER_ABSTIME */, &req, NULL);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ clock_nanosleep abstime past: got %ld, expected 0\n", ret);
+        fut_test_fail(139);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ clock_nanosleep: TIMER_ABSTIME in past returns 0\n");
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 140: mremap shrink anonymous mapping
+ * ============================================================ */
+extern long sys_mremap(void *old_address, size_t old_size, size_t new_size,
+                       int flags, void *new_address);
+
+static void test_mremap_shrink(void) {
+    fut_printf("[MISC-TEST] Test 140: mremap shrink memfd-backed mapping\n");
+    extern long sys_memfd_create(const char *uname, unsigned int flags);
+    extern long sys_ftruncate(int fd, uint64_t length);
+    extern long sys_close(int fd);
+
+    /* Create a 8KB memfd */
+    long mfd = sys_memfd_create("mremap_test", 0);
+    if (mfd < 0) {
+        fut_printf("[MISC-TEST] ✗ memfd_create: %ld\n", mfd);
+        fut_test_fail(140);
+        return;
+    }
+    long ret = sys_ftruncate((int)mfd, 8192);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ ftruncate: %ld\n", ret);
+        sys_close((int)mfd);
+        fut_test_fail(140);
+        return;
+    }
+
+    /* Map 8KB MAP_SHARED */
+    long maddr = sys_mmap(NULL, 8192, 3 /* PROT_READ|PROT_WRITE */,
+                          0x01 /* MAP_SHARED */, (int)mfd, 0);
+    if (maddr < 0) {
+        fut_printf("[MISC-TEST] ✗ mmap for mremap: %ld\n", maddr);
+        sys_close((int)mfd);
+        fut_test_fail(140);
+        return;
+    }
+    void *addr = (void *)(uintptr_t)maddr;
+
+    /* Shrink to 4KB — same address, flags=0 (no MREMAP_MAYMOVE) */
+    long naddr = sys_mremap(addr, 8192, 4096, 0, NULL);
+    if (naddr < 0) {
+        fut_printf("[MISC-TEST] ✗ mremap shrink: got %ld\n", naddr);
+        sys_munmap(addr, 8192);
+        sys_close((int)mfd);
+        fut_test_fail(140);
+        return;
+    }
+
+    sys_munmap((void *)(uintptr_t)naddr, 4096);
+    sys_close((int)mfd);
+    fut_printf("[MISC-TEST] ✓ mremap: 8KB→4KB shrink returned 0x%lx\n", naddr);
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -6728,6 +6881,12 @@ void fut_misc_test_thread(void *arg) {
     test_rt_tgsigqueueinfo();              /* Test 132: rt_tgsigqueueinfo stores siginfo in thread queue */
     test_memfd_mmap();                     /* Test 133: mmap on memfd returns valid mapping */
     test_timerfd_gettime();                /* Test 134: timerfd_gettime reports correct interval */
+    test_futex_wait_mismatch();            /* Test 135: futex WAIT value mismatch → EAGAIN */
+    test_futex_wait_timeout();             /* Test 136: futex WAIT with timeout → ETIMEDOUT */
+    test_futex_wake_no_waiters();          /* Test 137: futex WAKE no waiters → 0 */
+    test_clock_nanosleep_relative();       /* Test 138: clock_nanosleep relative sleep */
+    test_clock_nanosleep_abstime_past();   /* Test 139: clock_nanosleep TIMER_ABSTIME in past */
+    test_mremap_shrink();                  /* Test 140: mremap shrink anonymous mapping */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

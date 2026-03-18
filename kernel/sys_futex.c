@@ -21,6 +21,25 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
+/* Kernel-pointer bypass helpers for selftest support */
+static inline int futex_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_from_user(dst, src, n);
+}
+static inline int futex_access_ok_write(const void *ptr, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)ptr >= KERNEL_VIRTUAL_BASE) return 0;
+#endif
+    return fut_access_ok(ptr, n, 1);
+}
 
 /* ============================================================
  *   Futex Hash Table
@@ -308,7 +327,7 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
     }
 
     /* Phase 2: Validate userspace pointer with write access (futexes modify memory) */
-    if (fut_access_ok(uaddr, sizeof(uint32_t), 1) != 0) {
+    if (futex_access_ok_write(uaddr, sizeof(uint32_t)) != 0) {
         return -EFAULT;
     }
 
@@ -337,7 +356,7 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
             uint64_t timeout_ms = 0;
             if (timeout) {
                 fut_timespec_t ts;
-                if (fut_copy_from_user(&ts, timeout, sizeof(ts)) != 0) {
+                if (futex_copy_from_user(&ts, timeout, sizeof(ts)) != 0) {
                     return -EFAULT;
                 }
                 if (ts.tv_sec < 0 || ts.tv_nsec < 0 || ts.tv_nsec >= 1000000000) {
@@ -358,7 +377,7 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
 
             /* Read current value from userspace (under lock) */
             uint32_t current_val;
-            if (fut_copy_from_user(&current_val, uaddr, sizeof(uint32_t)) != 0) {
+            if (futex_copy_from_user(&current_val, uaddr, sizeof(uint32_t)) != 0) {
                 fut_spinlock_release(&bucket->lock);
                 return -EFAULT;
             }

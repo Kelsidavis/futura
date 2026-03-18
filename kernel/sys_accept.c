@@ -491,12 +491,15 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
             return -EAGAIN;
         }
 
-        /* Check for pending signals → EINTR */
+        /* Check for pending signals → EINTR (use per-thread mask) */
         {
             fut_task_t *sig_task = fut_task_current();
             if (sig_task) {
+                fut_thread_t *acc_thr = fut_thread_current();
                 uint64_t pending = __atomic_load_n(&sig_task->pending_signals, __ATOMIC_ACQUIRE);
-                uint64_t blocked = sig_task->signal_mask;
+                uint64_t blocked = acc_thr ?
+                    __atomic_load_n(&acc_thr->signal_mask, __ATOMIC_ACQUIRE) :
+                    sig_task->signal_mask;
                 if (pending & ~blocked)
                     return -EINTR;
             }

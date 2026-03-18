@@ -17,6 +17,7 @@
 #include <kernel/fut_memory.h>
 #include <kernel/fut_vfs.h>
 #include <kernel/fut_task.h>
+#include <kernel/fut_thread.h>
 #include <kernel/uaccess.h>
 #include <kernel/fut_waitq.h>
 #include <kernel/signal.h>
@@ -172,11 +173,14 @@ static ssize_t pipe_read(void *inode, void *priv, void *buf, size_t len, off_t *
 
     /* Block until data is available */
     while (pipe->count == 0 && !pipe->write_closed) {
-        /* Check for pending signals → EINTR */
+        /* Check for pending signals → EINTR (use per-thread mask) */
         fut_task_t *task = fut_task_current();
         if (task) {
+            fut_thread_t *pipe_thr = fut_thread_current();
             uint64_t pending = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
-            uint64_t blocked = task->signal_mask;
+            uint64_t blocked = pipe_thr ?
+                __atomic_load_n(&pipe_thr->signal_mask, __ATOMIC_ACQUIRE) :
+                task->signal_mask;
             if (pending & ~blocked) {
                 fut_spinlock_release(&pipe->lock);
                 return -EINTR;
@@ -246,11 +250,14 @@ static ssize_t pipe_write(void *inode, void *priv, const void *buf, size_t len, 
 
     /* Block until space is available */
     while (pipe->count >= pipe->size && !pipe->read_closed) {
-        /* Check for pending signals → EINTR */
+        /* Check for pending signals → EINTR (use per-thread mask) */
         fut_task_t *stask = fut_task_current();
         if (stask) {
+            fut_thread_t *pipe_thr = fut_thread_current();
             uint64_t pending = __atomic_load_n(&stask->pending_signals, __ATOMIC_ACQUIRE);
-            uint64_t blocked = stask->signal_mask;
+            uint64_t blocked = pipe_thr ?
+                __atomic_load_n(&pipe_thr->signal_mask, __ATOMIC_ACQUIRE) :
+                stask->signal_mask;
             if (pending & ~blocked) {
                 fut_spinlock_release(&pipe->lock);
                 return -EINTR;

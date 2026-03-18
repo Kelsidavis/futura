@@ -232,8 +232,12 @@ long sys_mremap(void *old_address, size_t old_size, size_t new_size,
     }
     flags_str[flags_idx] = '\0';
 
-    /* Get the task's MM context */
+    /* Get the task's MM context; fall back to kernel_mm for kernel threads
+     * (same as fut_mm_current() fallback used by fut_vfs_mmap) */
     fut_mm_t *mm = fut_task_get_mm(task);
+    if (!mm) {
+        mm = fut_mm_current();  /* Returns kernel_mm for tasks with no mm */
+    }
     if (!mm) {
         fut_printf("[MREMAP] mremap(%p, %zu->%zu pages, %s) -> ENOMEM (no mm context)\n",
                    old_address, old_pages, new_pages, flags_str);

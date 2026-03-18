@@ -9,25 +9,14 @@
  * Phase 1 (Completed): Basic madvise with stub implementation
  * Phase 2 (Completed): Enhanced validation, address/length/advice categorization, detailed logging
  * Phase 3 (Completed): Memory management hints acknowledgment (WILLNEED, DONTNEED, SEQUENTIAL, RANDOM)
- * Phase 4: Advanced features (MADV_FREE, MADV_MERGEABLE/KSM support)
+ * Phase 4 (Completed): Full Linux advice code set (MADV_FREE, MADV_HUGEPAGE, MADV_DONTDUMP, etc.)
+ *                      Uses switch-case validation to handle non-contiguous valid set (gaps at 5,6,7).
  */
 
 #include <kernel/fut_mm.h>
 #include <kernel/errno.h>
+#include <sys/mman.h>
 #include <stdint.h>
-
-/* madvise() advice codes */
-#define MADV_NORMAL       0  /* No special treatment */
-#define MADV_RANDOM       1  /* Expect random access */
-#define MADV_SEQUENTIAL   2  /* Expect sequential access */
-#define MADV_WILLNEED     3  /* Will need pages soon (prefetch) */
-#define MADV_DONTNEED     4  /* Don't need pages anymore (free) */
-#define MADV_MERGEABLE    5  /* Mark as mergeable (KSM) */
-#define MADV_UNMERGEABLE  6  /* Unmark as mergeable */
-#define MADV_DONTDUMP     7  /* Exclude from core dumps */
-#define MADV_DODUMP       8  /* Include in core dumps */
-#define MADV_DONTFORK     9  /* Don't inherit on fork */
-#define MADV_DOFORK      10  /* Inherit on fork */
 
 /* Note: PAGE_SIZE, PAGE_ALIGN_DOWN, PAGE_ALIGN_UP are defined in platform paging.h
    and already included via fut_mm.h */
@@ -118,12 +107,7 @@
  * Phase 4: KSM support, MADV_FREE implementation
  */
 long sys_madvise(void *addr, size_t length, int advice) {
-    /* Validate advice code */
-    if (advice < MADV_NORMAL || advice > MADV_DOFORK) {
-        return -EINVAL;
-    }
-
-    /* Zero-length is a POSIX-defined no-op */
+    /* Zero-length is a POSIX-defined no-op (checked before addr) */
     if (length == 0) {
         return 0;
     }
@@ -143,8 +127,29 @@ long sys_madvise(void *addr, size_t length, int advice) {
     if (addr_aligned > SIZE_MAX - length_aligned) {
         return -EINVAL;
     }
-
-    /* All advice codes are accepted as hints (no enforcement needed yet) */
     (void)length_aligned;
-    return 0;
+
+    /* Validate advice code using explicit switch.
+     * Linux advice values are non-contiguous: valid set is
+     * {0-4, 8-17}; values 5, 6, 7 are unused gaps → EINVAL. */
+    switch (advice) {
+    case MADV_NORMAL:       /* 0: default behavior */
+    case MADV_RANDOM:       /* 1: expect random access */
+    case MADV_SEQUENTIAL:   /* 2: expect sequential access */
+    case MADV_WILLNEED:     /* 3: prefetch pages soon */
+    case MADV_DONTNEED:     /* 4: free pages, won't need soon */
+    case MADV_FREE:         /* 8: lazy free (Linux 4.5+) */
+    case MADV_REMOVE:       /* 9: punch hole / remove pages */
+    case MADV_DONTFORK:     /* 10: don't inherit on fork */
+    case MADV_DOFORK:       /* 11: inherit on fork (default) */
+    case MADV_MERGEABLE:    /* 12: KSM may merge identical pages */
+    case MADV_UNMERGEABLE:  /* 13: KSM must not merge */
+    case MADV_HUGEPAGE:     /* 14: back with transparent hugepages */
+    case MADV_NOHUGEPAGE:   /* 15: do not back with hugepages */
+    case MADV_DONTDUMP:     /* 16: exclude from core dump */
+    case MADV_DODUMP:       /* 17: include in core dump */
+        return 0;
+    default:
+        return -EINVAL;
+    }
 }

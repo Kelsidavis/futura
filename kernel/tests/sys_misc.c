@@ -11376,6 +11376,109 @@ static void test_execveat_bad_dirfd(void) {
 }
 
 /* ============================================================
+ * Tests 250-253: madvise extended advice codes (Linux values)
+ * ============================================================ */
+
+/* Linux madvise values absent from the old local defines:
+ * MADV_FREE=8, MADV_HUGEPAGE=14, MADV_NOHUGEPAGE=15,
+ * MADV_DONTDUMP=16, MADV_DODUMP=17.
+ * Values 5, 6, 7 are unused gaps → must return EINVAL. */
+#define TMADV_FREE        8
+#define TMADV_HUGEPAGE   14
+#define TMADV_DONTDUMP   16
+#define TMADV_DODUMP     17
+
+static void test_madvise_free(void) {
+    fut_printf("[MISC-TEST] Test 250: madvise MADV_FREE (8) accepted\n");
+    extern long sys_madvise(void *addr, size_t length, int advice);
+    extern long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long off);
+    extern long sys_munmap(void *addr, size_t len);
+
+    void *p = (void *)sys_mmap(NULL, 4096, TEST_PROT_RW,
+                               TEST_MAP_PRIVATE | TEST_MAP_ANONYMOUS, -1, 0);
+    if (!p || (long)(uintptr_t)p < 0) { fut_test_fail(250); return; }
+
+    long r = sys_madvise(p, 4096, TMADV_FREE);
+    sys_munmap(p, 4096);
+
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ madvise(MADV_FREE): expected 0, got %ld\n", r);
+        fut_test_fail(250); return;
+    }
+    fut_printf("[MISC-TEST] ✓ madvise(MADV_FREE=8) → 0\n");
+    fut_test_pass();
+}
+
+static void test_madvise_hugepage(void) {
+    fut_printf("[MISC-TEST] Test 251: madvise MADV_HUGEPAGE/NOHUGEPAGE (14/15) accepted\n");
+    extern long sys_madvise(void *addr, size_t length, int advice);
+    extern long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long off);
+    extern long sys_munmap(void *addr, size_t len);
+
+    void *p = (void *)sys_mmap(NULL, 4096, TEST_PROT_RW,
+                               TEST_MAP_PRIVATE | TEST_MAP_ANONYMOUS, -1, 0);
+    if (!p || (long)(uintptr_t)p < 0) { fut_test_fail(251); return; }
+
+    long r1 = sys_madvise(p, 4096, TMADV_HUGEPAGE);   /* 14 */
+    long r2 = sys_madvise(p, 4096, 15);               /* MADV_NOHUGEPAGE */
+    sys_munmap(p, 4096);
+
+    if (r1 != 0 || r2 != 0) {
+        fut_printf("[MISC-TEST] ✗ madvise HUGEPAGE/NOHUGEPAGE: %ld/%ld\n", r1, r2);
+        fut_test_fail(251); return;
+    }
+    fut_printf("[MISC-TEST] ✓ madvise(MADV_HUGEPAGE=14, MADV_NOHUGEPAGE=15) → 0\n");
+    fut_test_pass();
+}
+
+static void test_madvise_dontdump(void) {
+    fut_printf("[MISC-TEST] Test 252: madvise MADV_DONTDUMP/DODUMP (16/17) accepted\n");
+    extern long sys_madvise(void *addr, size_t length, int advice);
+    extern long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long off);
+    extern long sys_munmap(void *addr, size_t len);
+
+    void *p = (void *)sys_mmap(NULL, 4096, TEST_PROT_RW,
+                               TEST_MAP_PRIVATE | TEST_MAP_ANONYMOUS, -1, 0);
+    if (!p || (long)(uintptr_t)p < 0) { fut_test_fail(252); return; }
+
+    long r1 = sys_madvise(p, 4096, TMADV_DONTDUMP);  /* 16 */
+    long r2 = sys_madvise(p, 4096, TMADV_DODUMP);    /* 17 */
+    sys_munmap(p, 4096);
+
+    if (r1 != 0 || r2 != 0) {
+        fut_printf("[MISC-TEST] ✗ madvise DONTDUMP/DODUMP: %ld/%ld\n", r1, r2);
+        fut_test_fail(252); return;
+    }
+    fut_printf("[MISC-TEST] ✓ madvise(MADV_DONTDUMP=16, MADV_DODUMP=17) → 0\n");
+    fut_test_pass();
+}
+
+static void test_madvise_gap_einval(void) {
+    fut_printf("[MISC-TEST] Test 253: madvise gap values (5,6,7) → EINVAL\n");
+    extern long sys_madvise(void *addr, size_t length, int advice);
+    extern long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long off);
+    extern long sys_munmap(void *addr, size_t len);
+
+    void *p = (void *)sys_mmap(NULL, 4096, TEST_PROT_RW,
+                               TEST_MAP_PRIVATE | TEST_MAP_ANONYMOUS, -1, 0);
+    if (!p || (long)(uintptr_t)p < 0) { fut_test_fail(253); return; }
+
+    /* Linux advice values 5, 6, 7 are unused gaps — must return EINVAL */
+    long r5 = sys_madvise(p, 4096, 5);
+    long r6 = sys_madvise(p, 4096, 6);
+    long r7 = sys_madvise(p, 4096, 7);
+    sys_munmap(p, 4096);
+
+    if (r5 != -22 || r6 != -22 || r7 != -22) { /* -EINVAL */
+        fut_printf("[MISC-TEST] ✗ madvise gaps: 5→%ld 6→%ld 7→%ld (want -22)\n",
+                   r5, r6, r7);
+        fut_test_fail(253); return;
+    }
+    fut_printf("[MISC-TEST] ✓ madvise(5/6/7) → EINVAL\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -11634,6 +11737,10 @@ void fut_misc_test_thread(void *arg) {
     test_map_fixed_noreplace_ok();         /* Test 247: MAP_FIXED_NOREPLACE at free addr succeeds */
     test_map_fixed_noreplace_conflict();   /* Test 248: MAP_FIXED_NOREPLACE over occupied → EEXIST */
     test_map_fixed_noreplace_partial();    /* Test 249: MAP_FIXED_NOREPLACE partial overlap → EEXIST */
+    test_madvise_free();                   /* Test 250: madvise MADV_FREE (8) accepted */
+    test_madvise_hugepage();               /* Test 251: madvise MADV_HUGEPAGE/NOHUGEPAGE (14/15) */
+    test_madvise_dontdump();               /* Test 252: madvise MADV_DONTDUMP/DODUMP (16/17) */
+    test_madvise_gap_einval();             /* Test 253: madvise gap values 5/6/7 → EINVAL */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

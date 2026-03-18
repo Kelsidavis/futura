@@ -14354,6 +14354,65 @@ static void test_getsockname_getpeername_abstract(void) {
 }
 
 /**
+ * Test 315: SO_RCVTIMEO enforced on blocking recv.
+ *
+ * Set a 50ms receive timeout on one end of a socketpair.
+ * Attempt to read with no data pending — should return EAGAIN within ~100ms.
+ * Also verify getsockopt(SO_RCVTIMEO) returns the stored value.
+ */
+static void test_so_rcvtimeo(void) {
+    fut_printf("[MISC-TEST] Test 315: SO_RCVTIMEO enforcement\n");
+    extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+    extern long sys_setsockopt(int sockfd, int level, int optname,
+                               const void *optval, unsigned int optlen);
+    extern long sys_getsockopt(int sockfd, int level, int optname,
+                               void *optval, unsigned int *optlen);
+
+    int sv[2] = {-1, -1};
+    long r = sys_socketpair(1 /*AF_UNIX*/, 1 /*SOCK_STREAM*/, 0, sv);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ socketpair failed: %ld\n", r);
+        fut_test_fail(315); return;
+    }
+
+    /* Set SO_RCVTIMEO = 50ms on sv[1] */
+    struct { long tv_sec; long tv_usec; } tv = { .tv_sec = 0, .tv_usec = 50000 };
+    r = sys_setsockopt(sv[1], 1 /*SOL_SOCKET*/, 20 /*SO_RCVTIMEO*/, &tv, sizeof(tv));
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ setsockopt(SO_RCVTIMEO) failed: %ld\n", r);
+        sys_close(sv[0]); sys_close(sv[1]); fut_test_fail(315); return;
+    }
+
+    /* Verify getsockopt returns the stored value */
+    struct { long tv_sec; long tv_usec; } tv_out = {0, 0};
+    unsigned int optlen = sizeof(tv_out);
+    r = sys_getsockopt(sv[1], 1 /*SOL_SOCKET*/, 20 /*SO_RCVTIMEO*/,
+                       &tv_out, &optlen);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ getsockopt(SO_RCVTIMEO) failed: %ld\n", r);
+        sys_close(sv[0]); sys_close(sv[1]); fut_test_fail(315); return;
+    }
+    if (tv_out.tv_sec != 0 || tv_out.tv_usec != 50000) {
+        fut_printf("[MISC-TEST] ✗ getsockopt returned {%ld, %ld}, want {0, 50000}\n",
+                   tv_out.tv_sec, tv_out.tv_usec);
+        sys_close(sv[0]); sys_close(sv[1]); fut_test_fail(315); return;
+    }
+
+    /* Read from sv[1] — no data in sv[0], should time out with EAGAIN */
+    char buf[16];
+    extern long sys_read(int fd, void *buf, size_t count);
+    long n = sys_read(sv[1], buf, sizeof(buf));
+    if (n != -11 /*-EAGAIN*/) {
+        fut_printf("[MISC-TEST] ✗ read after SO_RCVTIMEO returned %ld, want -EAGAIN(-11)\n", n);
+        sys_close(sv[0]); sys_close(sv[1]); fut_test_fail(315); return;
+    }
+
+    sys_close(sv[0]); sys_close(sv[1]);
+    fut_printf("[MISC-TEST] ✓ SO_RCVTIMEO: timed-out recv returns EAGAIN; getsockopt round-trips\n");
+    fut_test_pass();
+}
+
+/**
  * Test 314: Circular buffer wrap-around send/recv correctness.
  *
  * The socket receive buffer is 4096 bytes. To force wrap-around:
@@ -14965,6 +15024,7 @@ void fut_misc_test_thread(void *arg) {
     test_unix_dgram_connect();           /* Test 312: SOCK_DGRAM connect() sets default peer */
     test_getsockname_getpeername_abstract(); /* Test 313: getsockname/getpeername abstract addrlen */
     test_socket_circ_wrap();             /* Test 314: circular buffer wrap-around send/recv */
+    test_so_rcvtimeo();                  /* Test 315: SO_RCVTIMEO enforced on blocking recv */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -662,22 +662,26 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
 
             case SO_RCVTIMEO:
             case SO_SNDTIMEO:
-                /* Timeout - return {0, 0} (no timeout, default) */
+                /* Return stored timeout value */
                 {
+                    uint64_t ms = (optname == SO_RCVTIMEO)
+                                  ? socket->rcvtimeo_ms
+                                  : socket->sndtimeo_ms;
                     struct {
                         long tv_sec;
                         long tv_usec;
-                    } tv_zero = {0, 0};
-                    value_len = sizeof(tv_zero);
-
+                    } tv = {
+                        .tv_sec  = (long)(ms / 1000ULL),
+                        .tv_usec = (long)((ms % 1000ULL) * 1000ULL),
+                    };
+                    value_len = sizeof(tv);
                     copy_len = (len < value_len) ? len : value_len;
-                    if (gso_copy_to_user(optval, &tv_zero, copy_len) != 0) {
+                    if (gso_copy_to_user(optval, &tv, copy_len) != 0) {
                         return -EFAULT;
                     }
                     if (gso_copy_to_user(optlen, &value_len, sizeof(socklen_t)) != 0) {
                         return -EFAULT;
                     }
-
                     return 0;
                 }
 

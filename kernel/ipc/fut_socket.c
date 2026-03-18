@@ -79,6 +79,52 @@ static inline int socket_memcmp(const void *s1, const void *s2, size_t n) {
 #define memcpy(s1,s2,n)   socket_memcpy(s1, s2, n)
 #define memcmp(s1,s2,n)   socket_memcmp(s1, s2, n)
 
+/* ============================================================
+ *   Socket timeout support (SO_RCVTIMEO / SO_SNDTIMEO)
+ * ============================================================ */
+
+typedef struct sock_timeout_ctx {
+    fut_thread_t     *thread;
+    fut_waitq_t      *waitq;
+    fut_spinlock_t   *lock;
+    bool              fired;   /* set by callback to indicate timeout */
+} sock_timeout_ctx_t;
+
+/* Timer callback: remove thread from waitq and wake it with timeout flag */
+static void sock_timeout_callback(void *arg) {
+    sock_timeout_ctx_t *ctx = (sock_timeout_ctx_t *)arg;
+    fut_thread_t *thread = ctx->thread;
+    fut_waitq_t  *wq     = ctx->waitq;
+
+    fut_spinlock_acquire(ctx->lock);
+
+    /* Walk the wait queue and remove our thread if still there */
+    fut_thread_t *cur  = wq->head;
+    fut_thread_t *prev = NULL;
+    bool found = false;
+
+    while (cur) {
+        if (cur == thread) {
+            if (prev) prev->wait_next = cur->wait_next;
+            else      wq->head = cur->wait_next;
+            if (wq->tail == cur) wq->tail = prev;
+            cur->wait_next = NULL;
+            found = true;
+            break;
+        }
+        prev = cur;
+        cur  = cur->wait_next;
+    }
+
+    if (found) {
+        ctx->fired = true;
+        thread->state = FUT_THREAD_READY;
+        fut_sched_add_thread(thread);
+    }
+
+    fut_spinlock_release(ctx->lock);
+}
+
 /**
  * socket_pair_cleanup - Free all resources allocated for a socket pair
  *
@@ -837,8 +883,24 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
     uint32_t available = pair->recv_size -
         ((pair->recv_head + pair->recv_size - pair->recv_tail) % pair->recv_size);
 
+    /* SO_SNDTIMEO: set up timer if a send timeout is configured */
+    sock_timeout_ctx_t snd_tmo_ctx = {0};
+    bool snd_has_timeout = (socket->sndtimeo_ms > 0);
+    if (snd_has_timeout) {
+        uint64_t ticks = socket->sndtimeo_ms / 10;
+        if (socket->sndtimeo_ms % 10 != 0) ticks++;
+        if (ticks == 0) ticks = 1;
+        snd_tmo_ctx.thread = fut_thread_current();
+        snd_tmo_ctx.waitq  = pair->send_waitq;
+        snd_tmo_ctx.lock   = &pair->lock;
+        snd_tmo_ctx.fired  = false;
+        if (available == 0)
+            fut_timer_start(ticks, sock_timeout_callback, &snd_tmo_ctx);
+    }
+
     while (available == 0) {
         if (socket->flags & 0x800) {  /* O_NONBLOCK */
+            if (snd_has_timeout) fut_timer_cancel(sock_timeout_callback, &snd_tmo_ctx);
             fut_spinlock_release(&pair->lock);
             return -EAGAIN;
         }
@@ -852,6 +914,7 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
                     __atomic_load_n(&scur_thr->signal_mask, __ATOMIC_ACQUIRE) :
                     __atomic_load_n(&stask->signal_mask, __ATOMIC_ACQUIRE);
                 if (pending & ~blocked) {
+                    if (snd_has_timeout) fut_timer_cancel(sock_timeout_callback, &snd_tmo_ctx);
                     fut_spinlock_release(&pair->lock);
                     return -EINTR;
                 }
@@ -862,8 +925,15 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
         /* When we wake up, reacquire the lock */
         fut_spinlock_acquire(&pair->lock);
 
+        /* Timed out? */
+        if (snd_has_timeout && snd_tmo_ctx.fired) {
+            fut_spinlock_release(&pair->lock);
+            return -EAGAIN;
+        }
+
         /* Check again - peer might have closed while we were sleeping */
         if (!pair->peer) {
+            if (snd_has_timeout) fut_timer_cancel(sock_timeout_callback, &snd_tmo_ctx);
             fut_spinlock_release(&pair->lock);
             return -EPIPE;  /* Peer closed — broken pipe */
         }
@@ -871,6 +941,8 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
         available = pair->recv_size -
             ((pair->recv_head + pair->recv_size - pair->recv_tail) % pair->recv_size);
     }
+
+    if (snd_has_timeout) fut_timer_cancel(sock_timeout_callback, &snd_tmo_ctx);
 
     size_t to_write = (len > available) ? available : len;
 
@@ -951,8 +1023,24 @@ ssize_t fut_socket_recv(fut_socket_t *socket, void *buf, size_t len) {
         return 0;  /* EOF */
     }
 
+    /* SO_RCVTIMEO: set up timer if a receive timeout is configured */
+    sock_timeout_ctx_t rcv_tmo_ctx = {0};
+    bool rcv_has_timeout = (socket->rcvtimeo_ms > 0);
+    if (rcv_has_timeout) {
+        uint64_t ticks = socket->rcvtimeo_ms / 10;
+        if (socket->rcvtimeo_ms % 10 != 0) ticks++;
+        if (ticks == 0) ticks = 1;
+        rcv_tmo_ctx.thread = fut_thread_current();
+        rcv_tmo_ctx.waitq  = pair->recv_waitq;
+        rcv_tmo_ctx.lock   = &pair->lock;
+        rcv_tmo_ctx.fired  = false;
+        if (available == 0)
+            fut_timer_start(ticks, sock_timeout_callback, &rcv_tmo_ctx);
+    }
+
     while (available == 0) {
         if (socket->flags & 0x800) {  /* O_NONBLOCK */
+            if (rcv_has_timeout) fut_timer_cancel(sock_timeout_callback, &rcv_tmo_ctx);
             fut_spinlock_release(&pair->lock);
             return -EAGAIN;
         }
@@ -966,6 +1054,7 @@ ssize_t fut_socket_recv(fut_socket_t *socket, void *buf, size_t len) {
                     __atomic_load_n(&scur_thr->signal_mask, __ATOMIC_ACQUIRE) :
                     __atomic_load_n(&stask->signal_mask, __ATOMIC_ACQUIRE);
                 if (pending & ~blocked) {
+                    if (rcv_has_timeout) fut_timer_cancel(sock_timeout_callback, &rcv_tmo_ctx);
                     fut_spinlock_release(&pair->lock);
                     return -EINTR;
                 }
@@ -976,16 +1065,25 @@ ssize_t fut_socket_recv(fut_socket_t *socket, void *buf, size_t len) {
         /* When we wake up, reacquire the lock */
         fut_spinlock_acquire(&pair->lock);
 
+        /* Timed out? */
+        if (rcv_has_timeout && rcv_tmo_ctx.fired) {
+            fut_spinlock_release(&pair->lock);
+            return -EAGAIN;
+        }
+
         /* Recompute available data, then check peer status */
         available = (pair->recv_head + pair->recv_size - pair->recv_tail) %
                     pair->recv_size;
 
         /* EOF: peer closed AND no buffered data */
         if (!pair->peer && available == 0) {
+            if (rcv_has_timeout) fut_timer_cancel(sock_timeout_callback, &rcv_tmo_ctx);
             fut_spinlock_release(&pair->lock);
             return 0;
         }
     }
+
+    if (rcv_has_timeout) fut_timer_cancel(sock_timeout_callback, &rcv_tmo_ctx);
 
     size_t to_read = (len > available) ? available : len;
     /* Handle circular buffer wrap-around with two-chunk copy */

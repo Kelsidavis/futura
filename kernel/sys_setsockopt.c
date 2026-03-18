@@ -497,10 +497,19 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                 return 0;
 
             case SO_RCVTIMEO:
-            case SO_SNDTIMEO:
-                /* Timeout — accept without enforcement */
+            case SO_SNDTIMEO: {
+                /* Timeout — store for enforcement in recv/send blocking paths */
                 if (optlen < (socklen_t)(2 * sizeof(long))) return -EINVAL;
+                struct { long tv_sec; long tv_usec; } tv = {0, 0};
+                if (sso_copy_from_user(&tv, optval, sizeof(tv)) != 0) return -EFAULT;
+                uint64_t ms = (uint64_t)tv.tv_sec * 1000ULL +
+                              (uint64_t)tv.tv_usec / 1000ULL;
+                if (optname == SO_RCVTIMEO)
+                    socket->rcvtimeo_ms = ms;
+                else
+                    socket->sndtimeo_ms = ms;
                 return 0;
+            }
 
             case SO_LINGER:
                 /* Linger — accept without enforcement */

@@ -350,6 +350,10 @@ typedef struct fut_socket {
     char dgram_peer_path[108];          /* Peer path (may start with '\0' for abstract) */
     uint16_t dgram_peer_path_len;       /* 0 = not connected */
 
+    /* SO_RCVTIMEO / SO_SNDTIMEO: 0 = no timeout (block forever) */
+    uint64_t rcvtimeo_ms;               /* Receive timeout in milliseconds */
+    uint64_t sndtimeo_ms;               /* Send timeout in milliseconds */
+
     /* Refcounting and lifecycle */
     uint64_t refcount;                      /* Reference count */
     struct fut_waitq *close_waitq;          /* Wait queue for close completion */

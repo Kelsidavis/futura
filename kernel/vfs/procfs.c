@@ -76,6 +76,11 @@ enum procfs_kind {
     PROC_SYS_PID_MAX,      /* /proc/sys/kernel/pid_max */
     PROC_SYS_OVERCOMMIT,   /* /proc/sys/vm/overcommit_memory */
     PROC_SYS_FILE_MAX,     /* /proc/sys/fs/file-max */
+    PROC_SYS_RANDOM_DIR,   /* /proc/sys/kernel/random/ */
+    PROC_SYS_BOOT_ID,      /* /proc/sys/kernel/random/boot_id */
+    PROC_SYS_UUID,         /* /proc/sys/kernel/random/uuid */
+    PROC_SYS_ENTROPY_AVAIL,/* /proc/sys/kernel/random/entropy_avail */
+    PROC_SYS_POOLSIZE,     /* /proc/sys/kernel/random/poolsize */
     PROC_TASK_DIR,         /* /proc/<pid>/task/ */
     PROC_TID_DIR,          /* /proc/<pid>/task/<tid>/ */
     PROC_LIMITS,           /* /proc/<pid>/limits */
@@ -109,8 +114,13 @@ typedef struct {
 #define PROC_INO_SYS_OSRELEASE  211ULL
 #define PROC_INO_SYS_HOSTNAME   212ULL
 #define PROC_INO_SYS_PID_MAX    213ULL
-#define PROC_INO_SYS_OVERCOMMIT 220ULL
-#define PROC_INO_SYS_FILE_MAX   230ULL
+#define PROC_INO_SYS_OVERCOMMIT    220ULL
+#define PROC_INO_SYS_FILE_MAX      230ULL
+#define PROC_INO_SYS_RANDOM_DIR    204ULL
+#define PROC_INO_SYS_BOOT_ID       240ULL
+#define PROC_INO_SYS_UUID          241ULL
+#define PROC_INO_SYS_ENTROPY_AVAIL 242ULL
+#define PROC_INO_SYS_POOLSIZE      243ULL
 
 /* Per-PID: pid * 100 + offset */
 #define PROC_INO_PID_DIR(p)    (1000ULL + (uint64_t)(p) * 100 + 0)
@@ -774,6 +784,75 @@ static size_t gen_comm(char *buf, size_t cap, fut_task_t *task) {
     return b.pos;
 }
 
+/* ============================================================
+ *   UUID / random helpers for /proc/sys/kernel/random/
+ * ============================================================ */
+
+/* Simple xorshift64 — independent from sys_getrandom state */
+static uint64_t procfs_rng_state = 0;
+
+static uint64_t procfs_rng_next(void) {
+    if (!procfs_rng_state) {
+        /* Seed from hardware */
+#ifdef __x86_64__
+        uint32_t lo, hi;
+        __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
+        procfs_rng_state = ((uint64_t)hi << 32) | lo;
+#elif defined(__aarch64__)
+        __asm__ volatile("mrs %0, cntvct_el0" : "=r"(procfs_rng_state));
+#endif
+        procfs_rng_state ^= fut_get_ticks() ^ 0xDEADBEEFCAFEBABEULL;
+        if (!procfs_rng_state) procfs_rng_state = 0x6A09E667F3BCC908ULL;
+    }
+    uint64_t x = procfs_rng_state;
+    x ^= x << 13; x ^= x >> 7; x ^= x << 17;
+    procfs_rng_state = x;
+    return x;
+}
+
+/* Format 16 random bytes as UUID v4: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx */
+static size_t gen_uuid_into(char *out, size_t cap) {
+    if (cap < 38) return 0;  /* 36 chars + '\n' + '\0' */
+    uint64_t a = procfs_rng_next();
+    uint64_t b = procfs_rng_next();
+    /* Set version 4 and variant bits */
+    a = (a & 0xFFFFFFFFFFFF0FFFULL) | 0x0000000000004000ULL;
+    b = (b & 0x3FFFFFFFFFFFFFFFULL) | 0x8000000000000000ULL;
+    static const char hex[] = "0123456789abcdef";
+    char *p = out;
+#define HEX2(v) *p++ = hex[((v)>>4)&0xF]; *p++ = hex[(v)&0xF]
+    uint8_t bytes[16];
+    for (int i = 0; i < 8; i++) bytes[i]   = (uint8_t)(a >> (56 - i*8));
+    for (int i = 0; i < 8; i++) bytes[8+i] = (uint8_t)(b >> (56 - i*8));
+    HEX2(bytes[0]); HEX2(bytes[1]); HEX2(bytes[2]); HEX2(bytes[3]);
+    *p++ = '-';
+    HEX2(bytes[4]); HEX2(bytes[5]);
+    *p++ = '-';
+    HEX2(bytes[6]); HEX2(bytes[7]);
+    *p++ = '-';
+    HEX2(bytes[8]); HEX2(bytes[9]);
+    *p++ = '-';
+    HEX2(bytes[10]); HEX2(bytes[11]); HEX2(bytes[12]);
+    HEX2(bytes[13]); HEX2(bytes[14]); HEX2(bytes[15]);
+#undef HEX2
+    *p++ = '\n';
+    *p = '\0';
+    return (size_t)(p - out);
+}
+
+/* boot_id: generated once at first read, fixed thereafter */
+static char g_boot_id[38] = {0};  /* 36 chars + '\n' + '\0' */
+
+static size_t gen_boot_id(char *buf, size_t cap) {
+    if (!g_boot_id[0])
+        gen_uuid_into(g_boot_id, sizeof(g_boot_id));
+    size_t len = 0;
+    while (g_boot_id[len]) len++;
+    if (len > cap) len = cap;
+    __builtin_memcpy(buf, g_boot_id, len);
+    return len;
+}
+
 /* /proc/sys/kernel/ and /proc/sys/vm/ file generators */
 static size_t gen_sysctl_str(char *buf, size_t cap, const char *value) {
     struct pbuf b = { buf, 0, cap };
@@ -877,6 +956,18 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             break;
         case PROC_SYS_FILE_MAX:
             total = gen_sysctl_str(tmp, GEN_BUF, "1048576");
+            break;
+        case PROC_SYS_BOOT_ID:
+            total = gen_boot_id(tmp, GEN_BUF);
+            break;
+        case PROC_SYS_UUID:
+            total = gen_uuid_into(tmp, GEN_BUF);
+            break;
+        case PROC_SYS_ENTROPY_AVAIL:
+            total = gen_sysctl_str(tmp, GEN_BUF, "256");
+            break;
+        case PROC_SYS_POOLSIZE:
+            total = gen_sysctl_str(tmp, GEN_BUF, "4096");
             break;
         default:
             fut_free(tmp);
@@ -1240,6 +1331,35 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0100644, PROC_SYS_PID_MAX, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "random")) {
+            *result = procfs_alloc_vnode(mnt, VN_DIR, PROC_INO_SYS_RANDOM_DIR,
+                                          0040555, PROC_SYS_RANDOM_DIR, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        return -ENOENT;
+    }
+
+    if (dn->kind == PROC_SYS_RANDOM_DIR) {
+        if (STREQ(name, "boot_id")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_BOOT_ID,
+                                          0100444, PROC_SYS_BOOT_ID, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "uuid")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_UUID,
+                                          0100444, PROC_SYS_UUID, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "entropy_avail")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_ENTROPY_AVAIL,
+                                          0100444, PROC_SYS_ENTROPY_AVAIL, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "poolsize")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_POOLSIZE,
+                                          0100444, PROC_SYS_POOLSIZE, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         return -ENOENT;
     }
 
@@ -1477,13 +1597,27 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
     }
 
     if (dn->kind == PROC_SYS_KERNEL_DIR) {
-        static const char *e[] = { ".", "..", "ostype", "osrelease", "hostname", "pid_max" };
+        static const char *e[] = { ".", "..", "ostype", "osrelease", "hostname", "pid_max", "random" };
+        static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_DIR };
+        static const uint64_t i[] = { PROC_INO_SYS_KERNEL_DIR, PROC_INO_SYS_DIR,
+                                      PROC_INO_SYS_OSTYPE, PROC_INO_SYS_OSRELEASE,
+                                      PROC_INO_SYS_HOSTNAME, PROC_INO_SYS_PID_MAX,
+                                      PROC_INO_SYS_RANDOM_DIR };
+        if (idx < 7) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+        return -ENOENT;
+    }
+
+    if (dn->kind == PROC_SYS_RANDOM_DIR) {
+        static const char *e[] = { ".", "..", "boot_id", "uuid", "entropy_avail", "poolsize" };
         static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG };
-        static const uint64_t i[] = { PROC_INO_SYS_KERNEL_DIR, PROC_INO_SYS_DIR,
-                                      PROC_INO_SYS_OSTYPE, PROC_INO_SYS_OSRELEASE,
-                                      PROC_INO_SYS_HOSTNAME, PROC_INO_SYS_PID_MAX };
+        static const uint64_t i[] = { PROC_INO_SYS_RANDOM_DIR, PROC_INO_SYS_KERNEL_DIR,
+                                      PROC_INO_SYS_BOOT_ID, PROC_INO_SYS_UUID,
+                                      PROC_INO_SYS_ENTROPY_AVAIL, PROC_INO_SYS_POOLSIZE };
         if (idx < 6) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
         return -ENOENT;
     }

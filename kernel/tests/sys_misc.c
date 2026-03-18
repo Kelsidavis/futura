@@ -9262,6 +9262,109 @@ static void test_flock_basic(void) {
 }
 
 /* ============================================================
+ * Test 197: /proc/sys/kernel/random/boot_id — UUID v4 format
+ * ============================================================ */
+static void test_proc_boot_id(void) {
+    fut_printf("[MISC-TEST] Test 197: /proc/sys/kernel/random/boot_id UUID format\n");
+    extern long sys_read(int fd, void *buf, size_t count);
+
+    int fd = fut_vfs_open("/proc/sys/kernel/random/boot_id", 0x00, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open /proc/sys/kernel/random/boot_id failed: %d\n", fd);
+        fut_test_fail(197); return;
+    }
+
+    char buf[64];
+    __builtin_memset(buf, 0, sizeof(buf));
+    long r = sys_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    if (r < 36) {
+        fut_printf("[MISC-TEST] ✗ boot_id read returned %ld (want >=36)\n", r);
+        fut_test_fail(197); return;
+    }
+
+    /* Expect xxxxxxxx-xxxx-4xxx-xxxx-xxxxxxxxxxxx: hyphens at positions 8,13,18,23 */
+    if (buf[8] != '-' || buf[13] != '-' || buf[18] != '-' || buf[23] != '-') {
+        fut_printf("[MISC-TEST] ✗ boot_id not in UUID format: '%.36s'\n", buf);
+        fut_test_fail(197); return;
+    }
+    /* Version nibble must be '4' */
+    if (buf[14] != '4') {
+        fut_printf("[MISC-TEST] ✗ boot_id version nibble is '%c' (want '4')\n", buf[14]);
+        fut_test_fail(197); return;
+    }
+
+    /* Read again: should be identical (boot_id is stable) */
+    char buf2[64];
+    __builtin_memset(buf2, 0, sizeof(buf2));
+    int fd2 = fut_vfs_open("/proc/sys/kernel/random/boot_id", 0x00, 0);
+    if (fd2 < 0) { fut_test_fail(197); return; }
+    sys_read(fd2, buf2, sizeof(buf2) - 1);
+    fut_vfs_close(fd2);
+    for (int i = 0; i < 36; i++) {
+        if (buf[i] != buf2[i]) {
+            fut_printf("[MISC-TEST] ✗ boot_id changed between reads\n");
+            fut_test_fail(197); return;
+        }
+    }
+
+    buf[36] = '\0';  /* strip trailing newline for display */
+    fut_printf("[MISC-TEST] ✓ boot_id: UUID v4 format stable across reads: %s\n", buf);
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 198: /proc/sys/kernel/random/uuid — UUID v4, new each read
+ * ============================================================ */
+static void test_proc_random_uuid(void) {
+    fut_printf("[MISC-TEST] Test 198: /proc/sys/kernel/random/uuid new each read\n");
+    extern long sys_read(int fd, void *buf, size_t count);
+    char buf1[64], buf2[64];
+    __builtin_memset(buf1, 0, sizeof(buf1));
+    __builtin_memset(buf2, 0, sizeof(buf2));
+
+    int fd = fut_vfs_open("/proc/sys/kernel/random/uuid", 0x00, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open /proc/sys/kernel/random/uuid failed: %d\n", fd);
+        fut_test_fail(198); return;
+    }
+    long r = sys_read(fd, buf1, sizeof(buf1) - 1);
+    fut_vfs_close(fd);
+    if (r < 36) {
+        fut_printf("[MISC-TEST] ✗ uuid read returned %ld (want >=36)\n", r);
+        fut_test_fail(198); return;
+    }
+    if (buf1[8] != '-' || buf1[13] != '-' || buf1[18] != '-' || buf1[23] != '-') {
+        fut_printf("[MISC-TEST] ✗ uuid not in UUID format: '%.36s'\n", buf1);
+        fut_test_fail(198); return;
+    }
+    if (buf1[14] != '4') {
+        fut_printf("[MISC-TEST] ✗ uuid version nibble is '%c' (want '4')\n", buf1[14]);
+        fut_test_fail(198); return;
+    }
+
+    /* Second read should produce a different UUID */
+    fd = fut_vfs_open("/proc/sys/kernel/random/uuid", 0x00, 0);
+    if (fd < 0) { fut_test_fail(198); return; }
+    r = sys_read(fd, buf2, sizeof(buf2) - 1);
+    fut_vfs_close(fd);
+    if (r < 36) { fut_test_fail(198); return; }
+
+    int same = 1;
+    for (int i = 0; i < 36; i++) {
+        if (buf1[i] != buf2[i]) { same = 0; break; }
+    }
+    if (same) {
+        fut_printf("[MISC-TEST] ✗ uuid returned identical value twice: '%.36s'\n", buf1);
+        fut_test_fail(198); return;
+    }
+
+    buf1[36] = '\0';  /* strip trailing newline for display */
+    fut_printf("[MISC-TEST] ✓ uuid: UUID v4 format, different each read: %s\n", buf1);
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -9467,6 +9570,8 @@ void fut_misc_test_thread(void *arg) {
     test_alarm_basic();                    /* Test 194: alarm() set/cancel semantics */
     test_pause_eintr();                    /* Test 195: pause() returns EINTR on pending signal */
     test_flock_basic();                    /* Test 196: flock() shared/exclusive/unlock */
+    test_proc_boot_id();                   /* Test 197: /proc/sys/kernel/random/boot_id UUID format */
+    test_proc_random_uuid();               /* Test 198: /proc/sys/kernel/random/uuid new each read */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -14,6 +14,25 @@
 
 #include <kernel/kprintf.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
+static inline int sigaltstack_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_from_user(dst, src, n);
+}
+static inline int sigaltstack_copy_to_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)dst >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_to_user(dst, src, n);
+}
+
 /**
  * sigaltstack() - Set/get signal handler alternate stack
  *
@@ -121,7 +140,7 @@ long sys_sigaltstack(const struct sigaltstack *ss, struct sigaltstack *old_ss) {
 
     /* Copy old stack to user if requested */
     if (old_ss) {
-        if (fut_copy_to_user(old_ss, &current->sig_altstack, sizeof(struct sigaltstack)) != 0) {
+        if (sigaltstack_copy_to_user(old_ss, &current->sig_altstack, sizeof(struct sigaltstack)) != 0) {
             fut_printf("[SIGALTSTACK] sigaltstack -> EFAULT (invalid old_ss pointer)\n");
             return -EFAULT;
         }
@@ -132,7 +151,7 @@ long sys_sigaltstack(const struct sigaltstack *ss, struct sigaltstack *old_ss) {
         struct sigaltstack new_stack;
 
         /* Copy new stack from userspace */
-        if (fut_copy_from_user(&new_stack, ss, sizeof(struct sigaltstack)) != 0) {
+        if (sigaltstack_copy_from_user(&new_stack, ss, sizeof(struct sigaltstack)) != 0) {
             fut_printf("[SIGALTSTACK] sigaltstack(ss=%p) -> EFAULT (invalid ss pointer)\n", ss);
             return -EFAULT;
         }

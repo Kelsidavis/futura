@@ -34,11 +34,23 @@ static inline int futex_copy_from_user(void *dst, const void *src, size_t n) {
 #endif
     return fut_copy_from_user(dst, src, n);
 }
+static inline int futex_copy_to_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)dst >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_to_user(dst, src, n);
+}
 static inline int futex_access_ok_write(const void *ptr, size_t n) {
 #ifdef KERNEL_VIRTUAL_BASE
     if ((uintptr_t)ptr >= KERNEL_VIRTUAL_BASE) return 0;
 #endif
     return fut_access_ok(ptr, n, 1);
+}
+static inline int futex_access_ok_read(const void *ptr, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)ptr >= KERNEL_VIRTUAL_BASE) return 0;
+#endif
+    return fut_access_ok(ptr, n, 0);
 }
 
 /* ============================================================
@@ -644,7 +656,7 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
 
             /* Read current value at uaddr and compare with val3 */
             uint32_t current_val;
-            if (fut_copy_from_user(&current_val, uaddr, sizeof(current_val)) != 0) {
+            if (futex_copy_from_user(&current_val, uaddr, sizeof(current_val)) != 0) {
                 if (bucket1 != bucket2) {
                     fut_spinlock_release(&bucket2->lock);
                 }
@@ -791,7 +803,7 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
 
             /* Read old value at uaddr2 */
             uint32_t oldval;
-            if (fut_copy_from_user(&oldval, uaddr2, sizeof(oldval)) != 0) {
+            if (futex_copy_from_user(&oldval, uaddr2, sizeof(oldval)) != 0) {
                 if (bucket1 != bucket2) {
                     fut_spinlock_release(&bucket2->lock);
                 }
@@ -822,7 +834,7 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
             }
 
             /* Write new value to uaddr2 */
-            if (fut_copy_to_user(uaddr2, &newval, sizeof(newval)) != 0) {
+            if (futex_copy_to_user(uaddr2, &newval, sizeof(newval)) != 0) {
                 if (bucket1 != bucket2) {
                     fut_spinlock_release(&bucket2->lock);
                 }
@@ -1033,7 +1045,7 @@ long sys_set_robust_list(struct robust_list_head *head, size_t len) {
     /* Phase 3: Walk list on thread exit via exit_robust_list() */
 
     /* Phase 2: Validate robust_list head pointer before storing */
-    if (head && fut_access_ok(head, sizeof(struct robust_list_head), 0) != 0) {
+    if (head && futex_access_ok_read(head, sizeof(struct robust_list_head)) != 0) {
         return -EFAULT;
     }
 
@@ -1094,13 +1106,13 @@ void exit_robust_list(fut_thread_t *thread) {
     struct robust_list_head *head = (struct robust_list_head *)thread->robust_list;
 
     /* Validate and copy the list head from userspace */
-    if (fut_access_ok(head, sizeof(*head), 0) != 0) {
+    if (futex_access_ok_read(head, sizeof(*head)) != 0) {
         fut_printf("[FUTEX] exit_robust_list: head %p not accessible\n", (void *)head);
         return;
     }
 
     struct robust_list_head head_copy;
-    if (fut_copy_from_user(&head_copy, head, sizeof(head_copy)) != 0) {
+    if (futex_copy_from_user(&head_copy, head, sizeof(head_copy)) != 0) {
         fut_printf("[FUTEX] exit_robust_list: failed to read head\n");
         return;
     }
@@ -1116,11 +1128,11 @@ void exit_robust_list(fut_thread_t *thread) {
     /* Mask flag bits (bit 0 is the "lock being modified" bit) */       \
     _e = (struct robust_list *)((uintptr_t)_e & ~(uintptr_t)1);        \
     uint32_t *futex_uaddr = (uint32_t *)((char *)_e + futex_offset);   \
-    if (fut_access_ok(futex_uaddr, sizeof(uint32_t), 1) != 0) break;   \
+    if (futex_access_ok_write(futex_uaddr, sizeof(uint32_t)) != 0) break;   \
     uint32_t val;                                                        \
-    if (fut_copy_from_user(&val, futex_uaddr, sizeof(val)) != 0) break; \
+    if (futex_copy_from_user(&val, futex_uaddr, sizeof(val)) != 0) break; \
     uint32_t new_val = (val & ROBUST_FUTEX_WAITERS) | ROBUST_FUTEX_OWNER_DIED; \
-    if (fut_copy_to_user(futex_uaddr, &new_val, sizeof(new_val)) != 0) break;  \
+    if (futex_copy_to_user(futex_uaddr, &new_val, sizeof(new_val)) != 0) break;  \
     futex_wake_one(futex_uaddr);                                        \
     fut_printf("[FUTEX] exit_robust_list: released futex @%p (val 0x%x -> 0x%x)\n", \
                (void *)futex_uaddr, val, new_val);                      \
@@ -1132,14 +1144,14 @@ void exit_robust_list(fut_thread_t *thread) {
            count < ROBUST_LIST_LIMIT) {
 
         /* Validate and read next pointer before processing current entry */
-        if (fut_access_ok(entry, sizeof(*entry), 0) != 0) {
+        if (futex_access_ok_read(entry, sizeof(*entry)) != 0) {
             fut_printf("[FUTEX] exit_robust_list: entry %p not accessible, stopping\n",
                        (void *)entry);
             break;
         }
 
         struct robust_list entry_copy;
-        if (fut_copy_from_user(&entry_copy, entry, sizeof(entry_copy)) != 0) {
+        if (futex_copy_from_user(&entry_copy, entry, sizeof(entry_copy)) != 0) {
             fut_printf("[FUTEX] exit_robust_list: failed to read entry %p\n", (void *)entry);
             break;
         }
@@ -1186,10 +1198,10 @@ long sys_get_robust_list(int pid, struct robust_list_head **head_ptr,
     }
 
     /* Phase 2: Validate userspace pointers with write access (kernel writes to them) */
-    if (fut_access_ok(head_ptr, sizeof(struct robust_list_head *), 1) != 0) {
+    if (futex_access_ok_write(head_ptr, sizeof(struct robust_list_head *)) != 0) {
         return -EFAULT;
     }
-    if (fut_access_ok(len_ptr, sizeof(size_t), 1) != 0) {
+    if (futex_access_ok_write(len_ptr, sizeof(size_t)) != 0) {
         return -EFAULT;
     }
 
@@ -1214,11 +1226,11 @@ long sys_get_robust_list(int pid, struct robust_list_head **head_ptr,
     struct robust_list_head *stored_head = thread ? (struct robust_list_head *)thread->robust_list : NULL;
     size_t list_len = sizeof(struct robust_list_head);
 
-    if (fut_copy_to_user(head_ptr, &stored_head, sizeof(struct robust_list_head *)) != 0) {
+    if (futex_copy_to_user(head_ptr, &stored_head, sizeof(struct robust_list_head *)) != 0) {
         fut_printf("[GET_ROBUST_LIST] EFAULT: failed to write head_ptr to userspace\n");
         return -EFAULT;
     }
-    if (fut_copy_to_user(len_ptr, &list_len, sizeof(size_t)) != 0) {
+    if (futex_copy_to_user(len_ptr, &list_len, sizeof(size_t)) != 0) {
         fut_printf("[GET_ROBUST_LIST] EFAULT: failed to write len_ptr to userspace\n");
         return -EFAULT;
     }

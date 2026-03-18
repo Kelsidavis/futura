@@ -20,6 +20,25 @@
 
 #include <kernel/kprintf.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
+static inline int sigaction_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_from_user(dst, src, n);
+}
+static inline int sigaction_copy_to_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)dst >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_to_user(dst, src, n);
+}
+
 /**
  * sigaction() - Examine and change a signal action
  *
@@ -126,7 +145,7 @@ long sys_sigaction(int signum, const struct sigaction *act, struct sigaction *ol
         old.sa_restorer = NULL;
 
         /* Copy to userspace */
-        if (fut_copy_to_user(oldact, &old, sizeof(struct sigaction)) != 0) {
+        if (sigaction_copy_to_user(oldact, &old, sizeof(struct sigaction)) != 0) {
             return -EFAULT;
         }
 
@@ -137,7 +156,7 @@ long sys_sigaction(int signum, const struct sigaction *act, struct sigaction *ol
         struct sigaction new_act;
 
         /* Copy from userspace */
-        if (fut_copy_from_user(&new_act, act, sizeof(struct sigaction)) != 0) {
+        if (sigaction_copy_from_user(&new_act, act, sizeof(struct sigaction)) != 0) {
             return -EFAULT;
         }
 

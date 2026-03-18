@@ -882,6 +882,52 @@ static void test_poll_pollrdnorm(void) {
 }
 
 /* ============================================================
+ * Test 17: select() updates timeout to reflect remaining time (Linux)
+ * ============================================================ */
+#define POLL_TEST_SELECT_TIMEOUT_UPDATE 17
+
+static void test_select_timeout_update(void) {
+    fut_printf("[POLL-TEST] Test 17: select() updates timeout on return\n");
+
+    extern long sys_select(int nfds, void *readfds, void *writefds,
+                           void *exceptfds, void *timeout);
+
+    /* Use a 200ms timeout with no fds monitored → should time out.
+     * After return, timeout must be ≤ original value and ≥ 0. */
+    struct { long tv_sec; long tv_usec; } tv;
+    tv.tv_sec  = 0;
+    tv.tv_usec = 200000;  /* 200ms */
+
+    /* select() with no fds times out; on return tv should be updated to ~0 */
+    long ret = sys_select(0, NULL, NULL, NULL, &tv);
+    if (ret != 0) {
+        fut_printf("[POLL-TEST] ✗ select(0 fds, 200ms) returned %ld (expected 0)\n", ret);
+        fut_test_fail(POLL_TEST_SELECT_TIMEOUT_UPDATE);
+        return;
+    }
+
+    /* After timing out, remaining time should be 0 (or very close) */
+    if (tv.tv_sec < 0 || tv.tv_usec < 0) {
+        fut_printf("[POLL-TEST] ✗ timeout went negative: sec=%ld usec=%ld\n",
+                   (long)tv.tv_sec, (long)tv.tv_usec);
+        fut_test_fail(POLL_TEST_SELECT_TIMEOUT_UPDATE);
+        return;
+    }
+    /* Remaining time must be less than original (200ms) */
+    long remain_us = (long)tv.tv_sec * 1000000L + (long)tv.tv_usec;
+    if (remain_us >= 200000) {
+        fut_printf("[POLL-TEST] ✗ timeout not updated: remain=%ld us (expected < 200000)\n",
+                   remain_us);
+        fut_test_fail(POLL_TEST_SELECT_TIMEOUT_UPDATE);
+        return;
+    }
+
+    fut_printf("[POLL-TEST] ✓ select() timeout updated: remain=%ld us (< 200000 original)\n",
+               remain_us);
+    fut_test_pass();
+}
+
+/* ============================================================
  * Main test harness
  * ============================================================ */
 void fut_poll_test_thread(void *arg) {
@@ -907,6 +953,7 @@ void fut_poll_test_thread(void *arg) {
     test_select_timerfd_wakeup();    /* Test 14: select() wakes on timerfd (Phase 4) */
     test_poll_negative_fd();         /* Test 15: negative fd silently ignored (revents=0) */
     test_poll_pollrdnorm();          /* Test 16: POLLRDNORM/POLLWRNORM handled as POLLIN/POLLOUT */
+    test_select_timeout_update();    /* Test 17: select() updates timeout to reflect remaining time */
 
     fut_printf("[POLL-TEST] ========================================\n");
     fut_printf("[POLL-TEST] All poll/select tests done\n");

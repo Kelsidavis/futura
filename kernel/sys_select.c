@@ -571,6 +571,28 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
         if (cw != 0) return -EFAULT;
     }
 
+    /*
+     * Linux-specific: update timeout to reflect remaining time.
+     * POSIX does not require this, but Linux documents it and many programs
+     * (bash, Python, etc.) rely on select() modifying the timeval.
+     * Only update when a real timeout was requested (not NULL, not immediate).
+     */
+    if (local_timeout && has_timeout) {
+        uint64_t now = fut_get_ticks();
+        uint64_t remain_ms = 0;
+        if (deadline_ticks > now) {
+            uint64_t remain_ticks = deadline_ticks - now;
+            remain_ms = remain_ticks * 10;   /* ticks → ms (10ms/tick) */
+        }
+        fut_timeval_t ktv_remain;
+        ktv_remain.tv_sec  = (long)(remain_ms / 1000);
+        ktv_remain.tv_usec = (long)((remain_ms % 1000) * 1000);
+        if (IS_KPTR(local_timeout))
+            memcpy(local_timeout, &ktv_remain, sizeof(ktv_remain));
+        else
+            fut_copy_to_user(local_timeout, &ktv_remain, sizeof(ktv_remain));
+    }
+
     return ready_count;
 }
 

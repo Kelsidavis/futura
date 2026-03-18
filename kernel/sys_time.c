@@ -196,16 +196,19 @@ long sys_clock_gettime(int clock_id, fut_timespec_t *tp) {
         return -EFAULT;
     }
 
-    /* Validate clock_id */
+    /* Validate clock_id — accept all Linux clocks that clock_getres accepts */
     switch (clock_id) {
-        case CLOCK_REALTIME:
-        case CLOCK_MONOTONIC:
-        case CLOCK_BOOTTIME:
-        case CLOCK_REALTIME_COARSE:
-        case CLOCK_MONOTONIC_COARSE:
-        case CLOCK_MONOTONIC_RAW:
-        case CLOCK_PROCESS_CPUTIME_ID:
-        case CLOCK_THREAD_CPUTIME_ID:
+        case CLOCK_REALTIME:         /* 0 */
+        case CLOCK_MONOTONIC:        /* 1 */
+        case CLOCK_PROCESS_CPUTIME_ID: /* 2 */
+        case CLOCK_THREAD_CPUTIME_ID:  /* 3 */
+        case CLOCK_MONOTONIC_RAW:    /* 4 */
+        case CLOCK_REALTIME_COARSE:  /* 5 */
+        case CLOCK_MONOTONIC_COARSE: /* 6 */
+        case CLOCK_BOOTTIME:         /* 7 */
+        case CLOCK_REALTIME_ALARM:   /* 8: no alarm hw, same value as CLOCK_REALTIME */
+        case CLOCK_BOOTTIME_ALARM:   /* 9: no alarm hw, same value as CLOCK_BOOTTIME */
+        case CLOCK_TAI:              /* 11: no TAI offset in Futura, same as CLOCK_REALTIME */
             break;
         default:
             return -EINVAL;
@@ -239,8 +242,10 @@ long sys_clock_gettime(int clock_id, fut_timespec_t *tp) {
         kernel_tp.tv_sec  = (int64_t)(total_ns / 1000000000ULL);
         kernel_tp.tv_nsec = (int64_t)(total_ns % 1000000000ULL);
 
-        /* CLOCK_REALTIME and CLOCK_REALTIME_COARSE add the wall clock offset */
-        if (clock_id == CLOCK_REALTIME || clock_id == CLOCK_REALTIME_COARSE) {
+        /* Realtime-domain clocks add the wall clock offset:
+         * REALTIME, REALTIME_COARSE, REALTIME_ALARM (no alarm hw), TAI (no TAI offset) */
+        if (clock_id == CLOCK_REALTIME || clock_id == CLOCK_REALTIME_COARSE ||
+            clock_id == CLOCK_REALTIME_ALARM || clock_id == CLOCK_TAI) {
             kernel_tp.tv_sec += g_realtime_offset_sec;
             /* Apply sub-second NTP offset from adjtimex() ADJ_OFFSET */
             int64_t adj_nsec = g_ntp_adj_usec * 1000LL;

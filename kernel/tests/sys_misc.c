@@ -11784,6 +11784,37 @@ static void test_madvise_wipeonfork(void) {
     fut_test_pass();
 }
 
+static void test_clock_gettime_extended(void) {
+    fut_printf("[MISC-TEST] Test 266: clock_gettime TAI/ALARM clocks accepted\n");
+
+    /* struct timespec is two longs; use a two-element array as the buffer */
+    fut_timespec_t ts[1];
+
+    /* CLOCK_REALTIME_ALARM (8) → same as CLOCK_REALTIME */
+    long r8 = sys_clock_gettime(8, ts);
+    /* CLOCK_BOOTTIME_ALARM (9) → same as CLOCK_BOOTTIME */
+    long r9 = sys_clock_gettime(9, ts);
+    /* CLOCK_TAI (11) → same as CLOCK_REALTIME (no TAI offset in Futura) */
+    long r11 = sys_clock_gettime(11, ts);
+    /* CLOCK_MONOTONIC_RAW (4) and CLOCK_REALTIME_COARSE (5) */
+    long r4 = sys_clock_gettime(4, ts);
+    long r5 = sys_clock_gettime(5, ts);
+
+    if (r8 != 0 || r9 != 0 || r11 != 0 || r4 != 0 || r5 != 0) {
+        fut_printf("[MISC-TEST] ✗ clock_gettime ext: alarm8=%ld alarm9=%ld tai=%ld raw=%ld coarse=%ld\n",
+                   r8, r9, r11, r4, r5);
+        fut_test_fail(266); return;
+    }
+    /* CLOCK_INVALID (10) should return EINVAL */
+    long rinv = sys_clock_gettime(10, ts);
+    if (rinv != -22 /* -EINVAL */) {
+        fut_printf("[MISC-TEST] ✗ clock_gettime(10) expected -EINVAL, got %ld\n", rinv);
+        fut_test_fail(266); return;
+    }
+    fut_printf("[MISC-TEST] ✓ clock_gettime(ALARM/TAI/RAW/COARSE) → 0, invalid → EINVAL\n");
+    fut_test_pass();
+}
+
 /* ============================================================
  * Test entry point
  * ============================================================ */
@@ -12059,6 +12090,7 @@ void fut_misc_test_thread(void *arg) {
     test_timerfd_create_boottime();        /* Test 263: timerfd_create CLOCK_BOOTTIME/ALARM */
     test_timer_create_boottime();          /* Test 264: timer_create CLOCK_BOOTTIME/TAI */
     test_madvise_wipeonfork();             /* Test 265: madvise WIPEONFORK/COLD/PAGEOUT */
+    test_clock_gettime_extended();         /* Test 266: clock_gettime TAI/ALARM/RAW/COARSE clocks */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

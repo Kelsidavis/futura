@@ -79,6 +79,7 @@ enum procfs_kind {
     PROC_TASK_DIR,         /* /proc/<pid>/task/ */
     PROC_TID_DIR,          /* /proc/<pid>/task/<tid>/ */
     PROC_LIMITS,           /* /proc/<pid>/limits */
+    PROC_IO,               /* /proc/<pid>/io */
 };
 
 typedef struct {
@@ -125,6 +126,7 @@ typedef struct {
 #define PROC_INO_PID_TASK(p)   (1000ULL + (uint64_t)(p) * 100 + 10)
 #define PROC_INO_PID_ENVIRON(p)(1000ULL + (uint64_t)(p) * 100 + 11)
 #define PROC_INO_PID_LIMITS(p) (1000ULL + (uint64_t)(p) * 100 + 12)
+#define PROC_INO_PID_IO(p)     (1000ULL + (uint64_t)(p) * 100 + 13)
 /* fd entries: use high range to avoid collision */
 #define PROC_INO_FD_ENTRY(p,n) (100000000ULL + (uint64_t)(p) * 1000 + (uint64_t)(n))
 /* task/<tid> entries: separate high range */
@@ -407,6 +409,20 @@ static size_t gen_limits(char *buf, size_t cap, fut_task_t *task) {
         pb_str(&b, rows[i].units);
         pb_char(&b, '\n');
     }
+    return b.pos;
+}
+
+static size_t gen_io(char *buf, size_t cap, fut_task_t *task) {
+    if (!task) return 0;
+    struct pbuf b = { buf, 0, cap };
+    /* Linux /proc/<pid>/io format */
+    pb_str(&b, "rchar: ");    pb_u64(&b, task->io_rchar);    pb_char(&b, '\n');
+    pb_str(&b, "wchar: ");    pb_u64(&b, task->io_wchar);    pb_char(&b, '\n');
+    pb_str(&b, "syscr: ");    pb_u64(&b, task->io_syscr);    pb_char(&b, '\n');
+    pb_str(&b, "syscw: ");    pb_u64(&b, task->io_syscw);    pb_char(&b, '\n');
+    pb_str(&b, "read_bytes: ");  pb_u64(&b, 0);  pb_char(&b, '\n');
+    pb_str(&b, "write_bytes: "); pb_u64(&b, 0);  pb_char(&b, '\n');
+    pb_str(&b, "cancelled_write_bytes: "); pb_u64(&b, 0); pb_char(&b, '\n');
     return b.pos;
 }
 
@@ -839,6 +855,11 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             total = task ? gen_limits(tmp, GEN_BUF, task) : 0;
             break;
         }
+        case PROC_IO: {
+            fut_task_t *task = fut_task_by_pid(n->pid);
+            total = task ? gen_io(tmp, GEN_BUF, task) : 0;
+            break;
+        }
         case PROC_SYS_OSTYPE:
             total = gen_sysctl_str(tmp, GEN_BUF, "Linux");
             break;
@@ -1117,6 +1138,11 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0100444, PROC_LIMITS, pid, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "io")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_IO(pid),
+                                          0100400, PROC_IO, pid, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         return -ENOENT;
     }
 
@@ -1169,6 +1195,8 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
             { *result = procfs_alloc_vnode(mnt, VN_DIR, PROC_INO_PID_TASK(pid),   0040555, PROC_TASK_DIR,pid,0); return *result ? 0 : -ENOMEM; }
         if (STREQ(name, "limits"))
             { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_LIMITS(pid), 0100444, PROC_LIMITS,  pid,0); return *result ? 0 : -ENOMEM; }
+        if (STREQ(name, "io"))
+            { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_IO(pid),     0100400, PROC_IO,      pid,0); return *result ? 0 : -ENOMEM; }
         return -ENOENT;
     }
 
@@ -1338,7 +1366,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
     if (dn->kind == PROC_PID_DIR || dn->kind == PROC_TID_DIR) {
         static const char *entries[] = {
             ".", "..", "status", "maps", "cmdline", "environ", "fd", "exe", "cwd",
-            "stat", "statm", "comm", "task", "limits"
+            "stat", "statm", "comm", "task", "limits", "io"
         };
         static const uint8_t etypes[] = {
             FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
@@ -1348,10 +1376,10 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             FUT_VDIR_TYPE_SYMLINK, FUT_VDIR_TYPE_SYMLINK,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
             FUT_VDIR_TYPE_DIR,
-            FUT_VDIR_TYPE_REG
+            FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG
         };
         uint64_t pid = dn->pid;
-        if (idx < 13) {
+        if (idx < 14) {
             uint64_t ino;
             switch (idx) {
                 case 0:  ino = PROC_INO_PID_DIR(pid);     break;
@@ -1367,6 +1395,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                 case 10: ino = PROC_INO_PID_COMM(pid);    break;
                 case 11: ino = PROC_INO_PID_TASK(pid);    break;
                 case 12: ino = PROC_INO_PID_LIMITS(pid);  break;
+                case 13: ino = PROC_INO_PID_IO(pid);      break;
                 default: ino = 0; break;
             }
             de->d_ino    = ino;

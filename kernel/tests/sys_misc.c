@@ -8895,6 +8895,79 @@ static void test_close_range_cloexec(void) {
 }
 
 /* ============================================================
+ * Test 191: /proc/self/io counters increase after read/write
+ * ============================================================ */
+static void test_proc_self_io(void) {
+    fut_printf("[MISC-TEST] Test 191: /proc/self/io I/O counters\n");
+
+    /* Open a temp file and do some I/O to drive up counters */
+    int fd = fut_vfs_open("/io_test_191.txt", 0x42, 0644);
+    if (fd < 0) { fut_test_fail(191); return; }
+
+    extern long sys_write(int fd, const void *buf, size_t count);
+    extern long sys_read(int fd, void *buf, size_t count);
+
+    const char *data = "hello io accounting";
+    long wret = sys_write(fd, data, 19);
+    if (wret != 19) { fut_vfs_close(fd); fut_test_fail(191); return; }
+    fut_vfs_close(fd);
+
+    /* Read /proc/self/io */
+    int iofd = fut_vfs_open("/proc/self/io", 0x00, 0);
+    if (iofd < 0) {
+        fut_printf("[MISC-TEST] ✗ open /proc/self/io failed: %d\n", iofd);
+        fut_test_fail(191);
+        return;
+    }
+
+    char buf[512];
+    long n = sys_read(iofd, buf, sizeof(buf) - 1);
+    fut_vfs_close(iofd);
+
+    if (n <= 0) {
+        fut_printf("[MISC-TEST] ✗ read /proc/self/io returned %ld\n", n);
+        fut_test_fail(191);
+        return;
+    }
+    buf[n] = '\0';
+
+    /* Must contain "rchar:" and "wchar:" */
+    bool has_rchar = false, has_wchar = false;
+    for (int i = 0; i + 5 < (int)n; i++) {
+        if (buf[i]=='r' && buf[i+1]=='c' && buf[i+2]=='h' && buf[i+3]=='a' && buf[i+4]=='r' && buf[i+5]==':')
+            has_rchar = true;
+        if (buf[i]=='w' && buf[i+1]=='c' && buf[i+2]=='h' && buf[i+3]=='a' && buf[i+4]=='r' && buf[i+5]==':')
+            has_wchar = true;
+    }
+    if (!has_rchar || !has_wchar) {
+        fut_printf("[MISC-TEST] ✗ /proc/self/io missing rchar/wchar fields\n");
+        fut_test_fail(191);
+        return;
+    }
+
+    /* wchar must be > 0 (we wrote 19 bytes) */
+    /* Find "wchar: " and parse the value */
+    uint64_t wchar_val = 0;
+    for (int i = 0; i + 7 < (int)n; i++) {
+        if (buf[i]=='w' && buf[i+1]=='c' && buf[i+2]=='h' && buf[i+3]=='a' &&
+            buf[i+4]=='r' && buf[i+5]==':' && buf[i+6]==' ') {
+            for (int j = i + 7; j < (int)n && buf[j] >= '0' && buf[j] <= '9'; j++)
+                wchar_val = wchar_val * 10 + (uint64_t)(buf[j] - '0');
+            break;
+        }
+    }
+    if (wchar_val == 0) {
+        fut_printf("[MISC-TEST] ✗ /proc/self/io wchar is 0 (expected > 0 after write)\n");
+        fut_test_fail(191);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ /proc/self/io: rchar/wchar present, wchar=%llu after writes\n",
+               (unsigned long long)wchar_val);
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -9094,6 +9167,7 @@ void fut_misc_test_thread(void *arg) {
     test_proc_self_limits();               /* Test 188: /proc/self/limits readable */
     test_close_range_bulk();               /* Test 189: close_range bulk close */
     test_close_range_cloexec();            /* Test 190: close_range CLOEXEC */
+    test_proc_self_io();                   /* Test 191: /proc/self/io I/O counters */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

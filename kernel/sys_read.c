@@ -273,6 +273,10 @@ ssize_t sys_read(int fd, void *buf, size_t count) {
 
     fut_free(kbuf);
 
+    /* I/O accounting for /proc/<pid>/io */
+    task->io_rchar += (uint64_t)ret;
+    task->io_syscr++;
+
     /* Phase 2: Categorize read completion status */
     const char *completion_status;
     if ((size_t)ret < local_count) {

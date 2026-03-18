@@ -153,6 +153,12 @@ struct fut_task {
     int ioprio_class;                  // I/O priority class (0=none, 1=RT, 2=BE, 3=IDLE)
     int ioprio_level;                  // I/O priority level (0-7 for BE/RT, ignored for IDLE)
 
+    /* Per-task I/O accounting (/proc/<pid>/io) */
+    uint64_t io_rchar;                 // Bytes read via read()/pread()/readv() syscalls
+    uint64_t io_wchar;                 // Bytes written via write()/pwrite()/writev() syscalls
+    uint64_t io_syscr;                 // Number of read-family syscall invocations
+    uint64_t io_syscw;                 // Number of write-family syscall invocations
+
     /* POSIX capabilities */
     uint64_t cap_effective;            // Effective capability set
     uint64_t cap_permitted;            // Permitted capability set

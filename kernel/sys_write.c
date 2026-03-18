@@ -300,5 +300,9 @@ ssize_t sys_write(int fd, const void *buf, size_t count) {
                    local_fd, local_count, size_category, ret, completion_status);
     }
 
+    /* I/O accounting for /proc/<pid>/io */
+    task->io_wchar += (uint64_t)ret;
+    task->io_syscw++;
+
     return ret;
 }

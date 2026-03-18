@@ -360,6 +360,12 @@ void fut_socket_unref(fut_socket_t *socket) {
             fut_free(socket->close_waitq);
         }
 
+        if (socket->dgram_queue) {
+            if (socket->dgram_queue->recv_waitq)
+                fut_free(socket->dgram_queue->recv_waitq);
+            fut_free(socket->dgram_queue);
+        }
+
         /* Unregister from socket table */
         fut_spinlock_acquire(&socket_lock);
         for (int i = 0; i < FUT_SOCKET_MAX; i++) {
@@ -433,6 +439,29 @@ int fut_socket_bind(fut_socket_t *socket, const char *path, size_t path_len) {
             SOCKET_LOG("[SOCKET] Socket %u created VFS inode, path: %s\n",
                        socket->socket_id, path);
         }
+    }
+
+    /* Allocate datagram receive queue for SOCK_DGRAM sockets */
+    if (socket->socket_type == SOCK_DGRAM && !socket->dgram_queue) {
+        fut_dgram_queue_t *dq = fut_malloc(sizeof(fut_dgram_queue_t));
+        if (!dq) {
+            fut_free(socket->bound_path);
+            socket->bound_path = NULL;
+            socket->bound_path_len = 0;
+            return -ENOMEM;
+        }
+        memset(dq, 0, sizeof(*dq));
+        fut_spinlock_init(&dq->lock);
+        dq->recv_waitq = fut_malloc(sizeof(fut_waitq_t));
+        if (!dq->recv_waitq) {
+            fut_free(dq);
+            fut_free(socket->bound_path);
+            socket->bound_path = NULL;
+            socket->bound_path_len = 0;
+            return -ENOMEM;
+        }
+        fut_waitq_init(dq->recv_waitq);
+        socket->dgram_queue = dq;
     }
 
     socket->state = FUT_SOCK_BOUND;
@@ -1152,4 +1181,141 @@ int fut_socket_bytes_available(int sockfd) {
                                 recv_pair->recv_tail) % recv_pair->recv_size;
 
     return (int)bytes_available;
+}
+
+/* ============================================================
+ *   SOCK_DGRAM Support
+ * ============================================================ */
+
+/**
+ * Find a socket bound to the given path regardless of state.
+ * Used for SOCK_DGRAM delivery.
+ */
+fut_socket_t *fut_socket_find_bound(const char *path, size_t path_len) {
+    if (!path || path_len == 0)
+        return NULL;
+
+    fut_spinlock_acquire(&socket_lock);
+    for (int i = 0; i < FUT_SOCKET_MAX; i++) {
+        fut_socket_t *s = socket_registry[i];
+        if (s && s->bound_path &&
+            s->bound_path_len == path_len &&
+            memcmp(s->bound_path, path, path_len) == 0 &&
+            (s->state == FUT_SOCK_BOUND || s->state == FUT_SOCK_CONNECTED)) {
+            fut_socket_ref(s);
+            fut_spinlock_release(&socket_lock);
+            return s;
+        }
+    }
+    fut_spinlock_release(&socket_lock);
+    return NULL;
+}
+
+/**
+ * Send datagram to socket bound at dest_path.
+ */
+ssize_t fut_socket_sendto_dgram(const char *dest_path, size_t dest_path_len,
+                                const char *sender_path, size_t sender_path_len,
+                                const void *data, size_t data_len) {
+    if (!dest_path || dest_path_len == 0 || !data)
+        return -EINVAL;
+    if (data_len > FUT_DGRAM_DATA_MAX)
+        return -EMSGSIZE;
+
+    /* Find destination socket */
+    fut_socket_t *dest = fut_socket_find_bound(dest_path, dest_path_len);
+    if (!dest)
+        return -ECONNREFUSED;
+
+    if (!dest->dgram_queue) {
+        fut_socket_unref(dest);
+        return -ECONNREFUSED;
+    }
+
+    fut_dgram_queue_t *dq = dest->dgram_queue;
+    fut_spinlock_acquire(&dq->lock);
+
+    if (dq->count >= FUT_DGRAM_QUEUE_MAX) {
+        fut_spinlock_release(&dq->lock);
+        fut_socket_unref(dest);
+        return -EAGAIN;  /* Receiver's queue full */
+    }
+
+    /* Enqueue message */
+    uint32_t tail = (dq->head + dq->count) % FUT_DGRAM_QUEUE_MAX;
+    fut_dgram_entry_t *entry = &dq->msgs[tail];
+
+    /* Copy sender path */
+    if (sender_path && sender_path_len > 0 && sender_path_len <= 108) {
+        memcpy(entry->sender_path, sender_path, sender_path_len);
+        entry->sender_path_len = (uint16_t)sender_path_len;
+    } else {
+        entry->sender_path[0] = '\0';
+        entry->sender_path_len = 0;
+    }
+
+    memcpy(entry->data, data, data_len);
+    entry->data_len = (uint16_t)data_len;
+    dq->count++;
+
+    /* Wake any blocked recvfrom */
+    fut_waitq_wake_one(dq->recv_waitq);
+    fut_spinlock_release(&dq->lock);
+
+    fut_socket_unref(dest);
+    return (ssize_t)data_len;
+}
+
+/**
+ * Receive datagram from this socket's dgram_queue.
+ */
+ssize_t fut_socket_recvfrom_dgram(fut_socket_t *socket, void *buf, size_t len,
+                                  char *sender_path_out, uint16_t *sender_path_len_out) {
+    if (!socket || !buf)
+        return -EINVAL;
+    if (!socket->dgram_queue)
+        return -ENOTCONN;
+
+    fut_dgram_queue_t *dq = socket->dgram_queue;
+    fut_spinlock_acquire(&dq->lock);
+
+    while (dq->count == 0) {
+        if (socket->flags & 0x800) {  /* O_NONBLOCK */
+            fut_spinlock_release(&dq->lock);
+            return -EAGAIN;
+        }
+        /* Check for pending signals */
+        {
+            fut_task_t *t = fut_task_current();
+            if (t) {
+                uint64_t pending = __atomic_load_n(&t->pending_signals, __ATOMIC_ACQUIRE);
+                fut_thread_t *thr = fut_thread_current();
+                uint64_t blocked = thr ?
+                    __atomic_load_n(&thr->signal_mask, __ATOMIC_ACQUIRE) :
+                    __atomic_load_n(&t->signal_mask, __ATOMIC_ACQUIRE);
+                if (pending & ~blocked) {
+                    fut_spinlock_release(&dq->lock);
+                    return -EINTR;
+                }
+            }
+        }
+        fut_waitq_sleep_locked(dq->recv_waitq, &dq->lock, FUT_THREAD_BLOCKED);
+        fut_spinlock_acquire(&dq->lock);
+    }
+
+    fut_dgram_entry_t *entry = &dq->msgs[dq->head];
+    size_t copy_len = (len < entry->data_len) ? len : entry->data_len;
+    memcpy(buf, entry->data, copy_len);
+
+    if (sender_path_out && sender_path_len_out) {
+        if (entry->sender_path_len > 0)
+            memcpy(sender_path_out, entry->sender_path, entry->sender_path_len);
+        *sender_path_len_out = entry->sender_path_len;
+    }
+
+    dq->head = (dq->head + 1) % FUT_DGRAM_QUEUE_MAX;
+    dq->count--;
+    fut_spinlock_release(&dq->lock);
+
+    return (ssize_t)copy_len;
 }

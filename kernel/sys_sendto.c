@@ -224,9 +224,6 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
         }
     }
 
-    (void)local_dest_addr;
-    (void)local_addrlen;
-
     /* Validate socket FD */
     struct fut_file *file = vfs_get_file(local_sockfd);
     if (!file) {
@@ -490,6 +487,56 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
                    "(copy_from_user failed)\n",
                    local_sockfd, fd_category, local_len, size_category, task->pid);
         return -EFAULT;
+    }
+
+    /* SOCK_DGRAM with explicit destination: route directly to bound socket */
+    if (local_dest_addr && local_addrlen >= 3) {
+        extern fut_socket_t *get_socket_from_fd(int fd);
+        fut_socket_t *src_sock = get_socket_from_fd(local_sockfd);
+        if (src_sock && src_sock->socket_type == 2 /* SOCK_DGRAM */) {
+            /* Parse sockaddr_un from dest_addr */
+            struct {
+                unsigned short sun_family;
+                char sun_path[108];
+            } dest_sun;
+            size_t copy_sz = local_addrlen < sizeof(dest_sun) ? local_addrlen : sizeof(dest_sun);
+            if (sendto_copy_from_user(&dest_sun, local_dest_addr, copy_sz) != 0) {
+                fut_free(kbuf);
+                return -EFAULT;
+            }
+            if (dest_sun.sun_family != 1 /* AF_UNIX */) {
+                fut_free(kbuf);
+                return -EAFNOSUPPORT;
+            }
+            /* Compute dest path length: abstract sockets use full addrlen - 2 */
+            size_t dest_path_len;
+            if (copy_sz > 2 && dest_sun.sun_path[0] == '\0') {
+                dest_path_len = copy_sz - 2;  /* abstract: full bytes after sun_family */
+            } else {
+                /* Filesystem path: NUL-terminated */
+                size_t i = 0;
+                while (i < 107 && dest_sun.sun_path[i]) i++;
+                dest_path_len = i;
+            }
+            if (dest_path_len == 0) {
+                fut_free(kbuf);
+                return -EINVAL;
+            }
+
+            /* Get our bound path for the sender address */
+            const char *sender_path = "";
+            size_t sender_path_len = 0;
+            if (src_sock->bound_path && src_sock->bound_path_len > 0) {
+                sender_path = src_sock->bound_path;
+                sender_path_len = src_sock->bound_path_len;
+            }
+
+            ssize_t ret = fut_socket_sendto_dgram(dest_sun.sun_path, dest_path_len,
+                                                  sender_path, sender_path_len,
+                                                  kbuf, local_len);
+            fut_free(kbuf);
+            return ret;
+        }
     }
 
     /* Apply MSG_DONTWAIT: temporarily set O_NONBLOCK on the socket */

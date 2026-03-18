@@ -14157,6 +14157,130 @@ static void test_so_passcred(void) {
     fut_test_pass();
 }
 
+static void test_unix_dgram_sendto(void) {
+    fut_printf("[MISC-TEST] Test 309: AF_UNIX SOCK_DGRAM sendto/recvfrom with address\n");
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_bind(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_sendto(int sockfd, const void *buf, size_t len, int flags,
+                           const void *dest_addr, int addrlen);
+    extern long sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
+                             void *src_addr, void *addrlen);
+
+    /* Create sender and receiver DGRAM sockets */
+    long sender = sys_socket(1 /*AF_UNIX*/, 2 /*SOCK_DGRAM*/, 0);
+    if (sender < 0) {
+        fut_printf("[MISC-TEST] ✗ socket(sender) failed: %ld\n", sender);
+        fut_test_fail(309); return;
+    }
+    long receiver = sys_socket(1 /*AF_UNIX*/, 2 /*SOCK_DGRAM*/, 0);
+    if (receiver < 0) {
+        fut_printf("[MISC-TEST] ✗ socket(receiver) failed: %ld\n", receiver);
+        sys_close((int)sender); fut_test_fail(309); return;
+    }
+
+    /* Bind receiver to abstract address \0fut_dgram309 */
+    struct {
+        unsigned short sun_family;
+        char sun_path[15];
+    } recv_addr;
+    recv_addr.sun_family = 1; /* AF_UNIX */
+    recv_addr.sun_path[0]  = '\0';
+    recv_addr.sun_path[1]  = 'f';
+    recv_addr.sun_path[2]  = 'u';
+    recv_addr.sun_path[3]  = 't';
+    recv_addr.sun_path[4]  = '_';
+    recv_addr.sun_path[5]  = 'd';
+    recv_addr.sun_path[6]  = 'g';
+    recv_addr.sun_path[7]  = 'r';
+    recv_addr.sun_path[8]  = 'a';
+    recv_addr.sun_path[9]  = 'm';
+    recv_addr.sun_path[10] = '3';
+    recv_addr.sun_path[11] = '0';
+    recv_addr.sun_path[12] = '9';
+    recv_addr.sun_path[13] = '\0'; /* terminator (ignored for abstract) */
+    /* addrlen = 2 (sun_family) + 13 (sun_path[0..12]) */
+    int recv_addrlen = 2 + 13;
+
+    long r = sys_bind((int)receiver, &recv_addr, recv_addrlen);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ bind(receiver) failed: %ld\n", r);
+        sys_close((int)sender); sys_close((int)receiver);
+        fut_test_fail(309); return;
+    }
+
+    /* Also bind sender to abstract address so receiver can see it */
+    struct {
+        unsigned short sun_family;
+        char sun_path[18];
+    } send_addr;
+    send_addr.sun_family = 1; /* AF_UNIX */
+    send_addr.sun_path[0]  = '\0';
+    send_addr.sun_path[1]  = 'f';
+    send_addr.sun_path[2]  = 'u';
+    send_addr.sun_path[3]  = 't';
+    send_addr.sun_path[4]  = '_';
+    send_addr.sun_path[5]  = 'd';
+    send_addr.sun_path[6]  = 'g';
+    send_addr.sun_path[7]  = 's';
+    send_addr.sun_path[8]  = 'e';
+    send_addr.sun_path[9]  = 'n';
+    send_addr.sun_path[10] = 'd';
+    send_addr.sun_path[11] = '3';
+    send_addr.sun_path[12] = '0';
+    send_addr.sun_path[13] = '9';
+    send_addr.sun_path[14] = '\0'; /* terminator */
+    int send_addrlen = 2 + 14;
+
+    r = sys_bind((int)sender, &send_addr, send_addrlen);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ bind(sender) failed: %ld\n", r);
+        sys_close((int)sender); sys_close((int)receiver);
+        fut_test_fail(309); return;
+    }
+
+    /* Send datagram to receiver's abstract address */
+    const char payload[] = "dgram309";
+    r = sys_sendto((int)sender, payload, 8, 0, &recv_addr, recv_addrlen);
+    if (r != 8) {
+        fut_printf("[MISC-TEST] ✗ sendto failed: %ld (want 8)\n", r);
+        sys_close((int)sender); sys_close((int)receiver);
+        fut_test_fail(309); return;
+    }
+
+    /* Receive datagram and check payload */
+    char rbuf[16] = {0};
+    struct {
+        unsigned short sun_family;
+        char sun_path[16];
+    } src_addr;
+    int src_addrlen = (int)sizeof(src_addr);
+    r = sys_recvfrom((int)receiver, rbuf, sizeof(rbuf), 0, &src_addr, &src_addrlen);
+    if (r != 8) {
+        fut_printf("[MISC-TEST] ✗ recvfrom returned %ld (want 8)\n", r);
+        sys_close((int)sender); sys_close((int)receiver);
+        fut_test_fail(309); return;
+    }
+
+    /* Verify payload */
+    if (__builtin_memcmp(rbuf, "dgram309", 8) != 0) {
+        fut_printf("[MISC-TEST] ✗ payload mismatch\n");
+        sys_close((int)sender); sys_close((int)receiver);
+        fut_test_fail(309); return;
+    }
+
+    /* Verify sender address: family=AF_UNIX, abstract path = \0fut_dgsend309 */
+    if (src_addr.sun_family != 1 || src_addrlen < 3 || src_addr.sun_path[0] != '\0') {
+        fut_printf("[MISC-TEST] ✗ src_addr mismatch: family=%u addrlen=%d path[0]=%d\n",
+                   src_addr.sun_family, src_addrlen, (int)src_addr.sun_path[0]);
+        sys_close((int)sender); sys_close((int)receiver);
+        fut_test_fail(309); return;
+    }
+
+    sys_close((int)sender); sys_close((int)receiver);
+    fut_printf("[MISC-TEST] ✓ AF_UNIX SOCK_DGRAM sendto/recvfrom with explicit address (test 309)\n");
+    fut_test_pass();
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -14472,6 +14596,7 @@ void fut_misc_test_thread(void *arg) {
     test_msg_cmsg_cloexec();             /* Test 306: MSG_CMSG_CLOEXEC sets FD_CLOEXEC on SCM_RIGHTS FDs */
     test_unix_abstract_socket();         /* Test 307: abstract AF_UNIX bind/listen/connect/accept/send/recv */
     test_so_passcred();                  /* Test 308: SO_PASSCRED attaches SCM_CREDENTIALS on recvmsg */
+    test_unix_dgram_sendto();            /* Test 309: AF_UNIX SOCK_DGRAM sendto/recvfrom with address */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

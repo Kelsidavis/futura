@@ -268,6 +268,35 @@ typedef struct fut_socket_pair {
 #define FUT_SOCKET_BUFSIZE 4096  /* Per-direction buffer size */
 
 /* ============================================================
+ *   Datagram Queue (for SOCK_DGRAM sockets)
+ * ============================================================ */
+
+#define FUT_DGRAM_QUEUE_MAX 8    /* Max datagrams buffered */
+#define FUT_DGRAM_DATA_MAX  1024 /* Max datagram payload */
+
+/**
+ * One datagram entry: sender address + data.
+ */
+typedef struct fut_dgram_entry {
+    char     sender_path[108];  /* Sender's bound path (may start with '\0') */
+    uint16_t sender_path_len;   /* Length including leading NUL for abstract */
+    uint16_t data_len;          /* Payload length */
+    uint8_t  data[FUT_DGRAM_DATA_MAX];
+} fut_dgram_entry_t;
+
+/**
+ * Per-socket datagram receive queue.
+ * Allocated when a DGRAM socket is bound.
+ */
+typedef struct fut_dgram_queue {
+    fut_dgram_entry_t msgs[FUT_DGRAM_QUEUE_MAX];
+    uint32_t          head;       /* Dequeue index */
+    uint32_t          count;      /* Number of messages */
+    fut_spinlock_t    lock;
+    struct fut_waitq *recv_waitq; /* Unblocks recvfrom() */
+} fut_dgram_queue_t;
+
+/* ============================================================
  *   Socket Object
  * ============================================================ */
 
@@ -313,6 +342,9 @@ typedef struct fut_socket {
 
     /* Credential passing (SO_PASSCRED) */
     bool passcred;                          /* Attach SCM_CREDENTIALS cmsg on every recvmsg */
+
+    /* Datagram receive queue (SOCK_DGRAM only, allocated on bind) */
+    fut_dgram_queue_t *dgram_queue;
 
     /* Refcounting and lifecycle */
     uint64_t refcount;                      /* Reference count */
@@ -482,3 +514,31 @@ int allocate_socket_fd(fut_socket_t *socket);
  * @return 0 on success, negative error code on failure
  */
 int release_socket_fd(int fd);
+
+/**
+ * Find socket bound to the given path (any state including BOUND).
+ * Used for SOCK_DGRAM delivery to unconnected sockets.
+ * Returns the socket with an incremented refcount, or NULL.
+ */
+fut_socket_t *fut_socket_find_bound(const char *path, size_t path_len);
+
+/**
+ * Send datagram to socket bound at dest_path.
+ * Routes directly to the destination socket's dgram_queue.
+ * sender_path/sender_path_len identify the source (may be "", 0 for anonymous).
+ *
+ * @return Number of bytes sent, or negative error code.
+ */
+ssize_t fut_socket_sendto_dgram(const char *dest_path, size_t dest_path_len,
+                                const char *sender_path, size_t sender_path_len,
+                                const void *data, size_t data_len);
+
+/**
+ * Receive datagram from this socket's dgram_queue.
+ * Blocks if empty (unless socket has O_NONBLOCK).
+ * Fills sender_path_out[108] and *sender_path_len_out with source address.
+ *
+ * @return Number of data bytes returned, 0 if nothing, or negative error.
+ */
+ssize_t fut_socket_recvfrom_dgram(fut_socket_t *socket, void *buf, size_t len,
+                                  char *sender_path_out, uint16_t *sender_path_len_out);

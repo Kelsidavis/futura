@@ -472,6 +472,53 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
         return -ENOMEM;
     }
 
+    /* For SOCK_DGRAM sockets with a dgram_queue, use the datagram receive path */
+    {
+        extern fut_socket_t *get_socket_from_fd(int fd);
+        fut_socket_t *dgsock = get_socket_from_fd(local_sockfd);
+        if (dgsock && dgsock->socket_type == 2 /* SOCK_DGRAM */ && dgsock->dgram_queue) {
+            char sender_path[108];
+            uint16_t sender_path_len = 0;
+            if (local_flags & MSG_DONTWAIT)
+                dgsock->flags |= 0x800;
+            ssize_t dg_ret = fut_socket_recvfrom_dgram(dgsock, kbuf, local_len,
+                                                       sender_path, &sender_path_len);
+            if (local_flags & MSG_DONTWAIT)
+                dgsock->flags &= ~0x800;
+            if (dg_ret < 0) {
+                fut_free(kbuf);
+                return dg_ret;
+            }
+            if (dg_ret > 0) {
+                if (recv_copy_to_user(local_buf, kbuf, (size_t)dg_ret) != 0) {
+                    fut_free(kbuf);
+                    return -EFAULT;
+                }
+            }
+            fut_free(kbuf);
+            /* Fill src_addr with sender's AF_UNIX address if requested */
+            if (local_src_addr && local_addrlen) {
+                socklen_t alen = 0;
+                if (recv_copy_from_user(&alen, local_addrlen, sizeof(socklen_t)) == 0) {
+                    struct {
+                        unsigned short sun_family;
+                        char sun_path[108];
+                    } src_sun;
+                    __builtin_memset(&src_sun, 0, sizeof(src_sun));
+                    src_sun.sun_family = 1; /* AF_UNIX */
+                    size_t copy_path = sender_path_len < 108 ? sender_path_len : 107;
+                    if (copy_path > 0)
+                        __builtin_memcpy(src_sun.sun_path, sender_path, copy_path);
+                    unsigned short actual_len = (unsigned short)(2 + copy_path + (sender_path_len == 0 || sender_path[0] != '\0' ? 1 : 0));
+                    socklen_t to_copy = (actual_len < alen) ? actual_len : alen;
+                    recv_copy_to_user(local_src_addr, &src_sun, to_copy);
+                    recv_copy_to_user(local_addrlen, &actual_len, sizeof(socklen_t));
+                }
+            }
+            return dg_ret;
+        }
+    }
+
     /* Apply MSG_DONTWAIT: temporarily set O_NONBLOCK on the socket for this call */
     bool dontwait_applied = false;
     if (local_flags & MSG_DONTWAIT) {

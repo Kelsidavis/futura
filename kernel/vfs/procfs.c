@@ -2314,6 +2314,12 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0100444, PROC_SCHEDSTAT, pid, 0);
             return *result ? 0 : -ENOMEM;
         }
+        /* /proc/<pid>/net → same as global /proc/net/ (default network namespace) */
+        if (STREQ(name, "net")) {
+            *result = procfs_alloc_vnode(mnt, VN_DIR, PROC_INO_NET_DIR,
+                                          0040555, PROC_NET_DIR, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         return -ENOENT;
     }
 
@@ -2388,6 +2394,8 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
             { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_COREDUMP(pid),  0100644, PROC_COREDUMP_FILTER, pid,0); return *result ? 0 : -ENOMEM; }
         if (STREQ(name, "schedstat"))
             { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_SCHEDSTAT(pid), 0100444, PROC_SCHEDSTAT,       pid,0); return *result ? 0 : -ENOMEM; }
+        if (STREQ(name, "net"))
+            { *result = procfs_alloc_vnode(mnt, VN_DIR, PROC_INO_NET_DIR,             0040555, PROC_NET_DIR,         0,  0); return *result ? 0 : -ENOMEM; }
         return -ENOENT;
     }
 
@@ -2976,7 +2984,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             ".", "..", "status", "maps", "cmdline", "environ", "fd", "exe", "cwd",
             "stat", "statm", "comm", "task", "limits", "io", "smaps",
             "oom_score", "oom_score_adj", "cgroup", "ns", "fdinfo",
-            "wchan", "mountinfo", "coredump_filter", "schedstat"
+            "wchan", "mountinfo", "coredump_filter", "schedstat", "net"
         };
         static const uint8_t etypes[] = {
             FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
@@ -2990,10 +2998,10 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
             FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
-            FUT_VDIR_TYPE_REG
+            FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_DIR
         };
         uint64_t pid = dn->pid;
-        if (idx < 25) {
+        if (idx < 26) {
             uint64_t ino;
             switch (idx) {
                 case 0:  ino = PROC_INO_PID_DIR(pid);        break;
@@ -3021,6 +3029,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                 case 22: ino = PROC_INO_PID_MOUNTINFO(pid);  break;
                 case 23: ino = PROC_INO_PID_COREDUMP(pid);   break;
                 case 24: ino = PROC_INO_PID_SCHEDSTAT(pid);  break;
+                case 25: ino = PROC_INO_NET_DIR;              break;
                 default: ino = 0; break;
             }
             de->d_ino    = ino;

@@ -17562,6 +17562,33 @@ static void test_proc_core_uses_pid(void) {
 }
 
 /* ============================================================
+ * Test 367: /proc/self/net/unix readable (same content as /proc/net/unix)
+ * ============================================================ */
+static void test_proc_pid_net_unix(void) {
+    fut_printf("[MISC-TEST] Test 367: /proc/self/net/unix\n");
+    int fd = fut_vfs_open("/proc/self/net/unix", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 367: open /proc/self/net/unix failed: %d\n", fd);
+        fut_test_fail(367); return;
+    }
+    char buf[64];
+    long n = fut_vfs_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    if (n <= 0) {
+        fut_printf("[MISC-TEST] ✗ Test 367: read returned %ld\n", n);
+        fut_test_fail(367); return;
+    }
+    buf[n] = '\0';
+    /* Header line starts with "Num" */
+    if (buf[0] != 'N' || buf[1] != 'u' || buf[2] != 'm') {
+        fut_printf("[MISC-TEST] ✗ Test 367: unexpected content: '%s'\n", buf);
+        fut_test_fail(367); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 367: /proc/self/net/unix starts with 'Num'\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Tests 352-353: SO_SNDBUF / SO_RCVBUF set/get round-trip
  * ============================================================ */
 static void test_so_sndbuf_roundtrip(void) {
@@ -18100,6 +18127,7 @@ void fut_misc_test_thread(void *arg) {
     test_proc_schedstat();               /* Test 364: /proc/self/schedstat format */
     test_proc_core_pattern();            /* Test 365: /proc/sys/kernel/core_pattern */
     test_proc_core_uses_pid();           /* Test 366: /proc/sys/kernel/core_uses_pid */
+    test_proc_pid_net_unix();            /* Test 367: /proc/self/net/unix readable */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

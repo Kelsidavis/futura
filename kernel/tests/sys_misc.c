@@ -13207,6 +13207,182 @@ static void test_unix_sockname(void) {
     fut_test_pass();
 }
 
+/* -----------------------------------------------------------------------
+ * Tests 293-296: lseek SEEK_DATA / SEEK_HOLE (Linux 3.1+, sparse file API)
+ * ----------------------------------------------------------------------- */
+
+/* SEEK_DATA=3, SEEK_HOLE=4 per Linux kernel <unistd.h> */
+#define SEEK_DATA_TEST 3
+#define SEEK_HOLE_TEST 4
+
+/*
+ * Test 293: SEEK_DATA on a non-empty file returns the offset itself (data
+ * starts at the given offset in a dense file).
+ */
+static void test_lseek_seek_data(void) {
+    fut_printf("[MISC-TEST] Test 293: lseek SEEK_DATA on dense file\n");
+
+    /* Use fut_vfs wrappers — no extern declarations needed */
+    int fd = fut_vfs_open("/seek_data_293.bin", O_RDWR | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open: %d\n", fd);
+        fut_test_fail(1);
+        return;
+    }
+    fut_vfs_write(fd, "ABCDE", 5);  /* file_size = 5 */
+
+    /* SEEK_DATA at offset 0 → returns 0 (data starts at 0) */
+    int64_t pos = fut_vfs_lseek(fd, 0, SEEK_DATA_TEST);
+    if (pos != 0) {
+        fut_printf("[MISC-TEST] ✗ SEEK_DATA(0) returned %lld (want 0)\n", (long long)pos);
+        fut_vfs_close(fd);
+        fut_vfs_unlink("/seek_data_293.bin");
+        fut_test_fail(1);
+        return;
+    }
+
+    /* SEEK_DATA at offset 3 → returns 3 */
+    pos = fut_vfs_lseek(fd, 3, SEEK_DATA_TEST);
+    if (pos != 3) {
+        fut_printf("[MISC-TEST] ✗ SEEK_DATA(3) returned %lld (want 3)\n", (long long)pos);
+        fut_vfs_close(fd);
+        fut_vfs_unlink("/seek_data_293.bin");
+        fut_test_fail(1);
+        return;
+    }
+
+    fut_vfs_close(fd);
+    fut_vfs_unlink("/seek_data_293.bin");
+    fut_printf("[MISC-TEST] ✓ lseek SEEK_DATA: offset 0→0, offset 3→3\n");
+    fut_test_pass();
+}
+
+/*
+ * Test 294: SEEK_HOLE on a non-empty dense file returns the file size
+ * (the implicit hole at EOF).
+ */
+static void test_lseek_seek_hole(void) {
+    fut_printf("[MISC-TEST] Test 294: lseek SEEK_HOLE on dense file\n");
+
+    int fd = fut_vfs_open("/seek_hole_294.bin", O_RDWR | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open: %d\n", fd);
+        fut_test_fail(1);
+        return;
+    }
+    fut_vfs_write(fd, "HELLO", 5);  /* file_size = 5 */
+
+    /* SEEK_HOLE at offset 0 → file_size (implicit hole is at EOF) */
+    int64_t pos = fut_vfs_lseek(fd, 0, SEEK_HOLE_TEST);
+    if (pos != 5) {
+        fut_printf("[MISC-TEST] ✗ SEEK_HOLE(0) returned %lld (want 5)\n", (long long)pos);
+        fut_vfs_close(fd);
+        fut_vfs_unlink("/seek_hole_294.bin");
+        fut_test_fail(1);
+        return;
+    }
+
+    /* SEEK_HOLE at offset == EOF (5) → still returns 5 */
+    pos = fut_vfs_lseek(fd, 5, SEEK_HOLE_TEST);
+    if (pos != 5) {
+        fut_printf("[MISC-TEST] ✗ SEEK_HOLE(5) returned %lld (want 5)\n", (long long)pos);
+        fut_vfs_close(fd);
+        fut_vfs_unlink("/seek_hole_294.bin");
+        fut_test_fail(1);
+        return;
+    }
+
+    fut_vfs_close(fd);
+    fut_vfs_unlink("/seek_hole_294.bin");
+    fut_printf("[MISC-TEST] ✓ lseek SEEK_HOLE: offset 0→5, offset 5→5\n");
+    fut_test_pass();
+}
+
+/*
+ * Test 295: SEEK_DATA/SEEK_HOLE at or past EOF → ENXIO.
+ */
+static void test_lseek_seek_enxio(void) {
+    fut_printf("[MISC-TEST] Test 295: lseek SEEK_DATA/SEEK_HOLE past EOF → ENXIO\n");
+
+    int fd = fut_vfs_open("/seek_enxio_295.bin", O_RDWR | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open: %d\n", fd);
+        fut_test_fail(1);
+        return;
+    }
+    fut_vfs_write(fd, "XYZ", 3);  /* file_size = 3 */
+
+    /* SEEK_DATA at offset == file_size (3) → ENXIO */
+    int64_t pos = fut_vfs_lseek(fd, 3, SEEK_DATA_TEST);
+    if (pos != -ENXIO) {
+        fut_printf("[MISC-TEST] ✗ SEEK_DATA(3) on 3-byte file returned %lld (want ENXIO=%d)\n",
+                   (long long)pos, -ENXIO);
+        fut_vfs_close(fd);
+        fut_vfs_unlink("/seek_enxio_295.bin");
+        fut_test_fail(1);
+        return;
+    }
+
+    /* SEEK_HOLE at offset > file_size → ENXIO */
+    pos = fut_vfs_lseek(fd, 100, SEEK_HOLE_TEST);
+    if (pos != -ENXIO) {
+        fut_printf("[MISC-TEST] ✗ SEEK_HOLE(100) on 3-byte file returned %lld (want ENXIO=%d)\n",
+                   (long long)pos, -ENXIO);
+        fut_vfs_close(fd);
+        fut_vfs_unlink("/seek_enxio_295.bin");
+        fut_test_fail(1);
+        return;
+    }
+
+    fut_vfs_close(fd);
+    fut_vfs_unlink("/seek_enxio_295.bin");
+    fut_printf("[MISC-TEST] ✓ SEEK_DATA/SEEK_HOLE past EOF: ENXIO\n");
+    fut_test_pass();
+}
+
+/*
+ * Test 296: SEEK_DATA/SEEK_HOLE on an empty file.
+ * SEEK_DATA(0) → ENXIO (no data); SEEK_HOLE(0) → 0 (implicit hole at pos 0).
+ */
+static void test_lseek_seek_empty(void) {
+    fut_printf("[MISC-TEST] Test 296: lseek SEEK_DATA/SEEK_HOLE on empty file\n");
+
+    int fd = fut_vfs_open("/seek_empty_296.bin", O_RDWR | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open: %d\n", fd);
+        fut_test_fail(1);
+        return;
+    }
+    /* Empty file: size = 0 */
+
+    /* SEEK_DATA at offset 0 → ENXIO (no data in file) */
+    int64_t pos = fut_vfs_lseek(fd, 0, SEEK_DATA_TEST);
+    if (pos != -ENXIO) {
+        fut_printf("[MISC-TEST] ✗ SEEK_DATA(0) on empty file returned %lld (want ENXIO=%d)\n",
+                   (long long)pos, -ENXIO);
+        fut_vfs_close(fd);
+        fut_vfs_unlink("/seek_empty_296.bin");
+        fut_test_fail(1);
+        return;
+    }
+
+    /* SEEK_HOLE at offset 0 → 0 (the implicit hole starts at position 0=EOF) */
+    pos = fut_vfs_lseek(fd, 0, SEEK_HOLE_TEST);
+    if (pos != 0) {
+        fut_printf("[MISC-TEST] ✗ SEEK_HOLE(0) on empty file returned %lld (want 0)\n",
+                   (long long)pos);
+        fut_vfs_close(fd);
+        fut_vfs_unlink("/seek_empty_296.bin");
+        fut_test_fail(1);
+        return;
+    }
+
+    fut_vfs_close(fd);
+    fut_vfs_unlink("/seek_empty_296.bin");
+    fut_printf("[MISC-TEST] ✓ SEEK_DATA/SEEK_HOLE on empty file: ENXIO/0\n");
+    fut_test_pass();
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -13506,6 +13682,10 @@ void fut_misc_test_thread(void *arg) {
     test_unix_named_socket();            /* Test 290: AF_UNIX named socket bind/listen/connect/accept/send/recv */
     test_unix_named_errors();            /* Test 291: AF_UNIX named socket error paths */
     test_unix_sockname();                /* Test 292: getsockname/getpeername on AF_UNIX named socket */
+    test_lseek_seek_data();              /* Test 293: lseek SEEK_DATA returns offset itself on dense file */
+    test_lseek_seek_hole();              /* Test 294: lseek SEEK_HOLE returns file_size (implicit EOF hole) */
+    test_lseek_seek_enxio();             /* Test 295: SEEK_DATA/SEEK_HOLE past EOF → ENXIO */
+    test_lseek_seek_empty();             /* Test 296: SEEK_DATA/SEEK_HOLE on empty file */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

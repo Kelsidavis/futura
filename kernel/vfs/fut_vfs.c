@@ -2269,18 +2269,45 @@ int64_t fut_vfs_lseek(int fd, int64_t offset, int whence) {
 
     uint64_t new_offset = file->offset;
 
+    /* SEEK_DATA (3) and SEEK_HOLE (4): sparse file navigation.
+     * Futura's ramfs is dense (no holes); implement dense-file fallback per spec. */
+#ifndef SEEK_DATA
+#define SEEK_DATA 3
+#endif
+#ifndef SEEK_HOLE
+#define SEEK_HOLE 4
+#endif
+
     switch (whence) {
     case SEEK_SET:
-        new_offset = offset;
+        new_offset = (uint64_t)offset;
         break;
     case SEEK_CUR:
-        new_offset = file->offset + offset;
+        new_offset = file->offset + (uint64_t)offset;
         break;
     case SEEK_END:
         if (file->vnode) {
-            new_offset = file->vnode->size + offset;
+            new_offset = file->vnode->size + (uint64_t)offset;
         }
         break;
+    case SEEK_DATA:
+        /* Dense file: every byte in [0, size) is data.
+         * ENXIO if offset >= file_size; otherwise position = offset. */
+        if (offset < 0)
+            return -EINVAL;
+        if (!file->vnode || (uint64_t)offset >= file->vnode->size)
+            return -ENXIO;
+        file->offset = (uint64_t)offset;
+        return offset;
+    case SEEK_HOLE:
+        /* Dense file: only hole is the implicit one at EOF (== file_size).
+         * ENXIO if offset > file_size; otherwise position = file_size. */
+        if (offset < 0)
+            return -EINVAL;
+        if (!file->vnode || (uint64_t)offset > file->vnode->size)
+            return -ENXIO;
+        file->offset = file->vnode->size;
+        return (int64_t)file->vnode->size;
     default:
         return -EINVAL;
     }

@@ -10,7 +10,7 @@
  * Phase 1 (Completed): Basic lseek with VFS integration
  * Phase 2 (Completed): Enhanced validation, whence/offset categorization, and detailed logging
  * Phase 3 (Completed): Advanced seek modes support with VFS delegation
- * Phase 4: Performance optimization (cached position tracking)
+ * Phase 4 (Completed): SEEK_DATA/SEEK_HOLE sparse-file navigation (dense fallback)
  */
 
 #include <kernel/fut_vfs.h>
@@ -44,6 +44,8 @@
  *   - SEEK_SET (0): Set offset to absolute position (offset bytes from start)
  *   - SEEK_CUR (1): Set offset relative to current position (current + offset)
  *   - SEEK_END (2): Set offset relative to end of file (size + offset)
+ *   - SEEK_DATA (3): Seek to next data at or after offset (dense: returns offset; ENXIO if past EOF)
+ *   - SEEK_HOLE (4): Seek to next hole at or after offset (dense: returns file_size; ENXIO if past EOF)
  *
  * Behavior:
  *   - Does not perform I/O, only updates file position
@@ -152,6 +154,14 @@ int64_t sys_lseek(int fd, int64_t offset, int whence) {
         case SEEK_END:
             whence_desc = "SEEK_END";
             whence_meaning = "relative to end of file";
+            break;
+        case 3: /* SEEK_DATA */
+            whence_desc = "SEEK_DATA";
+            whence_meaning = "seek to next data at or after offset";
+            break;
+        case 4: /* SEEK_HOLE */
+            whence_desc = "SEEK_HOLE";
+            whence_meaning = "seek to next hole at or after offset";
             break;
         default:
             whence_desc = "invalid";
@@ -290,6 +300,9 @@ int64_t sys_lseek(int fd, int64_t offset, int whence) {
                 break;
             case -ESPIPE:
                 error_desc = "unseekable file type (pipe/socket/FIFO)";
+                break;
+            case -ENXIO:
+                error_desc = "no data/hole at or after offset (SEEK_DATA/SEEK_HOLE past EOF)";
                 break;
             default:
                 error_desc = "seek operation failed";

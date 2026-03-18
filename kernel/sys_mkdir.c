@@ -21,6 +21,19 @@
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
+static inline int mkdir_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_from_user(dst, src, n);
+}
+
 /**
  * mkdir() - Create directory
  *
@@ -146,7 +159,7 @@ long sys_mkdir(const char *path, uint32_t mode) {
 
     /* Copy path from userspace to kernel space */
     char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
-    if (fut_copy_from_user(path_buf, local_path, sizeof(path_buf)) != 0) {
+    if (mkdir_copy_from_user(path_buf, local_path, sizeof(path_buf)) != 0) {
         fut_printf("[MKDIR] mkdir(path=?, mode=%s) -> EFAULT (copy_from_user failed)\n",
                    mode_desc);
         return -EFAULT;

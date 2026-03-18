@@ -21,6 +21,19 @@
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
+static inline int chmod_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_from_user(dst, src, n);
+}
+
 /* Phase 3: ACL (Access Control List) support structure definition */
 struct fut_acl_entry {
     uint32_t type;        /* ACL entry type (user, group, mask, other) */
@@ -232,7 +245,7 @@ long sys_chmod(const char *pathname, uint32_t mode) {
 
     /* Copy pathname from userspace to kernel space */
     char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
-    if (fut_copy_from_user(path_buf, local_pathname, sizeof(path_buf)) != 0) {
+    if (chmod_copy_from_user(path_buf, local_pathname, sizeof(path_buf)) != 0) {
         fut_printf("[CHMOD] chmod(pathname=?, mode=%s, special=%s) -> EFAULT "
                    "(copy_from_user failed)\n", mode_desc, special_bits_desc);
         return -EFAULT;

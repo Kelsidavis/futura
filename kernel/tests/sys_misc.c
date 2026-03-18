@@ -7523,6 +7523,82 @@ static void test_chdir_basic(void) {
     fut_test_pass();
 }
 
+static void test_mkdir_basic(void) {
+    fut_printf("[MISC-TEST] Test 159: sys_mkdir basic\n");
+    extern long sys_mkdir(const char *path, uint32_t mode);
+
+    /* Create a new directory */
+    long ret = sys_mkdir("/test_mkdir_dir", 0755);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ mkdir(\"/test_mkdir_dir\"): %ld\n", ret);
+        fut_test_fail(159);
+        return;
+    }
+    /* Creating it again → EEXIST */
+    ret = sys_mkdir("/test_mkdir_dir", 0755);
+    if (ret != -EEXIST) {
+        fut_printf("[MISC-TEST] ✗ mkdir(existing): expected EEXIST, got %ld\n", ret);
+        fut_test_fail(159);
+        return;
+    }
+    /* Missing parent component → ENOENT */
+    ret = sys_mkdir("/no_such_parent/newdir", 0755);
+    if (ret != -ENOENT) {
+        fut_printf("[MISC-TEST] ✗ mkdir(no parent): expected ENOENT, got %ld\n", ret);
+        fut_test_fail(159);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ mkdir: created dir, EEXIST on dup, ENOENT on missing parent\n");
+    fut_test_pass();
+}
+
+static void test_chmod_basic(void) {
+    fut_printf("[MISC-TEST] Test 160: sys_chmod basic\n");
+    extern long sys_chmod(const char *pathname, uint32_t mode);
+    extern long sys_fstat(int fd, struct fut_stat *statbuf);
+
+    /* Create a file */
+    int fd = (int)fut_vfs_open("/test_chmod.txt", O_CREAT | O_RDWR, 0644);
+    if (fd >= 0) fut_vfs_close(fd);
+
+    /* Change mode to 0400 (read-only) */
+    long ret = sys_chmod("/test_chmod.txt", 0400);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ chmod(\"/test_chmod.txt\", 0400): %ld\n", ret);
+        fut_test_fail(160);
+        return;
+    }
+    /* Verify via fstat */
+    fd = (int)fut_vfs_open("/test_chmod.txt", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ chmod: reopen failed: %d\n", fd);
+        fut_test_fail(160);
+        return;
+    }
+    struct fut_stat st;
+    ret = sys_fstat(fd, &st);
+    fut_vfs_close(fd);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ chmod: fstat failed: %ld\n", ret);
+        fut_test_fail(160);
+        return;
+    }
+    if ((st.st_mode & 0777) != 0400) {
+        fut_printf("[MISC-TEST] ✗ chmod: mode=0%o, expected 0400\n", st.st_mode & 0777);
+        fut_test_fail(160);
+        return;
+    }
+    /* chmod on non-existent file → ENOENT */
+    ret = sys_chmod("/this_does_not_exist_chmod", 0644);
+    if (ret != -ENOENT) {
+        fut_printf("[MISC-TEST] ✗ chmod(missing): expected ENOENT, got %ld\n", ret);
+        fut_test_fail(160);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ chmod: mode changed to 0400, missing→ENOENT\n");
+    fut_test_pass();
+}
+
 /* ============================================================
  * Test entry point
  * ============================================================ */
@@ -7691,6 +7767,8 @@ void fut_misc_test_thread(void *arg) {
     test_truncate_basic();                 /* Test 156: sys_truncate shrinks file */
     test_access_basic();                   /* Test 157: sys_access F_OK/R_OK/W_OK */
     test_chdir_basic();                    /* Test 158: sys_chdir dir/missing/file */
+    test_mkdir_basic();                    /* Test 159: sys_mkdir create/EEXIST/ENOENT */
+    test_chmod_basic();                    /* Test 160: sys_chmod mode change + verify */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

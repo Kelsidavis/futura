@@ -17824,6 +17824,72 @@ static void test_mknod_fifo(void) {
 }
 
 /* ============================================================
+ * Test 382: utime() — set file timestamps to specific values, verify via stat
+ * ============================================================ */
+static void test_utime_syscall(void) {
+    fut_printf("[MISC-TEST] Test 382: utime() sets access and modification times\n");
+    extern long sys_utime(const char *pathname, const void *times);
+
+    /* Create a test file */
+    int fd = fut_vfs_open("/test_utime_382.txt", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 382: creat failed: %d\n", fd);
+        fut_test_fail(382); return;
+    }
+    fut_vfs_close(fd);
+
+    /* struct utimbuf layout: int64_t actime, int64_t modtime */
+    struct { int64_t actime; int64_t modtime; } ub;
+    ub.actime  = 1000000;  /* some deterministic value */
+    ub.modtime = 2000000;
+    long r = sys_utime("/test_utime_382.txt", &ub);
+    if (r != 0) {
+        fut_vfs_unlink("/test_utime_382.txt");
+        fut_printf("[MISC-TEST] ✗ Test 382: utime returned %ld\n", r);
+        fut_test_fail(382); return;
+    }
+
+    /* Verify mtime was updated */
+    struct fut_stat fst;
+    r = sys_stat("/test_utime_382.txt", &fst);
+    fut_vfs_unlink("/test_utime_382.txt");
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 382: stat failed: %ld\n", r);
+        fut_test_fail(382); return;
+    }
+    if ((int64_t)fst.st_mtime != 2000000) {
+        fut_printf("[MISC-TEST] ✗ Test 382: mtime=%lld expected 2000000\n",
+                   (long long)fst.st_mtime);
+        fut_test_fail(382); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 382: utime() set mtime correctly\n");
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 383: io_setup()/io_uring_setup() return ENOSYS
+ * ============================================================ */
+static void test_aio_uring_enosys(void) {
+    fut_printf("[MISC-TEST] Test 383: io_setup / io_uring_setup return ENOSYS\n");
+    extern long sys_io_setup(unsigned int nr_events, void *ctxp);
+    extern long sys_io_uring_setup(unsigned int entries, void *params);
+
+    void *ctx = (void *)0;
+    long r1 = sys_io_setup(16, &ctx);
+    if (r1 != -38 /*-ENOSYS*/) {
+        fut_printf("[MISC-TEST] ✗ Test 383: io_setup returned %ld, expected -ENOSYS\n", r1);
+        fut_test_fail(383); return;
+    }
+    long r2 = sys_io_uring_setup(8, (void *)0);
+    if (r2 != -38 /*-ENOSYS*/) {
+        fut_printf("[MISC-TEST] ✗ Test 383: io_uring_setup returned %ld, expected -ENOSYS\n", r2);
+        fut_test_fail(383); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 383: io_setup and io_uring_setup correctly return -ENOSYS\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test 367: /proc/self/net/unix readable (same content as /proc/net/unix)
  * ============================================================ */
 static void test_proc_pid_net_unix(void) {
@@ -18404,6 +18470,8 @@ void fut_misc_test_thread(void *arg) {
     test_lchown_syscall();               /* Test 379: lchown() changes symlink ownership */
     test_setfsuid_setfsgid();            /* Test 380: setfsuid/setfsgid return previous ID */
     test_mknod_fifo();                   /* Test 381: mknod() creates FIFO */
+    test_utime_syscall();                /* Test 382: utime() sets mtime */
+    test_aio_uring_enosys();             /* Test 383: io_setup/io_uring_setup return ENOSYS */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

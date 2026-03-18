@@ -91,3 +91,33 @@ long sys_futimesat(int dirfd, const char *pathname, const struct fut_timeval *ti
 long sys_utimes(const char *pathname, const struct fut_timeval *times) {
     return sys_futimesat(-100 /* AT_FDCWD */, pathname, times);
 }
+
+/**
+ * utime() - Change file timestamps (second precision, legacy)
+ *
+ * @param pathname  Path to the file
+ * @param times     struct utimbuf pointer, or NULL for current time
+ *
+ * struct utimbuf { time_t actime; time_t modtime; }
+ * Returns 0 on success, negative errno on failure.
+ */
+struct fut_utimbuf {
+    int64_t actime;   /* access time (seconds) */
+    int64_t modtime;  /* modification time (seconds) */
+};
+
+long sys_utime(const char *pathname, const struct fut_utimbuf *times) {
+    if (!times)
+        return sys_utimensat(-100 /* AT_FDCWD */, pathname, NULL, 0);
+
+    struct fut_utimbuf ub;
+    if (futimesat_copy_from_user(&ub, times, sizeof(ub)) != 0)
+        return -EFAULT;
+
+    fut_timespec_t ts[2];
+    ts[0].tv_sec  = ub.actime;
+    ts[0].tv_nsec = 0;
+    ts[1].tv_sec  = ub.modtime;
+    ts[1].tv_nsec = 0;
+    return sys_utimensat(-100 /* AT_FDCWD */, pathname, ts, 0);
+}

@@ -365,6 +365,21 @@
 /* Capability-based syscall numbers (SYS_open_cap, etc.) are defined in
  * kernel/syscalls.h to avoid duplication */
 
+/* Legacy utime (Linux x86_64: 132) */
+#define SYS_utime            132
+
+/* Linux AIO (Linux x86_64: 206-210) */
+#define SYS_io_setup         206
+#define SYS_io_destroy       207
+#define SYS_io_getevents     208
+#define SYS_io_submit        209
+#define SYS_io_cancel        210
+
+/* io_uring (Linux x86_64: 425-427) */
+#define SYS_io_uring_setup   425
+#define SYS_io_uring_enter   426
+#define SYS_io_uring_register 427
+
 #define MAX_SYSCALL     512
 
 /* ============================================================
@@ -1866,6 +1881,73 @@ static int64_t sys_utimes_handler(uint64_t pathname, uint64_t times, uint64_t ar
     (void)arg3; (void)arg4; (void)arg5; (void)arg6;
     extern long sys_utimes(const char *pathname, const void *times);
     return sys_utimes((const char *)pathname, (const void *)times);
+}
+
+static int64_t sys_utime_handler(uint64_t pathname, uint64_t times, uint64_t arg3,
+                                  uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_utime(const char *pathname, const void *times);
+    return sys_utime((const char *)pathname, (const void *)times);
+}
+
+/* Linux AIO stubs — return -ENOSYS so libaio falls back to sync I/O */
+static int64_t sys_io_setup_handler(uint64_t nr_events, uint64_t ctxp, uint64_t a3,
+                                     uint64_t a4, uint64_t a5, uint64_t a6) {
+    (void)nr_events; (void)ctxp; (void)a3; (void)a4; (void)a5; (void)a6;
+    extern long sys_io_setup(unsigned int nr_events, void *ctxp);
+    return sys_io_setup((unsigned int)nr_events, (void *)ctxp);
+}
+static int64_t sys_io_destroy_handler(uint64_t ctx_id, uint64_t a2, uint64_t a3,
+                                       uint64_t a4, uint64_t a5, uint64_t a6) {
+    (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
+    extern long sys_io_destroy(unsigned long ctx_id);
+    return sys_io_destroy((unsigned long)ctx_id);
+}
+static int64_t sys_io_getevents_handler(uint64_t ctx_id, uint64_t min_nr, uint64_t nr,
+                                         uint64_t events, uint64_t timeout, uint64_t a6) {
+    (void)a6;
+    extern long sys_io_getevents(unsigned long ctx_id, long min_nr, long nr,
+                                  void *events, const void *timeout);
+    return sys_io_getevents((unsigned long)ctx_id, (long)min_nr, (long)nr,
+                             (void *)events, (const void *)timeout);
+}
+static int64_t sys_io_submit_handler(uint64_t ctx_id, uint64_t nr, uint64_t iocbpp,
+                                      uint64_t a4, uint64_t a5, uint64_t a6) {
+    (void)a4; (void)a5; (void)a6;
+    extern long sys_io_submit(unsigned long ctx_id, long nr, void **iocbpp);
+    return sys_io_submit((unsigned long)ctx_id, (long)nr, (void **)iocbpp);
+}
+static int64_t sys_io_cancel_handler(uint64_t ctx_id, uint64_t iocb, uint64_t result,
+                                      uint64_t a4, uint64_t a5, uint64_t a6) {
+    (void)a4; (void)a5; (void)a6;
+    extern long sys_io_cancel(unsigned long ctx_id, void *iocb, void *result);
+    return sys_io_cancel((unsigned long)ctx_id, (void *)iocb, (void *)result);
+}
+
+/* io_uring stubs — return -ENOSYS so programs fall back to epoll/poll */
+static int64_t sys_io_uring_setup_handler(uint64_t entries, uint64_t params, uint64_t a3,
+                                           uint64_t a4, uint64_t a5, uint64_t a6) {
+    (void)a3; (void)a4; (void)a5; (void)a6;
+    extern long sys_io_uring_setup(unsigned int entries, void *params);
+    return sys_io_uring_setup((unsigned int)entries, (void *)params);
+}
+static int64_t sys_io_uring_enter_handler(uint64_t fd, uint64_t to_submit,
+                                           uint64_t min_complete, uint64_t flags,
+                                           uint64_t sig, uint64_t sigsz) {
+    extern long sys_io_uring_enter(unsigned int fd, unsigned int to_submit,
+                                    unsigned int min_complete, unsigned int flags,
+                                    const void *sig, size_t sigsz);
+    return sys_io_uring_enter((unsigned int)fd, (unsigned int)to_submit,
+                               (unsigned int)min_complete, (unsigned int)flags,
+                               (const void *)sig, (size_t)sigsz);
+}
+static int64_t sys_io_uring_register_handler(uint64_t fd, uint64_t opcode, uint64_t arg,
+                                              uint64_t nr_args, uint64_t a5, uint64_t a6) {
+    (void)a5; (void)a6;
+    extern long sys_io_uring_register(unsigned int fd, unsigned int opcode,
+                                       void *arg, unsigned int nr_args);
+    return sys_io_uring_register((unsigned int)fd, (unsigned int)opcode,
+                                  (void *)arg, (unsigned int)nr_args);
 }
 
 static int64_t sys_readahead_handler(uint64_t fd, uint64_t offset, uint64_t count,
@@ -3544,6 +3626,17 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_getgroups]         = sys_getgroups_handler,
     [SYS_setgroups]         = sys_setgroups_handler,
     [SYS_utimes]            = sys_utimes_handler,
+    [SYS_utime]             = sys_utime_handler,
+    /* Linux AIO stubs (206-210) — return ENOSYS so libaio falls back to sync I/O */
+    [SYS_io_setup]          = sys_io_setup_handler,
+    [SYS_io_destroy]        = sys_io_destroy_handler,
+    [SYS_io_getevents]      = sys_io_getevents_handler,
+    [SYS_io_submit]         = sys_io_submit_handler,
+    [SYS_io_cancel]         = sys_io_cancel_handler,
+    /* io_uring stubs (425-427) — return ENOSYS so programs fall back to epoll */
+    [SYS_io_uring_setup]    = sys_io_uring_setup_handler,
+    [SYS_io_uring_enter]    = sys_io_uring_enter_handler,
+    [SYS_io_uring_register] = sys_io_uring_register_handler,
     [SYS_socketpair]        = sys_socketpair_handler,
     [SYS_set_tid_address]   = sys_set_tid_address_handler,
     [SYS_timer_create]      = sys_timer_create_handler,

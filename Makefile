@@ -550,6 +550,7 @@ KERNEL_SOURCES := \
     kernel/sys_getcpu.c \
     kernel/sys_readahead.c \
     kernel/sys_futimesat.c \
+    kernel/sys_aio.c \
     kernel/sys_socketpair.c \
     kernel/sys_groups.c \
     kernel/sys_unshare.c \

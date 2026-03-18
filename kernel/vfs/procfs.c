@@ -194,6 +194,8 @@ enum procfs_kind {
     PROC_MISC_FILE,                 /* /proc/misc */
     PROC_ATTR_DIR,                  /* /proc/<pid>/attr/ */
     PROC_ATTR_CURRENT,              /* /proc/<pid>/attr/current */
+    PROC_BUDDYINFO,                 /* /proc/buddyinfo */
+    PROC_ZONEINFO,                  /* /proc/zoneinfo */
 };
 
 typedef struct {
@@ -309,6 +311,8 @@ typedef struct {
 #define PROC_INO_MISC_FILE             25ULL
 #define PROC_INO_PID_ATTR(p)           (1000ULL + (uint64_t)(p) * 100 + 24)
 #define PROC_INO_PID_ATTR_CUR(p)       (1000ULL + (uint64_t)(p) * 100 + 25)
+#define PROC_INO_BUDDYINFO             26ULL
+#define PROC_INO_ZONEINFO              27ULL
 
 /* Per-PID: pid * 100 + offset */
 #define PROC_INO_PID_DIR(p)    (1000ULL + (uint64_t)(p) * 100 + 0)
@@ -471,15 +475,60 @@ static size_t gen_meminfo(char *buf, size_t cap) {
     pb_str(&b, "MemTotal:       "); pb_u64(&b, total_kb); pb_str(&b, " kB\n");
     pb_str(&b, "MemFree:        "); pb_u64(&b, free_kb);  pb_str(&b, " kB\n");
     pb_str(&b, "MemAvailable:   "); pb_u64(&b, avail_kb); pb_str(&b, " kB\n");
-    pb_str(&b, "Buffers:        0 kB\n");
+    pb_str(&b, "Buffers:               0 kB\n");
     pb_str(&b, "Cached:         "); pb_u64(&b, used_kb);  pb_str(&b, " kB\n");
-    pb_str(&b, "SwapTotal:      0 kB\n");
-    pb_str(&b, "SwapFree:       0 kB\n");
-    pb_str(&b, "Dirty:          0 kB\n");
-    pb_str(&b, "Writeback:      0 kB\n");
+    pb_str(&b, "SwapCached:            0 kB\n");
+    pb_str(&b, "Active:         "); pb_u64(&b, used_kb);  pb_str(&b, " kB\n");
+    pb_str(&b, "Inactive:              0 kB\n");
+    pb_str(&b, "Active(anon):   "); pb_u64(&b, used_kb);  pb_str(&b, " kB\n");
+    pb_str(&b, "Inactive(anon):        0 kB\n");
+    pb_str(&b, "Active(file):          0 kB\n");
+    pb_str(&b, "Inactive(file):        0 kB\n");
+    pb_str(&b, "Unevictable:           0 kB\n");
+    pb_str(&b, "Mlocked:               0 kB\n");
+    pb_str(&b, "SwapTotal:             0 kB\n");
+    pb_str(&b, "SwapFree:              0 kB\n");
+    pb_str(&b, "Zswap:                 0 kB\n");
+    pb_str(&b, "Zswapped:              0 kB\n");
+    pb_str(&b, "Dirty:                 0 kB\n");
+    pb_str(&b, "Writeback:             0 kB\n");
     pb_str(&b, "AnonPages:      "); pb_u64(&b, used_kb);  pb_str(&b, " kB\n");
-    pb_str(&b, "Mapped:         0 kB\n");
-    pb_str(&b, "Shmem:          0 kB\n");
+    pb_str(&b, "Mapped:                0 kB\n");
+    pb_str(&b, "Shmem:                 0 kB\n");
+    pb_str(&b, "KReclaimable:          0 kB\n");
+    pb_str(&b, "Slab:                  0 kB\n");
+    pb_str(&b, "SReclaimable:          0 kB\n");
+    pb_str(&b, "SUnreclaim:            0 kB\n");
+    pb_str(&b, "KernelStack:           0 kB\n");
+    pb_str(&b, "ShadowCallStack:       0 kB\n");
+    pb_str(&b, "PageTables:            0 kB\n");
+    pb_str(&b, "SecPageTables:         0 kB\n");
+    pb_str(&b, "NFS_Unstable:          0 kB\n");
+    pb_str(&b, "Bounce:                0 kB\n");
+    pb_str(&b, "WritebackTmp:          0 kB\n");
+    pb_str(&b, "CommitLimit:    "); pb_u64(&b, total_kb); pb_str(&b, " kB\n");
+    pb_str(&b, "Committed_AS:   "); pb_u64(&b, used_kb);  pb_str(&b, " kB\n");
+    pb_str(&b, "VmallocTotal:   34359738367 kB\n");
+    pb_str(&b, "VmallocUsed:           0 kB\n");
+    pb_str(&b, "VmallocChunk:          0 kB\n");
+    pb_str(&b, "Percpu:                0 kB\n");
+    pb_str(&b, "HardwareCorrupted:     0 kB\n");
+    pb_str(&b, "AnonHugePages:         0 kB\n");
+    pb_str(&b, "ShmemHugePages:        0 kB\n");
+    pb_str(&b, "ShmemPmdMapped:        0 kB\n");
+    pb_str(&b, "FileHugePages:         0 kB\n");
+    pb_str(&b, "FilePmdMapped:         0 kB\n");
+    pb_str(&b, "CmaTotal:              0 kB\n");
+    pb_str(&b, "CmaFree:               0 kB\n");
+    pb_str(&b, "HugePages_Total:       0\n");
+    pb_str(&b, "HugePages_Free:        0\n");
+    pb_str(&b, "HugePages_Rsvd:        0\n");
+    pb_str(&b, "HugePages_Surp:        0\n");
+    pb_str(&b, "Hugepagesize:       2048 kB\n");
+    pb_str(&b, "Hugetlb:               0 kB\n");
+    pb_str(&b, "DirectMap4k:      131072 kB\n");
+    pb_str(&b, "DirectMap2M:      "); pb_u64(&b, total_kb); pb_str(&b, " kB\n");
+    pb_str(&b, "DirectMap1G:           0 kB\n");
     return b.pos;
 }
 
@@ -1271,6 +1320,96 @@ static size_t gen_misc_dev(char *buf, size_t cap) {
 }
 
 /*
+ * gen_buddyinfo() — /proc/buddyinfo
+ *
+ * Memory buddy allocator free-page counts per order.
+ * glibc malloc reads this on some arches to detect available huge pages.
+ * Report one NUMA node with all free pages at order 0.
+ */
+static size_t gen_buddyinfo(char *buf, size_t cap) {
+    struct pbuf b = { buf, 0, cap };
+    /* Node 0, zone DMA32: one entry per order (0..10), all 0 except order 0 */
+    pb_str(&b, "Node 0, zone      DMA32 ");
+    uint64_t free_pages = fut_pmm_free_pages();
+    pb_u64(&b, free_pages); /* order-0 pages */
+    pb_str(&b, "  0  0  0  0  0  0  0  0  0  0\n");
+    pb_str(&b, "Node 0, zone     Normal ");
+    pb_u64(&b, 0);
+    pb_str(&b, "  0  0  0  0  0  0  0  0  0  0\n");
+    return b.pos;
+}
+
+/*
+ * gen_zoneinfo() — /proc/zoneinfo
+ *
+ * Memory zone details. Minimal single-zone output for glibc/allocator compat.
+ */
+static size_t gen_zoneinfo(char *buf, size_t cap) {
+    struct pbuf b = { buf, 0, cap };
+    uint64_t total_pages = fut_pmm_total_pages();
+    uint64_t free_pages  = fut_pmm_free_pages();
+    pb_str(&b, "Node 0, zone   Normal\n");
+    pb_str(&b, "  per-node stats\n");
+    pb_str(&b, "      nr_inactive_anon 0\n");
+    pb_str(&b, "      nr_active_anon "); pb_u64(&b, total_pages - free_pages); pb_char(&b, '\n');
+    pb_str(&b, "      nr_inactive_file 0\n");
+    pb_str(&b, "      nr_active_file 0\n");
+    pb_str(&b, "      nr_unevictable 0\n");
+    pb_str(&b, "      nr_slab_reclaimable 0\n");
+    pb_str(&b, "      nr_slab_unreclaimable 0\n");
+    pb_str(&b, "      nr_isolated_anon 0\n");
+    pb_str(&b, "      nr_isolated_file 0\n");
+    pb_str(&b, "      workingset_nodes 0\n");
+    pb_str(&b, "      workingset_refault_anon 0\n");
+    pb_str(&b, "      workingset_refault_file 0\n");
+    pb_str(&b, "      nr_anon_pages "); pb_u64(&b, total_pages - free_pages); pb_char(&b, '\n');
+    pb_str(&b, "      nr_mapped 0\n");
+    pb_str(&b, "      nr_file_pages 0\n");
+    pb_str(&b, "      nr_dirty 0\n");
+    pb_str(&b, "      nr_writeback 0\n");
+    pb_str(&b, "      nr_writeback_temp 0\n");
+    pb_str(&b, "      nr_shmem 0\n");
+    pb_str(&b, "      nr_shmem_hugepages 0\n");
+    pb_str(&b, "      nr_shmem_pmdmapped 0\n");
+    pb_str(&b, "      nr_file_hugepages 0\n");
+    pb_str(&b, "      nr_file_pmdmapped 0\n");
+    pb_str(&b, "      nr_anon_transparent_hugepages 0\n");
+    pb_str(&b, "      nr_vmscan_write 0\n");
+    pb_str(&b, "      nr_vmscan_immediate_reclaim 0\n");
+    pb_str(&b, "      nr_dirtied 0\n");
+    pb_str(&b, "      nr_written 0\n");
+    pb_str(&b, "      nr_throttled_written 0\n");
+    pb_str(&b, "      nr_kernel_misc_reclaimable 0\n");
+    pb_str(&b, "      nr_foll_pin_acquired 0\n");
+    pb_str(&b, "      nr_foll_pin_released 0\n");
+    pb_str(&b, "      nr_kernel_stack 0\n");
+    pb_str(&b, "      nr_page_table_pages 0\n");
+    pb_str(&b, "      nr_sec_page_table_pages 0\n");
+    pb_str(&b, "      nr_shadow_call_stack 0\n");
+    pb_str(&b, "      nr_zone_inactive_anon 0\n");
+    pb_str(&b, "      nr_zone_active_anon "); pb_u64(&b, total_pages - free_pages); pb_char(&b, '\n');
+    pb_str(&b, "      nr_zone_inactive_file 0\n");
+    pb_str(&b, "      nr_zone_active_file 0\n");
+    pb_str(&b, "      nr_zone_unevictable 0\n");
+    pb_str(&b, "      nr_zone_write_pending 0\n");
+    pb_str(&b, "      nr_mlock 0\n");
+    pb_str(&b, "      nr_bounce 0\n");
+    pb_str(&b, "      nr_zspages 0\n");
+    pb_str(&b, "      nr_free_cma 0\n");
+    pb_str(&b, "  pages free     "); pb_u64(&b, free_pages);  pb_char(&b, '\n');
+    pb_str(&b, "        boost    0\n");
+    pb_str(&b, "        min      0\n");
+    pb_str(&b, "        low      0\n");
+    pb_str(&b, "        high     0\n");
+    pb_str(&b, "        spanned  "); pb_u64(&b, total_pages); pb_char(&b, '\n');
+    pb_str(&b, "        present  "); pb_u64(&b, total_pages); pb_char(&b, '\n');
+    pb_str(&b, "        managed  "); pb_u64(&b, total_pages); pb_char(&b, '\n');
+    pb_str(&b, "        cma      0\n");
+    pb_str(&b, "        protection: (0, 0)\n");
+    return b.pos;
+}
+
+/*
  * gen_comm() — /proc/<pid>/comm
  *
  * Single line: process name + newline.
@@ -1774,6 +1913,12 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             total = b.pos;
             break;
         }
+        case PROC_BUDDYINFO:
+            total = gen_buddyinfo(tmp, GEN_BUF);
+            break;
+        case PROC_ZONEINFO:
+            total = gen_zoneinfo(tmp, GEN_BUF);
+            break;
         case PROC_FDINFO_ENTRY: {
             /* /proc/<pid>/fdinfo/<n>: pos, flags (octal), mnt_id */
             fut_task_t *ftask = fut_task_by_pid(n->pid);
@@ -2324,6 +2469,16 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0100444, PROC_MISC_FILE, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "buddyinfo")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_BUDDYINFO,
+                                          0100444, PROC_BUDDYINFO, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "zoneinfo")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_ZONEINFO,
+                                          0100444, PROC_ZONEINFO, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         /* Try numeric PID */
         uint64_t pid = parse_dec(name);
         if (pid != (uint64_t)-1 && pid > 0) {
@@ -2552,6 +2707,8 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
             { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_SCHEDSTAT(pid), 0100444, PROC_SCHEDSTAT,       pid,0); return *result ? 0 : -ENOMEM; }
         if (STREQ(name, "net"))
             { *result = procfs_alloc_vnode(mnt, VN_DIR, PROC_INO_NET_DIR,             0040555, PROC_NET_DIR,         0,  0); return *result ? 0 : -ENOMEM; }
+        if (STREQ(name, "attr"))
+            { *result = procfs_alloc_vnode(mnt, VN_DIR, PROC_INO_PID_ATTR(pid),       0040555, PROC_ATTR_DIR,        pid,0); return *result ? 0 : -ENOMEM; }
         return -ENOENT;
     }
 
@@ -3071,7 +3228,8 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         static const char *fixed[] = {
             ".", "..", "self", "meminfo", "version", "uptime", "cpuinfo",
             "loadavg", "mounts", "sys", "stat", "filesystems", "vmstat", "net",
-            "interrupts", "cmdline", "swaps", "devices", "misc"
+            "interrupts", "cmdline", "swaps", "devices", "misc",
+            "buddyinfo", "zoneinfo"
         };
         static const uint8_t fixed_type[] = {
             FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
@@ -3082,7 +3240,8 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_DIR,
             FUT_VDIR_TYPE_REG,
-            FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG
+            FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+            FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG
         };
         static const uint64_t fixed_ino[] = {
             PROC_INO_ROOT, PROC_INO_ROOT,
@@ -3091,9 +3250,10 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             PROC_INO_STAT_GLOBAL, PROC_INO_FILESYSTEMS,
             PROC_INO_VMSTAT, PROC_INO_NET_DIR,
             PROC_INO_INTERRUPTS,
-            PROC_INO_CMDLINE_GLOBAL, PROC_INO_SWAPS, PROC_INO_DEVICES, PROC_INO_MISC_FILE
+            PROC_INO_CMDLINE_GLOBAL, PROC_INO_SWAPS, PROC_INO_DEVICES, PROC_INO_MISC_FILE,
+            PROC_INO_BUDDYINFO, PROC_INO_ZONEINFO
         };
-        if (idx < 19) {
+        if (idx < 21) {
             de->d_ino    = fixed_ino[idx];
             de->d_off    = idx + 1;
             de->d_type   = fixed_type[idx];
@@ -3108,15 +3268,15 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         }
 
         /*
-         * PID enumeration: after the 19 fixed entries, cookies encode
-         * "find first task with pid > (cookie - 19)".  After returning
-         * a PID entry we set cookie = 19 + that_pid + 1.
+         * PID enumeration: after the 21 fixed entries, cookies encode
+         * "find first task with pid > (cookie - 21)".  After returning
+         * a PID entry we set cookie = 21 + that_pid + 1.
          *
          * This is stable as long as PIDs are unique and monotonically
          * increasing; newly-forked tasks will appear if their PID is
          * greater than the last-seen PID.
          */
-        uint64_t min_pid = idx >= 19 ? idx - 19 : 0;  /* start scanning for pid > min_pid */
+        uint64_t min_pid = idx >= 21 ? idx - 21 : 0;  /* start scanning for pid > min_pid */
         fut_task_t *best = NULL;
         uint64_t   best_pid = (uint64_t)-1;
         fut_task_t *t = fut_task_list;
@@ -3148,7 +3308,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         if (nl > FUT_VFS_NAME_MAX) nl = FUT_VFS_NAME_MAX;
         __builtin_memcpy(de->d_name, pidname, nl);
         de->d_name[nl] = '\0';
-        *cookie = 19 + best->pid + 1;  /* resume after this pid */
+        *cookie = 21 + best->pid + 1;  /* resume after this pid */
         return 0;
     }
 

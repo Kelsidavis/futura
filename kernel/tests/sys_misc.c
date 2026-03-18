@@ -17665,6 +17665,43 @@ static void test_proc_attr_current(void) {
 }
 
 /* ============================================================
+ * Test 375: /proc/buddyinfo has "Node" header
+ * ============================================================ */
+static void test_proc_buddyinfo(void) {
+    fut_printf("[MISC-TEST] Test 375: /proc/buddyinfo\n");
+    int fd = fut_vfs_open("/proc/buddyinfo", O_RDONLY, 0);
+    if (fd < 0) { fut_printf("[MISC-TEST] ✗ Test 375: open failed: %d\n", fd); fut_test_fail(375); return; }
+    char buf[32]; long n = fut_vfs_read(fd, buf, sizeof(buf)-1); fut_vfs_close(fd);
+    if (n <= 0) { fut_printf("[MISC-TEST] ✗ Test 375: read returned %ld\n", n); fut_test_fail(375); return; }
+    buf[n] = '\0';
+    if (buf[0] != 'N') { fut_printf("[MISC-TEST] ✗ Test 375: no 'Node' header\n"); fut_test_fail(375); return; }
+    fut_printf("[MISC-TEST] ✓ Test 375: /proc/buddyinfo starts with 'Node'\n");
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 376: /proc/meminfo has HugePages_Total field
+ * ============================================================ */
+static void test_proc_meminfo_hugepages(void) {
+    fut_printf("[MISC-TEST] Test 376: /proc/meminfo HugePages_Total\n");
+    int fd = fut_vfs_open("/proc/meminfo", O_RDONLY, 0);
+    if (fd < 0) { fut_printf("[MISC-TEST] ✗ Test 376: open failed: %d\n", fd); fut_test_fail(376); return; }
+    char buf[2048]; long n = fut_vfs_read(fd, buf, sizeof(buf)-1); fut_vfs_close(fd);
+    if (n <= 0) { fut_printf("[MISC-TEST] ✗ Test 376: read returned %ld\n", n); fut_test_fail(376); return; }
+    buf[n] = '\0';
+    /* Check for HugePages_Total in the output */
+    int found = 0;
+    for (long i = 0; i < n - 14; i++) {
+        if (buf[i] == 'H' && buf[i+1] == 'u' && buf[i+2] == 'g' && buf[i+3] == 'e') {
+            found = 1; break;
+        }
+    }
+    if (!found) { fut_printf("[MISC-TEST] ✗ Test 376: HugePages_Total not found\n"); fut_test_fail(376); return; }
+    fut_printf("[MISC-TEST] ✓ Test 376: /proc/meminfo has HugePages_Total\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test 367: /proc/self/net/unix readable (same content as /proc/net/unix)
  * ============================================================ */
 static void test_proc_pid_net_unix(void) {
@@ -18238,6 +18275,8 @@ void fut_misc_test_thread(void *arg) {
     test_proc_swaps();                   /* Test 372: /proc/swaps has Filename header */
     test_proc_devices();                 /* Test 373: /proc/devices has Character devices */
     test_proc_attr_current();            /* Test 374: /proc/self/attr/current = unconfined */
+    test_proc_buddyinfo();               /* Test 375: /proc/buddyinfo has Node header */
+    test_proc_meminfo_hugepages();       /* Test 376: /proc/meminfo has HugePages_Total */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

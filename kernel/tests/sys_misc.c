@@ -14157,6 +14157,98 @@ static void test_so_passcred(void) {
     fut_test_pass();
 }
 
+/* struct mmsghdr for sendmmsg/recvmmsg tests */
+#ifndef _TEST_MMSGHDR_DEFINED
+#define _TEST_MMSGHDR_DEFINED
+struct test_mmsghdr {
+    struct test_msghdr msg_hdr;
+    unsigned int       msg_len;
+    /* compiler adds padding to align to pointer size (= 8) → 64 bytes total */
+};
+#endif
+
+static void test_sendmmsg_recvmmsg(void) {
+    fut_printf("[MISC-TEST] Test 310: sendmmsg/recvmmsg multi-message batch\n");
+    extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+    extern long sys_sendmmsg(int sockfd, struct test_mmsghdr *msgvec,
+                             unsigned int vlen, unsigned int flags);
+    extern long sys_recvmmsg(int sockfd, struct test_mmsghdr *msgvec,
+                             unsigned int vlen, unsigned int flags, void *timeout);
+
+    int sv[2] = {-1, -1};
+    long r = sys_socketpair(1 /*AF_UNIX*/, 1 /*SOCK_STREAM*/, 0, sv);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ socketpair failed: %ld\n", r);
+        fut_test_fail(310); return;
+    }
+
+    /* Build 3 send messages */
+    char buf0[] = "msg0";
+    char buf1[] = "hello";
+    char buf2[] = "world!";
+    struct iovec iov0 = { .iov_base = buf0, .iov_len = 4 };
+    struct iovec iov1 = { .iov_base = buf1, .iov_len = 5 };
+    struct iovec iov2 = { .iov_base = buf2, .iov_len = 6 };
+
+    struct test_mmsghdr smsg[3];
+    __builtin_memset(smsg, 0, sizeof(smsg));
+    smsg[0].msg_hdr.msg_iov    = &iov0; smsg[0].msg_hdr.msg_iovlen = 1;
+    smsg[1].msg_hdr.msg_iov    = &iov1; smsg[1].msg_hdr.msg_iovlen = 1;
+    smsg[2].msg_hdr.msg_iov    = &iov2; smsg[2].msg_hdr.msg_iovlen = 1;
+
+    long nsent = sys_sendmmsg(sv[0], smsg, 3, 0);
+    if (nsent != 3) {
+        fut_printf("[MISC-TEST] ✗ sendmmsg returned %ld (want 3)\n", nsent);
+        sys_close(sv[0]); sys_close(sv[1]); fut_test_fail(310); return;
+    }
+
+    /* Verify msg_len fields filled in by sendmmsg */
+    if (smsg[0].msg_len != 4 || smsg[1].msg_len != 5 || smsg[2].msg_len != 6) {
+        fut_printf("[MISC-TEST] ✗ sendmmsg msg_len: %u %u %u (want 4 5 6)\n",
+                   smsg[0].msg_len, smsg[1].msg_len, smsg[2].msg_len);
+        sys_close(sv[0]); sys_close(sv[1]); fut_test_fail(310); return;
+    }
+
+    /* Receive all 3 messages with recvmmsg.
+     * For SOCK_STREAM, iov_len must exactly match sent length so each
+     * recvmsg call consumes exactly one message worth of bytes. */
+    char rbuf0[4] = {0}, rbuf1[5] = {0}, rbuf2[6] = {0};
+    struct iovec riov0 = { .iov_base = rbuf0, .iov_len = 4 };
+    struct iovec riov1 = { .iov_base = rbuf1, .iov_len = 5 };
+    struct iovec riov2 = { .iov_base = rbuf2, .iov_len = 6 };
+
+    struct test_mmsghdr rmsg[3];
+    __builtin_memset(rmsg, 0, sizeof(rmsg));
+    rmsg[0].msg_hdr.msg_iov = &riov0; rmsg[0].msg_hdr.msg_iovlen = 1;
+    rmsg[1].msg_hdr.msg_iov = &riov1; rmsg[1].msg_hdr.msg_iovlen = 1;
+    rmsg[2].msg_hdr.msg_iov = &riov2; rmsg[2].msg_hdr.msg_iovlen = 1;
+
+    long nrecv = sys_recvmmsg(sv[1], rmsg, 3, 0, NULL);
+    if (nrecv != 3) {
+        fut_printf("[MISC-TEST] ✗ recvmmsg returned %ld (want 3)\n", nrecv);
+        sys_close(sv[0]); sys_close(sv[1]); fut_test_fail(310); return;
+    }
+
+    /* Verify msg_len fields filled in by recvmmsg */
+    if (rmsg[0].msg_len != 4 || rmsg[1].msg_len != 5 || rmsg[2].msg_len != 6) {
+        fut_printf("[MISC-TEST] ✗ recvmmsg msg_len: %u %u %u (want 4 5 6)\n",
+                   rmsg[0].msg_len, rmsg[1].msg_len, rmsg[2].msg_len);
+        sys_close(sv[0]); sys_close(sv[1]); fut_test_fail(310); return;
+    }
+
+    /* Verify data contents */
+    if (__builtin_memcmp(rbuf0, "msg0", 4) != 0 ||
+        __builtin_memcmp(rbuf1, "hello", 5) != 0 ||
+        __builtin_memcmp(rbuf2, "world!", 6) != 0) {
+        fut_printf("[MISC-TEST] ✗ recvmmsg data mismatch\n");
+        sys_close(sv[0]); sys_close(sv[1]); fut_test_fail(310); return;
+    }
+
+    sys_close(sv[0]); sys_close(sv[1]);
+    fut_printf("[MISC-TEST] ✓ sendmmsg/recvmmsg: 3 messages, correct counts and data\n");
+    fut_test_pass();
+}
+
 static void test_unix_dgram_sendto(void) {
     fut_printf("[MISC-TEST] Test 309: AF_UNIX SOCK_DGRAM sendto/recvfrom with address\n");
     extern long sys_socket(int domain, int type, int protocol);
@@ -14597,6 +14689,7 @@ void fut_misc_test_thread(void *arg) {
     test_unix_abstract_socket();         /* Test 307: abstract AF_UNIX bind/listen/connect/accept/send/recv */
     test_so_passcred();                  /* Test 308: SO_PASSCRED attaches SCM_CREDENTIALS on recvmsg */
     test_unix_dgram_sendto();            /* Test 309: AF_UNIX SOCK_DGRAM sendto/recvfrom with address */
+    test_sendmmsg_recvmmsg();            /* Test 310: sendmmsg/recvmmsg multi-message batch */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

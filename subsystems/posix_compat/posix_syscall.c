@@ -2472,27 +2472,24 @@ static int64_t sys_recvmsg_handler(uint64_t sockfd, uint64_t msg, uint64_t flags
     return sys_recvmsg((int)sockfd, (void *)msg, (int)flags);
 }
 
-/* sendmmsg: send multiple messages; falls back to sendmsg in a loop */
+/* sendmmsg: send multiple messages — delegate to sys_sendmmsg() */
 static int64_t sys_sendmmsg_handler(uint64_t sockfd, uint64_t msgvec, uint64_t vlen,
                                     uint64_t flags, uint64_t arg5, uint64_t arg6) {
     (void)arg5; (void)arg6;
-    extern ssize_t sys_sendmsg(int sockfd, const void *msg, int flags);
-    /* struct mmsghdr = { struct msghdr msg_hdr; unsigned int msg_len; }
-     * msg_len is 4 bytes after the msghdr. We can't portably compute msghdr
-     * size here, so just send the first message and return 1 as count. */
-    if (!msgvec || vlen == 0) return -EINVAL;
-    ssize_t r = sys_sendmsg((int)sockfd, (const void *)(uintptr_t)msgvec, (int)flags);
-    return (r < 0) ? r : 1;
+    extern long sys_sendmmsg(int sockfd, void *msgvec, unsigned int vlen, unsigned int flags);
+    return sys_sendmmsg((int)sockfd, (void *)(uintptr_t)msgvec,
+                        (unsigned int)vlen, (unsigned int)flags);
 }
 
-/* recvmmsg: receive multiple messages; falls back to recvmsg for one */
+/* recvmmsg: receive multiple messages — delegate to sys_recvmmsg() */
 static int64_t sys_recvmmsg_handler(uint64_t sockfd, uint64_t msgvec, uint64_t vlen,
                                     uint64_t flags, uint64_t timeout, uint64_t arg6) {
-    (void)timeout; (void)arg6;
-    extern ssize_t sys_recvmsg(int sockfd, void *msg, int flags);
-    if (!msgvec || vlen == 0) return -EINVAL;
-    ssize_t r = sys_recvmsg((int)sockfd, (void *)(uintptr_t)msgvec, (int)flags);
-    return (r < 0) ? r : 1;
+    (void)arg6;
+    extern long sys_recvmmsg(int sockfd, void *msgvec, unsigned int vlen,
+                             unsigned int flags, const void *timeout);
+    return sys_recvmmsg((int)sockfd, (void *)(uintptr_t)msgvec,
+                        (unsigned int)vlen, (unsigned int)flags,
+                        (const void *)(uintptr_t)timeout);
 }
 
 /* clock_adjtime: like adjtimex but takes a clk_id; delegate CLOCK_REALTIME */

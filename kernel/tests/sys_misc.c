@@ -8968,6 +8968,67 @@ static void test_proc_self_io(void) {
 }
 
 /* ============================================================
+ * Test 192: ioprio_set/get round-trip
+ * ============================================================ */
+#define TEST192_IOPRIO_CLASS_BE        2
+#define TEST192_IOPRIO_CLASS_IDLE      3
+#define TEST192_IOPRIO_CLASS_SHIFT     13
+#define TEST192_IOPRIO_WHO_PROCESS     1
+#define TEST192_IOPRIO_PRIO_VALUE(c,d) (((c) << TEST192_IOPRIO_CLASS_SHIFT) | (d))
+#define TEST192_IOPRIO_PRIO_CLASS(p)   (((p) >> TEST192_IOPRIO_CLASS_SHIFT) & 0x7)
+#define TEST192_IOPRIO_PRIO_DATA(p)    ((p) & 0x1fff)
+
+static void test_ioprio_basic(void) {
+    fut_printf("[MISC-TEST] Test 192: ioprio_set/get round-trip\n");
+    extern long sys_ioprio_set(int which, int who, int ioprio);
+    extern long sys_ioprio_get(int which, int who);
+
+    /* Set BE class, level 4 */
+    int set_val = TEST192_IOPRIO_PRIO_VALUE(TEST192_IOPRIO_CLASS_BE, 4);
+    long ret = sys_ioprio_set(TEST192_IOPRIO_WHO_PROCESS, 0, set_val);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ ioprio_set(BE, 4) returned %ld\n", ret);
+        fut_test_fail(192);
+        return;
+    }
+
+    long got = sys_ioprio_get(TEST192_IOPRIO_WHO_PROCESS, 0);
+    if (got < 0) {
+        fut_printf("[MISC-TEST] ✗ ioprio_get returned %ld\n", got);
+        fut_test_fail(192);
+        return;
+    }
+    int got_class = TEST192_IOPRIO_PRIO_CLASS((int)got);
+    int got_level = TEST192_IOPRIO_PRIO_DATA((int)got);
+    if (got_class != TEST192_IOPRIO_CLASS_BE || got_level != 4) {
+        fut_printf("[MISC-TEST] ✗ ioprio_get: class=%d (want %d), level=%d (want 4)\n",
+                   got_class, TEST192_IOPRIO_CLASS_BE, got_level);
+        fut_test_fail(192);
+        return;
+    }
+
+    /* EINVAL on invalid which */
+    ret = sys_ioprio_set(99, 0, set_val);
+    if (ret != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ ioprio_set(which=99) returned %ld (want EINVAL)\n", ret);
+        fut_test_fail(192);
+        return;
+    }
+
+    /* IDLE class: level is ignored, must succeed */
+    int idle_val = TEST192_IOPRIO_PRIO_VALUE(TEST192_IOPRIO_CLASS_IDLE, 0);
+    ret = sys_ioprio_set(TEST192_IOPRIO_WHO_PROCESS, 0, idle_val);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ ioprio_set(IDLE, 0) returned %ld\n", ret);
+        fut_test_fail(192);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ ioprio_set/get: BE/4 round-trip OK, EINVAL on bad which, IDLE accepted\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -9168,6 +9229,7 @@ void fut_misc_test_thread(void *arg) {
     test_close_range_bulk();               /* Test 189: close_range bulk close */
     test_close_range_cloexec();            /* Test 190: close_range CLOEXEC */
     test_proc_self_io();                   /* Test 191: /proc/self/io I/O counters */
+    test_ioprio_basic();                   /* Test 192: ioprio_set/get round-trip */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

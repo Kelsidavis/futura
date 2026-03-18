@@ -13896,6 +13896,98 @@ static void test_unix_seqpacket(void) {
     fut_test_pass();
 }
 
+/* Test 306: MSG_CMSG_CLOEXEC sets FD_CLOEXEC on FDs received via SCM_RIGHTS
+ *
+ * Verifies that recvmsg() with MSG_CMSG_CLOEXEC (0x40000000) atomically marks
+ * each received file descriptor with FD_CLOEXEC so the FDs do not leak across
+ * exec() in the receiving process.
+ */
+static void test_msg_cmsg_cloexec(void) {
+    fut_printf("[MISC-TEST] Test 306: MSG_CMSG_CLOEXEC\n");
+    extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+    extern long sys_sendmsg(int sockfd, const struct test_msghdr *msg, int flags);
+    extern long sys_recvmsg(int sockfd, struct test_msghdr *msg, int flags);
+    extern long sys_write(int fd, const void *buf, size_t count);
+
+#define MSG_CMSG_CLOEXEC_FLAG 0x40000000
+
+    int sv[2] = {-1, -1};
+    long r = sys_socketpair(1 /*AF_UNIX*/, 1 /*SOCK_STREAM*/, 0, sv);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ socketpair failed: %ld\n", r);
+        fut_test_fail(306); return;
+    }
+
+    /* Create a file to pass as SCM_RIGHTS payload */
+    int file_fd = fut_vfs_open("/cmsg_cloexec_test.txt", O_CREAT | O_RDWR, 0644);
+    if (file_fd < 0) {
+        sys_close(sv[0]); sys_close(sv[1]);
+        fut_printf("[MISC-TEST] ✗ open test file failed: %d\n", file_fd);
+        fut_test_fail(306); return;
+    }
+    sys_write(file_fd, "x", 1);
+
+    /* Build sendmsg with SCM_RIGHTS */
+    char data_buf[] = "ping";
+    struct iovec snd_iov = { .iov_base = data_buf, .iov_len = 4 };
+    char snd_ctrl[TEST_CMSG_SPACE(sizeof(int))];
+    __builtin_memset(snd_ctrl, 0, sizeof(snd_ctrl));
+    struct test_cmsghdr *scmsg = (struct test_cmsghdr *)snd_ctrl;
+    scmsg->cmsg_len   = TEST_CMSG_LEN(sizeof(int));
+    scmsg->cmsg_level = TEST_SOL_SOCKET;
+    scmsg->cmsg_type  = TEST_SCM_RIGHTS;
+    *(int *)TEST_CMSG_DATA(scmsg) = file_fd;
+    struct test_msghdr snd = {
+        .msg_iov = &snd_iov, .msg_iovlen = 1,
+        .msg_control = snd_ctrl, .msg_controllen = sizeof(snd_ctrl),
+    };
+    long sent = sys_sendmsg(sv[0], &snd, 0);
+    if (sent < 0) {
+        fut_printf("[MISC-TEST] ✗ sendmsg(SCM_RIGHTS) failed: %ld\n", sent);
+        fut_vfs_close(file_fd); sys_close(sv[0]); sys_close(sv[1]);
+        fut_test_fail(306); return;
+    }
+
+    /* Receive with MSG_CMSG_CLOEXEC */
+    char rcv_data[8] = {0};
+    char rcv_ctrl[TEST_CMSG_SPACE(sizeof(int))];
+    __builtin_memset(rcv_ctrl, 0, sizeof(rcv_ctrl));
+    struct iovec rcv_iov = { .iov_base = rcv_data, .iov_len = sizeof(rcv_data) };
+    struct test_msghdr rcv = {
+        .msg_iov = &rcv_iov, .msg_iovlen = 1,
+        .msg_control = rcv_ctrl, .msg_controllen = sizeof(rcv_ctrl),
+    };
+    long rcvd = sys_recvmsg(sv[1], &rcv, MSG_CMSG_CLOEXEC_FLAG);
+    if (rcvd < 0) {
+        fut_printf("[MISC-TEST] ✗ recvmsg(MSG_CMSG_CLOEXEC) failed: %ld\n", rcvd);
+        fut_vfs_close(file_fd); sys_close(sv[0]); sys_close(sv[1]);
+        fut_test_fail(306); return;
+    }
+
+    /* Extract received FD */
+    struct test_cmsghdr *rcmsg = (struct test_cmsghdr *)rcv_ctrl;
+    int rfd = *(int *)TEST_CMSG_DATA(rcmsg);
+    if (rfd < 0) {
+        fut_printf("[MISC-TEST] ✗ received fd=%d (invalid)\n", rfd);
+        fut_vfs_close(file_fd); sys_close(sv[0]); sys_close(sv[1]);
+        fut_test_fail(306); return;
+    }
+
+    /* Verify FD_CLOEXEC is set on received FD */
+    long flags = sys_fcntl(rfd, F_GETFD, 0);
+    sys_close(rfd);
+    fut_vfs_close(file_fd); sys_close(sv[0]); sys_close(sv[1]);
+    fut_vfs_unlink("/cmsg_cloexec_test.txt");
+
+    if (!(flags & FD_CLOEXEC)) {
+        fut_printf("[MISC-TEST] ✗ MSG_CMSG_CLOEXEC: FD_CLOEXEC not set on received fd (flags=%ld)\n", flags);
+        fut_test_fail(306); return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ MSG_CMSG_CLOEXEC: received fd has FD_CLOEXEC set\n");
+    fut_test_pass();
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -14208,6 +14300,7 @@ void fut_misc_test_thread(void *arg) {
     test_rseq_basic();                   /* Test 303: rseq register/unregister/error paths */
     test_close_range_basic();            /* Test 304: close_range bulk close + CLOEXEC */
     test_unix_seqpacket();               /* Test 305: AF_UNIX SOCK_SEQPACKET create/pair/send/recv */
+    test_msg_cmsg_cloexec();             /* Test 306: MSG_CMSG_CLOEXEC sets FD_CLOEXEC on SCM_RIGHTS FDs */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

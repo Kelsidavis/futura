@@ -7958,6 +7958,87 @@ static void test_fchownat_basic(void) {
     fut_test_pass();
 }
 
+static void test_linkat_basic(void) {
+    fut_printf("[MISC-TEST] Test 176: sys_linkat basic\n");
+    extern long sys_linkat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath, int flags);
+    extern long sys_unlink(const char *path);
+
+    /* Create source file */
+    int fd = (int)fut_vfs_open("/test_linkat_src.txt", O_CREAT | O_RDWR, 0644);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ linkat: create src failed: %d\n", fd);
+        fut_test_fail(176);
+        return;
+    }
+    fut_vfs_close(fd);
+
+    /* Create hard link via AT_FDCWD=-100 */
+    long ret = sys_linkat(-100, "/test_linkat_src.txt", -100, "/test_linkat_dst.txt", 0);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ linkat: expected 0, got %ld\n", ret);
+        sys_unlink("/test_linkat_src.txt");
+        fut_test_fail(176);
+        return;
+    }
+
+    /* Verify both exist */
+    struct fut_stat st;
+    int sr1 = fut_vfs_stat("/test_linkat_src.txt", &st);
+    int sr2 = fut_vfs_stat("/test_linkat_dst.txt", &st);
+    sys_unlink("/test_linkat_src.txt");
+    sys_unlink("/test_linkat_dst.txt");
+
+    if (sr1 != 0 || sr2 != 0) {
+        fut_printf("[MISC-TEST] ✗ linkat: src=%d dst=%d (expected 0:0)\n", sr1, sr2);
+        fut_test_fail(176);
+        return;
+    }
+
+    /* ENOENT on missing source */
+    long en = sys_linkat(-100, "/no_such_linkat_src", -100, "/test_linkat_dst2.txt", 0);
+    if (en != -ENOENT) {
+        fut_printf("[MISC-TEST] ✗ linkat ENOENT: expected ENOENT, got %ld\n", en);
+        fut_test_fail(176);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ sys_linkat: hard link created, ENOENT on missing src\n");
+    fut_test_pass();
+}
+
+static void test_symlinkat_basic(void) {
+    fut_printf("[MISC-TEST] Test 177: sys_symlinkat basic\n");
+    extern long sys_symlinkat(const char *target, int newdirfd, const char *linkpath);
+
+    /* Create symlink target → /proc */
+    long ret = sys_symlinkat("/proc", -100, "/test_symlinkat_link");
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ symlinkat: expected 0, got %ld\n", ret);
+        fut_test_fail(177);
+        return;
+    }
+
+    /* Verify symlink exists and is a symlink type */
+    char buf[64] = {0};
+    int rbytes = (int)fut_vfs_readlink("/test_symlinkat_link", buf, sizeof(buf));
+    fut_vfs_unlink("/test_symlinkat_link");
+
+    if (rbytes < 0 || buf[0] != '/') {
+        fut_printf("[MISC-TEST] ✗ symlinkat: readlink returned %d, buf='%s'\n", rbytes, buf);
+        fut_test_fail(177);
+        return;
+    }
+
+    /* ENOENT on missing parent */
+    long en = sys_symlinkat("/proc", -100, "/no_parent/test_symlinkat_link");
+    if (en != -ENOENT) {
+        fut_printf("[MISC-TEST] ✗ symlinkat ENOENT: expected ENOENT, got %ld\n", en);
+        fut_test_fail(177);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ sys_symlinkat: symlink created points to '/proc', ENOENT on bad parent\n");
+    fut_test_pass();
+}
+
 static void test_capget_basic(void) {
     fut_printf("[MISC-TEST] Test 175: sys_capget/capset basic\n");
     extern long sys_capget(void *hdrp, void *datap);
@@ -8351,6 +8432,8 @@ void fut_misc_test_thread(void *arg) {
     test_getresuid_syscall();              /* Test 173: sys_getresuid/getresgid direct call */
     test_waitid_nohang();                  /* Test 174: sys_waitid WNOHANG no children */
     test_capget_basic();                   /* Test 175: sys_capget effective caps for root */
+    test_linkat_basic();                   /* Test 176: sys_linkat hard link + ENOENT */
+    test_symlinkat_basic();                /* Test 177: sys_symlinkat creates symlink */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

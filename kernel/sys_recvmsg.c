@@ -339,6 +339,9 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
      * Socketpair DGRAM sockets have pair!=NULL and use the stream recv path. */
     bool is_dgram_sock = (dgsock && dgsock->socket_type == SOCK_DGRAM &&
                           !dgsock->pair && dgsock->dgram_queue != NULL);
+    /* Sender address for DGRAM recvmsg (filled by fut_socket_recvfrom_dgram) */
+    char dgram_sender_path[108];
+    uint16_t dgram_sender_path_len = 0;
     for (size_t i = 0; i < kmsg.msg_iovlen; i++) {
         struct iovec iov;
         if (recvmsg_copy_from_user(&iov, &kmsg.msg_iov[i], sizeof(struct iovec)) != 0) {
@@ -398,7 +401,8 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
         if (is_dgram_sock) {
             size_t actual_len = 0;
             ret = fut_socket_recvfrom_dgram(dgsock, kbuf, iov.iov_len,
-                                            NULL, NULL, &actual_len);
+                                            dgram_sender_path, &dgram_sender_path_len,
+                                            &actual_len);
             if (ret >= 0 && actual_len > iov.iov_len)
                 msg_trunc_set = true;
         } else if (do_waitall) {
@@ -447,6 +451,22 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
         if (!do_waitall && (size_t)ret < iov.iov_len) {
             break;
         }
+    }
+
+    /* Fill msg_name with sender address for DGRAM recvmsg */
+    if (is_dgram_sock && kmsg.msg_name && kmsg.msg_namelen > 0 && dgram_sender_path_len > 0) {
+        struct { unsigned short sun_family; char sun_path[108]; } sun = {0};
+        sun.sun_family = 1; /* AF_UNIX */
+        size_t path_copy = dgram_sender_path_len < 108 ? dgram_sender_path_len : 107;
+        __builtin_memcpy(sun.sun_path, dgram_sender_path, path_copy);
+        /* sun_len: 2-byte family + path + NUL (for filesystem paths) */
+        unsigned int sun_len = (unsigned int)(2 + path_copy +
+            (dgram_sender_path_len == 0 || dgram_sender_path[0] != '\0' ? 1 : 0));
+        unsigned int to_copy = (sun_len < kmsg.msg_namelen) ? sun_len : kmsg.msg_namelen;
+        recvmsg_copy_to_user(kmsg.msg_name, &sun, to_copy);
+        kmsg.msg_namelen = sun_len;
+    } else if (!is_dgram_sock) {
+        kmsg.msg_namelen = 0;  /* STREAM sockets don't fill msg_name */
     }
 
     kmsg.msg_flags = msg_trunc_set ? MSG_TRUNC : 0;

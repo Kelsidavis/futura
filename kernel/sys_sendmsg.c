@@ -334,6 +334,37 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
 
     (void)local_flags;  /* Ignore flags in Phase 2 (will implement in Phase 3) */
 
+    /* For named DGRAM sockets (no stream pair): extract destination from msg_name,
+     * then send each iovec as a separate datagram to that address. */
+    extern fut_socket_t *get_socket_from_fd(int fd);
+    fut_socket_t *sm_sock = get_socket_from_fd(local_sockfd);
+    bool is_dgram_sendmsg = (sm_sock && sm_sock->socket_type == SOCK_DGRAM && !sm_sock->pair);
+
+    /* Resolve DGRAM destination: msg_name wins over default peer */
+    char dgram_dest[108];
+    uint16_t dgram_dest_len = 0;
+    if (is_dgram_sendmsg) {
+        if (kmsg.msg_name && kmsg.msg_namelen >= 3) {
+            /* Parse sockaddr_un from msg_name */
+            struct { unsigned short sun_family; char sun_path[108]; } sun = {0};
+            size_t name_copy = (size_t)kmsg.msg_namelen < sizeof(sun) ? (size_t)kmsg.msg_namelen : sizeof(sun);
+            if (sendmsg_copy_from_user(&sun, kmsg.msg_name, name_copy) != 0)
+                return -EFAULT;
+            if (sun.sun_family != 1 /* AF_UNIX */)
+                return -EAFNOSUPPORT;
+            /* Path length = namelen - 2 (family bytes) */
+            dgram_dest_len = (uint16_t)(kmsg.msg_namelen - 2);
+            if (dgram_dest_len > 107) dgram_dest_len = 107;
+            __builtin_memcpy(dgram_dest, sun.sun_path, dgram_dest_len);
+        } else if (sm_sock->dgram_peer_path_len > 0) {
+            /* Use default peer from connect() */
+            dgram_dest_len = sm_sock->dgram_peer_path_len;
+            __builtin_memcpy(dgram_dest, sm_sock->dgram_peer_path, dgram_dest_len);
+        } else {
+            return -EDESTADDRREQ;
+        }
+    }
+
     /* Phase 2: Iterate through iovecs and write each buffer */
     ssize_t total_sent = 0;
     int iovecs_sent = 0;
@@ -377,8 +408,15 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
             return total_sent > 0 ? total_sent : -EFAULT;
         }
 
-        /* Write to socket */
-        ssize_t ret = fut_vfs_write(local_sockfd, kbuf, iov.iov_len);
+        /* Write to socket — use sendto_dgram for named DGRAM, VFS for stream/socketpair */
+        ssize_t ret;
+        if (is_dgram_sendmsg) {
+            ret = fut_socket_sendto_dgram(dgram_dest, dgram_dest_len,
+                                          sm_sock->bound_path, sm_sock->bound_path_len,
+                                          kbuf, iov.iov_len);
+        } else {
+            ret = fut_vfs_write(local_sockfd, kbuf, iov.iov_len);
+        }
         fut_free(kbuf);
 
         if (ret < 0) {

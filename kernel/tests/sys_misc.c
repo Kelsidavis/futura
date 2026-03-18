@@ -14412,6 +14412,155 @@ static void test_socket_errno_correctness(void) {
 }
 
 /**
+ * Test 322: sendmsg with msg_name delivers datagram to destination.
+ *
+ * Creates two DGRAM sockets; uses sendmsg with msg_name (dest addr) to send
+ * without calling connect() first. Verifies datagram is received.
+ */
+static void test_sendmsg_dgram_msgname(void) {
+    fut_printf("[MISC-TEST] Test 322: sendmsg DGRAM with msg_name\n");
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_bind(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_sendmsg(int sockfd, const struct test_msghdr *msg, int flags);
+    extern long sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
+                             void *src_addr, void *addrlen);
+
+    long recvfd = sys_socket(1, 2, 0);
+    long sendfd = sys_socket(1, 2, 0);
+    if (recvfd < 0 || sendfd < 0) {
+        if (recvfd >= 0) sys_close((int)recvfd);
+        if (sendfd >= 0) sys_close((int)sendfd);
+        fut_test_fail(322); return;
+    }
+
+    struct { unsigned short family; char path[16]; } dest = {0};
+    dest.family = 1;
+    dest.path[0] = '\0';
+    dest.path[1] = 't'; dest.path[2] = '3'; dest.path[3] = '2'; dest.path[4] = '2';
+    dest.path[5] = 's'; dest.path[6] = 'm'; dest.path[7] = 's'; dest.path[8] = 'g';
+    unsigned int dest_len = 2 + 9;
+
+    long r = sys_bind((int)recvfd, &dest, dest_len);
+    if (r != 0) {
+        sys_close((int)recvfd); sys_close((int)sendfd);
+        fut_test_fail(322); return;
+    }
+
+    char payload[] = "sendmsg-name";
+    struct iovec iov = { .iov_base = payload, .iov_len = 12 };
+    struct test_msghdr msg = {
+        .msg_name = &dest, .msg_namelen = dest_len,
+        .msg_iov = &iov, .msg_iovlen = 1,
+        .msg_control = NULL, .msg_controllen = 0, .msg_flags = 0,
+    };
+
+    long ns = sys_sendmsg((int)sendfd, &msg, 0);
+    sys_close((int)sendfd);
+    if (ns != 12) {
+        fut_printf("[MISC-TEST] ✗ sendmsg returned %ld, want 12\n", ns);
+        sys_close((int)recvfd); fut_test_fail(322); return;
+    }
+
+    char recvbuf[32] = {0};
+    long nr = sys_recvfrom((int)recvfd, recvbuf, sizeof(recvbuf), 0, NULL, NULL);
+    sys_close((int)recvfd);
+    if (nr != 12 || __builtin_memcmp(recvbuf, payload, 12) != 0) {
+        fut_printf("[MISC-TEST] ✗ recvfrom returned %ld\n", nr);
+        fut_test_fail(322); return;
+    }
+    fut_printf("[MISC-TEST] ✓ sendmsg with msg_name delivered datagram correctly\n");
+    fut_test_pass();
+}
+
+/**
+ * Test 323: recvmsg fills msg_name with sender address for DGRAM.
+ *
+ * Sender binds to an abstract path, sends to receiver.
+ * recvmsg with msg_name buffer should fill in sender's address.
+ */
+static void test_recvmsg_dgram_msgname(void) {
+    fut_printf("[MISC-TEST] Test 323: recvmsg fills msg_name with sender addr\n");
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_bind(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_sendto(int sockfd, const void *buf, size_t len, int flags,
+                           const void *dest_addr, int addrlen);
+    extern long sys_recvmsg(int sockfd, struct test_msghdr *msg, int flags);
+
+    long recvfd = sys_socket(1, 2, 0);
+    long sendfd = sys_socket(1, 2, 0);
+    if (recvfd < 0 || sendfd < 0) {
+        if (recvfd >= 0) sys_close((int)recvfd);
+        if (sendfd >= 0) sys_close((int)sendfd);
+        fut_test_fail(323); return;
+    }
+
+    /* Bind receiver */
+    struct { unsigned short family; char path[16]; } recv_addr = {0};
+    recv_addr.family = 1;
+    recv_addr.path[0] = '\0';
+    recv_addr.path[1] = 't'; recv_addr.path[2] = '3'; recv_addr.path[3] = '2';
+    recv_addr.path[4] = '3'; recv_addr.path[5] = 'r'; recv_addr.path[6] = 'c';
+    recv_addr.path[7] = 'v';
+    unsigned int recv_len = 2 + 8;
+    long r = sys_bind((int)recvfd, &recv_addr, recv_len);
+    if (r != 0) { sys_close((int)recvfd); sys_close((int)sendfd); fut_test_fail(323); return; }
+
+    /* Bind sender (so recvmsg can capture sender's name) */
+    struct { unsigned short family; char path[16]; } send_addr = {0};
+    send_addr.family = 1;
+    send_addr.path[0] = '\0';
+    send_addr.path[1] = 't'; send_addr.path[2] = '3'; send_addr.path[3] = '2';
+    send_addr.path[4] = '3'; send_addr.path[5] = 's'; send_addr.path[6] = 'n';
+    send_addr.path[7] = 'd';
+    unsigned int send_len = 2 + 8;
+    r = sys_bind((int)sendfd, &send_addr, send_len);
+    if (r != 0) { sys_close((int)recvfd); sys_close((int)sendfd); fut_test_fail(323); return; }
+
+    /* Send datagram */
+    char payload[] = "rcvmsg-name";
+    r = sys_sendto((int)sendfd, payload, 11, 0, &recv_addr, (int)recv_len);
+    sys_close((int)sendfd);
+    if (r != 11) { sys_close((int)recvfd); fut_test_fail(323); return; }
+
+    /* Receive with msg_name buffer */
+    char recvbuf[32] = {0};
+    struct { unsigned short family; char path[16]; } sender_out = {0};
+    unsigned int sender_namelen = sizeof(sender_out);
+    struct iovec iov = { .iov_base = recvbuf, .iov_len = sizeof(recvbuf) };
+    struct test_msghdr msg = {
+        .msg_name = &sender_out, .msg_namelen = sender_namelen,
+        .msg_iov = &iov, .msg_iovlen = 1,
+        .msg_control = NULL, .msg_controllen = 0, .msg_flags = 0,
+    };
+
+    long nr = sys_recvmsg((int)recvfd, &msg, 0);
+    sys_close((int)recvfd);
+
+    if (nr != 11) {
+        fut_printf("[MISC-TEST] ✗ recvmsg returned %ld, want 11\n", nr);
+        fut_test_fail(323); return;
+    }
+    if (__builtin_memcmp(recvbuf, payload, 11) != 0) {
+        fut_printf("[MISC-TEST] ✗ recvmsg data mismatch\n");
+        fut_test_fail(323); return;
+    }
+    /* Verify msg_name was filled with sender path */
+    if (msg.msg_namelen < 3 || sender_out.family != 1 /*AF_UNIX*/) {
+        fut_printf("[MISC-TEST] ✗ msg_name not filled: namelen=%u family=%u\n",
+                   msg.msg_namelen, sender_out.family);
+        fut_test_fail(323); return;
+    }
+    /* Check the abstract path matches "\0t323snd" (8 bytes) */
+    if (msg.msg_namelen != send_len ||
+        __builtin_memcmp(&sender_out.path, send_addr.path, 8) != 0) {
+        fut_printf("[MISC-TEST] ✗ sender path mismatch (namelen=%u)\n", msg.msg_namelen);
+        fut_test_fail(323); return;
+    }
+    fut_printf("[MISC-TEST] ✓ recvmsg filled msg_name with sender's abstract path\n");
+    fut_test_pass();
+}
+
+/**
  * Test 318: MSG_TRUNC in recvfrom returns actual datagram size.
  *
  * Send a 100-byte datagram; recv into 50-byte buffer with MSG_TRUNC flag.
@@ -15419,6 +15568,8 @@ void fut_misc_test_thread(void *arg) {
     test_msg_trunc_recvmsg();            /* Test 319: MSG_TRUNC set in msg_flags by recvmsg */
     test_dgram_read_syscall();           /* Test 320: plain read() works on DGRAM socket */
     test_dgram_write_connected();        /* Test 321: write() on connected DGRAM socket */
+    test_sendmsg_dgram_msgname();        /* Test 322: sendmsg with msg_name routes DGRAM */
+    test_recvmsg_dgram_msgname();        /* Test 323: recvmsg fills msg_name with sender addr */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

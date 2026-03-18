@@ -9159,6 +9159,46 @@ static void test_alarm_basic(void) {
 }
 
 /* ============================================================
+ * Test 195: sys_pause() returns EINTR when signal pending
+ * ============================================================ */
+static void test_pause_eintr(void) {
+    fut_printf("[MISC-TEST] Test 195: pause() EINTR on pending signal\n");
+    extern long sys_pause(void);
+    extern long sys_sigprocmask(int how, const sigset_t *set, sigset_t *oldset);
+
+    fut_task_t *task = fut_task_current();
+    if (!task) { fut_test_fail(195); return; }
+
+    /* Block SIGUSR1 (signal 10) so we can queue it safely */
+    sigset_t usr1_mask = { (1ULL << (10 - 1)) };
+    sigset_t old_mask;
+    sys_sigprocmask(0 /* SIG_BLOCK */, &usr1_mask, &old_mask);
+
+    /* Manually set SIGUSR1 as pending (bit 9, zero-based) */
+    __atomic_or_fetch(&task->pending_signals, (1ULL << 9), __ATOMIC_RELEASE);
+
+    /* Unblock SIGUSR1: now it's unblocked and pending → pause returns EINTR */
+    sys_sigprocmask(1 /* SIG_UNBLOCK */, &usr1_mask, NULL);
+
+    long r = sys_pause();
+
+    /* Clear the pending signal bit to prevent real delivery later */
+    __atomic_and_fetch(&task->pending_signals, ~(1ULL << 9), __ATOMIC_RELEASE);
+
+    /* Restore original mask */
+    sys_sigprocmask(2 /* SIG_SETMASK */, &old_mask, NULL);
+
+    if (r != -EINTR) {
+        fut_printf("[MISC-TEST] ✗ pause() returned %ld (expected EINTR=%d)\n", r, -EINTR);
+        fut_test_fail(195);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ pause(): returns EINTR when signal already pending\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -9362,6 +9402,7 @@ void fut_misc_test_thread(void *arg) {
     test_ioprio_basic();                   /* Test 192: ioprio_set/get round-trip */
     test_setresuid_setresgid();            /* Test 193: setresuid/setresgid round-trip */
     test_alarm_basic();                    /* Test 194: alarm() set/cancel semantics */
+    test_pause_eintr();                    /* Test 195: pause() returns EINTR on pending signal */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

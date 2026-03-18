@@ -124,6 +124,9 @@ enum procfs_kind {
     PROC_LIMITS,           /* /proc/<pid>/limits */
     PROC_IO,               /* /proc/<pid>/io */
     PROC_SMAPS,            /* /proc/<pid>/smaps */
+    PROC_OOM_SCORE,        /* /proc/<pid>/oom_score */
+    PROC_OOM_ADJ,          /* /proc/<pid>/oom_score_adj */
+    PROC_CGROUP,           /* /proc/<pid>/cgroup */
 };
 
 typedef struct {
@@ -215,6 +218,9 @@ typedef struct {
 #define PROC_INO_PID_LIMITS(p) (1000ULL + (uint64_t)(p) * 100 + 12)
 #define PROC_INO_PID_IO(p)     (1000ULL + (uint64_t)(p) * 100 + 13)
 #define PROC_INO_PID_SMAPS(p)  (1000ULL + (uint64_t)(p) * 100 + 14)
+#define PROC_INO_PID_OOM_SCORE(p) (1000ULL + (uint64_t)(p) * 100 + 15)
+#define PROC_INO_PID_OOM_ADJ(p)   (1000ULL + (uint64_t)(p) * 100 + 16)
+#define PROC_INO_PID_CGROUP(p)    (1000ULL + (uint64_t)(p) * 100 + 17)
 /* fd entries: use high range to avoid collision */
 #define PROC_INO_FD_ENTRY(p,n) (100000000ULL + (uint64_t)(p) * 1000 + (uint64_t)(n))
 /* task/<tid> entries: separate high range */
@@ -1242,6 +1248,27 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             total = task ? gen_smaps(tmp, GEN_BUF, task) : 0;
             break;
         }
+        case PROC_OOM_SCORE: {
+            /* OOM score 0 = least likely to be killed; simple RAM-model */
+            struct pbuf b = { tmp, 0, GEN_BUF };
+            pb_str(&b, "0\n");
+            total = b.pos;
+            break;
+        }
+        case PROC_OOM_ADJ: {
+            /* OOM score adjustment; 0 = neutral, -1000 = exempt */
+            struct pbuf b = { tmp, 0, GEN_BUF };
+            pb_str(&b, "0\n");
+            total = b.pos;
+            break;
+        }
+        case PROC_CGROUP: {
+            /* Minimal cgroup v1 format: "hierarchy:subsystems:path" */
+            struct pbuf b = { tmp, 0, GEN_BUF };
+            pb_str(&b, "0::/\n");  /* cgroup v2 unified hierarchy, root */
+            total = b.pos;
+            break;
+        }
         case PROC_SYS_OSTYPE:
             total = gen_sysctl_str(tmp, GEN_BUF, "Linux");
             break;
@@ -1640,6 +1667,21 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0100444, PROC_SMAPS, pid, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "oom_score")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_OOM_SCORE(pid),
+                                          0100444, PROC_OOM_SCORE, pid, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "oom_score_adj")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_OOM_ADJ(pid),
+                                          0100644, PROC_OOM_ADJ, pid, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "cgroup")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_CGROUP(pid),
+                                          0100444, PROC_CGROUP, pid, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         return -ENOENT;
     }
 
@@ -1695,7 +1737,13 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
         if (STREQ(name, "io"))
             { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_IO(pid),     0100400, PROC_IO,      pid,0); return *result ? 0 : -ENOMEM; }
         if (STREQ(name, "smaps"))
-            { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_SMAPS(pid),  0100444, PROC_SMAPS,   pid,0); return *result ? 0 : -ENOMEM; }
+            { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_SMAPS(pid),     0100444, PROC_SMAPS,     pid,0); return *result ? 0 : -ENOMEM; }
+        if (STREQ(name, "oom_score"))
+            { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_OOM_SCORE(pid), 0100444, PROC_OOM_SCORE, pid,0); return *result ? 0 : -ENOMEM; }
+        if (STREQ(name, "oom_score_adj"))
+            { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_OOM_ADJ(pid),   0100644, PROC_OOM_ADJ,   pid,0); return *result ? 0 : -ENOMEM; }
+        if (STREQ(name, "cgroup"))
+            { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_CGROUP(pid),    0100444, PROC_CGROUP,    pid,0); return *result ? 0 : -ENOMEM; }
         return -ENOENT;
     }
 
@@ -2083,7 +2131,8 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
     if (dn->kind == PROC_PID_DIR || dn->kind == PROC_TID_DIR) {
         static const char *entries[] = {
             ".", "..", "status", "maps", "cmdline", "environ", "fd", "exe", "cwd",
-            "stat", "statm", "comm", "task", "limits", "io", "smaps"
+            "stat", "statm", "comm", "task", "limits", "io", "smaps",
+            "oom_score", "oom_score_adj", "cgroup"
         };
         static const uint8_t etypes[] = {
             FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
@@ -2093,28 +2142,32 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             FUT_VDIR_TYPE_SYMLINK, FUT_VDIR_TYPE_SYMLINK,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
             FUT_VDIR_TYPE_DIR,
+            FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG
         };
         uint64_t pid = dn->pid;
-        if (idx < 16) {
+        if (idx < 19) {
             uint64_t ino;
             switch (idx) {
-                case 0:  ino = PROC_INO_PID_DIR(pid);     break;
-                case 1:  ino = PROC_INO_ROOT;              break;
-                case 2:  ino = PROC_INO_PID_STATUS(pid);  break;
-                case 3:  ino = PROC_INO_PID_MAPS(pid);    break;
-                case 4:  ino = PROC_INO_PID_CMDLINE(pid); break;
-                case 5:  ino = PROC_INO_PID_ENVIRON(pid); break;
-                case 6:  ino = PROC_INO_PID_FD(pid);      break;
-                case 7:  ino = PROC_INO_PID_EXE(pid);     break;
-                case 8:  ino = PROC_INO_PID_CWD(pid);     break;
-                case 9:  ino = PROC_INO_PID_STAT(pid);    break;
-                case 10: ino = PROC_INO_PID_STATM(pid);   break;
-                case 11: ino = PROC_INO_PID_COMM(pid);    break;
-                case 12: ino = PROC_INO_PID_TASK(pid);    break;
-                case 13: ino = PROC_INO_PID_LIMITS(pid);  break;
-                case 14: ino = PROC_INO_PID_IO(pid);      break;
-                case 15: ino = PROC_INO_PID_SMAPS(pid);   break;
+                case 0:  ino = PROC_INO_PID_DIR(pid);        break;
+                case 1:  ino = PROC_INO_ROOT;                 break;
+                case 2:  ino = PROC_INO_PID_STATUS(pid);     break;
+                case 3:  ino = PROC_INO_PID_MAPS(pid);       break;
+                case 4:  ino = PROC_INO_PID_CMDLINE(pid);    break;
+                case 5:  ino = PROC_INO_PID_ENVIRON(pid);    break;
+                case 6:  ino = PROC_INO_PID_FD(pid);         break;
+                case 7:  ino = PROC_INO_PID_EXE(pid);        break;
+                case 8:  ino = PROC_INO_PID_CWD(pid);        break;
+                case 9:  ino = PROC_INO_PID_STAT(pid);       break;
+                case 10: ino = PROC_INO_PID_STATM(pid);      break;
+                case 11: ino = PROC_INO_PID_COMM(pid);       break;
+                case 12: ino = PROC_INO_PID_TASK(pid);       break;
+                case 13: ino = PROC_INO_PID_LIMITS(pid);     break;
+                case 14: ino = PROC_INO_PID_IO(pid);         break;
+                case 15: ino = PROC_INO_PID_SMAPS(pid);      break;
+                case 16: ino = PROC_INO_PID_OOM_SCORE(pid);  break;
+                case 17: ino = PROC_INO_PID_OOM_ADJ(pid);    break;
+                case 18: ino = PROC_INO_PID_CGROUP(pid);     break;
                 default: ino = 0; break;
             }
             de->d_ino    = ino;

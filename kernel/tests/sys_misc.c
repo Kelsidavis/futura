@@ -12080,6 +12080,56 @@ static void test_mmap_prot_sem(void) {
     fut_test_pass();
 }
 
+static void test_proc_pid_oom_cgroup(void) {
+    fut_printf("[MISC-TEST] Test 275: /proc/self/{oom_score,oom_score_adj,cgroup}\n");
+
+    extern ssize_t sys_read(int fd, void *buf, size_t count);
+    char buf[32];
+
+    /* oom_score: read-only, should return a number */
+    int fd = fut_vfs_open("/proc/self/oom_score", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 275: open oom_score failed: %d\n", fd);
+        fut_test_fail(275); return;
+    }
+    long n = (long)sys_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    if (n <= 0) { fut_printf("[MISC-TEST] ✗ Test 275: oom_score empty\n"); fut_test_fail(275); return; }
+    buf[n] = '\0';
+    fut_printf("[MISC-TEST] ✓ /proc/self/oom_score = %s", buf);
+
+    /* oom_score_adj: read-write, should return a number */
+    fd = fut_vfs_open("/proc/self/oom_score_adj", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 275: open oom_score_adj failed: %d\n", fd);
+        fut_test_fail(275); return;
+    }
+    n = (long)sys_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    if (n <= 0) { fut_printf("[MISC-TEST] ✗ Test 275: oom_score_adj empty\n"); fut_test_fail(275); return; }
+    buf[n] = '\0';
+    fut_printf("[MISC-TEST] ✓ /proc/self/oom_score_adj = %s", buf);
+
+    /* cgroup: should have at least one line with ':' separators */
+    fd = fut_vfs_open("/proc/self/cgroup", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 275: open cgroup failed: %d\n", fd);
+        fut_test_fail(275); return;
+    }
+    n = (long)sys_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    if (n <= 0) { fut_printf("[MISC-TEST] ✗ Test 275: cgroup empty\n"); fut_test_fail(275); return; }
+    buf[n] = '\0';
+    /* Verify "0::/" format */
+    if (buf[0] != '0') {
+        fut_printf("[MISC-TEST] ✗ Test 275: cgroup format unexpected: %s\n", buf);
+        fut_test_fail(275); return;
+    }
+    fut_printf("[MISC-TEST] ✓ /proc/self/cgroup = %s", buf);
+
+    fut_test_pass();
+}
+
 static void test_proc_sys_vm(void) {
     fut_printf("[MISC-TEST] Test 274: /proc/sys/vm/ tunables\n");
 
@@ -12497,6 +12547,7 @@ void fut_misc_test_thread(void *arg) {
     test_proc_sys_net();                  /* Test 272: /proc/sys/net/core/somaxconn + ipv4/ip_local_port_range */
     test_proc_sys_fs_inotify();           /* Test 273: /proc/sys/fs/inotify/max_user_watches + file-nr */
     test_proc_sys_vm();                   /* Test 274: /proc/sys/vm/max_map_count + swappiness */
+    test_proc_pid_oom_cgroup();           /* Test 275: /proc/self/oom_score + oom_score_adj + cgroup */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -24,6 +24,7 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/fut_socket.h>
+#include <sys/mman.h>
 
 /* Permission checking functions (vfs_check_*_perm) provided by fut_vfs.h */
 
@@ -2497,6 +2498,19 @@ void *fut_vfs_mmap(int fd, void *addr, size_t len, int prot, int flags, off_t of
                    task ? task->pid : 0,
                    task ? task->max_fds : 0);
         return (void *)(intptr_t)(-EBADF);
+    }
+
+    /* POSIX: MAP_SHARED + PROT_WRITE on a read-only fd must fail with EACCES.
+     * Also reject if fd is not open for reading at all. */
+    {
+        int acc = file->flags & O_ACCMODE;
+        if (acc == O_WRONLY) {
+            /* Cannot read-map a write-only fd */
+            return (void *)(intptr_t)(-EACCES);
+        }
+        if ((prot & PROT_WRITE) && (flags & MAP_SHARED) && acc == O_RDONLY) {
+            return (void *)(intptr_t)(-EACCES);
+        }
     }
 
     /* Character devices may have custom mmap implementations */

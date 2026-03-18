@@ -16736,6 +16736,43 @@ static void test_copy_file_range_offsets(void) {
 }
 
 /* ============================================================
+ * Test 347: mmap MAP_SHARED|PROT_WRITE on O_RDONLY fd -> EACCES
+ * ============================================================ */
+static void test_mmap_rdonly_shared_write(void) {
+    fut_printf("[MISC-TEST] Test 347: mmap MAP_SHARED|PROT_WRITE on O_RDONLY fd\n");
+
+    extern long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long off);
+
+    /* Create a file and open it O_RDONLY */
+    int fd = fut_vfs_open("/mmap_rdonly_test.txt", 0x241, 0644); /* O_CREAT|O_RDWR|O_TRUNC */
+    if (fd < 0) { fut_test_fail(347); return; }
+
+    /* Write something so the file has content */
+    extern long sys_write(int fd, const void *buf, size_t count);
+    sys_write(fd, "hello", 5);
+    fut_vfs_close(fd);
+
+    /* Reopen read-only */
+    fd = fut_vfs_open("/mmap_rdonly_test.txt", O_RDONLY, 0);
+    if (fd < 0) { fut_test_fail(347); return; }
+
+    /* MAP_SHARED | PROT_WRITE on O_RDONLY fd must return EACCES */
+    long ret = sys_mmap(NULL, 4096, 0x3 /* PROT_READ|PROT_WRITE */, 0x01 /* MAP_SHARED */, fd, 0);
+    fut_vfs_close(fd);
+
+    if (ret != -EACCES) {
+        fut_printf("[MISC-TEST] ✗ Test 347: expected EACCES, got %ld\n", ret);
+        if (ret > 0) {
+            extern long sys_munmap(void *addr, size_t len);
+            sys_munmap((void *)(uintptr_t)ret, 4096);
+        }
+        fut_test_fail(347); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 347: mmap MAP_SHARED|PROT_WRITE on O_RDONLY -> EACCES\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test 346: writev on a pipe gathers all iovecs atomically
  * ============================================================ */
 static void test_writev_pipe_gather(void) {
@@ -17137,6 +17174,7 @@ void fut_misc_test_thread(void *arg) {
     test_pipe_nb_atomic_write();         /* Test 344: pipe O_NONBLOCK write <= PIPE_BUF is atomic */
     test_copy_file_range_offsets();      /* Test 345: copy_file_range off_in/off_out pread/pwrite semantics */
     test_writev_pipe_gather();           /* Test 346: writev on pipe gathers all iovecs atomically */
+    test_mmap_rdonly_shared_write();     /* Test 347: mmap MAP_SHARED|PROT_WRITE on O_RDONLY fd -> EACCES */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

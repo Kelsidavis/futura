@@ -1680,17 +1680,22 @@ long sys_epoll_create(int size) {
 long sys_epoll_pwait(int epfd, struct epoll_event *events, int maxevents,
                      int timeout, const void *sigmask) {
     fut_task_t *task = fut_task_current();
-    uint64_t saved_mask = 0;
+    sigset_t saved_mask = {0};
     bool mask_installed = false;
 
-    /* Atomically install the provided signal mask before waiting */
+    /* Atomically install the provided signal mask via fut_signal_procmask
+     * so the per-thread mask is updated correctly (not just the task mask). */
     if (sigmask && task) {
-        sigset_t newmask;
+        sigset_t newmask = {0};
+#ifdef KERNEL_VIRTUAL_BASE
+        if ((uintptr_t)sigmask >= KERNEL_VIRTUAL_BASE)
+            __builtin_memcpy(&newmask, sigmask, sizeof(sigset_t));
+        else
+#endif
         if (fut_copy_from_user(&newmask, sigmask, sizeof(sigset_t)) != 0) {
             return -EFAULT;
         }
-        saved_mask = __atomic_load_n(&task->signal_mask, __ATOMIC_ACQUIRE);
-        __atomic_store_n(&task->signal_mask, newmask.__mask, __ATOMIC_RELEASE);
+        fut_signal_procmask(task, SIGPROCMASK_SETMASK, &newmask, &saved_mask);
         mask_installed = true;
     }
 
@@ -1698,7 +1703,7 @@ long sys_epoll_pwait(int epfd, struct epoll_event *events, int maxevents,
 
     /* Restore original signal mask */
     if (mask_installed && task) {
-        __atomic_store_n(&task->signal_mask, saved_mask, __ATOMIC_RELEASE);
+        fut_signal_procmask(task, SIGPROCMASK_SETMASK, &saved_mask, NULL);
     }
 
     return ret;

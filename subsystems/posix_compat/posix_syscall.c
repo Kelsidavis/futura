@@ -74,6 +74,7 @@
 #define SYS_pwritev             296
 #define SYS_preadv2             327  /* Linux: 327 — free in Futura */
 #define SYS_pwritev2            328  /* Linux: 328 — free in Futura */
+#define SYS_mlock2              325  /* Linux: 325 — free in Futura */
 #define SYS_rt_tgsigqueueinfo   297
 #define SYS_process_vm_readv    437  /* Linux: 310 — Futura: 437 (310/311 used by vhangup/setreuid) */
 #define SYS_process_vm_writev   438  /* Linux: 311 — Futura: 438 */
@@ -1904,6 +1905,13 @@ static int64_t sys_mlock_handler(uint64_t addr, uint64_t len, uint64_t arg3,
     return sys_mlock((const void *)(uintptr_t)addr, (size_t)len);
 }
 
+static int64_t sys_mlock2_handler(uint64_t addr, uint64_t len, uint64_t flags,
+                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_mlock2(const void *addr, size_t len, unsigned int flags);
+    return sys_mlock2((const void *)(uintptr_t)addr, (size_t)len, (unsigned int)flags);
+}
+
 static int64_t sys_munlock_handler(uint64_t addr, uint64_t len, uint64_t arg3,
                                     uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     (void)arg3; (void)arg4; (void)arg5; (void)arg6;
@@ -3221,6 +3229,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_statfs]            = sys_statfs_handler,
     [SYS_fstatfs]           = sys_fstatfs_handler,
     [SYS_mlock]             = sys_mlock_handler,
+    [SYS_mlock2]            = sys_mlock2_handler,
     [SYS_munlock]           = sys_munlock_handler,
     [SYS_mlockall]          = sys_mlockall_handler,
     [SYS_munlockall]        = sys_munlockall_handler,

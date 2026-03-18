@@ -11090,6 +11090,68 @@ static void test_preadv2_bad_flags(void) {
 }
 
 /* ============================================================
+ * Tests 241-243: mlock2
+ * ============================================================ */
+static void test_mlock2_basic(void) {
+    fut_printf("[MISC-TEST] Test 241: mlock2 flags=0 (same as mlock)\n");
+    extern long sys_mlock2(const void *addr, size_t len, unsigned int flags);
+    extern long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long off);
+    extern long sys_munmap(void *addr, size_t len);
+    extern long sys_munlock(const void *addr, size_t len);
+
+    void *p = (void *)sys_mmap(NULL, 4096, 3 /* PROT_READ|PROT_WRITE */,
+                                0x22 /* MAP_PRIVATE|MAP_ANONYMOUS */, -1, 0);
+    if (!p || (long)(uintptr_t)p < 0) {
+        fut_printf("[MISC-TEST] ✗ mlock2: mmap failed: %ld\n", (long)(uintptr_t)p);
+        fut_test_fail(241); return;
+    }
+    long r = sys_mlock2(p, 4096, 0);
+    sys_munlock(p, 4096);
+    sys_munmap(p, 4096);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ mlock2 flags=0: %ld\n", r);
+        fut_test_fail(241); return;
+    }
+    fut_printf("[MISC-TEST] ✓ mlock2 flags=0 → 0\n");
+    fut_test_pass();
+}
+
+static void test_mlock2_onfault(void) {
+    fut_printf("[MISC-TEST] Test 242: mlock2 MLOCK_ONFAULT=1\n");
+    extern long sys_mlock2(const void *addr, size_t len, unsigned int flags);
+    extern long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long off);
+    extern long sys_munmap(void *addr, size_t len);
+    extern long sys_munlock(const void *addr, size_t len);
+
+    void *p = (void *)sys_mmap(NULL, 4096, 3, 0x22, -1, 0);
+    if (!p || (long)(uintptr_t)p < 0) { fut_test_fail(242); return; }
+
+    long r = sys_mlock2(p, 4096, 1 /* MLOCK_ONFAULT */);
+    sys_munlock(p, 4096);
+    sys_munmap(p, 4096);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ mlock2 MLOCK_ONFAULT: %ld\n", r);
+        fut_test_fail(242); return;
+    }
+    fut_printf("[MISC-TEST] ✓ mlock2 MLOCK_ONFAULT → 0\n");
+    fut_test_pass();
+}
+
+static void test_mlock2_bad_flags(void) {
+    fut_printf("[MISC-TEST] Test 243: mlock2 unknown flags → EINVAL\n");
+    extern long sys_mlock2(const void *addr, size_t len, unsigned int flags);
+    /* flags=2 is not MLOCK_ONFAULT (1), should be EINVAL */
+    char buf[64];
+    long r = sys_mlock2(buf, sizeof(buf), 0xFFFF);
+    if (r != -22 /* -EINVAL */) {
+        fut_printf("[MISC-TEST] ✗ mlock2 bad flags: expected EINVAL, got %ld\n", r);
+        fut_test_fail(243); return;
+    }
+    fut_printf("[MISC-TEST] ✓ mlock2 unknown flags → EINVAL\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Tests 234-236: execveat error paths
  * ============================================================ */
 static void test_execveat_invalid_flags(void) {
@@ -11386,6 +11448,9 @@ void fut_misc_test_thread(void *arg) {
     test_preadv2_explicit_offset();        /* Test 238: preadv2 explicit offset, no pos update */
     test_pwritev2_explicit_offset();       /* Test 239: pwritev2 explicit offset patching */
     test_preadv2_bad_flags();              /* Test 240: preadv2/pwritev2 unknown flags → EINVAL */
+    test_mlock2_basic();                   /* Test 241: mlock2 flags=0 (same as mlock) */
+    test_mlock2_onfault();                 /* Test 242: mlock2 MLOCK_ONFAULT accepted */
+    test_mlock2_bad_flags();               /* Test 243: mlock2 unknown flags → EINVAL */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

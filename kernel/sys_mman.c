@@ -245,6 +245,27 @@ long sys_mlock(const void *addr, size_t len) {
     return 0;
 }
 
+/* mlock2 flags */
+#define MLOCK_ONFAULT    1  /* Lock pages only on fault (Futura: same as mlock) */
+#define MLOCK2_FLAGS_VALID  MLOCK_ONFAULT
+
+/**
+ * sys_mlock2 - Lock memory pages with flags (Linux 4.4+)
+ *
+ * @param addr:  Starting address
+ * @param len:   Number of bytes to lock
+ * @param flags: 0 or MLOCK_ONFAULT
+ *
+ * Identical to mlock() for flags=0; MLOCK_ONFAULT is accepted but treated
+ * the same as mlock (Futura has no demand paging, pages are always present).
+ */
+long sys_mlock2(const void *addr, size_t len, unsigned int flags) {
+    if (flags & ~MLOCK2_FLAGS_VALID)
+        return -EINVAL;
+    /* Delegate to sys_mlock (MLOCK_ONFAULT is a no-op in Futura) */
+    return sys_mlock(addr, len);
+}
+
 /**
  * sys_munlock - Unlock memory pages
  *

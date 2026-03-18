@@ -88,6 +88,7 @@ struct test_rusage {
 #define CLKSCHED_TEST_CLOCK_GETTIME      14
 #define CLKSCHED_TEST_TIMER_SIGEV_VALUE  15
 #define CLKSCHED_TEST_TIMER_SI_TIMER     16
+#define CLKSCHED_TEST_ITIMER_VIRTUAL     17
 
 /* PRIO_PROCESS constant (matches sys_sched.c) */
 #define TEST_PRIO_PROCESS  0
@@ -731,6 +732,74 @@ static void test_posix_timer_si_timer(void) {
 }
 
 /* ============================================================
+ * Test 17: setitimer/getitimer ITIMER_VIRTUAL roundtrip
+ * ============================================================ */
+static void test_itimer_virtual(void) {
+    fut_printf("[CLKSCHED-TEST] Test 17: setitimer/getitimer ITIMER_VIRTUAL roundtrip\n");
+
+    /* Arm ITIMER_VIRTUAL with 3 second one-shot */
+    struct itimerval arm;
+    memset(&arm, 0, sizeof(arm));
+    arm.it_value.tv_sec     = 3;
+    arm.it_value.tv_usec    = 0;
+    arm.it_interval.tv_sec  = 1;
+    arm.it_interval.tv_usec = 500000;
+
+    long ret = sys_setitimer(ITIMER_VIRTUAL, &arm, NULL);
+    if (ret != 0) {
+        fut_printf("[CLKSCHED-TEST] ✗ setitimer(VIRTUAL) returned %ld\n", ret);
+        fut_test_fail(CLKSCHED_TEST_ITIMER_VIRTUAL);
+        return;
+    }
+
+    /* Verify backing fields in task struct */
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        fut_test_fail(CLKSCHED_TEST_ITIMER_VIRTUAL);
+        return;
+    }
+    if (task->itimer_virt_value_ms == 0) {
+        fut_printf("[CLKSCHED-TEST] ✗ itimer_virt_value_ms not set after setitimer\n");
+        sys_setitimer(ITIMER_VIRTUAL, &(struct itimerval){{0,0},{0,0}}, NULL);
+        fut_test_fail(CLKSCHED_TEST_ITIMER_VIRTUAL);
+        return;
+    }
+
+    /* Read back via getitimer */
+    struct itimerval cur;
+    memset(&cur, 0, sizeof(cur));
+    ret = sys_getitimer(ITIMER_VIRTUAL, &cur);
+    if (ret != 0) {
+        fut_printf("[CLKSCHED-TEST] ✗ getitimer(VIRTUAL) returned %ld\n", ret);
+        sys_setitimer(ITIMER_VIRTUAL, &(struct itimerval){{0,0},{0,0}}, NULL);
+        fut_test_fail(CLKSCHED_TEST_ITIMER_VIRTUAL);
+        return;
+    }
+
+    if (cur.it_value.tv_sec == 0 && cur.it_value.tv_usec == 0) {
+        fut_printf("[CLKSCHED-TEST] ✗ getitimer(VIRTUAL) it_value is zero\n");
+        sys_setitimer(ITIMER_VIRTUAL, &(struct itimerval){{0,0},{0,0}}, NULL);
+        fut_test_fail(CLKSCHED_TEST_ITIMER_VIRTUAL);
+        return;
+    }
+
+    /* Disarm */
+    struct itimerval disarm;
+    memset(&disarm, 0, sizeof(disarm));
+    sys_setitimer(ITIMER_VIRTUAL, &disarm, NULL);
+
+    if (task->itimer_virt_value_ms != 0) {
+        fut_printf("[CLKSCHED-TEST] ✗ itimer_virt_value_ms not cleared after disarm\n");
+        fut_test_fail(CLKSCHED_TEST_ITIMER_VIRTUAL);
+        return;
+    }
+
+    fut_printf("[CLKSCHED-TEST] ✓ ITIMER_VIRTUAL: armed=%llds interval=%lld.5s, disarmed OK\n",
+               (long long)cur.it_value.tv_sec, (long long)cur.it_interval.tv_sec);
+    fut_test_pass();
+}
+
+/* ============================================================
  * Main test harness thread
  * ============================================================ */
 void fut_clock_sched_test_thread(void *arg) {
@@ -756,6 +825,7 @@ void fut_clock_sched_test_thread(void *arg) {
     test_clock_gettime();
     test_posix_timer_sigev_value();
     test_posix_timer_si_timer();
+    test_itimer_virtual();
 
     fut_printf("[CLKSCHED-TEST] ========================================\n");
     fut_printf("[CLKSCHED-TEST] All clock/sched/timer tests done\n");

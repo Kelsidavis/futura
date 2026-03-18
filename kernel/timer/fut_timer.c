@@ -267,6 +267,11 @@ void fut_timer_tick(void) {
     // Check for expired alarms and deliver SIGALRM
     extern fut_task_t *fut_task_list;
 
+    /* Identify the currently running task for ITIMER_VIRTUAL/PROF */
+    extern fut_thread_t *fut_thread_current(void);
+    fut_thread_t *cur_thread = fut_thread_current();
+    fut_task_t *cur_task = (cur_thread && cur_thread->task) ? cur_thread->task : NULL;
+
     for (fut_task_t *task = fut_task_list; task != nullptr; task = task->next) {
         if (task->alarm_expires_ms > 0 && current_ms >= task->alarm_expires_ms) {
             /* Alarm expired — deliver SIGALRM with si_code=SI_KERNEL */
@@ -283,6 +288,32 @@ void fut_timer_tick(void) {
                 task->alarm_expires_ms = current_ms + task->itimer_real_interval_ms;
             } else {
                 task->alarm_expires_ms = 0;
+            }
+        }
+
+        /* ITIMER_VIRTUAL / ITIMER_PROF: decrement only for the running task.
+         * These approximate virtual/profiling time using wall-clock ticks
+         * since we don't have separate user/kernel mode time accounting. */
+        if (task == cur_task) {
+            /* ITIMER_VIRTUAL: fires SIGVTALRM when user CPU time is exhausted */
+            if (task->itimer_virt_value_ms > 0) {
+                if (task->itimer_virt_value_ms <= 10) {
+                    uint64_t new_val = task->itimer_virt_interval_ms;
+                    task->itimer_virt_value_ms = new_val;
+                    fut_signal_send(task, SIGVTALRM);
+                } else {
+                    task->itimer_virt_value_ms -= 10;
+                }
+            }
+            /* ITIMER_PROF: fires SIGPROF when profiling time (user+sys) expires */
+            if (task->itimer_prof_value_ms > 0) {
+                if (task->itimer_prof_value_ms <= 10) {
+                    uint64_t new_val = task->itimer_prof_interval_ms;
+                    task->itimer_prof_value_ms = new_val;
+                    fut_signal_send(task, SIGPROF);
+                } else {
+                    task->itimer_prof_value_ms -= 10;
+                }
             }
         }
 
@@ -333,10 +364,7 @@ void fut_timer_tick(void) {
     // Only trigger preemptive scheduling if the scheduler has been started
     // (i.e., current_thread != NULL). This prevents premature scheduling
     // before the test harness has created any threads.
-    extern fut_thread_t *fut_thread_current(void);
-    fut_thread_t *current = fut_thread_current();
-
-    if (current != nullptr) {
+    if (cur_thread != nullptr) {
         // Trigger preemptive scheduling
         // This will call fut_switch_context_irq() if a thread switch is needed
         fut_schedule();

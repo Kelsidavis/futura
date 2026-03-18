@@ -349,6 +349,13 @@ static void pb_oct(struct pbuf *b, uint32_t v) {
     for (int i = n - 1; i >= 0; i--) pb_char(b, tmp[i]);
 }
 
+static void pb_hex2(struct pbuf *b, uint8_t v) {
+    /* Print exactly 2 hex digits (for dev major:minor) */
+    static const char hex[] = "0123456789abcdef";
+    pb_char(b, hex[(v >> 4) & 0xf]);
+    pb_char(b, hex[v & 0xf]);
+}
+
 /* ============================================================
  *   Forward Declarations
  * ============================================================ */
@@ -620,15 +627,24 @@ static size_t gen_maps(char *buf, size_t cap, fut_task_t *task) {
         pb_char(&b, ' ');
         /* offset — exactly 8 hex chars (Linux %08llx) */
         pb_hex8(&b, vma->file_offset); pb_char(&b, ' ');
-        /* dev 00:00, inode 0, then pathname */
-        pb_str(&b, "00:00 0");
-        /* pathname: file-backed uses vnode name; anonymous uses region label */
-        if (vma->vnode && vma->vnode->name) {
-            pb_char(&b, '\t');
-            pb_str(&b, vma->vnode->name);
+        /* dev:inode — file-backed: "00:01 <ino>"; anonymous: "00:00 0" */
+        if (vma->vnode) {
+            pb_hex2(&b, 0); pb_char(&b, ':'); pb_hex2(&b, 1);
+            pb_char(&b, ' '); pb_u64(&b, vma->vnode->ino);
+        } else {
+            pb_str(&b, "00:00 0");
+        }
+        /* pathname */
+        if (vma->vnode) {
+            char path_buf[256];
+            char *full = fut_vnode_build_path(vma->vnode, path_buf, sizeof(path_buf));
+            pb_char(&b, ' ');
+            pb_str(&b, full ? full : vma->vnode->name ? vma->vnode->name : "");
+        } else if (vma->flags & VMA_STACK) {
+            pb_str(&b, " [stack]");
         } else if (mm->brk_start && vma->start >= mm->brk_start &&
                    vma->end <= mm->brk_current + 0x1000) {
-            pb_str(&b, "\t[heap]");
+            pb_str(&b, " [heap]");
         }
         pb_char(&b, '\n');
         vma = vma->next;
@@ -667,12 +683,22 @@ static size_t gen_smaps(char *buf, size_t cap, fut_task_t *task) {
         pb_char(&b, (vma->flags & VMA_SHARED) ? 's' : 'p');
         pb_char(&b, ' ');
         pb_hex8(&b, vma->file_offset); pb_char(&b, ' ');
-        pb_str(&b, "00:00 0");
-        if (vma->vnode && vma->vnode->name) {
-            pb_char(&b, '\t'); pb_str(&b, vma->vnode->name);
+        if (vma->vnode) {
+            pb_hex2(&b, 0); pb_char(&b, ':'); pb_hex2(&b, 1);
+            pb_char(&b, ' '); pb_u64(&b, vma->vnode->ino);
+        } else {
+            pb_str(&b, "00:00 0");
+        }
+        if (vma->vnode) {
+            char path_buf[256];
+            char *full = fut_vnode_build_path(vma->vnode, path_buf, sizeof(path_buf));
+            pb_char(&b, ' ');
+            pb_str(&b, full ? full : vma->vnode->name ? vma->vnode->name : "");
+        } else if (vma->flags & VMA_STACK) {
+            pb_str(&b, " [stack]");
         } else if (mm->brk_start && vma->start >= mm->brk_start &&
                    vma->end <= mm->brk_current + 0x1000) {
-            pb_str(&b, "\t[heap]");
+            pb_str(&b, " [heap]");
         }
         pb_char(&b, '\n');
 

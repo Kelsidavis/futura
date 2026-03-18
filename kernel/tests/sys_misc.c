@@ -16998,6 +16998,111 @@ static void test_proc_stat_sigmask(void) {
 }
 
 /* ============================================================
+ * Test 355: /proc/self/maps pathname format — space separator, no tabs
+ * ============================================================ */
+static void test_proc_maps_no_tab(void) {
+    fut_printf("[MISC-TEST] Test 355: /proc/self/maps uses space before pathname (no tabs)\n");
+
+    int fd = fut_vfs_open("/proc/self/maps", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 355: open /proc/self/maps failed: %d\n", fd);
+        fut_test_fail(355);
+        return;
+    }
+
+    char buf[1024];
+    long n = fut_vfs_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+
+    if (n <= 0) {
+        fut_printf("[MISC-TEST] ✗ Test 355: read /proc/self/maps failed: %ld\n", n);
+        fut_test_fail(355);
+        return;
+    }
+    buf[n] = '\0';
+
+    /* Verify no tab character appears in maps output.
+     * Old code used pb_char(&b, '\t') before pathnames; new code uses space. */
+    for (long i = 0; i < n; i++) {
+        if (buf[i] == '\t') {
+            fut_printf("[MISC-TEST] ✗ Test 355: tab character found at offset %ld in /proc/self/maps\n", i);
+            fut_test_fail(355);
+            return;
+        }
+    }
+    fut_printf("[MISC-TEST] ✓ Test 355: /proc/self/maps: no tabs, space-separated pathnames (%ld bytes)\n", n);
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 356: /proc/self/maps anonymous entries have correct dev:inode "00:00 0"
+ * ============================================================ */
+static void test_proc_maps_anon_devino(void) {
+    fut_printf("[MISC-TEST] Test 356: /proc/self/maps anonymous entries show dev:inode format\n");
+
+    int fd = fut_vfs_open("/proc/self/maps", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 356: open /proc/self/maps failed: %d\n", fd);
+        fut_test_fail(356);
+        return;
+    }
+
+    char buf[2048];
+    long n = fut_vfs_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+
+    if (n <= 0) {
+        fut_printf("[MISC-TEST] ✗ Test 356: read /proc/self/maps failed: %ld\n", n);
+        fut_test_fail(356);
+        return;
+    }
+    buf[n] = '\0';
+
+    /* Each line: "addr-addr perms offset dev inode [label]\n"
+     * For anonymous (no vnode): dev="00:00", inode="0"
+     * For file-backed: dev="00:01", inode=<nonzero>
+     * Verify every line has a colon in the dev field (not the old "00:00 0" stuck-together format).
+     * Parse field 4 (0-indexed, space-delimited) and check it contains ':'. */
+    int lines_checked = 0;
+    int lines_ok = 0;
+    char *line = buf;
+    while (line && *line) {
+        char *nl = line;
+        while (*nl && *nl != '\n') nl++;
+        /* Find field 4 (dev): skip fields 0-3 separated by spaces */
+        char *p = line;
+        int field = 0;
+        while (p < nl && field < 4) {
+            while (p < nl && *p == ' ') p++;  /* skip spaces */
+            while (p < nl && *p != ' ') p++;  /* skip field */
+            field++;
+        }
+        while (p < nl && *p == ' ') p++;  /* skip spaces before dev field */
+        /* p now points to dev field (e.g. "00:00" or "00:01") */
+        if (p < nl && (nl - p) >= 5) {
+            /* Verify colon at position 2 */
+            if (p[2] == ':') {
+                lines_ok++;
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 356: dev field has no colon: %.5s\n", p);
+                fut_test_fail(356);
+                return;
+            }
+            lines_checked++;
+        }
+        line = (*nl == '\n') ? nl + 1 : NULL;
+    }
+
+    if (lines_checked == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 356: /proc/self/maps: no VMA lines (empty mm)\n");
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 356: /proc/self/maps: %d lines, all have correct dev:inode format\n",
+                   lines_checked);
+    }
+    fut_test_pass();
+}
+
+/* ============================================================
  * Tests 352-353: SO_SNDBUF / SO_RCVBUF set/get round-trip
  * ============================================================ */
 static void test_so_sndbuf_roundtrip(void) {
@@ -17524,6 +17629,8 @@ void fut_misc_test_thread(void *arg) {
     test_so_sndbuf_roundtrip();          /* Test 352: SO_SNDBUF setsockopt→getsockopt doubles value */
     test_so_rcvbuf_roundtrip();          /* Test 353: SO_RCVBUF setsockopt→getsockopt doubles value */
     test_proc_stat_sigmask();            /* Test 354: /proc/self/stat sigcatch field reflects handlers */
+    test_proc_maps_no_tab();             /* Test 355: /proc/self/maps uses space before pathname (no tabs) */
+    test_proc_maps_anon_devino();        /* Test 356: /proc/self/maps anonymous entries have dev:inode format */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

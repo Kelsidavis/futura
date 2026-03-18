@@ -777,6 +777,11 @@ static int stage_stack_pages(fut_mm_t *mm, uint64_t *out_stack_top) {
         }
     }
 
+    /* Register the stack VMA so it appears as [stack] in /proc/pid/maps.
+     * Use integer constants (3 = PROT_READ|PROT_WRITE) since sys/mman.h
+     * is not included in this compilation unit's include set. */
+    fut_mm_add_vma(mm, base, USER_STACK_TOP, 3 /* PROT_READ|PROT_WRITE */, VMA_STACK);
+
     *out_stack_top = USER_STACK_TOP;
     return 0;
 }
@@ -1987,6 +1992,9 @@ static int stage_stack_pages(fut_mm_t *mm, uint64_t *out_stack_top) {
     fut_printf("[STACK] Successfully staged %d stack pages, stack_top=0x%llx\n",
                (int)USER_STACK_PAGES, (unsigned long long)USER_STACK_TOP);
 #endif
+
+    /* Register the stack VMA so it appears as [stack] in /proc/pid/maps */
+    fut_mm_add_vma(mm, stack_addr, USER_STACK_TOP, PROT_READ | PROT_WRITE, VMA_STACK);
 
     *out_stack_top = USER_STACK_TOP;
     return 0;

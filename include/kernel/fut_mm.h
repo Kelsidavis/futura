@@ -32,6 +32,7 @@ struct fut_vnode;
 #define VMA_COW       0x1000  /* Copy-on-write pages */
 #define VMA_SHARED    0x2000  /* Shared mapping (not private) */
 #define VMA_LOCKED    0x4000  /* Pages locked in memory (mlock) */
+#define VMA_STACK     0x8000  /* Initial user stack region ([stack] in /proc/maps) */
 
 /* Virtual Memory Area - represents a contiguous mapped region */
 struct fut_vma {

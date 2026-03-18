@@ -1464,6 +1464,18 @@ static int ramfs_link(struct fut_vnode *old_vnode, const char *oldpath, const ch
     new_entry->next = new_parent_node->dir.entries;
     new_parent_node->dir.entries = new_entry;
 
+    /* If the file had nlinks==0 (anonymous O_TMPFILE promoted to named),
+     * the dir-entry refcount was already dropped by a prior ramfs_unlink.
+     * Re-take it now so the new dir entry holds a proper vnode ref.
+     * Also clear the deferred-free flag since the file is now named again. */
+    struct ramfs_node *old_node = (struct ramfs_node *)old_vnode->fs_data;
+    if (old_vnode->nlinks == 0) {
+        fut_vnode_ref(old_vnode);  /* restore dir-entry ref */
+        if (old_node && old_node->deleted) {
+            old_node->deleted = 0;
+        }
+    }
+
     /* Increment link count on the vnode */
     old_vnode->nlinks++;
 

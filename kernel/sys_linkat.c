@@ -125,8 +125,8 @@ long sys_linkat(int olddirfd, const char *oldpath, int newdirfd, const char *new
         return -ESRCH;
     }
 
-    /* Phase 1: Validate flags - only AT_SYMLINK_FOLLOW is valid */
-    const int VALID_FLAGS = AT_SYMLINK_FOLLOW;
+    /* Phase 1: Validate flags */
+    const int VALID_FLAGS = AT_SYMLINK_FOLLOW | AT_EMPTY_PATH;
     if (local_flags & ~VALID_FLAGS) {
         fut_printf("[LINKAT] linkat(olddirfd=%d, newdirfd=%d, flags=0x%x) -> EINVAL (invalid flags)\n",
                    local_olddirfd, local_newdirfd, local_flags);
@@ -175,7 +175,46 @@ long sys_linkat(int olddirfd, const char *oldpath, int newdirfd, const char *new
         return -ENAMETOOLONG;
     }
 
-    /* Validate oldpath is not empty */
+    /* AT_EMPTY_PATH: olddirfd is the file fd, oldpath must be "".
+     * Creates a named hard link to an open (possibly anonymous) file. */
+    if ((local_flags & AT_EMPTY_PATH) && oldpath_buf[0] == '\0') {
+        /* Resolve newpath */
+        char resolved_newpath[256];
+        int rret = fut_vfs_resolve_at(task, local_newdirfd, newpath_buf,
+                                       resolved_newpath, sizeof(resolved_newpath));
+        if (rret < 0) {
+            fut_printf("[LINKAT] AT_EMPTY_PATH resolve newpath failed: %d\n", rret);
+            return rret;
+        }
+        if (newpath_buf[0] == '\0') {
+            return -ENOENT;
+        }
+
+        /* Get the vnode from olddirfd */
+        if (local_olddirfd < 0 || local_olddirfd >= task->max_fds || !task->fd_table) {
+            return -EBADF;
+        }
+        struct fut_file *src_file = task->fd_table[local_olddirfd];
+        if (!src_file || !src_file->vnode) {
+            return -EBADF;
+        }
+        struct fut_vnode *src_vnode = src_file->vnode;
+        if (src_vnode->type == VN_DIR) {
+            return -EPERM;  /* Cannot hard-link directories */
+        }
+
+        /* Use the vnode's ops->link to add a directory entry */
+        if (!src_vnode->ops || !src_vnode->ops->link) {
+            return -ENOSYS;
+        }
+        int ret = src_vnode->ops->link(src_vnode, "", resolved_newpath);
+        if (ret == 0)
+            fut_printf("[LINKAT] AT_EMPTY_PATH: fd=%d linked to '%s'\n",
+                       local_olddirfd, resolved_newpath);
+        return ret;
+    }
+
+    /* Validate oldpath is not empty (non-AT_EMPTY_PATH case) */
     if (oldpath_buf[0] == '\0') {
         fut_printf("[LINKAT] linkat(olddirfd=%d, oldpath=\"\" [empty]) -> EINVAL (empty oldpath)\n",
                    local_olddirfd);

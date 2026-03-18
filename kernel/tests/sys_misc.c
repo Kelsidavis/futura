@@ -15545,6 +15545,74 @@ static void test_unix_dgram_sendto(void) {
     fut_test_pass();
 }
 
+static void test_linkat_empty_path(void) {
+    fut_printf("[MISC-TEST] Test 331: linkat AT_EMPTY_PATH promotes O_TMPFILE to named file\n");
+    extern long sys_openat(int dirfd, const char *pathname, int flags, int mode);
+    extern long sys_linkat(int olddirfd, const char *oldpath, int newdirfd,
+                           const char *newpath, int flags);
+    extern ssize_t sys_write(int fd, const void *buf, size_t count);
+    extern ssize_t sys_read(int fd, void *buf, size_t count);
+    extern long sys_unlink(const char *path);
+    extern int64_t fut_vfs_lseek(int fd, int64_t offset, int whence);
+
+#ifndef O_TMPFILE
+#define O_TMPFILE (020000000 | 00200000)
+#endif
+#ifndef AT_FDCWD
+#define AT_FDCWD (-100)
+#endif
+#ifndef AT_EMPTY_PATH
+#define AT_EMPTY_PATH 0x1000
+#endif
+
+    const char dest[] = "/tmp/promoted_tmpfile";
+    sys_unlink(dest); /* ensure clean state */
+
+    /* Create an O_TMPFILE anonymous file */
+    int fd = (int)sys_openat(AT_FDCWD, "/tmp", O_TMPFILE | O_RDWR, 0600);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ AT_EMPTY_PATH: O_TMPFILE failed: %d\n", fd);
+        fut_test_fail(331); return;
+    }
+
+    /* Write content to anonymous file */
+    const char data[] = "promoted";
+    ssize_t nw = sys_write(fd, data, 8);
+    if (nw != 8) {
+        fut_printf("[MISC-TEST] ✗ AT_EMPTY_PATH: write failed: %zd\n", nw);
+        fut_vfs_close(fd); fut_test_fail(331); return;
+    }
+
+    /* Promote to named file via linkat(fd, "", AT_FDCWD, dest, AT_EMPTY_PATH) */
+    long lr = sys_linkat(fd, "", AT_FDCWD, dest, AT_EMPTY_PATH);
+    if (lr != 0) {
+        fut_printf("[MISC-TEST] ✗ AT_EMPTY_PATH: linkat returned %ld\n", lr);
+        fut_vfs_close(fd); fut_test_fail(331); return;
+    }
+
+    /* Close the original fd */
+    fut_vfs_close(fd);
+
+    /* Open the named file and verify content */
+    int fd2 = (int)fut_vfs_open(dest, O_RDONLY, 0);
+    if (fd2 < 0) {
+        fut_printf("[MISC-TEST] ✗ AT_EMPTY_PATH: open promoted file failed: %d\n", fd2);
+        sys_unlink(dest); fut_test_fail(331); return;
+    }
+    char rbuf[16] = {0};
+    ssize_t nr = sys_read(fd2, rbuf, 8);
+    fut_vfs_close(fd2);
+
+    if (nr != 8 || __builtin_memcmp(rbuf, data, 8) != 0) {
+        fut_printf("[MISC-TEST] ✗ AT_EMPTY_PATH: content mismatch nr=%zd buf='%s'\n", nr, rbuf);
+        sys_unlink(dest); fut_test_fail(331); return;
+    }
+
+    sys_unlink(dest);
+    fut_printf("[MISC-TEST] ✓ AT_EMPTY_PATH: O_TMPFILE promoted to named file, content verified\n");
+    fut_test_pass();
+}
+
 static void test_sendfile_socket(void) {
     fut_printf("[MISC-TEST] Test 330: sendfile file→socket\n");
     extern long sys_sendfile(int out_fd, int in_fd, uint64_t *offset, size_t count);
@@ -16006,6 +16074,7 @@ void fut_misc_test_thread(void *arg) {
     test_shutdown_shut_wr_eof();         /* Test 328: shutdown(SHUT_WR) signals EOF to peer's recv() */
     test_o_tmpfile_basic();              /* Test 329: O_TMPFILE creates anonymous file, survives close */
     test_sendfile_socket();              /* Test 330: sendfile(socket, file, ...) delivers data via socket */
+    test_linkat_empty_path();            /* Test 331: linkat AT_EMPTY_PATH promotes O_TMPFILE to named file */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

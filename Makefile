@@ -515,6 +515,7 @@ KERNEL_SOURCES := \
     kernel/sys_syslog.c \
     kernel/sys_reboot.c \
     kernel/sys_memfd.c \
+    kernel/sys_semaphore.c \
     kernel/sys_sigtimedwait.c \
     kernel/sys_membarrier.c \
     kernel/sys_copy_file_range.c \

@@ -9639,6 +9639,204 @@ static void test_scm_rights_fd_passing(void) {
 }
 
 /* ============================================================
+ * Tests 205-207: SysV semaphores — semget/semop/semctl
+ *
+ * Uses inline structs to avoid header conflicts.
+ * ============================================================ */
+
+/* Inline types for SysV semaphore tests */
+#ifndef _TEST_SEMBUF_DEFINED
+#define _TEST_SEMBUF_DEFINED
+struct test_sembuf {
+    unsigned short sem_num;
+    short          sem_op;
+    short          sem_flg;
+};
+struct test_semid_ds {
+    struct {
+        int          key;
+        unsigned int uid, gid, cuid, cgid;
+        unsigned int mode;
+        unsigned short seq, pad;
+    } sem_perm;
+    unsigned long sem_otime;
+    unsigned long sem_ctime;
+    unsigned long sem_nsems;
+};
+#define TEST_IPC_PRIVATE  0L
+#define TEST_IPC_CREAT    0x0200
+#define TEST_IPC_EXCL     0x0400
+#define TEST_IPC_RMID     0
+#define TEST_IPC_STAT     2
+#define TEST_SEM_GETVAL   12
+#define TEST_SEM_SETVAL   16
+#define TEST_SEM_GETALL   13
+#define TEST_SEM_SETALL   17
+#define TEST_IPC_NOWAIT   0x0800
+#endif /* _TEST_SEMBUF_DEFINED */
+
+/* Test 205: semget/semctl SETVAL/GETVAL/IPC_RMID basic round-trip */
+static void test_semget_basic(void) {
+    fut_printf("[MISC-TEST] Test 205: semget/semctl SETVAL/GETVAL basic\n");
+    extern long sys_semget(long key, int nsems, int semflg);
+    extern long sys_semctl(int semid, int semnum, int cmd, unsigned long arg);
+
+    /* Create a private semaphore set with 2 semaphores */
+    long semid = sys_semget(TEST_IPC_PRIVATE, 2, 0666 | TEST_IPC_CREAT);
+    if (semid < 0) {
+        fut_printf("[MISC-TEST] ✗ semget failed: %ld\n", semid);
+        fut_test_fail(205); return;
+    }
+
+    /* Set semaphore 0 to value 7 */
+    long r = sys_semctl((int)semid, 0, TEST_SEM_SETVAL, 7);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ semctl SETVAL failed: %ld\n", r);
+        sys_semctl((int)semid, 0, TEST_IPC_RMID, 0);
+        fut_test_fail(205); return;
+    }
+
+    /* Set semaphore 1 to value 3 */
+    r = sys_semctl((int)semid, 1, TEST_SEM_SETVAL, 3);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ semctl SETVAL sem[1] failed: %ld\n", r);
+        sys_semctl((int)semid, 0, TEST_IPC_RMID, 0);
+        fut_test_fail(205); return;
+    }
+
+    /* Verify GETVAL for both semaphores */
+    long v0 = sys_semctl((int)semid, 0, TEST_SEM_GETVAL, 0);
+    long v1 = sys_semctl((int)semid, 1, TEST_SEM_GETVAL, 0);
+    if (v0 != 7 || v1 != 3) {
+        fut_printf("[MISC-TEST] ✗ GETVAL: sem[0]=%ld (want 7), sem[1]=%ld (want 3)\n", v0, v1);
+        sys_semctl((int)semid, 0, TEST_IPC_RMID, 0);
+        fut_test_fail(205); return;
+    }
+
+    /* Verify IPC_STAT returns correct nsems */
+    struct test_semid_ds ds;
+    __builtin_memset(&ds, 0, sizeof(ds));
+    r = sys_semctl((int)semid, 0, TEST_IPC_STAT, (unsigned long)(uintptr_t)&ds);
+    if (r != 0 || ds.sem_nsems != 2) {
+        fut_printf("[MISC-TEST] ✗ IPC_STAT: ret=%ld nsems=%lu (want 2)\n", r, ds.sem_nsems);
+        sys_semctl((int)semid, 0, TEST_IPC_RMID, 0);
+        fut_test_fail(205); return;
+    }
+
+    /* Remove the set */
+    sys_semctl((int)semid, 0, TEST_IPC_RMID, 0);
+
+    fut_printf("[MISC-TEST] ✓ semget/SETVAL/GETVAL/IPC_STAT/IPC_RMID OK\n");
+    fut_test_pass();
+}
+
+/* Test 206: semop increment/decrement operations */
+static void test_semop_basic(void) {
+    fut_printf("[MISC-TEST] Test 206: semop increment/decrement\n");
+    extern long sys_semget(long key, int nsems, int semflg);
+    extern long sys_semctl(int semid, int semnum, int cmd, unsigned long arg);
+    extern long sys_semop(int semid, void *sops, unsigned int nsops);
+
+    long semid = sys_semget(TEST_IPC_PRIVATE, 1, 0666 | TEST_IPC_CREAT);
+    if (semid < 0) {
+        fut_printf("[MISC-TEST] ✗ semget failed: %ld\n", semid);
+        fut_test_fail(206); return;
+    }
+
+    /* Initialize to 10 */
+    sys_semctl((int)semid, 0, TEST_SEM_SETVAL, 10);
+
+    /* semop: -3 → should become 7 */
+    struct test_sembuf op1 = { .sem_num = 0, .sem_op = -3, .sem_flg = 0 };
+    long r = sys_semop((int)semid, &op1, 1);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ semop -3 failed: %ld\n", r);
+        sys_semctl((int)semid, 0, TEST_IPC_RMID, 0);
+        fut_test_fail(206); return;
+    }
+    long v = sys_semctl((int)semid, 0, TEST_SEM_GETVAL, 0);
+    if (v != 7) {
+        fut_printf("[MISC-TEST] ✗ after semop -3: val=%ld (want 7)\n", v);
+        sys_semctl((int)semid, 0, TEST_IPC_RMID, 0);
+        fut_test_fail(206); return;
+    }
+
+    /* semop: +5 → should become 12 */
+    struct test_sembuf op2 = { .sem_num = 0, .sem_op = 5, .sem_flg = 0 };
+    r = sys_semop((int)semid, &op2, 1);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ semop +5 failed: %ld\n", r);
+        sys_semctl((int)semid, 0, TEST_IPC_RMID, 0);
+        fut_test_fail(206); return;
+    }
+    v = sys_semctl((int)semid, 0, TEST_SEM_GETVAL, 0);
+    if (v != 12) {
+        fut_printf("[MISC-TEST] ✗ after semop +5: val=%ld (want 12)\n", v);
+        sys_semctl((int)semid, 0, TEST_IPC_RMID, 0);
+        fut_test_fail(206); return;
+    }
+
+    /* semop below zero with IPC_NOWAIT: should return EAGAIN */
+    struct test_sembuf op3 = { .sem_num = 0, .sem_op = -20, .sem_flg = TEST_IPC_NOWAIT };
+    r = sys_semop((int)semid, &op3, 1);
+    if (r != -11 /* -EAGAIN */) {
+        fut_printf("[MISC-TEST] ✗ semop -20 IPC_NOWAIT: got %ld (want -EAGAIN=-11)\n", r);
+        sys_semctl((int)semid, 0, TEST_IPC_RMID, 0);
+        fut_test_fail(206); return;
+    }
+
+    sys_semctl((int)semid, 0, TEST_IPC_RMID, 0);
+    fut_printf("[MISC-TEST] ✓ semop: inc/dec/EAGAIN all correct\n");
+    fut_test_pass();
+}
+
+/* Test 207: GETALL/SETALL bulk operations */
+static void test_semctl_getall_setall(void) {
+    fut_printf("[MISC-TEST] Test 207: semctl GETALL/SETALL bulk ops\n");
+    extern long sys_semget(long key, int nsems, int semflg);
+    extern long sys_semctl(int semid, int semnum, int cmd, unsigned long arg);
+
+    long semid = sys_semget(TEST_IPC_PRIVATE, 4, 0666 | TEST_IPC_CREAT);
+    if (semid < 0) {
+        fut_printf("[MISC-TEST] ✗ semget(4) failed: %ld\n", semid);
+        fut_test_fail(207); return;
+    }
+
+    /* SETALL: set all 4 semaphores via array */
+    unsigned short set_vals[4] = {10, 20, 30, 40};
+    long r = sys_semctl((int)semid, 0, TEST_SEM_SETALL,
+                        (unsigned long)(uintptr_t)set_vals);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ semctl SETALL failed: %ld\n", r);
+        sys_semctl((int)semid, 0, TEST_IPC_RMID, 0);
+        fut_test_fail(207); return;
+    }
+
+    /* GETALL: read them back */
+    unsigned short get_vals[4] = {0, 0, 0, 0};
+    r = sys_semctl((int)semid, 0, TEST_SEM_GETALL,
+                   (unsigned long)(uintptr_t)get_vals);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ semctl GETALL failed: %ld\n", r);
+        sys_semctl((int)semid, 0, TEST_IPC_RMID, 0);
+        fut_test_fail(207); return;
+    }
+
+    for (int i = 0; i < 4; i++) {
+        if (get_vals[i] != set_vals[i]) {
+            fut_printf("[MISC-TEST] ✗ GETALL[%d]=%u want %u\n",
+                       i, get_vals[i], set_vals[i]);
+            sys_semctl((int)semid, 0, TEST_IPC_RMID, 0);
+            fut_test_fail(207); return;
+        }
+    }
+
+    sys_semctl((int)semid, 0, TEST_IPC_RMID, 0);
+    fut_printf("[MISC-TEST] ✓ semctl GETALL/SETALL: 4 semaphores round-trip OK\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test 199: /proc/stat — cpu line and ctxt/btime present
  * ============================================================ */
 static void test_proc_stat_global(void) {
@@ -9940,6 +10138,9 @@ void fut_misc_test_thread(void *arg) {
     test_proc_net_dev();                   /* Test 202: /proc/net/dev readable */
     test_proc_net_tcp();                   /* Test 203: /proc/net/tcp readable */
     test_scm_rights_fd_passing();          /* Test 204: SCM_RIGHTS FD passing over AF_UNIX */
+    test_semget_basic();                   /* Test 205: semget/SETVAL/GETVAL/IPC_RMID round-trip */
+    test_semop_basic();                    /* Test 206: semop inc/dec/EAGAIN */
+    test_semctl_getall_setall();           /* Test 207: semctl GETALL/SETALL bulk ops */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -12615,6 +12615,65 @@ static void test_proc_net_unix_sockstat(void) {
     fut_test_pass();
 }
 
+static void test_proc_sys_security_net(void) {
+    fut_printf("[MISC-TEST] Test 284: /proc/sys/kernel/{perf_event_paranoid,kptr_restrict} + /proc/net/arp\n");
+
+    extern ssize_t sys_read(int fd, void *buf, size_t count);
+    char buf[64];
+
+    /* perf_event_paranoid: should be a single digit */
+    int fd = fut_vfs_open("/proc/sys/kernel/perf_event_paranoid", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 284: open perf_event_paranoid failed: %d\n", fd);
+        fut_test_fail(284); return;
+    }
+    long n = (long)sys_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    if (n <= 0 || buf[0] < '0' || buf[0] > '9') {
+        fut_printf("[MISC-TEST] ✗ Test 284: perf_event_paranoid bad value\n");
+        fut_test_fail(284); return;
+    }
+    buf[n] = '\0';
+    fut_printf("[MISC-TEST] ✓ /proc/sys/kernel/perf_event_paranoid = %s", buf);
+
+    /* kptr_restrict: should be a single digit */
+    fd = fut_vfs_open("/proc/sys/kernel/kptr_restrict", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 284: open kptr_restrict failed: %d\n", fd);
+        fut_test_fail(284); return;
+    }
+    n = (long)sys_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    if (n <= 0) {
+        fut_printf("[MISC-TEST] ✗ Test 284: kptr_restrict empty\n");
+        fut_test_fail(284); return;
+    }
+    buf[n] = '\0';
+    fut_printf("[MISC-TEST] ✓ /proc/sys/kernel/kptr_restrict = %s", buf);
+
+    /* /proc/net/arp: should have the "IP address" header */
+    fd = fut_vfs_open("/proc/net/arp", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 284: open /proc/net/arp failed: %d\n", fd);
+        fut_test_fail(284); return;
+    }
+    n = (long)sys_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    if (n <= 0) {
+        fut_printf("[MISC-TEST] ✗ Test 284: /proc/net/arp empty\n");
+        fut_test_fail(284); return;
+    }
+    buf[n] = '\0';
+    /* Should start with "IP address" */
+    if (buf[0] != 'I' || buf[1] != 'P') {
+        fut_printf("[MISC-TEST] ✗ Test 284: /proc/net/arp bad header: %.32s\n", buf);
+        fut_test_fail(284); return;
+    }
+    fut_printf("[MISC-TEST] ✓ /proc/net/arp has IP address header\n");
+
+    fut_test_pass();
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -12905,6 +12964,7 @@ void fut_misc_test_thread(void *arg) {
     test_proc_maps_format();              /* Test 281: /proc/self/maps offset is 8 hex chars */
     test_proc_sys_kernel_misc();          /* Test 282: randomize_va_space + domainname */
     test_proc_net_unix_sockstat();        /* Test 283: /proc/net/unix + /proc/net/sockstat */
+    test_proc_sys_security_net();         /* Test 284: perf_event_paranoid, kptr_restrict, arp */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

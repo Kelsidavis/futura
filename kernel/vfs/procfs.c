@@ -146,6 +146,11 @@ enum procfs_kind {
     PROC_SYS_DOMAINNAME,   /* /proc/sys/kernel/domainname */
     PROC_NET_UNIX,         /* /proc/net/unix */
     PROC_NET_SOCKSTAT,     /* /proc/net/sockstat */
+    PROC_SYS_PERF_PARANOID,/* /proc/sys/kernel/perf_event_paranoid */
+    PROC_SYS_KPTR_RESTRICT,/* /proc/sys/kernel/kptr_restrict */
+    PROC_SYS_DMESG_RESTRICT,/* /proc/sys/kernel/dmesg_restrict */
+    PROC_SYS_NET_IP_FORWARD, /* /proc/sys/net/ipv4/ip_forward */
+    PROC_NET_ARP,          /* /proc/net/arp */
 };
 
 typedef struct {
@@ -233,8 +238,13 @@ typedef struct {
 #define PROC_INO_SYS_NET_TCP_WMEM    279ULL
 #define PROC_INO_SYS_RANDOMIZE_VA    280ULL
 #define PROC_INO_SYS_DOMAINNAME      281ULL
+#define PROC_INO_SYS_PERF_PARANOID   282ULL
+#define PROC_INO_SYS_KPTR_RESTRICT   283ULL
+#define PROC_INO_SYS_DMESG_RESTRICT  284ULL
+#define PROC_INO_SYS_NET_IP_FORWARD  285ULL
 #define PROC_INO_NET_UNIX            19ULL
 #define PROC_INO_NET_SOCKSTAT        20ULL
+#define PROC_INO_NET_ARP             21ULL
 
 /* Per-PID: pid * 100 + offset */
 #define PROC_INO_PID_DIR(p)    (1000ULL + (uint64_t)(p) * 100 + 0)
@@ -1146,6 +1156,15 @@ static size_t gen_net_unix(char *buf, size_t cap) {
     return b.pos;
 }
 
+static size_t gen_net_arp(char *buf, size_t cap) {
+    /* /proc/net/arp — ARP table.
+     * Used by arp(8), ip neigh, network diagnostic tools.
+     * Header matches Linux kernel format. Empty table is valid. */
+    struct pbuf b = { buf, 0, cap };
+    pb_str(&b, "IP address       HW type     Flags       HW address            Mask     Device\n");
+    return b.pos;
+}
+
 static size_t gen_net_sockstat(char *buf, size_t cap) {
     /* /proc/net/sockstat — socket usage statistics.
      * Read by ss, netstat, systemd, and glibc resolver. */
@@ -1523,6 +1542,25 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
         case PROC_SYS_DOMAINNAME:
             /* NIS domain name — "(none)" when not configured */
             total = gen_sysctl_str(tmp, GEN_BUF, "(none)");
+            break;
+        case PROC_SYS_PERF_PARANOID:
+            /* 2 = only unprivileged userspace sampling; checked by gdb/sanitizers */
+            total = gen_sysctl_str(tmp, GEN_BUF, "2");
+            break;
+        case PROC_SYS_KPTR_RESTRICT:
+            /* 1 = hide kernel pointers from non-root (default on modern Linux) */
+            total = gen_sysctl_str(tmp, GEN_BUF, "1");
+            break;
+        case PROC_SYS_DMESG_RESTRICT:
+            /* 0 = unrestricted dmesg access */
+            total = gen_sysctl_str(tmp, GEN_BUF, "0");
+            break;
+        case PROC_SYS_NET_IP_FORWARD:
+            /* 0 = IP forwarding disabled */
+            total = gen_sysctl_str(tmp, GEN_BUF, "0");
+            break;
+        case PROC_NET_ARP:
+            total = gen_net_arp(tmp, GEN_BUF);
             break;
         default:
             fut_free(tmp);
@@ -1969,6 +2007,11 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0100444, PROC_NET_SOCKSTAT, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "arp")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_NET_ARP,
+                                          0100444, PROC_NET_ARP, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         return -ENOENT;
     }
 
@@ -2063,6 +2106,11 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
         if (STREQ(name, "tcp_wmem")) {
             *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_NET_TCP_WMEM,
                                           0100644, PROC_SYS_TCP_WMEM, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "ip_forward")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_NET_IP_FORWARD,
+                                          0100644, PROC_SYS_NET_IP_FORWARD, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
         return -ENOENT;
@@ -2162,6 +2210,21 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
         if (STREQ(name, "domainname")) {
             *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_DOMAINNAME,
                                           0100644, PROC_SYS_DOMAINNAME, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "perf_event_paranoid")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_PERF_PARANOID,
+                                          0100644, PROC_SYS_PERF_PARANOID, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "kptr_restrict")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_KPTR_RESTRICT,
+                                          0100644, PROC_SYS_KPTR_RESTRICT, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "dmesg_restrict")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_DMESG_RESTRICT,
+                                          0100644, PROC_SYS_DMESG_RESTRICT, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
         return -ENOENT;
@@ -2535,18 +2598,18 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
 
     if (dn->kind == PROC_NET_DIR) {
         static const char *e[] = { ".", "..", "dev", "route", "tcp", "udp",
-                                   "if_inet6", "unix", "sockstat" };
+                                   "if_inet6", "unix", "sockstat", "arp" };
         static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
-                                     FUT_VDIR_TYPE_REG };
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG };
         static const uint64_t i[] = { PROC_INO_NET_DIR, PROC_INO_ROOT,
                                       PROC_INO_NET_DEV, PROC_INO_NET_ROUTE,
                                       PROC_INO_NET_TCP, PROC_INO_NET_UDP,
                                       PROC_INO_NET_IF6, PROC_INO_NET_UNIX,
-                                      PROC_INO_NET_SOCKSTAT };
-        if (idx < 9) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+                                      PROC_INO_NET_SOCKSTAT, PROC_INO_NET_ARP };
+        if (idx < 10) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
         return -ENOENT;
     }
 
@@ -2590,16 +2653,18 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
     if (dn->kind == PROC_SYS_NET_IPV4_DIR) {
         static const char *e[] = { ".", "..", "ip_local_port_range",
                                    "tcp_fin_timeout", "tcp_syncookies",
-                                   "tcp_rmem", "tcp_wmem" };
+                                   "tcp_rmem", "tcp_wmem", "ip_forward" };
         static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG,
-                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG };
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_REG };
         static const uint64_t i[] = { PROC_INO_SYS_NET_IPV4_DIR, PROC_INO_SYS_NET_DIR,
                                       PROC_INO_SYS_NET_PORT_RANGE, PROC_INO_SYS_NET_FIN_TIMEOUT,
                                       PROC_INO_SYS_NET_SYNCOOKIES,
-                                      PROC_INO_SYS_NET_TCP_RMEM, PROC_INO_SYS_NET_TCP_WMEM };
-        if (idx < 7) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+                                      PROC_INO_SYS_NET_TCP_RMEM, PROC_INO_SYS_NET_TCP_WMEM,
+                                      PROC_INO_SYS_NET_IP_FORWARD };
+        if (idx < 8) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
         return -ENOENT;
     }
 
@@ -2610,7 +2675,9 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                    "msgmax", "msgmnb", "msgmni",
                                    "ngroups_max", "cap_last_cap",
                                    "threads-max", "printk", "yama",
-                                   "randomize_va_space", "domainname" };
+                                   "randomize_va_space", "domainname",
+                                   "perf_event_paranoid", "kptr_restrict",
+                                   "dmesg_restrict" };
         static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
@@ -2622,7 +2689,9 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_DIR,
-                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG };
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_REG };
         static const uint64_t i[] = { PROC_INO_SYS_KERNEL_DIR, PROC_INO_SYS_DIR,
                                       PROC_INO_SYS_OSTYPE, PROC_INO_SYS_OSRELEASE,
                                       PROC_INO_SYS_HOSTNAME, PROC_INO_SYS_PID_MAX,
@@ -2634,8 +2703,10 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                       PROC_INO_SYS_NGROUPS_MAX, PROC_INO_SYS_CAP_LAST_CAP,
                                       PROC_INO_SYS_THREADS_MAX, PROC_INO_SYS_PRINTK,
                                       PROC_INO_SYS_YAMA_DIR,
-                                      PROC_INO_SYS_RANDOMIZE_VA, PROC_INO_SYS_DOMAINNAME };
-        if (idx < 21) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+                                      PROC_INO_SYS_RANDOMIZE_VA, PROC_INO_SYS_DOMAINNAME,
+                                      PROC_INO_SYS_PERF_PARANOID, PROC_INO_SYS_KPTR_RESTRICT,
+                                      PROC_INO_SYS_DMESG_RESTRICT };
+        if (idx < 24) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
         return -ENOENT;
     }
 

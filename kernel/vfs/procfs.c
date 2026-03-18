@@ -30,6 +30,7 @@
 #include <kernel/fut_stats.h>
 #include <kernel/fut_lock.h>
 #include <kernel/vfs_credentials.h>
+#include <kernel/fut_socket.h>
 #include <kernel/errno.h>
 #include <kernel/kprintf.h>
 #include <sys/mman.h>
@@ -1168,12 +1169,76 @@ static size_t gen_net_if_inet6(char *buf, size_t cap) {
     return 0;
 }
 
+/* Helper struct passed as arg to net_unix_emit_one() callback. */
+struct net_unix_ctx { struct pbuf *b; };
+
+/* File-scope callback; no nested functions in pedantic mode. */
+static void net_unix_emit_one(const fut_socket_t *s, void *arg) {
+    struct net_unix_ctx *ctx = (struct net_unix_ctx *)arg;
+    struct pbuf *b = ctx->b;
+
+    /* Num: 16-digit hex address + ':' */
+    pb_hex16(b, (uint64_t)(uintptr_t)s);
+    pb_str(b, ": ");
+
+    /* RefCount: 8-digit hex */
+    pb_hex8(b, (uint64_t)s->refcount);
+    pb_char(b, ' ');
+
+    /* Protocol: 00000000 (AF_UNIX has no sub-protocol) */
+    pb_str(b, "00000000 ");
+
+    /* Flags: 00010000 for listening sockets, 00000000 otherwise */
+    if (s->state == FUT_SOCK_LISTENING)
+        pb_str(b, "00010000 ");
+    else
+        pb_str(b, "00000000 ");
+
+    /* Type: socket type as 4-digit hex (STREAM=0001, DGRAM=0002, SEQPACKET=0005) */
+    switch (s->socket_type) {
+    case 1:  pb_str(b, "0001 "); break;  /* SOCK_STREAM */
+    case 2:  pb_str(b, "0002 "); break;  /* SOCK_DGRAM */
+    case 5:  pb_str(b, "0005 "); break;  /* SOCK_SEQPACKET */
+    default: pb_str(b, "0000 "); break;
+    }
+
+    /* St: state as 2-digit hex */
+    switch (s->state) {
+    case FUT_SOCK_LISTENING:   pb_str(b, "01 "); break;
+    case FUT_SOCK_CONNECTING:  pb_str(b, "02 "); break;
+    case FUT_SOCK_CONNECTED:   pb_str(b, "03 "); break;
+    default:                   pb_str(b, "00 "); break;
+    }
+
+    /* Inode: decimal socket_id (stable per socket) */
+    pb_u64(b, (uint64_t)s->socket_id);
+
+    /* Path: filesystem path, @name for abstract, or empty for anonymous */
+    if (s->bound_path && s->bound_path_len > 0) {
+        pb_char(b, ' ');
+        if (s->bound_path[0] == '\0') {
+            /* Abstract socket: replace leading NUL with '@' */
+            pb_char(b, '@');
+            const char *name = s->bound_path + 1;
+            uint16_t nlen = (s->bound_path_len > 1) ? (s->bound_path_len - 1) : 0;
+            for (uint16_t i = 0; i < nlen && name[i] != '\0'; i++)
+                pb_char(b, name[i]);
+        } else {
+            pb_str(b, s->bound_path);
+        }
+    }
+
+    pb_char(b, '\n');
+}
+
 static size_t gen_net_unix(char *buf, size_t cap) {
     /* /proc/net/unix — Unix domain socket table.
      * Tools: ss -x, lsof, netstat -x, systemd socket activation checks.
      * Header matches Linux kernel format exactly. */
     struct pbuf b = { buf, 0, cap };
     pb_str(&b, "Num       RefCount Protocol Flags    Type St Inode Path\n");
+    struct net_unix_ctx ctx = { &b };
+    fut_socket_foreach(net_unix_emit_one, &ctx);
     return b.pos;
 }
 

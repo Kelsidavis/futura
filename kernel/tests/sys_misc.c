@@ -15736,6 +15736,117 @@ static void test_o_tmpfile_basic(void) {
     fut_test_pass();
 }
 
+/* ============================================================
+ * Test 332: /proc/net/unix lists bound AF_UNIX sockets
+ *
+ * Verifies that:
+ *   1. /proc/net/unix is readable and contains the header line.
+ *   2. A bound STREAM socket appears with its path in the table.
+ *   3. A listening socket shows the 00010000 ACC flag.
+ *   4. An anonymous (unbound) socket does NOT appear with a path.
+ * ============================================================ */
+static void test_proc_net_unix(void) {
+    fut_printf("[MISC-TEST] Test 332: /proc/net/unix lists bound AF_UNIX sockets\n");
+
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_bind(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_listen(int sockfd, int backlog);
+    extern long sys_close(int fd);
+
+    const char *sock_path = "/tmp/test_proc_net_unix.sock";
+
+    struct { unsigned short family; char path[108]; } addr;
+    addr.family = 1; /* AF_UNIX */
+    unsigned int plen = 0;
+    while (sock_path[plen]) { addr.path[plen] = sock_path[plen]; plen++; }
+    addr.path[plen] = '\0';
+    unsigned int addrlen = (unsigned int)(2 + plen + 1);
+
+    fut_vfs_unlink(sock_path);
+
+    /* Create and bind a listening server socket */
+    long srv = sys_socket(1 /*AF_UNIX*/, 1 /*SOCK_STREAM*/, 0);
+    if (srv < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 332: socket() failed: %ld\n", srv);
+        fut_test_fail(332); return;
+    }
+    long r = sys_bind((int)srv, &addr, addrlen);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 332: bind() failed: %ld\n", r);
+        sys_close((int)srv); fut_vfs_unlink(sock_path); fut_test_fail(332); return;
+    }
+    r = sys_listen((int)srv, 1);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 332: listen() failed: %ld\n", r);
+        sys_close((int)srv); fut_vfs_unlink(sock_path); fut_test_fail(332); return;
+    }
+
+    /* Read /proc/net/unix — use a large buffer; many sockets from earlier
+     * tests may still be alive and each entry is ~70 bytes. */
+    int pfd = (int)fut_vfs_open("/proc/net/unix", 0 /*O_RDONLY*/, 0);
+    if (pfd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 332: open /proc/net/unix failed: %d\n", pfd);
+        sys_close((int)srv); fut_vfs_unlink(sock_path); fut_test_fail(332); return;
+    }
+    static char buf[8192];  /* static to avoid large stack frame */
+    __builtin_memset(buf, 0, sizeof(buf));
+    ssize_t n = fut_vfs_read(pfd, buf, sizeof(buf) - 1);
+    fut_vfs_close(pfd);
+
+    if (n <= 0) {
+        fut_printf("[MISC-TEST] ✗ Test 332: read /proc/net/unix returned %ld\n", (long)n);
+        sys_close((int)srv); fut_vfs_unlink(sock_path); fut_test_fail(332); return;
+    }
+
+    /* Check header is present */
+    int has_header = 0;
+    for (ssize_t i = 0; i + 8 < n; i++) {
+        if (buf[i] == 'N' && buf[i+1] == 'u' && buf[i+2] == 'm') { has_header = 1; break; }
+    }
+    if (!has_header) {
+        fut_printf("[MISC-TEST] ✗ Test 332: /proc/net/unix missing header\n");
+        sys_close((int)srv); fut_vfs_unlink(sock_path); fut_test_fail(332); return;
+    }
+
+    /* Check our socket path appears in the output */
+    const char *needle = "test_proc_net_unix.sock";
+    unsigned int nlen = 0;
+    while (needle[nlen]) nlen++;
+    int has_path = 0;
+    for (ssize_t i = 0; i + (ssize_t)nlen <= n; i++) {
+        int match = 1;
+        for (unsigned int j = 0; j < nlen; j++) {
+            if (buf[i + (ssize_t)j] != needle[j]) { match = 0; break; }
+        }
+        if (match) { has_path = 1; break; }
+    }
+    if (!has_path) {
+        fut_printf("[MISC-TEST] ✗ Test 332: socket path not found in /proc/net/unix (n=%ld)\n", (long)n);
+        sys_close((int)srv); fut_vfs_unlink(sock_path); fut_test_fail(332); return;
+    }
+
+    /* Check ACC flag (00010000) appears for listening socket */
+    const char *flag_needle = "00010000";
+    unsigned int flen = 8;
+    int has_flag = 0;
+    for (ssize_t i = 0; i + (ssize_t)flen <= n; i++) {
+        int match = 1;
+        for (unsigned int j = 0; j < flen; j++) {
+            if (buf[i + (ssize_t)j] != flag_needle[j]) { match = 0; break; }
+        }
+        if (match) { has_flag = 1; break; }
+    }
+    if (!has_flag) {
+        fut_printf("[MISC-TEST] ✗ Test 332: ACC flag 00010000 not found in /proc/net/unix\n");
+        sys_close((int)srv); fut_vfs_unlink(sock_path); fut_test_fail(332); return;
+    }
+
+    sys_close((int)srv);
+    fut_vfs_unlink(sock_path);
+    fut_printf("[MISC-TEST] ✓ Test 332: /proc/net/unix shows bound/listening socket\n");
+    fut_test_pass();
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -16075,6 +16186,7 @@ void fut_misc_test_thread(void *arg) {
     test_o_tmpfile_basic();              /* Test 329: O_TMPFILE creates anonymous file, survives close */
     test_sendfile_socket();              /* Test 330: sendfile(socket, file, ...) delivers data via socket */
     test_linkat_empty_path();            /* Test 331: linkat AT_EMPTY_PATH promotes O_TMPFILE to named file */
+    test_proc_net_unix();                /* Test 332: /proc/net/unix lists bound AF_UNIX sockets */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

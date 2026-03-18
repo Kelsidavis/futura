@@ -555,3 +555,12 @@ ssize_t fut_socket_recvfrom_dgram(fut_socket_t *socket, void *buf, size_t len,
 ssize_t fut_socket_peek_dgram(fut_socket_t *socket, void *buf, size_t len,
                                char *sender_path_out, uint16_t *sender_path_len_out,
                                size_t *actual_datagram_len_out);
+
+/**
+ * fut_socket_foreach - Iterate over all live (non-closed) sockets.
+ *
+ * Calls @cb once for each socket in the registry that is not NULL and not in
+ * FUT_SOCK_CLOSED state.  @arg is passed through to each callback invocation.
+ * The callback must not call fut_socket_foreach() recursively.
+ */
+void fut_socket_foreach(void (*cb)(const fut_socket_t *, void *), void *arg);

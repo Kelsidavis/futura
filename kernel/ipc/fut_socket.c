@@ -151,6 +151,27 @@ static fut_socket_t *socket_registry[FUT_SOCKET_MAX];
 static volatile uint32_t socket_next_id = 1;
 static fut_spinlock_t socket_lock;
 
+/**
+ * fut_socket_foreach - Iterate over all live (non-closed) sockets.
+ *
+ * Calls @cb for each socket in the registry that is not NULL and not
+ * in FUT_SOCK_CLOSED state.  The spinlock is held for the minimum time
+ * needed to snapshot each pointer; the callback runs unlocked so it
+ * may safely read (but not modify) socket fields.
+ */
+void fut_socket_foreach(void (*cb)(const fut_socket_t *, void *), void *arg) {
+    for (int i = 0; i < FUT_SOCKET_MAX; i++) {
+        fut_spinlock_acquire(&socket_lock);
+        fut_socket_t *s = socket_registry[i];
+        if (s) fut_socket_ref(s);
+        fut_spinlock_release(&socket_lock);
+        if (!s) continue;
+        if (s->state != FUT_SOCK_CLOSED)
+            cb(s, arg);
+        fut_socket_unref(s);
+    }
+}
+
 /* ============================================================
  *   VFS Helper Functions
  * ============================================================ */

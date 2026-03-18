@@ -10512,6 +10512,86 @@ static void test_process_vm_flags_einval(void) {
 }
 
 /* ============================================================
+ * Tests 220-222: pidfd_open / pidfd_send_signal
+ * ============================================================ */
+
+/* Test 220: pidfd_open creates valid FD for self */
+static void test_pidfd_open_basic(void) {
+    fut_printf("[MISC-TEST] Test 220: pidfd_open creates FD for self\n");
+    extern long sys_pidfd_open(int pid, unsigned int flags);
+    extern long sys_getpid(void);
+
+    long pid = sys_getpid();
+    long fd = sys_pidfd_open((int)pid, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ pidfd_open failed: %ld\n", fd);
+        fut_test_fail(220); return;
+    }
+    fut_vfs_close((int)fd);
+
+    fut_printf("[MISC-TEST] ✓ pidfd_open: got fd=%ld for pid=%ld\n", fd, pid);
+    fut_test_pass();
+}
+
+/* Test 221: pidfd_send_signal(fd, 0, NULL, 0) existence check → 0 */
+static void test_pidfd_send_signal_zero(void) {
+    fut_printf("[MISC-TEST] Test 221: pidfd_send_signal sig=0 existence check\n");
+    extern long sys_pidfd_open(int pid, unsigned int flags);
+    extern long sys_pidfd_send_signal(int pidfd, int sig, const void *info,
+                                      unsigned int flags);
+    extern long sys_getpid(void);
+
+    long pid = sys_getpid();
+    long fd = sys_pidfd_open((int)pid, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ pidfd_open failed: %ld\n", fd);
+        fut_test_fail(221); return;
+    }
+
+    long r = sys_pidfd_send_signal((int)fd, 0, NULL, 0);
+    fut_vfs_close((int)fd);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ pidfd_send_signal(sig=0) returned %ld (want 0)\n", r);
+        fut_test_fail(221); return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ pidfd_send_signal sig=0: existence check returned 0\n");
+    fut_test_pass();
+}
+
+/* Test 222: pidfd_open with invalid PID → EINVAL; invalid FD → EBADF */
+static void test_pidfd_errors(void) {
+    fut_printf("[MISC-TEST] Test 222: pidfd_open EINVAL / pidfd_send_signal EBADF\n");
+    extern long sys_pidfd_open(int pid, unsigned int flags);
+    extern long sys_pidfd_send_signal(int pidfd, int sig, const void *info,
+                                      unsigned int flags);
+
+    /* pid <= 0 → EINVAL */
+    long r = sys_pidfd_open(0, 0);
+    if (r != -22 /* -EINVAL */) {
+        fut_printf("[MISC-TEST] ✗ pidfd_open(0) expected EINVAL, got %ld\n", r);
+        fut_test_fail(222); return;
+    }
+
+    /* flags != 0 and not PIDFD_NONBLOCK → EINVAL */
+    r = sys_pidfd_open(1, 0xFFFF);
+    if (r != -22) {
+        fut_printf("[MISC-TEST] ✗ pidfd_open bad flags expected EINVAL, got %ld\n", r);
+        fut_test_fail(222); return;
+    }
+
+    /* pidfd_send_signal with bad flags → EINVAL */
+    r = sys_pidfd_send_signal(0, 0, NULL, 1 /* invalid */);
+    if (r != -22) {
+        fut_printf("[MISC-TEST] ✗ pidfd_send_signal bad flags expected EINVAL, got %ld\n", r);
+        fut_test_fail(222); return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ pidfd_open/pidfd_send_signal: error paths correct\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -10740,6 +10820,9 @@ void fut_misc_test_thread(void *arg) {
     test_process_vm_readv_basic();         /* Test 217: process_vm_readv scatter-gather */
     test_process_vm_writev_basic();        /* Test 218: process_vm_writev scatter-gather */
     test_process_vm_flags_einval();        /* Test 219: process_vm_readv flags!=0 → EINVAL */
+    test_pidfd_open_basic();               /* Test 220: pidfd_open creates FD for self */
+    test_pidfd_send_signal_zero();         /* Test 221: pidfd_send_signal sig=0 existence check */
+    test_pidfd_errors();                   /* Test 222: pidfd_open/send_signal error paths */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -281,6 +281,8 @@
 #define SYS_syncfs          306
 #define SYS_clone3           435  /* Linux: 435 */
 #define SYS_close_range      436
+#define SYS_pidfd_open       434  /* Linux: 434 */
+#define SYS_pidfd_send_signal 424 /* Linux: 424 */
 #define SYS_sethostname      170
 #define SYS_setdomainname    171
 /* Syscalls whose Linux numbers conflict with Futura's custom scheme get
@@ -1710,6 +1712,22 @@ static int64_t sys_rt_tgsigqueueinfo_handler(uint64_t tgid, uint64_t tid, uint64
                                   (const void *)(uintptr_t)uinfo);
 }
 
+static int64_t sys_pidfd_open_handler(uint64_t pid, uint64_t flags, uint64_t arg3,
+                                      uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_pidfd_open(int pid, unsigned int flags);
+    return sys_pidfd_open((int)pid, (unsigned int)flags);
+}
+
+static int64_t sys_pidfd_send_signal_handler(uint64_t pidfd, uint64_t sig, uint64_t info,
+                                              uint64_t flags, uint64_t arg5, uint64_t arg6) {
+    (void)arg5; (void)arg6;
+    extern long sys_pidfd_send_signal(int pidfd, int sig, const void *info,
+                                      unsigned int flags);
+    return sys_pidfd_send_signal((int)pidfd, (int)sig, (const void *)(uintptr_t)info,
+                                 (unsigned int)flags);
+}
+
 static int64_t sys_process_vm_readv_handler(uint64_t pid, uint64_t lvec, uint64_t liovcnt,
                                              uint64_t rvec, uint64_t riovcnt, uint64_t flags) {
     extern long sys_process_vm_readv(int pid, const void *lvec, unsigned long liovcnt,
@@ -3099,6 +3117,8 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_rt_tgsigqueueinfo]   = sys_rt_tgsigqueueinfo_handler,
     [SYS_process_vm_readv]    = sys_process_vm_readv_handler,
     [SYS_process_vm_writev]   = sys_process_vm_writev_handler,
+    [SYS_pidfd_open]          = sys_pidfd_open_handler,
+    [SYS_pidfd_send_signal]   = sys_pidfd_send_signal_handler,
     /* time / itimer / clock */
     [SYS_getitimer]         = sys_getitimer_handler,
     [SYS_setitimer]         = sys_setitimer_handler,

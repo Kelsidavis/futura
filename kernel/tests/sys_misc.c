@@ -11090,6 +11090,107 @@ static void test_preadv2_bad_flags(void) {
 }
 
 /* ============================================================
+ * Tests 244-246: openat2
+ * ============================================================ */
+struct test_open_how {
+    uint64_t flags;
+    uint64_t mode;
+    uint64_t resolve;
+};
+#define TEST_OPEN_HOW_SIZE  24
+#define TEST_RESOLVE_NO_XDEV        0x01
+#define TEST_RESOLVE_NO_MAGICLINKS  0x02
+#define TEST_RESOLVE_CACHED         0x20
+
+static void test_openat2_basic(void) {
+    fut_printf("[MISC-TEST] Test 244: openat2 basic O_RDONLY on existing file\n");
+    extern long sys_openat2(int dirfd, const char *path, const struct test_open_how *how,
+                            size_t usize);
+
+    /* Create test file via VFS */
+    int wfd = (int)fut_vfs_open("/openat2_test.txt", O_CREAT | O_RDWR, 0644);
+    if (wfd < 0) { fut_test_fail(244); return; }
+    fut_vfs_write(wfd, "hello", 5);
+    fut_vfs_close(wfd);
+
+    struct test_open_how how = { .flags = 0 /* O_RDONLY */, .mode = 0, .resolve = 0 };
+    int fd = (int)sys_openat2(-100 /* AT_FDCWD */, "/openat2_test.txt", &how,
+                              TEST_OPEN_HOW_SIZE);
+    extern long sys_unlink(const char *path);
+    sys_unlink("/openat2_test.txt");
+
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ openat2 basic: %d\n", fd);
+        fut_test_fail(244); return;
+    }
+    fut_vfs_close(fd);
+    fut_printf("[MISC-TEST] ✓ openat2 basic: fd=%d\n", fd);
+    fut_test_pass();
+}
+
+static void test_openat2_resolve_flags(void) {
+    fut_printf("[MISC-TEST] Test 245: openat2 RESOLVE_NO_XDEV|RESOLVE_CACHED accepted\n");
+    extern long sys_openat2(int dirfd, const char *path, const struct test_open_how *how,
+                            size_t usize);
+
+    /* Create test file */
+    int wfd = (int)fut_vfs_open("/openat2_resolve.txt", O_CREAT | O_RDWR, 0644);
+    if (wfd < 0) { fut_test_fail(245); return; }
+    fut_vfs_close(wfd);
+
+    struct test_open_how how = {
+        .flags = 0 /* O_RDONLY */,
+        .mode = 0,
+        .resolve = TEST_RESOLVE_NO_XDEV | TEST_RESOLVE_NO_MAGICLINKS | TEST_RESOLVE_CACHED
+    };
+    int fd = (int)sys_openat2(-100, "/openat2_resolve.txt", &how, TEST_OPEN_HOW_SIZE);
+    extern long sys_unlink(const char *path);
+    sys_unlink("/openat2_resolve.txt");
+
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ openat2 resolve flags: %d\n", fd);
+        fut_test_fail(245); return;
+    }
+    fut_vfs_close(fd);
+    fut_printf("[MISC-TEST] ✓ openat2 resolve flags accepted: fd=%d\n", fd);
+    fut_test_pass();
+}
+
+static void test_openat2_errors(void) {
+    fut_printf("[MISC-TEST] Test 246: openat2 error paths\n");
+    extern long sys_openat2(int dirfd, const char *path, const struct test_open_how *how,
+                            size_t usize);
+
+    struct test_open_how how = { .flags = 0, .mode = 0, .resolve = 0 };
+
+    /* usize too small → EINVAL */
+    long r1 = sys_openat2(-100, "/no_such_file", &how, 8 /* < 24 */);
+    if (r1 != -22 /* -EINVAL */) {
+        fut_printf("[MISC-TEST] ✗ openat2 small usize: expected -22, got %ld\n", r1);
+        fut_test_fail(246); return;
+    }
+
+    /* Unknown resolve flags → EINVAL */
+    struct test_open_how bad_how = { .flags = 0, .mode = 0, .resolve = 0xFFFF };
+    long r2 = sys_openat2(-100, "/no_such_file", &bad_how, TEST_OPEN_HOW_SIZE);
+    if (r2 != -22 /* -EINVAL */) {
+        fut_printf("[MISC-TEST] ✗ openat2 bad resolve: expected -22, got %ld\n", r2);
+        fut_test_fail(246); return;
+    }
+
+    /* Missing file with valid how → ENOENT */
+    long r3 = sys_openat2(-100, "/no_such_openat2_xyz", &how, TEST_OPEN_HOW_SIZE);
+    if (r3 != -2 /* -ENOENT */) {
+        fut_printf("[MISC-TEST] ✗ openat2 ENOENT: expected -2, got %ld\n", r3);
+        fut_test_fail(246); return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ openat2 errors: usize=%ld resolve=%ld enoent=%ld\n",
+               r1, r2, r3);
+    fut_test_pass();
+}
+
+/* ============================================================
  * Tests 241-243: mlock2
  * ============================================================ */
 static void test_mlock2_basic(void) {
@@ -11451,6 +11552,9 @@ void fut_misc_test_thread(void *arg) {
     test_mlock2_basic();                   /* Test 241: mlock2 flags=0 (same as mlock) */
     test_mlock2_onfault();                 /* Test 242: mlock2 MLOCK_ONFAULT accepted */
     test_mlock2_bad_flags();               /* Test 243: mlock2 unknown flags → EINVAL */
+    test_openat2_basic();                  /* Test 244: openat2 basic O_RDONLY */
+    test_openat2_resolve_flags();          /* Test 245: openat2 RESOLVE_NO_XDEV|CACHED accepted */
+    test_openat2_errors();                 /* Test 246: openat2 error paths (usize, resolve, enoent) */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

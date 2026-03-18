@@ -75,6 +75,7 @@
 #define SYS_preadv2             327  /* Linux: 327 — free in Futura */
 #define SYS_pwritev2            328  /* Linux: 328 — free in Futura */
 #define SYS_mlock2              325  /* Linux: 325 — free in Futura */
+#define SYS_openat2             444  /* Linux: 437 — Futura: 444 (437 used by process_vm_readv) */
 #define SYS_rt_tgsigqueueinfo   297
 #define SYS_process_vm_readv    437  /* Linux: 310 — Futura: 437 (310/311 used by vhangup/setreuid) */
 #define SYS_process_vm_writev   438  /* Linux: 311 — Futura: 438 */
@@ -714,6 +715,15 @@ static int64_t sys_openat_handler(uint64_t dirfd, uint64_t pathname, uint64_t fl
     (void)arg5; (void)arg6;
     extern long sys_openat(int dirfd, const char *pathname, int flags, int mode);
     return sys_openat((int)dirfd, (const char *)(uintptr_t)pathname, (int)flags, (int)mode);
+}
+
+static int64_t sys_openat2_handler(uint64_t dirfd, uint64_t path, uint64_t how,
+                                   uint64_t usize, uint64_t arg5, uint64_t arg6) {
+    (void)arg5; (void)arg6;
+    struct open_how_s { uint64_t flags; uint64_t mode; uint64_t resolve; };
+    extern long sys_openat2(int dirfd, const char *path, const void *how, size_t usize);
+    return (int64_t)sys_openat2((int)dirfd, (const char *)(uintptr_t)path,
+                                 (const void *)(uintptr_t)how, (size_t)usize);
 }
 
 /* *at family syscall handlers */
@@ -3044,6 +3054,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_write]      = sys_write_handler,
     [SYS_open]       = sys_open_handler,
     [SYS_openat]     = sys_openat_handler,
+    [SYS_openat2]    = sys_openat2_handler,
     /* *at family (Linux x86_64 258-269, 280) */
     [SYS_mkdirat]    = sys_mkdirat_handler,
     [SYS_mknodat]    = sys_mknodat_handler,

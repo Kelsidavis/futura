@@ -216,6 +216,7 @@
 #include <kernel/fut_waitq.h>
 #include <kernel/fut_timer.h>
 #include <kernel/fut_fd_util.h>
+#include <shared/fut_timespec.h>
 #include <kernel/signal.h>
 #include <string.h>
 #include <stdint.h>
@@ -1707,4 +1708,51 @@ long sys_epoll_pwait(int epfd, struct epoll_event *events, int maxevents,
     }
 
     return ret;
+}
+
+/**
+ * sys_epoll_pwait2 - epoll_pwait with nanosecond-precision timeout (Linux 5.11+)
+ *
+ * @param epfd       Epoll file descriptor
+ * @param events     Buffer for returned events
+ * @param maxevents  Maximum number of events to return
+ * @param timeout    Pointer to struct timespec timeout (NULL = block forever)
+ * @param sigmask    Signal mask to temporarily install (NULL = no change)
+ * @param sigsetsize Size of the sigset (must be 8)
+ * @return Number of events, or -errno
+ *
+ * Extends epoll_pwait by taking a struct timespec instead of int milliseconds.
+ * The timeout is converted to milliseconds (rounding up) and delegated to
+ * sys_epoll_pwait.
+ */
+long sys_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
+                      const void *timeout_ts, const void *sigmask,
+                      size_t sigsetsize) {
+    (void)sigsetsize;  /* sigsetsize passed to pwait internally */
+    int timeout_ms = -1;  /* default: block forever */
+
+    if (timeout_ts) {
+        struct timespec ts = {0};
+#ifdef KERNEL_VIRTUAL_BASE
+        if ((uintptr_t)timeout_ts >= KERNEL_VIRTUAL_BASE)
+            __builtin_memcpy(&ts, timeout_ts, sizeof(ts));
+        else
+#endif
+        if (fut_copy_from_user(&ts, timeout_ts, sizeof(ts)) != 0)
+            return -EFAULT;
+
+        if (ts.tv_sec < 0 || ts.tv_nsec < 0 || ts.tv_nsec >= 1000000000L)
+            return -EINVAL;
+
+        /* Convert to milliseconds, clamped to INT_MAX */
+        if (ts.tv_sec == 0 && ts.tv_nsec == 0) {
+            timeout_ms = 0;  /* poll, don't block */
+        } else {
+            int64_t ms = (int64_t)ts.tv_sec * 1000 +
+                         ((int64_t)ts.tv_nsec + 999999) / 1000000;
+            timeout_ms = (ms > (int64_t)0x7FFFFFFF) ? 0x7FFFFFFF : (int)ms;
+        }
+    }
+
+    return sys_epoll_pwait(epfd, events, maxevents, timeout_ms, sigmask);
 }

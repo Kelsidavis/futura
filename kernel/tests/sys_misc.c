@@ -11557,6 +11557,134 @@ static void test_pkey_mprotect(void) {
 }
 
 /* ============================================================
+ * Tests 258-261: pidfd_getfd (Linux 438) and epoll_pwait2 (Linux 441)
+ * ============================================================ */
+
+static void test_pidfd_getfd_self(void) {
+    fut_printf("[MISC-TEST] Test 258: pidfd_getfd self-FD duplication\n");
+    extern long sys_pidfd_open(int pid, unsigned int flags);
+    extern long sys_pidfd_getfd(int pidfd, int targetfd, unsigned int flags);
+    extern long sys_getpid(void);
+    extern long sys_unlink(const char *path);
+
+    int mypid = (int)sys_getpid();
+    int pidfd = (int)sys_pidfd_open(mypid, 0);
+    if (pidfd < 0) {
+        fut_printf("[MISC-TEST] ✗ pidfd_getfd: pidfd_open failed: %d\n", pidfd);
+        fut_test_fail(258); return;
+    }
+
+    /* Open a file to have a real FD to duplicate */
+    int fd = (int)fut_vfs_open("/pidfd_getfd_test.txt", O_CREAT | O_RDWR, 0644);
+    if (fd < 0) { fut_vfs_close(pidfd); fut_test_fail(258); return; }
+
+    /* Duplicate fd from self via pidfd */
+    int newfd = (int)sys_pidfd_getfd(pidfd, fd, 0);
+    fut_vfs_close(pidfd);
+
+    if (newfd < 0) {
+        fut_printf("[MISC-TEST] ✗ pidfd_getfd self: got %d\n", newfd);
+        fut_vfs_close(fd);
+        sys_unlink("/pidfd_getfd_test.txt");
+        fut_test_fail(258); return;
+    }
+    /* Both FDs should refer to the same file — write via fd, close newfd */
+    fut_vfs_close(newfd);
+    fut_vfs_close(fd);
+    sys_unlink("/pidfd_getfd_test.txt");
+    fut_printf("[MISC-TEST] ✓ pidfd_getfd self: fd=%d dup'd to newfd=%d\n", fd, newfd);
+    fut_test_pass();
+}
+
+static void test_pidfd_getfd_errors(void) {
+    fut_printf("[MISC-TEST] Test 259: pidfd_getfd error paths\n");
+    extern long sys_pidfd_getfd(int pidfd, int targetfd, unsigned int flags);
+    extern long sys_getpid(void);
+    extern long sys_pidfd_open(int pid, unsigned int flags);
+
+    /* flags != 0 → EINVAL */
+    int mypid = (int)sys_getpid();
+    int pidfd = (int)sys_pidfd_open(mypid, 0);
+    if (pidfd < 0) { fut_test_fail(259); return; }
+
+    long r_flags = sys_pidfd_getfd(pidfd, 0, 1);   /* flags=1 → EINVAL */
+    long r_badf  = sys_pidfd_getfd(pidfd, -1, 0);  /* targetfd=-1 → EBADF */
+    long r_bpidfd = sys_pidfd_getfd(-1, 0, 0);     /* bad pidfd → EBADF */
+    fut_vfs_close(pidfd);
+
+    if (r_flags != -22 || r_badf != -9 || r_bpidfd != -9) {
+        fut_printf("[MISC-TEST] ✗ pidfd_getfd errors: flags→%ld badf→%ld bpidfd→%ld\n",
+                   r_flags, r_badf, r_bpidfd);
+        fut_test_fail(259); return;
+    }
+    fut_printf("[MISC-TEST] ✓ pidfd_getfd error paths: flags=-22 badf=-9 bpidfd=-9\n");
+    fut_test_pass();
+}
+
+static void test_epoll_pwait2_timeout0(void) {
+    fut_printf("[MISC-TEST] Test 260: epoll_pwait2 timeout=0 (immediate poll)\n");
+    extern long sys_epoll_create1(int flags);
+    extern long sys_epoll_pwait2(int epfd, void *events, int maxevents,
+                                  const void *timeout_ts, const void *sigmask,
+                                  size_t sigsetsize);
+
+    int epfd = (int)sys_epoll_create1(0);
+    if (epfd < 0) { fut_test_fail(260); return; }
+
+    /* struct timespec {tv_sec=0, tv_nsec=0} → immediate poll */
+    int64_t ts[2] = {0, 0};
+    char events_buf[64] = {0};
+    long r = sys_epoll_pwait2(epfd, events_buf, 1, ts, NULL, 8);
+    extern long sys_close(int fd);
+    sys_close(epfd);
+
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ epoll_pwait2 timeout=0: expected 0, got %ld\n", r);
+        fut_test_fail(260); return;
+    }
+    fut_printf("[MISC-TEST] ✓ epoll_pwait2 timeout=0 → 0 events\n");
+    fut_test_pass();
+}
+
+static void test_epoll_pwait2_null_timeout(void) {
+    fut_printf("[MISC-TEST] Test 261: epoll_pwait2 NULL timeout → -1ms (delegates to pwait)\n");
+    extern long sys_epoll_create1(int flags);
+    extern long sys_epoll_pwait2(int epfd, void *events, int maxevents,
+                                  const void *timeout_ts, const void *sigmask,
+                                  size_t sigsetsize);
+    extern long sys_eventfd2(unsigned int initval, int flags);
+    extern long sys_epoll_ctl(int epfd, int op, int fd, void *event);
+    extern long sys_write(int fd, const void *buf, size_t n);
+
+    int epfd = (int)sys_epoll_create1(0);
+    if (epfd < 0) { fut_test_fail(261); return; }
+
+    /* Create a ready eventfd to avoid blocking */
+    int efd = (int)sys_eventfd2(1, 0);
+    if (efd < 0) { sys_close(epfd); fut_test_fail(261); return; }
+
+    /* EPOLLIN=1, EPOLLOUT=4 */
+    uint64_t ev_data[2] = { 1 /* EPOLLIN */, (uint64_t)efd };
+    sys_epoll_ctl(epfd, 1 /* EPOLL_CTL_ADD */, efd, ev_data);
+
+    char events_buf[64] = {0};
+    /* Use timeout_ts={0,1} (1 nanosecond) so we don't block forever */
+    int64_t ts[2] = {0, 1};
+    long r = sys_epoll_pwait2(epfd, events_buf, 1, ts, NULL, 8);
+    extern long sys_close(int fd);
+    sys_close(efd);
+    sys_close(epfd);
+
+    /* eventfd was set to 1, so EPOLLIN should fire immediately → r=1 */
+    if (r != 1) {
+        fut_printf("[MISC-TEST] ✗ epoll_pwait2 ready efd: expected 1 event, got %ld\n", r);
+        fut_test_fail(261); return;
+    }
+    fut_printf("[MISC-TEST] ✓ epoll_pwait2 ready eventfd → 1 event\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -11823,6 +11951,10 @@ void fut_misc_test_thread(void *arg) {
     test_pkey_alloc_bad_flags();           /* Test 255: pkey_alloc bad flags/access → EINVAL */
     test_pkey_free_einval();               /* Test 256: pkey_free any pkey → EINVAL */
     test_pkey_mprotect();                  /* Test 257: pkey_mprotect pkey=-1 → 0, pkey=0 → EINVAL */
+    test_pidfd_getfd_self();               /* Test 258: pidfd_getfd self-FD dup */
+    test_pidfd_getfd_errors();             /* Test 259: pidfd_getfd error paths */
+    test_epoll_pwait2_timeout0();          /* Test 260: epoll_pwait2 timeout=0 immediate poll */
+    test_epoll_pwait2_null_timeout();      /* Test 261: epoll_pwait2 ready eventfd → 1 event */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -291,8 +291,10 @@
 #define SYS_syncfs          306
 #define SYS_clone3           435  /* Linux: 435 */
 #define SYS_close_range      436
-#define SYS_pidfd_open       434  /* Linux: 434 */
-#define SYS_pidfd_send_signal 424 /* Linux: 424 */
+#define SYS_pidfd_open        434  /* Linux: 434 */
+#define SYS_pidfd_send_signal 424  /* Linux: 424 */
+#define SYS_pidfd_getfd       445  /* Linux: 438 — Futura: 445 (438 used by process_vm_writev) */
+#define SYS_epoll_pwait2      446  /* Linux: 441 — Futura: 446 (441 used by seccomp) */
 #define SYS_sethostname      170
 #define SYS_setdomainname    171
 /* Syscalls whose Linux numbers conflict with Futura's custom scheme get
@@ -1840,6 +1842,13 @@ static int64_t sys_pidfd_send_signal_handler(uint64_t pidfd, uint64_t sig, uint6
                                  (unsigned int)flags);
 }
 
+static int64_t sys_pidfd_getfd_handler(uint64_t pidfd, uint64_t targetfd, uint64_t flags,
+                                        uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_pidfd_getfd(int pidfd, int targetfd, unsigned int flags);
+    return sys_pidfd_getfd((int)pidfd, (int)targetfd, (unsigned int)flags);
+}
+
 static int64_t sys_process_vm_readv_handler(uint64_t pid, uint64_t lvec, uint64_t liovcnt,
                                              uint64_t rvec, uint64_t riovcnt, uint64_t flags) {
     extern long sys_process_vm_readv(int pid, const void *lvec, unsigned long liovcnt,
@@ -2142,6 +2151,18 @@ static int64_t sys_epoll_pwait_handler(uint64_t epfd, uint64_t events, uint64_t 
                                  int timeout, const void *sigmask);
     return sys_epoll_pwait((int)epfd, (void *)(uintptr_t)events, (int)maxevents,
                             (int)timeout, (const void *)(uintptr_t)sigmask);
+}
+
+static int64_t sys_epoll_pwait2_handler(uint64_t epfd, uint64_t events, uint64_t maxevents,
+                                         uint64_t timeout_ts, uint64_t sigmask,
+                                         uint64_t sigsetsize) {
+    extern long sys_epoll_pwait2(int epfd, void *events, int maxevents,
+                                  const void *timeout_ts, const void *sigmask,
+                                  size_t sigsetsize);
+    return sys_epoll_pwait2((int)epfd, (void *)(uintptr_t)events, (int)maxevents,
+                             (const void *)(uintptr_t)timeout_ts,
+                             (const void *)(uintptr_t)sigmask,
+                             (size_t)sigsetsize);
 }
 
 static int64_t sys_timerfd_create_handler(uint64_t clockid, uint64_t flags, uint64_t arg3,
@@ -3245,6 +3266,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_process_vm_writev]   = sys_process_vm_writev_handler,
     [SYS_pidfd_open]          = sys_pidfd_open_handler,
     [SYS_pidfd_send_signal]   = sys_pidfd_send_signal_handler,
+    [SYS_pidfd_getfd]         = sys_pidfd_getfd_handler,
     [SYS_sched_setattr]       = sys_sched_setattr_handler,
     [SYS_sched_getattr]       = sys_sched_getattr_handler,
     [SYS_seccomp]             = sys_seccomp_handler,
@@ -3322,6 +3344,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_get_robust_list]   = sys_get_robust_list_handler,
     [SYS_sync_file_range]   = sys_sync_file_range_handler,
     [SYS_epoll_pwait]       = sys_epoll_pwait_handler,
+    [SYS_epoll_pwait2]      = sys_epoll_pwait2_handler,
     [SYS_timerfd_create]    = sys_timerfd_create_handler,
     [SYS_fallocate]         = sys_fallocate_handler,
     [SYS_timerfd_settime]   = sys_timerfd_settime_handler,

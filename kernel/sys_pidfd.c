@@ -1,4 +1,4 @@
-/* kernel/sys_pidfd.c - pidfd_open / pidfd_send_signal
+/* kernel/sys_pidfd.c - pidfd_open / pidfd_send_signal / pidfd_getfd
  *
  * Copyright (c) 2025 Kelsi Davis
  * Licensed under the MPL v2.0 — see LICENSE for details.
@@ -6,11 +6,10 @@
  * Implements process file descriptors (Linux 5.2+).
  * pidfd_open(pid, flags) creates an FD that references a process.
  * pidfd_send_signal(pidfd, sig, info, flags) sends a signal via that FD.
+ * pidfd_getfd(pidfd, targetfd, flags) duplicates an FD from another process.
  *
- * Phase 1 (Completed): Full implementation.
- *   - pidfd_open: validates pid, finds task, allocates chrdev FD
- *   - pidfd_send_signal: looks up task by stored pid, calls fut_signal_send
- *   - pidfd_release: frees pidfd context
+ * Phase 1 (Completed): pidfd_open and pidfd_send_signal.
+ * Phase 2 (Completed): pidfd_getfd — duplicate another process's FD.
  */
 
 #include <kernel/chrdev.h>
@@ -135,4 +134,67 @@ long sys_pidfd_send_signal(int pidfd, int sig, const void *info, unsigned int fl
     /* Deliver signal */
     fut_signal_send(target, sig);
     return 0;
+}
+
+/**
+ * sys_pidfd_getfd - Duplicate an FD from another process via its pidfd.
+ *
+ * @param pidfd     File descriptor from pidfd_open (references target process)
+ * @param targetfd  FD number in the target process to duplicate
+ * @param flags     Must be 0 (no flags defined)
+ * @return New FD in current process on success, -errno on error
+ *
+ * Linux 5.6+. Requires the pidfd to reference a live process and targetfd
+ * to be open in that process. In Linux this requires PTRACE_MODE_ATTACH;
+ * Futura allows it for any process (no ptrace credential model yet).
+ */
+long sys_pidfd_getfd(int pidfd, int targetfd, unsigned int flags) {
+    if (flags != 0)
+        return -EINVAL;
+    if (targetfd < 0)
+        return -EBADF;
+
+    fut_task_t *cur = fut_task_current();
+    if (!cur)
+        return -ESRCH;
+
+    /* Resolve pidfd → target PID */
+    if (!cur->fd_table || pidfd < 0 || pidfd >= cur->max_fds)
+        return -EBADF;
+    struct fut_file *pf = cur->fd_table[pidfd];
+    if (!pf || pf->chr_ops != &pidfd_fops || !pf->chr_private)
+        return -EBADF;
+
+    struct pidfd_ctx *ctx = (struct pidfd_ctx *)pf->chr_private;
+    fut_task_t *target = fut_task_by_pid((uint64_t)ctx->pid);
+    if (!target)
+        return -ESRCH;
+
+    /* Look up targetfd in the target task */
+    if (!target->fd_table || targetfd >= target->max_fds)
+        return -EBADF;
+    struct fut_file *file = vfs_get_file_from_task(target, targetfd);
+    if (!file)
+        return -EBADF;
+
+    /* Find a free FD slot in the current task, respecting RLIMIT_NOFILE */
+    int max = cur->max_fds;
+    {
+        uint64_t lim = cur->rlimits[7].rlim_cur; /* RLIMIT_NOFILE */
+        if (lim > 0 && lim < (uint64_t)max)
+            max = (int)lim;
+    }
+    int newfd = -1;
+    for (int i = 0; i < max; i++) {
+        if (!cur->fd_table[i]) { newfd = i; break; }
+    }
+    if (newfd < 0)
+        return -EMFILE;
+
+    /* Install a reference to the file in the current task */
+    vfs_file_ref(file);
+    cur->fd_table[newfd] = file;
+    if (cur->fd_flags) cur->fd_flags[newfd] = 0;
+
+    return newfd;
 }

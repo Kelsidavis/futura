@@ -127,6 +127,12 @@ enum procfs_kind {
     PROC_OOM_SCORE,        /* /proc/<pid>/oom_score */
     PROC_OOM_ADJ,          /* /proc/<pid>/oom_score_adj */
     PROC_CGROUP,           /* /proc/<pid>/cgroup */
+    PROC_NS_DIR,           /* /proc/<pid>/ns/ directory */
+    PROC_NS_ENTRY,         /* /proc/<pid>/ns/<name> symlink (fd = ns type index) */
+    PROC_SYS_NGROUPS_MAX,  /* /proc/sys/kernel/ngroups_max */
+    PROC_SYS_CAP_LAST_CAP, /* /proc/sys/kernel/cap_last_cap */
+    PROC_SYS_THREADS_MAX,  /* /proc/sys/kernel/threads-max */
+    PROC_SYS_PRINTK,       /* /proc/sys/kernel/printk */
 };
 
 typedef struct {
@@ -165,6 +171,10 @@ typedef struct {
 #define PROC_INO_SYS_OSRELEASE  211ULL
 #define PROC_INO_SYS_HOSTNAME   212ULL
 #define PROC_INO_SYS_PID_MAX    213ULL
+#define PROC_INO_SYS_NGROUPS_MAX    214ULL
+#define PROC_INO_SYS_CAP_LAST_CAP   215ULL
+#define PROC_INO_SYS_THREADS_MAX    216ULL
+#define PROC_INO_SYS_PRINTK         217ULL
 #define PROC_INO_SYS_OVERCOMMIT       220ULL
 #define PROC_INO_SYS_MAX_MAP_COUNT    221ULL
 #define PROC_INO_SYS_SWAPPINESS       222ULL
@@ -221,6 +231,9 @@ typedef struct {
 #define PROC_INO_PID_OOM_SCORE(p) (1000ULL + (uint64_t)(p) * 100 + 15)
 #define PROC_INO_PID_OOM_ADJ(p)   (1000ULL + (uint64_t)(p) * 100 + 16)
 #define PROC_INO_PID_CGROUP(p)    (1000ULL + (uint64_t)(p) * 100 + 17)
+#define PROC_INO_PID_NS(p)        (1000ULL + (uint64_t)(p) * 100 + 18)
+/* ns/ entries: 7 namespaces (pid/mnt/net/user/uts/ipc/cgroup), index 0-6 */
+#define PROC_INO_NS_ENTRY(p,n)    (300000000ULL + (uint64_t)(p) * 100 + (uint64_t)(n))
 /* fd entries: use high range to avoid collision */
 #define PROC_INO_FD_ENTRY(p,n) (100000000ULL + (uint64_t)(p) * 1000 + (uint64_t)(n))
 /* task/<tid> entries: separate high range */
@@ -1377,6 +1390,19 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
         case PROC_SYS_NET_SYNCOOKIES:
             total = gen_sysctl_str(tmp, GEN_BUF, "1");
             break;
+        case PROC_SYS_NGROUPS_MAX:
+            total = gen_sysctl_str(tmp, GEN_BUF, "65536");
+            break;
+        case PROC_SYS_CAP_LAST_CAP:
+            total = gen_sysctl_str(tmp, GEN_BUF, "40");
+            break;
+        case PROC_SYS_THREADS_MAX:
+            total = gen_sysctl_str(tmp, GEN_BUF, "32768");
+            break;
+        case PROC_SYS_PRINTK:
+            /* current default boot-time min loglevel format */
+            total = gen_sysctl_str(tmp, GEN_BUF, "4\t4\t1\t7");
+            break;
         default:
             fut_free(tmp);
             return -EINVAL;
@@ -1444,6 +1470,26 @@ static ssize_t procfs_link_readlink(struct fut_vnode *vnode, char *buf, size_t s
             const char *cwd = (task->cwd_cache && task->cwd_cache[0]) ?
                                task->cwd_cache : "/";
             while (cwd[len] && len < sizeof(tmp) - 1) { tmp[len] = cwd[len]; len++; }
+            break;
+        }
+        case PROC_NS_ENTRY: {
+            /* Namespace symlink target: <nstype>:[<inode>] */
+            static const char * const ns_names[] = {
+                "pid", "mnt", "net", "user", "uts", "ipc", "cgroup"
+            };
+            /* Standard Linux initial namespace inodes */
+            static const uint32_t ns_inodes[] = {
+                4026531836u, 4026531840u, 4026531992u, 4026531837u,
+                4026531838u, 4026531839u, 4026531835u
+            };
+            int ns_idx = n->fd;
+            if (ns_idx < 0 || ns_idx >= 7) return -EINVAL;
+            struct pbuf b = { tmp, 0, sizeof(tmp) };
+            pb_str(&b, ns_names[ns_idx]);
+            pb_str(&b, ":[");
+            pb_u64(&b, (uint64_t)ns_inodes[ns_idx]);
+            pb_char(&b, ']');
+            len = b.pos;
             break;
         }
         case PROC_FD_ENTRY: {
@@ -1682,6 +1728,11 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0100444, PROC_CGROUP, pid, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "ns")) {
+            *result = procfs_alloc_vnode(mnt, VN_DIR, PROC_INO_PID_NS(pid),
+                                          0040511, PROC_NS_DIR, pid, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         return -ENOENT;
     }
 
@@ -1744,6 +1795,8 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
             { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_OOM_ADJ(pid),   0100644, PROC_OOM_ADJ,   pid,0); return *result ? 0 : -ENOMEM; }
         if (STREQ(name, "cgroup"))
             { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_CGROUP(pid),    0100444, PROC_CGROUP,    pid,0); return *result ? 0 : -ENOMEM; }
+        if (STREQ(name, "ns"))
+            { *result = procfs_alloc_vnode(mnt, VN_DIR, PROC_INO_PID_NS(pid), 0040511, PROC_NS_DIR, pid, 0); return *result ? 0 : -ENOMEM; }
         return -ENOENT;
     }
 
@@ -1922,6 +1975,41 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
             *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_MSGMNI,
                                           0100644, PROC_SYS_MSGMNI, 0, 0);
             return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "ngroups_max")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_NGROUPS_MAX,
+                                          0100444, PROC_SYS_NGROUPS_MAX, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "cap_last_cap")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_CAP_LAST_CAP,
+                                          0100444, PROC_SYS_CAP_LAST_CAP, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "threads-max")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_THREADS_MAX,
+                                          0100644, PROC_SYS_THREADS_MAX, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "printk")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_PRINTK,
+                                          0100644, PROC_SYS_PRINTK, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        return -ENOENT;
+    }
+
+    if (dn->kind == PROC_NS_DIR) {
+        static const char * const ns_names[] = {
+            "pid", "mnt", "net", "user", "uts", "ipc", "cgroup"
+        };
+        uint64_t pid = dn->pid;
+        for (int i = 0; i < 7; i++) {
+            if (STREQ(name, ns_names[i])) {
+                *result = procfs_alloc_vnode(mnt, VN_LNK, PROC_INO_NS_ENTRY(pid, i),
+                                              0120444, PROC_NS_ENTRY, pid, i);
+                return *result ? 0 : -ENOMEM;
+            }
         }
         return -ENOENT;
     }
@@ -2132,7 +2220,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         static const char *entries[] = {
             ".", "..", "status", "maps", "cmdline", "environ", "fd", "exe", "cwd",
             "stat", "statm", "comm", "task", "limits", "io", "smaps",
-            "oom_score", "oom_score_adj", "cgroup"
+            "oom_score", "oom_score_adj", "cgroup", "ns"
         };
         static const uint8_t etypes[] = {
             FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
@@ -2143,10 +2231,11 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
             FUT_VDIR_TYPE_DIR,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
-            FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG
+            FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+            FUT_VDIR_TYPE_DIR
         };
         uint64_t pid = dn->pid;
-        if (idx < 19) {
+        if (idx < 20) {
             uint64_t ino;
             switch (idx) {
                 case 0:  ino = PROC_INO_PID_DIR(pid);        break;
@@ -2168,6 +2257,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                 case 16: ino = PROC_INO_PID_OOM_SCORE(pid);  break;
                 case 17: ino = PROC_INO_PID_OOM_ADJ(pid);    break;
                 case 18: ino = PROC_INO_PID_CGROUP(pid);     break;
+                case 19: ino = PROC_INO_PID_NS(pid);         break;
                 default: ino = 0; break;
             }
             de->d_ino    = ino;
@@ -2305,7 +2395,9 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         static const char *e[] = { ".", "..", "ostype", "osrelease", "hostname",
                                    "pid_max", "random",
                                    "shmmax", "shmall", "shmmni", "sem",
-                                   "msgmax", "msgmnb", "msgmni" };
+                                   "msgmax", "msgmnb", "msgmni",
+                                   "ngroups_max", "cap_last_cap",
+                                   "threads-max", "printk" };
         static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
@@ -2313,7 +2405,9 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
-                                     FUT_VDIR_TYPE_REG };
+                                     FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG };
         static const uint64_t i[] = { PROC_INO_SYS_KERNEL_DIR, PROC_INO_SYS_DIR,
                                       PROC_INO_SYS_OSTYPE, PROC_INO_SYS_OSRELEASE,
                                       PROC_INO_SYS_HOSTNAME, PROC_INO_SYS_PID_MAX,
@@ -2321,8 +2415,10 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                       PROC_INO_SYS_SHMMAX, PROC_INO_SYS_SHMALL,
                                       PROC_INO_SYS_SHMMNI, PROC_INO_SYS_SEM,
                                       PROC_INO_SYS_MSGMAX, PROC_INO_SYS_MSGMNB,
-                                      PROC_INO_SYS_MSGMNI };
-        if (idx < 14) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+                                      PROC_INO_SYS_MSGMNI,
+                                      PROC_INO_SYS_NGROUPS_MAX, PROC_INO_SYS_CAP_LAST_CAP,
+                                      PROC_INO_SYS_THREADS_MAX, PROC_INO_SYS_PRINTK };
+        if (idx < 18) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
         return -ENOENT;
     }
 
@@ -2336,6 +2432,24 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                       PROC_INO_SYS_ENTROPY_AVAIL, PROC_INO_SYS_POOLSIZE };
         if (idx < 6) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
         return -ENOENT;
+    }
+
+    if (dn->kind == PROC_NS_DIR) {
+        static const char *e[] = { ".", "..", "pid", "mnt", "net", "user", "uts", "ipc", "cgroup" };
+        static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
+                                     FUT_VDIR_TYPE_SYMLINK, FUT_VDIR_TYPE_SYMLINK,
+                                     FUT_VDIR_TYPE_SYMLINK, FUT_VDIR_TYPE_SYMLINK,
+                                     FUT_VDIR_TYPE_SYMLINK, FUT_VDIR_TYPE_SYMLINK,
+                                     FUT_VDIR_TYPE_SYMLINK };
+        uint64_t pid = dn->pid;
+        if (idx >= 9) return -ENOENT;
+        uint64_t ino;
+        switch (idx) {
+            case 0: ino = PROC_INO_PID_NS(pid);         break;
+            case 1: ino = PROC_INO_PID_DIR(pid);        break;
+            default: ino = PROC_INO_NS_ENTRY(pid, idx - 2); break;
+        }
+        SYS_DIR_ENTRY(e[idx], t[idx], ino);
     }
 
     if (dn->kind == PROC_SYS_VM_DIR) {

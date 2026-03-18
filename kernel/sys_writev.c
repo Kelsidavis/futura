@@ -11,6 +11,7 @@
 #include <kernel/errno.h>
 #include <sys/uio.h>  /* For struct iovec, UIO_MAXIOV, ssize_t */
 #include <stdint.h>
+#include <string.h>   /* memcpy */
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
@@ -529,63 +530,34 @@ ssize_t sys_writev(int fd, const struct iovec *iov, int iovcnt) {
         }
     }
 
-    /* Iterate over iovecs and call write for each */
-    ssize_t total_written = 0;
-    int iovecs_written = 0;
-    for (int i = 0; i < iovcnt; i++) {
-        if (kernel_iov[i].iov_len == 0) {
-            continue;  /* Skip zero-length buffers */
-        }
-
-        ssize_t n = fut_vfs_write(fd, kernel_iov[i].iov_base, kernel_iov[i].iov_len);
-
-        if (n < 0) {
-            /* Error on write */
-            if (total_written > 0) {
-                /* Return bytes written so far */
-                break;
-            } else {
-                /* No bytes written yet, return error */
-                fut_printf("[WRITEV] writev(fd=%d, iov=%p, iovcnt=%d) -> %ld (write error on iovec %d)\n",
-                           fd, iov, iovcnt, n, i);
-                fut_free(kernel_iov);
-                return n;
-            }
-        }
-
-        total_written += n;
-        iovecs_written++;
-
-        /* Check for partial write */
-        if (n < (ssize_t)kernel_iov[i].iov_len) {
-            /* Partial write, stop here */
-            break;
-        }
+    /* Gather all iov data into a flat buffer and do a single write.
+     * POSIX requires writev on a pipe to be atomic when total_size <= PIPE_BUF:
+     * interleaved writes from separate fut_vfs_write() calls would violate this.
+     * Gathering first ensures a single atomic write in all cases. */
+    ssize_t total_written;
+    if (total_size == 0) {
+        fut_free(kernel_iov);
+        /* I/O accounting */
+        task->io_syscw++;
+        return 0;
     }
 
+    uint8_t *flat_buf = fut_malloc(total_size);
+    if (!flat_buf) {
+        fut_free(kernel_iov);
+        return -ENOMEM;
+    }
+
+    size_t flat_off = 0;
+    for (int i = 0; i < iovcnt; i++) {
+        if (kernel_iov[i].iov_len == 0) continue;
+        memcpy(flat_buf + flat_off, kernel_iov[i].iov_base, kernel_iov[i].iov_len);
+        flat_off += kernel_iov[i].iov_len;
+    }
     fut_free(kernel_iov);
 
-    /* Phase 3 implementation with VFS optimization:
-     *
-     * ssize_t total = fut_vfs_writev(fd, kernel_iov, iovcnt);
-     * return total;
-     *
-     * The VFS layer would:
-     * 1. Validate all buffers are accessible
-     * 2. Lock file position
-     * 3. Perform single write operation from multiple buffers
-     * 4. Update file position atomically
-     * 5. Return total bytes written
-     *
-     * Benefits:
-     * - Single VFS call instead of N calls
-     * - Better atomicity (less chance of interleaving)
-     * - Opportunity for zero-copy optimization
-     * - Better performance for small buffers
-     *
-     * Phase 4: Add non-blocking I/O support and proper partial write handling
-     * Zero-copy optimization for page-aligned buffers
-     */
+    total_written = fut_vfs_write(fd, flat_buf, total_size);
+    fut_free(flat_buf);
 
     /* I/O accounting for /proc/<pid>/io */
     if (total_written > 0) {

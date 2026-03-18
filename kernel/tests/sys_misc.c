@@ -16735,6 +16735,54 @@ static void test_copy_file_range_offsets(void) {
     fut_test_pass();
 }
 
+/* ============================================================
+ * Test 346: writev on a pipe gathers all iovecs atomically
+ * ============================================================ */
+static void test_writev_pipe_gather(void) {
+    fut_printf("[MISC-TEST] Test 346: writev pipe gather\n");
+
+    int pipefd[2];
+    if (sys_pipe(pipefd) < 0) { fut_test_fail(346); return; }
+
+    /* Write 3 iovecs totalling 15 bytes (well within PIPE_BUF) */
+    char a[] = "Hello";
+    char b[] = ", ";
+    char c[] = "World";
+    struct iovec wv[3] = {
+        { .iov_base = a, .iov_len = 5 },
+        { .iov_base = b, .iov_len = 2 },
+        { .iov_base = c, .iov_len = 5 },
+    };
+    ssize_t nw = sys_writev(pipefd[1], wv, 3);
+    if (nw != 12) {
+        fut_printf("[MISC-TEST] ✗ writev pipe: wrote %zd (expected 12)\n", nw);
+        fut_vfs_close(pipefd[0]); fut_vfs_close(pipefd[1]);
+        fut_test_fail(346); return;
+    }
+
+    /* Read back and verify all 12 bytes are contiguous and correct */
+    char buf[16] = {0};
+    extern long sys_read(int fd, void *buf, size_t count);
+    ssize_t nr = sys_read(pipefd[0], buf, sizeof(buf));
+    fut_vfs_close(pipefd[0]); fut_vfs_close(pipefd[1]);
+
+    if (nr != 12) {
+        fut_printf("[MISC-TEST] ✗ writev pipe: read back %zd (expected 12)\n", nr);
+        fut_test_fail(346); return;
+    }
+    /* Verify content: "Hello, World" */
+    const char *expected = "Hello, World";
+    for (int i = 0; i < 12; i++) {
+        if (buf[i] != expected[i]) {
+            fut_printf("[MISC-TEST] ✗ writev pipe: buf[%d]='%c' expected '%c'\n",
+                       i, buf[i], expected[i]);
+            fut_test_fail(346); return;
+        }
+    }
+    fut_printf("[MISC-TEST] ✓ Test 346: writev pipe gather: 3 iovecs written and read back correctly\n");
+    fut_test_pass();
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -17088,6 +17136,7 @@ void fut_misc_test_thread(void *arg) {
     test_signalfd_poll_ready();          /* Test 343: signalfd in poll: POLLIN when signal pending */
     test_pipe_nb_atomic_write();         /* Test 344: pipe O_NONBLOCK write <= PIPE_BUF is atomic */
     test_copy_file_range_offsets();      /* Test 345: copy_file_range off_in/off_out pread/pwrite semantics */
+    test_writev_pipe_gather();           /* Test 346: writev on pipe gathers all iovecs atomically */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

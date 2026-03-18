@@ -835,6 +835,37 @@ int fut_socket_connect(fut_socket_t *socket, const char *target_path, size_t pat
  *   Socket I/O
  * ============================================================ */
 
+/* Circular buffer helpers for SEQPACKET framing — lock must be held by caller */
+static void circ_buf_write(fut_socket_pair_t *pair, const void *src, uint32_t len) {
+    const uint8_t *s = (const uint8_t *)src;
+    uint32_t sz = pair->recv_size, h = pair->recv_head;
+    uint32_t fc = sz - h;
+    if (len <= fc) {
+        __builtin_memcpy(&pair->recv_buf[h], s, len);
+    } else {
+        __builtin_memcpy(&pair->recv_buf[h], s, fc);
+        __builtin_memcpy(&pair->recv_buf[0], s + fc, len - fc);
+    }
+    pair->recv_head = (h + len) % sz;
+}
+
+static void circ_buf_read(fut_socket_pair_t *pair, void *dst, uint32_t len) {
+    uint8_t *d = (uint8_t *)dst;
+    uint32_t sz = pair->recv_size, t = pair->recv_tail;
+    uint32_t fc = sz - t;
+    if (len <= fc) {
+        __builtin_memcpy(d, &pair->recv_buf[t], len);
+    } else {
+        __builtin_memcpy(d, &pair->recv_buf[t], fc);
+        __builtin_memcpy(d + fc, &pair->recv_buf[0], len - fc);
+    }
+    pair->recv_tail = (t + len) % sz;
+}
+
+static void circ_buf_skip(fut_socket_pair_t *pair, uint32_t len) {
+    pair->recv_tail = (pair->recv_tail + len) % pair->recv_size;
+}
+
 /**
  * Send data on connected socket.
  */
@@ -883,6 +914,14 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
     uint32_t available = pair->recv_size -
         ((pair->recv_head + pair->recv_size - pair->recv_tail) % pair->recv_size);
 
+    /* SEQPACKET: must write entire frame atomically — need space for 4-byte header + body */
+    bool seqp = (socket->socket_type == SOCK_SEQPACKET);
+    uint32_t seqp_needed = seqp ? (uint32_t)(4 + len) : 1u;
+    if (seqp && seqp_needed > pair->recv_size - 1u) {
+        fut_spinlock_release(&pair->lock);
+        return -EMSGSIZE;
+    }
+
     /* SO_SNDTIMEO: set up timer if a send timeout is configured */
     sock_timeout_ctx_t snd_tmo_ctx = {0};
     bool snd_has_timeout = (socket->sndtimeo_ms > 0);
@@ -894,11 +933,11 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
         snd_tmo_ctx.waitq  = pair->send_waitq;
         snd_tmo_ctx.lock   = &pair->lock;
         snd_tmo_ctx.fired  = false;
-        if (available == 0)
+        if (available < seqp_needed)
             fut_timer_start(ticks, sock_timeout_callback, &snd_tmo_ctx);
     }
 
-    while (available == 0) {
+    while (available < seqp_needed) {
         if (socket->flags & 0x800) {  /* O_NONBLOCK */
             if (snd_has_timeout) fut_timer_cancel(sock_timeout_callback, &snd_tmo_ctx);
             fut_spinlock_release(&pair->lock);
@@ -944,17 +983,27 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
 
     if (snd_has_timeout) fut_timer_cancel(sock_timeout_callback, &snd_tmo_ctx);
 
-    size_t to_write = (len > available) ? available : len;
-
-    /* Handle circular buffer wrap-around with two-chunk copy */
-    size_t first_chunk = pair->recv_size - pair->recv_head;
-    if (to_write <= first_chunk) {
-        memcpy(&pair->recv_buf[pair->recv_head], buf, to_write);
+    if (seqp) {
+        /* SEQPACKET: write 4-byte little-endian length header then message body */
+        uint32_t ml = (uint32_t)len;
+        uint8_t hdr[4] = { (uint8_t)ml, (uint8_t)(ml >> 8),
+                           (uint8_t)(ml >> 16), (uint8_t)(ml >> 24) };
+        circ_buf_write(pair, hdr, 4);
+        circ_buf_write(pair, buf, (uint32_t)len);
     } else {
-        memcpy(&pair->recv_buf[pair->recv_head], buf, first_chunk);
-        memcpy(&pair->recv_buf[0], (const char *)buf + first_chunk, to_write - first_chunk);
+        size_t to_write = (len > available) ? available : len;
+
+        /* Handle circular buffer wrap-around with two-chunk copy */
+        size_t first_chunk = pair->recv_size - pair->recv_head;
+        if (to_write <= first_chunk) {
+            memcpy(&pair->recv_buf[pair->recv_head], buf, to_write);
+        } else {
+            memcpy(&pair->recv_buf[pair->recv_head], buf, first_chunk);
+            memcpy(&pair->recv_buf[0], (const char *)buf + first_chunk, to_write - first_chunk);
+        }
+        pair->recv_head = (pair->recv_head + to_write) % pair->recv_size;
+        len = to_write;  /* report actual bytes written for stream */
     }
-    pair->recv_head = (pair->recv_head + to_write) % pair->recv_size;
 
     /* Wake receiver */
     fut_waitq_wake_one(pair->recv_waitq);
@@ -966,8 +1015,8 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
 
     fut_spinlock_release(&pair->lock);
 
-    SOCKET_LOG("[SOCKET] Socket %u sent %zu bytes\n", socket->socket_id, to_write);
-    return (ssize_t)to_write;
+    SOCKET_LOG("[SOCKET] Socket %u sent %zu bytes\n", socket->socket_id, len);
+    return (ssize_t)len;
 }
 
 /**
@@ -1085,16 +1134,29 @@ ssize_t fut_socket_recv(fut_socket_t *socket, void *buf, size_t len) {
 
     if (rcv_has_timeout) fut_timer_cancel(sock_timeout_callback, &rcv_tmo_ctx);
 
-    size_t to_read = (len > available) ? available : len;
-    /* Handle circular buffer wrap-around with two-chunk copy */
-    size_t first_chunk = pair->recv_size - pair->recv_tail;
-    if (to_read <= first_chunk) {
-        memcpy(buf, &pair->recv_buf[pair->recv_tail], to_read);
+    size_t to_read;
+    if (socket->socket_type == SOCK_SEQPACKET) {
+        /* SEQPACKET: read 4-byte frame header, then exactly one message */
+        uint8_t hdr[4];
+        circ_buf_read(pair, hdr, 4);
+        uint32_t msglen = (uint32_t)hdr[0] | ((uint32_t)hdr[1] << 8)
+                        | ((uint32_t)hdr[2] << 16) | ((uint32_t)hdr[3] << 24);
+        to_read = (len < (size_t)msglen) ? len : (size_t)msglen;
+        circ_buf_read(pair, buf, (uint32_t)to_read);
+        if (to_read < (size_t)msglen)
+            circ_buf_skip(pair, msglen - (uint32_t)to_read);
     } else {
-        memcpy(buf, &pair->recv_buf[pair->recv_tail], first_chunk);
-        memcpy((char *)buf + first_chunk, &pair->recv_buf[0], to_read - first_chunk);
+        to_read = (len > available) ? available : len;
+        /* Handle circular buffer wrap-around with two-chunk copy */
+        size_t first_chunk = pair->recv_size - pair->recv_tail;
+        if (to_read <= first_chunk) {
+            memcpy(buf, &pair->recv_buf[pair->recv_tail], to_read);
+        } else {
+            memcpy(buf, &pair->recv_buf[pair->recv_tail], first_chunk);
+            memcpy((char *)buf + first_chunk, &pair->recv_buf[0], to_read - first_chunk);
+        }
+        pair->recv_tail = (pair->recv_tail + to_read) % pair->recv_size;
     }
-    pair->recv_tail = (pair->recv_tail + to_read) % pair->recv_size;
 
     /* Wake sender */
     fut_waitq_wake_one(pair->send_waitq);
@@ -1148,16 +1210,35 @@ ssize_t fut_socket_recv_peek(fut_socket_t *socket, void *buf, size_t len) {
         }
     }
 
-    size_t to_read = (len > available) ? available : len;
-    /* Handle circular buffer wrap-around with two-chunk copy */
-    size_t first_chunk = pair->recv_size - pair->recv_tail;
-
-    /* Copy data but do NOT advance recv_tail — data stays in buffer */
-    if (to_read <= first_chunk) {
-        memcpy(buf, &pair->recv_buf[pair->recv_tail], to_read);
+    size_t to_read;
+    if (socket->socket_type == SOCK_SEQPACKET) {
+        /* SEQPACKET peek: read 4-byte header from temp position, then peek data */
+        uint32_t t = pair->recv_tail, sz = pair->recv_size;
+        uint8_t hdr[4];
+        for (int i = 0; i < 4; i++) { hdr[i] = pair->recv_buf[t]; t = (t + 1) % sz; }
+        uint32_t msglen = (uint32_t)hdr[0] | ((uint32_t)hdr[1] << 8)
+                        | ((uint32_t)hdr[2] << 16) | ((uint32_t)hdr[3] << 24);
+        to_read = (len < (size_t)msglen) ? len : (size_t)msglen;
+        /* Copy data from t without advancing recv_tail */
+        uint32_t fc = sz - t;
+        if (to_read <= fc) {
+            memcpy(buf, &pair->recv_buf[t], to_read);
+        } else {
+            memcpy(buf, &pair->recv_buf[t], fc);
+            memcpy((char *)buf + fc, &pair->recv_buf[0], to_read - fc);
+        }
     } else {
-        memcpy(buf, &pair->recv_buf[pair->recv_tail], first_chunk);
-        memcpy((char *)buf + first_chunk, &pair->recv_buf[0], to_read - first_chunk);
+        to_read = (len > available) ? available : len;
+        /* Handle circular buffer wrap-around with two-chunk copy */
+        size_t first_chunk = pair->recv_size - pair->recv_tail;
+
+        /* Copy data but do NOT advance recv_tail — data stays in buffer */
+        if (to_read <= first_chunk) {
+            memcpy(buf, &pair->recv_buf[pair->recv_tail], to_read);
+        } else {
+            memcpy(buf, &pair->recv_buf[pair->recv_tail], first_chunk);
+            memcpy((char *)buf + first_chunk, &pair->recv_buf[0], to_read - first_chunk);
+        }
     }
 
     fut_spinlock_release(&pair->lock);

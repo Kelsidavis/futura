@@ -14412,6 +14412,107 @@ static void test_socket_errno_correctness(void) {
 }
 
 /**
+ * Test 325: SOCK_SEQPACKET preserves message boundaries.
+ *
+ * Two consecutive sends on a SEQPACKET socketpair must be received as two
+ * separate messages, not merged into one stream chunk.
+ */
+static void test_seqpacket_boundaries(void) {
+    fut_printf("[MISC-TEST] Test 325: SOCK_SEQPACKET message boundary preservation\n");
+    extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+    extern long sys_sendto(int sockfd, const void *buf, size_t len, int flags, const void *dest_addr, int addrlen);
+    extern long sys_recvfrom(int sockfd, void *buf, size_t len, int flags, void *src_addr, void *addrlen);
+
+    int sv[2] = { -1, -1 };
+    long r = sys_socketpair(1 /*AF_UNIX*/, 5 /*SOCK_SEQPACKET*/, 0, sv);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ socketpair(SEQPACKET) failed: %ld\n", r);
+        fut_test_fail(325); return;
+    }
+
+    /* Send two messages of different sizes */
+    const char msg1[] = "hello";
+    const char msg2[] = "world!";
+    long s1 = sys_sendto(sv[0], msg1, 5, 0, NULL, 0);
+    long s2 = sys_sendto(sv[0], msg2, 6, 0, NULL, 0);
+    if (s1 != 5 || s2 != 6) {
+        fut_printf("[MISC-TEST] ✗ sends: s1=%ld s2=%ld\n", s1, s2);
+        fut_vfs_close(sv[0]); fut_vfs_close(sv[1]);
+        fut_test_fail(325); return;
+    }
+
+    /* First recv must return exactly 5 bytes (first message) */
+    char buf[64] = {0};
+    long r1 = sys_recvfrom(sv[1], buf, sizeof(buf), 0, NULL, NULL);
+    if (r1 != 5) {
+        fut_printf("[MISC-TEST] ✗ first recv returned %ld (expected 5)\n", r1);
+        fut_vfs_close(sv[0]); fut_vfs_close(sv[1]);
+        fut_test_fail(325); return;
+    }
+
+    /* Second recv must return exactly 6 bytes (second message) */
+    char buf2[64] = {0};
+    long r2 = sys_recvfrom(sv[1], buf2, sizeof(buf2), 0, NULL, NULL);
+    if (r2 != 6) {
+        fut_printf("[MISC-TEST] ✗ second recv returned %ld (expected 6)\n", r2);
+        fut_vfs_close(sv[0]); fut_vfs_close(sv[1]);
+        fut_test_fail(325); return;
+    }
+
+    fut_vfs_close(sv[0]); fut_vfs_close(sv[1]);
+    fut_printf("[MISC-TEST] ✓ SEQPACKET: two sends yielded two separate bounded recvs (%ld+%ld)\n", r1, r2);
+    fut_test_pass();
+}
+
+/**
+ * Test 326: SOCK_SEQPACKET truncates to buffer size and discards remainder.
+ *
+ * Send a 20-byte message; recv with a 10-byte buffer must return 10 bytes
+ * (the truncated copy), discard the rest, and the next recv gets the next msg.
+ */
+static void test_seqpacket_truncation(void) {
+    fut_printf("[MISC-TEST] Test 326: SOCK_SEQPACKET truncation\n");
+    extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+    extern long sys_sendto(int sockfd, const void *buf, size_t len, int flags, const void *dest_addr, int addrlen);
+    extern long sys_recvfrom(int sockfd, void *buf, size_t len, int flags, void *src_addr, void *addrlen);
+
+    int sv[2] = { -1, -1 };
+    long r = sys_socketpair(1 /*AF_UNIX*/, 5 /*SOCK_SEQPACKET*/, 0, sv);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ socketpair(SEQPACKET) failed: %ld\n", r);
+        fut_test_fail(326); return;
+    }
+
+    /* Send 20-byte message then a sentinel 4-byte message */
+    const char big[20] = "12345678901234567890";
+    const char sentinel[4] = "DONE";
+    sys_sendto(sv[0], big, 20, 0, NULL, 0);
+    sys_sendto(sv[0], sentinel, 4, 0, NULL, 0);
+
+    /* Recv with 10-byte buffer: must get 10 bytes (truncated), rest discarded */
+    char small[10] = {0};
+    long got = sys_recvfrom(sv[1], small, 10, 0, NULL, NULL);
+    if (got != 10) {
+        fut_printf("[MISC-TEST] ✗ truncated recv returned %ld (expected 10)\n", got);
+        fut_vfs_close(sv[0]); fut_vfs_close(sv[1]);
+        fut_test_fail(326); return;
+    }
+
+    /* Next recv must return the sentinel, not the discarded remainder */
+    char buf2[16] = {0};
+    long got2 = sys_recvfrom(sv[1], buf2, sizeof(buf2), 0, NULL, NULL);
+    if (got2 != 4) {
+        fut_printf("[MISC-TEST] ✗ sentinel recv returned %ld (expected 4)\n", got2);
+        fut_vfs_close(sv[0]); fut_vfs_close(sv[1]);
+        fut_test_fail(326); return;
+    }
+
+    fut_vfs_close(sv[0]); fut_vfs_close(sv[1]);
+    fut_printf("[MISC-TEST] ✓ SEQPACKET: truncated recv (%ld bytes) discards rest; next msg (%ld bytes) intact\n", got, got2);
+    fut_test_pass();
+}
+
+/**
  * Test 324: MSG_PEEK on DGRAM socket sees datagram without consuming it.
  *
  * Send one datagram; peek should return the data and leave it in queue;
@@ -15632,6 +15733,8 @@ void fut_misc_test_thread(void *arg) {
     test_sendmsg_dgram_msgname();        /* Test 322: sendmsg with msg_name routes DGRAM */
     test_recvmsg_dgram_msgname();        /* Test 323: recvmsg fills msg_name with sender addr */
     test_dgram_msg_peek();               /* Test 324: MSG_PEEK on DGRAM leaves datagram in queue */
+    test_seqpacket_boundaries();         /* Test 325: SEQPACKET preserves message boundaries */
+    test_seqpacket_truncation();         /* Test 326: SEQPACKET truncates to buffer; discards remainder */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

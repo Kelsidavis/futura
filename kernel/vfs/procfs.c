@@ -504,7 +504,12 @@ static size_t gen_status(char *buf, size_t cap, fut_task_t *task) {
                                   pb_u64(&b, task->sgid); pb_char(&b, '\t');
                                   pb_u64(&b, task->gid);  pb_char(&b, '\n');
     pb_str(&b, "FDSize:\t");     pb_u64(&b, (uint64_t)task->max_fds); pb_char(&b, '\n');
-    pb_str(&b, "Groups:\t");     pb_char(&b, '\n');
+    pb_str(&b, "Groups:\t");
+    for (int gi = 0; gi < task->ngroups; gi++) {
+        if (gi > 0) pb_char(&b, ' ');
+        pb_u64(&b, task->groups[gi]);
+    }
+    pb_char(&b, '\n');
     pb_str(&b, "Threads:\t");    pb_u64(&b, task->thread_count); pb_char(&b, '\n');
     pb_str(&b, "VmPeak:\t");     pb_u64(&b, rss_kb); pb_str(&b, " kB\n");
     pb_str(&b, "VmSize:\t");     pb_u64(&b, rss_kb); pb_str(&b, " kB\n");
@@ -522,6 +527,8 @@ static size_t gen_status(char *buf, size_t cap, fut_task_t *task) {
     pb_str(&b, "CapAmb:\t");     pb_hex16(&b, 0);                      pb_char(&b, '\n');
     pb_str(&b, "NoNewPrivs:\t"); pb_u64(&b, task->no_new_privs ? 1 : 0); pb_char(&b, '\n');
     pb_str(&b, "Seccomp:\t");    pb_u64(&b, 0);                        pb_char(&b, '\n');
+    /* Umask (Linux 4.7+): file creation mask in octal */
+    pb_str(&b, "Umask:\t");      pb_oct(&b, task->umask & 0777);       pb_char(&b, '\n');
     return b.pos;
 }
 

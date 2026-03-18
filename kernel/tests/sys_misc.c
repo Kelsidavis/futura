@@ -17103,6 +17103,156 @@ static void test_proc_maps_anon_devino(void) {
 }
 
 /* ============================================================
+ * Test 357: /proc/self/status Groups: field lists supplementary GIDs
+ * ============================================================ */
+static void test_proc_status_groups(void) {
+    fut_printf("[MISC-TEST] Test 357: /proc/self/status Groups: field\n");
+
+    extern long sys_setgroups(int size, const uint32_t *list);
+
+    /* Set supplementary groups to {100, 200, 300} */
+    static const uint32_t test_groups[] = { 100, 200, 300 };
+    long r = sys_setgroups(3, test_groups);
+    if (r < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 357: setgroups(3,...) failed: %ld\n", r);
+        fut_test_fail(357);
+        return;
+    }
+
+    int fd = fut_vfs_open("/proc/self/status", O_RDONLY, 0);
+    if (fd < 0) {
+        sys_setgroups(0, NULL);  /* restore */
+        fut_printf("[MISC-TEST] ✗ Test 357: open /proc/self/status failed: %d\n", fd);
+        fut_test_fail(357);
+        return;
+    }
+
+    char buf[2048];
+    long n = fut_vfs_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    sys_setgroups(0, NULL);  /* restore empty groups */
+
+    if (n <= 0) {
+        fut_printf("[MISC-TEST] ✗ Test 357: read /proc/self/status failed: %ld\n", n);
+        fut_test_fail(357);
+        return;
+    }
+    buf[n] = '\0';
+
+    /* Find "Groups:" line */
+    const char *groups_line = NULL;
+    char *p = buf;
+    while (p && *p) {
+        if (p[0] == 'G' && p[1] == 'r' && p[2] == 'o' && p[3] == 'u' &&
+            p[4] == 'p' && p[5] == 's' && p[6] == ':') {
+            groups_line = p;
+            break;
+        }
+        while (*p && *p != '\n') p++;
+        if (*p == '\n') p++;
+    }
+
+    if (!groups_line) {
+        fut_printf("[MISC-TEST] ✗ Test 357: Groups: line not found in /proc/self/status\n");
+        fut_test_fail(357);
+        return;
+    }
+
+    /* Check that "100" appears in the Groups: line */
+    int has_100 = 0;
+    const char *end = groups_line;
+    while (*end && *end != '\n') end++;
+    for (const char *q = groups_line; q < end - 2; q++) {
+        if (q[0] == '1' && q[1] == '0' && q[2] == '0') { has_100 = 1; break; }
+    }
+
+    if (!has_100) {
+        /* Print what we got for debugging */
+        char snippet[64];
+        int slen = (int)(end - groups_line);
+        if (slen > 63) slen = 63;
+        memcpy(snippet, groups_line, slen);
+        snippet[slen] = '\0';
+        fut_printf("[MISC-TEST] ✗ Test 357: gid 100 not found in '%s'\n", snippet);
+        fut_test_fail(357);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 357: /proc/self/status Groups: lists supplementary GIDs\n");
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 358: /proc/self/status Umask: field matches current umask
+ * ============================================================ */
+static void test_proc_status_umask(void) {
+    fut_printf("[MISC-TEST] Test 358: /proc/self/status Umask: field\n");
+
+    extern long sys_umask(unsigned int mask);
+    /* Set umask to 0027 and verify it appears in status */
+    long old_umask = sys_umask(0027);
+
+    int fd = fut_vfs_open("/proc/self/status", O_RDONLY, 0);
+    if (fd < 0) {
+        sys_umask((unsigned int)old_umask);
+        fut_printf("[MISC-TEST] ✗ Test 358: open /proc/self/status failed: %d\n", fd);
+        fut_test_fail(358);
+        return;
+    }
+
+    char buf[2048];
+    long n = fut_vfs_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    sys_umask((unsigned int)old_umask);
+
+    if (n <= 0) {
+        fut_printf("[MISC-TEST] ✗ Test 358: read /proc/self/status failed: %ld\n", n);
+        fut_test_fail(358);
+        return;
+    }
+    buf[n] = '\0';
+
+    /* Find "Umask:" line */
+    const char *umask_line = NULL;
+    char *p = buf;
+    while (p && *p) {
+        if (p[0] == 'U' && p[1] == 'm' && p[2] == 'a' && p[3] == 's' &&
+            p[4] == 'k' && p[5] == ':') {
+            umask_line = p;
+            break;
+        }
+        while (*p && *p != '\n') p++;
+        if (*p == '\n') p++;
+    }
+
+    if (!umask_line) {
+        fut_printf("[MISC-TEST] ✗ Test 358: Umask: line not found in /proc/self/status\n");
+        fut_test_fail(358);
+        return;
+    }
+
+    /* umask 0027 → octal "27" in output (leading zeros stripped) */
+    int has_27 = 0;
+    const char *end = umask_line;
+    while (*end && *end != '\n') end++;
+    for (const char *q = umask_line; q < end - 1; q++) {
+        if (q[0] == '2' && q[1] == '7') { has_27 = 1; break; }
+    }
+
+    if (!has_27) {
+        char snippet[32];
+        int slen = (int)(end - umask_line);
+        if (slen > 31) slen = 31;
+        memcpy(snippet, umask_line, slen);
+        snippet[slen] = '\0';
+        fut_printf("[MISC-TEST] ✗ Test 358: '27' not found in '%s'\n", snippet);
+        fut_test_fail(358);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 358: /proc/self/status Umask: correctly shows octal umask\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Tests 352-353: SO_SNDBUF / SO_RCVBUF set/get round-trip
  * ============================================================ */
 static void test_so_sndbuf_roundtrip(void) {
@@ -17631,6 +17781,8 @@ void fut_misc_test_thread(void *arg) {
     test_proc_stat_sigmask();            /* Test 354: /proc/self/stat sigcatch field reflects handlers */
     test_proc_maps_no_tab();             /* Test 355: /proc/self/maps uses space before pathname (no tabs) */
     test_proc_maps_anon_devino();        /* Test 356: /proc/self/maps anonymous entries have dev:inode format */
+    test_proc_status_groups();           /* Test 357: /proc/self/status Groups: lists supplementary GIDs */
+    test_proc_status_umask();            /* Test 358: /proc/self/status Umask: matches current umask */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -23,6 +23,7 @@
 #include <kernel/fut_personality.h>
 #include <sys/utsname.h>
 #include <sys/resource.h>
+#include <sys/stat.h>
 #include <stdint.h>
 #include <string.h>
 #include "tests/test_api.h"
@@ -78,6 +79,8 @@ extern long sys_prlimit64(int pid, int resource, const void *new_limit, void *ol
 extern long sys_mincore(void *addr, size_t length, unsigned char *vec);
 extern long sys_sendfile(int out_fd, int in_fd, uint64_t *offset, size_t count);
 extern long sys_msync(void *addr, size_t length, int flags);
+extern long sys_stat(const char *path, struct fut_stat *statbuf);
+extern long sys_lstat(const char *path, struct fut_stat *statbuf);
 
 /* fcntl commands */
 #define F_DUPFD         0
@@ -7179,6 +7182,80 @@ static void test_msync_basic(void) {
     fut_test_pass();
 }
 
+static void test_stat_basic(void) {
+    fut_printf("[MISC-TEST] Test 151: sys_stat basic\n");
+
+    struct fut_stat st;
+    long ret = sys_stat("/proc", &st);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ stat(\"/proc\"): %ld\n", ret);
+        fut_test_fail(151);
+        return;
+    }
+    if (!S_ISDIR(st.st_mode)) {
+        fut_printf("[MISC-TEST] ✗ stat(\"/proc\"): mode 0x%x not a directory\n", st.st_mode);
+        fut_test_fail(151);
+        return;
+    }
+    /* stat on non-existent path must return ENOENT */
+    ret = sys_stat("/this_does_not_exist_stat_test", &st);
+    if (ret != -ENOENT) {
+        fut_printf("[MISC-TEST] ✗ stat(missing): expected ENOENT, got %ld\n", ret);
+        fut_test_fail(151);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ stat: /proc is dir, missing path → ENOENT\n");
+    fut_test_pass();
+}
+
+static void test_lstat_symlink(void) {
+    fut_printf("[MISC-TEST] Test 152: sys_lstat symlink\n");
+
+    /* Create a file and a symlink pointing to it */
+    int fd = (int)fut_vfs_open("/test_lstat_target.txt", O_CREAT | O_RDWR, 0644);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ lstat: create target failed: %d\n", fd);
+        fut_test_fail(152);
+        return;
+    }
+    fut_vfs_close(fd);
+
+    int r = (int)fut_vfs_symlink("/test_lstat_target.txt", "/test_lstat_link");
+    if (r < 0) {
+        fut_printf("[MISC-TEST] ✗ lstat: symlink create failed: %d\n", r);
+        fut_test_fail(152);
+        return;
+    }
+
+    /* lstat on the symlink itself should show S_IFLNK */
+    struct fut_stat st;
+    long ret = sys_lstat("/test_lstat_link", &st);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ lstat(\"/test_lstat_link\"): %ld\n", ret);
+        fut_test_fail(152);
+        return;
+    }
+    if (!S_ISLNK(st.st_mode)) {
+        fut_printf("[MISC-TEST] ✗ lstat(\"/test_lstat_link\"): mode 0x%x not a symlink\n", st.st_mode);
+        fut_test_fail(152);
+        return;
+    }
+    /* lstat on the regular file should show S_IFREG */
+    ret = sys_lstat("/test_lstat_target.txt", &st);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ lstat(target): %ld\n", ret);
+        fut_test_fail(152);
+        return;
+    }
+    if (S_ISLNK(st.st_mode)) {
+        fut_printf("[MISC-TEST] ✗ lstat(target): unexpectedly shows symlink mode\n");
+        fut_test_fail(152);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ lstat: symlink → S_IFLNK, target → not symlink\n");
+    fut_test_pass();
+}
+
 /* ============================================================
  * Test entry point
  * ============================================================ */
@@ -7339,6 +7416,8 @@ void fut_misc_test_thread(void *arg) {
     test_mincore_basic();                  /* Test 148: mincore on anonymous mapping */
     test_sendfile_basic();                 /* Test 149: sendfile file→file copy */
     test_msync_basic();                    /* Test 150: msync no-op on anonymous mapping */
+    test_stat_basic();                     /* Test 151: sys_stat directory + ENOENT */
+    test_lstat_symlink();                  /* Test 152: sys_lstat symlink type check */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

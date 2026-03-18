@@ -21,6 +21,25 @@
 #include <kernel/uaccess.h>
 #include <string.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
+static inline int stat_copy_to_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)dst >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_to_user(dst, src, n);
+}
+static inline int stat_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_from_user(dst, src, n);
+}
+
 
 /**
  * stat() - Get file status
@@ -101,7 +120,7 @@ long sys_stat(const char *path, struct fut_stat *statbuf) {
 
     /* Copy path from userspace to kernel space */
     char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
-    if (fut_copy_from_user(path_buf, local_path, sizeof(path_buf)) != 0) {
+    if (stat_copy_from_user(path_buf, local_path, sizeof(path_buf)) != 0) {
         fut_printf("[STAT] stat(path=?, statbuf=%p) -> EFAULT (copy_from_user failed)\n",
                    (void *)local_statbuf);
         return -EFAULT;
@@ -150,8 +169,8 @@ long sys_stat(const char *path, struct fut_stat *statbuf) {
      * requires path lookup and inode access. This optimization fails fast if
      * the buffer is in inaccessible memory. Use actual write test with first byte. */
     char test_byte;
-    if (fut_copy_from_user(&test_byte, (const char *)local_statbuf, 1) != 0 ||
-        fut_copy_to_user((char *)local_statbuf, &test_byte, 1) != 0) {
+    if (stat_copy_from_user(&test_byte, (const char *)local_statbuf, 1) != 0 ||
+        stat_copy_to_user((char *)local_statbuf, &test_byte, 1) != 0) {
         fut_printf("[STAT] stat(path='%s' [%s, len=%lu], statbuf=%p) -> EFAULT "
                    "(buffer not accessible)\n",
                    path_buf, path_type, (unsigned long)path_len, (void *)local_statbuf);
@@ -195,7 +214,7 @@ long sys_stat(const char *path, struct fut_stat *statbuf) {
     }
 
     /* Copy stat buffer to userspace */
-    if (fut_copy_to_user(local_statbuf, &kernel_stat, sizeof(struct fut_stat)) != 0) {
+    if (stat_copy_to_user(local_statbuf, &kernel_stat, sizeof(struct fut_stat)) != 0) {
         fut_printf("[STAT] stat(path='%s' [%s, len=%lu]) -> EFAULT "
                    "(copy_to_user failed)\n",
                    path_buf, path_type, (unsigned long)path_len);

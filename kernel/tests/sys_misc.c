@@ -7958,6 +7958,30 @@ static void test_fchownat_basic(void) {
     fut_test_pass();
 }
 
+static void test_syslog_basic(void) {
+    fut_printf("[MISC-TEST] Test 181: sys_syslog basic\n");
+    extern long sys_syslog(int type, char *buf, int len);
+
+    /* SYSLOG_ACTION_SIZE_BUFFER=10 returns size of the ring buffer */
+    long sz = sys_syslog(10, NULL, 0);
+    if (sz < 0) {
+        fut_printf("[MISC-TEST] ✗ syslog SIZE_BUFFER: returned %ld\n", sz);
+        fut_test_fail(181);
+        return;
+    }
+
+    /* SYSLOG_ACTION_READ_ALL=3 reads log into kernel buffer */
+    char buf[512];
+    long n = sys_syslog(3, buf, sizeof(buf));
+    if (n < 0) {
+        fut_printf("[MISC-TEST] ✗ syslog READ_ALL: returned %ld\n", n);
+        fut_test_fail(181);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ sys_syslog: SIZE_BUFFER=%ld, READ_ALL=%ld bytes\n", sz, n);
+    fut_test_pass();
+}
+
 static void test_fstatat_basic(void) {
     fut_printf("[MISC-TEST] Test 180: sys_fstatat basic\n");
     extern long sys_fstatat(int dirfd, const char *pathname, struct fut_stat *statbuf, int flags);
@@ -8520,6 +8544,7 @@ void fut_misc_test_thread(void *arg) {
     test_futimens_basic();                 /* Test 178: sys_futimens NULL times → current */
     test_utimensat_basic();                /* Test 179: sys_utimensat NULL times via AT_FDCWD */
     test_fstatat_basic();                  /* Test 180: sys_fstatat /proc + ENOENT */
+    test_syslog_basic();                   /* Test 181: sys_syslog SIZE_BUFFER + READ_ALL */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

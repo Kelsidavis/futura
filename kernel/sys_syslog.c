@@ -14,6 +14,19 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
+static inline int syslog_copy_to_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)dst >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_to_user(dst, src, n);
+}
+
 /* syslog command constants (Linux ABI) */
 #define SYSLOG_ACTION_CLOSE          0  /* Close the log (no-op) */
 #define SYSLOG_ACTION_OPEN           1  /* Open the log (no-op) */
@@ -106,7 +119,7 @@ long sys_syslog(int type, char *buf, int len) {
                 klog_read_pos = (klog_read_pos + 1) % KLOG_BUF_SIZE;
             }
 
-            if (fut_copy_to_user(buf + bytes_read, kbuf, i) != 0) {
+            if (syslog_copy_to_user(buf + bytes_read, kbuf, i) != 0) {
                 return bytes_read > 0 ? (long)bytes_read : -EFAULT;
             }
             bytes_read += i;
@@ -138,7 +151,7 @@ long sys_syslog(int type, char *buf, int len) {
                 kbuf[i] = klog_buf[(start + bytes_written + i) % KLOG_BUF_SIZE];
             }
 
-            if (fut_copy_to_user(buf + bytes_written, kbuf, chunk) != 0) {
+            if (syslog_copy_to_user(buf + bytes_written, kbuf, chunk) != 0) {
                 return bytes_written > 0 ? (long)bytes_written : -EFAULT;
             }
             bytes_written += chunk;

@@ -8526,6 +8526,203 @@ static void test_faccessat_basic(void) {
 }
 
 /* ============================================================
+ * Test 185: setsid() + setpgid() session/process-group semantics
+ * ============================================================ */
+static void test_setsid_setpgid(void) {
+    fut_printf("[MISC-TEST] Test 185: setsid/setpgid session semantics\n");
+    extern long sys_setsid(void);
+    extern long sys_setpgid(uint64_t pid, uint64_t pgid);
+    extern long sys_getpgid(uint64_t pid);
+    extern long sys_getsid(uint64_t pid);
+
+    fut_task_t *task = fut_task_current();
+    if (!task) { fut_test_fail(185); return; }
+
+    /* Save original state */
+    uint64_t orig_pgid = task->pgid;
+    uint64_t orig_sid  = task->sid;
+    uint64_t orig_pid  = task->pid;
+
+    /* Move ourselves to a different pgid so we're NOT a pgid leader */
+    /* Set pgid to a value != pid (use parent's pid or any existing pgid) */
+    /* Actually: setpgid(0, 0) == join own new group == pid becomes pgid */
+    /* To test setsid, we need pgid != pid. Temporarily set pgid to something else. */
+    task->pgid = orig_pid + 9999;  /* not pid, so we're not pgid leader */
+    task->sid  = orig_pid + 9999;
+
+    long sid = sys_setsid();
+    if (sid < 0) {
+        fut_printf("[MISC-TEST] ✗ setsid() returned %ld (expected new sid)\n", sid);
+        task->pgid = orig_pgid;
+        task->sid  = orig_sid;
+        fut_test_fail(185);
+        return;
+    }
+    if ((uint64_t)sid != task->pid) {
+        fut_printf("[MISC-TEST] ✗ setsid() returned %ld, expected pid=%llu\n", sid, (unsigned long long)task->pid);
+        task->pgid = orig_pgid;
+        task->sid  = orig_sid;
+        fut_test_fail(185);
+        return;
+    }
+    /* After setsid: pgid == pid (new process group) */
+    if (task->pgid != task->pid || task->sid != task->pid) {
+        fut_printf("[MISC-TEST] ✗ after setsid: pgid=%llu sid=%llu != pid=%llu\n",
+                   (unsigned long long)task->pgid,
+                   (unsigned long long)task->sid,
+                   (unsigned long long)task->pid);
+        task->pgid = orig_pgid;
+        task->sid  = orig_sid;
+        fut_test_fail(185);
+        return;
+    }
+
+    /* Now pgid == pid: calling setsid() again must fail EPERM */
+    long r2 = sys_setsid();
+    if (r2 != -EPERM) {
+        fut_printf("[MISC-TEST] ✗ setsid() when pgid leader returned %ld (expected EPERM)\n", r2);
+        task->pgid = orig_pgid;
+        task->sid  = orig_sid;
+        fut_test_fail(185);
+        return;
+    }
+
+    /* Restore original state */
+    task->pgid = orig_pgid;
+    task->sid  = orig_sid;
+
+    /* setpgid(0,0): join own new process group (pgid = pid) */
+    long r3 = sys_setpgid(0, 0);
+    if (r3 != 0) {
+        fut_printf("[MISC-TEST] ✗ setpgid(0,0) returned %ld\n", r3);
+        fut_test_fail(185);
+        return;
+    }
+    if (task->pgid != task->pid) {
+        fut_printf("[MISC-TEST] ✗ after setpgid(0,0): pgid=%llu != pid=%llu\n",
+                   (unsigned long long)task->pgid, (unsigned long long)task->pid);
+        fut_test_fail(185);
+        return;
+    }
+
+    /* getpgid(0) returns own pgid */
+    long pg = sys_getpgid(0);
+    if (pg < 0 || (uint64_t)pg != task->pid) {
+        fut_printf("[MISC-TEST] ✗ getpgid(0) returned %ld, expected %llu\n",
+                   pg, (unsigned long long)task->pid);
+        fut_test_fail(185);
+        return;
+    }
+
+    /* Restore */
+    task->pgid = orig_pgid;
+    task->sid  = orig_sid;
+
+    fut_printf("[MISC-TEST] ✓ setsid/setpgid: setsid creates session, EPERM when pgid leader, setpgid(0,0) works\n");
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 186: /proc/self/fd/<n> readlink resolves to file path
+ * ============================================================ */
+static void test_procfs_fd_symlink(void) {
+    fut_printf("[MISC-TEST] Test 186: /proc/self/fd/<n> readlink\n");
+    extern long sys_readlink(const char *path, char *buf, size_t bufsiz);
+
+    /* Open a known file */
+    int fd = (int)fut_vfs_open("/proc/uptime", 0 /* O_RDONLY */, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open /proc/uptime failed: %d\n", fd);
+        fut_test_fail(186);
+        return;
+    }
+
+    /* Build /proc/self/fd/<n> path */
+    char fdpath[64];
+    /* Simple itoa for fd number */
+    int tmp = fd;
+    int digs = 0, tmp2 = tmp;
+    do { digs++; tmp2 /= 10; } while (tmp2 > 0);
+    fdpath[0] = '/'; fdpath[1] = 'p'; fdpath[2] = 'r'; fdpath[3] = 'o';
+    fdpath[4] = 'c'; fdpath[5] = '/'; fdpath[6] = 's'; fdpath[7] = 'e';
+    fdpath[8] = 'l'; fdpath[9] = 'f'; fdpath[10] = '/'; fdpath[11] = 'f';
+    fdpath[12] = 'd'; fdpath[13] = '/';
+    int pos = 14 + digs - 1;
+    fdpath[14 + digs] = '\0';
+    tmp2 = tmp;
+    while (digs-- > 0) { fdpath[pos--] = '0' + (tmp2 % 10); tmp2 /= 10; }
+
+    char target[128];
+    __builtin_memset(target, 0, sizeof(target));
+    long rlen = sys_readlink(fdpath, target, sizeof(target) - 1);
+    fut_vfs_close(fd);
+
+    if (rlen <= 0) {
+        fut_printf("[MISC-TEST] ✗ readlink(%s) returned %ld\n", fdpath, rlen);
+        fut_test_fail(186);
+        return;
+    }
+    /* Target should be non-empty and start with '/' or be a path */
+    if (target[0] == '\0') {
+        fut_printf("[MISC-TEST] ✗ readlink(%s) returned empty string\n", fdpath);
+        fut_test_fail(186);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ /proc/self/fd/%d → '%s'\n", fd, target);
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 187: O_NONBLOCK pipe returns EAGAIN when empty
+ * ============================================================ */
+static void test_pipe_nonblock(void) {
+    fut_printf("[MISC-TEST] Test 187: O_NONBLOCK pipe EAGAIN on empty read\n");
+    extern long sys_pipe(int pipefd[2]);
+    extern long sys_fcntl(int fd, int cmd, uint64_t arg);
+
+#ifndef O_NONBLOCK
+#define O_NONBLOCK 0x800
+#endif
+
+    int pipefd[2] = {-1, -1};
+    long ret = sys_pipe(pipefd);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ pipe() failed: %ld\n", ret);
+        fut_test_fail(187);
+        return;
+    }
+
+    /* Set read end to O_NONBLOCK via F_SETFL */
+    long flags = sys_fcntl(pipefd[0], F_GETFL, 0);
+    ret = sys_fcntl(pipefd[0], F_SETFL, (uint64_t)(flags | O_NONBLOCK));
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ fcntl F_SETFL O_NONBLOCK failed: %ld\n", ret);
+        fut_vfs_close(pipefd[0]);
+        fut_vfs_close(pipefd[1]);
+        fut_test_fail(187);
+        return;
+    }
+
+    /* Read from empty pipe — must return EAGAIN */
+    char buf[16];
+    extern long sys_read(int fd, void *buf, size_t count);
+    long n = sys_read(pipefd[0], buf, sizeof(buf));
+    fut_vfs_close(pipefd[0]);
+    fut_vfs_close(pipefd[1]);
+
+    if (n != -EAGAIN) {
+        fut_printf("[MISC-TEST] ✗ read on empty O_NONBLOCK pipe returned %ld (expected EAGAIN=%d)\n",
+                   n, -EAGAIN);
+        fut_test_fail(187);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ O_NONBLOCK pipe: empty read returns EAGAIN\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -8719,6 +8916,9 @@ void fut_misc_test_thread(void *arg) {
     test_unlinkat_basic();                 /* Test 182: sys_unlinkat delete + ENOENT */
     test_mknodat_basic();                  /* Test 183: sys_mknodat S_IFREG creation */
     test_wuntraced_wcontinued();           /* Test 184: WUNTRACED/WCONTINUED stop_reported fix */
+    test_setsid_setpgid();                 /* Test 185: setsid/setpgid session semantics */
+    test_procfs_fd_symlink();              /* Test 186: /proc/self/fd/<n> readlink */
+    test_pipe_nonblock();                  /* Test 187: O_NONBLOCK pipe EAGAIN on empty read */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

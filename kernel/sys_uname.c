@@ -21,6 +21,31 @@
 
 #include <kernel/kprintf.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
+static inline int uname_copy_to_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)dst >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_to_user(dst, src, n);
+}
+static inline int uname_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_from_user(dst, src, n);
+}
+static inline int uname_access_ok(const void *ptr, size_t n, int write) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)ptr >= KERNEL_VIRTUAL_BASE) return 0;
+#endif
+    return fut_access_ok(ptr, n, write);
+}
+
 /* Mutable hostname and domainname — writable by sethostname/setdomainname */
 #define HOSTNAME_MAX  65
 #define DOMAINNAME_MAX 65
@@ -129,7 +154,7 @@ long sys_uname(struct utsname *buf) {
      * ATTACK: Attacker provides unmapped or read-only buffer
      * IMPACT: Kernel page fault when writing system info
      * DEFENSE: Check write permission before processing */
-    if (fut_access_ok(buf, sizeof(struct utsname), 1) != 0) {
+    if (uname_access_ok(buf, sizeof(struct utsname), 1) != 0) {
         fut_printf("[UNAME] uname(buf=%p) -> EFAULT (buffer not writable for %zu bytes)\n",
                    (void*)buf, sizeof(struct utsname));
         return -EFAULT;
@@ -139,8 +164,10 @@ long sys_uname(struct utsname *buf) {
     struct utsname info;
     memset(&info, 0, sizeof(info));
 
-    /* Operating system name */
-    memcpy(info.sysname, "Futura", 7);  /* 6 chars + null */
+    /* Operating system name — report "Linux" for POSIX/Linux compatibility.
+     * Many userspace programs check uname().sysname == "Linux" to detect the
+     * OS. Futura targets Linux ABI (PER_LINUX personality by default). */
+    memcpy(info.sysname, "Linux", 6);  /* 5 chars + null */
 
     /* Network node hostname (writable via sethostname) */
     size_t hn_len = 0;
@@ -148,8 +175,8 @@ long sys_uname(struct utsname *buf) {
     memcpy(info.nodename, g_hostname, hn_len);
     info.nodename[hn_len] = '\0';
 
-    /* Operating system release */
-    memcpy(info.release, "0.1.0", 6);  /* 5 chars + null */
+    /* Operating system release — report a realistic Linux version */
+    memcpy(info.release, "6.8.0-futura", 13);  /* 12 chars + null */
 
     /* Operating system version (build date/time) */
     {
@@ -173,7 +200,7 @@ long sys_uname(struct utsname *buf) {
 #endif
 
     /* Copy to userspace */
-    if (fut_copy_to_user(buf, &info, sizeof(info)) != 0) {
+    if (uname_copy_to_user(buf, &info, sizeof(info)) != 0) {
         fut_printf("[UNAME] uname(buf=%p) -> EFAULT "
                    "(copy_to_user failed)\n", (void*)buf);
         return -EFAULT;
@@ -218,7 +245,7 @@ long sys_sethostname(const char *name, size_t len) {
     }
 
     char buf[HOSTNAME_MAX];
-    if (fut_copy_from_user(buf, name, len) != 0) {
+    if (uname_copy_from_user(buf, name, len) != 0) {
         fut_printf("[SETHOSTNAME] sethostname(len=%zu, pid=%d) -> EFAULT\n", len, task->pid);
         return -EFAULT;
     }
@@ -270,7 +297,7 @@ long sys_setdomainname(const char *name, size_t len) {
     }
 
     char buf[DOMAINNAME_MAX];
-    if (fut_copy_from_user(buf, name, len) != 0) {
+    if (uname_copy_from_user(buf, name, len) != 0) {
         fut_printf("[SETDOMAINNAME] setdomainname(len=%zu, pid=%d) -> EFAULT\n", len, task->pid);
         return -EFAULT;
     }

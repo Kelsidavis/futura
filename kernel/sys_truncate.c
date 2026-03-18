@@ -21,6 +21,18 @@
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
+static inline int truncate_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_from_user(dst, src, n);
+}
 
 /**
  * truncate() - Truncate file to specified length (path-based)
@@ -81,7 +93,7 @@ long sys_truncate(const char *path, uint64_t length) {
      * Return -ENAMETOOLONG if truncation detected
      * Matches sys_openat pattern (commit f68ce63) */
     char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
-    if (fut_copy_from_user(path_buf, local_path, sizeof(path_buf)) != 0) {
+    if (truncate_copy_from_user(path_buf, local_path, sizeof(path_buf)) != 0) {
         fut_printf("[TRUNCATE] truncate(path=?, length=%llu) -> EFAULT (copy_from_user failed)\n",
                    (unsigned long long)local_length);
         return -EFAULT;

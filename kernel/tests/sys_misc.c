@@ -7366,6 +7366,90 @@ static void test_pwritev_basic(void) {
     fut_test_pass();
 }
 
+static void test_uname_content(void) {
+    fut_printf("[MISC-TEST] Test 155: sys_uname content\n");
+
+    struct utsname info;
+    long ret = sys_uname(&info);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ uname: %ld\n", ret);
+        fut_test_fail(155);
+        return;
+    }
+    /* sysname must be "Linux" for Linux ABI compatibility */
+    if (info.sysname[0] != 'L' || info.sysname[1] != 'i' ||
+        info.sysname[2] != 'n' || info.sysname[3] != 'u' || info.sysname[4] != 'x') {
+        fut_printf("[MISC-TEST] ✗ uname: sysname='%s' (expected 'Linux')\n", info.sysname);
+        fut_test_fail(155);
+        return;
+    }
+    /* machine should be non-empty */
+    if (info.machine[0] == '\0') {
+        fut_printf("[MISC-TEST] ✗ uname: empty machine\n");
+        fut_test_fail(155);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ uname: sysname='%s' machine='%s'\n",
+               info.sysname, info.machine);
+    fut_test_pass();
+}
+
+static void test_truncate_basic(void) {
+    fut_printf("[MISC-TEST] Test 156: sys_truncate basic\n");
+    extern long sys_truncate(const char *path, uint64_t length);
+    extern long sys_fstat(int fd, struct fut_stat *statbuf);
+
+    /* Create a file with some content */
+    int fd = (int)fut_vfs_open("/test_truncate.txt", O_CREAT | O_RDWR, 0644);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ truncate: create failed: %d\n", fd);
+        fut_test_fail(156);
+        return;
+    }
+    const char data[] = "Hello, Futura!";
+    fut_vfs_write(fd, data, 14);
+    fut_vfs_close(fd);
+
+    /* Truncate to 5 bytes */
+    long ret = sys_truncate("/test_truncate.txt", 5);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ truncate: %ld\n", ret);
+        fut_test_fail(156);
+        return;
+    }
+
+    /* Verify via fstat that size is now 5 */
+    fd = (int)fut_vfs_open("/test_truncate.txt", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ truncate: reopen failed: %d\n", fd);
+        fut_test_fail(156);
+        return;
+    }
+    struct fut_stat st;
+    ret = sys_fstat(fd, &st);
+    fut_vfs_close(fd);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ truncate: fstat failed: %ld\n", ret);
+        fut_test_fail(156);
+        return;
+    }
+    if (st.st_size != 5) {
+        fut_printf("[MISC-TEST] ✗ truncate: size=%llu expected 5\n",
+                   (unsigned long long)st.st_size);
+        fut_test_fail(156);
+        return;
+    }
+    /* truncate of non-existent file → ENOENT */
+    ret = sys_truncate("/this_does_not_exist_truncate", 0);
+    if (ret != -ENOENT) {
+        fut_printf("[MISC-TEST] ✗ truncate(missing): expected ENOENT, got %ld\n", ret);
+        fut_test_fail(156);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ truncate: file truncated to 5 bytes, missing → ENOENT\n");
+    fut_test_pass();
+}
+
 /* ============================================================
  * Test entry point
  * ============================================================ */
@@ -7530,6 +7614,8 @@ void fut_misc_test_thread(void *arg) {
     test_lstat_symlink();                  /* Test 152: sys_lstat symlink type check */
     test_preadv_basic();                   /* Test 153: sys_preadv scatter read */
     test_pwritev_basic();                  /* Test 154: sys_pwritev scatter write */
+    test_uname_content();                  /* Test 155: sys_uname returns non-empty fields */
+    test_truncate_basic();                 /* Test 156: sys_truncate shrinks file */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

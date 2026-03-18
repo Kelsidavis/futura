@@ -386,6 +386,7 @@ RUST_VIRTIO_INPUT_DIR := $(RUST_ROOT)/virtio_input
 RUST_APPLE_UART_DIR   := $(RUST_ROOT)/apple_uart
 RUST_APPLE_RTKIT_DIR  := $(RUST_ROOT)/apple_rtkit
 RUST_APPLE_ANS2_DIR   := $(RUST_ROOT)/apple_ans2
+RUST_APPLE_AIC_DIR    := $(RUST_ROOT)/apple_aic
 RUST_BUILD_DIR_BLK   := $(RUST_VIRTIO_BLK_DIR)/target/$(RUST_TARGET)/$(RUST_PROFILE)
 RUST_BUILD_DIR_NET   := $(RUST_VIRTIO_NET_DIR)/target/$(RUST_TARGET)/$(RUST_PROFILE)
 RUST_BUILD_DIR_GPU   := $(RUST_VIRTIO_GPU_DIR)/target/$(RUST_TARGET)/$(RUST_PROFILE)
@@ -393,6 +394,7 @@ RUST_BUILD_DIR_INPUT := $(RUST_VIRTIO_INPUT_DIR)/target/$(RUST_TARGET)/$(RUST_PR
 RUST_BUILD_DIR_APPLE_UART  := $(RUST_APPLE_UART_DIR)/target/$(RUST_TARGET)/$(RUST_PROFILE)
 RUST_BUILD_DIR_APPLE_RTKIT := $(RUST_APPLE_RTKIT_DIR)/target/$(RUST_TARGET)/$(RUST_PROFILE)
 RUST_BUILD_DIR_APPLE_ANS2  := $(RUST_APPLE_ANS2_DIR)/target/$(RUST_TARGET)/$(RUST_PROFILE)
+RUST_BUILD_DIR_APPLE_AIC   := $(RUST_APPLE_AIC_DIR)/target/$(RUST_TARGET)/$(RUST_PROFILE)
 RUST_LIB_VIRTIO_BLK   := $(RUST_BUILD_DIR_BLK)/libvirtio_blk.a
 RUST_LIB_VIRTIO_NET   := $(RUST_BUILD_DIR_NET)/libvirtio_net.a
 RUST_LIB_VIRTIO_GPU   := $(RUST_BUILD_DIR_GPU)/libvirtio_gpu.a
@@ -400,12 +402,13 @@ RUST_LIB_VIRTIO_INPUT := $(RUST_BUILD_DIR_INPUT)/libvirtio_input.a
 RUST_LIB_APPLE_UART   := $(RUST_BUILD_DIR_APPLE_UART)/libapple_uart.a
 RUST_LIB_APPLE_RTKIT  := $(RUST_BUILD_DIR_APPLE_RTKIT)/libapple_rtkit.a
 RUST_LIB_APPLE_ANS2   := $(RUST_BUILD_DIR_APPLE_ANS2)/libapple_ans2.a
+RUST_LIB_APPLE_AIC    := $(RUST_BUILD_DIR_APPLE_AIC)/libapple_aic.a
 
 # Platform-specific Rust drivers
 ifeq ($(PLATFORM),x86_64)
 RUST_LIBS := $(RUST_LIB_VIRTIO_BLK) $(RUST_LIB_VIRTIO_NET) $(RUST_LIB_VIRTIO_INPUT)
 else ifeq ($(PLATFORM),arm64)
-RUST_LIBS := $(RUST_LIB_VIRTIO_GPU) $(RUST_LIB_VIRTIO_NET) $(RUST_LIB_VIRTIO_BLK) $(RUST_LIB_VIRTIO_INPUT) $(RUST_LIB_APPLE_UART) $(RUST_LIB_APPLE_RTKIT) $(RUST_LIB_APPLE_ANS2)
+RUST_LIBS := $(RUST_LIB_VIRTIO_GPU) $(RUST_LIB_VIRTIO_NET) $(RUST_LIB_VIRTIO_BLK) $(RUST_LIB_VIRTIO_INPUT) $(RUST_LIB_APPLE_UART) $(RUST_LIB_APPLE_RTKIT) $(RUST_LIB_APPLE_ANS2) $(RUST_LIB_APPLE_AIC)
 else
 RUST_LIBS :=
 endif
@@ -939,6 +942,15 @@ $(RUST_LIB_APPLE_ANS2): $(RUST_SOURCES)
 	@cd $(RUST_APPLE_ANS2_DIR) && RUSTFLAGS="-C panic=abort -C force-unwind-tables=no $(RUSTFLAGS)" $(CARGO) build --release --target $(RUST_TARGET)
 	@tmpdir=$$(mktemp -d); \
 	cd $$tmpdir && $(AR) x $(abspath $(RUST_LIB_APPLE_ANS2)) && for obj in *.o; do $(OBJCOPY) --remove-section='.gcc_except_table*' --remove-section='.eh_frame*' $$obj >/dev/null 2>&1 || true; done && $(AR) rcs $(abspath $(RUST_LIB_APPLE_ANS2)) *.o; \
+	rm -rf $$tmpdir
+
+$(RUST_LIB_APPLE_AIC): $(RUST_SOURCES)
+	@$(RUSTC) --print target-list | grep -q $(RUST_TARGET) >/dev/null || { \
+		echo "error: rust target '$(RUST_TARGET)' not installed for $(RUSTC)." >&2; exit 1; }
+	@echo "CARGO apple_aic ($(RUST_PROFILE))"
+	@cd $(RUST_APPLE_AIC_DIR) && RUSTFLAGS="-C panic=abort -C force-unwind-tables=no $(RUSTFLAGS)" $(CARGO) build --release --target $(RUST_TARGET)
+	@tmpdir=$$(mktemp -d); \
+	cd $$tmpdir && $(AR) x $(abspath $(RUST_LIB_APPLE_AIC)) && for obj in *.o; do $(OBJCOPY) --remove-section='.gcc_except_table*' --remove-section='.eh_frame*' $$obj >/dev/null 2>&1 || true; done && $(AR) rcs $(abspath $(RUST_LIB_APPLE_AIC)) *.o; \
 	rm -rf $$tmpdir
 else
 rust-drivers:

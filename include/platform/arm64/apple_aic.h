@@ -132,4 +132,55 @@ void apple_aic_handle_irq(void);
  */
 void fut_apple_irq_init(const fut_platform_info_t *info);
 
+/* ============================================================
+ *   Rust driver FFI (drivers/rust/apple_aic)
+ * ============================================================ */
+
+typedef struct AppleAic AppleAic;
+
+typedef void (*rust_aic_irq_handler_t)(uint32_t irq, void *cookie);
+
+/** Allocate and initialise AIC at @base.  Returns non-null on success. */
+AppleAic *rust_aic_init(uint64_t base);
+
+/** Free an AppleAic returned by rust_aic_init. */
+void rust_aic_free(AppleAic *aic);
+
+/** Enable (unmask) hardware IRQ @irq. */
+void rust_aic_enable_irq(const AppleAic *aic, uint32_t irq);
+
+/** Disable (mask) hardware IRQ @irq. */
+void rust_aic_disable_irq(const AppleAic *aic, uint32_t irq);
+
+/** Returns 1 if IRQ @irq is pending. */
+int rust_aic_is_pending(const AppleAic *aic, uint32_t irq);
+
+/** Send IPI @ipi to @target_cpu. */
+void rust_aic_send_ipi(const AppleAic *aic, uint32_t target_cpu, uint32_t ipi);
+
+/** Acknowledge IPI @ipi. */
+void rust_aic_ack_ipi(const AppleAic *aic, uint32_t ipi);
+
+/** Return the current CPU ID from WHOAMI. */
+uint32_t rust_aic_whoami(const AppleAic *aic);
+
+/** Route IRQ @irq to the CPUs indicated by @cpu_mask. */
+void rust_aic_set_target_cpu(const AppleAic *aic, uint32_t irq, uint32_t cpu_mask);
+
+/** Register a C handler for IRQ @irq. */
+void rust_aic_register_handler(AppleAic *aic, uint32_t irq,
+                                rust_aic_irq_handler_t handler, void *cookie);
+
+/** Unregister the handler for IRQ @irq. */
+void rust_aic_unregister_handler(AppleAic *aic, uint32_t irq);
+
+/** Dispatch one pending IRQ — call from the ARM64 IRQ exception vector. */
+void rust_aic_handle_irq(const AppleAic *aic);
+
+/** Return the hardware IRQ count (0 if not initialised). */
+uint32_t rust_aic_num_irqs(const AppleAic *aic);
+
+/** Returns 1 if the AIC was successfully initialised. */
+int rust_aic_is_ready(const AppleAic *aic);
+
 #endif /* __FUTURA_ARM64_APPLE_AIC_H__ */

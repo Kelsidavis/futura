@@ -362,9 +362,13 @@ long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout) {
         }
 
         while (stats.ready_count == 0) {
-            /* Check for pending signals → EINTR */
+            /* Check for pending signals → EINTR.
+             * Use thread's signal mask when available (per-thread masking via sigprocmask). */
             uint64_t pending = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
-            uint64_t blocked = task->signal_mask;
+            fut_thread_t *poll_thr = fut_thread_current();
+            uint64_t blocked = poll_thr ?
+                __atomic_load_n(&poll_thr->signal_mask, __ATOMIC_ACQUIRE) :
+                task->signal_mask;
             if (pending & ~blocked) {
                 fut_free(kfds);
                 return -EINTR;

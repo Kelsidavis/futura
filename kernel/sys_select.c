@@ -415,9 +415,12 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
         if (ready_count > 0 || is_immediate)
             break;
 
-        /* Check for pending signals → EINTR */
+        /* Check for pending signals → EINTR (use thread mask if available) */
         uint64_t pending = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
-        uint64_t blocked = task->signal_mask;
+        fut_thread_t *sel_thr = fut_thread_current();
+        uint64_t blocked = sel_thr ?
+            __atomic_load_n(&sel_thr->signal_mask, __ATOMIC_ACQUIRE) :
+            task->signal_mask;
         if (pending & ~blocked)
             return -EINTR;
 
@@ -702,9 +705,12 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
         if (!ps_has_timeout && local_timeout)
             break;  /* zero-timeout: already handled */
 
-        /* Check for pending unblocked signals → EINTR */
+        /* Check for pending unblocked signals → EINTR (use thread mask if available) */
         uint64_t pending = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
-        uint64_t blocked = task->signal_mask;
+        fut_thread_t *psel_thr = fut_thread_current();
+        uint64_t blocked = psel_thr ?
+            __atomic_load_n(&psel_thr->signal_mask, __ATOMIC_ACQUIRE) :
+            task->signal_mask;
         if (pending & ~blocked) {
             ret = -EINTR;
             goto out_restore_sigmask;

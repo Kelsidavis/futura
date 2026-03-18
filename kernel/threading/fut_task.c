@@ -420,7 +420,14 @@ static void task_mark_exit(fut_task_t *task, int status, int signal) {
         bool suppress_chld = (chld_handler == SIG_IGN) ||
                              (chld_flags & SA_NOCLDWAIT);
         if (!suppress_chld) {
-            fut_signal_send(parent, SIGCHLD);
+            siginfo_t chld_info;
+            __builtin_memset(&chld_info, 0, sizeof(chld_info));
+            chld_info.si_signum = SIGCHLD;
+            chld_info.si_code   = signal ? CLD_KILLED : CLD_EXITED;
+            chld_info.si_pid    = task->pid;
+            chld_info.si_uid    = task->uid;
+            chld_info.si_status = signal ? signal : status;
+            fut_signal_send_with_info(parent, SIGCHLD, &chld_info);
         }
         /* Always wake waitpid/wait4 blockers */
         fut_waitq_wake_all(&parent->child_waiters);
@@ -551,8 +558,16 @@ void fut_task_do_stop(fut_task_t *task, int sig) {
         bool send_sigchld = !(chld_flags & SA_NOCLDSTOP);
         fut_waitq_wake_all(&task->parent->child_waiters);
         fut_spinlock_release(&task_list_lock);
-        if (send_sigchld)
-            fut_signal_send(task->parent, SIGCHLD);
+        if (send_sigchld) {
+            siginfo_t chld_info;
+            __builtin_memset(&chld_info, 0, sizeof(chld_info));
+            chld_info.si_signum = SIGCHLD;
+            chld_info.si_code   = CLD_STOPPED;
+            chld_info.si_pid    = task->pid;
+            chld_info.si_uid    = task->uid;
+            chld_info.si_status = sig;
+            fut_signal_send_with_info(task->parent, SIGCHLD, &chld_info);
+        }
     } else {
         fut_spinlock_release(&task_list_lock);
     }
@@ -583,8 +598,16 @@ void fut_task_do_cont(fut_task_t *task) {
         }
     }
     fut_spinlock_release(&task_list_lock);
-    if (parent && send_sigchld)
-        fut_signal_send(parent, SIGCHLD);
+    if (parent && send_sigchld) {
+        siginfo_t chld_info;
+        __builtin_memset(&chld_info, 0, sizeof(chld_info));
+        chld_info.si_signum = SIGCHLD;
+        chld_info.si_code   = CLD_CONTINUED;
+        chld_info.si_pid    = task->pid;
+        chld_info.si_uid    = task->uid;
+        chld_info.si_status = SIGCONT;
+        fut_signal_send_with_info(parent, SIGCHLD, &chld_info);
+    }
     fut_waitq_wake_all(&task->stop_waitq);
 }
 

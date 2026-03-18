@@ -16822,6 +16822,90 @@ static void test_ppoll_basic(void) {
 }
 
 /* ============================================================
+ * Test 350: TIOCGWINSZ returns default window size (24x80)
+ * Test 351: TIOCSWINSZ round-trip: set and read back new size
+ * ============================================================ */
+static void test_tiocgwinsz_default(void) {
+    fut_printf("[MISC-TEST] Test 350: TIOCGWINSZ default window size\n");
+
+    extern long sys_ioctl(int fd, unsigned long request, void *argp);
+
+#define TEST_TIOCGWINSZ 0x5413
+#define TEST_TIOCSWINSZ 0x5414
+
+    int fd = fut_vfs_open("/dev/console", 2 /* O_RDWR */, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 350: open /dev/console failed: %d\n", fd);
+        fut_test_fail(350); return;
+    }
+
+    struct { uint16_t ws_row; uint16_t ws_col;
+             uint16_t ws_xpixel; uint16_t ws_ypixel; } ws;
+    __builtin_memset(&ws, 0, sizeof(ws));
+
+    long r = sys_ioctl(fd, TEST_TIOCGWINSZ, &ws);
+    fut_vfs_close(fd);
+
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 350: TIOCGWINSZ returned %ld\n", r);
+        fut_test_fail(350); return;
+    }
+    if (ws.ws_row != 24 || ws.ws_col != 80) {
+        fut_printf("[MISC-TEST] ✗ Test 350: expected 24x80, got %ux%u\n",
+                   ws.ws_row, ws.ws_col);
+        fut_test_fail(350); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 350: TIOCGWINSZ default: %ux%u\n",
+               ws.ws_row, ws.ws_col);
+    fut_test_pass();
+}
+
+static void test_tiocswinsz_roundtrip(void) {
+    fut_printf("[MISC-TEST] Test 351: TIOCSWINSZ set/get round-trip\n");
+
+    extern long sys_ioctl(int fd, unsigned long request, void *argp);
+
+    int fd = fut_vfs_open("/dev/console", 2 /* O_RDWR */, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 351: open /dev/console failed: %d\n", fd);
+        fut_test_fail(351); return;
+    }
+
+    /* Save original */
+    struct { uint16_t ws_row; uint16_t ws_col;
+             uint16_t ws_xpixel; uint16_t ws_ypixel; } orig, set_ws, got_ws;
+    __builtin_memset(&orig, 0, sizeof(orig));
+    sys_ioctl(fd, TEST_TIOCGWINSZ, &orig);
+
+    /* Set new size */
+    set_ws.ws_row = 40; set_ws.ws_col = 120;
+    set_ws.ws_xpixel = 0; set_ws.ws_ypixel = 0;
+    long r = sys_ioctl(fd, TEST_TIOCSWINSZ, &set_ws);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 351: TIOCSWINSZ returned %ld\n", r);
+        fut_vfs_close(fd);
+        fut_test_fail(351); return;
+    }
+
+    /* Read back */
+    __builtin_memset(&got_ws, 0, sizeof(got_ws));
+    r = sys_ioctl(fd, TEST_TIOCGWINSZ, &got_ws);
+
+    /* Restore original before asserting */
+    sys_ioctl(fd, TEST_TIOCSWINSZ, &orig);
+    fut_vfs_close(fd);
+
+    if (r != 0 || got_ws.ws_row != 40 || got_ws.ws_col != 120) {
+        fut_printf("[MISC-TEST] ✗ Test 351: round-trip failed: r=%ld got %ux%u\n",
+                   r, got_ws.ws_row, got_ws.ws_col);
+        fut_test_fail(351); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 351: TIOCSWINSZ round-trip: set 40x120, read back %ux%u\n",
+               got_ws.ws_row, got_ws.ws_col);
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test 347: mmap MAP_SHARED|PROT_WRITE on O_RDONLY fd -> EACCES
  * ============================================================ */
 static void test_mmap_rdonly_shared_write(void) {
@@ -17263,6 +17347,8 @@ void fut_misc_test_thread(void *arg) {
     test_mmap_rdonly_shared_write();     /* Test 347: mmap MAP_SHARED|PROT_WRITE on O_RDONLY fd -> EACCES */
     test_getdents64_dot_dotdot();        /* Test 348: getdents64 includes . and .. entries */
     test_ppoll_basic();                  /* Test 349: ppoll() POLLIN on pipe with kernel-stack timespec */
+    test_tiocgwinsz_default();           /* Test 350: TIOCGWINSZ returns default 24x80 */
+    test_tiocswinsz_roundtrip();         /* Test 351: TIOCSWINSZ set/get round-trip */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

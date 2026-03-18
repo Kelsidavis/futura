@@ -521,7 +521,9 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
                  * their own copy_to_user (FIONREAD, FIONBIO, etc.) and for
                  * kernel selftest callers. Only enforce for device dispatch. */
                 bool is_builtin = (request == FIONREAD || request == FIONBIO ||
-                                   request == TIOCGWINSZ || request == TCGETS ||
+                                   request == TIOCGWINSZ || request == TIOCSWINSZ ||
+                                   request == TCGETS || request == TCSETS ||
+                                   request == TCSETSW || request == TCSETSF ||
                                    request == TIOCGPGRP || request == TIOCGSID);
                 if (argp_val >= KERNEL_VIRTUAL_BASE && !is_builtin) {
                     return -EFAULT;
@@ -745,6 +747,11 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
                 return -ENOTTY;
             if (!argp)
                 return -EFAULT;
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE) {
+                __builtin_memcpy(argp, &g_winsize, sizeof(g_winsize));
+            } else
+#endif
             if (fut_copy_to_user(argp, &g_winsize, sizeof(g_winsize)) != 0)
                 return -EFAULT;
             return 0;
@@ -756,6 +763,11 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
                 return -EFAULT;
             struct { uint16_t ws_row; uint16_t ws_col;
                      uint16_t ws_xpixel; uint16_t ws_ypixel; } new_ws;
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE) {
+                __builtin_memcpy(&new_ws, argp, sizeof(new_ws));
+            } else
+#endif
             if (fut_copy_from_user(&new_ws, argp, sizeof(new_ws)) != 0)
                 return -EFAULT;
             /* Update stored window size */

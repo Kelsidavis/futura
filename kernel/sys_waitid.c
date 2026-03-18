@@ -52,14 +52,6 @@ static inline int waitid_access_ok(const void *ptr, size_t n) {
 #define P_PIDFD  3  /* Wait for child via PID file descriptor */
 #endif
 
-/* CLD_* codes for siginfo_t.si_code when si_signo == SIGCHLD */
-#define CLD_EXITED    1   /* Child exited normally */
-#define CLD_KILLED    2   /* Child was killed by a signal */
-#define CLD_DUMPED    3   /* Child killed by signal + core dump */
-#define CLD_TRAPPED   4   /* Traced child trapped */
-#define CLD_STOPPED   5   /* Child stopped by a signal */
-#define CLD_CONTINUED 6   /* Child continued by SIGCONT */
-
 /**
  * waitid() - Wait for child process state change (advanced)
  *
@@ -197,9 +189,6 @@ long sys_waitid(int idtype, int id, siginfo_t *infop, int options,
     siginfo_t info;
     memset(&info, 0, sizeof(info));
     info.si_signum = SIGCHLD;
-
-#define CLD_STOPPED   5   /* Child stopped by a signal */
-#define CLD_CONTINUED 6   /* Stopped child was continued */
 
     if (WIFEXITED(status)) {
         info.si_code   = CLD_EXITED;

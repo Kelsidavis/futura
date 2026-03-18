@@ -9463,6 +9463,182 @@ static void test_proc_net_tcp(void) {
 }
 
 /* ============================================================
+ * Test 204: SCM_RIGHTS FD passing over AF_UNIX socketpair
+ * ============================================================ */
+/* Inline types for test_scm_rights_fd_passing only — avoids redefinition of
+ * struct iovec (already defined at line ~3358) if sys/socket.h were included. */
+#ifndef _TEST_MSGHDR_DEFINED
+#define _TEST_MSGHDR_DEFINED
+struct test_msghdr {
+    void         *msg_name;
+    unsigned int  msg_namelen;
+    struct iovec *msg_iov;
+    size_t        msg_iovlen;
+    void         *msg_control;
+    size_t        msg_controllen;
+    int           msg_flags;
+};
+struct test_cmsghdr {
+    size_t cmsg_len;
+    int    cmsg_level;
+    int    cmsg_type;
+};
+#define TEST_SOL_SOCKET   1
+#define TEST_SCM_RIGHTS   1
+/* CMSG helpers (size_t alignment = 8 on 64-bit) */
+#define TEST_CMSG_ALIGN(n)   (((n) + 7u) & ~7u)
+#define TEST_CMSG_DATA(c)    ((unsigned char *)((struct test_cmsghdr *)(c) + 1))
+#define TEST_CMSG_SPACE(n)   (TEST_CMSG_ALIGN(sizeof(struct test_cmsghdr)) + TEST_CMSG_ALIGN(n))
+#define TEST_CMSG_LEN(n)     (TEST_CMSG_ALIGN(sizeof(struct test_cmsghdr)) + (n))
+#endif /* _TEST_MSGHDR_DEFINED */
+
+static void test_scm_rights_fd_passing(void) {
+    fut_printf("[MISC-TEST] Test 204: SCM_RIGHTS FD passing over AF_UNIX socket\n");
+    extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+    extern long sys_write(int fd, const void *buf, size_t count);
+    extern long sys_read(int fd, void *buf, size_t count);
+    extern long sys_sendmsg(int sockfd, const struct test_msghdr *msg, int flags);
+    extern long sys_recvmsg(int sockfd, struct test_msghdr *msg, int flags);
+
+    /* Create socketpair */
+    int sv[2] = {-1, -1};
+    long r = sys_socketpair(1 /* AF_UNIX */, 1 /* SOCK_STREAM */, 0, sv);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ socketpair failed: %ld\n", r);
+        fut_test_fail(204); return;
+    }
+
+    /* Create a regular file and write data to it */
+    int file_fd = fut_vfs_open("/scm_rights_test.txt", 0x42 /* O_RDWR|O_CREAT */, 0644);
+    if (file_fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open test file failed: %d\n", file_fd);
+        sys_close(sv[0]); sys_close(sv[1]);
+        fut_test_fail(204); return;
+    }
+    const char *test_data = "scm_rights_test";
+    sys_write(file_fd, test_data, 15);
+
+    /* Seek back to start so the passed FD can be read from the beginning */
+    extern long sys_lseek(int fd, long offset, int whence);
+    sys_lseek(file_fd, 0, 0 /* SEEK_SET */);
+
+    /* Build sendmsg with SCM_RIGHTS containing file_fd */
+    char data_buf[] = "ping";
+    struct iovec iov = { .iov_base = data_buf, .iov_len = 4 };
+
+    /* Control message buffer: test_cmsghdr + one int (FD) */
+    char ctrl_buf[TEST_CMSG_SPACE(sizeof(int))];
+    __builtin_memset(ctrl_buf, 0, sizeof(ctrl_buf));
+    struct test_cmsghdr *cmsg = (struct test_cmsghdr *)ctrl_buf;
+    cmsg->cmsg_len   = TEST_CMSG_LEN(sizeof(int));
+    cmsg->cmsg_level = TEST_SOL_SOCKET;
+    cmsg->cmsg_type  = TEST_SCM_RIGHTS;
+    int *cmsg_fds = (int *)TEST_CMSG_DATA(cmsg);
+    cmsg_fds[0] = file_fd;
+
+    struct test_msghdr snd_msg = {
+        .msg_name       = NULL,
+        .msg_namelen    = 0,
+        .msg_iov        = &iov,
+        .msg_iovlen     = 1,
+        .msg_control    = ctrl_buf,
+        .msg_controllen = sizeof(ctrl_buf),
+        .msg_flags      = 0,
+    };
+
+    long sent = sys_sendmsg(sv[0], &snd_msg, 0);
+    if (sent < 0) {
+        fut_printf("[MISC-TEST] ✗ sendmsg with SCM_RIGHTS failed: %ld\n", sent);
+        fut_vfs_close(file_fd);
+        sys_close(sv[0]); sys_close(sv[1]);
+        fut_test_fail(204); return;
+    }
+
+    /* Receive on sv[1] with control buffer for SCM_RIGHTS */
+    char recv_data[8] = {0};
+    char recv_ctrl[TEST_CMSG_SPACE(sizeof(int))];
+    __builtin_memset(recv_ctrl, 0, sizeof(recv_ctrl));
+    struct iovec recv_iov = { .iov_base = recv_data, .iov_len = sizeof(recv_data) };
+
+    struct test_msghdr rcv_msg = {
+        .msg_name       = NULL,
+        .msg_namelen    = 0,
+        .msg_iov        = &recv_iov,
+        .msg_iovlen     = 1,
+        .msg_control    = recv_ctrl,
+        .msg_controllen = sizeof(recv_ctrl),
+        .msg_flags      = 0,
+    };
+
+    long rcvd = sys_recvmsg(sv[1], &rcv_msg, 0);
+    if (rcvd < 0) {
+        fut_printf("[MISC-TEST] ✗ recvmsg with SCM_RIGHTS failed: %ld\n", rcvd);
+        fut_vfs_close(file_fd);
+        sys_close(sv[0]); sys_close(sv[1]);
+        fut_test_fail(204); return;
+    }
+
+    /* Extract received FD from control message */
+    struct test_cmsghdr *rcv_cmsg = (struct test_cmsghdr *)recv_ctrl;
+    if (rcv_cmsg->cmsg_level != TEST_SOL_SOCKET || rcv_cmsg->cmsg_type != TEST_SCM_RIGHTS) {
+        fut_printf("[MISC-TEST] ✗ received cmsg level=%d type=%d (want SOL_SOCKET/SCM_RIGHTS)\n",
+                   rcv_cmsg->cmsg_level, rcv_cmsg->cmsg_type);
+        fut_vfs_close(file_fd);
+        sys_close(sv[0]); sys_close(sv[1]);
+        fut_test_fail(204); return;
+    }
+
+    int received_fd = *(int *)TEST_CMSG_DATA(rcv_cmsg);
+    if (received_fd < 0) {
+        fut_printf("[MISC-TEST] ✗ received_fd=%d (invalid)\n", received_fd);
+        fut_vfs_close(file_fd);
+        sys_close(sv[0]); sys_close(sv[1]);
+        fut_test_fail(204); return;
+    }
+
+    /* The received FD should be different from the original (new slot) */
+    if (received_fd == file_fd) {
+        fut_printf("[MISC-TEST] ✗ received_fd=%d same as original fd=%d (should be new)\n",
+                   received_fd, file_fd);
+        sys_close(received_fd);
+        fut_vfs_close(file_fd);
+        sys_close(sv[0]); sys_close(sv[1]);
+        fut_test_fail(204); return;
+    }
+
+    /* Read from received FD - should get the test data */
+    char read_buf[20] = {0};
+    long n = sys_read(received_fd, read_buf, 15);
+    if (n != 15) {
+        fut_printf("[MISC-TEST] ✗ read from received_fd returned %ld (want 15)\n", n);
+        sys_close(received_fd);
+        fut_vfs_close(file_fd);
+        sys_close(sv[0]); sys_close(sv[1]);
+        fut_test_fail(204); return;
+    }
+
+    /* Verify content matches */
+    for (int i = 0; i < 15; i++) {
+        if (read_buf[i] != test_data[i]) {
+            fut_printf("[MISC-TEST] ✗ data mismatch at byte %d: got 0x%02x want 0x%02x\n",
+                       i, (unsigned char)read_buf[i], (unsigned char)test_data[i]);
+            sys_close(received_fd);
+            fut_vfs_close(file_fd);
+            sys_close(sv[0]); sys_close(sv[1]);
+            fut_test_fail(204); return;
+        }
+    }
+
+    sys_close(received_fd);
+    fut_vfs_close(file_fd);
+    sys_close(sv[0]); sys_close(sv[1]);
+
+    fut_printf("[MISC-TEST] ✓ SCM_RIGHTS: FD passed, received as new fd=%d, data verified\n",
+               received_fd);
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test 199: /proc/stat — cpu line and ctxt/btime present
  * ============================================================ */
 static void test_proc_stat_global(void) {
@@ -9763,6 +9939,7 @@ void fut_misc_test_thread(void *arg) {
     test_proc_vmstat();                    /* Test 201: /proc/vmstat nr_free_pages present */
     test_proc_net_dev();                   /* Test 202: /proc/net/dev readable */
     test_proc_net_tcp();                   /* Test 203: /proc/net/tcp readable */
+    test_scm_rights_fd_passing();          /* Test 204: SCM_RIGHTS FD passing over AF_UNIX */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

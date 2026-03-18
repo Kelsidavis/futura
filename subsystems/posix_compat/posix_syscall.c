@@ -75,6 +75,7 @@
 #define SYS_rt_tgsigqueueinfo   297
 #define SYS_process_vm_readv    437  /* Linux: 310 — Futura: 437 (310/311 used by vhangup/setreuid) */
 #define SYS_process_vm_writev   438  /* Linux: 311 — Futura: 438 */
+#define SYS_execveat            322  /* Linux: 322 — free in Futura */
 #define SYS_select      23
 #define SYS_sched_yield 24
 #define SYS_mremap      25
@@ -985,6 +986,15 @@ static int64_t sys_execve_handler(uint64_t pathname, uint64_t argv, uint64_t env
     (void)arg4; (void)arg5; (void)arg6;
     return (int64_t)posix_execve((const char *)pathname, (char *const *)argv,
                                   (char *const *)envp);
+}
+
+static int64_t sys_execveat_handler(uint64_t dirfd, uint64_t pathname, uint64_t argv,
+                                     uint64_t envp, uint64_t flags, uint64_t arg6) {
+    (void)arg6;
+    extern long sys_execveat(int dirfd, const char *pathname,
+                             char *const argv[], char *const envp[], int flags);
+    return (int64_t)sys_execveat((int)dirfd, (const char *)pathname,
+                                  (char *const *)argv, (char *const *)envp, (int)flags);
 }
 
 static int64_t sys_exit_handler(uint64_t status, uint64_t arg2, uint64_t arg3,
@@ -3029,6 +3039,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_clone]      = sys_clone_handler,
     [SYS_fork]       = sys_fork_handler,
     [SYS_execve]     = sys_execve_handler,
+    [SYS_execveat]   = sys_execveat_handler,
     [SYS_exit]       = sys_exit_handler,
     [SYS_wait4]      = sys_wait4_handler,
     [SYS_nanosleep]  = sys_nanosleep_handler,

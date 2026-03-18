@@ -10969,6 +10969,53 @@ static void test_faccessat2_enoent(void) {
 }
 
 /* ============================================================
+ * Tests 234-236: execveat error paths
+ * ============================================================ */
+static void test_execveat_invalid_flags(void) {
+    fut_printf("[MISC-TEST] Test 234: execveat invalid flags → EINVAL\n");
+    extern long sys_execveat(int dirfd, const char *pathname,
+                             char *const argv[], char *const envp[], int flags);
+    /* flags = 0x9999 is unsupported */
+    long r = sys_execveat(-100 /* AT_FDCWD */, "/no_such_prog",
+                          (char *const []){NULL}, (char *const []){NULL}, 0x9999);
+    if (r != -22 /* -EINVAL */) {
+        fut_printf("[MISC-TEST] ✗ execveat bad flags expected EINVAL, got %ld\n", r);
+        fut_test_fail(234); return;
+    }
+    fut_printf("[MISC-TEST] ✓ execveat bad flags → EINVAL\n");
+    fut_test_pass();
+}
+
+static void test_execveat_fdcwd_enoent(void) {
+    fut_printf("[MISC-TEST] Test 235: execveat AT_FDCWD nonexistent → ENOENT\n");
+    extern long sys_execveat(int dirfd, const char *pathname,
+                             char *const argv[], char *const envp[], int flags);
+    long r = sys_execveat(-100 /* AT_FDCWD */, "/no_such_prog_evat_xyz",
+                          (char *const []){NULL}, (char *const []){NULL}, 0);
+    if (r != -2 /* -ENOENT */) {
+        fut_printf("[MISC-TEST] ✗ execveat FDCWD/missing expected ENOENT, got %ld\n", r);
+        fut_test_fail(235); return;
+    }
+    fut_printf("[MISC-TEST] ✓ execveat AT_FDCWD + missing path → ENOENT\n");
+    fut_test_pass();
+}
+
+static void test_execveat_bad_dirfd(void) {
+    fut_printf("[MISC-TEST] Test 236: execveat bad dirfd + relative path → EBADF\n");
+    extern long sys_execveat(int dirfd, const char *pathname,
+                             char *const argv[], char *const envp[], int flags);
+    /* dirfd=-99 is neither AT_FDCWD (-100) nor a valid fd */
+    long r = sys_execveat(-99, "relative_prog",
+                          (char *const []){NULL}, (char *const []){NULL}, 0);
+    if (r != -9 /* -EBADF */) {
+        fut_printf("[MISC-TEST] ✗ execveat bad dirfd expected EBADF, got %ld\n", r);
+        fut_test_fail(236); return;
+    }
+    fut_printf("[MISC-TEST] ✓ execveat bad dirfd + relative path → EBADF\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -11211,6 +11258,9 @@ void fut_misc_test_thread(void *arg) {
     test_kcmp_errors();                    /* Test 231: kcmp error paths */
     test_faccessat2_basic();               /* Test 232: faccessat2 F_OK/R_OK on existing file */
     test_faccessat2_enoent();              /* Test 233: faccessat2 returns ENOENT for missing */
+    test_execveat_invalid_flags();         /* Test 234: execveat invalid flags → EINVAL */
+    test_execveat_fdcwd_enoent();          /* Test 235: execveat AT_FDCWD + missing → ENOENT */
+    test_execveat_bad_dirfd();             /* Test 236: execveat bad dirfd + relative → EBADF */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

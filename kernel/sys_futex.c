@@ -453,8 +453,10 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
                 return -ESRCH;
             }
 
-            /* Store futex address in thread for later matching during wake */
-            thread->futex_addr = uaddr;
+            /* Store futex address and bitset in thread for later matching during wake.
+             * FUTEX_WAIT uses bitset=0xffffffff (match any); FUTEX_WAIT_BITSET uses val3. */
+            thread->futex_addr   = uaddr;
+            thread->futex_bitset = (cmd == FUTEX_WAIT_BITSET) ? val3 : 0xFFFFFFFFu;
 
             /* Register timeout timer if specified */
             futex_timeout_ctx_t timeout_ctx;
@@ -503,7 +505,10 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
 
         case FUTEX_WAKE:
         case FUTEX_WAKE_BITSET: {
-            /* FUTEX_WAKE: Wake up to 'val' threads waiting on futex at uaddr */
+            /* FUTEX_WAKE: Wake up to 'val' threads waiting on futex at uaddr.
+             * FUTEX_WAKE_BITSET: only wake threads whose wait-bitset intersects
+             * with the wake bitset (val3).  FUTEX_WAKE uses val3=0xffffffff. */
+            uint32_t wake_bitset = (cmd == FUTEX_WAKE_BITSET) ? val3 : 0xFFFFFFFFu;
 
             futex_bucket_t *bucket = futex_get_bucket(uaddr);
             fut_spinlock_acquire(&bucket->lock);
@@ -519,8 +524,10 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
             while (thread && woken < (int)max_wake) {
                 fut_thread_t *next = thread->wait_next;
 
-                /* Check if this thread is waiting on our specific futex address */
-                if (thread->futex_addr == uaddr) {
+                /* Check if this thread is waiting on our specific futex address
+                 * and the bitset intersection is non-zero (FUTEX_WAKE_BITSET check). */
+                if (thread->futex_addr == uaddr &&
+                    (thread->futex_bitset & wake_bitset) != 0) {
                     /* Remove from wait queue */
                     if (prev) {
                         prev->wait_next = next;

@@ -101,6 +101,7 @@ struct fut_thread {
 
     /* Futex support */
     void *futex_addr;                     // Address of futex we're waiting on (NULL if not waiting)
+    uint32_t futex_bitset;               // Bitset for FUTEX_WAIT_BITSET; 0 = not in bitset wait
     void *robust_list;                    // Userspace robust futex list head (set_robust_list)
 
     /* CLONE_CHILD_CLEARTID: address to write 0 + futex-wake on thread exit */

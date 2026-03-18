@@ -239,4 +239,46 @@ static inline uint64_t apple_rtkit_get_payload(uint64_t msg) {
  */
 void apple_rtkit_shutdown(apple_rtkit_ctx_t *ctx);
 
+/* ============================================================
+ *   Rust driver FFI (drivers/rust/apple_rtkit)
+ *
+ *   Opaque RtkitCtx * replaces the C apple_rtkit_ctx_t for callers
+ *   that use the Rust implementation.  The two contexts are not
+ *   interchangeable — use one or the other per co-processor.
+ * ============================================================ */
+
+/* Forward declaration of the opaque Rust context type */
+typedef struct RtkitCtx RtkitCtx;
+
+typedef void (*rust_rtkit_msg_handler_t)(void *cookie, uint8_t endpoint,
+                                         uint64_t msg);
+
+/** Allocate and initialise an RTKit context for the mailbox at @base. */
+RtkitCtx *rust_rtkit_init(uint64_t base);
+
+/** Run the full boot sequence (HELLO → EPMAP → STARTEP → ON).
+ *  Returns 1 on success, 0 on failure. */
+int rust_rtkit_boot(RtkitCtx *ctx);
+
+/** Free a context returned by rust_rtkit_init. */
+void rust_rtkit_free(RtkitCtx *ctx);
+
+/** Send @msg to @endpoint.  Returns 1 on success, 0 on TX timeout. */
+int rust_rtkit_send(RtkitCtx *ctx, uint8_t endpoint, uint64_t msg);
+
+/** Poll the RX FIFO and dispatch one message.
+ *  Returns 1 if dispatched, 0 if FIFO empty. */
+int rust_rtkit_poll(RtkitCtx *ctx);
+
+/** Register an application-endpoint handler. */
+void rust_rtkit_register_handler(RtkitCtx *ctx, uint8_t endpoint,
+                                  rust_rtkit_msg_handler_t handler,
+                                  void *cookie);
+
+/** Return the negotiated protocol version (0 if not yet booted). */
+uint32_t rust_rtkit_version(const RtkitCtx *ctx);
+
+/** Returns 1 if boot sequence completed successfully. */
+int rust_rtkit_is_ready(const RtkitCtx *ctx);
+
 #endif /* __FUTURA_ARM64_APPLE_RTKIT_H__ */

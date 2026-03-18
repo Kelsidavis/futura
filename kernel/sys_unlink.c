@@ -21,6 +21,17 @@
 #include <kernel/uaccess.h>
 #include <string.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+static inline int unlink_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_from_user(dst, src, n);
+}
 
 /**
  * unlink() - Delete a file or symbolic link
@@ -88,7 +99,7 @@ long sys_unlink(const char *path) {
 
     /* Copy path from userspace to kernel space */
     char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
-    if (fut_copy_from_user(path_buf, local_path, sizeof(path_buf)) != 0) {
+    if (unlink_copy_from_user(path_buf, local_path, sizeof(path_buf)) != 0) {
         fut_printf("[UNLINK] unlink(path=?) -> EFAULT (copy_from_user failed)\n");
         return -EFAULT;
     }

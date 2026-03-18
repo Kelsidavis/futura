@@ -21,6 +21,18 @@
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+static inline int rename_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_from_user(dst, src, n);
+}
+
 /**
  * rename() - Rename or move a file/directory
  *
@@ -156,7 +168,7 @@ long sys_rename(const char *oldpath, const char *newpath) {
     char old_buf[256];
     char new_buf[256];
 
-    if (fut_copy_from_user(old_buf, local_oldpath, sizeof(old_buf)) != 0) {
+    if (rename_copy_from_user(old_buf, local_oldpath, sizeof(old_buf)) != 0) {
         fut_printf("[RENAME] rename(oldpath=?, newpath=?) -> EFAULT (oldpath copy_from_user failed)\n");
         return -EFAULT;
     }
@@ -165,7 +177,7 @@ long sys_rename(const char *oldpath, const char *newpath) {
         return -ENAMETOOLONG;
     }
 
-    if (fut_copy_from_user(new_buf, local_newpath, sizeof(new_buf)) != 0) {
+    if (rename_copy_from_user(new_buf, local_newpath, sizeof(new_buf)) != 0) {
         fut_printf("[RENAME] rename(oldpath='%s', newpath=?) -> EFAULT (newpath copy_from_user failed)\n",
                    old_buf);
         return -EFAULT;

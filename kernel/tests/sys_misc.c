@@ -7599,6 +7599,91 @@ static void test_chmod_basic(void) {
     fut_test_pass();
 }
 
+static void test_unlink_rmdir_basic(void) {
+    fut_printf("[MISC-TEST] Test 161: sys_unlink/rmdir basic\n");
+    extern long sys_unlink(const char *path);
+    extern long sys_rmdir(const char *path);
+
+    /* Create a file and unlink it */
+    int fd = (int)fut_vfs_open("/test_unlink.txt", O_CREAT | O_RDWR, 0644);
+    if (fd >= 0) fut_vfs_close(fd);
+    long ret = sys_unlink("/test_unlink.txt");
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ unlink: %ld\n", ret);
+        fut_test_fail(161);
+        return;
+    }
+    /* Unlink already-removed file → ENOENT */
+    ret = sys_unlink("/test_unlink.txt");
+    if (ret != -ENOENT) {
+        fut_printf("[MISC-TEST] ✗ unlink(removed): expected ENOENT, got %ld\n", ret);
+        fut_test_fail(161);
+        return;
+    }
+    /* Create and remove a directory */
+    extern long sys_mkdir(const char *path, uint32_t mode);
+    sys_mkdir("/test_rmdir_dir", 0755);
+    ret = sys_rmdir("/test_rmdir_dir");
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ rmdir: %ld\n", ret);
+        fut_test_fail(161);
+        return;
+    }
+    /* rmdir on non-existent → ENOENT */
+    ret = sys_rmdir("/test_rmdir_dir");
+    if (ret != -ENOENT) {
+        fut_printf("[MISC-TEST] ✗ rmdir(removed): expected ENOENT, got %ld\n", ret);
+        fut_test_fail(161);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ unlink: file removed; rmdir: dir removed; both ENOENT after\n");
+    fut_test_pass();
+}
+
+static void test_rename_basic(void) {
+    fut_printf("[MISC-TEST] Test 162: sys_rename basic\n");
+    extern long sys_rename(const char *oldpath, const char *newpath);
+    extern long sys_unlink(const char *path);
+
+    /* Create source file */
+    int fd = (int)fut_vfs_open("/test_rename_src.txt", O_CREAT | O_RDWR, 0644);
+    if (fd >= 0) {
+        fut_vfs_write(fd, "rename", 6);
+        fut_vfs_close(fd);
+    }
+
+    /* Rename to a new path */
+    long ret = sys_rename("/test_rename_src.txt", "/test_rename_dst.txt");
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ rename: %ld\n", ret);
+        fut_test_fail(162);
+        return;
+    }
+    /* Source should be gone */
+    ret = sys_unlink("/test_rename_src.txt");
+    if (ret != -ENOENT) {
+        fut_printf("[MISC-TEST] ✗ rename: source still exists: %ld\n", ret);
+        fut_test_fail(162);
+        return;
+    }
+    /* Destination should exist (unlink it to clean up) */
+    ret = sys_unlink("/test_rename_dst.txt");
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ rename: dst not found: %ld\n", ret);
+        fut_test_fail(162);
+        return;
+    }
+    /* rename with non-existent source → ENOENT */
+    ret = sys_rename("/this_does_not_exist_rename", "/test_rename_dst2.txt");
+    if (ret != -ENOENT) {
+        fut_printf("[MISC-TEST] ✗ rename(missing src): expected ENOENT, got %ld\n", ret);
+        fut_test_fail(162);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ rename: src→dst, src gone, dst exists, missing→ENOENT\n");
+    fut_test_pass();
+}
+
 /* ============================================================
  * Test entry point
  * ============================================================ */
@@ -7769,6 +7854,8 @@ void fut_misc_test_thread(void *arg) {
     test_chdir_basic();                    /* Test 158: sys_chdir dir/missing/file */
     test_mkdir_basic();                    /* Test 159: sys_mkdir create/EEXIST/ENOENT */
     test_chmod_basic();                    /* Test 160: sys_chmod mode change + verify */
+    test_unlink_rmdir_basic();             /* Test 161: sys_unlink/rmdir remove + ENOENT */
+    test_rename_basic();                   /* Test 162: sys_rename src→dst + ENOENT */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

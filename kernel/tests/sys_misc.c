@@ -9199,6 +9199,69 @@ static void test_pause_eintr(void) {
 }
 
 /* ============================================================
+ * Test 196: flock() shared/exclusive/unlock cycle
+ * ============================================================ */
+#define TEST196_LOCK_SH  1
+#define TEST196_LOCK_EX  2
+#define TEST196_LOCK_UN  8
+#define TEST196_LOCK_NB  4
+
+static void test_flock_basic(void) {
+    fut_printf("[MISC-TEST] Test 196: flock() shared/exclusive/unlock\n");
+    extern long sys_flock(int fd, int operation);
+
+    /* Open a file to lock */
+    int fd = fut_vfs_open("/flock_test_196.txt", 0x42, 0644);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open failed: %d\n", fd);
+        fut_test_fail(196); return;
+    }
+
+    /* Acquire shared lock, then release */
+    long r = sys_flock(fd, TEST196_LOCK_SH);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ flock(LOCK_SH) returned %ld\n", r);
+        fut_vfs_close(fd); fut_test_fail(196); return;
+    }
+    r = sys_flock(fd, TEST196_LOCK_UN);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ flock(LOCK_UN) after SH returned %ld\n", r);
+        fut_vfs_close(fd); fut_test_fail(196); return;
+    }
+
+    /* Acquire exclusive lock, then release */
+    r = sys_flock(fd, TEST196_LOCK_EX);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ flock(LOCK_EX) returned %ld\n", r);
+        fut_vfs_close(fd); fut_test_fail(196); return;
+    }
+    r = sys_flock(fd, TEST196_LOCK_UN);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ flock(LOCK_UN) after EX returned %ld\n", r);
+        fut_vfs_close(fd); fut_test_fail(196); return;
+    }
+
+    /* LOCK_NB shared lock on unlocked file: should succeed */
+    r = sys_flock(fd, TEST196_LOCK_SH | TEST196_LOCK_NB);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ flock(LOCK_SH|LOCK_NB) returned %ld\n", r);
+        fut_vfs_close(fd); fut_test_fail(196); return;
+    }
+    sys_flock(fd, TEST196_LOCK_UN);
+
+    /* Invalid FD */
+    r = sys_flock(-1, TEST196_LOCK_SH);
+    if (r != -EBADF) {
+        fut_printf("[MISC-TEST] ✗ flock(-1, LOCK_SH) returned %ld (want EBADF)\n", r);
+        fut_vfs_close(fd); fut_test_fail(196); return;
+    }
+
+    fut_vfs_close(fd);
+    fut_printf("[MISC-TEST] ✓ flock: SH/UN and EX/UN cycles OK, LOCK_NB non-contended, EBADF on bad fd\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -9403,6 +9466,7 @@ void fut_misc_test_thread(void *arg) {
     test_setresuid_setresgid();            /* Test 193: setresuid/setresgid round-trip */
     test_alarm_basic();                    /* Test 194: alarm() set/cancel semantics */
     test_pause_eintr();                    /* Test 195: pause() returns EINTR on pending signal */
+    test_flock_basic();                    /* Test 196: flock() shared/exclusive/unlock */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

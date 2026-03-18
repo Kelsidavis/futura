@@ -679,6 +679,7 @@ static void test_inotify(void) {
 
     /* Create a file in the watched directory — should dispatch IN_CREATE */
     const char *test_file = "/inotify_watch_newfile.txt";
+    const char *expected_name = "inotify_watch_newfile.txt";
     fut_vfs_unlink(test_file); /* Best-effort cleanup from previous runs */
     int fd = fut_vfs_open(test_file, O_CREAT | O_RDWR, 0644);
     if (fd < 0) {
@@ -690,32 +691,48 @@ static void test_inotify(void) {
     }
     fut_vfs_close(fd);
 
-    /* Read event from inotify fd */
-    struct test_inotify_event ev;
-    ssize_t n = fut_vfs_read(ifd, &ev, sizeof(ev));
+    /* Read event from inotify fd — buffer large enough for header + padded name */
+    char buf[sizeof(struct test_inotify_event) + 256];
+    ssize_t n = fut_vfs_read(ifd, buf, sizeof(buf));
     fut_vfs_close(ifd);
 
-    if (n != (ssize_t)sizeof(ev)) {
-        fut_printf("[VFS-TEST] ✗ inotify read returned %ld (expected %zu)\n",
-                   n, sizeof(ev));
+    if (n < (ssize_t)sizeof(struct test_inotify_event)) {
+        fut_printf("[VFS-TEST] ✗ inotify read returned %ld (expected >= %zu)\n",
+                   n, sizeof(struct test_inotify_event));
         fut_test_fail(VFS_TEST_INOTIFY);
         return;
     }
 
-    if (ev.wd != wd) {
-        fut_printf("[VFS-TEST] ✗ inotify event wd=%d expected %d\n", ev.wd, wd);
+    struct test_inotify_event *ep = (struct test_inotify_event *)buf;
+
+    if (ep->wd != wd) {
+        fut_printf("[VFS-TEST] ✗ inotify event wd=%d expected %d\n", ep->wd, wd);
         fut_test_fail(VFS_TEST_INOTIFY);
         return;
     }
 
-    if (!(ev.mask & IN_CREATE)) {
-        fut_printf("[VFS-TEST] ✗ inotify event mask=0x%x missing IN_CREATE\n", ev.mask);
+    if (!(ep->mask & IN_CREATE)) {
+        fut_printf("[VFS-TEST] ✗ inotify event mask=0x%x missing IN_CREATE\n", ep->mask);
         fut_test_fail(VFS_TEST_INOTIFY);
         return;
     }
 
-    fut_printf("[VFS-TEST] ✓ inotify: IN_CREATE event received (wd=%d mask=0x%x)\n",
-               ev.wd, ev.mask);
+    /* Verify filename is included in the event (Phase 5) */
+    if (ep->len == 0) {
+        fut_printf("[VFS-TEST] ✗ inotify event len=0, expected name '%s'\n", expected_name);
+        fut_test_fail(VFS_TEST_INOTIFY);
+        return;
+    }
+    const char *got_name = buf + sizeof(struct test_inotify_event);
+    if (strcmp(got_name, expected_name) != 0) {
+        fut_printf("[VFS-TEST] ✗ inotify event name='%s' expected '%s'\n",
+                   got_name, expected_name);
+        fut_test_fail(VFS_TEST_INOTIFY);
+        return;
+    }
+
+    fut_printf("[VFS-TEST] ✓ inotify: IN_CREATE event received (wd=%d mask=0x%x name='%s')\n",
+               ep->wd, ep->mask, got_name);
     fut_test_pass();
 }
 

@@ -11,6 +11,7 @@
  * Phase 2 (Completed): Enhanced validation, parameter categorization, user-space data handling
  * Phase 3 (Completed): Inotify FD with event queue and watch list; read() support
  * Phase 4 (Completed): Global registry + inotify_dispatch_event() for VFS event delivery
+ * Phase 5 (Completed): Filename field in events (Linux ABI: name + null + padding to 4B boundary)
  */
 
 #include <kernel/chrdev.h>
@@ -24,6 +25,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
+#include <limits.h>
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
@@ -92,7 +94,7 @@ static inline int inotify_copy_to_user(void *dst, const void *src, size_t n) {
 /* Max watches per inotify instance */
 #define INOTIFY_MAX_WATCHES   256
 /* Max queued events per inotify instance */
-#define INOTIFY_MAX_EVENTS    1024
+#define INOTIFY_MAX_EVENTS    256
 /* Max path length for a watched path */
 #define INOTIFY_PATH_MAX      256
 
@@ -112,12 +114,21 @@ struct inotify_watch {
     char     path[INOTIFY_PATH_MAX];  /* Watched path */
 };
 
-/* Queued event (fixed size for simplicity - no filename in events for Phase 3) */
+/* Queued event with optional filename (Phase 5: includes entry name for dir watches) */
 struct inotify_queued_event {
     int      wd;
     uint32_t mask;
     uint32_t cookie;
+    char     name[NAME_MAX + 1];  /* basename of affected entry; empty for self-events */
 };
+
+/* Compute inotify name length: strlen+1 rounded up to next 4-byte boundary (Linux ABI) */
+static inline uint32_t inotify_name_padlen(const char *name) {
+    if (!name || name[0] == '\0') return 0;
+    size_t slen = strlen(name);
+    if (slen > NAME_MAX) slen = NAME_MAX;
+    return (uint32_t)(((slen + 1u) + 3u) & ~3u);  /* round up to 4-byte boundary */
+}
 
 /* Per-inotify-FD instance */
 struct inotify_instance {
@@ -208,9 +219,17 @@ void inotify_dispatch_event(const char *dir_path, uint32_t mask, const char *fil
                 inst->events[tail].wd     = w->wd;
                 inst->events[tail].mask   = mask;
                 inst->events[tail].cookie = 0;
+                /* Phase 5: copy entry basename into event for directory watches */
+                if (filename && filename[0] != '\0') {
+                    size_t flen = strlen(filename);
+                    if (flen > NAME_MAX) flen = NAME_MAX;
+                    __builtin_memcpy(inst->events[tail].name, filename, flen);
+                    inst->events[tail].name[flen] = '\0';
+                } else {
+                    inst->events[tail].name[0] = '\0';
+                }
                 inst->ev_tail  = (tail + 1) % INOTIFY_MAX_EVENTS;
                 inst->ev_count++;
-                (void)filename;  /* Phase 4: filename included in fixed event for now */
                 fut_waitq_wake_one(&inst->read_waitq);
             } else {
                 /* Queue overflow event at head (overwrite oldest) */
@@ -245,20 +264,20 @@ static const struct fut_file_ops inotify_fops = {
 };
 
 /* Read inotify events from the queue.
- * Returns one or more struct inotify_event records (without name field for Phase 3). */
+ * Returns one or more struct inotify_event records with optional name field (Phase 5). */
 static ssize_t inotify_read_op(void *inode, void *priv, void *u_buf, size_t len, off_t *pos) {
     (void)inode; (void)pos;
     struct inotify_instance *inst = (struct inotify_instance *)priv;
     if (!inst) return -EBADF;
 
-    /* Must be able to hold at least one minimal event (no name) */
-    const size_t min_event = sizeof(struct inotify_event);
-    if (len < min_event) return -EINVAL;
+    /* Must be able to hold at least one minimal event (header only) */
+    const size_t hdr_size = sizeof(struct inotify_event);
+    if (len < hdr_size) return -EINVAL;
 
     ssize_t total = 0;
     uint8_t *out = (uint8_t *)u_buf;
 
-    while (len >= min_event) {
+    while (len >= hdr_size) {
         fut_spinlock_acquire(&inst->lock);
 
         if (inst->ev_count == 0) {
@@ -292,27 +311,65 @@ static ssize_t inotify_read_op(void *inode, void *priv, void *u_buf, size_t len,
             continue;
         }
 
+        /* Peek at next event to compute its total size before dequeuing */
+        struct inotify_queued_event *qp = &inst->events[inst->ev_head];
+        uint32_t name_len = inotify_name_padlen(qp->name);
+        size_t needed = hdr_size + name_len;
+
+        if (len < needed) {
+            /* Buffer too small for this event */
+            fut_spinlock_release(&inst->lock);
+            if (total == 0) return -EINVAL;  /* Linux returns EINVAL if first event doesn't fit */
+            break;
+        }
+
         /* Dequeue one event */
-        struct inotify_queued_event qev = inst->events[inst->ev_head];
+        struct inotify_queued_event qev = *qp;
         inst->ev_head = (inst->ev_head + 1) % INOTIFY_MAX_EVENTS;
         inst->ev_count--;
         fut_spinlock_release(&inst->lock);
 
-        /* Fill inotify_event (no name for Phase 3: len=0) */
+        /* Fill inotify_event header */
         struct inotify_event ev;
         ev.wd     = qev.wd;
         ev.mask   = qev.mask;
         ev.cookie = qev.cookie;
-        ev.len    = 0;
+        ev.len    = name_len;
 
-        if (inotify_copy_to_user(out, &ev, sizeof(ev)) != 0) {
+        if (inotify_copy_to_user(out, &ev, hdr_size) != 0) {
             if (total == 0) return -EFAULT;
             break;
         }
+        out   += hdr_size;
+        total += (ssize_t)hdr_size;
+        len   -= hdr_size;
 
-        out   += sizeof(ev);
-        total += (ssize_t)sizeof(ev);
-        len   -= sizeof(ev);
+        /* Write null-padded name if present */
+        if (name_len > 0) {
+            /* Zero-fill the padded name region, then copy actual name bytes */
+            static const uint8_t zeros[4] = {0, 0, 0, 0};
+            size_t slen = strlen(qev.name);
+            if (slen > NAME_MAX) slen = NAME_MAX;
+            /* Copy name + null terminator */
+            if (inotify_copy_to_user(out, qev.name, slen + 1) != 0) {
+                if (total == (ssize_t)hdr_size) return -EFAULT;
+                break;
+            }
+            /* Zero-fill padding bytes beyond the null terminator */
+            size_t pad = name_len - (slen + 1);
+            if (pad > 0) {
+                size_t written = slen + 1;
+                while (pad > 0) {
+                    size_t chunk = pad > 4 ? 4 : pad;
+                    if (inotify_copy_to_user(out + written, zeros, chunk) != 0) break;
+                    written += chunk;
+                    pad -= chunk;
+                }
+            }
+            out   += name_len;
+            total += (ssize_t)name_len;
+            len   -= name_len;
+        }
     }
 
     return total > 0 ? total : -EAGAIN;

@@ -1146,27 +1146,24 @@ static int64_t sys_unlink_handler(uint64_t pathname, uint64_t arg2, uint64_t arg
     return (int64_t)fut_vfs_unlink(path_buf);
 }
 
-/* Hard link creation (stub) */
+/* Hard link creation */
 static int64_t sys_link_handler(uint64_t oldpath, uint64_t newpath, uint64_t arg3,
                                  uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     (void)arg3; (void)arg4; (void)arg5; (void)arg6;
-    /* Use kernel sys_link (currently a stub returning -ENOSYS) */
     return sys_link((const char *)oldpath, (const char *)newpath);
 }
 
-/* Symbolic link creation (stub) */
+/* Symbolic link creation */
 static int64_t sys_symlink_handler(uint64_t target, uint64_t linkpath, uint64_t arg3,
                                     uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     (void)arg3; (void)arg4; (void)arg5; (void)arg6;
-    /* Use kernel sys_symlink (currently a stub returning -ENOSYS) */
     return sys_symlink((const char *)target, (const char *)linkpath);
 }
 
-/* Symbolic link reading (stub) */
+/* Symbolic link reading */
 static int64_t sys_readlink_handler(uint64_t pathname, uint64_t buf, uint64_t bufsiz,
                                      uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     (void)arg4; (void)arg5; (void)arg6;
-    /* Use kernel sys_readlink (currently a stub returning -ENOSYS) */
     return sys_readlink((const char *)pathname, (char *)buf, (size_t)bufsiz);
 }
 

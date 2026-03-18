@@ -44,6 +44,7 @@
 #define VFS_TEST_INOTIFY_MODIFY  18
 #define VFS_TEST_INOTIFY_FTRUNC  19
 #define VFS_TEST_INOTIFY_UTIMENS 20
+#define VFS_TEST_INOTIFY_TRUNC   21
 
 /* Use kernel-level VFS functions (no copy_from_user) */
 #define sys_mkdir(path, mode)           fut_vfs_mkdir(path, (uint32_t)(mode))
@@ -57,6 +58,7 @@ extern long sys_inotify_init1(int flags);
 extern long sys_inotify_add_watch(int fd, const char *pathname, uint32_t mask);
 extern long sys_inotify_rm_watch(int fd, int wd);
 extern long sys_ftruncate(int fd, uint64_t length);
+extern long sys_truncate(const char *path, uint64_t length);
 extern long sys_utimensat(int dirfd, const char *pathname, const void *times, int flags);
 extern long sys_renameat2(int olddirfd, const char *oldpath,
                           int newdirfd, const char *newpath,
@@ -1479,6 +1481,70 @@ static void test_inotify_utimensat(void) {
     fut_test_pass();
 }
 
+static void test_inotify_truncate(void) {
+    fut_printf("[VFS-TEST] Test 21: inotify IN_MODIFY event on truncate (path)\n");
+
+    const char *watch_dir = "/";
+    const char *filepath  = "/trunc_path_inotify.txt";
+
+    /* Create file with some content */
+    fut_vfs_unlink(filepath);
+    int fd = fut_vfs_open(filepath, O_CREAT | O_RDWR, 0644);
+    if (fd < 0) {
+        fut_printf("[VFS-TEST] ✗ inotify_truncate: create failed %d\n", fd);
+        fut_test_fail(VFS_TEST_INOTIFY_TRUNC);
+        return;
+    }
+    fut_vfs_write(fd, "hello world", 11);
+    fut_vfs_close(fd);
+
+    int ifd = (int)sys_inotify_init1(IN_NONBLOCK);
+    if (ifd < 0) {
+        fut_vfs_unlink(filepath);
+        fut_printf("[VFS-TEST] ✗ inotify_truncate: inotify_init1 failed %d\n", ifd);
+        fut_test_fail(VFS_TEST_INOTIFY_TRUNC);
+        return;
+    }
+    int wd = (int)sys_inotify_add_watch(ifd, watch_dir, IN_MODIFY);
+    if (wd < 0) {
+        fut_vfs_close(ifd);
+        fut_vfs_unlink(filepath);
+        fut_printf("[VFS-TEST] ✗ inotify_truncate: add_watch failed %d\n", wd);
+        fut_test_fail(VFS_TEST_INOTIFY_TRUNC);
+        return;
+    }
+
+    /* truncate by path should fire IN_MODIFY */
+    long ret = sys_truncate(filepath, 3);
+
+    if (ret != 0) {
+        fut_vfs_close(ifd);
+        fut_vfs_unlink(filepath);
+        fut_printf("[VFS-TEST] ✗ inotify_truncate: truncate returned %ld\n", ret);
+        fut_test_fail(VFS_TEST_INOTIFY_TRUNC);
+        return;
+    }
+
+    char buf[sizeof(struct test_inotify_event) + 64];
+    long n = fut_vfs_read(ifd, buf, sizeof(buf));
+    fut_vfs_close(ifd);
+    fut_vfs_unlink(filepath);
+
+    if (n < (long)sizeof(struct test_inotify_event)) {
+        fut_printf("[VFS-TEST] ✗ inotify_truncate: no event (read=%ld)\n", n);
+        fut_test_fail(VFS_TEST_INOTIFY_TRUNC);
+        return;
+    }
+    struct test_inotify_event *ev = (struct test_inotify_event *)buf;
+    if (!(ev->mask & IN_MODIFY)) {
+        fut_printf("[VFS-TEST] ✗ inotify_truncate: mask=0x%x missing IN_MODIFY\n", ev->mask);
+        fut_test_fail(VFS_TEST_INOTIFY_TRUNC);
+        return;
+    }
+    fut_printf("[VFS-TEST] ✓ inotify truncate (path): IN_MODIFY mask=0x%x\n", ev->mask);
+    fut_test_pass();
+}
+
 void fut_vfs_test_thread(void *arg) {
     (void)arg;
 
@@ -1498,6 +1564,7 @@ void fut_vfs_test_thread(void *arg) {
     test_inotify_modify();
     test_inotify_ftruncate();
     test_inotify_utimensat();
+    test_inotify_truncate();
     test_mount();
     test_umount_expire();
     test_renameat2();

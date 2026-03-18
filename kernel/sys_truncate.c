@@ -355,6 +355,14 @@ long sys_truncate(const char *path, uint64_t length) {
                    path_buf, path_type, (unsigned long)path_len, vnode->ino,
                    (unsigned long long)local_length, length_category, operation,
                    (unsigned long long)current_size, (unsigned long long)local_length);
+
+        /* Dispatch IN_MODIFY: truncation changes file contents */
+        if (vnode->parent && vnode->name) {
+            char dir_path[256];
+            if (fut_vnode_build_path(vnode->parent, dir_path, sizeof(dir_path)))
+                inotify_dispatch_event(dir_path, 0x00000002 /* IN_MODIFY */, vnode->name, 0);
+        }
+
         fut_vnode_unref(vnode);
         return 0;
     }

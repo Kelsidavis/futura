@@ -523,6 +523,7 @@ KERNEL_SOURCES := \
     kernel/sys_seccomp.c \
     kernel/sys_kcmp.c \
     kernel/sys_execveat.c \
+    kernel/sys_preadv2.c \
     kernel/sys_sigtimedwait.c \
     kernel/sys_membarrier.c \
     kernel/sys_copy_file_range.c \

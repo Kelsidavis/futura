@@ -10969,6 +10969,127 @@ static void test_faccessat2_enoent(void) {
 }
 
 /* ============================================================
+ * Tests 237-240: preadv2/pwritev2
+ * ============================================================ */
+static void test_preadv2_current_pos(void) {
+    fut_printf("[MISC-TEST] Test 237: preadv2 offset=-1 (current position)\n");
+    extern ssize_t sys_preadv2(int fd, const struct iovec *iov, int iovcnt,
+                               int64_t offset, int flags);
+
+    int fd = (int)fut_vfs_open("/preadv2_test.txt", O_CREAT | O_RDWR, 0644);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ preadv2: open failed: %d\n", fd);
+        fut_test_fail(237); return;
+    }
+    fut_vfs_write(fd, "ABCDE", 5);
+    fut_vfs_lseek(fd, 0, 0); /* SEEK_SET */
+
+    char buf[5] = {0};
+    struct iovec iov = { .iov_base = buf, .iov_len = 5 };
+    ssize_t n = sys_preadv2(fd, &iov, 1, (int64_t)-1LL, 0);
+    fut_vfs_close(fd);
+    extern long sys_unlink(const char *path);
+    sys_unlink("/preadv2_test.txt");
+
+    if (n != 5 || buf[0] != 'A' || buf[4] != 'E') {
+        fut_printf("[MISC-TEST] ✗ preadv2 offset=-1: n=%ld buf='%.5s'\n", (long)n, buf);
+        fut_test_fail(237); return;
+    }
+    fut_printf("[MISC-TEST] ✓ preadv2 offset=-1: read %ld bytes\n", (long)n);
+    fut_test_pass();
+}
+
+static void test_preadv2_explicit_offset(void) {
+    fut_printf("[MISC-TEST] Test 238: preadv2 explicit offset\n");
+    extern ssize_t sys_preadv2(int fd, const struct iovec *iov, int iovcnt,
+                               int64_t offset, int flags);
+
+    int fd = (int)fut_vfs_open("/preadv2_off.txt", O_CREAT | O_RDWR, 0644);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ preadv2 off: open failed: %d\n", fd);
+        fut_test_fail(238); return;
+    }
+    fut_vfs_write(fd, "XYZABC", 6);
+
+    char buf[3] = {0};
+    struct iovec iov = { .iov_base = buf, .iov_len = 3 };
+    ssize_t n = sys_preadv2(fd, &iov, 1, 3 /* offset=3 → "ABC" */, 0);
+    int64_t pos = fut_vfs_lseek(fd, 0, 1 /* SEEK_CUR */);
+    fut_vfs_close(fd);
+    extern long sys_unlink(const char *path);
+    sys_unlink("/preadv2_off.txt");
+
+    if (n != 3 || buf[0] != 'A') {
+        fut_printf("[MISC-TEST] ✗ preadv2 offset=3: n=%ld buf='%.3s'\n", (long)n, buf);
+        fut_test_fail(238); return;
+    }
+    /* explicit offset must not move file position (stays at 6 = EOF after write) */
+    if (pos != 6) {
+        fut_printf("[MISC-TEST] ✗ preadv2 offset=3: file pos=%lld (expected 6)\n", (long long)pos);
+        fut_test_fail(238); return;
+    }
+    fut_printf("[MISC-TEST] ✓ preadv2 explicit offset: read '%c%c%c', pos unchanged=%lld\n",
+               buf[0], buf[1], buf[2], (long long)pos);
+    fut_test_pass();
+}
+
+static void test_pwritev2_explicit_offset(void) {
+    fut_printf("[MISC-TEST] Test 239: pwritev2 explicit offset\n");
+    extern ssize_t sys_pwritev2(int fd, const struct iovec *iov, int iovcnt,
+                                int64_t offset, int flags);
+
+    int fd = (int)fut_vfs_open("/pwritev2_off.txt", O_CREAT | O_RDWR, 0644);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ pwritev2 off: open failed: %d\n", fd);
+        fut_test_fail(239); return;
+    }
+    /* Write 6 bytes of padding */
+    fut_vfs_write(fd, "XXXXXX", 6);
+
+    /* Overwrite bytes 3-5 with "ABC" via pwritev2 */
+    struct iovec iov_patch = { .iov_base = (void *)"ABC", .iov_len = 3 };
+    ssize_t n = sys_pwritev2(fd, &iov_patch, 1, 3, 0);
+
+    /* Read back bytes 3-5 using preadv to verify */
+    char verify[3] = {0};
+    struct iovec iov_verify = { .iov_base = verify, .iov_len = 3 };
+    extern ssize_t sys_preadv2(int fd, const struct iovec *iov, int iovcnt,
+                               int64_t offset, int flags);
+    sys_preadv2(fd, &iov_verify, 1, 3, 0);
+    fut_vfs_close(fd);
+    extern long sys_unlink(const char *path);
+    sys_unlink("/pwritev2_off.txt");
+
+    if (n != 3 || verify[0] != 'A' || verify[1] != 'B' || verify[2] != 'C') {
+        fut_printf("[MISC-TEST] ✗ pwritev2 offset=3: n=%ld verify='%.3s'\n", (long)n, verify);
+        fut_test_fail(239); return;
+    }
+    fut_printf("[MISC-TEST] ✓ pwritev2 explicit offset=3: patched '%c%c%c'\n",
+               verify[0], verify[1], verify[2]);
+    fut_test_pass();
+}
+
+static void test_preadv2_bad_flags(void) {
+    fut_printf("[MISC-TEST] Test 240: preadv2/pwritev2 invalid flags → EINVAL\n");
+    extern ssize_t sys_preadv2(int fd, const struct iovec *iov, int iovcnt,
+                               int64_t offset, int flags);
+    extern ssize_t sys_pwritev2(int fd, const struct iovec *iov, int iovcnt,
+                                int64_t offset, int flags);
+    char buf[4];
+    struct iovec iov = { .iov_base = buf, .iov_len = 4 };
+
+    ssize_t r1 = sys_preadv2(0, &iov, 1, 0, 0x9999);
+    ssize_t r2 = sys_pwritev2(1, &iov, 1, 0, 0x9999);
+    if (r1 != -22 /* -EINVAL */ || r2 != -22) {
+        fut_printf("[MISC-TEST] ✗ preadv2/pwritev2 bad flags: r1=%ld r2=%ld\n",
+                   (long)r1, (long)r2);
+        fut_test_fail(240); return;
+    }
+    fut_printf("[MISC-TEST] ✓ preadv2/pwritev2 bad flags → EINVAL\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Tests 234-236: execveat error paths
  * ============================================================ */
 static void test_execveat_invalid_flags(void) {
@@ -11261,6 +11382,10 @@ void fut_misc_test_thread(void *arg) {
     test_execveat_invalid_flags();         /* Test 234: execveat invalid flags → EINVAL */
     test_execveat_fdcwd_enoent();          /* Test 235: execveat AT_FDCWD + missing → ENOENT */
     test_execveat_bad_dirfd();             /* Test 236: execveat bad dirfd + relative → EBADF */
+    test_preadv2_current_pos();            /* Test 237: preadv2 offset=-1 current position */
+    test_preadv2_explicit_offset();        /* Test 238: preadv2 explicit offset, no pos update */
+    test_pwritev2_explicit_offset();       /* Test 239: pwritev2 explicit offset patching */
+    test_preadv2_bad_flags();              /* Test 240: preadv2/pwritev2 unknown flags → EINVAL */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

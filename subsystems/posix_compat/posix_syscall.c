@@ -72,6 +72,8 @@
 #define SYS_pipe        22
 #define SYS_preadv              295
 #define SYS_pwritev             296
+#define SYS_preadv2             327  /* Linux: 327 — free in Futura */
+#define SYS_pwritev2            328  /* Linux: 328 — free in Futura */
 #define SYS_rt_tgsigqueueinfo   297
 #define SYS_process_vm_readv    437  /* Linux: 310 — Futura: 437 (310/311 used by vhangup/setreuid) */
 #define SYS_process_vm_writev   438  /* Linux: 311 — Futura: 438 */
@@ -877,6 +879,24 @@ static int64_t sys_pwritev_handler(uint64_t fd, uint64_t iov, uint64_t iovcnt,
     (void)arg5; (void)arg6;
     extern ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset);
     return (int64_t)sys_pwritev((int)fd, (const struct iovec *)(uintptr_t)iov, (int)iovcnt, (int64_t)offset);
+}
+
+static int64_t sys_preadv2_handler(uint64_t fd, uint64_t iov, uint64_t iovcnt,
+                                   uint64_t offset, uint64_t flags, uint64_t arg6) {
+    (void)arg6;
+    extern ssize_t sys_preadv2(int fd, const struct iovec *iov, int iovcnt,
+                               int64_t offset, int flags);
+    return (int64_t)sys_preadv2((int)fd, (const struct iovec *)(uintptr_t)iov,
+                                 (int)iovcnt, (int64_t)offset, (int)flags);
+}
+
+static int64_t sys_pwritev2_handler(uint64_t fd, uint64_t iov, uint64_t iovcnt,
+                                    uint64_t offset, uint64_t flags, uint64_t arg6) {
+    (void)arg6;
+    extern ssize_t sys_pwritev2(int fd, const struct iovec *iov, int iovcnt,
+                                int64_t offset, int flags);
+    return (int64_t)sys_pwritev2((int)fd, (const struct iovec *)(uintptr_t)iov,
+                                  (int)iovcnt, (int64_t)offset, (int)flags);
 }
 
 static int64_t sys_ioctl_handler(uint64_t fd, uint64_t req, uint64_t argp,
@@ -3171,6 +3191,8 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_inotify_init1] = sys_inotify_init1_handler,
     [SYS_preadv]              = sys_preadv_handler,
     [SYS_pwritev]             = sys_pwritev_handler,
+    [SYS_preadv2]             = sys_preadv2_handler,
+    [SYS_pwritev2]            = sys_pwritev2_handler,
     [SYS_rt_tgsigqueueinfo]   = sys_rt_tgsigqueueinfo_handler,
     [SYS_process_vm_readv]    = sys_process_vm_readv_handler,
     [SYS_process_vm_writev]   = sys_process_vm_writev_handler,

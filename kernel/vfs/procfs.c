@@ -480,10 +480,17 @@ static size_t gen_status(char *buf, size_t cap, fut_task_t *task) {
 
     const char *state_str;
     switch (task->state) {
-        case FUT_TASK_RUNNING: state_str = "R (running)";  break;
         case FUT_TASK_ZOMBIE:  state_str = "Z (zombie)";   break;
         case FUT_TASK_STOPPED: state_str = "T (stopped)";  break;
-        default:               state_str = "S (sleeping)"; break;
+        case FUT_TASK_RUNNING:
+        default: {
+            fut_thread_t *mt = task->threads;
+            if (mt && (mt->state == FUT_THREAD_SLEEPING || mt->state == FUT_THREAD_BLOCKED))
+                state_str = "S (sleeping)";
+            else
+                state_str = "R (running)";
+            break;
+        }
     }
 
     /* VmRSS: total bytes from VMA list */
@@ -806,13 +813,23 @@ static size_t gen_cmdline(char *buf, size_t cap, fut_task_t *task) {
 static size_t gen_stat(char *buf, size_t cap, fut_task_t *task) {
     if (!task) return 0;
 
-    /* State character */
+    /* State character — map task state to Linux /proc/stat state letter.
+     * For a RUNNING task, report 'S' (interruptible sleep) if the main thread
+     * is actually blocked/sleeping in a wait queue; 'R' only if truly runnable. */
     char state_c;
     switch (task->state) {
-        case FUT_TASK_RUNNING: state_c = 'R'; break;
         case FUT_TASK_ZOMBIE:  state_c = 'Z'; break;
         case FUT_TASK_STOPPED: state_c = 'T'; break;
-        default:               state_c = 'S'; break;
+        case FUT_TASK_RUNNING:
+        default: {
+            /* Check main thread's execution state */
+            fut_thread_t *mt = task->threads;
+            if (mt && (mt->state == FUT_THREAD_SLEEPING || mt->state == FUT_THREAD_BLOCKED))
+                state_c = 'S';  /* interruptible sleep */
+            else
+                state_c = 'R';  /* runnable */
+            break;
+        }
     }
 
     uint64_t ppid = task->parent ? task->parent->pid : 0;

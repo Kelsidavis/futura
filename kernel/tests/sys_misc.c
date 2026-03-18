@@ -9365,6 +9365,94 @@ static void test_proc_random_uuid(void) {
 }
 
 /* ============================================================
+ * Test 199: /proc/stat — cpu line and ctxt/btime present
+ * ============================================================ */
+static void test_proc_stat_global(void) {
+    fut_printf("[MISC-TEST] Test 199: /proc/stat cpu/ctxt/btime present\n");
+    extern long sys_read(int fd, void *buf, size_t count);
+
+    int fd = fut_vfs_open("/proc/stat", 0x00, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open /proc/stat failed: %d\n", fd);
+        fut_test_fail(199); return;
+    }
+    char buf[512];
+    __builtin_memset(buf, 0, sizeof(buf));
+    long r = sys_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    if (r <= 0) {
+        fut_printf("[MISC-TEST] ✗ read /proc/stat returned %ld\n", r);
+        fut_test_fail(199); return;
+    }
+    buf[r] = '\0';
+
+    /* Must start with "cpu " */
+    if (buf[0] != 'c' || buf[1] != 'p' || buf[2] != 'u' || buf[3] != ' ') {
+        fut_printf("[MISC-TEST] ✗ /proc/stat doesn't start with 'cpu '\n");
+        fut_test_fail(199); return;
+    }
+
+    /* Must contain "ctxt " */
+    int found_ctxt = 0, found_btime = 0;
+    for (int i = 0; i < (int)r - 4; i++) {
+        if (buf[i]=='c' && buf[i+1]=='t' && buf[i+2]=='x' && buf[i+3]=='t') found_ctxt = 1;
+        if (buf[i]=='b' && buf[i+1]=='t' && buf[i+2]=='i' && buf[i+3]=='m') found_btime = 1;
+    }
+    if (!found_ctxt) {
+        fut_printf("[MISC-TEST] ✗ /proc/stat missing 'ctxt' field\n");
+        fut_test_fail(199); return;
+    }
+    if (!found_btime) {
+        fut_printf("[MISC-TEST] ✗ /proc/stat missing 'btime' field\n");
+        fut_test_fail(199); return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ /proc/stat: cpu/ctxt/btime all present\n");
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 200: /proc/filesystems — lists known filesystem types
+ * ============================================================ */
+static void test_proc_filesystems(void) {
+    fut_printf("[MISC-TEST] Test 200: /proc/filesystems lists filesystems\n");
+    extern long sys_read(int fd, void *buf, size_t count);
+
+    int fd = fut_vfs_open("/proc/filesystems", 0x00, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open /proc/filesystems failed: %d\n", fd);
+        fut_test_fail(200); return;
+    }
+    char buf[256];
+    __builtin_memset(buf, 0, sizeof(buf));
+    long r = sys_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    if (r <= 0) {
+        fut_printf("[MISC-TEST] ✗ read /proc/filesystems returned %ld\n", r);
+        fut_test_fail(200); return;
+    }
+    buf[r] = '\0';
+
+    /* Must contain "proc" and "tmpfs" */
+    int found_proc = 0, found_tmpfs = 0;
+    for (int i = 0; i < (int)r - 3; i++) {
+        if (buf[i]=='p' && buf[i+1]=='r' && buf[i+2]=='o' && buf[i+3]=='c') found_proc = 1;
+        if (buf[i]=='t' && buf[i+1]=='m' && buf[i+2]=='p' && buf[i+3]=='f') found_tmpfs = 1;
+    }
+    if (!found_proc) {
+        fut_printf("[MISC-TEST] ✗ /proc/filesystems missing 'proc' entry\n");
+        fut_test_fail(200); return;
+    }
+    if (!found_tmpfs) {
+        fut_printf("[MISC-TEST] ✗ /proc/filesystems missing 'tmpfs' entry\n");
+        fut_test_fail(200); return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ /proc/filesystems: proc and tmpfs entries present\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -9572,6 +9660,8 @@ void fut_misc_test_thread(void *arg) {
     test_flock_basic();                    /* Test 196: flock() shared/exclusive/unlock */
     test_proc_boot_id();                   /* Test 197: /proc/sys/kernel/random/boot_id UUID format */
     test_proc_random_uuid();               /* Test 198: /proc/sys/kernel/random/uuid new each read */
+    test_proc_stat_global();               /* Test 199: /proc/stat cpu/ctxt/btime present */
+    test_proc_filesystems();               /* Test 200: /proc/filesystems lists proc and tmpfs */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

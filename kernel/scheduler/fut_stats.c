@@ -122,6 +122,13 @@ uint64_t fut_stats_get_ticks(void) {
 }
 
 /**
+ * Get total context switch count (for /proc/stat).
+ */
+uint64_t fut_stats_get_context_switches(void) {
+    return global_stats.total_context_switches;
+}
+
+/**
  * Get system load averages scaled for sysinfo(2).
  * sysinfo.loads[] uses SI_LOAD_SHIFT=16; our internal FSHIFT=11,
  * so multiply by (1<<(16-11)) = 32 to convert.

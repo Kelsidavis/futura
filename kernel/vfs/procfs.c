@@ -63,6 +63,8 @@ enum procfs_kind {
     PROC_CPUINFO,    /* /proc/cpuinfo */
     PROC_LOADAVG,    /* /proc/loadavg */
     PROC_MOUNTS,     /* /proc/mounts */
+    PROC_STAT_GLOBAL,/* /proc/stat */
+    PROC_FILESYSTEMS,/* /proc/filesystems */
     PROC_COMM,       /* /proc/<pid>/comm */
     PROC_ENVIRON,    /* /proc/<pid>/environ */
     /* /proc/sys/ subtree */
@@ -104,7 +106,9 @@ typedef struct {
 #define PROC_INO_UPTIME   5ULL
 #define PROC_INO_CPUINFO  6ULL
 #define PROC_INO_LOADAVG  7ULL
-#define PROC_INO_MOUNTS   8ULL
+#define PROC_INO_MOUNTS      8ULL
+#define PROC_INO_STAT_GLOBAL 9ULL
+#define PROC_INO_FILESYSTEMS 10ULL
 /* /proc/sys/ inode range: 200-299 */
 #define PROC_INO_SYS_DIR        200ULL
 #define PROC_INO_SYS_KERNEL_DIR 201ULL
@@ -853,6 +857,62 @@ static size_t gen_boot_id(char *buf, size_t cap) {
     return len;
 }
 
+/* ============================================================
+ *   /proc/stat — global CPU / system statistics
+ * ============================================================ */
+static size_t gen_proc_stat(char *buf, size_t cap) {
+    struct pbuf b = { buf, 0, cap };
+
+    /* Total ticks = system ticks; we have no user/nice/idle split yet */
+    uint64_t total_ticks = fut_get_ticks();  /* real-time ticks since boot */
+    uint64_t ctxt        = fut_stats_get_context_switches();
+
+    /* Approximate: report all time as system (we don't split user vs kernel yet) */
+    /* Format: cpu user nice system idle iowait irq softirq steal guest guest_nice */
+    pb_str(&b, "cpu  0 0 ");  pb_u64(&b, total_ticks);
+    pb_str(&b, " 0 0 0 0 0 0 0\n");
+
+    pb_str(&b, "cpu0 0 0 "); pb_u64(&b, total_ticks);
+    pb_str(&b, " 0 0 0 0 0 0 0\n");
+
+    /* ctxt: context switches since boot */
+    pb_str(&b, "ctxt ");     pb_u64(&b, ctxt);     pb_char(&b, '\n');
+
+    /* btime: boot time as seconds since epoch (approx: realtime_offset covers wall time) */
+    extern volatile int64_t g_realtime_offset_sec;
+    int64_t uptime_sec = (int64_t)(total_ticks / 100);
+    int64_t btime = g_realtime_offset_sec > uptime_sec
+                    ? g_realtime_offset_sec - uptime_sec : 0;
+    pb_str(&b, "btime ");    pb_u64(&b, (uint64_t)btime); pb_char(&b, '\n');
+
+    /* processes: total tasks ever created — use running task count as approximation */
+    uint64_t nproc = 0;
+    fut_task_t *t = fut_task_list;
+    while (t) { nproc++; t = t->next; }
+    pb_str(&b, "processes "); pb_u64(&b, nproc); pb_char(&b, '\n');
+
+    pb_str(&b, "procs_running "); pb_u64(&b, nproc > 0 ? nproc : 1); pb_char(&b, '\n');
+    pb_str(&b, "procs_blocked 0\n");
+    pb_str(&b, "softirq 0 0 0 0 0 0 0 0 0 0 0\n");
+
+    return b.pos;
+}
+
+/* ============================================================
+ *   /proc/filesystems — registered filesystem types
+ * ============================================================ */
+static size_t gen_filesystems(char *buf, size_t cap) {
+    struct pbuf b = { buf, 0, cap };
+    pb_str(&b, "nodev\tsysfs\n");
+    pb_str(&b, "nodev\trootfs\n");
+    pb_str(&b, "nodev\tproc\n");
+    pb_str(&b, "nodev\ttmpfs\n");
+    pb_str(&b, "nodev\tdevtmpfs\n");
+    pb_str(&b, "nodev\tramfs\n");
+    pb_str(&b, "\text4\n");
+    return b.pos;
+}
+
 /* /proc/sys/kernel/ and /proc/sys/vm/ file generators */
 static size_t gen_sysctl_str(char *buf, size_t cap, const char *value) {
     struct pbuf b = { buf, 0, cap };
@@ -923,6 +983,12 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             break;
         case PROC_MOUNTS:
             total = gen_mounts(tmp, GEN_BUF);
+            break;
+        case PROC_STAT_GLOBAL:
+            total = gen_proc_stat(tmp, GEN_BUF);
+            break;
+        case PROC_FILESYSTEMS:
+            total = gen_filesystems(tmp, GEN_BUF);
             break;
         case PROC_COMM: {
             fut_task_t *task = fut_task_by_pid(n->pid);
@@ -1148,6 +1214,16 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
         if (STREQ(name, "mounts")) {
             *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_MOUNTS,
                                           0100444, PROC_MOUNTS, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "stat")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_STAT_GLOBAL,
+                                          0100444, PROC_STAT_GLOBAL, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "filesystems")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_FILESYSTEMS,
+                                          0100444, PROC_FILESYSTEMS, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
         if (STREQ(name, "sys")) {
@@ -1410,21 +1486,23 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         /* Fixed entries: ., .., self, meminfo, version, uptime, cpuinfo, loadavg, mounts, sys */
         static const char *fixed[] = {
             ".", "..", "self", "meminfo", "version", "uptime", "cpuinfo",
-            "loadavg", "mounts", "sys"
+            "loadavg", "mounts", "sys", "stat", "filesystems"
         };
         static const uint8_t fixed_type[] = {
             FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
             FUT_VDIR_TYPE_SYMLINK,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
-            FUT_VDIR_TYPE_DIR
+            FUT_VDIR_TYPE_DIR,
+            FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG
         };
         static const uint64_t fixed_ino[] = {
             PROC_INO_ROOT, PROC_INO_ROOT,
             PROC_INO_SELF, PROC_INO_MEMINFO, PROC_INO_VERSION, PROC_INO_UPTIME,
-            PROC_INO_CPUINFO, PROC_INO_LOADAVG, PROC_INO_MOUNTS, PROC_INO_SYS_DIR
+            PROC_INO_CPUINFO, PROC_INO_LOADAVG, PROC_INO_MOUNTS, PROC_INO_SYS_DIR,
+            PROC_INO_STAT_GLOBAL, PROC_INO_FILESYSTEMS
         };
-        if (idx < 10) {
+        if (idx < 12) {
             de->d_ino    = fixed_ino[idx];
             de->d_off    = idx + 1;
             de->d_type   = fixed_type[idx];

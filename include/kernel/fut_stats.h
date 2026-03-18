@@ -76,6 +76,12 @@ void fut_debug_dump_stats(void);
 void fut_stats_reset(void);
 
 /**
+ * Get total context switch count (for /proc/stat).
+ * @return Total number of context switches since boot
+ */
+uint64_t fut_stats_get_context_switches(void);
+
+/**
  * Get system load averages (1, 5, 15 minute) scaled by 65536.
  * Compatible with sysinfo(2) loads[] format.
  *

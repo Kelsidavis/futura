@@ -11815,6 +11815,74 @@ static void test_clock_gettime_extended(void) {
     fut_test_pass();
 }
 
+static void test_fcntl_ofd_locks(void) {
+    fut_printf("[MISC-TEST] Test 267: F_OFD_SETLK/F_OFD_GETLK (Linux 3.15+ OFD locks)\n");
+    extern long sys_fcntl(int fd, int cmd, uint64_t arg);
+
+#define TEST267_F_OFD_GETLK  36
+#define TEST267_F_OFD_SETLK  37
+#define TEST267_F_OFD_SETLKW 38
+#define TEST267_F_RDLCK       0
+#define TEST267_F_WRLCK       1
+#define TEST267_F_UNLCK       2
+
+    /* Use VFS-level helpers so kernel-pointer path strings work without EFAULT */
+    const char *path = "/ofd_lock_test.txt";
+    fut_vfs_unlink(path);   /* best-effort pre-cleanup */
+    int fd = fut_vfs_open(path, O_CREAT | O_RDWR, 0644);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 267 open failed: %d\n", fd);
+        fut_test_fail(267); return;
+    }
+
+    /* struct flock: l_type(2) l_whence(2) l_start(8) l_len(8) l_pid(4) */
+    struct { short l_type; short l_whence; long l_start; long l_len; int l_pid; } lk;
+
+    /* F_OFD_SETLK: set write lock */
+    lk.l_type   = TEST267_F_WRLCK;
+    lk.l_whence = 0; /* SEEK_SET */
+    lk.l_start  = 0;
+    lk.l_len    = 0; /* whole file */
+    lk.l_pid    = 0;
+    long r = sys_fcntl(fd, TEST267_F_OFD_SETLK, (long)&lk);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ F_OFD_SETLK(WRLCK): %ld\n", r);
+        fut_vfs_close(fd); fut_vfs_unlink(path);
+        fut_test_fail(267); return;
+    }
+
+    /* F_OFD_GETLK: check lock type */
+    lk.l_type   = TEST267_F_WRLCK;
+    lk.l_whence = 0;
+    lk.l_start  = 0;
+    lk.l_len    = 0;
+    lk.l_pid    = 0;
+    r = sys_fcntl(fd, TEST267_F_OFD_GETLK, (long)&lk);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ F_OFD_GETLK: %ld\n", r);
+        fut_vfs_close(fd); fut_vfs_unlink(path);
+        fut_test_fail(267); return;
+    }
+
+    /* F_OFD_SETLK: unlock */
+    lk.l_type   = TEST267_F_UNLCK;
+    lk.l_whence = 0;
+    lk.l_start  = 0;
+    lk.l_len    = 0;
+    lk.l_pid    = 0;
+    r = sys_fcntl(fd, TEST267_F_OFD_SETLK, (long)&lk);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ F_OFD_SETLK(UNLCK): %ld\n", r);
+        fut_vfs_close(fd); fut_vfs_unlink(path);
+        fut_test_fail(267); return;
+    }
+
+    fut_vfs_close(fd);
+    fut_vfs_unlink(path);
+    fut_printf("[MISC-TEST] ✓ F_OFD_SETLK/F_OFD_GETLK → 0\n");
+    fut_test_pass();
+}
+
 /* ============================================================
  * Test entry point
  * ============================================================ */
@@ -12091,6 +12159,7 @@ void fut_misc_test_thread(void *arg) {
     test_timer_create_boottime();          /* Test 264: timer_create CLOCK_BOOTTIME/TAI */
     test_madvise_wipeonfork();             /* Test 265: madvise WIPEONFORK/COLD/PAGEOUT */
     test_clock_gettime_extended();         /* Test 266: clock_gettime TAI/ALARM/RAW/COARSE clocks */
+    test_fcntl_ofd_locks();               /* Test 267: F_OFD_SETLK/F_OFD_GETLK (Linux 3.15+ OFD locks) */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

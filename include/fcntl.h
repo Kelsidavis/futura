@@ -159,6 +159,15 @@
 #ifndef F_DUPFD_CLOEXEC
 #define F_DUPFD_CLOEXEC 1030 /* Duplicate FD with close-on-exec */
 #endif
+#ifndef F_OFD_GETLK
+#define F_OFD_GETLK     36  /* Get open file description lock (Linux 3.15+) */
+#endif
+#ifndef F_OFD_SETLK
+#define F_OFD_SETLK     37  /* Set open file description lock (non-blocking) */
+#endif
+#ifndef F_OFD_SETLKW
+#define F_OFD_SETLKW    38  /* Set open file description lock (blocking) */
+#endif
 #ifndef F_ADD_SEALS
 #define F_ADD_SEALS     1033 /* Add sealing flags to file */
 #endif

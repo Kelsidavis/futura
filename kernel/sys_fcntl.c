@@ -423,6 +423,18 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
             cmd_name = "F_GETLK";
             cmd_category = "get file lock info";
             break;
+        case F_OFD_GETLK:   /* 36: open file description lock query */
+            cmd_name = "F_OFD_GETLK";
+            cmd_category = "get OFD lock info (Linux 3.15+)";
+            break;
+        case F_OFD_SETLK:   /* 37: OFD lock set (non-blocking) */
+            cmd_name = "F_OFD_SETLK";
+            cmd_category = "set OFD lock (non-blocking)";
+            break;
+        case F_OFD_SETLKW:  /* 38: OFD lock set (blocking) */
+            cmd_name = "F_OFD_SETLKW";
+            cmd_category = "set OFD lock (blocking)";
+            break;
         case F_SETOWN:
             cmd_name = "F_SETOWN";
             cmd_category = "set owner process for signals";
@@ -825,10 +837,14 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
         return 0;
     }
 
+    case F_OFD_SETLK:   /* Open file description lock: same semantics as F_SETLK in Futura */
+    case F_OFD_SETLKW:  /* Open file description lock: same semantics as F_SETLKW in Futura */
     case F_SETLK:
     case F_SETLKW: {
-        /* F_SETLK: Set POSIX record lock (non-blocking).
-         * F_SETLKW: Set POSIX record lock (blocking - wait if conflict). */
+        /* F_SETLK/F_OFD_SETLK: Set record lock (non-blocking).
+         * F_SETLKW/F_OFD_SETLKW: Set record lock (blocking - wait if conflict).
+         * F_OFD_* uses per-FD lock semantics; in Futura (single-process) they
+         * behave identically to the POSIX variants. */
         struct flock lk;
         if (fcntl_copy_from_user(&lk, (const void *)(uintptr_t)local_arg, sizeof(lk)) != 0) {
             fut_printf("[FCNTL] fcntl(fd=%d, cmd=%s) -> EFAULT (copy flock failed)\n",
@@ -874,8 +890,9 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
         return ret;
     }
 
+    case F_OFD_GETLK:   /* Open file description lock query: same as F_GETLK in Futura */
     case F_GETLK: {
-        /* F_GETLK: Check if a lock would be blocked; if not, set l_type=F_UNLCK. */
+        /* F_GETLK/F_OFD_GETLK: Check if a lock would be blocked; if not, set l_type=F_UNLCK. */
         struct flock lk;
         if (fcntl_copy_from_user(&lk, (const void *)(uintptr_t)local_arg, sizeof(lk)) != 0) {
             fut_printf("[FCNTL] fcntl(fd=%d, cmd=F_GETLK) -> EFAULT (copy flock failed)\n",

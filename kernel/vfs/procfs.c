@@ -76,7 +76,12 @@ enum procfs_kind {
     PROC_SYS_OSRELEASE,    /* /proc/sys/kernel/osrelease */
     PROC_SYS_HOSTNAME,     /* /proc/sys/kernel/hostname */
     PROC_SYS_PID_MAX,      /* /proc/sys/kernel/pid_max */
-    PROC_SYS_OVERCOMMIT,   /* /proc/sys/vm/overcommit_memory */
+    PROC_SYS_OVERCOMMIT,      /* /proc/sys/vm/overcommit_memory */
+    PROC_SYS_MAX_MAP_COUNT,   /* /proc/sys/vm/max_map_count */
+    PROC_SYS_SWAPPINESS,      /* /proc/sys/vm/swappiness */
+    PROC_SYS_DIRTY_RATIO,     /* /proc/sys/vm/dirty_ratio */
+    PROC_SYS_DIRTY_BG_RATIO,  /* /proc/sys/vm/dirty_background_ratio */
+    PROC_SYS_MIN_FREE_KB,     /* /proc/sys/vm/min_free_kbytes */
     PROC_SYS_FILE_MAX,     /* /proc/sys/fs/file-max */
     PROC_SYS_FILE_NR,      /* /proc/sys/fs/file-nr */
     PROC_SYS_INOTIFY_DIR,  /* /proc/sys/fs/inotify/ */
@@ -157,7 +162,12 @@ typedef struct {
 #define PROC_INO_SYS_OSRELEASE  211ULL
 #define PROC_INO_SYS_HOSTNAME   212ULL
 #define PROC_INO_SYS_PID_MAX    213ULL
-#define PROC_INO_SYS_OVERCOMMIT    220ULL
+#define PROC_INO_SYS_OVERCOMMIT       220ULL
+#define PROC_INO_SYS_MAX_MAP_COUNT    221ULL
+#define PROC_INO_SYS_SWAPPINESS       222ULL
+#define PROC_INO_SYS_DIRTY_RATIO      223ULL
+#define PROC_INO_SYS_DIRTY_BG_RATIO   224ULL
+#define PROC_INO_SYS_MIN_FREE_KB      225ULL
 #define PROC_INO_SYS_FILE_MAX      230ULL
 #define PROC_INO_SYS_FILE_NR       231ULL
 #define PROC_INO_SYS_INOTIFY_DIR   232ULL
@@ -1247,6 +1257,22 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
         case PROC_SYS_OVERCOMMIT:
             total = gen_sysctl_str(tmp, GEN_BUF, "0");
             break;
+        case PROC_SYS_MAX_MAP_COUNT:
+            /* Elasticsearch requires ≥262144; use 1048576 for headroom */
+            total = gen_sysctl_str(tmp, GEN_BUF, "1048576");
+            break;
+        case PROC_SYS_SWAPPINESS:
+            total = gen_sysctl_str(tmp, GEN_BUF, "0");
+            break;
+        case PROC_SYS_DIRTY_RATIO:
+            total = gen_sysctl_str(tmp, GEN_BUF, "20");
+            break;
+        case PROC_SYS_DIRTY_BG_RATIO:
+            total = gen_sysctl_str(tmp, GEN_BUF, "10");
+            break;
+        case PROC_SYS_MIN_FREE_KB:
+            total = gen_sysctl_str(tmp, GEN_BUF, "65536");
+            break;
         case PROC_SYS_FILE_MAX:
             total = gen_sysctl_str(tmp, GEN_BUF, "1048576");
             break;
@@ -1882,6 +1908,31 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0100644, PROC_SYS_OVERCOMMIT, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "max_map_count")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_MAX_MAP_COUNT,
+                                          0100644, PROC_SYS_MAX_MAP_COUNT, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "swappiness")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_SWAPPINESS,
+                                          0100644, PROC_SYS_SWAPPINESS, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "dirty_ratio")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_DIRTY_RATIO,
+                                          0100644, PROC_SYS_DIRTY_RATIO, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "dirty_background_ratio")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_DIRTY_BG_RATIO,
+                                          0100644, PROC_SYS_DIRTY_BG_RATIO, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "min_free_kbytes")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_MIN_FREE_KB,
+                                          0100644, PROC_SYS_MIN_FREE_KB, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         return -ENOENT;
     }
 
@@ -2234,11 +2285,18 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
     }
 
     if (dn->kind == PROC_SYS_VM_DIR) {
-        static const char *e[] = { ".", "..", "overcommit_memory" };
-        static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_REG };
+        static const char *e[] = { ".", "..", "overcommit_memory", "max_map_count",
+                                   "swappiness", "dirty_ratio",
+                                   "dirty_background_ratio", "min_free_kbytes" };
+        static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG };
         static const uint64_t i[] = { PROC_INO_SYS_VM_DIR, PROC_INO_SYS_DIR,
-                                      PROC_INO_SYS_OVERCOMMIT };
-        if (idx < 3) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+                                      PROC_INO_SYS_OVERCOMMIT, PROC_INO_SYS_MAX_MAP_COUNT,
+                                      PROC_INO_SYS_SWAPPINESS, PROC_INO_SYS_DIRTY_RATIO,
+                                      PROC_INO_SYS_DIRTY_BG_RATIO, PROC_INO_SYS_MIN_FREE_KB };
+        if (idx < 8) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
         return -ENOENT;
     }
 

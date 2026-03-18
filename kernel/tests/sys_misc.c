@@ -12080,6 +12080,45 @@ static void test_mmap_prot_sem(void) {
     fut_test_pass();
 }
 
+static void test_proc_sys_vm(void) {
+    fut_printf("[MISC-TEST] Test 274: /proc/sys/vm/ tunables\n");
+
+    extern ssize_t sys_read(int fd, void *buf, size_t count);
+    char buf[32];
+
+    /* max_map_count — Elasticsearch/Java require >= 262144 */
+    int fd = fut_vfs_open("/proc/sys/vm/max_map_count", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 274: open /proc/sys/vm/max_map_count failed: %d\n", fd);
+        fut_test_fail(274); return;
+    }
+    long n = (long)sys_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    if (n <= 0 || buf[0] < '1') {
+        fut_printf("[MISC-TEST] ✗ Test 274: max_map_count read failed\n");
+        fut_test_fail(274); return;
+    }
+    buf[n] = '\0';
+    fut_printf("[MISC-TEST] ✓ /proc/sys/vm/max_map_count = %s", buf);
+
+    /* swappiness — should be 0 (no swap on Futura) */
+    fd = fut_vfs_open("/proc/sys/vm/swappiness", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 274: open /proc/sys/vm/swappiness failed: %d\n", fd);
+        fut_test_fail(274); return;
+    }
+    n = (long)sys_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    if (n <= 0) {
+        fut_printf("[MISC-TEST] ✗ Test 274: swappiness read empty\n");
+        fut_test_fail(274); return;
+    }
+    buf[n] = '\0';
+    fut_printf("[MISC-TEST] ✓ /proc/sys/vm/swappiness = %s", buf);
+
+    fut_test_pass();
+}
+
 static void test_proc_sys_fs_inotify(void) {
     fut_printf("[MISC-TEST] Test 273: /proc/sys/fs/inotify/ limits\n");
 
@@ -12457,6 +12496,7 @@ void fut_misc_test_thread(void *arg) {
     test_mmap_prot_sem();                 /* Test 271: mmap with PROT_SEM (0x8) accepted by Linux */
     test_proc_sys_net();                  /* Test 272: /proc/sys/net/core/somaxconn + ipv4/ip_local_port_range */
     test_proc_sys_fs_inotify();           /* Test 273: /proc/sys/fs/inotify/max_user_watches + file-nr */
+    test_proc_sys_vm();                   /* Test 274: /proc/sys/vm/max_map_count + swappiness */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

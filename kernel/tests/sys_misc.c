@@ -16668,6 +16668,81 @@ static void test_pipe_nb_atomic_write(void) {
     fut_test_pass();
 }
 
+/* ============================================================
+ * Test 345: copy_file_range with explicit off_in/off_out offsets
+ *   When off_in/off_out are non-NULL, pread/pwrite semantics apply:
+ *   - data is read/written at the given offsets
+ *   - the fd's file position is unchanged
+ *   - the pointed-to values are updated by bytes transferred
+ * ============================================================ */
+static void test_copy_file_range_offsets(void) {
+    fut_printf("[MISC-TEST] Test 345: copy_file_range with off_in/off_out\n");
+
+    extern long sys_copy_file_range(int fd_in, int64_t *off_in,
+                                    int fd_out, int64_t *off_out,
+                                    size_t len, unsigned int flags);
+    extern int64_t fut_vfs_lseek(int fd, int64_t offset, int whence);
+
+    /* Create source: "ABCDEFGHIJ" (10 bytes) */
+    int src = fut_vfs_open("/cfr_off_src.txt", 0x42, 0644);  /* O_RDWR|O_CREAT */
+    if (src < 0) { fut_test_fail(345); return; }
+    fut_vfs_write(src, "ABCDEFGHIJ", 10);
+    fut_vfs_lseek(src, 0, 0);
+
+    /* Create destination: 20 zero bytes */
+    int dst = fut_vfs_open("/cfr_off_dst.txt", 0x42, 0644);
+    if (dst < 0) { fut_vfs_close(src); fut_test_fail(345); return; }
+    char zeros[20]; __builtin_memset(zeros, 0, 20);
+    fut_vfs_write(dst, zeros, 20);
+
+    /*
+     * Copy 5 bytes from src at offset 2 ("CDEFG") to dst at offset 10.
+     * After the call: off_in=7, off_out=15.
+     * src fd position stays at 0; dst fd position stays at 20.
+     */
+    int64_t off_in = 2, off_out = 10;
+    long copied = sys_copy_file_range(src, &off_in, dst, &off_out, 5, 0);
+    if (copied != 5) {
+        fut_printf("[MISC-TEST] ✗ copy_file_range offsets: copied=%ld (expected 5)\n", copied);
+        fut_vfs_close(src); fut_vfs_close(dst); fut_test_fail(345); return;
+    }
+    if (off_in != 7) {
+        fut_printf("[MISC-TEST] ✗ off_in not updated: %lld (expected 7)\n", (long long)off_in);
+        fut_vfs_close(src); fut_vfs_close(dst); fut_test_fail(345); return;
+    }
+    if (off_out != 15) {
+        fut_printf("[MISC-TEST] ✗ off_out not updated: %lld (expected 15)\n", (long long)off_out);
+        fut_vfs_close(src); fut_vfs_close(dst); fut_test_fail(345); return;
+    }
+
+    /* src fd position must still be 0 (not advanced) */
+    int64_t src_pos = fut_vfs_lseek(src, 0, 1 /* SEEK_CUR */);
+    if (src_pos != 0) {
+        fut_printf("[MISC-TEST] ✗ src fd position moved: %lld (expected 0)\n", (long long)src_pos);
+        fut_vfs_close(src); fut_vfs_close(dst); fut_test_fail(345); return;
+    }
+
+    /* dst fd position must still be 20 (not advanced) */
+    int64_t dst_pos = fut_vfs_lseek(dst, 0, 1 /* SEEK_CUR */);
+    if (dst_pos != 20) {
+        fut_printf("[MISC-TEST] ✗ dst fd position moved: %lld (expected 20)\n", (long long)dst_pos);
+        fut_vfs_close(src); fut_vfs_close(dst); fut_test_fail(345); return;
+    }
+
+    /* Verify content at dst offset 10..14 == "CDEFG" */
+    char rbuf[6] = {0};
+    fut_vfs_lseek(dst, 10, 0);
+    ssize_t nr = fut_vfs_read(dst, rbuf, 5);
+    if (nr != 5 || __builtin_memcmp(rbuf, "CDEFG", 5) != 0) {
+        fut_printf("[MISC-TEST] ✗ dst content mismatch: nr=%zd buf='%.5s'\n", nr, rbuf);
+        fut_vfs_close(src); fut_vfs_close(dst); fut_test_fail(345); return;
+    }
+
+    fut_vfs_close(src); fut_vfs_close(dst);
+    fut_printf("[MISC-TEST] ✓ Test 345: copy_file_range off_in/off_out: correct data, positions unchanged\n");
+    fut_test_pass();
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -17020,6 +17095,7 @@ void fut_misc_test_thread(void *arg) {
     test_signalfd_epoll_ready();         /* Test 342: signalfd in epoll: EPOLLIN when signal pending */
     test_signalfd_poll_ready();          /* Test 343: signalfd in poll: POLLIN when signal pending */
     test_pipe_nb_atomic_write();         /* Test 344: pipe O_NONBLOCK write <= PIPE_BUF is atomic */
+    test_copy_file_range_offsets();      /* Test 345: copy_file_range off_in/off_out pread/pwrite semantics */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -311,6 +311,9 @@ typedef struct fut_socket {
     /* Server-side socket flag (set by accept) */
     bool is_accepted;                       /* TRUE if this socket was returned by accept() */
 
+    /* Credential passing (SO_PASSCRED) */
+    bool passcred;                          /* Attach SCM_CREDENTIALS cmsg on every recvmsg */
+
     /* Refcounting and lifecycle */
     uint64_t refcount;                      /* Reference count */
     struct fut_waitq *close_waitq;          /* Wait queue for close completion */

@@ -158,6 +158,9 @@
 #ifndef SO_PEERCRED
 #define SO_PEERCRED     17      /* Get peer credentials */
 #endif
+#ifndef SO_PASSCRED
+#define SO_PASSCRED     16      /* Enable SCM_CREDENTIALS cmsg on recvmsg */
+#endif
 
 /* ============================================================
  *   Message Flags (for send/recv)

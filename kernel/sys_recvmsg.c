@@ -500,6 +500,47 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
         }
     }
 
+    /* SO_PASSCRED: attach SCM_CREDENTIALS cmsg when credential passing is enabled.
+     * Each received message gets a ucred {pid, uid, gid} from the sending process.
+     * For AF_UNIX connected sockets, use the current task's credentials as the peer. */
+    if (total_received > 0 && kmsg.msg_control != NULL) {
+        extern fut_socket_t *get_socket_from_fd(int fd);
+        fut_socket_t *passcred_sock = get_socket_from_fd(local_sockfd);
+        if (passcred_sock && passcred_sock->passcred) {
+            struct ucred_t { int32_t pid; uint32_t uid; uint32_t gid; } cred;
+            cred.pid = task ? (int32_t)task->pid : 0;
+            cred.uid = task ? task->uid : 0;
+            cred.gid = task ? task->gid : 0;
+
+            size_t cred_cmsg_size = CMSG_SPACE(sizeof(struct ucred_t));
+            /* Read original control buffer size to check available space */
+            size_t orig_controllen2 = 0;
+            {
+                struct msghdr user_msg2;
+                if (recvmsg_copy_from_user(&user_msg2, local_msg, sizeof(struct msghdr)) == 0)
+                    orig_controllen2 = user_msg2.msg_controllen;
+            }
+            size_t cred_offset = kmsg.msg_controllen;  /* Append after any SCM_RIGHTS */
+            if (orig_controllen2 >= cred_offset + cred_cmsg_size) {
+                void *kcred_cmsg = fut_malloc(cred_cmsg_size);
+                if (kcred_cmsg) {
+                    for (size_t z = 0; z < cred_cmsg_size; z++) ((uint8_t *)kcred_cmsg)[z] = 0;
+                    struct cmsghdr *cc = (struct cmsghdr *)kcred_cmsg;
+                    cc->cmsg_len   = CMSG_LEN(sizeof(struct ucred_t));
+                    cc->cmsg_level = SOL_SOCKET;
+                    cc->cmsg_type  = SCM_CREDENTIALS;
+                    struct ucred_t *cp = (struct ucred_t *)CMSG_DATA(cc);
+                    *cp = cred;
+                    if (recvmsg_copy_to_user((char *)kmsg.msg_control + cred_offset,
+                                             kcred_cmsg, cred_cmsg_size) == 0) {
+                        kmsg.msg_controllen = cred_offset + cred_cmsg_size;
+                    }
+                    fut_free(kcred_cmsg);
+                }
+            }
+        }
+    }
+
     /* Write updated msghdr back to userspace */
     if (recvmsg_copy_to_user(local_msg, &kmsg, sizeof(struct msghdr)) != 0) {
         return total_received > 0 ? total_received : -EFAULT;

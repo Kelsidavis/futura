@@ -20,11 +20,27 @@
 
 #include <kernel/kprintf.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
+static inline int sso_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_from_user(dst, src, n);
+}
+
 /* Socket option constants (SOL_*, SO_*, IPPROTO_*) provided by fut_socket.h */
 
 /* Additional options not in fut_socket.h */
 #ifndef SO_TIMESTAMP
 #define SO_TIMESTAMP  29   /* Timestamp received messages */
+#endif
+#ifndef SO_PASSCRED
+#define SO_PASSCRED   16   /* Enable SCM_CREDENTIALS cmsg on recvmsg */
 #endif
 
 /**
@@ -495,6 +511,15 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                 /* Timestamp — accept without enforcement */
                 if (optlen < sizeof(int)) return -EINVAL;
                 return 0;
+
+            case SO_PASSCRED: {
+                /* Enable/disable SCM_CREDENTIALS cmsg attachment on recvmsg */
+                if (optlen < sizeof(int)) return -EINVAL;
+                int val = 0;
+                if (sso_copy_from_user(&val, optval, sizeof(int)) != 0) return -EFAULT;
+                socket->passcred = (val != 0);
+                return 0;
+            }
 
             default:
                 /* Unknown option */

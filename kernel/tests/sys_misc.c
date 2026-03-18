@@ -14068,6 +14068,95 @@ static void test_unix_abstract_socket(void) {
     fut_test_pass();
 }
 
+/* Test 308: SO_PASSCRED causes recvmsg to attach SCM_CREDENTIALS cmsg
+ *
+ * When SO_PASSCRED is set on the receiving socket, every message received via
+ * recvmsg() includes a SCM_CREDENTIALS ancillary message with the sender's
+ * {pid, uid, gid}. Enables privilege escalation prevention in IPC servers.
+ */
+static void test_so_passcred(void) {
+    fut_printf("[MISC-TEST] Test 308: SO_PASSCRED\n");
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+    extern long sys_setsockopt(int fd, int level, int optname, const void *optval, unsigned int optlen);
+    extern long sys_getsockopt(int fd, int level, int optname, void *optval, unsigned int *optlen);
+    extern long sys_sendmsg(int sockfd, const struct test_msghdr *msg, int flags);
+    extern long sys_recvmsg(int sockfd, struct test_msghdr *msg, int flags);
+    extern long sys_write(int fd, const void *buf, size_t count);
+
+#define TEST_SO_PASSCRED   16
+#define TEST_SCM_CREDS     2   /* SCM_CREDENTIALS */
+#define TEST_SOL_SOCK      1   /* SOL_SOCKET */
+
+    int sv[2] = {-1, -1};
+    long r = sys_socketpair(1 /*AF_UNIX*/, 1 /*SOCK_STREAM*/, 0, sv);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ socketpair failed: %ld\n", r);
+        fut_test_fail(308); return;
+    }
+
+    /* Enable SO_PASSCRED on the receiving end (sv[1]) */
+    int enable = 1;
+    r = sys_setsockopt(sv[1], TEST_SOL_SOCK, TEST_SO_PASSCRED, &enable, sizeof(int));
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ setsockopt(SO_PASSCRED) failed: %ld\n", r);
+        sys_close(sv[0]); sys_close(sv[1]); fut_test_fail(308); return;
+    }
+
+    /* Verify getsockopt round-trips it */
+    int got = 0;
+    unsigned int glen = sizeof(int);
+    r = sys_getsockopt(sv[1], TEST_SOL_SOCK, TEST_SO_PASSCRED, &got, &glen);
+    if (r != 0 || got != 1) {
+        fut_printf("[MISC-TEST] ✗ getsockopt(SO_PASSCRED): r=%ld got=%d\n", r, got);
+        sys_close(sv[0]); sys_close(sv[1]); fut_test_fail(308); return;
+    }
+
+    /* Send a plain data message from sv[0] */
+    char data[] = "hello";
+    sys_write(sv[0], data, 5);
+
+    /* Receive with recvmsg, provide a control buffer for SCM_CREDENTIALS */
+    /* SCM_CREDENTIALS: struct ucred = { pid(int32), uid(uint32), gid(uint32) } = 12 bytes */
+    char recv_data[8] = {0};
+    char recv_ctrl[TEST_CMSG_SPACE(12)];  /* CMSG_SPACE(sizeof(struct ucred)) */
+    __builtin_memset(recv_ctrl, 0, sizeof(recv_ctrl));
+    struct iovec riov = { .iov_base = recv_data, .iov_len = sizeof(recv_data) };
+    struct test_msghdr rmsg = {
+        .msg_iov = &riov, .msg_iovlen = 1,
+        .msg_control = recv_ctrl, .msg_controllen = sizeof(recv_ctrl),
+    };
+    long rcvd = sys_recvmsg(sv[1], &rmsg, 0);
+    sys_close(sv[0]); sys_close(sv[1]);
+
+    if (rcvd < 0) {
+        fut_printf("[MISC-TEST] ✗ recvmsg with SO_PASSCRED failed: %ld\n", rcvd);
+        fut_test_fail(308); return;
+    }
+
+    /* Extract control message — should be SCM_CREDENTIALS */
+    struct test_cmsghdr *cmsghp = (struct test_cmsghdr *)recv_ctrl;
+    if (rmsg.msg_controllen == 0 ||
+        cmsghp->cmsg_level != TEST_SOL_SOCK ||
+        cmsghp->cmsg_type  != TEST_SCM_CREDS) {
+        fut_printf("[MISC-TEST] ✗ SO_PASSCRED: controllen=%zu level=%d type=%d (want SOL_SOCKET/SCM_CREDENTIALS)\n",
+                   rmsg.msg_controllen, cmsghp->cmsg_level, cmsghp->cmsg_type);
+        fut_test_fail(308); return;
+    }
+
+    /* Verify uid is current task's uid (root = 0 in kernel tests) */
+    struct { int32_t pid; uint32_t uid; uint32_t gid; } *ucred_p =
+        (void *)TEST_CMSG_DATA(cmsghp);
+    if (ucred_p->uid != 0) {  /* kernel tests run as uid=0 */
+        fut_printf("[MISC-TEST] ✗ SO_PASSCRED: unexpected uid=%u (want 0)\n", ucred_p->uid);
+        fut_test_fail(308); return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ SO_PASSCRED: SCM_CREDENTIALS attached, pid=%d uid=%u gid=%u\n",
+               ucred_p->pid, ucred_p->uid, ucred_p->gid);
+    fut_test_pass();
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -14382,6 +14471,7 @@ void fut_misc_test_thread(void *arg) {
     test_unix_seqpacket();               /* Test 305: AF_UNIX SOCK_SEQPACKET create/pair/send/recv */
     test_msg_cmsg_cloexec();             /* Test 306: MSG_CMSG_CLOEXEC sets FD_CLOEXEC on SCM_RIGHTS FDs */
     test_unix_abstract_socket();         /* Test 307: abstract AF_UNIX bind/listen/connect/accept/send/recv */
+    test_so_passcred();                  /* Test 308: SO_PASSCRED attaches SCM_CREDENTIALS on recvmsg */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

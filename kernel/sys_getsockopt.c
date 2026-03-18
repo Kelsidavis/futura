@@ -748,6 +748,14 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
                 if (gso_copy_to_user(optlen, &value_len, sizeof(socklen_t)) != 0) return -EFAULT;
                 return 0;
 
+            case 16: /* SO_PASSCRED - credential passing enabled? */
+                int_value = socket->passcred ? 1 : 0;
+                value_len = sizeof(int);
+                copy_len = (len < value_len) ? len : value_len;
+                if (gso_copy_to_user(optval, &int_value, copy_len) != 0) return -EFAULT;
+                if (gso_copy_to_user(optlen, &value_len, sizeof(socklen_t)) != 0) return -EFAULT;
+                return 0;
+
             default:
                 return -ENOPROTOOPT;
         }

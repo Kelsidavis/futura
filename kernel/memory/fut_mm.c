@@ -1670,6 +1670,18 @@ int fut_mm_clone_vmas(fut_mm_t *dest_mm, fut_mm_t *src_mm) {
         if (rc < 0) {
             return rc;
         }
+        /* Copy file-backed fields so the child can demand-page from the same file */
+        if (src_vma->vnode) {
+            struct fut_vma *dst_vma = dest_mm->vma_list;
+            /* Walk to the last VMA (just added) */
+            while (dst_vma && dst_vma->next) dst_vma = dst_vma->next;
+            if (dst_vma && dst_vma->start == src_vma->start) {
+                dst_vma->vnode = src_vma->vnode;
+                dst_vma->file_offset = src_vma->file_offset;
+                extern void fut_vnode_ref(struct fut_vnode *);
+                fut_vnode_ref(src_vma->vnode);  /* Extra ref for child's VMA */
+            }
+        }
         src_vma = src_vma->next;
     }
 

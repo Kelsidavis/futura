@@ -438,6 +438,7 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
         {
             extern void fut_eventfd_set_epoll_notify(struct fut_file *f, fut_waitq_t *wq);
             extern void fut_timerfd_set_epoll_notify(struct fut_file *f, fut_waitq_t *wq);
+            extern void fut_signalfd_set_epoll_notify(struct fut_file *f, fut_waitq_t *wq);
             extern void fut_pipe_set_epoll_notify(struct fut_file *f, fut_waitq_t *wq);
             fut_waitq_t sel_wq;
             fut_waitq_init(&sel_wq);
@@ -449,6 +450,7 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
                 struct fut_file *wfile = task->fd_table[wfd];
                 fut_eventfd_set_epoll_notify(wfile, &sel_wq);
                 fut_timerfd_set_epoll_notify(wfile, &sel_wq);
+                fut_signalfd_set_epoll_notify(wfile, &sel_wq);
                 fut_pipe_set_epoll_notify(wfile, &sel_wq);
                 fut_socket_t *wsock = get_socket_from_fd(wfd);
                 if (wsock) {
@@ -536,6 +538,7 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
                 struct fut_file *uf = task->fd_table[ufd];
                 fut_eventfd_set_epoll_notify(uf, NULL);
                 fut_timerfd_set_epoll_notify(uf, NULL);
+                fut_signalfd_set_epoll_notify(uf, NULL);
                 fut_pipe_set_epoll_notify(uf, NULL);
                 fut_socket_t *us = get_socket_from_fd(ufd);
                 if (us) {
@@ -840,6 +843,7 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
         {
             extern void fut_eventfd_set_epoll_notify(struct fut_file *f, fut_waitq_t *wq);
             extern void fut_timerfd_set_epoll_notify(struct fut_file *f, fut_waitq_t *wq);
+            extern void fut_signalfd_set_epoll_notify(struct fut_file *f, fut_waitq_t *wq);
             extern void fut_pipe_set_epoll_notify(struct fut_file *f, fut_waitq_t *wq);
             fut_waitq_t psel_wq;
             fut_waitq_init(&psel_wq);
@@ -851,6 +855,7 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
                 struct fut_file *wfile = task->fd_table[wfd];
                 fut_eventfd_set_epoll_notify(wfile, &psel_wq);
                 fut_timerfd_set_epoll_notify(wfile, &psel_wq);
+                fut_signalfd_set_epoll_notify(wfile, &psel_wq);
                 fut_pipe_set_epoll_notify(wfile, &psel_wq);
                 fut_socket_t *wsock = get_socket_from_fd(wfd);
                 if (wsock) {
@@ -923,6 +928,7 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
                 struct fut_file *uf = task->fd_table[ufd];
                 fut_eventfd_set_epoll_notify(uf, NULL);
                 fut_timerfd_set_epoll_notify(uf, NULL);
+                fut_signalfd_set_epoll_notify(uf, NULL);
                 fut_pipe_set_epoll_notify(uf, NULL);
                 fut_socket_t *us = get_socket_from_fd(ufd);
                 if (us) {

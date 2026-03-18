@@ -2508,12 +2508,17 @@ static void test_pipe2_nonblock(void) {
         return;
     }
 
-    /* Fill the pipe buffer (4096 bytes) */
+    /* Fill the pipe buffer (65536 bytes - Linux-compatible default) */
     char fill[4096];
     __builtin_memset(fill, 'X', sizeof(fill));
-    ssize_t nw = fut_vfs_write(pipefd[1], fill, sizeof(fill));
-    if (nw != 4096) {
-        fut_printf("[MISC-TEST] ✗ fill write returned %zd\n", nw);
+    ssize_t total_written = 0;
+    while (total_written < 65536) {
+        ssize_t nw = fut_vfs_write(pipefd[1], fill, sizeof(fill));
+        if (nw <= 0) break;
+        total_written += nw;
+    }
+    if (total_written != 65536) {
+        fut_printf("[MISC-TEST] ✗ fill write returned %zd total (expected 65536)\n", total_written);
         fut_vfs_close(pipefd[0]);
         fut_vfs_close(pipefd[1]);
         fut_test_fail(64);
@@ -2521,9 +2526,9 @@ static void test_pipe2_nonblock(void) {
     }
 
     /* Write to full nonblocking pipe should return EAGAIN */
-    nw = fut_vfs_write(pipefd[1], "x", 1);
-    if (nw != -EAGAIN) {
-        fut_printf("[MISC-TEST] ✗ write(full NB pipe) returned %zd (expected EAGAIN)\n", nw);
+    ssize_t nw2 = fut_vfs_write(pipefd[1], "x", 1);
+    if (nw2 != -EAGAIN) {
+        fut_printf("[MISC-TEST] ✗ write(full NB pipe) returned %zd (expected EAGAIN)\n", nw2);
         fut_vfs_close(pipefd[0]);
         fut_vfs_close(pipefd[1]);
         fut_test_fail(64);
@@ -3171,12 +3176,19 @@ static void test_pipe_short_write(void) {
     long ret = sys_pipe(pipefd);
     if (ret != 0) { fut_test_fail(75); return; }
 
-    /* Fill pipe buffer almost completely (4096 - 10 = 4086 bytes) */
-    char fill[4086];
+    /* Fill pipe buffer almost completely (65536 - 10 = 65526 bytes) */
+    char fill[4096];
     __builtin_memset(fill, 'A', sizeof(fill));
-    ssize_t nw = fut_vfs_write(pipefd[1], fill, sizeof(fill));
-    if (nw != 4086) {
-        fut_printf("[MISC-TEST] ✗ fill write: %zd\n", nw);
+    ssize_t total_fill = 0;
+    while (total_fill < 65526) {
+        size_t want = 65526 - (size_t)total_fill;
+        if (want > sizeof(fill)) want = sizeof(fill);
+        ssize_t nw = fut_vfs_write(pipefd[1], fill, want);
+        if (nw <= 0) break;
+        total_fill += nw;
+    }
+    if (total_fill != 65526) {
+        fut_printf("[MISC-TEST] ✗ fill write: %zd (expected 65526)\n", total_fill);
         fut_vfs_close(pipefd[0]); fut_vfs_close(pipefd[1]);
         fut_test_fail(75); return;
     }
@@ -3184,13 +3196,13 @@ static void test_pipe_short_write(void) {
     /* Write 100 bytes — only 10 should fit (short write) */
     char extra[100];
     __builtin_memset(extra, 'B', sizeof(extra));
-    nw = fut_vfs_write(pipefd[1], extra, sizeof(extra));
+    ssize_t nw = fut_vfs_write(pipefd[1], extra, sizeof(extra));
 
-    /* Drain and close */
-    char drain[4096];
-    fut_vfs_read(pipefd[0], drain, sizeof(drain));
-    fut_vfs_close(pipefd[0]);
+    /* Drain and close: close write end first so read end sees EOF */
     fut_vfs_close(pipefd[1]);
+    char drain[4096];
+    while (fut_vfs_read(pipefd[0], drain, sizeof(drain)) > 0) {}
+    fut_vfs_close(pipefd[0]);
 
     if (nw != 10) {
         fut_printf("[MISC-TEST] ✗ short write: %zd (expected 10)\n", nw);
@@ -5079,10 +5091,10 @@ static void test_setpipe_sz(void) {
         return;
     }
 
-    /* Default size should be 4096 */
+    /* Default size should be 65536 (Linux-compatible default) */
     long sz = sys_fcntl(fds[0], F_GETPIPE_SZ, 0);
-    if (sz != 4096) {
-        fut_printf("[MISC-TEST] ✗ default pipe size=%ld (expected 4096)\n", sz);
+    if (sz != 65536) {
+        fut_printf("[MISC-TEST] ✗ default pipe size=%ld (expected 65536)\n", sz);
         fut_vfs_close(fds[0]);
         fut_vfs_close(fds[1]);
         fut_test_fail(95);
@@ -16445,6 +16457,157 @@ static void test_epoll_connecting_socket(void) {
     fut_test_pass();
 }
 
+/* ============================================================
+ * Test 342: signalfd in epoll reports EPOLLIN when signal pending
+ * ============================================================ */
+static void test_signalfd_epoll_ready(void) {
+    fut_printf("[MISC-TEST] Test 342: signalfd in epoll: EPOLLIN when signal pending\n");
+
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        fut_printf("[MISC-TEST] ✗ no current task\n");
+        fut_test_fail(342);
+        return;
+    }
+
+    const int test_signo = SIGUSR1;
+    uint64_t sig_bit = 1ULL << (test_signo - 1);
+
+    /* Clear any pre-existing SIGUSR1 */
+    __atomic_fetch_and(&task->pending_signals, ~sig_bit, __ATOMIC_ACQ_REL);
+
+    /* Create signalfd watching SIGUSR1 */
+    extern long sys_signalfd4(int ufd, const void *mask, size_t sizemask, int flags);
+    uint64_t mask = sig_bit;
+    long sfd = sys_signalfd4(-1, &mask, sizeof(mask), 0);
+    if (sfd < 0) {
+        fut_printf("[MISC-TEST] ✗ signalfd4 failed: %ld\n", sfd);
+        fut_test_fail(342);
+        return;
+    }
+
+    /* Create epoll set */
+    extern long sys_epoll_create1(int flags);
+    extern long sys_epoll_ctl(int epfd, int op, int fd, void *event);
+    extern long sys_epoll_wait(int epfd, void *events, int maxevents, int timeout);
+    long epfd = sys_epoll_create1(0);
+    if (epfd < 0) {
+        fut_printf("[MISC-TEST] ✗ epoll_create1 failed: %ld\n", epfd);
+        fut_vfs_close((int)sfd);
+        fut_test_fail(342);
+        return;
+    }
+
+    struct { uint32_t events; uint64_t data; } ev = { .events = 0x1 /* EPOLLIN */, .data = (uint64_t)sfd };
+    long r = sys_epoll_ctl((int)epfd, 1 /* EPOLL_CTL_ADD */, (int)sfd, &ev);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ epoll_ctl ADD failed: %ld\n", r);
+        fut_vfs_close((int)epfd);
+        fut_vfs_close((int)sfd);
+        fut_test_fail(342);
+        return;
+    }
+
+    /* Verify no events yet (no signal pending) */
+    struct { uint32_t events; uint64_t data; } ready[1];
+    r = sys_epoll_wait((int)epfd, ready, 1, 0);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ epoll_wait before signal: expected 0, got %ld (events=0x%x)\n",
+                   r, r > 0 ? ready[0].events : 0);
+        fut_vfs_close((int)epfd);
+        fut_vfs_close((int)sfd);
+        fut_test_fail(342);
+        return;
+    }
+
+    /* Deliver SIGUSR1 */
+    fut_signal_send(task, test_signo);
+
+    /* Now epoll_wait should return EPOLLIN */
+    ready[0].events = 0;
+    r = sys_epoll_wait((int)epfd, ready, 1, 0);
+    if (r != 1 || !(ready[0].events & 0x1 /* EPOLLIN */)) {
+        fut_printf("[MISC-TEST] ✗ epoll_wait after signal: r=%ld events=0x%x\n",
+                   r, r > 0 ? ready[0].events : 0);
+        /* Clear the pending signal to avoid affecting later tests */
+        __atomic_fetch_and(&task->pending_signals, ~sig_bit, __ATOMIC_ACQ_REL);
+        fut_vfs_close((int)epfd);
+        fut_vfs_close((int)sfd);
+        fut_test_fail(342);
+        return;
+    }
+
+    /* Drain the signalfd to leave the system clean */
+    __atomic_fetch_and(&task->pending_signals, ~sig_bit, __ATOMIC_ACQ_REL);
+    fut_vfs_close((int)epfd);
+    fut_vfs_close((int)sfd);
+    fut_printf("[MISC-TEST] ✓ Test 342: signalfd epoll EPOLLIN on pending signal\n");
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 343: signalfd in poll reports POLLIN when signal pending
+ * ============================================================ */
+static void test_signalfd_poll_ready(void) {
+    fut_printf("[MISC-TEST] Test 343: signalfd in poll: POLLIN when signal pending\n");
+
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        fut_printf("[MISC-TEST] ✗ no current task\n");
+        fut_test_fail(343);
+        return;
+    }
+
+    const int test_signo = SIGUSR2;
+    uint64_t sig_bit = 1ULL << (test_signo - 1);
+
+    /* Clear any pre-existing SIGUSR2 */
+    __atomic_fetch_and(&task->pending_signals, ~sig_bit, __ATOMIC_ACQ_REL);
+
+    /* Create signalfd watching SIGUSR2 */
+    extern long sys_signalfd4(int ufd, const void *mask, size_t sizemask, int flags);
+    uint64_t mask = sig_bit;
+    long sfd = sys_signalfd4(-1, &mask, sizeof(mask), 0);
+    if (sfd < 0) {
+        fut_printf("[MISC-TEST] ✗ signalfd4 failed: %ld\n", sfd);
+        fut_test_fail(343);
+        return;
+    }
+
+    /* Verify not readable yet */
+    extern long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout);
+    struct pollfd pfd = { .fd = (int)sfd, .events = POLLIN, .revents = 0 };
+    long r = sys_poll(&pfd, 1, 0);
+    if (r != 0 || (pfd.revents & POLLIN)) {
+        fut_printf("[MISC-TEST] ✗ poll before signal: r=%ld revents=0x%x (expected 0)\n",
+                   r, pfd.revents);
+        fut_vfs_close((int)sfd);
+        fut_test_fail(343);
+        return;
+    }
+
+    /* Deliver SIGUSR2 */
+    fut_signal_send(task, test_signo);
+
+    /* poll should now report POLLIN */
+    pfd.revents = 0;
+    r = sys_poll(&pfd, 1, 0);
+    if (r != 1 || !(pfd.revents & POLLIN)) {
+        fut_printf("[MISC-TEST] ✗ poll after signal: r=%ld revents=0x%x\n",
+                   r, pfd.revents);
+        __atomic_fetch_and(&task->pending_signals, ~sig_bit, __ATOMIC_ACQ_REL);
+        fut_vfs_close((int)sfd);
+        fut_test_fail(343);
+        return;
+    }
+
+    /* Drain */
+    __atomic_fetch_and(&task->pending_signals, ~sig_bit, __ATOMIC_ACQ_REL);
+    fut_vfs_close((int)sfd);
+    fut_printf("[MISC-TEST] ✓ Test 343: signalfd poll POLLIN on pending signal\n");
+    fut_test_pass();
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -16794,6 +16957,8 @@ void fut_misc_test_thread(void *arg) {
     test_shutdown_shut_rdwr();           /* Test 339: shutdown(SHUT_RDWR) closes both directions */
     test_poll_connecting_socket();       /* Test 340: poll() on CONNECTING socket wakes after accept() */
     test_epoll_connecting_socket();      /* Test 341: epoll_wait() on CONNECTING socket wakes after accept() */
+    test_signalfd_epoll_ready();         /* Test 342: signalfd in epoll: EPOLLIN when signal pending */
+    test_signalfd_poll_ready();          /* Test 343: signalfd in poll: POLLIN when signal pending */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

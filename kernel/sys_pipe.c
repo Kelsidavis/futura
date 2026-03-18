@@ -36,7 +36,7 @@
 #include <kernel/kprintf.h>
 
 /* Pipe buffer size */
-#define PIPE_BUF_SIZE 4096
+#define PIPE_BUF_SIZE 65536
 
 /* Pipe buffer structure */
 struct pipe_buffer {

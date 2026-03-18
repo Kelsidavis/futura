@@ -209,6 +209,12 @@ int fut_signal_send(struct fut_task *task, int signum) {
      * readers are notified when a signal arrives. */
     fut_waitq_wake_all(&task->signal_waitq);
 
+    /* Wake any epoll/poll/select instances watching a signalfd for this signal */
+    {
+        extern void fut_signalfd_wake_epoll(struct fut_task *task, int signo);
+        fut_signalfd_wake_epoll(task, signum);
+    }
+
     /* Wake any sleeping or blocked threads in this task for EINTR delivery.
      * SLEEPING threads: interrupted nanosleep/poll/select via fut_thread_wake_sleeping.
      * BLOCKED threads: interrupted pipe read/socket recv/futex wait via wait queue removal. */
@@ -338,6 +344,12 @@ int fut_signal_send_thread(struct fut_thread *thread, int signum) {
 
     /* Also wake signal waitq (for pause/sigsuspend/signalfd) */
     fut_waitq_wake_all(&task->signal_waitq);
+
+    /* Wake any epoll/poll/select instances watching a signalfd for this signal */
+    {
+        extern void fut_signalfd_wake_epoll(struct fut_task *task, int signo);
+        fut_signalfd_wake_epoll(task, signum);
+    }
 
     return 0;
 }

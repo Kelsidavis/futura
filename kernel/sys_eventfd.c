@@ -1069,6 +1069,7 @@ struct signalfd_ctx {
     fut_task_t *task;           /* Owning task */
     fut_waitq_t read_waitq;     /* Threads blocked in read() */
     fut_spinlock_t lock;
+    fut_waitq_t *epoll_notify;  /* Wakes epoll/poll/select when signal arrives */
 };
 
 struct signalfd_file {
@@ -1237,8 +1238,9 @@ long sys_signalfd4(int ufd, const void *mask, size_t sizemask, int flags) {
     /* Create new signalfd */
     struct signalfd_ctx *ctx = fut_malloc(sizeof(struct signalfd_ctx));
     if (!ctx) return -ENOMEM;
-    ctx->sigmask = sigmask;
-    ctx->task    = task;
+    ctx->sigmask       = sigmask;
+    ctx->task          = task;
+    ctx->epoll_notify  = NULL;
     fut_spinlock_init(&ctx->lock);
     fut_waitq_init(&ctx->read_waitq);
 
@@ -1485,6 +1487,46 @@ bool fut_signalfd_poll(struct fut_file *file, uint32_t requested, uint32_t *read
 
     if (ready_out) *ready_out = ready;
     return true;
+}
+
+/**
+ * Set the epoll/poll/select notification waitqueue on a signalfd.
+ * Called from epoll_ctl ADD, poll_wire_fds(), and select wiring.
+ * Pass wq=NULL to unwire.
+ */
+void fut_signalfd_set_epoll_notify(struct fut_file *file, fut_waitq_t *wq) {
+    if (!file || file->chr_private == NULL || file->chr_ops != &signalfd_fops)
+        return;
+    struct signalfd_file *sfile = (struct signalfd_file *)file->chr_private;
+    if (!sfile || !sfile->ctx)
+        return;
+    sfile->ctx->epoll_notify = wq;
+}
+
+/**
+ * Wake epoll_notify on signalfd contexts watching a given task whose
+ * sigmask intersects the delivered signal.  Called by fut_signal_send()
+ * after waking task->signal_waitq.
+ *
+ * Walks the task's fd_table looking for signalfd FDs; for each that
+ * covers the delivered signal, wakes the registered epoll_notify.
+ */
+void fut_signalfd_wake_epoll(fut_task_t *task, int signo) {
+    if (!task || !task->fd_table || signo < 1 || signo > 64)
+        return;
+    uint64_t bit = 1ULL << (signo - 1);
+    for (int i = 0; i < (int)task->max_fds; i++) {
+        struct fut_file *f = task->fd_table[i];
+        if (!f || f->chr_ops != &signalfd_fops || !f->chr_private)
+            continue;
+        struct signalfd_file *sfile = (struct signalfd_file *)f->chr_private;
+        if (!sfile->ctx)
+            continue;
+        if (!(sfile->ctx->sigmask & bit))
+            continue;
+        if (sfile->ctx->epoll_notify)
+            fut_waitq_wake_one(sfile->ctx->epoll_notify);
+    }
 }
 
 long sys_timerfd_create(int clockid, int flags) {

@@ -1072,16 +1072,18 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
             }
         }
 
-        /* Wire up epoll notification on eventfd, timerfd, and pipe */
+        /* Wire up epoll notification on eventfd, timerfd, signalfd, and pipe */
         {
             fut_task_t *ctl_task = fut_task_current();
             if (ctl_task && ctl_task->fd_table && fd < ctl_task->max_fds) {
                 struct fut_file *ctl_file = ctl_task->fd_table[fd];
                 extern void fut_eventfd_set_epoll_notify(struct fut_file *file, fut_waitq_t *wq);
                 extern void fut_timerfd_set_epoll_notify(struct fut_file *file, fut_waitq_t *wq);
+                extern void fut_signalfd_set_epoll_notify(struct fut_file *file, fut_waitq_t *wq);
                 extern void fut_pipe_set_epoll_notify(struct fut_file *file, fut_waitq_t *wq);
                 fut_eventfd_set_epoll_notify(ctl_file, &set->epoll_waitq);
                 fut_timerfd_set_epoll_notify(ctl_file, &set->epoll_waitq);
+                fut_signalfd_set_epoll_notify(ctl_file, &set->epoll_waitq);
                 fut_pipe_set_epoll_notify(ctl_file, &set->epoll_waitq);
             }
         }
@@ -1125,6 +1127,16 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
                     fut_socket_t *sock = get_socket_from_fd(fd);
                     if (sock && sock->connect_notify == &set->epoll_waitq)
                         sock->connect_notify = NULL;
+                }
+                /* Clear signalfd epoll_notify if we had wired it */
+                {
+                    fut_task_t *del_task = fut_task_current();
+                    if (del_task && del_task->fd_table && fd < del_task->max_fds) {
+                        extern void fut_signalfd_set_epoll_notify(struct fut_file *file, fut_waitq_t *wq);
+                        struct fut_file *del_file = del_task->fd_table[fd];
+                        if (del_file)
+                            fut_signalfd_set_epoll_notify(del_file, NULL);
+                    }
                 }
                 return 0;
             }

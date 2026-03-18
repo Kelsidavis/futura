@@ -45,6 +45,7 @@ static void poll_wire_fds(struct pollfd *kfds, unsigned long nfds,
                           fut_task_t *task, fut_waitq_t *wq) {
     extern void fut_eventfd_set_epoll_notify(struct fut_file *f, fut_waitq_t *wq);
     extern void fut_timerfd_set_epoll_notify(struct fut_file *f, fut_waitq_t *wq);
+    extern void fut_signalfd_set_epoll_notify(struct fut_file *f, fut_waitq_t *wq);
     extern void fut_pipe_set_epoll_notify(struct fut_file *f, fut_waitq_t *wq);
     for (unsigned long i = 0; i < nfds; i++) {
         int fd = kfds[i].fd;
@@ -53,6 +54,7 @@ static void poll_wire_fds(struct pollfd *kfds, unsigned long nfds,
         struct fut_file *file = task->fd_table[fd];
         fut_eventfd_set_epoll_notify(file, wq);
         fut_timerfd_set_epoll_notify(file, wq);
+        fut_signalfd_set_epoll_notify(file, wq);
         fut_pipe_set_epoll_notify(file, wq);
         fut_socket_t *sock = get_socket_from_fd(fd);
         if (sock) {
@@ -70,6 +72,7 @@ static void poll_unwire_fds(struct pollfd *kfds, unsigned long nfds,
                              fut_task_t *task, fut_waitq_t *wq) {
     extern void fut_eventfd_set_epoll_notify(struct fut_file *f, fut_waitq_t *wq);
     extern void fut_timerfd_set_epoll_notify(struct fut_file *f, fut_waitq_t *wq);
+    extern void fut_signalfd_set_epoll_notify(struct fut_file *f, fut_waitq_t *wq);
     extern void fut_pipe_set_epoll_notify(struct fut_file *f, fut_waitq_t *wq);
     for (unsigned long i = 0; i < nfds; i++) {
         int fd = kfds[i].fd;
@@ -78,6 +81,7 @@ static void poll_unwire_fds(struct pollfd *kfds, unsigned long nfds,
         struct fut_file *file = task->fd_table[fd];
         fut_eventfd_set_epoll_notify(file, NULL);
         fut_timerfd_set_epoll_notify(file, NULL);
+        fut_signalfd_set_epoll_notify(file, NULL);
         fut_pipe_set_epoll_notify(file, NULL);
         fut_socket_t *sock = get_socket_from_fd(fd);
         if (sock) {

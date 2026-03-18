@@ -2096,7 +2096,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG
         };
         uint64_t pid = dn->pid;
-        if (idx < 15) {
+        if (idx < 16) {
             uint64_t ino;
             switch (idx) {
                 case 0:  ino = PROC_INO_PID_DIR(pid);     break;
@@ -2104,16 +2104,17 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                 case 2:  ino = PROC_INO_PID_STATUS(pid);  break;
                 case 3:  ino = PROC_INO_PID_MAPS(pid);    break;
                 case 4:  ino = PROC_INO_PID_CMDLINE(pid); break;
-                case 5:  ino = PROC_INO_PID_FD(pid);      break;
-                case 6:  ino = PROC_INO_PID_EXE(pid);     break;
-                case 7:  ino = PROC_INO_PID_CWD(pid);     break;
-                case 8:  ino = PROC_INO_PID_STAT(pid);    break;
-                case 9:  ino = PROC_INO_PID_STATM(pid);   break;
-                case 10: ino = PROC_INO_PID_COMM(pid);    break;
-                case 11: ino = PROC_INO_PID_TASK(pid);    break;
-                case 12: ino = PROC_INO_PID_LIMITS(pid);  break;
-                case 13: ino = PROC_INO_PID_IO(pid);      break;
-                case 14: ino = PROC_INO_PID_SMAPS(pid);   break;
+                case 5:  ino = PROC_INO_PID_ENVIRON(pid); break;
+                case 6:  ino = PROC_INO_PID_FD(pid);      break;
+                case 7:  ino = PROC_INO_PID_EXE(pid);     break;
+                case 8:  ino = PROC_INO_PID_CWD(pid);     break;
+                case 9:  ino = PROC_INO_PID_STAT(pid);    break;
+                case 10: ino = PROC_INO_PID_STATM(pid);   break;
+                case 11: ino = PROC_INO_PID_COMM(pid);    break;
+                case 12: ino = PROC_INO_PID_TASK(pid);    break;
+                case 13: ino = PROC_INO_PID_LIMITS(pid);  break;
+                case 14: ino = PROC_INO_PID_IO(pid);      break;
+                case 15: ino = PROC_INO_PID_SMAPS(pid);   break;
                 default: ino = 0; break;
             }
             de->d_ino    = ino;

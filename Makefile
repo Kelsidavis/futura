@@ -517,6 +517,7 @@ KERNEL_SOURCES := \
     kernel/sys_memfd.c \
     kernel/sys_semaphore.c \
     kernel/sys_msgqueue.c \
+    kernel/sys_mqueue.c \
     kernel/sys_shm.c \
     kernel/sys_process_vm.c \
     kernel/sys_pidfd.c \

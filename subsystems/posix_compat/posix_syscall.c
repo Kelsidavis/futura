@@ -341,6 +341,13 @@
 #define SYS_msgsnd      69
 #define SYS_msgget      68
 #define SYS_msgctl      71
+/* POSIX message queues (Linux x86_64: 240-245) */
+#define SYS_mq_open         240
+#define SYS_mq_unlink       241
+#define SYS_mq_timedsend    242
+#define SYS_mq_timedreceive 243
+#define SYS_mq_notify       244
+#define SYS_mq_getsetattr   245
 
 /* Capability-based syscall numbers (SYS_open_cap, etc.) are defined in
  * kernel/syscalls.h to avoid duplication */
@@ -526,6 +533,72 @@ static int64_t sys_msgctl_handler(uint64_t msqid, uint64_t cmd, uint64_t buf,
     (void)arg4; (void)arg5; (void)arg6;
     extern long sys_msgctl(int msqid, int cmd, void *buf);
     return sys_msgctl((int)msqid, (int)cmd, (void *)(uintptr_t)buf);
+}
+
+/* POSIX message queue handlers */
+
+/* mq_attr ABI structure (must match sys_mqueue.c) */
+struct posix_mq_attr {
+    long mq_flags;
+    long mq_maxmsg;
+    long mq_msgsize;
+    long mq_curmsgs;
+    long __pad[4];
+};
+
+extern long sys_mq_open(const char *name, int oflag, unsigned int mode,
+                        const struct posix_mq_attr *attr);
+extern long sys_mq_unlink(const char *name);
+extern long sys_mq_timedsend(int mqdes, const char *msg_ptr, size_t msg_len,
+                             unsigned msg_prio, const void *abs_timeout);
+extern long sys_mq_timedreceive(int mqdes, char *msg_ptr, size_t msg_len,
+                                unsigned *msg_prio, const void *abs_timeout);
+extern long sys_mq_notify(int mqdes, const void *sevp);
+extern long sys_mq_getsetattr(int mqdes, const struct posix_mq_attr *newattr,
+                              struct posix_mq_attr *oldattr);
+
+static int64_t sys_mq_open_handler(uint64_t name, uint64_t oflag, uint64_t mode,
+                                   uint64_t attr, uint64_t arg5, uint64_t arg6) {
+    (void)arg5; (void)arg6;
+    return sys_mq_open((const char *)(uintptr_t)name, (int)oflag,
+                       (unsigned int)mode,
+                       (const struct posix_mq_attr *)(uintptr_t)attr);
+}
+
+static int64_t sys_mq_unlink_handler(uint64_t name, uint64_t arg2, uint64_t arg3,
+                                     uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    return sys_mq_unlink((const char *)(uintptr_t)name);
+}
+
+static int64_t sys_mq_timedsend_handler(uint64_t mqdes, uint64_t msg_ptr, uint64_t msg_len,
+                                        uint64_t msg_prio, uint64_t abs_timeout, uint64_t arg6) {
+    (void)arg6;
+    return sys_mq_timedsend((int)mqdes, (const char *)(uintptr_t)msg_ptr,
+                            (size_t)msg_len, (unsigned)msg_prio,
+                            (const void *)(uintptr_t)abs_timeout);
+}
+
+static int64_t sys_mq_timedreceive_handler(uint64_t mqdes, uint64_t msg_ptr, uint64_t msg_len,
+                                           uint64_t msg_prio, uint64_t abs_timeout, uint64_t arg6) {
+    (void)arg6;
+    return sys_mq_timedreceive((int)mqdes, (char *)(uintptr_t)msg_ptr,
+                               (size_t)msg_len, (unsigned *)(uintptr_t)msg_prio,
+                               (const void *)(uintptr_t)abs_timeout);
+}
+
+static int64_t sys_mq_notify_handler(uint64_t mqdes, uint64_t sevp, uint64_t arg3,
+                                     uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    return sys_mq_notify((int)mqdes, (const void *)(uintptr_t)sevp);
+}
+
+static int64_t sys_mq_getsetattr_handler(uint64_t mqdes, uint64_t newattr, uint64_t oldattr,
+                                         uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    return sys_mq_getsetattr((int)mqdes,
+                             (const struct posix_mq_attr *)(uintptr_t)newattr,
+                             (struct posix_mq_attr *)(uintptr_t)oldattr);
 }
 
 static inline uint64_t get_current_tid(void) {
@@ -3445,6 +3518,13 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_msgsnd]       = sys_msgsnd_handler,
     [SYS_msgrcv]       = sys_msgrcv_handler,
     [SYS_msgctl]       = sys_msgctl_handler,
+    /* POSIX message queues */
+    [SYS_mq_open]         = sys_mq_open_handler,
+    [SYS_mq_unlink]       = sys_mq_unlink_handler,
+    [SYS_mq_timedsend]    = sys_mq_timedsend_handler,
+    [SYS_mq_timedreceive] = sys_mq_timedreceive_handler,
+    [SYS_mq_notify]       = sys_mq_notify_handler,
+    [SYS_mq_getsetattr]   = sys_mq_getsetattr_handler,
     /* Capability-based syscalls (Phase 1) */
     [SYS_open_cap]     = sys_open_cap_handler,
     [SYS_read_cap]     = sys_read_cap_handler,

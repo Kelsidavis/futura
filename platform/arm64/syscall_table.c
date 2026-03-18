@@ -1901,6 +1901,70 @@ static int64_t sys_socketpair_wrapper(uint64_t domain, uint64_t type, uint64_t p
     return sys_socketpair((int)domain, (int)type, (int)protocol, (int *)sv);
 }
 
+/* POSIX message queue wrappers (180-185) */
+struct arm64_mq_attr {
+    long mq_flags;
+    long mq_maxmsg;
+    long mq_msgsize;
+    long mq_curmsgs;
+    long __pad[4];
+};
+
+extern long sys_mq_open(const char *name, int oflag, unsigned int mode,
+                        const struct arm64_mq_attr *attr);
+extern long sys_mq_unlink(const char *name);
+extern long sys_mq_timedsend(int mqdes, const char *msg_ptr, size_t msg_len,
+                             unsigned msg_prio, const void *abs_timeout);
+extern long sys_mq_timedreceive(int mqdes, char *msg_ptr, size_t msg_len,
+                                unsigned *msg_prio, const void *abs_timeout);
+extern long sys_mq_notify(int mqdes, const void *sevp);
+extern long sys_mq_getsetattr(int mqdes, const struct arm64_mq_attr *newattr,
+                              struct arm64_mq_attr *oldattr);
+
+static int64_t sys_mq_open_wrapper(uint64_t name, uint64_t oflag, uint64_t mode,
+                                   uint64_t attr, uint64_t arg5, uint64_t arg6) {
+    (void)arg5; (void)arg6;
+    return sys_mq_open((const char *)(uintptr_t)name, (int)oflag,
+                       (unsigned int)mode,
+                       (const struct arm64_mq_attr *)(uintptr_t)attr);
+}
+
+static int64_t sys_mq_unlink_wrapper(uint64_t name, uint64_t arg2, uint64_t arg3,
+                                     uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    return sys_mq_unlink((const char *)(uintptr_t)name);
+}
+
+static int64_t sys_mq_timedsend_wrapper(uint64_t mqdes, uint64_t msg_ptr, uint64_t msg_len,
+                                        uint64_t msg_prio, uint64_t abs_timeout, uint64_t arg6) {
+    (void)arg6;
+    return sys_mq_timedsend((int)mqdes, (const char *)(uintptr_t)msg_ptr,
+                            (size_t)msg_len, (unsigned)msg_prio,
+                            (const void *)(uintptr_t)abs_timeout);
+}
+
+static int64_t sys_mq_timedreceive_wrapper(uint64_t mqdes, uint64_t msg_ptr, uint64_t msg_len,
+                                           uint64_t msg_prio, uint64_t abs_timeout, uint64_t arg6) {
+    (void)arg6;
+    return sys_mq_timedreceive((int)mqdes, (char *)(uintptr_t)msg_ptr,
+                               (size_t)msg_len, (unsigned *)(uintptr_t)msg_prio,
+                               (const void *)(uintptr_t)abs_timeout);
+}
+
+static int64_t sys_mq_notify_wrapper(uint64_t mqdes, uint64_t sevp, uint64_t arg3,
+                                     uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    return sys_mq_notify((int)mqdes, (const void *)(uintptr_t)sevp);
+}
+
+static int64_t sys_mq_getsetattr_wrapper(uint64_t mqdes, uint64_t newattr, uint64_t oldattr,
+                                         uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    return sys_mq_getsetattr((int)mqdes,
+                             (const struct arm64_mq_attr *)(uintptr_t)newattr,
+                             (struct arm64_mq_attr *)(uintptr_t)oldattr);
+}
+
 /* sys_readahead_wrapper - read-ahead hint */
 static int64_t sys_readahead_wrapper(uint64_t fd, uint64_t offset, uint64_t count,
                                       uint64_t arg3, uint64_t arg4, uint64_t arg5) {
@@ -2652,6 +2716,13 @@ struct syscall_entry {
 #define __NR_rt_sigtimedwait    137
 #define __NR_sethostname        161
 #define __NR_gettid         178
+/* POSIX message queues (Linux ARM64: 180-185) */
+#define __NR_mq_open         180
+#define __NR_mq_unlink       181
+#define __NR_mq_timedsend    182
+#define __NR_mq_timedreceive 183
+#define __NR_mq_notify       184
+#define __NR_mq_getsetattr   185
 #define __NR_setdomainname  162
 #define __NR_getsockname    204
 #define __NR_getpeername    205
@@ -3404,6 +3475,20 @@ static void arm64_syscall_table_init(void) {
     syscall_table[__NR_fipc_poll].name = "fipc_poll";
     syscall_table[__NR_fipc_connect].handler = (syscall_fn_t)sys_fipc_connect_wrapper;
     syscall_table[__NR_fipc_connect].name = "fipc_connect";
+
+    /* POSIX message queues */
+    syscall_table[__NR_mq_open].handler = (syscall_fn_t)sys_mq_open_wrapper;
+    syscall_table[__NR_mq_open].name = "mq_open";
+    syscall_table[__NR_mq_unlink].handler = (syscall_fn_t)sys_mq_unlink_wrapper;
+    syscall_table[__NR_mq_unlink].name = "mq_unlink";
+    syscall_table[__NR_mq_timedsend].handler = (syscall_fn_t)sys_mq_timedsend_wrapper;
+    syscall_table[__NR_mq_timedsend].name = "mq_timedsend";
+    syscall_table[__NR_mq_timedreceive].handler = (syscall_fn_t)sys_mq_timedreceive_wrapper;
+    syscall_table[__NR_mq_timedreceive].name = "mq_timedreceive";
+    syscall_table[__NR_mq_notify].handler = (syscall_fn_t)sys_mq_notify_wrapper;
+    syscall_table[__NR_mq_notify].name = "mq_notify";
+    syscall_table[__NR_mq_getsetattr].handler = (syscall_fn_t)sys_mq_getsetattr_wrapper;
+    syscall_table[__NR_mq_getsetattr].name = "mq_getsetattr";
 
     syscall_table_initialized = true;
 }

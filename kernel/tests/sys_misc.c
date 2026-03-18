@@ -12674,6 +12674,202 @@ static void test_proc_sys_security_net(void) {
     fut_test_pass();
 }
 
+/* ---- POSIX mqueue (mq_open/mq_timedsend/mq_timedreceive) tests ---- */
+
+struct test_mq_attr {
+    long mq_flags;
+    long mq_maxmsg;
+    long mq_msgsize;
+    long mq_curmsgs;
+    long __pad[4];
+};
+
+extern long sys_mq_open(const char *name, int oflag, unsigned int mode,
+                        const struct test_mq_attr *attr);
+extern long sys_mq_unlink(const char *name);
+extern long sys_mq_timedsend(int mqdes, const char *msg_ptr, size_t msg_len,
+                             unsigned msg_prio, const void *abs_timeout);
+extern long sys_mq_timedreceive(int mqdes, char *msg_ptr, size_t msg_len,
+                                unsigned *msg_prio, const void *abs_timeout);
+extern long sys_mq_notify(int mqdes, const void *sevp);
+extern long sys_mq_getsetattr(int mqdes, const struct test_mq_attr *newattr,
+                              struct test_mq_attr *oldattr);
+
+static void test_mqueue_basic(void) {
+    fut_printf("[MISC-TEST] Test 287: mq_open/mq_timedsend/mq_timedreceive basic\n");
+
+    /* Create queue with small defaults */
+    struct test_mq_attr attr = { .mq_maxmsg = 4, .mq_msgsize = 64 };
+    long mqd = sys_mq_open("/test_mq_basic", O_CREAT | O_RDWR, 0600, &attr);
+    if (mqd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 287: mq_open failed: %ld\n", mqd);
+        fut_test_fail(287); return;
+    }
+
+    /* Send two messages with different priorities */
+    const char *msg_lo = "low-priority";
+    const char *msg_hi = "high-priority";
+    long r = sys_mq_timedsend((int)mqd, msg_lo, 12, 5, NULL);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 287: timedsend(lo) failed: %ld\n", r);
+        sys_mq_unlink("/test_mq_basic"); fut_test_fail(287); return;
+    }
+    r = sys_mq_timedsend((int)mqd, msg_hi, 13, 10, NULL);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 287: timedsend(hi) failed: %ld\n", r);
+        sys_mq_unlink("/test_mq_basic"); fut_test_fail(287); return;
+    }
+
+    /* Receive: should get high-priority message first */
+    char rbuf[64];
+    unsigned rprio = 0;
+    r = sys_mq_timedreceive((int)mqd, rbuf, sizeof(rbuf), &rprio, NULL);
+    if (r < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 287: timedreceive(1) failed: %ld\n", r);
+        sys_mq_unlink("/test_mq_basic"); fut_test_fail(287); return;
+    }
+    if (rprio != 10) {
+        fut_printf("[MISC-TEST] ✗ Test 287: first recv prio=%u (expected 10)\n", rprio);
+        sys_mq_unlink("/test_mq_basic"); fut_test_fail(287); return;
+    }
+    rbuf[r] = '\0';
+    fut_printf("[MISC-TEST] ✓ First received: prio=%u msg='%s'\n", rprio, rbuf);
+
+    /* Second receive should be low-priority */
+    r = sys_mq_timedreceive((int)mqd, rbuf, sizeof(rbuf), &rprio, NULL);
+    if (r < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 287: timedreceive(2) failed: %ld\n", r);
+        sys_mq_unlink("/test_mq_basic"); fut_test_fail(287); return;
+    }
+    if (rprio != 5) {
+        fut_printf("[MISC-TEST] ✗ Test 287: second recv prio=%u (expected 5)\n", rprio);
+        sys_mq_unlink("/test_mq_basic"); fut_test_fail(287); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Second received: prio=%u\n", rprio);
+
+    /* Third receive on empty queue → EAGAIN (nonblocking) */
+    long mqd2 = sys_mq_open("/test_mq_basic", O_RDWR | O_NONBLOCK, 0, NULL);
+    if (mqd2 >= 0) {
+        r = sys_mq_timedreceive((int)mqd2, rbuf, sizeof(rbuf), &rprio, NULL);
+        if (r != -11 /* EAGAIN */) {
+            fut_printf("[MISC-TEST] ✗ Test 287: empty recv returned %ld (want EAGAIN)\n", r);
+            sys_mq_unlink("/test_mq_basic"); fut_test_fail(287); return;
+        }
+        fut_printf("[MISC-TEST] ✓ Empty queue with O_NONBLOCK → EAGAIN\n");
+        /* close mqd2 */
+        extern long sys_close(int fd);
+        sys_close((int)mqd2);
+    }
+
+    sys_mq_unlink("/test_mq_basic");
+    extern long sys_close(int fd);
+    sys_close((int)mqd);
+    fut_test_pass();
+}
+
+static void test_mqueue_errors(void) {
+    fut_printf("[MISC-TEST] Test 288: mq_open/mq_timedsend error paths\n");
+
+    /* Open non-existent without O_CREAT → ENOENT */
+    long r = sys_mq_open("/no_such_queue", O_RDWR, 0, NULL);
+    if (r != -2 /* ENOENT */) {
+        fut_printf("[MISC-TEST] ✗ Test 288: open(no creat) = %ld (want ENOENT)\n", r);
+        fut_test_fail(288); return;
+    }
+    fut_printf("[MISC-TEST] ✓ open without O_CREAT → ENOENT\n");
+
+    /* Create then O_EXCL → EEXIST */
+    struct test_mq_attr attr = { .mq_maxmsg = 2, .mq_msgsize = 32 };
+    long mqd = sys_mq_open("/test_mq_err", O_CREAT | O_RDWR, 0600, &attr);
+    if (mqd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 288: mq_open failed: %ld\n", mqd);
+        fut_test_fail(288); return;
+    }
+    r = sys_mq_open("/test_mq_err", O_CREAT | O_EXCL | O_RDWR, 0600, &attr);
+    if (r != -17 /* EEXIST */) {
+        fut_printf("[MISC-TEST] ✗ Test 288: O_EXCL = %ld (want EEXIST)\n", r);
+        sys_mq_unlink("/test_mq_err"); fut_test_fail(288); return;
+    }
+    fut_printf("[MISC-TEST] ✓ O_CREAT|O_EXCL on existing → EEXIST\n");
+
+    /* EMSGSIZE: message too large for queue */
+    char big[512];
+    r = sys_mq_timedsend((int)mqd, big, sizeof(big), 0, NULL);
+    if (r != -90 /* EMSGSIZE */) {
+        fut_printf("[MISC-TEST] ✗ Test 288: timedsend(big) = %ld (want EMSGSIZE)\n", r);
+        sys_mq_unlink("/test_mq_err"); fut_test_fail(288); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Oversized message → EMSGSIZE\n");
+
+    /* EBADF: bad fd for timedreceive */
+    char rbuf[32];
+    r = sys_mq_timedreceive(-1, rbuf, sizeof(rbuf), NULL, NULL);
+    if (r != -9 /* EBADF */) {
+        fut_printf("[MISC-TEST] ✗ Test 288: timedreceive(bad fd) = %ld (want EBADF)\n", r);
+        sys_mq_unlink("/test_mq_err"); fut_test_fail(288); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Bad fd → EBADF\n");
+
+    sys_mq_unlink("/test_mq_err");
+    extern long sys_close(int fd);
+    sys_close((int)mqd);
+    fut_test_pass();
+}
+
+static void test_mqueue_getsetattr(void) {
+    fut_printf("[MISC-TEST] Test 289: mq_getsetattr and mq_notify\n");
+
+    struct test_mq_attr attr = { .mq_maxmsg = 8, .mq_msgsize = 128 };
+    long mqd = sys_mq_open("/test_mq_attr", O_CREAT | O_RDWR, 0600, &attr);
+    if (mqd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 289: mq_open failed: %ld\n", mqd);
+        fut_test_fail(289); return;
+    }
+
+    /* getsetattr: read current attributes */
+    struct test_mq_attr old = {0};
+    long r = sys_mq_getsetattr((int)mqd, NULL, &old);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 289: mq_getsetattr failed: %ld\n", r);
+        sys_mq_unlink("/test_mq_attr"); fut_test_fail(289); return;
+    }
+    if (old.mq_maxmsg != 8 || old.mq_msgsize != 128 || old.mq_curmsgs != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 289: attr mismatch: maxmsg=%ld msgsize=%ld curmsgs=%ld\n",
+                   old.mq_maxmsg, old.mq_msgsize, old.mq_curmsgs);
+        sys_mq_unlink("/test_mq_attr"); fut_test_fail(289); return;
+    }
+    fut_printf("[MISC-TEST] ✓ mq_getsetattr: maxmsg=%ld msgsize=%ld curmsgs=%ld\n",
+               old.mq_maxmsg, old.mq_msgsize, old.mq_curmsgs);
+
+    /* Send one message and verify curmsgs */
+    const char *msg = "test";
+    r = sys_mq_timedsend((int)mqd, msg, 4, 1, NULL);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 289: timedsend failed: %ld\n", r);
+        sys_mq_unlink("/test_mq_attr"); fut_test_fail(289); return;
+    }
+    struct test_mq_attr cur = {0};
+    sys_mq_getsetattr((int)mqd, NULL, &cur);
+    if (cur.mq_curmsgs != 1) {
+        fut_printf("[MISC-TEST] ✗ Test 289: curmsgs=%ld after send (expected 1)\n", cur.mq_curmsgs);
+        sys_mq_unlink("/test_mq_attr"); fut_test_fail(289); return;
+    }
+    fut_printf("[MISC-TEST] ✓ mq_curmsgs=1 after send\n");
+
+    /* mq_notify: accept with NULL (deregister, no-op) */
+    r = sys_mq_notify((int)mqd, NULL);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 289: mq_notify failed: %ld\n", r);
+        sys_mq_unlink("/test_mq_attr"); fut_test_fail(289); return;
+    }
+    fut_printf("[MISC-TEST] ✓ mq_notify(NULL) → 0\n");
+
+    sys_mq_unlink("/test_mq_attr");
+    extern long sys_close(int fd);
+    sys_close((int)mqd);
+    fut_test_pass();
+}
+
 static void test_proc_sys_net_ipv6(void) {
     fut_printf("[MISC-TEST] Test 285: /proc/sys/net/ipv6/conf/all/{disable_ipv6,forwarding}\n");
 
@@ -13075,6 +13271,9 @@ void fut_misc_test_thread(void *arg) {
     test_proc_sys_security_net();         /* Test 284: perf_event_paranoid, kptr_restrict, arp */
     test_proc_sys_net_ipv6();             /* Test 285: /proc/sys/net/ipv6/conf/all/{disable_ipv6,forwarding} */
     test_proc_sys_vm_fs_extras();         /* Test 286: mmap_min_addr, vfs_cache_pressure, nr_open, pipe-max-size */
+    test_mqueue_basic();                  /* Test 287: mq_open/mq_timedsend/mq_timedreceive priority ordering */
+    test_mqueue_errors();                 /* Test 288: mq error paths (ENOENT, EEXIST, EMSGSIZE, EBADF) */
+    test_mqueue_getsetattr();             /* Test 289: mq_getsetattr attrs and mq_notify */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

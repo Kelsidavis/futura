@@ -204,7 +204,13 @@ long sys_pwrite64(unsigned int fd, const void *buf, size_t count, int64_t offset
         return -EBADF;
     }
 
-    /* pwrite() not supported on character devices, pipes, or sockets */
+    /* pwrite64() is not valid on non-seekable fds (pipes, sockets, eventfd, etc.) */
+    if (file->chr_ops && !file->vnode) {
+        int mode = file->flags & O_ACCMODE;
+        if ((mode == O_RDONLY || mode == O_WRONLY) || (file->flags & FUT_F_UNSEEKABLE))
+            return -ESPIPE;
+    }
+
     /* Handle chr_ops files: dispatch to chr_ops->write with given offset.
      * Seekable chr_ops files (memfd, devfs) support positional I/O. */
     if (file->chr_ops) {

@@ -16095,6 +16095,51 @@ static void test_lseek_socket_espipe(void) {
     fut_test_pass();
 }
 
+/*
+ * Test 337: pread64/pwrite64 on socket returns ESPIPE
+ *
+ * POSIX: positional I/O on non-seekable fds must return ESPIPE.
+ */
+static void test_pread_pwrite_socket_espipe(void) {
+    fut_printf("[MISC-TEST] Test 337: pread64/pwrite64 on socket returns ESPIPE\n");
+
+    extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+    extern long sys_pread64(unsigned int fd, void *buf, size_t count, long offset);
+    extern long sys_pwrite64(unsigned int fd, const void *buf, size_t count, long offset);
+
+    int sv[2] = { -1, -1 };
+    long r = sys_socketpair(1 /*AF_UNIX*/, 1 /*SOCK_STREAM*/, 0, sv);
+    if (r < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 337: socketpair failed: %ld\n", r);
+        fut_test_fail(1);
+        return;
+    }
+
+    char buf[4] = "hi";
+    long pr = sys_pread64(sv[0], buf, sizeof(buf), 0);
+    if (pr != -ESPIPE) {
+        fut_printf("[MISC-TEST] ✗ Test 337: pread64(socket) returned %ld (expected -ESPIPE=%d)\n",
+                   pr, -ESPIPE);
+        sys_close(sv[0]); sys_close(sv[1]);
+        fut_test_fail(1);
+        return;
+    }
+
+    long pw = sys_pwrite64(sv[1], buf, 2, 0);
+    if (pw != -ESPIPE) {
+        fut_printf("[MISC-TEST] ✗ Test 337: pwrite64(socket) returned %ld (expected -ESPIPE=%d)\n",
+                   pw, -ESPIPE);
+        sys_close(sv[0]); sys_close(sv[1]);
+        fut_test_fail(1);
+        return;
+    }
+
+    sys_close(sv[0]);
+    sys_close(sv[1]);
+    fut_printf("[MISC-TEST] ✓ Test 337: pread64/pwrite64 on socket return ESPIPE\n");
+    fut_test_pass();
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -16439,6 +16484,7 @@ void fut_misc_test_thread(void *arg) {
     test_msg_nosignal();                 /* Test 334: MSG_NOSIGNAL suppresses SIGPIPE */
     test_so_peercred();                  /* Test 335: SO_PEERCRED returns correct credentials */
     test_lseek_socket_espipe();          /* Test 336: lseek on socket returns ESPIPE */
+    test_pread_pwrite_socket_espipe();   /* Test 337: pread64/pwrite64 on socket returns ESPIPE */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -1900,7 +1900,9 @@ static int procfs_file_getattr(struct fut_vnode *vnode, struct fut_stat *st) {
     if (!vnode || !st) return -EINVAL;
     __builtin_memset(st, 0, sizeof(*st));
     st->st_ino   = vnode->ino;
-    st->st_mode  = 0100444;  /* r--r--r-- regular file */
+    /* Use the vnode's own mode so writable files (e.g. hostname, oom_score_adj)
+     * report the correct permissions via stat(). Fall back to 0100444 if unset. */
+    st->st_mode  = vnode->mode ? vnode->mode : 0100444;
     st->st_nlink = 1;
     st->st_uid   = 0;
     st->st_gid   = 0;

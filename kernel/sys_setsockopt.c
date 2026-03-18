@@ -485,10 +485,21 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                 return 0;
 
             case SO_SNDBUF:
-            case SO_RCVBUF:
-                /* Buffer size — accept without enforcement (fixed internally) */
-                if (optlen < sizeof(int)) return -EINVAL;
+            case SO_RCVBUF: {
+                /* Linux doubles the requested value; minimum is 2048 bytes */
+                if (optlen < (socklen_t)sizeof(int)) return -EINVAL;
+                int req = 0;
+                if (sso_copy_from_user(&req, optval, sizeof(int)) != 0) return -EFAULT;
+                if (req < 0) return -EINVAL;
+                /* Double the requested value, enforce minimum 2048 */
+                uint32_t effective = (uint32_t)(req * 2);
+                if (effective < 2048) effective = 2048;
+                if (optname == SO_SNDBUF)
+                    socket->sndbuf = effective;
+                else
+                    socket->rcvbuf = effective;
                 return 0;
+            }
 
             case SO_RCVLOWAT:
             case SO_SNDLOWAT:

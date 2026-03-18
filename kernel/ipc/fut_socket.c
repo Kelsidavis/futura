@@ -319,6 +319,9 @@ fut_socket_t *fut_socket_create(int family, int type) {
     socket->socket_id = __atomic_fetch_add(&socket_next_id, 1, __ATOMIC_RELAXED);
     socket->shutdown_rd = false;
     socket->shutdown_wr = false;
+    /* SO_SNDBUF / SO_RCVBUF: Linux doubles the requested value; default = 2×BUFSIZE */
+    socket->sndbuf = 2 * FUT_SOCKET_BUFSIZE;
+    socket->rcvbuf = 2 * FUT_SOCKET_BUFSIZE;
 
     /* Allocate wait queue for close operations */
     socket->close_waitq = fut_malloc(sizeof(fut_waitq_t));

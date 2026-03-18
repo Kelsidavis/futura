@@ -16906,6 +16906,86 @@ static void test_tiocswinsz_roundtrip(void) {
 }
 
 /* ============================================================
+ * Tests 352-353: SO_SNDBUF / SO_RCVBUF set/get round-trip
+ * ============================================================ */
+static void test_so_sndbuf_roundtrip(void) {
+    fut_printf("[MISC-TEST] Test 352: SO_SNDBUF set/get round-trip\n");
+
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_setsockopt(int sockfd, int level, int optname,
+                               const void *optval, unsigned int optlen);
+    extern long sys_getsockopt(int sockfd, int level, int optname,
+                               void *optval, unsigned int *optlen);
+
+    int sock = (int)sys_socket(1 /* AF_UNIX */, 1 /* SOCK_STREAM */, 0);
+    if (sock < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 352: socket() failed: %d\n", sock);
+        fut_test_fail(352); return;
+    }
+
+    /* setsockopt SO_SNDBUF = 8192 → kernel stores 2×8192 = 16384 */
+    int req = 8192;
+    long r = sys_setsockopt(sock, 1 /* SOL_SOCKET */, 7 /* SO_SNDBUF */,
+                            &req, sizeof(req));
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 352: setsockopt(SO_SNDBUF) returned %ld\n", r);
+        fut_vfs_close(sock);
+        fut_test_fail(352); return;
+    }
+
+    /* getsockopt should return the doubled value */
+    int got = 0;
+    unsigned int len = sizeof(got);
+    r = sys_getsockopt(sock, 1 /* SOL_SOCKET */, 7 /* SO_SNDBUF */, &got, &len);
+    fut_vfs_close(sock);
+
+    if (r != 0 || got != 16384) {
+        fut_printf("[MISC-TEST] ✗ Test 352: SO_SNDBUF: set 8192, got %d (want 16384)\n", got);
+        fut_test_fail(352); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 352: SO_SNDBUF set/get: 8192 → stored %d\n", got);
+    fut_test_pass();
+}
+
+static void test_so_rcvbuf_roundtrip(void) {
+    fut_printf("[MISC-TEST] Test 353: SO_RCVBUF set/get round-trip\n");
+
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_setsockopt(int sockfd, int level, int optname,
+                               const void *optval, unsigned int optlen);
+    extern long sys_getsockopt(int sockfd, int level, int optname,
+                               void *optval, unsigned int *optlen);
+
+    int sock = (int)sys_socket(1 /* AF_UNIX */, 2 /* SOCK_DGRAM */, 0);
+    if (sock < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 353: socket() failed: %d\n", sock);
+        fut_test_fail(353); return;
+    }
+
+    /* setsockopt SO_RCVBUF = 4096 → kernel stores 2×4096 = 8192 */
+    int req = 4096;
+    long r = sys_setsockopt(sock, 1 /* SOL_SOCKET */, 8 /* SO_RCVBUF */,
+                            &req, sizeof(req));
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 353: setsockopt(SO_RCVBUF) returned %ld\n", r);
+        fut_vfs_close(sock);
+        fut_test_fail(353); return;
+    }
+
+    int got = 0;
+    unsigned int len = sizeof(got);
+    r = sys_getsockopt(sock, 1 /* SOL_SOCKET */, 8 /* SO_RCVBUF */, &got, &len);
+    fut_vfs_close(sock);
+
+    if (r != 0 || got != 8192) {
+        fut_printf("[MISC-TEST] ✗ Test 353: SO_RCVBUF: set 4096, got %d (want 8192)\n", got);
+        fut_test_fail(353); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 353: SO_RCVBUF set/get: 4096 → stored %d\n", got);
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test 347: mmap MAP_SHARED|PROT_WRITE on O_RDONLY fd -> EACCES
  * ============================================================ */
 static void test_mmap_rdonly_shared_write(void) {
@@ -17349,6 +17429,8 @@ void fut_misc_test_thread(void *arg) {
     test_ppoll_basic();                  /* Test 349: ppoll() POLLIN on pipe with kernel-stack timespec */
     test_tiocgwinsz_default();           /* Test 350: TIOCGWINSZ returns default 24x80 */
     test_tiocswinsz_roundtrip();         /* Test 351: TIOCSWINSZ set/get round-trip */
+    test_so_sndbuf_roundtrip();          /* Test 352: SO_SNDBUF setsockopt→getsockopt doubles value */
+    test_so_rcvbuf_roundtrip();          /* Test 353: SO_RCVBUF setsockopt→getsockopt doubles value */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

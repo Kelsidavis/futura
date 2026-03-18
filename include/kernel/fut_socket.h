@@ -358,6 +358,10 @@ typedef struct fut_socket {
     uint64_t rcvtimeo_ms;               /* Receive timeout in milliseconds */
     uint64_t sndtimeo_ms;               /* Send timeout in milliseconds */
 
+    /* SO_SNDBUF / SO_RCVBUF: effective buffer sizes (stored doubled, like Linux) */
+    uint32_t sndbuf;                    /* Send buffer size (default 2*FUT_SOCKET_BUFSIZE) */
+    uint32_t rcvbuf;                    /* Receive buffer size (default 2*FUT_SOCKET_BUFSIZE) */
+
     /* SO_PEERCRED: credentials of the connected peer (set at connect/accept time) */
     uint32_t peer_pid;
     uint32_t peer_uid;

@@ -592,8 +592,8 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
                 return 0;
 
             case SO_SNDBUF:
-                /* Return send buffer size */
-                int_value = FUT_SOCKET_BUFSIZE;
+                /* Return stored send buffer size (set doubled by setsockopt) */
+                int_value = (int)socket->sndbuf;
                 value_len = sizeof(int);
 
                 copy_len = (len < value_len) ? len : value_len;
@@ -608,8 +608,8 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
                 return 0;
 
             case SO_RCVBUF:
-                /* Return receive buffer size */
-                int_value = FUT_SOCKET_BUFSIZE;
+                /* Return stored receive buffer size (set doubled by setsockopt) */
+                int_value = (int)socket->rcvbuf;
                 value_len = sizeof(int);
 
                 copy_len = (len < value_len) ? len : value_len;

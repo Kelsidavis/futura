@@ -289,6 +289,7 @@ typedef struct fut_socket {
 
     /* Path binding (for all sockets) */
     char *bound_path;                       /* Path if bound (max 108 bytes) */
+    uint16_t bound_path_len;               /* Length of bound_path (needed for abstract sockets) */
     struct fut_vnode *path_vnode;           /* VFS vnode for bound path */
 
     /* Listener state (if state == LISTENING) */
@@ -339,12 +340,14 @@ fut_socket_t *fut_socket_create(int family, int type);
 /**
  * Bind socket to path.
  * Creates VFS inode for socket path, transitions to BOUND state.
+ * For abstract sockets (path[0] == '\0'), path_len includes the leading NUL.
  *
- * @param socket Socket to bind
- * @param path Path to bind to (max 108 bytes)
+ * @param socket   Socket to bind
+ * @param path     Path to bind to (max 108 bytes; may start with '\0' for abstract)
+ * @param path_len Length of path in bytes (strlen for filesystem, full len for abstract)
  * @return 0 on success, negative on error
  */
-int fut_socket_bind(fut_socket_t *socket, const char *path);
+int fut_socket_bind(fut_socket_t *socket, const char *path, size_t path_len);
 
 /**
  * Mark socket as listening.
@@ -370,11 +373,12 @@ int fut_socket_accept(fut_socket_t *listener, fut_socket_t **out_socket);
  * Connect to listening socket.
  * Creates bidirectional connection, queues with listener.
  *
- * @param socket Socket to connect
- * @param target_path Path of listening socket
+ * @param socket      Socket to connect
+ * @param target_path Path of listening socket (may be abstract)
+ * @param path_len    Length of target_path in bytes
  * @return 0 on success (immediately for AF_UNIX), negative on error
  */
-int fut_socket_connect(fut_socket_t *socket, const char *target_path);
+int fut_socket_connect(fut_socket_t *socket, const char *target_path, size_t path_len);
 
 /**
  * Send data on connected socket.
@@ -430,10 +434,11 @@ void fut_socket_unref(fut_socket_t *socket);
  * Find listening socket by bound path.
  * Used by connect() to locate target listener.
  *
- * @param path Path to search for
+ * @param path     Path to search for (may be abstract, starting with '\0')
+ * @param path_len Length of path in bytes
  * @return Socket if found and listening, NULL otherwise
  */
-fut_socket_t *fut_socket_find_listener(const char *path);
+fut_socket_t *fut_socket_find_listener(const char *path, size_t path_len);
 
 /**
  * Check if socket is ready for I/O (for poll/select).

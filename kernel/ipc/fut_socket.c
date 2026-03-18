@@ -61,12 +61,23 @@ static inline void *socket_memcpy(void *s1, const void *s2, size_t n) {
     return s1;
 }
 
+static inline int socket_memcmp(const void *s1, const void *s2, size_t n) {
+    const unsigned char *a = (const unsigned char *)s1;
+    const unsigned char *b = (const unsigned char *)s2;
+    while (n--) {
+        if (*a != *b) return (int)*a - (int)*b;
+        a++; b++;
+    }
+    return 0;
+}
+
 /* Use our implementations */
-#define strlen(s)       socket_strlen(s)
-#define strcmp(s1,s2)   socket_strcmp(s1, s2)
-#define strcpy(s1,s2)   socket_strcpy(s1, s2)
-#define memset(s,c,n)   socket_memset(s, c, n)
-#define memcpy(s1,s2,n) socket_memcpy(s1, s2, n)
+#define strlen(s)         socket_strlen(s)
+#define strcmp(s1,s2)     socket_strcmp(s1, s2)
+#define strcpy(s1,s2)     socket_strcpy(s1, s2)
+#define memset(s,c,n)     socket_memset(s, c, n)
+#define memcpy(s1,s2,n)   socket_memcpy(s1, s2, n)
+#define memcmp(s1,s2,n)   socket_memcmp(s1, s2, n)
 
 /**
  * socket_pair_cleanup - Free all resources allocated for a socket pair
@@ -371,67 +382,50 @@ void fut_socket_unref(fut_socket_t *socket) {
  * Bind socket to a path.
  * Creates VFS inode for socket if needed.
  */
-int fut_socket_bind(fut_socket_t *socket, const char *path) {
+int fut_socket_bind(fut_socket_t *socket, const char *path, size_t path_len) {
     if (!socket || !path || socket->state != FUT_SOCK_CREATED) {
         return -EINVAL;
     }
 
-    size_t path_len = strlen(path);
+    /* For filesystem paths use strlen; path_len passed from caller for abstract sockets */
     if (path_len == 0 || path_len > 108) {
         return -EINVAL;
     }
 
+    bool is_abstract = (path[0] == '\0' && path_len > 1);
+
     /* Check if path already bound (allow SO_REUSEADDR-like behavior for unix sockets)
-     * Unix domain sockets can be rebound to the same path for server applications.
-     * This is similar to SO_REUSEADDR for TCP sockets. */
+     * Use memcmp to correctly handle abstract paths that contain embedded NUL bytes. */
     fut_socket_t *old_socket = NULL;
     fut_spinlock_acquire(&socket_lock);
     for (int i = 0; i < FUT_SOCKET_MAX; i++) {
-        if (socket_registry[i] && socket_registry[i]->bound_path &&
-            strcmp(socket_registry[i]->bound_path, path) == 0) {
-            fut_printf("[SOCKET-BIND-CHECK] Found socket %u with same path: state=%d refcount=%d\n",
-                       socket_registry[i]->socket_id,
-                       socket_registry[i]->state,
-                       socket_registry[i]->refcount);
-
-            /* For Unix domain sockets, allow rebinding even if path is in use.
-             * This is standard behavior for server sockets (like Wayland).
-             * Refcount > 1 means there are active peer connections - only block those. */
-            if (socket_registry[i]->refcount > 1) {
-                fut_printf("[SOCKET-BIND-CHECK] Socket %u has active peers (refcount=%d), blocking bind\n",
-                           socket_registry[i]->socket_id, socket_registry[i]->refcount);
+        fut_socket_t *s = socket_registry[i];
+        if (s && s->bound_path && s->bound_path_len == path_len &&
+            memcmp(s->bound_path, path, path_len) == 0) {
+            SOCKET_LOG("[SOCKET-BIND-CHECK] Found socket %u with same path: state=%d refcount=%d\n",
+                       s->socket_id, s->state, s->refcount);
+            if (s->refcount > 1) {
                 fut_spinlock_release(&socket_lock);
                 return -EADDRINUSE;
             }
-            /* Socket has no active peers - allow rebinding (SO_REUSEADDR semantics) */
-            fut_printf("[SOCKET-BIND-CHECK] Socket %u has no active peers, allowing rebinding\n",
-                       socket_registry[i]->socket_id);
-            old_socket = socket_registry[i];
+            old_socket = s;
         }
     }
     fut_spinlock_release(&socket_lock);
 
-    /* Note: We do NOT unref old socket's path_vnode here because that would unlink
-     * it from the VFS directory. The inode stays in the directory and the old socket
-     * keeps its reference until it's actually closed. This allows multiple sockets
-     * to share the same path (SO_REUSEADDR semantics). */
-
-    /* Allocate and store bound path */
+    /* Allocate and store bound path (include full path_len bytes, NUL-terminate after) */
     socket->bound_path = fut_malloc(path_len + 1);
     if (!socket->bound_path) {
         return -ENOMEM;
     }
-    strcpy(socket->bound_path, path);
+    memcpy(socket->bound_path, path, path_len);
+    socket->bound_path[path_len] = '\0';
+    socket->bound_path_len = (uint16_t)path_len;
 
-    /* Create VFS inode for socket binding location, but skip if rebinding to existing path.
-     * When rebinding (SO_REUSEADDR), the old socket's inode stays in the VFS directory,
-     * and this socket can function without its own inode (non-fatal if creation fails). */
-    struct fut_vnode *inode = NULL;
-    if (!old_socket) {
-        /* First socket binding to this path - create VFS inode */
-        inode = fut_vfs_create_socket(path);
+    /* Create VFS inode for filesystem paths only (not abstract sockets) */
+    if (!is_abstract && !old_socket) {
+        struct fut_vnode *inode = fut_vfs_create_socket(path);
         if (!inode) {
-            /* Binding path creation failed, but socket is still bound for lookup */
             SOCKET_LOG("[SOCKET] Socket %u VFS inode creation failed (non-fatal), path: %s\n",
                        socket->socket_id, path);
         } else {
@@ -439,14 +433,11 @@ int fut_socket_bind(fut_socket_t *socket, const char *path) {
             SOCKET_LOG("[SOCKET] Socket %u created VFS inode, path: %s\n",
                        socket->socket_id, path);
         }
-    } else {
-        /* Rebinding to existing path - skip VFS inode creation, use old socket's inode */
-        SOCKET_LOG("[SOCKET] Socket %u rebinding to existing path (using old socket's inode), path: %s\n",
-                   socket->socket_id, path);
     }
 
     socket->state = FUT_SOCK_BOUND;
-    SOCKET_LOG("[SOCKET] Socket %u bound to path: %s\n", socket->socket_id, path);
+    SOCKET_LOG("[SOCKET] Socket %u bound (abstract=%d, len=%zu)\n",
+               socket->socket_id, (int)is_abstract, path_len);
     return 0;
 }
 
@@ -673,8 +664,8 @@ int fut_socket_accept(fut_socket_t *listener, fut_socket_t **out_socket) {
 /**
  * Find listening socket by bound path.
  */
-fut_socket_t *fut_socket_find_listener(const char *path) {
-    if (!path) {
+fut_socket_t *fut_socket_find_listener(const char *path, size_t path_len) {
+    if (!path || path_len == 0) {
         return NULL;
     }
 
@@ -682,7 +673,8 @@ fut_socket_t *fut_socket_find_listener(const char *path) {
     for (int i = 0; i < FUT_SOCKET_MAX; i++) {
         fut_socket_t *socket = socket_registry[i];
         if (socket && socket->bound_path &&
-            strcmp(socket->bound_path, path) == 0 &&
+            socket->bound_path_len == path_len &&
+            memcmp(socket->bound_path, path, path_len) == 0 &&
             socket->state == FUT_SOCK_LISTENING) {
             fut_socket_ref(socket);
             fut_spinlock_release(&socket_lock);
@@ -697,13 +689,13 @@ fut_socket_t *fut_socket_find_listener(const char *path) {
  * Connect to listening socket.
  * For blocking sockets, waits until accept() completes the connection.
  */
-int fut_socket_connect(fut_socket_t *socket, const char *target_path) {
-    if (!socket || !target_path) {
+int fut_socket_connect(fut_socket_t *socket, const char *target_path, size_t path_len) {
+    if (!socket || !target_path || path_len == 0) {
         return -EINVAL;
     }
 
     /* Find listening socket */
-    fut_socket_t *listener = fut_socket_find_listener(target_path);
+    fut_socket_t *listener = fut_socket_find_listener(target_path, path_len);
     if (!listener) {
         return -ECONNREFUSED;
     }

@@ -13988,6 +13988,86 @@ static void test_msg_cmsg_cloexec(void) {
     fut_test_pass();
 }
 
+/* Test 307: Abstract AF_UNIX socket (Linux-specific "\0name" namespace)
+ *
+ * Abstract sockets use sun_path[0] == '\0' followed by a name. They exist
+ * only in the kernel — no filesystem entry is created. connect() matches by
+ * the full name including the leading NUL.
+ */
+static void test_unix_abstract_socket(void) {
+    fut_printf("[MISC-TEST] Test 307: abstract AF_UNIX socket\n");
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_bind(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_listen(int sockfd, int backlog);
+    extern long sys_connect(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_accept(int sockfd, void *addr, unsigned int *addrlen);
+    extern long sys_write(int fd, const void *buf, size_t count);
+    extern long sys_read(int fd, void *buf, size_t count);
+
+    /* Abstract address: sun_path = "\0futura_abs307" (15 bytes including leading NUL) */
+    struct {
+        unsigned short sun_family;
+        char sun_path[108];
+    } addr;
+    addr.sun_family = 1; /* AF_UNIX */
+    /* Build abstract name: '\0' + "futura_abs307" */
+    const char abs_name[] = "futura_abs307";  /* 13 chars */
+    addr.sun_path[0] = '\0';
+    for (int i = 0; abs_name[i]; i++) addr.sun_path[1 + i] = abs_name[i];
+    /* addrlen = 2 (family) + 1 (NUL) + 13 (name) = 16; no trailing NUL needed */
+    unsigned int addrlen = (unsigned int)(2 + 1 + 13);
+
+    /* Server socket */
+    long srv = sys_socket(1 /*AF_UNIX*/, 1 /*SOCK_STREAM*/, 0);
+    if (srv < 0) {
+        fut_printf("[MISC-TEST] ✗ socket(server) failed: %ld\n", srv);
+        fut_test_fail(307); return;
+    }
+    long r = sys_bind((int)srv, &addr, addrlen);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ bind(abstract) failed: %ld\n", r);
+        sys_close((int)srv); fut_test_fail(307); return;
+    }
+    r = sys_listen((int)srv, 2);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ listen failed: %ld\n", r);
+        sys_close((int)srv); fut_test_fail(307); return;
+    }
+
+    /* Client socket connects to same abstract address */
+    long cli = sys_socket(1, 1, 0);
+    if (cli < 0) {
+        fut_printf("[MISC-TEST] ✗ socket(client) failed: %ld\n", cli);
+        sys_close((int)srv); fut_test_fail(307); return;
+    }
+    r = sys_connect((int)cli, &addr, addrlen);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ connect(abstract) failed: %ld\n", r);
+        sys_close((int)cli); sys_close((int)srv); fut_test_fail(307); return;
+    }
+
+    long conn = sys_accept((int)srv, NULL, NULL);
+    if (conn < 0) {
+        fut_printf("[MISC-TEST] ✗ accept failed: %ld\n", conn);
+        sys_close((int)cli); sys_close((int)srv); fut_test_fail(307); return;
+    }
+
+    /* Send from client, receive on accepted connection */
+    const char msg[] = "abstract";
+    long nw = sys_write((int)cli, msg, 8);
+    char rbuf[16] = {0};
+    long nr = sys_read((int)conn, rbuf, 15);
+    sys_close((int)conn); sys_close((int)cli); sys_close((int)srv);
+
+    if (nw != 8 || nr != 8 || __builtin_memcmp(rbuf, msg, 8) != 0) {
+        fut_printf("[MISC-TEST] ✗ abstract socket data: nw=%ld nr=%ld data='%.8s'\n", nw, nr, rbuf);
+        fut_test_fail(307); return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ abstract AF_UNIX: bind/listen/connect/accept/send/recv\n");
+    fut_test_pass();
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -14301,6 +14381,7 @@ void fut_misc_test_thread(void *arg) {
     test_close_range_basic();            /* Test 304: close_range bulk close + CLOEXEC */
     test_unix_seqpacket();               /* Test 305: AF_UNIX SOCK_SEQPACKET create/pair/send/recv */
     test_msg_cmsg_cloexec();             /* Test 306: MSG_CMSG_CLOEXEC sets FD_CLOEXEC on SCM_RIGHTS FDs */
+    test_unix_abstract_socket();         /* Test 307: abstract AF_UNIX bind/listen/connect/accept/send/recv */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

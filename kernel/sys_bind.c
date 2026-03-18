@@ -647,7 +647,7 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
     }
 
     /* Bind socket to address */
-    int ret = fut_socket_bind(socket, sock_path);
+    int ret = fut_socket_bind(socket, sock_path, path_len);
     if (ret < 0) {
         const char *error_desc;
         switch (ret) {

@@ -571,8 +571,8 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
     }
 
     /* Connect socket to peer */
-    connect_printf("[CONNECT-DBG] calling fut_socket_connect(socket=%p, path='%s')\n", socket, sock_path);
-    int ret = fut_socket_connect(socket, sock_path);
+    connect_printf("[CONNECT-DBG] calling fut_socket_connect(socket=%p, path_len=%zu)\n", socket, path_len);
+    int ret = fut_socket_connect(socket, sock_path, path_len);
     connect_printf("[CONNECT-DBG] fut_socket_connect returned %d\n", ret);
     if (ret < 0) {
         const char *error_desc;

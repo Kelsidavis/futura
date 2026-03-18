@@ -11,6 +11,7 @@
 #include "../../include/kernel/fut_memory.h"
 #include "../../include/kernel/fut_task.h"
 #include "../../include/kernel/signal.h"
+#include "../../include/kernel/signal_frame.h"
 #include <kernel/errno.h>
 #include <platform/platform.h>
 #include <stdatomic.h>
@@ -268,8 +269,15 @@ void fut_timer_tick(void) {
 
     for (fut_task_t *task = fut_task_list; task != nullptr; task = task->next) {
         if (task->alarm_expires_ms > 0 && current_ms >= task->alarm_expires_ms) {
-            // Alarm has expired - queue SIGALRM for this task
-            fut_signal_send(task, SIGALRM);
+            /* Alarm expired — deliver SIGALRM with si_code=SI_KERNEL */
+            siginfo_t sinfo;
+            __builtin_memset(&sinfo, 0, sizeof(sinfo));
+            sinfo.si_signum = SIGALRM;
+            sinfo.si_code   = SI_KERNEL;
+            sinfo.si_pid    = (int64_t)task->pid;
+            sinfo.si_uid    = (uint32_t)task->uid;
+            extern int fut_signal_send_with_info(struct fut_task *t, int sig, const void *info);
+            fut_signal_send_with_info(task, SIGALRM, &sinfo);
             // Reload for ITIMER_REAL interval, or disarm
             if (task->itimer_real_interval_ms > 0) {
                 task->alarm_expires_ms = current_ms + task->itimer_real_interval_ms;
@@ -294,8 +302,20 @@ void fut_timer_tick(void) {
                     // Signal still pending - count overrun
                     pt->overrun++;
                 } else {
+                    /* POSIX: deliver SI_TIMER siginfo so SA_SIGINFO handlers get
+                     * si_code=SI_TIMER, si_timerid=timer_id, si_overrun, si_value */
+                    siginfo_t sinfo;
+                    __builtin_memset(&sinfo, 0, sizeof(sinfo));
+                    sinfo.si_signum  = pt->signo;
+                    sinfo.si_code    = SI_TIMER;   /* -2 */
+                    sinfo.si_timerid = i + 1;       /* 1-based timer ID */
+                    sinfo.si_overrun = pt->overrun;
+                    sinfo.si_pid     = (int64_t)task->pid;
+                    sinfo.si_uid     = (uint32_t)task->uid;
+                    sinfo.si_value   = pt->sigev_value;
                     pt->overrun = 0;
-                    fut_signal_send(task, pt->signo);
+                    extern int fut_signal_send_with_info(struct fut_task *t, int sig, const void *info);
+                    fut_signal_send_with_info(task, pt->signo, &sinfo);
                 }
             }
 

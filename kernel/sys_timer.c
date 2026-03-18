@@ -107,6 +107,7 @@ long sys_timer_create(int clockid, struct sigevent *sevp, timer_t *timerid) {
     /* Parse sigevent if provided */
     int signo = SIGALRM;  /* Default signal */
     int notify = SIGEV_SIGNAL;
+    long sigev_value = 0;  /* sigev_value.sival_int for SA_SIGINFO handlers */
     if (local_sevp) {
         struct sigevent sev;
         if (timer_copy_from_user(&sev, local_sevp, sizeof(struct sigevent)) != 0)
@@ -121,6 +122,9 @@ long sys_timer_create(int clockid, struct sigevent *sevp, timer_t *timerid) {
                 return -EINVAL;
             signo = sev.sigev_signo;
         }
+
+        /* Store sigev_value for SA_SIGINFO delivery (si_value in siginfo_t) */
+        sigev_value = (long)sev.sigev_value.sival_int;
     }
 
     /* Find a free timer slot */
@@ -144,6 +148,7 @@ long sys_timer_create(int clockid, struct sigevent *sevp, timer_t *timerid) {
     pt->overrun = 0;
     pt->expiry_ms = 0;
     pt->interval_ms = 0;
+    pt->sigev_value = sigev_value;
 
     /* Write timer ID back to userspace (1-based) */
     timer_t id = slot + 1;

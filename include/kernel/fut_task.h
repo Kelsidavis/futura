@@ -31,6 +31,7 @@ typedef struct fut_posix_timer {
     int overrun;            /* Overrun count since last signal delivery */
     uint64_t expiry_ms;     /* Absolute expiration time in ms (0 = disarmed) */
     uint64_t interval_ms;   /* Repeat interval in ms (0 = one-shot) */
+    long sigev_value;       /* sigev_value.sival_int/ptr (passed to SA_SIGINFO handler as si_value) */
 } fut_posix_timer_t;
 
 /* Forward declaration */

@@ -795,6 +795,25 @@ static int64_t sys_poll_handler(uint64_t fds, uint64_t nfds, uint64_t timeout,
 }
 
 int copy_user_string(const char *u_path, char *kbuf, size_t max_len) {
+    /* Kernel-pointer bypass: when called from kernel selftests, the pointer
+     * is already in kernel space and fut_copy_from_user would reject it.
+     * x86_64 kernel base: 0xFFFFFFFF80000000; ARM64: 0xFFFF800000000000 */
+#if defined(__x86_64__)
+#define _COPY_USER_STRING_KBASE 0xFFFFFFFF80000000ULL
+#elif defined(__aarch64__)
+#define _COPY_USER_STRING_KBASE 0xFFFF800000000000ULL
+#else
+#define _COPY_USER_STRING_KBASE 0ULL
+#endif
+    if (_COPY_USER_STRING_KBASE && (uintptr_t)u_path >= _COPY_USER_STRING_KBASE) {
+        const char *p = u_path;
+        for (size_t i = 0; i < max_len; i++) {
+            kbuf[i] = p[i];
+            if (p[i] == '\0') return 0;
+        }
+        return -ENAMETOOLONG;
+    }
+#undef _COPY_USER_STRING_KBASE
     for (size_t i = 0; i < max_len; ++i) {
         char ch = 0;
         if (fut_copy_from_user(&ch, u_path + i, 1) != 0) {

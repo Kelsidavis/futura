@@ -24,6 +24,79 @@
 #define FD_CLOEXEC 1
 #endif
 
+/* ── O_TMPFILE helpers ────────────────────────────────────────── */
+
+static uint64_t g_tmpfile_seq = 0;
+
+/* Build a 16-char lowercase hex string of val into buf (no NUL appended). */
+static void u64_to_hex16(uint64_t val, char *buf) {
+    static const char hex[] = "0123456789abcdef";
+    for (int i = 15; i >= 0; i--) {
+        buf[i] = hex[val & 0xf];
+        val >>= 4;
+    }
+}
+
+/*
+ * Handle O_TMPFILE: resolve the directory, create an anonymous file inside it,
+ * unlink the name, and return the open fd.  The file persists until the last
+ * fd is closed.
+ *
+ * @param task      current task
+ * @param dirfd     directory fd or AT_FDCWD
+ * @param kpath     kernel-space directory path (already copied from user)
+ * @param flags     original open flags (O_TMPFILE | O_DIRECTORY included)
+ * @param mode      creation mode
+ */
+static long openat_tmpfile(fut_task_t *task, int dirfd, const char *kpath,
+                            int flags, int mode) {
+    /* Resolve to absolute directory path */
+    char abs_dir[256];
+    int rret = fut_vfs_resolve_at(task, dirfd, kpath, abs_dir, sizeof(abs_dir));
+    if (rret < 0)
+        return rret;
+
+    /* Build unique temp name: <dir>/.#tmpXXXXXXXXXXXXXXXX */
+    uint64_t seq = __atomic_fetch_add(&g_tmpfile_seq, 1, __ATOMIC_RELAXED);
+    char tmp_path[280];
+    size_t dlen = strlen(abs_dir);
+    /* Strip trailing slashes (keep at least '/') */
+    while (dlen > 1 && abs_dir[dlen - 1] == '/')
+        dlen--;
+    if (dlen + 1 + 6 + 16 + 1 > sizeof(tmp_path))
+        return -ENAMETOOLONG;
+    memcpy(tmp_path, abs_dir, dlen);
+    tmp_path[dlen++] = '/';
+    tmp_path[dlen++] = '.';
+    tmp_path[dlen++] = '#';
+    tmp_path[dlen++] = 't';
+    tmp_path[dlen++] = 'm';
+    tmp_path[dlen++] = 'p';
+    u64_to_hex16(seq, tmp_path + dlen);
+    dlen += 16;
+    tmp_path[dlen] = '\0';
+
+    /* Strip O_TMPFILE (and O_DIRECTORY which it includes); add O_CREAT|O_EXCL */
+    int create_flags = (flags & ~O_TMPFILE) | O_CREAT | O_EXCL;
+
+    int fd = (int)fut_vfs_open(tmp_path, create_flags, mode);
+    if (fd < 0)
+        return fd;
+
+    /* Unlink the directory entry immediately → file becomes anonymous */
+    int uret = fut_vfs_unlink(tmp_path);
+    if (uret < 0) {
+        fut_vfs_close(fd);
+        return uret;
+    }
+
+    /* Apply O_CLOEXEC if requested */
+    if ((flags & O_CLOEXEC) && task && task->fd_flags && fd < task->max_fds)
+        task->fd_flags[fd] |= FD_CLOEXEC;
+
+    return (long)fd;
+}
+
 /**
  * openat() - Open file relative to directory file descriptor
  *
@@ -128,8 +201,12 @@ long sys_openat(int dirfd, const char *pathname, int flags, int mode) {
         path_type = "relative";
     }
 
-    /* Open via VFS, using fut_vfs_open_at to handle dirfd-relative paths */
+    /* O_TMPFILE: create anonymous file in the specified directory */
     fut_task_t *open_task = fut_task_current();
+    if ((local_flags & O_TMPFILE) == O_TMPFILE)
+        return openat_tmpfile(open_task, local_dirfd, kpath, local_flags, local_mode);
+
+    /* Open via VFS, using fut_vfs_open_at to handle dirfd-relative paths */
     int result = fut_vfs_open_at(open_task, local_dirfd, kpath, local_flags, local_mode);
 
     /* Set FD_CLOEXEC if O_CLOEXEC was requested (per-FD flag) */

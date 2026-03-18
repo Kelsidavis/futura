@@ -15545,6 +15545,74 @@ static void test_unix_dgram_sendto(void) {
     fut_test_pass();
 }
 
+static void test_o_tmpfile_basic(void) {
+    fut_printf("[MISC-TEST] Test 329: O_TMPFILE anonymous file\n");
+    extern long sys_openat(int dirfd, const char *pathname, int flags, int mode);
+    extern ssize_t sys_write(int fd, const void *buf, size_t count);
+    extern ssize_t sys_read(int fd, void *buf, size_t count);
+    extern int64_t fut_vfs_lseek(int fd, int64_t offset, int whence);
+
+#ifndef O_TMPFILE
+#define O_TMPFILE (020000000 | 00200000)  /* 020000000 | O_DIRECTORY */
+#endif
+#ifndef AT_FDCWD
+#define AT_FDCWD (-100)
+#endif
+
+    /* Open an anonymous tmpfile in /tmp */
+    int fd = (int)sys_openat(AT_FDCWD, "/tmp", O_TMPFILE | O_RDWR, 0600);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ O_TMPFILE: openat returned %d\n", fd);
+        fut_test_fail(329);
+        return;
+    }
+
+    /* Write some data */
+    const char wdata[] = "tmpfiledata";
+    ssize_t nw = sys_write(fd, wdata, 11);
+    if (nw != 11) {
+        fut_printf("[MISC-TEST] ✗ O_TMPFILE: write returned %zd\n", nw);
+        fut_vfs_close(fd);
+        fut_test_fail(329);
+        return;
+    }
+
+    /* Seek back and read back */
+    fut_vfs_lseek(fd, 0, 0 /* SEEK_SET */);
+    char rbuf[16] = {0};
+    ssize_t nr = sys_read(fd, rbuf, 11);
+    if (nr != 11) {
+        fut_printf("[MISC-TEST] ✗ O_TMPFILE: read returned %zd\n", nr);
+        fut_vfs_close(fd);
+        fut_test_fail(329);
+        return;
+    }
+
+    /* Verify contents */
+    if (rbuf[0] != 't' || rbuf[10] != 'a') {
+        fut_printf("[MISC-TEST] ✗ O_TMPFILE: content mismatch '%c...%c'\n",
+                   rbuf[0], rbuf[10]);
+        fut_vfs_close(fd);
+        fut_test_fail(329);
+        return;
+    }
+
+    /* Close the fd — the anonymous file should be freed (no leak) */
+    fut_vfs_close(fd);
+
+    /* O_TMPFILE on a non-existent directory should fail */
+    int bad = (int)sys_openat(AT_FDCWD, "/nonexistent_dir_XYZ", O_TMPFILE | O_RDWR, 0600);
+    if (bad >= 0) {
+        fut_printf("[MISC-TEST] ✗ O_TMPFILE bad dir: expected error, got fd=%d\n", bad);
+        fut_vfs_close(bad);
+        fut_test_fail(329);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ O_TMPFILE: write+read roundtrip, data verified, bad-dir rejected\n");
+    fut_test_pass();
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -15881,6 +15949,7 @@ void fut_misc_test_thread(void *arg) {
     test_seqpacket_truncation();         /* Test 326: SEQPACKET truncates to buffer; discards remainder */
     test_seqpacket_connect_accept();     /* Test 327: SEQPACKET connect/accept path boundary preservation */
     test_shutdown_shut_wr_eof();         /* Test 328: shutdown(SHUT_WR) signals EOF to peer's recv() */
+    test_o_tmpfile_basic();              /* Test 329: O_TMPFILE creates anonymous file, survives close */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

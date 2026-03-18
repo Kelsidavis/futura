@@ -41,6 +41,7 @@ struct ramfs_xattr {
 struct ramfs_node {
     uint64_t magic_guard_before;    /* Guard value to detect overflow into structure */
     uint32_t open_count;            /* Reference count: number of open file descriptors */
+    uint8_t  deleted;               /* Set when unlinked while open; defers data free to close */
     /* Timestamps in ticks since boot (from fut_get_ticks(), 100 Hz = 10ms each) */
     uint64_t atime_ms;              /* Last access time */
     uint64_t mtime_ms;              /* Last modification time */
@@ -178,16 +179,22 @@ static int ramfs_close(struct fut_vnode *vnode) {
         node->open_count--;
     }
 
+    /* For unlinked-while-open files (O_TMPFILE or unlink of open fd):
+     * free data now that the last FD is gone. The vnode itself is freed
+     * by fut_vnode_unref() called by the caller (fut_file_release). */
+    if (node->open_count == 0 && node->deleted) {
+        if (node->file.data) {
+            fut_free(node->file.data);
+            node->file.data = NULL;
+        }
+        fut_free(node);
+        vnode->fs_data = NULL;
+        return 0;
+    }
+
     /* RAMFS file buffers are NEVER freed after open.
      * This is intentional - RAMFS is a boot-time filesystem for staging binaries.
      * File data persists for the lifetime of the system.
-     * Reasons:
-     * 1. Files can be opened and closed multiple times (write, then read for exec)
-     * 2. Each open/close pair is independent and shouldn't affect other accesses
-     * 3. RAMFS files are typically small (binaries, configs)
-     * 4. Keeping them persistent simplifies lifecycle management
-     *
-     * The open_count tracking is maintained for diagnostics only.
      */
     return 0;
 }
@@ -721,6 +728,7 @@ static int ramfs_create(struct fut_vnode *dir, const char *name, uint32_t mode, 
 
     /* Initialize open reference count */
     node->open_count = 0;
+    node->deleted = 0;
 
     /* Initialize timestamps to current time */
     node->atime_ms = fut_get_ticks();
@@ -838,6 +846,7 @@ static int ramfs_mkdir(struct fut_vnode *dir, const char *name, uint32_t mode) {
 
     /* Initialize open reference count */
     node->open_count = 0;
+    node->deleted = 0;
 
     /* Initialize timestamps to current time */
     node->atime_ms = fut_get_ticks();
@@ -922,13 +931,6 @@ static int ramfs_unlink(struct fut_vnode *dir, const char *name) {
                 return -EACCES;  /* Cannot unlink device nodes */
             }
 
-            /* Check if file is still open */
-            struct ramfs_node *node = (struct ramfs_node *)vnode->fs_data;
-            if (node && node->open_count > 0) {
-                fut_printf("[RAMFS-UNLINK] Warning: unlinking open file (open_count=%u)\n",
-                          node->open_count);
-            }
-
             /* Decrement link count */
             if (vnode->nlinks > 0) {
                 vnode->nlinks--;
@@ -944,20 +946,27 @@ static int ramfs_unlink(struct fut_vnode *dir, const char *name) {
             /* Free the directory entry (always - this is the name being removed) */
             fut_free(entry);
 
-            /* Only free data and vnode when all hard links are gone */
+            /* Drop the directory's reference to the vnode.
+             * If the file is still open (open_count > 0), mark it deleted and
+             * defer data cleanup to ramfs_close; the vnode stays alive until
+             * the last FD is closed and fut_vnode_unref drops it to zero. */
+            struct ramfs_node *node = (struct ramfs_node *)vnode->fs_data;
             if (vnode->nlinks == 0) {
-                /* Free file data if it exists */
-                if (node && node->file.data) {
-                    fut_free(node->file.data);
+                if (node && node->open_count > 0) {
+                    /* Deferred: data freed in ramfs_close when open_count hits 0 */
+                    node->deleted = 1;
+                } else {
+                    /* Immediate free: no open FDs */
+                    if (node && node->file.data) {
+                        fut_free(node->file.data);
+                    }
+                    if (node) {
+                        fut_free(node);
+                        vnode->fs_data = NULL;
+                    }
                 }
-
-                /* Free the ramfs_node */
-                if (node) {
-                    fut_free(node);
-                }
-
-                /* Free the vnode */
-                fut_free(vnode);
+                /* Drop the directory entry's refcount; frees vnode if refcount hits 0 */
+                fut_vnode_unref(vnode);
             }
 
             /* Update parent directory mtime and ctime (entry removed) */
@@ -1533,6 +1542,7 @@ static int ramfs_symlink(struct fut_vnode *parent, const char *linkpath, const c
     /* Initialize link_node */
     link_node->magic_guard_before = RAMFS_NODE_MAGIC;
     link_node->open_count = 0;
+    link_node->deleted = 0;
     link_node->atime_ms = fut_get_ticks();
     link_node->mtime_ms = link_node->atime_ms;
     link_node->ctime_ms = link_node->atime_ms;
@@ -1993,6 +2003,7 @@ static int ramfs_mount(const char *device, int flags, void *data, fut_handle_t b
     /* Initialize guard values to detect buffer overflows */
     root_node->magic_guard_before = RAMFS_NODE_MAGIC;
     root_node->open_count = 0;
+    root_node->deleted = 0;
     root_node->atime_ms = fut_get_ticks();
     root_node->mtime_ms = root_node->atime_ms;
     root_node->ctime_ms = root_node->atime_ms;

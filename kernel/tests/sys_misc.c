@@ -3167,49 +3167,41 @@ static void test_epoll_oneshot(void) {
 }
 
 /* ============================================================
- * Test 75: pipe short write when buffer partially full
+ * Test 75: blocking pipe write of <= PIPE_BUF bytes succeeds when space available
+ *
+ * POSIX: writes <= PIPE_BUF on a blocking pipe are atomic — they either complete
+ * fully or block until they can.  A write to a pipe with enough free space must
+ * return exactly len.  (The old test checked for a partial short-write which is
+ * incorrect POSIX/Linux behavior for writes <= PIPE_BUF.)
  * ============================================================ */
 static void test_pipe_short_write(void) {
-    fut_printf("[MISC-TEST] Test 75: pipe short write\n");
+    fut_printf("[MISC-TEST] Test 75: blocking pipe write <= PIPE_BUF atomic\n");
 
     int pipefd[2];
     long ret = sys_pipe(pipefd);
     if (ret != 0) { fut_test_fail(75); return; }
 
-    /* Fill pipe buffer almost completely (65536 - 10 = 65526 bytes) */
-    char fill[4096];
-    __builtin_memset(fill, 'A', sizeof(fill));
-    ssize_t total_fill = 0;
-    while (total_fill < 65526) {
-        size_t want = 65526 - (size_t)total_fill;
-        if (want > sizeof(fill)) want = sizeof(fill);
-        ssize_t nw = fut_vfs_write(pipefd[1], fill, want);
-        if (nw <= 0) break;
-        total_fill += nw;
-    }
-    if (total_fill != 65526) {
-        fut_printf("[MISC-TEST] ✗ fill write: %zd (expected 65526)\n", total_fill);
+    /* Write 100 bytes to an empty pipe — must return exactly 100 */
+    char data[100];
+    __builtin_memset(data, 'X', sizeof(data));
+    ssize_t nw = fut_vfs_write(pipefd[1], data, sizeof(data));
+    if (nw != 100) {
+        fut_printf("[MISC-TEST] ✗ blocking write 100 bytes to empty pipe: %zd (expected 100)\n", nw);
         fut_vfs_close(pipefd[0]); fut_vfs_close(pipefd[1]);
         fut_test_fail(75); return;
     }
 
-    /* Write 100 bytes — only 10 should fit (short write) */
-    char extra[100];
-    __builtin_memset(extra, 'B', sizeof(extra));
-    ssize_t nw = fut_vfs_write(pipefd[1], extra, sizeof(extra));
-
-    /* Drain and close: close write end first so read end sees EOF */
-    fut_vfs_close(pipefd[1]);
-    char drain[4096];
-    while (fut_vfs_read(pipefd[0], drain, sizeof(drain)) > 0) {}
-    fut_vfs_close(pipefd[0]);
-
-    if (nw != 10) {
-        fut_printf("[MISC-TEST] ✗ short write: %zd (expected 10)\n", nw);
+    /* Read back and verify */
+    char rbuf[100];
+    ssize_t nr = fut_vfs_read(pipefd[0], rbuf, sizeof(rbuf));
+    if (nr != 100 || __builtin_memcmp(rbuf, data, 100) != 0) {
+        fut_printf("[MISC-TEST] ✗ pipe readback: %zd bytes\n", nr);
+        fut_vfs_close(pipefd[0]); fut_vfs_close(pipefd[1]);
         fut_test_fail(75); return;
     }
 
-    fut_printf("[MISC-TEST] ✓ pipe short write: 100 requested, 10 written (buffer had 10 free)\n");
+    fut_vfs_close(pipefd[0]); fut_vfs_close(pipefd[1]);
+    fut_printf("[MISC-TEST] ✓ pipe blocking write: 100 bytes written atomically and verified\n");
     fut_test_pass();
 }
 

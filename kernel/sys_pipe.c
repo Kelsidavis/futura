@@ -263,8 +263,17 @@ static ssize_t pipe_write(void *inode, void *priv, const void *buf, size_t len, 
         }
     }
 
-    /* Block until space is available */
-    while (pipe->count >= pipe->size && !pipe->read_closed) {
+    /*
+     * Block until enough space is available.
+     *
+     * POSIX atomicity rules for blocking pipes:
+     *   writes <= PIPE_BUF: block until ALL bytes fit (atomic, never partial)
+     *   writes >  PIPE_BUF: block only while pipe is completely full (partial ok)
+     *
+     * This mirrors the O_NONBLOCK rules but sleeps instead of returning EAGAIN.
+     */
+    size_t need = (len <= PIPE_BUF_ATOMIC) ? len : 1;
+    while ((pipe->size - pipe->count) < need && !pipe->read_closed) {
         /* Check for pending signals → EINTR (use per-thread mask) */
         fut_task_t *stask = fut_task_current();
         if (stask) {
@@ -278,7 +287,7 @@ static ssize_t pipe_write(void *inode, void *priv, const void *buf, size_t len, 
                 return -EINTR;
             }
         }
-        /* Pipe is full and read end is still open - block */
+        /* Not enough space yet — block */
         fut_waitq_sleep_locked(&pipe->write_waitq, &pipe->lock, FUT_THREAD_BLOCKED);
         /* When we wake up, reacquire the lock */
         fut_spinlock_acquire(&pipe->lock);
@@ -290,7 +299,7 @@ static ssize_t pipe_write(void *inode, void *priv, const void *buf, size_t len, 
         return -EPIPE;
     }
 
-    /* Write up to len bytes to pipe */
+    /* Write up to len bytes to pipe (atomic writes always fit fully; large writes may be partial) */
     size_t space = pipe->size - pipe->count;
     size_t to_write = (len < space) ? len : space;
     size_t bytes_written = 0;

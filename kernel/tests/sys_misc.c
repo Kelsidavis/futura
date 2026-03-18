@@ -7958,6 +7958,58 @@ static void test_fchownat_basic(void) {
     fut_test_pass();
 }
 
+static void test_futimens_basic(void) {
+    fut_printf("[MISC-TEST] Test 178: sys_futimens basic\n");
+    extern long sys_futimens(int fd, const void *times);
+
+    /* Create a test file */
+    int fd = (int)fut_vfs_open("/test_futimens.txt", O_CREAT | O_RDWR, 0644);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ futimens: create failed: %d\n", fd);
+        fut_test_fail(178);
+        return;
+    }
+
+    /* futimens with NULL times → set to current time */
+    long ret = sys_futimens(fd, NULL);
+    fut_vfs_close(fd);
+    fut_vfs_unlink("/test_futimens.txt");
+
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ futimens(NULL): expected 0, got %ld\n", ret);
+        fut_test_fail(178);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ sys_futimens: NULL times (set to current) returns 0\n");
+    fut_test_pass();
+}
+
+static void test_utimensat_basic(void) {
+    fut_printf("[MISC-TEST] Test 179: sys_utimensat basic\n");
+    extern long sys_utimensat(int dirfd, const char *pathname, const void *times, int flags);
+
+    /* Create a test file */
+    int fd = (int)fut_vfs_open("/test_utimensat.txt", O_CREAT | O_RDWR, 0644);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ utimensat: create failed: %d\n", fd);
+        fut_test_fail(179);
+        return;
+    }
+    fut_vfs_close(fd);
+
+    /* utimensat with NULL times → set to current time */
+    long ret = sys_utimensat(-100, "/test_utimensat.txt", NULL, 0);
+    fut_vfs_unlink("/test_utimensat.txt");
+
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ utimensat(NULL): expected 0, got %ld\n", ret);
+        fut_test_fail(179);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ sys_utimensat: NULL times (set to current) via AT_FDCWD returns 0\n");
+    fut_test_pass();
+}
+
 static void test_linkat_basic(void) {
     fut_printf("[MISC-TEST] Test 176: sys_linkat basic\n");
     extern long sys_linkat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath, int flags);
@@ -8434,6 +8486,8 @@ void fut_misc_test_thread(void *arg) {
     test_capget_basic();                   /* Test 175: sys_capget effective caps for root */
     test_linkat_basic();                   /* Test 176: sys_linkat hard link + ENOENT */
     test_symlinkat_basic();                /* Test 177: sys_symlinkat creates symlink */
+    test_futimens_basic();                 /* Test 178: sys_futimens NULL times → current */
+    test_utimensat_basic();                /* Test 179: sys_utimensat NULL times via AT_FDCWD */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

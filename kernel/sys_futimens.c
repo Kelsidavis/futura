@@ -22,6 +22,19 @@
 #include <kernel/uaccess.h>
 #include <kernel/fut_timer.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
+static inline int futimens_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_from_user(dst, src, n);
+}
+
 /* Special timespec values */
 #define UTIME_NOW   ((long)1073741823)
 #define UTIME_OMIT  ((long)1073741822)
@@ -147,7 +160,7 @@ long sys_futimens(int fd, const fut_timespec_t *times) {
     /* Phase 2: Validate times parameter if provided */
     fut_timespec_t time_buf[2] = {0};
     if (local_times) {
-        if (fut_copy_from_user(time_buf, local_times, sizeof(time_buf)) != 0) {
+        if (futimens_copy_from_user(time_buf, local_times, sizeof(time_buf)) != 0) {
             fut_printf("[FUTIMENS] futimens(fd=%d [%s], times=%p) -> EFAULT "
                        "(times copy_from_user failed)\n",
                        local_fd, fd_desc, local_times);

@@ -27,6 +27,19 @@
 #include <kernel/fut_timer.h>
 #include <fcntl.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
+static inline int utimensat_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_from_user(dst, src, n);
+}
+
 /* AT_* constants provided by fcntl.h */
 
 /* Special timespec values */
@@ -142,7 +155,7 @@ long sys_utimensat(int dirfd, const char *pathname, const fut_timespec_t *times,
         /* Will set to current time in Phase 2 */
     } else {
         /* Copy timespec array from userspace */
-        if (fut_copy_from_user(time_buf, times, sizeof(time_buf)) != 0) {
+        if (utimensat_copy_from_user(time_buf, times, sizeof(time_buf)) != 0) {
             fut_printf("[UTIMENSAT] utimensat(dirfd=%d [%s], pathname=%p, times=%p [bad addr], "
                        "flags=%s, pid=%d) -> EFAULT (copy_from_user failed)\n",
                        dirfd, dirfd_desc, pathname, times, flags_desc, task->pid);
@@ -292,7 +305,7 @@ long sys_utimensat(int dirfd, const char *pathname, const fut_timespec_t *times,
 
     /* Copy pathname from userspace to kernel space */
     char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
-    if (fut_copy_from_user(path_buf, pathname, sizeof(path_buf)) != 0) {
+    if (utimensat_copy_from_user(path_buf, pathname, sizeof(path_buf)) != 0) {
         fut_printf("[UTIMENSAT] utimensat(dirfd=%d [%s], pathname=? [bad addr], times=%s, "
                    "flags=%s, pid=%d) -> EFAULT (pathname copy_from_user failed)\n",
                    dirfd, dirfd_desc, time_spec_desc, flags_desc, task->pid);

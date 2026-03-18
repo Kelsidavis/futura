@@ -10913,6 +10913,62 @@ static void test_kcmp_errors(void) {
 }
 
 /* ============================================================
+ * Tests 232-233: faccessat2()
+ * ============================================================ */
+
+#define TEST_AT_FDCWD_FA2  (-100)
+#define TEST_F_OK   0
+#define TEST_R_OK   4
+
+/* Test 232: faccessat2 F_OK/R_OK on existing file (delegates to sys_faccessat) */
+static void test_faccessat2_basic(void) {
+    fut_printf("[MISC-TEST] Test 232: faccessat2 F_OK/R_OK on existing file\n");
+    extern long sys_faccessat(int dirfd, const char *path, int mode, int flags);
+    extern long sys_unlink(const char *path);
+
+    int fd = fut_vfs_open("/fa2_test.txt", O_CREAT | O_RDWR, 0644);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open failed: %d\n", fd);
+        fut_test_fail(232); return;
+    }
+    fut_vfs_close(fd);
+
+    /* F_OK: file exists */
+    long r = sys_faccessat(TEST_AT_FDCWD_FA2, "/fa2_test.txt", TEST_F_OK, 0);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ faccessat2/faccessat F_OK expected 0, got %ld\n", r);
+        sys_unlink("/fa2_test.txt");
+        fut_test_fail(232); return;
+    }
+
+    /* R_OK: readable */
+    r = sys_faccessat(TEST_AT_FDCWD_FA2, "/fa2_test.txt", TEST_R_OK, 0);
+    sys_unlink("/fa2_test.txt");
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ faccessat2/faccessat R_OK expected 0, got %ld\n", r);
+        fut_test_fail(232); return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ faccessat2: F_OK and R_OK both return 0\n");
+    fut_test_pass();
+}
+
+/* Test 233: faccessat2 returns ENOENT for non-existent file */
+static void test_faccessat2_enoent(void) {
+    fut_printf("[MISC-TEST] Test 233: faccessat2 ENOENT for missing file\n");
+    extern long sys_faccessat(int dirfd, const char *path, int mode, int flags);
+
+    long r = sys_faccessat(TEST_AT_FDCWD_FA2, "/no_such_file_fa2_xyz", TEST_F_OK, 0);
+    if (r != -2 /* -ENOENT */) {
+        fut_printf("[MISC-TEST] ✗ faccessat2/faccessat missing expected ENOENT, got %ld\n", r);
+        fut_test_fail(233); return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ faccessat2: missing file → ENOENT\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -11153,6 +11209,8 @@ void fut_misc_test_thread(void *arg) {
     test_kcmp_file_same();                 /* Test 229: kcmp KCMP_FILE same FD → 0 */
     test_kcmp_file_different();            /* Test 230: kcmp KCMP_FILE different files → nonzero */
     test_kcmp_errors();                    /* Test 231: kcmp error paths */
+    test_faccessat2_basic();               /* Test 232: faccessat2 F_OK/R_OK on existing file */
+    test_faccessat2_enoent();              /* Test 233: faccessat2 returns ENOENT for missing */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

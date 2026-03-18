@@ -204,6 +204,7 @@
 #define SYS_sched_getattr          440  /* Linux: 315 — Futura: 440 */
 #define SYS_seccomp                441  /* Linux: 317 — Futura: 441 (317 used by renameat2) */
 #define SYS_kcmp                   442  /* Linux: 312 — Futura: 442 (312 used by capget) */
+#define SYS_faccessat2             443  /* Linux: 439 — Futura: 443 (439 used by sched_setattr) */
 
 /* xattr syscalls (Linux x86_64 188-199) */
 #define SYS_setxattr     188
@@ -1716,6 +1717,15 @@ static int64_t sys_rt_tgsigqueueinfo_handler(uint64_t tgid, uint64_t tid, uint64
                                   (const void *)(uintptr_t)uinfo);
 }
 
+static int64_t sys_faccessat2_handler(uint64_t dirfd, uint64_t path, uint64_t mode,
+                                       uint64_t flags, uint64_t arg5, uint64_t arg6) {
+    (void)arg5; (void)arg6;
+    /* faccessat2 is faccessat with flags properly passed — delegate directly */
+    extern long sys_faccessat(int dirfd, const char *pathname, int mode, int flags);
+    return sys_faccessat((int)dirfd, (const char *)(uintptr_t)path,
+                         (int)mode, (int)flags);
+}
+
 static int64_t sys_kcmp_handler(uint64_t pid1, uint64_t pid2, uint64_t type,
                                  uint64_t idx1, uint64_t idx2, uint64_t arg6) {
     (void)arg6;
@@ -3159,6 +3169,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_sched_getattr]       = sys_sched_getattr_handler,
     [SYS_seccomp]             = sys_seccomp_handler,
     [SYS_kcmp]                = sys_kcmp_handler,
+    [SYS_faccessat2]          = sys_faccessat2_handler,
     /* time / itimer / clock */
     [SYS_getitimer]         = sys_getitimer_handler,
     [SYS_setitimer]         = sys_setitimer_handler,

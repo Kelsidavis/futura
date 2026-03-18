@@ -73,6 +73,8 @@
 #define SYS_preadv              295
 #define SYS_pwritev             296
 #define SYS_rt_tgsigqueueinfo   297
+#define SYS_process_vm_readv    437  /* Linux: 310 — Futura: 437 (310/311 used by vhangup/setreuid) */
+#define SYS_process_vm_writev   438  /* Linux: 311 — Futura: 438 */
 #define SYS_select      23
 #define SYS_sched_yield 24
 #define SYS_mremap      25
@@ -1708,6 +1710,26 @@ static int64_t sys_rt_tgsigqueueinfo_handler(uint64_t tgid, uint64_t tid, uint64
                                   (const void *)(uintptr_t)uinfo);
 }
 
+static int64_t sys_process_vm_readv_handler(uint64_t pid, uint64_t lvec, uint64_t liovcnt,
+                                             uint64_t rvec, uint64_t riovcnt, uint64_t flags) {
+    extern long sys_process_vm_readv(int pid, const void *lvec, unsigned long liovcnt,
+                                     const void *rvec, unsigned long riovcnt,
+                                     unsigned long flags);
+    return sys_process_vm_readv((int)pid, (const void *)(uintptr_t)lvec, (unsigned long)liovcnt,
+                                (const void *)(uintptr_t)rvec, (unsigned long)riovcnt,
+                                (unsigned long)flags);
+}
+
+static int64_t sys_process_vm_writev_handler(uint64_t pid, uint64_t lvec, uint64_t liovcnt,
+                                              uint64_t rvec, uint64_t riovcnt, uint64_t flags) {
+    extern long sys_process_vm_writev(int pid, const void *lvec, unsigned long liovcnt,
+                                      const void *rvec, unsigned long riovcnt,
+                                      unsigned long flags);
+    return sys_process_vm_writev((int)pid, (const void *)(uintptr_t)lvec, (unsigned long)liovcnt,
+                                 (const void *)(uintptr_t)rvec, (unsigned long)riovcnt,
+                                 (unsigned long)flags);
+}
+
 static int64_t sys_memfd_create_handler(uint64_t uname, uint64_t flags, uint64_t arg3,
                                         uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     (void)arg3; (void)arg4; (void)arg5; (void)arg6;
@@ -3075,6 +3097,8 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_preadv]              = sys_preadv_handler,
     [SYS_pwritev]             = sys_pwritev_handler,
     [SYS_rt_tgsigqueueinfo]   = sys_rt_tgsigqueueinfo_handler,
+    [SYS_process_vm_readv]    = sys_process_vm_readv_handler,
+    [SYS_process_vm_writev]   = sys_process_vm_writev_handler,
     /* time / itimer / clock */
     [SYS_getitimer]         = sys_getitimer_handler,
     [SYS_setitimer]         = sys_setitimer_handler,

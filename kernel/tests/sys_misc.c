@@ -10423,6 +10423,95 @@ static void test_proc_filesystems(void) {
 }
 
 /* ============================================================
+ * Tests 217-219: process_vm_readv / process_vm_writev
+ * ============================================================ */
+
+struct pvm_test_iovec { void *iov_base; size_t iov_len; };
+
+/* Test 217: process_vm_readv scatter-gather */
+static void test_process_vm_readv_basic(void) {
+    fut_printf("[MISC-TEST] Test 217: process_vm_readv scatter-gather\n");
+    extern long sys_process_vm_readv(int pid, const void *lvec, unsigned long liovcnt,
+                                     const void *rvec, unsigned long riovcnt,
+                                     unsigned long flags);
+    extern long sys_getpid(void);
+
+    static const char src[8] = "ABCDEFGH";
+    char dst[8];
+    __builtin_memset(dst, 0, sizeof(dst));
+
+    struct pvm_test_iovec lv = { dst, 8 };
+    struct pvm_test_iovec rv = { (void *)src, 8 };
+
+    long pid = sys_getpid();
+    long n = sys_process_vm_readv((int)pid, &lv, 1, &rv, 1, 0);
+    if (n != 8) {
+        fut_printf("[MISC-TEST] ✗ process_vm_readv returned %ld (want 8)\n", n);
+        fut_test_fail(217); return;
+    }
+    if (__builtin_memcmp(dst, src, 8) != 0) {
+        fut_printf("[MISC-TEST] ✗ data mismatch after process_vm_readv\n");
+        fut_test_fail(217); return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ process_vm_readv: 8 bytes transferred correctly\n");
+    fut_test_pass();
+}
+
+/* Test 218: process_vm_writev scatter-gather */
+static void test_process_vm_writev_basic(void) {
+    fut_printf("[MISC-TEST] Test 218: process_vm_writev scatter-gather\n");
+    extern long sys_process_vm_writev(int pid, const void *lvec, unsigned long liovcnt,
+                                      const void *rvec, unsigned long riovcnt,
+                                      unsigned long flags);
+    extern long sys_getpid(void);
+
+    static const char src[6] = "HELLO!";
+    char dst[6];
+    __builtin_memset(dst, 0, sizeof(dst));
+
+    struct pvm_test_iovec lv = { (void *)src, 6 };
+    struct pvm_test_iovec rv = { dst, 6 };
+
+    long pid = sys_getpid();
+    long n = sys_process_vm_writev((int)pid, &lv, 1, &rv, 1, 0);
+    if (n != 6) {
+        fut_printf("[MISC-TEST] ✗ process_vm_writev returned %ld (want 6)\n", n);
+        fut_test_fail(218); return;
+    }
+    if (__builtin_memcmp(dst, src, 6) != 0) {
+        fut_printf("[MISC-TEST] ✗ data mismatch after process_vm_writev\n");
+        fut_test_fail(218); return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ process_vm_writev: 6 bytes transferred correctly\n");
+    fut_test_pass();
+}
+
+/* Test 219: process_vm_readv flags != 0 → EINVAL */
+static void test_process_vm_flags_einval(void) {
+    fut_printf("[MISC-TEST] Test 219: process_vm_readv flags!=0 → EINVAL\n");
+    extern long sys_process_vm_readv(int pid, const void *lvec, unsigned long liovcnt,
+                                     const void *rvec, unsigned long riovcnt,
+                                     unsigned long flags);
+    extern long sys_getpid(void);
+
+    char buf[8];
+    struct pvm_test_iovec lv = { buf, 8 };
+    struct pvm_test_iovec rv = { buf, 8 };
+
+    long pid = sys_getpid();
+    long r = sys_process_vm_readv((int)pid, &lv, 1, &rv, 1, 1 /* invalid flags */);
+    if (r != -22 /* -EINVAL */) {
+        fut_printf("[MISC-TEST] ✗ expected EINVAL for flags=1, got %ld\n", r);
+        fut_test_fail(219); return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ process_vm_readv: flags!=0 correctly returns EINVAL\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -10648,6 +10737,9 @@ void fut_misc_test_thread(void *arg) {
     test_signalfd_basic();                 /* Test 214: signalfd4 create/raise/read */
     test_signalfd_nonblock_eagain();       /* Test 215: SFD_NONBLOCK EAGAIN when empty */
     test_signalfd_mask_update();           /* Test 216: signalfd4 mask update via ufd != -1 */
+    test_process_vm_readv_basic();         /* Test 217: process_vm_readv scatter-gather */
+    test_process_vm_writev_basic();        /* Test 218: process_vm_writev scatter-gather */
+    test_process_vm_flags_einval();        /* Test 219: process_vm_readv flags!=0 → EINVAL */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -309,6 +309,9 @@
 #define SYS_getrandom       318  /* Linux: 318 */
 #define SYS_membarrier      324  /* Linux: 324 */
 #define SYS_copy_file_range 326  /* Linux: 326 */
+#define SYS_pkey_mprotect   329  /* Linux: 329 */
+#define SYS_pkey_alloc      330  /* Linux: 330 */
+#define SYS_pkey_free       331  /* Linux: 331 */
 #define SYS_rseq            334  /* Linux: 334 */
 #define SYS_statx           332  /* Linux: 332 */
 #define SYS_tgkill          234  /* Linux: 234 */
@@ -1191,6 +1194,28 @@ static int64_t sys_mprotect_handler(uint64_t addr, uint64_t len, uint64_t prot,
     (void)arg4; (void)arg5; (void)arg6;
     extern long sys_mprotect(void *addr, size_t len, int prot);
     return sys_mprotect((void *)addr, (size_t)len, (int)prot);
+}
+
+static int64_t sys_pkey_mprotect_handler(uint64_t addr, uint64_t len, uint64_t prot,
+                                          uint64_t pkey, uint64_t arg5, uint64_t arg6) {
+    (void)arg5; (void)arg6;
+    extern long sys_pkey_mprotect(void *addr, size_t len, int prot, int pkey);
+    return sys_pkey_mprotect((void *)addr, (size_t)len, (int)prot, (int)pkey);
+}
+
+static int64_t sys_pkey_alloc_handler(uint64_t flags, uint64_t access_rights,
+                                       uint64_t arg3, uint64_t arg4,
+                                       uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_pkey_alloc(unsigned int flags, unsigned int access_rights);
+    return sys_pkey_alloc((unsigned int)flags, (unsigned int)access_rights);
+}
+
+static int64_t sys_pkey_free_handler(uint64_t pkey, uint64_t arg2, uint64_t arg3,
+                                      uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_pkey_free(int pkey);
+    return sys_pkey_free((int)pkey);
 }
 
 static int64_t sys_mremap_handler(uint64_t old_addr, uint64_t old_size, uint64_t new_size,
@@ -3084,7 +3109,10 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_nanosleep]  = sys_nanosleep_handler,
     [SYS_brk]        = sys_brk_handler,
     [SYS_munmap]     = sys_munmap_handler,
-    [SYS_mprotect]   = sys_mprotect_handler,
+    [SYS_mprotect]        = sys_mprotect_handler,
+    [SYS_pkey_mprotect]   = sys_pkey_mprotect_handler,
+    [SYS_pkey_alloc]      = sys_pkey_alloc_handler,
+    [SYS_pkey_free]       = sys_pkey_free_handler,
     [SYS_echo]       = sys_echo_handler,
     [SYS_ioctl]      = sys_ioctl_handler,
     [SYS_mmap]       = sys_mmap_handler,

@@ -11479,6 +11479,84 @@ static void test_madvise_gap_einval(void) {
 }
 
 /* ============================================================
+ * Tests 254-257: pkey_alloc, pkey_free, pkey_mprotect (Linux 329-331)
+ * ============================================================ */
+
+/* Linux pkey syscall numbers (Futura uses same) */
+#define TPKEY_ALLOC_SYS      330
+#define TPKEY_FREE_SYS       331
+/* ENOSPC=28, EINVAL=22 */
+
+static void test_pkey_alloc_enospc(void) {
+    fut_printf("[MISC-TEST] Test 254: pkey_alloc with no PKU hardware → ENOSPC\n");
+    extern long sys_pkey_alloc(unsigned int flags, unsigned int access_rights);
+
+    /* With no PKU hardware support, pkey_alloc must return -ENOSPC */
+    long r = sys_pkey_alloc(0, 0);
+    if (r != -28) { /* -ENOSPC */
+        fut_printf("[MISC-TEST] ✗ pkey_alloc: expected -ENOSPC(-28), got %ld\n", r);
+        fut_test_fail(254); return;
+    }
+    fut_printf("[MISC-TEST] ✓ pkey_alloc(0,0) → -ENOSPC (no PKU hardware)\n");
+    fut_test_pass();
+}
+
+static void test_pkey_alloc_bad_flags(void) {
+    fut_printf("[MISC-TEST] Test 255: pkey_alloc bad flags/access_rights → EINVAL\n");
+    extern long sys_pkey_alloc(unsigned int flags, unsigned int access_rights);
+
+    long r1 = sys_pkey_alloc(1, 0);      /* flags != 0 */
+    long r2 = sys_pkey_alloc(0, 0xFF);   /* unknown access_rights bits */
+    if (r1 != -22 || r2 != -22) { /* -EINVAL */
+        fut_printf("[MISC-TEST] ✗ pkey_alloc bad args: flags→%ld acc→%ld (want -22)\n",
+                   r1, r2);
+        fut_test_fail(255); return;
+    }
+    fut_printf("[MISC-TEST] ✓ pkey_alloc bad flags/access_rights → EINVAL\n");
+    fut_test_pass();
+}
+
+static void test_pkey_free_einval(void) {
+    fut_printf("[MISC-TEST] Test 256: pkey_free any pkey → EINVAL (none allocated)\n");
+    extern long sys_pkey_free(int pkey);
+
+    long r0 = sys_pkey_free(0);
+    long r_bad = sys_pkey_free(100);  /* out of range */
+    if (r0 != -22 || r_bad != -22) { /* -EINVAL */
+        fut_printf("[MISC-TEST] ✗ pkey_free: pkey0→%ld, pkey100→%ld (want -22)\n",
+                   r0, r_bad);
+        fut_test_fail(256); return;
+    }
+    fut_printf("[MISC-TEST] ✓ pkey_free(0/100) → EINVAL\n");
+    fut_test_pass();
+}
+
+static void test_pkey_mprotect(void) {
+    fut_printf("[MISC-TEST] Test 257: pkey_mprotect pkey=-1 delegates to mprotect\n");
+    extern long sys_pkey_mprotect(void *addr, size_t len, int prot, int pkey);
+    extern long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long off);
+    extern long sys_munmap(void *addr, size_t len);
+
+    void *p = (void *)sys_mmap(NULL, 4096, TEST_PROT_RW,
+                               TEST_MAP_PRIVATE | TEST_MAP_ANONYMOUS, -1, 0);
+    if (!p || (long)(uintptr_t)p < 0) { fut_test_fail(257); return; }
+
+    /* pkey=-1: no key association, delegate to mprotect → 0 */
+    long r_ok = sys_pkey_mprotect(p, 4096, TEST_PROT_RW, -1);
+    /* pkey=0: not allocated → EINVAL */
+    long r_inv = sys_pkey_mprotect(p, 4096, TEST_PROT_RW, 0);
+    sys_munmap(p, 4096);
+
+    if (r_ok != 0 || r_inv != -22) {
+        fut_printf("[MISC-TEST] ✗ pkey_mprotect: pkey=-1→%ld pkey=0→%ld\n",
+                   r_ok, r_inv);
+        fut_test_fail(257); return;
+    }
+    fut_printf("[MISC-TEST] ✓ pkey_mprotect: pkey=-1→0, pkey=0→EINVAL\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -11741,6 +11819,10 @@ void fut_misc_test_thread(void *arg) {
     test_madvise_hugepage();               /* Test 251: madvise MADV_HUGEPAGE/NOHUGEPAGE (14/15) */
     test_madvise_dontdump();               /* Test 252: madvise MADV_DONTDUMP/DODUMP (16/17) */
     test_madvise_gap_einval();             /* Test 253: madvise gap values 5/6/7 → EINVAL */
+    test_pkey_alloc_enospc();              /* Test 254: pkey_alloc no PKU hw → ENOSPC */
+    test_pkey_alloc_bad_flags();           /* Test 255: pkey_alloc bad flags/access → EINVAL */
+    test_pkey_free_einval();               /* Test 256: pkey_free any pkey → EINVAL */
+    test_pkey_mprotect();                  /* Test 257: pkey_mprotect pkey=-1 → 0, pkey=0 → EINVAL */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

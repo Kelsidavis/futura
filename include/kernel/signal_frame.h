@@ -101,7 +101,10 @@ typedef struct {
     sigset_t uc_sigmask;          /* Signal mask to restore */
 } ucontext_t;
 
-/* Signal info - information about delivered signal */
+/* Signal info - information about delivered signal
+ * (also defined in fut_siginfo.h for use in fut_thread.h without signal.h) */
+#ifndef __siginfo_t_defined
+#define __siginfo_t_defined 1
 typedef struct {
     int si_signum;      /* Signal number */
     int si_errno;       /* Error number */
@@ -114,6 +117,7 @@ typedef struct {
     int si_overrun;     /* Timer overrun count */
     int si_timerid;     /* Timer ID */
 } siginfo_t;
+#endif
 
 /* Real-time signal frame layout on user stack
  *

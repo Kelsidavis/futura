@@ -13,8 +13,7 @@
 #include <stddef.h>
 #include <stdbool.h>
 #include "fut_stats.h"
-#include "signal.h"
-#include "signal_frame.h"
+#include "fut_siginfo.h"
 #if defined(__x86_64__)
 #include <platform/x86_64/regs.h>
 #elif defined(__aarch64__)
@@ -120,7 +119,7 @@ struct fut_thread {
 
     /* Per-signal siginfo_t for thread-directed signals (rt_tgsigqueueinfo / tgkill).
      * Indexed by signal number (0 unused; valid range 1..._NSIG-1). */
-    siginfo_t thread_sig_queue_info[_NSIG];
+    siginfo_t thread_sig_queue_info[FUT_THREAD_NSIG];
 };
 
 /* ============================================================

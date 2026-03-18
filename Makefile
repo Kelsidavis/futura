@@ -587,6 +587,7 @@ KERNEL_SOURCES := \
     kernel/sys_readlink.c \
     kernel/sys_readlinkat.c \
     kernel/sys_getdents64.c \
+    kernel/sys_getdents.c \
     kernel/sys_utimensat.c \
     kernel/sys_pread64.c \
     kernel/sys_pwrite64.c \

@@ -17938,6 +17938,78 @@ static void test_proc_fd_pipe_symlink(void) {
 }
 
 /* ============================================================
+ * Test 385: getdents(78) — legacy dirent listing matches getdents64
+ * ============================================================ */
+static void test_getdents_legacy(void) {
+    fut_printf("[MISC-TEST] Test 385: getdents(78) lists /tmp directory\n");
+    extern long sys_getdents(unsigned int fd, void *dirp, unsigned int count);
+    /* Ensure at least one file exists under /tmp */
+    int f = fut_vfs_open("/tmp/getdents385.txt", O_CREAT | O_RDWR, 0644);
+    if (f >= 0) fut_vfs_close(f);
+
+    int dfd = fut_vfs_open("/tmp", O_RDONLY, 0);
+    if (dfd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 385: open /tmp failed: %d\n", dfd);
+        fut_test_fail(385); return;
+    }
+    char buf[512];
+    long n = sys_getdents((unsigned int)dfd, buf, sizeof(buf));
+    fut_vfs_close(dfd);
+    if (n <= 0) {
+        fut_printf("[MISC-TEST] ✗ Test 385: getdents returned %ld\n", n);
+        fut_test_fail(385); return;
+    }
+    /* Walk the returned buffer and verify at least one entry looks sane.
+     * linux_dirent: d_ino(8) + d_off(8) + d_reclen(2) + name... */
+    struct { unsigned long d_ino; unsigned long d_off; unsigned short d_reclen;
+             char d_name[1]; } *d = (void *)buf;
+    if (d->d_reclen == 0 || d->d_reclen > (unsigned short)n || d->d_ino == 0) {
+        fut_printf("[MISC-TEST] ✗ Test 385: malformed dirent reclen=%u ino=%lu\n",
+                   d->d_reclen, d->d_ino);
+        fut_test_fail(385); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 385: getdents returned %ld bytes, first d_ino=%lu name='%s'\n",
+               n, d->d_ino, d->d_name);
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 386: swapon/swapoff return EPERM, iopl/ioperm return EPERM
+ * ============================================================ */
+static void test_swapon_iopl_eperm(void) {
+    fut_printf("[MISC-TEST] Test 386: swapon/swapoff/iopl/ioperm return EPERM\n");
+    extern long sys_swapon(const char *path, int swapflags);
+    extern long sys_swapoff(const char *path);
+    extern long sys_iopl(unsigned int level);
+    extern long sys_ioperm(unsigned long from, unsigned long num, int turn_on);
+
+    long r1 = sys_swapon("/dev/null", 0);
+    long r2 = sys_swapoff("/dev/null");
+    long r3 = sys_iopl(3);
+    long r4 = sys_ioperm(0, 1024, 1);
+
+    if (r1 != -1 && r1 != -EPERM) {
+        fut_printf("[MISC-TEST] ✗ Test 386: swapon returned %ld (expected -EPERM)\n", r1);
+        fut_test_fail(386); return;
+    }
+    if (r2 != -1 && r2 != -EPERM) {
+        fut_printf("[MISC-TEST] ✗ Test 386: swapoff returned %ld (expected -EPERM)\n", r2);
+        fut_test_fail(386); return;
+    }
+    if (r3 != -1 && r3 != -EPERM) {
+        fut_printf("[MISC-TEST] ✗ Test 386: iopl returned %ld (expected -EPERM)\n", r3);
+        fut_test_fail(386); return;
+    }
+    if (r4 != -1 && r4 != -EPERM) {
+        fut_printf("[MISC-TEST] ✗ Test 386: ioperm returned %ld (expected -EPERM)\n", r4);
+        fut_test_fail(386); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 386: swapon=%ld swapoff=%ld iopl=%ld ioperm=%ld (all EPERM)\n",
+               r1, r2, r3, r4);
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test 367: /proc/self/net/unix readable (same content as /proc/net/unix)
  * ============================================================ */
 static void test_proc_pid_net_unix(void) {
@@ -18521,6 +18593,8 @@ void fut_misc_test_thread(void *arg) {
     test_utime_syscall();                /* Test 382: utime() sets mtime */
     test_aio_uring_enosys();             /* Test 383: io_setup/io_uring_setup return ENOSYS */
     test_proc_fd_pipe_symlink();         /* Test 384: /proc/self/fd/<n> shows pipe:[ino] */
+    test_getdents_legacy();              /* Test 385: getdents(78) lists directory */
+    test_swapon_iopl_eperm();            /* Test 386: swapon/swapoff/iopl/ioperm -> EPERM */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

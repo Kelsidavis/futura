@@ -368,6 +368,13 @@
 /* Legacy utime (Linux x86_64: 132) */
 #define SYS_utime            132
 
+/* Legacy getdents / swap / ioport (Linux x86_64) */
+#define SYS_getdents         78
+#define SYS_swapon           167
+#define SYS_swapoff          168
+#define SYS_iopl             172
+#define SYS_ioperm           173
+
 /* Linux AIO (Linux x86_64: 206-210) */
 #define SYS_io_setup         206
 #define SYS_io_destroy       207
@@ -1888,6 +1895,38 @@ static int64_t sys_utime_handler(uint64_t pathname, uint64_t times, uint64_t arg
     (void)arg3; (void)arg4; (void)arg5; (void)arg6;
     extern long sys_utime(const char *pathname, const void *times);
     return sys_utime((const char *)pathname, (const void *)times);
+}
+
+/* Legacy getdents / swap / ioport handlers */
+static int64_t sys_getdents_handler(uint64_t fd, uint64_t dirp, uint64_t count,
+                                     uint64_t a4, uint64_t a5, uint64_t a6) {
+    (void)a4; (void)a5; (void)a6;
+    extern long sys_getdents(unsigned int fd, void *dirp, unsigned int count);
+    return sys_getdents((unsigned int)fd, (void *)dirp, (unsigned int)count);
+}
+static int64_t sys_swapon_handler(uint64_t path, uint64_t flags, uint64_t a3,
+                                   uint64_t a4, uint64_t a5, uint64_t a6) {
+    (void)a3; (void)a4; (void)a5; (void)a6;
+    extern long sys_swapon(const char *path, int swapflags);
+    return sys_swapon((const char *)path, (int)flags);
+}
+static int64_t sys_swapoff_handler(uint64_t path, uint64_t a2, uint64_t a3,
+                                    uint64_t a4, uint64_t a5, uint64_t a6) {
+    (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
+    extern long sys_swapoff(const char *path);
+    return sys_swapoff((const char *)path);
+}
+static int64_t sys_iopl_handler(uint64_t level, uint64_t a2, uint64_t a3,
+                                 uint64_t a4, uint64_t a5, uint64_t a6) {
+    (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
+    extern long sys_iopl(unsigned int level);
+    return sys_iopl((unsigned int)level);
+}
+static int64_t sys_ioperm_handler(uint64_t from, uint64_t num, uint64_t turn_on,
+                                   uint64_t a4, uint64_t a5, uint64_t a6) {
+    (void)a4; (void)a5; (void)a6;
+    extern long sys_ioperm(unsigned long from, unsigned long num, int turn_on);
+    return sys_ioperm((unsigned long)from, (unsigned long)num, (int)turn_on);
 }
 
 /* Linux AIO stubs — return -ENOSYS so libaio falls back to sync I/O */
@@ -3627,6 +3666,12 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_setgroups]         = sys_setgroups_handler,
     [SYS_utimes]            = sys_utimes_handler,
     [SYS_utime]             = sys_utime_handler,
+    /* Legacy getdents / swap / ioport */
+    [SYS_getdents]          = sys_getdents_handler,
+    [SYS_swapon]            = sys_swapon_handler,
+    [SYS_swapoff]           = sys_swapoff_handler,
+    [SYS_iopl]              = sys_iopl_handler,
+    [SYS_ioperm]            = sys_ioperm_handler,
     /* Linux AIO stubs (206-210) — return ENOSYS so libaio falls back to sync I/O */
     [SYS_io_setup]          = sys_io_setup_handler,
     [SYS_io_destroy]        = sys_io_destroy_handler,

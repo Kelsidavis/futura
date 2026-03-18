@@ -923,6 +923,49 @@ void fut_sched_stats(uint64_t *ready_cnt, uint64_t *running_cnt) {
 }
 
 /**
+ * fut_sched_check_rlimit_cpu - Enforce RLIMIT_CPU for a task.
+ *
+ * Sums cpu_ticks across all threads in the task, converts to seconds,
+ * and sends SIGXCPU (soft limit) or SIGKILL (hard limit) when exceeded.
+ * Called from fut_sched_tick() on every timer interrupt, and exposed for
+ * unit testing from the kernel self-test suite.
+ *
+ * @param task  The task to check (must not be NULL).
+ */
+void fut_sched_check_rlimit_cpu(fut_task_t *task) {
+    uint64_t cpu_soft = task->rlimits[0 /* RLIMIT_CPU */].rlim_cur;
+    uint64_t cpu_hard = task->rlimits[0 /* RLIMIT_CPU */].rlim_max;
+    uint64_t rlim_inf = (uint64_t)-1;  /* RLIM64_INFINITY */
+
+    if (cpu_soft == rlim_inf && cpu_hard == rlim_inf)
+        return;  /* Common case: no CPU limit set */
+
+    /* Accumulate cpu_ticks from all threads in this task */
+    uint64_t total_ticks = 0;
+    fut_thread_t *t = task->threads;
+    while (t) {
+        total_ticks += t->stats.cpu_ticks;
+        t = t->next;
+    }
+    uint64_t cpu_sec = total_ticks / FUT_TIMER_HZ;
+
+    /* Hard limit: SIGKILL immediately */
+    if (cpu_hard != rlim_inf && cpu_sec >= cpu_hard) {
+        fut_signal_send(task, 9 /* SIGKILL */);
+        return;
+    }
+    /* Soft limit: SIGXCPU once per new CPU-second over limit.
+     * rlimit_cpu_last_sec is initialized to UINT64_MAX so even a 0-second
+     * soft limit fires on the very first check. */
+    if (cpu_soft != rlim_inf && cpu_sec >= cpu_soft) {
+        if (cpu_sec != task->rlimit_cpu_last_sec) {
+            task->rlimit_cpu_last_sec = cpu_sec;
+            fut_signal_send(task, 24 /* SIGXCPU */);
+        }
+    }
+}
+
+/**
  * Scheduler tick handler - called from timer interrupt.
  *
  * Handles timer-driven preemption.
@@ -940,37 +983,10 @@ void fut_sched_tick(void) {
         return;
     }
 
-    /* RLIMIT_CPU enforcement: check once per second (every FUT_TIMER_HZ ticks).
-     * Sum cpu_ticks across all threads in the current task and signal if over limit. */
+    /* RLIMIT_CPU enforcement: check once per second (every FUT_TIMER_HZ ticks). */
     fut_task_t *cpu_task = curr ? curr->task : NULL;
-    if (cpu_task) {
-        uint64_t cpu_soft = cpu_task->rlimits[0 /* RLIMIT_CPU */].rlim_cur;
-        uint64_t cpu_hard = cpu_task->rlimits[0 /* RLIMIT_CPU */].rlim_max;
-        uint64_t rlim_inf = (uint64_t)-1;  /* RLIM64_INFINITY */
-
-        if (cpu_soft != rlim_inf || cpu_hard != rlim_inf) {
-            /* Accumulate cpu_ticks from all threads in this task */
-            uint64_t total_ticks = 0;
-            fut_thread_t *t = cpu_task->threads;
-            while (t) {
-                total_ticks += t->stats.cpu_ticks;
-                t = t->next;
-            }
-            uint64_t cpu_sec = total_ticks / FUT_TIMER_HZ;
-
-            /* Hard limit: SIGKILL */
-            if (cpu_hard != rlim_inf && cpu_sec >= cpu_hard) {
-                fut_signal_send(cpu_task, 9 /* SIGKILL */);
-            }
-            /* Soft limit: SIGXCPU each new second over limit */
-            else if (cpu_soft != rlim_inf && cpu_sec >= cpu_soft) {
-                if (cpu_sec != cpu_task->rlimit_cpu_last_sec) {
-                    cpu_task->rlimit_cpu_last_sec = cpu_sec;
-                    fut_signal_send(cpu_task, 24 /* SIGXCPU */);
-                }
-            }
-        }
-    }
+    if (cpu_task)
+        fut_sched_check_rlimit_cpu(cpu_task);
 
     // Trigger preemptive reschedule
     fut_schedule();

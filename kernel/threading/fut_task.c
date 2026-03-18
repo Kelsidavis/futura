@@ -204,6 +204,10 @@ fut_task_t *fut_task_create(void) {
     task->rlimits[RLIMIT_RTPRIO] = (struct rlimit64){0, 0};
     task->rlimits[RLIMIT_RTTIME] = (struct rlimit64){RLIM64_INFINITY, RLIM64_INFINITY};
 
+    /* Sentinel: RLIMIT_CPU last-signaled second starts at UINT64_MAX so that
+     * even a soft limit of 0 fires SIGXCPU on the very first timer tick. */
+    task->rlimit_cpu_last_sec = (uint64_t)-1;
+
     /* Initialize per-task file descriptor table */
     task->max_fds = FUT_FD_TABLE_INITIAL_SIZE;
     task->fd_table = (struct fut_file **)fut_malloc(FUT_FD_TABLE_INITIAL_SIZE * sizeof(struct fut_file *));

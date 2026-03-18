@@ -13557,6 +13557,73 @@ static void test_waitid_p_pidfd(void) {
     fut_test_pass();
 }
 
+/*
+ * Test 301: RLIMIT_CPU enforcement — SIGXCPU on soft limit, SIGKILL on hard limit.
+ *
+ * Creates a synthetic child task, sets CPU limits, then calls
+ * fut_sched_check_rlimit_cpu() directly (the same logic the timer tick calls)
+ * and verifies the correct signal is queued.
+ */
+static void test_rlimit_cpu_enforcement(void) {
+    fut_printf("[MISC-TEST] Test 301: RLIMIT_CPU enforcement (SIGXCPU/SIGKILL)\n");
+    extern fut_task_t *fut_task_create(void);
+    extern void fut_task_destroy(fut_task_t *task);
+    extern void fut_sched_check_rlimit_cpu(fut_task_t *task);
+
+    /* Part 1: soft limit = 0 → SIGXCPU (24) */
+    fut_task_t *child = fut_task_create();
+    if (!child) {
+        fut_printf("[MISC-TEST] ✗ rlimit_cpu: fut_task_create failed\n");
+        fut_test_fail(301); return;
+    }
+
+    child->rlimits[0].rlim_cur = 0;            /* 0 second soft limit */
+    child->rlimits[0].rlim_max = 10;           /* 10 second hard limit */
+    child->rlimit_cpu_last_sec = (uint64_t)-1; /* Sentinel: hasn't fired yet */
+
+    fut_sched_check_rlimit_cpu(child);
+
+    uint64_t sigxcpu_bit = (uint64_t)1 << 23; /* SIGXCPU = 24, stored at bit signum-1 = 23 */
+    uint64_t sigkill_bit = (uint64_t)1 << 8;  /* SIGKILL = 9, stored at bit signum-1 = 8 */
+
+    if (!(child->pending_signals & sigxcpu_bit)) {
+        fut_printf("[MISC-TEST] ✗ rlimit_cpu soft: SIGXCPU not pending (signals=0x%llx)\n",
+                   (unsigned long long)child->pending_signals);
+        fut_task_destroy(child);
+        fut_test_fail(301); return;
+    }
+    if (child->pending_signals & sigkill_bit) {
+        fut_printf("[MISC-TEST] ✗ rlimit_cpu soft: unexpected SIGKILL pending\n");
+        fut_task_destroy(child);
+        fut_test_fail(301); return;
+    }
+    fut_task_destroy(child);
+
+    /* Part 2: hard limit = 0 → SIGKILL (9) */
+    fut_task_t *child2 = fut_task_create();
+    if (!child2) {
+        fut_printf("[MISC-TEST] ✗ rlimit_cpu: fut_task_create (2) failed\n");
+        fut_test_fail(301); return;
+    }
+
+    child2->rlimits[0].rlim_cur = 0;             /* soft = 0 */
+    child2->rlimits[0].rlim_max = 0;             /* hard = 0 → SIGKILL */
+    child2->rlimit_cpu_last_sec = (uint64_t)-1;
+
+    fut_sched_check_rlimit_cpu(child2);
+
+    if (!(child2->pending_signals & sigkill_bit)) {
+        fut_printf("[MISC-TEST] ✗ rlimit_cpu hard: SIGKILL not pending (signals=0x%llx)\n",
+                   (unsigned long long)child2->pending_signals);
+        fut_task_destroy(child2);
+        fut_test_fail(301); return;
+    }
+    fut_task_destroy(child2);
+
+    fut_printf("[MISC-TEST] ✓ RLIMIT_CPU: soft=0→SIGXCPU, hard=0→SIGKILL\n");
+    fut_test_pass();
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -13864,6 +13931,7 @@ void fut_misc_test_thread(void *arg) {
     test_getsockopt_protocol();          /* Test 298: SO_PROTOCOL: 0 for AF_UNIX */
     test_getsockopt_domain();            /* Test 299: SO_DOMAIN: AF_UNIX=1 */
     test_waitid_p_pidfd();               /* Test 300: waitid(P_PIDFD) resolves pidfd to PID */
+    test_rlimit_cpu_enforcement();       /* Test 301: RLIMIT_CPU enforcement (SIGXCPU/SIGKILL) */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

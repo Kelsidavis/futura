@@ -120,6 +120,12 @@ void fut_schedule(void);
 void fut_sched_tick(void);
 
 /**
+ * Check RLIMIT_CPU limits for a task and send signals if exceeded.
+ * Exposed for unit testing from the kernel self-test suite.
+ */
+void fut_sched_check_rlimit_cpu(struct fut_task *task);
+
+/**
  * Add a thread to the ready queue.
  *
  * @param thread  Thread to add (must be in READY state)

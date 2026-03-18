@@ -45,6 +45,8 @@
 #define PR_GET_CHILD_SUBREAPER 37 /* Get subreaper status */
 #define PR_SET_MM           35   /* Modify mm_struct fields */
 #define PR_SET_VMA          0x53564d41 /* Set VMA name */
+#define PR_GET_SECCOMP      21   /* Get current seccomp mode */
+#define PR_SET_SECCOMP      22   /* Set seccomp mode */
 
 /* Maximum valid signal number */
 #define PR_MAX_SIGNAL       64
@@ -239,6 +241,16 @@ long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
     case PR_SET_VMA:
         /* VMA naming not supported; silently accept */
         return 0;
+
+    case PR_GET_SECCOMP:
+        /* No seccomp filter active; return SECCOMP_MODE_DISABLED (0) */
+        return 0;
+
+    case PR_SET_SECCOMP:
+        /* Accept SECCOMP_MODE_DISABLED (no-op); reject filter mode (ENOSYS) */
+        if (arg2 == 0)
+            return 0;
+        return -ENOSYS;
 
     default:
         fut_printf("[PRCTL] prctl(option=%d) -> EINVAL (unsupported option)\n", option);

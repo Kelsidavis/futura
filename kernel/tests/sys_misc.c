@@ -18103,6 +18103,71 @@ static void test_proc_status_nspid(void) {
 }
 
 /* ============================================================
+ * Test 389: prctl(PR_GET_SECCOMP) returns 0 (SECCOMP_MODE_DISABLED)
+ * Test 390: prctl(PR_SET_SECCOMP, 0) returns 0 (no-op)
+ * ============================================================ */
+#define TEST389_PR_GET_SECCOMP 21
+#define TEST389_PR_SET_SECCOMP 22
+static void test_prctl_seccomp(void) {
+    fut_printf("[MISC-TEST] Test 389: prctl(PR_GET_SECCOMP) returns 0\n");
+    extern long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
+                          unsigned long arg4, unsigned long arg5);
+    long mode = sys_prctl(TEST389_PR_GET_SECCOMP, 0, 0, 0, 0);
+    if (mode != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 389: expected 0 got %ld\n", mode);
+        fut_test_fail(389); goto t390;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 389: PR_GET_SECCOMP returned 0 (disabled)\n");
+    fut_test_pass();
+
+t390:
+    fut_printf("[MISC-TEST] Test 390: prctl(PR_SET_SECCOMP, 0) no-op returns 0\n");
+    long r = sys_prctl(TEST389_PR_SET_SECCOMP, 0 /* SECCOMP_MODE_DISABLED */, 0, 0, 0);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 390: expected 0 got %ld\n", r);
+        fut_test_fail(390); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 390: PR_SET_SECCOMP(DISABLED) returned 0\n");
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 391: /proc/self/smaps_rollup has Rss: field
+ * ============================================================ */
+static void test_proc_smaps_rollup(void) {
+    fut_printf("[MISC-TEST] Test 391: /proc/self/smaps_rollup has Rss:\n");
+    int fd = fut_vfs_open("/proc/self/smaps_rollup", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 391: open failed: %d\n", fd);
+        fut_test_fail(391); return;
+    }
+    char buf[1024];
+    long nr = fut_vfs_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    if (nr <= 0) {
+        fut_printf("[MISC-TEST] ✗ Test 391: read returned %ld\n", nr);
+        fut_test_fail(391); return;
+    }
+    buf[nr] = '\0';
+    /* Must contain "Rss:" and "[rollup]" */
+    int found_rss = 0, found_rollup = 0;
+    for (long i = 0; i + 4 <= nr; i++) {
+        if (buf[i]=='R' && buf[i+1]=='s' && buf[i+2]=='s' && buf[i+3]==':')
+            found_rss = 1;
+        if (i + 8 <= nr &&
+            buf[i]=='[' && buf[i+1]=='r' && buf[i+2]=='o' && buf[i+3]=='l' &&
+            buf[i+4]=='l' && buf[i+5]=='u' && buf[i+6]=='p' && buf[i+7]==']')
+            found_rollup = 1;
+    }
+    if (!found_rss || !found_rollup) {
+        fut_printf("[MISC-TEST] ✗ Test 391: Rss=%d rollup=%d\n", found_rss, found_rollup);
+        fut_test_fail(391); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 391: smaps_rollup has Rss: and [rollup]\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test 367: /proc/self/net/unix readable (same content as /proc/net/unix)
  * ============================================================ */
 static void test_proc_pid_net_unix(void) {
@@ -18690,6 +18755,8 @@ void fut_misc_test_thread(void *arg) {
     test_swapon_iopl_eperm();            /* Test 386: swapon/swapoff/iopl/ioperm -> EPERM */
     test_proc_fdinfo_eventfd();          /* Test 387: /proc/self/fdinfo/<n> has eventfd-count */
     test_proc_status_nspid();           /* Test 388: /proc/self/status has NSpid/NStgid */
+    test_prctl_seccomp();               /* Test 389-390: PR_GET_SECCOMP/PR_SET_SECCOMP */
+    test_proc_smaps_rollup();           /* Test 391: /proc/self/smaps_rollup has Rss: */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

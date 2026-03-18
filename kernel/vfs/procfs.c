@@ -218,6 +218,7 @@ enum procfs_kind {
     PROC_SYS_KERNEL_WATCHDOG,       /* /proc/sys/kernel/watchdog */
     PROC_SYS_KERNEL_WATCHDOG_THRESH,/* /proc/sys/kernel/watchdog_thresh */
     PROC_SYS_KERNEL_HUNG_TASK,      /* /proc/sys/kernel/hung_task_timeout_secs */
+    PROC_SMAPS_ROLLUP,              /* /proc/<pid>/smaps_rollup */
 };
 
 typedef struct {
@@ -333,6 +334,7 @@ typedef struct {
 #define PROC_INO_MISC_FILE             25ULL
 #define PROC_INO_PID_ATTR(p)           (1000ULL + (uint64_t)(p) * 100 + 24)
 #define PROC_INO_PID_ATTR_CUR(p)       (1000ULL + (uint64_t)(p) * 100 + 25)
+#define PROC_INO_PID_SMAPS_ROLLUP(p)   (1000ULL + (uint64_t)(p) * 100 + 26)
 #define PROC_INO_BUDDYINFO             26ULL
 #define PROC_INO_ZONEINFO              27ULL
 /* /proc/sys/vm/ extended range: 350-379 */
@@ -955,6 +957,59 @@ static size_t gen_smaps(char *buf, size_t cap, fut_task_t *task) {
 
         vma = vma->next;
     }
+    return b.pos;
+}
+
+/*
+ * gen_smaps_rollup() — /proc/<pid>/smaps_rollup
+ *
+ * Single synthetic entry aggregating Rss/Pss/etc. across all VMAs.
+ * Used by Go runtime, Rust allocators, and tools that want total RSS
+ * without iterating every mapping.
+ */
+static size_t gen_smaps_rollup(char *buf, size_t cap, fut_task_t *task) {
+    if (!task) return 0;
+    fut_mm_t *mm = task->mm ? task->mm : fut_mm_current();
+    if (!mm) return 0;
+
+    uint64_t total_size = 0, total_rss = 0, total_anon = 0;
+    struct fut_vma *vma = mm->vma_list;
+    while (vma) {
+        uint64_t vma_kb = (vma->end - vma->start) / 1024;
+        total_size += vma_kb;
+        if (vma->vnode == NULL) {   /* anonymous mapping */
+            total_rss  += vma_kb;
+            total_anon += vma_kb;
+        }
+        vma = vma->next;
+    }
+
+    struct pbuf b = { buf, 0, cap };
+    /* Header: synthetic [rollup] range covering all user space */
+    pb_str(&b, "00400000-ffffffffffffffff ---p 00000000 00:00 0 [rollup]\n");
+    pb_str(&b, "Size:            "); pb_u64(&b, total_size); pb_str(&b, " kB\n");
+    pb_str(&b, "KernelPageSize:        4 kB\n");
+    pb_str(&b, "MMUPageSize:           4 kB\n");
+    pb_str(&b, "Rss:             "); pb_u64(&b, total_rss);  pb_str(&b, " kB\n");
+    pb_str(&b, "Pss:             "); pb_u64(&b, total_rss);  pb_str(&b, " kB\n");
+    pb_str(&b, "Pss_Anon:        "); pb_u64(&b, total_anon); pb_str(&b, " kB\n");
+    pb_str(&b, "Pss_File:              0 kB\n");
+    pb_str(&b, "Pss_Shmem:             0 kB\n");
+    pb_str(&b, "Shared_Clean:          0 kB\n");
+    pb_str(&b, "Shared_Dirty:          0 kB\n");
+    pb_str(&b, "Private_Clean:   "); pb_u64(&b, total_rss);  pb_str(&b, " kB\n");
+    pb_str(&b, "Private_Dirty:         0 kB\n");
+    pb_str(&b, "Referenced:      "); pb_u64(&b, total_rss);  pb_str(&b, " kB\n");
+    pb_str(&b, "Anonymous:       "); pb_u64(&b, total_anon); pb_str(&b, " kB\n");
+    pb_str(&b, "LazyFree:              0 kB\n");
+    pb_str(&b, "AnonHugePages:         0 kB\n");
+    pb_str(&b, "ShmemPmdMapped:        0 kB\n");
+    pb_str(&b, "FilePmdMapped:         0 kB\n");
+    pb_str(&b, "Shared_Hugetlb:        0 kB\n");
+    pb_str(&b, "Private_Hugetlb:       0 kB\n");
+    pb_str(&b, "Swap:                  0 kB\n");
+    pb_str(&b, "SwapPss:               0 kB\n");
+    pb_str(&b, "Locked:                0 kB\n");
     return b.pos;
 }
 
@@ -1927,6 +1982,11 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             total = task ? gen_smaps(tmp, GEN_BUF, task) : 0;
             break;
         }
+        case PROC_SMAPS_ROLLUP: {
+            fut_task_t *task = fut_task_by_pid(n->pid);
+            total = task ? gen_smaps_rollup(tmp, GEN_BUF, task) : 0;
+            break;
+        }
         case PROC_OOM_SCORE: {
             /* OOM score 0 = least likely to be killed; simple RAM-model */
             struct pbuf b = { tmp, 0, GEN_BUF };
@@ -2819,6 +2879,11 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0100444, PROC_SMAPS, pid, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "smaps_rollup")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_SMAPS_ROLLUP(pid),
+                                          0100444, PROC_SMAPS_ROLLUP, pid, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         if (STREQ(name, "oom_score")) {
             *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_OOM_SCORE(pid),
                                           0100444, PROC_OOM_SCORE, pid, 0);
@@ -2942,7 +3007,9 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
         if (STREQ(name, "io"))
             { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_IO(pid),     0100400, PROC_IO,      pid,0); return *result ? 0 : -ENOMEM; }
         if (STREQ(name, "smaps"))
-            { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_SMAPS(pid),     0100444, PROC_SMAPS,     pid,0); return *result ? 0 : -ENOMEM; }
+            { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_SMAPS(pid),          0100444, PROC_SMAPS,          pid,0); return *result ? 0 : -ENOMEM; }
+        if (STREQ(name, "smaps_rollup"))
+            { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_SMAPS_ROLLUP(pid),   0100444, PROC_SMAPS_ROLLUP,   pid,0); return *result ? 0 : -ENOMEM; }
         if (STREQ(name, "oom_score"))
             { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_OOM_SCORE(pid), 0100444, PROC_OOM_SCORE, pid,0); return *result ? 0 : -ENOMEM; }
         if (STREQ(name, "oom_score_adj"))
@@ -3663,7 +3730,8 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             ".", "..", "status", "maps", "cmdline", "environ", "fd", "exe", "cwd",
             "stat", "statm", "comm", "task", "limits", "io", "smaps",
             "oom_score", "oom_score_adj", "cgroup", "ns", "fdinfo",
-            "wchan", "mountinfo", "coredump_filter", "schedstat", "net", "attr"
+            "wchan", "mountinfo", "coredump_filter", "schedstat", "net", "attr",
+            "smaps_rollup"
         };
         static const uint8_t etypes[] = {
             FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
@@ -3677,10 +3745,11 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
             FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
-            FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR
+            FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
+            FUT_VDIR_TYPE_REG
         };
         uint64_t pid = dn->pid;
-        if (idx < 27) {
+        if (idx < 28) {
             uint64_t ino;
             switch (idx) {
                 case 0:  ino = PROC_INO_PID_DIR(pid);        break;
@@ -3708,8 +3777,9 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                 case 22: ino = PROC_INO_PID_MOUNTINFO(pid);  break;
                 case 23: ino = PROC_INO_PID_COREDUMP(pid);   break;
                 case 24: ino = PROC_INO_PID_SCHEDSTAT(pid);  break;
-                case 25: ino = PROC_INO_NET_DIR;              break;
-                case 26: ino = PROC_INO_PID_ATTR(pid);       break;
+                case 25: ino = PROC_INO_NET_DIR;                    break;
+                case 26: ino = PROC_INO_PID_ATTR(pid);              break;
+                case 27: ino = PROC_INO_PID_SMAPS_ROLLUP(pid);      break;
                 default: ino = 0; break;
             }
             de->d_ino    = ino;

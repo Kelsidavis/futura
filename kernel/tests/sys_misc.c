@@ -14621,6 +14621,68 @@ static void test_dgram_read_syscall(void) {
 }
 
 /**
+ * Test 321: write() on a connected AF_UNIX SOCK_DGRAM socket.
+ *
+ * Connect a DGRAM socket to a peer; plain write() should deliver the datagram.
+ */
+static void test_dgram_write_connected(void) {
+    fut_printf("[MISC-TEST] Test 321: write() on connected DGRAM socket\n");
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_bind(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_connect(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_write(int fd, const void *buf, size_t count);
+    extern long sys_read(int fd, void *buf, size_t count);
+
+    long recvfd = sys_socket(1 /*AF_UNIX*/, 2 /*SOCK_DGRAM*/, 0);
+    long sendfd = sys_socket(1 /*AF_UNIX*/, 2 /*SOCK_DGRAM*/, 0);
+    if (recvfd < 0 || sendfd < 0) {
+        if (recvfd >= 0) sys_close((int)recvfd);
+        if (sendfd >= 0) sys_close((int)sendfd);
+        fut_test_fail(321); return;
+    }
+
+    struct { unsigned short family; char path[16]; } addr = {0};
+    addr.family = 1;
+    addr.path[0] = '\0';
+    addr.path[1] = 't'; addr.path[2] = '3'; addr.path[3] = '2'; addr.path[4] = '1';
+    addr.path[5] = 'w'; addr.path[6] = 'r'; addr.path[7] = 'i'; addr.path[8] = 't';
+    addr.path[9] = 'e';
+    unsigned int alen = 2 + 10;
+
+    long r = sys_bind((int)recvfd, &addr, alen);
+    if (r != 0) {
+        sys_close((int)recvfd); sys_close((int)sendfd);
+        fut_test_fail(321); return;
+    }
+
+    r = sys_connect((int)sendfd, &addr, alen);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ connect failed: %ld\n", r);
+        sys_close((int)recvfd); sys_close((int)sendfd);
+        fut_test_fail(321); return;
+    }
+
+    const char msg[] = "write-dgram";
+    long nw = sys_write((int)sendfd, msg, 11);
+    if (nw != 11) {
+        fut_printf("[MISC-TEST] ✗ write() returned %ld, want 11\n", nw);
+        sys_close((int)recvfd); sys_close((int)sendfd);
+        fut_test_fail(321); return;
+    }
+
+    char recvbuf[32] = {0};
+    long nr = sys_read((int)recvfd, recvbuf, sizeof(recvbuf));
+    sys_close((int)recvfd); sys_close((int)sendfd);
+
+    if (nr != 11 || __builtin_memcmp(recvbuf, msg, 11) != 0) {
+        fut_printf("[MISC-TEST] ✗ read() returned %ld, content mismatch\n", nr);
+        fut_test_fail(321); return;
+    }
+    fut_printf("[MISC-TEST] ✓ write()+read() on connected DGRAM socket delivered datagram\n");
+    fut_test_pass();
+}
+
+/**
  * Test 316: MSG_WAITALL forces recvfrom to loop until all bytes received.
  *
  * Scenario: sender writes 100 bytes in two 50-byte sends.
@@ -15356,6 +15418,7 @@ void fut_misc_test_thread(void *arg) {
     test_msg_trunc_recvfrom();           /* Test 318: MSG_TRUNC returns actual datagram size */
     test_msg_trunc_recvmsg();            /* Test 319: MSG_TRUNC set in msg_flags by recvmsg */
     test_dgram_read_syscall();           /* Test 320: plain read() works on DGRAM socket */
+    test_dgram_write_connected();        /* Test 321: write() on connected DGRAM socket */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

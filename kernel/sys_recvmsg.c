@@ -335,7 +335,10 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
     bool msg_trunc_set = false;
     /* Identify DGRAM socket once; used for MSG_TRUNC and direct dgram recv path */
     fut_socket_t *dgsock = get_socket_from_fd(local_sockfd);
-    bool is_dgram_sock = (dgsock && dgsock->socket_type == SOCK_DGRAM && dgsock->dgram_queue != NULL);
+    /* Named DGRAM (no stream pair): use direct dgram path for MSG_TRUNC detection.
+     * Socketpair DGRAM sockets have pair!=NULL and use the stream recv path. */
+    bool is_dgram_sock = (dgsock && dgsock->socket_type == SOCK_DGRAM &&
+                          !dgsock->pair && dgsock->dgram_queue != NULL);
     for (size_t i = 0; i < kmsg.msg_iovlen; i++) {
         struct iovec iov;
         if (recvmsg_copy_from_user(&iov, &kmsg.msg_iov[i], sizeof(struct iovec)) != 0) {

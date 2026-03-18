@@ -385,8 +385,8 @@ static ssize_t socket_read(void *inode, void *private_data, void *u_buf, size_t 
     if (!socket) {
         return -EBADF;
     }
-    /* DGRAM sockets use the datagram queue, not the stream pair */
-    if (socket->socket_type == SOCK_DGRAM && socket->dgram_queue) {
+    /* Named DGRAM sockets (no stream pair): use datagram queue for read */
+    if (socket->socket_type == SOCK_DGRAM && !socket->pair && socket->dgram_queue) {
         return fut_socket_recvfrom_dgram(socket, u_buf, n, NULL, NULL, NULL);
     }
     ssize_t result = fut_socket_recv(socket, u_buf, n);
@@ -403,6 +403,14 @@ static ssize_t socket_write(void *inode, void *private_data, const void *u_buf, 
     fut_socket_t *socket = (fut_socket_t *)private_data;
     if (!socket) {
         return -EBADF;
+    }
+    /* Named DGRAM sockets (no stream pair): route write() via the dgram path */
+    if (socket->socket_type == SOCK_DGRAM && !socket->pair) {
+        if (socket->dgram_peer_path_len == 0)
+            return -EDESTADDRREQ;
+        return fut_socket_sendto_dgram(socket->dgram_peer_path, socket->dgram_peer_path_len,
+                                       socket->bound_path, socket->bound_path_len,
+                                       u_buf, n);
     }
     ssize_t result = fut_socket_send(socket, u_buf, n);
     return result;

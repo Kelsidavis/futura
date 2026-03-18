@@ -2070,6 +2070,12 @@ ssize_t fut_vfs_read(int fd, void *buf, size_t size) {
     ssize_t ret = file->vnode->ops->read(file->vnode, buf, size, file->offset);
     if (ret > 0) {
         file->offset += ret;
+        /* Dispatch IN_ACCESS so watchers know the file was read */
+        if (file->vnode->parent && file->vnode->name) {
+            char dir_path[256];
+            if (fut_vnode_build_path(file->vnode->parent, dir_path, sizeof(dir_path)))
+                inotify_dispatch_event(dir_path, 0x00000001 /* IN_ACCESS */, file->vnode->name, 0);
+        }
     }
 
     return ret;

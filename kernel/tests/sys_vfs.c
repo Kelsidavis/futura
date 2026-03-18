@@ -40,6 +40,7 @@
 #define VFS_TEST_INOTIFY_RENAME 14
 #define VFS_TEST_INOTIFY_ATTRIB  15
 #define VFS_TEST_INOTIFY_CLOSE   16
+#define VFS_TEST_INOTIFY_ACCESS  17
 
 /* Use kernel-level VFS functions (no copy_from_user) */
 #define sys_mkdir(path, mode)           fut_vfs_mkdir(path, (uint32_t)(mode))
@@ -72,6 +73,7 @@ struct test_inotify_event {
 #define IN_ATTRIB          0x00000004U
 #define IN_CLOSE_WRITE     0x00000008U
 #define IN_CLOSE_NOWRITE   0x00000010U
+#define IN_ACCESS          0x00000001U
 #define IN_OPEN            0x00000020U
 #define IN_NONBLOCK 00004000
 #define RENAME_NOREPLACE (1U << 0)
@@ -1196,6 +1198,83 @@ static void test_inotify_close(void) {
     fut_test_pass();
 }
 
+/*
+ * Test 17: inotify IN_ACCESS event on read
+ *
+ * Creates a file with content, watches its parent for IN_ACCESS,
+ * reads the file, then verifies IN_ACCESS was dispatched.
+ */
+static void test_inotify_access(void) {
+    fut_printf("[VFS-TEST] Test 17: inotify IN_ACCESS event on read\n");
+
+    const char *watch_dir = "/";
+    const char *filepath  = "/access_test.txt";
+
+    /* Create and populate the file */
+    fut_vfs_unlink(filepath);
+    int fd = fut_vfs_open(filepath, O_CREAT | O_WRONLY, 0644);
+    if (fd < 0) {
+        fut_printf("[VFS-TEST] ✗ inotify_access: create file failed %d\n", fd);
+        fut_test_fail(VFS_TEST_INOTIFY_ACCESS);
+        return;
+    }
+    fut_vfs_write(fd, "hello", 5);
+    fut_vfs_close(fd);
+
+    /* Watch for IN_ACCESS */
+    int ifd = (int)sys_inotify_init1(IN_NONBLOCK);
+    if (ifd < 0) {
+        fut_printf("[VFS-TEST] ✗ inotify_access: inotify_init1 failed %d\n", ifd);
+        fut_vfs_unlink(filepath);
+        fut_test_fail(VFS_TEST_INOTIFY_ACCESS);
+        return;
+    }
+
+    int wd = (int)sys_inotify_add_watch(ifd, watch_dir, IN_ACCESS);
+    if (wd < 0) {
+        fut_printf("[VFS-TEST] ✗ inotify_access: add_watch failed %d\n", wd);
+        fut_vfs_close(ifd);
+        fut_vfs_unlink(filepath);
+        fut_test_fail(VFS_TEST_INOTIFY_ACCESS);
+        return;
+    }
+
+    /* Read the file — should generate IN_ACCESS */
+    int rfd = fut_vfs_open(filepath, O_RDONLY, 0);
+    if (rfd < 0) {
+        fut_printf("[VFS-TEST] ✗ inotify_access: open for read failed %d\n", rfd);
+        fut_vfs_close(ifd);
+        fut_vfs_unlink(filepath);
+        fut_test_fail(VFS_TEST_INOTIFY_ACCESS);
+        return;
+    }
+    char rbuf[16];
+    fut_vfs_read(rfd, rbuf, sizeof(rbuf));
+    fut_vfs_close(rfd);
+
+    /* Check for IN_ACCESS event */
+    char buf[sizeof(struct test_inotify_event) + 64];
+    long n = fut_vfs_read(ifd, buf, sizeof(buf));
+    fut_vfs_close(ifd);
+    fut_vfs_unlink(filepath);
+
+    if (n < (long)sizeof(struct test_inotify_event)) {
+        fut_printf("[VFS-TEST] ✗ inotify_access: no event (read returned %ld)\n", n);
+        fut_test_fail(VFS_TEST_INOTIFY_ACCESS);
+        return;
+    }
+
+    struct test_inotify_event *ev = (struct test_inotify_event *)buf;
+    if (!(ev->mask & IN_ACCESS)) {
+        fut_printf("[VFS-TEST] ✗ inotify_access: mask=0x%x missing IN_ACCESS\n", ev->mask);
+        fut_test_fail(VFS_TEST_INOTIFY_ACCESS);
+        return;
+    }
+
+    fut_printf("[VFS-TEST] ✓ inotify IN_ACCESS: read generated mask=0x%x\n", ev->mask);
+    fut_test_pass();
+}
+
 void fut_vfs_test_thread(void *arg) {
     (void)arg;
 
@@ -1211,6 +1290,7 @@ void fut_vfs_test_thread(void *arg) {
     test_inotify_rename();
     test_inotify_attrib();
     test_inotify_close();
+    test_inotify_access();
     test_mount();
     test_umount_expire();
     test_renameat2();

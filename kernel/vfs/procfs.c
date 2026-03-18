@@ -164,6 +164,10 @@ enum procfs_kind {
     /* Additional /proc/sys/fs/ entries */
     PROC_SYS_FS_NR_OPEN,            /* /proc/sys/fs/nr_open */
     PROC_SYS_FS_PIPE_MAX_SIZE,      /* /proc/sys/fs/pipe-max-size */
+    /* Additional /proc/<pid>/ entries */
+    PROC_WCHAN,                     /* /proc/<pid>/wchan */
+    PROC_MOUNTINFO,                 /* /proc/<pid>/mountinfo */
+    PROC_COREDUMP_FILTER,           /* /proc/<pid>/coredump_filter */
 };
 
 typedef struct {
@@ -289,6 +293,9 @@ typedef struct {
 #define PROC_INO_PID_CGROUP(p)    (1000ULL + (uint64_t)(p) * 100 + 17)
 #define PROC_INO_PID_NS(p)        (1000ULL + (uint64_t)(p) * 100 + 18)
 #define PROC_INO_PID_FDINFO(p)    (1000ULL + (uint64_t)(p) * 100 + 19)
+#define PROC_INO_PID_WCHAN(p)     (1000ULL + (uint64_t)(p) * 100 + 20)
+#define PROC_INO_PID_MOUNTINFO(p) (1000ULL + (uint64_t)(p) * 100 + 21)
+#define PROC_INO_PID_COREDUMP(p)  (1000ULL + (uint64_t)(p) * 100 + 22)
 /* ns/ entries: 7 namespaces (pid/mnt/net/user/uts/ipc/cgroup), index 0-6 */
 #define PROC_INO_NS_ENTRY(p,n)    (300000000ULL + (uint64_t)(p) * 100 + (uint64_t)(n))
 /* fdinfo/ entries: per-fd */
@@ -1071,6 +1078,63 @@ static size_t gen_mounts(char *buf, size_t cap) {
 }
 
 /*
+ * gen_wchan() — /proc/<pid>/wchan
+ *
+ * Returns the kernel wait channel symbol (or "0" if running / no symbol table).
+ */
+static size_t gen_wchan(char *buf, size_t cap) {
+    struct pbuf b = { buf, 0, cap };
+    pb_str(&b, "0\n");
+    return b.pos;
+}
+
+/*
+ * gen_mountinfo() — /proc/<pid>/mountinfo (Linux 2.6.26+)
+ *
+ * Extended mount table: each line has
+ *   <id> <parent_id> <major>:<minor> <fs_root> <mountpoint> <options>
+ *   [optional-fields] - <fs_type> <source> <super_opts>
+ */
+static size_t gen_mountinfo(char *buf, size_t cap) {
+    struct pbuf b = { buf, 0, cap };
+    struct fut_mount *m = fut_vfs_first_mount();
+    int mid = 1;
+    while (m) {
+        const char *mp  = (m->mountpoint && m->mountpoint[0]) ? m->mountpoint : "/";
+        const char *fs  = (m->fs && m->fs->name) ? m->fs->name : "unknown";
+        const char *dev = (m->device && m->device[0]) ? m->device : "none";
+        /* id parent major:minor fs_root mountpoint options */
+        pb_u64(&b, (uint64_t)mid); pb_char(&b, ' ');
+        pb_u64(&b, 0);             pb_char(&b, ' ');  /* parent = root (simplified) */
+        pb_str(&b, "0:1 / ");
+        pb_str(&b, mp);
+        pb_str(&b, " rw,relatime shared:1 - ");
+        pb_str(&b, fs);            pb_char(&b, ' ');
+        pb_str(&b, dev);
+        pb_str(&b, " rw\n");
+        m = m->next;
+        mid++;
+    }
+    if (b.pos == 0) {
+        /* Fallback: at least show rootfs */
+        pb_str(&b, "1 0 0:1 / / rw,relatime shared:1 - ramfs none rw\n");
+    }
+    return b.pos;
+}
+
+/*
+ * gen_coredump_filter() — /proc/<pid>/coredump_filter
+ *
+ * Bitmask controlling which VMA types are included in core dumps.
+ * Default 0x33 = anonymous private + anonymous shared + ELF headers.
+ */
+static size_t gen_coredump_filter(char *buf, size_t cap) {
+    struct pbuf b = { buf, 0, cap };
+    pb_str(&b, "0x33\n");
+    return b.pos;
+}
+
+/*
  * gen_comm() — /proc/<pid>/comm
  *
  * Single line: process name + newline.
@@ -1506,6 +1570,15 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             total = b.pos;
             break;
         }
+        case PROC_WCHAN:
+            total = gen_wchan(tmp, GEN_BUF);
+            break;
+        case PROC_MOUNTINFO:
+            total = gen_mountinfo(tmp, GEN_BUF);
+            break;
+        case PROC_COREDUMP_FILTER:
+            total = gen_coredump_filter(tmp, GEN_BUF);
+            break;
         case PROC_FDINFO_ENTRY: {
             /* /proc/<pid>/fdinfo/<n>: pos, flags (octal), mnt_id */
             fut_task_t *ftask = fut_task_by_pid(n->pid);
@@ -2058,6 +2131,21 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0040500, PROC_FDINFO_DIR, pid, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "wchan")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_WCHAN(pid),
+                                          0100444, PROC_WCHAN, pid, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "mountinfo")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_MOUNTINFO(pid),
+                                          0100444, PROC_MOUNTINFO, pid, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "coredump_filter")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_COREDUMP(pid),
+                                          0100644, PROC_COREDUMP_FILTER, pid, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         return -ENOENT;
     }
 
@@ -2124,6 +2212,12 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
             { *result = procfs_alloc_vnode(mnt, VN_DIR, PROC_INO_PID_NS(pid), 0040511, PROC_NS_DIR, pid, 0); return *result ? 0 : -ENOMEM; }
         if (STREQ(name, "fdinfo"))
             { *result = procfs_alloc_vnode(mnt, VN_DIR, PROC_INO_PID_FDINFO(pid), 0040500, PROC_FDINFO_DIR, pid, 0); return *result ? 0 : -ENOMEM; }
+        if (STREQ(name, "wchan"))
+            { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_WCHAN(pid),     0100444, PROC_WCHAN,           pid,0); return *result ? 0 : -ENOMEM; }
+        if (STREQ(name, "mountinfo"))
+            { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_MOUNTINFO(pid), 0100444, PROC_MOUNTINFO,       pid,0); return *result ? 0 : -ENOMEM; }
+        if (STREQ(name, "coredump_filter"))
+            { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_COREDUMP(pid),  0100644, PROC_COREDUMP_FILTER, pid,0); return *result ? 0 : -ENOMEM; }
         return -ENOENT;
     }
 
@@ -2701,7 +2795,8 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         static const char *entries[] = {
             ".", "..", "status", "maps", "cmdline", "environ", "fd", "exe", "cwd",
             "stat", "statm", "comm", "task", "limits", "io", "smaps",
-            "oom_score", "oom_score_adj", "cgroup", "ns", "fdinfo"
+            "oom_score", "oom_score_adj", "cgroup", "ns", "fdinfo",
+            "wchan", "mountinfo", "coredump_filter"
         };
         static const uint8_t etypes[] = {
             FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
@@ -2713,10 +2808,11 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             FUT_VDIR_TYPE_DIR,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
-            FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR
+            FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
+            FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG
         };
         uint64_t pid = dn->pid;
-        if (idx < 21) {
+        if (idx < 24) {
             uint64_t ino;
             switch (idx) {
                 case 0:  ino = PROC_INO_PID_DIR(pid);        break;
@@ -2740,6 +2836,9 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                 case 18: ino = PROC_INO_PID_CGROUP(pid);     break;
                 case 19: ino = PROC_INO_PID_NS(pid);         break;
                 case 20: ino = PROC_INO_PID_FDINFO(pid);     break;
+                case 21: ino = PROC_INO_PID_WCHAN(pid);      break;
+                case 22: ino = PROC_INO_PID_MOUNTINFO(pid);  break;
+                case 23: ino = PROC_INO_PID_COREDUMP(pid);   break;
                 default: ino = 0; break;
             }
             de->d_ino    = ino;

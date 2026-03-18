@@ -17307,6 +17307,120 @@ static void test_proc_stat_starttime(void) {
 }
 
 /* ============================================================
+ * Test 360: /proc/self/wchan returns a readable value ("0" for running)
+ * ============================================================ */
+static void test_proc_wchan(void) {
+    fut_printf("[MISC-TEST] Test 360: /proc/self/wchan readable\n");
+
+    int fd = fut_vfs_open("/proc/self/wchan", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 360: open /proc/self/wchan failed: %d\n", fd);
+        fut_test_fail(360);
+        return;
+    }
+
+    char buf[64];
+    long n = fut_vfs_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+
+    if (n <= 0) {
+        fut_printf("[MISC-TEST] ✗ Test 360: read /proc/self/wchan returned %ld\n", n);
+        fut_test_fail(360);
+        return;
+    }
+    buf[n] = '\0';
+    /* Must start with a digit or letter (symbol name or "0") */
+    if (buf[0] == '\0') {
+        fut_printf("[MISC-TEST] ✗ Test 360: /proc/self/wchan is empty\n");
+        fut_test_fail(360);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 360: /proc/self/wchan = '%s'\n", buf);
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 361: /proc/self/mountinfo contains a mount entry with " - " separator
+ * ============================================================ */
+static void test_proc_mountinfo(void) {
+    fut_printf("[MISC-TEST] Test 361: /proc/self/mountinfo format\n");
+
+    int fd = fut_vfs_open("/proc/self/mountinfo", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 361: open /proc/self/mountinfo failed: %d\n", fd);
+        fut_test_fail(361);
+        return;
+    }
+
+    char buf[512];
+    long n = fut_vfs_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+
+    if (n <= 0) {
+        fut_printf("[MISC-TEST] ✗ Test 361: read /proc/self/mountinfo returned %ld\n", n);
+        fut_test_fail(361);
+        return;
+    }
+    buf[n] = '\0';
+
+    /* Each line must contain " - " (optional-fields separator) */
+    int found = 0;
+    const char *p = buf;
+    while (*p) {
+        const char *q = p;
+        while (*q && *q != '\n') q++;
+        /* scan this line for " - " */
+        for (const char *s = p; s + 2 < q; s++) {
+            if (s[0] == ' ' && s[1] == '-' && s[2] == ' ') { found = 1; break; }
+        }
+        if (found) break;
+        p = (*q == '\n') ? q + 1 : q;
+    }
+
+    if (!found) {
+        fut_printf("[MISC-TEST] ✗ Test 361: no ' - ' separator found in mountinfo\n");
+        fut_test_fail(361);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 361: /proc/self/mountinfo contains valid mount entry\n");
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 362: /proc/self/coredump_filter returns a hex value (default 0x33)
+ * ============================================================ */
+static void test_proc_coredump_filter(void) {
+    fut_printf("[MISC-TEST] Test 362: /proc/self/coredump_filter\n");
+
+    int fd = fut_vfs_open("/proc/self/coredump_filter", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 362: open /proc/self/coredump_filter failed: %d\n", fd);
+        fut_test_fail(362);
+        return;
+    }
+
+    char buf[32];
+    long n = fut_vfs_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+
+    if (n <= 0) {
+        fut_printf("[MISC-TEST] ✗ Test 362: read /proc/self/coredump_filter returned %ld\n", n);
+        fut_test_fail(362);
+        return;
+    }
+    buf[n] = '\0';
+
+    /* Must start with "0x" (hex format) */
+    if (buf[0] != '0' || buf[1] != 'x') {
+        fut_printf("[MISC-TEST] ✗ Test 362: coredump_filter doesn't start with '0x': '%s'\n", buf);
+        fut_test_fail(362);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 362: /proc/self/coredump_filter = '%s'\n", buf);
+    fut_test_pass();
+}
+
+/* ============================================================
  * Tests 352-353: SO_SNDBUF / SO_RCVBUF set/get round-trip
  * ============================================================ */
 static void test_so_sndbuf_roundtrip(void) {
@@ -17838,6 +17952,9 @@ void fut_misc_test_thread(void *arg) {
     test_proc_status_groups();           /* Test 357: /proc/self/status Groups: lists supplementary GIDs */
     test_proc_status_umask();            /* Test 358: /proc/self/status Umask: matches current umask */
     test_proc_stat_starttime();          /* Test 359: /proc/self/stat starttime field is non-zero */
+    test_proc_wchan();                   /* Test 360: /proc/self/wchan readable */
+    test_proc_mountinfo();               /* Test 361: /proc/self/mountinfo has ' - ' separator */
+    test_proc_coredump_filter();         /* Test 362: /proc/self/coredump_filter returns hex value */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

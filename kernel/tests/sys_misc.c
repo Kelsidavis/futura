@@ -14412,6 +14412,94 @@ static void test_socket_errno_correctness(void) {
 }
 
 /**
+ * Test 327: SOCK_SEQPACKET via connect/accept preserves boundaries.
+ *
+ * Unlike socketpair, this exercises the full bind/listen/connect/accept
+ * path so the accepted socket inherits SOCK_SEQPACKET type and framing.
+ */
+static void test_seqpacket_connect_accept(void) {
+    fut_printf("[MISC-TEST] Test 327: SOCK_SEQPACKET connect/accept boundary\n");
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_bind(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_listen(int sockfd, int backlog);
+    extern long sys_connect(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_accept(int sockfd, void *addr, unsigned int *addrlen);
+    extern ssize_t sys_write(int fd, const void *buf, size_t count);
+    extern ssize_t sys_read(int fd, void *buf, size_t count);
+
+    /* Use abstract socket (null byte prefix) to avoid filesystem cleanup */
+    struct {
+        unsigned short sun_family;
+        char sun_path[108];
+    } addr;
+    addr.sun_family = 1; /* AF_UNIX */
+    addr.sun_path[0] = '\0';
+    const char *abstract_name = "seqpkt_ca_test";
+    size_t namelen = 0;
+    while (abstract_name[namelen]) { addr.sun_path[1 + namelen] = abstract_name[namelen]; namelen++; }
+    unsigned int addrlen = (unsigned int)(2 + 1 + namelen);
+
+    long srv = sys_socket(1, 5 /*SOCK_SEQPACKET*/, 0);
+    if (srv < 0) { fut_test_fail(327); return; }
+
+    long r = sys_bind((int)srv, &addr, addrlen);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ bind: %ld\n", r);
+        fut_vfs_close((int)srv); fut_test_fail(327); return;
+    }
+    r = sys_listen((int)srv, 2);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ listen: %ld\n", r);
+        fut_vfs_close((int)srv); fut_test_fail(327); return;
+    }
+
+    long cli = sys_socket(1, 5 /*SOCK_SEQPACKET*/, 0);
+    if (cli < 0) { fut_vfs_close((int)srv); fut_test_fail(327); return; }
+
+    r = sys_connect((int)cli, &addr, addrlen);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ connect: %ld\n", r);
+        fut_vfs_close((int)cli); fut_vfs_close((int)srv); fut_test_fail(327); return;
+    }
+
+    long conn = sys_accept((int)srv, NULL, NULL);
+    if (conn < 0) {
+        fut_printf("[MISC-TEST] ✗ accept: %ld\n", conn);
+        fut_vfs_close((int)cli); fut_vfs_close((int)srv); fut_test_fail(327); return;
+    }
+
+    /* Send two messages from client */
+    ssize_t s1 = sys_write((int)cli, "alpha", 5);
+    ssize_t s2 = sys_write((int)cli, "beta!", 5);
+    if (s1 != 5 || s2 != 5) {
+        fut_printf("[MISC-TEST] ✗ writes: s1=%zd s2=%zd\n", s1, s2);
+        fut_vfs_close((int)conn); fut_vfs_close((int)cli); fut_vfs_close((int)srv);
+        fut_test_fail(327); return;
+    }
+
+    /* Server reads: each read must return exactly one message */
+    char buf[64] = {0};
+    ssize_t r1 = sys_read((int)conn, buf, sizeof(buf));
+    if (r1 != 5) {
+        fut_printf("[MISC-TEST] ✗ first read: %zd (expected 5)\n", r1);
+        fut_vfs_close((int)conn); fut_vfs_close((int)cli); fut_vfs_close((int)srv);
+        fut_test_fail(327); return;
+    }
+    ssize_t r2 = sys_read((int)conn, buf, sizeof(buf));
+    if (r2 != 5) {
+        fut_printf("[MISC-TEST] ✗ second read: %zd (expected 5)\n", r2);
+        fut_vfs_close((int)conn); fut_vfs_close((int)cli); fut_vfs_close((int)srv);
+        fut_test_fail(327); return;
+    }
+
+    fut_vfs_close((int)conn);
+    fut_vfs_close((int)cli);
+    fut_vfs_close((int)srv);
+    fut_printf("[MISC-TEST] ✓ SEQPACKET connect/accept: two bounded messages (%zd+%zd)\n", r1, r2);
+    fut_test_pass();
+}
+
+/**
  * Test 325: SOCK_SEQPACKET preserves message boundaries.
  *
  * Two consecutive sends on a SEQPACKET socketpair must be received as two
@@ -15735,6 +15823,7 @@ void fut_misc_test_thread(void *arg) {
     test_dgram_msg_peek();               /* Test 324: MSG_PEEK on DGRAM leaves datagram in queue */
     test_seqpacket_boundaries();         /* Test 325: SEQPACKET preserves message boundaries */
     test_seqpacket_truncation();         /* Test 326: SEQPACKET truncates to buffer; discards remainder */
+    test_seqpacket_connect_accept();     /* Test 327: SEQPACKET connect/accept path boundary preservation */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

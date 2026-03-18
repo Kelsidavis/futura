@@ -13,8 +13,12 @@
  *   - Blocking send/receive with abs_timeout (ms-granular via ticks)
  *   - O_NONBLOCK support on both the queue and per-operation
  *   - mq_getsetattr: query/set O_NONBLOCK flag
- *   - mq_notify: register but do not fire (Phase 2)
  *   - Registered in x86_64 (240-245) and ARM64 (180-185) syscall tables
+ *
+ * Phase 2 (Completed):
+ *   - mq_notify: one-shot SIGEV_SIGNAL and SIGEV_NONE notifications
+ *   - Signal delivered when message arrives at empty queue, then cleared
+ *   - EBUSY if another task is already registered
  */
 
 #include <kernel/chrdev.h>
@@ -33,6 +37,8 @@
 #include <limits.h>
 /* Include fut_vfs.h for struct fut_file with chr_ops/chr_private and O_* flags */
 #include <kernel/fut_vfs.h>
+#include <kernel/signal.h>
+#include <shared/fut_sigevent.h>
 
 /* Forward declaration: mq_fops is defined after mq_fd_lookup */
 static const struct fut_file_ops mq_fops;
@@ -82,6 +88,9 @@ struct mqueue {
     atomic_int      refcnt;
     struct mq_node *msgs;           /* priority list, head = highest prio */
     fut_spinlock_t  lock;
+    /* Phase 2: one-shot notification via mq_notify */
+    uint64_t        notify_pid;     /* registered task PID; (uint64_t)-1 = none */
+    int             notify_signo;   /* signal to deliver; 0 = SIGEV_NONE (no signal) */
 };
 
 struct mq_fd {
@@ -316,8 +325,10 @@ long sys_mq_open(const char *name, int oflag, unsigned int mode,
         atomic_store_explicit(&mq->mq_curmsgs, 0, memory_order_relaxed);
         atomic_store_explicit(&mq->refcnt, 2, memory_order_relaxed); /* table + fd */
         fut_spinlock_init(&mq->lock);
-        mq->msgs      = NULL;
-        mq->unlinked  = false;
+        mq->msgs       = NULL;
+        mq->unlinked   = false;
+        mq->notify_pid   = (uint64_t)-1; /* no notification registered */
+        mq->notify_signo = 0;
 
         err = mq_table_insert(mq);
         if (err) {
@@ -459,8 +470,19 @@ long sys_mq_timedsend(int mqdes, const char *msg_ptr, size_t msg_len,
         fut_spinlock_acquire(&mq->lock);
         long cur = atomic_load_explicit(&mq->mq_curmsgs, memory_order_relaxed);
         if (cur < mq->mq_maxmsg) {
+            bool was_empty = (cur == 0);
             mq_insert_msg(mq, node);
+            /* Phase 2: fire one-shot mq_notify if queue was empty */
+            uint64_t npid  = mq->notify_pid;
+            int      nsig  = mq->notify_signo;
+            if (was_empty && npid != (uint64_t)-1)
+                mq->notify_pid = (uint64_t)-1;  /* one-shot: clear before release */
             fut_spinlock_release(&mq->lock);
+            if (was_empty && npid != (uint64_t)-1 && nsig > 0) {
+                fut_task_t *ntask = fut_task_by_pid(npid);
+                if (ntask)
+                    fut_signal_send(ntask, nsig);
+            }
             return 0;
         }
         fut_spinlock_release(&mq->lock);
@@ -590,15 +612,70 @@ long sys_mq_timedreceive(int mqdes, char *msg_ptr, size_t msg_len,
 
 /* ---- sys_mq_notify ------------------------------------------------ */
 
+/*
+ * Phase 2: mq_notify() — register a one-shot signal notification.
+ *
+ * Per POSIX:
+ *   - sevp == NULL: unregister. Only the task that registered may do this.
+ *   - sevp->sigev_notify == SIGEV_SIGNAL: deliver sigev_signo when a message
+ *     arrives at an empty queue. Notification fires once, then clears.
+ *   - sevp->sigev_notify == SIGEV_NONE: register without delivering a signal
+ *     (prevents other tasks from registering; clears on first send).
+ *   - Only one task may be registered per queue; -EBUSY if another is waiting.
+ */
 long sys_mq_notify(int mqdes, const void *sevp)
 {
     struct mq_fd *mfd = mq_fd_lookup(mqdes);
     if (!mfd)
         return -EBADF;
-    if (!mfd->mq || mfd->mq->unlinked)
+    struct mqueue *mq = mfd->mq;
+    if (!mq || mq->unlinked)
         return -EBADF;
-    /* Accept registration but don't fire: Phase 2 will implement delivery */
-    (void)sevp;
+
+    fut_task_t *task = fut_task_current();
+    if (!task)
+        return -ESRCH;
+
+    fut_spinlock_acquire(&mq->lock);
+
+    if (!sevp) {
+        /* Unregister: only the registered task may de-register */
+        if (mq->notify_pid == task->pid)
+            mq->notify_pid = (uint64_t)-1;
+        fut_spinlock_release(&mq->lock);
+        return 0;
+    }
+
+    /* Another task is already registered → EBUSY */
+    if (mq->notify_pid != (uint64_t)-1 && mq->notify_pid != task->pid) {
+        fut_spinlock_release(&mq->lock);
+        return -EBUSY;
+    }
+
+    /* Copy sigevent from caller */
+    struct sigevent kev;
+    if (mq_copy_from_user(&kev, sevp, sizeof(kev)) != 0) {
+        fut_spinlock_release(&mq->lock);
+        return -EFAULT;
+    }
+
+    if (kev.sigev_notify == SIGEV_SIGNAL) {
+        if (kev.sigev_signo < 1 || kev.sigev_signo > 64) {
+            fut_spinlock_release(&mq->lock);
+            return -EINVAL;
+        }
+        mq->notify_pid   = task->pid;
+        mq->notify_signo = kev.sigev_signo;
+    } else if (kev.sigev_notify == SIGEV_NONE) {
+        mq->notify_pid   = task->pid;
+        mq->notify_signo = 0;
+    } else {
+        /* SIGEV_THREAD not supported */
+        fut_spinlock_release(&mq->lock);
+        return -EINVAL;
+    }
+
+    fut_spinlock_release(&mq->lock);
     return 0;
 }
 

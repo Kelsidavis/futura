@@ -12870,6 +12870,108 @@ static void test_mqueue_getsetattr(void) {
     fut_test_pass();
 }
 
+static void test_mqueue_notify(void) {
+    fut_printf("[MISC-TEST] Test 302: mq_notify SIGEV_SIGNAL one-shot delivery\n");
+
+    /* Create a small queue for this test */
+    struct test_mq_attr attr = { .mq_maxmsg = 4, .mq_msgsize = 32 };
+    long mqd = sys_mq_open("/test_mq_notify", O_CREAT | O_RDWR, 0600, &attr);
+    if (mqd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 302: mq_open failed: %ld\n", mqd);
+        fut_test_fail(302); return;
+    }
+
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        sys_mq_unlink("/test_mq_notify"); fut_test_fail(302); return;
+    }
+
+    /* Register SIGUSR1 notification */
+    struct sigevent sev;
+    __builtin_memset(&sev, 0, sizeof(sev));
+    sev.sigev_notify = SIGEV_SIGNAL;
+    sev.sigev_signo  = 10; /* SIGUSR1 */
+    long r = sys_mq_notify((int)mqd, &sev);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 302: mq_notify(SIGUSR1) = %ld (expected 0)\n", r);
+        sys_mq_unlink("/test_mq_notify"); fut_test_fail(302); return;
+    }
+    fut_printf("[MISC-TEST] ✓ mq_notify(SIGUSR1) registered\n");
+
+    /* Re-registering by the same task should succeed (replace) */
+    r = sys_mq_notify((int)mqd, &sev);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 302: re-register = %ld (expected 0)\n", r);
+        sys_mq_unlink("/test_mq_notify"); fut_test_fail(302); return;
+    }
+
+    /* Clear any pre-existing SIGUSR1 (bit 9 = SIGUSR1 - 1) */
+    __atomic_and_fetch(&task->pending_signals, ~(1ULL << 9), __ATOMIC_RELEASE);
+
+    /* Send a message to the empty queue → should fire SIGUSR1 */
+    const char *msg = "notify-test";
+    r = sys_mq_timedsend((int)mqd, msg, 11, 1, NULL);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 302: mq_timedsend = %ld\n", r);
+        sys_mq_unlink("/test_mq_notify"); fut_test_fail(302); return;
+    }
+
+    /* SIGUSR1 should now be pending */
+    uint64_t pending = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
+    if (!(pending & (1ULL << 9))) {
+        fut_printf("[MISC-TEST] ✗ Test 302: SIGUSR1 not pending after send (signals=0x%llx)\n",
+                   (unsigned long long)pending);
+        sys_mq_unlink("/test_mq_notify"); fut_test_fail(302); return;
+    }
+    fut_printf("[MISC-TEST] ✓ SIGUSR1 pending after send to empty queue\n");
+
+    /* Clear the pending signal */
+    __atomic_and_fetch(&task->pending_signals, ~(1ULL << 9), __ATOMIC_RELEASE);
+
+    /* Second send: notification was one-shot — no new SIGUSR1 */
+    r = sys_mq_timedsend((int)mqd, msg, 11, 1, NULL);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 302: second send failed: %ld\n", r);
+        sys_mq_unlink("/test_mq_notify"); fut_test_fail(302); return;
+    }
+    pending = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
+    if (pending & (1ULL << 9)) {
+        fut_printf("[MISC-TEST] ✗ Test 302: SIGUSR1 fired again on second send (one-shot broken)\n");
+        sys_mq_unlink("/test_mq_notify"); fut_test_fail(302); return;
+    }
+    fut_printf("[MISC-TEST] ✓ No second SIGUSR1 (one-shot cleared)\n");
+
+    /* SIGEV_NONE: register without signal, verify no signal on next empty-queue send */
+    /* Drain the queue using getsetattr to count messages first */
+    char rbuf[32];
+    unsigned rprio;
+    struct test_mq_attr cur_attr = {0};
+    sys_mq_getsetattr((int)mqd, NULL, &cur_attr);
+    for (long i = 0; i < cur_attr.mq_curmsgs; i++)
+        sys_mq_timedreceive((int)mqd, rbuf, sizeof(rbuf), &rprio, NULL);
+    struct sigevent sev_none;
+    __builtin_memset(&sev_none, 0, sizeof(sev_none));
+    sev_none.sigev_notify = SIGEV_NONE;
+    r = sys_mq_notify((int)mqd, &sev_none);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 302: mq_notify(SIGEV_NONE) = %ld\n", r);
+        sys_mq_unlink("/test_mq_notify"); fut_test_fail(302); return;
+    }
+    __atomic_and_fetch(&task->pending_signals, ~(1ULL << 9), __ATOMIC_RELEASE);
+    sys_mq_timedsend((int)mqd, msg, 11, 1, NULL);
+    pending = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
+    if (pending & (1ULL << 9)) {
+        fut_printf("[MISC-TEST] ✗ Test 302: SIGUSR1 fired for SIGEV_NONE registration\n");
+        sys_mq_unlink("/test_mq_notify"); fut_test_fail(302); return;
+    }
+    fut_printf("[MISC-TEST] ✓ SIGEV_NONE: no signal delivered\n");
+
+    sys_mq_unlink("/test_mq_notify");
+    extern long sys_close(int fd);
+    sys_close((int)mqd);
+    fut_test_pass();
+}
+
 static void test_proc_sys_net_ipv6(void) {
     fut_printf("[MISC-TEST] Test 285: /proc/sys/net/ipv6/conf/all/{disable_ipv6,forwarding}\n");
 
@@ -13932,6 +14034,7 @@ void fut_misc_test_thread(void *arg) {
     test_getsockopt_domain();            /* Test 299: SO_DOMAIN: AF_UNIX=1 */
     test_waitid_p_pidfd();               /* Test 300: waitid(P_PIDFD) resolves pidfd to PID */
     test_rlimit_cpu_enforcement();       /* Test 301: RLIMIT_CPU enforcement (SIGXCPU/SIGKILL) */
+    test_mqueue_notify();                /* Test 302: mq_notify SIGEV_SIGNAL one-shot delivery */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

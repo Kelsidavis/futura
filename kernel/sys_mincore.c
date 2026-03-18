@@ -24,6 +24,19 @@
 #include <platform/arm64/memory/paging.h>
 #endif
 
+static inline int mincore_copy_to_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)dst >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_to_user(dst, src, n);
+}
+static inline int mincore_access_ok_write(const void *ptr, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)ptr >= KERNEL_VIRTUAL_BASE) return 0;
+#endif
+    return fut_access_ok(ptr, n, 1);
+}
+
 /* ============================================================================
  * PHASE 5 SECURITY HARDENING: mincore() - Memory Residency Query Vector Overflow
  * ============================================================================
@@ -478,7 +491,7 @@ long sys_mincore(void *addr, size_t length, unsigned char *vec) {
      * ATTACK: Attacker provides read-only or unmapped vec buffer
      * IMPACT: Kernel page fault when writing residency bits after VMA validation
      * DEFENSE: Check write permission before VMA traversal to fail fast */
-    if (fut_access_ok(local_vec, num_pages, 1) != 0) {
+    if (mincore_access_ok_write(local_vec, num_pages) != 0) {
         fut_printf("[MINCORE] mincore(%p, %zu, %p) -> EFAULT (vec not writable for %zu bytes)\n",
                    local_addr, local_length, local_vec, num_pages);
         return -EFAULT;
@@ -487,8 +500,9 @@ long sys_mincore(void *addr, size_t length, unsigned char *vec) {
     /* Phase 2: Validate VMA coverage */
     fut_mm_t *mm = fut_task_get_mm(task);
     if (!mm) {
-        fut_printf("[MINCORE] mincore(%p, %zu, %p) -> ENOMEM (no MM context)\n",
-                   local_addr, local_length, local_vec);
+        mm = fut_mm_current();  /* Fall back to kernel_mm for kernel threads */
+    }
+    if (!mm) {
         return -ENOMEM;
     }
 
@@ -593,7 +607,7 @@ long sys_mincore(void *addr, size_t length, unsigned char *vec) {
     }
 
     /* Copy result to userspace */
-    if (fut_copy_to_user(local_vec, kernel_vec, num_pages) != 0) {
+    if (mincore_copy_to_user(local_vec, kernel_vec, num_pages) != 0) {
         fut_printf("[MINCORE] mincore(%p, %zu, %p) -> EFAULT (copy_to_user failed)\n",
                    local_addr, aligned_len, local_vec);
         /* Priority 6: Free heap-allocated buffer before returning */

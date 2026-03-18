@@ -74,6 +74,8 @@ extern long sys_madvise(void *addr, size_t length, int advice);
 extern long sys_mlock(const void *addr, size_t len);
 extern long sys_munlock(const void *addr, size_t len);
 extern long sys_getcwd(char *buf, size_t size);
+extern long sys_prlimit64(int pid, int resource, const void *new_limit, void *old_limit);
+extern long sys_mincore(void *addr, size_t length, unsigned char *vec);
 
 /* fcntl commands */
 #define F_DUPFD         0
@@ -7007,6 +7009,76 @@ static void test_proc_self_maps(void) {
 }
 
 /* ============================================================
+ * Test 147: prlimit64(0, RLIMIT_NOFILE) round-trip
+ * ============================================================ */
+struct rlimit64_test {
+    uint64_t rlim_cur;
+    uint64_t rlim_max;
+};
+
+static void test_prlimit64_basic(void) {
+    fut_printf("[MISC-TEST] Test 147: prlimit64 self RLIMIT_NOFILE\n");
+
+    struct rlimit64_test old = { 0, 0 };
+
+    /* Query current RLIMIT_NOFILE (resource 7) for self (pid=0) */
+    long ret = sys_prlimit64(0, 7 /* RLIMIT_NOFILE */, NULL, &old);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ prlimit64 query: %ld\n", ret);
+        fut_test_fail(147);
+        return;
+    }
+
+    /* cur should be > 0 (default is 1024) */
+    if (old.rlim_cur == 0) {
+        fut_printf("[MISC-TEST] ✗ prlimit64: rlim_cur=0, expected > 0\n");
+        fut_test_fail(147);
+        return;
+    }
+
+    /* Set RLIMIT_NOFILE to same value (no-op set) */
+    struct rlimit64_test same = { old.rlim_cur, old.rlim_max };
+    ret = sys_prlimit64(0, 7, &same, NULL);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ prlimit64 set same: %ld\n", ret);
+        fut_test_fail(147);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ prlimit64: RLIMIT_NOFILE cur=%llu ok\n",
+               (unsigned long long)old.rlim_cur);
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 148: mincore on anonymous mapping
+ * ============================================================ */
+static void test_mincore_basic(void) {
+    fut_printf("[MISC-TEST] Test 148: mincore basic\n");
+
+    long addr = sys_mmap(NULL, 4096, PROT_RW_TEST,
+                         MAP_PRIVATE_TEST | MAP_ANONYMOUS_TEST, -1, 0);
+    if (addr < 0) {
+        fut_printf("[MISC-TEST] ✗ mincore: mmap failed: %ld\n", addr);
+        fut_test_fail(148);
+        return;
+    }
+
+    unsigned char vec[1] = { 0 };
+    long ret = sys_mincore((void *)addr, 4096, vec);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ mincore: returned %ld\n", ret);
+        sys_munmap((void *)addr, 4096);
+        fut_test_fail(148);
+        return;
+    }
+
+    sys_munmap((void *)addr, 4096);
+    fut_printf("[MISC-TEST] ✓ mincore: mapped page resident=%d\n", vec[0]);
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -7162,6 +7234,8 @@ void fut_misc_test_thread(void *arg) {
     test_mlock_munlock();                  /* Test 144: mlock/munlock cycle */
     test_getcwd_basic();                   /* Test 145: getcwd returns '/' path */
     test_proc_self_maps();                 /* Test 146: /proc/self/maps readable */
+    test_prlimit64_basic();                /* Test 147: prlimit64 self RLIMIT_NOFILE */
+    test_mincore_basic();                  /* Test 148: mincore on anonymous mapping */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -19,6 +19,31 @@
 #include <kernel/uaccess.h>
 #include <sys/resource.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
+static inline int prlimit_copy_to_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)dst >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_to_user(dst, src, n);
+}
+static inline int prlimit_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_from_user(dst, src, n);
+}
+static inline int prlimit_access_ok(const void *ptr, size_t n, int write) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)ptr >= KERNEL_VIRTUAL_BASE) return 0;
+#endif
+    return fut_access_ok(ptr, n, write);
+}
+
 /* RLIMIT_* constants provided by sys/resource.h */
 
 /* Special limit value */
@@ -101,14 +126,14 @@ long sys_prlimit64(int pid, int resource,
     }
 
     /* Validate userspace pointers before accessing */
-    if (local_old_limit && fut_access_ok(local_old_limit, sizeof(struct rlimit64), 1) != 0) {
+    if (local_old_limit && prlimit_access_ok(local_old_limit, sizeof(struct rlimit64), 1) != 0) {
         fut_printf("[PRLIMIT] prlimit64(pid=%d, resource=%s) -> EFAULT "
                    "(invalid old_limit pointer)\n",
                    local_pid, resource_name);
         return -EFAULT;
     }
 
-    if (local_new_limit && fut_access_ok(local_new_limit, sizeof(struct rlimit64), 0) != 0) {
+    if (local_new_limit && prlimit_access_ok(local_new_limit, sizeof(struct rlimit64), 0) != 0) {
         fut_printf("[PRLIMIT] prlimit64(pid=%d, resource=%s) -> EFAULT "
                    "(invalid new_limit pointer)\n",
                    local_pid, resource_name);
@@ -122,7 +147,7 @@ long sys_prlimit64(int pid, int resource,
      * avoid double-fetch TOCTOU vulnerabilities. */
     struct rlimit64 knl_new;
     if (local_new_limit) {
-        if (fut_copy_from_user(&knl_new, local_new_limit, sizeof(struct rlimit64)) != 0) {
+        if (prlimit_copy_from_user(&knl_new, local_new_limit, sizeof(struct rlimit64)) != 0) {
             fut_printf("[PRLIMIT] prlimit64(pid=%d, resource=%s) -> EFAULT "
                        "(copy_from_user new_limit failed)\n",
                        local_pid, resource_name);
@@ -212,7 +237,7 @@ long sys_prlimit64(int pid, int resource,
 
     /* Copy out pre-change limits to userspace via fut_copy_to_user */
     if (local_old_limit) {
-        if (fut_copy_to_user(local_old_limit, &current_limit, sizeof(struct rlimit64)) != 0) {
+        if (prlimit_copy_to_user(local_old_limit, &current_limit, sizeof(struct rlimit64)) != 0) {
             fut_printf("[PRLIMIT] prlimit64(pid=%d, resource=%s) -> EFAULT "
                        "(copy_to_user old_limit failed)\n",
                        local_pid, resource_name);

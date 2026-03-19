@@ -24321,6 +24321,110 @@ static void test_map_fixed_unaligned(void) {
 #undef MF_MAP_PRIVATE
 }
 
+/* ============================================================
+ * Tests 618-621: mremap grow/MREMAP_MAYMOVE/MREMAP_FIXED semantics
+ * ============================================================ */
+static void test_mremap_grow(void) {
+    /* Test 618: mremap grow with MREMAP_MAYMOVE — data preserved */
+    fut_printf("[MISC-TEST] Test 618: mremap grow 4KB→8KB with MREMAP_MAYMOVE\n");
+    long base618 = sys_mmap(NULL, 4096, 3 /* PROT_RW */,
+                            0x22 /* MAP_PRIVATE|MAP_ANON */, -1, 0);
+    if (base618 < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 618: mmap failed: %ld\n", base618);
+        return;
+    }
+    volatile uint8_t *p618 = (volatile uint8_t *)(uintptr_t)base618;
+    p618[0]    = 0xCA;
+    p618[4095] = 0xFE;
+    /* MREMAP_MAYMOVE = 1 */
+    long n618 = sys_mremap((void *)(uintptr_t)base618, 4096, 8192, 1, NULL);
+    if (n618 < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 618: mremap returned %ld\n", n618);
+        sys_munmap((void *)(uintptr_t)base618, 4096);
+        return;
+    }
+    volatile uint8_t *q618 = (volatile uint8_t *)(uintptr_t)n618;
+    if (q618[0] != 0xCA || q618[4095] != 0xFE) {
+        fut_printf("[MISC-TEST] ✗ Test 618: data lost after grow (q[0]=0x%02x q[4095]=0x%02x)\n",
+                   (unsigned)q618[0], (unsigned)q618[4095]);
+        sys_munmap((void *)(uintptr_t)n618, 8192);
+        return;
+    }
+    q618[4096] = 0x42; /* write into new pages */
+    if (q618[4096] != 0x42) {
+        fut_printf("[MISC-TEST] ✗ Test 618: new pages not writable\n");
+        sys_munmap((void *)(uintptr_t)n618, 8192);
+        return;
+    }
+    sys_munmap((void *)(uintptr_t)n618, 8192);
+    fut_printf("[MISC-TEST] ✓ Test 618: mremap 4KB→8KB MREMAP_MAYMOVE, data preserved\n");
+    fut_test_pass();
+
+    /* Test 619: mremap grow WITHOUT MREMAP_MAYMOVE → ENOMEM */
+    fut_printf("[MISC-TEST] Test 619: mremap grow without MREMAP_MAYMOVE → ENOMEM\n");
+    long base619 = sys_mmap(NULL, 4096, 3, 0x22, -1, 0);
+    if (base619 < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 619: mmap failed: %ld\n", base619);
+        return;
+    }
+    long n619 = sys_mremap((void *)(uintptr_t)base619, 4096, 8192, 0, NULL);
+    sys_munmap((void *)(uintptr_t)base619, 4096);
+    if (n619 != -12 /* -ENOMEM */) {
+        fut_printf("[MISC-TEST] ✗ Test 619: expected -ENOMEM, got %ld\n", n619);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 619: mremap grow flags=0 → ENOMEM\n");
+    fut_test_pass();
+
+    /* Test 620: mremap MREMAP_FIXED without MREMAP_MAYMOVE → EINVAL */
+    fut_printf("[MISC-TEST] Test 620: mremap MREMAP_FIXED without MREMAP_MAYMOVE → EINVAL\n");
+    long base620 = sys_mmap(NULL, 4096, 3, 0x22, -1, 0);
+    if (base620 < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 620: mmap failed: %ld\n", base620);
+        return;
+    }
+    /* MREMAP_FIXED=2 without MREMAP_MAYMOVE=1 */
+    long n620 = sys_mremap((void *)(uintptr_t)base620, 4096, 8192, 2,
+                           (void *)0x60000000UL);
+    sys_munmap((void *)(uintptr_t)base620, 4096);
+    if (n620 != -22 /* -EINVAL */) {
+        fut_printf("[MISC-TEST] ✗ Test 620: expected -EINVAL, got %ld\n", n620);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 620: mremap MREMAP_FIXED|no MAYMOVE → EINVAL\n");
+    fut_test_pass();
+
+    /* Test 621: mremap MREMAP_FIXED + MREMAP_MAYMOVE → data at new address */
+    fut_printf("[MISC-TEST] Test 621: mremap MREMAP_FIXED+MREMAP_MAYMOVE → new addr\n");
+    long base621 = sys_mmap(NULL, 4096, 3, 0x22, -1, 0);
+    if (base621 < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 621: mmap failed: %ld\n", base621);
+        return;
+    }
+    volatile uint8_t *p621 = (volatile uint8_t *)(uintptr_t)base621;
+    p621[0] = 0xBE;
+    p621[1] = 0xEF;
+    /* MREMAP_MAYMOVE|MREMAP_FIXED = 1|2 = 3 */
+    void *tgt621 = (void *)0x60001000UL;  /* page-aligned target */
+    long n621 = sys_mremap((void *)(uintptr_t)base621, 4096, 4096, 3, tgt621);
+    if (n621 != (long)(uintptr_t)tgt621) {
+        fut_printf("[MISC-TEST] ✗ Test 621: mremap FIXED returned 0x%lx, expected 0x%lx\n",
+                   (unsigned long)n621, (unsigned long)tgt621);
+        sys_munmap((void *)(uintptr_t)base621, 4096);
+        if (n621 > 0) sys_munmap((void *)(uintptr_t)n621, 4096);
+        return;
+    }
+    volatile uint8_t *q621 = (volatile uint8_t *)(uintptr_t)n621;
+    if (q621[0] != 0xBE || q621[1] != 0xEF) {
+        fut_printf("[MISC-TEST] ✗ Test 621: data not copied to new addr\n");
+        sys_munmap((void *)(uintptr_t)n621, 4096);
+        return;
+    }
+    sys_munmap((void *)(uintptr_t)n621, 4096);
+    fut_printf("[MISC-TEST] ✓ Test 621: mremap MREMAP_FIXED+MAYMOVE data at 0x60001000\n");
+    fut_test_pass();
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -24787,6 +24891,7 @@ void fut_misc_test_thread(void *arg) {
     test_sa_flags_nodefer_resethand();       /* Tests 604-609: SA_NODEFER/SA_RESETHAND flag semantics */
     test_fstatfs_ftype();                    /* Tests 610-613: fstatfs f_type per open FD */
     test_map_fixed_unaligned();              /* Tests 614-617: MAP_FIXED unaligned addr → EINVAL */
+    test_mremap_grow();                      /* Tests 618-621: mremap grow/MREMAP_MAYMOVE/MREMAP_FIXED */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

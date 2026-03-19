@@ -246,16 +246,11 @@ long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout) {
                 if (pending & ~blocked0)
                     return -EINTR;
             }
-            /* Use timer+waitq so wakeup works reliably in all environments
-             * (fut_thread_sleep uses the sleep queue which can be unreliable). */
-            uint64_t timeout_ticks = (uint64_t)timeout / 10;
-            if ((uint64_t)timeout % 10 != 0) timeout_ticks++;
-            if (timeout_ticks == 0) timeout_ticks = 1;
-            fut_waitq_t wq0;
-            fut_waitq_init(&wq0);
-            fut_timer_start(timeout_ticks, poll_waitq_wakeup, &wq0);
-            fut_waitq_sleep_locked(&wq0, NULL, FUT_THREAD_BLOCKED);
-            fut_timer_cancel(poll_waitq_wakeup, &wq0);
+            /* Use the sorted sleep queue (not a waitq+timer) for the nfds=0
+             * timeout-only path.  fut_thread_sleep inserts the thread into
+             * the timer sleep queue before yielding, so there is no race
+             * between registering the timeout and entering the sleep. */
+            fut_thread_sleep((uint64_t)timeout);
         }
         poll_printf("[POLL] poll(fds, 0, %d) -> 0 (no FDs to monitor)\n", timeout);
         return 0;
@@ -489,8 +484,13 @@ long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout) {
                 /* Use caller's deadline; fall back to 50ms for infinite-timeout */
                 uint64_t wake_ticks = (timeout > 0 && deadline > now)
                                       ? (deadline - now) : 5u;
+                /* Hold the wait queue lock while starting the timer so a
+                 * very fast timer callback cannot fire and call wake_all()
+                 * before the thread has been enqueued.  sleep_locked with
+                 * released_lock == &poll_wq.lock handles this atomically. */
+                fut_spinlock_acquire(&poll_wq.lock);
                 fut_timer_start(wake_ticks, poll_waitq_wakeup, &poll_wq);
-                fut_waitq_sleep_locked(&poll_wq, NULL, FUT_THREAD_BLOCKED);
+                fut_waitq_sleep_locked(&poll_wq, &poll_wq.lock, FUT_THREAD_BLOCKED);
                 fut_timer_cancel(poll_waitq_wakeup, &poll_wq);
             }
             poll_unwire_fds(kfds, nfds, task, &poll_wq);

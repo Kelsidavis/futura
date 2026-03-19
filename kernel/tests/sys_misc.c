@@ -23550,6 +23550,157 @@ static void test_mprotect_pte_update(void) {
     sys_munmap((void *)(uintptr_t)addr, 4096);
 }
 
+/* ====================================================================
+ * Tests 581-583: sigsuspend basic correctness
+ * ==================================================================== */
+static void test_sigsuspend_basic(void) {
+    extern long sys_sigsuspend(const void *mask);
+    fut_task_t *task = fut_task_current();
+
+    /* ---- Test 581: sigsuspend(NULL) → EINVAL ---- */
+    fut_printf("[MISC-TEST] Test 581: sigsuspend(NULL) → EINVAL\n");
+    long r = sys_sigsuspend(NULL);
+    if (r != -22 /* -EINVAL */) {
+        fut_printf("[MISC-TEST] ✗ Test 581: sigsuspend(NULL) → %ld (expected -EINVAL)\n", r);
+        fut_test_fail(581); fut_test_fail(582); fut_test_fail(583);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 581: sigsuspend(NULL) → -EINVAL\n");
+    fut_test_pass();
+
+    /* ---- Test 582: sigsuspend with pending unblocked signal → EINTR (no block) ---- */
+    fut_printf("[MISC-TEST] Test 582: sigsuspend with pending SIGUSR2 → EINTR immediately\n");
+    /* Queue SIGUSR2 (signal 12, bit 11) directly into task->pending_signals */
+    if (task)
+        __atomic_or_fetch(&task->pending_signals, (1ULL << 11), __ATOMIC_RELEASE);
+
+    /* Mask that does NOT block SIGUSR2 (bit 11 = 0) — so unblocked signal exists → no block */
+    uint64_t mask_allow_sigusr2 = 0;
+    r = sys_sigsuspend(&mask_allow_sigusr2);
+    /* Clear the pending signal so it doesn't affect later tests */
+    if (task)
+        __atomic_and_fetch(&task->pending_signals, ~(1ULL << 11), __ATOMIC_RELEASE);
+
+    if (r != -4 /* -EINTR */) {
+        fut_printf("[MISC-TEST] ✗ Test 582: sigsuspend with pending signal → %ld (expected -EINTR)\n", r);
+        fut_test_fail(582); fut_test_fail(583);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 582: sigsuspend with pending SIGUSR2 → -EINTR immediately\n");
+    fut_test_pass();
+
+    /* ---- Test 583: signal mask is restored after sigsuspend ---- */
+    fut_printf("[MISC-TEST] Test 583: signal mask restored after sigsuspend\n");
+    fut_thread_t *thr = fut_thread_current();
+    uint64_t *mask_ptr = thr ? &thr->signal_mask : (task ? &task->signal_mask : NULL);
+    if (!mask_ptr) {
+        fut_printf("[MISC-TEST] ✓ Test 583: (skipped — no thread context)\n");
+        fut_test_pass();
+        return;
+    }
+    uint64_t old_mask = __atomic_load_n(mask_ptr, __ATOMIC_ACQUIRE);
+    /* Queue SIGUSR2 so sigsuspend returns immediately (unblocked by mask 0) */
+    if (task)
+        __atomic_or_fetch(&task->pending_signals, (1ULL << 11), __ATOMIC_RELEASE);
+    uint64_t new_mask = 0;  /* allow all — SIGUSR2 pending will cause immediate return */
+    r = sys_sigsuspend(&new_mask);
+    /* Clear the pending signal */
+    if (task)
+        __atomic_and_fetch(&task->pending_signals, ~(1ULL << 11), __ATOMIC_RELEASE);
+    uint64_t restored_mask = __atomic_load_n(mask_ptr, __ATOMIC_ACQUIRE);
+    if (restored_mask != old_mask) {
+        fut_printf("[MISC-TEST] ✗ Test 583: mask not restored: got 0x%llx expected 0x%llx\n",
+                   (unsigned long long)restored_mask, (unsigned long long)old_mask);
+        fut_test_fail(583);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 583: signal mask restored after sigsuspend\n");
+    fut_test_pass();
+}
+
+/* ====================================================================
+ * Tests 584-586: dynamic FD table growth past initial FUT_FD_TABLE_INITIAL_SIZE
+ * ==================================================================== */
+static void test_fd_table_growth(void) {
+    extern long sys_open(const char *path, int flags, int mode);
+    extern long sys_close(int fd);
+    extern long sys_read(int fd, void *buf, size_t count);
+
+    /* ---- Test 584: open more than FUT_FD_TABLE_INITIAL_SIZE (64) FDs ---- */
+    fut_printf("[MISC-TEST] Test 584: open >64 FDs (FD table must grow)\n");
+
+#define FDGROW_COUNT 80   /* exceed initial 64-entry table */
+    static const char FDGROW_PATH[] = "/tmp/fdgrow_test.txt";
+    int fds[FDGROW_COUNT];
+    int opened = 0;
+
+    /* Create the file first */
+    int create_fd = (int)fut_vfs_open(FDGROW_PATH, O_CREAT | O_RDWR, 0644);
+    if (create_fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 584: create scratch file failed: %d\n", create_fd);
+        fut_test_fail(584); fut_test_fail(585); fut_test_fail(586);
+        return;
+    }
+    fut_vfs_close(create_fd);
+
+    for (int i = 0; i < FDGROW_COUNT; i++) {
+        long fd = sys_open(FDGROW_PATH, 0 /* O_RDONLY */, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 584: open #%d failed: %ld (opened=%d)\n",
+                       i, fd, opened);
+            for (int j = 0; j < opened; j++) sys_close(fds[j]);
+            fut_vfs_unlink(FDGROW_PATH);
+            fut_test_fail(584); fut_test_fail(585); fut_test_fail(586);
+            return;
+        }
+        fds[i] = (int)fd;
+        opened++;
+    }
+
+    if (opened < FDGROW_COUNT) {
+        fut_printf("[MISC-TEST] ✗ Test 584: only opened %d/%d FDs\n", opened, FDGROW_COUNT);
+        for (int j = 0; j < opened; j++) sys_close(fds[j]);
+        fut_vfs_unlink(FDGROW_PATH);
+        fut_test_fail(584); fut_test_fail(585); fut_test_fail(586);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 584: opened %d FDs (table grew past initial 64)\n", opened);
+    fut_test_pass();
+
+    /* ---- Test 585: highest FD (>64) is readable ---- */
+    fut_printf("[MISC-TEST] Test 585: FD at index >64 is functional\n");
+    char rbuf[4] = {0};
+    long rd = sys_read(fds[FDGROW_COUNT - 1], rbuf, sizeof(rbuf));
+    if (rd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 585: read from high FD %d failed: %ld\n",
+                   fds[FDGROW_COUNT - 1], rd);
+        for (int j = 0; j < opened; j++) sys_close(fds[j]);
+        fut_vfs_unlink(FDGROW_PATH);
+        fut_test_fail(585); fut_test_fail(586);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 585: high FD %d readable (rd=%ld)\n",
+               fds[FDGROW_COUNT - 1], rd);
+    fut_test_pass();
+
+    /* ---- Test 586: close all extra FDs cleanly ---- */
+    fut_printf("[MISC-TEST] Test 586: close all %d FDs cleanly\n", opened);
+    int close_errors = 0;
+    for (int j = 0; j < opened; j++) {
+        long cr = sys_close(fds[j]);
+        if (cr != 0) close_errors++;
+    }
+    fut_vfs_unlink(FDGROW_PATH);
+
+    if (close_errors > 0) {
+        fut_printf("[MISC-TEST] ✗ Test 586: %d close errors\n", close_errors);
+        fut_test_fail(586);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 586: all %d FDs closed without error\n", opened);
+    fut_test_pass();
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -24008,6 +24159,8 @@ void fut_misc_test_thread(void *arg) {
     test_fchdir_cwd_update();                /* Tests 570-573: fchdir cwd update correctness */
     test_mmap_shared_file_writeback();       /* Tests 574-577: MAP_SHARED mmap+msync+munmap writeback */
     test_mprotect_pte_update();              /* Tests 578-580: mprotect PTE update correctness */
+    test_sigsuspend_basic();                 /* Tests 581-583: sigsuspend NULL/pending/mask-restore */
+    test_fd_table_growth();                  /* Tests 584-586: dynamic FD table growth past 64 */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

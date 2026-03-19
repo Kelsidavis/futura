@@ -126,7 +126,48 @@ static int alloc_fd_for_task(fut_task_t *task, struct fut_file *file) {
         }
     }
 
-    /* FD table is full or RLIMIT_NOFILE reached */
+    /* FD table is full — try to grow it if RLIMIT_NOFILE allows more */
+    if (nofile_limit == 0 || (uint64_t)max < nofile_limit) {
+        int old_max  = task->max_fds;
+        int new_size = old_max * 2;
+        if (nofile_limit > 0 && (uint64_t)new_size > nofile_limit)
+            new_size = (int)nofile_limit;
+        if (new_size > (1 << 20)) new_size = (1 << 20);  /* Hard cap: 1M FDs */
+        if (new_size <= old_max) return -EMFILE;
+
+        /* Allocate larger tables.  Deliberately do NOT free the old tables:
+         * they may be static (ARM64 early-boot) memory, not PMM heap. */
+        struct fut_file **new_table =
+            fut_malloc((size_t)new_size * sizeof(struct fut_file *));
+        if (!new_table) return -EMFILE;
+
+        int *new_flags = fut_malloc((size_t)new_size * sizeof(int));
+        if (!new_flags) { fut_free(new_table); return -EMFILE; }
+
+        /* Copy existing entries, zero the new extension */
+        __builtin_memcpy(new_table, task->fd_table,
+                         (size_t)old_max * sizeof(struct fut_file *));
+        __builtin_memset(new_table + old_max, 0,
+                         (size_t)(new_size - old_max) * sizeof(struct fut_file *));
+
+        if (task->fd_flags) {
+            __builtin_memcpy(new_flags, task->fd_flags,
+                             (size_t)old_max * sizeof(int));
+        }
+        __builtin_memset(new_flags + old_max, 0,
+                         (size_t)(new_size - old_max) * sizeof(int));
+
+        task->fd_table = new_table;
+        task->fd_flags = new_flags;
+        task->max_fds  = new_size;
+
+        /* First free slot is the first extended entry */
+        task->fd_table[old_max] = file;
+        task->fd_flags[old_max] = 0;
+        return old_max;
+    }
+
+    /* RLIMIT_NOFILE reached */
     return -EMFILE;
 }
 

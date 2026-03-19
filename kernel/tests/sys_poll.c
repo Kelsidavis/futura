@@ -493,19 +493,14 @@ static void test_poll_timerfd_ready(void) {
         return;
     }
 
-    uintptr_t user_arm_addr = g_user_lo + 0x20000;
-    struct itimerspec *u_arm = (struct itimerspec *)map_user_page_for_test(user_arm_addr);
-    if (!u_arm) {
-        fut_printf("[POLL-TEST] ✗ failed to map user page for timerfd_settime\n");
-        fut_vfs_close((int)tfd);
-        fut_test_fail(POLL_TEST_TIMERFD_READY);
-        return;
-    }
+    /* Use kernel stack buffers — sys_timerfd_settime and timerfd_read_op both
+     * have KERNEL_VIRTUAL_BASE bypasses that skip fut_copy_from/to_user.
+     * This avoids pmap_map(), which triggered a scheduler race in CI where
+     * fut_task_current() returned NULL after a page-table context switch. */
     struct itimerspec arm = {0};
     arm.it_value.tv_nsec = 20 * 1000 * 1000;  /* 20 ms one-shot */
-    memcpy(u_arm, &arm, sizeof(arm));
 
-    ret = sys_timerfd_settime((int)tfd, 0, u_arm, NULL);
+    ret = sys_timerfd_settime((int)tfd, 0, &arm, NULL);
     if (ret != 0) {
         fut_printf("[POLL-TEST] ✗ timerfd_settime failed: %ld\n", ret);
         fut_vfs_close((int)tfd);
@@ -523,22 +518,8 @@ static void test_poll_timerfd_ready(void) {
         return;
     }
 
-    uintptr_t user_read_addr = g_user_lo + 0x22000;
-    uint64_t *u_expirations = (uint64_t *)map_user_page_for_test(user_read_addr);
-    if (!u_expirations) {
-        fut_printf("[POLL-TEST] ✗ failed to map user page for timerfd read\n");
-        fut_vfs_close((int)tfd);
-        fut_test_fail(POLL_TEST_TIMERFD_READY);
-        return;
-    }
-
-    ssize_t nr = fut_vfs_read((int)tfd, u_expirations, sizeof(*u_expirations));
     uint64_t expirations = 0;
-    if (nr == (ssize_t)sizeof(*u_expirations)) {
-        if (fut_copy_from_user(&expirations, u_expirations, sizeof(expirations)) != 0) {
-            nr = -EFAULT;
-        }
-    }
+    ssize_t nr = fut_vfs_read((int)tfd, &expirations, sizeof(expirations));
     if (nr != (ssize_t)sizeof(expirations) || expirations == 0) {
         fut_printf("[POLL-TEST] ✗ timerfd read failed: nr=%zd expirations=%llu\n",
                    nr, (unsigned long long)expirations);

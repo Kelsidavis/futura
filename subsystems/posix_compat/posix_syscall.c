@@ -3921,6 +3921,22 @@ static bool posix_deliver_signal(fut_task_t *current, int signum,
 #error "Unsupported architecture for signal delivery"
 #endif
 
+    /* SA_ONSTACK: if handler requests the alternate signal stack and one is
+     * configured, switch user_sp to the top of the alternate stack.
+     * Conditions: SA_ONSTACK set, altstack configured (not SS_DISABLE), and
+     * we are not already executing on the altstack (not SS_ONSTACK). */
+    unsigned long h_flags = (signum > 0 && signum < _NSIG)
+        ? current->signal_handler_flags[signum - 1] : 0;
+    if ((h_flags & SA_ONSTACK)
+        && current->sig_altstack.ss_sp != NULL
+        && !(current->sig_altstack.ss_flags & SS_DISABLE)
+        && !(current->sig_altstack.ss_flags & SS_ONSTACK)) {
+        /* Alternate stack grows downward: start at top = base + size */
+        user_sp = (uint64_t)(uintptr_t)current->sig_altstack.ss_sp
+                  + (uint64_t)current->sig_altstack.ss_size;
+        current->sig_altstack.ss_flags |= SS_ONSTACK;
+    }
+
     /* Allocate rt_sigframe on user stack (must be 16-byte aligned)
      * Decrement SP to make room for frame, ensuring 16-byte alignment */
     user_sp -= sizeof(struct rt_sigframe);

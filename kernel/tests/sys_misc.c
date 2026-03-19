@@ -19922,6 +19922,68 @@ static void test_ptrace_stub(void) {
 }
 
 /* ============================================================
+ * Tests 465-467: SA_ONSTACK + sigaltstack
+ * ============================================================ */
+static void test_sa_onstack(void) {
+    fut_printf("[MISC-TEST] Tests 465-467: SA_ONSTACK + sigaltstack\n");
+
+    extern long sys_sigaltstack(const struct sigaltstack *ss, struct sigaltstack *old_ss);
+    extern long sys_sigaction(int signum, const void *act, void *oldact);
+
+    /* Install an alternate stack (static storage, 16KiB) */
+    static char altstack_buf[16384];
+    struct sigaltstack new_ss = {
+        .ss_sp    = altstack_buf,
+        .ss_flags = 0,
+        .ss_size  = sizeof(altstack_buf),
+    };
+
+    /* Test 465: sigaltstack() installs the alternate stack */
+    long r = sys_sigaltstack(&new_ss, NULL);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 465: sigaltstack install returned %ld (expected 0)\n", r);
+        fut_test_fail(465); fut_test_fail(466); fut_test_fail(467); return;
+    }
+    fut_test_pass();
+    fut_printf("[MISC-TEST] ✓ Test 465: sigaltstack installed\n");
+
+    /* Test 466: sigaltstack() old_ss reads back the installed stack */
+    struct sigaltstack old_ss = {0};
+    r = sys_sigaltstack(NULL, &old_ss);
+    if (r != 0 || old_ss.ss_sp != altstack_buf || old_ss.ss_size != sizeof(altstack_buf)) {
+        fut_printf("[MISC-TEST] ✗ Test 466: sigaltstack readback failed: r=%ld sp=%p size=%zu\n",
+                   r, old_ss.ss_sp, old_ss.ss_size);
+        fut_test_fail(466); fut_test_fail(467); return;
+    }
+    fut_test_pass();
+    fut_printf("[MISC-TEST] ✓ Test 466: sigaltstack readback correct\n");
+
+    /* Test 467: SA_ONSTACK flag in sigaction is preserved */
+#define SA_ONSTACK_FLAG 0x08000000
+    struct sigaction act = {0};
+    act.sa_handler = (void (*)(int))(uintptr_t)1; /* dummy non-NULL */
+    act.sa_flags   = SA_ONSTACK_FLAG;
+    r = sys_sigaction(10 /* SIGUSR1 */, &act, NULL);
+    struct sigaction old_act = {0};
+    sys_sigaction(10, NULL, (void *)&old_act);
+    if (!(old_act.sa_flags & SA_ONSTACK_FLAG)) {
+        fut_printf("[MISC-TEST] ✗ Test 467: SA_ONSTACK not preserved, sa_flags=0x%lx\n",
+                   old_act.sa_flags);
+        fut_test_fail(467); return;
+    }
+    /* Restore: clear handler */
+    act.sa_handler = SIG_DFL;
+    act.sa_flags   = 0;
+    sys_sigaction(10, &act, NULL);
+    /* Disable alternate stack */
+    new_ss.ss_flags = 2; /* SS_DISABLE */
+    sys_sigaltstack(&new_ss, NULL);
+    fut_test_pass();
+    fut_printf("[MISC-TEST] ✓ Test 467: SA_ONSTACK preserved in sigaction\n");
+#undef SA_ONSTACK_FLAG
+}
+
+/* ============================================================
  * Tests 462-464: /proc/thread-self symlink
  * ============================================================ */
 static void test_proc_thread_self(void) {
@@ -20385,6 +20447,7 @@ void fut_misc_test_thread(void *arg) {
     test_proc_auxv();                     /* Tests 456-458: /proc/self/auxv binary format */
     test_ptrace_stub();                   /* Tests 459-460: ptrace PTRACE_TRACEME=0, others EPERM */
     test_sa_restorer_stored();            /* Test 461: SA_RESTORER stored and returned by sigaction */
+    test_sa_onstack();                    /* Tests 465-467: SA_ONSTACK + sigaltstack install/readback */
     test_proc_thread_self();              /* Tests 462-464: /proc/thread-self symlink */
 
     fut_printf("[MISC-TEST] ========================================\n");

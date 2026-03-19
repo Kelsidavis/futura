@@ -23169,6 +23169,162 @@ t569:
 #undef INO_RDWR_CREAT
 }
 
+/* ============================================================
+ * Tests 570-573: fchdir cwd update correctness
+ *
+ * fchdir() must update task->cwd so that subsequent relative
+ * path operations resolve correctly.  Before the fix, fchdir()
+ * only set current_dir_ino but left cwd_cache NULL, causing all
+ * relative paths to resolve from "/" instead of the new cwd.
+ *
+ * Test 570: fchdir to a directory, then open relative path succeeds
+ * Test 571: fchdir to a directory, getcwd returns new directory
+ * Test 572: fchdir on a regular file → ENOTDIR
+ * Test 573: fchdir restores behaviour after chdir back to "/"
+ * ============================================================ */
+static void test_fchdir_cwd_update(void) {
+    extern long sys_fchdir(int fd);
+    extern long sys_chdir(const char *path);
+    extern long sys_getcwd(char *buf, size_t size);
+    extern long sys_close(int fd);
+    extern long sys_open(const char *path, int flags, int mode);
+    extern ssize_t sys_read(int fd, void *buf, size_t count);
+    extern long sys_rmdir(const char *path);
+
+    fut_printf("[MISC-TEST] Tests 570-573: fchdir cwd update\n");
+
+    /* Setup: create /fchdir_test_dir/ with a file inside */
+    int dr = (int)fut_vfs_mkdir("/fchdir_test_dir", 0755);
+    if (dr < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 570: mkdir /fchdir_test_dir failed: %d\n", dr);
+        fut_test_fail(570);
+        fut_test_fail(571);
+        fut_test_fail(572);
+        fut_test_fail(573);
+        return;
+    }
+    int sfd = (int)fut_vfs_open("/fchdir_test_dir/hello.txt", 0x42 /* O_RDWR|O_CREAT */, 0644);
+    if (sfd >= 0) {
+        const char payload[] = "fchdir";
+        fut_vfs_write(sfd, payload, 6);
+        fut_vfs_close(sfd);
+    }
+
+    /* ---- Test 570: fchdir to dir, open relative path ---- */
+    fut_printf("[MISC-TEST] Test 570: fchdir + relative open\n");
+    int dirfd = (int)fut_vfs_open("/fchdir_test_dir", 0x10000 /* O_DIRECTORY */ | 0x0 /* O_RDONLY */, 0);
+    if (dirfd < 0) {
+        /* Fallback: plain open */
+        dirfd = (int)fut_vfs_open("/fchdir_test_dir", 0, 0);
+    }
+    if (dirfd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 570: open dir failed: %d\n", dirfd);
+        fut_test_fail(570);
+        goto t571;
+    }
+    {
+        long r = sys_fchdir(dirfd);
+        sys_close(dirfd);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 570: fchdir returned %ld\n", r);
+            fut_test_fail(570);
+            goto t571;
+        }
+        /* Now open "hello.txt" relative to new cwd */
+        int rfd = (int)sys_open("hello.txt", 0, 0);
+        if (rfd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 570: relative open returned %d (cwd not updated)\n", rfd);
+            fut_test_fail(570);
+        } else {
+            char rbuf[16] = {0};
+            ssize_t n = sys_read(rfd, rbuf, sizeof(rbuf) - 1);
+            sys_close(rfd);
+            if (n == 6 && __builtin_strncmp(rbuf, "fchdir", 6) == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 570: fchdir + relative open works\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 570: read n=%ld buf='%s'\n", n, rbuf);
+                fut_test_fail(570);
+            }
+        }
+    }
+
+t571:
+    /* ---- Test 571: getcwd returns new directory after fchdir ---- */
+    fut_printf("[MISC-TEST] Test 571: getcwd after fchdir\n");
+    {
+        /* fchdir to /fchdir_test_dir again */
+        int dfd = (int)fut_vfs_open("/fchdir_test_dir", 0, 0);
+        if (dfd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 571: open dir failed: %d\n", dfd);
+            fut_test_fail(571);
+            goto t572;
+        }
+        long r = sys_fchdir(dfd);
+        sys_close(dfd);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 571: fchdir returned %ld\n", r);
+            fut_test_fail(571);
+            goto t572;
+        }
+        char cwdbuf[128] = {0};
+        r = sys_getcwd(cwdbuf, sizeof(cwdbuf));
+        /* getcwd returns buf pointer (kernel addr → negative as long); errors in [-4095, -1] */
+        int getcwd_err = (r >= -4095 && r < 0);
+        if (!getcwd_err && __builtin_strncmp(cwdbuf, "/fchdir_test_dir", 16) == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 571: getcwd after fchdir = '%s'\n", cwdbuf);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 571: err=%d cwd='%s' (expected /fchdir_test_dir)\n",
+                       getcwd_err, cwdbuf);
+            fut_test_fail(571);
+        }
+    }
+
+t572:
+    /* ---- Test 572: fchdir on regular file → ENOTDIR ---- */
+    fut_printf("[MISC-TEST] Test 572: fchdir on regular file → ENOTDIR\n");
+    {
+        int rfd = (int)fut_vfs_open("/fchdir_test_dir/hello.txt", 0, 0);
+        if (rfd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 572: open file failed: %d\n", rfd);
+            fut_test_fail(572);
+            goto t573;
+        }
+        long r = sys_fchdir(rfd);
+        sys_close(rfd);
+        if (r == -20 /* -ENOTDIR */) {
+            fut_printf("[MISC-TEST] ✓ Test 572: fchdir(regular file) → ENOTDIR\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 572: fchdir(regular file) returned %ld (expected -ENOTDIR)\n", r);
+            fut_test_fail(572);
+        }
+    }
+
+t573:
+    /* ---- Test 573: chdir back to "/" restores relative resolution ---- */
+    fut_printf("[MISC-TEST] Test 573: chdir / restores root-relative paths\n");
+    {
+        sys_chdir("/");
+        /* Open an absolute path works; getcwd should return "/" */
+        char cwdbuf[64] = {0};
+        long r = sys_getcwd(cwdbuf, sizeof(cwdbuf));
+        int ge = (r >= -4095 && r < 0);
+        if (!ge && cwdbuf[0] == '/' && cwdbuf[1] == '\0') {
+            fut_printf("[MISC-TEST] ✓ Test 573: chdir / → cwd='/'\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 573: err=%d cwd='%s'\n", ge, cwdbuf);
+            fut_test_fail(573);
+        }
+    }
+
+    /* Cleanup */
+    fut_vfs_unlink("/fchdir_test_dir/hello.txt");
+    sys_rmdir("/fchdir_test_dir");
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -23624,6 +23780,7 @@ void fut_misc_test_thread(void *arg) {
     test_relative_symlink();                 /* Tests 558-561: relative symlink resolution */
     test_symlink_in_intermediate_path();     /* Tests 562-565: symlink in intermediate path component */
     test_inotify_event_delivery();           /* Tests 566-569: inotify IN_CREATE/MODIFY/DELETE/ONESHOT */
+    test_fchdir_cwd_update();                /* Tests 570-573: fchdir cwd update correctness */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

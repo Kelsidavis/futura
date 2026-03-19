@@ -210,15 +210,25 @@ long sys_fchdir(int fd) {
     /* Phase 3: Update current working directory to vnode's inode */
     task->current_dir_ino = vnode->ino;
 
-    /* Phase 3: Invalidate any cached working directory path */
-    if (task->cwd_cache) {
-        task->cwd_cache = NULL;
+    /* Update the cwd cache so that subsequent relative path lookups resolve
+     * correctly relative to the new directory.  Build the canonical path by
+     * walking the vnode->parent chain (same as sys_chdir and fut_vfs_chdir). */
+    {
+        char *built = fut_vnode_build_path(vnode, task->cwd_cache_buf, 256);
+        if (built && task->cwd_cache_buf[0] != '\0') {
+            task->cwd_cache = task->cwd_cache_buf;
+        } else {
+            /* Fallback: if build fails, clear the cache so getcwd returns "/" */
+            task->cwd_cache_buf[0] = '\0';
+            task->cwd_cache = NULL;
+        }
     }
 
     /* Phase 3: Detailed success logging with VFS integration */
     fut_printf("[FCHDIR] fchdir(fd=%d [%s], vnode_ino=%lu, old_dir_ino=%lu, pid=%d) "
-               "-> 0 (cwd changed via fd, Phase 4: Directory cache optimization)\n",
-               fd, fd_category, vnode->ino, old_dir_ino, task->pid);
+               "-> 0 (cwd='%s')\n",
+               fd, fd_category, vnode->ino, old_dir_ino, task->pid,
+               task->cwd_cache ? task->cwd_cache : "/");
 
     return 0;
 }

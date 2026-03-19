@@ -1244,7 +1244,7 @@ void fut_kernel_main(void) {
         planned_tests += 4u; /* pipe: creation, read/write, EPIPE, EOF */
         planned_tests += 5u; /* signal: handler installation, pending, ignored, multiple, delivery */
         planned_tests += 6u; /* capability: open, read, write, rights, invalid, close */
-        planned_tests += 6u; /* epoll: create, close, ctl add/del, quota, EBADF, EEXIST */
+        planned_tests += 12u; /* epoll: create, close, ctl add/del, quota, EBADF, EEXIST, EPOLLIN, timeout=0, MOD, ONESHOT, EPOLLET, EPOLLHUP */
         planned_tests += 8u; /* splice: statfs, sysinfo, pipe→file, file→pipe, EINVAL, vmsplice, fallocate, tee */
         planned_tests += 17u; /* clock_sched: getres, sched_param, sched_policy, itimer, rusage, times, getpriority, setpriority, getpriority(-who), setpriority(-who), unshare(0), unshare(invalid), rr_get_interval, clock_gettime, posix_timer_sigev_value, posix_timer_si_timer, itimer_virtual */
         planned_tests += 22u; /* vfs: O_TRUNC, O_APPEND, relpath, dir_mtime, readlink, hardlink, mount, renameat2, inotify, inotify_rename, inotify_attrib, inotify_close, inotify_access, inotify_modify, inotify_ftruncate, inotify_utimensat, inotify_truncate, inotify_delete, umount expire, dotdot, eisdir, chdir_dotdot */

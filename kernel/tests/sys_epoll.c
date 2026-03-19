@@ -23,6 +23,7 @@
 
 /* Forward declarations for kernel-internal epoll functions */
 extern long sys_epoll_create1(int flags);
+extern long sys_eventfd2(unsigned int initval, int flags);
 
 /* Max per-task epoll instances (must match kernel/sys_epoll.c) */
 #define EPOLL_TEST_MAX_PER_TASK 16
@@ -34,6 +35,12 @@ extern long sys_epoll_create1(int flags);
 #define EPOLL_TEST_QUOTA        4
 #define EPOLL_TEST_EBADF        5
 #define EPOLL_TEST_EEXIST       6
+#define EPOLL_TEST_EPOLLIN      7
+#define EPOLL_TEST_TIMEOUT      8
+#define EPOLL_TEST_MOD          9
+#define EPOLL_TEST_ONESHOT      10
+#define EPOLL_TEST_EPOLLET      11
+#define EPOLL_TEST_EPOLLHUP     12
 
 /* Scratch file used for FD-based tests */
 #define EPOLL_TEST_FILE "/tmp/epoll_test_scratch"
@@ -268,6 +275,394 @@ static void test_epoll_eexist(void) {
 }
 
 /**
+ * Test 7: epoll_wait returns EPOLLIN for an already-readable eventfd.
+ */
+static void test_epoll_wait_epollin(void) {
+    fut_printf("[EPOLL-TEST] Test 7: epoll_wait EPOLLIN on ready eventfd\n");
+
+    /* Create eventfd with initial count=1 (immediately readable) */
+    long efd = sys_eventfd2(1, 0);
+    if (efd < 0) {
+        fut_printf("[EPOLL-TEST] ✗ eventfd2 failed: %ld\n", efd);
+        fut_test_fail(EPOLL_TEST_EPOLLIN);
+        return;
+    }
+
+    long epfd = sys_epoll_create1(0);
+    if (epfd < 0) {
+        fut_printf("[EPOLL-TEST] ✗ epoll_create1 failed: %ld\n", epfd);
+        sys_close((int)efd);
+        fut_test_fail(EPOLL_TEST_EPOLLIN);
+        return;
+    }
+
+    struct epoll_event ev;
+    ev.events = EPOLLIN;
+    ev.data.fd = (int)efd;
+    long ret = sys_epoll_ctl((int)epfd, EPOLL_CTL_ADD, (int)efd, &ev);
+    if (ret != 0) {
+        fut_printf("[EPOLL-TEST] ✗ epoll_ctl ADD failed: %ld\n", ret);
+        sys_close((int)epfd);
+        sys_close((int)efd);
+        fut_test_fail(EPOLL_TEST_EPOLLIN);
+        return;
+    }
+
+    /* Poll with timeout=0 — eventfd is immediately readable */
+    struct epoll_event out[4];
+    long n = sys_epoll_wait((int)epfd, out, 4, 0);
+    if (n != 1) {
+        fut_printf("[EPOLL-TEST] ✗ epoll_wait returned %ld (expected 1)\n", n);
+        sys_close((int)epfd);
+        sys_close((int)efd);
+        fut_test_fail(EPOLL_TEST_EPOLLIN);
+        return;
+    }
+    if (!(out[0].events & EPOLLIN)) {
+        fut_printf("[EPOLL-TEST] ✗ event 0x%x missing EPOLLIN\n", out[0].events);
+        sys_close((int)epfd);
+        sys_close((int)efd);
+        fut_test_fail(EPOLL_TEST_EPOLLIN);
+        return;
+    }
+
+    sys_close((int)epfd);
+    sys_close((int)efd);
+    fut_printf("[EPOLL-TEST] ✓ epoll_wait: EPOLLIN fired for ready eventfd (events=0x%x)\n",
+               out[0].events);
+    fut_test_pass();
+}
+
+/**
+ * Test 8: epoll_wait with timeout=0 returns 0 when no fd is ready.
+ */
+static void test_epoll_wait_timeout_zero(void) {
+    fut_printf("[EPOLL-TEST] Test 8: epoll_wait timeout=0, no ready fd\n");
+
+    /* eventfd with count=0 — not readable */
+    long efd = sys_eventfd2(0, 0);
+    if (efd < 0) {
+        fut_printf("[EPOLL-TEST] ✗ eventfd2 failed: %ld\n", efd);
+        fut_test_fail(EPOLL_TEST_TIMEOUT);
+        return;
+    }
+
+    long epfd = sys_epoll_create1(0);
+    if (epfd < 0) {
+        fut_printf("[EPOLL-TEST] ✗ epoll_create1 failed: %ld\n", epfd);
+        sys_close((int)efd);
+        fut_test_fail(EPOLL_TEST_TIMEOUT);
+        return;
+    }
+
+    struct epoll_event ev;
+    ev.events = EPOLLIN;
+    ev.data.fd = (int)efd;
+    sys_epoll_ctl((int)epfd, EPOLL_CTL_ADD, (int)efd, &ev);
+
+    struct epoll_event out[4];
+    long n = sys_epoll_wait((int)epfd, out, 4, 0);
+
+    sys_close((int)epfd);
+    sys_close((int)efd);
+
+    if (n != 0) {
+        fut_printf("[EPOLL-TEST] ✗ epoll_wait timeout=0 returned %ld (expected 0)\n", n);
+        fut_test_fail(EPOLL_TEST_TIMEOUT);
+        return;
+    }
+
+    fut_printf("[EPOLL-TEST] ✓ epoll_wait: timeout=0 returns 0 for non-ready fd\n");
+    fut_test_pass();
+}
+
+/**
+ * Test 9: EPOLL_CTL_MOD updates event data returned by epoll_wait.
+ */
+static void test_epoll_ctl_mod(void) {
+    fut_printf("[EPOLL-TEST] Test 9: EPOLL_CTL_MOD updates event data\n");
+
+    /* eventfd with count=1 (immediately readable) */
+    long efd = sys_eventfd2(1, 0);
+    if (efd < 0) {
+        fut_printf("[EPOLL-TEST] ✗ eventfd2 failed: %ld\n", efd);
+        fut_test_fail(EPOLL_TEST_MOD);
+        return;
+    }
+
+    long epfd = sys_epoll_create1(0);
+    if (epfd < 0) {
+        fut_printf("[EPOLL-TEST] ✗ epoll_create1 failed: %ld\n", epfd);
+        sys_close((int)efd);
+        fut_test_fail(EPOLL_TEST_MOD);
+        return;
+    }
+
+    struct epoll_event ev;
+    ev.events = EPOLLIN;
+    ev.data.u32 = 42;
+    sys_epoll_ctl((int)epfd, EPOLL_CTL_ADD, (int)efd, &ev);
+
+    struct epoll_event out[4];
+    long n = sys_epoll_wait((int)epfd, out, 4, 0);
+    if (n != 1 || out[0].data.u32 != 42) {
+        fut_printf("[EPOLL-TEST] ✗ before MOD: n=%ld data.u32=%u (expected 1/42)\n",
+                   n, out[0].data.u32);
+        sys_close((int)epfd);
+        sys_close((int)efd);
+        fut_test_fail(EPOLL_TEST_MOD);
+        return;
+    }
+
+    /* MOD: change user data */
+    ev.events = EPOLLIN;
+    ev.data.u32 = 99;
+    long ret = sys_epoll_ctl((int)epfd, EPOLL_CTL_MOD, (int)efd, &ev);
+    if (ret != 0) {
+        fut_printf("[EPOLL-TEST] ✗ EPOLL_CTL_MOD failed: %ld\n", ret);
+        sys_close((int)epfd);
+        sys_close((int)efd);
+        fut_test_fail(EPOLL_TEST_MOD);
+        return;
+    }
+
+    n = sys_epoll_wait((int)epfd, out, 4, 0);
+    if (n != 1 || out[0].data.u32 != 99) {
+        fut_printf("[EPOLL-TEST] ✗ after MOD: n=%ld data.u32=%u (expected 1/99)\n",
+                   n, out[0].data.u32);
+        sys_close((int)epfd);
+        sys_close((int)efd);
+        fut_test_fail(EPOLL_TEST_MOD);
+        return;
+    }
+
+    sys_close((int)epfd);
+    sys_close((int)efd);
+    fut_printf("[EPOLL-TEST] ✓ EPOLL_CTL_MOD: data.u32 updated from 42 to 99\n");
+    fut_test_pass();
+}
+
+/**
+ * Test 10: EPOLLONESHOT — fd fires once, then is silenced; MOD re-arms it.
+ */
+static void test_epoll_oneshot(void) {
+    fut_printf("[EPOLL-TEST] Test 10: EPOLLONESHOT fires once then silenced\n");
+
+    long efd = sys_eventfd2(1, 0);  /* count=1, readable */
+    if (efd < 0) {
+        fut_printf("[EPOLL-TEST] ✗ eventfd2 failed: %ld\n", efd);
+        fut_test_fail(EPOLL_TEST_ONESHOT);
+        return;
+    }
+
+    long epfd = sys_epoll_create1(0);
+    if (epfd < 0) {
+        fut_printf("[EPOLL-TEST] ✗ epoll_create1 failed: %ld\n", epfd);
+        sys_close((int)efd);
+        fut_test_fail(EPOLL_TEST_ONESHOT);
+        return;
+    }
+
+    struct epoll_event ev;
+    ev.events = EPOLLIN | EPOLLONESHOT;
+    ev.data.fd = (int)efd;
+    sys_epoll_ctl((int)epfd, EPOLL_CTL_ADD, (int)efd, &ev);
+
+    struct epoll_event out[4];
+
+    /* First wait: should return 1 event */
+    long n = sys_epoll_wait((int)epfd, out, 4, 0);
+    if (n != 1) {
+        fut_printf("[EPOLL-TEST] ✗ first wait: n=%ld (expected 1)\n", n);
+        sys_close((int)epfd);
+        sys_close((int)efd);
+        fut_test_fail(EPOLL_TEST_ONESHOT);
+        return;
+    }
+
+    /* Second wait: EPOLLONESHOT silenced the fd → 0 events */
+    n = sys_epoll_wait((int)epfd, out, 4, 0);
+    if (n != 0) {
+        fut_printf("[EPOLL-TEST] ✗ second wait: n=%ld (expected 0, oneshot should silence)\n", n);
+        sys_close((int)epfd);
+        sys_close((int)efd);
+        fut_test_fail(EPOLL_TEST_ONESHOT);
+        return;
+    }
+
+    /* MOD to re-arm with EPOLLONESHOT */
+    ev.events = EPOLLIN | EPOLLONESHOT;
+    ev.data.fd = (int)efd;
+    long ret = sys_epoll_ctl((int)epfd, EPOLL_CTL_MOD, (int)efd, &ev);
+    if (ret != 0) {
+        fut_printf("[EPOLL-TEST] ✗ MOD re-arm failed: %ld\n", ret);
+        sys_close((int)epfd);
+        sys_close((int)efd);
+        fut_test_fail(EPOLL_TEST_ONESHOT);
+        return;
+    }
+
+    /* Third wait: re-armed, should fire again (eventfd still count=1) */
+    n = sys_epoll_wait((int)epfd, out, 4, 0);
+    if (n != 1) {
+        fut_printf("[EPOLL-TEST] ✗ third wait after MOD re-arm: n=%ld (expected 1)\n", n);
+        sys_close((int)epfd);
+        sys_close((int)efd);
+        fut_test_fail(EPOLL_TEST_ONESHOT);
+        return;
+    }
+
+    sys_close((int)epfd);
+    sys_close((int)efd);
+    fut_printf("[EPOLL-TEST] ✓ EPOLLONESHOT: fires once, silenced, MOD re-arms\n");
+    fut_test_pass();
+}
+
+/**
+ * Test 11: EPOLLET — edge-triggered only fires on not-ready→ready transition.
+ */
+static void test_epoll_epollet(void) {
+    fut_printf("[EPOLL-TEST] Test 11: EPOLLET edge-triggered transitions\n");
+
+    long efd = sys_eventfd2(0, 0);  /* count=0, not readable */
+    if (efd < 0) {
+        fut_printf("[EPOLL-TEST] ✗ eventfd2 failed: %ld\n", efd);
+        fut_test_fail(EPOLL_TEST_EPOLLET);
+        return;
+    }
+
+    long epfd = sys_epoll_create1(0);
+    if (epfd < 0) {
+        fut_printf("[EPOLL-TEST] ✗ epoll_create1 failed: %ld\n", epfd);
+        sys_close((int)efd);
+        fut_test_fail(EPOLL_TEST_EPOLLET);
+        return;
+    }
+
+    struct epoll_event ev;
+    ev.events = EPOLLIN | EPOLLET;
+    ev.data.fd = (int)efd;
+    sys_epoll_ctl((int)epfd, EPOLL_CTL_ADD, (int)efd, &ev);
+
+    struct epoll_event out[4];
+
+    /* Step 1: nothing ready → 0 events */
+    long n = sys_epoll_wait((int)epfd, out, 4, 0);
+    if (n != 0) {
+        fut_printf("[EPOLL-TEST] ✗ step1 (not ready): n=%ld (expected 0)\n", n);
+        sys_close((int)epfd);
+        sys_close((int)efd);
+        fut_test_fail(EPOLL_TEST_EPOLLET);
+        return;
+    }
+
+    /* Step 2: write to eventfd (not-ready→ready transition), expect 1 event */
+    uint64_t one = 1;
+    sys_write((int)efd, &one, sizeof(one));
+    n = sys_epoll_wait((int)epfd, out, 4, 0);
+    if (n != 1) {
+        fut_printf("[EPOLL-TEST] ✗ step2 (after write): n=%ld (expected 1)\n", n);
+        sys_close((int)epfd);
+        sys_close((int)efd);
+        fut_test_fail(EPOLL_TEST_EPOLLET);
+        return;
+    }
+
+    /* Step 3: still readable, no new edge → 0 events */
+    n = sys_epoll_wait((int)epfd, out, 4, 0);
+    if (n != 0) {
+        fut_printf("[EPOLL-TEST] ✗ step3 (no new edge): n=%ld (expected 0)\n", n);
+        sys_close((int)epfd);
+        sys_close((int)efd);
+        fut_test_fail(EPOLL_TEST_EPOLLET);
+        return;
+    }
+
+    /* Step 4: drain eventfd (counter→0), scan must observe not-ready → clears ET state */
+    uint64_t val;
+    sys_read((int)efd, &val, sizeof(val));  /* drain: counter→0 */
+    n = sys_epoll_wait((int)epfd, out, 4, 0);  /* scan sees not-ready → clears last_was_readable */
+    if (n != 0) {
+        fut_printf("[EPOLL-TEST] ✗ step4 (after drain): n=%ld (expected 0)\n", n);
+        sys_close((int)epfd);
+        sys_close((int)efd);
+        fut_test_fail(EPOLL_TEST_EPOLLET);
+        return;
+    }
+
+    /* Step 5: write again → new not-ready→ready transition → 1 event */
+    sys_write((int)efd, &one, sizeof(one));
+    n = sys_epoll_wait((int)epfd, out, 4, 0);
+    if (n != 1) {
+        fut_printf("[EPOLL-TEST] ✗ step5 (write after drain+scan): n=%ld (expected 1)\n", n);
+        sys_close((int)epfd);
+        sys_close((int)efd);
+        fut_test_fail(EPOLL_TEST_EPOLLET);
+        return;
+    }
+
+    sys_close((int)epfd);
+    sys_close((int)efd);
+    fut_printf("[EPOLL-TEST] ✓ EPOLLET: fires on not-ready→ready transitions only\n");
+    fut_test_pass();
+}
+
+/**
+ * Test 12: EPOLLHUP fires when write end of pipe is closed.
+ */
+static void test_epoll_hup_pipe(void) {
+    fut_printf("[EPOLL-TEST] Test 12: EPOLLHUP on pipe after write-end close\n");
+
+    int pipefd[2];
+    long ret = sys_pipe(pipefd);
+    if (ret != 0) {
+        fut_printf("[EPOLL-TEST] ✗ pipe() failed: %ld\n", ret);
+        fut_test_fail(EPOLL_TEST_EPOLLHUP);
+        return;
+    }
+
+    long epfd = sys_epoll_create1(0);
+    if (epfd < 0) {
+        fut_printf("[EPOLL-TEST] ✗ epoll_create1 failed: %ld\n", epfd);
+        sys_close(pipefd[0]);
+        sys_close(pipefd[1]);
+        fut_test_fail(EPOLL_TEST_EPOLLHUP);
+        return;
+    }
+
+    struct epoll_event ev;
+    ev.events = EPOLLIN | EPOLLHUP;
+    ev.data.fd = pipefd[0];
+    sys_epoll_ctl((int)epfd, EPOLL_CTL_ADD, pipefd[0], &ev);
+
+    /* Close write end → read end should see EPOLLHUP */
+    sys_close(pipefd[1]);
+
+    struct epoll_event out[4];
+    long n = sys_epoll_wait((int)epfd, out, 4, 0);
+    if (n < 1) {
+        fut_printf("[EPOLL-TEST] ✗ epoll_wait after write-end close: n=%ld (expected >=1)\n", n);
+        sys_close((int)epfd);
+        sys_close(pipefd[0]);
+        fut_test_fail(EPOLL_TEST_EPOLLHUP);
+        return;
+    }
+    if (!(out[0].events & (EPOLLHUP | EPOLLIN))) {
+        fut_printf("[EPOLL-TEST] ✗ events=0x%x missing EPOLLHUP|EPOLLIN\n", out[0].events);
+        sys_close((int)epfd);
+        sys_close(pipefd[0]);
+        fut_test_fail(EPOLL_TEST_EPOLLHUP);
+        return;
+    }
+
+    sys_close((int)epfd);
+    sys_close(pipefd[0]);
+    fut_printf("[EPOLL-TEST] ✓ EPOLLHUP: pipe read-end sees HUP after write-end closed (events=0x%x)\n",
+               out[0].events);
+    fut_test_pass();
+}
+
+/**
  * Thread entry point for epoll tests.
  */
 void fut_epoll_test_thread(void *arg) {
@@ -283,6 +678,12 @@ void fut_epoll_test_thread(void *arg) {
     test_epoll_quota();
     test_epoll_ebadf();
     test_epoll_eexist();
+    test_epoll_wait_epollin();
+    test_epoll_wait_timeout_zero();
+    test_epoll_ctl_mod();
+    test_epoll_oneshot();
+    test_epoll_epollet();
+    test_epoll_hup_pipe();
 
     fut_printf("[EPOLL-TEST] ========================================\n");
     fut_printf("[EPOLL-TEST] epoll Syscall Tests Complete\n");

@@ -3270,7 +3270,7 @@ struct syscall_entry {
 #define __NR_rt_sigaction   134
 #define __NR_rt_sigprocmask 135
 #define __NR_rt_sigpending  136
-#define __NR_rt_sigsuspend  137
+#define __NR_rt_sigsuspend  133
 #define __NR_rt_sigreturn   139
 #define __NR_setpriority    140
 #define __NR_getpriority    141
@@ -3650,8 +3650,8 @@ static void arm64_syscall_table_init(void) {
     syscall_table[__NR_pidfd_send_signal].name = "pidfd_send_signal";
     syscall_table[__NR_pidfd_getfd].handler = (syscall_fn_t)sys_pidfd_getfd_wrapper;
     syscall_table[__NR_pidfd_getfd].name = "pidfd_getfd";
-    syscall_table[__NR_sigsuspend].handler = (syscall_fn_t)sys_sigsuspend_wrapper;
-    syscall_table[__NR_sigsuspend].name = "sigsuspend";
+    /* Note: sigsuspend does not exist as a separate ARM64 syscall;
+     * slot 133 is rt_sigsuspend (registered below in the rt_sig* block) */
     syscall_table[__NR_mremap].handler = (syscall_fn_t)sys_mremap_wrapper;
     syscall_table[__NR_mremap].name = "mremap";
     syscall_table[__NR_sendmsg].handler = (syscall_fn_t)sys_sendmsg_wrapper;

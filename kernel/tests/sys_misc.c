@@ -20159,6 +20159,83 @@ static void test_clone3(void) {
     }
 }
 
+/* ============================================================
+ * Tests 477-481: Linux 5.10-6.10 newer syscall stubs
+ *   477: process_madvise  -> ENOSYS
+ *   478: set_mempolicy_home_node -> ENOSYS
+ *   479: cachestat        -> ENOSYS
+ *   480: fchmodat2        -> 0 (delegates to fchmodat)
+ *   481: mseal            -> 0 (no-op)
+ * ============================================================ */
+static void test_linux_6_10_stubs(void) {
+    fut_printf("[MISC-TEST] Tests 477-481: Linux 5.10-6.10 syscall stubs\n");
+
+    extern long sys_process_madvise(int pidfd, const void *iovec, unsigned long vlen,
+                                     int advice, unsigned int flags);
+    extern long sys_set_mempolicy_home_node(unsigned long start, unsigned long len,
+                                             unsigned long home_node, unsigned long flags);
+    extern long sys_cachestat(unsigned int fd, const void *cachestat_range,
+                               void *cachestat_buf, unsigned int flags);
+    extern long sys_fchmodat2(int dirfd, const char *pathname, unsigned int mode,
+                               unsigned int flags);
+    extern long sys_mseal(void *addr, size_t len, unsigned long flags);
+
+    /* Test 477: process_madvise -> ENOSYS */
+    fut_printf("[MISC-TEST] Test 477: process_madvise -> ENOSYS\n");
+    long r = sys_process_madvise(-1, NULL, 0, 0, 0);
+    if (r != -38 /*-ENOSYS*/) {
+        fut_printf("[MISC-TEST] ✗ Test 477: process_madvise returned %ld\n", r);
+        fut_test_fail(477);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 477: process_madvise -> -ENOSYS\n");
+        fut_test_pass();
+    }
+
+    /* Test 478: set_mempolicy_home_node -> ENOSYS */
+    fut_printf("[MISC-TEST] Test 478: set_mempolicy_home_node -> ENOSYS\n");
+    r = sys_set_mempolicy_home_node(0, 0, 0, 0);
+    if (r != -38 /*-ENOSYS*/) {
+        fut_printf("[MISC-TEST] ✗ Test 478: set_mempolicy_home_node returned %ld\n", r);
+        fut_test_fail(478);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 478: set_mempolicy_home_node -> -ENOSYS\n");
+        fut_test_pass();
+    }
+
+    /* Test 479: cachestat -> ENOSYS */
+    fut_printf("[MISC-TEST] Test 479: cachestat -> ENOSYS\n");
+    r = sys_cachestat(0, NULL, NULL, 0);
+    if (r != -38 /*-ENOSYS*/) {
+        fut_printf("[MISC-TEST] ✗ Test 479: cachestat returned %ld\n", r);
+        fut_test_fail(479);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 479: cachestat -> -ENOSYS\n");
+        fut_test_pass();
+    }
+
+    /* Test 480: fchmodat2(AT_FDCWD, non-existent, 0644, 0) -> ENOENT (not ENOSYS) */
+    fut_printf("[MISC-TEST] Test 480: fchmodat2 delegates to fchmodat\n");
+    r = sys_fchmodat2(-100 /*AT_FDCWD*/, "/nonexistent_fchmodat2_test", 0644, 0);
+    if (r != -2 /*-ENOENT*/) {
+        fut_printf("[MISC-TEST] ✗ Test 480: fchmodat2 returned %ld, expected -ENOENT\n", r);
+        fut_test_fail(480);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 480: fchmodat2 -> -ENOENT (delegate OK)\n");
+        fut_test_pass();
+    }
+
+    /* Test 481: mseal -> 0 (no-op, glibc 2.38+ memory sealing) */
+    fut_printf("[MISC-TEST] Test 481: mseal -> 0 (no-op)\n");
+    r = sys_mseal(NULL, 0, 0);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 481: mseal returned %ld, expected 0\n", r);
+        fut_test_fail(481);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 481: mseal -> 0\n");
+        fut_test_pass();
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -20588,6 +20665,7 @@ void fut_misc_test_thread(void *arg) {
     test_proc_thread_self();              /* Tests 462-464: /proc/thread-self symlink */
     test_linux_5_16_enosys_stubs();       /* Tests 468-472: landlock/memfd_secret/futex_waitv ENOSYS */
     test_clone3();                         /* Tests 473-476: clone3 EFAULT/EINVAL/ENOSYS/fork */
+    test_linux_6_10_stubs();               /* Tests 477-481: process_madvise/cachestat/mseal etc. */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

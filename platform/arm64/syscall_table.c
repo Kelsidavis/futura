@@ -3367,6 +3367,24 @@ static int64_t sys_clone3_wrapper(uint64_t cl_args, uint64_t size, uint64_t a3,
     return sys_clone3((const void *)(uintptr_t)cl_args, (size_t)size);
 }
 
+/* mseal wrapper — no-op success; glibc 2.38+ seals its own segments */
+static int64_t sys_mseal_wrapper(uint64_t addr, uint64_t len, uint64_t flags,
+                                  uint64_t a4, uint64_t a5, uint64_t a6) {
+    (void)a4; (void)a5; (void)a6;
+    extern long sys_mseal(void *addr, size_t len, unsigned long flags);
+    return sys_mseal((void *)(uintptr_t)addr, (size_t)len, (unsigned long)flags);
+}
+
+/* fchmodat2 wrapper — delegate to sys_fchmodat */
+static int64_t sys_fchmodat2_wrapper(uint64_t dirfd, uint64_t pathname, uint64_t mode,
+                                      uint64_t flags, uint64_t a5, uint64_t a6) {
+    (void)a5; (void)a6;
+    extern long sys_fchmodat2(int dirfd, const char *pathname, unsigned int mode,
+                               unsigned int flags);
+    return sys_fchmodat2((int)dirfd, (const char *)(uintptr_t)pathname,
+                          (unsigned int)mode, (unsigned int)flags);
+}
+
 /* Initialize syscall table at runtime to avoid ARM64 relocation issues */
 static void arm64_syscall_table_init(void) {
     if (syscall_table_initialized) {
@@ -4062,6 +4080,23 @@ static void arm64_syscall_table_init(void) {
     syscall_table[__NR_memfd_secret].name = "memfd_secret";
     syscall_table[__NR_futex_waitv].handler = (syscall_fn_t)sys_enosys_stub;
     syscall_table[__NR_futex_waitv].name = "futex_waitv";
+
+    /* Linux 5.10-6.10 stubs */
+#define __NR_process_madvise         440
+#define __NR_set_mempolicy_home_node 450
+#define __NR_cachestat               451
+#define __NR_fchmodat2               452
+#define __NR_mseal                   462
+    syscall_table[__NR_process_madvise].handler = (syscall_fn_t)sys_enosys_stub;
+    syscall_table[__NR_process_madvise].name = "process_madvise";
+    syscall_table[__NR_set_mempolicy_home_node].handler = (syscall_fn_t)sys_enosys_stub;
+    syscall_table[__NR_set_mempolicy_home_node].name = "set_mempolicy_home_node";
+    syscall_table[__NR_cachestat].handler = (syscall_fn_t)sys_enosys_stub;
+    syscall_table[__NR_cachestat].name = "cachestat";
+    syscall_table[__NR_fchmodat2].handler = (syscall_fn_t)sys_fchmodat2_wrapper;
+    syscall_table[__NR_fchmodat2].name = "fchmodat2";
+    syscall_table[__NR_mseal].handler = (syscall_fn_t)sys_mseal_wrapper;
+    syscall_table[__NR_mseal].name = "mseal";
 
     syscall_table_initialized = true;
 }

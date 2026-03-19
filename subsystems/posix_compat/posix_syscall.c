@@ -315,12 +315,18 @@
 #define SYS_pidfd_send_signal 424  /* Linux: 424 */
 #define SYS_pidfd_getfd       445  /* Linux: 438 — Futura: 445 (438 used by process_vm_writev) */
 #define SYS_epoll_pwait2      446  /* Linux: 441 — Futura: 446 (441 used by seccomp) */
-/* Linux 5.13-5.16 syscalls — remapped because 444-446 are taken above */
+/* Linux 5.10-5.16 syscalls — remapped because 444-446 are taken above */
 #define SYS_landlock_create_ruleset 447  /* Linux: 444 — Futura: 447 */
 #define SYS_landlock_add_rule       448  /* Linux: 445 — Futura: 448 */
 #define SYS_landlock_restrict_self  449  /* Linux: 446 — Futura: 449 */
 #define SYS_memfd_secret            450  /* Linux: 447 — Futura: 450 */
 #define SYS_futex_waitv             451  /* Linux: 449 — Futura: 451 */
+/* Linux 5.10-6.10 syscalls — remapped (Linux numbers conflict with Futura scheme) */
+#define SYS_process_madvise         452  /* Linux: 440 — Futura: 452 (440 = sched_getattr) */
+#define SYS_set_mempolicy_home_node 453  /* Linux: 450 — Futura: 453 (450 = memfd_secret) */
+#define SYS_cachestat               454  /* Linux: 451 — Futura: 454 (451 = futex_waitv) */
+#define SYS_fchmodat2               455  /* Linux: 452 — Futura: 455 */
+#define SYS_mseal                   456  /* Linux: 459 — Futura: 456 */
 #define SYS_sethostname      170
 #define SYS_setdomainname    171
 /* Syscalls whose Linux numbers conflict with Futura's custom scheme get
@@ -2145,6 +2151,51 @@ static int64_t sys_futex_waitv_handler(uint64_t waiters, uint64_t nr_futexes,
                             (int32_t)clockid);
 }
 
+/* process_madvise (Linux 5.10+) — ENOSYS; Android LMKD/systemd-oomd fall back */
+static int64_t sys_process_madvise_handler(uint64_t pidfd, uint64_t iovec, uint64_t vlen,
+                                            uint64_t advice, uint64_t flags, uint64_t a6) {
+    (void)a6;
+    extern long sys_process_madvise(int pidfd, const void *iovec, unsigned long vlen,
+                                     int advice, unsigned int flags);
+    return sys_process_madvise((int)pidfd, (const void *)(uintptr_t)iovec,
+                                (unsigned long)vlen, (int)advice, (unsigned int)flags);
+}
+/* set_mempolicy_home_node (Linux 5.17+) — ENOSYS; no NUMA support */
+static int64_t sys_set_mempolicy_home_node_handler(uint64_t start, uint64_t len,
+                                                    uint64_t home_node, uint64_t flags,
+                                                    uint64_t a5, uint64_t a6) {
+    (void)a5; (void)a6;
+    extern long sys_set_mempolicy_home_node(unsigned long start, unsigned long len,
+                                             unsigned long home_node, unsigned long flags);
+    return sys_set_mempolicy_home_node((unsigned long)start, (unsigned long)len,
+                                        (unsigned long)home_node, (unsigned long)flags);
+}
+/* cachestat (Linux 6.5+) — ENOSYS; no page cache */
+static int64_t sys_cachestat_handler(uint64_t fd, uint64_t range, uint64_t buf,
+                                      uint64_t flags, uint64_t a5, uint64_t a6) {
+    (void)a5; (void)a6;
+    extern long sys_cachestat(unsigned int fd, const void *cachestat_range,
+                               void *cachestat_buf, unsigned int flags);
+    return sys_cachestat((unsigned int)fd, (const void *)(uintptr_t)range,
+                          (void *)(uintptr_t)buf, (unsigned int)flags);
+}
+/* fchmodat2 (Linux 6.6+) — delegate to fchmodat */
+static int64_t sys_fchmodat2_handler(uint64_t dirfd, uint64_t pathname, uint64_t mode,
+                                      uint64_t flags, uint64_t a5, uint64_t a6) {
+    (void)a5; (void)a6;
+    extern long sys_fchmodat2(int dirfd, const char *pathname, unsigned int mode,
+                               unsigned int flags);
+    return sys_fchmodat2((int)dirfd, (const char *)(uintptr_t)pathname,
+                          (unsigned int)mode, (unsigned int)flags);
+}
+/* mseal (Linux 6.10+) — no-op; glibc 2.38+ seals its own segments */
+static int64_t sys_mseal_handler(uint64_t addr, uint64_t len, uint64_t flags,
+                                   uint64_t a4, uint64_t a5, uint64_t a6) {
+    (void)a4; (void)a5; (void)a6;
+    extern long sys_mseal(void *addr, size_t len, unsigned long flags);
+    return sys_mseal((void *)(uintptr_t)addr, (size_t)len, (unsigned long)flags);
+}
+
 static int64_t sys_sched_setattr_handler(uint64_t pid, uint64_t uattr, uint64_t flags,
                                           uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     (void)arg4; (void)arg5; (void)arg6;
@@ -3849,6 +3900,11 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_landlock_restrict_self]  = sys_landlock_restrict_self_handler,
     [SYS_memfd_secret]            = sys_memfd_secret_handler,
     [SYS_futex_waitv]             = sys_futex_waitv_handler,
+    [SYS_process_madvise]         = sys_process_madvise_handler,
+    [SYS_set_mempolicy_home_node] = sys_set_mempolicy_home_node_handler,
+    [SYS_cachestat]               = sys_cachestat_handler,
+    [SYS_fchmodat2]               = sys_fchmodat2_handler,
+    [SYS_mseal]                   = sys_mseal_handler,
 };
 
 /* ============================================================

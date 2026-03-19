@@ -1,19 +1,22 @@
-/* kernel/sys_landlock.c - Linux Landlock LSM and related stubs
+/* kernel/sys_landlock.c - Linux Landlock LSM and newer syscall stubs
  *
  * Copyright (c) 2025 Kelsi Davis
  * Licensed under the MPL v2.0 — see LICENSE for details.
  *
- * Stub implementations for Linux 5.13-5.16 syscalls that are not yet
- * implemented in Futura.  Each returns -ENOSYS so callers can fall back
- * gracefully (e.g. container sandboxes skip landlock, Wine/Proton uses
- * alternative synchronisation paths).
+ * Stub implementations for Linux 5.10-6.10 syscalls not yet in Futura.
+ * Each returns -ENOSYS (or 0 for no-op-safe ops) so callers fall back.
  *
- * Syscall numbers (Linux x86_64 / ARM64):
- *   landlock_create_ruleset  444
- *   landlock_add_rule        445
- *   landlock_restrict_self   446
- *   memfd_secret             447
+ * Linux x86_64 syscall numbers:
+ *   landlock_create_ruleset  444   (Linux 5.13)
+ *   landlock_add_rule        445   (Linux 5.13)
+ *   landlock_restrict_self   446   (Linux 5.13)
+ *   memfd_secret             447   (Linux 5.14)
  *   futex_waitv              449   (Linux 5.16)
+ *   process_madvise          440   (Linux 5.10) — remapped in Futura
+ *   set_mempolicy_home_node  450   (Linux 5.17) — remapped in Futura
+ *   cachestat                451   (Linux 6.5)  — remapped in Futura
+ *   fchmodat2                452   (Linux 6.6)  — remapped in Futura
+ *   mseal                    459   (Linux 6.10) — remapped in Futura
  */
 
 #include <kernel/errno.h>
@@ -67,4 +70,55 @@ long sys_futex_waitv(const void *waiters, unsigned int nr_futexes,
                      int32_t clockid) {
     (void)waiters; (void)nr_futexes; (void)flags; (void)timeout; (void)clockid;
     return -ENOSYS;
+}
+
+/**
+ * sys_process_madvise() - Apply madvise() hints to another process.
+ * Returns -ENOSYS; callers (Android LMKD, systemd-oomd) fall back.
+ */
+long sys_process_madvise(int pidfd, const void *iovec, unsigned long vlen,
+                         int advice, unsigned int flags) {
+    (void)pidfd; (void)iovec; (void)vlen; (void)advice; (void)flags;
+    return -ENOSYS;
+}
+
+/**
+ * sys_set_mempolicy_home_node() - Set home node for NUMA memory policy.
+ * Returns -ENOSYS; Futura has no NUMA topology.
+ */
+long sys_set_mempolicy_home_node(unsigned long start, unsigned long len,
+                                 unsigned long home_node, unsigned long flags) {
+    (void)start; (void)len; (void)home_node; (void)flags;
+    return -ENOSYS;
+}
+
+/**
+ * sys_cachestat() - Query page-cache status for a file range.
+ * Returns -ENOSYS; Futura has no page cache.
+ */
+long sys_cachestat(unsigned int fd, const void *cachestat_range,
+                   void *cachestat_buf, unsigned int flags) {
+    (void)fd; (void)cachestat_range; (void)cachestat_buf; (void)flags;
+    return -ENOSYS;
+}
+
+/**
+ * sys_fchmodat2() - Change file permissions (Linux 6.6+, with flag support).
+ * Delegates to sys_fchmodat; the main addition is AT_SYMLINK_NOFOLLOW which
+ * already returns ENOTSUP from fchmodat (symlinks have no permissions).
+ */
+long sys_fchmodat2(int dirfd, const char *pathname, unsigned int mode,
+                   unsigned int flags) {
+    extern long sys_fchmodat(int dirfd, const char *pathname, uint32_t mode, int flags);
+    return sys_fchmodat(dirfd, pathname, (uint32_t)mode, (int)flags);
+}
+
+/**
+ * sys_mseal() - Seal a memory mapping against future changes.
+ * Returns 0 (success, no-op); glibc 2.38+ uses this to seal its own segments
+ * and ignores ENOSYS, but returning 0 is more accurate from the caller's view.
+ */
+long sys_mseal(void *addr, size_t len, unsigned long flags) {
+    (void)addr; (void)len; (void)flags;
+    return 0;
 }

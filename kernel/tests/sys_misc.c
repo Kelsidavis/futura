@@ -22112,6 +22112,153 @@ t539:;
 #undef FALLOC_FL_ZERO_RANGE
 }
 
+/*
+ * test_xattr_basic() — Tests 540-543: extended attribute syscalls
+ *
+ *   Test 540: setxattr creates attribute; getxattr returns the value.
+ *   Test 541: listxattr enumerates the attribute name.
+ *   Test 542: removexattr removes the attribute; subsequent getxattr → ENODATA.
+ *   Test 543: XATTR_CREATE on existing attr → EEXIST; XATTR_REPLACE on missing → ENODATA.
+ */
+static void test_xattr_basic(void) {
+    extern long sys_setxattr(const char *path, const char *name,
+                             const void *value, long size, int flags);
+    extern long sys_getxattr(const char *path, const char *name,
+                             void *value, long size);
+    extern long sys_listxattr(const char *path, char *list, long size);
+    extern long sys_removexattr(const char *path, const char *name);
+
+#define XATTR_CREATE_F  1
+#define XATTR_REPLACE_F 2
+#define ENODATA_VAL    61
+
+    const char *path = "/xattr_test.txt";
+    const char *name = "user.test";
+    const char *value = "hello_xattr";
+
+    fut_vfs_unlink(path);
+    int fd = fut_vfs_open(path, O_CREAT | O_RDWR, 0644);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 540: open failed: %d\n", fd);
+        fut_test_fail(540); fut_test_fail(541); fut_test_fail(542); fut_test_fail(543); return;
+    }
+    fut_vfs_close(fd);
+
+    /* --- Test 540: setxattr + getxattr roundtrip --- */
+    fut_printf("[MISC-TEST] Test 540: setxattr + getxattr roundtrip\n");
+    {
+        long r = sys_setxattr(path, name, value, 11, 0);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 540: setxattr returned %ld (expected 0)\n", r);
+            fut_vfs_unlink(path);
+            fut_test_fail(540); goto t541;
+        }
+        char buf[32];
+        __builtin_memset(buf, 0, sizeof(buf));
+        long n = sys_getxattr(path, name, buf, sizeof(buf) - 1);
+        if (n != 11) {
+            fut_printf("[MISC-TEST] ✗ Test 540: getxattr returned %ld (expected 11)\n", n);
+            fut_vfs_unlink(path);
+            fut_test_fail(540); goto t541;
+        }
+        if (__builtin_memcmp(buf, value, 11) != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 540: getxattr value mismatch: '%s'\n", buf);
+            fut_vfs_unlink(path);
+            fut_test_fail(540); goto t541;
+        }
+        fut_printf("[MISC-TEST] ✓ Test 540: setxattr + getxattr: value='%s'\n", buf);
+        fut_test_pass();
+    }
+
+t541:;
+    /* --- Test 541: listxattr includes the attribute name --- */
+    fut_printf("[MISC-TEST] Test 541: listxattr enumerates attribute\n");
+    {
+        char list[128];
+        __builtin_memset(list, 0, sizeof(list));
+        long n = sys_listxattr(path, list, sizeof(list));
+        if (n <= 0) {
+            fut_printf("[MISC-TEST] ✗ Test 541: listxattr returned %ld\n", n);
+            fut_vfs_unlink(path);
+            fut_test_fail(541); goto t542;
+        }
+        /* List is NUL-separated. Look for "user.test\0" */
+        int found = 0;
+        for (long i = 0; i < n; ) {
+            const char *entry = list + i;
+            long elen = 0;
+            while (i + elen < n && list[i + elen] != '\0') elen++;
+            if (elen == 9 && __builtin_memcmp(entry, "user.test", 9) == 0) {
+                found = 1; break;
+            }
+            i += elen + 1;
+        }
+        if (!found) {
+            fut_printf("[MISC-TEST] ✗ Test 541: 'user.test' not in listxattr output\n");
+            fut_vfs_unlink(path);
+            fut_test_fail(541); goto t542;
+        }
+        fut_printf("[MISC-TEST] ✓ Test 541: listxattr: found 'user.test' in %ld-byte list\n", n);
+        fut_test_pass();
+    }
+
+t542:;
+    /* --- Test 542: removexattr removes attr; getxattr → ENODATA --- */
+    fut_printf("[MISC-TEST] Test 542: removexattr then getxattr → ENODATA\n");
+    {
+        long r = sys_removexattr(path, name);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 542: removexattr returned %ld (expected 0)\n", r);
+            fut_vfs_unlink(path);
+            fut_test_fail(542); goto t543;
+        }
+        char buf[32];
+        long n = sys_getxattr(path, name, buf, sizeof(buf));
+        if (n != -ENODATA_VAL) {
+            fut_printf("[MISC-TEST] ✗ Test 542: getxattr after remove returned %ld (expected -%d ENODATA)\n",
+                       n, ENODATA_VAL);
+            fut_vfs_unlink(path);
+            fut_test_fail(542); goto t543;
+        }
+        fut_printf("[MISC-TEST] ✓ Test 542: removexattr + getxattr → ENODATA\n");
+        fut_test_pass();
+    }
+
+t543:;
+    /* --- Test 543: XATTR_CREATE on existing → EEXIST; XATTR_REPLACE on missing → ENODATA --- */
+    fut_printf("[MISC-TEST] Test 543: XATTR_CREATE/REPLACE flag semantics\n");
+    {
+        /* Create it fresh */
+        sys_setxattr(path, name, "v1", 2, 0);
+
+        /* XATTR_CREATE on existing → EEXIST (17) */
+        long r = sys_setxattr(path, name, "v2", 2, XATTR_CREATE_F);
+        if (r != -17) { /* -EEXIST */
+            fut_printf("[MISC-TEST] ✗ Test 543: XATTR_CREATE on existing: %ld (expected -17)\n", r);
+            fut_vfs_unlink(path);
+            fut_test_fail(543); return;
+        }
+
+        /* Remove it, then XATTR_REPLACE on missing → ENODATA (61) */
+        sys_removexattr(path, name);
+        r = sys_setxattr(path, name, "v3", 2, XATTR_REPLACE_F);
+        if (r != -ENODATA_VAL) {
+            fut_printf("[MISC-TEST] ✗ Test 543: XATTR_REPLACE on missing: %ld (expected -%d)\n",
+                       r, ENODATA_VAL);
+            fut_vfs_unlink(path);
+            fut_test_fail(543); return;
+        }
+
+        fut_vfs_unlink(path);
+        fut_printf("[MISC-TEST] ✓ Test 543: XATTR_CREATE → EEXIST, XATTR_REPLACE → ENODATA\n");
+        fut_test_pass();
+    }
+
+#undef XATTR_CREATE_F
+#undef XATTR_REPLACE_F
+#undef ENODATA_VAL
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -22559,6 +22706,7 @@ void fut_misc_test_thread(void *arg) {
     test_fcntl_posix_locks();                /* Tests 531-533: fcntl F_SETLK/F_GETLK POSIX byte-range locks */
     test_getsockopt_type_error();            /* Tests 534-535: getsockopt SO_TYPE and SO_ERROR */
     test_fallocate_basic();                  /* Tests 536-539: fallocate extend/zero/punch/einval */
+    test_xattr_basic();                      /* Tests 540-543: setxattr/getxattr/listxattr/removexattr */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

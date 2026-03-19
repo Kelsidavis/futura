@@ -18745,6 +18745,82 @@ static void test_futex_requeue_pi(void) {
 }
 
 /* ============================================================
+ * Tests 433-435: pipe2 O_CLOEXEC flag propagation and io_uring stubs
+ * ============================================================ */
+static void test_pipe2_cloexec_and_uring_stubs(void) {
+    extern long sys_pipe2(int pipefd[2], int flags);
+    extern long sys_io_uring_setup(unsigned int entries, void *params);
+    extern long sys_io_uring_enter(unsigned int fd, unsigned int to_submit,
+                                    unsigned int min_complete, unsigned int flags,
+                                    const void *sig, size_t sigsz);
+    extern long sys_io_uring_register(unsigned int fd, unsigned int opcode,
+                                       void *arg, unsigned int nr_args);
+#define O_CLOEXEC_PIPE_VAL 02000000
+
+    /* Test 433: pipe2(O_CLOEXEC) sets FD_CLOEXEC on both fds */
+    fut_printf("[MISC-TEST] Test 433: pipe2(O_CLOEXEC) sets FD_CLOEXEC on both fds\n");
+    int pfds[2] = {-1, -1};
+    long r = sys_pipe2(pfds, O_CLOEXEC_PIPE_VAL);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 433: pipe2(O_CLOEXEC) returned %ld\n", r);
+        fut_test_fail(433);
+        goto test434;
+    }
+    {
+        long fl0 = sys_fcntl(pfds[0], F_GETFD, 0);
+        long fl1 = sys_fcntl(pfds[1], F_GETFD, 0);
+        if ((fl0 & FD_CLOEXEC) && (fl1 & FD_CLOEXEC)) {
+            fut_printf("[MISC-TEST] ✓ Test 433: FD_CLOEXEC set on both fds (%ld, %ld)\n", fl0, fl1);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 433: FD_CLOEXEC not set: fd[0]=%ld fd[1]=%ld\n", fl0, fl1);
+            fut_test_fail(433);
+        }
+        sys_close(pfds[0]);
+        sys_close(pfds[1]);
+    }
+
+test434:
+    /* Test 434: pipe2(0) does NOT set FD_CLOEXEC */
+    fut_printf("[MISC-TEST] Test 434: pipe2(0) does not set FD_CLOEXEC\n");
+    pfds[0] = pfds[1] = -1;
+    r = sys_pipe2(pfds, 0);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 434: pipe2(0) returned %ld\n", r);
+        fut_test_fail(434);
+        goto test435;
+    }
+    {
+        long fl0 = sys_fcntl(pfds[0], F_GETFD, 0);
+        long fl1 = sys_fcntl(pfds[1], F_GETFD, 0);
+        if (!(fl0 & FD_CLOEXEC) && !(fl1 & FD_CLOEXEC)) {
+            fut_printf("[MISC-TEST] ✓ Test 434: FD_CLOEXEC not set without flag (%ld, %ld)\n", fl0, fl1);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 434: FD_CLOEXEC unexpectedly set: fd[0]=%ld fd[1]=%ld\n", fl0, fl1);
+            fut_test_fail(434);
+        }
+        sys_close(pfds[0]);
+        sys_close(pfds[1]);
+    }
+
+test435:
+    /* Test 435: io_uring_enter and io_uring_register return ENOSYS */
+    fut_printf("[MISC-TEST] Test 435: io_uring_enter/register return ENOSYS\n");
+    long r_enter = sys_io_uring_enter(0, 0, 0, 0, NULL, 0);
+    long r_reg   = sys_io_uring_register(0, 0, NULL, 0);
+    if (r_enter == -ENOSYS && r_reg == -ENOSYS) {
+        fut_printf("[MISC-TEST] ✓ Test 435: io_uring_enter=%ld io_uring_register=%ld\n",
+                   r_enter, r_reg);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 435: enter=%ld reg=%ld (expected ENOSYS)\n",
+                   r_enter, r_reg);
+        fut_test_fail(435);
+    }
+}
+
+/* ============================================================
  * Tests 428-430: pipe2 O_DIRECT and inotify IN_MASK_CREATE
  * ============================================================ */
 static void test_pipe2_odirect_and_inotify_mask_create(void) {
@@ -19668,6 +19744,7 @@ void fut_misc_test_thread(void *arg) {
     test_arch_prctl_extended();           /* Tests 422-427: arch_prctl CPUID/XCOMP extended opcodes */
     test_pipe2_odirect_and_inotify_mask_create(); /* Tests 428-430: pipe2(O_DIRECT), inotify IN_MASK_CREATE */
     test_futex_requeue_pi();              /* Tests 431-432: FUTEX_WAIT_REQUEUE_PI, FUTEX_CMP_REQUEUE_PI stubs */
+    test_pipe2_cloexec_and_uring_stubs(); /* Tests 433-435: pipe2 O_CLOEXEC propagation, io_uring ENOSYS */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

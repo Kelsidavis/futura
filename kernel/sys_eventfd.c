@@ -545,7 +545,8 @@ static void eventfd_uid_dec(uint32_t uid) {
 /* timerfd flags */
 #define TFD_CLOEXEC     02000000
 #define TFD_NONBLOCK    00004000
-#define TFD_TIMER_ABSTIME 1
+#define TFD_TIMER_ABSTIME      1  /* Use absolute time for timerfd_settime */
+#define TFD_TIMER_CANCEL_ON_SET 2 /* Cancel absolute timer on clock change (Linux 3.17+) */
 
 /* CLOCK_* constants provided by time.h */
 /* struct timespec and struct itimerspec provided by shared/fut_timespec.h */
@@ -1616,7 +1617,7 @@ long sys_timerfd_settime(int ufd, int flags,
 
     if (!new_value) return -EINVAL;
     if (ufd < 0) return -EBADF;
-    if (flags & ~TFD_TIMER_ABSTIME) return -EINVAL;
+    if (flags & ~(TFD_TIMER_ABSTIME | TFD_TIMER_CANCEL_ON_SET)) return -EINVAL;
 
     /* Copy itimerspec from user space (or kernel buffer for selftests) */
     struct itimerspec kits;

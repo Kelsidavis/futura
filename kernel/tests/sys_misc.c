@@ -24707,6 +24707,63 @@ static void test_o_append_lseek(void) {
     }
 }
 
+/* ============================================================
+ * Tests 630-631: O_NOFOLLOW prevents following final symlink
+ * ============================================================
+ *
+ * Linux ABI: openat/open with O_NOFOLLOW returns ELOOP if the last
+ * path component is a symbolic link.  Non-symlink paths succeed normally.
+ *
+ *   630: open(symlink, O_NOFOLLOW) → ELOOP
+ *   631: open(regular_file, O_NOFOLLOW) → success (no symlink = no error)
+ */
+static void test_o_nofollow(void) {
+    extern long sys_openat(int dirfd, const char *path, int flags, int mode);
+
+#define O_NOFOLLOW_FLAG 0400000   /* 0400000 octal = O_NOFOLLOW on Linux */
+#define O_RDONLY_FLAG   0
+#define AT_FDCWD_VAL    (-100)
+
+    /* Setup: create a regular file and a symlink pointing to it */
+    int rfd = (int)fut_vfs_open("/nofollow_target.txt",
+                                 0x42 /* O_RDWR|O_CREAT */, 0644);
+    if (rfd < 0) {
+        fut_printf("[MISC-TEST] ✗ Tests 630-631: create target failed: %d\n", rfd);
+        fut_test_fail(630); fut_test_fail(631); return;
+    }
+    fut_vfs_write(rfd, "test", 4);
+    fut_vfs_close(rfd);
+
+    extern long sys_symlink(const char *target, const char *linkpath);
+    sys_symlink("/nofollow_target.txt", "/nofollow_link");
+
+    /* Test 630: open symlink with O_NOFOLLOW → ELOOP */
+    fut_printf("[MISC-TEST] Test 630: open(symlink, O_NOFOLLOW) → ELOOP\n");
+    long r630 = sys_openat(AT_FDCWD_VAL, "/nofollow_link",
+                            O_RDONLY_FLAG | O_NOFOLLOW_FLAG, 0);
+    if (r630 != -ELOOP) {
+        if (r630 >= 0) fut_vfs_close((int)r630);
+        fut_printf("[MISC-TEST] ✗ Test 630: expected ELOOP, got %ld\n", r630);
+        fut_test_fail(630);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 630: open(symlink, O_NOFOLLOW) → ELOOP\n");
+        fut_test_pass();
+    }
+
+    /* Test 631: open regular file with O_NOFOLLOW → success */
+    fut_printf("[MISC-TEST] Test 631: open(regular, O_NOFOLLOW) → success\n");
+    long r631 = sys_openat(AT_FDCWD_VAL, "/nofollow_target.txt",
+                            O_RDONLY_FLAG | O_NOFOLLOW_FLAG, 0);
+    if (r631 < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 631: expected success, got %ld\n", r631);
+        fut_test_fail(631);
+    } else {
+        fut_vfs_close((int)r631);
+        fut_printf("[MISC-TEST] ✓ Test 631: open(regular, O_NOFOLLOW) → success\n");
+        fut_test_pass();
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -25178,6 +25235,7 @@ void fut_misc_test_thread(void *arg) {
     test_pipe_epipe_sigpipe();               /* Tests 626-627: pipe write-after-read-close EPIPE+SIGPIPE */
     test_dup2_clears_cloexec();              /* Test 628: dup2(old,new) clears FD_CLOEXEC on new fd */
     test_o_append_lseek();                   /* Test 629: O_APPEND write goes to EOF even after lseek(0) */
+    test_o_nofollow();                       /* Tests 630-631: O_NOFOLLOW on symlink→ELOOP, regular→success */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

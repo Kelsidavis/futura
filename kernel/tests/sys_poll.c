@@ -110,20 +110,6 @@ static inline int local_fd_is_set(int fd, const local_fd_set *set) {
     return (set->fds_bits[fd / NFDBITS] >> (fd % NFDBITS)) & 1;
 }
 
-static void *map_user_page_for_test(uintptr_t uaddr) {
-#if defined(__x86_64__)
-    void *page = fut_pmm_alloc_page();
-    if (!page) return NULL;
-    phys_addr_t phys = pmap_virt_to_phys((uintptr_t)page);
-    if (pmap_map(uaddr, phys, PAGE_SIZE, PTE_PRESENT | PTE_WRITABLE | PTE_USER) != 0) {
-        return NULL;
-    }
-    return (void *)uaddr;
-#else
-    (void)uaddr;
-    return NULL;
-#endif
-}
 
 /* ============================================================
  * Test 1: poll() on a regular file reports POLLIN | POLLOUT
@@ -551,16 +537,9 @@ static void test_poll_signalfd_ready(void) {
     uint64_t sig_bit = (1ULL << (test_signo - 1));
     __atomic_fetch_and(&task->pending_signals, ~sig_bit, __ATOMIC_ACQ_REL);
 
-    uintptr_t user_mask_addr = g_user_lo + 0x21000;
-    uint64_t *u_mask = (uint64_t *)map_user_page_for_test(user_mask_addr);
-    if (!u_mask) {
-        fut_printf("[POLL-TEST] ✗ failed to map user page for signalfd4 mask\n");
-        fut_test_fail(POLL_TEST_SIGNALFD_READY);
-        return;
-    }
-    *u_mask = sig_bit;
-
-    long sfd = sys_signalfd4(-1, u_mask, sizeof(*u_mask), SFD_NONBLOCK);
+    /* Use kernel stack buffer — sfd_copy_from_user has KERNEL_VIRTUAL_BASE bypass */
+    uint64_t kmask = sig_bit;
+    long sfd = sys_signalfd4(-1, &kmask, sizeof(kmask), SFD_NONBLOCK);
     if (sfd < 0) {
         fut_printf("[POLL-TEST] ✗ signalfd4 failed: %ld\n", sfd);
         fut_test_fail(POLL_TEST_SIGNALFD_READY);
@@ -595,24 +574,10 @@ static void test_poll_signalfd_ready(void) {
         return;
     }
 
-    uintptr_t user_info_addr = g_user_lo + 0x23000;
-    struct test_signalfd_siginfo *u_info =
-        (struct test_signalfd_siginfo *)map_user_page_for_test(user_info_addr);
-    if (!u_info) {
-        fut_printf("[POLL-TEST] ✗ failed to map user page for signalfd read\n");
-        fut_vfs_close((int)sfd);
-        fut_test_fail(POLL_TEST_SIGNALFD_READY);
-        return;
-    }
-
+    /* Use kernel stack buffer — sfd_copy_to_user has KERNEL_VIRTUAL_BASE bypass */
     struct test_signalfd_siginfo info;
     memset(&info, 0, sizeof(info));
-    ssize_t nr = fut_vfs_read((int)sfd, u_info, sizeof(info));
-    if (nr == (ssize_t)sizeof(info)) {
-        if (fut_copy_from_user(&info, u_info, sizeof(info)) != 0) {
-            nr = -EFAULT;
-        }
-    }
+    ssize_t nr = fut_vfs_read((int)sfd, &info, sizeof(info));
     if (nr != (ssize_t)sizeof(info) || info.ssi_signo != (uint32_t)test_signo) {
         fut_printf("[POLL-TEST] ✗ signalfd read mismatch: nr=%zd signo=%u\n",
                    nr, info.ssi_signo);

@@ -66,8 +66,13 @@ long sys_arch_prctl(int code, unsigned long addr) {
 
     switch (code) {
     case ARCH_SET_FS:
-        /* Set FS base — used for TLS by libc */
-        thread->fs_base = addr;
+        /* Set FS base — used for TLS by libc.
+         * Write MSR/register BEFORE updating the struct field.
+         * The x86_64 scheduler reads rdmsr(MSR_FS_BASE) and stores it back to
+         * thread->fs_base on every context switch. If a timer fires between
+         * the struct write and the MSR write, the scheduler reads the old MSR
+         * value and overwrites thread->fs_base with it, losing the new value.
+         * By writing the MSR first, the scheduler always sees the new value. */
 #ifdef __x86_64__
         wrmsr(MSR_FS_BASE, addr);
 #elif defined(__aarch64__)
@@ -76,6 +81,7 @@ long sys_arch_prctl(int code, unsigned long addr) {
          * save/restore it via fut_thread_t.fs_base (offset 864). */
         __asm__ volatile("msr tpidr_el0, %0" :: "r"(addr));
 #endif
+        thread->fs_base = addr;
         return 0;
 
     case ARCH_GET_FS: {

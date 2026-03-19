@@ -386,7 +386,19 @@ extern void exit_robust_list(fut_thread_t *thread);
     fut_sched_remove_thread(self);
 
     // Remove from parent task
-    fut_task_remove_thread(self->task, self);
+    fut_task_t *exiting_task = self->task;
+    fut_task_remove_thread(exiting_task, self);
+
+    /* Auto-reap: when the parent had SIGCHLD=SIG_IGN or SA_NOCLDWAIT, the
+     * task was already detached from its parent and the global task list in
+     * task_mark_exit().  Now that the last thread has removed itself we can
+     * safely free the task struct via fut_task_destroy().  Since task->threads
+     * is already NULL (self was just removed above), fut_task_destroy() will
+     * not attempt to free any thread stacks — only the FD table, mm, and
+     * task struct itself are released. */
+    if (exiting_task && exiting_task->auto_reap && exiting_task->thread_count == 0) {
+        fut_task_destroy(exiting_task);
+    }
 
     // Remove from global thread list
     fut_thread_t **prev = &fut_thread_list;

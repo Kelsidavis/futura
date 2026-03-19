@@ -424,16 +424,39 @@ static void task_mark_exit(fut_task_t *task, int status, int signal) {
     fut_spinlock_release(&task->pidfd_notify_lock);
 
     if (parent) {
-        /* SA_NOCLDWAIT / SIGCHLD=SIG_IGN: suppress SIGCHLD delivery on exit.
-         * POSIX: if SIGCHLD is SIG_IGN or SA_NOCLDWAIT is set, do NOT send
-         * SIGCHLD to the parent when a child exits.  The zombie is still
-         * created (waitpid will return -ECHILD for these parents since they
-         * typically don't call waitpid, and init will eventually reap it). */
+        /* SA_NOCLDWAIT / SIGCHLD=SIG_IGN: auto-reap the child.
+         * POSIX / Linux: if the parent has SIGCHLD=SIG_IGN or SA_NOCLDWAIT,
+         * the child must NOT become a zombie.  Instead it is reaped
+         * immediately: detached from the parent's child list so that a
+         * subsequent waitpid() returns -ECHILD.  The task struct is freed
+         * lazily in fut_thread_exit() once the last thread has switched
+         * away (see auto_reap handling there). */
         sighandler_t chld_handler = parent->signal_handlers[SIGCHLD - 1];
         unsigned long chld_flags  = parent->signal_handler_flags[SIGCHLD - 1];
         bool suppress_chld = (chld_handler == SIG_IGN) ||
                              (chld_flags & SA_NOCLDWAIT);
-        if (!suppress_chld) {
+        if (suppress_chld) {
+            /* Mark for lazy free in fut_thread_exit() */
+            task->auto_reap = 1;
+            /* Detach from parent now so waitpid() returns ECHILD */
+            fut_spinlock_acquire(&task_list_lock);
+            task_detach_child(parent, task);
+            /* Remove from global task list so fut_task_by_pid() returns NULL */
+            if (fut_task_list == task) {
+                fut_task_list = task->next;
+            } else {
+                fut_task_t *prev = fut_task_list;
+                while (prev && prev->next != task) {
+                    prev = prev->next;
+                }
+                if (prev) prev->next = task->next;
+            }
+            atomic_fetch_sub_explicit(&global_task_count, 1, memory_order_relaxed);
+            task->next = NULL;
+            fut_spinlock_release(&task_list_lock);
+            /* Wake any blocked waitpid() — it will return ECHILD */
+            fut_waitq_wake_all(&parent->child_waiters);
+        } else {
             siginfo_t chld_info;
             __builtin_memset(&chld_info, 0, sizeof(chld_info));
             chld_info.si_signum = SIGCHLD;
@@ -442,9 +465,9 @@ static void task_mark_exit(fut_task_t *task, int status, int signal) {
             chld_info.si_uid    = task->uid;
             chld_info.si_status = signal ? signal : status;
             fut_signal_send_with_info(parent, SIGCHLD, &chld_info);
+            /* Wake waitpid/wait4 blockers */
+            fut_waitq_wake_all(&parent->child_waiters);
         }
-        /* Always wake waitpid/wait4 blockers */
-        fut_waitq_wake_all(&parent->child_waiters);
     }
 }
 

@@ -153,6 +153,7 @@ struct fut_task {
     int pdeathsig;                     // Signal to send on parent death (PR_SET_PDEATHSIG, 0=none)
     unsigned long no_new_privs;        // PR_SET_NO_NEW_PRIVS flag (sticky, prevents execve setuid)
     int dumpable;                      // PR_SET_DUMPABLE (1=dumpable, 0=not, default 1)
+    int auto_reap;                     // 1 = parent had SIGCHLD=SIG_IGN or SA_NOCLDWAIT; reap on thread exit
 
     /* I/O priority */
     int ioprio;                        // I/O priority (class + level encoded)

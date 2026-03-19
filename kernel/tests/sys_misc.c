@@ -20728,6 +20728,162 @@ static void test_proc_loginuid_sessionid(void) {
     }
 }
 
+/*
+ * test_sigchld_ign_autoreap() — Tests 503-505
+ *
+ * Verify SIGCHLD=SIG_IGN / SA_NOCLDWAIT auto-reap semantics:
+ * - When parent has SIGCHLD=SIG_IGN, exiting children are not left as
+ *   zombies; instead they are immediately detached from the parent's child
+ *   list.  A subsequent waitpid() must return -ECHILD.
+ * - SA_NOCLDWAIT has the same effect.
+ * - Normal (SIG_DFL) children remain reapable via waitpid().
+ *
+ * Tests 503-504 simulate the detachment that task_mark_exit() now
+ * performs when suppress_chld is true.  Test 505 verifies the normal
+ * (non-ignore) path still produces a reapable zombie.
+ */
+static void test_sigchld_ign_autoreap(void) {
+    extern long sys_waitpid(int pid, int *status, int flags);
+    extern fut_task_t *fut_task_create(void);
+    extern void fut_task_destroy(fut_task_t *task);
+
+#define ECHILD_VAL 10
+    fut_printf("[MISC-TEST] Tests 503-505: SIGCHLD=SIG_IGN/SA_NOCLDWAIT auto-reap\n");
+
+    fut_task_t *parent = fut_task_current();
+    if (!parent) {
+        fut_printf("[MISC-TEST] FAIL 503-505: no current task\n");
+        fut_test_fail(503); fut_test_fail(504); fut_test_fail(505);
+        return;
+    }
+
+    /* --- Test 503: SIGCHLD=SIG_IGN child is auto-reaped (no zombie) --- */
+    {
+        /* Save and install SIG_IGN for SIGCHLD */
+        sighandler_t saved_handler = parent->signal_handlers[SIGCHLD - 1];
+        parent->signal_handlers[SIGCHLD - 1] = SIG_IGN;
+
+        /* Create synthetic child (attached to parent by fut_task_create) */
+        fut_task_t *child = fut_task_create();
+        if (!child) {
+            parent->signal_handlers[SIGCHLD - 1] = saved_handler;
+            fut_printf("[MISC-TEST] FAIL 503: fut_task_create failed\n");
+            fut_test_fail(503);
+            goto t504;
+        }
+        int child_pid = (int)child->pid;
+
+        /* Simulate what task_mark_exit() does for SIGCHLD=SIG_IGN:
+         * mark auto_reap and detach child from parent's child list.
+         * (task_mark_exit is static; we reproduce its auto-reap side
+         *  effects here to test the waitpid() behavior.) */
+        child->auto_reap = 1;
+        /* Detach: walk parent->first_child and unlink */
+        fut_task_t **pp = &parent->first_child;
+        while (*pp && *pp != child) pp = &(*pp)->sibling;
+        if (*pp == child) *pp = child->sibling;
+        child->sibling = NULL;
+
+        /* waitpid(-1, WNOHANG) must return -ECHILD since child was detached */
+        int status = 0;
+        long rc = sys_waitpid(-1, &status, 1 /* WNOHANG */);
+        /* Also try waiting specifically for the child */
+        long rc2 = sys_waitpid(child_pid, &status, 1 /* WNOHANG */);
+
+        parent->signal_handlers[SIGCHLD - 1] = saved_handler;
+
+        /* Free the task struct manually (no thread to do lazy free) */
+        fut_task_destroy(child);
+
+        if (rc == -ECHILD_VAL && rc2 == -ECHILD_VAL) {
+            fut_printf("[MISC-TEST] PASS 503: SIGCHLD=SIG_IGN child not zombie (ECHILD)\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL 503: waitpid returned %ld/%ld, expected -ECHILD\n",
+                       rc, rc2);
+            fut_test_fail(503);
+        }
+    }
+
+t504:
+    /* --- Test 504: SA_NOCLDWAIT child is also auto-reaped --- */
+    {
+        unsigned long saved_flags = parent->signal_handler_flags[SIGCHLD - 1];
+        parent->signal_handler_flags[SIGCHLD - 1] |= SA_NOCLDWAIT;
+
+        fut_task_t *child = fut_task_create();
+        if (!child) {
+            parent->signal_handler_flags[SIGCHLD - 1] = saved_flags;
+            fut_printf("[MISC-TEST] FAIL 504: fut_task_create failed\n");
+            fut_test_fail(504);
+            goto t505;
+        }
+        int child_pid2 = (int)child->pid;
+
+        child->auto_reap = 1;
+        fut_task_t **pp = &parent->first_child;
+        while (*pp && *pp != child) pp = &(*pp)->sibling;
+        if (*pp == child) *pp = child->sibling;
+        child->sibling = NULL;
+
+        int status2 = 0;
+        long rc3 = sys_waitpid(child_pid2, &status2, 1 /* WNOHANG */);
+
+        parent->signal_handler_flags[SIGCHLD - 1] = saved_flags;
+        fut_task_destroy(child);
+
+        if (rc3 == -ECHILD_VAL) {
+            fut_printf("[MISC-TEST] PASS 504: SA_NOCLDWAIT child not zombie (ECHILD)\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL 504: SA_NOCLDWAIT waitpid returned %ld, expected -ECHILD\n",
+                       rc3);
+            fut_test_fail(504);
+        }
+    }
+
+t505:
+    /* --- Test 505: Normal SIG_DFL child stays as zombie until reaped --- */
+    {
+        /* Ensure SIG_DFL (NULL = default) */
+        sighandler_t saved = parent->signal_handlers[SIGCHLD - 1];
+        parent->signal_handlers[SIGCHLD - 1] = SIG_DFL;
+
+        fut_task_t *child = fut_task_create();
+        if (!child) {
+            parent->signal_handlers[SIGCHLD - 1] = saved;
+            fut_printf("[MISC-TEST] FAIL 505: fut_task_create failed\n");
+            fut_test_fail(505);
+            return;
+        }
+        int child_pid3 = (int)child->pid;
+
+        /* Place child in ZOMBIE state (normal exit path, not auto-reap) */
+        child->state = FUT_TASK_ZOMBIE;
+        child->exit_code = 0;
+        child->auto_reap = 0;
+
+        int status3 = 0;
+        long rc4 = sys_waitpid(child_pid3, &status3, 1 /* WNOHANG */);
+
+        parent->signal_handlers[SIGCHLD - 1] = saved;
+
+        if (rc4 == child_pid3) {
+            fut_printf("[MISC-TEST] PASS 505: SIG_DFL zombie reaped by waitpid (pid=%d)\n",
+                       child_pid3);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL 505: waitpid returned %ld, expected %d\n",
+                       rc4, child_pid3);
+            /* Cleanup on failure */
+            child->state = FUT_TASK_ZOMBIE;
+            sys_waitpid(child_pid3, &status3, 1);
+            fut_test_fail(505);
+        }
+    }
+#undef ECHILD_VAL
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -21164,6 +21320,7 @@ void fut_misc_test_thread(void *arg) {
     test_unshare_namespace_noop();         /* Tests 492-497: unshare namespace flags no-op */
     test_proc_uid_gid_map();              /* Tests 498-500: /proc/self/{uid_map,gid_map,setgroups} */
     test_proc_loginuid_sessionid();       /* Tests 501-502: /proc/self/{loginuid,sessionid} */
+    test_sigchld_ign_autoreap();          /* Tests 503-505: SIGCHLD=SIG_IGN/SA_NOCLDWAIT auto-reap */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

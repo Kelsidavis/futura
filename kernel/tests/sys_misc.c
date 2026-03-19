@@ -25797,6 +25797,291 @@ static void test_clock_settime(void) {
 }
 
 /* =========================================================
+ * Tests 702-717: futimesat, lxattr, fremovexattr, rt_tgsigqueueinfo,
+ *                setpgrp, time_millis, select(timeout), io_* ENOSYS
+ * ========================================================= */
+
+#ifndef AT_FDCWD_TEST
+#define AT_FDCWD_TEST (-100)
+#endif
+#ifndef XATTR_TEST_CREATE
+#define XATTR_TEST_CREATE 0x1
+#endif
+#ifndef ENODATA
+#define ENODATA 61
+#endif
+#ifndef ENOTSUP
+#define ENOTSUP 95
+#endif
+
+extern long sys_futimesat(int dirfd, const char *pathname, const void *times);
+extern long sys_lgetxattr(const char *path, const char *name, void *value, size_t size);
+extern long sys_llistxattr(const char *path, char *list, size_t size);
+extern long sys_lsetxattr(const char *path, const char *name, const void *value,
+                          size_t size, int flags);
+extern long sys_lremovexattr(const char *path, const char *name);
+extern long sys_fremovexattr(int fd, const char *name);
+extern long sys_rt_tgsigqueueinfo(int tgid, int tid, int sig, const void *uinfo);
+extern long sys_setpgrp(void);
+extern long sys_time_millis(void);
+extern long sys_select(int nfds, void *readfds, void *writefds,
+                       void *exceptfds, void *timeout);
+extern long sys_io_setup(unsigned int nr_events, void *ctxp);
+extern long sys_io_destroy(unsigned long ctx_id);
+extern long sys_io_getevents(unsigned long ctx_id, long min_nr, long nr,
+                             void *events, const void *timeout);
+extern long sys_io_submit(unsigned long ctx_id, long nr, void **iocbpp);
+extern long sys_io_cancel(unsigned long ctx_id, void *iocb, void *result);
+extern long sys_open(const char *path, int flags, int mode);
+
+/**
+ * test_futimesat_basic - Tests 702-703
+ *
+ *   Test 702: futimesat(AT_FDCWD, "/tmp", NULL) → 0
+ *   Test 703: futimesat(AT_FDCWD, "/no_such_xyz", NULL) → ENOENT
+ */
+static void test_futimesat_basic(void) {
+    /* Test 702: futimesat on existing path → 0 */
+    fut_printf("[MISC-TEST] Test 702: futimesat(AT_FDCWD, \"/tmp\", NULL) → 0\n");
+    long ret = sys_futimesat(AT_FDCWD_TEST, "/tmp", NULL);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 702: futimesat returned %ld\n", ret);
+        fut_test_fail(702);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 702: futimesat → 0\n");
+        fut_test_pass();
+    }
+
+    /* Test 703: futimesat on nonexistent path → ENOENT */
+    fut_printf("[MISC-TEST] Test 703: futimesat(AT_FDCWD, \"/no_such_xyz\", NULL) → ENOENT\n");
+    ret = sys_futimesat(AT_FDCWD_TEST, "/no_such_xyz", NULL);
+    if (ret != -ENOENT) {
+        fut_printf("[MISC-TEST] ✗ Test 703: futimesat returned %ld (expected -ENOENT=%d)\n",
+                   ret, -ENOENT);
+        fut_test_fail(703);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 703: futimesat nonexistent → ENOENT\n");
+        fut_test_pass();
+    }
+}
+
+/**
+ * test_lxattr_fremovexattr - Tests 704-708
+ *
+ *   Test 704: lgetxattr("/tmp", "user.noattr", buf, 64) → ENODATA
+ *   Test 705: llistxattr("/tmp", buf, 64) → 0 (no xattrs set)
+ *   Test 706: lsetxattr("/tmp", "user.testkey", "v", 1, 0) → 0
+ *   Test 707: lremovexattr("/tmp", "user.testkey") → 0
+ *   Test 708: fremovexattr on file fd with no attr → ENODATA
+ */
+static void test_lxattr_fremovexattr(void) {
+    char buf[64];
+
+    /* Test 704: lgetxattr nonexistent attr → ENODATA */
+    fut_printf("[MISC-TEST] Test 704: lgetxattr(\"/tmp\", \"user.noattr\") → ENODATA\n");
+    long ret = sys_lgetxattr("/tmp", "user.noattr", buf, sizeof(buf));
+    if (ret != -ENODATA) {
+        fut_printf("[MISC-TEST] ✗ Test 704: lgetxattr returned %ld (expected -ENODATA=%d)\n",
+                   ret, -ENODATA);
+        fut_test_fail(704);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 704: lgetxattr → ENODATA\n");
+        fut_test_pass();
+    }
+
+    /* Test 705: llistxattr on dir with no xattrs → 0 */
+    fut_printf("[MISC-TEST] Test 705: llistxattr(\"/tmp\") → 0 (no xattrs)\n");
+    ret = sys_llistxattr("/tmp", buf, sizeof(buf));
+    if (ret < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 705: llistxattr returned %ld\n", ret);
+        fut_test_fail(705);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 705: llistxattr → %ld bytes\n", ret);
+        fut_test_pass();
+    }
+
+    /* Test 706: lsetxattr → 0 (create new attr with flags=0) */
+    fut_printf("[MISC-TEST] Test 706: lsetxattr(\"/tmp\", \"user.testkey\", ...) → 0\n");
+    ret = sys_lsetxattr("/tmp", "user.testkey", "v", 1, 0);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 706: lsetxattr returned %ld\n", ret);
+        fut_test_fail(706);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 706: lsetxattr → 0\n");
+        fut_test_pass();
+    }
+
+    /* Test 707: lremovexattr → 0 */
+    fut_printf("[MISC-TEST] Test 707: lremovexattr(\"/tmp\", \"user.testkey\") → 0\n");
+    ret = sys_lremovexattr("/tmp", "user.testkey");
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 707: lremovexattr returned %ld\n", ret);
+        fut_test_fail(707);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 707: lremovexattr → 0\n");
+        fut_test_pass();
+    }
+
+    /* Test 708: fremovexattr on fd with no such attr → ENODATA
+     * Open a file, then try to remove an attr that was never set */
+    fut_printf("[MISC-TEST] Test 708: fremovexattr on file with no attr → ENODATA\n");
+    long fd = sys_open("/tmp/test708_xattr", 0100 | 0200 | 0100000000 /* O_RDWR|O_CREAT */, 0600);
+    if (fd >= 0) {
+        ret = sys_fremovexattr((int)fd, "user.noattr");
+        sys_close((int)fd);
+        if (ret != -ENODATA) {
+            fut_printf("[MISC-TEST] ✗ Test 708: fremovexattr returned %ld (expected -ENODATA=%d)\n",
+                       ret, -ENODATA);
+            fut_test_fail(708);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 708: fremovexattr → ENODATA\n");
+            fut_test_pass();
+        }
+    } else {
+        /* Can't open file — test kremovexattr on stdout fd=1 instead */
+        ret = sys_fremovexattr(1, "user.noattr");
+        /* stdout is a chrdev — vnode is NULL → EBADF */
+        if (ret == -EBADF || ret == -ENODATA) {
+            fut_printf("[MISC-TEST] ✓ Test 708: fremovexattr(chrdev) → %ld (EBADF or ENODATA ok)\n",
+                       ret);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 708: fremovexattr returned %ld\n", ret);
+            fut_test_fail(708);
+        }
+    }
+}
+
+/**
+ * test_rt_tgsigqueueinfo_setpgrp_time_millis - Tests 709-711
+ *
+ *   Test 709: rt_tgsigqueueinfo(0, 0, -1, &info) → EINVAL (bad sig)
+ *   Test 710: setpgrp() → 0 (become process group leader)
+ *   Test 711: time_millis() → > 0
+ */
+static void test_rt_tgsigqueueinfo_setpgrp_time_millis(void) {
+    /* Test 709: rt_tgsigqueueinfo invalid sig → EINVAL */
+    fut_printf("[MISC-TEST] Test 709: rt_tgsigqueueinfo(sig=-1) → EINVAL\n");
+    /* Need a valid info struct; sig validation is done before copy_from_user on some paths */
+    long ret = sys_rt_tgsigqueueinfo(0, 0, -1, NULL);
+    if (ret != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ Test 709: rt_tgsigqueueinfo returned %ld (expected -EINVAL=%d)\n",
+                   ret, -EINVAL);
+        fut_test_fail(709);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 709: rt_tgsigqueueinfo(-1) → EINVAL\n");
+        fut_test_pass();
+    }
+
+    /* Test 710: setpgrp() → 0 (or EPERM if already session leader) */
+    fut_printf("[MISC-TEST] Test 710: setpgrp() → 0 or EPERM (session leader)\n");
+    ret = sys_setpgrp();
+    if (ret != 0 && ret != -EPERM) {
+        fut_printf("[MISC-TEST] ✗ Test 710: setpgrp returned %ld\n", ret);
+        fut_test_fail(710);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 710: setpgrp → %ld\n", ret);
+        fut_test_pass();
+    }
+
+    /* Test 711: time_millis() → > 0 */
+    fut_printf("[MISC-TEST] Test 711: time_millis() → > 0\n");
+    long ms = sys_time_millis();
+    if (ms <= 0) {
+        fut_printf("[MISC-TEST] ✗ Test 711: time_millis returned %ld\n", ms);
+        fut_test_fail(711);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 711: time_millis → %ld ms\n", ms);
+        fut_test_pass();
+    }
+}
+
+/**
+ * test_select_zero_timeout - Test 712
+ *
+ *   Test 712: select(0, NULL, NULL, NULL, &tv_zero) → 0 immediately
+ */
+static void test_select_zero_timeout(void) {
+    fut_printf("[MISC-TEST] Test 712: select(nfds=0, timeout=0) → 0\n");
+    /* Use fut_timeval_t (int64 sec + usec) with both = 0 */
+    int64_t tv[2] = { 0, 0 };  /* {tv_sec=0, tv_usec=0} */
+    long ret = sys_select(0, NULL, NULL, NULL, tv);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 712: select returned %ld (expected 0)\n", ret);
+        fut_test_fail(712);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 712: select(0, timeout=0) → 0\n");
+        fut_test_pass();
+    }
+}
+
+/**
+ * test_io_aio_enosys - Tests 713-717
+ *
+ *   Test 713: io_setup(0, NULL) → ENOSYS
+ *   Test 714: io_destroy(0) → ENOSYS
+ *   Test 715: io_getevents(0,0,0,NULL,NULL) → ENOSYS
+ *   Test 716: io_submit(0,0,NULL) → ENOSYS
+ *   Test 717: io_cancel(0,NULL,NULL) → ENOSYS
+ */
+static void test_io_aio_enosys(void) {
+    /* Test 713: io_setup → ENOSYS */
+    fut_printf("[MISC-TEST] Test 713: io_setup → ENOSYS\n");
+    long ret = sys_io_setup(0, NULL);
+    if (ret != -ENOSYS) {
+        fut_printf("[MISC-TEST] ✗ Test 713: io_setup returned %ld\n", ret);
+        fut_test_fail(713);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 713: io_setup → ENOSYS\n");
+        fut_test_pass();
+    }
+
+    /* Test 714: io_destroy → ENOSYS */
+    fut_printf("[MISC-TEST] Test 714: io_destroy → ENOSYS\n");
+    ret = sys_io_destroy(0);
+    if (ret != -ENOSYS) {
+        fut_printf("[MISC-TEST] ✗ Test 714: io_destroy returned %ld\n", ret);
+        fut_test_fail(714);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 714: io_destroy → ENOSYS\n");
+        fut_test_pass();
+    }
+
+    /* Test 715: io_getevents → ENOSYS */
+    fut_printf("[MISC-TEST] Test 715: io_getevents → ENOSYS\n");
+    ret = sys_io_getevents(0, 0, 0, NULL, NULL);
+    if (ret != -ENOSYS) {
+        fut_printf("[MISC-TEST] ✗ Test 715: io_getevents returned %ld\n", ret);
+        fut_test_fail(715);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 715: io_getevents → ENOSYS\n");
+        fut_test_pass();
+    }
+
+    /* Test 716: io_submit → ENOSYS */
+    fut_printf("[MISC-TEST] Test 716: io_submit → ENOSYS\n");
+    ret = sys_io_submit(0, 0, NULL);
+    if (ret != -ENOSYS) {
+        fut_printf("[MISC-TEST] ✗ Test 716: io_submit returned %ld\n", ret);
+        fut_test_fail(716);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 716: io_submit → ENOSYS\n");
+        fut_test_pass();
+    }
+
+    /* Test 717: io_cancel → ENOSYS */
+    fut_printf("[MISC-TEST] Test 717: io_cancel → ENOSYS\n");
+    ret = sys_io_cancel(0, NULL, NULL);
+    if (ret != -ENOSYS) {
+        fut_printf("[MISC-TEST] ✗ Test 717: io_cancel returned %ld\n", ret);
+        fut_test_fail(717);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 717: io_cancel → ENOSYS\n");
+        fut_test_pass();
+    }
+}
+
+/* =========================================================
  * Tests 684-701: clock_getres, dup3, sysinfo, sched_param/scheduler,
  *                getpriority/setpriority, getitimer/setitimer, times,
  *                setuid/setgid/seteuid/setegid/setreuid/setregid
@@ -26610,6 +26895,11 @@ void fut_misc_test_thread(void *arg) {
     test_getsetitimer();                     /* Tests 693-694: getitimer/setitimer */
     test_times_syscall();                    /* Test 695: times() */
     test_set_credentials();                  /* Tests 696-701: setuid/gid/euid/egid/reuid/regid */
+    test_futimesat_basic();                  /* Tests 702-703: futimesat existing/nonexistent */
+    test_lxattr_fremovexattr();              /* Tests 704-708: lgetxattr/llistxattr/lsetxattr/lremovexattr/fremovexattr */
+    test_rt_tgsigqueueinfo_setpgrp_time_millis(); /* Tests 709-711: rt_tgsigqueueinfo/setpgrp/time_millis */
+    test_select_zero_timeout();              /* Test 712: select(0, NULL, NULL, NULL, timeout=0) → 0 */
+    test_io_aio_enosys();                    /* Tests 713-717: io_setup/destroy/getevents/submit/cancel → ENOSYS */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

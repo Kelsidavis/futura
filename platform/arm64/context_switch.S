@@ -33,13 +33,12 @@
  * - Context ID (CONTEXTID_EL1) management
  * - ASID isolation for address space separation
  *
- * Phase 3 (Planned): Advanced Context Management
+ * Phase 3 (Partial): Advanced Context Management
  * -----
- * Status: ⏳ Deferred
- * - FPU context preservation (v0-v31, FPSR, FPCR)
- * - Lazy FPU restoration strategy
- * - System register context (TPIDR_EL0, TPIDRRO_EL0)
- * - Privileged system registers (SCTLR_EL1, ACTLR_EL1)
+ * Status: ⏳ Partial
+ * - System register context (TPIDR_EL0): ✓ Implemented (saved/restored at offset 864)
+ * - FPU context preservation (v0-v31, FPSR, FPCR): ⏳ Deferred (lazy)
+ * - TPIDRRO_EL0, SCTLR_EL1, ACTLR_EL1: ⏳ Deferred
  *
  * CPU Context Structure (fut_cpu_context_t)
  * ==========================================
@@ -382,6 +381,10 @@ fut_context_switch:
     adr     x2, 1f                    /* Get address of resume point */
     str     x2, [x0, #152]            /* Save PC */
 
+    /* Save TLS register (TPIDR_EL0 = ARM64 equivalent of x86_64 FS_BASE) */
+    mrs     x2, tpidr_el0
+    str     x2, [x0, #864]            /* Save to fs_base field */
+
     /* Restore next thread context */
     ldp     x19, x20, [x1, #48]       /* Restore x19, x20 */
     ldp     x21, x22, [x1, #64]       /* Restore x21, x22 */
@@ -393,6 +396,10 @@ fut_context_switch:
     /* Restore stack pointer */
     ldr     x2, [x1, #144]            /* Restore SP */
     mov     sp, x2
+
+    /* Restore TLS register (TPIDR_EL0 = ARM64 equivalent of x86_64 FS_BASE) */
+    ldr     x2, [x1, #864]            /* Load from fs_base field */
+    msr     tpidr_el0, x2
 
     /* Restore PC (return address) */
     ldr     x2, [x1, #152]            /* Restore PC */

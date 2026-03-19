@@ -70,6 +70,11 @@ long sys_arch_prctl(int code, unsigned long addr) {
         thread->fs_base = addr;
 #ifdef __x86_64__
         wrmsr(MSR_FS_BASE, addr);
+#elif defined(__aarch64__)
+        /* On ARM64, TPIDR_EL0 is the user-space TLS register (equivalent to FS_BASE).
+         * Write it immediately so the current thread sees it; context switch will
+         * save/restore it via fut_thread_t.fs_base (offset 864). */
+        __asm__ volatile("msr tpidr_el0, %0" :: "r"(addr));
 #endif
         return 0;
 

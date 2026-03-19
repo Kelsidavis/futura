@@ -28101,6 +28101,104 @@ static void test_ppoll_sigmask_restore(void) {
     fut_test_pass();
 }
 
+/* ============================================================
+ * Tests 770-774: FUTEX_REQUEUE, FUTEX_CMP_REQUEUE, FUTEX_WAKE_OP
+ *
+ * These operations implement pthread_cond_broadcast/signal in NPTL.
+ * Tests cover: no-waiters paths (return 0), error paths (EAGAIN/EINVAL),
+ * and WAKE_OP's mandatory atomic side-effect on *uaddr2.
+ * ============================================================ */
+#define FUTEX_REQUEUE_VAL       3
+#define FUTEX_CMP_REQUEUE_VAL   4
+#define FUTEX_WAKE_OP_VAL       5
+/* FUTEX_OP(op, oparg, cmp, cmparg) encoding — matches include/sys/futex.h */
+#define TEST_FUTEX_OP(op, oparg, cmp, cmparg) \
+    (((op) & 0xf) | (((cmp) & 0xf) << 4) | \
+     (((oparg) & 0xfff) << 8) | (((cmparg) & 0xfff) << 20))
+#define FUTEX_OP_SET_VAL    0   /* *uaddr2 = oparg */
+#define FUTEX_OP_CMP_EQ_VAL 0   /* old == cmparg */
+
+static void test_futex_requeue_cmp_wake_op(void) {
+    extern long sys_futex(uint32_t *uaddr, int op, uint32_t val, const void *timeout,
+                          uint32_t *uaddr2, uint32_t val3);
+
+    uint32_t lock1 = 0, lock2 = 0;
+    long r;
+
+    /* Test 770: FUTEX_REQUEUE no waiters → 0 */
+    fut_printf("[MISC-TEST] Test 770: FUTEX_REQUEUE no waiters → 0\n");
+    lock1 = 0; lock2 = 0;
+    r = sys_futex(&lock1, FUTEX_REQUEUE_VAL, 1, NULL, &lock2, 0);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 770: FUTEX_REQUEUE expected 0, got %ld\n", r);
+        fut_test_fail(770);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 770: FUTEX_REQUEUE no waiters → 0\n");
+        fut_test_pass();
+    }
+
+    /* Test 771: FUTEX_REQUEUE NULL uaddr2 → EINVAL */
+    fut_printf("[MISC-TEST] Test 771: FUTEX_REQUEUE NULL uaddr2 → EINVAL\n");
+    lock1 = 0;
+    r = sys_futex(&lock1, FUTEX_REQUEUE_VAL, 1, NULL, NULL, 0);
+    if (r != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ Test 771: FUTEX_REQUEUE(NULL) expected -EINVAL(%d), got %ld\n",
+                   -EINVAL, r);
+        fut_test_fail(771);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 771: FUTEX_REQUEUE NULL uaddr2 → EINVAL\n");
+        fut_test_pass();
+    }
+
+    /* Test 772: FUTEX_CMP_REQUEUE val3 matches *uaddr, no waiters → 0 */
+    fut_printf("[MISC-TEST] Test 772: FUTEX_CMP_REQUEUE val3 match no waiters → 0\n");
+    lock1 = 42; lock2 = 0;
+    r = sys_futex(&lock1, FUTEX_CMP_REQUEUE_VAL, 0, NULL, &lock2, 42u);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 772: FUTEX_CMP_REQUEUE match expected 0, got %ld\n", r);
+        fut_test_fail(772);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 772: FUTEX_CMP_REQUEUE val3 match → 0\n");
+        fut_test_pass();
+    }
+
+    /* Test 773: FUTEX_CMP_REQUEUE val3 mismatch → EAGAIN */
+    fut_printf("[MISC-TEST] Test 773: FUTEX_CMP_REQUEUE val3 mismatch → EAGAIN\n");
+    lock1 = 42; lock2 = 0;
+    r = sys_futex(&lock1, FUTEX_CMP_REQUEUE_VAL, 0, NULL, &lock2, 99u);
+    if (r != -EAGAIN) {
+        fut_printf("[MISC-TEST] ✗ Test 773: FUTEX_CMP_REQUEUE mismatch expected -EAGAIN(%d), got %ld\n",
+                   -EAGAIN, r);
+        fut_test_fail(773);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 773: FUTEX_CMP_REQUEUE val3 mismatch → EAGAIN\n");
+        fut_test_pass();
+    }
+
+    /* Test 774: FUTEX_WAKE_OP atomic SET side effect on *uaddr2
+     * Encode: OP_SET oparg=55, CMP_EQ cmparg=7 → sets lock2 to 55 unconditionally.
+     * With lock2 starting at 7 and cmparg=7: oldval(7)==cmparg(7), so val2 wakes also
+     * attempted at uaddr2 (but no waiters → 0). Return = woken1 + woken2 = 0.
+     * Key invariant: *uaddr2 must be 55 after the call regardless of waiters. */
+    fut_printf("[MISC-TEST] Test 774: FUTEX_WAKE_OP atomic SET side effect\n");
+    lock1 = 0;
+    lock2 = 7;
+    uint32_t wake_op = (uint32_t)TEST_FUTEX_OP(FUTEX_OP_SET_VAL, 55, FUTEX_OP_CMP_EQ_VAL, 7);
+    r = sys_futex(&lock1, FUTEX_WAKE_OP_VAL, 0, NULL, &lock2, wake_op);
+    if (r < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 774: FUTEX_WAKE_OP returned %ld (expected >=0)\n", r);
+        fut_test_fail(774);
+    } else if (lock2 != 55u) {
+        fut_printf("[MISC-TEST] ✗ Test 774: lock2=%u after WAKE_OP SET(55) (expected 55)\n",
+                   lock2);
+        fut_test_fail(774);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 774: FUTEX_WAKE_OP SET(55): lock2=%u, ret=%ld\n",
+                   lock2, r);
+        fut_test_pass();
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -28634,6 +28732,7 @@ void fut_misc_test_thread(void *arg) {
     test_timerfd_disarm();                   /* Test 767: timerfd_settime({0,0}) disarms running timer */
     test_timerfd_abstime_realtime();         /* Test 768: timerfd CLOCK_REALTIME TFD_TIMER_ABSTIME fires */
     test_ppoll_sigmask_restore();            /* Test 769: ppoll() installs sigmask, restores it after return */
+    test_futex_requeue_cmp_wake_op();       /* Tests 770-774: FUTEX_REQUEUE/CMP_REQUEUE/WAKE_OP */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

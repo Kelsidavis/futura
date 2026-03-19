@@ -1844,3 +1844,21 @@ uint64_t fut_signalfd_get_sigmask(struct fut_file *file) {
         return 0;
     return sfile->ctx->sigmask;
 }
+
+/**
+ * fut_chrdev_fstat_mode() - Return st_mode file-type bits for fstat on this fd.
+ *
+ * On Linux, each anonymous file type has a specific mode type:
+ *   eventfd  → S_IFCHR  (0020000) character device
+ *   timerfd  → S_IFREG  (0100000) anon_inode:[timerfd]
+ *   signalfd → S_IFREG  (0100000) anon_inode:[signalfd]
+ *
+ * Returns the file-type bits (e.g. 0020000), or 0 if unknown.
+ */
+uint32_t fut_chrdev_fstat_mode(struct fut_file *file) {
+    if (!file || !file->chr_ops) return 0u;
+    if (file->chr_ops == &eventfd_fops)  return 0020000u; /* S_IFCHR */
+    if (file->chr_ops == &timerfd_fops)  return 0100000u; /* S_IFREG (anon_inode) */
+    if (file->chr_ops == &signalfd_fops) return 0100000u; /* S_IFREG (anon_inode) */
+    return 0u;
+}

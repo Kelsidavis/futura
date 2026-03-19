@@ -26589,6 +26589,139 @@ static void test_prlimit_other_pid(void) {
 }
 
 /**
+ * test_fstat_special_fds - Tests 754-757
+ *
+ * Verify that fstat() returns the correct Linux st_mode type bits for
+ * anonymous (vnode-less) file descriptors:
+ *   Test 754: fstat(pipe_read_fd)  → st_mode type = S_IFIFO  (0010000)
+ *   Test 755: fstat(socket_fd)     → st_mode type = S_IFSOCK (0140000)
+ *   Test 756: fstat(eventfd)       → st_mode type = S_IFCHR  (0020000)
+ *   Test 757: fstat(timerfd)       → st_mode type = S_IFREG  (0100000)
+ */
+static void test_fstat_special_fds(void) {
+    extern long sys_fstat(int fd, struct fut_stat *statbuf);
+    extern long sys_pipe(int pipefd[2]);
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_eventfd2(unsigned int initval, int flags);
+    extern long sys_timerfd_create(int clockid, int flags);
+
+    struct fut_stat st;
+
+#define T754_S_IFMT   0170000u
+#define T754_S_IFIFO  0010000u
+#define T754_S_IFSOCK 0140000u
+#define T754_S_IFCHR  0020000u
+#define T754_S_IFREG  0100000u
+
+    /* Test 754: pipe read fd → S_IFIFO */
+    fut_printf("[MISC-TEST] Test 754: fstat(pipe_read_fd) → S_IFIFO\n");
+    {
+        int pfd[2] = {-1, -1};
+        long r = sys_pipe(pfd);
+        if (r != 0 || pfd[0] < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 754: pipe() failed: %ld\n", r);
+            fut_test_fail(754);
+        } else {
+            __builtin_memset(&st, 0, sizeof(st));
+            r = sys_fstat(pfd[0], &st);
+            sys_close(pfd[0]); sys_close(pfd[1]);
+            if (r != 0) {
+                fut_printf("[MISC-TEST] ✗ Test 754: fstat failed: %ld\n", r);
+                fut_test_fail(754);
+            } else if ((st.st_mode & T754_S_IFMT) != T754_S_IFIFO) {
+                fut_printf("[MISC-TEST] ✗ Test 754: st_mode=0%o, want S_IFIFO\n", st.st_mode);
+                fut_test_fail(754);
+            } else {
+                fut_printf("[MISC-TEST] ✓ Test 754: pipe fstat st_mode=0%o (S_IFIFO)\n",
+                           st.st_mode);
+                fut_test_pass();
+            }
+        }
+    }
+
+    /* Test 755: AF_UNIX socket fd → S_IFSOCK */
+    fut_printf("[MISC-TEST] Test 755: fstat(socket_fd) → S_IFSOCK\n");
+    {
+        long s = sys_socket(1 /* AF_UNIX */, 1 /* SOCK_STREAM */, 0);
+        if (s < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 755: socket() failed: %ld\n", s);
+            fut_test_fail(755);
+        } else {
+            __builtin_memset(&st, 0, sizeof(st));
+            long r = sys_fstat((int)s, &st);
+            sys_close((int)s);
+            if (r != 0) {
+                fut_printf("[MISC-TEST] ✗ Test 755: fstat failed: %ld\n", r);
+                fut_test_fail(755);
+            } else if ((st.st_mode & T754_S_IFMT) != T754_S_IFSOCK) {
+                fut_printf("[MISC-TEST] ✗ Test 755: st_mode=0%o, want S_IFSOCK\n", st.st_mode);
+                fut_test_fail(755);
+            } else {
+                fut_printf("[MISC-TEST] ✓ Test 755: socket fstat st_mode=0%o (S_IFSOCK)\n",
+                           st.st_mode);
+                fut_test_pass();
+            }
+        }
+    }
+
+    /* Test 756: eventfd → S_IFCHR */
+    fut_printf("[MISC-TEST] Test 756: fstat(eventfd) → S_IFCHR\n");
+    {
+        long efd = sys_eventfd2(0, 0);
+        if (efd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 756: eventfd2() failed: %ld\n", efd);
+            fut_test_fail(756);
+        } else {
+            __builtin_memset(&st, 0, sizeof(st));
+            long r = sys_fstat((int)efd, &st);
+            sys_close((int)efd);
+            if (r != 0) {
+                fut_printf("[MISC-TEST] ✗ Test 756: fstat failed: %ld\n", r);
+                fut_test_fail(756);
+            } else if ((st.st_mode & T754_S_IFMT) != T754_S_IFCHR) {
+                fut_printf("[MISC-TEST] ✗ Test 756: st_mode=0%o, want S_IFCHR\n", st.st_mode);
+                fut_test_fail(756);
+            } else {
+                fut_printf("[MISC-TEST] ✓ Test 756: eventfd fstat st_mode=0%o (S_IFCHR)\n",
+                           st.st_mode);
+                fut_test_pass();
+            }
+        }
+    }
+
+    /* Test 757: timerfd → S_IFREG (anon_inode) */
+    fut_printf("[MISC-TEST] Test 757: fstat(timerfd) → S_IFREG\n");
+    {
+        long tfd = sys_timerfd_create(1 /* CLOCK_MONOTONIC */, 0);
+        if (tfd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 757: timerfd_create() failed: %ld\n", tfd);
+            fut_test_fail(757);
+        } else {
+            __builtin_memset(&st, 0, sizeof(st));
+            long r = sys_fstat((int)tfd, &st);
+            sys_close((int)tfd);
+            if (r != 0) {
+                fut_printf("[MISC-TEST] ✗ Test 757: fstat failed: %ld\n", r);
+                fut_test_fail(757);
+            } else if ((st.st_mode & T754_S_IFMT) != T754_S_IFREG) {
+                fut_printf("[MISC-TEST] ✗ Test 757: st_mode=0%o, want S_IFREG\n", st.st_mode);
+                fut_test_fail(757);
+            } else {
+                fut_printf("[MISC-TEST] ✓ Test 757: timerfd fstat st_mode=0%o (S_IFREG)\n",
+                           st.st_mode);
+                fut_test_pass();
+            }
+        }
+    }
+
+#undef T754_S_IFMT
+#undef T754_S_IFIFO
+#undef T754_S_IFSOCK
+#undef T754_S_IFCHR
+#undef T754_S_IFREG
+}
+
+/**
  * test_renameat_atfdcwd - Test 734
  *
  *   Test 734: renameat(AT_FDCWD, old, AT_FDCWD, new) behaves like rename()
@@ -27893,6 +28026,7 @@ void fut_misc_test_thread(void *arg) {
     test_sockopt_linger_setown();            /* Tests 744-747: SO_LINGER round-trip; F_SETOWN/F_GETOWN; POLLOUT */
     test_kill_pgrp_sig0();                   /* Tests 748-750: kill(0,0) own-pgrp; kill(-pgid,0) own-pgrp; ESRCH nonexistent */
     test_prlimit_other_pid();                /* Tests 751-753: prlimit64 by explicit self pid; ESRCH; RLIMIT_STACK */
+    test_fstat_special_fds();                /* Tests 754-757: fstat st_mode: pipe→S_IFIFO, sock→S_IFSOCK, efd→S_IFCHR, tfd→S_IFREG */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -191,13 +191,20 @@ long sys_fstat(int fd, struct fut_stat *statbuf) {
     /* Handle fds without vnodes: pipes, eventfds, sockets, etc. */
     if (!vnode) {
         struct fut_stat kernel_stat = {0};
-        /* Determine file type from access mode:
-         * Pipes have O_RDONLY or O_WRONLY, sockets/eventfds/etc have O_RDWR */
+        /* Determine file type: pipes are O_RDONLY/O_WRONLY; for O_RDWR fds,
+         * check chr_ops type (eventfd→S_IFCHR, timerfd/signalfd→S_IFREG,
+         * socket→S_IFSOCK). */
         int accmode = file->flags & 03;  /* O_ACCMODE */
         if (accmode == 0 || accmode == 1) {
             kernel_stat.st_mode = 0010000 | 0600;  /* S_IFIFO | rw------- */
         } else {
-            kernel_stat.st_mode = 0140000 | 0600;  /* S_IFSOCK | rw------- */
+            extern uint32_t fut_chrdev_fstat_mode(struct fut_file *f);
+            uint32_t chr_mode = fut_chrdev_fstat_mode(file);
+            if (chr_mode != 0u) {
+                kernel_stat.st_mode = chr_mode | 0600u;
+            } else {
+                kernel_stat.st_mode = 0140000 | 0600;  /* S_IFSOCK | rw------- */
+            }
         }
         kernel_stat.st_dev = 0;  /* Anonymous device (pipes, sockets) */
         kernel_stat.st_nlink = 1;

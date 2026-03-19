@@ -26211,6 +26211,226 @@ static void test_getsid_getpgid_self(void) {
 }
 
 /**
+ * test_renameat_atfdcwd - Test 734
+ *
+ *   Test 734: renameat(AT_FDCWD, old, AT_FDCWD, new) behaves like rename()
+ */
+static void test_renameat_atfdcwd(void) {
+    extern long sys_renameat(int olddirfd, const char *oldpath,
+                             int newdirfd, const char *newpath);
+    extern long sys_access(const char *pathname, int mode);
+#define AT_FDCWD_734 (-100)
+#define F_OK_734 0
+
+    fut_printf("[MISC-TEST] Test 734: renameat(AT_FDCWD, ...) → 0\n");
+
+    const char *src = "/tmp/renameat_src_734.txt";
+    const char *dst = "/tmp/renameat_dst_734.txt";
+
+    int fd = fut_vfs_open(src, O_CREAT | O_RDWR, 0644);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 734: create failed: %d\n", fd);
+        fut_test_fail(734);
+        return;
+    }
+    fut_vfs_write(fd, "hello", 5);
+    fut_vfs_close(fd);
+
+    fut_vfs_unlink(dst); /* remove any leftover */
+
+    long r = sys_renameat(AT_FDCWD_734, src, AT_FDCWD_734, dst);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 734: renameat returned %ld (expected 0)\n", r);
+        fut_test_fail(734);
+        fut_vfs_unlink(src);
+        return;
+    }
+
+    /* src must be gone, dst must exist */
+    long src_gone = sys_access(src, F_OK_734);
+    long dst_exists = sys_access(dst, F_OK_734);
+    fut_vfs_unlink(dst);
+
+    if (src_gone != -ENOENT || dst_exists != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 734: src_access=%ld dst_access=%ld\n",
+                   src_gone, dst_exists);
+        fut_test_fail(734);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 734: renameat(AT_FDCWD) → 0, src gone, dst exists\n");
+    fut_test_pass();
+#undef AT_FDCWD_734
+#undef F_OK_734
+}
+
+/**
+ * test_rename_overwrite - Test 735
+ *
+ *   Test 735: rename() to an existing file atomically replaces it.
+ *   src has "newdata", dst has "olddata". After rename, dst has "newdata".
+ */
+static void test_rename_overwrite(void) {
+    extern long sys_rename(const char *oldpath, const char *newpath);
+
+    fut_printf("[MISC-TEST] Test 735: rename() overwrites existing destination\n");
+
+    const char *src = "/tmp/rename_ow_src_735.txt";
+    const char *dst = "/tmp/rename_ow_dst_735.txt";
+
+    int fd = fut_vfs_open(src, O_CREAT | O_RDWR, 0644);
+    if (fd < 0) { fut_test_fail(735); return; }
+    fut_vfs_write(fd, "newdata", 7);
+    fut_vfs_close(fd);
+
+    fd = fut_vfs_open(dst, O_CREAT | O_RDWR, 0644);
+    if (fd < 0) { fut_vfs_unlink(src); fut_test_fail(735); return; }
+    fut_vfs_write(fd, "olddata", 7);
+    fut_vfs_close(fd);
+
+    long r = sys_rename(src, dst);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 735: rename returned %ld\n", r);
+        fut_vfs_unlink(src); fut_vfs_unlink(dst);
+        fut_test_fail(735);
+        return;
+    }
+
+    /* Read dst — should contain "newdata" */
+    char buf[16] = {0};
+    fd = fut_vfs_open(dst, O_RDONLY, 0);
+    if (fd >= 0) {
+        fut_vfs_read(fd, buf, sizeof(buf) - 1);
+        fut_vfs_close(fd);
+    }
+    fut_vfs_unlink(dst);
+
+    if (__builtin_memcmp(buf, "newdata", 7) != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 735: dst content wrong: '%s'\n", buf);
+        fut_test_fail(735);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 735: rename overwrote dst, content='%s'\n", buf);
+    fut_test_pass();
+}
+
+/**
+ * test_ocreat_oexcl_existing - Test 736
+ *
+ *   Test 736: open(O_CREAT|O_EXCL) on existing file → EEXIST
+ */
+static void test_ocreat_oexcl_existing(void) {
+    fut_printf("[MISC-TEST] Test 736: O_CREAT|O_EXCL on existing file → EEXIST\n");
+
+    const char *path = "/tmp/excl_test_736.txt";
+    fut_vfs_unlink(path);
+
+    /* Create the file first */
+    int fd = fut_vfs_open(path, O_CREAT | O_RDWR, 0644);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 736: initial create failed: %d\n", fd);
+        fut_test_fail(736);
+        return;
+    }
+    fut_vfs_close(fd);
+
+    /* O_CREAT|O_EXCL on existing file must return EEXIST */
+    long r = fut_vfs_open(path, O_CREAT | O_EXCL | O_RDWR, 0644);
+    fut_vfs_unlink(path);
+
+    if (r != -EEXIST) {
+        fut_printf("[MISC-TEST] ✗ Test 736: O_EXCL returned %ld (expected EEXIST)\n", r);
+        if (r >= 0) fut_vfs_close((int)r);
+        fut_test_fail(736);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 736: O_CREAT|O_EXCL on existing → EEXIST\n");
+    fut_test_pass();
+}
+
+/**
+ * test_hardlink_nlinks - Tests 737-739
+ *
+ *   Test 737: stat after create → st_nlink == 1
+ *   Test 738: stat after link()  → st_nlink == 2
+ *   Test 739: stat after unlink(link) → st_nlink == 1
+ */
+static void test_hardlink_nlinks(void) {
+    extern long sys_link(const char *oldpath, const char *newpath);
+    extern long sys_unlink(const char *path);
+    extern long sys_stat(const char *path, struct fut_stat *statbuf);
+
+    fut_printf("[MISC-TEST] Test 737: stat nlink=1 after create\n");
+
+    const char *src = "/tmp/nlink_src_737.txt";
+    const char *lnk = "/tmp/nlink_lnk_738.txt";
+    fut_vfs_unlink(src);
+    fut_vfs_unlink(lnk);
+
+    int fd = fut_vfs_open(src, O_CREAT | O_RDWR, 0644);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 737: create failed: %d\n", fd);
+        fut_test_fail(737); fut_test_fail(738); fut_test_fail(739);
+        return;
+    }
+    fut_vfs_close(fd);
+
+    struct fut_stat st = {0};
+    long r = sys_stat(src, &st);
+    if (r != 0 || st.st_nlink != 1) {
+        fut_printf("[MISC-TEST] ✗ Test 737: stat ret=%ld nlink=%u (expected 1)\n",
+                   r, st.st_nlink);
+        fut_test_fail(737); fut_test_fail(738); fut_test_fail(739);
+        fut_vfs_unlink(src);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 737: nlink=1 after create\n");
+    fut_test_pass();
+
+    /* Test 738: link() increases nlink to 2 */
+    fut_printf("[MISC-TEST] Test 738: stat nlink=2 after link()\n");
+    r = sys_link(src, lnk);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 738: link() returned %ld\n", r);
+        fut_test_fail(738); fut_test_fail(739);
+        fut_vfs_unlink(src);
+        return;
+    }
+    __builtin_memset(&st, 0, sizeof(st));
+    r = sys_stat(src, &st);
+    if (r != 0 || st.st_nlink != 2) {
+        fut_printf("[MISC-TEST] ✗ Test 738: stat ret=%ld nlink=%u (expected 2)\n",
+                   r, st.st_nlink);
+        fut_test_fail(738); fut_test_fail(739);
+        fut_vfs_unlink(src); fut_vfs_unlink(lnk);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 738: nlink=2 after link()\n");
+    fut_test_pass();
+
+    /* Test 739: unlink hard link → nlink back to 1, file still readable */
+    fut_printf("[MISC-TEST] Test 739: stat nlink=1 after unlink(link)\n");
+    r = sys_unlink(lnk);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 739: unlink(lnk) returned %ld\n", r);
+        fut_test_fail(739);
+        fut_vfs_unlink(src); fut_vfs_unlink(lnk);
+        return;
+    }
+    __builtin_memset(&st, 0, sizeof(st));
+    r = sys_stat(src, &st);
+    if (r != 0 || st.st_nlink != 1) {
+        fut_printf("[MISC-TEST] ✗ Test 739: stat ret=%ld nlink=%u (expected 1)\n",
+                   r, st.st_nlink);
+        fut_test_fail(739);
+        fut_vfs_unlink(src);
+        return;
+    }
+    fut_vfs_unlink(src);
+    fut_printf("[MISC-TEST] ✓ Test 739: nlink=1 after unlink(link)\n");
+    fut_test_pass();
+}
+
+/**
  * test_futimesat_basic - Tests 702-703
  *
  *   Test 702: futimesat(AT_FDCWD, "/tmp", NULL) → 0
@@ -27286,6 +27506,11 @@ void fut_misc_test_thread(void *arg) {
     test_kill_sig0();                        /* Tests 725-726: kill(pid, 0) existence check */
     test_sigprocmask_invalid_how();          /* Test 727: sigprocmask bad how → EINVAL */
     test_getsid_getpgid_self();              /* Tests 728-729: getsid/getpgid self */
+
+    test_renameat_atfdcwd();                 /* Test 734: renameat(AT_FDCWD) → rename */
+    test_rename_overwrite();                 /* Test 735: rename() overwrites existing dst */
+    test_ocreat_oexcl_existing();            /* Test 736: O_CREAT|O_EXCL on existing → EEXIST */
+    test_hardlink_nlinks();                  /* Tests 737-739: hard link nlink count 1→2→1 */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

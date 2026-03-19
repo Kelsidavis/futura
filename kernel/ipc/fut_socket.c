@@ -165,12 +165,21 @@ void fut_socket_foreach(void (*cb)(const fut_socket_t *, void *), void *arg) {
         fut_socket_t *s = socket_registry[i];
         int ref_ok = 0;
         if (s) {
-            ref_ok = fut_socket_ref(s);
-            if (!ref_ok) {
-                /* Stale/corrupted registry entry — clear it to prevent future crashes */
-                fut_printf("[SOCKET] Clearing corrupted registry slot %d (addr=%p magic=0x%08x)\n",
-                           i, (void *)s, s->magic);
+            /* Validate pointer is in kernel VA range before any dereference.
+             * Garbage/user-space pointers would fault in fut_socket_ref when
+             * accessing s->magic (e.g. ptr=0x500000000 faults at +320 offset). */
+            if ((uintptr_t)(void *)s < 0xFFFF800000000000ULL) {
+                fut_printf("[SOCKET] Clearing out-of-range registry slot %d (ptr=%p)\n",
+                           i, (void *)s);
                 socket_registry[i] = NULL;
+            } else {
+                ref_ok = fut_socket_ref(s);
+                if (!ref_ok) {
+                    /* Stale/corrupted registry entry — clear it */
+                    fut_printf("[SOCKET] Clearing corrupted registry slot %d (addr=%p)\n",
+                               i, (void *)s);
+                    socket_registry[i] = NULL;
+                }
             }
         }
         fut_spinlock_release(&socket_lock);
@@ -370,6 +379,12 @@ fut_socket_t *fut_socket_create(int family, int type) {
  */
 int fut_socket_ref(fut_socket_t *socket) {
     if (!socket) {
+        return 0;
+    }
+    /* Guard against garbage pointers before any dereference. */
+    if ((uintptr_t)(void *)socket < 0xFFFF800000000000ULL) {
+        fut_printf("[SOCKET-ERROR] Socket ref on non-kernel ptr (addr=%p)\n",
+                   (void *)socket);
         return 0;
     }
     if (socket->magic != FUT_SOCKET_MAGIC) {
@@ -829,7 +844,11 @@ fut_socket_t *fut_socket_find_listener(const char *path, size_t path_len) {
     fut_spinlock_acquire(&socket_lock);
     for (int i = 0; i < FUT_SOCKET_MAX; i++) {
         fut_socket_t *socket = socket_registry[i];
-        if (socket && socket->magic == FUT_SOCKET_MAGIC &&
+        if (!socket || (uintptr_t)(void *)socket < 0xFFFF800000000000ULL) {
+            if (socket) socket_registry[i] = NULL;
+            continue;
+        }
+        if (socket->magic == FUT_SOCKET_MAGIC &&
             socket->bound_path &&
             socket->bound_path_len == path_len &&
             memcmp(socket->bound_path, path, path_len) == 0 &&
@@ -1494,7 +1513,11 @@ fut_socket_t *fut_socket_find_bound(const char *path, size_t path_len) {
     fut_spinlock_acquire(&socket_lock);
     for (int i = 0; i < FUT_SOCKET_MAX; i++) {
         fut_socket_t *s = socket_registry[i];
-        if (s && s->magic == FUT_SOCKET_MAGIC &&
+        if (!s || (uintptr_t)(void *)s < 0xFFFF800000000000ULL) {
+            if (s) socket_registry[i] = NULL;
+            continue;
+        }
+        if (s->magic == FUT_SOCKET_MAGIC &&
             s->bound_path &&
             s->bound_path_len == path_len &&
             memcmp(s->bound_path, path, path_len) == 0 &&

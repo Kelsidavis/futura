@@ -1177,7 +1177,21 @@ static int64_t sys_clone_handler(uint64_t flags, uint64_t stack, uint64_t parent
         return (int64_t)sys_clone_thread(flags, stack, parent_tid, child_tid, tls);
     }
 
-    /* Unhandled clone flags (vfork, new namespaces, etc.) */
+    /* vfork pattern: CLONE_VM (0x100) + CLONE_VFORK (0x4000) without CLONE_THREAD.
+     * Used by musl vfork() and posix_spawn(). Futura has no separate address spaces,
+     * so CLONE_VM is a no-op — fall back to regular fork without blocking the parent.
+     * The child runs in its own task context and the parent continues concurrently. */
+    if (clone_flags & 0x4000ULL /* CLONE_VFORK */) {
+        return (int64_t)posix_fork();
+    }
+
+    /* CLONE_VM without CLONE_THREAD and without CLONE_VFORK: also fall back to fork.
+     * This covers clone(CLONE_VM|SIGCHLD) used by some threading libraries. */
+    if (clone_flags == 0x100ULL /* CLONE_VM only */) {
+        return (int64_t)posix_fork();
+    }
+
+    /* Unhandled clone flags (new namespaces, etc.) */
     fut_printf("[CLONE] clone(flags=0x%llx) -> ENOSYS (unhandled clone flags)\n",
                (unsigned long long)flags);
     return -38;  /* -ENOSYS */

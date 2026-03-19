@@ -18952,6 +18952,76 @@ static void test_proc_comm_write(void) {
 }
 
 /* ============================================================
+ * Tests 446-449: prctl PR_SET/GET_IO_FLUSHER and PR_SET/GET_MDWE
+ *
+ * Test 446: PR_SET_IO_FLUSHER = 1 → 0
+ * Test 447: PR_GET_IO_FLUSHER → 0 (not set)
+ * Test 448: PR_SET_MDWE = 0 → 0
+ * Test 449: PR_GET_MDWE → 0
+ * ============================================================ */
+static void test_prctl_io_flusher_mdwe(void) {
+    extern long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
+                          unsigned long arg4, unsigned long arg5);
+
+#define PR_SET_IO_FLUSHER_T 57
+#define PR_GET_IO_FLUSHER_T 58
+#define PR_SET_MDWE_T       65
+#define PR_GET_MDWE_T       66
+
+    /* Test 446: PR_SET_IO_FLUSHER */
+    fut_printf("[MISC-TEST] Test 446: PR_SET_IO_FLUSHER → 0\n");
+    {
+        long r = sys_prctl(PR_SET_IO_FLUSHER_T, 1, 0, 0, 0);
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 446: PR_SET_IO_FLUSHER accepted\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 446: PR_SET_IO_FLUSHER returned %ld\n", r);
+            fut_test_fail(446);
+        }
+    }
+
+    /* Test 447: PR_GET_IO_FLUSHER */
+    fut_printf("[MISC-TEST] Test 447: PR_GET_IO_FLUSHER → 0\n");
+    {
+        long r = sys_prctl(PR_GET_IO_FLUSHER_T, 0, 0, 0, 0);
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 447: PR_GET_IO_FLUSHER returns 0\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 447: PR_GET_IO_FLUSHER returned %ld\n", r);
+            fut_test_fail(447);
+        }
+    }
+
+    /* Test 448: PR_SET_MDWE */
+    fut_printf("[MISC-TEST] Test 448: PR_SET_MDWE → 0\n");
+    {
+        long r = sys_prctl(PR_SET_MDWE_T, 0, 0, 0, 0);
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 448: PR_SET_MDWE accepted\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 448: PR_SET_MDWE returned %ld\n", r);
+            fut_test_fail(448);
+        }
+    }
+
+    /* Test 449: PR_GET_MDWE */
+    fut_printf("[MISC-TEST] Test 449: PR_GET_MDWE → 0\n");
+    {
+        long r = sys_prctl(PR_GET_MDWE_T, 0, 0, 0, 0);
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 449: PR_GET_MDWE returns 0\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 449: PR_GET_MDWE returned %ld\n", r);
+            fut_test_fail(449);
+        }
+    }
+}
+
+/* ============================================================
  * Tests 444-445: EPOLLEXCLUSIVE and EPOLLWAKEUP accepted by epoll_ctl
  *
  * Test 444: epoll_ctl ADD with EPOLLEXCLUSIVE|EPOLLIN succeeds (not EINVAL)
@@ -20018,6 +20088,7 @@ void fut_misc_test_thread(void *arg) {
     test_execve_shebang();                /* Tests 440-441: shebang #! detection → ENOENT not EINVAL */
     test_proc_comm_write();               /* Tests 442-443: write to /proc/self/comm updates task name */
     test_epoll_exclusive_wakeup();        /* Tests 444-445: EPOLLEXCLUSIVE/EPOLLWAKEUP accepted by epoll_ctl */
+    test_prctl_io_flusher_mdwe();         /* Tests 446-449: PR_SET/GET_IO_FLUSHER, PR_SET/GET_MDWE */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

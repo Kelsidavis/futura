@@ -70,6 +70,17 @@
 /* Maximum valid signal number */
 #define PR_MAX_SIGNAL       64
 
+/* Linux 5.6+ prctl options (accepted as no-ops) */
+#define PR_SET_IO_FLUSHER   57  /* Mark thread as I/O flusher (memory-pressure exempt) */
+#define PR_GET_IO_FLUSHER   58  /* Get I/O flusher state */
+
+/* Linux 5.14+ */
+#define PR_SCHED_CORE       62  /* Core scheduling operations */
+
+/* Linux 6.3+ */
+#define PR_SET_MDWE         65  /* Memory-deny-write-execute policy */
+#define PR_GET_MDWE         66  /* Get MDWE policy */
+
 /**
  * sys_prctl - Process control operations
  *
@@ -329,6 +340,27 @@ long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
             return -EINVAL;
         }
     }
+
+    case PR_SET_IO_FLUSHER:
+        /* Linux 5.6+: mark thread as memory-pressure-exempt I/O flusher.
+         * No I/O pressure management in Futura; accept and return 0. */
+        return 0;
+
+    case PR_GET_IO_FLUSHER:
+        /* Return 0: thread is not an I/O flusher. */
+        return 0;
+
+    case PR_SCHED_CORE:
+        /* Linux 5.14+ core scheduling; no scheduling domain support. */
+        return -ENOTSUP;
+
+    case PR_SET_MDWE:
+        /* Linux 6.3+ memory-deny-write-execute; silently accept. */
+        return 0;
+
+    case PR_GET_MDWE:
+        /* Return 0: no MDWE restrictions. */
+        return 0;
 
     default:
         fut_printf("[PRCTL] prctl(option=%d) -> EINVAL (unsupported option)\n", option);

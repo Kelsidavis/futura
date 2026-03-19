@@ -63,6 +63,10 @@ struct fut_task {
     struct fut_task *first_child;      // Child list head
     struct fut_task *sibling;          // Next sibling in parent list
     fut_waitq_t child_waiters;         // Wait queue for waitpid callers
+    /* pidfd exit notification: up to 4 epoll/poll/select waitqs to wake on exit */
+#define FUT_PIDFD_NOTIFY_MAX 4
+    fut_waitq_t *pidfd_notify[FUT_PIDFD_NOTIFY_MAX];
+    fut_spinlock_t pidfd_notify_lock;
 
     enum {
         FUT_TASK_RUNNING = 0,

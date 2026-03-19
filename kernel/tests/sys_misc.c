@@ -18650,6 +18650,40 @@ static void test_faccessat2_empty_path(void) {
 }
 
 /* ============================================================
+ * Tests 410-411: pidfd poll readiness
+ * ============================================================ */
+static void test_pidfd_poll(void) {
+    extern long sys_pidfd_open(int pid, unsigned int flags);
+    extern long sys_getpid(void);
+    extern long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout);
+
+    long pid = sys_getpid();
+    long pidfd = sys_pidfd_open((int)pid, 0);
+
+    /* Test 410: pidfd_open for self succeeds */
+    fut_printf("[MISC-TEST] Test 410: pidfd_open(self) for poll test\n");
+    if (pidfd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 410: pidfd_open failed: %ld\n", pidfd);
+        fut_test_fail(410); fut_test_fail(411); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 410: pidfd_open(self) = %ld\n", pidfd);
+    fut_test_pass();
+
+    /* Test 411: poll(pidfd, POLLIN, 0) on a live process returns 0 (not ready) */
+    fut_printf("[MISC-TEST] Test 411: poll(pidfd, POLLIN, 0) on live process -> 0 events\n");
+    struct pollfd pfd = { .fd = (int)pidfd, .events = POLLIN, .revents = 0 };
+    long np = sys_poll(&pfd, 1, 0);
+    sys_close((int)pidfd);
+    if (np == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 411: poll on live pidfd returned 0 events\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 411: poll returned %ld (want 0)\n", np);
+        fut_test_fail(411);
+    }
+}
+
+/* ============================================================
  * Test 367: /proc/self/net/unix readable (same content as /proc/net/unix)
  * ============================================================ */
 static void test_proc_pid_net_unix(void) {
@@ -19248,6 +19282,7 @@ void fut_misc_test_thread(void *arg) {
     test_map_fixed_noreplace();         /* Tests 404-405: MAP_FIXED_NOREPLACE success/EEXIST */
     test_mqueue_waitq();                /* Tests 406-407: mqueue waitq: NONBLOCK EAGAIN, timeout ETIMEDOUT */
     test_faccessat2_empty_path();       /* Tests 408-409: faccessat2 AT_EMPTY_PATH on fd and EINVAL without flag */
+    test_pidfd_poll();                  /* Tests 410-411: pidfd poll on live process: open+0-events */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

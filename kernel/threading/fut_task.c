@@ -162,6 +162,9 @@ fut_task_t *fut_task_create(void) {
     }
 
     fut_waitq_init(&task->child_waiters);
+    fut_spinlock_init(&task->pidfd_notify_lock);
+    for (int pni = 0; pni < FUT_PIDFD_NOTIFY_MAX; pni++)
+        task->pidfd_notify[pni] = NULL;
     fut_waitq_init(&task->stop_waitq);
     fut_spinlock_init(&task->cap_recv_lock);
     fut_waitq_init(&task->cap_recv_waitq);
@@ -411,6 +414,14 @@ static void task_mark_exit(fut_task_t *task, int status, int signal) {
     task->exit_code = status & EXIT_CODE_MASK;
     task->term_signal = signal & SIGNAL_MASK;
     fut_spinlock_release(&task_list_lock);
+
+    /* Wake any epoll/poll/select waitqs registered via pidfds for this task */
+    fut_spinlock_acquire(&task->pidfd_notify_lock);
+    for (int pni = 0; pni < FUT_PIDFD_NOTIFY_MAX; pni++) {
+        if (task->pidfd_notify[pni])
+            fut_waitq_wake_all(task->pidfd_notify[pni]);
+    }
+    fut_spinlock_release(&task->pidfd_notify_lock);
 
     if (parent) {
         /* SA_NOCLDWAIT / SIGCHLD=SIG_IGN: suppress SIGCHLD delivery on exit.

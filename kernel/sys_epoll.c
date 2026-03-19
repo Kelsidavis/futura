@@ -1081,10 +1081,12 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
                 extern void fut_timerfd_set_epoll_notify(struct fut_file *file, fut_waitq_t *wq);
                 extern void fut_signalfd_set_epoll_notify(struct fut_file *file, fut_waitq_t *wq);
                 extern void fut_pipe_set_epoll_notify(struct fut_file *file, fut_waitq_t *wq);
+                extern void fut_pidfd_set_epoll_notify(struct fut_file *file, fut_waitq_t *wq);
                 fut_eventfd_set_epoll_notify(ctl_file, &set->epoll_waitq);
                 fut_timerfd_set_epoll_notify(ctl_file, &set->epoll_waitq);
                 fut_signalfd_set_epoll_notify(ctl_file, &set->epoll_waitq);
                 fut_pipe_set_epoll_notify(ctl_file, &set->epoll_waitq);
+                fut_pidfd_set_epoll_notify(ctl_file, &set->epoll_waitq);
             }
         }
 
@@ -1441,6 +1443,12 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
 
             if (!handled && fut_pipe_poll(file, set->fds[i].events, &events_ready)) {
                 handled = true;
+            }
+
+            if (!handled) {
+                extern bool fut_pidfd_poll(struct fut_file *file, uint32_t requested, uint32_t *ready_out);
+                if (fut_pidfd_poll(file, set->fds[i].events, &events_ready))
+                    handled = true;
             }
 
             /* For sockets: check get_socket_from_fd first (sockets may not have vnodes) */

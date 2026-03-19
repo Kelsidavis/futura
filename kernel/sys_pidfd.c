@@ -17,9 +17,11 @@
 #include <kernel/fut_memory.h>
 #include <kernel/fut_task.h>
 #include <kernel/fut_vfs.h>
+#include <kernel/fut_waitq.h>
 #include <kernel/kprintf.h>
 #include <kernel/signal.h>
 #include <kernel/uaccess.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -31,15 +33,12 @@
 
 /* pidfd context: remembers the PID at open time */
 struct pidfd_ctx {
-    int pid;
+    int          pid;
+    fut_waitq_t *epoll_notify;  /* set by epoll/poll/select to receive wakeup */
 };
 
-static int pidfd_release(void *inode, void *priv) {
-    (void)inode;
-    struct pidfd_ctx *ctx = (struct pidfd_ctx *)priv;
-    if (ctx) fut_free(ctx);
-    return 0;
-}
+/* Forward declaration so pidfd_fops can reference it */
+static int pidfd_release(void *inode, void *priv);
 
 static const struct fut_file_ops pidfd_fops = {
     .open    = NULL,
@@ -49,6 +48,95 @@ static const struct fut_file_ops pidfd_fops = {
     .ioctl   = NULL,
     .mmap    = NULL,
 };
+
+static int pidfd_release(void *inode, void *priv) {
+    (void)inode;
+    struct pidfd_ctx *ctx = (struct pidfd_ctx *)priv;
+    if (ctx) {
+        /* Remove from task's notify array before freeing */
+        if (ctx->epoll_notify) {
+            fut_task_t *task = fut_task_by_pid((uint64_t)ctx->pid);
+            if (task) {
+                fut_spinlock_acquire(&task->pidfd_notify_lock);
+                for (int i = 0; i < FUT_PIDFD_NOTIFY_MAX; i++) {
+                    if (task->pidfd_notify[i] == ctx->epoll_notify) {
+                        task->pidfd_notify[i] = NULL;
+                        break;
+                    }
+                }
+                fut_spinlock_release(&task->pidfd_notify_lock);
+            }
+        }
+        fut_free(ctx);
+    }
+    return 0;
+}
+
+/**
+ * fut_pidfd_set_epoll_notify - Register or clear an epoll/poll/select waitq for a pidfd.
+ *
+ * Called with wq != NULL to register (epoll_ctl ADD / poll wire-up) and with
+ * wq == NULL to unregister (unwire after poll/select returns).
+ * No-op if file is not a pidfd.
+ */
+void fut_pidfd_set_epoll_notify(struct fut_file *file, fut_waitq_t *wq) {
+    if (!file || file->chr_ops != &pidfd_fops || !file->chr_private)
+        return;
+    struct pidfd_ctx *ctx = (struct pidfd_ctx *)file->chr_private;
+
+    fut_task_t *task = fut_task_by_pid((uint64_t)ctx->pid);
+
+    if (wq) {
+        /* Register: add to task's notify array */
+        ctx->epoll_notify = wq;
+        if (task) {
+            /* If already zombie, fire immediately */
+            if (task->state == FUT_TASK_ZOMBIE) {
+                fut_waitq_wake_all(wq);
+                return;
+            }
+            fut_spinlock_acquire(&task->pidfd_notify_lock);
+            for (int i = 0; i < FUT_PIDFD_NOTIFY_MAX; i++) {
+                if (task->pidfd_notify[i] == NULL) {
+                    task->pidfd_notify[i] = wq;
+                    break;
+                }
+            }
+            fut_spinlock_release(&task->pidfd_notify_lock);
+        }
+    } else {
+        /* Unregister: remove from task's notify array */
+        if (task && ctx->epoll_notify) {
+            fut_spinlock_acquire(&task->pidfd_notify_lock);
+            for (int i = 0; i < FUT_PIDFD_NOTIFY_MAX; i++) {
+                if (task->pidfd_notify[i] == ctx->epoll_notify) {
+                    task->pidfd_notify[i] = NULL;
+                    break;
+                }
+            }
+            fut_spinlock_release(&task->pidfd_notify_lock);
+        }
+        ctx->epoll_notify = NULL;
+    }
+}
+
+/**
+ * fut_pidfd_poll - Check pidfd readiness for epoll/poll/select.
+ * Returns true if handled (file is a pidfd), false otherwise.
+ * Sets *ready_out to POLLIN (1) when the process has exited.
+ */
+bool fut_pidfd_poll(struct fut_file *file, uint32_t requested, uint32_t *ready_out) {
+    if (!file || file->chr_ops != &pidfd_fops || !file->chr_private)
+        return false;
+    struct pidfd_ctx *ctx = (struct pidfd_ctx *)file->chr_private;
+    fut_task_t *task = fut_task_by_pid((uint64_t)ctx->pid);
+    /* POLLIN is ready when the process no longer exists or is a zombie */
+    if (!task || task->state == FUT_TASK_ZOMBIE) {
+        if (requested & (1u /* POLLIN */ | 0x2000u /* EPOLLRDHUP */))
+            *ready_out |= 1u; /* POLLIN */
+    }
+    return true;
+}
 
 /* pidfd_open flags */
 #define PIDFD_NONBLOCK  0x800
@@ -75,6 +163,7 @@ long sys_pidfd_open(int pid, unsigned int flags) {
     if (!ctx)
         return -ENOMEM;
     ctx->pid = pid;
+    ctx->epoll_notify = NULL;
 
     int fd = chrdev_alloc_fd(&pidfd_fops, NULL, ctx);
     if (fd < 0) {

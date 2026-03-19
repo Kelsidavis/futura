@@ -228,6 +228,7 @@ enum procfs_kind {
     PROC_NET_NETSTAT,               /* /proc/net/netstat */
     PROC_NET_PACKET,                /* /proc/net/packet */
     PROC_AUXV,                      /* /proc/<pid>/auxv — ELF auxiliary vector (binary) */
+    PROC_PID_MEM,                   /* /proc/<pid>/mem  — raw process address space (r/w) */
 };
 
 typedef struct {
@@ -352,6 +353,7 @@ typedef struct {
 #define PROC_INO_PID_ATTR_CUR(p)       (1000ULL + (uint64_t)(p) * 100 + 25)
 #define PROC_INO_PID_SMAPS_ROLLUP(p)   (1000ULL + (uint64_t)(p) * 100 + 26)
 #define PROC_INO_PID_AUXV(p)           (1000ULL + (uint64_t)(p) * 100 + 27)
+#define PROC_INO_PID_MEM(p)            (1000ULL + (uint64_t)(p) * 100 + 28)
 #define PROC_INO_BUDDYINFO             26ULL
 #define PROC_INO_ZONEINFO              27ULL
 #define PROC_INO_THREAD_SELF           28ULL
@@ -1996,6 +1998,45 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
     procfs_node_t *n = (procfs_node_t *)vnode->fs_data;
     if (!n) return -EIO;
 
+    /*
+     * /proc/<pid>/mem: offset is a virtual address; read directly.
+     * In Futura's shared address space all tasks map the same VA range, so
+     * we validate the request against the task's VMA list and memcpy.
+     */
+    if (n->kind == PROC_PID_MEM) {
+        if (size == 0) return 0;
+        fut_task_t *task = fut_task_by_pid(n->pid);
+        if (!task) return -ESRCH;
+        fut_mm_t *mm = task->mm ? task->mm : fut_mm_current();
+        if (!mm) return -EIO;
+
+        uintptr_t addr = (uintptr_t)offset;
+        uintptr_t end  = addr + size;
+
+        /* Find a VMA that covers addr */
+        struct fut_vma *vma = mm->vma_list;
+        while (vma && vma->end <= addr)
+            vma = vma->next;
+
+        if (!vma || vma->start > addr)
+            return -EIO;   /* address not mapped */
+
+        /* Clamp to this VMA */
+        if (end > vma->end)
+            end = vma->end;
+        size_t copy_sz = (size_t)(end - addr);
+
+        const void *src = (const void *)addr;
+#ifdef KERNEL_VIRTUAL_BASE
+        if ((uintptr_t)buf >= KERNEL_VIRTUAL_BASE) {
+            __builtin_memcpy(buf, src, copy_sz);
+        } else
+#endif
+        if (fut_copy_to_user(buf, src, copy_sz) != 0)
+            return -EFAULT;
+        return (ssize_t)copy_sz;
+    }
+
     /* Generate content into a temporary 8KB buffer */
     const size_t GEN_BUF = 8192;
     char *tmp = fut_malloc(GEN_BUF);
@@ -2583,11 +2624,46 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
  */
 static ssize_t procfs_file_write(struct fut_vnode *vnode, const void *buf,
                                   size_t size, uint64_t offset) {
-    (void)offset;
     if (!vnode || !buf || size == 0) return -EINVAL;
     procfs_node_t *n = (procfs_node_t *)vnode->fs_data;
     if (!n) return -EIO;
 
+    /*
+     * /proc/<pid>/mem: offset is a virtual address; write directly.
+     * Check that the target VMA is writable before copying.
+     */
+    if (n->kind == PROC_PID_MEM) {
+        fut_task_t *task = fut_task_by_pid(n->pid);
+        if (!task) return -ESRCH;
+        fut_mm_t *mm = task->mm ? task->mm : fut_mm_current();
+        if (!mm) return -EIO;
+
+        uintptr_t addr = (uintptr_t)offset;
+        uintptr_t end  = addr + size;
+
+        struct fut_vma *vma = mm->vma_list;
+        while (vma && vma->end <= addr)
+            vma = vma->next;
+        if (!vma || vma->start > addr)
+            return -EIO;
+        if (!(vma->prot & PROT_WRITE))
+            return -EFAULT;
+        if (end > vma->end)
+            end = vma->end;
+        size_t copy_sz = (size_t)(end - addr);
+
+        void *dst = (void *)addr;
+#ifdef KERNEL_VIRTUAL_BASE
+        if ((uintptr_t)buf >= KERNEL_VIRTUAL_BASE) {
+            __builtin_memcpy(dst, buf, copy_sz);
+        } else
+#endif
+        if (fut_copy_from_user(dst, buf, copy_sz) != 0)
+            return -EFAULT;
+        return (ssize_t)copy_sz;
+    }
+
+    (void)offset;
     /* Copy data from caller (user or kernel pointer) into a kernel buffer */
     char kbuf[256];
     size_t copy_len = size < sizeof(kbuf) - 1 ? size : sizeof(kbuf) - 1;
@@ -3084,6 +3160,11 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0100400, PROC_AUXV, pid, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "mem")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_MEM(pid),
+                                          0100600, PROC_PID_MEM, pid, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         if (STREQ(name, "oom_score")) {
             *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_OOM_SCORE(pid),
                                           0100444, PROC_OOM_SCORE, pid, 0);
@@ -3212,6 +3293,8 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
             { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_SMAPS_ROLLUP(pid),   0100444, PROC_SMAPS_ROLLUP,   pid,0); return *result ? 0 : -ENOMEM; }
         if (STREQ(name, "auxv"))
             { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_AUXV(pid),           0100400, PROC_AUXV,           pid,0); return *result ? 0 : -ENOMEM; }
+        if (STREQ(name, "mem"))
+            { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_MEM(pid),            0100600, PROC_PID_MEM,        pid,0); return *result ? 0 : -ENOMEM; }
         if (STREQ(name, "oom_score"))
             { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_OOM_SCORE(pid), 0100444, PROC_OOM_SCORE, pid,0); return *result ? 0 : -ENOMEM; }
         if (STREQ(name, "oom_score_adj"))
@@ -3962,7 +4045,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             "stat", "statm", "comm", "task", "limits", "io", "smaps",
             "oom_score", "oom_score_adj", "cgroup", "ns", "fdinfo",
             "wchan", "mountinfo", "coredump_filter", "schedstat", "net", "attr",
-            "smaps_rollup", "auxv"
+            "smaps_rollup", "auxv", "mem"
         };
         static const uint8_t etypes[] = {
             FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
@@ -3977,10 +4060,10 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
-            FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG
+            FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG
         };
         uint64_t pid = dn->pid;
-        if (idx < 29) {
+        if (idx < 30) {
             uint64_t ino;
             switch (idx) {
                 case 0:  ino = PROC_INO_PID_DIR(pid);        break;
@@ -4012,6 +4095,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                 case 26: ino = PROC_INO_PID_ATTR(pid);              break;
                 case 27: ino = PROC_INO_PID_SMAPS_ROLLUP(pid);      break;
                 case 28: ino = PROC_INO_PID_AUXV(pid);              break;
+                case 29: ino = PROC_INO_PID_MEM(pid);               break;
                 default: ino = 0; break;
             }
             de->d_ino    = ino;

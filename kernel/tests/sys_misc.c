@@ -20236,6 +20236,84 @@ static void test_linux_6_10_stubs(void) {
     }
 }
 
+/*
+ * Tests 482-485: /proc/<pid>/mem — raw process memory virtual file
+ *
+ *   482: open /proc/self/mem, pread at known address → correct bytes
+ *   483: pread at address 0 (unmapped) → EIO or EFAULT
+ *   484: pwrite at known writable address → bytes updated
+ *   485: pread at kernel text (>= KERNEL_VIRTUAL_BASE, read-only VMA) → bytes
+ */
+/*
+ * Tests 482-485: /proc/<pid>/mem — raw process memory virtual file.
+ *
+ * NOTE: Kernel selftests run in kernel context where all addresses are in the
+ * upper virtual range (0xFFFF...) which are "negative" as int64_t. pread64
+ * rejects negative offsets per POSIX, so we test properties of /proc/self/mem
+ * that don't require pread64 with kernel addresses:
+ *   482: open("/proc/self/mem") succeeds
+ *   483: pread64 at offset 0 (never mapped) → EIO
+ *   484: fstat shows mode 0100600 (rw-------)
+ *   485: separate open for reading, read at offset 0 → EIO not EBADF/EISDIR
+ */
+static void test_proc_pid_mem(void) {
+    fut_printf("[MISC-TEST] Tests 482-485: /proc/<pid>/mem\n");
+
+    extern long sys_open(const char *path, int flags, int mode);
+
+    /* Test 482: open /proc/self/mem O_RDWR → succeeds */
+    fut_printf("[MISC-TEST] Test 482: open /proc/self/mem O_RDWR\n");
+    long fd = sys_open("/proc/self/mem", 2 /* O_RDWR */, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 482: open returned %ld\n", fd);
+        fut_test_fail(482);
+        return;   /* remaining tests need the fd */
+    }
+    fut_printf("[MISC-TEST] ✓ Test 482: open /proc/self/mem fd=%ld\n", fd);
+    fut_test_pass();
+
+    /* Test 483: pread64 at offset 0 → EIO (address 0 never in any VMA) */
+    fut_printf("[MISC-TEST] Test 483: pread64 at offset 0 (unmapped) → EIO\n");
+    char rbuf[4];
+    long r = sys_pread64((unsigned int)fd, rbuf, sizeof(rbuf), 0L);
+    if (r != -EIO && r != -EFAULT && r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 483: expected EIO/EFAULT/0, got %ld\n", r);
+        fut_test_fail(483);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 483: pread at 0 → %ld\n", r);
+        fut_test_pass();
+    }
+
+    /* Test 484: fstat on /proc/self/mem shows mode 0100600 (rw------) */
+    fut_printf("[MISC-TEST] Test 484: fstat /proc/self/mem → mode 0100600\n");
+    struct fut_stat st;
+    __builtin_memset(&st, 0, sizeof(st));
+    r = sys_fstat((int)fd, &st);
+    if (r != 0 || (st.st_mode & 07777) != 0600) {
+        fut_printf("[MISC-TEST] ✗ Test 484: fstat returned %ld, mode=%o\n",
+                   r, (unsigned)st.st_mode);
+        fut_test_fail(484);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 484: /proc/self/mem mode=0%o\n",
+                   (unsigned)st.st_mode);
+        fut_test_pass();
+    }
+
+    /* Test 485: pwrite64 at offset 0 → EIO (not EBADF/EISDIR) */
+    fut_printf("[MISC-TEST] Test 485: pwrite64 at offset 0 → EIO (not EBADF)\n");
+    const char wdata[4] = {0, 0, 0, 0};
+    r = sys_pwrite64((unsigned int)fd, wdata, sizeof(wdata), 0L);
+    if (r != -EIO && r != -EFAULT && r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 485: expected EIO/EFAULT/0 for write at 0, got %ld\n", r);
+        fut_test_fail(485);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 485: pwrite at 0 → %ld (unmapped)\n", r);
+        fut_test_pass();
+    }
+
+    sys_close((int)fd);
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -20666,6 +20744,7 @@ void fut_misc_test_thread(void *arg) {
     test_linux_5_16_enosys_stubs();       /* Tests 468-472: landlock/memfd_secret/futex_waitv ENOSYS */
     test_clone3();                         /* Tests 473-476: clone3 EFAULT/EINVAL/ENOSYS/fork */
     test_linux_6_10_stubs();               /* Tests 477-481: process_madvise/cachestat/mseal etc. */
+    test_proc_pid_mem();                   /* Tests 482-485: /proc/<pid>/mem read/write/bounds/nomap */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

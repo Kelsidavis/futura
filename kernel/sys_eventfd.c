@@ -611,6 +611,19 @@ static struct eventfd_ctx *eventfd_ctx_create(unsigned int initval, bool semapho
     return ctx;
 }
 
+/**
+ * eventfd_fionread - FIONREAD helper: returns 8 if counter > 0, else 0.
+ * Called by sys_ioctl for FIONREAD on eventfd file descriptors.
+ */
+int eventfd_fionread(struct fut_file *file) {
+    if (!file || file->chr_ops != &eventfd_fops || !file->chr_private)
+        return -1;
+    struct eventfd_file *efile = (struct eventfd_file *)file->chr_private;
+    if (!efile->ctx)
+        return -1;
+    return (efile->ctx->counter > 0) ? (int)sizeof(uint64_t) : 0;
+}
+
 static ssize_t eventfd_read(void *inode, void *priv, void *u_buf, size_t len, off_t *pos) {
     (void)inode;
     (void)pos;

@@ -472,8 +472,20 @@ long sys_rename(const char *oldpath, const char *newpath) {
      * Rollback link() if unlink() fails to maintain atomicity
      */
 
+    /* Look up the source file vnode — link() needs the file, not the directory */
+    struct fut_vnode *old_file = NULL;
+    ret = fut_vfs_lookup(old_buf, &old_file);
+    if (ret < 0) {
+        fut_printf("[RENAME] rename(old='%s' [%s], new='%s' [%s], op=%s) -> %d (old file lookup failed)\n",
+                   old_buf, old_path_type, new_buf, new_path_type, operation_type, ret);
+        fut_vnode_unref(old_parent);
+        fut_vnode_unref(new_parent);
+        return ret;
+    }
+
     /* Create link in new parent first (this will be full path to file) */
-    ret = new_parent->ops->link(new_parent, old_buf, new_buf);
+    ret = new_parent->ops->link(old_file, old_buf, new_buf);
+    fut_vnode_unref(old_file);
     if (ret < 0) {
         fut_printf("[RENAME] rename(old='%s' [%s], new='%s' [%s], op=%s) -> %d (link failed, cross-dir)\n",
                    old_buf, old_path_type, new_buf, new_path_type, operation_type, ret);

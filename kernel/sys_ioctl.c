@@ -908,13 +908,26 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
                         return -ENOTTY;
                 }
             } else if (file->chr_ops) {
-                /* Pipe/chr_ops: query bytes available from chr_private.
-                 * For pipes, chr_private is struct pipe_buffer with count field. */
-                if (file->chr_private) {
-                    /* Access pipe buffer count - offset 4*sizeof(size_t) = count field */
-                    struct { uint8_t *d; size_t sz; size_t rp; size_t wp; size_t count; } *pb =
-                        (void *)file->chr_private;
-                    bytes_available = (int)pb->count;
+                /* Socket: use fut_socket_bytes_available */
+                extern fut_socket_t *get_socket_from_fd(int fd);
+                extern int fut_socket_bytes_available(int sockfd);
+                fut_socket_t *sock = get_socket_from_fd(fd);
+                if (sock) {
+                    int sock_bytes = fut_socket_bytes_available(fd);
+                    if (sock_bytes >= 0)
+                        bytes_available = sock_bytes;
+                } else {
+                    /* Eventfd: 0 or 8 depending on counter */
+                    extern int eventfd_fionread(struct fut_file *file);
+                    int efd_bytes = eventfd_fionread(file);
+                    if (efd_bytes >= 0) {
+                        bytes_available = efd_bytes;
+                    } else if (file->chr_private) {
+                        /* Pipe chr_ops: chr_private is pipe_buffer with count field */
+                        struct { uint8_t *d; size_t sz; size_t rp; size_t wp; size_t count; } *pb =
+                            (void *)file->chr_private;
+                        bytes_available = (int)pb->count;
+                    }
                 }
             } else {
                 fut_printf("[IOCTL] ioctl(fd=%d, FIONREAD) -> EBADF (no vnode or ops)\n", fd);

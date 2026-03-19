@@ -25894,6 +25894,166 @@ static void test_mount_umount2(void) {
 }
 
 /**
+ * test_rename_cross_dir - Test 730
+ *
+ *   Test 730: rename() moves file across directories
+ */
+static void test_rename_cross_dir(void) {
+    extern long sys_rename(const char *oldpath, const char *newpath);
+    extern long sys_mkdir(const char *path, uint32_t mode);
+
+    fut_printf("[MISC-TEST] Test 730: rename() cross-directory move\n");
+
+    /* Create source directory with a file */
+    sys_mkdir("/tmp/rename_src_dir", 0755);
+    sys_mkdir("/tmp/rename_dst_dir", 0755);
+
+    int fd = (int)fut_vfs_open("/tmp/rename_src_dir/moveme.txt", O_CREAT | O_RDWR, 0644);
+    if (fd >= 0) {
+        fut_vfs_write(fd, "cross-dir", 9);
+        fut_vfs_close(fd);
+    }
+
+    long r = sys_rename("/tmp/rename_src_dir/moveme.txt",
+                        "/tmp/rename_dst_dir/moveme.txt");
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 730: rename cross-dir returned %ld (expected 0)\n", r);
+        fut_test_fail(730);
+    } else {
+        /* Verify destination exists and source is gone */
+        struct fut_stat st;
+        int dst_ok = fut_vfs_stat("/tmp/rename_dst_dir/moveme.txt", &st);
+        int src_gone = fut_vfs_stat("/tmp/rename_src_dir/moveme.txt", &st);
+        if (dst_ok == 0 && src_gone == -ENOENT) {
+            fut_printf("[MISC-TEST] ✓ Test 730: rename cross-dir: dst exists, src gone\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 730: dst_stat=%d src_stat=%d\n", dst_ok, src_gone);
+            fut_test_fail(730);
+        }
+    }
+    /* Cleanup */
+    fut_vfs_unlink("/tmp/rename_src_dir/moveme.txt");
+    fut_vfs_unlink("/tmp/rename_dst_dir/moveme.txt");
+    sys_rename("/tmp/rename_src_dir", "/tmp/rename_src_dir_del");
+    fut_vfs_rmdir("/tmp/rename_src_dir_del");
+    sys_rename("/tmp/rename_dst_dir", "/tmp/rename_dst_dir_del");
+    fut_vfs_rmdir("/tmp/rename_dst_dir_del");
+}
+
+/**
+ * test_fstat_directory - Test 731
+ *
+ *   Test 731: fstat on open directory fd returns S_IFDIR
+ */
+static void test_fstat_directory(void) {
+    extern long sys_fstat(int fd, struct fut_stat *statbuf);
+
+    fut_printf("[MISC-TEST] Test 731: fstat on directory fd → S_IFDIR\n");
+
+    int fd = (int)fut_vfs_open("/tmp", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 731: open /tmp failed: %d\n", fd);
+        fut_test_fail(731);
+        return;
+    }
+
+    struct fut_stat st = {0};
+    long r = sys_fstat(fd, &st);
+    fut_vfs_close(fd);
+
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 731: fstat failed: %ld\n", r);
+        fut_test_fail(731);
+        return;
+    }
+
+    /* S_IFDIR = 0040000 */
+    if ((st.st_mode & 0170000) != 0040000) {
+        fut_printf("[MISC-TEST] ✗ Test 731: st_mode=0%o, expected S_IFDIR (040xxx)\n", st.st_mode);
+        fut_test_fail(731);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 731: fstat directory fd → S_IFDIR (mode=0%o)\n", st.st_mode);
+    fut_test_pass();
+}
+
+/**
+ * test_fionread_socket - Test 732
+ *
+ *   Test 732: FIONREAD on socket returns bytes available
+ */
+static void test_fionread_socket(void) {
+    extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+
+    fut_printf("[MISC-TEST] Test 732: FIONREAD on socket returns bytes available\n");
+
+#define FIONREAD_TEST 0x541B
+    int sv[2] = {-1, -1};
+    long r = sys_socketpair(1 /* AF_UNIX */, 1 /* SOCK_STREAM */, 0, sv);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 732: socketpair failed: %ld\n", r);
+        fut_test_fail(732);
+        return;
+    }
+
+    /* Write 5 bytes to sv[0], read FIONREAD from sv[1] */
+    fut_vfs_write(sv[0], "hello", 5);
+
+    int nbytes = -1;
+    r = sys_ioctl(sv[1], (unsigned long)FIONREAD_TEST, (void *)&nbytes);
+    fut_vfs_close(sv[0]);
+    fut_vfs_close(sv[1]);
+#undef FIONREAD_TEST
+
+    if (r != 0 || nbytes != 5) {
+        fut_printf("[MISC-TEST] ✗ Test 732: FIONREAD returned r=%ld nbytes=%d (expected 5)\n", r, nbytes);
+        fut_test_fail(732);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 732: FIONREAD on socket → %d bytes\n", nbytes);
+    fut_test_pass();
+}
+
+/**
+ * test_fionread_eventfd - Test 733
+ *
+ *   Test 733: FIONREAD on eventfd with value=0 returns 0; after write returns 8
+ */
+static void test_fionread_eventfd(void) {
+    extern long sys_eventfd2(unsigned int initval, int flags);
+
+    fut_printf("[MISC-TEST] Test 733: FIONREAD on eventfd\n");
+
+#define FIONREAD_EFD_TEST 0x541B
+    long efd = sys_eventfd2(0, 0);
+    if (efd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 733: eventfd2 failed: %ld\n", efd);
+        fut_test_fail(733);
+        return;
+    }
+
+    /* Write to eventfd to set value to 1 */
+    uint64_t val = 1;
+    fut_vfs_write((int)efd, &val, sizeof(val));
+
+    /* FIONREAD on eventfd with data ready should return 8 (size of uint64_t) */
+    int nbytes = -1;
+    long r = sys_ioctl((int)efd, (unsigned long)FIONREAD_EFD_TEST, (void *)&nbytes);
+    fut_vfs_close((int)efd);
+#undef FIONREAD_EFD_TEST
+
+    if (r != 0 || nbytes != 8) {
+        fut_printf("[MISC-TEST] ✗ Test 733: FIONREAD(eventfd) r=%ld nbytes=%d (expected 8)\n",
+                   r, nbytes);
+        fut_test_fail(733);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 733: FIONREAD on eventfd → %d bytes\n", nbytes);
+    fut_test_pass();
+}
+
+/**
  * test_unlinkat_removedir - Tests 722-724
  *
  *   Test 722: unlinkat(AT_FDCWD, empty_dir, AT_REMOVEDIR) → 0
@@ -27118,6 +27278,10 @@ void fut_misc_test_thread(void *arg) {
     test_io_aio_enosys();                    /* Tests 713-717: io_setup/destroy/getevents/submit/cancel → ENOSYS */
     test_mount_umount2();                    /* Tests 718-721: mkdir/mount tmpfs/umount2/mount ENOENT */
 
+    test_rename_cross_dir();                 /* Test 730: rename() cross-directory move */
+    test_fstat_directory();                  /* Test 731: fstat on directory fd → S_IFDIR */
+    test_fionread_socket();                  /* Test 732: FIONREAD on socket */
+    test_fionread_eventfd();                 /* Test 733: FIONREAD on eventfd */
     test_unlinkat_removedir();               /* Tests 722-724: unlinkat(AT_REMOVEDIR) */
     test_kill_sig0();                        /* Tests 725-726: kill(pid, 0) existence check */
     test_sigprocmask_invalid_how();          /* Test 727: sigprocmask bad how → EINVAL */

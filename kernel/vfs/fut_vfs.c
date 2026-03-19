@@ -2273,6 +2273,14 @@ ssize_t fut_vfs_write(int fd, const void *buf, size_t size) {
         if (!file->chr_ops->write) {
             return -EINVAL;
         }
+        /* Enforce F_SEAL_GROW on chr_ops (memfd) files: if the write would extend
+         * past the current file size, reject with EPERM. */
+        if (file->seals & 0x0004 /* F_SEAL_GROW */) {
+            extern long fut_memfd_get_size(struct fut_file *file);
+            long cur = fut_memfd_get_size(file);
+            if (cur >= 0 && file->offset + size > (size_t)cur)
+                return -EPERM;
+        }
         off_t pos = (off_t)file->offset;
         ssize_t ret = file->chr_ops->write(file->chr_inode, file->chr_private, buf, size, &pos);
         if (ret > 0) {

@@ -26974,6 +26974,42 @@ t764:
         }
     }
 
+    /* Test 765: F_SEAL_GROW prevents writes that would extend the memfd */
+    fut_printf("[MISC-TEST] Test 765: F_ADD_SEALS(F_SEAL_GROW) prevents extending writes\n");
+    {
+#define F_SEAL_GROW_761 0x0004U
+        long fd = sys_memfd_create("sealtest4", MFD_ALLOW_SEALING_761);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 765: memfd_create failed: %ld\n", fd);
+            fut_test_fail(765);
+        } else {
+            /* Extend to 4 bytes via ftruncate */
+            sys_ftruncate((int)fd, 4);
+            /* Seal against growth */
+            sys_fcntl((int)fd, F_ADD_SEALS_761, (uint64_t)F_SEAL_GROW_761);
+            /* Write within bounds → OK (offset 0, 4 bytes into 4-byte file) */
+            char buf4[4] = "abcd";
+            long nw_ok = sys_write((int)fd, buf4, 4);
+            /* Seek past end and write → EPERM */
+            /* First seek to end */
+            extern int64_t sys_lseek(int fd, int64_t offset, int whence);
+            sys_lseek((int)fd, 4, 0 /* SEEK_SET */);
+            long nw_bad = sys_write((int)fd, buf4, 1);  /* would grow from 4→5 */
+            sys_close((int)fd);
+            if (nw_ok != 4) {
+                fut_printf("[MISC-TEST] ✗ Test 765: in-bounds write returned %ld, want 4\n", nw_ok);
+                fut_test_fail(765);
+            } else if (nw_bad != -EPERM) {
+                fut_printf("[MISC-TEST] ✗ Test 765: extending write returned %ld, want EPERM\n", nw_bad);
+                fut_test_fail(765);
+            } else {
+                fut_printf("[MISC-TEST] ✓ Test 765: F_SEAL_GROW enforced: in-bounds ok, extend → EPERM\n");
+                fut_test_pass();
+            }
+        }
+#undef F_SEAL_GROW_761
+    }
+
 #undef MFD_ALLOW_SEALING_761
 #undef F_GET_SEALS_761
 #undef F_ADD_SEALS_761
@@ -28289,7 +28325,7 @@ void fut_misc_test_thread(void *arg) {
     test_prlimit_other_pid();                /* Tests 751-753: prlimit64 by explicit self pid; ESRCH; RLIMIT_STACK */
     test_fstat_special_fds();                /* Tests 754-757: fstat st_mode: pipe→S_IFIFO, sock→S_IFSOCK, efd→S_IFCHR, tfd→S_IFREG */
     test_fstat_signalfd_fstatat_empty();     /* Tests 758-760: signalfd fstat S_IFREG; fstatat AT_EMPTY_PATH pipe+socket */
-    test_memfd_sealing();                    /* Tests 761-764: memfd sealing: EPERM w/o MFD_ALLOW_SEALING; F_SEAL_WRITE/SEAL/SHRINK enforcement */
+    test_memfd_sealing();                    /* Tests 761-765: memfd sealing: EPERM w/o MFD_ALLOW_SEALING; F_SEAL_WRITE/SEAL/SHRINK/GROW enforcement */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

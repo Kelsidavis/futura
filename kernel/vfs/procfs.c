@@ -721,6 +721,15 @@ static size_t gen_status(char *buf, size_t cap, fut_task_t *task) {
     }
     pb_str(&b, "VmSwap:\t");     pb_u64(&b, 0);            pb_str(&b, " kB\n");
     pb_str(&b, "HugetlbPages:\t");pb_u64(&b, 0);           pb_str(&b, " kB\n");
+    pb_str(&b, "CoreDumping:\t"); pb_u64(&b, task->dumpable ? 0 : 0); pb_char(&b, '\n');
+    pb_str(&b, "THP_enabled:\t"); pb_u64(&b, 1);           pb_char(&b, '\n');
+    /* SigQ: pending signal count / RLIMIT_SIGPENDING max */
+    {
+        unsigned int sigq_pend = (unsigned int)__builtin_popcountll(task->pending_signals);
+        uint64_t sigq_max = task->rlimits[11].rlim_cur; /* RLIMIT_SIGPENDING */
+        pb_str(&b, "SigQ:\t"); pb_u64(&b, sigq_pend); pb_char(&b, '/');
+        pb_u64(&b, sigq_max); pb_char(&b, '\n');
+    }
     /* SigPnd: thread-directed signals for the main thread.
      * ShdPnd: task-wide (process) pending signals.
      * SigBlk: main thread's blocked signal mask (per POSIX each thread has its own). */
@@ -750,6 +759,23 @@ static size_t gen_status(char *buf, size_t cap, fut_task_t *task) {
     pb_str(&b, "NSpid:\t");  pb_u64(&b, task->pid); pb_char(&b, '\n');
     pb_str(&b, "NSpgid:\t"); pb_u64(&b, task->pgid); pb_char(&b, '\n');
     pb_str(&b, "NSsid:\t");  pb_u64(&b, task->sid);  pb_char(&b, '\n');
+    /* CPU affinity: single-CPU environment, CPU 0 only */
+    pb_str(&b, "Cpus_allowed:\t"); pb_u64(&b, 1); pb_char(&b, '\n');
+    pb_str(&b, "Cpus_allowed_list:\t"); pb_str(&b, "0"); pb_char(&b, '\n');
+    /* NUMA memory policy: node 0 only (no NUMA) */
+    pb_str(&b, "Mems_allowed:\t"); pb_str(&b, "00000000,00000001"); pb_char(&b, '\n');
+    pb_str(&b, "Mems_allowed_list:\t"); pb_str(&b, "0"); pb_char(&b, '\n');
+    /* Context switch counters: sum across all threads */
+    {
+        uint64_t total_vol = 0, total_sw = 0;
+        for (fut_thread_t *t = task->threads; t; t = t->next) {
+            total_vol += t->stats.voluntary_yields;
+            total_sw  += t->stats.context_switches;
+        }
+        uint64_t nonvol = total_sw > total_vol ? total_sw - total_vol : 0;
+        pb_str(&b, "voluntary_ctxt_switches:\t"); pb_u64(&b, total_vol); pb_char(&b, '\n');
+        pb_str(&b, "nonvoluntary_ctxt_switches:\t"); pb_u64(&b, nonvol); pb_char(&b, '\n');
+    }
     return b.pos;
 }
 

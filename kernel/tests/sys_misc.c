@@ -18821,6 +18821,74 @@ test435:
 }
 
 /* ============================================================
+ * Tests 436-439: /proc/self/status extended fields
+ *
+ * Test 436: SigQ: field present
+ * Test 437: CoreDumping: field present
+ * Test 438: Cpus_allowed: and Cpus_allowed_list: present
+ * Test 439: voluntary_ctxt_switches: and nonvoluntary_ctxt_switches: present
+ * ============================================================ */
+static void test_proc_status_extended_fields(void) {
+    char buf[4096];
+    int fd = fut_vfs_open("/proc/self/status", 0, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Tests 436-439: open /proc/self/status failed: %d\n", fd);
+        fut_test_fail(436); fut_test_fail(437); fut_test_fail(438); fut_test_fail(439);
+        return;
+    }
+    long n = fut_vfs_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    if (n <= 0) {
+        fut_printf("[MISC-TEST] ✗ Tests 436-439: read failed: %ld\n", n);
+        fut_test_fail(436); fut_test_fail(437); fut_test_fail(438); fut_test_fail(439);
+        return;
+    }
+    buf[n] = '\0';
+
+    /* Test 436: SigQ: */
+    fut_printf("[MISC-TEST] Test 436: /proc/self/status has SigQ:\n");
+    if (status_has_field(buf, n, "SigQ:")) {
+        fut_printf("[MISC-TEST] ✓ Test 436: SigQ: present\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 436: SigQ: not found\n");
+        fut_test_fail(436);
+    }
+
+    /* Test 437: CoreDumping: */
+    fut_printf("[MISC-TEST] Test 437: /proc/self/status has CoreDumping:\n");
+    if (status_has_field(buf, n, "CoreDumping:")) {
+        fut_printf("[MISC-TEST] ✓ Test 437: CoreDumping: present\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 437: CoreDumping: not found\n");
+        fut_test_fail(437);
+    }
+
+    /* Test 438: Cpus_allowed: and Cpus_allowed_list: */
+    fut_printf("[MISC-TEST] Test 438: /proc/self/status has Cpus_allowed/Cpus_allowed_list\n");
+    if (status_has_field(buf, n, "Cpus_allowed:") &&
+        status_has_field(buf, n, "Cpus_allowed_list:")) {
+        fut_printf("[MISC-TEST] ✓ Test 438: Cpus_allowed and Cpus_allowed_list present\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 438: Cpus_allowed missing\n");
+        fut_test_fail(438);
+    }
+
+    /* Test 439: voluntary_ctxt_switches: and nonvoluntary_ctxt_switches: */
+    fut_printf("[MISC-TEST] Test 439: /proc/self/status has voluntary_ctxt_switches\n");
+    if (status_has_field(buf, n, "voluntary_ctxt_switches:") &&
+        status_has_field(buf, n, "nonvoluntary_ctxt_switches:")) {
+        fut_printf("[MISC-TEST] ✓ Test 439: voluntary/nonvoluntary_ctxt_switches present\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 439: voluntary_ctxt_switches missing\n");
+        fut_test_fail(439);
+    }
+}
+
+/* ============================================================
  * Tests 428-430: pipe2 O_DIRECT and inotify IN_MASK_CREATE
  * ============================================================ */
 static void test_pipe2_odirect_and_inotify_mask_create(void) {
@@ -19745,6 +19813,7 @@ void fut_misc_test_thread(void *arg) {
     test_pipe2_odirect_and_inotify_mask_create(); /* Tests 428-430: pipe2(O_DIRECT), inotify IN_MASK_CREATE */
     test_futex_requeue_pi();              /* Tests 431-432: FUTEX_WAIT_REQUEUE_PI, FUTEX_CMP_REQUEUE_PI stubs */
     test_pipe2_cloexec_and_uring_stubs(); /* Tests 433-435: pipe2 O_CLOEXEC propagation, io_uring ENOSYS */
+    test_proc_status_extended_fields();   /* Tests 436-439: SigQ, CoreDumping, Cpus_allowed, voluntary_ctxt_switches */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

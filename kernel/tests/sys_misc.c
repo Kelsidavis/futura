@@ -22593,6 +22593,150 @@ static void test_sync_syscalls(void) {
 }
 
 /*
+ * Tests 558-561: Relative symlink resolution
+ *
+ * Linux VFS resolves relative symlinks relative to the directory that *contains*
+ * the symlink, not relative to the process's cwd.  Prior to this fix, Futura
+ * passed the raw relative target to lookup_vnode(), which always starts from the
+ * filesystem root, so "../sibling" at /a/b/link resolved to /sibling instead of /a/sibling.
+ */
+static void test_relative_symlink(void) {
+    extern int fut_vfs_mkdir(const char *path, uint32_t mode);
+    extern int fut_vfs_symlink(const char *target, const char *linkpath);
+    extern int fut_vfs_unlink(const char *path);
+    extern long sys_open(const char *path, int flags, int mode);
+    extern ssize_t sys_read(int fd, void *buf, size_t count);
+    extern ssize_t sys_write(int fd, const void *buf, size_t count);
+    extern long sys_close(int fd);
+    extern long sys_rmdir(const char *path);
+    extern long sys_readlink(const char *path, char *buf, size_t bufsiz);
+
+    fut_printf("[MISC-TEST] Tests 558-561: relative symlink resolution\n");
+
+    /* Setup: /relsym_a/data.txt  (file to read through symlink) */
+    fut_vfs_mkdir("/relsym_a", 0755);
+    fut_vfs_mkdir("/relsym_b", 0755);
+
+    /* Create /relsym_a/data.txt */
+    int fd = (int)sys_open("/relsym_a/data.txt", 0101 /* O_CREAT|O_WRONLY */, 0644);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Tests 558-561: failed to create data.txt: %d\n", fd);
+        fut_test_fail(558); fut_test_fail(559); fut_test_fail(560); fut_test_fail(561);
+        return;
+    }
+    const char *content = "hello";
+    sys_write(fd, content, 5);
+    sys_close(fd);
+
+    /* Test 558: same-directory symlink: /relsym_a/link -> data.txt */
+    fut_printf("[MISC-TEST] Test 558: /relsym_a/link -> data.txt (same-dir relative)\n");
+    int r = (int)fut_vfs_symlink("data.txt", "/relsym_a/link");
+    if (r < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 558: symlink create failed: %d\n", r);
+        fut_test_fail(558);
+    } else {
+        char buf[16] = {0};
+        int rfd = (int)sys_open("/relsym_a/link", 0 /* O_RDONLY */, 0);
+        if (rfd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 558: open through relative symlink failed: %d\n", rfd);
+            fut_test_fail(558);
+        } else {
+            long n = sys_read(rfd, buf, sizeof(buf) - 1);
+            sys_close(rfd);
+            if (n == 5 && buf[0] == 'h') {
+                fut_printf("[MISC-TEST] ✓ Test 558: same-dir relative symlink resolves correctly\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 558: read returned n=%ld buf='%s'\n", n, buf);
+                fut_test_fail(558);
+            }
+        }
+        fut_vfs_unlink("/relsym_a/link");
+    }
+
+    /* Test 559: parent-directory symlink: /relsym_b/link -> ../relsym_a/data.txt */
+    fut_printf("[MISC-TEST] Test 559: /relsym_b/link -> ../relsym_a/data.txt (parent-dir relative)\n");
+    r = (int)fut_vfs_symlink("../relsym_a/data.txt", "/relsym_b/link");
+    if (r < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 559: symlink create failed: %d\n", r);
+        fut_test_fail(559);
+    } else {
+        char buf[16] = {0};
+        int rfd = (int)sys_open("/relsym_b/link", 0 /* O_RDONLY */, 0);
+        if (rfd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 559: open through ../parent relative symlink failed: %d\n", rfd);
+            fut_test_fail(559);
+        } else {
+            long n = sys_read(rfd, buf, sizeof(buf) - 1);
+            sys_close(rfd);
+            if (n == 5 && buf[0] == 'h') {
+                fut_printf("[MISC-TEST] ✓ Test 559: ../parent relative symlink resolves correctly\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 559: read returned n=%ld buf='%s'\n", n, buf);
+                fut_test_fail(559);
+            }
+        }
+        fut_vfs_unlink("/relsym_b/link");
+    }
+
+    /* Test 560: chained relative symlinks: /relsym_b/chain -> ../relsym_a/link2
+     *           /relsym_a/link2 -> data.txt  */
+    fut_printf("[MISC-TEST] Test 560: chained relative symlinks\n");
+    r = (int)fut_vfs_symlink("data.txt", "/relsym_a/link2");
+    int r2 = (int)fut_vfs_symlink("../relsym_a/link2", "/relsym_b/chain");
+    if (r < 0 || r2 < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 560: symlink setup failed: %d %d\n", r, r2);
+        fut_test_fail(560);
+    } else {
+        char buf[16] = {0};
+        int rfd = (int)sys_open("/relsym_b/chain", 0, 0);
+        if (rfd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 560: open through chained relative symlinks failed: %d\n", rfd);
+            fut_test_fail(560);
+        } else {
+            long n = sys_read(rfd, buf, sizeof(buf) - 1);
+            sys_close(rfd);
+            if (n == 5 && buf[0] == 'h') {
+                fut_printf("[MISC-TEST] ✓ Test 560: chained relative symlinks resolve correctly\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 560: read n=%ld buf='%s'\n", n, buf);
+                fut_test_fail(560);
+            }
+        }
+        fut_vfs_unlink("/relsym_a/link2");
+        fut_vfs_unlink("/relsym_b/chain");
+    }
+
+    /* Test 561: readlink on relative symlink returns raw target (not resolved) */
+    fut_printf("[MISC-TEST] Test 561: readlink returns raw relative target\n");
+    r = (int)fut_vfs_symlink("../relsym_a/data.txt", "/relsym_b/raw_link");
+    if (r < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 561: symlink create failed: %d\n", r);
+        fut_test_fail(561);
+    } else {
+        char rbuf[64] = {0};
+        long rn = sys_readlink("/relsym_b/raw_link", rbuf, sizeof(rbuf) - 1);
+        if (rn > 0) rbuf[rn] = '\0';
+        const char *expected = "../relsym_a/data.txt";
+        if (rn > 0 && __builtin_strcmp(rbuf, expected) == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 561: readlink returned raw target '%s'\n", rbuf);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 561: readlink returned n=%ld buf='%s'\n", rn, rbuf);
+            fut_test_fail(561);
+        }
+        fut_vfs_unlink("/relsym_b/raw_link");
+    }
+
+    /* Cleanup */
+    fut_vfs_unlink("/relsym_a/data.txt");
+    sys_rmdir("/relsym_a");
+    sys_rmdir("/relsym_b");
+}
+
+/*
  * Tests 555-557: clone(CLONE_VM|CLONE_VFORK) and vfork dispatch — no longer ENOSYS
  *
  * The clone(2) handler previously returned ENOSYS for any flags combination
@@ -23147,6 +23291,7 @@ void fut_misc_test_thread(void *arg) {
     test_terminal_ioctls();                  /* Tests 547-549: TIOCGPGRP/TIOCSPGRP/TIOCSCTTY */
     test_sync_syscalls();                    /* Tests 550-554: fsync/fdatasync/sync/syncfs correctness */
     test_clone_vfork_fallback();             /* Tests 555-557: clone(CLONE_VFORK|CLONE_VM) fallback to fork */
+    test_relative_symlink();                 /* Tests 558-561: relative symlink resolution */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

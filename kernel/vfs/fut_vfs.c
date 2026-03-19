@@ -892,11 +892,32 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
                     link_target[link_ret] = '\0';
                     VFSDBG("[vfs]  symlink '%s' -> '%s'\n", component, link_target);
 
+                    /* For relative symlinks, prepend the containing directory's
+                     * absolute path.  Without this, lookup_vnode("../foo") would
+                     * start from root and resolve incorrectly: a link at /a/b/link
+                     * pointing to "../foo" must resolve to /a/foo, not /foo. */
+                    char abs_target[512];
+                    const char *resolve_path = link_target;
+                    if (link_target[0] != '/') {
+                        char dir_path[256];
+                        char *dir = fut_vnode_build_path(current, dir_path, sizeof(dir_path));
+                        if (dir) {
+                            size_t dlen = strlen(dir);
+                            size_t tlen = (size_t)link_ret;
+                            if (dlen + 1 + tlen < sizeof(abs_target)) {
+                                __builtin_memcpy(abs_target, dir, dlen);
+                                abs_target[dlen] = '/';
+                                __builtin_memcpy(abs_target + dlen + 1, link_target, tlen + 1);
+                                resolve_path = abs_target;
+                            }
+                        }
+                    }
+
                     /* Release the symlink vnode */
                     release_lookup_ref(next);
 
                     /* Recursively resolve the symlink target */
-                    int symlink_ret = lookup_vnode(link_target, &next);
+                    int symlink_ret = lookup_vnode(resolve_path, &next);
                     if (symlink_ret < 0) {
                         release_lookup_ref(current);
                         fut_free(components);

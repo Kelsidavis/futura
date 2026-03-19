@@ -1821,6 +1821,55 @@ int fut_vfs_open(const char *path, int flags, int mode) {
     file->owner_pid = 0;
     file->fd_flags = 0;
     file->seals = 0;
+
+    /* VN_FIFO: wire the file struct to a per-vnode FIFO pipe buffer.
+     * chr_inode = fut_fifo_state *, chr_private = fut_fifo_state *
+     * The FIFO fops dispatch to pipe_read/write via the fut_fifo_state wrapper
+     * and do NOT free the buffer on close (it is owned by the vnode). */
+    if (vtype == VN_FIFO) {
+        extern void *fut_fifo_state_create(void);
+        extern void fut_fifo_open_read(void *fs);
+        extern void fut_fifo_open_write(void *fs);
+        extern struct fut_file_ops fifo_read_fops;
+        extern struct fut_file_ops fifo_write_fops;
+        extern struct fut_file_ops fifo_rdwr_fops;
+        /* Accessors avoid exposing the private ramfs_node layout */
+        extern void *ramfs_get_fifo_pipe(struct fut_vnode *vn);
+        extern void  ramfs_set_fifo_pipe(struct fut_vnode *vn, void *pipe);
+        extern int   fut_fifo_has_readers(void *fsp);
+
+        void *fifo_pipe = ramfs_get_fifo_pipe(vnode);
+        if (!fifo_pipe) {
+            fifo_pipe = fut_fifo_state_create();
+            if (!fifo_pipe) {
+                fut_free(file);
+                release_lookup_ref(vnode);
+                return -ENOMEM;
+            }
+            ramfs_set_fifo_pipe(vnode, fifo_pipe);
+        }
+        int fifo_acc = flags & O_ACCMODE;
+        /* O_WRONLY|O_NONBLOCK with no readers: ENXIO (Linux open(2) semantics) */
+        if (fifo_acc == O_WRONLY && (flags & O_NONBLOCK) && !fut_fifo_has_readers(fifo_pipe)) {
+            fut_free(file);
+            release_lookup_ref(vnode);
+            return -ENXIO;
+        }
+        if (fifo_acc == O_RDONLY || fifo_acc == O_RDWR)
+            fut_fifo_open_read(fifo_pipe);
+        if (fifo_acc == O_WRONLY || fifo_acc == O_RDWR)
+            fut_fifo_open_write(fifo_pipe);
+
+        file->chr_inode   = fifo_pipe;
+        file->chr_private = fifo_pipe;
+        if (fifo_acc == O_WRONLY)
+            file->chr_ops = &fifo_write_fops;
+        else if (fifo_acc == O_RDONLY)
+            file->chr_ops = &fifo_read_fops;
+        else
+            file->chr_ops = &fifo_rdwr_fops;
+    }
+
     /* Resolve and store absolute path for dirfd-relative *at syscall resolution */
     {
         char abs_path_buf[FUT_VFS_PATH_BUFFER_SIZE];

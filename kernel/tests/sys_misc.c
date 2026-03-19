@@ -21407,6 +21407,143 @@ static void test_thread_comm_and_tid_status(void) {
 #undef PR_GET_NAME_VAL
 }
 
+/*
+ * test_named_pipe() — Tests 521-525: VN_FIFO named pipe (mkfifo) read/write
+ *
+ *   Test 521: mkfifo + open(O_RDWR) succeeds.
+ *   Test 522: write to FIFO then read returns the written data.
+ *   Test 523: close write side via fifo_release_rdwr; subsequent read returns EOF.
+ *   Test 524: O_WRONLY|O_NONBLOCK on a FIFO with no readers returns ENXIO.
+ *   Test 525: fstat on a FIFO fd shows S_IFIFO in st_mode.
+ */
+static void test_named_pipe(void) {
+    extern long sys_mknod(const char *path, uint32_t mode, uint32_t dev);
+    extern long sys_fstat(int fd, struct fut_stat *statbuf);
+    extern long sys_open(const char *path, int flags, int mode);
+    extern long sys_unlink(const char *path);
+    extern long sys_write(int fd, const void *buf, size_t count);
+    extern long sys_read(int fd, void *buf, size_t count);
+
+    const char *fifo_path = "/tmp_test_fifo_521";
+    /* Clean up from any prior run */
+    sys_unlink(fifo_path);
+
+    /* Test 521: mkfifo (mknod with S_IFIFO | perms) succeeds */
+    fut_printf("[MISC-TEST] Test 521: mkfifo + open O_RDWR\n");
+    const unsigned int S_IFIFO_PERM = 0010000u | 0666u;
+    long mk = sys_mknod(fifo_path, S_IFIFO_PERM, 0);
+    if (mk < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 521: mknod(S_IFIFO) failed: %ld\n", mk);
+        fut_test_fail(521);
+    } else {
+        /* O_RDWR on a FIFO must not block and must succeed */
+        int fd = (int)sys_open(fifo_path, 2 /* O_RDWR */, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 521: open(O_RDWR) failed: %d\n", fd);
+            fut_test_fail(521);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 521: mkfifo + open(O_RDWR) fd=%d\n", fd);
+            fut_test_pass();
+
+            /* Test 522: write then read round-trips data */
+            fut_printf("[MISC-TEST] Test 522: FIFO write/read round-trip\n");
+            const char *msg = "fifo521";
+            long nw = sys_write(fd, msg, 7);
+            if (nw != 7) {
+                fut_printf("[MISC-TEST] ✗ Test 522: write returned %ld\n", nw);
+                fut_test_fail(522);
+            } else {
+                char rbuf[16];
+                memset(rbuf, 0, sizeof(rbuf));
+                long nr = sys_read(fd, rbuf, 7);
+                if (nr != 7 || __builtin_memcmp(rbuf, msg, 7) != 0) {
+                    fut_printf("[MISC-TEST] ✗ Test 522: read returned %ld data='%.8s'\n", nr, rbuf);
+                    fut_test_fail(522);
+                } else {
+                    fut_printf("[MISC-TEST] ✓ Test 522: FIFO write/read round-trip ok\n");
+                    fut_test_pass();
+                }
+            }
+
+            /* Test 523: close write side → read returns 0 (EOF).
+             * With O_RDWR we are both the reader and writer; closing the fd
+             * triggers fifo_release_rdwr which sets write_closed=true (writers=0).
+             * Open a fresh O_RDONLY fd to read from and then close the write end. */
+            fut_printf("[MISC-TEST] Test 523: close write side → EOF\n");
+            int rfd = (int)sys_open(fifo_path, 0 /* O_RDONLY */, 0);
+            if (rfd < 0) {
+                fut_printf("[MISC-TEST] ✗ Test 523: open(O_RDONLY) failed: %d\n", rfd);
+                fut_test_fail(523);
+            } else {
+                /* Close the O_RDWR fd (acts as both reader and writer) */
+                sys_close(fd);
+                fd = -1;
+                /* Now read from rfd — should see EOF since no writers remain */
+                char ebuf[4];
+                long er = sys_read(rfd, ebuf, sizeof(ebuf));
+                if (er == 0) {
+                    fut_printf("[MISC-TEST] ✓ Test 523: FIFO read after write-side close → EOF\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 523: expected EOF (0), got %ld\n", er);
+                    fut_test_fail(523);
+                }
+                sys_close(rfd);
+            }
+            if (fd >= 0) sys_close(fd);
+        }
+    }
+
+    /* Test 524: O_WRONLY|O_NONBLOCK with no readers → ENXIO */
+    fut_printf("[MISC-TEST] Test 524: O_WRONLY|O_NONBLOCK no readers → ENXIO\n");
+    {
+        /* Re-create the FIFO (previous open may have left state) */
+        sys_unlink(fifo_path);
+        long mk2 = sys_mknod(fifo_path, S_IFIFO_PERM, 0);
+        if (mk2 < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 524: mknod failed: %ld\n", mk2);
+            fut_test_fail(524);
+        } else {
+            /* 2048 = O_NONBLOCK on Linux x86_64; 1 = O_WRONLY */
+            int wfd = (int)sys_open(fifo_path, 1 | 2048 /* O_WRONLY|O_NONBLOCK */, 0);
+            if (wfd == -6 /* -ENXIO */) {
+                fut_printf("[MISC-TEST] ✓ Test 524: O_WRONLY|O_NONBLOCK no readers → ENXIO\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 524: expected ENXIO(-6), got %d\n", wfd);
+                if (wfd >= 0) sys_close(wfd);
+                fut_test_fail(524);
+            }
+        }
+    }
+
+    /* Test 525: fstat on a FIFO fd shows S_IFIFO in st_mode */
+    fut_printf("[MISC-TEST] Test 525: fstat on FIFO fd shows S_IFIFO\n");
+    {
+        int fd2 = (int)sys_open(fifo_path, 2 /* O_RDWR */, 0);
+        if (fd2 < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 525: open failed: %ld\n", (long)fd2);
+            fut_test_fail(525);
+        } else {
+            struct fut_stat st;
+            long sr = sys_fstat(fd2, &st);
+            sys_close(fd2);
+            if (sr < 0) {
+                fut_printf("[MISC-TEST] ✗ Test 525: fstat failed: %ld\n", sr);
+                fut_test_fail(525);
+            } else if ((st.st_mode & 0170000u) != 0010000u) {
+                fut_printf("[MISC-TEST] ✗ Test 525: st_mode=0x%x not S_IFIFO\n", st.st_mode);
+                fut_test_fail(525);
+            } else {
+                fut_printf("[MISC-TEST] ✓ Test 525: fstat FIFO st_mode=0x%x ok\n", st.st_mode);
+                fut_test_pass();
+            }
+        }
+    }
+
+    sys_unlink(fifo_path);
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -21848,6 +21985,7 @@ void fut_misc_test_thread(void *arg) {
     test_proc_personality_oom_adj();         /* Tests 509-511: /proc/self/{personality,oom_score_adj} */
     test_sysfs_basic();                      /* Tests 512-515: /sys mount, class/, bus/, kernel/mm/thp */
     test_thread_comm_and_tid_status();       /* Tests 516-520: per-thread comm + task/<tid>/ files */
+    test_named_pipe();                       /* Tests 521-525: VN_FIFO named pipe read/write */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

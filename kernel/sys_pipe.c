@@ -851,3 +851,236 @@ ssize_t pipe_peek(void *read_priv, void *buf, size_t len) {
     fut_spinlock_release(&pipe->lock);
     return (ssize_t)to_copy;
 }
+
+/* ============================================================
+ * Named pipe (FIFO) support
+ * ============================================================
+ *
+ * fut_fifo_state wraps a pipe_buffer for VN_FIFO vnodes.  Unlike
+ * anonymous pipes whose pipe_buffer is freed when the last fd
+ * closes, the FIFO pipe_buffer is owned by the vnode and persists
+ * across independent open()/close() cycles.
+ *
+ * fut_fifo_open_{read,write}() are called by fut_vfs_open() each
+ * time a VN_FIFO is opened.  They increment per-side counters and
+ * clear the corresponding closed flag so pipe_read/pipe_write work.
+ *
+ * The FIFO release functions decrement the counter and re-set the
+ * closed flag when the last fd on that side goes away — signalling
+ * EOF to readers or EPIPE to writers — but do NOT free the buffer.
+ */
+
+struct fut_fifo_state {
+    struct pipe_buffer *pipe;
+    uint32_t readers;           /* open O_RDONLY / O_RDWR fds */
+    uint32_t writers;           /* open O_WRONLY / O_RDWR fds */
+    fut_spinlock_t lock;
+};
+
+/* --- FIFO release helpers --- */
+
+static int fifo_release_read(void *inode, void *priv)
+{
+    (void)priv;
+    struct fut_fifo_state *fs = (struct fut_fifo_state *)inode;
+    if (!fs || !fs->pipe) return 0;
+
+    fut_spinlock_acquire(&fs->lock);
+    if (fs->readers > 0) fs->readers--;
+    if (fs->readers == 0) {
+        struct pipe_buffer *pb = fs->pipe;
+        fut_spinlock_acquire(&pb->lock);
+        pb->read_closed = true;
+        fut_spinlock_release(&pb->lock);
+        fut_waitq_wake_all(&pb->write_waitq);
+        if (pb->epoll_notify) fut_waitq_wake_one(pb->epoll_notify);
+    }
+    fut_spinlock_release(&fs->lock);
+    return 0;
+}
+
+static int fifo_release_write(void *inode, void *priv)
+{
+    (void)priv;
+    struct fut_fifo_state *fs = (struct fut_fifo_state *)inode;
+    if (!fs || !fs->pipe) return 0;
+
+    fut_spinlock_acquire(&fs->lock);
+    if (fs->writers > 0) fs->writers--;
+    if (fs->writers == 0) {
+        struct pipe_buffer *pb = fs->pipe;
+        fut_spinlock_acquire(&pb->lock);
+        pb->write_closed = true;
+        fut_spinlock_release(&pb->lock);
+        fut_waitq_wake_all(&pb->read_waitq);
+        if (pb->epoll_notify) fut_waitq_wake_one(pb->epoll_notify);
+    }
+    fut_spinlock_release(&fs->lock);
+    return 0;
+}
+
+static int fifo_release_rdwr(void *inode, void *priv)
+{
+    fifo_release_read(inode, priv);
+    fifo_release_write(inode, priv);
+    return 0;
+}
+
+/* --- FIFO read/write dispatch: extract pipe from fifo_state --- */
+
+static ssize_t fifo_read_impl(void *inode, void *priv,
+                               void *buf, size_t len, off_t *pos)
+{
+    (void)inode;
+    struct fut_fifo_state *fs = (struct fut_fifo_state *)priv;
+    if (!fs || !fs->pipe) return -EIO;
+    return pipe_read(NULL, fs->pipe, buf, len, pos);
+}
+
+static ssize_t fifo_write_impl(void *inode, void *priv,
+                                const void *buf, size_t len, off_t *pos)
+{
+    (void)inode;
+    struct fut_fifo_state *fs = (struct fut_fifo_state *)priv;
+    if (!fs || !fs->pipe) return -EIO;
+    return pipe_write(NULL, fs->pipe, buf, len, pos);
+}
+
+static int fifo_ioctl_impl(void *inode, void *priv,
+                            unsigned long req, unsigned long arg)
+{
+    (void)inode;
+    struct fut_fifo_state *fs = (struct fut_fifo_state *)priv;
+    if (!fs || !fs->pipe) return -EIO;
+    if (req == PIPE_IOC_SETFLAGS) {
+        bool nb = ((int)arg & 0x800) != 0;
+        fs->pipe->read_nonblock  = nb;
+        fs->pipe->write_nonblock = nb;
+        return 0;
+    }
+    return -EINVAL;
+}
+
+/* Published fops for FIFO read / write / read-write ends */
+struct fut_file_ops fifo_read_fops;
+struct fut_file_ops fifo_write_fops;
+struct fut_file_ops fifo_rdwr_fops;
+static bool fifo_fops_initialized = false;
+
+static void init_fifo_fops(void)
+{
+    if (fifo_fops_initialized) return;
+    init_pipe_fops();
+
+    fifo_read_fops.open    = NULL;
+    fifo_read_fops.release = fifo_release_read;
+    fifo_read_fops.read    = fifo_read_impl;
+    fifo_read_fops.write   = NULL;
+    fifo_read_fops.ioctl   = fifo_ioctl_impl;
+    fifo_read_fops.mmap    = NULL;
+
+    fifo_write_fops.open    = NULL;
+    fifo_write_fops.release = fifo_release_write;
+    fifo_write_fops.read    = NULL;
+    fifo_write_fops.write   = fifo_write_impl;
+    fifo_write_fops.ioctl   = fifo_ioctl_impl;
+    fifo_write_fops.mmap    = NULL;
+
+    fifo_rdwr_fops.open    = NULL;
+    fifo_rdwr_fops.release = fifo_release_rdwr;
+    fifo_rdwr_fops.read    = fifo_read_impl;
+    fifo_rdwr_fops.write   = fifo_write_impl;
+    fifo_rdwr_fops.ioctl   = fifo_ioctl_impl;
+    fifo_rdwr_fops.mmap    = NULL;
+
+    fifo_fops_initialized = true;
+}
+
+/**
+ * fut_fifo_state_create - allocate a FIFO pipe state for a VN_FIFO vnode.
+ *
+ * Returns a newly allocated fut_fifo_state whose pipe buffer starts with
+ * both ends "closed" (read_closed=true, write_closed=true).  They are
+ * cleared by fut_fifo_open_read() / fut_fifo_open_write() on the first
+ * open of each side.
+ */
+void *fut_fifo_state_create(void)
+{
+    init_fifo_fops();
+    struct fut_fifo_state *fs = fut_malloc(sizeof(struct fut_fifo_state));
+    if (!fs) return NULL;
+
+    fs->pipe = pipe_buffer_create();
+    if (!fs->pipe) { fut_free(fs); return NULL; }
+
+    fs->readers = 0;
+    fs->writers = 0;
+    fut_spinlock_init(&fs->lock);
+
+    /* Start with both ends "closed"; open() calls clear these. */
+    fs->pipe->read_closed  = true;
+    fs->pipe->write_closed = true;
+    return fs;
+}
+
+/** Return 1 if the FIFO currently has at least one open reader, 0 otherwise. */
+int fut_fifo_has_readers(void *fsp)
+{
+    struct fut_fifo_state *fs = (struct fut_fifo_state *)fsp;
+    if (!fs) return 0;
+    return fs->readers > 0 ? 1 : 0;
+}
+
+/** Free a FIFO pipe state (called when the owning vnode is destroyed). */
+void fut_fifo_state_destroy(struct fut_fifo_state *fs)
+{
+    if (!fs) return;
+    if (fs->pipe) { pipe_buffer_destroy(fs->pipe); fs->pipe = NULL; }
+    fut_free(fs);
+}
+
+/**
+ * fut_fifo_open_read - register a new reader on the FIFO.
+ *
+ * Increments the reader count.  On the first reader, clears read_closed
+ * so writers can proceed without EPIPE.  Wakes any writer that was
+ * waiting for a reader to appear.
+ */
+void fut_fifo_open_read(void *fsp)
+{
+    struct fut_fifo_state *fs = (struct fut_fifo_state *)fsp;
+    if (!fs || !fs->pipe) return;
+    init_fifo_fops();
+    fut_spinlock_acquire(&fs->lock);
+    fs->readers++;
+    if (fs->readers == 1) {
+        fut_spinlock_acquire(&fs->pipe->lock);
+        fs->pipe->read_closed = false;
+        fut_spinlock_release(&fs->pipe->lock);
+        fut_waitq_wake_all(&fs->pipe->write_waitq);
+    }
+    fut_spinlock_release(&fs->lock);
+}
+
+/**
+ * fut_fifo_open_write - register a new writer on the FIFO.
+ *
+ * Increments the writer count.  On the first writer, clears write_closed
+ * so readers can block waiting for data instead of seeing immediate EOF.
+ * Wakes any reader that was waiting for a writer to appear.
+ */
+void fut_fifo_open_write(void *fsp)
+{
+    struct fut_fifo_state *fs = (struct fut_fifo_state *)fsp;
+    if (!fs || !fs->pipe) return;
+    init_fifo_fops();
+    fut_spinlock_acquire(&fs->lock);
+    fs->writers++;
+    if (fs->writers == 1) {
+        fut_spinlock_acquire(&fs->pipe->lock);
+        fs->pipe->write_closed = false;
+        fut_spinlock_release(&fs->pipe->lock);
+        fut_waitq_wake_all(&fs->pipe->read_waitq);
+    }
+    fut_spinlock_release(&fs->lock);
+}

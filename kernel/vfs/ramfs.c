@@ -64,6 +64,7 @@ struct ramfs_node {
         } link;
     };
     struct ramfs_xattr *xattrs;     /* Extended attributes list (NULL if none) */
+    void *fifo_pipe;                /* struct fut_fifo_state * for VN_FIFO; NULL otherwise */
     uint64_t magic_guard_after;     /* Guard value to detect overflow after structure */
 };
 
@@ -145,6 +146,21 @@ static void str_copy_safe(char *dest, const char *src, size_t max_len) {
 /* ============================================================
  *   VNode Operations
  * ============================================================ */
+
+/* Accessor used by fut_vfs.c to read/write fifo_pipe without exposing ramfs_node layout */
+void *ramfs_get_fifo_pipe(struct fut_vnode *vnode)
+{
+    if (!vnode || !vnode->fs_data) return NULL;
+    struct ramfs_node *node = (struct ramfs_node *)vnode->fs_data;
+    return node->fifo_pipe;
+}
+
+void ramfs_set_fifo_pipe(struct fut_vnode *vnode, void *pipe)
+{
+    if (!vnode || !vnode->fs_data) return;
+    struct ramfs_node *node = (struct ramfs_node *)vnode->fs_data;
+    node->fifo_pipe = pipe;
+}
 
 static int ramfs_open(struct fut_vnode *vnode, int flags) {
     (void)flags;
@@ -737,6 +753,7 @@ static int ramfs_create(struct fut_vnode *dir, const char *name, uint32_t mode, 
 
     /* Initialize extended attributes list */
     node->xattrs = NULL;
+    node->fifo_pipe = NULL;
 
     /* Initialize file data */
     node->file.data = NULL;
@@ -855,6 +872,7 @@ static int ramfs_mkdir(struct fut_vnode *dir, const char *name, uint32_t mode) {
 
     /* Initialize extended attributes list */
     node->xattrs = NULL;
+    node->fifo_pipe = NULL;
 
     /* Initialize directory */
     node->dir.entries = NULL;
@@ -1587,6 +1605,7 @@ static int ramfs_symlink(struct fut_vnode *parent, const char *linkpath, const c
     link_node->mtime_ms = link_node->atime_ms;
     link_node->ctime_ms = link_node->atime_ms;
     link_node->xattrs = NULL;
+    link_node->fifo_pipe = NULL;
     link_node->link.target = target_buf;
     link_node->magic_guard_after = RAMFS_NODE_MAGIC;
 
@@ -2048,6 +2067,7 @@ static int ramfs_mount(const char *device, int flags, void *data, fut_handle_t b
     root_node->mtime_ms = root_node->atime_ms;
     root_node->ctime_ms = root_node->atime_ms;
     root_node->xattrs = NULL;
+    root_node->fifo_pipe = NULL;
     root_node->magic_guard_after = RAMFS_NODE_MAGIC;
 
     /* Initialize root directory */

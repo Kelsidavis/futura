@@ -2697,6 +2697,81 @@ static int64_t sys_quotactl_wrapper(uint64_t cmd, uint64_t special, uint64_t id,
     return sys_quotactl((unsigned int)cmd, (const char *)special, (int)id, (void *)addr);
 }
 
+/* sys_sched_setattr_wrapper */
+extern long sys_sched_setattr(int pid, const void *uattr, unsigned int flags);
+static int64_t sys_sched_setattr_wrapper(uint64_t pid, uint64_t uattr, uint64_t flags,
+                                          uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg3; (void)arg4; (void)arg5;
+    return sys_sched_setattr((int)pid, (const void *)uattr, (unsigned int)flags);
+}
+
+/* sys_sched_getattr_wrapper */
+extern long sys_sched_getattr(int pid, void *uattr, unsigned int usize, unsigned int flags);
+static int64_t sys_sched_getattr_wrapper(uint64_t pid, uint64_t uattr, uint64_t usize,
+                                          uint64_t flags, uint64_t arg4, uint64_t arg5) {
+    (void)arg4; (void)arg5;
+    return sys_sched_getattr((int)pid, (void *)uattr, (unsigned int)usize, (unsigned int)flags);
+}
+
+/* sys_mlock2_wrapper */
+extern long sys_mlock2(const void *addr, size_t len, unsigned int flags);
+static int64_t sys_mlock2_wrapper(uint64_t addr, uint64_t len, uint64_t flags,
+                                   uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg3; (void)arg4; (void)arg5;
+    return sys_mlock2((const void *)addr, (size_t)len, (unsigned int)flags);
+}
+
+/* sys_setfsuid_wrapper */
+extern long sys_setfsuid(uint32_t fsuid);
+static int64_t sys_setfsuid_wrapper(uint64_t fsuid, uint64_t arg1, uint64_t arg2,
+                                     uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+    return sys_setfsuid((uint32_t)fsuid);
+}
+
+/* sys_setfsgid_wrapper */
+extern long sys_setfsgid(uint32_t fsgid);
+static int64_t sys_setfsgid_wrapper(uint64_t fsgid, uint64_t arg1, uint64_t arg2,
+                                     uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+    return sys_setfsgid((uint32_t)fsgid);
+}
+
+/* sys_swapon_wrapper */
+extern long sys_swapon(const char *path, int swapflags);
+static int64_t sys_swapon_wrapper(uint64_t path, uint64_t swapflags,
+                                   uint64_t arg2, uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+    return sys_swapon((const char *)path, (int)swapflags);
+}
+
+/* sys_swapoff_wrapper */
+extern long sys_swapoff(const char *path);
+static int64_t sys_swapoff_wrapper(uint64_t path, uint64_t arg1, uint64_t arg2,
+                                    uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+    return sys_swapoff((const char *)path);
+}
+
+/* sys_epoll_pwait2_wrapper */
+extern long sys_epoll_pwait2(int epfd, void *events, int maxevents,
+                              const void *timeout_ts, const void *sigmask, size_t sigsetsize);
+static int64_t sys_epoll_pwait2_wrapper(uint64_t epfd, uint64_t events, uint64_t maxevents,
+                                         uint64_t timeout_ts, uint64_t sigmask, uint64_t sigsetsize) {
+    return sys_epoll_pwait2((int)epfd, (void *)events, (int)maxevents,
+                             (const void *)timeout_ts, (const void *)sigmask, (size_t)sigsetsize);
+}
+
+/* sys_execveat_wrapper */
+extern long sys_execveat(int dirfd, const char *pathname,
+                          char *const argv[], char *const envp[], int flags);
+static int64_t sys_execveat_wrapper(uint64_t dirfd, uint64_t pathname, uint64_t argv,
+                                     uint64_t envp, uint64_t flags, uint64_t arg5) {
+    (void)arg5;
+    return sys_execveat((int)dirfd, (const char *)pathname,
+                         (char *const *)argv, (char *const *)envp, (int)flags);
+}
+
 /* sys_preadv2_wrapper */
 extern ssize_t sys_preadv2(int fd, const struct iovec *iov, int iovcnt,
                             int64_t offset, int flags);
@@ -2991,6 +3066,21 @@ struct syscall_entry {
 #define __NR_sendmmsg           269
 #define __NR_process_vm_readv   270
 #define __NR_process_vm_writev  271
+/* sched extended (Linux ARM64: 273-274) */
+#define __NR_sched_setattr      273
+#define __NR_sched_getattr      274
+/* setfsuid/setfsgid (Linux ARM64: 151-152) */
+#define __NR_setfsuid           151
+#define __NR_setfsgid           152
+/* mlock2 (Linux ARM64: 284) */
+#define __NR_mlock2             284
+/* swapon/swapoff (Linux ARM64: 224-225) */
+#define __NR_swapon             224
+#define __NR_swapoff            225
+/* execveat (Linux ARM64: 281) */
+#define __NR_execveat           281
+/* epoll_pwait2 (Linux ARM64: 441) */
+#define __NR_epoll_pwait2       441
 /* preadv2/pwritev2 (Linux ARM64: 286-287) */
 #define __NR_preadv2            286
 #define __NR_pwritev2           287
@@ -3823,6 +3913,36 @@ static void arm64_syscall_table_init(void) {
     /* openat2 (Linux 5.6+) */
     syscall_table[__NR_openat2].handler = (syscall_fn_t)sys_openat2_wrapper;
     syscall_table[__NR_openat2].name = "openat2";
+
+    /* sched_getattr/sched_setattr (Linux 3.14+) */
+    syscall_table[__NR_sched_setattr].handler = (syscall_fn_t)sys_sched_setattr_wrapper;
+    syscall_table[__NR_sched_setattr].name = "sched_setattr";
+    syscall_table[__NR_sched_getattr].handler = (syscall_fn_t)sys_sched_getattr_wrapper;
+    syscall_table[__NR_sched_getattr].name = "sched_getattr";
+
+    /* setfsuid/setfsgid */
+    syscall_table[__NR_setfsuid].handler = (syscall_fn_t)sys_setfsuid_wrapper;
+    syscall_table[__NR_setfsuid].name = "setfsuid";
+    syscall_table[__NR_setfsgid].handler = (syscall_fn_t)sys_setfsgid_wrapper;
+    syscall_table[__NR_setfsgid].name = "setfsgid";
+
+    /* mlock2 (Linux 4.4+) */
+    syscall_table[__NR_mlock2].handler = (syscall_fn_t)sys_mlock2_wrapper;
+    syscall_table[__NR_mlock2].name = "mlock2";
+
+    /* swapon/swapoff */
+    syscall_table[__NR_swapon].handler = (syscall_fn_t)sys_swapon_wrapper;
+    syscall_table[__NR_swapon].name = "swapon";
+    syscall_table[__NR_swapoff].handler = (syscall_fn_t)sys_swapoff_wrapper;
+    syscall_table[__NR_swapoff].name = "swapoff";
+
+    /* execveat (Linux 3.19+) */
+    syscall_table[__NR_execveat].handler = (syscall_fn_t)sys_execveat_wrapper;
+    syscall_table[__NR_execveat].name = "execveat";
+
+    /* epoll_pwait2 (Linux 5.11+) */
+    syscall_table[__NR_epoll_pwait2].handler = (syscall_fn_t)sys_epoll_pwait2_wrapper;
+    syscall_table[__NR_epoll_pwait2].name = "epoll_pwait2";
 
     /* preadv2/pwritev2 (Linux 4.6+) */
     syscall_table[__NR_preadv2].handler = (syscall_fn_t)sys_preadv2_wrapper;

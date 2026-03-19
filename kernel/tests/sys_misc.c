@@ -22259,6 +22259,148 @@ t543:;
 #undef ENODATA_VAL
 }
 
+/*
+ * test_rusage_children_and_fxattr() — Tests 544-546
+ *
+ *   Test 544: getrusage(RUSAGE_CHILDREN) accumulates reaped child CPU ticks.
+ *   Test 545: fsetxattr + fgetxattr (fd-based extended attribute) roundtrip.
+ *   Test 546: flistxattr enumerates attr set via fsetxattr.
+ */
+static void test_rusage_children_and_fxattr(void) {
+    /* ---- Test 544: RUSAGE_CHILDREN accumulates ticks ---- */
+    fut_printf("[MISC-TEST] Test 544: getrusage(RUSAGE_CHILDREN) accumulates child ticks\n");
+    {
+        /* struct rusage: first 16 bytes = timeval ru_utime { int64 tv_sec; int64 tv_usec } */
+        typedef struct {
+            long long utime_sec;
+            long long utime_usec;
+            long long stime_sec;
+            long long stime_usec;
+            long long rest[14];
+        } test_ru_t;
+
+        extern long sys_getrusage(int who, void *rusage);
+        extern fut_task_t *fut_task_create(void);
+        extern long sys_waitpid(int pid, int *status, int flags);
+
+        /* Snapshot RUSAGE_CHILDREN before creating/reaping child */
+        test_ru_t ru_before;
+        __builtin_memset(&ru_before, 0, sizeof(ru_before));
+        long r = sys_getrusage(-1 /* RUSAGE_CHILDREN */, &ru_before);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 544: getrusage(RUSAGE_CHILDREN) before: %ld\n", r);
+            fut_test_fail(544); goto t545;
+        }
+
+        /* Create child with 300 cpu ticks → 3 seconds */
+        fut_task_t *child = fut_task_create();
+        if (!child) {
+            fut_printf("[MISC-TEST] ✗ Test 544: fut_task_create failed\n");
+            fut_test_fail(544); goto t545;
+        }
+        child->state = FUT_TASK_ZOMBIE;
+        child->exit_code = 0;
+        child->child_cpu_ticks = 300;  /* 300 ticks × 10ms = 3s */
+
+        int status = 0;
+        long pid = sys_waitpid((int)child->pid, &status, 0);  /* reap → accumulate */
+        if (pid <= 0) {
+            fut_printf("[MISC-TEST] ✗ Test 544: waitpid failed: %ld\n", pid);
+            fut_test_fail(544); goto t545;
+        }
+
+        /* Now getrusage(RUSAGE_CHILDREN) should reflect the accumulated ticks */
+        test_ru_t ru_after;
+        __builtin_memset(&ru_after, 0, sizeof(ru_after));
+        r = sys_getrusage(-1, &ru_after);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 544: getrusage(RUSAGE_CHILDREN) after: %ld\n", r);
+            fut_test_fail(544); goto t545;
+        }
+
+        /* After - before should be at least 3 seconds (300 ticks × 10000 µs) */
+        long long delta_sec = ru_after.utime_sec - ru_before.utime_sec;
+        long long delta_usec = ru_after.utime_usec - ru_before.utime_usec;
+        long long delta_total_usec = delta_sec * 1000000LL + delta_usec;
+        if (delta_total_usec < 3000000LL) {
+            fut_printf("[MISC-TEST] ✗ Test 544: RUSAGE_CHILDREN delta=%lld µs (expected >=3000000)\n",
+                       delta_total_usec);
+            fut_test_fail(544); goto t545;
+        }
+        fut_printf("[MISC-TEST] ✓ Test 544: RUSAGE_CHILDREN delta=%lld µs (3s child ticks)\n",
+                   delta_total_usec);
+        fut_test_pass();
+    }
+
+t545:;
+    /* ---- Test 545: fsetxattr + fgetxattr fd-based roundtrip ---- */
+    fut_printf("[MISC-TEST] Test 545: fsetxattr + fgetxattr roundtrip\n");
+    {
+        extern long sys_fsetxattr(int fd, const char *name, const void *value,
+                                  long size, int flags);
+        extern long sys_fgetxattr(int fd, const char *name, void *value, long size);
+
+        int fd = fut_vfs_open("/fxattr_test.txt", O_CREAT | O_RDWR, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 545: open failed: %d\n", fd);
+            fut_test_fail(545); fut_test_fail(546); return;
+        }
+
+        const char *fname = "user.fxattr";
+        const char *fval = "fxattr_value";
+        long r = sys_fsetxattr(fd, fname, fval, 12, 0);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 545: fsetxattr returned %ld (expected 0)\n", r);
+            fut_vfs_close(fd); fut_vfs_unlink("/fxattr_test.txt");
+            fut_test_fail(545); fut_test_fail(546); return;
+        }
+
+        char buf[32];
+        __builtin_memset(buf, 0, sizeof(buf));
+        long n = sys_fgetxattr(fd, fname, buf, sizeof(buf));
+        if (n != 12) {
+            fut_printf("[MISC-TEST] ✗ Test 545: fgetxattr returned %ld (expected 12)\n", n);
+            fut_vfs_close(fd); fut_vfs_unlink("/fxattr_test.txt");
+            fut_test_fail(545); fut_test_fail(546); return;
+        }
+        if (__builtin_memcmp(buf, fval, 12) != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 545: fgetxattr value mismatch: '%s'\n", buf);
+            fut_vfs_close(fd); fut_vfs_unlink("/fxattr_test.txt");
+            fut_test_fail(545); fut_test_fail(546); return;
+        }
+        fut_printf("[MISC-TEST] ✓ Test 545: fsetxattr + fgetxattr: value='%s'\n", buf);
+        fut_test_pass();
+
+        /* ---- Test 546: flistxattr enumerates the fd attribute ---- */
+        fut_printf("[MISC-TEST] Test 546: flistxattr enumerates fd attribute\n");
+        extern long sys_flistxattr(int fd, char *list, long size);
+        char list[128];
+        __builtin_memset(list, 0, sizeof(list));
+        long nl = sys_flistxattr(fd, list, sizeof(list));
+        fut_vfs_close(fd); fut_vfs_unlink("/fxattr_test.txt");
+        if (nl <= 0) {
+            fut_printf("[MISC-TEST] ✗ Test 546: flistxattr returned %ld\n", nl);
+            fut_test_fail(546); return;
+        }
+        int found = 0;
+        for (long i = 0; i < nl; ) {
+            const char *entry = list + i;
+            long elen = 0;
+            while (i + elen < nl && list[i + elen] != '\0') elen++;
+            if (elen == 11 && __builtin_memcmp(entry, "user.fxattr", 11) == 0) {
+                found = 1; break;
+            }
+            i += elen + 1;
+        }
+        if (!found) {
+            fut_printf("[MISC-TEST] ✗ Test 546: 'user.fxattr' not in flistxattr\n");
+            fut_test_fail(546); return;
+        }
+        fut_printf("[MISC-TEST] ✓ Test 546: flistxattr: found 'user.fxattr'\n");
+        fut_test_pass();
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -22707,6 +22849,7 @@ void fut_misc_test_thread(void *arg) {
     test_getsockopt_type_error();            /* Tests 534-535: getsockopt SO_TYPE and SO_ERROR */
     test_fallocate_basic();                  /* Tests 536-539: fallocate extend/zero/punch/einval */
     test_xattr_basic();                      /* Tests 540-543: setxattr/getxattr/listxattr/removexattr */
+    test_rusage_children_and_fxattr();       /* Tests 544-546: RUSAGE_CHILDREN accumulation, fsetxattr/fgetxattr */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

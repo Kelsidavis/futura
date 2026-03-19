@@ -20656,6 +20656,78 @@ static void test_proc_uid_gid_map(void) {
     }
 }
 
+/*
+ * test_proc_loginuid_sessionid() — Tests 501-502
+ *
+ * Verify that /proc/self/loginuid and /proc/self/sessionid can be opened
+ * and read successfully.  loginuid is read by PAM, sudo, and audit tools;
+ * sessionid is read by sshd, systemd, and audit tools.  Both return numeric
+ * strings (4294967295 when unset).
+ */
+static void test_proc_loginuid_sessionid(void) {
+    extern long sys_openat(int dirfd, const char *pathname, int flags, int mode);
+    extern long sys_read(int fd, void *buf, size_t count);
+    extern long sys_close(int fd);
+
+    fut_printf("[MISC-TEST] Tests 501-502: /proc/self/{loginuid,sessionid}\n");
+
+    /* Test 501: /proc/self/loginuid readable and contains a decimal number */
+    {
+        int fd = (int)sys_openat(-100, "/proc/self/loginuid", 0, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] FAIL 501: open loginuid failed: %d\n", fd);
+            fut_test_fail(501);
+        } else {
+            char buf[32];
+            long n = sys_read(fd, buf, sizeof(buf) - 1);
+            sys_close(fd);
+            if (n > 0) {
+                buf[n] = '\0';
+                /* Must start with a digit */
+                int ok = (buf[0] >= '0' && buf[0] <= '9');
+                if (ok) {
+                    fut_printf("[MISC-TEST] PASS 501: loginuid = \"%s\"\n", buf);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] FAIL 501: loginuid unexpected content\n");
+                    fut_test_fail(501);
+                }
+            } else {
+                fut_printf("[MISC-TEST] FAIL 501: loginuid read returned %ld\n", n);
+                fut_test_fail(501);
+            }
+        }
+    }
+
+    /* Test 502: /proc/self/sessionid readable and contains a decimal number */
+    {
+        int fd = (int)sys_openat(-100, "/proc/self/sessionid", 0, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] FAIL 502: open sessionid failed: %d\n", fd);
+            fut_test_fail(502);
+        } else {
+            char buf[32];
+            long n = sys_read(fd, buf, sizeof(buf) - 1);
+            sys_close(fd);
+            if (n > 0) {
+                buf[n] = '\0';
+                /* Must start with a digit */
+                int ok = (buf[0] >= '0' && buf[0] <= '9');
+                if (ok) {
+                    fut_printf("[MISC-TEST] PASS 502: sessionid = \"%s\"\n", buf);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] FAIL 502: sessionid unexpected content\n");
+                    fut_test_fail(502);
+                }
+            } else {
+                fut_printf("[MISC-TEST] FAIL 502: sessionid read returned %ld\n", n);
+                fut_test_fail(502);
+            }
+        }
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -21091,6 +21163,7 @@ void fut_misc_test_thread(void *arg) {
     test_subreaper_reparent();             /* Tests 489-491: PR_SET_CHILD_SUBREAPER reparenting */
     test_unshare_namespace_noop();         /* Tests 492-497: unshare namespace flags no-op */
     test_proc_uid_gid_map();              /* Tests 498-500: /proc/self/{uid_map,gid_map,setgroups} */
+    test_proc_loginuid_sessionid();       /* Tests 501-502: /proc/self/{loginuid,sessionid} */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

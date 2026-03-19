@@ -21544,6 +21544,230 @@ static void test_named_pipe(void) {
     sys_unlink(fifo_path);
 }
 
+/*
+ * test_wait4_rusage() — Tests 526-528: sys_wait4 with struct rusage
+ *
+ *   Test 526: wait4(pid, &status, 0, NULL) reaps zombie child, returns child_pid.
+ *   Test 527: wait4(pid, &status, 0, &rusage) fills ru_utime from child_cpu_ticks.
+ *   Test 528: wait4(child_pid, &status, WNOHANG, NULL) returns 0 for non-zombie child.
+ */
+static void test_wait4_rusage(void) {
+    extern long sys_wait4(int pid, int *u_status, int flags, void *rusage_ptr);
+    extern fut_task_t *fut_task_create(void);
+    extern void fut_task_destroy(fut_task_t *task);
+
+#define WNOHANG_VAL 1
+
+    /* --- Test 526: wait4(pid, &status, 0, NULL) reaps zombie child --- */
+    fut_printf("[MISC-TEST] Test 526: wait4 basic (no rusage)\n");
+    {
+        fut_task_t *child = fut_task_create();
+        if (!child) {
+            fut_printf("[MISC-TEST] ✗ Test 526: fut_task_create failed\n");
+            fut_test_fail(526);
+            goto t527;
+        }
+        int child_pid = (int)child->pid;
+        child->state = FUT_TASK_ZOMBIE;
+        child->exit_code = 42;  /* WEXITSTATUS(status) should be 42 */
+
+        int status = -1;
+        long rc = sys_wait4(child_pid, &status, 0, NULL);
+        if (rc != (long)child_pid) {
+            fut_printf("[MISC-TEST] ✗ Test 526: wait4 returned %ld (expected %d)\n", rc, child_pid);
+            fut_test_fail(526);
+            goto t527;
+        }
+        /* encode_wait_status: (exit_code & 0x7f) << 8 */
+        int expected_status = (42 & 0x7f) << 8;
+        if (status != expected_status) {
+            fut_printf("[MISC-TEST] ✗ Test 526: status=0x%x (expected 0x%x)\n",
+                       (unsigned)status, (unsigned)expected_status);
+            fut_test_fail(526);
+            goto t527;
+        }
+        fut_printf("[MISC-TEST] ✓ Test 526: wait4 basic: rc=%ld status=0x%x\n", rc, (unsigned)status);
+        fut_test_pass();
+    }
+
+t527:;
+    /* --- Test 527: wait4 with rusage — ru_utime from child_cpu_ticks --- */
+    fut_printf("[MISC-TEST] Test 527: wait4 with rusage fills ru_utime\n");
+    {
+        /* struct rusage layout (Linux ABI, 144 bytes):
+         *   int64 tv_sec  at offset 0
+         *   int64 tv_usec at offset 8
+         *   int64 ru_stime.tv_sec  at offset 16
+         *   int64 ru_stime.tv_usec at offset 24
+         *   ... rest zeroed */
+        typedef struct {
+            long long tv_sec;
+            long long tv_usec;
+            long long st_sec;
+            long long st_usec;
+            long long rest[14];   /* remaining 112 bytes / 8 = 14 longs */
+        } test_rusage_t;
+
+        fut_task_t *child = fut_task_create();
+        if (!child) {
+            fut_printf("[MISC-TEST] ✗ Test 527: fut_task_create failed\n");
+            fut_test_fail(527);
+            goto t528;
+        }
+        int child_pid = (int)child->pid;
+        child->state = FUT_TASK_ZOMBIE;
+        child->exit_code = 0;
+        /* 200 ticks @ 100 Hz = 2 seconds exactly */
+        child->child_cpu_ticks = 200;
+
+        int status = -1;
+        test_rusage_t rusage;
+        __builtin_memset(&rusage, 0xff, sizeof(rusage));  /* poison to detect non-writes */
+        long rc = sys_wait4(child_pid, &status, 0, &rusage);
+        if (rc != (long)child_pid) {
+            fut_printf("[MISC-TEST] ✗ Test 527: wait4 returned %ld (expected %d)\n", rc, child_pid);
+            fut_test_fail(527);
+            goto t528;
+        }
+        /* 200 ticks * 10000 µs/tick = 2000000 µs = 2 seconds */
+        if (rusage.tv_sec != 2 || rusage.tv_usec != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 527: ru_utime=%lld.%06lld (expected 2.000000)\n",
+                       rusage.tv_sec, rusage.tv_usec);
+            fut_test_fail(527);
+            goto t528;
+        }
+        /* ru_stime should be zero */
+        if (rusage.st_sec != 0 || rusage.st_usec != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 527: ru_stime=%lld.%lld (expected 0.0)\n",
+                       rusage.st_sec, rusage.st_usec);
+            fut_test_fail(527);
+            goto t528;
+        }
+        fut_printf("[MISC-TEST] ✓ Test 527: wait4 rusage: ru_utime=%lld.%06lld\n",
+                   rusage.tv_sec, rusage.tv_usec);
+        fut_test_pass();
+    }
+
+t528:;
+    /* --- Test 528: wait4 WNOHANG on running (non-zombie) child → 0 --- */
+    fut_printf("[MISC-TEST] Test 528: wait4 WNOHANG running child → 0\n");
+    {
+        fut_task_t *child = fut_task_create();
+        if (!child) {
+            fut_printf("[MISC-TEST] ✗ Test 528: fut_task_create failed\n");
+            fut_test_fail(528);
+            return;
+        }
+        int child_pid = (int)child->pid;
+        child->state = FUT_TASK_RUNNING;  /* not a zombie */
+
+        int status = -1;
+        long rc = sys_wait4(child_pid, &status, WNOHANG_VAL, NULL);
+        if (rc != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 528: WNOHANG running child returned %ld (expected 0)\n", rc);
+            child->state = FUT_TASK_ZOMBIE;
+            sys_wait4(child_pid, &status, 0, NULL);  /* reap */
+            fut_test_fail(528);
+            return;
+        }
+        fut_printf("[MISC-TEST] ✓ Test 528: wait4 WNOHANG running child → 0\n");
+        fut_test_pass();
+        /* reap the synthetic child */
+        child->state = FUT_TASK_ZOMBIE;
+        sys_wait4(child_pid, &status, 0, NULL);
+    }
+#undef WNOHANG_VAL
+}
+
+/*
+ * test_robust_list() — Tests 529-530: set_robust_list / get_robust_list
+ *
+ *   Test 529: set + get roundtrip: stored head is returned verbatim.
+ *   Test 530: invalid len → EINVAL; NULL head_ptr → EINVAL.
+ */
+static void test_robust_list(void) {
+    extern long sys_set_robust_list(void *head, long len);
+    extern long sys_get_robust_list(int pid, void **head_ptr, long *len_ptr);
+
+    /* struct robust_list_head: { struct robust_list { void *next; } list;
+     *                            long futex_offset;
+     *                            void *list_op_pending; }
+     * size = 3 pointers = 24 bytes on 64-bit */
+    typedef struct {
+        void *list_next;       /* robust_list.next */
+        long  futex_offset;
+        void *list_op_pending;
+    } test_rlh_t;
+
+    /* --- Test 529: set then get returns the same pointer and correct length --- */
+    fut_printf("[MISC-TEST] Test 529: set_robust_list / get_robust_list roundtrip\n");
+    {
+        test_rlh_t head;
+        head.list_next = &head;  /* empty list: next points to itself */
+        head.futex_offset = 0;
+        head.list_op_pending = NULL;
+
+        long sz = (long)sizeof(test_rlh_t);
+        long rc = sys_set_robust_list(&head, sz);
+        if (rc != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 529: set_robust_list returned %ld (expected 0)\n", rc);
+            fut_test_fail(529);
+            goto t530;
+        }
+
+        void *got_head = (void *)0xdeadbeef;
+        long got_len = -1;
+        rc = sys_get_robust_list(0, &got_head, &got_len);
+        if (rc != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 529: get_robust_list returned %ld (expected 0)\n", rc);
+            fut_test_fail(529);
+            goto t530;
+        }
+        if (got_head != &head) {
+            fut_printf("[MISC-TEST] ✗ Test 529: got_head=%p (expected %p)\n", got_head, &head);
+            fut_test_fail(529);
+            goto t530;
+        }
+        if (got_len != sz) {
+            fut_printf("[MISC-TEST] ✗ Test 529: got_len=%ld (expected %ld)\n", got_len, sz);
+            fut_test_fail(529);
+            goto t530;
+        }
+        fut_printf("[MISC-TEST] ✓ Test 529: set/get_robust_list roundtrip: head=%p len=%ld\n",
+                   got_head, got_len);
+        fut_test_pass();
+    }
+
+t530:;
+    /* --- Test 530: error paths --- */
+    fut_printf("[MISC-TEST] Test 530: set_robust_list/get_robust_list error paths\n");
+    {
+        typedef struct { void *a; long b; void *c; } dummy_rlh_t;
+        dummy_rlh_t head2 = { NULL, 0, NULL };
+        long sz = (long)sizeof(dummy_rlh_t);
+
+        /* Wrong length → EINVAL */
+        long rc = sys_set_robust_list(&head2, sz + 1);
+        if (rc != -22) {  /* -EINVAL */
+            fut_printf("[MISC-TEST] ✗ Test 530: bad-len returned %ld (expected -22 EINVAL)\n", rc);
+            fut_test_fail(530);
+            return;
+        }
+
+        /* NULL head_ptr in get_robust_list → EINVAL */
+        long got_len = -1;
+        rc = sys_get_robust_list(0, NULL, &got_len);
+        if (rc != -22) {
+            fut_printf("[MISC-TEST] ✗ Test 530: null head_ptr returned %ld (expected -22)\n", rc);
+            fut_test_fail(530);
+            return;
+        }
+
+        fut_printf("[MISC-TEST] ✓ Test 530: bad-len → EINVAL, null head_ptr → EINVAL\n");
+        fut_test_pass();
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -21986,6 +22210,8 @@ void fut_misc_test_thread(void *arg) {
     test_sysfs_basic();                      /* Tests 512-515: /sys mount, class/, bus/, kernel/mm/thp */
     test_thread_comm_and_tid_status();       /* Tests 516-520: per-thread comm + task/<tid>/ files */
     test_named_pipe();                       /* Tests 521-525: VN_FIFO named pipe read/write */
+    test_wait4_rusage();                     /* Tests 526-528: wait4 with struct rusage */
+    test_robust_list();                      /* Tests 529-530: set/get_robust_list roundtrip+errors */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

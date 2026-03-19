@@ -22489,6 +22489,109 @@ t549:;
 #undef T547_TIOCSCTTY
 }
 
+/* ============================================================
+ * Tests 550-554: fsync / fdatasync / sync / syncfs correctness
+ *
+ *   Test 550: fsync(fd) on a regular file returns 0.
+ *   Test 551: fdatasync(fd) on a regular file returns 0.
+ *   Test 552: sync() (no-arg flush) returns 0.
+ *   Test 553: syncfs(fd) on a regular file returns 0.
+ *   Test 554: fsync(-1) → EBADF; fdatasync(-1) → EBADF.
+ * ============================================================ */
+static void test_sync_syscalls(void) {
+    extern long sys_fsync(int fd);
+    extern long sys_fdatasync(int fd);
+    extern long sys_sync(void);
+    extern long sys_syncfs(int fd);
+
+    /* --- Test 550: fsync on a regular file → 0 --- */
+    fut_printf("[MISC-TEST] Test 550: fsync on regular file\n");
+    {
+        int fd = (int)fut_vfs_open("/tmp/fsync_test.txt", O_CREAT | O_RDWR | O_TRUNC, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 550: open failed: %d\n", fd);
+            fut_test_fail(550); return;
+        }
+        fut_vfs_write(fd, "data", 4);
+        long r = sys_fsync(fd);
+        fut_vfs_close(fd);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 550: fsync returned %ld (expected 0)\n", r);
+            fut_test_fail(550); return;
+        }
+        fut_printf("[MISC-TEST] ✓ Test 550: fsync → 0\n");
+        fut_test_pass();
+    }
+
+    /* --- Test 551: fdatasync on a regular file → 0 --- */
+    fut_printf("[MISC-TEST] Test 551: fdatasync on regular file\n");
+    {
+        int fd = (int)fut_vfs_open("/tmp/fdatasync_test.txt", O_CREAT | O_RDWR | O_TRUNC, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 551: open failed: %d\n", fd);
+            fut_test_fail(551); return;
+        }
+        fut_vfs_write(fd, "data", 4);
+        long r = sys_fdatasync(fd);
+        fut_vfs_close(fd);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 551: fdatasync returned %ld (expected 0)\n", r);
+            fut_test_fail(551); return;
+        }
+        fut_printf("[MISC-TEST] ✓ Test 551: fdatasync → 0\n");
+        fut_test_pass();
+    }
+
+    /* --- Test 552: sync() → 0 --- */
+    fut_printf("[MISC-TEST] Test 552: sync() flushes all filesystems\n");
+    {
+        long r = sys_sync();
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 552: sync() returned %ld (expected 0)\n", r);
+            fut_test_fail(552); return;
+        }
+        fut_printf("[MISC-TEST] ✓ Test 552: sync() → 0\n");
+        fut_test_pass();
+    }
+
+    /* --- Test 553: syncfs(fd) on a regular file → 0 --- */
+    fut_printf("[MISC-TEST] Test 553: syncfs on regular file\n");
+    {
+        int fd = (int)fut_vfs_open("/tmp/syncfs_test.txt", O_CREAT | O_RDWR | O_TRUNC, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 553: open failed: %d\n", fd);
+            fut_test_fail(553); return;
+        }
+        long r = sys_syncfs(fd);
+        fut_vfs_close(fd);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 553: syncfs returned %ld (expected 0)\n", r);
+            fut_test_fail(553); return;
+        }
+        fut_printf("[MISC-TEST] ✓ Test 553: syncfs → 0\n");
+        fut_test_pass();
+    }
+
+    /* --- Test 554: fsync(-1) → EBADF; fdatasync(-1) → EBADF --- */
+    fut_printf("[MISC-TEST] Test 554: fsync/fdatasync on invalid fd → EBADF\n");
+    {
+        long r1 = sys_fsync(-1);
+        long r2 = sys_fdatasync(-1);
+        if (r1 != -EBADF) {
+            fut_printf("[MISC-TEST] ✗ Test 554: fsync(-1) returned %ld (expected -%d EBADF)\n",
+                       r1, EBADF);
+            fut_test_fail(554); return;
+        }
+        if (r2 != -EBADF) {
+            fut_printf("[MISC-TEST] ✗ Test 554: fdatasync(-1) returned %ld (expected -%d EBADF)\n",
+                       r2, EBADF);
+            fut_test_fail(554); return;
+        }
+        fut_printf("[MISC-TEST] ✓ Test 554: fsync(-1)=EBADF fdatasync(-1)=EBADF\n");
+        fut_test_pass();
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -22939,6 +23042,7 @@ void fut_misc_test_thread(void *arg) {
     test_xattr_basic();                      /* Tests 540-543: setxattr/getxattr/listxattr/removexattr */
     test_rusage_children_and_fxattr();       /* Tests 544-546: RUSAGE_CHILDREN accumulation, fsetxattr/fgetxattr */
     test_terminal_ioctls();                  /* Tests 547-549: TIOCGPGRP/TIOCSPGRP/TIOCSCTTY */
+    test_sync_syscalls();                    /* Tests 550-554: fsync/fdatasync/sync/syncfs correctness */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

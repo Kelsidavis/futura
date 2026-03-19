@@ -24837,6 +24837,67 @@ static void test_ftruncate_rdonly(void) {
 /* ============================================================
  * Tests 635-638: clock_settime correctness
  * ============================================================ */
+/* ============================================================
+ * Tests 639-641: adjtimex NTP clock adjustment interface
+ * ============================================================ */
+struct test_timex {
+    unsigned int modes;
+    long offset;
+    long freq;
+    long maxerror;
+    long esterror;
+    int status;
+    long constant;
+    long precision;
+    long tolerance;
+    struct { long tv_sec; long tv_usec; } time;
+    long tick;
+};
+
+static void test_adjtimex(void) {
+    extern long sys_adjtimex(struct test_timex *txc);
+
+    /* Test 639: modes=0 (query only) → returns TIME_OK (0) with tick=10000 */
+    fut_printf("[MISC-TEST] Test 639: adjtimex(modes=0) query → TIME_OK, tick=10000\n");
+    struct test_timex tx = {0};
+    long ret = sys_adjtimex(&tx);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 639: expected 0 (TIME_OK), got %ld\n", ret);
+        fut_test_fail(639);
+    } else if (tx.tick != 10000) {
+        fut_printf("[MISC-TEST] ✗ Test 639: tick=%ld (expected 10000)\n", tx.tick);
+        fut_test_fail(639);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 639: adjtimex query → TIME_OK, tick=10000\n");
+        fut_test_pass();
+    }
+
+    /* Test 640: modes=ADJ_STATUS (0x0010) set status=0 → returns 0 */
+    fut_printf("[MISC-TEST] Test 640: adjtimex(ADJ_STATUS, status=0) → 0\n");
+    struct test_timex tx2 = {0};
+    tx2.modes = 0x0010; /* ADJ_STATUS */
+    tx2.status = 0;     /* TIME_OK */
+    long ret2 = sys_adjtimex(&tx2);
+    if (ret2 != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 640: expected 0, got %ld\n", ret2);
+        fut_test_fail(640);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 640: adjtimex(ADJ_STATUS=0) → 0\n");
+        fut_test_pass();
+    }
+
+    /* Test 641: NULL txc → EFAULT */
+    fut_printf("[MISC-TEST] Test 641: adjtimex(NULL) → EFAULT\n");
+    long ret3 = sys_adjtimex(NULL);
+    if (ret3 != -EFAULT) {
+        fut_printf("[MISC-TEST] ✗ Test 641: expected EFAULT, got %ld\n", ret3);
+        fut_test_fail(641);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 641: adjtimex(NULL) → EFAULT\n");
+        fut_test_pass();
+    }
+}
+
 extern long sys_clock_settime(int clock_id, const fut_timespec_t *tp);
 extern long sys_clock_gettime(int clock_id, fut_timespec_t *tp);
 
@@ -25383,6 +25444,7 @@ void fut_misc_test_thread(void *arg) {
     test_sched_rr_get_interval();            /* Tests 632-633: sched_rr_get_interval quantum and EINVAL */
     test_ftruncate_rdonly();                 /* Test 634: ftruncate(O_RDONLY) → EBADF */
     test_clock_settime();                    /* Tests 635-638: clock_settime root/EINVAL/bad-nsec/neg-sec */
+    test_adjtimex();                         /* Tests 639-641: adjtimex query/status/NULL */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

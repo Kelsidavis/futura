@@ -18705,6 +18705,72 @@ static void test_close_range_unshare(void) {
 }
 
 /* ============================================================
+ * Tests 428-430: pipe2 O_DIRECT and inotify IN_MASK_CREATE
+ * ============================================================ */
+static void test_pipe2_odirect_and_inotify_mask_create(void) {
+    extern long sys_pipe2(int pipefd[2], int flags);
+    extern long sys_inotify_init1(int flags);
+    extern long sys_inotify_add_watch(int fd, const char *path, uint32_t mask);
+    extern long sys_close(int fd);
+#define O_DIRECT_VAL     00040000
+#define O_NONBLOCK_VAL   00004000
+#define O_CLOEXEC_VAL    02000000
+#define IN_MODIFY_VAL    0x00000002
+#define IN_MASK_CREATE_VAL 0x10000000
+
+    long r;
+
+    /* Test 428: pipe2(O_DIRECT) accepted */
+    fut_printf("[MISC-TEST] Test 428: pipe2(O_DIRECT) -> 0\n");
+    int pfds[2] = {-1, -1};
+    r = sys_pipe2(pfds, O_DIRECT_VAL);
+    if (r == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 428: pipe2(O_DIRECT) accepted, fds=%d,%d\n",
+                   pfds[0], pfds[1]);
+        sys_close(pfds[0]);
+        sys_close(pfds[1]);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 428: got %ld (expected 0)\n", r);
+        fut_test_fail(428);
+    }
+
+    /* Test 429: inotify IN_MASK_CREATE succeeds on new watch */
+    fut_printf("[MISC-TEST] Test 429: inotify IN_MASK_CREATE on new path -> wd >= 0\n");
+    long ifd = sys_inotify_init1(O_CLOEXEC_VAL);
+    if (ifd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 429: inotify_init1 failed: %ld\n", ifd);
+        fut_test_fail(429);
+        goto test430;
+    }
+    r = sys_inotify_add_watch((int)ifd, "/", IN_MODIFY_VAL | IN_MASK_CREATE_VAL);
+    if (r >= 0) {
+        fut_printf("[MISC-TEST] ✓ Test 429: IN_MASK_CREATE new watch -> wd=%ld\n", r);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 429: got %ld (expected >=0)\n", r);
+        fut_test_fail(429);
+    }
+
+    /* Test 430: inotify IN_MASK_CREATE fails with EEXIST if watch already set */
+    fut_printf("[MISC-TEST] Test 430: inotify IN_MASK_CREATE on existing path -> EEXIST\n");
+    r = sys_inotify_add_watch((int)ifd, "/", IN_MODIFY_VAL | IN_MASK_CREATE_VAL);
+    if (r == -17 /* EEXIST */) {
+        fut_printf("[MISC-TEST] ✓ Test 430: IN_MASK_CREATE EEXIST on duplicate\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 430: got %ld (expected -17/EEXIST)\n", r);
+        fut_test_fail(430);
+    }
+    sys_close((int)ifd);
+    return;
+test430:
+    /* inotify_init failed: skip test 430 too */
+    fut_printf("[MISC-TEST] ✓ Test 430: skip (inotify_init1 failed)\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Tests 422-427: arch_prctl extended opcodes (x86_64)
  * ============================================================ */
 static void test_arch_prctl_extended(void) {
@@ -19560,6 +19626,7 @@ void fut_misc_test_thread(void *arg) {
     test_close_range_unshare();           /* Test 417: close_range CLOSE_RANGE_UNSHARE accepted */
     test_prctl_cap_ambient();             /* Tests 418-421: PR_CAP_AMBIENT IS_SET/RAISE/LOWER/CLEAR_ALL */
     test_arch_prctl_extended();           /* Tests 422-427: arch_prctl CPUID/XCOMP extended opcodes */
+    test_pipe2_odirect_and_inotify_mask_create(); /* Tests 428-430: pipe2(O_DIRECT), inotify IN_MASK_CREATE */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

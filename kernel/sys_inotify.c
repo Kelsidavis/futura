@@ -78,6 +78,7 @@ static inline int inotify_copy_to_user(void *dst, const void *src, size_t n) {
 #define IN_DONT_FOLLOW   0x02000000  /* Don't follow symlinks */
 #define IN_EXCL_UNLINK   0x04000000  /* Exclude events on unlinked objects */
 #define IN_MASK_ADD      0x20000000  /* Add to existing watch mask */
+#define IN_MASK_CREATE   0x10000000  /* Fail with EEXIST if watch exists (Linux 4.18+) */
 #define IN_ISDIR         0x40000000  /* Event occurred on directory */
 #define IN_ONESHOT       0x80000000  /* Only send event once */
 
@@ -545,10 +546,18 @@ long sys_inotify_add_watch(int fd, const char *pathname, uint32_t mask) {
     for (int i = 0; i < inst->watch_count; i++) {
         if (strncmp(inst->watches[i].path, path_buf, INOTIFY_PATH_MAX) == 0) {
             int wd = inst->watches[i].wd;
+            /* IN_MASK_CREATE: fail if watch already exists (Linux 4.18+) */
+            if (mask & IN_MASK_CREATE) {
+                fut_spinlock_release(&inst->lock);
+                fut_printf("[INOTIFY] inotify_add_watch(fd=%d, path='%s', mask=0x%x) "
+                           "-> EEXIST (IN_MASK_CREATE: watch already exists, wd=%d)\n",
+                           fd, path_buf, mask, wd);
+                return -EEXIST;
+            }
             if (mask & IN_MASK_ADD) {
-                inst->watches[i].mask |= (mask & ~IN_MASK_ADD);
+                inst->watches[i].mask |= (mask & ~(IN_MASK_ADD | IN_MASK_CREATE));
             } else {
-                inst->watches[i].mask = mask;
+                inst->watches[i].mask = mask & ~IN_MASK_CREATE;
             }
             fut_spinlock_release(&inst->lock);
             fut_printf("[INOTIFY] inotify_add_watch(fd=%d, path='%s', mask=0x%x) "
@@ -568,7 +577,7 @@ long sys_inotify_add_watch(int fd, const char *pathname, uint32_t mask) {
     int wd = inst->next_wd++;
     struct inotify_watch *w = &inst->watches[inst->watch_count++];
     w->wd = wd;
-    w->mask = mask & ~IN_MASK_ADD;
+    w->mask = mask & ~(IN_MASK_ADD | IN_MASK_CREATE);
     size_t plen = strlen(path_buf);
     if (plen >= INOTIFY_PATH_MAX) plen = INOTIFY_PATH_MAX - 1;
     memcpy(w->path, path_buf, plen);

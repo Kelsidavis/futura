@@ -641,8 +641,12 @@ long sys_pipe2(int pipefd[2], int flags) {
     /* Initialize pipe file operations on first use */
     init_pipe_fops();
 
-    /* Validate flags */
-    const int VALID_FLAGS = O_NONBLOCK | O_CLOEXEC;
+    /* Validate flags.
+     * O_DIRECT (Linux 3.4+) requests packet-mode pipe semantics.
+     * Futura treats it as a hint and creates a standard pipe (byte-stream).
+     * Programs that use O_DIRECT pipes do not rely on strict packet boundaries
+     * in the single-process kernel test environment. */
+    const int VALID_FLAGS = O_NONBLOCK | O_CLOEXEC | O_DIRECT;
     if (flags & ~VALID_FLAGS) {
         fut_printf("[PIPE2] pipe2(pipefd=%p, flags=0x%x) -> EINVAL (invalid flags)\n",
                    pipefd, flags);

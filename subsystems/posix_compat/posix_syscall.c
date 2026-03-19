@@ -180,6 +180,7 @@
 #define SYS_clock_gettime 98
 #define SYS_getrusage    99
 #define SYS_times        100
+#define SYS_ptrace       101
 #define SYS_setrlimit    160
 #define SYS_time         201
 #define SYS_syslog       103
@@ -2890,6 +2891,15 @@ static int64_t sys_unimplemented(uint64_t arg1, uint64_t arg2, uint64_t arg3,
     return -38;  /* -ENOSYS: Function not implemented */
 }
 
+/* ptrace(2) — process tracing stub. */
+static int64_t sys_ptrace_handler(uint64_t request, uint64_t pid, uint64_t addr,
+                                   uint64_t data, uint64_t arg5, uint64_t arg6) {
+    (void)arg5; (void)arg6;
+    extern long sys_ptrace(int request, int pid, void *addr, void *data);
+    return sys_ptrace((int)request, (int)pid, (void *)(uintptr_t)addr,
+                      (void *)(uintptr_t)data);
+}
+
 static int64_t sys_getcwd_handler(uint64_t buf, uint64_t size, uint64_t arg3,
                                    uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     (void)arg3; (void)arg4; (void)arg5; (void)arg6;
@@ -3558,6 +3568,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_getrlimit]    = sys_getrlimit_handler,
     [SYS_getrusage]    = sys_getrusage_handler,
     [SYS_times]        = sys_times_handler,
+    [SYS_ptrace]       = sys_ptrace_handler,
     [SYS_setrlimit]    = sys_setrlimit_handler,
     [SYS_getpriority]  = sys_getpriority_handler,
     [SYS_setpriority]  = sys_setpriority_handler,

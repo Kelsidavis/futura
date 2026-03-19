@@ -19781,6 +19781,85 @@ static void test_writev_pipe_gather(void) {
     fut_test_pass();
 }
 
+/* ============================================================
+ * Tests 456-458: /proc/self/auxv — ELF auxiliary vector (binary)
+ * ============================================================ */
+static void test_proc_auxv(void) {
+    fut_printf("[MISC-TEST] Tests 456-458: /proc/self/auxv\n");
+
+    int fd = fut_vfs_open("/proc/self/auxv", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 456: open /proc/self/auxv failed: %d\n", fd);
+        fut_test_fail(456); fut_test_fail(457); fut_test_fail(458); return;
+    }
+    fut_test_pass(); /* Test 456: file opens */
+    fut_printf("[MISC-TEST] ✓ Test 456: /proc/self/auxv opened\n");
+
+    /* Read binary auxv: array of {uint64_t key, uint64_t val} pairs */
+    uint64_t auxv[32];  /* plenty for our reconstructed vector */
+    ssize_t nr = fut_vfs_read(fd, auxv, sizeof(auxv));
+    fut_vfs_close(fd);
+
+    if (nr < 16 || (nr % 16) != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 457: auxv read %zd bytes (expected multiple of 16, >= 16)\n", nr);
+        fut_test_fail(457); fut_test_fail(458); return;
+    }
+    fut_test_pass(); /* Test 457: valid size */
+    fut_printf("[MISC-TEST] ✓ Test 457: /proc/self/auxv %zd bytes (valid size)\n", nr);
+
+    /* Scan entries: must contain AT_PAGESZ (6) = 4096 and end with AT_NULL (0,0) */
+    int n_entries = (int)(nr / 16);
+    int found_pagesz = 0;
+    int found_null = 0;
+    for (int i = 0; i < n_entries; i++) {
+        uint64_t key = auxv[i * 2];
+        uint64_t val = auxv[i * 2 + 1];
+        if (key == 6 /* AT_PAGESZ */ && val == 4096) {
+            found_pagesz = 1;
+        }
+        if (key == 0 /* AT_NULL */) {
+            found_null = 1;
+        }
+    }
+    if (!found_pagesz || !found_null) {
+        fut_printf("[MISC-TEST] ✗ Test 458: auxv missing AT_PAGESZ=%d AT_NULL=%d\n",
+                   found_pagesz, found_null);
+        fut_test_fail(458); return;
+    }
+    fut_test_pass(); /* Test 458: AT_PAGESZ=4096 and AT_NULL present */
+    fut_printf("[MISC-TEST] ✓ Test 458: /proc/self/auxv has AT_PAGESZ=4096 and AT_NULL terminator\n");
+}
+
+/* ============================================================
+ * Tests 459-460: ptrace() stub — PTRACE_TRACEME=0, others EPERM
+ * ============================================================ */
+static void test_ptrace_stub(void) {
+    fut_printf("[MISC-TEST] Tests 459-460: ptrace() stub\n");
+
+    extern long sys_ptrace(int request, int pid, void *addr, void *data);
+
+    /* PTRACE_TRACEME (0): a child calling this to opt-in to tracing should
+     * get 0 so it doesn't abort immediately.  The parent's PTRACE_ATTACH
+     * will fail, but we just need the child not to crash. */
+    long r0 = sys_ptrace(0 /* PTRACE_TRACEME */, 0, (void *)0, (void *)0);
+    if (r0 != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 459: ptrace(PTRACE_TRACEME) = %ld (expected 0)\n", r0);
+        fut_test_fail(459); fut_test_fail(460); return;
+    }
+    fut_test_pass(); /* Test 459 */
+    fut_printf("[MISC-TEST] ✓ Test 459: ptrace(PTRACE_TRACEME) = 0\n");
+
+    /* All other requests return -EPERM (not -ENOSYS). */
+    long r1 = sys_ptrace(16 /* PTRACE_ATTACH */, 1, (void *)0, (void *)0);
+    if (r1 != -EPERM) {
+        fut_printf("[MISC-TEST] ✗ Test 460: ptrace(PTRACE_ATTACH) = %ld (expected -EPERM=%d)\n",
+                   r1, -EPERM);
+        fut_test_fail(460); return;
+    }
+    fut_test_pass(); /* Test 460 */
+    fut_printf("[MISC-TEST] ✓ Test 460: ptrace(PTRACE_ATTACH) = -EPERM\n");
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -20203,6 +20282,8 @@ void fut_misc_test_thread(void *arg) {
     test_epoll_exclusive_wakeup();        /* Tests 444-445: EPOLLEXCLUSIVE/EPOLLWAKEUP accepted by epoll_ctl */
     test_prctl_io_flusher_mdwe();         /* Tests 446-449: PR_SET/GET_IO_FLUSHER, PR_SET/GET_MDWE */
     test_fcntl_setsig_lease_notify();     /* Tests 450-455: fcntl F_SETSIG/GETSIG, SETLEASE/GETLEASE, NOTIFY, SETOWN_EX */
+    test_proc_auxv();                     /* Tests 456-458: /proc/self/auxv binary format */
+    test_ptrace_stub();                   /* Tests 459-460: ptrace PTRACE_TRACEME=0, others EPERM */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

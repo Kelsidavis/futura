@@ -226,6 +226,7 @@ enum procfs_kind {
     PROC_NET_SNMP,                  /* /proc/net/snmp */
     PROC_NET_NETSTAT,               /* /proc/net/netstat */
     PROC_NET_PACKET,                /* /proc/net/packet */
+    PROC_AUXV,                      /* /proc/<pid>/auxv — ELF auxiliary vector (binary) */
 };
 
 typedef struct {
@@ -349,6 +350,7 @@ typedef struct {
 #define PROC_INO_PID_ATTR(p)           (1000ULL + (uint64_t)(p) * 100 + 24)
 #define PROC_INO_PID_ATTR_CUR(p)       (1000ULL + (uint64_t)(p) * 100 + 25)
 #define PROC_INO_PID_SMAPS_ROLLUP(p)   (1000ULL + (uint64_t)(p) * 100 + 26)
+#define PROC_INO_PID_AUXV(p)           (1000ULL + (uint64_t)(p) * 100 + 27)
 #define PROC_INO_BUDDYINFO             26ULL
 #define PROC_INO_ZONEINFO              27ULL
 /* /proc/sys/vm/ extended range: 350-379 */
@@ -2027,6 +2029,32 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             }
             break;
         }
+        case PROC_AUXV: {
+            /* /proc/<pid>/auxv — ELF auxiliary vector in binary {key,val} uint64_t pairs.
+             * The kernel pushes auxv onto the user stack during exec (elf64.c), but does
+             * not store a per-task copy.  We reconstruct the minimal set of entries that
+             * debuggers and getauxval() callers care about most. */
+            fut_task_t *task = fut_task_by_pid(n->pid);
+            if (task) {
+                struct { uint64_t key; uint64_t val; } *av =
+                    (void *)tmp;
+                int ai = 0;
+#define AUXV_PUSH(k, v) do { av[ai].key = (k); av[ai].val = (v); ai++; } while(0)
+                AUXV_PUSH(6,  PAGE_SIZE);               /* AT_PAGESZ */
+                AUXV_PUSH(11, (uint64_t)task->ruid);    /* AT_UID */
+                AUXV_PUSH(12, (uint64_t)task->uid);     /* AT_EUID */
+                AUXV_PUSH(13, (uint64_t)task->rgid);    /* AT_GID */
+                AUXV_PUSH(14, (uint64_t)task->gid);     /* AT_EGID */
+                /* AT_SECURE: 1 if effective credentials differ from real */
+                uint64_t secure = (task->uid != task->ruid || task->gid != task->rgid) ? 1 : 0;
+                AUXV_PUSH(23, secure);                  /* AT_SECURE */
+                AUXV_PUSH(16, 0ULL);                    /* AT_HWCAP — no special hw caps */
+                AUXV_PUSH(0,  0ULL);                    /* AT_NULL — terminator */
+#undef AUXV_PUSH
+                total = (size_t)ai * sizeof(av[0]);
+            }
+            break;
+        }
         case PROC_STAT: {
             fut_task_t *task = fut_task_by_pid(n->pid);
             total = task ? gen_stat(tmp, GEN_BUF, task) : 0;
@@ -3029,6 +3057,11 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0100444, PROC_SMAPS_ROLLUP, pid, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "auxv")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_AUXV(pid),
+                                          0100400, PROC_AUXV, pid, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         if (STREQ(name, "oom_score")) {
             *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_OOM_SCORE(pid),
                                           0100444, PROC_OOM_SCORE, pid, 0);
@@ -3155,6 +3188,8 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
             { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_SMAPS(pid),          0100444, PROC_SMAPS,          pid,0); return *result ? 0 : -ENOMEM; }
         if (STREQ(name, "smaps_rollup"))
             { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_SMAPS_ROLLUP(pid),   0100444, PROC_SMAPS_ROLLUP,   pid,0); return *result ? 0 : -ENOMEM; }
+        if (STREQ(name, "auxv"))
+            { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_AUXV(pid),           0100400, PROC_AUXV,           pid,0); return *result ? 0 : -ENOMEM; }
         if (STREQ(name, "oom_score"))
             { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_OOM_SCORE(pid), 0100444, PROC_OOM_SCORE, pid,0); return *result ? 0 : -ENOMEM; }
         if (STREQ(name, "oom_score_adj"))
@@ -3904,7 +3939,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             "stat", "statm", "comm", "task", "limits", "io", "smaps",
             "oom_score", "oom_score_adj", "cgroup", "ns", "fdinfo",
             "wchan", "mountinfo", "coredump_filter", "schedstat", "net", "attr",
-            "smaps_rollup"
+            "smaps_rollup", "auxv"
         };
         static const uint8_t etypes[] = {
             FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
@@ -3919,10 +3954,10 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
-            FUT_VDIR_TYPE_REG
+            FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG
         };
         uint64_t pid = dn->pid;
-        if (idx < 28) {
+        if (idx < 29) {
             uint64_t ino;
             switch (idx) {
                 case 0:  ino = PROC_INO_PID_DIR(pid);        break;
@@ -3953,6 +3988,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                 case 25: ino = PROC_INO_NET_DIR;                    break;
                 case 26: ino = PROC_INO_PID_ATTR(pid);              break;
                 case 27: ino = PROC_INO_PID_SMAPS_ROLLUP(pid);      break;
+                case 28: ino = PROC_INO_PID_AUXV(pid);              break;
                 default: ino = 0; break;
             }
             de->d_ino    = ino;

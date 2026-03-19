@@ -21877,6 +21877,82 @@ static void test_fcntl_posix_locks(void) {
 #undef T531_F_UNLCK
 }
 
+/*
+ * test_getsockopt_type_error() — Tests 534-535: getsockopt SO_TYPE / SO_ERROR
+ *
+ *   Test 534: getsockopt(SOL_SOCKET, SO_TYPE) returns SOCK_STREAM for stream socket.
+ *   Test 535: getsockopt(SOL_SOCKET, SO_ERROR) returns 0 (no pending error).
+ */
+static void test_getsockopt_type_error(void) {
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_getsockopt(int sockfd, int level, int optname,
+                               void *optval, unsigned int *optlen);
+
+#define T534_AF_UNIX      1
+#define T534_SOCK_STREAM  1
+#define T534_SOL_SOCKET   1
+#define T534_SO_TYPE      3
+#define T534_SO_ERROR     4
+
+    /* --- Test 534: getsockopt SO_TYPE returns socket type --- */
+    fut_printf("[MISC-TEST] Test 534: getsockopt SO_TYPE returns SOCK_STREAM\n");
+    {
+        long s = sys_socket(T534_AF_UNIX, T534_SOCK_STREAM, 0);
+        if (s < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 534: socket failed: %ld\n", s);
+            fut_test_fail(534); fut_test_fail(535); return;
+        }
+        int sock_type = -1;
+        unsigned int optlen = (unsigned int)sizeof(sock_type);
+        long r = sys_getsockopt((int)s, T534_SOL_SOCKET, T534_SO_TYPE,
+                                &sock_type, &optlen);
+        fut_vfs_close((int)s);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 534: getsockopt SO_TYPE returned %ld (expected 0)\n", r);
+            fut_test_fail(534);
+            goto t535;
+        }
+        if (sock_type != T534_SOCK_STREAM) {
+            fut_printf("[MISC-TEST] ✗ Test 534: SO_TYPE=%d (expected SOCK_STREAM=%d)\n",
+                       sock_type, T534_SOCK_STREAM);
+            fut_test_fail(534);
+            goto t535;
+        }
+        fut_printf("[MISC-TEST] ✓ Test 534: SO_TYPE=%d (SOCK_STREAM) optlen=%u\n",
+                   sock_type, optlen);
+        fut_test_pass();
+    }
+
+t535:;
+    /* --- Test 535: getsockopt SO_ERROR returns 0 --- */
+    fut_printf("[MISC-TEST] Test 535: getsockopt SO_ERROR returns 0\n");
+    {
+        long s = sys_socket(T534_AF_UNIX, T534_SOCK_STREAM, 0);
+        if (s < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 535: socket failed: %ld\n", s);
+            fut_test_fail(535); return;
+        }
+        int sock_err = -1;
+        unsigned int optlen = (unsigned int)sizeof(sock_err);
+        long r = sys_getsockopt((int)s, T534_SOL_SOCKET, T534_SO_ERROR,
+                                &sock_err, &optlen);
+        fut_vfs_close((int)s);
+        if (r != 0 || sock_err != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 535: SO_ERROR: r=%ld sock_err=%d (expected 0, 0)\n",
+                       r, sock_err);
+            fut_test_fail(535); return;
+        }
+        fut_printf("[MISC-TEST] ✓ Test 535: SO_ERROR=0 (no pending error)\n");
+        fut_test_pass();
+    }
+
+#undef T534_AF_UNIX
+#undef T534_SOCK_STREAM
+#undef T534_SOL_SOCKET
+#undef T534_SO_TYPE
+#undef T534_SO_ERROR
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -22322,6 +22398,7 @@ void fut_misc_test_thread(void *arg) {
     test_wait4_rusage();                     /* Tests 526-528: wait4 with struct rusage */
     test_robust_list();                      /* Tests 529-530: set/get_robust_list roundtrip+errors */
     test_fcntl_posix_locks();                /* Tests 531-533: fcntl F_SETLK/F_GETLK POSIX byte-range locks */
+    test_getsockopt_type_error();            /* Tests 534-535: getsockopt SO_TYPE and SO_ERROR */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

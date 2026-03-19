@@ -1148,6 +1148,24 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
             return 0;
         }
 
+        case FUTEX_WAIT_REQUEUE_PI: {
+            /* FUTEX_WAIT_REQUEUE_PI (Linux 2.6.31+): wait on uaddr, on wake
+             * attempt to acquire the PI lock at uaddr2.
+             * Futura doesn't implement priority inheritance; treat as FUTEX_WAIT
+             * with bitset=FUTEX_BITSET_MATCH_ANY.  The caller will need to acquire
+             * the PI lock manually via FUTEX_LOCK_PI after we return. */
+            return sys_futex(uaddr, FUTEX_WAIT_BITSET | (op & FUTEX_PRIVATE_FLAG),
+                             val, timeout, uaddr2, 0xFFFFFFFFU);
+        }
+
+        case FUTEX_CMP_REQUEUE_PI: {
+            /* FUTEX_CMP_REQUEUE_PI (Linux 2.6.31+): like FUTEX_CMP_REQUEUE but
+             * the target futex (uaddr2) is a PI mutex.  Futura delegates to
+             * FUTEX_CMP_REQUEUE since we have no PI scheduling. */
+            return sys_futex(uaddr, FUTEX_CMP_REQUEUE | (op & FUTEX_PRIVATE_FLAG),
+                             val, timeout, uaddr2, val3);
+        }
+
         default:
             fut_printf("[FUTEX] Unsupported futex operation: %d\n", cmd);
             return -ENOSYS;

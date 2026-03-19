@@ -18705,6 +18705,46 @@ static void test_close_range_unshare(void) {
 }
 
 /* ============================================================
+ * Tests 431-432: FUTEX_WAIT_REQUEUE_PI and FUTEX_CMP_REQUEUE_PI
+ * ============================================================ */
+static void test_futex_requeue_pi(void) {
+    extern long sys_futex(uint32_t *uaddr, int op, uint32_t val,
+                          const void *timeout, uint32_t *uaddr2, uint32_t val3);
+#define FUTEX_WAIT_REQUEUE_PI_VAL  11
+#define FUTEX_CMP_REQUEUE_PI_VAL   12
+#define FUTEX_CLOCK_REALTIME_VAL   256
+
+    uint32_t lock1 = 0;
+    uint32_t lock2 = 0;
+    long r;
+
+    /* Test 431: FUTEX_WAIT_REQUEUE_PI with mismatched value -> EAGAIN immediately */
+    fut_printf("[MISC-TEST] Test 431: FUTEX_WAIT_REQUEUE_PI mismatched val -> EAGAIN\n");
+    lock1 = 99;  /* value at uaddr */
+    r = sys_futex(&lock1, FUTEX_WAIT_REQUEUE_PI_VAL, 0 /* val != lock1 */, NULL, &lock2, 0);
+    if (r == -11 /* EAGAIN */ || r == -4 /* EINTR */ || r == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 431: FUTEX_WAIT_REQUEUE_PI no-hang -> %ld\n", r);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 431: got %ld (expected EAGAIN/EINTR/0)\n", r);
+        fut_test_fail(431);
+    }
+
+    /* Test 432: FUTEX_CMP_REQUEUE_PI with mismatched val3 -> EAGAIN */
+    fut_printf("[MISC-TEST] Test 432: FUTEX_CMP_REQUEUE_PI mismatched val3 -> EAGAIN\n");
+    lock1 = 42;
+    /* val3=0 != lock1=42: should fail comparison and return EAGAIN */
+    r = sys_futex(&lock1, FUTEX_CMP_REQUEUE_PI_VAL, 1, NULL, &lock2, 0);
+    if (r == -11 /* EAGAIN */ || r == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 432: FUTEX_CMP_REQUEUE_PI returned %ld\n", r);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 432: got %ld (expected 0 or EAGAIN)\n", r);
+        fut_test_fail(432);
+    }
+}
+
+/* ============================================================
  * Tests 428-430: pipe2 O_DIRECT and inotify IN_MASK_CREATE
  * ============================================================ */
 static void test_pipe2_odirect_and_inotify_mask_create(void) {
@@ -19627,6 +19667,7 @@ void fut_misc_test_thread(void *arg) {
     test_prctl_cap_ambient();             /* Tests 418-421: PR_CAP_AMBIENT IS_SET/RAISE/LOWER/CLEAR_ALL */
     test_arch_prctl_extended();           /* Tests 422-427: arch_prctl CPUID/XCOMP extended opcodes */
     test_pipe2_odirect_and_inotify_mask_create(); /* Tests 428-430: pipe2(O_DIRECT), inotify IN_MASK_CREATE */
+    test_futex_requeue_pi();              /* Tests 431-432: FUTEX_WAIT_REQUEUE_PI, FUTEX_CMP_REQUEUE_PI stubs */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

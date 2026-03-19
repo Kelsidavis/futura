@@ -21953,6 +21953,165 @@ t535:;
 #undef T534_SO_ERROR
 }
 
+/*
+ * test_fallocate_basic() — Tests 536-539: fallocate space allocation
+ *
+ *   Test 536: fallocate(mode=0, offset=0, len=4096) extends file size.
+ *   Test 537: fallocate(ZERO_RANGE) zeros content of existing data.
+ *   Test 538: fallocate(PUNCH_HOLE|KEEP_SIZE) zeros range, size unchanged.
+ *   Test 539: fallocate with invalid flags → EINVAL.
+ */
+static void test_fallocate_basic(void) {
+    extern long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len);
+
+#define FALLOC_FL_KEEP_SIZE  0x01
+#define FALLOC_FL_PUNCH_HOLE 0x02
+#define FALLOC_FL_ZERO_RANGE 0x08
+
+    /* --- Test 536: mode=0 extends file size --- */
+    fut_printf("[MISC-TEST] Test 536: fallocate(mode=0) extends file size\n");
+    {
+        int fd = fut_vfs_open("/fallocate_test.txt", O_CREAT | O_RDWR, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 536: open failed: %d\n", fd);
+            fut_test_fail(536); goto t537;
+        }
+        /* File starts empty (size=0) */
+        long r = sys_fallocate(fd, 0, 0, 4096);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 536: fallocate returned %ld (expected 0)\n", r);
+            fut_vfs_close(fd); fut_vfs_unlink("/fallocate_test.txt");
+            fut_test_fail(536); goto t537;
+        }
+        /* Verify file size is now 4096 */
+        struct fut_stat st;
+        extern long sys_fstat(int fd, struct fut_stat *buf);
+        long sr = sys_fstat(fd, &st);
+        fut_vfs_close(fd); fut_vfs_unlink("/fallocate_test.txt");
+        if (sr != 0 || st.st_size != 4096) {
+            fut_printf("[MISC-TEST] ✗ Test 536: size=%lld (expected 4096)\n",
+                       (long long)st.st_size);
+            fut_test_fail(536); goto t537;
+        }
+        fut_printf("[MISC-TEST] ✓ Test 536: fallocate mode=0: size extended to %lld\n",
+                   (long long)st.st_size);
+        fut_test_pass();
+    }
+
+t537:;
+    /* --- Test 537: ZERO_RANGE zeroes existing content --- */
+    fut_printf("[MISC-TEST] Test 537: fallocate ZERO_RANGE zeros content\n");
+    {
+        int fd = fut_vfs_open("/fallocate_zr.txt", O_CREAT | O_RDWR, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 537: open failed: %d\n", fd);
+            fut_test_fail(537); goto t538;
+        }
+        /* Write some data */
+        const char data[8] = { 1, 2, 3, 4, 5, 6, 7, 8 };
+        extern long sys_write(int fd, const void *buf, size_t count);
+        sys_write(fd, data, 8);
+
+        /* ZERO_RANGE the first 4 bytes */
+        long r = sys_fallocate(fd, FALLOC_FL_ZERO_RANGE, 0, 4);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 537: fallocate ZERO_RANGE returned %ld\n", r);
+            fut_vfs_close(fd); fut_vfs_unlink("/fallocate_zr.txt");
+            fut_test_fail(537); goto t538;
+        }
+        /* Read back and verify first 4 bytes are zero, rest unchanged */
+        char readbuf[8];
+        extern long sys_pread64(unsigned int fd, void *buf, size_t count, long offset);
+        long nr = sys_pread64(fd, readbuf, 8, 0);
+        fut_vfs_close(fd); fut_vfs_unlink("/fallocate_zr.txt");
+        if (nr != 8) {
+            fut_printf("[MISC-TEST] ✗ Test 537: pread returned %ld (expected 8)\n", nr);
+            fut_test_fail(537); goto t538;
+        }
+        if (readbuf[0] != 0 || readbuf[1] != 0 || readbuf[2] != 0 || readbuf[3] != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 537: bytes 0-3 not zeroed: %d %d %d %d\n",
+                       readbuf[0], readbuf[1], readbuf[2], readbuf[3]);
+            fut_test_fail(537); goto t538;
+        }
+        if (readbuf[4] != 5 || readbuf[5] != 6) {
+            fut_printf("[MISC-TEST] ✗ Test 537: bytes 4-5 changed: %d %d (expected 5,6)\n",
+                       readbuf[4], readbuf[5]);
+            fut_test_fail(537); goto t538;
+        }
+        fut_printf("[MISC-TEST] ✓ Test 537: ZERO_RANGE: first 4 bytes zeroed, rest preserved\n");
+        fut_test_pass();
+    }
+
+t538:;
+    /* --- Test 538: PUNCH_HOLE|KEEP_SIZE zeros range without extending size --- */
+    fut_printf("[MISC-TEST] Test 538: fallocate PUNCH_HOLE|KEEP_SIZE zeros, size unchanged\n");
+    {
+        int fd = fut_vfs_open("/fallocate_ph.txt", O_CREAT | O_RDWR, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 538: open failed: %d\n", fd);
+            fut_test_fail(538); goto t539;
+        }
+        const char data[8] = { 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H' };
+        extern long sys_write(int fd, const void *buf, size_t count);
+        sys_write(fd, data, 8);
+
+        long r = sys_fallocate(fd, FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE, 2, 4);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 538: fallocate PUNCH_HOLE returned %ld\n", r);
+            fut_vfs_close(fd); fut_vfs_unlink("/fallocate_ph.txt");
+            fut_test_fail(538); goto t539;
+        }
+        /* Verify bytes 2-5 are zero, surrounding bytes unchanged, size still 8 */
+        char readbuf[8];
+        extern long sys_pread64(unsigned int fd, void *buf, size_t count, long offset);
+        long nr = sys_pread64(fd, readbuf, 8, 0);
+        extern long sys_fstat(int fd, struct fut_stat *buf);
+        struct fut_stat st;
+        sys_fstat(fd, &st);
+        fut_vfs_close(fd); fut_vfs_unlink("/fallocate_ph.txt");
+        if (nr != 8 || st.st_size != 8) {
+            fut_printf("[MISC-TEST] ✗ Test 538: nr=%ld size=%lld (expected 8, 8)\n",
+                       nr, (long long)st.st_size);
+            fut_test_fail(538); goto t539;
+        }
+        if (readbuf[0] != 'A' || readbuf[1] != 'B') {
+            fut_printf("[MISC-TEST] ✗ Test 538: prefix changed: %c %c\n",
+                       readbuf[0], readbuf[1]);
+            fut_test_fail(538); goto t539;
+        }
+        if (readbuf[2] != 0 || readbuf[3] != 0 || readbuf[4] != 0 || readbuf[5] != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 538: punch range not zeroed\n");
+            fut_test_fail(538); goto t539;
+        }
+        fut_printf("[MISC-TEST] ✓ Test 538: PUNCH_HOLE: range zeroed, size=%lld ok\n",
+                   (long long)st.st_size);
+        fut_test_pass();
+    }
+
+t539:;
+    /* --- Test 539: invalid flags → EINVAL --- */
+    fut_printf("[MISC-TEST] Test 539: fallocate invalid flags → EINVAL\n");
+    {
+        int fd = fut_vfs_open("/fallocate_inv.txt", O_CREAT | O_RDWR, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 539: open failed: %d\n", fd);
+            fut_test_fail(539); return;
+        }
+        long r = sys_fallocate(fd, 0x80 /* unknown flag */, 0, 4096);
+        fut_vfs_close(fd); fut_vfs_unlink("/fallocate_inv.txt");
+        if (r != -22) { /* -EINVAL */
+            fut_printf("[MISC-TEST] ✗ Test 539: bad flags returned %ld (expected -EINVAL)\n", r);
+            fut_test_fail(539); return;
+        }
+        fut_printf("[MISC-TEST] ✓ Test 539: fallocate bad flags → EINVAL\n");
+        fut_test_pass();
+    }
+
+#undef FALLOC_FL_KEEP_SIZE
+#undef FALLOC_FL_PUNCH_HOLE
+#undef FALLOC_FL_ZERO_RANGE
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -22399,6 +22558,7 @@ void fut_misc_test_thread(void *arg) {
     test_robust_list();                      /* Tests 529-530: set/get_robust_list roundtrip+errors */
     test_fcntl_posix_locks();                /* Tests 531-533: fcntl F_SETLK/F_GETLK POSIX byte-range locks */
     test_getsockopt_type_error();            /* Tests 534-535: getsockopt SO_TYPE and SO_ERROR */
+    test_fallocate_basic();                  /* Tests 536-539: fallocate extend/zero/punch/einval */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -3086,9 +3086,9 @@ struct syscall_entry {
 /* clock_adjtime (Linux ARM64: 266), setns (268) */
 #define __NR_clock_adjtime      266
 #define __NR_setns              268
-/* sched extended (Linux ARM64: 273-274) */
-#define __NR_sched_setattr      273
-#define __NR_sched_getattr      274
+/* sched extended (Linux ARM64: 274-275; 273=finit_module) */
+#define __NR_sched_setattr      274
+#define __NR_sched_getattr      275
 /* setfsuid/setfsgid (Linux ARM64: 151-152) */
 #define __NR_setfsuid           151
 #define __NR_setfsgid           152

@@ -220,11 +220,16 @@ long sys_fstatfs(int fd, struct fut_linux_statfs *buf) {
         return -EBADF;
     }
 
-    /* Phase 2: Return real physical memory statistics
-     * Phase 3 (Completed): Get vnode from file, get mount point, call fs-specific statfs
-     */
+    /* Return real physical memory stats with correct f_type from the file's path.
+     * Use file->path (absolute path) or vnode->mount->mountpoint as fallback. */
     struct fut_linux_statfs stats;
     fill_statfs_from_pmm(&stats);
+    {
+        const char *mp = file->path;
+        if (!mp && file->vnode && file->vnode->mount)
+            mp = file->vnode->mount->mountpoint;
+        stats.f_type = statfs_magic_for_path(mp);
+    }
 
     /* Copy to userspace buffer */
     if (statfs_copy_to_buf(buf, &stats, sizeof(struct fut_linux_statfs)) != 0) {

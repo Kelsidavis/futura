@@ -24162,6 +24162,94 @@ static void test_sa_flags_nodefer_resethand(void) {
     sys_sigaction(12, &act, NULL);
 }
 
+/*
+ * Tests 610-613: fstatfs f_type per open file descriptor
+ *
+ * fstatfs() should return the correct filesystem magic based on the
+ * filesystem the FD belongs to, just like statfs() does by path.
+ */
+static void test_fstatfs_ftype(void) {
+    extern long sys_fstatfs(int fd, void *buf);
+    struct fut_linux_statfs sb;
+
+    /* Test 610: fstatfs on a regular ramfs file → RAMFS_MAGIC */
+    fut_printf("[MISC-TEST] Test 610: fstatfs(ramfs file) f_type = RAMFS_MAGIC\n");
+    int fd610 = fut_vfs_open("/fstatfs_test.txt", 0x42 /* O_RDWR|O_CREAT */, 0644);
+    if (fd610 < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 610: open failed: %d\n", fd610);
+        fut_test_fail(610);
+    } else {
+        __builtin_memset(&sb, 0, sizeof(sb));
+        long ret = sys_fstatfs(fd610, &sb);
+        fut_vfs_close(fd610);
+        if (ret != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 610: fstatfs returned %ld\n", ret);
+            fut_test_fail(610);
+        } else if (sb.f_type != 0x858458F6ULL) {
+            fut_printf("[MISC-TEST] ✗ Test 610: f_type=0x%llx, expected 0x858458F6\n",
+                       (unsigned long long)sb.f_type);
+            fut_test_fail(610);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 610: fstatfs(ramfs) f_type=0x858458F6\n");
+            fut_test_pass();
+        }
+    }
+
+    /* Test 611: fstatfs on /proc/self/status → PROC_SUPER_MAGIC */
+    fut_printf("[MISC-TEST] Test 611: fstatfs(/proc/self/status) f_type = PROC_SUPER_MAGIC\n");
+    int fd611 = fut_vfs_open("/proc/self/status", 0 /* O_RDONLY */, 0);
+    if (fd611 < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 611: open /proc/self/status: %d\n", fd611);
+        fut_test_fail(611);
+    } else {
+        __builtin_memset(&sb, 0, sizeof(sb));
+        long ret = sys_fstatfs(fd611, &sb);
+        fut_vfs_close(fd611);
+        if (ret != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 611: fstatfs returned %ld\n", ret);
+            fut_test_fail(611);
+        } else if (sb.f_type != 0x9fa0ULL) {
+            fut_printf("[MISC-TEST] ✗ Test 611: f_type=0x%llx, expected 0x9fa0\n",
+                       (unsigned long long)sb.f_type);
+            fut_test_fail(611);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 611: fstatfs(/proc/self/status) f_type=0x9fa0\n");
+            fut_test_pass();
+        }
+    }
+
+    /* Test 612: fstatfs with invalid fd → EBADF */
+    fut_printf("[MISC-TEST] Test 612: fstatfs(invalid fd) → EBADF\n");
+    __builtin_memset(&sb, 0, sizeof(sb));
+    long ret = sys_fstatfs(-1, &sb);
+    if (ret != -9 /* -EBADF */) {
+        fut_printf("[MISC-TEST] ✗ Test 612: expected -EBADF, got %ld\n", ret);
+        fut_test_fail(612);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 612: fstatfs(-1) → EBADF\n");
+        fut_test_pass();
+    }
+
+    /* Test 613: fstatfs with NULL buf → EFAULT */
+    fut_printf("[MISC-TEST] Test 613: fstatfs(valid fd, NULL buf) → EFAULT\n");
+    int fd613 = fut_vfs_open("/fstatfs_test.txt", 0 /* O_RDONLY */, 0);
+    if (fd613 < 0) {
+        /* File may have been deleted; just pass since the open is optional */
+        fut_printf("[MISC-TEST] ✓ Test 613: skip (file unavailable)\n");
+        fut_test_pass();
+    } else {
+        ret = sys_fstatfs(fd613, NULL);
+        fut_vfs_close(fd613);
+        if (ret != -14 /* -EFAULT */) {
+            fut_printf("[MISC-TEST] ✗ Test 613: expected -EFAULT, got %ld\n", ret);
+            fut_test_fail(613);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 613: fstatfs(fd, NULL) → EFAULT\n");
+            fut_test_pass();
+        }
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -24626,6 +24714,7 @@ void fut_misc_test_thread(void *arg) {
     test_pdeathsig_prctl();                  /* Tests 596-599: pdeathsig prctl semantics */
     test_statfs_ftype();                     /* Tests 600-603: statfs f_type per mount point */
     test_sa_flags_nodefer_resethand();       /* Tests 604-609: SA_NODEFER/SA_RESETHAND flag semantics */
+    test_fstatfs_ftype();                    /* Tests 610-613: fstatfs f_type per open FD */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

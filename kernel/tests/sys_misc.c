@@ -24873,6 +24873,82 @@ static void test_sched_yield_basic(void) {
 }
 
 /* ============================================================
+ * Tests 667-668: umask round-trip and syslog console actions
+ * ============================================================
+ *   Test 667: umask(0077) returns old mask, verify, then restore
+ *   Test 668: syslog(CONSOLE_OFF=6) → 0; syslog(CONSOLE_ON=7) → 0
+ */
+static void test_umask_roundtrip_syslog_console(void) {
+    extern long sys_umask(unsigned int mask);
+    extern long sys_syslog(int type, char *buf, int len);
+
+    /* Test 667: umask() returns old mask */
+    fut_printf("[MISC-TEST] Test 667: umask(0077) returns previous mask\n");
+    long old = sys_umask(0077);
+    if (old < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 667: umask(0077) returned %ld\n", old);
+        fut_test_fail(667);
+    } else {
+        /* set back to 0022 and verify we get 0077 */
+        long prev = sys_umask(0022);
+        if (prev != 0077) {
+            fut_printf("[MISC-TEST] ✗ Test 667: second umask returned %ld (expected 77)\n", prev);
+            sys_umask((unsigned int)old); /* restore */
+            fut_test_fail(667);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 667: umask round-trip OK (0%lo→0%lo)\n", old, prev);
+            sys_umask((unsigned int)old); /* restore original */
+            fut_test_pass();
+        }
+    }
+
+    /* Test 668: syslog CONSOLE_OFF/ON accept and return 0 */
+    fut_printf("[MISC-TEST] Test 668: syslog(CONSOLE_OFF=6) + syslog(CONSOLE_ON=7) → 0\n");
+    long r1 = sys_syslog(6 /* SYSLOG_ACTION_CONSOLE_OFF */, NULL, 0);
+    long r2 = sys_syslog(7 /* SYSLOG_ACTION_CONSOLE_ON  */, NULL, 0);
+    if (r1 != 0 || r2 != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 668: syslog(6)=%ld syslog(7)=%ld (expected 0,0)\n", r1, r2);
+        fut_test_fail(668);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 668: syslog CONSOLE_OFF/ON → 0\n");
+        fut_test_pass();
+    }
+}
+
+/* ============================================================
+ * Tests 669-670: chroot() error paths
+ * ============================================================
+ *   Test 669: chroot("/") → 0 (root has CAP_SYS_CHROOT)
+ *   Test 670: chroot("/no_such_path_xyz") → ENOENT
+ */
+static void test_chroot_basic(void) {
+    extern long sys_chroot(const char *path);
+
+    /* Test 669: chroot("/") as root → 0 */
+    fut_printf("[MISC-TEST] Test 669: chroot(\"/\") as root → 0\n");
+    long ret = sys_chroot("/");
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 669: chroot(\"/\") returned %ld (expected 0)\n", ret);
+        fut_test_fail(669);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 669: chroot(\"/\") → 0\n");
+        fut_test_pass();
+    }
+
+    /* Test 670: chroot nonexistent → ENOENT */
+    fut_printf("[MISC-TEST] Test 670: chroot(\"/no_such_path_xyz\") → ENOENT\n");
+    ret = sys_chroot("/no_such_path_xyz");
+    if (ret != -ENOENT) {
+        fut_printf("[MISC-TEST] ✗ Test 670: chroot nonexistent returned %ld (expected -ENOENT=%d)\n",
+                   ret, -ENOENT);
+        fut_test_fail(670);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 670: chroot nonexistent → ENOENT\n");
+        fut_test_pass();
+    }
+}
+
+/* ============================================================
  * Tests 663-665: mlockall/munlockall correctness
  * ============================================================
  *   Test 663: mlockall(MCL_CURRENT=1) → 0 (locks all mapped pages)
@@ -25988,6 +26064,8 @@ void fut_misc_test_thread(void *arg) {
     test_quotactl_stub();                    /* Tests 656-657: quotactl Q_SYNC→ENOSYS, Q_GETQUOTA NULL→EINVAL */
     test_vhangup_basic();                    /* Test 658: vhangup() → 0 */
     test_pivot_root_enosys();                /* Test 659: pivot_root → ENOSYS */
+    test_umask_roundtrip_syslog_console();   /* Tests 667-668: umask round-trip + syslog CONSOLE_OFF/ON */
+    test_chroot_basic();                     /* Tests 669-670: chroot("/")→0, nonexistent→ENOENT */
     test_mlockall_munlockall();              /* Tests 663-665: mlockall(MCL_CURRENT)→0, munlockall→0, invalid→EINVAL */
     test_set_tid_address();                  /* Test 666: set_tid_address returns TID */
     test_rt_signal_block_pending();          /* Tests 660-662: RT signal SIGRTMIN=34 block/pending/restore */

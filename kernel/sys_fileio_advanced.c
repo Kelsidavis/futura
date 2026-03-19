@@ -75,7 +75,7 @@ long sys_chroot(const char *path) {
 
     /* Copy path from userspace instead of direct dereference */
     char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
-    if (fut_copy_from_user(path_buf, local_path, sizeof(path_buf)) != 0) {
+    if (fileio_copy_from_user(path_buf, local_path, sizeof(path_buf)) != 0) {
         fut_printf("[CHROOT] chroot -> EFAULT (copy_from_user failed, pid=%d)\n", task->pid);
         return -EFAULT;
     }

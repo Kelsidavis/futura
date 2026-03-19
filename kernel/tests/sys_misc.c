@@ -24250,6 +24250,77 @@ static void test_fstatfs_ftype(void) {
     }
 }
 
+static void test_map_fixed_unaligned(void) {
+#define MF_MAP_FIXED      0x10
+#define MF_MAP_ANON       0x20
+#define MF_MAP_PRIVATE    0x02
+    /* Test 614: MAP_FIXED with page-aligned addr succeeds */
+    fut_printf("[MISC-TEST] Test 614: MAP_FIXED with page-aligned addr succeeds\n");
+    long addr614 = sys_mmap((void *)0x20000000UL, 4096,
+                            3 /* PROT_READ|PROT_WRITE */,
+                            MF_MAP_PRIVATE | MF_MAP_ANON | MF_MAP_FIXED,
+                            -1, 0);
+    if (addr614 < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 614: MAP_FIXED aligned addr failed: %ld\n", addr614);
+    } else if ((unsigned long)addr614 != 0x20000000UL) {
+        fut_printf("[MISC-TEST] ✗ Test 614: MAP_FIXED returned wrong addr: 0x%lx\n", addr614);
+    } else {
+        sys_munmap((void *)addr614, 4096);
+        fut_printf("[MISC-TEST] ✓ Test 614: MAP_FIXED aligned addr → correct address\n");
+        fut_test_pass();
+    }
+
+    /* Test 615: MAP_FIXED with non-page-aligned addr → EINVAL */
+    fut_printf("[MISC-TEST] Test 615: MAP_FIXED with non-aligned addr → EINVAL\n");
+    long addr615 = sys_mmap((void *)0x20000001UL, 4096,
+                            3 /* PROT_READ|PROT_WRITE */,
+                            MF_MAP_PRIVATE | MF_MAP_ANON | MF_MAP_FIXED,
+                            -1, 0);
+    if (addr615 == -22 /* -EINVAL */) {
+        fut_printf("[MISC-TEST] ✓ Test 615: MAP_FIXED unaligned addr → EINVAL\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 615: expected -EINVAL, got %ld\n", addr615);
+        if (addr615 > 0) sys_munmap((void *)addr615, 4096);
+    }
+
+    /* Test 616: MAP_FIXED with addr offset by 1 page minus 1 byte → EINVAL */
+    fut_printf("[MISC-TEST] Test 616: MAP_FIXED addr=0x20000FFF (unaligned) → EINVAL\n");
+    long addr616 = sys_mmap((void *)0x20000FFFUL, 4096,
+                            3 /* PROT_READ|PROT_WRITE */,
+                            MF_MAP_PRIVATE | MF_MAP_ANON | MF_MAP_FIXED,
+                            -1, 0);
+    if (addr616 == -22 /* -EINVAL */) {
+        fut_printf("[MISC-TEST] ✓ Test 616: MAP_FIXED addr=0x20000FFF → EINVAL\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 616: expected -EINVAL, got %ld\n", addr616);
+        if (addr616 > 0) sys_munmap((void *)addr616, 4096);
+    }
+
+    /* Test 617: mmap hint (no MAP_FIXED) with unaligned addr — succeeds, addr rounded */
+    fut_printf("[MISC-TEST] Test 617: mmap hint (no MAP_FIXED) unaligned → succeeds\n");
+    long addr617 = sys_mmap((void *)0x20000800UL, 4096,
+                            3 /* PROT_READ|PROT_WRITE */,
+                            MF_MAP_PRIVATE | MF_MAP_ANON,
+                            -1, 0);
+    if (addr617 < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 617: mmap hint unaligned failed: %ld\n", addr617);
+    } else {
+        if (addr617 % 4096 != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 617: returned unaligned addr 0x%lx\n", addr617);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 617: mmap hint unaligned → page-aligned addr 0x%lx\n",
+                       addr617);
+            fut_test_pass();
+        }
+        sys_munmap((void *)addr617, 4096);
+    }
+#undef MF_MAP_FIXED
+#undef MF_MAP_ANON
+#undef MF_MAP_PRIVATE
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -24715,6 +24786,7 @@ void fut_misc_test_thread(void *arg) {
     test_statfs_ftype();                     /* Tests 600-603: statfs f_type per mount point */
     test_sa_flags_nodefer_resethand();       /* Tests 604-609: SA_NODEFER/SA_RESETHAND flag semantics */
     test_fstatfs_ftype();                    /* Tests 610-613: fstatfs f_type per open FD */
+    test_map_fixed_unaligned();              /* Tests 614-617: MAP_FIXED unaligned addr → EINVAL */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

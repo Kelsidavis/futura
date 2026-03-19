@@ -394,7 +394,11 @@ void *fut_mm_map_anonymous(fut_mm_t *mm, uintptr_t hint, size_t len, int prot, i
 
     uintptr_t base;
     if ((flags & 0x10) && hint) { /* MAP_FIXED - must use exact address */
-        base = PAGE_ALIGN_DOWN(hint);
+        /* Linux ABI: MAP_FIXED with non-page-aligned address → EINVAL */
+        if (hint % PAGE_SIZE != 0) {
+            return (void *)(intptr_t)(-EINVAL);
+        }
+        base = hint;
     } else if (hint) {
         /* Honor hint as a suggestion when provided */
         base = PAGE_ALIGN_DOWN(hint);
@@ -715,7 +719,11 @@ void *fut_mm_map_file(fut_mm_t *mm, struct fut_vnode *vnode, uintptr_t hint,
     /* Determine mapping address */
     uintptr_t base;
     if ((flags & 0x10) && hint) { /* MAP_FIXED - must use exact address */
-        base = PAGE_ALIGN_DOWN(hint);
+        /* Linux ABI: MAP_FIXED with non-page-aligned address → EINVAL */
+        if (hint % PAGE_SIZE != 0) {
+            return (void *)(intptr_t)(-EINVAL);
+        }
+        base = hint;
     } else if (hint) {
         /* Honor hint as a suggestion when provided */
         base = PAGE_ALIGN_DOWN(hint);
@@ -1213,7 +1221,11 @@ void *fut_mm_map_anonymous(fut_mm_t *mm, uintptr_t hint, size_t len, int prot, i
 
     uintptr_t base;
     if ((flags & 0x10) && hint) { /* MAP_FIXED - must use exact address */
-        base = PAGE_ALIGN_DOWN(hint);
+        /* Linux ABI: MAP_FIXED with non-page-aligned address → EINVAL */
+        if (hint % PAGE_SIZE != 0) {
+            return (void *)(intptr_t)(-EINVAL);
+        }
+        base = hint;
     } else if (hint) {
         /* Honor hint as a suggestion when provided */
         base = PAGE_ALIGN_DOWN(hint);
@@ -1481,7 +1493,11 @@ void *fut_mm_map_file(fut_mm_t *mm, struct fut_vnode *vnode, uintptr_t hint,
     /* Determine mapping address */
     uintptr_t base;
     if ((flags & 0x10) && hint) { /* MAP_FIXED - must use exact address */
-        base = PAGE_ALIGN_DOWN(hint);
+        /* Linux ABI: MAP_FIXED with non-page-aligned address → EINVAL */
+        if (hint % PAGE_SIZE != 0) {
+            return (void *)(intptr_t)(-EINVAL);
+        }
+        base = hint;
     } else if (hint) {
         /* Honor hint as a suggestion when provided */
         base = PAGE_ALIGN_DOWN(hint);

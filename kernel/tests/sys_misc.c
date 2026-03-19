@@ -24855,6 +24855,88 @@ struct test_timex {
 };
 
 /* ============================================================
+ * Tests 644-645: accept4 SOCK_NONBLOCK and SOCK_CLOEXEC flags
+ * ============================================================ */
+static void test_accept4_flags(void) {
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_bind(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_listen(int sockfd, int backlog);
+    extern long sys_connect(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_accept4(int sockfd, void *addr, unsigned int *addrlen, int flags);
+    extern long sys_close(int fd);
+
+#define ACCEPT4_SOCK_NONBLOCK  0x800     /* O_NONBLOCK */
+#define ACCEPT4_SOCK_CLOEXEC   0x80000   /* O_CLOEXEC */
+
+    const char *sock_path = "/tmp/accept4_test.sock";
+    struct {
+        unsigned short sun_family;
+        char sun_path[108];
+    } addr;
+    addr.sun_family = 1; /* AF_UNIX */
+    size_t plen = 0;
+    while (sock_path[plen]) { addr.sun_path[plen] = sock_path[plen]; plen++; }
+    addr.sun_path[plen] = '\0';
+    unsigned int addrlen = (unsigned int)(2 + plen + 1);
+
+    fut_vfs_unlink(sock_path);
+
+    long server = sys_socket(1, 1, 0);
+    if (server < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 644: socket failed: %ld\n", server);
+        fut_test_fail(644); fut_test_fail(645); return;
+    }
+    sys_bind((int)server, &addr, addrlen);
+    sys_listen((int)server, 5);
+
+    /* Connect two clients so we have two connections to accept */
+    long c1 = sys_socket(1, 1, 0);
+    long c2 = sys_socket(1, 1, 0);
+    sys_connect((int)c1, &addr, addrlen);
+    sys_connect((int)c2, &addr, addrlen);
+
+    /* Test 644: accept4 with SOCK_NONBLOCK → O_NONBLOCK set on conn fd */
+    fut_printf("[MISC-TEST] Test 644: accept4(SOCK_NONBLOCK) → O_NONBLOCK on conn fd\n");
+    long conn1 = sys_accept4((int)server, NULL, NULL, ACCEPT4_SOCK_NONBLOCK);
+    if (conn1 < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 644: accept4(SOCK_NONBLOCK) failed: %ld\n", conn1);
+        fut_test_fail(644);
+    } else {
+        long fl = sys_fcntl((int)conn1, F_GETFL, 0);
+        if (!(fl & 0x800 /* O_NONBLOCK */)) {
+            fut_printf("[MISC-TEST] ✗ Test 644: O_NONBLOCK not set (flags=0x%lx)\n", fl);
+            fut_test_fail(644);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 644: accept4(SOCK_NONBLOCK) → flags=0x%lx has O_NONBLOCK\n", fl);
+            fut_test_pass();
+        }
+        sys_close((int)conn1);
+    }
+
+    /* Test 645: accept4 with SOCK_CLOEXEC → FD_CLOEXEC set on conn fd */
+    fut_printf("[MISC-TEST] Test 645: accept4(SOCK_CLOEXEC) → FD_CLOEXEC on conn fd\n");
+    long conn2 = sys_accept4((int)server, NULL, NULL, ACCEPT4_SOCK_CLOEXEC);
+    if (conn2 < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 645: accept4(SOCK_CLOEXEC) failed: %ld\n", conn2);
+        fut_test_fail(645);
+    } else {
+        long fd_flags = sys_fcntl((int)conn2, F_GETFD, 0);
+        if (!(fd_flags & 1 /* FD_CLOEXEC */)) {
+            fut_printf("[MISC-TEST] ✗ Test 645: FD_CLOEXEC not set (fd_flags=0x%lx)\n", fd_flags);
+            fut_test_fail(645);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 645: accept4(SOCK_CLOEXEC) → FD_CLOEXEC set\n");
+            fut_test_pass();
+        }
+        sys_close((int)conn2);
+    }
+
+    sys_close((int)c1); sys_close((int)c2);
+    sys_close((int)server);
+    fut_vfs_unlink(sock_path);
+}
+
+/* ============================================================
  * Tests 642-643: fstatat AT_SYMLINK_NOFOLLOW vs follow
  * ============================================================ */
 static void test_fstatat_symlink_nofollow(void) {
@@ -25497,6 +25579,7 @@ void fut_misc_test_thread(void *arg) {
     test_clock_settime();                    /* Tests 635-638: clock_settime root/EINVAL/bad-nsec/neg-sec */
     test_adjtimex();                         /* Tests 639-641: adjtimex query/status/NULL */
     test_fstatat_symlink_nofollow();         /* Tests 642-643: fstatat AT_SYMLINK_NOFOLLOW vs follow */
+    test_accept4_flags();                    /* Tests 644-645: accept4 SOCK_NONBLOCK+SOCK_CLOEXEC */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

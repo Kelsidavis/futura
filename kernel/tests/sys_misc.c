@@ -24873,6 +24873,78 @@ static void test_sched_yield_basic(void) {
 }
 
 /* ============================================================
+ * Tests 679-683: sys_time, getppid, getpgrp, sched priority limits
+ * ============================================================
+ *   Test 679: time(NULL) returns current epoch seconds (>0)
+ *   Test 680: getppid() returns non-zero (parent exists)
+ *   Test 681: getpgrp() returns valid pgid (> 0)
+ *   Test 682: sched_get_priority_max(SCHED_FIFO=1) → 99
+ *   Test 683: sched_get_priority_min(SCHED_FIFO=1) → 1
+ */
+static void test_time_getppid_pgrp_sched_prio(void) {
+    extern long sys_time(unsigned long *tloc);
+    extern long sys_getppid(void);
+    extern long sys_getpgrp(void);
+    extern long sys_sched_get_priority_max(int policy);
+    extern long sys_sched_get_priority_min(int policy);
+
+    /* Test 679: time(NULL) returns positive epoch seconds */
+    fut_printf("[MISC-TEST] Test 679: time(NULL) returns epoch seconds > 0\n");
+    long t = sys_time(NULL);
+    if (t <= 0) {
+        fut_printf("[MISC-TEST] ✗ Test 679: time(NULL) returned %ld (expected > 0)\n", t);
+        fut_test_fail(679);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 679: time(NULL) = %ld\n", t);
+        fut_test_pass();
+    }
+
+    /* Test 680: getppid() returns non-zero (init=1 if no parent) */
+    fut_printf("[MISC-TEST] Test 680: getppid() returns non-zero\n");
+    long ppid = sys_getppid();
+    if (ppid <= 0) {
+        fut_printf("[MISC-TEST] ✗ Test 680: getppid() returned %ld (expected > 0)\n", ppid);
+        fut_test_fail(680);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 680: getppid() = %ld\n", ppid);
+        fut_test_pass();
+    }
+
+    /* Test 681: getpgrp() returns valid pgid (>= 0 is valid; 0 = no group set yet) */
+    fut_printf("[MISC-TEST] Test 681: getpgrp() returns pgid >= 0\n");
+    long pgid = sys_getpgrp();
+    if (pgid < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 681: getpgrp() returned %ld (expected >= 0)\n", pgid);
+        fut_test_fail(681);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 681: getpgrp() = %ld\n", pgid);
+        fut_test_pass();
+    }
+
+    /* Test 682: sched_get_priority_max(SCHED_FIFO=1) → 99 */
+    fut_printf("[MISC-TEST] Test 682: sched_get_priority_max(SCHED_FIFO) → 99\n");
+    long pmax = sys_sched_get_priority_max(1 /* SCHED_FIFO */);
+    if (pmax != 99) {
+        fut_printf("[MISC-TEST] ✗ Test 682: max priority returned %ld (expected 99)\n", pmax);
+        fut_test_fail(682);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 682: sched_get_priority_max(FIFO) = 99\n");
+        fut_test_pass();
+    }
+
+    /* Test 683: sched_get_priority_min(SCHED_FIFO=1) → 1 */
+    fut_printf("[MISC-TEST] Test 683: sched_get_priority_min(SCHED_FIFO) → 1\n");
+    long pmin = sys_sched_get_priority_min(1 /* SCHED_FIFO */);
+    if (pmin != 1) {
+        fut_printf("[MISC-TEST] ✗ Test 683: min priority returned %ld (expected 1)\n", pmin);
+        fut_test_fail(683);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 683: sched_get_priority_min(FIFO) = 1\n");
+        fut_test_pass();
+    }
+}
+
+/* ============================================================
  * Tests 677-678: sys_utimes basic
  * ============================================================
  *   Test 677: utimes("/tmp/utimes_test", NULL) → 0 (set to current time)
@@ -26208,6 +26280,7 @@ void fut_misc_test_thread(void *arg) {
     test_vhangup_basic();                    /* Test 658: vhangup() → 0 */
     test_pivot_root_enosys();                /* Test 659: pivot_root → ENOSYS */
     test_umask_roundtrip_syslog_console();   /* Tests 667-668: umask round-trip + syslog CONSOLE_OFF/ON */
+    test_time_getppid_pgrp_sched_prio();     /* Tests 679-683: time/getppid/getpgrp/sched_prio_limits */
     test_utimes_basic();                     /* Tests 677-678: utimes NULL→0, nonexistent→ENOENT */
     test_gettimeofday_settimeofday();        /* Tests 675-676: gettimeofday tv_sec>0, settimeofday NULL→EFAULT */
     test_sethostname_setdomainname();        /* Tests 671-672: sethostname/setdomainname → 0 */

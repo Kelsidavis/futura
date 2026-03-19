@@ -22401,6 +22401,94 @@ t545:;
     }
 }
 
+/*
+ * test_terminal_ioctls() — Tests 547-549: terminal ioctl operations
+ *
+ *   Test 547: TIOCGPGRP on a regular file returns current pgid.
+ *   Test 548: TIOCSPGRP sets foreground pgrp (no-op, returns 0).
+ *   Test 549: TIOCSCTTY accepts the terminal as controlling terminal (no-op).
+ */
+static void test_terminal_ioctls(void) {
+    extern long sys_ioctl(int fd, unsigned long request, void *argp);
+
+#define T547_TIOCGPGRP  0x540F
+#define T547_TIOCSPGRP  0x5410
+#define T547_TIOCSCTTY  0x540E
+
+    /* --- Test 547: TIOCGPGRP returns current pgid --- */
+    fut_printf("[MISC-TEST] Test 547: TIOCGPGRP returns current pgid\n");
+    {
+        fut_task_t *task = fut_task_current();
+        int expected_pgid = task ? (int)task->pgid : 0;
+
+        /* Open a file (any fd works for our ioctl dispatch) */
+        int fd = fut_vfs_open("/tioctest.txt", O_CREAT | O_RDWR, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 547: open failed: %d\n", fd);
+            fut_test_fail(547); fut_test_fail(548); fut_test_fail(549); return;
+        }
+        int pgid = -1;
+        long r = sys_ioctl(fd, T547_TIOCGPGRP, &pgid);
+        fut_vfs_close(fd); fut_vfs_unlink("/tioctest.txt");
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 547: TIOCGPGRP returned %ld (expected 0)\n", r);
+            fut_test_fail(547);
+            goto t548;
+        }
+        if (pgid != expected_pgid) {
+            fut_printf("[MISC-TEST] ✗ Test 547: pgid=%d (expected %d)\n", pgid, expected_pgid);
+            fut_test_fail(547);
+            goto t548;
+        }
+        fut_printf("[MISC-TEST] ✓ Test 547: TIOCGPGRP pgid=%d\n", pgid);
+        fut_test_pass();
+    }
+
+t548:;
+    /* --- Test 548: TIOCSPGRP sets foreground pgrp (no-op) → 0 --- */
+    fut_printf("[MISC-TEST] Test 548: TIOCSPGRP sets pgrp (no-op) → 0\n");
+    {
+        int fd = fut_vfs_open("/tioctest2.txt", O_CREAT | O_RDWR, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 548: open failed: %d\n", fd);
+            fut_test_fail(548); fut_test_fail(549); return;
+        }
+        int new_pgid = 42;
+        long r = sys_ioctl(fd, T547_TIOCSPGRP, &new_pgid);
+        fut_vfs_close(fd); fut_vfs_unlink("/tioctest2.txt");
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 548: TIOCSPGRP returned %ld (expected 0)\n", r);
+            fut_test_fail(548);
+            goto t549;
+        }
+        fut_printf("[MISC-TEST] ✓ Test 548: TIOCSPGRP → 0\n");
+        fut_test_pass();
+    }
+
+t549:;
+    /* --- Test 549: TIOCSCTTY makes terminal controlling (no-op) → 0 --- */
+    fut_printf("[MISC-TEST] Test 549: TIOCSCTTY controlling terminal (no-op) → 0\n");
+    {
+        int fd = fut_vfs_open("/tioctest3.txt", O_CREAT | O_RDWR, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 549: open failed: %d\n", fd);
+            fut_test_fail(549); return;
+        }
+        long r = sys_ioctl(fd, T547_TIOCSCTTY, (void *)0L);
+        fut_vfs_close(fd); fut_vfs_unlink("/tioctest3.txt");
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 549: TIOCSCTTY returned %ld (expected 0)\n", r);
+            fut_test_fail(549); return;
+        }
+        fut_printf("[MISC-TEST] ✓ Test 549: TIOCSCTTY → 0\n");
+        fut_test_pass();
+    }
+
+#undef T547_TIOCGPGRP
+#undef T547_TIOCSPGRP
+#undef T547_TIOCSCTTY
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -22850,6 +22938,7 @@ void fut_misc_test_thread(void *arg) {
     test_fallocate_basic();                  /* Tests 536-539: fallocate extend/zero/punch/einval */
     test_xattr_basic();                      /* Tests 540-543: setxattr/getxattr/listxattr/removexattr */
     test_rusage_children_and_fxattr();       /* Tests 544-546: RUSAGE_CHILDREN accumulation, fsetxattr/fgetxattr */
+    test_terminal_ioctls();                  /* Tests 547-549: TIOCGPGRP/TIOCSPGRP/TIOCSCTTY */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

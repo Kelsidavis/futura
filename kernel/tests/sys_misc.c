@@ -24425,6 +24425,102 @@ static void test_mremap_grow(void) {
     fut_test_pass();
 }
 
+/* ============================================================
+ * Tests 622-625: pselect6 basic functionality
+ * ============================================================
+ *
+ * Verifies:
+ *   622: pselect6(nfds=0, all-NULL, timeout=0) → 0 immediately
+ *   623: pselect6 with readable pipe (data present) → 1, rfd set
+ *   624: pselect6 with readable pipe (no data) + timeout=0 → 0
+ *   625: pselect6 writefds on pipe write-end → 1, wfd set
+ */
+#define PSEL_NFDBITS (8 * (int)sizeof(unsigned long))
+typedef struct { unsigned long fds_bits[1024 / (8 * (int)sizeof(unsigned long))]; } psel_fdset_t;
+static inline void psel_fdset_set(int fd, psel_fdset_t *s) {
+    s->fds_bits[fd / PSEL_NFDBITS] |= (1UL << (fd % PSEL_NFDBITS));
+}
+static inline int psel_fdset_test(int fd, const psel_fdset_t *s) {
+    return (int)((s->fds_bits[fd / PSEL_NFDBITS] >> (fd % PSEL_NFDBITS)) & 1UL);
+}
+
+static void test_pselect6_basic(void) {
+    extern long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
+                             void *timeout, void *sigmask);
+    extern long sys_pipe(int pipefd[2]);
+    extern long sys_write(int fd, const void *buf, size_t count);
+    extern long sys_close(int fd);
+
+    struct fut_timespec ts_zero = { .tv_sec = 0, .tv_nsec = 0 };
+
+    /* Test 622: nfds=0, all NULL fd_sets, timeout=0 → returns 0 immediately */
+    fut_printf("[MISC-TEST] Test 622: pselect6(nfds=0, timeout=0) → 0\n");
+    long r622 = sys_pselect6(0, NULL, NULL, NULL, &ts_zero, NULL);
+    if (r622 != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 622: expected 0, got %ld\n", r622);
+        fut_test_fail(622);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 622: pselect6(nfds=0) → 0\n");
+        fut_test_pass();
+    }
+
+    /* Create a pipe for tests 623-625 */
+    int pfd[2];
+    if (sys_pipe(pfd) != 0) {
+        fut_printf("[MISC-TEST] ✗ Tests 623-625: pipe() failed\n");
+        fut_test_fail(623); fut_test_fail(624); fut_test_fail(625);
+        return;
+    }
+
+    /* Test 623: readable pipe (data present) → readfds has rfd set, returns 1 */
+    fut_printf("[MISC-TEST] Test 623: pselect6 readfds with data in pipe → 1\n");
+    sys_write(pfd[1], "X", 1);
+    psel_fdset_t rset623;
+    __builtin_memset(&rset623, 0, sizeof(rset623));
+    psel_fdset_set(pfd[0], &rset623);
+    long r623 = sys_pselect6(pfd[0] + 1, &rset623, NULL, NULL, &ts_zero, NULL);
+    if (r623 != 1 || !psel_fdset_test(pfd[0], &rset623)) {
+        fut_printf("[MISC-TEST] ✗ Test 623: expected 1+rfd_set, got r=%ld bit=%d\n",
+                   r623, psel_fdset_test(pfd[0], &rset623));
+        fut_test_fail(623);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 623: pselect6 readfds with data → 1\n");
+        fut_test_pass();
+    }
+    /* Drain pipe */
+    { char tmp; extern long sys_read(int fd, void *buf, size_t count); sys_read(pfd[0], &tmp, 1); }
+
+    /* Test 624: readable pipe (no data), timeout=0 → returns 0 immediately */
+    fut_printf("[MISC-TEST] Test 624: pselect6 readfds empty pipe timeout=0 → 0\n");
+    psel_fdset_t rset624;
+    __builtin_memset(&rset624, 0, sizeof(rset624));
+    psel_fdset_set(pfd[0], &rset624);
+    long r624 = sys_pselect6(pfd[0] + 1, &rset624, NULL, NULL, &ts_zero, NULL);
+    if (r624 != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 624: expected 0 on empty pipe, got %ld\n", r624);
+        fut_test_fail(624);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 624: pselect6 empty pipe timeout=0 → 0\n");
+        fut_test_pass();
+    }
+
+    /* Test 625: writefds on pipe write-end (never full) → returns 1 */
+    fut_printf("[MISC-TEST] Test 625: pselect6 writefds pipe write-end → 1\n");
+    psel_fdset_t wset625;
+    __builtin_memset(&wset625, 0, sizeof(wset625));
+    psel_fdset_set(pfd[1], &wset625);
+    long r625 = sys_pselect6(pfd[1] + 1, NULL, &wset625, NULL, &ts_zero, NULL);
+    sys_close(pfd[0]); sys_close(pfd[1]);
+    if (r625 != 1 || !psel_fdset_test(pfd[1], &wset625)) {
+        fut_printf("[MISC-TEST] ✗ Test 625: expected 1+wfd_set, got r=%ld bit=%d\n",
+                   r625, psel_fdset_test(pfd[1], &wset625));
+        fut_test_fail(625);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 625: pselect6 writefds pipe write-end → 1\n");
+        fut_test_pass();
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -24892,6 +24988,7 @@ void fut_misc_test_thread(void *arg) {
     test_fstatfs_ftype();                    /* Tests 610-613: fstatfs f_type per open FD */
     test_map_fixed_unaligned();              /* Tests 614-617: MAP_FIXED unaligned addr → EINVAL */
     test_mremap_grow();                      /* Tests 618-621: mremap grow/MREMAP_MAYMOVE/MREMAP_FIXED */
+    test_pselect6_basic();                   /* Tests 622-625: pselect6 readfds/writefds/nfds=0/timeout=0 */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

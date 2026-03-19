@@ -1062,6 +1062,55 @@ static int lookup_parent_and_name(const char *path,
             return -ENOENT;
         }
 
+        /* Follow symlinks in intermediate path components */
+        if (next->type == VN_LNK) {
+            if (next->ops && next->ops->readlink) {
+                char link_target[256];
+                int link_ret = next->ops->readlink(next, link_target, sizeof(link_target) - 1);
+                if (link_ret > 0) {
+                    link_target[link_ret] = '\0';
+
+                    /* For relative symlinks, prepend the containing directory's path */
+                    char abs_target[512];
+                    const char *resolve_path = link_target;
+                    if (link_target[0] != '/') {
+                        char dir_path[256];
+                        char *dir = fut_vnode_build_path(current, dir_path, sizeof(dir_path));
+                        if (dir) {
+                            size_t dlen = strlen(dir);
+                            size_t tlen = (size_t)link_ret;
+                            if (dlen + 1 + tlen < sizeof(abs_target)) {
+                                __builtin_memcpy(abs_target, dir, dlen);
+                                abs_target[dlen] = '/';
+                                __builtin_memcpy(abs_target + dlen + 1, link_target, tlen + 1);
+                                resolve_path = abs_target;
+                            }
+                        }
+                    }
+
+                    release_lookup_ref(next);
+                    struct fut_vnode *sym_resolved = NULL;
+                    int sym_ret = lookup_vnode(resolve_path, &sym_resolved);
+                    if (sym_ret < 0 || !sym_resolved) {
+                        if (current != root_vnode_base) release_lookup_ref(current);
+                        fut_free(components);
+                        return sym_ret < 0 ? sym_ret : -ENOENT;
+                    }
+                    next = sym_resolved;
+                } else {
+                    release_lookup_ref(next);
+                    if (current != root_vnode_base) release_lookup_ref(current);
+                    fut_free(components);
+                    return link_ret < 0 ? link_ret : -ENOENT;
+                }
+            } else {
+                release_lookup_ref(next);
+                if (current != root_vnode_base) release_lookup_ref(current);
+                fut_free(components);
+                return -ELOOP;
+            }
+        }
+
         if (current != root_vnode_base) {
             release_lookup_ref(current);
         }
@@ -2647,11 +2696,10 @@ void fut_vnode_unref(struct fut_vnode *vnode) {
     if (remaining == 0) {
         VFSDBG("[vnode-unref] freeing vnode ino=%llu type=%d\n", vnode->ino, vnode->type);
 
-        /* Clean up parent reference and basename */
-        if (vnode->parent) {
-            fut_vnode_unref(vnode->parent);
-            vnode->parent = NULL;
-        }
+        /* vnode->parent is a weak traversal pointer only — no refcount is held
+         * on the parent.  Calling fut_vnode_unref(vnode->parent) here would
+         * spuriously decrement the parent's refcount because no matching
+         * fut_vnode_ref was called when the child was created. */
         if (vnode->name) {
             fut_free(vnode->name);
             vnode->name = NULL;

@@ -1065,9 +1065,11 @@ static int ramfs_rmdir(struct fut_vnode *dir, const char *name) {
 
             /* Free the ramfs_node */
             fut_free(node);
+            vnode->fs_data = NULL;
 
-            /* Free the vnode */
-            fut_free(vnode);
+            /* Release the vnode through the normal refcount path so that
+             * vnode->name is freed and refcount accounting stays consistent. */
+            fut_vnode_unref(vnode);
 
             /* Parent loses a link (child's ".." no longer references it) */
             if (dir->nlinks > 0) dir->nlinks--;

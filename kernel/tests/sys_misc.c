@@ -22593,6 +22593,143 @@ static void test_sync_syscalls(void) {
 }
 
 /*
+ * Tests 562-565: Symlink in intermediate path component
+ *
+ * open("/dirlink/file") where /dirlink -> /realdir must resolve correctly.
+ * Prior to the fix, lookup_parent_and_name() did not follow symlinks in
+ * intermediate (non-final) path components, causing ENOTDIR.
+ */
+static void test_symlink_in_intermediate_path(void) {
+    extern int fut_vfs_mkdir(const char *path, uint32_t mode);
+    extern int fut_vfs_symlink(const char *target, const char *linkpath);
+    extern int fut_vfs_unlink(const char *path);
+    extern long sys_open(const char *path, int flags, int mode);
+    extern ssize_t sys_read(int fd, void *buf, size_t count);
+    extern ssize_t sys_write(int fd, const void *buf, size_t count);
+    extern long sys_close(int fd);
+    extern long sys_rmdir(const char *path);
+    extern long sys_mkdir(const char *path, uint32_t mode);
+
+    fut_printf("[MISC-TEST] Tests 562-565: symlink in intermediate path component\n");
+
+    /* Setup: /intermed_real/ — real directory with a file */
+    fut_vfs_mkdir("/intermed_real", 0755);
+
+    int fd = (int)sys_open("/intermed_real/data.txt", 0101 /* O_CREAT|O_WRONLY */, 0644);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Tests 562-565: setup failed to create data.txt: %d\n", fd);
+        fut_test_fail(562); fut_test_fail(563); fut_test_fail(564); fut_test_fail(565);
+        return;
+    }
+    sys_write(fd, "world", 5);
+    sys_close(fd);
+
+    /* /intermed_link -> /intermed_real  (absolute dir symlink) */
+    int r = (int)fut_vfs_symlink("/intermed_real", "/intermed_link");
+    if (r < 0) {
+        fut_printf("[MISC-TEST] ✗ Tests 562-565: symlink create failed: %d\n", r);
+        fut_test_fail(562); fut_test_fail(563); fut_test_fail(564); fut_test_fail(565);
+        goto cleanup_real;
+    }
+
+    /* Test 562: open("/intermed_link/data.txt") must work */
+    fut_printf("[MISC-TEST] Test 562: open through absolute dir symlink in path\n");
+    {
+        char buf[16] = {0};
+        int rfd = (int)sys_open("/intermed_link/data.txt", 0 /* O_RDONLY */, 0);
+        if (rfd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 562: open failed: %d\n", rfd);
+            fut_test_fail(562);
+        } else {
+            long n = sys_read(rfd, buf, sizeof(buf) - 1);
+            sys_close(rfd);
+            if (n == 5 && buf[0] == 'w') {
+                fut_printf("[MISC-TEST] ✓ Test 562: open through dir symlink in intermediate path works\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 562: read n=%ld buf='%s'\n", n, buf);
+                fut_test_fail(562);
+            }
+        }
+    }
+
+    /* Test 563: create file through dir symlink */
+    fut_printf("[MISC-TEST] Test 563: create file through absolute dir symlink in path\n");
+    {
+        int wfd = (int)sys_open("/intermed_link/new.txt", 0101|0200 /* O_CREAT|O_WRONLY */, 0644);
+        if (wfd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 563: open/create failed: %d\n", wfd);
+            fut_test_fail(563);
+        } else {
+            sys_write(wfd, "x", 1);
+            sys_close(wfd);
+            /* Verify via real path */
+            int vfd = (int)sys_open("/intermed_real/new.txt", 0, 0);
+            if (vfd >= 0) {
+                sys_close(vfd);
+                fut_printf("[MISC-TEST] ✓ Test 563: file created through dir symlink is visible at real path\n");
+                fut_test_pass();
+                fut_vfs_unlink("/intermed_real/new.txt");
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 563: file not visible at real path: %d\n", vfd);
+                fut_test_fail(563);
+            }
+        }
+    }
+
+    /* Test 564: relative dir symlink in intermediate path */
+    fut_printf("[MISC-TEST] Test 564: open through relative dir symlink in intermediate path\n");
+    /* /intermed_rlink -> intermed_real  (relative, from root) */
+    fut_vfs_symlink("intermed_real", "/intermed_rlink");
+    {
+        char buf[16] = {0};
+        int rfd = (int)sys_open("/intermed_rlink/data.txt", 0, 0);
+        if (rfd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 564: open failed: %d\n", rfd);
+            fut_test_fail(564);
+        } else {
+            long n = sys_read(rfd, buf, sizeof(buf) - 1);
+            sys_close(rfd);
+            if (n == 5 && buf[0] == 'w') {
+                fut_printf("[MISC-TEST] ✓ Test 564: open through relative dir symlink in path works\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 564: read n=%ld buf='%s'\n", n, buf);
+                fut_test_fail(564);
+            }
+        }
+        fut_vfs_unlink("/intermed_rlink");
+    }
+
+    /* Test 565: mkdir through dir symlink */
+    fut_printf("[MISC-TEST] Test 565: mkdir through absolute dir symlink in intermediate path\n");
+    {
+        int mr = (int)sys_mkdir("/intermed_link/subdir", 0755);
+        if (mr < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 565: mkdir through dir symlink failed: %d\n", mr);
+            fut_test_fail(565);
+        } else {
+            /* Verify subdir visible under real path */
+            int vfd = (int)sys_open("/intermed_real/subdir", 0, 0);
+            if (vfd >= 0) {
+                sys_close(vfd);
+                fut_printf("[MISC-TEST] ✓ Test 565: mkdir through dir symlink creates dir at real path\n");
+                fut_test_pass();
+                sys_rmdir("/intermed_real/subdir");
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 565: subdir not visible at real path: %d\n", vfd);
+                fut_test_fail(565);
+            }
+        }
+    }
+
+    fut_vfs_unlink("/intermed_link");
+cleanup_real:
+    fut_vfs_unlink("/intermed_real/data.txt");
+    sys_rmdir("/intermed_real");
+}
+
+/*
  * Tests 558-561: Relative symlink resolution
  *
  * Linux VFS resolves relative symlinks relative to the directory that *contains*
@@ -23292,6 +23429,7 @@ void fut_misc_test_thread(void *arg) {
     test_sync_syscalls();                    /* Tests 550-554: fsync/fdatasync/sync/syncfs correctness */
     test_clone_vfork_fallback();             /* Tests 555-557: clone(CLONE_VFORK|CLONE_VM) fallback to fork */
     test_relative_symlink();                 /* Tests 558-561: relative symlink resolution */
+    test_symlink_in_intermediate_path();     /* Tests 562-565: symlink in intermediate path component */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

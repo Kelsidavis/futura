@@ -39,6 +39,11 @@
 /* Note: struct fut_vma is now defined in fut_mm.h */
 typedef struct fut_vma fut_vma_t;
 
+/* MAP_FIXED_NOREPLACE (Linux 4.17+): fail with EEXIST if target range is mapped */
+#ifndef MAP_FIXED_NOREPLACE
+#define MAP_FIXED_NOREPLACE 0x100000
+#endif
+
 static fut_mm_t kernel_mm;
 static fut_mm_t *active_mm = NULL;
 
@@ -47,6 +52,15 @@ static bool vma_can_merge(const fut_vma_t *vma1, const fut_vma_t *vma2);
 static fut_vma_t *vma_merge(fut_vma_t *vma1, fut_vma_t *vma2);
 static void vma_try_merge_neighbors(fut_mm_t *mm, fut_vma_t *vma);
 static void vma_insert_sorted(fut_mm_t *mm, fut_vma_t *vma);
+
+/* Check if [start, end) overlaps any existing VMA */
+static bool mm_range_has_vma(fut_mm_t *mm, uintptr_t start, uintptr_t end) {
+    for (fut_vma_t *v = mm->vma_list; v; v = v->next) {
+        if (v->start < end && v->end > start)
+            return true;
+    }
+    return false;
+}
 
 #define USER_STACK_TOP      0x00007FFF00000000ULL
 #define USER_VMA_MAX        (USER_STACK_TOP - (16ULL << 20))
@@ -413,11 +427,19 @@ void *fut_mm_map_anonymous(fut_mm_t *mm, uintptr_t hint, size_t len, int prot, i
         return (void *)(intptr_t)(-ENOMEM);
     }
 
-    /* MAP_FIXED: unmap any existing mappings in the target range first */
+    /* MAP_FIXED / MAP_FIXED_NOREPLACE: handle fixed-address semantics */
     if ((flags & 0x10) && hint) {
-        int unmap_ret = fut_mm_unmap(mm, base, aligned);
-        if (unmap_ret < 0 && unmap_ret != -EINVAL) {
-            return (void *)(intptr_t)unmap_ret;
+        if (flags & MAP_FIXED_NOREPLACE) {
+            /* NOREPLACE: fail if any existing VMA overlaps the target range */
+            if (mm_range_has_vma(mm, base, end)) {
+                return (void *)(intptr_t)(-EEXIST);
+            }
+        } else {
+            /* Plain MAP_FIXED: unmap any existing mappings first */
+            int unmap_ret = fut_mm_unmap(mm, base, aligned);
+            if (unmap_ret < 0 && unmap_ret != -EINVAL) {
+                return (void *)(intptr_t)unmap_ret;
+            }
         }
     }
 
@@ -703,11 +725,19 @@ void *fut_mm_map_file(fut_mm_t *mm, struct fut_vnode *vnode, uintptr_t hint,
         return (void *)(intptr_t)(-ENOMEM);
     }
 
-    /* MAP_FIXED: unmap any existing mappings in the target range first */
+    /* MAP_FIXED / MAP_FIXED_NOREPLACE: handle fixed-address semantics */
     if ((flags & 0x10) && hint) {
-        int unmap_ret = fut_mm_unmap(mm, base, aligned);
-        if (unmap_ret < 0 && unmap_ret != -EINVAL) {
-            return (void *)(intptr_t)unmap_ret;
+        if (flags & MAP_FIXED_NOREPLACE) {
+            /* NOREPLACE: fail if any existing VMA overlaps the target range */
+            if (mm_range_has_vma(mm, base, end)) {
+                return (void *)(intptr_t)(-EEXIST);
+            }
+        } else {
+            /* Plain MAP_FIXED: unmap any existing mappings first */
+            int unmap_ret = fut_mm_unmap(mm, base, aligned);
+            if (unmap_ret < 0 && unmap_ret != -EINVAL) {
+                return (void *)(intptr_t)unmap_ret;
+            }
         }
     }
 
@@ -1193,11 +1223,19 @@ void *fut_mm_map_anonymous(fut_mm_t *mm, uintptr_t hint, size_t len, int prot, i
         return (void *)(intptr_t)(-ENOMEM);
     }
 
-    /* MAP_FIXED: unmap any existing mappings in the target range first */
+    /* MAP_FIXED / MAP_FIXED_NOREPLACE: handle fixed-address semantics */
     if ((flags & 0x10) && hint) {
-        int unmap_ret = fut_mm_unmap(mm, base, aligned);
-        if (unmap_ret < 0 && unmap_ret != -EINVAL) {
-            return (void *)(intptr_t)unmap_ret;
+        if (flags & MAP_FIXED_NOREPLACE) {
+            /* NOREPLACE: fail if any existing VMA overlaps the target range */
+            if (mm_range_has_vma(mm, base, end)) {
+                return (void *)(intptr_t)(-EEXIST);
+            }
+        } else {
+            /* Plain MAP_FIXED: unmap any existing mappings first */
+            int unmap_ret = fut_mm_unmap(mm, base, aligned);
+            if (unmap_ret < 0 && unmap_ret != -EINVAL) {
+                return (void *)(intptr_t)unmap_ret;
+            }
         }
     }
 
@@ -1442,11 +1480,19 @@ void *fut_mm_map_file(fut_mm_t *mm, struct fut_vnode *vnode, uintptr_t hint,
         return (void *)(intptr_t)(-ENOMEM);
     }
 
-    /* MAP_FIXED: unmap any existing mappings in the target range first */
+    /* MAP_FIXED / MAP_FIXED_NOREPLACE: handle fixed-address semantics */
     if ((flags & 0x10) && hint) {
-        int unmap_ret = fut_mm_unmap(mm, base, aligned);
-        if (unmap_ret < 0 && unmap_ret != -EINVAL) {
-            return (void *)(intptr_t)unmap_ret;
+        if (flags & MAP_FIXED_NOREPLACE) {
+            /* NOREPLACE: fail if any existing VMA overlaps the target range */
+            if (mm_range_has_vma(mm, base, end)) {
+                return (void *)(intptr_t)(-EEXIST);
+            }
+        } else {
+            /* Plain MAP_FIXED: unmap any existing mappings first */
+            int unmap_ret = fut_mm_unmap(mm, base, aligned);
+            if (unmap_ret < 0 && unmap_ret != -EINVAL) {
+                return (void *)(intptr_t)unmap_ret;
+            }
         }
     }
 

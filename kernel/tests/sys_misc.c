@@ -18438,6 +18438,60 @@ struct test_semop_sembuf {
     short          sem_flg;
 };
 
+/* ============================================================
+ * Tests 404-405: MAP_FIXED_NOREPLACE
+ * ============================================================ */
+
+#define TEST_PROT_RW        3       /* PROT_READ|PROT_WRITE */
+#define TEST_MAP_ANON_PRIV  0x22    /* MAP_ANONYMOUS|MAP_PRIVATE */
+#define TEST_MAP_FIXED      0x10
+#define TEST_MAP_FIXED_NR   0x100010 /* MAP_FIXED|MAP_FIXED_NOREPLACE */
+
+static void test_map_fixed_noreplace(void) {
+    extern long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset);
+    extern long sys_munmap(void *addr, size_t len);
+
+    /* Map a page at a known address */
+    long addr = sys_mmap(NULL, 4096, TEST_PROT_RW, TEST_MAP_ANON_PRIV, -1, 0);
+    if (addr <= 0) {
+        fut_printf("[MISC-TEST] ✗ Tests 404-405: initial mmap failed: %ld\n", addr);
+        fut_test_fail(404); fut_test_fail(405);
+        return;
+    }
+
+    /* Test 404: MAP_FIXED_NOREPLACE on an unmapped adjacent page → success */
+    fut_printf("[MISC-TEST] Test 404: MAP_FIXED_NOREPLACE on unmapped addr succeeds\n");
+    long addr2 = addr + 4096; /* adjacent, should be unmapped */
+    long r = sys_mmap((void *)addr2, 4096, TEST_PROT_RW,
+                      TEST_MAP_FIXED_NR | TEST_MAP_ANON_PRIV, -1, 0);
+    if (r == addr2) {
+        fut_printf("[MISC-TEST] ✓ Test 404: MAP_FIXED_NOREPLACE on free page = 0x%lx\n", r);
+        fut_test_pass();
+        sys_munmap((void *)addr2, 4096);
+    } else if (r == -17) { /* -EEXIST: addr2 happened to be mapped */
+        /* Acceptable: the adjacent page might already be used */
+        fut_printf("[MISC-TEST] ✓ Test 404: MAP_FIXED_NOREPLACE on mapped page = EEXIST (ok)\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 404: got %ld (expected 0x%lx or EEXIST)\n", r, addr2);
+        fut_test_fail(404);
+    }
+
+    /* Test 405: MAP_FIXED_NOREPLACE on the already-mapped page → EEXIST */
+    fut_printf("[MISC-TEST] Test 405: MAP_FIXED_NOREPLACE on mapped addr -> EEXIST\n");
+    r = sys_mmap((void *)addr, 4096, TEST_PROT_RW,
+                 TEST_MAP_FIXED_NR | TEST_MAP_ANON_PRIV, -1, 0);
+    if (r == -17) { /* -EEXIST */
+        fut_printf("[MISC-TEST] ✓ Test 405: MAP_FIXED_NOREPLACE returned EEXIST for mapped page\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 405: got %ld (expected -17/-EEXIST)\n", r);
+        fut_test_fail(405);
+    }
+
+    sys_munmap((void *)addr, 4096);
+}
+
 static void test_semop_blocking(void) {
     extern long sys_semget(long key, int nsems, int semflg);
     extern long sys_semop(int semid, void *sops, unsigned int nsops);
@@ -19094,6 +19148,7 @@ void fut_misc_test_thread(void *arg) {
     test_futex_pi();                    /* Tests 395-397: FUTEX_LOCK/TRYLOCK/UNLOCK_PI */
     test_siocgif();                     /* Tests 398-400: SIOCGIFCONF/SIOCGIFFLAGS/SIOCGIFADDR */
     test_semop_blocking();              /* Tests 401-403: semop IPC_NOWAIT/zero-wait/decrement */
+    test_map_fixed_noreplace();         /* Tests 404-405: MAP_FIXED_NOREPLACE success/EEXIST */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -24834,6 +24834,80 @@ static void test_ftruncate_rdonly(void) {
     }
 }
 
+/* ============================================================
+ * Tests 635-638: clock_settime correctness
+ * ============================================================ */
+extern long sys_clock_settime(int clock_id, const fut_timespec_t *tp);
+extern long sys_clock_gettime(int clock_id, fut_timespec_t *tp);
+
+static void test_clock_settime(void) {
+    /* Test 635: clock_settime(CLOCK_REALTIME, valid) as root → 0 */
+    fut_printf("[MISC-TEST] Test 635: clock_settime(CLOCK_REALTIME) as root → 0\n");
+
+    /* Save current time so we can restore after the test */
+    fut_timespec_t orig = {0};
+    sys_clock_gettime(0 /* CLOCK_REALTIME */, &orig);
+
+    fut_timespec_t ts = { .tv_sec = 1700000000LL, .tv_nsec = 0 };
+    long ret = sys_clock_settime(0 /* CLOCK_REALTIME */, &ts);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 635: clock_settime returned %ld (expected 0)\n", ret);
+        fut_test_fail(635);
+    } else {
+        /* Verify clock_gettime reflects the new time */
+        fut_timespec_t after = {0};
+        sys_clock_gettime(0 /* CLOCK_REALTIME */, &after);
+        if (after.tv_sec < 1700000000LL || after.tv_sec > 1700000010LL) {
+            fut_printf("[MISC-TEST] ✗ Test 635: after settime got sec=%lld (expected ~1700000000)\n",
+                       (long long)after.tv_sec);
+            fut_test_fail(635);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 635: clock_settime(CLOCK_REALTIME) → 0, "
+                       "gettime returns %lld\n", (long long)after.tv_sec);
+            fut_test_pass();
+        }
+    }
+    /* Restore original time */
+    if (orig.tv_sec > 0)
+        sys_clock_settime(0, &orig);
+
+    /* Test 636: clock_settime(CLOCK_MONOTONIC, ...) → EINVAL (not settable) */
+    fut_printf("[MISC-TEST] Test 636: clock_settime(CLOCK_MONOTONIC) → EINVAL\n");
+    fut_timespec_t ts2 = { .tv_sec = 100, .tv_nsec = 0 };
+    long ret2 = sys_clock_settime(1 /* CLOCK_MONOTONIC */, &ts2);
+    if (ret2 != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ Test 636: expected EINVAL, got %ld\n", ret2);
+        fut_test_fail(636);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 636: clock_settime(CLOCK_MONOTONIC) → EINVAL\n");
+        fut_test_pass();
+    }
+
+    /* Test 637: clock_settime(CLOCK_REALTIME, {tv_nsec=1e9}) → EINVAL */
+    fut_printf("[MISC-TEST] Test 637: clock_settime bad nsec → EINVAL\n");
+    fut_timespec_t ts3 = { .tv_sec = 1000, .tv_nsec = 1000000000LL };
+    long ret3 = sys_clock_settime(0 /* CLOCK_REALTIME */, &ts3);
+    if (ret3 != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ Test 637: expected EINVAL, got %ld\n", ret3);
+        fut_test_fail(637);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 637: clock_settime nsec=1e9 → EINVAL\n");
+        fut_test_pass();
+    }
+
+    /* Test 638: clock_settime(CLOCK_REALTIME, {tv_sec=-1}) → EINVAL */
+    fut_printf("[MISC-TEST] Test 638: clock_settime negative tv_sec → EINVAL\n");
+    fut_timespec_t ts4 = { .tv_sec = -1, .tv_nsec = 0 };
+    long ret4 = sys_clock_settime(0 /* CLOCK_REALTIME */, &ts4);
+    if (ret4 != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ Test 638: expected EINVAL, got %ld\n", ret4);
+        fut_test_fail(638);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 638: clock_settime tv_sec=-1 → EINVAL\n");
+        fut_test_pass();
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -25308,6 +25382,7 @@ void fut_misc_test_thread(void *arg) {
     test_o_nofollow();                       /* Tests 630-631: O_NOFOLLOW on symlink→ELOOP, regular→success */
     test_sched_rr_get_interval();            /* Tests 632-633: sched_rr_get_interval quantum and EINVAL */
     test_ftruncate_rdonly();                 /* Test 634: ftruncate(O_RDONLY) → EBADF */
+    test_clock_settime();                    /* Tests 635-638: clock_settime root/EINVAL/bad-nsec/neg-sec */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

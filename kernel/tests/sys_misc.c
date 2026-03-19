@@ -24873,6 +24873,73 @@ static void test_sched_yield_basic(void) {
 }
 
 /* ============================================================
+ * Tests 671-672: sethostname/setdomainname round-trip
+ * ============================================================
+ *   Test 671: sethostname("testhost", 8) → 0; uname shows "testhost"
+ *   Test 672: setdomainname("testdom", 7) → 0
+ */
+static void test_sethostname_setdomainname(void) {
+    extern long sys_sethostname(const char *name, unsigned long len);
+    extern long sys_setdomainname(const char *name, unsigned long len);
+
+    /* Test 671: sethostname → 0 */
+    fut_printf("[MISC-TEST] Test 671: sethostname(\"testhost\") → 0\n");
+    long ret = sys_sethostname("testhost", 8);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 671: sethostname returned %ld\n", ret);
+        fut_test_fail(671);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 671: sethostname → 0\n");
+        fut_test_pass();
+    }
+
+    /* Test 672: setdomainname → 0 */
+    fut_printf("[MISC-TEST] Test 672: setdomainname(\"testdom\") → 0\n");
+    ret = sys_setdomainname("testdom", 7);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 672: setdomainname returned %ld\n", ret);
+        fut_test_fail(672);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 672: setdomainname → 0\n");
+        fut_test_pass();
+    }
+}
+
+/* ============================================================
+ * Tests 673-674: tee and sync_file_range error paths
+ * ============================================================
+ *   Test 673: tee(fd, fd, ...) → EINVAL (same fd)
+ *   Test 674: sync_file_range(fd, 0, 0, SYNC_FILE_RANGE_WRITE) → 0
+ */
+static void test_tee_and_sync_file_range(void) {
+    extern long sys_tee(int fd_in, int fd_out, unsigned long len, unsigned int flags);
+    extern long sys_sync_file_range(int fd, long offset, long nbytes, unsigned int flags);
+
+    /* Test 673: tee with same fd → EINVAL */
+    fut_printf("[MISC-TEST] Test 673: tee(fd, fd, ...) → EINVAL (same fd)\n");
+    long ret = sys_tee(1, 1, 1024, 0);
+    if (ret != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ Test 673: tee(1,1) returned %ld (expected -EINVAL=%d)\n",
+                   ret, -EINVAL);
+        fut_test_fail(673);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 673: tee(same fd) → EINVAL\n");
+        fut_test_pass();
+    }
+
+    /* Test 674: sync_file_range on open fd → 0 */
+    fut_printf("[MISC-TEST] Test 674: sync_file_range(fd=1, 0, 0, WRITE=2) → 0\n");
+    ret = sys_sync_file_range(1, 0, 0, 2 /* SYNC_FILE_RANGE_WRITE */);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 674: sync_file_range returned %ld (expected 0)\n", ret);
+        fut_test_fail(674);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 674: sync_file_range → 0\n");
+        fut_test_pass();
+    }
+}
+
+/* ============================================================
  * Tests 667-668: umask round-trip and syslog console actions
  * ============================================================
  *   Test 667: umask(0077) returns old mask, verify, then restore
@@ -26065,6 +26132,8 @@ void fut_misc_test_thread(void *arg) {
     test_vhangup_basic();                    /* Test 658: vhangup() → 0 */
     test_pivot_root_enosys();                /* Test 659: pivot_root → ENOSYS */
     test_umask_roundtrip_syslog_console();   /* Tests 667-668: umask round-trip + syslog CONSOLE_OFF/ON */
+    test_sethostname_setdomainname();        /* Tests 671-672: sethostname/setdomainname → 0 */
+    test_tee_and_sync_file_range();          /* Tests 673-674: tee same-fd→EINVAL, sync_file_range→0 */
     test_chroot_basic();                     /* Tests 669-670: chroot("/")→0, nonexistent→ENOENT */
     test_mlockall_munlockall();              /* Tests 663-665: mlockall(MCL_CURRENT)→0, munlockall→0, invalid→EINVAL */
     test_set_tid_address();                  /* Test 666: set_tid_address returns TID */

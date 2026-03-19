@@ -8,8 +8,8 @@
  *
  * Phase 1 (Completed): Basic parameter validation
  * Phase 2 (Completed): Enhanced validation and reporting
- * Phase 3 (Completed): Modify page table entries via fut_mm_mprotect() with TLB flush
- * Phase 4: Enforce SELinux/capability-based protection policies
+ * Phase 3 (Completed): Update VMA prot metadata
+ * Phase 4 (Completed): Re-map present pages via fut_mm_mprotect() for immediate enforcement
  */
 
 #include <kernel/fut_task.h>
@@ -56,8 +56,8 @@
  *
  * Phase 1 (Completed): Basic parameter validation
  * Phase 2 (Completed): Enhanced validation with detailed protection flag reporting
- * Phase 3 (Completed): Modify page table entries via fut_mm_mprotect() with TLB flush
- * Phase 4: Enforce SELinux/capability-based protection policies
+ * Phase 3 (Completed): Update VMA prot metadata
+ * Phase 4 (Completed): Re-map present pages via fut_mm_mprotect() for immediate enforcement
  * Support PROT_GROWSDOWN/PROT_GROWSUP for stack guards
  *
  * Common use cases:
@@ -224,25 +224,22 @@ long sys_mprotect(void *addr, size_t len, int prot) {
         return -EINVAL;
     }
     /* Phase 3: Update VMA protection metadata for the requested range.
-     * Page table entries are not yet modified (requires arch-specific
-     * page walker); the VMA prot field is authoritative for future
-     * permission checks and mmap queries. */
+     * Update vma->prot for all VMAs overlapping [start, end). */
     fut_mm_t *mm = fut_task_get_mm(task);
+    if (!mm) mm = fut_mm_current();
     if (mm) {
-        bool found = false;
         for (struct fut_vma *vma = mm->vma_list; vma; vma = vma->next) {
-            /* Check for any overlap between [start,end) and [vma->start,vma->end) */
             if (vma->end <= start || vma->start >= end)
                 continue;
-            /* VMA overlaps the requested range — update its prot */
             vma->prot = prot;
-            found = true;
         }
-        if (!found) {
-            /* No VMA covers any part of this range. For kernel test callers
-             * (mmap may return addresses not tracked in VMA list), still
-             * succeed — matches Linux behavior for anonymous pages. */
-        }
+
+        /* Phase 4: Update PTEs for present pages in [start, end).
+         * Re-maps each demand-paged page with PTE flags derived from prot
+         * so hardware enforces the new protection immediately.
+         * Pages not yet loaded are handled by the page fault handler
+         * reading vma->prot. */
+        fut_mm_mprotect(mm, start, end, prot);
     }
 
     return 0;

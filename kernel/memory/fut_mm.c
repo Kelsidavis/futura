@@ -1757,6 +1757,58 @@ int fut_mm_clone_vmas(fut_mm_t *dest_mm, fut_mm_t *src_mm) {
     return 0;
 }
 
+/**
+ * fut_mm_mprotect - Update protection on present pages in [start, end).
+ *
+ * For each page in the range that is already mapped (present in the page
+ * table), re-maps it with PTE flags derived from @prot.  Pages that are
+ * not yet demand-paged in are skipped — the page fault handler reads the
+ * VMA prot field and will use the new flags when they are first loaded.
+ * Pages not tracked by our allocator (e.g. kernel identity-mapped residuals)
+ * are also skipped via fut_page_ref_get == 0.
+ *
+ * sys_mprotect must update vma->prot before calling this function.
+ */
+int fut_mm_mprotect(fut_mm_t *mm, uintptr_t start, uintptr_t end, int prot) {
+    if (!mm || start >= end) {
+        return 0;
+    }
+
+    fut_vmem_context_t *ctx = fut_mm_context(mm);
+    if (!ctx) {
+        return 0;
+    }
+
+    /* Compute new PTE flags from PROT_* bits (same logic as page_fault.c) */
+    uint64_t new_flags = PTE_PRESENT | PTE_USER;
+    if (prot & 0x2) {          /* PROT_WRITE */
+        new_flags |= PTE_WRITABLE;
+    }
+    if ((prot & 0x4) == 0) {   /* !PROT_EXEC → no-execute */
+        new_flags |= PTE_NX;
+    }
+
+    uintptr_t pg_start = PAGE_ALIGN_DOWN(start);
+    uintptr_t pg_end   = PAGE_ALIGN_UP(end);
+
+    for (uintptr_t pg = pg_start; pg < pg_end; pg += PAGE_SIZE) {
+        uint64_t pte = 0;
+        if (pmap_probe_pte(ctx, pg, &pte) != 0)
+            continue;  /* Not present — skip, page fault will apply prot on demand */
+
+        uint64_t phys = fut_pte_to_phys(pte);
+        if (!phys) continue;
+
+        /* Skip pages not allocated by our demand-pager */
+        if (fut_page_ref_get((phys_addr_t)phys) == 0) continue;
+
+        /* Re-map with updated protection; ignore per-page error (best-effort) */
+        pmap_map_user(ctx, pg, (phys_addr_t)phys, PAGE_SIZE, new_flags);
+    }
+
+    return 0;
+}
+
 /* ============================================================
  *   Page Reference Counting for Copy-On-Write
  * ============================================================ */

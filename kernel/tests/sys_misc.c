@@ -24764,6 +24764,76 @@ static void test_o_nofollow(void) {
     }
 }
 
+/* ============================================================
+ * Tests 632-634: sched_rr_get_interval and ftruncate error paths
+ * ============================================================ */
+extern long sys_sched_rr_get_interval(int pid, void *interval);
+
+static void test_sched_rr_get_interval(void) {
+    fut_printf("[MISC-TEST] Test 632: sched_rr_get_interval(0) returns quantum\n");
+
+    /* Call with pid=0 (self) — should return 10ms quantum */
+    fut_timespec_t ts = {0};
+    long ret = sys_sched_rr_get_interval(0, &ts);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 632: sched_rr_get_interval(0) returned %ld\n", ret);
+        fut_test_fail(632);
+    } else if (ts.tv_sec != 0 || ts.tv_nsec <= 0) {
+        fut_printf("[MISC-TEST] ✗ Test 632: quantum={%lld,%lld} (expected tv_sec=0, tv_nsec>0)\n",
+                   (long long)ts.tv_sec, (long long)ts.tv_nsec);
+        fut_test_fail(632);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 632: sched_rr_get_interval quantum={0,%lld ns}\n",
+                   (long long)ts.tv_nsec);
+        fut_test_pass();
+    }
+
+    fut_printf("[MISC-TEST] Test 633: sched_rr_get_interval(-1) → EINVAL\n");
+    long ret2 = sys_sched_rr_get_interval(-1, &ts);
+    if (ret2 != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ Test 633: expected EINVAL, got %ld\n", ret2);
+        fut_test_fail(633);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 633: sched_rr_get_interval(-1) → EINVAL\n");
+        fut_test_pass();
+    }
+}
+
+static void test_ftruncate_rdonly(void) {
+    fut_printf("[MISC-TEST] Test 634: ftruncate on O_RDONLY fd → EBADF\n");
+    extern long sys_ftruncate(int fd, uint64_t length);
+
+    /* Create a file, write data, close, then reopen O_RDONLY */
+    int fd = (int)fut_vfs_open("/test_ftruncate_rdonly.txt", O_CREAT | O_RDWR, 0644);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 634: create failed: %d\n", fd);
+        fut_test_fail(634);
+        return;
+    }
+    fut_vfs_write(fd, "hello", 5);
+    fut_vfs_close(fd);
+
+    fd = (int)fut_vfs_open("/test_ftruncate_rdonly.txt", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 634: reopen O_RDONLY failed: %d\n", fd);
+        fut_vfs_unlink("/test_ftruncate_rdonly.txt");
+        fut_test_fail(634);
+        return;
+    }
+
+    long ret = sys_ftruncate(fd, 0);
+    fut_vfs_close(fd);
+    fut_vfs_unlink("/test_ftruncate_rdonly.txt");
+
+    if (ret != -EBADF) {
+        fut_printf("[MISC-TEST] ✗ Test 634: ftruncate(O_RDONLY) returned %ld (expected EBADF)\n", ret);
+        fut_test_fail(634);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 634: ftruncate(O_RDONLY) → EBADF\n");
+        fut_test_pass();
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -25236,6 +25306,8 @@ void fut_misc_test_thread(void *arg) {
     test_dup2_clears_cloexec();              /* Test 628: dup2(old,new) clears FD_CLOEXEC on new fd */
     test_o_append_lseek();                   /* Test 629: O_APPEND write goes to EOF even after lseek(0) */
     test_o_nofollow();                       /* Tests 630-631: O_NOFOLLOW on symlink→ELOOP, regular→success */
+    test_sched_rr_get_interval();            /* Tests 632-633: sched_rr_get_interval quantum and EINVAL */
+    test_ftruncate_rdonly();                 /* Test 634: ftruncate(O_RDONLY) → EBADF */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

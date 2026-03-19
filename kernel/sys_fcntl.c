@@ -969,6 +969,43 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
     case F_GETOWN:
         return (long)(file ? file->owner_pid : 0);
 
+    case F_SETSIG: {
+        /* F_SETSIG (Linux): set signal sent when async I/O is ready.
+         * arg == 0 → use SIGIO (default); any other real-time or standard signal
+         * can be specified.  Store for F_GETSIG; actual delivery via async I/O
+         * is not yet implemented in Futura. */
+        int sig = (int)(uint64_t)local_arg;
+        if (sig < 0 || sig > 64)
+            return -EINVAL;
+        if (file)
+            file->async_sig = sig;
+        return 0;
+    }
+
+    case F_GETSIG:
+        /* Return stored async-I/O signal, or 0 (= SIGIO default). */
+        return file ? (long)file->async_sig : 0;
+
+    case 1024: /* F_SETLEASE — set file lease */
+        /* Futura has no mandatory file-locking / lease infrastructure.
+         * Accept F_RDLCK (0), F_WRLCK (1), and F_UNLCK (2); return 0. */
+        if ((int)local_arg < 0 || (int)local_arg > 2)
+            return -EINVAL;
+        return 0;
+
+    case 1025: /* F_GETLEASE — query current lease */
+        /* No leases held; return F_UNLCK (2). */
+        return 2;
+
+    case 1026: /* F_NOTIFY — dnotify directory change notification */
+        /* Accept and ignore: Futura does not deliver DN_* events. */
+        return 0;
+
+    case 1028: /* F_SETOWN_EX — set owner with extended type/pid */
+    case 1029: /* F_GETOWN_EX — get owner with extended type/pid */
+        /* Silently accept for now; extended owner info is not used. */
+        return 0;
+
     default:
         /* Unknown command */
         fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%d [%s], arg=%llu) -> EINVAL "

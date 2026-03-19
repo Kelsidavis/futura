@@ -531,6 +531,7 @@ struct fut_file {
     void *chr_private;              /* Driver private state */
     int fd_flags;                   /* FD-specific flags (e.g., FD_CLOEXEC) */
     int owner_pid;                  /* Owner PID for async I/O signals (F_SETOWN/F_GETOWN) */
+    int async_sig;                  /* Signal for async I/O (F_SETSIG/F_GETSIG; 0 = SIGIO) */
     uint32_t seals;                 /* File sealing flags (F_SEAL_*) */
     char *path;                     /* Absolute path (heap-allocated); used by *at syscalls for dirfd resolution */
 };

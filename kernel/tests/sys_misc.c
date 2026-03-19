@@ -18952,6 +18952,119 @@ static void test_proc_comm_write(void) {
 }
 
 /* ============================================================
+ * Tests 450-455: fcntl F_SETSIG, F_GETSIG, F_SETLEASE, F_GETLEASE,
+ *                F_NOTIFY, F_SETOWN_EX
+ *
+ * Test 450: F_SETSIG(SIGUSR1) → 0, F_GETSIG → SIGUSR1
+ * Test 451: F_SETSIG(0) → 0 (reset to SIGIO default)
+ * Test 452: F_SETLEASE(F_UNLCK=2) → 0
+ * Test 453: F_GETLEASE → 2 (F_UNLCK, no lease)
+ * Test 454: F_NOTIFY(0) → 0 (dnotify accepted)
+ * Test 455: F_SETOWN_EX → 0
+ * ============================================================ */
+static void test_fcntl_setsig_lease_notify(void) {
+    extern long sys_fcntl(int fd, int cmd, uint64_t arg);
+    extern long sys_open(const char *path, int flags, int mode);
+    extern long sys_close(int fd);
+
+#define F_SETSIG_T  10
+#define F_GETSIG_T  11
+#define F_SETLEASE_T 1024
+#define F_GETLEASE_T 1025
+#define F_NOTIFY_T   1026
+#define F_SETOWN_EX_T 1028
+
+    /* Open a real file for these tests */
+    long fd = sys_open("/proc/self/comm", 0 /*O_RDONLY*/, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 450-455: open /proc/self/comm failed (%ld)\n", fd);
+        for (int i = 450; i <= 455; i++) fut_test_fail(i);
+        return;
+    }
+
+    /* Test 450: F_SETSIG(SIGUSR1=10) + F_GETSIG */
+    fut_printf("[MISC-TEST] Test 450: fcntl F_SETSIG/F_GETSIG roundtrip\n");
+    {
+        long r1 = sys_fcntl((int)fd, F_SETSIG_T, 10 /*SIGUSR1*/);
+        long r2 = sys_fcntl((int)fd, F_GETSIG_T, 0);
+        if (r1 == 0 && r2 == 10) {
+            fut_printf("[MISC-TEST] ✓ Test 450: F_SETSIG/F_GETSIG roundtrip\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 450: set=%ld get=%ld\n", r1, r2);
+            fut_test_fail(450);
+        }
+    }
+
+    /* Test 451: F_SETSIG(0) — reset to SIGIO default */
+    fut_printf("[MISC-TEST] Test 451: F_SETSIG(0) resets to SIGIO\n");
+    {
+        long r = sys_fcntl((int)fd, F_SETSIG_T, 0);
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 451: F_SETSIG(0) accepted\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 451: F_SETSIG(0) returned %ld\n", r);
+            fut_test_fail(451);
+        }
+    }
+
+    /* Test 452: F_SETLEASE(F_UNLCK=2) */
+    fut_printf("[MISC-TEST] Test 452: fcntl F_SETLEASE(F_UNLCK)\n");
+    {
+        long r = sys_fcntl((int)fd, F_SETLEASE_T, 2 /*F_UNLCK*/);
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 452: F_SETLEASE accepted\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 452: F_SETLEASE returned %ld\n", r);
+            fut_test_fail(452);
+        }
+    }
+
+    /* Test 453: F_GETLEASE → F_UNLCK (2) */
+    fut_printf("[MISC-TEST] Test 453: fcntl F_GETLEASE → F_UNLCK\n");
+    {
+        long r = sys_fcntl((int)fd, F_GETLEASE_T, 0);
+        if (r == 2) {
+            fut_printf("[MISC-TEST] ✓ Test 453: F_GETLEASE returns F_UNLCK\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 453: F_GETLEASE returned %ld (expected 2)\n", r);
+            fut_test_fail(453);
+        }
+    }
+
+    /* Test 454: F_NOTIFY(0) */
+    fut_printf("[MISC-TEST] Test 454: fcntl F_NOTIFY(0) accepted\n");
+    {
+        long r = sys_fcntl((int)fd, F_NOTIFY_T, 0);
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 454: F_NOTIFY accepted\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 454: F_NOTIFY returned %ld\n", r);
+            fut_test_fail(454);
+        }
+    }
+
+    /* Test 455: F_SETOWN_EX(NULL) */
+    fut_printf("[MISC-TEST] Test 455: fcntl F_SETOWN_EX(NULL) accepted\n");
+    {
+        long r = sys_fcntl((int)fd, F_SETOWN_EX_T, 0);
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 455: F_SETOWN_EX accepted\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 455: F_SETOWN_EX returned %ld\n", r);
+            fut_test_fail(455);
+        }
+    }
+
+    sys_close((int)fd);
+}
+
+/* ============================================================
  * Tests 446-449: prctl PR_SET/GET_IO_FLUSHER and PR_SET/GET_MDWE
  *
  * Test 446: PR_SET_IO_FLUSHER = 1 → 0
@@ -20089,6 +20202,7 @@ void fut_misc_test_thread(void *arg) {
     test_proc_comm_write();               /* Tests 442-443: write to /proc/self/comm updates task name */
     test_epoll_exclusive_wakeup();        /* Tests 444-445: EPOLLEXCLUSIVE/EPOLLWAKEUP accepted by epoll_ctl */
     test_prctl_io_flusher_mdwe();         /* Tests 446-449: PR_SET/GET_IO_FLUSHER, PR_SET/GET_MDWE */
+    test_fcntl_setsig_lease_notify();     /* Tests 450-455: fcntl F_SETSIG/GETSIG, SETLEASE/GETLEASE, NOTIFY, SETOWN_EX */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

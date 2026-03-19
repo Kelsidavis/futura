@@ -25894,6 +25894,163 @@ static void test_mount_umount2(void) {
 }
 
 /**
+ * test_unlinkat_removedir - Tests 722-724
+ *
+ *   Test 722: unlinkat(AT_FDCWD, empty_dir, AT_REMOVEDIR) → 0
+ *   Test 723: unlinkat(AT_FDCWD, nonempty_dir, AT_REMOVEDIR) → ENOTEMPTY
+ *   Test 724: unlinkat(AT_FDCWD, file, AT_REMOVEDIR) → ENOTDIR
+ */
+static void test_unlinkat_removedir(void) {
+    extern long sys_unlinkat(int dirfd, const char *pathname, int flags);
+    extern long sys_mkdir(const char *path, uint32_t mode);
+#define AT_REMOVEDIR_TEST 0x200
+
+    /* Test 722: remove empty directory */
+    fut_printf("[MISC-TEST] Test 722: unlinkat(AT_REMOVEDIR) on empty dir → 0\n");
+    long r = sys_mkdir("/tmp/unlinkat_rmdir_test", 0755);
+    if (r != 0 && r != -EEXIST) {
+        fut_printf("[MISC-TEST] ✗ Test 722: mkdir failed: %ld\n", r);
+        fut_test_fail(722);
+    } else {
+        r = sys_unlinkat(-100 /* AT_FDCWD */, "/tmp/unlinkat_rmdir_test", AT_REMOVEDIR_TEST);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 722: unlinkat(AT_REMOVEDIR) returned %ld (expected 0)\n", r);
+            fut_test_fail(722);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 722: unlinkat(AT_REMOVEDIR) empty dir → 0\n");
+            fut_test_pass();
+        }
+    }
+
+    /* Test 723: remove non-empty directory → ENOTEMPTY */
+    fut_printf("[MISC-TEST] Test 723: unlinkat(AT_REMOVEDIR) on nonempty dir → ENOTEMPTY\n");
+    sys_mkdir("/tmp/unlinkat_nonempty_test", 0755);
+    /* Create a file inside so the directory is non-empty */
+    int fd = (int)fut_vfs_open("/tmp/unlinkat_nonempty_test/child.txt", O_CREAT | O_RDWR, 0644);
+    if (fd >= 0) fut_vfs_close(fd);
+    r = sys_unlinkat(-100, "/tmp/unlinkat_nonempty_test", AT_REMOVEDIR_TEST);
+    if (r != -ENOTEMPTY) {
+        fut_printf("[MISC-TEST] ✗ Test 723: unlinkat(nonempty) returned %ld (expected -ENOTEMPTY=%d)\n",
+                   r, -ENOTEMPTY);
+        fut_test_fail(723);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 723: unlinkat(AT_REMOVEDIR) nonempty → ENOTEMPTY\n");
+        fut_test_pass();
+    }
+    /* Cleanup */
+    fut_vfs_unlink("/tmp/unlinkat_nonempty_test/child.txt");
+    sys_unlinkat(-100, "/tmp/unlinkat_nonempty_test", AT_REMOVEDIR_TEST);
+
+    /* Test 724: AT_REMOVEDIR on a regular file → ENOTDIR */
+    fut_printf("[MISC-TEST] Test 724: unlinkat(AT_REMOVEDIR) on file → ENOTDIR\n");
+    fd = (int)fut_vfs_open("/tmp/unlinkat_file_test.txt", O_CREAT | O_RDWR, 0644);
+    if (fd >= 0) fut_vfs_close(fd);
+    r = sys_unlinkat(-100, "/tmp/unlinkat_file_test.txt", AT_REMOVEDIR_TEST);
+    fut_vfs_unlink("/tmp/unlinkat_file_test.txt"); /* cleanup regardless */
+    if (r != -ENOTDIR) {
+        fut_printf("[MISC-TEST] ✗ Test 724: unlinkat(file, AT_REMOVEDIR) returned %ld (expected -ENOTDIR=%d)\n",
+                   r, -ENOTDIR);
+        fut_test_fail(724);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 724: unlinkat(AT_REMOVEDIR) file → ENOTDIR\n");
+        fut_test_pass();
+    }
+
+#undef AT_REMOVEDIR_TEST
+}
+
+/**
+ * test_kill_sig0 - Tests 725-726
+ *
+ *   Test 725: kill(self_pid, 0) → 0 (process exists)
+ *   Test 726: kill(999999, 0) → ESRCH (process doesn't exist)
+ */
+static void test_kill_sig0(void) {
+    extern long sys_kill(int pid, int sig);
+    extern long sys_getpid(void);
+
+    /* Test 725: kill(self, 0) → 0 */
+    fut_printf("[MISC-TEST] Test 725: kill(self, 0) → 0\n");
+    long pid = sys_getpid();
+    long r = sys_kill((int)pid, 0);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 725: kill(self=%ld, 0) returned %ld (expected 0)\n", pid, r);
+        fut_test_fail(725);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 725: kill(self, 0) → 0\n");
+        fut_test_pass();
+    }
+
+    /* Test 726: kill(nonexistent_pid, 0) → ESRCH */
+    fut_printf("[MISC-TEST] Test 726: kill(999999, 0) → ESRCH\n");
+    r = sys_kill(999999, 0);
+    if (r != -ESRCH) {
+        fut_printf("[MISC-TEST] ✗ Test 726: kill(999999, 0) returned %ld (expected -ESRCH=%d)\n",
+                   r, -ESRCH);
+        fut_test_fail(726);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 726: kill(nonexistent, 0) → ESRCH\n");
+        fut_test_pass();
+    }
+}
+
+/**
+ * test_sigprocmask_invalid_how - Test 727
+ *
+ *   Test 727: sigprocmask(99, NULL, NULL) → EINVAL (invalid how)
+ */
+static void test_sigprocmask_invalid_how(void) {
+    extern long sys_sigprocmask(int how, const sigset_t *set, sigset_t *oldset);
+
+    fut_printf("[MISC-TEST] Test 727: sigprocmask(how=99) → EINVAL\n");
+    long r = sys_sigprocmask(99, NULL, NULL);
+    if (r != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ Test 727: sigprocmask(99) returned %ld (expected -EINVAL=%d)\n",
+                   r, -EINVAL);
+        fut_test_fail(727);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 727: sigprocmask(invalid how) → EINVAL\n");
+        fut_test_pass();
+    }
+}
+
+/**
+ * test_getsid_getpgid_self - Tests 728-729
+ *
+ *   Test 728: getsid(0) returns session ID > 0
+ *   Test 729: getpgid(0) == getpgrp() (same process group)
+ */
+static void test_getsid_getpgid_self(void) {
+    extern long sys_getsid(uint64_t pid);
+    extern long sys_getpgid(uint64_t pid);
+    extern long sys_getpgrp(void);
+
+    /* Test 728: getsid(0) → non-negative SID (>= 0), no error */
+    fut_printf("[MISC-TEST] Test 728: getsid(0) → SID >= 0\n");
+    long sid = sys_getsid(0);
+    if (sid < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 728: getsid(0) returned %ld (expected >= 0)\n", sid);
+        fut_test_fail(728);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 728: getsid(0) → %ld\n", sid);
+        fut_test_pass();
+    }
+
+    /* Test 729: getpgid(0) == getpgrp() */
+    fut_printf("[MISC-TEST] Test 729: getpgid(0) == getpgrp()\n");
+    long pgid1 = sys_getpgid(0);
+    long pgid2 = sys_getpgrp();
+    if (pgid1 < 0 || pgid1 != pgid2) {
+        fut_printf("[MISC-TEST] ✗ Test 729: getpgid(0)=%ld getpgrp()=%ld (expected equal)\n",
+                   pgid1, pgid2);
+        fut_test_fail(729);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 729: getpgid(0)=%ld == getpgrp()=%ld\n", pgid1, pgid2);
+        fut_test_pass();
+    }
+}
+
+/**
  * test_futimesat_basic - Tests 702-703
  *
  *   Test 702: futimesat(AT_FDCWD, "/tmp", NULL) → 0
@@ -26960,6 +27117,11 @@ void fut_misc_test_thread(void *arg) {
     test_select_zero_timeout();              /* Test 712: select(0, NULL, NULL, NULL, timeout=0) → 0 */
     test_io_aio_enosys();                    /* Tests 713-717: io_setup/destroy/getevents/submit/cancel → ENOSYS */
     test_mount_umount2();                    /* Tests 718-721: mkdir/mount tmpfs/umount2/mount ENOENT */
+
+    test_unlinkat_removedir();               /* Tests 722-724: unlinkat(AT_REMOVEDIR) */
+    test_kill_sig0();                        /* Tests 725-726: kill(pid, 0) existence check */
+    test_sigprocmask_invalid_how();          /* Test 727: sigprocmask bad how → EINVAL */
+    test_getsid_getpgid_self();              /* Tests 728-729: getsid/getpgid self */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

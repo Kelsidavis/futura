@@ -24521,6 +24521,192 @@ static void test_pselect6_basic(void) {
     }
 }
 
+/* ============================================================
+ * Tests 626-627: pipe write-after-read-close → EPIPE + SIGPIPE
+ * ============================================================
+ *
+ * Linux ABI: writing to a pipe with no readers returns -EPIPE and
+ * queues SIGPIPE to the calling task.  When SIGPIPE is blocked or
+ * ignored the write still returns -EPIPE.
+ *
+ *   626: write to closed-read-end pipe → -EPIPE, SIGPIPE pending
+ *   627: same but with SIGPIPE blocked → -EPIPE, no unblocked SIGPIPE
+ */
+static void test_pipe_epipe_sigpipe(void) {
+    extern long sys_pipe(int pipefd[2]);
+    extern long sys_write(int fd, const void *buf, size_t count);
+    extern long sys_close(int fd);
+
+    fut_task_t *task = fut_task_current();
+
+    /* Test 626: write to pipe with read end closed → EPIPE + SIGPIPE pending */
+    fut_printf("[MISC-TEST] Test 626: pipe write after read close → EPIPE+SIGPIPE\n");
+    int pfd626[2];
+    if (sys_pipe(pfd626) != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 626: pipe() failed\n");
+        fut_test_fail(626); fut_test_fail(627); return;
+    }
+    sys_close(pfd626[0]);          /* Close read end */
+
+    /* Block SIGPIPE (bit 12 = signal 13 - 1) so the test survives */
+    uint64_t saved_mask = task->signal_mask;
+    task->signal_mask |= (1ULL << 12);
+    /* Clear any pre-existing SIGPIPE */
+    __atomic_and_fetch(&task->pending_signals, ~(1ULL << 12), __ATOMIC_ACQ_REL);
+
+    long r626 = sys_write(pfd626[1], "x", 1);
+    sys_close(pfd626[1]);
+
+    int sigpipe_pending = (__atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE) >> 12) & 1;
+    task->signal_mask = saved_mask;
+    __atomic_and_fetch(&task->pending_signals, ~(1ULL << 12), __ATOMIC_ACQ_REL);
+
+    if (r626 != -EPIPE) {
+        fut_printf("[MISC-TEST] ✗ Test 626: write returned %ld (expected -EPIPE)\n", r626);
+        fut_test_fail(626);
+    } else if (!sigpipe_pending) {
+        fut_printf("[MISC-TEST] ✗ Test 626: SIGPIPE not queued after EPIPE write\n");
+        fut_test_fail(626);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 626: pipe write after read close → EPIPE + SIGPIPE\n");
+        fut_test_pass();
+    }
+
+    /* Test 627: SIGPIPE blocked → write returns EPIPE but SIGPIPE stays blocked/pending */
+    fut_printf("[MISC-TEST] Test 627: pipe write SIGPIPE blocked → only EPIPE\n");
+    int pfd627[2];
+    if (sys_pipe(pfd627) != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 627: pipe() failed\n");
+        fut_test_fail(627); return;
+    }
+    sys_close(pfd627[0]);
+
+    uint64_t saved627 = task->signal_mask;
+    task->signal_mask |= (1ULL << 12);   /* block SIGPIPE */
+    __atomic_and_fetch(&task->pending_signals, ~(1ULL << 12), __ATOMIC_ACQ_REL);
+
+    long r627 = sys_write(pfd627[1], "y", 1);
+    sys_close(pfd627[1]);
+
+    task->signal_mask = saved627;
+    /* Clear the SIGPIPE queued while blocked — it will be delivered on unblock in real use */
+    __atomic_and_fetch(&task->pending_signals, ~(1ULL << 12), __ATOMIC_ACQ_REL);
+
+    if (r627 != -EPIPE) {
+        fut_printf("[MISC-TEST] ✗ Test 627: write returned %ld (expected -EPIPE)\n", r627);
+        fut_test_fail(627);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 627: pipe write SIGPIPE blocked → EPIPE returned\n");
+        fut_test_pass();
+    }
+}
+
+/* ============================================================
+ * Test 628: dup2(oldfd, newfd) clears FD_CLOEXEC on newfd
+ * ============================================================
+ *
+ * POSIX: dup2 always clears the close-on-exec flag on the new fd.
+ * (Exception: dup2(fd, fd) is a no-op, tested in test 92.)
+ */
+static void test_dup2_clears_cloexec(void) {
+    extern long sys_dup2(int oldfd, int newfd);
+    extern long sys_fcntl(int fd, int cmd, uint64_t arg);
+
+    fut_printf("[MISC-TEST] Test 628: dup2(old, new) clears FD_CLOEXEC on new fd\n");
+
+    /* Open a file and set O_CLOEXEC on it */
+    int src = (int)fut_vfs_open("/dup2_cloexec_test.txt", 0x42 /* O_RDWR|O_CREAT */, 0644);
+    if (src < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 628: open failed: %d\n", src);
+        fut_test_fail(628); return;
+    }
+    /* Set FD_CLOEXEC on src */
+    sys_fcntl(src, 2 /* F_SETFD */, 1 /* FD_CLOEXEC */);
+
+    /* Open a second fd and set cloexec on it — this is the target for dup2 */
+    int dst = (int)fut_vfs_open("/dup2_cloexec_test.txt", 0, 0);
+    if (dst < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 628: open dst failed: %d\n", dst);
+        fut_vfs_close(src);
+        fut_test_fail(628); return;
+    }
+    sys_fcntl(dst, 2 /* F_SETFD */, 1 /* FD_CLOEXEC */);
+
+    /* dup2(src, dst): replaces dst with duplicate of src — must clear cloexec on dst */
+    long r = sys_dup2(src, dst);
+    if (r != dst) {
+        fut_printf("[MISC-TEST] ✗ Test 628: dup2 returned %ld (expected %d)\n", r, dst);
+        fut_vfs_close(src); fut_vfs_close(dst);
+        fut_test_fail(628); return;
+    }
+
+    /* Verify cloexec is cleared on dst */
+    long flags = sys_fcntl(dst, 1 /* F_GETFD */, 0);
+    fut_vfs_close(src); fut_vfs_close(dst);
+
+    if (flags & 1 /* FD_CLOEXEC */) {
+        fut_printf("[MISC-TEST] ✗ Test 628: dup2 did not clear FD_CLOEXEC (flags=0x%lx)\n", flags);
+        fut_test_fail(628);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 628: dup2 cleared FD_CLOEXEC on new fd\n");
+        fut_test_pass();
+    }
+}
+
+/* ============================================================
+ * Test 629: O_APPEND write goes to EOF even after lseek(0)
+ * ============================================================
+ *
+ * Linux ABI: with O_APPEND, each write atomically seeks to EOF then
+ * writes — even if the file offset was moved with lseek().
+ */
+static void test_o_append_lseek(void) {
+    extern long sys_lseek(int fd, long offset, int whence);
+    extern ssize_t sys_write(int fd, const void *buf, size_t count);
+    extern ssize_t sys_read(int fd, void *buf, size_t count);
+
+    fut_printf("[MISC-TEST] Test 629: O_APPEND write ignores lseek position\n");
+
+    /* Create file with 5 bytes of content */
+    int fd = (int)fut_vfs_open("/append_lseek_test.txt", 0x42 /* O_RDWR|O_CREAT */, 0644);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 629: open failed: %d\n", fd);
+        fut_test_fail(629); return;
+    }
+    fut_vfs_write(fd, "AAAAA", 5);
+    fut_vfs_close(fd);
+
+    /* Reopen with O_APPEND, then lseek to beginning, then write */
+    fd = (int)fut_vfs_open("/append_lseek_test.txt",
+                           0x402 /* O_RDWR|O_APPEND */, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 629: O_APPEND reopen failed: %d\n", fd);
+        fut_test_fail(629); return;
+    }
+    sys_lseek(fd, 0, 0 /* SEEK_SET */);     /* seek to start */
+    sys_write(fd, "BB", 2);                  /* should append at EOF (offset 5) */
+    fut_vfs_close(fd);
+
+    /* Read back file; should be "AAAAABB" (7 bytes) */
+    fd = (int)fut_vfs_open("/append_lseek_test.txt", 0, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 629: reopen for read failed: %d\n", fd);
+        fut_test_fail(629); return;
+    }
+    char buf[16] = {0};
+    ssize_t n = sys_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+
+    if (n != 7 || __builtin_memcmp(buf, "AAAAABB", 7) != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 629: n=%ld buf='%s' (expected 7 'AAAAABB')\n",
+                   (long)n, buf);
+        fut_test_fail(629);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 629: O_APPEND lseek(0) then write → appended at EOF\n");
+        fut_test_pass();
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -24989,6 +25175,9 @@ void fut_misc_test_thread(void *arg) {
     test_map_fixed_unaligned();              /* Tests 614-617: MAP_FIXED unaligned addr → EINVAL */
     test_mremap_grow();                      /* Tests 618-621: mremap grow/MREMAP_MAYMOVE/MREMAP_FIXED */
     test_pselect6_basic();                   /* Tests 622-625: pselect6 readfds/writefds/nfds=0/timeout=0 */
+    test_pipe_epipe_sigpipe();               /* Tests 626-627: pipe write-after-read-close EPIPE+SIGPIPE */
+    test_dup2_clears_cloexec();              /* Test 628: dup2(old,new) clears FD_CLOEXEC on new fd */
+    test_o_append_lseek();                   /* Test 629: O_APPEND write goes to EOF even after lseek(0) */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

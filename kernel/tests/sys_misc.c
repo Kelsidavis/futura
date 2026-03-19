@@ -24873,6 +24873,45 @@ static void test_sched_yield_basic(void) {
 }
 
 /* ============================================================
+ * Tests 677-678: sys_utimes basic
+ * ============================================================
+ *   Test 677: utimes("/tmp/utimes_test", NULL) → 0 (set to current time)
+ *   Test 678: utimes("/no_such_file_xyz", NULL) → ENOENT
+ */
+static void test_utimes_basic(void) {
+    extern long sys_utimes(const char *pathname, const void *times);
+
+    /* Create a test file */
+    int fd = fut_vfs_open("/tmp/utimes_test", 0x241 /* O_WRONLY|O_CREAT|O_TRUNC */, 0644);
+    if (fd >= 0) fut_vfs_close(fd);
+
+    /* Test 677: utimes with NULL times → set to current time → 0 */
+    fut_printf("[MISC-TEST] Test 677: utimes(\"/tmp/utimes_test\", NULL) → 0\n");
+    long ret = sys_utimes("/tmp/utimes_test", NULL);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 677: utimes returned %ld (expected 0)\n", ret);
+        fut_vfs_unlink("/tmp/utimes_test");
+        fut_test_fail(677);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 677: utimes → 0\n");
+        fut_vfs_unlink("/tmp/utimes_test");
+        fut_test_pass();
+    }
+
+    /* Test 678: utimes nonexistent file → ENOENT */
+    fut_printf("[MISC-TEST] Test 678: utimes(\"/no_such_utimes_file\", NULL) → ENOENT\n");
+    ret = sys_utimes("/no_such_utimes_file", NULL);
+    if (ret != -ENOENT) {
+        fut_printf("[MISC-TEST] ✗ Test 678: utimes nonexistent returned %ld (expected -ENOENT=%d)\n",
+                   ret, -ENOENT);
+        fut_test_fail(678);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 678: utimes nonexistent → ENOENT\n");
+        fut_test_pass();
+    }
+}
+
+/* ============================================================
  * Tests 675-676: gettimeofday basic and settimeofday
  * ============================================================
  *   Test 675: gettimeofday(&tv, NULL) → 0, tv_sec > 0
@@ -26169,6 +26208,7 @@ void fut_misc_test_thread(void *arg) {
     test_vhangup_basic();                    /* Test 658: vhangup() → 0 */
     test_pivot_root_enosys();                /* Test 659: pivot_root → ENOSYS */
     test_umask_roundtrip_syslog_console();   /* Tests 667-668: umask round-trip + syslog CONSOLE_OFF/ON */
+    test_utimes_basic();                     /* Tests 677-678: utimes NULL→0, nonexistent→ENOENT */
     test_gettimeofday_settimeofday();        /* Tests 675-676: gettimeofday tv_sec>0, settimeofday NULL→EFAULT */
     test_sethostname_setdomainname();        /* Tests 671-672: sethostname/setdomainname → 0 */
     test_tee_and_sync_file_range();          /* Tests 673-674: tee same-fd→EINVAL, sync_file_range→0 */

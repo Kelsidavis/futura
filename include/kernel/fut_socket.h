@@ -340,6 +340,16 @@ typedef struct fut_socket {
     int flags;                              /* O_NONBLOCK, etc */
     int socket_type;                        /* SOCK_STREAM, etc (AF_UNIX only) */
     int address_family;                     /* AF_UNIX only */
+    uint32_t so_flags;                      /* Boolean SO_* options bitmask */
+/* so_flags bits */
+#define FUT_SO_F_REUSEADDR  (1u << 0)
+#define FUT_SO_F_REUSEPORT  (1u << 1)
+#define FUT_SO_F_KEEPALIVE  (1u << 2)
+#define FUT_SO_F_BROADCAST  (1u << 3)
+#define FUT_SO_F_OOBINLINE  (1u << 4)
+#define FUT_SO_F_DONTROUTE  (1u << 5)
+#define FUT_SO_F_DEBUG      (1u << 6)
+#define FUT_SO_F_TIMESTAMP  (1u << 7)
 
     /* Shutdown state (Phase 4) */
     bool shutdown_rd;                       /* Read channel shut down (SHUT_RD) */

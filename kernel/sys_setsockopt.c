@@ -471,18 +471,31 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
 
             case SO_REUSEADDR:
             case SO_REUSEPORT:
-                /* Accept without enforcement (AF_UNIX doesn't have port conflicts) */
-                if (optlen < sizeof(int)) return -EINVAL;
-                return 0;
-
             case SO_KEEPALIVE:
             case SO_BROADCAST:
             case SO_OOBINLINE:
             case SO_DONTROUTE:
-            case SO_DEBUG:
-                /* Boolean options — accept without enforcement */
+            case SO_DEBUG: {
+                /* Boolean options — store in so_flags for getsockopt round-trip */
                 if (optlen < sizeof(int)) return -EINVAL;
+                int val = 0;
+                if (sso_copy_from_user(&val, optval, sizeof(int)) != 0) return -EFAULT;
+                uint32_t bit = 0;
+                switch (optname) {
+                    case SO_REUSEADDR:  bit = FUT_SO_F_REUSEADDR; break;
+                    case SO_REUSEPORT:  bit = FUT_SO_F_REUSEPORT; break;
+                    case SO_KEEPALIVE:  bit = FUT_SO_F_KEEPALIVE; break;
+                    case SO_BROADCAST:  bit = FUT_SO_F_BROADCAST; break;
+                    case SO_OOBINLINE:  bit = FUT_SO_F_OOBINLINE; break;
+                    case SO_DONTROUTE:  bit = FUT_SO_F_DONTROUTE; break;
+                    case SO_DEBUG:      bit = FUT_SO_F_DEBUG;     break;
+                }
+                if (val)
+                    socket->so_flags |= bit;
+                else
+                    socket->so_flags &= ~bit;
                 return 0;
+            }
 
             case SO_SNDBUF:
             case SO_RCVBUF: {

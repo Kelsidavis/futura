@@ -26211,6 +26211,122 @@ static void test_getsid_getpgid_self(void) {
 }
 
 /**
+ * test_sockopt_bool_roundtrip - Tests 740-743
+ *
+ *   Test 740: setsockopt(SO_REUSEADDR, 1) → getsockopt → 1
+ *   Test 741: setsockopt(SO_KEEPALIVE, 1) → getsockopt → 1
+ *   Test 742: setsockopt(SO_REUSEADDR, 0) clears it → getsockopt → 0
+ *   Test 743: setsockopt(SO_BROADCAST, 1) → getsockopt → 1
+ */
+static void test_sockopt_bool_roundtrip(void) {
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_setsockopt(int fd, int level, int optname,
+                               const void *optval, unsigned int optlen);
+    extern long sys_getsockopt(int fd, int level, int optname,
+                               void *optval, unsigned int *optlen);
+
+#define T740_SOL_SOCKET  1
+#define T740_SO_REUSEADDR 2
+#define T740_SO_KEEPALIVE 9
+#define T740_SO_BROADCAST 6
+
+    long s = sys_socket(1 /* AF_UNIX */, 1 /* SOCK_STREAM */, 0);
+    if (s < 0) {
+        fut_printf("[MISC-TEST] ✗ Tests 740-743: socket failed: %ld\n", s);
+        fut_test_fail(740); fut_test_fail(741);
+        fut_test_fail(742); fut_test_fail(743);
+        return;
+    }
+
+    int enable = 1, got = -1;
+    unsigned int glen = sizeof(int);
+
+    /* Test 740: SO_REUSEADDR set → get = 1 */
+    fut_printf("[MISC-TEST] Test 740: setsockopt/getsockopt SO_REUSEADDR round-trip\n");
+    long r = sys_setsockopt((int)s, T740_SOL_SOCKET, T740_SO_REUSEADDR,
+                            &enable, sizeof(int));
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 740: setsockopt(SO_REUSEADDR) returned %ld\n", r);
+        fut_test_fail(740);
+    } else {
+        got = -1; glen = sizeof(int);
+        r = sys_getsockopt((int)s, T740_SOL_SOCKET, T740_SO_REUSEADDR, &got, &glen);
+        if (r != 0 || got != 1) {
+            fut_printf("[MISC-TEST] ✗ Test 740: getsockopt(SO_REUSEADDR) r=%ld got=%d\n", r, got);
+            fut_test_fail(740);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 740: SO_REUSEADDR=1 round-trip\n");
+            fut_test_pass();
+        }
+    }
+
+    /* Test 741: SO_KEEPALIVE set → get = 1 */
+    fut_printf("[MISC-TEST] Test 741: setsockopt/getsockopt SO_KEEPALIVE round-trip\n");
+    r = sys_setsockopt((int)s, T740_SOL_SOCKET, T740_SO_KEEPALIVE,
+                       &enable, sizeof(int));
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 741: setsockopt(SO_KEEPALIVE) returned %ld\n", r);
+        fut_test_fail(741);
+    } else {
+        got = -1; glen = sizeof(int);
+        r = sys_getsockopt((int)s, T740_SOL_SOCKET, T740_SO_KEEPALIVE, &got, &glen);
+        if (r != 0 || got != 1) {
+            fut_printf("[MISC-TEST] ✗ Test 741: getsockopt(SO_KEEPALIVE) r=%ld got=%d\n", r, got);
+            fut_test_fail(741);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 741: SO_KEEPALIVE=1 round-trip\n");
+            fut_test_pass();
+        }
+    }
+
+    /* Test 742: clear SO_REUSEADDR → get = 0 */
+    fut_printf("[MISC-TEST] Test 742: setsockopt(SO_REUSEADDR, 0) clears flag\n");
+    int zero = 0;
+    r = sys_setsockopt((int)s, T740_SOL_SOCKET, T740_SO_REUSEADDR,
+                       &zero, sizeof(int));
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 742: setsockopt(SO_REUSEADDR, 0) returned %ld\n", r);
+        fut_test_fail(742);
+    } else {
+        got = -1; glen = sizeof(int);
+        r = sys_getsockopt((int)s, T740_SOL_SOCKET, T740_SO_REUSEADDR, &got, &glen);
+        if (r != 0 || got != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 742: getsockopt(SO_REUSEADDR) r=%ld got=%d (want 0)\n",
+                       r, got);
+            fut_test_fail(742);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 742: SO_REUSEADDR cleared to 0\n");
+            fut_test_pass();
+        }
+    }
+
+    /* Test 743: SO_BROADCAST set → get = 1 */
+    fut_printf("[MISC-TEST] Test 743: setsockopt/getsockopt SO_BROADCAST round-trip\n");
+    r = sys_setsockopt((int)s, T740_SOL_SOCKET, T740_SO_BROADCAST,
+                       &enable, sizeof(int));
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 743: setsockopt(SO_BROADCAST) returned %ld\n", r);
+        fut_test_fail(743);
+    } else {
+        got = -1; glen = sizeof(int);
+        r = sys_getsockopt((int)s, T740_SOL_SOCKET, T740_SO_BROADCAST, &got, &glen);
+        if (r != 0 || got != 1) {
+            fut_printf("[MISC-TEST] ✗ Test 743: getsockopt(SO_BROADCAST) r=%ld got=%d\n", r, got);
+            fut_test_fail(743);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 743: SO_BROADCAST=1 round-trip\n");
+            fut_test_pass();
+        }
+    }
+
+    fut_vfs_close((int)s);
+#undef T740_SOL_SOCKET
+#undef T740_SO_REUSEADDR
+#undef T740_SO_KEEPALIVE
+#undef T740_SO_BROADCAST
+}
+
+/**
  * test_renameat_atfdcwd - Test 734
  *
  *   Test 734: renameat(AT_FDCWD, old, AT_FDCWD, new) behaves like rename()
@@ -27511,6 +27627,7 @@ void fut_misc_test_thread(void *arg) {
     test_rename_overwrite();                 /* Test 735: rename() overwrites existing dst */
     test_ocreat_oexcl_existing();            /* Test 736: O_CREAT|O_EXCL on existing → EEXIST */
     test_hardlink_nlinks();                  /* Tests 737-739: hard link nlink count 1→2→1 */
+    test_sockopt_bool_roundtrip();           /* Tests 740-743: SO_REUSEADDR/KEEPALIVE/BROADCAST round-trip */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

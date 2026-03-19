@@ -628,10 +628,18 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
             case SO_KEEPALIVE:
             case SO_BROADCAST:
             case SO_OOBINLINE:
-            case SO_DONTROUTE:
-                /* Boolean options - return 0 (default: disabled)
-                 * setsockopt accepts these but doesn't enforce them */
-                int_value = 0;
+            case SO_DONTROUTE: {
+                /* Boolean options — return stored so_flags value */
+                uint32_t bit = 0;
+                switch (optname) {
+                    case SO_REUSEADDR: bit = FUT_SO_F_REUSEADDR; break;
+                    case SO_REUSEPORT: bit = FUT_SO_F_REUSEPORT; break;
+                    case SO_KEEPALIVE: bit = FUT_SO_F_KEEPALIVE; break;
+                    case SO_BROADCAST: bit = FUT_SO_F_BROADCAST; break;
+                    case SO_OOBINLINE: bit = FUT_SO_F_OOBINLINE; break;
+                    case SO_DONTROUTE: bit = FUT_SO_F_DONTROUTE; break;
+                }
+                int_value = (socket->so_flags & bit) ? 1 : 0;
                 value_len = sizeof(int);
 
                 copy_len = (len < value_len) ? len : value_len;
@@ -643,6 +651,7 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
                 }
 
                 return 0;
+            }
 
             case SO_RCVLOWAT:
             case SO_SNDLOWAT:

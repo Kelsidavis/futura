@@ -19921,6 +19921,45 @@ static void test_ptrace_stub(void) {
     fut_printf("[MISC-TEST] ✓ Test 460: ptrace(PTRACE_ATTACH) = -EPERM\n");
 }
 
+/* ============================================================
+ * Tests 462-464: /proc/thread-self symlink
+ * ============================================================ */
+static void test_proc_thread_self(void) {
+    fut_printf("[MISC-TEST] Tests 462-464: /proc/thread-self\n");
+
+    /* Test 462: /proc/thread-self exists as a symlink (readlink succeeds) */
+    char target[128] = {0};
+    extern long sys_readlinkat(int dirfd, const char *path, char *buf, size_t bufsize);
+    long n = sys_readlinkat(-100 /* AT_FDCWD */, "/proc/thread-self", target, sizeof(target) - 1);
+    if (n <= 0) {
+        fut_printf("[MISC-TEST] ✗ Test 462: readlink /proc/thread-self failed: %ld\n", n);
+        fut_test_fail(462); fut_test_fail(463); fut_test_fail(464); return;
+    }
+    target[n] = '\0';
+    fut_test_pass(); /* Test 462 */
+    fut_printf("[MISC-TEST] ✓ Test 462: /proc/thread-self → '%s'\n", target);
+
+    /* Test 463: target starts with /proc/ */
+    int starts_ok = (target[0]=='/' && target[1]=='p' && target[2]=='r' &&
+                     target[3]=='o' && target[4]=='c' && target[5]=='/');
+    if (!starts_ok) {
+        fut_printf("[MISC-TEST] ✗ Test 463: /proc/thread-self target '%s' doesn't start with /proc/\n", target);
+        fut_test_fail(463); fut_test_fail(464); return;
+    }
+    fut_test_pass(); /* Test 463 */
+    fut_printf("[MISC-TEST] ✓ Test 463: /proc/thread-self target begins /proc/\n");
+
+    /* Test 464: /proc/thread-self is openable as a directory */
+    int fd = fut_vfs_open(target, O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 464: open '%s' failed: %d\n", target, fd);
+        fut_test_fail(464); return;
+    }
+    fut_vfs_close(fd);
+    fut_test_pass(); /* Test 464 */
+    fut_printf("[MISC-TEST] ✓ Test 464: /proc/thread-self target directory opened\n");
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -20346,6 +20385,7 @@ void fut_misc_test_thread(void *arg) {
     test_proc_auxv();                     /* Tests 456-458: /proc/self/auxv binary format */
     test_ptrace_stub();                   /* Tests 459-460: ptrace PTRACE_TRACEME=0, others EPERM */
     test_sa_restorer_stored();            /* Test 461: SA_RESTORER stored and returned by sigaction */
+    test_proc_thread_self();              /* Tests 462-464: /proc/thread-self symlink */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -61,6 +61,7 @@ extern char g_domainname[];
 enum procfs_kind {
     PROC_ROOT,       /* /proc directory */
     PROC_SELF,       /* /proc/self symlink */
+    PROC_THREAD_SELF,/* /proc/thread-self symlink */
     PROC_MEMINFO,    /* /proc/meminfo */
     PROC_VERSION,    /* /proc/version */
     PROC_UPTIME,     /* /proc/uptime */
@@ -353,6 +354,7 @@ typedef struct {
 #define PROC_INO_PID_AUXV(p)           (1000ULL + (uint64_t)(p) * 100 + 27)
 #define PROC_INO_BUDDYINFO             26ULL
 #define PROC_INO_ZONEINFO              27ULL
+#define PROC_INO_THREAD_SELF           28ULL
 /* /proc/sys/vm/ extended range: 350-379 */
 #define PROC_INO_SYS_VM_DROP_CACHES    350ULL
 #define PROC_INO_SYS_VM_DIRTY_EXPIRE   351ULL
@@ -2701,6 +2703,21 @@ static ssize_t procfs_link_readlink(struct fut_vnode *vnode, char *buf, size_t s
             len = b.pos;
             break;
         }
+        case PROC_THREAD_SELF: {
+            /* Resolve to /proc/<pid>/task/<tid> */
+            fut_task_t *cur = fut_task_current();
+            extern fut_thread_t *fut_thread_current(void);
+            fut_thread_t *thr = fut_thread_current();
+            uint64_t cpid = cur ? cur->pid : 1;
+            uint64_t ctid = thr ? thr->tid : cpid;
+            struct pbuf b = { tmp, 0, sizeof(tmp) };
+            pb_str(&b, "/proc/");
+            pb_u64(&b, cpid);
+            pb_str(&b, "/task/");
+            pb_u64(&b, ctid);
+            len = b.pos;
+            break;
+        }
         case PROC_EXE: {
             /* Executable path stored at exec time */
             fut_task_t *task = fut_task_by_pid(n->pid);
@@ -2876,6 +2893,11 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
         if (STREQ(name, "self")) {
             *result = procfs_alloc_vnode(mnt, VN_LNK, PROC_INO_SELF,
                                           0120777, PROC_SELF, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "thread-self")) {
+            *result = procfs_alloc_vnode(mnt, VN_LNK, PROC_INO_THREAD_SELF,
+                                          0120777, PROC_THREAD_SELF, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
         if (STREQ(name, "meminfo")) {
@@ -3847,14 +3869,14 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
     if (dn->kind == PROC_ROOT) {
         /* Fixed entries: ., .., self, meminfo, version, uptime, cpuinfo, loadavg, mounts, sys, ... */
         static const char *fixed[] = {
-            ".", "..", "self", "meminfo", "version", "uptime", "cpuinfo",
+            ".", "..", "self", "thread-self", "meminfo", "version", "uptime", "cpuinfo",
             "loadavg", "mounts", "sys", "stat", "filesystems", "vmstat", "net",
             "interrupts", "cmdline", "swaps", "devices", "misc",
             "buddyinfo", "zoneinfo"
         };
         static const uint8_t fixed_type[] = {
             FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
-            FUT_VDIR_TYPE_SYMLINK,
+            FUT_VDIR_TYPE_SYMLINK, FUT_VDIR_TYPE_SYMLINK,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
             FUT_VDIR_TYPE_DIR,
@@ -3866,7 +3888,8 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         };
         static const uint64_t fixed_ino[] = {
             PROC_INO_ROOT, PROC_INO_ROOT,
-            PROC_INO_SELF, PROC_INO_MEMINFO, PROC_INO_VERSION, PROC_INO_UPTIME,
+            PROC_INO_SELF, PROC_INO_THREAD_SELF,
+            PROC_INO_MEMINFO, PROC_INO_VERSION, PROC_INO_UPTIME,
             PROC_INO_CPUINFO, PROC_INO_LOADAVG, PROC_INO_MOUNTS, PROC_INO_SYS_DIR,
             PROC_INO_STAT_GLOBAL, PROC_INO_FILESYSTEMS,
             PROC_INO_VMSTAT, PROC_INO_NET_DIR,
@@ -3874,7 +3897,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             PROC_INO_CMDLINE_GLOBAL, PROC_INO_SWAPS, PROC_INO_DEVICES, PROC_INO_MISC_FILE,
             PROC_INO_BUDDYINFO, PROC_INO_ZONEINFO
         };
-        if (idx < 21) {
+        if (idx < 22) {
             de->d_ino    = fixed_ino[idx];
             de->d_off    = idx + 1;
             de->d_type   = fixed_type[idx];

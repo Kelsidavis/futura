@@ -1482,10 +1482,37 @@ static int64_t sys_sigprocmask_handler(uint64_t how, uint64_t set, uint64_t olds
  */
 static int64_t sys_sigreturn_handler(uint64_t frame_ptr, uint64_t arg2, uint64_t arg3,
                                      uint64_t arg4, uint64_t arg5, uint64_t arg6) {
-    (void)frame_ptr; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    (void)frame_ptr; (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
 
-    /* arg2 (RSI) contains pointer to rt_sigframe on user stack */
-    void *user_frame = (void *)(uintptr_t)arg2;
+    /* Locate the rt_sigframe using the user RSP captured at syscall entry.
+     *
+     * On x86_64: signal delivery sets frame->rsp = user_sp (base of rt_sigframe).
+     *   The handler's 'ret' pops sigframe.return_address, advancing user RSP to
+     *   user_sp + sizeof(long). __restore_rt then calls 'int $0x80' (rt_sigreturn).
+     *   At that point fut_current_frame->rsp == user_sp + sizeof(long), so:
+     *     sigframe_base = fut_current_frame->rsp - sizeof(long)
+     *
+     * On ARM64: signal delivery sets frame->sp = user_sp. The handler returns
+     *   via 'ret' (br x30) where x30 = sa_restorer, which calls 'svc #0'. At that
+     *   point SP is still user_sp (ARM64 ret doesn't pop the stack), so:
+     *     sigframe_base = fut_current_frame->sp
+     *
+     * Using RSI (old approach) is wrong: RSI contains the siginfo_t pointer set at
+     * signal delivery, and the signal handler may have clobbered it by the time
+     * __restore_rt calls rt_sigreturn.
+     */
+    extern fut_interrupt_frame_t *fut_current_frame;
+#ifdef __x86_64__
+    void *user_frame = fut_current_frame
+        ? (void *)(uintptr_t)(fut_current_frame->rsp - sizeof(long))
+        : NULL;
+#elif defined(__aarch64__)
+    void *user_frame = fut_current_frame
+        ? (void *)(uintptr_t)fut_current_frame->sp
+        : NULL;
+#else
+    void *user_frame = NULL;
+#endif
 
     extern fut_task_t *fut_task_current(void);
     extern int fut_copy_from_user(void *k_dst, const void *u_src, size_t n);
@@ -1549,8 +1576,7 @@ static int64_t sys_sigreturn_handler(uint64_t frame_ptr, uint64_t arg2, uint64_t
             frame->fs = ctx->fs;
         }
 
-        fut_printf("[SIGNAL] Restored context from sigreturn: rip=0x%llx rsp=0x%llx\n",
-                   frame->rip, frame->rsp);
+        (void)0; /* context restored */
 #elif defined(__aarch64__)
         struct sigcontext *ctx = &sigframe.uc.uc_mcontext.gregs;
 
@@ -1576,8 +1602,7 @@ static int64_t sys_sigreturn_handler(uint64_t frame_ptr, uint64_t arg2, uint64_t
         frame->fpsr = ctx->fpsr;
         frame->fpcr = ctx->fpcr;
 
-        fut_printf("[SIGNAL] Restored context from sigreturn: pc=0x%llx sp=0x%llx\n",
-                   frame->pc, frame->sp);
+        (void)0; /* context restored */
 #else
 #error "Unsupported architecture for sigreturn"
 #endif

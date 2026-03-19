@@ -255,7 +255,10 @@ long sys_close(int fd) {
  *   -ESRCH  if no current task
  */
 long sys_close_range(unsigned int first, unsigned int last, unsigned int flags) {
-    const unsigned int SUPPORTED = CLOSE_RANGE_CLOEXEC;
+    /* CLOSE_RANGE_UNSHARE: unshare FD table before ranging.
+     * Futura's per-task FD tables are never shared (no CLONE_FILES threads in
+     * the close_range caller context), so this is a safe no-op. */
+    const unsigned int SUPPORTED = CLOSE_RANGE_CLOEXEC | CLOSE_RANGE_UNSHARE;
 
     fut_task_t *task = fut_task_current();
     if (!task) {
@@ -269,7 +272,6 @@ long sys_close_range(unsigned int first, unsigned int last, unsigned int flags) 
         return -EINVAL;
     }
 
-    /* CLOSE_RANGE_UNSHARE requires FD-table unsharing; not supported */
     if (flags & ~SUPPORTED) {
         fut_printf("[CLOSE_RANGE] close_range(%u, %u, 0x%x, pid=%d) -> EINVAL (unsupported flags)\n",
                    first, last, flags, task->pid);

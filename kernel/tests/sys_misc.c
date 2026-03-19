@@ -18684,6 +18684,27 @@ static void test_pidfd_poll(void) {
 }
 
 /* ============================================================
+ * Test 417: close_range CLOSE_RANGE_UNSHARE accepted as no-op
+ * ============================================================ */
+static void test_close_range_unshare(void) {
+    extern long sys_close_range(unsigned int first, unsigned int last,
+                                unsigned int flags);
+#define CLOSE_RANGE_UNSHARE_VAL (1U << 1)
+#define CLOSE_RANGE_CLOEXEC_VAL (1U << 2)
+
+    fut_printf("[MISC-TEST] Test 417: close_range(3, 10, UNSHARE) -> 0\n");
+    /* CLOSE_RANGE_UNSHARE should be a no-op and return 0 */
+    long r = sys_close_range(3, 10, CLOSE_RANGE_UNSHARE_VAL);
+    if (r == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 417: close_range UNSHARE accepted\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 417: got %ld (expected 0)\n", r);
+        fut_test_fail(417);
+    }
+}
+
+/* ============================================================
  * Tests 415-416: madvise MADV_POPULATE_READ/WRITE (Linux 5.14+)
  * ============================================================ */
 static void test_madvise_populate(void) {
@@ -19373,6 +19394,7 @@ void fut_misc_test_thread(void *arg) {
     test_pidfd_poll();                  /* Tests 410-411: pidfd poll on live process: open+0-events */
     test_prctl_tid_address_speculation(); /* Tests 412-414: PR_GET_TID_ADDRESS, SPECULATION_CTRL get/set */
     test_madvise_populate();              /* Tests 415-416: MADV_POPULATE_READ/WRITE accepted (Linux 5.14+) */
+    test_close_range_unshare();           /* Test 417: close_range CLOSE_RANGE_UNSHARE accepted */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

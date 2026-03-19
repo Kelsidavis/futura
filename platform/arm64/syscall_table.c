@@ -3352,11 +3352,19 @@ struct syscall_entry {
 static struct syscall_entry syscall_table[MAX_SYSCALL];
 static bool syscall_table_initialized = false;
 
-/* Stub that returns -ENOSYS (used for clone3 so libc probes fall back silently) */
+/* Stub that returns -ENOSYS */
 static int64_t sys_enosys_stub(uint64_t a1, uint64_t a2, uint64_t a3,
                                 uint64_t a4, uint64_t a5, uint64_t a6) {
     (void)a1; (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
     return -ENOSYS;
+}
+
+/* clone3 wrapper — translates struct clone_args to fork or clone_thread */
+static int64_t sys_clone3_wrapper(uint64_t cl_args, uint64_t size, uint64_t a3,
+                                   uint64_t a4, uint64_t a5, uint64_t a6) {
+    (void)a3; (void)a4; (void)a5; (void)a6;
+    extern long sys_clone3(const void *uargs, size_t size);
+    return sys_clone3((const void *)(uintptr_t)cl_args, (size_t)size);
 }
 
 /* Initialize syscall table at runtime to avoid ARM64 relocation issues */
@@ -3628,8 +3636,8 @@ static void arm64_syscall_table_init(void) {
     syscall_table[__NR_socketpair].name = "socketpair";
     syscall_table[__NR_renameat2].handler = (syscall_fn_t)sys_renameat2_wrapper;
     syscall_table[__NR_renameat2].name = "renameat2";
-    /* clone3: ENOSYS so libc falls back to clone() (fork-compat) */
-    syscall_table[__NR_clone3].handler = (syscall_fn_t)sys_enosys_stub;
+    /* clone3: fork/thread dispatch via struct clone_args */
+    syscall_table[__NR_clone3].handler = (syscall_fn_t)sys_clone3_wrapper;
     syscall_table[__NR_clone3].name = "clone3";
     syscall_table[__NR_close_range].handler = (syscall_fn_t)sys_close_range_wrapper;
     syscall_table[__NR_close_range].name = "close_range";

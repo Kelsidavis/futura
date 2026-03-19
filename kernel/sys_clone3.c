@@ -1,0 +1,135 @@
+/* kernel/sys_clone3.c - clone3() syscall (Linux 5.3+)
+ *
+ * Copyright (c) 2025 Kelsi Davis
+ * Licensed under the MPL v2.0 — see LICENSE for details.
+ *
+ * clone3() is the newer process/thread creation interface that uses a
+ * struct clone_args instead of raw arguments.  It subsumes clone() and
+ * is the preferred path in glibc 2.34+ for both fork() and pthread_create().
+ *
+ * Implemented paths:
+ *   - Fork: flags == SIGCHLD (or 0 exit-signal) with no CLONE_VM/THREAD
+ *   - Thread: CLONE_VM | CLONE_THREAD | CLONE_SIGHAND set
+ *
+ * Returns ENOSYS for namespace flags (CLONE_NEWNS etc.) that require
+ * unimplemented namespace infrastructure.
+ *
+ * Syscall number (Linux x86_64 / ARM64): 435
+ */
+
+#include <kernel/fut_task.h>
+#include <kernel/fut_thread.h>
+#include <kernel/errno.h>
+#include <kernel/uaccess.h>
+#include <stdint.h>
+#include <stddef.h>
+#include <string.h>
+
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
+#include <kernel/kprintf.h>
+
+/* struct clone_args — as defined by Linux (uapi/linux/sched.h) */
+struct fut_clone_args {
+    uint64_t flags;         /* Clone flags */
+    uint64_t pidfd;         /* Out: pidfd (CLONE_PIDFD) */
+    uint64_t child_tid;     /* Out in child: TID (CLONE_CHILD_SETTID) */
+    uint64_t parent_tid;    /* Out in parent: child TID (CLONE_PARENT_SETTID) */
+    uint64_t exit_signal;   /* Signal sent to parent when child exits */
+    uint64_t stack;         /* Child stack base */
+    uint64_t stack_size;    /* Child stack size */
+    uint64_t tls;           /* TLS descriptor (CLONE_SETTLS) */
+    /* v1 extension (size >= 64) */
+    uint64_t set_tid;       /* Pointer to TID array (privileged) */
+    uint64_t set_tid_size;  /* Count in set_tid */
+    /* v2 extension (size >= 88) */
+    uint64_t cgroup;        /* cgroup fd */
+};
+
+#define CLONE_ARGS_SIZE_VER0  64   /* First version: fields through tls */
+#define CLONE_ARGS_SIZE_VER1  80   /* v1 adds set_tid/set_tid_size */
+#define CLONE_ARGS_SIZE_VER2  88   /* v2 adds cgroup */
+#define CLONE_ARGS_SIZE_MAX   CLONE_ARGS_SIZE_VER2
+
+/* Namespace flags — require unimplemented namespace infra */
+#define CLONE_NEWNS    0x00020000
+#define CLONE_NEWCGROUP 0x02000000
+#define CLONE_NEWUTS   0x04000000
+#define CLONE_NEWIPC   0x08000000
+#define CLONE_NEWUSER  0x10000000
+#define CLONE_NEWPID   0x20000000
+#define CLONE_NEWNET   0x40000000
+#define CLONE_NEWTIME  0x00000080
+
+#define CLONE_NAMESPACE_FLAGS (CLONE_NEWNS | CLONE_NEWCGROUP | CLONE_NEWUTS | \
+                               CLONE_NEWIPC | CLONE_NEWUSER | CLONE_NEWPID |  \
+                               CLONE_NEWNET | CLONE_NEWTIME)
+
+#define CLONE_THREAD  0x00010000
+#define CLONE_VM      0x00000100
+#define CLONE_SIGHAND 0x00000800
+#define CLONE_PIDFD   0x00001000
+
+static inline int clone3_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_from_user(dst, src, n);
+}
+
+/**
+ * sys_clone3 - Create a child process or thread via struct clone_args.
+ *
+ * @uargs:  Pointer to userspace struct clone_args.
+ * @size:   sizeof(*uargs) as known by the caller (for ABI versioning).
+ *
+ * Returns child PID in parent, 0 in child, or negative errno.
+ */
+long sys_clone3(const struct fut_clone_args *uargs, size_t size) {
+    /* Validate size: must cover at least the v0 fields */
+    if (size < CLONE_ARGS_SIZE_VER0 || size > CLONE_ARGS_SIZE_MAX)
+        return -EINVAL;
+
+    if (!uargs)
+        return -EFAULT;
+
+    /* Copy the args structure (only as many bytes as the caller provided) */
+    struct fut_clone_args args;
+    __builtin_memset(&args, 0, sizeof(args));
+    size_t copy_sz = (size < sizeof(args)) ? size : sizeof(args);
+    if (clone3_copy_from_user(&args, uargs, copy_sz) != 0)
+        return -EFAULT;
+
+    uint64_t flags = args.flags;
+
+    /* Namespace creation requires unimplemented infrastructure */
+    if (flags & CLONE_NAMESPACE_FLAGS) {
+        fut_printf("[CLONE3] clone3(flags=0x%llx) -> ENOSYS (namespace flags)\n",
+                   (unsigned long long)flags);
+        return -ENOSYS;
+    }
+
+    /* pidfd: we accept the flag but store 0 in *pidfd (no pidfd support yet) */
+    if ((flags & CLONE_PIDFD) && args.pidfd) {
+        uint32_t zero = 0;
+        fut_copy_to_user((void *)(uintptr_t)args.pidfd, &zero, sizeof(zero));
+        flags &= ~(uint64_t)CLONE_PIDFD;  /* Don't pass to lower layers */
+    }
+
+    /* Thread creation path */
+    if (flags & CLONE_THREAD) {
+        extern long sys_clone_thread(uint64_t flags, uint64_t child_stack,
+                                     uint64_t parent_tid_ptr, uint64_t child_tid_ptr,
+                                     uint64_t tls);
+        return sys_clone_thread(flags, args.stack, args.parent_tid,
+                                args.child_tid, args.tls);
+    }
+
+    /* Fork path: no CLONE_VM / CLONE_THREAD */
+    extern long sys_fork(void);
+    return sys_fork();
+}

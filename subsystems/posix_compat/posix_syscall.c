@@ -1177,12 +1177,12 @@ static int64_t sys_clone_handler(uint64_t flags, uint64_t stack, uint64_t parent
     return -38;  /* -ENOSYS */
 }
 
-/* clone3() — newer clone interface using struct clone_args */
+/* clone3() — newer clone interface using struct clone_args (Linux 5.3+) */
 static int64_t sys_clone3_handler(uint64_t cl_args, uint64_t size, uint64_t arg3,
                                    uint64_t arg4, uint64_t arg5, uint64_t arg6) {
-    (void)cl_args; (void)size; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
-    /* Return ENOSYS so libc falls back to clone() */
-    return -38;  /* -ENOSYS */
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_clone3(const void *uargs, size_t size);
+    return sys_clone3((const void *)(uintptr_t)cl_args, (size_t)size);
 }
 
 static int64_t sys_execve_handler(uint64_t pathname, uint64_t argv, uint64_t envp,

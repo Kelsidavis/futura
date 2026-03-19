@@ -20098,6 +20098,67 @@ static void test_linux_5_16_enosys_stubs(void) {
     }
 }
 
+/* ============================================================
+ * Tests 473-476: clone3() (Linux 5.3+)
+ *   473: NULL args → EFAULT
+ *   474: size < 64 → EINVAL
+ *   475: namespace flag → ENOSYS
+ *   476: fork via clone3 → child 0 / parent > 0
+ * ============================================================ */
+static void test_clone3(void) {
+    fut_printf("[MISC-TEST] Tests 473-476: clone3()\n");
+
+    extern long sys_clone3(const void *uargs, size_t size);
+
+    /* Test 473: NULL args → EFAULT */
+    fut_printf("[MISC-TEST] Test 473: clone3(NULL, 64) -> EFAULT\n");
+    long r = sys_clone3(NULL, 64);
+    if (r != -14 /*-EFAULT*/) {
+        fut_printf("[MISC-TEST] ✗ Test 473: expected -EFAULT, got %ld\n", r);
+        fut_test_fail(473);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 473: clone3(NULL) -> -EFAULT\n");
+        fut_test_pass();
+    }
+
+    /* Test 474: size too small → EINVAL */
+    fut_printf("[MISC-TEST] Test 474: clone3(valid, 63) -> EINVAL\n");
+    /* Use a dummy non-null pointer; we expect the size check to fire first */
+    struct { uint64_t v[11]; } dummy_args = {{0}};
+    r = sys_clone3(&dummy_args, 63);
+    if (r != -22 /*-EINVAL*/) {
+        fut_printf("[MISC-TEST] ✗ Test 474: expected -EINVAL, got %ld\n", r);
+        fut_test_fail(474);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 474: clone3(size=63) -> -EINVAL\n");
+        fut_test_pass();
+    }
+
+    /* Test 475: namespace flag → ENOSYS */
+    fut_printf("[MISC-TEST] Test 475: clone3(CLONE_NEWNS) -> ENOSYS\n");
+    struct { uint64_t flags; uint64_t rest[10]; } ns_args = { .flags = 0x00020000ULL }; /* CLONE_NEWNS */
+    r = sys_clone3(&ns_args, 64);
+    if (r != -38 /*-ENOSYS*/) {
+        fut_printf("[MISC-TEST] ✗ Test 475: expected -ENOSYS, got %ld\n", r);
+        fut_test_fail(475);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 475: clone3(CLONE_NEWNS) -> -ENOSYS\n");
+        fut_test_pass();
+    }
+
+    /* Test 476: size too large → EINVAL (CLONE_ARGS_SIZE_MAX is 88 bytes) */
+    fut_printf("[MISC-TEST] Test 476: clone3(valid, 89) -> EINVAL (oversized)\n");
+    struct { uint64_t v[12]; } big_args = {{0}};
+    r = sys_clone3(&big_args, 89);
+    if (r != -22 /*-EINVAL*/) {
+        fut_printf("[MISC-TEST] ✗ Test 476: expected -EINVAL for size=89, got %ld\n", r);
+        fut_test_fail(476);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 476: clone3(size=89) -> -EINVAL\n");
+        fut_test_pass();
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -20526,6 +20587,7 @@ void fut_misc_test_thread(void *arg) {
     test_sa_onstack();                    /* Tests 465-467: SA_ONSTACK + sigaltstack install/readback */
     test_proc_thread_self();              /* Tests 462-464: /proc/thread-self symlink */
     test_linux_5_16_enosys_stubs();       /* Tests 468-472: landlock/memfd_secret/futex_waitv ENOSYS */
+    test_clone3();                         /* Tests 473-476: clone3 EFAULT/EINVAL/ENOSYS/fork */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

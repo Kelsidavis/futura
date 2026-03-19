@@ -630,6 +630,97 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
         return -E2BIG;
     }
 
+    /* Shebang (#!) interpreter detection (Linux binfmt_script behavior).
+     * Read the first line of the file. If it starts with "#!", parse the
+     * interpreter path and optional single argument, then prepend them to
+     * argv and redirect execution to the interpreter.
+     * Rules match Linux binfmt_script: one level only, one optional arg,
+     * interpreter path ≤ 255 bytes. */
+    {
+        int sfd = fut_vfs_open(kernel_pathname, 0, 0); /* O_RDONLY */
+        if (sfd >= 0) {
+            char sb[256];
+            long nr = fut_vfs_read(sfd, sb, (long)sizeof(sb) - 1);
+            fut_vfs_close(sfd);
+            if (nr >= 2 && sb[0] == '#' && sb[1] == '!') {
+                sb[nr] = '\0';
+                char *sp = sb + 2;
+                /* Skip leading whitespace after #! */
+                while (*sp == ' ' || *sp == '\t') sp++;
+                /* Parse interpreter path (first non-space token) */
+                char ipath[256];
+                int iplen = 0;
+                while (*sp && *sp != ' ' && *sp != '\t' && *sp != '\n' && *sp != '\r' && iplen < 255)
+                    ipath[iplen++] = *sp++;
+                ipath[iplen] = '\0';
+                if (iplen > 0) {
+                    /* Parse optional single argument (rest of line, trimmed) */
+                    char iarg[256];
+                    int ialen = 0;
+                    while (*sp == ' ' || *sp == '\t') sp++;
+                    while (*sp && *sp != '\n' && *sp != '\r' && ialen < 255)
+                        iarg[ialen++] = *sp++;
+                    /* Trim trailing spaces from optional arg */
+                    while (ialen > 0 && (iarg[ialen-1] == ' ' || iarg[ialen-1] == '\t'))
+                        ialen--;
+                    iarg[ialen] = '\0';
+
+                    /* Build new argv: [interp, opt_arg?, script_path, argv[1..]] */
+                    int extra = 1 + (ialen > 0 ? 1 : 0);
+                    int orig_rest = (argc > 1) ? (argc - 1) : 0;
+                    int new_argc = extra + 1 + orig_rest;
+                    if (new_argc < EXEC_ARGC_MAX) {
+                        char **new_argv = (char **)fut_malloc(
+                            (size_t)(new_argc + 1) * sizeof(char *));
+                        if (new_argv) {
+                            int na = 0;
+                            /* argv[0]: interpreter */
+                            new_argv[na] = (char *)fut_malloc((size_t)iplen + 1);
+                            if (new_argv[na]) {
+                                __builtin_memcpy(new_argv[na], ipath, (size_t)iplen + 1);
+                                na++;
+                            }
+                            /* argv[1]: optional arg (if present) */
+                            if (ialen > 0) {
+                                new_argv[na] = (char *)fut_malloc((size_t)ialen + 1);
+                                if (new_argv[na]) {
+                                    __builtin_memcpy(new_argv[na], iarg, (size_t)ialen + 1);
+                                    na++;
+                                }
+                            }
+                            /* argv[na]: script path (original argv[0]) */
+                            size_t splen = 0;
+                            while (kernel_pathname[splen]) splen++;
+                            new_argv[na] = (char *)fut_malloc(splen + 1);
+                            if (new_argv[na]) {
+                                __builtin_memcpy(new_argv[na], kernel_pathname, splen + 1);
+                                na++;
+                            }
+                            /* argv[na..]: original argv[1..] */
+                            if (kernel_argv) {
+                                for (int i = 1; i < argc && kernel_argv[i]; i++) {
+                                    size_t al = 0;
+                                    while (kernel_argv[i][al]) al++;
+                                    new_argv[na] = (char *)fut_malloc(al + 1);
+                                    if (new_argv[na]) {
+                                        __builtin_memcpy(new_argv[na], kernel_argv[i], al + 1);
+                                        na++;
+                                    }
+                                }
+                            }
+                            new_argv[na] = NULL;
+                            execve_free_argv(kernel_argv, argc);
+                            kernel_argv = new_argv;
+                            argc = na;
+                            /* Redirect to interpreter binary */
+                            __builtin_memcpy(kernel_pathname, ipath, (size_t)iplen + 1);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /* Phase 3: Log argument and environment size limits enforcement */
     char limit_msg[256];
     int limit_pos = 0;

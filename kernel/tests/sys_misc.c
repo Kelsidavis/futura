@@ -18821,6 +18821,58 @@ test435:
 }
 
 /* ============================================================
+ * Tests 440-441: execve shebang (#!) script detection
+ *
+ * Test 440: execve on file with #!/nonexistent returns ENOENT (not EINVAL)
+ * Test 441: execve on file with #!/interp opt-arg returns ENOENT
+ * ============================================================ */
+static void test_execve_shebang(void) {
+    extern long sys_execve(const char *pathname, char *const argv[], char *const envp[]);
+
+    /* Test 440: simple shebang — interpreter does not exist → ENOENT */
+    fut_printf("[MISC-TEST] Test 440: execve shebang → ENOENT for missing interpreter\n");
+    {
+        int fd = fut_vfs_open("/tmp/shebang_test440.sh", O_CREAT | O_RDWR, 0755);
+        if (fd >= 0) {
+            const char *content = "#!/tmp/no_such_interp_440\necho hello\n";
+            fut_vfs_write(fd, content, (long)36);
+            fut_vfs_close(fd);
+        }
+        const char *const argv_arr[] = { "/tmp/shebang_test440.sh", NULL };
+        long ret = sys_execve("/tmp/shebang_test440.sh",
+                              (char *const *)argv_arr, NULL);
+        if (ret == -ENOENT) {
+            fut_printf("[MISC-TEST] ✓ Test 440: shebang execve → -ENOENT (interpreter not found)\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 440: shebang execve returned %ld (expected -2)\n", ret);
+            fut_test_fail(440);
+        }
+    }
+
+    /* Test 441: shebang with optional arg — interpreter does not exist → ENOENT */
+    fut_printf("[MISC-TEST] Test 441: execve shebang with opt-arg → ENOENT\n");
+    {
+        int fd = fut_vfs_open("/tmp/shebang_test441.sh", O_CREAT | O_RDWR, 0755);
+        if (fd >= 0) {
+            const char *content = "#!/tmp/no_such_interp_441 -x\necho hi\n";
+            fut_vfs_write(fd, content, (long)37);
+            fut_vfs_close(fd);
+        }
+        const char *const argv_arr[] = { "/tmp/shebang_test441.sh", NULL };
+        long ret = sys_execve("/tmp/shebang_test441.sh",
+                              (char *const *)argv_arr, NULL);
+        if (ret == -ENOENT) {
+            fut_printf("[MISC-TEST] ✓ Test 441: shebang+optarg execve → -ENOENT\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 441: shebang+optarg returned %ld (expected -2)\n", ret);
+            fut_test_fail(441);
+        }
+    }
+}
+
+/* ============================================================
  * Tests 436-439: /proc/self/status extended fields
  *
  * Test 436: SigQ: field present
@@ -19814,6 +19866,7 @@ void fut_misc_test_thread(void *arg) {
     test_futex_requeue_pi();              /* Tests 431-432: FUTEX_WAIT_REQUEUE_PI, FUTEX_CMP_REQUEUE_PI stubs */
     test_pipe2_cloexec_and_uring_stubs(); /* Tests 433-435: pipe2 O_CLOEXEC propagation, io_uring ENOSYS */
     test_proc_status_extended_fields();   /* Tests 436-439: SigQ, CoreDumping, Cpus_allowed, voluntary_ctxt_switches */
+    test_execve_shebang();                /* Tests 440-441: shebang #! detection → ENOENT not EINVAL */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

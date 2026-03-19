@@ -24855,6 +24855,46 @@ struct test_timex {
 };
 
 /* ============================================================
+ * Tests 651-652: getrusage RUSAGE_THREAD and invalid who
+ * ============================================================ */
+static void test_getrusage_thread(void) {
+    extern long sys_getrusage(int who, void *usage);
+
+    /* Need to define struct rusage locally since we can't include sys/resource.h here
+     * (already included above) — use the existing struct rusage from sys/resource.h */
+    struct rusage ru;
+
+    /* Test 651: RUSAGE_THREAD (who=1) returns per-thread stats */
+    fut_printf("[MISC-TEST] Test 651: getrusage(RUSAGE_THREAD) returns thread stats\n");
+    __builtin_memset(&ru, 0, sizeof(ru));
+    long ret = sys_getrusage(1 /* RUSAGE_THREAD */, &ru);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 651: getrusage(RUSAGE_THREAD) returned %ld\n", ret);
+        fut_test_fail(651);
+    } else if (ru.ru_utime.tv_sec < 0 || ru.ru_utime.tv_usec < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 651: negative cpu time sec=%ld usec=%ld\n",
+                   (long)ru.ru_utime.tv_sec, (long)ru.ru_utime.tv_usec);
+        fut_test_fail(651);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 651: RUSAGE_THREAD → utime=%ld.%06ld nvcsw=%ld\n",
+                   (long)ru.ru_utime.tv_sec, (long)ru.ru_utime.tv_usec,
+                   ru.ru_nvcsw);
+        fut_test_pass();
+    }
+
+    /* Test 652: invalid who → EINVAL */
+    fut_printf("[MISC-TEST] Test 652: getrusage(99) → EINVAL\n");
+    long ret2 = sys_getrusage(99, &ru);
+    if (ret2 != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ Test 652: expected EINVAL, got %ld\n", ret2);
+        fut_test_fail(652);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 652: getrusage(99) → EINVAL\n");
+        fut_test_pass();
+    }
+}
+
+/* ============================================================
  * Tests 649-650: prctl PR_SET_MM and PR_SET_VMA
  * ============================================================ */
 static void test_prctl_set_mm_set_vma(void) {
@@ -25679,6 +25719,7 @@ void fut_misc_test_thread(void *arg) {
     test_accept4_flags();                    /* Tests 644-645: accept4 SOCK_NONBLOCK+SOCK_CLOEXEC */
     test_mmap_hint_flags();                  /* Tests 646-648: mmap MAP_POPULATE/NORESERVE/STACK accepted */
     test_prctl_set_mm_set_vma();             /* Tests 649-650: PR_SET_MM→EPERM, PR_SET_VMA→0 */
+    test_getrusage_thread();                 /* Tests 651-652: RUSAGE_THREAD and EINVAL */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

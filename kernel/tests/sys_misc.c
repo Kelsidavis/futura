@@ -24855,6 +24855,71 @@ struct test_timex {
 };
 
 /* ============================================================
+ * Tests 646-648: mmap hint flags (MAP_POPULATE/NORESERVE/STACK)
+ * ============================================================ */
+static void test_mmap_hint_flags(void) {
+    extern long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset);
+    extern long sys_munmap(void *addr, size_t len);
+#define MAP_ANON_PRIVATE  (0x20 | 0x02)   /* MAP_ANONYMOUS | MAP_PRIVATE */
+#define MHINT_MAP_POPULATE  0x8000
+#define MHINT_MAP_NORESERVE 0x4000
+#define MHINT_MAP_STACK     0x20000
+
+    /* Test 646: MAP_POPULATE accepted (prefault hint) */
+    fut_printf("[MISC-TEST] Test 646: mmap(MAP_POPULATE) accepted\n");
+    long addr646 = sys_mmap(NULL, 4096, 3 /* PROT_READ|PROT_WRITE */,
+                            MAP_ANON_PRIVATE | MHINT_MAP_POPULATE, -1, 0);
+    if (addr646 < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 646: mmap(MAP_POPULATE) returned %ld\n", addr646);
+        fut_test_fail(646);
+    } else {
+        volatile char *p = (volatile char *)addr646;
+        *p = 0x42;
+        if (*p != 0x42) {
+            fut_printf("[MISC-TEST] ✗ Test 646: memory not writable\n");
+            fut_test_fail(646);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 646: mmap(MAP_POPULATE) → writable page\n");
+            fut_test_pass();
+        }
+        sys_munmap((void *)addr646, 4096);
+    }
+
+    /* Test 647: MAP_NORESERVE accepted (no swap reservation hint) */
+    fut_printf("[MISC-TEST] Test 647: mmap(MAP_NORESERVE) accepted\n");
+    long addr647 = sys_mmap(NULL, 4096, 3 /* PROT_READ|PROT_WRITE */,
+                            MAP_ANON_PRIVATE | MHINT_MAP_NORESERVE, -1, 0);
+    if (addr647 < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 647: mmap(MAP_NORESERVE) returned %ld\n", addr647);
+        fut_test_fail(647);
+    } else {
+        volatile char *p = (volatile char *)addr647;
+        *p = 0x55;
+        if (*p != 0x55) {
+            fut_printf("[MISC-TEST] ✗ Test 647: memory not writable\n");
+            fut_test_fail(647);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 647: mmap(MAP_NORESERVE) → writable page\n");
+            fut_test_pass();
+        }
+        sys_munmap((void *)addr647, 4096);
+    }
+
+    /* Test 648: MAP_STACK accepted (thread stack hint, used by glibc) */
+    fut_printf("[MISC-TEST] Test 648: mmap(MAP_STACK) accepted\n");
+    long addr648 = sys_mmap(NULL, 4096, 3 /* PROT_READ|PROT_WRITE */,
+                            MAP_ANON_PRIVATE | MHINT_MAP_STACK, -1, 0);
+    if (addr648 < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 648: mmap(MAP_STACK) returned %ld\n", addr648);
+        fut_test_fail(648);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 648: mmap(MAP_STACK) → valid address\n");
+        fut_test_pass();
+        sys_munmap((void *)addr648, 4096);
+    }
+}
+
+/* ============================================================
  * Tests 644-645: accept4 SOCK_NONBLOCK and SOCK_CLOEXEC flags
  * ============================================================ */
 static void test_accept4_flags(void) {
@@ -25580,6 +25645,7 @@ void fut_misc_test_thread(void *arg) {
     test_adjtimex();                         /* Tests 639-641: adjtimex query/status/NULL */
     test_fstatat_symlink_nofollow();         /* Tests 642-643: fstatat AT_SYMLINK_NOFOLLOW vs follow */
     test_accept4_flags();                    /* Tests 644-645: accept4 SOCK_NONBLOCK+SOCK_CLOEXEC */
+    test_mmap_hint_flags();                  /* Tests 646-648: mmap MAP_POPULATE/NORESERVE/STACK accepted */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

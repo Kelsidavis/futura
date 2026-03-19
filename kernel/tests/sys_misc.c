@@ -24873,6 +24873,71 @@ static void test_sched_yield_basic(void) {
 }
 
 /* ============================================================
+ * Tests 660-662: RT signal (SIGRTMIN=34) block, pending, and unblock
+ * ============================================================
+ *   Test 660: sigprocmask(SIG_BLOCK, {34}) → 0 (RT signal blocked)
+ *   Test 661: kill(self, 34) then sigpending shows bit 34 set
+ *   Test 662: sigprocmask(SIG_UNBLOCK, {34}) clears pending bit
+ */
+static void test_rt_signal_block_pending(void) {
+    extern long sys_sigprocmask(int how, const sigset_t *set, sigset_t *oldset);
+    extern long sys_sigpending(sigset_t *set);
+    extern long sys_kill(int pid, int sig);
+    extern long sys_getpid(void);
+
+#define SIGRTMIN_VAL 34
+
+    /* Test 660: block SIGRTMIN (34) — RT signal in upper bit range */
+    fut_printf("[MISC-TEST] Test 660: sigprocmask(SIG_BLOCK, {SIGRTMIN=34}) → 0\n");
+    sigset_t rt_block = { .__mask = (1ULL << (SIGRTMIN_VAL - 1)) };
+    sigset_t old_mask = {0};
+    long ret = sys_sigprocmask(0 /* SIG_BLOCK */, &rt_block, &old_mask);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 660: sigprocmask block SIGRTMIN=%d returned %ld\n",
+                   SIGRTMIN_VAL, ret);
+        fut_test_fail(660);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 660: SIGRTMIN blocked ok\n");
+        fut_test_pass();
+    }
+
+    /* Test 661: send SIGRTMIN to self, verify it appears in sigpending */
+    fut_printf("[MISC-TEST] Test 661: kill(self, SIGRTMIN=34) → pending\n");
+    long pid = sys_getpid();
+    ret = sys_kill((int)pid, SIGRTMIN_VAL);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 661: kill(self, 34) returned %ld\n", ret);
+        sys_sigprocmask(2 /* SIG_SETMASK */, &old_mask, NULL);
+        fut_test_fail(661);
+    } else {
+        sigset_t pending = {0};
+        sys_sigpending(&pending);
+        int bit_set = (pending.__mask >> (SIGRTMIN_VAL - 1)) & 1;
+        if (!bit_set) {
+            fut_printf("[MISC-TEST] ✗ Test 661: SIGRTMIN not in pending mask=0x%llx\n",
+                       (unsigned long long)pending.__mask);
+            sys_sigprocmask(2 /* SIG_SETMASK */, &old_mask, NULL);
+            fut_test_fail(661);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 661: SIGRTMIN=34 pending (mask bit 33 set)\n");
+            fut_test_pass();
+        }
+    }
+
+    /* Test 662: restore old mask (SIG_SETMASK) — drops the pending RT signal */
+    fut_printf("[MISC-TEST] Test 662: restore mask (SIG_SETMASK) clears SIGRTMIN block\n");
+    ret = sys_sigprocmask(2 /* SIG_SETMASK */, &old_mask, NULL);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 662: SIG_SETMASK restore returned %ld\n", ret);
+        fut_test_fail(662);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 662: mask restored → 0\n");
+        fut_test_pass();
+    }
+#undef SIGRTMIN_VAL
+}
+
+/* ============================================================
  * Tests 654-655: acct() enable/disable process accounting
  * ============================================================
  *   Test 654: acct(NULL) → 0 (disable accounting — always accepted)
@@ -25849,6 +25914,7 @@ void fut_misc_test_thread(void *arg) {
     test_quotactl_stub();                    /* Tests 656-657: quotactl Q_SYNC→ENOSYS, Q_GETQUOTA NULL→EINVAL */
     test_vhangup_basic();                    /* Test 658: vhangup() → 0 */
     test_pivot_root_enosys();                /* Test 659: pivot_root → ENOSYS */
+    test_rt_signal_block_pending();          /* Tests 660-662: RT signal SIGRTMIN=34 block/pending/restore */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

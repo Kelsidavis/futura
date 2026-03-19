@@ -452,6 +452,7 @@ KERNEL_SOURCES := \
     kernel/vfs/fut_vfs_cap.c \
     kernel/vfs/ramfs.c \
     kernel/vfs/procfs.c \
+    kernel/vfs/sysfs.c \
     kernel/vfs/vfs_credentials.c \
     kernel/vfs/fut_lock.c \
     kernel/exec/elf64.c \

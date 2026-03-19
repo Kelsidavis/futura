@@ -1210,6 +1210,20 @@ void fut_kernel_main(void) {
             fut_printf("[WARN] ✗ Failed to mount procfs at /proc (error %d)\n", proc_mount_ret);
     }
 
+    /* Initialize and mount sysfs at /sys */
+    {
+        extern void fut_sysfs_init(void);
+        fut_sysfs_init();
+        int sys_mkdir_ret = fut_vfs_mkdir("/sys", 0555);
+        if (sys_mkdir_ret < 0 && sys_mkdir_ret != -EEXIST)
+            fut_printf("[WARN] Failed to create /sys directory (error %d)\n", sys_mkdir_ret);
+        int sys_mount_ret = fut_vfs_mount(NULL, "/sys", "sysfs", 0, NULL, FUT_INVALID_HANDLE);
+        if (sys_mount_ret == 0)
+            fut_printf("[INIT] ✓ Mounted sysfs at /sys\n");
+        else
+            fut_printf("[WARN] ✗ Failed to mount sysfs at /sys (error %d)\n", sys_mount_ret);
+    }
+
     bool run_async_selftests = boot_flag_enabled("async-tests", false);
 
     /* VFS and exec double tests are DISABLED (too much memory), don't count them */
@@ -1235,7 +1249,7 @@ void fut_kernel_main(void) {
         planned_tests += 17u; /* clock_sched: getres, sched_param, sched_policy, itimer, rusage, times, getpriority, setpriority, getpriority(-who), setpriority(-who), unshare(0), unshare(invalid), rr_get_interval, clock_gettime, posix_timer_sigev_value, posix_timer_si_timer, itimer_virtual */
         planned_tests += 22u; /* vfs: O_TRUNC, O_APPEND, relpath, dir_mtime, readlink, hardlink, mount, renameat2, inotify, inotify_rename, inotify_attrib, inotify_close, inotify_access, inotify_modify, inotify_ftruncate, inotify_utimensat, inotify_truncate, inotify_delete, umount expire, dotdot, eisdir, chdir_dotdot */
         planned_tests += 17u; /* poll: file ready, eventfd not-ready, eventfd ready, POLLNVAL, select file, select pipe, pselect6 pipe, pselect6 sigmask restore, timeout-only sleep, timerfd readiness, signalfd readiness, pipe EOF, select pipe EOF, select timerfd wakeup, poll negative fd, POLLRDNORM, select timeout update */
-        planned_tests += 511u; /* misc(511): ..., proc-diskstats-partitions-cgroups(506-508), proc-personality-oom_score_adj(509-511) */
+        planned_tests += 515u; /* misc(515): ..., proc-personality-oom_score_adj(509-511), sysfs-basic(512-515) */
         // planned_tests += 1u; /* block */
         // planned_tests += 1u; /* futfs */
         // planned_tests += 1u; /* net */

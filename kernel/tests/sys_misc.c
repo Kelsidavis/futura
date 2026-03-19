@@ -21092,6 +21092,101 @@ static void test_proc_personality_oom_adj(void) {
     }
 }
 
+/*
+ * test_sysfs_basic() — Tests 512-515
+ *
+ * Verify that /sys is mounted and exposes the expected skeleton.
+ * Test 512: /sys itself is openable as a directory (stat).
+ * Test 513: /sys/class/ directory exists and is listable.
+ * Test 514: /sys/bus/ exists; /sys/bus/pci/ exists.
+ * Test 515: /sys/kernel/mm/transparent_hugepage/enabled is readable
+ *           and contains "[never]" (THP disabled).
+ */
+static void test_sysfs_basic(void) {
+    extern long sys_openat(int dirfd, const char *pathname, int flags, int mode);
+    extern long sys_read(int fd, void *buf, size_t count);
+    extern long sys_close(int fd);
+#define O_DIRECTORY 0200000
+
+    fut_printf("[MISC-TEST] Tests 512-515: /sys sysfs mount\n");
+
+    /* Test 512: /sys is a directory */
+    {
+        int fd = (int)sys_openat(-100, "/sys", O_DIRECTORY, 0);
+        if (fd >= 0) {
+            sys_close(fd);
+            fut_printf("[MISC-TEST] PASS 512: /sys openable as directory\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL 512: open /sys failed: %d\n", fd);
+            fut_test_fail(512);
+        }
+    }
+
+    /* Test 513: /sys/class/ exists */
+    {
+        int fd = (int)sys_openat(-100, "/sys/class", O_DIRECTORY, 0);
+        if (fd >= 0) {
+            sys_close(fd);
+            fut_printf("[MISC-TEST] PASS 513: /sys/class/ accessible\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL 513: open /sys/class failed: %d\n", fd);
+            fut_test_fail(513);
+        }
+    }
+
+    /* Test 514: /sys/bus/pci/ exists */
+    {
+        int fd = (int)sys_openat(-100, "/sys/bus/pci", O_DIRECTORY, 0);
+        if (fd >= 0) {
+            sys_close(fd);
+            fut_printf("[MISC-TEST] PASS 514: /sys/bus/pci/ accessible\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL 514: open /sys/bus/pci failed: %d\n", fd);
+            fut_test_fail(514);
+        }
+    }
+
+    /* Test 515: /sys/kernel/mm/transparent_hugepage/enabled contains "[never]" */
+    {
+        int fd = (int)sys_openat(-100,
+                    "/sys/kernel/mm/transparent_hugepage/enabled", 0, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] FAIL 515: open thp/enabled failed: %d\n", fd);
+            fut_test_fail(515);
+        } else {
+            char buf[64];
+            long n = sys_read(fd, buf, sizeof(buf) - 1);
+            sys_close(fd);
+            if (n > 0) {
+                buf[n] = '\0';
+                /* Must contain "[never]" */
+                int found = 0;
+                for (long i = 0; i + 6 < n; i++) {
+                    if (buf[i] == '[' && buf[i+1] == 'n' && buf[i+2] == 'e' &&
+                        buf[i+3] == 'v' && buf[i+4] == 'e' && buf[i+5] == 'r' &&
+                        buf[i+6] == ']') {
+                        found = 1; break;
+                    }
+                }
+                if (found) {
+                    fut_printf("[MISC-TEST] PASS 515: thp/enabled = \"%s\"\n", buf);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] FAIL 515: expected [never], got \"%s\"\n", buf);
+                    fut_test_fail(515);
+                }
+            } else {
+                fut_printf("[MISC-TEST] FAIL 515: read returned %ld\n", n);
+                fut_test_fail(515);
+            }
+        }
+    }
+#undef O_DIRECTORY
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -21531,6 +21626,7 @@ void fut_misc_test_thread(void *arg) {
     test_sigchld_ign_autoreap();          /* Tests 503-505: SIGCHLD=SIG_IGN/SA_NOCLDWAIT auto-reap */
     test_proc_diskstats_partitions_cgroups(); /* Tests 506-508: /proc/{diskstats,partitions,cgroups} */
     test_proc_personality_oom_adj();         /* Tests 509-511: /proc/self/{personality,oom_score_adj} */
+    test_sysfs_basic();                      /* Tests 512-515: /sys mount, class/, bus/, kernel/mm/thp */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

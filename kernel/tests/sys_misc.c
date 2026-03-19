@@ -24873,6 +24873,112 @@ static void test_sched_yield_basic(void) {
 }
 
 /* ============================================================
+ * Tests 654-655: acct() enable/disable process accounting
+ * ============================================================
+ *   Test 654: acct(NULL) → 0 (disable accounting — always accepted)
+ *   Test 655: acct("/tmp/acct_test") → 0 (enable with valid path)
+ */
+static void test_acct_basic(void) {
+    extern long sys_acct(const char *filename);
+
+    /* Test 654: acct(NULL) → 0: disable accounting */
+    fut_printf("[MISC-TEST] Test 654: acct(NULL) disables accounting → 0\n");
+    long ret = sys_acct(NULL);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 654: acct(NULL) returned %ld (expected 0)\n", ret);
+        fut_test_fail(654);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 654: acct(NULL) → 0\n");
+        fut_test_pass();
+    }
+
+    /* Test 655: acct with valid path enables accounting */
+    fut_printf("[MISC-TEST] Test 655: acct(\"/tmp/acct_test\") enables accounting → 0\n");
+    /* Create the file first so acct() can open it */
+    int fd = fut_vfs_open("/tmp/acct_test", 0x241 /* O_WRONLY|O_CREAT|O_TRUNC */, 0600);
+    if (fd >= 0) fut_vfs_close(fd);
+    ret = sys_acct("/tmp/acct_test");
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 655: acct(\"/tmp/acct_test\") returned %ld (expected 0)\n", ret);
+        fut_test_fail(655);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 655: acct(\"/tmp/acct_test\") → 0\n");
+        fut_test_pass();
+    }
+    /* Restore: disable accounting */
+    sys_acct(NULL);
+    fut_vfs_unlink("/tmp/acct_test");
+}
+
+/* ============================================================
+ * Tests 656-657: quotactl error paths
+ * ============================================================
+ *   Test 656: qtype > PRJQUOTA(2) → EINVAL
+ *   Test 657: valid qtype, bad qcmd → EINVAL
+ */
+static void test_quotactl_stub(void) {
+    extern long sys_quotactl(unsigned int cmd, const char *special, int id, void *addr);
+
+    /* Test 656: invalid qtype (3 > PRJQUOTA=2) → EINVAL */
+    fut_printf("[MISC-TEST] Test 656: quotactl(invalid qtype=3) → EINVAL\n");
+    long ret = sys_quotactl(3u /* qtype=3, qcmd=0 */, "/dev/null", 0, NULL);
+    if (ret != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ Test 656: quotactl invalid qtype returned %ld (expected -EINVAL=%d)\n",
+                   ret, -EINVAL);
+        fut_test_fail(656);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 656: quotactl invalid qtype → EINVAL\n");
+        fut_test_pass();
+    }
+
+    /* Test 657: qtype=0(USRQUOTA), cmd=0x800001 → EINVAL
+     * qcmd = 0x800001 & ~0xFF = 0x800000, outside [Q_SYNC=0x800001, Q_GETNEXTQUOTA=0x800009] */
+    fut_printf("[MISC-TEST] Test 657: quotactl(0x800001, \"/dev/null\") → EINVAL (bad qcmd)\n");
+    ret = sys_quotactl(0x800001u, "/dev/null", 0, NULL);
+    if (ret != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ Test 657: quotactl 0x800001 returned %ld (expected -EINVAL=%d)\n",
+                   ret, -EINVAL);
+        fut_test_fail(657);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 657: quotactl 0x800001 → EINVAL\n");
+        fut_test_pass();
+    }
+}
+
+/* ============================================================
+ * Test 658: vhangup() — hangup terminal, always returns 0
+ * ============================================================ */
+static void test_vhangup_basic(void) {
+    extern long sys_vhangup(void);
+    fut_printf("[MISC-TEST] Test 658: vhangup() → 0\n");
+    long ret = sys_vhangup();
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 658: vhangup returned %ld (expected 0)\n", ret);
+        fut_test_fail(658);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 658: vhangup() → 0\n");
+        fut_test_pass();
+    }
+}
+
+/* ============================================================
+ * Test 659: pivot_root() — always returns ENOSYS (not supported)
+ * ============================================================ */
+static void test_pivot_root_enosys(void) {
+    extern long sys_pivot_root(const char *new_root, const char *put_old);
+    fut_printf("[MISC-TEST] Test 659: pivot_root(\"/\", \"/\") → ENOSYS\n");
+    long ret = sys_pivot_root("/", "/");
+    if (ret != -ENOSYS) {
+        fut_printf("[MISC-TEST] ✗ Test 659: pivot_root returned %ld (expected -ENOSYS=%d)\n",
+                   ret, -ENOSYS);
+        fut_test_fail(659);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 659: pivot_root → ENOSYS\n");
+        fut_test_pass();
+    }
+}
+
+/* ============================================================
  * Tests 651-652: getrusage RUSAGE_THREAD and invalid who
  * ============================================================ */
 static void test_getrusage_thread(void) {
@@ -25739,6 +25845,10 @@ void fut_misc_test_thread(void *arg) {
     test_prctl_set_mm_set_vma();             /* Tests 649-650: PR_SET_MM→EPERM, PR_SET_VMA→0 */
     test_getrusage_thread();                 /* Tests 651-652: RUSAGE_THREAD and EINVAL */
     test_sched_yield_basic();                /* Test 653: sched_yield() → 0 */
+    test_acct_basic();                       /* Tests 654-655: acct NULL→0, valid path→0 */
+    test_quotactl_stub();                    /* Tests 656-657: quotactl Q_SYNC→ENOSYS, Q_GETQUOTA NULL→EINVAL */
+    test_vhangup_basic();                    /* Test 658: vhangup() → 0 */
+    test_pivot_root_enosys();                /* Test 659: pivot_root → ENOSYS */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

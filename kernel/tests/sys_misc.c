@@ -26465,6 +26465,130 @@ static void test_sockopt_bool_roundtrip(void) {
 }
 
 /**
+ * test_kill_pgrp_sig0 - Tests 748-750
+ *
+ *   Test 748: kill(0, 0)  → 0 (own process group exists)
+ *   Test 749: kill(-pgid, 0) where pgid = getpgid(0) → 0 (group exists)
+ *   Test 750: kill(-999998, 0) → ESRCH (no such process group)
+ */
+static void test_kill_pgrp_sig0(void) {
+    extern long sys_kill(int pid, int sig);
+    extern long sys_getpgid(uint64_t pid);
+
+    /* Test 748: kill(0, 0) — signal to own process group (existence check) */
+    fut_printf("[MISC-TEST] Test 748: kill(0, 0) → own process group exists\n");
+    long r = sys_kill(0, 0);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 748: kill(0, 0) returned %ld (expected 0)\n", r);
+        fut_test_fail(748);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 748: kill(0, 0) → 0\n");
+        fut_test_pass();
+    }
+
+    /* Test 749: kill(-pgid, 0) — our own pgid as negative argument */
+    fut_printf("[MISC-TEST] Test 749: kill(-pgid, 0) for self pgid → 0\n");
+    long pgid = sys_getpgid(0);
+    if (pgid <= 0) {
+        fut_printf("[MISC-TEST] ✗ Test 749: getpgid(0) returned %ld\n", pgid);
+        fut_test_fail(749);
+    } else {
+        r = sys_kill((int)(-pgid), 0);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 749: kill(-%ld, 0) returned %ld (expected 0)\n",
+                       pgid, r);
+            fut_test_fail(749);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 749: kill(-%ld, 0) → 0\n", pgid);
+            fut_test_pass();
+        }
+    }
+
+    /* Test 750: kill(-999998, 0) — nonexistent process group → ESRCH */
+    fut_printf("[MISC-TEST] Test 750: kill(-999998, 0) → ESRCH\n");
+    r = sys_kill(-999998, 0);
+    if (r != -ESRCH) {
+        fut_printf("[MISC-TEST] ✗ Test 750: kill(-999998, 0) returned %ld (expected -ESRCH=%d)\n",
+                   r, -ESRCH);
+        fut_test_fail(750);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 750: kill(-999998, 0) → ESRCH\n");
+        fut_test_pass();
+    }
+}
+
+/**
+ * test_prlimit_other_pid - Tests 751-753
+ *
+ *   Test 751: prlimit64(self_pid, RLIMIT_NOFILE, NULL, &old) → 0, limits match pid=0
+ *   Test 752: prlimit64(999999, RLIMIT_NOFILE, NULL, &old)  → ESRCH
+ *   Test 753: prlimit64(self_pid, RLIMIT_STACK, NULL, &old) → 0, cur/max > 0
+ */
+static void test_prlimit_other_pid(void) {
+    extern long sys_prlimit64(int pid, int resource,
+                               const void *new_limit, void *old_limit);
+    extern long sys_getpid(void);
+
+    struct { uint64_t rlim_cur; uint64_t rlim_max; } old0 = {0, 0}, oldp = {0, 0};
+
+#define T751_RLIMIT_NOFILE 7
+#define T751_RLIMIT_STACK  3
+
+    /* Test 751: prlimit64(self_pid, RLIMIT_NOFILE) matches prlimit64(0, RLIMIT_NOFILE) */
+    fut_printf("[MISC-TEST] Test 751: prlimit64(self_pid, RLIMIT_NOFILE) matches pid=0 query\n");
+    long self_pid = sys_getpid();
+
+    long r0 = sys_prlimit64(0, T751_RLIMIT_NOFILE, NULL, &old0);
+    long rp = sys_prlimit64((int)self_pid, T751_RLIMIT_NOFILE, NULL, &oldp);
+    if (r0 != 0 || rp != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 751: prlimit64 returned r0=%ld rp=%ld\n", r0, rp);
+        fut_test_fail(751);
+    } else if (old0.rlim_cur != oldp.rlim_cur || old0.rlim_max != oldp.rlim_max) {
+        fut_printf("[MISC-TEST] ✗ Test 751: pid=0 cur=%llu max=%llu, pid=%ld cur=%llu max=%llu\n",
+                   (unsigned long long)old0.rlim_cur, (unsigned long long)old0.rlim_max,
+                   self_pid,
+                   (unsigned long long)oldp.rlim_cur, (unsigned long long)oldp.rlim_max);
+        fut_test_fail(751);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 751: prlimit64(self_pid) matches pid=0: cur=%llu\n",
+                   (unsigned long long)oldp.rlim_cur);
+        fut_test_pass();
+    }
+
+    /* Test 752: prlimit64(nonexistent_pid) → ESRCH */
+    fut_printf("[MISC-TEST] Test 752: prlimit64(999999, RLIMIT_NOFILE) → ESRCH\n");
+    struct { uint64_t rlim_cur; uint64_t rlim_max; } esrch_buf = {0, 0};
+    long re = sys_prlimit64(999999, T751_RLIMIT_NOFILE, NULL, &esrch_buf);
+    if (re != -ESRCH) {
+        fut_printf("[MISC-TEST] ✗ Test 752: prlimit64(999999) returned %ld (expected -ESRCH=%d)\n",
+                   re, -ESRCH);
+        fut_test_fail(752);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 752: prlimit64(999999) → ESRCH\n");
+        fut_test_pass();
+    }
+
+    /* Test 753: prlimit64(self_pid, RLIMIT_STACK) → sane cur/max */
+    fut_printf("[MISC-TEST] Test 753: prlimit64(self_pid, RLIMIT_STACK) → sane limits\n");
+    struct { uint64_t rlim_cur; uint64_t rlim_max; } stk = {0, 0};
+    long rs = sys_prlimit64((int)self_pid, T751_RLIMIT_STACK, NULL, &stk);
+    if (rs != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 753: prlimit64(RLIMIT_STACK) returned %ld\n", rs);
+        fut_test_fail(753);
+    } else if (stk.rlim_cur == 0 && stk.rlim_max == 0) {
+        fut_printf("[MISC-TEST] ✗ Test 753: RLIMIT_STACK cur=0 max=0 (unexpected)\n");
+        fut_test_fail(753);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 753: RLIMIT_STACK cur=%llu max=%llu\n",
+                   (unsigned long long)stk.rlim_cur, (unsigned long long)stk.rlim_max);
+        fut_test_pass();
+    }
+
+#undef T751_RLIMIT_NOFILE
+#undef T751_RLIMIT_STACK
+}
+
+/**
  * test_renameat_atfdcwd - Test 734
  *
  *   Test 734: renameat(AT_FDCWD, old, AT_FDCWD, new) behaves like rename()
@@ -27767,6 +27891,8 @@ void fut_misc_test_thread(void *arg) {
     test_hardlink_nlinks();                  /* Tests 737-739: hard link nlink count 1→2→1 */
     test_sockopt_bool_roundtrip();           /* Tests 740-743: SO_REUSEADDR/KEEPALIVE/BROADCAST round-trip */
     test_sockopt_linger_setown();            /* Tests 744-747: SO_LINGER round-trip; F_SETOWN/F_GETOWN; POLLOUT */
+    test_kill_pgrp_sig0();                   /* Tests 748-750: kill(0,0) own-pgrp; kill(-pgid,0) own-pgrp; ESRCH nonexistent */
+    test_prlimit_other_pid();                /* Tests 751-753: prlimit64 by explicit self pid; ESRCH; RLIMIT_STACK */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

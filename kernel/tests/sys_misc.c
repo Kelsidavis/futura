@@ -20314,6 +20314,75 @@ static void test_proc_pid_mem(void) {
     sys_close((int)fd);
 }
 
+/*
+ * test_sigev_thread_id() — Tests 486-488
+ *
+ * Verify that timer_create() accepts SIGEV_THREAD_ID (Linux-specific notify
+ * method used by glibc NPTL to deliver timer signals to a specific thread).
+ */
+static void test_sigev_thread_id(void) {
+    fut_printf("[MISC-TEST] Tests 486-488: SIGEV_THREAD_ID timer_create\n");
+
+    extern long sys_timer_create(int clockid, struct sigevent *sevp, timer_t *timerid);
+    extern long sys_timer_delete(timer_t timerid);
+    extern long sys_gettid(void);
+
+    /* Test 486: timer_create with SIGEV_THREAD_ID and current TID → success */
+    fut_printf("[MISC-TEST] Test 486: timer_create SIGEV_THREAD_ID with valid TID\n");
+    long tid = sys_gettid();
+    struct sigevent sev;
+    __builtin_memset(&sev, 0, sizeof(sev));
+    sev.sigev_notify = SIGEV_THREAD_ID;
+    sev.sigev_signo  = 10; /* SIGUSR1 */
+    sev.sigev_notify_thread_id = (int)tid;
+    timer_t timerid = -1;
+    long r = sys_timer_create(1 /* CLOCK_MONOTONIC */, &sev, &timerid);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 486: timer_create returned %ld\n", r);
+        fut_test_fail(486);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 486: timer_create SIGEV_THREAD_ID id=%d\n", timerid);
+        fut_test_pass();
+        sys_timer_delete(timerid);
+    }
+
+    /* Test 487: timer_create with SIGEV_THREAD_ID and TID=0 → EINVAL */
+    fut_printf("[MISC-TEST] Test 487: timer_create SIGEV_THREAD_ID tid=0 → EINVAL\n");
+    struct sigevent sev_bad;
+    __builtin_memset(&sev_bad, 0, sizeof(sev_bad));
+    sev_bad.sigev_notify = SIGEV_THREAD_ID;
+    sev_bad.sigev_signo  = 10;
+    sev_bad.sigev_notify_thread_id = 0; /* invalid: TID must be > 0 */
+    timer_t bad_id = -1;
+    r = sys_timer_create(1, &sev_bad, &bad_id);
+    if (r != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ Test 487: expected EINVAL, got %ld\n", r);
+        fut_test_fail(487);
+        if (r == 0) sys_timer_delete(bad_id);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 487: SIGEV_THREAD_ID tid=0 → EINVAL\n");
+        fut_test_pass();
+    }
+
+    /* Test 488: SIGEV_THREAD_ID with invalid signal → EINVAL */
+    fut_printf("[MISC-TEST] Test 488: timer_create SIGEV_THREAD_ID bad signo → EINVAL\n");
+    struct sigevent sev_badsig;
+    __builtin_memset(&sev_badsig, 0, sizeof(sev_badsig));
+    sev_badsig.sigev_notify = SIGEV_THREAD_ID;
+    sev_badsig.sigev_signo  = 999; /* invalid signal number */
+    sev_badsig.sigev_notify_thread_id = (int)tid;
+    timer_t badsig_id = -1;
+    r = sys_timer_create(1, &sev_badsig, &badsig_id);
+    if (r != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ Test 488: expected EINVAL, got %ld\n", r);
+        fut_test_fail(488);
+        if (r == 0) sys_timer_delete(badsig_id);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 488: SIGEV_THREAD_ID bad signo → EINVAL\n");
+        fut_test_pass();
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -20745,6 +20814,7 @@ void fut_misc_test_thread(void *arg) {
     test_clone3();                         /* Tests 473-476: clone3 EFAULT/EINVAL/ENOSYS/fork */
     test_linux_6_10_stubs();               /* Tests 477-481: process_madvise/cachestat/mseal etc. */
     test_proc_pid_mem();                   /* Tests 482-485: /proc/<pid>/mem read/write/bounds/nomap */
+    test_sigev_thread_id();                /* Tests 486-488: timer_create SIGEV_THREAD_ID */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

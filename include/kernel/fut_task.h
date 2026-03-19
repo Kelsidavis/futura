@@ -27,11 +27,12 @@ typedef struct fut_posix_timer {
     int armed;              /* Timer is armed (counting down) */
     int clockid;            /* CLOCK_REALTIME, CLOCK_MONOTONIC */
     int signo;              /* Signal to deliver */
-    int notify;             /* SIGEV_NONE or SIGEV_SIGNAL */
+    int notify;             /* SIGEV_NONE, SIGEV_SIGNAL, or SIGEV_THREAD_ID */
     int overrun;            /* Overrun count since last signal delivery */
     uint64_t expiry_ms;     /* Absolute expiration time in ms (0 = disarmed) */
     uint64_t interval_ms;   /* Repeat interval in ms (0 = one-shot) */
     long sigev_value;       /* sigev_value.sival_int/ptr (passed to SA_SIGINFO handler as si_value) */
+    uint64_t target_tid;    /* Target thread TID for SIGEV_THREAD_ID delivery */
 } fut_posix_timer_t;
 
 /* Forward declaration */

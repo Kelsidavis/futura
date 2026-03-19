@@ -121,19 +121,31 @@ long sys_timer_create(int clockid, struct sigevent *sevp, timer_t *timerid) {
     int signo = SIGALRM;  /* Default signal */
     int notify = SIGEV_SIGNAL;
     long sigev_value = 0;  /* sigev_value.sival_int for SA_SIGINFO handlers */
+    uint64_t target_tid = 0;  /* For SIGEV_THREAD_ID: target thread TID */
     if (local_sevp) {
         struct sigevent sev;
         if (timer_copy_from_user(&sev, local_sevp, sizeof(struct sigevent)) != 0)
             return -EFAULT;
 
-        if (sev.sigev_notify != SIGEV_NONE && sev.sigev_notify != SIGEV_SIGNAL)
+        if (sev.sigev_notify != SIGEV_NONE &&
+            sev.sigev_notify != SIGEV_SIGNAL &&
+            sev.sigev_notify != SIGEV_THREAD_ID)
             return -EINVAL;
 
         notify = sev.sigev_notify;
-        if (notify == SIGEV_SIGNAL) {
+        if (notify == SIGEV_SIGNAL || notify == SIGEV_THREAD_ID) {
             if (sev.sigev_signo < 1 || sev.sigev_signo >= _NSIG)
                 return -EINVAL;
             signo = sev.sigev_signo;
+        }
+
+        /* SIGEV_THREAD_ID: caller specifies which thread receives the signal */
+        if (notify == SIGEV_THREAD_ID) {
+            if (sev.sigev_notify_thread_id <= 0)
+                return -EINVAL;
+            target_tid = (uint64_t)sev.sigev_notify_thread_id;
+            /* Map to SIGEV_SIGNAL for delivery path — target_tid distinguishes it */
+            notify = SIGEV_THREAD_ID;
         }
 
         /* Store sigev_value for SA_SIGINFO delivery (si_value in siginfo_t) */
@@ -162,6 +174,7 @@ long sys_timer_create(int clockid, struct sigevent *sevp, timer_t *timerid) {
     pt->expiry_ms = 0;
     pt->interval_ms = 0;
     pt->sigev_value = sigev_value;
+    pt->target_tid = target_tid;
 
     /* Write timer ID back to userspace (1-based) */
     timer_t id = slot + 1;

@@ -47,6 +47,9 @@ union sigval {
 #ifndef SIGEV_THREAD
 #define SIGEV_THREAD    2       /* Notify via thread */
 #endif
+#ifndef SIGEV_THREAD_ID
+#define SIGEV_THREAD_ID 4       /* Notify a specific thread by TID (Linux-specific, glibc NPTL) */
+#endif
 
 /* ============================================================
  *   sigevent Structure (for timer notification)
@@ -58,7 +61,10 @@ struct sigevent {
     int sigev_notify;                   /* Notification method */
     int sigev_signo;                    /* Signal number */
     union sigval sigev_value;           /* Value passed to handler */
-    void (*sigev_notify_function)(union sigval);  /* Thread function */
-    void *sigev_notify_attributes;      /* Thread attributes */
+    void (*sigev_notify_function)(union sigval);  /* Thread function (SIGEV_THREAD) */
+    union {
+        void *sigev_notify_attributes;  /* Thread attributes (SIGEV_THREAD) */
+        int   sigev_notify_thread_id;   /* Target thread TID (SIGEV_THREAD_ID, Linux-specific) */
+    };
 };
 #endif

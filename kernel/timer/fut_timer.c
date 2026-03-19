@@ -12,6 +12,7 @@
 #include "../../include/kernel/fut_task.h"
 #include "../../include/kernel/signal.h"
 #include "../../include/kernel/signal_frame.h"
+#include <shared/fut_sigevent.h>
 #include <kernel/errno.h>
 #include <platform/platform.h>
 #include <stdatomic.h>
@@ -326,11 +327,27 @@ void fut_timer_tick(void) {
                 continue;
 
             // Timer expired
-            if (pt->notify == 1 /* SIGEV_SIGNAL */) {
-                uint64_t sig_bit = (1ULL << (pt->signo - 1));
-                uint64_t pending = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
-                if (pending & sig_bit) {
-                    // Signal still pending - count overrun
+            if (pt->notify == SIGEV_SIGNAL || pt->notify == SIGEV_THREAD_ID) {
+                /* For SIGEV_THREAD_ID: check pending on the target thread.
+                 * For SIGEV_SIGNAL: check task-wide pending bitmap. */
+                int already_pending = 0;
+                if (pt->notify == SIGEV_THREAD_ID && pt->target_tid != 0) {
+                    extern fut_thread_t *fut_thread_find(uint64_t tid);
+                    fut_thread_t *thr = fut_thread_find(pt->target_tid);
+                    if (thr) {
+                        uint64_t sig_bit = (1ULL << (pt->signo - 1));
+                        uint64_t tpend = __atomic_load_n(
+                            &thr->thread_pending_signals, __ATOMIC_ACQUIRE);
+                        already_pending = (tpend & sig_bit) != 0;
+                    }
+                } else {
+                    uint64_t sig_bit = (1ULL << (pt->signo - 1));
+                    uint64_t pending = __atomic_load_n(
+                        &task->pending_signals, __ATOMIC_ACQUIRE);
+                    already_pending = (pending & sig_bit) != 0;
+                }
+
+                if (already_pending) {
                     pt->overrun++;
                 } else {
                     /* POSIX: deliver SI_TIMER siginfo so SA_SIGINFO handlers get
@@ -345,8 +362,24 @@ void fut_timer_tick(void) {
                     sinfo.si_uid     = (uint32_t)task->uid;
                     sinfo.si_value   = pt->sigev_value;
                     pt->overrun = 0;
-                    extern int fut_signal_send_with_info(struct fut_task *t, int sig, const void *info);
-                    fut_signal_send_with_info(task, pt->signo, &sinfo);
+                    if (pt->notify == SIGEV_THREAD_ID && pt->target_tid != 0) {
+                        extern fut_thread_t *fut_thread_find(uint64_t tid);
+                        extern int fut_signal_send_thread_with_info(
+                            fut_thread_t *thread, int sig, const void *info);
+                        fut_thread_t *thr = fut_thread_find(pt->target_tid);
+                        if (thr)
+                            fut_signal_send_thread_with_info(thr, pt->signo, &sinfo);
+                        else {
+                            /* Thread gone — fall back to task-level delivery */
+                            extern int fut_signal_send_with_info(
+                                struct fut_task *t, int sig, const void *info);
+                            fut_signal_send_with_info(task, pt->signo, &sinfo);
+                        }
+                    } else {
+                        extern int fut_signal_send_with_info(
+                            struct fut_task *t, int sig, const void *info);
+                        fut_signal_send_with_info(task, pt->signo, &sinfo);
+                    }
                 }
             }
 

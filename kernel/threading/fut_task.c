@@ -449,6 +449,36 @@ static void task_mark_exit(fut_task_t *task, int status, int signal) {
 }
 
 /**
+ * fut_task_find_new_parent - Find the new parent for a dying task's orphaned children.
+ *
+ * Walks up the ancestor chain looking for the nearest subreaper
+ * (PR_SET_CHILD_SUBREAPER). Falls back to init (pid 1) if none found.
+ * Caller must hold task_list_lock.
+ */
+fut_task_t *fut_task_find_new_parent(fut_task_t *dying_task) {
+    fut_task_t *new_parent = NULL;
+    fut_task_t *ancestor = dying_task->parent;
+    while (ancestor && ancestor->pid != 1) {
+        if ((ancestor->personality >> 31) & 1) {  /* PR_SET_CHILD_SUBREAPER bit */
+            new_parent = ancestor;
+            break;
+        }
+        ancestor = ancestor->parent;
+    }
+    if (!new_parent) {
+        fut_task_t *t = fut_task_list;
+        while (t) {
+            if (t->pid == 1) {
+                new_parent = t;
+                break;
+            }
+            t = t->next;
+        }
+    }
+    return new_parent;
+}
+
+/**
  * Internal helper: Clean up task memory and exit thread.
  * Consolidates common exit cleanup to avoid code duplication.
  */
@@ -480,24 +510,16 @@ static void task_cleanup_and_exit(fut_task_t *task, int status, int signal) {
         task->clear_child_tid = NULL;  /* Clear the address so we don't do this twice */
     }
 
-    /* Reparent orphaned children to init (pid 1) before marking zombie.
+    /* Reparent orphaned children before marking zombie.
+     * Linux semantics: reparent to the nearest ancestor that is a subreaper
+     * (PR_SET_CHILD_SUBREAPER), falling back to init (pid 1).
      * Without this, children of dying processes become permanently
      * unreapable zombies since no parent can wait4() on them. */
     fut_spinlock_acquire(&task_list_lock);
     if (task->first_child) {
-        fut_task_t *init_task = NULL;
-        /* Find init (pid 1) by walking the task list */
-        fut_task_t *t = fut_task_list;
-        while (t) {
-            if (t->pid == 1) {
-                init_task = t;
-                break;
-            }
-            t = t->next;
-        }
-
-        if (init_task && init_task != task) {
-            /* Move all children to init. Deliver pdeathsig if configured. */
+        fut_task_t *new_parent = fut_task_find_new_parent(task);
+        if (new_parent && new_parent != task) {
+            /* Move all children to new_parent. Deliver pdeathsig if configured. */
             fut_task_t *child = task->first_child;
             while (child) {
                 fut_task_t *next = child->sibling;
@@ -505,14 +527,14 @@ static void task_cleanup_and_exit(fut_task_t *task, int status, int signal) {
                 if (child->pdeathsig > 0 && child->state != FUT_TASK_ZOMBIE) {
                     fut_signal_send(child, child->pdeathsig);
                 }
-                child->parent = init_task;
-                child->sibling = init_task->first_child;
-                init_task->first_child = child;
+                child->parent = new_parent;
+                child->sibling = new_parent->first_child;
+                new_parent->first_child = child;
                 child = next;
             }
             task->first_child = NULL;
-            /* Wake init in case any reparented children are zombies */
-            fut_waitq_wake_all(&init_task->child_waiters);
+            /* Wake new_parent in case any reparented children are zombies */
+            fut_waitq_wake_all(&new_parent->child_waiters);
         }
     }
     fut_spinlock_release(&task_list_lock);

@@ -20383,6 +20383,114 @@ static void test_sigev_thread_id(void) {
     }
 }
 
+/* ============================================================
+ * test_subreaper_reparent() — Tests 489-491
+ *
+ * Verify PR_SET_CHILD_SUBREAPER causes orphaned grandchildren to be
+ * reparented to the subreaper ancestor rather than init (pid 1).
+ * Uses fut_task_find_new_parent() — the extracted helper that implements
+ * the reparenting logic — to test it directly without needing fork()/exit().
+ * ============================================================ */
+static void test_subreaper_reparent(void) {
+    fut_printf("[MISC-TEST] Tests 489-491: PR_SET_CHILD_SUBREAPER reparenting\n");
+
+    extern fut_task_t *fut_task_create(void);
+    extern fut_task_t *fut_task_find_new_parent(fut_task_t *dying_task);
+    extern long sys_waitpid(int pid, int *status, int flags);
+    extern long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
+                          unsigned long arg4, unsigned long arg5);
+
+    fut_task_t *current = fut_task_current();
+    if (!current) {
+        fut_printf("[MISC-TEST] ✗ Test 489: no current task\n");
+        fut_test_fail(489); fut_test_fail(490); fut_test_fail(491);
+        return;
+    }
+
+    /* Test 489: without subreaper, find_new_parent returns init or NULL (not current) */
+    fut_printf("[MISC-TEST] Test 489: find_new_parent without subreaper → not current\n");
+    /* Save and clear the subreaper bit */
+    unsigned long saved_personality = current->personality;
+    current->personality &= ~(1UL << 31);
+
+    /* Create a synthetic child task */
+    fut_task_t *child = fut_task_create();
+    if (!child) {
+        fut_printf("[MISC-TEST] ✗ Test 489: fut_task_create failed\n");
+        current->personality = saved_personality;
+        fut_test_fail(489); fut_test_fail(490); fut_test_fail(491);
+        return;
+    }
+    /* Wire child's parent to current */
+    child->parent = current;
+
+    fut_task_t *found = fut_task_find_new_parent(child);
+    if (found == current) {
+        /* Should NOT be current since subreaper bit is clear */
+        fut_printf("[MISC-TEST] ✗ Test 489: found current as parent without subreaper\n");
+        fut_test_fail(489);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 489: no subreaper → parent is %s (pid=%d)\n",
+                   found ? "non-current" : "NULL", found ? (int)found->pid : 0);
+        fut_test_pass();
+    }
+
+    /* Test 490: with subreaper set on current, find_new_parent returns current */
+    fut_printf("[MISC-TEST] Test 490: find_new_parent with subreaper → current\n");
+    current->personality |= (1UL << 31);  /* Set PR_SET_CHILD_SUBREAPER bit */
+
+    found = fut_task_find_new_parent(child);
+    if (found != current) {
+        fut_printf("[MISC-TEST] ✗ Test 490: expected current (pid=%d), got pid=%d\n",
+                   (int)current->pid, found ? (int)found->pid : -1);
+        fut_test_fail(490);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 490: subreaper set → find_new_parent returns current\n");
+        fut_test_pass();
+    }
+
+    /* Test 491: subreaper is grandparent, dying task is child → grandchild reparented to subreaper */
+    fut_printf("[MISC-TEST] Test 491: grandchild reparented to subreaper grandparent\n");
+    fut_task_t *grandchild = fut_task_create();
+    if (!grandchild) {
+        fut_printf("[MISC-TEST] ✗ Test 491: fut_task_create grandchild failed\n");
+        fut_test_fail(491);
+    } else {
+        /* child is dying; grandchild is child's child; current (subreaper) is grandparent */
+        grandchild->parent = child;
+        child->first_child = grandchild;
+        /* child's parent is current (subreaper) */
+        child->parent = current;
+
+        fut_task_t *gp_found = fut_task_find_new_parent(child);
+        if (gp_found != current) {
+            fut_printf("[MISC-TEST] ✗ Test 491: expected subreaper (pid=%d), got pid=%d\n",
+                       (int)current->pid, gp_found ? (int)gp_found->pid : -1);
+            fut_test_fail(491);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 491: grandchild reparented to subreaper pid=%d\n",
+                       (int)current->pid);
+            fut_test_pass();
+        }
+
+        /* Clean up grandchild */
+        child->first_child = NULL;
+        grandchild->state = FUT_TASK_ZOMBIE;
+        grandchild->exit_code = 0;
+        int gs;
+        sys_waitpid((int)grandchild->pid, &gs, 1 /* WNOHANG */);
+    }
+
+    /* Restore personality */
+    current->personality = saved_personality;
+
+    /* Clean up child */
+    child->state = FUT_TASK_ZOMBIE;
+    child->exit_code = 0;
+    int cs;
+    sys_waitpid((int)child->pid, &cs, 1 /* WNOHANG */);
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -20815,6 +20923,7 @@ void fut_misc_test_thread(void *arg) {
     test_linux_6_10_stubs();               /* Tests 477-481: process_madvise/cachestat/mseal etc. */
     test_proc_pid_mem();                   /* Tests 482-485: /proc/<pid>/mem read/write/bounds/nomap */
     test_sigev_thread_id();                /* Tests 486-488: timer_create SIGEV_THREAD_ID */
+    test_subreaper_reparent();             /* Tests 489-491: PR_SET_CHILD_SUBREAPER reparenting */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

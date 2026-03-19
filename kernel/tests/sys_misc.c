@@ -21768,6 +21768,115 @@ t530:;
     }
 }
 
+/*
+ * test_fcntl_posix_locks() — Tests 531-533: fcntl POSIX byte-range locks
+ *
+ *   Test 531: F_SETLK WRLCK on a file succeeds (no contention).
+ *   Test 532: F_GETLK on locked file returns F_UNLCK (owner doesn't block self).
+ *   Test 533: F_SETLK F_UNLCK releases the lock; subsequent F_GETLK still F_UNLCK.
+ */
+static void test_fcntl_posix_locks(void) {
+    extern long sys_fcntl(int fd, int cmd, uint64_t arg);
+
+#define T531_F_GETLK   5
+#define T531_F_SETLK   6
+#define T531_F_RDLCK   0
+#define T531_F_WRLCK   1
+#define T531_F_UNLCK   2
+
+    /* struct flock: l_type(2) l_whence(2) pad(4) l_start(8) l_len(8) l_pid(4) */
+    struct {
+        short l_type;
+        short l_whence;
+        int   _pad;
+        long  l_start;
+        long  l_len;
+        int   l_pid;
+    } lk;
+
+    const char *path = "/posix_lock_test.txt";
+    fut_vfs_unlink(path);
+    int fd = fut_vfs_open(path, O_CREAT | O_RDWR, 0644);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 531: open failed: %d\n", fd);
+        fut_test_fail(531); fut_test_fail(532); fut_test_fail(533); return;
+    }
+
+    /* --- Test 531: F_SETLK WRLCK (no contention) → 0 --- */
+    fut_printf("[MISC-TEST] Test 531: F_SETLK WRLCK no-contention\n");
+    __builtin_memset(&lk, 0, sizeof(lk));
+    lk.l_type   = T531_F_WRLCK;
+    lk.l_whence = 0; /* SEEK_SET */
+    lk.l_start  = 0;
+    lk.l_len    = 0; /* whole file */
+    long r = sys_fcntl(fd, T531_F_SETLK, (uint64_t)(uintptr_t)&lk);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 531: F_SETLK WRLCK returned %ld (expected 0)\n", r);
+        fut_vfs_close(fd); fut_vfs_unlink(path);
+        fut_test_fail(531); fut_test_fail(532); fut_test_fail(533); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 531: F_SETLK WRLCK → 0\n");
+    fut_test_pass();
+
+    /* --- Test 532: F_GETLK on file we locked → F_UNLCK (owner can't block itself) --- */
+    fut_printf("[MISC-TEST] Test 532: F_GETLK on self-locked file → F_UNLCK\n");
+    __builtin_memset(&lk, 0, sizeof(lk));
+    lk.l_type   = T531_F_WRLCK;
+    lk.l_whence = 0;
+    lk.l_start  = 0;
+    lk.l_len    = 0;
+    r = sys_fcntl(fd, T531_F_GETLK, (uint64_t)(uintptr_t)&lk);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 532: F_GETLK returned %ld (expected 0)\n", r);
+        fut_vfs_close(fd); fut_vfs_unlink(path);
+        fut_test_fail(532); fut_test_fail(533); return;
+    }
+    if (lk.l_type != T531_F_UNLCK) {
+        fut_printf("[MISC-TEST] ✗ Test 532: F_GETLK l_type=%d (expected F_UNLCK=%d)\n",
+                   (int)lk.l_type, T531_F_UNLCK);
+        fut_vfs_close(fd); fut_vfs_unlink(path);
+        fut_test_fail(532); fut_test_fail(533); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 532: F_GETLK self-lock → F_UNLCK (l_type=%d)\n", (int)lk.l_type);
+    fut_test_pass();
+
+    /* --- Test 533: F_SETLK F_UNLCK releases; F_GETLK still returns F_UNLCK --- */
+    fut_printf("[MISC-TEST] Test 533: F_SETLK UNLCK then F_GETLK still F_UNLCK\n");
+    __builtin_memset(&lk, 0, sizeof(lk));
+    lk.l_type   = T531_F_UNLCK;
+    lk.l_whence = 0;
+    lk.l_start  = 0;
+    lk.l_len    = 0;
+    r = sys_fcntl(fd, T531_F_SETLK, (uint64_t)(uintptr_t)&lk);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 533: F_SETLK UNLCK returned %ld (expected 0)\n", r);
+        fut_vfs_close(fd); fut_vfs_unlink(path);
+        fut_test_fail(533); return;
+    }
+    __builtin_memset(&lk, 0, sizeof(lk));
+    lk.l_type   = T531_F_RDLCK;
+    lk.l_whence = 0;
+    lk.l_start  = 0;
+    lk.l_len    = 0;
+    r = sys_fcntl(fd, T531_F_GETLK, (uint64_t)(uintptr_t)&lk);
+    if (r != 0 || lk.l_type != T531_F_UNLCK) {
+        fut_printf("[MISC-TEST] ✗ Test 533: F_GETLK after unlock: rc=%ld l_type=%d (expected 0, F_UNLCK)\n",
+                   r, (int)lk.l_type);
+        fut_vfs_close(fd); fut_vfs_unlink(path);
+        fut_test_fail(533); return;
+    }
+    fut_vfs_close(fd);
+    fut_vfs_unlink(path);
+    fut_printf("[MISC-TEST] ✓ Test 533: F_SETLK UNLCK + F_GETLK → F_UNLCK\n");
+    fut_test_pass();
+
+#undef T531_F_GETLK
+#undef T531_F_SETLK
+#undef T531_F_RDLCK
+#undef T531_F_WRLCK
+#undef T531_F_UNLCK
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -22212,6 +22321,7 @@ void fut_misc_test_thread(void *arg) {
     test_named_pipe();                       /* Tests 521-525: VN_FIFO named pipe read/write */
     test_wait4_rusage();                     /* Tests 526-528: wait4 with struct rusage */
     test_robust_list();                      /* Tests 529-530: set/get_robust_list roundtrip+errors */
+    test_fcntl_posix_locks();                /* Tests 531-533: fcntl F_SETLK/F_GETLK POSIX byte-range locks */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

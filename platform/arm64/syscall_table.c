@@ -1884,6 +1884,30 @@ static int64_t sys_close_range_wrapper(uint64_t first, uint64_t last, uint64_t f
     return sys_close_range((unsigned int)first, (unsigned int)last, (unsigned int)flags);
 }
 
+/* sys_pidfd_open_wrapper */
+extern long sys_pidfd_open(int pid, unsigned int flags);
+static int64_t sys_pidfd_open_wrapper(uint64_t pid, uint64_t flags,
+                                      uint64_t arg2, uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+    return sys_pidfd_open((int)pid, (unsigned int)flags);
+}
+
+/* sys_pidfd_send_signal_wrapper */
+extern long sys_pidfd_send_signal(int pidfd, int sig, const void *info, unsigned int flags);
+static int64_t sys_pidfd_send_signal_wrapper(uint64_t pidfd, uint64_t sig, uint64_t info,
+                                              uint64_t flags, uint64_t arg4, uint64_t arg5) {
+    (void)arg4; (void)arg5;
+    return sys_pidfd_send_signal((int)pidfd, (int)sig, (const void *)info, (unsigned int)flags);
+}
+
+/* sys_pidfd_getfd_wrapper */
+extern long sys_pidfd_getfd(int pidfd, int targetfd, unsigned int flags);
+static int64_t sys_pidfd_getfd_wrapper(uint64_t pidfd, uint64_t targetfd, uint64_t flags,
+                                        uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg3; (void)arg4; (void)arg5;
+    return sys_pidfd_getfd((int)pidfd, (int)targetfd, (unsigned int)flags);
+}
+
 /* sys_renameat2_wrapper */
 extern long sys_renameat2(int olddirfd, const char *oldpath,
                           int newdirfd, const char *newpath, unsigned int flags);
@@ -2733,9 +2757,12 @@ struct syscall_entry {
 #define __NR_accept4        242
 #define __NR_syncfs         267
 #define __NR_renameat2      276
-#define __NR_clone3         435
-#define __NR_close_range    436
-#define __NR_faccessat2     439
+#define __NR_pidfd_send_signal  424
+#define __NR_clone3             435
+#define __NR_close_range        436
+#define __NR_pidfd_open         434
+#define __NR_pidfd_getfd        438
+#define __NR_faccessat2         439
 #define __NR_fcntl          25
 #define __NR_ioctl          29
 /* I/O priority - syscalls 30-31 */
@@ -3212,6 +3239,13 @@ static void arm64_syscall_table_init(void) {
     /* faccessat2 (439) = same as faccessat since our wrapper already passes flags */
     syscall_table[__NR_faccessat2].handler = (syscall_fn_t)sys_faccessat_wrapper;
     syscall_table[__NR_faccessat2].name = "faccessat2";
+    /* pidfd syscalls (Linux 5.2+/5.6+) */
+    syscall_table[__NR_pidfd_open].handler = (syscall_fn_t)sys_pidfd_open_wrapper;
+    syscall_table[__NR_pidfd_open].name = "pidfd_open";
+    syscall_table[__NR_pidfd_send_signal].handler = (syscall_fn_t)sys_pidfd_send_signal_wrapper;
+    syscall_table[__NR_pidfd_send_signal].name = "pidfd_send_signal";
+    syscall_table[__NR_pidfd_getfd].handler = (syscall_fn_t)sys_pidfd_getfd_wrapper;
+    syscall_table[__NR_pidfd_getfd].name = "pidfd_getfd";
     syscall_table[__NR_sigsuspend].handler = (syscall_fn_t)sys_sigsuspend_wrapper;
     syscall_table[__NR_sigsuspend].name = "sigsuspend";
     syscall_table[__NR_mremap].handler = (syscall_fn_t)sys_mremap_wrapper;

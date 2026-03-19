@@ -315,8 +315,12 @@ typedef struct fut_dgram_queue {
  * 3b. Connected: connect() -> CONNECTED state, communicates via pair
  * 4. Closed: close() -> CLOSED state
  */
+/* Magic value used to detect use-after-free on socket structs. */
+#define FUT_SOCKET_MAGIC 0x534F434BU  /* "SOCK" */
+
 typedef struct fut_socket {
     /* Identity and state */
+    uint32_t magic;                         /* Must equal FUT_SOCKET_MAGIC while alive */
     enum fut_socket_state state;            /* Current socket state */
     uint32_t socket_id;                     /* Unique socket ID for debugging */
 
@@ -478,7 +482,7 @@ int fut_socket_close(fut_socket_t *socket);
  *
  * @param socket Socket to reference
  */
-void fut_socket_ref(fut_socket_t *socket);
+int fut_socket_ref(fut_socket_t *socket);
 
 /**
  * Release reference to socket (decrease refcount, may free).

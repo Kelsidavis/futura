@@ -163,9 +163,18 @@ void fut_socket_foreach(void (*cb)(const fut_socket_t *, void *), void *arg) {
     for (int i = 0; i < FUT_SOCKET_MAX; i++) {
         fut_spinlock_acquire(&socket_lock);
         fut_socket_t *s = socket_registry[i];
-        if (s) fut_socket_ref(s);
+        int ref_ok = 0;
+        if (s) {
+            ref_ok = fut_socket_ref(s);
+            if (!ref_ok) {
+                /* Stale/corrupted registry entry — clear it to prevent future crashes */
+                fut_printf("[SOCKET] Clearing corrupted registry slot %d (addr=%p magic=0x%08x)\n",
+                           i, (void *)s, s->magic);
+                socket_registry[i] = NULL;
+            }
+        }
         fut_spinlock_release(&socket_lock);
-        if (!s) continue;
+        if (!s || !ref_ok) continue;
         if (s->state != FUT_SOCK_CLOSED)
             cb(s, arg);
         fut_socket_unref(s);
@@ -312,6 +321,7 @@ fut_socket_t *fut_socket_create(int family, int type) {
     }
 
     memset(socket, 0, sizeof(*socket));
+    socket->magic = FUT_SOCKET_MAGIC;
     socket->state = FUT_SOCK_CREATED;
     socket->address_family = family;
     socket->socket_type = type;
@@ -356,17 +366,24 @@ fut_socket_t *fut_socket_create(int family, int type) {
 
 /**
  * Reference a socket (increment refcount).
+ * Returns 1 on success, 0 if the socket is invalid or corrupted.
  */
-void fut_socket_ref(fut_socket_t *socket) {
+int fut_socket_ref(fut_socket_t *socket) {
     if (!socket) {
-        return;
+        return 0;
+    }
+    if (socket->magic != FUT_SOCKET_MAGIC) {
+        fut_printf("[SOCKET-ERROR] Socket ref on invalid/freed struct (magic=0x%08x addr=%p)\n",
+                   socket->magic, (void *)socket);
+        return 0;
     }
     if (socket->refcount >= 1000) {
         fut_printf("[SOCKET-ERROR] Socket %u refcount overflow: %lu\n",
                    socket->socket_id, socket->refcount);
-        return;
+        return 0;
     }
     __atomic_add_fetch(&socket->refcount, 1, __ATOMIC_ACQ_REL);
+    return 1;
 }
 
 /**
@@ -467,6 +484,8 @@ void fut_socket_unref(fut_socket_t *socket) {
         }
         fut_spinlock_release(&socket_lock);
 
+        /* Poison magic before free to catch use-after-free */
+        socket->magic = 0;
         fut_free(socket);
     }
 }
@@ -810,11 +829,15 @@ fut_socket_t *fut_socket_find_listener(const char *path, size_t path_len) {
     fut_spinlock_acquire(&socket_lock);
     for (int i = 0; i < FUT_SOCKET_MAX; i++) {
         fut_socket_t *socket = socket_registry[i];
-        if (socket && socket->bound_path &&
+        if (socket && socket->magic == FUT_SOCKET_MAGIC &&
+            socket->bound_path &&
             socket->bound_path_len == path_len &&
             memcmp(socket->bound_path, path, path_len) == 0 &&
             socket->state == FUT_SOCK_LISTENING) {
-            fut_socket_ref(socket);
+            if (!fut_socket_ref(socket)) {
+                socket_registry[i] = NULL;
+                continue;
+            }
             fut_spinlock_release(&socket_lock);
             return socket;
         }
@@ -1471,11 +1494,15 @@ fut_socket_t *fut_socket_find_bound(const char *path, size_t path_len) {
     fut_spinlock_acquire(&socket_lock);
     for (int i = 0; i < FUT_SOCKET_MAX; i++) {
         fut_socket_t *s = socket_registry[i];
-        if (s && s->bound_path &&
+        if (s && s->magic == FUT_SOCKET_MAGIC &&
+            s->bound_path &&
             s->bound_path_len == path_len &&
             memcmp(s->bound_path, path, path_len) == 0 &&
             (s->state == FUT_SOCK_BOUND || s->state == FUT_SOCK_CONNECTED)) {
-            fut_socket_ref(s);
+            if (!fut_socket_ref(s)) {
+                socket_registry[i] = NULL;
+                continue;
+            }
             fut_spinlock_release(&socket_lock);
             return s;
         }

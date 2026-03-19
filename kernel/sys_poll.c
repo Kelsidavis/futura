@@ -235,7 +235,27 @@ long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout) {
     /* nfds == 0 is valid (wait for timeout only) */
     if (nfds == 0) {
         if (timeout > 0) {
-            fut_thread_sleep((uint64_t)timeout);
+            /* Check for pending unblocked signals before sleeping */
+            fut_task_t *t0 = fut_task_current();
+            if (t0) {
+                uint64_t pending = __atomic_load_n(&t0->pending_signals, __ATOMIC_ACQUIRE);
+                fut_thread_t *thr0 = fut_thread_current();
+                uint64_t blocked0 = thr0 ?
+                    __atomic_load_n(&thr0->signal_mask, __ATOMIC_ACQUIRE) :
+                    t0->signal_mask;
+                if (pending & ~blocked0)
+                    return -EINTR;
+            }
+            /* Use timer+waitq so wakeup works reliably in all environments
+             * (fut_thread_sleep uses the sleep queue which can be unreliable). */
+            uint64_t timeout_ticks = (uint64_t)timeout / 10;
+            if ((uint64_t)timeout % 10 != 0) timeout_ticks++;
+            if (timeout_ticks == 0) timeout_ticks = 1;
+            fut_waitq_t wq0;
+            fut_waitq_init(&wq0);
+            fut_timer_start(timeout_ticks, poll_waitq_wakeup, &wq0);
+            fut_waitq_sleep_locked(&wq0, NULL, FUT_THREAD_BLOCKED);
+            fut_timer_cancel(poll_waitq_wakeup, &wq0);
         }
         poll_printf("[POLL] poll(fds, 0, %d) -> 0 (no FDs to monitor)\n", timeout);
         return 0;

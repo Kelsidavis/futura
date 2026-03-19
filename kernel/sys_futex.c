@@ -59,6 +59,12 @@ static inline int futex_access_ok_read(const void *ptr, size_t n) {
 
 #define FUTEX_HASH_SIZE 256  /* Number of hash buckets */
 
+/* PI futex word bit layout (Linux ABI) */
+#define ROBUST_FUTEX_OWNER_DIED  0x40000000U  /* Set when owner dies holding lock */
+#define ROBUST_FUTEX_WAITERS     0x80000000U  /* Set when threads are waiting */
+#define ROBUST_FUTEX_TID_MASK    0x3FFFFFFFU  /* Lower 30 bits = owner TID */
+#define ROBUST_LIST_LIMIT        2048         /* Max entries to walk (prevent infinite loop) */
+
 /* Futex hash table bucket - contains wait queue for all futexes hashing to this bucket */
 typedef struct futex_bucket {
     fut_spinlock_t lock;
@@ -246,8 +252,7 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
     bool use_realtime_clock = (op & FUTEX_CLOCK_REALTIME) != 0;
     int cmd = op & 0x7F;
 
-    fut_printf("[FUTEX] futex(uaddr=%p, op=%d, val=%u, timeout=%p, uaddr2=%p, val3=%u)\n",
-               uaddr, op, val, timeout, uaddr2, val3);
+    /* Entry logging removed — too noisy at runtime */
 
     /* Document pointer validation requirement for Phase 2 implementation
      * VULNERABILITY: Time-of-Check-Time-of-Use (TOCTOU) and Invalid Pointer Access
@@ -968,6 +973,181 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
             return woken1 + woken2;
         }
 
+        case FUTEX_TRYLOCK_PI:
+        case FUTEX_LOCK_PI: {
+            /*
+             * PI futex word layout (Linux ABI):
+             *   bits 29:0  = owner TID (0 = free)
+             *   bit  30    = FUTEX_OWNER_DIED (owner exited holding lock)
+             *   bit  31    = FUTEX_WAITERS   (threads are waiting)
+             *
+             * We implement the lock semantics without actual priority
+             * inheritance (no priority boosting).  This is sufficient for
+             * programs that just need the PI-futex locking protocol.
+             */
+            fut_thread_t *cur = fut_thread_current();
+            uint32_t mytid = cur ? (uint32_t)cur->tid : 1u;
+
+            /* Parse timeout — FUTEX_LOCK_PI uses a relative timespec */
+            bool has_timeout = false;
+            uint64_t deadline_ticks = 0;
+            if (timeout && cmd == FUTEX_LOCK_PI) {
+                fut_timespec_t ts;
+                if (futex_copy_from_user(&ts, timeout, sizeof(ts)) != 0)
+                    return -EFAULT;
+                if (ts.tv_sec < 0 || ts.tv_nsec < 0 || ts.tv_nsec >= 1000000000)
+                    return -EINVAL;
+                uint64_t tmo_ticks = ((uint64_t)ts.tv_sec * FUT_TIMER_HZ)
+                                   + ((uint64_t)ts.tv_nsec / (1000000000UL / FUT_TIMER_HZ));
+                deadline_ticks = fut_get_ticks() + tmo_ticks;
+                has_timeout = true;
+            }
+
+            for (;;) {
+                uint32_t word;
+                if (futex_copy_from_user(&word, uaddr, sizeof(word)) != 0)
+                    return -EFAULT;
+
+                uint32_t owner = word & ROBUST_FUTEX_TID_MASK;
+
+                /* Deadlock detection */
+                if (owner == mytid)
+                    return -EDEADLK;
+
+                /* Lock is free or previous owner died — try to acquire */
+                if (owner == 0 || (word & ROBUST_FUTEX_OWNER_DIED)) {
+                    uint32_t expected = word;
+                    uint32_t new_word = (word & ROBUST_FUTEX_WAITERS) | mytid;
+                    if (__atomic_compare_exchange_n((uint32_t *)uaddr, &expected, new_word,
+                                                    false,
+                                                    __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST))
+                        return 0;   /* acquired */
+                    continue;       /* CAS lost — retry */
+                }
+
+                /* Lock is held */
+                if (cmd == FUTEX_TRYLOCK_PI)
+                    return -EAGAIN;
+
+                /* Check timeout */
+                if (has_timeout && fut_get_ticks() >= deadline_ticks)
+                    return -ETIMEDOUT;
+
+                /* Check pending signals */
+                if (cur && cur->task) {
+                    uint64_t pend = __atomic_load_n(&cur->task->pending_signals, __ATOMIC_ACQUIRE);
+                    uint64_t mask = __atomic_load_n(&cur->signal_mask, __ATOMIC_ACQUIRE);
+                    if (pend & ~mask)
+                        return -EINTR;
+                }
+
+                /* Mark WAITERS bit so the owner calls UNLOCK_PI correctly */
+                {
+                    uint32_t exp2 = word;
+                    __atomic_compare_exchange_n((uint32_t *)uaddr, &exp2,
+                                                word | ROBUST_FUTEX_WAITERS,
+                                                false,
+                                                __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
+                }
+
+                /* Sleep on bucket wait queue until the owner wakes us */
+                futex_bucket_t *bucket = futex_get_bucket(uaddr);
+                fut_spinlock_acquire(&bucket->lock);
+
+                /* Re-read under lock: might have become free while we were setting up */
+                uint32_t recheck;
+                if (futex_copy_from_user(&recheck, uaddr, sizeof(recheck)) != 0) {
+                    fut_spinlock_release(&bucket->lock);
+                    return -EFAULT;
+                }
+                uint32_t recheck_owner = recheck & ROBUST_FUTEX_TID_MASK;
+                if (recheck_owner == 0 || (recheck & ROBUST_FUTEX_OWNER_DIED)) {
+                    fut_spinlock_release(&bucket->lock);
+                    continue;
+                }
+
+                if (cur) {
+                    cur->futex_addr   = uaddr;
+                    cur->futex_bitset = 0xFFFFFFFFu;
+                }
+
+                futex_timeout_ctx_t tctx;
+                if (has_timeout) {
+                    uint64_t now = fut_get_ticks();
+                    uint64_t rem = (deadline_ticks > now) ? (deadline_ticks - now) : 1u;
+                    tctx.thread = cur;
+                    tctx.bucket = bucket;
+                    fut_timer_start(rem, futex_timeout_callback, &tctx);
+                }
+
+                fut_waitq_sleep_locked(&bucket->waiters, &bucket->lock, FUT_THREAD_BLOCKED);
+
+                if (has_timeout)
+                    fut_timer_cancel(futex_timeout_callback, &tctx);
+
+                bool timed_out = cur && (cur->futex_addr == NULL);
+                if (cur) cur->futex_addr = NULL;
+
+                if (timed_out)
+                    return -ETIMEDOUT;
+
+                /* Check signals after wakeup */
+                if (cur && cur->task) {
+                    uint64_t pend = __atomic_load_n(&cur->task->pending_signals, __ATOMIC_ACQUIRE);
+                    uint64_t mask = __atomic_load_n(&cur->signal_mask, __ATOMIC_ACQUIRE);
+                    if (pend & ~mask)
+                        return -EINTR;
+                }
+                /* Loop: try to acquire again */
+            }
+        }
+
+        case FUTEX_UNLOCK_PI: {
+            fut_thread_t *cur = fut_thread_current();
+            uint32_t mytid = cur ? (uint32_t)cur->tid : 1u;
+
+            uint32_t word;
+            if (futex_copy_from_user(&word, uaddr, sizeof(word)) != 0)
+                return -EFAULT;
+
+            /* Verify we own the lock */
+            if ((word & ROBUST_FUTEX_TID_MASK) != mytid)
+                return -EPERM;
+
+            bool has_waiters = (word & ROBUST_FUTEX_WAITERS) != 0;
+
+            /* Atomically release: set word to 0 (waiters will re-acquire) */
+            uint32_t expected = word;
+            __atomic_compare_exchange_n((uint32_t *)uaddr, &expected, 0u,
+                                        false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
+
+            if (has_waiters) {
+                /* Wake one waiter — it will re-acquire via FUTEX_LOCK_PI loop */
+                futex_bucket_t *bucket = futex_get_bucket(uaddr);
+                fut_spinlock_acquire(&bucket->lock);
+
+                fut_waitq_t *wq = &bucket->waiters;
+                fut_thread_t *t = wq->head;
+                fut_thread_t *prev = NULL;
+                while (t) {
+                    fut_thread_t *next = t->wait_next;
+                    if (t->futex_addr == uaddr) {
+                        if (prev) prev->wait_next = next;
+                        else       wq->head       = next;
+                        if (wq->tail == t) wq->tail = prev;
+                        t->wait_next = NULL;
+                        t->state = FUT_THREAD_READY;
+                        fut_sched_add_thread(t);
+                        break;
+                    }
+                    prev = t;
+                    t = next;
+                }
+                fut_spinlock_release(&bucket->lock);
+            }
+            return 0;
+        }
+
         default:
             fut_printf("[FUTEX] Unsupported futex operation: %d\n", cmd);
             return -ENOSYS;
@@ -1120,11 +1300,7 @@ long sys_set_robust_list(struct robust_list_head *head, size_t len) {
  *   - -ESRCH if process not found
  *   - -EPERM if permission denied
  */
-/* Futex word bit layout for robust mutexes */
-#define ROBUST_FUTEX_OWNER_DIED  0x40000000U  /* Set when owner dies holding lock */
-#define ROBUST_FUTEX_WAITERS     0x80000000U  /* Set when threads are waiting */
-#define ROBUST_FUTEX_TID_MASK    0x3FFFFFFFU  /* Lower 30 bits = owner TID */
-#define ROBUST_LIST_LIMIT        2048         /* Max entries to walk (prevent infinite loop) */
+/* Futex word bit layout for robust mutexes (defined near top of file) */
 
 /**
  * exit_robust_list - Walk the robust list on thread exit and release locks.

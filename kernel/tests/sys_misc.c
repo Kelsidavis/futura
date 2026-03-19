@@ -18267,6 +18267,53 @@ static void test_proc_net_fib_trie(void) {
 }
 
 /* ============================================================
+ * Tests 395-397: FUTEX_TRYLOCK_PI, FUTEX_LOCK_PI (free), FUTEX_UNLOCK_PI
+ * ============================================================ */
+#define FUTEX_LOCK_PI_VAL      6
+#define FUTEX_UNLOCK_PI_VAL    7
+#define FUTEX_TRYLOCK_PI_VAL   8
+
+static void test_futex_pi(void) {
+    /* Test 395: FUTEX_TRYLOCK_PI on a free futex (word == 0) should acquire */
+    fut_printf("[MISC-TEST] Test 395: FUTEX_TRYLOCK_PI on free futex\n");
+    uint32_t word = 0;
+    long ret = sys_futex(&word, FUTEX_TRYLOCK_PI_VAL | 128 /* PRIVATE */, 0, NULL, NULL, 0);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 395: TRYLOCK_PI returned %ld (expected 0)\n", ret);
+        fut_test_fail(395);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 395: TRYLOCK_PI acquired free futex\n");
+        fut_test_pass();
+    }
+
+    /* Test 396: FUTEX_LOCK_PI on a free futex (word == 0) should acquire */
+    fut_printf("[MISC-TEST] Test 396: FUTEX_LOCK_PI on free futex\n");
+    uint32_t word2 = 0;
+    ret = sys_futex(&word2, FUTEX_LOCK_PI_VAL | 128 /* PRIVATE */, 0, NULL, NULL, 0);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 396: LOCK_PI returned %ld (expected 0)\n", ret);
+        fut_test_fail(396);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 396: LOCK_PI acquired free futex\n");
+        fut_test_pass();
+    }
+
+    /* Test 397: FUTEX_UNLOCK_PI on futex we own should succeed */
+    fut_printf("[MISC-TEST] Test 397: FUTEX_UNLOCK_PI releases owned futex\n");
+    ret = sys_futex(&word2, FUTEX_UNLOCK_PI_VAL | 128 /* PRIVATE */, 0, NULL, NULL, 0);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 397: UNLOCK_PI returned %ld (expected 0)\n", ret);
+        fut_test_fail(397);
+    } else if (word2 != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 397: word2=%u after unlock (expected 0)\n", word2);
+        fut_test_fail(397);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 397: UNLOCK_PI released futex (word=0)\n");
+        fut_test_pass();
+    }
+}
+
+/* ============================================================
  * Test 367: /proc/self/net/unix readable (same content as /proc/net/unix)
  * ============================================================ */
 static void test_proc_pid_net_unix(void) {
@@ -18859,6 +18906,7 @@ void fut_misc_test_thread(void *arg) {
     test_proc_net_tcp6();               /* Test 392: /proc/net/tcp6 has header */
     test_proc_net_snmp();               /* Test 393: /proc/net/snmp has Tcp: */
     test_proc_net_fib_trie();           /* Test 394: /proc/net/fib_trie readable */
+    test_futex_pi();                    /* Tests 395-397: FUTEX_LOCK/TRYLOCK/UNLOCK_PI */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

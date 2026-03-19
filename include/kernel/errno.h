@@ -142,6 +142,10 @@
 #define ENOSYS      38
 #endif
 
+#ifndef EDEADLK
+#define EDEADLK     35  /* Resource deadlock avoided */
+#endif
+
 #ifndef ENOTEMPTY
 #define ENOTEMPTY   39
 #endif

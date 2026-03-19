@@ -24854,6 +24854,57 @@ struct test_timex {
     long tick;
 };
 
+/* ============================================================
+ * Tests 642-643: fstatat AT_SYMLINK_NOFOLLOW vs follow
+ * ============================================================ */
+static void test_fstatat_symlink_nofollow(void) {
+    extern long sys_fstatat(int dirfd, const char *pathname,
+                            struct fut_stat *statbuf, int flags);
+#define AT_SYMLINK_NOFOLLOW_TEST 0x100
+
+    /* Create a target file and a symlink pointing to it */
+    int fd = (int)fut_vfs_open("/fstatat_nofollow_target.txt", O_CREAT | O_RDWR, 0644);
+    if (fd >= 0) { fut_vfs_write(fd, "x", 1); fut_vfs_close(fd); }
+    fut_vfs_symlink("/fstatat_nofollow_target.txt", "/fstatat_nofollow_link");
+
+    /* Test 642: fstatat with AT_SYMLINK_NOFOLLOW → sees symlink (S_IFLNK) */
+    fut_printf("[MISC-TEST] Test 642: fstatat(symlink, AT_SYMLINK_NOFOLLOW) → S_IFLNK\n");
+    struct fut_stat st = {0};
+    long ret = sys_fstatat(-100 /* AT_FDCWD */, "/fstatat_nofollow_link", &st,
+                           AT_SYMLINK_NOFOLLOW_TEST);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 642: fstatat returned %ld\n", ret);
+        fut_test_fail(642);
+    } else if ((st.st_mode & 0170000) != 0120000 /* S_IFLNK */) {
+        fut_printf("[MISC-TEST] ✗ Test 642: mode=0%o (expected S_IFLNK=0120000)\n",
+                   st.st_mode);
+        fut_test_fail(642);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 642: AT_SYMLINK_NOFOLLOW → mode=0%o (S_IFLNK)\n",
+                   st.st_mode);
+        fut_test_pass();
+    }
+
+    /* Test 643: fstatat without AT_SYMLINK_NOFOLLOW → follows symlink (S_IFREG) */
+    fut_printf("[MISC-TEST] Test 643: fstatat(symlink, 0) follows to regular file\n");
+    struct fut_stat st2 = {0};
+    long ret2 = sys_fstatat(-100 /* AT_FDCWD */, "/fstatat_nofollow_link", &st2, 0);
+    if (ret2 != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 643: fstatat returned %ld\n", ret2);
+        fut_test_fail(643);
+    } else if ((st2.st_mode & 0170000) != 0100000 /* S_IFREG */) {
+        fut_printf("[MISC-TEST] ✗ Test 643: mode=0%o (expected S_IFREG=0100000)\n",
+                   st2.st_mode);
+        fut_test_fail(643);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 643: follow→S_IFREG mode=0%o\n", st2.st_mode);
+        fut_test_pass();
+    }
+
+    fut_vfs_unlink("/fstatat_nofollow_link");
+    fut_vfs_unlink("/fstatat_nofollow_target.txt");
+}
+
 static void test_adjtimex(void) {
     extern long sys_adjtimex(struct test_timex *txc);
 
@@ -25445,6 +25496,7 @@ void fut_misc_test_thread(void *arg) {
     test_ftruncate_rdonly();                 /* Test 634: ftruncate(O_RDONLY) → EBADF */
     test_clock_settime();                    /* Tests 635-638: clock_settime root/EINVAL/bad-nsec/neg-sec */
     test_adjtimex();                         /* Tests 639-641: adjtimex query/status/NULL */
+    test_fstatat_symlink_nofollow();         /* Tests 642-643: fstatat AT_SYMLINK_NOFOLLOW vs follow */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

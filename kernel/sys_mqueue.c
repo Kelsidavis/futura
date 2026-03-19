@@ -28,6 +28,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/fut_thread.h>
 #include <kernel/fut_timer.h>
+#include <kernel/fut_waitq.h>
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
 #include <stddef.h>
@@ -88,6 +89,8 @@ struct mqueue {
     atomic_int      refcnt;
     struct mq_node *msgs;           /* priority list, head = highest prio */
     fut_spinlock_t  lock;
+    fut_waitq_t     send_waitq;     /* waiters blocked on full queue (send side) */
+    fut_waitq_t     recv_waitq;     /* waiters blocked on empty queue (recv side) */
     /* Phase 2: one-shot notification via mq_notify */
     uint64_t        notify_pid;     /* registered task PID; (uint64_t)-1 = none */
     int             notify_signo;   /* signal to deliver; 0 = SIGEV_NONE (no signal) */
@@ -325,6 +328,8 @@ long sys_mq_open(const char *name, int oflag, unsigned int mode,
         atomic_store_explicit(&mq->mq_curmsgs, 0, memory_order_relaxed);
         atomic_store_explicit(&mq->refcnt, 2, memory_order_relaxed); /* table + fd */
         fut_spinlock_init(&mq->lock);
+        fut_waitq_init(&mq->send_waitq);
+        fut_waitq_init(&mq->recv_waitq);
         mq->msgs       = NULL;
         mq->unlinked   = false;
         mq->notify_pid   = (uint64_t)-1; /* no notification registered */
@@ -466,8 +471,8 @@ long sys_mq_timedsend(int mqdes, const char *msg_ptr, size_t msg_len,
     }
 
     /* Try to enqueue, blocking if full */
+    fut_spinlock_acquire(&mq->lock);
     for (;;) {
-        fut_spinlock_acquire(&mq->lock);
         long cur = atomic_load_explicit(&mq->mq_curmsgs, memory_order_relaxed);
         if (cur < mq->mq_maxmsg) {
             bool was_empty = (cur == 0);
@@ -477,6 +482,8 @@ long sys_mq_timedsend(int mqdes, const char *msg_ptr, size_t msg_len,
             int      nsig  = mq->notify_signo;
             if (was_empty && npid != (uint64_t)-1)
                 mq->notify_pid = (uint64_t)-1;  /* one-shot: clear before release */
+            /* Wake any blocked receivers */
+            fut_waitq_wake_all(&mq->recv_waitq);
             fut_spinlock_release(&mq->lock);
             if (was_empty && npid != (uint64_t)-1 && nsig > 0) {
                 fut_task_t *ntask = fut_task_by_pid(npid);
@@ -485,14 +492,15 @@ long sys_mq_timedsend(int mqdes, const char *msg_ptr, size_t msg_len,
             }
             return 0;
         }
-        fut_spinlock_release(&mq->lock);
 
         /* Queue is full */
         if (nonblock) {
+            fut_spinlock_release(&mq->lock);
             fut_free(node);
             return -EAGAIN;
         }
         if (has_timeout && fut_get_ticks() >= deadline) {
+            fut_spinlock_release(&mq->lock);
             fut_free(node);
             return -ETIMEDOUT;
         }
@@ -505,12 +513,15 @@ long sys_mq_timedsend(int mqdes, const char *msg_ptr, size_t msg_len,
             uint64_t blocked = thr ? __atomic_load_n(&thr->signal_mask, __ATOMIC_ACQUIRE)
                                    : task->signal_mask;
             if (pending & ~blocked) {
+                fut_spinlock_release(&mq->lock);
                 fut_free(node);
                 return -EINTR;
             }
         }
 
-        fut_thread_sleep(10); /* 10ms sleep before retry */
+        /* Sleep until a receiver dequeues a message, freeing space */
+        fut_waitq_sleep_locked(&mq->send_waitq, &mq->lock, FUT_THREAD_BLOCKED);
+        fut_spinlock_acquire(&mq->lock);
     }
 }
 
@@ -558,12 +569,14 @@ long sys_mq_timedreceive(int mqdes, char *msg_ptr, size_t msg_len,
 
     int nonblock = (mfd->oflag & O_NONBLOCK);
 
+    fut_spinlock_acquire(&mq->lock);
     for (;;) {
-        fut_spinlock_acquire(&mq->lock);
         struct mq_node *node = mq->msgs;
         if (node) {
             mq->msgs = node->next;
             atomic_fetch_sub_explicit(&mq->mq_curmsgs, 1, memory_order_acq_rel);
+            /* Wake any blocked senders — a slot just opened */
+            fut_waitq_wake_all(&mq->send_waitq);
             fut_spinlock_release(&mq->lock);
 
             /* Copy message to user */
@@ -587,13 +600,16 @@ long sys_mq_timedreceive(int mqdes, char *msg_ptr, size_t msg_len,
             fut_free(node);
             return ret;
         }
-        fut_spinlock_release(&mq->lock);
 
         /* Queue is empty */
-        if (nonblock)
+        if (nonblock) {
+            fut_spinlock_release(&mq->lock);
             return -EAGAIN;
-        if (has_timeout && fut_get_ticks() >= deadline)
+        }
+        if (has_timeout && fut_get_ticks() >= deadline) {
+            fut_spinlock_release(&mq->lock);
             return -ETIMEDOUT;
+        }
 
         /* Check for signals */
         fut_task_t *task = fut_task_current();
@@ -602,11 +618,15 @@ long sys_mq_timedreceive(int mqdes, char *msg_ptr, size_t msg_len,
             fut_thread_t *thr = fut_thread_current();
             uint64_t blocked = thr ? __atomic_load_n(&thr->signal_mask, __ATOMIC_ACQUIRE)
                                    : task->signal_mask;
-            if (pending & ~blocked)
+            if (pending & ~blocked) {
+                fut_spinlock_release(&mq->lock);
                 return -EINTR;
+            }
         }
 
-        fut_thread_sleep(10);
+        /* Sleep until a sender enqueues a message */
+        fut_waitq_sleep_locked(&mq->recv_waitq, &mq->lock, FUT_THREAD_BLOCKED);
+        fut_spinlock_acquire(&mq->lock);
     }
 }
 

@@ -18553,6 +18553,62 @@ static void test_semop_blocking(void) {
 }
 
 /* ============================================================
+ * Tests 406-407: mqueue waitq — NONBLOCK returns EAGAIN when full,
+ *                zero-timeout timedreceive on empty queue → ETIMEDOUT
+ * ============================================================ */
+static void test_mqueue_waitq(void) {
+    struct test_mq_attr attr = { .mq_maxmsg = 2, .mq_msgsize = 16 };
+    const char *qname = "/test_mq_wq";
+    long mqd = sys_mq_open(qname, O_CREAT | O_RDWR, 0600, &attr);
+    if (mqd < 0) {
+        fut_printf("[MISC-TEST] ✗ Tests 406-407: mq_open failed: %ld\n", mqd);
+        fut_test_fail(406); fut_test_fail(407); return;
+    }
+
+    /* Fill the queue */
+    const char *msg = "testmsg12345678";
+    sys_mq_timedsend((int)mqd, msg, 16, 1, NULL);
+    sys_mq_timedsend((int)mqd, msg, 16, 1, NULL);
+
+    /* Test 406: O_NONBLOCK send on full queue → EAGAIN */
+    fut_printf("[MISC-TEST] Test 406: mq_timedsend NONBLOCK on full queue -> EAGAIN\n");
+    long mqd_nb = sys_mq_open(qname, O_RDWR | O_NONBLOCK, 0600, NULL);
+    long r = -1;
+    if (mqd_nb >= 0) {
+        r = sys_mq_timedsend((int)mqd_nb, msg, 16, 1, NULL);
+        sys_close((int)mqd_nb);
+    }
+    if (r == -11) { /* -EAGAIN */
+        fut_printf("[MISC-TEST] ✓ Test 406: O_NONBLOCK send on full queue returned EAGAIN\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 406: got %ld (expected -11/-EAGAIN)\n", r);
+        fut_test_fail(406);
+    }
+
+    /* Test 407: timedreceive with already-expired timeout on empty queue → ETIMEDOUT */
+    fut_printf("[MISC-TEST] Test 407: mq_timedreceive past-deadline on empty queue -> ETIMEDOUT\n");
+    /* Drain the queue first */
+    char rbuf[16];
+    unsigned rprio;
+    sys_mq_timedreceive((int)mqd, rbuf, 16, &rprio, NULL);
+    sys_mq_timedreceive((int)mqd, rbuf, 16, &rprio, NULL);
+    /* Now queue is empty; use timeout {0,0} (epoch = already past) */
+    struct { long tv_sec; long tv_nsec; } zero_ts = {0, 0};
+    r = sys_mq_timedreceive((int)mqd, rbuf, 16, &rprio, &zero_ts);
+    if (r == -110) { /* -ETIMEDOUT */
+        fut_printf("[MISC-TEST] ✓ Test 407: past-deadline timedreceive returned ETIMEDOUT\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 407: got %ld (expected -110/-ETIMEDOUT)\n", r);
+        fut_test_fail(407);
+    }
+
+    sys_close((int)mqd);
+    sys_mq_unlink(qname);
+}
+
+/* ============================================================
  * Test 367: /proc/self/net/unix readable (same content as /proc/net/unix)
  * ============================================================ */
 static void test_proc_pid_net_unix(void) {
@@ -19149,6 +19205,7 @@ void fut_misc_test_thread(void *arg) {
     test_siocgif();                     /* Tests 398-400: SIOCGIFCONF/SIOCGIFFLAGS/SIOCGIFADDR */
     test_semop_blocking();              /* Tests 401-403: semop IPC_NOWAIT/zero-wait/decrement */
     test_map_fixed_noreplace();         /* Tests 404-405: MAP_FIXED_NOREPLACE success/EEXIST */
+    test_mqueue_waitq();                /* Tests 406-407: mqueue waitq: NONBLOCK EAGAIN, timeout ETIMEDOUT */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

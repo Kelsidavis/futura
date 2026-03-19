@@ -2698,13 +2698,12 @@ static int64_t sys_quotactl_wrapper(uint64_t cmd, uint64_t special, uint64_t id,
 }
 
 /* sys_clock_adjtime_wrapper: clock_adjtime(clk_id, txc) — delegate to adjtimex for CLOCK_REALTIME */
-extern long sys_adjtimex(void *txc);
 static int64_t sys_clock_adjtime_wrapper(uint64_t clk_id, uint64_t txc,
                                           uint64_t arg2, uint64_t arg3, uint64_t arg4, uint64_t arg5) {
     (void)arg2; (void)arg3; (void)arg4; (void)arg5;
     if (clk_id != 0)  /* only CLOCK_REALTIME (0) supported */
         return -EINVAL;
-    return sys_adjtimex((void *)txc);
+    return sys_adjtimex((struct timex *)txc);
 }
 
 /* sys_setns_wrapper: setns(fd, nstype) — ENOSYS (namespaces not yet implemented) */

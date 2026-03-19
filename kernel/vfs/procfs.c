@@ -2605,6 +2605,20 @@ static ssize_t procfs_file_write(struct fut_vnode *vnode, const void *buf,
             return (ssize_t)size;
         }
 
+        case PROC_COMM: {
+            /* Writing to /proc/<pid>/comm sets the task's comm (process name).
+             * Same semantics as prctl(PR_SET_NAME): max 15 chars, NUL-terminated.
+             * Only allow writing to our own comm (n->pid == current task's pid). */
+            fut_task_t *task = fut_task_by_pid(n->pid);
+            if (!task) return -ESRCH;
+            fut_task_t *cur = fut_task_current();
+            if (!cur || (uint64_t)n->pid != cur->pid) return -EPERM;
+            size_t nlen = copy_len < 15 ? copy_len : 15;
+            __builtin_memcpy(task->comm, kbuf, nlen);
+            task->comm[nlen] = '\0';
+            return (ssize_t)size;
+        }
+
         case PROC_SYS_CORE_PATTERN:
         case PROC_SYS_CORE_USES_PID:
         case PROC_SYS_SUID_DUMPABLE:

@@ -18873,6 +18873,85 @@ static void test_execve_shebang(void) {
 }
 
 /* ============================================================
+ * Tests 442-443: /proc/<pid>/comm write support
+ *
+ * Test 442: Write new name to /proc/self/comm; read back and verify.
+ * Test 443: Writing to /proc/<other_pid>/comm returns EPERM.
+ * ============================================================ */
+static void test_proc_comm_write(void) {
+    extern long sys_getpid(void);
+
+    /* Test 442: write own comm via /proc/self/comm */
+    fut_printf("[MISC-TEST] Test 442: write /proc/self/comm updates task name\n");
+    {
+        /* Write a new name */
+        int fd = fut_vfs_open("/proc/self/comm", O_RDWR, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 442: open /proc/self/comm failed (%d)\n", fd);
+            fut_test_fail(442);
+        } else {
+            const char *newname = "testcomm442";
+            long wret = fut_vfs_write(fd, newname, (long)11);
+            fut_vfs_close(fd);
+            if (wret < 0) {
+                fut_printf("[MISC-TEST] ✗ Test 442: write returned %ld\n", wret);
+                fut_test_fail(442);
+            } else {
+                /* Read it back */
+                int rfd = fut_vfs_open("/proc/self/comm", O_RDONLY, 0);
+                if (rfd < 0) {
+                    fut_printf("[MISC-TEST] ✗ Test 442: reopen for read failed (%d)\n", rfd);
+                    fut_test_fail(442);
+                } else {
+                    char buf[32];
+                    long nr = fut_vfs_read(rfd, buf, 31);
+                    fut_vfs_close(rfd);
+                    /* Trim trailing newline if present */
+                    if (nr > 0 && buf[nr-1] == '\n') nr--;
+                    buf[nr < 0 ? 0 : nr] = '\0';
+                    /* comm is capped at 15 chars */
+                    if (__builtin_strncmp(buf, "testcomm442", 11) == 0) {
+                        fut_printf("[MISC-TEST] ✓ Test 442: /proc/self/comm write/read back: '%s'\n", buf);
+                        fut_test_pass();
+                    } else {
+                        fut_printf("[MISC-TEST] ✗ Test 442: got '%s' expected 'testcomm442'\n", buf);
+                        fut_test_fail(442);
+                    }
+                }
+            }
+        }
+    }
+
+    /* Test 443: writing to /proc/1/comm (PID 1 ≠ current) returns EPERM */
+    fut_printf("[MISC-TEST] Test 443: write /proc/1/comm → EPERM (not own task)\n");
+    {
+        long cur_pid = sys_getpid();
+        if (cur_pid == 1) {
+            /* Running as PID 1 — skip this check */
+            fut_printf("[MISC-TEST] ✓ Test 443: skipped (running as PID 1)\n");
+            fut_test_pass();
+        } else {
+            int fd = fut_vfs_open("/proc/1/comm", O_RDWR, 0);
+            if (fd < 0) {
+                /* ENOENT or EPERM both acceptable — can't write another task */
+                fut_printf("[MISC-TEST] ✓ Test 443: open /proc/1/comm denied (%d)\n", fd);
+                fut_test_pass();
+            } else {
+                long wret = fut_vfs_write(fd, "hacked", 6);
+                fut_vfs_close(fd);
+                if (wret == -EPERM) {
+                    fut_printf("[MISC-TEST] ✓ Test 443: write /proc/1/comm → -EPERM\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 443: write returned %ld (expected -EPERM)\n", wret);
+                    fut_test_fail(443);
+                }
+            }
+        }
+    }
+}
+
+/* ============================================================
  * Tests 436-439: /proc/self/status extended fields
  *
  * Test 436: SigQ: field present
@@ -19867,6 +19946,7 @@ void fut_misc_test_thread(void *arg) {
     test_pipe2_cloexec_and_uring_stubs(); /* Tests 433-435: pipe2 O_CLOEXEC propagation, io_uring ENOSYS */
     test_proc_status_extended_fields();   /* Tests 436-439: SigQ, CoreDumping, Cpus_allowed, voluntary_ctxt_switches */
     test_execve_shebang();                /* Tests 440-441: shebang #! detection → ENOENT not EINVAL */
+    test_proc_comm_write();               /* Tests 442-443: write to /proc/self/comm updates task name */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

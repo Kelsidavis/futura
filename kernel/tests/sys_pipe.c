@@ -26,6 +26,8 @@
 #define PIPE_TEST_READ_WRITE 2
 #define PIPE_TEST_EPIPE 3
 #define PIPE_TEST_EOF 4
+#define PIPE_TEST_NONBLOCK 5
+#define PIPE_TEST_CLOEXEC  6
 
 /* Test 1: Verify pipe creation allocates proper FDs */
 static void test_pipe_creation(void) {
@@ -238,6 +240,98 @@ static void test_pipe_eof(void) {
     fut_test_pass();
 }
 
+/* Test 5: pipe2(O_NONBLOCK) — read from empty pipe returns EAGAIN */
+static void test_pipe2_nonblock(void) {
+    fut_printf("[PIPE-TEST] Test 5: pipe2(O_NONBLOCK) empty read returns EAGAIN\n");
+
+    extern long sys_pipe2(int pipefd[2], int flags);
+
+    int pipefd[2];
+    long ret = sys_pipe2(pipefd, 0x800 /* O_NONBLOCK */);
+    if (ret != 0) {
+        fut_printf("[PIPE-TEST] ✗ pipe2(O_NONBLOCK) failed: %ld\n", ret);
+        fut_test_fail(PIPE_TEST_NONBLOCK);
+        return;
+    }
+
+    /* Read from empty non-blocking pipe — must return EAGAIN */
+    char buf[16];
+    ssize_t n = fut_vfs_read(pipefd[0], buf, sizeof(buf));
+    if (n != -EAGAIN) {
+        fut_printf("[PIPE-TEST] ✗ read on empty non-blocking pipe: %zd (expected -EAGAIN=%d)\n",
+                   n, -EAGAIN);
+        fut_vfs_close(pipefd[0]);
+        fut_vfs_close(pipefd[1]);
+        fut_test_fail(PIPE_TEST_NONBLOCK);
+        return;
+    }
+
+    /* Write then read — should succeed */
+    const char *msg = "nb";
+    ssize_t nw = fut_vfs_write(pipefd[1], msg, 2);
+    if (nw != 2) {
+        fut_printf("[PIPE-TEST] ✗ write to non-blocking pipe: %zd (expected 2)\n", nw);
+        fut_vfs_close(pipefd[0]);
+        fut_vfs_close(pipefd[1]);
+        fut_test_fail(PIPE_TEST_NONBLOCK);
+        return;
+    }
+
+    n = fut_vfs_read(pipefd[0], buf, sizeof(buf));
+    if (n != 2) {
+        fut_printf("[PIPE-TEST] ✗ read after write on non-blocking pipe: %zd (expected 2)\n", n);
+        fut_vfs_close(pipefd[0]);
+        fut_vfs_close(pipefd[1]);
+        fut_test_fail(PIPE_TEST_NONBLOCK);
+        return;
+    }
+
+    fut_vfs_close(pipefd[0]);
+    fut_vfs_close(pipefd[1]);
+    fut_printf("[PIPE-TEST] ✓ pipe2(O_NONBLOCK): empty→EAGAIN, write+read→ok\n");
+    fut_test_pass();
+}
+
+/* Test 6: pipe2(O_CLOEXEC) — both FDs have FD_CLOEXEC set */
+static void test_pipe2_cloexec(void) {
+    fut_printf("[PIPE-TEST] Test 6: pipe2(O_CLOEXEC) sets FD_CLOEXEC\n");
+
+    extern long sys_pipe2(int pipefd[2], int flags);
+
+    int pipefd[2];
+    long ret = sys_pipe2(pipefd, 0x80000 /* O_CLOEXEC */);
+    if (ret != 0) {
+        fut_printf("[PIPE-TEST] ✗ pipe2(O_CLOEXEC) failed: %ld\n", ret);
+        fut_test_fail(PIPE_TEST_CLOEXEC);
+        return;
+    }
+
+    /* Both FDs must have FD_CLOEXEC (1) set via F_GETFD */
+    extern long sys_fcntl(int fd, int cmd, uint64_t arg);
+    long flags0 = sys_fcntl(pipefd[0], 1 /* F_GETFD */, 0);
+    long flags1 = sys_fcntl(pipefd[1], 1 /* F_GETFD */, 0);
+
+    if (!(flags0 & 1 /* FD_CLOEXEC */)) {
+        fut_printf("[PIPE-TEST] ✗ read-end fd_flags=0x%lx missing FD_CLOEXEC\n", flags0);
+        fut_vfs_close(pipefd[0]);
+        fut_vfs_close(pipefd[1]);
+        fut_test_fail(PIPE_TEST_CLOEXEC);
+        return;
+    }
+    if (!(flags1 & 1 /* FD_CLOEXEC */)) {
+        fut_printf("[PIPE-TEST] ✗ write-end fd_flags=0x%lx missing FD_CLOEXEC\n", flags1);
+        fut_vfs_close(pipefd[0]);
+        fut_vfs_close(pipefd[1]);
+        fut_test_fail(PIPE_TEST_CLOEXEC);
+        return;
+    }
+
+    fut_vfs_close(pipefd[0]);
+    fut_vfs_close(pipefd[1]);
+    fut_printf("[PIPE-TEST] ✓ pipe2(O_CLOEXEC): FD_CLOEXEC set on both ends\n");
+    fut_test_pass();
+}
+
 /* Main test harness thread */
 void fut_pipe_test_thread(void *arg) {
     (void)arg;
@@ -251,6 +345,8 @@ void fut_pipe_test_thread(void *arg) {
     test_pipe_read_write();
     test_pipe_epipe();
     test_pipe_eof();
+    test_pipe2_nonblock();
+    test_pipe2_cloexec();
 
     fut_printf("[PIPE-TEST] ========================================\n");
     fut_printf("[PIPE-TEST] All pipe tests completed\n");

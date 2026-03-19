@@ -1241,7 +1241,7 @@ void fut_kernel_main(void) {
     if (run_async_selftests) {
         planned_tests += 5u; /* multiprocess: fork isolation, FD inheritance, per-task isolation, cloexec, shared offset */
         planned_tests += 5u; /* dup2: basic dup, invalid FDs, stdout redirect, same FD, dup3 */
-        planned_tests += 4u; /* pipe: creation, read/write, EPIPE, EOF */
+        planned_tests += 6u; /* pipe: creation, read/write, EPIPE, EOF, pipe2(O_NONBLOCK), pipe2(O_CLOEXEC) */
         planned_tests += 5u; /* signal: handler installation, pending, ignored, multiple, delivery */
         planned_tests += 6u; /* capability: open, read, write, rights, invalid, close */
         planned_tests += 12u; /* epoll: create, close, ctl add/del, quota, EBADF, EEXIST, EPOLLIN, timeout=0, MOD, ONESHOT, EPOLLET, EPOLLHUP */

@@ -142,7 +142,7 @@ long sys_sigaction(int signum, const struct sigaction *act, struct sigaction *ol
         old.sa_handler = current->signal_handlers[signum - 1];
         old.sa_mask.__mask = current->signal_handler_masks[signum - 1];
         old.sa_flags = current->signal_handler_flags[signum - 1];
-        old.sa_restorer = NULL;
+        old.sa_restorer = current->signal_handler_restorers[signum - 1];
 
         /* Copy to userspace */
         if (sigaction_copy_to_user(oldact, &old, sizeof(struct sigaction)) != 0) {
@@ -164,6 +164,9 @@ long sys_sigaction(int signum, const struct sigaction *act, struct sigaction *ol
         current->signal_handlers[signum - 1] = new_act.sa_handler;
         current->signal_handler_masks[signum - 1] = new_act.sa_mask.__mask;
         current->signal_handler_flags[signum - 1] = new_act.sa_flags;
+        /* Store sa_restorer (libc sets SA_RESTORER + a trampoline that calls rt_sigreturn) */
+        current->signal_handler_restorers[signum - 1] =
+            (new_act.sa_flags & SA_RESTORER) ? new_act.sa_restorer : NULL;
 
         /* POSIX: setting to SIG_IGN discards any pending instance */
         if (new_act.sa_handler == SIG_IGN) {

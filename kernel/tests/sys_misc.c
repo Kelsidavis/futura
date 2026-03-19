@@ -19782,6 +19782,67 @@ static void test_writev_pipe_gather(void) {
 }
 
 /* ============================================================
+ * Test 461: SA_RESTORER round-trip via sigaction
+ * ============================================================
+ * When glibc/musl installs a signal handler they always set SA_RESTORER and
+ * point sa_restorer at __restore_rt (which calls rt_sigreturn).  The kernel
+ * must store the restorer and return it via the oldact pointer so that the
+ * library can inspect/restore it correctly.
+ */
+static void test_sa_restorer_dummy_fn(void) { /* used as fake restorer */ }
+
+static void test_sa_restorer_stored(void) {
+    fut_printf("[MISC-TEST] Test 461: SA_RESTORER stored by sigaction\n");
+
+    /* sigaction layout used by glibc:  handler, flags, restorer, mask */
+    struct {
+        void (*sa_handler)(int);
+        unsigned long sa_flags;
+        void (*sa_restorer)(void);
+        uint64_t sa_mask;
+    } act = {0}, old = {0};
+
+#define SA_RESTORER_FLAG 0x04000000UL
+
+    /* Use a fake handler (SIG_IGN = 1) and a fake restorer address */
+    act.sa_handler  = (void (*)(int))1; /* SIG_IGN */
+    act.sa_flags    = SA_RESTORER_FLAG;
+    act.sa_restorer = test_sa_restorer_dummy_fn;
+    act.sa_mask     = 0;
+
+    /* Install on SIGUSR2 (12) */
+    long r = sys_sigaction(12, &act, NULL);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 461: sigaction install returned %ld\n", r);
+        fut_test_fail(461); return;
+    }
+
+    /* Read back via oldact */
+    r = sys_sigaction(12, NULL, &old);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 461: sigaction readback returned %ld\n", r);
+        fut_test_fail(461); return;
+    }
+
+    /* Verify restorer was preserved */
+    /* Compare as uintptr_t to avoid -Wpedantic "function pointer to object pointer" */
+    if ((uintptr_t)(void (*)(void))old.sa_restorer !=
+        (uintptr_t)(void (*)(void))test_sa_restorer_dummy_fn) {
+        fut_printf("[MISC-TEST] ✗ Test 461: sa_restorer mismatch\n");
+        fut_test_fail(461); return;
+    }
+    if (!(old.sa_flags & SA_RESTORER_FLAG)) {
+        fut_printf("[MISC-TEST] ✗ Test 461: SA_RESTORER flag not preserved in sa_flags=0x%lx\n",
+                   old.sa_flags);
+        fut_test_fail(461); return;
+    }
+
+#undef SA_RESTORER_FLAG
+    fut_test_pass();
+    fut_printf("[MISC-TEST] ✓ Test 461: SA_RESTORER stored and returned correctly\n");
+}
+
+/* ============================================================
  * Tests 456-458: /proc/self/auxv — ELF auxiliary vector (binary)
  * ============================================================ */
 static void test_proc_auxv(void) {
@@ -20284,6 +20345,7 @@ void fut_misc_test_thread(void *arg) {
     test_fcntl_setsig_lease_notify();     /* Tests 450-455: fcntl F_SETSIG/GETSIG, SETLEASE/GETLEASE, NOTIFY, SETOWN_EX */
     test_proc_auxv();                     /* Tests 456-458: /proc/self/auxv binary format */
     test_ptrace_stub();                   /* Tests 459-460: ptrace PTRACE_TRACEME=0, others EPERM */
+    test_sa_restorer_stored();            /* Test 461: SA_RESTORER stored and returned by sigaction */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

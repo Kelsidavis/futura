@@ -955,9 +955,10 @@ long sys_fork(void) {
 
     /* Inherit parent's signal handlers and mask (POSIX requirement) */
     for (int i = 0; i < _NSIG; i++) {
-        child_task->signal_handlers[i]      = parent_task->signal_handlers[i];
-        child_task->signal_handler_masks[i] = parent_task->signal_handler_masks[i];
-        child_task->signal_handler_flags[i] = parent_task->signal_handler_flags[i];
+        child_task->signal_handlers[i]           = parent_task->signal_handlers[i];
+        child_task->signal_handler_masks[i]      = parent_task->signal_handler_masks[i];
+        child_task->signal_handler_flags[i]      = parent_task->signal_handler_flags[i];
+        child_task->signal_handler_restorers[i]  = parent_task->signal_handler_restorers[i];
     }
     child_task->signal_mask = __atomic_load_n(&parent_task->signal_mask, __ATOMIC_ACQUIRE);
 

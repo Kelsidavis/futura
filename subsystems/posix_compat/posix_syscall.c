@@ -4019,8 +4019,17 @@ static bool posix_deliver_signal(fut_task_t *current, int signum,
         }
     }
 
-    /* Set return address (for when handler calls sigreturn) */
-    sigframe.return_address = NULL;  /* Could point to user-space trampoline */
+    /* Set return address (for when handler calls sigreturn).
+     * If the application registered a restorer via SA_RESTORER (glibc/musl always
+     * do this with __restore_rt which calls rt_sigreturn), use it so that signal
+     * handlers can return normally without crashing. */
+    if (signum > 0 && signum < _NSIG &&
+        (current->signal_handler_flags[signum - 1] & SA_RESTORER) &&
+        current->signal_handler_restorers[signum - 1] != NULL) {
+        sigframe.return_address = current->signal_handler_restorers[signum - 1];
+    } else {
+        sigframe.return_address = NULL;
+    }
     sigframe.pad = 0;
 
     /* Copy frame to user stack */

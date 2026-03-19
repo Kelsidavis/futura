@@ -110,6 +110,7 @@ struct fut_task {
     uint64_t signal_mask;                 // Mask of currently blocked signals
     uint64_t signal_handler_masks[_NSIG]; // Per-handler masks (signals to block during handler)
     unsigned long signal_handler_flags[_NSIG]; // Per-handler flags (SA_RESTART, SA_RESETHAND, etc.)
+    void (*signal_handler_restorers[_NSIG])(void); // sa_restorer: trampoline (SA_RESTORER flag)
     uint64_t pending_signals;          // Bitmask of pending signals awaiting delivery
     fut_waitq_t signal_waitq;          // Wait queue for pause() blocking until signal
     struct sigaltstack sig_altstack;   // Alternate signal stack configuration

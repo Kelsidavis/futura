@@ -59,6 +59,12 @@
 #ifndef EPOLLRDHUP
 #define EPOLLRDHUP      0x2000  /* Peer shutdown writing half */
 #endif
+#ifndef EPOLLWAKEUP
+#define EPOLLWAKEUP     (1 << 29)   /* Wakeup source (power management, Linux 3.5+) */
+#endif
+#ifndef EPOLLEXCLUSIVE
+#define EPOLLEXCLUSIVE  (1u << 28)  /* Exclusive wakeup (thundering herd, Linux 4.5+) */
+#endif
 #ifndef EPOLLONESHOT
 #define EPOLLONESHOT    (1 << 30)   /* One-shot behavior */
 #endif

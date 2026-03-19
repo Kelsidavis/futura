@@ -18952,6 +18952,76 @@ static void test_proc_comm_write(void) {
 }
 
 /* ============================================================
+ * Tests 444-445: EPOLLEXCLUSIVE and EPOLLWAKEUP accepted by epoll_ctl
+ *
+ * Test 444: epoll_ctl ADD with EPOLLEXCLUSIVE|EPOLLIN succeeds (not EINVAL)
+ * Test 445: epoll_ctl ADD with EPOLLWAKEUP|EPOLLIN succeeds (not EINVAL)
+ * ============================================================ */
+static void test_epoll_exclusive_wakeup(void) {
+    extern long sys_epoll_create1(int flags);
+    extern long sys_epoll_ctl(int epfd, int op, int fd, void *event);
+    extern long sys_eventfd2(unsigned int initval, int flags);
+    extern long sys_close(int fd);
+
+#ifndef EPOLLEXCLUSIVE
+#define EPOLLEXCLUSIVE (1u << 28)
+#endif
+#ifndef EPOLLWAKEUP
+#define EPOLLWAKEUP    (1u << 29)
+#endif
+
+    /* Test 444: EPOLLEXCLUSIVE should not cause EINVAL */
+    fut_printf("[MISC-TEST] Test 444: EPOLLEXCLUSIVE|EPOLLIN accepted by epoll_ctl\n");
+    {
+        long epfd = sys_epoll_create1(0);
+        long efd  = sys_eventfd2(0, 0);
+        if (epfd < 0 || efd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 444: setup failed (epfd=%ld efd=%ld)\n", epfd, efd);
+            fut_test_fail(444);
+        } else {
+            struct { uint32_t events; uint64_t data; } ev;
+            ev.events = (uint32_t)(EPOLLEXCLUSIVE | 1u /*EPOLLIN*/);
+            ev.data = 0;
+            long r = sys_epoll_ctl((int)epfd, 1 /*EPOLL_CTL_ADD*/, (int)efd, &ev);
+            if (r == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 444: EPOLLEXCLUSIVE accepted (ret=0)\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 444: epoll_ctl returned %ld (expected 0)\n", r);
+                fut_test_fail(444);
+            }
+        }
+        if (epfd >= 0) sys_close((int)epfd);
+        if (efd  >= 0) sys_close((int)efd);
+    }
+
+    /* Test 445: EPOLLWAKEUP should not cause EINVAL */
+    fut_printf("[MISC-TEST] Test 445: EPOLLWAKEUP|EPOLLIN accepted by epoll_ctl\n");
+    {
+        long epfd = sys_epoll_create1(0);
+        long efd  = sys_eventfd2(0, 0);
+        if (epfd < 0 || efd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 445: setup failed (epfd=%ld efd=%ld)\n", epfd, efd);
+            fut_test_fail(445);
+        } else {
+            struct { uint32_t events; uint64_t data; } ev;
+            ev.events = (uint32_t)(EPOLLWAKEUP | 1u /*EPOLLIN*/);
+            ev.data = 0;
+            long r = sys_epoll_ctl((int)epfd, 1 /*EPOLL_CTL_ADD*/, (int)efd, &ev);
+            if (r == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 445: EPOLLWAKEUP accepted (ret=0)\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 445: epoll_ctl returned %ld (expected 0)\n", r);
+                fut_test_fail(445);
+            }
+        }
+        if (epfd >= 0) sys_close((int)epfd);
+        if (efd  >= 0) sys_close((int)efd);
+    }
+}
+
+/* ============================================================
  * Tests 436-439: /proc/self/status extended fields
  *
  * Test 436: SigQ: field present
@@ -19947,6 +20017,7 @@ void fut_misc_test_thread(void *arg) {
     test_proc_status_extended_fields();   /* Tests 436-439: SigQ, CoreDumping, Cpus_allowed, voluntary_ctxt_switches */
     test_execve_shebang();                /* Tests 440-441: shebang #! detection → ENOENT not EINVAL */
     test_proc_comm_write();               /* Tests 442-443: write to /proc/self/comm updates task name */
+    test_epoll_exclusive_wakeup();        /* Tests 444-445: EPOLLEXCLUSIVE/EPOLLWAKEUP accepted by epoll_ctl */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

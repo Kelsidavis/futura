@@ -944,10 +944,14 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
             return -EFAULT;
         }
 
-        /* Validate event mask doesn't contain invalid bits */
+        /* Validate event mask doesn't contain invalid bits.
+         * EPOLLWAKEUP (Linux 3.5+): power-management wakeup hint; accepted, no-op.
+         * EPOLLEXCLUSIVE (Linux 4.5+): exclusive wakeup for thundering-herd avoidance;
+         * accepted and treated as level-triggered (single-waiter not yet enforced). */
         uint32_t valid_events = EPOLLIN | EPOLLOUT | EPOLLPRI | EPOLLERR | EPOLLHUP |
                                EPOLLRDHUP | EPOLLRDNORM | EPOLLRDBAND |
                                EPOLLWRNORM | EPOLLWRBAND |
+                               EPOLLWAKEUP | EPOLLEXCLUSIVE |
                                EPOLL_ET | EPOLL_ONESHOT;
         if (ev.events & ~valid_events) {
             uint32_t invalid_bits = ev.events & ~valid_events;

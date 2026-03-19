@@ -154,6 +154,7 @@ struct fut_task {
     unsigned long no_new_privs;        // PR_SET_NO_NEW_PRIVS flag (sticky, prevents execve setuid)
     int dumpable;                      // PR_SET_DUMPABLE (1=dumpable, 0=not, default 1)
     int auto_reap;                     // 1 = parent had SIGCHLD=SIG_IGN or SA_NOCLDWAIT; reap on thread exit
+    int oom_score_adj;                 // /proc/<pid>/oom_score_adj: OOM killer bias (-1000..1000)
 
     /* I/O priority */
     int ioprio;                        // I/O priority (class + level encoded)

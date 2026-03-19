@@ -20976,6 +20976,122 @@ static void test_proc_diskstats_partitions_cgroups(void) {
     }
 }
 
+/*
+ * test_proc_personality_oom_adj() — Tests 509-511
+ *
+ * Test 509: /proc/self/personality is readable and starts with '0' (PER_LINUX).
+ * Test 510: /proc/self/oom_score_adj is readable (returns "0" by default).
+ * Test 511: Writing to /proc/self/oom_score_adj stores and round-trips the value.
+ */
+static void test_proc_personality_oom_adj(void) {
+    extern long sys_openat(int dirfd, const char *pathname, int flags, int mode);
+    extern long sys_read(int fd, void *buf, size_t count);
+    extern long sys_write(int fd, const void *buf, size_t count);
+    extern long sys_close(int fd);
+
+    fut_printf("[MISC-TEST] Tests 509-511: /proc/self/{personality,oom_score_adj}\n");
+
+    /* Test 509: /proc/self/personality starts with '0' (PER_LINUX = 0x00000000) */
+    {
+        int fd = (int)sys_openat(-100, "/proc/self/personality", 0, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] FAIL 509: open personality failed: %d\n", fd);
+            fut_test_fail(509);
+        } else {
+            char buf[16];
+            long n = sys_read(fd, buf, sizeof(buf) - 1);
+            sys_close(fd);
+            if (n > 0) {
+                buf[n] = '\0';
+                /* PER_LINUX = 0x00000000 → "00000000\n" */
+                int ok = (buf[0] == '0');
+                if (ok) {
+                    fut_printf("[MISC-TEST] PASS 509: personality = \"%s\"\n", buf);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] FAIL 509: unexpected content '%c'\n", buf[0]);
+                    fut_test_fail(509);
+                }
+            } else {
+                fut_printf("[MISC-TEST] FAIL 509: read returned %ld\n", n);
+                fut_test_fail(509);
+            }
+        }
+    }
+
+    /* Test 510: /proc/self/oom_score_adj readable, returns numeric string */
+    {
+        int fd = (int)sys_openat(-100, "/proc/self/oom_score_adj", 0, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] FAIL 510: open oom_score_adj failed: %d\n", fd);
+            fut_test_fail(510);
+        } else {
+            char buf[16];
+            long n = sys_read(fd, buf, sizeof(buf) - 1);
+            sys_close(fd);
+            if (n > 0) {
+                buf[n] = '\0';
+                /* Default is 0 */
+                int ok = (buf[0] == '0');
+                if (ok) {
+                    fut_printf("[MISC-TEST] PASS 510: oom_score_adj = \"%s\"\n", buf);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] FAIL 510: unexpected content\n");
+                    fut_test_fail(510);
+                }
+            } else {
+                fut_printf("[MISC-TEST] FAIL 510: read returned %ld\n", n);
+                fut_test_fail(510);
+            }
+        }
+    }
+
+    /* Test 511: write -500 to oom_score_adj, read it back */
+    {
+        /* Open for write (flags=1 = O_WRONLY) */
+        int wfd = (int)sys_openat(-100, "/proc/self/oom_score_adj", 1/*O_WRONLY*/, 0);
+        if (wfd < 0) {
+            fut_printf("[MISC-TEST] FAIL 511: open oom_score_adj O_WRONLY failed: %d\n", wfd);
+            fut_test_fail(511);
+        } else {
+            const char *val = "-500";
+            long wn = sys_write(wfd, val, 4);
+            sys_close(wfd);
+            if (wn < 0) {
+                fut_printf("[MISC-TEST] FAIL 511: write failed: %ld\n", wn);
+                fut_test_fail(511);
+            } else {
+                /* Read it back */
+                int rfd = (int)sys_openat(-100, "/proc/self/oom_score_adj", 0/*O_RDONLY*/, 0);
+                if (rfd < 0) {
+                    fut_printf("[MISC-TEST] FAIL 511: open for read failed: %d\n", rfd);
+                    fut_test_fail(511);
+                } else {
+                    char rbuf[16];
+                    long rn = sys_read(rfd, rbuf, sizeof(rbuf) - 1);
+                    sys_close(rfd);
+                    if (rn > 0) {
+                        rbuf[rn] = '\0';
+                        /* Should read "-500\n" */
+                        int ok = (rbuf[0] == '-' && rbuf[1] == '5' && rbuf[2] == '0' && rbuf[3] == '0');
+                        if (ok) {
+                            fut_printf("[MISC-TEST] PASS 511: oom_score_adj round-trip: \"%s\"\n", rbuf);
+                            fut_test_pass();
+                        } else {
+                            fut_printf("[MISC-TEST] FAIL 511: expected -500, got \"%s\"\n", rbuf);
+                            fut_test_fail(511);
+                        }
+                    } else {
+                        fut_printf("[MISC-TEST] FAIL 511: readback returned %ld\n", rn);
+                        fut_test_fail(511);
+                    }
+                }
+            }
+        }
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -21414,6 +21530,7 @@ void fut_misc_test_thread(void *arg) {
     test_proc_loginuid_sessionid();       /* Tests 501-502: /proc/self/{loginuid,sessionid} */
     test_sigchld_ign_autoreap();          /* Tests 503-505: SIGCHLD=SIG_IGN/SA_NOCLDWAIT auto-reap */
     test_proc_diskstats_partitions_cgroups(); /* Tests 506-508: /proc/{diskstats,partitions,cgroups} */
+    test_proc_personality_oom_adj();         /* Tests 509-511: /proc/self/{personality,oom_score_adj} */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

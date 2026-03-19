@@ -180,6 +180,7 @@ enum procfs_kind {
     PROC_SYS_FS_PIPE_MAX_SIZE,      /* /proc/sys/fs/pipe-max-size */
     /* Additional /proc/<pid>/ entries */
     PROC_WCHAN,                     /* /proc/<pid>/wchan */
+    PROC_PERSONALITY,               /* /proc/<pid>/personality */
     PROC_MOUNTINFO,                 /* /proc/<pid>/mountinfo */
     PROC_COREDUMP_FILTER,           /* /proc/<pid>/coredump_filter */
     PROC_SCHEDSTAT,                 /* /proc/<pid>/schedstat */
@@ -367,6 +368,7 @@ typedef struct {
 #define PROC_INO_PID_SETGROUPS(p)      (1000ULL + (uint64_t)(p) * 100 + 31)
 #define PROC_INO_PID_LOGINUID(p)       (1000ULL + (uint64_t)(p) * 100 + 32)
 #define PROC_INO_PID_SESSIONID(p)      (1000ULL + (uint64_t)(p) * 100 + 33)
+#define PROC_INO_PID_PERSONALITY(p)    (1000ULL + (uint64_t)(p) * 100 + 34)
 #define PROC_INO_BUDDYINFO             26ULL
 #define PROC_INO_ZONEINFO              27ULL
 #define PROC_INO_THREAD_SELF           28ULL
@@ -1414,6 +1416,23 @@ static size_t gen_wchan(char *buf, size_t cap) {
 }
 
 /*
+ * gen_personality() — /proc/<pid>/personality
+ *
+ * Execution personality as 8-hex-digit value (zero-padded).
+ * Most processes run PER_LINUX (0x00000000).
+ */
+static size_t gen_personality(char *buf, size_t cap, fut_task_t *task) {
+    unsigned long p = task ? task->personality : 0UL;
+    struct pbuf b = { buf, 0, cap };
+    static const char hx[] = "0123456789abcdef";
+    /* Emit 8 hex digits */
+    for (int shift = 28; shift >= 0; shift -= 4)
+        pb_char(&b, hx[(p >> (unsigned)shift) & 0xfU]);
+    pb_char(&b, '\n');
+    return b.pos;
+}
+
+/*
  * gen_mountinfo() — /proc/<pid>/mountinfo (Linux 2.6.26+)
  *
  * Extended mount table: each line has
@@ -2307,9 +2326,17 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             break;
         }
         case PROC_OOM_ADJ: {
-            /* OOM score adjustment; 0 = neutral, -1000 = exempt */
+            /* OOM score adjustment; 0 = neutral, -1000 = OOM-exempt */
+            fut_task_t *otask = fut_task_by_pid(n->pid);
             struct pbuf b = { tmp, 0, GEN_BUF };
-            pb_str(&b, "0\n");
+            int adj = otask ? otask->oom_score_adj : 0;
+            if (adj < 0) {
+                pb_char(&b, '-');
+                pb_u64(&b, (uint64_t)(-(long)adj));
+            } else {
+                pb_u64(&b, (uint64_t)adj);
+            }
+            pb_char(&b, '\n');
             total = b.pos;
             break;
         }
@@ -2323,6 +2350,11 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
         case PROC_WCHAN:
             total = gen_wchan(tmp, GEN_BUF);
             break;
+        case PROC_PERSONALITY: {
+            fut_task_t *ptask = fut_task_by_pid(n->pid);
+            total = gen_personality(tmp, GEN_BUF, ptask);
+            break;
+        }
         case PROC_MOUNTINFO:
             total = gen_mountinfo(tmp, GEN_BUF);
             break;
@@ -2815,18 +2847,22 @@ static ssize_t procfs_file_write(struct fut_vnode *vnode, const void *buf,
             return (ssize_t)size;
 
         case PROC_OOM_ADJ: {
-            /* oom_score_adj: accept the write, store per-task if task is found */
-            fut_task_t *task = fut_task_by_pid(n->pid);
-            if (task) {
-                long val = 0;
-                for (size_t i = 0; i < copy_len; i++) {
-                    if (kbuf[i] >= '0' && kbuf[i] <= '9')
-                        val = val * 10 + (kbuf[i] - '0');
-                    else if (i == 0 && kbuf[i] == '-')
-                        val = -(long)(kbuf[1] - '0'); /* approximate */
-                }
-                (void)val; /* not acted on in our simple OOM policy */
-            }
+            /* oom_score_adj: parse signed decimal [-1000..1000] and store in task */
+            fut_task_t *wtask = fut_task_by_pid(n->pid);
+            if (!wtask) return -ESRCH;
+            /* Parse signed integer */
+            size_t i = 0;
+            int neg = 0;
+            if (i < copy_len && kbuf[i] == '-') { neg = 1; i++; }
+            else if (i < copy_len && kbuf[i] == '+') { i++; }
+            long val = 0;
+            for (; i < copy_len && kbuf[i] >= '0' && kbuf[i] <= '9'; i++)
+                val = val * 10 + (kbuf[i] - '0');
+            if (neg) val = -val;
+            /* Clamp to [-1000, 1000] */
+            if (val < -1000) val = -1000;
+            if (val >  1000) val =  1000;
+            wtask->oom_score_adj = (int)val;
             return (ssize_t)size;
         }
 
@@ -3354,6 +3390,11 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0100444, PROC_WCHAN, pid, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "personality")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_PERSONALITY(pid),
+                                          0100444, PROC_PERSONALITY, pid, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         if (STREQ(name, "mountinfo")) {
             *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_MOUNTINFO(pid),
                                           0100444, PROC_MOUNTINFO, pid, 0);
@@ -3475,7 +3516,9 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
         if (STREQ(name, "fdinfo"))
             { *result = procfs_alloc_vnode(mnt, VN_DIR, PROC_INO_PID_FDINFO(pid), 0040500, PROC_FDINFO_DIR, pid, 0); return *result ? 0 : -ENOMEM; }
         if (STREQ(name, "wchan"))
-            { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_WCHAN(pid),     0100444, PROC_WCHAN,           pid,0); return *result ? 0 : -ENOMEM; }
+            { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_WCHAN(pid),        0100444, PROC_WCHAN,           pid,0); return *result ? 0 : -ENOMEM; }
+        if (STREQ(name, "personality"))
+            { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_PERSONALITY(pid),  0100444, PROC_PERSONALITY,     pid,0); return *result ? 0 : -ENOMEM; }
         if (STREQ(name, "mountinfo"))
             { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_MOUNTINFO(pid), 0100444, PROC_MOUNTINFO,       pid,0); return *result ? 0 : -ENOMEM; }
         if (STREQ(name, "coredump_filter"))
@@ -4218,7 +4261,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             "wchan", "mountinfo", "coredump_filter", "schedstat", "net", "attr",
             "smaps_rollup", "auxv", "mem",
             "uid_map", "gid_map", "setgroups",
-            "loginuid", "sessionid"
+            "loginuid", "sessionid", "personality"
         };
         static const uint8_t etypes[] = {
             FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
@@ -4235,10 +4278,10 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
-            FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG
+            FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG
         };
         uint64_t pid = dn->pid;
-        if (idx < 35) {
+        if (idx < 36) {
             uint64_t ino;
             switch (idx) {
                 case 0:  ino = PROC_INO_PID_DIR(pid);        break;
@@ -4276,6 +4319,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                 case 32: ino = PROC_INO_PID_SETGROUPS(pid);         break;
                 case 33: ino = PROC_INO_PID_LOGINUID(pid);          break;
                 case 34: ino = PROC_INO_PID_SESSIONID(pid);         break;
+                case 35: ino = PROC_INO_PID_PERSONALITY(pid);       break;
                 default: ino = 0; break;
             }
             de->d_ino    = ino;

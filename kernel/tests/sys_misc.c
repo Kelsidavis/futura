@@ -25815,6 +25815,10 @@ static void test_clock_settime(void) {
 #endif
 
 extern long sys_futimesat(int dirfd, const char *pathname, const void *times);
+extern long sys_mount(const char *source, const char *target, const char *filesystemtype,
+                      unsigned long mountflags, const void *data);
+extern long sys_umount2(const char *target, int flags);
+extern long sys_mkdir(const char *path, uint32_t mode);
 extern long sys_lgetxattr(const char *path, const char *name, void *value, size_t size);
 extern long sys_llistxattr(const char *path, char *list, size_t size);
 extern long sys_lsetxattr(const char *path, const char *name, const void *value,
@@ -25833,6 +25837,61 @@ extern long sys_io_getevents(unsigned long ctx_id, long min_nr, long nr,
 extern long sys_io_submit(unsigned long ctx_id, long nr, void **iocbpp);
 extern long sys_io_cancel(unsigned long ctx_id, void *iocb, void *result);
 extern long sys_open(const char *path, int flags, int mode);
+
+/**
+ * test_mount_umount2 - Tests 718-721
+ *
+ *   Test 718: mkdir("/tmp/mnt_test") → 0
+ *   Test 719: mount(NULL, "/tmp/mnt_test", "tmpfs", 0, NULL) → 0
+ *   Test 720: umount2("/tmp/mnt_test", 0) → 0
+ *   Test 721: mount(NULL, "/noexist_mnt", "tmpfs", 0, NULL) → ENOENT
+ */
+static void test_mount_umount2(void) {
+    /* Test 718: mkdir for mount point */
+    fut_printf("[MISC-TEST] Test 718: mkdir(\"/tmp/mnt_test\") → 0\n");
+    long ret = sys_mkdir("/tmp/mnt_test", 0755);
+    if (ret != 0 && ret != -EEXIST) {
+        fut_printf("[MISC-TEST] ✗ Test 718: mkdir returned %ld\n", ret);
+        fut_test_fail(718);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 718: mkdir → %ld (0 or EEXIST ok)\n", ret);
+        fut_test_pass();
+    }
+
+    /* Test 719: mount tmpfs at /tmp/mnt_test → 0 */
+    fut_printf("[MISC-TEST] Test 719: mount(NULL, \"/tmp/mnt_test\", \"tmpfs\", 0, NULL) → 0\n");
+    ret = sys_mount(NULL, "/tmp/mnt_test", "tmpfs", 0, NULL);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 719: mount returned %ld\n", ret);
+        fut_test_fail(719);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 719: mount → 0\n");
+        fut_test_pass();
+    }
+
+    /* Test 720: umount2("/tmp/mnt_test", 0) → 0 */
+    fut_printf("[MISC-TEST] Test 720: umount2(\"/tmp/mnt_test\", 0) → 0\n");
+    ret = sys_umount2("/tmp/mnt_test", 0);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 720: umount2 returned %ld\n", ret);
+        fut_test_fail(720);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 720: umount2 → 0\n");
+        fut_test_pass();
+    }
+
+    /* Test 721: mount to nonexistent target → ENOENT */
+    fut_printf("[MISC-TEST] Test 721: mount(NULL, \"/noexist_mnt\", \"tmpfs\") → ENOENT\n");
+    ret = sys_mount(NULL, "/noexist_mnt", "tmpfs", 0, NULL);
+    if (ret != -ENOENT) {
+        fut_printf("[MISC-TEST] ✗ Test 721: mount returned %ld (expected -ENOENT=%d)\n",
+                   ret, -ENOENT);
+        fut_test_fail(721);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 721: mount nonexistent → ENOENT\n");
+        fut_test_pass();
+    }
+}
 
 /**
  * test_futimesat_basic - Tests 702-703
@@ -26900,6 +26959,7 @@ void fut_misc_test_thread(void *arg) {
     test_rt_tgsigqueueinfo_setpgrp_time_millis(); /* Tests 709-711: rt_tgsigqueueinfo/setpgrp/time_millis */
     test_select_zero_timeout();              /* Test 712: select(0, NULL, NULL, NULL, timeout=0) → 0 */
     test_io_aio_enosys();                    /* Tests 713-717: io_setup/destroy/getevents/submit/cancel → ENOSYS */
+    test_mount_umount2();                    /* Tests 718-721: mkdir/mount tmpfs/umount2/mount ENOENT */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

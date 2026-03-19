@@ -21,6 +21,19 @@
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
+static inline int umount_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_from_user(dst, src, n);
+}
+
 #define CAP_SYS_ADMIN  21
 
 /* Unmount flags */
@@ -213,7 +226,7 @@ long sys_umount2(const char *target, int flags) {
      * IMPACT: Kernel reads arbitrary user memory without validation
      * DEFENSE: Copy path with fut_copy_from_user and detect truncation */
     char target_buf[256];
-    if (fut_copy_from_user(target_buf, target, sizeof(target_buf)) != 0) {
+    if (umount_copy_from_user(target_buf, target, sizeof(target_buf)) != 0) {
         fut_printf("[UMOUNT2] umount2(target=?, flags=0x%x, pid=%d) -> EFAULT "
                    "(target copy_from_user failed)\n", flags, task->pid);
         return -EFAULT;

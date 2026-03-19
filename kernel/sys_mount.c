@@ -24,6 +24,20 @@
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
+/* Kernel-pointer bypass helper for copy_from_user */
+static inline int mount_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_from_user(dst, src, n);
+}
+
 #define CAP_SYS_ADMIN  21
 
 /* Mount flags */
@@ -220,7 +234,7 @@ long sys_mount(const char *source, const char *target, const char *filesystemtyp
 
         /* Bulk copy entire data buffer in ONE operation (not 4096 operations)
          * This is 100x faster than byte-by-byte scanning */
-        if (fut_copy_from_user(data_buf, data, MAX_MOUNT_DATA_SIZE) != 0) {
+        if (mount_copy_from_user(data_buf, data, MAX_MOUNT_DATA_SIZE) != 0) {
             /* Copy failed - data pointer invalid or shorter than MAX size
              * This is expected for valid short strings, try smaller copy */
             fut_printf("[MOUNT] mount(source=%p, data=%p) -> EFAULT "
@@ -294,7 +308,7 @@ long sys_mount(const char *source, const char *target, const char *filesystemtyp
      * - CVE-2017-7889: Linux mount path truncation
      */
     char target_buf[256];
-    if (fut_copy_from_user(target_buf, target, sizeof(target_buf)) != 0) {
+    if (mount_copy_from_user(target_buf, target, sizeof(target_buf)) != 0) {
         fut_printf("[MOUNT] mount(source=%p, target=?, fstype=%p, flags=0x%lx, pid=%d) -> EFAULT "
                    "(target copy_from_user failed)\n",
                    source, filesystemtype, mountflags, task->pid);
@@ -335,7 +349,7 @@ long sys_mount(const char *source, const char *target, const char *filesystemtyp
      */
     char fstype_buf[64] = {0};
     if (filesystemtype) {
-        if (fut_copy_from_user(fstype_buf, filesystemtype, sizeof(fstype_buf)) != 0) {
+        if (mount_copy_from_user(fstype_buf, filesystemtype, sizeof(fstype_buf)) != 0) {
             fut_printf("[MOUNT] mount(source=%p, target='%s', fstype=?, flags=0x%lx, pid=%d) -> EFAULT "
                        "(fstype copy_from_user failed)\n",
                    source, target_buf, mountflags, task->pid);

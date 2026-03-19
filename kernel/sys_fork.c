@@ -1823,6 +1823,9 @@ long sys_clone_thread(uint64_t flags, uint64_t child_stack,
      * child starts with the same signal mask as the creating thread). */
     child_thread->signal_mask = __atomic_load_n(&parent_thread->signal_mask, __ATOMIC_ACQUIRE);
 
+    /* Inherit parent thread's name (child gets same comm to start with) */
+    __builtin_memcpy(child_thread->comm, parent_thread->comm, sizeof(child_thread->comm));
+
 #ifdef __x86_64__
     FORK_LOG("[CLONE] thread tid=%llu rip=0x%llx rsp=0x%llx fs_base=0x%llx\n",
              (unsigned long long)child_tid,

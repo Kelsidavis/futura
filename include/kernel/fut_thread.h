@@ -121,6 +121,10 @@ struct fut_thread {
     /* Per-signal siginfo_t for thread-directed signals (rt_tgsigqueueinfo / tgkill).
      * Indexed by signal number (0 unused; valid range 1..._NSIG-1). */
     siginfo_t thread_sig_queue_info[FUT_THREAD_NSIG];
+
+    /* Per-thread name: set via prctl(PR_SET_NAME) or /proc/<pid>/task/<tid>/comm.
+     * Initialized from task->comm at thread creation; max 15 chars + NUL. */
+    char comm[16];
 };
 
 /* ============================================================

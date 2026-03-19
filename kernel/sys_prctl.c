@@ -129,7 +129,10 @@ long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
     }
 
     case PR_SET_NAME: {
-        /* Set process/thread name (max 15 chars + null) */
+        /* Set calling thread's name (max 15 chars + null).
+         * Linux semantics: per-thread name, not per-process.
+         * Also update task->comm so /proc/<pid>/status Name: is consistent
+         * when the main thread (tid == pid) renames itself. */
         const char *name = (const char *)(uintptr_t)arg2;
         if (!name) {
             return -EFAULT;
@@ -144,19 +147,26 @@ long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
             }
         }
         kname[15] = '\0';
+        /* Set per-thread name */
+        fut_thread_t *cur_thread = fut_thread_current();
+        if (cur_thread)
+            memcpy(cur_thread->comm, kname, 16);
+        /* Keep task->comm in sync (used by /proc/<pid>/status Name: field) */
         memcpy(task->comm, kname, 16);
         return 0;
     }
 
     case PR_GET_NAME: {
-        /* Get process/thread name */
+        /* Get calling thread's name (per-thread in Linux). */
         char *uname = (char *)(uintptr_t)arg2;
         if (!uname) {
             return -EFAULT;
         }
-        if (fut_copy_to_user(uname, task->comm, 16) != 0) {
+        fut_thread_t *cur_thread = fut_thread_current();
+        const char *src = (cur_thread && cur_thread->comm[0]) ? cur_thread->comm : task->comm;
+        if (fut_copy_to_user(uname, src, 16) != 0) {
             /* If copy_to_user fails, try direct copy (kernel pointer) */
-            memcpy(uname, task->comm, 16);
+            memcpy(uname, src, 16);
         }
         return 0;
     }

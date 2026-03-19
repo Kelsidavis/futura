@@ -204,6 +204,11 @@ fut_thread_t *fut_thread_create(
         .blocked_waitq = NULL
     };
 
+    /* Inherit task comm (thread name starts as process name; can be overridden
+     * later via prctl(PR_SET_NAME) on a per-thread basis). */
+    if (task->comm[0])
+        __builtin_memcpy(thread->comm, task->comm, sizeof(thread->comm));
+
 #if defined(__x86_64__)
     /* Pre-allocate IRQ frame storage so fut_switch_context_irq never calls
      * fut_malloc from interrupt context. Calling the allocator from an IRQ

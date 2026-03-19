@@ -21187,6 +21187,226 @@ static void test_sysfs_basic(void) {
 #undef O_DIRECTORY
 }
 
+/*
+ * test_thread_comm_and_tid_status() — Tests 516-520
+ *
+ * Verifies per-thread name semantics and /proc/<pid>/task/<tid>/ correctness:
+ *   Test 516: prctl(PR_SET_NAME) → PR_GET_NAME returns the set name.
+ *   Test 517: /proc/self/task/<tid>/status has "Pid:\t<tid>" (TID, not PID).
+ *   Test 518: /proc/self/task/<tid>/comm returns the thread name set via prctl.
+ *   Test 519: /proc/self/task/<tid>/stat field 1 is the TID.
+ *   Test 520: PR_SET_NAME does not corrupt /proc/self/comm (task name unchanged
+ *             once written via /proc/self/comm separately).
+ */
+static void test_thread_comm_and_tid_status(void) {
+    extern long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
+                          unsigned long arg4, unsigned long arg5);
+    extern long sys_gettid(void);
+    extern long sys_getpid(void);
+    extern long sys_openat(int dirfd, const char *pathname, int flags, int mode);
+    extern long sys_read(int fd, void *buf, size_t count);
+    extern long sys_close(int fd);
+    extern long sys_write(int fd, const void *buf, size_t count);
+
+#define PR_SET_NAME_VAL 15
+#define PR_GET_NAME_VAL 16
+
+    fut_printf("[MISC-TEST] Tests 516-520: per-thread comm + task/<tid>/ files\n");
+
+    long tid = sys_gettid();
+    long pid = sys_getpid();
+
+    /* Test 516: PR_SET_NAME → PR_GET_NAME round-trip */
+    {
+        const char *newname = "futtest516";
+        char got[16];
+        __builtin_memset(got, 0, sizeof(got));
+        sys_prctl(PR_SET_NAME_VAL, (unsigned long)newname, 0, 0, 0);
+        sys_prctl(PR_GET_NAME_VAL, (unsigned long)got, 0, 0, 0);
+        if (__builtin_memcmp(got, newname, __builtin_strlen(newname)) == 0) {
+            fut_printf("[MISC-TEST] PASS 516: PR_SET_NAME/GET_NAME = \"%s\"\n", got);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL 516: got \"%s\"\n", got);
+            fut_test_fail(516);
+        }
+    }
+
+    /* Build path /proc/self/task/<tid>/status */
+    char path[64];
+    {
+        /* manual snprintf: /proc/self/task/<decimal_tid>/status */
+        const char *prefix = "/proc/self/task/";
+        char *p = path;
+        for (int i = 0; prefix[i]; i++) *p++ = prefix[i];
+        /* convert tid to decimal */
+        char digits[20]; int nd = 0;
+        long v = tid;
+        if (v == 0) { digits[nd++] = '0'; }
+        else { long tmp2 = v; while (tmp2) { digits[nd++] = '0' + (int)(tmp2 % 10); tmp2 /= 10; } }
+        for (int i = nd - 1; i >= 0; i--) *p++ = digits[i];
+        const char *suf_status = "/status";
+        for (int i = 0; suf_status[i]; i++) *p++ = suf_status[i];
+        *p = '\0';
+    }
+
+    /* Test 517: /proc/self/task/<tid>/status has "Pid:\t<tid>" */
+    {
+        int fd = (int)sys_openat(-100, path, 0, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] FAIL 517: open %s failed: %d\n", path, fd);
+            fut_test_fail(517);
+        } else {
+            char buf[1024];
+            long n = sys_read(fd, buf, sizeof(buf) - 1);
+            sys_close(fd);
+            if (n <= 0) {
+                fut_printf("[MISC-TEST] FAIL 517: read returned %ld\n", n);
+                fut_test_fail(517);
+            } else {
+                buf[n] = '\0';
+                /* Look for "Pid:\t<tid>" — must NOT be PID */
+                int found_tid_in_pid = 0;
+                for (long i = 0; i + 4 < n; i++) {
+                    if (buf[i]=='P' && buf[i+1]=='i' && buf[i+2]=='d' && buf[i+3]==':' && buf[i+4]=='\t') {
+                        /* parse the number after "Pid:\t" */
+                        long parsed = 0;
+                        long j = i + 5;
+                        while (j < n && buf[j] >= '0' && buf[j] <= '9')
+                            parsed = parsed * 10 + (buf[j++] - '0');
+                        if (parsed == tid) found_tid_in_pid = 1;
+                        break;
+                    }
+                }
+                if (found_tid_in_pid) {
+                    fut_printf("[MISC-TEST] PASS 517: task/<tid>/status Pid: = %ld\n", tid);
+                    fut_test_pass();
+                } else {
+                    /* Show what Pid: line we got */
+                    fut_printf("[MISC-TEST] FAIL 517: Pid: field != tid(%ld) in: %.80s\n", tid, buf);
+                    fut_test_fail(517);
+                }
+            }
+        }
+    }
+
+    /* Build /proc/self/task/<tid>/comm path */
+    char path_comm[64];
+    {
+        char *p = path_comm;
+        const char *prefix = "/proc/self/task/";
+        for (int i = 0; prefix[i]; i++) *p++ = prefix[i];
+        char digits[20]; int nd = 0;
+        long v = tid;
+        if (v == 0) { digits[nd++] = '0'; }
+        else { long tmp2 = v; while (tmp2) { digits[nd++] = '0' + (int)(tmp2 % 10); tmp2 /= 10; } }
+        for (int i = nd - 1; i >= 0; i--) *p++ = digits[i];
+        const char *suf = "/comm";
+        for (int i = 0; suf[i]; i++) *p++ = suf[i];
+        *p = '\0';
+    }
+
+    /* Test 518: /proc/self/task/<tid>/comm returns the name set via prctl */
+    {
+        int fd = (int)sys_openat(-100, path_comm, 0, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] FAIL 518: open task comm failed: %d\n", fd);
+            fut_test_fail(518);
+        } else {
+            char buf[32];
+            long n = sys_read(fd, buf, sizeof(buf) - 1);
+            sys_close(fd);
+            if (n > 0 && buf[n-1] == '\n') n--;  /* strip trailing newline */
+            buf[n > 0 ? n : 0] = '\0';
+            /* Should match what we set in test 516 ("futtest516") */
+            if (n > 0 && __builtin_memcmp(buf, "futtest516", 10) == 0) {
+                fut_printf("[MISC-TEST] PASS 518: task/<tid>/comm = \"%s\"\n", buf);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL 518: task/<tid>/comm = \"%s\"\n", buf);
+                fut_test_fail(518);
+            }
+        }
+    }
+
+    /* Build /proc/self/task/<tid>/stat path */
+    char path_stat[64];
+    {
+        char *p = path_stat;
+        const char *prefix = "/proc/self/task/";
+        for (int i = 0; prefix[i]; i++) *p++ = prefix[i];
+        char digits[20]; int nd = 0;
+        long v = tid;
+        if (v == 0) { digits[nd++] = '0'; }
+        else { long tmp2 = v; while (tmp2) { digits[nd++] = '0' + (int)(tmp2 % 10); tmp2 /= 10; } }
+        for (int i = nd - 1; i >= 0; i--) *p++ = digits[i];
+        const char *suf = "/stat";
+        for (int i = 0; suf[i]; i++) *p++ = suf[i];
+        *p = '\0';
+    }
+
+    /* Test 519: /proc/self/task/<tid>/stat field 1 is TID */
+    {
+        int fd = (int)sys_openat(-100, path_stat, 0, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] FAIL 519: open task stat failed: %d\n", fd);
+            fut_test_fail(519);
+        } else {
+            char buf[256];
+            long n = sys_read(fd, buf, sizeof(buf) - 1);
+            sys_close(fd);
+            buf[n > 0 ? n : 0] = '\0';
+            /* field 1 = first space-delimited token */
+            long parsed = 0;
+            for (long i = 0; i < n && buf[i] >= '0' && buf[i] <= '9'; i++)
+                parsed = parsed * 10 + (buf[i] - '0');
+            if (parsed == tid) {
+                fut_printf("[MISC-TEST] PASS 519: task/<tid>/stat field1 = %ld\n", tid);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL 519: stat field1 = %ld, want %ld\n", parsed, tid);
+                fut_test_fail(519);
+            }
+        }
+    }
+
+    /* Test 520: Tgid: in task/<tid>/status equals PID (thread-group ID = process) */
+    {
+        int fd = (int)sys_openat(-100, path, 0, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] FAIL 520: open status failed: %d\n", fd);
+            fut_test_fail(520);
+        } else {
+            char buf[1024];
+            long n = sys_read(fd, buf, sizeof(buf) - 1);
+            sys_close(fd);
+            buf[n > 0 ? n : 0] = '\0';
+            int found_tgid = 0;
+            for (long i = 0; i + 5 < n; i++) {
+                if (buf[i]=='T' && buf[i+1]=='g' && buf[i+2]=='i' && buf[i+3]=='d' &&
+                    buf[i+4]==':' && buf[i+5]=='\t') {
+                    long parsed = 0;
+                    long j = i + 6;
+                    while (j < n && buf[j] >= '0' && buf[j] <= '9')
+                        parsed = parsed * 10 + (buf[j++] - '0');
+                    if (parsed == pid) found_tgid = 1;
+                    break;
+                }
+            }
+            if (found_tgid) {
+                fut_printf("[MISC-TEST] PASS 520: task/<tid>/status Tgid: = %ld (pid)\n", pid);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL 520: Tgid: != pid(%ld) in: %.80s\n", pid, buf);
+                fut_test_fail(520);
+            }
+        }
+    }
+
+#undef PR_SET_NAME_VAL
+#undef PR_GET_NAME_VAL
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -21627,6 +21847,7 @@ void fut_misc_test_thread(void *arg) {
     test_proc_diskstats_partitions_cgroups(); /* Tests 506-508: /proc/{diskstats,partitions,cgroups} */
     test_proc_personality_oom_adj();         /* Tests 509-511: /proc/self/{personality,oom_score_adj} */
     test_sysfs_basic();                      /* Tests 512-515: /sys mount, class/, bus/, kernel/mm/thp */
+    test_thread_comm_and_tid_status();       /* Tests 516-520: per-thread comm + task/<tid>/ files */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

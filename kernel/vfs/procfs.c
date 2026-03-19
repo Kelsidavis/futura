@@ -634,7 +634,8 @@ static size_t gen_uptime(char *buf, size_t cap) {
     return b.pos;
 }
 
-static size_t gen_status(char *buf, size_t cap, fut_task_t *task) {
+/* tid: when non-zero, this is /proc/<pid>/task/<tid>/status — show tid in Pid: field */
+static size_t gen_status(char *buf, size_t cap, fut_task_t *task, uint64_t tid) {
     if (!task) return 0;
 
     const char *state_str;
@@ -702,11 +703,20 @@ static size_t gen_status(char *buf, size_t cap, fut_task_t *task) {
 
     uint64_t ppid = task->parent ? task->parent->pid : 0;
 
+    /* For /proc/<pid>/task/<tid>/status, use the thread's own name if available */
+    const char *comm_name = task->comm[0] ? task->comm : "?";
+    if (tid != 0) {
+        /* Find the thread with this TID and use its per-thread comm */
+        for (fut_thread_t *t = task->threads; t; t = t->next) {
+            if (t->tid == tid && t->comm[0]) { comm_name = t->comm; break; }
+        }
+    }
+
     struct pbuf b = { buf, 0, cap };
-    pb_str(&b, "Name:\t");       pb_str(&b, task->comm[0] ? task->comm : "?"); pb_char(&b, '\n');
+    pb_str(&b, "Name:\t");       pb_str(&b, comm_name); pb_char(&b, '\n');
     pb_str(&b, "State:\t");      pb_str(&b, state_str); pb_char(&b, '\n');
     pb_str(&b, "Tgid:\t");       pb_u64(&b, task->pid); pb_char(&b, '\n');
-    pb_str(&b, "Pid:\t");        pb_u64(&b, task->pid); pb_char(&b, '\n');
+    pb_str(&b, "Pid:\t");        pb_u64(&b, tid ? tid : task->pid); pb_char(&b, '\n');
     pb_str(&b, "PPid:\t");       pb_u64(&b, ppid);       pb_char(&b, '\n');
     pb_str(&b, "TracerPid:\t");  pb_u64(&b, 0);          pb_char(&b, '\n');
     pb_str(&b, "Uid:\t");        pb_u64(&b, task->ruid); pb_char(&b, '\t');
@@ -1108,7 +1118,8 @@ static size_t gen_cmdline(char *buf, size_t cap, fut_task_t *task) {
  *   13/14=utime/stime (USER_HZ=100 ticks), 17=priority, 18=nice,
  *   19=num_threads, 21=starttime, 22=vsize (bytes), 23=rss (pages)
  */
-static size_t gen_stat(char *buf, size_t cap, fut_task_t *task) {
+/* tid: when non-zero, this is /proc/<pid>/task/<tid>/stat — show tid as field 1 */
+static size_t gen_stat(char *buf, size_t cap, fut_task_t *task, uint64_t tid) {
     if (!task) return 0;
 
     /* State character — map task state to Linux /proc/stat state letter.
@@ -1178,11 +1189,17 @@ static size_t gen_stat(char *buf, size_t cap, fut_task_t *task) {
 
     struct pbuf b = { buf, 0, cap };
 
-    /* Field 1: pid */
-    pb_u64(&b, task->pid); pb_char(&b, ' ');
-    /* Field 2: comm in parens */
+    /* Field 1: pid (or tid when reading /proc/<pid>/task/<tid>/stat) */
+    pb_u64(&b, tid ? tid : task->pid); pb_char(&b, ' ');
+    /* Field 2: comm in parens — use per-thread name when tid is set */
     pb_char(&b, '(');
-    pb_str(&b, task->comm[0] ? task->comm : "?");
+    const char *stat_comm = task->comm[0] ? task->comm : "?";
+    if (tid) {
+        for (fut_thread_t *t = task->threads; t; t = t->next) {
+            if (t->tid == tid && t->comm[0]) { stat_comm = t->comm; break; }
+        }
+    }
+    pb_str(&b, stat_comm);
     pb_char(&b, ')'); pb_char(&b, ' ');
     /* Field 3: state */
     pb_char(&b, state_c); pb_char(&b, ' ');
@@ -1698,9 +1715,15 @@ static size_t gen_cgroups(char *buf, size_t cap) {
  *
  * Single line: process name + newline.
  */
-static size_t gen_comm(char *buf, size_t cap, fut_task_t *task) {
+/* tid: when non-zero, this is /proc/<pid>/task/<tid>/comm — show thread name */
+static size_t gen_comm(char *buf, size_t cap, fut_task_t *task, uint64_t tid) {
     if (!task) return 0;
     const char *name = task->comm[0] ? task->comm : "?";
+    if (tid) {
+        for (fut_thread_t *t = task->threads; t; t = t->next) {
+            if (t->tid == tid && t->comm[0]) { name = t->comm; break; }
+        }
+    }
     struct pbuf b = { buf, 0, cap };
     pb_str(&b, name);
     pb_char(&b, '\n');
@@ -2129,7 +2152,9 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
         case PROC_UPTIME:  total = gen_uptime(tmp, GEN_BUF);  break;
         case PROC_STATUS: {
             fut_task_t *task = fut_task_by_pid(n->pid);
-            total = task ? gen_status(tmp, GEN_BUF, task) : 0;
+            /* n->fd is non-zero when reading /proc/<pid>/task/<tid>/status:
+             * it holds the TID so Pid: shows the thread ID, not the process ID. */
+            total = task ? gen_status(tmp, GEN_BUF, task, (uint64_t)(unsigned int)n->fd) : 0;
             break;
         }
         case PROC_MAPS: {
@@ -2229,7 +2254,7 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
         }
         case PROC_STAT: {
             fut_task_t *task = fut_task_by_pid(n->pid);
-            total = task ? gen_stat(tmp, GEN_BUF, task) : 0;
+            total = task ? gen_stat(tmp, GEN_BUF, task, (uint64_t)(unsigned int)n->fd) : 0;
             break;
         }
         case PROC_STATM: {
@@ -2295,7 +2320,7 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             break;
         case PROC_COMM: {
             fut_task_t *task = fut_task_by_pid(n->pid);
-            total = task ? gen_comm(tmp, GEN_BUF, task) : 0;
+            total = task ? gen_comm(tmp, GEN_BUF, task, (uint64_t)(unsigned int)n->fd) : 0;
             break;
         }
         case PROC_LIMITS: {
@@ -3459,10 +3484,13 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
     }
 
     if (dn->kind == PROC_TID_DIR) {
-        /* /proc/<pid>/task/<tid>/ exposes the same files as /proc/<pid>/ */
+        /* /proc/<pid>/task/<tid>/ exposes the same files as /proc/<pid>/ but with
+         * tid-specific fields: status/stat Pid: shows TID; comm shows thread name.
+         * The TID is stored in dn->fd (set when the TID directory vnode was created). */
         uint64_t pid = dn->pid;
+        int tid_fd = dn->fd;  /* TID stored in fd field of the task/<tid> directory vnode */
         if (STREQ(name, "status"))
-            { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_STATUS(pid), 0100444, PROC_STATUS, pid, 0); return *result ? 0 : -ENOMEM; }
+            { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_STATUS(pid), 0100444, PROC_STATUS, pid, tid_fd); return *result ? 0 : -ENOMEM; }
         if (STREQ(name, "maps"))
             { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_MAPS(pid),   0100444, PROC_MAPS,   pid, 0); return *result ? 0 : -ENOMEM; }
         if (STREQ(name, "cmdline"))
@@ -3476,11 +3504,11 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
         if (STREQ(name, "cwd"))
             { *result = procfs_alloc_vnode(mnt, VN_LNK, PROC_INO_PID_CWD(pid),    0120777, PROC_CWD,    pid, 0); return *result ? 0 : -ENOMEM; }
         if (STREQ(name, "stat"))
-            { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_STAT(pid),   0100444, PROC_STAT,   pid, 0); return *result ? 0 : -ENOMEM; }
+            { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_STAT(pid),   0100444, PROC_STAT,   pid, tid_fd); return *result ? 0 : -ENOMEM; }
         if (STREQ(name, "statm"))
             { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_STATM(pid),  0100444, PROC_STATM,  pid, 0); return *result ? 0 : -ENOMEM; }
         if (STREQ(name, "comm"))
-            { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_COMM(pid),   0100644, PROC_COMM,   pid, 0); return *result ? 0 : -ENOMEM; }
+            { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_COMM(pid),   0100644, PROC_COMM,   pid, tid_fd); return *result ? 0 : -ENOMEM; }
         if (STREQ(name, "task"))
             { *result = procfs_alloc_vnode(mnt, VN_DIR, PROC_INO_PID_TASK(pid),   0040555, PROC_TASK_DIR,pid,0); return *result ? 0 : -ENOMEM; }
         if (STREQ(name, "limits"))

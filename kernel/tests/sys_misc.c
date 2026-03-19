@@ -24855,6 +24855,24 @@ struct test_timex {
 };
 
 /* ============================================================
+ * Test 653: sched_yield() returns 0
+ * ============================================================ */
+static void test_sched_yield_basic(void) {
+    fut_printf("[MISC-TEST] Test 653: sched_yield() → 0\n");
+    extern long sys_sched_yield(void);
+
+    /* sched_yield always succeeds: POSIX says it shall return 0 */
+    long ret = sys_sched_yield();
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 653: sched_yield returned %ld (expected 0)\n", ret);
+        fut_test_fail(653);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 653: sched_yield() → 0\n");
+        fut_test_pass();
+    }
+}
+
+/* ============================================================
  * Tests 651-652: getrusage RUSAGE_THREAD and invalid who
  * ============================================================ */
 static void test_getrusage_thread(void) {
@@ -25720,6 +25738,7 @@ void fut_misc_test_thread(void *arg) {
     test_mmap_hint_flags();                  /* Tests 646-648: mmap MAP_POPULATE/NORESERVE/STACK accepted */
     test_prctl_set_mm_set_vma();             /* Tests 649-650: PR_SET_MM→EPERM, PR_SET_VMA→0 */
     test_getrusage_thread();                 /* Tests 651-652: RUSAGE_THREAD and EINVAL */
+    test_sched_yield_basic();                /* Test 653: sched_yield() → 0 */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -764,10 +764,17 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
         return -EINVAL;
 
     case F_GET_SEALS:
+        /* Only sealing-capable fds (memfd MFD_ALLOW_SEALING) return seals.
+         * All others return -EPERM per Linux semantics. */
+        if (!(file->flags & FUT_F_SEALING))
+            return -EPERM;
         return (long)file->seals;
 
     case F_ADD_SEALS: { /* Also F_SETPIPE_SZ (same value: 1033) */
-        /* For pipe fds: F_SETPIPE_SZ — resize the pipe buffer */
+        /* For sealing-capable fds (memfd MFD_ALLOW_SEALING), go straight to seal logic.
+         * For pipe fds: F_SETPIPE_SZ — resize the pipe buffer.
+         * (F_ADD_SEALS and F_SETPIPE_SZ share value 1033, disambiguated by fd type.) */
+        if (file->flags & FUT_F_SEALING) goto do_seal;
         if (file->chr_ops && !file->vnode) {
             /* Get pipe_buffer from private data */
             struct pipe_buffer_hdr {
@@ -814,6 +821,12 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
 
             return (long)new_size;
         }
+        /* Remaining fds are not pipe and not sealing-capable */
+        fut_printf("[FCNTL] fcntl(fd=%d, F_ADD_SEALS) -> EPERM (not a sealing fd)\n",
+                   local_fd);
+        return -EPERM;
+
+        do_seal:;
         uint32_t new_seals = (uint32_t)local_arg;
         uint32_t valid_mask = F_SEAL_SEAL | F_SEAL_SHRINK | F_SEAL_GROW |
                               F_SEAL_WRITE | F_SEAL_FUTURE_WRITE;

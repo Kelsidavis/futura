@@ -26833,6 +26833,156 @@ static void test_fstat_signalfd_fstatat_empty(void) {
 }
 
 /**
+ * test_memfd_sealing - Tests 761-764
+ *
+ * Test 761: F_GET_SEALS on memfd without MFD_ALLOW_SEALING → EPERM
+ * Test 762: F_ADD_SEALS on memfd without MFD_ALLOW_SEALING → EPERM;
+ *           F_ADD_SEALS(F_SEAL_WRITE) on MFD_ALLOW_SEALING memfd → 0,
+ *           then write → EPERM (seal enforced)
+ * Test 763: F_ADD_SEALS(F_SEAL_SEAL) prevents further F_ADD_SEALS
+ * Test 764: F_ADD_SEALS(F_SEAL_SHRINK) prevents ftruncate shrink
+ */
+static void test_memfd_sealing(void) {
+    extern long sys_memfd_create(const char *uname, unsigned int flags);
+    extern long sys_fcntl(int fd, int cmd, uint64_t arg);
+    extern long sys_ftruncate(int fd, uint64_t length);
+    extern ssize_t sys_write(int fd, const void *buf, size_t count);
+
+#define MFD_ALLOW_SEALING_761 0x0002U
+#define F_GET_SEALS_761   1034
+#define F_ADD_SEALS_761   1033
+#define F_SEAL_SEAL_761   0x0001U
+#define F_SEAL_SHRINK_761 0x0002U
+#define F_SEAL_WRITE_761  0x0008U
+
+    /* Test 761: F_GET_SEALS on non-sealing memfd → EPERM */
+    fut_printf("[MISC-TEST] Test 761: F_GET_SEALS without MFD_ALLOW_SEALING → EPERM\n");
+    {
+        long fd = sys_memfd_create("notseal", 0 /* no MFD_ALLOW_SEALING */);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 761: memfd_create failed: %ld\n", fd);
+            fut_test_fail(761);
+        } else {
+            long r = sys_fcntl((int)fd, F_GET_SEALS_761, 0);
+            sys_close((int)fd);
+            if (r != -EPERM) {
+                fut_printf("[MISC-TEST] ✗ Test 761: F_GET_SEALS returned %ld, want EPERM\n", r);
+                fut_test_fail(761);
+            } else {
+                fut_printf("[MISC-TEST] ✓ Test 761: F_GET_SEALS without MFD_ALLOW_SEALING → EPERM\n");
+                fut_test_pass();
+            }
+        }
+    }
+
+    /* Test 762: F_ADD_SEALS(F_SEAL_WRITE) on MFD_ALLOW_SEALING memfd enforces write denial */
+    fut_printf("[MISC-TEST] Test 762: F_ADD_SEALS(F_SEAL_WRITE) prevents writes\n");
+    {
+        long fd = sys_memfd_create("sealtest", MFD_ALLOW_SEALING_761);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 762: memfd_create failed: %ld\n", fd);
+            fut_test_fail(762);
+        } else {
+            /* Initially 0 seals */
+            long seals = sys_fcntl((int)fd, F_GET_SEALS_761, 0);
+            if (seals != 0) {
+                fut_printf("[MISC-TEST] ✗ Test 762: initial seals=%ld, want 0\n", seals);
+                fut_test_fail(762);
+                sys_close((int)fd);
+                goto t763;
+            }
+            /* Add F_SEAL_WRITE */
+            long r = sys_fcntl((int)fd, F_ADD_SEALS_761, (long)F_SEAL_WRITE_761);
+            if (r != 0) {
+                fut_printf("[MISC-TEST] ✗ Test 762: F_ADD_SEALS returned %ld\n", r);
+                fut_test_fail(762);
+                sys_close((int)fd);
+                goto t763;
+            }
+            /* Write after sealing → EPERM */
+            char buf[4] = "xy";
+            long nw = sys_write((int)fd, buf, 2);
+            sys_close((int)fd);
+            if (nw != -EPERM) {
+                fut_printf("[MISC-TEST] ✗ Test 762: write after F_SEAL_WRITE returned %ld, want EPERM\n", nw);
+                fut_test_fail(762);
+            } else {
+                fut_printf("[MISC-TEST] ✓ Test 762: F_SEAL_WRITE enforced: write → EPERM\n");
+                fut_test_pass();
+            }
+        }
+    }
+
+t763:
+    /* Test 763: F_ADD_SEALS(F_SEAL_SEAL) prevents further sealing */
+    fut_printf("[MISC-TEST] Test 763: F_ADD_SEALS(F_SEAL_SEAL) prevents more seals\n");
+    {
+        long fd = sys_memfd_create("sealtest2", MFD_ALLOW_SEALING_761);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 763: memfd_create failed: %ld\n", fd);
+            fut_test_fail(763);
+        } else {
+            /* Seal the seal list */
+            long r = sys_fcntl((int)fd, F_ADD_SEALS_761, (long)F_SEAL_SEAL_761);
+            if (r != 0) {
+                fut_printf("[MISC-TEST] ✗ Test 763: F_ADD_SEALS(SEAL) returned %ld\n", r);
+                fut_test_fail(763);
+                sys_close((int)fd);
+                goto t764;
+            }
+            /* Adding more seals now must fail with EPERM */
+            long r2 = sys_fcntl((int)fd, F_ADD_SEALS_761, (long)F_SEAL_SHRINK_761);
+            sys_close((int)fd);
+            if (r2 != -EPERM) {
+                fut_printf("[MISC-TEST] ✗ Test 763: F_ADD_SEALS after SEAL_SEAL returned %ld, want EPERM\n", r2);
+                fut_test_fail(763);
+            } else {
+                fut_printf("[MISC-TEST] ✓ Test 763: F_SEAL_SEAL prevents further sealing\n");
+                fut_test_pass();
+            }
+        }
+    }
+
+t764:
+    /* Test 764: F_ADD_SEALS(F_SEAL_SHRINK) prevents truncating smaller */
+    fut_printf("[MISC-TEST] Test 764: F_ADD_SEALS(F_SEAL_SHRINK) prevents shrink\n");
+    {
+        long fd = sys_memfd_create("sealtest3", MFD_ALLOW_SEALING_761);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 764: memfd_create failed: %ld\n", fd);
+            fut_test_fail(764);
+        } else {
+            /* Extend to 4096 bytes */
+            sys_ftruncate((int)fd, 4096);
+            /* Seal against shrinking */
+            sys_fcntl((int)fd, F_ADD_SEALS_761, (long)F_SEAL_SHRINK_761);
+            /* Truncate to smaller → EPERM */
+            long r = sys_ftruncate((int)fd, 1024);
+            /* Truncate to same size → OK */
+            long r2 = sys_ftruncate((int)fd, 4096);
+            sys_close((int)fd);
+            if (r != -EPERM) {
+                fut_printf("[MISC-TEST] ✗ Test 764: ftruncate(shrink) returned %ld, want EPERM\n", r);
+                fut_test_fail(764);
+            } else if (r2 != 0) {
+                fut_printf("[MISC-TEST] ✗ Test 764: ftruncate(same) returned %ld, want 0\n", r2);
+                fut_test_fail(764);
+            } else {
+                fut_printf("[MISC-TEST] ✓ Test 764: F_SEAL_SHRINK prevents shrink, allows same-size\n");
+                fut_test_pass();
+            }
+        }
+    }
+
+#undef MFD_ALLOW_SEALING_761
+#undef F_GET_SEALS_761
+#undef F_ADD_SEALS_761
+#undef F_SEAL_SEAL_761
+#undef F_SEAL_SHRINK_761
+#undef F_SEAL_WRITE_761
+}
+
+/**
  * test_renameat_atfdcwd - Test 734
  *
  *   Test 734: renameat(AT_FDCWD, old, AT_FDCWD, new) behaves like rename()
@@ -28139,6 +28289,7 @@ void fut_misc_test_thread(void *arg) {
     test_prlimit_other_pid();                /* Tests 751-753: prlimit64 by explicit self pid; ESRCH; RLIMIT_STACK */
     test_fstat_special_fds();                /* Tests 754-757: fstat st_mode: pipe→S_IFIFO, sock→S_IFSOCK, efd→S_IFCHR, tfd→S_IFREG */
     test_fstat_signalfd_fstatat_empty();     /* Tests 758-760: signalfd fstat S_IFREG; fstatat AT_EMPTY_PATH pipe+socket */
+    test_memfd_sealing();                    /* Tests 761-764: memfd sealing: EPERM w/o MFD_ALLOW_SEALING; F_SEAL_WRITE/SEAL/SHRINK enforcement */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -117,14 +117,21 @@ static int memfd_release(void *inode, void *priv) {
     return 0;
 }
 
-/* Private ioctl for ftruncate support (used by sys_ftruncate) */
+/* Private ioctls for ftruncate and seal-check support (used by sys_ftruncate) */
 #define MEMFD_IOC_TRUNCATE 0xFE10
+#define MEMFD_IOC_GETSIZE  0xFE11
 
 static int memfd_ioctl(void *inode, void *priv, unsigned long req, unsigned long arg) {
     (void)inode;
     struct memfd *mf = (struct memfd *)priv;
     if (!mf)
         return -EINVAL;
+
+    if (req == MEMFD_IOC_GETSIZE) {
+        /* Returns current size in arg (as size_t*) */
+        if (arg) *(size_t *)arg = mf->size;
+        return (int)mf->size;
+    }
 
     if (req == MEMFD_IOC_TRUNCATE) {
         size_t new_size = (size_t)arg;
@@ -153,6 +160,14 @@ static int memfd_ioctl(void *inode, void *priv, unsigned long req, unsigned long
     }
 
     return -EINVAL;
+}
+
+/* Exported helper for seal checking: returns current memfd size, or -EINVAL if not a memfd */
+long fut_memfd_get_size(struct fut_file *file) {
+    if (!file || !file->chr_ops || !file->chr_ops->ioctl)
+        return -EINVAL;
+    return (long)file->chr_ops->ioctl(file->chr_inode, file->chr_private,
+                                      MEMFD_IOC_GETSIZE, 0);
 }
 
 static void *memfd_mmap(void *inode, void *priv, void *u_addr,
@@ -255,6 +270,14 @@ long sys_memfd_create(const char *uname, unsigned int flags) {
         fut_task_t *task = fut_task_current();
         if (task && task->fd_flags && fd < task->max_fds)
             task->fd_flags[fd] |= FD_CLOEXEC;
+    }
+
+    /* Mark file as sealing-capable when MFD_ALLOW_SEALING is set.
+     * F_ADD_SEALS checks this flag and returns EPERM if absent. */
+    if (flags & MFD_ALLOW_SEALING) {
+        fut_task_t *task = fut_task_current();
+        if (task && task->fd_table && fd < task->max_fds && task->fd_table[fd])
+            task->fd_table[fd]->flags |= FUT_F_SEALING;
     }
 
     return fd;

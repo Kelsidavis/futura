@@ -1007,6 +1007,9 @@ int vfs_check_modify_perm(struct fut_vnode *vnode);
  * (sockets, eventfd, timerfd, signalfd, pidfd, mqueue) to mark them
  * as non-seekable.  Cleared by memfd after allocation. */
 #define FUT_F_UNSEEKABLE 0x40000000
+/* Set by memfd_create(MFD_ALLOW_SEALING) to permit F_ADD_SEALS/F_GET_SEALS.
+ * Without this flag, F_ADD_SEALS returns -EPERM (Linux semantics). */
+#define FUT_F_SEALING    0x20000000
 
 /* Error codes */
 #define ENOENT      2       /* No such file or directory */

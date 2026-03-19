@@ -130,13 +130,25 @@ long sys_ftruncate(int fd, uint64_t length) {
         return -EBADF;
     }
 
-    /* Enforce file seals */
+    /* Enforce file seals (applies to memfd chr_ops files and vnode files alike) */
     if (file->seals & 0x0008 /* F_SEAL_WRITE */) {
         return -EPERM;
     }
 
-    /* Handle chr_ops files (memfd, etc.) via truncate ioctl */
+    /* Handle chr_ops files (memfd, etc.) via truncate ioctl.
+     * Check size-based seals before dispatching; query current size via ioctl first. */
     if (file->chr_ops && !file->vnode) {
+        if (file->seals & (0x0002 /* F_SEAL_SHRINK */ | 0x0004 /* F_SEAL_GROW */)) {
+            /* Query current size via MEMFD_IOC_GETSIZE (0xFE11) */
+            extern long fut_memfd_get_size(struct fut_file *file);
+            long cur = fut_memfd_get_size(file);
+            if (cur >= 0) {
+                if ((file->seals & 0x0002) && (uint64_t)length < (uint64_t)cur)
+                    return -EPERM;
+                if ((file->seals & 0x0004) && (uint64_t)length > (uint64_t)cur)
+                    return -EPERM;
+            }
+        }
         if (file->chr_ops->ioctl) {
             return file->chr_ops->ioctl(file->chr_inode, file->chr_private,
                                         0xFE10 /* MEMFD_IOC_TRUNCATE */,

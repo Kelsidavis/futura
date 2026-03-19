@@ -51,6 +51,11 @@
 #define PR_GET_TID_ADDRESS  50   /* Get pointer set by set_tid_address() */
 #define PR_GET_SPECULATION_CTRL 52 /* Get Spectre mitigation state */
 #define PR_SET_SPECULATION_CTRL 53 /* Set Spectre mitigation state */
+#define PR_CAP_AMBIENT      47   /* Ambient capability management (Linux 4.3+) */
+#define PR_CAP_AMBIENT_IS_SET  1   /* arg3: check if cap arg3 is in ambient set */
+#define PR_CAP_AMBIENT_RAISE   2   /* arg3: add cap arg3 to ambient set */
+#define PR_CAP_AMBIENT_LOWER   3   /* arg3: remove cap arg3 from ambient set */
+#define PR_CAP_AMBIENT_CLEAR_ALL 4 /* Clear all ambient capabilities */
 #define PR_SPEC_STORE_BYPASS     0 /* Spectre v4 store bypass (arg2 to GET/SET) */
 #define PR_SPEC_INDIRECT_BRANCH  1 /* Spectre v2 indirect branch (arg2) */
 #define PR_SPEC_L1D_FLUSH        2 /* L1D cache flush on context switch */
@@ -80,7 +85,7 @@
  */
 long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
                unsigned long arg4, unsigned long arg5) {
-    (void)arg3; (void)arg4; (void)arg5;
+    (void)arg4; (void)arg5;
 
     fut_task_t *task = fut_task_current();
     if (!task) {
@@ -295,6 +300,35 @@ long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
     case PR_SET_SPECULATION_CTRL:
         /* Silently accept — no real speculation mitigations needed. */
         return 0;
+
+    case PR_CAP_AMBIENT: {
+        /* Ambient capability management (Linux 4.3+).
+         * arg2 = operation (IS_SET/RAISE/LOWER/CLEAR_ALL), arg3 = capability number.
+         * Futura has no ambient capability set yet; accept all ops as stubs. */
+        int op = (int)arg2;
+        switch (op) {
+        case PR_CAP_AMBIENT_IS_SET:
+            /* Check if cap arg3 is in ambient set — always not set */
+            if ((int)arg3 < 0 || (int)arg3 > 63)
+                return -EINVAL;
+            return 0;
+        case PR_CAP_AMBIENT_RAISE:
+            /* Add cap to ambient set — accept without enforcement */
+            if ((int)arg3 < 0 || (int)arg3 > 63)
+                return -EINVAL;
+            return 0;
+        case PR_CAP_AMBIENT_LOWER:
+            /* Remove cap from ambient set — no-op */
+            if ((int)arg3 < 0 || (int)arg3 > 63)
+                return -EINVAL;
+            return 0;
+        case PR_CAP_AMBIENT_CLEAR_ALL:
+            /* Clear all ambient capabilities — no-op */
+            return 0;
+        default:
+            return -EINVAL;
+        }
+    }
 
     default:
         fut_printf("[PRCTL] prctl(option=%d) -> EINVAL (unsupported option)\n", option);

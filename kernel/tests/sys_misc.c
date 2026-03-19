@@ -18705,6 +18705,69 @@ static void test_close_range_unshare(void) {
 }
 
 /* ============================================================
+ * Tests 418-421: PR_CAP_AMBIENT operations (Linux 4.3+)
+ * ============================================================ */
+static void test_prctl_cap_ambient(void) {
+    extern long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
+                          unsigned long arg4, unsigned long arg5);
+#define PR_CAP_AMBIENT_VAL       47
+#define PR_CAP_AMBIENT_IS_SET_VAL  1
+#define PR_CAP_AMBIENT_RAISE_VAL   2
+#define PR_CAP_AMBIENT_LOWER_VAL   3
+#define PR_CAP_AMBIENT_CLEAR_ALL_VAL 4
+#define CAP_NET_BIND_SERVICE_VAL   10
+
+    long r;
+
+    /* Test 418: IS_SET returns 0 (not in ambient set) */
+    fut_printf("[MISC-TEST] Test 418: prctl(PR_CAP_AMBIENT, IS_SET, CAP_NET_BIND_SERVICE)\n");
+    r = sys_prctl(PR_CAP_AMBIENT_VAL, PR_CAP_AMBIENT_IS_SET_VAL,
+                  CAP_NET_BIND_SERVICE_VAL, 0, 0);
+    if (r == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 418: PR_CAP_AMBIENT IS_SET -> 0\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 418: got %ld (expected 0)\n", r);
+        fut_test_fail(418);
+    }
+
+    /* Test 419: RAISE returns 0 (accepted as no-op) */
+    fut_printf("[MISC-TEST] Test 419: prctl(PR_CAP_AMBIENT, RAISE, CAP_NET_BIND_SERVICE)\n");
+    r = sys_prctl(PR_CAP_AMBIENT_VAL, PR_CAP_AMBIENT_RAISE_VAL,
+                  CAP_NET_BIND_SERVICE_VAL, 0, 0);
+    if (r == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 419: PR_CAP_AMBIENT RAISE -> 0\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 419: got %ld (expected 0)\n", r);
+        fut_test_fail(419);
+    }
+
+    /* Test 420: LOWER returns 0 (no-op) */
+    fut_printf("[MISC-TEST] Test 420: prctl(PR_CAP_AMBIENT, LOWER, CAP_NET_BIND_SERVICE)\n");
+    r = sys_prctl(PR_CAP_AMBIENT_VAL, PR_CAP_AMBIENT_LOWER_VAL,
+                  CAP_NET_BIND_SERVICE_VAL, 0, 0);
+    if (r == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 420: PR_CAP_AMBIENT LOWER -> 0\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 420: got %ld (expected 0)\n", r);
+        fut_test_fail(420);
+    }
+
+    /* Test 421: CLEAR_ALL returns 0 (no-op) */
+    fut_printf("[MISC-TEST] Test 421: prctl(PR_CAP_AMBIENT, CLEAR_ALL)\n");
+    r = sys_prctl(PR_CAP_AMBIENT_VAL, PR_CAP_AMBIENT_CLEAR_ALL_VAL, 0, 0, 0);
+    if (r == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 421: PR_CAP_AMBIENT CLEAR_ALL -> 0\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 421: got %ld (expected 0)\n", r);
+        fut_test_fail(421);
+    }
+}
+
+/* ============================================================
  * Tests 415-416: madvise MADV_POPULATE_READ/WRITE (Linux 5.14+)
  * ============================================================ */
 static void test_madvise_populate(void) {
@@ -19395,6 +19458,7 @@ void fut_misc_test_thread(void *arg) {
     test_prctl_tid_address_speculation(); /* Tests 412-414: PR_GET_TID_ADDRESS, SPECULATION_CTRL get/set */
     test_madvise_populate();              /* Tests 415-416: MADV_POPULATE_READ/WRITE accepted (Linux 5.14+) */
     test_close_range_unshare();           /* Test 417: close_range CLOSE_RANGE_UNSHARE accepted */
+    test_prctl_cap_ambient();             /* Tests 418-421: PR_CAP_AMBIENT IS_SET/RAISE/LOWER/CLEAR_ALL */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

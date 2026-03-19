@@ -29,7 +29,7 @@ static inline int read_copy_to_user(void *dst, const void *src, size_t n) {
 #ifdef KERNEL_VIRTUAL_BASE
     if ((uintptr_t)dst >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
 #endif
-    return read_copy_to_user(dst, src, n);
+    return fut_copy_to_user(dst, src, n);
 }
 
 /* Maximum single read size to prevent excessive kernel buffer allocation */

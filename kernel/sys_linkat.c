@@ -32,7 +32,7 @@ static inline int linkat_copy_from_user(void *dst, const void *src, size_t n) {
 #ifdef KERNEL_VIRTUAL_BASE
     if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
 #endif
-    return linkat_copy_from_user(dst, src, n);
+    return fut_copy_from_user(dst, src, n);
 }
 
 /* AT_* constants provided by fcntl.h */

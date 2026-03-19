@@ -1191,6 +1191,22 @@ static int64_t sys_clone_handler(uint64_t flags, uint64_t stack, uint64_t parent
         return (int64_t)posix_fork();
     }
 
+    /* Resource-sharing flags without structural flags (no CLONE_THREAD, no namespaces,
+     * no CLONE_NEWNS/NEWPID/etc.): treat as fork.  Futura copies the FD table and FS
+     * state on fork anyway, so CLONE_FILES (0x400), CLONE_FS (0x200), CLONE_SIGHAND
+     * (0x800), CLONE_IO (0x80000000), CLONE_SYSVSEM (0x40000) are safe no-ops.
+     * This covers posix_spawn implementations that pass CLONE_FILES|CLONE_FS|SIGCHLD. */
+#define CLONE_FORK_COMPAT_MASK (0x100ULL   /* CLONE_VM */     | \
+                                 0x200ULL   /* CLONE_FS */     | \
+                                 0x400ULL   /* CLONE_FILES */  | \
+                                 0x800ULL   /* CLONE_SIGHAND */| \
+                                 0x40000ULL /* CLONE_SYSVSEM */| \
+                                 0x80000000ULL /* CLONE_IO */)
+    if ((clone_flags & ~CLONE_FORK_COMPAT_MASK) == 0) {
+        return (int64_t)posix_fork();
+    }
+#undef CLONE_FORK_COMPAT_MASK
+
     /* Unhandled clone flags (new namespaces, etc.) */
     fut_printf("[CLONE] clone(flags=0x%llx) -> ENOSYS (unhandled clone flags)\n",
                (unsigned long long)flags);

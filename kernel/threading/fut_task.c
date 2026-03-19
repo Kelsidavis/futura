@@ -137,6 +137,7 @@ fut_task_t *fut_task_create(void) {
         .cwd_cache = NULL,  /* Set to cwd_cache_buf below */
         .umask = FUT_UMASK_DEFAULT,  /* Default umask: owner read/write, group/others read only */
         .personality = PER_LINUX,   /* Default Linux personality */
+        .dumpable = 1,              /* Linux default: processes are dumpable (PR_GET_DUMPABLE=1) */
         .nice = 0,                  /* Default nice value (normal priority) */
         .clear_child_tid = NULL,  /* No tid address set initially (set via set_tid_address) */
         .fd_table = NULL,   /* FD table initialized below */

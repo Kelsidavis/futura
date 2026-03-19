@@ -550,10 +550,10 @@ static void test_prctl_name(void) {
 static void test_prctl_dumpable(void) {
     fut_printf("[MISC-TEST] Test 12: prctl PR_SET_DUMPABLE/PR_GET_DUMPABLE\n");
 
-    /* Default should be dumpable (1) or at least non-negative */
+    /* Linux default: PR_GET_DUMPABLE returns 1 (process is dumpable) */
     long val = sys_prctl(PR_GET_DUMPABLE, 0, 0, 0, 0);
-    if (val < 0) {
-        fut_printf("[MISC-TEST] ✗ PR_GET_DUMPABLE returned %ld\n", val);
+    if (val != 1) {
+        fut_printf("[MISC-TEST] ✗ PR_GET_DUMPABLE default=%ld (expected 1)\n", val);
         fut_test_fail(12);
         return;
     }

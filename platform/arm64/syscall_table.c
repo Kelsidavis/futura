@@ -2697,6 +2697,58 @@ static int64_t sys_quotactl_wrapper(uint64_t cmd, uint64_t special, uint64_t id,
     return sys_quotactl((unsigned int)cmd, (const char *)special, (int)id, (void *)addr);
 }
 
+/* sys_preadv2_wrapper */
+extern ssize_t sys_preadv2(int fd, const struct iovec *iov, int iovcnt,
+                            int64_t offset, int flags);
+static int64_t sys_preadv2_wrapper(uint64_t fd, uint64_t iov, uint64_t iovcnt,
+                                    uint64_t offset, uint64_t flags, uint64_t arg5) {
+    (void)arg5;
+    return sys_preadv2((int)fd, (const struct iovec *)iov, (int)iovcnt,
+                       (int64_t)offset, (int)flags);
+}
+
+/* sys_pwritev2_wrapper */
+extern ssize_t sys_pwritev2(int fd, const struct iovec *iov, int iovcnt,
+                             int64_t offset, int flags);
+static int64_t sys_pwritev2_wrapper(uint64_t fd, uint64_t iov, uint64_t iovcnt,
+                                     uint64_t offset, uint64_t flags, uint64_t arg5) {
+    (void)arg5;
+    return sys_pwritev2((int)fd, (const struct iovec *)iov, (int)iovcnt,
+                        (int64_t)offset, (int)flags);
+}
+
+/* sys_kcmp_wrapper */
+extern long sys_kcmp(int pid1, int pid2, int type, unsigned long idx1, unsigned long idx2);
+static int64_t sys_kcmp_wrapper(uint64_t pid1, uint64_t pid2, uint64_t type,
+                                 uint64_t idx1, uint64_t idx2, uint64_t arg5) {
+    (void)arg5;
+    return sys_kcmp((int)pid1, (int)pid2, (int)type, (unsigned long)idx1, (unsigned long)idx2);
+}
+
+/* sys_seccomp_wrapper */
+extern long sys_seccomp(unsigned int operation, unsigned int flags, const void *uargs);
+static int64_t sys_seccomp_wrapper(uint64_t operation, uint64_t flags, uint64_t uargs,
+                                    uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg3; (void)arg4; (void)arg5;
+    return sys_seccomp((unsigned int)operation, (unsigned int)flags, (const void *)uargs);
+}
+
+/* sys_rt_sigqueueinfo_wrapper */
+extern long sys_rt_sigqueueinfo(int tgid, int sig, const void *uinfo);
+static int64_t sys_rt_sigqueueinfo_wrapper(uint64_t tgid, uint64_t sig, uint64_t uinfo,
+                                            uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg3; (void)arg4; (void)arg5;
+    return sys_rt_sigqueueinfo((int)tgid, (int)sig, (const void *)uinfo);
+}
+
+/* sys_rt_tgsigqueueinfo_wrapper */
+extern long sys_rt_tgsigqueueinfo(int tgid, int tid, int sig, const void *uinfo);
+static int64_t sys_rt_tgsigqueueinfo_wrapper(uint64_t tgid, uint64_t tid, uint64_t sig,
+                                              uint64_t uinfo, uint64_t arg4, uint64_t arg5) {
+    (void)arg4; (void)arg5;
+    return sys_rt_tgsigqueueinfo((int)tgid, (int)tid, (int)sig, (const void *)uinfo);
+}
+
 /* sys_recvmmsg_wrapper */
 extern long sys_recvmmsg(int sockfd, void *msgvec, unsigned int vlen,
                          unsigned int flags, const struct timespec *timeout);
@@ -2939,10 +2991,18 @@ struct syscall_entry {
 #define __NR_sendmmsg           269
 #define __NR_process_vm_readv   270
 #define __NR_process_vm_writev  271
+/* preadv2/pwritev2 (Linux ARM64: 286-287) */
+#define __NR_preadv2            286
+#define __NR_pwritev2           287
 /* Memory protection keys (Linux ARM64: 288-290) */
 #define __NR_pkey_mprotect      288
 #define __NR_pkey_alloc         289
 #define __NR_pkey_free          290
+/* kcmp (Linux ARM64: 272), seccomp (277), rt_sigqueueinfo (138), rt_tgsigqueueinfo (240) */
+#define __NR_kcmp               272
+#define __NR_seccomp            277
+#define __NR_rt_sigqueueinfo    138
+#define __NR_rt_tgsigqueueinfo  240
 /* pidfd and newer syscalls */
 #define __NR_pidfd_send_signal  424
 #define __NR_clone3             435
@@ -3763,6 +3823,26 @@ static void arm64_syscall_table_init(void) {
     /* openat2 (Linux 5.6+) */
     syscall_table[__NR_openat2].handler = (syscall_fn_t)sys_openat2_wrapper;
     syscall_table[__NR_openat2].name = "openat2";
+
+    /* preadv2/pwritev2 (Linux 4.6+) */
+    syscall_table[__NR_preadv2].handler = (syscall_fn_t)sys_preadv2_wrapper;
+    syscall_table[__NR_preadv2].name = "preadv2";
+    syscall_table[__NR_pwritev2].handler = (syscall_fn_t)sys_pwritev2_wrapper;
+    syscall_table[__NR_pwritev2].name = "pwritev2";
+
+    /* kcmp (Linux 3.5+) */
+    syscall_table[__NR_kcmp].handler = (syscall_fn_t)sys_kcmp_wrapper;
+    syscall_table[__NR_kcmp].name = "kcmp";
+
+    /* seccomp (Linux 3.17+) */
+    syscall_table[__NR_seccomp].handler = (syscall_fn_t)sys_seccomp_wrapper;
+    syscall_table[__NR_seccomp].name = "seccomp";
+
+    /* rt_sigqueueinfo / rt_tgsigqueueinfo */
+    syscall_table[__NR_rt_sigqueueinfo].handler = (syscall_fn_t)sys_rt_sigqueueinfo_wrapper;
+    syscall_table[__NR_rt_sigqueueinfo].name = "rt_sigqueueinfo";
+    syscall_table[__NR_rt_tgsigqueueinfo].handler = (syscall_fn_t)sys_rt_tgsigqueueinfo_wrapper;
+    syscall_table[__NR_rt_tgsigqueueinfo].name = "rt_tgsigqueueinfo";
 
     syscall_table_initialized = true;
 }

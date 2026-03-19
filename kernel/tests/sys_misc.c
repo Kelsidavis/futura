@@ -6986,8 +6986,19 @@ static void test_getcwd_basic(void) {
 static void test_proc_self_maps(void) {
     fut_printf("[MISC-TEST] Test 146: /proc/self/maps readable\n");
 
+    /* Create an anonymous VMA so /proc/self/maps has at least one entry to report. */
+    extern long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset);
+    extern long sys_munmap(void *addr, size_t len);
+#define MAPS_MAP_PRIVATE  0x02
+#define MAPS_MAP_ANON     0x20
+#define MAPS_PROT_RW      3
+    long vma_addr = sys_mmap(NULL, 4096, MAPS_PROT_RW,
+                             MAPS_MAP_PRIVATE | MAPS_MAP_ANON, -1, 0);
+    int has_vma = (vma_addr > 0);
+
     int fd = fut_vfs_open("/proc/self/maps", 0 /* O_RDONLY */, 0);
     if (fd < 0) {
+        if (has_vma) sys_munmap((void *)(uintptr_t)vma_addr, 4096);
         fut_printf("[MISC-TEST] ✗ open /proc/self/maps: %d\n", fd);
         fut_test_fail(146);
         return;
@@ -6996,6 +7007,8 @@ static void test_proc_self_maps(void) {
     char buf[256];
     long n = fut_vfs_read(fd, buf, sizeof(buf) - 1);
     fut_vfs_close(fd);
+
+    if (has_vma) sys_munmap((void *)(uintptr_t)vma_addr, 4096);
 
     if (n <= 0) {
         fut_printf("[MISC-TEST] ✗ read /proc/self/maps: %ld\n", n);
@@ -12473,15 +12486,22 @@ static void test_proc_sys_kernel_caps(void) {
 static void test_proc_maps_format(void) {
     fut_printf("[MISC-TEST] Test 281: /proc/self/maps offset is 8 hex chars, not 16\n");
 
+    /* Create an anonymous VMA so /proc/self/maps has at least one entry. */
+    long vma281 = sys_mmap(NULL, 4096, MAPS_PROT_RW,
+                           MAPS_MAP_PRIVATE | MAPS_MAP_ANON, -1, 0);
+    int has281 = (vma281 > 0);
+
     extern ssize_t sys_read(int fd, void *buf, size_t count);
     char buf[512];
     int fd = fut_vfs_open("/proc/self/maps", O_RDONLY, 0);
     if (fd < 0) {
+        if (has281) sys_munmap((void *)(uintptr_t)vma281, 4096);
         fut_printf("[MISC-TEST] ✗ Test 281: open /proc/self/maps failed: %d\n", fd);
         fut_test_fail(281); return;
     }
     long n = (long)sys_read(fd, buf, sizeof(buf) - 1);
     fut_vfs_close(fd);
+    if (has281) sys_munmap((void *)(uintptr_t)vma281, 4096);
     if (n <= 0) {
         fut_printf("[MISC-TEST] ✗ Test 281: /proc/self/maps empty\n");
         fut_test_fail(281); return;
@@ -17005,8 +17025,14 @@ static void test_proc_stat_sigmask(void) {
 static void test_proc_maps_no_tab(void) {
     fut_printf("[MISC-TEST] Test 355: /proc/self/maps uses space before pathname (no tabs)\n");
 
+    /* Ensure at least one VMA exists so maps output is non-empty. */
+    long vma355 = sys_mmap(NULL, 4096, MAPS_PROT_RW,
+                           MAPS_MAP_PRIVATE | MAPS_MAP_ANON, -1, 0);
+    int has355 = (vma355 > 0);
+
     int fd = fut_vfs_open("/proc/self/maps", O_RDONLY, 0);
     if (fd < 0) {
+        if (has355) sys_munmap((void *)(uintptr_t)vma355, 4096);
         fut_printf("[MISC-TEST] ✗ Test 355: open /proc/self/maps failed: %d\n", fd);
         fut_test_fail(355);
         return;
@@ -17015,6 +17041,7 @@ static void test_proc_maps_no_tab(void) {
     char buf[1024];
     long n = fut_vfs_read(fd, buf, sizeof(buf) - 1);
     fut_vfs_close(fd);
+    if (has355) sys_munmap((void *)(uintptr_t)vma355, 4096);
 
     if (n <= 0) {
         fut_printf("[MISC-TEST] ✗ Test 355: read /proc/self/maps failed: %ld\n", n);
@@ -17042,8 +17069,14 @@ static void test_proc_maps_no_tab(void) {
 static void test_proc_maps_anon_devino(void) {
     fut_printf("[MISC-TEST] Test 356: /proc/self/maps anonymous entries show dev:inode format\n");
 
+    /* Ensure at least one VMA exists. */
+    long vma356 = sys_mmap(NULL, 4096, MAPS_PROT_RW,
+                           MAPS_MAP_PRIVATE | MAPS_MAP_ANON, -1, 0);
+    int has356 = (vma356 > 0);
+
     int fd = fut_vfs_open("/proc/self/maps", O_RDONLY, 0);
     if (fd < 0) {
+        if (has356) sys_munmap((void *)(uintptr_t)vma356, 4096);
         fut_printf("[MISC-TEST] ✗ Test 356: open /proc/self/maps failed: %d\n", fd);
         fut_test_fail(356);
         return;
@@ -17052,6 +17085,7 @@ static void test_proc_maps_anon_devino(void) {
     char buf[2048];
     long n = fut_vfs_read(fd, buf, sizeof(buf) - 1);
     fut_vfs_close(fd);
+    if (has356) sys_munmap((void *)(uintptr_t)vma356, 4096);
 
     if (n <= 0) {
         fut_printf("[MISC-TEST] ✗ Test 356: read /proc/self/maps failed: %ld\n", n);
@@ -23325,6 +23359,129 @@ t573:
     sys_rmdir("/fchdir_test_dir");
 }
 
+/* ============================================================
+ * Tests 574-577: MAP_SHARED file-backed mmap + msync writeback
+ *
+ * Verifies that:
+ *   574: mmap(MAP_SHARED, file) returns a valid mapping address
+ *   575: msync(MS_SYNC) on a file mapping returns 0
+ *   576: munmap on a file mapping returns 0, file data intact
+ *   577: mmap(MAP_SHARED|PROT_WRITE) on O_RDONLY fd → EACCES
+ * ============================================================ */
+static void test_mmap_shared_file_writeback(void) {
+    extern long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset);
+    extern long sys_munmap(void *addr, size_t len);
+    extern long sys_msync(void *addr, size_t length, int flags);
+    extern long sys_close(int fd);
+    extern ssize_t sys_read(int fd, void *buf, size_t count);
+
+#define MMAP_SHARED_FILE_CONTENT "writeback_test_data"
+#define MMAP_SHARED_FILE_LEN     19
+#define MMAP_MAP_SHARED   0x01
+#define MMAP_MAP_PRIVATE  0x02
+#define MMAP_PROT_RW      3   /* PROT_READ|PROT_WRITE */
+#define MMAP_PROT_RO      1   /* PROT_READ */
+#define MMAP_MS_SYNC      4
+
+    const char *path = "/mmap_shared_test.txt";
+
+    /* Setup: create file with known content */
+    int fd = (int)fut_vfs_open(path, 0x42 /* O_RDWR|O_CREAT */, 0644);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Tests 574-577: open failed: %d\n", fd);
+        fut_test_fail(574); fut_test_fail(575);
+        fut_test_fail(576); fut_test_fail(577);
+        return;
+    }
+    fut_vfs_write(fd, MMAP_SHARED_FILE_CONTENT, MMAP_SHARED_FILE_LEN);
+    fut_vfs_close(fd);
+
+    /* ---- Test 574: mmap MAP_SHARED on regular file → valid address ---- */
+    fut_printf("[MISC-TEST] Test 574: mmap(MAP_SHARED) on regular file\n");
+    int rw_fd = (int)fut_vfs_open(path, 0x2 /* O_RDWR */, 0);
+    if (rw_fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 574: reopen failed: %d\n", rw_fd);
+        fut_test_fail(574); fut_test_fail(575); fut_test_fail(576);
+        goto t577;
+    }
+    {
+        long addr = sys_mmap(NULL, 4096, MMAP_PROT_RW, MMAP_MAP_SHARED, rw_fd, 0);
+        if (addr < 0 || addr == 0) {
+            fut_printf("[MISC-TEST] ✗ Test 574: mmap(MAP_SHARED) returned %ld\n", addr);
+            fut_test_fail(574);
+            fut_vfs_close(rw_fd);
+            fut_test_fail(575); fut_test_fail(576);
+            goto t577;
+        }
+        fut_printf("[MISC-TEST] ✓ Test 574: mmap(MAP_SHARED) → 0x%lx\n", addr);
+        fut_test_pass();
+
+        /* ---- Test 575: msync on the mapping → 0 ---- */
+        fut_printf("[MISC-TEST] Test 575: msync(MS_SYNC) on file mapping\n");
+        long msret = sys_msync((void *)(uintptr_t)addr, 4096, MMAP_MS_SYNC);
+        if (msret != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 575: msync returned %ld\n", msret);
+            fut_test_fail(575);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 575: msync(MS_SYNC) returned 0\n");
+            fut_test_pass();
+        }
+
+        /* ---- Test 576: munmap → 0, file data not corrupted ---- */
+        fut_printf("[MISC-TEST] Test 576: munmap file mapping + verify data\n");
+        long umret = sys_munmap((void *)(uintptr_t)addr, 4096);
+        fut_vfs_close(rw_fd);
+        if (umret != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 576: munmap returned %ld\n", umret);
+            fut_test_fail(576);
+            goto t577;
+        }
+        /* Re-open and read file to verify content is intact */
+        int vfd = (int)fut_vfs_open(path, 0, 0);
+        if (vfd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 576: re-open failed: %d\n", vfd);
+            fut_test_fail(576);
+            goto t577;
+        }
+        char rbuf[32] = {0};
+        ssize_t n = fut_vfs_read(vfd, rbuf, MMAP_SHARED_FILE_LEN);
+        fut_vfs_close(vfd);
+        if (n == MMAP_SHARED_FILE_LEN &&
+            __builtin_memcmp(rbuf, MMAP_SHARED_FILE_CONTENT, MMAP_SHARED_FILE_LEN) == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 576: munmap ok, file data intact\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 576: n=%zd content mismatch\n", n);
+            fut_test_fail(576);
+        }
+    }
+
+t577:
+    /* ---- Test 577: mmap MAP_SHARED|PROT_WRITE on O_RDONLY fd → EACCES ---- */
+    fut_printf("[MISC-TEST] Test 577: mmap MAP_SHARED+PROT_WRITE on O_RDONLY fd\n");
+    {
+        int ro_fd = (int)fut_vfs_open(path, 0 /* O_RDONLY */, 0);
+        if (ro_fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 577: open O_RDONLY failed: %d\n", ro_fd);
+            fut_test_fail(577);
+            goto cleanup;
+        }
+        long r = sys_mmap(NULL, 4096, MMAP_PROT_RW, MMAP_MAP_SHARED, ro_fd, 0);
+        fut_vfs_close(ro_fd);
+        if (r == -13 /* -EACCES */) {
+            fut_printf("[MISC-TEST] ✓ Test 577: MAP_SHARED+PROT_WRITE on rdonly fd → EACCES\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 577: expected -EACCES(-13), got %ld\n", r);
+            if (r > 0) sys_munmap((void *)(uintptr_t)r, 4096);
+            fut_test_fail(577);
+        }
+    }
+
+cleanup:
+    fut_vfs_unlink(path);
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -23781,6 +23938,7 @@ void fut_misc_test_thread(void *arg) {
     test_symlink_in_intermediate_path();     /* Tests 562-565: symlink in intermediate path component */
     test_inotify_event_delivery();           /* Tests 566-569: inotify IN_CREATE/MODIFY/DELETE/ONESHOT */
     test_fchdir_cwd_update();                /* Tests 570-573: fchdir cwd update correctness */
+    test_mmap_shared_file_writeback();       /* Tests 574-577: MAP_SHARED mmap+msync+munmap writeback */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

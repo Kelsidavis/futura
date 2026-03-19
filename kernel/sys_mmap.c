@@ -232,6 +232,10 @@ long sys_munmap(void *addr, size_t len) {
 
     fut_mm_t *mm = fut_task_get_mm(task);
     if (!mm) {
+        /* Kernel threads don't have a task mm; fall back to the active mm */
+        mm = fut_mm_current();
+    }
+    if (!mm) {
         return -ENOMEM;
     }
 

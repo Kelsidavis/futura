@@ -507,43 +507,53 @@ fail:
 }
 
 /**
- * Flush dirty pages from a VMA back to the backing file (write-back).
+ * Flush present pages from a MAP_SHARED VMA back to the backing file.
  *
- * This is called when unmapping a MAP_SHARED file-backed region.
- * The function writes all pages in the VMA to the backing file at their
- * corresponding file offsets.
+ * Probes each page via pmap_probe_pte; for present pages converts physical
+ * address to kernel virtual and calls vnode->ops->write at the correct offset.
  *
  * @param vma Virtual memory area with file backing
- * @return 0 on success, -errno on error
+ * @param ctx Page-table context for PTE probing
+ * @return 0 on success
  */
-static int vma_writeback_pages(fut_vma_t *vma) {
+static int vma_writeback_pages(fut_vma_t *vma, fut_vmem_context_t *ctx) {
 
     if (!vma || !vma->vnode) {
-        return 0;  /* Nothing to writeback for anonymous mappings */
+        return 0;
     }
 
-    /* Only writeback for MAP_SHARED mappings (not MAP_PRIVATE) */
-    if (!(vma->flags & VMA_SHARED)) {
-        return 0;  /* Private mappings not written back */
+    /* MAP_SHARED = 0x01; vma->flags stores the raw mmap() flags */
+    if (!(vma->flags & 0x01)) {
+        return 0;  /* Private mapping: no writeback */
     }
 
-    /* Check if vnode has write capability */
     if (!vma->vnode->ops || !vma->vnode->ops->write) {
-        return -EBADF;  /* Can't write to vnode */
+        return 0;  /* No write op available */
     }
 
-    /* Iterate through pages in the VMA and write them back to file */
-    uint64_t page_count = (vma->end - vma->start) / PAGE_SIZE;
-    for (uint64_t i = 0; i < page_count; i++) {
-        uintptr_t page_addr = vma->start + (i * PAGE_SIZE);
-        uint64_t file_offset = vma->file_offset + (i * PAGE_SIZE);
+    if (!ctx) {
+        return 0;  /* No page-table context */
+    }
 
-        /* Note: For proper writeback, we would need the mm context.
-         * Since we don't have it here, this is a placeholder framework.
-         * In a full implementation, pass mm to this function.
-         */
-        fut_printf("[WRITEBACK] Framework ready for page at va=0x%llx file_offset=%llu\n",
-                   page_addr, file_offset);
+    /* Walk each page: probe PTE, convert phys→kvirt, write to vnode */
+    for (uintptr_t pg = vma->start; pg < vma->end; pg += PAGE_SIZE) {
+        uint64_t pte = 0;
+        if (pmap_probe_pte(ctx, pg, &pte) != 0)
+            continue;
+
+        uint64_t phys = fut_pte_to_phys(pte);
+        if (!phys) continue;
+
+        /* Skip pages not tracked by our allocator (e.g. early-boot identity
+         * mappings that may appear at user-space addresses in the kernel PML4).
+         * Such pages have refcount == 0 and must not be written to vnodes. */
+        if (fut_page_ref_get((phys_addr_t)phys) == 0) continue;
+
+        void *kvirt = (void *)pmap_phys_to_virt((phys_addr_t)phys);
+        if (!kvirt) continue;
+
+        uint64_t foff = vma->file_offset + (pg - vma->start);
+        vma->vnode->ops->write(vma->vnode, kvirt, PAGE_SIZE, foff);
     }
 
     return 0;
@@ -560,6 +570,8 @@ int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len) {
     if (unmap_end < unmap_start) {
         return -EINVAL;
     }
+
+    fut_vmem_context_t *ctx = fut_mm_context(mm);
 
     fut_vma_t **link = &mm->vma_list;
     fut_vma_t *vma = mm->vma_list;
@@ -592,8 +604,8 @@ int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len) {
                     mm->locked_vm = 0;
             }
 
-            /* Writeback dirty pages to file for MAP_SHARED mappings before unmapping */
-            vma_writeback_pages(vma);
+            /* Writeback present pages to file for MAP_SHARED mappings before unmapping */
+            vma_writeback_pages(vma, ctx);
 
             mm_unmap_and_free(mm, vma->start, vma->end);
             /* Release file backing if present */
@@ -1261,43 +1273,52 @@ void *fut_mm_map_anonymous(fut_mm_t *mm, uintptr_t hint, size_t len, int prot, i
 }
 
 /**
- * Flush dirty pages from a VMA back to the backing file (write-back).
+ * Flush present pages from a MAP_SHARED VMA back to the backing file.
  *
- * This is called when unmapping a MAP_SHARED file-backed region.
- * The function writes all pages in the VMA to the backing file at their
- * corresponding file offsets.
+ * Probes each page via pmap_probe_pte; for present pages converts physical
+ * address to kernel virtual and calls vnode->ops->write at the correct offset.
  *
  * @param vma Virtual memory area with file backing
- * @return 0 on success, -errno on error
+ * @param ctx Page-table context for PTE probing
+ * @return 0 on success
  */
-static int vma_writeback_pages(fut_vma_t *vma) {
+static int vma_writeback_pages(fut_vma_t *vma, fut_vmem_context_t *ctx) {
 
     if (!vma || !vma->vnode) {
-        return 0;  /* Nothing to writeback for anonymous mappings */
+        return 0;
     }
 
-    /* Only writeback for MAP_SHARED mappings (not MAP_PRIVATE) */
-    if (!(vma->flags & VMA_SHARED)) {
-        return 0;  /* Private mappings not written back */
+    /* MAP_SHARED = 0x01; vma->flags stores the raw mmap() flags */
+    if (!(vma->flags & 0x01)) {
+        return 0;  /* Private mapping: no writeback */
     }
 
-    /* Check if vnode has write capability */
     if (!vma->vnode->ops || !vma->vnode->ops->write) {
-        return -EBADF;  /* Can't write to vnode */
+        return 0;
     }
 
-    /* Iterate through pages in the VMA and write them back to file */
-    uint64_t page_count = (vma->end - vma->start) / PAGE_SIZE;
-    for (uint64_t i = 0; i < page_count; i++) {
-        uintptr_t page_addr = vma->start + (i * PAGE_SIZE);
-        uint64_t file_offset = vma->file_offset + (i * PAGE_SIZE);
+    if (!ctx) {
+        return 0;
+    }
 
-        /* Note: For proper writeback, we would need the mm context.
-         * Since we don't have it here, this is a placeholder framework.
-         * In a full implementation, pass mm to this function.
-         */
-        fut_printf("[WRITEBACK] Framework ready for page at va=0x%llx file_offset=%llu\n",
-                   page_addr, file_offset);
+    for (uintptr_t pg = vma->start; pg < vma->end; pg += PAGE_SIZE) {
+        uint64_t pte = 0;
+        if (pmap_probe_pte(ctx, pg, &pte) != 0)
+            continue;
+
+        uint64_t phys = fut_pte_to_phys(pte);
+        if (!phys) continue;
+
+        /* Skip pages not tracked by our allocator (e.g. early-boot identity
+         * mappings that may appear at user-space addresses in the kernel PML4).
+         * Such pages have refcount == 0 and must not be written to vnodes. */
+        if (fut_page_ref_get((phys_addr_t)phys) == 0) continue;
+
+        void *kvirt = (void *)pmap_phys_to_virt((phys_addr_t)phys);
+        if (!kvirt) continue;
+
+        uint64_t foff = vma->file_offset + (pg - vma->start);
+        vma->vnode->ops->write(vma->vnode, kvirt, PAGE_SIZE, foff);
     }
 
     return 0;
@@ -1317,6 +1338,8 @@ int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len) {
     if (unmap_end < unmap_start) {
         return -EINVAL;
     }
+
+    fut_vmem_context_t *ctx = fut_mm_context(mm);
 
     fut_vma_t **link = &mm->vma_list;
     fut_vma_t *vma = mm->vma_list;
@@ -1349,8 +1372,8 @@ int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len) {
                     mm->locked_vm = 0;
             }
 
-            /* Writeback dirty pages to file for MAP_SHARED mappings before unmapping */
-            vma_writeback_pages(vma);
+            /* Writeback present pages to file for MAP_SHARED mappings before unmapping */
+            vma_writeback_pages(vma, ctx);
 
             mm_unmap_and_free(mm, vma->start, vma->end);
             /* Release file backing if present */

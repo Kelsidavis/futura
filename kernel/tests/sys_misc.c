@@ -20491,6 +20491,86 @@ static void test_subreaper_reparent(void) {
     sys_waitpid((int)child->pid, &cs, 1 /* WNOHANG */);
 }
 
+/* ============================================================
+ * test_unshare_namespace_noop() — Tests 492-497
+ *
+ * Verify that unshare() with namespace flags returns 0 for all
+ * namespace types (they are accepted as no-ops since Futura does
+ * not enforce per-task namespace isolation), except CLONE_NEWPID
+ * which requires PID namespace infrastructure and returns ENOSYS.
+ * ============================================================ */
+static void test_unshare_namespace_noop(void) {
+    extern long sys_unshare(unsigned long flags);
+
+    fut_printf("[MISC-TEST] Tests 492-497: unshare namespace flags\n");
+
+    /* CLONE_NEWUTS (0x04000000) — UTS namespace: hostname isolation */
+    fut_printf("[MISC-TEST] Test 492: unshare(CLONE_NEWUTS) -> 0\n");
+    long r = sys_unshare(0x04000000UL);
+    if (r == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 492: unshare(CLONE_NEWUTS) = 0\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 492: unshare(CLONE_NEWUTS) = %ld (expected 0)\n", r);
+        fut_test_fail(492);
+    }
+
+    /* CLONE_NEWIPC (0x08000000) — IPC namespace */
+    fut_printf("[MISC-TEST] Test 493: unshare(CLONE_NEWIPC) -> 0\n");
+    r = sys_unshare(0x08000000UL);
+    if (r == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 493: unshare(CLONE_NEWIPC) = 0\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 493: unshare(CLONE_NEWIPC) = %ld (expected 0)\n", r);
+        fut_test_fail(493);
+    }
+
+    /* CLONE_NEWNS (0x00020000) — mount namespace */
+    fut_printf("[MISC-TEST] Test 494: unshare(CLONE_NEWNS) -> 0\n");
+    r = sys_unshare(0x00020000UL);
+    if (r == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 494: unshare(CLONE_NEWNS) = 0\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 494: unshare(CLONE_NEWNS) = %ld (expected 0)\n", r);
+        fut_test_fail(494);
+    }
+
+    /* CLONE_NEWNET (0x40000000) — network namespace */
+    fut_printf("[MISC-TEST] Test 495: unshare(CLONE_NEWNET) -> 0\n");
+    r = sys_unshare(0x40000000UL);
+    if (r == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 495: unshare(CLONE_NEWNET) = 0\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 495: unshare(CLONE_NEWNET) = %ld (expected 0)\n", r);
+        fut_test_fail(495);
+    }
+
+    /* CLONE_NEWUSER (0x10000000) — user namespace */
+    fut_printf("[MISC-TEST] Test 496: unshare(CLONE_NEWUSER) -> 0\n");
+    r = sys_unshare(0x10000000UL);
+    if (r == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 496: unshare(CLONE_NEWUSER) = 0\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 496: unshare(CLONE_NEWUSER) = %ld (expected 0)\n", r);
+        fut_test_fail(496);
+    }
+
+    /* CLONE_NEWPID (0x20000000) — PID namespace: requires infra → ENOSYS */
+    fut_printf("[MISC-TEST] Test 497: unshare(CLONE_NEWPID) -> ENOSYS\n");
+    r = sys_unshare(0x20000000UL);
+    if (r == -38 /* ENOSYS */) {
+        fut_printf("[MISC-TEST] ✓ Test 497: unshare(CLONE_NEWPID) = ENOSYS\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 497: unshare(CLONE_NEWPID) = %ld (expected -38 ENOSYS)\n", r);
+        fut_test_fail(497);
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -20924,6 +21004,7 @@ void fut_misc_test_thread(void *arg) {
     test_proc_pid_mem();                   /* Tests 482-485: /proc/<pid>/mem read/write/bounds/nomap */
     test_sigev_thread_id();                /* Tests 486-488: timer_create SIGEV_THREAD_ID */
     test_subreaper_reparent();             /* Tests 489-491: PR_SET_CHILD_SUBREAPER reparenting */
+    test_unshare_namespace_noop();         /* Tests 492-497: unshare namespace flags no-op */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

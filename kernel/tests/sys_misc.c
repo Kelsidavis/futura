@@ -20884,6 +20884,98 @@ t505:
 #undef ECHILD_VAL
 }
 
+/*
+ * test_proc_diskstats_partitions_cgroups() — Tests 506-508
+ *
+ * Verify that /proc/diskstats, /proc/partitions, and /proc/cgroups can be
+ * opened and read.  These files are checked by iostat, lsblk, Docker,
+ * systemd, and libvirt.  Futura has no block devices so diskstats may be
+ * empty; partitions and cgroups must have recognizable header content.
+ */
+static void test_proc_diskstats_partitions_cgroups(void) {
+    extern long sys_openat(int dirfd, const char *pathname, int flags, int mode);
+    extern long sys_read(int fd, void *buf, size_t count);
+    extern long sys_close(int fd);
+
+    fut_printf("[MISC-TEST] Tests 506-508: /proc/{diskstats,partitions,cgroups}\n");
+
+    /* Test 506: /proc/diskstats openable (may be empty — no block devices) */
+    {
+        int fd = (int)sys_openat(-100, "/proc/diskstats", 0, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] FAIL 506: open /proc/diskstats failed: %d\n", fd);
+            fut_test_fail(506);
+        } else {
+            char buf[256];
+            long n = sys_read(fd, buf, sizeof(buf) - 1);
+            sys_close(fd);
+            /* empty is fine — no block devices; negative is an error */
+            if (n >= 0) {
+                fut_printf("[MISC-TEST] PASS 506: /proc/diskstats readable (%ld bytes)\n", n);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL 506: /proc/diskstats read error: %ld\n", n);
+                fut_test_fail(506);
+            }
+        }
+    }
+
+    /* Test 507: /proc/partitions starts with "major" */
+    {
+        int fd = (int)sys_openat(-100, "/proc/partitions", 0, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] FAIL 507: open /proc/partitions failed: %d\n", fd);
+            fut_test_fail(507);
+        } else {
+            char buf[64];
+            long n = sys_read(fd, buf, sizeof(buf) - 1);
+            sys_close(fd);
+            if (n > 4) {
+                buf[n] = '\0';
+                int ok = (buf[0] == 'm' && buf[1] == 'a' && buf[2] == 'j');
+                if (ok) {
+                    fut_printf("[MISC-TEST] PASS 507: /proc/partitions header ok\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] FAIL 507: unexpected content\n");
+                    fut_test_fail(507);
+                }
+            } else {
+                fut_printf("[MISC-TEST] FAIL 507: read returned %ld\n", n);
+                fut_test_fail(507);
+            }
+        }
+    }
+
+    /* Test 508: /proc/cgroups contains "#subsys_name" header */
+    {
+        int fd = (int)sys_openat(-100, "/proc/cgroups", 0, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] FAIL 508: open /proc/cgroups failed: %d\n", fd);
+            fut_test_fail(508);
+        } else {
+            char buf[128];
+            long n = sys_read(fd, buf, sizeof(buf) - 1);
+            sys_close(fd);
+            if (n > 10) {
+                buf[n] = '\0';
+                /* Must start with '#' (subsys_name header) */
+                int ok = (buf[0] == '#');
+                if (ok) {
+                    fut_printf("[MISC-TEST] PASS 508: /proc/cgroups header ok\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] FAIL 508: unexpected content\n");
+                    fut_test_fail(508);
+                }
+            } else {
+                fut_printf("[MISC-TEST] FAIL 508: read returned %ld\n", n);
+                fut_test_fail(508);
+            }
+        }
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -21321,6 +21413,7 @@ void fut_misc_test_thread(void *arg) {
     test_proc_uid_gid_map();              /* Tests 498-500: /proc/self/{uid_map,gid_map,setgroups} */
     test_proc_loginuid_sessionid();       /* Tests 501-502: /proc/self/{loginuid,sessionid} */
     test_sigchld_ign_autoreap();          /* Tests 503-505: SIGCHLD=SIG_IGN/SA_NOCLDWAIT auto-reap */
+    test_proc_diskstats_partitions_cgroups(); /* Tests 506-508: /proc/{diskstats,partitions,cgroups} */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

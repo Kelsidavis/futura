@@ -234,6 +234,9 @@ enum procfs_kind {
     PROC_SETGROUPS,                 /* /proc/<pid>/setgroups — "allow" or "deny" */
     PROC_LOGINUID,                  /* /proc/<pid>/loginuid — audit login UID (4294967295 = unset) */
     PROC_SESSIONID,                 /* /proc/<pid>/sessionid — audit session ID */
+    PROC_DISKSTATS,                 /* /proc/diskstats — block device I/O statistics */
+    PROC_PARTITIONS,                /* /proc/partitions — block device partition table */
+    PROC_CGROUPS,                   /* /proc/cgroups — cgroup subsystem list */
 };
 
 typedef struct {
@@ -367,6 +370,9 @@ typedef struct {
 #define PROC_INO_BUDDYINFO             26ULL
 #define PROC_INO_ZONEINFO              27ULL
 #define PROC_INO_THREAD_SELF           28ULL
+#define PROC_INO_DISKSTATS             29ULL
+#define PROC_INO_PARTITIONS            30ULL
+#define PROC_INO_CGROUPS               31ULL
 /* /proc/sys/vm/ extended range: 350-379 */
 #define PROC_INO_SYS_VM_DROP_CACHES    350ULL
 #define PROC_INO_SYS_VM_DIRTY_EXPIRE   351ULL
@@ -1624,6 +1630,51 @@ static size_t gen_zoneinfo(char *buf, size_t cap) {
 }
 
 /*
+ * gen_diskstats() — /proc/diskstats
+ *
+ * Block device I/O statistics. Futura has no block devices; emit an empty
+ * file so iostat/iotop don't fail with ENOENT.
+ */
+static size_t gen_diskstats(char *buf, size_t cap) {
+    (void)buf; (void)cap;
+    return 0;
+}
+
+/*
+ * gen_partitions() — /proc/partitions
+ *
+ * Block device partition table header. No partitions in futura; emit the
+ * standard header so lsblk/blkid don't fail with ENOENT.
+ */
+static size_t gen_partitions(char *buf, size_t cap) {
+    struct pbuf b = { buf, 0, cap };
+    pb_str(&b, "major minor  #blocks  name\n\n");
+    return b.pos;
+}
+
+/*
+ * gen_cgroups() — /proc/cgroups
+ *
+ * Control group subsystem list. All subsystems report hierarchy=0 (not
+ * mounted), num_cgroups=1 (root only), enabled=1. Docker, systemd, and
+ * libvirt read this file to enumerate available cgroup controllers.
+ */
+static size_t gen_cgroups(char *buf, size_t cap) {
+    struct pbuf b = { buf, 0, cap };
+    pb_str(&b, "#subsys_name\thierarchy\tnum_cgroups\tenabled\n");
+    pb_str(&b, "cpuset\t0\t1\t1\n");
+    pb_str(&b, "cpu\t0\t1\t1\n");
+    pb_str(&b, "cpuacct\t0\t1\t1\n");
+    pb_str(&b, "blkio\t0\t1\t1\n");
+    pb_str(&b, "memory\t0\t1\t1\n");
+    pb_str(&b, "devices\t0\t1\t1\n");
+    pb_str(&b, "freezer\t0\t1\t1\n");
+    pb_str(&b, "net_cls\t0\t1\t1\n");
+    pb_str(&b, "pids\t0\t1\t1\n");
+    return b.pos;
+}
+
+/*
  * gen_comm() — /proc/<pid>/comm
  *
  * Single line: process name + newline.
@@ -2342,6 +2393,15 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             break;
         case PROC_ZONEINFO:
             total = gen_zoneinfo(tmp, GEN_BUF);
+            break;
+        case PROC_DISKSTATS:
+            total = gen_diskstats(tmp, GEN_BUF);
+            break;
+        case PROC_PARTITIONS:
+            total = gen_partitions(tmp, GEN_BUF);
+            break;
+        case PROC_CGROUPS:
+            total = gen_cgroups(tmp, GEN_BUF);
             break;
         case PROC_FDINFO_ENTRY: {
             /* /proc/<pid>/fdinfo/<n>: pos, flags, mnt_id, type-specific fields */
@@ -3123,6 +3183,21 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
         if (STREQ(name, "zoneinfo")) {
             *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_ZONEINFO,
                                           0100444, PROC_ZONEINFO, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "diskstats")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_DISKSTATS,
+                                          0100444, PROC_DISKSTATS, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "partitions")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PARTITIONS,
+                                          0100444, PROC_PARTITIONS, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "cgroups")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_CGROUPS,
+                                          0100444, PROC_CGROUPS, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
         /* Try numeric PID */
@@ -4049,7 +4124,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             ".", "..", "self", "thread-self", "meminfo", "version", "uptime", "cpuinfo",
             "loadavg", "mounts", "sys", "stat", "filesystems", "vmstat", "net",
             "interrupts", "cmdline", "swaps", "devices", "misc",
-            "buddyinfo", "zoneinfo"
+            "buddyinfo", "zoneinfo", "diskstats", "partitions", "cgroups"
         };
         static const uint8_t fixed_type[] = {
             FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
@@ -4061,7 +4136,8 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_DIR,
             FUT_VDIR_TYPE_REG,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
-            FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG
+            FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+            FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG
         };
         static const uint64_t fixed_ino[] = {
             PROC_INO_ROOT, PROC_INO_ROOT,
@@ -4072,9 +4148,10 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             PROC_INO_VMSTAT, PROC_INO_NET_DIR,
             PROC_INO_INTERRUPTS,
             PROC_INO_CMDLINE_GLOBAL, PROC_INO_SWAPS, PROC_INO_DEVICES, PROC_INO_MISC_FILE,
-            PROC_INO_BUDDYINFO, PROC_INO_ZONEINFO
+            PROC_INO_BUDDYINFO, PROC_INO_ZONEINFO,
+            PROC_INO_DISKSTATS, PROC_INO_PARTITIONS, PROC_INO_CGROUPS
         };
-        if (idx < 22) {
+        if (idx < 25) {
             de->d_ino    = fixed_ino[idx];
             de->d_off    = idx + 1;
             de->d_type   = fixed_type[idx];
@@ -4089,15 +4166,15 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         }
 
         /*
-         * PID enumeration: after the 21 fixed entries, cookies encode
-         * "find first task with pid > (cookie - 21)".  After returning
-         * a PID entry we set cookie = 21 + that_pid + 1.
+         * PID enumeration: after the 25 fixed entries, cookies encode
+         * "find first task with pid > (cookie - 25)".  After returning
+         * a PID entry we set cookie = 25 + that_pid + 1.
          *
          * This is stable as long as PIDs are unique and monotonically
          * increasing; newly-forked tasks will appear if their PID is
          * greater than the last-seen PID.
          */
-        uint64_t min_pid = idx >= 21 ? idx - 21 : 0;  /* start scanning for pid > min_pid */
+        uint64_t min_pid = idx >= 25 ? idx - 25 : 0;  /* start scanning for pid > min_pid */
         fut_task_t *best = NULL;
         uint64_t   best_pid = (uint64_t)-1;
         fut_task_t *t = fut_task_list;
@@ -4129,7 +4206,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         if (nl > FUT_VFS_NAME_MAX) nl = FUT_VFS_NAME_MAX;
         __builtin_memcpy(de->d_name, pidname, nl);
         de->d_name[nl] = '\0';
-        *cookie = 21 + best->pid + 1;  /* resume after this pid */
+        *cookie = 25 + best->pid + 1;  /* resume after this pid */
         return 0;
     }
 

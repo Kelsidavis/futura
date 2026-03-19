@@ -29,6 +29,9 @@
 #include <stdint.h>
 #include <string.h>
 #include "tests/test_api.h"
+#include <sched.h>
+#include <sys/time.h>
+#include <sys/times.h>
 
 /* Architecture-specific paging headers for KERNEL_VIRTUAL_BASE */
 #ifdef __x86_64__
@@ -25793,6 +25796,318 @@ static void test_clock_settime(void) {
     }
 }
 
+/* =========================================================
+ * Tests 684-701: clock_getres, dup3, sysinfo, sched_param/scheduler,
+ *                getpriority/setpriority, getitimer/setitimer, times,
+ *                setuid/setgid/seteuid/setegid/setreuid/setregid
+ * ========================================================= */
+
+extern long sys_clock_getres(int clock_id, fut_timespec_t *res);
+extern long sys_dup3(int oldfd, int newfd, int flags);
+extern long sys_sysinfo(struct fut_linux_sysinfo *info);
+extern long sys_sched_getparam(int pid, struct sched_param *param);
+extern long sys_sched_setparam(int pid, const struct sched_param *param);
+extern long sys_sched_getscheduler(int pid);
+extern long sys_sched_setscheduler(int pid, int policy, const struct sched_param *param);
+extern long sys_getpriority(int which, int who);
+extern long sys_setpriority(int which, int who, int prio);
+extern long sys_getitimer(int which, struct itimerval *value);
+extern long sys_setitimer(int which, const struct itimerval *value, struct itimerval *ovalue);
+extern long sys_times(struct tms *buf);
+extern long sys_setuid(uint32_t uid);
+extern long sys_setgid(uint32_t gid);
+extern long sys_seteuid(uint32_t euid);
+extern long sys_setegid(uint32_t egid);
+extern long sys_setreuid(uint32_t ruid, uint32_t euid);
+extern long sys_setregid(uint32_t rgid, uint32_t egid);
+extern long sys_close(int fd);
+
+#ifndef SCHED_OTHER
+#define SCHED_OTHER 0
+#endif
+#ifndef PRIO_PROCESS
+#define PRIO_PROCESS 0
+#endif
+#ifndef O_CLOEXEC
+#define O_CLOEXEC 02000000
+#endif
+
+/**
+ * test_clock_getres_dup3_sysinfo - Tests 684-686
+ *
+ *   Test 684: clock_getres(CLOCK_REALTIME) → 0, tv_nsec=10000000
+ *   Test 685: dup3(1, 8, O_CLOEXEC) → 8
+ *   Test 686: sysinfo(&info) → 0, uptime > 0
+ */
+static void test_clock_getres_dup3_sysinfo(void) {
+    /* Test 684: clock_getres(CLOCK_REALTIME) → 0 */
+    fut_printf("[MISC-TEST] Test 684: clock_getres(CLOCK_REALTIME) → 0, tv_nsec=10000000\n");
+    fut_timespec_t res;
+    long ret = sys_clock_getres(0 /* CLOCK_REALTIME */, &res);
+    if (ret != 0 || res.tv_nsec != 10000000LL) {
+        fut_printf("[MISC-TEST] ✗ Test 684: clock_getres returned %ld, tv_nsec=%lld\n",
+                   ret, (long long)res.tv_nsec);
+        fut_test_fail(684);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 684: clock_getres → 0, tv_nsec=%lld\n",
+                   (long long)res.tv_nsec);
+        fut_test_pass();
+    }
+
+    /* Test 685: dup3(1 [stdout], 8, O_CLOEXEC) → 8 */
+    fut_printf("[MISC-TEST] Test 685: dup3(1, 8, O_CLOEXEC) → 8\n");
+    long fd = sys_dup3(1, 8, O_CLOEXEC);
+    if (fd != 8) {
+        fut_printf("[MISC-TEST] ✗ Test 685: dup3 returned %ld (expected 8)\n", fd);
+        fut_test_fail(685);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 685: dup3 → %ld\n", fd);
+        fut_test_pass();
+        sys_close((int)fd);
+    }
+
+    /* Test 686: sysinfo(&info) → 0, uptime > 0 */
+    fut_printf("[MISC-TEST] Test 686: sysinfo → 0, uptime > 0\n");
+    struct fut_linux_sysinfo info;
+    __builtin_memset(&info, 0, sizeof(info));
+    ret = sys_sysinfo(&info);
+    if (ret != 0 || info.uptime == 0) {
+        fut_printf("[MISC-TEST] ✗ Test 686: sysinfo returned %ld, uptime=%llu\n",
+                   ret, (unsigned long long)info.uptime);
+        fut_test_fail(686);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 686: sysinfo → 0, uptime=%llu s\n",
+                   (unsigned long long)info.uptime);
+        fut_test_pass();
+    }
+}
+
+/**
+ * test_sched_param_scheduler - Tests 687-690
+ *
+ *   Test 687: sched_getparam(0, &param) → 0
+ *   Test 688: sched_setparam(0, &param) → 0 (priority=0)
+ *   Test 689: sched_getscheduler(0) → SCHED_OTHER (0)
+ *   Test 690: sched_setscheduler(0, SCHED_OTHER, &param) → old policy (>=0)
+ */
+static void test_sched_param_scheduler(void) {
+    /* Test 687: sched_getparam(0) → 0 */
+    fut_printf("[MISC-TEST] Test 687: sched_getparam(pid=0) → 0\n");
+    struct sched_param param;
+    __builtin_memset(&param, 0, sizeof(param));
+    long ret = sys_sched_getparam(0, &param);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 687: sched_getparam returned %ld\n", ret);
+        fut_test_fail(687);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 687: sched_getparam → 0, priority=%d\n",
+                   param.sched_priority);
+        fut_test_pass();
+    }
+
+    /* Test 688: sched_setparam(0, {priority=0}) → 0 */
+    fut_printf("[MISC-TEST] Test 688: sched_setparam(pid=0, priority=0) → 0\n");
+    param.sched_priority = 0;
+    ret = sys_sched_setparam(0, &param);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 688: sched_setparam returned %ld\n", ret);
+        fut_test_fail(688);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 688: sched_setparam → 0\n");
+        fut_test_pass();
+    }
+
+    /* Test 689: sched_getscheduler(0) → SCHED_OTHER (0) */
+    fut_printf("[MISC-TEST] Test 689: sched_getscheduler(pid=0) → SCHED_OTHER (0)\n");
+    ret = sys_sched_getscheduler(0);
+    if (ret != SCHED_OTHER) {
+        fut_printf("[MISC-TEST] ✗ Test 689: sched_getscheduler returned %ld (expected %d)\n",
+                   ret, SCHED_OTHER);
+        fut_test_fail(689);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 689: sched_getscheduler → SCHED_OTHER\n");
+        fut_test_pass();
+    }
+
+    /* Test 690: sched_setscheduler(0, SCHED_OTHER, {priority=0}) → old policy (>=0) */
+    fut_printf("[MISC-TEST] Test 690: sched_setscheduler(pid=0, SCHED_OTHER) → old policy >= 0\n");
+    param.sched_priority = 0;
+    ret = sys_sched_setscheduler(0, SCHED_OTHER, &param);
+    if (ret < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 690: sched_setscheduler returned %ld\n", ret);
+        fut_test_fail(690);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 690: sched_setscheduler → %ld (old policy)\n", ret);
+        fut_test_pass();
+    }
+}
+
+/**
+ * test_getsetpriority - Tests 691-692
+ *
+ *   Test 691: getpriority(PRIO_PROCESS, 0) → valid value (>= -20, no error)
+ *   Test 692: setpriority(PRIO_PROCESS, 0, 0) → 0
+ */
+static void test_getsetpriority(void) {
+    /* Test 691: getpriority(PRIO_PROCESS, 0) */
+    fut_printf("[MISC-TEST] Test 691: getpriority(PRIO_PROCESS, 0) → valid\n");
+    long prio = sys_getpriority(PRIO_PROCESS, 0);
+    /* Returns 20-nice (linux convention); nice range [-20,19] → return [1,40].
+     * Treat any negative errno as failure. */
+    if (prio < -20) {
+        fut_printf("[MISC-TEST] ✗ Test 691: getpriority returned %ld (unexpected error)\n",
+                   prio);
+        fut_test_fail(691);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 691: getpriority → %ld\n", prio);
+        fut_test_pass();
+    }
+
+    /* Test 692: setpriority(PRIO_PROCESS, 0, 0) → 0 */
+    fut_printf("[MISC-TEST] Test 692: setpriority(PRIO_PROCESS, 0, nice=0) → 0\n");
+    long ret = sys_setpriority(PRIO_PROCESS, 0, 0);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 692: setpriority returned %ld\n", ret);
+        fut_test_fail(692);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 692: setpriority → 0\n");
+        fut_test_pass();
+    }
+}
+
+/**
+ * test_getsetitimer - Tests 693-694
+ *
+ *   Test 693: getitimer(ITIMER_REAL, &val) → 0
+ *   Test 694: setitimer(ITIMER_REAL, {0,0,0,0}, NULL) → 0 (disarm)
+ */
+static void test_getsetitimer(void) {
+    /* Test 693: getitimer(ITIMER_REAL) → 0 */
+    fut_printf("[MISC-TEST] Test 693: getitimer(ITIMER_REAL) → 0\n");
+    struct itimerval val;
+    __builtin_memset(&val, 0, sizeof(val));
+    long ret = sys_getitimer(ITIMER_REAL, &val);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 693: getitimer returned %ld\n", ret);
+        fut_test_fail(693);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 693: getitimer → 0 (it_value.tv_sec=%ld)\n",
+                   val.it_value.tv_sec);
+        fut_test_pass();
+    }
+
+    /* Test 694: setitimer(ITIMER_REAL, {all zero}, NULL) → 0 (disarm) */
+    fut_printf("[MISC-TEST] Test 694: setitimer(ITIMER_REAL, {0}, NULL) → 0 (disarm)\n");
+    struct itimerval zero;
+    __builtin_memset(&zero, 0, sizeof(zero));
+    ret = sys_setitimer(ITIMER_REAL, &zero, NULL);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 694: setitimer returned %ld\n", ret);
+        fut_test_fail(694);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 694: setitimer → 0\n");
+        fut_test_pass();
+    }
+}
+
+/**
+ * test_times_syscall - Test 695
+ *
+ *   Test 695: times(&tms) → elapsed ticks >= 0, tms_utime >= 0
+ */
+static void test_times_syscall(void) {
+    fut_printf("[MISC-TEST] Test 695: times(&tms) → elapsed ticks >= 0\n");
+    struct tms tbuf;
+    __builtin_memset(&tbuf, 0xff, sizeof(tbuf));
+    long elapsed = sys_times(&tbuf);
+    if (elapsed < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 695: times returned %ld\n", elapsed);
+        fut_test_fail(695);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 695: times → elapsed=%ld, tms_utime=%ld\n",
+                   elapsed, (long)tbuf.tms_utime);
+        fut_test_pass();
+    }
+}
+
+/**
+ * test_set_credentials - Tests 696-701
+ *
+ *   Test 696: setuid(0) → 0 (root task)
+ *   Test 697: setgid(0) → 0
+ *   Test 698: seteuid(0) → 0
+ *   Test 699: setegid(0) → 0
+ *   Test 700: setreuid(0, 0) → 0
+ *   Test 701: setregid(0, 0) → 0
+ */
+static void test_set_credentials(void) {
+    /* Test 696: setuid(0) → 0 */
+    fut_printf("[MISC-TEST] Test 696: setuid(0) → 0\n");
+    long ret = sys_setuid(0);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 696: setuid(0) returned %ld\n", ret);
+        fut_test_fail(696);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 696: setuid(0) → 0\n");
+        fut_test_pass();
+    }
+
+    /* Test 697: setgid(0) → 0 */
+    fut_printf("[MISC-TEST] Test 697: setgid(0) → 0\n");
+    ret = sys_setgid(0);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 697: setgid(0) returned %ld\n", ret);
+        fut_test_fail(697);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 697: setgid(0) → 0\n");
+        fut_test_pass();
+    }
+
+    /* Test 698: seteuid(0) → 0 */
+    fut_printf("[MISC-TEST] Test 698: seteuid(0) → 0\n");
+    ret = sys_seteuid(0);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 698: seteuid(0) returned %ld\n", ret);
+        fut_test_fail(698);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 698: seteuid(0) → 0\n");
+        fut_test_pass();
+    }
+
+    /* Test 699: setegid(0) → 0 */
+    fut_printf("[MISC-TEST] Test 699: setegid(0) → 0\n");
+    ret = sys_setegid(0);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 699: setegid(0) returned %ld\n", ret);
+        fut_test_fail(699);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 699: setegid(0) → 0\n");
+        fut_test_pass();
+    }
+
+    /* Test 700: setreuid(0, 0) → 0 */
+    fut_printf("[MISC-TEST] Test 700: setreuid(0, 0) → 0\n");
+    ret = sys_setreuid(0, 0);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 700: setreuid(0, 0) returned %ld\n", ret);
+        fut_test_fail(700);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 700: setreuid(0, 0) → 0\n");
+        fut_test_pass();
+    }
+
+    /* Test 701: setregid(0, 0) → 0 */
+    fut_printf("[MISC-TEST] Test 701: setregid(0, 0) → 0\n");
+    ret = sys_setregid(0, 0);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 701: setregid(0, 0) returned %ld\n", ret);
+        fut_test_fail(701);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 701: setregid(0, 0) → 0\n");
+        fut_test_pass();
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -26289,6 +26604,12 @@ void fut_misc_test_thread(void *arg) {
     test_mlockall_munlockall();              /* Tests 663-665: mlockall(MCL_CURRENT)→0, munlockall→0, invalid→EINVAL */
     test_set_tid_address();                  /* Test 666: set_tid_address returns TID */
     test_rt_signal_block_pending();          /* Tests 660-662: RT signal SIGRTMIN=34 block/pending/restore */
+    test_clock_getres_dup3_sysinfo();        /* Tests 684-686: clock_getres/dup3/sysinfo */
+    test_sched_param_scheduler();            /* Tests 687-690: sched_getparam/setparam/getscheduler/setscheduler */
+    test_getsetpriority();                   /* Tests 691-692: getpriority/setpriority */
+    test_getsetitimer();                     /* Tests 693-694: getitimer/setitimer */
+    test_times_syscall();                    /* Test 695: times() */
+    test_set_credentials();                  /* Tests 696-701: setuid/gid/euid/egid/reuid/regid */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

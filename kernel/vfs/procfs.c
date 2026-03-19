@@ -229,6 +229,9 @@ enum procfs_kind {
     PROC_NET_PACKET,                /* /proc/net/packet */
     PROC_AUXV,                      /* /proc/<pid>/auxv — ELF auxiliary vector (binary) */
     PROC_PID_MEM,                   /* /proc/<pid>/mem  — raw process address space (r/w) */
+    PROC_UID_MAP,                   /* /proc/<pid>/uid_map — user namespace UID mapping */
+    PROC_GID_MAP,                   /* /proc/<pid>/gid_map — user namespace GID mapping */
+    PROC_SETGROUPS,                 /* /proc/<pid>/setgroups — "allow" or "deny" */
 };
 
 typedef struct {
@@ -354,6 +357,9 @@ typedef struct {
 #define PROC_INO_PID_SMAPS_ROLLUP(p)   (1000ULL + (uint64_t)(p) * 100 + 26)
 #define PROC_INO_PID_AUXV(p)           (1000ULL + (uint64_t)(p) * 100 + 27)
 #define PROC_INO_PID_MEM(p)            (1000ULL + (uint64_t)(p) * 100 + 28)
+#define PROC_INO_PID_UID_MAP(p)        (1000ULL + (uint64_t)(p) * 100 + 29)
+#define PROC_INO_PID_GID_MAP(p)        (1000ULL + (uint64_t)(p) * 100 + 30)
+#define PROC_INO_PID_SETGROUPS(p)      (1000ULL + (uint64_t)(p) * 100 + 31)
 #define PROC_INO_BUDDYINFO             26ULL
 #define PROC_INO_ZONEINFO              27ULL
 #define PROC_INO_THREAD_SELF           28ULL
@@ -2098,6 +2104,31 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             }
             break;
         }
+        case PROC_UID_MAP: {
+            /* /proc/<pid>/uid_map — user namespace uid mapping.
+             * Format: "inside_start outside_start count\n"
+             * Futura has no user namespaces; report identity mapping for the
+             * full 32-bit UID space (same as Linux initial user namespace). */
+            struct pbuf b = { tmp, 0, GEN_BUF };
+            pb_str(&b, "         0          0 4294967295\n");
+            total = b.pos;
+            break;
+        }
+        case PROC_GID_MAP: {
+            /* /proc/<pid>/gid_map — same format as uid_map */
+            struct pbuf b = { tmp, 0, GEN_BUF };
+            pb_str(&b, "         0          0 4294967295\n");
+            total = b.pos;
+            break;
+        }
+        case PROC_SETGROUPS: {
+            /* /proc/<pid>/setgroups — "allow" means setgroups(2) is permitted.
+             * Futura has no user namespace restrictions, so always "allow". */
+            struct pbuf b = { tmp, 0, GEN_BUF };
+            pb_str(&b, "allow\n");
+            total = b.pos;
+            break;
+        }
         case PROC_STAT: {
             fut_task_t *task = fut_task_by_pid(n->pid);
             total = task ? gen_stat(tmp, GEN_BUF, task) : 0;
@@ -3165,6 +3196,21 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0100600, PROC_PID_MEM, pid, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "uid_map")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_UID_MAP(pid),
+                                          0100644, PROC_UID_MAP, pid, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "gid_map")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_GID_MAP(pid),
+                                          0100644, PROC_GID_MAP, pid, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "setgroups")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_SETGROUPS(pid),
+                                          0100644, PROC_SETGROUPS, pid, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         if (STREQ(name, "oom_score")) {
             *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_OOM_SCORE(pid),
                                           0100444, PROC_OOM_SCORE, pid, 0);
@@ -3295,6 +3341,12 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
             { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_AUXV(pid),           0100400, PROC_AUXV,           pid,0); return *result ? 0 : -ENOMEM; }
         if (STREQ(name, "mem"))
             { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_MEM(pid),            0100600, PROC_PID_MEM,        pid,0); return *result ? 0 : -ENOMEM; }
+        if (STREQ(name, "uid_map"))
+            { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_UID_MAP(pid),        0100644, PROC_UID_MAP,         pid,0); return *result ? 0 : -ENOMEM; }
+        if (STREQ(name, "gid_map"))
+            { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_GID_MAP(pid),        0100644, PROC_GID_MAP,         pid,0); return *result ? 0 : -ENOMEM; }
+        if (STREQ(name, "setgroups"))
+            { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_SETGROUPS(pid),      0100644, PROC_SETGROUPS,       pid,0); return *result ? 0 : -ENOMEM; }
         if (STREQ(name, "oom_score"))
             { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_OOM_SCORE(pid), 0100444, PROC_OOM_SCORE, pid,0); return *result ? 0 : -ENOMEM; }
         if (STREQ(name, "oom_score_adj"))
@@ -4045,7 +4097,8 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             "stat", "statm", "comm", "task", "limits", "io", "smaps",
             "oom_score", "oom_score_adj", "cgroup", "ns", "fdinfo",
             "wchan", "mountinfo", "coredump_filter", "schedstat", "net", "attr",
-            "smaps_rollup", "auxv", "mem"
+            "smaps_rollup", "auxv", "mem",
+            "uid_map", "gid_map", "setgroups"
         };
         static const uint8_t etypes[] = {
             FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
@@ -4060,10 +4113,11 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
+            FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG
         };
         uint64_t pid = dn->pid;
-        if (idx < 30) {
+        if (idx < 33) {
             uint64_t ino;
             switch (idx) {
                 case 0:  ino = PROC_INO_PID_DIR(pid);        break;
@@ -4096,6 +4150,9 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                 case 27: ino = PROC_INO_PID_SMAPS_ROLLUP(pid);      break;
                 case 28: ino = PROC_INO_PID_AUXV(pid);              break;
                 case 29: ino = PROC_INO_PID_MEM(pid);               break;
+                case 30: ino = PROC_INO_PID_UID_MAP(pid);           break;
+                case 31: ino = PROC_INO_PID_GID_MAP(pid);           break;
+                case 32: ino = PROC_INO_PID_SETGROUPS(pid);         break;
                 default: ino = 0; break;
             }
             de->d_ino    = ino;

@@ -20571,6 +20571,91 @@ static void test_unshare_namespace_noop(void) {
     }
 }
 
+/*
+ * test_proc_uid_gid_map() — Tests 498-500
+ *
+ * Verify that /proc/self/uid_map, /proc/self/gid_map, and
+ * /proc/self/setgroups can be opened and read successfully.
+ * These files are required by container tools and user-namespace-
+ * aware programs such as newuidmap, podman, and bubblewrap.
+ */
+static void test_proc_uid_gid_map(void) {
+    extern long sys_openat(int dirfd, const char *pathname, int flags, int mode);
+    extern long sys_read(int fd, void *buf, size_t count);
+    extern long sys_close(int fd);
+
+    fut_printf("[MISC-TEST] Tests 498-500: /proc/self/{uid_map,gid_map,setgroups}\n");
+
+    /* Test 498: /proc/self/uid_map readable */
+    {
+        int fd = (int)sys_openat(-100, "/proc/self/uid_map", 0, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] FAIL 498: open uid_map failed: %d\n", fd);
+            fut_test_fail(498);
+        } else {
+            char buf[64];
+            long n = sys_read(fd, buf, sizeof(buf) - 1);
+            sys_close(fd);
+            if (n > 0) {
+                fut_printf("[MISC-TEST] PASS 498: uid_map read %ld bytes\n", n);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL 498: uid_map read returned %ld\n", n);
+                fut_test_fail(498);
+            }
+        }
+    }
+
+    /* Test 499: /proc/self/gid_map readable */
+    {
+        int fd = (int)sys_openat(-100, "/proc/self/gid_map", 0, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] FAIL 499: open gid_map failed: %d\n", fd);
+            fut_test_fail(499);
+        } else {
+            char buf[64];
+            long n = sys_read(fd, buf, sizeof(buf) - 1);
+            sys_close(fd);
+            if (n > 0) {
+                fut_printf("[MISC-TEST] PASS 499: gid_map read %ld bytes\n", n);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL 499: gid_map read returned %ld\n", n);
+                fut_test_fail(499);
+            }
+        }
+    }
+
+    /* Test 500: /proc/self/setgroups readable and contains "allow" */
+    {
+        int fd = (int)sys_openat(-100, "/proc/self/setgroups", 0, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] FAIL 500: open setgroups failed: %d\n", fd);
+            fut_test_fail(500);
+        } else {
+            char buf[32];
+            long n = sys_read(fd, buf, sizeof(buf) - 1);
+            sys_close(fd);
+            if (n > 0) {
+                buf[n] = '\0';
+                /* Content should be "allow\n" */
+                int ok = (buf[0] == 'a' && buf[1] == 'l' && buf[2] == 'l'
+                          && buf[3] == 'o' && buf[4] == 'w');
+                if (ok) {
+                    fut_printf("[MISC-TEST] PASS 500: setgroups = \"allow\"\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] FAIL 500: setgroups unexpected content\n");
+                    fut_test_fail(500);
+                }
+            } else {
+                fut_printf("[MISC-TEST] FAIL 500: setgroups read returned %ld\n", n);
+                fut_test_fail(500);
+            }
+        }
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -21005,6 +21090,7 @@ void fut_misc_test_thread(void *arg) {
     test_sigev_thread_id();                /* Tests 486-488: timer_create SIGEV_THREAD_ID */
     test_subreaper_reparent();             /* Tests 489-491: PR_SET_CHILD_SUBREAPER reparenting */
     test_unshare_namespace_noop();         /* Tests 492-497: unshare namespace flags no-op */
+    test_proc_uid_gid_map();              /* Tests 498-500: /proc/self/{uid_map,gid_map,setgroups} */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

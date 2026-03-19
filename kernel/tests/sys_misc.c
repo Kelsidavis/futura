@@ -22976,6 +22976,199 @@ t557:;
     }
 }
 
+/* ============================================================
+ * Tests 566-569: inotify event delivery
+ *
+ * Exercises the end-to-end inotify pipeline:
+ *   ramfs/VFS → inotify_dispatch_event() → event queue → read()
+ *
+ * Test 566: IN_CREATE fires when a file is created
+ * Test 567: IN_MODIFY fires when a file is written
+ * Test 568: IN_DELETE fires when a file is unlinked
+ * Test 569: IN_ONESHOT auto-removes the watch after one event
+ * ============================================================ */
+static void test_inotify_event_delivery(void) {
+    extern long sys_inotify_init1(int flags);
+    extern long sys_inotify_add_watch(int fd, const char *path, uint32_t mask);
+    extern long sys_close(int fd);
+    extern long sys_read(int fd, void *buf, size_t count);
+
+#define INO_NB       00004000      /* IN_NONBLOCK */
+#define INO_CREATE   0x00000100u
+#define INO_MODIFY   0x00000002u
+#define INO_DELETE   0x00000200u
+#define INO_ONESHOT  0x80000000u
+#define INO_RDWR_CREAT 0x42       /* O_RDWR|O_CREAT */
+
+    /* inotify_event layout: wd(4)+mask(4)+cookie(4)+len(4)+name[len] */
+    struct ino_ev { int wd; uint32_t mask; uint32_t cookie; uint32_t len; char name[256]; };
+
+    /* ---- Test 566: IN_CREATE event delivered when file is created ---- */
+    fut_printf("[MISC-TEST] Test 566: inotify IN_CREATE event delivery\n");
+    long ifd = sys_inotify_init1(INO_NB);
+    if (ifd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 566: inotify_init1 -> %ld\n", ifd);
+        fut_test_fail(566);
+        goto t567;
+    }
+    long wd566 = sys_inotify_add_watch((int)ifd, "/", INO_CREATE);
+    if (wd566 < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 566: add_watch -> %ld\n", wd566);
+        sys_close((int)ifd);
+        fut_test_fail(566);
+        goto t567;
+    }
+    {
+        int cfd = (int)fut_vfs_open("/ino_ev566.txt", INO_RDWR_CREAT, 0644);
+        if (cfd >= 0) fut_vfs_close(cfd);
+        fut_vfs_unlink("/ino_ev566.txt");
+    }
+    {
+        struct ino_ev ev566;
+        long nr = sys_read((int)ifd, &ev566, sizeof(ev566));
+        sys_close((int)ifd);
+        if (nr >= 16 && (ev566.mask & INO_CREATE) && ev566.wd == (int)wd566
+                && ev566.len > 0
+                && __builtin_strncmp(ev566.name, "ino_ev566.txt", 13) == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 566: IN_CREATE wd=%d mask=0x%x name='%s'\n",
+                       ev566.wd, ev566.mask, ev566.name);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 566: nr=%ld wd=%d mask=0x%x len=%u name='%s'\n",
+                       nr, ev566.wd, ev566.mask, ev566.len,
+                       (nr >= 16 && ev566.len > 0) ? ev566.name : "<none>");
+            fut_test_fail(566);
+        }
+    }
+
+t567:
+    /* ---- Test 567: IN_MODIFY event delivered when file is written ---- */
+    fut_printf("[MISC-TEST] Test 567: inotify IN_MODIFY event delivery\n");
+    ifd = sys_inotify_init1(INO_NB);
+    if (ifd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 567: inotify_init1 -> %ld\n", ifd);
+        fut_test_fail(567);
+        goto t568;
+    }
+    {
+        long wd567 = sys_inotify_add_watch((int)ifd, "/", INO_MODIFY);
+        if (wd567 < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 567: add_watch -> %ld\n", wd567);
+            sys_close((int)ifd);
+            fut_test_fail(567);
+            goto t568;
+        }
+        int cfd = (int)fut_vfs_open("/ino_ev567.txt", INO_RDWR_CREAT, 0644);
+        if (cfd >= 0) {
+            const char wdata[] = "hello";
+            fut_vfs_write(cfd, wdata, 5);
+            fut_vfs_close(cfd);
+        }
+        fut_vfs_unlink("/ino_ev567.txt");
+        struct ino_ev ev567;
+        long nr = sys_read((int)ifd, &ev567, sizeof(ev567));
+        sys_close((int)ifd);
+        if (nr >= 16 && (ev567.mask & INO_MODIFY)) {
+            fut_printf("[MISC-TEST] ✓ Test 567: IN_MODIFY wd=%d mask=0x%x name='%s'\n",
+                       ev567.wd, ev567.mask, ev567.len > 0 ? ev567.name : "");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 567: nr=%ld mask=0x%x (no IN_MODIFY)\n",
+                       nr, (unsigned)(nr >= 16 ? ev567.mask : 0));
+            fut_test_fail(567);
+        }
+    }
+
+t568:
+    /* ---- Test 568: IN_DELETE event delivered when file is unlinked ---- */
+    fut_printf("[MISC-TEST] Test 568: inotify IN_DELETE event delivery\n");
+    ifd = sys_inotify_init1(INO_NB);
+    if (ifd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 568: inotify_init1 -> %ld\n", ifd);
+        fut_test_fail(568);
+        goto t569;
+    }
+    {
+        long wd568 = sys_inotify_add_watch((int)ifd, "/", INO_DELETE);
+        if (wd568 < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 568: add_watch -> %ld\n", wd568);
+            sys_close((int)ifd);
+            fut_test_fail(568);
+            goto t569;
+        }
+        int cfd = (int)fut_vfs_open("/ino_ev568.txt", INO_RDWR_CREAT, 0644);
+        if (cfd >= 0) fut_vfs_close(cfd);
+        fut_vfs_unlink("/ino_ev568.txt");
+        struct ino_ev ev568;
+        long nr = sys_read((int)ifd, &ev568, sizeof(ev568));
+        sys_close((int)ifd);
+        if (nr >= 16 && (ev568.mask & INO_DELETE) && ev568.wd == (int)wd568
+                && ev568.len > 0
+                && __builtin_strncmp(ev568.name, "ino_ev568.txt", 13) == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 568: IN_DELETE wd=%d mask=0x%x name='%s'\n",
+                       ev568.wd, ev568.mask, ev568.name);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 568: nr=%ld wd=%d mask=0x%x len=%u name='%s'\n",
+                       nr, ev568.wd, ev568.mask, ev568.len,
+                       (nr >= 16 && ev568.len > 0) ? ev568.name : "<none>");
+            fut_test_fail(568);
+        }
+    }
+
+t569:
+    /* ---- Test 569: IN_ONESHOT removes watch after first event ---- */
+    fut_printf("[MISC-TEST] Test 569: inotify IN_ONESHOT removes watch after first event\n");
+    ifd = sys_inotify_init1(INO_NB);
+    if (ifd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 569: inotify_init1 -> %ld\n", ifd);
+        fut_test_fail(569);
+        return;
+    }
+    {
+        long wd569 = sys_inotify_add_watch((int)ifd, "/", INO_CREATE | INO_ONESHOT);
+        if (wd569 < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 569: add_watch -> %ld\n", wd569);
+            sys_close((int)ifd);
+            fut_test_fail(569);
+            return;
+        }
+        /* First create fires the event and the IN_ONESHOT flag removes the watch */
+        int cfd = (int)fut_vfs_open("/ino_ev569a.txt", INO_RDWR_CREAT, 0644);
+        if (cfd >= 0) { fut_vfs_close(cfd); fut_vfs_unlink("/ino_ev569a.txt"); }
+        struct ino_ev ev569a;
+        long nr = sys_read((int)ifd, &ev569a, sizeof(ev569a));
+        if (nr < 16 || !(ev569a.mask & INO_CREATE)) {
+            fut_printf("[MISC-TEST] ✗ Test 569: first event: nr=%ld mask=0x%x\n",
+                       nr, (unsigned)(nr >= 16 ? ev569a.mask : 0));
+            sys_close((int)ifd);
+            fut_test_fail(569);
+            return;
+        }
+        /* Second create: watch was consumed, so no event → EAGAIN */
+        cfd = (int)fut_vfs_open("/ino_ev569b.txt", INO_RDWR_CREAT, 0644);
+        if (cfd >= 0) { fut_vfs_close(cfd); fut_vfs_unlink("/ino_ev569b.txt"); }
+        struct ino_ev ev569b;
+        nr = sys_read((int)ifd, &ev569b, sizeof(ev569b));
+        sys_close((int)ifd);
+        if (nr == -11 /* -EAGAIN */) {
+            fut_printf("[MISC-TEST] ✓ Test 569: IN_ONESHOT: first event fired, "
+                       "second read=EAGAIN (watch consumed)\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 569: second read=%ld (expected -EAGAIN)\n", nr);
+            fut_test_fail(569);
+        }
+    }
+
+#undef INO_NB
+#undef INO_CREATE
+#undef INO_MODIFY
+#undef INO_DELETE
+#undef INO_ONESHOT
+#undef INO_RDWR_CREAT
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -23430,6 +23623,7 @@ void fut_misc_test_thread(void *arg) {
     test_clone_vfork_fallback();             /* Tests 555-557: clone(CLONE_VFORK|CLONE_VM) fallback to fork */
     test_relative_symlink();                 /* Tests 558-561: relative symlink resolution */
     test_symlink_in_intermediate_path();     /* Tests 562-565: symlink in intermediate path component */
+    test_inotify_event_delivery();           /* Tests 566-569: inotify IN_CREATE/MODIFY/DELETE/ONESHOT */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

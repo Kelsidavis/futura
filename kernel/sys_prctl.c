@@ -70,6 +70,17 @@
 /* Maximum valid signal number */
 #define PR_MAX_SIGNAL       64
 
+/* Kernel-pointer-safe copy to user (for selftest support) */
+static inline int prctl_copy_to_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)dst >= KERNEL_VIRTUAL_BASE) {
+        __builtin_memcpy(dst, src, n);
+        return 0;
+    }
+#endif
+    return fut_copy_to_user(dst, src, n);
+}
+
 /* Linux 5.6+ prctl options (accepted as no-ops) */
 #define PR_SET_IO_FLUSHER   57  /* Mark thread as I/O flusher (memory-pressure exempt) */
 #define PR_GET_IO_FLUSHER   58  /* Get I/O flusher state */
@@ -122,7 +133,7 @@ long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
             return -EFAULT;
         }
         int val = task->pdeathsig;
-        if (fut_copy_to_user(uptr, &val, sizeof(int)) != 0) {
+        if (prctl_copy_to_user(uptr, &val, sizeof(int)) != 0) {
             return -EFAULT;
         }
         return 0;

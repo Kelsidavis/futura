@@ -23877,6 +23877,144 @@ static void test_dev_zero_mmap(void) {
     fut_vfs_close(zfd);
 }
 
+/*
+ * Tests 596-599: pdeathsig prctl API correctness
+ *
+ * Tests that PR_SET_PDEATHSIG / PR_GET_PDEATHSIG work correctly and that
+ * invalid signal numbers are rejected (per Linux semantics).
+ */
+static void test_pdeathsig_prctl(void) {
+    /* Test 596: PR_GET_PDEATHSIG on fresh task returns 0 (no death signal set) */
+    fut_printf("[MISC-TEST] Test 596: PR_GET_PDEATHSIG initial value\n");
+    int sigval = -1;
+    long ret = sys_prctl(PR_GET_PDEATHSIG, (unsigned long)&sigval, 0, 0, 0);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 596: PR_GET_PDEATHSIG returned %ld\n", ret);
+        fut_test_fail(596);
+    } else if (sigval != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 596: expected 0, got %d\n", sigval);
+        fut_test_fail(596);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 596: pdeathsig initially 0\n");
+        fut_test_pass();
+    }
+
+    /* Test 597: PR_SET_PDEATHSIG with valid signal */
+    fut_printf("[MISC-TEST] Test 597: PR_SET_PDEATHSIG SIGUSR1\n");
+    ret = sys_prctl(PR_SET_PDEATHSIG, 10 /* SIGUSR1 */, 0, 0, 0);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 597: PR_SET_PDEATHSIG returned %ld\n", ret);
+        fut_test_fail(597);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 597: PR_SET_PDEATHSIG SIGUSR1 OK\n");
+        fut_test_pass();
+    }
+
+    /* Test 598: PR_GET_PDEATHSIG returns the value just set */
+    fut_printf("[MISC-TEST] Test 598: PR_GET_PDEATHSIG reads back SIGUSR1\n");
+    sigval = -1;
+    ret = sys_prctl(PR_GET_PDEATHSIG, (unsigned long)&sigval, 0, 0, 0);
+    if (ret != 0 || sigval != 10) {
+        fut_printf("[MISC-TEST] ✗ Test 598: expected 10, got ret=%ld sigval=%d\n", ret, sigval);
+        fut_test_fail(598);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 598: pdeathsig reads back 10 (SIGUSR1)\n");
+        fut_test_pass();
+    }
+
+    /* Test 599: PR_SET_PDEATHSIG with invalid signal returns EINVAL */
+    fut_printf("[MISC-TEST] Test 599: PR_SET_PDEATHSIG invalid signal\n");
+    ret = sys_prctl(PR_SET_PDEATHSIG, 200 /* invalid */, 0, 0, 0);
+    if (ret != -22 /* -EINVAL */) {
+        fut_printf("[MISC-TEST] ✗ Test 599: expected -EINVAL, got %ld\n", ret);
+        fut_test_fail(599);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 599: invalid pdeathsig rejected\n");
+        fut_test_pass();
+    }
+
+    /* Restore pdeathsig to 0 for remaining tests */
+    sys_prctl(PR_SET_PDEATHSIG, 0, 0, 0, 0);
+}
+
+/*
+ * Tests 600-603: statfs f_type correctness
+ *
+ * statfs() should return filesystem-type-specific magic numbers:
+ *   /proc       -> PROC_SUPER_MAGIC  (0x9fa0)
+ *   /sys        -> SYSFS_MAGIC       (0x62656572)
+ *   /           -> FUT_RAMFS_MAGIC   (0x858458F6)
+ *   /proc/self  -> PROC_SUPER_MAGIC  (0x9fa0, prefix match)
+ */
+static void test_statfs_ftype(void) {
+    extern long sys_statfs(const char *path, void *buf);
+    struct fut_linux_statfs sb;
+
+    /* Test 600: statfs("/") returns ramfs magic */
+    fut_printf("[MISC-TEST] Test 600: statfs(\"/\") f_type = RAMFS_MAGIC\n");
+    __builtin_memset(&sb, 0, sizeof(sb));
+    long ret = sys_statfs("/", &sb);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 600: statfs(\"/\") returned %ld\n", ret);
+        fut_test_fail(600);
+    } else if (sb.f_type != 0x858458F6ULL) {
+        fut_printf("[MISC-TEST] ✗ Test 600: f_type=0x%llx, expected 0x858458F6\n",
+                   (unsigned long long)sb.f_type);
+        fut_test_fail(600);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 600: statfs(\"/\") f_type=0x858458F6 (ramfs)\n");
+        fut_test_pass();
+    }
+
+    /* Test 601: statfs("/proc") returns proc magic */
+    fut_printf("[MISC-TEST] Test 601: statfs(\"/proc\") f_type = PROC_SUPER_MAGIC\n");
+    __builtin_memset(&sb, 0, sizeof(sb));
+    ret = sys_statfs("/proc", &sb);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 601: statfs(\"/proc\") returned %ld\n", ret);
+        fut_test_fail(601);
+    } else if (sb.f_type != 0x9fa0ULL) {
+        fut_printf("[MISC-TEST] ✗ Test 601: f_type=0x%llx, expected 0x9fa0\n",
+                   (unsigned long long)sb.f_type);
+        fut_test_fail(601);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 601: statfs(\"/proc\") f_type=0x9fa0 (proc)\n");
+        fut_test_pass();
+    }
+
+    /* Test 602: statfs("/proc/self") returns proc magic (prefix match) */
+    fut_printf("[MISC-TEST] Test 602: statfs(\"/proc/self\") f_type = PROC_SUPER_MAGIC\n");
+    __builtin_memset(&sb, 0, sizeof(sb));
+    ret = sys_statfs("/proc/self", &sb);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 602: statfs(\"/proc/self\") returned %ld\n", ret);
+        fut_test_fail(602);
+    } else if (sb.f_type != 0x9fa0ULL) {
+        fut_printf("[MISC-TEST] ✗ Test 602: f_type=0x%llx, expected 0x9fa0\n",
+                   (unsigned long long)sb.f_type);
+        fut_test_fail(602);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 602: statfs(\"/proc/self\") f_type=0x9fa0 (proc)\n");
+        fut_test_pass();
+    }
+
+    /* Test 603: statfs("/sys") returns sysfs magic */
+    fut_printf("[MISC-TEST] Test 603: statfs(\"/sys\") f_type = SYSFS_MAGIC\n");
+    __builtin_memset(&sb, 0, sizeof(sb));
+    ret = sys_statfs("/sys", &sb);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 603: statfs(\"/sys\") returned %ld\n", ret);
+        fut_test_fail(603);
+    } else if (sb.f_type != 0x62656572ULL) {
+        fut_printf("[MISC-TEST] ✗ Test 603: f_type=0x%llx, expected 0x62656572\n",
+                   (unsigned long long)sb.f_type);
+        fut_test_fail(603);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 603: statfs(\"/sys\") f_type=0x62656572 (sysfs)\n");
+        fut_test_pass();
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -24338,6 +24476,8 @@ void fut_misc_test_thread(void *arg) {
     test_sigsuspend_basic();                 /* Tests 581-583: sigsuspend NULL/pending/mask-restore */
     test_fd_table_growth();                  /* Tests 584-586: dynamic FD table growth past 64 */
     test_dev_zero_mmap();                    /* Tests 587-595: /dev/zero mmap correctness */
+    test_pdeathsig_prctl();                  /* Tests 596-599: pdeathsig prctl semantics */
+    test_statfs_ftype();                     /* Tests 600-603: statfs f_type per mount point */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

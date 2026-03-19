@@ -803,6 +803,8 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
     task->sig_altstack.ss_size = 0;
     /* Clear set_tid_address (child thread tracking is per-address-space) */
     task->clear_child_tid = NULL;
+    /* Linux: pdeathsig is cleared on exec (signal was registered by the old image's parent) */
+    task->pdeathsig = 0;
 
     /* Phase 2: Detailed pre-exec logging (use kernel_pathname for SMAP safety) */
     char msg[256];

@@ -42,12 +42,26 @@ static inline int statfs_copy_to_buf(void *dst, const void *src, size_t n) {
 #define FUT_RAMFS_MAGIC   0x858458F6
 #define FUT_EXT2_MAGIC    0xEF53
 #define FUT_EXT4_MAGIC    0xEF53
+#define PROC_SUPER_MAGIC  0x9fa0
+#define SYSFS_MAGIC       0x62656572
 
 /* Mount flags */
 #define FUT_ST_RDONLY     0x0001  /* Read-only filesystem */
 #define FUT_ST_NOSUID     0x0002  /* Ignore suid and sgid bits */
 #define FUT_ST_NODEV      0x0004  /* Disallow access to device special files */
 #define FUT_ST_NOEXEC     0x0008  /* Disallow program execution */
+
+/* Return the correct filesystem magic for the given path prefix */
+static uint32_t statfs_magic_for_path(const char *path) {
+    if (!path) return FUT_RAMFS_MAGIC;
+    if (path[0] == '/' && path[1] == 'p' && path[2] == 'r' && path[3] == 'o' &&
+        path[4] == 'c' && (path[5] == '\0' || path[5] == '/'))
+        return PROC_SUPER_MAGIC;
+    if (path[0] == '/' && path[1] == 's' && path[2] == 'y' && path[3] == 's' &&
+        (path[4] == '\0' || path[4] == '/'))
+        return SYSFS_MAGIC;
+    return FUT_RAMFS_MAGIC;
+}
 
 /* Build a statfs struct from physical memory stats (shared by statfs and fstatfs) */
 static void fill_statfs_from_pmm(struct fut_linux_statfs *s) {
@@ -138,9 +152,10 @@ long sys_statfs(const char *path, struct fut_linux_statfs *buf) {
     path_preview[preview_len] = '\0';
 
     /* Phase 2: Return real physical memory stats as filesystem space.
-     * Futura uses ramfs backed by the physical page allocator. */
+     * Phase 3: Set correct f_type for well-known mount points (/proc, /sys). */
     struct fut_linux_statfs real_stats = {0};
     fill_statfs_from_pmm(&real_stats);
+    real_stats.f_type = statfs_magic_for_path(path_preview);
 
     /* Copy to user or kernel buffer */
     if (statfs_copy_to_buf(buf, &real_stats, sizeof(struct fut_linux_statfs)) != 0) {

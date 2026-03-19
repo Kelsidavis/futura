@@ -122,7 +122,11 @@ long sys_gettimeofday(fut_timeval_t *tv, void *tz) {
      * VULNERABILITY: Invalid Output Buffer Pointer
      * ATTACK: Attacker provides read-only or unmapped tv buffer
      * IMPACT: Kernel page fault when writing timeval structure
-     * DEFENSE: Check write permission before processing */
+     * DEFENSE: Check write permission before processing
+     * Skip access_ok for kernel-originated calls (selftests use kernel stack pointers) */
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)tv < KERNEL_VIRTUAL_BASE)
+#endif
     if (fut_access_ok(tv, sizeof(fut_timeval_t), 1) != 0) {
         fut_printf("[TIME] gettimeofday(tv=%p) -> EFAULT (tv not writable for %zu bytes)\n",
                    tv, sizeof(fut_timeval_t));

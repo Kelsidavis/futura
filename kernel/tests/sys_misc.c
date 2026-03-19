@@ -24873,6 +24873,43 @@ static void test_sched_yield_basic(void) {
 }
 
 /* ============================================================
+ * Tests 675-676: gettimeofday basic and settimeofday
+ * ============================================================
+ *   Test 675: gettimeofday(&tv, NULL) → 0, tv_sec > 0
+ *   Test 676: settimeofday(NULL, NULL) → EFAULT (required args)
+ */
+static void test_gettimeofday_settimeofday(void) {
+    extern long sys_gettimeofday(void *tv, void *tz);
+    extern long sys_settimeofday(const void *tv, const void *tz);
+
+    /* Test 675: gettimeofday returns valid time */
+    fut_printf("[MISC-TEST] Test 675: gettimeofday(&tv, NULL) → tv_sec > 0\n");
+    struct { long tv_sec; long tv_usec; } tv = {0, 0};
+    long ret = sys_gettimeofday(&tv, NULL);
+    if (ret != 0 || tv.tv_sec <= 0) {
+        fut_printf("[MISC-TEST] ✗ Test 675: gettimeofday returned %ld, tv_sec=%ld\n",
+                   ret, tv.tv_sec);
+        fut_test_fail(675);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 675: gettimeofday tv_sec=%ld tv_usec=%ld\n",
+                   tv.tv_sec, tv.tv_usec);
+        fut_test_pass();
+    }
+
+    /* Test 676: settimeofday(NULL, NULL) → EFAULT */
+    fut_printf("[MISC-TEST] Test 676: settimeofday(NULL, NULL) → EFAULT\n");
+    ret = sys_settimeofday(NULL, NULL);
+    if (ret != -EFAULT) {
+        fut_printf("[MISC-TEST] ✗ Test 676: settimeofday(NULL,NULL) returned %ld (expected -EFAULT=%d)\n",
+                   ret, -EFAULT);
+        fut_test_fail(676);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 676: settimeofday(NULL,NULL) → EFAULT\n");
+        fut_test_pass();
+    }
+}
+
+/* ============================================================
  * Tests 671-672: sethostname/setdomainname round-trip
  * ============================================================
  *   Test 671: sethostname("testhost", 8) → 0; uname shows "testhost"
@@ -26132,6 +26169,7 @@ void fut_misc_test_thread(void *arg) {
     test_vhangup_basic();                    /* Test 658: vhangup() → 0 */
     test_pivot_root_enosys();                /* Test 659: pivot_root → ENOSYS */
     test_umask_roundtrip_syslog_console();   /* Tests 667-668: umask round-trip + syslog CONSOLE_OFF/ON */
+    test_gettimeofday_settimeofday();        /* Tests 675-676: gettimeofday tv_sec>0, settimeofday NULL→EFAULT */
     test_sethostname_setdomainname();        /* Tests 671-672: sethostname/setdomainname → 0 */
     test_tee_and_sync_file_range();          /* Tests 673-674: tee same-fd→EINVAL, sync_file_range→0 */
     test_chroot_basic();                     /* Tests 669-670: chroot("/")→0, nonexistent→ENOENT */

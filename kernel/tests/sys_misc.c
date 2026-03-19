@@ -24873,6 +24873,80 @@ static void test_sched_yield_basic(void) {
 }
 
 /* ============================================================
+ * Tests 663-665: mlockall/munlockall correctness
+ * ============================================================
+ *   Test 663: mlockall(MCL_CURRENT=1) → 0 (locks all mapped pages)
+ *   Test 664: munlockall() → 0 (unlocks all pages)
+ *   Test 665: mlockall(0x80 invalid flag) → EINVAL
+ */
+static void test_mlockall_munlockall(void) {
+    extern long sys_mlockall(int flags);
+    extern long sys_munlockall(void);
+
+#define MCL_CURRENT_VAL  1
+#define MCL_FUTURE_VAL   2
+#define MCL_ONFAULT_VAL  4
+
+    /* Test 663: mlockall(MCL_CURRENT) → 0 */
+    fut_printf("[MISC-TEST] Test 663: mlockall(MCL_CURRENT) → 0\n");
+    long ret = sys_mlockall(MCL_CURRENT_VAL);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 663: mlockall(MCL_CURRENT) returned %ld (expected 0)\n", ret);
+        fut_test_fail(663);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 663: mlockall(MCL_CURRENT) → 0\n");
+        fut_test_pass();
+    }
+
+    /* Test 664: munlockall() → 0 */
+    fut_printf("[MISC-TEST] Test 664: munlockall() → 0\n");
+    ret = sys_munlockall();
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 664: munlockall() returned %ld (expected 0)\n", ret);
+        fut_test_fail(664);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 664: munlockall() → 0\n");
+        fut_test_pass();
+    }
+
+    /* Test 665: mlockall(invalid flags) → EINVAL */
+    fut_printf("[MISC-TEST] Test 665: mlockall(0x80 invalid) → EINVAL\n");
+    ret = sys_mlockall(0x80);
+    if (ret != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ Test 665: mlockall(0x80) returned %ld (expected -EINVAL=%d)\n",
+                   ret, -EINVAL);
+        fut_test_fail(665);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 665: mlockall(0x80) → EINVAL\n");
+        fut_test_pass();
+    }
+#undef MCL_CURRENT_VAL
+#undef MCL_FUTURE_VAL
+#undef MCL_ONFAULT_VAL
+}
+
+/* ============================================================
+ * Test 666: set_tid_address — returns caller's TID
+ * ============================================================ */
+static void test_set_tid_address(void) {
+    extern long sys_set_tid_address(int *tidptr);
+    extern long sys_gettid(void);
+
+    fut_printf("[MISC-TEST] Test 666: set_tid_address returns caller TID\n");
+    int tid_word = 0;
+    long tid = sys_set_tid_address(&tid_word);
+    long expected_tid = sys_gettid();
+    if (tid != expected_tid || tid <= 0) {
+        fut_printf("[MISC-TEST] ✗ Test 666: set_tid_address returned %ld (gettid=%ld)\n",
+                   tid, expected_tid);
+        fut_test_fail(666);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 666: set_tid_address returned TID=%ld\n", tid);
+        fut_test_pass();
+    }
+}
+
+/* ============================================================
  * Tests 660-662: RT signal (SIGRTMIN=34) block, pending, and unblock
  * ============================================================
  *   Test 660: sigprocmask(SIG_BLOCK, {34}) → 0 (RT signal blocked)
@@ -25914,6 +25988,8 @@ void fut_misc_test_thread(void *arg) {
     test_quotactl_stub();                    /* Tests 656-657: quotactl Q_SYNC→ENOSYS, Q_GETQUOTA NULL→EINVAL */
     test_vhangup_basic();                    /* Test 658: vhangup() → 0 */
     test_pivot_root_enosys();                /* Test 659: pivot_root → ENOSYS */
+    test_mlockall_munlockall();              /* Tests 663-665: mlockall(MCL_CURRENT)→0, munlockall→0, invalid→EINVAL */
+    test_set_tid_address();                  /* Test 666: set_tid_address returns TID */
     test_rt_signal_block_pending();          /* Tests 660-662: RT signal SIGRTMIN=34 block/pending/restore */
 
     fut_printf("[MISC-TEST] ========================================\n");

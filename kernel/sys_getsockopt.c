@@ -695,12 +695,12 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
                 }
 
             case SO_LINGER:
-                /* Linger - return l_onoff=0, l_linger=0 (no linger, default) */
+                /* Linger - return stored l_onoff/l_linger */
                 {
                     struct {
                         int l_onoff;
                         int l_linger;
-                    } ling_zero = {0, 0};
+                    } ling_zero = {socket->linger_onoff, socket->linger_secs};
                     value_len = sizeof(ling_zero);
 
                     copy_len = (len < value_len) ? len : value_len;

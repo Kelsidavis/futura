@@ -372,6 +372,10 @@ typedef struct fut_socket {
     uint64_t rcvtimeo_ms;               /* Receive timeout in milliseconds */
     uint64_t sndtimeo_ms;               /* Send timeout in milliseconds */
 
+    /* SO_LINGER: linger-on-close settings */
+    int linger_onoff;                   /* l_onoff: 0=disabled (default) */
+    int linger_secs;                    /* l_linger: delay in seconds */
+
     /* SO_SNDBUF / SO_RCVBUF: effective buffer sizes (stored doubled, like Linux) */
     uint32_t sndbuf;                    /* Send buffer size (default 2*FUT_SOCKET_BUFSIZE) */
     uint32_t rcvbuf;                    /* Receive buffer size (default 2*FUT_SOCKET_BUFSIZE) */

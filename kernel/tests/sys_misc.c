@@ -26211,6 +26211,144 @@ static void test_getsid_getpgid_self(void) {
 }
 
 /**
+ * test_sockopt_linger_setown - Tests 744-747
+ *
+ *   Test 744: SO_LINGER setsockopt/getsockopt round-trip (l_onoff=1, l_linger=5)
+ *   Test 745: SO_LINGER clear (l_onoff=0) round-trip
+ *   Test 746: F_SETOWN/F_GETOWN round-trip (store and retrieve owner PID)
+ *   Test 747: poll(POLLOUT) on fresh connected socketpair → immediately writable
+ */
+static void test_sockopt_linger_setown(void) {
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_setsockopt(int fd, int level, int optname,
+                               const void *optval, unsigned int optlen);
+    extern long sys_getsockopt(int fd, int level, int optname,
+                               void *optval, unsigned int *optlen);
+    extern long sys_fcntl(int fd, int cmd, uint64_t arg);
+    extern long sys_getpid(void);
+    extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+
+#define T744_SOL_SOCKET 1
+#define T744_SO_LINGER  13
+#define T744_F_SETOWN   8
+#define T744_F_GETOWN   9
+#define T744_POLLIN     0x0001
+#define T744_POLLOUT    0x0004
+
+    long s = sys_socket(1 /* AF_UNIX */, 1 /* SOCK_STREAM */, 0);
+    if (s < 0) {
+        fut_printf("[MISC-TEST] ✗ Tests 744-747: socket failed: %ld\n", s);
+        fut_test_fail(744); fut_test_fail(745);
+        fut_test_fail(746); fut_test_fail(747);
+        return;
+    }
+
+    struct { int l_onoff; int l_linger; } ling, got_ling;
+    unsigned int glen;
+
+    /* Test 744: SO_LINGER l_onoff=1 l_linger=5 round-trip */
+    fut_printf("[MISC-TEST] Test 744: SO_LINGER(l_onoff=1, l_linger=5) round-trip\n");
+    ling.l_onoff = 1; ling.l_linger = 5;
+    long r = sys_setsockopt((int)s, T744_SOL_SOCKET, T744_SO_LINGER,
+                            &ling, sizeof(ling));
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 744: setsockopt(SO_LINGER) returned %ld\n", r);
+        fut_test_fail(744);
+    } else {
+        __builtin_memset(&got_ling, 0, sizeof(got_ling));
+        glen = sizeof(got_ling);
+        r = sys_getsockopt((int)s, T744_SOL_SOCKET, T744_SO_LINGER, &got_ling, &glen);
+        if (r != 0 || got_ling.l_onoff != 1 || got_ling.l_linger != 5) {
+            fut_printf("[MISC-TEST] ✗ Test 744: getsockopt l_onoff=%d l_linger=%d\n",
+                       got_ling.l_onoff, got_ling.l_linger);
+            fut_test_fail(744);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 744: SO_LINGER(1,5) round-trip\n");
+            fut_test_pass();
+        }
+    }
+
+    /* Test 745: SO_LINGER clear (l_onoff=0) */
+    fut_printf("[MISC-TEST] Test 745: SO_LINGER clear (l_onoff=0)\n");
+    ling.l_onoff = 0; ling.l_linger = 0;
+    r = sys_setsockopt((int)s, T744_SOL_SOCKET, T744_SO_LINGER,
+                       &ling, sizeof(ling));
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 745: setsockopt(SO_LINGER, 0) returned %ld\n", r);
+        fut_test_fail(745);
+    } else {
+        __builtin_memset(&got_ling, 0xff, sizeof(got_ling));
+        glen = sizeof(got_ling);
+        r = sys_getsockopt((int)s, T744_SOL_SOCKET, T744_SO_LINGER, &got_ling, &glen);
+        if (r != 0 || got_ling.l_onoff != 0 || got_ling.l_linger != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 745: getsockopt l_onoff=%d l_linger=%d\n",
+                       got_ling.l_onoff, got_ling.l_linger);
+            fut_test_fail(745);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 745: SO_LINGER cleared to (0,0)\n");
+            fut_test_pass();
+        }
+    }
+    fut_vfs_close((int)s);
+
+    /* Test 746: F_SETOWN/F_GETOWN round-trip */
+    fut_printf("[MISC-TEST] Test 746: F_SETOWN/F_GETOWN round-trip\n");
+    int fd = fut_vfs_open("/tmp/setown_test_746.txt", O_CREAT | O_RDWR, 0644);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 746: open failed: %d\n", fd);
+        fut_test_fail(746);
+    } else {
+        long pid = sys_getpid();
+        r = sys_fcntl(fd, T744_F_SETOWN, (uint64_t)pid);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 746: F_SETOWN returned %ld\n", r);
+            fut_test_fail(746);
+        } else {
+            long owner = sys_fcntl(fd, T744_F_GETOWN, 0);
+            if (owner != pid) {
+                fut_printf("[MISC-TEST] ✗ Test 746: F_GETOWN=%ld expected %ld\n", owner, pid);
+                fut_test_fail(746);
+            } else {
+                fut_printf("[MISC-TEST] ✓ Test 746: F_SETOWN/F_GETOWN pid=%ld\n", owner);
+                fut_test_pass();
+            }
+        }
+        fut_vfs_close(fd);
+        fut_vfs_unlink("/tmp/setown_test_746.txt");
+    }
+
+    /* Test 747: poll(POLLOUT) on fresh connected socketpair → writable immediately */
+    fut_printf("[MISC-TEST] Test 747: poll(POLLOUT) on fresh socketpair → immediately writable\n");
+    struct { int fd; short events; short revents; } pfd;
+    int sv[2] = {-1, -1};
+    r = sys_socketpair(1, 1, 0, sv);
+    if (r != 0 || sv[0] < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 747: socketpair failed: %ld\n", r);
+        fut_test_fail(747);
+        return;
+    }
+    pfd.fd = sv[0]; pfd.events = (short)T744_POLLOUT; pfd.revents = 0;
+    extern long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout);
+    r = sys_poll((struct pollfd *)&pfd, 1, 0 /* nowait */);
+    fut_vfs_close(sv[0]); fut_vfs_close(sv[1]);
+    if (r != 1 || !(pfd.revents & (short)T744_POLLOUT)) {
+        fut_printf("[MISC-TEST] ✗ Test 747: poll returned %ld revents=0x%x\n",
+                   r, (unsigned)pfd.revents);
+        fut_test_fail(747);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 747: poll(POLLOUT) socketpair immediately writable\n");
+        fut_test_pass();
+    }
+
+#undef T744_SOL_SOCKET
+#undef T744_SO_LINGER
+#undef T744_F_SETOWN
+#undef T744_F_GETOWN
+#undef T744_POLLIN
+#undef T744_POLLOUT
+}
+
+/**
  * test_sockopt_bool_roundtrip - Tests 740-743
  *
  *   Test 740: setsockopt(SO_REUSEADDR, 1) → getsockopt → 1
@@ -27628,6 +27766,7 @@ void fut_misc_test_thread(void *arg) {
     test_ocreat_oexcl_existing();            /* Test 736: O_CREAT|O_EXCL on existing → EEXIST */
     test_hardlink_nlinks();                  /* Tests 737-739: hard link nlink count 1→2→1 */
     test_sockopt_bool_roundtrip();           /* Tests 740-743: SO_REUSEADDR/KEEPALIVE/BROADCAST round-trip */
+    test_sockopt_linger_setown();            /* Tests 744-747: SO_LINGER round-trip; F_SETOWN/F_GETOWN; POLLOUT */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

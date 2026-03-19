@@ -535,10 +535,15 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                 return 0;
             }
 
-            case SO_LINGER:
-                /* Linger — accept without enforcement */
+            case SO_LINGER: {
+                /* Linger — store l_onoff/l_linger for getsockopt round-trip */
                 if (optlen < (socklen_t)(2 * sizeof(int))) return -EINVAL;
+                struct { int l_onoff; int l_linger; } ling = {0, 0};
+                if (sso_copy_from_user(&ling, optval, sizeof(ling)) != 0) return -EFAULT;
+                socket->linger_onoff = ling.l_onoff;
+                socket->linger_secs  = ling.l_linger;
                 return 0;
+            }
 
             case SO_TIMESTAMP:
                 /* Timestamp — accept without enforcement */

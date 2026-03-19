@@ -4038,6 +4038,23 @@ static void arm64_syscall_table_init(void) {
     syscall_table[__NR_rt_tgsigqueueinfo].handler = (syscall_fn_t)sys_rt_tgsigqueueinfo_wrapper;
     syscall_table[__NR_rt_tgsigqueueinfo].name = "rt_tgsigqueueinfo";
 
+    /* Linux 5.13-5.16 stubs — return ENOSYS so callers fall back gracefully */
+#define __NR_landlock_create_ruleset 444
+#define __NR_landlock_add_rule       445
+#define __NR_landlock_restrict_self  446
+#define __NR_memfd_secret            447
+#define __NR_futex_waitv             449
+    syscall_table[__NR_landlock_create_ruleset].handler = (syscall_fn_t)sys_enosys_stub;
+    syscall_table[__NR_landlock_create_ruleset].name = "landlock_create_ruleset";
+    syscall_table[__NR_landlock_add_rule].handler = (syscall_fn_t)sys_enosys_stub;
+    syscall_table[__NR_landlock_add_rule].name = "landlock_add_rule";
+    syscall_table[__NR_landlock_restrict_self].handler = (syscall_fn_t)sys_enosys_stub;
+    syscall_table[__NR_landlock_restrict_self].name = "landlock_restrict_self";
+    syscall_table[__NR_memfd_secret].handler = (syscall_fn_t)sys_enosys_stub;
+    syscall_table[__NR_memfd_secret].name = "memfd_secret";
+    syscall_table[__NR_futex_waitv].handler = (syscall_fn_t)sys_enosys_stub;
+    syscall_table[__NR_futex_waitv].name = "futex_waitv";
+
     syscall_table_initialized = true;
 }
 

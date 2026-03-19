@@ -315,6 +315,12 @@
 #define SYS_pidfd_send_signal 424  /* Linux: 424 */
 #define SYS_pidfd_getfd       445  /* Linux: 438 — Futura: 445 (438 used by process_vm_writev) */
 #define SYS_epoll_pwait2      446  /* Linux: 441 — Futura: 446 (441 used by seccomp) */
+/* Linux 5.13-5.16 syscalls — remapped because 444-446 are taken above */
+#define SYS_landlock_create_ruleset 447  /* Linux: 444 — Futura: 447 */
+#define SYS_landlock_add_rule       448  /* Linux: 445 — Futura: 448 */
+#define SYS_landlock_restrict_self  449  /* Linux: 446 — Futura: 449 */
+#define SYS_memfd_secret            450  /* Linux: 447 — Futura: 450 */
+#define SYS_futex_waitv             451  /* Linux: 449 — Futura: 451 */
 #define SYS_sethostname      170
 #define SYS_setdomainname    171
 /* Syscalls whose Linux numbers conflict with Futura's custom scheme get
@@ -2094,6 +2100,51 @@ static int64_t sys_seccomp_handler(uint64_t operation, uint64_t flags, uint64_t 
                        (const void *)(uintptr_t)uargs);
 }
 
+/* landlock_create_ruleset — Linux 5.13+; return ENOSYS so callers fall back */
+static int64_t sys_landlock_create_ruleset_handler(uint64_t attr, uint64_t size,
+                                                    uint64_t flags, uint64_t a4,
+                                                    uint64_t a5, uint64_t a6) {
+    (void)a4; (void)a5; (void)a6;
+    extern long sys_landlock_create_ruleset(const void *attr, size_t size, uint32_t flags);
+    return sys_landlock_create_ruleset((const void *)(uintptr_t)attr, (size_t)size,
+                                       (uint32_t)flags);
+}
+static int64_t sys_landlock_add_rule_handler(uint64_t ruleset_fd, uint64_t rule_type,
+                                              uint64_t rule_attr, uint64_t flags,
+                                              uint64_t a5, uint64_t a6) {
+    (void)a5; (void)a6;
+    extern long sys_landlock_add_rule(int ruleset_fd, unsigned int rule_type,
+                                      const void *rule_attr, uint32_t flags);
+    return sys_landlock_add_rule((int)ruleset_fd, (unsigned int)rule_type,
+                                  (const void *)(uintptr_t)rule_attr, (uint32_t)flags);
+}
+static int64_t sys_landlock_restrict_self_handler(uint64_t ruleset_fd, uint64_t flags,
+                                                   uint64_t a3, uint64_t a4,
+                                                   uint64_t a5, uint64_t a6) {
+    (void)a3; (void)a4; (void)a5; (void)a6;
+    extern long sys_landlock_restrict_self(int ruleset_fd, uint32_t flags);
+    return sys_landlock_restrict_self((int)ruleset_fd, (uint32_t)flags);
+}
+/* memfd_secret — Linux 5.14+; return ENOSYS so callers fall back */
+static int64_t sys_memfd_secret_handler(uint64_t flags, uint64_t a2, uint64_t a3,
+                                         uint64_t a4, uint64_t a5, uint64_t a6) {
+    (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
+    extern long sys_memfd_secret(unsigned int flags);
+    return sys_memfd_secret((unsigned int)flags);
+}
+/* futex_waitv — Linux 5.16+ (Wine/Proton); return ENOSYS so callers fall back */
+static int64_t sys_futex_waitv_handler(uint64_t waiters, uint64_t nr_futexes,
+                                        uint64_t flags, uint64_t timeout,
+                                        uint64_t clockid, uint64_t a6) {
+    (void)a6;
+    extern long sys_futex_waitv(const void *waiters, unsigned int nr_futexes,
+                                unsigned int flags, const void *timeout,
+                                int32_t clockid);
+    return sys_futex_waitv((const void *)(uintptr_t)waiters, (unsigned int)nr_futexes,
+                            (unsigned int)flags, (const void *)(uintptr_t)timeout,
+                            (int32_t)clockid);
+}
+
 static int64_t sys_sched_setattr_handler(uint64_t pid, uint64_t uattr, uint64_t flags,
                                           uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     (void)arg4; (void)arg5; (void)arg6;
@@ -3792,6 +3843,12 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_unlinkat_cap] = sys_unlinkat_cap_handler,
     [SYS_rmdirat_cap]  = sys_rmdirat_cap_handler,
     [SYS_statat_cap]   = sys_statat_cap_handler,
+    /* Linux 5.13-5.16 stubs */
+    [SYS_landlock_create_ruleset] = sys_landlock_create_ruleset_handler,
+    [SYS_landlock_add_rule]       = sys_landlock_add_rule_handler,
+    [SYS_landlock_restrict_self]  = sys_landlock_restrict_self_handler,
+    [SYS_memfd_secret]            = sys_memfd_secret_handler,
+    [SYS_futex_waitv]             = sys_futex_waitv_handler,
 };
 
 /* ============================================================

@@ -20022,6 +20022,82 @@ static void test_proc_thread_self(void) {
     fut_printf("[MISC-TEST] ✓ Test 464: /proc/thread-self target directory opened\n");
 }
 
+/* ============================================================
+ * Tests 468-472: Linux 5.13-5.16 ENOSYS stubs
+ *   landlock_create_ruleset (Linux 5.13)
+ *   landlock_add_rule       (Linux 5.13)
+ *   landlock_restrict_self  (Linux 5.13)
+ *   memfd_secret            (Linux 5.14)
+ *   futex_waitv             (Linux 5.16)
+ * ============================================================ */
+static void test_linux_5_16_enosys_stubs(void) {
+    fut_printf("[MISC-TEST] Tests 468-472: Linux 5.13-5.16 ENOSYS stubs\n");
+
+    extern long sys_landlock_create_ruleset(const void *attr, size_t size, uint32_t flags);
+    extern long sys_landlock_add_rule(int ruleset_fd, unsigned int rule_type,
+                                      const void *rule_attr, uint32_t flags);
+    extern long sys_landlock_restrict_self(int ruleset_fd, uint32_t flags);
+    extern long sys_memfd_secret(unsigned int flags);
+    extern long sys_futex_waitv(const void *waiters, unsigned int nr_futexes,
+                                unsigned int flags, const void *timeout,
+                                int32_t clockid);
+
+    /* Test 468: landlock_create_ruleset returns ENOSYS */
+    fut_printf("[MISC-TEST] Test 468: landlock_create_ruleset -> ENOSYS\n");
+    long r = sys_landlock_create_ruleset(NULL, 0, 0);
+    if (r != -38 /*-ENOSYS*/) {
+        fut_printf("[MISC-TEST] ✗ Test 468: landlock_create_ruleset returned %ld, expected -ENOSYS\n", r);
+        fut_test_fail(468);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 468: landlock_create_ruleset -> -ENOSYS\n");
+        fut_test_pass();
+    }
+
+    /* Test 469: landlock_add_rule returns ENOSYS */
+    fut_printf("[MISC-TEST] Test 469: landlock_add_rule -> ENOSYS\n");
+    r = sys_landlock_add_rule(-1, 0, NULL, 0);
+    if (r != -38 /*-ENOSYS*/) {
+        fut_printf("[MISC-TEST] ✗ Test 469: landlock_add_rule returned %ld, expected -ENOSYS\n", r);
+        fut_test_fail(469);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 469: landlock_add_rule -> -ENOSYS\n");
+        fut_test_pass();
+    }
+
+    /* Test 470: landlock_restrict_self returns ENOSYS */
+    fut_printf("[MISC-TEST] Test 470: landlock_restrict_self -> ENOSYS\n");
+    r = sys_landlock_restrict_self(-1, 0);
+    if (r != -38 /*-ENOSYS*/) {
+        fut_printf("[MISC-TEST] ✗ Test 470: landlock_restrict_self returned %ld, expected -ENOSYS\n", r);
+        fut_test_fail(470);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 470: landlock_restrict_self -> -ENOSYS\n");
+        fut_test_pass();
+    }
+
+    /* Test 471: memfd_secret returns ENOSYS */
+    fut_printf("[MISC-TEST] Test 471: memfd_secret -> ENOSYS\n");
+    r = sys_memfd_secret(0);
+    if (r != -38 /*-ENOSYS*/) {
+        fut_printf("[MISC-TEST] ✗ Test 471: memfd_secret returned %ld, expected -ENOSYS\n", r);
+        fut_test_fail(471);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 471: memfd_secret -> -ENOSYS\n");
+        fut_test_pass();
+    }
+
+    /* Test 472: futex_waitv returns ENOSYS */
+    fut_printf("[MISC-TEST] Test 472: futex_waitv -> ENOSYS\n");
+    r = sys_futex_waitv(NULL, 0, 0, NULL, 0);
+    if (r != -38 /*-ENOSYS*/) {
+        fut_printf("[MISC-TEST] ✗ Test 472: futex_waitv returned %ld, expected -ENOSYS\n", r);
+        fut_test_fail(472);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 472: futex_waitv -> -ENOSYS\n");
+        fut_test_pass();
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -20449,6 +20525,7 @@ void fut_misc_test_thread(void *arg) {
     test_sa_restorer_stored();            /* Test 461: SA_RESTORER stored and returned by sigaction */
     test_sa_onstack();                    /* Tests 465-467: SA_ONSTACK + sigaltstack install/readback */
     test_proc_thread_self();              /* Tests 462-464: /proc/thread-self symlink */
+    test_linux_5_16_enosys_stubs();       /* Tests 468-472: landlock/memfd_secret/futex_waitv ENOSYS */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

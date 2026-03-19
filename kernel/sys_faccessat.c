@@ -38,6 +38,9 @@ static inline int faccessat_copy_from_user(void *dst, const void *src, size_t n)
 }
 
 /* AT_* constants provided by fcntl.h */
+#ifndef AT_EMPTY_PATH
+#define AT_EMPTY_PATH    0x1000   /* Allow empty relative pathname (faccessat2) */
+#endif
 
 /* access() mode bits */
 #define F_OK 0  /* File exists */
@@ -139,8 +142,8 @@ long sys_faccessat(int dirfd, const char *pathname, int mode, int flags) {
         return -ESRCH;
     }
 
-    /* Phase 1: Validate flags - only AT_EACCESS and AT_SYMLINK_NOFOLLOW are valid */
-    const int VALID_FLAGS = AT_EACCESS | AT_SYMLINK_NOFOLLOW;
+    /* Validate flags — AT_EMPTY_PATH accepted (faccessat2 path) */
+    const int VALID_FLAGS = AT_EACCESS | AT_SYMLINK_NOFOLLOW | AT_EMPTY_PATH;
     if (local_flags & ~VALID_FLAGS) {
         fut_printf("[FACCESSAT] faccessat(dirfd=%d, mode=%d, flags=0x%x) -> EINVAL (invalid flags)\n",
                    local_dirfd, local_mode, local_flags);
@@ -175,11 +178,63 @@ long sys_faccessat(int dirfd, const char *pathname, int mode, int flags) {
         return -ENAMETOOLONG;
     }
 
-    /* Validate pathname is not empty */
+    /* AT_EMPTY_PATH: empty pathname means operate on dirfd itself */
     if (path_buf[0] == '\0') {
-        fut_printf("[FACCESSAT] faccessat(dirfd=%d, pathname=\"\" [empty]) -> EINVAL (empty pathname)\n",
-                   local_dirfd);
-        return -EINVAL;
+        if (!(local_flags & AT_EMPTY_PATH)) {
+            fut_printf("[FACCESSAT] faccessat(dirfd=%d, pathname=\"\" [empty]) -> EINVAL (empty pathname)\n",
+                       local_dirfd);
+            return -EINVAL;
+        }
+
+        /* Get the vnode for dirfd (or cwd when dirfd == AT_FDCWD) */
+        struct fut_vnode *vnode = NULL;
+        if (local_dirfd == AT_FDCWD) {
+            /* Look up the cwd vnode by path */
+            const char *cwd = (task && task->cwd_cache && task->cwd_cache[0])
+                              ? task->cwd_cache : "/";
+            extern int fut_vfs_lookup(const char *path, struct fut_vnode **out);
+            fut_vfs_lookup(cwd, &vnode);
+        } else {
+            if (local_dirfd < 0 || local_dirfd >= task->max_fds)
+                return -EBADF;
+            struct fut_file *epfile = vfs_get_file_from_task(task, local_dirfd);
+            if (!epfile || !epfile->vnode)
+                return -EBADF;
+            vnode = epfile->vnode;
+        }
+
+        if (!vnode)
+            return -EBADF;
+
+        /* F_OK: vnode exists */
+        if (local_mode == F_OK)
+            return 0;
+
+        uint32_t check_uid = (local_flags & AT_EACCESS) ? task->uid  : task->ruid;
+        uint32_t check_gid = (local_flags & AT_EACCESS) ? task->gid  : task->rgid;
+        uint32_t file_mode = vnode->mode & 0777;
+        uint32_t perm_bits;
+
+        if (check_uid == 0) {
+            if ((local_mode & X_OK) && !(file_mode & 0111))
+                return -EACCES;
+            return 0;
+        } else if (check_uid == vnode->uid) {
+            perm_bits = (file_mode >> 6) & 7;
+        } else if (check_gid == vnode->gid) {
+            perm_bits = (file_mode >> 3) & 7;
+        } else {
+            int in_group = 0;
+            for (int gi = 0; gi < task->ngroups; gi++) {
+                if (task->groups[gi] == vnode->gid) { in_group = 1; break; }
+            }
+            perm_bits = in_group ? ((file_mode >> 3) & 7) : (file_mode & 7);
+        }
+
+        if ((local_mode & R_OK) && !(perm_bits & 4)) return -EACCES;
+        if ((local_mode & W_OK) && !(perm_bits & 2)) return -EACCES;
+        if ((local_mode & X_OK) && !(perm_bits & 1)) return -EACCES;
+        return 0;
     }
 
     /* Categorize pathname */

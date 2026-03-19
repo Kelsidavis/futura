@@ -18609,6 +18609,47 @@ static void test_mqueue_waitq(void) {
 }
 
 /* ============================================================
+ * Tests 408-409: faccessat2 AT_EMPTY_PATH support
+ *   408: AT_EMPTY_PATH on a valid fd returns 0 (F_OK)
+ *   409: empty path without AT_EMPTY_PATH returns EINVAL
+ * ============================================================ */
+static void test_faccessat2_empty_path(void) {
+    extern long sys_faccessat(int dirfd, const char *pathname, int mode, int flags);
+#define TEST_AT_EMPTY_PATH 0x1000
+
+    /* Open a file to get a valid fd */
+    int fd = fut_vfs_open("/proc/version", O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Tests 408-409: open /proc/version failed: %d\n", fd);
+        fut_test_fail(408); fut_test_fail(409); return;
+    }
+
+    /* Test 408: AT_EMPTY_PATH on valid fd → 0 (F_OK) */
+    fut_printf("[MISC-TEST] Test 408: faccessat2(fd, \"\", F_OK, AT_EMPTY_PATH) -> 0\n");
+    long r = sys_faccessat(fd, "", 0, TEST_AT_EMPTY_PATH);
+    if (r == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 408: AT_EMPTY_PATH F_OK on fd returned 0\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 408: got %ld (expected 0)\n", r);
+        fut_test_fail(408);
+    }
+
+    /* Test 409: empty path without AT_EMPTY_PATH → EINVAL */
+    fut_printf("[MISC-TEST] Test 409: faccessat(fd, \"\", F_OK, 0) -> EINVAL\n");
+    r = sys_faccessat(fd, "", 0, 0);
+    if (r == -22) { /* -EINVAL */
+        fut_printf("[MISC-TEST] ✓ Test 409: empty path without AT_EMPTY_PATH returned EINVAL\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 409: got %ld (expected -22/-EINVAL)\n", r);
+        fut_test_fail(409);
+    }
+
+    sys_close(fd);
+}
+
+/* ============================================================
  * Test 367: /proc/self/net/unix readable (same content as /proc/net/unix)
  * ============================================================ */
 static void test_proc_pid_net_unix(void) {
@@ -19206,6 +19247,7 @@ void fut_misc_test_thread(void *arg) {
     test_semop_blocking();              /* Tests 401-403: semop IPC_NOWAIT/zero-wait/decrement */
     test_map_fixed_noreplace();         /* Tests 404-405: MAP_FIXED_NOREPLACE success/EEXIST */
     test_mqueue_waitq();                /* Tests 406-407: mqueue waitq: NONBLOCK EAGAIN, timeout ETIMEDOUT */
+    test_faccessat2_empty_path();       /* Tests 408-409: faccessat2 AT_EMPTY_PATH on fd and EINVAL without flag */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

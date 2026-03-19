@@ -26722,6 +26722,117 @@ static void test_fstat_special_fds(void) {
 }
 
 /**
+ * test_fstat_signalfd_fstatat_empty - Tests 758-760
+ *
+ * Test 758: fstat(signalfd) → st_mode type = S_IFREG (anon_inode, like timerfd)
+ * Test 759: fstatat(pipe_read_fd, "", AT_EMPTY_PATH) → S_IFIFO (delegates to fstat)
+ * Test 760: fstatat(socket_fd,   "", AT_EMPTY_PATH) → S_IFSOCK (delegates to fstat)
+ */
+static void test_fstat_signalfd_fstatat_empty(void) {
+    extern long sys_fstat(int fd, struct fut_stat *statbuf);
+    extern long sys_fstatat(int dirfd, const char *pathname,
+                            struct fut_stat *statbuf, int flags);
+    extern long sys_signalfd4(int ufd, const void *mask, size_t sizemask, int flags);
+    extern long sys_pipe(int pipefd[2]);
+    extern long sys_socket(int domain, int type, int protocol);
+
+    struct fut_stat st;
+
+#define T758_S_IFMT   0170000u
+#define T758_S_IFREG  0100000u
+#define T758_S_IFIFO  0010000u
+#define T758_S_IFSOCK 0140000u
+#ifndef AT_EMPTY_PATH
+#define AT_EMPTY_PATH 0x1000
+#endif
+
+    /* Test 758: signalfd fstat → S_IFREG */
+    fut_printf("[MISC-TEST] Test 758: fstat(signalfd) → S_IFREG\n");
+    {
+        uint64_t mask758 = 1u << (10 - 1); /* SIGUSR1 = 10 */
+        long sfd = sys_signalfd4(-1, &mask758, sizeof(mask758), 0);
+        if (sfd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 758: signalfd4 failed: %ld\n", sfd);
+            fut_test_fail(758);
+        } else {
+            __builtin_memset(&st, 0, sizeof(st));
+            long r = sys_fstat((int)sfd, &st);
+            sys_close((int)sfd);
+            if (r != 0) {
+                fut_printf("[MISC-TEST] ✗ Test 758: fstat failed: %ld\n", r);
+                fut_test_fail(758);
+            } else if ((st.st_mode & T758_S_IFMT) != T758_S_IFREG) {
+                fut_printf("[MISC-TEST] ✗ Test 758: st_mode=0%o, want S_IFREG (0%o)\n",
+                           st.st_mode, T758_S_IFREG);
+                fut_test_fail(758);
+            } else {
+                fut_printf("[MISC-TEST] ✓ Test 758: signalfd fstat st_mode=0%o (S_IFREG)\n",
+                           st.st_mode);
+                fut_test_pass();
+            }
+        }
+    }
+
+    /* Test 759: fstatat(pipe_read_fd, "", AT_EMPTY_PATH) → S_IFIFO */
+    fut_printf("[MISC-TEST] Test 759: fstatat(pipe_read_fd, \"\", AT_EMPTY_PATH) → S_IFIFO\n");
+    {
+        int pfd[2] = {-1, -1};
+        long r = sys_pipe(pfd);
+        if (r != 0 || pfd[0] < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 759: pipe() failed: %ld\n", r);
+            fut_test_fail(759);
+        } else {
+            __builtin_memset(&st, 0, sizeof(st));
+            r = sys_fstatat(pfd[0], "", &st, AT_EMPTY_PATH);
+            sys_close(pfd[0]); sys_close(pfd[1]);
+            if (r != 0) {
+                fut_printf("[MISC-TEST] ✗ Test 759: fstatat AT_EMPTY_PATH failed: %ld\n", r);
+                fut_test_fail(759);
+            } else if ((st.st_mode & T758_S_IFMT) != T758_S_IFIFO) {
+                fut_printf("[MISC-TEST] ✗ Test 759: st_mode=0%o, want S_IFIFO (0%o)\n",
+                           st.st_mode, T758_S_IFIFO);
+                fut_test_fail(759);
+            } else {
+                fut_printf("[MISC-TEST] ✓ Test 759: fstatat AT_EMPTY_PATH pipe st_mode=0%o (S_IFIFO)\n",
+                           st.st_mode);
+                fut_test_pass();
+            }
+        }
+    }
+
+    /* Test 760: fstatat(socket_fd, "", AT_EMPTY_PATH) → S_IFSOCK */
+    fut_printf("[MISC-TEST] Test 760: fstatat(socket_fd, \"\", AT_EMPTY_PATH) → S_IFSOCK\n");
+    {
+        long s = sys_socket(1 /* AF_UNIX */, 1 /* SOCK_STREAM */, 0);
+        if (s < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 760: socket() failed: %ld\n", s);
+            fut_test_fail(760);
+        } else {
+            __builtin_memset(&st, 0, sizeof(st));
+            long r = sys_fstatat((int)s, "", &st, AT_EMPTY_PATH);
+            sys_close((int)s);
+            if (r != 0) {
+                fut_printf("[MISC-TEST] ✗ Test 760: fstatat AT_EMPTY_PATH failed: %ld\n", r);
+                fut_test_fail(760);
+            } else if ((st.st_mode & T758_S_IFMT) != T758_S_IFSOCK) {
+                fut_printf("[MISC-TEST] ✗ Test 760: st_mode=0%o, want S_IFSOCK (0%o)\n",
+                           st.st_mode, T758_S_IFSOCK);
+                fut_test_fail(760);
+            } else {
+                fut_printf("[MISC-TEST] ✓ Test 760: fstatat AT_EMPTY_PATH socket st_mode=0%o (S_IFSOCK)\n",
+                           st.st_mode);
+                fut_test_pass();
+            }
+        }
+    }
+
+#undef T758_S_IFMT
+#undef T758_S_IFREG
+#undef T758_S_IFIFO
+#undef T758_S_IFSOCK
+}
+
+/**
  * test_renameat_atfdcwd - Test 734
  *
  *   Test 734: renameat(AT_FDCWD, old, AT_FDCWD, new) behaves like rename()
@@ -28027,6 +28138,7 @@ void fut_misc_test_thread(void *arg) {
     test_kill_pgrp_sig0();                   /* Tests 748-750: kill(0,0) own-pgrp; kill(-pgid,0) own-pgrp; ESRCH nonexistent */
     test_prlimit_other_pid();                /* Tests 751-753: prlimit64 by explicit self pid; ESRCH; RLIMIT_STACK */
     test_fstat_special_fds();                /* Tests 754-757: fstat st_mode: pipe→S_IFIFO, sock→S_IFSOCK, efd→S_IFCHR, tfd→S_IFREG */
+    test_fstat_signalfd_fstatat_empty();     /* Tests 758-760: signalfd fstat S_IFREG; fstatat AT_EMPTY_PATH pipe+socket */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

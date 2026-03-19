@@ -221,43 +221,14 @@ long sys_fstatat(int dirfd, const char *pathname, void *statbuf, int flags) {
                 return -EBADF;
             }
 
-            /* Verify dirfd has a vnode */
-            if (!dir_file->vnode) {
-                fut_printf("[FSTATAT] fstatat(dirfd=%d, pathname=\"\" [empty], flags=AT_EMPTY_PATH) -> EBADF (dirfd has no vnode)\n",
-                           local_dirfd);
-                return -EBADF;
-            }
-
-            /* Use vnode's getattr to get status */
-            if (!dir_file->vnode->ops || !dir_file->vnode->ops->getattr) {
-                fut_printf("[FSTATAT] fstatat(dirfd=%d, pathname=\"\" [empty], flags=AT_EMPTY_PATH) -> ENOSYS (no getattr operation)\n",
-                           local_dirfd);
-                return -ENOSYS;
-            }
-
-            /* Get attributes from vnode */
-            int ret = dir_file->vnode->ops->getattr(dir_file->vnode, local_statbuf);
-
-            if (ret < 0) {
-                const char *error_desc;
-                switch (ret) {
-                    case -EACCES:
-                        error_desc = "permission denied";
-                        break;
-                    default:
-                        error_desc = "getattr failed";
-                        break;
-                }
-
-                fut_printf("[FSTATAT] fstatat(dirfd=%d, pathname=\"\" [empty], flags=AT_EMPTY_PATH) -> %d (%s)\n",
-                           local_dirfd, ret, error_desc);
-                return ret;
-            }
-
-            /* Success */
-            fut_printf("[FSTATAT] fstatat(dirfd=%d, pathname=\"\" [empty], flags=AT_EMPTY_PATH) -> 0 (Phase 3: fstat via dirfd)\n",
-                       local_dirfd);
-            return 0;
+            /* Delegate to sys_fstat() — handles vnode-less fds (pipes, sockets,
+             * eventfd, signalfd, timerfd) as well as regular vnode-backed fds.
+             * This is correct Linux semantics: AT_EMPTY_PATH is equivalent to fstat(). */
+            extern long sys_fstat(int fd, struct fut_stat *statbuf);
+            int ret = (int)sys_fstat(local_dirfd, local_statbuf);
+            fut_printf("[FSTATAT] fstatat(dirfd=%d, pathname=\"\" [empty], flags=AT_EMPTY_PATH) -> %d (delegated to fstat)\n",
+                       local_dirfd, ret);
+            return ret;
         } else {
             fut_printf("[FSTATAT] fstatat(dirfd=%d, pathname=\"\" [empty]) -> EINVAL (empty pathname without AT_EMPTY_PATH)\n",
                        local_dirfd);

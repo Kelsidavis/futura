@@ -739,6 +739,7 @@ int fut_socket_accept(fut_socket_t *listener, fut_socket_t **out_socket) {
     }
 
     memset(accepted, 0, sizeof(*accepted));
+    accepted->magic = FUT_SOCKET_MAGIC;
     accepted->state = FUT_SOCK_CONNECTED;
     accepted->address_family = listener->address_family;
     accepted->socket_type = listener->socket_type;

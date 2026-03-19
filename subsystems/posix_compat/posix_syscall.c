@@ -4180,9 +4180,15 @@ static bool posix_deliver_signal(fut_task_t *current, int signum,
         sigframe.uc.uc_sigmask.__mask = saved_mask;
 
         /* Apply the handler's sa_mask during delivery:
-         * Block additional signals specified in the handler's sa_mask */
+         * Block additional signals specified in the handler's sa_mask.
+         * Linux also blocks the signal itself during delivery unless SA_NODEFER
+         * is set (prevents recursive delivery of the same signal). */
         if (signum > 0 && signum < _NSIG) {
             uint64_t handler_mask = current->signal_handler_masks[signum - 1];
+            /* Auto-block the delivered signal unless SA_NODEFER */
+            if (!(current->signal_handler_flags[signum - 1] & SA_NODEFER)) {
+                handler_mask |= (1ULL << (signum - 1));
+            }
             __atomic_or_fetch(mptr, handler_mask, __ATOMIC_ACQ_REL);
         }
     }
@@ -4238,7 +4244,7 @@ static bool posix_deliver_signal(fut_task_t *current, int signum,
 
     /* Apply SA_RESETHAND flag if set:
      * Reset handler to SIG_DFL after delivery */
-    if (signum < _NSIG && (current->signal_handler_flags[signum] & SA_RESETHAND)) {
+    if (signum > 0 && signum <= _NSIG && (current->signal_handler_flags[signum - 1] & SA_RESETHAND)) {
         fut_signal_set_handler(current, signum, SIG_DFL);
         fut_printf("[SIGNAL] Applied SA_RESETHAND for signal %d\n", signum);
     }

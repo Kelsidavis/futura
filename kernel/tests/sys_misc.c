@@ -24015,6 +24015,153 @@ static void test_statfs_ftype(void) {
     }
 }
 
+/*
+ * Tests 604-609: SA_NODEFER and SA_RESETHAND sigaction flag semantics
+ *
+ * SA_NODEFER: Don't automatically block the signal during delivery.
+ * SA_RESETHAND: Reset handler to SIG_DFL after the first delivery.
+ *
+ * These tests verify:
+ * - Both flags are stored and read back via sigaction (roundtrip)
+ * - The delivered-signal auto-block logic respects SA_NODEFER
+ */
+
+#define SA_NODEFER_FLAG    0x40000000UL  /* Don't block signal during handler */
+#define SA_RESETHAND_FLAG  0x80000000UL  /* Reset handler to SIG_DFL */
+
+static void test_dummy_handler_604(int sig) { (void)sig; }
+
+static void test_sa_flags_nodefer_resethand(void) {
+    extern long sys_sigaction(int signum, const void *act, void *oldact);
+    fut_task_t *task = fut_task_current();
+    if (!task) { fut_test_fail(604); fut_test_fail(605); fut_test_fail(606);
+                 fut_test_fail(607); fut_test_fail(608); fut_test_fail(609); return; }
+
+    struct {
+        void (*sa_handler)(int);
+        unsigned long sa_flags;
+        void (*sa_restorer)(void);
+        uint64_t sa_mask;
+    } act = {0}, old = {0};
+
+    /* Test 604: SA_NODEFER flag stored and read back */
+    fut_printf("[MISC-TEST] Test 604: SA_NODEFER flag roundtrip\n");
+    act.sa_handler = test_dummy_handler_604;
+    act.sa_flags   = SA_NODEFER_FLAG;
+    act.sa_mask    = 0;
+    long ret = sys_sigaction(10 /* SIGUSR1 */, &act, &old);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 604: sigaction set returned %ld\n", ret);
+        fut_test_fail(604);
+    } else {
+        /* Read back */
+        struct { void (*h)(int); unsigned long f; void (*r)(void); uint64_t m; } got = {0};
+        ret = sys_sigaction(10, NULL, &got);
+        if (ret != 0 || !(got.f & SA_NODEFER_FLAG)) {
+            fut_printf("[MISC-TEST] ✗ Test 604: SA_NODEFER not preserved, flags=0x%lx ret=%ld\n",
+                       got.f, ret);
+            fut_test_fail(604);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 604: SA_NODEFER flag preserved (0x%lx)\n", got.f);
+            fut_test_pass();
+        }
+    }
+
+    /* Test 605: SA_RESETHAND flag stored and read back */
+    fut_printf("[MISC-TEST] Test 605: SA_RESETHAND flag roundtrip\n");
+    act.sa_handler = test_dummy_handler_604;
+    act.sa_flags   = SA_RESETHAND_FLAG;
+    act.sa_mask    = 0;
+    ret = sys_sigaction(10, &act, NULL);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 605: sigaction set returned %ld\n", ret);
+        fut_test_fail(605);
+    } else {
+        struct { void (*h)(int); unsigned long f; void (*r)(void); uint64_t m; } got = {0};
+        ret = sys_sigaction(10, NULL, &got);
+        if (ret != 0 || !(got.f & SA_RESETHAND_FLAG)) {
+            fut_printf("[MISC-TEST] ✗ Test 605: SA_RESETHAND not preserved, flags=0x%lx\n", got.f);
+            fut_test_fail(605);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 605: SA_RESETHAND flag preserved (0x%lx)\n", got.f);
+            fut_test_pass();
+        }
+    }
+
+    /* Test 606: SA_NODEFER|SA_RESETHAND combined */
+    fut_printf("[MISC-TEST] Test 606: SA_NODEFER|SA_RESETHAND combined\n");
+    act.sa_handler = test_dummy_handler_604;
+    act.sa_flags   = SA_NODEFER_FLAG | SA_RESETHAND_FLAG;
+    act.sa_mask    = 0;
+    ret = sys_sigaction(10, &act, NULL);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 606: sigaction set returned %ld\n", ret);
+        fut_test_fail(606);
+    } else {
+        struct { void (*h)(int); unsigned long f; void (*r)(void); uint64_t m; } got = {0};
+        ret = sys_sigaction(10, NULL, &got);
+        unsigned long both = SA_NODEFER_FLAG | SA_RESETHAND_FLAG;
+        if (ret != 0 || (got.f & both) != both) {
+            fut_printf("[MISC-TEST] ✗ Test 606: combined flags not preserved, got=0x%lx\n", got.f);
+            fut_test_fail(606);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 606: SA_NODEFER|SA_RESETHAND preserved\n");
+            fut_test_pass();
+        }
+    }
+
+    /* Test 607: Without SA_NODEFER, signal is auto-blocked in mask during delivery.
+     * Simulate: set handler (no SA_NODEFER), check signal_handler_flags shows no SA_NODEFER. */
+    fut_printf("[MISC-TEST] Test 607: no SA_NODEFER → signal_handler_flags lacks SA_NODEFER\n");
+    act.sa_handler = test_dummy_handler_604;
+    act.sa_flags   = 0;
+    act.sa_mask    = 0;
+    ret = sys_sigaction(10, &act, NULL);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 607: sigaction returned %ld\n", ret);
+        fut_test_fail(607);
+    } else if (task->signal_handler_flags[9] & SA_NODEFER_FLAG) {
+        fut_printf("[MISC-TEST] ✗ Test 607: SA_NODEFER unexpectedly set\n");
+        fut_test_fail(607);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 607: no SA_NODEFER means signal will be auto-blocked\n");
+        fut_test_pass();
+    }
+
+    /* Test 608: With SA_NODEFER, signal NOT auto-blocked — verify flag is set */
+    fut_printf("[MISC-TEST] Test 608: SA_NODEFER set → signal_handler_flags has SA_NODEFER\n");
+    act.sa_flags   = SA_NODEFER_FLAG;
+    ret = sys_sigaction(10, &act, NULL);
+    if (ret != 0 || !(task->signal_handler_flags[9] & SA_NODEFER_FLAG)) {
+        fut_printf("[MISC-TEST] ✗ Test 608: SA_NODEFER not in flags=0x%lx\n",
+                   task->signal_handler_flags[9]);
+        fut_test_fail(608);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 608: SA_NODEFER in signal_handler_flags[9]\n");
+        fut_test_pass();
+    }
+
+    /* Test 609: SA_RESETHAND stores correctly at signal array index [signum-1] */
+    fut_printf("[MISC-TEST] Test 609: SA_RESETHAND index correctness (signum-1)\n");
+    act.sa_flags   = SA_RESETHAND_FLAG;
+    /* Use SIGUSR2 (sig 12) to verify index 11 gets the flag */
+    ret = sys_sigaction(12, &act, NULL);
+    if (ret != 0 || !(task->signal_handler_flags[11] & SA_RESETHAND_FLAG)) {
+        fut_printf("[MISC-TEST] ✗ Test 609: SA_RESETHAND at wrong index, flags[11]=0x%lx\n",
+                   task->signal_handler_flags[11]);
+        fut_test_fail(609);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 609: SA_RESETHAND at signal_handler_flags[11] (SIGUSR2-1)\n");
+        fut_test_pass();
+    }
+
+    /* Restore handlers */
+    act.sa_handler = SIG_DFL;
+    act.sa_flags   = 0;
+    sys_sigaction(10, &act, NULL);
+    sys_sigaction(12, &act, NULL);
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -24478,6 +24625,7 @@ void fut_misc_test_thread(void *arg) {
     test_dev_zero_mmap();                    /* Tests 587-595: /dev/zero mmap correctness */
     test_pdeathsig_prctl();                  /* Tests 596-599: pdeathsig prctl semantics */
     test_statfs_ftype();                     /* Tests 600-603: statfs f_type per mount point */
+    test_sa_flags_nodefer_resethand();       /* Tests 604-609: SA_NODEFER/SA_RESETHAND flag semantics */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

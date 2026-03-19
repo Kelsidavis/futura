@@ -2697,6 +2697,23 @@ static int64_t sys_quotactl_wrapper(uint64_t cmd, uint64_t special, uint64_t id,
     return sys_quotactl((unsigned int)cmd, (const char *)special, (int)id, (void *)addr);
 }
 
+/* sys_clock_adjtime_wrapper: clock_adjtime(clk_id, txc) — delegate to adjtimex for CLOCK_REALTIME */
+extern long sys_adjtimex(void *txc);
+static int64_t sys_clock_adjtime_wrapper(uint64_t clk_id, uint64_t txc,
+                                          uint64_t arg2, uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+    if (clk_id != 0)  /* only CLOCK_REALTIME (0) supported */
+        return -EINVAL;
+    return sys_adjtimex((void *)txc);
+}
+
+/* sys_setns_wrapper: setns(fd, nstype) — ENOSYS (namespaces not yet implemented) */
+static int64_t sys_setns_wrapper(uint64_t fd, uint64_t nstype,
+                                  uint64_t arg2, uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)fd; (void)nstype; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+    return -38;  /* -ENOSYS */
+}
+
 /* sys_sched_setattr_wrapper */
 extern long sys_sched_setattr(int pid, const void *uattr, unsigned int flags);
 static int64_t sys_sched_setattr_wrapper(uint64_t pid, uint64_t uattr, uint64_t flags,
@@ -3066,6 +3083,9 @@ struct syscall_entry {
 #define __NR_sendmmsg           269
 #define __NR_process_vm_readv   270
 #define __NR_process_vm_writev  271
+/* clock_adjtime (Linux ARM64: 266), setns (268) */
+#define __NR_clock_adjtime      266
+#define __NR_setns              268
 /* sched extended (Linux ARM64: 273-274) */
 #define __NR_sched_setattr      273
 #define __NR_sched_getattr      274
@@ -3913,6 +3933,13 @@ static void arm64_syscall_table_init(void) {
     /* openat2 (Linux 5.6+) */
     syscall_table[__NR_openat2].handler = (syscall_fn_t)sys_openat2_wrapper;
     syscall_table[__NR_openat2].name = "openat2";
+
+    /* clock_adjtime: delegate to adjtimex for CLOCK_REALTIME */
+    syscall_table[__NR_clock_adjtime].handler = (syscall_fn_t)sys_clock_adjtime_wrapper;
+    syscall_table[__NR_clock_adjtime].name = "clock_adjtime";
+    /* setns: ENOSYS (namespace support not yet implemented) */
+    syscall_table[__NR_setns].handler = (syscall_fn_t)sys_setns_wrapper;
+    syscall_table[__NR_setns].name = "setns";
 
     /* sched_getattr/sched_setattr (Linux 3.14+) */
     syscall_table[__NR_sched_setattr].handler = (syscall_fn_t)sys_sched_setattr_wrapper;

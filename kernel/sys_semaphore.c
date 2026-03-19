@@ -14,6 +14,7 @@
 
 #include <kernel/fut_task.h>
 #include <kernel/fut_timer.h>
+#include <kernel/fut_waitq.h>
 #include <kernel/errno.h>
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
@@ -73,6 +74,8 @@ struct sem_set {
     int           nsems;
     unsigned int  mode;
     struct sem_entry sems[SEMMSL];
+    fut_spinlock_t lock;   /* protects sems[] and waitq */
+    fut_waitq_t    waitq;  /* woken when any semaphore value changes */
 };
 
 /* struct sembuf: operation descriptor passed by user */
@@ -192,6 +195,8 @@ long sys_semget(long key, int nsems, int semflg) {
             semtable[i].mode  = (unsigned int)(semflg & 0777);
             __builtin_memset(semtable[i].sems, 0,
                              (size_t)nsems * sizeof(struct sem_entry));
+            fut_spinlock_init(&semtable[i].lock);
+            fut_waitq_init(&semtable[i].waitq);
             return semtable[i].id;
         }
     }
@@ -202,12 +207,31 @@ long sys_semget(long key, int nsems, int semflg) {
  *   semop(2) - perform operations on semaphores
  * ============================================================ */
 
+/* Check if all semop operations can proceed without blocking (lock must be held) */
+static int semop_can_proceed(const struct sem_set *s,
+                              const struct sem_sembuf *ops, unsigned int n) {
+    for (unsigned int i = 0; i < n; i++) {
+        int cur = s->sems[ops[i].sem_num].semval;
+        int op  = ops[i].sem_op;
+        if (op > 0) {
+            if (cur + op > SEMVMX)
+                return -ERANGE;
+        } else if (op < 0) {
+            if (cur + op < 0)
+                return (ops[i].sem_flg & IPC_NOWAIT) ? -EAGAIN : 0; /* 0 = would block */
+        } else {
+            if (cur != 0)
+                return (ops[i].sem_flg & IPC_NOWAIT) ? -EAGAIN : 0; /* 0 = would block */
+        }
+    }
+    return 1; /* all can proceed */
+}
+
 /**
  * semop - Atomically perform operations on a semaphore set.
  *
- * For non-blocking operations (IPC_NOWAIT or sem_op > 0 or resulting val >= 0):
- *   applies all ops atomically.
- * For operations that would block: returns -EAGAIN.
+ * Operations that would block (decrement below 0, or wait-for-zero on non-zero)
+ * sleep on the sem_set's wait queue until another semop wakes them.
  *
  * @param semid  Semaphore set ID
  * @param sops   Array of struct sembuf operations
@@ -222,15 +246,15 @@ long sys_semop(int semid, void *sops, unsigned int nsops) {
     if (nsops > SEM_E2BIG_NSOPS)
         return -E2BIG;
 
-    struct sem_set *s = semtable_find_by_id(semid);
-    if (!s)
-        return -EINVAL;
-
-    /* Copy operations from user */
+    /* Copy operations from user before taking lock (avoid holding lock during copy) */
     struct sem_sembuf ops[SEM_E2BIG_NSOPS > SEMMSL ? SEMMSL : SEM_E2BIG_NSOPS];
     unsigned int copy_n = nsops < (unsigned int)SEMMSL ? nsops : (unsigned int)SEMMSL;
     if (sem_copy_from_user(ops, sops, copy_n * sizeof(struct sem_sembuf)) != 0)
         return -EFAULT;
+
+    struct sem_set *s = semtable_find_by_id(semid);
+    if (!s)
+        return -EINVAL;
 
     /* Validate semaphore indices */
     for (unsigned int i = 0; i < copy_n; i++) {
@@ -238,36 +262,54 @@ long sys_semop(int semid, void *sops, unsigned int nsops) {
             return -E2BIG;
     }
 
-    /* Check whether all operations can proceed without blocking */
-    for (unsigned int i = 0; i < copy_n; i++) {
-        int cur = s->sems[ops[i].sem_num].semval;
-        int op  = ops[i].sem_op;
-        if (op > 0) {
-            /* Increment: always succeeds unless overflow */
-            if (cur + op > SEMVMX)
-                return -ERANGE;
-        } else if (op < 0) {
-            /* Decrement: blocks if result would be negative */
-            if (cur + op < 0) {
-                return (ops[i].sem_flg & IPC_NOWAIT) ? -EAGAIN : -EAGAIN;
-            }
-        } else {
-            /* sem_op == 0: wait for value to be zero */
-            if (cur != 0) {
-                return (ops[i].sem_flg & IPC_NOWAIT) ? -EAGAIN : -EAGAIN;
-            }
-        }
-    }
-
-    /* All operations can proceed — apply atomically */
     extern fut_task_t *fut_task_current(void);
+    extern fut_thread_t *fut_thread_current(void);
     fut_task_t *task = fut_task_current();
     int pid = task ? (int)task->pid : 1;
 
+    fut_spinlock_acquire(&s->lock);
+
+    for (;;) {
+        /* Re-check that set still exists after wakeup */
+        if (!s->used) {
+            fut_spinlock_release(&s->lock);
+            return -EIDRM;
+        }
+
+        int rc = semop_can_proceed(s, ops, copy_n);
+        if (rc < 0) {
+            /* IPC_NOWAIT set or overflow */
+            fut_spinlock_release(&s->lock);
+            return rc;
+        }
+        if (rc == 1)
+            break; /* can proceed */
+
+        /* Would block: check for pending signals */
+        fut_thread_t *thr = fut_thread_current();
+        if (thr && task) {
+            uint64_t pend = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
+            uint64_t mask = __atomic_load_n(&thr->signal_mask, __ATOMIC_ACQUIRE);
+            if (pend & ~mask) {
+                fut_spinlock_release(&s->lock);
+                return -EINTR;
+            }
+        }
+
+        /* Sleep until a semaphore value changes */
+        fut_waitq_sleep_locked(&s->waitq, &s->lock, FUT_THREAD_BLOCKED);
+        fut_spinlock_acquire(&s->lock);
+    }
+
+    /* All operations can proceed — apply atomically */
     for (unsigned int i = 0; i < copy_n; i++) {
         s->sems[ops[i].sem_num].semval += ops[i].sem_op;
         s->sems[ops[i].sem_num].sempid  = pid;
     }
+
+    /* Wake any waiters that might now be unblocked */
+    fut_waitq_wake_all(&s->waitq);
+    fut_spinlock_release(&s->lock);
 
     return 0;
 }
@@ -291,7 +333,11 @@ long sys_semctl(int semid, int semnum, int cmd, unsigned long arg) {
         struct sem_set *s = semtable_find_by_id(semid);
         if (!s)
             return -EINVAL;
+        fut_spinlock_acquire(&s->lock);
         s->used = 0;
+        /* Wake all waiters so they see EIDRM */
+        fut_waitq_wake_all(&s->waitq);
+        fut_spinlock_release(&s->lock);
         return 0;
     }
 
@@ -310,7 +356,10 @@ long sys_semctl(int semid, int semnum, int cmd, unsigned long arg) {
             return -EINVAL;
         if ((int)arg < 0 || (int)arg > SEMVMX)
             return -ERANGE;
+        fut_spinlock_acquire(&s->lock);
         s->sems[semnum].semval = (int)arg;
+        fut_waitq_wake_all(&s->waitq);
+        fut_spinlock_release(&s->lock);
         return 0;
 
     case SEM_GETPID:
@@ -344,11 +393,16 @@ long sys_semctl(int semid, int semnum, int cmd, unsigned long arg) {
         if (sem_copy_from_user(vals, (const void *)(uintptr_t)arg,
                                (size_t)s->nsems * sizeof(unsigned short)) != 0)
             return -EFAULT;
+        fut_spinlock_acquire(&s->lock);
         for (int i = 0; i < s->nsems; i++) {
-            if (vals[i] > SEMVMX)
+            if (vals[i] > SEMVMX) {
+                fut_spinlock_release(&s->lock);
                 return -ERANGE;
+            }
             s->sems[i].semval = (int)vals[i];
         }
+        fut_waitq_wake_all(&s->waitq);
+        fut_spinlock_release(&s->lock);
         return 0;
     }
 
@@ -414,20 +468,24 @@ long sys_semtimedop(int semid, void *sops, unsigned int nsops,
     if (nsops > SEM_E2BIG_NSOPS)
         return -E2BIG;
 
-    /* Validate timeout if provided */
+    /* Parse optional timeout */
+    uint64_t deadline_ticks = UINT64_MAX; /* infinite */
+    bool has_timeout = false;
+
     if (timeout) {
         fut_timespec_t ts;
         if (sem_copy_from_user(&ts, timeout, sizeof(ts)) != 0)
             return -EFAULT;
         if (ts.tv_sec < 0 || ts.tv_nsec < 0 || ts.tv_nsec >= 1000000000LL)
             return -EINVAL;
-        /* Store validated timeout for potential future blocking implementation */
-        (void)ts;
+        has_timeout = true;
+        extern uint64_t fut_timer_ticks(void);
+        uint64_t now_ticks = fut_get_ticks();
+        uint64_t timeout_ticks = (uint64_t)ts.tv_sec * 100u +
+                                  (uint64_t)ts.tv_nsec / 10000000u;
+        deadline_ticks = now_ticks + timeout_ticks;
+        (void)deadline_ticks; /* used below */
     }
-
-    struct sem_set *s = semtable_find_by_id(semid);
-    if (!s)
-        return -EINVAL;
 
     /* Copy operations from user */
     struct sem_sembuf ops[SEM_E2BIG_NSOPS > SEMMSL ? SEMMSL : SEM_E2BIG_NSOPS];
@@ -435,39 +493,67 @@ long sys_semtimedop(int semid, void *sops, unsigned int nsops,
     if (sem_copy_from_user(ops, sops, copy_n * sizeof(struct sem_sembuf)) != 0)
         return -EFAULT;
 
+    struct sem_set *s = semtable_find_by_id(semid);
+    if (!s)
+        return -EINVAL;
+
     /* Validate semaphore indices */
     for (unsigned int i = 0; i < copy_n; i++) {
         if (ops[i].sem_num >= (unsigned short)s->nsems)
             return -E2BIG;
     }
 
-    /* Check whether all operations can proceed without blocking */
-    for (unsigned int i = 0; i < copy_n; i++) {
-        int cur = s->sems[ops[i].sem_num].semval;
-        int op  = ops[i].sem_op;
-        if (op > 0) {
-            if (cur + op > SEMVMX)
-                return -ERANGE;
-        } else if (op < 0) {
-            if (cur + op < 0) {
-                /* Would block: semtimedop returns EAGAIN (timeout expired) */
-                return -EAGAIN;
-            }
-        } else {
-            /* sem_op == 0: wait for zero */
-            if (cur != 0)
-                return -EAGAIN;
-        }
-    }
-
-    /* All operations can proceed — apply atomically */
+    extern fut_task_t *fut_task_current(void);
+    extern fut_thread_t *fut_thread_current(void);
     fut_task_t *task = fut_task_current();
     int pid = task ? (int)task->pid : 1;
+
+    fut_spinlock_acquire(&s->lock);
+
+    for (;;) {
+        if (!s->used) {
+            fut_spinlock_release(&s->lock);
+            return -EIDRM;
+        }
+
+        int rc = semop_can_proceed(s, ops, copy_n);
+        if (rc < 0) {
+            fut_spinlock_release(&s->lock);
+            return rc;
+        }
+        if (rc == 1)
+            break;
+
+        /* Would block: check timeout */
+        if (has_timeout) {
+            extern uint64_t fut_timer_ticks(void);
+            if (fut_get_ticks() >= deadline_ticks) {
+                fut_spinlock_release(&s->lock);
+                return -EAGAIN; /* POSIX says EAGAIN on timeout */
+            }
+        }
+
+        /* Check pending signals */
+        fut_thread_t *thr = fut_thread_current();
+        if (thr && task) {
+            uint64_t pend = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
+            uint64_t mask = __atomic_load_n(&thr->signal_mask, __ATOMIC_ACQUIRE);
+            if (pend & ~mask) {
+                fut_spinlock_release(&s->lock);
+                return -EINTR;
+            }
+        }
+
+        fut_waitq_sleep_locked(&s->waitq, &s->lock, FUT_THREAD_BLOCKED);
+        fut_spinlock_acquire(&s->lock);
+    }
 
     for (unsigned int i = 0; i < copy_n; i++) {
         s->sems[ops[i].sem_num].semval += ops[i].sem_op;
         s->sems[ops[i].sem_num].sempid  = pid;
     }
+    fut_waitq_wake_all(&s->waitq);
+    fut_spinlock_release(&s->lock);
 
     return 0;
 }

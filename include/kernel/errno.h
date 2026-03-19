@@ -223,6 +223,10 @@
 #define ENOMSG      42   /* No message of desired type */
 #endif
 
+#ifndef EIDRM
+#define EIDRM       43   /* Identifier removed */
+#endif
+
 #ifndef EOPNOTSUPP
 #define EOPNOTSUPP  95   /* Operation not supported on socket */
 #endif

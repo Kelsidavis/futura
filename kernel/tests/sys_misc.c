@@ -11934,10 +11934,12 @@ static void test_semtimedop_basic(void) {
         fut_test_fail(268); return;
     }
 
-    /* semtimedop: NULL timeout (no block) with val=0 decrement → EAGAIN */
-    rc = sys_semtimedop((int)semid, &decr, 1, (void *)0);
+    /* semtimedop: zero timeout with val=0 decrement → EAGAIN
+     * (NULL timeout would block indefinitely — use {0,0} for immediate expire) */
+    struct { long tv_sec; long tv_nsec; } ts_zero2 = {0, 0};
+    rc = sys_semtimedop((int)semid, &decr, 1, &ts_zero2);
     if (rc != -11 /* -EAGAIN */) {
-        fut_printf("[MISC-TEST] ✗ Test 268 expected -EAGAIN on NULL timeout, got %ld\n", rc);
+        fut_printf("[MISC-TEST] ✗ Test 268 expected -EAGAIN on zero timeout, got %ld\n", rc);
         sys_semctl((int)semid, 0, TEST268_IPC_RMID, 0);
         fut_test_fail(268); return;
     }
@@ -18420,6 +18422,83 @@ static void test_siocgif(void) {
 }
 
 /* ============================================================
+ * Tests 401-403: semop IPC_NOWAIT, zero-wait, and blocking decrement
+ * ============================================================ */
+
+#define TEST_SEMOP_IPC_PRIVATE  0L
+#define TEST_SEMOP_IPC_CREAT    0x0200
+#define TEST_SEMOP_IPC_RMID     0
+#define TEST_SEMOP_SEM_SETVAL   16
+#define TEST_SEMOP_SEM_GETVAL   12
+#define TEST_SEMOP_IPC_NOWAIT   0x0800
+
+struct test_semop_sembuf {
+    unsigned short sem_num;
+    short          sem_op;
+    short          sem_flg;
+};
+
+static void test_semop_blocking(void) {
+    extern long sys_semget(long key, int nsems, int semflg);
+    extern long sys_semop(int semid, void *sops, unsigned int nsops);
+    extern long sys_semctl(int semid, int semnum, int cmd, unsigned long arg);
+
+    long semid = sys_semget(TEST_SEMOP_IPC_PRIVATE, 1,
+                             0666 | TEST_SEMOP_IPC_CREAT);
+    if (semid < 0) {
+        fut_printf("[MISC-TEST] ✗ Tests 401-403: semget failed: %ld\n", semid);
+        fut_test_fail(401); fut_test_fail(402); fut_test_fail(403);
+        return;
+    }
+
+    /* Test 401: semop decrement with IPC_NOWAIT on val=0 → EAGAIN */
+    fut_printf("[MISC-TEST] Test 401: semop -1 NOWAIT on val=0 -> EAGAIN\n");
+    struct test_semop_sembuf op1 = { .sem_num = 0, .sem_op = -1,
+                                     .sem_flg = TEST_SEMOP_IPC_NOWAIT };
+    long r = sys_semop((int)semid, &op1, 1);
+    if (r != -11) { /* -EAGAIN = -11 */
+        fut_printf("[MISC-TEST] ✗ Test 401: got %ld (expected -11/-EAGAIN)\n", r);
+        fut_test_fail(401);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 401: IPC_NOWAIT returned EAGAIN on val=0\n");
+        fut_test_pass();
+    }
+
+    /* Test 402: semop wait-for-zero (sem_op=0) on val=0 → success */
+    fut_printf("[MISC-TEST] Test 402: semop 0 (wait-for-zero) on val=0 -> 0\n");
+    struct test_semop_sembuf op2 = { .sem_num = 0, .sem_op = 0, .sem_flg = 0 };
+    r = sys_semop((int)semid, &op2, 1);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 402: got %ld (expected 0)\n", r);
+        fut_test_fail(402);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 402: zero-wait on zero-val succeeded\n");
+        fut_test_pass();
+    }
+
+    /* Set semaphore to 1 for next test */
+    sys_semctl((int)semid, 0, TEST_SEMOP_SEM_SETVAL, 1);
+
+    /* Test 403: semop(-1) without NOWAIT on val=1 → success, val becomes 0 */
+    fut_printf("[MISC-TEST] Test 403: semop -1 (no NOWAIT) on val=1 -> 0\n");
+    struct test_semop_sembuf op3 = { .sem_num = 0, .sem_op = -1, .sem_flg = 0 };
+    r = sys_semop((int)semid, &op3, 1);
+    long newval = sys_semctl((int)semid, 0, TEST_SEMOP_SEM_GETVAL, 0);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 403: semop returned %ld (expected 0)\n", r);
+        fut_test_fail(403);
+    } else if (newval != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 403: val=%ld after decrement (expected 0)\n", newval);
+        fut_test_fail(403);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 403: semop decrement succeeded, val=0\n");
+        fut_test_pass();
+    }
+
+    sys_semctl((int)semid, 0, TEST_SEMOP_IPC_RMID, 0);
+}
+
+/* ============================================================
  * Test 367: /proc/self/net/unix readable (same content as /proc/net/unix)
  * ============================================================ */
 static void test_proc_pid_net_unix(void) {
@@ -19014,6 +19093,7 @@ void fut_misc_test_thread(void *arg) {
     test_proc_net_fib_trie();           /* Test 394: /proc/net/fib_trie readable */
     test_futex_pi();                    /* Tests 395-397: FUTEX_LOCK/TRYLOCK/UNLOCK_PI */
     test_siocgif();                     /* Tests 398-400: SIOCGIFCONF/SIOCGIFFLAGS/SIOCGIFADDR */
+    test_semop_blocking();              /* Tests 401-403: semop IPC_NOWAIT/zero-wait/decrement */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

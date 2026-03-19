@@ -2697,6 +2697,170 @@ static int64_t sys_quotactl_wrapper(uint64_t cmd, uint64_t special, uint64_t id,
     return sys_quotactl((unsigned int)cmd, (const char *)special, (int)id, (void *)addr);
 }
 
+/* sys_recvmmsg_wrapper */
+extern long sys_recvmmsg(int sockfd, void *msgvec, unsigned int vlen,
+                         unsigned int flags, const struct timespec *timeout);
+static int64_t sys_recvmmsg_wrapper(uint64_t sockfd, uint64_t msgvec, uint64_t vlen,
+                                    uint64_t flags, uint64_t timeout, uint64_t arg5) {
+    (void)arg5;
+    return sys_recvmmsg((int)sockfd, (void *)msgvec, (unsigned int)vlen,
+                        (unsigned int)flags, (const struct timespec *)timeout);
+}
+
+/* sys_sendmmsg_wrapper */
+extern long sys_sendmmsg(int sockfd, void *msgvec, unsigned int vlen, unsigned int flags);
+static int64_t sys_sendmmsg_wrapper(uint64_t sockfd, uint64_t msgvec, uint64_t vlen,
+                                    uint64_t flags, uint64_t arg4, uint64_t arg5) {
+    (void)arg4; (void)arg5;
+    return sys_sendmmsg((int)sockfd, (void *)msgvec, (unsigned int)vlen, (unsigned int)flags);
+}
+
+/* sys_process_vm_readv_wrapper */
+extern long sys_process_vm_readv(int pid, const void *lvec, unsigned long liovcnt,
+                                  const void *rvec, unsigned long riovcnt, unsigned long flags);
+static int64_t sys_process_vm_readv_wrapper(uint64_t pid, uint64_t lvec, uint64_t liovcnt,
+                                             uint64_t rvec, uint64_t riovcnt, uint64_t flags) {
+    return sys_process_vm_readv((int)pid, (const void *)lvec, (unsigned long)liovcnt,
+                                 (const void *)rvec, (unsigned long)riovcnt, (unsigned long)flags);
+}
+
+/* sys_process_vm_writev_wrapper */
+extern long sys_process_vm_writev(int pid, const void *lvec, unsigned long liovcnt,
+                                   const void *rvec, unsigned long riovcnt, unsigned long flags);
+static int64_t sys_process_vm_writev_wrapper(uint64_t pid, uint64_t lvec, uint64_t liovcnt,
+                                              uint64_t rvec, uint64_t riovcnt, uint64_t flags) {
+    return sys_process_vm_writev((int)pid, (const void *)lvec, (unsigned long)liovcnt,
+                                  (const void *)rvec, (unsigned long)riovcnt, (unsigned long)flags);
+}
+
+/* sys_openat2_wrapper */
+extern long sys_openat2(int dirfd, const char *path, const void *how, size_t usize);
+static int64_t sys_openat2_wrapper(uint64_t dirfd, uint64_t path, uint64_t how,
+                                    uint64_t usize, uint64_t arg4, uint64_t arg5) {
+    (void)arg4; (void)arg5;
+    return sys_openat2((int)dirfd, (const char *)path, (const void *)how, (size_t)usize);
+}
+
+/* sys_pkey_mprotect_wrapper */
+extern long sys_pkey_mprotect(void *addr, size_t len, int prot, int pkey);
+static int64_t sys_pkey_mprotect_wrapper(uint64_t addr, uint64_t len, uint64_t prot,
+                                          uint64_t pkey, uint64_t arg4, uint64_t arg5) {
+    (void)arg4; (void)arg5;
+    return sys_pkey_mprotect((void *)addr, (size_t)len, (int)prot, (int)pkey);
+}
+
+/* sys_pkey_alloc_wrapper */
+extern long sys_pkey_alloc(unsigned int flags, unsigned int access_rights);
+static int64_t sys_pkey_alloc_wrapper(uint64_t flags, uint64_t access_rights,
+                                       uint64_t arg2, uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+    return sys_pkey_alloc((unsigned int)flags, (unsigned int)access_rights);
+}
+
+/* sys_pkey_free_wrapper */
+extern long sys_pkey_free(int pkey);
+static int64_t sys_pkey_free_wrapper(uint64_t pkey, uint64_t arg1, uint64_t arg2,
+                                      uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+    return sys_pkey_free((int)pkey);
+}
+
+/* sys_msgget_wrapper */
+extern long sys_msgget(long key, int msgflg);
+static int64_t sys_msgget_wrapper(uint64_t key, uint64_t msgflg,
+                                   uint64_t arg2, uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+    return sys_msgget((long)key, (int)msgflg);
+}
+
+/* sys_msgsnd_wrapper */
+extern long sys_msgsnd(int msqid, const void *msgp, size_t msgsz, int msgflg);
+static int64_t sys_msgsnd_wrapper(uint64_t msqid, uint64_t msgp, uint64_t msgsz,
+                                   uint64_t msgflg, uint64_t arg4, uint64_t arg5) {
+    (void)arg4; (void)arg5;
+    return sys_msgsnd((int)msqid, (const void *)msgp, (size_t)msgsz, (int)msgflg);
+}
+
+/* sys_msgrcv_wrapper */
+extern long sys_msgrcv(int msqid, void *msgp, size_t msgsz, long msgtyp, int msgflg);
+static int64_t sys_msgrcv_wrapper(uint64_t msqid, uint64_t msgp, uint64_t msgsz,
+                                   uint64_t msgtyp, uint64_t msgflg, uint64_t arg5) {
+    (void)arg5;
+    return sys_msgrcv((int)msqid, (void *)msgp, (size_t)msgsz, (long)msgtyp, (int)msgflg);
+}
+
+/* sys_msgctl_wrapper */
+extern long sys_msgctl(int msqid, int cmd, void *buf);
+static int64_t sys_msgctl_wrapper(uint64_t msqid, uint64_t cmd, uint64_t buf,
+                                   uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg3; (void)arg4; (void)arg5;
+    return sys_msgctl((int)msqid, (int)cmd, (void *)buf);
+}
+
+/* sys_semget_wrapper */
+extern long sys_semget(long key, int nsems, int semflg);
+static int64_t sys_semget_wrapper(uint64_t key, uint64_t nsems, uint64_t semflg,
+                                   uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg3; (void)arg4; (void)arg5;
+    return sys_semget((long)key, (int)nsems, (int)semflg);
+}
+
+/* sys_semop_wrapper */
+extern long sys_semop(int semid, void *sops, unsigned int nsops);
+static int64_t sys_semop_wrapper(uint64_t semid, uint64_t sops, uint64_t nsops,
+                                  uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg3; (void)arg4; (void)arg5;
+    return sys_semop((int)semid, (void *)sops, (unsigned int)nsops);
+}
+
+/* sys_semctl_wrapper */
+extern long sys_semctl(int semid, int semnum, int cmd, unsigned long arg);
+static int64_t sys_semctl_wrapper(uint64_t semid, uint64_t semnum, uint64_t cmd,
+                                   uint64_t arg, uint64_t arg4, uint64_t arg5) {
+    (void)arg4; (void)arg5;
+    return sys_semctl((int)semid, (int)semnum, (int)cmd, (unsigned long)arg);
+}
+
+/* sys_semtimedop_wrapper */
+extern long sys_semtimedop(int semid, void *sops, unsigned int nsops, const void *timeout);
+static int64_t sys_semtimedop_wrapper(uint64_t semid, uint64_t sops, uint64_t nsops,
+                                       uint64_t timeout, uint64_t arg4, uint64_t arg5) {
+    (void)arg4; (void)arg5;
+    return sys_semtimedop((int)semid, (void *)sops, (unsigned int)nsops, (const void *)timeout);
+}
+
+/* sys_shmget_wrapper */
+extern long sys_shmget(long key, size_t size, int shmflg);
+static int64_t sys_shmget_wrapper(uint64_t key, uint64_t size, uint64_t shmflg,
+                                   uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg3; (void)arg4; (void)arg5;
+    return sys_shmget((long)key, (size_t)size, (int)shmflg);
+}
+
+/* sys_shmctl_wrapper */
+extern long sys_shmctl(int shmid, int cmd, void *buf);
+static int64_t sys_shmctl_wrapper(uint64_t shmid, uint64_t cmd, uint64_t buf,
+                                   uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg3; (void)arg4; (void)arg5;
+    return sys_shmctl((int)shmid, (int)cmd, (void *)buf);
+}
+
+/* sys_shmat_wrapper */
+extern long sys_shmat(int shmid, const void *shmaddr, int shmflg);
+static int64_t sys_shmat_wrapper(uint64_t shmid, uint64_t shmaddr, uint64_t shmflg,
+                                  uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg3; (void)arg4; (void)arg5;
+    return sys_shmat((int)shmid, (const void *)shmaddr, (int)shmflg);
+}
+
+/* sys_shmdt_wrapper */
+extern long sys_shmdt(const void *shmaddr);
+static int64_t sys_shmdt_wrapper(uint64_t shmaddr, uint64_t arg1, uint64_t arg2,
+                                  uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+    return sys_shmdt((const void *)shmaddr);
+}
+
 /* ============================================================
  *   System Call Table
  * ============================================================ */
@@ -2757,11 +2921,35 @@ struct syscall_entry {
 #define __NR_accept4        242
 #define __NR_syncfs         267
 #define __NR_renameat2      276
+/* System V IPC (Linux ARM64: 186-197) */
+#define __NR_msgget             186
+#define __NR_msgsnd             187
+#define __NR_msgrcv             188
+#define __NR_msgctl             189
+#define __NR_semget             190
+#define __NR_semop              191
+#define __NR_semctl             192
+#define __NR_semtimedop         193
+#define __NR_shmget             194
+#define __NR_shmctl             195
+#define __NR_shmat              196
+#define __NR_shmdt              197
+/* Socket extensions (Linux ARM64: 243, 269-271) */
+#define __NR_recvmmsg           243
+#define __NR_sendmmsg           269
+#define __NR_process_vm_readv   270
+#define __NR_process_vm_writev  271
+/* Memory protection keys (Linux ARM64: 288-290) */
+#define __NR_pkey_mprotect      288
+#define __NR_pkey_alloc         289
+#define __NR_pkey_free          290
+/* pidfd and newer syscalls */
 #define __NR_pidfd_send_signal  424
 #define __NR_clone3             435
 #define __NR_close_range        436
 #define __NR_pidfd_open         434
 #define __NR_pidfd_getfd        438
+#define __NR_openat2            437
 #define __NR_faccessat2         439
 #define __NR_fcntl          25
 #define __NR_ioctl          29
@@ -3523,6 +3711,58 @@ static void arm64_syscall_table_init(void) {
     syscall_table[__NR_mq_notify].name = "mq_notify";
     syscall_table[__NR_mq_getsetattr].handler = (syscall_fn_t)sys_mq_getsetattr_wrapper;
     syscall_table[__NR_mq_getsetattr].name = "mq_getsetattr";
+
+    /* System V IPC: message queues */
+    syscall_table[__NR_msgget].handler = (syscall_fn_t)sys_msgget_wrapper;
+    syscall_table[__NR_msgget].name = "msgget";
+    syscall_table[__NR_msgsnd].handler = (syscall_fn_t)sys_msgsnd_wrapper;
+    syscall_table[__NR_msgsnd].name = "msgsnd";
+    syscall_table[__NR_msgrcv].handler = (syscall_fn_t)sys_msgrcv_wrapper;
+    syscall_table[__NR_msgrcv].name = "msgrcv";
+    syscall_table[__NR_msgctl].handler = (syscall_fn_t)sys_msgctl_wrapper;
+    syscall_table[__NR_msgctl].name = "msgctl";
+
+    /* System V IPC: semaphores */
+    syscall_table[__NR_semget].handler = (syscall_fn_t)sys_semget_wrapper;
+    syscall_table[__NR_semget].name = "semget";
+    syscall_table[__NR_semop].handler = (syscall_fn_t)sys_semop_wrapper;
+    syscall_table[__NR_semop].name = "semop";
+    syscall_table[__NR_semctl].handler = (syscall_fn_t)sys_semctl_wrapper;
+    syscall_table[__NR_semctl].name = "semctl";
+    syscall_table[__NR_semtimedop].handler = (syscall_fn_t)sys_semtimedop_wrapper;
+    syscall_table[__NR_semtimedop].name = "semtimedop";
+
+    /* System V IPC: shared memory */
+    syscall_table[__NR_shmget].handler = (syscall_fn_t)sys_shmget_wrapper;
+    syscall_table[__NR_shmget].name = "shmget";
+    syscall_table[__NR_shmctl].handler = (syscall_fn_t)sys_shmctl_wrapper;
+    syscall_table[__NR_shmctl].name = "shmctl";
+    syscall_table[__NR_shmat].handler = (syscall_fn_t)sys_shmat_wrapper;
+    syscall_table[__NR_shmat].name = "shmat";
+    syscall_table[__NR_shmdt].handler = (syscall_fn_t)sys_shmdt_wrapper;
+    syscall_table[__NR_shmdt].name = "shmdt";
+
+    /* Socket extensions */
+    syscall_table[__NR_recvmmsg].handler = (syscall_fn_t)sys_recvmmsg_wrapper;
+    syscall_table[__NR_recvmmsg].name = "recvmmsg";
+    syscall_table[__NR_sendmmsg].handler = (syscall_fn_t)sys_sendmmsg_wrapper;
+    syscall_table[__NR_sendmmsg].name = "sendmmsg";
+    syscall_table[__NR_process_vm_readv].handler = (syscall_fn_t)sys_process_vm_readv_wrapper;
+    syscall_table[__NR_process_vm_readv].name = "process_vm_readv";
+    syscall_table[__NR_process_vm_writev].handler = (syscall_fn_t)sys_process_vm_writev_wrapper;
+    syscall_table[__NR_process_vm_writev].name = "process_vm_writev";
+
+    /* Memory protection keys */
+    syscall_table[__NR_pkey_mprotect].handler = (syscall_fn_t)sys_pkey_mprotect_wrapper;
+    syscall_table[__NR_pkey_mprotect].name = "pkey_mprotect";
+    syscall_table[__NR_pkey_alloc].handler = (syscall_fn_t)sys_pkey_alloc_wrapper;
+    syscall_table[__NR_pkey_alloc].name = "pkey_alloc";
+    syscall_table[__NR_pkey_free].handler = (syscall_fn_t)sys_pkey_free_wrapper;
+    syscall_table[__NR_pkey_free].name = "pkey_free";
+
+    /* openat2 (Linux 5.6+) */
+    syscall_table[__NR_openat2].handler = (syscall_fn_t)sys_openat2_wrapper;
+    syscall_table[__NR_openat2].name = "openat2";
 
     syscall_table_initialized = true;
 }

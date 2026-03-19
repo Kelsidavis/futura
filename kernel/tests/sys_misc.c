@@ -24855,6 +24855,38 @@ struct test_timex {
 };
 
 /* ============================================================
+ * Tests 649-650: prctl PR_SET_MM and PR_SET_VMA
+ * ============================================================ */
+static void test_prctl_set_mm_set_vma(void) {
+    extern long sys_prctl(int option, uint64_t arg2, uint64_t arg3,
+                          uint64_t arg4, uint64_t arg5);
+#define TEST_PR_SET_MM   35
+#define TEST_PR_SET_VMA  0x53564d41
+
+    /* Test 649: PR_SET_MM → EPERM (mm modification unsupported) */
+    fut_printf("[MISC-TEST] Test 649: prctl(PR_SET_MM) → EPERM\n");
+    long ret = sys_prctl(TEST_PR_SET_MM, 0, 0, 0, 0);
+    if (ret != -EPERM) {
+        fut_printf("[MISC-TEST] ✗ Test 649: expected EPERM, got %ld\n", ret);
+        fut_test_fail(649);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 649: prctl(PR_SET_MM) → EPERM\n");
+        fut_test_pass();
+    }
+
+    /* Test 650: PR_SET_VMA → 0 (VMA naming accepted as no-op) */
+    fut_printf("[MISC-TEST] Test 650: prctl(PR_SET_VMA) → 0\n");
+    long ret2 = sys_prctl(TEST_PR_SET_VMA, 0, 0, 0, 0);
+    if (ret2 != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 650: expected 0, got %ld\n", ret2);
+        fut_test_fail(650);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 650: prctl(PR_SET_VMA) → 0 (no-op)\n");
+        fut_test_pass();
+    }
+}
+
+/* ============================================================
  * Tests 646-648: mmap hint flags (MAP_POPULATE/NORESERVE/STACK)
  * ============================================================ */
 static void test_mmap_hint_flags(void) {
@@ -25646,6 +25678,7 @@ void fut_misc_test_thread(void *arg) {
     test_fstatat_symlink_nofollow();         /* Tests 642-643: fstatat AT_SYMLINK_NOFOLLOW vs follow */
     test_accept4_flags();                    /* Tests 644-645: accept4 SOCK_NONBLOCK+SOCK_CLOEXEC */
     test_mmap_hint_flags();                  /* Tests 646-648: mmap MAP_POPULATE/NORESERVE/STACK accepted */
+    test_prctl_set_mm_set_vma();             /* Tests 649-650: PR_SET_MM→EPERM, PR_SET_VMA→0 */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

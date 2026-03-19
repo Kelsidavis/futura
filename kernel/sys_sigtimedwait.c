@@ -23,6 +23,12 @@
 #include <platform/arm64/memory/paging.h>
 #endif
 
+/* Timer callback: wake a waitq passed as arg (used for timed sigtimedwait) */
+static void stw_timer_wake(void *arg) {
+    fut_waitq_t *wq = (fut_waitq_t *)arg;
+    if (wq) fut_waitq_wake_all(wq);
+}
+
 /* siginfo_t for returning signal info to userspace */
 struct kernel_siginfo {
     int      si_signo;
@@ -156,8 +162,14 @@ long sys_rt_sigtimedwait(const uint64_t *uthese, void *uinfo,
             int64_t remain = deadline_ticks - (int64_t)fut_get_ticks();
             if (remain <= 0)
                 return -EAGAIN;
-            /* Sleep with timed wakeup; fut_signal_send wakes sleeping threads early */
-            fut_thread_sleep((uint64_t)remain);
+            /* Use timer+waitq: remain is in ticks (not ms), so start timer
+             * for that many ticks and sleep on signal_waitq.
+             * fut_signal_send also wakes signal_waitq, so signals interrupt early. */
+            fut_timer_start((uint64_t)remain, stw_timer_wake, &task->signal_waitq);
+            fut_spinlock_acquire(&task->signal_waitq.lock);
+            fut_waitq_sleep_locked(&task->signal_waitq, &task->signal_waitq.lock,
+                                   FUT_THREAD_BLOCKED);
+            fut_timer_cancel(stw_timer_wake, &task->signal_waitq);
         } else {
             /* No timeout — block indefinitely on signal waitq */
             fut_spinlock_acquire(&task->signal_waitq.lock);

@@ -43,6 +43,12 @@ static inline int _ns_copy_to_user(void *dst, const void *src, size_t n) {
 /* Nanosleep debugging (controlled via debug_config.h) */
 #define nanosleep_printf(...) do { if (NANOSLEEP_DEBUG) fut_printf(__VA_ARGS__); } while(0)
 
+/* Timer callback that wakes the task's signal_waitq to end a nanosleep */
+static void ns_timer_wakeup(void *arg) {
+    fut_task_t *t = (fut_task_t *)arg;
+    if (t) fut_waitq_wake_all(&t->signal_waitq);
+}
+
 /**
  * nanosleep() syscall - High-resolution sleep
  *
@@ -244,8 +250,21 @@ long sys_nanosleep(const fut_timespec_t *u_req, fut_timespec_t *u_rem) {
     /* Record start time for remainder calculation */
     uint64_t start_ticks = fut_get_ticks();
 
-    /* Perform the sleep (may be interrupted by signal delivery) */
-    fut_thread_sleep(millis);
+    /* Perform the sleep using timer+waitq so wakeup is reliable in all
+     * environments (QEMU CI, bare metal).  fut_thread_sleep() uses the
+     * sleep-queue mechanism which can stall indefinitely in QEMU.
+     * Sleeping on task->signal_waitq means a delivered signal also wakes
+     * us early — the post-sleep signal check below handles EINTR. */
+    {
+        uint64_t sleep_ticks = millis / 10;
+        if (millis % 10 != 0) sleep_ticks++;
+        if (sleep_ticks == 0) sleep_ticks = 1;
+        fut_timer_start(sleep_ticks, ns_timer_wakeup, task);
+        fut_spinlock_acquire(&task->signal_waitq.lock);
+        fut_waitq_sleep_locked(&task->signal_waitq, &task->signal_waitq.lock,
+                               FUT_THREAD_BLOCKED);
+        fut_timer_cancel(ns_timer_wakeup, task);
+    }
 
     /* Check if we were woken early by a signal (use thread mask) */
     if (task) {

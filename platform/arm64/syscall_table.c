@@ -678,6 +678,16 @@ static int64_t sys_pipe_wrapper(uint64_t pipefd, uint64_t arg1, uint64_t arg2,
     return sys_pipe((int *)pipefd);
 }
 
+/* sys_pipe2_wrapper - create pipe with flags
+ * x0 = pipefd array pointer, x1 = flags (O_CLOEXEC, O_NONBLOCK, O_DIRECT)
+ */
+extern long sys_pipe2(int pipefd[2], int flags);
+static int64_t sys_pipe2_wrapper(uint64_t pipefd, uint64_t flags, uint64_t arg2,
+                                 uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+    return sys_pipe2((int *)pipefd, (int)flags);
+}
+
 /* sys_dup_wrapper - duplicate file descriptor
  * x0 = oldfd
  */
@@ -3004,6 +3014,38 @@ static int64_t sys_shmdt_wrapper(uint64_t shmaddr, uint64_t arg1, uint64_t arg2,
     return sys_shmdt((const void *)shmaddr);
 }
 
+/* sys_io_uring_setup_wrapper - io_uring setup (stub: returns ENOSYS) */
+extern long sys_io_uring_setup(unsigned int entries, void *params);
+static int64_t sys_io_uring_setup_wrapper(uint64_t entries, uint64_t params,
+                                           uint64_t arg2, uint64_t arg3,
+                                           uint64_t arg4, uint64_t arg5) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+    return sys_io_uring_setup((unsigned int)entries, (void *)params);
+}
+
+/* sys_io_uring_enter_wrapper - io_uring enter (stub: returns ENOSYS) */
+extern long sys_io_uring_enter(unsigned int fd, unsigned int to_submit,
+                                unsigned int min_complete, unsigned int flags,
+                                const void *sig, size_t sigsz);
+static int64_t sys_io_uring_enter_wrapper(uint64_t fd, uint64_t to_submit,
+                                           uint64_t min_complete, uint64_t flags,
+                                           uint64_t sig, uint64_t sigsz) {
+    return sys_io_uring_enter((unsigned int)fd, (unsigned int)to_submit,
+                               (unsigned int)min_complete, (unsigned int)flags,
+                               (const void *)sig, (size_t)sigsz);
+}
+
+/* sys_io_uring_register_wrapper - io_uring register (stub: returns ENOSYS) */
+extern long sys_io_uring_register(unsigned int fd, unsigned int opcode,
+                                   void *arg, unsigned int nr_args);
+static int64_t sys_io_uring_register_wrapper(uint64_t fd, uint64_t opcode,
+                                              uint64_t arg, uint64_t nr_args,
+                                              uint64_t arg4, uint64_t arg5) {
+    (void)arg4; (void)arg5;
+    return sys_io_uring_register((unsigned int)fd, (unsigned int)opcode,
+                                  (void *)arg, (unsigned int)nr_args);
+}
+
 /* ============================================================
  *   System Call Table
  * ============================================================ */
@@ -3066,13 +3108,13 @@ struct syscall_entry {
 #define __NR_renameat2      276
 /* System V IPC (Linux ARM64: 186-197) */
 #define __NR_msgget             186
-#define __NR_msgsnd             187
+#define __NR_msgctl             187
 #define __NR_msgrcv             188
-#define __NR_msgctl             189
+#define __NR_msgsnd             189
 #define __NR_semget             190
-#define __NR_semop              191
-#define __NR_semctl             192
-#define __NR_semtimedop         193
+#define __NR_semctl             191
+#define __NR_semtimedop         192
+#define __NR_semop              193
 #define __NR_shmget             194
 #define __NR_shmctl             195
 #define __NR_shmat              196
@@ -3304,8 +3346,13 @@ struct syscall_entry {
 #define __NR_fipc_poll      405
 #define __NR_fipc_connect   406
 
-/* Maximum syscall number */
-#define MAX_SYSCALL         440
+/* io_uring (Linux ARM64: 425-427) */
+#define __NR_io_uring_setup     425
+#define __NR_io_uring_enter     426
+#define __NR_io_uring_register  427
+
+/* Maximum syscall number — must exceed highest registered number (epoll_pwait2=441) */
+#define MAX_SYSCALL         450
 
 /* Syscall table - sparse array indexed by syscall number */
 /* Syscall table - initialized at runtime to avoid ARM64 relocation issues */
@@ -3434,8 +3481,8 @@ static void arm64_syscall_table_init(void) {
     syscall_table[__NR_close].name = "close";
     syscall_table[__NR_vhangup].handler = (syscall_fn_t)sys_vhangup_wrapper;
     syscall_table[__NR_vhangup].name = "vhangup";
-    syscall_table[__NR_pipe2].handler = (syscall_fn_t)sys_pipe_wrapper;
-    syscall_table[__NR_pipe2].name = "pipe2/pipe";
+    syscall_table[__NR_pipe2].handler = (syscall_fn_t)sys_pipe2_wrapper;
+    syscall_table[__NR_pipe2].name = "pipe2";
     syscall_table[__NR_quotactl].handler = (syscall_fn_t)sys_quotactl_wrapper;
     syscall_table[__NR_quotactl].name = "quotactl";
     syscall_table[__NR_getdents64].handler = (syscall_fn_t)sys_getdents64_wrapper;
@@ -3969,6 +4016,14 @@ static void arm64_syscall_table_init(void) {
     /* epoll_pwait2 (Linux 5.11+) */
     syscall_table[__NR_epoll_pwait2].handler = (syscall_fn_t)sys_epoll_pwait2_wrapper;
     syscall_table[__NR_epoll_pwait2].name = "epoll_pwait2";
+
+    /* io_uring (Linux 5.1+) — stubs that return ENOSYS so libc/apps fall back */
+    syscall_table[__NR_io_uring_setup].handler = (syscall_fn_t)sys_io_uring_setup_wrapper;
+    syscall_table[__NR_io_uring_setup].name = "io_uring_setup";
+    syscall_table[__NR_io_uring_enter].handler = (syscall_fn_t)sys_io_uring_enter_wrapper;
+    syscall_table[__NR_io_uring_enter].name = "io_uring_enter";
+    syscall_table[__NR_io_uring_register].handler = (syscall_fn_t)sys_io_uring_register_wrapper;
+    syscall_table[__NR_io_uring_register].name = "io_uring_register";
 
     /* preadv2/pwritev2 (Linux 4.6+) */
     syscall_table[__NR_preadv2].handler = (syscall_fn_t)sys_preadv2_wrapper;

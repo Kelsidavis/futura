@@ -40,6 +40,60 @@
 #define TCSETSW     0x5403  /* set termios, drain output first */
 #define TCSETSF     0x5404  /* set termios, drain + flush input first */
 
+/* Network interface ioctls */
+#define SIOCGIFCONF    0x8912  /* Get interface list */
+#define SIOCGIFFLAGS   0x8913  /* Get interface flags */
+#define SIOCSIFFLAGS   0x8914  /* Set interface flags */
+#define SIOCGIFADDR    0x8915  /* Get interface address */
+#define SIOCGIFDSTADDR 0x8917  /* Get point-to-point address */
+#define SIOCGIFBRDADDR 0x8919  /* Get broadcast address */
+#define SIOCGIFNETMASK 0x891B  /* Get network mask */
+#define SIOCGIFMTU     0x8921  /* Get MTU */
+#define SIOCGIFHWADDR  0x8927  /* Get hardware address */
+#define SIOCGIFINDEX   0x8933  /* Get interface index */
+#define SIOCGIFNAME    0x8910  /* Get interface name from index */
+
+/* Interface flags (IFF_*) */
+#define IFF_UP         0x0001  /* Interface is up */
+#define IFF_BROADCAST  0x0002  /* Broadcast address valid */
+#define IFF_LOOPBACK   0x0008  /* Is a loopback net */
+#define IFF_POINTOPOINT 0x0010 /* Interface is PPP link */
+#define IFF_RUNNING    0x0040  /* Resources allocated */
+#define IFF_NOARP      0x0080  /* No ARP protocol */
+#define IFF_PROMISC    0x0100  /* Receive all packets */
+#define IFF_MULTICAST  0x1000  /* Supports multicast */
+
+/* Interface name/address structures */
+#define IFNAMSIZ  16
+
+/* Mirrors Linux struct sockaddr (16 bytes) */
+struct fut_sockaddr {
+    uint16_t sa_family;
+    char     sa_data[14];
+};
+
+/* Mirrors Linux struct ifreq (40 bytes on x86_64) */
+struct fut_ifreq {
+    char ifr_name[IFNAMSIZ];
+    union {
+        struct fut_sockaddr ifru_addr;
+        struct fut_sockaddr ifru_hwaddr;
+        short               ifru_flags;
+        int                 ifru_ivalue;  /* mtu, metric, index, etc. */
+        char                _pad[24];     /* union size = 24 bytes */
+    } ifr_ifru;
+};
+
+/* Mirrors Linux struct ifconf (16 bytes on x86_64) */
+struct fut_ifconf {
+    int   ifc_len;
+    int   _pad;
+    union {
+        char             *ifc_buf;
+        struct fut_ifreq *ifc_req;
+    } ifc_ifcu;
+};
+
 /* Global terminal window size — shared by all TTY fds */
 static struct {
     uint16_t ws_row;
@@ -600,11 +654,22 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
 
             /* First check for known legacy ioctls that don't use _IOC encoding */
             switch (request) {
-                case TCGETS:      /* Get terminal settings - writes termios to argp */
-                case TIOCGWINSZ:  /* Get window size - writes winsize to argp */
-                case FIONREAD:    /* Get bytes available - writes int to argp */
-                case TIOCGPGRP:   /* Get foreground pgrp - writes pid_t to argp */
-                case TIOCGSID:    /* Get session ID - writes pid_t to argp */
+                case TCGETS:         /* Get terminal settings - writes termios to argp */
+                case TIOCGWINSZ:     /* Get window size - writes winsize to argp */
+                case FIONREAD:       /* Get bytes available - writes int to argp */
+                case TIOCGPGRP:      /* Get foreground pgrp - writes pid_t to argp */
+                case TIOCGSID:       /* Get session ID - writes pid_t to argp */
+                /* Network interface get ioctls - write ifreq/ifconf to argp */
+                case SIOCGIFCONF:
+                case SIOCGIFFLAGS:
+                case SIOCGIFADDR:
+                case SIOCGIFDSTADDR:
+                case SIOCGIFBRDADDR:
+                case SIOCGIFNETMASK:
+                case SIOCGIFMTU:
+                case SIOCGIFHWADDR:
+                case SIOCGIFINDEX:
+                case SIOCGIFNAME:
                     requires_write = 1;
                     break;
                 case TCSETS:      /* Set terminal settings - reads termios from argp */
@@ -612,6 +677,7 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
                 case TCSETSF:
                 case FIONBIO:     /* Set non-blocking - reads int from argp */
                 case TIOCSPGRP:   /* Set foreground pgrp - reads pid_t from argp */
+                case SIOCSIFFLAGS:
                     requires_read = 1;
                     break;
                 default:
@@ -691,7 +757,13 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
             request != TIOCGWINSZ && request != TIOCSWINSZ &&
             request != TIOCGPGRP &&
             request != TIOCSPGRP && request != TIOCGSID &&
-            request != TIOCSCTTY && request != TIOCNOTTY) {
+            request != TIOCSCTTY && request != TIOCNOTTY &&
+            request != SIOCGIFCONF && request != SIOCGIFFLAGS &&
+            request != SIOCSIFFLAGS && request != SIOCGIFADDR &&
+            request != SIOCGIFDSTADDR && request != SIOCGIFBRDADDR &&
+            request != SIOCGIFNETMASK && request != SIOCGIFMTU &&
+            request != SIOCGIFHWADDR && request != SIOCGIFINDEX &&
+            request != SIOCGIFNAME) {
             return file->chr_ops->ioctl(file->chr_inode, file->chr_private, request, (unsigned long)argp);
         }
     }
@@ -963,6 +1035,242 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
                 return -EFAULT;
             return 0;
         }
+        /* ----------------------------------------------------------------
+         * Network interface ioctls
+         * We advertise a single loopback interface "lo":
+         *   index=1, flags=IFF_UP|IFF_LOOPBACK|IFF_RUNNING,
+         *   addr=127.0.0.1, netmask=255.0.0.0, mtu=65536
+         * SIOCGIFCONF returns ifreq list; all others read/write ifreq by name.
+         * ---------------------------------------------------------------- */
+        case SIOCGIFCONF: {
+            /* struct ifconf: { int ifc_len; int _pad; void *ifc_buf } */
+            if (!argp)
+                return -EFAULT;
+            struct fut_ifconf ifc;
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
+                __builtin_memcpy(&ifc, argp, sizeof(ifc));
+            else
+#endif
+            if (fut_copy_from_user(&ifc, argp, sizeof(ifc)) != 0)
+                return -EFAULT;
+
+            /* Size of one entry: sizeof(struct fut_ifreq) = 16 + 24 = 40 */
+            const int entry_size = (int)sizeof(struct fut_ifreq);
+
+            if (ifc.ifc_ifcu.ifc_buf == NULL || ifc.ifc_len == 0) {
+                /* Caller querying size: return space needed for 1 interface */
+                ifc.ifc_len = entry_size;
+#ifdef KERNEL_VIRTUAL_BASE
+                if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
+                    __builtin_memcpy(argp, &ifc, sizeof(ifc));
+                else
+#endif
+                if (fut_copy_to_user(argp, &ifc, sizeof(ifc)) != 0)
+                    return -EFAULT;
+                return 0;
+            }
+
+            /* Fill in loopback entry if there's room */
+            if (ifc.ifc_len >= entry_size) {
+                struct fut_ifreq ifr;
+                __builtin_memset(&ifr, 0, sizeof(ifr));
+                __builtin_memcpy(ifr.ifr_name, "lo", 3);
+                ifr.ifr_ifru.ifru_addr.sa_family = AF_INET;
+                /* 127.0.0.1 in network byte order (big-endian in sa_data) */
+                ifr.ifr_ifru.ifru_addr.sa_data[2] = 127;
+                ifr.ifr_ifru.ifru_addr.sa_data[5] = 1;
+
+                void *dst = ifc.ifc_ifcu.ifc_buf;
+#ifdef KERNEL_VIRTUAL_BASE
+                if ((uintptr_t)dst >= KERNEL_VIRTUAL_BASE)
+                    __builtin_memcpy(dst, &ifr, sizeof(ifr));
+                else
+#endif
+                if (fut_copy_to_user(dst, &ifr, sizeof(ifr)) != 0)
+                    return -EFAULT;
+
+                ifc.ifc_len = entry_size;
+            } else {
+                ifc.ifc_len = 0;
+            }
+
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
+                __builtin_memcpy(argp, &ifc, sizeof(ifc));
+            else
+#endif
+            if (fut_copy_to_user(argp, &ifc, sizeof(ifc)) != 0)
+                return -EFAULT;
+            return 0;
+        }
+
+        case SIOCGIFFLAGS: {
+            if (!argp)
+                return -EFAULT;
+            struct fut_ifreq ifr;
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
+                __builtin_memcpy(&ifr, argp, sizeof(ifr));
+            else
+#endif
+            if (fut_copy_from_user(&ifr, argp, sizeof(ifr)) != 0)
+                return -EFAULT;
+            /* Only support "lo" */
+            if (__builtin_strncmp(ifr.ifr_name, "lo", IFNAMSIZ) != 0)
+                return -ENODEV;
+            ifr.ifr_ifru.ifru_flags = IFF_UP | IFF_LOOPBACK | IFF_RUNNING;
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
+                __builtin_memcpy(argp, &ifr, sizeof(ifr));
+            else
+#endif
+            if (fut_copy_to_user(argp, &ifr, sizeof(ifr)) != 0)
+                return -EFAULT;
+            return 0;
+        }
+
+        case SIOCSIFFLAGS:
+            /* Accept silently — we don't change loopback state */
+            return 0;
+
+        case SIOCGIFADDR:
+        case SIOCGIFDSTADDR:
+        case SIOCGIFBRDADDR:
+        case SIOCGIFNETMASK: {
+            if (!argp)
+                return -EFAULT;
+            struct fut_ifreq ifr;
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
+                __builtin_memcpy(&ifr, argp, sizeof(ifr));
+            else
+#endif
+            if (fut_copy_from_user(&ifr, argp, sizeof(ifr)) != 0)
+                return -EFAULT;
+            if (__builtin_strncmp(ifr.ifr_name, "lo", IFNAMSIZ) != 0)
+                return -ENODEV;
+            __builtin_memset(&ifr.ifr_ifru, 0, sizeof(ifr.ifr_ifru));
+            ifr.ifr_ifru.ifru_addr.sa_family = AF_INET;
+            if (request == SIOCGIFNETMASK) {
+                /* 255.0.0.0 — class A loopback mask */
+                ifr.ifr_ifru.ifru_addr.sa_data[2] = (char)255;
+            } else {
+                /* 127.0.0.1 for addr/dst/brd */
+                ifr.ifr_ifru.ifru_addr.sa_data[2] = 127;
+                ifr.ifr_ifru.ifru_addr.sa_data[5] = 1;
+            }
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
+                __builtin_memcpy(argp, &ifr, sizeof(ifr));
+            else
+#endif
+            if (fut_copy_to_user(argp, &ifr, sizeof(ifr)) != 0)
+                return -EFAULT;
+            return 0;
+        }
+
+        case SIOCGIFMTU: {
+            if (!argp)
+                return -EFAULT;
+            struct fut_ifreq ifr;
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
+                __builtin_memcpy(&ifr, argp, sizeof(ifr));
+            else
+#endif
+            if (fut_copy_from_user(&ifr, argp, sizeof(ifr)) != 0)
+                return -EFAULT;
+            if (__builtin_strncmp(ifr.ifr_name, "lo", IFNAMSIZ) != 0)
+                return -ENODEV;
+            ifr.ifr_ifru.ifru_ivalue = 65536;
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
+                __builtin_memcpy(argp, &ifr, sizeof(ifr));
+            else
+#endif
+            if (fut_copy_to_user(argp, &ifr, sizeof(ifr)) != 0)
+                return -EFAULT;
+            return 0;
+        }
+
+        case SIOCGIFHWADDR: {
+            if (!argp)
+                return -EFAULT;
+            struct fut_ifreq ifr;
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
+                __builtin_memcpy(&ifr, argp, sizeof(ifr));
+            else
+#endif
+            if (fut_copy_from_user(&ifr, argp, sizeof(ifr)) != 0)
+                return -EFAULT;
+            if (__builtin_strncmp(ifr.ifr_name, "lo", IFNAMSIZ) != 0)
+                return -ENODEV;
+            /* Loopback has ARPHRD_LOOPBACK (772) hw family, zero MAC */
+            __builtin_memset(&ifr.ifr_ifru, 0, sizeof(ifr.ifr_ifru));
+            ifr.ifr_ifru.ifru_hwaddr.sa_family = 772; /* ARPHRD_LOOPBACK */
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
+                __builtin_memcpy(argp, &ifr, sizeof(ifr));
+            else
+#endif
+            if (fut_copy_to_user(argp, &ifr, sizeof(ifr)) != 0)
+                return -EFAULT;
+            return 0;
+        }
+
+        case SIOCGIFINDEX: {
+            if (!argp)
+                return -EFAULT;
+            struct fut_ifreq ifr;
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
+                __builtin_memcpy(&ifr, argp, sizeof(ifr));
+            else
+#endif
+            if (fut_copy_from_user(&ifr, argp, sizeof(ifr)) != 0)
+                return -EFAULT;
+            if (__builtin_strncmp(ifr.ifr_name, "lo", IFNAMSIZ) != 0)
+                return -ENODEV;
+            ifr.ifr_ifru.ifru_ivalue = 1; /* lo is always index 1 */
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
+                __builtin_memcpy(argp, &ifr, sizeof(ifr));
+            else
+#endif
+            if (fut_copy_to_user(argp, &ifr, sizeof(ifr)) != 0)
+                return -EFAULT;
+            return 0;
+        }
+
+        case SIOCGIFNAME: {
+            /* argp is struct ifreq; read ifr_ifru.ifru_ivalue as the index,
+             * write ifr_name with the interface name for that index */
+            if (!argp)
+                return -EFAULT;
+            struct fut_ifreq ifr;
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
+                __builtin_memcpy(&ifr, argp, sizeof(ifr));
+            else
+#endif
+            if (fut_copy_from_user(&ifr, argp, sizeof(ifr)) != 0)
+                return -EFAULT;
+            if (ifr.ifr_ifru.ifru_ivalue != 1)
+                return -ENODEV;
+            __builtin_memset(ifr.ifr_name, 0, IFNAMSIZ);
+            __builtin_memcpy(ifr.ifr_name, "lo", 2);
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
+                __builtin_memcpy(argp, &ifr, sizeof(ifr));
+            else
+#endif
+            if (fut_copy_to_user(argp, &ifr, sizeof(ifr)) != 0)
+                return -EFAULT;
+            return 0;
+        }
+
         default:
             fut_printf("[IOCTL] ioctl(fd=%d, request=0x%lx [%s], argp=%p) -> ENOTTY (no ioctl op)\n",
                        fd, request, request_name, argp);

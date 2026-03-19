@@ -18314,6 +18314,112 @@ static void test_futex_pi(void) {
 }
 
 /* ============================================================
+ * Tests 398-400: Network interface ioctls (SIOCGIFCONF/FLAGS/ADDR)
+ * ============================================================ */
+
+#define SIOCGIFCONF_VAL  0x8912
+#define SIOCGIFFLAGS_VAL 0x8913
+#define SIOCGIFADDR_VAL  0x8915
+#define SIOCGIFINDEX_VAL 0x8933
+#define IFF_LOOPBACK_VAL 0x0008
+
+struct test_sockaddr {
+    uint16_t sa_family;
+    char     sa_data[14];
+};
+
+struct test_ifreq {
+    char ifr_name[16];
+    union {
+        struct test_sockaddr ifru_addr;
+        short                ifru_flags;
+        int                  ifru_ivalue;
+        char                 _pad[24];
+    } ifr_ifru;
+};
+
+struct test_ifconf {
+    int   ifc_len;
+    int   _pad;
+    union {
+        char             *ifc_buf;
+        struct test_ifreq *ifc_req;
+    } ifc_ifcu;
+};
+
+static void test_siocgif(void) {
+    /* Need a valid fd — open a scratch file */
+    int fd = fut_vfs_open("/siocgif_test.tmp", 0x41 /* O_WRONLY|O_CREAT */, 0600);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Tests 398-400: could not open scratch fd: %d\n", fd);
+        fut_test_fail(398); fut_test_fail(399); fut_test_fail(400);
+        return;
+    }
+
+    /* Test 398: SIOCGIFCONF returns 1 interface with name "lo" */
+    fut_printf("[MISC-TEST] Test 398: SIOCGIFCONF lists loopback interface\n");
+    struct test_ifreq entries[4];
+    __builtin_memset(entries, 0, sizeof(entries));
+    struct test_ifconf ifc;
+    ifc.ifc_len = (int)sizeof(entries);
+    ifc._pad    = 0;
+    ifc.ifc_ifcu.ifc_buf = (char *)entries;
+    long ret = sys_ioctl(fd, SIOCGIFCONF_VAL, &ifc);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 398: SIOCGIFCONF returned %ld\n", ret);
+        fut_test_fail(398);
+    } else if (ifc.ifc_len <= 0) {
+        fut_printf("[MISC-TEST] ✗ Test 398: ifc_len=%d (expected >0)\n", ifc.ifc_len);
+        fut_test_fail(398);
+    } else if (entries[0].ifr_name[0] != 'l' || entries[0].ifr_name[1] != 'o') {
+        fut_printf("[MISC-TEST] ✗ Test 398: first iface name='%s' (expected 'lo')\n",
+                   entries[0].ifr_name);
+        fut_test_fail(398);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 398: SIOCGIFCONF returned 'lo' interface\n");
+        fut_test_pass();
+    }
+
+    /* Test 399: SIOCGIFFLAGS for "lo" has IFF_LOOPBACK set */
+    fut_printf("[MISC-TEST] Test 399: SIOCGIFFLAGS for lo has IFF_LOOPBACK\n");
+    struct test_ifreq ifr;
+    __builtin_memset(&ifr, 0, sizeof(ifr));
+    __builtin_memcpy(ifr.ifr_name, "lo", 3);
+    ret = sys_ioctl(fd, SIOCGIFFLAGS_VAL, &ifr);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 399: SIOCGIFFLAGS returned %ld\n", ret);
+        fut_test_fail(399);
+    } else if (!(ifr.ifr_ifru.ifru_flags & IFF_LOOPBACK_VAL)) {
+        fut_printf("[MISC-TEST] ✗ Test 399: flags=0x%x — IFF_LOOPBACK not set\n",
+                   (unsigned)ifr.ifr_ifru.ifru_flags);
+        fut_test_fail(399);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 399: lo flags=0x%x (IFF_LOOPBACK set)\n",
+                   (unsigned)ifr.ifr_ifru.ifru_flags);
+        fut_test_pass();
+    }
+
+    /* Test 400: SIOCGIFADDR for "lo" returns 127.x.x.x */
+    fut_printf("[MISC-TEST] Test 400: SIOCGIFADDR for lo returns 127.0.0.1\n");
+    __builtin_memset(&ifr, 0, sizeof(ifr));
+    __builtin_memcpy(ifr.ifr_name, "lo", 3);
+    ret = sys_ioctl(fd, SIOCGIFADDR_VAL, &ifr);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 400: SIOCGIFADDR returned %ld\n", ret);
+        fut_test_fail(400);
+    } else if ((unsigned char)ifr.ifr_ifru.ifru_addr.sa_data[2] != 127) {
+        fut_printf("[MISC-TEST] ✗ Test 400: addr[2]=%u (expected 127)\n",
+                   (unsigned char)ifr.ifr_ifru.ifru_addr.sa_data[2]);
+        fut_test_fail(400);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 400: lo address starts with 127\n");
+        fut_test_pass();
+    }
+
+    fut_vfs_close(fd);
+}
+
+/* ============================================================
  * Test 367: /proc/self/net/unix readable (same content as /proc/net/unix)
  * ============================================================ */
 static void test_proc_pid_net_unix(void) {
@@ -18907,6 +19013,7 @@ void fut_misc_test_thread(void *arg) {
     test_proc_net_snmp();               /* Test 393: /proc/net/snmp has Tcp: */
     test_proc_net_fib_trie();           /* Test 394: /proc/net/fib_trie readable */
     test_futex_pi();                    /* Tests 395-397: FUTEX_LOCK/TRYLOCK/UNLOCK_PI */
+    test_siocgif();                     /* Tests 398-400: SIOCGIFCONF/SIOCGIFFLAGS/SIOCGIFADDR */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

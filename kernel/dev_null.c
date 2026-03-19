@@ -12,7 +12,10 @@
 #include <kernel/chrdev.h>
 #include <kernel/devfs.h>
 #include <kernel/errno.h>
+#include <kernel/fut_mm.h>
+#include <kernel/fut_task.h>
 #include <kernel/kprintf.h>
+#include <sys/mman.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
@@ -44,13 +47,32 @@ static ssize_t zero_read(void *inode, void *priv, void *buf, size_t n, off_t *po
     return (ssize_t)n;
 }
 
+/* /dev/zero mmap: create an anonymous mapping backed by zeroed pages.
+ * This allows programs to use open("/dev/zero") + mmap() as an alternative
+ * to MAP_ANONYMOUS for creating zero-filled private or shared mappings.
+ * Offset is ignored (all of /dev/zero appears as zeroed infinite storage). */
+static void *zero_mmap_op(void *inode, void *priv, void *u_addr, size_t len,
+                           off_t off, int prot, int flags) {
+    (void)inode; (void)priv; (void)off;
+    fut_task_t *task = fut_task_current();
+    if (!task) return (void *)(intptr_t)(-ESRCH);
+
+    fut_mm_t *mm = fut_task_get_mm(task);
+    if (!mm) mm = fut_mm_current();
+    if (!mm) return (void *)(intptr_t)(-ENOMEM);
+
+    /* Force MAP_ANONYMOUS: /dev/zero is equivalent to an anonymous mapping */
+    int anon_flags = flags | MAP_ANONYMOUS;
+    return fut_mm_map_anonymous(mm, (uintptr_t)u_addr, len, prot, anon_flags);
+}
+
 static const struct fut_file_ops zero_fops = {
     .read = zero_read,
     .write = null_write,  /* Same as /dev/null — discard */
     .open = NULL,
     .release = NULL,
     .ioctl = NULL,
-    .mmap = NULL,
+    .mmap = zero_mmap_op,
 };
 
 /* /dev/urandom: read returns random bytes (from getrandom), write succeeds */

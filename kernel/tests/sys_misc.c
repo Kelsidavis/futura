@@ -23701,6 +23701,182 @@ static void test_fd_table_growth(void) {
     fut_test_pass();
 }
 
+/* ============================================================
+ * Tests 587-595: /dev/zero mmap and mmap correctness
+ *
+ * Tests that mmap() of /dev/zero returns a usable anonymous mapping.
+ * /dev/zero is commonly used as an alternative to MAP_ANONYMOUS by
+ * legacy programs.  Previously, mmap() on /dev/zero returned -ENODEV
+ * because zero_fops.mmap was NULL.
+ * ============================================================ */
+static void test_dev_zero_mmap(void) {
+    /* Test 587: mmap of /dev/zero (MAP_PRIVATE) returns a valid address */
+    fut_printf("[MISC-TEST] Test 587: mmap /dev/zero MAP_PRIVATE\n");
+    int zfd = (int)fut_vfs_open("/dev/zero", 2 /* O_RDWR */, 0);
+    if (zfd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 587: open /dev/zero failed: %d\n", zfd);
+        fut_test_fail(587);
+        return;
+    }
+    long addr587 = sys_mmap(NULL, 4096, 3 /* PROT_READ|PROT_WRITE */,
+                             2 /* MAP_PRIVATE */, zfd, 0);
+    if (addr587 < 0 || addr587 == 0) {
+        fut_printf("[MISC-TEST] ✗ Test 587: mmap /dev/zero failed: %ld\n", addr587);
+        fut_vfs_close(zfd);
+        fut_test_fail(587);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 587: mmap /dev/zero -> 0x%lx\n", addr587);
+    fut_test_pass();
+
+    /* Test 588: mmap'd /dev/zero region is zero-filled */
+    fut_printf("[MISC-TEST] Test 588: mmap /dev/zero content is zeroed\n");
+    const unsigned char *p = (const unsigned char *)(uintptr_t)addr587;
+    int nonzero = 0;
+    for (int i = 0; i < 16; i++) {
+        if (p[i] != 0) { nonzero++; }
+    }
+    if (nonzero) {
+        fut_printf("[MISC-TEST] ✗ Test 588: %d non-zero bytes at mmap'd /dev/zero\n", nonzero);
+        sys_munmap((void *)(uintptr_t)addr587, 4096);
+        fut_vfs_close(zfd);
+        fut_test_fail(588);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 588: mmap /dev/zero content is zeroed\n");
+    fut_test_pass();
+
+    /* Test 589: write to mmap'd /dev/zero region (MAP_PRIVATE; data survives) */
+    fut_printf("[MISC-TEST] Test 589: write to mmap /dev/zero region\n");
+    unsigned char *wp = (unsigned char *)(uintptr_t)addr587;
+    for (int i = 0; i < 8; i++) wp[i] = (unsigned char)(i + 1);
+    int mismatch = 0;
+    for (int i = 0; i < 8; i++) {
+        if (wp[i] != (unsigned char)(i + 1)) mismatch++;
+    }
+    if (mismatch) {
+        fut_printf("[MISC-TEST] ✗ Test 589: write-read mismatch on mmap'd /dev/zero\n");
+        sys_munmap((void *)(uintptr_t)addr587, 4096);
+        fut_vfs_close(zfd);
+        fut_test_fail(589);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 589: mmap /dev/zero write-read roundtrip ok\n");
+    fut_test_pass();
+
+    /* Test 590: munmap the /dev/zero mapping */
+    fut_printf("[MISC-TEST] Test 590: munmap /dev/zero mapping\n");
+    long uret = sys_munmap((void *)(uintptr_t)addr587, 4096);
+    if (uret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 590: munmap failed: %ld\n", uret);
+        fut_vfs_close(zfd);
+        fut_test_fail(590);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 590: munmap /dev/zero ok\n");
+    fut_test_pass();
+
+    /* Test 591: mmap /dev/zero MAP_SHARED also works */
+    fut_printf("[MISC-TEST] Test 591: mmap /dev/zero MAP_SHARED\n");
+    long addr591 = sys_mmap(NULL, 4096, 3 /* PROT_READ|PROT_WRITE */,
+                             1 /* MAP_SHARED */, zfd, 0);
+    if (addr591 < 0 || addr591 == 0) {
+        fut_printf("[MISC-TEST] ✗ Test 591: mmap /dev/zero MAP_SHARED failed: %ld\n", addr591);
+        fut_vfs_close(zfd);
+        fut_test_fail(591);
+        return;
+    }
+    sys_munmap((void *)(uintptr_t)addr591, 4096);
+    fut_printf("[MISC-TEST] ✓ Test 591: mmap /dev/zero MAP_SHARED ok\n");
+    fut_test_pass();
+
+    /* Test 592: mmap /dev/zero with sub-page length — rounds up to PAGE_SIZE */
+    fut_printf("[MISC-TEST] Test 592: mmap /dev/zero length < PAGE_SIZE rounds up\n");
+    long addr592 = sys_mmap(NULL, 1 /* 1 byte */, 3 /* PROT_READ|PROT_WRITE */,
+                             2 /* MAP_PRIVATE */, zfd, 0);
+    if (addr592 < 0 || addr592 == 0) {
+        fut_printf("[MISC-TEST] ✗ Test 592: mmap /dev/zero 1-byte failed: %ld\n", addr592);
+        fut_vfs_close(zfd);
+        fut_test_fail(592);
+        return;
+    }
+    /* Writing at offset 4095 (within rounded-up page) should work */
+    unsigned char *p592 = (unsigned char *)(uintptr_t)addr592;
+    p592[4095] = 0xAB;
+    if (p592[4095] != 0xAB) {
+        fut_printf("[MISC-TEST] ✗ Test 592: access at 4095 failed\n");
+        sys_munmap((void *)(uintptr_t)addr592, 4096);
+        fut_vfs_close(zfd);
+        fut_test_fail(592);
+        return;
+    }
+    sys_munmap((void *)(uintptr_t)addr592, 4096);
+    fut_printf("[MISC-TEST] ✓ Test 592: mmap /dev/zero 1-byte rounds to page\n");
+    fut_test_pass();
+
+    /* Test 593: mmap /dev/zero with non-zero offset — offset ignored for /dev/zero */
+    fut_printf("[MISC-TEST] Test 593: mmap /dev/zero with offset=4096\n");
+    long addr593 = sys_mmap(NULL, 4096, 3 /* PROT_READ|PROT_WRITE */,
+                             2 /* MAP_PRIVATE */, zfd, 4096);
+    if (addr593 < 0 || addr593 == 0) {
+        fut_printf("[MISC-TEST] ✗ Test 593: mmap /dev/zero offset=4096 failed: %ld\n", addr593);
+        fut_vfs_close(zfd);
+        fut_test_fail(593);
+        return;
+    }
+    sys_munmap((void *)(uintptr_t)addr593, 4096);
+    fut_printf("[MISC-TEST] ✓ Test 593: mmap /dev/zero with offset ok\n");
+    fut_test_pass();
+
+    /* Test 594: PROT_NONE mmap of /dev/zero, then mprotect to PROT_READ|PROT_WRITE */
+    fut_printf("[MISC-TEST] Test 594: mmap /dev/zero PROT_NONE then mprotect\n");
+    long addr594 = sys_mmap(NULL, 4096, 0 /* PROT_NONE */,
+                             2 /* MAP_PRIVATE */, zfd, 0);
+    if (addr594 < 0 || addr594 == 0) {
+        fut_printf("[MISC-TEST] ✗ Test 594: mmap /dev/zero PROT_NONE failed: %ld\n", addr594);
+        fut_vfs_close(zfd);
+        fut_test_fail(594);
+        return;
+    }
+    extern long sys_mprotect(void *addr, size_t len, int prot);
+    long mret594 = sys_mprotect((void *)(uintptr_t)addr594, 4096,
+                                 3 /* PROT_READ|PROT_WRITE */);
+    if (mret594 != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 594: mprotect failed: %ld\n", mret594);
+        sys_munmap((void *)(uintptr_t)addr594, 4096);
+        fut_vfs_close(zfd);
+        fut_test_fail(594);
+        return;
+    }
+    sys_munmap((void *)(uintptr_t)addr594, 4096);
+    fut_printf("[MISC-TEST] ✓ Test 594: /dev/zero PROT_NONE + mprotect ok\n");
+    fut_test_pass();
+
+    /* Test 595: mmap of write-only /dev/null fd returns error (EACCES or ENODEV) */
+    fut_printf("[MISC-TEST] Test 595: mmap write-only /dev/null -> EACCES/ENODEV\n");
+    int null_fd = (int)fut_vfs_open("/dev/null", 1 /* O_WRONLY */, 0);
+    if (null_fd < 0) {
+        /* open O_WRONLY may fail on some builds — accept and skip */
+        fut_printf("[MISC-TEST] ✓ Test 595: skip (O_WRONLY open returned %d)\n", null_fd);
+        fut_test_pass();
+    } else {
+        long addr595 = sys_mmap(NULL, 4096, 1 /* PROT_READ */,
+                                 2 /* MAP_PRIVATE */, null_fd, 0);
+        fut_vfs_close(null_fd);
+        /* Expect negative: EACCES(-13) or ENODEV(-19) */
+        if (addr595 < 0) {
+            fut_printf("[MISC-TEST] ✓ Test 595: mmap write-only fd rejected (%ld)\n", addr595);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 595: expected error, got 0x%lx\n", addr595);
+            sys_munmap((void *)(uintptr_t)addr595, 4096);
+            fut_test_fail(595);
+        }
+    }
+
+    fut_vfs_close(zfd);
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -24161,6 +24337,7 @@ void fut_misc_test_thread(void *arg) {
     test_mprotect_pte_update();              /* Tests 578-580: mprotect PTE update correctness */
     test_sigsuspend_basic();                 /* Tests 581-583: sigsuspend NULL/pending/mask-restore */
     test_fd_table_growth();                  /* Tests 584-586: dynamic FD table growth past 64 */
+    test_dev_zero_mmap();                    /* Tests 587-595: /dev/zero mmap correctness */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -8,6 +8,7 @@
  */
 
 #include <kernel/fut_task.h>
+#include <kernel/fut_thread.h>
 #include <kernel/fut_memory.h>
 #include <kernel/uaccess.h>
 #include <kernel/errno.h>
@@ -47,6 +48,19 @@
 #define PR_SET_VMA          0x53564d41 /* Set VMA name */
 #define PR_GET_SECCOMP      21   /* Get current seccomp mode */
 #define PR_SET_SECCOMP      22   /* Set seccomp mode */
+#define PR_GET_TID_ADDRESS  50   /* Get pointer set by set_tid_address() */
+#define PR_GET_SPECULATION_CTRL 52 /* Get Spectre mitigation state */
+#define PR_SET_SPECULATION_CTRL 53 /* Set Spectre mitigation state */
+#define PR_SPEC_STORE_BYPASS     0 /* Spectre v4 store bypass (arg2 to GET/SET) */
+#define PR_SPEC_INDIRECT_BRANCH  1 /* Spectre v2 indirect branch (arg2) */
+#define PR_SPEC_L1D_FLUSH        2 /* L1D cache flush on context switch */
+/* Speculation values returned by PR_GET_SPECULATION_CTRL */
+#define PR_SPEC_NOT_AFFECTED     0
+#define PR_SPEC_PRCTL            (1UL << 0)
+#define PR_SPEC_ENABLE           (1UL << 1)
+#define PR_SPEC_DISABLE          (1UL << 2)
+#define PR_SPEC_FORCE_DISABLE    (1UL << 3)
+#define PR_SPEC_DISABLE_NOEXEC   (1UL << 4)
 
 /* Maximum valid signal number */
 #define PR_MAX_SIGNAL       64
@@ -251,6 +265,36 @@ long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
         if (arg2 == 0)
             return 0;
         return -ENOSYS;
+
+    case PR_GET_TID_ADDRESS: {
+        /* Return the address registered via set_tid_address() for this thread.
+         * gdb and thread-library diagnostics use this to find a thread's TID word. */
+        if (!arg2)
+            return -EFAULT;
+        fut_thread_t *thr = fut_thread_current();
+        void *tid_addr = thr ? (void *)thr->clear_child_tid : (void *)task->clear_child_tid;
+        uint64_t *out = (uint64_t *)arg2;
+#ifdef KERNEL_VIRTUAL_BASE
+        if ((uintptr_t)out >= KERNEL_VIRTUAL_BASE) {
+            *out = (uint64_t)(uintptr_t)tid_addr;
+            return 0;
+        }
+#endif
+        uint64_t val = (uint64_t)(uintptr_t)tid_addr;
+        if (fut_copy_to_user(out, &val, sizeof(val)) != 0)
+            return -EFAULT;
+        return 0;
+    }
+
+    case PR_GET_SPECULATION_CTRL:
+        /* Futura has no speculative-execution hardware vulnerabilities in emulation;
+         * report NOT_AFFECTED for all speculation types. */
+        (void)arg2;
+        return PR_SPEC_NOT_AFFECTED;
+
+    case PR_SET_SPECULATION_CTRL:
+        /* Silently accept — no real speculation mitigations needed. */
+        return 0;
 
     default:
         fut_printf("[PRCTL] prctl(option=%d) -> EINVAL (unsupported option)\n", option);

@@ -18684,6 +18684,53 @@ static void test_pidfd_poll(void) {
 }
 
 /* ============================================================
+ * Tests 412-414: prctl PR_GET_TID_ADDRESS, PR_GET/SET_SPECULATION_CTRL
+ * ============================================================ */
+static void test_prctl_tid_address_speculation(void) {
+    extern long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
+                          unsigned long arg4, unsigned long arg5);
+#define T412_PR_GET_TID_ADDRESS   50
+#define T412_PR_GET_SPECULATION   52
+#define T412_PR_SET_SPECULATION   53
+#define T412_PR_SPEC_STORE_BYPASS  0
+
+    /* Test 412: PR_GET_TID_ADDRESS — succeeds, writes current clear_child_tid */
+    fut_printf("[MISC-TEST] Test 412: prctl(PR_GET_TID_ADDRESS) returns tid address\n");
+    uint64_t tid_addr_out = 0xdeadbeef;
+    long r = sys_prctl(T412_PR_GET_TID_ADDRESS, (unsigned long)&tid_addr_out, 0, 0, 0);
+    if (r == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 412: PR_GET_TID_ADDRESS returned 0, addr=0x%llx\n",
+                   (unsigned long long)tid_addr_out);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 412: returned %ld (expected 0)\n", r);
+        fut_test_fail(412);
+    }
+
+    /* Test 413: PR_GET_SPECULATION_CTRL returns PR_SPEC_NOT_AFFECTED (0) */
+    fut_printf("[MISC-TEST] Test 413: prctl(PR_GET_SPECULATION_CTRL) -> 0 (not affected)\n");
+    r = sys_prctl(T412_PR_GET_SPECULATION, T412_PR_SPEC_STORE_BYPASS, 0, 0, 0);
+    if (r == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 413: PR_GET_SPECULATION_CTRL = PR_SPEC_NOT_AFFECTED\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 413: returned %ld (expected 0)\n", r);
+        fut_test_fail(413);
+    }
+
+    /* Test 414: PR_SET_SPECULATION_CTRL no-op returns 0 */
+    fut_printf("[MISC-TEST] Test 414: prctl(PR_SET_SPECULATION_CTRL) no-op -> 0\n");
+    r = sys_prctl(T412_PR_SET_SPECULATION, T412_PR_SPEC_STORE_BYPASS, 0, 0, 0);
+    if (r == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 414: PR_SET_SPECULATION_CTRL returned 0\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 414: returned %ld (expected 0)\n", r);
+        fut_test_fail(414);
+    }
+}
+
+/* ============================================================
  * Test 367: /proc/self/net/unix readable (same content as /proc/net/unix)
  * ============================================================ */
 static void test_proc_pid_net_unix(void) {
@@ -19283,6 +19330,7 @@ void fut_misc_test_thread(void *arg) {
     test_mqueue_waitq();                /* Tests 406-407: mqueue waitq: NONBLOCK EAGAIN, timeout ETIMEDOUT */
     test_faccessat2_empty_path();       /* Tests 408-409: faccessat2 AT_EMPTY_PATH on fd and EINVAL without flag */
     test_pidfd_poll();                  /* Tests 410-411: pidfd poll on live process: open+0-events */
+    test_prctl_tid_address_speculation(); /* Tests 412-414: PR_GET_TID_ADDRESS, SPECULATION_CTRL get/set */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

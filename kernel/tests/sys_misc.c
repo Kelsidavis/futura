@@ -28199,6 +28199,214 @@ static void test_futex_requeue_cmp_wake_op(void) {
     }
 }
 
+/* ============================================================
+ * Tests 775-778: epoll_ctl error paths
+ *
+ * Linux epoll_ctl ABI:
+ *   EPOLL_CTL_ADD on already-registered fd → EEXIST
+ *   EPOLL_CTL_MOD on fd not registered → ENOENT
+ *   EPOLL_CTL_DEL on fd not registered → ENOENT
+ *   EPOLL_CTL_ADD after DEL → 0 (re-registration succeeds)
+ * ============================================================ */
+static void test_epoll_ctl_errors(void) {
+    extern long sys_epoll_create1(int flags);
+    extern long sys_epoll_ctl(int epfd, int op, int fd, void *event);
+    extern long sys_eventfd2(unsigned int initval, int flags);
+
+    /* epoll_event: events(u32) + data(u64) — packed 12 bytes */
+    struct { uint32_t events; uint64_t data; } ev;
+
+    /* Test 775: EPOLL_CTL_ADD same fd twice → EEXIST */
+    fut_printf("[MISC-TEST] Test 775: epoll_ctl ADD twice → EEXIST\n");
+    long epfd = sys_epoll_create1(0);
+    long efd  = sys_eventfd2(0, 0);
+    if (epfd < 0 || efd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 775: setup failed epfd=%ld efd=%ld\n", epfd, efd);
+        if (epfd >= 0) fut_vfs_close((int)epfd);
+        if (efd  >= 0) fut_vfs_close((int)efd);
+        fut_test_fail(775);
+        goto t776;
+    }
+    ev.events = 0x001; /* EPOLLIN */
+    ev.data   = (uint64_t)(int)efd;
+    {
+        long r1 = sys_epoll_ctl((int)epfd, 1 /* ADD */, (int)efd, &ev);
+        long r2 = sys_epoll_ctl((int)epfd, 1 /* ADD */, (int)efd, &ev);
+        if (r1 != 0 || r2 != -EEXIST) {
+            fut_printf("[MISC-TEST] ✗ Test 775: first ADD=%ld (want 0) second ADD=%ld (want -EEXIST=%d)\n",
+                       r1, r2, -EEXIST);
+            fut_vfs_close((int)epfd); fut_vfs_close((int)efd);
+            fut_test_fail(775);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 775: epoll ADD×2 → 0 then EEXIST\n");
+            fut_test_pass();
+        }
+    }
+    fut_vfs_close((int)epfd);
+    fut_vfs_close((int)efd);
+
+t776:
+    /* Test 776: EPOLL_CTL_DEL on fd not in epoll → ENOENT (EPOLL_CTL_DEL=2) */
+    fut_printf("[MISC-TEST] Test 776: epoll_ctl DEL fd not registered → ENOENT\n");
+    epfd = sys_epoll_create1(0);
+    efd  = sys_eventfd2(0, 0);
+    if (epfd < 0 || efd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 776: setup failed epfd=%ld efd=%ld\n", epfd, efd);
+        if (epfd >= 0) fut_vfs_close((int)epfd);
+        if (efd  >= 0) fut_vfs_close((int)efd);
+        fut_test_fail(776);
+        goto t777;
+    }
+    {
+        long r = sys_epoll_ctl((int)epfd, 2 /* DEL */, (int)efd, NULL);
+        if (r != -ENOENT) {
+            fut_printf("[MISC-TEST] ✗ Test 776: DEL unregistered fd=%ld (want -ENOENT=%d)\n",
+                       r, -ENOENT);
+            fut_test_fail(776);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 776: epoll DEL unregistered → ENOENT\n");
+            fut_test_pass();
+        }
+    }
+    fut_vfs_close((int)epfd);
+    fut_vfs_close((int)efd);
+
+t777:
+    /* Test 777: EPOLL_CTL_MOD on fd not in epoll → ENOENT (EPOLL_CTL_MOD=3) */
+    fut_printf("[MISC-TEST] Test 777: epoll_ctl MOD fd not registered → ENOENT\n");
+    epfd = sys_epoll_create1(0);
+    efd  = sys_eventfd2(0, 0);
+    if (epfd < 0 || efd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 777: setup failed epfd=%ld efd=%ld\n", epfd, efd);
+        if (epfd >= 0) fut_vfs_close((int)epfd);
+        if (efd  >= 0) fut_vfs_close((int)efd);
+        fut_test_fail(777);
+        goto t778;
+    }
+    ev.events = 0x001; ev.data = (uint64_t)(int)efd;
+    {
+        long r = sys_epoll_ctl((int)epfd, 3 /* MOD */, (int)efd, &ev);
+        if (r != -ENOENT) {
+            fut_printf("[MISC-TEST] ✗ Test 777: MOD unregistered fd=%ld (want -ENOENT=%d)\n",
+                       r, -ENOENT);
+            fut_test_fail(777);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 777: epoll MOD unregistered → ENOENT\n");
+            fut_test_pass();
+        }
+    }
+    fut_vfs_close((int)epfd);
+    fut_vfs_close((int)efd);
+
+t778:
+    /* Test 778: EPOLL_CTL_DEL then re-ADD succeeds */
+    fut_printf("[MISC-TEST] Test 778: epoll_ctl ADD→DEL→ADD cycle\n");
+    epfd = sys_epoll_create1(0);
+    efd  = sys_eventfd2(0, 0);
+    if (epfd < 0 || efd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 778: setup failed epfd=%ld efd=%ld\n", epfd, efd);
+        if (epfd >= 0) fut_vfs_close((int)epfd);
+        if (efd  >= 0) fut_vfs_close((int)efd);
+        fut_test_fail(778);
+        return;
+    }
+    ev.events = 0x001; ev.data = (uint64_t)(int)efd;
+    {
+        long r1 = sys_epoll_ctl((int)epfd, 1 /* ADD */, (int)efd, &ev); /* add */
+        long r2 = sys_epoll_ctl((int)epfd, 2 /* DEL */, (int)efd, NULL); /* del */
+        long r3 = sys_epoll_ctl((int)epfd, 1 /* ADD */, (int)efd, &ev); /* re-add */
+        if (r1 != 0 || r2 != 0 || r3 != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 778: ADD=%ld DEL=%ld re-ADD=%ld (all want 0)\n",
+                       r1, r2, r3);
+            fut_test_fail(778);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 778: epoll ADD→DEL→ADD cycle all succeeded\n");
+            fut_test_pass();
+        }
+    }
+    fut_vfs_close((int)epfd);
+    fut_vfs_close((int)efd);
+}
+
+/* ============================================================
+ * Test 779: POSIX timer fires and delivers SIGALRM to pending_signals
+ *
+ * Arms a 10ms POSIX timer (CLOCK_MONOTONIC, SIGALRM delivery).
+ * SIGALRM is blocked so the signal accumulates in pending_signals
+ * without the default terminate action running.  After sleeping 50ms
+ * the pending bit must be set, confirming end-to-end timer→signal delivery.
+ * ============================================================ */
+static void test_posix_timer_signal_delivery(void) {
+    fut_printf("[MISC-TEST] Test 779: POSIX timer fires → SIGALRM pending\n");
+    extern long sys_timer_create(int clockid, struct sigevent *sevp, timer_t *timerid);
+    extern long sys_timer_settime(timer_t timerid, int flags,
+                                  const struct itimerspec *new_value,
+                                  struct itimerspec *old_value);
+    extern long sys_timer_delete(int timerid);
+    extern long sys_sigprocmask(int how, const sigset_t *set, sigset_t *oldset);
+    extern long sys_nanosleep(const fut_timespec_t *req, fut_timespec_t *rem);
+
+#define SIGALRM_NR 14
+    /* Block ALL signals so nanosleep won't EINTR and SIG_DFL won't terminate */
+    sigset_t full_mask779, saved_mask779;
+    full_mask779.__mask = ~0UL;
+    long rm = sys_sigprocmask(2 /* SIG_SETMASK */, &full_mask779, &saved_mask779);
+    if (rm != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 779: sigprocmask block failed: %ld\n", rm);
+        fut_test_fail(779); return;
+    }
+
+    /* Clear any pre-existing SIGALRM pending bit from prior tests */
+    fut_task_t *task779 = fut_task_current();
+    uint64_t alrm_bit = (1ULL << (SIGALRM_NR - 1));
+    __atomic_and_fetch(&task779->pending_signals, ~alrm_bit, __ATOMIC_RELEASE);
+
+    /* Create POSIX timer: CLOCK_MONOTONIC, NULL sevp → SIGALRM */
+    timer_t tid779 = 0;
+    long rc = sys_timer_create(1 /* CLOCK_MONOTONIC */, NULL, &tid779);
+    if (rc != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 779: timer_create failed: %ld\n", rc);
+        sys_sigprocmask(2, &saved_mask779, NULL);
+        fut_test_fail(779); return;
+    }
+
+    /* Arm: 10ms one-shot (1 tick at 100Hz) */
+    struct itimerspec its779;
+    its779.it_value.tv_sec    = 0;
+    its779.it_value.tv_nsec   = 10000000;  /* 10ms */
+    its779.it_interval.tv_sec = 0;
+    its779.it_interval.tv_nsec = 0;
+    rc = sys_timer_settime(tid779, 0, &its779, NULL);
+    if (rc != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 779: timer_settime failed: %ld\n", rc);
+        sys_timer_delete((int)tid779);
+        sys_sigprocmask(2, &saved_mask779, NULL);
+        fut_test_fail(779); return;
+    }
+
+    /* Sleep 50ms (5 ticks) — all signals blocked, so nanosleep won't EINTR */
+    fut_timespec_t sleep779 = { .tv_sec = 0, .tv_nsec = 50000000 };
+    sys_nanosleep(&sleep779, NULL);
+
+    /* Check pending_signals for SIGALRM */
+    uint64_t pending779 = __atomic_load_n(&task779->pending_signals, __ATOMIC_ACQUIRE);
+
+    /* Cleanup: delete timer, clear SIGALRM, restore mask */
+    sys_timer_delete((int)tid779);
+    __atomic_and_fetch(&task779->pending_signals, ~alrm_bit, __ATOMIC_RELEASE);
+    sys_sigprocmask(2, &saved_mask779, NULL);
+
+    if (!(pending779 & alrm_bit)) {
+        fut_printf("[MISC-TEST] ✗ Test 779: SIGALRM not pending after timer fire "
+                   "(pending=0x%llx)\n", (unsigned long long)pending779);
+        fut_test_fail(779); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 779: POSIX timer fired → SIGALRM pending (0x%llx)\n",
+               (unsigned long long)(pending779 & alrm_bit));
+    fut_test_pass();
+#undef SIGALRM_NR
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -28733,6 +28941,8 @@ void fut_misc_test_thread(void *arg) {
     test_timerfd_abstime_realtime();         /* Test 768: timerfd CLOCK_REALTIME TFD_TIMER_ABSTIME fires */
     test_ppoll_sigmask_restore();            /* Test 769: ppoll() installs sigmask, restores it after return */
     test_futex_requeue_cmp_wake_op();       /* Tests 770-774: FUTEX_REQUEUE/CMP_REQUEUE/WAKE_OP */
+    test_epoll_ctl_errors();               /* Tests 775-778: epoll_ctl EEXIST/ENOENT/re-ADD */
+    test_posix_timer_signal_delivery();    /* Test 779: POSIX timer fires → SIGALRM pending */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

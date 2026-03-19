@@ -18684,6 +18684,47 @@ static void test_pidfd_poll(void) {
 }
 
 /* ============================================================
+ * Tests 415-416: madvise MADV_POPULATE_READ/WRITE (Linux 5.14+)
+ * ============================================================ */
+static void test_madvise_populate(void) {
+    extern long sys_madvise(void *addr, size_t length, int advice);
+    extern long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long off);
+    extern long sys_munmap(void *addr, size_t len);
+#define MADV_POPULATE_READ_VAL  22
+#define MADV_POPULATE_WRITE_VAL 23
+
+    void *p = (void *)sys_mmap(NULL, 4096, TEST_PROT_RW,
+                               TEST_MAP_PRIVATE | TEST_MAP_ANONYMOUS, -1, 0);
+    if (!p || (long)(uintptr_t)p < 0) {
+        fut_printf("[MISC-TEST] ✗ Tests 415-416: mmap failed\n");
+        fut_test_fail(415); fut_test_fail(416); return;
+    }
+
+    /* Test 415: MADV_POPULATE_READ accepted */
+    fut_printf("[MISC-TEST] Test 415: madvise(MADV_POPULATE_READ) -> 0\n");
+    long r = sys_madvise(p, 4096, MADV_POPULATE_READ_VAL);
+    if (r == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 415: MADV_POPULATE_READ returned 0\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 415: got %ld (expected 0)\n", r);
+        fut_test_fail(415);
+    }
+
+    /* Test 416: MADV_POPULATE_WRITE accepted */
+    fut_printf("[MISC-TEST] Test 416: madvise(MADV_POPULATE_WRITE) -> 0\n");
+    r = sys_madvise(p, 4096, MADV_POPULATE_WRITE_VAL);
+    sys_munmap(p, 4096);
+    if (r == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 416: MADV_POPULATE_WRITE returned 0\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 416: got %ld (expected 0)\n", r);
+        fut_test_fail(416);
+    }
+}
+
+/* ============================================================
  * Tests 412-414: prctl PR_GET_TID_ADDRESS, PR_GET/SET_SPECULATION_CTRL
  * ============================================================ */
 static void test_prctl_tid_address_speculation(void) {
@@ -19331,6 +19372,7 @@ void fut_misc_test_thread(void *arg) {
     test_faccessat2_empty_path();       /* Tests 408-409: faccessat2 AT_EMPTY_PATH on fd and EINVAL without flag */
     test_pidfd_poll();                  /* Tests 410-411: pidfd poll on live process: open+0-events */
     test_prctl_tid_address_speculation(); /* Tests 412-414: PR_GET_TID_ADDRESS, SPECULATION_CTRL get/set */
+    test_madvise_populate();              /* Tests 415-416: MADV_POPULATE_READ/WRITE accepted (Linux 5.14+) */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

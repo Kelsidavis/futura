@@ -152,6 +152,10 @@ long sys_madvise(void *addr, size_t length, int advice) {
     case 19:                /* MADV_KEEPONFORK: keep on fork (Linux 4.14+) */
     case 20:                /* MADV_COLD: deactivate pages (Linux 5.4+) */
     case 21:                /* MADV_PAGEOUT: reclaim pages now (Linux 5.4+) */
+    case 22:                /* MADV_POPULATE_READ: pre-fault pages read-only (Linux 5.14+) */
+    case 23:                /* MADV_POPULATE_WRITE: pre-fault pages read-write (Linux 5.14+) */
+    case 24:                /* MADV_DONTNEED_LOCKED: DONTNEED even if mlock'd (Linux 5.18+) */
+    case 25:                /* MADV_COLLAPSE: synchronous hugepage collapse (Linux 6.1+) */
         return 0;
     default:
         return -EINVAL;

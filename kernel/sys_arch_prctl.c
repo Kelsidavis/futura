@@ -25,6 +25,24 @@
 #define ARCH_GET_FS  0x1003
 #define ARCH_GET_GS  0x1004
 
+/* CPU feature enumeration control (Linux 4.12+) */
+#define ARCH_GET_CPUID  0x1011  /* Returns 1 if CPUID instruction is enabled */
+#define ARCH_SET_CPUID  0x1012  /* Enable/disable CPUID instruction (arg=0/1) */
+
+/* Extended CPU state component control (Linux 5.16+) */
+#define ARCH_GET_XCOMP_SUPP        0x1021  /* Get supported xstate component mask */
+#define ARCH_GET_XCOMP_PERM        0x1022  /* Get permitted xstate component mask */
+#define ARCH_REQ_XCOMP_PERM        0x1023  /* Request permission to use xstate component */
+#define ARCH_GET_XCOMP_GUEST_PERM  0x1024  /* Get guest xstate permission mask */
+#define ARCH_REQ_XCOMP_GUEST_PERM  0x1025  /* Request guest xstate permission */
+
+/* Supported xstate components (XFEATURE masks).
+ * Futura emulates under QEMU with at minimum x87, SSE, AVX. */
+#define XFEATURE_MASK_FP   (1ULL << 0)   /* x87 FPU */
+#define XFEATURE_MASK_SSE  (1ULL << 1)   /* SSE/XMM */
+#define XFEATURE_MASK_AVX  (1ULL << 2)   /* AVX/YMM */
+#define XFEATURE_SUPP      (XFEATURE_MASK_FP | XFEATURE_MASK_SSE | XFEATURE_MASK_AVX)
+
 /**
  * sys_arch_prctl - Set/get architecture-specific thread state
  *
@@ -89,6 +107,54 @@ long sys_arch_prctl(int code, unsigned long addr) {
         }
         return 0;
     }
+
+    case ARCH_GET_CPUID:
+        /* In Futura (emulated), CPUID is always available */
+        return 1;
+
+    case ARCH_SET_CPUID:
+        /* Accept enable/disable request; CPUID always available in emulation */
+        if (addr != 0 && addr != 1)
+            return -EINVAL;
+        return 0;
+
+    case ARCH_GET_XCOMP_SUPP: {
+        /* Return supported extended state component mask */
+        uint64_t *uptr = (uint64_t *)addr;
+        if (!uptr) return -EFAULT;
+        uint64_t val = XFEATURE_SUPP;
+        if (fut_copy_to_user(uptr, &val, sizeof(val)) != 0)
+            *uptr = val;
+        return 0;
+    }
+
+    case ARCH_GET_XCOMP_PERM: {
+        /* Return permitted extended state component mask (same as supported) */
+        uint64_t *uptr = (uint64_t *)addr;
+        if (!uptr) return -EFAULT;
+        uint64_t val = XFEATURE_SUPP;
+        if (fut_copy_to_user(uptr, &val, sizeof(val)) != 0)
+            *uptr = val;
+        return 0;
+    }
+
+    case ARCH_REQ_XCOMP_PERM:
+        /* Grant permission to use any supported xstate component */
+        return 0;
+
+    case ARCH_GET_XCOMP_GUEST_PERM: {
+        /* Return 0 — no guest VM support */
+        uint64_t *uptr = (uint64_t *)addr;
+        if (!uptr) return -EFAULT;
+        uint64_t val = 0;
+        if (fut_copy_to_user(uptr, &val, sizeof(val)) != 0)
+            *uptr = val;
+        return 0;
+    }
+
+    case ARCH_REQ_XCOMP_GUEST_PERM:
+        /* No guest VM support — return EINVAL per Linux behavior */
+        return -EINVAL;
 
     default:
         return -EINVAL;

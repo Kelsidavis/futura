@@ -18705,6 +18705,106 @@ static void test_close_range_unshare(void) {
 }
 
 /* ============================================================
+ * Tests 422-427: arch_prctl extended opcodes (x86_64)
+ * ============================================================ */
+static void test_arch_prctl_extended(void) {
+#ifdef __x86_64__
+    extern long sys_arch_prctl(int code, unsigned long addr);
+#define ARCH_SET_FS_VAL       0x1002
+#define ARCH_GET_FS_VAL       0x1003
+#define ARCH_GET_CPUID_VAL    0x1011
+#define ARCH_SET_CPUID_VAL    0x1012
+#define ARCH_GET_XCOMP_SUPP_VAL 0x1021
+#define ARCH_GET_XCOMP_PERM_VAL 0x1022
+#define ARCH_REQ_XCOMP_PERM_VAL 0x1023
+
+    long r;
+    uint64_t val;
+
+    /* Test 422: ARCH_SET_FS + ARCH_GET_FS round-trip */
+    fut_printf("[MISC-TEST] Test 422: arch_prctl ARCH_SET_FS/ARCH_GET_FS round-trip\n");
+    uint64_t sentinel = 0xDEADBEEF12345678ULL;
+    r = sys_arch_prctl(ARCH_SET_FS_VAL, (unsigned long)sentinel);
+    val = 0;
+    long r2 = sys_arch_prctl(ARCH_GET_FS_VAL, (unsigned long)&val);
+    if (r == 0 && r2 == 0 && val == sentinel) {
+        fut_printf("[MISC-TEST] ✓ Test 422: ARCH_SET_FS/GET_FS round-trip OK\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 422: set=%ld get=%ld val=0x%llx (expected 0x%llx)\n",
+                   r, r2, (unsigned long long)val, (unsigned long long)sentinel);
+        fut_test_fail(422);
+    }
+
+    /* Test 423: ARCH_GET_CPUID returns 1 (CPUID enabled in emulation) */
+    fut_printf("[MISC-TEST] Test 423: arch_prctl ARCH_GET_CPUID -> 1\n");
+    r = sys_arch_prctl(ARCH_GET_CPUID_VAL, 0);
+    if (r == 1) {
+        fut_printf("[MISC-TEST] ✓ Test 423: ARCH_GET_CPUID = 1\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 423: got %ld (expected 1)\n", r);
+        fut_test_fail(423);
+    }
+
+    /* Test 424: ARCH_SET_CPUID returns 0 */
+    fut_printf("[MISC-TEST] Test 424: arch_prctl ARCH_SET_CPUID(1) -> 0\n");
+    r = sys_arch_prctl(ARCH_SET_CPUID_VAL, 1);
+    if (r == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 424: ARCH_SET_CPUID accepted\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 424: got %ld (expected 0)\n", r);
+        fut_test_fail(424);
+    }
+
+    /* Test 425: ARCH_GET_XCOMP_SUPP returns non-zero mask */
+    fut_printf("[MISC-TEST] Test 425: arch_prctl ARCH_GET_XCOMP_SUPP\n");
+    val = 0;
+    r = sys_arch_prctl(ARCH_GET_XCOMP_SUPP_VAL, (unsigned long)&val);
+    if (r == 0 && val != 0) {
+        fut_printf("[MISC-TEST] ✓ Test 425: ARCH_GET_XCOMP_SUPP = 0x%llx\n",
+                   (unsigned long long)val);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 425: r=%ld val=0x%llx (expected r=0, val!=0)\n",
+                   r, (unsigned long long)val);
+        fut_test_fail(425);
+    }
+
+    /* Test 426: ARCH_GET_XCOMP_PERM returns non-zero mask */
+    fut_printf("[MISC-TEST] Test 426: arch_prctl ARCH_GET_XCOMP_PERM\n");
+    val = 0;
+    r = sys_arch_prctl(ARCH_GET_XCOMP_PERM_VAL, (unsigned long)&val);
+    if (r == 0 && val != 0) {
+        fut_printf("[MISC-TEST] ✓ Test 426: ARCH_GET_XCOMP_PERM = 0x%llx\n",
+                   (unsigned long long)val);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 426: r=%ld val=0x%llx\n", r, (unsigned long long)val);
+        fut_test_fail(426);
+    }
+
+    /* Test 427: ARCH_REQ_XCOMP_PERM returns 0 */
+    fut_printf("[MISC-TEST] Test 427: arch_prctl ARCH_REQ_XCOMP_PERM(AVX=2) -> 0\n");
+    r = sys_arch_prctl(ARCH_REQ_XCOMP_PERM_VAL, 2 /* XFEATURE_YMM */);
+    if (r == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 427: ARCH_REQ_XCOMP_PERM accepted\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 427: got %ld (expected 0)\n", r);
+        fut_test_fail(427);
+    }
+#else
+    /* ARM64: arch_prctl does not exist; skip all 6 tests */
+    for (int i = 422; i <= 427; i++) {
+        fut_printf("[MISC-TEST] ✓ Test %d: arch_prctl extended (N/A on ARM64, SKIP)\n", i);
+        fut_test_pass();
+    }
+#endif
+}
+
+/* ============================================================
  * Tests 418-421: PR_CAP_AMBIENT operations (Linux 4.3+)
  * ============================================================ */
 static void test_prctl_cap_ambient(void) {
@@ -19459,6 +19559,7 @@ void fut_misc_test_thread(void *arg) {
     test_madvise_populate();              /* Tests 415-416: MADV_POPULATE_READ/WRITE accepted (Linux 5.14+) */
     test_close_range_unshare();           /* Test 417: close_range CLOSE_RANGE_UNSHARE accepted */
     test_prctl_cap_ambient();             /* Tests 418-421: PR_CAP_AMBIENT IS_SET/RAISE/LOWER/CLEAR_ALL */
+    test_arch_prctl_extended();           /* Tests 422-427: arch_prctl CPUID/XCOMP extended opcodes */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

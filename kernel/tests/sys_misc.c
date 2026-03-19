@@ -27797,6 +27797,310 @@ static void test_set_credentials(void) {
     }
 }
 
+/* ============================================================
+ * Tests 766-769: timerfd TFD_TIMER_ABSTIME and ppoll sigmask
+ * ============================================================ */
+
+/* itimerspec layout used by timerfd tests */
+struct test_itimerspec {
+    struct { int64_t tv_sec; long tv_nsec; } it_interval;
+    struct { int64_t tv_sec; long tv_nsec; } it_value;
+};
+
+/*
+ * Test 766: timerfd_settime(TFD_TIMER_ABSTIME, past absolute time) fires ASAP.
+ *
+ * Setting an absolute time in the past (tv_sec=0, tv_nsec=0 is epoch, always
+ * past) must result in the timerfd becoming readable within 1 timer tick (10ms).
+ * We confirm with poll(timeout=200ms) → POLLIN.
+ */
+static void test_timerfd_abstime_past(void) {
+    fut_printf("[MISC-TEST] Test 766: timerfd TFD_TIMER_ABSTIME past → fires ASAP\n");
+
+#define TFD_TIMER_ABSTIME_TEST 1
+
+    long tfd = sys_timerfd_create(1 /* CLOCK_MONOTONIC */, 0);
+    if (tfd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 766: timerfd_create: %ld\n", tfd);
+        fut_test_fail(766);
+        return;
+    }
+
+    /* Absolute time = {0, 1ns} — epoch+1ns, always in the past for CLOCK_MONOTONIC.
+     * Note: {0,0} disarms the timer per POSIX; must use a non-zero it_value. */
+    struct test_itimerspec its = {
+        .it_interval = { 0, 0 },
+        .it_value    = { 0, 1 }   /* 1 nanosecond past epoch — definitely in the past */
+    };
+    long ret = sys_timerfd_settime((int)tfd, TFD_TIMER_ABSTIME_TEST, &its, NULL);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 766: timerfd_settime(ABSTIME) returned %ld\n", ret);
+        fut_vfs_close((int)tfd);
+        fut_test_fail(766);
+        return;
+    }
+
+    /* Block all signals during poll to prevent EINTR from pending test signals */
+    extern long sys_sigprocmask(int how, const sigset_t *set, sigset_t *oldset);
+    sigset_t full_mask, saved_mask;
+    full_mask.__mask = ~0UL;
+    sys_sigprocmask(2 /* SIG_SETMASK */, &full_mask, &saved_mask);
+
+    /* poll with 200ms timeout — should fire after ≤1 tick (10ms) */
+    struct pollfd pfd = { .fd = (int)tfd, .events = 0x001 /* POLLIN */, .revents = 0 };
+    extern long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout);
+    long n = sys_poll(&pfd, 1, 200);
+
+    sys_sigprocmask(2, &saved_mask, NULL);  /* restore */
+
+    if (n < 1 || !(pfd.revents & 0x001)) {
+        fut_printf("[MISC-TEST] ✗ Test 766: poll returned %ld revents=0x%x (expected POLLIN)\n",
+                   n, pfd.revents);
+        fut_vfs_close((int)tfd);
+        fut_test_fail(766);
+        return;
+    }
+
+    /* Read confirms expiration count ≥ 1 */
+    uint64_t exp = 0;
+    ssize_t nr = fut_vfs_read((int)tfd, &exp, sizeof(exp));
+    fut_vfs_close((int)tfd);
+    if (nr != 8 || exp < 1) {
+        fut_printf("[MISC-TEST] ✗ Test 766: timerfd read nr=%zd exp=%llu\n",
+                   nr, (unsigned long long)exp);
+        fut_test_fail(766);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ Test 766: TFD_TIMER_ABSTIME past → fired, exp=%llu\n",
+               (unsigned long long)exp);
+    fut_test_pass();
+}
+
+/*
+ * Test 767: timerfd_settime with it_value={0,0} disarms a running timer.
+ *
+ * Arm a timer for 5 seconds, then immediately disarm it by calling
+ * timerfd_settime with it_value={0,0}.  A subsequent poll(timeout=0)
+ * must return 0 events and timerfd_gettime must report it_value={0,0}.
+ */
+static void test_timerfd_disarm(void) {
+    fut_printf("[MISC-TEST] Test 767: timerfd_settime({0,0}) disarms timer\n");
+
+    long tfd = sys_timerfd_create(1 /* CLOCK_MONOTONIC */, 0);
+    if (tfd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 767: timerfd_create: %ld\n", tfd);
+        fut_test_fail(767);
+        return;
+    }
+
+    /* Arm for 5 seconds — far future so it won't fire */
+    struct test_itimerspec arm = {
+        .it_interval = { 0, 0 },
+        .it_value    = { 5, 0 }
+    };
+    long ret = sys_timerfd_settime((int)tfd, 0, &arm, NULL);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 767: arm returned %ld\n", ret);
+        fut_vfs_close((int)tfd);
+        fut_test_fail(767);
+        return;
+    }
+
+    /* Disarm: it_value = {0, 0} */
+    struct test_itimerspec disarm = { .it_interval = { 0, 0 }, .it_value = { 0, 0 } };
+    ret = sys_timerfd_settime((int)tfd, 0, &disarm, NULL);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 767: disarm returned %ld\n", ret);
+        fut_vfs_close((int)tfd);
+        fut_test_fail(767);
+        return;
+    }
+
+    /* poll(timeout=0): disarmed timer must not be readable */
+    struct pollfd pfd = { .fd = (int)tfd, .events = 0x001, .revents = 0 };
+    extern long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout);
+    long n = sys_poll(&pfd, 1, 0);
+    if (n != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 767: poll after disarm returned %ld (want 0)\n", n);
+        fut_vfs_close((int)tfd);
+        fut_test_fail(767);
+        return;
+    }
+
+    /* timerfd_gettime must report it_value = {0, 0} */
+    struct test_itimerspec cur = {0};
+    ret = sys_timerfd_gettime((int)tfd, &cur);
+    fut_vfs_close((int)tfd);
+    if (ret != 0 || cur.it_value.tv_sec != 0 || cur.it_value.tv_nsec != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 767: timerfd_gettime after disarm: ret=%ld val={%lld,%ld}\n",
+                   ret, (long long)cur.it_value.tv_sec, cur.it_value.tv_nsec);
+        fut_test_fail(767);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ Test 767: timerfd disarmed, poll=0, gettime val=0\n");
+    fut_test_pass();
+}
+
+/*
+ * Test 768: timerfd CLOCK_REALTIME + TFD_TIMER_ABSTIME fires correctly.
+ *
+ * Get current CLOCK_REALTIME, add 10ms, arm a CLOCK_REALTIME timerfd with
+ * that absolute deadline.  poll(200ms) must see POLLIN.
+ */
+static void test_timerfd_abstime_realtime(void) {
+    fut_printf("[MISC-TEST] Test 768: timerfd CLOCK_REALTIME TFD_TIMER_ABSTIME fires\n");
+
+    long tfd = sys_timerfd_create(0 /* CLOCK_REALTIME */, 0);
+    if (tfd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 768: timerfd_create(CLOCK_REALTIME): %ld\n", tfd);
+        fut_test_fail(768);
+        return;
+    }
+
+    /* Get current CLOCK_REALTIME */
+    fut_timespec_t now = {0};
+    long r = sys_clock_gettime(0 /* CLOCK_REALTIME */, &now);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 768: clock_gettime(REALTIME): %ld\n", r);
+        fut_vfs_close((int)tfd);
+        fut_test_fail(768);
+        return;
+    }
+
+    /* Deadline = now + 10ms */
+    long nsec = now.tv_nsec + 10000000L;
+    long sec  = now.tv_sec;
+    if (nsec >= 1000000000L) { nsec -= 1000000000L; sec++; }
+
+    struct test_itimerspec its = {
+        .it_interval = { 0, 0 },
+        .it_value    = { sec, nsec }
+    };
+    long ret = sys_timerfd_settime((int)tfd, TFD_TIMER_ABSTIME_TEST, &its, NULL);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 768: timerfd_settime(REALTIME,ABSTIME): %ld\n", ret);
+        fut_vfs_close((int)tfd);
+        fut_test_fail(768);
+        return;
+    }
+
+    /* Block all signals during poll to prevent EINTR from pending test signals */
+    extern long sys_sigprocmask(int how, const sigset_t *set, sigset_t *oldset);
+    sigset_t full_mask768, saved_mask768;
+    full_mask768.__mask = ~0UL;
+    sys_sigprocmask(2 /* SIG_SETMASK */, &full_mask768, &saved_mask768);
+
+    /* poll(200ms) — timer fires within 10ms after the deadline */
+    struct pollfd pfd = { .fd = (int)tfd, .events = 0x001, .revents = 0 };
+    extern long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout);
+    long n = sys_poll(&pfd, 1, 200);
+
+    sys_sigprocmask(2, &saved_mask768, NULL);  /* restore */
+
+    if (n < 1 || !(pfd.revents & 0x001)) {
+        fut_printf("[MISC-TEST] ✗ Test 768: poll returned %ld revents=0x%x\n", n, pfd.revents);
+        fut_vfs_close((int)tfd);
+        fut_test_fail(768);
+        return;
+    }
+
+    uint64_t exp = 0;
+    ssize_t nr = fut_vfs_read((int)tfd, &exp, sizeof(exp));
+    fut_vfs_close((int)tfd);
+    if (nr != 8 || exp < 1) {
+        fut_printf("[MISC-TEST] ✗ Test 768: timerfd read nr=%zd exp=%llu\n",
+                   nr, (unsigned long long)exp);
+        fut_test_fail(768);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ Test 768: CLOCK_REALTIME TFD_TIMER_ABSTIME fired, exp=%llu\n",
+               (unsigned long long)exp);
+    fut_test_pass();
+}
+
+/*
+ * Test 769: ppoll() atomically installs and restores the signal mask.
+ *
+ * Verifies that:
+ *   1. ppoll() accepts a non-NULL sigmask and applies it during the call.
+ *   2. The signal mask is restored after ppoll() returns.
+ *   3. ppoll() with a ready eventfd returns immediately with 1 event.
+ *
+ * The test does NOT rely on signal delivery interrupting the poll; it only
+ * checks the mask save/restore semantics via sigprocmask round-trips.
+ */
+static void test_ppoll_sigmask_restore(void) {
+    fut_printf("[MISC-TEST] Test 769: ppoll() sigmask install and restore\n");
+
+    extern long sys_sigprocmask(int how, const sigset_t *set, sigset_t *oldset);
+    extern long sys_ppoll(void *fds, unsigned int nfds, void *tmo_p, const void *sigmask);
+    extern long sys_eventfd2(unsigned int initval, int flags);
+
+    /* Snapshot the current signal mask */
+    sigset_t initial_mask = {0};
+    long r = sys_sigprocmask(0 /* SIG_BLOCK */, NULL, &initial_mask);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 769: sigprocmask(get) returned %ld\n", r);
+        fut_test_fail(769);
+        return;
+    }
+
+    /* Create a ready eventfd so ppoll can return without blocking */
+    long efd = sys_eventfd2(1, 0);
+    if (efd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 769: eventfd2 returned %ld\n", efd);
+        fut_test_fail(769);
+        return;
+    }
+
+    /* Build a sigmask that blocks SIGUSR2 (bit 11, signal 12) */
+    sigset_t ppoll_mask = {0};
+    ppoll_mask.__mask = (1UL << (12 - 1));  /* block SIGUSR2 */
+
+    struct pollfd pfd = { .fd = (int)efd, .events = 0x001 /* POLLIN */, .revents = 0 };
+    struct { int64_t tv_sec; long tv_nsec; } ts = { 0, 50000000L }; /* 50ms */
+
+    long n = sys_ppoll(&pfd, 1, &ts, &ppoll_mask);
+
+    fut_vfs_close((int)efd);
+
+    /* ppoll must return 1 event (eventfd was ready) */
+    if (n != 1 || !(pfd.revents & 0x001)) {
+        fut_printf("[MISC-TEST] ✗ Test 769: ppoll returned %ld revents=0x%x (want 1 + POLLIN)\n",
+                   n, pfd.revents);
+        /* Restore original mask before failing */
+        sys_sigprocmask(2 /* SIG_SETMASK */, &initial_mask, NULL);
+        fut_test_fail(769);
+        return;
+    }
+
+    /* Signal mask must be restored to initial_mask after ppoll */
+    sigset_t after_mask = {0};
+    r = sys_sigprocmask(0 /* SIG_BLOCK */, NULL, &after_mask);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 769: sigprocmask(post-ppoll) returned %ld\n", r);
+        fut_test_fail(769);
+        return;
+    }
+
+    /* Compare signal masks */
+    if (after_mask.__mask != initial_mask.__mask) {
+        fut_printf("[MISC-TEST] ✗ Test 769: mask not restored: after=0x%lx initial=0x%lx\n",
+                   (unsigned long)after_mask.__mask,
+                   (unsigned long)initial_mask.__mask);
+        /* Restore explicitly before failing */
+        sys_sigprocmask(2, &initial_mask, NULL);
+        fut_test_fail(769);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ Test 769: ppoll(sigmask): returned %ld event, mask restored\n", n);
+    fut_test_pass();
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -28326,6 +28630,10 @@ void fut_misc_test_thread(void *arg) {
     test_fstat_special_fds();                /* Tests 754-757: fstat st_mode: pipe→S_IFIFO, sock→S_IFSOCK, efd→S_IFCHR, tfd→S_IFREG */
     test_fstat_signalfd_fstatat_empty();     /* Tests 758-760: signalfd fstat S_IFREG; fstatat AT_EMPTY_PATH pipe+socket */
     test_memfd_sealing();                    /* Tests 761-765: memfd sealing: EPERM w/o MFD_ALLOW_SEALING; F_SEAL_WRITE/SEAL/SHRINK/GROW enforcement */
+    test_timerfd_abstime_past();             /* Test 766: timerfd TFD_TIMER_ABSTIME past time → fires ASAP */
+    test_timerfd_disarm();                   /* Test 767: timerfd_settime({0,0}) disarms running timer */
+    test_timerfd_abstime_realtime();         /* Test 768: timerfd CLOCK_REALTIME TFD_TIMER_ABSTIME fires */
+    test_ppoll_sigmask_restore();            /* Test 769: ppoll() installs sigmask, restores it after return */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

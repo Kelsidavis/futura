@@ -35901,6 +35901,139 @@ static void test_mremap_dontunmap_and_fdinfo(void) {
     }
 }
 
+/* ============================================================
+ * Tests 1089-1092: /proc/self/fd/<n> symlink targets for anonymous fds
+ *   Test 1089: /proc/self/fd/<n> for socket → "socket:[ino]"
+ *   Test 1090: /proc/self/fd/<n> for timerfd → "anon_inode:[timerfd]"
+ *   Test 1091: /proc/self/fd/<n> for signalfd → "anon_inode:[signalfd]"
+ *   Test 1092: /proc/self/fd/<n> for eventfd → "anon_inode:[eventfd]"
+ * ============================================================ */
+static int buf_contains(const char *buf, long n, const char *needle, long nlen) {
+    for (long j = 0; j + nlen <= n; j++) {
+        if (__builtin_memcmp(buf + j, needle, (size_t)nlen) == 0)
+            return 1;
+    }
+    return 0;
+}
+
+static void test_proc_fd_anon_symlinks(void) {
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_timerfd_create(int clockid, int flags);
+    extern long sys_signalfd4(int ufd, const void *mask, size_t sizemask, int flags);
+    extern long sys_eventfd2(unsigned int initval, int flags);
+    extern long sys_readlink(const char *path, char *buf, size_t bufsiz);
+    extern long sys_close(int fd);
+
+    /* Helper: build /proc/self/fd/<n> and readlink it */
+    char fdpath[64];
+    char target[128];
+
+#define BUILD_FD_PATH(fdnum) do { \
+    fdpath[0]='/'; fdpath[1]='p'; fdpath[2]='r'; fdpath[3]='o'; fdpath[4]='c'; \
+    fdpath[5]='/'; fdpath[6]='s'; fdpath[7]='e'; fdpath[8]='l'; fdpath[9]='f'; \
+    fdpath[10]='/'; fdpath[11]='f'; fdpath[12]='d'; fdpath[13]='/'; \
+    int _n = (int)(fdnum), _i = 14; \
+    if (_n >= 100) fdpath[_i++] = (char)('0' + _n/100); \
+    if (_n >= 10)  fdpath[_i++] = (char)('0' + (_n/10)%10); \
+    fdpath[_i++] = (char)('0' + _n%10); fdpath[_i] = '\0'; \
+} while(0)
+
+    /* ---- Test 1089: socket fd → "socket:[<ino>]" ---- */
+    fut_printf("[MISC-TEST] Test 1089: /proc/self/fd socket → 'socket:[ino]'\n");
+    {
+        long sfd = sys_socket(1 /* AF_UNIX */, 1 /* SOCK_STREAM */, 0);
+        if (sfd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1089: socket() failed: %ld\n", sfd);
+            fut_test_fail(1089);
+        } else {
+            BUILD_FD_PATH(sfd);
+            __builtin_memset(target, 0, sizeof(target));
+            long rlen = sys_readlink(fdpath, target, sizeof(target) - 1);
+            sys_close((int)sfd);
+            if (rlen > 0 && buf_contains(target, rlen, "socket:[", 8)) {
+                fut_printf("[MISC-TEST] ✓ Test 1089: %s → '%s'\n", fdpath, target);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1089: readlink=%ld target='%s' (want 'socket:[...]')\n",
+                           rlen, target);
+                fut_test_fail(1089);
+            }
+        }
+    }
+
+    /* ---- Test 1090: timerfd → "anon_inode:[timerfd]" ---- */
+    fut_printf("[MISC-TEST] Test 1090: /proc/self/fd timerfd → 'anon_inode:[timerfd]'\n");
+    {
+        long tfd = sys_timerfd_create(1 /* CLOCK_MONOTONIC */, 0);
+        if (tfd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1090: timerfd_create failed: %ld\n", tfd);
+            fut_test_fail(1090);
+        } else {
+            BUILD_FD_PATH(tfd);
+            __builtin_memset(target, 0, sizeof(target));
+            long rlen = sys_readlink(fdpath, target, sizeof(target) - 1);
+            sys_close((int)tfd);
+            if (rlen > 0 && buf_contains(target, rlen, "timerfd", 7)) {
+                fut_printf("[MISC-TEST] ✓ Test 1090: %s → '%s'\n", fdpath, target);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1090: readlink=%ld target='%s' (want 'anon_inode:[timerfd]')\n",
+                           rlen, target);
+                fut_test_fail(1090);
+            }
+        }
+    }
+
+    /* ---- Test 1091: signalfd → "anon_inode:[signalfd]" ---- */
+    fut_printf("[MISC-TEST] Test 1091: /proc/self/fd signalfd → 'anon_inode:[signalfd]'\n");
+    {
+        uint64_t mask = 1ULL << 9; /* SIGUSR1 */
+        long sigfd = sys_signalfd4(-1, &mask, 8, 0);
+        if (sigfd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1091: signalfd4 failed: %ld\n", sigfd);
+            fut_test_fail(1091);
+        } else {
+            BUILD_FD_PATH(sigfd);
+            __builtin_memset(target, 0, sizeof(target));
+            long rlen = sys_readlink(fdpath, target, sizeof(target) - 1);
+            sys_close((int)sigfd);
+            if (rlen > 0 && buf_contains(target, rlen, "signalfd", 8)) {
+                fut_printf("[MISC-TEST] ✓ Test 1091: %s → '%s'\n", fdpath, target);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1091: readlink=%ld target='%s' (want 'anon_inode:[signalfd]')\n",
+                           rlen, target);
+                fut_test_fail(1091);
+            }
+        }
+    }
+
+    /* ---- Test 1092: eventfd → "anon_inode:[eventfd]" ---- */
+    fut_printf("[MISC-TEST] Test 1092: /proc/self/fd eventfd → 'anon_inode:[eventfd]'\n");
+    {
+        long efd = sys_eventfd2(0, 0);
+        if (efd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1092: eventfd2 failed: %ld\n", efd);
+            fut_test_fail(1092);
+        } else {
+            BUILD_FD_PATH(efd);
+            __builtin_memset(target, 0, sizeof(target));
+            long rlen = sys_readlink(fdpath, target, sizeof(target) - 1);
+            sys_close((int)efd);
+            if (rlen > 0 && buf_contains(target, rlen, "eventfd", 7)) {
+                fut_printf("[MISC-TEST] ✓ Test 1092: %s → '%s'\n", fdpath, target);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1092: readlink=%ld target='%s' (want 'anon_inode:[eventfd]')\n",
+                           rlen, target);
+                fut_test_fail(1092);
+            }
+        }
+    }
+
+#undef BUILD_FD_PATH
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -36505,6 +36638,7 @@ void fut_misc_test_thread(void *arg) {
     test_inotify_moved_proc_getdents(); /* Tests 1075-1079: inotify IN_MOVED_FROM/TO cookie; getdents /proc PID listing */
     test_inotify_self_events(); /* Tests 1080-1082: IN_DELETE_SELF, IN_MOVE_SELF, IN_Q_OVERFLOW */
     test_mremap_dontunmap_and_fdinfo(); /* Tests 1083-1088: mremap DONTUNMAP; fdinfo timerfd/signalfd */
+    test_proc_fd_anon_symlinks(); /* Tests 1089-1092: /proc/self/fd/<n> shows socket:[ino]/anon_inode:[type] */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

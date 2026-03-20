@@ -1236,6 +1236,63 @@ void fut_kernel_main(void) {
             fut_printf("[WARN] ✗ Failed to mount sysfs at /sys (error %d)\n", sys_mount_ret);
     }
 
+    /* Create /etc with essential config files for Linux userspace compatibility */
+    {
+        int etc_mkdir_ret = fut_vfs_mkdir("/etc", 0755);
+        if (etc_mkdir_ret < 0 && etc_mkdir_ret != -EEXIST)
+            fut_printf("[WARN] Failed to create /etc directory (error %d)\n", etc_mkdir_ret);
+        int etc_mount_ret = fut_vfs_mount(NULL, "/etc", "ramfs", 0, NULL, FUT_INVALID_HANDLE);
+        if (etc_mount_ret == 0)
+            fut_printf("[INIT] ✓ Mounted ramfs at /etc\n");
+        else
+            fut_printf("[WARN] ✗ Failed to mount ramfs at /etc (error %d)\n", etc_mount_ret);
+
+        /* Helper: write a string to a new file */
+#define ETC_WRITE(path, content) do { \
+    int _fd = fut_vfs_open((path), O_WRONLY | O_CREAT | O_TRUNC, 0644); \
+    if (_fd >= 0) { \
+        fut_vfs_write(_fd, (content), __builtin_strlen(content)); \
+        fut_vfs_close(_fd); \
+    } else { \
+        fut_printf("[WARN] Failed to create %s (err %d)\n", (path), _fd); \
+    } \
+} while (0)
+
+        ETC_WRITE("/etc/hostname",
+                  "futura\n");
+        ETC_WRITE("/etc/hosts",
+                  "127.0.0.1\tlocalhost\n"
+                  "::1\t\tlocalhost ip6-localhost ip6-loopback\n"
+                  "127.0.1.1\tfutura\n");
+        ETC_WRITE("/etc/resolv.conf",
+                  "nameserver 127.0.0.1\n"
+                  "search local\n");
+        ETC_WRITE("/etc/nsswitch.conf",
+                  "passwd:   files\n"
+                  "group:    files\n"
+                  "shadow:   files\n"
+                  "hosts:    files dns\n"
+                  "networks: files\n"
+                  "protocols: files\n"
+                  "services: files\n");
+        ETC_WRITE("/etc/passwd",
+                  "root:x:0:0:root:/root:/bin/sh\n"
+                  "nobody:x:65534:65534:nobody:/nonexistent:/usr/sbin/nologin\n");
+        ETC_WRITE("/etc/group",
+                  "root:x:0:\n"
+                  "nobody:x:65534:\n");
+        ETC_WRITE("/etc/os-release",
+                  "NAME=\"Futura OS\"\n"
+                  "VERSION=\"1.0\"\n"
+                  "ID=futura\n"
+                  "VERSION_ID=1.0\n"
+                  "PRETTY_NAME=\"Futura OS 1.0\"\n"
+                  "HOME_URL=\"https://github.com/netrunner-labs/futura\"\n");
+#undef ETC_WRITE
+
+        fut_printf("[INIT] ✓ Created /etc config files\n");
+    }
+
     bool run_async_selftests = boot_flag_enabled("async-tests", false);
 
     /* VFS and exec double tests are DISABLED (too much memory), don't count them */
@@ -1261,7 +1318,7 @@ void fut_kernel_main(void) {
         planned_tests += 17u; /* clock_sched: getres, sched_param, sched_policy, itimer, rusage, times, getpriority, setpriority, getpriority(-who), setpriority(-who), unshare(0), unshare(invalid), rr_get_interval, clock_gettime, posix_timer_sigev_value, posix_timer_si_timer, itimer_virtual */
         planned_tests += 22u; /* vfs: O_TRUNC, O_APPEND, relpath, dir_mtime, readlink, hardlink, mount, renameat2, inotify, inotify_rename, inotify_attrib, inotify_close, inotify_access, inotify_modify, inotify_ftruncate, inotify_utimensat, inotify_truncate, inotify_delete, umount expire, dotdot, eisdir, chdir_dotdot */
         planned_tests += 17u; /* poll: file ready, eventfd not-ready, eventfd ready, POLLNVAL, select file, select pipe, pselect6 pipe, pselect6 sigmask restore, timeout-only sleep, timerfd readiness, signalfd readiness, pipe EOF, select pipe EOF, select timerfd wakeup, poll negative fd, POLLRDNORM, select timeout update */
-        planned_tests += 930u; /* misc(930): ..., af_netlink_rtm_route (921-925), inotify_onlydir_maskadd (926-930) */
+        planned_tests += 936u; /* misc(936): ..., inotify_onlydir_maskadd (926-930), etc_filesystem (931-936) */
         // planned_tests += 1u; /* block */
         // planned_tests += 1u; /* futfs */
         // planned_tests += 1u; /* net */

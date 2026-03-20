@@ -31460,6 +31460,79 @@ static void test_inotify_onlydir_maskadd(void) {
     fut_printf("[MISC-TEST] ✓ Tests 926-930: inotify IN_ONLYDIR+IN_MASK_ADD done\n");
 }
 
+/* ---- /etc filesystem tests (931-936) ----------------------------------- */
+
+/*
+ * test_etc_filesystem() — Tests 931-936
+ *
+ *   Test 931: /etc/hostname is readable and contains "futura"
+ *   Test 932: /etc/hosts is readable and contains "127.0.0.1"
+ *   Test 933: /etc/resolv.conf is readable and contains "nameserver"
+ *   Test 934: /etc/nsswitch.conf is readable and contains "hosts:"
+ *   Test 935: /etc/passwd is readable and contains "root:x:0:0"
+ *   Test 936: /etc/group is readable and contains "root:x:0:"
+ */
+static void test_etc_filesystem(void) {
+    fut_printf("[MISC-TEST] Tests 931-936: /etc filesystem\n");
+
+    extern long sys_openat(int dirfd, const char *path, int flags, int mode);
+    extern long sys_read(int fd, void *buf, size_t count);
+    extern long sys_close(int fd);
+
+#define AT_FDCWD_ETC  (-100)
+#define O_RDONLY_ETC  0
+
+#define ETC_TEST(tnum, path, needle) do { \
+    fut_printf("[MISC-TEST] Test %d: read %s\n", (tnum), (path)); \
+    long _fd = sys_openat(AT_FDCWD_ETC, (path), O_RDONLY_ETC, 0); \
+    if (_fd < 0) { \
+        fut_printf("[MISC-TEST] ✗ Test %d: open(%s) = %ld (want >= 0)\n", \
+                   (tnum), (path), _fd); \
+        fut_test_fail((tnum)); \
+        break; \
+    } \
+    char _buf[256]; \
+    __builtin_memset(_buf, 0, sizeof(_buf)); \
+    long _nr = sys_read((int)_fd, _buf, sizeof(_buf) - 1); \
+    sys_close((int)_fd); \
+    if (_nr <= 0) { \
+        fut_printf("[MISC-TEST] ✗ Test %d: read(%s) = %ld (want > 0)\n", \
+                   (tnum), (path), _nr); \
+        fut_test_fail((tnum)); \
+        break; \
+    } \
+    /* simple substring search */ \
+    const char *_needle = (needle); \
+    size_t _nlen = __builtin_strlen(_needle); \
+    bool _found = false; \
+    for (long _i = 0; _i <= _nr - (long)_nlen; _i++) { \
+        if (__builtin_memcmp(_buf + _i, _needle, _nlen) == 0) { _found = true; break; } \
+    } \
+    if (_found) { \
+        fut_printf("[MISC-TEST] ✓ Test %d: %s contains \"%s\"\n", \
+                   (tnum), (path), _needle); \
+        fut_test_pass(); \
+    } else { \
+        fut_printf("[MISC-TEST] ✗ Test %d: %s does not contain \"%s\"\n", \
+                   (tnum), (path), _needle); \
+        fut_test_fail((tnum)); \
+    } \
+} while (0)
+
+    ETC_TEST(931, "/etc/hostname",     "futura");
+    ETC_TEST(932, "/etc/hosts",        "127.0.0.1");
+    ETC_TEST(933, "/etc/resolv.conf",  "nameserver");
+    ETC_TEST(934, "/etc/nsswitch.conf","hosts:");
+    ETC_TEST(935, "/etc/passwd",       "root:x:0:0");
+    ETC_TEST(936, "/etc/group",        "root:x:0:");
+
+#undef ETC_TEST
+#undef AT_FDCWD_ETC
+#undef O_RDONLY_ETC
+
+    fut_printf("[MISC-TEST] ✓ Tests 931-936: /etc filesystem done\n");
+}
+
 /* ---- AF_NETLINK RTM_GETROUTE / RTM_GETNEIGH tests (921-925) ------------ */
 
 /*
@@ -32181,6 +32254,7 @@ void fut_misc_test_thread(void *arg) {
     test_af_netlink_extended();           /* Tests 916-920: AF_NETLINK getsockname/connect/poll/recvfrom */
     test_af_netlink_rtm_route();          /* Tests 921-925: AF_NETLINK RTM_GETROUTE/RTM_GETNEIGH */
     test_inotify_onlydir_maskadd();       /* Tests 926-930: inotify IN_ONLYDIR + IN_MASK_ADD flags */
+    test_etc_filesystem();                /* Tests 931-936: /etc/hostname/hosts/resolv.conf/nsswitch.conf/passwd/group */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

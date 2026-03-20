@@ -219,6 +219,19 @@ fut_thread_t *fut_thread_create(
         fut_free(raw_thread);
         return NULL;
     }
+    /* CRITICAL: Zero-initialize and set CS=0x08 (kernel code segment).
+     * If a timer interrupt fires before the cooperative first-switch (which
+     * sets irq_frame=NULL), the IRQ restore path checks irq_frame->cs at
+     * offset 176 to decide between .kernel_coop_restore (cs==0x08) and the
+     * IRETQ path (cs==0x23 or other).  With uninitialized heap memory,
+     * garbage at offset 176 may not equal 0x08, causing IRETQ with garbage
+     * values → triple fault → LAPIC EOI never sent → timer suppressed →
+     * system hang (0 tests run, seen on x86_64 CI).
+     * With cs=0x08 the assembly always takes .kernel_coop_restore, which
+     * correctly uses the cooperative context (rip=trampoline for fresh
+     * threads) and sends EOI to un-mask the LAPIC timer. */
+    memset(thread->irq_frame, 0, sizeof(fut_interrupt_frame_t));
+    thread->irq_frame->cs = GDT_KERNEL_CODE;
 #endif
 
 #if defined(__aarch64__)

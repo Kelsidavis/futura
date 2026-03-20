@@ -36977,6 +36977,177 @@ t1122:
 #undef SCHED_ATTR_SIZE_NICE
 }
 
+/* ============================================================
+ * Tests 1123-1126: ShdPnd: process-wide pending signal via kill()
+ *   Test 1123: kill(getpid(), SIGUSR1) while blocked → ShdPnd: shows bit 0x200
+ *   Test 1124: sigpending() also shows SIGUSR1 (task->pending_signals included)
+ *   Test 1125: SigPnd: is 0 for this signal (not in thread pending, only task pending)
+ *   Test 1126: rt_sigtimedwait consumes SIGUSR1; ShdPnd: cleared
+ *
+ * SIGUSR1 = signal 10 → bit 9 → bitmask 0x200
+ * Distinguishes kill() (→ ShdPnd) from tgkill() (→ SigPnd).
+ * ============================================================ */
+static void test_shd_pnd_kill(void) {
+    extern long sys_sigpending(sigset_t *set);
+    extern long sys_sigprocmask(int how, const sigset_t *set, sigset_t *oldset);
+    extern long sys_rt_sigtimedwait(const uint64_t *uthese, void *uinfo,
+                                    const void *uts, size_t sigsetsize);
+    extern long sys_kill(int pid, int sig);
+
+#define SIGUSR1_BIT_SHD  0x200ULL   /* signal 10 = bit 9 */
+#define SIGUSR1_NUM_SHD  10
+
+    struct timespec ts = { .tv_sec = 0, .tv_nsec = 50000000 }; /* 50ms */
+
+    /* Block SIGUSR1 before sending so it stays pending */
+    sigset_t block = { .__mask = SIGUSR1_BIT_SHD };
+    sigset_t old   = { .__mask = 0 };
+    sys_sigprocmask(0 /* SIG_BLOCK */, &block, &old);
+
+    /* ---- Test 1123: kill(getpid(), SIGUSR1) → ShdPnd: shows 0x200 ---- */
+    fut_printf("[MISC-TEST] Test 1123: kill(getpid(), SIGUSR1) while blocked → ShdPnd: 0x200\n");
+    {
+        fut_task_t *task = fut_task_current();
+        if (!task) {
+            fut_printf("[MISC-TEST] ✗ Test 1123: no current task\n");
+            fut_test_fail(1123);
+            sys_sigprocmask(2, &old, NULL);
+            goto t1124;
+        }
+
+        long r = sys_kill((int)task->pid, SIGUSR1_NUM_SHD);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1123: kill(getpid(), SIGUSR1) returned %ld\n", r);
+            fut_test_fail(1123);
+            sys_sigprocmask(2, &old, NULL);
+            goto t1124;
+        }
+
+        /* Read /proc/self/status and check ShdPnd: */
+        int fd = fut_vfs_open("/proc/self/status", 0, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1123: open /proc/self/status failed: %d\n", fd);
+            fut_test_fail(1123);
+            goto t1124;
+        }
+        char buf[2048];
+        long n = fut_vfs_read(fd, buf, sizeof(buf) - 1);
+        fut_vfs_close(fd);
+        if (n <= 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1123: read status failed: %ld\n", n);
+            fut_test_fail(1123);
+            goto t1124;
+        }
+        buf[n] = '\0';
+        uint64_t shdpnd = status_parse_hex_field(buf, n, "ShdPnd", 6);
+        if (shdpnd == (uint64_t)-1) {
+            fut_printf("[MISC-TEST] ✗ Test 1123: ShdPnd: field not found in status\n");
+            fut_test_fail(1123);
+        } else if (!(shdpnd & SIGUSR1_BIT_SHD)) {
+            fut_printf("[MISC-TEST] ✗ Test 1123: ShdPnd=0x%llx missing SIGUSR1 bit (0x%llx)\n",
+                       (unsigned long long)shdpnd, (unsigned long long)SIGUSR1_BIT_SHD);
+            fut_test_fail(1123);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1123: ShdPnd=0x%llx has SIGUSR1 bit\n",
+                       (unsigned long long)shdpnd);
+            fut_test_pass();
+        }
+    }
+
+t1124:
+    /* ---- Test 1124: sigpending() also shows SIGUSR1 (task pending included) ---- */
+    fut_printf("[MISC-TEST] Test 1124: sigpending() includes task-wide pending (ShdPnd)\n");
+    {
+        sigset_t pending = { .__mask = 0 };
+        long r = sys_sigpending(&pending);
+        if (r != 0 || !(pending.__mask & SIGUSR1_BIT_SHD)) {
+            fut_printf("[MISC-TEST] ✗ Test 1124: sigpending=0x%llx r=%ld (expected bit 0x%llx)\n",
+                       (unsigned long long)pending.__mask, r, (unsigned long long)SIGUSR1_BIT_SHD);
+            fut_test_fail(1124);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1124: sigpending()=0x%llx includes task-wide SIGUSR1\n",
+                       (unsigned long long)pending.__mask);
+            fut_test_pass();
+        }
+    }
+
+    /* ---- Test 1125: SigPnd: is 0 for SIGUSR1 (kill → task pending, not thread pending) ---- */
+    fut_printf("[MISC-TEST] Test 1125: SigPnd: is 0 for SIGUSR1 (kill goes to task, not thread)\n");
+    {
+        int fd = fut_vfs_open("/proc/self/status", 0, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1125: open /proc/self/status failed: %d\n", fd);
+            fut_test_fail(1125);
+            goto t1126;
+        }
+        char buf[2048];
+        long n = fut_vfs_read(fd, buf, sizeof(buf) - 1);
+        fut_vfs_close(fd);
+        if (n <= 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1125: read status failed: %ld\n", n);
+            fut_test_fail(1125);
+            goto t1126;
+        }
+        buf[n] = '\0';
+        uint64_t sigpnd = status_parse_hex_field(buf, n, "SigPnd", 6);
+        if (sigpnd == (uint64_t)-1) {
+            fut_printf("[MISC-TEST] ✗ Test 1125: SigPnd: field not found\n");
+            fut_test_fail(1125);
+        } else if (sigpnd & SIGUSR1_BIT_SHD) {
+            fut_printf("[MISC-TEST] ✗ Test 1125: SigPnd=0x%llx unexpectedly has SIGUSR1 bit\n",
+                       (unsigned long long)sigpnd);
+            fut_test_fail(1125);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1125: SigPnd=0x%llx no SIGUSR1 bit (correct: kill→ShdPnd)\n",
+                       (unsigned long long)sigpnd);
+            fut_test_pass();
+        }
+    }
+
+t1126:
+    /* ---- Test 1126: rt_sigtimedwait consumes SIGUSR1; ShdPnd cleared ---- */
+    fut_printf("[MISC-TEST] Test 1126: rt_sigtimedwait consumes SIGUSR1 → ShdPnd cleared\n");
+    {
+        uint64_t catch_mask = SIGUSR1_BIT_SHD;
+        long r = sys_rt_sigtimedwait(&catch_mask, NULL, &ts, sizeof(uint64_t));
+        if (r == SIGUSR1_NUM_SHD || r == -11 /* EAGAIN */) {
+            int fd = fut_vfs_open("/proc/self/status", 0, 0);
+            if (fd >= 0) {
+                char buf[2048];
+                long n = fut_vfs_read(fd, buf, sizeof(buf) - 1);
+                fut_vfs_close(fd);
+                if (n > 0) {
+                    buf[n] = '\0';
+                    uint64_t shdpnd = status_parse_hex_field(buf, n, "ShdPnd", 6);
+                    if (shdpnd != (uint64_t)-1 && !(shdpnd & SIGUSR1_BIT_SHD)) {
+                        fut_printf("[MISC-TEST] ✓ Test 1126: ShdPnd=0x%llx cleared after consume\n",
+                                   (unsigned long long)shdpnd);
+                        fut_test_pass();
+                    } else {
+                        fut_printf("[MISC-TEST] ✗ Test 1126: ShdPnd=0x%llx still has SIGUSR1 bit\n",
+                                   (unsigned long long)shdpnd);
+                        fut_test_fail(1126);
+                    }
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1126: read status failed\n");
+                    fut_test_fail(1126);
+                }
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1126: open /proc/self/status failed\n");
+                fut_test_fail(1126);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1126: rt_sigtimedwait returned %ld\n", r);
+            fut_test_fail(1126);
+        }
+        /* Restore signal mask */
+        sys_sigprocmask(2 /* SIG_SETMASK */, &old, NULL);
+    }
+
+#undef SIGUSR1_BIT_SHD
+#undef SIGUSR1_NUM_SHD
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -37589,6 +37760,7 @@ void fut_misc_test_thread(void *arg) {
     test_sched_param_rt_readback(); /* Tests 1111-1114: sched_getparam/sched_setparam RT priority readback */
     test_sigpending_accuracy();     /* Tests 1115-1118: sigpending() and SigPnd: proc/self/status accuracy */
     test_sched_attr_nice_getpriority(); /* Tests 1119-1122: sched_setattr/getattr nice and getpriority consistency */
+    test_shd_pnd_kill();                /* Tests 1123-1126: ShdPnd: process-wide pending via kill() */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

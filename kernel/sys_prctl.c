@@ -10,6 +10,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/fut_thread.h>
 #include <kernel/fut_memory.h>
+#include <kernel/fut_mm.h>
 #include <kernel/uaccess.h>
 #include <kernel/errno.h>
 #include <kernel/kprintf.h>
@@ -155,7 +156,8 @@ static inline int prctl_copy_to_user(void *dst, const void *src, size_t n) {
  */
 long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
                unsigned long arg4, unsigned long arg5) {
-    (void)arg4; (void)arg5;
+    /* arg4 and arg5 used by PR_SET_VMA */
+    (void)arg4;
 
     fut_task_t *task = fut_task_current();
     if (!task) {
@@ -340,9 +342,79 @@ long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
         /* Modifying mm_struct fields not supported; return EPERM */
         return -EPERM;
 
-    case PR_SET_VMA:
-        /* VMA naming not supported; silently accept */
+    case PR_SET_VMA: {
+        /* PR_SET_VMA_ANON_NAME (arg2=0): set anonymous VMA name for debuggers.
+         * arg3=addr, arg4=len, arg5=name (NULL to clear).
+         * Shows as [anon:name] in /proc/self/maps. Max 80 chars. */
+        if (arg2 != 0) return -EINVAL; /* Only PR_SET_VMA_ANON_NAME=0 supported */
+
+        uintptr_t va_start = (uintptr_t)arg3;
+        size_t    va_len   = (size_t)arg4;
+        const char *uname  = (const char *)(uintptr_t)arg5;
+
+        if (va_len == 0) return 0;  /* Nothing to do */
+
+        /* Copy and validate name from userspace (or NULL to clear) */
+        char name_buf[81]; /* ANON_VMA_NAME_MAX_LEN=80 + NUL */
+        if (uname) {
+            /* Copy up to 81 bytes; reject if too long or contains \n */
+            size_t i = 0;
+            for (; i < 80; i++) {
+                char c;
+#ifdef KERNEL_VIRTUAL_BASE
+                if ((uintptr_t)(uname + i) >= KERNEL_VIRTUAL_BASE)
+                    c = uname[i];
+                else
+#endif
+                if (fut_copy_from_user(&c, uname + i, 1) != 0) return -EFAULT;
+                if (c == '\n') return -EINVAL; /* Linux rejects \n in names */
+                name_buf[i] = c;
+                if (c == '\0') break;
+            }
+            if (i == 80) {
+                char last;
+#ifdef KERNEL_VIRTUAL_BASE
+                if ((uintptr_t)(uname + 80) >= KERNEL_VIRTUAL_BASE)
+                    last = uname[80];
+                else
+#endif
+                if (fut_copy_from_user(&last, uname + 80, 1) != 0) return -EFAULT;
+                if (last != '\0') return -EINVAL; /* Name too long */
+                name_buf[80] = '\0';
+            }
+        }
+
+        /* Apply name to all VMAs overlapping [va_start, va_start+va_len) */
+        fut_mm_t *mm = task->mm ? task->mm : fut_mm_current();
+        if (!mm) return -ENOMEM;
+
+        uintptr_t va_end = va_start + va_len;
+        struct fut_vma *vma = mm->vma_list;
+        int found = 0;
+        while (vma) {
+            if (vma->end <= va_start || vma->start >= va_end) {
+                vma = vma->next;
+                continue;
+            }
+            /* Only name anonymous VMAs; ignore file-backed ones */
+            if (!vma->vnode) {
+                if (vma->anon_name) {
+                    fut_free(vma->anon_name);
+                    vma->anon_name = NULL;
+                }
+                if (uname) {
+                    size_t nlen = __builtin_strlen(name_buf) + 1;
+                    vma->anon_name = fut_malloc(nlen);
+                    if (!vma->anon_name) return -ENOMEM;
+                    __builtin_memcpy(vma->anon_name, name_buf, nlen);
+                }
+                found = 1;
+            }
+            vma = vma->next;
+        }
+        (void)found; /* Not an error if no VMAs overlap (matches Linux) */
         return 0;
+    }
 
     case PR_GET_SECCOMP:
         /* No seccomp filter active; return SECCOMP_MODE_DISABLED (0) */

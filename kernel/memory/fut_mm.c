@@ -264,6 +264,7 @@ void fut_mm_release(fut_mm_t *mm) {
     while (vma) {
         fut_vma_t *next = vma->next;
         mm_unmap_and_free(mm, vma->start, vma->end);
+        if (vma->anon_name) fut_free(vma->anon_name);
         fut_free(vma);
         vma = next;
     }
@@ -491,6 +492,7 @@ void *fut_mm_map_anonymous(fut_mm_t *mm, uintptr_t hint, size_t len, int prot, i
     vma->flags = flags;
     vma->vnode = NULL;  /* Anonymous mapping */
     vma->file_offset = 0;
+    vma->anon_name = NULL;
     vma_insert_sorted(mm, vma);
 
     mm->mmap_base = end;
@@ -617,6 +619,7 @@ int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len) {
                 extern void fut_vnode_unref(struct fut_vnode *);
                 fut_vnode_unref(vma->vnode);
             }
+            if (vma->anon_name) fut_free(vma->anon_name);
             fut_free(vma);
             vma = next;
             continue;
@@ -661,6 +664,15 @@ int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len) {
                 fut_vnode_ref(vma->vnode);
             } else {
                 right_vma->file_offset = 0;
+            }
+            /* Propagate anon name to the split right portion */
+            if (vma->anon_name) {
+                size_t nlen = __builtin_strlen(vma->anon_name) + 1;
+                right_vma->anon_name = fut_malloc(nlen);
+                if (right_vma->anon_name)
+                    __builtin_memcpy(right_vma->anon_name, vma->anon_name, nlen);
+            } else {
+                right_vma->anon_name = NULL;
             }
             right_vma->next = vma->next;
 
@@ -773,6 +785,7 @@ void *fut_mm_map_file(fut_mm_t *mm, struct fut_vnode *vnode, uintptr_t hint,
     vma->flags = flags;
     vma->vnode = vnode;
     vma->file_offset = file_offset;
+    vma->anon_name = NULL;
     vma_insert_sorted(mm, vma);
 
     /* Add reference to vnode */
@@ -1107,6 +1120,7 @@ void fut_mm_release(fut_mm_t *mm) {
     while (vma) {
         fut_vma_t *next = vma->next;
         mm_unmap_and_free(mm, vma->start, vma->end);
+        if (vma->anon_name) fut_free(vma->anon_name);
         fut_free(vma);
         vma = next;
     }
@@ -1275,6 +1289,7 @@ void *fut_mm_map_anonymous(fut_mm_t *mm, uintptr_t hint, size_t len, int prot, i
     vma->flags = flags;
     vma->vnode = NULL;  /* Anonymous mapping */
     vma->file_offset = 0;
+    vma->anon_name = NULL;
     vma_insert_sorted(mm, vma);
 
     mm->mmap_base = end;
@@ -1392,6 +1407,7 @@ int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len) {
             if (vma->vnode) {
                 fut_vnode_unref(vma->vnode);
             }
+            if (vma->anon_name) fut_free(vma->anon_name);
             fut_free(vma);
             vma = next;
             continue;
@@ -1436,6 +1452,15 @@ int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len) {
                 fut_vnode_ref(vma->vnode);
             } else {
                 right_vma->file_offset = 0;
+            }
+            /* Propagate anon name to the split right portion */
+            if (vma->anon_name) {
+                size_t nlen = __builtin_strlen(vma->anon_name) + 1;
+                right_vma->anon_name = fut_malloc(nlen);
+                if (right_vma->anon_name)
+                    __builtin_memcpy(right_vma->anon_name, vma->anon_name, nlen);
+            } else {
+                right_vma->anon_name = NULL;
             }
             right_vma->next = vma->next;
 
@@ -1547,6 +1572,7 @@ void *fut_mm_map_file(fut_mm_t *mm, struct fut_vnode *vnode, uintptr_t hint,
     vma->flags = flags;
     vma->vnode = vnode;
     vma->file_offset = file_offset;
+    vma->anon_name = NULL;
     vma_insert_sorted(mm, vma);
 
     /* Add reference to vnode */
@@ -1600,6 +1626,13 @@ static bool vma_can_merge(const fut_vma_t *vma1, const fut_vma_t *vma2) {
         }
     }
 
+    /* VMAs with different anon names must not be merged */
+    if (vma1->anon_name != vma2->anon_name) {
+        if (!vma1->anon_name || !vma2->anon_name ||
+            __builtin_strcmp(vma1->anon_name, vma2->anon_name) != 0)
+            return false;
+    }
+
     return true;
 }
 
@@ -1621,6 +1654,7 @@ static fut_vma_t *vma_merge(fut_vma_t *vma1, fut_vma_t *vma2) {
         extern void fut_vnode_unref(struct fut_vnode *);
         fut_vnode_unref(vma2->vnode);
     }
+    if (vma2->anon_name) fut_free(vma2->anon_name);
 
     fut_free(vma2);
     return vma1;
@@ -1721,6 +1755,7 @@ int fut_mm_add_vma(fut_mm_t *mm, uintptr_t start, uintptr_t end, int prot, int f
     vma->flags = flags;
     vma->vnode = NULL;  /* Set by caller if file-backed */
     vma->file_offset = 0;
+    vma->anon_name = NULL;
     vma->next = NULL;
 
     /* Add to end of list (insertion order) */
@@ -1755,16 +1790,24 @@ int fut_mm_clone_vmas(fut_mm_t *dest_mm, fut_mm_t *src_mm) {
         if (rc < 0) {
             return rc;
         }
-        /* Copy file-backed fields so the child can demand-page from the same file */
-        if (src_vma->vnode) {
+        /* Copy file-backed and anon_name fields into the new child VMA */
+        if (src_vma->vnode || src_vma->anon_name) {
             struct fut_vma *dst_vma = dest_mm->vma_list;
             /* Walk to the last VMA (just added) */
             while (dst_vma && dst_vma->next) dst_vma = dst_vma->next;
             if (dst_vma && dst_vma->start == src_vma->start) {
-                dst_vma->vnode = src_vma->vnode;
-                dst_vma->file_offset = src_vma->file_offset;
-                extern void fut_vnode_ref(struct fut_vnode *);
-                fut_vnode_ref(src_vma->vnode);  /* Extra ref for child's VMA */
+                if (src_vma->vnode) {
+                    dst_vma->vnode = src_vma->vnode;
+                    dst_vma->file_offset = src_vma->file_offset;
+                    extern void fut_vnode_ref(struct fut_vnode *);
+                    fut_vnode_ref(src_vma->vnode);  /* Extra ref for child's VMA */
+                }
+                if (src_vma->anon_name) {
+                    size_t nlen = __builtin_strlen(src_vma->anon_name) + 1;
+                    dst_vma->anon_name = fut_malloc(nlen);
+                    if (dst_vma->anon_name)
+                        __builtin_memcpy(dst_vma->anon_name, src_vma->anon_name, nlen);
+                }
             }
         }
         src_vma = src_vma->next;

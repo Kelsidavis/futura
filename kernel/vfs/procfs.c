@@ -957,6 +957,10 @@ static size_t gen_maps(char *buf, size_t cap, fut_task_t *task) {
             char *full = fut_vnode_build_path(vma->vnode, path_buf, sizeof(path_buf));
             pb_char(&b, ' ');
             pb_str(&b, full ? full : vma->vnode->name ? vma->vnode->name : "");
+        } else if (vma->anon_name) {
+            pb_str(&b, " [anon:");
+            pb_str(&b, vma->anon_name);
+            pb_char(&b, ']');
         } else if (vma->flags & VMA_STACK) {
             pb_str(&b, " [stack]");
         } else if (mm->brk_start && vma->start >= mm->brk_start &&
@@ -1011,6 +1015,10 @@ static size_t gen_smaps(char *buf, size_t cap, fut_task_t *task) {
             char *full = fut_vnode_build_path(vma->vnode, path_buf, sizeof(path_buf));
             pb_char(&b, ' ');
             pb_str(&b, full ? full : vma->vnode->name ? vma->vnode->name : "");
+        } else if (vma->anon_name) {
+            pb_str(&b, " [anon:");
+            pb_str(&b, vma->anon_name);
+            pb_char(&b, ']');
         } else if (vma->flags & VMA_STACK) {
             pb_str(&b, " [stack]");
         } else if (mm->brk_start && vma->start >= mm->brk_start &&

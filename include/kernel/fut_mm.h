@@ -46,6 +46,11 @@ struct fut_vma {
     struct fut_vnode *vnode;  /* Backing file vnode (holds reference) */
     uint64_t file_offset;      /* Offset into backing file */
 
+    /* User-provided VMA name (PR_SET_VMA_ANON_NAME, Linux 5.17+).
+     * Non-NULL only for anonymous mappings; shown as [anon:name] in /proc/maps.
+     * Heap-allocated; freed on VMA free. */
+    char *anon_name;
+
     struct fut_vma *next;  /* Next VMA in list */
 };
 

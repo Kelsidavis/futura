@@ -37997,6 +37997,208 @@ static void test_sigaltstack_autodisarm(void) {
 #undef AUTODISARM_MINSZ
 }
 
+/* ============================================================
+ * Tests 1156-1162: PR_SET_VMA_ANON_NAME (Linux 5.17+)
+ *   1156: PR_SET_VMA on anonymous mapping → 0
+ *   1157: /proc/self/maps shows [anon:myregion] after naming
+ *   1158: Unknown sub-option → EINVAL
+ *   1159: Name > 80 chars → EINVAL
+ *   1160: Name containing \n → EINVAL
+ *   1161: NULL name clears existing name (no [anon:...] in maps)
+ *   1162: File-backed VMA is silently skipped (returns 0)
+ * ============================================================ */
+#define PR_SET_VMA_VAL        0x53564d41
+#define PR_SET_VMA_ANON_NAME_VAL 0
+static void test_prctl_set_vma_anon_name(void) {
+    fut_printf("[MISC-TEST] Tests 1156-1162: PR_SET_VMA_ANON_NAME\n");
+
+    extern long sys_prctl(int, unsigned long, unsigned long, unsigned long, unsigned long);
+    extern long sys_mmap(void *, size_t, int, int, int, long);
+    extern long sys_munmap(void *, size_t);
+    extern ssize_t sys_read(int fd, void *buf, size_t count);
+#define VMA_PROT_RW   3   /* PROT_READ|PROT_WRITE */
+#define VMA_MAP_PA    (0x2|0x20) /* MAP_PRIVATE|MAP_ANON */
+#define VMA_PAGE_SZ   4096
+
+    /* Allocate an anonymous VMA to name */
+    long vma = sys_mmap(NULL, VMA_PAGE_SZ, VMA_PROT_RW, VMA_MAP_PA, -1, 0);
+    if (vma <= 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1156: mmap failed: %ld\n", vma);
+        for (int i = 1156; i <= 1162; i++) fut_test_fail(i);
+        return;
+    }
+
+    /* Test 1156: set name on anonymous VMA → 0 */
+    fut_printf("[MISC-TEST] Test 1156: PR_SET_VMA_ANON_NAME on anon VMA → 0\n");
+    long r = sys_prctl(PR_SET_VMA_VAL, PR_SET_VMA_ANON_NAME_VAL,
+                       (unsigned long)vma, VMA_PAGE_SZ, (unsigned long)"myregion");
+    if (r == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 1156: PR_SET_VMA_ANON_NAME returned 0\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1156: expected 0, got %ld\n", r);
+        fut_test_fail(1156);
+    }
+
+    /* Test 1157: /proc/self/maps shows [anon:myregion] */
+    fut_printf("[MISC-TEST] Test 1157: /proc/self/maps contains [anon:myregion]\n");
+    char mapsbuf[2048];
+    int mfd = fut_vfs_open("/proc/self/maps", 0 /*O_RDONLY*/, 0);
+    if (mfd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1157: open /proc/self/maps failed: %d\n", mfd);
+        fut_test_fail(1157);
+    } else {
+        long n = (long)sys_read(mfd, mapsbuf, sizeof(mapsbuf) - 1);
+        fut_vfs_close(mfd);
+        if (n <= 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1157: read /proc/self/maps failed\n");
+            fut_test_fail(1157);
+        } else {
+            mapsbuf[n] = '\0';
+            /* Search for "[anon:myregion]" in maps output */
+            int found = 0;
+            for (long i = 0; i < n - 14; i++) {
+                if (mapsbuf[i] == '[' && mapsbuf[i+1] == 'a' &&
+                    mapsbuf[i+2] == 'n' && mapsbuf[i+3] == 'o' &&
+                    mapsbuf[i+4] == 'n' && mapsbuf[i+5] == ':' &&
+                    mapsbuf[i+6] == 'm' && mapsbuf[i+7] == 'y' &&
+                    mapsbuf[i+8] == 'r' && mapsbuf[i+9] == 'e' &&
+                    mapsbuf[i+10] == 'g' && mapsbuf[i+11] == 'i' &&
+                    mapsbuf[i+12] == 'o' && mapsbuf[i+13] == 'n' &&
+                    mapsbuf[i+14] == ']') {
+                    found = 1;
+                    break;
+                }
+            }
+            if (found) {
+                fut_printf("[MISC-TEST] ✓ Test 1157: [anon:myregion] in /proc/self/maps\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1157: [anon:myregion] not found in maps (%.200s)\n", mapsbuf);
+                fut_test_fail(1157);
+            }
+        }
+    }
+
+    /* Test 1158: unknown sub-option → EINVAL */
+    fut_printf("[MISC-TEST] Test 1158: unknown sub-option → EINVAL\n");
+    r = sys_prctl(PR_SET_VMA_VAL, 99UL, (unsigned long)vma, VMA_PAGE_SZ, 0UL);
+    if (r == -22 /* -EINVAL */) {
+        fut_printf("[MISC-TEST] ✓ Test 1158: unknown sub-option → EINVAL\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1158: expected -EINVAL, got %ld\n", r);
+        fut_test_fail(1158);
+    }
+
+    /* Test 1159: name > 80 chars → EINVAL */
+    fut_printf("[MISC-TEST] Test 1159: name > 80 chars → EINVAL\n");
+    static const char long_name[82] =
+        "12345678901234567890123456789012345678901234567890"
+        "12345678901234567890123456789012"; /* 82 chars including NUL at 81 */
+    r = sys_prctl(PR_SET_VMA_VAL, PR_SET_VMA_ANON_NAME_VAL,
+                  (unsigned long)vma, VMA_PAGE_SZ, (unsigned long)long_name);
+    if (r == -22 /* -EINVAL */) {
+        fut_printf("[MISC-TEST] ✓ Test 1159: name > 80 chars → EINVAL\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1159: expected -EINVAL, got %ld\n", r);
+        fut_test_fail(1159);
+    }
+
+    /* Test 1160: name containing \n → EINVAL */
+    fut_printf("[MISC-TEST] Test 1160: name with \\n → EINVAL\n");
+    static const char nl_name[] = "bad\nname";
+    r = sys_prctl(PR_SET_VMA_VAL, PR_SET_VMA_ANON_NAME_VAL,
+                  (unsigned long)vma, VMA_PAGE_SZ, (unsigned long)nl_name);
+    if (r == -22 /* -EINVAL */) {
+        fut_printf("[MISC-TEST] ✓ Test 1160: name with \\n → EINVAL\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1160: expected -EINVAL, got %ld\n", r);
+        fut_test_fail(1160);
+    }
+
+    /* Test 1161: NULL name clears the name; maps no longer shows [anon:myregion] */
+    fut_printf("[MISC-TEST] Test 1161: NULL name clears anon name\n");
+    r = sys_prctl(PR_SET_VMA_VAL, PR_SET_VMA_ANON_NAME_VAL,
+                  (unsigned long)vma, VMA_PAGE_SZ, 0UL);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1161: expected 0, got %ld\n", r);
+        fut_test_fail(1161);
+    } else {
+        /* Re-read maps and check no [anon:myregion] */
+        int mfd2 = fut_vfs_open("/proc/self/maps", 0, 0);
+        if (mfd2 < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1161: open /proc/self/maps failed\n");
+            fut_test_fail(1161);
+        } else {
+            char mbuf2[2048];
+            long n2 = (long)sys_read(mfd2, mbuf2, sizeof(mbuf2) - 1);
+            fut_vfs_close(mfd2);
+            if (n2 <= 0) { fut_test_fail(1161); }
+            else {
+                mbuf2[n2] = '\0';
+                int still_found = 0;
+                for (long i = 0; i < n2 - 14; i++) {
+                    if (mbuf2[i] == '[' && mbuf2[i+1] == 'a' && mbuf2[i+2] == 'n' &&
+                        mbuf2[i+3] == 'o' && mbuf2[i+4] == 'n' && mbuf2[i+5] == ':' &&
+                        mbuf2[i+6] == 'm' && mbuf2[i+7] == 'y' && mbuf2[i+8] == 'r' &&
+                        mbuf2[i+9] == 'e' && mbuf2[i+10] == 'g' && mbuf2[i+11] == 'i' &&
+                        mbuf2[i+12] == 'o' && mbuf2[i+13] == 'n' && mbuf2[i+14] == ']') {
+                        still_found = 1; break;
+                    }
+                }
+                if (!still_found) {
+                    fut_printf("[MISC-TEST] ✓ Test 1161: name cleared, not in maps\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1161: [anon:myregion] still in maps after clear\n");
+                    fut_test_fail(1161);
+                }
+            }
+        }
+    }
+
+    sys_munmap((void *)(uintptr_t)vma, VMA_PAGE_SZ);
+
+    /* Test 1162: file-backed VMA silently returns 0 */
+    fut_printf("[MISC-TEST] Test 1162: file-backed VMA returns 0\n");
+    extern long sys_openat(int dirfd, const char *pathname, int flags, int mode);
+    extern long sys_close(int fd);
+    long ffd = sys_openat(-100 /*AT_FDCWD*/, "/proc/self/maps", 0/*O_RDONLY*/, 0);
+    if (ffd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1162: openat failed\n");
+        fut_test_fail(1162);
+    } else {
+        /* Map the file */
+        long fvma = sys_mmap(NULL, VMA_PAGE_SZ, 1/*PROT_READ*/, 2/*MAP_PRIVATE*/, (int)ffd, 0);
+        sys_close((int)ffd);
+        if (fvma <= 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1162: mmap file failed\n");
+            fut_test_fail(1162);
+        } else {
+            /* File-backed VMAs silently return 0 (nothing to name) */
+            r = sys_prctl(PR_SET_VMA_VAL, PR_SET_VMA_ANON_NAME_VAL,
+                          (unsigned long)fvma, VMA_PAGE_SZ, (unsigned long)"filebacked");
+            sys_munmap((void *)(uintptr_t)fvma, VMA_PAGE_SZ);
+            if (r == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1162: file-backed VMA → 0\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1162: expected 0, got %ld\n", r);
+                fut_test_fail(1162);
+            }
+        }
+    }
+
+#undef PR_SET_VMA_VAL
+#undef PR_SET_VMA_ANON_NAME_VAL
+#undef VMA_PROT_RW
+#undef VMA_MAP_PA
+#undef VMA_PAGE_SZ
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -38617,6 +38819,7 @@ void fut_misc_test_thread(void *arg) {
     test_capset_bset_enforcement();     /* Tests 1141-1142: capset rejects permitted > bset */
     test_cap_ambient_real();            /* Tests 1143-1150: ambient cap real state tracking */
     test_sigaltstack_autodisarm();      /* Tests 1151-1155: SS_AUTODISARM flag support */
+    test_prctl_set_vma_anon_name();     /* Tests 1156-1162: PR_SET_VMA_ANON_NAME */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -35630,6 +35630,277 @@ static void test_inotify_self_events(void) {
 #undef INO_Q_OVERFLOW_VAL
 }
 
+/* ============================================================
+ * Tests 1083-1088: mremap MREMAP_DONTUNMAP and fdinfo for timerfd/signalfd
+ *   Test 1083: mremap MREMAP_MAYMOVE|MREMAP_DONTUNMAP preserves old mapping
+ *   Test 1084: mremap MREMAP_DONTUNMAP new mapping has copied data
+ *   Test 1085: mremap MREMAP_DONTUNMAP old mapping munmap succeeds
+ *   Test 1086: /proc/self/fdinfo/<n> for timerfd has "clockid:" field
+ *   Test 1087: /proc/self/fdinfo/<n> for timerfd has "it_interval:" field
+ *   Test 1088: /proc/self/fdinfo/<n> for signalfd has "sigmask:" field
+ * ============================================================ */
+static void test_mremap_dontunmap_and_fdinfo(void) {
+    extern long sys_mmap(void *addr, size_t length, int prot, int flags,
+                         int fd, long offset);
+    extern long sys_mremap(void *old_address, size_t old_size, size_t new_size,
+                           int flags, void *new_address);
+    extern long sys_munmap(void *addr, size_t length);
+    extern long sys_timerfd_create(int clockid, int flags);
+    extern long sys_timerfd_settime(int ufd, int flags, const void *new_value,
+                                    void *old_value);
+    extern long sys_signalfd4(int ufd, const void *mask, size_t sizemask, int flags);
+    extern long sys_close(int fd);
+
+    /* MREMAP_MAYMOVE=1, MREMAP_DONTUNMAP=4 */
+#define T1083_MAYMOVE_DONTUNMAP 5
+
+    /* ---- Test 1083: MREMAP_DONTUNMAP keeps old mapping alive ---- */
+    fut_printf("[MISC-TEST] Test 1083: mremap MREMAP_DONTUNMAP preserves old mapping\n");
+    {
+        long base = sys_mmap(NULL, 4096, 3 /*PROT_RW*/, 0x22 /*MAP_PRIVATE|ANON*/, -1, 0);
+        if (base < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1083: mmap failed: %ld\n", base);
+            fut_test_fail(1083);
+        } else {
+            volatile uint8_t *old = (volatile uint8_t *)(uintptr_t)base;
+            old[0] = 0xAB; old[1] = 0xCD;
+            long na = sys_mremap((void *)(uintptr_t)base, 4096, 4096,
+                                 T1083_MAYMOVE_DONTUNMAP, NULL);
+            if (na < 0) {
+                fut_printf("[MISC-TEST] ✗ Test 1083: mremap failed: %ld\n", na);
+                sys_munmap((void *)(uintptr_t)base, 4096);
+                fut_test_fail(1083);
+            } else {
+                /* Old mapping must still be readable */
+                if (old[0] == 0xAB && old[1] == 0xCD) {
+                    fut_printf("[MISC-TEST] ✓ Test 1083: old mapping still alive after DONTUNMAP\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1083: old mapping gone (0x%02x 0x%02x)\n",
+                               (unsigned)old[0], (unsigned)old[1]);
+                    fut_test_fail(1083);
+                }
+                sys_munmap((void *)(uintptr_t)base, 4096);
+                sys_munmap((void *)(uintptr_t)na, 4096);
+            }
+        }
+    }
+
+    /* ---- Test 1084: MREMAP_DONTUNMAP new mapping has copied data ---- */
+    fut_printf("[MISC-TEST] Test 1084: mremap MREMAP_DONTUNMAP new mapping has data\n");
+    {
+        long base = sys_mmap(NULL, 4096, 3, 0x22, -1, 0);
+        if (base < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1084: mmap failed\n");
+            fut_test_fail(1084);
+        } else {
+            volatile uint8_t *old = (volatile uint8_t *)(uintptr_t)base;
+            old[0] = 0x12; old[4095] = 0x34;
+            long na = sys_mremap((void *)(uintptr_t)base, 4096, 8192,
+                                 T1083_MAYMOVE_DONTUNMAP, NULL);
+            if (na < 0) {
+                fut_printf("[MISC-TEST] ✗ Test 1084: mremap failed: %ld\n", na);
+                sys_munmap((void *)(uintptr_t)base, 4096);
+                fut_test_fail(1084);
+            } else {
+                volatile uint8_t *n84 = (volatile uint8_t *)(uintptr_t)na;
+                if (n84[0] == 0x12 && n84[4095] == 0x34) {
+                    fut_printf("[MISC-TEST] ✓ Test 1084: new mapping has copied data\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1084: data mismatch (0x%02x 0x%02x)\n",
+                               (unsigned)n84[0], (unsigned)n84[4095]);
+                    fut_test_fail(1084);
+                }
+                sys_munmap((void *)(uintptr_t)base, 4096);
+                sys_munmap((void *)(uintptr_t)na, 8192);
+            }
+        }
+    }
+
+    /* ---- Test 1085: MREMAP_DONTUNMAP old mapping can be munmapped ---- */
+    fut_printf("[MISC-TEST] Test 1085: mremap MREMAP_DONTUNMAP old munmap succeeds\n");
+    {
+        long base = sys_mmap(NULL, 4096, 3, 0x22, -1, 0);
+        if (base < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1085: mmap failed\n");
+            fut_test_fail(1085);
+        } else {
+            long na = sys_mremap((void *)(uintptr_t)base, 4096, 4096,
+                                 T1083_MAYMOVE_DONTUNMAP, NULL);
+            if (na < 0) {
+                fut_printf("[MISC-TEST] ✗ Test 1085: mremap failed: %ld\n", na);
+                sys_munmap((void *)(uintptr_t)base, 4096);
+                fut_test_fail(1085);
+            } else {
+                long r = sys_munmap((void *)(uintptr_t)base, 4096);
+                if (r == 0) {
+                    fut_printf("[MISC-TEST] ✓ Test 1085: old mapping munmap → 0\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1085: old munmap returned %ld\n", r);
+                    fut_test_fail(1085);
+                }
+                sys_munmap((void *)(uintptr_t)na, 4096);
+            }
+        }
+    }
+
+#undef T1083_MAYMOVE_DONTUNMAP
+
+    /* ---- Test 1086: /proc/self/fdinfo/<n> for timerfd has "clockid:" ---- */
+    fut_printf("[MISC-TEST] Test 1086: /proc/self/fdinfo for timerfd has 'clockid:'\n");
+    {
+        long tfd = sys_timerfd_create(1 /* CLOCK_MONOTONIC */, 0);
+        if (tfd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1086: timerfd_create failed: %ld\n", tfd);
+            fut_test_fail(1086);
+        } else {
+            char path[64];
+            path[0]='/'; path[1]='p'; path[2]='r'; path[3]='o'; path[4]='c';
+            path[5]='/'; path[6]='s'; path[7]='e'; path[8]='l'; path[9]='f';
+            path[10]='/'; path[11]='f'; path[12]='d'; path[13]='i';
+            path[14]='n'; path[15]='f'; path[16]='o'; path[17]='/';
+            int n86 = (int)tfd;
+            int i = 18;
+            if (n86 >= 100) path[i++] = (char)('0' + n86/100);
+            if (n86 >= 10)  path[i++] = (char)('0' + (n86/10)%10);
+            path[i++] = (char)('0' + n86%10); path[i] = '\0';
+
+            int ifd = fut_vfs_open(path, O_RDONLY, 0);
+            if (ifd < 0) {
+                fut_printf("[MISC-TEST] ✗ Test 1086: open %s failed: %d\n", path, ifd);
+                fut_test_fail(1086);
+            } else {
+                char buf[512]; long nr = fut_vfs_read(ifd, buf, sizeof(buf) - 1);
+                fut_vfs_close(ifd);
+                if (nr > 0) {
+                    buf[nr] = '\0';
+                    const char *needle = "clockid:"; int found = 0;
+                    for (long j = 0; j + 8 <= nr; j++) {
+                        if (__builtin_memcmp(buf + j, needle, 8) == 0) { found = 1; break; }
+                    }
+                    if (found) {
+                        fut_printf("[MISC-TEST] ✓ Test 1086: timerfd fdinfo has 'clockid:'\n");
+                        fut_test_pass();
+                    } else {
+                        fut_printf("[MISC-TEST] ✗ Test 1086: 'clockid:' not in: '%.64s'\n", buf);
+                        fut_test_fail(1086);
+                    }
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1086: read fdinfo returned %ld\n", nr);
+                    fut_test_fail(1086);
+                }
+            }
+            sys_close((int)tfd);
+        }
+    }
+
+    /* ---- Test 1087: /proc/self/fdinfo/<n> for timerfd has "it_interval:" ---- */
+    fut_printf("[MISC-TEST] Test 1087: /proc/self/fdinfo for timerfd has 'it_interval:'\n");
+    {
+        long tfd = sys_timerfd_create(1, 0);
+        if (tfd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1087: timerfd_create failed: %ld\n", tfd);
+            fut_test_fail(1087);
+        } else {
+            /* Arm a periodic timer so it_interval is emitted */
+            struct { struct { long s; long ns; } iv, val; } its = {
+                .iv  = { 0, 100000000 },
+                .val = { 0, 100000000 }
+            };
+            sys_timerfd_settime((int)tfd, 0, &its, NULL);
+
+            char path[64];
+            path[0]='/'; path[1]='p'; path[2]='r'; path[3]='o'; path[4]='c';
+            path[5]='/'; path[6]='s'; path[7]='e'; path[8]='l'; path[9]='f';
+            path[10]='/'; path[11]='f'; path[12]='d'; path[13]='i';
+            path[14]='n'; path[15]='f'; path[16]='o'; path[17]='/';
+            int n87 = (int)tfd;
+            int i = 18;
+            if (n87 >= 100) path[i++] = (char)('0' + n87/100);
+            if (n87 >= 10)  path[i++] = (char)('0' + (n87/10)%10);
+            path[i++] = (char)('0' + n87%10); path[i] = '\0';
+
+            int ifd = fut_vfs_open(path, O_RDONLY, 0);
+            if (ifd < 0) {
+                fut_printf("[MISC-TEST] ✗ Test 1087: open %s failed: %d\n", path, ifd);
+                fut_test_fail(1087);
+            } else {
+                char buf[512]; long nr = fut_vfs_read(ifd, buf, sizeof(buf) - 1);
+                fut_vfs_close(ifd);
+                if (nr > 0) {
+                    buf[nr] = '\0';
+                    const char *needle = "it_interval:"; int found = 0;
+                    for (long j = 0; j + 12 <= nr; j++) {
+                        if (__builtin_memcmp(buf + j, needle, 12) == 0) { found = 1; break; }
+                    }
+                    if (found) {
+                        fut_printf("[MISC-TEST] ✓ Test 1087: timerfd fdinfo has 'it_interval:'\n");
+                        fut_test_pass();
+                    } else {
+                        fut_printf("[MISC-TEST] ✗ Test 1087: 'it_interval:' not in: '%.64s'\n", buf);
+                        fut_test_fail(1087);
+                    }
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1087: read fdinfo returned %ld\n", nr);
+                    fut_test_fail(1087);
+                }
+            }
+            sys_close((int)tfd);
+        }
+    }
+
+    /* ---- Test 1088: /proc/self/fdinfo/<n> for signalfd has "sigmask:" ---- */
+    fut_printf("[MISC-TEST] Test 1088: /proc/self/fdinfo for signalfd has 'sigmask:'\n");
+    {
+        uint64_t mask = 1ULL << 9; /* SIGUSR1 bit */
+        long sfd = sys_signalfd4(-1, &mask, 8, 0);
+        if (sfd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1088: signalfd4 failed: %ld\n", sfd);
+            fut_test_fail(1088);
+        } else {
+            char path[64];
+            path[0]='/'; path[1]='p'; path[2]='r'; path[3]='o'; path[4]='c';
+            path[5]='/'; path[6]='s'; path[7]='e'; path[8]='l'; path[9]='f';
+            path[10]='/'; path[11]='f'; path[12]='d'; path[13]='i';
+            path[14]='n'; path[15]='f'; path[16]='o'; path[17]='/';
+            int n88 = (int)sfd;
+            int i = 18;
+            if (n88 >= 100) path[i++] = (char)('0' + n88/100);
+            if (n88 >= 10)  path[i++] = (char)('0' + (n88/10)%10);
+            path[i++] = (char)('0' + n88%10); path[i] = '\0';
+
+            int ifd = fut_vfs_open(path, O_RDONLY, 0);
+            if (ifd < 0) {
+                fut_printf("[MISC-TEST] ✗ Test 1088: open %s failed: %d\n", path, ifd);
+                fut_test_fail(1088);
+            } else {
+                char buf[512]; long nr = fut_vfs_read(ifd, buf, sizeof(buf) - 1);
+                fut_vfs_close(ifd);
+                if (nr > 0) {
+                    buf[nr] = '\0';
+                    const char *needle = "sigmask:"; int found = 0;
+                    for (long j = 0; j + 8 <= nr; j++) {
+                        if (__builtin_memcmp(buf + j, needle, 8) == 0) { found = 1; break; }
+                    }
+                    if (found) {
+                        fut_printf("[MISC-TEST] ✓ Test 1088: signalfd fdinfo has 'sigmask:'\n");
+                        fut_test_pass();
+                    } else {
+                        fut_printf("[MISC-TEST] ✗ Test 1088: 'sigmask:' not in: '%.64s'\n", buf);
+                        fut_test_fail(1088);
+                    }
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1088: read fdinfo returned %ld\n", nr);
+                    fut_test_fail(1088);
+                }
+            }
+            sys_close((int)sfd);
+        }
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -36233,6 +36504,7 @@ void fut_misc_test_thread(void *arg) {
     test_proc_fd_getdents_eventfd_overflow(); /* Tests 1071-1074: /proc/self/fd getdents; eventfd UINT64_MAX/overflow */
     test_inotify_moved_proc_getdents(); /* Tests 1075-1079: inotify IN_MOVED_FROM/TO cookie; getdents /proc PID listing */
     test_inotify_self_events(); /* Tests 1080-1082: IN_DELETE_SELF, IN_MOVE_SELF, IN_Q_OVERFLOW */
+    test_mremap_dontunmap_and_fdinfo(); /* Tests 1083-1088: mremap DONTUNMAP; fdinfo timerfd/signalfd */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

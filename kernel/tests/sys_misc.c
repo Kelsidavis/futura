@@ -31460,6 +31460,125 @@ static void test_inotify_onlydir_maskadd(void) {
     fut_printf("[MISC-TEST] ✓ Tests 926-930: inotify IN_ONLYDIR+IN_MASK_ADD done\n");
 }
 
+/* ---- /run directory and /etc directory listing tests (942-946) --------- */
+
+/*
+ * test_run_and_etc_dirs() — Tests 942-946
+ *
+ *   Test 942: stat("/run") → S_ISDIR
+ *   Test 943: create file in /run → 0 (writable)
+ *   Test 944: stat("/run/lock") → S_ISDIR
+ *   Test 945: stat("/run/user/0") → S_ISDIR
+ *   Test 946: open+read /etc/os-release contains "Futura"
+ */
+static void test_run_and_etc_dirs(void) {
+    fut_printf("[MISC-TEST] Tests 942-946: /run dirs and /etc/os-release\n");
+
+    extern long sys_openat(int dirfd, const char *path, int flags, int mode);
+    extern long sys_read(int fd, void *buf, size_t count);
+    extern long sys_close(int fd);
+    extern long sys_write(int fd, const void *buf, size_t count);
+    extern long sys_stat(const char *path, struct fut_stat *statbuf);
+    extern long sys_unlink(const char *path);
+
+#define AT_FDCWD_R (-100)
+#define O_RDONLY_R  0
+#define O_WRONLY_R  1
+#define O_CREAT_R   0100
+#define O_TRUNC_R   01000
+
+    struct fut_stat st;
+
+    /* --- Test 942: /run exists and is a directory --- */
+    fut_printf("[MISC-TEST] Test 942: stat(\"/run\") → S_ISDIR\n");
+    __builtin_memset(&st, 0, sizeof(st));
+    long r942 = sys_stat("/run", &st);
+    if (r942 == 0 && (st.st_mode & 0170000) == 0040000 /* S_IFDIR */) {
+        fut_printf("[MISC-TEST] ✓ Test 942: /run is a directory (mode=0%o)\n", st.st_mode);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 942: stat(\"/run\") = %ld, mode=0%o (want dir)\n",
+                   r942, st.st_mode);
+        fut_test_fail(942);
+    }
+
+    /* --- Test 943: can create a file in /run (writable mount) --- */
+    fut_printf("[MISC-TEST] Test 943: create file in /run\n");
+    const char *tmpfile = "/run/test943.txt";
+    long fd943 = sys_openat(AT_FDCWD_R, tmpfile,
+                            O_WRONLY_R | O_CREAT_R | O_TRUNC_R, 0644);
+    if (fd943 >= 0) {
+        sys_write((int)fd943, "run-test", 8);
+        sys_close((int)fd943);
+        sys_unlink(tmpfile);
+        fut_printf("[MISC-TEST] ✓ Test 943: /run is writable\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 943: open(\"/run/...\") = %ld (want >= 0)\n", fd943);
+        fut_test_fail(943);
+    }
+
+    /* --- Test 944: /run/lock is a directory --- */
+    fut_printf("[MISC-TEST] Test 944: stat(\"/run/lock\") → S_ISDIR\n");
+    __builtin_memset(&st, 0, sizeof(st));
+    long r944 = sys_stat("/run/lock", &st);
+    if (r944 == 0 && (st.st_mode & 0170000) == 0040000) {
+        fut_printf("[MISC-TEST] ✓ Test 944: /run/lock is a directory\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 944: stat(\"/run/lock\") = %ld, mode=0%o\n",
+                   r944, st.st_mode);
+        fut_test_fail(944);
+    }
+
+    /* --- Test 945: /run/user/0 is a directory --- */
+    fut_printf("[MISC-TEST] Test 945: stat(\"/run/user/0\") → S_ISDIR\n");
+    __builtin_memset(&st, 0, sizeof(st));
+    long r945 = sys_stat("/run/user/0", &st);
+    if (r945 == 0 && (st.st_mode & 0170000) == 0040000) {
+        fut_printf("[MISC-TEST] ✓ Test 945: /run/user/0 is a directory\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 945: stat(\"/run/user/0\") = %ld, mode=0%o\n",
+                   r945, st.st_mode);
+        fut_test_fail(945);
+    }
+
+    /* --- Test 946: /etc/os-release contains "Futura" --- */
+    fut_printf("[MISC-TEST] Test 946: /etc/os-release contains \"Futura\"\n");
+    long fd946 = sys_openat(AT_FDCWD_R, "/etc/os-release", O_RDONLY_R, 0);
+    if (fd946 >= 0) {
+        char buf[256];
+        __builtin_memset(buf, 0, sizeof(buf));
+        long nr = sys_read((int)fd946, buf, sizeof(buf) - 1);
+        sys_close((int)fd946);
+        const char *needle = "Futura";
+        size_t nlen = 6;
+        bool found = false;
+        for (long i = 0; i <= nr - (long)nlen; i++) {
+            if (__builtin_memcmp(buf + i, needle, nlen) == 0) { found = true; break; }
+        }
+        if (found) {
+            fut_printf("[MISC-TEST] ✓ Test 946: /etc/os-release contains \"Futura\"\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 946: /etc/os-release lacks \"Futura\"\n");
+            fut_test_fail(946);
+        }
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 946: open(/etc/os-release) = %ld\n", fd946);
+        fut_test_fail(946);
+    }
+
+#undef AT_FDCWD_R
+#undef O_RDONLY_R
+#undef O_WRONLY_R
+#undef O_CREAT_R
+#undef O_TRUNC_R
+
+    fut_printf("[MISC-TEST] ✓ Tests 942-946: /run dirs and /etc/os-release done\n");
+}
+
 /* ---- Cross-filesystem EXDEV tests (937-941) ----------------------------- */
 
 /*
@@ -32367,6 +32486,7 @@ void fut_misc_test_thread(void *arg) {
     test_inotify_onlydir_maskadd();       /* Tests 926-930: inotify IN_ONLYDIR + IN_MASK_ADD flags */
     test_etc_filesystem();                /* Tests 931-936: /etc/hostname/hosts/resolv.conf/nsswitch.conf/passwd/group */
     test_cross_fs_exdev();                /* Tests 937-941: EXDEV on cross-mount link/rename; same-mount success */
+    test_run_and_etc_dirs();              /* Tests 942-946: /run writable, /run/lock, /run/user/0, getdents /etc, /etc/os-release */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -130,6 +130,21 @@ long sys_ftruncate(int fd, uint64_t length) {
         return -EBADF;
     }
 
+    /* Enforce RLIMIT_FSIZE: extending beyond the soft limit returns EFBIG and
+     * sends SIGXFSZ.  Shrinking is always allowed regardless of the limit. */
+    {
+        uint64_t fsize_limit = task->rlimits[1].rlim_cur; /* RLIMIT_FSIZE = 1 */
+        if (fsize_limit != (uint64_t)-1 && fsize_limit != 0 &&
+                length > fsize_limit) {
+            extern int fut_signal_send(struct fut_task *t, int sig);
+            fut_signal_send(task, 25 /* SIGXFSZ */);
+            fut_printf("[FTRUNCATE] ftruncate(fd=%d, length=%llu) -> EFBIG "
+                       "(exceeds RLIMIT_FSIZE=%llu)\n",
+                       fd, length, fsize_limit);
+            return -EFBIG;
+        }
+    }
+
     /* Enforce file seals (applies to memfd chr_ops files and vnode files alike) */
     if (file->seals & 0x0008 /* F_SEAL_WRITE */) {
         return -EPERM;

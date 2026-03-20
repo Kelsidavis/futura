@@ -28871,6 +28871,144 @@ static void test_opath_semantics(void) {
 #undef O_PATH_FLAG
 }
 
+/* ============================================================
+ * Tests 796-799: ftruncate/truncate enforce RLIMIT_FSIZE
+ *
+ *   796: ftruncate within RLIMIT_FSIZE succeeds
+ *   797: ftruncate beyond RLIMIT_FSIZE returns EFBIG + SIGXFSZ pending
+ *   798: truncate() beyond RLIMIT_FSIZE returns EFBIG + SIGXFSZ pending
+ *   799: shrink (ftruncate to 0) always succeeds even with tight RLIMIT_FSIZE
+ *
+ * POSIX: "If a write() or ftruncate() request would increase the size of
+ * a file beyond the value of the soft RLIMIT_FSIZE limit for the process,
+ * the request shall fail and the SIGXFSZ signal shall be generated for
+ * the process."
+ * ============================================================ */
+static void test_ftruncate_rlimit_fsize(void) {
+    fut_printf("[MISC-TEST] Tests 796-799: ftruncate/truncate RLIMIT_FSIZE enforcement\n");
+
+    /* sys_prlimit64 already declared at file scope with void* parameters */
+    extern long sys_sigprocmask(int how, const sigset_t *set, sigset_t *oldset);
+    extern long sys_ftruncate(int fd, uint64_t length);
+    extern long sys_truncate(const char *path, uint64_t length);
+
+    /* Block SIGXFSZ (signal 25) to prevent default SIG_ACTION_CORE termination */
+    sigset_t xfsz_block = { .__mask = 1ULL << (25 - 1) };
+    sigset_t saved_mask;
+    sys_sigprocmask(0 /* SIG_BLOCK */, &xfsz_block, &saved_mask);
+
+    /* Create a test file */
+    const char *path796 = "/tmp/test796_ftrunc.bin";
+    int fd796 = (int)fut_vfs_open(path796, O_CREAT | O_RDWR, 0644);
+    if (fd796 < 0) {
+        fut_printf("[MISC-TEST] ✗ setup: open failed: %d\n", fd796);
+        sys_sigprocmask(2 /* SIG_SETMASK */, &saved_mask, NULL);
+        fut_test_fail(796); fut_test_fail(797);
+        fut_test_fail(798); fut_test_fail(799);
+        return;
+    }
+
+    /* Set RLIMIT_FSIZE = 100 bytes */
+    struct rlimit64_test old_fsize = { 0, 0 }, new_fsize = { 0, 0 };
+    sys_prlimit64(0, 1 /* RLIMIT_FSIZE */, NULL, &old_fsize);
+    new_fsize.rlim_cur = 100;
+    new_fsize.rlim_max = old_fsize.rlim_max;
+    sys_prlimit64(0, 1 /* RLIMIT_FSIZE */, &new_fsize, NULL);
+
+    fut_task_t *task796 = fut_task_current();
+    uint64_t sigxfsz_bit = 1ULL << (25 - 1);
+
+    /* Test 796: ftruncate to 50 (within limit) → 0 */
+    long ret = sys_ftruncate(fd796, 50);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 796: ftruncate(50) within limit returned %ld (expected 0)\n", ret);
+        fut_vfs_close(fd796);
+        sys_prlimit64(0, 1, &old_fsize, NULL);
+        sys_sigprocmask(2, &saved_mask, NULL);
+        fut_test_fail(796); fut_test_fail(797);
+        fut_test_fail(798); fut_test_fail(799);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 796: ftruncate(50) within RLIMIT_FSIZE=100 → 0\n");
+    fut_test_pass();
+
+    /* Test 797: ftruncate to 200 (beyond limit) → EFBIG + SIGXFSZ */
+    /* Clear any pending SIGXFSZ first */
+    if (task796) __atomic_and_fetch(&task796->pending_signals, ~sigxfsz_bit, __ATOMIC_RELEASE);
+    ret = sys_ftruncate(fd796, 200);
+    if (ret != -EFBIG) {
+        fut_printf("[MISC-TEST] ✗ Test 797: ftruncate(200) returned %ld (expected -EFBIG=%d)\n",
+                   ret, -EFBIG);
+        fut_vfs_close(fd796);
+        sys_prlimit64(0, 1, &old_fsize, NULL);
+        sys_sigprocmask(2, &saved_mask, NULL);
+        fut_test_fail(797); fut_test_fail(798); fut_test_fail(799);
+        return;
+    }
+    /* Verify SIGXFSZ was queued */
+    if (task796) {
+        uint64_t pending = __atomic_load_n(&task796->pending_signals, __ATOMIC_ACQUIRE);
+        if (!(pending & sigxfsz_bit)) {
+            fut_printf("[MISC-TEST] ✗ Test 797: SIGXFSZ not pending after ftruncate beyond limit\n");
+            fut_vfs_close(fd796);
+            sys_prlimit64(0, 1, &old_fsize, NULL);
+            sys_sigprocmask(2, &saved_mask, NULL);
+            fut_test_fail(797); fut_test_fail(798); fut_test_fail(799);
+            return;
+        }
+        __atomic_and_fetch(&task796->pending_signals, ~sigxfsz_bit, __ATOMIC_RELEASE);
+    }
+    fut_printf("[MISC-TEST] ✓ Test 797: ftruncate(200) beyond limit → -EFBIG + SIGXFSZ\n");
+    fut_test_pass();
+
+    fut_vfs_close(fd796);
+
+    /* Test 798: truncate() beyond limit → EFBIG + SIGXFSZ */
+    if (task796) __atomic_and_fetch(&task796->pending_signals, ~sigxfsz_bit, __ATOMIC_RELEASE);
+    ret = sys_truncate(path796, 150);
+    if (ret != -EFBIG) {
+        fut_printf("[MISC-TEST] ✗ Test 798: truncate(150) returned %ld (expected -EFBIG=%d)\n",
+                   ret, -EFBIG);
+        sys_prlimit64(0, 1, &old_fsize, NULL);
+        sys_sigprocmask(2, &saved_mask, NULL);
+        fut_test_fail(798); fut_test_fail(799);
+        return;
+    }
+    if (task796) {
+        uint64_t pending = __atomic_load_n(&task796->pending_signals, __ATOMIC_ACQUIRE);
+        if (!(pending & sigxfsz_bit)) {
+            fut_printf("[MISC-TEST] ✗ Test 798: SIGXFSZ not pending after truncate beyond limit\n");
+            sys_prlimit64(0, 1, &old_fsize, NULL);
+            sys_sigprocmask(2, &saved_mask, NULL);
+            fut_test_fail(798); fut_test_fail(799);
+            return;
+        }
+        __atomic_and_fetch(&task796->pending_signals, ~sigxfsz_bit, __ATOMIC_RELEASE);
+    }
+    fut_printf("[MISC-TEST] ✓ Test 798: truncate(150) beyond limit → -EFBIG + SIGXFSZ\n");
+    fut_test_pass();
+
+    /* Test 799: ftruncate to 0 (shrink) always succeeds regardless of limit */
+    int fd799 = (int)fut_vfs_open(path796, O_RDWR, 0);
+    if (fd799 >= 0) {
+        ret = sys_ftruncate(fd799, 0);
+        fut_vfs_close(fd799);
+        if (ret != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 799: ftruncate(0/shrink) returned %ld (expected 0)\n", ret);
+            sys_prlimit64(0, 1, &old_fsize, NULL);
+            sys_sigprocmask(2, &saved_mask, NULL);
+            fut_test_fail(799);
+            return;
+        }
+    }
+    fut_printf("[MISC-TEST] ✓ Test 799: ftruncate(0) shrink ignores RLIMIT_FSIZE → 0\n");
+    fut_test_pass();
+
+    /* Restore rlimit and signal mask */
+    sys_prlimit64(0, 1 /* RLIMIT_FSIZE */, &old_fsize, NULL);
+    sys_sigprocmask(2 /* SIG_SETMASK */, &saved_mask, NULL);
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -29413,6 +29551,7 @@ void fut_misc_test_thread(void *arg) {
     test_flock_nb_conflict();             /* Tests 786-787: flock LOCK_NB conflict → EAGAIN, then success */
     test_rlimit_fsize_enforcement();      /* Tests 788-791: RLIMIT_FSIZE: truncation, EFBIG, SIGXFSZ */
     test_opath_semantics();               /* Tests 792-795: O_PATH fd: open ok, read EBADF, write EBADF, fstat ok */
+    test_ftruncate_rlimit_fsize();        /* Tests 796-799: ftruncate/truncate enforce RLIMIT_FSIZE */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

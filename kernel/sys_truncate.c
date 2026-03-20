@@ -297,6 +297,18 @@ long sys_truncate(const char *path, uint64_t length) {
         return -EACCES;
     }
 
+    /* Enforce RLIMIT_FSIZE: extending beyond the soft limit → EFBIG + SIGXFSZ */
+    {
+        uint64_t fsize_limit = task->rlimits[1].rlim_cur; /* RLIMIT_FSIZE = 1 */
+        if (fsize_limit != (uint64_t)-1 && fsize_limit != 0 &&
+                local_length > fsize_limit) {
+            extern int fut_signal_send(struct fut_task *t, int sig);
+            fut_signal_send(task, 25 /* SIGXFSZ */);
+            fut_vnode_unref(vnode);
+            return -EFBIG;
+        }
+    }
+
     /* Phase 2: Store current size for before/after comparison */
     uint64_t current_size = vnode->size;
 

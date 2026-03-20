@@ -110,6 +110,10 @@
 #define ENOTTY      25
 #endif
 
+#ifndef EFBIG
+#define EFBIG       27
+#endif
+
 #ifndef ENOSPC
 #define ENOSPC      28
 #endif

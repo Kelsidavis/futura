@@ -34726,6 +34726,124 @@ static void test_sendfile_access_mode(void) {
     }
 }
 
+/*
+ * test_read_write_access_mode — Tests 1057-1060
+ *
+ * Verify that read/write/readv/writev enforce access mode on regular files.
+ * These go through fut_vfs_read/write which have O_ACCMODE checks. Test 52
+ * already covers write(O_RDONLY) via fut_vfs_write; these tests use the
+ * syscall interface and cover the read(O_WRONLY) case which was untested.
+ *   1057: read(O_WRONLY regular file) → EBADF
+ *   1058: write(O_RDONLY regular file) → EBADF  [via sys_write syscall]
+ *   1059: readv(O_WRONLY regular file) → EBADF
+ *   1060: writev(O_RDONLY regular file) → EBADF
+ */
+static void test_read_write_access_mode(void) {
+    extern ssize_t sys_read(int fd, void *buf, size_t count);
+    extern ssize_t sys_write(int fd, const void *buf, size_t count);
+    extern ssize_t sys_readv(int fd, const struct iovec *iov, int iovcnt);
+    extern ssize_t sys_writev(int fd, const struct iovec *iov, int iovcnt);
+    extern long sys_close(int fd);
+
+    /* Create a populated file to open O_RDONLY */
+    {
+        int wfd = fut_vfs_open("/rwam_file.txt", O_RDWR | O_CREAT | O_TRUNC, 0644);
+        if (wfd >= 0) {
+            sys_write(wfd, "hello", 5);
+            sys_close(wfd);
+        }
+    }
+
+    /* ---- Test 1057: read(O_WRONLY fd) → EBADF ---- */
+    fut_printf("[MISC-TEST] Test 1057: read(O_WRONLY regular file) → EBADF\n");
+    {
+        int fd = fut_vfs_open("/rwam_file.txt", O_WRONLY, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1057: open O_WRONLY failed: %d\n", fd);
+            fut_test_fail(1057);
+        } else {
+            char buf[8];
+            ssize_t r = sys_read(fd, buf, sizeof(buf));
+            sys_close(fd);
+            if (r == -EBADF) {
+                fut_printf("[MISC-TEST] ✓ Test 1057: read(O_WRONLY) → EBADF\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1057: read(O_WRONLY)=%zd (expected -EBADF=%d)\n",
+                           r, -EBADF);
+                fut_test_fail(1057);
+            }
+        }
+    }
+
+    /* ---- Test 1058: write(O_RDONLY fd) via sys_write → EBADF ---- */
+    fut_printf("[MISC-TEST] Test 1058: write(O_RDONLY regular file) → EBADF\n");
+    {
+        int fd = fut_vfs_open("/rwam_file.txt", O_RDONLY, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1058: open O_RDONLY failed: %d\n", fd);
+            fut_test_fail(1058);
+        } else {
+            ssize_t r = sys_write(fd, "hack", 4);
+            sys_close(fd);
+            if (r == -EBADF) {
+                fut_printf("[MISC-TEST] ✓ Test 1058: write(O_RDONLY) → EBADF\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1058: write(O_RDONLY)=%zd (expected -EBADF=%d)\n",
+                           r, -EBADF);
+                fut_test_fail(1058);
+            }
+        }
+    }
+
+    /* ---- Test 1059: readv(O_WRONLY fd) → EBADF ---- */
+    fut_printf("[MISC-TEST] Test 1059: readv(O_WRONLY regular file) → EBADF\n");
+    {
+        int fd = fut_vfs_open("/rwam_file.txt", O_WRONLY, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1059: open O_WRONLY failed: %d\n", fd);
+            fut_test_fail(1059);
+        } else {
+            char buf[8];
+            struct iovec iov = { .iov_base = buf, .iov_len = sizeof(buf) };
+            ssize_t r = sys_readv(fd, &iov, 1);
+            sys_close(fd);
+            if (r == -EBADF) {
+                fut_printf("[MISC-TEST] ✓ Test 1059: readv(O_WRONLY) → EBADF\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1059: readv(O_WRONLY)=%zd (expected -EBADF=%d)\n",
+                           r, -EBADF);
+                fut_test_fail(1059);
+            }
+        }
+    }
+
+    /* ---- Test 1060: writev(O_RDONLY fd) → EBADF ---- */
+    fut_printf("[MISC-TEST] Test 1060: writev(O_RDONLY regular file) → EBADF\n");
+    {
+        int fd = fut_vfs_open("/rwam_file.txt", O_RDONLY, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1060: open O_RDONLY failed: %d\n", fd);
+            fut_test_fail(1060);
+        } else {
+            const char data[] = "hack";
+            struct iovec iov = { .iov_base = (void *)data, .iov_len = 4 };
+            ssize_t r = sys_writev(fd, &iov, 1);
+            sys_close(fd);
+            if (r == -EBADF) {
+                fut_printf("[MISC-TEST] ✓ Test 1060: writev(O_RDONLY) → EBADF\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1060: writev(O_RDONLY)=%zd (expected -EBADF=%d)\n",
+                           r, -EBADF);
+                fut_test_fail(1060);
+            }
+        }
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -35322,6 +35440,7 @@ void fut_misc_test_thread(void *arg) {
     test_preadv_pwritev_access_mode();   /* Tests 1045-1048: preadv(O_WRONLY)→EBADF, pwritev(O_RDONLY)→EBADF */
     test_splice_access_mode();           /* Tests 1049-1052: splice file-side access mode enforcement */
     test_sendfile_access_mode();         /* Tests 1053-1056: sendfile in_fd/out_fd access mode enforcement */
+    test_read_write_access_mode();       /* Tests 1057-1060: read/write/readv/writev access mode on regular files */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

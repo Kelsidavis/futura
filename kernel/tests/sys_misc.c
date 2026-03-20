@@ -36849,6 +36849,134 @@ t1118:
 #undef SIGUSR2_NUM
 }
 
+/* ============================================================
+ * Tests 1119-1122: sched_setattr/getattr nice field and getpriority consistency
+ *   Test 1119: sched_setattr(sched_nice=-5) → sched_getattr returns sched_nice=-5
+ *   Test 1120: sched_getattr nice field consistent with getpriority(20-nice)
+ *   Test 1121: setpriority(PRIO_PROCESS, 0, 3) → sched_getattr sched_nice=3
+ *   Test 1122: restore nice to 0
+ *
+ * Verifies that sched_setattr/sched_getattr nice field and
+ * getpriority/setpriority operate on the same underlying task->nice value.
+ * ============================================================ */
+static void test_sched_attr_nice_getpriority(void) {
+    extern long sys_sched_getattr(int pid, void *uattr, unsigned int usize,
+                                  unsigned int flags);
+    extern long sys_sched_setattr(int pid, const void *uattr, unsigned int flags);
+    extern long sys_getpriority(int which, int who);
+    extern long sys_setpriority(int which, int who, int prio);
+
+#define SCHED_ATTR_SIZE_NICE  48u  /* version-0 struct sched_attr */
+
+    struct sched_attr_nice {
+        uint32_t size;
+        uint32_t sched_policy;
+        uint64_t sched_flags;
+        int32_t  sched_nice;
+        uint32_t sched_priority;
+        uint64_t sched_runtime;
+        uint64_t sched_deadline;
+        uint64_t sched_period;
+    };
+
+    /* ---- Test 1119: sched_setattr sched_nice=-5 → getattr sched_nice=-5 ---- */
+    fut_printf("[MISC-TEST] Test 1119: sched_setattr(SCHED_OTHER, nice=-5) → sched_getattr nice=-5\n");
+    {
+        struct sched_attr_nice attr;
+        __builtin_memset(&attr, 0, sizeof(attr));
+        attr.size         = SCHED_ATTR_SIZE_NICE;
+        attr.sched_policy = 0; /* SCHED_OTHER */
+        attr.sched_nice   = -5;
+        long r = sys_sched_setattr(0, &attr, 0);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1119: sched_setattr(nice=-5) returned %ld\n", r);
+            fut_test_fail(1119);
+            goto t1120;
+        }
+        __builtin_memset(&attr, 0xff, sizeof(attr));
+        r = sys_sched_getattr(0, &attr, SCHED_ATTR_SIZE_NICE, 0);
+        if (r != 0 || attr.sched_nice != -5) {
+            fut_printf("[MISC-TEST] ✗ Test 1119: getattr r=%ld sched_nice=%d (expected -5)\n",
+                       r, attr.sched_nice);
+            fut_test_fail(1119);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1119: sched_getattr sched_nice=%d\n", attr.sched_nice);
+            fut_test_pass();
+        }
+    }
+
+t1120:
+    /* ---- Test 1120: sched_getattr nice consistent with getpriority(20-nice) ---- */
+    fut_printf("[MISC-TEST] Test 1120: sched_getattr sched_nice consistent with getpriority\n");
+    {
+        /* Currently nice=-5; getpriority(PRIO_PROCESS,0) should return 20-(-5)=25 */
+        struct sched_attr_nice attr;
+        __builtin_memset(&attr, 0, sizeof(attr));
+        long rg = sys_sched_getattr(0, &attr, SCHED_ATTR_SIZE_NICE, 0);
+        long rp = sys_getpriority(0 /* PRIO_PROCESS */, 0);
+        if (rg != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1120: sched_getattr returned %ld\n", rg);
+            fut_test_fail(1120);
+            goto t1121;
+        }
+        /* getpriority returns (20 - nice) */
+        long expected_prio = 20 - (long)attr.sched_nice;
+        if (rp != expected_prio) {
+            fut_printf("[MISC-TEST] ✗ Test 1120: getpriority=%ld expected %ld (20-(%d))\n",
+                       rp, expected_prio, attr.sched_nice);
+            fut_test_fail(1120);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1120: getpriority=%ld = 20 - sched_nice(%d) consistent\n",
+                       rp, attr.sched_nice);
+            fut_test_pass();
+        }
+    }
+
+t1121:
+    /* ---- Test 1121: setpriority(PRIO_PROCESS,0,3) → sched_getattr sched_nice=3 ---- */
+    fut_printf("[MISC-TEST] Test 1121: setpriority(nice=3) → sched_getattr sched_nice=3\n");
+    {
+        long r = sys_setpriority(0 /* PRIO_PROCESS */, 0, 3);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1121: setpriority(3) returned %ld\n", r);
+            fut_test_fail(1121);
+            goto t1122;
+        }
+        struct sched_attr_nice attr;
+        __builtin_memset(&attr, 0, sizeof(attr));
+        r = sys_sched_getattr(0, &attr, SCHED_ATTR_SIZE_NICE, 0);
+        if (r != 0 || attr.sched_nice != 3) {
+            fut_printf("[MISC-TEST] ✗ Test 1121: sched_getattr r=%ld sched_nice=%d (expected 3)\n",
+                       r, attr.sched_nice);
+            fut_test_fail(1121);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1121: sched_getattr sched_nice=%d after setpriority(3)\n",
+                       attr.sched_nice);
+            fut_test_pass();
+        }
+    }
+
+t1122:
+    /* ---- Test 1122: restore nice to 0 ---- */
+    fut_printf("[MISC-TEST] Test 1122: restore nice to 0\n");
+    {
+        long r = sys_setpriority(0, 0, 0);
+        struct sched_attr_nice attr;
+        __builtin_memset(&attr, 0, sizeof(attr));
+        sys_sched_getattr(0, &attr, SCHED_ATTR_SIZE_NICE, 0);
+        if (r != 0 || attr.sched_nice != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1122: restore failed: r=%ld sched_nice=%d\n",
+                       r, attr.sched_nice);
+            fut_test_fail(1122);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1122: nice restored to 0\n");
+            fut_test_pass();
+        }
+    }
+
+#undef SCHED_ATTR_SIZE_NICE
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -37460,6 +37588,7 @@ void fut_misc_test_thread(void *arg) {
     test_sched_rt_policy_roundtrip(); /* Tests 1105-1110: SCHED_FIFO/SCHED_RR roundtrip */
     test_sched_param_rt_readback(); /* Tests 1111-1114: sched_getparam/sched_setparam RT priority readback */
     test_sigpending_accuracy();     /* Tests 1115-1118: sigpending() and SigPnd: proc/self/status accuracy */
+    test_sched_attr_nice_getpriority(); /* Tests 1119-1122: sched_setattr/getattr nice and getpriority consistency */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

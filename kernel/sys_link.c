@@ -485,7 +485,7 @@ long sys_link(const char *oldpath, const char *newpath) {
         case VN_DIR:
             file_type_desc = "directory";
             would_fail_type_check = 1;
-            type_error = -EISDIR;
+            type_error = -EPERM;  /* POSIX/Linux: EPERM for hard-linking a directory */
             break;
         case VN_LNK:
             file_type_desc = "symbolic link";

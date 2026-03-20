@@ -592,8 +592,8 @@ static int ramfs_lookup(struct fut_vnode *dir, const char *name, struct fut_vnod
     int safety_counter = 0;
 
     while (entry) {
-        /* Detect circular or corrupted lists (max 100 entries per directory) */
-        if (++safety_counter > 100) {
+        /* Detect circular or corrupted lists (max 65536 entries per directory) */
+        if (++safety_counter > 65536) {
             fut_printf("[ramfs] ERROR: Directory entry list corruption detected (loop?)\n");
             return -EIO;
         }
@@ -1459,9 +1459,10 @@ static int ramfs_link(struct fut_vnode *old_vnode, const char *oldpath, const ch
         return -EINVAL;
     }
 
-    /* Cannot create hard link to directory (prevents cycles) */
+    /* Cannot create hard link to directory (prevents cycles).
+     * Linux (and POSIX) returns EPERM for this, not EISDIR. */
     if (old_vnode->type == VN_DIR) {
-        return -EISDIR;
+        return -EPERM;
     }
 
     /* Extract directory and basename from newpath */

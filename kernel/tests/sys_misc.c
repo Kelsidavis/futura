@@ -33214,18 +33214,132 @@ static void test_af_netlink_rtm_route(void) {
 }
 
 /*
- * test_pread_pwrite_position — Tests 1003-1005
+ * test_rename_link_type_errors — Tests 1003-1007
  *
- *   1003: pread64 does not advance the file offset
- *   1004: pwrite64 does not advance the file offset
- *   1005: pwrite64 on an O_APPEND fd writes at the given offset (ignores O_APPEND)
+ *   1003: unlink(directory) → EISDIR (use rmdir, not unlink, for dirs)
+ *   1004: link(directory, newname) → EPERM (hard-linking dirs is forbidden)
+ *   1005: rename(file, existing_dir) → EISDIR (file can't replace a directory)
+ *   1006: rename(dir, existing_file) → ENOTDIR (directory can't replace a file)
+ *   1007: rename(dir, nonempty_dir) → ENOTEMPTY (can't replace non-empty directory)
+ *
+ * These are all POSIX/Linux type-based restrictions on rename and link operations.
+ */
+static void test_rename_link_type_errors(void) {
+    fut_printf("[MISC-TEST] Tests 1003-1007: rename/link directory type-error semantics\n");
+
+    extern long sys_unlink(const char *path);
+    extern long sys_link(const char *oldpath, const char *newpath);
+    extern long sys_rename(const char *oldpath, const char *newpath);
+    extern long sys_mkdir(const char *path, uint32_t mode);
+
+    /* Set up test files/directories */
+    sys_mkdir("/rlt_dir1", 0755);
+    sys_mkdir("/rlt_dir2", 0755);      /* empty, used for rename targets */
+    sys_mkdir("/rlt_dir3", 0755);      /* non-empty */
+    int fd = (int)fut_vfs_open("/rlt_dir3/child.txt", O_CREAT | O_RDWR, 0644);
+    if (fd >= 0) fut_vfs_close(fd);
+    int fd2 = (int)fut_vfs_open("/rlt_file.txt", O_CREAT | O_RDWR, 0644);
+    if (fd2 >= 0) fut_vfs_close(fd2);
+    int fd3 = (int)fut_vfs_open("/rlt_file2.txt", O_CREAT | O_RDWR, 0644);
+    if (fd3 >= 0) fut_vfs_close(fd3);
+
+    /* ---- Test 1003: unlink(directory) → EISDIR ---- */
+    fut_printf("[MISC-TEST] Test 1003: unlink(directory) → EISDIR\n");
+    {
+        long r = sys_unlink("/rlt_dir1");
+        if (r != -EISDIR) {
+            fut_printf("[MISC-TEST] ✗ Test 1003: unlink(dir) = %ld (expected -EISDIR=%d)\n",
+                       r, -EISDIR);
+            fut_test_fail(1003);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1003: unlink(dir) → EISDIR\n");
+            fut_test_pass();
+        }
+    }
+
+    /* ---- Test 1004: link(directory, newname) → EPERM ---- */
+    fut_printf("[MISC-TEST] Test 1004: link(directory, newlink) → EPERM\n");
+    {
+        long r = sys_link("/rlt_dir1", "/rlt_dir1_link");
+        if (r != -EPERM) {
+            fut_printf("[MISC-TEST] ✗ Test 1004: link(dir) = %ld (expected -EPERM=%d)\n",
+                       r, -EPERM);
+            fut_test_fail(1004);
+            /* clean up if link accidentally succeeded */
+            if (r == 0) sys_unlink("/rlt_dir1_link");
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1004: link(dir) → EPERM\n");
+            fut_test_pass();
+        }
+    }
+
+    /* ---- Test 1005: rename(file, existing_dir) → EISDIR ---- */
+    fut_printf("[MISC-TEST] Test 1005: rename(file, existing_dir) → EISDIR\n");
+    {
+        /* /rlt_file.txt is a file; /rlt_dir2 is an existing dir: should be EISDIR */
+        long r = sys_rename("/rlt_file.txt", "/rlt_dir2");
+        if (r != -EISDIR) {
+            fut_printf("[MISC-TEST] ✗ Test 1005: rename(file→dir) = %ld (expected -EISDIR=%d)\n",
+                       r, -EISDIR);
+            fut_test_fail(1005);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1005: rename(file, existing_dir) → EISDIR\n");
+            fut_test_pass();
+        }
+    }
+
+    /* ---- Test 1006: rename(dir, existing_file) → ENOTDIR ---- */
+    fut_printf("[MISC-TEST] Test 1006: rename(dir, existing_file) → ENOTDIR\n");
+    {
+        /* /rlt_dir1 is a dir; /rlt_file2.txt is an existing file: should be ENOTDIR */
+        long r = sys_rename("/rlt_dir1", "/rlt_file2.txt");
+        if (r != -ENOTDIR) {
+            fut_printf("[MISC-TEST] ✗ Test 1006: rename(dir→file) = %ld (expected -ENOTDIR=%d)\n",
+                       r, -ENOTDIR);
+            fut_test_fail(1006);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1006: rename(dir, existing_file) → ENOTDIR\n");
+            fut_test_pass();
+        }
+    }
+
+    /* ---- Test 1007: rename(dir, nonempty_dir) → ENOTEMPTY ---- */
+    fut_printf("[MISC-TEST] Test 1007: rename(dir, nonempty_dir) → ENOTEMPTY\n");
+    {
+        /* /rlt_dir1 is empty; /rlt_dir3 is non-empty (has child.txt): should be ENOTEMPTY */
+        long r = sys_rename("/rlt_dir1", "/rlt_dir3");
+        if (r != -ENOTEMPTY) {
+            fut_printf("[MISC-TEST] ✗ Test 1007: rename(dir→nonempty) = %ld (expected -ENOTEMPTY=%d)\n",
+                       r, -ENOTEMPTY);
+            fut_test_fail(1007);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1007: rename(dir, nonempty_dir) → ENOTEMPTY\n");
+            fut_test_pass();
+        }
+    }
+
+    /* Cleanup */
+    fut_vfs_unlink("/rlt_dir3/child.txt");
+    fut_vfs_rmdir("/rlt_dir3");
+    fut_vfs_rmdir("/rlt_dir2");
+    fut_vfs_rmdir("/rlt_dir1");
+    fut_vfs_unlink("/rlt_file.txt");
+    fut_vfs_unlink("/rlt_file2.txt");
+}
+
+/*
+ * test_pread_pwrite_position — Tests 1008-1010
+ *
+ *   1008: pread64 does not advance the file offset
+ *   1009: pwrite64 does not advance the file offset
+ *   1010: pwrite64 on an O_APPEND fd writes at the given offset (ignores O_APPEND)
  *
  * POSIX: "pwrite() shall be equivalent to write(), except that it writes into a
  * given position and does not change the file offset (regardless of whether
  * O_APPEND is set)."
  */
 static void test_pread_pwrite_position(void) {
-    fut_printf("[MISC-TEST] Tests 1003-1005: pread/pwrite file-position and O_APPEND semantics\n");
+    fut_printf("[MISC-TEST] Tests 1008-1010: pread/pwrite file-position and O_APPEND semantics\n");
 
     extern long sys_pread64(unsigned int fd, void *buf, size_t count, int64_t offset);
     extern long sys_pwrite64(unsigned int fd, const void *buf, size_t count, int64_t offset);
@@ -33242,15 +33356,15 @@ static void test_pread_pwrite_position(void) {
 #define TPPOS_O_APPEND  0x400
 #define TPPOS_O_RDONLY  0
 
-    /* ---- Test 1003: pread64 does not advance file position ---- */
-    fut_printf("[MISC-TEST] Test 1003: pread64 does not advance file offset\n");
+    /* ---- Test 1008: pread64 does not advance file position ---- */
+    fut_printf("[MISC-TEST] Test 1008: pread64 does not advance file offset\n");
     {
         const char *path = "/ppos_test_read.txt";
         int fd = (int)fut_vfs_open(path, TPPOS_O_CREAT | TPPOS_O_RDWR | TPPOS_O_TRUNC, 0644);
         if (fd < 0) {
-            fut_printf("[MISC-TEST] ✗ Test 1003: open failed: %d\n", fd);
-            fut_test_fail(1003);
-            goto t1003_done;
+            fut_printf("[MISC-TEST] ✗ Test 1008: open failed: %d\n", fd);
+            fut_test_fail(1008);
+            goto t1008_done;
         }
         /* Write "ABCDEFGHIJ" (10 bytes) to the file */
         fut_vfs_write(fd, "ABCDEFGHIJ", 10);
@@ -33259,89 +33373,89 @@ static void test_pread_pwrite_position(void) {
         /* Verify position is 0 */
         long pos_before = sys_lseek(fd, 0, TPPOS_SEEK_CUR);
         if (pos_before != 0) {
-            fut_printf("[MISC-TEST] ✗ Test 1003: initial pos=%ld (expected 0)\n", pos_before);
+            fut_printf("[MISC-TEST] ✗ Test 1008: initial pos=%ld (expected 0)\n", pos_before);
             fut_vfs_close(fd);
             fut_vfs_unlink(path);
-            fut_test_fail(1003);
-            goto t1003_done;
+            fut_test_fail(1008);
+            goto t1008_done;
         }
         /* pread at offset 5 (should read "FGHIJ") */
         char rbuf[6] = {0};
         long nr = sys_pread64((unsigned int)fd, rbuf, 5, 5);
         if (nr != 5 || rbuf[0] != 'F' || rbuf[4] != 'J') {
-            fut_printf("[MISC-TEST] ✗ Test 1003: pread64 returned %ld or bad data '%c%c'\n",
+            fut_printf("[MISC-TEST] ✗ Test 1008: pread64 returned %ld or bad data '%c%c'\n",
                        nr, rbuf[0], rbuf[4]);
             fut_vfs_close(fd);
             fut_vfs_unlink(path);
-            fut_test_fail(1003);
-            goto t1003_done;
+            fut_test_fail(1008);
+            goto t1008_done;
         }
         /* File position must still be 0 */
         long pos_after = sys_lseek(fd, 0, TPPOS_SEEK_CUR);
         fut_vfs_close(fd);
         fut_vfs_unlink(path);
         if (pos_after != 0) {
-            fut_printf("[MISC-TEST] ✗ Test 1003: pos after pread64=%ld (expected 0)\n", pos_after);
-            fut_test_fail(1003);
-            goto t1003_done;
+            fut_printf("[MISC-TEST] ✗ Test 1008: pos after pread64=%ld (expected 0)\n", pos_after);
+            fut_test_fail(1008);
+            goto t1008_done;
         }
-        fut_printf("[MISC-TEST] ✓ Test 1003: pread64 pos unchanged (0→0 after pread at 5)\n");
+        fut_printf("[MISC-TEST] ✓ Test 1008: pread64 pos unchanged (0→0 after pread at 5)\n");
         fut_test_pass();
     }
-t1003_done:;
+t1008_done:;
 
-    /* ---- Test 1004: pwrite64 does not advance file position ---- */
-    fut_printf("[MISC-TEST] Test 1004: pwrite64 does not advance file offset\n");
+    /* ---- Test 1009: pwrite64 does not advance file position ---- */
+    fut_printf("[MISC-TEST] Test 1009: pwrite64 does not advance file offset\n");
     {
         const char *path = "/ppos_test_write.txt";
         int fd = (int)fut_vfs_open(path, TPPOS_O_CREAT | TPPOS_O_RDWR | TPPOS_O_TRUNC, 0644);
         if (fd < 0) {
-            fut_printf("[MISC-TEST] ✗ Test 1004: open failed: %d\n", fd);
-            fut_test_fail(1004);
-            goto t1004_done;
+            fut_printf("[MISC-TEST] ✗ Test 1009: open failed: %d\n", fd);
+            fut_test_fail(1009);
+            goto t1009_done;
         }
         /* Seek to position 0 (already there after open) */
         long pos_before = sys_lseek(fd, 0, TPPOS_SEEK_CUR);
         if (pos_before != 0) {
-            fut_printf("[MISC-TEST] ✗ Test 1004: initial pos=%ld (expected 0)\n", pos_before);
+            fut_printf("[MISC-TEST] ✗ Test 1009: initial pos=%ld (expected 0)\n", pos_before);
             fut_vfs_close(fd);
             fut_vfs_unlink(path);
-            fut_test_fail(1004);
-            goto t1004_done;
+            fut_test_fail(1009);
+            goto t1009_done;
         }
         /* pwrite "HELLO" at offset 10 */
         long nw = sys_pwrite64((unsigned int)fd, "HELLO", 5, 10);
         if (nw != 5) {
-            fut_printf("[MISC-TEST] ✗ Test 1004: pwrite64 returned %ld (expected 5)\n", nw);
+            fut_printf("[MISC-TEST] ✗ Test 1009: pwrite64 returned %ld (expected 5)\n", nw);
             fut_vfs_close(fd);
             fut_vfs_unlink(path);
-            fut_test_fail(1004);
-            goto t1004_done;
+            fut_test_fail(1009);
+            goto t1009_done;
         }
         /* File position must still be 0 */
         long pos_after = sys_lseek(fd, 0, TPPOS_SEEK_CUR);
         fut_vfs_close(fd);
         fut_vfs_unlink(path);
         if (pos_after != 0) {
-            fut_printf("[MISC-TEST] ✗ Test 1004: pos after pwrite64=%ld (expected 0)\n", pos_after);
-            fut_test_fail(1004);
-            goto t1004_done;
+            fut_printf("[MISC-TEST] ✗ Test 1009: pos after pwrite64=%ld (expected 0)\n", pos_after);
+            fut_test_fail(1009);
+            goto t1009_done;
         }
-        fut_printf("[MISC-TEST] ✓ Test 1004: pwrite64 pos unchanged (0→0 after pwrite at 10)\n");
+        fut_printf("[MISC-TEST] ✓ Test 1009: pwrite64 pos unchanged (0→0 after pwrite at 10)\n");
         fut_test_pass();
     }
-t1004_done:;
+t1009_done:;
 
-    /* ---- Test 1005: pwrite64 on O_APPEND fd writes at given offset ---- */
-    fut_printf("[MISC-TEST] Test 1005: pwrite64 on O_APPEND fd ignores O_APPEND\n");
+    /* ---- Test 1010: pwrite64 on O_APPEND fd writes at given offset ---- */
+    fut_printf("[MISC-TEST] Test 1010: pwrite64 on O_APPEND fd ignores O_APPEND\n");
     {
         const char *path = "/ppos_test_append.txt";
         /* Create file without O_APPEND to pre-populate */
         int fd_init = (int)fut_vfs_open(path, TPPOS_O_CREAT | TPPOS_O_RDWR | TPPOS_O_TRUNC, 0644);
         if (fd_init < 0) {
-            fut_printf("[MISC-TEST] ✗ Test 1005: create failed: %d\n", fd_init);
-            fut_test_fail(1005);
-            goto t1005_done;
+            fut_printf("[MISC-TEST] ✗ Test 1010: create failed: %d\n", fd_init);
+            fut_test_fail(1010);
+            goto t1010_done;
         }
         /* Write "HELLO" to make file 5 bytes */
         fut_vfs_write(fd_init, "HELLO", 5);
@@ -33350,27 +33464,27 @@ t1004_done:;
         /* Reopen with O_APPEND | O_RDWR */
         int fd = (int)fut_vfs_open(path, TPPOS_O_RDWR | TPPOS_O_APPEND, 0644);
         if (fd < 0) {
-            fut_printf("[MISC-TEST] ✗ Test 1005: reopen O_APPEND failed: %d\n", fd);
+            fut_printf("[MISC-TEST] ✗ Test 1010: reopen O_APPEND failed: %d\n", fd);
             fut_vfs_unlink(path);
-            fut_test_fail(1005);
-            goto t1005_done;
+            fut_test_fail(1010);
+            goto t1010_done;
         }
         /* pwrite "XYZ" at offset 0 — must write at 0, not at end (5) */
         long nw = sys_pwrite64((unsigned int)fd, "XYZ", 3, 0);
         fut_vfs_close(fd);
         if (nw != 3) {
-            fut_printf("[MISC-TEST] ✗ Test 1005: pwrite64(O_APPEND) returned %ld (expected 3)\n", nw);
+            fut_printf("[MISC-TEST] ✗ Test 1010: pwrite64(O_APPEND) returned %ld (expected 3)\n", nw);
             fut_vfs_unlink(path);
-            fut_test_fail(1005);
-            goto t1005_done;
+            fut_test_fail(1010);
+            goto t1010_done;
         }
         /* Verify content: first 3 bytes must be "XYZ", bytes 3-4 must be "LO" */
         int rfd = (int)fut_vfs_open(path, TPPOS_O_RDONLY, 0);
         if (rfd < 0) {
-            fut_printf("[MISC-TEST] ✗ Test 1005: reopen for read failed: %d\n", rfd);
+            fut_printf("[MISC-TEST] ✗ Test 1010: reopen for read failed: %d\n", rfd);
             fut_vfs_unlink(path);
-            fut_test_fail(1005);
-            goto t1005_done;
+            fut_test_fail(1010);
+            goto t1010_done;
         }
         char content[8] = {0};
         long nr = sys_read(rfd, content, 5);
@@ -33378,15 +33492,15 @@ t1004_done:;
         fut_vfs_unlink(path);
         if (nr != 5 || content[0] != 'X' || content[1] != 'Y' || content[2] != 'Z' ||
             content[3] != 'L' || content[4] != 'O') {
-            fut_printf("[MISC-TEST] ✗ Test 1005: content='%c%c%c%c%c' (expected 'XYZLO')\n",
+            fut_printf("[MISC-TEST] ✗ Test 1010: content='%c%c%c%c%c' (expected 'XYZLO')\n",
                        content[0], content[1], content[2], content[3], content[4]);
-            fut_test_fail(1005);
-            goto t1005_done;
+            fut_test_fail(1010);
+            goto t1010_done;
         }
-        fut_printf("[MISC-TEST] ✓ Test 1005: pwrite64 on O_APPEND writes at offset 0 (content='XYZLO')\n");
+        fut_printf("[MISC-TEST] ✓ Test 1010: pwrite64 on O_APPEND writes at offset 0 (content='XYZLO')\n");
         fut_test_pass();
     }
-t1005_done:;
+t1010_done:;
 
 #undef TPPOS_SEEK_SET
 #undef TPPOS_SEEK_CUR
@@ -33981,7 +34095,8 @@ void fut_misc_test_thread(void *arg) {
     test_rlimit_data_brk();              /* Tests 994-996: RLIMIT_DATA enforcement in brk() */
     test_utimensat_utime_omit();         /* Tests 997-999: utimensat UTIME_OMIT/UTIME_NOW semantics */
     test_dup_shared_description();       /* Tests 1000-1002: dup() shared open-file-description semantics */
-    test_pread_pwrite_position();        /* Tests 1003-1005: pread/pwrite position preservation + O_APPEND bypass */
+    test_rename_link_type_errors();      /* Tests 1003-1007: rename/link type errors (EISDIR/EPERM/ENOTDIR/ENOTEMPTY) */
+    test_pread_pwrite_position();        /* Tests 1008-1010: pread/pwrite position preservation + O_APPEND bypass */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

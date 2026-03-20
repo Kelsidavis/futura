@@ -101,6 +101,9 @@ static inline int prctl_copy_to_user(void *dst, const void *src, size_t n) {
 #define PR_SET_PTRACER      0x59616d61  /* Allow <pid> to ptrace this process */
 #define PR_SET_PTRACER_ANY  (~0UL)      /* Allow any process to ptrace */
 
+/* ELF auxiliary vector access (Linux 6.5+) — magic value spells "AUXV" */
+#define PR_GET_AUXV         0x41555856  /* Copy auxv into caller-provided buffer */
+
 /* Linux 5.6+ prctl options (accepted as no-ops) */
 #define PR_SET_IO_FLUSHER   57  /* Mark thread as I/O flusher (memory-pressure exempt) */
 #define PR_GET_IO_FLUSHER   58  /* Get I/O flusher state */
@@ -446,6 +449,49 @@ long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
          * arg2 = PID to allow (or PR_SET_PTRACER_ANY for any process, or 0 to clear).
          * Futura has no Yama LSM; accept as no-op so Docker/gdb don't see EINVAL. */
         return 0;
+
+    case PR_GET_AUXV: {
+        /* Linux 6.5+: copy the ELF auxiliary vector into caller-supplied buffer.
+         * arg2 = buf (void *), arg3 = buflen (size_t), arg4 must be 0.
+         * Returns the total auxv byte count; EINVAL if arg4 != 0 or buf too small. */
+        if (arg4 != 0)
+            return -EINVAL;
+
+        /* Build the same minimal auxv that /proc/<pid>/auxv generates */
+        struct auxv_pair { uint64_t key; uint64_t val; };
+        struct auxv_pair av[16];
+        int ai = 0;
+#ifdef PAGE_SIZE
+        av[ai].key = 6;  av[ai].val = PAGE_SIZE;             ai++; /* AT_PAGESZ */
+#else
+        av[ai].key = 6;  av[ai].val = 4096;                  ai++;
+#endif
+        av[ai].key = 11; av[ai].val = (uint64_t)task->ruid;  ai++; /* AT_UID */
+        av[ai].key = 12; av[ai].val = (uint64_t)task->uid;   ai++; /* AT_EUID */
+        av[ai].key = 13; av[ai].val = (uint64_t)task->rgid;  ai++; /* AT_GID */
+        av[ai].key = 14; av[ai].val = (uint64_t)task->gid;   ai++; /* AT_EGID */
+        uint64_t secure = (task->uid != task->ruid || task->gid != task->rgid) ? 1 : 0;
+        av[ai].key = 23; av[ai].val = secure;                 ai++; /* AT_SECURE */
+        av[ai].key = 16; av[ai].val = 0ULL;                   ai++; /* AT_HWCAP */
+        av[ai].key = 0;  av[ai].val = 0ULL;                   ai++; /* AT_NULL */
+
+        size_t auxv_size = (size_t)ai * sizeof(struct auxv_pair);
+
+        /* If buf is NULL or buflen is 0, just return the size */
+        void *buf = (void *)(uintptr_t)arg2;
+        size_t buflen = (size_t)arg3;
+        if (!buf || buflen == 0)
+            return (long)auxv_size;
+
+        /* If buffer is too small, return EINVAL (Linux semantics) */
+        if (buflen < auxv_size)
+            return -EINVAL;
+
+        if (prctl_copy_to_user(buf, av, auxv_size) != 0)
+            return -EFAULT;
+
+        return (long)auxv_size;
+    }
 
     default:
         fut_printf("[PRCTL] prctl(option=%d) -> EINVAL (unsupported option)\n", option);

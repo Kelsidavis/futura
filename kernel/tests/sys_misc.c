@@ -32005,6 +32005,61 @@ static void test_prctl_ptracer(void) {
 #undef PR_SET_PTRACER_ANY
 }
 
+static void test_prctl_get_auxv(void) {
+    fut_printf("[MISC-TEST] Tests 976-978: PR_GET_AUXV (ELF auxv prctl, Linux 6.5+)\n");
+
+    extern long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
+                          unsigned long arg4, unsigned long arg5);
+
+#define PR_GET_AUXV_MAGIC 0x41555856UL
+
+    /* Test 976: NULL buf → returns total auxv byte count (> 0) */
+    fut_printf("[MISC-TEST] Test 976: PR_GET_AUXV(NULL, 0) → positive size\n");
+    long sz = sys_prctl((int)PR_GET_AUXV_MAGIC, 0UL, 0UL, 0UL, 0UL);
+    if (sz > 0) {
+        fut_printf("[MISC-TEST] ✓ Test 976: PR_GET_AUXV size = %ld\n", sz);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 976: PR_GET_AUXV returned %ld (want > 0)\n", sz);
+        fut_test_fail(976);
+    }
+
+    /* Test 977: valid buffer → copies data and returns same size */
+    fut_printf("[MISC-TEST] Test 977: PR_GET_AUXV(buf, size) → data copied\n");
+    struct { uint64_t key; uint64_t val; } auxvbuf[32];
+    __builtin_memset(auxvbuf, 0xcc, sizeof(auxvbuf));
+    long r = sys_prctl((int)PR_GET_AUXV_MAGIC,
+                       (unsigned long)(uintptr_t)auxvbuf,
+                       (unsigned long)sizeof(auxvbuf),
+                       0UL, 0UL);
+    if (r == sz) {
+        fut_printf("[MISC-TEST] ✓ Test 977: PR_GET_AUXV returned %ld bytes\n", r);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 977: PR_GET_AUXV returned %ld (want %ld)\n", r, sz);
+        fut_test_fail(977);
+    }
+
+    /* Test 978: AT_NULL terminator present in returned data */
+    fut_printf("[MISC-TEST] Test 978: auxv data contains AT_NULL (0) terminator\n");
+    int found_null = 0;
+    if (r > 0) {
+        int nentries = (int)(r / (long)sizeof(auxvbuf[0]));
+        for (int i = 0; i < nentries; i++) {
+            if (auxvbuf[i].key == 0) { found_null = 1; break; }
+        }
+    }
+    if (found_null) {
+        fut_printf("[MISC-TEST] ✓ Test 978: AT_NULL terminator found\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 978: AT_NULL not found in auxv data\n");
+        fut_test_fail(978);
+    }
+
+#undef PR_GET_AUXV_MAGIC
+}
+
 static void test_cross_fs_exdev(void) {
     fut_printf("[MISC-TEST] Tests 937-941: cross-filesystem EXDEV / same-fs link+rename\n");
 
@@ -32907,6 +32962,7 @@ void fut_misc_test_thread(void *arg) {
     test_prctl_tsc_timing();             /* Tests 962-968: PR_GET/SET_TIMING, PR_GET/SET_TSC */
     test_proc_pid_root();                /* Tests 969-972: /proc/self/root symlink */
     test_prctl_ptracer();                /* Tests 973-975: PR_SET_PTRACER Yama LSM no-op */
+    test_prctl_get_auxv();               /* Tests 976-978: PR_GET_AUXV auxv copy */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

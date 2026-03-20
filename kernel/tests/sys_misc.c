@@ -33511,6 +33511,127 @@ t1010_done:;
 #undef TPPOS_O_RDONLY
 }
 
+/*
+ * test_open_lseek_errors — Tests 1011-1015
+ *
+ *   1011: open(dir, O_WRONLY) → EISDIR
+ *   1012: open(dir, O_RDWR)   → EISDIR
+ *   1013: open(file, O_DIRECTORY) → ENOTDIR
+ *   1014: lseek(fd, -1, SEEK_SET) → EINVAL (negative absolute offset)
+ *   1015: lseek(fd, 0, 999) → EINVAL (invalid whence value)
+ *
+ * These verify correct POSIX error returns for invalid open/lseek operations.
+ */
+static void test_open_lseek_errors(void) {
+    fut_printf("[MISC-TEST] Tests 1011-1015: open/lseek POSIX error cases\n");
+
+    extern long sys_lseek(int fd, int64_t offset, int whence);
+    extern long sys_close(int fd);
+    extern long sys_mkdir(const char *path, uint32_t mode);
+
+#define TOLE_O_RDONLY    0
+#define TOLE_O_WRONLY    1
+#define TOLE_O_RDWR      2
+#define TOLE_O_CREAT     0x40
+#define TOLE_O_DIRECTORY 0x10000
+
+    /* Create test dir and file */
+    sys_mkdir("/tole_dir", 0755);
+    int tfd = (int)fut_vfs_open("/tole_file.txt", TOLE_O_CREAT | TOLE_O_RDWR, 0644);
+    if (tfd >= 0) {
+        fut_vfs_write(tfd, "x", 1);
+        fut_vfs_close(tfd);
+    }
+
+    /* ---- Test 1011: open(dir, O_WRONLY) → EISDIR ---- */
+    fut_printf("[MISC-TEST] Test 1011: open(dir, O_WRONLY) → EISDIR\n");
+    {
+        long r = (long)fut_vfs_open("/tole_dir", TOLE_O_WRONLY, 0);
+        if (r != -EISDIR) {
+            fut_printf("[MISC-TEST] ✗ Test 1011: open(dir,O_WRONLY)=%ld (expected -EISDIR=%d)\n",
+                       r, -EISDIR);
+            if (r >= 0) fut_vfs_close((int)r);
+            fut_test_fail(1011);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1011: open(dir, O_WRONLY) → EISDIR\n");
+            fut_test_pass();
+        }
+    }
+
+    /* ---- Test 1012: open(dir, O_RDWR) → EISDIR ---- */
+    fut_printf("[MISC-TEST] Test 1012: open(dir, O_RDWR) → EISDIR\n");
+    {
+        long r = (long)fut_vfs_open("/tole_dir", TOLE_O_RDWR, 0);
+        if (r != -EISDIR) {
+            fut_printf("[MISC-TEST] ✗ Test 1012: open(dir,O_RDWR)=%ld (expected -EISDIR=%d)\n",
+                       r, -EISDIR);
+            if (r >= 0) fut_vfs_close((int)r);
+            fut_test_fail(1012);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1012: open(dir, O_RDWR) → EISDIR\n");
+            fut_test_pass();
+        }
+    }
+
+    /* ---- Test 1013: open(file, O_DIRECTORY) → ENOTDIR ---- */
+    fut_printf("[MISC-TEST] Test 1013: open(file, O_DIRECTORY) → ENOTDIR\n");
+    {
+        long r = (long)fut_vfs_open("/tole_file.txt", TOLE_O_RDONLY | TOLE_O_DIRECTORY, 0);
+        if (r != -ENOTDIR) {
+            fut_printf("[MISC-TEST] ✗ Test 1013: open(file,O_DIRECTORY)=%ld (expected -ENOTDIR=%d)\n",
+                       r, -ENOTDIR);
+            if (r >= 0) fut_vfs_close((int)r);
+            fut_test_fail(1013);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1013: open(file, O_DIRECTORY) → ENOTDIR\n");
+            fut_test_pass();
+        }
+    }
+
+    /* Open a regular file for lseek tests */
+    int sfd = (int)fut_vfs_open("/tole_file.txt", TOLE_O_RDONLY, 0);
+
+    /* ---- Test 1014: lseek(fd, -1, SEEK_SET) → EINVAL ---- */
+    fut_printf("[MISC-TEST] Test 1014: lseek(fd, -1, SEEK_SET) → EINVAL\n");
+    {
+        long r = (sfd >= 0) ? sys_lseek(sfd, -1, 0 /* SEEK_SET */) : -EBADF;
+        if (r != -EINVAL) {
+            fut_printf("[MISC-TEST] ✗ Test 1014: lseek(-1,SEEK_SET)=%ld (expected -EINVAL=%d)\n",
+                       r, -EINVAL);
+            fut_test_fail(1014);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1014: lseek(-1, SEEK_SET) → EINVAL\n");
+            fut_test_pass();
+        }
+    }
+
+    /* ---- Test 1015: lseek(fd, 0, 999) → EINVAL ---- */
+    fut_printf("[MISC-TEST] Test 1015: lseek(fd, 0, 999) → EINVAL\n");
+    {
+        long r = (sfd >= 0) ? sys_lseek(sfd, 0, 999) : -EBADF;
+        if (r != -EINVAL) {
+            fut_printf("[MISC-TEST] ✗ Test 1015: lseek(0,999)=%ld (expected -EINVAL=%d)\n",
+                       r, -EINVAL);
+            fut_test_fail(1015);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1015: lseek(0, 999/invalid whence) → EINVAL\n");
+            fut_test_pass();
+        }
+    }
+
+    if (sfd >= 0) fut_vfs_close(sfd);
+
+    /* Cleanup */
+    fut_vfs_unlink("/tole_file.txt");
+    fut_vfs_rmdir("/tole_dir");
+
+#undef TOLE_O_RDONLY
+#undef TOLE_O_WRONLY
+#undef TOLE_O_RDWR
+#undef TOLE_O_CREAT
+#undef TOLE_O_DIRECTORY
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -34097,6 +34218,7 @@ void fut_misc_test_thread(void *arg) {
     test_dup_shared_description();       /* Tests 1000-1002: dup() shared open-file-description semantics */
     test_rename_link_type_errors();      /* Tests 1003-1007: rename/link type errors (EISDIR/EPERM/ENOTDIR/ENOTEMPTY) */
     test_pread_pwrite_position();        /* Tests 1008-1010: pread/pwrite position preservation + O_APPEND bypass */
+    test_open_lseek_errors();            /* Tests 1011-1015: open(dir,O_WRONLY/RDWR)→EISDIR, open(file,O_DIRECTORY)→ENOTDIR, lseek errors */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

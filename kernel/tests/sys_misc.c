@@ -31959,6 +31959,52 @@ static void test_proc_pid_root(void) {
     }
 }
 
+static void test_prctl_ptracer(void) {
+    fut_printf("[MISC-TEST] Tests 973-975: PR_SET_PTRACER (Yama LSM ptrace scope)\n");
+
+    extern long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
+                          unsigned long arg4, unsigned long arg5);
+
+#define PR_SET_PTRACER_MAGIC  0x59616d61UL
+#define PR_SET_PTRACER_ANY    (~0UL)
+
+    /* Test 973: PR_SET_PTRACER_ANY → 0 (allow any tracer, Docker/gdb pattern) */
+    fut_printf("[MISC-TEST] Test 973: PR_SET_PTRACER(ANY) → 0\n");
+    long r = sys_prctl((int)PR_SET_PTRACER_MAGIC, PR_SET_PTRACER_ANY, 0, 0, 0);
+    if (r == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 973: PR_SET_PTRACER(ANY) = 0\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 973: PR_SET_PTRACER(ANY) = %ld (want 0)\n", r);
+        fut_test_fail(973);
+    }
+
+    /* Test 974: PR_SET_PTRACER(0) = clear/disable → 0 */
+    fut_printf("[MISC-TEST] Test 974: PR_SET_PTRACER(0) clear → 0\n");
+    r = sys_prctl((int)PR_SET_PTRACER_MAGIC, 0UL, 0, 0, 0);
+    if (r == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 974: PR_SET_PTRACER(0) = 0\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 974: PR_SET_PTRACER(0) = %ld (want 0)\n", r);
+        fut_test_fail(974);
+    }
+
+    /* Test 975: PR_SET_PTRACER(1) allow pid 1 → 0 */
+    fut_printf("[MISC-TEST] Test 975: PR_SET_PTRACER(pid=1) → 0\n");
+    r = sys_prctl((int)PR_SET_PTRACER_MAGIC, 1UL, 0, 0, 0);
+    if (r == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 975: PR_SET_PTRACER(1) = 0\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 975: PR_SET_PTRACER(1) = %ld (want 0)\n", r);
+        fut_test_fail(975);
+    }
+
+#undef PR_SET_PTRACER_MAGIC
+#undef PR_SET_PTRACER_ANY
+}
+
 static void test_cross_fs_exdev(void) {
     fut_printf("[MISC-TEST] Tests 937-941: cross-filesystem EXDEV / same-fs link+rename\n");
 
@@ -32860,6 +32906,7 @@ void fut_misc_test_thread(void *arg) {
     test_prctl_newer_options();          /* Tests 954-961: PR_TASK_PERF_EVENTS_*, PR_GET_TID_ADDRESS fix, PR_THP_DISABLE */
     test_prctl_tsc_timing();             /* Tests 962-968: PR_GET/SET_TIMING, PR_GET/SET_TSC */
     test_proc_pid_root();                /* Tests 969-972: /proc/self/root symlink */
+    test_prctl_ptracer();                /* Tests 973-975: PR_SET_PTRACER Yama LSM no-op */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

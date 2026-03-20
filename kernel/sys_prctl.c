@@ -97,6 +97,10 @@ static inline int prctl_copy_to_user(void *dst, const void *src, size_t n) {
     return fut_copy_to_user(dst, src, n);
 }
 
+/* Yama LSM ptrace scope (Linux 3.4+) — magic value chosen to spell "Yama" */
+#define PR_SET_PTRACER      0x59616d61  /* Allow <pid> to ptrace this process */
+#define PR_SET_PTRACER_ANY  (~0UL)      /* Allow any process to ptrace */
+
 /* Linux 5.6+ prctl options (accepted as no-ops) */
 #define PR_SET_IO_FLUSHER   57  /* Mark thread as I/O flusher (memory-pressure exempt) */
 #define PR_GET_IO_FLUSHER   58  /* Get I/O flusher state */
@@ -435,6 +439,12 @@ long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
         /* x86_64: accept PR_TSC_ENABLE or PR_TSC_SIGSEGV; no enforcement */
         if (arg2 != PR_TSC_ENABLE && arg2 != PR_TSC_SIGSEGV)
             return -EINVAL;
+        return 0;
+
+    case PR_SET_PTRACER:
+        /* Yama LSM ptrace-scope override (Linux 3.4+).
+         * arg2 = PID to allow (or PR_SET_PTRACER_ANY for any process, or 0 to clear).
+         * Futura has no Yama LSM; accept as no-op so Docker/gdb don't see EINVAL. */
         return 0;
 
     default:

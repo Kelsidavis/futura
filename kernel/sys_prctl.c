@@ -269,17 +269,20 @@ long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
         if (cap < 0 || cap > 63) {
             return -EINVAL;
         }
-        /* All capabilities in bounding set by default */
-        return 1;
+        return (task->cap_bset >> (unsigned)cap) & 1;
     }
 
     case PR_CAPBSET_DROP: {
-        /* Drop a capability from the bounding set */
+        /* Drop a capability from the bounding set (irreversible) */
         int cap = (int)arg2;
         if (cap < 0 || cap > 63) {
             return -EINVAL;
         }
-        /* Accept but don't enforce (no bounding set tracking yet) */
+        /* Requires CAP_SETPCAP */
+        if (!(task->cap_effective & (1ULL << 8 /* CAP_SETPCAP */))) {
+            return -EPERM;
+        }
+        task->cap_bset &= ~(1ULL << (unsigned)cap);
         return 0;
     }
 

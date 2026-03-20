@@ -37504,6 +37504,138 @@ t1136_done:
     }
 }
 
+/* Tests 1137-1140: capability bounding set (PR_CAPBSET_READ / PR_CAPBSET_DROP)
+ *
+ *   Test 1137: PR_CAPBSET_READ for a present cap → 1
+ *   Test 1138: PR_CAPBSET_READ for cap > 63 → -EINVAL
+ *   Test 1139: PR_CAPBSET_DROP removes cap; PR_CAPBSET_READ returns 0 after drop
+ *   Test 1140: /proc/self/status CapBnd reflects dropped cap
+ */
+static void test_cap_bset(void) {
+    extern long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
+                          unsigned long arg4, unsigned long arg5);
+
+#define PR_CAPBSET_READ_TEST  23
+#define PR_CAPBSET_DROP_TEST  24
+
+    /* ---- Test 1137: PR_CAPBSET_READ for CAP_NET_ADMIN (12) → 1 ---- */
+    fut_printf("[MISC-TEST] Test 1137: PR_CAPBSET_READ(CAP_NET_ADMIN=12) -> 1\n");
+    {
+        long r = sys_prctl(PR_CAPBSET_READ_TEST, 12, 0, 0, 0);
+        if (r != 1) {
+            fut_printf("[MISC-TEST] ✗ Test 1137: expected 1, got %ld\n", r);
+            fut_test_fail(1137);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1137: PR_CAPBSET_READ(12) = 1\n");
+            fut_test_pass();
+        }
+    }
+
+    /* ---- Test 1138: PR_CAPBSET_READ for cap=64 → -EINVAL ---- */
+    fut_printf("[MISC-TEST] Test 1138: PR_CAPBSET_READ(64) -> -EINVAL\n");
+    {
+        long r = sys_prctl(PR_CAPBSET_READ_TEST, 64, 0, 0, 0);
+        if (r != -EINVAL) {
+            fut_printf("[MISC-TEST] ✗ Test 1138: expected -EINVAL, got %ld\n", r);
+            fut_test_fail(1138);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1138: PR_CAPBSET_READ(64) = -EINVAL\n");
+            fut_test_pass();
+        }
+    }
+
+    /* ---- Test 1139: PR_CAPBSET_DROP then PR_CAPBSET_READ returns 0 ---- */
+    fut_printf("[MISC-TEST] Test 1139: PR_CAPBSET_DROP(CAP_SYS_PTRACE=19) removes from bset\n");
+    {
+        /* Drop CAP_SYS_PTRACE from bounding set */
+        long dr = sys_prctl(PR_CAPBSET_DROP_TEST, 19, 0, 0, 0);
+        if (dr != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1139: PR_CAPBSET_DROP returned %ld\n", dr);
+            fut_test_fail(1139);
+        } else {
+            long rr = sys_prctl(PR_CAPBSET_READ_TEST, 19, 0, 0, 0);
+            if (rr != 0) {
+                fut_printf("[MISC-TEST] ✗ Test 1139: after drop, READ returned %ld (expected 0)\n", rr);
+                fut_test_fail(1139);
+            } else {
+                fut_printf("[MISC-TEST] ✓ Test 1139: cap 19 removed from bounding set\n");
+                fut_test_pass();
+            }
+        }
+    }
+
+    /* ---- Test 1140: CapBnd in /proc/self/status reflects the dropped cap ---- */
+    fut_printf("[MISC-TEST] Test 1140: /proc/self/status CapBnd reflects dropped cap\n");
+    {
+        /* Compute expected_bset from actual PR_CAPBSET_READ state: previous tests
+         * may have already dropped some caps (e.g. test 1035 drops cap 8).
+         * expected = (current state after test 1139) = current_before & ~(1<<19).
+         * But we already dropped cap 19 in test 1139, so just read all bits now. */
+        uint64_t expected_bset = 0;
+        for (int i = 0; i < 41; i++) {
+            long r = sys_prctl(PR_CAPBSET_READ_TEST, (unsigned long)i, 0, 0, 0);
+            if (r == 1) expected_bset |= (1ULL << i);
+        }
+
+        extern long sys_openat(int dirfd, const char *pathname, int flags, int mode);
+        extern long sys_read(int, void *, size_t);
+        extern long sys_close(int);
+
+        char buf[4096];
+        long fd = sys_openat(-100 /* AT_FDCWD */, "/proc/self/status", 0 /* O_RDONLY */, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1140: open /proc/self/status failed: %ld\n", fd);
+            fut_test_fail(1140);
+            goto t1140_done;
+        }
+        long n = sys_read((int)fd, buf, sizeof(buf) - 1);
+        sys_close((int)fd);
+        if (n <= 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1140: read /proc/self/status failed: %ld\n", n);
+            fut_test_fail(1140);
+            goto t1140_done;
+        }
+        buf[n] = '\0';
+
+        /* Find "CapBnd:\t" line */
+        const char *p = buf;
+        while (*p && !(p[0]=='C' && p[1]=='a' && p[2]=='p' && p[3]=='B' &&
+                       p[4]=='n' && p[5]=='d' && p[6]==':' && p[7]=='\t'))
+            p++;
+        if (!*p) {
+            fut_printf("[MISC-TEST] ✗ Test 1140: CapBnd: not found in /proc/self/status\n");
+            fut_test_fail(1140);
+            goto t1140_done;
+        }
+        p += 8; /* skip "CapBnd:\t" */
+
+        /* Parse hex value */
+        uint64_t val = 0;
+        while ((*p >= '0' && *p <= '9') || (*p >= 'a' && *p <= 'f') || (*p >= 'A' && *p <= 'F')) {
+            uint64_t digit;
+            if (*p >= '0' && *p <= '9') digit = (uint64_t)(*p - '0');
+            else if (*p >= 'a' && *p <= 'f') digit = (uint64_t)(*p - 'a' + 10);
+            else digit = (uint64_t)(*p - 'A' + 10);
+            val = (val << 4) | digit;
+            p++;
+        }
+
+        if (val != expected_bset) {
+            fut_printf("[MISC-TEST] ✗ Test 1140: CapBnd=0x%llx, expected 0x%llx\n",
+                       (unsigned long long)val, (unsigned long long)expected_bset);
+            fut_test_fail(1140);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1140: CapBnd=0x%llx matches expected\n",
+                       (unsigned long long)val);
+            fut_test_pass();
+        }
+t1140_done:;
+    }
+
+#undef PR_CAPBSET_READ_TEST
+#undef PR_CAPBSET_DROP_TEST
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -38120,6 +38252,7 @@ void fut_misc_test_thread(void *arg) {
     test_sched_flags_roundtrip();       /* Tests 1127-1130: sched_flags storage/validation/persistence */
     test_prio_thread();                 /* Tests 1131-1134: getpriority/setpriority PRIO_THREAD */
     test_sched_setattr_atomic_fail();   /* Tests 1135-1136: sched_setattr atomic-failure semantics */
+    test_cap_bset();                    /* Tests 1137-1140: capability bounding set PR_CAPBSET_READ/DROP */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

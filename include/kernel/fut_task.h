@@ -172,6 +172,7 @@ struct fut_task {
     uint64_t cap_effective;            // Effective capability set
     uint64_t cap_permitted;            // Permitted capability set
     uint64_t cap_inheritable;          // Inheritable capability set
+    uint64_t cap_bset;                 // Capability bounding set (all caps set at init)
 
     /* File descriptor table (per-task, for process isolation) */
     struct fut_file **fd_table;        // Array of file pointers

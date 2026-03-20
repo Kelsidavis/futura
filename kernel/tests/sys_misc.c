@@ -29737,6 +29737,110 @@ static void test_proc_sys_net_keepalive(void) {
     }
 }
 
+/*
+ * test_proc_sys_net_ipv4_conf - Tests 838-841: /proc/sys/net/ipv4/conf/ subtree
+ *   Test 838: /proc/sys/net/ipv4/conf/ directory openable
+ *   Test 839: /proc/sys/net/ipv4/conf/all/ directory openable
+ *   Test 840: /proc/sys/net/ipv4/conf/all/rp_filter → "0\n"
+ *   Test 841: /proc/sys/net/ipv4/conf/all/forwarding → "0\n"
+ * test_proc_net_route - Test 842: /proc/net/route has loopback entry
+ *   Test 842: /proc/net/route contains "lo\t0000007F"
+ */
+static void test_proc_sys_net_ipv4_conf(void) {
+    extern long sys_openat(int dirfd, const char *pathname, int flags, int mode);
+    extern long sys_close(int fd);
+    extern ssize_t sys_read(int fd, void *buf, size_t count);
+
+    fut_printf("[MISC-TEST] Tests 838-842: /proc/sys/net/ipv4/conf/ + /proc/net/route\n");
+
+    /* Test 838: conf/ directory */
+    long fd = sys_openat(-100, "/proc/sys/net/ipv4/conf", 0x10000 /* O_DIRECTORY */, 0);
+    if (fd >= 0) {
+        fut_test_pass(); /* 838 */
+        sys_close((int)fd);
+    } else {
+        fut_printf("[MISC-TEST] x open /proc/sys/net/ipv4/conf failed: %ld\n", fd);
+        fut_test_fail(838);
+    }
+
+    /* Test 839: conf/all/ directory */
+    fd = sys_openat(-100, "/proc/sys/net/ipv4/conf/all", 0x10000 /* O_DIRECTORY */, 0);
+    if (fd >= 0) {
+        fut_test_pass(); /* 839 */
+        sys_close((int)fd);
+    } else {
+        fut_printf("[MISC-TEST] x open /proc/sys/net/ipv4/conf/all failed: %ld\n", fd);
+        fut_test_fail(839);
+    }
+
+    char buf[32];
+    ssize_t n;
+
+    /* Test 840: rp_filter = 0 */
+    fd = sys_openat(-100, "/proc/sys/net/ipv4/conf/all/rp_filter", 0, 0);
+    if (fd >= 0) {
+        __builtin_memset(buf, 0, sizeof(buf));
+        n = sys_read((int)fd, buf, sizeof(buf) - 1);
+        sys_close((int)fd);
+        if (n > 0 && buf[0] == '0' && buf[1] == '\n') {
+            fut_test_pass(); /* 840 */
+        } else {
+            fut_printf("[MISC-TEST] x rp_filter wrong: n=%zd content='%.8s'\n", n, buf);
+            fut_test_fail(840);
+        }
+    } else {
+        fut_printf("[MISC-TEST] x open rp_filter failed: %ld\n", fd);
+        fut_test_fail(840);
+    }
+
+    /* Test 841: forwarding = 0 */
+    fd = sys_openat(-100, "/proc/sys/net/ipv4/conf/all/forwarding", 0, 0);
+    if (fd >= 0) {
+        __builtin_memset(buf, 0, sizeof(buf));
+        n = sys_read((int)fd, buf, sizeof(buf) - 1);
+        sys_close((int)fd);
+        if (n > 0 && buf[0] == '0' && buf[1] == '\n') {
+            fut_test_pass(); /* 841 */
+        } else {
+            fut_printf("[MISC-TEST] x forwarding wrong: n=%zd content='%.8s'\n", n, buf);
+            fut_test_fail(841);
+        }
+    } else {
+        fut_printf("[MISC-TEST] x open forwarding failed: %ld\n", fd);
+        fut_test_fail(841);
+    }
+
+    /* Test 842: /proc/net/route has loopback entry */
+    fd = sys_openat(-100, "/proc/net/route", 0, 0);
+    if (fd >= 0) {
+        char rbuf[256];
+        __builtin_memset(rbuf, 0, sizeof(rbuf));
+        ssize_t rn = sys_read((int)fd, rbuf, sizeof(rbuf) - 1);
+        sys_close((int)fd);
+        /* Look for "lo\t0000007F" in the content */
+        int found = 0;
+        for (ssize_t k = 0; k + 9 < rn; k++) {
+            if (rbuf[k] == 'l' && rbuf[k+1] == 'o' && rbuf[k+2] == '\t' &&
+                rbuf[k+3] == '0' && rbuf[k+4] == '0' && rbuf[k+5] == '0' &&
+                rbuf[k+6] == '0' && rbuf[k+7] == '0' && rbuf[k+8] == '0' &&
+                rbuf[k+9] == '7') {
+                found = 1;
+                break;
+            }
+        }
+        if (found) {
+            fut_test_pass(); /* 842 */
+        } else {
+            fut_printf("[MISC-TEST] x /proc/net/route: loopback entry not found (n=%zd)\n", rn);
+            fut_test_fail(842);
+        }
+    } else {
+        fut_printf("[MISC-TEST] x open /proc/net/route failed: %ld\n", fd);
+        fut_test_fail(842);
+    }
+}
+
+
 
 static void test_inotify_poll_epoll_select(void) {
     extern long sys_inotify_init1(int flags);
@@ -30425,6 +30529,7 @@ void fut_misc_test_thread(void *arg) {
     test_proc_pagemap();                  /* Tests 823-826: /proc/self/pagemap binary interface */
     test_sysfs_net_lo();                   /* Tests 827-833: /sys/class/net/lo/ loopback interface */
     test_proc_sys_net_keepalive();         /* Tests 834-837: /proc/sys/net/ipv4 tcp_keepalive_*+ip_unprivileged_port_start */
+    test_proc_sys_net_ipv4_conf();         /* Tests 838-842: conf/all/ rp_filter/forwarding + /proc/net/route loopback */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

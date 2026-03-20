@@ -131,6 +131,13 @@ enum procfs_kind {
     PROC_SYS_NET_TCP_KEEPALIVE_INTVL, /* /proc/sys/net/ipv4/tcp_keepalive_intvl */
     PROC_SYS_NET_TCP_KEEPALIVE_PROBES,/* /proc/sys/net/ipv4/tcp_keepalive_probes */
     PROC_SYS_NET_IP_UNPRIV_PORT_START,/* /proc/sys/net/ipv4/ip_unprivileged_port_start */
+    /* /proc/sys/net/ipv4/conf/ subtree */
+    PROC_SYS_NET_IPV4_CONF_DIR,       /* /proc/sys/net/ipv4/conf/ */
+    PROC_SYS_NET_IPV4_CONF_ALL_DIR,   /* /proc/sys/net/ipv4/conf/all/ */
+    PROC_SYS_NET_IPV4_CONF_DEFAULT_DIR,/* /proc/sys/net/ipv4/conf/default/ */
+    PROC_SYS_NET_IPV4_CONF_RP_FILTER, /* .../conf/all/rp_filter */
+    PROC_SYS_NET_IPV4_CONF_FORWARDING,/* .../conf/all/forwarding */
+    PROC_SYS_NET_IPV4_CONF_ACCEPT_RA, /* .../conf/all/accept_redirects */
     PROC_VMSTAT,           /* /proc/vmstat */
     PROC_NET_DIR,          /* /proc/net/ */
     PROC_NET_DEV,          /* /proc/net/dev */
@@ -402,6 +409,13 @@ typedef struct {
 #define PROC_INO_SYS_NET_KEEPALIVE_INTVL 405ULL
 #define PROC_INO_SYS_NET_KEEPALIVE_PROBES 406ULL
 #define PROC_INO_SYS_NET_UNPRIV_PORT     407ULL
+/* /proc/sys/net/ipv4/conf/ range: 408-414 */
+#define PROC_INO_SYS_NET_IPV4_CONF_DIR   408ULL
+#define PROC_INO_SYS_NET_IPV4_CONF_ALL   409ULL
+#define PROC_INO_SYS_NET_IPV4_CONF_DEF   410ULL
+#define PROC_INO_SYS_NET_IPV4_RP_FILTER  411ULL
+#define PROC_INO_SYS_NET_IPV4_FORWARDING 412ULL
+#define PROC_INO_SYS_NET_IPV4_ACCEPT_RA  413ULL
 /* /proc/sys/kernel/ extended range: 400-429 */
 #define PROC_INO_SYS_KERNEL_NMI_WD     400ULL
 #define PROC_INO_SYS_KERNEL_WATCHDOG   401ULL
@@ -1856,6 +1870,8 @@ static size_t gen_net_dev(char *buf, size_t cap) {
 static size_t gen_net_route(char *buf, size_t cap) {
     struct pbuf b = { buf, 0, cap };
     pb_str(&b, "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n");
+    /* Loopback route: 127.0.0.0/8 → lo, flags RTF_UP(0x1) */
+    pb_str(&b, "lo\t0000007F\t00000000\t0001\t0\t0\t0\t000000FF\t0\t0\t0\n");
     return b.pos;
 }
 
@@ -2761,6 +2777,16 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
         case PROC_SYS_NET_IP_UNPRIV_PORT_START:
             /* 1024 = unprivileged programs can bind ports >= 1024 */
             total = gen_sysctl_str(tmp, GEN_BUF, "1024");
+            break;
+        case PROC_SYS_NET_IPV4_CONF_RP_FILTER:
+            /* 0 = disabled (loose mode would be 2, strict 1) */
+            total = gen_sysctl_str(tmp, GEN_BUF, "0");
+            break;
+        case PROC_SYS_NET_IPV4_CONF_FORWARDING:
+            total = gen_sysctl_str(tmp, GEN_BUF, "0");
+            break;
+        case PROC_SYS_NET_IPV4_CONF_ACCEPT_RA:
+            total = gen_sysctl_str(tmp, GEN_BUF, "1");
             break;
         case PROC_NET_ARP:
             total = gen_net_arp(tmp, GEN_BUF);
@@ -3876,6 +3902,48 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0100644, PROC_SYS_NET_IP_UNPRIV_PORT_START, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "conf")) {
+            *result = procfs_alloc_vnode(mnt, VN_DIR, PROC_INO_SYS_NET_IPV4_CONF_DIR,
+                                          0040555, PROC_SYS_NET_IPV4_CONF_DIR, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        return -ENOENT;
+    }
+
+    if (dn->kind == PROC_SYS_NET_IPV4_CONF_DIR) {
+        if (STREQ(name, "all")) {
+            *result = procfs_alloc_vnode(mnt, VN_DIR, PROC_INO_SYS_NET_IPV4_CONF_ALL,
+                                          0040555, PROC_SYS_NET_IPV4_CONF_ALL_DIR, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "default")) {
+            *result = procfs_alloc_vnode(mnt, VN_DIR, PROC_INO_SYS_NET_IPV4_CONF_DEF,
+                                          0040555, PROC_SYS_NET_IPV4_CONF_DEFAULT_DIR, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        return -ENOENT;
+    }
+
+    if (dn->kind == PROC_SYS_NET_IPV4_CONF_ALL_DIR ||
+        dn->kind == PROC_SYS_NET_IPV4_CONF_DEFAULT_DIR) {
+        uint64_t base_ino = (dn->kind == PROC_SYS_NET_IPV4_CONF_ALL_DIR)
+                            ? PROC_INO_SYS_NET_IPV4_CONF_ALL
+                            : PROC_INO_SYS_NET_IPV4_CONF_DEF;
+        if (STREQ(name, "rp_filter")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_NET_IPV4_RP_FILTER + (base_ino == PROC_INO_SYS_NET_IPV4_CONF_ALL ? 0 : 10),
+                                          0100644, PROC_SYS_NET_IPV4_CONF_RP_FILTER, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "forwarding")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_NET_IPV4_FORWARDING + (base_ino == PROC_INO_SYS_NET_IPV4_CONF_ALL ? 0 : 10),
+                                          0100644, PROC_SYS_NET_IPV4_CONF_FORWARDING, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "accept_redirects")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_NET_IPV4_ACCEPT_RA + (base_ino == PROC_INO_SYS_NET_IPV4_CONF_ALL ? 0 : 10),
+                                          0100644, PROC_SYS_NET_IPV4_CONF_ACCEPT_RA, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         return -ENOENT;
     }
 
@@ -4633,7 +4701,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                    "tcp_rmem", "tcp_wmem", "ip_forward",
                                    "tcp_keepalive_time", "tcp_keepalive_intvl",
                                    "tcp_keepalive_probes",
-                                   "ip_unprivileged_port_start" };
+                                   "ip_unprivileged_port_start", "conf" };
         static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG,
@@ -4641,7 +4709,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                      FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG,
-                                     FUT_VDIR_TYPE_REG };
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_DIR };
         static const uint64_t i[] = { PROC_INO_SYS_NET_IPV4_DIR, PROC_INO_SYS_NET_DIR,
                                       PROC_INO_SYS_NET_PORT_RANGE, PROC_INO_SYS_NET_FIN_TIMEOUT,
                                       PROC_INO_SYS_NET_SYNCOOKIES,
@@ -4650,8 +4718,39 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                       PROC_INO_SYS_NET_KEEPALIVE_TIME,
                                       PROC_INO_SYS_NET_KEEPALIVE_INTVL,
                                       PROC_INO_SYS_NET_KEEPALIVE_PROBES,
-                                      PROC_INO_SYS_NET_UNPRIV_PORT };
-        if (idx < 12) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+                                      PROC_INO_SYS_NET_UNPRIV_PORT,
+                                      PROC_INO_SYS_NET_IPV4_CONF_DIR };
+        if (idx < 13) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+        return -ENOENT;
+    }
+
+    if (dn->kind == PROC_SYS_NET_IPV4_CONF_DIR) {
+        static const char *e[] = { ".", "..", "all", "default" };
+        static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
+                                     FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR };
+        static const uint64_t i[] = { PROC_INO_SYS_NET_IPV4_CONF_DIR,
+                                      PROC_INO_SYS_NET_IPV4_DIR,
+                                      PROC_INO_SYS_NET_IPV4_CONF_ALL,
+                                      PROC_INO_SYS_NET_IPV4_CONF_DEF };
+        if (idx < 4) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+        return -ENOENT;
+    }
+
+    if (dn->kind == PROC_SYS_NET_IPV4_CONF_ALL_DIR ||
+        dn->kind == PROC_SYS_NET_IPV4_CONF_DEFAULT_DIR) {
+        uint64_t self_ino = (dn->kind == PROC_SYS_NET_IPV4_CONF_ALL_DIR)
+                            ? PROC_INO_SYS_NET_IPV4_CONF_ALL
+                            : PROC_INO_SYS_NET_IPV4_CONF_DEF;
+        uint64_t offset = (dn->kind == PROC_SYS_NET_IPV4_CONF_ALL_DIR) ? 0 : 10;
+        static const char *e[] = { ".", "..", "rp_filter", "forwarding", "accept_redirects" };
+        static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_REG };
+        if (idx == 0) SYS_DIR_ENTRY(e[0], t[0], self_ino);
+        if (idx == 1) SYS_DIR_ENTRY(e[1], t[1], PROC_INO_SYS_NET_IPV4_CONF_DIR);
+        if (idx == 2) SYS_DIR_ENTRY(e[2], t[2], PROC_INO_SYS_NET_IPV4_RP_FILTER  + offset);
+        if (idx == 3) SYS_DIR_ENTRY(e[3], t[3], PROC_INO_SYS_NET_IPV4_FORWARDING + offset);
+        if (idx == 4) SYS_DIR_ENTRY(e[4], t[4], PROC_INO_SYS_NET_IPV4_ACCEPT_RA  + offset);
         return -ENOENT;
     }
 

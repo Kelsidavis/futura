@@ -34027,6 +34027,101 @@ static void test_file_io_posix_semantics(void) {
     }
 }
 
+/*
+ * test_prctl_timerslack_capbset — Tests 1031-1035
+ *
+ * Verifies prctl commands that are implemented but lack explicit test coverage:
+ *   1031: PR_GET_TIMERSLACK returns a positive value (default 50000 ns = 50 µs)
+ *   1032: PR_SET_TIMERSLACK(100000) → 0 (accepted)
+ *   1033: PR_CAPBSET_READ(CAP_NET_BIND_SERVICE=10) → 1 (in bounding set)
+ *   1034: PR_CAPBSET_READ(64) → EINVAL (capability out of [0,63])
+ *   1035: PR_CAPBSET_DROP(CAP_SETPCAP=8) → 0 (accepted)
+ */
+static void test_prctl_timerslack_capbset(void) {
+    extern long sys_prctl(int option, uint64_t arg2, uint64_t arg3,
+                          uint64_t arg4, uint64_t arg5);
+
+#define TPTS_PR_SET_TIMERSLACK  29
+#define TPTS_PR_GET_TIMERSLACK  30
+#define TPTS_PR_CAPBSET_READ    23
+#define TPTS_PR_CAPBSET_DROP    24
+#define TPTS_CAP_NET_BIND       10
+#define TPTS_CAP_SETPCAP        8
+
+    /* ---- Test 1031: PR_GET_TIMERSLACK returns positive value ---- */
+    fut_printf("[MISC-TEST] Test 1031: prctl(PR_GET_TIMERSLACK) returns positive ns value\n");
+    {
+        long slack = sys_prctl(TPTS_PR_GET_TIMERSLACK, 0, 0, 0, 0);
+        if (slack > 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1031: PR_GET_TIMERSLACK=%ld ns\n", slack);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1031: PR_GET_TIMERSLACK=%ld (expected > 0)\n", slack);
+            fut_test_fail(1031);
+        }
+    }
+
+    /* ---- Test 1032: PR_SET_TIMERSLACK → 0 (accepted) ---- */
+    fut_printf("[MISC-TEST] Test 1032: prctl(PR_SET_TIMERSLACK, 100000) → 0\n");
+    {
+        long r = sys_prctl(TPTS_PR_SET_TIMERSLACK, 100000, 0, 0, 0);
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1032: PR_SET_TIMERSLACK(100000) → 0\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1032: PR_SET_TIMERSLACK=%ld (expected 0)\n", r);
+            fut_test_fail(1032);
+        }
+    }
+
+    /* ---- Test 1033: PR_CAPBSET_READ(CAP_NET_BIND_SERVICE=10) → 1 ---- */
+    fut_printf("[MISC-TEST] Test 1033: prctl(PR_CAPBSET_READ, CAP_NET_BIND_SERVICE=10) → 1\n");
+    {
+        long r = sys_prctl(TPTS_PR_CAPBSET_READ, TPTS_CAP_NET_BIND, 0, 0, 0);
+        if (r == 1) {
+            fut_printf("[MISC-TEST] ✓ Test 1033: PR_CAPBSET_READ(CAP_NET_BIND_SERVICE) → 1\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1033: PR_CAPBSET_READ(10)=%ld (expected 1)\n", r);
+            fut_test_fail(1033);
+        }
+    }
+
+    /* ---- Test 1034: PR_CAPBSET_READ(64) → EINVAL (out of range) ---- */
+    fut_printf("[MISC-TEST] Test 1034: prctl(PR_CAPBSET_READ, 64) → EINVAL\n");
+    {
+        long r = sys_prctl(TPTS_PR_CAPBSET_READ, 64, 0, 0, 0);
+        if (r == -EINVAL) {
+            fut_printf("[MISC-TEST] ✓ Test 1034: PR_CAPBSET_READ(64) → EINVAL\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1034: PR_CAPBSET_READ(64)=%ld (expected -EINVAL=%d)\n",
+                       r, -EINVAL);
+            fut_test_fail(1034);
+        }
+    }
+
+    /* ---- Test 1035: PR_CAPBSET_DROP(CAP_SETPCAP=8) → 0 ---- */
+    fut_printf("[MISC-TEST] Test 1035: prctl(PR_CAPBSET_DROP, CAP_SETPCAP=8) → 0\n");
+    {
+        long r = sys_prctl(TPTS_PR_CAPBSET_DROP, TPTS_CAP_SETPCAP, 0, 0, 0);
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1035: PR_CAPBSET_DROP(CAP_SETPCAP) → 0\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1035: PR_CAPBSET_DROP(8)=%ld (expected 0)\n", r);
+            fut_test_fail(1035);
+        }
+    }
+
+#undef TPTS_PR_SET_TIMERSLACK
+#undef TPTS_PR_GET_TIMERSLACK
+#undef TPTS_PR_CAPBSET_READ
+#undef TPTS_PR_CAPBSET_DROP
+#undef TPTS_CAP_NET_BIND
+#undef TPTS_CAP_SETPCAP
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -34617,6 +34712,7 @@ void fut_misc_test_thread(void *arg) {
     test_fifo_seekable_ops();            /* Tests 1016-1020: FIFO pread/pwrite/lseek→ESPIPE, getdents64(non-dir)→ENOTDIR */
     test_mmap_dup3_select_errors();      /* Tests 1021-1025: mmap unaligned-offset→EINVAL, dup3 errors, select nfds>FD_SETSIZE→EINVAL */
     test_file_io_posix_semantics();      /* Tests 1026-1030: read@EOF→0, fstat size/mtime after write, lseek(SEEK_END), F_SETFL+O_APPEND */
+    test_prctl_timerslack_capbset();     /* Tests 1031-1035: PR_GET/SET_TIMERSLACK, PR_CAPBSET_READ/EINVAL, PR_CAPBSET_DROP/EINVAL */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

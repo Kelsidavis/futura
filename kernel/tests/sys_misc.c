@@ -28407,6 +28407,124 @@ static void test_posix_timer_signal_delivery(void) {
 #undef SIGALRM_NR
 }
 
+/* ============================================================
+ * Tests 780-782: munmap partial unmap (middle-page split)
+ *
+ * Linux ABI: munmap() on a sub-range of a VMA splits it into two
+ * separate VMAs covering the regions before and after the unmapped range.
+ * The split portions must remain fully accessible.
+ *
+ * This exercises fut_mm_unmap Case 4 ("unmap middle"), which is the path
+ * used by glibc malloc when it carves pages out of large anonymous chunks.
+ * ============================================================ */
+static void test_munmap_middle(void) {
+    extern long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long off);
+    extern long sys_munmap(void *addr, size_t len);
+
+#define MM_PROT_RW  3       /* PROT_READ|PROT_WRITE */
+#define MM_MAP_PA   0x22    /* MAP_PRIVATE|MAP_ANONYMOUS */
+#define PAGE        4096u
+
+    /* Test 780: munmap middle page of 3-page mapping returns 0 */
+    fut_printf("[MISC-TEST] Test 780: munmap middle page of 3-page mapping\n");
+    long base = sys_mmap(NULL, 3 * PAGE, MM_PROT_RW, MM_MAP_PA, -1, 0);
+    if (base < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 780: mmap 3 pages failed: %ld\n", base);
+        fut_test_fail(780); goto t781;
+    }
+    /* Write sentinels to first and last pages */
+    volatile uint8_t *p = (volatile uint8_t *)(uintptr_t)base;
+    p[0]           = 0xAA;  /* sentinel in first page */
+    p[2 * PAGE]    = 0xBB;  /* sentinel in third page */
+
+    /* Unmap the middle page */
+    long r = sys_munmap((void *)(uintptr_t)(base + PAGE), PAGE);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 780: munmap middle returned %ld (want 0)\n", r);
+        sys_munmap((void *)(uintptr_t)base, 3 * PAGE);  /* best-effort cleanup */
+        fut_test_fail(780); goto t781;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 780: munmap middle page → 0\n");
+    fut_test_pass();
+
+    /* Test 781: first page sentinel preserved after middle-page unmap */
+    fut_printf("[MISC-TEST] Test 781: first page still readable after middle unmap\n");
+    if (p[0] != 0xAA) {
+        fut_printf("[MISC-TEST] ✗ Test 781: first-page sentinel corrupted: 0x%02x\n", p[0]);
+        sys_munmap((void *)(uintptr_t)base, PAGE);
+        sys_munmap((void *)(uintptr_t)(base + 2 * PAGE), PAGE);
+        fut_test_fail(781); goto t781_cleanup;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 781: first page sentinel 0x%02x preserved\n", p[0]);
+    fut_test_pass();
+
+    /* Test 782: last page sentinel preserved after middle-page unmap */
+    fut_printf("[MISC-TEST] Test 782: last page still readable after middle unmap\n");
+    if (p[2 * PAGE] != 0xBB) {
+        fut_printf("[MISC-TEST] ✗ Test 782: last-page sentinel corrupted: 0x%02x\n", p[2 * PAGE]);
+        fut_test_fail(782);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 782: last page sentinel 0x%02x preserved\n", p[2 * PAGE]);
+        fut_test_pass();
+    }
+
+t781_cleanup:
+    /* Clean up remaining first and last pages */
+    sys_munmap((void *)(uintptr_t)base, PAGE);
+    sys_munmap((void *)(uintptr_t)(base + 2 * PAGE), PAGE);
+    goto done780;
+
+t781:
+    fut_test_fail(781);
+    fut_test_fail(782);
+
+done780:;
+#undef MM_PROT_RW
+#undef MM_MAP_PA
+#undef PAGE
+}
+
+/* ============================================================
+ * Test 783: select() updates timeout struct on Linux
+ *
+ * Linux-specific ABI: after select() returns (due to timeout expiry),
+ * the timeval is updated to reflect elapsed time (≈ 0 remaining).
+ * POSIX does not require this, but Linux always does it and bash/Python
+ * rely on it.  Futura implements this in sys_select.c.
+ * ============================================================ */
+static void test_select_timeout_update(void) {
+    fut_printf("[MISC-TEST] Test 783: select() updates timeout to remaining after expiry\n");
+    extern long sys_select(int nfds, void *rfds, void *wfds, void *efds, void *timeout);
+
+    extern long sys_sigprocmask(int how, const sigset_t *set, sigset_t *oldset);
+
+    /* Block all signals so accumulated pending signals from prior tests don't EINTR */
+    sigset_t full783, saved783;
+    full783.__mask = ~0UL;
+    sys_sigprocmask(2 /* SIG_SETMASK */, &full783, &saved783);
+
+    /* Select with nfds=0 (no fds) and timeout=30ms.
+     * After the call the timeval must be near 0 (Linux updates it). */
+    int64_t tv[2] = { 0, 30000 };  /* tv_sec=0, tv_usec=30000 (30ms) */
+    long r = sys_select(0, NULL, NULL, NULL, tv);
+    sys_sigprocmask(2, &saved783, NULL);  /* restore before any fail return */
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 783: select returned %ld (expected 0)\n", r);
+        fut_test_fail(783); return;
+    }
+
+    /* tv[0] is tv_sec, tv[1] is tv_usec.  After timeout expiry both should
+     * be 0 (or very close to 0 — we allow up to 30ms worth of ticks). */
+    if (tv[0] != 0 || tv[1] > 30000) {
+        fut_printf("[MISC-TEST] ✗ Test 783: timeout not updated: tv={%lld,%lld} (want ~{0,0})\n",
+                   (long long)tv[0], (long long)tv[1]);
+        fut_test_fail(783); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 783: timeout updated to {%lld,%lld} after expiry\n",
+               (long long)tv[0], (long long)tv[1]);
+    fut_test_pass();
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -28943,6 +29061,8 @@ void fut_misc_test_thread(void *arg) {
     test_futex_requeue_cmp_wake_op();       /* Tests 770-774: FUTEX_REQUEUE/CMP_REQUEUE/WAKE_OP */
     test_epoll_ctl_errors();               /* Tests 775-778: epoll_ctl EEXIST/ENOENT/re-ADD */
     test_posix_timer_signal_delivery();    /* Test 779: POSIX timer fires → SIGALRM pending */
+    test_munmap_middle();                  /* Tests 780-782: partial munmap splits VMA */
+    test_select_timeout_update();          /* Test 783: select() updates timeout to remaining time */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

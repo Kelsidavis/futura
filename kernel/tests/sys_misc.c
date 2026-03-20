@@ -37885,6 +37885,118 @@ static void test_cap_ambient_real(void) {
 #undef CAMB_AT_FDCWD
 }
 
+/* ============================================================
+ * Tests 1151-1155: SS_AUTODISARM (Linux 4.7+) sigaltstack flag
+ *
+ * SS_AUTODISARM (0x80000000) causes the altstack to be auto-disabled
+ * when a signal is delivered to it, preventing reentrancy. Programs
+ * like ASAN and glibc set this flag at initialization.
+ *
+ *   Test 1151: sigaltstack with SS_AUTODISARM accepted (not EINVAL)
+ *   Test 1152: readback of installed stack preserves SS_AUTODISARM flag
+ *   Test 1153: sigaltstack with SS_DISABLE|SS_AUTODISARM accepted
+ *   Test 1154: sigaltstack with SS_ONSTACK|SS_AUTODISARM rejected (EPERM — on stack)
+ *              NOTE: We skip this test since SS_ONSTACK means "currently on the stack"
+ *              which is hard to test without actual signal delivery; just test EINVAL
+ *              for unknown flags instead.
+ *   Test 1154: invalid flag combination (SS_AUTODISARM|0x4) → EINVAL
+ *   Test 1155: SS_AUTODISARM cleared when altstack disabled via SS_DISABLE
+ * ============================================================ */
+static void test_sigaltstack_autodisarm(void) {
+    extern long sys_sigaltstack(const struct sigaltstack *ss, struct sigaltstack *old_ss);
+
+#define AUTODISARM_FLAG     0x80000000
+#define AUTODISARM_SS_DIS   0x02
+#define AUTODISARM_MINSZ    4096
+
+    static char autodisarm_buf[8192];
+    long r;
+
+    /* Test 1151: install altstack with SS_AUTODISARM flag — must succeed */
+    fut_printf("[MISC-TEST] Test 1151: sigaltstack with SS_AUTODISARM accepted\n");
+    struct sigaltstack ss_auto = {
+        .ss_sp    = autodisarm_buf,
+        .ss_flags = AUTODISARM_FLAG,
+        .ss_size  = sizeof(autodisarm_buf),
+    };
+    r = sys_sigaltstack(&ss_auto, NULL);
+    if (r == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 1151: SS_AUTODISARM accepted\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1151: SS_AUTODISARM got %ld (expected 0)\n", r);
+        fut_test_fail(1151);
+    }
+
+    /* Test 1152: readback preserves SS_AUTODISARM in ss_flags */
+    fut_printf("[MISC-TEST] Test 1152: sigaltstack readback preserves SS_AUTODISARM\n");
+    struct sigaltstack old_ss = {0};
+    r = sys_sigaltstack(NULL, &old_ss);
+    if (r == 0 && (old_ss.ss_flags & AUTODISARM_FLAG)) {
+        fut_printf("[MISC-TEST] ✓ Test 1152: SS_AUTODISARM preserved in readback\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1152: readback flags=0x%x (expected SS_AUTODISARM set)\n",
+                   old_ss.ss_flags);
+        fut_test_fail(1152);
+    }
+
+    /* Test 1153: SS_DISABLE|SS_AUTODISARM accepted (disabling with the flag) */
+    fut_printf("[MISC-TEST] Test 1153: SS_DISABLE|SS_AUTODISARM accepted\n");
+    struct sigaltstack ss_dis = {
+        .ss_sp    = NULL,
+        .ss_flags = AUTODISARM_SS_DIS | AUTODISARM_FLAG,
+        .ss_size  = 0,
+    };
+    r = sys_sigaltstack(&ss_dis, NULL);
+    if (r == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 1153: SS_DISABLE|SS_AUTODISARM accepted\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1153: SS_DISABLE|SS_AUTODISARM got %ld\n", r);
+        fut_test_fail(1153);
+    }
+
+    /* Test 1154: unknown flag (SS_AUTODISARM|0x4) → EINVAL */
+    fut_printf("[MISC-TEST] Test 1154: unknown flag 0x%x → EINVAL\n",
+               AUTODISARM_FLAG | 0x4);
+    struct sigaltstack ss_bad = {
+        .ss_sp    = autodisarm_buf,
+        .ss_flags = AUTODISARM_FLAG | 0x4,  /* 0x4 is not a valid flag */
+        .ss_size  = sizeof(autodisarm_buf),
+    };
+    r = sys_sigaltstack(&ss_bad, NULL);
+    if (r == -22 /* EINVAL */) {
+        fut_printf("[MISC-TEST] ✓ Test 1154: unknown flag → EINVAL\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1154: unknown flag got %ld (expected -22)\n", r);
+        fut_test_fail(1154);
+    }
+
+    /* Test 1155: re-enable altstack without SS_AUTODISARM; readback shows no flag */
+    fut_printf("[MISC-TEST] Test 1155: altstack without SS_AUTODISARM shows no flag\n");
+    struct sigaltstack ss_plain = {
+        .ss_sp    = autodisarm_buf,
+        .ss_flags = 0,
+        .ss_size  = sizeof(autodisarm_buf),
+    };
+    r = sys_sigaltstack(&ss_plain, NULL);
+    struct sigaltstack old2 = {0};
+    sys_sigaltstack(NULL, &old2);
+    if (r == 0 && !(old2.ss_flags & AUTODISARM_FLAG)) {
+        fut_printf("[MISC-TEST] ✓ Test 1155: no SS_AUTODISARM after plain install\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1155: r=%ld flags=0x%x\n", r, old2.ss_flags);
+        fut_test_fail(1155);
+    }
+
+#undef AUTODISARM_FLAG
+#undef AUTODISARM_SS_DIS
+#undef AUTODISARM_MINSZ
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -38504,6 +38616,7 @@ void fut_misc_test_thread(void *arg) {
     test_cap_bset();                    /* Tests 1137-1140: capability bounding set PR_CAPBSET_READ/DROP */
     test_capset_bset_enforcement();     /* Tests 1141-1142: capset rejects permitted > bset */
     test_cap_ambient_real();            /* Tests 1143-1150: ambient cap real state tracking */
+    test_sigaltstack_autodisarm();      /* Tests 1151-1155: SS_AUTODISARM flag support */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

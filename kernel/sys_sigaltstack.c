@@ -163,8 +163,8 @@ long sys_sigaltstack(const struct sigaltstack *ss, struct sigaltstack *old_ss) {
             return -EPERM;
         }
 
-        /* Validate flags */
-        if (new_stack.ss_flags & ~(SS_DISABLE | SS_ONSTACK)) {
+        /* Validate flags — SS_AUTODISARM (Linux 4.7+) auto-disarms altstack on delivery */
+        if (new_stack.ss_flags & ~(SS_DISABLE | SS_ONSTACK | SS_AUTODISARM)) {
             fut_printf("[SIGALTSTACK] sigaltstack(flags=0x%x) -> EINVAL (invalid flags)\n",
                       new_stack.ss_flags);
             return -EINVAL;

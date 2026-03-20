@@ -144,8 +144,9 @@ struct sigaltstack {
 };
 
 /* sigaltstack flags */
-#define SS_ONSTACK  0x01    /* Currently executing on signal stack */
-#define SS_DISABLE  0x02    /* Disable signal stack */
+#define SS_ONSTACK    0x01          /* Currently executing on signal stack */
+#define SS_DISABLE    0x02          /* Disable signal stack */
+#define SS_AUTODISARM 0x80000000    /* Auto-disarm altstack when signal delivered (Linux 4.7+) */
 
 /* Minimum signal stack size (4 KiB) */
 #define MINSIGSTKSZ 4096

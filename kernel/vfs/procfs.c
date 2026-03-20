@@ -250,6 +250,7 @@ enum procfs_kind {
     PROC_PARTITIONS,                /* /proc/partitions — block device partition table */
     PROC_CGROUPS,                   /* /proc/cgroups — cgroup subsystem list */
     PROC_PAGEMAP,                   /* /proc/<pid>/pagemap — physical page info (binary, 8 bytes/page) */
+    PROC_KALLSYMS,                  /* /proc/kallsyms — kernel symbol table (addresses zeroed per kptr_restrict) */
 };
 
 typedef struct {
@@ -416,6 +417,7 @@ typedef struct {
 #define PROC_INO_SYS_NET_IPV4_RP_FILTER  411ULL
 #define PROC_INO_SYS_NET_IPV4_FORWARDING 412ULL
 #define PROC_INO_SYS_NET_IPV4_ACCEPT_RA  413ULL
+#define PROC_INO_KALLSYMS                 414ULL
 /* /proc/sys/kernel/ extended range: 400-429 */
 #define PROC_INO_SYS_KERNEL_NMI_WD     400ULL
 #define PROC_INO_SYS_KERNEL_WATCHDOG   401ULL
@@ -1736,6 +1738,74 @@ static size_t gen_cgroups(char *buf, size_t cap) {
 }
 
 /*
+ * gen_kallsyms() — /proc/kallsyms
+ *
+ * Kernel symbol table. Addresses are zeroed (all-zeros) per kptr_restrict=1
+ * semantics (unprivileged users see zeroed addresses). Format per symbol:
+ *   <16-digit-hex-addr> <type> <name>[\t[module]]\n
+ * Type characters: T=text, D=data, B=bss, A=absolute, R=rodata, W=weak.
+ * Tools like perf, eBPF loader, ltrace, and kmod read this file.
+ */
+static size_t gen_kallsyms(char *buf, size_t cap) {
+    struct pbuf b = { buf, 0, cap };
+    /* Emit a representative set of kernel symbols with zeroed addresses.
+     * This is sufficient for tools that probe symbol existence (e.g. perf,
+     * BCC/eBPF loaders, systemtap) without exposing kernel layout. */
+    static const struct { const char *name; char type; } syms[] = {
+        { "_text",                    'T' },
+        { "_stext",                   'T' },
+        { "kernel_main",              'T' },
+        { "fut_task_current",         'T' },
+        { "fut_task_schedule",        'T' },
+        { "fut_task_create",          'T' },
+        { "fut_task_exit",            'T' },
+        { "sys_read",                 'T' },
+        { "sys_write",                'T' },
+        { "sys_open",                 'T' },
+        { "sys_close",                'T' },
+        { "sys_mmap",                 'T' },
+        { "sys_brk",                  'T' },
+        { "sys_fork",                 'T' },
+        { "sys_execve",               'T' },
+        { "sys_exit",                 'T' },
+        { "sys_wait4",                'T' },
+        { "sys_kill",                 'T' },
+        { "sys_getpid",               'T' },
+        { "sys_clone",                'T' },
+        { "sys_socket",               'T' },
+        { "sys_accept",               'T' },
+        { "sys_connect",              'T' },
+        { "sys_sendto",               'T' },
+        { "sys_recvfrom",             'T' },
+        { "sys_epoll_create1",        'T' },
+        { "sys_epoll_ctl",            'T' },
+        { "sys_epoll_wait",           'T' },
+        { "fut_mm_map_anonymous",     'T' },
+        { "fut_mm_unmap",             'T' },
+        { "fut_vfs_open",             'T' },
+        { "fut_vfs_close",            'T' },
+        { "fut_vfs_read",             'T' },
+        { "fut_vfs_write",            'T' },
+        { "fut_printf",               'T' },
+        { "_etext",                   'T' },
+        { "_sdata",                   'D' },
+        { "_edata",                   'D' },
+        { "g_realtime_offset_sec",    'D' },
+        { "_sbss",                    'B' },
+        { "_ebss",                    'B' },
+        { "_end",                     'A' },
+    };
+    for (size_t i = 0; i < sizeof(syms)/sizeof(syms[0]); i++) {
+        pb_str(&b, "0000000000000000 ");
+        pb_char(&b, syms[i].type);
+        pb_char(&b, ' ');
+        pb_str(&b, syms[i].name);
+        pb_char(&b, '\n');
+    }
+    return b.pos;
+}
+
+/*
  * gen_comm() — /proc/<pid>/comm
  *
  * Single line: process name + newline.
@@ -2544,6 +2614,9 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             break;
         case PROC_CGROUPS:
             total = gen_cgroups(tmp, GEN_BUF);
+            break;
+        case PROC_KALLSYMS:
+            total = gen_kallsyms(tmp, GEN_BUF);
             break;
         case PROC_FDINFO_ENTRY: {
             /* /proc/<pid>/fdinfo/<n>: pos, flags, mnt_id, type-specific fields */
@@ -3367,6 +3440,11 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
         if (STREQ(name, "cgroups")) {
             *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_CGROUPS,
                                           0100444, PROC_CGROUPS, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "kallsyms")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_KALLSYMS,
+                                          0100444, PROC_KALLSYMS, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
         /* Try numeric PID */
@@ -4372,7 +4450,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             ".", "..", "self", "thread-self", "meminfo", "version", "uptime", "cpuinfo",
             "loadavg", "mounts", "sys", "stat", "filesystems", "vmstat", "net",
             "interrupts", "cmdline", "swaps", "devices", "misc",
-            "buddyinfo", "zoneinfo", "diskstats", "partitions", "cgroups"
+            "buddyinfo", "zoneinfo", "diskstats", "partitions", "cgroups", "kallsyms"
         };
         static const uint8_t fixed_type[] = {
             FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
@@ -4385,7 +4463,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             FUT_VDIR_TYPE_REG,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
-            FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG
+            FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG
         };
         static const uint64_t fixed_ino[] = {
             PROC_INO_ROOT, PROC_INO_ROOT,
@@ -4397,9 +4475,9 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             PROC_INO_INTERRUPTS,
             PROC_INO_CMDLINE_GLOBAL, PROC_INO_SWAPS, PROC_INO_DEVICES, PROC_INO_MISC_FILE,
             PROC_INO_BUDDYINFO, PROC_INO_ZONEINFO,
-            PROC_INO_DISKSTATS, PROC_INO_PARTITIONS, PROC_INO_CGROUPS
+            PROC_INO_DISKSTATS, PROC_INO_PARTITIONS, PROC_INO_CGROUPS, PROC_INO_KALLSYMS
         };
-        if (idx < 25) {
+        if (idx < 26) {
             de->d_ino    = fixed_ino[idx];
             de->d_off    = idx + 1;
             de->d_type   = fixed_type[idx];
@@ -4414,15 +4492,15 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         }
 
         /*
-         * PID enumeration: after the 25 fixed entries, cookies encode
-         * "find first task with pid > (cookie - 25)".  After returning
-         * a PID entry we set cookie = 25 + that_pid + 1.
+         * PID enumeration: after the 26 fixed entries, cookies encode
+         * "find first task with pid > (cookie - 26)".  After returning
+         * a PID entry we set cookie = 26 + that_pid + 1.
          *
          * This is stable as long as PIDs are unique and monotonically
          * increasing; newly-forked tasks will appear if their PID is
          * greater than the last-seen PID.
          */
-        uint64_t min_pid = idx >= 25 ? idx - 25 : 0;  /* start scanning for pid > min_pid */
+        uint64_t min_pid = idx >= 26 ? idx - 26 : 0;  /* start scanning for pid > min_pid */
         fut_task_t *best = NULL;
         uint64_t   best_pid = (uint64_t)-1;
         fut_task_t *t = fut_task_list;
@@ -4447,14 +4525,14 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         pidname[pn] = '\0';
 
         de->d_ino    = PROC_INO_PID_DIR(best->pid);
-        de->d_off    = 10 + best->pid + 1;
+        de->d_off    = 26 + best->pid + 1;
         de->d_type   = FUT_VDIR_TYPE_DIR;
         de->d_reclen = sizeof(*de);
         size_t nl = (size_t)pn;
         if (nl > FUT_VFS_NAME_MAX) nl = FUT_VFS_NAME_MAX;
         __builtin_memcpy(de->d_name, pidname, nl);
         de->d_name[nl] = '\0';
-        *cookie = 25 + best->pid + 1;  /* resume after this pid */
+        *cookie = 26 + best->pid + 1;  /* resume after this pid */
         return 0;
     }
 

@@ -29840,6 +29840,87 @@ static void test_proc_sys_net_ipv4_conf(void) {
     }
 }
 
+/*
+ * Tests 843-846: /proc/kallsyms
+ *
+ * Test 843: open /proc/kallsyms → valid fd
+ * Test 844: read returns > 0 bytes
+ * Test 845: content has zeroed address prefix (kptr_restrict=1 style)
+ * Test 846: content contains known symbol "kernel_main"
+ */
+static void test_proc_kallsyms(void) {
+    extern long sys_openat(int dirfd, const char *pathname, int flags, int mode);
+    extern long sys_close(int fd);
+    extern ssize_t sys_read(int fd, void *buf, size_t count);
+
+    fut_printf("[MISC-TEST] Tests 843-846: /proc/kallsyms\n");
+
+    /* Test 843: open */
+    long fd = sys_openat(-100, "/proc/kallsyms", 0 /* O_RDONLY */, 0);
+    if (fd >= 0) {
+        fut_test_pass(); /* 843 */
+    } else {
+        fut_printf("[MISC-TEST] x open /proc/kallsyms failed: %ld\n", fd);
+        fut_test_fail(843);
+        fut_test_fail(844);
+        fut_test_fail(845);
+        fut_test_fail(846);
+        return;
+    }
+
+    char buf[512];
+    __builtin_memset(buf, 0, sizeof(buf));
+    ssize_t n = sys_read((int)fd, buf, sizeof(buf) - 1);
+    sys_close((int)fd);
+
+    /* Test 844: non-empty */
+    if (n > 0) {
+        fut_test_pass(); /* 844 */
+    } else {
+        fut_printf("[MISC-TEST] x read /proc/kallsyms returned %zd\n", n);
+        fut_test_fail(844);
+        fut_test_fail(845);
+        fut_test_fail(846);
+        return;
+    }
+
+    /* Test 845: zeroed address prefix present (kptr_restrict=1 semantics) */
+    int has_zeroed_addr = 0;
+    for (ssize_t i = 0; i + 17 <= n; i++) {
+        if (buf[i+ 0] == '0' && buf[i+ 1] == '0' && buf[i+ 2] == '0' &&
+            buf[i+ 3] == '0' && buf[i+ 4] == '0' && buf[i+ 5] == '0' &&
+            buf[i+ 6] == '0' && buf[i+ 7] == '0' && buf[i+ 8] == '0' &&
+            buf[i+ 9] == '0' && buf[i+10] == '0' && buf[i+11] == '0' &&
+            buf[i+12] == '0' && buf[i+13] == '0' && buf[i+14] == '0' &&
+            buf[i+15] == '0' && buf[i+16] == ' ') {
+            has_zeroed_addr = 1;
+            break;
+        }
+    }
+    if (has_zeroed_addr) {
+        fut_test_pass(); /* 845 */
+    } else {
+        fut_printf("[MISC-TEST] x /proc/kallsyms missing zeroed addr prefix: %.64s\n", buf);
+        fut_test_fail(845);
+    }
+
+    /* Test 846: contains "kernel_main" symbol */
+    int has_sym = 0;
+    const char *needle = "kernel_main";
+    int nlen = 11;
+    for (ssize_t i = 0; i + nlen <= n; i++) {
+        if (__builtin_memcmp(buf + i, needle, (size_t)nlen) == 0) {
+            has_sym = 1;
+            break;
+        }
+    }
+    if (has_sym) {
+        fut_test_pass(); /* 846 */
+    } else {
+        fut_printf("[MISC-TEST] x /proc/kallsyms missing 'kernel_main'\n");
+        fut_test_fail(846);
+    }
+}
 
 
 static void test_inotify_poll_epoll_select(void) {
@@ -30530,6 +30611,7 @@ void fut_misc_test_thread(void *arg) {
     test_sysfs_net_lo();                   /* Tests 827-833: /sys/class/net/lo/ loopback interface */
     test_proc_sys_net_keepalive();         /* Tests 834-837: /proc/sys/net/ipv4 tcp_keepalive_*+ip_unprivileged_port_start */
     test_proc_sys_net_ipv4_conf();         /* Tests 838-842: conf/all/ rp_filter/forwarding + /proc/net/route loopback */
+    test_proc_kallsyms();                  /* Tests 843-846: /proc/kallsyms open/read/zeroed-addr/kernel_main */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -504,6 +504,11 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
                 fut_free(kbuf);
                 return -EFAULT;
             }
+            if (dest_sun.sun_family == 2 /* AF_INET */ || dest_sun.sun_family == 10 /* AF_INET6 */) {
+                /* No real TCP/IP stack — network is unreachable */
+                fut_free(kbuf);
+                return -ENETUNREACH;
+            }
             if (dest_sun.sun_family != 1 /* AF_UNIX */) {
                 fut_free(kbuf);
                 return -EAFNOSUPPORT;

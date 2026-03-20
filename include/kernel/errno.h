@@ -195,6 +195,10 @@
 #endif
 
 /* Network socket error codes */
+#ifndef ENETUNREACH
+#define ENETUNREACH  101 /* Network is unreachable */
+#endif
+
 #ifndef EAFNOSUPPORT
 #define EAFNOSUPPORT 97
 #endif

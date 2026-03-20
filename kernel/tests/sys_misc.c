@@ -30580,6 +30580,162 @@ test881:;
  * Test 886: setsockopt(SO_MARK, 0x1234) → 0
  * Test 887: listen(AF_INET fd) after bind → 0 (stub: no TCP connections possible)
  */
+/* test_af_inet_bind_getsockname defined below test_udp_sockopt_and_sendto */
+
+/**
+ * Tests 888-895: IPPROTO_UDP setsockopt/getsockopt + AF_INET SOCK_DGRAM sendto()
+ *
+ * Test 888: setsockopt(IPPROTO_UDP, UDP_CORK=1, 1) → 0
+ * Test 889: getsockopt(IPPROTO_UDP, UDP_CORK=1) → returns 0 (int)
+ * Test 890: AF_INET SOCK_DGRAM sendto() with explicit dest_addr → -ENETUNREACH
+ * Test 891: AF_INET SOCK_DGRAM sendto() no dest_addr (unconnected) → -EDESTADDRREQ
+ * Test 892: getsockopt(SOL_SOCKET, SO_PRIORITY=12) → 0
+ * Test 893: getsockopt(SOL_SOCKET, SO_MARK=36) → 0
+ * Test 894: setsockopt(IPPROTO_UDP, UDP_SEGMENT=103, 1400) → 0 (no-op)
+ * Test 895: setsockopt(IPPROTO_UDP, unknown=200) → -ENOPROTOOPT
+ */
+static void test_udp_sockopt_and_sendto(void) {
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_setsockopt(int fd, int level, int optname,
+                               const void *optval, unsigned int optlen);
+    extern long sys_getsockopt(int fd, int level, int optname,
+                               void *optval, unsigned int *optlen);
+    extern long sys_sendto(int sockfd, const void *buf, size_t len,
+                           int flags, const void *dest_addr, int addrlen);
+    extern long sys_close(int fd);
+
+    fut_printf("[MISC-TEST] Tests 888-895: IPPROTO_UDP sockopt + AF_INET DGRAM sendto\n");
+
+#define AF_INET_N    2
+#define IPPROTO_UDP_N 17
+#define SOL_SOCK_N   1
+
+    long udpfd = sys_socket(AF_INET_N, 2 /* SOCK_DGRAM */, 0);
+    if (udpfd < 0) {
+        fut_printf("[MISC-TEST] ✗ Tests 888-895: socket(AF_INET, SOCK_DGRAM) failed: %ld\n", udpfd);
+        for (int i = 888; i <= 895; i++) fut_test_fail((uint16_t)i);
+        return;
+    }
+
+    /* Test 888: setsockopt(IPPROTO_UDP, UDP_CORK, 1) → 0 */
+    {
+        int val = 1;
+        long r = sys_setsockopt((int)udpfd, IPPROTO_UDP_N, 1 /* UDP_CORK */, &val, sizeof(int));
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 888: setsockopt(IPPROTO_UDP, UDP_CORK, 1) → 0\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 888: setsockopt(IPPROTO_UDP, UDP_CORK) → %ld\n", r);
+            fut_test_fail(888);
+        }
+    }
+
+    /* Test 889: getsockopt(IPPROTO_UDP, UDP_CORK) → 0 */
+    {
+        int val = -1;
+        unsigned int vlen = sizeof(int);
+        long r = sys_getsockopt((int)udpfd, IPPROTO_UDP_N, 1 /* UDP_CORK */, &val, &vlen);
+        if (r == 0 && val == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 889: getsockopt(IPPROTO_UDP, UDP_CORK) → 0\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 889: getsockopt(IPPROTO_UDP, UDP_CORK) r=%ld val=%d\n", r, val);
+            fut_test_fail(889);
+        }
+    }
+
+    /* Test 890: sendto() AF_INET SOCK_DGRAM with explicit dest → ENETUNREACH */
+    {
+        /* sockaddr_in: family(2LE) + port(2NBO) + addr(4) + zero(8) */
+        unsigned char dest[16] = {0};
+        dest[0] = AF_INET_N; dest[1] = 0; /* sin_family LE */
+        dest[2] = 0x1F; dest[3] = 0x90; /* port 8080 NBO */
+        dest[4] = 127; dest[5] = 0; dest[6] = 0; dest[7] = 1; /* 127.0.0.1 */
+        const char *msg = "hello";
+        long r = sys_sendto((int)udpfd, msg, 5, 0, dest, 16);
+        if (r == -101 /* ENETUNREACH */) {
+            fut_printf("[MISC-TEST] ✓ Test 890: sendto(AF_INET udp) → ENETUNREACH\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 890: sendto expected ENETUNREACH(-101), got %ld\n", r);
+            fut_test_fail(890);
+        }
+    }
+
+    /* Test 891: sendto() unconnected, no dest_addr → EDESTADDRREQ */
+    {
+        const char *msg = "hello";
+        long r = sys_sendto((int)udpfd, msg, 5, 0, (void *)0, 0);
+        if (r == -89 /* EDESTADDRREQ */) {
+            fut_printf("[MISC-TEST] ✓ Test 891: sendto(unconnected, NULL dest) → EDESTADDRREQ\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 891: sendto expected EDESTADDRREQ(-89), got %ld\n", r);
+            fut_test_fail(891);
+        }
+    }
+
+    /* Test 892: getsockopt(SOL_SOCKET, SO_PRIORITY=12) → 0 */
+    {
+        int val = -1;
+        unsigned int vlen = sizeof(int);
+        long r = sys_getsockopt((int)udpfd, SOL_SOCK_N, 12 /* SO_PRIORITY */, &val, &vlen);
+        if (r == 0 && val == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 892: getsockopt(SO_PRIORITY) → 0\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 892: getsockopt(SO_PRIORITY) r=%ld val=%d\n", r, val);
+            fut_test_fail(892);
+        }
+    }
+
+    /* Test 893: getsockopt(SOL_SOCKET, SO_MARK=36) → 0 */
+    {
+        int val = -1;
+        unsigned int vlen = sizeof(int);
+        long r = sys_getsockopt((int)udpfd, SOL_SOCK_N, 36 /* SO_MARK */, &val, &vlen);
+        if (r == 0 && val == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 893: getsockopt(SO_MARK) → 0\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 893: getsockopt(SO_MARK) r=%ld val=%d\n", r, val);
+            fut_test_fail(893);
+        }
+    }
+
+    /* Test 894: setsockopt(IPPROTO_UDP, UDP_SEGMENT=103, 1400) → 0 */
+    {
+        int val = 1400;
+        long r = sys_setsockopt((int)udpfd, IPPROTO_UDP_N, 103 /* UDP_SEGMENT */, &val, sizeof(int));
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 894: setsockopt(IPPROTO_UDP, UDP_SEGMENT, 1400) → 0\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 894: setsockopt(IPPROTO_UDP, UDP_SEGMENT) → %ld\n", r);
+            fut_test_fail(894);
+        }
+    }
+
+    /* Test 895: setsockopt(IPPROTO_UDP, unknown=200) → -ENOPROTOOPT */
+    {
+        int val = 1;
+        long r = sys_setsockopt((int)udpfd, IPPROTO_UDP_N, 200 /* unknown */, &val, sizeof(int));
+        if (r == -92 /* ENOPROTOOPT */) {
+            fut_printf("[MISC-TEST] ✓ Test 895: setsockopt(IPPROTO_UDP, 200) → ENOPROTOOPT\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 895: expected ENOPROTOOPT(-92), got %ld\n", r);
+            fut_test_fail(895);
+        }
+    }
+
+    sys_close((int)udpfd);
+
+#undef AF_INET_N
+#undef IPPROTO_UDP_N
+#undef SOL_SOCK_N
+}
+
 static void test_af_inet_bind_getsockname(void) {
     extern long sys_socket(int domain, int type, int protocol);
     extern long sys_bind(int sockfd, const void *addr, unsigned int addrlen);
@@ -31252,6 +31408,7 @@ void fut_misc_test_thread(void *arg) {
     test_ipproto_sockopts();              /* Tests 867-873: IPPROTO_TCP/IP/IPV6 setsockopt/getsockopt round-trip */
     test_af_inet_socket_stub();           /* Tests 874-881: AF_INET/AF_INET6 socket creation stubs */
     test_af_inet_bind_getsockname();      /* Tests 882-887: AF_INET bind/getsockname, SO_PRIORITY/BINDTODEVICE */
+    test_udp_sockopt_and_sendto();        /* Tests 888-895: IPPROTO_UDP setsockopt/getsockopt + AF_INET DGRAM sendto */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

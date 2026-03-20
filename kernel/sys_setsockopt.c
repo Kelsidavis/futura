@@ -652,6 +652,20 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                     (optname >= 27 && optname <= 80)) return 0;
                 return -ENOPROTOOPT;
         }
+    } else if (level == 17 /* IPPROTO_UDP */) {
+        /* IPPROTO_UDP options — accept without enforcement (no real UDP stack) */
+        switch (optname) {
+            case 1:   /* UDP_CORK */
+            case 100: /* UDP_ENCAP */
+            case 101: /* UDP_NO_CHECK6_TX */
+            case 102: /* UDP_NO_CHECK6_RX */
+            case 103: /* UDP_SEGMENT */
+            case 104: /* UDP_GRO */
+                return 0;
+            default:
+                if (optname >= 2 && optname <= 120) return 0;
+                return -ENOPROTOOPT;
+        }
     } else {
         /* Unknown protocol level */
         fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, level=%d, optname=%d) -> ENOPROTOOPT\n",

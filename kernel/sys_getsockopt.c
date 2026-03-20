@@ -767,13 +767,50 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
                 if (gso_copy_to_user(optlen, &value_len, sizeof(socklen_t)) != 0) return -EFAULT;
                 return 0;
 
+            case 12: /* SO_PRIORITY */
+            case 25: /* SO_BINDTODEVICE — return empty string */
+            case 26: /* SO_ATTACH_FILTER */
+            case 27: /* SO_DETACH_FILTER */
+            case 32: /* SO_SNDBUFFORCE */
+            case 33: /* SO_RCVBUFFORCE */
+            case 34: /* SO_PASSSEC */
+            case 35: /* SO_TIMESTAMPNS */
+            case 36: /* SO_MARK */
+            case 37: /* SO_TIMESTAMPING */
+            case 41: /* SO_WIFI_STATUS */
+            case 42: /* SO_PEEK_OFF */
+            case 45: /* SO_BPF_EXTENSIONS */
+            case 46: /* SO_INCOMING_CPU */
+            case 52: /* SO_DETACH_BPF */
+            case 53: /* SO_ATTACH_REUSEPORT_CBPF */
+            case 54: /* SO_ATTACH_REUSEPORT_EBPF */
+            case 55: /* SO_CNX_ADVICE */
+            case 57: /* SO_MEMINFO */
+            case 58: /* SO_INCOMING_NAPI_ID */
+            case 59: /* SO_COOKIE */
+            case 62: /* SO_RCVTIMEO_NEW */
+            case 63: /* SO_SNDTIMEO_NEW */
+            case 64: case 65: case 66: case 67: case 68: case 69: case 70: case 71: {
+                /* Extended options: return 0 (disabled/zero value) */
+                int_value = 0;
+                value_len = sizeof(int);
+                copy_len = (len < value_len) ? len : value_len;
+                if (gso_copy_to_user(optval, &int_value, copy_len) != 0) return -EFAULT;
+                if (gso_copy_to_user(optlen, &value_len, sizeof(socklen_t)) != 0) return -EFAULT;
+                return 0;
+            }
+
             default:
                 return -ENOPROTOOPT;
         }
-    } else if (level == IPPROTO_TCP || level == IPPROTO_IP || level == IPPROTO_IPV6) {
+    } else if (level == IPPROTO_TCP || level == IPPROTO_IP || level == IPPROTO_IPV6 || level == 17 /* IPPROTO_UDP */) {
         /* Protocol-level options: return stored values or defaults */
         int proto_val = 0;
-        if (level == IPPROTO_TCP) {
+        if (level == 17 /* IPPROTO_UDP */) {
+            /* UDP options: return 0 (no real UDP stack state) */
+            if (optname >= 1 && optname <= 120) { proto_val = 0; }
+            else { return -ENOPROTOOPT; }
+        } else if (level == IPPROTO_TCP) {
             switch (optname) {
                 case 1:  proto_val = socket->tcp_nodelay;      break; /* TCP_NODELAY */
                 case 2:  proto_val = socket->tcp_maxseg ? (int)socket->tcp_maxseg : 536; break;

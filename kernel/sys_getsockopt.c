@@ -770,8 +770,57 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
             default:
                 return -ENOPROTOOPT;
         }
+    } else if (level == IPPROTO_TCP || level == IPPROTO_IP || level == IPPROTO_IPV6) {
+        /* Protocol-level options: return stored values or defaults */
+        int proto_val = 0;
+        if (level == IPPROTO_TCP) {
+            switch (optname) {
+                case 1:  proto_val = socket->tcp_nodelay;      break; /* TCP_NODELAY */
+                case 2:  proto_val = socket->tcp_maxseg ? (int)socket->tcp_maxseg : 536; break;
+                case 3:  proto_val = socket->tcp_cork;         break; /* TCP_CORK */
+                case 4:  proto_val = socket->tcp_keepidle ? (int)socket->tcp_keepidle : 7200; break;
+                case 5:  proto_val = socket->tcp_keepintvl ? (int)socket->tcp_keepintvl : 75; break;
+                case 6:  proto_val = socket->tcp_keepcnt ? (int)socket->tcp_keepcnt : 9; break;
+                case 7:  proto_val = socket->tcp_syncnt ? (int)socket->tcp_syncnt : 6; break;
+                case 8:  proto_val = socket->tcp_linger2;      break; /* TCP_LINGER2 */
+                case 9:  proto_val = (int)socket->tcp_defer_accept; break;
+                case 10: proto_val = 0;                        break; /* TCP_WINDOW_CLAMP */
+                case 11: proto_val = 0;                        break; /* TCP_INFO: 0 (no struct) */
+                case 12: proto_val = socket->tcp_quickack;     break; /* TCP_QUICKACK */
+                default:
+                    if (optname >= 13 && optname <= 31) { proto_val = 0; break; }
+                    return -ENOPROTOOPT;
+            }
+        } else if (level == IPPROTO_IP) {
+            switch (optname) {
+                case 1:  proto_val = socket->ip_tos;           break; /* IP_TOS */
+                case 2:  proto_val = socket->ip_ttl ? (int)socket->ip_ttl : 64; break; /* IP_TTL */
+                case 3:  proto_val = socket->ip_hdrincl;       break; /* IP_HDRINCL */
+                case 10: proto_val = (int)socket->ip_mtu_discover; break;
+                case 12: proto_val = socket->ip_recvttl;       break; /* IP_RECVTTL */
+                case 13: proto_val = socket->ip_recvtos;       break; /* IP_RECVTOS */
+                default:
+                    if (optname >= 4 && optname <= 64) { proto_val = 0; break; }
+                    return -ENOPROTOOPT;
+            }
+        } else { /* IPPROTO_IPV6 */
+            switch (optname) {
+                case 26: proto_val = socket->ipv6_v6only;      break; /* IPV6_V6ONLY */
+                case 66: proto_val = socket->ipv6_recvtclass;  break; /* IPV6_RECVTCLASS */
+                case 67: proto_val = socket->ipv6_tclass;      break; /* IPV6_TCLASS */
+                default:
+                    if ((optname >= 1 && optname <= 25) ||
+                        (optname >= 27 && optname <= 80)) { proto_val = 0; break; }
+                    return -ENOPROTOOPT;
+            }
+        }
+        socklen_t pv_len = sizeof(int);
+        socklen_t pv_copy = (len < pv_len) ? len : pv_len;
+        if (gso_copy_to_user(optval, &proto_val, pv_copy) != 0) return -EFAULT;
+        if (gso_copy_to_user(optlen, &pv_len, sizeof(socklen_t)) != 0) return -EFAULT;
+        return 0;
     } else {
-        /* Protocol-level options not supported for AF_UNIX */
+        /* Unknown protocol level */
         return -ENOPROTOOPT;
     }
 }

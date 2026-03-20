@@ -380,6 +380,31 @@ typedef struct fut_socket {
     uint32_t sndbuf;                    /* Send buffer size (default 2*FUT_SOCKET_BUFSIZE) */
     uint32_t rcvbuf;                    /* Receive buffer size (default 2*FUT_SOCKET_BUFSIZE) */
 
+    /* IPPROTO_TCP options (stored for round-trip; enforcement is best-effort) */
+    uint8_t  tcp_nodelay;      /* TCP_NODELAY (1) — disable Nagle */
+    uint8_t  tcp_cork;         /* TCP_CORK (3) — cork output */
+    uint32_t tcp_keepidle;     /* TCP_KEEPIDLE (4) — seconds */
+    uint32_t tcp_keepintvl;    /* TCP_KEEPINTVL (5) — seconds */
+    uint32_t tcp_keepcnt;      /* TCP_KEEPCNT (6) — count */
+    uint32_t tcp_syncnt;       /* TCP_SYNCNT (7) — SYN retries */
+    int32_t  tcp_linger2;      /* TCP_LINGER2 (8) — FIN_WAIT2 timeout */
+    uint32_t tcp_defer_accept; /* TCP_DEFER_ACCEPT (9) — seconds */
+    uint32_t tcp_maxseg;       /* TCP_MAXSEG (2) — segment size */
+    uint8_t  tcp_quickack;     /* TCP_QUICKACK (12) — quick-ack mode */
+
+    /* IPPROTO_IP options */
+    uint8_t  ip_tos;           /* IP_TOS (1) */
+    uint8_t  ip_ttl;           /* IP_TTL (2) — default 64 */
+    uint8_t  ip_hdrincl;       /* IP_HDRINCL (3) */
+    uint8_t  ip_recvtos;       /* IP_RECVTOS (13) */
+    uint8_t  ip_recvttl;       /* IP_RECVTTL (12) */
+    uint32_t ip_mtu_discover;  /* IP_MTU_DISCOVER (10) */
+
+    /* IPPROTO_IPV6 options */
+    uint8_t  ipv6_v6only;      /* IPV6_V6ONLY (26) */
+    uint8_t  ipv6_tclass;      /* IPV6_TCLASS (67) */
+    uint8_t  ipv6_recvtclass;  /* IPV6_RECVTCLASS (66) */
+
     /* SO_PEERCRED: credentials of the connected peer (set at connect/accept time) */
     uint32_t peer_pid;
     uint32_t peer_uid;

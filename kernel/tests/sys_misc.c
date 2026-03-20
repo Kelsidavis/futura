@@ -30192,6 +30192,126 @@ static void test_sysfs_cpu_topology(void) {
  * Test 859: mount("mqueue", "/mnt_mqueue_test", "mqueue") → 0
  * Test 860: mount("hugetlbfs", "/mnt_huge_test", "hugetlbfs") → 0
  */
+/*
+ * Tests 867-873: IPPROTO_TCP / IPPROTO_IP / IPPROTO_IPV6 setsockopt + getsockopt.
+ *
+ * Verifies that:
+ *   867: setsockopt(IPPROTO_TCP, TCP_NODELAY=1, 1) → 0
+ *   868: getsockopt(IPPROTO_TCP, TCP_NODELAY=1) → 1 (round-trip)
+ *   869: setsockopt(IPPROTO_TCP, TCP_KEEPIDLE=4, 30) → 0
+ *   870: getsockopt(IPPROTO_TCP, TCP_KEEPIDLE=4) → 30 (round-trip)
+ *   871: setsockopt(IPPROTO_IP, IP_TTL=2, 128) → 0
+ *   872: getsockopt(IPPROTO_IP, IP_TTL=2) → 128 (round-trip)
+ *   873: setsockopt(IPPROTO_IPV6, IPV6_V6ONLY=26, 1) then getsockopt → 1
+ */
+static void test_ipproto_sockopts(void) {
+    extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+    extern long sys_setsockopt(int fd, int level, int optname,
+                               const void *optval, unsigned int optlen);
+    extern long sys_getsockopt(int fd, int level, int optname,
+                               void *optval, unsigned int *optlen);
+    extern long sys_close(int fd);
+
+#define IPPROTO_TCP_NUM 6
+#define IPPROTO_IP_NUM  0
+#define IPPROTO_IPV6_NUM 41
+
+    fut_printf("[MISC-TEST] Tests 867-873: IPPROTO_TCP/IP/IPV6 setsockopt/getsockopt\n");
+
+    int sv[2];
+    long r = sys_socketpair(1 /* AF_UNIX */, 1 /* SOCK_STREAM */, 0, sv);
+    if (r < 0) {
+        fut_printf("[MISC-TEST] ✗ Tests 867-873: socketpair failed: %ld\n", r);
+        fut_test_fail(867); fut_test_fail(868); fut_test_fail(869);
+        fut_test_fail(870); fut_test_fail(871); fut_test_fail(872);
+        fut_test_fail(873);
+        return;
+    }
+
+    /* Test 867: setsockopt(IPPROTO_TCP, TCP_NODELAY, 1) → 0 */
+    int val = 1;
+    r = sys_setsockopt(sv[0], IPPROTO_TCP_NUM, 1 /* TCP_NODELAY */, &val, sizeof(int));
+    if (r == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 867: setsockopt(IPPROTO_TCP, TCP_NODELAY, 1) → 0\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 867: setsockopt(IPPROTO_TCP, TCP_NODELAY, 1) → %ld\n", r);
+        fut_test_fail(867);
+    }
+
+    /* Test 868: getsockopt(IPPROTO_TCP, TCP_NODELAY) → 1 (round-trip) */
+    int out = 0;
+    unsigned int outlen = sizeof(int);
+    r = sys_getsockopt(sv[0], IPPROTO_TCP_NUM, 1 /* TCP_NODELAY */, &out, &outlen);
+    if (r == 0 && out == 1) {
+        fut_printf("[MISC-TEST] ✓ Test 868: getsockopt(IPPROTO_TCP, TCP_NODELAY) → %d\n", out);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 868: getsockopt(IPPROTO_TCP, TCP_NODELAY) r=%ld out=%d\n", r, out);
+        fut_test_fail(868);
+    }
+
+    /* Test 869: setsockopt(IPPROTO_TCP, TCP_KEEPIDLE, 30) → 0 */
+    val = 30;
+    r = sys_setsockopt(sv[0], IPPROTO_TCP_NUM, 4 /* TCP_KEEPIDLE */, &val, sizeof(int));
+    if (r == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 869: setsockopt(IPPROTO_TCP, TCP_KEEPIDLE, 30) → 0\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 869: setsockopt(IPPROTO_TCP, TCP_KEEPIDLE, 30) → %ld\n", r);
+        fut_test_fail(869);
+    }
+
+    /* Test 870: getsockopt(IPPROTO_TCP, TCP_KEEPIDLE) → 30 */
+    out = 0; outlen = sizeof(int);
+    r = sys_getsockopt(sv[0], IPPROTO_TCP_NUM, 4 /* TCP_KEEPIDLE */, &out, &outlen);
+    if (r == 0 && out == 30) {
+        fut_printf("[MISC-TEST] ✓ Test 870: getsockopt(IPPROTO_TCP, TCP_KEEPIDLE) → %d\n", out);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 870: getsockopt(IPPROTO_TCP, TCP_KEEPIDLE) r=%ld out=%d\n", r, out);
+        fut_test_fail(870);
+    }
+
+    /* Test 871: setsockopt(IPPROTO_IP, IP_TTL=2, 128) → 0 */
+    val = 128;
+    r = sys_setsockopt(sv[0], IPPROTO_IP_NUM, 2 /* IP_TTL */, &val, sizeof(int));
+    if (r == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 871: setsockopt(IPPROTO_IP, IP_TTL, 128) → 0\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 871: setsockopt(IPPROTO_IP, IP_TTL, 128) → %ld\n", r);
+        fut_test_fail(871);
+    }
+
+    /* Test 872: getsockopt(IPPROTO_IP, IP_TTL) → 128 */
+    out = 0; outlen = sizeof(int);
+    r = sys_getsockopt(sv[0], IPPROTO_IP_NUM, 2 /* IP_TTL */, &out, &outlen);
+    if (r == 0 && out == 128) {
+        fut_printf("[MISC-TEST] ✓ Test 872: getsockopt(IPPROTO_IP, IP_TTL) → %d\n", out);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 872: getsockopt(IPPROTO_IP, IP_TTL) r=%ld out=%d\n", r, out);
+        fut_test_fail(872);
+    }
+
+    /* Test 873: setsockopt(IPPROTO_IPV6, IPV6_V6ONLY=26, 1) then getsockopt → 1 */
+    val = 1;
+    r = sys_setsockopt(sv[0], IPPROTO_IPV6_NUM, 26 /* IPV6_V6ONLY */, &val, sizeof(int));
+    out = 0; outlen = sizeof(int);
+    long r2 = sys_getsockopt(sv[0], IPPROTO_IPV6_NUM, 26 /* IPV6_V6ONLY */, &out, &outlen);
+    if (r == 0 && r2 == 0 && out == 1) {
+        fut_printf("[MISC-TEST] ✓ Test 873: IPPROTO_IPV6 IPV6_V6ONLY round-trip → %d\n", out);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 873: IPPROTO_IPV6 IPV6_V6ONLY: set=%ld get=%ld out=%d\n", r, r2, out);
+        fut_test_fail(873);
+    }
+
+    sys_close(sv[0]);
+    sys_close(sv[1]);
+}
+
 static void test_mount_fstype_extended(void) {
     extern long sys_mount(const char *source, const char *target,
                           const char *fstype, unsigned long flags,
@@ -30857,6 +30977,7 @@ void fut_misc_test_thread(void *arg) {
     test_sysfs_cpu_topology();             /* Tests 847-853: /sys/devices/system/cpu/ topology */
     test_mount_fstype_extended();          /* Tests 854-860: mount devtmpfs/proc/sysfs/cgroup2/debugfs/mqueue/hugetlbfs */
     test_statfs_magic_values();            /* Tests 861-866: statfs f_type: /proc=0x9fa0, /sys=sysfs, /dev=devtmpfs, /tmp=tmpfs, /run=tmpfs, /dev/shm=tmpfs */
+    test_ipproto_sockopts();              /* Tests 867-873: IPPROTO_TCP/IP/IPV6 setsockopt/getsockopt round-trip */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

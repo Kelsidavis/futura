@@ -565,14 +565,62 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                            sockfd, optname);
                 return -ENOPROTOOPT;
         }
+    } else if (level == IPPROTO_TCP) {
+        /* IPPROTO_TCP options — store for round-trip, no real TCP stack to enforce */
+        if (optlen < sizeof(int)) return -EINVAL;
+        int val = 0;
+        if (sso_copy_from_user(&val, optval, sizeof(int)) != 0) return -EFAULT;
+        switch (optname) {
+            case 1:  socket->tcp_nodelay     = (uint8_t)(val != 0); return 0; /* TCP_NODELAY */
+            case 2:  if (val > 0) socket->tcp_maxseg = (uint32_t)val; return 0; /* TCP_MAXSEG */
+            case 3:  socket->tcp_cork        = (uint8_t)(val != 0); return 0; /* TCP_CORK */
+            case 4:  socket->tcp_keepidle    = (uint32_t)(val > 0 ? val : 0); return 0; /* TCP_KEEPIDLE */
+            case 5:  socket->tcp_keepintvl   = (uint32_t)(val > 0 ? val : 0); return 0; /* TCP_KEEPINTVL */
+            case 6:  socket->tcp_keepcnt     = (uint32_t)(val > 0 ? val : 0); return 0; /* TCP_KEEPCNT */
+            case 7:  socket->tcp_syncnt      = (uint32_t)(val > 0 ? val : 0); return 0; /* TCP_SYNCNT */
+            case 8:  socket->tcp_linger2     = val; return 0; /* TCP_LINGER2 */
+            case 9:  socket->tcp_defer_accept= (uint32_t)(val > 0 ? val : 0); return 0; /* TCP_DEFER_ACCEPT */
+            case 10: case 11: return 0; /* TCP_WINDOW_CLAMP, TCP_INFO — accept, no storage */
+            case 12: socket->tcp_quickack    = (uint8_t)(val != 0); return 0; /* TCP_QUICKACK */
+            default:
+                if (optname >= 13 && optname <= 31) return 0; /* accept remaining TCP opts */
+                return -ENOPROTOOPT;
+        }
+    } else if (level == IPPROTO_IP) {
+        /* IPPROTO_IP options */
+        if (optlen < sizeof(int)) return -EINVAL;
+        int val = 0;
+        if (sso_copy_from_user(&val, optval, sizeof(int)) != 0) return -EFAULT;
+        switch (optname) {
+            case 1:  socket->ip_tos         = (uint8_t)(val & 0xff); return 0; /* IP_TOS */
+            case 2:  if (val > 0 && val <= 255) socket->ip_ttl = (uint8_t)val; return 0; /* IP_TTL */
+            case 3:  socket->ip_hdrincl     = (uint8_t)(val != 0); return 0; /* IP_HDRINCL */
+            case 10: socket->ip_mtu_discover= (uint32_t)val; return 0; /* IP_MTU_DISCOVER */
+            case 12: socket->ip_recvttl     = (uint8_t)(val != 0); return 0; /* IP_RECVTTL */
+            case 13: socket->ip_recvtos     = (uint8_t)(val != 0); return 0; /* IP_RECVTOS */
+            default:
+                /* multicast, IP_PKTINFO, etc. — accept without storage */
+                if (optname >= 4 && optname <= 64) return 0;
+                return -ENOPROTOOPT;
+        }
+    } else if (level == IPPROTO_IPV6) {
+        /* IPPROTO_IPV6 options */
+        if (optlen < sizeof(int)) return -EINVAL;
+        int val = 0;
+        if (sso_copy_from_user(&val, optval, sizeof(int)) != 0) return -EFAULT;
+        switch (optname) {
+            case 26: socket->ipv6_v6only    = (uint8_t)(val != 0); return 0; /* IPV6_V6ONLY */
+            case 66: socket->ipv6_recvtclass= (uint8_t)(val != 0); return 0; /* IPV6_RECVTCLASS */
+            case 67: socket->ipv6_tclass    = (uint8_t)(val & 0xff); return 0; /* IPV6_TCLASS */
+            default:
+                if ((optname >= 1 && optname <= 25) ||
+                    (optname >= 27 && optname <= 80)) return 0;
+                return -ENOPROTOOPT;
+        }
     } else {
-        /* Phase 3: Protocol-specific options (IPPROTO_TCP, IPPROTO_IP, etc.) */
-        const char *level_str = (level == IPPROTO_TCP) ? "IPPROTO_TCP" :
-                                (level == IPPROTO_IP) ? "IPPROTO_IP" :
-                                (level == IPPROTO_IPV6) ? "IPPROTO_IPV6" : "UNKNOWN";
-
-        fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, level=%s, optname=%d) -> ENOPROTOOPT (level not supported)\n",
-                   sockfd, level_str, optname);
+        /* Unknown protocol level */
+        fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, level=%d, optname=%d) -> ENOPROTOOPT\n",
+                   sockfd, level, optname);
         return -ENOPROTOOPT;
     }
 }

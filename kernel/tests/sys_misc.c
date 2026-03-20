@@ -37307,6 +37307,85 @@ t1130_cleanup:
 #undef SCHED_FLAG_RESET_ON_FORK_TEST
 }
 
+/* Tests 1131-1134: getpriority/setpriority with PRIO_THREAD (which=3)
+ *
+ *   Test 1131: getpriority(PRIO_THREAD, 0) returns nice value of calling thread's task
+ *   Test 1132: setpriority(PRIO_THREAD, 0, nice) stores new nice; verified via getpriority
+ *   Test 1133: getpriority(PRIO_THREAD, invalid_tid) returns -ESRCH
+ *   Test 1134: setpriority(PRIO_THREAD, invalid_tid, 0) returns -ESRCH
+ */
+static void test_prio_thread(void) {
+    extern long sys_getpriority(int which, int who);
+    extern long sys_setpriority(int which, int who, int prio);
+
+#define PRIO_THREAD_TEST 3
+
+    /* ---- Test 1131: getpriority(PRIO_THREAD, 0) succeeds ---- */
+    fut_printf("[MISC-TEST] Test 1131: getpriority(PRIO_THREAD, 0) returns current task nice\n");
+    {
+        /* First ensure nice is at default (0); getpriority returns (20 - nice) */
+        long r = sys_getpriority(PRIO_THREAD_TEST, 0);
+        /* r should be 20 - nice; with nice=0, r=20; with any valid nice, r in [1, 40] */
+        if (r < 1 || r > 40) {
+            fut_printf("[MISC-TEST] ✗ Test 1131: getpriority(PRIO_THREAD,0) returned %ld\n", r);
+            fut_test_fail(1131);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1131: getpriority(PRIO_THREAD,0) = %ld\n", r);
+            fut_test_pass();
+        }
+    }
+
+    /* ---- Test 1132: setpriority(PRIO_THREAD, 0, 5) stores; getpriority reads back ---- */
+    fut_printf("[MISC-TEST] Test 1132: setpriority(PRIO_THREAD, 0, 5) + getpriority readback\n");
+    {
+        long sr = sys_setpriority(PRIO_THREAD_TEST, 0, 5);
+        if (sr != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1132: setpriority returned %ld\n", sr);
+            fut_test_fail(1132);
+        } else {
+            long gr = sys_getpriority(PRIO_THREAD_TEST, 0);
+            /* nice=5 → getpriority returns 20-5 = 15 */
+            if (gr != 15) {
+                fut_printf("[MISC-TEST] ✗ Test 1132: expected 15, got %ld\n", gr);
+                fut_test_fail(1132);
+            } else {
+                fut_printf("[MISC-TEST] ✓ Test 1132: getpriority(PRIO_THREAD,0) = %ld after set(5)\n", gr);
+                fut_test_pass();
+            }
+        }
+        /* Restore nice to 0 */
+        sys_setpriority(PRIO_THREAD_TEST, 0, 0);
+    }
+
+    /* ---- Test 1133: getpriority(PRIO_THREAD, 999999) → ESRCH ---- */
+    fut_printf("[MISC-TEST] Test 1133: getpriority(PRIO_THREAD, 999999) -> ESRCH\n");
+    {
+        long r = sys_getpriority(PRIO_THREAD_TEST, 999999);
+        if (r != -ESRCH) {
+            fut_printf("[MISC-TEST] ✗ Test 1133: expected -ESRCH, got %ld\n", r);
+            fut_test_fail(1133);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1133: got -ESRCH for unknown TID\n");
+            fut_test_pass();
+        }
+    }
+
+    /* ---- Test 1134: setpriority(PRIO_THREAD, 999999, 0) → ESRCH ---- */
+    fut_printf("[MISC-TEST] Test 1134: setpriority(PRIO_THREAD, 999999, 0) -> ESRCH\n");
+    {
+        long r = sys_setpriority(PRIO_THREAD_TEST, 999999, 0);
+        if (r != -ESRCH) {
+            fut_printf("[MISC-TEST] ✗ Test 1134: expected -ESRCH, got %ld\n", r);
+            fut_test_fail(1134);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1134: got -ESRCH for unknown TID\n");
+            fut_test_pass();
+        }
+    }
+
+#undef PRIO_THREAD_TEST
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -37921,6 +38000,7 @@ void fut_misc_test_thread(void *arg) {
     test_sched_attr_nice_getpriority(); /* Tests 1119-1122: sched_setattr/getattr nice and getpriority consistency */
     test_shd_pnd_kill();                /* Tests 1123-1126: ShdPnd: process-wide pending via kill() */
     test_sched_flags_roundtrip();       /* Tests 1127-1130: sched_flags storage/validation/persistence */
+    test_prio_thread();                 /* Tests 1131-1134: getpriority/setpriority PRIO_THREAD */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -18,6 +18,7 @@
 #define PRIO_PROCESS 0  /* Priority applies to process */
 #define PRIO_PGRP    1  /* Priority applies to process group */
 #define PRIO_USER    2  /* Priority applies to user */
+#define PRIO_THREAD  3  /* Priority applies to a specific thread by TID */
 
 /* Nice value range: -20 (highest priority) to +19 (lowest priority)
  * Default is 0 (normal priority) */
@@ -106,6 +107,7 @@ long sys_getpriority(int which, int who) {
         case PRIO_PROCESS: which_desc = "PRIO_PROCESS"; break;
         case PRIO_PGRP:    which_desc = "PRIO_PGRP";    break;
         case PRIO_USER:    which_desc = "PRIO_USER";    break;
+        case PRIO_THREAD:  which_desc = "PRIO_THREAD";  break;
         default:
             fut_printf("[SCHED] getpriority(which=%d, who=%d) -> EINVAL (invalid which parameter)\n",
                        which, who);
@@ -120,12 +122,30 @@ long sys_getpriority(int which, int who) {
 
     /* Traverse task list without holding the lock (accepting benign races,
      * same pattern used by fut_timer.c).  For PRIO_PROCESS / PRIO_PGRP /
-     * PRIO_USER the result is advisory and exact atomicity is not required. */
+     * PRIO_USER / PRIO_THREAD the result is advisory and exact atomicity
+     * is not required. */
     extern fut_task_t *fut_task_list;
 
     int best_nice = PRIO_MAX + 1; /* sentinel: no matching task yet */
 
-    if (which == PRIO_PROCESS) {
+    if (which == PRIO_THREAD) {
+        /* PRIO_THREAD: who=0 means calling thread, who=tid means that thread.
+         * nice is per-task in Futura; return the task's nice for the thread. */
+        if (who == 0) {
+            best_nice = task->nice;
+        } else {
+            /* Find the task that owns a thread with TID == who */
+            for (fut_task_t *t = fut_task_list; t; t = t->next) {
+                if (t->state == FUT_TASK_ZOMBIE) continue;
+                for (fut_thread_t *th = t->threads; th; th = th->next) {
+                    if (th->tid == (uint64_t)who) {
+                        if (t->nice < best_nice) best_nice = t->nice;
+                        break;
+                    }
+                }
+            }
+        }
+    } else if (which == PRIO_PROCESS) {
         uint64_t target_pid = (who == 0) ? task->pid : (uint64_t)who;
         for (fut_task_t *t = fut_task_list; t; t = t->next) {
             if (t->pid == target_pid && t->state != FUT_TASK_ZOMBIE) {
@@ -192,6 +212,7 @@ long sys_setpriority(int which, int who, int prio) {
         case PRIO_PROCESS: which_desc = "PRIO_PROCESS"; break;
         case PRIO_PGRP:    which_desc = "PRIO_PGRP";    break;
         case PRIO_USER:    which_desc = "PRIO_USER";    break;
+        case PRIO_THREAD:  which_desc = "PRIO_THREAD";  break;
         default:
             fut_printf("[SCHED] setpriority(which=%d, who=%d, prio=%d) -> EINVAL (invalid which parameter)\n",
                        which, who, prio);
@@ -216,7 +237,41 @@ long sys_setpriority(int which, int who, int prio) {
     int saw_uid_mismatch = 0;
     int saw_need_privilege = 0;
 
-    if (which == PRIO_PROCESS) {
+    if (which == PRIO_THREAD) {
+        /* PRIO_THREAD: who=0 means calling task, who=tid means that thread's task */
+        fut_task_t *target_task = NULL;
+        if (who == 0) {
+            target_task = task;
+        } else {
+            for (fut_task_t *t = fut_task_list; t; t = t->next) {
+                if (t->state == FUT_TASK_ZOMBIE) continue;
+                for (fut_thread_t *th = t->threads; th; th = th->next) {
+                    if (th->tid == (uint64_t)who) {
+                        target_task = t;
+                        break;
+                    }
+                }
+                if (target_task) break;
+            }
+        }
+        if (!target_task) {
+            fut_printf("[SCHED] setpriority(%s, who=%d, prio=%d) -> ESRCH\n",
+                       which_desc, who, prio);
+            return -ESRCH;
+        }
+        if (task->uid != 0 && task->uid != target_task->uid) {
+            fut_printf("[SCHED] setpriority(%s, who=%d, prio=%d) -> EPERM (uid mismatch)\n",
+                       which_desc, who, prio);
+            return -EPERM;
+        }
+        if (prio < target_task->nice && task->uid != 0) {
+            fut_printf("[SCHED] setpriority(%s, who=%d, prio=%d) -> EACCES (not privileged)\n",
+                       which_desc, who, prio);
+            return -EACCES;
+        }
+        target_task->nice = prio;
+        matched = 1;
+    } else if (which == PRIO_PROCESS) {
         uint64_t target_pid = (who == 0) ? task->pid : (uint64_t)who;
         for (fut_task_t *t = fut_task_list; t; t = t->next) {
             if (t->pid != target_pid || t->state == FUT_TASK_ZOMBIE)

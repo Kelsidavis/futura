@@ -520,6 +520,12 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
         return -EBADF;
     }
 
+    /* Check that fd was opened for writing (not read-only) */
+    if ((file->flags & O_ACCMODE) == O_RDONLY) {
+        fut_free(kernel_iov);
+        return -EBADF;
+    }
+
     /* pwritev() not supported on character devices, pipes, or sockets */
     if (file->chr_ops) {
         fut_printf("[PWRITEV] pwritev(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> ESPIPE (chrdev)\n",

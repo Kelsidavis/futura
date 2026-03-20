@@ -34356,6 +34356,121 @@ static void test_nanosleep_rmtp_sigpipe_ign(void) {
     }
 }
 
+/*
+ * test_preadv_pwritev_access_mode — Tests 1045-1048
+ *
+ * preadv/pwritev had the same access-mode bypass as pread64/pwrite64:
+ * they called vnode->ops->read/write directly, skipping the VFS check.
+ *   1045: preadv(O_WRONLY fd) → EBADF
+ *   1046: pwritev(O_RDONLY fd) → EBADF
+ *   1047: preadv(O_RDONLY fd) → succeeds (positive case)
+ *   1048: pwritev(O_RDWR fd) → succeeds (positive case)
+ */
+static void test_preadv_pwritev_access_mode(void) {
+    extern ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset);
+    extern ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset);
+    extern long sys_close(int fd);
+
+    /* ---- Test 1045: preadv(O_WRONLY fd) → EBADF ---- */
+    fut_printf("[MISC-TEST] Test 1045: preadv(O_WRONLY fd) → EBADF\n");
+    {
+        int fd = fut_vfs_open("/pvam_wronly.txt", O_WRONLY | O_CREAT, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1045: open O_WRONLY failed: %d\n", fd);
+            fut_test_fail(1045);
+        } else {
+            char buf[4];
+            struct iovec iov = { .iov_base = buf, .iov_len = sizeof(buf) };
+            ssize_t r = sys_preadv(fd, &iov, 1, 0);
+            sys_close(fd);
+            if (r == -EBADF) {
+                fut_printf("[MISC-TEST] ✓ Test 1045: preadv(O_WRONLY) → EBADF\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1045: preadv(O_WRONLY)=%zd (expected -EBADF=%d)\n",
+                           r, -EBADF);
+                fut_test_fail(1045);
+            }
+        }
+    }
+
+    /* ---- Test 1046: pwritev(O_RDONLY fd) → EBADF ---- */
+    fut_printf("[MISC-TEST] Test 1046: pwritev(O_RDONLY fd) → EBADF\n");
+    {
+        /* Create the file first */
+        int cfd = fut_vfs_open("/pvam_rdonly.txt", O_RDWR | O_CREAT, 0644);
+        if (cfd >= 0) sys_close(cfd);
+        int fd = fut_vfs_open("/pvam_rdonly.txt", O_RDONLY, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1046: open O_RDONLY failed: %d\n", fd);
+            fut_test_fail(1046);
+        } else {
+            const char data[] = "data";
+            struct iovec iov = { .iov_base = (void *)data, .iov_len = 4 };
+            ssize_t r = sys_pwritev(fd, &iov, 1, 0);
+            sys_close(fd);
+            if (r == -EBADF) {
+                fut_printf("[MISC-TEST] ✓ Test 1046: pwritev(O_RDONLY) → EBADF\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1046: pwritev(O_RDONLY)=%zd (expected -EBADF=%d)\n",
+                           r, -EBADF);
+                fut_test_fail(1046);
+            }
+        }
+    }
+
+    /* ---- Test 1047: preadv(O_RDONLY fd) → success ---- */
+    fut_printf("[MISC-TEST] Test 1047: preadv(O_RDONLY fd) → success\n");
+    {
+        int wfd = fut_vfs_open("/pvam_rdok.txt", O_RDWR | O_CREAT | O_TRUNC, 0644);
+        if (wfd >= 0) {
+            extern long sys_write(int fd, const void *buf, size_t count);
+            sys_write(wfd, "hello", 5);
+            sys_close(wfd);
+        }
+        int fd = fut_vfs_open("/pvam_rdok.txt", O_RDONLY, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1047: open O_RDONLY failed: %d\n", fd);
+            fut_test_fail(1047);
+        } else {
+            char buf[8] = {0};
+            struct iovec iov = { .iov_base = buf, .iov_len = 5 };
+            ssize_t r = sys_preadv(fd, &iov, 1, 0);
+            sys_close(fd);
+            if (r == 5 && buf[0] == 'h') {
+                fut_printf("[MISC-TEST] ✓ Test 1047: preadv(O_RDONLY) → %zd bytes\n", r);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1047: preadv(O_RDONLY)=%zd (expected 5)\n", r);
+                fut_test_fail(1047);
+            }
+        }
+    }
+
+    /* ---- Test 1048: pwritev(O_RDWR fd) → success ---- */
+    fut_printf("[MISC-TEST] Test 1048: pwritev(O_RDWR fd) → success\n");
+    {
+        int fd = fut_vfs_open("/pvam_rwok.txt", O_RDWR | O_CREAT | O_TRUNC, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1048: open O_RDWR failed: %d\n", fd);
+            fut_test_fail(1048);
+        } else {
+            const char data[] = "world";
+            struct iovec iov = { .iov_base = (void *)data, .iov_len = 5 };
+            ssize_t r = sys_pwritev(fd, &iov, 1, 0);
+            sys_close(fd);
+            if (r == 5) {
+                fut_printf("[MISC-TEST] ✓ Test 1048: pwritev(O_RDWR) → %zd bytes\n", r);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1048: pwritev(O_RDWR)=%zd (expected 5)\n", r);
+                fut_test_fail(1048);
+            }
+        }
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -34949,6 +35064,7 @@ void fut_misc_test_thread(void *arg) {
     test_prctl_timerslack_capbset();     /* Tests 1031-1035: PR_GET/SET_TIMERSLACK, PR_CAPBSET_READ/EINVAL, PR_CAPBSET_DROP/EINVAL */
     test_nanosleep_rmtp_sigpipe_ign();   /* Tests 1036-1040: nanosleep rmtp on EINTR, NULL req, bad nsec, SIGPIPE+SIG_IGN, zero sleep */
     test_pread_pwrite_access_mode();     /* Tests 1041-1044: pread64(O_WRONLY)→EBADF, pwrite64(O_RDONLY)→EBADF */
+    test_preadv_pwritev_access_mode();   /* Tests 1045-1048: preadv(O_WRONLY)→EBADF, pwritev(O_RDONLY)→EBADF */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

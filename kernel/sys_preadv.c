@@ -513,6 +513,12 @@ ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) 
         return -EBADF;
     }
 
+    /* Check that fd was opened for reading (not write-only) */
+    if ((file->flags & O_ACCMODE) == O_WRONLY) {
+        fut_free(kernel_iov);
+        return -EBADF;
+    }
+
     /* preadv() not supported on character devices, pipes, or sockets */
     if (file->chr_ops) {
         fut_printf("[PREADV] preadv(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> ESPIPE (chrdev)\n",

@@ -29009,6 +29009,149 @@ static void test_ftruncate_rlimit_fsize(void) {
     sys_sigprocmask(2 /* SIG_SETMASK */, &saved_mask, NULL);
 }
 
+/* ============================================================
+ * Tests 800-803: inotify fd readiness in poll / epoll / select
+ *
+ *   800: poll([inotify_fd], POLLIN, 0) after event → 1 (POLLIN set)
+ *   801: poll([inotify_fd], POLLIN, 0) with no pending event → 0
+ *   802: epoll_wait(epfd, events, 1, 0) with inotify fd after event → EPOLLIN
+ *   803: select(ifd+1, &rfds, ..., timeout=0) after event → ifd set in rfds
+ * ============================================================ */
+static void test_inotify_poll_epoll_select(void) {
+    extern long sys_inotify_init1(int flags);
+    extern long sys_inotify_add_watch(int fd, const char *path, uint32_t mask);
+    extern long sys_close(int fd);
+    extern long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout);
+    extern long sys_epoll_create1(int flags);
+    extern long sys_epoll_ctl(int epfd, int op, int fd, void *event);
+    extern long sys_epoll_wait(int epfd, void *events, int maxevents, int timeout);
+    extern long sys_select(int nfds, void *rfds, void *wfds, void *efds, void *timeout);
+
+#ifndef INO_NB_800
+#define INO_NB_800       00004000
+#define INO_CREATE_800   0x00000100u
+#endif
+
+    /* ---- Test 801: poll before any event → 0 (not ready) ---- */
+    fut_printf("[MISC-TEST] Test 801: poll(inotify_fd) before event → 0\n");
+    {
+        long ifd = sys_inotify_init1(INO_NB_800);
+        if (ifd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 801: inotify_init1 → %ld\n", ifd);
+            fut_test_fail(801);
+            goto t800;
+        }
+        sys_inotify_add_watch((int)ifd, "/", INO_CREATE_800);
+        struct pollfd pfd801 = { .fd = (int)ifd, .events = POLLIN, .revents = 0 };
+        long r = sys_poll(&pfd801, 1, 0);
+        sys_close((int)ifd);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 801: poll returned %ld revents=0x%x (expected 0)\n",
+                       r, (unsigned)pfd801.revents);
+            fut_test_fail(801);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 801: poll(no event) → 0\n");
+            fut_test_pass();
+        }
+    }
+
+t800:
+    /* ---- Test 800: poll after event → 1 / POLLIN ---- */
+    fut_printf("[MISC-TEST] Test 800: poll(inotify_fd) after event → POLLIN\n");
+    {
+        long ifd = sys_inotify_init1(INO_NB_800);
+        if (ifd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 800: inotify_init1 → %ld\n", ifd);
+            fut_test_fail(800);
+            goto t802;
+        }
+        sys_inotify_add_watch((int)ifd, "/", INO_CREATE_800);
+        int cfd = (int)fut_vfs_open("/ino800_chk.txt", 0x42, 0644);
+        if (cfd >= 0) { fut_vfs_close(cfd); fut_vfs_unlink("/ino800_chk.txt"); }
+        struct pollfd pfd800 = { .fd = (int)ifd, .events = POLLIN, .revents = 0 };
+        long r = sys_poll(&pfd800, 1, 0);
+        sys_close((int)ifd);
+        if (r != 1 || !(pfd800.revents & POLLIN)) {
+            fut_printf("[MISC-TEST] ✗ Test 800: poll returned %ld revents=0x%x (expected 1/POLLIN)\n",
+                       r, (unsigned)pfd800.revents);
+            fut_test_fail(800);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 800: poll(after event) → 1/POLLIN\n");
+            fut_test_pass();
+        }
+    }
+
+t802:
+    /* ---- Test 802: epoll_wait after event → EPOLLIN ---- */
+    fut_printf("[MISC-TEST] Test 802: epoll_wait(inotify_fd) after event → EPOLLIN\n");
+    {
+        long ifd = sys_inotify_init1(INO_NB_800);
+        if (ifd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 802: inotify_init1 → %ld\n", ifd);
+            fut_test_fail(802);
+            goto t803;
+        }
+        sys_inotify_add_watch((int)ifd, "/", INO_CREATE_800);
+        int cfd = (int)fut_vfs_open("/ino802_chk.txt", 0x42, 0644);
+        if (cfd >= 0) { fut_vfs_close(cfd); fut_vfs_unlink("/ino802_chk.txt"); }
+        long epfd = sys_epoll_create1(0);
+        if (epfd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 802: epoll_create1 → %ld\n", epfd);
+            sys_close((int)ifd);
+            fut_test_fail(802);
+            goto t803;
+        }
+        /* struct epoll_event: events(4) + pad(4) + data_u64(8) = 16 bytes */
+        struct { uint32_t events; uint32_t pad; uint64_t data; } ev802 = { 1u, 0, (uint64_t)(int)ifd };
+        sys_epoll_ctl((int)epfd, 1 /* EPOLL_CTL_ADD */, (int)ifd, &ev802);
+        struct { uint32_t events; uint32_t pad; uint64_t data; } out802 = { 0, 0, 0 };
+        long r = sys_epoll_wait((int)epfd, &out802, 1, 0);
+        sys_close((int)epfd);
+        sys_close((int)ifd);
+        if (r != 1 || !(out802.events & 1u)) {
+            fut_printf("[MISC-TEST] ✗ Test 802: epoll_wait returned %ld events=0x%x (expected 1/EPOLLIN)\n",
+                       r, (unsigned)out802.events);
+            fut_test_fail(802);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 802: epoll_wait(after event) → 1/EPOLLIN\n");
+            fut_test_pass();
+        }
+    }
+
+t803:
+    /* ---- Test 803: select after event → fd set in rfds ---- */
+    fut_printf("[MISC-TEST] Test 803: select(inotify_fd) after event → fd in rfds\n");
+    {
+        long ifd = sys_inotify_init1(INO_NB_800);
+        if (ifd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 803: inotify_init1 → %ld\n", ifd);
+            fut_test_fail(803);
+            return;
+        }
+        sys_inotify_add_watch((int)ifd, "/", INO_CREATE_800);
+        int cfd = (int)fut_vfs_open("/ino803_chk.txt", 0x42, 0644);
+        if (cfd >= 0) { fut_vfs_close(cfd); fut_vfs_unlink("/ino803_chk.txt"); }
+        /* fd_set: 16 unsigned longs (1024 bits) */
+        unsigned long rfds803[16];
+        __builtin_memset(rfds803, 0, sizeof(rfds803));
+        rfds803[(int)ifd / (8*(int)sizeof(unsigned long))] |=
+            1UL << ((int)ifd % (8*(int)sizeof(unsigned long)));
+        int64_t tv803[2] = { 0, 0 };
+        long r = sys_select((int)ifd + 1, rfds803, NULL, NULL, tv803);
+        int is_set = (rfds803[(int)ifd / (8*(int)sizeof(unsigned long))]
+                      >> ((int)ifd % (8*(int)sizeof(unsigned long)))) & 1;
+        sys_close((int)ifd);
+        if (r != 1 || !is_set) {
+            fut_printf("[MISC-TEST] ✗ Test 803: select returned %ld isset=%d (expected 1/1)\n",
+                       r, is_set);
+            fut_test_fail(803);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 803: select(after event) → 1 fd in rfds\n");
+            fut_test_pass();
+        }
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -29552,6 +29695,7 @@ void fut_misc_test_thread(void *arg) {
     test_rlimit_fsize_enforcement();      /* Tests 788-791: RLIMIT_FSIZE: truncation, EFBIG, SIGXFSZ */
     test_opath_semantics();               /* Tests 792-795: O_PATH fd: open ok, read EBADF, write EBADF, fstat ok */
     test_ftruncate_rlimit_fsize();        /* Tests 796-799: ftruncate/truncate enforce RLIMIT_FSIZE */
+    test_inotify_poll_epoll_select();     /* Tests 800-803: inotify fd readiness in poll/epoll/select */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

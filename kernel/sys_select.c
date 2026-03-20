@@ -380,6 +380,11 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
                     handled = true;
             }
             if (!handled) {
+                extern bool fut_inotify_poll(struct fut_file *f, uint32_t req, uint32_t *out);
+                if (fut_inotify_poll(file, epoll_req, &epoll_ready))
+                    handled = true;
+            }
+            if (!handled) {
                 fut_socket_t *socket = get_socket_from_fd(fd);
                 if (socket) {
                     int poll_events = 0;
@@ -446,6 +451,7 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
             extern void fut_signalfd_set_epoll_notify(struct fut_file *f, fut_waitq_t *wq);
             extern void fut_pipe_set_epoll_notify(struct fut_file *f, fut_waitq_t *wq);
             extern void fut_pidfd_set_epoll_notify(struct fut_file *f, fut_waitq_t *wq);
+            extern void fut_inotify_set_epoll_notify(struct fut_file *f, fut_waitq_t *wq);
             fut_waitq_t sel_wq;
             fut_waitq_init(&sel_wq);
             for (int wfd = 0; wfd < local_nfds; wfd++) {
@@ -459,6 +465,7 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
                 fut_signalfd_set_epoll_notify(wfile, &sel_wq);
                 fut_pipe_set_epoll_notify(wfile, &sel_wq);
                 fut_pidfd_set_epoll_notify(wfile, &sel_wq);
+                fut_inotify_set_epoll_notify(wfile, &sel_wq);
                 fut_socket_t *wsock = get_socket_from_fd(wfd);
                 if (wsock) {
                     if (wsock->pair_reverse) wsock->pair_reverse->epoll_notify = &sel_wq;
@@ -483,6 +490,7 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
                         fut_eventfd_set_epoll_notify(uf, NULL);
                         fut_timerfd_set_epoll_notify(uf, NULL);
                         fut_pipe_set_epoll_notify(uf, NULL);
+                        { extern void fut_inotify_set_epoll_notify(struct fut_file *, fut_waitq_t *); fut_inotify_set_epoll_notify(uf, NULL); }
                         fut_socket_t *us = get_socket_from_fd(ufd);
                         if (us) {
                             if (us->pair_reverse && us->pair_reverse->epoll_notify == &sel_wq) us->pair_reverse->epoll_notify = NULL;
@@ -502,6 +510,7 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
                 if (!handled && fut_signalfd_poll(file, epoll_req, &epoll_ready)) handled = true;
                 if (!handled && fut_pipe_poll(file, epoll_req, &epoll_ready)) handled = true;
                 if (!handled) { extern bool fut_pidfd_poll(struct fut_file *f, uint32_t req, uint32_t *out); if (fut_pidfd_poll(file, epoll_req, &epoll_ready)) handled = true; }
+                if (!handled) { extern bool fut_inotify_poll(struct fut_file *f, uint32_t req, uint32_t *out); if (fut_inotify_poll(file, epoll_req, &epoll_ready)) handled = true; }
                 if (!handled) {
                     fut_socket_t *socket = get_socket_from_fd(fd);
                     if (socket) {
@@ -549,6 +558,7 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
                 fut_signalfd_set_epoll_notify(uf, NULL);
                 fut_pipe_set_epoll_notify(uf, NULL);
                 fut_pidfd_set_epoll_notify(uf, NULL);
+                { extern void fut_inotify_set_epoll_notify(struct fut_file *, fut_waitq_t *); fut_inotify_set_epoll_notify(uf, NULL); }
                 fut_socket_t *us = get_socket_from_fd(ufd);
                 if (us) {
                     if (us->pair_reverse && us->pair_reverse->epoll_notify == &sel_wq) us->pair_reverse->epoll_notify = NULL;
@@ -810,6 +820,11 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
                     handled = true;
             }
             if (!handled) {
+                extern bool fut_inotify_poll(struct fut_file *f, uint32_t req, uint32_t *out);
+                if (fut_inotify_poll(file, epoll_req, &epoll_ready))
+                    handled = true;
+            }
+            if (!handled) {
                 fut_socket_t *socket = get_socket_from_fd(fd);
                 if (socket) {
                     int poll_events = 0;
@@ -895,6 +910,7 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
                 fut_signalfd_set_epoll_notify(wfile, &psel_wq);
                 fut_pipe_set_epoll_notify(wfile, &psel_wq);
                 fut_pidfd_set_epoll_notify(wfile, &psel_wq);
+                { extern void fut_inotify_set_epoll_notify(struct fut_file *, fut_waitq_t *); fut_inotify_set_epoll_notify(wfile, &psel_wq); }
                 fut_socket_t *wsock = get_socket_from_fd(wfd);
                 if (wsock) {
                     if (wsock->pair_reverse) wsock->pair_reverse->epoll_notify = &psel_wq;
@@ -923,6 +939,7 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
                 if (!handled && fut_signalfd_poll(file, epoll_req, &epoll_ready)) handled = true;
                 if (!handled && fut_pipe_poll(file, epoll_req, &epoll_ready)) handled = true;
                 if (!handled) { extern bool fut_pidfd_poll(struct fut_file *f, uint32_t req, uint32_t *out); if (fut_pidfd_poll(file, epoll_req, &epoll_ready)) handled = true; }
+                if (!handled) { extern bool fut_inotify_poll(struct fut_file *f, uint32_t req, uint32_t *out); if (fut_inotify_poll(file, epoll_req, &epoll_ready)) handled = true; }
                 if (!handled) {
                     fut_socket_t *socket = get_socket_from_fd(fd);
                     if (socket) {
@@ -970,6 +987,7 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
                 fut_signalfd_set_epoll_notify(uf, NULL);
                 fut_pipe_set_epoll_notify(uf, NULL);
                 fut_pidfd_set_epoll_notify(uf, NULL);
+                { extern void fut_inotify_set_epoll_notify(struct fut_file *, fut_waitq_t *); fut_inotify_set_epoll_notify(uf, NULL); }
                 fut_socket_t *us = get_socket_from_fd(ufd);
                 if (us) {
                     if (us->pair_reverse && us->pair_reverse->epoll_notify == &psel_wq) us->pair_reverse->epoll_notify = NULL;

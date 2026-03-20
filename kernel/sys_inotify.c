@@ -18,6 +18,7 @@
 #include <kernel/fut_memory.h>
 #include <kernel/fut_sched.h>
 #include <kernel/fut_task.h>
+#include <sys/epoll.h>
 #include <kernel/fut_thread.h>
 #include <kernel/fut_vfs.h>
 #include <kernel/fut_waitq.h>
@@ -135,6 +136,7 @@ static inline uint32_t inotify_name_padlen(const char *name) {
 struct inotify_instance {
     fut_spinlock_t          lock;
     fut_waitq_t             read_waitq;
+    fut_waitq_t            *epoll_notify;  /* epoll/poll/select wakeup (NULL if none) */
     struct fut_file        *file;
     int                     next_wd;       /* Next watch descriptor to assign */
     int                     watch_count;
@@ -244,12 +246,16 @@ void inotify_dispatch_event(const char *dir_path, uint32_t mask, const char *fil
                 inst->ev_tail  = (tail + 1) % INOTIFY_MAX_EVENTS;
                 inst->ev_count++;
                 fut_waitq_wake_one(&inst->read_waitq);
+                if (inst->epoll_notify)
+                    fut_waitq_wake_all(inst->epoll_notify);
             } else {
                 /* Queue overflow event at head (overwrite oldest) */
                 inst->events[inst->ev_head].wd   = w->wd;
                 inst->events[inst->ev_head].mask = IN_Q_OVERFLOW;
                 inst->events[inst->ev_head].cookie = 0;
                 /* Don't advance ev_head; the next read will see overflow */
+                if (inst->epoll_notify)
+                    fut_waitq_wake_all(inst->epoll_notify);
             }
 
             /* IN_ONESHOT: remove watch after first event */
@@ -656,10 +662,47 @@ long sys_inotify_rm_watch(int fd, int wd) {
         inst->ev_tail = (inst->ev_tail + 1) % INOTIFY_MAX_EVENTS;
         inst->ev_count++;
         fut_waitq_wake_one(&inst->read_waitq);
+        if (inst->epoll_notify)
+            fut_waitq_wake_all(inst->epoll_notify);
     }
 
     fut_spinlock_release(&inst->lock);
 
     fut_printf("[INOTIFY] inotify_rm_watch(fd=%d, wd=%d) -> 0 (Phase 3: watch removed)\n", fd, wd);
     return 0;
+}
+
+/**
+ * fut_inotify_poll - Check if an inotify fd has pending events (for epoll/poll/select).
+ *
+ * Returns true if the file is an inotify fd (and fills ready_out), false otherwise.
+ * Sets EPOLLIN in ready_out when there are queued events.
+ */
+bool fut_inotify_poll(struct fut_file *file, uint32_t requested, uint32_t *ready_out) {
+    if (!file || file->chr_ops != &inotify_fops || !file->chr_private)
+        return false;
+
+    struct inotify_instance *inst = (struct inotify_instance *)file->chr_private;
+    uint32_t ready = 0;
+    fut_spinlock_acquire(&inst->lock);
+    if (inst->ev_count > 0 && (requested & (EPOLLIN | EPOLLRDNORM)))
+        ready |= (EPOLLIN | EPOLLRDNORM);
+    fut_spinlock_release(&inst->lock);
+
+    if (ready_out) *ready_out = ready;
+    return true;
+}
+
+/**
+ * fut_inotify_set_epoll_notify - Wire an inotify fd to an epoll/poll/select waitqueue.
+ *
+ * Called from epoll_ctl ADD, poll wiring, and select wiring to enable
+ * event-driven wakeup when an inotify event is queued.
+ * Pass wq=NULL to unwire.
+ */
+void fut_inotify_set_epoll_notify(struct fut_file *file, fut_waitq_t *wq) {
+    if (!file || file->chr_ops != &inotify_fops || !file->chr_private)
+        return;
+    struct inotify_instance *inst = (struct inotify_instance *)file->chr_private;
+    inst->epoll_notify = wq;
 }

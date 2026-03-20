@@ -48,6 +48,7 @@ static void poll_wire_fds(struct pollfd *kfds, unsigned long nfds,
     extern void fut_signalfd_set_epoll_notify(struct fut_file *f, fut_waitq_t *wq);
     extern void fut_pipe_set_epoll_notify(struct fut_file *f, fut_waitq_t *wq);
     extern void fut_pidfd_set_epoll_notify(struct fut_file *f, fut_waitq_t *wq);
+    extern void fut_inotify_set_epoll_notify(struct fut_file *f, fut_waitq_t *wq);
     for (unsigned long i = 0; i < nfds; i++) {
         int fd = kfds[i].fd;
         if (fd < 0 || fd >= (int)task->max_fds || !task->fd_table || !task->fd_table[fd])
@@ -58,6 +59,7 @@ static void poll_wire_fds(struct pollfd *kfds, unsigned long nfds,
         fut_signalfd_set_epoll_notify(file, wq);
         fut_pipe_set_epoll_notify(file, wq);
         fut_pidfd_set_epoll_notify(file, wq);
+        fut_inotify_set_epoll_notify(file, wq);
         fut_socket_t *sock = get_socket_from_fd(fd);
         if (sock) {
             if (sock->pair_reverse) sock->pair_reverse->epoll_notify = wq;
@@ -77,6 +79,7 @@ static void poll_unwire_fds(struct pollfd *kfds, unsigned long nfds,
     extern void fut_signalfd_set_epoll_notify(struct fut_file *f, fut_waitq_t *wq);
     extern void fut_pipe_set_epoll_notify(struct fut_file *f, fut_waitq_t *wq);
     extern void fut_pidfd_set_epoll_notify(struct fut_file *f, fut_waitq_t *wq);
+    extern void fut_inotify_set_epoll_notify(struct fut_file *f, fut_waitq_t *wq);
     for (unsigned long i = 0; i < nfds; i++) {
         int fd = kfds[i].fd;
         if (fd < 0 || fd >= (int)task->max_fds || !task->fd_table || !task->fd_table[fd])
@@ -87,6 +90,7 @@ static void poll_unwire_fds(struct pollfd *kfds, unsigned long nfds,
         fut_signalfd_set_epoll_notify(file, NULL);
         fut_pipe_set_epoll_notify(file, NULL);
         fut_pidfd_set_epoll_notify(file, NULL);
+        fut_inotify_set_epoll_notify(file, NULL);
         fut_socket_t *sock = get_socket_from_fd(fd);
         if (sock) {
             if (sock->pair_reverse && sock->pair_reverse->epoll_notify == wq)
@@ -150,6 +154,11 @@ static struct poll_scan_stats poll_scan_fds(struct pollfd *kfds, unsigned long n
         if (!handled) {
             extern bool fut_pidfd_poll(struct fut_file *f, uint32_t req, uint32_t *out);
             if (fut_pidfd_poll(file, epoll_req, &epoll_ready))
+                handled = true;
+        }
+        if (!handled) {
+            extern bool fut_inotify_poll(struct fut_file *f, uint32_t req, uint32_t *out);
+            if (fut_inotify_poll(file, epoll_req, &epoll_ready))
                 handled = true;
         }
 

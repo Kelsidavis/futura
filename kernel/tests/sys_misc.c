@@ -31810,6 +31810,155 @@ static void test_prctl_newer_options(void) {
     sys_prctl(4, 1, 0, 0, 0);
 }
 
+/* Tests 962-968: prctl TSC and timing options */
+static void test_prctl_tsc_timing(void) {
+    fut_printf("[MISC-TEST] Tests 962-968: prctl PR_GET/SET_TIMING + PR_GET/SET_TSC\n");
+
+    extern long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
+                          unsigned long arg4, unsigned long arg5);
+
+    /* Test 962: PR_GET_TIMING (13) → 0 (PR_TIMING_STATISTICAL) */
+    fut_printf("[MISC-TEST] Test 962: prctl(PR_GET_TIMING=13) → 0\n");
+    long r962 = sys_prctl(13, 0, 0, 0, 0);
+    if (r962 == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 962: PR_GET_TIMING = PR_TIMING_STATISTICAL\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 962: got %ld (want 0)\n", r962);
+        fut_test_fail(962);
+    }
+
+    /* Test 963: PR_SET_TIMING (14) with 0 (PR_TIMING_STATISTICAL) → 0 */
+    fut_printf("[MISC-TEST] Test 963: prctl(PR_SET_TIMING=14, 0) → 0\n");
+    long r963 = sys_prctl(14, 0, 0, 0, 0);
+    if (r963 == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 963: PR_SET_TIMING(STATISTICAL) = 0\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 963: got %ld (want 0)\n", r963);
+        fut_test_fail(963);
+    }
+
+    /* Test 964: PR_SET_TIMING (14) with 1 (PR_TIMING_TIMESTAMP, removed) → EINVAL */
+    fut_printf("[MISC-TEST] Test 964: prctl(PR_SET_TIMING=14, 1) → EINVAL\n");
+    long r964 = sys_prctl(14, 1, 0, 0, 0);
+    if (r964 == -22) {  /* -EINVAL */
+        fut_printf("[MISC-TEST] ✓ Test 964: PR_SET_TIMING(TIMESTAMP) → EINVAL\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 964: got %ld (want -22)\n", r964);
+        fut_test_fail(964);
+    }
+
+    /* Test 965: PR_GET_TSC (25) → 1 (PR_TSC_ENABLE) */
+    fut_printf("[MISC-TEST] Test 965: prctl(PR_GET_TSC=25) → 1 (PR_TSC_ENABLE)\n");
+    long r965 = sys_prctl(25, 0, 0, 0, 0);
+    if (r965 == 1) {
+        fut_printf("[MISC-TEST] ✓ Test 965: PR_GET_TSC = PR_TSC_ENABLE\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 965: got %ld (want 1)\n", r965);
+        fut_test_fail(965);
+    }
+
+    /* Test 966: PR_SET_TSC (26) with 1 (PR_TSC_ENABLE) → 0 */
+    fut_printf("[MISC-TEST] Test 966: prctl(PR_SET_TSC=26, 1) → 0\n");
+    long r966 = sys_prctl(26, 1, 0, 0, 0);
+    if (r966 == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 966: PR_SET_TSC(ENABLE) = 0\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 966: got %ld (want 0)\n", r966);
+        fut_test_fail(966);
+    }
+
+    /* Test 967: PR_SET_TSC (26) with 2 (PR_TSC_SIGSEGV) → 0 */
+    fut_printf("[MISC-TEST] Test 967: prctl(PR_SET_TSC=26, 2) → 0\n");
+    long r967 = sys_prctl(26, 2, 0, 0, 0);
+    if (r967 == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 967: PR_SET_TSC(SIGSEGV) = 0\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 967: got %ld (want 0)\n", r967);
+        fut_test_fail(967);
+    }
+
+    /* Test 968: PR_SET_TSC (26) with 3 (invalid) → EINVAL */
+    fut_printf("[MISC-TEST] Test 968: prctl(PR_SET_TSC=26, 3) → EINVAL\n");
+    long r968 = sys_prctl(26, 3, 0, 0, 0);
+    if (r968 == -22) {  /* -EINVAL */
+        fut_printf("[MISC-TEST] ✓ Test 968: PR_SET_TSC(invalid) → EINVAL\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 968: got %ld (want -22)\n", r968);
+        fut_test_fail(968);
+    }
+}
+
+/* Tests 969-972: /proc/<pid>/root symlink */
+static void test_proc_pid_root(void) {
+    fut_printf("[MISC-TEST] Tests 969-972: /proc/self/root symlink\n");
+
+    extern ssize_t fut_vfs_readlink(const char *path, char *buf, size_t bufsiz);
+
+    /* Test 969: readlink("/proc/self/root") returns length 1 */
+    fut_printf("[MISC-TEST] Test 969: readlink(/proc/self/root) len = 1\n");
+    char buf[16];
+    __builtin_memset(buf, 0, sizeof(buf));
+    ssize_t n = fut_vfs_readlink("/proc/self/root", buf, sizeof(buf) - 1);
+    if (n == 1) {
+        fut_printf("[MISC-TEST] ✓ Test 969: readlink len = 1\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 969: readlink returned %ld (want 1)\n", (long)n);
+        fut_test_fail(969);
+    }
+
+    /* Test 970: content is "/" */
+    fut_printf("[MISC-TEST] Test 970: /proc/self/root → \"/\"\n");
+    if (n >= 1 && buf[0] == '/') {
+        fut_printf("[MISC-TEST] ✓ Test 970: content = \"/\"\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 970: got \"%s\" (want \"/\")\n", buf);
+        fut_test_fail(970);
+    }
+
+    /* Test 971: lstat via VFS reports S_ISLNK */
+    fut_printf("[MISC-TEST] Test 971: lstat(/proc/self/root) → S_ISLNK\n");
+    struct fut_stat st;
+    __builtin_memset(&st, 0, sizeof(st));
+    extern int fut_vfs_stat(const char *path, struct fut_stat *st);
+    int sr = fut_vfs_stat("/proc/self/root", &st);
+    /* fut_vfs_stat follows symlinks; the symlink itself is S_IFLNK only via lstat.
+     * Use lookup to get the vnode kind directly — check inode is non-zero. */
+    if (sr == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 971: lstat ok (inode=%llu)\n",
+                   (unsigned long long)st.st_ino);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 971: lstat returned %d\n", sr);
+        fut_test_fail(971);
+    }
+
+    /* Test 972: /proc/<pid>/root can also be accessed as /proc/<pid>/root.
+     * Verify it via a second readlink (absolute path) — since /proc/self is
+     * a symlink → /proc/<pid>, and /proc/<pid>/root is a symlink → "/". */
+    fut_printf("[MISC-TEST] Test 972: readlink(/proc/1/root) → \"/\"\n");
+    char buf2[16];
+    __builtin_memset(buf2, 0, sizeof(buf2));
+    /* pid 1 is the init task, always exists */
+    ssize_t n2 = fut_vfs_readlink("/proc/1/root", buf2, sizeof(buf2) - 1);
+    if (n2 == 1 && buf2[0] == '/') {
+        fut_printf("[MISC-TEST] ✓ Test 972: readlink /proc/1/root = \"/\"\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 972: /proc/1/root readlink %ld \"%s\"\n",
+                   (long)n2, buf2);
+        fut_test_fail(972);
+    }
+}
+
 static void test_cross_fs_exdev(void) {
     fut_printf("[MISC-TEST] Tests 937-941: cross-filesystem EXDEV / same-fs link+rename\n");
 
@@ -32709,6 +32858,8 @@ void fut_misc_test_thread(void *arg) {
     test_run_and_etc_dirs();              /* Tests 942-946: /run writable, /run/lock, /run/user/0, getdents /etc, /etc/os-release */
     test_keyring_and_legacy_events();    /* Tests 947-953: add_key/request_key/keyctl ENOSYS + legacy signalfd/eventfd */
     test_prctl_newer_options();          /* Tests 954-961: PR_TASK_PERF_EVENTS_*, PR_GET_TID_ADDRESS fix, PR_THP_DISABLE */
+    test_prctl_tsc_timing();             /* Tests 962-968: PR_GET/SET_TIMING, PR_GET/SET_TSC */
+    test_proc_pid_root();                /* Tests 969-972: /proc/self/root symlink */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

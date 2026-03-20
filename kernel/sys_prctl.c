@@ -71,6 +71,18 @@
 #define PR_SPEC_FORCE_DISABLE    (1UL << 3)
 #define PR_SPEC_DISABLE_NOEXEC   (1UL << 4)
 
+/* x86_64 TSC (Time Stamp Counter) access control */
+#define PR_GET_TSC          25   /* Get TSC access for this process */
+#define PR_SET_TSC          26   /* Set TSC access for this process */
+#define PR_TSC_ENABLE        1   /* Allow the use of the timestamp counter */
+#define PR_TSC_SIGSEGV       2   /* Throw a SIGSEGV instead of reading the TSC */
+
+/* Process timing method */
+#define PR_GET_TIMING       13   /* Get time accounting method */
+#define PR_SET_TIMING       14   /* Set time accounting method */
+#define PR_TIMING_STATISTICAL 0  /* Normal (statistical) process timing */
+/* PR_TIMING_TIMESTAMP (1) was removed in Linux 2.6.29 */
+
 /* Maximum valid signal number */
 #define PR_MAX_SIGNAL       64
 
@@ -402,6 +414,27 @@ long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
     case PR_GET_THP_DISABLE:
         /* Linux 3.15+: query THP disabled state.
          * Return 0: THP is not active (Futura has no THP). */
+        return 0;
+
+    case PR_GET_TIMING:
+        /* Return PR_TIMING_STATISTICAL (0) — only mode supported since Linux 2.6.29 */
+        return PR_TIMING_STATISTICAL;
+
+    case PR_SET_TIMING:
+        /* Only PR_TIMING_STATISTICAL (0) is valid; PR_TIMING_TIMESTAMP was removed */
+        if (arg2 != PR_TIMING_STATISTICAL)
+            return -EINVAL;
+        return 0;
+
+    case PR_GET_TSC:
+        /* x86_64: report TSC reads always allowed (PR_TSC_ENABLE) in Futura */
+        (void)arg2;
+        return PR_TSC_ENABLE;
+
+    case PR_SET_TSC:
+        /* x86_64: accept PR_TSC_ENABLE or PR_TSC_SIGSEGV; no enforcement */
+        if (arg2 != PR_TSC_ENABLE && arg2 != PR_TSC_SIGSEGV)
+            return -EINVAL;
         return 0;
 
     default:

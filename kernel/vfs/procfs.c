@@ -73,6 +73,7 @@ enum procfs_kind {
     PROC_FD_ENTRY,   /* /proc/<pid>/fd/<n> symlink */
     PROC_EXE,        /* /proc/<pid>/exe symlink */
     PROC_CWD,        /* /proc/<pid>/cwd symlink */
+    PROC_PID_ROOT,   /* /proc/<pid>/root symlink → "/" (filesystem root) */
     PROC_STAT,       /* /proc/<pid>/stat */
     PROC_STATM,      /* /proc/<pid>/statm */
     PROC_CPUINFO,    /* /proc/cpuinfo */
@@ -380,6 +381,7 @@ typedef struct {
 #define PROC_INO_PID_GID_MAP(p)        (1000ULL + (uint64_t)(p) * 100 + 30)
 #define PROC_INO_PID_SETGROUPS(p)      (1000ULL + (uint64_t)(p) * 100 + 31)
 #define PROC_INO_PID_PAGEMAP(p)        (1000ULL + (uint64_t)(p) * 100 + 35)
+#define PROC_INO_PID_ROOT(p)           (1000ULL + (uint64_t)(p) * 100 + 36)
 #define PROC_INO_PID_LOGINUID(p)       (1000ULL + (uint64_t)(p) * 100 + 32)
 #define PROC_INO_PID_SESSIONID(p)      (1000ULL + (uint64_t)(p) * 100 + 33)
 #define PROC_INO_PID_PERSONALITY(p)    (1000ULL + (uint64_t)(p) * 100 + 34)
@@ -3172,6 +3174,12 @@ static ssize_t procfs_link_readlink(struct fut_vnode *vnode, char *buf, size_t s
             while (cwd[len] && len < sizeof(tmp) - 1) { tmp[len] = cwd[len]; len++; }
             break;
         }
+        case PROC_PID_ROOT: {
+            /* Root directory of process filesystem namespace — always "/" in Futura */
+            tmp[0] = '/';
+            len = 1;
+            break;
+        }
         case PROC_NS_ENTRY: {
             /* Namespace symlink target: <nstype>:[<inode>] */
             static const char * const ns_names[] = {
@@ -3496,6 +3504,11 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0120777, PROC_CWD, pid, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "root")) {
+            *result = procfs_alloc_vnode(mnt, VN_LNK, PROC_INO_PID_ROOT(pid),
+                                          0120777, PROC_PID_ROOT, pid, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         if (STREQ(name, "stat")) {
             *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_STAT(pid),
                                           0100444, PROC_STAT, pid, 0);
@@ -3694,6 +3707,8 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
             { *result = procfs_alloc_vnode(mnt, VN_LNK, PROC_INO_PID_EXE(pid),    0120777, PROC_EXE,    pid, 0); return *result ? 0 : -ENOMEM; }
         if (STREQ(name, "cwd"))
             { *result = procfs_alloc_vnode(mnt, VN_LNK, PROC_INO_PID_CWD(pid),    0120777, PROC_CWD,    pid, 0); return *result ? 0 : -ENOMEM; }
+        if (STREQ(name, "root"))
+            { *result = procfs_alloc_vnode(mnt, VN_LNK, PROC_INO_PID_ROOT(pid),   0120777, PROC_PID_ROOT,pid, 0); return *result ? 0 : -ENOMEM; }
         if (STREQ(name, "stat"))
             { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_STAT(pid),   0100444, PROC_STAT,   pid, tid_fd); return *result ? 0 : -ENOMEM; }
         if (STREQ(name, "statm"))
@@ -4544,7 +4559,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             "wchan", "mountinfo", "coredump_filter", "schedstat", "net", "attr",
             "smaps_rollup", "auxv", "mem",
             "uid_map", "gid_map", "setgroups",
-            "loginuid", "sessionid", "personality", "pagemap"
+            "loginuid", "sessionid", "personality", "pagemap", "root"
         };
         static const uint8_t etypes[] = {
             FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
@@ -4562,10 +4577,11 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
-            FUT_VDIR_TYPE_REG
+            FUT_VDIR_TYPE_REG,
+            FUT_VDIR_TYPE_SYMLINK   /* root */
         };
         uint64_t pid = dn->pid;
-        if (idx < 37) {
+        if (idx < 38) {
             uint64_t ino;
             switch (idx) {
                 case 0:  ino = PROC_INO_PID_DIR(pid);        break;
@@ -4605,6 +4621,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                 case 34: ino = PROC_INO_PID_SESSIONID(pid);         break;
                 case 35: ino = PROC_INO_PID_PERSONALITY(pid);       break;
                 case 36: ino = PROC_INO_PID_PAGEMAP(pid);           break;
+                case 37: ino = PROC_INO_PID_ROOT(pid);              break;
                 default: ino = 0; break;
             }
             de->d_ino    = ino;

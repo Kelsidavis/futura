@@ -481,9 +481,32 @@ long sys_mount(const char *source, const char *target, const char *filesystemtyp
     }
 
     /* Map filesystem type to registered kernel FS name.
-     * "tmpfs" is backed by "ramfs" (both are simple in-memory filesystems). */
+     * "tmpfs" and "devtmpfs" are backed by "ramfs" (in-memory).
+     * "proc" and "sysfs" are pseudo-filesystems with dedicated registrations. */
     const char *kernel_fstype;
-    if (strcmp(fstype_buf, "ramfs") == 0 || strcmp(fstype_buf, "tmpfs") == 0) {
+    if (strcmp(fstype_buf, "ramfs") == 0 ||
+        strcmp(fstype_buf, "tmpfs") == 0 ||
+        strcmp(fstype_buf, "devtmpfs") == 0) {
+        kernel_fstype = "ramfs";
+    } else if (strcmp(fstype_buf, "proc") == 0) {
+        kernel_fstype = "proc";
+    } else if (strcmp(fstype_buf, "sysfs") == 0) {
+        kernel_fstype = "sysfs";
+    } else if (strcmp(fstype_buf, "securityfs") == 0 ||
+               strcmp(fstype_buf, "cgroup") == 0 ||
+               strcmp(fstype_buf, "cgroup2") == 0 ||
+               strcmp(fstype_buf, "pstore") == 0 ||
+               strcmp(fstype_buf, "efivarfs") == 0 ||
+               strcmp(fstype_buf, "debugfs") == 0 ||
+               strcmp(fstype_buf, "tracefs") == 0 ||
+               strcmp(fstype_buf, "bpf") == 0 ||
+               strcmp(fstype_buf, "fusectl") == 0 ||
+               strcmp(fstype_buf, "hugetlbfs") == 0 ||
+               strcmp(fstype_buf, "mqueue") == 0) {
+        /* These kernel virtual filesystems are commonly mounted by systemd
+         * and container runtimes.  Map them to ramfs (empty in-memory tree)
+         * so the mount succeeds and the mountpoint exists, even though the
+         * filesystem is not fully implemented. */
         kernel_fstype = "ramfs";
     } else {
         fut_printf("[MOUNT] mount(target='%s', fstype='%s', pid=%d) -> ENODEV "

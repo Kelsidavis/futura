@@ -30181,6 +30181,125 @@ static void test_sysfs_cpu_topology(void) {
     }
 }
 
+/*
+ * Tests 854-860: mount() extended filesystem type support
+ *
+ * Test 854: mount("devtmpfs", "/mnt_devtmpfs_test", "devtmpfs") → 0
+ * Test 855: mount("proc", "/mnt_proc_test", "proc") → 0
+ * Test 856: mount("sysfs", "/mnt_sysfs_test", "sysfs") → 0
+ * Test 857: mount("cgroup2", "/mnt_cgroup2_test", "cgroup2") → 0
+ * Test 858: mount("debugfs", "/mnt_debugfs_test", "debugfs") → 0
+ * Test 859: mount("mqueue", "/mnt_mqueue_test", "mqueue") → 0
+ * Test 860: mount("hugetlbfs", "/mnt_huge_test", "hugetlbfs") → 0
+ */
+static void test_mount_fstype_extended(void) {
+    extern long sys_mount(const char *source, const char *target,
+                          const char *fstype, unsigned long flags,
+                          const void *data);
+    extern long sys_mkdir(const char *path, uint32_t mode);
+    extern long sys_umount2(const char *target, int flags);
+
+    fut_printf("[MISC-TEST] Tests 854-860: mount extended fstype support\n");
+
+    static const struct {
+        const char *fstype;
+        const char *mp;
+        unsigned int test_num;
+    } cases[] = {
+        { "devtmpfs",  "/mnt_devtmpfs_test", 854 },
+        { "proc",      "/mnt_proc_test",     855 },
+        { "sysfs",     "/mnt_sysfs_test",    856 },
+        { "cgroup2",   "/mnt_cgroup2_test",  857 },
+        { "debugfs",   "/mnt_debugfs_test",  858 },
+        { "mqueue",    "/mnt_mqueue_test",   859 },
+        { "hugetlbfs", "/mnt_huge_test",     860 },
+    };
+
+    for (int i = 0; i < 7; i++) {
+        sys_mkdir(cases[i].mp, 0755);
+        long r = sys_mount("none", cases[i].mp, cases[i].fstype, 0, NULL);
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test %u: mount(%s) -> 0\n",
+                       cases[i].test_num, cases[i].fstype);
+            fut_test_pass();
+            sys_umount2(cases[i].mp, 0);
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test %u: mount(%s) returned %ld (expected 0)\n",
+                       cases[i].test_num, cases[i].fstype, r);
+            fut_test_fail((uint16_t)cases[i].test_num);
+        }
+    }
+}
+
+/*
+ * Tests 861-866: statfs f_type returns correct filesystem magic values.
+ *
+ * Test 861: statfs("/proc") → f_type == PROC_SUPER_MAGIC (0x9fa0)
+ * Test 862: statfs("/sys")  → f_type == SYSFS_MAGIC (0x62656572)
+ * Test 863: statfs("/dev")  → f_type == DEVTMPFS_MAGIC (0x1373)
+ * Test 864: statfs("/tmp")  → f_type == TMPFS_MAGIC (0x01021994)
+ * Test 865: statfs("/run")  → f_type == TMPFS_MAGIC (0x01021994)
+ * Test 866: statfs("/dev/shm") → f_type == TMPFS_MAGIC (0x01021994)
+ */
+static void test_statfs_magic_values(void) {
+    extern long sys_statfs(const char *path, void *buf);
+
+    fut_printf("[MISC-TEST] Tests 861-866: statfs f_type filesystem magic\n");
+
+    /* struct statfs — we only need the first field (f_type, 64 bits on x86_64) */
+    struct test_statfs_buf {
+        int64_t  f_type;
+        int64_t  f_bsize;
+        int64_t  f_blocks;
+        int64_t  f_bfree;
+        int64_t  f_bavail;
+        int64_t  f_files;
+        int64_t  f_ffree;
+        uint64_t f_fsid[2];
+        int64_t  f_namelen;
+        int64_t  f_frsize;
+        int64_t  f_flags;
+        int64_t  f_spare[4];
+    };
+
+    static const struct {
+        const char *path;
+        int64_t     magic;
+        unsigned int test_num;
+    } cases[] = {
+        { "/proc",    0x9fa0,      861 },
+        { "/sys",     0x62656572,  862 },
+        { "/dev",     0x1373,      863 },
+        { "/tmp",     0x01021994,  864 },
+        { "/run",     0x01021994,  865 },
+        { "/dev/shm", 0x01021994,  866 },
+    };
+
+    for (int i = 0; i < 6; i++) {
+        struct test_statfs_buf sb;
+        __builtin_memset(&sb, 0, sizeof(sb));
+        long r = sys_statfs(cases[i].path, &sb);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test %u: statfs(\"%s\") returned %ld\n",
+                       cases[i].test_num, cases[i].path, r);
+            fut_test_fail((uint16_t)cases[i].test_num);
+            continue;
+        }
+        if (sb.f_type == cases[i].magic) {
+            fut_printf("[MISC-TEST] ✓ Test %u: statfs(\"%s\") f_type=0x%llx\n",
+                       cases[i].test_num, cases[i].path,
+                       (unsigned long long)sb.f_type);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test %u: statfs(\"%s\") f_type=0x%llx (expected 0x%llx)\n",
+                       cases[i].test_num, cases[i].path,
+                       (unsigned long long)sb.f_type,
+                       (unsigned long long)cases[i].magic);
+            fut_test_fail((uint16_t)cases[i].test_num);
+        }
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -30736,6 +30855,8 @@ void fut_misc_test_thread(void *arg) {
     test_proc_sys_net_ipv4_conf();         /* Tests 838-842: conf/all/ rp_filter/forwarding + /proc/net/route loopback */
     test_proc_kallsyms();                  /* Tests 843-846: /proc/kallsyms open/read/zeroed-addr/kernel_main */
     test_sysfs_cpu_topology();             /* Tests 847-853: /sys/devices/system/cpu/ topology */
+    test_mount_fstype_extended();          /* Tests 854-860: mount devtmpfs/proc/sysfs/cgroup2/debugfs/mqueue/hugetlbfs */
+    test_statfs_magic_values();            /* Tests 861-866: statfs f_type: /proc=0x9fa0, /sys=sysfs, /dev=devtmpfs, /tmp=tmpfs, /run=tmpfs, /dev/shm=tmpfs */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

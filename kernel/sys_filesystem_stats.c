@@ -38,12 +38,21 @@ static inline int statfs_copy_to_buf(void *dst, const void *src, size_t n) {
 }
 
 /* Filesystem type constants */
-#define FUT_TMPFS_MAGIC   0x01021994
-#define FUT_RAMFS_MAGIC   0x858458F6
-#define FUT_EXT2_MAGIC    0xEF53
-#define FUT_EXT4_MAGIC    0xEF53
-#define PROC_SUPER_MAGIC  0x9fa0
-#define SYSFS_MAGIC       0x62656572
+#define FUT_TMPFS_MAGIC        0x01021994
+#define FUT_RAMFS_MAGIC        0x858458F6
+#define FUT_EXT2_MAGIC         0xEF53
+#define FUT_EXT4_MAGIC         0xEF53
+#define PROC_SUPER_MAGIC       0x9fa0
+#define SYSFS_MAGIC            0x62656572
+#define DEVTMPFS_MAGIC         0x1373
+#define CGROUP_SUPER_MAGIC     0x27e0eb
+#define CGROUP2_SUPER_MAGIC    0x63677270
+#define SECURITYFS_MAGIC       0x73636673
+#define DEBUGFS_MAGIC          0x64626720
+#define TRACEFS_MAGIC          0x74726163
+#define HUGETLBFS_MAGIC        0x958458F6
+#define MQUEUE_MAGIC           0x19800202
+#define BPF_FS_MAGIC           0xcafe4a11
 
 /* Mount flags */
 #define FUT_ST_RDONLY     0x0001  /* Read-only filesystem */
@@ -51,15 +60,41 @@ static inline int statfs_copy_to_buf(void *dst, const void *src, size_t n) {
 #define FUT_ST_NODEV      0x0004  /* Disallow access to device special files */
 #define FUT_ST_NOEXEC     0x0008  /* Disallow program execution */
 
-/* Return the correct filesystem magic for the given path prefix */
+/* Helper: does `path` start with `prefix` and is followed by '/' or NUL? */
+static inline int path_starts_with(const char *path, const char *prefix) {
+    size_t n = 0;
+    while (prefix[n]) { if (path[n] != prefix[n]) return 0; n++; }
+    return path[n] == '\0' || path[n] == '/';
+}
+
+/* Return the correct filesystem magic for the given path prefix.
+ * Maps well-known Linux mount points to their canonical f_type values. */
 static uint32_t statfs_magic_for_path(const char *path) {
     if (!path) return FUT_RAMFS_MAGIC;
-    if (path[0] == '/' && path[1] == 'p' && path[2] == 'r' && path[3] == 'o' &&
-        path[4] == 'c' && (path[5] == '\0' || path[5] == '/'))
+    if (path_starts_with(path, "/proc"))
         return PROC_SUPER_MAGIC;
-    if (path[0] == '/' && path[1] == 's' && path[2] == 'y' && path[3] == 's' &&
-        (path[4] == '\0' || path[4] == '/'))
+    if (path_starts_with(path, "/sys/fs/cgroup"))
+        return CGROUP2_SUPER_MAGIC;
+    if (path_starts_with(path, "/sys/kernel/security"))
+        return SECURITYFS_MAGIC;
+    if (path_starts_with(path, "/sys/kernel/debug"))
+        return DEBUGFS_MAGIC;
+    if (path_starts_with(path, "/sys/kernel/tracing"))
+        return TRACEFS_MAGIC;
+    if (path_starts_with(path, "/sys"))
         return SYSFS_MAGIC;
+    if (path_starts_with(path, "/dev/shm") ||
+        path_starts_with(path, "/dev/mqueue"))
+        return FUT_TMPFS_MAGIC;
+    if (path_starts_with(path, "/dev/hugepages"))
+        return HUGETLBFS_MAGIC;
+    if (path_starts_with(path, "/dev"))
+        return DEVTMPFS_MAGIC;
+    /* Common tmpfs mounts: /tmp, /run, /run/shm, /var/volatile */
+    if (path_starts_with(path, "/tmp") ||
+        path_starts_with(path, "/run") ||
+        path_starts_with(path, "/var/volatile"))
+        return FUT_TMPFS_MAGIC;
     return FUT_RAMFS_MAGIC;
 }
 

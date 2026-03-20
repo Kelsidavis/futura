@@ -1000,6 +1000,8 @@ long sys_fork(void) {
     child_task->sched_flags   = parent_task->sched_flags & ~(uint64_t)SCHED_FLAG_RESET_ON_FORK;
     /* nice value is always inherited (RESET_ON_FORK only affects RT policy) */
     child_task->nice          = parent_task->nice;
+    /* timerslack_ns is inherited by the child */
+    child_task->timerslack_ns = parent_task->timerslack_ns;
     /* pdeathsig is NOT inherited — cleared on fork (Linux behavior) */
     child_task->pdeathsig     = 0;
     /* comm and exe_path are inherited (child starts with same name/exe) */

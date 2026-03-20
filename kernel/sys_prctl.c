@@ -258,12 +258,14 @@ long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
         return (long)task->no_new_privs;
 
     case PR_SET_TIMERSLACK:
-        /* Accept but ignore — Futura uses fixed timer resolution */
+        /* Store the requested slack (in nanoseconds) per-task.
+         * arg2 == 0 means "set to 0" (not "reset to default"). */
+        task->timerslack_ns = (uint64_t)arg2;
         return 0;
 
     case PR_GET_TIMERSLACK:
-        /* Return default timer slack (50us in nanoseconds, matching Linux default) */
-        return 50000;
+        /* Return per-task timer slack in nanoseconds. */
+        return (long)task->timerslack_ns;
 
     case PR_CAPBSET_READ: {
         /* Check if capability is in the bounding set */

@@ -252,6 +252,7 @@ enum procfs_kind {
     PROC_CGROUPS,                   /* /proc/cgroups — cgroup subsystem list */
     PROC_PAGEMAP,                   /* /proc/<pid>/pagemap — physical page info (binary, 8 bytes/page) */
     PROC_KALLSYMS,                  /* /proc/kallsyms — kernel symbol table (addresses zeroed per kptr_restrict) */
+    PROC_TIMERSLACK_NS,             /* /proc/<pid>/timerslack_ns — timer expiry slack in nanoseconds */
 };
 
 typedef struct {
@@ -382,6 +383,7 @@ typedef struct {
 #define PROC_INO_PID_SETGROUPS(p)      (1000ULL + (uint64_t)(p) * 100 + 31)
 #define PROC_INO_PID_PAGEMAP(p)        (1000ULL + (uint64_t)(p) * 100 + 35)
 #define PROC_INO_PID_ROOT(p)           (1000ULL + (uint64_t)(p) * 100 + 36)
+#define PROC_INO_PID_TIMERSLACK(p)     (1000ULL + (uint64_t)(p) * 100 + 37)
 #define PROC_INO_PID_LOGINUID(p)       (1000ULL + (uint64_t)(p) * 100 + 32)
 #define PROC_INO_PID_SESSIONID(p)      (1000ULL + (uint64_t)(p) * 100 + 33)
 #define PROC_INO_PID_PERSONALITY(p)    (1000ULL + (uint64_t)(p) * 100 + 34)
@@ -2545,6 +2547,16 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             total = gen_personality(tmp, GEN_BUF, ptask);
             break;
         }
+        case PROC_TIMERSLACK_NS: {
+            /* /proc/<pid>/timerslack_ns: timer expiry slack in nanoseconds */
+            fut_task_t *tstask = fut_task_by_pid(n->pid);
+            struct pbuf b = { tmp, 0, GEN_BUF };
+            uint64_t slack = tstask ? tstask->timerslack_ns : 50000U;
+            pb_u64(&b, slack);
+            pb_char(&b, '\n');
+            total = b.pos;
+            break;
+        }
         case PROC_MOUNTINFO:
             total = gen_mountinfo(tmp, GEN_BUF);
             break;
@@ -3079,6 +3091,20 @@ static ssize_t procfs_file_write(struct fut_vnode *vnode, const void *buf,
             if (val < -1000) val = -1000;
             if (val >  1000) val =  1000;
             wtask->oom_score_adj = (int)val;
+            return (ssize_t)size;
+        }
+
+        case PROC_TIMERSLACK_NS: {
+            /* /proc/<pid>/timerslack_ns: write unsigned decimal nanoseconds. */
+            fut_task_t *wtask = fut_task_by_pid(n->pid);
+            if (!wtask) return -ESRCH;
+            /* Only allow writing to our own timerslack_ns */
+            fut_task_t *cur = fut_task_current();
+            if (!cur || (uint64_t)n->pid != cur->pid) return -EPERM;
+            uint64_t val = 0;
+            for (size_t i = 0; i < copy_len && kbuf[i] >= '0' && kbuf[i] <= '9'; i++)
+                val = val * 10 + (uint64_t)(kbuf[i] - '0');
+            wtask->timerslack_ns = val;
             return (ssize_t)size;
         }
 
@@ -3632,6 +3658,11 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0100400, PROC_PAGEMAP, pid, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "timerslack_ns")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_TIMERSLACK(pid),
+                                          0100644, PROC_TIMERSLACK_NS, pid, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         if (STREQ(name, "mountinfo")) {
             *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_MOUNTINFO(pid),
                                           0100444, PROC_MOUNTINFO, pid, 0);
@@ -3763,6 +3794,8 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
             { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_PERSONALITY(pid),  0100444, PROC_PERSONALITY,     pid,0); return *result ? 0 : -ENOMEM; }
         if (STREQ(name, "pagemap"))
             { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_PAGEMAP(pid),      0100400, PROC_PAGEMAP,         pid,0); return *result ? 0 : -ENOMEM; }
+        if (STREQ(name, "timerslack_ns"))
+            { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_TIMERSLACK(pid),   0100644, PROC_TIMERSLACK_NS,   pid,0); return *result ? 0 : -ENOMEM; }
         if (STREQ(name, "mountinfo"))
             { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_MOUNTINFO(pid), 0100444, PROC_MOUNTINFO,       pid,0); return *result ? 0 : -ENOMEM; }
         if (STREQ(name, "coredump_filter"))
@@ -4567,7 +4600,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             "wchan", "mountinfo", "coredump_filter", "schedstat", "net", "attr",
             "smaps_rollup", "auxv", "mem",
             "uid_map", "gid_map", "setgroups",
-            "loginuid", "sessionid", "personality", "pagemap", "root"
+            "loginuid", "sessionid", "personality", "pagemap", "timerslack_ns", "root"
         };
         static const uint8_t etypes[] = {
             FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
@@ -4586,10 +4619,11 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
             FUT_VDIR_TYPE_REG,
+            FUT_VDIR_TYPE_REG,      /* timerslack_ns */
             FUT_VDIR_TYPE_SYMLINK   /* root */
         };
         uint64_t pid = dn->pid;
-        if (idx < 38) {
+        if (idx < 39) {
             uint64_t ino;
             switch (idx) {
                 case 0:  ino = PROC_INO_PID_DIR(pid);        break;
@@ -4629,7 +4663,8 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                 case 34: ino = PROC_INO_PID_SESSIONID(pid);         break;
                 case 35: ino = PROC_INO_PID_PERSONALITY(pid);       break;
                 case 36: ino = PROC_INO_PID_PAGEMAP(pid);           break;
-                case 37: ino = PROC_INO_PID_ROOT(pid);              break;
+                case 37: ino = PROC_INO_PID_TIMERSLACK(pid);        break;
+                case 38: ino = PROC_INO_PID_ROOT(pid);              break;
                 default: ino = 0; break;
             }
             de->d_ino    = ino;

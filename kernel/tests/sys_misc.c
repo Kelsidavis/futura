@@ -38199,6 +38199,182 @@ static void test_prctl_set_vma_anon_name(void) {
 #undef VMA_PAGE_SZ
 }
 
+/*
+ * test_prctl_timerslack_procfs — Tests 1163-1168
+ *
+ * Verifies per-task timerslack_ns storage and /proc/self/timerslack_ns:
+ *   1163: PR_SET_TIMERSLACK(99999) roundtrip via PR_GET_TIMERSLACK → 99999
+ *   1164: PR_SET_TIMERSLACK(0) → PR_GET_TIMERSLACK returns 0
+ *   1165: set 50000 via prctl, read /proc/self/timerslack_ns → "50000\n"
+ *   1166: set 111000 via prctl, read /proc/self/timerslack_ns → "111000\n"
+ *   1167: write "222000\n" to /proc/self/timerslack_ns, PR_GET_TIMERSLACK → 222000
+ *   1168: write "0\n" to /proc/self/timerslack_ns, PR_GET_TIMERSLACK → 0
+ */
+static void test_prctl_timerslack_procfs(void) {
+    extern long sys_prctl(int option, uint64_t arg2, uint64_t arg3,
+                          uint64_t arg4, uint64_t arg5);
+    extern long sys_openat(int dirfd, const char *pathname, int flags, int mode);
+    extern long sys_read(int fd, void *buf, size_t count);
+    extern long sys_write(int fd, const void *buf, size_t count);
+    extern long sys_close(int fd);
+
+#define TSNS_PR_SET  29
+#define TSNS_PR_GET  30
+
+    fut_printf("[MISC-TEST] Tests 1163-1168: PR_SET/GET_TIMERSLACK + /proc/self/timerslack_ns\n");
+
+    /* Helper: parse unsigned decimal from buf[0..len-1], stop at non-digit */
+    /* (inline below where needed) */
+
+    /* Test 1163: PR_SET_TIMERSLACK(99999) roundtrip */
+    fut_printf("[MISC-TEST] Test 1163: PR_SET_TIMERSLACK(99999) + PR_GET_TIMERSLACK → 99999\n");
+    {
+        long r = sys_prctl(TSNS_PR_SET, 99999, 0, 0, 0);
+        long got = sys_prctl(TSNS_PR_GET, 0, 0, 0, 0);
+        if (r == 0 && got == 99999) {
+            fut_printf("[MISC-TEST] ✓ Test 1163: timerslack roundtrip 99999\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1163: set=%ld get=%ld (expected 0, 99999)\n", r, got);
+            fut_test_fail(1163);
+        }
+    }
+
+    /* Test 1164: PR_SET_TIMERSLACK(0) stores zero */
+    fut_printf("[MISC-TEST] Test 1164: PR_SET_TIMERSLACK(0) → PR_GET_TIMERSLACK == 0\n");
+    {
+        long r = sys_prctl(TSNS_PR_SET, 0, 0, 0, 0);
+        long got = sys_prctl(TSNS_PR_GET, 0, 0, 0, 0);
+        if (r == 0 && got == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1164: timerslack=0 stored and retrieved\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1164: set=%ld get=%ld (expected 0, 0)\n", r, got);
+            fut_test_fail(1164);
+        }
+    }
+
+    /* Test 1165: /proc/self/timerslack_ns reads "50000\n" after PR_SET_TIMERSLACK(50000) */
+    fut_printf("[MISC-TEST] Test 1165: /proc/self/timerslack_ns reads 50000 after prctl set\n");
+    {
+        sys_prctl(TSNS_PR_SET, 50000, 0, 0, 0);
+        int fd = (int)sys_openat(-100, "/proc/self/timerslack_ns", 0, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1165: open timerslack_ns failed: %d\n", fd);
+            fut_test_fail(1165);
+        } else {
+            char buf[32];
+            long n = sys_read(fd, buf, sizeof(buf) - 1);
+            sys_close(fd);
+            if (n > 0) {
+                buf[n] = '\0';
+                /* parse decimal */
+                uint64_t val = 0;
+                for (long i = 0; i < n && buf[i] >= '0' && buf[i] <= '9'; i++)
+                    val = val * 10 + (uint64_t)(buf[i] - '0');
+                if (val == 50000) {
+                    fut_printf("[MISC-TEST] ✓ Test 1165: timerslack_ns = %llu\n", (unsigned long long)val);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1165: expected 50000, got %llu\n", (unsigned long long)val);
+                    fut_test_fail(1165);
+                }
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1165: read returned %ld\n", n);
+                fut_test_fail(1165);
+            }
+        }
+    }
+
+    /* Test 1166: /proc/self/timerslack_ns reads 111000 after PR_SET_TIMERSLACK(111000) */
+    fut_printf("[MISC-TEST] Test 1166: /proc/self/timerslack_ns reads 111000\n");
+    {
+        sys_prctl(TSNS_PR_SET, 111000, 0, 0, 0);
+        int fd = (int)sys_openat(-100, "/proc/self/timerslack_ns", 0, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1166: open timerslack_ns failed: %d\n", fd);
+            fut_test_fail(1166);
+        } else {
+            char buf[32];
+            long n = sys_read(fd, buf, sizeof(buf) - 1);
+            sys_close(fd);
+            if (n > 0) {
+                buf[n] = '\0';
+                uint64_t val = 0;
+                for (long i = 0; i < n && buf[i] >= '0' && buf[i] <= '9'; i++)
+                    val = val * 10 + (uint64_t)(buf[i] - '0');
+                if (val == 111000) {
+                    fut_printf("[MISC-TEST] ✓ Test 1166: timerslack_ns = %llu\n", (unsigned long long)val);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1166: expected 111000, got %llu\n", (unsigned long long)val);
+                    fut_test_fail(1166);
+                }
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1166: read returned %ld\n", n);
+                fut_test_fail(1166);
+            }
+        }
+    }
+
+    /* Test 1167: write "222000\n" to /proc/self/timerslack_ns, PR_GET_TIMERSLACK → 222000 */
+    fut_printf("[MISC-TEST] Test 1167: write 222000 to /proc/self/timerslack_ns, PR_GET → 222000\n");
+    {
+        int fd = (int)sys_openat(-100, "/proc/self/timerslack_ns", 1/*O_WRONLY*/, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1167: open timerslack_ns O_WRONLY failed: %d\n", fd);
+            fut_test_fail(1167);
+        } else {
+            const char *wval = "222000\n";
+            long wn = sys_write(fd, wval, 7);
+            sys_close(fd);
+            if (wn > 0) {
+                long got = sys_prctl(TSNS_PR_GET, 0, 0, 0, 0);
+                if (got == 222000) {
+                    fut_printf("[MISC-TEST] ✓ Test 1167: write→prctl roundtrip 222000\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1167: PR_GET_TIMERSLACK=%ld (expected 222000)\n", got);
+                    fut_test_fail(1167);
+                }
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1167: write returned %ld\n", wn);
+                fut_test_fail(1167);
+            }
+        }
+    }
+
+    /* Test 1168: write "0\n" to /proc/self/timerslack_ns, PR_GET_TIMERSLACK → 0 */
+    fut_printf("[MISC-TEST] Test 1168: write 0 to /proc/self/timerslack_ns, PR_GET → 0\n");
+    {
+        int fd = (int)sys_openat(-100, "/proc/self/timerslack_ns", 1/*O_WRONLY*/, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1168: open timerslack_ns O_WRONLY failed: %d\n", fd);
+            fut_test_fail(1168);
+        } else {
+            const char *wval = "0\n";
+            long wn = sys_write(fd, wval, 2);
+            sys_close(fd);
+            if (wn > 0) {
+                long got = sys_prctl(TSNS_PR_GET, 0, 0, 0, 0);
+                if (got == 0) {
+                    fut_printf("[MISC-TEST] ✓ Test 1168: write 0 → PR_GET_TIMERSLACK=0\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1168: PR_GET_TIMERSLACK=%ld (expected 0)\n", got);
+                    fut_test_fail(1168);
+                }
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1168: write returned %ld\n", wn);
+                fut_test_fail(1168);
+            }
+        }
+    }
+
+#undef TSNS_PR_SET
+#undef TSNS_PR_GET
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -38820,6 +38996,7 @@ void fut_misc_test_thread(void *arg) {
     test_cap_ambient_real();            /* Tests 1143-1150: ambient cap real state tracking */
     test_sigaltstack_autodisarm();      /* Tests 1151-1155: SS_AUTODISARM flag support */
     test_prctl_set_vma_anon_name();     /* Tests 1156-1162: PR_SET_VMA_ANON_NAME */
+    test_prctl_timerslack_procfs();     /* Tests 1163-1168: PR_SET/GET_TIMERSLACK + /proc/self/timerslack_ns */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

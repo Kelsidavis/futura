@@ -139,6 +139,7 @@ fut_task_t *fut_task_create(void) {
         .personality = PER_LINUX,   /* Default Linux personality */
         .dumpable = 1,              /* Linux default: processes are dumpable (PR_GET_DUMPABLE=1) */
         .nice = 0,                  /* Default nice value (normal priority) */
+        .timerslack_ns = 50000,     /* Linux default: 50 μs timer slack */
         .clear_child_tid = NULL,  /* No tid address set initially (set via set_tid_address) */
         .fd_table = NULL,   /* FD table initialized below */
         .max_fds = 0,

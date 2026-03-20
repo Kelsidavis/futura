@@ -474,9 +474,11 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
         int old_flags = file->flags;
         int new_flags = file->flags;
 
-        /* Preserve access mode, update only supported changeable flags */
-        new_flags &= ~(O_NONBLOCK | O_APPEND);
-        new_flags |= ((int)local_arg & (O_NONBLOCK | O_APPEND));
+        /* Preserve access mode, update only supported changeable flags.
+         * O_ASYNC (0x2000) is stored so F_GETOWN/F_SETSIG work correctly. */
+        #define O_ASYNC_FLAG 0x2000
+        new_flags &= ~(O_NONBLOCK | O_APPEND | O_ASYNC_FLAG);
+        new_flags |= ((int)local_arg & (O_NONBLOCK | O_APPEND | O_ASYNC_FLAG));
 
         file->flags = new_flags;
 

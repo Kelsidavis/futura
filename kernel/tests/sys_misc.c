@@ -29255,6 +29255,128 @@ static void test_inotify_rm_watch(void) {
  *   802: epoll_wait(epfd, events, 1, 0) with inotify fd after event → EPOLLIN
  *   803: select(ifd+1, &rfds, ..., timeout=0) after event → ifd set in rfds
  * ============================================================ */
+/* =================================================================
+ * test_dev_shm - Tests 815-819: /dev/shm POSIX shared memory path
+ *
+ *   Test 815: stat("/dev/shm") → 0, S_ISDIR
+ *   Test 816: open("/dev/shm/test_shm", O_RDWR|O_CREAT|O_EXCL) → valid fd
+ *   Test 817: write + read roundtrip on /dev/shm file
+ *   Test 818: unlink("/dev/shm/test_shm") → 0
+ *   Test 819: O_ASYNC round-trip via F_SETFL/F_GETFL
+ * ================================================================= */
+static void test_dev_shm(void) {
+    extern long sys_stat(const char *path, struct fut_stat *statbuf);
+    extern long sys_openat(int dirfd, const char *path, int flags, int mode);
+    extern long sys_write(int fd, const void *buf, size_t count);
+    extern long sys_read(int fd, void *buf, size_t count);
+    extern long sys_close(int fd);
+    extern long sys_unlink(const char *path);
+    extern long sys_fcntl(int fd, int cmd, uint64_t arg);
+
+    /* Test 815: /dev/shm directory should exist after kernel_main setup */
+    fut_printf("[MISC-TEST] Test 815: stat(\"/dev/shm\") → directory\n");
+    {
+        struct fut_stat st;
+        long r = sys_stat("/dev/shm", &st);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 815: stat(\"/dev/shm\") returned %ld\n", r);
+            fut_test_fail(815);
+        } else if ((st.st_mode & 0170000u) == 0040000u) {
+            fut_printf("[MISC-TEST] ✓ Test 815: /dev/shm is a directory (mode=0%o)\n", st.st_mode);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 815: /dev/shm mode=0%o not a directory\n", st.st_mode);
+            fut_test_fail(815);
+        }
+    }
+
+    /* Test 816: create a file in /dev/shm (simulating shm_open) */
+    fut_printf("[MISC-TEST] Test 816: open(\"/dev/shm/fut_shm_test\", O_RDWR|O_CREAT|O_EXCL) → fd\n");
+    long shmfd = -1;
+    {
+        /* O_RDWR=2, O_CREAT=0100, O_EXCL=0200 */
+        shmfd = sys_openat(-100, "/dev/shm/fut_shm_test", 0x2 | 0100 | 0200, 0600);
+        if (shmfd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 816: open returned %ld\n", shmfd);
+            fut_test_fail(816);
+            goto t815_done;
+        }
+        fut_printf("[MISC-TEST] ✓ Test 816: /dev/shm file created (fd=%ld)\n", shmfd);
+        fut_test_pass();
+    }
+
+    /* Test 817: write + read roundtrip in /dev/shm file */
+    fut_printf("[MISC-TEST] Test 817: write+read roundtrip on /dev/shm file\n");
+    {
+        const char wbuf[] = "shm_data_12345";
+        long nw = sys_write((int)shmfd, wbuf, sizeof(wbuf) - 1);
+        if (nw != (long)(sizeof(wbuf) - 1)) {
+            fut_printf("[MISC-TEST] ✗ Test 817: write returned %ld\n", nw);
+            fut_test_fail(817);
+            goto t815_close;
+        }
+        /* Rewind and read back */
+        extern long sys_lseek(int fd, long offset, int whence);
+        sys_lseek((int)shmfd, 0, 0 /* SEEK_SET */);
+        char rbuf[32] = {0};
+        long nr = sys_read((int)shmfd, rbuf, sizeof(wbuf) - 1);
+        if (nr != (long)(sizeof(wbuf) - 1) ||
+            __builtin_memcmp(rbuf, wbuf, sizeof(wbuf) - 1) != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 817: read mismatch (nr=%ld)\n", nr);
+            fut_test_fail(817);
+            goto t815_close;
+        }
+        fut_printf("[MISC-TEST] ✓ Test 817: /dev/shm write+read roundtrip ok\n");
+        fut_test_pass();
+    }
+
+t815_close:
+    sys_close((int)shmfd);
+
+    /* Test 818: unlink the shared memory file */
+    fut_printf("[MISC-TEST] Test 818: unlink(\"/dev/shm/fut_shm_test\") → 0\n");
+    {
+        long r = sys_unlink("/dev/shm/fut_shm_test");
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 818: unlink returned %ld\n", r);
+            fut_test_fail(818);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 818: /dev/shm unlink → 0\n");
+            fut_test_pass();
+        }
+    }
+
+t815_done: ;
+
+    /* Test 819: O_ASYNC round-trip via F_SETFL/F_GETFL + F_SETOWN */
+    fut_printf("[MISC-TEST] Test 819: O_ASYNC F_SETFL/F_GETFL + F_SETOWN/F_GETOWN round-trip\n");
+    {
+        /* Create a pipe to test on */
+        int p[2] = {-1, -1};
+        extern long sys_pipe(int pipefd[2]);
+        long pr = sys_pipe(p);
+        if (pr != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 819: pipe() failed %ld\n", pr);
+            fut_test_fail(819);
+        } else {
+            /* F_SETOWN so kernel stores owner — F_GETOWN should return it */
+            #define T819_SETOWN 8
+            #define T819_GETOWN 9
+            sys_fcntl(p[0], T819_SETOWN, (uint64_t)5 /* PID 5 */);
+            long owner = sys_fcntl(p[0], T819_GETOWN, 0);
+            if (owner == 5) {
+                fut_printf("[MISC-TEST] ✓ Test 819: F_SETOWN/F_GETOWN round-trip ok\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 819: F_GETOWN returned %ld (expected 5)\n", owner);
+                fut_test_fail(819);
+            }
+            sys_close(p[0]);
+            sys_close(p[1]);
+        }
+    }
+}
+
 static void test_inotify_poll_epoll_select(void) {
     extern long sys_inotify_init1(int flags);
     extern long sys_inotify_add_watch(int fd, const char *path, uint32_t mask);
@@ -29937,6 +30059,7 @@ void fut_misc_test_thread(void *arg) {
     test_bind_mount();                    /* Tests 804-807: MS_BIND bind mount */
     test_mount_propagation();             /* Tests 808-811: MS_SLAVE/MS_PRIVATE/MS_SHARED/MS_REC no-op */
     test_inotify_rm_watch();              /* Tests 812-814: inotify_rm_watch + IN_IGNORED event */
+    test_dev_shm();                       /* Tests 815-819: /dev/shm POSIX shm path + O_ASYNC F_SETOWN */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

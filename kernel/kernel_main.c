@@ -1196,6 +1196,18 @@ void fut_kernel_main(void) {
         fut_printf("[WARN] ✗ Failed to mount ramfs at /tmp (error %d)\n", tmp_mount_ret);
     }
 
+    /* Create and mount /dev/shm for POSIX shared memory (shm_open/shm_unlink use this path) */
+    {
+        int shm_mkdir_ret = fut_vfs_mkdir("/dev/shm", 01777);
+        if (shm_mkdir_ret < 0 && shm_mkdir_ret != -EEXIST)
+            fut_printf("[WARN] Failed to create /dev/shm directory (error %d)\n", shm_mkdir_ret);
+        int shm_mount_ret = fut_vfs_mount(NULL, "/dev/shm", "ramfs", 0, NULL, FUT_INVALID_HANDLE);
+        if (shm_mount_ret == 0)
+            fut_printf("[INIT] ✓ Mounted ramfs at /dev/shm (POSIX shm_open support)\n");
+        else
+            fut_printf("[WARN] ✗ Failed to mount ramfs at /dev/shm (error %d)\n", shm_mount_ret);
+    }
+
     /* Initialize and mount procfs at /proc */
     {
         extern void fut_procfs_init(void);
@@ -1249,7 +1261,7 @@ void fut_kernel_main(void) {
         planned_tests += 17u; /* clock_sched: getres, sched_param, sched_policy, itimer, rusage, times, getpriority, setpriority, getpriority(-who), setpriority(-who), unshare(0), unshare(invalid), rr_get_interval, clock_gettime, posix_timer_sigev_value, posix_timer_si_timer, itimer_virtual */
         planned_tests += 22u; /* vfs: O_TRUNC, O_APPEND, relpath, dir_mtime, readlink, hardlink, mount, renameat2, inotify, inotify_rename, inotify_attrib, inotify_close, inotify_access, inotify_modify, inotify_ftruncate, inotify_utimensat, inotify_truncate, inotify_delete, umount expire, dotdot, eisdir, chdir_dotdot */
         planned_tests += 17u; /* poll: file ready, eventfd not-ready, eventfd ready, POLLNVAL, select file, select pipe, pselect6 pipe, pselect6 sigmask restore, timeout-only sleep, timerfd readiness, signalfd readiness, pipe EOF, select pipe EOF, select timerfd wakeup, poll negative fd, POLLRDNORM, select timeout update */
-        planned_tests += 814u; /* misc(814): ..., RLIMIT_FSIZE enforcement (788-791), O_PATH semantics (792-795), ftruncate/truncate RLIMIT_FSIZE (796-799), inotify poll/epoll/select (800-803), MS_BIND bind mount (804-807), MS_PROPAGATION no-op (808-811), inotify_rm_watch+IN_IGNORED (812-814) */
+        planned_tests += 819u; /* misc(819): ..., MS_BIND (804-807), MS_PROPAGATION (808-811), inotify_rm_watch+IN_IGNORED (812-814), /dev/shm+O_ASYNC (815-819) */
         // planned_tests += 1u; /* block */
         // planned_tests += 1u; /* futfs */
         // planned_tests += 1u; /* net */

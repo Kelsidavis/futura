@@ -464,9 +464,10 @@ long sys_sched_getattr(int pid, struct sched_attr *uattr, unsigned int usize,
 
     struct sched_attr attr;
     __builtin_memset(&attr, 0, sizeof(attr));
-    attr.size          = SCHED_ATTR_SIZE_VER0;
-    attr.sched_policy  = (uint32_t)policy;
-    attr.sched_nice    = target->nice;
+    attr.size           = SCHED_ATTR_SIZE_VER0;
+    attr.sched_policy   = (uint32_t)policy;
+    attr.sched_flags    = target->sched_flags;
+    attr.sched_nice     = target->nice;
     attr.sched_priority = (uint32_t)(prio > 0 ? prio : 0);
     /* Deadline fields: 0 (not a DEADLINE task) */
 
@@ -537,11 +538,18 @@ long sys_sched_setattr(int pid, const struct sched_attr *uattr, unsigned int fla
         thr->rt_priority   = prio;
         thr = thr->next;
     }
+    /* Validate sched_flags: only SCHED_FLAG_RESET_ON_FORK (0x01) is supported
+     * for non-deadline policies.  Unknown or deadline-only flags → EINVAL. */
+    #define SCHED_ATTR_VALID_FLAGS  ((uint64_t)SCHED_FLAG_RESET_ON_FORK)
+    if (attr.sched_flags & ~SCHED_ATTR_VALID_FLAGS)
+        return -EINVAL;
+
     /* Apply nice value (clamp to -20..19) */
     int nice = (int)attr.sched_nice;
     if (nice < -20) nice = -20;
     if (nice >  19) nice =  19;
     target->nice = nice;
+    target->sched_flags = attr.sched_flags;
 
     return 0;
 }

@@ -479,19 +479,38 @@
 #include <platform/platform.h>
 #include <sys/mman.h>
 #include <sys/resource.h>
+#include <sched.h>
 #include <kernel/debug_config.h>
 extern fut_interrupt_frame_t *fut_current_frame;
 
-/* clone() flag bits used for thread creation */
+/* clone() flag bits used for thread creation (guard against sched.h redefs) */
+#ifndef CLONE_VM
 #define CLONE_VM             0x00000100ULL  /* Share virtual memory */
+#endif
+#ifndef CLONE_FS
 #define CLONE_FS             0x00000200ULL  /* Share filesystem state */
+#endif
+#ifndef CLONE_FILES
 #define CLONE_FILES          0x00000400ULL  /* Share file descriptor table */
+#endif
+#ifndef CLONE_SIGHAND
 #define CLONE_SIGHAND        0x00000800ULL  /* Share signal handlers */
+#endif
+#ifndef CLONE_THREAD
 #define CLONE_THREAD         0x00010000ULL  /* Same thread group (share PID/TGID) */
+#endif
+#ifndef CLONE_SETTLS
 #define CLONE_SETTLS         0x00080000ULL  /* New TLS from tls argument */
+#endif
+#ifndef CLONE_PARENT_SETTID
 #define CLONE_PARENT_SETTID  0x00100000ULL  /* Write child TID to parent_tid pointer */
+#endif
+#ifndef CLONE_CHILD_CLEARTID
 #define CLONE_CHILD_CLEARTID 0x00200000ULL  /* Clear child_tid on thread exit + futex wake */
+#endif
+#ifndef CLONE_CHILD_SETTID
 #define CLONE_CHILD_SETTID   0x01000000ULL  /* Write child TID into child_tid address */
+#endif
 
 /* Fork debugging (controlled via debug_config.h) */
 #if FORK_DEBUG
@@ -975,6 +994,10 @@ long sys_fork(void) {
     child_task->personality   = parent_task->personality;
     child_task->dumpable      = parent_task->dumpable;
     child_task->no_new_privs  = parent_task->no_new_privs;
+    /* Inherit sched_flags; RESET_ON_FORK is NOT passed to child */
+    child_task->sched_flags   = parent_task->sched_flags & ~(uint64_t)SCHED_FLAG_RESET_ON_FORK;
+    /* nice value is always inherited (RESET_ON_FORK only affects RT policy) */
+    child_task->nice          = parent_task->nice;
     /* pdeathsig is NOT inherited — cleared on fork (Linux behavior) */
     child_task->pdeathsig     = 0;
     /* comm and exe_path are inherited (child starts with same name/exe) */
@@ -1687,6 +1710,19 @@ static fut_thread_t *clone_thread(fut_thread_t *parent_thread, fut_task_t *child
                (unsigned long long)child_thread->context.sp_el0);
 
 #endif
+
+    /* Inherit parent's scheduling policy and RT priority.
+     * If parent task has SCHED_FLAG_RESET_ON_FORK, reset child to SCHED_OTHER.
+     * The flag itself is NOT inherited (already cleared in child_task above). */
+    fut_task_t *parent_task_for_sched = parent_thread->task;
+    if (parent_task_for_sched &&
+        (parent_task_for_sched->sched_flags & SCHED_FLAG_RESET_ON_FORK)) {
+        child_thread->sched_policy = SCHED_OTHER;
+        child_thread->rt_priority  = 0;
+    } else {
+        child_thread->sched_policy = parent_thread->sched_policy;
+        child_thread->rt_priority  = parent_thread->rt_priority;
+    }
 
     return child_thread;
 }

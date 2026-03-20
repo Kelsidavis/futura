@@ -142,6 +142,7 @@ struct fut_task {
     uint32_t umask;                    // File creation mask (per-task, not global)
     unsigned long personality;         // Execution personality (PER_LINUX etc.)
     int nice;                          // Nice value: -20 (highest) to +19 (lowest), default 0
+    uint64_t sched_flags;              // Scheduling flags (e.g. SCHED_FLAG_RESET_ON_FORK)
 
     /* prctl state */
     char comm[16];                     // Process name (PR_SET_NAME/PR_GET_NAME, max 15 chars + null)

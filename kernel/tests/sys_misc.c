@@ -37148,6 +37148,165 @@ t1126:
 #undef SIGUSR1_NUM_SHD
 }
 
+/*
+ * Tests 1127-1130: sched_setattr/getattr sched_flags storage and validation
+ *
+ *   Test 1127: sched_setattr with SCHED_FLAG_RESET_ON_FORK (0x01) → getattr returns 0x01
+ *   Test 1128: sched_setattr with flags=0 clears flag → getattr returns 0
+ *   Test 1129: sched_setattr with unknown flags (0xff) → EINVAL
+ *   Test 1130: sched_setscheduler(SCHED_FIFO) after set_flags does NOT clear sched_flags
+ */
+static void test_sched_flags_roundtrip(void) {
+    extern long sys_sched_setattr(int pid, const void *uattr, unsigned int flags);
+    extern long sys_sched_getattr(int pid, void *uattr, unsigned int usize, unsigned int flags);
+    extern long sys_sched_setscheduler(int pid, int policy, const struct sched_param *param);
+
+#define SCHED_FLAG_RESET_ON_FORK_TEST 0x01ULL
+
+    /* ---- Test 1127: set SCHED_FLAG_RESET_ON_FORK, verify getattr returns it ---- */
+    fut_printf("[MISC-TEST] Test 1127: sched_setattr SCHED_FLAG_RESET_ON_FORK roundtrip\n");
+    {
+        struct sched_attr attr;
+        __builtin_memset(&attr, 0, sizeof(attr));
+        attr.size          = 48;
+        attr.sched_policy  = 0; /* SCHED_OTHER */
+        attr.sched_flags   = SCHED_FLAG_RESET_ON_FORK_TEST;
+        attr.sched_nice    = 0;
+        attr.sched_priority = 0;
+
+        long r = sys_sched_setattr(0, &attr, 0);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1127: sched_setattr returned %ld (expected 0)\n", r);
+            fut_test_fail(1127);
+            goto t1128;
+        }
+
+        struct sched_attr out;
+        __builtin_memset(&out, 0, sizeof(out));
+        r = sys_sched_getattr(0, &out, 48, 0);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1127: sched_getattr returned %ld\n", r);
+            fut_test_fail(1127);
+            goto t1128;
+        }
+        if (out.sched_flags != SCHED_FLAG_RESET_ON_FORK_TEST) {
+            fut_printf("[MISC-TEST] ✗ Test 1127: sched_flags=0x%llx expected 0x%llx\n",
+                       (unsigned long long)out.sched_flags,
+                       (unsigned long long)SCHED_FLAG_RESET_ON_FORK_TEST);
+            fut_test_fail(1127);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1127: sched_flags=0x%llx (RESET_ON_FORK stored)\n",
+                       (unsigned long long)out.sched_flags);
+            fut_test_pass();
+        }
+    }
+t1128:
+    /* ---- Test 1128: clear flags → getattr returns 0 ---- */
+    fut_printf("[MISC-TEST] Test 1128: sched_setattr flags=0 clears RESET_ON_FORK\n");
+    {
+        struct sched_attr attr;
+        __builtin_memset(&attr, 0, sizeof(attr));
+        attr.size = 48;
+        /* sched_flags already 0 from memset */
+        long r = sys_sched_setattr(0, &attr, 0);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1128: sched_setattr returned %ld\n", r);
+            fut_test_fail(1128);
+            goto t1129;
+        }
+        struct sched_attr out;
+        __builtin_memset(&out, 0, sizeof(out));
+        r = sys_sched_getattr(0, &out, 48, 0);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1128: sched_getattr returned %ld\n", r);
+            fut_test_fail(1128);
+            goto t1129;
+        }
+        if (out.sched_flags != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1128: sched_flags=0x%llx expected 0\n",
+                       (unsigned long long)out.sched_flags);
+            fut_test_fail(1128);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1128: sched_flags=0 (flag cleared)\n");
+            fut_test_pass();
+        }
+    }
+t1129:
+    /* ---- Test 1129: unknown flags → EINVAL ---- */
+    fut_printf("[MISC-TEST] Test 1129: sched_setattr with unknown flags=0xff → EINVAL\n");
+    {
+        struct sched_attr attr;
+        __builtin_memset(&attr, 0, sizeof(attr));
+        attr.size = 48;
+        attr.sched_flags = 0xffULL; /* Only 0x01 is valid for non-DEADLINE */
+        long r = sys_sched_setattr(0, &attr, 0);
+        if (r != -22) { /* -EINVAL */
+            fut_printf("[MISC-TEST] ✗ Test 1129: returned %ld (expected -EINVAL=-22)\n", r);
+            fut_test_fail(1129);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1129: sched_setattr(flags=0xff) → EINVAL\n");
+            fut_test_pass();
+        }
+    }
+    /* ---- Test 1130: sched_setscheduler does NOT clear sched_flags ---- */
+    fut_printf("[MISC-TEST] Test 1130: sched_setscheduler(FIFO) does not clear sched_flags\n");
+    {
+        /* First set RESET_ON_FORK flag */
+        struct sched_attr attr;
+        __builtin_memset(&attr, 0, sizeof(attr));
+        attr.size = 48;
+        attr.sched_flags = SCHED_FLAG_RESET_ON_FORK_TEST;
+        long r = sys_sched_setattr(0, &attr, 0);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1130: sched_setattr setup returned %ld\n", r);
+            fut_test_fail(1130);
+            goto t1130_cleanup;
+        }
+
+        /* Switch to SCHED_FIFO via sched_setscheduler */
+        struct sched_param sp;
+        sp.sched_priority = 10;
+        r = sys_sched_setscheduler(0, 1 /* SCHED_FIFO */, &sp);
+        if (r < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1130: sched_setscheduler returned %ld\n", r);
+            fut_test_fail(1130);
+            goto t1130_cleanup;
+        }
+
+        /* sched_getattr should still show sched_flags = RESET_ON_FORK */
+        struct sched_attr out;
+        __builtin_memset(&out, 0, sizeof(out));
+        r = sys_sched_getattr(0, &out, 48, 0);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1130: sched_getattr returned %ld\n", r);
+            fut_test_fail(1130);
+            goto t1130_cleanup;
+        }
+        if (out.sched_flags != SCHED_FLAG_RESET_ON_FORK_TEST) {
+            fut_printf("[MISC-TEST] ✗ Test 1130: sched_flags=0x%llx after setscheduler "
+                       "(expected 0x%llx)\n",
+                       (unsigned long long)out.sched_flags,
+                       (unsigned long long)SCHED_FLAG_RESET_ON_FORK_TEST);
+            fut_test_fail(1130);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1130: sched_flags=0x%llx preserved after "
+                       "sched_setscheduler\n",
+                       (unsigned long long)out.sched_flags);
+            fut_test_pass();
+        }
+
+t1130_cleanup:
+        /* Restore to SCHED_OTHER, flags=0 */
+        __builtin_memset(&attr, 0, sizeof(attr));
+        attr.size = 48;
+        sys_sched_setattr(0, &attr, 0);
+        sp.sched_priority = 0;
+        sys_sched_setscheduler(0, 0 /* SCHED_OTHER */, &sp);
+    }
+
+#undef SCHED_FLAG_RESET_ON_FORK_TEST
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -37761,6 +37920,7 @@ void fut_misc_test_thread(void *arg) {
     test_sigpending_accuracy();     /* Tests 1115-1118: sigpending() and SigPnd: proc/self/status accuracy */
     test_sched_attr_nice_getpriority(); /* Tests 1119-1122: sched_setattr/getattr nice and getpriority consistency */
     test_shd_pnd_kill();                /* Tests 1123-1126: ShdPnd: process-wide pending via kill() */
+    test_sched_flags_roundtrip();       /* Tests 1127-1130: sched_flags storage/validation/persistence */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

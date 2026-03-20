@@ -238,6 +238,7 @@ enum procfs_kind {
     PROC_DISKSTATS,                 /* /proc/diskstats — block device I/O statistics */
     PROC_PARTITIONS,                /* /proc/partitions — block device partition table */
     PROC_CGROUPS,                   /* /proc/cgroups — cgroup subsystem list */
+    PROC_PAGEMAP,                   /* /proc/<pid>/pagemap — physical page info (binary, 8 bytes/page) */
 };
 
 typedef struct {
@@ -365,6 +366,7 @@ typedef struct {
 #define PROC_INO_PID_MEM(p)            (1000ULL + (uint64_t)(p) * 100 + 28)
 #define PROC_INO_PID_UID_MAP(p)        (1000ULL + (uint64_t)(p) * 100 + 29)
 #define PROC_INO_PID_GID_MAP(p)        (1000ULL + (uint64_t)(p) * 100 + 30)
+#define PROC_INO_PID_PAGEMAP(p)        (1000ULL + (uint64_t)(p) * 100 + 31)
 #define PROC_INO_PID_SETGROUPS(p)      (1000ULL + (uint64_t)(p) * 100 + 31)
 #define PROC_INO_PID_LOGINUID(p)       (1000ULL + (uint64_t)(p) * 100 + 32)
 #define PROC_INO_PID_SESSIONID(p)      (1000ULL + (uint64_t)(p) * 100 + 33)
@@ -2140,6 +2142,64 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
         return (ssize_t)copy_sz;
     }
 
+    /*
+     * /proc/<pid>/pagemap: binary file, 8 bytes per page of virtual address space.
+     * offset is a byte offset; entry index = offset / 8; VA = entry_index * PAGE_SIZE.
+     *
+     * Each 64-bit entry:
+     *   bit 63: page present (in a mapped VMA)
+     *   bit 56: page exclusively mapped (not shared)
+     *   bits 0-54: page frame number (synthetic: VA >> PAGE_SHIFT)
+     *
+     * Returns 0 entries for unmapped regions (Linux semantics).
+     * Tools use this to discover which pages are resident (bit 63).
+     */
+    if (n->kind == PROC_PAGEMAP) {
+        if (size == 0) return 0;
+        /* size must be a multiple of 8 */
+        size_t entries = size / 8;
+        if (entries == 0) return -EINVAL;
+
+        fut_task_t *task = fut_task_by_pid(n->pid);
+        if (!task) return -ESRCH;
+        fut_mm_t *mm = task->mm ? task->mm : fut_mm_current();
+        if (!mm) return -EIO;
+
+        uint64_t *out = (uint64_t *)buf;
+        uintptr_t base_va = (uintptr_t)(offset / 8) * PAGE_SIZE;
+
+        for (size_t i = 0; i < entries; i++) {
+            uintptr_t va = base_va + (uintptr_t)(i * PAGE_SIZE);
+            /* Walk VMA list to check if va is mapped */
+            struct fut_vma *vma = mm->vma_list;
+            while (vma && vma->end <= va)
+                vma = vma->next;
+
+            uint64_t entry;
+            if (vma && vma->start <= va) {
+                /* Page is present in a mapped VMA.
+                 * Synthetic PFN: treat VA as if mapped 1:1 at same frame index. */
+                uint64_t pfn = va >> 12;  /* PAGE_SHIFT = 12 */
+                int shared = (vma->flags & VMA_SHARED) ? 1 : 0;
+                entry = (1ULL << 63)                     /* PM_PRESENT */
+                      | (shared ? 0 : (1ULL << 56))      /* PM_MMAP_EXCLUSIVE if private */
+                      | (pfn & 0x7fffffffffffffULL);      /* bits 0-54: PFN */
+            } else {
+                entry = 0;  /* not mapped */
+            }
+
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)buf >= KERNEL_VIRTUAL_BASE) {
+                out[i] = entry;
+                continue;
+            }
+#endif
+            if (fut_copy_to_user(&out[i], &entry, sizeof(entry)) != 0)
+                return (i > 0) ? (ssize_t)(i * 8) : -EFAULT;
+        }
+        return (ssize_t)(entries * 8);
+    }
+
     /* Generate content into a temporary 8KB buffer */
     const size_t GEN_BUF = 8192;
     char *tmp = fut_malloc(GEN_BUF);
@@ -3420,6 +3480,11 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0100444, PROC_PERSONALITY, pid, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "pagemap")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_PAGEMAP(pid),
+                                          0100400, PROC_PAGEMAP, pid, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         if (STREQ(name, "mountinfo")) {
             *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_MOUNTINFO(pid),
                                           0100444, PROC_MOUNTINFO, pid, 0);
@@ -3547,6 +3612,8 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
             { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_WCHAN(pid),        0100444, PROC_WCHAN,           pid,0); return *result ? 0 : -ENOMEM; }
         if (STREQ(name, "personality"))
             { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_PERSONALITY(pid),  0100444, PROC_PERSONALITY,     pid,0); return *result ? 0 : -ENOMEM; }
+        if (STREQ(name, "pagemap"))
+            { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_PAGEMAP(pid),      0100400, PROC_PAGEMAP,         pid,0); return *result ? 0 : -ENOMEM; }
         if (STREQ(name, "mountinfo"))
             { *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_MOUNTINFO(pid), 0100444, PROC_MOUNTINFO,       pid,0); return *result ? 0 : -ENOMEM; }
         if (STREQ(name, "coredump_filter"))
@@ -4289,7 +4356,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             "wchan", "mountinfo", "coredump_filter", "schedstat", "net", "attr",
             "smaps_rollup", "auxv", "mem",
             "uid_map", "gid_map", "setgroups",
-            "loginuid", "sessionid", "personality"
+            "loginuid", "sessionid", "personality", "pagemap"
         };
         static const uint8_t etypes[] = {
             FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
@@ -4306,10 +4373,11 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
-            FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG
+            FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+            FUT_VDIR_TYPE_REG
         };
         uint64_t pid = dn->pid;
-        if (idx < 36) {
+        if (idx < 37) {
             uint64_t ino;
             switch (idx) {
                 case 0:  ino = PROC_INO_PID_DIR(pid);        break;
@@ -4348,6 +4416,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                 case 33: ino = PROC_INO_PID_LOGINUID(pid);          break;
                 case 34: ino = PROC_INO_PID_SESSIONID(pid);         break;
                 case 35: ino = PROC_INO_PID_PERSONALITY(pid);       break;
+                case 36: ino = PROC_INO_PID_PAGEMAP(pid);           break;
                 default: ino = 0; break;
             }
             de->d_ino    = ino;

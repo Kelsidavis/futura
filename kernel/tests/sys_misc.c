@@ -29426,6 +29426,100 @@ static void test_epoll_fd_fstat(void) {
 #undef S_IFCHR_TEST
 }
 
+/*
+ * test_proc_pagemap - Tests 823-826: /proc/<pid>/pagemap binary interface
+ *
+ *   Test 823: open /proc/self/pagemap succeeds
+ *   Test 824: seek + read 8 bytes for a known mapped page -> bit 63 set (present)
+ *   Test 825: seek + read 8 bytes for an unmapped page -> entry is 0 (not present)
+ *   Test 826: close pagemap fd succeeds
+ */
+static void test_proc_pagemap(void) {
+    extern long sys_openat(int dirfd, const char *pathname, int flags, int mode);
+    extern long sys_close(int fd);
+    extern long sys_mmap(void *addr, size_t len, int prot, int flags, int fd2, long offset);
+    extern long sys_munmap(void *addr, size_t len);
+    extern ssize_t sys_read(int fd, void *buf, size_t count);
+    extern int64_t fut_vfs_lseek(int fd, int64_t offset, int whence);
+
+    fut_printf("[MISC-TEST] Test 823-826: /proc/self/pagemap binary interface\n");
+
+    /* Test 823: open /proc/self/pagemap */
+    int pmfd = (int)sys_openat(-100 /* AT_FDCWD */, "/proc/self/pagemap",
+                                0 /* O_RDONLY */, 0);
+    if (pmfd < 0) {
+        fut_printf("[MISC-TEST] â open /proc/self/pagemap failed: %d\n", pmfd);
+        fut_test_fail(823);
+        fut_test_fail(824);
+        fut_test_fail(825);
+        fut_test_fail(826);
+        return;
+    }
+    fut_test_pass(); /* 823 */
+
+    /* Map an anonymous page so we have a known present VMA */
+    long map_ret = sys_mmap(NULL, 4096, 3 /* PROT_READ|PROT_WRITE */,
+                            0x22 /* MAP_ANONYMOUS|MAP_PRIVATE */, -1, 0);
+    if (map_ret < 0) {
+        fut_printf("[MISC-TEST] â mmap for pagemap test failed: %ld\n", map_ret);
+        fut_test_fail(824);
+        fut_test_fail(825);
+        sys_close(pmfd);
+        fut_test_pass(); /* 826 (close at least works) */
+        return;
+    }
+    uintptr_t mapped_va = (uintptr_t)map_ret;
+
+    /* Test 824: read pagemap entry for the mapped page -- bit 63 must be set */
+    /* file offset = (VA / PAGE_SIZE) * 8 */
+    uint64_t pm_offset = (uint64_t)(mapped_va / 4096) * 8;
+    int64_t seekret = fut_vfs_lseek(pmfd, (int64_t)pm_offset, 0 /* SEEK_SET */);
+    uint64_t entry = 0;
+    ssize_t nread = 0;
+    if (seekret == (int64_t)pm_offset) {
+        nread = sys_read(pmfd, &entry, 8);
+    }
+    if (nread == 8 && (entry & (1ULL << 63))) {
+        fut_printf("[MISC-TEST] â pagemap: mapped page entry=0x%llx (bit63 set)\n",
+                   (unsigned long long)entry);
+        fut_test_pass(); /* 824 */
+    } else {
+        fut_printf("[MISC-TEST] â pagemap: mapped page nread=%zd entry=0x%llx (expected bit63)\n",
+                   (long)nread, (unsigned long long)entry);
+        fut_test_fail(824);
+    }
+
+    sys_munmap((void *)mapped_va, 4096);
+
+    /* Test 825: read pagemap entry for an unmapped address (high user VA).
+     * The entry should be 0 (not present). */
+    uintptr_t unmapped_va = 0x0000700000000000ULL;
+    uint64_t um_offset = (uint64_t)(unmapped_va / 4096) * 8;
+    int64_t seekret2 = fut_vfs_lseek(pmfd, (int64_t)um_offset, 0 /* SEEK_SET */);
+    uint64_t entry2 = 0xdeadbeefdeadbeefULL;
+    ssize_t nread2 = 0;
+    if (seekret2 == (int64_t)um_offset) {
+        nread2 = sys_read(pmfd, &entry2, 8);
+    }
+    if (nread2 == 8 && entry2 == 0) {
+        fut_printf("[MISC-TEST] â pagemap: unmapped page entry=0 (not present)\n");
+        fut_test_pass(); /* 825 */
+    } else {
+        fut_printf("[MISC-TEST] â pagemap: unmapped page nread=%zd entry=0x%llx (expected 0)\n",
+                   (long)nread2, (unsigned long long)entry2);
+        fut_test_fail(825);
+    }
+
+    /* Test 826: close pagemap fd */
+    long cret = sys_close(pmfd);
+    if (cret == 0) {
+        fut_test_pass(); /* 826 */
+    } else {
+        fut_printf("[MISC-TEST] â close pagemap fd failed: %ld\n", cret);
+        fut_test_fail(826);
+    }
+}
+
 static void test_inotify_poll_epoll_select(void) {
     extern long sys_inotify_init1(int flags);
     extern long sys_inotify_add_watch(int fd, const char *path, uint32_t mask);
@@ -30110,6 +30204,7 @@ void fut_misc_test_thread(void *arg) {
     test_inotify_rm_watch();              /* Tests 812-814: inotify_rm_watch + IN_IGNORED event */
     test_dev_shm();                       /* Tests 815-819: /dev/shm POSIX shm path + O_ASYNC F_SETOWN */
     test_epoll_fd_fstat();                /* Tests 820-822: epoll fd in fd_table, fstat → S_IFCHR */
+    test_proc_pagemap();                  /* Tests 823-826: /proc/self/pagemap binary interface */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

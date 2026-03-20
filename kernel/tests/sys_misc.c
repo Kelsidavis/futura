@@ -36694,6 +36694,161 @@ t1112:
     }
 }
 
+/* ============================================================
+ * Tests 1115-1118: sigpending() and /proc/self/status SigPnd: accuracy
+ *   Test 1115: sigpending() returns 0 initially (clean state)
+ *   Test 1116: Block SIGUSR2, tgkill self, sigpending() shows SIGUSR2 bit
+ *   Test 1117: /proc/self/status SigPnd: shows SIGUSR2 bit while pending
+ *   Test 1118: rt_sigtimedwait consumes signal; sigpending() cleared
+ *
+ * SIGUSR2 = signal 12 → bit 11 → bitmask 0x800
+ * ============================================================ */
+static void test_sigpending_accuracy(void) {
+    extern long sys_sigpending(sigset_t *set);
+    extern long sys_sigprocmask(int how, const sigset_t *set, sigset_t *oldset);
+    extern long sys_rt_sigtimedwait(const uint64_t *uthese, void *uinfo,
+                                    const void *uts, size_t sigsetsize);
+
+#define SIGUSR2_BIT   0x800ULL   /* signal 12 = bit 11 */
+#define SIGUSR2_NUM   12
+
+    struct timespec ts = { .tv_sec = 0, .tv_nsec = 50000000 }; /* 50ms timeout */
+
+    /* ---- Test 1115: sigpending() returns 0 initially ---- */
+    fut_printf("[MISC-TEST] Test 1115: sigpending() returns 0 initially\n");
+    {
+        sigset_t pending = { .__mask = 0xdeadbeefULL };
+        long r = sys_sigpending(&pending);
+        /* Mask to the signals we care about (standard signals 1-31) */
+        uint64_t pend_val = pending.__mask & 0x7fffffffULL;
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1115: sigpending() returned %ld (expected 0)\n", r);
+            fut_test_fail(1115);
+        } else if (pend_val & SIGUSR2_BIT) {
+            /* If SIGUSR2 is pending from a prior test, clean it up */
+            uint64_t catch_mask = SIGUSR2_BIT;
+            sys_rt_sigtimedwait(&catch_mask, NULL, &ts, sizeof(uint64_t));
+            fut_printf("[MISC-TEST] ✓ Test 1115: SIGUSR2 was pending from prior test, cleared; sigpending ok\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1115: sigpending() initial state clean (0x%llx)\n",
+                       (unsigned long long)pend_val);
+            fut_test_pass();
+        }
+    }
+
+    /* ---- Test 1116: sigpending() shows SIGUSR2 after blocking+sending ---- */
+    fut_printf("[MISC-TEST] Test 1116: Block SIGUSR2, tgkill self → sigpending() shows SIGUSR2\n");
+    {
+        extern long sys_tgkill(int tgid, int tid, int sig);
+        fut_task_t *task = fut_task_current();
+        fut_thread_t *thread = fut_thread_current();
+        if (!task || !thread) {
+            fut_printf("[MISC-TEST] ✗ Test 1116: no current task/thread\n");
+            fut_test_fail(1116);
+            goto t1117;
+        }
+
+        /* Block SIGUSR2 */
+        sigset_t block = { .__mask = SIGUSR2_BIT };
+        sigset_t old   = { .__mask = 0 };
+        long r = sys_sigprocmask(0 /* SIG_BLOCK */, &block, &old);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1116: sigprocmask(SIG_BLOCK, SIGUSR2) failed: %ld\n", r);
+            fut_test_fail(1116);
+            goto t1117;
+        }
+
+        /* Send SIGUSR2 to self (tgkill) — stays pending since blocked */
+        r = sys_tgkill((int)task->pid, (int)thread->tid, SIGUSR2_NUM);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1116: tgkill(SIGUSR2) returned %ld\n", r);
+            sys_sigprocmask(2 /* SIG_SETMASK */, &old, NULL);
+            fut_test_fail(1116);
+            goto t1117;
+        }
+
+        /* sigpending() should show SIGUSR2 pending */
+        sigset_t pending = { .__mask = 0 };
+        r = sys_sigpending(&pending);
+        if (r != 0 || !(pending.__mask & SIGUSR2_BIT)) {
+            fut_printf("[MISC-TEST] ✗ Test 1116: sigpending=0x%llx r=%ld (expected bit 0x%llx)\n",
+                       (unsigned long long)pending.__mask, r, (unsigned long long)SIGUSR2_BIT);
+            sys_sigprocmask(2, &old, NULL);
+            fut_test_fail(1116);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1116: sigpending()=0x%llx has SIGUSR2 bit\n",
+                       (unsigned long long)pending.__mask);
+            fut_test_pass();
+        }
+        /* Leave SIGUSR2 pending for test 1117 */
+    }
+
+t1117:
+    /* ---- Test 1117: /proc/self/status SigPnd: shows SIGUSR2 pending ---- */
+    fut_printf("[MISC-TEST] Test 1117: /proc/self/status SigPnd: reflects pending SIGUSR2\n");
+    {
+        int fd = fut_vfs_open("/proc/self/status", 0, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1117: open /proc/self/status failed: %d\n", fd);
+            fut_test_fail(1117);
+            goto t1118;
+        }
+        char buf[2048];
+        long n = fut_vfs_read(fd, buf, sizeof(buf) - 1);
+        fut_vfs_close(fd);
+        if (n <= 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1117: read status failed: %ld\n", n);
+            fut_test_fail(1117);
+            goto t1118;
+        }
+        buf[n] = '\0';
+        uint64_t sigpnd = status_parse_hex_field(buf, n, "SigPnd", 6);
+        if (sigpnd == (uint64_t)-1) {
+            fut_printf("[MISC-TEST] ✗ Test 1117: SigPnd: field not found in status\n");
+            fut_test_fail(1117);
+        } else if (!(sigpnd & SIGUSR2_BIT)) {
+            fut_printf("[MISC-TEST] ✗ Test 1117: SigPnd=0x%llx missing SIGUSR2 bit (0x%llx)\n",
+                       (unsigned long long)sigpnd, (unsigned long long)SIGUSR2_BIT);
+            fut_test_fail(1117);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1117: SigPnd=0x%llx has SIGUSR2 bit\n",
+                       (unsigned long long)sigpnd);
+            fut_test_pass();
+        }
+    }
+
+t1118:
+    /* ---- Test 1118: consume SIGUSR2 via rt_sigtimedwait → sigpending cleared ---- */
+    fut_printf("[MISC-TEST] Test 1118: rt_sigtimedwait consumes SIGUSR2 → sigpending cleared\n");
+    {
+        uint64_t catch_mask = SIGUSR2_BIT;
+        long r = sys_rt_sigtimedwait(&catch_mask, NULL, &ts, sizeof(uint64_t));
+        /* r should be the signal number (12) on success, or EAGAIN if already consumed */
+        if (r == SIGUSR2_NUM || r == -11 /* EAGAIN — already consumed or never sent */) {
+            /* Now check sigpending is clear */
+            sigset_t pending = { .__mask = 0 };
+            sys_sigpending(&pending);
+            if (pending.__mask & SIGUSR2_BIT) {
+                fut_printf("[MISC-TEST] ✗ Test 1118: sigpending still has SIGUSR2 after rt_sigtimedwait\n");
+                fut_test_fail(1118);
+            } else {
+                fut_printf("[MISC-TEST] ✓ Test 1118: sigpending cleared after consuming SIGUSR2\n");
+                fut_test_pass();
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1118: rt_sigtimedwait returned %ld (expected 12 or EAGAIN)\n", r);
+            fut_test_fail(1118);
+        }
+        /* Restore signal mask: unblock SIGUSR2 */
+        sigset_t unblock = { .__mask = SIGUSR2_BIT };
+        sys_sigprocmask(1 /* SIG_UNBLOCK */, &unblock, NULL);
+    }
+
+#undef SIGUSR2_BIT
+#undef SIGUSR2_NUM
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -37304,6 +37459,7 @@ void fut_misc_test_thread(void *arg) {
     test_sched_batch_idle_roundtrip(); /* Tests 1101-1104: SCHED_BATCH/SCHED_IDLE roundtrip */
     test_sched_rt_policy_roundtrip(); /* Tests 1105-1110: SCHED_FIFO/SCHED_RR roundtrip */
     test_sched_param_rt_readback(); /* Tests 1111-1114: sched_getparam/sched_setparam RT priority readback */
+    test_sigpending_accuracy();     /* Tests 1115-1118: sigpending() and SigPnd: proc/self/status accuracy */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

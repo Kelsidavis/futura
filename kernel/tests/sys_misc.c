@@ -34122,6 +34122,129 @@ static void test_prctl_timerslack_capbset(void) {
 #undef TPTS_CAP_SETPCAP
 }
 
+/*
+ * test_nanosleep_rmtp_sigpipe_ign — Tests 1036-1040
+ *
+ * Tests nanosleep POSIX correctness and SIGPIPE SIG_IGN behavior:
+ *   1036: nanosleep EINTR with signal pre-pending → rmtp set to full requested time
+ *   1037: nanosleep(NULL, rmtp) → EINVAL (NULL request pointer)
+ *   1038: nanosleep({nsec=2000000000}, NULL) → EINVAL (nsec ≥ 10^9)
+ *   1039: write to broken pipe with SIGPIPE=SIG_IGN → EPIPE, SIGPIPE NOT queued
+ *   1040: nanosleep({0,0}, NULL) → 0 (zero duration is valid, immediate return)
+ */
+static void test_nanosleep_rmtp_sigpipe_ign(void) {
+    extern long sys_nanosleep(const fut_timespec_t *req, fut_timespec_t *rem);
+    extern long sys_pipe(int pipefd[2]);
+    extern long sys_write(int fd, const void *buf, size_t count);
+    extern long sys_close(int fd);
+
+    fut_task_t *task = fut_task_current();
+
+    /* ---- Test 1036: EINTR → rmtp = full requested duration ---- */
+    fut_printf("[MISC-TEST] Test 1036: nanosleep EINTR → rmtp set to full req duration\n");
+    {
+        /* Pre-pend SIGUSR1 (signal 10, bit 9); block it so we survive */
+        uint64_t saved_mask = task->signal_mask;
+        task->signal_mask |= (1ULL << 9);
+        __atomic_or_fetch(&task->pending_signals, (1ULL << 9), __ATOMIC_RELEASE);
+
+        fut_timespec_t req = { .tv_sec = 1, .tv_nsec = 0 };
+        fut_timespec_t rmtp = { .tv_sec = -1, .tv_nsec = -1 };
+        long r = sys_nanosleep(&req, &rmtp);
+
+        /* Restore */
+        task->signal_mask = saved_mask;
+        __atomic_and_fetch(&task->pending_signals, ~(1ULL << 9), __ATOMIC_RELEASE);
+
+        if (r == -EINTR && rmtp.tv_sec == 1 && rmtp.tv_nsec == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1036: EINTR + rmtp={%lld,%lld} (full duration)\n",
+                       (long long)rmtp.tv_sec, (long long)rmtp.tv_nsec);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1036: ret=%ld rmtp={%lld,%lld} (want EINTR+{1,0})\n",
+                       r, (long long)rmtp.tv_sec, (long long)rmtp.tv_nsec);
+            fut_test_fail(1036);
+        }
+    }
+
+    /* ---- Test 1037: nanosleep(NULL, rmtp) → EINVAL ---- */
+    fut_printf("[MISC-TEST] Test 1037: nanosleep(NULL, rmtp) → EINVAL\n");
+    {
+        fut_timespec_t rmtp = {0};
+        long r = sys_nanosleep(NULL, &rmtp);
+        if (r == -EINVAL) {
+            fut_printf("[MISC-TEST] ✓ Test 1037: nanosleep(NULL) → EINVAL\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1037: nanosleep(NULL)=%ld (expected -EINVAL=%d)\n",
+                       r, -EINVAL);
+            fut_test_fail(1037);
+        }
+    }
+
+    /* ---- Test 1038: nanosleep({nsec=2000000000}) → EINVAL (nsec out of range) ---- */
+    fut_printf("[MISC-TEST] Test 1038: nanosleep({nsec=2000000000}) → EINVAL\n");
+    {
+        fut_timespec_t req = { .tv_sec = 0, .tv_nsec = 2000000000LL };
+        long r = sys_nanosleep(&req, NULL);
+        if (r == -EINVAL) {
+            fut_printf("[MISC-TEST] ✓ Test 1038: nanosleep(nsec>=1e9) → EINVAL\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1038: nanosleep(bad nsec)=%ld (expected -EINVAL=%d)\n",
+                       r, -EINVAL);
+            fut_test_fail(1038);
+        }
+    }
+
+    /* ---- Test 1039: SIGPIPE=SIG_IGN → write broken pipe returns EPIPE, no signal queued ---- */
+    fut_printf("[MISC-TEST] Test 1039: SIGPIPE=SIG_IGN → EPIPE without queuing\n");
+    {
+        /* Install SIG_IGN for SIGPIPE (signal 13, index 12) */
+        void (*old_handler)(int) = task->signal_handlers[12];
+        task->signal_handlers[12] = SIG_IGN;
+        __atomic_and_fetch(&task->pending_signals, ~(1ULL << 12), __ATOMIC_ACQ_REL);
+
+        int pfd[2];
+        long pr = sys_pipe(pfd);
+        if (pr != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1039: pipe() failed: %ld\n", pr);
+            fut_test_fail(1039);
+            task->signal_handlers[12] = old_handler;
+        } else {
+            sys_close(pfd[0]);  /* close read end → writes will get EPIPE */
+            long wr = sys_write(pfd[1], "x", 1);
+            sys_close(pfd[1]);
+            int sigpipe_queued = (__atomic_load_n(&task->pending_signals,
+                                                   __ATOMIC_ACQUIRE) >> 12) & 1;
+            task->signal_handlers[12] = old_handler;
+
+            if (wr == -EPIPE && !sigpipe_queued) {
+                fut_printf("[MISC-TEST] ✓ Test 1039: SIGPIPE=SIG_IGN: EPIPE + no signal queued\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1039: write=%ld sigpipe_queued=%d "
+                           "(want EPIPE + no queue)\n", wr, sigpipe_queued);
+                fut_test_fail(1039);
+            }
+        }
+    }
+
+    /* ---- Test 1040: nanosleep({0,0}) → 0 (zero duration, immediate return) ---- */
+    fut_printf("[MISC-TEST] Test 1040: nanosleep({0,0}) → 0 (zero duration valid)\n");
+    {
+        fut_timespec_t req = { .tv_sec = 0, .tv_nsec = 0 };
+        long r = sys_nanosleep(&req, NULL);
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1040: nanosleep({0,0}) → 0\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1040: nanosleep({0,0})=%ld (expected 0)\n", r);
+            fut_test_fail(1040);
+        }
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -34713,6 +34836,7 @@ void fut_misc_test_thread(void *arg) {
     test_mmap_dup3_select_errors();      /* Tests 1021-1025: mmap unaligned-offset→EINVAL, dup3 errors, select nfds>FD_SETSIZE→EINVAL */
     test_file_io_posix_semantics();      /* Tests 1026-1030: read@EOF→0, fstat size/mtime after write, lseek(SEEK_END), F_SETFL+O_APPEND */
     test_prctl_timerslack_capbset();     /* Tests 1031-1035: PR_GET/SET_TIMERSLACK, PR_CAPBSET_READ/EINVAL, PR_CAPBSET_DROP/EINVAL */
+    test_nanosleep_rmtp_sigpipe_ign();   /* Tests 1036-1040: nanosleep rmtp on EINTR, NULL req, bad nsec, SIGPIPE+SIG_IGN, zero sleep */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

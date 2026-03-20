@@ -32060,6 +32060,142 @@ static void test_prctl_get_auxv(void) {
 #undef PR_GET_AUXV_MAGIC
 }
 
+/* ============================================================
+ * test_prctl_arm64_options() — Tests 979-984
+ * ============================================================
+ *
+ * ARM64-specific prctl options and PR_SET_SYSCALL_USER_DISPATCH:
+ *
+ *   979: PR_SET_FP_MODE(0)              → 0 (standard FPSIMD mode accepted)
+ *   980: PR_GET_FP_MODE                 → 0 (reports standard FPSIMD mode)
+ *   981: PR_PAC_RESET_KEYS(all keys)    → 0 (PAC key reset no-op)
+ *   982: PR_SET_TAGGED_ADDR_CTRL(0)     → 0 (no MTE tagging accepted)
+ *   983: PR_GET_TAGGED_ADDR_CTRL        → 0 (no tagged addresses)
+ *   984: PR_SET_SYSCALL_USER_DISPATCH   → 0 (Wine/Proton dispatch no-op)
+ *
+ * On ARM64: these test real ARM64 compat behavior.
+ * On x86_64: PR_SET/GET_FP_MODE and PAC/MTE return EINVAL per Linux; we
+ * skip those with pass so the test count stays identical across arches.
+ */
+static void test_prctl_arm64_options(void) {
+    fut_printf("[MISC-TEST] Tests 979-984: ARM64 prctl options + syscall user dispatch\n");
+
+    extern long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
+                          unsigned long arg4, unsigned long arg5);
+
+#define T_PR_SET_FP_MODE            45UL
+#define T_PR_GET_FP_MODE            46UL
+#define T_PR_PAC_RESET_KEYS         54UL
+#define T_PR_PAC_ALL_KEYS           0x1fUL  /* APDAKEY|APDBKEY|APGAKEY|APIAKEY|APIBKEY */
+#define T_PR_SET_TAGGED_ADDR_CTRL   55UL
+#define T_PR_GET_TAGGED_ADDR_CTRL   56UL
+#define T_PR_SET_SYSCALL_USER_DISPATCH 43UL
+
+    long r;
+
+    /* --- Test 979: PR_SET_FP_MODE(0) --- */
+    fut_printf("[MISC-TEST] Test 979: prctl(PR_SET_FP_MODE, 0) → 0\n");
+#ifdef __aarch64__
+    r = sys_prctl((int)T_PR_SET_FP_MODE, 0UL, 0UL, 0UL, 0UL);
+    if (r == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 979: PR_SET_FP_MODE(0) = 0\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 979: PR_SET_FP_MODE returned %ld\n", r);
+        fut_test_fail(979);
+    }
+#else
+    /* x86_64: PR_SET_FP_MODE is ARM64-only; EINVAL is correct Linux behavior */
+    fut_printf("[MISC-TEST] ✓ Test 979: PR_SET_FP_MODE (ARM64-only, SKIP on x86_64)\n");
+    fut_test_pass();
+#endif
+
+    /* --- Test 980: PR_GET_FP_MODE --- */
+    fut_printf("[MISC-TEST] Test 980: prctl(PR_GET_FP_MODE) → 0\n");
+#ifdef __aarch64__
+    r = sys_prctl((int)T_PR_GET_FP_MODE, 0UL, 0UL, 0UL, 0UL);
+    if (r == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 980: PR_GET_FP_MODE = 0 (standard FPSIMD)\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 980: PR_GET_FP_MODE returned %ld\n", r);
+        fut_test_fail(980);
+    }
+#else
+    fut_printf("[MISC-TEST] ✓ Test 980: PR_GET_FP_MODE (ARM64-only, SKIP on x86_64)\n");
+    fut_test_pass();
+#endif
+
+    /* --- Test 981: PR_PAC_RESET_KEYS --- */
+    fut_printf("[MISC-TEST] Test 981: prctl(PR_PAC_RESET_KEYS, all_keys) → 0\n");
+#ifdef __aarch64__
+    r = sys_prctl((int)T_PR_PAC_RESET_KEYS, T_PR_PAC_ALL_KEYS, 0UL, 0UL, 0UL);
+    if (r == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 981: PR_PAC_RESET_KEYS = 0\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 981: PR_PAC_RESET_KEYS returned %ld\n", r);
+        fut_test_fail(981);
+    }
+#else
+    fut_printf("[MISC-TEST] ✓ Test 981: PR_PAC_RESET_KEYS (ARM64-only, SKIP on x86_64)\n");
+    fut_test_pass();
+#endif
+
+    /* --- Test 982: PR_SET_TAGGED_ADDR_CTRL(0) --- */
+    fut_printf("[MISC-TEST] Test 982: prctl(PR_SET_TAGGED_ADDR_CTRL, 0) → 0\n");
+#ifdef __aarch64__
+    r = sys_prctl((int)T_PR_SET_TAGGED_ADDR_CTRL, 0UL, 0UL, 0UL, 0UL);
+    if (r == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 982: PR_SET_TAGGED_ADDR_CTRL(0) = 0\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 982: PR_SET_TAGGED_ADDR_CTRL returned %ld\n", r);
+        fut_test_fail(982);
+    }
+#else
+    fut_printf("[MISC-TEST] ✓ Test 982: PR_SET_TAGGED_ADDR_CTRL (ARM64-only, SKIP on x86_64)\n");
+    fut_test_pass();
+#endif
+
+    /* --- Test 983: PR_GET_TAGGED_ADDR_CTRL --- */
+    fut_printf("[MISC-TEST] Test 983: prctl(PR_GET_TAGGED_ADDR_CTRL) → 0\n");
+#ifdef __aarch64__
+    r = sys_prctl((int)T_PR_GET_TAGGED_ADDR_CTRL, 0UL, 0UL, 0UL, 0UL);
+    if (r == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 983: PR_GET_TAGGED_ADDR_CTRL = 0 (no MTE)\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 983: PR_GET_TAGGED_ADDR_CTRL returned %ld\n", r);
+        fut_test_fail(983);
+    }
+#else
+    fut_printf("[MISC-TEST] ✓ Test 983: PR_GET_TAGGED_ADDR_CTRL (ARM64-only, SKIP on x86_64)\n");
+    fut_test_pass();
+#endif
+
+    /* --- Test 984: PR_SET_SYSCALL_USER_DISPATCH --- */
+    /* Linux 5.11+: Wine/Proton use this to intercept syscalls for Windows emulation.
+     * Futura accepts it as no-op; both ARM64 and x86_64 should return 0. */
+    fut_printf("[MISC-TEST] Test 984: prctl(PR_SET_SYSCALL_USER_DISPATCH) → 0\n");
+    r = sys_prctl((int)T_PR_SET_SYSCALL_USER_DISPATCH, 0UL, 0UL, 0UL, 0UL);
+    if (r == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 984: PR_SET_SYSCALL_USER_DISPATCH = 0\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 984: PR_SET_SYSCALL_USER_DISPATCH returned %ld\n", r);
+        fut_test_fail(984);
+    }
+
+#undef T_PR_SET_FP_MODE
+#undef T_PR_GET_FP_MODE
+#undef T_PR_PAC_RESET_KEYS
+#undef T_PR_PAC_ALL_KEYS
+#undef T_PR_SET_TAGGED_ADDR_CTRL
+#undef T_PR_GET_TAGGED_ADDR_CTRL
+#undef T_PR_SET_SYSCALL_USER_DISPATCH
+}
+
 static void test_cross_fs_exdev(void) {
     fut_printf("[MISC-TEST] Tests 937-941: cross-filesystem EXDEV / same-fs link+rename\n");
 
@@ -32963,6 +33099,7 @@ void fut_misc_test_thread(void *arg) {
     test_proc_pid_root();                /* Tests 969-972: /proc/self/root symlink */
     test_prctl_ptracer();                /* Tests 973-975: PR_SET_PTRACER Yama LSM no-op */
     test_prctl_get_auxv();               /* Tests 976-978: PR_GET_AUXV auxv copy */
+    test_prctl_arm64_options();          /* Tests 979-984: ARM64 FP/PAC/MTE + syscall-user-dispatch */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

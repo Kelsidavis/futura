@@ -115,6 +115,31 @@ static inline int prctl_copy_to_user(void *dst, const void *src, size_t n) {
 #define PR_SET_MDWE         65  /* Memory-deny-write-execute policy */
 #define PR_GET_MDWE         66  /* Get MDWE policy */
 
+/* Linux 5.11+: syscall user dispatch (Wine/Proton syscall virtualization) */
+#define PR_SET_SYSCALL_USER_DISPATCH  43
+
+/* ARM64-specific prctl options */
+#define PR_SET_FP_MODE      45  /* Set FP mode (ARM64 only) */
+#define PR_GET_FP_MODE      46  /* Get FP mode (ARM64 only) */
+#define PR_FP_MODE_FR       (1 << 0)  /* 64-bit FP registers */
+#define PR_FP_MODE_FRE      (1 << 1)  /* 32-bit compat FP */
+
+#define PR_PAC_RESET_KEYS   54  /* Reset ARM64 PAC keys */
+#define PR_PAC_APDAKEY      (1 << 0)
+#define PR_PAC_APDBKEY      (1 << 1)
+#define PR_PAC_APGAKEY      (1 << 2)
+#define PR_PAC_APIAKEY      (1 << 3)
+#define PR_PAC_APIBKEY      (1 << 4)
+
+#define PR_SET_TAGGED_ADDR_CTRL  55  /* Tagged address ABI control (ARM64 MTE) */
+#define PR_GET_TAGGED_ADDR_CTRL  56  /* Get tagged address ABI control */
+#define PR_TAGGED_ADDR_ENABLE    (1UL << 0)  /* Enable tagged user addresses */
+#define PR_MTE_TCF_SHIFT         1
+#define PR_MTE_TCF_NONE          (0UL << PR_MTE_TCF_SHIFT)
+#define PR_MTE_TCF_SYNC          (1UL << PR_MTE_TCF_SHIFT)
+#define PR_MTE_TCF_ASYNC         (2UL << PR_MTE_TCF_SHIFT)
+#define PR_MTE_TCF_MASK          (3UL << PR_MTE_TCF_SHIFT)
+
 /**
  * sys_prctl - Process control operations
  *
@@ -448,6 +473,45 @@ long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
         /* Yama LSM ptrace-scope override (Linux 3.4+).
          * arg2 = PID to allow (or PR_SET_PTRACER_ANY for any process, or 0 to clear).
          * Futura has no Yama LSM; accept as no-op so Docker/gdb don't see EINVAL. */
+        return 0;
+
+    case PR_SET_SYSCALL_USER_DISPATCH:
+        /* Linux 5.11+: enable/disable userspace syscall interception via SIGSYS.
+         * Used by Wine/Proton on ARM64 for Windows syscall emulation.
+         * Futura has no user-dispatch mechanism; accept as no-op so callers
+         * don't abort. arg2=PR_SYS_DISPATCH_OFF(0)/ON(1); arg3=offset; arg4=len; arg5=selector */
+        return 0;
+
+    case PR_SET_FP_MODE:
+        /* ARM64 floating-point mode control (Linux 4.9+).
+         * Valid modes: 0 (default FPSIMD), PR_FP_MODE_FR (1), PR_FP_MODE_FRE (2).
+         * Futura always uses standard FPSIMD mode; accept valid values as no-op.
+         * x86_64: EINVAL is correct Linux behavior; we accept here for compat. */
+        if (arg2 & ~(unsigned long)(PR_FP_MODE_FR | PR_FP_MODE_FRE))
+            return -EINVAL;
+        return 0;
+
+    case PR_GET_FP_MODE:
+        /* Return current FP mode: 0 = standard FPSIMD (default for all Futura tasks). */
+        return 0;
+
+    case PR_PAC_RESET_KEYS:
+        /* ARM64 pointer-authentication key reset (Linux 5.0+).
+         * arg2 is a bitmask of keys to reset (PR_PAC_AP{DA,DB,GA,IA,IB}KEY).
+         * Futura has no PAC hardware; accept as no-op so PAC-aware programs start. */
+        return 0;
+
+    case PR_SET_TAGGED_ADDR_CTRL:
+        /* ARM64 MTE (Memory Tagging Extension) tagged-address ABI control (Linux 5.10+).
+         * arg2 is a flags word: PR_TAGGED_ADDR_ENABLE + MTE TCF mode + tag mask.
+         * Futura has no MTE hardware; only accept arg2=0 (no tagging); reject non-zero
+         * so callers correctly detect that MTE is unavailable. */
+        if (arg2 != 0)
+            return -EINVAL;
+        return 0;
+
+    case PR_GET_TAGGED_ADDR_CTRL:
+        /* Return tagged-address control word: 0 = no tagged addresses (MTE not enabled). */
         return 0;
 
     case PR_GET_AUXV: {

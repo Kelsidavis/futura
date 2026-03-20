@@ -107,6 +107,7 @@ long sys_brk(uintptr_t new_break) {
     }
 
     fut_mm_t *mm = fut_task_get_mm(task);
+    if (!mm) mm = fut_mm_current();
     if (!mm) {
         brk_printf("[BRK] brk(new_break=0x%lx) -> ENOMEM (no mm context)\n", new_break);
         return -ENOMEM;
@@ -197,6 +198,21 @@ long sys_brk(uintptr_t new_break) {
                    "(exceeds heap limit, Phase 2)\n",
                    new_break, current, brk_limit, change_category);
         return -ENOMEM;
+    }
+
+    /* RLIMIT_DATA: data segment size = heap end - heap base */
+    if (new_break > current) {
+        uint64_t rlim_data = task->rlimits[2].rlim_cur; /* RLIMIT_DATA = 2 */
+        if (rlim_data != (uint64_t)-1) {
+            uint64_t new_data_size = new_break - brk_start;
+            if (new_data_size > rlim_data) {
+                brk_printf("[BRK] brk(new_break=0x%lx) -> ENOMEM (RLIMIT_DATA exceeded: "
+                           "data_size=0x%llx > limit=0x%llx)\n",
+                           new_break, (unsigned long long)new_data_size,
+                           (unsigned long long)rlim_data);
+                return -ENOMEM;
+            }
+        }
     }
 
     /* Phase 2: No-op check */
@@ -354,6 +370,7 @@ long sys_brk(uintptr_t new_break) {
     }
 
     fut_mm_t *mm = fut_task_get_mm(task);
+    if (!mm) mm = fut_mm_current();
     if (!mm) {
         brk_printf("[BRK] brk(new_break=0x%lx) -> ENOMEM (no mm context)\n", local_new_break);
         return -ENOMEM;
@@ -443,6 +460,21 @@ long sys_brk(uintptr_t new_break) {
                    "(exceeds heap limit, ARM64)\n",
                    local_new_break, current, brk_limit, change_category);
         return -ENOMEM;
+    }
+
+    /* RLIMIT_DATA: data segment size = heap end - heap base */
+    if (local_new_break > current) {
+        uint64_t rlim_data = task->rlimits[2].rlim_cur; /* RLIMIT_DATA = 2 */
+        if (rlim_data != (uint64_t)-1) {
+            uint64_t new_data_size = local_new_break - brk_start;
+            if (new_data_size > rlim_data) {
+                brk_printf("[BRK] brk(new_break=0x%lx) -> ENOMEM (RLIMIT_DATA exceeded: "
+                           "data_size=0x%llx > limit=0x%llx, ARM64)\n",
+                           local_new_break, (unsigned long long)new_data_size,
+                           (unsigned long long)rlim_data);
+                return -ENOMEM;
+            }
+        }
     }
 
     /* No-op check */

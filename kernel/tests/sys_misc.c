@@ -32495,6 +32495,74 @@ static void test_madvise_wipeonfork_flag(void) {
 #undef PAGE_992
 }
 
+/*
+ * test_rlimit_data_brk — Tests 994-996
+ *
+ *   994: brk(0) query with RLIMIT_DATA=inf → returns current break (≥ 0)
+ *   995: brk(current+PAGE_SIZE) with RLIMIT_DATA=PAGE_SIZE-1 → ENOMEM (data_size exceeds limit)
+ *   996: restore RLIMIT_DATA=inf, brk(0) query → returns current break (limit restored)
+ */
+static void test_rlimit_data_brk(void) {
+    fut_printf("[MISC-TEST] Tests 994-996: RLIMIT_DATA enforcement in brk()\n");
+
+    extern long sys_brk(uintptr_t new_break);
+    extern long sys_prlimit64(int pid, int resource,
+                              const void *new_limit, void *old_limit);
+#define RLIMIT_DATA_994  2u
+#define PAGE_SZ_994      4096UL
+#define RLIM64_INF_994   ((uint64_t)-1)
+
+    struct { uint64_t cur; uint64_t max; } old_data, new_data;
+
+    /* Save current RLIMIT_DATA */
+    sys_prlimit64(0, RLIMIT_DATA_994, (void *)0, &old_data);
+
+    /* Test 994: with RLIMIT_DATA=inf, brk(0) query returns current break */
+    fut_printf("[MISC-TEST] Test 994: brk(0) with RLIMIT_DATA=inf → current break\n");
+    long cur = sys_brk(0);
+    if (cur >= 0) {
+        fut_printf("[MISC-TEST] ✓ Test 994: brk(0) returned current break %ld\n", cur);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 994: brk(0) returned %ld (expected ≥ 0)\n", cur);
+        fut_test_fail(994);
+    }
+
+    /* Test 995: RLIMIT_DATA = PAGE_SIZE-1; brk(current+PAGE_SIZE) → ENOMEM
+     * data_size = (cur + PAGE_SIZE) - brk_start; since brk_start=0, data_size = PAGE_SIZE > limit */
+    fut_printf("[MISC-TEST] Test 995: brk(current+PAGE_SIZE) with RLIMIT_DATA=%lu → ENOMEM\n",
+               PAGE_SZ_994 - 1);
+    new_data.cur = PAGE_SZ_994 - 1;
+    new_data.max = RLIM64_INF_994;
+    sys_prlimit64(0, RLIMIT_DATA_994, &new_data, (void *)0);
+    long r995 = sys_brk((uintptr_t)(cur + (long)PAGE_SZ_994));
+    if (r995 == -12 /* ENOMEM */) {
+        fut_printf("[MISC-TEST] ✓ Test 995: brk blocked by RLIMIT_DATA → ENOMEM\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 995: brk returned %ld (expected -ENOMEM=-12)\n", r995);
+        fut_test_fail(995);
+    }
+
+    /* Restore RLIMIT_DATA */
+    sys_prlimit64(0, RLIMIT_DATA_994, &old_data, (void *)0);
+
+    /* Test 996: after restoring RLIMIT_DATA=inf, brk(0) still returns current break */
+    fut_printf("[MISC-TEST] Test 996: brk(0) after restoring RLIMIT_DATA=inf → current break\n");
+    long r996 = sys_brk(0);
+    if (r996 >= 0) {
+        fut_printf("[MISC-TEST] ✓ Test 996: brk(0) returned %ld after restore\n", r996);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 996: brk(0) returned %ld after restore\n", r996);
+        fut_test_fail(996);
+    }
+
+#undef RLIMIT_DATA_994
+#undef PAGE_SZ_994
+#undef RLIM64_INF_994
+}
+
 static void test_cross_fs_exdev(void) {
     fut_printf("[MISC-TEST] Tests 937-941: cross-filesystem EXDEV / same-fs link+rename\n");
 
@@ -33402,6 +33470,7 @@ void fut_misc_test_thread(void *arg) {
     test_rlimit_as_mmap();               /* Tests 985-988: RLIMIT_AS enforcement in mmap */
     test_madvise_dontneed_zeros();       /* Tests 989-991: MADV_DONTNEED/FREE zero anon pages */
     test_madvise_wipeonfork_flag();      /* Tests 992-993: MADV_WIPEONFORK sets/clears VMA flag */
+    test_rlimit_data_brk();              /* Tests 994-996: RLIMIT_DATA enforcement in brk() */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -32287,6 +32287,119 @@ static void test_rlimit_as_mmap(void) {
 #undef RLIM64_INF_985
 }
 
+/*
+ * test_madvise_dontneed_zeros — Tests 989-991
+ *
+ *   989: write to anon page, MADV_DONTNEED → memory reads as zero
+ *   990: MADV_FREE on anon page also zeros memory
+ *   991: MADV_DONTNEED on partial range zeros only that subrange
+ */
+static void test_madvise_dontneed_zeros(void) {
+    fut_printf("[MISC-TEST] Tests 989-991: MADV_DONTNEED/FREE zero anonymous pages\n");
+
+    extern long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long off);
+    extern long sys_munmap(void *addr, size_t len);
+    extern long sys_madvise(void *addr, size_t length, int advice);
+#define MADV_DONTNEED_989   4
+#define MADV_FREE_989       8
+#define PROT_RW_989         (1|2)       /* PROT_READ|PROT_WRITE */
+#define MAP_ANON_989        (0x20|0x2)  /* MAP_ANONYMOUS|MAP_PRIVATE */
+#define PAGE_989            4096UL
+
+    /* Test 989: write pattern, MADV_DONTNEED, read → zero */
+    fut_printf("[MISC-TEST] Test 989: MADV_DONTNEED zeros anon page\n");
+    void *p989 = (void *)sys_mmap(NULL, PAGE_989, PROT_RW_989, MAP_ANON_989, -1, 0);
+    if (!p989 || (long)(uintptr_t)p989 < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 989: mmap failed\n");
+        fut_test_fail(989); fut_test_fail(990); fut_test_fail(991);
+        return;
+    }
+    /* Write non-zero pattern */
+    unsigned char *bp = (unsigned char *)p989;
+    for (unsigned i = 0; i < PAGE_989; i++) bp[i] = 0xAB;
+    /* MADV_DONTNEED: expect memory to be zeroed */
+    long r = sys_madvise(p989, PAGE_989, MADV_DONTNEED_989);
+    int all_zero = (r == 0);
+    if (all_zero) {
+        for (unsigned i = 0; i < PAGE_989; i++) {
+            if (bp[i] != 0) { all_zero = 0; break; }
+        }
+    }
+    sys_munmap(p989, PAGE_989);
+    if (all_zero) {
+        fut_printf("[MISC-TEST] ✓ Test 989: MADV_DONTNEED zeroed anon page\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 989: memory not zeroed after MADV_DONTNEED (ret=%ld)\n", r);
+        fut_test_fail(989);
+    }
+
+    /* Test 990: MADV_FREE also zeros */
+    fut_printf("[MISC-TEST] Test 990: MADV_FREE zeros anon page\n");
+    void *p990 = (void *)sys_mmap(NULL, PAGE_989, PROT_RW_989, MAP_ANON_989, -1, 0);
+    if (!p990 || (long)(uintptr_t)p990 < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 990: mmap failed\n");
+        fut_test_fail(990); fut_test_fail(991);
+        return;
+    }
+    bp = (unsigned char *)p990;
+    for (unsigned i = 0; i < PAGE_989; i++) bp[i] = 0xCD;
+    r = sys_madvise(p990, PAGE_989, MADV_FREE_989);
+    int all_zero2 = (r == 0);
+    if (all_zero2) {
+        for (unsigned i = 0; i < PAGE_989; i++) {
+            if (bp[i] != 0) { all_zero2 = 0; break; }
+        }
+    }
+    sys_munmap(p990, PAGE_989);
+    if (all_zero2) {
+        fut_printf("[MISC-TEST] ✓ Test 990: MADV_FREE zeroed anon page\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 990: memory not zeroed after MADV_FREE (ret=%ld)\n", r);
+        fut_test_fail(990);
+    }
+
+    /* Test 991: partial range — only first half of 2-page mapping is DONTNEED'd */
+    fut_printf("[MISC-TEST] Test 991: MADV_DONTNEED on partial range\n");
+    void *p991 = (void *)sys_mmap(NULL, 2 * PAGE_989, PROT_RW_989, MAP_ANON_989, -1, 0);
+    if (!p991 || (long)(uintptr_t)p991 < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 991: mmap failed\n");
+        fut_test_fail(991);
+        return;
+    }
+    bp = (unsigned char *)p991;
+    /* Fill both pages with 0xEF */
+    for (unsigned i = 0; i < 2 * PAGE_989; i++) bp[i] = 0xEF;
+    /* DONTNEED only the first page */
+    r = sys_madvise(p991, PAGE_989, MADV_DONTNEED_989);
+    int first_zero = (r == 0);
+    int second_nonzero = 1;
+    if (first_zero) {
+        for (unsigned i = 0; i < PAGE_989; i++) {
+            if (bp[i] != 0) { first_zero = 0; break; }
+        }
+    }
+    for (unsigned i = PAGE_989; i < 2 * PAGE_989; i++) {
+        if (bp[i] != 0xEF) { second_nonzero = 0; break; }
+    }
+    sys_munmap(p991, 2 * PAGE_989);
+    if (first_zero && second_nonzero) {
+        fut_printf("[MISC-TEST] ✓ Test 991: partial MADV_DONTNEED zeroed first page only\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 991: partial DONTNEED: first_zero=%d second_nonzero=%d\n",
+                   first_zero, second_nonzero);
+        fut_test_fail(991);
+    }
+
+#undef MADV_DONTNEED_989
+#undef MADV_FREE_989
+#undef PROT_RW_989
+#undef MAP_ANON_989
+#undef PAGE_989
+}
+
 static void test_cross_fs_exdev(void) {
     fut_printf("[MISC-TEST] Tests 937-941: cross-filesystem EXDEV / same-fs link+rename\n");
 
@@ -33192,6 +33305,7 @@ void fut_misc_test_thread(void *arg) {
     test_prctl_get_auxv();               /* Tests 976-978: PR_GET_AUXV auxv copy */
     test_prctl_arm64_options();          /* Tests 979-984: ARM64 FP/PAC/MTE + syscall-user-dispatch */
     test_rlimit_as_mmap();               /* Tests 985-988: RLIMIT_AS enforcement in mmap */
+    test_madvise_dontneed_zeros();       /* Tests 989-991: MADV_DONTNEED/FREE zero anon pages */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

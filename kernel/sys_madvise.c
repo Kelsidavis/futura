@@ -14,9 +14,12 @@
  */
 
 #include <kernel/fut_mm.h>
+#include <kernel/fut_task.h>
+#include <kernel/fut_thread.h>
 #include <kernel/errno.h>
 #include <sys/mman.h>
 #include <stdint.h>
+#include <string.h>
 
 /* Note: PAGE_SIZE, PAGE_ALIGN_DOWN, PAGE_ALIGN_UP are defined in platform paging.h
    and already included via fut_mm.h */
@@ -137,8 +140,35 @@ long sys_madvise(void *addr, size_t length, int advice) {
     case MADV_RANDOM:       /* 1: expect random access */
     case MADV_SEQUENTIAL:   /* 2: expect sequential access */
     case MADV_WILLNEED:     /* 3: prefetch pages soon */
-    case MADV_DONTNEED:     /* 4: free pages, won't need soon */
-    case MADV_FREE:         /* 8: lazy free (Linux 4.5+) */
+        return 0;
+
+    case MADV_DONTNEED:     /* 4: release anon pages; next access sees zeros */
+    case MADV_FREE: {       /* 8: lazy-free (Linux 4.5+) — same observable effect */
+        /* For anonymous private VMAs, zero the range so the next read returns 0,
+         * matching Linux semantics (pages are unmapped; new demand-zero pages appear).
+         * Shared/file-backed VMAs are left untouched (no-op is safe). */
+        fut_task_t *task = fut_task_current();
+        fut_mm_t *mm = task ? fut_task_get_mm(task) : NULL;
+        if (!mm) mm = fut_mm_current();
+        if (mm) {
+            uintptr_t range_start = addr_aligned;
+            uintptr_t range_end   = addr_aligned + length_aligned;
+            struct fut_vma *vma = mm->vma_list;
+            while (vma) {
+                /* Only zero anonymous (vnode==NULL) private (not VMA_SHARED) VMAs */
+                if (!vma->vnode && !(vma->flags & VMA_SHARED)) {
+                    uintptr_t zstart = vma->start > range_start ? vma->start : range_start;
+                    uintptr_t zend   = vma->end   < range_end   ? vma->end   : range_end;
+                    if (zstart < zend) {
+                        memset((void *)zstart, 0, zend - zstart);
+                    }
+                }
+                vma = vma->next;
+            }
+        }
+        return 0;
+    }
+
     case MADV_REMOVE:       /* 9: punch hole / remove pages */
     case MADV_DONTFORK:     /* 10: don't inherit on fork */
     case MADV_DOFORK:       /* 11: inherit on fork (default) */

@@ -127,6 +127,10 @@ enum procfs_kind {
     PROC_SYS_NET_PORT_RANGE,    /* /proc/sys/net/ipv4/ip_local_port_range */
     PROC_SYS_NET_FIN_TIMEOUT,   /* /proc/sys/net/ipv4/tcp_fin_timeout */
     PROC_SYS_NET_SYNCOOKIES,    /* /proc/sys/net/ipv4/tcp_syncookies */
+    PROC_SYS_NET_TCP_KEEPALIVE_TIME,  /* /proc/sys/net/ipv4/tcp_keepalive_time */
+    PROC_SYS_NET_TCP_KEEPALIVE_INTVL, /* /proc/sys/net/ipv4/tcp_keepalive_intvl */
+    PROC_SYS_NET_TCP_KEEPALIVE_PROBES,/* /proc/sys/net/ipv4/tcp_keepalive_probes */
+    PROC_SYS_NET_IP_UNPRIV_PORT_START,/* /proc/sys/net/ipv4/ip_unprivileged_port_start */
     PROC_VMSTAT,           /* /proc/vmstat */
     PROC_NET_DIR,          /* /proc/net/ */
     PROC_NET_DEV,          /* /proc/net/dev */
@@ -366,8 +370,8 @@ typedef struct {
 #define PROC_INO_PID_MEM(p)            (1000ULL + (uint64_t)(p) * 100 + 28)
 #define PROC_INO_PID_UID_MAP(p)        (1000ULL + (uint64_t)(p) * 100 + 29)
 #define PROC_INO_PID_GID_MAP(p)        (1000ULL + (uint64_t)(p) * 100 + 30)
-#define PROC_INO_PID_PAGEMAP(p)        (1000ULL + (uint64_t)(p) * 100 + 31)
 #define PROC_INO_PID_SETGROUPS(p)      (1000ULL + (uint64_t)(p) * 100 + 31)
+#define PROC_INO_PID_PAGEMAP(p)        (1000ULL + (uint64_t)(p) * 100 + 35)
 #define PROC_INO_PID_LOGINUID(p)       (1000ULL + (uint64_t)(p) * 100 + 32)
 #define PROC_INO_PID_SESSIONID(p)      (1000ULL + (uint64_t)(p) * 100 + 33)
 #define PROC_INO_PID_PERSONALITY(p)    (1000ULL + (uint64_t)(p) * 100 + 34)
@@ -393,6 +397,11 @@ typedef struct {
 #define PROC_INO_SYS_FS_AIO_NR         381ULL
 #define PROC_INO_SYS_FS_PROT_HL        382ULL
 #define PROC_INO_SYS_FS_PROT_SL        383ULL
+/* /proc/sys/net/ipv4/ extended range: 404-407 */
+#define PROC_INO_SYS_NET_KEEPALIVE_TIME  404ULL
+#define PROC_INO_SYS_NET_KEEPALIVE_INTVL 405ULL
+#define PROC_INO_SYS_NET_KEEPALIVE_PROBES 406ULL
+#define PROC_INO_SYS_NET_UNPRIV_PORT     407ULL
 /* /proc/sys/kernel/ extended range: 400-429 */
 #define PROC_INO_SYS_KERNEL_NMI_WD     400ULL
 #define PROC_INO_SYS_KERNEL_WATCHDOG   401ULL
@@ -2740,6 +2749,19 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             /* 0 = IP forwarding disabled */
             total = gen_sysctl_str(tmp, GEN_BUF, "0");
             break;
+        case PROC_SYS_NET_TCP_KEEPALIVE_TIME:
+            total = gen_sysctl_str(tmp, GEN_BUF, "7200");
+            break;
+        case PROC_SYS_NET_TCP_KEEPALIVE_INTVL:
+            total = gen_sysctl_str(tmp, GEN_BUF, "75");
+            break;
+        case PROC_SYS_NET_TCP_KEEPALIVE_PROBES:
+            total = gen_sysctl_str(tmp, GEN_BUF, "9");
+            break;
+        case PROC_SYS_NET_IP_UNPRIV_PORT_START:
+            /* 1024 = unprivileged programs can bind ports >= 1024 */
+            total = gen_sysctl_str(tmp, GEN_BUF, "1024");
+            break;
         case PROC_NET_ARP:
             total = gen_net_arp(tmp, GEN_BUF);
             break;
@@ -3834,6 +3856,26 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0100644, PROC_SYS_NET_IP_FORWARD, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "tcp_keepalive_time")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_NET_KEEPALIVE_TIME,
+                                          0100644, PROC_SYS_NET_TCP_KEEPALIVE_TIME, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "tcp_keepalive_intvl")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_NET_KEEPALIVE_INTVL,
+                                          0100644, PROC_SYS_NET_TCP_KEEPALIVE_INTVL, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "tcp_keepalive_probes")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_NET_KEEPALIVE_PROBES,
+                                          0100644, PROC_SYS_NET_TCP_KEEPALIVE_PROBES, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "ip_unprivileged_port_start")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_NET_UNPRIV_PORT,
+                                          0100644, PROC_SYS_NET_IP_UNPRIV_PORT_START, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         return -ENOENT;
     }
 
@@ -4588,18 +4630,28 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
     if (dn->kind == PROC_SYS_NET_IPV4_DIR) {
         static const char *e[] = { ".", "..", "ip_local_port_range",
                                    "tcp_fin_timeout", "tcp_syncookies",
-                                   "tcp_rmem", "tcp_wmem", "ip_forward" };
+                                   "tcp_rmem", "tcp_wmem", "ip_forward",
+                                   "tcp_keepalive_time", "tcp_keepalive_intvl",
+                                   "tcp_keepalive_probes",
+                                   "ip_unprivileged_port_start" };
         static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG };
         static const uint64_t i[] = { PROC_INO_SYS_NET_IPV4_DIR, PROC_INO_SYS_NET_DIR,
                                       PROC_INO_SYS_NET_PORT_RANGE, PROC_INO_SYS_NET_FIN_TIMEOUT,
                                       PROC_INO_SYS_NET_SYNCOOKIES,
                                       PROC_INO_SYS_NET_TCP_RMEM, PROC_INO_SYS_NET_TCP_WMEM,
-                                      PROC_INO_SYS_NET_IP_FORWARD };
-        if (idx < 8) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+                                      PROC_INO_SYS_NET_IP_FORWARD,
+                                      PROC_INO_SYS_NET_KEEPALIVE_TIME,
+                                      PROC_INO_SYS_NET_KEEPALIVE_INTVL,
+                                      PROC_INO_SYS_NET_KEEPALIVE_PROBES,
+                                      PROC_INO_SYS_NET_UNPRIV_PORT };
+        if (idx < 12) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
         return -ENOENT;
     }
 

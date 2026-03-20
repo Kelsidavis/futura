@@ -29648,6 +29648,96 @@ static void test_sysfs_net_lo(void) {
     }
 }
 
+/*
+ * test_proc_sys_net_keepalive - Tests 834-837: /proc/sys/net/ipv4 tcp_keepalive_*
+ *                               and ip_unprivileged_port_start
+ *
+ *   Test 834: tcp_keepalive_time readable, contains "7200\n"
+ *   Test 835: tcp_keepalive_intvl readable, contains "75\n"
+ *   Test 836: tcp_keepalive_probes readable, contains "9\n"
+ *   Test 837: ip_unprivileged_port_start readable, contains "1024\n"
+ */
+static void test_proc_sys_net_keepalive(void) {
+    extern long sys_openat(int dirfd, const char *pathname, int flags, int mode);
+    extern long sys_close(int fd);
+    extern ssize_t sys_read(int fd, void *buf, size_t count);
+
+    fut_printf("[MISC-TEST] Tests 834-837: /proc/sys/net/ipv4 tcp_keepalive + ip_unprivileged_port_start\n");
+
+    char buf[32];
+    ssize_t n;
+    long fd;
+
+    /* Test 834: tcp_keepalive_time = 7200 */
+    fd = sys_openat(-100, "/proc/sys/net/ipv4/tcp_keepalive_time", 0, 0);
+    if (fd >= 0) {
+        __builtin_memset(buf, 0, sizeof(buf));
+        n = sys_read((int)fd, buf, sizeof(buf) - 1);
+        sys_close((int)fd);
+        if (n > 0 && __builtin_memcmp(buf, "7200\n", 5) == 0) {
+            fut_test_pass(); /* 834 */
+        } else {
+            fut_printf("[MISC-TEST] x tcp_keepalive_time wrong: n=%zd content='%.10s'\n", n, buf);
+            fut_test_fail(834);
+        }
+    } else {
+        fut_printf("[MISC-TEST] x open tcp_keepalive_time failed: %ld\n", fd);
+        fut_test_fail(834);
+    }
+
+    /* Test 835: tcp_keepalive_intvl = 75 */
+    fd = sys_openat(-100, "/proc/sys/net/ipv4/tcp_keepalive_intvl", 0, 0);
+    if (fd >= 0) {
+        __builtin_memset(buf, 0, sizeof(buf));
+        n = sys_read((int)fd, buf, sizeof(buf) - 1);
+        sys_close((int)fd);
+        if (n > 0 && __builtin_memcmp(buf, "75\n", 3) == 0) {
+            fut_test_pass(); /* 835 */
+        } else {
+            fut_printf("[MISC-TEST] x tcp_keepalive_intvl wrong: n=%zd content='%.10s'\n", n, buf);
+            fut_test_fail(835);
+        }
+    } else {
+        fut_printf("[MISC-TEST] x open tcp_keepalive_intvl failed: %ld\n", fd);
+        fut_test_fail(835);
+    }
+
+    /* Test 836: tcp_keepalive_probes = 9 */
+    fd = sys_openat(-100, "/proc/sys/net/ipv4/tcp_keepalive_probes", 0, 0);
+    if (fd >= 0) {
+        __builtin_memset(buf, 0, sizeof(buf));
+        n = sys_read((int)fd, buf, sizeof(buf) - 1);
+        sys_close((int)fd);
+        if (n > 0 && buf[0] == '9' && buf[1] == '\n') {
+            fut_test_pass(); /* 836 */
+        } else {
+            fut_printf("[MISC-TEST] x tcp_keepalive_probes wrong: n=%zd content='%.10s'\n", n, buf);
+            fut_test_fail(836);
+        }
+    } else {
+        fut_printf("[MISC-TEST] x open tcp_keepalive_probes failed: %ld\n", fd);
+        fut_test_fail(836);
+    }
+
+    /* Test 837: ip_unprivileged_port_start = 1024 */
+    fd = sys_openat(-100, "/proc/sys/net/ipv4/ip_unprivileged_port_start", 0, 0);
+    if (fd >= 0) {
+        __builtin_memset(buf, 0, sizeof(buf));
+        n = sys_read((int)fd, buf, sizeof(buf) - 1);
+        sys_close((int)fd);
+        if (n > 0 && __builtin_memcmp(buf, "1024\n", 5) == 0) {
+            fut_test_pass(); /* 837 */
+        } else {
+            fut_printf("[MISC-TEST] x ip_unprivileged_port_start wrong: n=%zd content='%.10s'\n", n, buf);
+            fut_test_fail(837);
+        }
+    } else {
+        fut_printf("[MISC-TEST] x open ip_unprivileged_port_start failed: %ld\n", fd);
+        fut_test_fail(837);
+    }
+}
+
+
 static void test_inotify_poll_epoll_select(void) {
     extern long sys_inotify_init1(int flags);
     extern long sys_inotify_add_watch(int fd, const char *path, uint32_t mask);
@@ -30334,6 +30424,7 @@ void fut_misc_test_thread(void *arg) {
     test_epoll_fd_fstat();                /* Tests 820-822: epoll fd in fd_table, fstat → S_IFCHR */
     test_proc_pagemap();                  /* Tests 823-826: /proc/self/pagemap binary interface */
     test_sysfs_net_lo();                   /* Tests 827-833: /sys/class/net/lo/ loopback interface */
+    test_proc_sys_net_keepalive();         /* Tests 834-837: /proc/sys/net/ipv4 tcp_keepalive_*+ip_unprivileged_port_start */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -37386,6 +37386,124 @@ static void test_prio_thread(void) {
 #undef PRIO_THREAD_TEST
 }
 
+/* Tests 1135-1136: sched_setattr atomic-failure semantics
+ *
+ *   Test 1135: sched_setattr with invalid flags does NOT modify the previous policy
+ *   Test 1136: sched_setattr with invalid prio for SCHED_FIFO does NOT modify nice
+ */
+static void test_sched_setattr_atomic_fail(void) {
+    extern long sys_sched_setattr(int pid, const void *uattr, unsigned int flags);
+    extern long sys_sched_getattr(int pid, void *uattr, unsigned int usize,
+                                  unsigned int flags);
+    extern long sys_sched_setscheduler(int pid, int policy,
+                                       const struct sched_param *param);
+
+    struct sched_attr {
+        uint32_t size;
+        uint32_t sched_policy;
+        uint64_t sched_flags;
+        int32_t  sched_nice;
+        uint32_t sched_priority;
+        uint64_t sched_runtime;
+        uint64_t sched_deadline;
+        uint64_t sched_period;
+    };
+
+    /* ---- Test 1135: bad flags → EINVAL, previous policy preserved ---- */
+    fut_printf("[MISC-TEST] Test 1135: sched_setattr bad-flags → EINVAL, policy preserved\n");
+    {
+        struct sched_attr get_attr;
+        __builtin_memset(&get_attr, 0, sizeof(get_attr));
+        get_attr.size = 48;
+
+        /* Read current policy */
+        long gr = sys_sched_getattr(0, &get_attr, 48, 0);
+        if (gr != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1135: sched_getattr failed: %ld\n", gr);
+            fut_test_fail(1135);
+            goto t1135_done;
+        }
+        uint32_t orig_policy = get_attr.sched_policy;
+        uint64_t orig_flags  = get_attr.sched_flags;
+
+        /* Try to set SCHED_BATCH with invalid flags */
+        struct sched_attr bad_attr;
+        __builtin_memset(&bad_attr, 0, sizeof(bad_attr));
+        bad_attr.size         = 48;
+        bad_attr.sched_policy = 3; /* SCHED_BATCH */
+        bad_attr.sched_flags  = 0xff; /* invalid */
+        long sr = sys_sched_setattr(0, &bad_attr, 0);
+        if (sr != -EINVAL) {
+            fut_printf("[MISC-TEST] ✗ Test 1135: expected -EINVAL, got %ld\n", sr);
+            fut_test_fail(1135);
+            goto t1135_done;
+        }
+
+        /* Policy must still be the original */
+        __builtin_memset(&get_attr, 0, sizeof(get_attr));
+        get_attr.size = 48;
+        gr = sys_sched_getattr(0, &get_attr, 48, 0);
+        if (gr != 0 || get_attr.sched_policy != orig_policy ||
+            get_attr.sched_flags != orig_flags) {
+            fut_printf("[MISC-TEST] ✗ Test 1135: policy/flags changed after failed setattr "
+                       "(policy=%u flags=0x%llx)\n",
+                       get_attr.sched_policy,
+                       (unsigned long long)get_attr.sched_flags);
+            fut_test_fail(1135);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1135: policy preserved after bad-flags EINVAL\n");
+            fut_test_pass();
+        }
+t1135_done:;
+    }
+
+    /* ---- Test 1136: bad priority for SCHED_FIFO → EINVAL, nice preserved ---- */
+    fut_printf("[MISC-TEST] Test 1136: sched_setattr SCHED_FIFO prio=0 → EINVAL, nice preserved\n");
+    {
+        /* First set a known nice value */
+        struct sched_attr set_nice;
+        __builtin_memset(&set_nice, 0, sizeof(set_nice));
+        set_nice.size        = 48;
+        set_nice.sched_policy = 0; /* SCHED_OTHER */
+        set_nice.sched_nice  = 7;
+        sys_sched_setattr(0, &set_nice, 0);
+
+        /* Try SCHED_FIFO with prio=0 (invalid: must be 1-99) + new nice */
+        struct sched_attr bad2;
+        __builtin_memset(&bad2, 0, sizeof(bad2));
+        bad2.size           = 48;
+        bad2.sched_policy   = 1; /* SCHED_FIFO */
+        bad2.sched_priority = 0; /* INVALID */
+        bad2.sched_nice     = -5;
+        long sr = sys_sched_setattr(0, &bad2, 0);
+        if (sr != -EINVAL) {
+            fut_printf("[MISC-TEST] ✗ Test 1136: expected -EINVAL, got %ld\n", sr);
+            fut_test_fail(1136);
+            goto t1136_done;
+        }
+
+        /* Verify nice is still 7, not -5 */
+        struct sched_attr chk;
+        __builtin_memset(&chk, 0, sizeof(chk));
+        chk.size = 48;
+        long gr = sys_sched_getattr(0, &chk, 48, 0);
+        if (gr != 0 || chk.sched_nice != 7) {
+            fut_printf("[MISC-TEST] ✗ Test 1136: nice=%d (expected 7) after bad FIFO setattr\n",
+                       (int)chk.sched_nice);
+            fut_test_fail(1136);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1136: nice=7 preserved after bad prio EINVAL\n");
+            fut_test_pass();
+        }
+t1136_done:
+        /* Restore SCHED_OTHER, nice=0 */
+        __builtin_memset(&set_nice, 0, sizeof(set_nice));
+        set_nice.size        = 48;
+        set_nice.sched_policy = 0;
+        sys_sched_setattr(0, &set_nice, 0);
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -38001,6 +38119,7 @@ void fut_misc_test_thread(void *arg) {
     test_shd_pnd_kill();                /* Tests 1123-1126: ShdPnd: process-wide pending via kill() */
     test_sched_flags_roundtrip();       /* Tests 1127-1130: sched_flags storage/validation/persistence */
     test_prio_thread();                 /* Tests 1131-1134: getpriority/setpriority PRIO_THREAD */
+    test_sched_setattr_atomic_fail();   /* Tests 1135-1136: sched_setattr atomic-failure semantics */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

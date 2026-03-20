@@ -99,6 +99,13 @@ long sys_sched_setparam(int pid, const struct sched_param *param) {
         return -EINVAL;
     }
 
+    /* RLIMIT_RTPRIO enforcement for setparam:
+     * If current thread is already on an RT policy, RLIMIT_RTPRIO limits
+     * the priority that can be set. Root is exempt. */
+    if (task->uid != 0 && kparam.sched_priority > 0) {
+        /* Only enforce if current or target policy is RT — checked after lookup */
+    }
+
     /* Find target thread: pid=0 means self, otherwise look up by PID */
     fut_thread_t *target_thread = thread;
     if (pid != 0) {
@@ -107,6 +114,16 @@ long sys_sched_setparam(int pid, const struct sched_param *param) {
             return -ESRCH;
         }
         target_thread = target_task->threads;
+    }
+
+    /* Enforce RLIMIT_RTPRIO for RT policies */
+    if (task->uid != 0 && target_thread &&
+        (target_thread->sched_policy == SCHED_FIFO ||
+         target_thread->sched_policy == SCHED_RR)) {
+        uint64_t rtprio_limit = task->rlimits[14 /* RLIMIT_RTPRIO */].rlim_cur;
+        if ((uint64_t)kparam.sched_priority > rtprio_limit) {
+            return -EPERM;
+        }
     }
 
     if (target_thread) {
@@ -239,6 +256,20 @@ long sys_sched_setscheduler(int pid, int policy, const struct sched_param *param
                    "(SCHED_OTHER priority must be 0)\n",
                    pid, policy_name, kparam.sched_priority);
         return -EINVAL;
+    }
+
+    /* RLIMIT_RTPRIO enforcement (Linux semantics):
+     * Unprivileged processes may only set RT priority up to RLIMIT_RTPRIO.
+     * Root (uid=0) is exempt. */
+    if (task->uid != 0 && (policy == SCHED_FIFO || policy == SCHED_RR)) {
+        uint64_t rtprio_limit = task->rlimits[14 /* RLIMIT_RTPRIO */].rlim_cur;
+        if ((uint64_t)kparam.sched_priority > rtprio_limit) {
+            fut_printf("[SCHED] sched_setscheduler(pid=%d, policy=%s, priority=%d) -> EPERM "
+                       "(RLIMIT_RTPRIO=%llu)\n",
+                       pid, policy_name, kparam.sched_priority,
+                       (unsigned long long)rtprio_limit);
+            return -EPERM;
+        }
     }
 
     /* Find target thread: pid=0 means self, otherwise look up by PID */
@@ -531,6 +562,14 @@ long sys_sched_setattr(int pid, const struct sched_attr *uattr, unsigned int fla
         && prio != 0)
         return -EINVAL;
 
+    /* Validate sched_flags BEFORE applying any changes (Linux semantics: either
+     * the whole call succeeds or nothing is modified). */
+    #define SCHED_ATTR_VALID_FLAGS  ((uint64_t)SCHED_FLAG_RESET_ON_FORK)
+    if (attr.sched_flags & ~SCHED_ATTR_VALID_FLAGS)
+        return -EINVAL;
+
+    /* All validation passed; apply atomically */
+
     /* Apply to all threads of the task */
     fut_thread_t *thr = target->threads;
     while (thr) {
@@ -538,11 +577,6 @@ long sys_sched_setattr(int pid, const struct sched_attr *uattr, unsigned int fla
         thr->rt_priority   = prio;
         thr = thr->next;
     }
-    /* Validate sched_flags: only SCHED_FLAG_RESET_ON_FORK (0x01) is supported
-     * for non-deadline policies.  Unknown or deadline-only flags → EINVAL. */
-    #define SCHED_ATTR_VALID_FLAGS  ((uint64_t)SCHED_FLAG_RESET_ON_FORK)
-    if (attr.sched_flags & ~SCHED_ATTR_VALID_FLAGS)
-        return -EINVAL;
 
     /* Apply nice value (clamp to -20..19) */
     int nice = (int)attr.sched_nice;

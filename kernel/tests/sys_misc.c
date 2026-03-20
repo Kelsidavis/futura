@@ -34924,6 +34924,107 @@ static void test_fionread_regular_file(void) {
 #undef FIONREAD_VAL
 }
 
+/* ============================================================
+ * Tests 1064-1067: Extended network interface ioctls
+ *   Test 1064: SIOCGIFMTU for "lo" returns 65536
+ *   Test 1065: SIOCGIFNETMASK for "lo" first octet is 255
+ *   Test 1066: SIOCGIFHWADDR for "lo" sa_family is ARPHRD_LOOPBACK (772)
+ *   Test 1067: SIOCGIFINDEX for "lo" returns 1
+ * ============================================================ */
+
+#define SIOCGIFMTU_VAL     0x8921
+#define SIOCGIFNETMASK_VAL 0x891B
+#define SIOCGIFHWADDR_VAL  0x8927
+
+static void test_siocgif_extended(void) {
+    extern long sys_ioctl(int fd, unsigned long request, void *argp);
+
+    /* Use a regular file fd — ioctl for SIOCGIF* works on any fd in this kernel */
+    int fd = fut_vfs_open("/siocgif_ext_test.tmp", O_WRONLY | O_CREAT, 0600);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Tests 1064-1067: open scratch fd failed: %d\n", fd);
+        fut_test_fail(1064); fut_test_fail(1065); fut_test_fail(1066); fut_test_fail(1067);
+        return;
+    }
+
+    struct test_ifreq ifr;
+
+    /* ---- Test 1064: SIOCGIFMTU for "lo" → 65536 ---- */
+    fut_printf("[MISC-TEST] Test 1064: SIOCGIFMTU(lo) → 65536\n");
+    __builtin_memset(&ifr, 0, sizeof(ifr));
+    __builtin_memcpy(ifr.ifr_name, "lo", 3);
+    long ret = sys_ioctl(fd, SIOCGIFMTU_VAL, &ifr);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1064: SIOCGIFMTU returned %ld\n", ret);
+        fut_test_fail(1064);
+    } else if (ifr.ifr_ifru.ifru_ivalue != 65536) {
+        fut_printf("[MISC-TEST] ✗ Test 1064: MTU=%d (expected 65536)\n",
+                   ifr.ifr_ifru.ifru_ivalue);
+        fut_test_fail(1064);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 1064: SIOCGIFMTU lo MTU=%d\n",
+                   ifr.ifr_ifru.ifru_ivalue);
+        fut_test_pass();
+    }
+
+    /* ---- Test 1065: SIOCGIFNETMASK for "lo" → 255.0.0.0 ---- */
+    fut_printf("[MISC-TEST] Test 1065: SIOCGIFNETMASK(lo) → first octet 255\n");
+    __builtin_memset(&ifr, 0, sizeof(ifr));
+    __builtin_memcpy(ifr.ifr_name, "lo", 3);
+    ret = sys_ioctl(fd, SIOCGIFNETMASK_VAL, &ifr);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1065: SIOCGIFNETMASK returned %ld\n", ret);
+        fut_test_fail(1065);
+    } else if ((unsigned char)ifr.ifr_ifru.ifru_addr.sa_data[2] != 255) {
+        fut_printf("[MISC-TEST] ✗ Test 1065: netmask[0]=%u (expected 255)\n",
+                   (unsigned char)ifr.ifr_ifru.ifru_addr.sa_data[2]);
+        fut_test_fail(1065);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 1065: SIOCGIFNETMASK lo first octet=255\n");
+        fut_test_pass();
+    }
+
+    /* ---- Test 1066: SIOCGIFHWADDR for "lo" → ARPHRD_LOOPBACK (772) ---- */
+    fut_printf("[MISC-TEST] Test 1066: SIOCGIFHWADDR(lo) → ARPHRD_LOOPBACK 772\n");
+    __builtin_memset(&ifr, 0, sizeof(ifr));
+    __builtin_memcpy(ifr.ifr_name, "lo", 3);
+    ret = sys_ioctl(fd, SIOCGIFHWADDR_VAL, &ifr);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1066: SIOCGIFHWADDR returned %ld\n", ret);
+        fut_test_fail(1066);
+    } else if (ifr.ifr_ifru.ifru_addr.sa_family != 772) {
+        fut_printf("[MISC-TEST] ✗ Test 1066: hwaddr.sa_family=%u (expected 772)\n",
+                   (unsigned)ifr.ifr_ifru.ifru_addr.sa_family);
+        fut_test_fail(1066);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 1066: SIOCGIFHWADDR lo sa_family=772 (ARPHRD_LOOPBACK)\n");
+        fut_test_pass();
+    }
+
+    /* ---- Test 1067: SIOCGIFINDEX for "lo" → 1 ---- */
+    fut_printf("[MISC-TEST] Test 1067: SIOCGIFINDEX(lo) → 1\n");
+    __builtin_memset(&ifr, 0, sizeof(ifr));
+    __builtin_memcpy(ifr.ifr_name, "lo", 3);
+    ret = sys_ioctl(fd, SIOCGIFINDEX_VAL, &ifr);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1067: SIOCGIFINDEX returned %ld\n", ret);
+        fut_test_fail(1067);
+    } else if (ifr.ifr_ifru.ifru_ivalue != 1) {
+        fut_printf("[MISC-TEST] ✗ Test 1067: ifindex=%d (expected 1)\n",
+                   ifr.ifr_ifru.ifru_ivalue);
+        fut_test_fail(1067);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 1067: SIOCGIFINDEX lo index=1\n");
+        fut_test_pass();
+    }
+
+    fut_vfs_close(fd);
+
+#undef SIOCGIFMTU_VAL
+#undef SIOCGIFNETMASK_VAL
+#undef SIOCGIFHWADDR_VAL
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -35522,6 +35623,7 @@ void fut_misc_test_thread(void *arg) {
     test_sendfile_access_mode();         /* Tests 1053-1056: sendfile in_fd/out_fd access mode enforcement */
     test_read_write_access_mode();       /* Tests 1057-1060: read/write/readv/writev access mode on regular files */
     test_fionread_regular_file();        /* Tests 1061-1063: ioctl FIONREAD on regular files */
+    test_siocgif_extended();             /* Tests 1064-1067: SIOCGIFMTU/NETMASK/HWADDR/INDEX for "lo" */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

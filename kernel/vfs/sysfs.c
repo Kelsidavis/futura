@@ -10,7 +10,7 @@
  *
  * Directory tree:
  *   /sys/
- *     class/  net/  block/  tty/
+ *     class/  net/lo/{ifindex,operstate,type,mtu,address,flags}  block/  tty/
  *     bus/    pci/devices/  usb/devices/  platform/devices/
  *     devices/
  *     kernel/ mm/ transparent_hugepage/{enabled,defrag,use_zero_pages}
@@ -39,6 +39,14 @@ enum sysfs_kind {
     SYSFS_CLASS_NET_DIR,
     SYSFS_CLASS_BLOCK_DIR,
     SYSFS_CLASS_TTY_DIR,
+    /* /sys/class/net/lo/ */
+    SYSFS_CLASS_NET_LO_DIR,
+    SYSFS_NET_LO_IFINDEX,       /* file */
+    SYSFS_NET_LO_OPERSTATE,     /* file */
+    SYSFS_NET_LO_TYPE,          /* file */
+    SYSFS_NET_LO_MTU,           /* file */
+    SYSFS_NET_LO_ADDRESS,       /* file */
+    SYSFS_NET_LO_FLAGS,         /* file */
     /* /sys/bus/ */
     SYSFS_BUS_DIR,
     SYSFS_BUS_PCI_DIR,
@@ -103,6 +111,13 @@ typedef struct {
 #define SYSFS_INO_POWER             523ULL
 #define SYSFS_INO_POWER_STATE       524ULL
 #define SYSFS_INO_MODULE            525ULL
+#define SYSFS_INO_CLASS_NET_LO      526ULL
+#define SYSFS_INO_NET_LO_IFINDEX    527ULL
+#define SYSFS_INO_NET_LO_OPERSTATE  528ULL
+#define SYSFS_INO_NET_LO_TYPE       529ULL
+#define SYSFS_INO_NET_LO_MTU        530ULL
+#define SYSFS_INO_NET_LO_ADDRESS    531ULL
+#define SYSFS_INO_NET_LO_FLAGS      532ULL
 
 /* ============================================================
  *   Forward declarations
@@ -183,6 +198,25 @@ static ssize_t sysfs_file_read(struct fut_vnode *vnode, void *buf,
         case SYSFS_POWER_STATE:
             /* Expose the standard sleep states without actually supporting them */
             total = sysfs_gen_str(tmp, sizeof(tmp), "freeze mem standby disk\n");
+            break;
+        /* /sys/class/net/lo/ attribute files */
+        case SYSFS_NET_LO_IFINDEX:
+            total = sysfs_gen_str(tmp, sizeof(tmp), "1\n");
+            break;
+        case SYSFS_NET_LO_OPERSTATE:
+            total = sysfs_gen_str(tmp, sizeof(tmp), "unknown\n");
+            break;
+        case SYSFS_NET_LO_TYPE:
+            total = sysfs_gen_str(tmp, sizeof(tmp), "772\n");
+            break;
+        case SYSFS_NET_LO_MTU:
+            total = sysfs_gen_str(tmp, sizeof(tmp), "65536\n");
+            break;
+        case SYSFS_NET_LO_ADDRESS:
+            total = sysfs_gen_str(tmp, sizeof(tmp), "00:00:00:00:00:00\n");
+            break;
+        case SYSFS_NET_LO_FLAGS:
+            total = sysfs_gen_str(tmp, sizeof(tmp), "0x10\n");
             break;
         default:
             return -EINVAL;
@@ -269,6 +303,25 @@ static const sysfs_de_t class_entries[] = {
     DE_DIR("tty",    SYSFS_INO_CLASS_TTY,   SYSFS_CLASS_TTY_DIR),
 };
 #define CLASS_N (sizeof(class_entries)/sizeof(class_entries[0]))
+
+static const sysfs_de_t class_net_entries[] = {
+    DE_DIR(".",   SYSFS_INO_CLASS_NET,    SYSFS_CLASS_NET_DIR),
+    DE_DIR("..",  SYSFS_INO_CLASS,        SYSFS_CLASS_DIR),
+    DE_DIR("lo",  SYSFS_INO_CLASS_NET_LO, SYSFS_CLASS_NET_LO_DIR),
+};
+#define CLASS_NET_N (sizeof(class_net_entries)/sizeof(class_net_entries[0]))
+
+static const sysfs_de_t lo_entries[] = {
+    DE_DIR(".",         SYSFS_INO_CLASS_NET_LO,    SYSFS_CLASS_NET_LO_DIR),
+    DE_DIR("..",        SYSFS_INO_CLASS_NET,        SYSFS_CLASS_NET_DIR),
+    DE_REG("ifindex",   SYSFS_INO_NET_LO_IFINDEX,  SYSFS_NET_LO_IFINDEX),
+    DE_REG("operstate", SYSFS_INO_NET_LO_OPERSTATE,SYSFS_NET_LO_OPERSTATE),
+    DE_REG("type",      SYSFS_INO_NET_LO_TYPE,     SYSFS_NET_LO_TYPE),
+    DE_REG("mtu",       SYSFS_INO_NET_LO_MTU,      SYSFS_NET_LO_MTU),
+    DE_REG("address",   SYSFS_INO_NET_LO_ADDRESS,  SYSFS_NET_LO_ADDRESS),
+    DE_REG("flags",     SYSFS_INO_NET_LO_FLAGS,    SYSFS_NET_LO_FLAGS),
+};
+#define LO_N (sizeof(lo_entries)/sizeof(lo_entries[0]))
 
 static const sysfs_de_t bus_entries[] = {
     DE_DIR(".",        SYSFS_INO_BUS,          SYSFS_BUS_DIR),
@@ -368,8 +421,10 @@ static int sysfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
     if (!n) return -EIO;
 
     switch (n->kind) {
-        case SYSFS_ROOT:             return sysfs_table_readdir(root_entries,     ROOT_N,     cookie, de);
+        case SYSFS_ROOT:             return sysfs_table_readdir(root_entries,      ROOT_N,      cookie, de);
         case SYSFS_CLASS_DIR:        return sysfs_table_readdir(class_entries,    CLASS_N,    cookie, de);
+        case SYSFS_CLASS_NET_DIR:    return sysfs_table_readdir(class_net_entries,CLASS_NET_N,cookie, de);
+        case SYSFS_CLASS_NET_LO_DIR: return sysfs_table_readdir(lo_entries,       LO_N,       cookie, de);
         case SYSFS_BUS_DIR:          return sysfs_table_readdir(bus_entries,      BUS_N,      cookie, de);
         case SYSFS_BUS_PCI_DIR:      return sysfs_table_readdir(pci_entries,      PCI_N,      cookie, de);
         case SYSFS_BUS_USB_DIR:      return sysfs_table_readdir(usb_entries,      USB_N,      cookie, de);
@@ -414,6 +469,10 @@ static int sysfs_dir_lookup(struct fut_vnode *dir, const char *name,
             return sysfs_table_lookup(mnt, root_entries, ROOT_N, name, result);
         case SYSFS_CLASS_DIR:
             return sysfs_table_lookup(mnt, class_entries, CLASS_N, name, result);
+        case SYSFS_CLASS_NET_DIR:
+            return sysfs_table_lookup(mnt, class_net_entries, CLASS_NET_N, name, result);
+        case SYSFS_CLASS_NET_LO_DIR:
+            return sysfs_table_lookup(mnt, lo_entries, LO_N, name, result);
         case SYSFS_BUS_DIR:
             return sysfs_table_lookup(mnt, bus_entries, BUS_N, name, result);
         case SYSFS_BUS_PCI_DIR:

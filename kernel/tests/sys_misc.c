@@ -29520,6 +29520,134 @@ static void test_proc_pagemap(void) {
     }
 }
 
+/*
+ * test_sysfs_net_lo - Tests 827-833: /sys/class/net/lo/ loopback interface
+ *
+ *   Test 827: open /sys/class/net directory succeeds
+ *   Test 828: open /sys/class/net/lo directory succeeds
+ *   Test 829: /sys/class/net/lo/ifindex contains "1\n"
+ *   Test 830: /sys/class/net/lo/operstate contains "unknown\n"
+ *   Test 831: /sys/class/net/lo/mtu contains "65536\n"
+ *   Test 832: /sys/class/net/lo/type contains "772\n"
+ *   Test 833: /sys/class/net/lo/address contains "00:00:00:00:00:00\n"
+ */
+static void test_sysfs_net_lo(void) {
+    extern long sys_openat(int dirfd, const char *pathname, int flags, int mode);
+    extern long sys_close(int fd);
+    extern ssize_t sys_read(int fd, void *buf, size_t count);
+
+    fut_printf("[MISC-TEST] Tests 827-833: /sys/class/net/lo/ loopback interface\n");
+
+    /* Test 827: open /sys/class/net directory */
+    long netdir = sys_openat(-100, "/sys/class/net", 0x10000 /* O_DIRECTORY */, 0);
+    if (netdir >= 0) {
+        fut_test_pass(); /* 827 */
+        sys_close((int)netdir);
+    } else {
+        fut_printf("[MISC-TEST] x open /sys/class/net failed: %ld\n", netdir);
+        fut_test_fail(827);
+    }
+
+    /* Test 828: open /sys/class/net/lo directory */
+    long lodir = sys_openat(-100, "/sys/class/net/lo", 0x10000 /* O_DIRECTORY */, 0);
+    if (lodir >= 0) {
+        fut_test_pass(); /* 828 */
+        sys_close((int)lodir);
+    } else {
+        fut_printf("[MISC-TEST] x open /sys/class/net/lo failed: %ld\n", lodir);
+        fut_test_fail(828);
+    }
+
+    char buf[64];
+    ssize_t n;
+    long fd;
+
+    /* Test 829: ifindex */
+    fd = sys_openat(-100, "/sys/class/net/lo/ifindex", 0, 0);
+    if (fd >= 0) {
+        __builtin_memset(buf, 0, sizeof(buf));
+        n = sys_read((int)fd, buf, sizeof(buf) - 1);
+        sys_close((int)fd);
+        if (n > 0 && buf[0] == '1' && buf[1] == '\n') {
+            fut_test_pass(); /* 829 */
+        } else {
+            fut_printf("[MISC-TEST] x ifindex content wrong: n=%zd\n", n);
+            fut_test_fail(829);
+        }
+    } else {
+        fut_printf("[MISC-TEST] x open ifindex failed: %ld\n", fd);
+        fut_test_fail(829);
+    }
+
+    /* Test 830: operstate */
+    fd = sys_openat(-100, "/sys/class/net/lo/operstate", 0, 0);
+    if (fd >= 0) {
+        __builtin_memset(buf, 0, sizeof(buf));
+        n = sys_read((int)fd, buf, sizeof(buf) - 1);
+        sys_close((int)fd);
+        if (n > 0 && __builtin_memcmp(buf, "unknown\n", 8) == 0) {
+            fut_test_pass(); /* 830 */
+        } else {
+            fut_printf("[MISC-TEST] x operstate content wrong\n");
+            fut_test_fail(830);
+        }
+    } else {
+        fut_printf("[MISC-TEST] x open operstate failed: %ld\n", fd);
+        fut_test_fail(830);
+    }
+
+    /* Test 831: mtu */
+    fd = sys_openat(-100, "/sys/class/net/lo/mtu", 0, 0);
+    if (fd >= 0) {
+        __builtin_memset(buf, 0, sizeof(buf));
+        n = sys_read((int)fd, buf, sizeof(buf) - 1);
+        sys_close((int)fd);
+        if (n > 0 && __builtin_memcmp(buf, "65536\n", 6) == 0) {
+            fut_test_pass(); /* 831 */
+        } else {
+            fut_printf("[MISC-TEST] x mtu content wrong\n");
+            fut_test_fail(831);
+        }
+    } else {
+        fut_printf("[MISC-TEST] x open mtu failed: %ld\n", fd);
+        fut_test_fail(831);
+    }
+
+    /* Test 832: type (ARPHRD_LOOPBACK = 772) */
+    fd = sys_openat(-100, "/sys/class/net/lo/type", 0, 0);
+    if (fd >= 0) {
+        __builtin_memset(buf, 0, sizeof(buf));
+        n = sys_read((int)fd, buf, sizeof(buf) - 1);
+        sys_close((int)fd);
+        if (n > 0 && __builtin_memcmp(buf, "772\n", 4) == 0) {
+            fut_test_pass(); /* 832 */
+        } else {
+            fut_printf("[MISC-TEST] x type content wrong\n");
+            fut_test_fail(832);
+        }
+    } else {
+        fut_printf("[MISC-TEST] x open type failed: %ld\n", fd);
+        fut_test_fail(832);
+    }
+
+    /* Test 833: address */
+    fd = sys_openat(-100, "/sys/class/net/lo/address", 0, 0);
+    if (fd >= 0) {
+        __builtin_memset(buf, 0, sizeof(buf));
+        n = sys_read((int)fd, buf, sizeof(buf) - 1);
+        sys_close((int)fd);
+        if (n > 0 && __builtin_memcmp(buf, "00:00:00:00:00:00\n", 18) == 0) {
+            fut_test_pass(); /* 833 */
+        } else {
+            fut_printf("[MISC-TEST] x address content wrong\n");
+            fut_test_fail(833);
+        }
+    } else {
+        fut_printf("[MISC-TEST] x open address failed: %ld\n", fd);
+        fut_test_fail(833);
+    }
+}
+
 static void test_inotify_poll_epoll_select(void) {
     extern long sys_inotify_init1(int flags);
     extern long sys_inotify_add_watch(int fd, const char *path, uint32_t mask);
@@ -30205,6 +30333,7 @@ void fut_misc_test_thread(void *arg) {
     test_dev_shm();                       /* Tests 815-819: /dev/shm POSIX shm path + O_ASYNC F_SETOWN */
     test_epoll_fd_fstat();                /* Tests 820-822: epoll fd in fd_table, fstat → S_IFCHR */
     test_proc_pagemap();                  /* Tests 823-826: /proc/self/pagemap binary interface */
+    test_sysfs_net_lo();                   /* Tests 827-833: /sys/class/net/lo/ loopback interface */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

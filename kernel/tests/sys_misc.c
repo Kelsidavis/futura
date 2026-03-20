@@ -32563,6 +32563,164 @@ static void test_rlimit_data_brk(void) {
 #undef RLIM64_INF_994
 }
 
+/*
+ * test_utimensat_utime_omit — Tests 997-999
+ *
+ *   997: utimensat UTIME_OMIT on mtime → atime updated, mtime preserved
+ *   998: utimensat UTIME_NOW on both    → both timestamps set to current (≥ 0)
+ *   999: futimens (fd, NULL, UTIME_OMIT on atime) → atime preserved, mtime updated
+ */
+static void test_utimensat_utime_omit(void) {
+    fut_printf("[MISC-TEST] Tests 997-999: utimensat UTIME_OMIT / UTIME_NOW semantics\n");
+
+    extern long sys_utimensat(int dirfd, const char *pathname, const void *times, int flags);
+
+#define UTS_AT_FDCWD    (-100)
+#define UTS_UTIME_NOW   ((int64_t)((1L << 30) - 1L))
+#define UTS_UTIME_OMIT  ((int64_t)((1L << 30) - 2L))
+    typedef struct { int64_t tv_sec; int64_t tv_nsec; } uts_ts_t;
+
+    /* ---- Test 997: UTIME_OMIT on mtime — only atime updated ---- */
+    fut_printf("[MISC-TEST] Test 997: utimensat UTIME_OMIT on mtime\n");
+    {
+        const char *p = "/utimensat_utime_omit_997.txt";
+        int fd = (int)fut_vfs_open(p, O_CREAT | O_RDWR, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 997: open failed %d\n", fd);
+            fut_test_fail(997); goto t998;
+        }
+        fut_vfs_close(fd);
+
+        /* Step 1: set both to known values */
+        uts_ts_t ts_init[2] = { {111111111LL, 0}, {222222222LL, 0} };
+        long r = sys_utimensat(UTS_AT_FDCWD, p, ts_init, 0);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 997: init utimensat failed %ld\n", r);
+            fut_vfs_unlink(p); fut_test_fail(997); goto t998;
+        }
+
+        /* Step 2: update atime=333333333, omit mtime */
+        uts_ts_t ts_omit[2] = { {333333333LL, 0}, {0, UTS_UTIME_OMIT} };
+        r = sys_utimensat(UTS_AT_FDCWD, p, ts_omit, 0);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 997: UTIME_OMIT utimensat failed %ld\n", r);
+            fut_vfs_unlink(p); fut_test_fail(997); goto t998;
+        }
+
+        struct fut_stat st997 = {0};
+        r = sys_stat(p, &st997);
+        fut_vfs_unlink(p);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 997: stat failed %ld\n", r);
+            fut_test_fail(997); goto t998;
+        }
+        if ((int64_t)st997.st_atime != 333333333LL) {
+            fut_printf("[MISC-TEST] ✗ Test 997: atime=%lld expected 333333333\n",
+                       (long long)st997.st_atime);
+            fut_test_fail(997); goto t998;
+        }
+        if ((int64_t)st997.st_mtime != 222222222LL) {
+            fut_printf("[MISC-TEST] ✗ Test 997: mtime=%lld expected 222222222 (UTIME_OMIT broken)\n",
+                       (long long)st997.st_mtime);
+            fut_test_fail(997); goto t998;
+        }
+        fut_printf("[MISC-TEST] ✓ Test 997: UTIME_OMIT preserved mtime=%lld; atime=%lld\n",
+                   (long long)st997.st_mtime, (long long)st997.st_atime);
+        fut_test_pass();
+    }
+
+t998:
+    /* ---- Test 998: UTIME_NOW updates both timestamps ---- */
+    fut_printf("[MISC-TEST] Test 998: utimensat UTIME_NOW on both timestamps\n");
+    {
+        const char *p = "/utimensat_utime_now_998.txt";
+        int fd = (int)fut_vfs_open(p, O_CREAT | O_RDWR, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 998: open failed %d\n", fd);
+            fut_test_fail(998); goto t999;
+        }
+        fut_vfs_close(fd);
+
+        uts_ts_t ts_now[2] = { {0, UTS_UTIME_NOW}, {0, UTS_UTIME_NOW} };
+        long r = sys_utimensat(UTS_AT_FDCWD, p, ts_now, 0);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 998: utimensat UTIME_NOW failed %ld\n", r);
+            fut_vfs_unlink(p); fut_test_fail(998); goto t999;
+        }
+        struct fut_stat st998 = {0};
+        r = sys_stat(p, &st998);
+        fut_vfs_unlink(p);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 998: stat failed %ld\n", r);
+            fut_test_fail(998); goto t999;
+        }
+        if ((int64_t)st998.st_atime < 0 || (int64_t)st998.st_mtime < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 998: UTIME_NOW produced negative time"
+                       " atime=%lld mtime=%lld\n",
+                       (long long)st998.st_atime, (long long)st998.st_mtime);
+            fut_test_fail(998); goto t999;
+        }
+        fut_printf("[MISC-TEST] ✓ Test 998: UTIME_NOW atime=%lld mtime=%lld\n",
+                   (long long)st998.st_atime, (long long)st998.st_mtime);
+        fut_test_pass();
+    }
+
+t999:
+    /* ---- Test 999: futimens (fd, NULL) — UTIME_OMIT on atime, explicit mtime ---- */
+    fut_printf("[MISC-TEST] Test 999: futimens UTIME_OMIT on atime via fd\n");
+    {
+        const char *p = "/utimensat_futimens_999.txt";
+        int fd = (int)fut_vfs_open(p, O_CREAT | O_RDWR, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 999: open failed %d\n", fd);
+            fut_test_fail(999); goto t999_done;
+        }
+
+        /* First set both to known values via path */
+        uts_ts_t ts_init[2] = { {555555555LL, 0}, {666666666LL, 0} };
+        long r = sys_utimensat(UTS_AT_FDCWD, p, ts_init, 0);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 999: init utimensat failed %ld\n", r);
+            fut_vfs_close(fd); fut_vfs_unlink(p); fut_test_fail(999); goto t999_done;
+        }
+
+        /* futimens: omit atime, set mtime=777777777 */
+        uts_ts_t ts_futimens[2] = { {0, UTS_UTIME_OMIT}, {777777777LL, 0} };
+        r = sys_utimensat(fd, (const char *)0, ts_futimens, 0);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 999: futimens failed %ld\n", r);
+            fut_vfs_close(fd); fut_vfs_unlink(p); fut_test_fail(999); goto t999_done;
+        }
+
+        struct fut_stat st999 = {0};
+        r = sys_fstat(fd, &st999);
+        fut_vfs_close(fd);
+        fut_vfs_unlink(p);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 999: fstat failed %ld\n", r);
+            fut_test_fail(999); goto t999_done;
+        }
+        if ((int64_t)st999.st_atime != 555555555LL) {
+            fut_printf("[MISC-TEST] ✗ Test 999: atime=%lld expected 555555555 (UTIME_OMIT)\n",
+                       (long long)st999.st_atime);
+            fut_test_fail(999); goto t999_done;
+        }
+        if ((int64_t)st999.st_mtime != 777777777LL) {
+            fut_printf("[MISC-TEST] ✗ Test 999: mtime=%lld expected 777777777\n",
+                       (long long)st999.st_mtime);
+            fut_test_fail(999); goto t999_done;
+        }
+        fut_printf("[MISC-TEST] ✓ Test 999: futimens atime=%lld (preserved) mtime=%lld\n",
+                   (long long)st999.st_atime, (long long)st999.st_mtime);
+        fut_test_pass();
+    }
+
+t999_done:;
+#undef UTS_AT_FDCWD
+#undef UTS_UTIME_NOW
+#undef UTS_UTIME_OMIT
+}
+
 static void test_cross_fs_exdev(void) {
     fut_printf("[MISC-TEST] Tests 937-941: cross-filesystem EXDEV / same-fs link+rename\n");
 
@@ -33471,6 +33629,7 @@ void fut_misc_test_thread(void *arg) {
     test_madvise_dontneed_zeros();       /* Tests 989-991: MADV_DONTNEED/FREE zero anon pages */
     test_madvise_wipeonfork_flag();      /* Tests 992-993: MADV_WIPEONFORK sets/clears VMA flag */
     test_rlimit_data_brk();              /* Tests 994-996: RLIMIT_DATA enforcement in brk() */
+    test_utimensat_utime_omit();         /* Tests 997-999: utimensat UTIME_OMIT/UTIME_NOW semantics */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

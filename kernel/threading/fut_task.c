@@ -163,6 +163,7 @@ fut_task_t *fut_task_create(void) {
     }
     /* Bounding set: all caps 0..40 (cap_last_cap=40); dropped via PR_CAPBSET_DROP */
     task->cap_bset = (1ULL << 41) - 1;  /* 0x000001ffffffffff */
+    task->cap_ambient = 0;              /* Ambient set starts empty */
 
     fut_waitq_init(&task->child_waiters);
     fut_spinlock_init(&task->pidfd_notify_lock);

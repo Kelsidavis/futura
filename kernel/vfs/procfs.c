@@ -810,7 +810,7 @@ static size_t gen_status(char *buf, size_t cap, fut_task_t *task, uint64_t tid) 
     pb_str(&b, "CapPrm:\t");     pb_hex16(&b, task->cap_permitted);   pb_char(&b, '\n');
     pb_str(&b, "CapEff:\t");     pb_hex16(&b, task->cap_effective);   pb_char(&b, '\n');
     pb_str(&b, "CapBnd:\t");     pb_hex16(&b, task->cap_bset);         pb_char(&b, '\n');
-    pb_str(&b, "CapAmb:\t");     pb_hex16(&b, 0);                      pb_char(&b, '\n');
+    pb_str(&b, "CapAmb:\t");     pb_hex16(&b, task->cap_ambient);      pb_char(&b, '\n');
     pb_str(&b, "NoNewPrivs:\t"); pb_u64(&b, task->no_new_privs ? 1 : 0); pb_char(&b, '\n');
     pb_str(&b, "Seccomp:\t");    pb_u64(&b, 0);                        pb_char(&b, '\n');
     pb_str(&b, "Seccomp_filters:\t"); pb_u64(&b, 0);                   pb_char(&b, '\n');

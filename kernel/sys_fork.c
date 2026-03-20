@@ -989,7 +989,8 @@ long sys_fork(void) {
     child_task->cap_effective   = parent_task->cap_effective;
     child_task->cap_permitted   = parent_task->cap_permitted;
     child_task->cap_inheritable = parent_task->cap_inheritable;
-    child_task->cap_bset        = parent_task->cap_bset;  /* Bounding set inherited */
+    child_task->cap_bset        = parent_task->cap_bset;    /* Bounding set inherited */
+    child_task->cap_ambient     = parent_task->cap_ambient; /* Ambient set inherited */
 
     /* Inherit personality, dumpable, no_new_privs (POSIX/Linux semantics) */
     child_task->personality   = parent_task->personality;

@@ -19512,15 +19512,16 @@ static void test_prctl_cap_ambient(void) {
         fut_test_fail(418);
     }
 
-    /* Test 419: RAISE returns 0 (accepted as no-op) */
-    fut_printf("[MISC-TEST] Test 419: prctl(PR_CAP_AMBIENT, RAISE, CAP_NET_BIND_SERVICE)\n");
+    /* Test 419: RAISE is blocked by no_new_privs=1 (set in test 13 — sticky).
+     * With real PR_CAP_AMBIENT, RAISE returns -EPERM when no_new_privs is set. */
+    fut_printf("[MISC-TEST] Test 419: prctl(PR_CAP_AMBIENT, RAISE) blocked by no_new_privs\n");
     r = sys_prctl(PR_CAP_AMBIENT_VAL, PR_CAP_AMBIENT_RAISE_VAL,
                   CAP_NET_BIND_SERVICE_VAL, 0, 0);
-    if (r == 0) {
-        fut_printf("[MISC-TEST] ✓ Test 419: PR_CAP_AMBIENT RAISE -> 0\n");
+    if (r == -1 /* -EPERM */) {
+        fut_printf("[MISC-TEST] ✓ Test 419: PR_CAP_AMBIENT RAISE → EPERM (no_new_privs)\n");
         fut_test_pass();
     } else {
-        fut_printf("[MISC-TEST] ✗ Test 419: got %ld (expected 0)\n", r);
+        fut_printf("[MISC-TEST] ✗ Test 419: got %ld (expected -1/-EPERM)\n", r);
         fut_test_fail(419);
     }
 
@@ -37726,6 +37727,164 @@ t1141_done:;
 #undef LINUX_CAPABILITY_VERSION_3
 }
 
+/* ============================================================
+ * Tests 1143-1150: Ambient capability set (real state tracking)
+ *
+ * Note: no_new_privs=1 was set permanently in test 13 (sticky), so
+ * PR_CAP_AMBIENT_RAISE will always return -EPERM. We test:
+ *   - IS_SET returns 0 (ambient stays empty since RAISE is blocked)
+ *   - RAISE → EPERM (blocked by no_new_privs)
+ *   - LOWER → 0 (always allowed, even with no_new_privs)
+ *   - CLEAR_ALL → 0 (always allowed)
+ *   - CapAmb: in /proc/self/status shows 0x0...0 (ambient is empty)
+ *   - RAISE(64) → EINVAL (invalid cap, checked before no_new_privs)
+ *   - IS_SET(-1) → EINVAL (invalid negative cap)
+ *   - IS_SET with out-of-range op → EINVAL
+ * ============================================================ */
+static void test_cap_ambient_real(void) {
+    extern long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
+                          unsigned long arg4, unsigned long arg5);
+    extern long sys_openat(int dirfd, const char *path, int flags, int mode);
+    extern long sys_read(int fd, void *buf, size_t count);
+    extern long sys_close(int fd);
+
+#define CAMB_PR_CAP_AMBIENT     47
+#define CAMB_IS_SET             1
+#define CAMB_RAISE              2
+#define CAMB_LOWER              3
+#define CAMB_CLEAR_ALL          4
+#define CAMB_CAP                5   /* CAP_KILL */
+#define CAMB_O_RDONLY           0
+#define CAMB_AT_FDCWD           (-100)
+
+    long r;
+
+    /* Test 1143: IS_SET(5) = 0 (ambient set starts empty) */
+    fut_printf("[MISC-TEST] Test 1143: PR_CAP_AMBIENT IS_SET(5) = 0 (empty initially)\n");
+    r = sys_prctl(CAMB_PR_CAP_AMBIENT, CAMB_IS_SET, CAMB_CAP, 0, 0);
+    if (r == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 1143: IS_SET(5) = 0\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1143: IS_SET(5) = %ld (expected 0)\n", r);
+        fut_test_fail(1143);
+    }
+
+    /* Test 1144: RAISE(5) → EPERM (no_new_privs=1 blocks raise) */
+    fut_printf("[MISC-TEST] Test 1144: PR_CAP_AMBIENT RAISE(5) → EPERM (no_new_privs)\n");
+    r = sys_prctl(CAMB_PR_CAP_AMBIENT, CAMB_RAISE, CAMB_CAP, 0, 0);
+    if (r == -1 /* -EPERM */) {
+        fut_printf("[MISC-TEST] ✓ Test 1144: RAISE(5) → EPERM (no_new_privs is set)\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1144: RAISE(5) = %ld (expected -1/-EPERM)\n", r);
+        fut_test_fail(1144);
+    }
+
+    /* Test 1145: IS_SET(5) = 0 (still, since RAISE was rejected) */
+    fut_printf("[MISC-TEST] Test 1145: PR_CAP_AMBIENT IS_SET(5) = 0 (RAISE was rejected)\n");
+    r = sys_prctl(CAMB_PR_CAP_AMBIENT, CAMB_IS_SET, CAMB_CAP, 0, 0);
+    if (r == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 1145: IS_SET(5) = 0 after failed RAISE\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1145: IS_SET(5) = %ld (expected 0)\n", r);
+        fut_test_fail(1145);
+    }
+
+    /* Test 1146: LOWER(5) → 0 (LOWER is always allowed, even with no_new_privs) */
+    fut_printf("[MISC-TEST] Test 1146: PR_CAP_AMBIENT LOWER(5) → 0\n");
+    r = sys_prctl(CAMB_PR_CAP_AMBIENT, CAMB_LOWER, CAMB_CAP, 0, 0);
+    if (r == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 1146: LOWER(5) = 0\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1146: LOWER(5) = %ld (expected 0)\n", r);
+        fut_test_fail(1146);
+    }
+
+    /* Test 1147: CLEAR_ALL → 0 (always allowed) */
+    fut_printf("[MISC-TEST] Test 1147: PR_CAP_AMBIENT CLEAR_ALL → 0\n");
+    r = sys_prctl(CAMB_PR_CAP_AMBIENT, CAMB_CLEAR_ALL, 0, 0, 0);
+    if (r == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 1147: CLEAR_ALL = 0\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1147: CLEAR_ALL = %ld (expected 0)\n", r);
+        fut_test_fail(1147);
+    }
+
+    /* Test 1148: CapAmb: in /proc/self/status shows 0 (ambient is empty) */
+    fut_printf("[MISC-TEST] Test 1148: CapAmb: in /proc/self/status = 0\n");
+    {
+        int fd = (int)sys_openat(CAMB_AT_FDCWD, "/proc/self/status", CAMB_O_RDONLY, 0);
+        int found_zero = 0;
+        if (fd >= 0) {
+            char buf[4096];
+            long n = sys_read(fd, buf, sizeof(buf) - 1);
+            sys_close(fd);
+            if (n > 0) {
+                buf[n] = '\0';
+                const char *p = buf;
+                while (*p) {
+                    if (p[0]=='C' && p[1]=='a' && p[2]=='p' && p[3]=='A' &&
+                        p[4]=='m' && p[5]=='b' && p[6]==':' && p[7]=='\t') {
+                        p += 8;
+                        unsigned long long val = 0;
+                        while ((*p>='0'&&*p<='9')||(*p>='a'&&*p<='f')||(*p>='A'&&*p<='F')) {
+                            int d = (*p>='0'&&*p<='9') ? *p-'0' :
+                                    (*p>='a'&&*p<='f') ? *p-'a'+10 : *p-'A'+10;
+                            val = val*16 + (unsigned long long)d;
+                            p++;
+                        }
+                        found_zero = (val == 0);
+                        break;
+                    }
+                    p++;
+                }
+            }
+        }
+        if (found_zero) {
+            fut_printf("[MISC-TEST] ✓ Test 1148: CapAmb: = 0 (empty ambient set)\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1148: CapAmb: was not 0\n");
+            fut_test_fail(1148);
+        }
+    }
+
+    /* Test 1149: RAISE(64) → EINVAL (cap > 63, checked before no_new_privs) */
+    fut_printf("[MISC-TEST] Test 1149: PR_CAP_AMBIENT RAISE(64) → EINVAL\n");
+    r = sys_prctl(CAMB_PR_CAP_AMBIENT, CAMB_RAISE, 64, 0, 0);
+    if (r == -22 /* EINVAL */) {
+        fut_printf("[MISC-TEST] ✓ Test 1149: RAISE(64) → EINVAL\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1149: RAISE(64) = %ld (expected -22)\n", r);
+        fut_test_fail(1149);
+    }
+
+    /* Test 1150: IS_SET(64) → EINVAL (cap > 63) */
+    fut_printf("[MISC-TEST] Test 1150: PR_CAP_AMBIENT IS_SET(64) → EINVAL\n");
+    r = sys_prctl(CAMB_PR_CAP_AMBIENT, CAMB_IS_SET, 64, 0, 0);
+    if (r == -22 /* EINVAL */) {
+        fut_printf("[MISC-TEST] ✓ Test 1150: IS_SET(64) → EINVAL\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1150: IS_SET(64) = %ld (expected -22)\n", r);
+        fut_test_fail(1150);
+    }
+
+#undef CAMB_PR_CAP_AMBIENT
+#undef CAMB_IS_SET
+#undef CAMB_RAISE
+#undef CAMB_LOWER
+#undef CAMB_CLEAR_ALL
+#undef CAMB_CAP
+#undef CAMB_O_RDONLY
+#undef CAMB_AT_FDCWD
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -38344,6 +38503,7 @@ void fut_misc_test_thread(void *arg) {
     test_sched_setattr_atomic_fail();   /* Tests 1135-1136: sched_setattr atomic-failure semantics */
     test_cap_bset();                    /* Tests 1137-1140: capability bounding set PR_CAPBSET_READ/DROP */
     test_capset_bset_enforcement();     /* Tests 1141-1142: capset rejects permitted > bset */
+    test_cap_ambient_real();            /* Tests 1143-1150: ambient cap real state tracking */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

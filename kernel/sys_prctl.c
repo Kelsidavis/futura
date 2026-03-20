@@ -388,26 +388,42 @@ long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
     case PR_CAP_AMBIENT: {
         /* Ambient capability management (Linux 4.3+).
          * arg2 = operation (IS_SET/RAISE/LOWER/CLEAR_ALL), arg3 = capability number.
-         * Futura has no ambient capability set yet; accept all ops as stubs. */
+         * Linux rules:
+         *   RAISE: cap must be in permitted AND inheritable; no_new_privs must be 0.
+         *   LOWER: always allowed (unconditionally clears the bit).
+         *   IS_SET: returns 1 or 0.
+         *   CLEAR_ALL: always allowed. */
         int op = (int)arg2;
         switch (op) {
-        case PR_CAP_AMBIENT_IS_SET:
-            /* Check if cap arg3 is in ambient set — always not set */
-            if ((int)arg3 < 0 || (int)arg3 > 63)
+        case PR_CAP_AMBIENT_IS_SET: {
+            int cap = (int)arg3;
+            if (cap < 0 || cap > 63)
                 return -EINVAL;
-            return 0;
-        case PR_CAP_AMBIENT_RAISE:
-            /* Add cap to ambient set — accept without enforcement */
-            if ((int)arg3 < 0 || (int)arg3 > 63)
+            return (task->cap_ambient >> (unsigned)cap) & 1;
+        }
+        case PR_CAP_AMBIENT_RAISE: {
+            int cap = (int)arg3;
+            if (cap < 0 || cap > 63)
                 return -EINVAL;
+            /* no_new_privs blocks raising ambient */
+            if (task->no_new_privs)
+                return -EPERM;
+            uint64_t bit = 1ULL << (unsigned)cap;
+            /* cap must be in both permitted and inheritable */
+            if (!(task->cap_permitted & bit) || !(task->cap_inheritable & bit))
+                return -EPERM;
+            task->cap_ambient |= bit;
             return 0;
-        case PR_CAP_AMBIENT_LOWER:
-            /* Remove cap from ambient set — no-op */
-            if ((int)arg3 < 0 || (int)arg3 > 63)
+        }
+        case PR_CAP_AMBIENT_LOWER: {
+            int cap = (int)arg3;
+            if (cap < 0 || cap > 63)
                 return -EINVAL;
+            task->cap_ambient &= ~(1ULL << (unsigned)cap);
             return 0;
+        }
         case PR_CAP_AMBIENT_CLEAR_ALL:
-            /* Clear all ambient capabilities — no-op */
+            task->cap_ambient = 0;
             return 0;
         default:
             return -EINVAL;

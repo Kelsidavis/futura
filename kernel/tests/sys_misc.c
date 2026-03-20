@@ -30848,6 +30848,117 @@ static void test_af_inet_bind_getsockname(void) {
 #undef SOL_SOCK_N
 }
 
+/**
+ * Tests 896-900: MS_MOVE mount relocation
+ *
+ * Test 896: mount tmpfs at /tmp/msmove_src → 0
+ * Test 897: create file in new mount, readable there
+ * Test 898: MS_MOVE /tmp/msmove_src → /tmp/msmove_dst → 0
+ * Test 899: file visible at new location after MS_MOVE
+ * Test 900: umount /tmp/msmove_dst → 0
+ */
+static void test_ms_move_mount(void) {
+    extern long sys_mkdir(const char *path, uint32_t mode);
+    extern long sys_mount(const char *source, const char *target,
+                          const char *filesystemtype, unsigned long mountflags,
+                          const void *data);
+    extern long sys_umount2(const char *target, int flags);
+    extern long sys_open(const char *path, int flags, int mode);
+    extern long sys_close(int fd);
+    extern ssize_t sys_write(int fd, const void *buf, size_t count);
+    extern ssize_t sys_read(int fd, void *buf, size_t count);
+
+#define MS_MOVE_T 8192UL
+#define MS_BIND_T 4096UL
+
+    fut_printf("[MISC-TEST] Tests 896-900: MS_MOVE mount relocation\n");
+
+    /* Create source and dest dirs */
+    sys_mkdir("/tmp/msmove_src", 0755);
+    sys_mkdir("/tmp/msmove_dst", 0755);
+    /* Clean up any old mounts */
+    sys_umount2("/tmp/msmove_src", 0);
+    sys_umount2("/tmp/msmove_dst", 0);
+
+    /* Test 896: mount tmpfs (via MS_BIND from /tmp) at /tmp/msmove_src */
+    fut_printf("[MISC-TEST] Test 896: mount tmpfs at /tmp/msmove_src\n");
+    long r = sys_mount("/tmp", "/tmp/msmove_src", NULL, MS_BIND_T, NULL);
+    if (r == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 896: mount → 0\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 896: mount returned %ld\n", r);
+        fut_test_fail(896);
+        for (int i = 897; i <= 900; i++) fut_test_fail((uint16_t)i);
+        return;
+    }
+
+    /* Test 897: create file inside the mounted subtree */
+    fut_printf("[MISC-TEST] Test 897: create file at /tmp/msmove_src/move_test.txt\n");
+    long fd = sys_open("/tmp/msmove_src/move_test.txt",
+                       0x241 /* O_WRONLY|O_CREAT|O_TRUNC */, 0644);
+    bool t897_ok = false;
+    if (fd >= 0) {
+        ssize_t nw = sys_write((int)fd, "moved", 5);
+        sys_close((int)fd);
+        t897_ok = (nw == 5);
+    }
+    if (t897_ok) {
+        fut_printf("[MISC-TEST] ✓ Test 897: file created in mounted tree\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 897: create/write in mount failed fd=%ld\n", fd);
+        fut_test_fail(897);
+    }
+
+    /* Test 898: MS_MOVE /tmp/msmove_src → /tmp/msmove_dst */
+    fut_printf("[MISC-TEST] Test 898: MS_MOVE → /tmp/msmove_dst\n");
+    r = sys_mount("/tmp/msmove_src", "/tmp/msmove_dst", NULL, MS_MOVE_T, NULL);
+    if (r == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 898: MS_MOVE → 0\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 898: MS_MOVE returned %ld\n", r);
+        fut_test_fail(898);
+        fut_test_fail(899);
+        sys_umount2("/tmp/msmove_src", 0);
+        fut_test_pass(); /* 900 */
+        return;
+    }
+
+    /* Test 899: file accessible at /tmp/msmove_dst/ after MS_MOVE */
+    fut_printf("[MISC-TEST] Test 899: file readable at new mount location\n");
+    fd = sys_open("/tmp/msmove_dst/move_test.txt", 0 /* O_RDONLY */, 0);
+    bool t899_ok = false;
+    if (fd >= 0) {
+        char rbuf[8] = {0};
+        ssize_t nr = sys_read((int)fd, rbuf, 5);
+        sys_close((int)fd);
+        t899_ok = (nr == 5 && rbuf[0] == 'm' && rbuf[4] == 'd');
+    }
+    if (t899_ok) {
+        fut_printf("[MISC-TEST] ✓ Test 899: file visible at dst after MS_MOVE\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 899: file not accessible at dst fd=%ld\n", fd);
+        fut_test_fail(899);
+    }
+
+    /* Test 900: umount /tmp/msmove_dst → 0 */
+    fut_printf("[MISC-TEST] Test 900: umount2(/tmp/msmove_dst) → 0\n");
+    r = sys_umount2("/tmp/msmove_dst", 0);
+    if (r == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 900: umount2 → 0\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 900: umount2 returned %ld\n", r);
+        fut_test_fail(900);
+    }
+
+#undef MS_MOVE_T
+#undef MS_BIND_T
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -31409,6 +31520,7 @@ void fut_misc_test_thread(void *arg) {
     test_af_inet_socket_stub();           /* Tests 874-881: AF_INET/AF_INET6 socket creation stubs */
     test_af_inet_bind_getsockname();      /* Tests 882-887: AF_INET bind/getsockname, SO_PRIORITY/BINDTODEVICE */
     test_udp_sockopt_and_sendto();        /* Tests 888-895: IPPROTO_UDP setsockopt/getsockopt + AF_INET DGRAM sendto */
+    test_ms_move_mount();                 /* Tests 896-900: MS_MOVE mount relocation */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

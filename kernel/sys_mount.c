@@ -439,12 +439,34 @@ long sys_mount(const char *source, const char *target, const char *filesystemtyp
         return 0;
     }
 
-    /* MS_MOVE: not yet implemented */
+    /* MS_MOVE: move a mount from source to target */
     if (mountflags & MS_MOVE) {
-        fut_printf("[MOUNT] mount(target='%s', flags=0x%lx, pid=%d) -> ENOSYS "
-                   "(MS_MOVE not implemented)\n",
-                   target_buf, mountflags, task->pid);
-        return -ENOSYS;
+        char source_buf2[256];
+        if (!source || mount_copy_from_user(source_buf2, source, sizeof(source_buf2)) != 0) {
+            fut_printf("[MOUNT] MS_MOVE: EFAULT copying source\n");
+            return -EFAULT;
+        }
+        if (memchr(source_buf2, '\0', sizeof(source_buf2)) == NULL)
+            return -ENAMETOOLONG;
+        if (source_buf2[0] == '\0')
+            return -EINVAL;
+
+        /* Heap-dup target; ownership transferred to fut_vfs_move_mount on success */
+        size_t tlen2 = strlen(target_buf) + 1;
+        char *new_mp = fut_malloc(tlen2);
+        if (!new_mp) return -ENOMEM;
+        memcpy(new_mp, target_buf, tlen2);
+
+        int ret = fut_vfs_move_mount(source_buf2, new_mp);
+        if (ret < 0) {
+            fut_free(new_mp);
+            fut_printf("[MOUNT] MS_MOVE('%s' -> '%s', pid=%d) -> %d\n",
+                       source_buf2, target_buf, task->pid, ret);
+            return ret;
+        }
+        fut_printf("[MOUNT] MS_MOVE('%s' -> '%s', pid=%d) -> 0\n",
+                   source_buf2, target_buf, task->pid);
+        return 0;
     }
 
     /* Verify target directory exists and is a directory */

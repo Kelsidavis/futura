@@ -687,6 +687,7 @@ int fut_vfs_mount(const char *device, const char *mountpoint,
  * @return 0 on success, negative errno on failure.
  */
 int fut_vfs_bind_mount(const char *source, char *target);
+int fut_vfs_move_mount(const char *source, char *target);
 
 /**
  * Unmount a filesystem.

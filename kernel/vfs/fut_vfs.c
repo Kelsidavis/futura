@@ -503,6 +503,47 @@ int fut_vfs_unmount(const char *mountpoint) {
     return -ENOENT;
 }
 
+/**
+ * fut_vfs_move_mount - Atomically move a mount to a new location (MS_MOVE).
+ *
+ * @param source  Current mountpoint path of the mount to move.
+ * @param target  Heap-allocated path string for the new mountpoint.
+ *                Ownership transferred on success; caller must NOT free it.
+ * @return 0 on success, -ENOENT if source not found, -ENOTDIR if target not a dir,
+ *         -EINVAL if source or target is NULL/empty.
+ */
+int fut_vfs_move_mount(const char *source, char *target) {
+    if (!source || !target || source[0] == '\0' || target[0] == '\0')
+        return -EINVAL;
+
+    /* Verify target directory exists */
+    struct fut_vnode *target_vnode = NULL;
+    int ret = fut_vfs_lookup(target, &target_vnode);
+    if (ret < 0)
+        return ret;
+    if (target_vnode->type != VN_DIR) {
+        fut_vnode_unref(target_vnode);
+        return -ENOTDIR;
+    }
+    fut_vnode_unref(target_vnode);
+
+    /* Find mount with source as its mountpoint */
+    struct fut_mount *mount = mount_list;
+    while (mount) {
+        const char *a = mount->mountpoint;
+        const char *b = source;
+        while (*a && *b && *a == *b) { a++; b++; }
+        if (*a == '\0' && *b == '\0') {
+            /* Found — update mountpoint in-place */
+            mount->mountpoint = target;
+            return 0;
+        }
+        mount = mount->next;
+    }
+
+    return -ENOENT;
+}
+
 int fut_vfs_remount(const char *mountpoint, int flags) {
     if (!mountpoint) {
         return -EINVAL;

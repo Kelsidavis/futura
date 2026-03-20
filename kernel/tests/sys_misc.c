@@ -35278,6 +35278,208 @@ t1074:
     }
 }
 
+/* ============================================================
+ * Tests 1075-1079: inotify IN_MOVED events + procfs getdents
+ *   Test 1075: inotify IN_MOVED_FROM fired on rename (correct name)
+ *   Test 1076: inotify IN_MOVED_TO fired on rename (correct name)
+ *   Test 1077: IN_MOVED_FROM/TO cookies match and are non-zero
+ *   Test 1078: getdents64(/proc) lists current PID directory
+ *   Test 1079: getdents64(/proc/<pid>/) lists "fd" entry
+ * ============================================================ */
+
+static void test_inotify_moved_proc_getdents(void) {
+    extern long sys_inotify_init1(int flags);
+    extern long sys_inotify_add_watch(int fd, const char *path, uint32_t mask);
+    extern long sys_rename(const char *oldpath, const char *newpath);
+    extern long sys_read(int fd, void *buf, size_t count);
+    extern long sys_close(int fd);
+    extern long sys_getdents64(unsigned int fd, void *dirp, unsigned int count);
+    extern long sys_getpid(void);
+    extern long sys_openat(int dirfd, const char *pathname, int flags, int mode);
+
+#define INO_MOVED_FROM   0x00000040u
+#define INO_MOVED_TO     0x00000080u
+#define INO_MOVE_ALL     (INO_MOVED_FROM | INO_MOVED_TO)
+#define INO_NB_FLAG      00004000
+    struct ino_ev_mv { int wd; uint32_t mask; uint32_t cookie; uint32_t len; char name[256]; };
+
+    /* ---- Tests 1075-1077: IN_MOVED_FROM/TO on rename with matching cookie ---- */
+    fut_printf("[MISC-TEST] Test 1075: inotify IN_MOVED_FROM on rename\n");
+    {
+        /* Create source file */
+        int cfd = fut_vfs_open("/ino_mv_src.txt", O_RDWR | O_CREAT, 0644);
+        if (cfd >= 0) fut_vfs_close(cfd);
+
+        long ifd = sys_inotify_init1(INO_NB_FLAG);
+        if (ifd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1075: inotify_init1 -> %ld\n", ifd);
+            fut_test_fail(1075);
+            goto t1078;
+        }
+        long wd = sys_inotify_add_watch((int)ifd, "/", INO_MOVE_ALL);
+        if (wd < 0) {
+            sys_close((int)ifd);
+            fut_printf("[MISC-TEST] ✗ Test 1075: add_watch -> %ld\n", wd);
+            fut_test_fail(1075);
+            goto t1078;
+        }
+
+        sys_rename("/ino_mv_src.txt", "/ino_mv_dst.txt");
+
+        /* Read all pending events at once — inotify packs them into a single read */
+        char evbuf[1024];
+        long nr = sys_read((int)ifd, evbuf, sizeof(evbuf));
+        sys_close((int)ifd);
+        fut_vfs_unlink("/ino_mv_dst.txt");
+
+        /* Parse events from buffer */
+        struct ino_ev_mv ev1 = {0}, ev2 = {0};
+        int evcount = 0;
+        if (nr > 0) {
+            long pos = 0;
+            while (pos + 16 <= nr && evcount < 2) {
+                struct ino_ev_mv *ep = (struct ino_ev_mv *)(evbuf + pos);
+                if (evcount == 0) __builtin_memcpy(&ev1, ep, sizeof(ev1));
+                else              __builtin_memcpy(&ev2, ep, sizeof(ev2));
+                evcount++;
+                long step = 16 + ep->len;
+                if (step <= 0 || pos + step > nr) break;
+                pos += step;
+            }
+        }
+
+        /* Test 1075: IN_MOVED_FROM with correct name */
+        if (evcount >= 1 && (ev1.mask & INO_MOVED_FROM) &&
+            __builtin_strncmp(ev1.name, "ino_mv_src.txt", 14) == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1075: IN_MOVED_FROM name='%s' cookie=%u\n",
+                       ev1.name, ev1.cookie);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1075: nr=%ld evcount=%d mask=0x%x name='%s'\n",
+                       nr, evcount, ev1.mask, evcount >= 1 && ev1.len > 0 ? ev1.name : "<none>");
+            fut_test_fail(1075);
+        }
+
+        /* Test 1076: IN_MOVED_TO with correct name */
+        fut_printf("[MISC-TEST] Test 1076: inotify IN_MOVED_TO on rename\n");
+        if (evcount >= 2 && (ev2.mask & INO_MOVED_TO) &&
+            __builtin_strncmp(ev2.name, "ino_mv_dst.txt", 14) == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1076: IN_MOVED_TO name='%s' cookie=%u\n",
+                       ev2.name, ev2.cookie);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1076: nr=%ld evcount=%d mask=0x%x name='%s'\n",
+                       nr, evcount, ev2.mask, evcount >= 2 && ev2.len > 0 ? ev2.name : "<none>");
+            fut_test_fail(1076);
+        }
+
+        /* Test 1077: cookies match and are non-zero */
+        fut_printf("[MISC-TEST] Test 1077: IN_MOVED_FROM/TO cookies match\n");
+        if (evcount >= 2 && ev1.cookie != 0 && ev1.cookie == ev2.cookie) {
+            fut_printf("[MISC-TEST] ✓ Test 1077: matching non-zero cookie %u\n", ev1.cookie);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1077: evcount=%d cookie1=%u cookie2=%u (expect equal, non-zero)\n",
+                       evcount, ev1.cookie, ev2.cookie);
+            fut_test_fail(1077);
+        }
+    }
+
+t1078:
+    /* ---- Test 1078: getdents64(/proc) lists current PID ---- */
+    fut_printf("[MISC-TEST] Test 1078: getdents64(/proc) lists current PID\n");
+    {
+        long pid = sys_getpid();
+        /* Build PID string */
+        char pid_str[20]; int pn = 0;
+        { long v = pid; if (v == 0) { pid_str[pn++] = '0'; } else {
+            char rev[20]; int rn = 0;
+            while (v) { rev[rn++] = '0' + (int)(v % 10); v /= 10; }
+            for (int i = rn - 1; i >= 0; i--) pid_str[pn++] = rev[i]; } }
+        pid_str[pn] = '\0';
+
+        int dfd = fut_vfs_open("/proc", 00200000 /*O_DIRECTORY*/, 0);
+        if (dfd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1078: open /proc failed: %d\n", dfd);
+            fut_test_fail(1078);
+            goto t1079;
+        }
+
+        char buf[8192];
+        long n = sys_getdents64((unsigned int)dfd, buf, sizeof(buf));
+        fut_vfs_close(dfd);
+
+        bool found = false;
+        if (n > 0) {
+            long pos = 0;
+            while (pos < n) {
+                struct test_dirent64 *d = (struct test_dirent64 *)(buf + pos);
+                if (d->d_reclen == 0) break;
+                if (__builtin_strcmp(d->d_name, pid_str) == 0) { found = true; break; }
+                pos += d->d_reclen;
+            }
+        }
+        if (!found) {
+            fut_printf("[MISC-TEST] ✗ Test 1078: PID %s not found in /proc (n=%ld)\n", pid_str, n);
+            fut_test_fail(1078);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1078: /proc lists PID %s\n", pid_str);
+            fut_test_pass();
+        }
+    }
+
+t1079:
+    /* ---- Test 1079: getdents64(/proc/<pid>/) lists "fd" entry ---- */
+    fut_printf("[MISC-TEST] Test 1079: getdents64(/proc/<pid>/) lists 'fd'\n");
+    {
+        /* Build /proc/<pid> path */
+        long pid = sys_getpid();
+        char proc_pid[64];
+        int pp = 0;
+        proc_pid[pp++] = '/'; proc_pid[pp++] = 'p'; proc_pid[pp++] = 'r';
+        proc_pid[pp++] = 'o'; proc_pid[pp++] = 'c'; proc_pid[pp++] = '/';
+        { long v = pid; if (v == 0) { proc_pid[pp++] = '0'; } else {
+            char rev[20]; int rn = 0;
+            while (v) { rev[rn++] = '0' + (int)(v % 10); v /= 10; }
+            for (int i = rn - 1; i >= 0; i--) proc_pid[pp++] = rev[i]; } }
+        proc_pid[pp] = '\0';
+
+        int dfd = fut_vfs_open(proc_pid, 00200000 /*O_DIRECTORY*/, 0);
+        if (dfd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1079: open %s failed: %d\n", proc_pid, dfd);
+            fut_test_fail(1079);
+            return;
+        }
+
+        char buf[8192];
+        long n = sys_getdents64((unsigned int)dfd, buf, sizeof(buf));
+        fut_vfs_close(dfd);
+
+        bool found = false;
+        if (n > 0) {
+            long pos = 0;
+            while (pos < n) {
+                struct test_dirent64 *d = (struct test_dirent64 *)(buf + pos);
+                if (d->d_reclen == 0) break;
+                if (__builtin_strcmp(d->d_name, "fd") == 0) { found = true; break; }
+                pos += d->d_reclen;
+            }
+        }
+        if (!found) {
+            fut_printf("[MISC-TEST] ✗ Test 1079: 'fd' not found in %s (n=%ld)\n", proc_pid, n);
+            fut_test_fail(1079);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1079: %s/ contains 'fd' entry\n", proc_pid);
+            fut_test_pass();
+        }
+    }
+
+#undef INO_MOVED_FROM
+#undef INO_MOVED_TO
+#undef INO_MOVE_ALL
+#undef INO_NB_FLAG
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -35879,6 +36081,7 @@ void fut_misc_test_thread(void *arg) {
     test_siocgif_extended();             /* Tests 1064-1067: SIOCGIFMTU/NETMASK/HWADDR/INDEX for "lo" */
     test_siocgifname_sa_nocldstop();     /* Tests 1068-1070: SIOCGIFNAME reverse lookup; SA_NOCLDSTOP flag */
     test_proc_fd_getdents_eventfd_overflow(); /* Tests 1071-1074: /proc/self/fd getdents; eventfd UINT64_MAX/overflow */
+    test_inotify_moved_proc_getdents(); /* Tests 1075-1079: inotify IN_MOVED_FROM/TO cookie; getdents /proc PID listing */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -33883,6 +33883,150 @@ static void test_mmap_dup3_select_errors(void) {
 #undef TMDS_O_CLOEXEC
 }
 
+/*
+ * test_file_io_posix_semantics — Tests 1026-1030
+ *
+ * Verifies POSIX-mandated file I/O behaviors that are implemented but
+ * lack explicit coverage:
+ *   1026: read() at EOF → 0
+ *   1027: fstat() after write() shows updated st_size
+ *   1028: fstat() after write() shows non-zero st_mtime
+ *   1029: lseek(0, SEEK_END) returns current file size
+ *   1030: fcntl(F_SETFL, O_APPEND) redirects subsequent writes to end
+ */
+static void test_file_io_posix_semantics(void) {
+    extern ssize_t sys_write(int fd, const void *buf, size_t count);
+    extern ssize_t sys_read(int fd, void *buf, size_t count);
+    extern long sys_lseek(int fd, int64_t offset, int whence);
+    extern long sys_fstat(int fd, struct fut_stat *statbuf);
+    extern long sys_close(int fd);
+    extern long sys_fcntl(int fd, int cmd, uint64_t arg);
+
+    /* ---- Test 1026: read() at EOF returns 0 ---- */
+    fut_printf("[MISC-TEST] Test 1026: read() at EOF → 0\n");
+    {
+        int fd = fut_vfs_open("/fio_eof.txt", 0x242 /* O_RDWR|O_CREAT|O_TRUNC */, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1026: open failed: %d\n", fd);
+            fut_test_fail(1026);
+        } else {
+            sys_write(fd, "hello", 5); /* write 5 bytes, offset now at 5 */
+            char buf[16];
+            ssize_t n = sys_read(fd, buf, sizeof(buf)); /* read at EOF */
+            if (n == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1026: read() at EOF → 0\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1026: read() at EOF → %zd (expected 0)\n", n);
+                fut_test_fail(1026);
+            }
+            sys_close(fd);
+        }
+    }
+
+    /* ---- Test 1027: fstat() after write() shows updated st_size ---- */
+    fut_printf("[MISC-TEST] Test 1027: fstat() after write() → st_size updated\n");
+    {
+        int fd = fut_vfs_open("/fio_size.txt", 0x242 /* O_RDWR|O_CREAT|O_TRUNC */, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1027: open failed: %d\n", fd);
+            fut_test_fail(1027);
+        } else {
+            sys_write(fd, "12345678", 8);
+            struct fut_stat st = {0};
+            sys_fstat(fd, &st);
+            if (st.st_size == 8) {
+                fut_printf("[MISC-TEST] ✓ Test 1027: fstat() st_size == 8\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1027: st_size=%llu (expected 8)\n",
+                           (unsigned long long)st.st_size);
+                fut_test_fail(1027);
+            }
+            sys_close(fd);
+        }
+    }
+
+    /* ---- Test 1028: fstat() after write() shows non-zero st_mtime ---- */
+    fut_printf("[MISC-TEST] Test 1028: fstat() after write() → st_mtime != 0\n");
+    {
+        int fd = fut_vfs_open("/fio_mtime.txt", 0x242 /* O_RDWR|O_CREAT|O_TRUNC */, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1028: open failed: %d\n", fd);
+            fut_test_fail(1028);
+        } else {
+            sys_write(fd, "data", 4);
+            struct fut_stat st = {0};
+            sys_fstat(fd, &st);
+            if (st.st_mtime != 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1028: fstat() st_mtime=%llu (non-zero)\n",
+                           (unsigned long long)st.st_mtime);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1028: st_mtime == 0 (expected non-zero after write)\n");
+                fut_test_fail(1028);
+            }
+            sys_close(fd);
+        }
+    }
+
+    /* ---- Test 1029: lseek(0, SEEK_END) returns file size ---- */
+    fut_printf("[MISC-TEST] Test 1029: lseek(0, SEEK_END) == st_size\n");
+    {
+        int fd = fut_vfs_open("/fio_seekend.txt", 0x242 /* O_RDWR|O_CREAT|O_TRUNC */, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1029: open failed: %d\n", fd);
+            fut_test_fail(1029);
+        } else {
+            sys_write(fd, "1234567", 7); /* 7 bytes */
+            long pos = sys_lseek(fd, 0, 2 /* SEEK_END */);
+            if (pos == 7) {
+                fut_printf("[MISC-TEST] ✓ Test 1029: lseek(SEEK_END) == 7\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1029: lseek(SEEK_END)=%ld (expected 7)\n", pos);
+                fut_test_fail(1029);
+            }
+            sys_close(fd);
+        }
+    }
+
+    /* ---- Test 1030: fcntl(F_SETFL, O_APPEND) redirects writes to end ---- */
+    fut_printf("[MISC-TEST] Test 1030: fcntl(F_SETFL, O_APPEND) redirects writes to end\n");
+    {
+#define FIOS_O_APPEND 0x400
+        int fd = fut_vfs_open("/fio_append.txt", 0x242 /* O_RDWR|O_CREAT|O_TRUNC */, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1030: open failed: %d\n", fd);
+            fut_test_fail(1030);
+        } else {
+            /* Write "hello" without O_APPEND */
+            sys_write(fd, "hello", 5);
+            /* Rewind to start and set O_APPEND */
+            sys_lseek(fd, 0, 0 /* SEEK_SET */);
+            long flags = sys_fcntl(fd, 3 /* F_GETFL */, 0);
+            sys_fcntl(fd, 4 /* F_SETFL */, (uint64_t)(flags | FIOS_O_APPEND));
+            /* Write "world" — O_APPEND should place it at offset 5, not 0 */
+            sys_write(fd, "world", 5);
+            /* Read back from the start */
+            sys_lseek(fd, 0, 0 /* SEEK_SET */);
+            char buf[16] = {0};
+            sys_read(fd, buf, 10);
+            if (buf[0] == 'h' && buf[5] == 'w') {
+                fut_printf("[MISC-TEST] ✓ Test 1030: O_APPEND write appended to end: '%.*s'\n",
+                           10, buf);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1030: content='%.10s' (expected 'helloworld')\n",
+                           buf);
+                fut_test_fail(1030);
+            }
+            sys_close(fd);
+        }
+#undef FIOS_O_APPEND
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -34472,6 +34616,7 @@ void fut_misc_test_thread(void *arg) {
     test_open_lseek_errors();            /* Tests 1011-1015: open(dir,O_WRONLY/RDWR)→EISDIR, open(file,O_DIRECTORY)→ENOTDIR, lseek errors */
     test_fifo_seekable_ops();            /* Tests 1016-1020: FIFO pread/pwrite/lseek→ESPIPE, getdents64(non-dir)→ENOTDIR */
     test_mmap_dup3_select_errors();      /* Tests 1021-1025: mmap unaligned-offset→EINVAL, dup3 errors, select nfds>FD_SETSIZE→EINVAL */
+    test_file_io_posix_semantics();      /* Tests 1026-1030: read@EOF→0, fstat size/mtime after write, lseek(SEEK_END), F_SETFL+O_APPEND */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

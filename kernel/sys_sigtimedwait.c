@@ -143,7 +143,13 @@ long sys_rt_sigtimedwait(const uint64_t *uthese, void *uinfo,
                 struct kernel_siginfo info;
                 memset(&info, 0, sizeof(info));
                 info.si_signo = signo;
-                info.si_code = 0;  /* SI_USER */
+                /* Read si_code from the per-signal queue info populated by
+                 * fut_signal_send() (SI_USER for kill/raise), rt_sigqueueinfo
+                 * (SI_QUEUE), tgkill (SI_TKILL), or POSIX timer (SI_TIMER). */
+                if (from_thread && cur_thread)
+                    info.si_code = cur_thread->thread_sig_queue_info[signo - 1].si_code;
+                else
+                    info.si_code = task->sig_queue_info[signo - 1].si_code;
                 info.si_pid = task->pid;
                 info.si_uid = task->uid;
                 sigtimedwait_copy_to_user(uinfo, &info, sizeof(info));

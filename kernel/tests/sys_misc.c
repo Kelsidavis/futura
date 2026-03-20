@@ -28525,6 +28525,144 @@ static void test_select_timeout_update(void) {
     fut_test_pass();
 }
 
+/* ============================================================
+ * Tests 784-785: rt_sigtimedwait fills siginfo correctly
+ *
+ *   784: uinfo.si_signo  == SIGUSR1 (10) when SIGUSR1 is dequeued
+ *   785: uinfo.si_code   == 0 (SI_USER) for a kill()-sourced signal
+ *
+ * POSIX: when uinfo is non-NULL, rt_sigtimedwait populates at least
+ * si_signo and si_code.  Futura's implementation reads si_code from
+ * the per-signal sig_queue_info filled by fut_signal_send().
+ * ============================================================ */
+static void test_sigtimedwait_uinfo(void) {
+    fut_printf("[MISC-TEST] Tests 784-785: rt_sigtimedwait fills siginfo\n");
+    extern long sys_rt_sigtimedwait(const uint64_t *uthese, void *uinfo,
+                                     const void *uts, size_t sigsetsize);
+    extern long sys_sigprocmask(int how, const sigset_t *set, sigset_t *oldset);
+    extern long sys_kill(int pid, int sig);
+    extern long sys_getpid(void);
+
+    fut_task_t *task784 = fut_task_current();
+    if (!task784) { fut_test_fail(784); fut_test_fail(785); return; }
+
+    /* Block SIGUSR1 so kill() queues it without triggering the default
+     * SIG_DFL terminate action (SIGUSR1 default = terminate). */
+    sigset_t block784 = { .__mask = 1ULL << 9 };  /* SIGUSR1 = bit 9 */
+    sigset_t saved784;
+    sys_sigprocmask(0 /* SIG_BLOCK */, &block784, &saved784);
+
+    /* Clear any pre-existing SIGUSR1 pending bit from earlier tests */
+    __atomic_and_fetch(&task784->pending_signals, ~(1ULL << 9), __ATOMIC_RELEASE);
+
+    /* Send SIGUSR1 to self — fills sig_queue_info[9] with si_code=SI_USER */
+    long pid784 = sys_getpid();
+    sys_kill((int)pid784, 10 /* SIGUSR1 */);
+
+    /* 128-byte buffer matching struct kernel_siginfo:
+     *   si_signo (int, offset 0), si_errno (int, offset 4), si_code (int, offset 8) */
+    struct { int si_signo; int si_errno; int si_code; char pad[116]; } uinfo784;
+    __builtin_memset(&uinfo784, 0xff, sizeof(uinfo784));
+
+    uint64_t uthese784 = 1ULL << 9;  /* SIGUSR1 */
+    struct { int64_t tv_sec; long tv_nsec; } ts784 = { 0, 10000000 };  /* 10ms */
+    long ret784 = sys_rt_sigtimedwait(&uthese784, &uinfo784, &ts784, sizeof(uint64_t));
+
+    /* Restore signal mask before any fail-return */
+    sys_sigprocmask(2 /* SIG_SETMASK */, &saved784, NULL);
+
+    if (ret784 != 10) {
+        fut_printf("[MISC-TEST] ✗ Test 784: sigtimedwait returned %ld (expected 10)\n", ret784);
+        fut_test_fail(784); fut_test_fail(785); return;
+    }
+
+    /* Test 784: si_signo (offset 0) must equal 10 (SIGUSR1) */
+    if (uinfo784.si_signo != 10) {
+        fut_printf("[MISC-TEST] ✗ Test 784: uinfo.si_signo=%d (expected 10)\n", uinfo784.si_signo);
+        fut_test_fail(784); fut_test_fail(785); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 784: sigtimedwait uinfo.si_signo=%d\n", uinfo784.si_signo);
+    fut_test_pass();
+
+    /* Test 785: si_code (offset 8) must be 0 (SI_USER — signal from kill()) */
+    if (uinfo784.si_code != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 785: uinfo.si_code=%d (expected 0=SI_USER)\n",
+                   uinfo784.si_code);
+        fut_test_fail(785); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 785: sigtimedwait uinfo.si_code=%d (SI_USER)\n",
+               uinfo784.si_code);
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Tests 786-787: flock LOCK_NB conflict detection
+ *
+ *   786: LOCK_EX|LOCK_NB returns EAGAIN when another open file
+ *        description holds LOCK_SH on the same vnode.
+ *   787: After LOCK_UN releases the shared lock,
+ *        LOCK_EX|LOCK_NB succeeds (returns 0).
+ *
+ * Linux: flock() is per open-file-description.  Two separate
+ * open() calls create independent OFDs; a LOCK_SH on fd1 blocks
+ * LOCK_EX from fd2 even within the same process.
+ * ============================================================ */
+static void test_flock_nb_conflict(void) {
+    fut_printf("[MISC-TEST] Tests 786-787: flock LOCK_NB conflict\n");
+    extern long sys_flock(int fd, int operation);
+
+#define T786_LOCK_SH  1
+#define T786_LOCK_EX  2
+#define T786_LOCK_UN  8
+#define T786_LOCK_NB  4
+
+    /* Two independent open() calls → two separate file descriptions */
+    int fd1 = fut_vfs_open("/flock_nb786.txt", 0x42 /* O_CREAT|O_RDWR */, 0644);
+    int fd2 = fut_vfs_open("/flock_nb786.txt", 2    /* O_RDWR         */, 0);
+
+    if (fd1 < 0 || fd2 < 0) {
+        fut_printf("[MISC-TEST] ✗ Tests 786-787: open failed fd1=%d fd2=%d\n", fd1, fd2);
+        if (fd1 >= 0) fut_vfs_close(fd1);
+        if (fd2 >= 0) fut_vfs_close(fd2);
+        fut_test_fail(786); fut_test_fail(787); return;
+    }
+
+    /* Acquire shared lock via fd1 */
+    long r = sys_flock(fd1, T786_LOCK_SH);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Tests 786-787: flock(fd1, LOCK_SH)=%ld\n", r);
+        fut_vfs_close(fd1); fut_vfs_close(fd2);
+        fut_test_fail(786); fut_test_fail(787); return;
+    }
+
+    /* Test 786: LOCK_EX|LOCK_NB via fd2 must fail with EAGAIN because
+     * fd1 holds a shared lock on the same vnode */
+    r = sys_flock(fd2, T786_LOCK_EX | T786_LOCK_NB);
+    if (r != -EAGAIN) {
+        fut_printf("[MISC-TEST] ✗ Test 786: LOCK_EX|LOCK_NB=%ld (expected -EAGAIN=%d)\n",
+                   r, -EAGAIN);
+        sys_flock(fd1, T786_LOCK_UN);
+        fut_vfs_close(fd1); fut_vfs_close(fd2);
+        fut_test_fail(786); fut_test_fail(787); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 786: flock LOCK_EX|LOCK_NB → EAGAIN while LOCK_SH held\n");
+    fut_test_pass();
+
+    /* Release shared lock; LOCK_EX|LOCK_NB must now succeed */
+    sys_flock(fd1, T786_LOCK_UN);
+
+    r = sys_flock(fd2, T786_LOCK_EX | T786_LOCK_NB);
+    sys_flock(fd2, T786_LOCK_UN);
+    fut_vfs_close(fd1); fut_vfs_close(fd2);
+
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 787: LOCK_EX|LOCK_NB after unlock=%ld (expected 0)\n", r);
+        fut_test_fail(787); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 787: flock LOCK_EX|LOCK_NB → 0 after LOCK_UN\n");
+    fut_test_pass();
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -29063,6 +29201,8 @@ void fut_misc_test_thread(void *arg) {
     test_posix_timer_signal_delivery();    /* Test 779: POSIX timer fires → SIGALRM pending */
     test_munmap_middle();                  /* Tests 780-782: partial munmap splits VMA */
     test_select_timeout_update();          /* Test 783: select() updates timeout to remaining time */
+    test_sigtimedwait_uinfo();            /* Tests 784-785: rt_sigtimedwait fills siginfo si_signo/si_code */
+    test_flock_nb_conflict();             /* Tests 786-787: flock LOCK_NB conflict → EAGAIN, then success */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

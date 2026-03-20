@@ -36034,6 +36034,193 @@ static void test_proc_fd_anon_symlinks(void) {
 #undef BUILD_FD_PATH
 }
 
+/* ============================================================
+ * Tests 1093-1096: /proc/self/fdinfo pos: and flags: tracking
+ *   Test 1093: fdinfo pos: for regular file is 0 initially
+ *   Test 1094: fdinfo pos: for regular file is 100 after lseek(fd,100,SEEK_SET)
+ *   Test 1095: fdinfo flags: for pipe read end contains "00" (O_RDONLY)
+ *   Test 1096: fdinfo flags: for pipe write end contains "01" (O_WRONLY)
+ * ============================================================ */
+/* Helper: read /proc/self/fdinfo/<fd_num> into buf; returns bytes read or -errno */
+static long read_fdinfo_for_fd(int fd_num, char *buf, size_t bufsz) {
+    char path[64];
+    path[0]='/'; path[1]='p'; path[2]='r'; path[3]='o'; path[4]='c';
+    path[5]='/'; path[6]='s'; path[7]='e'; path[8]='l'; path[9]='f';
+    path[10]='/'; path[11]='f'; path[12]='d'; path[13]='i';
+    path[14]='n'; path[15]='f'; path[16]='o'; path[17]='/';
+    int n = fd_num, i = 18;
+    if (n >= 100) { path[i++] = (char)('0' + n/100); n %= 100; }
+    if (n >= 10)  { path[i++] = (char)('0' + n/10);  n %= 10; }
+    path[i++] = (char)('0' + n);
+    path[i] = '\0';
+    int ifd = fut_vfs_open(path, O_RDONLY, 0);
+    if (ifd < 0) return (long)ifd;
+    long nr = fut_vfs_read(ifd, buf, (long)(bufsz - 1));
+    fut_vfs_close(ifd);
+    if (nr > 0) buf[nr] = '\0';
+    return nr;
+}
+
+static void test_fdinfo_pos_flags(void) {
+    extern int64_t fut_vfs_lseek(int fd, int64_t offset, int whence);
+    extern long sys_pipe(int pipefd[2]);
+
+    /* ---- Test 1093: fdinfo pos: = 0 for fresh regular file ---- */
+    fut_printf("[MISC-TEST] Test 1093: fdinfo pos: = 0 for fresh regular file\n");
+    {
+        int fd = fut_vfs_open("/tmp/fdinfo_pos_test", O_CREAT | O_RDWR | O_TRUNC, 0600);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1093: open failed: %d\n", fd);
+            fut_test_fail(1093);
+            goto t1094;
+        }
+        char buf[256];
+        long nr = read_fdinfo_for_fd(fd, buf, sizeof(buf));
+        fut_vfs_close(fd);
+        fut_vfs_unlink("/tmp/fdinfo_pos_test");
+        if (nr <= 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1093: read fdinfo failed: %ld\n", nr);
+            fut_test_fail(1093);
+            goto t1094;
+        }
+        /* Check "pos:\t0" (offset 0) is present */
+        int found = 0;
+        for (long j = 0; j + 6 <= nr; j++) {
+            if (buf[j]=='p' && buf[j+1]=='o' && buf[j+2]=='s' &&
+                buf[j+3]==':' && buf[j+4]=='\t' && buf[j+5]=='0') {
+                found = 1; break;
+            }
+        }
+        if (!found) {
+            fut_printf("[MISC-TEST] ✗ Test 1093: pos:\\t0 not found in fdinfo: '%s'\n", buf);
+            fut_test_fail(1093);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1093: fdinfo pos:\\t0 present for fresh file\n");
+            fut_test_pass();
+        }
+    }
+t1094:
+    /* ---- Test 1094: fdinfo pos: = 100 after lseek ---- */
+    fut_printf("[MISC-TEST] Test 1094: fdinfo pos: = 100 after lseek(fd, 100, SEEK_SET)\n");
+    {
+        int fd = fut_vfs_open("/tmp/fdinfo_pos_test2", O_CREAT | O_RDWR | O_TRUNC, 0600);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1094: open failed: %d\n", fd);
+            fut_test_fail(1094);
+            goto t1095;
+        }
+        int64_t pos = fut_vfs_lseek(fd, 100, 0 /* SEEK_SET */);
+        if (pos != 100) {
+            fut_printf("[MISC-TEST] ✗ Test 1094: lseek returned %lld (expected 100)\n",
+                       (long long)pos);
+            fut_vfs_close(fd);
+            fut_vfs_unlink("/tmp/fdinfo_pos_test2");
+            fut_test_fail(1094);
+            goto t1095;
+        }
+        char buf[256];
+        long nr = read_fdinfo_for_fd(fd, buf, sizeof(buf));
+        fut_vfs_close(fd);
+        fut_vfs_unlink("/tmp/fdinfo_pos_test2");
+        if (nr <= 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1094: read fdinfo failed: %ld\n", nr);
+            fut_test_fail(1094);
+            goto t1095;
+        }
+        /* Check "pos:\t100" is present */
+        int found = 0;
+        for (long j = 0; j + 9 <= nr; j++) {
+            if (buf[j]=='p' && buf[j+1]=='o' && buf[j+2]=='s' &&
+                buf[j+3]==':' && buf[j+4]=='\t' &&
+                buf[j+5]=='1' && buf[j+6]=='0' && buf[j+7]=='0') {
+                found = 1; break;
+            }
+        }
+        if (!found) {
+            fut_printf("[MISC-TEST] ✗ Test 1094: pos:\\t100 not found in fdinfo: '%s'\n", buf);
+            fut_test_fail(1094);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1094: fdinfo pos:\\t100 present after lseek\n");
+            fut_test_pass();
+        }
+    }
+t1095:
+    /* ---- Test 1095: fdinfo flags for pipe read end (O_RDONLY) ---- */
+    fut_printf("[MISC-TEST] Test 1095: fdinfo flags: for pipe read end has 'flags:'\n");
+    {
+        int pipefd[2] = { -1, -1 };
+        long r = sys_pipe(pipefd);
+        if (r != 0 || pipefd[0] < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1095: pipe() failed: %ld\n", r);
+            fut_test_fail(1095);
+            goto t1096;
+        }
+        char buf[256];
+        long nr = read_fdinfo_for_fd(pipefd[0], buf, sizeof(buf));
+        fut_vfs_close(pipefd[0]);
+        fut_vfs_close(pipefd[1]);
+        if (nr <= 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1095: read fdinfo for pipe read end failed: %ld\n", nr);
+            fut_test_fail(1095);
+            goto t1096;
+        }
+        /* Check "flags:" is present (pipe fds have flags) */
+        int found = 0;
+        for (long j = 0; j + 6 <= nr; j++) {
+            if (buf[j]=='f' && buf[j+1]=='l' && buf[j+2]=='a' &&
+                buf[j+3]=='g' && buf[j+4]=='s' && buf[j+5]==':') {
+                found = 1; break;
+            }
+        }
+        if (!found) {
+            fut_printf("[MISC-TEST] ✗ Test 1095: 'flags:' not found in pipe read fdinfo\n");
+            fut_test_fail(1095);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1095: pipe read end fdinfo has 'flags:'\n");
+            fut_test_pass();
+        }
+    }
+t1096:
+    /* ---- Test 1096: fdinfo flags for pipe write end shows O_WRONLY ---- */
+    fut_printf("[MISC-TEST] Test 1096: fdinfo flags: for pipe write end shows O_WRONLY (01)\n");
+    {
+        int pipefd[2] = { -1, -1 };
+        long r = sys_pipe(pipefd);
+        if (r != 0 || pipefd[1] < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1096: pipe() failed: %ld\n", r);
+            fut_test_fail(1096);
+            return;
+        }
+        char buf[256];
+        long nr = read_fdinfo_for_fd(pipefd[1], buf, sizeof(buf));
+        fut_vfs_close(pipefd[0]);
+        fut_vfs_close(pipefd[1]);
+        if (nr <= 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1096: read fdinfo for pipe write end failed: %ld\n", nr);
+            fut_test_fail(1096);
+            return;
+        }
+        /* Check "flags:\t01" is present — O_WRONLY=1 in octal is "01",
+         * and procfs emits "flags:\t0" + pb_oct(flags), so "flags:\t01" for O_WRONLY */
+        int found = 0;
+        for (long j = 0; j + 8 <= nr; j++) {
+            if (buf[j]=='f' && buf[j+1]=='l' && buf[j+2]=='a' && buf[j+3]=='g' &&
+                buf[j+4]=='s' && buf[j+5]==':' && buf[j+6]=='\t' &&
+                buf[j+7]=='0' && buf[j+8]=='1') {
+                found = 1; break;
+            }
+        }
+        if (!found) {
+            fut_printf("[MISC-TEST] ✗ Test 1096: 'flags:\\t01' not in pipe write fdinfo: '%s'\n",
+                       buf);
+            fut_test_fail(1096);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1096: pipe write end fdinfo has 'flags:\\t01'\n");
+            fut_test_pass();
+        }
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -36639,6 +36826,7 @@ void fut_misc_test_thread(void *arg) {
     test_inotify_self_events(); /* Tests 1080-1082: IN_DELETE_SELF, IN_MOVE_SELF, IN_Q_OVERFLOW */
     test_mremap_dontunmap_and_fdinfo(); /* Tests 1083-1088: mremap DONTUNMAP; fdinfo timerfd/signalfd */
     test_proc_fd_anon_symlinks(); /* Tests 1089-1092: /proc/self/fd/<n> shows socket:[ino]/anon_inode:[type] */
+    test_fdinfo_pos_flags(); /* Tests 1093-1096: fdinfo pos:/flags: accuracy */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -31342,6 +31342,159 @@ static void test_af_netlink_extended(void) {
     fut_printf("[MISC-TEST] ✓ Tests 916-920: AF_NETLINK extended done\n");
 }
 
+/* ---- AF_NETLINK RTM_GETROUTE / RTM_GETNEIGH tests (921-925) ------------ */
+
+/*
+ * test_af_netlink_rtm_route() — Tests 921-925
+ *
+ *   Test 921: sendmsg(RTM_GETROUTE) → > 0 bytes sent
+ *   Test 922: recvmsg after RTM_GETROUTE → > 0 bytes received
+ *   Test 923: response type = RTM_NEWROUTE(24) or NLMSG_DONE(3)
+ *   Test 924: sendmsg(RTM_GETNEIGH) → > 0 bytes sent
+ *   Test 925: recvmsg after RTM_GETNEIGH → NLMSG_DONE(3) (empty ARP table)
+ */
+static void test_af_netlink_rtm_route(void) {
+    fut_printf("[MISC-TEST] Tests 921-925: AF_NETLINK RTM_GETROUTE/RTM_GETNEIGH\n");
+
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_close(int fd);
+    extern ssize_t sys_sendmsg(int sockfd, const struct test_msghdr *msg, int flags);
+    extern ssize_t sys_recvmsg(int sockfd, struct test_msghdr *msg, int flags);
+
+#define TEST_RTM_NEWROUTE_R  24
+#define TEST_RTM_GETROUTE_R  26
+#define TEST_RTM_GETNEIGH_R  30
+#define TEST_RTM_DONE_R      3
+
+    long fd = sys_socket(16 /* AF_NETLINK */, 3 /* SOCK_RAW */, 0 /* NETLINK_ROUTE */);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Tests 921-925: socket(AF_NETLINK) failed: %ld\n", fd);
+        fut_test_fail(921); fut_test_fail(922); fut_test_fail(923);
+        fut_test_fail(924); fut_test_fail(925); return;
+    }
+
+    /* --- Test 921: sendmsg(RTM_GETROUTE) → > 0 --- */
+    fut_printf("[MISC-TEST] Test 921: sendmsg RTM_GETROUTE\n");
+    struct test_nlmsghdr req921 = {
+        .nlmsg_len   = sizeof(struct test_nlmsghdr),
+        .nlmsg_type  = TEST_RTM_GETROUTE_R,
+        .nlmsg_flags = 0x0301,
+        .nlmsg_seq   = 3,
+        .nlmsg_pid   = 0,
+    };
+    struct iovec siov921 = { .iov_base = &req921, .iov_len = sizeof(req921) };
+    struct test_msghdr smsg921 = {
+        .msg_name = NULL, .msg_namelen = 0,
+        .msg_iov = &siov921, .msg_iovlen = 1,
+        .msg_control = NULL, .msg_controllen = 0, .msg_flags = 0,
+    };
+    ssize_t ws = sys_sendmsg((int)fd, &smsg921, 0);
+    if (ws <= 0) {
+        fut_printf("[MISC-TEST] ✗ Test 921: sendmsg RTM_GETROUTE = %zd (want > 0)\n", ws);
+        fut_test_fail(921); sys_close((int)fd); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 921: sendmsg RTM_GETROUTE → %zd\n", ws);
+    fut_test_pass();
+
+    /* --- Test 922: recvmsg → > 0 bytes --- */
+    fut_printf("[MISC-TEST] Test 922: recvmsg after RTM_GETROUTE\n");
+    unsigned char rbuf[256];
+    __builtin_memset(rbuf, 0, sizeof(rbuf));
+    struct iovec riov922 = { .iov_base = rbuf, .iov_len = sizeof(rbuf) };
+    struct test_msghdr rmsg922 = {
+        .msg_name = NULL, .msg_namelen = 0,
+        .msg_iov = &riov922, .msg_iovlen = 1,
+        .msg_control = NULL, .msg_controllen = 0, .msg_flags = 0,
+    };
+    ssize_t rr = sys_recvmsg((int)fd, &rmsg922, 0);
+    if (rr <= 0) {
+        fut_printf("[MISC-TEST] ✗ Test 922: recvmsg = %zd (want > 0)\n", rr);
+        fut_test_fail(922); sys_close((int)fd); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 922: recvmsg → %zd bytes\n", rr);
+    fut_test_pass();
+
+    /* --- Test 923: nlmsg_type = RTM_NEWROUTE(24) or NLMSG_DONE(3) --- */
+    fut_printf("[MISC-TEST] Test 923: nlmsg_type = RTM_NEWROUTE(24) or NLMSG_DONE(3)\n");
+    if ((size_t)rr >= 6) {
+        uint16_t nltype;
+        __builtin_memcpy(&nltype, rbuf + 4, sizeof(nltype));
+        if (nltype == TEST_RTM_NEWROUTE_R || nltype == TEST_RTM_DONE_R) {
+            fut_printf("[MISC-TEST] ✓ Test 923: nlmsg_type=%u (RTM_NEWROUTE or DONE)\n",
+                       (unsigned)nltype);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 923: nlmsg_type=%u (want 24 or 3)\n",
+                       (unsigned)nltype);
+            fut_test_fail(923); sys_close((int)fd); return;
+        }
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 923: response too short (%zd bytes)\n", rr);
+        fut_test_fail(923); sys_close((int)fd); return;
+    }
+
+    /* --- Test 924: sendmsg(RTM_GETNEIGH) → > 0 --- */
+    fut_printf("[MISC-TEST] Test 924: sendmsg RTM_GETNEIGH\n");
+    struct test_nlmsghdr req924 = {
+        .nlmsg_len   = sizeof(struct test_nlmsghdr),
+        .nlmsg_type  = TEST_RTM_GETNEIGH_R,
+        .nlmsg_flags = 0x0301,
+        .nlmsg_seq   = 4,
+        .nlmsg_pid   = 0,
+    };
+    struct iovec siov924 = { .iov_base = &req924, .iov_len = sizeof(req924) };
+    struct test_msghdr smsg924 = {
+        .msg_name = NULL, .msg_namelen = 0,
+        .msg_iov = &siov924, .msg_iovlen = 1,
+        .msg_control = NULL, .msg_controllen = 0, .msg_flags = 0,
+    };
+    ssize_t ws2 = sys_sendmsg((int)fd, &smsg924, 0);
+    if (ws2 <= 0) {
+        fut_printf("[MISC-TEST] ✗ Test 924: sendmsg RTM_GETNEIGH = %zd (want > 0)\n", ws2);
+        fut_test_fail(924); sys_close((int)fd); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 924: sendmsg RTM_GETNEIGH → %zd\n", ws2);
+    fut_test_pass();
+
+    /* --- Test 925: recvmsg after RTM_GETNEIGH → NLMSG_DONE (empty table) --- */
+    fut_printf("[MISC-TEST] Test 925: recvmsg after RTM_GETNEIGH → NLMSG_DONE\n");
+    __builtin_memset(rbuf, 0, sizeof(rbuf));
+    struct iovec riov925 = { .iov_base = rbuf, .iov_len = sizeof(rbuf) };
+    struct test_msghdr rmsg925 = {
+        .msg_name = NULL, .msg_namelen = 0,
+        .msg_iov = &riov925, .msg_iovlen = 1,
+        .msg_control = NULL, .msg_controllen = 0, .msg_flags = 0,
+    };
+    ssize_t rr2 = sys_recvmsg((int)fd, &rmsg925, 0);
+    if (rr2 <= 0) {
+        fut_printf("[MISC-TEST] ✗ Test 925: recvmsg = %zd (want > 0)\n", rr2);
+        fut_test_fail(925); sys_close((int)fd); return;
+    }
+    if ((size_t)rr2 >= 6) {
+        uint16_t nltype2;
+        __builtin_memcpy(&nltype2, rbuf + 4, sizeof(nltype2));
+        if (nltype2 == TEST_RTM_DONE_R) {
+            fut_printf("[MISC-TEST] ✓ Test 925: RTM_GETNEIGH → NLMSG_DONE (empty table)\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 925: nlmsg_type=%u (want NLMSG_DONE=3)\n",
+                       (unsigned)nltype2);
+            fut_test_fail(925);
+        }
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 925: response too short (%zd bytes)\n", rr2);
+        fut_test_fail(925);
+    }
+
+#undef TEST_RTM_NEWROUTE_R
+#undef TEST_RTM_GETROUTE_R
+#undef TEST_RTM_GETNEIGH_R
+#undef TEST_RTM_DONE_R
+
+    sys_close((int)fd);
+    fut_printf("[MISC-TEST] ✓ Tests 921-925: AF_NETLINK RTM_GETROUTE/GETNEIGH done\n");
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -31908,6 +32061,7 @@ void fut_misc_test_thread(void *arg) {
     test_seccomp_filter();                /* Tests 901-906: seccomp FILTER/STRICT/prctl no-op */
     test_af_netlink_socket();             /* Tests 907-915: AF_NETLINK (NETLINK_ROUTE) socket */
     test_af_netlink_extended();           /* Tests 916-920: AF_NETLINK getsockname/connect/poll/recvfrom */
+    test_af_netlink_rtm_route();          /* Tests 921-925: AF_NETLINK RTM_GETROUTE/RTM_GETNEIGH */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

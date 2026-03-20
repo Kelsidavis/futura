@@ -7,8 +7,10 @@
  * programs that enumerate network interfaces at startup.
  *
  * Supported operations:
- *   RTM_GETLINK  → RTM_NEWLINK for loopback (lo, index 1)
- *   RTM_GETADDR  → RTM_NEWADDR for 127.0.0.1/8 on lo
+ *   RTM_GETLINK   → RTM_NEWLINK for loopback (lo, index 1)
+ *   RTM_GETADDR   → RTM_NEWADDR for 127.0.0.1/8 on lo
+ *   RTM_GETROUTE  → RTM_NEWROUTE for loopback route (127.0.0.0/8 lo)
+ *   RTM_GETNEIGH  → NLMSG_DONE (empty neighbor table)
  *   anything else → empty NLMSG_DONE
  *
  * Socket lifecycle:
@@ -40,6 +42,9 @@
 #define RTM_GETLINK     18
 #define RTM_NEWADDR     20
 #define RTM_GETADDR     22
+#define RTM_NEWROUTE    24
+#define RTM_GETROUTE    26
+#define RTM_GETNEIGH    30
 
 /* ARPHRD (hardware type) */
 #define ARPHRD_ETHER    1
@@ -102,6 +107,28 @@ typedef struct __attribute__((packed)) {
     uint16_t rta_len;
     uint16_t rta_type;
 } nl_rta_t;  /* 4 bytes */
+
+typedef struct __attribute__((packed)) {
+    uint8_t  rtm_family;    /* Address family */
+    uint8_t  rtm_dst_len;   /* Destination prefix length */
+    uint8_t  rtm_src_len;   /* Source prefix length */
+    uint8_t  rtm_tos;       /* TOS filter */
+    uint8_t  rtm_table;     /* Routing table ID */
+    uint8_t  rtm_protocol;  /* Routing protocol */
+    uint8_t  rtm_scope;     /* Routing scope */
+    uint8_t  rtm_type;      /* Route type */
+    uint32_t rtm_flags;     /* Route flags */
+} nl_rtmsg_t;  /* 12 bytes */
+
+/* rtmsg table / protocol / scope / type constants */
+#define RT_TABLE_LOCAL   255
+#define RTPROT_KERNEL    2
+#define RT_SCOPE_LINK    253
+#define RTN_LOCAL        2
+
+/* Route rtattrs */
+#define RTA_DST          1
+#define RTA_OIF          4
 
 /* ── Builder helpers ────────────────────────────────────────────────────── */
 
@@ -240,6 +267,53 @@ static uint32_t nl_build_newaddr(uint8_t *buf, uint32_t seq) {
     return pos;
 }
 
+/* ── RTM_GETROUTE response ──────────────────────────────────────────────── */
+
+/* Returns the loopback route: 127.0.0.0/8 via lo (scope link, type local) */
+static uint32_t nl_build_newroute(uint8_t *buf, uint32_t seq) {
+    uint32_t pos = 0;
+
+    /* Outer nlmsghdr */
+    uint32_t msg_start = pos;
+    nl_hdr_t hdr = {
+        .nlmsg_len   = 0,
+        .nlmsg_type  = RTM_NEWROUTE,
+        .nlmsg_flags = NLM_F_MULTI,
+        .nlmsg_seq   = seq,
+        .nlmsg_pid   = 0,
+    };
+    nl_append(buf, &pos, &hdr, sizeof(hdr));
+
+    /* rtmsg: AF_INET, 127.0.0.0/8, table=LOCAL, proto=KERNEL, scope=LINK */
+    nl_rtmsg_t rtm = {
+        .rtm_family   = 2 /* AF_INET */,
+        .rtm_dst_len  = 8,
+        .rtm_src_len  = 0,
+        .rtm_tos      = 0,
+        .rtm_table    = RT_TABLE_LOCAL,
+        .rtm_protocol = RTPROT_KERNEL,
+        .rtm_scope    = RT_SCOPE_LINK,
+        .rtm_type     = RTN_LOCAL,
+        .rtm_flags    = 0,
+    };
+    nl_append(buf, &pos, &rtm, sizeof(rtm));
+
+    /* RTA_DST = 127.0.0.0 */
+    uint32_t dst = 0x0000007fU; /* 127.0.0.0 in network byte order */
+    nl_rta32(buf, &pos, RTA_DST, dst);
+
+    /* RTA_OIF = 1 (lo) */
+    nl_rta32(buf, &pos, RTA_OIF, 1);
+
+    /* Patch length in the header */
+    uint32_t msg_len = pos - msg_start;
+    __builtin_memcpy(buf + msg_start, &msg_len, sizeof(msg_len));
+
+    nl_done(buf, &pos, seq);
+
+    return pos;
+}
+
 /* ── Empty NLMSG_DONE (for unsupported request types) ──────────────────── */
 
 static uint32_t nl_build_done_only(uint8_t *buf, uint32_t seq) {
@@ -300,6 +374,13 @@ ssize_t netlink_handle_send(fut_socket_t *sock,
         break;
     case RTM_GETADDR:
         resp_len = nl_build_newaddr(buf, req.nlmsg_seq);
+        break;
+    case RTM_GETROUTE:
+        resp_len = nl_build_newroute(buf, req.nlmsg_seq);
+        break;
+    case RTM_GETNEIGH:
+        /* Empty neighbor table — just NLMSG_DONE */
+        resp_len = nl_build_done_only(buf, req.nlmsg_seq);
         break;
     default:
         resp_len = nl_build_done_only(buf, req.nlmsg_seq);

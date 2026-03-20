@@ -113,12 +113,9 @@ long sys_clone3(const struct fut_clone_args *uargs, size_t size) {
         return -ENOSYS;
     }
 
-    /* pidfd: we accept the flag but store 0 in *pidfd (no pidfd support yet) */
-    if ((flags & CLONE_PIDFD) && args.pidfd) {
-        uint32_t zero = 0;
-        fut_copy_to_user((void *)(uintptr_t)args.pidfd, &zero, sizeof(zero));
-        flags &= ~(uint64_t)CLONE_PIDFD;  /* Don't pass to lower layers */
-    }
+    /* CLONE_PIDFD: create a pidfd for the child and write it to *args.pidfd */
+    int want_pidfd = (flags & CLONE_PIDFD) && args.pidfd;
+    flags &= ~(uint64_t)CLONE_PIDFD;  /* Don't pass to lower layers */
 
     /* Thread creation path */
     if (flags & CLONE_THREAD) {
@@ -131,5 +128,25 @@ long sys_clone3(const struct fut_clone_args *uargs, size_t size) {
 
     /* Fork path: no CLONE_VM / CLONE_THREAD */
     extern long sys_fork(void);
-    return sys_fork();
+    long child_pid = sys_fork();
+
+    /* In the parent, create and write the pidfd if CLONE_PIDFD was set */
+    if (child_pid > 0 && want_pidfd) {
+        extern long sys_pidfd_open(int pid, unsigned int flags);
+        long pidfd = sys_pidfd_open((int)child_pid, 0);
+        if (pidfd >= 0) {
+            int pidfd_int = (int)pidfd;
+            fut_copy_to_user((void *)(uintptr_t)args.pidfd, &pidfd_int, sizeof(pidfd_int));
+        } else {
+            /* pidfd_open failed; write -1 to indicate failure */
+            int minus1 = -1;
+            fut_copy_to_user((void *)(uintptr_t)args.pidfd, &minus1, sizeof(minus1));
+        }
+    } else if (child_pid <= 0 && want_pidfd) {
+        /* In the child (or error): write -1 */
+        int minus1 = -1;
+        fut_copy_to_user((void *)(uintptr_t)args.pidfd, &minus1, sizeof(minus1));
+    }
+
+    return child_pid;
 }

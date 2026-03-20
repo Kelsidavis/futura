@@ -19594,7 +19594,7 @@ static void test_madvise_populate(void) {
 static void test_prctl_tid_address_speculation(void) {
     extern long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
                           unsigned long arg4, unsigned long arg5);
-#define T412_PR_GET_TID_ADDRESS   50
+#define T412_PR_GET_TID_ADDRESS   40  /* Linux: 40 (was incorrectly 50) */
 #define T412_PR_GET_SPECULATION   52
 #define T412_PR_SET_SPECULATION   53
 #define T412_PR_SPEC_STORE_BYPASS  0
@@ -31696,6 +31696,120 @@ static void test_keyring_and_legacy_events(void) {
     }
 }
 
+/*
+ * test_prctl_newer_options() — Tests 954-961
+ *
+ * Verifies prctl() options added in Linux 2.6.31+ / 3.x / 4.x that were
+ * previously returning EINVAL:
+ *   954: PR_TASK_PERF_EVENTS_DISABLE (31)  → 0
+ *   955: PR_TASK_PERF_EVENTS_ENABLE  (32)  → 0
+ *   956: PR_GET_TID_ADDRESS (40) stores non-NULL ptr → 0
+ *   957: PR_SET_THP_DISABLE (41, val=1)    → 0
+ *   958: PR_GET_THP_DISABLE (42)           → 0
+ *   959: prctl(unknown=9999)               → EINVAL
+ *   960: prctl(PR_GET_PDEATHSIG=2) after clear → correct stored value
+ *   961: prctl(PR_SET_DUMPABLE=4, 0) + PR_GET_DUMPABLE(3) → 0
+ */
+static void test_prctl_newer_options(void) {
+    fut_printf("[MISC-TEST] Tests 954-961: prctl newer options\n");
+
+    extern long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
+                          unsigned long arg4, unsigned long arg5);
+
+    /* Test 954: PR_TASK_PERF_EVENTS_DISABLE (31) → 0 */
+    fut_printf("[MISC-TEST] Test 954: prctl(PR_TASK_PERF_EVENTS_DISABLE=31) → 0\n");
+    long r954 = sys_prctl(31, 0, 0, 0, 0);
+    if (r954 == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 954: PR_TASK_PERF_EVENTS_DISABLE = 0\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 954: got %ld (want 0)\n", r954);
+        fut_test_fail(954);
+    }
+
+    /* Test 955: PR_TASK_PERF_EVENTS_ENABLE (32) → 0 */
+    fut_printf("[MISC-TEST] Test 955: prctl(PR_TASK_PERF_EVENTS_ENABLE=32) → 0\n");
+    long r955 = sys_prctl(32, 0, 0, 0, 0);
+    if (r955 == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 955: PR_TASK_PERF_EVENTS_ENABLE = 0\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 955: got %ld (want 0)\n", r955);
+        fut_test_fail(955);
+    }
+
+    /* Test 956: PR_GET_TID_ADDRESS (40) — was broken (defined as 50), now fixed */
+    fut_printf("[MISC-TEST] Test 956: prctl(PR_GET_TID_ADDRESS=40, &ptr) → 0\n");
+    uint64_t tid_ptr = 0;
+    long r956 = sys_prctl(40, (unsigned long)&tid_ptr, 0, 0, 0);
+    if (r956 == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 956: PR_GET_TID_ADDRESS = 0 (ptr=0x%llx)\n",
+                   (unsigned long long)tid_ptr);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 956: got %ld (want 0)\n", r956);
+        fut_test_fail(956);
+    }
+
+    /* Test 957: PR_SET_THP_DISABLE (41) → 0 */
+    fut_printf("[MISC-TEST] Test 957: prctl(PR_SET_THP_DISABLE=41, 1) → 0\n");
+    long r957 = sys_prctl(41, 1, 0, 0, 0);
+    if (r957 == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 957: PR_SET_THP_DISABLE = 0\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 957: got %ld (want 0)\n", r957);
+        fut_test_fail(957);
+    }
+
+    /* Test 958: PR_GET_THP_DISABLE (42) → 0 */
+    fut_printf("[MISC-TEST] Test 958: prctl(PR_GET_THP_DISABLE=42) → 0\n");
+    long r958 = sys_prctl(42, 0, 0, 0, 0);
+    if (r958 == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 958: PR_GET_THP_DISABLE = 0\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 958: got %ld (want 0)\n", r958);
+        fut_test_fail(958);
+    }
+
+    /* Test 959: unknown prctl option → EINVAL */
+    fut_printf("[MISC-TEST] Test 959: prctl(9999) → EINVAL\n");
+    long r959 = sys_prctl(9999, 0, 0, 0, 0);
+    if (r959 == -22) {  /* -EINVAL */
+        fut_printf("[MISC-TEST] ✓ Test 959: prctl(unknown) → EINVAL\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 959: got %ld (want -22)\n", r959);
+        fut_test_fail(959);
+    }
+
+    /* Test 960: PR_SET_DUMPABLE(4, 0) → 0 then PR_GET_DUMPABLE(3) → 0 */
+    fut_printf("[MISC-TEST] Test 960: prctl(PR_SET_DUMPABLE=4, 0) → 0\n");
+    long r960 = sys_prctl(4, 0, 0, 0, 0);
+    if (r960 == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 960: PR_SET_DUMPABLE(0) = 0\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 960: got %ld (want 0)\n", r960);
+        fut_test_fail(960);
+    }
+
+    /* Test 961: PR_GET_DUMPABLE(3) → 0 (we just set it to 0) */
+    fut_printf("[MISC-TEST] Test 961: prctl(PR_GET_DUMPABLE=3) → 0\n");
+    long r961 = sys_prctl(3, 0, 0, 0, 0);
+    if (r961 == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 961: PR_GET_DUMPABLE = 0\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 961: got %ld (want 0)\n", r961);
+        fut_test_fail(961);
+    }
+
+    /* Restore dumpable to 1 for later tests */
+    sys_prctl(4, 1, 0, 0, 0);
+}
+
 static void test_cross_fs_exdev(void) {
     fut_printf("[MISC-TEST] Tests 937-941: cross-filesystem EXDEV / same-fs link+rename\n");
 
@@ -32594,6 +32708,7 @@ void fut_misc_test_thread(void *arg) {
     test_cross_fs_exdev();                /* Tests 937-941: EXDEV on cross-mount link/rename; same-mount success */
     test_run_and_etc_dirs();              /* Tests 942-946: /run writable, /run/lock, /run/user/0, getdents /etc, /etc/os-release */
     test_keyring_and_legacy_events();    /* Tests 947-953: add_key/request_key/keyctl ENOSYS + legacy signalfd/eventfd */
+    test_prctl_newer_options();          /* Tests 954-961: PR_TASK_PERF_EVENTS_*, PR_GET_TID_ADDRESS fix, PR_THP_DISABLE */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -48,7 +48,11 @@
 #define PR_SET_VMA          0x53564d41 /* Set VMA name */
 #define PR_GET_SECCOMP      21   /* Get current seccomp mode */
 #define PR_SET_SECCOMP      22   /* Set seccomp mode */
-#define PR_GET_TID_ADDRESS  50   /* Get pointer set by set_tid_address() */
+#define PR_TASK_PERF_EVENTS_DISABLE 31 /* Disable perf events for this task */
+#define PR_TASK_PERF_EVENTS_ENABLE  32 /* Re-enable perf events for this task */
+#define PR_GET_TID_ADDRESS  40   /* Get pointer set by set_tid_address() */
+#define PR_SET_THP_DISABLE  41   /* Disable transparent hugepages for this task */
+#define PR_GET_THP_DISABLE  42   /* Get THP disabled state */
 #define PR_GET_SPECULATION_CTRL 52 /* Get Spectre mitigation state */
 #define PR_SET_SPECULATION_CTRL 53 /* Set Spectre mitigation state */
 #define PR_CAP_AMBIENT      47   /* Ambient capability management (Linux 4.3+) */
@@ -382,6 +386,22 @@ long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
 
     case PR_GET_MDWE:
         /* Return 0: no MDWE restrictions. */
+        return 0;
+
+    case PR_TASK_PERF_EVENTS_DISABLE:
+    case PR_TASK_PERF_EVENTS_ENABLE:
+        /* Linux 2.6.31+: control perf event counting for this task.
+         * Futura has no perf infrastructure; accept both ops as no-ops. */
+        return 0;
+
+    case PR_SET_THP_DISABLE:
+        /* Linux 3.15+: disable transparent hugepages for this task.
+         * Futura has no THP; accept the hint silently. */
+        return 0;
+
+    case PR_GET_THP_DISABLE:
+        /* Linux 3.15+: query THP disabled state.
+         * Return 0: THP is not active (Futura has no THP). */
         return 0;
 
     default:

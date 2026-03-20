@@ -35025,6 +35025,95 @@ static void test_siocgif_extended(void) {
 #undef SIOCGIFHWADDR_VAL
 }
 
+/* ============================================================
+ * Tests 1068-1070: SIOCGIFNAME reverse lookup + SA_NOCLDSTOP suppression
+ *   Test 1068: SIOCGIFNAME(index=1) returns "lo"
+ *   Test 1069: SA_NOCLDSTOP set → suppresses SIGCHLD on child stop
+ *   Test 1070: SA_NOCLDSTOP clear → does not suppress SIGCHLD on child stop
+ * ============================================================ */
+
+#ifndef SA_NOCLDSTOP
+#define SA_NOCLDSTOP 1
+#endif
+
+#define SIOCGIFNAME_VAL 0x8910
+
+static void test_siocgifname_sa_nocldstop(void) {
+    extern long sys_ioctl(int fd, unsigned long request, void *argp);
+
+    /* ---- Test 1068: SIOCGIFNAME(index=1) → "lo" ---- */
+    fut_printf("[MISC-TEST] Test 1068: SIOCGIFNAME(index=1) → \"lo\"\n");
+    int fd = fut_vfs_open("/siocgifname_test.tmp", O_WRONLY | O_CREAT, 0600);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1068: open scratch fd failed: %d\n", fd);
+        fut_test_fail(1068);
+    } else {
+        struct test_ifreq ifr;
+        __builtin_memset(&ifr, 0, sizeof(ifr));
+        ifr.ifr_ifru.ifru_ivalue = 1; /* request name for interface index 1 */
+        long ret = sys_ioctl(fd, SIOCGIFNAME_VAL, &ifr);
+        if (ret != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1068: SIOCGIFNAME returned %ld\n", ret);
+            fut_test_fail(1068);
+        } else if (ifr.ifr_name[0] != 'l' || ifr.ifr_name[1] != 'o' || ifr.ifr_name[2] != '\0') {
+            fut_printf("[MISC-TEST] ✗ Test 1068: ifr_name='%s' (expected 'lo')\n",
+                       ifr.ifr_name);
+            fut_test_fail(1068);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1068: SIOCGIFNAME(1) → 'lo'\n");
+            fut_test_pass();
+        }
+        fut_vfs_close(fd);
+    }
+
+    /* ---- Tests 1069-1070: SA_NOCLDSTOP suppression logic ---- */
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        fut_printf("[MISC-TEST] ✗ Tests 1069-1070: no current task\n");
+        fut_test_fail(1069); fut_test_fail(1070);
+        return;
+    }
+
+    sighandler_t orig_handler = task->signal_handlers[SIGCHLD - 1];
+    unsigned long orig_flags = task->signal_handler_flags[SIGCHLD - 1];
+
+    /* Test 1069: With SA_NOCLDSTOP set, send_sigchld should be false */
+    fut_printf("[MISC-TEST] Test 1069: SA_NOCLDSTOP set → suppresses SIGCHLD on stop\n");
+    task->signal_handlers[SIGCHLD - 1] = (sighandler_t)(uintptr_t)1; /* non-IGN */
+    task->signal_handler_flags[SIGCHLD - 1] = SA_NOCLDSTOP;
+    unsigned long chld_flags = task->signal_handler_flags[SIGCHLD - 1];
+    bool send_sigchld_nocldstop = !(chld_flags & SA_NOCLDSTOP);
+    task->signal_handlers[SIGCHLD - 1] = orig_handler;
+    task->signal_handler_flags[SIGCHLD - 1] = orig_flags;
+
+    if (send_sigchld_nocldstop) {
+        fut_printf("[MISC-TEST] ✗ Test 1069: SA_NOCLDSTOP set but send_sigchld=true\n");
+        fut_test_fail(1069);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 1069: SA_NOCLDSTOP suppresses SIGCHLD on child stop\n");
+        fut_test_pass();
+    }
+
+    /* Test 1070: Without SA_NOCLDSTOP, send_sigchld should be true */
+    fut_printf("[MISC-TEST] Test 1070: SA_NOCLDSTOP clear → SIGCHLD sent on stop\n");
+    task->signal_handlers[SIGCHLD - 1] = (sighandler_t)(uintptr_t)1; /* non-IGN */
+    task->signal_handler_flags[SIGCHLD - 1] = 0; /* no SA_NOCLDSTOP */
+    chld_flags = task->signal_handler_flags[SIGCHLD - 1];
+    bool send_sigchld_normal = !(chld_flags & SA_NOCLDSTOP);
+    task->signal_handlers[SIGCHLD - 1] = orig_handler;
+    task->signal_handler_flags[SIGCHLD - 1] = orig_flags;
+
+    if (!send_sigchld_normal) {
+        fut_printf("[MISC-TEST] ✗ Test 1070: SA_NOCLDSTOP clear but send_sigchld=false\n");
+        fut_test_fail(1070);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 1070: Without SA_NOCLDSTOP, SIGCHLD is sent on stop\n");
+        fut_test_pass();
+    }
+}
+
+#undef SIOCGIFNAME_VAL
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -35624,6 +35713,7 @@ void fut_misc_test_thread(void *arg) {
     test_read_write_access_mode();       /* Tests 1057-1060: read/write/readv/writev access mode on regular files */
     test_fionread_regular_file();        /* Tests 1061-1063: ioctl FIONREAD on regular files */
     test_siocgif_extended();             /* Tests 1064-1067: SIOCGIFMTU/NETMASK/HWADDR/INDEX for "lo" */
+    test_siocgifname_sa_nocldstop();     /* Tests 1068-1070: SIOCGIFNAME reverse lookup; SA_NOCLDSTOP flag */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

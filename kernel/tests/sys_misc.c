@@ -36221,6 +36221,203 @@ t1096:
     }
 }
 
+/* ============================================================
+ * Tests 1097-1100: SA_RESTART flag roundtrip and SigBlk: accuracy
+ *   Test 1097: SA_RESTART flag stored/read back by sigaction
+ *   Test 1098: SA_RESTART|SA_NODEFER combined flags roundtrip
+ *   Test 1099: /proc/self/status SigBlk: reflects blocked SIGUSR1
+ *   Test 1100: /proc/self/status SigBlk: shows 0 after unblocking
+ * ============================================================ */
+
+/* Parse a 16-digit hex field value from /proc/self/status.
+ * Looks for "<field>:\t" in buf[0..n], parses the following hex string.
+ * Returns the parsed 64-bit value, or UINT64_MAX on failure. */
+static uint64_t status_parse_hex_field(const char *buf, long n,
+                                       const char *field, size_t flen)
+{
+    for (long i = 0; i + (long)flen + 2 <= n; i++) {
+        int match = 1;
+        for (size_t j = 0; j < flen; j++) {
+            if (buf[i + (long)j] != field[j]) { match = 0; break; }
+        }
+        if (!match) continue;
+        /* Found field name; expect ":\t" immediately after */
+        if (buf[i + (long)flen] != ':' || buf[i + (long)flen + 1] != '\t') continue;
+        /* Parse hex digits that follow */
+        long k = i + (long)flen + 2;
+        uint64_t val = 0;
+        int digits = 0;
+        while (k < n && digits < 16) {
+            char c = buf[k++];
+            if (c >= '0' && c <= '9') { val = (val << 4) | (uint64_t)(c - '0'); digits++; }
+            else if (c >= 'a' && c <= 'f') { val = (val << 4) | (uint64_t)(c - 'a' + 10); digits++; }
+            else if (c >= 'A' && c <= 'F') { val = (val << 4) | (uint64_t)(c - 'A' + 10); digits++; }
+            else break;
+        }
+        if (digits > 0) return val;
+    }
+    return (uint64_t)-1;
+}
+
+static void dummy_handler_restart(int sig) { (void)sig; }
+
+static void test_sa_restart_and_sigblk(void) {
+    extern long sys_sigaction(int signum, const void *act, void *oldact);
+    extern long sys_sigprocmask(int how, const sigset_t *set, sigset_t *oldset);
+
+#define SA_RESTART_FLAG    0x10000000UL
+#define SA_NODEFER_FLAG2   0x40000000UL
+
+    struct sa_t {
+        void (*sa_handler)(int);
+        unsigned long sa_flags;
+        void (*sa_restorer)(void);
+        uint64_t sa_mask;
+    };
+
+    /* ---- Test 1097: SA_RESTART flag roundtrip ---- */
+    fut_printf("[MISC-TEST] Test 1097: SA_RESTART flag stored/read back by sigaction\n");
+    {
+        struct sa_t act = {0}, got = {0};
+        act.sa_handler = dummy_handler_restart;
+        act.sa_flags   = SA_RESTART_FLAG;
+        long r = sys_sigaction(10 /* SIGUSR1 */, &act, NULL);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1097: sigaction set failed: %ld\n", r);
+            fut_test_fail(1097);
+        } else {
+            r = sys_sigaction(10, NULL, &got);
+            if (r != 0 || !(got.sa_flags & SA_RESTART_FLAG)) {
+                fut_printf("[MISC-TEST] ✗ Test 1097: SA_RESTART not preserved, flags=0x%lx ret=%ld\n",
+                           got.sa_flags, r);
+                fut_test_fail(1097);
+            } else {
+                fut_printf("[MISC-TEST] ✓ Test 1097: SA_RESTART flag preserved (0x%lx)\n", got.sa_flags);
+                fut_test_pass();
+            }
+        }
+        /* Restore default */
+        struct sa_t def = {0};
+        def.sa_handler = (void (*)(int))0; /* SIG_DFL */
+        sys_sigaction(10, &def, NULL);
+    }
+
+    /* ---- Test 1098: SA_RESTART|SA_NODEFER combined roundtrip ---- */
+    fut_printf("[MISC-TEST] Test 1098: SA_RESTART|SA_NODEFER combined flags roundtrip\n");
+    {
+        struct sa_t act = {0}, got = {0};
+        act.sa_handler = dummy_handler_restart;
+        act.sa_flags   = SA_RESTART_FLAG | SA_NODEFER_FLAG2;
+        long r = sys_sigaction(10, &act, NULL);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1098: sigaction set failed: %ld\n", r);
+            fut_test_fail(1098);
+        } else {
+            r = sys_sigaction(10, NULL, &got);
+            int restart_ok  = (got.sa_flags & SA_RESTART_FLAG)  != 0;
+            int nodefer_ok  = (got.sa_flags & SA_NODEFER_FLAG2)  != 0;
+            if (r != 0 || !restart_ok || !nodefer_ok) {
+                fut_printf("[MISC-TEST] ✗ Test 1098: flags=0x%lx (want SA_RESTART|SA_NODEFER)\n",
+                           got.sa_flags);
+                fut_test_fail(1098);
+            } else {
+                fut_printf("[MISC-TEST] ✓ Test 1098: SA_RESTART|SA_NODEFER preserved (0x%lx)\n",
+                           got.sa_flags);
+                fut_test_pass();
+            }
+        }
+        struct sa_t def = {0};
+        sys_sigaction(10, &def, NULL);
+    }
+
+    /* ---- Test 1099: SigBlk: in /proc/self/status after blocking SIGUSR1 ---- */
+    fut_printf("[MISC-TEST] Test 1099: /proc/self/status SigBlk: reflects blocked SIGUSR1\n");
+    {
+        /* Block SIGUSR1 (signal 10 → bit 9) */
+        sigset_t block_set = { .__mask = (1ULL << (10 - 1)) };
+        sigset_t old_set = {0};
+        long r = sys_sigprocmask(0 /* SIG_BLOCK */, &block_set, &old_set);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1099: sigprocmask(SIG_BLOCK) failed: %ld\n", r);
+            fut_test_fail(1099);
+            goto t1100;
+        }
+        /* Read /proc/self/status */
+        int fd = fut_vfs_open("/proc/self/status", 0, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1099: open /proc/self/status failed: %d\n", fd);
+            sys_sigprocmask(2 /* SIG_SETMASK */, &old_set, NULL);
+            fut_test_fail(1099);
+            goto t1100;
+        }
+        char buf[2048];
+        long n = fut_vfs_read(fd, buf, sizeof(buf) - 1);
+        fut_vfs_close(fd);
+        if (n <= 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1099: read status failed: %ld\n", n);
+            sys_sigprocmask(2, &old_set, NULL);
+            fut_test_fail(1099);
+            goto t1100;
+        }
+        buf[n] = '\0';
+        uint64_t sigblk = status_parse_hex_field(buf, n, "SigBlk", 6);
+        sys_sigprocmask(2 /* SIG_SETMASK */, &old_set, NULL);
+        /* SIGUSR1 = signal 10 → bit 9 (0-indexed) = 0x200 */
+        if (sigblk == (uint64_t)-1) {
+            fut_printf("[MISC-TEST] ✗ Test 1099: SigBlk: not found in status\n");
+            fut_test_fail(1099);
+        } else if (!(sigblk & 0x200ULL)) {
+            fut_printf("[MISC-TEST] ✗ Test 1099: SigBlk=0x%llx missing SIGUSR1 bit (0x200)\n",
+                       (unsigned long long)sigblk);
+            fut_test_fail(1099);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1099: SigBlk=0x%llx has SIGUSR1 bit set\n",
+                       (unsigned long long)sigblk);
+            fut_test_pass();
+        }
+    }
+t1100:
+    /* ---- Test 1100: SigBlk: shows 0 for SIGUSR1 after unblocking ---- */
+    fut_printf("[MISC-TEST] Test 1100: /proc/self/status SigBlk: clear after unblocking SIGUSR1\n");
+    {
+        /* Ensure SIGUSR1 is unblocked */
+        sigset_t unblock_set = { .__mask = (1ULL << (10 - 1)) };
+        sys_sigprocmask(1 /* SIG_UNBLOCK */, &unblock_set, NULL);
+        /* Read /proc/self/status */
+        int fd = fut_vfs_open("/proc/self/status", 0, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1100: open /proc/self/status failed: %d\n", fd);
+            fut_test_fail(1100);
+            return;
+        }
+        char buf[2048];
+        long n = fut_vfs_read(fd, buf, sizeof(buf) - 1);
+        fut_vfs_close(fd);
+        if (n <= 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1100: read status failed: %ld\n", n);
+            fut_test_fail(1100);
+            return;
+        }
+        buf[n] = '\0';
+        uint64_t sigblk = status_parse_hex_field(buf, n, "SigBlk", 6);
+        if (sigblk == (uint64_t)-1) {
+            fut_printf("[MISC-TEST] ✗ Test 1100: SigBlk: not found in status\n");
+            fut_test_fail(1100);
+        } else if (sigblk & 0x200ULL) {
+            fut_printf("[MISC-TEST] ✗ Test 1100: SigBlk=0x%llx still has SIGUSR1 bit after unblock\n",
+                       (unsigned long long)sigblk);
+            fut_test_fail(1100);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1100: SigBlk=0x%llx SIGUSR1 bit clear\n",
+                       (unsigned long long)sigblk);
+            fut_test_pass();
+        }
+    }
+
+#undef SA_RESTART_FLAG
+#undef SA_NODEFER_FLAG2
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -36827,6 +37024,7 @@ void fut_misc_test_thread(void *arg) {
     test_mremap_dontunmap_and_fdinfo(); /* Tests 1083-1088: mremap DONTUNMAP; fdinfo timerfd/signalfd */
     test_proc_fd_anon_symlinks(); /* Tests 1089-1092: /proc/self/fd/<n> shows socket:[ino]/anon_inode:[type] */
     test_fdinfo_pos_flags(); /* Tests 1093-1096: fdinfo pos:/flags: accuracy */
+    test_sa_restart_and_sigblk(); /* Tests 1097-1100: SA_RESTART flag roundtrip; SigBlk: accuracy */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

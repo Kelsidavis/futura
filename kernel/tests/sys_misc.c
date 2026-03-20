@@ -28781,6 +28781,96 @@ static void test_flock_nb_conflict(void) {
     fut_test_pass();
 }
 
+/* ============================================================
+ * Tests 792-795: O_PATH fd semantics
+ *
+ *   792: open with O_PATH succeeds (valid fd returned)
+ *   793: read() on O_PATH fd returns EBADF
+ *   794: write() on O_PATH fd returns EBADF
+ *   795: fstat() on O_PATH fd succeeds and returns S_IFREG mode
+ *
+ * POSIX/Linux: O_PATH opens a file descriptor that refers to the
+ * file's path in the filesystem, not its content.  I/O operations
+ * (read, write) are not permitted and must return EBADF.
+ * File-metadata operations (fstat, fchdir on dirs) still work.
+ * ============================================================ */
+static void test_opath_semantics(void) {
+    fut_printf("[MISC-TEST] Tests 792-795: O_PATH fd semantics\n");
+
+    extern long sys_fstat(int fd, struct fut_stat *statbuf);
+
+#define O_PATH_FLAG 010000000   /* 0x200000 */
+
+    const char *path792 = "/tmp/test792_opath.txt";
+
+    /* Create the file first via a normal open */
+    int cfd = (int)fut_vfs_open(path792, O_CREAT | O_RDWR, 0644);
+    if (cfd < 0) {
+        fut_printf("[MISC-TEST] ✗ setup: open(%s) failed: %d\n", path792, cfd);
+        fut_test_fail(792); fut_test_fail(793);
+        fut_test_fail(794); fut_test_fail(795);
+        return;
+    }
+    /* Write a sentinel byte so the file is non-empty */
+    fut_vfs_write(cfd, "x", 1);
+    fut_vfs_close(cfd);
+
+    /* Test 792: O_PATH open succeeds */
+    int fd792 = (int)fut_vfs_open(path792, O_PATH_FLAG, 0);
+    if (fd792 < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 792: open(O_PATH) failed: %d\n", fd792);
+        fut_test_fail(792); fut_test_fail(793);
+        fut_test_fail(794); fut_test_fail(795);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 792: open(O_PATH) → fd=%d\n", fd792);
+    fut_test_pass();
+
+    /* Test 793: read() on O_PATH fd → EBADF */
+    char buf793[8];
+    ssize_t r793 = fut_vfs_read(fd792, buf793, sizeof(buf793));
+    if (r793 != -EBADF) {
+        fut_printf("[MISC-TEST] ✗ Test 793: read(O_PATH fd) returned %zd (expected -EBADF=%d)\n",
+                   r793, -EBADF);
+        fut_vfs_close(fd792);
+        fut_test_fail(793); fut_test_fail(794); fut_test_fail(795);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 793: read(O_PATH fd) → -EBADF\n");
+    fut_test_pass();
+
+    /* Test 794: write() on O_PATH fd → EBADF */
+    ssize_t w794 = fut_vfs_write(fd792, "y", 1);
+    if (w794 != -EBADF) {
+        fut_printf("[MISC-TEST] ✗ Test 794: write(O_PATH fd) returned %zd (expected -EBADF=%d)\n",
+                   w794, -EBADF);
+        fut_vfs_close(fd792);
+        fut_test_fail(794); fut_test_fail(795);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 794: write(O_PATH fd) → -EBADF\n");
+    fut_test_pass();
+
+    /* Test 795: fstat() on O_PATH fd succeeds and shows S_IFREG */
+    struct fut_stat st795;
+    long ret795 = sys_fstat(fd792, &st795);
+    fut_vfs_close(fd792);
+    if (ret795 < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 795: fstat(O_PATH fd) failed: %ld\n", ret795);
+        fut_test_fail(795);
+        return;
+    }
+    if (!S_ISREG(st795.st_mode)) {
+        fut_printf("[MISC-TEST] ✗ Test 795: fstat st_mode=0%o not S_IFREG\n", st795.st_mode);
+        fut_test_fail(795);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 795: fstat(O_PATH fd) → st_mode=0%o (S_IFREG)\n", st795.st_mode);
+    fut_test_pass();
+
+#undef O_PATH_FLAG
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -29322,6 +29412,7 @@ void fut_misc_test_thread(void *arg) {
     test_sigtimedwait_uinfo();            /* Tests 784-785: rt_sigtimedwait fills siginfo si_signo/si_code */
     test_flock_nb_conflict();             /* Tests 786-787: flock LOCK_NB conflict → EAGAIN, then success */
     test_rlimit_fsize_enforcement();      /* Tests 788-791: RLIMIT_FSIZE: truncation, EFBIG, SIGXFSZ */
+    test_opath_semantics();               /* Tests 792-795: O_PATH fd: open ok, read EBADF, write EBADF, fstat ok */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

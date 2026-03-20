@@ -1873,8 +1873,10 @@ int fut_vfs_open(const char *path, int flags, int mode) {
         return -ENOTDIR;
     }
 
-    /* Permission checks based on access mode (unless we just created the file) */
-    if (!created) {
+    /* Permission checks based on access mode (unless we just created the file).
+     * O_PATH skips all content-access permission checks: the caller only needs
+     * execute permission on the path components, not on the file itself. */
+    if (!created && !(flags & O_PATH)) {
         int access_mode = flags & O_ACCMODE;
 
         /* Check read permission for O_RDONLY and O_RDWR */
@@ -1993,8 +1995,8 @@ int fut_vfs_open(const char *path, int flags, int mode) {
         /* If malloc fails, path remains NULL; dirfd resolution will fall back gracefully */
     }
 
-    /* Check permissions for write access */
-    if ((flags & (O_WRONLY | O_RDWR)) && !created) {
+    /* Check permissions for write access — O_PATH bypasses content access */
+    if ((flags & (O_WRONLY | O_RDWR)) && !created && !(flags & O_PATH)) {
         /* For existing files, check if write is allowed */
         int perm_ret = check_file_permission(vnode, NULL, true);
         if (perm_ret < 0) {
@@ -2006,8 +2008,8 @@ int fut_vfs_open(const char *path, int flags, int mode) {
         }
     }
 
-    /* O_TRUNC: truncate existing regular files to zero length */
-    if ((flags & O_TRUNC) && !created && vnode->type == VN_REG) {
+    /* O_TRUNC: truncate existing regular files to zero length (no-op with O_PATH) */
+    if ((flags & O_TRUNC) && !(flags & O_PATH) && !created && vnode->type == VN_REG) {
         if (vnode->ops && vnode->ops->truncate) {
             int trunc_ret = vnode->ops->truncate(vnode, 0);
             if (trunc_ret < 0) {
@@ -2184,6 +2186,11 @@ ssize_t fut_vfs_read(int fd, void *buf, size_t size) {
         return -EBADF;
     }
 
+    /* O_PATH fds cannot be used for I/O — only path-based operations */
+    if (file->flags & O_PATH) {
+        return -EBADF;
+    }
+
     /* Check that fd was opened for reading */
     int access_mode = file->flags & O_ACCMODE;
     if (access_mode == O_WRONLY) {
@@ -2254,6 +2261,11 @@ ssize_t fut_vfs_write(int fd, const void *buf, size_t size) {
     struct fut_file *file = get_file_from_task(task, fd);
     VFSDBG("[vfs-write] get_file_from_task returned %p\n", (void*)file);
     if (!file) {
+        return -EBADF;
+    }
+
+    /* O_PATH fds cannot be used for I/O */
+    if (file->flags & O_PATH) {
         return -EBADF;
     }
 

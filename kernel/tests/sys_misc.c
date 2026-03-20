@@ -32564,6 +32564,172 @@ static void test_rlimit_data_brk(void) {
 }
 
 /*
+ * test_dup_shared_description — Tests 1000-1002
+ *
+ *   1000: dup'd fds share file offset (lseek via one advances position for both)
+ *   1001: dup'd fds share file status flags (O_NONBLOCK set on one is visible on other)
+ *   1002: dup'd fds do NOT share FD_CLOEXEC (it is per-descriptor, not per-description)
+ */
+static void test_dup_shared_description(void) {
+    fut_printf("[MISC-TEST] Tests 1000-1002: dup() shared open-file-description semantics\n");
+
+    extern long sys_dup(int oldfd);
+    extern long sys_fcntl(int fd, int cmd, uint64_t arg);
+    extern long sys_lseek(int fd, long offset, int whence);
+
+#define TDUP_F_GETFL    3
+#define TDUP_F_SETFL    4
+#define TDUP_F_GETFD    1
+#define TDUP_F_SETFD    2
+#define TDUP_FD_CLOEXEC 1
+#define TDUP_O_NONBLOCK 0x800
+#define TDUP_O_RDONLY   0
+#define TDUP_SEEK_SET   0
+#define TDUP_SEEK_CUR   1
+
+    /* ---- Test 1000: dup shares file offset ---- */
+    fut_printf("[MISC-TEST] Test 1000: dup shares file offset\n");
+    {
+        const char *p = "/dup_shared_offset_1000.txt";
+        int fd1 = (int)fut_vfs_open(p, O_CREAT | O_RDWR, 0644);
+        if (fd1 < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1000: open failed %d\n", fd1);
+            fut_test_fail(1000); goto t1001;
+        }
+
+        /* Write "HELLO" and seek back to 0 */
+        ssize_t n = fut_vfs_write(fd1, "HELLO", 5);
+        (void)n;
+        sys_lseek(fd1, 0, TDUP_SEEK_SET);
+
+        long fd2 = sys_dup(fd1);
+        if (fd2 < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1000: dup failed %ld\n", fd2);
+            fut_vfs_close(fd1); fut_vfs_unlink(p);
+            fut_test_fail(1000); goto t1001;
+        }
+
+        /* Read 2 bytes via fd2 → "HE", offset advances to 2 */
+        char buf2[4] = {0};
+        ssize_t nr2 = fut_vfs_read((int)fd2, buf2, 2);
+
+        /* Read 2 bytes via fd1 → should be "LL" (offset shared, now at 2) */
+        char buf1[4] = {0};
+        ssize_t nr1 = fut_vfs_read(fd1, buf1, 2);
+
+        fut_vfs_close(fd1);
+        fut_vfs_close((int)fd2);
+        fut_vfs_unlink(p);
+
+        if (nr2 != 2 || buf2[0] != 'H' || buf2[1] != 'E') {
+            fut_printf("[MISC-TEST] ✗ Test 1000: fd2 read %ld bytes got '%c%c'\n",
+                       (long)nr2, buf2[0], buf2[1]);
+            fut_test_fail(1000); goto t1001;
+        }
+        if (nr1 != 2 || buf1[0] != 'L' || buf1[1] != 'L') {
+            fut_printf("[MISC-TEST] ✗ Test 1000: fd1 read %ld bytes got '%c%c' (want 'LL')\n",
+                       (long)nr1, buf1[0], buf1[1]);
+            fut_test_fail(1000); goto t1001;
+        }
+        fut_printf("[MISC-TEST] ✓ Test 1000: dup fd2 read 'HE', fd1 read 'LL' (shared offset)\n");
+        fut_test_pass();
+    }
+
+t1001:
+    /* ---- Test 1001: dup shares file status flags (O_NONBLOCK) ---- */
+    fut_printf("[MISC-TEST] Test 1001: dup shares file status flags\n");
+    {
+        const char *p = "/dup_shared_flags_1001.txt";
+        int fd1 = (int)fut_vfs_open(p, O_CREAT | O_RDWR, 0644);
+        if (fd1 < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1001: open failed %d\n", fd1);
+            fut_test_fail(1001); goto t1002;
+        }
+
+        long fd2 = sys_dup(fd1);
+        if (fd2 < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1001: dup failed %ld\n", fd2);
+            fut_vfs_close(fd1); fut_vfs_unlink(p);
+            fut_test_fail(1001); goto t1002;
+        }
+
+        /* Set O_NONBLOCK via fd1 */
+        long fl = sys_fcntl(fd1, TDUP_F_GETFL, 0);
+        sys_fcntl(fd1, TDUP_F_SETFL, (uint64_t)(fl | TDUP_O_NONBLOCK));
+
+        /* Verify O_NONBLOCK is visible via fd2 */
+        long fl2 = sys_fcntl((int)fd2, TDUP_F_GETFL, 0);
+
+        fut_vfs_close(fd1);
+        fut_vfs_close((int)fd2);
+        fut_vfs_unlink(p);
+
+        if (!(fl2 & TDUP_O_NONBLOCK)) {
+            fut_printf("[MISC-TEST] ✗ Test 1001: O_NONBLOCK not shared fl2=0x%lx\n", fl2);
+            fut_test_fail(1001); goto t1002;
+        }
+        fut_printf("[MISC-TEST] ✓ Test 1001: O_NONBLOCK set on fd1 visible via dup'd fd2\n");
+        fut_test_pass();
+    }
+
+t1002:
+    /* ---- Test 1002: dup does NOT share FD_CLOEXEC ---- */
+    fut_printf("[MISC-TEST] Test 1002: dup does not inherit FD_CLOEXEC\n");
+    {
+        const char *p = "/dup_cloexec_1002.txt";
+        int fd1 = (int)fut_vfs_open(p, O_CREAT | O_RDWR, 0644);
+        if (fd1 < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1002: open failed %d\n", fd1);
+            fut_test_fail(1002); goto t1002_done;
+        }
+
+        /* Set FD_CLOEXEC on fd1 */
+        sys_fcntl(fd1, TDUP_F_SETFD, TDUP_FD_CLOEXEC);
+
+        long fd2 = sys_dup(fd1);
+        if (fd2 < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1002: dup failed %ld\n", fd2);
+            fut_vfs_close(fd1); fut_vfs_unlink(p);
+            fut_test_fail(1002); goto t1002_done;
+        }
+
+        /* fd2 must NOT have FD_CLOEXEC set */
+        long fd_flags = sys_fcntl((int)fd2, TDUP_F_GETFD, 0);
+
+        /* fd1 MUST still have FD_CLOEXEC set (verify it wasn't lost) */
+        long fd_flags1 = sys_fcntl(fd1, TDUP_F_GETFD, 0);
+
+        fut_vfs_close(fd1);
+        fut_vfs_close((int)fd2);
+        fut_vfs_unlink(p);
+
+        if (fd_flags & TDUP_FD_CLOEXEC) {
+            fut_printf("[MISC-TEST] ✗ Test 1002: dup'd fd has FD_CLOEXEC set (fd_flags=0x%lx)\n",
+                       fd_flags);
+            fut_test_fail(1002); goto t1002_done;
+        }
+        if (!(fd_flags1 & TDUP_FD_CLOEXEC)) {
+            fut_printf("[MISC-TEST] ✗ Test 1002: original fd lost FD_CLOEXEC (fd_flags1=0x%lx)\n",
+                       fd_flags1);
+            fut_test_fail(1002); goto t1002_done;
+        }
+        fut_printf("[MISC-TEST] ✓ Test 1002: dup clears FD_CLOEXEC on new fd (per-descriptor)\n");
+        fut_test_pass();
+    }
+
+t1002_done:;
+#undef TDUP_F_GETFL
+#undef TDUP_F_SETFL
+#undef TDUP_F_GETFD
+#undef TDUP_F_SETFD
+#undef TDUP_FD_CLOEXEC
+#undef TDUP_O_NONBLOCK
+#undef TDUP_O_RDONLY
+#undef TDUP_SEEK_SET
+#undef TDUP_SEEK_CUR
+}
+
+/*
  * test_utimensat_utime_omit — Tests 997-999
  *
  *   997: utimensat UTIME_OMIT on mtime → atime updated, mtime preserved
@@ -33630,6 +33796,7 @@ void fut_misc_test_thread(void *arg) {
     test_madvise_wipeonfork_flag();      /* Tests 992-993: MADV_WIPEONFORK sets/clears VMA flag */
     test_rlimit_data_brk();              /* Tests 994-996: RLIMIT_DATA enforcement in brk() */
     test_utimensat_utime_omit();         /* Tests 997-999: utimensat UTIME_OMIT/UTIME_NOW semantics */
+    test_dup_shared_description();       /* Tests 1000-1002: dup() shared open-file-description semantics */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

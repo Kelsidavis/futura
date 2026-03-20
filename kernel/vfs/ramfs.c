@@ -997,6 +997,14 @@ static int ramfs_unlink(struct fut_vnode *dir, const char *name) {
                 char dir_path[256];
                 if (fut_vnode_build_path(dir, dir_path, sizeof(dir_path))) {
                     inotify_dispatch_event(dir_path, 0x00000200 /* IN_DELETE */, name, 0);
+                    /* Phase 5: IN_DELETE_SELF for watches on the file itself */
+                    size_t dlen = __builtin_strlen(dir_path);
+                    size_t nlen = __builtin_strlen(name);
+                    if (dlen + 1 + nlen < sizeof(dir_path)) {
+                        if (dlen > 0 && dir_path[dlen - 1] != '/') dir_path[dlen++] = '/';
+                        __builtin_memcpy(dir_path + dlen, name, nlen + 1);
+                        inotify_dispatch_event(dir_path, 0x00000400 /* IN_DELETE_SELF */, NULL, 0);
+                    }
                 }
             }
 
@@ -1810,6 +1818,16 @@ static int ramfs_rename(struct fut_vnode *parent, const char *oldname, const cha
 
     if (have_dir_path) {
         inotify_dispatch_event(dir_path, 0x00000080 /* IN_MOVED_TO */, newname, move_cookie);
+        /* Phase 5: IN_MOVE_SELF for watches on the moved file's old path */
+        size_t dlen = __builtin_strlen(dir_path);
+        size_t oname_len = __builtin_strlen(oldname);
+        char old_file_path[256];
+        if (dlen + 1 + oname_len < sizeof(old_file_path)) {
+            __builtin_memcpy(old_file_path, dir_path, dlen);
+            if (dlen > 0 && old_file_path[dlen - 1] != '/') old_file_path[dlen++] = '/';
+            __builtin_memcpy(old_file_path + dlen, oldname, oname_len + 1);
+            inotify_dispatch_event(old_file_path, 0x00000800 /* IN_MOVE_SELF */, NULL, 0);
+        }
     }
 
     return 0;

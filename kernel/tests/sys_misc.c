@@ -35279,12 +35279,15 @@ t1074:
 }
 
 /* ============================================================
- * Tests 1075-1079: inotify IN_MOVED events + procfs getdents
+ * Tests 1075-1082: inotify IN_MOVED/SELF events + procfs getdents
  *   Test 1075: inotify IN_MOVED_FROM fired on rename (correct name)
  *   Test 1076: inotify IN_MOVED_TO fired on rename (correct name)
  *   Test 1077: IN_MOVED_FROM/TO cookies match and are non-zero
  *   Test 1078: getdents64(/proc) lists current PID directory
  *   Test 1079: getdents64(/proc/<pid>/) lists "fd" entry
+ *   Test 1080: inotify IN_DELETE_SELF fires when watched file is unlinked
+ *   Test 1081: inotify IN_MOVE_SELF fires when watched file is renamed
+ *   Test 1082: inotify IN_Q_OVERFLOW delivered when event queue is full
  * ============================================================ */
 
 static void test_inotify_moved_proc_getdents(void) {
@@ -35478,6 +35481,153 @@ t1079:
 #undef INO_MOVED_TO
 #undef INO_MOVE_ALL
 #undef INO_NB_FLAG
+}
+
+/* ============================================================
+ * Tests 1080-1082: inotify IN_DELETE_SELF, IN_MOVE_SELF, IN_Q_OVERFLOW
+ * ============================================================ */
+static void test_inotify_self_events(void) {
+    extern long sys_inotify_init1(int flags);
+    extern long sys_inotify_add_watch(int fd, const char *path, uint32_t mask);
+    extern long sys_rename(const char *oldpath, const char *newpath);
+    extern long sys_read(int fd, void *buf, size_t count);
+    extern long sys_close(int fd);
+
+#define INO_SELF_NB          00004000
+#define INO_DELETE_SELF_VAL  0x00000400u
+#define INO_MOVE_SELF_VAL    0x00000800u
+#define INO_Q_OVERFLOW_VAL   0x00004000u
+    struct ino_self_ev { int wd; uint32_t mask; uint32_t cookie; uint32_t len; char name[256]; };
+
+    /* ---- Test 1080: IN_DELETE_SELF on unlink of watched file ---- */
+    fut_printf("[MISC-TEST] Test 1080: inotify IN_DELETE_SELF on unlink\n");
+    {
+        /* Create the file to watch */
+        int cfd = fut_vfs_open("/ino_self_del.txt", O_RDWR | O_CREAT, 0644);
+        if (cfd >= 0) fut_vfs_close(cfd);
+
+        long ifd = sys_inotify_init1(INO_SELF_NB);
+        bool pass1080 = false;
+        if (ifd >= 0) {
+            /* Watch the file itself (not parent dir) for IN_DELETE_SELF */
+            long wd = sys_inotify_add_watch((int)ifd, "/ino_self_del.txt", INO_DELETE_SELF_VAL);
+            if (wd >= 0) {
+                fut_vfs_unlink("/ino_self_del.txt");
+                char evbuf[512];
+                long nr = sys_read((int)ifd, evbuf, sizeof(evbuf));
+                if (nr >= 16) {
+                    struct ino_self_ev *ep = (struct ino_self_ev *)evbuf;
+                    if (ep->mask & INO_DELETE_SELF_VAL) {
+                        fut_printf("[MISC-TEST] ✓ Test 1080: IN_DELETE_SELF wd=%d mask=0x%x\n",
+                                   ep->wd, ep->mask);
+                        pass1080 = true;
+                    } else {
+                        fut_printf("[MISC-TEST] ✗ Test 1080: mask=0x%x (no IN_DELETE_SELF)\n",
+                                   ep->mask);
+                    }
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1080: read returned %ld\n", nr);
+                }
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1080: add_watch returned %ld\n", wd);
+                fut_vfs_unlink("/ino_self_del.txt");
+            }
+            sys_close((int)ifd);
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1080: inotify_init1 -> %ld\n", ifd);
+        }
+        if (pass1080) fut_test_pass(); else fut_test_fail(1080);
+    }
+
+    /* ---- Test 1081: IN_MOVE_SELF on rename of watched file ---- */
+    fut_printf("[MISC-TEST] Test 1081: inotify IN_MOVE_SELF on rename\n");
+    {
+        int cfd = fut_vfs_open("/ino_self_mv.txt", O_RDWR | O_CREAT, 0644);
+        if (cfd >= 0) fut_vfs_close(cfd);
+
+        long ifd = sys_inotify_init1(INO_SELF_NB);
+        bool pass1081 = false;
+        if (ifd >= 0) {
+            long wd = sys_inotify_add_watch((int)ifd, "/ino_self_mv.txt", INO_MOVE_SELF_VAL);
+            if (wd >= 0) {
+                sys_rename("/ino_self_mv.txt", "/ino_self_mv2.txt");
+                char evbuf[512];
+                long nr = sys_read((int)ifd, evbuf, sizeof(evbuf));
+                fut_vfs_unlink("/ino_self_mv2.txt");
+                if (nr >= 16) {
+                    struct ino_self_ev *ep = (struct ino_self_ev *)evbuf;
+                    if (ep->mask & INO_MOVE_SELF_VAL) {
+                        fut_printf("[MISC-TEST] ✓ Test 1081: IN_MOVE_SELF wd=%d mask=0x%x\n",
+                                   ep->wd, ep->mask);
+                        pass1081 = true;
+                    } else {
+                        fut_printf("[MISC-TEST] ✗ Test 1081: mask=0x%x (no IN_MOVE_SELF)\n",
+                                   ep->mask);
+                    }
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1081: read returned %ld\n", nr);
+                }
+            } else {
+                fut_vfs_unlink("/ino_self_mv.txt");
+            }
+            sys_close((int)ifd);
+        }
+        if (pass1081) fut_test_pass(); else fut_test_fail(1081);
+    }
+
+    /* ---- Test 1082: IN_Q_OVERFLOW when queue is exhausted ---- */
+    fut_printf("[MISC-TEST] Test 1082: inotify IN_Q_OVERFLOW on queue full\n");
+    {
+        /* Create file and watch parent; flood with creates to overflow queue */
+        long ifd = sys_inotify_init1(INO_SELF_NB);
+        bool pass1082 = false;
+        if (ifd >= 0) {
+            /* Watch root for create/delete events (avoid IN_ONESHOT=0x80000000 in 0xFFFFFFFF) */
+            long wd = sys_inotify_add_watch((int)ifd, "/", 0x00000FFFu);
+            (void)wd;
+            /* Create/delete many files to flood the queue (INOTIFY_MAX_EVENTS = 128) */
+            for (int i = 0; i < 200; i++) {
+                char p[32]; int pi = 0;
+                p[pi++] = '/'; p[pi++] = 'i'; p[pi++] = 'q'; p[pi++] = 'o';
+                int v = i; char rev[10]; int rn = 0;
+                while (v) { rev[rn++] = '0' + (v % 10); v /= 10; }
+                if (!rn) { rev[rn++] = '0'; }
+                for (int j = rn - 1; j >= 0; j--) p[pi++] = rev[j];
+                p[pi++] = '.'; p[pi++] = 't'; p[pi++] = '\0';
+                int f = fut_vfs_open(p, O_RDWR | O_CREAT, 0644);
+                if (f >= 0) fut_vfs_close(f);
+                fut_vfs_unlink(p);
+            }
+            /* Read events; look for IN_Q_OVERFLOW in any event */
+            char evbuf[8192];
+            long nr = sys_read((int)ifd, evbuf, sizeof(evbuf));
+            sys_close((int)ifd);
+            if (nr > 0) {
+                long pos = 0;
+                while (pos + 16 <= nr) {
+                    struct ino_self_ev *ep = (struct ino_self_ev *)(evbuf + pos);
+                    if (ep->mask & INO_Q_OVERFLOW_VAL) {
+                        pass1082 = true;
+                        break;
+                    }
+                    long step = 16 + ep->len;
+                    if (step <= 0 || pos + step > nr) break;
+                    pos += step;
+                }
+            }
+            if (pass1082) {
+                fut_printf("[MISC-TEST] ✓ Test 1082: IN_Q_OVERFLOW detected\n");
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1082: no IN_Q_OVERFLOW in %ld bytes\n", nr);
+            }
+        }
+        if (pass1082) fut_test_pass(); else fut_test_fail(1082);
+    }
+
+#undef INO_SELF_NB
+#undef INO_DELETE_SELF_VAL
+#undef INO_MOVE_SELF_VAL
+#undef INO_Q_OVERFLOW_VAL
 }
 
 void fut_misc_test_thread(void *arg) {
@@ -36082,6 +36232,7 @@ void fut_misc_test_thread(void *arg) {
     test_siocgifname_sa_nocldstop();     /* Tests 1068-1070: SIOCGIFNAME reverse lookup; SA_NOCLDSTOP flag */
     test_proc_fd_getdents_eventfd_overflow(); /* Tests 1071-1074: /proc/self/fd getdents; eventfd UINT64_MAX/overflow */
     test_inotify_moved_proc_getdents(); /* Tests 1075-1079: inotify IN_MOVED_FROM/TO cookie; getdents /proc PID listing */
+    test_inotify_self_events(); /* Tests 1080-1082: IN_DELETE_SELF, IN_MOVE_SELF, IN_Q_OVERFLOW */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

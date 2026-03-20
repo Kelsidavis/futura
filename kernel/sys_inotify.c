@@ -250,9 +250,10 @@ void inotify_dispatch_event(const char *dir_path, uint32_t mask, const char *fil
                     fut_waitq_wake_all(inst->epoll_notify);
             } else {
                 /* Queue overflow event at head (overwrite oldest) */
-                inst->events[inst->ev_head].wd   = w->wd;
-                inst->events[inst->ev_head].mask = IN_Q_OVERFLOW;
+                inst->events[inst->ev_head].wd     = -1;  /* Linux: wd=-1 for overflow */
+                inst->events[inst->ev_head].mask   = IN_Q_OVERFLOW;
                 inst->events[inst->ev_head].cookie = 0;
+                inst->events[inst->ev_head].name[0] = '\0';  /* no filename for overflow */
                 /* Don't advance ev_head; the next read will see overflow */
                 if (inst->epoll_notify)
                     fut_waitq_wake_all(inst->epoll_notify);

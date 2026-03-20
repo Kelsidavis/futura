@@ -55,6 +55,14 @@ static inline int mount_copy_from_user(void *dst, const void *src, size_t n) {
 #define MS_MOVE          8192   /* Atomically move mounted tree */
 #define MS_REC           16384  /* Recursive (for bind and move) */
 #define MS_RELATIME      2097152 /* Update atime relative to mtime/ctime */
+/* Mount propagation flags (Linux 2.6.15+) — change namespace propagation type.
+ * Futura has no per-task mount namespaces so these are accepted as no-ops. */
+#define MS_UNBINDABLE    (1<<17) /* Mount cannot be bind-mounted */
+#define MS_PRIVATE       (1<<18) /* No propagation to/from parent namespace */
+#define MS_SLAVE         (1<<19) /* Receive propagation from master, don't propagate back */
+#define MS_SHARED        (1<<20) /* Propagate mount/unmount events to peer group */
+/* Mask covering all propagation flags */
+#define MS_PROPAGATION   (MS_SHARED | MS_SLAVE | MS_PRIVATE | MS_UNBINDABLE)
 
 /**
  * mount() - Mount filesystem
@@ -365,8 +373,8 @@ long sys_mount(const char *source, const char *target, const char *filesystemtyp
         }
     }
 
-    /* Phase 2: Validate filesystemtype (required except for remount/bind/move) */
-    if (fstype_buf[0] == '\0' && !(mountflags & (MS_REMOUNT | MS_BIND | MS_MOVE))) {
+    /* Phase 2: Validate filesystemtype (required except for remount/bind/move/propagation) */
+    if (fstype_buf[0] == '\0' && !(mountflags & (MS_REMOUNT | MS_BIND | MS_MOVE | MS_PROPAGATION))) {
         fut_printf("[MOUNT] mount(source=%p, target='%s', fstype=NULL, flags=0x%lx, pid=%d) -> EINVAL "
                    "(filesystem type required)\n",
                    source, target_buf, mountflags, task->pid);
@@ -380,6 +388,22 @@ long sys_mount(const char *source, const char *target, const char *filesystemtyp
         fut_printf("[MOUNT] mount(target='%s', fstype='%s', pid=%d) -> EPERM (need CAP_SYS_ADMIN)\n",
                    target_buf, fstype_buf, task->pid);
         return -EPERM;
+    }
+
+    /* MS_SHARED / MS_SLAVE / MS_PRIVATE / MS_UNBINDABLE: mount propagation.
+     * Container runtimes (Docker, containerd, systemd) call these to set up
+     * namespace propagation.  Futura has no per-task mount namespaces so the
+     * semantics are trivially satisfied — accept and return 0. */
+    if (mountflags & MS_PROPAGATION) {
+        const char *prop =
+            (mountflags & MS_SHARED)     ? "MS_SHARED"     :
+            (mountflags & MS_SLAVE)      ? "MS_SLAVE"      :
+            (mountflags & MS_PRIVATE)    ? "MS_PRIVATE"    :
+                                           "MS_UNBINDABLE";
+        fut_printf("[MOUNT] propagation(%s%s, target='%s', pid=%d) -> 0 (no-op)\n",
+                   prop, (mountflags & MS_REC) ? "|MS_REC" : "",
+                   target_buf, task->pid);
+        return 0;
     }
 
     /* MS_BIND: create a bind mount (source visible at target) */

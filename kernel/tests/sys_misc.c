@@ -29107,6 +29107,147 @@ static void test_bind_mount(void) {
 }
 
 /* ============================================================
+ * test_mount_propagation - Tests 808-811
+ *
+ *   808: mount(NULL, "/", NULL, MS_SLAVE|MS_REC, NULL) → 0 (no-op)
+ *   809: mount(NULL, "/", NULL, MS_PRIVATE, NULL) → 0 (no-op)
+ *   810: mount(NULL, "/", NULL, MS_SHARED, NULL) → 0 (no-op)
+ *   811: mount(NULL, "/", NULL, MS_UNBINDABLE, NULL) → 0 (no-op)
+ * ============================================================ */
+#define MS_SLAVE_TEST       (1<<19)
+#define MS_PRIVATE_TEST     (1<<18)
+#define MS_SHARED_TEST      (1<<20)
+#define MS_UNBINDABLE_TEST  (1<<17)
+#define MS_REC_TEST         16384
+static void test_mount_propagation(void) {
+    extern long sys_mount(const char *source, const char *target,
+                          const char *filesystemtype, unsigned long mountflags,
+                          const void *data);
+
+    /* Test 808: MS_SLAVE|MS_REC on "/" → 0 (container runtime pattern) */
+    fut_printf("[MISC-TEST] Test 808: mount(NULL,\"/\",NULL,MS_SLAVE|MS_REC) → 0\n");
+    long ret = sys_mount(NULL, "/", NULL,
+                         (unsigned long)(MS_SLAVE_TEST | MS_REC_TEST), NULL);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 808: returned %ld\n", ret);
+        fut_test_fail(808);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 808: MS_SLAVE|MS_REC → 0\n");
+        fut_test_pass();
+    }
+
+    /* Test 809: MS_PRIVATE on "/" → 0 */
+    fut_printf("[MISC-TEST] Test 809: mount(NULL,\"/\",NULL,MS_PRIVATE) → 0\n");
+    ret = sys_mount(NULL, "/", NULL, (unsigned long)MS_PRIVATE_TEST, NULL);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 809: returned %ld\n", ret);
+        fut_test_fail(809);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 809: MS_PRIVATE → 0\n");
+        fut_test_pass();
+    }
+
+    /* Test 810: MS_SHARED on "/" → 0 */
+    fut_printf("[MISC-TEST] Test 810: mount(NULL,\"/\",NULL,MS_SHARED) → 0\n");
+    ret = sys_mount(NULL, "/", NULL, (unsigned long)MS_SHARED_TEST, NULL);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 810: returned %ld\n", ret);
+        fut_test_fail(810);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 810: MS_SHARED → 0\n");
+        fut_test_pass();
+    }
+
+    /* Test 811: MS_UNBINDABLE on "/" → 0 */
+    fut_printf("[MISC-TEST] Test 811: mount(NULL,\"/\",NULL,MS_UNBINDABLE) → 0\n");
+    ret = sys_mount(NULL, "/", NULL, (unsigned long)MS_UNBINDABLE_TEST, NULL);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 811: returned %ld\n", ret);
+        fut_test_fail(811);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 811: MS_UNBINDABLE → 0\n");
+        fut_test_pass();
+    }
+}
+
+/* ============================================================
+ * test_inotify_rm_watch - Tests 812-814
+ *
+ *   812: inotify_rm_watch(fd, wd) → 0
+ *   813: inotify_rm_watch(fd, invalid_wd) → EINVAL
+ *   814: read after inotify_rm_watch returns IN_IGNORED event
+ * ============================================================ */
+static void test_inotify_rm_watch(void) {
+    extern long sys_inotify_init1(int flags);
+    extern long sys_inotify_add_watch(int fd, const char *path, uint32_t mask);
+    extern long sys_inotify_rm_watch(int fd, int wd);
+    extern long sys_close(int fd);
+    extern ssize_t sys_read(int fd, void *buf, size_t count);
+
+#ifndef IRM_NB
+#define IRM_NB           00004000   /* O_NONBLOCK */
+#define IRM_IN_ALL       0x00000fffu /* IN_ALL_EVENTS */
+#define IRM_IN_IGNORED   0x00008000u /* Watch removed */
+#endif
+    /* struct inotify_event: wd(4) + mask(4) + cookie(4) + len(4) */
+    struct { int wd; unsigned mask; unsigned cookie; unsigned len; } ev;
+
+    /* Test 812: rm_watch on a valid watch descriptor → 0 */
+    fut_printf("[MISC-TEST] Test 812: inotify_rm_watch(valid wd) → 0\n");
+    long ifd = sys_inotify_init1(IRM_NB);
+    if (ifd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 812: inotify_init1 → %ld\n", ifd);
+        fut_test_fail(812);
+        fut_test_fail(813);
+        fut_test_fail(814);
+        return;
+    }
+    long wd = sys_inotify_add_watch((int)ifd, "/", (uint32_t)IRM_IN_ALL);
+    if (wd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 812: add_watch → %ld\n", wd);
+        sys_close((int)ifd);
+        fut_test_fail(812);
+        fut_test_fail(813);
+        fut_test_fail(814);
+        return;
+    }
+    long r = sys_inotify_rm_watch((int)ifd, (int)wd);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 812: rm_watch returned %ld\n", r);
+        fut_test_fail(812);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 812: inotify_rm_watch → 0\n");
+        fut_test_pass();
+    }
+
+    /* Test 813: rm_watch on invalid wd → EINVAL */
+    fut_printf("[MISC-TEST] Test 813: inotify_rm_watch(invalid wd) → EINVAL\n");
+    r = sys_inotify_rm_watch((int)ifd, 9999);
+    if (r != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ Test 813: got %ld (expected -EINVAL)\n", r);
+        fut_test_fail(813);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 813: rm_watch(invalid) → EINVAL\n");
+        fut_test_pass();
+    }
+
+    /* Test 814: IN_IGNORED event is queued after rm_watch */
+    fut_printf("[MISC-TEST] Test 814: IN_IGNORED event readable after rm_watch\n");
+    ssize_t nr = sys_read((int)ifd, &ev, sizeof(ev));
+    if (nr == (ssize_t)sizeof(ev) && (ev.mask & IRM_IN_IGNORED)) {
+        fut_printf("[MISC-TEST] ✓ Test 814: IN_IGNORED event received (mask=0x%x)\n",
+                   ev.mask);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 814: read=%zd mask=0x%x (expected IN_IGNORED)\n",
+                   nr, ev.mask);
+        fut_test_fail(814);
+    }
+
+    sys_close((int)ifd);
+}
+
+/* ============================================================
  * Tests 800-803: inotify fd readiness in poll / epoll / select
  *
  *   800: poll([inotify_fd], POLLIN, 0) after event → 1 (POLLIN set)
@@ -29794,6 +29935,8 @@ void fut_misc_test_thread(void *arg) {
     test_ftruncate_rlimit_fsize();        /* Tests 796-799: ftruncate/truncate enforce RLIMIT_FSIZE */
     test_inotify_poll_epoll_select();     /* Tests 800-803: inotify fd readiness in poll/epoll/select */
     test_bind_mount();                    /* Tests 804-807: MS_BIND bind mount */
+    test_mount_propagation();             /* Tests 808-811: MS_SLAVE/MS_PRIVATE/MS_SHARED/MS_REC no-op */
+    test_inotify_rm_watch();              /* Tests 812-814: inotify_rm_watch + IN_IGNORED event */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

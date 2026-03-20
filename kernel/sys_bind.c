@@ -470,6 +470,13 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
         return 0;
     }
 
+    /* AF_NETLINK: accept any sockaddr_nl — no real port assignment needed */
+    if (sa_family == 16 /* AF_NETLINK */) {
+        fut_socket_t *nl_sock = get_socket_from_fd(local_sockfd);
+        if (nl_sock) nl_sock->state = FUT_SOCK_BOUND;
+        return 0;
+    }
+
     /* Phase 2: Only AF_UNIX supported currently (Phase 3 adds AF_INET/AF_INET6 stubs) */
     if (sa_family != AF_UNIX) {
         bind_printf("[BIND] bind(sockfd=%d, family=%u [%s, %s], addrlen=%u) -> ENOTSUP (unsupported address family)\n",

@@ -482,6 +482,7 @@ KERNEL_SOURCES := \
     kernel/sys_close.c \
     kernel/sys_openat.c \
     kernel/sys_socket.c \
+    kernel/sys_netlink.c \
     kernel/sys_bind.c \
     kernel/sys_listen.c \
     kernel/sys_connect.c \

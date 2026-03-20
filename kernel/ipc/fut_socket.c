@@ -314,13 +314,17 @@ void fut_socket_system_init(void) {
  * Create a new socket object in CREATED state.
  */
 fut_socket_t *fut_socket_create(int family, int type) {
-    /* Supported families: AF_UNIX (full), AF_INET/AF_INET6 (stub — no TCP/IP stack) */
-    if (family != AF_UNIX && family != AF_INET && family != AF_INET6) {
+    /* Supported families: AF_UNIX (full), AF_INET/AF_INET6 (stub), AF_NETLINK (stub) */
+    if (family != AF_UNIX && family != AF_INET && family != AF_INET6 && family != AF_NETLINK) {
         return NULL;
     }
-    /* Support SOCK_STREAM, SOCK_DGRAM, and SOCK_SEQPACKET for AF_UNIX.
-     * AF_INET/AF_INET6 support SOCK_STREAM and SOCK_DGRAM only. */
-    if (type != SOCK_STREAM && type != SOCK_DGRAM && type != SOCK_SEQPACKET) {
+    /* SOCK_STREAM, SOCK_DGRAM, SOCK_SEQPACKET for AF_UNIX;
+     * SOCK_STREAM/SOCK_DGRAM for AF_INET/AF_INET6;
+     * SOCK_RAW/SOCK_DGRAM for AF_NETLINK. */
+    if (family == AF_NETLINK) {
+        if (type != SOCK_RAW && type != SOCK_DGRAM)
+            return NULL;
+    } else if (type != SOCK_STREAM && type != SOCK_DGRAM && type != SOCK_SEQPACKET) {
         return NULL;
     }
 

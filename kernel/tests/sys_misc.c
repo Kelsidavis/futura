@@ -31071,6 +31071,187 @@ static void test_seccomp_filter(void) {
     fut_printf("[MISC-TEST] ✓ Tests 901-906: seccomp FILTER/STRICT/prctl no-op done\n");
 }
 
+/* ============================================================
+ * Tests 907-915: AF_NETLINK (NETLINK_ROUTE) socket
+ * ============================================================ */
+#ifndef _TEST_MSGHDR_DEFINED
+#define _TEST_MSGHDR_DEFINED
+struct test_msghdr {
+    void         *msg_name;
+    unsigned int  msg_namelen;
+    struct iovec *msg_iov;
+    size_t        msg_iovlen;
+    void         *msg_control;
+    size_t        msg_controllen;
+    int           msg_flags;
+};
+#endif /* _TEST_MSGHDR_DEFINED */
+
+/* Minimal netlink header — matches kernel nl_hdr_t layout */
+struct test_nlmsghdr {
+    unsigned int   nlmsg_len;
+    unsigned short nlmsg_type;
+    unsigned short nlmsg_flags;
+    unsigned int   nlmsg_seq;
+    unsigned int   nlmsg_pid;
+};
+
+/* Netlink message types */
+#define TEST_NLMSG_DONE  3
+#define TEST_RTM_NEWLINK 16
+#define TEST_RTM_GETLINK 18
+#define TEST_RTM_NEWADDR 20
+#define TEST_RTM_GETADDR 22
+
+/* struct sockaddr_nl (12 bytes) */
+struct test_sockaddr_nl {
+    unsigned short nl_family;   /* AF_NETLINK = 16 */
+    unsigned short nl_pad;
+    unsigned int   nl_pid;
+    unsigned int   nl_groups;
+};
+
+static void test_af_netlink_socket(void) {
+    fut_printf("[MISC-TEST] Tests 907-915: AF_NETLINK (NETLINK_ROUTE) socket\n");
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_bind(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_close(int fd);
+    extern ssize_t sys_sendmsg(int sockfd, const struct test_msghdr *msg, int flags);
+    extern ssize_t sys_recvmsg(int sockfd, struct test_msghdr *msg, int flags);
+
+    /* Test 907: socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE=0) → fd >= 0 */
+    long fd1 = sys_socket(16 /* AF_NETLINK */, 3 /* SOCK_RAW */, 0 /* NETLINK_ROUTE */);
+    if (fd1 >= 0) {
+        fut_printf("[MISC-TEST] ✓ Test 907: socket(AF_NETLINK, SOCK_RAW, 0) → %ld\n", fd1);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 907: socket(AF_NETLINK, SOCK_RAW, 0) = %ld (want >= 0)\n", fd1);
+        fut_test_fail(907); return;
+    }
+
+    /* Test 908: socket(AF_NETLINK, SOCK_DGRAM, 0) → fd >= 0 */
+    long fd2 = sys_socket(16 /* AF_NETLINK */, 2 /* SOCK_DGRAM */, 0);
+    if (fd2 >= 0) {
+        fut_printf("[MISC-TEST] ✓ Test 908: socket(AF_NETLINK, SOCK_DGRAM, 0) → %ld\n", fd2);
+        fut_test_pass();
+        sys_close((int)fd2);
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 908: socket(AF_NETLINK, SOCK_DGRAM, 0) = %ld (want >= 0)\n", fd2);
+        fut_test_fail(908); sys_close((int)fd1); return;
+    }
+
+    /* Test 909: socket(AF_NETLINK, SOCK_STREAM, 0) → ENOTSUP (-95) */
+    long fd3 = sys_socket(16 /* AF_NETLINK */, 1 /* SOCK_STREAM */, 0);
+    if (fd3 < 0) {
+        fut_printf("[MISC-TEST] ✓ Test 909: socket(AF_NETLINK, SOCK_STREAM, 0) → %ld (error)\n", fd3);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 909: socket(AF_NETLINK, SOCK_STREAM, 0) = %ld (want error)\n", fd3);
+        sys_close((int)fd3);
+        fut_test_fail(909); sys_close((int)fd1); return;
+    }
+
+    /* Test 910: bind(nlfd, sockaddr_nl{AF_NETLINK,0,0,0}, sizeof) → 0 */
+    struct test_sockaddr_nl nladdr = { 16, 0, 0, 0 };
+    long br = sys_bind((int)fd1, &nladdr, (unsigned int)sizeof(nladdr));
+    if (br == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 910: bind(nlfd, sockaddr_nl) → 0\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 910: bind(nlfd, sockaddr_nl) = %ld (want 0)\n", br);
+        fut_test_fail(910); sys_close((int)fd1); return;
+    }
+
+    /* Test 911: sendmsg(nlfd, RTM_GETLINK request) → > 0 */
+    struct test_nlmsghdr req = {
+        .nlmsg_len   = sizeof(struct test_nlmsghdr),
+        .nlmsg_type  = TEST_RTM_GETLINK,
+        .nlmsg_flags = 0x0301, /* NLM_F_REQUEST | NLM_F_DUMP */
+        .nlmsg_seq   = 1,
+        .nlmsg_pid   = 0,
+    };
+    struct iovec siov = { .iov_base = &req, .iov_len = sizeof(req) };
+    struct test_msghdr smsg = {
+        .msg_name = NULL, .msg_namelen = 0,
+        .msg_iov = &siov, .msg_iovlen = 1,
+        .msg_control = NULL, .msg_controllen = 0, .msg_flags = 0,
+    };
+    ssize_t nsent = sys_sendmsg((int)fd1, &smsg, 0);
+    if (nsent > 0) {
+        fut_printf("[MISC-TEST] ✓ Test 911: sendmsg(RTM_GETLINK) → %zd\n", nsent);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 911: sendmsg(RTM_GETLINK) = %zd (want > 0)\n", nsent);
+        fut_test_fail(911); sys_close((int)fd1); return;
+    }
+
+    /* Test 912: recvmsg(nlfd) → > 0 bytes of netlink response */
+    unsigned char resp_buf[512];
+    struct iovec riov = { .iov_base = resp_buf, .iov_len = sizeof(resp_buf) };
+    struct test_msghdr rmsg = {
+        .msg_name = NULL, .msg_namelen = 0,
+        .msg_iov = &riov, .msg_iovlen = 1,
+        .msg_control = NULL, .msg_controllen = 0, .msg_flags = 0,
+    };
+    ssize_t nrecv = sys_recvmsg((int)fd1, &rmsg, 0);
+    if (nrecv > 0) {
+        fut_printf("[MISC-TEST] ✓ Test 912: recvmsg after RTM_GETLINK → %zd bytes\n", nrecv);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 912: recvmsg = %zd (want > 0)\n", nrecv);
+        fut_test_fail(912); sys_close((int)fd1); return;
+    }
+
+    /* Test 913: first nlmsg_type in response = RTM_NEWLINK or NLMSG_DONE */
+    if (nrecv >= (ssize_t)sizeof(struct test_nlmsghdr)) {
+        struct test_nlmsghdr *rh = (struct test_nlmsghdr *)resp_buf;
+        if (rh->nlmsg_type == TEST_RTM_NEWLINK || rh->nlmsg_type == TEST_NLMSG_DONE) {
+            fut_printf("[MISC-TEST] ✓ Test 913: first nlmsg_type=%u (RTM_NEWLINK or DONE)\n",
+                       rh->nlmsg_type);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 913: nlmsg_type=%u (want RTM_NEWLINK=16 or DONE=3)\n",
+                       rh->nlmsg_type);
+            fut_test_fail(913); sys_close((int)fd1); return;
+        }
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 913: response too short (%zd bytes)\n", nrecv);
+        fut_test_fail(913); sys_close((int)fd1); return;
+    }
+
+    /* Test 914: sendmsg(RTM_GETADDR) → > 0 */
+    req.nlmsg_type = TEST_RTM_GETADDR;
+    req.nlmsg_seq  = 2;
+    ssize_t nsent2 = sys_sendmsg((int)fd1, &smsg, 0);
+    if (nsent2 > 0) {
+        fut_printf("[MISC-TEST] ✓ Test 914: sendmsg(RTM_GETADDR) → %zd\n", nsent2);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 914: sendmsg(RTM_GETADDR) = %zd (want > 0)\n", nsent2);
+        fut_test_fail(914); sys_close((int)fd1); return;
+    }
+
+    /* Test 915: recvmsg after RTM_GETADDR → > 0, first type = RTM_NEWADDR or DONE */
+    ssize_t nrecv2 = sys_recvmsg((int)fd1, &rmsg, 0);
+    if (nrecv2 >= (ssize_t)sizeof(struct test_nlmsghdr)) {
+        struct test_nlmsghdr *rh2 = (struct test_nlmsghdr *)resp_buf;
+        if (rh2->nlmsg_type == TEST_RTM_NEWADDR || rh2->nlmsg_type == TEST_NLMSG_DONE) {
+            fut_printf("[MISC-TEST] ✓ Test 915: RTM_GETADDR response type=%u\n", rh2->nlmsg_type);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 915: RTM_GETADDR type=%u (want 20 or 3)\n",
+                       rh2->nlmsg_type);
+            fut_test_fail(915); sys_close((int)fd1); return;
+        }
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 915: RTM_GETADDR recv = %zd (want > 0)\n", nrecv2);
+        fut_test_fail(915); sys_close((int)fd1); return;
+    }
+
+    sys_close((int)fd1);
+    fut_printf("[MISC-TEST] ✓ Tests 907-915: AF_NETLINK socket done\n");
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -31635,6 +31816,7 @@ void fut_misc_test_thread(void *arg) {
     test_ms_move_mount();                 /* Tests 896-900: MS_MOVE mount relocation */
 
     test_seccomp_filter();                /* Tests 901-906: seccomp FILTER/STRICT/prctl no-op */
+    test_af_netlink_socket();             /* Tests 907-915: AF_NETLINK (NETLINK_ROUTE) socket */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

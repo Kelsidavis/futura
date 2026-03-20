@@ -316,6 +316,37 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
      * Phase 4: Handle ancillary data (SCM_RIGHTS for FD receiving)
      */
 
+    /* AF_NETLINK: drain pre-built response directly into the first iov. */
+    {
+        extern fut_socket_t *get_socket_from_fd(int fd);
+        fut_socket_t *nl_sock = get_socket_from_fd(local_sockfd);
+        if (nl_sock && nl_sock->address_family == 16 /* AF_NETLINK */) {
+            extern ssize_t netlink_handle_recv(fut_socket_t *sock,
+                                               void *out_buf, size_t out_len);
+            ssize_t total_nl = 0;
+            for (size_t i = 0; i < kmsg.msg_iovlen; i++) {
+                struct iovec iov;
+                if (recvmsg_copy_from_user(&iov, &kmsg.msg_iov[i], sizeof(iov)) != 0)
+                    break;
+                if (!iov.iov_base || iov.iov_len == 0) continue;
+                /* Allocate a kernel bounce buffer */
+                void *kbuf = fut_malloc(iov.iov_len);
+                if (!kbuf) break;
+                ssize_t got = netlink_handle_recv(nl_sock, kbuf, iov.iov_len);
+                if (got > 0) {
+                    if (recvmsg_copy_to_user(iov.iov_base, kbuf, (size_t)got) != 0) {
+                        fut_free(kbuf);
+                        break;
+                    }
+                    total_nl += got;
+                }
+                fut_free(kbuf);
+                if (got <= 0) break;
+            }
+            return total_nl;
+        }
+    }
+
     /* Handle MSG_DONTWAIT flag
      * Temporarily set O_NONBLOCK on socket if MSG_DONTWAIT is specified.
      * This ensures the socket returns EAGAIN instead of blocking. */

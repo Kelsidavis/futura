@@ -338,6 +338,24 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
      * then send each iovec as a separate datagram to that address. */
     extern fut_socket_t *get_socket_from_fd(int fd);
     fut_socket_t *sm_sock = get_socket_from_fd(local_sockfd);
+
+    /* AF_NETLINK: parse the RTM_GET* request and pre-build the response. */
+    if (sm_sock && sm_sock->address_family == 16 /* AF_NETLINK */) {
+        extern ssize_t netlink_handle_send(fut_socket_t *sock,
+                                           const void *iov_base, size_t iov_len,
+                                           ssize_t total_len);
+        /* Read the first iov to get the nlmsghdr */
+        const void *nl_iov_base = NULL;
+        size_t nl_iov_len = 0;
+        if (kmsg.msg_iovlen > 0) {
+            struct iovec iov0;
+            if (sendmsg_copy_from_user(&iov0, &kmsg.msg_iov[0], sizeof(iov0)) == 0) {
+                nl_iov_base = iov0.iov_base;
+                nl_iov_len  = iov0.iov_len;
+            }
+        }
+        return netlink_handle_send(sm_sock, nl_iov_base, nl_iov_len, (ssize_t)total_size);
+    }
     bool is_dgram_sendmsg = (sm_sock && sm_sock->socket_type == SOCK_DGRAM && !sm_sock->pair);
 
     /* Resolve DGRAM destination: msg_name wins over default peer */

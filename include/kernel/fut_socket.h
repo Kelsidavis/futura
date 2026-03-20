@@ -45,6 +45,9 @@ typedef uint32_t socklen_t;
 #ifndef AF_INET6
 #define AF_INET6    10  /* IPv6 Internet protocols */
 #endif
+#ifndef AF_NETLINK
+#define AF_NETLINK  16  /* Kernel user interface (netlink) */
+#endif
 
 /* ============================================================
  *   Socket Types
@@ -414,6 +417,11 @@ typedef struct fut_socket {
     uint32_t peer_pid;
     uint32_t peer_uid;
     uint32_t peer_gid;
+
+    /* AF_NETLINK pending response buffer (allocated on sendmsg, freed after recvmsg drains it) */
+    uint8_t *nl_resp_buf;    /* heap-allocated response; NULL = nothing pending */
+    uint32_t nl_resp_len;    /* total bytes in nl_resp_buf */
+    uint32_t nl_resp_pos;    /* bytes already consumed by recvmsg */
 
     /* Refcounting and lifecycle */
     uint64_t refcount;                      /* Reference count */

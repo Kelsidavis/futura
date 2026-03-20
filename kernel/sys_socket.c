@@ -145,6 +145,10 @@ long sys_socket(int domain, int type, int protocol) {
             domain_name = "AF_INET6";
             domain_desc = "IPv6";
             break;
+        case AF_NETLINK:
+            domain_name = "AF_NETLINK";
+            domain_desc = "kernel netlink interface";
+            break;
         default:
             domain_name = "UNKNOWN";
             domain_desc = "unknown address family";
@@ -210,8 +214,9 @@ long sys_socket(int domain, int type, int protocol) {
         protocol_desc = "custom";
     }
 
-    /* Validate address family: AF_UNIX (full), AF_INET/AF_INET6 (stub) */
-    if (local_domain != AF_UNIX && local_domain != AF_INET && local_domain != AF_INET6) {
+    /* Validate address family: AF_UNIX (full), AF_INET/AF_INET6 (stub), AF_NETLINK (stub) */
+    if (local_domain != AF_UNIX && local_domain != AF_INET &&
+        local_domain != AF_INET6 && local_domain != AF_NETLINK) {
         return -EAFNOSUPPORT;
     }
 
@@ -219,6 +224,11 @@ long sys_socket(int domain, int type, int protocol) {
     if (local_domain == AF_UNIX) {
         /* AF_UNIX supports SOCK_STREAM, SOCK_DGRAM, and SOCK_SEQPACKET */
         if (base_type != SOCK_STREAM && base_type != SOCK_DGRAM && base_type != SOCK_SEQPACKET) {
+            return -ENOTSUP;
+        }
+    } else if (local_domain == AF_NETLINK) {
+        /* AF_NETLINK uses SOCK_RAW or SOCK_DGRAM */
+        if (base_type != SOCK_RAW && base_type != SOCK_DGRAM) {
             return -ENOTSUP;
         }
     } else {

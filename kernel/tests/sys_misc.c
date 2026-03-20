@@ -33757,6 +33757,132 @@ do_getdents:;
     }
 }
 
+/*
+ * test_mmap_dup3_select_errors — Tests 1021-1025
+ *
+ *   1021: mmap(file_fd, MAP_PRIVATE, PROT_READ, offset=0)  → valid addr (positive)
+ *   1022: mmap(file_fd, MAP_PRIVATE, PROT_READ, offset=1)  → EINVAL (non-page-aligned)
+ *   1023: dup3(fd, fd, O_CLOEXEC) → EINVAL (oldfd==newfd)
+ *   1024: dup3(fd, fd+1, 0xBAAD)  → EINVAL (invalid flags)
+ *   1025: select(1025, NULL, NULL, NULL, &zero_tv) → EINVAL (nfds > FD_SETSIZE)
+ *
+ * These cover POSIX/Linux requirements:
+ *  - mmap file offset must be page-aligned (POSIX.1-2008 mmap)
+ *  - dup3(old,new,flags): old==new → EINVAL; unknown flags → EINVAL
+ *  - select: nfds must be in [0, FD_SETSIZE]
+ */
+static void test_mmap_dup3_select_errors(void) {
+    extern long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset);
+    extern long sys_munmap(void *addr, size_t len);
+    extern long sys_dup3(int oldfd, int newfd, int flags);
+    extern long sys_close(int fd);
+
+#define TMDS_MAP_PRIVATE  0x02
+#define TMDS_MAP_ANON     0x20
+#define TMDS_PROT_READ    1
+#define TMDS_O_CLOEXEC    02000000
+
+    /* ---- Test 1021: mmap(regular file, MAP_PRIVATE, PROT_READ, offset=0) → valid ---- */
+    fut_printf("[MISC-TEST] Test 1021: mmap(regular_file, MAP_PRIVATE, offset=0) → valid addr\n");
+    {
+        int fd = (int)fut_vfs_open("/tmds_file.txt", O_RDONLY | O_CREAT, 0644);
+        long r = (fd >= 0)
+            ? sys_mmap(NULL, 4096, TMDS_PROT_READ, TMDS_MAP_PRIVATE, fd, 0)
+            : -EBADF;
+        if (fd >= 0) fut_vfs_close(fd);
+        if (r > 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1021: mmap(file, MAP_PRIVATE) → 0x%lx\n", r);
+            fut_test_pass();
+            sys_munmap((void *)(uintptr_t)r, 4096);
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1021: mmap(file,MAP_PRIVATE) returned %ld\n", r);
+            fut_test_fail(1021);
+        }
+        fut_vfs_unlink("/tmds_file.txt");
+    }
+
+    /* ---- Test 1022: mmap(file, MAP_PRIVATE, offset=1) → EINVAL (unaligned) ---- */
+    fut_printf("[MISC-TEST] Test 1022: mmap(file, MAP_PRIVATE, offset=1) → EINVAL\n");
+    {
+        /* Use MAP_ANONYMOUS to avoid needing a real fd — the offset check comes
+         * first (before fd validation) for non-anonymous mappings.
+         * But we must use a real fd to hit the non-anonymous path.
+         * MAP_ANONYMOUS ignores offset; use a regular file fd here. */
+        int fd = (int)fut_vfs_open("/tmds_file2.txt", O_RDONLY | O_CREAT, 0644);
+        long r = (fd >= 0)
+            ? sys_mmap(NULL, 4096, TMDS_PROT_READ, TMDS_MAP_PRIVATE, fd, 1)
+            : -EBADF;
+        if (fd >= 0) { fut_vfs_close(fd); fut_vfs_unlink("/tmds_file2.txt"); }
+        if (r == -EINVAL) {
+            fut_printf("[MISC-TEST] ✓ Test 1022: mmap(offset=1) → EINVAL\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1022: mmap(offset=1)=%ld (expected -EINVAL=%d)\n",
+                       r, -EINVAL);
+            if (r > 0) sys_munmap((void *)(uintptr_t)r, 4096);
+            fut_test_fail(1022);
+        }
+    }
+
+    /* ---- Test 1023: dup3(fd, fd, O_CLOEXEC) → EINVAL (oldfd == newfd) ---- */
+    fut_printf("[MISC-TEST] Test 1023: dup3(fd, fd, O_CLOEXEC) → EINVAL\n");
+    {
+        int fd = (int)fut_vfs_open("/tmds_dup.txt", O_RDONLY | O_CREAT, 0644);
+        long r = (fd >= 0) ? sys_dup3(fd, fd, TMDS_O_CLOEXEC) : -EBADF;
+        if (fd >= 0) { fut_vfs_close(fd); fut_vfs_unlink("/tmds_dup.txt"); }
+        if (r == -EINVAL) {
+            fut_printf("[MISC-TEST] ✓ Test 1023: dup3(fd,fd,CLOEXEC) → EINVAL\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1023: dup3(fd,fd)=%ld (expected -EINVAL=%d)\n",
+                       r, -EINVAL);
+            fut_test_fail(1023);
+        }
+    }
+
+    /* ---- Test 1024: dup3(fd, newfd, 0xBAAD) → EINVAL (bad flags) ---- */
+    fut_printf("[MISC-TEST] Test 1024: dup3(fd, newfd, bad_flags) → EINVAL\n");
+    {
+        int fd = (int)fut_vfs_open("/tmds_dup2.txt", O_RDONLY | O_CREAT, 0644);
+        long r = (fd >= 0) ? sys_dup3(fd, fd + 10, 0xBAAD) : -EBADF;
+        if (fd >= 0) {
+            /* Close the duplicated fd if it accidentally succeeded */
+            if (r > 0 && r != fd) sys_close((int)r);
+            fut_vfs_close(fd);
+            fut_vfs_unlink("/tmds_dup2.txt");
+        }
+        if (r == -EINVAL) {
+            fut_printf("[MISC-TEST] ✓ Test 1024: dup3(fd,newfd,bad_flags) → EINVAL\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1024: dup3(bad_flags)=%ld (expected -EINVAL=%d)\n",
+                       r, -EINVAL);
+            fut_test_fail(1024);
+        }
+    }
+
+    /* ---- Test 1025: select(nfds=1025, NULL, NULL, NULL, &zero_tv) → EINVAL ---- */
+    fut_printf("[MISC-TEST] Test 1025: select(1025, NULL, NULL, NULL) → EINVAL (nfds>FD_SETSIZE)\n");
+    {
+        struct { long tv_sec; long tv_usec; } zero_tv = { 0, 0 };
+        extern long sys_select(int nfds, void *rfds, void *wfds, void *efds, void *timeout);
+        long r = sys_select(1025, NULL, NULL, NULL, &zero_tv);
+        if (r == -EINVAL) {
+            fut_printf("[MISC-TEST] ✓ Test 1025: select(1025) → EINVAL\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1025: select(1025)=%ld (expected -EINVAL=%d)\n",
+                       r, -EINVAL);
+            fut_test_fail(1025);
+        }
+    }
+
+#undef TMDS_MAP_PRIVATE
+#undef TMDS_MAP_ANON
+#undef TMDS_PROT_READ
+#undef TMDS_O_CLOEXEC
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -34345,6 +34471,7 @@ void fut_misc_test_thread(void *arg) {
     test_pread_pwrite_position();        /* Tests 1008-1010: pread/pwrite position preservation + O_APPEND bypass */
     test_open_lseek_errors();            /* Tests 1011-1015: open(dir,O_WRONLY/RDWR)→EISDIR, open(file,O_DIRECTORY)→ENOTDIR, lseek errors */
     test_fifo_seekable_ops();            /* Tests 1016-1020: FIFO pread/pwrite/lseek→ESPIPE, getdents64(non-dir)→ENOTDIR */
+    test_mmap_dup3_select_errors();      /* Tests 1021-1025: mmap unaligned-offset→EINVAL, dup3 errors, select nfds>FD_SETSIZE→EINVAL */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

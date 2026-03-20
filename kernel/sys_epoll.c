@@ -208,6 +208,7 @@
 
 #include <kernel/eventfd.h>
 #include <kernel/fut_vfs.h>
+#include <kernel/chrdev.h>
 #include <kernel/fut_socket.h>
 #include <kernel/errno.h>
 #include <kernel/uaccess.h>
@@ -236,6 +237,7 @@
 /* Epoll debugging (controlled via debug_config.h) */
 #include <kernel/fut_memory.h>
 #include <sys/epoll.h>
+#include <fcntl.h>
 
 /* Internal helper macros */
 #define EPOLLMASK_IOCTLS  (EPOLLERR | EPOLLHUP)
@@ -291,7 +293,18 @@ struct epoll_set {
 
 /* Global epoll instance table */
 static struct epoll_set epoll_instances[MAX_EPOLL_INSTANCES];
-static int next_epoll_fd = 4000;  /* Start epoll FDs at 4000 to avoid collision with regular FDs */
+
+/* Forward declarations */
+static int epoll_release_op(void *inode, void *priv);
+static void epoll_deallocate_set(struct epoll_set *set);
+
+/* File operations for epoll file descriptors.
+ * epoll fds are now regular chrdev fds in fd_table, so close() and
+ * FD_CLOEXEC work through the normal VFS path instead of a separate
+ * 4000+ namespace. */
+const struct fut_file_ops epoll_fops = {
+    .release = epoll_release_op,
+};
 
 /**
  * Notify all epoll instances that a file descriptor is being closed.
@@ -320,21 +333,11 @@ void epoll_notify_fd_close(int fd) {
 }
 
 /**
- * epoll_close_cloexec - Close all epoll instances marked EPOLL_CLOEXEC for a PID
- *
- * Called from execve to honor close-on-exec semantics for epoll file descriptors.
- * Since epoll FDs are not in the task's fd_table, they need separate cleanup.
+ * epoll_close_cloexec - no-op: epoll fds are now in fd_table, so the normal
+ * FD_CLOEXEC close path in exec handles them automatically.
  */
 void epoll_close_cloexec(uint64_t pid) {
-    for (int i = 0; i < MAX_EPOLL_INSTANCES; i++) {
-        if (epoll_instances[i].active &&
-            epoll_instances[i].owner_pid == pid &&
-            epoll_instances[i].cloexec) {
-            epoll_instances[i].active = false;
-            epoll_instances[i].count = 0;
-            memset(epoll_instances[i].fds, 0, sizeof(epoll_instances[i].fds));
-        }
-    }
+    (void)pid;
 }
 
 /* Count active epoll instances owned by a given PID */
@@ -419,16 +422,9 @@ static struct epoll_set *epoll_allocate_set(uint64_t owner_pid) {
      */
     for (int i = 0; i < MAX_EPOLL_INSTANCES; i++) {
         if (!epoll_instances[i].active) {
-            /* Check for FD counter overflow before allocation */
-            if (next_epoll_fd >= INT_MAX) {
-                fut_printf("[EPOLL_ALLOCATE] epoll_allocate_set() -> NULL "
-                           "(epoll FD counter would overflow INT_MAX)\n");
-                return NULL;
-            }
-
             memset(&epoll_instances[i], 0, sizeof(epoll_instances[i]));
             epoll_instances[i].active = true;
-            epoll_instances[i].epfd = next_epoll_fd++;
+            epoll_instances[i].epfd = -1; /* assigned after chrdev_alloc_fd */
             epoll_instances[i].count = 0;
             epoll_instances[i].owner_pid = owner_pid;
             fut_waitq_init(&epoll_instances[i].epoll_waitq);
@@ -436,6 +432,14 @@ static struct epoll_set *epoll_allocate_set(uint64_t owner_pid) {
         }
     }
     return NULL;
+}
+
+/* Release callback: called by fut_vfs_close when epoll fd refcount hits 0 */
+static int epoll_release_op(void *inode, void *priv) {
+    (void)inode;
+    struct epoll_set *set = (struct epoll_set *)priv;
+    epoll_deallocate_set(set);
+    return 0;
 }
 
 /* Helper to deallocate an epoll set */
@@ -449,17 +453,11 @@ static void epoll_deallocate_set(struct epoll_set *set) {
 }
 
 /**
- * Check if an FD is an epoll instance and deallocate it on close.
- * Called from sys_close() (via epoll_notify_fd_close) to reclaim
- * epoll resources when the epoll FD itself is closed.
- * Returns true if the FD was an epoll instance.
+ * epoll_try_close - no-op: epoll fds are now in fd_table and are freed via
+ * epoll_release_op when fut_vfs_close drops the last reference.
  */
 bool epoll_try_close(int fd) {
-    struct epoll_set *set = epoll_get_set(fd);
-    if (set) {
-        epoll_deallocate_set(set);
-        return true;
-    }
+    (void)fd;
     return false;
 }
 
@@ -596,12 +594,24 @@ long sys_epoll_create1(int flags) {
         return -ENOMEM;
     }
 
-    /* Apply EPOLL_CLOEXEC flag */
+    /* Allocate a normal fd in the task's fd_table for this epoll instance.
+     * This gives epoll fds the same lifecycle as other fds: close(2) and
+     * FD_CLOEXEC work through the normal VFS path, and fstat(2) returns
+     * S_IFCHR via fut_chrdev_fstat_mode. */
+    int fd = chrdev_alloc_fd(&epoll_fops, NULL, set);
+    if (fd < 0) {
+        epoll_deallocate_set(set);
+        return fd;
+    }
+    set->epfd = fd;
+
     if (flags & EPOLL_CLOEXEC) {
         set->cloexec = true;
+        if (task && task->fd_flags && fd < task->max_fds)
+            task->fd_flags[fd] |= FD_CLOEXEC;
     }
 
-    return set->epfd;
+    return fd;
 }
 
 /**

@@ -23,8 +23,6 @@
 
 /* epoll close notification — auto-removes FD from all epoll instances */
 extern void epoll_notify_fd_close(int fd);
-/* epoll instance close — deallocates epoll set when epoll FD is closed */
-extern bool epoll_try_close(int fd);
 
 /* Close debugging (controlled via debug_config.h) */
 #define close_printf(...) do { if (CLOSE_DEBUG) fut_printf(__VA_ARGS__); } while(0)
@@ -163,13 +161,6 @@ long sys_close(int fd) {
     if (local_fd < 0) {
         close_printf("[CLOSE] close(fd=%d) -> EBADF (negative fd)\n", local_fd);
         return -EBADF;
-    }
-
-    /* Check epoll FDs first: they live in a separate namespace (4000-4999)
-     * above task->max_fds, so they must be handled before the bounds check. */
-    if (epoll_try_close(local_fd)) {
-        close_printf("[CLOSE] close(fd=%d) -> 0 (epoll instance deallocated)\n", local_fd);
-        return 0;
     }
 
     if (local_fd >= task->max_fds) {

@@ -1855,10 +1855,13 @@ uint64_t fut_signalfd_get_sigmask(struct fut_file *file) {
  *
  * Returns the file-type bits (e.g. 0020000), or 0 if unknown.
  */
+extern const struct fut_file_ops epoll_fops;
+
 uint32_t fut_chrdev_fstat_mode(struct fut_file *file) {
     if (!file || !file->chr_ops) return 0u;
     if (file->chr_ops == &eventfd_fops)  return 0020000u; /* S_IFCHR */
     if (file->chr_ops == &timerfd_fops)  return 0100000u; /* S_IFREG (anon_inode) */
     if (file->chr_ops == &signalfd_fops) return 0100000u; /* S_IFREG (anon_inode) */
+    if (file->chr_ops == &epoll_fops)    return 0020000u; /* S_IFCHR (anon_inode:[eventpoll]) */
     return 0u;
 }

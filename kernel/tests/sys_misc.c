@@ -29377,6 +29377,55 @@ t815_done: ;
     }
 }
 
+/* =================================================================
+ * test_epoll_fd_fstat - Tests 820-822: epoll fds are normal fds in fd_table
+ *
+ *   Test 820: epoll_create1(0) returns small fd (< 1000)
+ *   Test 821: fstat(epfd) → 0 and st_mode has S_IFCHR type bits
+ *   Test 822: close(epfd) succeeds
+ * ================================================================= */
+static void test_epoll_fd_fstat(void) {
+    extern long sys_epoll_create1(int flags);
+    extern long sys_fstat(int fd, struct fut_stat *statbuf);
+    extern long sys_close(int fd);
+
+#define S_IFMT_TEST  0170000u
+#define S_IFCHR_TEST 0020000u
+
+    /* Test 820: epoll_create1 returns a small fd (not 4000+) */
+    long epfd = sys_epoll_create1(0);
+    if (epfd < 0 || epfd >= 1000) {
+        fut_test_fail((uint16_t)820);
+    } else {
+        fut_test_pass();
+    }
+
+    if (epfd >= 0) {
+        /* Test 821: fstat returns S_IFCHR */
+        struct fut_stat st = {0};
+        long ret = sys_fstat((int)epfd, &st);
+        if (ret == 0 && (st.st_mode & S_IFMT_TEST) == S_IFCHR_TEST) {
+            fut_test_pass();
+        } else {
+            fut_test_fail((uint16_t)821);
+        }
+
+        /* Test 822: close(epfd) succeeds */
+        ret = sys_close((int)epfd);
+        if (ret == 0) {
+            fut_test_pass();
+        } else {
+            fut_test_fail((uint16_t)822);
+        }
+    } else {
+        fut_test_fail((uint16_t)821);
+        fut_test_fail((uint16_t)822);
+    }
+
+#undef S_IFMT_TEST
+#undef S_IFCHR_TEST
+}
+
 static void test_inotify_poll_epoll_select(void) {
     extern long sys_inotify_init1(int flags);
     extern long sys_inotify_add_watch(int fd, const char *path, uint32_t mask);
@@ -30060,6 +30109,7 @@ void fut_misc_test_thread(void *arg) {
     test_mount_propagation();             /* Tests 808-811: MS_SLAVE/MS_PRIVATE/MS_SHARED/MS_REC no-op */
     test_inotify_rm_watch();              /* Tests 812-814: inotify_rm_watch + IN_IGNORED event */
     test_dev_shm();                       /* Tests 815-819: /dev/shm POSIX shm path + O_ASYNC F_SETOWN */
+    test_epoll_fd_fstat();                /* Tests 820-822: epoll fd in fd_table, fstat → S_IFCHR */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

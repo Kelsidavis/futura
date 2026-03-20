@@ -30570,6 +30570,128 @@ test881:;
 #undef SOL_SOCKET_NUM
 }
 
+/*
+ * Tests 882-887: AF_INET bind/getsockname + extended SOL_SOCKET options.
+ *
+ * Test 882: bind(AF_INET, 0.0.0.0:9999) → 0
+ * Test 883: getsockname after bind → family=AF_INET, port=9999
+ * Test 884: setsockopt(SO_BINDTODEVICE="") → 0
+ * Test 885: setsockopt(SO_PRIORITY, 6) → 0
+ * Test 886: setsockopt(SO_MARK, 0x1234) → 0
+ * Test 887: listen(AF_INET fd) after bind → 0 (stub: no TCP connections possible)
+ */
+static void test_af_inet_bind_getsockname(void) {
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_bind(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_getsockname(int sockfd, void *addr, unsigned int *addrlen);
+    extern long sys_setsockopt(int fd, int level, int optname,
+                               const void *optval, unsigned int optlen);
+    extern long sys_listen(int sockfd, int backlog);
+    extern long sys_close(int fd);
+
+    fut_printf("[MISC-TEST] Tests 882-887: AF_INET bind/getsockname + extended setsockopt\n");
+
+#define AF_INET_N   2
+#define SOL_SOCK_N  1
+
+    long fd = sys_socket(AF_INET_N, 1 /* SOCK_STREAM */, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Tests 882-887: socket(AF_INET) failed: %ld\n", fd);
+        fut_test_fail(882); fut_test_fail(883); fut_test_fail(884);
+        fut_test_fail(885); fut_test_fail(886); fut_test_fail(887);
+        return;
+    }
+
+    /* Test 882: bind(AF_INET, 0.0.0.0:9999) → 0 */
+    {
+        /* sockaddr_in: family(2) + port(2 NBO) + addr(4) + zero(8) */
+        unsigned char sin[16] = {0};
+        sin[0] = AF_INET_N; sin[1] = 0; /* sin_family LE */
+        sin[2] = (9999 >> 8) & 0xFF; sin[3] = 9999 & 0xFF; /* port NBO */
+        /* addr = 0.0.0.0 (already zero) */
+        long r = sys_bind((int)fd, sin, 16);
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 882: bind(AF_INET, 0.0.0.0:9999) → 0\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 882: bind returned %ld\n", r);
+            fut_test_fail(882);
+        }
+    }
+
+    /* Test 883: getsockname → family=AF_INET, port=9999 */
+    {
+        unsigned char addr[16] = {0};
+        unsigned int alen = 16;
+        long r = sys_getsockname((int)fd, addr, &alen);
+        unsigned short fam = (unsigned short)(addr[0] | (addr[1] << 8));
+        unsigned short port = (unsigned short)((addr[2] << 8) | addr[3]);
+        if (r == 0 && fam == AF_INET_N && port == 9999) {
+            fut_printf("[MISC-TEST] ✓ Test 883: getsockname → AF_INET port=%u\n", port);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 883: getsockname r=%ld fam=%u port=%u\n", r, fam, port);
+            fut_test_fail(883);
+        }
+    }
+
+    /* Test 884: setsockopt(SO_BINDTODEVICE="") → 0 */
+    {
+        const char *devname = "";
+        long r = sys_setsockopt((int)fd, SOL_SOCK_N, 25 /* SO_BINDTODEVICE */, devname, 1);
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 884: setsockopt(SO_BINDTODEVICE) → 0\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 884: setsockopt(SO_BINDTODEVICE) → %ld\n", r);
+            fut_test_fail(884);
+        }
+    }
+
+    /* Test 885: setsockopt(SO_PRIORITY, 6) → 0 */
+    {
+        int prio = 6;
+        long r = sys_setsockopt((int)fd, SOL_SOCK_N, 12 /* SO_PRIORITY */, &prio, sizeof(int));
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 885: setsockopt(SO_PRIORITY, 6) → 0\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 885: setsockopt(SO_PRIORITY) → %ld\n", r);
+            fut_test_fail(885);
+        }
+    }
+
+    /* Test 886: setsockopt(SO_MARK, 0x1234) → 0 */
+    {
+        int mark = 0x1234;
+        long r = sys_setsockopt((int)fd, SOL_SOCK_N, 36 /* SO_MARK */, &mark, sizeof(int));
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 886: setsockopt(SO_MARK, 0x1234) → 0\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 886: setsockopt(SO_MARK) → %ld\n", r);
+            fut_test_fail(886);
+        }
+    }
+
+    /* Test 887: listen(AF_INET fd after bind) → 0 */
+    {
+        long r = sys_listen((int)fd, 10);
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 887: listen(AF_INET stub) → 0\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 887: listen → %ld\n", r);
+            fut_test_fail(887);
+        }
+    }
+
+    sys_close((int)fd);
+
+#undef AF_INET_N
+#undef SOL_SOCK_N
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -31129,6 +31251,7 @@ void fut_misc_test_thread(void *arg) {
     test_statfs_magic_values();            /* Tests 861-866: statfs f_type: /proc=0x9fa0, /sys=sysfs, /dev=devtmpfs, /tmp=tmpfs, /run=tmpfs, /dev/shm=tmpfs */
     test_ipproto_sockopts();              /* Tests 867-873: IPPROTO_TCP/IP/IPV6 setsockopt/getsockopt round-trip */
     test_af_inet_socket_stub();           /* Tests 874-881: AF_INET/AF_INET6 socket creation stubs */
+    test_af_inet_bind_getsockname();      /* Tests 882-887: AF_INET bind/getsockname, SO_PRIORITY/BINDTODEVICE */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

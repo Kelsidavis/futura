@@ -550,6 +550,41 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                 if (optlen < sizeof(int)) return -EINVAL;
                 return 0;
 
+            case 12: /* SO_PRIORITY — socket priority for QoS */
+            case 25: /* SO_BINDTODEVICE — bind to specific NIC */
+            case 26: /* SO_ATTACH_FILTER — BPF filter (no-op: no packet filter engine) */
+            case 27: /* SO_DETACH_FILTER — detach BPF filter */
+            case 32: /* SO_SNDBUFFORCE — forced send buffer (privileged) */
+            case 33: /* SO_RCVBUFFORCE — forced recv buffer (privileged) */
+            case 34: /* SO_PASSSEC — SELinux label passing */
+            case 35: /* SO_TIMESTAMPNS — nanosecond timestamp */
+            case 36: /* SO_MARK — socket mark for policy routing */
+            case 37: /* SO_TIMESTAMPING — hardware timestamping */
+            case 41: /* SO_WIFI_STATUS — WiFi status */
+            case 42: /* SO_PEEK_OFF — MSG_PEEK offset */
+            case 45: /* SO_BPF_EXTENSIONS */
+            case 46: /* SO_INCOMING_CPU */
+            case 47: /* SO_ATTACH_BPF */
+            case 52: /* SO_DETACH_BPF */
+            case 53: /* SO_ATTACH_REUSEPORT_CBPF */
+            case 54: /* SO_ATTACH_REUSEPORT_EBPF */
+            case 55: /* SO_CNX_ADVICE */
+            case 57: /* SO_MEMINFO */
+            case 58: /* SO_INCOMING_NAPI_ID */
+            case 59: /* SO_COOKIE */
+            case 62: /* SO_RCVTIMEO_NEW */
+            case 63: /* SO_SNDTIMEO_NEW */
+            case 64: /* SO_DETACH_REUSEPORT_BPF */
+            case 65: /* SO_PREFER_BUSY_POLL */
+            case 66: /* SO_BUSY_POLL_BUDGET */
+            case 67: /* SO_NETNS_COOKIE */
+            case 68: /* SO_BUF_LOCK */
+            case 69: /* SO_RESERVE_MEM */
+            case 70: /* SO_TXREHASH */
+            case 71: /* SO_RCVMARK */
+                /* Accept silently — no enforcement for these options */
+                return 0;
+
             case SO_PASSCRED: {
                 /* Enable/disable SCM_CREDENTIALS cmsg attachment on recvmsg */
                 if (optlen < sizeof(int)) return -EINVAL;

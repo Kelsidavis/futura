@@ -2571,13 +2571,13 @@ int64_t fut_vfs_lseek(int fd, int64_t offset, int whence) {
      * Pipes use O_RDONLY/O_WRONLY (set by pipe()/pipe2()).
      * Sockets, eventfd, timerfd, signalfd, pidfd, and mqueue use
      * FUT_F_UNSEEKABLE (set by chrdev_alloc_fd()).
-     * Device files opened by path (try_open_chrdev) and memfd are seekable. */
-    if (file->chr_ops && !file->vnode) {
-        int mode = file->flags & O_ACCMODE;
-        if ((mode == O_RDONLY || mode == O_WRONLY) ||
-            (file->flags & FUT_F_UNSEEKABLE))
-            return -ESPIPE;
-    }
+     * Device files opened by path (try_open_chrdev) and memfd are seekable.
+     * Named FIFOs have both chr_ops and vnode (VN_FIFO) — also ESPIPE. */
+    if ((file->chr_ops && !file->vnode &&
+         ((file->flags & O_ACCMODE) != O_RDWR ||
+          (file->flags & FUT_F_UNSEEKABLE))) ||
+        (file->vnode && file->vnode->type == VN_FIFO))
+        return -ESPIPE;
 
     uint64_t new_offset = file->offset;
 

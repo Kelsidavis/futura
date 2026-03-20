@@ -33632,6 +33632,131 @@ static void test_open_lseek_errors(void) {
 #undef TOLE_O_DIRECTORY
 }
 
+/*
+ * test_fifo_seekable_ops — Tests 1016-1020
+ *
+ *   1016: pread64(fifo_fd) → ESPIPE  (named FIFO is non-seekable)
+ *   1017: pwrite64(fifo_fd) → ESPIPE (named FIFO is non-seekable)
+ *   1018: lseek(fifo_fd, 0, SEEK_CUR) → ESPIPE (named FIFO is non-seekable)
+ *   1019: getdents64(regular_file_fd) → ENOTDIR
+ *   1020: getdents64(pipe_read_fd) → ENOTDIR
+ *
+ * pread64/pwrite64/lseek on a named FIFO must return ESPIPE — FIFOs are
+ * non-seekable stream devices and POSIX/Linux require ESPIPE for these.
+ * getdents64 on any non-directory fd must return ENOTDIR.
+ */
+static void test_fifo_seekable_ops(void) {
+    extern long sys_pread64(unsigned int fd, void *buf, size_t count, int64_t offset);
+    extern long sys_pwrite64(unsigned int fd, const void *buf, size_t count, int64_t offset);
+    extern long sys_lseek(int fd, int64_t offset, int whence);
+    extern long sys_getdents64(unsigned int fd, void *dirp, unsigned int count);
+
+    /* Create a named FIFO for the seekable-ops tests */
+    fut_vfs_rmdir("/fso_fifo");
+    fut_vfs_unlink("/fso_fifo");
+    long mk = fut_vfs_mknod("/fso_fifo", 0010644 /* S_IFIFO|0644 */);
+    if (mk < 0) {
+        fut_printf("[MISC-TEST] ✗ Tests 1016-1018: mkfifo /fso_fifo failed: %ld\n", mk);
+        fut_test_fail(1016); fut_test_fail(1017); fut_test_fail(1018);
+        goto do_getdents;
+    }
+
+    /* Open FIFO O_RDWR so the single open doesn't block */
+    int ffd = (int)fut_vfs_open("/fso_fifo", O_RDWR, 0);
+    if (ffd < 0) {
+        fut_printf("[MISC-TEST] ✗ Tests 1016-1018: open /fso_fifo failed: %d\n", ffd);
+        fut_test_fail(1016); fut_test_fail(1017); fut_test_fail(1018);
+        fut_vfs_unlink("/fso_fifo");
+        goto do_getdents;
+    }
+
+    /* Test 1016: pread64(fifo_fd) → ESPIPE */
+    fut_printf("[MISC-TEST] Test 1016: pread64(fifo_fd) → ESPIPE\n");
+    {
+        char rbuf[8];
+        long r = sys_pread64(ffd, rbuf, sizeof(rbuf), 0);
+        if (r != -ESPIPE) {
+            fut_printf("[MISC-TEST] ✗ Test 1016: pread64(fifo)=%ld (expected -ESPIPE=%d)\n",
+                       r, -ESPIPE);
+            fut_test_fail(1016);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1016: pread64(fifo) → ESPIPE\n");
+            fut_test_pass();
+        }
+    }
+
+    /* Test 1017: pwrite64(fifo_fd) → ESPIPE */
+    fut_printf("[MISC-TEST] Test 1017: pwrite64(fifo_fd) → ESPIPE\n");
+    {
+        const char wbuf[] = "hello";
+        long r = sys_pwrite64(ffd, wbuf, sizeof(wbuf), 0);
+        if (r != -ESPIPE) {
+            fut_printf("[MISC-TEST] ✗ Test 1017: pwrite64(fifo)=%ld (expected -ESPIPE=%d)\n",
+                       r, -ESPIPE);
+            fut_test_fail(1017);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1017: pwrite64(fifo) → ESPIPE\n");
+            fut_test_pass();
+        }
+    }
+
+    /* Test 1018: lseek(fifo_fd, 0, SEEK_CUR) → ESPIPE */
+    fut_printf("[MISC-TEST] Test 1018: lseek(fifo_fd, 0, SEEK_CUR) → ESPIPE\n");
+    {
+        long r = sys_lseek(ffd, 0, 1 /* SEEK_CUR */);
+        if (r != -ESPIPE) {
+            fut_printf("[MISC-TEST] ✗ Test 1018: lseek(fifo,SEEK_CUR)=%ld (expected -ESPIPE=%d)\n",
+                       r, -ESPIPE);
+            fut_test_fail(1018);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1018: lseek(fifo, SEEK_CUR) → ESPIPE\n");
+            fut_test_pass();
+        }
+    }
+
+    fut_vfs_close(ffd);
+    fut_vfs_unlink("/fso_fifo");
+
+do_getdents:;
+
+    /* Test 1019: getdents64(regular_file_fd) → ENOTDIR */
+    fut_printf("[MISC-TEST] Test 1019: getdents64(regular_file_fd) → ENOTDIR\n");
+    {
+        int rfd = (int)fut_vfs_open("/fso_reg.txt", O_RDWR | O_CREAT, 0644);
+        char dirp[256];
+        long r = (rfd >= 0) ? sys_getdents64((unsigned int)rfd, dirp, sizeof(dirp)) : -EBADF;
+        if (r != -ENOTDIR) {
+            fut_printf("[MISC-TEST] ✗ Test 1019: getdents64(regular)=%ld (expected -ENOTDIR=%d)\n",
+                       r, -ENOTDIR);
+            fut_test_fail(1019);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1019: getdents64(regular_file) → ENOTDIR\n");
+            fut_test_pass();
+        }
+        if (rfd >= 0) { fut_vfs_close(rfd); fut_vfs_unlink("/fso_reg.txt"); }
+    }
+
+    /* Test 1020: getdents64(pipe_read_fd) → ENOTDIR */
+    fut_printf("[MISC-TEST] Test 1020: getdents64(pipe_fd) → ENOTDIR\n");
+    {
+        int pfd[2] = { -1, -1 };
+        extern long sys_pipe(int pipefd[2]);
+        long pr = sys_pipe(pfd);
+        char dirp[256];
+        long r = (pr == 0) ? sys_getdents64((unsigned int)pfd[0], dirp, sizeof(dirp)) : -EBADF;
+        if (r != -ENOTDIR) {
+            fut_printf("[MISC-TEST] ✗ Test 1020: getdents64(pipe)=%ld (expected -ENOTDIR=%d)\n",
+                       r, -ENOTDIR);
+            fut_test_fail(1020);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1020: getdents64(pipe_fd) → ENOTDIR\n");
+            fut_test_pass();
+        }
+        if (pfd[0] >= 0) fut_vfs_close(pfd[0]);
+        if (pfd[1] >= 0) fut_vfs_close(pfd[1]);
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -34219,6 +34344,7 @@ void fut_misc_test_thread(void *arg) {
     test_rename_link_type_errors();      /* Tests 1003-1007: rename/link type errors (EISDIR/EPERM/ENOTDIR/ENOTEMPTY) */
     test_pread_pwrite_position();        /* Tests 1008-1010: pread/pwrite position preservation + O_APPEND bypass */
     test_open_lseek_errors();            /* Tests 1011-1015: open(dir,O_WRONLY/RDWR)→EISDIR, open(file,O_DIRECTORY)→ENOTDIR, lseek errors */
+    test_fifo_seekable_ops();            /* Tests 1016-1020: FIFO pread/pwrite/lseek→ESPIPE, getdents64(non-dir)→ENOTDIR */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

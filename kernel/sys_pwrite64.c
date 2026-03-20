@@ -204,12 +204,12 @@ long sys_pwrite64(unsigned int fd, const void *buf, size_t count, int64_t offset
         return -EBADF;
     }
 
-    /* pwrite64() is not valid on non-seekable fds (pipes, sockets, eventfd, etc.) */
-    if (file->chr_ops && !file->vnode) {
-        int mode = file->flags & O_ACCMODE;
-        if ((mode == O_RDONLY || mode == O_WRONLY) || (file->flags & FUT_F_UNSEEKABLE))
-            return -ESPIPE;
-    }
+    /* pwrite64() is not valid on non-seekable fds (pipes, sockets, eventfd, etc.)
+     * Also covers named FIFOs: they have both chr_ops and vnode (VN_FIFO). */
+    if ((file->chr_ops && !file->vnode &&
+         (((file->flags & O_ACCMODE) != O_RDWR) || (file->flags & FUT_F_UNSEEKABLE))) ||
+        (file->vnode && file->vnode->type == VN_FIFO))
+        return -ESPIPE;
 
     /* Handle chr_ops files: dispatch to chr_ops->write with given offset.
      * Seekable chr_ops files (memfd, devfs) support positional I/O. */

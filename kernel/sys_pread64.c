@@ -242,12 +242,12 @@ long sys_pread64(unsigned int fd, void *buf, size_t count, int64_t offset) {
         return -EBADF;
     }
 
-    /* pread64() is not valid on non-seekable fds (pipes, sockets, eventfd, etc.) */
-    if (file->chr_ops && !file->vnode) {
-        int mode = file->flags & O_ACCMODE;
-        if ((mode == O_RDONLY || mode == O_WRONLY) || (file->flags & FUT_F_UNSEEKABLE))
-            return -ESPIPE;
-    }
+    /* pread64() is not valid on non-seekable fds (pipes, sockets, eventfd, etc.)
+     * Also covers named FIFOs: they have both chr_ops and vnode (VN_FIFO). */
+    if ((file->chr_ops && !file->vnode &&
+         (((file->flags & O_ACCMODE) != O_RDWR) || (file->flags & FUT_F_UNSEEKABLE))) ||
+        (file->vnode && file->vnode->type == VN_FIFO))
+        return -ESPIPE;
 
     /* Handle chr_ops files (memfd, etc.) — call chr_ops->read with given offset */
     if (file->chr_ops && file->chr_ops->read) {

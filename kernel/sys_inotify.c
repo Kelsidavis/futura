@@ -546,6 +546,25 @@ long sys_inotify_add_watch(int fd, const char *pathname, uint32_t mask) {
         return -EINVAL;
     }
 
+    /* IN_ONLYDIR: fail with ENOTDIR if the path is not a directory */
+    if (mask & IN_ONLYDIR) {
+        struct fut_vnode *vn = NULL;
+        int lk_err = (mask & IN_DONT_FOLLOW)
+                     ? fut_vfs_lookup_nofollow(path_buf, &vn)
+                     : fut_vfs_lookup(path_buf, &vn);
+        if (lk_err == 0 && vn) {
+            enum fut_vnode_type vtype = vn->type;
+            fut_vnode_unref(vn);
+            if (vtype != VN_DIR) {
+                fut_printf("[INOTIFY] inotify_add_watch(fd=%d, path='%s', mask=0x%x) "
+                           "-> ENOTDIR (IN_ONLYDIR: not a directory)\n", fd, path_buf, mask);
+                return -ENOTDIR;
+            }
+        } else {
+            /* Path not found or error — let the normal watch path handle it */
+        }
+    }
+
     fut_spinlock_acquire(&inst->lock);
 
     /* Check if path is already watched — update mask if so (or add if IN_MASK_ADD) */

@@ -31342,6 +31342,124 @@ static void test_af_netlink_extended(void) {
     fut_printf("[MISC-TEST] ✓ Tests 916-920: AF_NETLINK extended done\n");
 }
 
+/* ---- inotify IN_ONLYDIR + IN_MASK_ADD tests (926-930) ------------------ */
+
+/*
+ * test_inotify_onlydir_maskadd() — Tests 926-930
+ *
+ *   Test 926: inotify_add_watch(fd, dir, IN_ONLYDIR) → wd >= 0 (dir is a dir)
+ *   Test 927: inotify_add_watch(fd, file, IN_ONLYDIR) → ENOTDIR (file not a dir)
+ *   Test 928: inotify_add_watch(fd, dir, IN_MODIFY) then
+ *             inotify_add_watch(fd, dir, IN_CREATE|IN_MASK_ADD) → same wd, mask is union
+ *   Test 929: second add_watch with IN_MASK_ADD returned same wd as first
+ *   Test 930: inotify_add_watch with IN_MASK_ADD+IN_MASK_CREATE on existing → EEXIST
+ */
+static void test_inotify_onlydir_maskadd(void) {
+    fut_printf("[MISC-TEST] Tests 926-930: inotify IN_ONLYDIR + IN_MASK_ADD\n");
+
+    extern long sys_inotify_init1(int flags);
+    extern long sys_inotify_add_watch(int fd, const char *path, uint32_t mask);
+    extern long sys_close(int fd);
+    extern long sys_openat(int dirfd, const char *path, int flags, int mode);
+    extern long sys_unlink(const char *path);
+    extern long sys_write(int fd, const void *buf, size_t count);
+
+#define INO926_IN_MODIFY       0x00000002u
+#define INO926_IN_CREATE       0x00000100u
+#define INO926_IN_ONLYDIR      0x01000000u
+#define INO926_IN_MASK_ADD     0x20000000u
+#define INO926_IN_MASK_CREATE  0x10000000u
+#define INO926_INI_NONBLOCK    00004000
+
+    long ifd = sys_inotify_init1(INO926_INI_NONBLOCK);
+    if (ifd < 0) {
+        fut_printf("[MISC-TEST] ✗ Tests 926-930: inotify_init1 failed: %ld\n", ifd);
+        fut_test_fail(926); fut_test_fail(927); fut_test_fail(928);
+        fut_test_fail(929); fut_test_fail(930); return;
+    }
+
+    /* Create a test file for the "file path" tests */
+    const char *tfile = "/inotify_onlydir_test.txt";
+    long ffd = sys_openat(-100, tfile, 0x42 /* O_RDWR|O_CREAT */, 0644);
+    if (ffd >= 0) sys_write((int)ffd, "x", 1), sys_close((int)ffd);
+
+    /* --- Test 926: IN_ONLYDIR on "/" (directory) → wd >= 0 --- */
+    fut_printf("[MISC-TEST] Test 926: inotify_add_watch(fd, \"/\", IN_ONLYDIR) → wd >= 0\n");
+    long wd1 = sys_inotify_add_watch((int)ifd, "/", INO926_IN_MODIFY | INO926_IN_ONLYDIR);
+    if (wd1 >= 0) {
+        fut_printf("[MISC-TEST] ✓ Test 926: IN_ONLYDIR on dir → wd=%ld\n", wd1);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 926: IN_ONLYDIR on dir → %ld (want >= 0)\n", wd1);
+        fut_test_fail(926); sys_unlink(tfile); sys_close((int)ifd); return;
+    }
+
+    /* --- Test 927: IN_ONLYDIR on a regular file → ENOTDIR (-20) --- */
+    fut_printf("[MISC-TEST] Test 927: inotify_add_watch(fd, file, IN_ONLYDIR) → ENOTDIR\n");
+    long wd_f = sys_inotify_add_watch((int)ifd, tfile,
+                                      INO926_IN_MODIFY | INO926_IN_ONLYDIR);
+    if (wd_f == -20 /* ENOTDIR */) {
+        fut_printf("[MISC-TEST] ✓ Test 927: IN_ONLYDIR on file → ENOTDIR\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 927: IN_ONLYDIR on file → %ld (want -20 ENOTDIR)\n",
+                   wd_f);
+        fut_test_fail(927);
+    }
+
+    /* --- Test 928: IN_MASK_ADD updates mask without replacing --- */
+    /* First add a watch for "/" with IN_MODIFY only */
+    /* (wd1 already watches "/" with IN_MODIFY from test 926) */
+    /* Now add IN_CREATE with IN_MASK_ADD — should return the same wd */
+    fut_printf("[MISC-TEST] Test 928: inotify_add_watch(fd, \"/\", IN_CREATE|IN_MASK_ADD) "
+               "→ same wd as original\n");
+    long wd2 = sys_inotify_add_watch((int)ifd, "/",
+                                     INO926_IN_CREATE | INO926_IN_MASK_ADD);
+    if (wd2 >= 0) {
+        fut_printf("[MISC-TEST] ✓ Test 928: IN_MASK_ADD → wd=%ld (>= 0)\n", wd2);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 928: IN_MASK_ADD returned %ld (want >= 0)\n", wd2);
+        fut_test_fail(928);
+    }
+
+    /* --- Test 929: IN_MASK_ADD returned same wd as the original watch --- */
+    fut_printf("[MISC-TEST] Test 929: IN_MASK_ADD wd matches original wd\n");
+    if (wd2 == wd1) {
+        fut_printf("[MISC-TEST] ✓ Test 929: IN_MASK_ADD same wd=%ld\n", wd2);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 929: IN_MASK_ADD wd=%ld != original wd=%ld\n",
+                   wd2, wd1);
+        fut_test_fail(929);
+    }
+
+    /* --- Test 930: IN_MASK_ADD+IN_MASK_CREATE on existing watch → EEXIST --- */
+    fut_printf("[MISC-TEST] Test 930: IN_MASK_ADD+IN_MASK_CREATE on existing watch → EEXIST\n");
+    long wd3 = sys_inotify_add_watch((int)ifd, "/",
+                                     INO926_IN_MODIFY | INO926_IN_MASK_ADD
+                                     | INO926_IN_MASK_CREATE);
+    if (wd3 == -17 /* EEXIST */) {
+        fut_printf("[MISC-TEST] ✓ Test 930: IN_MASK_ADD+IN_MASK_CREATE → EEXIST\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 930: IN_MASK_ADD+IN_MASK_CREATE → %ld (want -17)\n",
+                   wd3);
+        fut_test_fail(930);
+    }
+
+#undef INO926_IN_MODIFY
+#undef INO926_IN_CREATE
+#undef INO926_IN_ONLYDIR
+#undef INO926_IN_MASK_ADD
+#undef INO926_IN_MASK_CREATE
+#undef INO926_INI_NONBLOCK
+
+    sys_unlink(tfile);
+    sys_close((int)ifd);
+    fut_printf("[MISC-TEST] ✓ Tests 926-930: inotify IN_ONLYDIR+IN_MASK_ADD done\n");
+}
+
 /* ---- AF_NETLINK RTM_GETROUTE / RTM_GETNEIGH tests (921-925) ------------ */
 
 /*
@@ -32062,6 +32180,7 @@ void fut_misc_test_thread(void *arg) {
     test_af_netlink_socket();             /* Tests 907-915: AF_NETLINK (NETLINK_ROUTE) socket */
     test_af_netlink_extended();           /* Tests 916-920: AF_NETLINK getsockname/connect/poll/recvfrom */
     test_af_netlink_rtm_route();          /* Tests 921-925: AF_NETLINK RTM_GETROUTE/RTM_GETNEIGH */
+    test_inotify_onlydir_maskadd();       /* Tests 926-930: inotify IN_ONLYDIR + IN_MASK_ADD flags */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

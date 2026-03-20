@@ -4503,7 +4503,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             __builtin_memcpy(de->d_name, fixed[idx], nl);
             de->d_name[nl] = '\0';
             *cookie = idx + 1;
-            return 0;
+            return 1;
         }
 
         /*
@@ -4548,7 +4548,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         __builtin_memcpy(de->d_name, pidname, nl);
         de->d_name[nl] = '\0';
         *cookie = 26 + best->pid + 1;  /* resume after this pid */
-        return 0;
+        return 1;
     }
 
     if (dn->kind == PROC_PID_DIR || dn->kind == PROC_TID_DIR) {
@@ -4634,7 +4634,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             __builtin_memcpy(de->d_name, nm, nl);
             de->d_name[nl] = '\0';
             *cookie = idx + 1;
-            return 0;
+            return 1;
         }
         return -ENOENT;
     }
@@ -4647,14 +4647,14 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             de->d_off = 1; de->d_type = FUT_VDIR_TYPE_DIR;
             de->d_reclen = sizeof(*de);
             de->d_name[0] = '.'; de->d_name[1] = '\0';
-            *cookie = 1; return 0;
+            *cookie = 1; return 1;
         }
         if (idx == 1) {
             de->d_ino = PROC_INO_PID_DIR(pid);
             de->d_off = 2; de->d_type = FUT_VDIR_TYPE_DIR;
             de->d_reclen = sizeof(*de);
             de->d_name[0] = '.'; de->d_name[1] = '.'; de->d_name[2] = '\0';
-            *cookie = 2; return 0;
+            *cookie = 2; return 1;
         }
         /* TID enumeration: cookie >= 2 → find thread at position idx-2 */
         fut_task_t *task = fut_task_by_pid(pid);
@@ -4678,7 +4678,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         __builtin_memcpy(de->d_name, tidname, nl);
         de->d_name[nl] = '\0';
         *cookie = idx + 1;
-        return 0;
+        return 1;
     }
 
     /* Generic readdir helper for small fixed-entry directories */
@@ -4688,7 +4688,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
     size_t _nl = 0; while ((nm)[_nl]) _nl++; \
     if (_nl > FUT_VFS_NAME_MAX) _nl = FUT_VFS_NAME_MAX; \
     __builtin_memcpy(de->d_name, (nm), _nl); de->d_name[_nl] = '\0'; \
-    *cookie = idx + 1; return 0; \
+    *cookie = idx + 1; return 1; \
 } while (0)
 
     if (dn->kind == PROC_NET_DIR) {
@@ -5055,7 +5055,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             de->d_reclen = sizeof(*de);
             de->d_name[0] = '.'; de->d_name[1] = '\0';
             *cookie = 1;
-            return 0;
+            return 1;
         }
         if (idx == 1) {
             de->d_ino    = PROC_INO_PID_DIR(pid);
@@ -5064,7 +5064,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             de->d_reclen = sizeof(*de);
             de->d_name[0] = '.'; de->d_name[1] = '.'; de->d_name[2] = '\0';
             *cookie = 2;
-            return 0;
+            return 1;
         }
         /* Scan for open fds starting at fd_scan = idx - 2 */
         int scan = (int)(idx - 2);
@@ -5089,7 +5089,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         de->d_reclen = sizeof(*de);
         __builtin_memcpy(de->d_name, tmp, tn + 1);
         *cookie = (uint64_t)(scan + 2 + 1);
-        return 0;
+        return 1;
     }
 
     if (dn->kind == PROC_FDINFO_DIR) {
@@ -5100,12 +5100,12 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         if (idx == 0) {
             de->d_ino = PROC_INO_PID_FDINFO(pid); de->d_off = 1;
             de->d_type = FUT_VDIR_TYPE_DIR; de->d_reclen = sizeof(*de);
-            de->d_name[0] = '.'; de->d_name[1] = '\0'; *cookie = 1; return 0;
+            de->d_name[0] = '.'; de->d_name[1] = '\0'; *cookie = 1; return 1;
         }
         if (idx == 1) {
             de->d_ino = PROC_INO_PID_DIR(pid); de->d_off = 2;
             de->d_type = FUT_VDIR_TYPE_DIR; de->d_reclen = sizeof(*de);
-            de->d_name[0] = '.'; de->d_name[1] = '.'; de->d_name[2] = '\0'; *cookie = 2; return 0;
+            de->d_name[0] = '.'; de->d_name[1] = '.'; de->d_name[2] = '\0'; *cookie = 2; return 1;
         }
         /* Scan for open fds (same layout as PROC_FD_DIR) */
         int scan = (int)(idx - 2);
@@ -5129,7 +5129,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         de->d_reclen = sizeof(*de);
         __builtin_memcpy(de->d_name, tmp, tn + 1);
         *cookie = (uint64_t)(scan + 2 + 1);
-        return 0;
+        return 1;
     }
 
     return -ENOTDIR;

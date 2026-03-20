@@ -35114,6 +35114,170 @@ static void test_siocgifname_sa_nocldstop(void) {
 
 #undef SIOCGIFNAME_VAL
 
+/* ============================================================
+ * Tests 1071-1074: /proc/self/fd getdents + eventfd overflow protection
+ *   Test 1071: getdents64 on /proc/self/fd lists open fd numbers
+ *   Test 1072: write(eventfd, UINT64_MAX) → EINVAL
+ *   Test 1073: O_NONBLOCK eventfd: write that would overflow → EAGAIN
+ *   Test 1074: write(eventfd, EFD_MAXVAL-counter) succeeds (boundary)
+ * ============================================================ */
+
+static void test_proc_fd_getdents_eventfd_overflow(void) {
+    extern long sys_getdents64(unsigned int fd, void *dirp, unsigned int count);
+    extern long sys_eventfd2(unsigned int initval, int flags);
+    extern long sys_read(int fd, void *buf, size_t count);
+    extern long sys_write(int fd, const void *buf, size_t count);
+    extern long sys_close(int fd);
+
+    /* ---- Test 1071: getdents64 on /proc/self/fd lists open fd ---- */
+    fut_printf("[MISC-TEST] Test 1071: getdents64(/proc/self/fd) lists open fd\n");
+    {
+        /* Open a file and verify its fd number appears in /proc/self/fd */
+        int target_fd = fut_vfs_open("/proc_fd_test_1071.tmp", O_RDWR | O_CREAT, 0600);
+        if (target_fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1071: open target fd failed: %d\n", target_fd);
+            fut_test_fail(1071);
+            goto t1072;
+        }
+
+        extern long sys_openat(int dirfd, const char *pathname, int flags, int mode);
+        int dir_fd = (int)sys_openat(-100 /*AT_FDCWD*/, "/proc/self/fd", 00200000 /*O_DIRECTORY*/, 0);
+        if (dir_fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1071: open /proc/self/fd failed: %d\n", dir_fd);
+            fut_vfs_close(target_fd);
+            fut_test_fail(1071);
+            goto t1072;
+        }
+
+        /* Build target fd number string */
+        char target_str[16];
+        int v = target_fd, tn = 0;
+        if (v == 0) { target_str[tn++] = '0'; }
+        else {
+            char rev[10]; int rn = 0;
+            while (v) { rev[rn++] = '0' + (v % 10); v /= 10; }
+            for (int i = rn - 1; i >= 0; i--) target_str[tn++] = rev[i];
+        }
+        target_str[tn] = '\0';
+
+        /* Read directory entries */
+        char buf[4096];
+        bool found = false;
+        long n = sys_getdents64(dir_fd, buf, sizeof(buf));
+        if (n > 0) {
+            long pos = 0;
+            while (pos < n) {
+                struct test_dirent64 *d = (struct test_dirent64 *)(buf + pos);
+                if (d->d_reclen == 0) break;
+                if (__builtin_strcmp(d->d_name, target_str) == 0) {
+                    found = true;
+                    break;
+                }
+                pos += d->d_reclen;
+            }
+        }
+        fut_vfs_close(dir_fd);
+        fut_vfs_close(target_fd);
+
+        if (!found) {
+            fut_printf("[MISC-TEST] ✗ Test 1071: fd %d not found in /proc/self/fd (n=%ld)\n",
+                       target_fd, n);
+            fut_test_fail(1071);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1071: /proc/self/fd lists fd %d\n", target_fd);
+            fut_test_pass();
+        }
+    }
+
+t1072:
+    /* ---- Test 1072: write(eventfd, UINT64_MAX) → EINVAL ---- */
+    fut_printf("[MISC-TEST] Test 1072: write(eventfd, UINT64_MAX) → EINVAL\n");
+    {
+        int efd = (int)sys_eventfd2(0, 0);
+        if (efd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1072: eventfd2 failed: %d\n", efd);
+            fut_test_fail(1072);
+            goto t1073;
+        }
+        uint64_t maxval = (uint64_t)-1; /* UINT64_MAX */
+        long ret = sys_write(efd, &maxval, 8);
+        sys_close(efd);
+        if (ret != -22) { /* -EINVAL */
+            fut_printf("[MISC-TEST] ✗ Test 1072: write(UINT64_MAX) returned %ld (expected -EINVAL)\n",
+                       ret);
+            fut_test_fail(1072);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1072: write(UINT64_MAX) → EINVAL\n");
+            fut_test_pass();
+        }
+    }
+
+t1073:
+    /* ---- Test 1073: O_NONBLOCK eventfd overflow → EAGAIN ---- */
+    fut_printf("[MISC-TEST] Test 1073: O_NONBLOCK eventfd write overflow → EAGAIN\n");
+    {
+#define EFD_NONBLOCK_FLAG 0x800
+        int efd = (int)sys_eventfd2(0, EFD_NONBLOCK_FLAG);
+        if (efd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1073: eventfd2(NONBLOCK) failed: %d\n", efd);
+            fut_test_fail(1073);
+            goto t1074;
+        }
+        /* First write: set counter to UINT64_MAX - 2 (= EFD_MAXVAL - 1) */
+        uint64_t big = (uint64_t)-1 - 2; /* UINT64_MAX - 2 */
+        long ret = sys_write(efd, &big, 8);
+        if (ret != 8) {
+            fut_printf("[MISC-TEST] ✗ Test 1073: first write returned %ld (expected 8)\n", ret);
+            sys_close(efd);
+            fut_test_fail(1073);
+            goto t1074;
+        }
+        /* Second write: adding 2 would reach UINT64_MAX (overflow) → EAGAIN */
+        uint64_t two = 2;
+        ret = sys_write(efd, &two, 8);
+        sys_close(efd);
+        if (ret != -11) { /* -EAGAIN */
+            fut_printf("[MISC-TEST] ✗ Test 1073: overflow write returned %ld (expected -EAGAIN)\n",
+                       ret);
+            fut_test_fail(1073);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1073: O_NONBLOCK eventfd overflow → EAGAIN\n");
+            fut_test_pass();
+        }
+#undef EFD_NONBLOCK_FLAG
+    }
+
+t1074:
+    /* ---- Test 1074: eventfd write at exact boundary succeeds ---- */
+    fut_printf("[MISC-TEST] Test 1074: eventfd write at EFD_MAXVAL boundary succeeds\n");
+    {
+#define EFD_NONBLOCK_FLAG2 0x800
+        int efd = (int)sys_eventfd2(0, EFD_NONBLOCK_FLAG2);
+        if (efd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1074: eventfd2 failed: %d\n", efd);
+            fut_test_fail(1074);
+            return;
+        }
+        /* Write UINT64_MAX - 2 (last valid value that doesn't overflow) */
+        uint64_t val = (uint64_t)-1 - 2; /* counter becomes UINT64_MAX-2 */
+        long ret = sys_write(efd, &val, 8);
+        /* Read back to confirm counter */
+        uint64_t readval = 0;
+        long rret = sys_read(efd, &readval, 8);
+        sys_close(efd);
+        if (ret != 8 || rret != 8 || readval != val) {
+            fut_printf("[MISC-TEST] ✗ Test 1074: write=%ld read=%ld readval=%llu (expected 8,8,%llu)\n",
+                       ret, rret, (unsigned long long)readval, (unsigned long long)val);
+            fut_test_fail(1074);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1074: eventfd boundary write/read: %llu\n",
+                       (unsigned long long)readval);
+            fut_test_pass();
+        }
+#undef EFD_NONBLOCK_FLAG2
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -35714,6 +35878,7 @@ void fut_misc_test_thread(void *arg) {
     test_fionread_regular_file();        /* Tests 1061-1063: ioctl FIONREAD on regular files */
     test_siocgif_extended();             /* Tests 1064-1067: SIOCGIFMTU/NETMASK/HWADDR/INDEX for "lo" */
     test_siocgifname_sa_nocldstop();     /* Tests 1068-1070: SIOCGIFNAME reverse lookup; SA_NOCLDSTOP flag */
+    test_proc_fd_getdents_eventfd_overflow(); /* Tests 1071-1074: /proc/self/fd getdents; eventfd UINT64_MAX/overflow */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

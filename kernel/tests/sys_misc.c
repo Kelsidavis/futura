@@ -34844,6 +34844,86 @@ static void test_read_write_access_mode(void) {
     }
 }
 
+/*
+ * test_fionread_regular_file — Tests 1061-1063
+ *
+ * FIONREAD on regular files should return the number of bytes from the current
+ * file offset to EOF (bytes available for reading). This path (VN_REG case) in
+ * sys_ioctl.c was implemented but not tested.
+ *   1061: FIONREAD at offset 0 of 10-byte file → 10
+ *   1062: FIONREAD after seeking to offset 6 → 4
+ *   1063: FIONREAD at EOF → 0
+ */
+static void test_fionread_regular_file(void) {
+    extern long sys_ioctl(int fd, unsigned long request, void *argp);
+    extern long sys_lseek(int fd, int64_t offset, int whence);
+    extern long sys_write(int fd, const void *buf, size_t count);
+    extern long sys_close(int fd);
+#define FIONREAD_VAL 0x541B
+
+    int fd = fut_vfs_open("/fionread_reg.txt", O_RDWR | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1061-1063: open failed: %d\n", fd);
+        fut_test_fail(1061);
+        fut_test_fail(1062);
+        fut_test_fail(1063);
+        return;
+    }
+    /* Write 10 bytes */
+    sys_write(fd, "0123456789", 10);
+    sys_lseek(fd, 0, 0);  /* Seek to beginning */
+
+    /* ---- Test 1061: FIONREAD at offset 0 → 10 ---- */
+    fut_printf("[MISC-TEST] Test 1061: FIONREAD(regular file, offset=0) → 10\n");
+    {
+        int avail = -1;
+        long r = sys_ioctl(fd, FIONREAD_VAL, &avail);
+        if (r == 0 && avail == 10) {
+            fut_printf("[MISC-TEST] ✓ Test 1061: FIONREAD at offset 0 → %d\n", avail);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1061: FIONREAD=%ld avail=%d (expected 0 and 10)\n",
+                       r, avail);
+            fut_test_fail(1061);
+        }
+    }
+
+    /* ---- Test 1062: FIONREAD after lseek(6) → 4 ---- */
+    fut_printf("[MISC-TEST] Test 1062: FIONREAD(regular file, offset=6) → 4\n");
+    sys_lseek(fd, 6, 0);  /* Seek to offset 6 */
+    {
+        int avail = -1;
+        long r = sys_ioctl(fd, FIONREAD_VAL, &avail);
+        if (r == 0 && avail == 4) {
+            fut_printf("[MISC-TEST] ✓ Test 1062: FIONREAD at offset 6 → %d\n", avail);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1062: FIONREAD=%ld avail=%d (expected 0 and 4)\n",
+                       r, avail);
+            fut_test_fail(1062);
+        }
+    }
+
+    /* ---- Test 1063: FIONREAD at EOF → 0 ---- */
+    fut_printf("[MISC-TEST] Test 1063: FIONREAD(regular file, at EOF) → 0\n");
+    sys_lseek(fd, 10, 0);  /* Seek to EOF */
+    {
+        int avail = -1;
+        long r = sys_ioctl(fd, FIONREAD_VAL, &avail);
+        if (r == 0 && avail == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1063: FIONREAD at EOF → %d\n", avail);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1063: FIONREAD=%ld avail=%d (expected 0 and 0)\n",
+                       r, avail);
+            fut_test_fail(1063);
+        }
+    }
+
+    sys_close(fd);
+#undef FIONREAD_VAL
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -35441,6 +35521,7 @@ void fut_misc_test_thread(void *arg) {
     test_splice_access_mode();           /* Tests 1049-1052: splice file-side access mode enforcement */
     test_sendfile_access_mode();         /* Tests 1053-1056: sendfile in_fd/out_fd access mode enforcement */
     test_read_write_access_mode();       /* Tests 1057-1060: read/write/readv/writev access mode on regular files */
+    test_fionread_regular_file();        /* Tests 1061-1063: ioctl FIONREAD on regular files */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

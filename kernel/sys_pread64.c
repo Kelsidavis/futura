@@ -242,6 +242,10 @@ long sys_pread64(unsigned int fd, void *buf, size_t count, int64_t offset) {
         return -EBADF;
     }
 
+    /* Check that fd was opened for reading (not write-only) */
+    if ((file->flags & O_ACCMODE) == O_WRONLY)
+        return -EBADF;
+
     /* pread64() is not valid on non-seekable fds (pipes, sockets, eventfd, etc.)
      * Also covers named FIFOs: they have both chr_ops and vnode (VN_FIFO). */
     if ((file->chr_ops && !file->vnode &&

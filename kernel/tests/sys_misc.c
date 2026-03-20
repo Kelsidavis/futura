@@ -34123,6 +34123,117 @@ static void test_prctl_timerslack_capbset(void) {
 }
 
 /*
+ * test_pread_pwrite_access_mode — Tests 1041-1044
+ *
+ * POSIX: pread64 on O_WRONLY fd → EBADF; pwrite64 on O_RDONLY fd → EBADF.
+ * Previously these slipped past the access-mode check because pread/pwrite
+ * called vnode->ops->read/write directly, bypassing the VFS layer check.
+ *   1041: pread64(O_WRONLY fd) → EBADF
+ *   1042: pwrite64(O_RDONLY fd) → EBADF
+ *   1043: pread64(O_RDONLY fd) → succeeds (positive case)
+ *   1044: pwrite64(O_RDWR fd) → succeeds (positive case)
+ */
+static void test_pread_pwrite_access_mode(void) {
+    extern long sys_pread64(unsigned int fd, void *buf, size_t count, int64_t offset);
+    extern long sys_pwrite64(unsigned int fd, const void *buf, size_t count, int64_t offset);
+    extern long sys_close(int fd);
+
+    /* ---- Test 1041: pread64(O_WRONLY fd) → EBADF ---- */
+    fut_printf("[MISC-TEST] Test 1041: pread64(O_WRONLY fd) → EBADF\n");
+    {
+        int fd = fut_vfs_open("/pam_wronly.txt", 0x41 /* O_WRONLY|O_CREAT */, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1041: open O_WRONLY failed: %d\n", fd);
+            fut_test_fail(1041);
+        } else {
+            char buf[4];
+            long r = sys_pread64((unsigned int)fd, buf, sizeof(buf), 0);
+            sys_close(fd);
+            if (r == -EBADF) {
+                fut_printf("[MISC-TEST] ✓ Test 1041: pread64(O_WRONLY) → EBADF\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1041: pread64(O_WRONLY)=%ld (expected -EBADF=%d)\n",
+                           r, -EBADF);
+                fut_test_fail(1041);
+            }
+        }
+    }
+
+    /* ---- Test 1042: pwrite64(O_RDONLY fd) → EBADF ---- */
+    fut_printf("[MISC-TEST] Test 1042: pwrite64(O_RDONLY fd) → EBADF\n");
+    {
+        /* First create the file so we can open it O_RDONLY */
+        int cfd = fut_vfs_open("/pam_rdonly.txt", 0x42 /* O_RDWR|O_CREAT */, 0644);
+        if (cfd >= 0) { sys_close(cfd); }
+        int fd = fut_vfs_open("/pam_rdonly.txt", 0x00 /* O_RDONLY */, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1042: open O_RDONLY failed: %d\n", fd);
+            fut_test_fail(1042);
+        } else {
+            long r = sys_pwrite64((unsigned int)fd, "data", 4, 0);
+            sys_close(fd);
+            if (r == -EBADF) {
+                fut_printf("[MISC-TEST] ✓ Test 1042: pwrite64(O_RDONLY) → EBADF\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1042: pwrite64(O_RDONLY)=%ld (expected -EBADF=%d)\n",
+                           r, -EBADF);
+                fut_test_fail(1042);
+            }
+        }
+    }
+
+    /* ---- Test 1043: pread64(O_RDONLY fd) succeeds ---- */
+    fut_printf("[MISC-TEST] Test 1043: pread64(O_RDONLY fd) → success\n");
+    {
+        /* Write known content first via O_RDWR */
+        int wfd = fut_vfs_open("/pam_rdok.txt", 0x242 /* O_RDWR|O_CREAT|O_TRUNC */, 0644);
+        if (wfd >= 0) {
+            extern long sys_write(int fd, const void *buf, size_t count);
+            sys_write(wfd, "hello", 5);
+            sys_close(wfd);
+        }
+        int fd = fut_vfs_open("/pam_rdok.txt", 0x00 /* O_RDONLY */, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1043: open O_RDONLY failed: %d\n", fd);
+            fut_test_fail(1043);
+        } else {
+            char buf[8] = {0};
+            long r = sys_pread64((unsigned int)fd, buf, 5, 0);
+            sys_close(fd);
+            if (r == 5 && buf[0] == 'h') {
+                fut_printf("[MISC-TEST] ✓ Test 1043: pread64(O_RDONLY) → %ld bytes\n", r);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1043: pread64(O_RDONLY)=%ld (expected 5)\n", r);
+                fut_test_fail(1043);
+            }
+        }
+    }
+
+    /* ---- Test 1044: pwrite64(O_RDWR fd) succeeds ---- */
+    fut_printf("[MISC-TEST] Test 1044: pwrite64(O_RDWR fd) → success\n");
+    {
+        int fd = fut_vfs_open("/pam_rwok.txt", 0x242 /* O_RDWR|O_CREAT|O_TRUNC */, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1044: open O_RDWR failed: %d\n", fd);
+            fut_test_fail(1044);
+        } else {
+            long r = sys_pwrite64((unsigned int)fd, "world", 5, 0);
+            sys_close(fd);
+            if (r == 5) {
+                fut_printf("[MISC-TEST] ✓ Test 1044: pwrite64(O_RDWR) → %ld bytes\n", r);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1044: pwrite64(O_RDWR)=%ld (expected 5)\n", r);
+                fut_test_fail(1044);
+            }
+        }
+    }
+}
+
+/*
  * test_nanosleep_rmtp_sigpipe_ign — Tests 1036-1040
  *
  * Tests nanosleep POSIX correctness and SIGPIPE SIG_IGN behavior:
@@ -34837,6 +34948,7 @@ void fut_misc_test_thread(void *arg) {
     test_file_io_posix_semantics();      /* Tests 1026-1030: read@EOF→0, fstat size/mtime after write, lseek(SEEK_END), F_SETFL+O_APPEND */
     test_prctl_timerslack_capbset();     /* Tests 1031-1035: PR_GET/SET_TIMERSLACK, PR_CAPBSET_READ/EINVAL, PR_CAPBSET_DROP/EINVAL */
     test_nanosleep_rmtp_sigpipe_ign();   /* Tests 1036-1040: nanosleep rmtp on EINTR, NULL req, bad nsec, SIGPIPE+SIG_IGN, zero sleep */
+    test_pread_pwrite_access_mode();     /* Tests 1041-1044: pread64(O_WRONLY)→EBADF, pwrite64(O_RDONLY)→EBADF */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

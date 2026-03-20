@@ -23,6 +23,21 @@
 /* Maximum number of VMAs per process (DoS protection) */
 #define MAX_VMA_COUNT   65536
 
+/* RLIMIT_AS = 9 (address space limit); RLIM64_INFINITY = (uint64_t)-1 */
+#define MMAP_RLIMIT_AS       9
+#define MMAP_RLIM64_INFINITY ((uint64_t)-1)
+
+/* Sum all VMA sizes for RLIMIT_AS enforcement. */
+static uint64_t mmap_total_vsize(fut_mm_t *mm) {
+    uint64_t total = 0;
+    struct fut_vma *vma = mm->vma_list;
+    while (vma) {
+        total += vma->end - vma->start;
+        vma = vma->next;
+    }
+    return total;
+}
+
 #include <kernel/kprintf.h>
 
 /**
@@ -181,6 +196,22 @@ long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset) 
          * - Cause O(n) slowdowns in VMA list operations
          * - Trigger OOM conditions during fork (must clone all VMAs)
          * Limit to MAX_VMA_COUNT (65536) VMAs per process. */
+        /* Enforce RLIMIT_AS: reject if new mapping would push total virtual size
+         * over the soft address-space limit (POSIX/Linux: returns ENOMEM). */
+        uint64_t rlim_as = task->rlimits[MMAP_RLIMIT_AS].rlim_cur;
+        if (rlim_as != MMAP_RLIM64_INFINITY) {
+            size_t aligned_len = PAGE_ALIGN_UP(len);
+            uint64_t total_vs = mmap_total_vsize(mm);
+            if (total_vs + aligned_len > rlim_as) {
+                fut_printf("[MMAP] mmap(addr=%p, len=%zu) -> ENOMEM "
+                           "(RLIMIT_AS: total_vs=%llu + len=%zu > rlim=%llu)\n",
+                           addr, len,
+                           (unsigned long long)total_vs, aligned_len,
+                           (unsigned long long)rlim_as);
+                return -ENOMEM;
+            }
+        }
+
         int vma_count = fut_mm_vma_count(mm);
         if (vma_count >= MAX_VMA_COUNT) {
             fut_printf("[MMAP] mmap(addr=%p, len=%zu) -> ENOMEM "
@@ -194,6 +225,27 @@ long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset) 
             return (long)(intptr_t)res;
         }
         return (long)(intptr_t)res;
+    }
+
+    /* RLIMIT_AS check for file-backed mappings */
+    {
+        fut_task_t *fb_task = fut_task_current();
+        if (fb_task) {
+            uint64_t rlim_as = fb_task->rlimits[MMAP_RLIMIT_AS].rlim_cur;
+            if (rlim_as != MMAP_RLIM64_INFINITY) {
+                fut_mm_t *fb_mm = fut_task_get_mm(fb_task);
+                if (!fb_mm) fb_mm = fut_mm_current();
+                if (fb_mm) {
+                    size_t aligned_len = PAGE_ALIGN_UP(len);
+                    uint64_t total_vs = mmap_total_vsize(fb_mm);
+                    if (total_vs + aligned_len > rlim_as) {
+                        fut_printf("[MMAP] file mmap(fd=%d, len=%zu) -> ENOMEM (RLIMIT_AS)\n",
+                                   fd, len);
+                        return -ENOMEM;
+                    }
+                }
+            }
+        }
     }
 
     void *mapped = fut_vfs_mmap(fd, addr, len, prot, flags, (off_t)offset);

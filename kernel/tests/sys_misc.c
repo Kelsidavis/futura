@@ -32196,6 +32196,97 @@ static void test_prctl_arm64_options(void) {
 #undef T_PR_SET_SYSCALL_USER_DISPATCH
 }
 
+/*
+ * test_rlimit_as_mmap — Tests 985-988
+ *
+ *   985: mmap(PAGE_SIZE, MAP_ANONYMOUS) with RLIMIT_AS=infinity → success (baseline)
+ *   986: mmap(PAGE_SIZE, MAP_ANONYMOUS) with RLIMIT_AS=64KB → ENOMEM
+ *   987: after restoring RLIMIT_AS=infinity, mmap(PAGE_SIZE) → success again
+ *   988: RLIMIT_AS set to current VM size (no room) → mmap fails; enlarged → succeeds
+ */
+static void test_rlimit_as_mmap(void) {
+    fut_printf("[MISC-TEST] Tests 985-988: RLIMIT_AS enforcement in mmap\n");
+
+    extern long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset);
+    extern long sys_munmap(void *addr, size_t len);
+    extern long sys_prlimit64(int pid, int resource,
+                              const void *new_limit, void *old_limit);
+#define RLIMIT_AS_985   9u
+#define PROT_RW_985     (0x1|0x2)  /* PROT_READ|PROT_WRITE */
+#define MAP_ANON_985    (0x20|0x2) /* MAP_ANONYMOUS|MAP_PRIVATE */
+#define PAGE_SZ_985     4096UL
+#define RLIM64_INF_985  ((uint64_t)-1)
+
+    struct { uint64_t cur; uint64_t max; } old_as, new_as;
+
+    /* Save current RLIMIT_AS */
+    sys_prlimit64(0, RLIMIT_AS_985, (void *)0, &old_as);
+
+    /* Test 985: with infinite RLIMIT_AS, anonymous mmap succeeds */
+    fut_printf("[MISC-TEST] Test 985: mmap(PAGE_SIZE) with RLIMIT_AS=inf → success\n");
+    long m985 = sys_mmap((void *)0, PAGE_SZ_985, PROT_RW_985, MAP_ANON_985, -1, 0);
+    if (m985 > 0) {
+        sys_munmap((void *)(uintptr_t)m985, PAGE_SZ_985);
+        fut_printf("[MISC-TEST] ✓ Test 985: mmap with RLIMIT_AS=inf succeeded\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 985: mmap returned %ld (expected > 0)\n", m985);
+        fut_test_fail(985);
+    }
+
+    /* Test 986: set RLIMIT_AS=1 byte (below PAGE_SIZE) → any mmap fails with ENOMEM */
+    fut_printf("[MISC-TEST] Test 986: mmap(PAGE_SIZE) with RLIMIT_AS=1 → ENOMEM\n");
+    new_as.cur = 1;  /* 1 byte — below PAGE_SIZE, so any new mapping is rejected */
+    new_as.max = old_as.max;
+    sys_prlimit64(0, RLIMIT_AS_985, &new_as, (void *)0);
+    long m986 = sys_mmap((void *)0, PAGE_SZ_985, PROT_RW_985, MAP_ANON_985, -1, 0);
+    if (m986 == -12 /* ENOMEM */) {
+        fut_printf("[MISC-TEST] ✓ Test 986: mmap with RLIMIT_AS=64KB → ENOMEM\n");
+        fut_test_pass();
+    } else {
+        if (m986 > 0) sys_munmap((void *)(uintptr_t)m986, PAGE_SZ_985);
+        fut_printf("[MISC-TEST] ✗ Test 986: mmap returned %ld (expected -ENOMEM=-12)\n", m986);
+        fut_test_fail(986);
+    }
+
+    /* Test 987: restore RLIMIT_AS=inf, mmap succeeds again */
+    fut_printf("[MISC-TEST] Test 987: after restoring RLIMIT_AS=inf, mmap succeeds\n");
+    sys_prlimit64(0, RLIMIT_AS_985, &old_as, (void *)0);
+    long m987 = sys_mmap((void *)0, PAGE_SZ_985, PROT_RW_985, MAP_ANON_985, -1, 0);
+    if (m987 > 0) {
+        sys_munmap((void *)(uintptr_t)m987, PAGE_SZ_985);
+        fut_printf("[MISC-TEST] ✓ Test 987: mmap after rlimit restore succeeded\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 987: mmap returned %ld after rlimit restore\n", m987);
+        fut_test_fail(987);
+    }
+
+    /* Test 988: set RLIMIT_AS=very large (1TB) → mmap PAGE_SIZE succeeds */
+    fut_printf("[MISC-TEST] Test 988: mmap(PAGE_SIZE) with RLIMIT_AS=1TB → success\n");
+    new_as.cur = (uint64_t)1024 * 1024 * 1024 * 1024;  /* 1 TB */
+    new_as.max = old_as.max;
+    sys_prlimit64(0, RLIMIT_AS_985, &new_as, (void *)0);
+    long m988 = sys_mmap((void *)0, PAGE_SZ_985, PROT_RW_985, MAP_ANON_985, -1, 0);
+    if (m988 > 0) {
+        sys_munmap((void *)(uintptr_t)m988, PAGE_SZ_985);
+        fut_printf("[MISC-TEST] ✓ Test 988: mmap with RLIMIT_AS=1TB succeeded\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 988: mmap returned %ld (RLIMIT_AS=1TB should succeed)\n", m988);
+        fut_test_fail(988);
+    }
+
+    /* Restore RLIMIT_AS to original value */
+    sys_prlimit64(0, RLIMIT_AS_985, &old_as, (void *)0);
+
+#undef RLIMIT_AS_985
+#undef PROT_RW_985
+#undef MAP_ANON_985
+#undef PAGE_SZ_985
+#undef RLIM64_INF_985
+}
+
 static void test_cross_fs_exdev(void) {
     fut_printf("[MISC-TEST] Tests 937-941: cross-filesystem EXDEV / same-fs link+rename\n");
 
@@ -33100,6 +33191,7 @@ void fut_misc_test_thread(void *arg) {
     test_prctl_ptracer();                /* Tests 973-975: PR_SET_PTRACER Yama LSM no-op */
     test_prctl_get_auxv();               /* Tests 976-978: PR_GET_AUXV auxv copy */
     test_prctl_arm64_options();          /* Tests 979-984: ARM64 FP/PAC/MTE + syscall-user-dispatch */
+    test_rlimit_as_mmap();               /* Tests 985-988: RLIMIT_AS enforcement in mmap */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

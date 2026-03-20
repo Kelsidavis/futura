@@ -28526,6 +28526,124 @@ static void test_select_timeout_update(void) {
 }
 
 /* ============================================================
+ * Tests 788-791: RLIMIT_FSIZE enforcement
+ *
+ *   788: write within RLIMIT_FSIZE → full write succeeds
+ *   789: write that would exceed RLIMIT_FSIZE is truncated to limit
+ *   790: write starting at or past RLIMIT_FSIZE → EFBIG
+ *   791: SIGXFSZ is pending after an over-limit write (POSIX requirement)
+ *
+ * POSIX: if a write would cause the file size to exceed RLIMIT_FSIZE,
+ * the write shall fail with EFBIG and SIGXFSZ shall be sent to the
+ * process.  Writes that partially exceed the limit are truncated.
+ * ============================================================ */
+static void test_rlimit_fsize_enforcement(void) {
+    fut_printf("[MISC-TEST] Tests 788-791: RLIMIT_FSIZE enforcement\n");
+    extern long sys_prlimit64(int pid, int resource, const void *new_limit, void *old_limit);
+    extern long sys_sigprocmask(int how, const sigset_t *set, sigset_t *oldset);
+
+    fut_task_t *task788 = fut_task_current();
+    if (!task788) {
+        fut_test_fail(788); fut_test_fail(789); fut_test_fail(790); fut_test_fail(791);
+        return;
+    }
+
+    /* Block SIGXFSZ to prevent default SIG_DFL=core/terminate action */
+    sigset_t xfsz_block = { .__mask = 1ULL << (25 - 1) };  /* SIGXFSZ = signal 25 */
+    sigset_t saved_mask;
+    sys_sigprocmask(0 /* SIG_BLOCK */, &xfsz_block, &saved_mask);
+
+    /* Clear any pre-existing SIGXFSZ */
+    __atomic_and_fetch(&task788->pending_signals, ~(1ULL << 24), __ATOMIC_RELEASE);
+
+    /* Save current RLIMIT_FSIZE and set soft=100 bytes, hard=RLIM64_INFINITY */
+    struct { uint64_t cur; uint64_t max; } old_fsize, new_fsize;
+    sys_prlimit64(0, 1 /* RLIMIT_FSIZE */, NULL, &old_fsize);
+    new_fsize.cur = 100;
+    new_fsize.max = old_fsize.max;
+    sys_prlimit64(0, 1 /* RLIMIT_FSIZE */, &new_fsize, NULL);
+
+    /* Open a fresh test file */
+    int fd788 = fut_vfs_open("/rlimit_fsize_test.txt", 0x42 /* O_CREAT|O_RDWR */, 0644);
+    if (fd788 < 0) {
+        fut_printf("[MISC-TEST] ✗ Tests 788-791: open failed: %d\n", fd788);
+        sys_prlimit64(0, 1, &old_fsize, NULL);
+        sys_sigprocmask(2 /* SIG_SETMASK */, &saved_mask, NULL);
+        fut_test_fail(788); fut_test_fail(789); fut_test_fail(790); fut_test_fail(791);
+        return;
+    }
+
+    /* Test 788: write 50 bytes at offset 0 — well within limit → 50 returned */
+    char buf[120];
+    __builtin_memset(buf, 'A', sizeof(buf));
+    ssize_t n = fut_vfs_write(fd788, buf, 50);
+    if (n != 50) {
+        fut_printf("[MISC-TEST] ✗ Test 788: write(50) = %zd (expected 50)\n", n);
+        fut_vfs_close(fd788);
+        sys_prlimit64(0, 1, &old_fsize, NULL);
+        sys_sigprocmask(2, &saved_mask, NULL);
+        fut_test_fail(788); fut_test_fail(789); fut_test_fail(790); fut_test_fail(791);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 788: write(50) within RLIMIT_FSIZE=100 → 50\n");
+    fut_test_pass();
+
+    /* Advance to offset 90 by writing another 40 bytes (90 total, still within limit) */
+    fut_vfs_write(fd788, buf, 40);
+
+    /* Test 789: write 20 bytes at offset 90 — would reach 110 > 100 → truncated to 10 */
+    n = fut_vfs_write(fd788, buf, 20);
+    if (n != 10) {
+        fut_printf("[MISC-TEST] ✗ Test 789: partial write at offset 90 = %zd (expected 10)\n", n);
+        fut_vfs_close(fd788);
+        sys_prlimit64(0, 1, &old_fsize, NULL);
+        sys_sigprocmask(2, &saved_mask, NULL);
+        fut_test_fail(789); fut_test_fail(790); fut_test_fail(791);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 789: write(20) at offset 90 truncated to 10 (limit=100)\n");
+    fut_test_pass();
+
+    /* File offset is now 100 = fsize_limit */
+
+    /* Test 790: write at offset 100 (== limit) → EFBIG */
+    n = fut_vfs_write(fd788, buf, 1);
+    if (n != -27 /* -EFBIG */) {
+        fut_printf("[MISC-TEST] ✗ Test 790: write at offset 100 = %zd (expected -EFBIG=%d)\n",
+                   n, -27);
+        fut_vfs_close(fd788);
+        sys_prlimit64(0, 1, &old_fsize, NULL);
+        sys_sigprocmask(2, &saved_mask, NULL);
+        fut_test_fail(790); fut_test_fail(791);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 790: write at limit offset → EFBIG\n");
+    fut_test_pass();
+
+    fut_vfs_close(fd788);
+
+    /* Test 791: SIGXFSZ must be pending (set by the over-limit write in test 790) */
+    uint64_t pending791 = __atomic_load_n(&task788->pending_signals, __ATOMIC_ACQUIRE);
+    uint64_t xfsz_bit = 1ULL << 24;  /* SIGXFSZ = signal 25, bit index 24 */
+    int has_xfsz = (pending791 & xfsz_bit) != 0;
+
+    /* Clear SIGXFSZ before restoring mask so it doesn't fire */
+    __atomic_and_fetch(&task788->pending_signals, ~xfsz_bit, __ATOMIC_RELEASE);
+
+    /* Restore rlimit and signal mask */
+    sys_prlimit64(0, 1, &old_fsize, NULL);
+    sys_sigprocmask(2, &saved_mask, NULL);
+
+    if (!has_xfsz) {
+        fut_printf("[MISC-TEST] ✗ Test 791: SIGXFSZ not pending after over-limit write\n");
+        fut_test_fail(791);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 791: SIGXFSZ pending after write beyond RLIMIT_FSIZE\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Tests 784-785: rt_sigtimedwait fills siginfo correctly
  *
  *   784: uinfo.si_signo  == SIGUSR1 (10) when SIGUSR1 is dequeued
@@ -29203,6 +29321,7 @@ void fut_misc_test_thread(void *arg) {
     test_select_timeout_update();          /* Test 783: select() updates timeout to remaining time */
     test_sigtimedwait_uinfo();            /* Tests 784-785: rt_sigtimedwait fills siginfo si_signo/si_code */
     test_flock_nb_conflict();             /* Tests 786-787: flock LOCK_NB conflict → EAGAIN, then success */
+    test_rlimit_fsize_enforcement();      /* Tests 788-791: RLIMIT_FSIZE: truncation, EFBIG, SIGXFSZ */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

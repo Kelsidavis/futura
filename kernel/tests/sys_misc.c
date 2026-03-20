@@ -36608,6 +36608,92 @@ static void test_sched_rt_policy_roundtrip(void) {
     }
 }
 
+/* ============================================================
+ * Tests 1111-1114: sched_getparam/sched_setparam RT priority readback
+ *   Test 1111: sched_getparam after SCHED_RR/priority=42 returns priority=42
+ *   Test 1112: sched_setparam changes RT priority without changing policy
+ *   Test 1113: sched_getparam reads back updated priority=99
+ *   Test 1114: restore SCHED_OTHER (policy=0, priority=0)
+ * ============================================================ */
+static void test_sched_param_rt_readback(void) {
+    extern long sys_sched_setscheduler(int pid, int policy, const struct sched_param *param);
+    extern long sys_sched_getscheduler(int pid);
+    extern long sys_sched_getparam(int pid, struct sched_param *param);
+    extern long sys_sched_setparam(int pid, const struct sched_param *param);
+    struct sched_param param;
+
+    /* ---- Test 1111: sched_getparam reads back priority after SCHED_RR ---- */
+    fut_printf("[MISC-TEST] Test 1111: sched_getparam reads priority=42 after sched_setscheduler(SCHED_RR,42)\n");
+    {
+        param.sched_priority = 42;
+        long r = sys_sched_setscheduler(0, 2 /* SCHED_RR */, &param);
+        if (r < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1111: setscheduler(SCHED_RR,42) returned %ld\n", r);
+            fut_test_fail(1111);
+            goto t1112;
+        }
+        __builtin_memset(&param, 0xff, sizeof(param));
+        r = sys_sched_getparam(0, &param);
+        if (r != 0 || param.sched_priority != 42) {
+            fut_printf("[MISC-TEST] ✗ Test 1111: getparam r=%ld priority=%d (expected 42)\n",
+                       r, param.sched_priority);
+            fut_test_fail(1111);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1111: sched_getparam priority=%d (correct)\n",
+                       param.sched_priority);
+            fut_test_pass();
+        }
+    }
+t1112:
+    /* ---- Test 1112: sched_setparam changes priority without changing policy ---- */
+    fut_printf("[MISC-TEST] Test 1112: sched_setparam changes RT priority, policy stays SCHED_RR\n");
+    {
+        param.sched_priority = 99;
+        long r = sys_sched_setparam(0, &param);
+        long pol = sys_sched_getscheduler(0);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1112: sched_setparam(99) returned %ld\n", r);
+            fut_test_fail(1112);
+        } else if (pol != 2 /* SCHED_RR */) {
+            fut_printf("[MISC-TEST] ✗ Test 1112: policy changed to %ld (expected SCHED_RR=2)\n", pol);
+            fut_test_fail(1112);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1112: sched_setparam(99) ok, policy still SCHED_RR\n");
+            fut_test_pass();
+        }
+    }
+
+    /* ---- Test 1113: sched_getparam reads updated priority=99 ---- */
+    fut_printf("[MISC-TEST] Test 1113: sched_getparam reads updated priority=99\n");
+    {
+        __builtin_memset(&param, 0, sizeof(param));
+        long r = sys_sched_getparam(0, &param);
+        if (r != 0 || param.sched_priority != 99) {
+            fut_printf("[MISC-TEST] ✗ Test 1113: getparam r=%ld priority=%d (expected 99)\n",
+                       r, param.sched_priority);
+            fut_test_fail(1113);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1113: sched_getparam priority=%d\n", param.sched_priority);
+            fut_test_pass();
+        }
+    }
+
+    /* ---- Test 1114: restore SCHED_OTHER ---- */
+    fut_printf("[MISC-TEST] Test 1114: restore to SCHED_OTHER\n");
+    {
+        param.sched_priority = 0;
+        long r = sys_sched_setscheduler(0, 0 /* SCHED_OTHER */, &param);
+        long pol = sys_sched_getscheduler(0);
+        if (r < 0 || pol != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1114: restore failed: ret=%ld scheduler=%ld\n", r, pol);
+            fut_test_fail(1114);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1114: restored SCHED_OTHER, priority=0\n");
+            fut_test_pass();
+        }
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -37217,6 +37303,7 @@ void fut_misc_test_thread(void *arg) {
     test_sa_restart_and_sigblk(); /* Tests 1097-1100: SA_RESTART flag roundtrip; SigBlk: accuracy */
     test_sched_batch_idle_roundtrip(); /* Tests 1101-1104: SCHED_BATCH/SCHED_IDLE roundtrip */
     test_sched_rt_policy_roundtrip(); /* Tests 1105-1110: SCHED_FIFO/SCHED_RR roundtrip */
+    test_sched_param_rt_readback(); /* Tests 1111-1114: sched_getparam/sched_setparam RT priority readback */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

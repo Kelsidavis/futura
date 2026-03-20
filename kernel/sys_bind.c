@@ -425,9 +425,16 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
             return -EACCES;
         }
 
-        bind_printf("[BIND] bind(sockfd=%d, family=%s, port=%u [%s], addrlen=%u) -> ENOTSUP (AF_INET binding not yet implemented)\n",
+        /* Store the bound address in the socket for getsockname() */
+        fut_socket_t *inet_socket = get_socket_from_fd(local_sockfd);
+        if (inet_socket) {
+            inet_socket->inet_addr = inet_addr.sin_addr;
+            inet_socket->inet_port = inet_addr.sin_port;
+            inet_socket->state = FUT_SOCK_BOUND;
+        }
+        bind_printf("[BIND] bind(sockfd=%d, family=%s, port=%u [%s], addrlen=%u) -> 0 (AF_INET stub)\n",
                    local_sockfd, family_name, port, port_cat, local_addrlen);
-        return -ENOTSUP;
+        return 0;
     }
 
     /* Phase 3: Handle AF_INET6 (IPv6) addresses */
@@ -451,9 +458,16 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
             return -EACCES;
         }
 
-        bind_printf("[BIND] bind(sockfd=%d, family=%s, port=%u [%s], addrlen=%u) -> ENOTSUP (AF_INET6 binding not yet implemented)\n",
+        /* Store the bound port in the socket for getsockname() */
+        fut_socket_t *inet6_socket = get_socket_from_fd(local_sockfd);
+        if (inet6_socket) {
+            inet6_socket->inet_port = inet6_addr.sin6_port;
+            __builtin_memcpy(inet6_socket->inet6_addr, &inet6_addr.sin6_addr, 16);
+            inet6_socket->state = FUT_SOCK_BOUND;
+        }
+        bind_printf("[BIND] bind(sockfd=%d, family=%s, port=%u [%s], addrlen=%u) -> 0 (AF_INET6 stub)\n",
                    local_sockfd, family_name, port, port_cat, local_addrlen);
-        return -ENOTSUP;
+        return 0;
     }
 
     /* Phase 2: Only AF_UNIX supported currently (Phase 3 adds AF_INET/AF_INET6 stubs) */

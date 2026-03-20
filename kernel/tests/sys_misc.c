@@ -2702,10 +2702,10 @@ extern long sys_close(int fd);
 static void test_socket_errors(void) {
     fut_printf("[MISC-TEST] Test 68: socket error codes\n");
 
-    /* AF_INET (2) not supported → EAFNOSUPPORT */
-    long ret = sys_socket(2, 1, 0);  /* AF_INET, SOCK_STREAM */
+    /* AF_PACKET (17) not supported → EAFNOSUPPORT */
+    long ret = sys_socket(17, 1, 0);  /* AF_PACKET, SOCK_STREAM */
     if (ret != -97) {  /* EAFNOSUPPORT */
-        fut_printf("[MISC-TEST] ✗ socket(AF_INET) returned %ld (expected -97)\n", ret);
+        fut_printf("[MISC-TEST] ✗ socket(AF_PACKET) returned %ld (expected -97 EAFNOSUPPORT)\n", ret);
         if (ret >= 0) sys_close((int)ret);
         fut_test_fail(68);
         return;
@@ -2720,6 +2720,15 @@ static void test_socket_errors(void) {
         return;
     }
 
+    /* AF_INET + SOCK_STREAM should now succeed (stub) */
+    ret = sys_socket(2, 1, 0);  /* AF_INET, SOCK_STREAM */
+    if (ret < 0) {
+        fut_printf("[MISC-TEST] ✗ socket(AF_INET, SOCK_STREAM) returned %ld (expected fd)\n", ret);
+        fut_test_fail(68);
+        return;
+    }
+    sys_close((int)ret);
+
     /* AF_UNIX + SOCK_STREAM should succeed */
     ret = sys_socket(1, 1, 0);
     if (ret < 0) {
@@ -2729,7 +2738,7 @@ static void test_socket_errors(void) {
     }
     sys_close((int)ret);
 
-    fut_printf("[MISC-TEST] ✓ socket: EAFNOSUPPORT for AF_INET, AF_UNIX SOCK_STREAM works\n");
+    fut_printf("[MISC-TEST] ✓ socket: EAFNOSUPPORT for AF_PACKET, AF_INET stub works, AF_UNIX works\n");
     fut_test_pass();
 }
 
@@ -30420,6 +30429,147 @@ static void test_statfs_magic_values(void) {
     }
 }
 
+/*
+ * Tests 874-881: AF_INET/AF_INET6 socket creation stubs.
+ *
+ * Test 874: socket(AF_INET, SOCK_STREAM, 0) → >= 0 (creates FD)
+ * Test 875: getsockopt(fd, SOL_SOCKET, SO_DOMAIN) → AF_INET (2)
+ * Test 876: connect(AF_INET, loopback:80) → ECONNREFUSED (no TCP stack)
+ * Test 877: close(AF_INET fd) → 0
+ * Test 878: socket(AF_INET, SOCK_DGRAM, 0) → >= 0
+ * Test 879: socket(AF_INET6, SOCK_STREAM, 0) → >= 0
+ * Test 880: getsockopt(inet6_fd, SOL_SOCKET, SO_DOMAIN) → AF_INET6 (10)
+ * Test 881: socket(AF_INET, SOCK_RAW, 0) → ENOTSUP/EAFNOSUPPORT (raw not supported)
+ */
+static void test_af_inet_socket_stub(void) {
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_connect(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_getsockopt(int fd, int level, int optname,
+                               void *optval, unsigned int *optlen);
+    extern long sys_close(int fd);
+
+    fut_printf("[MISC-TEST] Tests 874-881: AF_INET/AF_INET6 socket creation stubs\n");
+
+#define AF_INET_NUM   2
+#define AF_INET6_NUM  10
+#define SOCK_RAW_NUM  3
+#define SO_DOMAIN_NUM 39
+#define SOL_SOCKET_NUM 1
+
+    /* Test 874: socket(AF_INET, SOCK_STREAM, 0) → valid fd */
+    long fd_inet = sys_socket(AF_INET_NUM, 1 /* SOCK_STREAM */, 0);
+    if (fd_inet >= 0) {
+        fut_printf("[MISC-TEST] ✓ Test 874: socket(AF_INET, SOCK_STREAM, 0) → %ld\n", fd_inet);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 874: socket(AF_INET, SOCK_STREAM, 0) → %ld\n", fd_inet);
+        fut_test_fail(874);
+        /* Can't run remaining AF_INET tests without the fd */
+        fut_test_fail(875); fut_test_fail(876); fut_test_fail(877);
+        goto test878;
+    }
+
+    /* Test 875: SO_DOMAIN getsockopt returns AF_INET */
+    {
+        int dom = 0;
+        unsigned int domlen = sizeof(int);
+        long r = sys_getsockopt((int)fd_inet, SOL_SOCKET_NUM, SO_DOMAIN_NUM, &dom, &domlen);
+        if (r == 0 && dom == AF_INET_NUM) {
+            fut_printf("[MISC-TEST] ✓ Test 875: SO_DOMAIN → %d (AF_INET)\n", dom);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 875: SO_DOMAIN → r=%ld dom=%d\n", r, dom);
+            fut_test_fail(875);
+        }
+    }
+
+    /* Test 876: connect(AF_INET, 127.0.0.1:80) → ECONNREFUSED */
+    {
+        /* sockaddr_in: family(2) + port(2) + addr(4) + zero(8) = 16 bytes */
+        unsigned char sin[16] = {0};
+        sin[0] = AF_INET_NUM & 0xFF; sin[1] = (AF_INET_NUM >> 8) & 0xFF; /* sin_family */
+        sin[2] = 0; sin[3] = 80;   /* sin_port = 80 in network byte order */
+        sin[4] = 127; sin[5] = 0; sin[6] = 0; sin[7] = 1; /* 127.0.0.1 */
+        long r = sys_connect((int)fd_inet, sin, 16);
+        if (r == -111 /* ECONNREFUSED */) {
+            fut_printf("[MISC-TEST] ✓ Test 876: connect(AF_INET, 127.0.0.1:80) → ECONNREFUSED\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 876: connect returned %ld (expected -111 ECONNREFUSED)\n", r);
+            fut_test_fail(876);
+        }
+    }
+
+    /* Test 877: close(AF_INET fd) → 0 */
+    {
+        long r = sys_close((int)fd_inet);
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 877: close(AF_INET fd) → 0\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 877: close → %ld\n", r);
+            fut_test_fail(877);
+        }
+    }
+
+test878:;
+    /* Test 878: socket(AF_INET, SOCK_DGRAM, 0) → valid fd */
+    long fd_udp = sys_socket(AF_INET_NUM, 2 /* SOCK_DGRAM */, 0);
+    if (fd_udp >= 0) {
+        fut_printf("[MISC-TEST] ✓ Test 878: socket(AF_INET, SOCK_DGRAM, 0) → %ld\n", fd_udp);
+        fut_test_pass();
+        sys_close((int)fd_udp);
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 878: socket(AF_INET, SOCK_DGRAM, 0) → %ld\n", fd_udp);
+        fut_test_fail(878);
+    }
+
+    /* Test 879: socket(AF_INET6, SOCK_STREAM, 0) → valid fd */
+    long fd_inet6 = sys_socket(AF_INET6_NUM, 1 /* SOCK_STREAM */, 0);
+    if (fd_inet6 >= 0) {
+        fut_printf("[MISC-TEST] ✓ Test 879: socket(AF_INET6, SOCK_STREAM, 0) → %ld\n", fd_inet6);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 879: socket(AF_INET6, SOCK_STREAM, 0) → %ld\n", fd_inet6);
+        fut_test_fail(879);
+        fut_test_fail(880);
+        goto test881;
+    }
+
+    /* Test 880: SO_DOMAIN getsockopt returns AF_INET6 */
+    {
+        int dom = 0;
+        unsigned int domlen = sizeof(int);
+        long r = sys_getsockopt((int)fd_inet6, SOL_SOCKET_NUM, SO_DOMAIN_NUM, &dom, &domlen);
+        if (r == 0 && dom == AF_INET6_NUM) {
+            fut_printf("[MISC-TEST] ✓ Test 880: SO_DOMAIN(AF_INET6) → %d\n", dom);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 880: SO_DOMAIN(AF_INET6) → r=%ld dom=%d\n", r, dom);
+            fut_test_fail(880);
+        }
+        sys_close((int)fd_inet6);
+    }
+
+test881:;
+    /* Test 881: socket(AF_INET, SOCK_RAW, 0) → error (raw not supported) */
+    long fd_raw = sys_socket(AF_INET_NUM, SOCK_RAW_NUM, 0);
+    if (fd_raw < 0) {
+        fut_printf("[MISC-TEST] ✓ Test 881: socket(AF_INET, SOCK_RAW) → %ld (rejected)\n", fd_raw);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 881: socket(AF_INET, SOCK_RAW) → %ld (expected error)\n", fd_raw);
+        fut_test_fail(881);
+        sys_close((int)fd_raw);
+    }
+
+#undef AF_INET_NUM
+#undef AF_INET6_NUM
+#undef SOCK_RAW_NUM
+#undef SO_DOMAIN_NUM
+#undef SOL_SOCKET_NUM
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -30978,6 +31128,7 @@ void fut_misc_test_thread(void *arg) {
     test_mount_fstype_extended();          /* Tests 854-860: mount devtmpfs/proc/sysfs/cgroup2/debugfs/mqueue/hugetlbfs */
     test_statfs_magic_values();            /* Tests 861-866: statfs f_type: /proc=0x9fa0, /sys=sysfs, /dev=devtmpfs, /tmp=tmpfs, /run=tmpfs, /dev/shm=tmpfs */
     test_ipproto_sockopts();              /* Tests 867-873: IPPROTO_TCP/IP/IPV6 setsockopt/getsockopt round-trip */
+    test_af_inet_socket_stub();           /* Tests 874-881: AF_INET/AF_INET6 socket creation stubs */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

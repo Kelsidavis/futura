@@ -314,12 +314,12 @@ void fut_socket_system_init(void) {
  * Create a new socket object in CREATED state.
  */
 fut_socket_t *fut_socket_create(int family, int type) {
-    if (family != AF_UNIX) {
+    /* Supported families: AF_UNIX (full), AF_INET/AF_INET6 (stub — no TCP/IP stack) */
+    if (family != AF_UNIX && family != AF_INET && family != AF_INET6) {
         return NULL;
     }
     /* Support SOCK_STREAM, SOCK_DGRAM, and SOCK_SEQPACKET for AF_UNIX.
-     * SOCK_SEQPACKET is connection-oriented like SOCK_STREAM; treat it with
-     * stream semantics internally (same buffer layout, same state machine). */
+     * AF_INET/AF_INET6 support SOCK_STREAM and SOCK_DGRAM only. */
     if (type != SOCK_STREAM && type != SOCK_DGRAM && type != SOCK_SEQPACKET) {
         return NULL;
     }

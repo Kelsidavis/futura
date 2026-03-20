@@ -210,15 +210,22 @@ long sys_socket(int domain, int type, int protocol) {
         protocol_desc = "custom";
     }
 
-    /* Validate address family (only AF_UNIX supported) */
-    if (local_domain != AF_UNIX) {
+    /* Validate address family: AF_UNIX (full), AF_INET/AF_INET6 (stub) */
+    if (local_domain != AF_UNIX && local_domain != AF_INET && local_domain != AF_INET6) {
         return -EAFNOSUPPORT;
     }
 
-    /* Validate socket type (SOCK_STREAM, SOCK_DGRAM, SOCK_SEQPACKET for AF_UNIX).
-     * SOCK_SEQPACKET is connection-oriented like SOCK_STREAM with message boundaries. */
-    if (base_type != SOCK_STREAM && base_type != SOCK_DGRAM && base_type != SOCK_SEQPACKET) {
-        return -ENOTSUP;
+    /* Validate socket type */
+    if (local_domain == AF_UNIX) {
+        /* AF_UNIX supports SOCK_STREAM, SOCK_DGRAM, and SOCK_SEQPACKET */
+        if (base_type != SOCK_STREAM && base_type != SOCK_DGRAM && base_type != SOCK_SEQPACKET) {
+            return -ENOTSUP;
+        }
+    } else {
+        /* AF_INET/AF_INET6 support SOCK_STREAM and SOCK_DGRAM */
+        if (base_type != SOCK_STREAM && base_type != SOCK_DGRAM) {
+            return -ENOTSUP;
+        }
     }
 
     /* Phase 4: Validate flags - only SOCK_NONBLOCK and SOCK_CLOEXEC supported */
@@ -229,8 +236,8 @@ long sys_socket(int domain, int type, int protocol) {
         return -EINVAL;
     }
 
-    /* Phase 2: Validate protocol (should be 0 for AF_UNIX) */
-    if (local_protocol != 0) {
+    /* Validate protocol: AF_UNIX requires 0; AF_INET allows 0 or IPPROTO_TCP/UDP */
+    if (local_domain == AF_UNIX && local_protocol != 0) {
         socket_printf("[SOCKET] socket(domain=%s, type=%s, flags=%s, protocol=%d [%s]) -> EINVAL (AF_UNIX requires protocol=0)\n",
                    domain_name, type_name, flags_desc, local_protocol, protocol_desc);
         return -EINVAL;

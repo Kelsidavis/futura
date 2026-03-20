@@ -374,11 +374,18 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
             break;
     }
 
-    /* Phase 2: Only AF_UNIX supported in current phase */
+    /* AF_INET/AF_INET6: no real TCP/IP stack — return ECONNREFUSED (same as no server listening) */
+    if (sa_family == AF_INET || sa_family == AF_INET6) {
+        connect_printf("[CONNECT] connect(sockfd=%d, family=%u [%s]) -> ECONNREFUSED (no TCP/IP stack)\n",
+                   local_sockfd, sa_family, family_name);
+        return -ECONNREFUSED;
+    }
+
+    /* Only AF_UNIX fully supported */
     if (sa_family != AF_UNIX) {
-        connect_printf("[CONNECT] connect(sockfd=%d, family=%u [%s, %s], addrlen=%u) -> ENOTSUP (only AF_UNIX supported in Phase 2)\n",
+        connect_printf("[CONNECT] connect(sockfd=%d, family=%u [%s, %s], addrlen=%u) -> EAFNOSUPPORT\n",
                    local_sockfd, sa_family, family_name, family_desc, local_addrlen);
-        return -ENOTSUP;
+        return -EAFNOSUPPORT;
     }
 
     /* Phase 2: Validate addrlen for Unix domain socket (2 bytes family + path) */

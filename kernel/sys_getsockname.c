@@ -22,6 +22,22 @@
 
 #include <kernel/kprintf.h>
 
+/* Internet address structures (mirrors sys_bind.c) */
+typedef struct {
+    uint16_t sin_family;
+    uint16_t sin_port;
+    uint32_t sin_addr;
+    uint8_t  sin_zero[8];
+} sockaddr_in_t;
+
+typedef struct {
+    uint16_t sin6_family;
+    uint16_t sin6_port;
+    uint32_t sin6_flowinfo;
+    uint8_t  sin6_addr[16];
+    uint32_t sin6_scope_id;
+} sockaddr_in6_t;
+
 #ifdef __x86_64__
 #include <platform/x86_64/memory/paging.h>
 #elif defined(__aarch64__)
@@ -364,7 +380,39 @@ long sys_getsockname(int sockfd, void *addr, socklen_t *addrlen) {
         return -EBADF;
     }
 
-    /* Build sockaddr_un with socket's bound address.
+    int af = socket->address_family;
+
+    if (af == AF_INET) {
+        /* Return sockaddr_in with stored bound address */
+        sockaddr_in_t sin = {0};
+        sin.sin_family = AF_INET;
+        sin.sin_port   = socket->inet_port;
+        sin.sin_addr   = socket->inet_addr;
+        socklen_t actual_len = (socklen_t)sizeof(sockaddr_in_t);
+        socklen_t copy_len = (len < actual_len) ? len : actual_len;
+        if (getsockname_copy_to_user(local_addr, &sin, copy_len) != 0)
+            return -EFAULT;
+        if (getsockname_copy_to_user(local_addrlen, &actual_len, sizeof(socklen_t)) != 0)
+            return -EFAULT;
+        return 0;
+    }
+
+    if (af == AF_INET6) {
+        /* Return sockaddr_in6 with stored bound address */
+        sockaddr_in6_t sin6 = {0};
+        sin6.sin6_family = AF_INET6;
+        sin6.sin6_port   = socket->inet_port;
+        __builtin_memcpy(&sin6.sin6_addr, socket->inet6_addr, 16);
+        socklen_t actual_len = (socklen_t)sizeof(sockaddr_in6_t);
+        socklen_t copy_len = (len < actual_len) ? len : actual_len;
+        if (getsockname_copy_to_user(local_addr, &sin6, copy_len) != 0)
+            return -EFAULT;
+        if (getsockname_copy_to_user(local_addrlen, &actual_len, sizeof(socklen_t)) != 0)
+            return -EFAULT;
+        return 0;
+    }
+
+    /* AF_UNIX: build sockaddr_un with socket's bound path.
      * Use bound_path_len (not strnlen) — abstract paths start with '\0'. */
     struct sockaddr_un sock_addr;
     __builtin_memset(&sock_addr, 0, sizeof(sock_addr));

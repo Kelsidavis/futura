@@ -30058,6 +30058,129 @@ t803:
     }
 }
 
+/*
+ * Tests 847-853: /sys/devices/system/cpu/ topology
+ *
+ * Test 847: /sys/devices/system/cpu/ is a directory (openable)
+ * Test 848: cpu/online reads "0\n" (single CPU, index 0)
+ * Test 849: cpu/possible reads "0\n"
+ * Test 850: cpu/cpu0/ is a directory
+ * Test 851: cpu/cpu0/online reads "1\n" (CPU 0 is always on)
+ * Test 852: cpu/cpu0/topology/ is a directory
+ * Test 853: cpu/cpu0/topology/core_id reads "0\n"
+ */
+static void test_sysfs_cpu_topology(void) {
+    extern long sys_openat(int dirfd, const char *pathname, int flags, int mode);
+    extern long sys_close(int fd);
+    extern ssize_t sys_read(int fd, void *buf, size_t count);
+
+    fut_printf("[MISC-TEST] Tests 847-853: /sys/devices/system/cpu/ topology\n");
+
+    /* Test 847: cpu directory */
+    long fd = sys_openat(-100, "/sys/devices/system/cpu", 0x10000 /* O_DIRECTORY */, 0);
+    if (fd >= 0) {
+        fut_test_pass(); /* 847 */
+        sys_close((int)fd);
+    } else {
+        fut_printf("[MISC-TEST] x open /sys/devices/system/cpu failed: %ld\n", fd);
+        fut_test_fail(847);
+        fut_test_fail(848); fut_test_fail(849); fut_test_fail(850);
+        fut_test_fail(851); fut_test_fail(852); fut_test_fail(853);
+        return;
+    }
+
+    char buf[16];
+    ssize_t n;
+
+    /* Test 848: cpu/online = "0\n" */
+    fd = sys_openat(-100, "/sys/devices/system/cpu/online", 0, 0);
+    if (fd >= 0) {
+        __builtin_memset(buf, 0, sizeof(buf));
+        n = sys_read((int)fd, buf, sizeof(buf) - 1);
+        sys_close((int)fd);
+        if (n > 0 && buf[0] == '0' && buf[1] == '\n') {
+            fut_test_pass(); /* 848 */
+        } else {
+            fut_printf("[MISC-TEST] x cpu/online: n=%zd val='%.4s'\n", n, buf);
+            fut_test_fail(848);
+        }
+    } else {
+        fut_printf("[MISC-TEST] x open cpu/online failed: %ld\n", fd);
+        fut_test_fail(848);
+    }
+
+    /* Test 849: cpu/possible = "0\n" */
+    fd = sys_openat(-100, "/sys/devices/system/cpu/possible", 0, 0);
+    if (fd >= 0) {
+        __builtin_memset(buf, 0, sizeof(buf));
+        n = sys_read((int)fd, buf, sizeof(buf) - 1);
+        sys_close((int)fd);
+        if (n > 0 && buf[0] == '0' && buf[1] == '\n') {
+            fut_test_pass(); /* 849 */
+        } else {
+            fut_printf("[MISC-TEST] x cpu/possible: n=%zd val='%.4s'\n", n, buf);
+            fut_test_fail(849);
+        }
+    } else {
+        fut_printf("[MISC-TEST] x open cpu/possible failed: %ld\n", fd);
+        fut_test_fail(849);
+    }
+
+    /* Test 850: cpu/cpu0/ is a directory */
+    fd = sys_openat(-100, "/sys/devices/system/cpu/cpu0", 0x10000 /* O_DIRECTORY */, 0);
+    if (fd >= 0) {
+        fut_test_pass(); /* 850 */
+        sys_close((int)fd);
+    } else {
+        fut_printf("[MISC-TEST] x open cpu/cpu0/ failed: %ld\n", fd);
+        fut_test_fail(850);
+    }
+
+    /* Test 851: cpu0/online = "1\n" */
+    fd = sys_openat(-100, "/sys/devices/system/cpu/cpu0/online", 0, 0);
+    if (fd >= 0) {
+        __builtin_memset(buf, 0, sizeof(buf));
+        n = sys_read((int)fd, buf, sizeof(buf) - 1);
+        sys_close((int)fd);
+        if (n > 0 && buf[0] == '1' && buf[1] == '\n') {
+            fut_test_pass(); /* 851 */
+        } else {
+            fut_printf("[MISC-TEST] x cpu0/online: n=%zd val='%.4s'\n", n, buf);
+            fut_test_fail(851);
+        }
+    } else {
+        fut_printf("[MISC-TEST] x open cpu0/online failed: %ld\n", fd);
+        fut_test_fail(851);
+    }
+
+    /* Test 852: cpu0/topology/ is a directory */
+    fd = sys_openat(-100, "/sys/devices/system/cpu/cpu0/topology", 0x10000, 0);
+    if (fd >= 0) {
+        fut_test_pass(); /* 852 */
+        sys_close((int)fd);
+    } else {
+        fut_printf("[MISC-TEST] x open cpu0/topology/ failed: %ld\n", fd);
+        fut_test_fail(852);
+    }
+
+    /* Test 853: cpu0/topology/core_id = "0\n" */
+    fd = sys_openat(-100, "/sys/devices/system/cpu/cpu0/topology/core_id", 0, 0);
+    if (fd >= 0) {
+        __builtin_memset(buf, 0, sizeof(buf));
+        n = sys_read((int)fd, buf, sizeof(buf) - 1);
+        sys_close((int)fd);
+        if (n > 0 && buf[0] == '0' && buf[1] == '\n') {
+            fut_test_pass(); /* 853 */
+        } else {
+            fut_printf("[MISC-TEST] x cpu0/topology/core_id: n=%zd val='%.4s'\n", n, buf);
+            fut_test_fail(853);
+        }
+    } else {
+        fut_printf("[MISC-TEST] x open core_id failed: %ld\n", fd);
+        fut_test_fail(853);
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -30612,6 +30735,7 @@ void fut_misc_test_thread(void *arg) {
     test_proc_sys_net_keepalive();         /* Tests 834-837: /proc/sys/net/ipv4 tcp_keepalive_*+ip_unprivileged_port_start */
     test_proc_sys_net_ipv4_conf();         /* Tests 838-842: conf/all/ rp_filter/forwarding + /proc/net/route loopback */
     test_proc_kallsyms();                  /* Tests 843-846: /proc/kallsyms open/read/zeroed-addr/kernel_main */
+    test_sysfs_cpu_topology();             /* Tests 847-853: /sys/devices/system/cpu/ topology */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

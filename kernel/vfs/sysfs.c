@@ -57,6 +57,23 @@ enum sysfs_kind {
     SYSFS_BUS_PLATFORM_DEV_DIR,
     /* /sys/devices/ */
     SYSFS_DEVICES_DIR,
+    /* /sys/devices/system/ */
+    SYSFS_DEVICES_SYSTEM_DIR,
+    /* /sys/devices/system/cpu/ */
+    SYSFS_CPU_DIR,
+    SYSFS_CPU_ONLINE,           /* file: "0\n" */
+    SYSFS_CPU_POSSIBLE,         /* file: "0\n" */
+    SYSFS_CPU_PRESENT,          /* file: "0\n" */
+    SYSFS_CPU_KERNEL_MAX,       /* file: "0\n" */
+    /* /sys/devices/system/cpu/cpu0/ */
+    SYSFS_CPU0_DIR,
+    SYSFS_CPU0_ONLINE,          /* file: "1\n" (CPU 0 is always online) */
+    /* /sys/devices/system/cpu/cpu0/topology/ */
+    SYSFS_CPU0_TOPOLOGY_DIR,
+    SYSFS_CPU0_CORE_ID,         /* file: "0\n" */
+    SYSFS_CPU0_PKG_ID,          /* file: "0\n" */
+    SYSFS_CPU0_CORE_SIBLINGS,   /* file: "1\n" */
+    SYSFS_CPU0_THREAD_SIBLINGS, /* file: "1\n" */
     /* /sys/kernel/ */
     SYSFS_KERNEL_DIR,
     SYSFS_KERNEL_MM_DIR,
@@ -111,6 +128,19 @@ typedef struct {
 #define SYSFS_INO_POWER             523ULL
 #define SYSFS_INO_POWER_STATE       524ULL
 #define SYSFS_INO_MODULE            525ULL
+#define SYSFS_INO_DEVICES_SYSTEM    533ULL
+#define SYSFS_INO_CPU               534ULL
+#define SYSFS_INO_CPU_ONLINE        535ULL
+#define SYSFS_INO_CPU_POSSIBLE      536ULL
+#define SYSFS_INO_CPU_PRESENT       537ULL
+#define SYSFS_INO_CPU_KERNEL_MAX    538ULL
+#define SYSFS_INO_CPU0              539ULL
+#define SYSFS_INO_CPU0_ONLINE       540ULL
+#define SYSFS_INO_CPU0_TOPOLOGY     541ULL
+#define SYSFS_INO_CPU0_CORE_ID      542ULL
+#define SYSFS_INO_CPU0_PKG_ID       543ULL
+#define SYSFS_INO_CPU0_CORE_SIB     544ULL
+#define SYSFS_INO_CPU0_THREAD_SIB   545ULL
 #define SYSFS_INO_CLASS_NET_LO      526ULL
 #define SYSFS_INO_NET_LO_IFINDEX    527ULL
 #define SYSFS_INO_NET_LO_OPERSTATE  528ULL
@@ -218,6 +248,16 @@ static ssize_t sysfs_file_read(struct fut_vnode *vnode, void *buf,
         case SYSFS_NET_LO_FLAGS:
             total = sysfs_gen_str(tmp, sizeof(tmp), "0x10\n");
             break;
+        /* /sys/devices/system/cpu/ attribute files */
+        case SYSFS_CPU_ONLINE:      total = sysfs_gen_str(tmp, sizeof(tmp), "0\n");   break;
+        case SYSFS_CPU_POSSIBLE:    total = sysfs_gen_str(tmp, sizeof(tmp), "0\n");   break;
+        case SYSFS_CPU_PRESENT:     total = sysfs_gen_str(tmp, sizeof(tmp), "0\n");   break;
+        case SYSFS_CPU_KERNEL_MAX:  total = sysfs_gen_str(tmp, sizeof(tmp), "0\n");   break;
+        case SYSFS_CPU0_ONLINE:     total = sysfs_gen_str(tmp, sizeof(tmp), "1\n");   break;
+        case SYSFS_CPU0_CORE_ID:    total = sysfs_gen_str(tmp, sizeof(tmp), "0\n");   break;
+        case SYSFS_CPU0_PKG_ID:     total = sysfs_gen_str(tmp, sizeof(tmp), "0\n");   break;
+        case SYSFS_CPU0_CORE_SIBLINGS:   total = sysfs_gen_str(tmp, sizeof(tmp), "1\n"); break;
+        case SYSFS_CPU0_THREAD_SIBLINGS: total = sysfs_gen_str(tmp, sizeof(tmp), "1\n"); break;
         default:
             return -EINVAL;
     }
@@ -390,6 +430,54 @@ static const sysfs_de_t power_entries[] = {
 };
 #define POWER_N (sizeof(power_entries)/sizeof(power_entries[0]))
 
+/* /sys/devices/ → system/ */
+static const sysfs_de_t devices_entries[] = {
+    DE_DIR(".",      SYSFS_INO_DEVICES,        SYSFS_DEVICES_DIR),
+    DE_DIR("..",     SYSFS_INO_ROOT,           SYSFS_ROOT),
+    DE_DIR("system", SYSFS_INO_DEVICES_SYSTEM, SYSFS_DEVICES_SYSTEM_DIR),
+};
+#define DEVICES_N (sizeof(devices_entries)/sizeof(devices_entries[0]))
+
+/* /sys/devices/system/ → cpu/ */
+static const sysfs_de_t system_entries[] = {
+    DE_DIR(".",   SYSFS_INO_DEVICES_SYSTEM, SYSFS_DEVICES_SYSTEM_DIR),
+    DE_DIR("..",  SYSFS_INO_DEVICES,        SYSFS_DEVICES_DIR),
+    DE_DIR("cpu", SYSFS_INO_CPU,            SYSFS_CPU_DIR),
+};
+#define SYSTEM_N (sizeof(system_entries)/sizeof(system_entries[0]))
+
+/* /sys/devices/system/cpu/ */
+static const sysfs_de_t cpu_entries[] = {
+    DE_DIR(".",         SYSFS_INO_CPU,           SYSFS_CPU_DIR),
+    DE_DIR("..",        SYSFS_INO_DEVICES_SYSTEM, SYSFS_DEVICES_SYSTEM_DIR),
+    DE_REG("online",    SYSFS_INO_CPU_ONLINE,    SYSFS_CPU_ONLINE),
+    DE_REG("possible",  SYSFS_INO_CPU_POSSIBLE,  SYSFS_CPU_POSSIBLE),
+    DE_REG("present",   SYSFS_INO_CPU_PRESENT,   SYSFS_CPU_PRESENT),
+    DE_REG("kernel_max",SYSFS_INO_CPU_KERNEL_MAX,SYSFS_CPU_KERNEL_MAX),
+    DE_DIR("cpu0",      SYSFS_INO_CPU0,          SYSFS_CPU0_DIR),
+};
+#define CPU_N (sizeof(cpu_entries)/sizeof(cpu_entries[0]))
+
+/* /sys/devices/system/cpu/cpu0/ */
+static const sysfs_de_t cpu0_entries[] = {
+    DE_DIR(".",        SYSFS_INO_CPU0,        SYSFS_CPU0_DIR),
+    DE_DIR("..",       SYSFS_INO_CPU,         SYSFS_CPU_DIR),
+    DE_REG("online",   SYSFS_INO_CPU0_ONLINE, SYSFS_CPU0_ONLINE),
+    DE_DIR("topology", SYSFS_INO_CPU0_TOPOLOGY,SYSFS_CPU0_TOPOLOGY_DIR),
+};
+#define CPU0_N (sizeof(cpu0_entries)/sizeof(cpu0_entries[0]))
+
+/* /sys/devices/system/cpu/cpu0/topology/ */
+static const sysfs_de_t cpu0_topology_entries[] = {
+    DE_DIR(".",                     SYSFS_INO_CPU0_TOPOLOGY,  SYSFS_CPU0_TOPOLOGY_DIR),
+    DE_DIR("..",                    SYSFS_INO_CPU0,           SYSFS_CPU0_DIR),
+    DE_REG("core_id",               SYSFS_INO_CPU0_CORE_ID,   SYSFS_CPU0_CORE_ID),
+    DE_REG("physical_package_id",   SYSFS_INO_CPU0_PKG_ID,    SYSFS_CPU0_PKG_ID),
+    DE_REG("core_siblings",         SYSFS_INO_CPU0_CORE_SIB,  SYSFS_CPU0_CORE_SIBLINGS),
+    DE_REG("thread_siblings",       SYSFS_INO_CPU0_THREAD_SIB,SYSFS_CPU0_THREAD_SIBLINGS),
+};
+#define CPU0_TOPO_N (sizeof(cpu0_topology_entries)/sizeof(cpu0_topology_entries[0]))
+
 /* Generic "empty dir" readdir: just "." and ".." */
 static int sysfs_empty_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                 struct fut_vdirent *de) {
@@ -434,6 +522,11 @@ static int sysfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         case SYSFS_KERNEL_MM_THP_DIR:return sysfs_table_readdir(thp_entries,      THP_N,      cookie, de);
         case SYSFS_FS_DIR:           return sysfs_table_readdir(fs_entries,       FS_N,       cookie, de);
         case SYSFS_POWER_DIR:        return sysfs_table_readdir(power_entries,    POWER_N,    cookie, de);
+        case SYSFS_DEVICES_DIR:      return sysfs_table_readdir(devices_entries,  DEVICES_N,  cookie, de);
+        case SYSFS_DEVICES_SYSTEM_DIR: return sysfs_table_readdir(system_entries, SYSTEM_N,   cookie, de);
+        case SYSFS_CPU_DIR:          return sysfs_table_readdir(cpu_entries,      CPU_N,      cookie, de);
+        case SYSFS_CPU0_DIR:         return sysfs_table_readdir(cpu0_entries,     CPU0_N,     cookie, de);
+        case SYSFS_CPU0_TOPOLOGY_DIR:return sysfs_table_readdir(cpu0_topology_entries, CPU0_TOPO_N, cookie, de);
         default:
             return sysfs_empty_readdir(dir, cookie, de);
     }
@@ -491,6 +584,16 @@ static int sysfs_dir_lookup(struct fut_vnode *dir, const char *name,
             return sysfs_table_lookup(mnt, fs_entries, FS_N, name, result);
         case SYSFS_POWER_DIR:
             return sysfs_table_lookup(mnt, power_entries, POWER_N, name, result);
+        case SYSFS_DEVICES_DIR:
+            return sysfs_table_lookup(mnt, devices_entries, DEVICES_N, name, result);
+        case SYSFS_DEVICES_SYSTEM_DIR:
+            return sysfs_table_lookup(mnt, system_entries, SYSTEM_N, name, result);
+        case SYSFS_CPU_DIR:
+            return sysfs_table_lookup(mnt, cpu_entries, CPU_N, name, result);
+        case SYSFS_CPU0_DIR:
+            return sysfs_table_lookup(mnt, cpu0_entries, CPU0_N, name, result);
+        case SYSFS_CPU0_TOPOLOGY_DIR:
+            return sysfs_table_lookup(mnt, cpu0_topology_entries, CPU0_TOPO_N, name, result);
         default:
             /* Empty directories: no children beyond . and .. */
             return -ENOENT;

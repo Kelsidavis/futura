@@ -3126,6 +3126,10 @@ struct syscall_entry {
 /* setfsuid/setfsgid (Linux ARM64: 151-152) */
 #define __NR_setfsuid           151
 #define __NR_setfsgid           152
+/* Linux keyring (Linux ARM64: 217-219) */
+#define __NR_add_key            217
+#define __NR_request_key        218
+#define __NR_keyctl             219
 /* mlock2 (Linux ARM64: 284) */
 #define __NR_mlock2             284
 /* swapon/swapoff (Linux ARM64: 224-225) */
@@ -4063,6 +4067,14 @@ static void arm64_syscall_table_init(void) {
     syscall_table[__NR_rt_sigqueueinfo].name = "rt_sigqueueinfo";
     syscall_table[__NR_rt_tgsigqueueinfo].handler = (syscall_fn_t)sys_rt_tgsigqueueinfo_wrapper;
     syscall_table[__NR_rt_tgsigqueueinfo].name = "rt_tgsigqueueinfo";
+
+    /* Linux keyring stubs (Linux ARM64: 217-219) — ENOSYS, not implemented */
+    syscall_table[__NR_add_key].handler = (syscall_fn_t)sys_enosys_stub;
+    syscall_table[__NR_add_key].name = "add_key";
+    syscall_table[__NR_request_key].handler = (syscall_fn_t)sys_enosys_stub;
+    syscall_table[__NR_request_key].name = "request_key";
+    syscall_table[__NR_keyctl].handler = (syscall_fn_t)sys_enosys_stub;
+    syscall_table[__NR_keyctl].name = "keyctl";
 
     /* Linux 5.13-5.16 stubs — return ENOSYS so callers fall back gracefully */
 #define __NR_landlock_create_ruleset 444

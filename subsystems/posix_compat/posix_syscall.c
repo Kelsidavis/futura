@@ -201,6 +201,9 @@
 #define SYS_pselect6     270
 #define SYS_ppoll        271
 /* accept4 / signalfd4 / dup3 / pipe2 */
+/* signalfd legacy (282) / timerfd_create (283) / eventfd legacy (284) */
+#define SYS_signalfd     282  /* Linux: 282 — legacy variant; flags=0 */
+#define SYS_eventfd      284  /* Linux: 284 — legacy variant; flags=0 */
 #define SYS_accept4      288
 #define SYS_signalfd4    289
 #define SYS_eventfd2     290
@@ -242,6 +245,11 @@
 
 /* waitid (Linux x86_64 247) */
 #define SYS_waitid       247
+
+/* Linux keyring (Linux x86_64 248-250) — implemented as ENOSYS stubs */
+#define SYS_add_key      248
+#define SYS_request_key  249
+#define SYS_keyctl       250
 
 /* inotify (Linux x86_64 253-255, 294) */
 #define SYS_inotify_init     253
@@ -3000,6 +3008,49 @@ static int64_t sys_waitid_handler(uint64_t idtype, uint64_t id, uint64_t infop,
                       (int)options, (void *)(uintptr_t)rusage);
 }
 
+/* Linux keyring stubs — not implemented; return ENOSYS so callers fall back */
+static int64_t sys_add_key_handler(uint64_t type, uint64_t description, uint64_t payload,
+                                    uint64_t plen, uint64_t keyring, uint64_t arg6) {
+    (void)arg6;
+    extern long sys_add_key(const char *type, const char *description,
+                            const void *payload, size_t plen, int keyring);
+    return sys_add_key((const char *)(uintptr_t)type, (const char *)(uintptr_t)description,
+                       (const void *)(uintptr_t)payload, (size_t)plen, (int)keyring);
+}
+static int64_t sys_request_key_handler(uint64_t type, uint64_t description, uint64_t callout,
+                                        uint64_t dest_keyring, uint64_t arg5, uint64_t arg6) {
+    (void)arg5; (void)arg6;
+    extern long sys_request_key(const char *type, const char *description,
+                                const char *callout_info, int dest_keyring);
+    return sys_request_key((const char *)(uintptr_t)type,
+                           (const char *)(uintptr_t)description,
+                           (const char *)(uintptr_t)callout, (int)dest_keyring);
+}
+static int64_t sys_keyctl_handler(uint64_t operation, uint64_t arg2, uint64_t arg3,
+                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg6;
+    extern long sys_keyctl(int operation, unsigned long arg2, unsigned long arg3,
+                           unsigned long arg4, unsigned long arg5);
+    return sys_keyctl((int)operation, (unsigned long)arg2, (unsigned long)arg3,
+                      (unsigned long)arg4, (unsigned long)arg5);
+}
+
+/* signalfd legacy (282) — same as signalfd4 with flags=0 */
+static int64_t sys_signalfd_handler(uint64_t ufd, uint64_t mask, uint64_t sizemask,
+                                     uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_signalfd4(int ufd, const void *mask, size_t sizemask, int flags);
+    return sys_signalfd4((int)ufd, (const void *)(uintptr_t)mask, (size_t)sizemask, 0);
+}
+
+/* eventfd legacy (284) — same as eventfd2 with flags=0 */
+static int64_t sys_eventfd_handler(uint64_t initval, uint64_t arg2, uint64_t arg3,
+                                    uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_eventfd2(unsigned int initval, int flags);
+    return sys_eventfd2((unsigned int)initval, 0);
+}
+
 /* inotify handlers */
 static int64_t sys_inotify_init_handler(uint64_t arg1, uint64_t arg2, uint64_t arg3,
                                         uint64_t arg4, uint64_t arg5, uint64_t arg6) {
@@ -3764,6 +3815,13 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_fremovexattr] = sys_fremovexattr_handler,
     /* waitid */
     [SYS_waitid]            = sys_waitid_handler,
+    /* Linux keyring stubs */
+    [SYS_add_key]           = sys_add_key_handler,
+    [SYS_request_key]       = sys_request_key_handler,
+    [SYS_keyctl]            = sys_keyctl_handler,
+    /* legacy signalfd/eventfd (no flags variants) */
+    [SYS_signalfd]          = sys_signalfd_handler,
+    [SYS_eventfd]           = sys_eventfd_handler,
     /* inotify */
     [SYS_inotify_init]      = sys_inotify_init_handler,
     [SYS_inotify_add_watch] = sys_inotify_add_watch_handler,

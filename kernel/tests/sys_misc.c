@@ -31590,6 +31590,112 @@ static void test_run_and_etc_dirs(void) {
  *   Test 940: link("/tmp/a", "/tmp/b") → 0 (same /tmp mount)
  *   Test 941: rename("/tmp/b", "/tmp/c") → 0 (same /tmp mount)
  */
+
+/* ---- Linux keyring and legacy signalfd/eventfd (Tests 947-953) ----------- */
+
+/*
+ * test_keyring_and_legacy_events() — Tests 947-953
+ *
+ *   Test 947: add_key(248)     → -38 ENOSYS  (keyring not implemented)
+ *   Test 948: request_key(249) → -38 ENOSYS
+ *   Test 949: keyctl(250)      → -38 ENOSYS
+ *   Test 950: legacy signalfd(282) → valid fd (forwards to signalfd4 flags=0)
+ *   Test 951: close the legacy signalfd fd → 0
+ *   Test 952: legacy eventfd(284) → valid fd (forwards to eventfd2 flags=0)
+ *   Test 953: close the legacy eventfd fd → 0
+ */
+static void test_keyring_and_legacy_events(void) {
+    fut_printf("[MISC-TEST] Tests 947-953: keyring ENOSYS + legacy signalfd/eventfd\n");
+
+    extern long sys_add_key(const char *type, const char *description,
+                            const void *payload, size_t plen, int keyring);
+    extern long sys_request_key(const char *type, const char *description,
+                                const char *callout_info, int dest_keyring);
+    extern long sys_keyctl(int operation, unsigned long arg2, unsigned long arg3,
+                           unsigned long arg4, unsigned long arg5);
+    extern long sys_signalfd4(int ufd, const void *mask, size_t sizemask, int flags);
+    extern long sys_eventfd2(unsigned int initval, int flags);
+    extern long sys_close(int fd);
+
+    /* --- Test 947: add_key → ENOSYS --- */
+    fut_printf("[MISC-TEST] Test 947: add_key → ENOSYS\n");
+    long r947 = sys_add_key(NULL, NULL, NULL, 0, 0);
+    if (r947 == -38) {
+        fut_printf("[MISC-TEST] ✓ Test 947: add_key → ENOSYS\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 947: add_key = %ld (want -38)\n", r947);
+        fut_test_fail(947);
+    }
+
+    /* --- Test 948: request_key → ENOSYS --- */
+    fut_printf("[MISC-TEST] Test 948: request_key → ENOSYS\n");
+    long r948 = sys_request_key(NULL, NULL, NULL, 0);
+    if (r948 == -38) {
+        fut_printf("[MISC-TEST] ✓ Test 948: request_key → ENOSYS\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 948: request_key = %ld (want -38)\n", r948);
+        fut_test_fail(948);
+    }
+
+    /* --- Test 949: keyctl → ENOSYS --- */
+    fut_printf("[MISC-TEST] Test 949: keyctl → ENOSYS\n");
+    long r949 = sys_keyctl(0, 0, 0, 0, 0);
+    if (r949 == -38) {
+        fut_printf("[MISC-TEST] ✓ Test 949: keyctl → ENOSYS\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 949: keyctl = %ld (want -38)\n", r949);
+        fut_test_fail(949);
+    }
+
+    /* --- Tests 950-951: legacy signalfd = signalfd4(fd, mask, sz, flags=0) --- */
+    fut_printf("[MISC-TEST] Test 950: legacy signalfd4(flags=0) → valid fd\n");
+    unsigned long sigmask = 0UL; /* block no signals */
+    long sfd = sys_signalfd4(-1, &sigmask, sizeof(sigmask), 0);
+    if (sfd >= 0) {
+        fut_printf("[MISC-TEST] ✓ Test 950: signalfd4(flags=0) → fd=%ld\n", sfd);
+        fut_test_pass();
+        fut_printf("[MISC-TEST] Test 951: close signalfd fd\n");
+        long r951 = sys_close((int)sfd);
+        if (r951 == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 951: close(signalfd) = 0\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 951: close(signalfd) = %ld\n", r951);
+            fut_test_fail(951);
+        }
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 950: signalfd4(flags=0) = %ld (want >=0)\n", sfd);
+        fut_test_fail(950);
+        fut_printf("[MISC-TEST] ✗ Test 951: skipped\n");
+        fut_test_fail(951);
+    }
+
+    /* --- Tests 952-953: legacy eventfd = eventfd2(initval, flags=0) --- */
+    fut_printf("[MISC-TEST] Test 952: legacy eventfd2(flags=0) → valid fd\n");
+    long efd = sys_eventfd2(0, 0);
+    if (efd >= 0) {
+        fut_printf("[MISC-TEST] ✓ Test 952: eventfd2(flags=0) → fd=%ld\n", efd);
+        fut_test_pass();
+        fut_printf("[MISC-TEST] Test 953: close eventfd fd\n");
+        long r953 = sys_close((int)efd);
+        if (r953 == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 953: close(eventfd) = 0\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 953: close(eventfd) = %ld\n", r953);
+            fut_test_fail(953);
+        }
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 952: eventfd2(flags=0) = %ld (want >=0)\n", efd);
+        fut_test_fail(952);
+        fut_printf("[MISC-TEST] ✗ Test 953: skipped\n");
+        fut_test_fail(953);
+    }
+}
+
 static void test_cross_fs_exdev(void) {
     fut_printf("[MISC-TEST] Tests 937-941: cross-filesystem EXDEV / same-fs link+rename\n");
 
@@ -32487,6 +32593,7 @@ void fut_misc_test_thread(void *arg) {
     test_etc_filesystem();                /* Tests 931-936: /etc/hostname/hosts/resolv.conf/nsswitch.conf/passwd/group */
     test_cross_fs_exdev();                /* Tests 937-941: EXDEV on cross-mount link/rename; same-mount success */
     test_run_and_etc_dirs();              /* Tests 942-946: /run writable, /run/lock, /run/user/0, getdents /etc, /etc/os-release */
+    test_keyring_and_legacy_events();    /* Tests 947-953: add_key/request_key/keyctl ENOSYS + legacy signalfd/eventfd */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

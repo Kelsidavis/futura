@@ -31252,6 +31252,96 @@ static void test_af_netlink_socket(void) {
     fut_printf("[MISC-TEST] ✓ Tests 907-915: AF_NETLINK socket done\n");
 }
 
+/* ============================================================
+ * Tests 916-920: AF_NETLINK getsockname/connect/poll/recvfrom
+ * ============================================================ */
+static void test_af_netlink_extended(void) {
+    fut_printf("[MISC-TEST] Tests 916-920: AF_NETLINK getsockname/connect/poll/recvfrom\n");
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_close(int fd);
+    extern long sys_getsockname(int sockfd, void *addr, unsigned int *addrlen);
+    extern long sys_connect(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_write(int fd, const void *buf, size_t count);
+    extern long sys_read(int fd, void *buf, size_t count);
+
+    long fd = sys_socket(16 /* AF_NETLINK */, 3 /* SOCK_RAW */, 0 /* NETLINK_ROUTE */);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Tests 916-920: socket failed: %ld\n", fd);
+        fut_test_fail(916); return;
+    }
+
+    /* Test 916: getsockname → sockaddr_nl with family=16 */
+    struct test_sockaddr_nl gsnaddr;
+    unsigned int gsnlen = (unsigned int)sizeof(gsnaddr);
+    long gr = sys_getsockname((int)fd, &gsnaddr, &gsnlen);
+    if (gr == 0 && gsnaddr.nl_family == 16) {
+        fut_printf("[MISC-TEST] ✓ Test 916: getsockname(nlfd) → family=%u\n", gsnaddr.nl_family);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 916: getsockname = %ld family=%u (want 0, 16)\n",
+                   gr, gsnaddr.nl_family);
+        fut_test_fail(916); sys_close((int)fd); return;
+    }
+
+    /* Test 917: connect(nlfd, {nl_family=16, nl_pid=0}) → 0 */
+    struct test_sockaddr_nl nlkern = { 16, 0, 0, 0 };
+    long cr = sys_connect((int)fd, &nlkern, (unsigned int)sizeof(nlkern));
+    if (cr == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 917: connect(nlfd, kernel) → 0\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 917: connect = %ld (want 0)\n", cr);
+        fut_test_fail(917); sys_close((int)fd); return;
+    }
+
+    /* Test 918: write(nlfd, RTM_GETLINK request) → > 0 (sendto path) */
+    struct test_nlmsghdr wreq = {
+        .nlmsg_len = sizeof(struct test_nlmsghdr),
+        .nlmsg_type = TEST_RTM_GETLINK,
+        .nlmsg_flags = 0x0301,
+        .nlmsg_seq = 42,
+        .nlmsg_pid = 0,
+    };
+    long wr = sys_write((int)fd, &wreq, sizeof(wreq));
+    if (wr > 0) {
+        fut_printf("[MISC-TEST] ✓ Test 918: write(nlfd, RTM_GETLINK) → %ld\n", wr);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 918: write = %ld (want > 0)\n", wr);
+        fut_test_fail(918); sys_close((int)fd); return;
+    }
+
+    /* Test 919: read(nlfd) → > 0 bytes (recvfrom path after write) */
+    unsigned char rbuf[256];
+    long rr = sys_read((int)fd, rbuf, sizeof(rbuf));
+    if (rr > 0) {
+        fut_printf("[MISC-TEST] ✓ Test 919: read(nlfd) → %ld bytes\n", rr);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 919: read = %ld (want > 0)\n", rr);
+        fut_test_fail(919); sys_close((int)fd); return;
+    }
+
+    /* Test 920: nlmsg_type in response = RTM_NEWLINK(16) or NLMSG_DONE(3) */
+    if (rr >= (long)sizeof(struct test_nlmsghdr)) {
+        struct test_nlmsghdr *rh = (struct test_nlmsghdr *)rbuf;
+        if (rh->nlmsg_type == TEST_RTM_NEWLINK || rh->nlmsg_type == TEST_NLMSG_DONE) {
+            fut_printf("[MISC-TEST] ✓ Test 920: read nlmsg_type=%u (RTM_NEWLINK or DONE)\n",
+                       rh->nlmsg_type);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 920: nlmsg_type=%u (want 16 or 3)\n", rh->nlmsg_type);
+            fut_test_fail(920); sys_close((int)fd); return;
+        }
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 920: response too short (%ld bytes)\n", rr);
+        fut_test_fail(920); sys_close((int)fd); return;
+    }
+
+    sys_close((int)fd);
+    fut_printf("[MISC-TEST] ✓ Tests 916-920: AF_NETLINK extended done\n");
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -31817,6 +31907,7 @@ void fut_misc_test_thread(void *arg) {
 
     test_seccomp_filter();                /* Tests 901-906: seccomp FILTER/STRICT/prctl no-op */
     test_af_netlink_socket();             /* Tests 907-915: AF_NETLINK (NETLINK_ROUTE) socket */
+    test_af_netlink_extended();           /* Tests 916-920: AF_NETLINK getsockname/connect/poll/recvfrom */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -382,6 +382,17 @@ long sys_getsockname(int sockfd, void *addr, socklen_t *addrlen) {
 
     int af = socket->address_family;
 
+    /* AF_NETLINK: return sockaddr_nl{family=16, pad=0, pid=0, groups=0} */
+    if (af == 16 /* AF_NETLINK */) {
+        struct { uint16_t nl_family; uint16_t nl_pad; uint32_t nl_pid; uint32_t nl_groups; } nladdr = {0};
+        nladdr.nl_family = 16;
+        socklen_t actual_len = (socklen_t)sizeof(nladdr);
+        socklen_t copy_len = (len < actual_len) ? len : actual_len;
+        if (getsockname_copy_to_user(local_addr, &nladdr, copy_len) != 0) return -EFAULT;
+        if (getsockname_copy_to_user(local_addrlen, &actual_len, sizeof(socklen_t)) != 0) return -EFAULT;
+        return 0;
+    }
+
     if (af == AF_INET) {
         /* Return sockaddr_in with stored bound address */
         sockaddr_in_t sin = {0};

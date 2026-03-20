@@ -472,6 +472,23 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
         return -ENOMEM;
     }
 
+    /* AF_NETLINK: drain pending response buffer directly */
+    {
+        extern fut_socket_t *get_socket_from_fd(int fd);
+        fut_socket_t *nlsock = get_socket_from_fd(local_sockfd);
+        if (nlsock && nlsock->address_family == 16 /* AF_NETLINK */) {
+            extern ssize_t netlink_handle_recv(fut_socket_t *sock,
+                                               void *out_buf, size_t out_len);
+            ssize_t got = netlink_handle_recv(nlsock, kbuf, local_len);
+            if (got > 0 && recv_copy_to_user(local_buf, kbuf, (size_t)got) != 0) {
+                fut_free(kbuf);
+                return -EFAULT;
+            }
+            fut_free(kbuf);
+            return got;
+        }
+    }
+
     /* For SOCK_DGRAM sockets with a dgram_queue, use the datagram receive path */
     {
         extern fut_socket_t *get_socket_from_fd(int fd);

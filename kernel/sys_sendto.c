@@ -489,6 +489,20 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
         return -EFAULT;
     }
 
+    /* AF_NETLINK: parse the request from kbuf and build response */
+    {
+        extern fut_socket_t *get_socket_from_fd(int fd);
+        fut_socket_t *nl_sock = get_socket_from_fd(local_sockfd);
+        if (nl_sock && nl_sock->address_family == 16 /* AF_NETLINK */) {
+            extern ssize_t netlink_handle_send(fut_socket_t *sock,
+                                               const void *iov_base, size_t iov_len,
+                                               ssize_t total_len);
+            ssize_t r = netlink_handle_send(nl_sock, kbuf, local_len, (ssize_t)local_len);
+            fut_free(kbuf);
+            return r;
+        }
+    }
+
     /* SOCK_DGRAM with explicit destination: route directly to bound socket */
     if (local_dest_addr && local_addrlen >= 3) {
         extern fut_socket_t *get_socket_from_fd(int fd);

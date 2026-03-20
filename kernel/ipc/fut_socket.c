@@ -1436,6 +1436,16 @@ int fut_socket_poll(fut_socket_t *socket, int events) {
 
     int ready = 0;
 
+    /* AF_NETLINK: POLLIN if a response is pending, always POLLOUT */
+    if (socket->address_family == AF_NETLINK) {
+        if ((events & 0x1) && socket->nl_resp_buf &&
+            socket->nl_resp_pos < socket->nl_resp_len)
+            ready |= 0x1;   /* POLLIN */
+        if (events & 0x4)
+            ready |= 0x4;   /* POLLOUT — netlink is always writable */
+        return ready;
+    }
+
     if (socket->state == FUT_SOCK_LISTENING && socket->listener) {
         if ((events & 0x1) && socket->listener->queue_count > 0) {  /* POLLIN */
             ready |= 0x1;

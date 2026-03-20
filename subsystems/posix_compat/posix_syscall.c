@@ -433,6 +433,11 @@ static ssize_t socket_read(void *inode, void *private_data, void *u_buf, size_t 
     if (!socket) {
         return -EBADF;
     }
+    /* AF_NETLINK: drain pending response buffer */
+    if (socket->address_family == 16 /* AF_NETLINK */) {
+        extern ssize_t netlink_handle_recv(fut_socket_t *sock, void *out_buf, size_t out_len);
+        return netlink_handle_recv(socket, u_buf, n);
+    }
     /* Named DGRAM sockets (no stream pair): use datagram queue for read */
     if (socket->socket_type == SOCK_DGRAM && !socket->pair && socket->dgram_queue) {
         return fut_socket_recvfrom_dgram(socket, u_buf, n, NULL, NULL, NULL);
@@ -451,6 +456,13 @@ static ssize_t socket_write(void *inode, void *private_data, const void *u_buf, 
     fut_socket_t *socket = (fut_socket_t *)private_data;
     if (!socket) {
         return -EBADF;
+    }
+    /* AF_NETLINK: parse request and build response */
+    if (socket->address_family == 16 /* AF_NETLINK */) {
+        extern ssize_t netlink_handle_send(fut_socket_t *sock,
+                                           const void *iov_base, size_t iov_len,
+                                           ssize_t total_len);
+        return netlink_handle_send(socket, u_buf, n, (ssize_t)n);
     }
     /* Named DGRAM sockets (no stream pair): route write() via the dgram path */
     if (socket->socket_type == SOCK_DGRAM && !socket->pair) {

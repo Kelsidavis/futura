@@ -381,6 +381,14 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
         return -ECONNREFUSED;
     }
 
+    /* AF_NETLINK: connect to kernel (nl_pid=0) is a no-op; mark socket as bound */
+    if (sa_family == 16 /* AF_NETLINK */) {
+        extern fut_socket_t *get_socket_from_fd(int fd);
+        fut_socket_t *nl_sock = get_socket_from_fd(local_sockfd);
+        if (nl_sock) nl_sock->state = FUT_SOCK_CONNECTED;
+        return 0;
+    }
+
     /* Only AF_UNIX fully supported */
     if (sa_family != AF_UNIX) {
         connect_printf("[CONNECT] connect(sockfd=%d, family=%u [%s, %s], addrlen=%u) -> EAFNOSUPPORT\n",

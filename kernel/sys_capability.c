@@ -387,27 +387,33 @@ long sys_capset(struct __user_cap_header_struct *hdrp,
         }
     }
 
-    /* Phase 3: Validate capability mask (can only set within permitted set) */
-    if (data.effective & ~target_task->cap_permitted) {
-        fut_printf("[CAPABILITY] capset(hdrp=? [version=%s, pid=%s], datap=? [op=%s], "
-                   "eff_mask=0x%x, perm=0x%x], caller_pid=%d) -> EPERM "
-                   "(cannot add capabilities outside permitted set)\n",
-                   version_desc, pid_desc, operation_type, data.effective,
-                   target_task->cap_permitted, task->pid);
+    /* Validate: new permitted set must not exceed old permitted set.
+     * Linux rule: new_permitted ⊆ old_permitted (caps can only be dropped, not added). */
+    if (data.permitted & ~(uint32_t)target_task->cap_permitted) {
+        fut_printf("[CAPABILITY] capset -> EPERM (permitted exceeds old_permitted)\n");
+        return -EPERM;
+    }
+
+    /* Validate: effective ⊆ new_permitted */
+    if (data.effective & ~data.permitted) {
+        fut_printf("[CAPABILITY] capset -> EPERM (effective exceeds permitted)\n");
+        return -EPERM;
+    }
+
+    /* Validate: inheritable ⊆ (old_inheritable ∪ cap_bset) — simplified: ⊆ bset∩permitted */
+    uint32_t bset_lo = (uint32_t)(target_task->cap_bset & 0xFFFFFFFF);
+    if (data.inheritable & ~((uint32_t)target_task->cap_inheritable | bset_lo)) {
+        fut_printf("[CAPABILITY] capset -> EPERM (inheritable exceeds inheritable∪bset)\n");
         return -EPERM;
     }
 
     /* Phase 3: Store old capabilities for before/after comparison */
-    uint32_t old_effective = target_task->cap_effective;
+    uint32_t old_effective = (uint32_t)target_task->cap_effective;
 
     /* Phase 3: Update task capabilities in structure */
-    target_task->cap_effective = data.effective & 0xFFFFFFFF;
-    if (data.permitted != 0) {
-        target_task->cap_permitted = data.permitted & 0xFFFFFFFF;
-    }
-    if (data.inheritable != 0) {
-        target_task->cap_inheritable = data.inheritable & 0xFFFFFFFF;
-    }
+    target_task->cap_effective   = data.effective & 0xFFFFFFFF;
+    target_task->cap_permitted   = data.permitted & 0xFFFFFFFF;
+    target_task->cap_inheritable = data.inheritable & 0xFFFFFFFF;
 
     /* Phase 3: Identify capability changes for logging */
     uint32_t added_caps = target_task->cap_effective & ~old_effective;

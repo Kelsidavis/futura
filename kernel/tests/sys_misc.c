@@ -37636,6 +37636,96 @@ t1140_done:;
 #undef PR_CAPBSET_DROP_TEST
 }
 
+/* Tests 1141-1142: capset enforces capability bounding set
+ *
+ *   Test 1141: capset with permitted ⊆ old_permitted succeeds (drops a cap)
+ *   Test 1142: capset with permitted that was removed from bset → EPERM
+ */
+static void test_capset_bset_enforcement(void) {
+    /* capget/capset structs */
+    struct _cap_hdr {
+        uint32_t version;
+        int pid;
+    };
+    struct _cap_data {
+        uint32_t effective;
+        uint32_t permitted;
+        uint32_t inheritable;
+    };
+
+    extern long sys_capget(void *hdrp, void *datap);
+    extern long sys_capset(void *hdrp, const void *datap);
+
+#define LINUX_CAPABILITY_VERSION_3  0x20080522U
+
+    /* ---- Test 1141: capset with subset of permitted (drop one cap) succeeds ---- */
+    fut_printf("[MISC-TEST] Test 1141: capset with permitted subset succeeds (drops cap)\n");
+    {
+        struct _cap_hdr hdr = { LINUX_CAPABILITY_VERSION_3, 0 };
+        struct _cap_data data;
+        long r = sys_capget(&hdr, &data);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1141: capget failed: %ld\n", r);
+            fut_test_fail(1141);
+            goto t1141_done;
+        }
+        uint32_t orig_perm = data.permitted;
+
+        /* Drop one cap from permitted (bit 20 = CAP_SYS_PACCT) */
+        uint32_t new_perm = orig_perm & ~(1U << 20);
+        struct _cap_data new_data = {
+            .effective   = data.effective & new_perm,
+            .permitted   = new_perm,
+            .inheritable = data.inheritable & new_perm,
+        };
+        struct _cap_hdr hdr2 = { LINUX_CAPABILITY_VERSION_3, 0 };
+        r = sys_capset(&hdr2, &new_data);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1141: capset returned %ld\n", r);
+            fut_test_fail(1141);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1141: capset with subset permitted succeeded\n");
+            fut_test_pass();
+        }
+
+        /* Restore */
+        struct _cap_data restore = { .effective = orig_perm, .permitted = orig_perm, .inheritable = orig_perm };
+        struct _cap_hdr hdr3 = { LINUX_CAPABILITY_VERSION_3, 0 };
+        sys_capset(&hdr3, &restore);
+
+t1141_done:;
+    }
+
+    /* ---- Test 1142: capset with effective exceeding permitted → EPERM ---- */
+    fut_printf("[MISC-TEST] Test 1142: capset with effective > permitted → EPERM\n");
+    {
+        struct _cap_hdr hdr = { LINUX_CAPABILITY_VERSION_3, 0 };
+        struct _cap_data data;
+        sys_capget(&hdr, &data);
+
+        /* Drop cap 21 from permitted but keep it in effective → EPERM.
+         * Use cap 21 (CAP_IPC_LOCK) which is still in the effective set
+         * (test 1141 dropped cap 20, so use a different one here). */
+        uint32_t new_perm = data.permitted & ~(1U << 21);
+        struct _cap_data bad = {
+            .effective   = data.effective,  /* still has cap 21 */
+            .permitted   = new_perm,        /* cap 21 removed from permitted */
+            .inheritable = data.inheritable & new_perm,
+        };
+        struct _cap_hdr hdr2 = { LINUX_CAPABILITY_VERSION_3, 0 };
+        long r = sys_capset(&hdr2, &bad);
+        if (r != -EPERM) {
+            fut_printf("[MISC-TEST] ✗ Test 1142: expected -EPERM (eff>perm), got %ld\n", r);
+            fut_test_fail(1142);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1142: capset with effective > permitted → EPERM\n");
+            fut_test_pass();
+        }
+    }
+
+#undef LINUX_CAPABILITY_VERSION_3
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -38253,6 +38343,7 @@ void fut_misc_test_thread(void *arg) {
     test_prio_thread();                 /* Tests 1131-1134: getpriority/setpriority PRIO_THREAD */
     test_sched_setattr_atomic_fail();   /* Tests 1135-1136: sched_setattr atomic-failure semantics */
     test_cap_bset();                    /* Tests 1137-1140: capability bounding set PR_CAPBSET_READ/DROP */
+    test_capset_bset_enforcement();     /* Tests 1141-1142: capset rejects permitted > bset */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -210,6 +210,12 @@ long sys_sendfile(int out_fd, int in_fd, uint64_t *offset, size_t count) {
         return -EBADF;
     }
 
+    /* Enforce access mode: in_fd must be readable; out_fd must be writable */
+    if ((in_file->flags & O_ACCMODE) == O_WRONLY)
+        return -EBADF;
+    if ((out_file->flags & O_ACCMODE) == O_RDONLY)
+        return -EBADF;
+
     /* Handle offset parameter */
     uint64_t start_offset = 0;
     if (local_offset) {

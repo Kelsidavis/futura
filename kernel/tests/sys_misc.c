@@ -34607,6 +34607,125 @@ static void test_splice_access_mode(void) {
     }
 }
 
+/*
+ * test_sendfile_access_mode — Tests 1053-1056
+ *
+ * sendfile() checked vnode->ops existence but not the fd open flags.
+ * A write-only in_fd or read-only out_fd would silently proceed.
+ *   1053: sendfile(out=any, in=O_WRONLY) → EBADF
+ *   1054: sendfile(out=O_RDONLY, in=any) → EBADF
+ *   1055: sendfile(out=O_WRONLY, in=O_RDONLY) → success (positive case)
+ *   1056: sendfile(out=O_RDWR, in=O_RDWR) → success (positive case)
+ */
+static void test_sendfile_access_mode(void) {
+    extern long sys_sendfile(int out_fd, int in_fd, uint64_t *offset, size_t count);
+    extern long sys_write(int fd, const void *buf, size_t count);
+    extern long sys_close(int fd);
+
+    /* ---- Test 1053: sendfile(in=O_WRONLY) → EBADF ---- */
+    fut_printf("[MISC-TEST] Test 1053: sendfile(in=O_WRONLY) → EBADF\n");
+    {
+        int in_fd = fut_vfs_open("/sfam_wronly.txt", O_WRONLY | O_CREAT, 0644);
+        int out_fd = fut_vfs_open("/sfam_out1.txt", O_RDWR | O_CREAT | O_TRUNC, 0644);
+        if (in_fd < 0 || out_fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1053: setup failed in=%d out=%d\n", in_fd, out_fd);
+            fut_test_fail(1053);
+        } else {
+            long r = sys_sendfile(out_fd, in_fd, NULL, 4);
+            if (r == -EBADF) {
+                fut_printf("[MISC-TEST] ✓ Test 1053: sendfile(in=O_WRONLY) → EBADF\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1053: sendfile(in=O_WRONLY)=%ld (expected -EBADF=%d)\n",
+                           r, -EBADF);
+                fut_test_fail(1053);
+            }
+        }
+        if (in_fd >= 0) sys_close(in_fd);
+        if (out_fd >= 0) sys_close(out_fd);
+    }
+
+    /* ---- Test 1054: sendfile(out=O_RDONLY) → EBADF ---- */
+    fut_printf("[MISC-TEST] Test 1054: sendfile(out=O_RDONLY) → EBADF\n");
+    {
+        /* Create files */
+        int cfd = fut_vfs_open("/sfam_in2.txt", O_RDWR | O_CREAT | O_TRUNC, 0644);
+        if (cfd >= 0) { sys_write(cfd, "data", 4); sys_close(cfd); }
+        int cfd2 = fut_vfs_open("/sfam_out2.txt", O_RDWR | O_CREAT | O_TRUNC, 0644);
+        if (cfd2 >= 0) sys_close(cfd2);
+
+        int in_fd = fut_vfs_open("/sfam_in2.txt", O_RDONLY, 0);
+        int out_fd = fut_vfs_open("/sfam_out2.txt", O_RDONLY, 0);
+        if (in_fd < 0 || out_fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1054: setup failed in=%d out=%d\n", in_fd, out_fd);
+            fut_test_fail(1054);
+        } else {
+            long r = sys_sendfile(out_fd, in_fd, NULL, 4);
+            if (r == -EBADF) {
+                fut_printf("[MISC-TEST] ✓ Test 1054: sendfile(out=O_RDONLY) → EBADF\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1054: sendfile(out=O_RDONLY)=%ld (expected -EBADF=%d)\n",
+                           r, -EBADF);
+                fut_test_fail(1054);
+            }
+        }
+        if (in_fd >= 0) sys_close(in_fd);
+        if (out_fd >= 0) sys_close(out_fd);
+    }
+
+    /* ---- Test 1055: sendfile(out=O_WRONLY, in=O_RDONLY) → success ---- */
+    fut_printf("[MISC-TEST] Test 1055: sendfile(out=O_WRONLY, in=O_RDONLY) → success\n");
+    {
+        int wfd = fut_vfs_open("/sfam_in3.txt", O_RDWR | O_CREAT | O_TRUNC, 0644);
+        if (wfd >= 0) { sys_write(wfd, "hello", 5); sys_close(wfd); }
+
+        int in_fd = fut_vfs_open("/sfam_in3.txt", O_RDONLY, 0);
+        int out_fd = fut_vfs_open("/sfam_out3.txt", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (in_fd < 0 || out_fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1055: setup failed in=%d out=%d\n", in_fd, out_fd);
+            fut_test_fail(1055);
+        } else {
+            long r = sys_sendfile(out_fd, in_fd, NULL, 5);
+            if (r == 5) {
+                fut_printf("[MISC-TEST] ✓ Test 1055: sendfile(O_RDONLY→O_WRONLY) → %ld bytes\n", r);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1055: sendfile(O_RDONLY→O_WRONLY)=%ld (expected 5)\n", r);
+                fut_test_fail(1055);
+            }
+        }
+        if (in_fd >= 0) sys_close(in_fd);
+        if (out_fd >= 0) sys_close(out_fd);
+    }
+
+    /* ---- Test 1056: sendfile(out=O_RDWR, in=O_RDWR) → success ---- */
+    fut_printf("[MISC-TEST] Test 1056: sendfile(out=O_RDWR, in=O_RDWR) → success\n");
+    {
+        int in_fd = fut_vfs_open("/sfam_in4.txt", O_RDWR | O_CREAT | O_TRUNC, 0644);
+        if (in_fd >= 0) sys_write(in_fd, "world", 5);
+        int out_fd = fut_vfs_open("/sfam_out4.txt", O_RDWR | O_CREAT | O_TRUNC, 0644);
+        if (in_fd < 0 || out_fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1056: setup failed in=%d out=%d\n", in_fd, out_fd);
+            fut_test_fail(1056);
+        } else {
+            /* Rewind in_fd */
+            extern long sys_lseek(int fd, int64_t offset, int whence);
+            sys_lseek(in_fd, 0, 0);
+            long r = sys_sendfile(out_fd, in_fd, NULL, 5);
+            if (r == 5) {
+                fut_printf("[MISC-TEST] ✓ Test 1056: sendfile(O_RDWR→O_RDWR) → %ld bytes\n", r);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1056: sendfile(O_RDWR→O_RDWR)=%ld (expected 5)\n", r);
+                fut_test_fail(1056);
+            }
+        }
+        if (in_fd >= 0) sys_close(in_fd);
+        if (out_fd >= 0) sys_close(out_fd);
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -35202,6 +35321,7 @@ void fut_misc_test_thread(void *arg) {
     test_pread_pwrite_access_mode();     /* Tests 1041-1044: pread64(O_WRONLY)→EBADF, pwrite64(O_RDONLY)→EBADF */
     test_preadv_pwritev_access_mode();   /* Tests 1045-1048: preadv(O_WRONLY)→EBADF, pwritev(O_RDONLY)→EBADF */
     test_splice_access_mode();           /* Tests 1049-1052: splice file-side access mode enforcement */
+    test_sendfile_access_mode();         /* Tests 1053-1056: sendfile in_fd/out_fd access mode enforcement */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

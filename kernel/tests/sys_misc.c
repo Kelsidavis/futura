@@ -14,6 +14,7 @@
 
 #include <kernel/fut_task.h>
 #include <kernel/fut_thread.h>
+#include <kernel/fut_mm.h>
 #include <kernel/fut_percpu.h>
 #include <poll.h>
 #include <kernel/fut_vfs.h>
@@ -32400,6 +32401,100 @@ static void test_madvise_dontneed_zeros(void) {
 #undef PAGE_989
 }
 
+/*
+ * test_madvise_wipeonfork_flag — Tests 992-993
+ *
+ *   992: MADV_WIPEONFORK sets VMA_WIPEONFORK flag on anon private VMA
+ *   993: MADV_KEEPONFORK clears VMA_WIPEONFORK flag
+ */
+static void test_madvise_wipeonfork_flag(void) {
+    fut_printf("[MISC-TEST] Tests 992-993: MADV_WIPEONFORK sets/clears VMA_WIPEONFORK flag\n");
+
+    extern long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long off);
+    extern long sys_munmap(void *addr, size_t len);
+    extern long sys_madvise(void *addr, size_t length, int advice);
+    extern fut_task_t *fut_task_current(void);
+    extern fut_mm_t *fut_mm_current(void);
+#define VMA_WIPEONFORK_992  0x10000
+#define PROT_RW_992         (1|2)
+#define MAP_ANON_992        (0x20|0x2)
+#define PAGE_992            4096UL
+
+    void *p = (void *)sys_mmap(NULL, PAGE_992, PROT_RW_992, MAP_ANON_992, -1, 0);
+    if (!p || (long)(uintptr_t)p < 0) {
+        fut_printf("[MISC-TEST] ✗ Tests 992-993: mmap failed\n");
+        fut_test_fail(992); fut_test_fail(993);
+        return;
+    }
+
+    /* Test 992: MADV_WIPEONFORK sets flag on the matching VMA */
+    fut_printf("[MISC-TEST] Test 992: MADV_WIPEONFORK sets VMA_WIPEONFORK flag\n");
+    long r = sys_madvise(p, PAGE_992, 18 /* MADV_WIPEONFORK */);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 992: madvise(WIPEONFORK) returned %ld\n", r);
+        fut_test_fail(992);
+    } else {
+        /* Check VMA_WIPEONFORK was set in the VMA */
+        fut_task_t *task = fut_task_current();
+        fut_mm_t *mm = task ? fut_task_get_mm(task) : NULL;
+        if (!mm) mm = fut_mm_current();
+        int flag_set = 0;
+        if (mm) {
+            struct fut_vma *vma = mm->vma_list;
+            while (vma) {
+                if (vma->start <= (uintptr_t)p && (uintptr_t)p < vma->end) {
+                    flag_set = (vma->flags & VMA_WIPEONFORK_992) != 0;
+                    break;
+                }
+                vma = vma->next;
+            }
+        }
+        if (flag_set) {
+            fut_printf("[MISC-TEST] ✓ Test 992: VMA_WIPEONFORK flag set after MADV_WIPEONFORK\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 992: VMA_WIPEONFORK flag NOT set\n");
+            fut_test_fail(992);
+        }
+    }
+
+    /* Test 993: MADV_KEEPONFORK clears the flag */
+    fut_printf("[MISC-TEST] Test 993: MADV_KEEPONFORK clears VMA_WIPEONFORK flag\n");
+    r = sys_madvise(p, PAGE_992, 19 /* MADV_KEEPONFORK */);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 993: madvise(KEEPONFORK) returned %ld\n", r);
+        fut_test_fail(993);
+    } else {
+        fut_task_t *task = fut_task_current();
+        fut_mm_t *mm = task ? fut_task_get_mm(task) : NULL;
+        if (!mm) mm = fut_mm_current();
+        int flag_clear = 1;
+        if (mm) {
+            struct fut_vma *vma = mm->vma_list;
+            while (vma) {
+                if (vma->start <= (uintptr_t)p && (uintptr_t)p < vma->end) {
+                    flag_clear = (vma->flags & VMA_WIPEONFORK_992) == 0;
+                    break;
+                }
+                vma = vma->next;
+            }
+        }
+        if (flag_clear) {
+            fut_printf("[MISC-TEST] ✓ Test 993: VMA_WIPEONFORK flag cleared by MADV_KEEPONFORK\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 993: VMA_WIPEONFORK flag NOT cleared\n");
+            fut_test_fail(993);
+        }
+    }
+
+    sys_munmap(p, PAGE_992);
+#undef VMA_WIPEONFORK_992
+#undef PROT_RW_992
+#undef MAP_ANON_992
+#undef PAGE_992
+}
+
 static void test_cross_fs_exdev(void) {
     fut_printf("[MISC-TEST] Tests 937-941: cross-filesystem EXDEV / same-fs link+rename\n");
 
@@ -33306,6 +33401,7 @@ void fut_misc_test_thread(void *arg) {
     test_prctl_arm64_options();          /* Tests 979-984: ARM64 FP/PAC/MTE + syscall-user-dispatch */
     test_rlimit_as_mmap();               /* Tests 985-988: RLIMIT_AS enforcement in mmap */
     test_madvise_dontneed_zeros();       /* Tests 989-991: MADV_DONTNEED/FREE zero anon pages */
+    test_madvise_wipeonfork_flag();      /* Tests 992-993: MADV_WIPEONFORK sets/clears VMA flag */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

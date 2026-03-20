@@ -29,10 +29,11 @@ typedef uint64_t phys_addr_t;
 struct fut_vnode;
 
 /* VMA flags */
-#define VMA_COW       0x1000  /* Copy-on-write pages */
-#define VMA_SHARED    0x2000  /* Shared mapping (not private) */
-#define VMA_LOCKED    0x4000  /* Pages locked in memory (mlock) */
-#define VMA_STACK     0x8000  /* Initial user stack region ([stack] in /proc/maps) */
+#define VMA_COW         0x1000  /* Copy-on-write pages */
+#define VMA_SHARED      0x2000  /* Shared mapping (not private) */
+#define VMA_LOCKED      0x4000  /* Pages locked in memory (mlock) */
+#define VMA_STACK       0x8000  /* Initial user stack region ([stack] in /proc/maps) */
+#define VMA_WIPEONFORK  0x10000 /* Zero child's pages on fork (MADV_WIPEONFORK) */
 
 /* Virtual Memory Area - represents a contiguous mapped region */
 struct fut_vma {

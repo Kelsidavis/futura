@@ -178,8 +178,46 @@ long sys_madvise(void *addr, size_t length, int advice) {
     case MADV_NOHUGEPAGE:   /* 15: do not back with hugepages */
     case MADV_DONTDUMP:     /* 16: exclude from core dump */
     case MADV_DODUMP:       /* 17: include in core dump */
-    case 18:                /* MADV_WIPEONFORK: wipe on fork (Linux 4.14+) */
-    case 19:                /* MADV_KEEPONFORK: keep on fork (Linux 4.14+) */
+        return 0;
+
+    case 18: {              /* MADV_WIPEONFORK: zero anon pages in child on fork */
+        /* Set VMA_WIPEONFORK on all anonymous VMAs overlapping [addr, addr+len).
+         * On fork, clone_mm() will give the child zero pages for these VMAs. */
+        fut_task_t *wf_task = fut_task_current();
+        fut_mm_t *wf_mm = wf_task ? fut_task_get_mm(wf_task) : NULL;
+        if (!wf_mm) wf_mm = fut_mm_current();
+        if (wf_mm) {
+            uintptr_t range_start = addr_aligned;
+            uintptr_t range_end   = addr_aligned + length_aligned;
+            struct fut_vma *vma = wf_mm->vma_list;
+            while (vma) {
+                if (vma->start < range_end && vma->end > range_start
+                    && !vma->vnode && !(vma->flags & VMA_SHARED)) {
+                    vma->flags |=  VMA_WIPEONFORK;
+                }
+                vma = vma->next;
+            }
+        }
+        return 0;
+    }
+
+    case 19: {              /* MADV_KEEPONFORK: undo MADV_WIPEONFORK */
+        fut_task_t *kf_task = fut_task_current();
+        fut_mm_t *kf_mm = kf_task ? fut_task_get_mm(kf_task) : NULL;
+        if (!kf_mm) kf_mm = fut_mm_current();
+        if (kf_mm) {
+            uintptr_t range_start = addr_aligned;
+            uintptr_t range_end   = addr_aligned + length_aligned;
+            struct fut_vma *vma = kf_mm->vma_list;
+            while (vma) {
+                if (vma->start < range_end && vma->end > range_start)
+                    vma->flags &= ~VMA_WIPEONFORK;
+                vma = vma->next;
+            }
+        }
+        return 0;
+    }
+
     case 20:                /* MADV_COLD: deactivate pages (Linux 5.4+) */
     case 21:                /* MADV_PAGEOUT: reclaim pages now (Linux 5.4+) */
     case 22:                /* MADV_POPULATE_READ: pre-fault pages read-only (Linux 5.14+) */

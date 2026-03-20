@@ -1303,13 +1303,22 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
 
     /* Iterate over VMAs and share pages with COW or shared semantics */
     struct fut_vma *vma;
+    /* Parallel child VMA iterator: child_vma_iter tracks child VMAs for flag updates */
+    struct fut_vma *child_vma_iter = child_mm->vma_list;
     for (vma = parent_mm->vma_list; vma != NULL; vma = vma->next) {
         bool is_cow = (vma->flags & VMA_COW) != 0;
         bool is_shared = (vma->flags & MAP_SHARED) != 0;
+        bool is_wipeonfork = (vma->flags & VMA_WIPEONFORK) != 0;
         const char *mode = is_shared ? "(SHARED)" : (is_cow ? "(COW)" : "(COPY)");
         (void)mode;  /* Used only in debug logging */
-        FORK_LOG("[FORK] Cloning VMA: 0x%llx-0x%llx %s\n",
-                   vma->start, vma->end, mode);
+        FORK_LOG("[FORK] Cloning VMA: 0x%llx-0x%llx %s%s\n",
+                   vma->start, vma->end, mode, is_wipeonfork ? " WIPEONFORK" : "");
+
+        /* MADV_WIPEONFORK: child VMA should NOT inherit the wipe flag (it only fires once) */
+        if (child_vma_iter && child_vma_iter->start == vma->start) {
+            child_vma_iter->flags &= ~VMA_WIPEONFORK;
+            child_vma_iter = child_vma_iter->next;
+        }
 
         uint64_t page_count = 0;
         for (uint64_t page = vma->start; page < vma->end; page += FUT_PAGE_SIZE) {
@@ -1326,7 +1335,24 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
 
             phys_addr_t parent_phys = pte & PTE_PHYS_ADDR_MASK;
 
-            if (is_shared) {
+            if (is_wipeonfork && !is_shared) {
+                /* MADV_WIPEONFORK: give child a fresh zero page instead of copying.
+                 * The parent's page is left untouched. */
+                void *zero_page = fut_pmm_alloc_page();
+                if (!zero_page) {
+                    fut_mm_release(child_mm);
+                    return NULL;
+                }
+                memset(zero_page, 0, FUT_PAGE_SIZE);
+                phys_addr_t zero_phys = pmap_virt_to_phys((uintptr_t)zero_page);
+                uint64_t flags = pte_extract_flags(pte);
+                if (pmap_map_user(child_ctx, page, zero_phys, FUT_PAGE_SIZE, flags) != 0) {
+                    fut_pmm_free_page(zero_page);
+                    fut_mm_release(child_mm);
+                    return NULL;
+                }
+                page_count++;
+            } else if (is_shared) {
                 /* SHARED: Map same physical page with same permissions (including writable).
                  * Both parent and child see each other's writes immediately.
                  * This is used for Wayland shm buffers and other shared memory. */

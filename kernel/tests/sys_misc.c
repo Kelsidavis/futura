@@ -34471,6 +34471,142 @@ static void test_preadv_pwritev_access_mode(void) {
     }
 }
 
+/*
+ * test_splice_access_mode — Tests 1049-1052
+ *
+ * splice() calls vnode->ops->read/write directly for the non-pipe (file) side,
+ * bypassing the VFS access-mode check. Linux returns EBADF in these cases.
+ *   1049: splice(O_WRONLY file → pipe) → EBADF  (can't read from write-only file)
+ *   1050: splice(pipe → O_RDONLY file) → EBADF  (can't write to read-only file)
+ *   1051: splice(O_RDONLY file → pipe) → success (positive case)
+ *   1052: splice(pipe → O_WRONLY file) → success (positive case)
+ */
+static void test_splice_access_mode(void) {
+    extern long sys_splice(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
+                           size_t len, unsigned int flags);
+    extern long sys_pipe(int pipefd[2]);
+    extern long sys_write(int fd, const void *buf, size_t count);
+    extern long sys_close(int fd);
+
+    /* ---- Test 1049: splice(O_WRONLY file → pipe) → EBADF ---- */
+    fut_printf("[MISC-TEST] Test 1049: splice(O_WRONLY file → pipe) → EBADF\n");
+    {
+        int pipefd[2];
+        long pr = sys_pipe(pipefd);
+        int src_fd = fut_vfs_open("/splice_am_src.txt", O_WRONLY | O_CREAT, 0644);
+        if (pr != 0 || src_fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1049: setup failed pipe=%ld src=%d\n", pr, src_fd);
+            fut_test_fail(1049);
+            if (src_fd >= 0) sys_close(src_fd);
+            if (pr == 0) { sys_close(pipefd[0]); sys_close(pipefd[1]); }
+        } else {
+            long r = sys_splice(src_fd, NULL, pipefd[1], NULL, 4, 0);
+            sys_close(src_fd);
+            sys_close(pipefd[0]);
+            sys_close(pipefd[1]);
+            if (r == -EBADF) {
+                fut_printf("[MISC-TEST] ✓ Test 1049: splice(O_WRONLY→pipe) → EBADF\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1049: splice(O_WRONLY→pipe)=%ld (expected -EBADF=%d)\n",
+                           r, -EBADF);
+                fut_test_fail(1049);
+            }
+        }
+    }
+
+    /* ---- Test 1050: splice(pipe → O_RDONLY file) → EBADF ---- */
+    fut_printf("[MISC-TEST] Test 1050: splice(pipe → O_RDONLY file) → EBADF\n");
+    {
+        /* Create a file so we can open it O_RDONLY */
+        int cfd = fut_vfs_open("/splice_am_dst.txt", O_RDWR | O_CREAT, 0644);
+        if (cfd >= 0) sys_close(cfd);
+        int pipefd[2];
+        long pr = sys_pipe(pipefd);
+        int dst_fd = fut_vfs_open("/splice_am_dst.txt", O_RDONLY, 0);
+        if (pr != 0 || dst_fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1050: setup failed pipe=%ld dst=%d\n", pr, dst_fd);
+            fut_test_fail(1050);
+            if (dst_fd >= 0) sys_close(dst_fd);
+            if (pr == 0) { sys_close(pipefd[0]); sys_close(pipefd[1]); }
+        } else {
+            /* Write something to the pipe so splice has data to read */
+            sys_write(pipefd[1], "data", 4);
+            long r = sys_splice(pipefd[0], NULL, dst_fd, NULL, 4, 0);
+            sys_close(dst_fd);
+            sys_close(pipefd[0]);
+            sys_close(pipefd[1]);
+            if (r == -EBADF) {
+                fut_printf("[MISC-TEST] ✓ Test 1050: splice(pipe→O_RDONLY) → EBADF\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1050: splice(pipe→O_RDONLY)=%ld (expected -EBADF=%d)\n",
+                           r, -EBADF);
+                fut_test_fail(1050);
+            }
+        }
+    }
+
+    /* ---- Test 1051: splice(O_RDONLY file → pipe) → success ---- */
+    fut_printf("[MISC-TEST] Test 1051: splice(O_RDONLY file → pipe) → success\n");
+    {
+        /* Populate the source file */
+        int wfd = fut_vfs_open("/splice_am_ok.txt", O_RDWR | O_CREAT | O_TRUNC, 0644);
+        if (wfd >= 0) {
+            sys_write(wfd, "hello", 5);
+            sys_close(wfd);
+        }
+        int pipefd[2];
+        long pr = sys_pipe(pipefd);
+        int src_fd = fut_vfs_open("/splice_am_ok.txt", O_RDONLY, 0);
+        if (pr != 0 || src_fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1051: setup failed pipe=%ld src=%d\n", pr, src_fd);
+            fut_test_fail(1051);
+            if (src_fd >= 0) sys_close(src_fd);
+            if (pr == 0) { sys_close(pipefd[0]); sys_close(pipefd[1]); }
+        } else {
+            long r = sys_splice(src_fd, NULL, pipefd[1], NULL, 5, 0);
+            sys_close(src_fd);
+            sys_close(pipefd[0]);
+            sys_close(pipefd[1]);
+            if (r == 5) {
+                fut_printf("[MISC-TEST] ✓ Test 1051: splice(O_RDONLY→pipe) → %ld bytes\n", r);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1051: splice(O_RDONLY→pipe)=%ld (expected 5)\n", r);
+                fut_test_fail(1051);
+            }
+        }
+    }
+
+    /* ---- Test 1052: splice(pipe → O_WRONLY file) → success ---- */
+    fut_printf("[MISC-TEST] Test 1052: splice(pipe → O_WRONLY file) → success\n");
+    {
+        int pipefd[2];
+        long pr = sys_pipe(pipefd);
+        int dst_fd = fut_vfs_open("/splice_am_out.txt", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (pr != 0 || dst_fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1052: setup failed pipe=%ld dst=%d\n", pr, dst_fd);
+            fut_test_fail(1052);
+            if (dst_fd >= 0) sys_close(dst_fd);
+            if (pr == 0) { sys_close(pipefd[0]); sys_close(pipefd[1]); }
+        } else {
+            sys_write(pipefd[1], "world", 5);
+            long r = sys_splice(pipefd[0], NULL, dst_fd, NULL, 5, 0);
+            sys_close(dst_fd);
+            sys_close(pipefd[0]);
+            sys_close(pipefd[1]);
+            if (r == 5) {
+                fut_printf("[MISC-TEST] ✓ Test 1052: splice(pipe→O_WRONLY) → %ld bytes\n", r);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1052: splice(pipe→O_WRONLY)=%ld (expected 5)\n", r);
+                fut_test_fail(1052);
+            }
+        }
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -35065,6 +35201,7 @@ void fut_misc_test_thread(void *arg) {
     test_nanosleep_rmtp_sigpipe_ign();   /* Tests 1036-1040: nanosleep rmtp on EINTR, NULL req, bad nsec, SIGPIPE+SIG_IGN, zero sleep */
     test_pread_pwrite_access_mode();     /* Tests 1041-1044: pread64(O_WRONLY)→EBADF, pwrite64(O_RDONLY)→EBADF */
     test_preadv_pwritev_access_mode();   /* Tests 1045-1048: preadv(O_WRONLY)→EBADF, pwritev(O_RDONLY)→EBADF */
+    test_splice_access_mode();           /* Tests 1049-1052: splice file-side access mode enforcement */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

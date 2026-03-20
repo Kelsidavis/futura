@@ -220,6 +220,13 @@ long sys_splice(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
         return -EINVAL;
     }
 
+    /* For the non-pipe (file) side, enforce access mode:
+     * fd_in must be readable; fd_out must be writable. */
+    if (!in_is_pipe && (file_in->flags & O_ACCMODE) == O_WRONLY)
+        return -EBADF;
+    if (!out_is_pipe && (file_out->flags & O_ACCMODE) == O_RDONLY)
+        return -EBADF;
+
     /* ESPIPE: offset not allowed for pipes */
     if (local_off_in  && in_is_pipe)  return -ESPIPE;
     if (local_off_out && out_is_pipe) return -ESPIPE;

@@ -36418,6 +36418,86 @@ t1100:
 #undef SA_NODEFER_FLAG2
 }
 
+/* ============================================================
+ * Tests 1101-1104: sched_setscheduler SCHED_BATCH and SCHED_IDLE roundtrip
+ *   Test 1101: sched_setscheduler(0, SCHED_BATCH, {0}) returns old policy
+ *   Test 1102: sched_getscheduler(0) returns SCHED_BATCH after setting it
+ *   Test 1103: sched_setscheduler(0, SCHED_IDLE, {0}) returns old policy
+ *   Test 1104: sched_setscheduler(0, SCHED_OTHER, {0}) restores default
+ * ============================================================ */
+static void test_sched_batch_idle_roundtrip(void) {
+    extern long sys_sched_setscheduler(int pid, int policy, const struct sched_param *param);
+    extern long sys_sched_getscheduler(int pid);
+    struct sched_param zero_param;
+    __builtin_memset(&zero_param, 0, sizeof(zero_param));
+
+#ifndef SCHED_BATCH
+#define SCHED_BATCH 3
+#endif
+#ifndef SCHED_IDLE
+#define SCHED_IDLE  5
+#endif
+
+    /* ---- Test 1101: set SCHED_BATCH → returns old policy ---- */
+    fut_printf("[MISC-TEST] Test 1101: sched_setscheduler(SCHED_BATCH) returns old policy\n");
+    {
+        long old_pol = sys_sched_setscheduler(0, SCHED_BATCH, &zero_param);
+        if (old_pol < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1101: sched_setscheduler(SCHED_BATCH) returned %ld\n",
+                       old_pol);
+            fut_test_fail(1101);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1101: sched_setscheduler(SCHED_BATCH) old_policy=%ld\n",
+                       old_pol);
+            fut_test_pass();
+        }
+    }
+
+    /* ---- Test 1102: getscheduler returns SCHED_BATCH ---- */
+    fut_printf("[MISC-TEST] Test 1102: sched_getscheduler returns SCHED_BATCH after setting it\n");
+    {
+        long pol = sys_sched_getscheduler(0);
+        if (pol != SCHED_BATCH) {
+            fut_printf("[MISC-TEST] ✗ Test 1102: getscheduler=%ld (expected SCHED_BATCH=%d)\n",
+                       pol, SCHED_BATCH);
+            fut_test_fail(1102);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1102: getscheduler → SCHED_BATCH (%ld)\n", pol);
+            fut_test_pass();
+        }
+    }
+
+    /* ---- Test 1103: set SCHED_IDLE → returns old policy ---- */
+    fut_printf("[MISC-TEST] Test 1103: sched_setscheduler(SCHED_IDLE) returns old policy\n");
+    {
+        long old_pol = sys_sched_setscheduler(0, SCHED_IDLE, &zero_param);
+        if (old_pol < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1103: sched_setscheduler(SCHED_IDLE) returned %ld\n",
+                       old_pol);
+            fut_test_fail(1103);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1103: sched_setscheduler(SCHED_IDLE) old_policy=%ld\n",
+                       old_pol);
+            fut_test_pass();
+        }
+    }
+
+    /* ---- Test 1104: restore SCHED_OTHER, verify ---- */
+    fut_printf("[MISC-TEST] Test 1104: sched_setscheduler restores SCHED_OTHER\n");
+    {
+        long r = sys_sched_setscheduler(0, 0 /* SCHED_OTHER */, &zero_param);
+        long pol = sys_sched_getscheduler(0);
+        if (r < 0 || pol != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1104: restore SCHED_OTHER: ret=%ld getscheduler=%ld\n",
+                       r, pol);
+            fut_test_fail(1104);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1104: restored to SCHED_OTHER (%ld)\n", pol);
+            fut_test_pass();
+        }
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -37025,6 +37105,7 @@ void fut_misc_test_thread(void *arg) {
     test_proc_fd_anon_symlinks(); /* Tests 1089-1092: /proc/self/fd/<n> shows socket:[ino]/anon_inode:[type] */
     test_fdinfo_pos_flags(); /* Tests 1093-1096: fdinfo pos:/flags: accuracy */
     test_sa_restart_and_sigblk(); /* Tests 1097-1100: SA_RESTART flag roundtrip; SigBlk: accuracy */
+    test_sched_batch_idle_roundtrip(); /* Tests 1101-1104: SCHED_BATCH/SCHED_IDLE roundtrip */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

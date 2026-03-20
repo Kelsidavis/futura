@@ -31460,6 +31460,117 @@ static void test_inotify_onlydir_maskadd(void) {
     fut_printf("[MISC-TEST] ✓ Tests 926-930: inotify IN_ONLYDIR+IN_MASK_ADD done\n");
 }
 
+/* ---- Cross-filesystem EXDEV tests (937-941) ----------------------------- */
+
+/*
+ * test_cross_fs_exdev() — Tests 937-941
+ *
+ *   Test 937: link("/tmp/file", "/etc/link") → EXDEV (different mounts)
+ *   Test 938: rename("/tmp/file", "/etc/renamed") → EXDEV (different mounts)
+ *   Test 939: link("/<root-file>", "/tmp/link") → EXDEV (root vs /tmp)
+ *   Test 940: link("/tmp/a", "/tmp/b") → 0 (same /tmp mount)
+ *   Test 941: rename("/tmp/b", "/tmp/c") → 0 (same /tmp mount)
+ */
+static void test_cross_fs_exdev(void) {
+    fut_printf("[MISC-TEST] Tests 937-941: cross-filesystem EXDEV / same-fs link+rename\n");
+
+    extern long sys_openat(int dirfd, const char *path, int flags, int mode);
+    extern long sys_close(int fd);
+    extern long sys_write(int fd, const void *buf, size_t count);
+    extern long sys_link(const char *oldpath, const char *newpath);
+    extern long sys_rename(const char *oldpath, const char *newpath);
+    extern long sys_unlink(const char *path);
+
+#define AT_FDCWD_X (-100)
+#define O_WRONLY_X  1
+#define O_CREAT_X   0100
+#define O_TRUNC_X   01000
+
+    /* Create a file in /tmp (ramfs mounted at /tmp) */
+    const char *src_tmp  = "/tmp/exdev_src.txt";
+    long tfd = sys_openat(AT_FDCWD_X, src_tmp,
+                          O_WRONLY_X | O_CREAT_X | O_TRUNC_X, 0644);
+    if (tfd >= 0) { sys_write((int)tfd, "exdev", 5); sys_close((int)tfd); }
+
+    /* Create a file in / (root ramfs) */
+    const char *src_root = "/exdev_root.txt";
+    long rfd = sys_openat(AT_FDCWD_X, src_root,
+                          O_WRONLY_X | O_CREAT_X | O_TRUNC_X, 0644);
+    if (rfd >= 0) { sys_write((int)rfd, "exdev", 5); sys_close((int)rfd); }
+
+    /* --- Test 937: link /tmp/file → /etc/link should fail EXDEV --- */
+    fut_printf("[MISC-TEST] Test 937: link(/tmp→/etc) → EXDEV\n");
+    long r937 = sys_link(src_tmp, "/etc/exdev_link.txt");
+    if (r937 == -18 /* EXDEV */) {
+        fut_printf("[MISC-TEST] ✓ Test 937: link(/tmp→/etc) → EXDEV\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 937: link(/tmp→/etc) = %ld (want -18 EXDEV)\n",
+                   r937);
+        fut_test_fail(937);
+    }
+
+    /* --- Test 938: rename /tmp/file → /etc/ should fail EXDEV --- */
+    fut_printf("[MISC-TEST] Test 938: rename(/tmp→/etc) → EXDEV\n");
+    long r938 = sys_rename(src_tmp, "/etc/exdev_renamed.txt");
+    if (r938 == -18 /* EXDEV */) {
+        fut_printf("[MISC-TEST] ✓ Test 938: rename(/tmp→/etc) → EXDEV\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 938: rename(/tmp→/etc) = %ld (want -18 EXDEV)\n",
+                   r938);
+        fut_test_fail(938);
+    }
+
+    /* --- Test 939: link /root-file → /tmp/ should fail EXDEV --- */
+    fut_printf("[MISC-TEST] Test 939: link(/→/tmp) → EXDEV\n");
+    long r939 = sys_link(src_root, "/tmp/exdev_fromroot.txt");
+    if (r939 == -18 /* EXDEV */) {
+        fut_printf("[MISC-TEST] ✓ Test 939: link(/→/tmp) → EXDEV\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 939: link(/→/tmp) = %ld (want -18 EXDEV)\n",
+                   r939);
+        fut_test_fail(939);
+    }
+
+    /* --- Test 940: link within /tmp (same mount) → 0 --- */
+    fut_printf("[MISC-TEST] Test 940: link(/tmp→/tmp) → 0 (same mount)\n");
+    const char *lnk_tmp = "/tmp/exdev_link2.txt";
+    long r940 = sys_link(src_tmp, lnk_tmp);
+    if (r940 == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 940: link within /tmp → 0\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 940: link within /tmp = %ld (want 0)\n", r940);
+        fut_test_fail(940);
+    }
+
+    /* --- Test 941: rename within /tmp (same mount) → 0 --- */
+    fut_printf("[MISC-TEST] Test 941: rename(/tmp→/tmp) → 0 (same mount)\n");
+    const char *dst_tmp = "/tmp/exdev_renamed2.txt";
+    long r941 = sys_rename(lnk_tmp, dst_tmp);
+    if (r941 == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 941: rename within /tmp → 0\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 941: rename within /tmp = %ld (want 0)\n", r941);
+        fut_test_fail(941);
+    }
+
+    /* cleanup */
+    sys_unlink(src_tmp);
+    sys_unlink(src_root);
+    sys_unlink(dst_tmp);
+
+#undef AT_FDCWD_X
+#undef O_WRONLY_X
+#undef O_CREAT_X
+#undef O_TRUNC_X
+
+    fut_printf("[MISC-TEST] ✓ Tests 937-941: cross-fs EXDEV / same-fs done\n");
+}
+
 /* ---- /etc filesystem tests (931-936) ----------------------------------- */
 
 /*
@@ -32255,6 +32366,7 @@ void fut_misc_test_thread(void *arg) {
     test_af_netlink_rtm_route();          /* Tests 921-925: AF_NETLINK RTM_GETROUTE/RTM_GETNEIGH */
     test_inotify_onlydir_maskadd();       /* Tests 926-930: inotify IN_ONLYDIR + IN_MASK_ADD flags */
     test_etc_filesystem();                /* Tests 931-936: /etc/hostname/hosts/resolv.conf/nsswitch.conf/passwd/group */
+    test_cross_fs_exdev();                /* Tests 937-941: EXDEV on cross-mount link/rename; same-mount success */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

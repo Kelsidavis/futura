@@ -29010,6 +29010,103 @@ static void test_ftruncate_rlimit_fsize(void) {
 }
 
 /* ============================================================
+ * test_bind_mount - Tests 804-807
+ *
+ *   804: mount("/tmp/bind_src", "/tmp/bind_dst", NULL, MS_BIND, NULL) → 0
+ *   805: file written in bind source is readable at bind target
+ *   806: file written in bind target is readable at bind source
+ *   807: umount2("/tmp/bind_dst", 0) → 0
+ * ============================================================ */
+#define MS_BIND_TEST 4096
+static void test_bind_mount(void) {
+    extern long sys_mkdir(const char *path, uint32_t mode);
+    extern long sys_mount(const char *source, const char *target,
+                          const char *filesystemtype, unsigned long mountflags,
+                          const void *data);
+    extern long sys_umount2(const char *target, int flags);
+    extern long sys_open(const char *path, int flags, int mode);
+    extern long sys_close(int fd);
+    extern ssize_t sys_write(int fd, const void *buf, size_t count);
+    extern ssize_t sys_read(int fd, void *buf, size_t count);
+
+    /* Setup: create source and destination directories */
+    sys_mkdir("/tmp/bind_src", 0755);
+    sys_mkdir("/tmp/bind_dst", 0755);
+
+    /* Test 804: bind mount /tmp/bind_src → /tmp/bind_dst */
+    fut_printf("[MISC-TEST] Test 804: MS_BIND mount → 0\n");
+    long ret = sys_mount("/tmp/bind_src", "/tmp/bind_dst", NULL, MS_BIND_TEST, NULL);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 804: mount(MS_BIND) returned %ld\n", ret);
+        fut_test_fail(804);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 804: bind mount → 0\n");
+        fut_test_pass();
+    }
+
+    /* Test 805: write to source, read at destination */
+    fut_printf("[MISC-TEST] Test 805: write to source, readable at destination\n");
+    long fd = sys_open("/tmp/bind_src/hello.txt", 0x241 /* O_WRONLY|O_CREAT|O_TRUNC */, 0644);
+    bool t805_ok = false;
+    if (fd >= 0) {
+        sys_write((int)fd, "hello", 5);
+        sys_close((int)fd);
+        /* Read from bind destination */
+        fd = sys_open("/tmp/bind_dst/hello.txt", 0 /* O_RDONLY */, 0);
+        if (fd >= 0) {
+            char rbuf[8] = {0};
+            ssize_t nr = sys_read((int)fd, rbuf, 5);
+            sys_close((int)fd);
+            if (nr == 5 && rbuf[0] == 'h' && rbuf[4] == 'o')
+                t805_ok = true;
+        }
+    }
+    if (!t805_ok) {
+        fut_printf("[MISC-TEST] ✗ Test 805: bind src→dst visibility failed\n");
+        fut_test_fail(805);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 805: src write visible at dst\n");
+        fut_test_pass();
+    }
+
+    /* Test 806: write to destination, read at source */
+    fut_printf("[MISC-TEST] Test 806: write to destination, readable at source\n");
+    fd = sys_open("/tmp/bind_dst/world.txt", 0x241 /* O_WRONLY|O_CREAT|O_TRUNC */, 0644);
+    bool t806_ok = false;
+    if (fd >= 0) {
+        sys_write((int)fd, "world", 5);
+        sys_close((int)fd);
+        /* Read from bind source */
+        fd = sys_open("/tmp/bind_src/world.txt", 0 /* O_RDONLY */, 0);
+        if (fd >= 0) {
+            char rbuf[8] = {0};
+            ssize_t nr = sys_read((int)fd, rbuf, 5);
+            sys_close((int)fd);
+            if (nr == 5 && rbuf[0] == 'w' && rbuf[4] == 'd')
+                t806_ok = true;
+        }
+    }
+    if (!t806_ok) {
+        fut_printf("[MISC-TEST] ✗ Test 806: bind dst→src visibility failed\n");
+        fut_test_fail(806);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 806: dst write visible at src\n");
+        fut_test_pass();
+    }
+
+    /* Test 807: unmount bind destination → 0 */
+    fut_printf("[MISC-TEST] Test 807: umount2(\"/tmp/bind_dst\") → 0\n");
+    ret = sys_umount2("/tmp/bind_dst", 0);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 807: umount2 returned %ld\n", ret);
+        fut_test_fail(807);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 807: umount2 bind → 0\n");
+        fut_test_pass();
+    }
+}
+
+/* ============================================================
  * Tests 800-803: inotify fd readiness in poll / epoll / select
  *
  *   800: poll([inotify_fd], POLLIN, 0) after event → 1 (POLLIN set)
@@ -29696,6 +29793,7 @@ void fut_misc_test_thread(void *arg) {
     test_opath_semantics();               /* Tests 792-795: O_PATH fd: open ok, read EBADF, write EBADF, fstat ok */
     test_ftruncate_rlimit_fsize();        /* Tests 796-799: ftruncate/truncate enforce RLIMIT_FSIZE */
     test_inotify_poll_epoll_select();     /* Tests 800-803: inotify fd readiness in poll/epoll/select */
+    test_bind_mount();                    /* Tests 804-807: MS_BIND bind mount */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

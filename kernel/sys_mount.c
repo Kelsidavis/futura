@@ -382,10 +382,43 @@ long sys_mount(const char *source, const char *target, const char *filesystemtyp
         return -EPERM;
     }
 
-    /* Reject special mount operations not yet implemented */
-    if (mountflags & (MS_BIND | MS_MOVE)) {
+    /* MS_BIND: create a bind mount (source visible at target) */
+    if (mountflags & MS_BIND) {
+        /* Copy source path */
+        char source_buf[256];
+        if (!source || mount_copy_from_user(source_buf, source, sizeof(source_buf)) != 0) {
+            fut_printf("[MOUNT] bind mount: EFAULT copying source\n");
+            return -EFAULT;
+        }
+        if (memchr(source_buf, '\0', sizeof(source_buf)) == NULL) {
+            return -ENAMETOOLONG;
+        }
+        if (source_buf[0] == '\0') {
+            return -EINVAL;
+        }
+
+        /* Heap-dup target; ownership transferred to fut_vfs_bind_mount on success */
+        size_t tlen = strlen(target_buf) + 1;
+        char *mountpoint = fut_malloc(tlen);
+        if (!mountpoint) return -ENOMEM;
+        memcpy(mountpoint, target_buf, tlen);
+
+        int ret = fut_vfs_bind_mount(source_buf, mountpoint);
+        if (ret < 0) {
+            fut_free(mountpoint);
+            fut_printf("[MOUNT] bind mount('%s' -> '%s', pid=%d) -> %d\n",
+                       source_buf, target_buf, task->pid, ret);
+            return ret;
+        }
+        fut_printf("[MOUNT] bind mount('%s' -> '%s', pid=%d) -> 0\n",
+                   source_buf, target_buf, task->pid);
+        return 0;
+    }
+
+    /* MS_MOVE: not yet implemented */
+    if (mountflags & MS_MOVE) {
         fut_printf("[MOUNT] mount(target='%s', flags=0x%lx, pid=%d) -> ENOSYS "
-                   "(MS_BIND/MS_MOVE not implemented)\n",
+                   "(MS_MOVE not implemented)\n",
                    target_buf, mountflags, task->pid);
         return -ENOSYS;
     }

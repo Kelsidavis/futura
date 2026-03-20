@@ -399,6 +399,64 @@ int fut_vfs_mount(const char *device, const char *mountpoint,
     return 0;
 }
 
+/**
+ * fut_vfs_bind_mount - Create a bind mount.
+ *
+ * A bind mount makes a directory subtree visible at a second location.
+ * Both paths share the same underlying vnode tree; changes at either
+ * location are immediately visible at the other.
+ *
+ * Allocates a new mount entry with root pointing to the source directory
+ * vnode (ref already held).  The target path string is heap-duplicated so
+ * the caller may free its copy.
+ *
+ * @param source  Absolute path of the source directory.
+ * @param target  Heap-allocated absolute path of the new mount point
+ *                (ownership transferred to the mount entry; caller must
+ *                NOT free it after a successful return).
+ * @return 0 on success, negative errno on failure.
+ */
+int fut_vfs_bind_mount(const char *source, char *target) {
+    if (!source || !target)
+        return -EINVAL;
+
+    /* Look up source vnode — must be a directory */
+    struct fut_vnode *src_vnode = NULL;
+    int ret = fut_vfs_lookup(source, &src_vnode);
+    if (ret < 0)
+        return ret;
+    if (!src_vnode) {
+        return -ENOENT;
+    }
+    if (src_vnode->type != VN_DIR) {
+        fut_vnode_unref(src_vnode);
+        return -ENOTDIR;
+    }
+
+    /* Allocate bind mount entry */
+    struct fut_mount *mount = fut_malloc(sizeof(struct fut_mount));
+    if (!mount) {
+        fut_vnode_unref(src_vnode);
+        return -ENOMEM;
+    }
+
+    mount->device         = source;   /* informational only */
+    mount->mountpoint     = target;   /* heap-dup from caller */
+    mount->fs             = NULL;     /* no filesystem driver */
+    mount->root           = src_vnode; /* ref held by lookup */
+    mount->flags          = 4096;    /* MS_BIND */
+    mount->expire_marked  = false;
+    mount->fs_data        = NULL;
+    mount->st_dev         = next_device_id++;
+    mount->block_device_handle = ((fut_handle_t)0); /* FUT_INVALID_HANDLE */
+
+    /* Prepend to mount list */
+    mount->next = mount_list;
+    mount_list  = mount;
+
+    return 0;
+}
+
 int fut_vfs_unmount(const char *mountpoint) {
     struct fut_mount **prev = &mount_list;
     struct fut_mount *mount = mount_list;

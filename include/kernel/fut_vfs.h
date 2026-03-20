@@ -677,6 +677,18 @@ int fut_vfs_mount(const char *device, const char *mountpoint,
                   const char *fstype, int flags, void *data, fut_handle_t block_device_handle);
 
 /**
+ * Create a bind mount.
+ *
+ * Makes the directory at @source visible at @target.  The @target string
+ * must be heap-allocated; ownership is transferred on success.
+ *
+ * @param source  Absolute path of source directory.
+ * @param target  Heap-allocated absolute path of target mount point.
+ * @return 0 on success, negative errno on failure.
+ */
+int fut_vfs_bind_mount(const char *source, char *target);
+
+/**
  * Unmount a filesystem.
  *
  * @param mountpoint Mount point path

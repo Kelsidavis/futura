@@ -298,10 +298,11 @@ long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
         return 0;
 
     case PR_SET_SECCOMP:
-        /* Accept SECCOMP_MODE_DISABLED (no-op); reject filter mode (ENOSYS) */
-        if (arg2 == 0)
-            return 0;
-        return -ENOSYS;
+        /* Accept all seccomp modes as no-op (no BPF enforcement in Futura).
+         * SECCOMP_MODE_DISABLED=0, SECCOMP_MODE_STRICT=1, SECCOMP_MODE_FILTER=2 */
+        if (arg2 > 2)
+            return -EINVAL;
+        return 0;
 
     case PR_GET_TID_ADDRESS: {
         /* Return the address registered via set_tid_address() for this thread.

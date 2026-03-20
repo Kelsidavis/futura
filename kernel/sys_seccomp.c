@@ -62,8 +62,15 @@ long sys_seccomp(unsigned int operation, unsigned int flags, const void *uargs) 
         return 0;
 
     case SECCOMP_SET_MODE_FILTER:
-        /* BPF filter mode: not yet implemented */
-        return -ENOSYS;
+        /* BPF filter mode: accept as no-op (no real BPF enforcement in Futura).
+         * Chrome, Node.js, systemd and other sandboxed programs install filters
+         * at startup; ENOSYS would prevent them from running at all. */
+        if (flags & ~(SECCOMP_FILTER_FLAG_TSYNC | SECCOMP_FILTER_FLAG_LOG |
+                      SECCOMP_FILTER_FLAG_SPEC_ALLOW))
+            return -EINVAL;
+        if (!uargs)
+            return -EFAULT;
+        return 0;
 
     case SECCOMP_GET_ACTION_AVAIL: {
         /* Check if a given action is supported.

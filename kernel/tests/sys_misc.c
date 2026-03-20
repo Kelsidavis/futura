@@ -10784,19 +10784,19 @@ static void test_seccomp_strict_mode(void) {
     fut_test_pass();
 }
 
-/* Test 227: SECCOMP_SET_MODE_FILTER returns ENOSYS (BPF not implemented) */
+/* Test 227: SECCOMP_SET_MODE_FILTER with NULL prog → EFAULT (not ENOSYS; filter accepted as no-op) */
 static void test_seccomp_filter_enosys(void) {
-    fut_printf("[MISC-TEST] Test 227: seccomp FILTER returns ENOSYS\n");
+    fut_printf("[MISC-TEST] Test 227: seccomp FILTER NULL prog → EFAULT\n");
     extern long sys_seccomp(unsigned int operation, unsigned int flags,
                             const void *uargs);
 
     long r = sys_seccomp(TEST_SECCOMP_SET_MODE_FILTER, 0, NULL);
-    if (r != -38 /* -ENOSYS */) {
-        fut_printf("[MISC-TEST] ✗ seccomp FILTER expected ENOSYS, got %ld\n", r);
+    if (r != -14 /* -EFAULT */) {
+        fut_printf("[MISC-TEST] ✗ seccomp FILTER NULL expected EFAULT(-14), got %ld\n", r);
         fut_test_fail(227); return;
     }
 
-    fut_printf("[MISC-TEST] ✓ seccomp FILTER → ENOSYS\n");
+    fut_printf("[MISC-TEST] ✓ seccomp FILTER NULL → EFAULT\n");
     fut_test_pass();
 }
 
@@ -30959,6 +30959,118 @@ static void test_ms_move_mount(void) {
 #undef MS_BIND_T
 }
 
+/* =====================================================================
+ * Tests 901-906: seccomp FILTER / STRICT / prctl no-op
+ *
+ * Test 901: seccomp(SECCOMP_SET_MODE_STRICT, 0, NULL) → 0
+ * Test 902: seccomp(SECCOMP_SET_MODE_FILTER, 0, valid_prog) → 0
+ * Test 903: seccomp(SECCOMP_SET_MODE_FILTER, 0, NULL) → EFAULT
+ * Test 904: prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, valid_prog) → 0
+ * Test 905: prctl(PR_GET_SECCOMP) → 0 (no filter enforced)
+ * Test 906: seccomp(SECCOMP_GET_ACTION_AVAIL, 0, &SECCOMP_RET_ALLOW) → 0
+ * ===================================================================== */
+
+/* Minimal BPF program: one instruction (BPF_RET|BPF_K, SECCOMP_RET_ALLOW) */
+struct test_sock_fprog {
+    unsigned short len;
+    void          *filter;
+};
+struct test_sock_filter {
+    unsigned short code;
+    unsigned char  jt;
+    unsigned char  jf;
+    unsigned int   k;
+};
+
+static void test_seccomp_filter(void) {
+    extern long sys_seccomp(unsigned int operation, unsigned int flags,
+                             const void *uargs);
+    extern long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
+                          unsigned long arg4, unsigned long arg5);
+
+    fut_printf("[MISC-TEST] Tests 901-906: seccomp FILTER/STRICT/prctl no-op\n");
+
+    /* Test 901: SECCOMP_SET_MODE_STRICT (0) → 0 */
+    {
+        long r = sys_seccomp(0 /* SECCOMP_SET_MODE_STRICT */, 0, (void *)0);
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 901: seccomp(STRICT) → 0\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 901: seccomp(STRICT) = %ld (want 0)\n", r);
+            fut_test_fail(901);
+        }
+    }
+
+    /* Test 902: SECCOMP_SET_MODE_FILTER with valid (non-NULL) prog → 0 */
+    {
+        struct test_sock_filter insn = { 0x6 /* BPF_RET|BPF_K */, 0, 0, 0x7fff0000U /* SECCOMP_RET_ALLOW */ };
+        struct test_sock_fprog prog  = { 1, &insn };
+        long r = sys_seccomp(1 /* SECCOMP_SET_MODE_FILTER */, 0, &prog);
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 902: seccomp(FILTER,valid_prog) → 0\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 902: seccomp(FILTER,valid_prog) = %ld (want 0)\n", r);
+            fut_test_fail(902);
+        }
+    }
+
+    /* Test 903: SECCOMP_SET_MODE_FILTER with NULL prog → EFAULT (-14) */
+    {
+        long r = sys_seccomp(1 /* SECCOMP_SET_MODE_FILTER */, 0, (void *)0);
+        if (r == -14 /* -EFAULT */) {
+            fut_printf("[MISC-TEST] ✓ Test 903: seccomp(FILTER,NULL) → EFAULT\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 903: seccomp(FILTER,NULL) = %ld (want -14)\n", r);
+            fut_test_fail(903);
+        }
+    }
+
+    /* Test 904: prctl(PR_SET_SECCOMP=22, SECCOMP_MODE_FILTER=2, prog) → 0 */
+    {
+        struct test_sock_filter insn = { 0x6, 0, 0, 0x7fff0000U };
+        struct test_sock_fprog prog  = { 1, &insn };
+        long r = sys_prctl(22 /* PR_SET_SECCOMP */, 2 /* SECCOMP_MODE_FILTER */,
+                           (unsigned long)&prog, 0, 0);
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 904: prctl(PR_SET_SECCOMP,FILTER) → 0\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 904: prctl(PR_SET_SECCOMP,FILTER) = %ld (want 0)\n", r);
+            fut_test_fail(904);
+        }
+    }
+
+    /* Test 905: prctl(PR_GET_SECCOMP=21) → 0 (no filter enforced) */
+    {
+        long r = sys_prctl(21 /* PR_GET_SECCOMP */, 0, 0, 0, 0);
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 905: prctl(PR_GET_SECCOMP) → 0\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 905: prctl(PR_GET_SECCOMP) = %ld (want 0)\n", r);
+            fut_test_fail(905);
+        }
+    }
+
+    /* Test 906: seccomp(SECCOMP_GET_ACTION_AVAIL, 0, &SECCOMP_RET_ALLOW) → 0 */
+    {
+        unsigned int action = 0x7fff0000U; /* SECCOMP_RET_ALLOW */
+        long r = sys_seccomp(2 /* SECCOMP_GET_ACTION_AVAIL */, 0, &action);
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 906: seccomp(GET_ACTION_AVAIL,ALLOW) → 0\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 906: seccomp(GET_ACTION_AVAIL,ALLOW) = %ld (want 0)\n", r);
+            fut_test_fail(906);
+        }
+    }
+
+    fut_printf("[MISC-TEST] ✓ Tests 901-906: seccomp FILTER/STRICT/prctl no-op done\n");
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -31521,6 +31633,8 @@ void fut_misc_test_thread(void *arg) {
     test_af_inet_bind_getsockname();      /* Tests 882-887: AF_INET bind/getsockname, SO_PRIORITY/BINDTODEVICE */
     test_udp_sockopt_and_sendto();        /* Tests 888-895: IPPROTO_UDP setsockopt/getsockopt + AF_INET DGRAM sendto */
     test_ms_move_mount();                 /* Tests 896-900: MS_MOVE mount relocation */
+
+    test_seccomp_filter();                /* Tests 901-906: seccomp FILTER/STRICT/prctl no-op */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -36498,6 +36498,116 @@ static void test_sched_batch_idle_roundtrip(void) {
     }
 }
 
+/* ============================================================
+ * Tests 1105-1110: SCHED_FIFO and SCHED_RR realtime policy roundtrip
+ *   Test 1105: sched_setscheduler(0, SCHED_FIFO, {priority=1}) succeeds
+ *   Test 1106: sched_getscheduler returns SCHED_FIFO after set
+ *   Test 1107: sched_setscheduler(0, SCHED_RR, {priority=10}) succeeds
+ *   Test 1108: sched_getscheduler returns SCHED_RR after set
+ *   Test 1109: sched_setscheduler(0, SCHED_FIFO, {priority=0}) → EINVAL
+ *   Test 1110: restore to SCHED_OTHER succeeds
+ * ============================================================ */
+static void test_sched_rt_policy_roundtrip(void) {
+    extern long sys_sched_setscheduler(int pid, int policy, const struct sched_param *param);
+    extern long sys_sched_getscheduler(int pid);
+    struct sched_param param;
+
+#ifndef SCHED_FIFO
+#define SCHED_FIFO 1
+#endif
+#ifndef SCHED_RR
+#define SCHED_RR   2
+#endif
+
+    /* ---- Test 1105: SCHED_FIFO with priority=1 ---- */
+    fut_printf("[MISC-TEST] Test 1105: sched_setscheduler(SCHED_FIFO, priority=1) succeeds\n");
+    {
+        param.sched_priority = 1;
+        long r = sys_sched_setscheduler(0, SCHED_FIFO, &param);
+        if (r < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1105: sched_setscheduler(SCHED_FIFO,1) returned %ld\n", r);
+            fut_test_fail(1105);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1105: sched_setscheduler(SCHED_FIFO,1) old_policy=%ld\n",
+                       r);
+            fut_test_pass();
+        }
+    }
+
+    /* ---- Test 1106: getscheduler returns SCHED_FIFO ---- */
+    fut_printf("[MISC-TEST] Test 1106: sched_getscheduler returns SCHED_FIFO\n");
+    {
+        long pol = sys_sched_getscheduler(0);
+        if (pol != SCHED_FIFO) {
+            fut_printf("[MISC-TEST] ✗ Test 1106: getscheduler=%ld (expected SCHED_FIFO=%d)\n",
+                       pol, SCHED_FIFO);
+            fut_test_fail(1106);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1106: getscheduler → SCHED_FIFO (%ld)\n", pol);
+            fut_test_pass();
+        }
+    }
+
+    /* ---- Test 1107: SCHED_RR with priority=10 ---- */
+    fut_printf("[MISC-TEST] Test 1107: sched_setscheduler(SCHED_RR, priority=10) succeeds\n");
+    {
+        param.sched_priority = 10;
+        long r = sys_sched_setscheduler(0, SCHED_RR, &param);
+        if (r < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1107: sched_setscheduler(SCHED_RR,10) returned %ld\n", r);
+            fut_test_fail(1107);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1107: sched_setscheduler(SCHED_RR,10) old_policy=%ld\n",
+                       r);
+            fut_test_pass();
+        }
+    }
+
+    /* ---- Test 1108: getscheduler returns SCHED_RR ---- */
+    fut_printf("[MISC-TEST] Test 1108: sched_getscheduler returns SCHED_RR\n");
+    {
+        long pol = sys_sched_getscheduler(0);
+        if (pol != SCHED_RR) {
+            fut_printf("[MISC-TEST] ✗ Test 1108: getscheduler=%ld (expected SCHED_RR=%d)\n",
+                       pol, SCHED_RR);
+            fut_test_fail(1108);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1108: getscheduler → SCHED_RR (%ld)\n", pol);
+            fut_test_pass();
+        }
+    }
+
+    /* ---- Test 1109: SCHED_FIFO with priority=0 → EINVAL ---- */
+    fut_printf("[MISC-TEST] Test 1109: sched_setscheduler(SCHED_FIFO, priority=0) → EINVAL\n");
+    {
+        param.sched_priority = 0;
+        long r = sys_sched_setscheduler(0, SCHED_FIFO, &param);
+        if (r != -22 /* -EINVAL */) {
+            fut_printf("[MISC-TEST] ✗ Test 1109: expected EINVAL(-22), got %ld\n", r);
+            fut_test_fail(1109);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1109: SCHED_FIFO priority=0 → EINVAL\n");
+            fut_test_pass();
+        }
+    }
+
+    /* ---- Test 1110: restore SCHED_OTHER ---- */
+    fut_printf("[MISC-TEST] Test 1110: restore to SCHED_OTHER\n");
+    {
+        param.sched_priority = 0;
+        long r = sys_sched_setscheduler(0, 0 /* SCHED_OTHER */, &param);
+        long pol = sys_sched_getscheduler(0);
+        if (r < 0 || pol != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1110: restore failed: ret=%ld, getscheduler=%ld\n",
+                       r, pol);
+            fut_test_fail(1110);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1110: restored to SCHED_OTHER (0)\n");
+            fut_test_pass();
+        }
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -37106,6 +37216,7 @@ void fut_misc_test_thread(void *arg) {
     test_fdinfo_pos_flags(); /* Tests 1093-1096: fdinfo pos:/flags: accuracy */
     test_sa_restart_and_sigblk(); /* Tests 1097-1100: SA_RESTART flag roundtrip; SigBlk: accuracy */
     test_sched_batch_idle_roundtrip(); /* Tests 1101-1104: SCHED_BATCH/SCHED_IDLE roundtrip */
+    test_sched_rt_policy_roundtrip(); /* Tests 1105-1110: SCHED_FIFO/SCHED_RR roundtrip */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

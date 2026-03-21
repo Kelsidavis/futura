@@ -15,6 +15,7 @@
 #include <kernel/fut_socket.h>
 #include <kernel/uaccess.h>
 #include <kernel/errno.h>
+#include <kernel/signal.h>
 #include <sys/socket.h>  /* For struct msghdr, cmsghdr, socklen_t, SCM_* */
 #include <stddef.h>
 #include <stdint.h>
@@ -426,7 +427,10 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
             return total_sent > 0 ? total_sent : -EFAULT;
         }
 
-        /* Write to socket — use sendto_dgram for named DGRAM, VFS for stream/socketpair */
+        /* Write to socket — use sendto_dgram for named DGRAM, VFS for stream/socketpair.
+         * Suppress SIGPIPE at VFS level; we handle it here based on MSG_NOSIGNAL. */
+        fut_task_t *sm_task = fut_task_current();
+        if (sm_task) sm_task->suppress_sigpipe = 1;
         ssize_t ret;
         if (is_dgram_sendmsg) {
             ret = fut_socket_sendto_dgram(dgram_dest, dgram_dest_len,
@@ -435,14 +439,13 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
         } else {
             ret = fut_vfs_write(local_sockfd, kbuf, iov.iov_len);
         }
+        if (sm_task) sm_task->suppress_sigpipe = 0;
         fut_free(kbuf);
 
         if (ret < 0) {
             /* SIGPIPE on broken connection (unless MSG_NOSIGNAL) */
             if (ret == -EPIPE && !(local_flags & 0x4000 /* MSG_NOSIGNAL */)) {
-                extern int fut_signal_send(struct fut_task *task, int signum);
-                fut_task_t *task = fut_task_current();
-                if (task) fut_signal_send(task, 13 /* SIGPIPE */);
+                if (sm_task) fut_signal_send(sm_task, 13 /* SIGPIPE */);
             }
             return total_sent > 0 ? total_sent : ret;
         }

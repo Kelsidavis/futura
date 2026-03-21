@@ -606,9 +606,15 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
         }
     }
 
+    /* MSG_NOSIGNAL: suppress SIGPIPE at the source (before fut_vfs_write sends it) */
+    if (local_flags & 0x4000 /* MSG_NOSIGNAL */)
+        task->suppress_sigpipe = 1;
+
     /* Write to socket via VFS */
     ssize_t ret = fut_vfs_write(local_sockfd, kbuf, local_len);
     fut_free(kbuf);
+
+    task->suppress_sigpipe = 0;
 
     /* Restore O_NONBLOCK if we temporarily set it */
     if (dontwait_applied) {
@@ -620,11 +626,6 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
     /* Phase 4: Consume bytes from I/O budget if write succeeded */
     if (ret > 0) {
         fut_io_budget_consume_bytes(task, (uint64_t)ret);
-    }
-
-    /* fut_vfs_write already raised SIGPIPE; suppress it when MSG_NOSIGNAL is set */
-    if (ret == -EPIPE && (local_flags & 0x4000 /* MSG_NOSIGNAL */)) {
-        __atomic_and_fetch(&task->pending_signals, ~(1ULL << 12), __ATOMIC_RELEASE);
     }
 
     if (ret < 0) {

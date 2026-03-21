@@ -13739,6 +13739,68 @@ static void test_tee_correctness(void) {
     }
 }
 
+/**
+ * Tests 1371-1372: FIONBIO on pipes propagates to pipe buffer nonblock state
+ *
+ * Test 1371: ioctl(pipefd, FIONBIO, &1) makes pipe read return EAGAIN when empty
+ * Test 1372: ioctl(pipefd, FIONBIO, &0) restores blocking behavior (read succeeds after write)
+ */
+static void test_fionbio_pipe(void) {
+    extern long sys_read(int fd, void *buf, size_t count);
+    extern long sys_write(int fd, const void *buf, size_t count);
+    extern long sys_pipe2(int pipefd[2], int flags);
+    extern long sys_ioctl(int fd, unsigned long request, void *argp);
+
+    /* Test 1371: FIONBIO on pipe read end makes empty read return EAGAIN */
+    fut_printf("[MISC-TEST] Test 1371: ioctl(pipe, FIONBIO, 1) → EAGAIN on empty read\n");
+    {
+        int p[2];
+        long r = sys_pipe2(p, 0);
+        if (r < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1371: pipe2 failed: %ld\n", r);
+            fut_test_fail(1371);
+        } else {
+            /* Set nonblock via FIONBIO */
+            int one = 1;
+            long ir = sys_ioctl(p[0], 0x5421 /* FIONBIO */, (void *)&one);
+            if (ir < 0) {
+                fut_printf("[MISC-TEST] ✗ Test 1371: ioctl FIONBIO failed: %ld\n", ir);
+                fut_test_fail(1371);
+            } else {
+                /* Read from empty pipe should now return EAGAIN */
+                char buf[16];
+                long rr = sys_read(p[0], buf, 16);
+                if (rr == -11 /* EAGAIN */) {
+                    fut_printf("[MISC-TEST] ✓ Test 1371: FIONBIO pipe read → EAGAIN\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1371: read → %ld (expected EAGAIN=-11)\n", rr);
+                    fut_test_fail(1371);
+                }
+            }
+
+            /* Test 1372: Clear FIONBIO, write data, read succeeds */
+            fut_printf("[MISC-TEST] Test 1372: ioctl(pipe, FIONBIO, 0) + write → read succeeds\n");
+            {
+                int zero = 0;
+                sys_ioctl(p[0], 0x5421 /* FIONBIO */, (void *)&zero);
+                /* Write some data so read has something to return */
+                sys_write(p[1], "hi", 2);
+                char buf2[16];
+                long rr = sys_read(p[0], buf2, 16);
+                if (rr == 2 && buf2[0] == 'h' && buf2[1] == 'i') {
+                    fut_printf("[MISC-TEST] ✓ Test 1372: FIONBIO cleared, read=2 bytes\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1372: read → %ld (expected 2)\n", rr);
+                    fut_test_fail(1372);
+                }
+            }
+            sys_close(p[0]); sys_close(p[1]);
+        }
+    }
+}
+
 static void test_proc_fd_anon_types(void) {
     extern long sys_read(int fd, void *buf, size_t count);
     extern long sys_readlink(const char *path, char *buf, size_t bufsiz);
@@ -44769,6 +44831,7 @@ void fut_misc_test_thread(void *arg) {
     test_splice_nonblock();                  /* Tests 1362-1363: splice SPLICE_F_NONBLOCK */
     test_read_write_count_zero();            /* Tests 1364-1366: read/write count=0 EBADF, sendfile neg offset */
     test_tee_correctness();                  /* Tests 1367-1370: tee data integrity, NONBLOCK, same-fd */
+    test_fionbio_pipe();                     /* Tests 1371-1372: FIONBIO pipe nonblock propagation */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

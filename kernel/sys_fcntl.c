@@ -495,9 +495,9 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
             fut_socket_t *sock = get_socket_from_fd(local_fd);
             if (sock) {
                 if (new_flags & O_NONBLOCK) {
-                    sock->flags |= 0x800;
+                    sock->flags |= O_NONBLOCK;
                 } else {
-                    sock->flags &= ~0x800;
+                    sock->flags &= ~O_NONBLOCK;
                 }
             }
         }

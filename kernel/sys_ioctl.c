@@ -964,6 +964,14 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
                 file->flags |= O_NONBLOCK;
             else
                 file->flags &= ~O_NONBLOCK;
+            /* Propagate to chr_ops devices (pipes, FIFOs) via private ioctl
+             * so they update internal nonblock state. Matches fcntl(F_SETFL)
+             * propagation path at sys_fcntl.c:487-490. */
+            if (file->chr_ops && file->chr_ops->ioctl) {
+                file->chr_ops->ioctl(file->chr_inode, file->chr_private,
+                                     0xFE01 /* PIPE_IOC_SETFLAGS */,
+                                     (unsigned long)file->flags);
+            }
             /* Propagate to socket object so socket-layer checks see the flag */
             fut_socket_t *sock = get_socket_from_fd(fd);
             if (sock) {

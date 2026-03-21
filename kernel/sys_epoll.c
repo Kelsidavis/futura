@@ -1064,6 +1064,7 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
         set->fds[slot].oneshot = (ev.events & EPOLL_ONESHOT) != 0;
         set->fds[slot].last_was_readable = false;
         set->fds[slot].last_was_writable = false;
+        set->fds[slot].last_was_hup = false;
 
         /* Phase 3: Mask out modifier flags from events for actual event checking */
         uint32_t base_events = ev.events & ~(EPOLL_ET | EPOLL_ONESHOT);
@@ -1122,6 +1123,7 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
                 set->fds[i].oneshot = (ev.events & EPOLL_ONESHOT) != 0;
                 set->fds[i].last_was_readable = false;
                 set->fds[i].last_was_writable = false;
+                set->fds[i].last_was_hup = false;
 
                 /* Strip modifier flags from events for actual event checking */
                 uint32_t base_events = ev.events & ~(EPOLL_ET | EPOLL_ONESHOT);

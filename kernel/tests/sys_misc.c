@@ -16371,6 +16371,139 @@ static void test_chmod_sgid_strip(void) {
     }
 }
 
+/**
+ * test_epollet_mod_rearm - EPOLL_CTL_MOD re-arms edge-triggered state
+ *
+ * Tests 1462-1463:
+ * 1462: EPOLL_CTL_MOD re-arms EPOLLET so EPOLLHUP fires again
+ * 1463: EPOLL_CTL_MOD re-arms EPOLLET readable state
+ */
+static void test_epollet_mod_rearm(void) {
+    extern long sys_pipe(int pipefd[2]);
+    extern long sys_epoll_create1(int flags);
+    extern long sys_epoll_ctl(int epfd, int op, int fd, void *event);
+    extern long sys_epoll_wait(int epfd, void *events, int maxevents, int timeout);
+    extern long sys_write(int fd, const void *buf, size_t count);
+    extern long sys_read(int fd, void *buf, size_t count);
+    extern long sys_close(int fd);
+
+#define ET_EPOLLET   (1U << 31)
+#define ET_EPOLLIN   0x001
+#define ET_EPOLLHUP  0x010
+
+    /* Test 1462: EPOLL_CTL_MOD re-arms EPOLLET for EPOLLHUP */
+    fut_printf("[MISC-TEST] Test 1462: EPOLL_CTL_MOD re-arms EPOLLET EPOLLHUP\n");
+    {
+        int pipefd[2];
+        long r = sys_pipe(pipefd);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1462: pipe failed: %ld\n", r);
+            fut_test_fail(1462);
+        } else {
+            long epfd = sys_epoll_create1(0);
+            if (epfd < 0) {
+                fut_printf("[MISC-TEST] ✗ Test 1462: epoll_create1 failed: %ld\n", epfd);
+                fut_vfs_close(pipefd[0]); fut_vfs_close(pipefd[1]);
+                fut_test_fail(1462);
+            } else {
+                struct { uint32_t events; uint64_t data; } __attribute__((packed)) ev = {
+                    .events = ET_EPOLLIN | ET_EPOLLET, .data = 1462
+                };
+                sys_epoll_ctl((int)epfd, 1 /* ADD */, pipefd[0], &ev);
+
+                /* Close write end → EPOLLHUP on read end */
+                fut_vfs_close(pipefd[1]);
+
+                /* First wait: consume the HUP edge */
+                struct { uint32_t events; uint64_t data; } __attribute__((packed)) out = {0};
+                r = sys_epoll_wait((int)epfd, &out, 1, 0);
+                /* Edge consumed, second wait should be empty */
+                r = sys_epoll_wait((int)epfd, &out, 1, 0);
+
+                /* Now MOD to re-arm the edge state */
+                ev.events = ET_EPOLLIN | ET_EPOLLET;
+                ev.data = 1462;
+                sys_epoll_ctl((int)epfd, 3 /* MOD */, pipefd[0], &ev);
+
+                /* After MOD, EPOLLHUP should fire again */
+                out.events = 0;
+                r = sys_epoll_wait((int)epfd, &out, 1, 0);
+                if (r == 1 && (out.events & ET_EPOLLHUP)) {
+                    fut_printf("[MISC-TEST] ✓ Test 1462: MOD re-armed EPOLLET EPOLLHUP\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1462: after MOD: wait=%ld events=0x%x\n",
+                               r, out.events);
+                    fut_test_fail(1462);
+                }
+
+                sys_close((int)epfd);
+                fut_vfs_close(pipefd[0]);
+            }
+        }
+    }
+
+    /* Test 1463: EPOLL_CTL_MOD re-arms EPOLLET readable state */
+    fut_printf("[MISC-TEST] Test 1463: EPOLL_CTL_MOD re-arms EPOLLET EPOLLIN\n");
+    {
+        int pipefd[2];
+        long r = sys_pipe(pipefd);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1463: pipe failed: %ld\n", r);
+            fut_test_fail(1463);
+        } else {
+            long epfd = sys_epoll_create1(0);
+            if (epfd < 0) {
+                fut_printf("[MISC-TEST] ✗ Test 1463: epoll_create1 failed: %ld\n", epfd);
+                fut_vfs_close(pipefd[0]); fut_vfs_close(pipefd[1]);
+                fut_test_fail(1463);
+            } else {
+                struct { uint32_t events; uint64_t data; } __attribute__((packed)) ev = {
+                    .events = ET_EPOLLIN | ET_EPOLLET, .data = 1463
+                };
+                sys_epoll_ctl((int)epfd, 1 /* ADD */, pipefd[0], &ev);
+
+                /* Write data to make pipe readable */
+                sys_write(pipefd[1], "hello", 5);
+
+                /* First wait: consume the readable edge */
+                struct { uint32_t events; uint64_t data; } __attribute__((packed)) out = {0};
+                r = sys_epoll_wait((int)epfd, &out, 1, 0);
+                /* Edge consumed */
+
+                /* Second wait without MOD: should not re-report */
+                out.events = 0;
+                r = sys_epoll_wait((int)epfd, &out, 1, 0);
+
+                /* MOD to re-arm */
+                ev.events = ET_EPOLLIN | ET_EPOLLET;
+                ev.data = 1463;
+                sys_epoll_ctl((int)epfd, 3 /* MOD */, pipefd[0], &ev);
+
+                /* After MOD, EPOLLIN should fire again (data still in pipe) */
+                out.events = 0;
+                r = sys_epoll_wait((int)epfd, &out, 1, 0);
+                if (r == 1 && (out.events & ET_EPOLLIN)) {
+                    fut_printf("[MISC-TEST] ✓ Test 1463: MOD re-armed EPOLLET EPOLLIN\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1463: after MOD: wait=%ld events=0x%x\n",
+                               r, out.events);
+                    fut_test_fail(1463);
+                }
+
+                sys_close((int)epfd);
+                fut_vfs_close(pipefd[0]);
+                fut_vfs_close(pipefd[1]);
+            }
+        }
+    }
+
+#undef ET_EPOLLET
+#undef ET_EPOLLIN
+#undef ET_EPOLLHUP
+}
+
 static void test_proc_fd_anon_types(void) {
     extern long sys_read(int fd, void *buf, size_t count);
     extern long sys_readlink(const char *path, char *buf, size_t bufsiz);
@@ -47425,6 +47558,7 @@ void fut_misc_test_thread(void *arg) {
     test_sgid_dir_inheritance();            /* Tests 1452-1454: S_ISGID directory group inheritance */
     test_sticky_bit_enforcement();          /* Tests 1455-1458: sticky bit on directories */
     test_chmod_sgid_strip();                /* Tests 1459-1461: chmod S_ISGID stripping */
+    test_epollet_mod_rearm();               /* Tests 1462-1463: EPOLL_CTL_MOD re-arms EPOLLET */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

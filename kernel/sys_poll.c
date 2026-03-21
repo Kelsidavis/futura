@@ -236,10 +236,10 @@ long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout) {
         return -EFAULT;
     }
 
-    if (timeout < -1) {
-        poll_printf("[POLL] poll(fds, %lu, timeout=%d) -> EINVAL (timeout must be >= -1)\n", nfds, timeout);
-        return -EINVAL;
-    }
+    /* Linux treats any negative timeout as infinite (equivalent to -1).
+     * POSIX says "negative timeout means infinite", not just -1. */
+    if (timeout < -1)
+        timeout = -1;
 
     /* nfds == 0 is valid (wait for timeout only) */
     if (nfds == 0) {
@@ -324,11 +324,9 @@ long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout) {
      * ATTACK SCENARIO 4: Negative Timeout Integer Underflow
      * Attacker provides timeout < -1 to exploit unchecked arithmetic
      * 1. Attacker calls poll(fds, nfds=10, timeout=INT_MIN)
-     * 2. Line 87-90: Validation checks timeout >= -1 (Phase 3)
-     * 3. But timeout=INT_MIN fails check (returns EINVAL correctly)
-     * 4. However, if check missing: timeout arithmetic wraps
-     * 5. Timeout conversion to absolute time overflows
-     * 6. Poll never wakes up (infinite hang)
+     * 2. Defense: any negative timeout is normalized to -1 (infinite wait)
+     * 3. This matches Linux behavior (all negatives = infinite)
+     * 4. No integer underflow possible after normalization
      *
      * ATTACK SCENARIO 5: Post-Multiplication Validation Bypass
      * Why post-multiplication checks are INSUFFICIENT:

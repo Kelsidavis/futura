@@ -47662,6 +47662,101 @@ static void test_open_creat_directory_einval(void) {
 }
 
 /* ============================================================
+ * Test 1493: poll() with negative timeout treated as infinite
+ * ============================================================ */
+static void test_poll_negative_timeout(void) {
+    extern long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout);
+    extern long sys_pipe2(int pipefd[2], int flags);
+    extern int fut_vfs_close(int fd);
+    extern long sys_write(int fd, const void *buf, size_t count);
+
+    /* Test 1493: poll() with timeout=-100 should not return EINVAL;
+     * Linux treats any negative timeout as infinite wait.
+     * Use a pipe with data so poll returns immediately with POLLIN. */
+    fut_printf("[MISC-TEST] Test 1493: poll(timeout=-100) → not EINVAL\n");
+    {
+        int pipefd[2];
+        long pret = sys_pipe2(pipefd, 0);
+        if (pret < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1493: pipe2 failed: %ld\n", pret);
+            fut_test_fail(1493);
+            return;
+        }
+        /* Write data so read end is ready → poll returns immediately */
+        sys_write(pipefd[1], "x", 1);
+
+        struct pollfd pfd;
+        pfd.fd = pipefd[0];
+        pfd.events = POLLIN;
+        pfd.revents = 0;
+        /* timeout=-100: negative but not -1. Should be treated as infinite,
+         * but since the fd is ready, poll returns immediately with 1. */
+        long ret = sys_poll(&pfd, 1, -100);
+        fut_vfs_close(pipefd[0]);
+        fut_vfs_close(pipefd[1]);
+        if (ret == -22) {
+            fut_printf("[MISC-TEST] ✗ Test 1493: poll(timeout=-100) returned EINVAL\n");
+            fut_test_fail(1493);
+        } else if (ret == 1 && (pfd.revents & POLLIN)) {
+            fut_printf("[MISC-TEST] ✓ Test 1493: poll(timeout=-100) → %ld with POLLIN\n", ret);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1493: expected 1/POLLIN, got ret=%ld revents=0x%x\n",
+                       ret, pfd.revents);
+            fut_test_fail(1493);
+        }
+    }
+}
+
+/* ============================================================
+ * Tests 1494-1495: fcntl F_DUPFD with arg >= RLIMIT_NOFILE
+ * ============================================================ */
+static void test_fcntl_dupfd_rlimit(void) {
+    extern long sys_fcntl(int fd, int cmd, uint64_t arg);
+    extern long sys_open(const char *pathname, int flags, int mode);
+    extern int fut_vfs_close(int fd);
+
+    long fd = sys_open("/", 0200000 /* O_DIRECTORY | O_RDONLY */, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1494-1495: setup open / failed: %ld\n", fd);
+        fut_test_fail(1494);
+        fut_test_fail(1495);
+        return;
+    }
+
+    /* Test 1494: F_DUPFD with arg >= RLIMIT_NOFILE → EINVAL
+     * Default RLIMIT_NOFILE soft limit is typically 1024. Use 99999. */
+    fut_printf("[MISC-TEST] Test 1494: fcntl(F_DUPFD, 99999) → EINVAL\n");
+    {
+        long ret = sys_fcntl((int)fd, 0 /* F_DUPFD */, 99999);
+        if (ret == -22 /* -EINVAL */) {
+            fut_printf("[MISC-TEST] ✓ Test 1494: F_DUPFD(99999) → EINVAL\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1494: expected -22, got %ld\n", ret);
+            if (ret >= 0) fut_vfs_close((int)ret);
+            fut_test_fail(1494);
+        }
+    }
+
+    /* Test 1495: F_DUPFD_CLOEXEC with arg >= RLIMIT_NOFILE → EINVAL */
+    fut_printf("[MISC-TEST] Test 1495: fcntl(F_DUPFD_CLOEXEC, 99999) → EINVAL\n");
+    {
+        long ret = sys_fcntl((int)fd, 1030 /* F_DUPFD_CLOEXEC */, 99999);
+        if (ret == -22 /* -EINVAL */) {
+            fut_printf("[MISC-TEST] ✓ Test 1495: F_DUPFD_CLOEXEC(99999) → EINVAL\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1495: expected -22, got %ld\n", ret);
+            if (ret >= 0) fut_vfs_close((int)ret);
+            fut_test_fail(1495);
+        }
+    }
+
+    fut_vfs_close((int)fd);
+}
+
+/* ============================================================
  * Tests 1479-1481: openat2 RESOLVE_IN_ROOT enforcement
  * ============================================================ */
 #define TEST_RESOLVE_IN_ROOT 0x10
@@ -48485,6 +48580,8 @@ void fut_misc_test_thread(void *arg) {
     test_socket_atomic_flags();             /* Tests 1484-1487: socket/socketpair atomic SOCK_NONBLOCK/SOCK_CLOEXEC */
     test_pipe2_atomic_flags();              /* Tests 1488-1489: pipe2 atomic O_NONBLOCK|O_CLOEXEC */
     test_open_creat_directory_einval();     /* Tests 1490-1492: open(O_CREAT|O_DIRECTORY) → EINVAL */
+    test_poll_negative_timeout();           /* Test  1493: poll() with timeout < -1 treated as infinite */
+    test_fcntl_dupfd_rlimit();             /* Tests 1494-1495: F_DUPFD with arg >= RLIMIT_NOFILE → EINVAL */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

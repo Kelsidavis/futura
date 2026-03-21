@@ -535,6 +535,15 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
             return -EINVAL;
         }
 
+        /* Linux: F_DUPFD with arg >= RLIMIT_NOFILE returns -EINVAL */
+        uint64_t nofile_rlim = task->rlimits[RLIMIT_NOFILE].rlim_cur;
+        if ((uint64_t)minfd >= nofile_rlim) {
+            fut_printf("[FCNTL] fcntl(fd=%d, cmd=%s, minfd=%d) -> EINVAL "
+                       "(minfd >= RLIMIT_NOFILE %llu)\n",
+                       local_fd, cmd_name, minfd, nofile_rlim);
+            return -EINVAL;
+        }
+
         /* Check RLIMIT_NOFILE before allowing F_DUPFD
          *
          * ATTACK SCENARIO: FD Exhaustion via F_DUPFD

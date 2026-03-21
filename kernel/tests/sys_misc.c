@@ -39435,6 +39435,128 @@ done_icao:
     return;
 }
 
+/**
+ * test_inotify_attrib_and_sndtimeo() — Tests 1216-1217
+ *
+ *   Test 1216: inotify IN_ATTRIB fires when a file's permissions are changed
+ *              via chmod(). IN_ATTRIB covers all metadata changes (mode, uid,
+ *              gid, timestamps) and is dispatched from sys_chmod/chown/utimensat.
+ *
+ *   Test 1217: SO_SNDTIMEO getsockopt/setsockopt round-trip.
+ *              Sets a 100ms send timeout, then reads it back and verifies the
+ *              stored value matches. Mirrors the SO_RCVTIMEO test (Test 315).
+ */
+static void test_inotify_attrib_and_sndtimeo(void) {
+    extern long sys_inotify_init1(int flags);
+    extern long sys_inotify_add_watch(int fd, const char *path, uint32_t mask);
+    extern long sys_close(int fd);
+    extern long sys_read(int fd, void *buf, size_t count);
+    extern long sys_chmod(const char *path, unsigned int mode);
+    extern long sys_setsockopt(int sockfd, int level, int optname,
+                               const void *optval, unsigned int optlen);
+    extern long sys_getsockopt(int sockfd, int level, int optname,
+                               void *optval, unsigned int *optlen);
+    extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+
+#define IAT_NB          00004000u
+#define IAT_RDWR_CREAT  0x42
+#define IAT_IN_ATTRIB   0x00000004u
+#define IAT_SOL_SOCKET  1
+#define IAT_SO_SNDTIMEO 21
+
+    /* ---- Test 1216: IN_ATTRIB fires on chmod ---- */
+    fut_printf("[MISC-TEST] Test 1216: inotify IN_ATTRIB fires on chmod\n");
+    {
+        struct iat_ev { int wd; uint32_t mask; uint32_t cookie; uint32_t len; char name[256]; };
+
+        int setup_fd = (int)fut_vfs_open("/ino_attrib1216.txt", IAT_RDWR_CREAT, 0644);
+        if (setup_fd >= 0) { fut_vfs_write(setup_fd, "a", 1); fut_vfs_close(setup_fd); }
+
+        long ifd = sys_inotify_init1(IAT_NB);
+        if (ifd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1216: inotify_init1 -> %ld\n", ifd);
+            fut_test_fail(1216);
+            goto t1217;
+        }
+        long wd = sys_inotify_add_watch((int)ifd, "/", IAT_IN_ATTRIB);
+        if (wd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1216: add_watch -> %ld\n", wd);
+            sys_close((int)ifd);
+            fut_test_fail(1216);
+            fut_vfs_unlink("/ino_attrib1216.txt");
+            goto t1217;
+        }
+        /* chmod → triggers IN_ATTRIB */
+        sys_chmod("/ino_attrib1216.txt", 0600);
+
+        struct iat_ev ev;
+        long nr = sys_read((int)ifd, &ev, sizeof(ev));
+        sys_close((int)ifd);
+        fut_vfs_unlink("/ino_attrib1216.txt");
+        if (nr >= 16 && (ev.mask & IAT_IN_ATTRIB)) {
+            fut_printf("[MISC-TEST] ✓ Test 1216: IN_ATTRIB wd=%d mask=0x%x\n",
+                       ev.wd, ev.mask);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1216: nr=%ld mask=0x%x (no IN_ATTRIB)\n",
+                       nr, (unsigned)(nr >= 16 ? ev.mask : 0));
+            fut_test_fail(1216);
+        }
+    }
+
+t1217:
+    /* ---- Test 1217: SO_SNDTIMEO getsockopt round-trip ---- */
+    fut_printf("[MISC-TEST] Test 1217: SO_SNDTIMEO getsockopt round-trip\n");
+    {
+        int sv[2] = {-1, -1};
+        long r = sys_socketpair(1 /*AF_UNIX*/, 1 /*SOCK_STREAM*/, 0, sv);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1217: socketpair failed: %ld\n", r);
+            fut_test_fail(1217);
+            goto done_iat;
+        }
+
+        /* Set SO_SNDTIMEO = 100ms */
+        struct { long tv_sec; long tv_usec; } tv_set = { .tv_sec = 0, .tv_usec = 100000 };
+        r = sys_setsockopt(sv[0], IAT_SOL_SOCKET, IAT_SO_SNDTIMEO,
+                           &tv_set, sizeof(tv_set));
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1217: setsockopt(SO_SNDTIMEO) = %ld\n", r);
+            sys_close(sv[0]); sys_close(sv[1]);
+            fut_test_fail(1217);
+            goto done_iat;
+        }
+
+        /* Read back with getsockopt */
+        struct { long tv_sec; long tv_usec; } tv_get = {0, 0};
+        unsigned int optlen = sizeof(tv_get);
+        r = sys_getsockopt(sv[0], IAT_SOL_SOCKET, IAT_SO_SNDTIMEO,
+                           &tv_get, &optlen);
+        sys_close(sv[0]); sys_close(sv[1]);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1217: getsockopt(SO_SNDTIMEO) = %ld\n", r);
+            fut_test_fail(1217);
+            goto done_iat;
+        }
+        if (tv_get.tv_sec != 0 || tv_get.tv_usec != 100000) {
+            fut_printf("[MISC-TEST] ✗ Test 1217: SO_SNDTIMEO got {%ld,%ld}, want {0,100000}\n",
+                       tv_get.tv_sec, tv_get.tv_usec);
+            fut_test_fail(1217);
+            goto done_iat;
+        }
+        fut_printf("[MISC-TEST] ✓ Test 1217: SO_SNDTIMEO round-trip: {0, 100000}\n");
+        fut_test_pass();
+    }
+
+done_iat:
+#undef IAT_NB
+#undef IAT_RDWR_CREAT
+#undef IAT_IN_ATTRIB
+#undef IAT_SOL_SOCKET
+#undef IAT_SO_SNDTIMEO
+    return;
+}
+
 static void test_getrandom_flags(void) {
     /* Tests 1200-1204: getrandom flag variants (GRND_NONBLOCK, GRND_RANDOM,
      * GRND_INSECURE) and edge cases (buflen=0, NULL buf).
@@ -40295,6 +40417,7 @@ void fut_misc_test_thread(void *arg) {
     test_getrandom_flags();            /* Tests 1200-1204: getrandom GRND_NONBLOCK, GRND_RANDOM, GRND_INSECURE, buflen=0, NULL buf */
     test_itimer_virtual_prof();        /* Tests 1207-1211: setitimer/getitimer ITIMER_VIRTUAL, ITIMER_PROF, EINVAL */
     test_inotify_close_access_open();  /* Tests 1212-1215: inotify IN_CLOSE_WRITE/IN_CLOSE_NOWRITE/IN_ACCESS/IN_OPEN */
+    test_inotify_attrib_and_sndtimeo(); /* Tests 1216-1217: inotify IN_ATTRIB on chmod; SO_SNDTIMEO round-trip */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

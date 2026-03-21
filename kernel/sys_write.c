@@ -149,14 +149,15 @@ ssize_t sys_write(int fd, const void *buf, size_t count) {
     }
 
     /* Phase 2: Validate fd early */
-    if (local_fd < 0) {
-        write_printf("[WRITE] write(fd=%d, count=%lu) -> EBADF (negative fd)\n", local_fd, local_count);
+    if (local_fd < 0 || local_fd >= task->max_fds) {
+        write_printf("[WRITE] write(fd=%d, count=%lu) -> EBADF (invalid fd)\n", local_fd, local_count);
         return -EBADF;
     }
 
-    /* Phase 2: Handle empty write (valid, returns 0 immediately) */
+    /* Phase 2: Handle empty write — Linux still validates fd is open for count=0 */
     if (local_count == 0) {
-        write_printf("[WRITE] write(fd=%d, count=0) -> 0 (empty write)\n", local_fd);
+        struct fut_file *f0 = vfs_get_file_from_task(task, local_fd);
+        if (!f0) return -EBADF;
         return 0;
     }
 

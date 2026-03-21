@@ -139,13 +139,14 @@ ssize_t sys_read(int fd, void *buf, size_t count) {
     }
 
     /* Phase 2: Validate fd early */
-    if (local_fd < 0) {
+    if (local_fd < 0 || local_fd >= task->max_fds) {
         return -EBADF;
     }
 
-    /* Phase 2: Handle empty read (valid, returns 0 immediately) */
+    /* Phase 2: Handle empty read — Linux still validates fd is open for count=0 */
     if (local_count == 0) {
-        fut_printf("[READ] read(fd=%d, count=0) -> 0 (empty read)\n", local_fd);
+        struct fut_file *f0 = vfs_get_file_from_task(task, local_fd);
+        if (!f0) return -EBADF;
         return 0;
     }
 

@@ -1930,8 +1930,8 @@ static int64_t sys_setitimer_handler(uint64_t which, uint64_t value, uint64_t ov
 static int64_t sys_sendfile_handler(uint64_t out_fd, uint64_t in_fd, uint64_t offset,
                                     uint64_t count, uint64_t arg5, uint64_t arg6) {
     (void)arg5; (void)arg6;
-    extern long sys_sendfile(int out_fd, int in_fd, uint64_t *offset, size_t count);
-    return sys_sendfile((int)out_fd, (int)in_fd, (uint64_t *)(uintptr_t)offset, (size_t)count);
+    extern long sys_sendfile(int out_fd, int in_fd, int64_t *offset, size_t count);
+    return sys_sendfile((int)out_fd, (int)in_fd, (int64_t *)(uintptr_t)offset, (size_t)count);
 }
 
 static int64_t sys_fchdir_handler(uint64_t fd, uint64_t arg2, uint64_t arg3,

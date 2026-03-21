@@ -148,11 +148,11 @@ long sys_chroot(const char *path) {
  *   - -EFAULT if offset pointer is invalid
  *   - -ESRCH if no current task
  */
-long sys_sendfile(int out_fd, int in_fd, uint64_t *offset, size_t count) {
+long sys_sendfile(int out_fd, int in_fd, int64_t *offset, size_t count) {
     /* ARM64 FIX: Copy register params to local stack vars before blocking calls */
     int local_out_fd = out_fd;
     int local_in_fd = in_fd;
-    uint64_t *local_offset = offset;
+    int64_t *local_offset = offset;
     size_t local_count = count;
 
     fut_task_t *task = fut_task_current();
@@ -216,16 +216,20 @@ long sys_sendfile(int out_fd, int in_fd, uint64_t *offset, size_t count) {
     if ((out_file->flags & O_ACCMODE) == O_RDONLY)
         return -EBADF;
 
-    /* Handle offset parameter */
+    /* Handle offset parameter — Linux uses off_t (signed) */
+    int64_t signed_offset = 0;
     uint64_t start_offset = 0;
     if (local_offset) {
         /* Copy offset from userspace */
-        if (fileio_copy_from_user(&start_offset, local_offset, sizeof(uint64_t)) != 0) {
+        if (fileio_copy_from_user(&signed_offset, local_offset, sizeof(int64_t)) != 0) {
             fut_printf("[SENDFILE] sendfile(out_fd=%d, in_fd=%d, count=%zu, pid=%d) -> EFAULT "
                        "(invalid offset pointer)\n",
                        local_out_fd, local_in_fd, local_count, task->pid);
             return -EFAULT;
         }
+        if (signed_offset < 0)
+            return -EINVAL;
+        start_offset = (uint64_t)signed_offset;
     } else {
         start_offset = in_file->offset;
     }
@@ -302,7 +306,8 @@ long sys_sendfile(int out_fd, int in_fd, uint64_t *offset, size_t count) {
 
     /* Update offset for caller; propagate write-back failure */
     if (local_offset) {
-        if (fileio_copy_to_user(local_offset, &read_offset, sizeof(uint64_t)) != 0) {
+        int64_t final_offset = (int64_t)read_offset;
+        if (fileio_copy_to_user(local_offset, &final_offset, sizeof(int64_t)) != 0) {
             return -EFAULT;
         }
     } else {

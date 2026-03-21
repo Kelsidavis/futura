@@ -83,7 +83,7 @@ extern long sys_munlock(const void *addr, size_t len);
 extern long sys_getcwd(char *buf, size_t size);
 extern long sys_prlimit64(int pid, int resource, const void *new_limit, void *old_limit);
 extern long sys_mincore(void *addr, size_t length, unsigned char *vec);
-extern long sys_sendfile(int out_fd, int in_fd, uint64_t *offset, size_t count);
+extern long sys_sendfile(int out_fd, int in_fd, int64_t *offset, size_t count);
 extern long sys_msync(void *addr, size_t length, int flags);
 extern long sys_stat(const char *path, struct fut_stat *statbuf);
 extern long sys_lstat(const char *path, struct fut_stat *statbuf);
@@ -7155,13 +7155,13 @@ static void test_sendfile_basic(void) {
     }
 
     /* sendfile with explicit offset parameter */
-    uint64_t off = 0;
+    int64_t off = 0;
     sys_lseek(dst, 0, 0);
     sys_lseek(src, 0, 0);
     n = sys_sendfile(dst, src, &off, 5);
     if (n != 5 || off != 5) {
-        fut_printf("[MISC-TEST] ✗ sendfile with offset: n=%ld off=%llu\n",
-                   n, (unsigned long long)off);
+        fut_printf("[MISC-TEST] ✗ sendfile with offset: n=%ld off=%lld\n",
+                   n, (long long)off);
         fut_vfs_close(src); fut_vfs_close(dst);
         fut_test_fail(149);
         return;
@@ -13528,6 +13528,67 @@ static void test_splice_nonblock(void) {
     #undef SPLICE_F_NONBLOCK_FLAG
 }
 
+static void test_read_write_count_zero(void) {
+    extern long sys_read(int fd, void *buf, size_t count);
+    extern long sys_write(int fd, const void *buf, size_t count);
+
+    /* Test 1364: read(999, buf, 0) on invalid fd returns EBADF */
+    fut_printf("[MISC-TEST] Test 1364: read(invalid_fd, buf, 0) → EBADF\n");
+    {
+        char buf[1];
+        long ret = sys_read(999, buf, 0);
+        if (ret == -9 /* EBADF */) {
+            fut_printf("[MISC-TEST] ✓ Test 1364: read(999, buf, 0) → EBADF\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1364: read(999, buf, 0) → %ld (expected EBADF=-9)\n", ret);
+            fut_test_fail(1364);
+        }
+    }
+
+    /* Test 1365: write(999, buf, 0) on invalid fd returns EBADF */
+    fut_printf("[MISC-TEST] Test 1365: write(invalid_fd, buf, 0) → EBADF\n");
+    {
+        char buf[1] = {0};
+        long ret = sys_write(999, buf, 0);
+        if (ret == -9 /* EBADF */) {
+            fut_printf("[MISC-TEST] ✓ Test 1365: write(999, buf, 0) → EBADF\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1365: write(999, buf, 0) → %ld (expected EBADF=-9)\n", ret);
+            fut_test_fail(1365);
+        }
+    }
+
+    /* Test 1366: sendfile with negative offset returns EINVAL */
+    fut_printf("[MISC-TEST] Test 1366: sendfile(negative offset) → EINVAL\n");
+    {
+        extern long sys_sendfile(int out_fd, int in_fd, int64_t *offset, size_t count);
+        extern long sys_open(const char *path, int flags, int mode);
+
+        long infd = sys_open("/dev/null", 0 /* O_RDONLY */, 0);
+        long outfd = sys_open("/dev/null", 1 /* O_WRONLY */, 0);
+        if (infd >= 0 && outfd >= 0) {
+            int64_t neg_off = -100;
+            long ret = sys_sendfile((int)outfd, (int)infd, &neg_off, 4096);
+            if (ret == -22 /* EINVAL */) {
+                fut_printf("[MISC-TEST] ✓ Test 1366: sendfile(negative offset) → EINVAL\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1366: sendfile(negative offset) → %ld (expected EINVAL=-22)\n", ret);
+                fut_test_fail(1366);
+            }
+            sys_close((int)infd);
+            sys_close((int)outfd);
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1366: failed to open /dev/null\n");
+            fut_test_fail(1366);
+            if (infd >= 0) sys_close((int)infd);
+            if (outfd >= 0) sys_close((int)outfd);
+        }
+    }
+}
+
 static void test_proc_fd_anon_types(void) {
     extern long sys_read(int fd, void *buf, size_t count);
     extern long sys_readlink(const char *path, char *buf, size_t bufsiz);
@@ -18161,7 +18222,7 @@ static void test_linkat_empty_path(void) {
 
 static void test_sendfile_socket(void) {
     fut_printf("[MISC-TEST] Test 330: sendfile file→socket\n");
-    extern long sys_sendfile(int out_fd, int in_fd, uint64_t *offset, size_t count);
+    extern long sys_sendfile(int out_fd, int in_fd, int64_t *offset, size_t count);
     extern long sys_socketpair(int domain, int type, int protocol, int *sv);
     extern ssize_t sys_read(int fd, void *buf, size_t count);
     extern long sys_unlink(const char *path);
@@ -37196,7 +37257,7 @@ static void test_splice_access_mode(void) {
  *   1056: sendfile(out=O_RDWR, in=O_RDWR) → success (positive case)
  */
 static void test_sendfile_access_mode(void) {
-    extern long sys_sendfile(int out_fd, int in_fd, uint64_t *offset, size_t count);
+    extern long sys_sendfile(int out_fd, int in_fd, int64_t *offset, size_t count);
     extern long sys_write(int fd, const void *buf, size_t count);
     extern long sys_close(int fd);
 
@@ -44556,6 +44617,7 @@ void fut_misc_test_thread(void *arg) {
     test_epollet_hup();                      /* Tests 1358-1359: EPOLLET EPOLLHUP on pipe close */
     test_recvmsg_peek();                     /* Tests 1360-1361: recvmsg MSG_PEEK */
     test_splice_nonblock();                  /* Tests 1362-1363: splice SPLICE_F_NONBLOCK */
+    test_read_write_count_zero();            /* Tests 1364-1366: read/write count=0 EBADF, sendfile neg offset */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

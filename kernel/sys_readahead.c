@@ -45,6 +45,10 @@ long sys_readahead(int fd, int64_t offset, size_t count) {
     if (file->flags & O_PATH)
         return -EBADF;
 
+    /* readahead requires the fd to be readable */
+    if ((file->flags & O_ACCMODE) == O_WRONLY)
+        return -EBADF;
+
     /* Pipes and sockets are not seekable */
     if (file->vnode && (file->vnode->type == VN_FIFO || file->vnode->type == VN_SOCK))
         return -EINVAL;

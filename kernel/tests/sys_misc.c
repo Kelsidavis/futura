@@ -15173,6 +15173,38 @@ static void test_accmode_fallocate_cfr(void) {
     }
 }
 
+static void test_readahead_writeonly(void) {
+    extern long sys_open(const char *path, int flags, int mode);
+    extern long sys_close(int fd);
+    extern long sys_readahead(int fd, int64_t offset, size_t count);
+
+    /* Test 1430: readahead on O_WRONLY fd → EBADF */
+    fut_printf("[MISC-TEST] Test 1430: readahead(O_WRONLY fd) → EBADF\n");
+    {
+        long fd = sys_open("/tmp/.t_accmode", 0x01 /* O_WRONLY */, 0);
+        if (fd < 0) {
+            /* File may not exist yet, create it */
+            long cfd = sys_open("/tmp/.t_accmode", 0x42 /* O_CREAT|O_RDWR */, 0644);
+            if (cfd >= 0) sys_close((int)cfd);
+            fd = sys_open("/tmp/.t_accmode", 0x01 /* O_WRONLY */, 0);
+        }
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1430: open failed %ld\n", fd);
+            fut_test_fail(1430);
+        } else {
+            long r = sys_readahead((int)fd, 0, 4096);
+            if (r == -9 /* -EBADF */) {
+                fut_printf("[MISC-TEST] ✓ Test 1430: readahead(O_WRONLY) = -EBADF\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1430: readahead(O_WRONLY) = %ld (want -9)\n", r);
+                fut_test_fail(1430);
+            }
+            sys_close((int)fd);
+        }
+    }
+}
+
 static void test_proc_fd_anon_types(void) {
     extern long sys_read(int fd, void *buf, size_t count);
     extern long sys_readlink(const char *path, char *buf, size_t bufsiz);
@@ -46216,6 +46248,7 @@ void fut_misc_test_thread(void *arg) {
     test_opath_pread_pwrite();               /* Tests 1409-1412: O_PATH blocks pread64/pwrite64/preadv/pwritev */
     test_opath_comprehensive();              /* Tests 1413-1426: O_PATH blocks sendfile/ftruncate/fallocate/lseek/ioctl/fchmod/fchown/copy_file_range/readahead/fsync/fdatasync/fadvise */
     test_accmode_fallocate_cfr();            /* Tests 1427-1429: fallocate/copy_file_range reject wrong access mode */
+    test_readahead_writeonly();              /* Test 1430: readahead rejects O_WRONLY fd */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

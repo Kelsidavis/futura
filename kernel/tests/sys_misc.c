@@ -16093,6 +16093,142 @@ static void test_sgid_dir_inheritance(void) {
     }
 }
 
+/**
+ * test_sticky_bit_enforcement - Sticky bit (01000) on directories
+ *
+ * Tests 1455-1458:
+ * 1455: Root can unlink in sticky dir (always allowed)
+ * 1456: Non-owner, non-dir-owner gets EACCES in sticky dir
+ * 1457: File owner can unlink own file from sticky dir
+ * 1458: Rename from sticky dir blocked for non-owner
+ */
+static void test_sticky_bit_enforcement(void) {
+    extern long sys_write(int fd, const void *buf, size_t count);
+    extern long sys_fchmod(int fd, uint32_t mode);
+    extern long sys_fchown(int fd, uint32_t uid, uint32_t gid);
+    extern long sys_mkdir(const char *pathname, uint32_t mode);
+    extern long sys_unlink(const char *pathname);
+    extern long sys_rename(const char *oldpath, const char *newpath);
+
+    fut_task_t *task = fut_task_current();
+    uint32_t saved_uid = task->uid;
+    uint64_t saved_caps = task->cap_effective;
+
+    /* Create sticky directory owned by root */
+    sys_mkdir("/test_sticky", 01777);
+    int dirfd = (int)fut_vfs_open("/test_sticky", O_RDONLY, 0);
+    if (dirfd >= 0) {
+        sys_fchmod(dirfd, 01777);  /* Ensure sticky bit set */
+        fut_vfs_close(dirfd);
+    }
+
+    /* Create files owned by different users */
+    int fd1 = (int)fut_vfs_open("/test_sticky/rootfile.txt", O_CREAT | O_RDWR, 0644);
+    if (fd1 >= 0) {
+        sys_write(fd1, "data", 4);
+        sys_fchown(fd1, 0, 0);  /* owned by root */
+        fut_vfs_close(fd1);
+    }
+
+    int fd2 = (int)fut_vfs_open("/test_sticky/user100.txt", O_CREAT | O_RDWR, 0644);
+    if (fd2 >= 0) {
+        sys_write(fd2, "data", 4);
+        sys_fchown(fd2, 100, 100);  /* owned by uid 100 */
+        fut_vfs_close(fd2);
+    }
+
+    int fd3 = (int)fut_vfs_open("/test_sticky/user200.txt", O_CREAT | O_RDWR, 0644);
+    if (fd3 >= 0) {
+        sys_write(fd3, "data", 4);
+        sys_fchown(fd3, 200, 200);  /* owned by uid 200 */
+        fut_vfs_close(fd3);
+    }
+
+    /* Create a file for rename test */
+    int fd4 = (int)fut_vfs_open("/test_sticky/rename_src.txt", O_CREAT | O_RDWR, 0644);
+    if (fd4 >= 0) {
+        sys_write(fd4, "data", 4);
+        sys_fchown(fd4, 300, 300);  /* owned by uid 300 */
+        fut_vfs_close(fd4);
+    }
+
+    /* Test 1455: Root can always unlink in sticky dir */
+    fut_printf("[MISC-TEST] Test 1455: root can unlink in sticky dir\n");
+    {
+        /* Re-create the file first */
+        int tf = (int)fut_vfs_open("/test_sticky/rootdel.txt", O_CREAT | O_RDWR, 0644);
+        if (tf >= 0) { sys_write(tf, "d", 1); fut_vfs_close(tf); }
+
+        long ret = sys_unlink("/test_sticky/rootdel.txt");
+        if (ret == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1455: root unlink in sticky dir succeeded\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1455: root unlink failed: %ld\n", ret);
+            fut_test_fail(1455);
+        }
+    }
+
+    /* Test 1456: Non-owner uid gets EACCES for other's file in sticky dir */
+    fut_printf("[MISC-TEST] Test 1456: non-owner blocked from unlink in sticky dir\n");
+    {
+        /* Become uid 100, drop CAP_FOWNER */
+        task->uid = 100;
+        task->cap_effective &= ~(1ULL << 3 /* CAP_FOWNER */);
+
+        long ret = sys_unlink("/test_sticky/user200.txt");
+        if (ret == -EACCES) {
+            fut_printf("[MISC-TEST] ✓ Test 1456: non-owner got EACCES in sticky dir\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1456: expected EACCES, got %ld\n", ret);
+            fut_test_fail(1456);
+        }
+
+        /* Restore */
+        task->uid = saved_uid;
+        task->cap_effective = saved_caps;
+    }
+
+    /* Test 1457: File owner CAN unlink own file from sticky dir */
+    fut_printf("[MISC-TEST] Test 1457: file owner can unlink in sticky dir\n");
+    {
+        task->uid = 100;
+        task->cap_effective &= ~(1ULL << 3);
+
+        long ret = sys_unlink("/test_sticky/user100.txt");
+        if (ret == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1457: file owner unlink succeeded\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1457: file owner unlink failed: %ld\n", ret);
+            fut_test_fail(1457);
+        }
+
+        task->uid = saved_uid;
+        task->cap_effective = saved_caps;
+    }
+
+    /* Test 1458: Rename from sticky dir blocked for non-owner */
+    fut_printf("[MISC-TEST] Test 1458: rename from sticky dir blocked for non-owner\n");
+    {
+        task->uid = 100;
+        task->cap_effective &= ~(1ULL << 3);
+
+        long ret = sys_rename("/test_sticky/rename_src.txt", "/test_sticky/renamed.txt");
+        if (ret == -EACCES) {
+            fut_printf("[MISC-TEST] ✓ Test 1458: rename blocked in sticky dir\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1458: expected EACCES, got %ld\n", ret);
+            fut_test_fail(1458);
+        }
+
+        task->uid = saved_uid;
+        task->cap_effective = saved_caps;
+    }
+}
+
 static void test_proc_fd_anon_types(void) {
     extern long sys_read(int fd, void *buf, size_t count);
     extern long sys_readlink(const char *path, char *buf, size_t bufsiz);
@@ -47145,6 +47281,7 @@ void fut_misc_test_thread(void *arg) {
     test_suid_clear_on_open_trunc();        /* Tests 1446-1448: setuid/setgid clearing on open(O_TRUNC) */
     test_suid_clear_chown_fchownat();       /* Tests 1449-1451: setuid/setgid clearing on chown/fchownat */
     test_sgid_dir_inheritance();            /* Tests 1452-1454: S_ISGID directory group inheritance */
+    test_sticky_bit_enforcement();          /* Tests 1455-1458: sticky bit on directories */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

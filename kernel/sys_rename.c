@@ -349,6 +349,26 @@ long sys_rename(const char *oldpath, const char *newpath) {
             return -ENOSYS;
         }
 
+        /* Sticky bit enforcement on source directory */
+        if (old_parent->mode & 01000) {
+            fut_task_t *stask = fut_task_current();
+            uint32_t caller_uid = stask ? stask->uid : 0;
+            int has_cap_fowner = stask &&
+                (stask->cap_effective & (1ULL << 3 /* CAP_FOWNER */));
+            if (caller_uid != 0 && !has_cap_fowner && caller_uid != old_parent->uid) {
+                struct fut_vnode *src = NULL;
+                int lret = fut_vfs_lookup(old_buf, &src);
+                if (lret == 0 && src) {
+                    if (caller_uid != src->uid) {
+                        fut_vnode_unref(src);
+                        fut_vnode_unref(old_parent);
+                        return -EACCES;
+                    }
+                    fut_vnode_unref(src);
+                }
+            }
+        }
+
         ret = old_parent->ops->rename(old_parent, old_name, new_name);
         if (ret == 0) {
             fut_printf("[RENAME] rename(old='%s' [%s], new='%s' [%s], op=%s) -> 0 (success, same-dir)\n",

@@ -1353,6 +1353,28 @@ int fut_vfs_unlink(const char *path) {
         return -ENOSYS;
     }
 
+    /* Sticky bit enforcement: in a directory with 01000 (sticky bit),
+     * only the file owner, directory owner, or CAP_FOWNER can unlink. */
+    if (parent->mode & 01000) {
+        fut_task_t *task = fut_task_current();
+        uint32_t caller_uid = task ? task->uid : 0;
+        int has_cap_fowner = task &&
+            (task->cap_effective & (1ULL << 3 /* CAP_FOWNER */));
+        if (caller_uid != 0 && !has_cap_fowner && caller_uid != parent->uid) {
+            /* Need to check if caller owns the target file */
+            struct fut_vnode *target = NULL;
+            int lret = fut_vfs_lookup(path, &target);
+            if (lret == 0 && target) {
+                if (caller_uid != target->uid) {
+                    release_lookup_ref(target);
+                    release_lookup_ref(parent);
+                    return -EACCES;
+                }
+                release_lookup_ref(target);
+            }
+        }
+    }
+
     ret = parent->ops->unlink(parent, leaf);
     release_lookup_ref(parent);
     return ret;
@@ -1370,6 +1392,26 @@ int fut_vfs_rmdir(const char *path) {
     if (!parent->ops || !parent->ops->rmdir) {
         release_lookup_ref(parent);
         return -ENOSYS;
+    }
+
+    /* Sticky bit enforcement: same check as unlink */
+    if (parent->mode & 01000) {
+        fut_task_t *task = fut_task_current();
+        uint32_t caller_uid = task ? task->uid : 0;
+        int has_cap_fowner = task &&
+            (task->cap_effective & (1ULL << 3 /* CAP_FOWNER */));
+        if (caller_uid != 0 && !has_cap_fowner && caller_uid != parent->uid) {
+            struct fut_vnode *target = NULL;
+            int lret = fut_vfs_lookup(path, &target);
+            if (lret == 0 && target) {
+                if (caller_uid != target->uid) {
+                    release_lookup_ref(target);
+                    release_lookup_ref(parent);
+                    return -EACCES;
+                }
+                release_lookup_ref(target);
+            }
+        }
     }
 
     ret = parent->ops->rmdir(parent, leaf);
@@ -3288,6 +3330,26 @@ int fut_vfs_rename(const char *oldpath, const char *newpath) {
     if (!old_parent->ops || !old_parent->ops->rename) {
         fut_vnode_unref(old_parent);
         return -ENOSYS;
+    }
+
+    /* Sticky bit enforcement on source directory */
+    if (old_parent->mode & 01000) {
+        fut_task_t *task = fut_task_current();
+        uint32_t caller_uid = task ? task->uid : 0;
+        int has_cap_fowner = task &&
+            (task->cap_effective & (1ULL << 3 /* CAP_FOWNER */));
+        if (caller_uid != 0 && !has_cap_fowner && caller_uid != old_parent->uid) {
+            struct fut_vnode *src = NULL;
+            int lret = fut_vfs_lookup(oldpath, &src);
+            if (lret == 0 && src) {
+                if (caller_uid != src->uid) {
+                    release_lookup_ref(src);
+                    fut_vnode_unref(old_parent);
+                    return -EACCES;
+                }
+                release_lookup_ref(src);
+            }
+        }
     }
 
     /* Same parent: simple rename */

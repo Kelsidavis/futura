@@ -90,7 +90,12 @@ typedef struct sock_timeout_ctx {
     bool              fired;   /* set by callback to indicate timeout */
 } sock_timeout_ctx_t;
 
-/* Timer callback: remove thread from waitq and wake it with timeout flag */
+/* Get current tick counter (declared in fut_timer.h / timer.c) */
+extern uint64_t fut_get_ticks(void);
+
+/* Timer callback: remove thread from waitq and wake it with timeout flag.
+ * Note: ctx->lock is the WAITQ's own lock (wq->lock), NOT the outer pair->lock.
+ * The callback must only acquire the waitq lock to keep it IRQ-safe. */
 static void sock_timeout_callback(void *arg) {
     sock_timeout_ctx_t *ctx = (sock_timeout_ctx_t *)arg;
     fut_thread_t *thread = ctx->thread;
@@ -1041,24 +1046,32 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
         return -EMSGSIZE;
     }
 
-    /* SO_SNDTIMEO: set up timer if a send timeout is configured */
+    /* SO_SNDTIMEO: compute absolute deadline (ticks) before entering the wait loop.
+     * We do NOT start the timer here — starting it while pair->lock is held would
+     * deadlock on single-CPU: the timer IRQ fires, calls sock_timeout_callback which
+     * tries to acquire the waitq lock, but we hold it (pair->lock held → timer spins
+     * forever waiting for the lock the preempted thread holds). */
     sock_timeout_ctx_t snd_tmo_ctx = {0};
     bool snd_has_timeout = (socket->sndtimeo_ms > 0);
+    uint64_t snd_deadline = 0;
     if (snd_has_timeout) {
         uint64_t ticks = socket->sndtimeo_ms / 10;
         if (socket->sndtimeo_ms % 10 != 0) ticks++;
         if (ticks == 0) ticks = 1;
+        snd_deadline = fut_get_ticks() + ticks;
         snd_tmo_ctx.thread = fut_thread_current();
         snd_tmo_ctx.waitq  = pair->send_waitq;
-        snd_tmo_ctx.lock   = &pair->lock;
+        snd_tmo_ctx.lock   = &pair->send_waitq->lock; /* waitq's own lock — IRQ-safe */
         snd_tmo_ctx.fired  = false;
-        if (available < seqp_needed)
-            fut_timer_start(ticks, sock_timeout_callback, &snd_tmo_ctx);
     }
 
     while (available < seqp_needed) {
         if (socket->flags & 0x800) {  /* O_NONBLOCK */
-            if (snd_has_timeout) fut_timer_cancel(sock_timeout_callback, &snd_tmo_ctx);
+            fut_spinlock_release(&pair->lock);
+            return -EAGAIN;
+        }
+        /* Deadline expired? */
+        if (snd_has_timeout && fut_get_ticks() >= snd_deadline) {
             fut_spinlock_release(&pair->lock);
             return -EAGAIN;
         }
@@ -1072,16 +1085,38 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
                     __atomic_load_n(&scur_thr->signal_mask, __ATOMIC_ACQUIRE) :
                     __atomic_load_n(&stask->signal_mask, __ATOMIC_ACQUIRE);
                 if (pending & ~blocked) {
-                    if (snd_has_timeout) fut_timer_cancel(sock_timeout_callback, &snd_tmo_ctx);
                     fut_spinlock_release(&pair->lock);
                     return -EINTR;
                 }
             }
         }
-        /* Blocking socket: wait for receiver to read data */
-        fut_waitq_sleep_locked(pair->send_waitq, &pair->lock, FUT_THREAD_BLOCKED);
-        /* When we wake up, reacquire the lock */
-        fut_spinlock_acquire(&pair->lock);
+        /* Inline-enqueue current thread while holding pair->lock, then release
+         * pair->lock BEFORE starting the timer to avoid IRQ-spinlock deadlock. */
+        fut_thread_t *snd_thr = fut_thread_current();
+        if (snd_thr) {
+            snd_tmo_ctx.fired  = false;
+            snd_thr->state         = FUT_THREAD_BLOCKED;
+            snd_thr->blocked_waitq = pair->send_waitq;
+            snd_thr->wait_next     = NULL;
+            fut_spinlock_acquire(&pair->send_waitq->lock);
+            if (pair->send_waitq->tail) pair->send_waitq->tail->wait_next = snd_thr;
+            else                        pair->send_waitq->head = snd_thr;
+            pair->send_waitq->tail = snd_thr;
+            fut_spinlock_release(&pair->send_waitq->lock);
+            /* Release outer lock BEFORE starting timer — callback acquires waitq lock */
+            fut_spinlock_release(&pair->lock);
+            if (snd_has_timeout) {
+                uint64_t now = fut_get_ticks();
+                uint64_t rem = (snd_deadline > now) ? (snd_deadline - now) : 1;
+                fut_timer_start(rem, sock_timeout_callback, &snd_tmo_ctx);
+            }
+            fut_schedule();
+            if (snd_has_timeout) fut_timer_cancel(sock_timeout_callback, &snd_tmo_ctx);
+            fut_spinlock_acquire(&pair->lock);
+        } else {
+            fut_spinlock_release(&pair->lock);
+            return -EAGAIN;
+        }
 
         /* Timed out? */
         if (snd_has_timeout && snd_tmo_ctx.fired) {
@@ -1091,7 +1126,6 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
 
         /* Check again - peer might have closed while we were sleeping */
         if (!pair->peer) {
-            if (snd_has_timeout) fut_timer_cancel(sock_timeout_callback, &snd_tmo_ctx);
             fut_spinlock_release(&pair->lock);
             return -EPIPE;  /* Peer closed — broken pipe */
         }
@@ -1099,8 +1133,6 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
         available = pair->recv_size -
             ((pair->recv_head + pair->recv_size - pair->recv_tail) % pair->recv_size);
     }
-
-    if (snd_has_timeout) fut_timer_cancel(sock_timeout_callback, &snd_tmo_ctx);
 
     if (seqp) {
         /* SEQPACKET: write 4-byte little-endian length header then message body */
@@ -1191,24 +1223,30 @@ ssize_t fut_socket_recv(fut_socket_t *socket, void *buf, size_t len) {
         return 0;  /* EOF */
     }
 
-    /* SO_RCVTIMEO: set up timer if a receive timeout is configured */
+    /* SO_RCVTIMEO: compute absolute deadline before entering the wait loop.
+     * Same IRQ-deadlock fix as the send path: don't start the timer while
+     * pair->lock is held.  Inline-enqueue, release pair->lock, then start. */
     sock_timeout_ctx_t rcv_tmo_ctx = {0};
     bool rcv_has_timeout = (socket->rcvtimeo_ms > 0);
+    uint64_t rcv_deadline = 0;
     if (rcv_has_timeout) {
         uint64_t ticks = socket->rcvtimeo_ms / 10;
         if (socket->rcvtimeo_ms % 10 != 0) ticks++;
         if (ticks == 0) ticks = 1;
+        rcv_deadline = fut_get_ticks() + ticks;
         rcv_tmo_ctx.thread = fut_thread_current();
         rcv_tmo_ctx.waitq  = pair->recv_waitq;
-        rcv_tmo_ctx.lock   = &pair->lock;
+        rcv_tmo_ctx.lock   = &pair->recv_waitq->lock;
         rcv_tmo_ctx.fired  = false;
-        if (available == 0)
-            fut_timer_start(ticks, sock_timeout_callback, &rcv_tmo_ctx);
     }
 
     while (available == 0) {
         if (socket->flags & 0x800) {  /* O_NONBLOCK */
-            if (rcv_has_timeout) fut_timer_cancel(sock_timeout_callback, &rcv_tmo_ctx);
+            fut_spinlock_release(&pair->lock);
+            return -EAGAIN;
+        }
+        /* Deadline expired? */
+        if (rcv_has_timeout && fut_get_ticks() >= rcv_deadline) {
             fut_spinlock_release(&pair->lock);
             return -EAGAIN;
         }
@@ -1222,16 +1260,36 @@ ssize_t fut_socket_recv(fut_socket_t *socket, void *buf, size_t len) {
                     __atomic_load_n(&scur_thr->signal_mask, __ATOMIC_ACQUIRE) :
                     __atomic_load_n(&stask->signal_mask, __ATOMIC_ACQUIRE);
                 if (pending & ~blocked) {
-                    if (rcv_has_timeout) fut_timer_cancel(sock_timeout_callback, &rcv_tmo_ctx);
                     fut_spinlock_release(&pair->lock);
                     return -EINTR;
                 }
             }
         }
-        /* Blocking socket: wait for sender to write data */
-        fut_waitq_sleep_locked(pair->recv_waitq, &pair->lock, FUT_THREAD_BLOCKED);
-        /* When we wake up, reacquire the lock */
-        fut_spinlock_acquire(&pair->lock);
+        /* Inline-enqueue, release pair->lock, start timer, sleep */
+        fut_thread_t *rcv_thr = fut_thread_current();
+        if (rcv_thr) {
+            rcv_tmo_ctx.fired  = false;
+            rcv_thr->state         = FUT_THREAD_BLOCKED;
+            rcv_thr->blocked_waitq = pair->recv_waitq;
+            rcv_thr->wait_next     = NULL;
+            fut_spinlock_acquire(&pair->recv_waitq->lock);
+            if (pair->recv_waitq->tail) pair->recv_waitq->tail->wait_next = rcv_thr;
+            else                        pair->recv_waitq->head = rcv_thr;
+            pair->recv_waitq->tail = rcv_thr;
+            fut_spinlock_release(&pair->recv_waitq->lock);
+            fut_spinlock_release(&pair->lock);
+            if (rcv_has_timeout) {
+                uint64_t now = fut_get_ticks();
+                uint64_t rem = (rcv_deadline > now) ? (rcv_deadline - now) : 1;
+                fut_timer_start(rem, sock_timeout_callback, &rcv_tmo_ctx);
+            }
+            fut_schedule();
+            if (rcv_has_timeout) fut_timer_cancel(sock_timeout_callback, &rcv_tmo_ctx);
+            fut_spinlock_acquire(&pair->lock);
+        } else {
+            fut_spinlock_release(&pair->lock);
+            return -EAGAIN;
+        }
 
         /* Timed out? */
         if (rcv_has_timeout && rcv_tmo_ctx.fired) {
@@ -1245,13 +1303,10 @@ ssize_t fut_socket_recv(fut_socket_t *socket, void *buf, size_t len) {
 
         /* EOF: peer closed AND no buffered data */
         if (!pair->peer && available == 0) {
-            if (rcv_has_timeout) fut_timer_cancel(sock_timeout_callback, &rcv_tmo_ctx);
             fut_spinlock_release(&pair->lock);
             return 0;
         }
     }
-
-    if (rcv_has_timeout) fut_timer_cancel(sock_timeout_callback, &rcv_tmo_ctx);
 
     size_t to_read;
     if (socket->socket_type == SOCK_SEQPACKET) {
@@ -1618,23 +1673,27 @@ ssize_t fut_socket_recvfrom_dgram(fut_socket_t *socket, void *buf, size_t len,
     fut_dgram_queue_t *dq = socket->dgram_queue;
     fut_spinlock_acquire(&dq->lock);
 
-    /* SO_RCVTIMEO: set up a one-shot timer if a receive timeout is configured */
+    /* SO_RCVTIMEO: same inline-enqueue-before-timer fix as the stream paths */
     sock_timeout_ctx_t dg_tmo_ctx = {0};
     bool dg_has_timeout = (socket->rcvtimeo_ms > 0);
-    if (dg_has_timeout && dq->count == 0) {
+    uint64_t dg_deadline = 0;
+    if (dg_has_timeout) {
         uint64_t ticks = socket->rcvtimeo_ms / 10;
         if (socket->rcvtimeo_ms % 10 != 0) ticks++;
         if (ticks == 0) ticks = 1;
+        dg_deadline = fut_get_ticks() + ticks;
         dg_tmo_ctx.thread = fut_thread_current();
         dg_tmo_ctx.waitq  = dq->recv_waitq;
-        dg_tmo_ctx.lock   = &dq->lock;
+        dg_tmo_ctx.lock   = &dq->recv_waitq->lock;
         dg_tmo_ctx.fired  = false;
-        fut_timer_start(ticks, sock_timeout_callback, &dg_tmo_ctx);
     }
 
     while (dq->count == 0) {
         if (socket->flags & 0x800) {  /* O_NONBLOCK */
-            if (dg_has_timeout) fut_timer_cancel(sock_timeout_callback, &dg_tmo_ctx);
+            fut_spinlock_release(&dq->lock);
+            return -EAGAIN;
+        }
+        if (dg_has_timeout && fut_get_ticks() >= dg_deadline) {
             fut_spinlock_release(&dq->lock);
             return -EAGAIN;
         }
@@ -1648,14 +1707,35 @@ ssize_t fut_socket_recvfrom_dgram(fut_socket_t *socket, void *buf, size_t len,
                     __atomic_load_n(&thr->signal_mask, __ATOMIC_ACQUIRE) :
                     __atomic_load_n(&t->signal_mask, __ATOMIC_ACQUIRE);
                 if (pending & ~blocked) {
-                    if (dg_has_timeout) fut_timer_cancel(sock_timeout_callback, &dg_tmo_ctx);
                     fut_spinlock_release(&dq->lock);
                     return -EINTR;
                 }
             }
         }
-        fut_waitq_sleep_locked(dq->recv_waitq, &dq->lock, FUT_THREAD_BLOCKED);
-        fut_spinlock_acquire(&dq->lock);
+        fut_thread_t *dg_thr = fut_thread_current();
+        if (dg_thr) {
+            dg_tmo_ctx.fired  = false;
+            dg_thr->state         = FUT_THREAD_BLOCKED;
+            dg_thr->blocked_waitq = dq->recv_waitq;
+            dg_thr->wait_next     = NULL;
+            fut_spinlock_acquire(&dq->recv_waitq->lock);
+            if (dq->recv_waitq->tail) dq->recv_waitq->tail->wait_next = dg_thr;
+            else                      dq->recv_waitq->head = dg_thr;
+            dq->recv_waitq->tail = dg_thr;
+            fut_spinlock_release(&dq->recv_waitq->lock);
+            fut_spinlock_release(&dq->lock);
+            if (dg_has_timeout) {
+                uint64_t now = fut_get_ticks();
+                uint64_t rem = (dg_deadline > now) ? (dg_deadline - now) : 1;
+                fut_timer_start(rem, sock_timeout_callback, &dg_tmo_ctx);
+            }
+            fut_schedule();
+            if (dg_has_timeout) fut_timer_cancel(sock_timeout_callback, &dg_tmo_ctx);
+            fut_spinlock_acquire(&dq->lock);
+        } else {
+            fut_spinlock_release(&dq->lock);
+            return -EAGAIN;
+        }
         if (dg_has_timeout && dg_tmo_ctx.fired) {
             fut_spinlock_release(&dq->lock);
             return -EAGAIN;

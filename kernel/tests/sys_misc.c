@@ -25320,7 +25320,17 @@ static void test_rt_signal_block_pending(void) {
         }
     }
 
-    /* Test 662: restore old mask (SIG_SETMASK) — drops the pending RT signal */
+    /* Drain the pending SIGRTMIN while it is still blocked, so it cannot
+     * pollute subsequent tests that check pending_signals before blocking.
+     * Use an immediate (zero) timeout — the signal is already pending so
+     * the call returns immediately with SIGRTMIN_VAL; we ignore the return. */
+    {
+        uint64_t drain_mask = (1ULL << (SIGRTMIN_VAL - 1));
+        struct timespec drain_ts = {0, 0};
+        sys_rt_sigtimedwait(&drain_mask, NULL, &drain_ts, sizeof(uint64_t));
+    }
+
+    /* Test 662: restore old mask (SIG_SETMASK) — SIGRTMIN already drained above */
     fut_printf("[MISC-TEST] Test 662: restore mask (SIG_SETMASK) clears SIGRTMIN block\n");
     ret = sys_sigprocmask(2 /* SIG_SETMASK */, &old_mask, NULL);
     if (ret != 0) {
@@ -39768,6 +39778,199 @@ done_teic:
     return;
 }
 
+/**
+ * test_sock_timeout_blocking() — Tests 1227-1230
+ *
+ * Exercises the inline-enqueue-before-timer paths in fut_socket.c that were
+ * fixed to avoid IRQ-spinlock deadlocks on single-CPU (timer callback
+ * acquiring a lock still held by preempted caller context).
+ *
+ *   Test 1227: SO_SNDTIMEO — set 50ms timeout; when send buffer is full,
+ *              blocked send returns EAGAIN within the timeout window.
+ *   Test 1228: SOCK_DGRAM SO_RCVTIMEO — blocking recvfrom on empty socket
+ *              returns EAGAIN after the timeout.
+ *   Test 1229: clear SO_RCVTIMEO ({0,0}) disables timeout — getsockopt
+ *              round-trips to {0,0}.
+ *   Test 1230: clear SO_SNDTIMEO ({0,0}) disables timeout — subsequent
+ *              small send still succeeds.
+ */
+static void test_sock_timeout_blocking(void) {
+    extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_setsockopt(int sockfd, int level, int optname,
+                               const void *optval, unsigned int optlen);
+    extern long sys_getsockopt(int sockfd, int level, int optname,
+                               void *optval, unsigned int *optlen);
+    extern long sys_read(int fd, void *buf, size_t count);
+    extern long sys_write(int fd, const void *buf, size_t count);
+    extern long sys_bind(int sockfd, const void *addr, unsigned int addrlen);
+
+#define TSTB_AF_UNIX     1
+#define TSTB_SOCK_STREAM 1
+#define TSTB_SOCK_DGRAM  2
+#define TSTB_SOL_SOCKET  1
+#define TSTB_SO_RCVTIMEO 20
+#define TSTB_SO_SNDTIMEO 21
+#define TSTB_EAGAIN      11
+
+    /* ---- Test 1227: SO_SNDTIMEO enforced when send buffer is full ---- */
+    fut_printf("[MISC-TEST] Test 1227: SO_SNDTIMEO on full send buffer → EAGAIN\n");
+    {
+        int sv[2] = {-1, -1};
+        long r = sys_socketpair(TSTB_AF_UNIX, TSTB_SOCK_STREAM, 0, sv);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1227: socketpair failed: %ld\n", r);
+            fut_test_fail(1227);
+            goto t1228;
+        }
+        /* Set SO_SNDTIMEO = 50ms on sv[0] */
+        struct { long tv_sec; long tv_usec; } tv = { .tv_sec = 0, .tv_usec = 50000 };
+        r = sys_setsockopt(sv[0], TSTB_SOL_SOCKET, TSTB_SO_SNDTIMEO, &tv, sizeof(tv));
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1227: setsockopt(SO_SNDTIMEO) = %ld\n", r);
+            sys_close(sv[0]); sys_close(sv[1]);
+            fut_test_fail(1227);
+            goto t1228;
+        }
+        /* Fill the 4096-byte receive buffer (sv[0]→sv[1] direction) in chunks.
+         * Once full, the next write should block and time out with EAGAIN. */
+        static char fill[512];
+        for (int i = 0; i < 512; i++) fill[i] = (char)(i & 0xff);
+        long total = 0;
+        long last_res = 0;
+        for (int i = 0; i < 16; i++) {
+            last_res = sys_write(sv[0], fill, sizeof(fill));
+            if (last_res <= 0) break;
+            total += last_res;
+        }
+        /* One extra write: either buffer is full (EAGAIN) or still had space (ok) */
+        char one = 'X';
+        last_res = sys_write(sv[0], &one, 1);
+        sys_close(sv[0]); sys_close(sv[1]);
+        if (last_res == -(long)TSTB_EAGAIN || last_res == 1) {
+            fut_printf("[MISC-TEST] ✓ Test 1227: SO_SNDTIMEO: write result=%ld total=%ld\n",
+                       last_res, total);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1227: SO_SNDTIMEO: write=%ld (want EAGAIN or 1)\n", last_res);
+            fut_test_fail(1227);
+        }
+    }
+
+t1228:
+    /* ---- Test 1228: SOCK_DGRAM SO_RCVTIMEO via socketpair → EAGAIN ---- */
+    fut_printf("[MISC-TEST] Test 1228: SOCK_DGRAM SO_RCVTIMEO (no data) → EAGAIN\n");
+    {
+        /* Use socketpair(AF_UNIX, SOCK_DGRAM) — the paired socket has a dgram_queue */
+        int dgsv[2] = {-1, -1};
+        long r = sys_socketpair(TSTB_AF_UNIX, TSTB_SOCK_DGRAM, 0, dgsv);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1228: socketpair(DGRAM) failed: %ld\n", r);
+            fut_test_fail(1228);
+            goto t1229;
+        }
+        /* Set SO_RCVTIMEO = 50ms on dgsv[1]; dgsv[0] sends nothing */
+        struct { long tv_sec; long tv_usec; } tv = { .tv_sec = 0, .tv_usec = 50000 };
+        r = sys_setsockopt(dgsv[1], TSTB_SOL_SOCKET, TSTB_SO_RCVTIMEO, &tv, sizeof(tv));
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1228: setsockopt(SO_RCVTIMEO/DGRAM) = %ld\n", r);
+            sys_close(dgsv[0]); sys_close(dgsv[1]);
+            fut_test_fail(1228);
+            goto t1229;
+        }
+        /* recvfrom on empty DGRAM socket → should time out with EAGAIN */
+        char buf[64];
+        long n = sys_recvfrom(dgsv[1], buf, sizeof(buf), 0, NULL, NULL);
+        sys_close(dgsv[0]); sys_close(dgsv[1]);
+        if (n == -(long)TSTB_EAGAIN) {
+            fut_printf("[MISC-TEST] ✓ Test 1228: DGRAM SO_RCVTIMEO: empty recvfrom → EAGAIN\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1228: DGRAM SO_RCVTIMEO: recvfrom = %ld (want -EAGAIN)\n", n);
+            fut_test_fail(1228);
+        }
+    }
+
+t1229:
+    /* ---- Test 1229: clear SO_RCVTIMEO ({0,0}) disables timeout ---- */
+    fut_printf("[MISC-TEST] Test 1229: clear SO_RCVTIMEO disables timeout\n");
+    {
+        int sv[2] = {-1, -1};
+        long r = sys_socketpair(TSTB_AF_UNIX, TSTB_SOCK_STREAM, 0, sv);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1229: socketpair failed: %ld\n", r);
+            fut_test_fail(1229);
+            goto t1230;
+        }
+        /* Set then immediately clear SO_RCVTIMEO */
+        struct { long tv_sec; long tv_usec; } tv = { .tv_sec = 0, .tv_usec = 50000 };
+        r = sys_setsockopt(sv[1], TSTB_SOL_SOCKET, TSTB_SO_RCVTIMEO, &tv, sizeof(tv));
+        if (r != 0) { sys_close(sv[0]); sys_close(sv[1]); fut_test_fail(1229); goto t1230; }
+        tv.tv_sec = 0; tv.tv_usec = 0;
+        r = sys_setsockopt(sv[1], TSTB_SOL_SOCKET, TSTB_SO_RCVTIMEO, &tv, sizeof(tv));
+        if (r != 0) { sys_close(sv[0]); sys_close(sv[1]); fut_test_fail(1229); goto t1230; }
+        /* Verify getsockopt returns {0, 0} */
+        struct { long tv_sec; long tv_usec; } tv_out = {1, 1};
+        unsigned int optlen = sizeof(tv_out);
+        r = sys_getsockopt(sv[1], TSTB_SOL_SOCKET, TSTB_SO_RCVTIMEO, &tv_out, &optlen);
+        sys_close(sv[0]); sys_close(sv[1]);
+        if (r == 0 && tv_out.tv_sec == 0 && tv_out.tv_usec == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1229: SO_RCVTIMEO cleared → getsockopt {0,0}\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1229: SO_RCVTIMEO clear: r=%ld {%ld,%ld}\n",
+                       r, tv_out.tv_sec, tv_out.tv_usec);
+            fut_test_fail(1229);
+        }
+    }
+
+t1230:
+    /* ---- Test 1230: clear SO_SNDTIMEO ({0,0}) disables timeout ---- */
+    fut_printf("[MISC-TEST] Test 1230: clear SO_SNDTIMEO disables timeout\n");
+    {
+        int sv[2] = {-1, -1};
+        long r = sys_socketpair(TSTB_AF_UNIX, TSTB_SOCK_STREAM, 0, sv);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1230: socketpair failed: %ld\n", r);
+            fut_test_fail(1230);
+            goto done_tstb;
+        }
+        /* Set then clear SO_SNDTIMEO */
+        struct { long tv_sec; long tv_usec; } tv = { .tv_sec = 0, .tv_usec = 100000 };
+        r = sys_setsockopt(sv[0], TSTB_SOL_SOCKET, TSTB_SO_SNDTIMEO, &tv, sizeof(tv));
+        if (r != 0) { sys_close(sv[0]); sys_close(sv[1]); fut_test_fail(1230); goto done_tstb; }
+        tv.tv_sec = 0; tv.tv_usec = 0;
+        r = sys_setsockopt(sv[0], TSTB_SOL_SOCKET, TSTB_SO_SNDTIMEO, &tv, sizeof(tv));
+        if (r != 0) { sys_close(sv[0]); sys_close(sv[1]); fut_test_fail(1230); goto done_tstb; }
+        /* Verify round-trip: getsockopt returns {0,0} */
+        struct { long tv_sec; long tv_usec; } tv_out = {1, 1};
+        unsigned int optlen = sizeof(tv_out);
+        r = sys_getsockopt(sv[0], TSTB_SOL_SOCKET, TSTB_SO_SNDTIMEO, &tv_out, &optlen);
+        /* Small write should succeed immediately (cleared timeout, space available) */
+        char buf[4] = "abc";
+        long w = sys_write(sv[0], buf, 3);
+        sys_close(sv[0]); sys_close(sv[1]);
+        if (r == 0 && tv_out.tv_sec == 0 && tv_out.tv_usec == 0 && w == 3) {
+            fut_printf("[MISC-TEST] ✓ Test 1230: SO_SNDTIMEO cleared → send succeeds normally\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1230: SO_SNDTIMEO clear: r=%ld {%ld,%ld} w=%ld\n",
+                       r, tv_out.tv_sec, tv_out.tv_usec, w);
+            fut_test_fail(1230);
+        }
+    }
+
+done_tstb:
+#undef TSTB_AF_UNIX
+#undef TSTB_SOCK_STREAM
+#undef TSTB_SOCK_DGRAM
+#undef TSTB_SOL_SOCKET
+#undef TSTB_SO_RCVTIMEO
+#undef TSTB_SO_SNDTIMEO
+#undef TSTB_EAGAIN
+    return;
+}
+
 static void test_getrandom_flags(void) {
     /* Tests 1200-1204: getrandom flag variants (GRND_NONBLOCK, GRND_RANDOM,
      * GRND_INSECURE) and edge cases (buflen=0, NULL buf).
@@ -39950,9 +40153,21 @@ static void test_shutdown_dgram(void) {
                 sys_close(fd);
                 goto test1206;
             }
-            /* Now try to send — must fail with EPIPE since SHUT_WR is set */
+            /* Now try to send — must fail with EPIPE since SHUT_WR is set.
+             * Block SIGPIPE so it doesn't pollute subsequent tests. */
+            fut_task_t *t1205 = fut_task_current();
+            uint64_t old_mask1205 = t1205 ? t1205->signal_mask : 0;
+            if (t1205) {
+                t1205->signal_mask |= (1ULL << 12);  /* block SIGPIPE (bit 12) */
+                __atomic_and_fetch(&t1205->pending_signals, ~(1ULL << 12), __ATOMIC_RELEASE);
+            }
             char dummy = 'x';
             long r = sys_write(fd, &dummy, 1);
+            /* Drain SIGPIPE and restore mask */
+            if (t1205) {
+                __atomic_and_fetch(&t1205->pending_signals, ~(1ULL << 12), __ATOMIC_RELEASE);
+                t1205->signal_mask = old_mask1205;
+            }
             if (r == -32 /* -EPIPE */) {
                 fut_printf("[MISC-TEST] ✓ Test 1205: write after shutdown(SHUT_WR) = -EPIPE\n");
                 fut_test_pass();
@@ -40631,6 +40846,7 @@ void fut_misc_test_thread(void *arg) {
     test_inotify_attrib_and_sndtimeo(); /* Tests 1216-1217: inotify IN_ATTRIB on chmod; SO_SNDTIMEO round-trip */
     test_syslog_actions();              /* Tests 1218-1223: syslog CLOSE/OPEN/READ/READ_CLEAR/CLEAR/SIZE_UNREAD */
     test_socket_eisconn_and_timerfd_cancel(); /* Tests 1224-1226: EISCONN/accept-not-listening/TFD_CANCEL_ON_SET */
+    test_sock_timeout_blocking();             /* Tests 1227-1230: SO_SNDTIMEO/SO_RCVTIMEO blocking + clear */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

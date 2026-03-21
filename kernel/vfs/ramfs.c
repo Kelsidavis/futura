@@ -1670,6 +1670,11 @@ static int ramfs_symlink(struct fut_vnode *parent, const char *linkpath, const c
     new_entry->next = parent_node->dir.entries;
     parent_node->dir.entries = new_entry;
 
+    /* POSIX: creating an entry updates parent directory mtime/ctime */
+    uint64_t symlink_now = fut_get_ticks();
+    parent_node->mtime_ms = symlink_now;
+    parent_node->ctime_ms = symlink_now;
+
     return 0;
 }
 

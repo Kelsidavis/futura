@@ -16854,6 +16854,78 @@ static void test_rename_link_timestamps(void) {
     }
 }
 
+/*
+ * test_symlink_dir_timestamps - POSIX directory timestamp update on symlink creation
+ *
+ * Tests 1473-1474:
+ * 1473: symlink() updates parent directory mtime
+ * 1474: symlink() updates parent directory ctime
+ */
+static void test_symlink_dir_timestamps(void) {
+    extern long sys_stat(const char *path, struct fut_stat *statbuf);
+    extern long sys_symlink(const char *target, const char *linkpath);
+
+    /* Test 1473: symlink updates parent directory mtime */
+    fut_printf("[MISC-TEST] Test 1473: symlink updates dir mtime\n");
+    {
+        int ret = fut_vfs_mkdir("/test_sym_ts", 0755);
+        if (ret < 0 && ret != -EEXIST) {
+            fut_printf("[MISC-TEST] ✗ Test 1473: mkdir failed: %d\n", ret);
+            fut_test_fail(1473);
+        } else {
+            struct fut_stat dirst = {0};
+            sys_stat("/test_sym_ts", &dirst);
+            uint64_t mtime_before = dirst.st_mtime;
+
+            for (volatile int i = 0; i < 200000; i++) {}
+
+            long r = sys_symlink("/nonexistent", "/test_sym_ts/link1");
+            if (r < 0) {
+                fut_printf("[MISC-TEST] ✗ Test 1473: symlink failed: %ld\n", r);
+                fut_test_fail(1473);
+            } else {
+                struct fut_stat dirst2 = {0};
+                sys_stat("/test_sym_ts", &dirst2);
+
+                if (dirst2.st_mtime >= mtime_before) {
+                    fut_printf("[MISC-TEST] ✓ Test 1473: dir mtime updated on symlink\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1473: dir mtime not updated\n");
+                    fut_test_fail(1473);
+                }
+            }
+        }
+    }
+
+    /* Test 1474: symlink updates parent directory ctime */
+    fut_printf("[MISC-TEST] Test 1474: symlink updates dir ctime\n");
+    {
+        struct fut_stat dirst = {0};
+        sys_stat("/test_sym_ts", &dirst);
+        uint64_t ctime_before = dirst.st_ctime;
+
+        for (volatile int i = 0; i < 200000; i++) {}
+
+        long r = sys_symlink("/nonexistent2", "/test_sym_ts/link2");
+        if (r < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1474: symlink failed: %ld\n", r);
+            fut_test_fail(1474);
+        } else {
+            struct fut_stat dirst2 = {0};
+            sys_stat("/test_sym_ts", &dirst2);
+
+            if (dirst2.st_ctime >= ctime_before) {
+                fut_printf("[MISC-TEST] ✓ Test 1474: dir ctime updated on symlink\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1474: dir ctime not updated\n");
+                fut_test_fail(1474);
+            }
+        }
+    }
+}
+
 static void test_proc_fd_anon_types(void) {
     extern long sys_read(int fd, void *buf, size_t count);
     extern long sys_readlink(const char *path, char *buf, size_t bufsiz);
@@ -47912,6 +47984,7 @@ void fut_misc_test_thread(void *arg) {
     test_ctime_on_metadata_change();        /* Tests 1464-1466: ctime updates on chmod/chown */
     test_truncate_updates_timestamps();     /* Tests 1467-1469: truncate mtime/ctime updates */
     test_rename_link_timestamps();          /* Tests 1470-1472: rename/link timestamp updates */
+    test_symlink_dir_timestamps();          /* Tests 1473-1474: symlink dir timestamp updates */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

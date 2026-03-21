@@ -11558,6 +11558,125 @@ static void test_capset_correctness(void) {
 }
 
 /* ============================================================
+ * Tests 1280-1282: WCOREDUMP bit in wait status
+ * When a process is killed by a core-dumping signal (SIGABRT, SIGSEGV, etc.),
+ * bit 7 (0x80) of the wait status must be set. WCOREDUMP(status) checks this.
+ * ============================================================ */
+static void test_wcoredump_bit(void) {
+    extern long sys_wait4(int pid, int *status, int options, void *rusage);
+    extern fut_task_t *fut_task_create(void);
+
+    fut_task_t *parent = fut_task_current();
+    if (!parent) {
+        fut_printf("[MISC-TEST] ✗ Tests 1280-1282: no current task\n");
+        fut_test_fail(1280); fut_test_fail(1281); fut_test_fail(1282);
+        return;
+    }
+
+    /* Test 1280: SIGABRT (6) should set WCOREDUMP bit */
+    fut_printf("[MISC-TEST] Test 1280: SIGABRT wait status has WCOREDUMP bit\n");
+    {
+        fut_task_t *child = fut_task_create();
+        if (!child) {
+            fut_printf("[MISC-TEST] ✗ Test 1280: fut_task_create failed\n");
+            fut_test_fail(1280);
+            goto t1281;
+        }
+        int child_pid = (int)child->pid;
+        child->state = FUT_TASK_ZOMBIE;
+        child->exit_code = 0;
+        child->term_signal = 6;  /* SIGABRT — core-dumping signal */
+
+        int status = -1;
+        long rc = sys_wait4(child_pid, &status, 0, NULL);
+        if (rc != (long)child_pid) {
+            fut_printf("[MISC-TEST] ✗ Test 1280: wait4 returned %ld (expected %d)\n", rc, child_pid);
+            fut_test_fail(1280);
+            goto t1281;
+        }
+        /* Expected: signal=6 in low 7 bits, core dump bit (0x80) set */
+        int expected = 6 | 0x80;
+        if (status != expected) {
+            fut_printf("[MISC-TEST] ✗ Test 1280: status=0x%x (expected 0x%x)\n",
+                       (unsigned)status, (unsigned)expected);
+            fut_test_fail(1280);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1280: SIGABRT status=0x%x (WCOREDUMP set)\n",
+                       (unsigned)status);
+            fut_test_pass();
+        }
+    }
+
+t1281:;
+    /* Test 1281: SIGSEGV (11) should also set WCOREDUMP bit */
+    fut_printf("[MISC-TEST] Test 1281: SIGSEGV wait status has WCOREDUMP bit\n");
+    {
+        fut_task_t *child = fut_task_create();
+        if (!child) {
+            fut_printf("[MISC-TEST] ✗ Test 1281: fut_task_create failed\n");
+            fut_test_fail(1281);
+            goto t1282;
+        }
+        int child_pid = (int)child->pid;
+        child->state = FUT_TASK_ZOMBIE;
+        child->exit_code = 0;
+        child->term_signal = 11;  /* SIGSEGV — core-dumping signal */
+
+        int status = -1;
+        long rc = sys_wait4(child_pid, &status, 0, NULL);
+        if (rc != (long)child_pid) {
+            fut_printf("[MISC-TEST] ✗ Test 1281: wait4 returned %ld (expected %d)\n", rc, child_pid);
+            fut_test_fail(1281);
+            goto t1282;
+        }
+        int expected = 11 | 0x80;
+        if (status != expected) {
+            fut_printf("[MISC-TEST] ✗ Test 1281: status=0x%x (expected 0x%x)\n",
+                       (unsigned)status, (unsigned)expected);
+            fut_test_fail(1281);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1281: SIGSEGV status=0x%x (WCOREDUMP set)\n",
+                       (unsigned)status);
+            fut_test_pass();
+        }
+    }
+
+t1282:;
+    /* Test 1282: SIGTERM (15) is NOT a core-dumping signal — WCOREDUMP bit must be clear */
+    fut_printf("[MISC-TEST] Test 1282: SIGTERM wait status has NO WCOREDUMP bit\n");
+    {
+        fut_task_t *child = fut_task_create();
+        if (!child) {
+            fut_printf("[MISC-TEST] ✗ Test 1282: fut_task_create failed\n");
+            fut_test_fail(1282);
+            return;
+        }
+        int child_pid = (int)child->pid;
+        child->state = FUT_TASK_ZOMBIE;
+        child->exit_code = 0;
+        child->term_signal = 15;  /* SIGTERM — NOT a core-dumping signal */
+
+        int status = -1;
+        long rc = sys_wait4(child_pid, &status, 0, NULL);
+        if (rc != (long)child_pid) {
+            fut_printf("[MISC-TEST] ✗ Test 1282: wait4 returned %ld (expected %d)\n", rc, child_pid);
+            fut_test_fail(1282);
+            return;
+        }
+        int expected = 15;  /* Just the signal, no core dump bit */
+        if (status != expected) {
+            fut_printf("[MISC-TEST] ✗ Test 1282: status=0x%x (expected 0x%x)\n",
+                       (unsigned)status, (unsigned)expected);
+            fut_test_fail(1282);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1282: SIGTERM status=0x%x (no WCOREDUMP)\n",
+                       (unsigned)status);
+            fut_test_pass();
+        }
+    }
+}
+
+/* ============================================================
  * Tests 241-243: mlock2
  * ============================================================ */
 static void test_mlock2_basic(void) {
@@ -42286,6 +42405,7 @@ void fut_misc_test_thread(void *arg) {
     test_openat2_resolve_beneath();          /* Tests 1270-1272: RESOLVE_BENEATH enforcement */
     test_capget_correctness();               /* Tests 1273-1275: capget version/pid/two-struct */
     test_capset_correctness();               /* Tests 1276-1279: capset version/two-struct/validation */
+    test_wcoredump_bit();                    /* Tests 1280-1282: WCOREDUMP bit in wait status */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

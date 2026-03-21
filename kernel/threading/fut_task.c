@@ -53,7 +53,17 @@ static fut_spinlock_t task_list_lock = { .locked = 0 };
 /* Exit status encoding masks (POSIX waitpid() format) */
 #define EXIT_CODE_MASK      0xFF    /* Low 8 bits: exit code (0-255) */
 #define SIGNAL_MASK         0x7F    /* Low 7 bits: signal number (1-127) */
+#define CORE_DUMP_BIT       0x80    /* Bit 7: WCOREDUMP — set for core-dumping signals */
 #define WAIT_STATUS_SHIFT   8       /* Exit code shifted left 8 bits in wait status */
+
+/* Signals whose default disposition generates a core dump (Linux sig_default.c).
+ * Even with RLIMIT_CORE=0, the WCOREDUMP bit is set in the wait status. */
+static inline int signal_generates_core(int sig) {
+    /* SIGQUIT=3, SIGILL=4, SIGTRAP=5, SIGABRT=6, SIGBUS=7, SIGFPE=8,
+     * SIGSEGV=11, SIGXCPU=24, SIGXFSZ=25, SIGSYS=31 */
+    return sig == 3 || sig == 4 || sig == 5 || sig == 6 || sig == 7 ||
+           sig == 8 || sig == 11 || sig == 24 || sig == 25 || sig == 31;
+}
 
 static void task_attach_child(fut_task_t *parent, fut_task_t *child) {
     if (!parent || !child) {
@@ -612,7 +622,10 @@ void fut_task_signal_exit(int signal) {
 
 static int encode_wait_status(const fut_task_t *task) {
     if (task->term_signal) {
-        return task->term_signal & SIGNAL_MASK;
+        int status = task->term_signal & SIGNAL_MASK;
+        if (signal_generates_core(task->term_signal))
+            status |= CORE_DUMP_BIT;
+        return status;
     }
     return (task->exit_code & EXIT_CODE_MASK) << WAIT_STATUS_SHIFT;
 }

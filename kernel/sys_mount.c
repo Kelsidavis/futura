@@ -683,3 +683,60 @@ long sys_open_by_handle_at(int mount_fd, void *handle, int flags) {
     (void)mount_fd; (void)handle; (void)flags;
     return -EOPNOTSUPP;
 }
+
+/* ============================================================
+ *   Linux 6.8+ mount/LSM stubs
+ * ============================================================ */
+
+/**
+ * sys_statmount() - Query mount attributes by mount ID (Linux 6.8+).
+ * Returns -ENOSYS; callers (util-linux 2.40+) fall back to /proc/self/mountinfo.
+ */
+long sys_statmount(const void *req, void *buf, size_t bufsize, unsigned int flags) {
+    (void)req; (void)buf; (void)bufsize; (void)flags;
+    return -ENOSYS;
+}
+
+/**
+ * sys_listmount() - List mount IDs under a parent mount (Linux 6.8+).
+ * Returns -ENOSYS; callers fall back to parsing /proc/self/mountinfo.
+ */
+long sys_listmount(const void *req, uint64_t *mnt_ids, size_t nr_mnt_ids,
+                   unsigned int flags) {
+    (void)req; (void)mnt_ids; (void)nr_mnt_ids; (void)flags;
+    return -ENOSYS;
+}
+
+/**
+ * sys_lsm_get_self_attr() - Get LSM attributes of the calling process (Linux 6.8+).
+ * Returns -ENOSYS; no LSM framework in Futura. systemd 256+ probes this.
+ */
+long sys_lsm_get_self_attr(unsigned int attr, void *ctx, uint32_t *size,
+                           uint32_t flags) {
+    (void)attr; (void)ctx; (void)size; (void)flags;
+    return -ENOSYS;
+}
+
+/**
+ * sys_lsm_set_self_attr() - Set LSM attributes (Linux 6.8+).
+ * Returns -ENOSYS; no LSM framework.
+ */
+long sys_lsm_set_self_attr(unsigned int attr, void *ctx, uint32_t size,
+                           uint32_t flags) {
+    (void)attr; (void)ctx; (void)size; (void)flags;
+    return -ENOSYS;
+}
+
+/**
+ * sys_lsm_list_modules() - List loaded LSM modules (Linux 6.8+).
+ * Returns 0 (no modules loaded). systemd 256+ uses this to enumerate
+ * available security modules.
+ */
+long sys_lsm_list_modules(uint64_t *ids, uint32_t *size, uint32_t flags) {
+    (void)ids; (void)flags;
+    if (size) {
+        /* Report 0 modules — buffer size needed is 0 */
+        *size = 0;
+    }
+    return 0;
+}

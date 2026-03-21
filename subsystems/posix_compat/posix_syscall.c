@@ -355,6 +355,12 @@
 #define SYS_fsmount                 432  /* Linux: 432 */
 #define SYS_fspick                  433  /* Linux: 433 */
 #define SYS_mount_setattr           458  /* Linux: 442 — Futura: 458 (442 = kcmp) */
+/* Linux 6.8+ syscalls (2024) */
+#define SYS_statmount               459  /* Linux: 453 — Futura: 459 */
+#define SYS_listmount               460  /* Linux: 454 — Futura: 460 */
+#define SYS_lsm_get_self_attr       461  /* Linux: 459 — Futura: 461 */
+#define SYS_lsm_set_self_attr       462  /* Linux: 460 — Futura: 462 */
+#define SYS_lsm_list_modules        463  /* Linux: 461 — Futura: 463 */
 /* File handle syscalls (Linux 2.6.39+) */
 #define SYS_name_to_handle_at       303  /* Linux: 303 (conflicts with prlimit64? no, prlimit64=302) */
 #define SYS_open_by_handle_at       304  /* Linux: 304 */
@@ -2492,6 +2498,50 @@ static int64_t sys_open_by_handle_at_handler(uint64_t mount_fd, uint64_t handle,
     return sys_open_by_handle_at((int)mount_fd, (void *)(uintptr_t)handle, (int)flags);
 }
 
+/* Linux 6.8+ statmount/listmount/LSM stubs */
+static int64_t sys_statmount_handler(uint64_t req, uint64_t buf, uint64_t bufsize,
+                                      uint64_t flags, uint64_t a5, uint64_t a6) {
+    (void)a5; (void)a6;
+    extern long sys_statmount(const void *req, void *buf, size_t bufsize, unsigned int flags);
+    return sys_statmount((const void *)(uintptr_t)req, (void *)(uintptr_t)buf,
+                         (size_t)bufsize, (unsigned int)flags);
+}
+
+static int64_t sys_listmount_handler(uint64_t req, uint64_t mnt_ids, uint64_t nr_mnt_ids,
+                                      uint64_t flags, uint64_t a5, uint64_t a6) {
+    (void)a5; (void)a6;
+    extern long sys_listmount(const void *req, uint64_t *mnt_ids, size_t nr_mnt_ids,
+                              unsigned int flags);
+    return sys_listmount((const void *)(uintptr_t)req, (uint64_t *)(uintptr_t)mnt_ids,
+                         (size_t)nr_mnt_ids, (unsigned int)flags);
+}
+
+static int64_t sys_lsm_get_self_attr_handler(uint64_t attr, uint64_t ctx, uint64_t size,
+                                              uint64_t flags, uint64_t a5, uint64_t a6) {
+    (void)a5; (void)a6;
+    extern long sys_lsm_get_self_attr(unsigned int attr, void *ctx, uint32_t *size,
+                                      uint32_t flags);
+    return sys_lsm_get_self_attr((unsigned int)attr, (void *)(uintptr_t)ctx,
+                                 (uint32_t *)(uintptr_t)size, (uint32_t)flags);
+}
+
+static int64_t sys_lsm_set_self_attr_handler(uint64_t attr, uint64_t ctx, uint64_t size,
+                                              uint64_t flags, uint64_t a5, uint64_t a6) {
+    (void)a5; (void)a6;
+    extern long sys_lsm_set_self_attr(unsigned int attr, void *ctx, uint32_t size,
+                                      uint32_t flags);
+    return sys_lsm_set_self_attr((unsigned int)attr, (void *)(uintptr_t)ctx,
+                                 (uint32_t)size, (uint32_t)flags);
+}
+
+static int64_t sys_lsm_list_modules_handler(uint64_t ids, uint64_t size, uint64_t flags,
+                                             uint64_t a4, uint64_t a5, uint64_t a6) {
+    (void)a4; (void)a5; (void)a6;
+    extern long sys_lsm_list_modules(uint64_t *ids, uint32_t *size, uint32_t flags);
+    return sys_lsm_list_modules((uint64_t *)(uintptr_t)ids, (uint32_t *)(uintptr_t)size,
+                                (uint32_t)flags);
+}
+
 static int64_t sys_sched_setattr_handler(uint64_t pid, uint64_t uattr, uint64_t flags,
                                           uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     (void)arg4; (void)arg5; (void)arg6;
@@ -4272,6 +4322,12 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     /* File handle stubs (Linux 2.6.39+) */
     [SYS_name_to_handle_at]       = sys_name_to_handle_at_handler,
     [SYS_open_by_handle_at]       = sys_open_by_handle_at_handler,
+    /* Linux 6.8+ statmount/listmount/LSM stubs */
+    [SYS_statmount]               = sys_statmount_handler,
+    [SYS_listmount]               = sys_listmount_handler,
+    [SYS_lsm_get_self_attr]       = sys_lsm_get_self_attr_handler,
+    [SYS_lsm_set_self_attr]       = sys_lsm_set_self_attr_handler,
+    [SYS_lsm_list_modules]        = sys_lsm_list_modules_handler,
 };
 
 /* ============================================================

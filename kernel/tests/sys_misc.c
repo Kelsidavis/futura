@@ -12341,6 +12341,83 @@ static void test_clone_parent(void) {
     }
 }
 
+static void test_linux68_stubs(void) {
+    extern long sys_statmount(const void *req, void *buf, size_t bufsize, unsigned int flags);
+    extern long sys_listmount(const void *req, uint64_t *mnt_ids, size_t nr_mnt_ids,
+                              unsigned int flags);
+    extern long sys_lsm_get_self_attr(unsigned int attr, void *ctx, uint32_t *size,
+                                      uint32_t flags);
+    extern long sys_lsm_set_self_attr(unsigned int attr, void *ctx, uint32_t size,
+                                      uint32_t flags);
+    extern long sys_lsm_list_modules(uint64_t *ids, uint32_t *size, uint32_t flags);
+
+    /* Test 1317: statmount → ENOSYS */
+    fut_printf("[MISC-TEST] Test 1317: statmount → ENOSYS\n");
+    {
+        long ret = sys_statmount(NULL, NULL, 0, 0);
+        if (ret == -ENOSYS) {
+            fut_printf("[MISC-TEST] ✓ Test 1317: statmount → ENOSYS\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1317: statmount returned %ld\n", ret);
+            fut_test_fail(1317);
+        }
+    }
+
+    /* Test 1318: listmount → ENOSYS */
+    fut_printf("[MISC-TEST] Test 1318: listmount → ENOSYS\n");
+    {
+        long ret = sys_listmount(NULL, NULL, 0, 0);
+        if (ret == -ENOSYS) {
+            fut_printf("[MISC-TEST] ✓ Test 1318: listmount → ENOSYS\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1318: listmount returned %ld\n", ret);
+            fut_test_fail(1318);
+        }
+    }
+
+    /* Test 1319: lsm_get_self_attr → ENOSYS */
+    fut_printf("[MISC-TEST] Test 1319: lsm_get_self_attr → ENOSYS\n");
+    {
+        long ret = sys_lsm_get_self_attr(0, NULL, NULL, 0);
+        if (ret == -ENOSYS) {
+            fut_printf("[MISC-TEST] ✓ Test 1319: lsm_get_self_attr → ENOSYS\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1319: lsm_get_self_attr returned %ld\n", ret);
+            fut_test_fail(1319);
+        }
+    }
+
+    /* Test 1320: lsm_set_self_attr → ENOSYS */
+    fut_printf("[MISC-TEST] Test 1320: lsm_set_self_attr → ENOSYS\n");
+    {
+        long ret = sys_lsm_set_self_attr(0, NULL, 0, 0);
+        if (ret == -ENOSYS) {
+            fut_printf("[MISC-TEST] ✓ Test 1320: lsm_set_self_attr → ENOSYS\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1320: lsm_set_self_attr returned %ld\n", ret);
+            fut_test_fail(1320);
+        }
+    }
+
+    /* Test 1321: lsm_list_modules → 0 (no modules) */
+    fut_printf("[MISC-TEST] Test 1321: lsm_list_modules → 0 (no LSM modules)\n");
+    {
+        uint32_t sz = 999;
+        long ret = sys_lsm_list_modules(NULL, &sz, 0);
+        if (ret == 0 && sz == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1321: lsm_list_modules returned 0, size=0\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1321: ret=%ld size=%u\n", ret, sz);
+            fut_test_fail(1321);
+        }
+    }
+}
+
 static void test_process_madvise_basic(void) {
     /* Test 1292: process_madvise with flags != 0 → EINVAL */
     fut_printf("[MISC-TEST] Test 1292: process_madvise flags=1 → EINVAL\n");
@@ -43205,6 +43282,7 @@ void fut_misc_test_thread(void *arg) {
     test_proc_status_speculation();          /* Tests 1309-1310: /proc/self/status speculation fields */
     test_exit_signal_field();                /* Tests 1311-1313: exit_signal field */
     test_clone_parent();                     /* Tests 1314-1316: CLONE_PARENT */
+    test_linux68_stubs();                    /* Tests 1317-1321: Linux 6.8+ syscall stubs */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

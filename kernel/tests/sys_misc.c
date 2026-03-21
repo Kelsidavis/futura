@@ -19324,7 +19324,8 @@ static void test_getdents64_dot_dotdot(void) {
 static void test_ppoll_basic(void) {
     fut_printf("[MISC-TEST] Test 349: ppoll() POLLIN on pipe with kernel-stack timespec\n");
 
-    extern long sys_ppoll(void *fds, unsigned int nfds, void *tmo_p, const void *sigmask);
+    extern long sys_ppoll(void *fds, unsigned int nfds, void *tmo_p, const void *sigmask,
+                          size_t sigsetsize);
     extern long sys_pipe(int pipefd[2]);
     extern long sys_write(int fd, const void *buf, size_t count);
     extern long sys_close(int fd);
@@ -19341,7 +19342,7 @@ static void test_ppoll_basic(void) {
     struct pollfd pfd = { .fd = pipefd[0], .events = POLLIN, .revents = 0 };
 
     /* Poll with no data in pipe and timeout=0: should return 0 immediately */
-    long r = sys_ppoll(&pfd, 1, &ts_zero, NULL);
+    long r = sys_ppoll(&pfd, 1, &ts_zero, NULL, 0);
     if (r != 0) {
         fut_printf("[MISC-TEST] ✗ Test 349: expected 0 on empty pipe, got %ld\n", r);
         sys_close(pipefd[0]); sys_close(pipefd[1]);
@@ -19351,7 +19352,7 @@ static void test_ppoll_basic(void) {
     /* Write data to pipe, then poll: should return 1 with POLLIN set */
     sys_write(pipefd[1], "x", 1);
     pfd.revents = 0;
-    r = sys_ppoll(&pfd, 1, &ts_zero, NULL);
+    r = sys_ppoll(&pfd, 1, &ts_zero, NULL, 0);
     sys_close(pipefd[0]); sys_close(pipefd[1]);
 
     if (r != 1 || !(pfd.revents & POLLIN)) {
@@ -30622,7 +30623,8 @@ static void test_ppoll_sigmask_restore(void) {
     fut_printf("[MISC-TEST] Test 769: ppoll() sigmask install and restore\n");
 
     extern long sys_sigprocmask(int how, const sigset_t *set, sigset_t *oldset);
-    extern long sys_ppoll(void *fds, unsigned int nfds, void *tmo_p, const void *sigmask);
+    extern long sys_ppoll(void *fds, unsigned int nfds, void *tmo_p, const void *sigmask,
+                          size_t sigsetsize);
     extern long sys_eventfd2(unsigned int initval, int flags);
 
     /* Snapshot the current signal mask */
@@ -30649,7 +30651,7 @@ static void test_ppoll_sigmask_restore(void) {
     struct pollfd pfd = { .fd = (int)efd, .events = 0x001 /* POLLIN */, .revents = 0 };
     struct { int64_t tv_sec; long tv_nsec; } ts = { 0, 50000000L }; /* 50ms */
 
-    long n = sys_ppoll(&pfd, 1, &ts, &ppoll_mask);
+    long n = sys_ppoll(&pfd, 1, &ts, &ppoll_mask, sizeof(sigset_t));
 
     fut_vfs_close((int)efd);
 

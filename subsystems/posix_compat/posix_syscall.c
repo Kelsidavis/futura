@@ -1833,10 +1833,12 @@ static int64_t sys_pselect6_handler(uint64_t nfds, uint64_t readfds, uint64_t wr
 
 /* ppoll() handler */
 static int64_t sys_ppoll_handler(uint64_t fds, uint64_t nfds, uint64_t tmo_p,
-                                  uint64_t sigmask, uint64_t arg5, uint64_t arg6) {
-    (void)arg5; (void)arg6;
-    extern long sys_ppoll(void *fds, unsigned int nfds, void *tmo_p, const void *sigmask);
-    return sys_ppoll((void *)fds, (unsigned int)nfds, (void *)tmo_p, (const void *)sigmask);
+                                  uint64_t sigmask, uint64_t sigsetsize, uint64_t arg6) {
+    (void)arg6;
+    extern long sys_ppoll(void *fds, unsigned int nfds, void *tmo_p, const void *sigmask,
+                          size_t sigsetsize);
+    return sys_ppoll((void *)fds, (unsigned int)nfds, (void *)tmo_p,
+                     (const void *)sigmask, (size_t)sigsetsize);
 }
 
 /* sigpending() handler */
@@ -2876,12 +2878,13 @@ static int64_t sys_sync_file_range_handler(uint64_t fd, uint64_t offset, uint64_
 }
 
 static int64_t sys_epoll_pwait_handler(uint64_t epfd, uint64_t events, uint64_t maxevents,
-                                        uint64_t timeout, uint64_t sigmask, uint64_t arg6) {
-    (void)arg6;
+                                        uint64_t timeout, uint64_t sigmask,
+                                        uint64_t sigsetsize) {
     extern long sys_epoll_pwait(int epfd, void *events, int maxevents,
-                                 int timeout, const void *sigmask);
+                                 int timeout, const void *sigmask, size_t sigsetsize);
     return sys_epoll_pwait((int)epfd, (void *)(uintptr_t)events, (int)maxevents,
-                            (int)timeout, (const void *)(uintptr_t)sigmask);
+                            (int)timeout, (const void *)(uintptr_t)sigmask,
+                            (size_t)sigsetsize);
 }
 
 static int64_t sys_epoll_pwait2_handler(uint64_t epfd, uint64_t events, uint64_t maxevents,

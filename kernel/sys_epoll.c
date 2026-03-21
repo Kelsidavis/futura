@@ -1737,7 +1737,7 @@ long sys_epoll_create(int size) {
  * Phase 2 (Completed): Atomically install signal mask, call epoll_wait, restore mask
  */
 long sys_epoll_pwait(int epfd, struct epoll_event *events, int maxevents,
-                     int timeout, const void *sigmask) {
+                     int timeout, const void *sigmask, size_t sigsetsize) {
     fut_task_t *task = fut_task_current();
     sigset_t saved_mask = {0};
     bool mask_installed = false;
@@ -1745,13 +1745,19 @@ long sys_epoll_pwait(int epfd, struct epoll_event *events, int maxevents,
     /* Atomically install the provided signal mask via fut_signal_procmask
      * so the per-thread mask is updated correctly (not just the task mask). */
     if (sigmask && task) {
-        sigset_t newmask = {0};
+        /* Linux validates sigsetsize == sizeof(sigset_t); kernel callers pass 0 */
 #ifdef KERNEL_VIRTUAL_BASE
-        if ((uintptr_t)sigmask >= KERNEL_VIRTUAL_BASE)
-            __builtin_memcpy(&newmask, sigmask, sizeof(sigset_t));
-        else
+        bool is_kptr = (uintptr_t)sigmask >= KERNEL_VIRTUAL_BASE;
+#else
+        bool is_kptr = false;
 #endif
-        if (fut_copy_from_user(&newmask, sigmask, sizeof(sigset_t)) != 0) {
+        if (!is_kptr && sigsetsize != sizeof(sigset_t))
+            return -EINVAL;
+
+        sigset_t newmask = {0};
+        if (is_kptr)
+            __builtin_memcpy(&newmask, sigmask, sizeof(sigset_t));
+        else if (fut_copy_from_user(&newmask, sigmask, sizeof(sigset_t)) != 0) {
             return -EFAULT;
         }
         int mret = fut_signal_procmask(task, SIGPROCMASK_SETMASK, &newmask, &saved_mask);
@@ -1794,7 +1800,7 @@ long sys_epoll_pwait(int epfd, struct epoll_event *events, int maxevents,
 long sys_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
                       const void *timeout_ts, const void *sigmask,
                       size_t sigsetsize) {
-    (void)sigsetsize;  /* sigsetsize passed to pwait internally */
+    /* sigsetsize is forwarded to pwait for validation */
     int timeout_ms = -1;  /* default: block forever */
 
     if (timeout_ts) {
@@ -1820,5 +1826,5 @@ long sys_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
         }
     }
 
-    return sys_epoll_pwait(epfd, events, maxevents, timeout_ms, sigmask);
+    return sys_epoll_pwait(epfd, events, maxevents, timeout_ms, sigmask, sigsetsize);
 }

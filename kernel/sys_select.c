@@ -1094,7 +1094,8 @@ out_restore_sigmask:
  * Phase 2 (Completed): Implement actual FD polling via sys_poll delegation
  * Phase 3 (Completed): Signal mask temporarily installed (blocking deferred)
  */
-long sys_ppoll(void *fds, unsigned int nfds, void *tmo_p, const void *sigmask) {
+long sys_ppoll(void *fds, unsigned int nfds, void *tmo_p, const void *sigmask,
+               size_t sigsetsize) {
     /* ARM64 FIX: Copy parameters to local variables immediately to ensure they're preserved
      * on the stack across potentially blocking calls. Task operations may block and corrupt
      * register-passed parameters upon resumption. */
@@ -1146,6 +1147,10 @@ long sys_ppoll(void *fds, unsigned int nfds, void *tmo_p, const void *sigmask) {
     bool mask_applied = false;
 
     if (local_sigmask && task) {
+        /* Linux validates sigsetsize == sizeof(sigset_t); kernel callers pass 0 */
+        if (!IS_KPTR(local_sigmask) && sigsetsize != sizeof(sigset_t))
+            return -EINVAL;
+
         sigset_t requested_mask = {0};
 
         if (IS_KPTR(local_sigmask)) {

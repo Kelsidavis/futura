@@ -4240,10 +4240,15 @@ static bool posix_deliver_signal(fut_task_t *current, int signum,
         current->sig_altstack.ss_flags |= SS_ONSTACK;
     }
 
-    /* Allocate rt_sigframe on user stack (must be 16-byte aligned)
-     * Decrement SP to make room for frame, ensuring 16-byte alignment */
+    /* Allocate rt_sigframe on user stack.
+     * x86-64 ABI: at function entry RSP % 16 == 8 (as if 'call' just ran,
+     * pushing the return address).  Linux: sp = round_down(sp-sz, 16) - 8.
+     * ARM64 ABI: RSP must be 16-byte aligned on function entry (no -8). */
     user_sp -= sizeof(struct rt_sigframe);
     user_sp &= ~15ULL;  /* Align to 16 bytes */
+#ifdef __x86_64__
+    user_sp -= 8;        /* x86-64: pretcode at [RSP], so RSP must be (16n+8) */
+#endif
 
     /* Verify user stack is accessible (basic check) */
     if (user_sp < 0x400000) {  /* Below reasonable user stack threshold */

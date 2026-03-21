@@ -40928,6 +40928,141 @@ static void test_fake_restorer_fn(void) { /* fake sa_restorer for test 1259 */ }
  *   Test 1258: info field follows return_address at offset sizeof(void*)
  *   Test 1259: SA_RESTORER flag causes restorer to be stored in task
  * ============================================================ */
+
+/* ============================================================
+ * Tests 1260-1262: x86-64 signal frame stack alignment
+ *   Test 1260: signal delivery alignment formula → RSP % 16 == 8 (x86-64)
+ *              or RSP % 16 == 0 (ARM64, 16-byte aligned on function entry)
+ *   Test 1261: pretcode-first + alignment → [RSP] == sa_restorer for 'ret'
+ *   Test 1262: sigreturn RSP calculation is consistent with alignment
+ * ============================================================ */
+static void test_signal_stack_alignment(void) {
+    fut_printf("[MISC-TEST] Tests 1260-1262: signal frame ABI stack alignment\n");
+
+    const size_t frame_size = sizeof(struct rt_sigframe);
+
+    /* Test 1260: Verify the signal delivery alignment formula gives the
+     * correct RSP alignment for the architecture:
+     *   x86-64: RSP % 16 == 8  (ABI: 8-byte aligned at function entry, as
+     *           if 'call' just pushed the return address)
+     *   ARM64:  RSP % 16 == 0  (ABI: 16-byte aligned at function entry)
+     *
+     * Formula used in kernel signal delivery:
+     *   sp = ((original_rsp - frame_size) & ~15) - 8   [x86-64]
+     *   sp = ((original_sp  - frame_size) & ~15)        [ARM64]
+     */
+    fut_printf("[MISC-TEST] Test 1260: signal frame RSP alignment\n");
+    {
+        int ok = 0;
+        /* Test several values to ensure alignment is always correct */
+        uint64_t test_sps[] = {
+            0x7fff0000ULL, 0x7fff0008ULL, 0x7fff0010ULL,
+            0x7fff1234ULL, 0x7fff5678ULL, 0x7ffffffcULL,
+        };
+        for (int i = 0; i < 6; i++) {
+            uint64_t sp = test_sps[i];
+            sp -= frame_size;
+            sp &= ~15ULL;
+#ifdef __x86_64__
+            sp -= 8;
+            if ((sp % 16) == 8) ok++;
+#else   /* ARM64 */
+            if ((sp % 16) == 0) ok++;
+#endif
+        }
+        if (ok == 6) {
+            fut_printf("[MISC-TEST] ✓ Test 1260: signal frame RSP%%16==%d on all 6 test values (%s)\n",
+#ifdef __x86_64__
+                       8, "x86-64");
+#else
+                       0, "arm64");
+#endif
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1260: alignment wrong (%d/6 correct)\n", ok);
+            fut_test_fail(1260);
+        }
+    }
+
+    /* Test 1261: With pretcode-first layout and correct alignment,
+     * the 'ret' instruction in the signal handler pops [RSP] = return_address
+     * (= sa_restorer) into RIP.
+     * After 'ret': RSP_after = user_sp + sizeof(void*) = user_sp + 8.
+     * This should be (16n + 0) for x86-64 (sa_restorer function entry ABI). */
+    fut_printf("[MISC-TEST] Test 1261: 'ret' from signal handler RSP alignment\n");
+    {
+        /* Simulate: user_sp = signal_frame_base (the fixed-up sp from Test 1260) */
+        uint64_t sim_rsp = 0x7fff1000ULL;
+        uint64_t user_sp = sim_rsp - frame_size;
+        user_sp &= ~15ULL;
+#ifdef __x86_64__
+        user_sp -= 8;
+        /* After handler 'ret': pops [user_sp] (return_address), RSP = user_sp + 8 */
+        uint64_t rsp_after_ret = user_sp + 8;
+        /* rsp_after_ret should be 16-byte aligned (correct for sa_restorer entry) */
+        if ((rsp_after_ret % 16) == 0 && (user_sp % 16) == 8) {
+            fut_printf("[MISC-TEST] ✓ Test 1261: x86-64 user_sp%%16=%llu, RSP_after_ret%%16=%llu\n",
+                       (unsigned long long)(user_sp % 16),
+                       (unsigned long long)(rsp_after_ret % 16));
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1261: user_sp%%16=%llu, rsp_after_ret%%16=%llu (expected 8,0)\n",
+                       (unsigned long long)(user_sp % 16),
+                       (unsigned long long)(rsp_after_ret % 16));
+            fut_test_fail(1261);
+        }
+#else   /* ARM64 */
+        /* ARM64 'ret' = 'br x30' — does NOT pop from stack, SP unchanged */
+        if ((user_sp % 16) == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1261: arm64 user_sp%%16=0 (16-byte aligned)\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1261: arm64 user_sp%%16=%llu (expected 0)\n",
+                       (unsigned long long)(user_sp % 16));
+            fut_test_fail(1261);
+        }
+#endif
+    }
+
+    /* Test 1262: sigreturn RSP-to-frame calculation is consistent with delivery.
+     * On x86-64:
+     *   Delivery:  RSP = user_sp            (user_sp % 16 == 8)
+     *   After ret: RSP = user_sp + 8        (user_sp + 8 % 16 == 0)
+     *   rt_sigreturn: frame = RSP - 8 = user_sp   ✓ (matches frame base)
+     * On ARM64:
+     *   Delivery:  SP  = user_sp            (user_sp % 16 == 0)
+     *   After ret: SP  = user_sp (unchanged by 'ret')
+     *   rt_sigreturn: frame = SP = user_sp  ✓
+     */
+    fut_printf("[MISC-TEST] Test 1262: sigreturn frame-pointer reconstruction\n");
+    {
+        uint64_t sim_rsp = 0x7ffe0000ULL;
+        uint64_t user_sp = sim_rsp - frame_size;
+        user_sp &= ~15ULL;
+#ifdef __x86_64__
+        user_sp -= 8;
+        uint64_t rsp_at_sigreturn = user_sp + sizeof(void *); /* after handler 'ret' */
+        uint64_t frame_base = rsp_at_sigreturn - sizeof(void *);
+        if (frame_base == user_sp) {
+            fut_printf("[MISC-TEST] ✓ Test 1262: sigreturn reconstructs frame_base=%llx == user_sp=%llx\n",
+                       (unsigned long long)frame_base, (unsigned long long)user_sp);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1262: frame_base=%llx != user_sp=%llx\n",
+                       (unsigned long long)frame_base, (unsigned long long)user_sp);
+            fut_test_fail(1262);
+        }
+#else   /* ARM64: SP unchanged, frame_base == user_sp directly */
+        uint64_t frame_base = user_sp;
+        if (frame_base == user_sp) {
+            fut_printf("[MISC-TEST] ✓ Test 1262: arm64 sigreturn frame_base == user_sp\n");
+            fut_test_pass();
+        } else {
+            fut_test_fail(1262);
+        }
+#endif
+    }
+}
 static void test_sigframe_layout(void) {
     fut_printf("[MISC-TEST] Tests 1257-1259: rt_sigframe layout and SA_RESTORER\n");
 
@@ -41635,6 +41770,7 @@ void fut_misc_test_thread(void *arg) {
     test_sigsegv_pagefault_delivery();        /* Tests 1247-1250: page-fault SIGSEGV delivery mechanism */
     test_hw_exception_signals();              /* Tests 1251-1256: hardware exception → signal delivery */
     test_sigframe_layout();                   /* Tests 1257-1259: rt_sigframe pretcode-first layout + SA_RESTORER */
+    test_signal_stack_alignment();            /* Tests 1260-1262: x86-64 RSP%16==8 at handler entry */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -801,10 +801,16 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
 
     /* User-defined handler - set up signal frame on user stack */
 
-    /* Allocate rt_sigframe on user stack with 16-byte alignment */
+    /* Allocate rt_sigframe on user stack.
+     * x86-64 ABI: at function entry (just after 'call'), RSP % 16 == 8.
+     * Signal delivery is equivalent to a 'call': pretcode sits at [RSP]
+     * as if the call instruction pushed it.  Linux uses:
+     *   sp = round_down(sp - frame_size, 16) - 8
+     * so that the frame base (= RSP on handler entry) is 8-byte aligned. */
     uint64_t sp = f->rsp;
     sp -= sizeof(struct rt_sigframe);
     sp &= ~0xFULL;  /* Align to 16 bytes */
+    sp -= 8;         /* x86-64: RSP must be (16n+8) at handler entry */
 
     /* security: Check for stack pointer underflow/wraparound.
      * If sp wrapped past zero or is above the original stack pointer,

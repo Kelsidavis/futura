@@ -8,20 +8,22 @@
  *   - mode:    file creation mode (for O_CREAT)
  *   - resolve: path resolution control (RESOLVE_* flags)
  *
- * Phase 1 (Completed):
+ * Implemented:
  *   - Validates usize (must be >= sizeof(open_how))
  *   - Copies open_how from userspace
  *   - Validates resolve flags (only known RESOLVE_* accepted)
  *   - RESOLVE_NO_XDEV, RESOLVE_NO_MAGICLINKS, RESOLVE_CACHED: no-op (accepted)
- *   - RESOLVE_NO_SYMLINKS, RESOLVE_BENEATH, RESOLVE_IN_ROOT: accepted as no-op
- *   - Delegates to sys_openat with flags and mode
+ *   - RESOLVE_NO_SYMLINKS, RESOLVE_IN_ROOT: accepted as no-op
+ *   - RESOLVE_BENEATH: enforced — path must stay within dirfd's subtree
  *   - Returns EINVAL for unknown resolve flags or usize too small
+ *   - Returns EXDEV when RESOLVE_BENEATH is violated
  */
 
 #include <kernel/fut_task.h>
 #include <kernel/fut_vfs.h>
 #include <kernel/errno.h>
 #include <kernel/uaccess.h>
+#include <fcntl.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
@@ -51,6 +53,75 @@ struct open_how {
 #define RESOLVE_VALID          (RESOLVE_NO_XDEV | RESOLVE_NO_MAGICLINKS | \
                                 RESOLVE_NO_SYMLINKS | RESOLVE_BENEATH | \
                                 RESOLVE_IN_ROOT | RESOLVE_CACHED)
+
+/**
+ * Normalize an absolute POSIX path by resolving "." and ".." components.
+ * Writes result to out (out_size bytes). Returns 0 on success, negative on error.
+ * Input must start with '/'.
+ */
+static int normalize_abs_path(const char *in, char *out, size_t out_size) {
+    if (!in || in[0] != '/' || out_size < 2)
+        return -1;
+    char *o     = out;
+    char *o_end = out + out_size - 1;
+    *o++ = '/';
+
+    /* seg_pos[depth] = position in out just before this segment was written.
+     * Restored to seg_pos[depth-1] when ".." is encountered. */
+    char *seg_pos[256];
+    int depth = 0;
+
+    const char *p = in + 1; /* skip leading '/' */
+    while (*p) {
+        while (*p == '/') p++;    /* skip consecutive slashes */
+        if (!*p) break;
+
+        const char *q = p;
+        while (*q && *q != '/') q++;
+        size_t len = (size_t)(q - p);
+
+        if (len == 1 && p[0] == '.') {
+            p = q;
+            continue;
+        }
+        if (len == 2 && p[0] == '.' && p[1] == '.') {
+            if (depth > 0)
+                o = seg_pos[--depth]; /* pop last segment */
+            /* at root ".." stays at root */
+            p = q;
+            continue;
+        }
+        if (depth >= 256)
+            return -ENAMETOOLONG;
+        seg_pos[depth] = o;          /* save restore point for future ".." */
+        if (depth > 0) {
+            if (o >= o_end) return -ENAMETOOLONG;
+            *o++ = '/';
+        }
+        if (o + len > o_end) return -ENAMETOOLONG;
+        __builtin_memcpy(o, p, len);
+        o += len;
+        depth++;
+        p = q;
+    }
+    *o = '\0';
+    return 0;
+}
+
+/* Returns 1 if resolved is equal to dir_path or is a direct descendant. */
+static int path_is_within(const char *resolved, const char *dir_path) {
+    if (!resolved || !dir_path) return 0;
+    size_t dlen = 0;
+    while (dir_path[dlen]) dlen++;
+    /* strip trailing slash (except root) */
+    while (dlen > 1 && dir_path[dlen - 1] == '/') dlen--;
+    /* "/" contains everything */
+    if (dlen == 1 && dir_path[0] == '/') return 1;
+    /* resolved must have dir_path as prefix */
+    for (size_t i = 0; i < dlen; i++)
+        if (resolved[i] != dir_path[i]) return 0;
+    return resolved[dlen] == '/' || resolved[dlen] == '\0';
+}
 
 static inline int openat2_copy_from_user(void *dst, const void *src, size_t n) {
 #ifdef KERNEL_VIRTUAL_BASE
@@ -86,11 +157,10 @@ long sys_openat2(int dirfd, const char *path, const struct open_how *how,
     if (kow.resolve & ~RESOLVE_VALID)
         return -EINVAL;
 
-    /* Phase 1: resolve flags are accepted but treated as hints (no-op).
-     * Futura's VFS is a simple in-memory FS with no mount points or
-     * magic links, so RESOLVE_NO_XDEV, RESOLVE_NO_MAGICLINKS, and
-     * RESOLVE_CACHED are naturally satisfied. RESOLVE_BENEATH /
-     * RESOLVE_IN_ROOT / RESOLVE_NO_SYMLINKS are validated but not enforced. */
+    /* RESOLVE_NO_XDEV, RESOLVE_NO_MAGICLINKS, RESOLVE_CACHED: naturally satisfied
+     * by Futura's in-memory VFS (no mount points or magic links).
+     * RESOLVE_NO_SYMLINKS, RESOLVE_IN_ROOT: accepted as no-op.
+     * RESOLVE_BENEATH: enforced below after path resolution. */
 
     /* Copy pathname to kernel buffer (bypass kernel-pointer EFAULT) */
     char kpath[256];
@@ -108,6 +178,36 @@ long sys_openat2(int dirfd, const char *path, const struct open_how *how,
     kpath[plen] = '\0';
 
     fut_task_t *task = fut_task_current();
+
+    /* Enforce RESOLVE_BENEATH: the final resolved path must remain within
+     * the dirfd's subtree.  Returns -EXDEV on violation (matching Linux). */
+    if ((kow.resolve & RESOLVE_BENEATH) && dirfd != AT_FDCWD) {
+        struct fut_file *dir_file = vfs_get_file_from_task(task, dirfd);
+        if (dir_file && dir_file->path) {
+            char raw_buf[FUT_VFS_PATH_BUFFER_SIZE];
+            char norm_buf[FUT_VFS_PATH_BUFFER_SIZE];
+            const char *to_check;
+            if (kpath[0] == '/') {
+                /* Absolute path: normalize kpath itself */
+                if (normalize_abs_path(kpath, norm_buf, sizeof(norm_buf)) == 0)
+                    to_check = norm_buf;
+                else
+                    to_check = kpath;
+            } else {
+                /* Relative path: combine with dirfd's path, then normalize */
+                int rc = fut_vfs_resolve_at(task, dirfd, kpath,
+                                            raw_buf, sizeof(raw_buf));
+                if (rc < 0) return -EXDEV;
+                if (normalize_abs_path(raw_buf, norm_buf, sizeof(norm_buf)) == 0)
+                    to_check = norm_buf;
+                else
+                    to_check = raw_buf;
+            }
+            if (!path_is_within(to_check, dir_file->path))
+                return -EXDEV;
+        }
+    }
+
     int fd = fut_vfs_open_at(task, dirfd, kpath, (int)kow.flags, (int)kow.mode);
 
     /* Set FD_CLOEXEC if O_CLOEXEC requested */

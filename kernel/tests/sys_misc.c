@@ -11297,6 +11297,80 @@ static void test_openat2_errors(void) {
 }
 
 /* ============================================================
+ * Tests 1270-1272: RESOLVE_BENEATH enforcement in openat2
+ * ============================================================ */
+#define TEST_RESOLVE_BENEATH  0x08
+
+static void test_openat2_resolve_beneath(void) {
+    extern long sys_openat2(int dirfd, const char *path, const struct test_open_how *how,
+                            size_t usize);
+    extern int fut_vfs_mkdir(const char *path, uint32_t mode);
+    extern long sys_unlink(const char *path);
+    extern long sys_rmdir(const char *path);
+
+    /* Set up: /rb_testdir/ with inner.txt inside */
+    fut_vfs_mkdir("/rb_testdir", 0755);
+    int inner = (int)fut_vfs_open("/rb_testdir/inner.txt", 0x42 /* O_RDWR|O_CREAT */, 0644);
+    if (inner >= 0) { fut_vfs_write(inner, "x", 1); fut_vfs_close(inner); }
+
+    /* Open /rb_testdir as a dirfd */
+    int dirfd = (int)fut_vfs_open("/rb_testdir", 00200000 /* O_DIRECTORY */, 0);
+    if (dirfd < 0) {
+        fut_printf("[MISC-TEST] ✗ Tests 1270-1272: open dirfd failed: %d\n", dirfd);
+        fut_test_fail(1270); fut_test_fail(1271); fut_test_fail(1272);
+        sys_unlink("/rb_testdir/inner.txt");
+        sys_rmdir("/rb_testdir");
+        return;
+    }
+
+    /* Test 1270: RESOLVE_BENEATH + path within subtree → success */
+    fut_printf("[MISC-TEST] Test 1270: RESOLVE_BENEATH normal relative path succeeds\n");
+    struct test_open_how how_beneath = { .flags = 0, .mode = 0,
+                                        .resolve = TEST_RESOLVE_BENEATH };
+    long fd1 = sys_openat2(dirfd, "inner.txt", &how_beneath, TEST_OPEN_HOW_SIZE);
+    if (fd1 >= 0) {
+        fut_printf("[MISC-TEST] ✓ Test 1270: RESOLVE_BENEATH normal path: fd=%ld\n", fd1);
+        fut_vfs_close((int)fd1);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1270: RESOLVE_BENEATH normal path: %ld\n", fd1);
+        fut_test_fail(1270);
+    }
+
+    /* Test 1271: RESOLVE_BENEATH + "../" escape attempt → -EXDEV
+     * "../../etc/passwd" normalizes to "/etc/passwd" which escapes /rb_testdir */
+    fut_printf("[MISC-TEST] Test 1271: RESOLVE_BENEATH path escape via ../ → EXDEV\n");
+    long fd2 = sys_openat2(dirfd, "../../etc/passwd", &how_beneath, TEST_OPEN_HOW_SIZE);
+    if (fd2 == -18 /* -EXDEV */) {
+        fut_printf("[MISC-TEST] ✓ Test 1271: RESOLVE_BENEATH escape blocked: %ld\n", fd2);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1271: RESOLVE_BENEATH escape: expected -18 (EXDEV),"
+                   " got %ld\n", fd2);
+        fut_test_fail(1271);
+    }
+    if (fd2 >= 0) fut_vfs_close((int)fd2);
+
+    /* Test 1272: RESOLVE_BENEATH + absolute path outside subtree → -EXDEV
+     * "/tmp" is a different subtree from /rb_testdir, so EXDEV even if it exists */
+    fut_printf("[MISC-TEST] Test 1272: RESOLVE_BENEATH absolute path outside subtree → EXDEV\n");
+    long fd3 = sys_openat2(dirfd, "/tmp", &how_beneath, TEST_OPEN_HOW_SIZE);
+    if (fd3 == -18 /* -EXDEV */) {
+        fut_printf("[MISC-TEST] ✓ Test 1272: RESOLVE_BENEATH abs path blocked: %ld\n", fd3);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1272: RESOLVE_BENEATH abs path: expected -18 (EXDEV),"
+                   " got %ld\n", fd3);
+        fut_test_fail(1272);
+    }
+    if (fd3 >= 0) fut_vfs_close((int)fd3);
+
+    fut_vfs_close(dirfd);
+    sys_unlink("/rb_testdir/inner.txt");
+    sys_rmdir("/rb_testdir");
+}
+
+/* ============================================================
  * Tests 241-243: mlock2
  * ============================================================ */
 static void test_mlock2_basic(void) {
@@ -42022,6 +42096,7 @@ void fut_misc_test_thread(void *arg) {
     test_ss_autodisarm_delivery();            /* Tests 1260-1262: SS_AUTODISARM enforcement at signal delivery */
     test_signal_stack_alignment();            /* Tests 1263-1265: x86-64 RSP%16==8 at handler entry */
     test_kill_siginfo_sender();               /* Tests 1267-1269: kill() SI_USER si_pid/si_uid = sender's pid/uid */
+    test_openat2_resolve_beneath();          /* Tests 1270-1272: RESOLVE_BENEATH enforcement */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

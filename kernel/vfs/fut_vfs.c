@@ -2595,6 +2595,8 @@ int64_t fut_vfs_lseek(int fd, int64_t offset, int whence) {
 
     switch (whence) {
     case SEEK_SET:
+        if (offset < 0)
+            return -EINVAL;
         new_offset = (uint64_t)offset;
         break;
     case SEEK_CUR:
@@ -2627,12 +2629,12 @@ int64_t fut_vfs_lseek(int fd, int64_t offset, int whence) {
         return -EINVAL;
     }
 
-    /* Validate resulting offset is non-negative and representable in off_t.
-     * Catches: negative SEEK_SET offset, SEEK_CUR/SEEK_END arithmetic underflow
-     * (negative result wraps to large uint64_t), and overflow past INT64_MAX.
-     * POSIX: return EINVAL for negative resulting offset. */
+    /* Validate resulting offset is representable in off_t.
+     * Catches: SEEK_CUR/SEEK_END arithmetic underflow (negative result wraps
+     * to large uint64_t) and overflow past INT64_MAX.
+     * POSIX: EOVERFLOW when resulting offset cannot be represented in off_t. */
     if (new_offset > (uint64_t)INT64_MAX) {
-        return -EINVAL;
+        return -EOVERFLOW;
     }
 
     file->offset = new_offset;

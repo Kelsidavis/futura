@@ -13289,6 +13289,32 @@ static void test_renameat2_noreplace(void) {
         }
     }
 
+    /* Test 1357: lseek SEEK_CUR overflow → EOVERFLOW (not EINVAL) */
+    fut_printf("[MISC-TEST] Test 1357: lseek SEEK_CUR overflow → EOVERFLOW\n");
+    {
+        extern long sys_lseek(int fd, long offset, int whence);
+        int fd = (int)fut_vfs_open("/lseek_overflow_test.txt", 0x42, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1357: open failed: %d\n", fd);
+            fut_test_fail(1357);
+        } else {
+            /* Seek to a large offset first */
+            sys_lseek(fd, 0x7FFFFFFFFFFFFFF0LL, 0 /* SEEK_SET */);
+            /* Now SEEK_CUR with a value that overflows past INT64_MAX */
+            long r = sys_lseek(fd, 0x100, 1 /* SEEK_CUR */);
+            fut_vfs_close(fd);
+            fut_vfs_unlink("/lseek_overflow_test.txt");
+            if (r == -EOVERFLOW) {
+                fut_printf("[MISC-TEST] ✓ Test 1357: SEEK_CUR overflow → EOVERFLOW\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1357: expected EOVERFLOW(%d), got %ld\n",
+                           -EOVERFLOW, r);
+                fut_test_fail(1357);
+            }
+        }
+    }
+
 #undef RENAME_NOREPLACE
 }
 
@@ -44314,7 +44340,7 @@ void fut_misc_test_thread(void *arg) {
     test_alarm_large_values();               /* Tests 1343-1345: alarm() POSIX compliance with large values */
     test_memfd_extended_flags();             /* Tests 1346-1350: memfd MFD_HUGETLB, MFD_NOEXEC_SEAL, MFD_EXEC */
     test_getdents64_dtype();                 /* Tests 1351-1353: getdents64 returns Linux DT_* values */
-    test_renameat2_noreplace();              /* Tests 1354-1356: renameat2 NOREPLACE + readlinkat empty */
+    test_renameat2_noreplace();              /* Tests 1354-1357: renameat2 NOREPLACE, readlinkat empty, lseek EOVERFLOW */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -177,11 +177,16 @@ long sys_shutdown(int sockfd, int how) {
             break;
     }
 
-    /* Phase 2: Validate socket is connected */
+    /* Phase 2: Validate socket is connected
+     * Linux allows shutdown() on unconnected SOCK_DGRAM sockets (POSIX permits
+     * this; ENOTCONN only applies to connection-oriented sockets like SOCK_STREAM).
+     */
     if (socket->state != FUT_SOCK_CONNECTED) {
-        fut_printf("[SHUTDOWN] shutdown(sockfd=%d, socket_id=%u, state=%s, how=%s) -> ENOTCONN (socket not connected)\n",
-                   local_sockfd, socket->socket_id, socket_state_desc, how_desc);
-        return -ENOTCONN;
+        if (socket->socket_type != SOCK_DGRAM) {
+            fut_printf("[SHUTDOWN] shutdown(sockfd=%d, socket_id=%u, state=%s, how=%s) -> ENOTCONN (socket not connected)\n",
+                       local_sockfd, socket->socket_id, socket_state_desc, how_desc);
+            return -ENOTCONN;
+        }
     }
 
     /* Set shutdown flags checked by send/recv operations */

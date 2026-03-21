@@ -39120,6 +39120,79 @@ static void test_vmsplice_tee(void) {
     }
 }
 
+static void test_shutdown_dgram(void) {
+    /* Linux allows shutdown() on unconnected SOCK_DGRAM sockets.
+     * Tests 1197-1199: SHUT_RD, SHUT_WR, and invalid how on DGRAM socket. */
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_shutdown(int sockfd, int how);
+    extern long sys_close(int fd);
+
+#define TEST_AF_UNIX 1
+#define TEST_SOCK_DGRAM 2
+
+    /* Test 1197: shutdown(dgram, SHUT_RD) on unconnected socket → 0 */
+    fut_printf("[MISC-TEST] Test 1197: shutdown(DGRAM, SHUT_RD) unconnected → 0\n");
+    {
+        int fd = (int)sys_socket(TEST_AF_UNIX, TEST_SOCK_DGRAM, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1197: socket() failed (%d)\n", fd);
+            fut_test_fail(1197);
+        } else {
+            long r = sys_shutdown(fd, 0 /* SHUT_RD */);
+            if (r == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1197: shutdown(DGRAM, SHUT_RD) = 0\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1197: shutdown returned %ld (want 0)\n", r);
+                fut_test_fail(1197);
+            }
+            sys_close(fd);
+        }
+    }
+
+    /* Test 1198: shutdown(dgram, SHUT_WR) on unconnected socket → 0 */
+    fut_printf("[MISC-TEST] Test 1198: shutdown(DGRAM, SHUT_WR) unconnected → 0\n");
+    {
+        int fd = (int)sys_socket(TEST_AF_UNIX, TEST_SOCK_DGRAM, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1198: socket() failed (%d)\n", fd);
+            fut_test_fail(1198);
+        } else {
+            long r = sys_shutdown(fd, 1 /* SHUT_WR */);
+            if (r == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1198: shutdown(DGRAM, SHUT_WR) = 0\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1198: shutdown returned %ld (want 0)\n", r);
+                fut_test_fail(1198);
+            }
+            sys_close(fd);
+        }
+    }
+
+    /* Test 1199: shutdown(dgram, invalid_how=99) → EINVAL even on DGRAM */
+    fut_printf("[MISC-TEST] Test 1199: shutdown(DGRAM, how=99) → EINVAL\n");
+    {
+        int fd = (int)sys_socket(TEST_AF_UNIX, TEST_SOCK_DGRAM, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1199: socket() failed (%d)\n", fd);
+            fut_test_fail(1199);
+        } else {
+            long r = sys_shutdown(fd, 99);
+            if (r == -22 /* -EINVAL */) {
+                fut_printf("[MISC-TEST] ✓ Test 1199: shutdown(DGRAM, 99) = -EINVAL\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1199: shutdown returned %ld (want -EINVAL)\n", r);
+                fut_test_fail(1199);
+            }
+            sys_close(fd);
+        }
+    }
+#undef TEST_AF_UNIX
+#undef TEST_SOCK_DGRAM
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -39749,6 +39822,7 @@ void fut_misc_test_thread(void *arg) {
     test_enosys_stubs();               /* Tests 1184-1188: perf_event_open/fanotify/userfaultfd/bpf stubs */
     test_inet_peer_addr();             /* Tests 1189-1191: getpeername AF_INET ENOTCONN + recvfrom src_addr */
     test_vmsplice_tee();               /* Tests 1192-1196: vmsplice write+read, EFAULT, EINVAL, EBADF, tee dup */
+    test_shutdown_dgram();             /* Tests 1197-1199: shutdown() on unconnected SOCK_DGRAM (Linux compat) */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

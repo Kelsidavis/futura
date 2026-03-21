@@ -14243,6 +14243,170 @@ static void test_socket_ops_on_nonsocket(void) {
     }
 }
 
+/* Tests 1392-1395: Socket fd duplication and operations on dup'd fds.
+ * Verifies that dup2/dup on socket fds correctly propagates socket_fd_table
+ * entries so socket-specific syscalls work on the new fd. */
+static void test_socket_dup_operations(void) {
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+    extern long sys_dup(int oldfd);
+    extern long sys_dup2(int oldfd, int newfd);
+    extern long sys_getsockopt(int sockfd, int level, int optname,
+                               void *optval, unsigned int *optlen);
+    extern long sys_setsockopt(int sockfd, int level, int optname,
+                               const void *optval, unsigned int optlen);
+    extern long sys_write(int fd, const void *buf, size_t count);
+    extern long sys_read(int fd, void *buf, size_t count);
+    extern long sys_close(int fd);
+
+    /* Test 1392: dup(socket_fd) returns new fd that supports socket ops */
+    fut_printf("[MISC-TEST] Test 1392: dup(socket_fd) preserves socket ops\n");
+    {
+        long sockfd = sys_socket(1 /* AF_UNIX */, 1 /* SOCK_STREAM */, 0);
+        if (sockfd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1392: socket() = %ld\n", sockfd);
+            fut_test_fail(1392);
+        } else {
+            long dupfd = sys_dup((int)sockfd);
+            if (dupfd < 0) {
+                fut_printf("[MISC-TEST] ✗ Test 1392: dup() = %ld\n", dupfd);
+                fut_test_fail(1392);
+                sys_close((int)sockfd);
+            } else {
+                /* getsockopt(SO_TYPE) on dup'd fd should return SOCK_STREAM */
+                int val = 0;
+                unsigned int len = sizeof(val);
+                long r = sys_getsockopt((int)dupfd, 1 /* SOL_SOCKET */, 3 /* SO_TYPE */, &val, &len);
+                if (r == 0 && val == 1 /* SOCK_STREAM */) {
+                    fut_printf("[MISC-TEST] ✓ Test 1392: dup(socket) SO_TYPE=SOCK_STREAM\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1392: getsockopt(dup'd fd) = %ld, val=%d\n", r, val);
+                    fut_test_fail(1392);
+                }
+                sys_close((int)dupfd);
+                sys_close((int)sockfd);
+            }
+        }
+    }
+
+    /* Test 1393: dup2(socket_fd, target) and socket ops on target fd */
+    fut_printf("[MISC-TEST] Test 1393: dup2(socket_fd, target) preserves socket ops\n");
+    {
+        long sockfd = sys_socket(1 /* AF_UNIX */, 2 /* SOCK_DGRAM */, 0);
+        if (sockfd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1393: socket() = %ld\n", sockfd);
+            fut_test_fail(1393);
+        } else {
+            /* Open a temp file to get a target fd, then dup2 the socket onto it */
+            extern long sys_open(const char *path, int flags, int mode);
+            long targetfd = sys_open("/proc/self/status", 0, 0);
+            if (targetfd < 0) {
+                fut_printf("[MISC-TEST] ✗ Test 1393: open(target) = %ld\n", targetfd);
+                fut_test_fail(1393);
+                sys_close((int)sockfd);
+            } else {
+                long r = sys_dup2((int)sockfd, (int)targetfd);
+                if (r < 0) {
+                    fut_printf("[MISC-TEST] ✗ Test 1393: dup2() = %ld\n", r);
+                    fut_test_fail(1393);
+                } else {
+                    /* getsockopt(SO_TYPE) on target fd should return SOCK_DGRAM */
+                    int val = 0;
+                    unsigned int len = sizeof(val);
+                    r = sys_getsockopt((int)targetfd, 1, 3, &val, &len);
+                    if (r == 0 && val == 2 /* SOCK_DGRAM */) {
+                        fut_printf("[MISC-TEST] ✓ Test 1393: dup2(socket, target) SO_TYPE=SOCK_DGRAM\n");
+                        fut_test_pass();
+                    } else {
+                        fut_printf("[MISC-TEST] ✗ Test 1393: getsockopt(target) = %ld, val=%d\n", r, val);
+                        fut_test_fail(1393);
+                    }
+                }
+                sys_close((int)targetfd);
+                sys_close((int)sockfd);
+            }
+        }
+    }
+
+    /* Test 1394: close original after dup, dup'd fd still works */
+    fut_printf("[MISC-TEST] Test 1394: close original socket, dup'd fd still works\n");
+    {
+        int sv[2] = {-1, -1};
+        long r = sys_socketpair(1, 1 /* SOCK_STREAM */, 0, sv);
+        if (r < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1394: socketpair() = %ld\n", r);
+            fut_test_fail(1394);
+        } else {
+            long dupfd = sys_dup(sv[0]);
+            if (dupfd < 0) {
+                fut_printf("[MISC-TEST] ✗ Test 1394: dup() = %ld\n", dupfd);
+                fut_test_fail(1394);
+                sys_close(sv[0]); sys_close(sv[1]);
+            } else {
+                /* Close the original, write via dup'd fd, read from peer */
+                sys_close(sv[0]);
+
+                const char msg[] = "dup-test";
+                r = sys_write((int)dupfd, msg, 8);
+                if (r != 8) {
+                    fut_printf("[MISC-TEST] ✗ Test 1394: write(dup'd) = %ld\n", r);
+                    fut_test_fail(1394);
+                } else {
+                    char buf[16] = {0};
+                    r = sys_read(sv[1], buf, sizeof(buf));
+                    if (r == 8 && __builtin_memcmp(buf, "dup-test", 8) == 0) {
+                        fut_printf("[MISC-TEST] ✓ Test 1394: data flows through dup'd socket after original closed\n");
+                        fut_test_pass();
+                    } else {
+                        fut_printf("[MISC-TEST] ✗ Test 1394: read = %ld, data mismatch\n", r);
+                        fut_test_fail(1394);
+                    }
+                }
+                sys_close((int)dupfd);
+                sys_close(sv[1]);
+            }
+        }
+    }
+
+    /* Test 1395: dup2 socket onto non-socket → socket ops work on new fd,
+     * ENOTSOCK no longer returned */
+    fut_printf("[MISC-TEST] Test 1395: dup2(socket, file_fd) replaces file with socket\n");
+    {
+        long sockfd = sys_socket(1 /* AF_UNIX */, 1 /* SOCK_STREAM */, 0);
+        extern long sys_open(const char *path, int flags, int mode);
+        long filefd = sys_open("/proc/self/status", 0, 0);
+        if (sockfd < 0 || filefd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1395: setup failed sock=%ld file=%ld\n", sockfd, filefd);
+            fut_test_fail(1395);
+            if (sockfd >= 0) sys_close((int)sockfd);
+            if (filefd >= 0) sys_close((int)filefd);
+        } else {
+            /* Before dup2: getsockopt on filefd should fail with ENOTSOCK */
+            int val = 0;
+            unsigned int len = sizeof(val);
+            long r1 = sys_getsockopt((int)filefd, 1, 3, &val, &len);
+
+            /* dup2 socket onto filefd */
+            long r = sys_dup2((int)sockfd, (int)filefd);
+
+            /* After dup2: getsockopt on filefd should succeed */
+            val = 0; len = sizeof(val);
+            long r2 = sys_getsockopt((int)filefd, 1, 3, &val, &len);
+
+            if (r1 == -88 /* -ENOTSOCK */ && r >= 0 && r2 == 0 && val == 1) {
+                fut_printf("[MISC-TEST] ✓ Test 1395: dup2(socket→file) transitions ENOTSOCK→SO_TYPE=1\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1395: before=%ld dup2=%ld after=%ld val=%d\n", r1, r, r2, val);
+                fut_test_fail(1395);
+            }
+            sys_close((int)filefd);
+            sys_close((int)sockfd);
+        }
+    }
+}
+
 static void test_proc_fd_anon_types(void) {
     extern long sys_read(int fd, void *buf, size_t count);
     extern long sys_readlink(const char *path, char *buf, size_t bufsiz);
@@ -45279,6 +45443,7 @@ void fut_misc_test_thread(void *arg) {
     test_so_error_read_clear();              /* Tests 1377-1378: SO_ERROR read-and-clear semantics */
     test_listen_connect_edge_cases();        /* Tests 1379-1382: listen DGRAM EOPNOTSUPP, connect AF_UNSPEC */
     test_socket_ops_on_nonsocket();          /* Tests 1383-1391: socket ops on non-socket fd → ENOTSOCK */
+    test_socket_dup_operations();            /* Tests 1392-1395: dup/dup2 on socket fds */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

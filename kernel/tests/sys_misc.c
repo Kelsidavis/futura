@@ -13477,6 +13477,57 @@ static void test_recvmsg_peek(void) {
 #undef MSG_PEEK_FLAG
 }
 
+static void test_splice_nonblock(void) {
+    extern long sys_pipe2(int pipefd[2], int flags);
+    extern long sys_splice(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
+                           size_t len, unsigned int flags);
+    extern long sys_write(int fd, const void *buf, size_t count);
+
+    #define SPLICE_F_NONBLOCK_FLAG 0x02
+
+    /* Test 1362: splice on empty pipe with SPLICE_F_NONBLOCK returns EAGAIN */
+    fut_printf("[MISC-TEST] Test 1362: splice SPLICE_F_NONBLOCK on empty pipe → EAGAIN\n");
+    {
+        int src[2];  /* source pipe */
+        int dst[2];  /* destination pipe */
+        long r1 = sys_pipe2(src, 0);
+        long r2 = sys_pipe2(dst, 0);
+
+        if (r1 < 0 || r2 < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1362: pipe2 failed: %ld / %ld\n", r1, r2);
+            fut_test_fail(1362);
+        } else {
+            /* Splice from empty source pipe with NONBLOCK → EAGAIN */
+            long ret = sys_splice(src[0], (void*)0, dst[1], (void*)0, 4096, SPLICE_F_NONBLOCK_FLAG);
+            if (ret == -11 /* EAGAIN */) {
+                fut_printf("[MISC-TEST] ✓ Test 1362: splice(NONBLOCK, empty pipe) → EAGAIN\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1362: splice(NONBLOCK, empty pipe) → %ld (expected EAGAIN=-11)\n", ret);
+                fut_test_fail(1362);
+            }
+
+            /* Test 1363: splice with SPLICE_F_NONBLOCK transfers available data */
+            fut_printf("[MISC-TEST] Test 1363: splice SPLICE_F_NONBLOCK transfers available data\n");
+            const char *msg = "nonblock!";  /* 9 bytes */
+            sys_write(src[1], msg, 9);
+            ret = sys_splice(src[0], (void*)0, dst[1], (void*)0, 4096, SPLICE_F_NONBLOCK_FLAG);
+            if (ret == 9) {
+                fut_printf("[MISC-TEST] ✓ Test 1363: splice(NONBLOCK) transferred %ld bytes\n", ret);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1363: splice(NONBLOCK) → %ld (expected 9)\n", ret);
+                fut_test_fail(1363);
+            }
+
+            sys_close(src[0]); sys_close(src[1]);
+            sys_close(dst[0]); sys_close(dst[1]);
+        }
+    }
+
+    #undef SPLICE_F_NONBLOCK_FLAG
+}
+
 static void test_proc_fd_anon_types(void) {
     extern long sys_read(int fd, void *buf, size_t count);
     extern long sys_readlink(const char *path, char *buf, size_t bufsiz);
@@ -44502,6 +44553,7 @@ void fut_misc_test_thread(void *arg) {
     test_renameat2_noreplace();              /* Tests 1354-1357: renameat2 NOREPLACE, readlinkat empty, lseek EOVERFLOW */
     test_epollet_hup();                      /* Tests 1358-1359: EPOLLET EPOLLHUP on pipe close */
     test_recvmsg_peek();                     /* Tests 1360-1361: recvmsg MSG_PEEK */
+    test_splice_nonblock();                  /* Tests 1362-1363: splice SPLICE_F_NONBLOCK */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

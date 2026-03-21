@@ -235,6 +235,32 @@ long sys_splice(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
     if (local_len == 0)
         return 0;
 
+    /* SPLICE_F_NONBLOCK: temporarily set nonblock on pipe ends */
+    extern bool pipe_get_nonblock(void *priv, bool is_write);
+    extern void pipe_set_nonblock(void *priv, bool is_write, bool nonblock);
+
+    bool saved_in_nb  = false;
+    bool saved_out_nb = false;
+    bool set_in_nb    = false;
+    bool set_out_nb   = false;
+
+    if (local_flags & SPLICE_F_NONBLOCK) {
+        if (in_is_pipe) {
+            saved_in_nb = pipe_get_nonblock(file_in->chr_private, false);
+            if (!saved_in_nb) {
+                pipe_set_nonblock(file_in->chr_private, false, true);
+                set_in_nb = true;
+            }
+        }
+        if (out_is_pipe) {
+            saved_out_nb = pipe_get_nonblock(file_out->chr_private, true);
+            if (!saved_out_nb) {
+                pipe_set_nonblock(file_out->chr_private, true, true);
+                set_out_nb = true;
+            }
+        }
+    }
+
     /* Determine effective read offset */
     int64_t read_off  = 0;
     int64_t write_off = 0;
@@ -250,11 +276,16 @@ long sys_splice(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
     }
 
     /* Transfer via a temporary kernel buffer (PIPE_BUF_SIZE chunks) */
+    long result;
     const size_t CHUNK = 4096;
     uint8_t *kbuf = (uint8_t *)fut_malloc(CHUNK);
-    if (!kbuf) return -ENOMEM;
+    if (!kbuf) {
+        result = -ENOMEM;
+        goto restore_nb;
+    }
 
     size_t transferred = 0;
+    long splice_err = 0;
 
     while (transferred < local_len) {
         size_t want = local_len - transferred;
@@ -276,9 +307,10 @@ long sys_splice(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
         }
 
         if (nread < 0) {
-            if (transferred > 0) break;  /* Return partial on error */
-            fut_free(kbuf);
-            return (long)nread;
+            /* EAGAIN from nonblock pipe: treat as "no more data right now" */
+            if (transferred > 0) break;
+            splice_err = (long)nread;
+            break;
         }
         if (nread == 0) break;  /* EOF or pipe empty (non-blocking) */
 
@@ -299,8 +331,8 @@ long sys_splice(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
 
         if (nwritten < 0) {
             if (transferred > 0) break;
-            fut_free(kbuf);
-            return (long)nwritten;
+            splice_err = (long)nwritten;
+            break;
         }
 
         transferred += (size_t)nwritten;
@@ -313,15 +345,24 @@ long sys_splice(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
     if (!local_off_out) file_out->offset = (uint64_t)write_off;
 
     /* Write back updated offsets to userspace if caller provided pointers */
-    if (local_off_in  && fut_copy_to_user(local_off_in,  &read_off,  sizeof(int64_t)) != 0)
-        return -EFAULT;
-    if (local_off_out && fut_copy_to_user(local_off_out, &write_off, sizeof(int64_t)) != 0)
-        return -EFAULT;
+    if (local_off_in  && fut_copy_to_user(local_off_in,  &read_off,  sizeof(int64_t)) != 0) {
+        result = -EFAULT;
+        goto restore_nb;
+    }
+    if (local_off_out && fut_copy_to_user(local_off_out, &write_off, sizeof(int64_t)) != 0) {
+        result = -EFAULT;
+        goto restore_nb;
+    }
 
     fut_printf("[SPLICE] splice(fd_in=%d, fd_out=%d, len=%zu, pid=%d) -> %zu bytes transferred\n",
                local_fd_in, local_fd_out, local_len, task->pid, transferred);
 
-    return (long)transferred;
+    result = (transferred > 0) ? (long)transferred : splice_err;
+
+restore_nb:
+    if (set_in_nb)  pipe_set_nonblock(file_in->chr_private,  false, false);
+    if (set_out_nb) pipe_set_nonblock(file_out->chr_private, true,  false);
+    return result;
 }
 
 /**

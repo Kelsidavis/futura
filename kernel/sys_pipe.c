@@ -852,6 +852,35 @@ ssize_t pipe_peek(void *read_priv, void *buf, size_t len) {
     return (ssize_t)to_copy;
 }
 
+/**
+ * pipe_get_nonblock() - Query nonblock flag for a pipe end
+ *
+ * @param priv       chr_private pointer (struct pipe_buffer *)
+ * @param is_write   true for write end, false for read end
+ * @return           current nonblock state
+ */
+bool pipe_get_nonblock(void *priv, bool is_write) {
+    struct pipe_buffer *pipe = (struct pipe_buffer *)priv;
+    if (!pipe) return false;
+    return is_write ? pipe->write_nonblock : pipe->read_nonblock;
+}
+
+/**
+ * pipe_set_nonblock() - Set nonblock flag for a pipe end
+ *
+ * @param priv       chr_private pointer (struct pipe_buffer *)
+ * @param is_write   true for write end, false for read end
+ * @param nonblock   new nonblock state
+ */
+void pipe_set_nonblock(void *priv, bool is_write, bool nonblock) {
+    struct pipe_buffer *pipe = (struct pipe_buffer *)priv;
+    if (!pipe) return;
+    if (is_write)
+        pipe->write_nonblock = nonblock;
+    else
+        pipe->read_nonblock = nonblock;
+}
+
 /* ============================================================
  * Named pipe (FIFO) support
  * ============================================================

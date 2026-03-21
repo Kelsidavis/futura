@@ -14598,7 +14598,7 @@ static void test_fallocate_collapse_range(void) {
     /* Test 1402: COLLAPSE_RANGE with non-aligned offset → EINVAL */
     fut_printf("[MISC-TEST] Test 1402: COLLAPSE_RANGE non-aligned → EINVAL\n");
     {
-        long fd = sys_open("/tmp/.t1401_collapse", 0 /* O_RDONLY */, 0);
+        long fd = sys_open("/tmp/.t1401_collapse", 0x02 /* O_RDWR */, 0);
         if (fd < 0) {
             fut_printf("[MISC-TEST] ✗ Test 1402: open = %ld\n", fd);
             fut_test_fail(1402);
@@ -15091,6 +15091,86 @@ static void test_opath_comprehensive(void) {
         sys_close((int)fd);
     }
 #undef O_PATH_FLAG3
+}
+
+static void test_accmode_fallocate_cfr(void) {
+    extern long sys_open(const char *path, int flags, int mode);
+    extern long sys_close(int fd);
+    extern long sys_write(int fd, const void *buf, size_t count);
+    extern long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len);
+    extern long sys_copy_file_range(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
+                                     size_t len, unsigned int flags);
+
+    /* Create a test file with some content */
+    long wfd = sys_open("/tmp/.t_accmode", 0x42 /* O_CREAT|O_RDWR */, 0644);
+    if (wfd >= 0) {
+        sys_write((int)wfd, "accmodetest12345", 16);
+        sys_close((int)wfd);
+    }
+
+    /* Test 1427: fallocate on O_RDONLY fd → EBADF */
+    fut_printf("[MISC-TEST] Test 1427: fallocate(O_RDONLY fd) → EBADF\n");
+    {
+        long rfd = sys_open("/tmp/.t_accmode", 0x00 /* O_RDONLY */, 0);
+        if (rfd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1427: open failed %ld\n", rfd);
+            fut_test_fail(1427);
+        } else {
+            long r = sys_fallocate((int)rfd, 0, 0, 4096);
+            if (r == -9 /* -EBADF */) {
+                fut_printf("[MISC-TEST] ✓ Test 1427: fallocate(O_RDONLY) = -EBADF\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1427: fallocate(O_RDONLY) = %ld (want -9)\n", r);
+                fut_test_fail(1427);
+            }
+            sys_close((int)rfd);
+        }
+    }
+
+    /* Test 1428: copy_file_range with O_WRONLY source → EBADF */
+    fut_printf("[MISC-TEST] Test 1428: copy_file_range(O_WRONLY src) → EBADF\n");
+    {
+        long wofd = sys_open("/tmp/.t_accmode", 0x01 /* O_WRONLY */, 0);
+        long rdfd = sys_open("/tmp/.t_accmode", 0x02 /* O_RDWR */, 0);
+        if (wofd < 0 || rdfd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1428: open failed\n");
+            fut_test_fail(1428);
+        } else {
+            long r = sys_copy_file_range((int)wofd, (int64_t *)0, (int)rdfd, (int64_t *)0, 8, 0);
+            if (r == -9 /* -EBADF */) {
+                fut_printf("[MISC-TEST] ✓ Test 1428: copy_file_range(O_WRONLY src) = -EBADF\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1428: copy_file_range(O_WRONLY src) = %ld (want -9)\n", r);
+                fut_test_fail(1428);
+            }
+        }
+        if (wofd >= 0) sys_close((int)wofd);
+        if (rdfd >= 0) sys_close((int)rdfd);
+    }
+
+    /* Test 1429: copy_file_range with O_RDONLY dest → EBADF */
+    fut_printf("[MISC-TEST] Test 1429: copy_file_range(O_RDONLY dest) → EBADF\n");
+    {
+        long rwfd = sys_open("/tmp/.t_accmode", 0x02 /* O_RDWR */, 0);
+        long rofd = sys_open("/tmp/.t_accmode", 0x00 /* O_RDONLY */, 0);
+        if (rwfd < 0 || rofd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1429: open failed\n");
+            fut_test_fail(1429);
+        } else {
+            long r = sys_copy_file_range((int)rwfd, (int64_t *)0, (int)rofd, (int64_t *)0, 8, 0);
+            if (r == -9 /* -EBADF */) {
+                fut_printf("[MISC-TEST] ✓ Test 1429: copy_file_range(O_RDONLY dest) = -EBADF\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1429: copy_file_range(O_RDONLY dest) = %ld (want -9)\n", r);
+                fut_test_fail(1429);
+            }
+        }
+        if (rwfd >= 0) sys_close((int)rwfd);
+        if (rofd >= 0) sys_close((int)rofd);
+    }
 }
 
 static void test_proc_fd_anon_types(void) {
@@ -46135,6 +46215,7 @@ void fut_misc_test_thread(void *arg) {
     test_fallocate_insert_range();           /* Tests 1405-1408: fallocate INSERT_RANGE */
     test_opath_pread_pwrite();               /* Tests 1409-1412: O_PATH blocks pread64/pwrite64/preadv/pwritev */
     test_opath_comprehensive();              /* Tests 1413-1426: O_PATH blocks sendfile/ftruncate/fallocate/lseek/ioctl/fchmod/fchown/copy_file_range/readahead/fsync/fdatasync/fadvise */
+    test_accmode_fallocate_cfr();            /* Tests 1427-1429: fallocate/copy_file_range reject wrong access mode */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

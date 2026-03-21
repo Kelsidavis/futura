@@ -345,6 +345,10 @@ long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
     if (file->flags & O_PATH)
         return -EBADF;
 
+    /* fallocate requires write access */
+    if ((file->flags & O_ACCMODE) == O_RDONLY)
+        return -EBADF;
+
     /* Validate mode flags */
     const int FALLOC_FL_KEEP_SIZE = 0x01;
     const int FALLOC_FL_PUNCH_HOLE = 0x02;

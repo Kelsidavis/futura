@@ -98,6 +98,12 @@ long sys_copy_file_range(int fd_in, int64_t *off_in,
     if ((f_in->flags & O_PATH) || (f_out->flags & O_PATH))
         return -EBADF;
 
+    /* fd_in must be readable, fd_out must be writable */
+    if ((f_in->flags & O_ACCMODE) == O_WRONLY)
+        return -EBADF;
+    if ((f_out->flags & O_ACCMODE) == O_RDONLY)
+        return -EBADF;
+
     /* Read explicit offsets if provided */
     int64_t pos_in = -1, pos_out = -1;
     if (off_in) {

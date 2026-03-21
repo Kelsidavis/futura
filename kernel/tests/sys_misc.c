@@ -12886,6 +12886,82 @@ static void test_cpus_allowed_procfs(void) {
     }
 }
 
+/* ============================================================
+ * test_alarm_large_values() — Tests 1343-1345
+ *
+ * Verify alarm() POSIX compliance: accepts any unsigned int value,
+ * does not reject large values with EINVAL.
+ * ============================================================ */
+static void test_alarm_large_values(void) {
+    extern long sys_alarm(unsigned int seconds);
+    extern long sys_sigprocmask(int how, const sigset_t *set, sigset_t *oldset);
+
+    /* Block SIGALRM to prevent delivery during tests */
+    sigset_t alrm_mask = { (1ULL << (14 - 1)) };
+    sigset_t old_mask;
+    sys_sigprocmask(0 /* SIG_BLOCK */, &alrm_mask, &old_mask);
+
+    /* Test 1343: alarm(100000) succeeds (> 86400, previously rejected) */
+    fut_printf("[MISC-TEST] Test 1343: alarm(100000) accepts value > 86400\n");
+    {
+        sys_alarm(0);  /* clear any pending alarm */
+        long r = sys_alarm(100000);
+        if (r < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1343: alarm(100000) returned %ld (want >= 0)\n", r);
+            fut_test_fail(1343);
+        } else {
+            /* Cancel and verify remaining time is reasonable */
+            long rem = sys_alarm(0);
+            if (rem >= 99990 && rem <= 100000) {
+                fut_printf("[MISC-TEST] ✓ Test 1343: alarm(100000) accepted, remaining=%ld\n", rem);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1343: alarm(100000) remaining=%ld (want ~100000)\n", rem);
+                fut_test_fail(1343);
+            }
+        }
+    }
+
+    /* Test 1344: alarm(0xFFFFFF) succeeds (16 million seconds ≈ 194 days) */
+    fut_printf("[MISC-TEST] Test 1344: alarm(0xFFFFFF) accepts very large value\n");
+    {
+        sys_alarm(0);
+        long r = sys_alarm(0xFFFFFF);
+        if (r < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1344: alarm(0xFFFFFF) returned %ld (want >= 0)\n", r);
+            fut_test_fail(1344);
+        } else {
+            long rem = sys_alarm(0);
+            /* Just check it's large and positive */
+            if (rem > 0xFFFFF0) {
+                fut_printf("[MISC-TEST] ✓ Test 1344: alarm(0xFFFFFF) accepted, remaining=%ld\n", rem);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1344: alarm(0xFFFFFF) remaining=%ld (want > 0xFFFFF0)\n", rem);
+                fut_test_fail(1344);
+            }
+        }
+    }
+
+    /* Test 1345: alarm() replace large→small returns large remaining */
+    fut_printf("[MISC-TEST] Test 1345: alarm() replace 100000→5 returns ~100000 remaining\n");
+    {
+        sys_alarm(0);
+        sys_alarm(100000);
+        long rem = sys_alarm(5);
+        if (rem >= 99990 && rem <= 100000) {
+            fut_printf("[MISC-TEST] ✓ Test 1345: replace 100000→5, old remaining=%ld\n", rem);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1345: remaining=%ld (want 99990-100000)\n", rem);
+            fut_test_fail(1345);
+        }
+        sys_alarm(0);  /* clean up */
+    }
+
+    sys_sigprocmask(2 /* SIG_SETMASK */, &old_mask, NULL);
+}
+
 static void test_proc_fd_anon_types(void) {
     extern long sys_read(int fd, void *buf, size_t count);
     extern long sys_readlink(const char *path, char *buf, size_t bufsiz);
@@ -41729,8 +41805,8 @@ static void test_sock_timeout_blocking(void) {
             fut_test_fail(1227);
             goto t1228;
         }
-        /* Set SO_SNDTIMEO = 50ms on sv[0] */
-        struct { long tv_sec; long tv_usec; } tv = { .tv_sec = 0, .tv_usec = 50000 };
+        /* Set SO_SNDTIMEO = 500ms on sv[0] (use generous timeout for CI QEMU) */
+        struct { long tv_sec; long tv_usec; } tv = { .tv_sec = 0, .tv_usec = 500000 };
         r = sys_setsockopt(sv[0], TSTB_SOL_SOCKET, TSTB_SO_SNDTIMEO, &tv, sizeof(tv));
         if (r != 0) {
             fut_printf("[MISC-TEST] ✗ Test 1227: setsockopt(SO_SNDTIMEO) = %ld\n", r);
@@ -41775,8 +41851,8 @@ t1228:
             fut_test_fail(1228);
             goto t1229;
         }
-        /* Set SO_RCVTIMEO = 50ms on dgsv[1]; dgsv[0] sends nothing */
-        struct { long tv_sec; long tv_usec; } tv = { .tv_sec = 0, .tv_usec = 50000 };
+        /* Set SO_RCVTIMEO = 500ms on dgsv[1]; dgsv[0] sends nothing */
+        struct { long tv_sec; long tv_usec; } tv = { .tv_sec = 0, .tv_usec = 500000 };
         r = sys_setsockopt(dgsv[1], TSTB_SOL_SOCKET, TSTB_SO_RCVTIMEO, &tv, sizeof(tv));
         if (r != 0) {
             fut_printf("[MISC-TEST] ✗ Test 1228: setsockopt(SO_RCVTIMEO/DGRAM) = %ld\n", r);
@@ -43905,6 +43981,7 @@ void fut_misc_test_thread(void *arg) {
     test_so_rcvtimeo_new();                  /* Tests 1334-1337: SO_RCVTIMEO_NEW/SO_SNDTIMEO_NEW */
     test_cpus_allowed_procfs();              /* Tests 1338-1339: /proc/self/status Cpus_allowed dynamic */
     test_proc_fd_anon_types();               /* Tests 1340-1342: /proc/self/fd/ anon_inode types */
+    test_alarm_large_values();               /* Tests 1343-1345: alarm() POSIX compliance with large values */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

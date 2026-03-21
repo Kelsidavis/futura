@@ -1034,6 +1034,12 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
         return -ENOTCONN;
     }
 
+    /* SO_LINGER RST: peer set ECONNRESET — return error on send too */
+    if (socket->pending_error == ECONNRESET) {
+        socket->pending_error = 0;
+        return -ECONNRESET;
+    }
+
     /* Phase 4: Enforce shutdown_wr flag */
     if (socket->shutdown_wr) {
         SOCKET_LOG("[SOCKET] Socket %u send blocked: write channel shutdown (SHUT_WR)\n",
@@ -1235,6 +1241,13 @@ ssize_t fut_socket_recv(fut_socket_t *socket, void *buf, size_t len) {
 
     if (socket->state != FUT_SOCK_CONNECTED || !socket->pair) {
         return -ENOTCONN;
+    }
+
+    /* SO_LINGER RST: peer set ECONNRESET — return error immediately,
+     * discarding any buffered data (RST semantics). */
+    if (socket->pending_error == ECONNRESET) {
+        socket->pending_error = 0;  /* consume the error */
+        return -ECONNRESET;
     }
 
     /* Phase 4: Enforce shutdown_rd flag */
@@ -1494,6 +1507,21 @@ int fut_socket_close(fut_socket_t *socket) {
     }
 
     socket->state = FUT_SOCK_CLOSED;
+
+    /* SO_LINGER with l_linger=0: hard close (RST semantics).
+     * Discard buffered send data and set ECONNRESET on the peer so
+     * the next recv() returns -ECONNRESET instead of delivering
+     * stale data or a clean EOF. */
+    if (socket->linger_onoff && socket->linger_secs == 0 && socket->pair) {
+        fut_spinlock_acquire(&socket->pair->lock);
+        /* Discard unsent data in the send buffer */
+        socket->pair->recv_head = socket->pair->recv_tail;
+        /* Mark the peer socket with ECONNRESET */
+        fut_socket_t *peer = socket->pair->peer;
+        if (peer)
+            peer->pending_error = ECONNRESET;
+        fut_spinlock_release(&socket->pair->lock);
+    }
 
     /* If this is a listening socket, wake all pending connect() callers.
      * They will see the socket is not CONNECTED and return ECONNREFUSED. */

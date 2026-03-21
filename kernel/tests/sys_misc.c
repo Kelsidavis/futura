@@ -49170,6 +49170,188 @@ static void test_sockname_zero_addrlen(void) {
     }
 }
 
+/**
+ * Test SO_LINGER enforcement on socket close.
+ *
+ * Test 1543: SO_LINGER l_linger=0 discards send buffer — peer recv returns ECONNRESET.
+ * Test 1544: SO_LINGER l_linger=0 on setsockopt returns 0 (option accepted).
+ * Test 1545: Default close (no linger) delivers buffered data to peer.
+ * Test 1546: SO_LINGER l_onoff=0 (disabled) still delivers buffered data.
+ */
+static void test_so_linger(void) {
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_bind(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_listen(int sockfd, int backlog);
+    extern long sys_connect(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_accept(int sockfd, void *addr, unsigned int *addrlen);
+    extern long sys_close(int fd);
+    extern ssize_t sys_write(int fd, const void *buf, size_t count);
+    extern ssize_t sys_read(int fd, void *buf, size_t count);
+    extern long sys_setsockopt(int fd, int level, int optname, const void *optval, unsigned int optlen);
+
+    /* Test 1543: SO_LINGER l_linger=0: close discards buffer, peer gets ECONNRESET */
+    fut_printf("[MISC-TEST] Test 1543: SO_LINGER l_linger=0 discards data, peer gets ECONNRESET\n");
+    {
+        long sfd = sys_socket(1 /* AF_UNIX */, 1 /* SOCK_STREAM */, 0);
+        if (sfd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1543: server socket failed: %ld\n", sfd);
+            fut_test_fail(1543);
+        } else {
+            struct { unsigned short family; char path[108]; } addr;
+            addr.family = 1;
+            __builtin_memcpy(addr.path, "/tmp/.t1543_linger", 19);
+            sys_bind((int)sfd, &addr, (unsigned int)(2 + 19));
+            sys_listen((int)sfd, 5);
+
+            long cfd = sys_socket(1, 1, 0);
+            sys_connect((int)cfd, &addr, (unsigned int)(2 + 19));
+            long afd = sys_accept((int)sfd, NULL, NULL);
+
+            if (cfd < 0 || afd < 0) {
+                fut_printf("[MISC-TEST] ✗ Test 1543: connect/accept failed: cfd=%ld afd=%ld\n", cfd, afd);
+                fut_test_fail(1543);
+            } else {
+                /* Client sends data */
+                sys_write((int)cfd, "hello", 5);
+
+                /* Set SO_LINGER with l_linger=0 on client */
+                struct { int l_onoff; int l_linger; } ling = { 1, 0 };
+                sys_setsockopt((int)cfd, 1 /* SOL_SOCKET */, 13 /* SO_LINGER */,
+                               &ling, sizeof(ling));
+
+                /* Close client — should discard buffered data and RST */
+                sys_close((int)cfd);
+                cfd = -1;
+
+                /* Server tries to read — should get ECONNRESET, not the data */
+                char buf[16];
+                ssize_t nr = sys_read((int)afd, buf, sizeof(buf));
+                if (nr == -104 /* -ECONNRESET */) {
+                    fut_printf("[MISC-TEST] ✓ Test 1543: recv after linger=0 close = -ECONNRESET\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1543: recv = %ld (want -104 ECONNRESET)\n", (long)nr);
+                    fut_test_fail(1543);
+                }
+            }
+            if (cfd >= 0) sys_close((int)cfd);
+            if (afd >= 0) sys_close((int)afd);
+            sys_close((int)sfd);
+        }
+    }
+
+    /* Test 1544: setsockopt SO_LINGER returns 0 */
+    fut_printf("[MISC-TEST] Test 1544: setsockopt SO_LINGER returns 0\n");
+    {
+        long fd = sys_socket(1, 1, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1544: socket failed: %ld\n", fd);
+            fut_test_fail(1544);
+        } else {
+            struct { int l_onoff; int l_linger; } ling = { 1, 0 };
+            long r = sys_setsockopt((int)fd, 1, 13, &ling, sizeof(ling));
+            if (r == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1544: setsockopt SO_LINGER = 0\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1544: setsockopt SO_LINGER = %ld\n", r);
+                fut_test_fail(1544);
+            }
+            sys_close((int)fd);
+        }
+    }
+
+    /* Test 1545: Default close (no linger) delivers buffered data to peer */
+    fut_printf("[MISC-TEST] Test 1545: default close delivers buffered data\n");
+    {
+        long sfd = sys_socket(1, 1, 0);
+        if (sfd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1545: server socket failed: %ld\n", sfd);
+            fut_test_fail(1545);
+        } else {
+            struct { unsigned short family; char path[108]; } addr;
+            addr.family = 1;
+            __builtin_memcpy(addr.path, "/tmp/.t1545_nolinger", 21);
+            sys_bind((int)sfd, &addr, (unsigned int)(2 + 21));
+            sys_listen((int)sfd, 5);
+
+            long cfd = sys_socket(1, 1, 0);
+            sys_connect((int)cfd, &addr, (unsigned int)(2 + 21));
+            long afd = sys_accept((int)sfd, NULL, NULL);
+
+            if (cfd < 0 || afd < 0) {
+                fut_printf("[MISC-TEST] ✗ Test 1545: connect/accept failed\n");
+                fut_test_fail(1545);
+            } else {
+                /* Client sends data and closes WITHOUT linger */
+                sys_write((int)cfd, "world", 5);
+                sys_close((int)cfd);
+                cfd = -1;
+
+                /* Server reads — should get the data */
+                char buf[16];
+                ssize_t nr = sys_read((int)afd, buf, sizeof(buf));
+                if (nr == 5) {
+                    fut_printf("[MISC-TEST] ✓ Test 1545: default close delivers data (got %ld bytes)\n", (long)nr);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1545: read = %ld (want 5)\n", (long)nr);
+                    fut_test_fail(1545);
+                }
+            }
+            if (cfd >= 0) sys_close((int)cfd);
+            if (afd >= 0) sys_close((int)afd);
+            sys_close((int)sfd);
+        }
+    }
+
+    /* Test 1546: SO_LINGER l_onoff=0 (disabled) still delivers buffered data */
+    fut_printf("[MISC-TEST] Test 1546: SO_LINGER disabled still delivers data\n");
+    {
+        long sfd = sys_socket(1, 1, 0);
+        if (sfd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1546: server socket failed: %ld\n", sfd);
+            fut_test_fail(1546);
+        } else {
+            struct { unsigned short family; char path[108]; } addr;
+            addr.family = 1;
+            __builtin_memcpy(addr.path, "/tmp/.t1546_lingoff", 20);
+            sys_bind((int)sfd, &addr, (unsigned int)(2 + 20));
+            sys_listen((int)sfd, 5);
+
+            long cfd = sys_socket(1, 1, 0);
+            sys_connect((int)cfd, &addr, (unsigned int)(2 + 20));
+            long afd = sys_accept((int)sfd, NULL, NULL);
+
+            if (cfd < 0 || afd < 0) {
+                fut_printf("[MISC-TEST] ✗ Test 1546: connect/accept failed\n");
+                fut_test_fail(1546);
+            } else {
+                /* Client sends data, sets linger OFF, closes */
+                sys_write((int)cfd, "data!", 5);
+                struct { int l_onoff; int l_linger; } ling = { 0, 0 };
+                sys_setsockopt((int)cfd, 1, 13, &ling, sizeof(ling));
+                sys_close((int)cfd);
+                cfd = -1;
+
+                /* Server reads — should get the data (linger disabled) */
+                char buf[16];
+                ssize_t nr = sys_read((int)afd, buf, sizeof(buf));
+                if (nr == 5) {
+                    fut_printf("[MISC-TEST] ✓ Test 1546: linger-off close delivers data (got %ld bytes)\n", (long)nr);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1546: read = %ld (want 5)\n", (long)nr);
+                    fut_test_fail(1546);
+                }
+            }
+            if (cfd >= 0) sys_close((int)cfd);
+            if (afd >= 0) sys_close((int)afd);
+            sys_close((int)sfd);
+        }
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -49898,6 +50080,7 @@ void fut_misc_test_thread(void *arg) {
     test_af_inet_edge_cases();             /* Tests 1523-1530: nonblocking, port 0, SO_REUSEADDR, multi-accept */
     test_flock_fcntl_edge_cases();         /* Tests 1531-1538: flock/fcntl locking edge cases */
     test_sockname_zero_addrlen();          /* Tests 1539-1542: getsockname/getpeername addrlen=0 */
+    test_so_linger();                      /* Tests 1543-1546: SO_LINGER close semantics */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

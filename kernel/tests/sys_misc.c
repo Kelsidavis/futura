@@ -39233,6 +39233,208 @@ static void test_itimer_virtual_prof(void) {
 #undef ITIMER_PROF_T
 }
 
+/**
+ * test_inotify_close_access_open() — Tests 1212-1215
+ *
+ * Verify inotify event delivery for file lifecycle events:
+ *   Test 1212: IN_CLOSE_WRITE fires when a writable file is closed
+ *   Test 1213: IN_CLOSE_NOWRITE fires when a read-only file is closed
+ *   Test 1214: IN_ACCESS fires when a file is read
+ *   Test 1215: IN_OPEN fires when a file is opened
+ */
+static void test_inotify_close_access_open(void) {
+    extern long sys_inotify_init1(int flags);
+    extern long sys_inotify_add_watch(int fd, const char *path, uint32_t mask);
+    extern long sys_close(int fd);
+    extern long sys_read(int fd, void *buf, size_t count);
+    extern long sys_open(const char *path, int flags, int mode);
+
+#define ICAO_NB          00004000u    /* IN_NONBLOCK */
+#define ICAO_RDWR_CREAT  0x42         /* O_RDWR|O_CREAT */
+#define ICAO_RDONLY      0x00
+#define ICAO_IN_ACCESS        0x00000001u
+#define ICAO_IN_CLOSE_WRITE   0x00000008u
+#define ICAO_IN_CLOSE_NOWRITE 0x00000010u
+#define ICAO_IN_OPEN          0x00000020u
+
+    /* inotify_event layout */
+    struct icao_ev { int wd; uint32_t mask; uint32_t cookie; uint32_t len; char name[256]; };
+
+    /* ---- Test 1212: IN_CLOSE_WRITE fires when writable fd is closed ---- */
+    fut_printf("[MISC-TEST] Test 1212: inotify IN_CLOSE_WRITE event delivery\n");
+    {
+        /* Create/pre-populate the watched file */
+        int setup_fd = (int)fut_vfs_open("/ino_caw1212.txt", ICAO_RDWR_CREAT, 0644);
+        if (setup_fd >= 0) { fut_vfs_write(setup_fd, "x", 1); fut_vfs_close(setup_fd); }
+
+        long ifd = sys_inotify_init1(ICAO_NB);
+        if (ifd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1212: inotify_init1 -> %ld\n", ifd);
+            fut_test_fail(1212);
+            goto t1213;
+        }
+        long wd = sys_inotify_add_watch((int)ifd, "/", ICAO_IN_CLOSE_WRITE);
+        if (wd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1212: add_watch -> %ld\n", wd);
+            sys_close((int)ifd);
+            fut_test_fail(1212);
+            fut_vfs_unlink("/ino_caw1212.txt");
+            goto t1213;
+        }
+        /* Open for writing and close → triggers IN_CLOSE_WRITE */
+        int wfd = (int)sys_open("/ino_caw1212.txt", ICAO_RDWR_CREAT, 0644);
+        if (wfd >= 0) sys_close(wfd);
+
+        struct icao_ev ev;
+        long nr = sys_read((int)ifd, &ev, sizeof(ev));
+        sys_close((int)ifd);
+        fut_vfs_unlink("/ino_caw1212.txt");
+        if (nr >= 16 && (ev.mask & ICAO_IN_CLOSE_WRITE)) {
+            fut_printf("[MISC-TEST] ✓ Test 1212: IN_CLOSE_WRITE wd=%d mask=0x%x\n",
+                       ev.wd, ev.mask);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1212: nr=%ld mask=0x%x (no IN_CLOSE_WRITE)\n",
+                       nr, (unsigned)(nr >= 16 ? ev.mask : 0));
+            fut_test_fail(1212);
+        }
+    }
+
+t1213:
+    /* ---- Test 1213: IN_CLOSE_NOWRITE fires when read-only fd is closed ---- */
+    fut_printf("[MISC-TEST] Test 1213: inotify IN_CLOSE_NOWRITE event delivery\n");
+    {
+        int setup_fd = (int)fut_vfs_open("/ino_caw1213.txt", ICAO_RDWR_CREAT, 0644);
+        if (setup_fd >= 0) { fut_vfs_write(setup_fd, "y", 1); fut_vfs_close(setup_fd); }
+
+        long ifd = sys_inotify_init1(ICAO_NB);
+        if (ifd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1213: inotify_init1 -> %ld\n", ifd);
+            fut_test_fail(1213);
+            goto t1214;
+        }
+        long wd = sys_inotify_add_watch((int)ifd, "/", ICAO_IN_CLOSE_NOWRITE);
+        if (wd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1213: add_watch -> %ld\n", wd);
+            sys_close((int)ifd);
+            fut_test_fail(1213);
+            fut_vfs_unlink("/ino_caw1213.txt");
+            goto t1214;
+        }
+        /* Open read-only and close → triggers IN_CLOSE_NOWRITE */
+        int rfd = (int)sys_open("/ino_caw1213.txt", ICAO_RDONLY, 0);
+        if (rfd >= 0) sys_close(rfd);
+
+        struct icao_ev ev;
+        long nr = sys_read((int)ifd, &ev, sizeof(ev));
+        sys_close((int)ifd);
+        fut_vfs_unlink("/ino_caw1213.txt");
+        if (nr >= 16 && (ev.mask & ICAO_IN_CLOSE_NOWRITE)) {
+            fut_printf("[MISC-TEST] ✓ Test 1213: IN_CLOSE_NOWRITE wd=%d mask=0x%x\n",
+                       ev.wd, ev.mask);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1213: nr=%ld mask=0x%x (no IN_CLOSE_NOWRITE)\n",
+                       nr, (unsigned)(nr >= 16 ? ev.mask : 0));
+            fut_test_fail(1213);
+        }
+    }
+
+t1214:
+    /* ---- Test 1214: IN_ACCESS fires when a file is read ---- */
+    fut_printf("[MISC-TEST] Test 1214: inotify IN_ACCESS event delivery\n");
+    {
+        int setup_fd = (int)fut_vfs_open("/ino_caw1214.txt", ICAO_RDWR_CREAT, 0644);
+        if (setup_fd >= 0) { fut_vfs_write(setup_fd, "z", 1); fut_vfs_close(setup_fd); }
+
+        long ifd = sys_inotify_init1(ICAO_NB);
+        if (ifd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1214: inotify_init1 -> %ld\n", ifd);
+            fut_test_fail(1214);
+            goto t1215;
+        }
+        long wd = sys_inotify_add_watch((int)ifd, "/", ICAO_IN_ACCESS);
+        if (wd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1214: add_watch -> %ld\n", wd);
+            sys_close((int)ifd);
+            fut_test_fail(1214);
+            fut_vfs_unlink("/ino_caw1214.txt");
+            goto t1215;
+        }
+        /* Read the file → triggers IN_ACCESS */
+        int rfd = (int)sys_open("/ino_caw1214.txt", ICAO_RDONLY, 0);
+        if (rfd >= 0) {
+            char rbuf[8];
+            sys_read(rfd, rbuf, sizeof(rbuf));
+            sys_close(rfd);
+        }
+
+        struct icao_ev ev;
+        long nr = sys_read((int)ifd, &ev, sizeof(ev));
+        sys_close((int)ifd);
+        fut_vfs_unlink("/ino_caw1214.txt");
+        if (nr >= 16 && (ev.mask & ICAO_IN_ACCESS)) {
+            fut_printf("[MISC-TEST] ✓ Test 1214: IN_ACCESS wd=%d mask=0x%x\n",
+                       ev.wd, ev.mask);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1214: nr=%ld mask=0x%x (no IN_ACCESS)\n",
+                       nr, (unsigned)(nr >= 16 ? ev.mask : 0));
+            fut_test_fail(1214);
+        }
+    }
+
+t1215:
+    /* ---- Test 1215: IN_OPEN fires when a file is opened ---- */
+    fut_printf("[MISC-TEST] Test 1215: inotify IN_OPEN event delivery\n");
+    {
+        int setup_fd = (int)fut_vfs_open("/ino_caw1215.txt", ICAO_RDWR_CREAT, 0644);
+        if (setup_fd >= 0) fut_vfs_close(setup_fd);
+
+        long ifd = sys_inotify_init1(ICAO_NB);
+        if (ifd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1215: inotify_init1 -> %ld\n", ifd);
+            fut_test_fail(1215);
+            goto done_icao;
+        }
+        long wd = sys_inotify_add_watch((int)ifd, "/", ICAO_IN_OPEN);
+        if (wd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1215: add_watch -> %ld\n", wd);
+            sys_close((int)ifd);
+            fut_test_fail(1215);
+            fut_vfs_unlink("/ino_caw1215.txt");
+            goto done_icao;
+        }
+        /* Open the file → triggers IN_OPEN */
+        int ofd = (int)sys_open("/ino_caw1215.txt", ICAO_RDONLY, 0);
+        if (ofd >= 0) sys_close(ofd);
+
+        struct icao_ev ev;
+        long nr = sys_read((int)ifd, &ev, sizeof(ev));
+        sys_close((int)ifd);
+        fut_vfs_unlink("/ino_caw1215.txt");
+        if (nr >= 16 && (ev.mask & ICAO_IN_OPEN)) {
+            fut_printf("[MISC-TEST] ✓ Test 1215: IN_OPEN wd=%d mask=0x%x\n",
+                       ev.wd, ev.mask);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1215: nr=%ld mask=0x%x (no IN_OPEN)\n",
+                       nr, (unsigned)(nr >= 16 ? ev.mask : 0));
+            fut_test_fail(1215);
+        }
+    }
+
+done_icao:
+#undef ICAO_NB
+#undef ICAO_RDWR_CREAT
+#undef ICAO_RDONLY
+#undef ICAO_IN_ACCESS
+#undef ICAO_IN_CLOSE_WRITE
+#undef ICAO_IN_CLOSE_NOWRITE
+#undef ICAO_IN_OPEN
+    return;
+}
+
 static void test_getrandom_flags(void) {
     /* Tests 1200-1204: getrandom flag variants (GRND_NONBLOCK, GRND_RANDOM,
      * GRND_INSECURE) and edge cases (buflen=0, NULL buf).
@@ -40092,6 +40294,7 @@ void fut_misc_test_thread(void *arg) {
     test_shutdown_dgram();             /* Tests 1197-1199, 1205-1206: shutdown() DGRAM compat + SHUT_WR/SHUT_RD enforcement */
     test_getrandom_flags();            /* Tests 1200-1204: getrandom GRND_NONBLOCK, GRND_RANDOM, GRND_INSECURE, buflen=0, NULL buf */
     test_itimer_virtual_prof();        /* Tests 1207-1211: setitimer/getitimer ITIMER_VIRTUAL, ITIMER_PROF, EINVAL */
+    test_inotify_close_access_open();  /* Tests 1212-1215: inotify IN_CLOSE_WRITE/IN_CLOSE_NOWRITE/IN_ACCESS/IN_OPEN */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

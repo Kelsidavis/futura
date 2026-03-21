@@ -12023,6 +12023,77 @@ static void test_new_mount_api_stubs(void) {
     }
 }
 
+static void test_clone3_clear_sighand(void) {
+    extern long sys_clone3(const void *uargs, size_t size);
+    extern long sys_wait4(int pid, int *status, int options, void *rusage);
+
+    /* clone3 struct layout (must match kernel) */
+    struct {
+        uint64_t flags;
+        uint64_t pidfd;
+        uint64_t child_tid;
+        uint64_t parent_tid;
+        uint64_t exit_signal;
+        uint64_t stack;
+        uint64_t stack_size;
+        uint64_t tls;
+    } args;
+
+#define CLONE3_SIGHAND  0x00000800ULL
+#define CLONE3_CLEAR_SIGHAND 0x100000000ULL
+
+    /* Test 1306: CLONE_CLEAR_SIGHAND | CLONE_SIGHAND → EINVAL (mutually exclusive) */
+    fut_printf("[MISC-TEST] Test 1306: clone3 CLONE_CLEAR_SIGHAND|CLONE_SIGHAND → EINVAL\n");
+    __builtin_memset(&args, 0, sizeof(args));
+    args.flags = CLONE3_CLEAR_SIGHAND | CLONE3_SIGHAND;
+    args.exit_signal = 17; /* SIGCHLD */
+    long r = sys_clone3(&args, sizeof(args));
+    if (r == -EINVAL) {
+        fut_printf("[MISC-TEST] ✓ Test 1306: CLONE_CLEAR_SIGHAND|CLONE_SIGHAND → EINVAL\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1306: expected EINVAL, got %ld\n", r);
+        if (r >= 0) sys_wait4((int)r, NULL, 0, NULL); /* reap if it forked */
+        fut_test_fail(1306);
+    }
+
+    /* Test 1307: CLONE_CLEAR_SIGHAND alone passes validation (fork path fails
+     * in kernel selftests due to missing interrupt frame, but the flag itself
+     * is accepted — we verify it doesn't return EINVAL) */
+    fut_printf("[MISC-TEST] Test 1307: clone3 CLONE_CLEAR_SIGHAND passes validation\n");
+    __builtin_memset(&args, 0, sizeof(args));
+    args.flags = CLONE3_CLEAR_SIGHAND;
+    args.exit_signal = 17; /* SIGCHLD */
+    r = sys_clone3(&args, sizeof(args));
+    /* In selftest environment, fork fails with ENOMEM/-12 due to missing
+     * interrupt frame, but we verify the CLONE_CLEAR_SIGHAND flag itself
+     * doesn't cause EINVAL (it would be -22 if rejected) */
+    if (r != -EINVAL) {
+        fut_printf("[MISC-TEST] ✓ Test 1307: CLONE_CLEAR_SIGHAND accepted (fork returned %ld)\n", r);
+        if (r > 0) sys_wait4((int)r, NULL, 0, NULL);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1307: CLONE_CLEAR_SIGHAND rejected with EINVAL\n");
+        fut_test_fail(1307);
+    }
+
+    /* Test 1308: CLONE_INTO_CGROUP is silently accepted (not rejected) */
+    fut_printf("[MISC-TEST] Test 1308: clone3 CLONE_INTO_CGROUP silently accepted\n");
+#define CLONE3_INTO_CGROUP 0x200000000ULL
+    __builtin_memset(&args, 0, sizeof(args));
+    args.flags = CLONE3_INTO_CGROUP;
+    args.exit_signal = 17;
+    r = sys_clone3(&args, sizeof(args));
+    if (r != -EINVAL && r != -ENOSYS) {
+        fut_printf("[MISC-TEST] ✓ Test 1308: CLONE_INTO_CGROUP accepted (fork returned %ld)\n", r);
+        if (r > 0) sys_wait4((int)r, NULL, 0, NULL);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1308: CLONE_INTO_CGROUP rejected with %ld\n", r);
+        fut_test_fail(1308);
+    }
+}
+
 static void test_process_madvise_basic(void) {
     /* Test 1292: process_madvise with flags != 0 → EINVAL */
     fut_printf("[MISC-TEST] Test 1292: process_madvise flags=1 → EINVAL\n");
@@ -42882,7 +42953,8 @@ void fut_misc_test_thread(void *arg) {
     test_waitid_cld_dumped();                /* Tests 1283-1284: waitid CLD_DUMPED/CLD_KILLED */
     test_futex_waitv_basic();                /* Tests 1285-1291: futex_waitv validation and value-mismatch */
     test_process_madvise_basic();            /* Tests 1292-1296: process_madvise validation and delegation */
-    test_new_mount_api_stubs();              /* Tests 1297-1307: new mount API + file handle stubs */
+    test_new_mount_api_stubs();              /* Tests 1297-1305: new mount API + file handle stubs */
+    test_clone3_clear_sighand();             /* Tests 1306-1308: clone3 CLONE_CLEAR_SIGHAND */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

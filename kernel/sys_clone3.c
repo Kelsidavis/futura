@@ -77,6 +77,8 @@ struct fut_clone_args {
 #define CLONE_CHILD_SETTID   0x01000000
 #define CLONE_CHILD_CLEARTID 0x00200000
 #define CLONE_SETTLS         0x00080000
+#define CLONE_CLEAR_SIGHAND  0x100000000ULL  /* Linux 5.5: reset all handlers to SIG_DFL */
+#define CLONE_INTO_CGROUP    0x200000000ULL  /* Linux 5.7: place child in specific cgroup */
 
 static inline int clone3_copy_from_user(void *dst, const void *src, size_t n) {
 #ifdef KERNEL_VIRTUAL_BASE
@@ -124,6 +126,13 @@ long sys_clone3(const struct fut_clone_args *uargs, size_t size) {
         return -ENOSYS;
     }
 
+    /* CLONE_CLEAR_SIGHAND and CLONE_SIGHAND are mutually exclusive (Linux 5.5) */
+    if ((flags & CLONE_CLEAR_SIGHAND) && (flags & CLONE_SIGHAND))
+        return -EINVAL;
+
+    /* CLONE_INTO_CGROUP: no cgroup infra yet, ignore (cgroup fd not used) */
+    flags &= ~CLONE_INTO_CGROUP;
+
     /* CLONE_PIDFD: create a pidfd for the child and write it to *args.pidfd */
     int want_pidfd = (flags & CLONE_PIDFD) && args.pidfd;
     flags &= ~(uint64_t)CLONE_PIDFD;  /* Don't pass to lower layers */
@@ -162,6 +171,17 @@ long sys_clone3(const struct fut_clone_args *uargs, size_t size) {
     } else if (child_pid == 0) {
         /* ── Child context ── */
         fut_task_t *child_task = fut_task_current();
+
+        /* CLONE_CLEAR_SIGHAND: reset ALL signal dispositions to SIG_DFL
+         * (Linux 5.5+).  Used by systemd when spawning services to ensure
+         * the child starts with a completely clean signal state. */
+        if ((flags & CLONE_CLEAR_SIGHAND) && child_task) {
+            for (int i = 0; i < _NSIG; i++) {
+                child_task->signal_handlers[i] = SIG_DFL;
+                child_task->signal_handler_masks[i] = 0;
+                child_task->signal_handler_flags[i] = 0;
+            }
+        }
 
         /* CLONE_CHILD_SETTID: write child's own TID into child_tid address */
         if ((flags & CLONE_CHILD_SETTID) && args.child_tid && child_task) {

@@ -2337,6 +2337,15 @@ ssize_t fut_vfs_read(int fd, void *buf, size_t size) {
     ssize_t ret = file->vnode->ops->read(file->vnode, buf, size, file->offset);
     if (ret > 0) {
         file->offset += ret;
+
+        /* Update access time unless O_NOATIME is set.
+         * O_NOATIME suppresses atime updates on read, commonly used by
+         * backup tools, databases, and mail servers to avoid write amplification. */
+        if (!(file->flags & O_NOATIME)) {
+            extern void ramfs_touch_atime(struct fut_vnode *vnode);
+            ramfs_touch_atime(file->vnode);
+        }
+
         /* Dispatch IN_ACCESS so watchers know the file was read */
         if (file->vnode->parent && file->vnode->name) {
             char dir_path[256];

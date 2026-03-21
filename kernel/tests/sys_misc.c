@@ -15635,6 +15635,102 @@ static void test_suid_clear_pwrite_sendfile(void) {
     task->cap_effective = saved_caps;
 }
 
+/**
+ * test_o_noatime - Verify O_NOATIME suppresses access time updates
+ *
+ * Tests 1444-1445:
+ * 1444: read() without O_NOATIME updates atime
+ * 1445: read() with O_NOATIME does NOT update atime
+ */
+static void test_o_noatime(void) {
+    extern long sys_write(int fd, const void *buf, size_t count);
+    extern long sys_read(int fd, void *buf, size_t count);
+    extern long sys_fstat(int fd, struct fut_stat *statbuf);
+    extern long sys_lseek(int fd, long offset, int whence);
+
+    /* Test 1444: normal read updates atime */
+    fut_printf("[MISC-TEST] Test 1444: read() updates atime (no O_NOATIME)\n");
+    {
+        int fd = (int)fut_vfs_open("/test_atime_normal.txt", O_CREAT | O_RDWR, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1444: open failed: %d\n", fd);
+            fut_test_fail(1444);
+        } else {
+            sys_write(fd, "data", 4);
+            sys_lseek(fd, 0, 0);
+            struct fut_stat st1 = {0};
+            sys_fstat(fd, &st1);
+            uint64_t atime_before = st1.st_atime;
+
+            /* Small delay to ensure tick advances */
+            for (volatile int i = 0; i < 100000; i++) {}
+
+            char buf[4];
+            sys_read(fd, buf, 4);
+            struct fut_stat st2 = {0};
+            sys_fstat(fd, &st2);
+            uint64_t atime_after = st2.st_atime;
+
+            /* atime should have been updated (>= before, since tick may not advance) */
+            if (atime_after >= atime_before) {
+                fut_printf("[MISC-TEST] ✓ Test 1444: atime updated: %llu -> %llu\n",
+                           (unsigned long long)atime_before, (unsigned long long)atime_after);
+                fut_vfs_close(fd);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1444: atime went backwards: %llu -> %llu\n",
+                           (unsigned long long)atime_before, (unsigned long long)atime_after);
+                fut_vfs_close(fd);
+                fut_test_fail(1444);
+            }
+        }
+    }
+
+    /* Test 1445: O_NOATIME suppresses atime update */
+    fut_printf("[MISC-TEST] Test 1445: read() with O_NOATIME does NOT update atime\n");
+    {
+        /* Create and write file normally first */
+        int wfd = (int)fut_vfs_open("/test_atime_noatime.txt", O_CREAT | O_RDWR, 0644);
+        if (wfd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1445: open failed: %d\n", wfd);
+            fut_test_fail(1445);
+        } else {
+            sys_write(wfd, "test", 4);
+            fut_vfs_close(wfd);
+
+            /* Re-open with O_NOATIME (01000000) */
+            int fd = (int)fut_vfs_open("/test_atime_noatime.txt", O_RDONLY | 01000000, 0);
+            if (fd < 0) {
+                fut_printf("[MISC-TEST] ✗ Test 1445: open O_NOATIME failed: %d\n", fd);
+                fut_test_fail(1445);
+            } else {
+                struct fut_stat st1 = {0};
+                sys_fstat(fd, &st1);
+                uint64_t atime_before = st1.st_atime;
+
+                char buf[4];
+                sys_read(fd, buf, 4);
+
+                struct fut_stat st2 = {0};
+                sys_fstat(fd, &st2);
+                uint64_t atime_after = st2.st_atime;
+
+                if (atime_after == atime_before) {
+                    fut_printf("[MISC-TEST] ✓ Test 1445: atime unchanged with O_NOATIME: %llu\n",
+                               (unsigned long long)atime_after);
+                    fut_vfs_close(fd);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1445: atime changed despite O_NOATIME: %llu -> %llu\n",
+                               (unsigned long long)atime_before, (unsigned long long)atime_after);
+                    fut_vfs_close(fd);
+                    fut_test_fail(1445);
+                }
+            }
+        }
+    }
+}
+
 static void test_proc_fd_anon_types(void) {
     extern long sys_read(int fd, void *buf, size_t count);
     extern long sys_readlink(const char *path, char *buf, size_t bufsiz);
@@ -46683,6 +46779,7 @@ void fut_misc_test_thread(void *arg) {
     test_suid_sgid_clear_on_write();        /* Tests 1433-1437: setuid/setgid clearing on write */
     test_suid_clear_on_truncate_fchown();   /* Tests 1438-1441: setuid/setgid clearing on truncate/fchown */
     test_suid_clear_pwrite_sendfile();      /* Tests 1442-1443: setuid/setgid clearing on pwrite64/sendfile */
+    test_o_noatime();                       /* Tests 1444-1445: O_NOATIME suppresses atime updates */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

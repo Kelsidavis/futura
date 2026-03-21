@@ -289,8 +289,7 @@ static ssize_t ramfs_read(struct fut_vnode *vnode, void *buf, size_t size, uint6
         dest[i] = src[i];
     }
 
-    /* Update access time on successful read */
-    node->atime_ms = fut_get_ticks();
+    /* atime update now handled by VFS layer (O_NOATIME aware) */
 
     return (ssize_t)to_read;
 }
@@ -2002,6 +2001,16 @@ static int ramfs_removexattr(struct fut_vnode *vnode, const char *name) {
 static struct fut_vnode_ops ramfs_vnode_ops;
 
 /* Initialize ramfs vnode operations */
+/**
+ * ramfs_touch_atime - Update access time on a ramfs vnode.
+ * Called from VFS read path when O_NOATIME is NOT set.
+ */
+void ramfs_touch_atime(struct fut_vnode *vnode) {
+    if (!vnode || !vnode->fs_data) return;
+    struct ramfs_node *node = (struct ramfs_node *)vnode->fs_data;
+    node->atime_ms = fut_get_ticks();
+}
+
 static void ramfs_init_vnode_ops(void) {
     ramfs_vnode_ops.open = ramfs_open;
     ramfs_vnode_ops.close = ramfs_close;

@@ -14,9 +14,6 @@
 
 #include <kernel/kprintf.h>
 
-/* Maximum blocking retries to prevent infinite loops */
-#define FUT_LOCK_MAX_WAIT_ITERATIONS 1000
-
 /* Lock type constants */
 #define FUT_LOCK_NONE       0
 #define FUT_LOCK_SHARED     1
@@ -43,11 +40,20 @@ int fut_vnode_lock_shared(struct fut_vnode *vnode, uint32_t pid, int nonblock) {
         if (nonblock) {
             return -EAGAIN;
         }
-        /* Block until exclusive lock is released */
-        int iters = 0;
+        /* Block until exclusive lock is released, with EINTR on signal */
         while (vnode->lock_type == FUT_LOCK_EXCLUSIVE && vnode->lock_owner_pid != pid) {
-            if (iters++ >= FUT_LOCK_MAX_WAIT_ITERATIONS)
-                return -EBUSY;
+            /* Check for pending unblocked signals → EINTR */
+            extern fut_thread_t *fut_thread_current(void);
+            fut_task_t *sig_task = fut_task_current();
+            if (sig_task) {
+                uint64_t pending = __atomic_load_n(&sig_task->pending_signals, __ATOMIC_ACQUIRE);
+                fut_thread_t *thr = fut_thread_current();
+                uint64_t blocked = thr ?
+                    __atomic_load_n(&thr->signal_mask, __ATOMIC_ACQUIRE) :
+                    __atomic_load_n(&sig_task->signal_mask, __ATOMIC_ACQUIRE);
+                if (pending & ~blocked)
+                    return -EINTR;
+            }
             fut_waitq_sleep_locked(&vnode->lock_waitq, NULL, FUT_THREAD_BLOCKED);
         }
     }
@@ -94,12 +100,21 @@ int fut_vnode_lock_exclusive(struct fut_vnode *vnode, uint32_t pid, int nonblock
         if (nonblock) {
             return -EAGAIN;
         }
-        /* Block until all conflicting locks are released */
-        int iters = 0;
+        /* Block until all conflicting locks are released, with EINTR on signal */
         while (vnode->lock_type == FUT_LOCK_SHARED ||
                (vnode->lock_type == FUT_LOCK_EXCLUSIVE && vnode->lock_owner_pid != pid)) {
-            if (iters++ >= FUT_LOCK_MAX_WAIT_ITERATIONS)
-                return -EBUSY;
+            /* Check for pending unblocked signals → EINTR */
+            extern fut_thread_t *fut_thread_current(void);
+            fut_task_t *sig_task = fut_task_current();
+            if (sig_task) {
+                uint64_t pending = __atomic_load_n(&sig_task->pending_signals, __ATOMIC_ACQUIRE);
+                fut_thread_t *thr = fut_thread_current();
+                uint64_t blocked = thr ?
+                    __atomic_load_n(&thr->signal_mask, __ATOMIC_ACQUIRE) :
+                    __atomic_load_n(&sig_task->signal_mask, __ATOMIC_ACQUIRE);
+                if (pending & ~blocked)
+                    return -EINTR;
+            }
             fut_waitq_sleep_locked(&vnode->lock_waitq, NULL, FUT_THREAD_BLOCKED);
         }
     }

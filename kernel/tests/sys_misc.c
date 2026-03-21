@@ -48836,6 +48836,204 @@ t1530:
     }
 }
 
+/* ============================================================
+ * Tests 1531-1538: flock/fcntl locking edge cases
+ *
+ * Test 1531: flock(LOCK_EX) then same fd flock(LOCK_SH) → downgrade succeeds
+ * Test 1532: flock(LOCK_SH) then same fd flock(LOCK_EX) → upgrade succeeds
+ * Test 1533: F_SETLKW WRLCK on unlocked file → immediate success (no block)
+ * Test 1534: F_SETLKW RDLCK on unlocked file → immediate success
+ * Test 1535: F_OFD_SETLK / F_OFD_GETLK round-trip
+ * Test 1536: flock(LOCK_UN) on unlocked file → idempotent success
+ * Test 1537: flock(invalid op) → EINVAL
+ * Test 1538: F_SETLK on closed fd → EBADF
+ * ============================================================ */
+static void test_flock_fcntl_edge_cases(void) {
+    extern long sys_flock(int fd, int operation);
+    extern long sys_fcntl(int fd, int cmd, uint64_t arg);
+
+#define EDGE_LOCK_SH  1
+#define EDGE_LOCK_EX  2
+#define EDGE_LOCK_NB  4
+#define EDGE_LOCK_UN  8
+#define EDGE_F_GETLK  5
+#define EDGE_F_SETLK  6
+#define EDGE_F_SETLKW 7
+#define EDGE_F_OFD_GETLK  36
+#define EDGE_F_OFD_SETLK  37
+#define EDGE_F_RDLCK  0
+#define EDGE_F_WRLCK  1
+#define EDGE_F_UNLCK  2
+
+    struct {
+        short l_type;
+        short l_whence;
+        int   _pad;
+        long  l_start;
+        long  l_len;
+        int   l_pid;
+    } lk;
+
+    fut_printf("[MISC-TEST] Tests 1531-1538: flock/fcntl locking edge cases\n");
+
+    const char *path = "/flock_edge_test.txt";
+    fut_vfs_unlink(path);
+    int fd = fut_vfs_open(path, O_CREAT | O_RDWR, 0644);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open failed: %d\n", fd);
+        for (int t = 1531; t <= 1538; t++) fut_test_fail(t);
+        return;
+    }
+
+    /* Test 1531: EX → SH downgrade on same fd */
+    fut_printf("[MISC-TEST] Test 1531: flock EX→SH downgrade\n");
+    long r = sys_flock(fd, EDGE_LOCK_EX);
+    long r2 = sys_flock(fd, EDGE_LOCK_SH);
+    sys_flock(fd, EDGE_LOCK_UN);
+    if (r == 0 && r2 == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 1531: EX→SH downgrade succeeded\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1531: EX=%ld SH=%ld\n", r, r2);
+        fut_test_fail(1531);
+    }
+
+    /* Test 1532: flock(LOCK_EX|LOCK_NB) on locked file → EAGAIN (then unlock and re-lock) */
+    fut_printf("[MISC-TEST] Test 1532: flock LOCK_EX|LOCK_NB contention → EAGAIN\n");
+    {
+        /* Open a second fd to the same file to create contention */
+        int fd2 = fut_vfs_open(path, O_RDWR, 0644);
+        if (fd2 < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1532: second open failed: %d\n", fd2);
+            fut_test_fail(1532);
+        } else {
+            /* Hold SH on fd, try EX|NB on fd2 → EAGAIN */
+            r = sys_flock(fd, EDGE_LOCK_SH);
+            r2 = sys_flock(fd2, EDGE_LOCK_EX | EDGE_LOCK_NB);
+            sys_flock(fd, EDGE_LOCK_UN);
+            fut_vfs_close(fd2);
+            if (r == 0 && r2 == -EAGAIN) {
+                fut_printf("[MISC-TEST] ✓ Test 1532: LOCK_EX|LOCK_NB → EAGAIN (SH held)\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1532: SH=%ld EX|NB=%ld (want 0, -11)\n", r, r2);
+                fut_test_fail(1532);
+            }
+        }
+    }
+
+    /* Test 1533: F_SETLKW WRLCK on unlocked file → immediate success */
+    fut_printf("[MISC-TEST] Test 1533: F_SETLKW WRLCK no-contention\n");
+    __builtin_memset(&lk, 0, sizeof(lk));
+    lk.l_type   = EDGE_F_WRLCK;
+    lk.l_whence = 0;
+    lk.l_start  = 0;
+    lk.l_len    = 0;
+    r = sys_fcntl(fd, EDGE_F_SETLKW, (uint64_t)(uintptr_t)&lk);
+    if (r == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 1533: F_SETLKW WRLCK → 0\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1533: F_SETLKW WRLCK → %ld\n", r);
+        fut_test_fail(1533);
+    }
+    /* Unlock */
+    lk.l_type = EDGE_F_UNLCK;
+    sys_fcntl(fd, EDGE_F_SETLK, (uint64_t)(uintptr_t)&lk);
+
+    /* Test 1534: F_SETLKW RDLCK on unlocked file → immediate success */
+    fut_printf("[MISC-TEST] Test 1534: F_SETLKW RDLCK no-contention\n");
+    __builtin_memset(&lk, 0, sizeof(lk));
+    lk.l_type   = EDGE_F_RDLCK;
+    lk.l_whence = 0;
+    lk.l_start  = 0;
+    lk.l_len    = 0;
+    r = sys_fcntl(fd, EDGE_F_SETLKW, (uint64_t)(uintptr_t)&lk);
+    if (r == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 1534: F_SETLKW RDLCK → 0\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1534: F_SETLKW RDLCK → %ld\n", r);
+        fut_test_fail(1534);
+    }
+    /* Unlock */
+    lk.l_type = EDGE_F_UNLCK;
+    sys_fcntl(fd, EDGE_F_SETLK, (uint64_t)(uintptr_t)&lk);
+
+    /* Test 1535: F_OFD_SETLK / F_OFD_GETLK round-trip */
+    fut_printf("[MISC-TEST] Test 1535: F_OFD_SETLK/GETLK round-trip\n");
+    __builtin_memset(&lk, 0, sizeof(lk));
+    lk.l_type   = EDGE_F_WRLCK;
+    lk.l_whence = 0;
+    lk.l_start  = 0;
+    lk.l_len    = 0;
+    r = sys_fcntl(fd, EDGE_F_OFD_SETLK, (uint64_t)(uintptr_t)&lk);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1535: F_OFD_SETLK → %ld\n", r);
+        fut_test_fail(1535);
+    } else {
+        /* Query with F_OFD_GETLK: same owner → should report F_UNLCK */
+        __builtin_memset(&lk, 0, sizeof(lk));
+        lk.l_type   = EDGE_F_WRLCK;
+        lk.l_whence = 0;
+        lk.l_start  = 0;
+        lk.l_len    = 0;
+        r = sys_fcntl(fd, EDGE_F_OFD_GETLK, (uint64_t)(uintptr_t)&lk);
+        if (r == 0 && lk.l_type == EDGE_F_UNLCK) {
+            fut_printf("[MISC-TEST] ✓ Test 1535: F_OFD round-trip OK\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1535: F_OFD_GETLK r=%ld l_type=%d\n", r, (int)lk.l_type);
+            fut_test_fail(1535);
+        }
+        /* Unlock */
+        lk.l_type = EDGE_F_UNLCK;
+        sys_fcntl(fd, EDGE_F_OFD_SETLK, (uint64_t)(uintptr_t)&lk);
+    }
+
+    /* Test 1536: flock(LOCK_UN) on unlocked file → idempotent success (0) */
+    fut_printf("[MISC-TEST] Test 1536: flock LOCK_UN on unlocked file\n");
+    r = sys_flock(fd, EDGE_LOCK_UN);
+    if (r == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 1536: LOCK_UN on unlocked → 0\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1536: LOCK_UN → %ld\n", r);
+        fut_test_fail(1536);
+    }
+
+    /* Test 1537: flock(invalid op) → EINVAL */
+    fut_printf("[MISC-TEST] Test 1537: flock invalid operation\n");
+    r = sys_flock(fd, 0xFF);
+    if (r == -EINVAL) {
+        fut_printf("[MISC-TEST] ✓ Test 1537: flock(0xFF) → EINVAL\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1537: flock(0xFF) → %ld\n", r);
+        fut_test_fail(1537);
+    }
+
+    fut_vfs_close(fd);
+
+    /* Test 1538: fcntl F_SETLK on closed fd → EBADF */
+    fut_printf("[MISC-TEST] Test 1538: F_SETLK on closed fd\n");
+    __builtin_memset(&lk, 0, sizeof(lk));
+    lk.l_type   = EDGE_F_WRLCK;
+    lk.l_whence = 0;
+    lk.l_start  = 0;
+    lk.l_len    = 0;
+    r = sys_fcntl(fd, EDGE_F_SETLK, (uint64_t)(uintptr_t)&lk);
+    if (r == -EBADF) {
+        fut_printf("[MISC-TEST] ✓ Test 1538: F_SETLK on closed fd → EBADF\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1538: F_SETLK closed → %ld\n", r);
+        fut_test_fail(1538);
+    }
+
+    fut_vfs_unlink(path);
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -49562,6 +49760,7 @@ void fut_misc_test_thread(void *arg) {
     test_af_inet_bind_conflict();          /* Tests 1515-1516: AF_INET bind conflict detection */
     test_af_inet_tcp_extended();           /* Tests 1517-1522: AF_INET getsockname/getpeername/shutdown */
     test_af_inet_edge_cases();             /* Tests 1523-1530: nonblocking, port 0, SO_REUSEADDR, multi-accept */
+    test_flock_fcntl_edge_cases();         /* Tests 1531-1538: flock/fcntl locking edge cases */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

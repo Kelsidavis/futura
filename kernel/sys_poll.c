@@ -510,6 +510,15 @@ long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout) {
                     poll_thr->state         = FUT_THREAD_BLOCKED;
                     poll_thr->blocked_waitq = &poll_wq;
                     poll_thr->wait_next     = NULL;
+                    /* Disable IRQs while holding poll_wq.lock: wired FD
+                     * callbacks (e.g. timerfd_timer_cb) wake this waitq from
+                     * timer IRQ context — if the IRQ fires while the lock is
+                     * held, the handler spins forever (single-CPU deadlock). */
+#ifdef __x86_64__
+                    __asm__ volatile("cli" ::: "memory");
+#elif defined(__aarch64__)
+                    __asm__ volatile("msr daifset, #2" ::: "memory");
+#endif
                     fut_spinlock_acquire(&poll_wq.lock);
                     if (poll_wq.tail) {
                         poll_wq.tail->wait_next = poll_thr;
@@ -518,6 +527,11 @@ long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout) {
                     }
                     poll_wq.tail = poll_thr;
                     fut_spinlock_release(&poll_wq.lock);
+#ifdef __x86_64__
+                    __asm__ volatile("sti" ::: "memory");
+#elif defined(__aarch64__)
+                    __asm__ volatile("msr daifclr, #2" ::: "memory");
+#endif
                     if (fut_timer_start(wake_ticks, poll_waitq_wakeup, &poll_wq) != 0) {
                         /* OOM: dequeue thread, restore state, clean up and fail */
                         fut_waitq_remove_thread(&poll_wq, poll_thr);

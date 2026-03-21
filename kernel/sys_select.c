@@ -556,6 +556,17 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
                     sel_thr->state         = FUT_THREAD_BLOCKED;
                     sel_thr->blocked_waitq = &sel_wq;
                     sel_thr->wait_next     = NULL;
+                    /* Disable interrupts while holding sel_wq.lock to prevent
+                     * IRQ-spinlock deadlock: wired FD callbacks (e.g.
+                     * timerfd_timer_cb) call fut_waitq_wake_one(&sel_wq) from
+                     * timer IRQ context, which tries to acquire sel_wq.lock.
+                     * If the IRQ fires while we hold the lock, the handler
+                     * spins forever on a lock we can never release. */
+#ifdef __x86_64__
+                    __asm__ volatile("cli" ::: "memory");
+#elif defined(__aarch64__)
+                    __asm__ volatile("msr daifset, #2" ::: "memory");
+#endif
                     fut_spinlock_acquire(&sel_wq.lock);
                     if (sel_wq.tail) {
                         sel_wq.tail->wait_next = sel_thr;
@@ -564,6 +575,11 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
                     }
                     sel_wq.tail = sel_thr;
                     fut_spinlock_release(&sel_wq.lock);
+#ifdef __x86_64__
+                    __asm__ volatile("sti" ::: "memory");
+#elif defined(__aarch64__)
+                    __asm__ volatile("msr daifclr, #2" ::: "memory");
+#endif
                     if (fut_timer_start(wake_ticks, select_waitq_wakeup, &sel_wq) != 0) {
                         /* OOM: dequeue thread, restore state, unwire and fail */
                         fut_waitq_remove_thread(&sel_wq, sel_thr);
@@ -1019,6 +1035,12 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
                     psel_thr->state         = FUT_THREAD_BLOCKED;
                     psel_thr->blocked_waitq = &psel_wq;
                     psel_thr->wait_next     = NULL;
+                    /* Disable IRQs — same deadlock prevention as select4 path */
+#ifdef __x86_64__
+                    __asm__ volatile("cli" ::: "memory");
+#elif defined(__aarch64__)
+                    __asm__ volatile("msr daifset, #2" ::: "memory");
+#endif
                     fut_spinlock_acquire(&psel_wq.lock);
                     if (psel_wq.tail) {
                         psel_wq.tail->wait_next = psel_thr;
@@ -1027,6 +1049,11 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
                     }
                     psel_wq.tail = psel_thr;
                     fut_spinlock_release(&psel_wq.lock);
+#ifdef __x86_64__
+                    __asm__ volatile("sti" ::: "memory");
+#elif defined(__aarch64__)
+                    __asm__ volatile("msr daifclr, #2" ::: "memory");
+#endif
                     if (fut_timer_start(wake_ticks, select_waitq_wakeup, &psel_wq) != 0) {
                         /* OOM: dequeue thread, restore state, unwire and fail */
                         fut_waitq_remove_thread(&psel_wq, psel_thr);

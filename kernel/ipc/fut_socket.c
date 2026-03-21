@@ -1125,7 +1125,25 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
             if (snd_has_timeout) {
                 uint64_t now = fut_get_ticks();
                 uint64_t rem = (snd_deadline > now) ? (snd_deadline - now) : 1;
-                fut_timer_start(rem, sock_timeout_callback, &snd_tmo_ctx);
+                int trc = fut_timer_start(rem, sock_timeout_callback, &snd_tmo_ctx);
+                if (trc != 0) {
+                    /* Timer alloc failed (OOM) — dequeue from waitq and bail */
+                    fut_spinlock_acquire(&pair->send_waitq->lock);
+                    fut_thread_t *wc = pair->send_waitq->head, *wp = NULL;
+                    while (wc) {
+                        if (wc == snd_thr) {
+                            if (wp) wp->wait_next = wc->wait_next;
+                            else    pair->send_waitq->head = wc->wait_next;
+                            if (pair->send_waitq->tail == wc) pair->send_waitq->tail = wp;
+                            wc->wait_next = NULL;
+                            break;
+                        }
+                        wp = wc; wc = wc->wait_next;
+                    }
+                    fut_spinlock_release(&pair->send_waitq->lock);
+                    snd_thr->state = FUT_THREAD_RUNNING;
+                    return -EAGAIN;
+                }
             }
             fut_schedule();
             if (snd_has_timeout) fut_timer_cancel(sock_timeout_callback, &snd_tmo_ctx);
@@ -1298,7 +1316,25 @@ ssize_t fut_socket_recv(fut_socket_t *socket, void *buf, size_t len) {
             if (rcv_has_timeout) {
                 uint64_t now = fut_get_ticks();
                 uint64_t rem = (rcv_deadline > now) ? (rcv_deadline - now) : 1;
-                fut_timer_start(rem, sock_timeout_callback, &rcv_tmo_ctx);
+                int trc = fut_timer_start(rem, sock_timeout_callback, &rcv_tmo_ctx);
+                if (trc != 0) {
+                    /* Timer alloc failed (OOM) — dequeue from waitq and bail */
+                    fut_spinlock_acquire(&pair->recv_waitq->lock);
+                    fut_thread_t *wc = pair->recv_waitq->head, *wp = NULL;
+                    while (wc) {
+                        if (wc == rcv_thr) {
+                            if (wp) wp->wait_next = wc->wait_next;
+                            else    pair->recv_waitq->head = wc->wait_next;
+                            if (pair->recv_waitq->tail == wc) pair->recv_waitq->tail = wp;
+                            wc->wait_next = NULL;
+                            break;
+                        }
+                        wp = wc; wc = wc->wait_next;
+                    }
+                    fut_spinlock_release(&pair->recv_waitq->lock);
+                    rcv_thr->state = FUT_THREAD_RUNNING;
+                    return -EAGAIN;
+                }
             }
             fut_schedule();
             if (rcv_has_timeout) fut_timer_cancel(sock_timeout_callback, &rcv_tmo_ctx);
@@ -1749,7 +1785,25 @@ ssize_t fut_socket_recvfrom_dgram(fut_socket_t *socket, void *buf, size_t len,
             if (dg_has_timeout) {
                 uint64_t now = fut_get_ticks();
                 uint64_t rem = (dg_deadline > now) ? (dg_deadline - now) : 1;
-                fut_timer_start(rem, sock_timeout_callback, &dg_tmo_ctx);
+                int trc = fut_timer_start(rem, sock_timeout_callback, &dg_tmo_ctx);
+                if (trc != 0) {
+                    /* Timer alloc failed (OOM) — dequeue from waitq and bail */
+                    fut_spinlock_acquire(&dq->recv_waitq->lock);
+                    fut_thread_t *wc = dq->recv_waitq->head, *wp = NULL;
+                    while (wc) {
+                        if (wc == dg_thr) {
+                            if (wp) wp->wait_next = wc->wait_next;
+                            else    dq->recv_waitq->head = wc->wait_next;
+                            if (dq->recv_waitq->tail == wc) dq->recv_waitq->tail = wp;
+                            wc->wait_next = NULL;
+                            break;
+                        }
+                        wp = wc; wc = wc->wait_next;
+                    }
+                    fut_spinlock_release(&dq->recv_waitq->lock);
+                    dg_thr->state = FUT_THREAD_RUNNING;
+                    return -EAGAIN;
+                }
             }
             fut_schedule();
             if (dg_has_timeout) fut_timer_cancel(sock_timeout_callback, &dg_tmo_ctx);

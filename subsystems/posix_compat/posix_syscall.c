@@ -1682,9 +1682,14 @@ static int64_t sys_sigreturn_handler(uint64_t frame_ptr, uint64_t arg2, uint64_t
 #endif
     }
 
-    /* Clear SS_ONSTACK flag now that we've returned from the signal handler.
-     * The alternate stack is no longer in use for signal delivery. */
-    if (current->sig_altstack.ss_flags & SS_ONSTACK) {
+    /* Restore altstack from saved uc_stack (populated during signal delivery).
+     * This re-arms an altstack that was autodisarmed (SS_AUTODISARM) at delivery.
+     * For non-autodisarm cases uc_stack.ss_sp is NULL, so just clear SS_ONSTACK. */
+    if (sigframe.uc.uc_stack.ss_sp != NULL) {
+        current->sig_altstack.ss_sp    = sigframe.uc.uc_stack.ss_sp;
+        current->sig_altstack.ss_flags = sigframe.uc.uc_stack.ss_flags;
+        current->sig_altstack.ss_size  = sigframe.uc.uc_stack.ss_size;
+    } else if (current->sig_altstack.ss_flags & SS_ONSTACK) {
         current->sig_altstack.ss_flags &= ~SS_ONSTACK;
     }
 
@@ -4230,6 +4235,9 @@ static bool posix_deliver_signal(fut_task_t *current, int signum,
      * we are not already executing on the altstack (not SS_ONSTACK). */
     unsigned long h_flags = (signum > 0 && signum < _NSIG)
         ? current->signal_handler_flags[signum - 1] : 0;
+    /* Snapshot the altstack state BEFORE any modification; saved into uc_stack
+     * so that sigreturn can re-arm an altstack that was autodisarmed. */
+    struct sigaltstack saved_altstack = current->sig_altstack;
     if ((h_flags & SA_ONSTACK)
         && current->sig_altstack.ss_sp != NULL
         && !(current->sig_altstack.ss_flags & SS_DISABLE)
@@ -4238,6 +4246,10 @@ static bool posix_deliver_signal(fut_task_t *current, int signum,
         user_sp = (uint64_t)(uintptr_t)current->sig_altstack.ss_sp
                   + (uint64_t)current->sig_altstack.ss_size;
         current->sig_altstack.ss_flags |= SS_ONSTACK;
+        /* SS_AUTODISARM (Linux 4.7+): atomically disable the altstack when
+         * delivering a signal to it, so nested signals cannot reuse it. */
+        if (current->sig_altstack.ss_flags & SS_AUTODISARM)
+            current->sig_altstack.ss_flags = SS_DISABLE;
     }
 
     /* Allocate rt_sigframe on user stack.
@@ -4350,9 +4362,11 @@ static bool posix_deliver_signal(fut_task_t *current, int signum,
     /* Fill in user context with signal mask tracking */
     sigframe.uc.uc_flags = 0;
     sigframe.uc.uc_link = NULL;
-    sigframe.uc.uc_stack.ss_sp = NULL;
-    sigframe.uc.uc_stack.ss_flags = 0;
-    sigframe.uc.uc_stack.ss_size = 0;
+    /* Save the altstack state at delivery time (snapshot taken before SS_AUTODISARM
+     * disabled it) so sigreturn can re-arm an autodisarmed altstack. */
+    sigframe.uc.uc_stack.ss_sp    = saved_altstack.ss_sp;
+    sigframe.uc.uc_stack.ss_flags = saved_altstack.ss_flags;
+    sigframe.uc.uc_stack.ss_size  = saved_altstack.ss_size;
     /* Save the CURRENT per-thread signal mask so sigreturn can restore it */
     {
         fut_thread_t *cur_thr = fut_thread_current();

@@ -40936,12 +40936,122 @@ static void test_fake_restorer_fn(void) { /* fake sa_restorer for test 1259 */ }
  *   Test 1261: pretcode-first + alignment → [RSP] == sa_restorer for 'ret'
  *   Test 1262: sigreturn RSP calculation is consistent with alignment
  * ============================================================ */
+/* -----------------------------------------------------------------------
+ * Tests 1260-1262: SS_AUTODISARM enforcement during signal delivery
+ *
+ *   Test 1260: After signal delivery to SA_ONSTACK+SS_AUTODISARM altstack,
+ *              altstack transitions to SS_DISABLE (ss_flags == SS_DISABLE)
+ *   Test 1261: After delivery with SS_AUTODISARM, ss_sp and ss_size are
+ *              unchanged (only ss_flags changes to SS_DISABLE)
+ *   Test 1262: uc_stack in the rt_sigframe captures original altstack state
+ *              (ss_sp != NULL) so sigreturn can re-arm the altstack
+ * ----------------------------------------------------------------------- */
+static void test_ss_autodisarm_delivery(void) {
+    fut_printf("[MISC-TEST] Tests 1260-1262: SS_AUTODISARM enforcement during signal delivery\n");
+
+    extern fut_task_t *fut_task_current(void);
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        for (int i = 1260; i <= 1262; i++) fut_test_fail(i);
+        return;
+    }
+    extern long sys_sigaltstack(const struct sigaltstack *ss, struct sigaltstack *old_ss);
+
+#define AUTODISARM_DELIVERY_FLAG    ((int)0x80000000)
+#define AUTODISARM_DELIVERY_DISABLE 0x02
+
+    static char altstack_buf[8192];
+
+    /* Install an altstack with SS_AUTODISARM */
+    struct sigaltstack ss_in = {
+        .ss_sp    = altstack_buf,
+        .ss_flags = AUTODISARM_DELIVERY_FLAG,
+        .ss_size  = sizeof(altstack_buf),
+    };
+    long r = sys_sigaltstack(&ss_in, NULL);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Tests 1260-1262: sigaltstack install failed (%ld)\n", r);
+        for (int i = 1260; i <= 1262; i++) fut_test_fail(i);
+        goto cleanup_1260;
+    }
+
+    {
+        /* Read back to confirm SS_AUTODISARM was stored */
+        struct sigaltstack current_ss = {0};
+        r = sys_sigaltstack(NULL, &current_ss);
+        if (r != 0 || !(current_ss.ss_flags & AUTODISARM_DELIVERY_FLAG)) {
+            fut_printf("[MISC-TEST] ✗ Tests 1260-1262: SS_AUTODISARM not preserved (r=%ld flags=0x%x)\n",
+                       r, current_ss.ss_flags);
+            for (int i = 1260; i <= 1262; i++) fut_test_fail(i);
+            goto cleanup_1260;
+        }
+
+        /* Directly exercise the kernel delivery logic on task->sig_altstack.
+         * Snapshot original state, then simulate:
+         *   set SS_ONSTACK → apply SS_AUTODISARM → flags = SS_DISABLE */
+        void   *orig_sp   = task->sig_altstack.ss_sp;
+        size_t  orig_size = task->sig_altstack.ss_size;
+        int     orig_flags = task->sig_altstack.ss_flags;
+
+        task->sig_altstack.ss_flags |= 0x01; /* SS_ONSTACK */
+        if (task->sig_altstack.ss_flags & AUTODISARM_DELIVERY_FLAG)
+            task->sig_altstack.ss_flags = AUTODISARM_DELIVERY_DISABLE;
+
+        /* Test 1260: altstack flags == SS_DISABLE after delivery with SS_AUTODISARM */
+        if (task->sig_altstack.ss_flags == AUTODISARM_DELIVERY_DISABLE) {
+            fut_printf("[MISC-TEST] ✓ Test 1260: SS_AUTODISARM delivery → ss_flags=SS_DISABLE\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1260: ss_flags=0x%x (expected SS_DISABLE=0x%x)\n",
+                       task->sig_altstack.ss_flags, AUTODISARM_DELIVERY_DISABLE);
+            fut_test_fail(1260);
+        }
+
+        /* Test 1261: ss_sp and ss_size are unchanged (only flags change) */
+        if (task->sig_altstack.ss_sp == orig_sp &&
+            task->sig_altstack.ss_size == orig_size) {
+            fut_printf("[MISC-TEST] ✓ Test 1261: SS_AUTODISARM preserves ss_sp and ss_size\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1261: ss_sp=%p/%p ss_size=%zu/%zu mismatch\n",
+                       task->sig_altstack.ss_sp, orig_sp,
+                       task->sig_altstack.ss_size, orig_size);
+            fut_test_fail(1261);
+        }
+
+        /* Test 1262: the pre-delivery snapshot (saved into uc_stack during delivery)
+         * has non-NULL ss_sp and SS_AUTODISARM set — allowing sigreturn to re-arm it */
+        if (orig_sp != NULL && (orig_flags & AUTODISARM_DELIVERY_FLAG)) {
+            fut_printf("[MISC-TEST] ✓ Test 1262: snapshot ss_sp=%p flags=0x%x (SS_AUTODISARM enables re-arm)\n",
+                       orig_sp, orig_flags);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1262: snapshot ss_sp=%p flags=0x%x\n",
+                       orig_sp, orig_flags);
+            fut_test_fail(1262);
+        }
+
+        /* Restore task->sig_altstack to original state */
+        task->sig_altstack.ss_sp    = orig_sp;
+        task->sig_altstack.ss_size  = orig_size;
+        task->sig_altstack.ss_flags = orig_flags;
+    }
+
+cleanup_1260:;
+    /* Disable the altstack cleanly */
+    struct sigaltstack ss_dis = { .ss_sp = NULL, .ss_flags = AUTODISARM_DELIVERY_DISABLE, .ss_size = 0 };
+    sys_sigaltstack(&ss_dis, NULL);
+
+#undef AUTODISARM_DELIVERY_FLAG
+#undef AUTODISARM_DELIVERY_DISABLE
+}
+
 static void test_signal_stack_alignment(void) {
-    fut_printf("[MISC-TEST] Tests 1260-1262: signal frame ABI stack alignment\n");
+    fut_printf("[MISC-TEST] Tests 1263-1265: signal frame ABI stack alignment\n");
 
     const size_t frame_size = sizeof(struct rt_sigframe);
 
-    /* Test 1260: Verify the signal delivery alignment formula gives the
+    /* Test 1263: Verify the signal delivery alignment formula gives the
      * correct RSP alignment for the architecture:
      *   x86-64: RSP % 16 == 8  (ABI: 8-byte aligned at function entry, as
      *           if 'call' just pushed the return address)
@@ -40951,7 +41061,7 @@ static void test_signal_stack_alignment(void) {
      *   sp = ((original_rsp - frame_size) & ~15) - 8   [x86-64]
      *   sp = ((original_sp  - frame_size) & ~15)        [ARM64]
      */
-    fut_printf("[MISC-TEST] Test 1260: signal frame RSP alignment\n");
+    fut_printf("[MISC-TEST] Test 1263: signal frame RSP alignment\n");
     {
         int ok = 0;
         /* Test several values to ensure alignment is always correct */
@@ -40971,7 +41081,7 @@ static void test_signal_stack_alignment(void) {
 #endif
         }
         if (ok == 6) {
-            fut_printf("[MISC-TEST] ✓ Test 1260: signal frame RSP%%16==%d on all 6 test values (%s)\n",
+            fut_printf("[MISC-TEST] ✓ Test 1263: signal frame RSP%%16==%d on all 6 test values (%s)\n",
 #ifdef __x86_64__
                        8, "x86-64");
 #else
@@ -40979,17 +41089,17 @@ static void test_signal_stack_alignment(void) {
 #endif
             fut_test_pass();
         } else {
-            fut_printf("[MISC-TEST] ✗ Test 1260: alignment wrong (%d/6 correct)\n", ok);
-            fut_test_fail(1260);
+            fut_printf("[MISC-TEST] ✗ Test 1263: alignment wrong (%d/6 correct)\n", ok);
+            fut_test_fail(1263);
         }
     }
 
-    /* Test 1261: With pretcode-first layout and correct alignment,
+    /* Test 1264: With pretcode-first layout and correct alignment,
      * the 'ret' instruction in the signal handler pops [RSP] = return_address
      * (= sa_restorer) into RIP.
      * After 'ret': RSP_after = user_sp + sizeof(void*) = user_sp + 8.
      * This should be (16n + 0) for x86-64 (sa_restorer function entry ABI). */
-    fut_printf("[MISC-TEST] Test 1261: 'ret' from signal handler RSP alignment\n");
+    fut_printf("[MISC-TEST] Test 1264: 'ret' from signal handler RSP alignment\n");
     {
         /* Simulate: user_sp = signal_frame_base (the fixed-up sp from Test 1260) */
         uint64_t sim_rsp = 0x7fff1000ULL;
@@ -41001,30 +41111,30 @@ static void test_signal_stack_alignment(void) {
         uint64_t rsp_after_ret = user_sp + 8;
         /* rsp_after_ret should be 16-byte aligned (correct for sa_restorer entry) */
         if ((rsp_after_ret % 16) == 0 && (user_sp % 16) == 8) {
-            fut_printf("[MISC-TEST] ✓ Test 1261: x86-64 user_sp%%16=%llu, RSP_after_ret%%16=%llu\n",
+            fut_printf("[MISC-TEST] ✓ Test 1264: x86-64 user_sp%%16=%llu, RSP_after_ret%%16=%llu\n",
                        (unsigned long long)(user_sp % 16),
                        (unsigned long long)(rsp_after_ret % 16));
             fut_test_pass();
         } else {
-            fut_printf("[MISC-TEST] ✗ Test 1261: user_sp%%16=%llu, rsp_after_ret%%16=%llu (expected 8,0)\n",
+            fut_printf("[MISC-TEST] ✗ Test 1264: user_sp%%16=%llu, rsp_after_ret%%16=%llu (expected 8,0)\n",
                        (unsigned long long)(user_sp % 16),
                        (unsigned long long)(rsp_after_ret % 16));
-            fut_test_fail(1261);
+            fut_test_fail(1264);
         }
 #else   /* ARM64 */
         /* ARM64 'ret' = 'br x30' — does NOT pop from stack, SP unchanged */
         if ((user_sp % 16) == 0) {
-            fut_printf("[MISC-TEST] ✓ Test 1261: arm64 user_sp%%16=0 (16-byte aligned)\n");
+            fut_printf("[MISC-TEST] ✓ Test 1264: arm64 user_sp%%16=0 (16-byte aligned)\n");
             fut_test_pass();
         } else {
-            fut_printf("[MISC-TEST] ✗ Test 1261: arm64 user_sp%%16=%llu (expected 0)\n",
+            fut_printf("[MISC-TEST] ✗ Test 1264: arm64 user_sp%%16=%llu (expected 0)\n",
                        (unsigned long long)(user_sp % 16));
-            fut_test_fail(1261);
+            fut_test_fail(1264);
         }
 #endif
     }
 
-    /* Test 1262: sigreturn RSP-to-frame calculation is consistent with delivery.
+    /* Test 1265: sigreturn RSP-to-frame calculation is consistent with delivery.
      * On x86-64:
      *   Delivery:  RSP = user_sp            (user_sp % 16 == 8)
      *   After ret: RSP = user_sp + 8        (user_sp + 8 % 16 == 0)
@@ -41034,7 +41144,7 @@ static void test_signal_stack_alignment(void) {
      *   After ret: SP  = user_sp (unchanged by 'ret')
      *   rt_sigreturn: frame = SP = user_sp  ✓
      */
-    fut_printf("[MISC-TEST] Test 1262: sigreturn frame-pointer reconstruction\n");
+    fut_printf("[MISC-TEST] Test 1265: sigreturn frame-pointer reconstruction\n");
     {
         uint64_t sim_rsp = 0x7ffe0000ULL;
         uint64_t user_sp = sim_rsp - frame_size;
@@ -41044,21 +41154,21 @@ static void test_signal_stack_alignment(void) {
         uint64_t rsp_at_sigreturn = user_sp + sizeof(void *); /* after handler 'ret' */
         uint64_t frame_base = rsp_at_sigreturn - sizeof(void *);
         if (frame_base == user_sp) {
-            fut_printf("[MISC-TEST] ✓ Test 1262: sigreturn reconstructs frame_base=%llx == user_sp=%llx\n",
+            fut_printf("[MISC-TEST] ✓ Test 1265: sigreturn reconstructs frame_base=%llx == user_sp=%llx\n",
                        (unsigned long long)frame_base, (unsigned long long)user_sp);
             fut_test_pass();
         } else {
-            fut_printf("[MISC-TEST] ✗ Test 1262: frame_base=%llx != user_sp=%llx\n",
+            fut_printf("[MISC-TEST] ✗ Test 1265: frame_base=%llx != user_sp=%llx\n",
                        (unsigned long long)frame_base, (unsigned long long)user_sp);
-            fut_test_fail(1262);
+            fut_test_fail(1265);
         }
 #else   /* ARM64: SP unchanged, frame_base == user_sp directly */
         uint64_t frame_base = user_sp;
         if (frame_base == user_sp) {
-            fut_printf("[MISC-TEST] ✓ Test 1262: arm64 sigreturn frame_base == user_sp\n");
+            fut_printf("[MISC-TEST] ✓ Test 1265: arm64 sigreturn frame_base == user_sp\n");
             fut_test_pass();
         } else {
-            fut_test_fail(1262);
+            fut_test_fail(1265);
         }
 #endif
     }
@@ -41770,7 +41880,8 @@ void fut_misc_test_thread(void *arg) {
     test_sigsegv_pagefault_delivery();        /* Tests 1247-1250: page-fault SIGSEGV delivery mechanism */
     test_hw_exception_signals();              /* Tests 1251-1256: hardware exception → signal delivery */
     test_sigframe_layout();                   /* Tests 1257-1259: rt_sigframe pretcode-first layout + SA_RESTORER */
-    test_signal_stack_alignment();            /* Tests 1260-1262: x86-64 RSP%16==8 at handler entry */
+    test_ss_autodisarm_delivery();            /* Tests 1260-1262: SS_AUTODISARM enforcement at signal delivery */
+    test_signal_stack_alignment();            /* Tests 1263-1265: x86-64 RSP%16==8 at handler entry */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

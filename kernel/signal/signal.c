@@ -558,6 +558,8 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
     /* Phase 2: Select signal stack — use alternate stack if SA_ONSTACK set
      * and the alternate stack is active (not disabled, not already on it). */
     unsigned long handler_flags = task->signal_handler_flags[signum - 1];
+    /* Snapshot altstack BEFORE any modification so uc_stack captures original state. */
+    struct sigaltstack saved_altstack = task->sig_altstack;
     uint64_t sp;
     if ((handler_flags & SA_ONSTACK) &&
         !(task->sig_altstack.ss_flags & SS_DISABLE) &&
@@ -568,6 +570,10 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
         sp = (uint64_t)task->sig_altstack.ss_sp + task->sig_altstack.ss_size;
         /* Mark we are now executing on the alternate stack */
         task->sig_altstack.ss_flags |= SS_ONSTACK;
+        /* SS_AUTODISARM (Linux 4.7+): atomically disable the altstack when
+         * delivering a signal to it, so nested signals cannot reuse it. */
+        if (task->sig_altstack.ss_flags & SS_AUTODISARM)
+            task->sig_altstack.ss_flags = SS_DISABLE;
     } else {
         sp = f->sp;
     }
@@ -608,9 +614,11 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
     /* Fill ucontext_t */
     sframe.uc.uc_flags = 0;
     sframe.uc.uc_link = NULL;
-    sframe.uc.uc_stack.ss_sp = (void *)f->sp;
-    sframe.uc.uc_stack.ss_flags = 0;
-    sframe.uc.uc_stack.ss_size = 0x1000;
+    /* Save altstack state at delivery time (before SS_AUTODISARM disabled it)
+     * so that sigreturn can re-arm the altstack when returning. */
+    sframe.uc.uc_stack.ss_sp    = saved_altstack.ss_sp;
+    sframe.uc.uc_stack.ss_flags = saved_altstack.ss_flags;
+    sframe.uc.uc_stack.ss_size  = saved_altstack.ss_size;
 
     /* Copy registers from exception frame to sigcontext */
     for (int i = 0; i < 31; i++) {

@@ -508,6 +508,11 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
         extern fut_socket_t *get_socket_from_fd(int fd);
         fut_socket_t *src_sock = get_socket_from_fd(local_sockfd);
         if (src_sock && src_sock->socket_type == 2 /* SOCK_DGRAM */) {
+            /* Enforce shutdown(SHUT_WR) on DGRAM sockets */
+            if (src_sock->shutdown_wr) {
+                fut_free(kbuf);
+                return -EPIPE;
+            }
             /* Parse sockaddr_un from dest_addr */
             struct {
                 unsigned short sun_family;
@@ -563,6 +568,11 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
         extern fut_socket_t *get_socket_from_fd(int fd);
         fut_socket_t *dgsock = get_socket_from_fd(local_sockfd);
         if (dgsock && dgsock->socket_type == 2 /* SOCK_DGRAM */) {
+            /* Enforce shutdown(SHUT_WR) on DGRAM sockets */
+            if (dgsock->shutdown_wr) {
+                fut_free(kbuf);
+                return -EPIPE;
+            }
             if (dgsock->dgram_peer_path_len > 0) {
                 /* Connected DGRAM: deliver to stored peer */
                 const char *sender_path = "";

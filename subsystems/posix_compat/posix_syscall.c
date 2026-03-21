@@ -481,6 +481,9 @@ static ssize_t socket_write(void *inode, void *private_data, const void *u_buf, 
                                            ssize_t total_len);
         return netlink_handle_send(socket, u_buf, n, (ssize_t)n);
     }
+    /* Enforce shutdown(SHUT_WR) before any send path */
+    if (socket->shutdown_wr)
+        return -EPIPE;
     /* Named DGRAM sockets (no stream pair): route write() via the dgram path */
     if (socket->socket_type == SOCK_DGRAM && !socket->pair) {
         if (socket->dgram_peer_path_len == 0)

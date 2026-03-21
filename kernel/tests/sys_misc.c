@@ -14407,6 +14407,140 @@ static void test_socket_dup_operations(void) {
     }
 }
 
+/* Tests 1396-1400: cachestat() syscall (Linux 6.5+)
+ * Verifies page cache statistics for files, pipes, and edge cases. */
+static void test_cachestat(void) {
+    extern long sys_cachestat(unsigned int fd, const void *cachestat_range,
+                              void *cachestat_buf, unsigned int flags);
+    extern long sys_open(const char *path, int flags, int mode);
+    extern long sys_write(int fd, const void *buf, size_t count);
+    extern long sys_close(int fd);
+
+    struct cachestat_range { uint64_t off; uint64_t len; };
+    struct cachestat {
+        uint64_t nr_cache;
+        uint64_t nr_dirty;
+        uint64_t nr_writeback;
+        uint64_t nr_evicted;
+        uint64_t nr_recently_evicted;
+    };
+
+    /* Test 1396: cachestat on a regular file → reports cached pages */
+    fut_printf("[MISC-TEST] Test 1396: cachestat on regular file\n");
+    {
+        /* Create a file with some data */
+        long fd = sys_open("/tmp/.t1396_cachestat", 0x42 /* O_CREAT|O_RDWR */, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1396: open = %ld\n", fd);
+            fut_test_fail(1396);
+        } else {
+            char data[8192]; /* 2 pages worth */
+            __builtin_memset(data, 'A', sizeof(data));
+            sys_write((int)fd, data, sizeof(data));
+
+            struct cachestat_range range = { .off = 0, .len = 0 }; /* 0 = to EOF */
+            struct cachestat result = {0};
+            long r = sys_cachestat((unsigned int)fd, &range, &result, 0);
+            if (r == 0 && result.nr_cache == 2) {
+                fut_printf("[MISC-TEST] ✓ Test 1396: cachestat = 0, nr_cache=%llu\n",
+                           (unsigned long long)result.nr_cache);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1396: r=%ld, nr_cache=%llu (want 2)\n",
+                           r, (unsigned long long)result.nr_cache);
+                fut_test_fail(1396);
+            }
+            sys_close((int)fd);
+        }
+    }
+
+    /* Test 1397: cachestat with offset beyond file size → nr_cache=0 */
+    fut_printf("[MISC-TEST] Test 1397: cachestat with offset beyond EOF\n");
+    {
+        long fd = sys_open("/tmp/.t1396_cachestat", 0 /* O_RDONLY */, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1397: open = %ld\n", fd);
+            fut_test_fail(1397);
+        } else {
+            struct cachestat_range range = { .off = 1000000, .len = 4096 };
+            struct cachestat result = { .nr_cache = 999 };
+            long r = sys_cachestat((unsigned int)fd, &range, &result, 0);
+            if (r == 0 && result.nr_cache == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1397: cachestat(off=1M) nr_cache=0\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1397: r=%ld, nr_cache=%llu\n",
+                           r, (unsigned long long)result.nr_cache);
+                fut_test_fail(1397);
+            }
+            sys_close((int)fd);
+        }
+    }
+
+    /* Test 1398: cachestat with invalid flags → EINVAL */
+    fut_printf("[MISC-TEST] Test 1398: cachestat with invalid flags\n");
+    {
+        long fd = sys_open("/tmp/.t1396_cachestat", 0, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1398: open = %ld\n", fd);
+            fut_test_fail(1398);
+        } else {
+            struct cachestat_range range = { .off = 0, .len = 4096 };
+            struct cachestat result = {0};
+            long r = sys_cachestat((unsigned int)fd, &range, &result, 1 /* invalid */);
+            if (r == -22 /* -EINVAL */) {
+                fut_printf("[MISC-TEST] ✓ Test 1398: cachestat(flags=1) = -EINVAL\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1398: cachestat(flags=1) = %ld (want -22)\n", r);
+                fut_test_fail(1398);
+            }
+            sys_close((int)fd);
+        }
+    }
+
+    /* Test 1399: cachestat on bad fd → EBADF */
+    fut_printf("[MISC-TEST] Test 1399: cachestat on bad fd\n");
+    {
+        struct cachestat_range range = { .off = 0, .len = 4096 };
+        struct cachestat result = {0};
+        long r = sys_cachestat(999, &range, &result, 0);
+        if (r == -9 /* -EBADF */) {
+            fut_printf("[MISC-TEST] ✓ Test 1399: cachestat(fd=999) = -EBADF\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1399: cachestat(fd=999) = %ld (want -9)\n", r);
+            fut_test_fail(1399);
+        }
+    }
+
+    /* Test 1400: cachestat on pipe fd → nr_cache=0 (no page cache) */
+    fut_printf("[MISC-TEST] Test 1400: cachestat on pipe fd\n");
+    {
+        extern long sys_pipe(int pipefd[2]);
+        int pipefd[2] = {-1, -1};
+        long r = sys_pipe(pipefd);
+        if (r < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1400: pipe = %ld\n", r);
+            fut_test_fail(1400);
+        } else {
+            struct cachestat_range range = { .off = 0, .len = 0 };
+            struct cachestat result = { .nr_cache = 999 };
+            r = sys_cachestat((unsigned int)pipefd[0], &range, &result, 0);
+            if (r == 0 && result.nr_cache == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1400: cachestat(pipe) nr_cache=0\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1400: r=%ld, nr_cache=%llu\n",
+                           r, (unsigned long long)result.nr_cache);
+                fut_test_fail(1400);
+            }
+            sys_close(pipefd[0]);
+            sys_close(pipefd[1]);
+        }
+    }
+}
+
 static void test_proc_fd_anon_types(void) {
     extern long sys_read(int fd, void *buf, size_t count);
     extern long sys_readlink(const char *path, char *buf, size_t bufsiz);
@@ -23637,14 +23771,14 @@ static void test_linux_6_10_stubs(void) {
         fut_test_pass();
     }
 
-    /* Test 479: cachestat -> ENOSYS */
-    fut_printf("[MISC-TEST] Test 479: cachestat -> ENOSYS\n");
+    /* Test 479: cachestat(NULL ptrs) -> EFAULT (cachestat is now implemented) */
+    fut_printf("[MISC-TEST] Test 479: cachestat(NULL) -> EFAULT\n");
     r = sys_cachestat(0, NULL, NULL, 0);
-    if (r != -38 /*-ENOSYS*/) {
-        fut_printf("[MISC-TEST] ✗ Test 479: cachestat returned %ld\n", r);
+    if (r != -14 /*-EFAULT*/) {
+        fut_printf("[MISC-TEST] ✗ Test 479: cachestat(NULL) returned %ld (want -EFAULT)\n", r);
         fut_test_fail(479);
     } else {
-        fut_printf("[MISC-TEST] ✓ Test 479: cachestat -> -ENOSYS\n");
+        fut_printf("[MISC-TEST] ✓ Test 479: cachestat(NULL) -> -EFAULT\n");
         fut_test_pass();
     }
 
@@ -45444,6 +45578,7 @@ void fut_misc_test_thread(void *arg) {
     test_listen_connect_edge_cases();        /* Tests 1379-1382: listen DGRAM EOPNOTSUPP, connect AF_UNSPEC */
     test_socket_ops_on_nonsocket();          /* Tests 1383-1391: socket ops on non-socket fd → ENOTSOCK */
     test_socket_dup_operations();            /* Tests 1392-1395: dup/dup2 on socket fds */
+    test_cachestat();                        /* Tests 1396-1400: cachestat syscall */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

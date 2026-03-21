@@ -20,6 +20,7 @@
 
 #include <kernel/errno.h>
 #include <kernel/fut_task.h>
+#include <kernel/fut_vfs.h>
 #include <kernel/uaccess.h>
 #include <stdint.h>
 #include <stddef.h>
@@ -160,13 +161,99 @@ long sys_set_mempolicy_home_node(unsigned long start, unsigned long len,
 }
 
 /**
- * sys_cachestat() - Query page-cache status for a file range.
- * Returns -ENOSYS; Futura has no page cache.
+ * sys_cachestat() - Query page-cache status for a file range (Linux 6.5+).
+ *
+ * On Futura's ramfs, all file data lives in memory, so everything is
+ * effectively "cached". We report nr_cache pages covering the requested
+ * range and zero for dirty/writeback/evicted counters.
+ *
+ * @param fd              File descriptor to query
+ * @param cachestat_range Pointer to struct { u64 off; u64 len; }
+ * @param cachestat_buf   Pointer to struct { u64 nr_cache, nr_dirty,
+ *                          nr_writeback, nr_evicted, nr_recently_evicted; }
+ * @param flags           Reserved (must be 0)
+ *
+ * Returns 0 on success, negative errno on error.
  */
 long sys_cachestat(unsigned int fd, const void *cachestat_range,
                    void *cachestat_buf, unsigned int flags) {
-    (void)fd; (void)cachestat_range; (void)cachestat_buf; (void)flags;
-    return -ENOSYS;
+    if (flags != 0) return -EINVAL;
+    if (!cachestat_range || !cachestat_buf) return -EFAULT;
+
+    fut_task_t *task = fut_task_current();
+    if (!task) return -ESRCH;
+
+    /* Validate fd */
+    if (fd >= (unsigned int)task->max_fds || !task->fd_table) return -EBADF;
+    struct fut_file *file = task->fd_table[fd];
+    if (!file) return -EBADF;
+
+    /* Copy range from user/kernel space */
+    struct { uint64_t off; uint64_t len; } range;
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)cachestat_range >= KERNEL_VIRTUAL_BASE)
+        __builtin_memcpy(&range, cachestat_range, sizeof(range));
+    else
+#endif
+    if (fut_copy_from_user(&range, cachestat_range, sizeof(range)) != 0)
+        return -EFAULT;
+
+    /* Get file size from vnode; character/pipe/socket fds have no page cache */
+    uint64_t file_size = 0;
+    if (file->vnode) {
+        file_size = file->vnode->size;
+    } else {
+        /* Non-regular files (pipes, sockets, etc.) have no page cache. */
+        /* Linux returns success with all-zero counts for these. */
+    }
+
+    /* Calculate how many pages of the requested range are cached.
+     * On ramfs, if the range overlaps the file, it's all cached. */
+    uint64_t nr_cache_pages = 0;
+    if (file_size > 0) {
+        uint64_t start = range.off;
+        uint64_t end;
+        if (range.len == 0) {
+            /* len=0 means "to end of file" */
+            end = file_size;
+        } else {
+            end = range.off + range.len;
+        }
+        /* Clamp to file size */
+        if (start >= file_size) {
+            nr_cache_pages = 0;
+        } else {
+            if (end > file_size) end = file_size;
+            uint64_t cached_bytes = end - start;
+            nr_cache_pages = (cached_bytes + 4095) / 4096; /* PAGE_SIZE=4096 */
+        }
+    }
+
+    /* Build result: all pages are cached, nothing is dirty/writeback/evicted */
+    struct {
+        uint64_t nr_cache;
+        uint64_t nr_dirty;
+        uint64_t nr_writeback;
+        uint64_t nr_evicted;
+        uint64_t nr_recently_evicted;
+    } result = {
+        .nr_cache = nr_cache_pages,
+        .nr_dirty = 0,
+        .nr_writeback = 0,
+        .nr_evicted = 0,
+        .nr_recently_evicted = 0,
+    };
+
+    /* Copy result to userspace */
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)cachestat_buf >= KERNEL_VIRTUAL_BASE)
+        __builtin_memcpy(cachestat_buf, &result, sizeof(result));
+    else
+#endif
+    if (fut_copy_to_user(cachestat_buf, &result, sizeof(result)) != 0)
+        return -EFAULT;
+
+    return 0;
 }
 
 /**

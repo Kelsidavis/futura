@@ -333,8 +333,6 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
      * Phase 4: Handle ancillary data (SCM_RIGHTS for FD passing)
      */
 
-    (void)local_flags;  /* Ignore flags in Phase 2 (will implement in Phase 3) */
-
     /* For named DGRAM sockets (no stream pair): extract destination from msg_name,
      * then send each iovec as a separate datagram to that address. */
     extern fut_socket_t *get_socket_from_fd(int fd);
@@ -428,9 +426,14 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
         }
 
         /* Write to socket — use sendto_dgram for named DGRAM, VFS for stream/socketpair.
-         * Suppress SIGPIPE at VFS level; we handle it here based on MSG_NOSIGNAL. */
+         * Suppress SIGPIPE at VFS level; we handle it here based on MSG_NOSIGNAL.
+         * Set per-task msg_dontwait for MSG_DONTWAIT (avoids mutating shared sock->flags). */
         fut_task_t *sm_task = fut_task_current();
-        if (sm_task) sm_task->suppress_sigpipe = 1;
+        if (sm_task) {
+            sm_task->suppress_sigpipe = 1;
+            if (local_flags & MSG_DONTWAIT)
+                sm_task->msg_dontwait = 1;
+        }
         ssize_t ret;
         if (is_dgram_sendmsg) {
             ret = fut_socket_sendto_dgram(dgram_dest, dgram_dest_len,
@@ -439,7 +442,11 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
         } else {
             ret = fut_vfs_write(local_sockfd, kbuf, iov.iov_len);
         }
-        if (sm_task) sm_task->suppress_sigpipe = 0;
+        if (sm_task) {
+            sm_task->suppress_sigpipe = 0;
+            if (local_flags & MSG_DONTWAIT)
+                sm_task->msg_dontwait = 0;
+        }
         fut_free(kbuf);
 
         if (ret < 0) {

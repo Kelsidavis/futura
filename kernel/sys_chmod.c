@@ -464,6 +464,20 @@ long sys_chmod(const char *pathname, uint32_t mode) {
         return -ENOSYS;
     }
 
+    /* Linux: non-root without CAP_FSETID gets S_ISGID silently stripped
+     * when the caller is not in the file's group. */
+    {
+        fut_task_t *chmod_task = fut_task_current();
+        if (chmod_task && chmod_task->uid != 0) {
+            int has_cap_fsetid = (chmod_task->cap_effective & (1ULL << 4 /* CAP_FSETID */));
+            if ((local_mode & 02000) && !has_cap_fsetid) {
+                if (chmod_task->gid != vnode->gid && chmod_task->ruid != 0) {
+                    local_mode &= ~(uint32_t)02000;
+                }
+            }
+        }
+    }
+
     /* Create a stat structure with the new mode.
      * uid/gid use (uint32_t)-1 as "don't change" sentinel. */
     struct fut_stat stat = {0};

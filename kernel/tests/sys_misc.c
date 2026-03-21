@@ -16229,6 +16229,148 @@ static void test_sticky_bit_enforcement(void) {
     }
 }
 
+/**
+ * test_chmod_sgid_strip - S_ISGID stripping for non-group-member chmod
+ *
+ * Tests 1459-1461:
+ * 1459: Non-root non-group-member chmod strips S_ISGID
+ * 1460: Group member chmod preserves S_ISGID
+ * 1461: CAP_FSETID preserves S_ISGID regardless of group
+ */
+static void test_chmod_sgid_strip(void) {
+    extern long sys_write(int fd, const void *buf, size_t count);
+    extern long sys_fchmod(int fd, uint32_t mode);
+    extern long sys_fchown(int fd, uint32_t uid, uint32_t gid);
+    extern long sys_fstat(int fd, struct fut_stat *statbuf);
+
+    fut_task_t *task = fut_task_current();
+    uint32_t saved_uid = task->uid;
+    uint32_t saved_ruid = task->ruid;
+    uint32_t saved_gid = task->gid;
+    uint64_t saved_caps = task->cap_effective;
+
+    /* Test 1459: non-group-member chmod strips S_ISGID */
+    fut_printf("[MISC-TEST] Test 1459: chmod S_ISGID stripped for non-group-member\n");
+    {
+        int fd = (int)fut_vfs_open("/test_sgid_strip.txt", O_CREAT | O_RDWR, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1459: open failed: %d\n", fd);
+            fut_test_fail(1459);
+        } else {
+            sys_write(fd, "data", 4);
+            /* File owned by uid 100, group 100 */
+            sys_fchown(fd, 100, 100);
+
+            /* Become uid 100 (owner), group 200 (NOT the file's group) */
+            task->uid = 100;
+            task->ruid = 100;
+            task->gid = 200;
+            task->cap_effective &= ~(1ULL << 3 /* CAP_FOWNER */);
+            task->cap_effective &= ~(1ULL << 4 /* CAP_FSETID */);
+
+            sys_fchmod(fd, 02755);  /* try to set S_ISGID */
+
+            struct fut_stat st = {0};
+            sys_fstat(fd, &st);
+            if (!(st.st_mode & 02000)) {
+                fut_printf("[MISC-TEST] ✓ Test 1459: S_ISGID stripped (mode=0%o)\n",
+                           st.st_mode & 07777);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1459: S_ISGID not stripped (mode=0%o)\n",
+                           st.st_mode & 07777);
+                fut_test_fail(1459);
+            }
+
+            task->uid = saved_uid;
+            task->ruid = saved_ruid;
+            task->gid = saved_gid;
+            task->cap_effective = saved_caps;
+            fut_vfs_close(fd);
+        }
+    }
+
+    /* Test 1460: group member chmod preserves S_ISGID */
+    fut_printf("[MISC-TEST] Test 1460: chmod S_ISGID preserved for group member\n");
+    {
+        int fd = (int)fut_vfs_open("/test_sgid_keep.txt", O_CREAT | O_RDWR, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1460: open failed: %d\n", fd);
+            fut_test_fail(1460);
+        } else {
+            sys_write(fd, "data", 4);
+            sys_fchown(fd, 100, 100);
+
+            /* Become uid 100 (owner), group 100 (same as file) */
+            task->uid = 100;
+            task->ruid = 100;
+            task->gid = 100;
+            task->cap_effective &= ~(1ULL << 3);
+            task->cap_effective &= ~(1ULL << 4);
+
+            sys_fchmod(fd, 02755);
+
+            struct fut_stat st = {0};
+            sys_fstat(fd, &st);
+            if (st.st_mode & 02000) {
+                fut_printf("[MISC-TEST] ✓ Test 1460: S_ISGID preserved for group member (mode=0%o)\n",
+                           st.st_mode & 07777);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1460: S_ISGID wrongly stripped (mode=0%o)\n",
+                           st.st_mode & 07777);
+                fut_test_fail(1460);
+            }
+
+            task->uid = saved_uid;
+            task->ruid = saved_ruid;
+            task->gid = saved_gid;
+            task->cap_effective = saved_caps;
+            fut_vfs_close(fd);
+        }
+    }
+
+    /* Test 1461: CAP_FSETID preserves S_ISGID regardless */
+    fut_printf("[MISC-TEST] Test 1461: CAP_FSETID preserves S_ISGID\n");
+    {
+        int fd = (int)fut_vfs_open("/test_sgid_capfsetid.txt", O_CREAT | O_RDWR, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1461: open failed: %d\n", fd);
+            fut_test_fail(1461);
+        } else {
+            sys_write(fd, "data", 4);
+            sys_fchown(fd, 100, 100);
+
+            /* Become uid 100 (owner), group 200 (NOT file's group), with CAP_FSETID */
+            task->uid = 100;
+            task->ruid = 100;
+            task->gid = 200;
+            task->cap_effective &= ~(1ULL << 3);
+            task->cap_effective |= (1ULL << 4 /* CAP_FSETID */);
+
+            sys_fchmod(fd, 02755);
+
+            struct fut_stat st = {0};
+            sys_fstat(fd, &st);
+            if (st.st_mode & 02000) {
+                fut_printf("[MISC-TEST] ✓ Test 1461: CAP_FSETID preserved S_ISGID (mode=0%o)\n",
+                           st.st_mode & 07777);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1461: S_ISGID stripped despite CAP_FSETID (mode=0%o)\n",
+                           st.st_mode & 07777);
+                fut_test_fail(1461);
+            }
+
+            task->uid = saved_uid;
+            task->ruid = saved_ruid;
+            task->gid = saved_gid;
+            task->cap_effective = saved_caps;
+            fut_vfs_close(fd);
+        }
+    }
+}
+
 static void test_proc_fd_anon_types(void) {
     extern long sys_read(int fd, void *buf, size_t count);
     extern long sys_readlink(const char *path, char *buf, size_t bufsiz);
@@ -47282,6 +47424,7 @@ void fut_misc_test_thread(void *arg) {
     test_suid_clear_chown_fchownat();       /* Tests 1449-1451: setuid/setgid clearing on chown/fchownat */
     test_sgid_dir_inheritance();            /* Tests 1452-1454: S_ISGID directory group inheritance */
     test_sticky_bit_enforcement();          /* Tests 1455-1458: sticky bit on directories */
+    test_chmod_sgid_strip();                /* Tests 1459-1461: chmod S_ISGID stripping */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

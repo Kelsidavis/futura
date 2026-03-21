@@ -579,37 +579,51 @@ long sys_tee(int fd_in, int fd_out, size_t len, unsigned int flags) {
     if (local_len == 0)
         return 0;
 
-    /* Peek data from source pipe without consuming it */
-    const size_t CHUNK = 4096;
-    size_t remaining = local_len;
-    ssize_t total = 0;
-
-    uint8_t *kbuf = (uint8_t *)fut_malloc(CHUNK);
-    if (!kbuf) return -ENOMEM;
-
+    /* Peek ALL requested data in a single call.
+     *
+     * BUG FIX: The previous chunked-loop approach called pipe_peek() multiple
+     * times, but pipe_peek() always reads from the same read_pos (it doesn't
+     * consume data). So chunk N+1 would re-read the same bytes as chunk N,
+     * duplicating the first CHUNK bytes across the entire output.
+     *
+     * Fix: peek the full requested amount in one call, then write to the
+     * output pipe. Pipe buffers are bounded (65536 bytes), so the allocation
+     * is safe. Cap at 65536 to prevent excessive allocation for large len. */
     extern ssize_t pipe_peek(void *read_priv, void *buf, size_t len);
 
-    while (remaining > 0) {
-        size_t want = (remaining < CHUNK) ? remaining : CHUNK;
-        ssize_t got = pipe_peek(file_in->chr_private, kbuf, want);
-        if (got < 0) { total = (total > 0) ? total : got; break; }
-        if (got == 0) break;  /* Source pipe empty */
+    size_t peek_len = local_len;
+    if (peek_len > 65536)
+        peek_len = 65536;
 
-        off_t pos = 0;
-        ssize_t nwritten = file_out->chr_ops->write(
-            file_out->chr_inode, file_out->chr_private, kbuf, (size_t)got, &pos);
-        if (nwritten < 0) { total = (total > 0) ? total : nwritten; break; }
+    uint8_t *kbuf = (uint8_t *)fut_malloc(peek_len);
+    if (!kbuf) return -ENOMEM;
 
-        total += nwritten;
-        remaining -= (size_t)nwritten;
-        if (nwritten < got) break;  /* Dest pipe full */
+    ssize_t got = pipe_peek(file_in->chr_private, kbuf, peek_len);
+    if (got < 0) {
+        fut_free(kbuf);
+        return got;
+    }
+    if (got == 0) {
+        fut_free(kbuf);
+        /* SPLICE_F_NONBLOCK: return -EAGAIN when source pipe is empty */
+        if (local_flags & SPLICE_F_NONBLOCK)
+            return -EAGAIN;
+        /* Without NONBLOCK, return 0 (no data available) */
+        return 0;
     }
 
+    /* Write peeked data to output pipe */
+    off_t pos = 0;
+    ssize_t nwritten = file_out->chr_ops->write(
+        file_out->chr_inode, file_out->chr_private, kbuf, (size_t)got, &pos);
     fut_free(kbuf);
 
+    if (nwritten < 0)
+        return nwritten;
+
     fut_printf("[TEE] tee(fd_in=%d, fd_out=%d, len=%zu, pid=%d) -> %zd bytes\n",
-               local_fd_in, local_fd_out, local_len, task->pid, total);
-    return total;
+               local_fd_in, local_fd_out, local_len, task->pid, nwritten);
+    return nwritten;
 }
 
 /**

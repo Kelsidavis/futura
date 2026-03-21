@@ -13589,6 +13589,156 @@ static void test_read_write_count_zero(void) {
     }
 }
 
+/**
+ * Tests 1367-1370: tee() correctness
+ *
+ * Test 1367: tee() duplicates data without consuming source
+ * Test 1368: tee() with >4096 bytes doesn't duplicate first chunk
+ * Test 1369: tee(SPLICE_F_NONBLOCK) on empty pipe → EAGAIN
+ * Test 1370: tee(same_fd) → EINVAL
+ */
+static void test_tee_correctness(void) {
+    extern long sys_tee(int fd_in, int fd_out, size_t len, unsigned int flags);
+    extern long sys_read(int fd, void *buf, size_t count);
+    extern long sys_write(int fd, const void *buf, size_t count);
+    extern long sys_pipe2(int pipefd[2], int flags);
+
+    /* Test 1367: tee duplicates data without consuming source pipe */
+    fut_printf("[MISC-TEST] Test 1367: tee duplicates data without consuming source\n");
+    {
+        int src[2], dst[2];
+        long r1 = sys_pipe2(src, 0);
+        long r2 = sys_pipe2(dst, 0);
+        if (r1 < 0 || r2 < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1367: pipe2 failed\n");
+            fut_test_fail(1367);
+        } else {
+            /* Write data to source pipe */
+            const char *msg = "tee-test";
+            sys_write(src[1], msg, 8);
+
+            /* tee from source read-end to dest write-end */
+            long teed = sys_tee(src[0], dst[1], 8, 0);
+            if (teed != 8) {
+                fut_printf("[MISC-TEST] ✗ Test 1367: tee returned %ld (expected 8)\n", teed);
+                fut_test_fail(1367);
+            } else {
+                /* Verify dest has the data */
+                char dbuf[16];
+                long dr = sys_read(dst[0], dbuf, 16);
+                /* Verify source STILL has the data (not consumed) */
+                char sbuf[16];
+                long sr = sys_read(src[0], sbuf, 16);
+                if (dr == 8 && sr == 8 &&
+                    __builtin_memcmp(dbuf, "tee-test", 8) == 0 &&
+                    __builtin_memcmp(sbuf, "tee-test", 8) == 0) {
+                    fut_printf("[MISC-TEST] ✓ Test 1367: tee duplicated data, source intact\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1367: dest_read=%ld src_read=%ld\n", dr, sr);
+                    fut_test_fail(1367);
+                }
+            }
+            sys_close(src[0]); sys_close(src[1]);
+            sys_close(dst[0]); sys_close(dst[1]);
+        }
+    }
+
+    /* Test 1368: tee with >4096 bytes produces correct output (no chunk duplication) */
+    fut_printf("[MISC-TEST] Test 1368: tee >4096 bytes doesn't duplicate first chunk\n");
+    {
+        int src[2], dst[2];
+        long r1 = sys_pipe2(src, 0);
+        long r2 = sys_pipe2(dst, 0);
+        if (r1 < 0 || r2 < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1368: pipe2 failed\n");
+            fut_test_fail(1368);
+        } else {
+            /* Write 8192 bytes: first 4096 = 'A', next 4096 = 'B' */
+            char wbuf[4096];
+            __builtin_memset(wbuf, 'A', 4096);
+            sys_write(src[1], wbuf, 4096);
+            __builtin_memset(wbuf, 'B', 4096);
+            sys_write(src[1], wbuf, 4096);
+
+            /* tee all 8192 bytes */
+            long teed = sys_tee(src[0], dst[1], 8192, 0);
+            if (teed < 8192) {
+                fut_printf("[MISC-TEST] ✗ Test 1368: tee returned %ld (expected 8192)\n", teed);
+                fut_test_fail(1368);
+            } else {
+                /* Read from dest and verify: first 4096='A', next 4096='B' */
+                char rbuf[8192];
+                long total = 0;
+                while (total < 8192) {
+                    long nr = sys_read(dst[0], rbuf + total, 8192 - (size_t)total);
+                    if (nr <= 0) break;
+                    total += nr;
+                }
+                bool first_ok = true, second_ok = true;
+                for (int i = 0; i < 4096 && first_ok; i++)
+                    if (rbuf[i] != 'A') first_ok = false;
+                for (int i = 4096; i < 8192 && second_ok; i++)
+                    if (rbuf[i] != 'B') second_ok = false;
+                if (total == 8192 && first_ok && second_ok) {
+                    fut_printf("[MISC-TEST] ✓ Test 1368: tee 8192 bytes correct (no duplication)\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1368: total=%ld first_ok=%d second_ok=%d\n",
+                               total, first_ok, second_ok);
+                    fut_test_fail(1368);
+                }
+            }
+            sys_close(src[0]); sys_close(src[1]);
+            sys_close(dst[0]); sys_close(dst[1]);
+        }
+    }
+
+    /* Test 1369: tee(SPLICE_F_NONBLOCK) on empty pipe → EAGAIN */
+    fut_printf("[MISC-TEST] Test 1369: tee(SPLICE_F_NONBLOCK) on empty pipe → EAGAIN\n");
+    {
+        int src[2], dst[2];
+        long r1 = sys_pipe2(src, 0);
+        long r2 = sys_pipe2(dst, 0);
+        if (r1 < 0 || r2 < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1369: pipe2 failed\n");
+            fut_test_fail(1369);
+        } else {
+            long ret = sys_tee(src[0], dst[1], 4096, 2 /* SPLICE_F_NONBLOCK */);
+            if (ret == -11 /* EAGAIN */) {
+                fut_printf("[MISC-TEST] ✓ Test 1369: tee(NONBLOCK, empty) → EAGAIN\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1369: tee(NONBLOCK, empty) → %ld (expected EAGAIN=-11)\n", ret);
+                fut_test_fail(1369);
+            }
+            sys_close(src[0]); sys_close(src[1]);
+            sys_close(dst[0]); sys_close(dst[1]);
+        }
+    }
+
+    /* Test 1370: tee(fd, fd) → EINVAL */
+    fut_printf("[MISC-TEST] Test 1370: tee(same_fd) → EINVAL\n");
+    {
+        int p[2];
+        long r = sys_pipe2(p, 0);
+        if (r < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1370: pipe2 failed\n");
+            fut_test_fail(1370);
+        } else {
+            long ret = sys_tee(p[0], p[0], 4096, 0);
+            if (ret == -22 /* EINVAL */) {
+                fut_printf("[MISC-TEST] ✓ Test 1370: tee(same_fd) → EINVAL\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1370: tee(same_fd) → %ld (expected EINVAL=-22)\n", ret);
+                fut_test_fail(1370);
+            }
+            sys_close(p[0]); sys_close(p[1]);
+        }
+    }
+}
+
 static void test_proc_fd_anon_types(void) {
     extern long sys_read(int fd, void *buf, size_t count);
     extern long sys_readlink(const char *path, char *buf, size_t bufsiz);
@@ -44618,6 +44768,7 @@ void fut_misc_test_thread(void *arg) {
     test_recvmsg_peek();                     /* Tests 1360-1361: recvmsg MSG_PEEK */
     test_splice_nonblock();                  /* Tests 1362-1363: splice SPLICE_F_NONBLOCK */
     test_read_write_count_zero();            /* Tests 1364-1366: read/write count=0 EBADF, sendfile neg offset */
+    test_tee_correctness();                  /* Tests 1367-1370: tee data integrity, NONBLOCK, same-fd */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

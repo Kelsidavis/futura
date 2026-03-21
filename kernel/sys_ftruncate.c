@@ -313,6 +313,26 @@ long sys_ftruncate(int fd, uint64_t length) {
             return ret;
         }
 
+        /* POSIX/Linux: clear setuid/setgid bits on truncate.
+         * Same semantics as write: S_ISUID cleared unconditionally,
+         * S_ISGID cleared only when S_IXGRP is set. CAP_FSETID bypasses. */
+        if (vnode->type == VN_REG) {
+            uint32_t mode = vnode->mode;
+            int needs_clear = 0;
+            if (mode & 04000) needs_clear = 1;
+            if ((mode & 02000) && (mode & 00010)) needs_clear = 1;
+            if (needs_clear) {
+                int has_cap_fsetid = task &&
+                    (task->cap_effective & (1ULL << 4 /* CAP_FSETID */));
+                if (!has_cap_fsetid) {
+                    if (mode & 04000)
+                        vnode->mode &= ~(uint32_t)04000;
+                    if ((mode & 02000) && (mode & 00010))
+                        vnode->mode &= ~(uint32_t)02000;
+                }
+            }
+        }
+
         /* Dispatch IN_MODIFY: truncation changes file contents */
         if (vnode->parent && vnode->name) {
             char dir_path[256];

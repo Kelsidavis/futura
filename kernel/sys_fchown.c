@@ -140,6 +140,10 @@ long sys_fchown(int fd, uint32_t uid, uint32_t gid) {
     stat.st_atime = (uint64_t)-1;
     stat.st_mtime = (uint64_t)-1;
 
+    /* Save old uid/gid to detect ownership changes for S_ISUID/S_ISGID clearing */
+    uint32_t old_uid = vnode->uid;
+    uint32_t old_gid = vnode->gid;
+
     /* Call the filesystem's setattr operation */
     int ret = vnode->ops->setattr(vnode, &stat);
 
@@ -165,6 +169,23 @@ long sys_fchown(int fd, uint32_t uid, uint32_t gid) {
                    local_fd, fd_category, vnode->ino, local_uid, uid_desc, local_gid, gid_desc,
                    ret, error_desc);
         return ret;
+    }
+
+    /* POSIX/Linux: clear S_ISUID/S_ISGID on ownership change.
+     * When uid changes, both S_ISUID and S_ISGID are cleared.
+     * When only gid changes, S_ISGID is cleared if S_IXGRP is set.
+     * This prevents privilege escalation via chowning setuid binaries. */
+    if (vnode->type == VN_REG) {
+        int uid_changed = (local_uid != (uint32_t)-1 && local_uid != old_uid);
+        int gid_changed = (local_gid != (uint32_t)-1 && local_gid != old_gid);
+        if (uid_changed || gid_changed) {
+            if (uid_changed) {
+                vnode->mode &= ~(uint32_t)(04000 | 02000);
+            } else if (gid_changed) {
+                if ((vnode->mode & 02000) && (vnode->mode & 00010))
+                    vnode->mode &= ~(uint32_t)02000;
+            }
+        }
     }
 
     /* Dispatch IN_ATTRIB inotify event so watchers see the ownership change */

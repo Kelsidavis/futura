@@ -15423,6 +15423,135 @@ static void test_suid_sgid_clear_on_write(void) {
     }
 }
 
+/**
+ * test_suid_clear_on_truncate_fchown - Verify S_ISUID/S_ISGID cleared on truncate/fchown
+ *
+ * Tests 1438-1441:
+ * 1438: ftruncate clears S_ISUID
+ * 1439: ftruncate clears S_ISGID (with S_IXGRP)
+ * 1440: fchown (uid change) clears both S_ISUID and S_ISGID
+ * 1441: fchown (gid change only) clears S_ISGID when S_IXGRP set
+ */
+static void test_suid_clear_on_truncate_fchown(void) {
+    extern long sys_write(int fd, const void *buf, size_t count);
+    extern long sys_fchmod(int fd, uint32_t mode);
+    extern long sys_fchown(int fd, uint32_t uid, uint32_t gid);
+    extern long sys_ftruncate(int fd, uint64_t length);
+    extern long sys_fstat(int fd, struct fut_stat *statbuf);
+
+    fut_task_t *task = fut_task_current();
+    uint64_t saved_caps = task->cap_effective;
+    task->cap_effective &= ~(1ULL << 4 /* CAP_FSETID */);
+
+    /* Test 1438: ftruncate clears S_ISUID */
+    fut_printf("[MISC-TEST] Test 1438: ftruncate clears S_ISUID\n");
+    {
+        int fd = (int)fut_vfs_open("/test_trunc_suid.txt", O_CREAT | O_RDWR, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1438: open failed: %d\n", fd);
+            fut_test_fail(1438);
+        } else {
+            sys_write(fd, "data", 4);
+            sys_fchmod(fd, 04755);
+            sys_ftruncate(fd, 2);
+            struct fut_stat st = {0};
+            sys_fstat(fd, &st);
+            if (st.st_mode & 04000) {
+                fut_printf("[MISC-TEST] ✗ Test 1438: S_ISUID not cleared after ftruncate (mode=0%o)\n",
+                           st.st_mode & 07777);
+                fut_vfs_close(fd);
+                fut_test_fail(1438);
+            } else {
+                fut_printf("[MISC-TEST] ✓ Test 1438: S_ISUID cleared after ftruncate (mode=0%o)\n",
+                           st.st_mode & 07777);
+                fut_vfs_close(fd);
+                fut_test_pass();
+            }
+        }
+    }
+
+    /* Test 1439: ftruncate clears S_ISGID (with S_IXGRP) */
+    fut_printf("[MISC-TEST] Test 1439: ftruncate clears S_ISGID when S_IXGRP set\n");
+    {
+        int fd = (int)fut_vfs_open("/test_trunc_sgid.txt", O_CREAT | O_RDWR, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1439: open failed: %d\n", fd);
+            fut_test_fail(1439);
+        } else {
+            sys_write(fd, "data", 4);
+            sys_fchmod(fd, 02755);
+            sys_ftruncate(fd, 2);
+            struct fut_stat st = {0};
+            sys_fstat(fd, &st);
+            if (st.st_mode & 02000) {
+                fut_printf("[MISC-TEST] ✗ Test 1439: S_ISGID not cleared after ftruncate (mode=0%o)\n",
+                           st.st_mode & 07777);
+                fut_vfs_close(fd);
+                fut_test_fail(1439);
+            } else {
+                fut_printf("[MISC-TEST] ✓ Test 1439: S_ISGID cleared after ftruncate (mode=0%o)\n",
+                           st.st_mode & 07777);
+                fut_vfs_close(fd);
+                fut_test_pass();
+            }
+        }
+    }
+
+    task->cap_effective = saved_caps;
+
+    /* Test 1440: fchown uid change clears S_ISUID and S_ISGID */
+    fut_printf("[MISC-TEST] Test 1440: fchown (uid change) clears S_ISUID|S_ISGID\n");
+    {
+        int fd = (int)fut_vfs_open("/test_chown_suid.txt", O_CREAT | O_RDWR, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1440: open failed: %d\n", fd);
+            fut_test_fail(1440);
+        } else {
+            sys_fchmod(fd, 06755);  /* setuid+setgid */
+            sys_fchown(fd, 1000, (uint32_t)-1);  /* change uid only */
+            struct fut_stat st = {0};
+            sys_fstat(fd, &st);
+            if ((st.st_mode & 06000) == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1440: S_ISUID|S_ISGID cleared on uid change (mode=0%o)\n",
+                           st.st_mode & 07777);
+                fut_vfs_close(fd);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1440: bits remain: 0%o (mode=0%o)\n",
+                           st.st_mode & 06000, st.st_mode & 07777);
+                fut_vfs_close(fd);
+                fut_test_fail(1440);
+            }
+        }
+    }
+
+    /* Test 1441: fchown gid change clears S_ISGID when S_IXGRP set */
+    fut_printf("[MISC-TEST] Test 1441: fchown (gid change) clears S_ISGID when S_IXGRP set\n");
+    {
+        int fd = (int)fut_vfs_open("/test_chown_sgid.txt", O_CREAT | O_RDWR, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1441: open failed: %d\n", fd);
+            fut_test_fail(1441);
+        } else {
+            sys_fchmod(fd, 02755);  /* setgid + group-exec */
+            sys_fchown(fd, (uint32_t)-1, 1000);  /* change gid only */
+            struct fut_stat st = {0};
+            sys_fstat(fd, &st);
+            if (st.st_mode & 02000) {
+                fut_printf("[MISC-TEST] ✗ Test 1441: S_ISGID not cleared on gid change (mode=0%o)\n",
+                           st.st_mode & 07777);
+                fut_vfs_close(fd);
+                fut_test_fail(1441);
+            } else {
+                fut_printf("[MISC-TEST] ✓ Test 1441: S_ISGID cleared on gid change (mode=0%o)\n",
+                           st.st_mode & 07777);
+                fut_vfs_close(fd);
+                fut_test_pass();
+            }
+        }
+    }
+}
+
 static void test_proc_fd_anon_types(void) {
     extern long sys_read(int fd, void *buf, size_t count);
     extern long sys_readlink(const char *path, char *buf, size_t bufsiz);
@@ -46469,6 +46598,7 @@ void fut_misc_test_thread(void *arg) {
     test_readahead_writeonly();              /* Test 1430: readahead rejects O_WRONLY fd */
     test_mmap_min_addr();                   /* Tests 1431-1432: mmap_min_addr enforcement */
     test_suid_sgid_clear_on_write();        /* Tests 1433-1437: setuid/setgid clearing on write */
+    test_suid_clear_on_truncate_fchown();   /* Tests 1438-1441: setuid/setgid clearing on truncate/fchown */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

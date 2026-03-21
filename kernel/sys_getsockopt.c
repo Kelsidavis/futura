@@ -783,6 +783,20 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
                 if (gso_copy_to_user(optlen, &value_len, sizeof(socklen_t)) != 0) return -EFAULT;
                 return 0;
 
+            case 62: /* SO_RCVTIMEO_NEW */
+            case 63: { /* SO_SNDTIMEO_NEW — Y2038-safe (struct __kernel_sock_timeval) */
+                uint64_t ms = (optname == 62) ? socket->rcvtimeo_ms : socket->sndtimeo_ms;
+                struct { int64_t tv_sec; int64_t tv_usec; } tv = {
+                    .tv_sec  = (int64_t)(ms / 1000ULL),
+                    .tv_usec = (int64_t)((ms % 1000ULL) * 1000ULL),
+                };
+                value_len = sizeof(tv);
+                copy_len = (len < value_len) ? len : value_len;
+                if (gso_copy_to_user(optval, &tv, copy_len) != 0) return -EFAULT;
+                if (gso_copy_to_user(optlen, &value_len, sizeof(socklen_t)) != 0) return -EFAULT;
+                return 0;
+            }
+
             case 12: /* SO_PRIORITY */
             case 25: /* SO_BINDTODEVICE — return empty string */
             case 26: /* SO_ATTACH_FILTER */
@@ -803,8 +817,6 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
             case 57: /* SO_MEMINFO */
             case 58: /* SO_INCOMING_NAPI_ID */
             case 59: /* SO_COOKIE */
-            case 62: /* SO_RCVTIMEO_NEW */
-            case 63: /* SO_SNDTIMEO_NEW */
             case 64: case 65: case 66: case 67: case 68: case 69: case 70: case 71: {
                 /* Extended options: return 0 (disabled/zero value) */
                 int_value = 0;

@@ -12717,6 +12717,85 @@ static void test_tcp_info(void) {
     }
 }
 
+static void test_so_rcvtimeo_new(void) {
+    extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+    extern long sys_setsockopt(int fd, int level, int optname, const void *optval, unsigned int optlen);
+    extern long sys_getsockopt(int fd, int level, int optname, void *optval, unsigned int *optlen);
+
+    int sv[2] = {-1, -1};
+    long r = sys_socketpair(1 /* AF_UNIX */, 1 /* SOCK_STREAM */, 0, sv);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ socketpair failed: %ld\n", r);
+        fut_test_fail(1334); fut_test_fail(1335); fut_test_fail(1336);
+        fut_test_fail(1337); return;
+    }
+
+    /* Test 1334: setsockopt SO_RCVTIMEO_NEW stores timeout */
+    fut_printf("[MISC-TEST] Test 1334: SO_RCVTIMEO_NEW set 2.5s\n");
+    {
+        struct { int64_t tv_sec; int64_t tv_usec; } tv = { .tv_sec = 2, .tv_usec = 500000 };
+        r = sys_setsockopt(sv[0], 1 /*SOL_SOCKET*/, 62 /*SO_RCVTIMEO_NEW*/, &tv, sizeof(tv));
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1334: setsockopt SO_RCVTIMEO_NEW → 0\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1334: setsockopt SO_RCVTIMEO_NEW → %ld\n", r);
+            fut_test_fail(1334);
+        }
+    }
+
+    /* Test 1335: getsockopt SO_RCVTIMEO_NEW returns stored value */
+    fut_printf("[MISC-TEST] Test 1335: SO_RCVTIMEO_NEW get → 2.500s\n");
+    {
+        struct { int64_t tv_sec; int64_t tv_usec; } got = {0, 0};
+        unsigned int glen = sizeof(got);
+        r = sys_getsockopt(sv[0], 1, 62, &got, &glen);
+        if (r == 0 && got.tv_sec == 2 && got.tv_usec == 500000) {
+            fut_printf("[MISC-TEST] ✓ Test 1335: SO_RCVTIMEO_NEW = %ld.%06ld\n",
+                       (long)got.tv_sec, (long)got.tv_usec);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1335: ret=%ld sec=%ld usec=%ld\n",
+                       r, (long)got.tv_sec, (long)got.tv_usec);
+            fut_test_fail(1335);
+        }
+    }
+
+    /* Test 1336: setsockopt SO_SNDTIMEO_NEW stores timeout */
+    fut_printf("[MISC-TEST] Test 1336: SO_SNDTIMEO_NEW set 1.0s\n");
+    {
+        struct { int64_t tv_sec; int64_t tv_usec; } tv = { .tv_sec = 1, .tv_usec = 0 };
+        r = sys_setsockopt(sv[0], 1, 63 /*SO_SNDTIMEO_NEW*/, &tv, sizeof(tv));
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1336: setsockopt SO_SNDTIMEO_NEW → 0\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1336: setsockopt SO_SNDTIMEO_NEW → %ld\n", r);
+            fut_test_fail(1336);
+        }
+    }
+
+    /* Test 1337: getsockopt SO_SNDTIMEO_NEW returns stored value */
+    fut_printf("[MISC-TEST] Test 1337: SO_SNDTIMEO_NEW get → 1.000s\n");
+    {
+        struct { int64_t tv_sec; int64_t tv_usec; } got = {0, 0};
+        unsigned int glen = sizeof(got);
+        r = sys_getsockopt(sv[0], 1, 63, &got, &glen);
+        if (r == 0 && got.tv_sec == 1 && got.tv_usec == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1337: SO_SNDTIMEO_NEW = %ld.%06ld\n",
+                       (long)got.tv_sec, (long)got.tv_usec);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1337: ret=%ld sec=%ld usec=%ld\n",
+                       r, (long)got.tv_sec, (long)got.tv_usec);
+            fut_test_fail(1337);
+        }
+    }
+
+    sys_close(sv[0]);
+    sys_close(sv[1]);
+}
+
 static void test_process_madvise_basic(void) {
     /* Test 1292: process_madvise with flags != 0 → EINVAL */
     fut_printf("[MISC-TEST] Test 1292: process_madvise flags=1 → EINVAL\n");
@@ -43584,6 +43663,7 @@ void fut_misc_test_thread(void *arg) {
     test_linux68_stubs();                    /* Tests 1317-1321: Linux 6.8+ syscall stubs */
     test_so_timestamp();                     /* Tests 1322-1329: SO_TIMESTAMP/SO_TIMESTAMPNS cmsg delivery */
     test_tcp_info();                         /* Tests 1330-1333: TCP_INFO struct getsockopt */
+    test_so_rcvtimeo_new();                  /* Tests 1334-1337: SO_RCVTIMEO_NEW/SO_SNDTIMEO_NEW */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

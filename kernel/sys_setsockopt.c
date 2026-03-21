@@ -595,8 +595,24 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
             case 57: /* SO_MEMINFO */
             case 58: /* SO_INCOMING_NAPI_ID */
             case 59: /* SO_COOKIE */
-            case 62: /* SO_RCVTIMEO_NEW */
-            case 63: /* SO_SNDTIMEO_NEW */
+                /* Accept silently — no enforcement for these options */
+                return 0;
+
+            case 62: /* SO_RCVTIMEO_NEW — Y2038-safe variant (struct __kernel_sock_timeval) */
+            case 63: { /* SO_SNDTIMEO_NEW */
+                /* struct __kernel_sock_timeval { int64_t tv_sec; int64_t tv_usec; } — always 16 bytes */
+                if (optlen < 16) return -EINVAL;
+                struct { int64_t tv_sec; int64_t tv_usec; } tv = {0, 0};
+                if (sso_copy_from_user(&tv, optval, sizeof(tv)) != 0) return -EFAULT;
+                uint64_t ms = (uint64_t)tv.tv_sec * 1000ULL +
+                              (uint64_t)tv.tv_usec / 1000ULL;
+                if (optname == 62)
+                    socket->rcvtimeo_ms = ms;
+                else
+                    socket->sndtimeo_ms = ms;
+                return 0;
+            }
+
             case 64: /* SO_DETACH_REUSEPORT_BPF */
             case 65: /* SO_PREFER_BUSY_POLL */
             case 66: /* SO_BUSY_POLL_BUDGET */

@@ -546,12 +546,19 @@ bool fut_trap_handle_page_fault(fut_interrupt_frame_t *frame) {
     /* Get fault address from FAR */
     uint64_t fault_addr = frame->far;
 
-    /* Check if this is a data abort (page fault) */
-    bool is_lower_el = (ec == 0x24);  /* ESR_EC_DABT_LOWER */
+    /* Check if this is a data abort or instruction abort (page fault) */
+    bool is_lower_el  = (ec == 0x24);  /* ESR_EC_DABT_LOWER */
     bool is_current_el = (ec == 0x25); /* ESR_EC_DABT_CURRENT */
+    bool is_iabt_el0  = (ec == 0x20);  /* ESR_EC_IABT_LOWER: instruction fetch fault */
 
-    if (!is_lower_el && !is_current_el) {
-        return false;  /* Not a data abort */
+    if (!is_lower_el && !is_current_el && !is_iabt_el0) {
+        return false;  /* Not a page fault we can handle */
+    }
+
+    /* For instruction aborts, the faulting address is in PC (same as FAR for IABT).
+     * Use frame->pc as the fault address for accurate demand-paging lookups. */
+    if (is_iabt_el0) {
+        fault_addr = frame->pc;
     }
 
     /* Extract fault status code (FSC) from ESR bits [5:0] */
@@ -576,12 +583,13 @@ bool fut_trap_handle_page_fault(fut_interrupt_frame_t *frame) {
     }
 
     /* Only handle user-space faults (lower EL = EL0 = user) */
-    if (!is_lower_el) {
+    if (!is_lower_el && !is_iabt_el0) {
         return false;  /* Kernel page fault - not handled here */
     }
 
-    /* Extract write flag from ESR bit 6 (WnR: Write not Read) */
-    bool is_write = (esr >> 6) & 1;
+    /* Extract write flag from ESR bit 6 (WnR: Write not Read).
+     * Instruction fetches are never writes. */
+    bool is_write = is_iabt_el0 ? false : (bool)((esr >> 6) & 1);
 
     /* Get current process memory context */
     fut_mm_t *mm = fut_mm_current();

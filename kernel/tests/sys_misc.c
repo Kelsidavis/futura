@@ -40768,6 +40768,158 @@ static void test_sigsegv_pagefault_delivery(void) {
     }
 }
 
+/* ============================================================
+ * Tests 1251-1256: hardware exception → signal delivery
+ *   Test 1251: FPE_INTDIV==1, ILL_ILLOPC==1, BUS_ADRALN==1 (Linux ABI constants)
+ *   Test 1252: SIG_DFL SIGFPE → term_signal set
+ *   Test 1253: user SIGFPE handler → term_signal NOT set, pending bit set
+ *   Test 1254: SIGFPE siginfo si_code=FPE_INTDIV stored correctly
+ *   Test 1255: SIG_DFL SIGILL → term_signal set
+ *   Test 1256: user SIGILL handler → si_code=ILL_ILLOPC si_addr=instruction addr
+ * ============================================================ */
+static void test_hw_exception_signals(void) {
+    fut_printf("[MISC-TEST] Tests 1251-1256: hardware exception → signal delivery\n");
+
+    extern fut_task_t *fut_task_current(void);
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        for (int i = 1251; i <= 1256; i++) fut_test_fail(i);
+        return;
+    }
+
+    extern long sys_sigaction(int signum, const void *act, void *oldact);
+    extern int fut_signal_send(struct fut_task *task, int signum);
+    extern int fut_signal_send_with_info(struct fut_task *task, int signum, const void *info);
+
+    struct {
+        void (*sa_handler)(int);
+        unsigned long sa_flags;
+        void (*sa_restorer)(void);
+        uint64_t sa_mask;
+    } act_dfl  = { (void *)0, 0, 0, 0 };
+    struct {
+        void (*sa_handler)(int);
+        unsigned long sa_flags;
+        void (*sa_restorer)(void);
+        uint64_t sa_mask;
+    } act_user = { test_dummy_sigsegv_handler, 0, 0, 0 };
+
+    /* Test 1251: si_code constants have Linux ABI values */
+    if (FPE_INTDIV == 1 && ILL_ILLOPC == 1 && BUS_ADRALN == 1) {
+        fut_printf("[MISC-TEST] ✓ Test 1251: FPE_INTDIV=ILL_ILLOPC=BUS_ADRALN=1\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1251: FPE_INTDIV=%d ILL_ILLOPC=%d BUS_ADRALN=%d\n",
+                   FPE_INTDIV, ILL_ILLOPC, BUS_ADRALN);
+        fut_test_fail(1251);
+    }
+
+    /* Test 1252: SIG_DFL SIGFPE → term_signal=8 */
+    {
+        sys_sigaction(8, &act_dfl, NULL);
+        int saved = task->term_signal;
+        task->term_signal = 0;
+        fut_signal_send(task, 8 /* SIGFPE */);
+        int got = task->term_signal;
+        task->term_signal = saved;
+        __atomic_and_fetch(&task->pending_signals, ~(1ULL << 7), __ATOMIC_ACQ_REL);
+        if (got == 8) {
+            fut_printf("[MISC-TEST] ✓ Test 1252: SIG_DFL SIGFPE → term_signal=8\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1252: term_signal=%d (expected 8)\n", got);
+            fut_test_fail(1252);
+        }
+    }
+
+    /* Test 1253: user SIGFPE handler → term_signal stays 0, pending bit set */
+    {
+        sys_sigaction(8, &act_user, NULL);
+        task->term_signal = 0;
+        siginfo_t info;
+        __builtin_memset(&info, 0, sizeof(info));
+        info.si_signum = 8; info.si_code = FPE_INTDIV;
+        info.si_addr   = (void *)0x4000UL;
+        fut_signal_send_with_info(task, 8, &info);
+        int got_term = task->term_signal;
+        uint64_t pend = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
+        task->term_signal = 0;
+        __atomic_and_fetch(&task->pending_signals, ~(1ULL << 7), __ATOMIC_ACQ_REL);
+        sys_sigaction(8, &act_dfl, NULL);
+        if (got_term == 0 && (pend & (1ULL << 7))) {
+            fut_printf("[MISC-TEST] ✓ Test 1253: user SIGFPE handler → term_signal=0 pending set\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1253: term_signal=%d pend_bit=%d\n",
+                       got_term, (int)!!(pend & (1ULL << 7)));
+            fut_test_fail(1253);
+        }
+    }
+
+    /* Test 1254: SIGFPE siginfo si_code=FPE_INTDIV si_addr stored correctly */
+    {
+        sys_sigaction(8, &act_user, NULL);
+        siginfo_t info;
+        __builtin_memset(&info, 0, sizeof(info));
+        info.si_signum = 8; info.si_code = FPE_INTDIV;
+        info.si_addr   = (void *)0xABCDEFUL;
+        fut_signal_send_with_info(task, 8, &info);
+        int sc = task->sig_queue_info[7].si_code;
+        void *sa = task->sig_queue_info[7].si_addr;
+        __atomic_and_fetch(&task->pending_signals, ~(1ULL << 7), __ATOMIC_ACQ_REL);
+        sys_sigaction(8, &act_dfl, NULL);
+        if (sc == FPE_INTDIV && sa == (void *)0xABCDEFUL) {
+            fut_printf("[MISC-TEST] ✓ Test 1254: SIGFPE siginfo si_code=FPE_INTDIV si_addr=0xABCDEF\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1254: si_code=%d si_addr=%p\n", sc, sa);
+            fut_test_fail(1254);
+        }
+    }
+
+    /* Test 1255: SIG_DFL SIGILL → term_signal=4 */
+    {
+        sys_sigaction(4, &act_dfl, NULL);
+        int saved = task->term_signal;
+        task->term_signal = 0;
+        fut_signal_send(task, 4 /* SIGILL */);
+        int got = task->term_signal;
+        task->term_signal = saved;
+        __atomic_and_fetch(&task->pending_signals, ~(1ULL << 3), __ATOMIC_ACQ_REL);
+        if (got == 4) {
+            fut_printf("[MISC-TEST] ✓ Test 1255: SIG_DFL SIGILL → term_signal=4\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1255: term_signal=%d (expected 4)\n", got);
+            fut_test_fail(1255);
+        }
+    }
+
+    /* Test 1256: user SIGILL handler → si_code=ILL_ILLOPC si_addr=instr_addr */
+    {
+        sys_sigaction(4, &act_user, NULL);
+        siginfo_t info;
+        __builtin_memset(&info, 0, sizeof(info));
+        info.si_signum = 4; info.si_code = ILL_ILLOPC;
+        info.si_addr   = (void *)0x12340000UL;
+        fut_signal_send_with_info(task, 4, &info);
+        int sc = task->sig_queue_info[3].si_code;
+        void *sa = task->sig_queue_info[3].si_addr;
+        int got_term = task->term_signal;
+        task->term_signal = 0;
+        __atomic_and_fetch(&task->pending_signals, ~(1ULL << 3), __ATOMIC_ACQ_REL);
+        sys_sigaction(4, &act_dfl, NULL);
+        if (sc == ILL_ILLOPC && sa == (void *)0x12340000UL && got_term == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1256: user SIGILL handler si_code=ILL_ILLOPC si_addr correct\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1256: si_code=%d si_addr=%p term_signal=%d\n",
+                       sc, sa, got_term);
+            fut_test_fail(1256);
+        }
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -41409,6 +41561,7 @@ void fut_misc_test_thread(void *arg) {
     test_cleartid_futex_wake();               /* Tests 1235-1238: CLONE_CHILD_CLEARTID TID-zero+futex-wake on thread exit */
     test_proc_stat_fields();                  /* Tests 1239-1246: /proc/self/stat 52-field format + rt_priority/policy/delayacct */
     test_sigsegv_pagefault_delivery();        /* Tests 1247-1250: page-fault SIGSEGV delivery mechanism */
+    test_hw_exception_signals();              /* Tests 1251-1256: hardware exception → signal delivery */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

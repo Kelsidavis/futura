@@ -9,6 +9,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <kernel/signal.h>
+#include <kernel/fut_siginfo.h>
 #include <kernel/kprintf.h>
 
 /* Forward declarations */
@@ -21,6 +22,28 @@ extern int64_t arm64_syscall_dispatch(uint64_t syscall_num,
 /* fut_signal_deliver declared in kernel/signal.h */
 extern int fut_trap_handle_page_fault(void *frame);
 extern void fut_task_signal_exit(int signal);
+extern struct fut_task *fut_task_current(void);
+
+/* Deliver signum to a user-mode exception frame.
+ * If a user handler is installed, redirect the frame; otherwise terminate. */
+static void arm64_deliver_exception_signal(fut_interrupt_frame_t *frame,
+                                           int signum, int si_code, void *si_addr) {
+    struct fut_task *task = fut_task_current();
+    if (task) {
+        sighandler_t handler = fut_signal_get_handler(task, signum);
+        if (handler != SIG_DFL && handler != SIG_IGN) {
+            siginfo_t info;
+            __builtin_memset(&info, 0, sizeof(info));
+            info.si_signum = signum;
+            info.si_code   = si_code;
+            info.si_addr   = si_addr;
+            fut_signal_send_with_info(task, signum, &info);
+            fut_signal_deliver(task, frame);
+            return;
+        }
+    }
+    fut_task_signal_exit(signum);
+}
 
 /* Exception frame structure (matches arm64_exception_entry.S) */
 typedef struct {
@@ -311,13 +334,22 @@ void arm64_exception_dispatch(fut_interrupt_frame_t *frame) {
                 fut_serial_puts("[PANIC] Unhandled kernel data abort\n");
                 handle_unknown(frame);
             }
-            fut_task_signal_exit(SIGSEGV);
-            break;
+            /* EL0 data abort not handled by page_fault.c (shouldn't happen now) */
+            arm64_deliver_exception_signal(frame, SIGSEGV, SEGV_MAPERR,
+                                           (void *)(uintptr_t)frame->far);
+            return;
 
         case ESR_EC_IABT_EL0:
             fut_serial_puts("[EXCEPTION] Instruction abort from lower EL (userspace)\n");
-            fut_task_signal_exit(SIGSEGV);
-            break;
+            /* Instruction fetch fault: page not mapped or not executable.
+             * Try demand-paging first (executable mapping may not be loaded). */
+            if (fut_trap_handle_page_fault(frame)) {
+                return;
+            }
+            /* Unresolvable instruction abort → SIGSEGV */
+            arm64_deliver_exception_signal(frame, SIGSEGV, SEGV_MAPERR,
+                                           (void *)(uintptr_t)frame->pc);
+            return;
 
         case ESR_EC_IABT_EL1:
             fut_serial_puts("[EXCEPTION] Instruction abort from same EL (kernel)\n");
@@ -355,12 +387,13 @@ void arm64_exception_dispatch(fut_interrupt_frame_t *frame) {
                 fut_serial_putc('\n');
             }
 
-            /* If exception came from EL0, signal the process instead of hanging */
+            /* If exception came from EL0, deliver SIGILL to user handler */
             if ((frame->pstate & 0xF) == 0) {
-                fut_task_signal_exit(SIGILL);
-            } else {
-                handle_unknown(frame);
+                arm64_deliver_exception_signal(frame, SIGILL, ILL_ILLOPC,
+                                               (void *)(uintptr_t)frame->pc);
+                return;
             }
+            handle_unknown(frame);
             break;
 
         default:

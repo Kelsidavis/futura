@@ -19,6 +19,8 @@
 #include <kernel/fut_mm.h>
 #include <kernel/fb.h>
 #include <kernel/trap.h>
+#include <kernel/signal.h>
+#include <kernel/fut_siginfo.h>
 #include <kernel/boot_args.h>
 #include <kernel/build_cmdline.h>
 #include <kernel/fut_percpu.h>
@@ -985,6 +987,48 @@ void __attribute__((weak)) fut_isr_handler(void *regs_ptr) {
         if (fut_trap_handle_page_fault(regs)) {
             return;
         }
+    }
+
+    /* User-mode hardware exception: deliver the appropriate POSIX signal
+     * rather than halting the kernel.  Mirrors Linux exception→signal mapping.
+     * Check CPL (cs & 3 != 0) to distinguish user exceptions from kernel faults. */
+    if ((regs->cs & 0x3u) != 0 && regs->vector != 14) {
+        int ex_sig  = 0;
+        int ex_code = SI_KERNEL;
+        void *ex_addr = (void *)(uintptr_t)regs->rip;
+        switch (regs->vector) {
+            case 0:  ex_sig = SIGFPE;  ex_code = FPE_INTDIV; break; /* #DE Divide Error */
+            case 4:  ex_sig = SIGFPE;  ex_code = FPE_INTOVF; break; /* #OF Integer Overflow */
+            case 5:  ex_sig = SIGSEGV; ex_code = SEGV_BNDERR; break;/* #BR Bound Range */
+            case 6:  ex_sig = SIGILL;  ex_code = ILL_ILLOPC; break; /* #UD Illegal Opcode */
+            case 7:  ex_sig = SIGFPE;  ex_code = FPE_FLTINV; break; /* #NM FPU Unavailable */
+            case 13: ex_sig = SIGSEGV; ex_code = SI_KERNEL;  break; /* #GP General Protection */
+            case 16: ex_sig = SIGFPE;  ex_code = FPE_FLTINV; break; /* #MF x87 FP Error */
+            case 17: ex_sig = SIGBUS;  ex_code = BUS_ADRALN; break; /* #AC Alignment Check */
+            case 19: ex_sig = SIGFPE;  ex_code = FPE_FLTINV; break; /* #XM SIMD FP Exception */
+            default: ex_sig = SIGILL;  ex_code = ILL_PRVOPC; break; /* other → SIGILL */
+        }
+        fut_printf("[TRAP] user exception vec=%llu rip=0x%llx err=0x%llx → sig%d\n",
+                   (unsigned long long)regs->vector, (unsigned long long)regs->rip,
+                   (unsigned long long)regs->error_code, ex_sig);
+        extern struct fut_task *fut_task_current(void);
+        struct fut_task *ex_task = fut_task_current();
+        if (ex_task) {
+            sighandler_t ex_handler = fut_signal_get_handler(ex_task, ex_sig);
+            if (ex_handler != SIG_DFL && ex_handler != SIG_IGN) {
+                siginfo_t ex_info;
+                __builtin_memset(&ex_info, 0, sizeof(ex_info));
+                ex_info.si_signum = ex_sig;
+                ex_info.si_code   = ex_code;
+                ex_info.si_addr   = ex_addr;
+                fut_signal_send_with_info(ex_task, ex_sig, &ex_info);
+                fut_signal_deliver(ex_task, regs);
+                return;
+            }
+        }
+        extern void fut_task_signal_exit(int signal);
+        fut_task_signal_exit(ex_sig);
+        return;
     }
 
     fut_disable_interrupts();

@@ -25,6 +25,12 @@
 #include <fcntl.h>
 #include <sched.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
 /* ============================================================
  *   Syscall Numbers
  * ============================================================ */
@@ -1192,14 +1198,59 @@ static int64_t sys_fork_handler(uint64_t arg1, uint64_t arg2, uint64_t arg3,
 /* clone() — Linux process/thread creation syscall.
  * glibc/musl use clone(SIGCHLD, 0, ...) to implement fork().
  * clone3() (syscall 435) is the newer interface; also handled here. */
+
+/* TID-management flags that are compatible with fork paths */
+#define CLONE_SETTLS_          0x00080000ULL
+#define CLONE_PARENT_SETTID_   0x00100000ULL
+#define CLONE_CHILD_CLEARTID_  0x00200000ULL
+#define CLONE_CHILD_SETTID_    0x01000000ULL
+#define CLONE_TID_FLAGS_       (CLONE_SETTLS_ | CLONE_PARENT_SETTID_ | \
+                                CLONE_CHILD_CLEARTID_ | CLONE_CHILD_SETTID_)
+
+static inline int clone_copy_to_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)dst >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_to_user(dst, src, n);
+}
+
+/**
+ * clone_apply_tid_flags — handle CLONE_PARENT_SETTID, CLONE_CHILD_SETTID,
+ * and CLONE_CHILD_CLEARTID after a fork.  Called in both parent and child.
+ */
+static int64_t clone_do_fork_with_flags(uint64_t clone_flags, uint64_t parent_tid,
+                                         uint64_t child_tid) {
+    long pid = posix_fork();
+    if (pid < 0)
+        return (int64_t)pid;
+
+    if (pid > 0) {
+        /* Parent context */
+        if ((clone_flags & CLONE_PARENT_SETTID_) && parent_tid) {
+            int tid_val = (int)pid;
+            clone_copy_to_user((void *)(uintptr_t)parent_tid,
+                               &tid_val, sizeof(tid_val));
+        }
+    } else {
+        /* Child context */
+        extern fut_task_t *fut_task_current(void);
+        fut_task_t *task = fut_task_current();
+        if ((clone_flags & CLONE_CHILD_SETTID_) && child_tid && task) {
+            int tid_val = (int)task->pid;
+            clone_copy_to_user((void *)(uintptr_t)child_tid,
+                               &tid_val, sizeof(tid_val));
+        }
+        if ((clone_flags & CLONE_CHILD_CLEARTID_) && child_tid && task) {
+            task->clear_child_tid = (void *)(uintptr_t)child_tid;
+        }
+    }
+    return (int64_t)pid;
+}
+
 static int64_t sys_clone_handler(uint64_t flags, uint64_t stack, uint64_t parent_tid,
                                   uint64_t child_tid, uint64_t tls, uint64_t arg6) {
     (void)arg6;
     uint64_t clone_flags = flags & ~0xFFULL;  /* Strip exit-signal from low byte */
-
-    /* Plain fork: clone(SIGCHLD, 0, NULL, NULL, 0) — most common from libc fork() */
-    if (clone_flags == 0)
-        return (int64_t)posix_fork();
 
     /* Thread creation: CLONE_THREAD (bit 16) set */
     if (clone_flags & 0x10000ULL /* CLONE_THREAD */) {
@@ -1209,18 +1260,26 @@ static int64_t sys_clone_handler(uint64_t flags, uint64_t stack, uint64_t parent
         return (int64_t)sys_clone_thread(flags, stack, parent_tid, child_tid, tls);
     }
 
+    /* Strip TID-management flags — these are handled after fork by clone_do_fork_with_flags */
+    uint64_t structural_flags = clone_flags & ~CLONE_TID_FLAGS_;
+
+    /* Plain fork: clone(SIGCHLD, 0, NULL, NULL, 0) — most common from libc fork().
+     * Also covers glibc < 2.34 fork(): clone(CLONE_CHILD_SETTID|CLONE_CHILD_CLEARTID|SIGCHLD) */
+    if (structural_flags == 0)
+        return clone_do_fork_with_flags(clone_flags, parent_tid, child_tid);
+
     /* vfork pattern: CLONE_VM (0x100) + CLONE_VFORK (0x4000) without CLONE_THREAD.
      * Used by musl vfork() and posix_spawn(). Futura has no separate address spaces,
      * so CLONE_VM is a no-op — fall back to regular fork without blocking the parent.
      * The child runs in its own task context and the parent continues concurrently. */
-    if (clone_flags & 0x4000ULL /* CLONE_VFORK */) {
-        return (int64_t)posix_fork();
+    if (structural_flags & 0x4000ULL /* CLONE_VFORK */) {
+        return clone_do_fork_with_flags(clone_flags, parent_tid, child_tid);
     }
 
     /* CLONE_VM without CLONE_THREAD and without CLONE_VFORK: also fall back to fork.
      * This covers clone(CLONE_VM|SIGCHLD) used by some threading libraries. */
-    if (clone_flags == 0x100ULL /* CLONE_VM only */) {
-        return (int64_t)posix_fork();
+    if (structural_flags == 0x100ULL /* CLONE_VM only */) {
+        return clone_do_fork_with_flags(clone_flags, parent_tid, child_tid);
     }
 
     /* Resource-sharing flags without structural flags (no CLONE_THREAD, no namespaces,
@@ -1234,8 +1293,8 @@ static int64_t sys_clone_handler(uint64_t flags, uint64_t stack, uint64_t parent
                                  0x800ULL   /* CLONE_SIGHAND */| \
                                  0x40000ULL /* CLONE_SYSVSEM */| \
                                  0x80000000ULL /* CLONE_IO */)
-    if ((clone_flags & ~CLONE_FORK_COMPAT_MASK) == 0) {
-        return (int64_t)posix_fork();
+    if ((structural_flags & ~CLONE_FORK_COMPAT_MASK) == 0) {
+        return clone_do_fork_with_flags(clone_flags, parent_tid, child_tid);
     }
 #undef CLONE_FORK_COMPAT_MASK
 

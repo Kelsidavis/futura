@@ -18,6 +18,7 @@
 #include <kernel/fut_thread.h>
 #include <kernel/fut_timer.h>
 #include <kernel/fut_socket.h>
+#include <kernel/fut_vfs.h>
 #include <kernel/fut_waitq.h>
 #include <kernel/errno.h>
 #include <kernel/uaccess.h>
@@ -778,14 +779,23 @@ long sys_accept4(int sockfd, void *addr, socklen_t *addrlen, int flags) {
         return newfd;
     }
 
-    /* Phase 4: Apply SOCK_NONBLOCK flag if requested */
-    if (local_flags & SOCK_NONBLOCK) {
-        sys_fcntl((int)newfd, F_SETFL, O_NONBLOCK);
-    }
-
-    /* Phase 4: Apply SOCK_CLOEXEC flag if requested */
-    if (local_flags & SOCK_CLOEXEC) {
-        sys_fcntl((int)newfd, F_SETFD, FD_CLOEXEC);
+    /* Apply flags directly on the new FD — no fcntl() race window.
+     * This is the correct accept4 behavior: flags are set atomically
+     * as part of socket creation, before the FD is visible to other
+     * threads via poll/epoll/etc. */
+    if (local_flags & (SOCK_NONBLOCK | SOCK_CLOEXEC)) {
+        extern fut_task_t *fut_task_current(void);
+        fut_task_t *atask = fut_task_current();
+        if (atask && newfd < atask->max_fds) {
+            if (local_flags & SOCK_NONBLOCK) {
+                struct fut_file *afile = atask->fd_table[newfd];
+                if (afile)
+                    afile->flags |= O_NONBLOCK;
+            }
+            if (local_flags & SOCK_CLOEXEC) {
+                atask->fd_flags[newfd] |= FD_CLOEXEC;
+            }
+        }
     }
 
     /* Determine flags description for logging */

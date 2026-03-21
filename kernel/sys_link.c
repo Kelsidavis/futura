@@ -70,7 +70,7 @@ static inline int link_copy_from_user(void *dst, const void *src, size_t n) {
  *
  * Returns:
  *   - 0 on success (link count incremented)
- *   - -ENOSYS if filesystem doesn't support hard links
+ *   - -EPERM if filesystem doesn't support hard links
  *
  * Error codes:
  *   - -EFAULT if oldpath or newpath points to inaccessible memory
@@ -80,7 +80,7 @@ static inline int link_copy_from_user(void *dst, const void *src, size_t n) {
  *   - -ENOTDIR if path component is not a directory
  *   - -EISDIR if oldpath is a directory (hard links to dirs prohibited)
  *   - -EXDEV if oldpath and newpath on different filesystems
- *   - -EPERM if filesystem doesn't support hard links
+ *   - -EPERM if filesystem doesn't support hard links or directory link attempted
  *   - -EMLINK if oldpath already has maximum number of links
  *   - -ENOSPC if no space available for new directory entry
  *   - -EROFS if filesystem is read-only
@@ -679,10 +679,10 @@ long sys_link(const char *oldpath, const char *newpath) {
 
     /* Filesystem doesn't support hard links */
     fut_printf("[LINK] link(old='%s' [%s], new='%s' [%s], old_type=%s, "
-               "old_ino=%lu) -> ENOSYS (filesystem doesn't support link)\n",
+               "old_ino=%lu) -> EPERM (filesystem doesn't support link)\n",
                old_buf, old_path_type, new_buf, new_path_type,
                file_type_desc, old_vnode->ino);
     fut_vnode_unref(old_vnode);
     fut_vnode_unref(new_parent);
-    return -ENOSYS;
+    return -EPERM;
 }

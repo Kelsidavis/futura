@@ -68,8 +68,8 @@ struct fut_acl {
  *   - -ENOENT if file does not exist or path component missing
  *   - -ENAMETOOLONG if pathname too long
  *   - -ENOTDIR if component of path prefix is not a directory
- *   - -ENOSYS if filesystem doesn't support permission changes
- *   - -EPERM if process doesn't have permission to change mode
+ *   - -EPERM if filesystem doesn't support permission changes or
+ *           process doesn't have permission to change mode
  *   - -EROFS if file is on read-only filesystem
  *
  * Behavior:
@@ -457,11 +457,11 @@ long sys_chmod(const char *pathname, uint32_t mode) {
     /* Check if filesystem supports permission changes */
     if (!vnode->ops || !vnode->ops->setattr) {
         fut_printf("[CHMOD] chmod(path='%s' [%s], vnode_ino=%lu, perms=%s, mode=%s, "
-                   "special=%s) -> ENOSYS (filesystem doesn't support setattr)\n",
+                   "special=%s) -> EPERM (filesystem doesn't support setattr)\n",
                    path_buf, path_type, vnode->ino, perms_change_buf, mode_desc,
                    special_bits_desc);
         fut_vnode_unref(vnode);
-        return -ENOSYS;
+        return -EPERM;
     }
 
     /* Linux: non-root without CAP_FSETID gets S_ISGID silently stripped

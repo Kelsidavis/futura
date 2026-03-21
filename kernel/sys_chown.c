@@ -58,8 +58,8 @@ static inline int chown_copy_from_user(void *dst, const void *src, size_t n) {
  *   - -ENOENT if file does not exist or path component missing
  *   - -ENAMETOOLONG if pathname too long
  *   - -ENOTDIR if component of path prefix is not a directory
- *   - -ENOSYS if filesystem doesn't support ownership changes
- *   - -EPERM if process doesn't have permission to change ownership
+ *   - -EPERM if filesystem doesn't support ownership changes or
+ *           process doesn't have permission to change ownership
  *   - -EROFS if file is on read-only filesystem
  *
  * Behavior:
@@ -393,11 +393,11 @@ long sys_chown(const char *pathname, uint32_t uid, uint32_t gid) {
     /* Check if filesystem supports ownership changes */
     if (!vnode->ops || !vnode->ops->setattr) {
         fut_printf("[CHOWN] chown(path='%s' [%s], vnode_ino=%lu, ownership=%s, "
-                   "uid=%s, gid=%s, op=%s) -> ENOSYS (filesystem doesn't support setattr)\n",
+                   "uid=%s, gid=%s, op=%s) -> EPERM (filesystem doesn't support setattr)\n",
                    path_buf, path_type, vnode->ino, ownership_change_buf,
                    uid_desc, gid_desc, operation_type);
         fut_vnode_unref(vnode);
-        return -ENOSYS;
+        return -EPERM;
     }
 
     /* Create a stat structure with the new ownership.

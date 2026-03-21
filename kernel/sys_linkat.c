@@ -205,7 +205,7 @@ long sys_linkat(int olddirfd, const char *oldpath, int newdirfd, const char *new
 
         /* Use the vnode's ops->link to add a directory entry */
         if (!src_vnode->ops || !src_vnode->ops->link) {
-            return -ENOSYS;
+            return -EPERM;
         }
         int ret = src_vnode->ops->link(src_vnode, "", resolved_newpath);
         if (ret == 0)

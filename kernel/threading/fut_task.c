@@ -155,6 +155,7 @@ fut_task_t *fut_task_create(void) {
         .dumpable = 1,              /* Linux default: processes are dumpable (PR_GET_DUMPABLE=1) */
         .nice = 0,                  /* Default nice value (normal priority) */
         .timerslack_ns = 50000,     /* Linux default: 50 μs timer slack */
+        .exit_signal = SIGCHLD,   /* Default: send SIGCHLD to parent on exit */
         .clear_child_tid = NULL,  /* No tid address set initially (set via set_tid_address) */
         .fd_table = NULL,   /* FD table initialized below */
         .max_fds = 0,
@@ -444,17 +445,20 @@ static void task_mark_exit(fut_task_t *task, int status, int signal) {
     fut_spinlock_release(&task->pidfd_notify_lock);
 
     if (parent) {
+        int esig = task->exit_signal;
+        if (esig <= 0 || esig >= _NSIG) esig = SIGCHLD;  /* Sanitize */
+
         /* SA_NOCLDWAIT / SIGCHLD=SIG_IGN: auto-reap the child.
-         * POSIX / Linux: if the parent has SIGCHLD=SIG_IGN or SA_NOCLDWAIT,
-         * the child must NOT become a zombie.  Instead it is reaped
-         * immediately: detached from the parent's child list so that a
-         * subsequent waitpid() returns -ECHILD.  The task struct is freed
-         * lazily in fut_thread_exit() once the last thread has switched
-         * away (see auto_reap handling there). */
-        sighandler_t chld_handler = parent->signal_handlers[SIGCHLD - 1];
-        unsigned long chld_flags  = parent->signal_handler_flags[SIGCHLD - 1];
-        bool suppress_chld = (chld_handler == SIG_IGN) ||
-                             (chld_flags & SA_NOCLDWAIT);
+         * POSIX / Linux: if the exit_signal is SIGCHLD and the parent has
+         * SIGCHLD=SIG_IGN or SA_NOCLDWAIT, the child must NOT become a
+         * zombie.  Instead it is reaped immediately. */
+        bool suppress_chld = false;
+        if (esig == SIGCHLD) {
+            sighandler_t chld_handler = parent->signal_handlers[SIGCHLD - 1];
+            unsigned long chld_flags  = parent->signal_handler_flags[SIGCHLD - 1];
+            suppress_chld = (chld_handler == SIG_IGN) ||
+                            (chld_flags & SA_NOCLDWAIT);
+        }
         if (suppress_chld) {
             /* Mark for lazy free in fut_thread_exit() */
             task->auto_reap = 1;
@@ -479,12 +483,12 @@ static void task_mark_exit(fut_task_t *task, int status, int signal) {
         } else {
             siginfo_t chld_info;
             __builtin_memset(&chld_info, 0, sizeof(chld_info));
-            chld_info.si_signum = SIGCHLD;
+            chld_info.si_signum = esig;
             chld_info.si_code   = signal ? (signal_generates_core(signal) ? CLD_DUMPED : CLD_KILLED) : CLD_EXITED;
             chld_info.si_pid    = task->pid;
             chld_info.si_uid    = task->uid;
             chld_info.si_status = signal ? signal : status;
-            fut_signal_send_with_info(parent, SIGCHLD, &chld_info);
+            fut_signal_send_with_info(parent, esig, &chld_info);
             /* Wake waitpid/wait4 blockers */
             fut_waitq_wake_all(&parent->child_waiters);
         }

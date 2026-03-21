@@ -172,6 +172,11 @@ long sys_clone3(const struct fut_clone_args *uargs, size_t size) {
         /* ── Child context ── */
         fut_task_t *child_task = fut_task_current();
 
+        /* Set exit_signal from clone_args (default SIGCHLD if 0 or unset) */
+        if (child_task) {
+            child_task->exit_signal = args.exit_signal ? (int)args.exit_signal : SIGCHLD;
+        }
+
         /* CLONE_CLEAR_SIGHAND: reset ALL signal dispositions to SIG_DFL
          * (Linux 5.5+).  Used by systemd when spawning services to ensure
          * the child starts with a completely clean signal state. */

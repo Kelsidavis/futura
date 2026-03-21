@@ -12148,6 +12148,127 @@ static void test_proc_status_speculation(void) {
     }
 }
 
+static void test_exit_signal_field(void) {
+    extern long sys_getpid(void);
+
+    /* Test 1311: exit_signal defaults to SIGCHLD (17) */
+    fut_printf("[MISC-TEST] Test 1311: exit_signal defaults to SIGCHLD\n");
+    {
+        fut_task_t *task = fut_task_current();
+        if (task && task->exit_signal == 17) {
+            fut_printf("[MISC-TEST] ✓ Test 1311: exit_signal=%d (SIGCHLD)\n", task->exit_signal);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1311: exit_signal=%d, expected 17\n",
+                       task ? task->exit_signal : -1);
+            fut_test_fail(1311);
+        }
+    }
+
+    /* Test 1312: /proc/self/stat field 38 reflects exit_signal */
+    fut_printf("[MISC-TEST] Test 1312: /proc/self/stat field 38 = exit_signal\n");
+    {
+        int fd = (int)fut_vfs_open("/proc/self/stat", 0 /*O_RDONLY*/, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1312: open /proc/self/stat failed\n");
+            fut_test_fail(1312);
+            fut_test_fail(1313);
+            return;
+        }
+        char buf[1024];
+        __builtin_memset(buf, 0, sizeof(buf));
+        ssize_t n = fut_vfs_read(fd, buf, sizeof(buf) - 1);
+        fut_vfs_close(fd);
+        if (n <= 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1312: read failed\n");
+            fut_test_fail(1312);
+            fut_test_fail(1313);
+            return;
+        }
+        buf[n] = '\0';
+
+        /* Parse field 38: skip past ')' then count fields 3..38 */
+        const char *p = buf;
+        while (*p && *p != ')') p++;
+        if (*p == ')') p++;
+        /* Now skip fields 3..37 (35 fields) */
+        int field = 2;
+        while (*p && field < 38) {
+            if (*p == ' ') {
+                field++;
+                while (*p == ' ') p++;
+            } else {
+                p++;
+            }
+        }
+        /* p now points to field 38 */
+        long val = 0;
+        int negative = 0;
+        if (*p == '-') { negative = 1; p++; }
+        while (*p >= '0' && *p <= '9') { val = val * 10 + (*p - '0'); p++; }
+        if (negative) val = -val;
+
+        if (val == 17) {
+            fut_printf("[MISC-TEST] ✓ Test 1312: /proc/self/stat field 38 = %ld (SIGCHLD)\n", val);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1312: field 38 = %ld, expected 17\n", val);
+            fut_test_fail(1312);
+        }
+    }
+
+    /* Test 1313: exit_signal can be modified and /proc reflects it */
+    fut_printf("[MISC-TEST] Test 1313: exit_signal writeable and reflected in /proc\n");
+    {
+        fut_task_t *task = fut_task_current();
+        if (!task) {
+            fut_printf("[MISC-TEST] ✗ Test 1313: no current task\n");
+            fut_test_fail(1313);
+            return;
+        }
+        int saved = task->exit_signal;
+        task->exit_signal = 15;  /* SIGTERM */
+        int fd = (int)fut_vfs_open("/proc/self/stat", 0, 0);
+        if (fd < 0) {
+            task->exit_signal = saved;
+            fut_printf("[MISC-TEST] ✗ Test 1313: open failed\n");
+            fut_test_fail(1313);
+            return;
+        }
+        char buf[1024];
+        __builtin_memset(buf, 0, sizeof(buf));
+        ssize_t rn = fut_vfs_read(fd, buf, sizeof(buf) - 1);
+        fut_vfs_close(fd);
+        task->exit_signal = saved;  /* Restore */
+
+        if (rn <= 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1313: read failed\n");
+            fut_test_fail(1313);
+            return;
+        }
+        buf[rn] = '\0';
+
+        /* Parse field 38 again */
+        const char *p = buf;
+        while (*p && *p != ')') p++;
+        if (*p == ')') p++;
+        int field = 2;
+        while (*p && field < 38) {
+            if (*p == ' ') { field++; while (*p == ' ') p++; } else { p++; }
+        }
+        long val = 0;
+        while (*p >= '0' && *p <= '9') { val = val * 10 + (*p - '0'); p++; }
+
+        if (val == 15) {
+            fut_printf("[MISC-TEST] ✓ Test 1313: field 38 = %ld after set to SIGTERM\n", val);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1313: field 38 = %ld, expected 15\n", val);
+            fut_test_fail(1313);
+        }
+    }
+}
+
 static void test_process_madvise_basic(void) {
     /* Test 1292: process_madvise with flags != 0 → EINVAL */
     fut_printf("[MISC-TEST] Test 1292: process_madvise flags=1 → EINVAL\n");
@@ -43010,6 +43131,7 @@ void fut_misc_test_thread(void *arg) {
     test_new_mount_api_stubs();              /* Tests 1297-1305: new mount API + file handle stubs */
     test_clone3_clear_sighand();             /* Tests 1306-1308: clone3 CLONE_CLEAR_SIGHAND */
     test_proc_status_speculation();          /* Tests 1309-1310: /proc/self/status speculation fields */
+    test_exit_signal_field();                /* Tests 1311-1313: exit_signal field */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

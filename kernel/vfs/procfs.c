@@ -1337,8 +1337,9 @@ static size_t gen_stat(char *buf, size_t cap, fut_task_t *task, uint64_t tid) {
     /* (36) nswap (37) cnswap: obsolete, always 0 */
     pb_char(&b, '0'); pb_char(&b, ' ');
     pb_char(&b, '0'); pb_char(&b, ' ');
-    /* (38) exit_signal: SIGCHLD for normal tasks */
-    pb_str(&b, "17");  pb_char(&b, ' ');
+    /* (38) exit_signal: from task's exit_signal field (SIGCHLD=17 for fork) */
+    { int esig = task->exit_signal; if (esig <= 0) esig = 17; pb_u64(&b, (uint64_t)esig); }
+    pb_char(&b, ' ');
     /* (39) processor: CPU 0 */
     pb_char(&b, '0'); pb_char(&b, ' ');
     /* (40) rt_priority: 0 for SCHED_OTHER, 1-99 for RT */

@@ -14657,6 +14657,122 @@ static void test_fallocate_collapse_range(void) {
     }
 }
 
+/* Tests 1405-1408: fallocate FALLOC_FL_INSERT_RANGE
+ * Verifies that inserting a zero-filled range shifts existing data up
+ * and grows the file. */
+static void test_fallocate_insert_range(void) {
+    extern long sys_open(const char *path, int flags, int mode);
+    extern long sys_write(int fd, const void *buf, size_t count);
+    extern long sys_read(int fd, void *buf, size_t count);
+    extern long sys_lseek(int fd, long offset, int whence);
+    extern long sys_close(int fd);
+    extern long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len);
+
+    /* Test 1405: INSERT_RANGE inserts a zero gap in the middle */
+    fut_printf("[MISC-TEST] Test 1405: fallocate INSERT_RANGE inserts zero gap\n");
+    {
+        long fd = sys_open("/tmp/.t1405_insert", 0x42 /* O_CREAT|O_RDWR */, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1405: open = %ld\n", fd);
+            fut_test_fail(1405);
+        } else {
+            /* Write 2 blocks: 4096 bytes of 'A', 4096 bytes of 'B' */
+            char block[4096];
+            __builtin_memset(block, 'A', 4096);
+            sys_write((int)fd, block, 4096);
+            __builtin_memset(block, 'B', 4096);
+            sys_write((int)fd, block, 4096);
+
+            /* Insert 4096-byte gap at offset 4096 → A, zeros, B */
+            long r = sys_fallocate((int)fd, 0x20 /* FALLOC_FL_INSERT_RANGE */,
+                                   4096, 4096);
+            if (r != 0) {
+                fut_printf("[MISC-TEST] ✗ Test 1405: fallocate(INSERT) = %ld\n", r);
+                fut_test_fail(1405);
+            } else {
+                /* File should now be 12288 bytes: A(4096) + zeros(4096) + B(4096) */
+                sys_lseek((int)fd, 0, 0);
+                char buf[12288] = {0};
+                long rd = sys_read((int)fd, buf, 12288);
+                int ok = (rd == 12288)
+                    && (buf[0] == 'A') && (buf[4095] == 'A')       /* First block: A */
+                    && (buf[4096] == '\0') && (buf[8191] == '\0')   /* Middle: zeros */
+                    && (buf[8192] == 'B') && (buf[12287] == 'B');   /* Last block: B */
+                if (ok) {
+                    fut_printf("[MISC-TEST] ✓ Test 1405: INSERT_RANGE inserted zero gap\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1405: rd=%ld [0]=%d [4096]=%d [8192]=%d\n",
+                               rd, (int)buf[0], (int)buf[4096], (int)buf[8192]);
+                    fut_test_fail(1405);
+                }
+            }
+            sys_close((int)fd);
+        }
+    }
+
+    /* Test 1406: INSERT_RANGE with non-aligned offset → EINVAL */
+    fut_printf("[MISC-TEST] Test 1406: INSERT_RANGE non-aligned → EINVAL\n");
+    {
+        long fd = sys_open("/tmp/.t1405_insert", 0x02 /* O_RDWR */, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1406: open = %ld\n", fd);
+            fut_test_fail(1406);
+        } else {
+            long r = sys_fallocate((int)fd, 0x20, 100 /* not aligned */, 4096);
+            if (r == -22 /* -EINVAL */) {
+                fut_printf("[MISC-TEST] ✓ Test 1406: INSERT_RANGE(off=100) = -EINVAL\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1406: r = %ld (want -22)\n", r);
+                fut_test_fail(1406);
+            }
+            sys_close((int)fd);
+        }
+    }
+
+    /* Test 1407: INSERT_RANGE past EOF → EINVAL */
+    fut_printf("[MISC-TEST] Test 1407: INSERT_RANGE past EOF → EINVAL\n");
+    {
+        long fd = sys_open("/tmp/.t1405_insert", 0x02, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1407: open = %ld\n", fd);
+            fut_test_fail(1407);
+        } else {
+            /* File is 12288 bytes; inserting at 16384 should fail */
+            long r = sys_fallocate((int)fd, 0x20, 16384, 4096);
+            if (r == -22 /* -EINVAL */) {
+                fut_printf("[MISC-TEST] ✓ Test 1407: INSERT_RANGE(past EOF) = -EINVAL\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1407: r = %ld (want -22)\n", r);
+                fut_test_fail(1407);
+            }
+            sys_close((int)fd);
+        }
+    }
+
+    /* Test 1408: INSERT_RANGE combined with KEEP_SIZE → EINVAL */
+    fut_printf("[MISC-TEST] Test 1408: INSERT_RANGE|KEEP_SIZE → EINVAL\n");
+    {
+        long fd = sys_open("/tmp/.t1405_insert", 0x02, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1408: open = %ld\n", fd);
+            fut_test_fail(1408);
+        } else {
+            long r = sys_fallocate((int)fd, 0x20 | 0x01 /* INSERT|KEEP_SIZE */, 0, 4096);
+            if (r == -22 /* -EINVAL */) {
+                fut_printf("[MISC-TEST] ✓ Test 1408: INSERT|KEEP_SIZE = -EINVAL\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1408: r = %ld (want -22)\n", r);
+                fut_test_fail(1408);
+            }
+            sys_close((int)fd);
+        }
+    }
+}
+
 static void test_proc_fd_anon_types(void) {
     extern long sys_read(int fd, void *buf, size_t count);
     extern long sys_readlink(const char *path, char *buf, size_t bufsiz);
@@ -45696,6 +45812,7 @@ void fut_misc_test_thread(void *arg) {
     test_socket_dup_operations();            /* Tests 1392-1395: dup/dup2 on socket fds */
     test_cachestat();                        /* Tests 1396-1400: cachestat syscall */
     test_fallocate_collapse_range();         /* Tests 1401-1404: fallocate COLLAPSE_RANGE */
+    test_fallocate_insert_range();           /* Tests 1405-1408: fallocate INSERT_RANGE */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -345,8 +345,10 @@ long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
     const int FALLOC_FL_PUNCH_HOLE = 0x02;
     const int FALLOC_FL_COLLAPSE_RANGE = 0x04;
     const int FALLOC_FL_ZERO_RANGE = 0x08;
+    const int FALLOC_FL_INSERT_RANGE = 0x20;
     const int VALID_FLAGS = FALLOC_FL_KEEP_SIZE | FALLOC_FL_PUNCH_HOLE |
-                            FALLOC_FL_COLLAPSE_RANGE | FALLOC_FL_ZERO_RANGE;
+                            FALLOC_FL_COLLAPSE_RANGE | FALLOC_FL_ZERO_RANGE |
+                            FALLOC_FL_INSERT_RANGE;
 
     if (mode & ~VALID_FLAGS) {
         fut_printf("[FALLOCATE] fallocate(fd=%d, mode=0x%x, pid=%d) -> EINVAL "
@@ -377,6 +379,8 @@ long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
         op_type = "punch hole";
     } else if (mode & FALLOC_FL_COLLAPSE_RANGE) {
         op_type = "collapse range";
+    } else if (mode & FALLOC_FL_INSERT_RANGE) {
+        op_type = "insert range";
     } else if (mode & FALLOC_FL_ZERO_RANGE) {
         op_type = "zero range";
     } else if (mode & FALLOC_FL_KEEP_SIZE) {
@@ -506,6 +510,69 @@ long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
             vnode->ops->truncate(vnode, vnode->size - len);
         } else {
             vnode->size -= len;
+        }
+
+        return 0;
+    }
+
+    /* INSERT_RANGE: insert a zero-filled gap at offset, shifting existing data up.
+     * The file grows by len bytes. Both offset and len must be block-aligned. */
+    if (mode & FALLOC_FL_INSERT_RANGE) {
+        /* INSERT_RANGE must not be combined with other flags */
+        if (mode != FALLOC_FL_INSERT_RANGE) {
+            return -EINVAL;
+        }
+
+        if (!vnode || !vnode->ops || !vnode->ops->read || !vnode->ops->write) {
+            return -ENOSYS;
+        }
+
+        /* Linux requires block-aligned offset and len */
+        if ((offset & 0xFFF) || (len & 0xFFF)) {
+            return -EINVAL;
+        }
+
+        /* Offset must be within the file */
+        if (offset > vnode->size) {
+            return -EINVAL;
+        }
+
+        /* Extend file first */
+        uint64_t new_size = vnode->size + len;
+        if (vnode->ops->truncate) {
+            int ret = vnode->ops->truncate(vnode, new_size);
+            if (ret < 0) return (long)ret;
+        } else {
+            vnode->size = new_size;
+        }
+
+        /* Shift data from [offset, old_end) up to [offset+len, new_end).
+         * Work backwards to avoid overwriting data we haven't read yet. */
+        uint64_t old_end = new_size - len;  /* original file size */
+        uint64_t tail_bytes = old_end - offset;
+        uint8_t chunk_buf[4096];
+
+        while (tail_bytes > 0) {
+            size_t chunk = (tail_bytes > sizeof(chunk_buf))
+                           ? sizeof(chunk_buf) : (size_t)tail_bytes;
+            uint64_t src_off = offset + tail_bytes - chunk;
+            uint64_t dst_off = src_off + len;
+            ssize_t rd = vnode->ops->read(vnode, chunk_buf, chunk, src_off);
+            if (rd <= 0) break;
+            vnode->ops->write(vnode, chunk_buf, (size_t)rd, dst_off);
+            tail_bytes -= chunk;
+        }
+
+        /* Zero the inserted gap */
+        static const uint8_t zero_page[4096];
+        uint64_t remaining = len;
+        uint64_t cur = offset;
+        while (remaining > 0) {
+            size_t chunk = (remaining > sizeof(zero_page))
+                           ? sizeof(zero_page) : (size_t)remaining;
+            vnode->ops->write(vnode, zero_page, chunk, cur);
+            cur += chunk;
+            remaining -= chunk;
         }
 
         return 0;

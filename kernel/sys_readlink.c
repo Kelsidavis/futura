@@ -178,10 +178,9 @@ long sys_readlink(const char *path, char *buf, size_t bufsiz) {
         return -EFAULT;
     }
 
-    /* Phase 2: Validate buffer size */
+    /* Linux: readlink with bufsiz=0 returns 0 (not an error) */
     if (local_bufsiz == 0) {
-        fut_printf("[READLINK] readlink(path=?, buf=?, bufsiz=0) -> EINVAL (zero buffer size)\n");
-        return -EINVAL;
+        return 0;
     }
 
     /* Phase 2: Validate buffer size is reasonable (PATH_MAX limit) */

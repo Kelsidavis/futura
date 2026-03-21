@@ -2797,16 +2797,17 @@ int fut_vfs_stat(const char *path, struct fut_stat *stat) {
         stat->st_blocks = (vnode->size + 511) / 512;  /* 512-byte units per POSIX */
 
         /* Set timestamps using tick-based time to avoid calibration deadlock.
-         * fut_get_ticks() returns ticks at 100 Hz (10ms each). */
+         * fut_get_ticks() returns ticks at 100 Hz (10ms each).
+         * st_atime/mtime/ctime are seconds, st_*_nsec is the sub-second part. */
         extern uint64_t fut_get_ticks(void);
         uint64_t now_ticks = fut_get_ticks();
         uint64_t now_ns = now_ticks * 10000000ULL;  /* ticks → ns */
-        stat->st_atime = now_ns;
-        stat->st_atime_nsec = 0;
-        stat->st_mtime = now_ns;
-        stat->st_mtime_nsec = 0;
-        stat->st_ctime = now_ns;
-        stat->st_ctime_nsec = 0;
+        stat->st_atime = now_ns / 1000000000ULL;
+        stat->st_atime_nsec = now_ns % 1000000000ULL;
+        stat->st_mtime = now_ns / 1000000000ULL;
+        stat->st_mtime_nsec = now_ns % 1000000000ULL;
+        stat->st_ctime = now_ns / 1000000000ULL;
+        stat->st_ctime_nsec = now_ns % 1000000000ULL;
         ret = 0;
     }
 

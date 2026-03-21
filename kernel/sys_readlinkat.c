@@ -135,11 +135,9 @@ long sys_readlinkat(int dirfd, const char *pathname, char *buf, size_t bufsiz) {
         return -EINVAL;
     }
 
-    /* Validate bufsiz */
+    /* Linux: readlinkat with bufsiz=0 returns 0 (not an error) */
     if (local_bufsiz == 0) {
-        fut_printf("[READLINKAT] readlinkat(dirfd=%d, bufsiz=0) -> EINVAL (zero bufsiz)\n",
-                   local_dirfd);
-        return -EINVAL;
+        return 0;
     }
 
     /* Copy pathname from userspace */

@@ -47912,6 +47912,69 @@ static void test_sendto_eisconn(void) {
 }
 
 /* ============================================================
+ * Test 1501: stat timestamps are seconds (not raw nanoseconds)
+ * ============================================================ */
+static void test_stat_timestamps(void) {
+    extern long sys_stat(const char *path, struct fut_stat *statbuf);
+
+    /* Test 1501: stat("/")->st_atime should be a reasonable Unix timestamp
+     * (seconds since epoch), not a raw nanosecond value.
+     * If the value is > 10^15, it's clearly nanoseconds not seconds. */
+    fut_printf("[MISC-TEST] Test 1501: stat timestamps are seconds\n");
+    {
+        struct fut_stat st;
+        __builtin_memset(&st, 0, sizeof(st));
+        long ret = sys_stat("/", &st);
+        if (ret < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1501: stat('/') failed: %ld\n", ret);
+            fut_test_fail(1501);
+        } else if (st.st_atime < 1000000000000000ULL) {
+            /* Value is less than 10^15, so it's plausibly seconds */
+            fut_printf("[MISC-TEST] ✓ Test 1501: stat atime=%llu (seconds, reasonable)\n",
+                       (unsigned long long)st.st_atime);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1501: stat atime=%llu looks like nanoseconds\n",
+                       (unsigned long long)st.st_atime);
+            fut_test_fail(1501);
+        }
+    }
+}
+
+/* ============================================================
+ * Test 1502: readlink(bufsiz=0) → 0 (not EINVAL)
+ * ============================================================ */
+static void test_readlink_bufsiz_zero(void) {
+    extern long sys_readlink(const char *path, char *buf, size_t bufsiz);
+    extern long sys_symlink(const char *target, const char *linkpath);
+    extern long sys_unlink(const char *path);
+
+    /* Create a symlink to test with */
+    sys_unlink("/rl0_link");
+    long sret = sys_symlink("/tmp", "/rl0_link");
+    if (sret < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1502: symlink create failed: %ld\n", sret);
+        fut_test_fail(1502);
+        return;
+    }
+
+    /* Test 1502: readlink with bufsiz=0 should return 0, not EINVAL */
+    fut_printf("[MISC-TEST] Test 1502: readlink(bufsiz=0) → 0\n");
+    {
+        char buf[1];
+        long ret = sys_readlink("/rl0_link", buf, 0);
+        sys_unlink("/rl0_link");
+        if (ret == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1502: readlink(bufsiz=0) → 0\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1502: expected 0, got %ld\n", ret);
+            fut_test_fail(1502);
+        }
+    }
+}
+
+/* ============================================================
  * Tests 1479-1481: openat2 RESOLVE_IN_ROOT enforcement
  * ============================================================ */
 #define TEST_RESOLVE_IN_ROOT 0x10
@@ -48741,6 +48804,8 @@ void fut_misc_test_thread(void *arg) {
     test_so_rcvbuf_cap();                  /* Tests 1497-1498: SO_RCVBUF capped at sysctl max */
     test_mprotect_unmapped();              /* Test  1499: mprotect on unmapped region → ENOMEM */
     test_sendto_eisconn();                 /* Test  1500: sendto on connected SOCK_STREAM with dest → EISCONN */
+    test_stat_timestamps();                /* Test  1501: stat timestamps are in seconds, not nanoseconds */
+    test_readlink_bufsiz_zero();           /* Test  1502: readlink(bufsiz=0) → 0, not EINVAL */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -11,6 +11,7 @@
 
 #include <kernel/fut_task.h>
 #include <kernel/fut_socket.h>
+#include <kernel/fut_vfs.h>
 #include <kernel/fut_memory.h>
 #include <kernel/fut_waitq.h>
 #include <kernel/errno.h>
@@ -18,6 +19,7 @@
 #include <kernel/kprintf.h>
 #include <string.h>
 #include <stdint.h>
+#include <fcntl.h>
 
 #ifdef __x86_64__
 #include <platform/x86_64/memory/paging.h>
@@ -177,15 +179,30 @@ pair_alloc_fail:
         return fd1;
     }
 
-    /* Apply SOCK_NONBLOCK and SOCK_CLOEXEC flags */
-    extern long sys_fcntl(int fd, int cmd, uint64_t arg);
-    if (type_flags & SOCK_NONBLOCK) {
-        sys_fcntl(fd0, 4 /* F_SETFL */, 0x800 /* O_NONBLOCK */);
-        sys_fcntl(fd1, 4 /* F_SETFL */, 0x800 /* O_NONBLOCK */);
-    }
-    if (type_flags & SOCK_CLOEXEC) {
-        sys_fcntl(fd0, 2 /* F_SETFD */, 1 /* FD_CLOEXEC */);
-        sys_fcntl(fd1, 2 /* F_SETFD */, 1 /* FD_CLOEXEC */);
+    /* Apply SOCK_NONBLOCK and SOCK_CLOEXEC directly on the FD structures
+     * to avoid race windows between fd allocation and flag application.
+     * (Using sys_fcntl would leave a gap where another thread could
+     * observe the fd without the requested flags.) */
+    if (type_flags & (SOCK_NONBLOCK | SOCK_CLOEXEC)) {
+        fut_task_t *task = fut_task_current();
+        if (task) {
+            if (type_flags & SOCK_NONBLOCK) {
+                if (fd0 < task->max_fds) {
+                    struct fut_file *f = task->fd_table[fd0];
+                    if (f) f->flags |= O_NONBLOCK;
+                }
+                if (fd1 < task->max_fds) {
+                    struct fut_file *f = task->fd_table[fd1];
+                    if (f) f->flags |= O_NONBLOCK;
+                }
+            }
+            if (type_flags & SOCK_CLOEXEC) {
+                if (fd0 < task->max_fds)
+                    task->fd_flags[fd0] |= FD_CLOEXEC;
+                if (fd1 < task->max_fds)
+                    task->fd_flags[fd1] |= FD_CLOEXEC;
+            }
+        }
     }
 
     /* Return FDs to caller */

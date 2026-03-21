@@ -47427,6 +47427,106 @@ static void test_copy_file_range_rejects_pipe(void) {
 }
 
 /* ============================================================
+ * Tests 1484-1487: socket/socketpair atomic SOCK_NONBLOCK/SOCK_CLOEXEC
+ *
+ * Verify that socket() and socketpair() set SOCK_NONBLOCK and
+ * SOCK_CLOEXEC directly on the file structure (not via fcntl),
+ * ensuring flags are visible immediately after fd allocation.
+ * ============================================================ */
+static void test_socket_atomic_flags(void) {
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+    extern long sys_fcntl(int fd, int cmd, uint64_t arg);
+    extern int fut_vfs_close(int fd);
+
+    /* Test 1484: socket(SOCK_STREAM|SOCK_NONBLOCK) → O_NONBLOCK set */
+    fut_printf("[MISC-TEST] Test 1484: socket(SOCK_NONBLOCK) → O_NONBLOCK set\n");
+    {
+        long fd = sys_socket(1 /* AF_UNIX */, 1 /* SOCK_STREAM */ | 0x800 /* SOCK_NONBLOCK */, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1484: socket() returned %ld\n", fd);
+            fut_test_fail(1484);
+        } else {
+            long fl = sys_fcntl((int)fd, 3 /* F_GETFL */, 0);
+            if (fl >= 0 && (fl & 0x800 /* O_NONBLOCK */)) {
+                fut_printf("[MISC-TEST] ✓ Test 1484: socket SOCK_NONBLOCK → F_GETFL has O_NONBLOCK\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1484: F_GETFL=0x%lx missing O_NONBLOCK\n", fl);
+                fut_test_fail(1484);
+            }
+            fut_vfs_close((int)fd);
+        }
+    }
+
+    /* Test 1485: socket(SOCK_STREAM|SOCK_CLOEXEC) → FD_CLOEXEC set */
+    fut_printf("[MISC-TEST] Test 1485: socket(SOCK_CLOEXEC) → FD_CLOEXEC set\n");
+    {
+        long fd = sys_socket(1 /* AF_UNIX */, 1 /* SOCK_STREAM */ | 0x80000 /* SOCK_CLOEXEC */, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1485: socket() returned %ld\n", fd);
+            fut_test_fail(1485);
+        } else {
+            long fl = sys_fcntl((int)fd, 1 /* F_GETFD */, 0);
+            if (fl >= 0 && (fl & 1 /* FD_CLOEXEC */)) {
+                fut_printf("[MISC-TEST] ✓ Test 1485: socket SOCK_CLOEXEC → F_GETFD has FD_CLOEXEC\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1485: F_GETFD=0x%lx missing FD_CLOEXEC\n", fl);
+                fut_test_fail(1485);
+            }
+            fut_vfs_close((int)fd);
+        }
+    }
+
+    /* Test 1486: socketpair(SOCK_NONBLOCK) → both fds have O_NONBLOCK */
+    fut_printf("[MISC-TEST] Test 1486: socketpair(SOCK_NONBLOCK) → O_NONBLOCK on both\n");
+    {
+        int sv[2] = {-1, -1};
+        long r = sys_socketpair(1 /* AF_UNIX */, 1 /* SOCK_STREAM */ | 0x800 /* SOCK_NONBLOCK */, 0, sv);
+        if (r < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1486: socketpair() returned %ld\n", r);
+            fut_test_fail(1486);
+        } else {
+            long fl0 = sys_fcntl(sv[0], 3 /* F_GETFL */, 0);
+            long fl1 = sys_fcntl(sv[1], 3 /* F_GETFL */, 0);
+            if (fl0 >= 0 && (fl0 & 0x800) && fl1 >= 0 && (fl1 & 0x800)) {
+                fut_printf("[MISC-TEST] ✓ Test 1486: socketpair SOCK_NONBLOCK → both O_NONBLOCK\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1486: fl0=0x%lx fl1=0x%lx missing O_NONBLOCK\n", fl0, fl1);
+                fut_test_fail(1486);
+            }
+            fut_vfs_close(sv[0]);
+            fut_vfs_close(sv[1]);
+        }
+    }
+
+    /* Test 1487: socketpair(SOCK_CLOEXEC) → both fds have FD_CLOEXEC */
+    fut_printf("[MISC-TEST] Test 1487: socketpair(SOCK_CLOEXEC) → FD_CLOEXEC on both\n");
+    {
+        int sv[2] = {-1, -1};
+        long r = sys_socketpair(1 /* AF_UNIX */, 1 /* SOCK_STREAM */ | 0x80000 /* SOCK_CLOEXEC */, 0, sv);
+        if (r < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1487: socketpair() returned %ld\n", r);
+            fut_test_fail(1487);
+        } else {
+            long fl0 = sys_fcntl(sv[0], 1 /* F_GETFD */, 0);
+            long fl1 = sys_fcntl(sv[1], 1 /* F_GETFD */, 0);
+            if (fl0 >= 0 && (fl0 & 1) && fl1 >= 0 && (fl1 & 1)) {
+                fut_printf("[MISC-TEST] ✓ Test 1487: socketpair SOCK_CLOEXEC → both FD_CLOEXEC\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1487: fl0=0x%lx fl1=0x%lx missing FD_CLOEXEC\n", fl0, fl1);
+                fut_test_fail(1487);
+            }
+            fut_vfs_close(sv[0]);
+            fut_vfs_close(sv[1]);
+        }
+    }
+}
+
+/* ============================================================
  * Tests 1479-1481: openat2 RESOLVE_IN_ROOT enforcement
  * ============================================================ */
 #define TEST_RESOLVE_IN_ROOT 0x10
@@ -48247,6 +48347,7 @@ void fut_misc_test_thread(void *arg) {
     test_openat2_resolve_in_root();         /* Tests 1479-1481: RESOLVE_IN_ROOT enforcement */
     test_sendfile_rejects_socket_source();  /* Test 1482: sendfile from socket → EINVAL */
     test_copy_file_range_rejects_pipe();    /* Test 1483: copy_file_range from pipe → EINVAL */
+    test_socket_atomic_flags();             /* Tests 1484-1487: socket/socketpair atomic SOCK_NONBLOCK/SOCK_CLOEXEC */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

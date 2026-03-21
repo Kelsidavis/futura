@@ -15,6 +15,7 @@
 
 #include <kernel/fut_task.h>
 #include <kernel/fut_socket.h>
+#include <kernel/fut_vfs.h>
 #include <kernel/syscalls.h>
 #include <kernel/errno.h>
 #include <fcntl.h>
@@ -270,14 +271,22 @@ long sys_socket(int domain, int type, int protocol) {
         return -EMFILE;
     }
 
-    /* Phase 4: Apply SOCK_NONBLOCK flag if requested */
-    if (type_flags & SOCK_NONBLOCK) {
-        sys_fcntl(sockfd, F_SETFL, O_NONBLOCK);
-    }
-
-    /* Phase 4: Apply SOCK_CLOEXEC flag if requested */
-    if (type_flags & SOCK_CLOEXEC) {
-        sys_fcntl(sockfd, F_SETFD, FD_CLOEXEC);
+    /* Apply SOCK_NONBLOCK and SOCK_CLOEXEC directly on the FD structure
+     * to avoid race windows between fd allocation and flag application.
+     * (Using sys_fcntl would leave a gap where another thread could
+     * observe the fd without the requested flags.) */
+    if (type_flags & (SOCK_NONBLOCK | SOCK_CLOEXEC)) {
+        fut_task_t *stask = fut_task_current();
+        if (stask && sockfd < stask->max_fds) {
+            if (type_flags & SOCK_NONBLOCK) {
+                struct fut_file *sfile = stask->fd_table[sockfd];
+                if (sfile)
+                    sfile->flags |= O_NONBLOCK;
+            }
+            if (type_flags & SOCK_CLOEXEC) {
+                stask->fd_flags[sockfd] |= FD_CLOEXEC;
+            }
+        }
     }
 
     /* Phase 4: Detailed success logging */

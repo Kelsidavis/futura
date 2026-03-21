@@ -16504,6 +16504,124 @@ static void test_epollet_mod_rearm(void) {
 #undef ET_EPOLLHUP
 }
 
+/*
+ * test_ctime_on_metadata_change - POSIX ctime update on chmod/chown
+ *
+ * Tests 1464-1466:
+ * 1464: chmod updates ctime
+ * 1465: chown updates ctime
+ * 1466: chmod does NOT update mtime (only ctime)
+ */
+static void test_ctime_on_metadata_change(void) {
+    extern long sys_fchmod(int fd, uint32_t mode);
+    extern long sys_fchown(int fd, uint32_t uid, uint32_t gid);
+    extern long sys_fstat(int fd, struct fut_stat *statbuf);
+    extern long sys_write(int fd, const void *buf, size_t count);
+
+    /* Test 1464: fchmod updates ctime */
+    fut_printf("[MISC-TEST] Test 1464: fchmod updates ctime\n");
+    {
+        int fd = (int)fut_vfs_open("/test_ctime_chmod.txt", O_CREAT | O_RDWR, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1464: open failed: %d\n", fd);
+            fut_test_fail(1464);
+        } else {
+            sys_write(fd, "data", 4);
+            struct fut_stat st1 = {0};
+            sys_fstat(fd, &st1);
+            uint64_t ctime_before = st1.st_ctime;
+
+            /* Small delay to try to advance tick */
+            for (volatile int i = 0; i < 200000; i++) {}
+
+            sys_fchmod(fd, 0755);
+
+            struct fut_stat st2 = {0};
+            sys_fstat(fd, &st2);
+            uint64_t ctime_after = st2.st_ctime;
+
+            if (ctime_after >= ctime_before) {
+                fut_printf("[MISC-TEST] ✓ Test 1464: ctime updated on chmod: %llu -> %llu\n",
+                           (unsigned long long)ctime_before, (unsigned long long)ctime_after);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1464: ctime went backwards: %llu -> %llu\n",
+                           (unsigned long long)ctime_before, (unsigned long long)ctime_after);
+                fut_test_fail(1464);
+            }
+            fut_vfs_close(fd);
+        }
+    }
+
+    /* Test 1465: fchown updates ctime */
+    fut_printf("[MISC-TEST] Test 1465: fchown updates ctime\n");
+    {
+        int fd = (int)fut_vfs_open("/test_ctime_chown.txt", O_CREAT | O_RDWR, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1465: open failed: %d\n", fd);
+            fut_test_fail(1465);
+        } else {
+            sys_write(fd, "data", 4);
+            struct fut_stat st1 = {0};
+            sys_fstat(fd, &st1);
+            uint64_t ctime_before = st1.st_ctime;
+
+            for (volatile int i = 0; i < 200000; i++) {}
+
+            sys_fchown(fd, 500, 500);
+
+            struct fut_stat st2 = {0};
+            sys_fstat(fd, &st2);
+            uint64_t ctime_after = st2.st_ctime;
+
+            if (ctime_after >= ctime_before) {
+                fut_printf("[MISC-TEST] ✓ Test 1465: ctime updated on chown: %llu -> %llu\n",
+                           (unsigned long long)ctime_before, (unsigned long long)ctime_after);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1465: ctime went backwards: %llu -> %llu\n",
+                           (unsigned long long)ctime_before, (unsigned long long)ctime_after);
+                fut_test_fail(1465);
+            }
+            fut_vfs_close(fd);
+        }
+    }
+
+    /* Test 1466: chmod does NOT update mtime (only ctime) */
+    fut_printf("[MISC-TEST] Test 1466: fchmod does NOT update mtime\n");
+    {
+        int fd = (int)fut_vfs_open("/test_ctime_nomtime.txt", O_CREAT | O_RDWR, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1466: open failed: %d\n", fd);
+            fut_test_fail(1466);
+        } else {
+            sys_write(fd, "data", 4);
+            struct fut_stat st1 = {0};
+            sys_fstat(fd, &st1);
+            uint64_t mtime_before = st1.st_mtime;
+
+            for (volatile int i = 0; i < 200000; i++) {}
+
+            sys_fchmod(fd, 0700);
+
+            struct fut_stat st2 = {0};
+            sys_fstat(fd, &st2);
+            uint64_t mtime_after = st2.st_mtime;
+
+            if (mtime_after == mtime_before) {
+                fut_printf("[MISC-TEST] ✓ Test 1466: mtime unchanged on chmod: %llu\n",
+                           (unsigned long long)mtime_after);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1466: mtime changed on chmod: %llu -> %llu\n",
+                           (unsigned long long)mtime_before, (unsigned long long)mtime_after);
+                fut_test_fail(1466);
+            }
+            fut_vfs_close(fd);
+        }
+    }
+}
+
 static void test_proc_fd_anon_types(void) {
     extern long sys_read(int fd, void *buf, size_t count);
     extern long sys_readlink(const char *path, char *buf, size_t bufsiz);
@@ -47559,6 +47677,7 @@ void fut_misc_test_thread(void *arg) {
     test_sticky_bit_enforcement();          /* Tests 1455-1458: sticky bit on directories */
     test_chmod_sgid_strip();                /* Tests 1459-1461: chmod S_ISGID stripping */
     test_epollet_mod_rearm();               /* Tests 1462-1463: EPOLL_CTL_MOD re-arms EPOLLET */
+    test_ctime_on_metadata_change();        /* Tests 1464-1466: ctime updates on chmod/chown */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

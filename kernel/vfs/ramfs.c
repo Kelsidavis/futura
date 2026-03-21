@@ -1853,18 +1853,24 @@ static int ramfs_setattr(struct fut_vnode *vnode, const struct fut_stat *stat) {
         return -EIO;
     }
 
+    /* Track whether any metadata actually changed, for ctime update */
+    int metadata_changed = 0;
+
     /* Update mode: sentinel (uint32_t)-1 means "don't change".
      * Only permission/special bits are updated; file type bits are preserved. */
     if (stat->st_mode != (uint32_t)-1) {
         vnode->mode = (vnode->mode & ~(uint32_t)07777) | (stat->st_mode & 07777);
+        metadata_changed = 1;
     }
 
     /* Update uid/gid: sentinel (uint32_t)-1 means "don't change" */
     if (stat->st_uid != (uint32_t)-1) {
         vnode->uid = stat->st_uid;
+        metadata_changed = 1;
     }
     if (stat->st_gid != (uint32_t)-1) {
         vnode->gid = stat->st_gid;
+        metadata_changed = 1;
     }
 
     /* Update timestamps: sentinel (uint64_t)-1 means "don't change".
@@ -1874,7 +1880,12 @@ static int ramfs_setattr(struct fut_vnode *vnode, const struct fut_stat *stat) {
     }
     if (stat->st_mtime != (uint64_t)-1) {
         node->mtime_ms = stat->st_mtime * 100ULL + stat->st_mtime_nsec / 10000000ULL;
-        node->ctime_ms = fut_get_ticks();  /* ctime always updates on metadata change */
+        metadata_changed = 1;
+    }
+
+    /* POSIX: ctime updates on any metadata change (mode, uid, gid, mtime) */
+    if (metadata_changed) {
+        node->ctime_ms = fut_get_ticks();
     }
 
     return 0;

@@ -11677,6 +11677,93 @@ t1282:;
 }
 
 /* ============================================================
+ * Tests 1283-1284: waitid CLD_DUMPED si_code for core-dumping signals
+ * When a child is killed by SIGABRT/SIGSEGV etc., waitid's siginfo_t
+ * should have si_code=CLD_DUMPED (3), not CLD_KILLED (2).
+ * ============================================================ */
+static void test_waitid_cld_dumped(void) {
+    extern long sys_waitid(int idtype, int id, void *infop, int options, void *rusage);
+    extern fut_task_t *fut_task_create(void);
+
+    fut_task_t *parent = fut_task_current();
+    if (!parent) {
+        fut_printf("[MISC-TEST] ✗ Tests 1283-1284: no current task\n");
+        fut_test_fail(1283); fut_test_fail(1284);
+        return;
+    }
+
+    /* Test 1283: waitid reports CLD_DUMPED for SIGABRT-killed child */
+    fut_printf("[MISC-TEST] Test 1283: waitid CLD_DUMPED for SIGABRT\n");
+    {
+        fut_task_t *child = fut_task_create();
+        if (!child) {
+            fut_printf("[MISC-TEST] ✗ Test 1283: fut_task_create failed\n");
+            fut_test_fail(1283);
+            goto t1284;
+        }
+        int child_pid = (int)child->pid;
+        child->state = FUT_TASK_ZOMBIE;
+        child->exit_code = 0;
+        child->term_signal = 6;  /* SIGABRT */
+
+        /* Use P_PID (1), WEXITED (4) — read into siginfo_t directly */
+        siginfo_t info;
+        __builtin_memset(&info, 0, sizeof(info));
+        long rc = sys_waitid(1 /*P_PID*/, child_pid, &info, 4 /*WEXITED*/, NULL);
+        if (rc != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1283: waitid returned %ld\n", rc);
+            fut_test_fail(1283);
+            goto t1284;
+        }
+        if (info.si_code != 3 /* CLD_DUMPED */) {
+            fut_printf("[MISC-TEST] ✗ Test 1283: si_code=%d (expected CLD_DUMPED=3)\n", info.si_code);
+            fut_test_fail(1283);
+        } else if (info.si_status != 6 /* SIGABRT */) {
+            fut_printf("[MISC-TEST] ✗ Test 1283: si_status=%d (expected 6=SIGABRT)\n", info.si_status);
+            fut_test_fail(1283);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1283: waitid SIGABRT → CLD_DUMPED, status=6\n");
+            fut_test_pass();
+        }
+    }
+
+t1284:;
+    /* Test 1284: waitid reports CLD_KILLED (not CLD_DUMPED) for SIGTERM */
+    fut_printf("[MISC-TEST] Test 1284: waitid CLD_KILLED for SIGTERM\n");
+    {
+        fut_task_t *child = fut_task_create();
+        if (!child) {
+            fut_printf("[MISC-TEST] ✗ Test 1284: fut_task_create failed\n");
+            fut_test_fail(1284);
+            return;
+        }
+        int child_pid = (int)child->pid;
+        child->state = FUT_TASK_ZOMBIE;
+        child->exit_code = 0;
+        child->term_signal = 15;  /* SIGTERM — not core-dumping */
+
+        siginfo_t info;
+        __builtin_memset(&info, 0, sizeof(info));
+        long rc = sys_waitid(1 /*P_PID*/, child_pid, &info, 4 /*WEXITED*/, NULL);
+        if (rc != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1284: waitid returned %ld\n", rc);
+            fut_test_fail(1284);
+            return;
+        }
+        if (info.si_code != 2 /* CLD_KILLED */) {
+            fut_printf("[MISC-TEST] ✗ Test 1284: si_code=%d (expected CLD_KILLED=2)\n", info.si_code);
+            fut_test_fail(1284);
+        } else if (info.si_status != 15 /* SIGTERM */) {
+            fut_printf("[MISC-TEST] ✗ Test 1284: si_status=%d (expected 15=SIGTERM)\n", info.si_status);
+            fut_test_fail(1284);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1284: waitid SIGTERM → CLD_KILLED, status=15\n");
+            fut_test_pass();
+        }
+    }
+}
+
+/* ============================================================
  * Tests 241-243: mlock2
  * ============================================================ */
 static void test_mlock2_basic(void) {
@@ -42406,6 +42493,7 @@ void fut_misc_test_thread(void *arg) {
     test_capget_correctness();               /* Tests 1273-1275: capget version/pid/two-struct */
     test_capset_correctness();               /* Tests 1276-1279: capset version/two-struct/validation */
     test_wcoredump_bit();                    /* Tests 1280-1282: WCOREDUMP bit in wait status */
+    test_waitid_cld_dumped();                /* Tests 1283-1284: waitid CLD_DUMPED/CLD_KILLED */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

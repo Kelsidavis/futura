@@ -1432,6 +1432,75 @@ static int64_t sys_mincore_wrapper(uint64_t addr, uint64_t len, uint64_t vec,
     return sys_mincore((void *)addr, (size_t)len, (unsigned char *)vec);
 }
 
+/* NUMA memory policy wrappers */
+extern long sys_mbind(unsigned long addr, unsigned long len, int mode,
+                      const unsigned long *nodemask, unsigned long maxnode,
+                      unsigned int flags);
+static int64_t sys_mbind_wrapper(uint64_t addr, uint64_t len, uint64_t mode,
+                                  uint64_t nodemask, uint64_t maxnode, uint64_t flags) {
+    return sys_mbind((unsigned long)addr, (unsigned long)len, (int)mode,
+                     (const unsigned long *)nodemask, (unsigned long)maxnode,
+                     (unsigned int)flags);
+}
+extern long sys_get_mempolicy(int *mode_out, unsigned long *nodemask_out,
+                               unsigned long maxnode, unsigned long addr,
+                               unsigned int flags);
+static int64_t sys_get_mempolicy_wrapper(uint64_t mode_out, uint64_t nodemask_out,
+                                          uint64_t maxnode, uint64_t addr, uint64_t flags,
+                                          uint64_t arg5) {
+    (void)arg5;
+    return sys_get_mempolicy((int *)mode_out, (unsigned long *)nodemask_out,
+                              (unsigned long)maxnode, (unsigned long)addr,
+                              (unsigned int)flags);
+}
+extern long sys_set_mempolicy(int mode, const unsigned long *nodemask,
+                               unsigned long maxnode);
+static int64_t sys_set_mempolicy_wrapper(uint64_t mode, uint64_t nodemask,
+                                          uint64_t maxnode, uint64_t arg3,
+                                          uint64_t arg4, uint64_t arg5) {
+    (void)arg3; (void)arg4; (void)arg5;
+    return sys_set_mempolicy((int)mode, (const unsigned long *)nodemask,
+                              (unsigned long)maxnode);
+}
+
+/* perf/fanotify/userfaultfd/bpf ENOSYS/EPERM stubs */
+extern long sys_perf_event_open(const void *attr, int pid, int cpu,
+                                 int group_fd, unsigned long flags);
+static int64_t sys_perf_event_open_wrapper(uint64_t attr, uint64_t pid, uint64_t cpu,
+                                            uint64_t group_fd, uint64_t flags, uint64_t arg5) {
+    (void)arg5;
+    return sys_perf_event_open((const void *)attr, (int)pid, (int)cpu,
+                                (int)group_fd, (unsigned long)flags);
+}
+extern long sys_fanotify_init(unsigned int flags, unsigned int event_f_flags);
+static int64_t sys_fanotify_init_wrapper(uint64_t flags, uint64_t event_f_flags,
+                                          uint64_t arg2, uint64_t arg3,
+                                          uint64_t arg4, uint64_t arg5) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+    return sys_fanotify_init((unsigned int)flags, (unsigned int)event_f_flags);
+}
+extern long sys_fanotify_mark(int fanotify_fd, unsigned int flags,
+                               unsigned long mask, int dirfd, const char *pathname);
+static int64_t sys_fanotify_mark_wrapper(uint64_t fanotify_fd, uint64_t flags,
+                                          uint64_t mask, uint64_t dirfd,
+                                          uint64_t pathname, uint64_t arg5) {
+    (void)arg5;
+    return sys_fanotify_mark((int)fanotify_fd, (unsigned int)flags,
+                              (unsigned long)mask, (int)dirfd, (const char *)pathname);
+}
+extern long sys_userfaultfd(int flags);
+static int64_t sys_userfaultfd_wrapper(uint64_t flags, uint64_t arg1, uint64_t arg2,
+                                        uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+    return sys_userfaultfd((int)flags);
+}
+extern long sys_bpf(int cmd, const void *attr, unsigned int size);
+static int64_t sys_bpf_wrapper(uint64_t cmd, uint64_t attr, uint64_t size,
+                                uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg3; (void)arg4; (void)arg5;
+    return sys_bpf((int)cmd, (const void *)attr, (unsigned int)size);
+}
+
 /* sys_msync_wrapper - synchronize memory-mapped file
  * x0 = addr, x1 = len, x2 = flags
  */
@@ -3834,22 +3903,12 @@ static void arm64_syscall_table_init(void) {
     syscall_table[__NR_madvise].handler = (syscall_fn_t)sys_madvise_wrapper;
     syscall_table[__NR_madvise].name = "madvise";
     /* NUMA memory policy — single-node stubs */
-    {
-        extern long sys_mbind(unsigned long addr, unsigned long len, int mode,
-                              const unsigned long *nodemask, unsigned long maxnode,
-                              unsigned int flags);
-        extern long sys_get_mempolicy(int *mode_out, unsigned long *nodemask_out,
-                                       unsigned long maxnode, unsigned long addr,
-                                       unsigned int flags);
-        extern long sys_set_mempolicy(int mode, const unsigned long *nodemask,
-                                      unsigned long maxnode);
-        syscall_table[__NR_mbind].handler = (syscall_fn_t)sys_mbind;
-        syscall_table[__NR_mbind].name = "mbind";
-        syscall_table[__NR_get_mempolicy].handler = (syscall_fn_t)sys_get_mempolicy;
-        syscall_table[__NR_get_mempolicy].name = "get_mempolicy";
-        syscall_table[__NR_set_mempolicy].handler = (syscall_fn_t)sys_set_mempolicy;
-        syscall_table[__NR_set_mempolicy].name = "set_mempolicy";
-    }
+    syscall_table[__NR_mbind].handler = (syscall_fn_t)sys_mbind_wrapper;
+    syscall_table[__NR_mbind].name = "mbind";
+    syscall_table[__NR_get_mempolicy].handler = (syscall_fn_t)sys_get_mempolicy_wrapper;
+    syscall_table[__NR_get_mempolicy].name = "get_mempolicy";
+    syscall_table[__NR_set_mempolicy].handler = (syscall_fn_t)sys_set_mempolicy_wrapper;
+    syscall_table[__NR_set_mempolicy].name = "set_mempolicy";
     syscall_table[__NR_wait4].handler = (syscall_fn_t)sys_waitpid_wrapper;
     syscall_table[__NR_wait4].name = "wait4/waitpid";
     syscall_table[__NR_prlimit64].handler = (syscall_fn_t)sys_prlimit64_wrapper;
@@ -4137,25 +4196,16 @@ static void arm64_syscall_table_init(void) {
 #define __NR_fanotify_mark    263  /* Linux aarch64: 263 */
 #define __NR_userfaultfd      282  /* Linux aarch64: 282 */
 #define __NR_bpf              280  /* Linux aarch64: 280 */
-    {
-        extern long sys_perf_event_open(const void *attr, int pid, int cpu,
-                                        int group_fd, unsigned long flags);
-        extern long sys_fanotify_init(unsigned int flags, unsigned int event_f_flags);
-        extern long sys_fanotify_mark(int fanotify_fd, unsigned int flags,
-                                       unsigned long mask, int dirfd, const char *pathname);
-        extern long sys_userfaultfd(int flags);
-        extern long sys_bpf(int cmd, const void *attr, unsigned int size);
-        syscall_table[__NR_perf_event_open].handler = (syscall_fn_t)sys_perf_event_open;
-        syscall_table[__NR_perf_event_open].name = "perf_event_open";
-        syscall_table[__NR_fanotify_init].handler = (syscall_fn_t)sys_fanotify_init;
-        syscall_table[__NR_fanotify_init].name = "fanotify_init";
-        syscall_table[__NR_fanotify_mark].handler = (syscall_fn_t)sys_fanotify_mark;
-        syscall_table[__NR_fanotify_mark].name = "fanotify_mark";
-        syscall_table[__NR_userfaultfd].handler = (syscall_fn_t)sys_userfaultfd;
-        syscall_table[__NR_userfaultfd].name = "userfaultfd";
-        syscall_table[__NR_bpf].handler = (syscall_fn_t)sys_bpf;
-        syscall_table[__NR_bpf].name = "bpf";
-    }
+    syscall_table[__NR_perf_event_open].handler = (syscall_fn_t)sys_perf_event_open_wrapper;
+    syscall_table[__NR_perf_event_open].name = "perf_event_open";
+    syscall_table[__NR_fanotify_init].handler = (syscall_fn_t)sys_fanotify_init_wrapper;
+    syscall_table[__NR_fanotify_init].name = "fanotify_init";
+    syscall_table[__NR_fanotify_mark].handler = (syscall_fn_t)sys_fanotify_mark_wrapper;
+    syscall_table[__NR_fanotify_mark].name = "fanotify_mark";
+    syscall_table[__NR_userfaultfd].handler = (syscall_fn_t)sys_userfaultfd_wrapper;
+    syscall_table[__NR_userfaultfd].name = "userfaultfd";
+    syscall_table[__NR_bpf].handler = (syscall_fn_t)sys_bpf_wrapper;
+    syscall_table[__NR_bpf].name = "bpf";
 
     syscall_table_initialized = true;
 }

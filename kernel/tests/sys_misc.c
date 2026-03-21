@@ -38794,6 +38794,94 @@ static void test_enosys_stubs(void) {
     }
 }
 
+/* Tests 1189-1191: getpeername AF_INET ENOTCONN + recvfrom src_addr passback */
+static void test_inet_peer_addr(void) {
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_getpeername(int sockfd, void *addr, unsigned int *addrlen);
+    extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+    extern long sys_write(int fd, const void *buf, unsigned long count);
+    extern long sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
+                             void *src_addr, void *addrlen);
+    extern long sys_close(int fd);
+
+    /* Test 1189: getpeername on AF_INET socket that is not connected → ENOTCONN */
+    fut_printf("[MISC-TEST] Test 1189: getpeername AF_INET unconnected → ENOTCONN\n");
+    {
+        long fd = sys_socket(2 /* AF_INET */, 1 /* SOCK_STREAM */, 0);
+        long r;
+        if (fd < 0) {
+            /* socket(AF_INET) failed; skip gracefully */
+            fut_printf("[MISC-TEST] ✗ Test 1189: socket(AF_INET) failed (%ld)\n", fd);
+            fut_test_fail(1189);
+        } else {
+            struct { unsigned short sa_family; char sa_data[14]; } addr = {0};
+            unsigned int addrlen = (unsigned int)sizeof(addr);
+            r = sys_getpeername((int)fd, &addr, &addrlen);
+            if (r == -107 /* -ENOTCONN */) {
+                fut_printf("[MISC-TEST] ✓ Test 1189: getpeername(AF_INET, not connected) → ENOTCONN\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1189: getpeername returned %ld (expected -107/ENOTCONN)\n", r);
+                fut_test_fail(1189);
+            }
+            sys_close((int)fd);
+        }
+    }
+
+    /* Test 1190: recvfrom on AF_UNIX socketpair with src_addr → writes back addrlen */
+    fut_printf("[MISC-TEST] Test 1190: recvfrom AF_UNIX socketpair src_addr passback\n");
+    {
+        int sv[2] = {-1, -1};
+        long r = sys_socketpair(1 /* AF_UNIX */, 1 /* SOCK_STREAM */, 0, sv);
+        if (r != 0 || sv[0] < 0 || sv[1] < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1190: socketpair failed (%ld)\n", r);
+            fut_test_fail(1190);
+        } else {
+            char wbuf[4] = {'T','E','S','T'};
+            sys_write(sv[0], wbuf, 4);
+            char rbuf[8] = {0};
+            struct { unsigned short sun_family; char sun_path[108]; } src = {0};
+            unsigned int addrlen = (unsigned int)sizeof(src);
+            long nr = sys_recvfrom(sv[1], rbuf, sizeof(rbuf), 0, &src, &addrlen);
+            if (nr == 4 && addrlen >= 2 && src.sun_family == 1 /* AF_UNIX */) {
+                fut_printf("[MISC-TEST] ✓ Test 1190: recvfrom src_addr: family=%u addrlen=%u\n",
+                           src.sun_family, addrlen);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1190: recvfrom nr=%ld family=%u addrlen=%u\n",
+                           nr, src.sun_family, addrlen);
+                fut_test_fail(1190);
+            }
+            sys_close(sv[0]);
+            sys_close(sv[1]);
+        }
+    }
+
+    /* Test 1191: getpeername on AF_INET socket returns sin_family=AF_INET after connected
+     * (AF_INET connect always returns ECONNREFUSED in Futura; verify ENOTCONN from getpeername) */
+    fut_printf("[MISC-TEST] Test 1191: getpeername AF_INET6 unconnected → ENOTCONN\n");
+    {
+        long fd = sys_socket(10 /* AF_INET6 */, 1 /* SOCK_STREAM */, 0);
+        long r;
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1191: socket(AF_INET6) failed (%ld)\n", fd);
+            fut_test_fail(1191);
+        } else {
+            struct { unsigned short sa_family; char sa_data[24]; } addr = {0};
+            unsigned int addrlen = (unsigned int)sizeof(addr);
+            r = sys_getpeername((int)fd, &addr, &addrlen);
+            if (r == -107 /* -ENOTCONN */) {
+                fut_printf("[MISC-TEST] ✓ Test 1191: getpeername(AF_INET6, not connected) → ENOTCONN\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1191: getpeername returned %ld (expected -107/ENOTCONN)\n", r);
+                fut_test_fail(1191);
+            }
+            sys_close((int)fd);
+        }
+    }
+}
+
 /* Tests 1180-1183: NUMA memory policy syscalls (single-node stubs) */
 static void test_mempolicy(void) {
     extern long sys_mbind(unsigned long addr, unsigned long len, int mode,
@@ -39483,6 +39571,7 @@ void fut_misc_test_thread(void *arg) {
     test_proc_net_tcp_udp();           /* Tests 1176-1179: /proc/net/tcp and /proc/net/udp enumeration */
     test_mempolicy();                  /* Tests 1180-1183: mbind/get_mempolicy/set_mempolicy single-node */
     test_enosys_stubs();               /* Tests 1184-1188: perf_event_open/fanotify/userfaultfd/bpf stubs */
+    test_inet_peer_addr();             /* Tests 1189-1191: getpeername AF_INET ENOTCONN + recvfrom src_addr */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -50,6 +50,22 @@ static inline int getpeername_access_ok(const void *ptr, size_t n, int write) {
 /* Address family constants (AF_*) provided by fut_socket.h */
 /* struct sockaddr_un provided by sys/un.h */
 
+/* Internet address structures (same layout as sys_getsockname.c) */
+typedef struct {
+    uint16_t sin_family;
+    uint16_t sin_port;
+    uint32_t sin_addr;
+    uint8_t  sin_zero[8];
+} gpn_sockaddr_in_t;
+
+typedef struct {
+    uint16_t sin6_family;
+    uint16_t sin6_port;
+    uint32_t sin6_flowinfo;
+    uint8_t  sin6_addr[16];
+    uint32_t sin6_scope_id;
+} gpn_sockaddr_in6_t;
+
 /**
  * getpeername() - Get address of connected peer
  *
@@ -303,6 +319,58 @@ long sys_getpeername(int sockfd, void *addr, socklen_t *addrlen) {
     if (!socket) {
         fut_printf("[GETPEERNAME] getpeername(sockfd=%d) -> EBADF (not a socket)\n", local_sockfd);
         return -EBADF;
+    }
+
+    /* AF_INET: return peer's sockaddr_in from the connected pair */
+    if (socket->address_family == AF_INET) {
+        fut_socket_t *peer = NULL;
+        if (socket->socket_type == SOCK_STREAM || socket->socket_type == SOCK_SEQPACKET) {
+            if (socket->state != FUT_SOCK_CONNECTED) {
+                fut_printf("[GETPEERNAME] getpeername(sockfd=%d) -> ENOTCONN (AF_INET not connected)\n",
+                           local_sockfd);
+                return -ENOTCONN;
+            }
+            peer = socket->pair ? socket->pair->peer : NULL;
+        }
+        gpn_sockaddr_in_t sin = {0};
+        sin.sin_family = AF_INET;
+        if (peer) {
+            sin.sin_port = peer->inet_port;
+            sin.sin_addr = peer->inet_addr;
+        }
+        socklen_t actual_len = (socklen_t)sizeof(gpn_sockaddr_in_t);
+        socklen_t copy_len = (len < actual_len) ? len : actual_len;
+        if (getpeername_copy_to_user(local_addr, &sin, copy_len) != 0)
+            return -EFAULT;
+        if (getpeername_copy_to_user(local_addrlen, &actual_len, sizeof(socklen_t)) != 0)
+            return -EFAULT;
+        return 0;
+    }
+
+    /* AF_INET6: return peer's sockaddr_in6 */
+    if (socket->address_family == AF_INET6) {
+        fut_socket_t *peer = NULL;
+        if (socket->socket_type == SOCK_STREAM || socket->socket_type == SOCK_SEQPACKET) {
+            if (socket->state != FUT_SOCK_CONNECTED) {
+                fut_printf("[GETPEERNAME] getpeername(sockfd=%d) -> ENOTCONN (AF_INET6 not connected)\n",
+                           local_sockfd);
+                return -ENOTCONN;
+            }
+            peer = socket->pair ? socket->pair->peer : NULL;
+        }
+        gpn_sockaddr_in6_t sin6 = {0};
+        sin6.sin6_family = AF_INET6;
+        if (peer) {
+            sin6.sin6_port = peer->inet_port;
+            __builtin_memcpy(&sin6.sin6_addr, peer->inet6_addr, 16);
+        }
+        socklen_t actual_len = (socklen_t)sizeof(gpn_sockaddr_in6_t);
+        socklen_t copy_len = (len < actual_len) ? len : actual_len;
+        if (getpeername_copy_to_user(local_addr, &sin6, copy_len) != 0)
+            return -EFAULT;
+        if (getpeername_copy_to_user(local_addrlen, &actual_len, sizeof(socklen_t)) != 0)
+            return -EFAULT;
+        return 0;
     }
 
     /* Determine peer path and length based on socket type */

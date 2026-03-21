@@ -31,6 +31,22 @@
 #include <platform/arm64/memory/paging.h>
 #endif
 
+/* Internet address structures for peer-address return */
+typedef struct {
+    uint16_t sin_family;
+    uint16_t sin_port;
+    uint32_t sin_addr;
+    uint8_t  sin_zero[8];
+} rfrom_sockaddr_in_t;
+
+typedef struct {
+    uint16_t sin6_family;
+    uint16_t sin6_port;
+    uint32_t sin6_flowinfo;
+    uint8_t  sin6_addr[16];
+    uint32_t sin6_scope_id;
+} rfrom_sockaddr_in6_t;
+
 static inline int recv_copy_from_user(void *dst, const void *src, size_t n) {
 #ifdef KERNEL_VIRTUAL_BASE
     if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
@@ -714,8 +730,36 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
             } else {
                 /* AF_UNIX not connected, no peer address */
             }
-        } else {
-            /* non-UNIX family address not yet supported */
+        } else if (socket && socket->address_family == AF_INET) {
+            /* AF_INET: return peer's sockaddr_in */
+            fut_socket_t *peer = NULL;
+            if (socket->pair && socket->pair->peer)
+                peer = socket->pair->peer;
+            rfrom_sockaddr_in_t sin = {0};
+            sin.sin_family = AF_INET;
+            if (peer) {
+                sin.sin_port = peer->inet_port;
+                sin.sin_addr = peer->inet_addr;
+            }
+            socklen_t actual_len = (socklen_t)sizeof(rfrom_sockaddr_in_t);
+            socklen_t copy_len = (actual_len < len) ? actual_len : len;
+            if (recv_copy_to_user(local_src_addr, &sin, copy_len) == 0)
+                (void)recv_copy_to_user(local_addrlen, &actual_len, sizeof(socklen_t));
+        } else if (socket && socket->address_family == AF_INET6) {
+            /* AF_INET6: return peer's sockaddr_in6 */
+            fut_socket_t *peer = NULL;
+            if (socket->pair && socket->pair->peer)
+                peer = socket->pair->peer;
+            rfrom_sockaddr_in6_t sin6 = {0};
+            sin6.sin6_family = AF_INET6;
+            if (peer) {
+                sin6.sin6_port = peer->inet_port;
+                __builtin_memcpy(&sin6.sin6_addr, peer->inet6_addr, 16);
+            }
+            socklen_t actual_len = (socklen_t)sizeof(rfrom_sockaddr_in6_t);
+            socklen_t copy_len = (actual_len < len) ? actual_len : len;
+            if (recv_copy_to_user(local_src_addr, &sin6, copy_len) == 0)
+                (void)recv_copy_to_user(local_addrlen, &actual_len, sizeof(socklen_t));
         }
     }
 

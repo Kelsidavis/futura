@@ -347,6 +347,17 @@
 #define SYS_fanotify_mark           301  /* Linux: 301 */
 #define SYS_userfaultfd             323  /* Linux: 323 */
 #define SYS_bpf                     457  /* Linux: 321 — Futura: 457 (321 = memfd_create) */
+/* Linux 5.2+ new mount API (using their native Linux numbers — no conflicts) */
+#define SYS_open_tree               428  /* Linux: 428 */
+#define SYS_move_mount_new          429  /* Linux: 429 */
+#define SYS_fsopen                  430  /* Linux: 430 */
+#define SYS_fsconfig                431  /* Linux: 431 */
+#define SYS_fsmount                 432  /* Linux: 432 */
+#define SYS_fspick                  433  /* Linux: 433 */
+#define SYS_mount_setattr           458  /* Linux: 442 — Futura: 458 (442 = kcmp) */
+/* File handle syscalls (Linux 2.6.39+) */
+#define SYS_name_to_handle_at       303  /* Linux: 303 (conflicts with prlimit64? no, prlimit64=302) */
+#define SYS_open_by_handle_at       304  /* Linux: 304 */
 #define SYS_sethostname      170
 #define SYS_setdomainname    171
 /* Syscalls whose Linux numbers conflict with Futura's custom scheme get
@@ -2390,6 +2401,75 @@ static int64_t sys_bpf_handler(uint64_t cmd, uint64_t attr, uint64_t size,
     return sys_bpf((int)cmd, (const void *)(uintptr_t)attr, (unsigned int)size);
 }
 
+/* New mount API handlers (Linux 5.2+) */
+static int64_t sys_open_tree_handler(uint64_t dirfd, uint64_t pathname, uint64_t flags,
+                                      uint64_t a4, uint64_t a5, uint64_t a6) {
+    (void)a4; (void)a5; (void)a6;
+    extern long sys_open_tree(int dirfd, const char *pathname, unsigned int flags);
+    return sys_open_tree((int)dirfd, (const char *)(uintptr_t)pathname, (unsigned int)flags);
+}
+static int64_t sys_move_mount_new_handler(uint64_t from_dirfd, uint64_t from_pathname,
+                                           uint64_t to_dirfd, uint64_t to_pathname,
+                                           uint64_t flags, uint64_t a6) {
+    (void)a6;
+    extern long sys_move_mount(int from_dirfd, const char *from_pathname,
+                                int to_dirfd, const char *to_pathname, unsigned int flags);
+    return sys_move_mount((int)from_dirfd, (const char *)(uintptr_t)from_pathname,
+                           (int)to_dirfd, (const char *)(uintptr_t)to_pathname, (unsigned int)flags);
+}
+static int64_t sys_fsopen_handler(uint64_t fsname, uint64_t flags,
+                                   uint64_t a3, uint64_t a4, uint64_t a5, uint64_t a6) {
+    (void)a3; (void)a4; (void)a5; (void)a6;
+    extern long sys_fsopen(const char *fsname, unsigned int flags);
+    return sys_fsopen((const char *)(uintptr_t)fsname, (unsigned int)flags);
+}
+static int64_t sys_fsconfig_handler(uint64_t fs_fd, uint64_t cmd, uint64_t key,
+                                     uint64_t value, uint64_t aux, uint64_t a6) {
+    (void)a6;
+    extern long sys_fsconfig(int fs_fd, unsigned int cmd, const char *key,
+                              const void *value, int aux);
+    return sys_fsconfig((int)fs_fd, (unsigned int)cmd, (const char *)(uintptr_t)key,
+                         (const void *)(uintptr_t)value, (int)aux);
+}
+static int64_t sys_fsmount_handler(uint64_t fs_fd, uint64_t flags, uint64_t attr_flags,
+                                    uint64_t a4, uint64_t a5, uint64_t a6) {
+    (void)a4; (void)a5; (void)a6;
+    extern long sys_fsmount(int fs_fd, unsigned int flags, unsigned int attr_flags);
+    return sys_fsmount((int)fs_fd, (unsigned int)flags, (unsigned int)attr_flags);
+}
+static int64_t sys_fspick_handler(uint64_t dirfd, uint64_t pathname, uint64_t flags,
+                                   uint64_t a4, uint64_t a5, uint64_t a6) {
+    (void)a4; (void)a5; (void)a6;
+    extern long sys_fspick(int dirfd, const char *pathname, unsigned int flags);
+    return sys_fspick((int)dirfd, (const char *)(uintptr_t)pathname, (unsigned int)flags);
+}
+static int64_t sys_mount_setattr_handler(uint64_t dirfd, uint64_t pathname, uint64_t flags,
+                                          uint64_t uattr, uint64_t usize, uint64_t a6) {
+    (void)a6;
+    extern long sys_mount_setattr(int dirfd, const char *pathname, unsigned int flags,
+                                   const void *uattr, size_t usize);
+    return sys_mount_setattr((int)dirfd, (const char *)(uintptr_t)pathname, (unsigned int)flags,
+                              (const void *)(uintptr_t)uattr, (size_t)usize);
+}
+/* File handle syscall handlers */
+static int64_t sys_name_to_handle_at_handler(uint64_t dirfd, uint64_t pathname,
+                                              uint64_t handle, uint64_t mount_id,
+                                              uint64_t flags, uint64_t a6) {
+    (void)a6;
+    extern long sys_name_to_handle_at(int dirfd, const char *pathname,
+                                       void *handle, int *mount_id, int flags);
+    return sys_name_to_handle_at((int)dirfd, (const char *)(uintptr_t)pathname,
+                                  (void *)(uintptr_t)handle, (int *)(uintptr_t)mount_id,
+                                  (int)flags);
+}
+static int64_t sys_open_by_handle_at_handler(uint64_t mount_fd, uint64_t handle,
+                                              uint64_t flags, uint64_t a4,
+                                              uint64_t a5, uint64_t a6) {
+    (void)a4; (void)a5; (void)a6;
+    extern long sys_open_by_handle_at(int mount_fd, void *handle, int flags);
+    return sys_open_by_handle_at((int)mount_fd, (void *)(uintptr_t)handle, (int)flags);
+}
+
 static int64_t sys_sched_setattr_handler(uint64_t pid, uint64_t uattr, uint64_t flags,
                                           uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     (void)arg4; (void)arg5; (void)arg6;
@@ -4159,6 +4239,17 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_fanotify_mark]           = sys_fanotify_mark_handler,
     [SYS_userfaultfd]             = sys_userfaultfd_handler,
     [SYS_bpf]                     = sys_bpf_handler,
+    /* New mount API stubs (Linux 5.2-5.12) */
+    [SYS_open_tree]               = sys_open_tree_handler,
+    [SYS_move_mount_new]          = sys_move_mount_new_handler,
+    [SYS_fsopen]                  = sys_fsopen_handler,
+    [SYS_fsconfig]                = sys_fsconfig_handler,
+    [SYS_fsmount]                 = sys_fsmount_handler,
+    [SYS_fspick]                  = sys_fspick_handler,
+    [SYS_mount_setattr]           = sys_mount_setattr_handler,
+    /* File handle stubs (Linux 2.6.39+) */
+    [SYS_name_to_handle_at]       = sys_name_to_handle_at_handler,
+    [SYS_open_by_handle_at]       = sys_open_by_handle_at_handler,
 };
 
 /* ============================================================

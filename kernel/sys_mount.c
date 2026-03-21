@@ -561,3 +561,125 @@ long sys_mount(const char *source, const char *target, const char *filesystemtyp
                mountpoint, fstype_buf, kernel_fstype, mountflags, task->pid);
     return 0;
 }
+
+/* ============================================================
+ *   New mount API stubs (Linux 5.2+)
+ *
+ *   fsopen/fsconfig/fsmount/fspick/open_tree/move_mount/mount_setattr
+ *   These implement the new-style filesystem configuration interface
+ *   introduced in Linux 5.2 and extended through 5.12.  systemd 250+,
+ *   util-linux 2.38+, and container runtimes (runc, crun) probe these
+ *   at startup and fall back to mount(2) on ENOSYS.
+ *
+ *   Linux x86_64 syscall numbers:
+ *     open_tree       428
+ *     move_mount      429
+ *     fsopen          430
+ *     fsconfig        431
+ *     fsmount         432
+ *     fspick          433
+ *     mount_setattr   442
+ * ============================================================ */
+
+/**
+ * sys_open_tree() - Open a mount for manipulation (Linux 5.2).
+ * Returns -ENOSYS; callers fall back to mount(2).
+ */
+long sys_open_tree(int dirfd, const char *pathname, unsigned int flags) {
+    (void)dirfd; (void)pathname; (void)flags;
+    return -ENOSYS;
+}
+
+/**
+ * sys_move_mount() - Move a mount from one location to another (Linux 5.2).
+ * Returns -ENOSYS; callers fall back to mount(MS_MOVE).
+ */
+long sys_move_mount(int from_dirfd, const char *from_pathname,
+                    int to_dirfd, const char *to_pathname,
+                    unsigned int flags) {
+    (void)from_dirfd; (void)from_pathname;
+    (void)to_dirfd; (void)to_pathname; (void)flags;
+    return -ENOSYS;
+}
+
+/**
+ * sys_fsopen() - Open a filesystem context for configuration (Linux 5.2).
+ * Returns -ENOSYS; callers fall back to mount(2).
+ */
+long sys_fsopen(const char *fsname, unsigned int flags) {
+    (void)fsname; (void)flags;
+    return -ENOSYS;
+}
+
+/**
+ * sys_fsconfig() - Configure a filesystem context (Linux 5.2).
+ * Returns -ENOSYS; callers fall back to mount(2).
+ */
+long sys_fsconfig(int fs_fd, unsigned int cmd, const char *key,
+                  const void *value, int aux) {
+    (void)fs_fd; (void)cmd; (void)key; (void)value; (void)aux;
+    return -ENOSYS;
+}
+
+/**
+ * sys_fsmount() - Create a mount from a filesystem context (Linux 5.2).
+ * Returns -ENOSYS; callers fall back to mount(2).
+ */
+long sys_fsmount(int fs_fd, unsigned int flags, unsigned int attr_flags) {
+    (void)fs_fd; (void)flags; (void)attr_flags;
+    return -ENOSYS;
+}
+
+/**
+ * sys_fspick() - Pick an existing mount for reconfiguration (Linux 5.2).
+ * Returns -ENOSYS; callers fall back to mount(MS_REMOUNT).
+ */
+long sys_fspick(int dirfd, const char *pathname, unsigned int flags) {
+    (void)dirfd; (void)pathname; (void)flags;
+    return -ENOSYS;
+}
+
+/**
+ * sys_mount_setattr() - Set mount attributes (Linux 5.12).
+ * Returns -ENOSYS; callers fall back to mount(MS_REMOUNT | MS_BIND).
+ */
+long sys_mount_setattr(int dirfd, const char *pathname, unsigned int flags,
+                       const void *uattr, size_t usize) {
+    (void)dirfd; (void)pathname; (void)flags; (void)uattr; (void)usize;
+    return -ENOSYS;
+}
+
+/* ============================================================
+ *   File handle syscalls (Linux 2.6.39+)
+ *
+ *   name_to_handle_at(303) / open_by_handle_at(304)
+ *   Used by systemd, Docker, containerd, and fuse-overlayfs for
+ *   inode-based file identification.  Return -EOPNOTSUPP to signal
+ *   "filesystem doesn't support handles" — this is the proper
+ *   errno (not ENOSYS) that callers expect for fallback.
+ * ============================================================ */
+
+/**
+ * sys_name_to_handle_at() - Convert a pathname to a file handle.
+ * Returns -EOPNOTSUPP; no filesystem in Futura supports file handles.
+ * Callers (systemd, Docker) fall back to stat-based identification.
+ *
+ * Linux x86_64: 303  Linux aarch64: 264
+ */
+long sys_name_to_handle_at(int dirfd, const char *pathname,
+                           void *handle, int *mount_id,
+                           int flags) {
+    (void)dirfd; (void)pathname; (void)handle; (void)mount_id; (void)flags;
+    return -EOPNOTSUPP;
+}
+
+/**
+ * sys_open_by_handle_at() - Open a file via a file handle.
+ * Returns -EOPNOTSUPP; no filesystem in Futura supports file handles.
+ *
+ * Linux x86_64: 304  Linux aarch64: 265
+ */
+long sys_open_by_handle_at(int mount_fd, void *handle, int flags) {
+    (void)mount_fd; (void)handle; (void)flags;
+    return -EOPNOTSUPP;
+}

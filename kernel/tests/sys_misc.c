@@ -11906,6 +11906,123 @@ static void test_futex_waitv_basic(void) {
 extern long sys_process_madvise(int pidfd, const void *iovec, unsigned long vlen,
                                 int advice, unsigned int flags);
 
+static void test_new_mount_api_stubs(void) {
+    extern long sys_open_tree(int dirfd, const char *pathname, unsigned int flags);
+    extern long sys_move_mount(int from_dirfd, const char *from_pathname,
+                                int to_dirfd, const char *to_pathname, unsigned int flags);
+    extern long sys_fsopen(const char *fsname, unsigned int flags);
+    extern long sys_fsconfig(int fs_fd, unsigned int cmd, const char *key,
+                              const void *value, int aux);
+    extern long sys_fsmount(int fs_fd, unsigned int flags, unsigned int attr_flags);
+    extern long sys_fspick(int dirfd, const char *pathname, unsigned int flags);
+    extern long sys_mount_setattr(int dirfd, const char *pathname, unsigned int flags,
+                                   const void *uattr, size_t usize);
+    extern long sys_name_to_handle_at(int dirfd, const char *pathname,
+                                       void *handle, int *mount_id, int flags);
+    extern long sys_open_by_handle_at(int mount_fd, void *handle, int flags);
+
+    long r;
+
+    /* Test 1297: open_tree → ENOSYS */
+    fut_printf("[MISC-TEST] Test 1297: open_tree → ENOSYS\n");
+    r = sys_open_tree(-100 /*AT_FDCWD*/, "/", 0);
+    if (r == -ENOSYS) {
+        fut_printf("[MISC-TEST] ✓ Test 1297: open_tree → ENOSYS\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1297: open_tree returned %ld\n", r);
+        fut_test_fail(1297);
+    }
+
+    /* Test 1298: move_mount (new API) → ENOSYS */
+    fut_printf("[MISC-TEST] Test 1298: move_mount (new API) → ENOSYS\n");
+    r = sys_move_mount(-100, "/tmp", -100, "/mnt", 0);
+    if (r == -ENOSYS) {
+        fut_printf("[MISC-TEST] ✓ Test 1298: move_mount → ENOSYS\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1298: move_mount returned %ld\n", r);
+        fut_test_fail(1298);
+    }
+
+    /* Test 1299: fsopen → ENOSYS */
+    fut_printf("[MISC-TEST] Test 1299: fsopen → ENOSYS\n");
+    r = sys_fsopen("ext4", 0);
+    if (r == -ENOSYS) {
+        fut_printf("[MISC-TEST] ✓ Test 1299: fsopen → ENOSYS\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1299: fsopen returned %ld\n", r);
+        fut_test_fail(1299);
+    }
+
+    /* Test 1300: fsconfig → ENOSYS */
+    fut_printf("[MISC-TEST] Test 1300: fsconfig → ENOSYS\n");
+    r = sys_fsconfig(-1, 0, NULL, NULL, 0);
+    if (r == -ENOSYS) {
+        fut_printf("[MISC-TEST] ✓ Test 1300: fsconfig → ENOSYS\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1300: fsconfig returned %ld\n", r);
+        fut_test_fail(1300);
+    }
+
+    /* Test 1301: fsmount → ENOSYS */
+    fut_printf("[MISC-TEST] Test 1301: fsmount → ENOSYS\n");
+    r = sys_fsmount(-1, 0, 0);
+    if (r == -ENOSYS) {
+        fut_printf("[MISC-TEST] ✓ Test 1301: fsmount → ENOSYS\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1301: fsmount returned %ld\n", r);
+        fut_test_fail(1301);
+    }
+
+    /* Test 1302: fspick → ENOSYS */
+    fut_printf("[MISC-TEST] Test 1302: fspick → ENOSYS\n");
+    r = sys_fspick(-100, "/", 0);
+    if (r == -ENOSYS) {
+        fut_printf("[MISC-TEST] ✓ Test 1302: fspick → ENOSYS\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1302: fspick returned %ld\n", r);
+        fut_test_fail(1302);
+    }
+
+    /* Test 1303: mount_setattr → ENOSYS */
+    fut_printf("[MISC-TEST] Test 1303: mount_setattr → ENOSYS\n");
+    r = sys_mount_setattr(-100, "/", 0, NULL, 0);
+    if (r == -ENOSYS) {
+        fut_printf("[MISC-TEST] ✓ Test 1303: mount_setattr → ENOSYS\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1303: mount_setattr returned %ld\n", r);
+        fut_test_fail(1303);
+    }
+
+    /* Test 1304: name_to_handle_at → EOPNOTSUPP */
+    fut_printf("[MISC-TEST] Test 1304: name_to_handle_at → EOPNOTSUPP\n");
+    r = sys_name_to_handle_at(-100, "/", NULL, NULL, 0);
+    if (r == -EOPNOTSUPP) {
+        fut_printf("[MISC-TEST] ✓ Test 1304: name_to_handle_at → EOPNOTSUPP\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1304: name_to_handle_at returned %ld\n", r);
+        fut_test_fail(1304);
+    }
+
+    /* Test 1305: open_by_handle_at → EOPNOTSUPP */
+    fut_printf("[MISC-TEST] Test 1305: open_by_handle_at → EOPNOTSUPP\n");
+    r = sys_open_by_handle_at(-1, NULL, 0);
+    if (r == -EOPNOTSUPP) {
+        fut_printf("[MISC-TEST] ✓ Test 1305: open_by_handle_at → EOPNOTSUPP\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1305: open_by_handle_at returned %ld\n", r);
+        fut_test_fail(1305);
+    }
+}
+
 static void test_process_madvise_basic(void) {
     /* Test 1292: process_madvise with flags != 0 → EINVAL */
     fut_printf("[MISC-TEST] Test 1292: process_madvise flags=1 → EINVAL\n");
@@ -42765,6 +42882,7 @@ void fut_misc_test_thread(void *arg) {
     test_waitid_cld_dumped();                /* Tests 1283-1284: waitid CLD_DUMPED/CLD_KILLED */
     test_futex_waitv_basic();                /* Tests 1285-1291: futex_waitv validation and value-mismatch */
     test_process_madvise_basic();            /* Tests 1292-1296: process_madvise validation and delegation */
+    test_new_mount_api_stubs();              /* Tests 1297-1307: new mount API + file handle stubs */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -1312,10 +1312,17 @@ static int ramfs_truncate(struct fut_vnode *vnode, uint64_t length) {
 
     uint64_t old_size = vnode->size;
 
-    /* Case 1: Shrinking file or no change */
-    if (length <= old_size) {
-        /* Just update the size - keep allocated memory for future growth */
+    /* No-op if size unchanged */
+    if (length == old_size) {
+        return 0;
+    }
+
+    /* Case 1: Shrinking file */
+    if (length < old_size) {
         vnode->size = length;
+        /* POSIX: truncate updates mtime and ctime */
+        node->mtime_ms = fut_get_ticks();
+        node->ctime_ms = node->mtime_ms;
         return 0;
     }
 
@@ -1361,6 +1368,10 @@ static int ramfs_truncate(struct fut_vnode *vnode, uint64_t length) {
 
     /* Update file size */
     vnode->size = length;
+
+    /* POSIX: truncate updates mtime and ctime */
+    node->mtime_ms = fut_get_ticks();
+    node->ctime_ms = node->mtime_ms;
 
     return 0;
 }

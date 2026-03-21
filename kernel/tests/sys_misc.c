@@ -16622,6 +16622,116 @@ static void test_ctime_on_metadata_change(void) {
     }
 }
 
+/*
+ * test_truncate_updates_timestamps - POSIX mtime/ctime update on truncate
+ *
+ * Tests 1467-1469:
+ * 1467: ftruncate (shrink) updates mtime and ctime
+ * 1468: ftruncate (extend) updates mtime and ctime
+ * 1469: ftruncate to same size does NOT update mtime
+ */
+static void test_truncate_updates_timestamps(void) {
+    extern long sys_ftruncate(int fd, uint64_t length);
+    extern long sys_fstat(int fd, struct fut_stat *statbuf);
+    extern long sys_write(int fd, const void *buf, size_t count);
+
+    /* Test 1467: ftruncate (shrink) updates mtime and ctime */
+    fut_printf("[MISC-TEST] Test 1467: ftruncate shrink updates mtime/ctime\n");
+    {
+        int fd = (int)fut_vfs_open("/test_trunc_ts1.txt", O_CREAT | O_RDWR, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1467: open failed: %d\n", fd);
+            fut_test_fail(1467);
+        } else {
+            sys_write(fd, "hello world", 11);
+            struct fut_stat st1 = {0};
+            sys_fstat(fd, &st1);
+            uint64_t mtime_before = st1.st_mtime;
+            uint64_t ctime_before = st1.st_ctime;
+
+            for (volatile int i = 0; i < 200000; i++) {}
+
+            sys_ftruncate(fd, 5);
+
+            struct fut_stat st2 = {0};
+            sys_fstat(fd, &st2);
+
+            if (st2.st_mtime >= mtime_before && st2.st_ctime >= ctime_before) {
+                fut_printf("[MISC-TEST] ✓ Test 1467: mtime/ctime updated on shrink\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1467: timestamps not updated\n");
+                fut_test_fail(1467);
+            }
+            fut_vfs_close(fd);
+        }
+    }
+
+    /* Test 1468: ftruncate (extend) updates mtime and ctime */
+    fut_printf("[MISC-TEST] Test 1468: ftruncate extend updates mtime/ctime\n");
+    {
+        int fd = (int)fut_vfs_open("/test_trunc_ts2.txt", O_CREAT | O_RDWR, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1468: open failed: %d\n", fd);
+            fut_test_fail(1468);
+        } else {
+            sys_write(fd, "hi", 2);
+            struct fut_stat st1 = {0};
+            sys_fstat(fd, &st1);
+            uint64_t mtime_before = st1.st_mtime;
+            uint64_t ctime_before = st1.st_ctime;
+
+            for (volatile int i = 0; i < 200000; i++) {}
+
+            sys_ftruncate(fd, 100);
+
+            struct fut_stat st2 = {0};
+            sys_fstat(fd, &st2);
+
+            if (st2.st_mtime >= mtime_before && st2.st_ctime >= ctime_before) {
+                fut_printf("[MISC-TEST] ✓ Test 1468: mtime/ctime updated on extend\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1468: timestamps not updated\n");
+                fut_test_fail(1468);
+            }
+            fut_vfs_close(fd);
+        }
+    }
+
+    /* Test 1469: ftruncate to same size does NOT update mtime */
+    fut_printf("[MISC-TEST] Test 1469: ftruncate same size no mtime change\n");
+    {
+        int fd = (int)fut_vfs_open("/test_trunc_ts3.txt", O_CREAT | O_RDWR, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1469: open failed: %d\n", fd);
+            fut_test_fail(1469);
+        } else {
+            sys_write(fd, "data", 4);
+            struct fut_stat st1 = {0};
+            sys_fstat(fd, &st1);
+            uint64_t mtime_before = st1.st_mtime;
+
+            for (volatile int i = 0; i < 200000; i++) {}
+
+            sys_ftruncate(fd, 4);  /* same size */
+
+            struct fut_stat st2 = {0};
+            sys_fstat(fd, &st2);
+
+            if (st2.st_mtime == mtime_before) {
+                fut_printf("[MISC-TEST] ✓ Test 1469: mtime unchanged on same-size truncate\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1469: mtime changed: %llu -> %llu\n",
+                           (unsigned long long)mtime_before, (unsigned long long)st2.st_mtime);
+                fut_test_fail(1469);
+            }
+            fut_vfs_close(fd);
+        }
+    }
+}
+
 static void test_proc_fd_anon_types(void) {
     extern long sys_read(int fd, void *buf, size_t count);
     extern long sys_readlink(const char *path, char *buf, size_t bufsiz);
@@ -47678,6 +47788,7 @@ void fut_misc_test_thread(void *arg) {
     test_chmod_sgid_strip();                /* Tests 1459-1461: chmod S_ISGID stripping */
     test_epollet_mod_rearm();               /* Tests 1462-1463: EPOLL_CTL_MOD re-arms EPOLLET */
     test_ctime_on_metadata_change();        /* Tests 1464-1466: ctime updates on chmod/chown */
+    test_truncate_updates_timestamps();     /* Tests 1467-1469: truncate mtime/ctime updates */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

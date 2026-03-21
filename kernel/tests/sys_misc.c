@@ -15731,6 +15731,130 @@ static void test_o_noatime(void) {
     }
 }
 
+/**
+ * test_suid_clear_on_open_trunc - S_ISUID/S_ISGID clearing on open(O_TRUNC)
+ *
+ * Tests 1446-1448:
+ * 1446: open(O_TRUNC) clears S_ISUID
+ * 1447: open(O_TRUNC) clears S_ISGID (with S_IXGRP)
+ * 1448: open(O_TRUNC) preserves S_ISGID without S_IXGRP (mandatory locking)
+ */
+static void test_suid_clear_on_open_trunc(void) {
+    extern long sys_write(int fd, const void *buf, size_t count);
+    extern long sys_fchmod(int fd, uint32_t mode);
+    extern long sys_fstat(int fd, struct fut_stat *statbuf);
+
+    fut_task_t *task = fut_task_current();
+    uint64_t saved_caps = task->cap_effective;
+    task->cap_effective &= ~(1ULL << 4 /* CAP_FSETID */);
+
+    /* Test 1446: open(O_TRUNC) clears S_ISUID */
+    fut_printf("[MISC-TEST] Test 1446: open(O_TRUNC) clears S_ISUID\n");
+    {
+        /* Create file with content and setuid bit */
+        int fd = (int)fut_vfs_open("/test_otrunc_suid.txt", O_CREAT | O_RDWR, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1446: create failed: %d\n", fd);
+            fut_test_fail(1446);
+        } else {
+            sys_write(fd, "data", 4);
+            sys_fchmod(fd, 04755);  /* set S_ISUID */
+            fut_vfs_close(fd);
+
+            /* Re-open with O_TRUNC — should clear S_ISUID */
+            fd = (int)fut_vfs_open("/test_otrunc_suid.txt", O_WRONLY | O_TRUNC, 0);
+            if (fd < 0) {
+                fut_printf("[MISC-TEST] ✗ Test 1446: O_TRUNC open failed: %d\n", fd);
+                fut_test_fail(1446);
+            } else {
+                struct fut_stat st = {0};
+                sys_fstat(fd, &st);
+                if (st.st_mode & 04000) {
+                    fut_printf("[MISC-TEST] ✗ Test 1446: S_ISUID not cleared after open(O_TRUNC) (mode=0%o)\n",
+                               st.st_mode & 07777);
+                    fut_vfs_close(fd);
+                    fut_test_fail(1446);
+                } else {
+                    fut_printf("[MISC-TEST] ✓ Test 1446: S_ISUID cleared after open(O_TRUNC) (mode=0%o)\n",
+                               st.st_mode & 07777);
+                    fut_vfs_close(fd);
+                    fut_test_pass();
+                }
+            }
+        }
+    }
+
+    /* Test 1447: open(O_TRUNC) clears S_ISGID when S_IXGRP set */
+    fut_printf("[MISC-TEST] Test 1447: open(O_TRUNC) clears S_ISGID when S_IXGRP set\n");
+    {
+        int fd = (int)fut_vfs_open("/test_otrunc_sgid.txt", O_CREAT | O_RDWR, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1447: create failed: %d\n", fd);
+            fut_test_fail(1447);
+        } else {
+            sys_write(fd, "data", 4);
+            sys_fchmod(fd, 02755);  /* S_ISGID + S_IXGRP */
+            fut_vfs_close(fd);
+
+            fd = (int)fut_vfs_open("/test_otrunc_sgid.txt", O_WRONLY | O_TRUNC, 0);
+            if (fd < 0) {
+                fut_printf("[MISC-TEST] ✗ Test 1447: O_TRUNC open failed: %d\n", fd);
+                fut_test_fail(1447);
+            } else {
+                struct fut_stat st = {0};
+                sys_fstat(fd, &st);
+                if (st.st_mode & 02000) {
+                    fut_printf("[MISC-TEST] ✗ Test 1447: S_ISGID not cleared after open(O_TRUNC) (mode=0%o)\n",
+                               st.st_mode & 07777);
+                    fut_vfs_close(fd);
+                    fut_test_fail(1447);
+                } else {
+                    fut_printf("[MISC-TEST] ✓ Test 1447: S_ISGID cleared after open(O_TRUNC) (mode=0%o)\n",
+                               st.st_mode & 07777);
+                    fut_vfs_close(fd);
+                    fut_test_pass();
+                }
+            }
+        }
+    }
+
+    /* Test 1448: open(O_TRUNC) preserves S_ISGID without S_IXGRP (mandatory locking) */
+    fut_printf("[MISC-TEST] Test 1448: open(O_TRUNC) preserves S_ISGID without S_IXGRP\n");
+    {
+        int fd = (int)fut_vfs_open("/test_otrunc_mlock.txt", O_CREAT | O_RDWR, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1448: create failed: %d\n", fd);
+            fut_test_fail(1448);
+        } else {
+            sys_write(fd, "data", 4);
+            sys_fchmod(fd, 02644);  /* S_ISGID without S_IXGRP = mandatory locking */
+            fut_vfs_close(fd);
+
+            fd = (int)fut_vfs_open("/test_otrunc_mlock.txt", O_WRONLY | O_TRUNC, 0);
+            if (fd < 0) {
+                fut_printf("[MISC-TEST] ✗ Test 1448: O_TRUNC open failed: %d\n", fd);
+                fut_test_fail(1448);
+            } else {
+                struct fut_stat st = {0};
+                sys_fstat(fd, &st);
+                if (st.st_mode & 02000) {
+                    fut_printf("[MISC-TEST] ✓ Test 1448: S_ISGID preserved (mandatory locking, mode=0%o)\n",
+                               st.st_mode & 07777);
+                    fut_vfs_close(fd);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1448: S_ISGID incorrectly cleared (mode=0%o)\n",
+                               st.st_mode & 07777);
+                    fut_vfs_close(fd);
+                    fut_test_fail(1448);
+                }
+            }
+        }
+    }
+
+    task->cap_effective = saved_caps;
+}
+
 static void test_proc_fd_anon_types(void) {
     extern long sys_read(int fd, void *buf, size_t count);
     extern long sys_readlink(const char *path, char *buf, size_t bufsiz);
@@ -46780,6 +46904,7 @@ void fut_misc_test_thread(void *arg) {
     test_suid_clear_on_truncate_fchown();   /* Tests 1438-1441: setuid/setgid clearing on truncate/fchown */
     test_suid_clear_pwrite_sendfile();      /* Tests 1442-1443: setuid/setgid clearing on pwrite64/sendfile */
     test_o_noatime();                       /* Tests 1444-1445: O_NOATIME suppresses atime updates */
+    test_suid_clear_on_open_trunc();        /* Tests 1446-1448: setuid/setgid clearing on open(O_TRUNC) */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

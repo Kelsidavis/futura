@@ -2119,6 +2119,24 @@ int fut_vfs_open(const char *path, int flags, int mode) {
                 return trunc_ret;
             }
             file->offset = 0;  /* Reset offset after truncation */
+
+            /* POSIX/Linux: clear S_ISUID and S_ISGID bits on O_TRUNC */
+            uint32_t mode = vnode->mode;
+            int needs_clear = 0;
+            if (mode & 04000)  /* S_ISUID */
+                needs_clear = 1;
+            if ((mode & 02000) && (mode & 00010))  /* S_ISGID + S_IXGRP */
+                needs_clear = 1;
+            if (needs_clear) {
+                int has_cap_fsetid = task &&
+                    (task->cap_effective & (1ULL << 4 /* CAP_FSETID */));
+                if (!has_cap_fsetid) {
+                    if (mode & 04000)
+                        vnode->mode &= ~(uint32_t)04000;
+                    if ((mode & 02000) && (mode & 00010))
+                        vnode->mode &= ~(uint32_t)02000;
+                }
+            }
         }
     }
 

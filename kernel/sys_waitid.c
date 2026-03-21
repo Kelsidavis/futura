@@ -194,7 +194,7 @@ long sys_waitid(int idtype, int id, siginfo_t *infop, int options,
         info.si_code   = CLD_EXITED;
         info.si_status = WEXITSTATUS(status);
     } else if (WIFSIGNALED(status)) {
-        info.si_code   = CLD_KILLED;
+        info.si_code   = (status & 0x80) ? CLD_DUMPED : CLD_KILLED;
         info.si_status = WTERMSIG(status);
     } else if (WIFSTOPPED(status)) {
         info.si_code   = CLD_STOPPED;
@@ -217,7 +217,10 @@ long sys_waitid(int idtype, int id, siginfo_t *infop, int options,
     fut_printf("[WAITID] waitid(%s, id=%d, options=0x%x) -> 0 "
                "(child_pid=%d, uid=%u, code=%s, status=%d%s)\n",
                idtype_desc, id, options, child_pid, child_uid,
-               (info.si_code == CLD_EXITED) ? "CLD_EXITED" : "CLD_KILLED",
+               (info.si_code == CLD_EXITED) ? "CLD_EXITED" :
+               (info.si_code == CLD_DUMPED) ? "CLD_DUMPED" :
+               (info.si_code == CLD_STOPPED) ? "CLD_STOPPED" :
+               (info.si_code == CLD_CONTINUED) ? "CLD_CONTINUED" : "CLD_KILLED",
                info.si_status,
                (options & WNOWAIT) ? ", peek" : "");
     return 0;

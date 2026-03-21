@@ -480,7 +480,7 @@ static void task_mark_exit(fut_task_t *task, int status, int signal) {
             siginfo_t chld_info;
             __builtin_memset(&chld_info, 0, sizeof(chld_info));
             chld_info.si_signum = SIGCHLD;
-            chld_info.si_code   = signal ? CLD_KILLED : CLD_EXITED;
+            chld_info.si_code   = signal ? (signal_generates_core(signal) ? CLD_DUMPED : CLD_KILLED) : CLD_EXITED;
             chld_info.si_pid    = task->pid;
             chld_info.si_uid    = task->uid;
             chld_info.si_status = signal ? signal : status;

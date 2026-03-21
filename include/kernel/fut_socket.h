@@ -424,6 +424,9 @@ typedef struct fut_socket {
     uint32_t nl_resp_len;    /* total bytes in nl_resp_buf */
     uint32_t nl_resp_pos;    /* bytes already consumed by recvmsg */
 
+    /* Pending error (SO_ERROR): set by async failures, read-and-cleared by getsockopt */
+    int pending_error;
+
     /* Refcounting and lifecycle */
     uint64_t refcount;                      /* Reference count */
     struct fut_waitq *close_waitq;          /* Wait queue for close completion */

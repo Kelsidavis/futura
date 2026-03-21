@@ -13920,6 +13920,64 @@ static void test_msg_dontwait_per_call(void) {
     }
 }
 
+/*
+ * Tests 1377-1378: SO_ERROR read-and-clear semantics
+ */
+static void test_so_error_read_clear(void) {
+    extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+    extern long sys_getsockopt(int fd, int level, int optname,
+                               void *optval, unsigned int *optlen);
+
+    /* Test 1377: SO_ERROR on fresh socket returns 0 */
+    fut_printf("[MISC-TEST] Test 1377: getsockopt(SO_ERROR) returns 0 on fresh socket\n");
+    {
+        int sv[2];
+        long r = sys_socketpair(1 /* AF_UNIX */, 1 /* SOCK_STREAM */, 0, sv);
+        if (r < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1377: socketpair → %ld\n", r);
+            fut_test_fail(1377);
+        } else {
+            int error = -1;
+            unsigned int elen = sizeof(error);
+            long gr = sys_getsockopt(sv[0], 1 /* SOL_SOCKET */, 4 /* SO_ERROR */,
+                                     &error, &elen);
+            if (gr == 0 && error == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1377: SO_ERROR=0 on fresh socket\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1377: getsockopt=%ld error=%d\n", gr, error);
+                fut_test_fail(1377);
+            }
+            sys_close(sv[0]); sys_close(sv[1]);
+        }
+    }
+
+    /* Test 1378: SO_ERROR is read-and-clear (second read returns 0) */
+    fut_printf("[MISC-TEST] Test 1378: SO_ERROR read-and-clear (consecutive reads)\n");
+    {
+        int sv[2];
+        long r = sys_socketpair(1 /* AF_UNIX */, 1 /* SOCK_STREAM */, 0, sv);
+        if (r < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1378: socketpair → %ld\n", r);
+            fut_test_fail(1378);
+        } else {
+            /* Two consecutive reads should both return 0 on a clean socket */
+            int error1 = -1, error2 = -1;
+            unsigned int elen1 = sizeof(error1), elen2 = sizeof(error2);
+            sys_getsockopt(sv[0], 1, 4, &error1, &elen1);
+            sys_getsockopt(sv[0], 1, 4, &error2, &elen2);
+            if (error1 == 0 && error2 == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1378: both SO_ERROR reads return 0\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1378: error1=%d error2=%d\n", error1, error2);
+                fut_test_fail(1378);
+            }
+            sys_close(sv[0]); sys_close(sv[1]);
+        }
+    }
+}
+
 static void test_proc_fd_anon_types(void) {
     extern long sys_read(int fd, void *buf, size_t count);
     extern long sys_readlink(const char *path, char *buf, size_t bufsiz);
@@ -44953,6 +45011,7 @@ void fut_misc_test_thread(void *arg) {
     test_fionbio_pipe();                     /* Tests 1371-1372: FIONBIO pipe nonblock propagation */
     test_truncate_negative_length();         /* Tests 1373-1374: ftruncate/truncate reject negative length */
     test_msg_dontwait_per_call();            /* Tests 1375-1376: MSG_DONTWAIT doesn't mutate sock->flags */
+    test_so_error_read_clear();              /* Tests 1377-1378: SO_ERROR read-and-clear semantics */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

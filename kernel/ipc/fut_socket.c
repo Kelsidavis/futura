@@ -1518,6 +1518,11 @@ int fut_socket_poll(fut_socket_t *socket, int events) {
         return ready;
     }
 
+    /* Report POLLERR if there's a pending socket error (SO_ERROR) */
+    if (socket->pending_error != 0) {
+        ready |= 0x8;  /* POLLERR */
+    }
+
     if (socket->state == FUT_SOCK_LISTENING && socket->listener) {
         if ((events & 0x1) && socket->listener->queue_count > 0) {  /* POLLIN */
             ready |= 0x1;

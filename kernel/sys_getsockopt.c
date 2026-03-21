@@ -574,9 +574,9 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
                 return 0;
 
             case SO_ERROR:
-                /* Return pending error and clear it
-                 * Phase 2: No error tracking yet, always return 0 */
-                int_value = 0;
+                /* Return pending error and atomically clear it (Linux semantics) */
+                int_value = socket->pending_error;
+                socket->pending_error = 0;
                 value_len = sizeof(int);
 
                 copy_len = (len < value_len) ? len : value_len;
@@ -588,7 +588,6 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
                     return -EFAULT;
                 }
 
-                /* SO_ERROR: always 0 (no error tracking yet) */
                 return 0;
 
             case SO_SNDBUF:

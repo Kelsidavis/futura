@@ -791,6 +791,11 @@ long sys_accept4(int sockfd, void *addr, socklen_t *addrlen, int flags) {
                 struct fut_file *afile = atask->fd_table[newfd];
                 if (afile)
                     afile->flags |= O_NONBLOCK;
+                /* Also propagate to socket struct so socket_nonblock()
+                 * returns true in fut_socket_recv/send. */
+                fut_socket_t *asock = get_socket_from_fd((int)newfd);
+                if (asock)
+                    asock->flags |= O_NONBLOCK;
             }
             if (local_flags & SOCK_CLOEXEC) {
                 atask->fd_flags[newfd] |= FD_CLOEXEC;

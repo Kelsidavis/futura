@@ -282,6 +282,9 @@ long sys_socket(int domain, int type, int protocol) {
                 struct fut_file *sfile = stask->fd_table[sockfd];
                 if (sfile)
                     sfile->flags |= O_NONBLOCK;
+                /* Also set on the socket struct so socket_nonblock()
+                 * returns true in fut_socket_recv/send. */
+                socket->flags |= O_NONBLOCK;
             }
             if (type_flags & SOCK_CLOEXEC) {
                 stask->fd_flags[sockfd] |= FD_CLOEXEC;

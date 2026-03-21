@@ -48580,6 +48580,262 @@ static void test_af_inet_tcp_extended(void) {
     sys_close((int)server_fd);
 }
 
+/* ============================================================
+ * Tests 1523-1530: AF_INET edge cases — nonblocking, port 0,
+ *                  SO_REUSEADDR, multi-accept
+ * ============================================================ */
+static void test_af_inet_edge_cases(void) {
+    fut_printf("[MISC-TEST] Tests 1523-1530: AF_INET edge cases\n");
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_bind(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_listen(int sockfd, int backlog);
+    extern long sys_connect(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_accept(int sockfd, void *addr, unsigned int *addrlen);
+    extern long sys_getsockname(int sockfd, void *addr, unsigned int *addrlen);
+    extern long sys_setsockopt(int sockfd, int level, int optname,
+                               const void *optval, unsigned int optlen);
+    extern long sys_read(int fd, void *buf, unsigned long count);
+    extern long sys_write(int fd, const void *buf, unsigned long count);
+    extern long sys_close(int fd);
+    extern long sys_fcntl(int fd, int cmd, unsigned long arg);
+
+    struct { uint16_t sin_family; uint16_t sin_port; uint32_t sin_addr; uint8_t sin_zero[8]; } addr;
+    unsigned int addrlen;
+
+    /* Test 1523: SOCK_NONBLOCK — recv on empty connected socket returns EAGAIN */
+    {
+        long srv = sys_socket(2, 1, 0);  /* server: blocking */
+        if (srv < 0) { fut_test_fail(1523); goto t1524; }
+        __builtin_memset(&addr, 0, sizeof(addr));
+        addr.sin_family = 2;
+        addr.sin_port = test_htons(12350);
+        if (sys_bind((int)srv, &addr, 16) != 0 || sys_listen((int)srv, 5) != 0) {
+            sys_close((int)srv); fut_test_fail(1523); goto t1524;
+        }
+        /* client: SOCK_NONBLOCK (0x800) */
+        long cli = sys_socket(2, 1 | 0x800, 0);
+        if (cli < 0) { sys_close((int)srv); fut_test_fail(1523); goto t1524; }
+        __builtin_memset(&addr, 0, sizeof(addr));
+        addr.sin_family = 2; addr.sin_port = test_htons(12350);
+        if (sys_connect((int)cli, &addr, 16) != 0) {
+            sys_close((int)cli); sys_close((int)srv); fut_test_fail(1523); goto t1524;
+        }
+        unsigned int al = 16;
+        long acc = sys_accept((int)srv, &addr, &al);
+        if (acc < 0) { sys_close((int)cli); sys_close((int)srv); fut_test_fail(1523); goto t1524; }
+        /* Read on nonblocking client with no data → EAGAIN (-11) */
+        char buf[16];
+        long rr = sys_read((int)cli, buf, 16);
+        if (rr == -11 /* EAGAIN */) {
+            fut_printf("[MISC-TEST] ✓ Test 1523: nonblocking recv on empty socket → EAGAIN\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1523: nonblocking recv → %ld (expected -11 EAGAIN)\n", rr);
+            fut_test_fail(1523);
+        }
+        sys_close((int)acc); sys_close((int)cli); sys_close((int)srv);
+    }
+
+t1524:
+    /* Test 1524: listen on port 0 → auto-assigned port via getsockname */
+    {
+        long fd = sys_socket(2, 1, 0);
+        if (fd < 0) { fut_test_fail(1524); goto t1525; }
+        __builtin_memset(&addr, 0, sizeof(addr));
+        addr.sin_family = 2; addr.sin_port = 0; addr.sin_addr = 0;
+        if (sys_bind((int)fd, &addr, 16) != 0) {
+            sys_close((int)fd); fut_test_fail(1524); goto t1525;
+        }
+        __builtin_memset(&addr, 0, sizeof(addr));
+        addrlen = 16;
+        long ret = sys_getsockname((int)fd, &addr, &addrlen);
+        uint16_t assigned = test_htons(addr.sin_port);
+        if (ret == 0 && assigned >= 49152) {
+            fut_printf("[MISC-TEST] ✓ Test 1524: bind(port=0) → auto port=%u\n", assigned);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1524: bind(port=0) → ret=%ld port=%u\n", ret, assigned);
+            fut_test_fail(1524);
+        }
+        sys_close((int)fd);
+    }
+
+t1525:
+    /* Test 1525: SO_REUSEADDR allows rebinding to a just-freed port */
+    {
+        /* First, bind to port 12351 and close */
+        long fd1 = sys_socket(2, 1, 0);
+        if (fd1 < 0) { fut_test_fail(1525); goto t1526; }
+        __builtin_memset(&addr, 0, sizeof(addr));
+        addr.sin_family = 2; addr.sin_port = test_htons(12351);
+        if (sys_bind((int)fd1, &addr, 16) != 0) {
+            sys_close((int)fd1); fut_test_fail(1525); goto t1526;
+        }
+        sys_close((int)fd1);
+
+        /* Now rebind to same port with SO_REUSEADDR */
+        long fd2 = sys_socket(2, 1, 0);
+        if (fd2 < 0) { fut_test_fail(1525); goto t1526; }
+        int optval = 1;
+        sys_setsockopt((int)fd2, 1 /*SOL_SOCKET*/, 2 /*SO_REUSEADDR*/, &optval, 4);
+        long br = sys_bind((int)fd2, &addr, 16);
+        if (br == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1525: SO_REUSEADDR allows rebind to port 12351\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1525: rebind with REUSEADDR → %ld\n", br);
+            fut_test_fail(1525);
+        }
+        sys_close((int)fd2);
+    }
+
+t1526:
+    /* Test 1526: multi-client accept — two clients connect, two accepts */
+    {
+        long srv = sys_socket(2, 1, 0);
+        if (srv < 0) { fut_test_fail(1526); goto t1527; }
+        __builtin_memset(&addr, 0, sizeof(addr));
+        addr.sin_family = 2; addr.sin_port = test_htons(12352);
+        if (sys_bind((int)srv, &addr, 16) != 0 || sys_listen((int)srv, 5) != 0) {
+            sys_close((int)srv); fut_test_fail(1526); goto t1527;
+        }
+        /* Connect two clients */
+        long c1 = sys_socket(2, 1, 0);
+        long c2 = sys_socket(2, 1, 0);
+        if (c1 < 0 || c2 < 0) {
+            if (c1 >= 0) sys_close((int)c1);
+            if (c2 >= 0) sys_close((int)c2);
+            sys_close((int)srv); fut_test_fail(1526); goto t1527;
+        }
+        __builtin_memset(&addr, 0, sizeof(addr));
+        addr.sin_family = 2; addr.sin_port = test_htons(12352);
+        long cr1 = sys_connect((int)c1, &addr, 16);
+        long cr2 = sys_connect((int)c2, &addr, 16);
+        if (cr1 != 0 || cr2 != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1526: connect → %ld/%ld\n", cr1, cr2);
+            sys_close((int)c1); sys_close((int)c2); sys_close((int)srv);
+            fut_test_fail(1526); goto t1527;
+        }
+        /* Accept both */
+        unsigned int al = 16;
+        long a1 = sys_accept((int)srv, &addr, &al);
+        al = 16;
+        long a2 = sys_accept((int)srv, &addr, &al);
+        if (a1 < 0 || a2 < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1526: accept → %ld/%ld\n", a1, a2);
+            if (a1 >= 0) sys_close((int)a1);
+            if (a2 >= 0) sys_close((int)a2);
+            sys_close((int)c1); sys_close((int)c2); sys_close((int)srv);
+            fut_test_fail(1526); goto t1527;
+        }
+        /* Verify independent data paths */
+        sys_write((int)c1, "AA", 2);
+        sys_write((int)c2, "BB", 2);
+        char b1[4] = {0}, b2[4] = {0};
+        long r1 = sys_read((int)a1, b1, 4);
+        long r2 = sys_read((int)a2, b2, 4);
+        if (r1 == 2 && r2 == 2 &&
+            b1[0] == 'A' && b1[1] == 'A' &&
+            b2[0] == 'B' && b2[1] == 'B') {
+            fut_printf("[MISC-TEST] ✓ Test 1526: multi-accept: 2 clients, independent data paths\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1526: data mismatch r1=%ld r2=%ld\n", r1, r2);
+            fut_test_fail(1526);
+        }
+        sys_close((int)a1); sys_close((int)a2);
+        sys_close((int)c1); sys_close((int)c2); sys_close((int)srv);
+    }
+
+t1527:
+    /* Test 1527: fcntl F_SETFL O_NONBLOCK on AF_INET socket */
+    {
+        long fd = sys_socket(2, 1, 0);
+        if (fd < 0) { fut_test_fail(1527); goto t1528; }
+        /* Set O_NONBLOCK via fcntl */
+        long ret = sys_fcntl((int)fd, 4 /*F_SETFL*/, 0x800 /*O_NONBLOCK*/);
+        if (ret != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1527: fcntl F_SETFL O_NONBLOCK → %ld\n", ret);
+            sys_close((int)fd); fut_test_fail(1527); goto t1528;
+        }
+        /* Verify with F_GETFL */
+        long flags = sys_fcntl((int)fd, 3 /*F_GETFL*/, 0);
+        if (flags >= 0 && (flags & 0x800)) {
+            fut_printf("[MISC-TEST] ✓ Test 1527: fcntl F_SETFL/F_GETFL O_NONBLOCK on AF_INET\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1527: F_GETFL → 0x%lx (no O_NONBLOCK)\n", flags);
+            fut_test_fail(1527);
+        }
+        sys_close((int)fd);
+    }
+
+t1528:
+    /* Test 1528: accept on non-listening socket → EINVAL */
+    {
+        long fd = sys_socket(2, 1, 0);
+        if (fd < 0) { fut_test_fail(1528); goto t1529; }
+        __builtin_memset(&addr, 0, sizeof(addr));
+        addr.sin_family = 2; addr.sin_port = test_htons(12353);
+        sys_bind((int)fd, &addr, 16);
+        /* accept without listen */
+        unsigned int al = 16;
+        long ret = sys_accept((int)fd, &addr, &al);
+        if (ret == -22 /* EINVAL */) {
+            fut_printf("[MISC-TEST] ✓ Test 1528: accept on non-listening socket → EINVAL\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1528: accept on non-listening → %ld\n", ret);
+            fut_test_fail(1528);
+        }
+        sys_close((int)fd);
+    }
+
+t1529:
+    /* Test 1529: connect to self (same port) → ECONNREFUSED or EADDRINUSE */
+    {
+        long fd = sys_socket(2, 1, 0);
+        if (fd < 0) { fut_test_fail(1529); goto t1530; }
+        __builtin_memset(&addr, 0, sizeof(addr));
+        addr.sin_family = 2; addr.sin_port = test_htons(12354);
+        if (sys_bind((int)fd, &addr, 16) != 0) {
+            sys_close((int)fd); fut_test_fail(1529); goto t1530;
+        }
+        /* connect bound (not listening) socket to itself */
+        long ret = sys_connect((int)fd, &addr, 16);
+        if (ret == -111 /* ECONNREFUSED */ || ret == -98 /* EADDRINUSE */ || ret == -22 /* EINVAL */) {
+            fut_printf("[MISC-TEST] ✓ Test 1529: connect bound to self → %ld\n", ret);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1529: connect to self → %ld\n", ret);
+            fut_test_fail(1529);
+        }
+        sys_close((int)fd);
+    }
+
+t1530:
+    /* Test 1530: double listen is harmless (updates backlog) */
+    {
+        long fd = sys_socket(2, 1, 0);
+        if (fd < 0) { fut_test_fail(1530); return; }
+        __builtin_memset(&addr, 0, sizeof(addr));
+        addr.sin_family = 2; addr.sin_port = test_htons(12355);
+        if (sys_bind((int)fd, &addr, 16) != 0) {
+            sys_close((int)fd); fut_test_fail(1530); return;
+        }
+        long r1 = sys_listen((int)fd, 5);
+        long r2 = sys_listen((int)fd, 10);
+        if (r1 == 0 && r2 == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1530: double listen succeeds (backlog updated)\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1530: listen → %ld/%ld\n", r1, r2);
+            fut_test_fail(1530);
+        }
+        sys_close((int)fd);
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -49305,6 +49561,7 @@ void fut_misc_test_thread(void *arg) {
     test_af_inet_connect_refused();        /* Test  1514: AF_INET connect non-listening → ECONNREFUSED */
     test_af_inet_bind_conflict();          /* Tests 1515-1516: AF_INET bind conflict detection */
     test_af_inet_tcp_extended();           /* Tests 1517-1522: AF_INET getsockname/getpeername/shutdown */
+    test_af_inet_edge_cases();             /* Tests 1523-1530: nonblocking, port 0, SO_REUSEADDR, multi-accept */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

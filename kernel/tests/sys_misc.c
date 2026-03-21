@@ -12796,6 +12796,96 @@ static void test_so_rcvtimeo_new(void) {
     sys_close(sv[1]);
 }
 
+static void test_cpus_allowed_procfs(void) {
+    extern long sys_sched_setaffinity(int pid, unsigned int len, const void *user_mask);
+    extern long sys_sched_getaffinity(int pid, unsigned int len, void *user_mask);
+    extern long sys_read(int fd, void *buf, size_t count);
+
+    /* Test 1338: /proc/self/status Cpus_allowed reflects affinity mask */
+    fut_printf("[MISC-TEST] Test 1338: /proc/self/status Cpus_allowed from affinity\n");
+    {
+        /* Get current mask */
+        uint64_t mask = 0;
+        sys_sched_getaffinity(0, sizeof(mask), &mask);
+        /* Read /proc/self/status */
+        int fd = fut_vfs_open("/proc/self/status", 0 /* O_RDONLY */, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1338: open /proc/self/status → %d\n", fd);
+            fut_test_fail(1338); fut_test_fail(1339); return;
+        }
+        char buf[4096];
+        long n = sys_read(fd, buf, sizeof(buf) - 1);
+        fut_vfs_close(fd);
+        if (n <= 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1338: read → %ld\n", n);
+            fut_test_fail(1338); fut_test_fail(1339); return;
+        }
+        buf[n] = '\0';
+        /* Find "Cpus_allowed:\t" */
+        const char *needle = "Cpus_allowed:\t";
+        char *found = NULL;
+        for (int i = 0; i < n - 14; i++) {
+            int match = 1;
+            for (int j = 0; needle[j]; j++) {
+                if (buf[i+j] != needle[j]) { match = 0; break; }
+            }
+            if (match) { found = &buf[i + 14]; break; }
+        }
+        if (found) {
+            /* Should be hex representation of the mask, not just "1" */
+            /* At minimum, should contain hex chars */
+            int has_hex = 0;
+            for (char *q = found; *q && *q != '\n'; q++) {
+                if ((*q >= '0' && *q <= '9') || (*q >= 'a' && *q <= 'f')) has_hex = 1;
+            }
+            if (has_hex) {
+                fut_printf("[MISC-TEST] ✓ Test 1338: Cpus_allowed field present with hex mask\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1338: Cpus_allowed has no hex chars\n");
+                fut_test_fail(1338);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1338: Cpus_allowed not found in /proc/self/status\n");
+            fut_test_fail(1338);
+        }
+    }
+
+    /* Test 1339: Cpus_allowed_list shows CPU range */
+    fut_printf("[MISC-TEST] Test 1339: /proc/self/status Cpus_allowed_list\n");
+    {
+        int fd = fut_vfs_open("/proc/self/status", 0, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1339: open → %d\n", fd);
+            fut_test_fail(1339); return;
+        }
+        char buf[4096];
+        long n = sys_read(fd, buf, sizeof(buf) - 1);
+        fut_vfs_close(fd);
+        if (n <= 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1339: read → %ld\n", n);
+            fut_test_fail(1339); return;
+        }
+        buf[n] = '\0';
+        const char *needle = "Cpus_allowed_list:\t";
+        char *found = NULL;
+        for (int i = 0; i < n - 19; i++) {
+            int match = 1;
+            for (int j = 0; needle[j]; j++) {
+                if (buf[i+j] != needle[j]) { match = 0; break; }
+            }
+            if (match) { found = &buf[i + 19]; break; }
+        }
+        if (found && found[0] >= '0' && found[0] <= '9') {
+            fut_printf("[MISC-TEST] ✓ Test 1339: Cpus_allowed_list starts with '%c'\n", found[0]);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1339: Cpus_allowed_list not found or invalid\n");
+            fut_test_fail(1339);
+        }
+    }
+}
+
 static void test_process_madvise_basic(void) {
     /* Test 1292: process_madvise with flags != 0 → EINVAL */
     fut_printf("[MISC-TEST] Test 1292: process_madvise flags=1 → EINVAL\n");
@@ -43664,6 +43754,7 @@ void fut_misc_test_thread(void *arg) {
     test_so_timestamp();                     /* Tests 1322-1329: SO_TIMESTAMP/SO_TIMESTAMPNS cmsg delivery */
     test_tcp_info();                         /* Tests 1330-1333: TCP_INFO struct getsockopt */
     test_so_rcvtimeo_new();                  /* Tests 1334-1337: SO_RCVTIMEO_NEW/SO_SNDTIMEO_NEW */
+    test_cpus_allowed_procfs();              /* Tests 1338-1339: /proc/self/status Cpus_allowed dynamic */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

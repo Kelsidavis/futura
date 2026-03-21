@@ -861,9 +861,52 @@ static size_t gen_status(char *buf, size_t cap, fut_task_t *task, uint64_t tid) 
     pb_str(&b, "NSpid:\t");  pb_u64(&b, task->pid); pb_char(&b, '\n');
     pb_str(&b, "NSpgid:\t"); pb_u64(&b, task->pgid); pb_char(&b, '\n');
     pb_str(&b, "NSsid:\t");  pb_u64(&b, task->sid);  pb_char(&b, '\n');
-    /* CPU affinity: single-CPU environment, CPU 0 only */
-    pb_str(&b, "Cpus_allowed:\t"); pb_u64(&b, 1); pb_char(&b, '\n');
-    pb_str(&b, "Cpus_allowed_list:\t"); pb_str(&b, "0"); pb_char(&b, '\n');
+    /* CPU affinity: reflect actual sched_setaffinity mask from thread */
+    {
+        uint64_t amask = 0;
+        if (task->threads)
+            amask = task->threads->cpu_affinity_mask;
+        if (amask == 0)
+            amask = 0x1;  /* Default: at least CPU 0 */
+        /* Cpus_allowed: hex bitmask in Linux "%08x,%08x" format (high,low) */
+        pb_str(&b, "Cpus_allowed:\t");
+        uint32_t hi = (uint32_t)(amask >> 32);
+        uint32_t lo = (uint32_t)(amask & 0xFFFFFFFFu);
+        if (hi) {
+            static const char hex[] = "0123456789abcdef";
+            char t[8]; for (int i = 7; i >= 0; i--) { t[i] = hex[hi & 0xf]; hi >>= 4; }
+            for (int i = 0; i < 8; i++) pb_char(&b, t[i]);
+            pb_char(&b, ',');
+            char s[8]; for (int i = 7; i >= 0; i--) { s[i] = hex[lo & 0xf]; lo >>= 4; }
+            for (int i = 0; i < 8; i++) pb_char(&b, s[i]);
+        } else {
+            static const char hex[] = "0123456789abcdef";
+            char s[8]; uint32_t v = lo;
+            for (int i = 7; i >= 0; i--) { s[i] = hex[v & 0xf]; v >>= 4; }
+            for (int i = 0; i < 8; i++) pb_char(&b, s[i]);
+        }
+        pb_char(&b, '\n');
+        /* Cpus_allowed_list: "0" or "0-N" or comma-separated ranges */
+        pb_str(&b, "Cpus_allowed_list:\t");
+        int first = -1, last = -1, need_comma = 0;
+        for (int i = 0; i < 64; i++) {
+            if (amask & (1ULL << i)) {
+                if (first < 0) first = i;
+                last = i;
+            } else if (first >= 0) {
+                if (need_comma) pb_char(&b, ',');
+                pb_u64(&b, (uint64_t)first);
+                if (last > first) { pb_char(&b, '-'); pb_u64(&b, (uint64_t)last); }
+                first = -1; need_comma = 1;
+            }
+        }
+        if (first >= 0) {
+            if (need_comma) pb_char(&b, ',');
+            pb_u64(&b, (uint64_t)first);
+            if (last > first) { pb_char(&b, '-'); pb_u64(&b, (uint64_t)last); }
+        }
+        pb_char(&b, '\n');
+    }
     /* NUMA memory policy: node 0 only (no NUMA) */
     pb_str(&b, "Mems_allowed:\t"); pb_str(&b, "00000000,00000001"); pb_char(&b, '\n');
     pb_str(&b, "Mems_allowed_list:\t"); pb_str(&b, "0"); pb_char(&b, '\n');

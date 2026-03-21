@@ -917,7 +917,9 @@ int fut_socket_connect(fut_socket_t *socket, const char *target_path, size_t pat
     /* Find listening socket */
     fut_socket_t *listener = fut_socket_find_listener(target_path, path_len);
     if (!listener) {
-        return -ECONNREFUSED;
+        /* No listener at this path: ENOENT (Linux returns ENOENT for
+         * connect() to a non-existent Unix socket path, not ECONNREFUSED) */
+        return -ENOENT;
     }
 
     /* Check if listener has space in backlog */

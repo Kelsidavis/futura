@@ -19139,7 +19139,7 @@ static void test_unix_named_errors(void) {
         char sun_path[108];
     } addr;
 
-    /* connect to non-existent socket → ECONNREFUSED */
+    /* connect to non-existent socket → ENOENT (Linux: path doesn't exist) */
     addr.sun_family = 1;
     const char *no_path = "/tmp/no_such_socket_291.sock";
     size_t plen = 0;
@@ -19148,12 +19148,12 @@ static void test_unix_named_errors(void) {
     long fd = sys_socket(1, 1, 0);
     if (fd < 0) { fut_printf("[MISC-TEST] ✗ Test 291: socket failed\n"); fut_test_fail(291); return; }
     long r = sys_connect((int)fd, &addr, (unsigned int)(2 + plen + 1));
-    if (r != -111 /* ECONNREFUSED */) {
-        fut_printf("[MISC-TEST] ✗ Test 291: connect nonexistent = %ld (want ECONNREFUSED)\n", r);
+    if (r != -2 /* ENOENT */) {
+        fut_printf("[MISC-TEST] ✗ Test 291: connect nonexistent = %ld (want ENOENT)\n", r);
         sys_close((int)fd); fut_test_fail(291); return;
     }
     sys_close((int)fd);
-    fut_printf("[MISC-TEST] ✓ connect to non-existent → ECONNREFUSED\n");
+    fut_printf("[MISC-TEST] ✓ connect to non-existent → ENOENT\n");
 
     /* bind twice → EINVAL (already bound) */
     const char *dup_path = "/tmp/test_unix_dup_291.sock";

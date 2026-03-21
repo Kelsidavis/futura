@@ -40454,6 +40454,209 @@ static void test_cleartid_futex_wake(void) {
     }
 }
 
+/* ---- /proc/self/stat helpers (file-scope to avoid nested functions) ---- */
+
+/* Advance past field 1 (pid) and field 2 ((comm)), then position pointer
+ * at the start of field N (N >= 3, 1-based).  Returns NULL on failure. */
+static const char *stat_field_ptr(const char *line, int n) {
+    const char *p = line;
+    while (*p && *p != ' ') p++;       /* skip field 1 */
+    if (*p == ' ') p++;
+    if (*p == '(') { while (*p && *p != ')') p++; if (*p) p++; }  /* skip (comm) */
+    if (*p == ' ') p++;
+    int field = 3;
+    while (*p && field < n) {
+        while (*p && *p != ' ' && *p != '\n') p++;
+        if (*p == ' ') { p++; field++; }
+        else break;
+    }
+    return (field == n) ? p : NULL;
+}
+
+/* Parse a decimal long from p (may be negative); returns -999999 if p==NULL. */
+static long stat_parse_long(const char *p) {
+    if (!p) return -999999L;
+    long v = 0; int neg = 0;
+    if (*p == '-') { neg = 1; p++; }
+    while (*p >= '0' && *p <= '9') { v = v * 10 + (*p - '0'); p++; }
+    return neg ? -v : v;
+}
+
+/*
+ * Tests 1239-1246: /proc/self/stat field count and accuracy
+ *
+ * Linux /proc/[pid]/stat has 52 fields.  Tools like htop 3.x, atop, and
+ * perf use fields 42+ (delayacct_blkio_ticks, guest_time, start_data, …).
+ * Verify that our implementation outputs the full 52-field format.
+ *
+ *   Test 1239: open /proc/self/stat succeeds
+ *   Test 1240: stat file contains at least 52 whitespace-separated tokens
+ *   Test 1241: field 1 (pid) matches getpid()
+ *   Test 1242: field 2 (comm) is wrapped in parentheses
+ *   Test 1243: field 3 (state) is a known letter (R/S/D/T/Z/I)
+ *   Test 1244: field 40 (rt_priority) == 0 for a SCHED_OTHER task
+ *   Test 1245: field 41 (policy) == 0 for a SCHED_OTHER task
+ *   Test 1246: field 42 (delayacct_blkio_ticks) is parseable (>= 0)
+ */
+static void test_proc_stat_fields(void) {
+    fut_printf("[MISC-TEST] Tests 1239-1246: /proc/self/stat 52-field format\n");
+
+    extern long sys_getpid(void);
+
+    /* Test 1239: open */
+    int fd = (int)fut_vfs_open("/proc/self/stat", 0 /*O_RDONLY*/, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1239: open /proc/self/stat failed: %d\n", fd);
+        fut_test_fail(1239);
+        /* skip remaining tests */
+        for (int i = 1240; i <= 1246; i++) fut_test_fail(i);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 1239: /proc/self/stat opened fd=%d\n", fd);
+    fut_test_pass();
+
+    /* Read the file */
+    char buf[1024];
+    __builtin_memset(buf, 0, sizeof(buf));
+    ssize_t n = fut_vfs_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    if (n <= 0) {
+        fut_printf("[MISC-TEST] ✗ stat read returned %ld\n", (long)n);
+        for (int i = 1240; i <= 1246; i++) fut_test_fail(i);
+        return;
+    }
+    buf[n] = '\0';
+
+    /*
+     * Parse the stat line.  Field 2 (comm) is wrapped in parentheses and may
+     * contain spaces, so we find the closing ')' first, then count the fields
+     * after it.  Fields 1..52 are space-separated.
+     *
+     * Layout: "pid (comm) state ppid pgrp ... policy delay guest cguest ..."
+     */
+
+    /* Test 1240: field count >= 52.  Count spaces, handling the comm field. */
+    {
+        const char *p = buf;
+        /* Skip field 1 (pid) */
+        while (*p && *p != ' ') p++;
+        if (*p) p++;  /* skip space */
+        /* Skip field 2 (comm in parens) */
+        if (*p == '(') {
+            while (*p && *p != ')') p++;
+            if (*p == ')') p++;
+        }
+        /* Now count remaining space-delimited tokens (fields 3..52 = 50 more) */
+        int count = 2;  /* already counted field 1 and field 2 */
+        int in_tok = 0;
+        while (*p) {
+            if (*p == ' ' || *p == '\n') {
+                in_tok = 0;
+            } else {
+                if (!in_tok) { count++; in_tok = 1; }
+            }
+            p++;
+        }
+        if (count < 52) {
+            fut_printf("[MISC-TEST] ✗ Test 1240: only %d fields in /proc/self/stat (need 52)\n", count);
+            fut_test_fail(1240);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1240: /proc/self/stat has %d fields (≥ 52)\n", count);
+            fut_test_pass();
+        }
+    }
+
+    /* Test 1241: field 1 == getpid() */
+    {
+        long stat_pid = 0;
+        const char *p = buf;
+        while (*p >= '0' && *p <= '9') { stat_pid = stat_pid * 10 + (*p - '0'); p++; }
+        long my_pid = sys_getpid();
+        if (stat_pid != my_pid) {
+            fut_printf("[MISC-TEST] ✗ Test 1241: stat pid=%ld != getpid=%ld\n", stat_pid, my_pid);
+            fut_test_fail(1241);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1241: stat pid=%ld == getpid()\n", stat_pid);
+            fut_test_pass();
+        }
+    }
+
+    /* Test 1242: field 2 (comm) starts with '(' */
+    {
+        const char *p = buf;
+        while (*p && *p != ' ') p++;  /* skip pid */
+        if (*p == ' ') p++;
+        if (*p != '(') {
+            fut_printf("[MISC-TEST] ✗ Test 1242: stat field 2 does not start with '('\n");
+            fut_test_fail(1242);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1242: stat comm wrapped in parens\n");
+            fut_test_pass();
+        }
+    }
+
+    /* Test 1243: field 3 (state) is one of R/S/D/T/Z/I/t */
+    {
+        const char *p = buf;
+        while (*p && *p != ' ') p++;
+        if (*p) p++;
+        /* skip comm */
+        if (*p == '(') { while (*p && *p != ')') p++; if (*p) p++; }
+        if (*p == ' ') p++;
+        char state = *p;
+        const char *valid = "RSDTZItp";
+        int ok = 0;
+        for (int i = 0; valid[i]; i++) if (state == valid[i]) ok = 1;
+        if (!ok) {
+            fut_printf("[MISC-TEST] ✗ Test 1243: stat state='%c' not a valid state char\n", state);
+            fut_test_fail(1243);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1243: stat state='%c'\n", state);
+            fut_test_pass();
+        }
+    }
+
+    /* Test 1244: field 40 (rt_priority) == 0 for SCHED_OTHER */
+    {
+        long rtp = stat_parse_long(stat_field_ptr(buf, 40));
+        if (rtp != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1244: stat field 40 (rt_priority)=%ld (expected 0)\n", rtp);
+            fut_test_fail(1244);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1244: stat field 40 (rt_priority)=0\n");
+            fut_test_pass();
+        }
+    }
+
+    /* Test 1245: field 41 (policy) == 0 for SCHED_OTHER */
+    {
+        long pol = stat_parse_long(stat_field_ptr(buf, 41));
+        if (pol != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1245: stat field 41 (policy)=%ld (expected 0)\n", pol);
+            fut_test_fail(1245);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1245: stat field 41 (policy)=0\n");
+            fut_test_pass();
+        }
+    }
+
+    /* Test 1246: field 42 (delayacct_blkio_ticks) is present and >= 0 */
+    {
+        const char *fp = stat_field_ptr(buf, 42);
+        long delay = stat_parse_long(fp);
+        if (!fp || delay == -999999L) {
+            fut_printf("[MISC-TEST] ✗ Test 1246: stat field 42 (delayacct) not found\n");
+            fut_test_fail(1246);
+        } else if (delay < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1246: stat field 42 (delayacct)=%ld (expected >= 0)\n", delay);
+            fut_test_fail(1246);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1246: stat field 42 (delayacct)=%ld\n", delay);
+            fut_test_pass();
+        }
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -41093,6 +41296,7 @@ void fut_misc_test_thread(void *arg) {
     test_sock_timeout_blocking();             /* Tests 1227-1230: SO_SNDTIMEO/SO_RCVTIMEO blocking + clear */
     test_stream_buf_integrity();              /* Tests 1231-1234: stream socket circular-buffer full/wrap integrity */
     test_cleartid_futex_wake();               /* Tests 1235-1238: CLONE_CHILD_CLEARTID TID-zero+futex-wake on thread exit */
+    test_proc_stat_fields();                  /* Tests 1239-1246: /proc/self/stat 52-field format + rt_priority/policy/delayacct */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

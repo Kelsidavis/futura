@@ -1327,15 +1327,50 @@ static size_t gen_stat(char *buf, size_t cap, fut_task_t *task, uint64_t tid) {
     pb_u64(&b, blocked_sig);  pb_char(&b, ' ');
     pb_u64(&b, sigignore);    pb_char(&b, ' ');
     pb_u64(&b, sigcatch);     pb_char(&b, ' ');
-    pb_char(&b, '0');         pb_char(&b, ' ');  /* wchan (0) */
-    /* Fields 35-37: nswap cnswap exit_signal */
+    pb_char(&b, '0');         pb_char(&b, ' ');  /* (35) wchan */
+    /* (36) nswap (37) cnswap: obsolete, always 0 */
     pb_char(&b, '0'); pb_char(&b, ' ');
     pb_char(&b, '0'); pb_char(&b, ' ');
-    pb_str(&b, "17");  pb_char(&b, ' '); /* SIGCHLD = 17 */
-    /* Field 39: processor (CPU 0) */
+    /* (38) exit_signal: SIGCHLD for normal tasks */
+    pb_str(&b, "17");  pb_char(&b, ' ');
+    /* (39) processor: CPU 0 */
     pb_char(&b, '0'); pb_char(&b, ' ');
-    /* Fields 40-41: rt_priority policy */
+    /* (40) rt_priority: 0 for SCHED_OTHER, 1-99 for RT */
+    {
+        int rtp = 0;
+        if (task->threads) rtp = task->threads->rt_priority;
+        pb_u64(&b, (uint64_t)(rtp < 0 ? 0 : rtp)); pb_char(&b, ' ');
+    }
+    /* (41) policy: SCHED_OTHER=0, SCHED_FIFO=1, SCHED_RR=2, SCHED_BATCH=3, SCHED_IDLE=5 */
+    {
+        int pol = 0;
+        if (task->threads) pol = task->threads->sched_policy;
+        pb_u64(&b, (uint64_t)(pol < 0 ? 0 : pol)); pb_char(&b, ' ');
+    }
+    /* (42) delayacct_blkio_ticks: 0 (no delay accounting) */
     pb_char(&b, '0'); pb_char(&b, ' ');
+    /* (43) guest_time: 0 (no hypervisor guest time) */
+    pb_char(&b, '0'); pb_char(&b, ' ');
+    /* (44) cguest_time: 0 */
+    pb_char(&b, '0'); pb_char(&b, ' ');
+    /* (45-47) start_data end_data start_brk: from mm */
+    {
+        uint64_t sd = 0, ed = 0, sb = 0;
+        if (task->mm) {
+            sd = task->mm->brk_start ? task->mm->brk_start : 0;
+            ed = task->mm->brk_current ? task->mm->brk_current : 0;
+            sb = ed;
+        }
+        pb_u64(&b, sd); pb_char(&b, ' ');
+        pb_u64(&b, ed); pb_char(&b, ' ');
+        pb_u64(&b, sb); pb_char(&b, ' ');
+    }
+    /* (48-51) arg_start arg_end env_start env_end: 0 (not tracked in kernel context) */
+    pb_char(&b, '0'); pb_char(&b, ' ');
+    pb_char(&b, '0'); pb_char(&b, ' ');
+    pb_char(&b, '0'); pb_char(&b, ' ');
+    pb_char(&b, '0'); pb_char(&b, ' ');
+    /* (52) exit_code: 0 (process is running) */
     pb_char(&b, '0'); pb_char(&b, '\n');
 
     return b.pos;

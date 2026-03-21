@@ -89,6 +89,21 @@ static void task_detach_child(fut_task_t *parent, fut_task_t *child) {
 }
 
 /**
+ * Reparent a task to a new parent (CLONE_PARENT support).
+ * Detaches child from old_parent's child list, attaches to new_parent.
+ */
+void fut_task_reparent(fut_task_t *child, fut_task_t *new_parent) {
+    if (!child || !new_parent || child->parent == new_parent)
+        return;
+    fut_spinlock_acquire(&task_list_lock);
+    if (child->parent)
+        task_detach_child(child->parent, child);
+    child->parent = new_parent;
+    task_attach_child(new_parent, child);
+    fut_spinlock_release(&task_list_lock);
+}
+
+/**
  * Create a new task (process container).
  */
 fut_task_t *fut_task_create(void) {

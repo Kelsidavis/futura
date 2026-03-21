@@ -1237,6 +1237,20 @@ static int64_t clone_do_fork_with_flags(uint64_t clone_flags, uint64_t parent_ti
 
     if (pid > 0) {
         /* Parent context */
+
+        /* CLONE_PARENT: reparent child to caller's parent */
+        if (clone_flags & 0x00008000ULL /* CLONE_PARENT */) {
+            extern fut_task_t *fut_task_current(void);
+            extern fut_task_t *fut_task_by_pid(uint64_t pid);
+            extern void fut_task_reparent(fut_task_t *child, fut_task_t *new_parent);
+            fut_task_t *caller = fut_task_current();
+            if (caller && caller->parent) {
+                fut_task_t *child = fut_task_by_pid((uint64_t)pid);
+                if (child)
+                    fut_task_reparent(child, caller->parent);
+            }
+        }
+
         if ((clone_flags & CLONE_PARENT_SETTID_) && parent_tid) {
             int tid_val = (int)pid;
             clone_copy_to_user((void *)(uintptr_t)parent_tid,
@@ -1309,6 +1323,7 @@ static int64_t sys_clone_handler(uint64_t flags, uint64_t stack, uint64_t parent
                                  0x200ULL   /* CLONE_FS */     | \
                                  0x400ULL   /* CLONE_FILES */  | \
                                  0x800ULL   /* CLONE_SIGHAND */| \
+                                 0x8000ULL  /* CLONE_PARENT */ | \
                                  0x40000ULL /* CLONE_SYSVSEM */| \
                                  0x80000000ULL /* CLONE_IO */)
     if ((structural_flags & ~CLONE_FORK_COMPAT_MASK) == 0) {

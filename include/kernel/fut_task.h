@@ -286,6 +286,7 @@ int fut_task_waitpid_ex(int pid, int *status_out, int flags, uint32_t *uid_out);
 void fut_task_signal_exit(int signal);
 void fut_task_do_stop(fut_task_t *task, int sig);
 void fut_task_do_cont(fut_task_t *task);
+void fut_task_reparent(fut_task_t *child, fut_task_t *new_parent);
 fut_task_t *fut_task_find_new_parent(fut_task_t *dying_task);
 
 /**

@@ -77,6 +77,7 @@ struct fut_clone_args {
 #define CLONE_CHILD_SETTID   0x01000000
 #define CLONE_CHILD_CLEARTID 0x00200000
 #define CLONE_SETTLS         0x00080000
+#define CLONE_PARENT         0x00008000      /* Linux: child gets same parent as caller */
 #define CLONE_CLEAR_SIGHAND  0x100000000ULL  /* Linux 5.5: reset all handlers to SIG_DFL */
 #define CLONE_INTO_CGROUP    0x200000000ULL  /* Linux 5.7: place child in specific cgroup */
 
@@ -152,6 +153,17 @@ long sys_clone3(const struct fut_clone_args *uargs, size_t size) {
 
     if (child_pid > 0) {
         /* ── Parent context ── */
+
+        /* CLONE_PARENT: reparent child to caller's parent (sibling relationship).
+         * Used by systemd-nspawn, container runtimes, double-fork daemons. */
+        if ((flags & CLONE_PARENT) && child_pid > 0) {
+            fut_task_t *caller = fut_task_current();
+            if (caller && caller->parent) {
+                fut_task_t *child = fut_task_by_pid((uint64_t)child_pid);
+                if (child)
+                    fut_task_reparent(child, caller->parent);
+            }
+        }
 
         /* CLONE_PIDFD: create pidfd and write to caller */
         if (want_pidfd) {

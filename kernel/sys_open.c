@@ -145,6 +145,14 @@ long sys_open(const char *pathname, int flags, int mode) {
         return -EINVAL;
     }
 
+    /* O_CREAT | O_DIRECTORY without O_TMPFILE is invalid on Linux.
+     * O_TMPFILE includes O_DIRECTORY, so only reject when the O_TMPFILE
+     * high bit (020000000) is absent. */
+    if ((local_flags & (O_CREAT | O_DIRECTORY)) == (O_CREAT | O_DIRECTORY) &&
+        (local_flags & O_TMPFILE) != O_TMPFILE) {
+        return -EINVAL;
+    }
+
     /* Validate access mode BEFORE use
      * VULNERABILITY: Invalid Access Mode Causing Undefined Behavior
      *

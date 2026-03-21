@@ -201,6 +201,14 @@ long sys_openat(int dirfd, const char *pathname, int flags, int mode) {
         path_type = "relative";
     }
 
+    /* O_CREAT | O_DIRECTORY without O_TMPFILE is invalid on Linux.
+     * O_TMPFILE includes O_DIRECTORY, so only reject when the O_TMPFILE
+     * high bit (020000000) is absent. */
+    if ((local_flags & (O_CREAT | O_DIRECTORY)) == (O_CREAT | O_DIRECTORY) &&
+        (local_flags & O_TMPFILE) != O_TMPFILE) {
+        return -EINVAL;
+    }
+
     /* O_TMPFILE: create anonymous file in the specified directory */
     fut_task_t *open_task = fut_task_current();
     if ((local_flags & O_TMPFILE) == O_TMPFILE)

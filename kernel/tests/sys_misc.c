@@ -47594,6 +47594,74 @@ static void test_pipe2_atomic_flags(void) {
 }
 
 /* ============================================================
+ * Tests 1490-1492: open(O_CREAT|O_DIRECTORY) → EINVAL
+ *
+ * Linux rejects O_CREAT|O_DIRECTORY with EINVAL (unless O_TMPFILE).
+ * This prevents creating regular files with misleading O_DIRECTORY.
+ * ============================================================ */
+static void test_open_creat_directory_einval(void) {
+    extern long sys_open(const char *pathname, int flags, int mode);
+    extern long sys_openat(int dirfd, const char *pathname, int flags, int mode);
+    extern int fut_vfs_close(int fd);
+    extern long sys_unlink(const char *path);
+
+    /* Test 1490: open(O_CREAT|O_DIRECTORY) → EINVAL */
+    fut_printf("[MISC-TEST] Test 1490: open(O_CREAT|O_DIRECTORY) → EINVAL\n");
+    {
+        long fd = sys_open("/ocd_test_1490.txt",
+                           0x40 /* O_CREAT */ | 0200000 /* O_DIRECTORY */ | 0x02 /* O_RDWR */,
+                           0644);
+        if (fd == -22 /* -EINVAL */) {
+            fut_printf("[MISC-TEST] ✓ Test 1490: open(O_CREAT|O_DIRECTORY) → EINVAL\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1490: expected -22, got %ld\n", fd);
+            if (fd >= 0) { fut_vfs_close((int)fd); sys_unlink("/ocd_test_1490.txt"); }
+            fut_test_fail(1490);
+        }
+    }
+
+    /* Test 1491: openat(AT_FDCWD, O_CREAT|O_DIRECTORY) → EINVAL */
+    fut_printf("[MISC-TEST] Test 1491: openat(AT_FDCWD, O_CREAT|O_DIRECTORY) → EINVAL\n");
+    {
+        long fd = sys_openat(-100 /* AT_FDCWD */, "/ocd_test_1491.txt",
+                             0x40 /* O_CREAT */ | 0200000 /* O_DIRECTORY */ | 0x02 /* O_RDWR */,
+                             0644);
+        if (fd == -22 /* -EINVAL */) {
+            fut_printf("[MISC-TEST] ✓ Test 1491: openat(O_CREAT|O_DIRECTORY) → EINVAL\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1491: expected -22, got %ld\n", fd);
+            if (fd >= 0) { fut_vfs_close((int)fd); sys_unlink("/ocd_test_1491.txt"); }
+            fut_test_fail(1491);
+        }
+    }
+
+    /* Test 1492: open(O_RDONLY|O_DIRECTORY) on regular file → ENOTDIR (still works) */
+    fut_printf("[MISC-TEST] Test 1492: open(O_RDONLY|O_DIRECTORY) on regular file → ENOTDIR\n");
+    {
+        /* Create a regular file first */
+        int wfd = (int)sys_open("/ocd_regfile.txt", 0x42 /* O_RDWR|O_CREAT */, 0644);
+        if (wfd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1492: setup create failed: %d\n", wfd);
+            fut_test_fail(1492);
+        } else {
+            fut_vfs_close(wfd);
+            long fd = sys_open("/ocd_regfile.txt", 0200000 /* O_DIRECTORY */, 0);
+            sys_unlink("/ocd_regfile.txt");
+            if (fd == -20 /* -ENOTDIR */) {
+                fut_printf("[MISC-TEST] ✓ Test 1492: open(O_DIRECTORY) on regular file → ENOTDIR\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1492: expected -20, got %ld\n", fd);
+                if (fd >= 0) fut_vfs_close((int)fd);
+                fut_test_fail(1492);
+            }
+        }
+    }
+}
+
+/* ============================================================
  * Tests 1479-1481: openat2 RESOLVE_IN_ROOT enforcement
  * ============================================================ */
 #define TEST_RESOLVE_IN_ROOT 0x10
@@ -48416,6 +48484,7 @@ void fut_misc_test_thread(void *arg) {
     test_copy_file_range_rejects_pipe();    /* Test 1483: copy_file_range from pipe → EINVAL */
     test_socket_atomic_flags();             /* Tests 1484-1487: socket/socketpair atomic SOCK_NONBLOCK/SOCK_CLOEXEC */
     test_pipe2_atomic_flags();              /* Tests 1488-1489: pipe2 atomic O_NONBLOCK|O_CLOEXEC */
+    test_open_creat_directory_einval();     /* Tests 1490-1492: open(O_CREAT|O_DIRECTORY) → EINVAL */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -470,7 +470,7 @@ long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
             remaining -= (uint64_t)written;
         }
 
-        return 0;
+        goto clear_suid;
     }
 
     /* Phase 4: COLLAPSE_RANGE removes a byte range and shifts remaining data down.
@@ -521,7 +521,7 @@ long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
             vnode->size -= len;
         }
 
-        return 0;
+        goto clear_suid;
     }
 
     /* INSERT_RANGE: insert a zero-filled gap at offset, shifting existing data up.
@@ -584,9 +584,29 @@ long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
             remaining -= chunk;
         }
 
-        return 0;
+        goto clear_suid;
     }
 
+    return 0;
+
+clear_suid:
+    /* POSIX/Linux: clear setuid/setgid bits after fallocate modifies content */
+    if (vnode && vnode->type == VN_REG) {
+        uint32_t fmode = vnode->mode;
+        int needs_clear = 0;
+        if (fmode & 04000) needs_clear = 1;
+        if ((fmode & 02000) && (fmode & 00010)) needs_clear = 1;
+        if (needs_clear) {
+            int has_cap_fsetid = task &&
+                (task->cap_effective & (1ULL << 4 /* CAP_FSETID */));
+            if (!has_cap_fsetid) {
+                if (fmode & 04000)
+                    vnode->mode &= ~(uint32_t)04000;
+                if ((fmode & 02000) && (fmode & 00010))
+                    vnode->mode &= ~(uint32_t)02000;
+            }
+        }
+    }
     return 0;
 }
 

@@ -39557,6 +39557,105 @@ done_iat:
     return;
 }
 
+/**
+ * test_syslog_actions() — Tests 1218-1223
+ *
+ * Tests the less-exercised syslog(2) action codes:
+ *   1218: SYSLOG_ACTION_CLOSE  (0) → 0
+ *   1219: SYSLOG_ACTION_OPEN   (1) → 0
+ *   1220: SYSLOG_ACTION_READ   (2) → bytes read ≥ 0 (non-destructive ring drain)
+ *   1221: SYSLOG_ACTION_READ_CLEAR (4) → bytes read ≥ 0; ring cleared
+ *   1222: SYSLOG_ACTION_CLEAR  (5) → 0; SIZE_UNREAD returns 0 afterwards
+ *   1223: SYSLOG_ACTION_SIZE_UNREAD (9) → ≥ 0 (unread byte count)
+ *
+ * Tests 0/1 (CLOSE/OPEN) are currently untested no-ops.
+ * Tests 2/4 test the read and read-clear paths.
+ * Tests 5/9 verify clear and size_unread round-trip.
+ */
+static void test_syslog_actions(void) {
+    extern long sys_syslog(int type, char *buf, int len);
+
+    /* Test 1218: SYSLOG_ACTION_CLOSE (0) → 0 (no-op) */
+    fut_printf("[MISC-TEST] Test 1218: syslog(0/CLOSE) → 0\n");
+    {
+        long r = sys_syslog(0, NULL, 0);
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1218: syslog(CLOSE) = 0\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1218: syslog(CLOSE) = %ld (want 0)\n", r);
+            fut_test_fail(1218);
+        }
+    }
+
+    /* Test 1219: SYSLOG_ACTION_OPEN (1) → 0 (no-op) */
+    fut_printf("[MISC-TEST] Test 1219: syslog(1/OPEN) → 0\n");
+    {
+        long r = sys_syslog(1, NULL, 0);
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1219: syslog(OPEN) = 0\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1219: syslog(OPEN) = %ld (want 0)\n", r);
+            fut_test_fail(1219);
+        }
+    }
+
+    /* Test 1220: SYSLOG_ACTION_READ (2): consume bytes from ring; ≥ 0 */
+    fut_printf("[MISC-TEST] Test 1220: syslog(2/READ) → bytes ≥ 0\n");
+    {
+        char buf[512];
+        long r = sys_syslog(2, buf, sizeof(buf));
+        if (r >= 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1220: syslog(READ) = %ld bytes\n", r);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1220: syslog(READ) = %ld (want ≥ 0)\n", r);
+            fut_test_fail(1220);
+        }
+    }
+
+    /* Test 1221: SYSLOG_ACTION_READ_CLEAR (4): read and clear ring; ≥ 0 */
+    fut_printf("[MISC-TEST] Test 1221: syslog(4/READ_CLEAR) → bytes ≥ 0\n");
+    {
+        char buf[512];
+        long r = sys_syslog(4, buf, sizeof(buf));
+        if (r >= 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1221: syslog(READ_CLEAR) = %ld bytes\n", r);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1221: syslog(READ_CLEAR) = %ld (want ≥ 0)\n", r);
+            fut_test_fail(1221);
+        }
+    }
+
+    /* Test 1222: SYSLOG_ACTION_CLEAR (5) → 0; SIZE_UNREAD drops to 0 */
+    fut_printf("[MISC-TEST] Test 1222: syslog(5/CLEAR) → 0\n");
+    {
+        long r = sys_syslog(5, NULL, 0);
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1222: syslog(CLEAR) = 0\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1222: syslog(CLEAR) = %ld (want 0)\n", r);
+            fut_test_fail(1222);
+        }
+    }
+
+    /* Test 1223: SYSLOG_ACTION_SIZE_UNREAD (9) → 0 after CLEAR */
+    fut_printf("[MISC-TEST] Test 1223: syslog(9/SIZE_UNREAD) after CLEAR → 0\n");
+    {
+        long r = sys_syslog(9, NULL, 0);
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1223: syslog(SIZE_UNREAD) = 0 after CLEAR\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1223: syslog(SIZE_UNREAD) = %ld (want 0)\n", r);
+            fut_test_fail(1223);
+        }
+    }
+}
+
 static void test_getrandom_flags(void) {
     /* Tests 1200-1204: getrandom flag variants (GRND_NONBLOCK, GRND_RANDOM,
      * GRND_INSECURE) and edge cases (buflen=0, NULL buf).
@@ -40418,6 +40517,7 @@ void fut_misc_test_thread(void *arg) {
     test_itimer_virtual_prof();        /* Tests 1207-1211: setitimer/getitimer ITIMER_VIRTUAL, ITIMER_PROF, EINVAL */
     test_inotify_close_access_open();  /* Tests 1212-1215: inotify IN_CLOSE_WRITE/IN_CLOSE_NOWRITE/IN_ACCESS/IN_OPEN */
     test_inotify_attrib_and_sndtimeo(); /* Tests 1216-1217: inotify IN_ATTRIB on chmod; SO_SNDTIMEO round-trip */
+    test_syslog_actions();              /* Tests 1218-1223: syslog CLOSE/OPEN/READ/READ_CLEAR/CLEAR/SIZE_UNREAD */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

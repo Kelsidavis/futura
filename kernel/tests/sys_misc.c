@@ -45771,8 +45771,8 @@ static void test_sock_timeout_blocking(void) {
             fut_test_fail(1227);
             goto t1228;
         }
-        /* Set SO_SNDTIMEO = 500ms on sv[0] (use generous timeout for CI QEMU) */
-        struct { long tv_sec; long tv_usec; } tv = { .tv_sec = 0, .tv_usec = 500000 };
+        /* Set SO_SNDTIMEO = 50ms on sv[0] (5 ticks at 100Hz, fast for CI QEMU) */
+        struct { long tv_sec; long tv_usec; } tv = { .tv_sec = 0, .tv_usec = 50000 };
         r = sys_setsockopt(sv[0], TSTB_SOL_SOCKET, TSTB_SO_SNDTIMEO, &tv, sizeof(tv));
         if (r != 0) {
             fut_printf("[MISC-TEST] ✗ Test 1227: setsockopt(SO_SNDTIMEO) = %ld\n", r);
@@ -45817,8 +45817,8 @@ t1228:
             fut_test_fail(1228);
             goto t1229;
         }
-        /* Set SO_RCVTIMEO = 500ms on dgsv[1]; dgsv[0] sends nothing */
-        struct { long tv_sec; long tv_usec; } tv = { .tv_sec = 0, .tv_usec = 500000 };
+        /* Set SO_RCVTIMEO = 50ms on dgsv[1]; dgsv[0] sends nothing */
+        struct { long tv_sec; long tv_usec; } tv = { .tv_sec = 0, .tv_usec = 50000 };
         r = sys_setsockopt(dgsv[1], TSTB_SOL_SOCKET, TSTB_SO_RCVTIMEO, &tv, sizeof(tv));
         if (r != 0) {
             fut_printf("[MISC-TEST] ✗ Test 1228: setsockopt(SO_RCVTIMEO/DGRAM) = %ld\n", r);

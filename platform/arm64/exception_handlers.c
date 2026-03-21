@@ -24,27 +24,6 @@ extern int fut_trap_handle_page_fault(void *frame);
 extern void fut_task_signal_exit(int signal);
 extern struct fut_task *fut_task_current(void);
 
-/* Deliver signum to a user-mode exception frame.
- * If a user handler is installed, redirect the frame; otherwise terminate. */
-static void arm64_deliver_exception_signal(fut_interrupt_frame_t *frame,
-                                           int signum, int si_code, void *si_addr) {
-    struct fut_task *task = fut_task_current();
-    if (task) {
-        sighandler_t handler = fut_signal_get_handler(task, signum);
-        if (handler != SIG_DFL && handler != SIG_IGN) {
-            siginfo_t info;
-            __builtin_memset(&info, 0, sizeof(info));
-            info.si_signum = signum;
-            info.si_code   = si_code;
-            info.si_addr   = si_addr;
-            fut_signal_send_with_info(task, signum, &info);
-            fut_signal_deliver(task, frame);
-            return;
-        }
-    }
-    fut_task_signal_exit(signum);
-}
-
 /* Exception frame structure (matches arm64_exception_entry.S) */
 typedef struct {
     uint64_t x[31];             /* x0-x30 */
@@ -78,6 +57,27 @@ extern fut_interrupt_frame_t *fut_current_frame;
 /* Extract exception class from ESR */
 static inline uint32_t esr_get_ec(uint64_t esr) {
     return (esr >> ESR_EC_SHIFT) & ESR_EC_MASK;
+}
+
+/* Deliver signum to a user-mode exception frame.
+ * If a user handler is installed, redirect the frame; otherwise terminate. */
+static void arm64_deliver_exception_signal(fut_interrupt_frame_t *frame,
+                                           int signum, int si_code, void *si_addr) {
+    struct fut_task *task = fut_task_current();
+    if (task) {
+        sighandler_t handler = fut_signal_get_handler(task, signum);
+        if (handler != SIG_DFL && handler != SIG_IGN) {
+            siginfo_t info;
+            __builtin_memset(&info, 0, sizeof(info));
+            info.si_signum = signum;
+            info.si_code   = si_code;
+            info.si_addr   = si_addr;
+            fut_signal_send_with_info(task, signum, &info);
+            fut_signal_deliver(task, frame);
+            return;
+        }
+    }
+    fut_task_signal_exit(signum);
 }
 
 /* Handle SVC (syscall) from EL0

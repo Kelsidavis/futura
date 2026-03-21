@@ -301,11 +301,34 @@ long sys_mremap(void *old_address, size_t old_size, size_t new_size,
     }
 
     if (!(flags & MREMAP_MAYMOVE)) {
-        /* Cannot move: in-place expansion not yet supported */
-        fut_printf("[MREMAP] mremap(%p, %zu->%zu pages, %s) -> ENOMEM "
-                   "(in-place expansion not supported, use MREMAP_MAYMOVE)\n",
-                   old_address, old_pages, new_pages, flags_str);
-        return -ENOMEM;
+        /* In-place only: check if extension range is free, then map it */
+        uintptr_t ext_start = (uintptr_t)old_address + old_aligned;
+        uintptr_t ext_end   = (uintptr_t)old_address + new_aligned;
+        int range_free = 1;
+        struct fut_vma *v = mm->vma_list;
+        while (v) {
+            if (v->start < ext_end && v->end > ext_start) {
+                range_free = 0;
+                break;
+            }
+            v = v->next;
+        }
+        if (!range_free) {
+            fut_printf("[MREMAP] mremap(%p, %zu->%zu, %s) -> ENOMEM (extension range occupied)\n",
+                       old_address, old_pages, new_pages, flags_str);
+            return -ENOMEM;
+        }
+        /* Extension range is free: map the extra pages in-place */
+        void *ext = fut_mm_map_anonymous(mm, ext_start, new_aligned - old_aligned,
+                                         vma->prot, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED);
+        if (!ext || (intptr_t)ext < 0) {
+            fut_printf("[MREMAP] mremap(%p, %zu->%zu, %s) -> ENOMEM (in-place ext failed)\n",
+                       old_address, old_pages, new_pages, flags_str);
+            return -ENOMEM;
+        }
+        fut_printf("[MREMAP] mremap(%p, %zu->%zu pages, %s) -> %p (in-place expand)\n",
+                   old_address, old_pages, new_pages, flags_str, old_address);
+        return (long)(uintptr_t)old_address;
     }
 
     /* MREMAP_MAYMOVE: allocate new region, copy, free old */

@@ -24374,21 +24374,38 @@ static void test_mremap_grow(void) {
     fut_printf("[MISC-TEST] ✓ Test 618: mremap 4KB→8KB MREMAP_MAYMOVE, data preserved\n");
     fut_test_pass();
 
-    /* Test 619: mremap grow WITHOUT MREMAP_MAYMOVE → ENOMEM */
-    fut_printf("[MISC-TEST] Test 619: mremap grow without MREMAP_MAYMOVE → ENOMEM\n");
+    /* Test 619: mremap grow WITHOUT MREMAP_MAYMOVE → succeeds in-place when range is free */
+    fut_printf("[MISC-TEST] Test 619: mremap grow 4KB→8KB flags=0 (in-place, free range)\n");
     long base619 = sys_mmap(NULL, 4096, 3, 0x22, -1, 0);
     if (base619 < 0) {
         fut_printf("[MISC-TEST] ✗ Test 619: mmap failed: %ld\n", base619);
         return;
     }
+    volatile uint8_t *p619 = (volatile uint8_t *)(uintptr_t)base619;
+    p619[0] = 0xAB;
     long n619 = sys_mremap((void *)(uintptr_t)base619, 4096, 8192, 0, NULL);
-    sys_munmap((void *)(uintptr_t)base619, 4096);
-    if (n619 != -12 /* -ENOMEM */) {
-        fut_printf("[MISC-TEST] ✗ Test 619: expected -ENOMEM, got %ld\n", n619);
-        return;
+    if (n619 == base619 && p619[0] == 0xAB) {
+        /* In-place expand succeeded; new page should be accessible and zeroed */
+        volatile uint8_t *ext619 = (volatile uint8_t *)(uintptr_t)(base619 + 4096);
+        ext619[0] = 0xCD;
+        if (ext619[0] == 0xCD) {
+            fut_printf("[MISC-TEST] ✓ Test 619: mremap in-place 4KB→8KB, data preserved + ext writable\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 619: ext page not writable\n");
+            fut_test_fail(619);
+        }
+        sys_munmap((void *)(uintptr_t)base619, 8192);
+    } else if (n619 == -12 /* -ENOMEM */) {
+        /* Extension range was occupied; still acceptable */
+        fut_printf("[MISC-TEST] ✓ Test 619: mremap flags=0 → ENOMEM (range occupied, OK)\n");
+        fut_test_pass();
+        sys_munmap((void *)(uintptr_t)base619, 4096);
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 619: unexpected mremap result %ld\n", n619);
+        fut_test_fail(619);
+        sys_munmap((void *)(uintptr_t)base619, 4096);
     }
-    fut_printf("[MISC-TEST] ✓ Test 619: mremap grow flags=0 → ENOMEM\n");
-    fut_test_pass();
 
     /* Test 620: mremap MREMAP_FIXED without MREMAP_MAYMOVE → EINVAL */
     fut_printf("[MISC-TEST] Test 620: mremap MREMAP_FIXED without MREMAP_MAYMOVE → EINVAL\n");

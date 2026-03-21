@@ -3515,11 +3515,17 @@ static ssize_t procfs_link_readlink(struct fut_vnode *vnode, char *buf, size_t s
                     extern bool fut_eventfd_poll(struct fut_file *, uint32_t, uint32_t *);
                     extern bool fut_timerfd_poll(struct fut_file *, uint32_t, uint32_t *);
                     extern bool fut_signalfd_poll(struct fut_file *, uint32_t, uint32_t *);
+                    extern bool fut_inotify_poll(struct fut_file *, uint32_t, uint32_t *);
+                    extern bool fut_pidfd_poll(struct fut_file *, uint32_t, uint32_t *);
+                    extern const struct fut_file_ops epoll_fops;
                     uint32_t dummy = 0;
                     const char *anon_type = NULL;
-                    if      (fut_eventfd_poll(file, 0, &dummy))  anon_type = "eventfd";
+                    if      (file->chr_ops == &epoll_fops)       anon_type = "eventpoll";
+                    else if (fut_eventfd_poll(file, 0, &dummy))  anon_type = "eventfd";
                     else if (fut_timerfd_poll(file, 0, &dummy))  anon_type = "timerfd";
                     else if (fut_signalfd_poll(file, 0, &dummy)) anon_type = "signalfd";
+                    else if (fut_inotify_poll(file, 0, &dummy))  anon_type = "inotify";
+                    else if (fut_pidfd_poll(file, 0, &dummy))    anon_type = "pidfd";
                     else if (file->chr_ops)                      anon_type = "anon";
                     if (anon_type) {
                         struct pbuf b = { tmp, 0, sizeof(tmp) };

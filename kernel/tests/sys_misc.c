@@ -12886,6 +12886,155 @@ static void test_cpus_allowed_procfs(void) {
     }
 }
 
+static void test_proc_fd_anon_types(void) {
+    extern long sys_read(int fd, void *buf, size_t count);
+    extern long sys_readlink(const char *path, char *buf, size_t bufsiz);
+    extern long sys_epoll_create1(int flags);
+    extern long sys_inotify_init1(int flags);
+
+    /* Test 1340: epoll fd shows anon_inode:[eventpoll] in /proc/self/fd/<n> */
+    fut_printf("[MISC-TEST] Test 1340: /proc/self/fd/<epoll> → anon_inode:[eventpoll]\n");
+    {
+        long efd = sys_epoll_create1(0);
+        if (efd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1340: epoll_create1 → %ld\n", efd);
+            fut_test_fail(1340);
+        } else {
+            char path[64];
+            /* Build "/proc/self/fd/<N>" path manually */
+            const char *prefix = "/proc/self/fd/";
+            int pi = 0;
+            while (prefix[pi]) { path[pi] = prefix[pi]; pi++; }
+            /* Convert fd number to string */
+            int fd_num = (int)efd;
+            char num_buf[12]; int ni = 0;
+            if (fd_num == 0) { num_buf[ni++] = '0'; }
+            else { int tmp = fd_num; while (tmp > 0) { num_buf[ni++] = '0' + (tmp % 10); tmp /= 10; } }
+            for (int i = ni - 1; i >= 0; i--) path[pi++] = num_buf[i];
+            path[pi] = '\0';
+
+            char link[128] = {0};
+            long lr = sys_readlink(path, link, sizeof(link) - 1);
+            if (lr > 0) {
+                link[lr] = '\0';
+                /* Check for "eventpoll" substring */
+                int found = 0;
+                for (int i = 0; i < lr - 9; i++) {
+                    if (link[i] == 'e' && link[i+1] == 'v' && link[i+2] == 'e' &&
+                        link[i+3] == 'n' && link[i+4] == 't' && link[i+5] == 'p' &&
+                        link[i+6] == 'o' && link[i+7] == 'l' && link[i+8] == 'l') {
+                        found = 1; break;
+                    }
+                }
+                if (found) {
+                    fut_printf("[MISC-TEST] ✓ Test 1340: %s → %s\n", path, link);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1340: %s → '%s' (want eventpoll)\n", path, link);
+                    fut_test_fail(1340);
+                }
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1340: readlink(%s) → %ld\n", path, lr);
+                fut_test_fail(1340);
+            }
+            sys_close((int)efd);
+        }
+    }
+
+    /* Test 1341: inotify fd shows anon_inode:[inotify] */
+    fut_printf("[MISC-TEST] Test 1341: /proc/self/fd/<inotify> → anon_inode:[inotify]\n");
+    {
+        long ifd = sys_inotify_init1(0);
+        if (ifd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1341: inotify_init1 → %ld\n", ifd);
+            fut_test_fail(1341);
+        } else {
+            char path[64];
+            const char *prefix = "/proc/self/fd/";
+            int pi = 0;
+            while (prefix[pi]) { path[pi] = prefix[pi]; pi++; }
+            int fd_num = (int)ifd;
+            char num_buf[12]; int ni = 0;
+            if (fd_num == 0) { num_buf[ni++] = '0'; }
+            else { int tmp = fd_num; while (tmp > 0) { num_buf[ni++] = '0' + (tmp % 10); tmp /= 10; } }
+            for (int i = ni - 1; i >= 0; i--) path[pi++] = num_buf[i];
+            path[pi] = '\0';
+
+            char link[128] = {0};
+            long lr = sys_readlink(path, link, sizeof(link) - 1);
+            if (lr > 0) {
+                link[lr] = '\0';
+                int found = 0;
+                for (int i = 0; i < lr - 7; i++) {
+                    if (link[i] == 'i' && link[i+1] == 'n' && link[i+2] == 'o' &&
+                        link[i+3] == 't' && link[i+4] == 'i' && link[i+5] == 'f' &&
+                        link[i+6] == 'y') {
+                        found = 1; break;
+                    }
+                }
+                if (found) {
+                    fut_printf("[MISC-TEST] ✓ Test 1341: %s → %s\n", path, link);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1341: %s → '%s' (want inotify)\n", path, link);
+                    fut_test_fail(1341);
+                }
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1341: readlink(%s) → %ld\n", path, lr);
+                fut_test_fail(1341);
+            }
+            sys_close((int)ifd);
+        }
+    }
+
+    /* Test 1342: pidfd shows anon_inode:[pidfd] */
+    fut_printf("[MISC-TEST] Test 1342: /proc/self/fd/<pidfd> → anon_inode:[pidfd]\n");
+    {
+        extern long sys_pidfd_open(int pid, unsigned int flags);
+        fut_task_t *self = fut_task_current();
+        long pfd = sys_pidfd_open(self ? (int)self->pid : 1, 0);
+        if (pfd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1342: pidfd_open → %ld\n", pfd);
+            fut_test_fail(1342);
+        } else {
+            char path[64];
+            const char *prefix = "/proc/self/fd/";
+            int pi = 0;
+            while (prefix[pi]) { path[pi] = prefix[pi]; pi++; }
+            int fd_num = (int)pfd;
+            char num_buf[12]; int ni = 0;
+            if (fd_num == 0) { num_buf[ni++] = '0'; }
+            else { int tmp = fd_num; while (tmp > 0) { num_buf[ni++] = '0' + (tmp % 10); tmp /= 10; } }
+            for (int i = ni - 1; i >= 0; i--) path[pi++] = num_buf[i];
+            path[pi] = '\0';
+
+            char link[128] = {0};
+            long lr = sys_readlink(path, link, sizeof(link) - 1);
+            if (lr > 0) {
+                link[lr] = '\0';
+                int found = 0;
+                for (int i = 0; i < lr - 5; i++) {
+                    if (link[i] == 'p' && link[i+1] == 'i' && link[i+2] == 'd' &&
+                        link[i+3] == 'f' && link[i+4] == 'd') {
+                        found = 1; break;
+                    }
+                }
+                if (found) {
+                    fut_printf("[MISC-TEST] ✓ Test 1342: %s → %s\n", path, link);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1342: %s → '%s' (want pidfd)\n", path, link);
+                    fut_test_fail(1342);
+                }
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1342: readlink(%s) → %ld\n", path, lr);
+                fut_test_fail(1342);
+            }
+            sys_close((int)pfd);
+        }
+    }
+}
+
 static void test_process_madvise_basic(void) {
     /* Test 1292: process_madvise with flags != 0 → EINVAL */
     fut_printf("[MISC-TEST] Test 1292: process_madvise flags=1 → EINVAL\n");
@@ -43755,6 +43904,7 @@ void fut_misc_test_thread(void *arg) {
     test_tcp_info();                         /* Tests 1330-1333: TCP_INFO struct getsockopt */
     test_so_rcvtimeo_new();                  /* Tests 1334-1337: SO_RCVTIMEO_NEW/SO_SNDTIMEO_NEW */
     test_cpus_allowed_procfs();              /* Tests 1338-1339: /proc/self/status Cpus_allowed dynamic */
+    test_proc_fd_anon_types();               /* Tests 1340-1342: /proc/self/fd/ anon_inode types */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -551,7 +551,17 @@ ssize_t sys_writev(int fd, const struct iovec *iov, int iovcnt) {
     size_t flat_off = 0;
     for (int i = 0; i < iovcnt; i++) {
         if (kernel_iov[i].iov_len == 0) continue;
-        memcpy(flat_buf + flat_off, kernel_iov[i].iov_base, kernel_iov[i].iov_len);
+#ifdef KERNEL_VIRTUAL_BASE
+        if ((uintptr_t)kernel_iov[i].iov_base >= KERNEL_VIRTUAL_BASE)
+            memcpy(flat_buf + flat_off, kernel_iov[i].iov_base, kernel_iov[i].iov_len);
+        else
+#endif
+        if (fut_copy_from_user(flat_buf + flat_off, kernel_iov[i].iov_base,
+                               kernel_iov[i].iov_len) != 0) {
+            fut_free(flat_buf);
+            fut_free(kernel_iov);
+            return -EFAULT;
+        }
         flat_off += kernel_iov[i].iov_len;
     }
     fut_free(kernel_iov);

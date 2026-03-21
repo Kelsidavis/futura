@@ -1246,6 +1246,13 @@ static int64_t clone_do_fork_with_flags(uint64_t clone_flags, uint64_t parent_ti
         /* Child context */
         extern fut_task_t *fut_task_current(void);
         fut_task_t *task = fut_task_current();
+        if (task) {
+            /* Set exit_signal from the low byte of clone flags.
+             * clone(SIGCHLD, ...) → exit_signal=17; clone(0, ...) → keep default SIGCHLD. */
+            int esig = (int)(clone_flags & 0xFFULL);
+            if (esig > 0 && esig < _NSIG)
+                task->exit_signal = esig;
+        }
         if ((clone_flags & CLONE_CHILD_SETTID_) && child_tid && task) {
             int tid_val = (int)task->pid;
             clone_copy_to_user((void *)(uintptr_t)child_tid,
@@ -1277,20 +1284,20 @@ static int64_t sys_clone_handler(uint64_t flags, uint64_t stack, uint64_t parent
     /* Plain fork: clone(SIGCHLD, 0, NULL, NULL, 0) — most common from libc fork().
      * Also covers glibc < 2.34 fork(): clone(CLONE_CHILD_SETTID|CLONE_CHILD_CLEARTID|SIGCHLD) */
     if (structural_flags == 0)
-        return clone_do_fork_with_flags(clone_flags, parent_tid, child_tid);
+        return clone_do_fork_with_flags(flags, parent_tid, child_tid);
 
     /* vfork pattern: CLONE_VM (0x100) + CLONE_VFORK (0x4000) without CLONE_THREAD.
      * Used by musl vfork() and posix_spawn(). Futura has no separate address spaces,
      * so CLONE_VM is a no-op — fall back to regular fork without blocking the parent.
      * The child runs in its own task context and the parent continues concurrently. */
     if (structural_flags & 0x4000ULL /* CLONE_VFORK */) {
-        return clone_do_fork_with_flags(clone_flags, parent_tid, child_tid);
+        return clone_do_fork_with_flags(flags, parent_tid, child_tid);
     }
 
     /* CLONE_VM without CLONE_THREAD and without CLONE_VFORK: also fall back to fork.
      * This covers clone(CLONE_VM|SIGCHLD) used by some threading libraries. */
     if (structural_flags == 0x100ULL /* CLONE_VM only */) {
-        return clone_do_fork_with_flags(clone_flags, parent_tid, child_tid);
+        return clone_do_fork_with_flags(flags, parent_tid, child_tid);
     }
 
     /* Resource-sharing flags without structural flags (no CLONE_THREAD, no namespaces,
@@ -1305,7 +1312,7 @@ static int64_t sys_clone_handler(uint64_t flags, uint64_t stack, uint64_t parent
                                  0x40000ULL /* CLONE_SYSVSEM */| \
                                  0x80000000ULL /* CLONE_IO */)
     if ((structural_flags & ~CLONE_FORK_COMPAT_MASK) == 0) {
-        return clone_do_fork_with_flags(clone_flags, parent_tid, child_tid);
+        return clone_do_fork_with_flags(flags, parent_tid, child_tid);
     }
 #undef CLONE_FORK_COMPAT_MASK
 

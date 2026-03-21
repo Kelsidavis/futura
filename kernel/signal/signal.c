@@ -814,13 +814,30 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
 
     /* User-defined handler - set up signal frame on user stack */
 
-    /* Allocate rt_sigframe on user stack.
+    unsigned long handler_flags_pre = task->signal_handler_flags[signum - 1];
+    /* Snapshot altstack BEFORE any modification so uc_stack captures original state. */
+    struct sigaltstack saved_altstack_x86 = task->sig_altstack;
+    uint64_t sp;
+    if ((handler_flags_pre & SA_ONSTACK) &&
+        !(task->sig_altstack.ss_flags & SS_DISABLE) &&
+        !(task->sig_altstack.ss_flags & SS_ONSTACK) &&
+        task->sig_altstack.ss_sp != NULL &&
+        task->sig_altstack.ss_size >= sizeof(struct rt_sigframe)) {
+        /* Deliver on top of alternate stack (grows down from top) */
+        sp = (uint64_t)task->sig_altstack.ss_sp + task->sig_altstack.ss_size;
+        task->sig_altstack.ss_flags |= SS_ONSTACK;
+        if (task->sig_altstack.ss_flags & SS_AUTODISARM)
+            task->sig_altstack.ss_flags = SS_DISABLE;
+    } else {
+        sp = f->rsp;
+    }
+
+    /* Allocate rt_sigframe on selected stack.
      * x86-64 ABI: at function entry (just after 'call'), RSP % 16 == 8.
      * Signal delivery is equivalent to a 'call': pretcode sits at [RSP]
      * as if the call instruction pushed it.  Linux uses:
      *   sp = round_down(sp - frame_size, 16) - 8
      * so that the frame base (= RSP on handler entry) is 8-byte aligned. */
-    uint64_t sp = f->rsp;
     sp -= sizeof(struct rt_sigframe);
     sp &= ~0xFULL;  /* Align to 16 bytes */
     sp -= 8;         /* x86-64: RSP must be (16n+8) at handler entry */
@@ -851,9 +868,11 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
     /* Fill ucontext_t */
     sframe.uc.uc_flags = 0;
     sframe.uc.uc_link = NULL;
-    sframe.uc.uc_stack.ss_sp = (void *)f->rsp;
-    sframe.uc.uc_stack.ss_flags = 0;
-    sframe.uc.uc_stack.ss_size = 0x1000;
+    /* Save altstack state at delivery time (before SS_ONSTACK/SS_AUTODISARM
+     * modified it) so sigreturn can re-arm the altstack when returning. */
+    sframe.uc.uc_stack.ss_sp    = saved_altstack_x86.ss_sp;
+    sframe.uc.uc_stack.ss_flags = saved_altstack_x86.ss_flags;
+    sframe.uc.uc_stack.ss_size  = saved_altstack_x86.ss_size;
 
     /* Copy registers from interrupt frame to sigcontext */
     sframe.uc.uc_mcontext.gregs.r8 = f->r8;

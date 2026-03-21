@@ -39120,6 +39120,91 @@ static void test_vmsplice_tee(void) {
     }
 }
 
+static void test_getrandom_flags(void) {
+    /* Tests 1200-1204: getrandom flag variants (GRND_NONBLOCK, GRND_RANDOM,
+     * GRND_INSECURE) and edge cases (buflen=0, NULL buf).
+     * Linux 5.6 added GRND_INSECURE; all flags should succeed in our kernel
+     * since we don't have an "entropy not yet initialized" state. */
+    extern long sys_getrandom(void *buf, size_t buflen, unsigned int flags);
+
+#define GRND_NONBLOCK_F 0x0001
+#define GRND_RANDOM_F   0x0002
+#define GRND_INSECURE_F 0x0004
+
+    /* Test 1200: GRND_NONBLOCK succeeds immediately (no waiting for entropy) */
+    fut_printf("[MISC-TEST] Test 1200: getrandom(GRND_NONBLOCK) returns data\n");
+    {
+        uint8_t buf[8] = {0};
+        long r = sys_getrandom(buf, sizeof(buf), GRND_NONBLOCK_F);
+        if (r == 8) {
+            fut_printf("[MISC-TEST] ✓ Test 1200: getrandom(GRND_NONBLOCK) = 8\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1200: getrandom(GRND_NONBLOCK) = %ld (want 8)\n", r);
+            fut_test_fail(1200);
+        }
+    }
+
+    /* Test 1201: GRND_RANDOM succeeds (uses same pool, no rate-limit in Futura) */
+    fut_printf("[MISC-TEST] Test 1201: getrandom(GRND_RANDOM) returns data\n");
+    {
+        uint8_t buf[8] = {0};
+        long r = sys_getrandom(buf, sizeof(buf), GRND_RANDOM_F);
+        if (r == 8) {
+            fut_printf("[MISC-TEST] ✓ Test 1201: getrandom(GRND_RANDOM) = 8\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1201: getrandom(GRND_RANDOM) = %ld (want 8)\n", r);
+            fut_test_fail(1201);
+        }
+    }
+
+    /* Test 1202: GRND_INSECURE (Linux 5.6+) succeeds (skips urandom wait) */
+    fut_printf("[MISC-TEST] Test 1202: getrandom(GRND_INSECURE) returns data\n");
+    {
+        uint8_t buf[8] = {0};
+        long r = sys_getrandom(buf, sizeof(buf), GRND_INSECURE_F);
+        if (r == 8) {
+            fut_printf("[MISC-TEST] ✓ Test 1202: getrandom(GRND_INSECURE) = 8\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1202: getrandom(GRND_INSECURE) = %ld (want 8)\n", r);
+            fut_test_fail(1202);
+        }
+    }
+
+    /* Test 1203: buflen=0 returns 0 immediately (no error) */
+    fut_printf("[MISC-TEST] Test 1203: getrandom(buflen=0) returns 0\n");
+    {
+        uint8_t buf[4] = {0};
+        long r = sys_getrandom(buf, 0, 0);
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1203: getrandom(buflen=0) = 0\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1203: getrandom(buflen=0) = %ld (want 0)\n", r);
+            fut_test_fail(1203);
+        }
+    }
+
+    /* Test 1204: NULL buf returns EFAULT */
+    fut_printf("[MISC-TEST] Test 1204: getrandom(NULL) returns EFAULT\n");
+    {
+        long r = sys_getrandom((void *)0, 8, 0);
+        if (r == -14 /* -EFAULT */) {
+            fut_printf("[MISC-TEST] ✓ Test 1204: getrandom(NULL) = -EFAULT\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1204: getrandom(NULL) = %ld (want -EFAULT)\n", r);
+            fut_test_fail(1204);
+        }
+    }
+
+#undef GRND_NONBLOCK_F
+#undef GRND_RANDOM_F
+#undef GRND_INSECURE_F
+}
+
 static void test_shutdown_dgram(void) {
     /* Linux allows shutdown() on unconnected SOCK_DGRAM sockets.
      * Tests 1197-1199: SHUT_RD, SHUT_WR, and invalid how on DGRAM socket. */
@@ -39823,6 +39908,7 @@ void fut_misc_test_thread(void *arg) {
     test_inet_peer_addr();             /* Tests 1189-1191: getpeername AF_INET ENOTCONN + recvfrom src_addr */
     test_vmsplice_tee();               /* Tests 1192-1196: vmsplice write+read, EFAULT, EINVAL, EBADF, tee dup */
     test_shutdown_dgram();             /* Tests 1197-1199: shutdown() on unconnected SOCK_DGRAM (Linux compat) */
+    test_getrandom_flags();            /* Tests 1200-1204: getrandom GRND_NONBLOCK, GRND_RANDOM, GRND_INSECURE, buflen=0, NULL buf */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

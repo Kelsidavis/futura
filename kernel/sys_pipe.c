@@ -705,16 +705,28 @@ long sys_pipe2(int pipefd[2], int flags) {
         if (wfile) wfile->flags = O_WRONLY;
     }
 
-    /* Apply O_NONBLOCK flag if requested */
+    /* Apply O_NONBLOCK and O_CLOEXEC directly on the FD structures
+     * to avoid race windows between fd allocation and flag application.
+     * (Using sys_fcntl would leave a gap where another thread could
+     * observe the fd without the requested flags.) */
     if (flags & O_NONBLOCK) {
-        sys_fcntl(read_fd, F_SETFL, O_NONBLOCK);
-        sys_fcntl(write_fd, F_SETFL, O_NONBLOCK);
+        extern struct fut_file *vfs_get_file(int fd);
+        struct fut_file *rf = vfs_get_file(read_fd);
+        struct fut_file *wf = vfs_get_file(write_fd);
+        if (rf) rf->flags |= O_NONBLOCK;
+        if (wf) wf->flags |= O_NONBLOCK;
+        /* Sync pipe buffer's per-end nonblock flags */
+        pipe->read_nonblock = true;
+        pipe->write_nonblock = true;
     }
-
-    /* Apply O_CLOEXEC flag if requested */
     if (flags & O_CLOEXEC) {
-        sys_fcntl(read_fd, F_SETFD, FD_CLOEXEC);
-        sys_fcntl(write_fd, F_SETFD, FD_CLOEXEC);
+        fut_task_t *ptask = fut_task_current();
+        if (ptask && ptask->fd_flags) {
+            if (read_fd < ptask->max_fds)
+                ptask->fd_flags[read_fd] |= FD_CLOEXEC;
+            if (write_fd < ptask->max_fds)
+                ptask->fd_flags[write_fd] |= FD_CLOEXEC;
+        }
     }
 
     /* Copy file descriptors to userspace */

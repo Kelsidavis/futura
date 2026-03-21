@@ -47527,6 +47527,73 @@ static void test_socket_atomic_flags(void) {
 }
 
 /* ============================================================
+ * Tests 1488-1489: pipe2 atomic O_NONBLOCK|O_CLOEXEC
+ *
+ * Verify that pipe2() sets O_NONBLOCK and O_CLOEXEC directly
+ * on the file structures (not via fcntl), ensuring flags are
+ * visible immediately and pipe nonblock state is consistent.
+ * ============================================================ */
+static void test_pipe2_atomic_flags(void) {
+    extern long sys_pipe2(int pipefd[2], int flags);
+    extern long sys_fcntl(int fd, int cmd, uint64_t arg);
+    extern int fut_vfs_close(int fd);
+
+    /* Test 1488: pipe2(O_NONBLOCK|O_CLOEXEC) → both fds have both flags */
+    fut_printf("[MISC-TEST] Test 1488: pipe2(O_NONBLOCK|O_CLOEXEC) → both flags set\n");
+    {
+        int pipefd[2] = {-1, -1};
+        long r = sys_pipe2(pipefd, 0x800 /* O_NONBLOCK */ | 0x80000 /* O_CLOEXEC */);
+        if (r < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1488: pipe2() returned %ld\n", r);
+            fut_test_fail(1488);
+        } else {
+            long fl0 = sys_fcntl(pipefd[0], 3 /* F_GETFL */, 0);
+            long fl1 = sys_fcntl(pipefd[1], 3 /* F_GETFL */, 0);
+            long fd0 = sys_fcntl(pipefd[0], 1 /* F_GETFD */, 0);
+            long fd1 = sys_fcntl(pipefd[1], 1 /* F_GETFD */, 0);
+            int ok = (fl0 >= 0 && (fl0 & 0x800)) &&
+                     (fl1 >= 0 && (fl1 & 0x800)) &&
+                     (fd0 >= 0 && (fd0 & 1)) &&
+                     (fd1 >= 0 && (fd1 & 1));
+            if (ok) {
+                fut_printf("[MISC-TEST] ✓ Test 1488: pipe2 O_NONBLOCK|O_CLOEXEC → all flags set\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1488: fl0=0x%lx fl1=0x%lx fd0=0x%lx fd1=0x%lx\n",
+                           fl0, fl1, fd0, fd1);
+                fut_test_fail(1488);
+            }
+            fut_vfs_close(pipefd[0]);
+            fut_vfs_close(pipefd[1]);
+        }
+    }
+
+    /* Test 1489: pipe2(O_NONBLOCK) read returns EAGAIN on empty pipe */
+    fut_printf("[MISC-TEST] Test 1489: pipe2(O_NONBLOCK) read → EAGAIN\n");
+    {
+        int pipefd[2] = {-1, -1};
+        long r = sys_pipe2(pipefd, 0x800 /* O_NONBLOCK */);
+        if (r < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1489: pipe2() returned %ld\n", r);
+            fut_test_fail(1489);
+        } else {
+            char buf[4];
+            extern long sys_read(int fd, void *buf, size_t count);
+            long nr = sys_read(pipefd[0], buf, sizeof(buf));
+            if (nr == -11 /* -EAGAIN */) {
+                fut_printf("[MISC-TEST] ✓ Test 1489: pipe2 O_NONBLOCK read → EAGAIN\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1489: read returned %ld (expected -11 EAGAIN)\n", nr);
+                fut_test_fail(1489);
+            }
+            fut_vfs_close(pipefd[0]);
+            fut_vfs_close(pipefd[1]);
+        }
+    }
+}
+
+/* ============================================================
  * Tests 1479-1481: openat2 RESOLVE_IN_ROOT enforcement
  * ============================================================ */
 #define TEST_RESOLVE_IN_ROOT 0x10
@@ -48348,6 +48415,7 @@ void fut_misc_test_thread(void *arg) {
     test_sendfile_rejects_socket_source();  /* Test 1482: sendfile from socket → EINVAL */
     test_copy_file_range_rejects_pipe();    /* Test 1483: copy_file_range from pipe → EINVAL */
     test_socket_atomic_flags();             /* Tests 1484-1487: socket/socketpair atomic SOCK_NONBLOCK/SOCK_CLOEXEC */
+    test_pipe2_atomic_flags();              /* Tests 1488-1489: pipe2 atomic O_NONBLOCK|O_CLOEXEC */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -463,20 +463,44 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
             thread->futex_addr   = uaddr;
             thread->futex_bitset = (cmd == FUTEX_WAIT_BITSET) ? val3 : 0xFFFFFFFFu;
 
-            /* Register timeout timer if specified */
+            /* Pre-compute timeout ticks before enqueuing */
             futex_timeout_ctx_t timeout_ctx;
+            uint64_t timeout_ticks = 0;
             if (has_timeout) {
                 timeout_ctx.thread = thread;
                 timeout_ctx.bucket = bucket;
-                /* Convert ms to ticks (100 Hz = 10ms/tick) */
-                uint64_t timeout_ticks = timeout_ms / 10;
+                timeout_ticks = timeout_ms / 10;
                 if (timeout_ms % 10 != 0) timeout_ticks++;
                 if (timeout_ticks == 0 && timeout_ms > 0) timeout_ticks = 1;
+            }
+
+            /* Enqueue thread into wait queue while still holding bucket->lock.
+             * We inline the enqueue here so we can release bucket->lock BEFORE
+             * starting the timer.  futex_timeout_callback acquires bucket->lock
+             * from IRQ context; if we hold bucket->lock when the timer fires on a
+             * single-CPU system, the IRQ handler spins on an already-held lock
+             * and the preempted thread can never release it → deadlock. */
+            thread->state         = FUT_THREAD_BLOCKED;
+            thread->blocked_waitq = &bucket->waiters;
+            thread->wait_next     = NULL;
+            if (bucket->waiters.tail) {
+                bucket->waiters.tail->wait_next = thread;
+            } else {
+                bucket->waiters.head = thread;
+            }
+            bucket->waiters.tail = thread;
+
+            /* Release bucket->lock BEFORE starting the timer so the callback
+             * can safely acquire it from IRQ context without deadlocking. */
+            fut_spinlock_release(&bucket->lock);
+
+            /* Start timer only after the lock is free */
+            if (has_timeout) {
                 fut_timer_start(timeout_ticks, futex_timeout_callback, &timeout_ctx);
             }
 
-            /* Sleep on wait queue (releases bucket lock) */
-            fut_waitq_sleep_locked(&bucket->waiters, &bucket->lock, FUT_THREAD_BLOCKED);
+            /* Yield to scheduler; woken by FUTEX_WAKE or timeout callback */
+            fut_schedule();
 
             /* Cancel timeout timer if set (harmless if already fired) */
             if (has_timeout) {
@@ -1072,15 +1096,33 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
                 }
 
                 futex_timeout_ctx_t tctx;
+                uint64_t tctx_ticks = 0;
                 if (has_timeout) {
                     uint64_t now = fut_get_ticks();
-                    uint64_t rem = (deadline_ticks > now) ? (deadline_ticks - now) : 1u;
+                    tctx_ticks = (deadline_ticks > now) ? (deadline_ticks - now) : 1u;
                     tctx.thread = cur;
                     tctx.bucket = bucket;
-                    fut_timer_start(rem, futex_timeout_callback, &tctx);
                 }
 
-                fut_waitq_sleep_locked(&bucket->waiters, &bucket->lock, FUT_THREAD_BLOCKED);
+                /* Inline enqueue + release lock before timer (same IRQ-deadlock
+                 * fix as FUTEX_WAIT: callback acquires bucket->lock from IRQ). */
+                if (cur) {
+                    cur->state         = FUT_THREAD_BLOCKED;
+                    cur->blocked_waitq = &bucket->waiters;
+                    cur->wait_next     = NULL;
+                    if (bucket->waiters.tail) {
+                        bucket->waiters.tail->wait_next = cur;
+                    } else {
+                        bucket->waiters.head = cur;
+                    }
+                    bucket->waiters.tail = cur;
+                }
+                fut_spinlock_release(&bucket->lock);
+
+                if (has_timeout)
+                    fut_timer_start(tctx_ticks, futex_timeout_callback, &tctx);
+
+                fut_schedule();
 
                 if (has_timeout)
                     fut_timer_cancel(futex_timeout_callback, &tctx);

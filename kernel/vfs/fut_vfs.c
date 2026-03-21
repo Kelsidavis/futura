@@ -2468,6 +2468,34 @@ ssize_t fut_vfs_write(int fd, const void *buf, size_t size) {
     VFSDBG("[vfs-write] vnode->ops->write returned %lld\n", (long long)ret);
     if (ret > 0) {
         file->offset += ret;
+
+        /* POSIX/Linux: clear set-user-ID and set-group-ID bits on write.
+         * After a successful write to a regular file, the kernel must:
+         *   - Clear S_ISUID (04000) unconditionally
+         *   - Clear S_ISGID (02000) only if S_IXGRP (00010) is also set
+         *     (S_ISGID without S_IXGRP means mandatory locking, not setgid)
+         * Exception: processes with CAP_FSETID (bit 4) retain these bits.
+         * This prevents privilege escalation via writing to setuid binaries. */
+        if (file->vnode->type == VN_REG) {
+            uint32_t mode = file->vnode->mode;
+            int needs_clear = 0;
+            if (mode & 04000)  /* S_ISUID */
+                needs_clear = 1;
+            if ((mode & 02000) && (mode & 00010))  /* S_ISGID + S_IXGRP */
+                needs_clear = 1;
+            if (needs_clear) {
+                fut_task_t *suid_task = fut_task_current();
+                int has_cap_fsetid = suid_task &&
+                    (suid_task->cap_effective & (1ULL << 4 /* CAP_FSETID */));
+                if (!has_cap_fsetid) {
+                    if (mode & 04000)
+                        file->vnode->mode &= ~(uint32_t)04000;
+                    if ((mode & 02000) && (mode & 00010))
+                        file->vnode->mode &= ~(uint32_t)02000;
+                }
+            }
+        }
+
         /* Dispatch IN_MODIFY so inotify watchers see writes */
         if (file->vnode->parent && file->vnode->name) {
             char dir_path[256];

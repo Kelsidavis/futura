@@ -15244,6 +15244,185 @@ static void test_mmap_min_addr(void) {
     }
 }
 
+/**
+ * test_suid_sgid_clear_on_write - Verify S_ISUID/S_ISGID bits cleared after write
+ *
+ * Tests 1433-1437:
+ * 1433: Write to setuid file clears S_ISUID
+ * 1434: Write to setgid+group-exec file clears S_ISGID
+ * 1435: Write to setgid WITHOUT group-exec does NOT clear S_ISGID (mandatory locking)
+ * 1436: Write to setuid+setgid+group-exec file clears both
+ * 1437: CAP_FSETID preserves setuid bit on write
+ */
+static void test_suid_sgid_clear_on_write(void) {
+    extern long sys_write(int fd, const void *buf, size_t count);
+    extern long sys_fchmod(int fd, uint32_t mode);
+    extern long sys_fstat(int fd, struct fut_stat *statbuf);
+    extern long sys_lseek(int fd, long offset, int whence);
+
+    /* Drop CAP_FSETID for tests 1433-1436 (kernel starts with all caps) */
+    fut_task_t *task = fut_task_current();
+    uint64_t saved_caps = task->cap_effective;
+    task->cap_effective &= ~(1ULL << 4 /* CAP_FSETID */);
+
+    /* Test 1433: Write to setuid file clears S_ISUID */
+    fut_printf("[MISC-TEST] Test 1433: write clears S_ISUID (04000)\n");
+    {
+        int fd = (int)fut_vfs_open("/test_suid_clear.txt", O_CREAT | O_RDWR, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1433: open failed: %d\n", fd);
+            fut_test_fail(1433);
+        } else {
+            sys_fchmod(fd, 04755);  /* setuid + rwxr-xr-x */
+            struct fut_stat st = {0};
+            sys_fstat(fd, &st);
+            if (!(st.st_mode & 04000)) {
+                fut_printf("[MISC-TEST] ✗ Test 1433: fchmod didn't set S_ISUID\n");
+                fut_vfs_close(fd);
+                fut_test_fail(1433);
+            } else {
+                sys_write(fd, "x", 1);
+                sys_fstat(fd, &st);
+                if (st.st_mode & 04000) {
+                    fut_printf("[MISC-TEST] ✗ Test 1433: S_ISUID not cleared after write (mode=0%o)\n",
+                               st.st_mode & 07777);
+                    fut_vfs_close(fd);
+                    fut_test_fail(1433);
+                } else {
+                    fut_printf("[MISC-TEST] ✓ Test 1433: S_ISUID cleared after write (mode=0%o)\n",
+                               st.st_mode & 07777);
+                    fut_vfs_close(fd);
+                    fut_test_pass();
+                }
+            }
+        }
+    }
+
+    /* Test 1434: Write to setgid+group-exec file clears S_ISGID */
+    fut_printf("[MISC-TEST] Test 1434: write clears S_ISGID when S_IXGRP set\n");
+    {
+        int fd = (int)fut_vfs_open("/test_sgid_clear.txt", O_CREAT | O_RDWR, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1434: open failed: %d\n", fd);
+            fut_test_fail(1434);
+        } else {
+            sys_fchmod(fd, 02755);  /* setgid + rwxr-xr-x (group-exec set) */
+            struct fut_stat st = {0};
+            sys_fstat(fd, &st);
+            if (!(st.st_mode & 02000)) {
+                fut_printf("[MISC-TEST] ✗ Test 1434: fchmod didn't set S_ISGID\n");
+                fut_vfs_close(fd);
+                fut_test_fail(1434);
+            } else {
+                sys_write(fd, "y", 1);
+                sys_fstat(fd, &st);
+                if (st.st_mode & 02000) {
+                    fut_printf("[MISC-TEST] ✗ Test 1434: S_ISGID not cleared after write (mode=0%o)\n",
+                               st.st_mode & 07777);
+                    fut_vfs_close(fd);
+                    fut_test_fail(1434);
+                } else {
+                    fut_printf("[MISC-TEST] ✓ Test 1434: S_ISGID cleared after write (mode=0%o)\n",
+                               st.st_mode & 07777);
+                    fut_vfs_close(fd);
+                    fut_test_pass();
+                }
+            }
+        }
+    }
+
+    /* Test 1435: S_ISGID WITHOUT S_IXGRP is NOT cleared (mandatory locking semantics) */
+    fut_printf("[MISC-TEST] Test 1435: write does NOT clear S_ISGID without S_IXGRP\n");
+    {
+        int fd = (int)fut_vfs_open("/test_sgid_noexec.txt", O_CREAT | O_RDWR, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1435: open failed: %d\n", fd);
+            fut_test_fail(1435);
+        } else {
+            sys_fchmod(fd, 02644);  /* setgid + rw-r--r-- (NO group-exec) */
+            struct fut_stat st = {0};
+            sys_fstat(fd, &st);
+            if (!(st.st_mode & 02000)) {
+                fut_printf("[MISC-TEST] ✗ Test 1435: fchmod didn't set S_ISGID\n");
+                fut_vfs_close(fd);
+                fut_test_fail(1435);
+            } else {
+                sys_write(fd, "z", 1);
+                sys_fstat(fd, &st);
+                if (st.st_mode & 02000) {
+                    fut_printf("[MISC-TEST] ✓ Test 1435: S_ISGID preserved without S_IXGRP (mode=0%o)\n",
+                               st.st_mode & 07777);
+                    fut_vfs_close(fd);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1435: S_ISGID was cleared without S_IXGRP (mode=0%o)\n",
+                               st.st_mode & 07777);
+                    fut_vfs_close(fd);
+                    fut_test_fail(1435);
+                }
+            }
+        }
+    }
+
+    /* Test 1436: Write to setuid+setgid+group-exec clears both bits */
+    fut_printf("[MISC-TEST] Test 1436: write clears both S_ISUID and S_ISGID\n");
+    {
+        int fd = (int)fut_vfs_open("/test_suid_sgid_clear.txt", O_CREAT | O_RDWR, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1436: open failed: %d\n", fd);
+            fut_test_fail(1436);
+        } else {
+            sys_fchmod(fd, 06755);  /* setuid+setgid + rwxr-xr-x */
+            struct fut_stat st = {0};
+            sys_fstat(fd, &st);
+            sys_write(fd, "w", 1);
+            sys_fstat(fd, &st);
+            if ((st.st_mode & 06000) == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1436: both S_ISUID|S_ISGID cleared (mode=0%o)\n",
+                           st.st_mode & 07777);
+                fut_vfs_close(fd);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1436: suid/sgid bits remain: 0%o (mode=0%o)\n",
+                           st.st_mode & 06000, st.st_mode & 07777);
+                fut_vfs_close(fd);
+                fut_test_fail(1436);
+            }
+        }
+    }
+
+    /* Restore caps for test 1437 — needs CAP_FSETID */
+    task->cap_effective = saved_caps;
+
+    /* Test 1437: CAP_FSETID preserves setuid bit on write */
+    fut_printf("[MISC-TEST] Test 1437: CAP_FSETID preserves S_ISUID on write\n");
+    {
+        int fd = (int)fut_vfs_open("/test_cap_fsetid.txt", O_CREAT | O_RDWR, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1437: open failed: %d\n", fd);
+            fut_test_fail(1437);
+        } else {
+            /* Ensure CAP_FSETID (bit 4) is set */
+            task->cap_effective |= (1ULL << 4);
+            sys_fchmod(fd, 04755);
+            sys_write(fd, "c", 1);
+            struct fut_stat st = {0};
+            sys_fstat(fd, &st);
+            if (st.st_mode & 04000) {
+                fut_printf("[MISC-TEST] ✓ Test 1437: CAP_FSETID preserved S_ISUID (mode=0%o)\n",
+                           st.st_mode & 07777);
+                fut_vfs_close(fd);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1437: S_ISUID cleared despite CAP_FSETID (mode=0%o)\n",
+                           st.st_mode & 07777);
+                fut_vfs_close(fd);
+                fut_test_fail(1437);
+            }
+        }
+    }
+}
+
 static void test_proc_fd_anon_types(void) {
     extern long sys_read(int fd, void *buf, size_t count);
     extern long sys_readlink(const char *path, char *buf, size_t bufsiz);
@@ -46289,6 +46468,7 @@ void fut_misc_test_thread(void *arg) {
     test_accmode_fallocate_cfr();            /* Tests 1427-1429: fallocate/copy_file_range reject wrong access mode */
     test_readahead_writeonly();              /* Test 1430: readahead rejects O_WRONLY fd */
     test_mmap_min_addr();                   /* Tests 1431-1432: mmap_min_addr enforcement */
+    test_suid_sgid_clear_on_write();        /* Tests 1433-1437: setuid/setgid clearing on write */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

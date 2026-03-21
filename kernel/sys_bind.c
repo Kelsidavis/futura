@@ -678,6 +678,7 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
     if (ret < 0) {
         const char *error_desc;
         switch (ret) {
+            case -EADDRINUSE:
             case -EEXIST:
                 error_desc = "address already in use";
                 break;

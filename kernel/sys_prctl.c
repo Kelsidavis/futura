@@ -233,9 +233,10 @@ long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
     }
 
     case PR_SET_DUMPABLE: {
-        /* Control whether core dumps are produced */
+        /* Control whether core dumps are produced.
+         * Valid values: 0=SUID_DUMP_DISABLE, 1=SUID_DUMP_USER, 2=SUID_DUMP_ROOT */
         int val = (int)arg2;
-        if (val != 0 && val != 1) {
+        if (val < 0 || val > 2) {
             return -EINVAL;
         }
         task->dumpable = val;

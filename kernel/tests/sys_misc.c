@@ -48025,6 +48025,36 @@ static void test_fchown_group_perms(void) {
 }
 
 /* ============================================================
+ * Test 1505: PR_SET_DUMPABLE accepts SUID_DUMP_ROOT (2)
+ * ============================================================ */
+static void test_prctl_dumpable_root(void) {
+    extern long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
+                          unsigned long arg4, unsigned long arg5);
+
+    fut_printf("[MISC-TEST] Test 1505: PR_SET_DUMPABLE(2) → 0\n");
+    {
+        /* PR_SET_DUMPABLE=4, value=2 (SUID_DUMP_ROOT) */
+        long ret = sys_prctl(4, 2, 0, 0, 0);
+        if (ret == 0) {
+            /* Verify PR_GET_DUMPABLE=3 returns 2 */
+            long val = sys_prctl(3, 0, 0, 0, 0);
+            /* Restore to default (1) */
+            sys_prctl(4, 1, 0, 0, 0);
+            if (val == 2) {
+                fut_printf("[MISC-TEST] ✓ Test 1505: SUID_DUMP_ROOT accepted, get → 2\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1505: set ok but get → %ld (expected 2)\n", val);
+                fut_test_fail(1505);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1505: PR_SET_DUMPABLE(2) → %ld\n", ret);
+            fut_test_fail(1505);
+        }
+    }
+}
+
+/* ============================================================
  * Tests 1479-1481: openat2 RESOLVE_IN_ROOT enforcement
  * ============================================================ */
 #define TEST_RESOLVE_IN_ROOT 0x10
@@ -48857,6 +48887,7 @@ void fut_misc_test_thread(void *arg) {
     test_stat_timestamps();                /* Test  1501: stat timestamps are in seconds, not nanoseconds */
     test_readlink_bufsiz_zero();           /* Test  1502: readlink(bufsiz=0) → 0, not EINVAL */
     test_fchown_group_perms();             /* Tests 1503-1504: fchown non-root group change rules */
+    test_prctl_dumpable_root();            /* Test  1505: PR_SET_DUMPABLE accepts SUID_DUMP_ROOT (2) */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

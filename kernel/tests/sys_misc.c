@@ -40353,12 +40353,25 @@ test1206:;
  * exactly what sys_clone_thread(CLONE_CHILD_CLEARTID) does internally.
  * ============================================================ */
 
-/* TID word shared between test thread and child: static so both can see it */
-static volatile int g_cleartid_tidword;
+/* Shared state for CLEARTID test — static so child thread can access them */
+static volatile int g_cleartid_tidword;    /* Futex word: starts at child TID, zeroed by CLEARTID */
+static volatile int g_cleartid_stored_tid; /* TID copy that child writes; parent reads to get val */
 
-/* Child entry: just exits immediately — clear_child_tid is set by parent before child runs */
+/* Child entry: atomically sets its TID in both vars, registers CLEARTID, then exits.
+ * This avoids the race where the child exits before the parent can set clear_child_tid. */
 static void cleartid_child_fn(void *arg) {
     (void)arg;
+    fut_thread_t *self = fut_thread_current();
+    int my_tid = (int)self->tid;
+
+    /* Write TID into both globals while we're running */
+    __atomic_store_n((int *)&g_cleartid_stored_tid, my_tid, __ATOMIC_RELEASE);
+    __atomic_store_n((int *)&g_cleartid_tidword, my_tid, __ATOMIC_RELEASE);
+
+    /* Register clear_child_tid so fut_thread_exit() zeroes g_cleartid_tidword + wakes futex */
+    self->clear_child_tid = (int *)&g_cleartid_tidword;
+
+    /* Exit — triggers: *(clear_child_tid) = 0; futex_wake_one(clear_child_tid) */
     fut_thread_exit();
 }
 
@@ -40366,7 +40379,8 @@ static void test_cleartid_futex_wake(void) {
     extern long sys_futex(uint32_t *uaddr, int op, uint32_t val, const void *timeout,
                           uint32_t *uaddr2, uint32_t val3);
 
-    g_cleartid_tidword = 0;
+    g_cleartid_tidword    = 0;
+    g_cleartid_stored_tid = 0;
 
     fut_task_t *task = fut_task_current();
     fut_thread_t *parent_thread = fut_thread_current();
@@ -40377,7 +40391,7 @@ static void test_cleartid_futex_wake(void) {
         return;
     }
 
-    /* Create child thread — it will call fut_thread_exit() immediately */
+    /* Create child thread — it will write its TID, set clear_child_tid, and exit */
     fut_thread_t *child = fut_thread_create(task, cleartid_child_fn, NULL,
                                              parent_thread->stack_size,
                                              parent_thread->priority);
@@ -40389,30 +40403,34 @@ static void test_cleartid_futex_wake(void) {
         fut_test_fail(1237); fut_test_fail(1238);
         return;
     }
-    int child_tid = (int)child->tid;
-    fut_printf("[MISC-TEST] ✓ Test 1235: child thread created, tid=%d\n", child_tid);
+    fut_printf("[MISC-TEST] ✓ Test 1235: child thread created, tid=%llu\n",
+               (unsigned long long)child->tid);
     fut_test_pass();
 
-    /* Simulate CLONE_CHILD_SETTID: write child TID into tid_word */
-    g_cleartid_tidword = child_tid;
-
-    /* Simulate CLONE_CHILD_CLEARTID: set clear_child_tid so fut_thread_exit() will
-     * zero tid_word and wake a futex waiter */
-    child->clear_child_tid = (int *)&g_cleartid_tidword;
-
-    /* Test 1236: tid_word now holds the child TID */
-    int snap = g_cleartid_tidword;
-    if (snap != child_tid) {
-        fut_printf("[MISC-TEST] ✗ Test 1236: tid_word=%d expected=%d\n", snap, child_tid);
-        fut_test_fail(1236);
-    } else {
-        fut_printf("[MISC-TEST] ✓ Test 1236: tid_word=%d (child TID)\n", snap);
-        fut_test_pass();
+    /* Yield until the child has set g_cleartid_stored_tid (its TID).
+     * Once non-zero, we know the child has also stored its TID in g_cleartid_tidword
+     * and registered clear_child_tid.  The child may have already exited too. */
+    int child_tid = 0;
+    for (int spin = 0; spin < 10000 && child_tid == 0; spin++) {
+        child_tid = __atomic_load_n((int *)&g_cleartid_stored_tid, __ATOMIC_ACQUIRE);
+        if (child_tid == 0)
+            fut_thread_yield();
     }
 
-    /* Test 1237: FUTEX_WAIT on tid_word returns 0 (woken by CLEARTID) or
-     * -EAGAIN (child already exited — tid_word was zeroed before we got here).
-     * -ETIMEDOUT would mean CLEARTID did not fire → bug. */
+    /* Test 1236: child wrote its TID into g_cleartid_stored_tid */
+    if (child_tid == 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1236: child never wrote TID (timeout)\n");
+        fut_test_fail(1236);
+        fut_test_fail(1237);
+        fut_test_fail(1238);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 1236: child TID=%d in g_cleartid_stored_tid\n", child_tid);
+    fut_test_pass();
+
+    /* Test 1237: FUTEX_WAIT on g_cleartid_tidword returns 0 (woken by CLEARTID) or
+     * -EAGAIN (child already zeroed g_cleartid_tidword before we got here).
+     * -ETIMEDOUT → CLEARTID did not fire → bug. */
     fut_timespec_t wait_ts = { .tv_sec = 1, .tv_nsec = 0 };
     long fw = sys_futex((uint32_t *)&g_cleartid_tidword,
                         0 /* FUTEX_WAIT */ | 128 /* FUTEX_PRIVATE_FLAG */,
@@ -40421,12 +40439,12 @@ static void test_cleartid_futex_wake(void) {
         fut_printf("[MISC-TEST] ✗ Test 1237: futex_wait returned %ld (expected 0 or -EAGAIN)\n", fw);
         fut_test_fail(1237);
     } else {
-        fut_printf("[MISC-TEST] ✓ Test 1237: futex_wait returned %ld (child exited)\n", fw);
+        fut_printf("[MISC-TEST] ✓ Test 1237: futex_wait returned %ld\n", fw);
         fut_test_pass();
     }
 
-    /* Test 1238: tid_word must be 0 — clear_child_tid zeroed it on thread exit */
-    int final_val = g_cleartid_tidword;
+    /* Test 1238: g_cleartid_tidword must be 0 — clear_child_tid zeroed it on exit */
+    int final_val = __atomic_load_n((int *)&g_cleartid_tidword, __ATOMIC_ACQUIRE);
     if (final_val != 0) {
         fut_printf("[MISC-TEST] ✗ Test 1238: tid_word=%d after exit, expected 0\n", final_val);
         fut_test_fail(1238);

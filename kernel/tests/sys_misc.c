@@ -47347,6 +47347,50 @@ static void test_openat2_resolve_no_symlinks(void) {
     sys_unlink("/rns_target.txt");
 }
 
+/* ============================================================
+ * Test 1478: fcntl F_SETFL includes O_DIRECT in changeable mask
+ * ============================================================ */
+static void test_fcntl_setfl_o_direct(void) {
+    fut_printf("[MISC-TEST] Test 1478: F_SETFL can set/clear O_DIRECT\n");
+    extern long sys_fcntl(int fd, int cmd, unsigned long arg);
+    extern long sys_unlink(const char *path);
+    #define TEST_O_DIRECT 00040000
+
+    int fd = (int)fut_vfs_open("/setfl_direct.txt", 0x42 /* O_CREAT|O_RDWR */, 0644);
+    if (fd < 0) { fut_test_fail(1478); return; }
+
+    /* Initially O_DIRECT should not be set */
+    long fl = sys_fcntl(fd, F_GETFL, 0);
+    if (fl < 0) { fut_vfs_close(fd); sys_unlink("/setfl_direct.txt"); fut_test_fail(1478); return; }
+
+    /* Set O_DIRECT via F_SETFL */
+    long r = sys_fcntl(fd, F_SETFL, (unsigned long)(fl | TEST_O_DIRECT));
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1478: F_SETFL(O_DIRECT) failed: %ld\n", r);
+        fut_vfs_close(fd); sys_unlink("/setfl_direct.txt"); fut_test_fail(1478); return;
+    }
+
+    /* Verify O_DIRECT is now set */
+    long fl2 = sys_fcntl(fd, F_GETFL, 0);
+    if (!(fl2 & TEST_O_DIRECT)) {
+        fut_printf("[MISC-TEST] ✗ Test 1478: O_DIRECT not set after F_SETFL: 0x%lx\n", fl2);
+        fut_vfs_close(fd); sys_unlink("/setfl_direct.txt"); fut_test_fail(1478); return;
+    }
+
+    /* Clear O_DIRECT */
+    sys_fcntl(fd, F_SETFL, (unsigned long)(fl2 & ~TEST_O_DIRECT));
+    long fl3 = sys_fcntl(fd, F_GETFL, 0);
+    if (fl3 & TEST_O_DIRECT) {
+        fut_printf("[MISC-TEST] ✗ Test 1478: O_DIRECT still set after clear: 0x%lx\n", fl3);
+        fut_vfs_close(fd); sys_unlink("/setfl_direct.txt"); fut_test_fail(1478); return;
+    }
+
+    fut_vfs_close(fd);
+    sys_unlink("/setfl_direct.txt");
+    fut_printf("[MISC-TEST] ✓ Test 1478: F_SETFL O_DIRECT set/clear works\n");
+    fut_test_pass();
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -48050,6 +48094,7 @@ void fut_misc_test_thread(void *arg) {
     test_rename_link_timestamps();          /* Tests 1470-1472: rename/link timestamp updates */
     test_symlink_dir_timestamps();          /* Tests 1473-1474: symlink dir timestamp updates */
     test_openat2_resolve_no_symlinks();     /* Tests 1475-1477: RESOLVE_NO_SYMLINKS enforcement */
+    test_fcntl_setfl_o_direct();            /* Test 1478: F_SETFL O_DIRECT set/clear */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -54,6 +54,22 @@ static inline int accept_access_ok(const void *ptr, size_t n, int write) {
     return fut_access_ok(ptr, n, write);
 }
 
+/* Internet address structures for peer address return */
+typedef struct {
+    uint16_t sin_family;
+    uint16_t sin_port;
+    uint32_t sin_addr;
+    uint8_t  sin_zero[8];
+} accept_sockaddr_in_t;
+
+typedef struct {
+    uint16_t sin6_family;
+    uint16_t sin6_port;
+    uint32_t sin6_flowinfo;
+    uint8_t  sin6_addr[16];
+    uint32_t sin6_scope_id;
+} accept_sockaddr_in6_t;
+
 /* Accept debugging (controlled via debug_config.h) */
 #define accept_printf(...) do { if (ACCEPT_DEBUG) fut_printf(__VA_ARGS__); } while(0)
 
@@ -597,8 +613,31 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
                 accept_printf("[ACCEPT] AF_UNIX peer address: path='%s', actual_len=%u, copied=%u\n",
                            peer_path, actual_len, copy_len);
             }
+        } else if (accepted_socket->address_family == AF_INET) {
+            /* AF_INET: return peer's sockaddr_in */
+            accept_sockaddr_in_t sin = {0};
+            sin.sin_family = AF_INET;
+            if (accepted_socket->pair && accepted_socket->pair->peer) {
+                sin.sin_port = accepted_socket->pair->peer->inet_port;
+                sin.sin_addr = accepted_socket->pair->peer->inet_addr;
+            }
+            actual_len = (socklen_t)sizeof(accept_sockaddr_in_t);
+            socklen_t copy_len = (actual_len < len) ? actual_len : len;
+            if (accept_copy_to_user(local_addr, &sin, copy_len) != 0)
+                actual_len = 0;
+        } else if (accepted_socket->address_family == AF_INET6) {
+            /* AF_INET6: return peer's sockaddr_in6 */
+            accept_sockaddr_in6_t sin6 = {0};
+            sin6.sin6_family = AF_INET6;
+            if (accepted_socket->pair && accepted_socket->pair->peer) {
+                sin6.sin6_port = accepted_socket->pair->peer->inet_port;
+                __builtin_memcpy(&sin6.sin6_addr, accepted_socket->pair->peer->inet6_addr, 16);
+            }
+            actual_len = (socklen_t)sizeof(accept_sockaddr_in6_t);
+            socklen_t copy_len = (actual_len < len) ? actual_len : len;
+            if (accept_copy_to_user(local_addr, &sin6, copy_len) != 0)
+                actual_len = 0;
         } else {
-            /* Other address families not yet supported */
             actual_len = 0;
         }
 

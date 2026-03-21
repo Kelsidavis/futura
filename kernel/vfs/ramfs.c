@@ -1546,6 +1546,14 @@ static int ramfs_link(struct fut_vnode *old_vnode, const char *oldpath, const ch
     /* Increment link count on the vnode */
     old_vnode->nlinks++;
 
+    /* POSIX: link updates parent directory mtime/ctime and file ctime */
+    uint64_t link_now = fut_get_ticks();
+    new_parent_node->mtime_ms = link_now;
+    new_parent_node->ctime_ms = link_now;
+    if (old_node) {
+        old_node->ctime_ms = link_now;
+    }
+
     return 0;
 }
 
@@ -1838,6 +1846,17 @@ static int ramfs_rename(struct fut_vnode *parent, const char *oldname, const cha
             __builtin_memcpy(old_file_path + dlen, oldname, oname_len + 1);
             inotify_dispatch_event(old_file_path, 0x00000800 /* IN_MOVE_SELF */, NULL, 0);
         }
+    }
+
+    /* POSIX: rename updates parent directory mtime and ctime */
+    uint64_t rename_now = fut_get_ticks();
+    parent_node->mtime_ms = rename_now;
+    parent_node->ctime_ms = rename_now;
+
+    /* Also update ctime of the renamed file itself */
+    struct ramfs_node *moved_node = (struct ramfs_node *)old_vnode->fs_data;
+    if (moved_node) {
+        moved_node->ctime_ms = rename_now;
     }
 
     return 0;

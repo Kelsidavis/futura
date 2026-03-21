@@ -16732,6 +16732,128 @@ static void test_truncate_updates_timestamps(void) {
     }
 }
 
+/*
+ * test_rename_link_timestamps - POSIX timestamp updates on rename/link
+ *
+ * Tests 1470-1472:
+ * 1470: rename updates parent directory ctime
+ * 1471: link() updates file ctime (nlinks changed)
+ * 1472: rename updates moved file's ctime
+ */
+static void test_rename_link_timestamps(void) {
+    extern long sys_stat(const char *path, struct fut_stat *statbuf);
+    extern long sys_rename(const char *oldpath, const char *newpath);
+    extern long sys_link(const char *oldpath, const char *newpath);
+    extern long sys_write(int fd, const void *buf, size_t count);
+
+    /* Test 1470: rename updates parent directory ctime */
+    fut_printf("[MISC-TEST] Test 1470: rename updates dir ctime\n");
+    {
+        /* Create a test directory and file */
+        int ret = fut_vfs_mkdir("/test_rn_ts", 0755);
+        if (ret < 0 && ret != -EEXIST) {
+            fut_printf("[MISC-TEST] ✗ Test 1470: mkdir failed: %d\n", ret);
+            fut_test_fail(1470);
+        } else {
+            int fd = (int)fut_vfs_open("/test_rn_ts/file_a.txt", O_CREAT | O_RDWR, 0644);
+            if (fd < 0) {
+                fut_printf("[MISC-TEST] ✗ Test 1470: open failed: %d\n", fd);
+                fut_test_fail(1470);
+            } else {
+                sys_write(fd, "data", 4);
+                fut_vfs_close(fd);
+
+                struct fut_stat dirst = {0};
+                sys_stat("/test_rn_ts", &dirst);
+                uint64_t dir_ctime_before = dirst.st_ctime;
+
+                for (volatile int i = 0; i < 200000; i++) {}
+
+                sys_rename("/test_rn_ts/file_a.txt", "/test_rn_ts/file_b.txt");
+
+                struct fut_stat dirst2 = {0};
+                sys_stat("/test_rn_ts", &dirst2);
+
+                if (dirst2.st_ctime >= dir_ctime_before) {
+                    fut_printf("[MISC-TEST] ✓ Test 1470: dir ctime updated on rename\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1470: dir ctime not updated\n");
+                    fut_test_fail(1470);
+                }
+            }
+        }
+    }
+
+    /* Test 1471: link() updates file ctime */
+    fut_printf("[MISC-TEST] Test 1471: link updates file ctime\n");
+    {
+        int fd = (int)fut_vfs_open("/test_link_ctime.txt", O_CREAT | O_RDWR, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1471: open failed: %d\n", fd);
+            fut_test_fail(1471);
+        } else {
+            sys_write(fd, "data", 4);
+            fut_vfs_close(fd);
+
+            struct fut_stat st1 = {0};
+            sys_stat("/test_link_ctime.txt", &st1);
+            uint64_t ctime_before = st1.st_ctime;
+
+            for (volatile int i = 0; i < 200000; i++) {}
+
+            long lret = sys_link("/test_link_ctime.txt", "/test_link_ctime2.txt");
+            if (lret < 0) {
+                fut_printf("[MISC-TEST] ✗ Test 1471: link failed: %ld\n", lret);
+                fut_test_fail(1471);
+            } else {
+                struct fut_stat st2 = {0};
+                sys_stat("/test_link_ctime.txt", &st2);
+
+                if (st2.st_ctime >= ctime_before) {
+                    fut_printf("[MISC-TEST] ✓ Test 1471: file ctime updated on link\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1471: file ctime not updated\n");
+                    fut_test_fail(1471);
+                }
+            }
+        }
+    }
+
+    /* Test 1472: rename updates moved file's ctime */
+    fut_printf("[MISC-TEST] Test 1472: rename updates file ctime\n");
+    {
+        int fd = (int)fut_vfs_open("/test_rn_fctime.txt", O_CREAT | O_RDWR, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1472: open failed: %d\n", fd);
+            fut_test_fail(1472);
+        } else {
+            sys_write(fd, "data", 4);
+            fut_vfs_close(fd);
+
+            struct fut_stat st1 = {0};
+            sys_stat("/test_rn_fctime.txt", &st1);
+            uint64_t ctime_before = st1.st_ctime;
+
+            for (volatile int i = 0; i < 200000; i++) {}
+
+            sys_rename("/test_rn_fctime.txt", "/test_rn_fctime_moved.txt");
+
+            struct fut_stat st2 = {0};
+            sys_stat("/test_rn_fctime_moved.txt", &st2);
+
+            if (st2.st_ctime >= ctime_before) {
+                fut_printf("[MISC-TEST] ✓ Test 1472: file ctime updated on rename\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1472: file ctime not updated\n");
+                fut_test_fail(1472);
+            }
+        }
+    }
+}
+
 static void test_proc_fd_anon_types(void) {
     extern long sys_read(int fd, void *buf, size_t count);
     extern long sys_readlink(const char *path, char *buf, size_t bufsiz);
@@ -47789,6 +47911,7 @@ void fut_misc_test_thread(void *arg) {
     test_epollet_mod_rearm();               /* Tests 1462-1463: EPOLL_CTL_MOD re-arms EPOLLET */
     test_ctime_on_metadata_change();        /* Tests 1464-1466: ctime updates on chmod/chown */
     test_truncate_updates_timestamps();     /* Tests 1467-1469: truncate mtime/ctime updates */
+    test_rename_link_timestamps();          /* Tests 1470-1472: rename/link timestamp updates */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

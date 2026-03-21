@@ -254,6 +254,7 @@ enum procfs_kind {
     PROC_KALLSYMS,                  /* /proc/kallsyms — kernel symbol table (addresses zeroed per kptr_restrict) */
     PROC_TIMERSLACK_NS,             /* /proc/<pid>/timerslack_ns — timer expiry slack in nanoseconds */
     PROC_SYSCALL,                   /* /proc/<pid>/syscall — current syscall number and arguments */
+    PROC_LOCKS,                     /* /proc/locks — POSIX and flock file lock table */
 };
 
 typedef struct {
@@ -424,6 +425,7 @@ typedef struct {
 #define PROC_INO_SYS_NET_IPV4_FORWARDING 412ULL
 #define PROC_INO_SYS_NET_IPV4_ACCEPT_RA  413ULL
 #define PROC_INO_KALLSYMS                 414ULL
+#define PROC_INO_LOCKS                    415ULL
 /* /proc/sys/kernel/ extended range: 400-429 */
 #define PROC_INO_SYS_KERNEL_NMI_WD     400ULL
 #define PROC_INO_SYS_KERNEL_WATCHDOG   401ULL
@@ -2656,6 +2658,14 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
         case PROC_KALLSYMS:
             total = gen_kallsyms(tmp, GEN_BUF);
             break;
+        case PROC_LOCKS:
+            /* /proc/locks — file lock table.
+             * Futura's file locking is per-vnode (not globally enumerable).
+             * Return empty content: no locks registered with the central lock manager.
+             * Format when locks exist: "N: POSIX  ADVISORY  WRITE PID DEV:INO START END\n"
+             * Empty file is valid and accepted by all callers (lsof, procps, etc.). */
+            total = 0;
+            break;
         case PROC_FDINFO_ENTRY: {
             /* /proc/<pid>/fdinfo/<n>: pos, flags, mnt_id, type-specific fields */
             fut_task_t *ftask = fut_task_by_pid(n->pid);
@@ -3503,6 +3513,11 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
         if (STREQ(name, "kallsyms")) {
             *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_KALLSYMS,
                                           0100444, PROC_KALLSYMS, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "locks")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_LOCKS,
+                                          0100444, PROC_LOCKS, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
         /* Try numeric PID */
@@ -4529,7 +4544,8 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             ".", "..", "self", "thread-self", "meminfo", "version", "uptime", "cpuinfo",
             "loadavg", "mounts", "sys", "stat", "filesystems", "vmstat", "net",
             "interrupts", "cmdline", "swaps", "devices", "misc",
-            "buddyinfo", "zoneinfo", "diskstats", "partitions", "cgroups", "kallsyms"
+            "buddyinfo", "zoneinfo", "diskstats", "partitions", "cgroups", "kallsyms",
+            "locks"
         };
         static const uint8_t fixed_type[] = {
             FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
@@ -4542,7 +4558,8 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             FUT_VDIR_TYPE_REG,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
-            FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG
+            FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+            FUT_VDIR_TYPE_REG   /* locks */
         };
         static const uint64_t fixed_ino[] = {
             PROC_INO_ROOT, PROC_INO_ROOT,
@@ -4554,9 +4571,10 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             PROC_INO_INTERRUPTS,
             PROC_INO_CMDLINE_GLOBAL, PROC_INO_SWAPS, PROC_INO_DEVICES, PROC_INO_MISC_FILE,
             PROC_INO_BUDDYINFO, PROC_INO_ZONEINFO,
-            PROC_INO_DISKSTATS, PROC_INO_PARTITIONS, PROC_INO_CGROUPS, PROC_INO_KALLSYMS
+            PROC_INO_DISKSTATS, PROC_INO_PARTITIONS, PROC_INO_CGROUPS, PROC_INO_KALLSYMS,
+            PROC_INO_LOCKS
         };
-        if (idx < 26) {
+        if (idx < 27) {
             de->d_ino    = fixed_ino[idx];
             de->d_off    = idx + 1;
             de->d_type   = fixed_type[idx];
@@ -4571,15 +4589,15 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         }
 
         /*
-         * PID enumeration: after the 26 fixed entries, cookies encode
-         * "find first task with pid > (cookie - 26)".  After returning
-         * a PID entry we set cookie = 26 + that_pid + 1.
+         * PID enumeration: after the 27 fixed entries, cookies encode
+         * "find first task with pid > (cookie - 27)".  After returning
+         * a PID entry we set cookie = 27 + that_pid + 1.
          *
          * This is stable as long as PIDs are unique and monotonically
          * increasing; newly-forked tasks will appear if their PID is
          * greater than the last-seen PID.
          */
-        uint64_t min_pid = idx >= 26 ? idx - 26 : 0;  /* start scanning for pid > min_pid */
+        uint64_t min_pid = idx >= 27 ? idx - 27 : 0;  /* start scanning for pid > min_pid */
         fut_task_t *best = NULL;
         uint64_t   best_pid = (uint64_t)-1;
         fut_task_t *t = fut_task_list;
@@ -4604,14 +4622,14 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         pidname[pn] = '\0';
 
         de->d_ino    = PROC_INO_PID_DIR(best->pid);
-        de->d_off    = 26 + best->pid + 1;
+        de->d_off    = 27 + best->pid + 1;
         de->d_type   = FUT_VDIR_TYPE_DIR;
         de->d_reclen = sizeof(*de);
         size_t nl = (size_t)pn;
         if (nl > FUT_VFS_NAME_MAX) nl = FUT_VFS_NAME_MAX;
         __builtin_memcpy(de->d_name, pidname, nl);
         de->d_name[nl] = '\0';
-        *cookie = 26 + best->pid + 1;  /* resume after this pid */
+        *cookie = 27 + best->pid + 1;  /* resume after this pid */
         return 1;
     }
 

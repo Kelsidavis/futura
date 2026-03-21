@@ -552,7 +552,7 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
                     size_t copy_path = sender_path_len < 108 ? sender_path_len : 107;
                     if (copy_path > 0)
                         __builtin_memcpy(src_sun.sun_path, sender_path, copy_path);
-                    unsigned short actual_len = (unsigned short)(2 + copy_path + (sender_path_len == 0 || sender_path[0] != '\0' ? 1 : 0));
+                    socklen_t actual_len = (socklen_t)(2 + copy_path + (sender_path_len == 0 || sender_path[0] != '\0' ? 1 : 0));
                     socklen_t to_copy = (actual_len < alen) ? actual_len : alen;
                     recv_copy_to_user(local_src_addr, &src_sun, to_copy);
                     recv_copy_to_user(local_addrlen, &actual_len, sizeof(socklen_t));
@@ -704,7 +704,7 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
                 peer_addr.sun_path[i] = '\0';
 
                 /* Calculate actual address length (sun_family + path + null) */
-                unsigned short actual_len = (unsigned short)((char*)&peer_addr.sun_path[0] - (char*)&peer_addr) + i + 1;
+                socklen_t actual_len = (socklen_t)((char*)&peer_addr.sun_path[0] - (char*)&peer_addr) + (socklen_t)i + 1;
 
                 /* Copy address to userspace (truncate if buffer too small) */
                 socklen_t copy_len = (actual_len < len) ? actual_len : len;

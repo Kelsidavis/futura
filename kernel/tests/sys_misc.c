@@ -38961,6 +38961,165 @@ static void test_mempolicy(void) {
     }
 }
 
+/* ============================================================
+ * Tests 1192-1196: vmsplice + tee functional tests
+ *
+ *   1192: vmsplice user buffer → pipe write end, read back data
+ *   1193: vmsplice(NULL iov) → EFAULT
+ *   1194: vmsplice(nr_segs=0) → EINVAL
+ *   1195: vmsplice to regular file fd → EBADF
+ *   1196: tee() duplicates pipe data to a second pipe
+ * ============================================================ */
+static void test_vmsplice_tee(void) {
+    extern long sys_vmsplice(int fd, const void *iov, size_t nr_segs,
+                             unsigned int flags);
+    extern long sys_tee(int fd_in, int fd_out, unsigned long len,
+                        unsigned int flags);
+    extern long sys_pipe(int pipefd[2]);
+    extern ssize_t sys_read(int fd, void *buf, size_t count);
+    extern ssize_t sys_write(int fd, const void *buf, size_t count);
+    extern long sys_close(int fd);
+    extern long sys_open(const char *path, int flags, int mode);
+
+    struct iovec {
+        void   *iov_base;
+        size_t  iov_len;
+    };
+
+    fut_printf("[MISC-TEST] Tests 1192-1196: vmsplice + tee\n");
+
+    /* Test 1192: vmsplice writes iov to pipe, read back verifies content */
+    fut_printf("[MISC-TEST] Test 1192: vmsplice writes to pipe\n");
+    {
+        int pfd[2] = {-1, -1};
+        long pr = sys_pipe(pfd);
+        if (pr != 0 || pfd[0] < 0 || pfd[1] < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1192: pipe() failed (%ld)\n", pr);
+            fut_test_fail(1192);
+        } else {
+            char src[8] = "vmstest";
+            struct iovec iov = { .iov_base = src, .iov_len = 7 };
+            long nwr = sys_vmsplice(pfd[1], &iov, 1, 0);
+            if (nwr != 7) {
+                fut_printf("[MISC-TEST] ✗ Test 1192: vmsplice returned %ld (want 7)\n", nwr);
+                fut_test_fail(1192);
+            } else {
+                char dst[8] = {0};
+                ssize_t nr = sys_read(pfd[0], dst, 7);
+                if (nr == 7 && dst[0] == 'v' && dst[6] == 't') {
+                    fut_printf("[MISC-TEST] ✓ Test 1192: vmsplice wrote and read back '%.*s'\n",
+                               (int)nr, dst);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1192: read back %zd bytes, got '%.*s'\n",
+                               nr, (int)nr, dst);
+                    fut_test_fail(1192);
+                }
+            }
+            sys_close(pfd[0]);
+            sys_close(pfd[1]);
+        }
+    }
+
+    /* Test 1193: vmsplice(NULL iov) → EFAULT */
+    fut_printf("[MISC-TEST] Test 1193: vmsplice NULL iov → EFAULT\n");
+    {
+        int pfd[2] = {-1, -1};
+        sys_pipe(pfd);
+        long r = sys_vmsplice(pfd[1], NULL, 1, 0);
+        if (r == -14 /* -EFAULT */) {
+            fut_printf("[MISC-TEST] ✓ Test 1193: vmsplice(NULL iov) → EFAULT\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1193: returned %ld (want -EFAULT)\n", r);
+            fut_test_fail(1193);
+        }
+        if (pfd[0] >= 0) sys_close(pfd[0]);
+        if (pfd[1] >= 0) sys_close(pfd[1]);
+    }
+
+    /* Test 1194: vmsplice(nr_segs=0) → EINVAL */
+    fut_printf("[MISC-TEST] Test 1194: vmsplice nr_segs=0 → EINVAL\n");
+    {
+        int pfd[2] = {-1, -1};
+        sys_pipe(pfd);
+        char dummy[4] = {0};
+        struct iovec iov = { .iov_base = dummy, .iov_len = 4 };
+        long r = sys_vmsplice(pfd[1], &iov, 0, 0);
+        if (r == -22 /* -EINVAL */) {
+            fut_printf("[MISC-TEST] ✓ Test 1194: vmsplice(nr_segs=0) → EINVAL\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1194: returned %ld (want -EINVAL)\n", r);
+            fut_test_fail(1194);
+        }
+        if (pfd[0] >= 0) sys_close(pfd[0]);
+        if (pfd[1] >= 0) sys_close(pfd[1]);
+    }
+
+    /* Test 1195: vmsplice to regular file fd (not a pipe) → EBADF */
+    fut_printf("[MISC-TEST] Test 1195: vmsplice to non-pipe fd → EBADF\n");
+    {
+        int fd = (int)sys_open("/tmp/vms_test1195.txt", 0101 /* O_CREAT|O_WRONLY */, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1195: open failed (%d)\n", fd);
+            fut_test_fail(1195);
+        } else {
+            char buf[4] = {0};
+            struct iovec iov = { .iov_base = buf, .iov_len = 4 };
+            long r = sys_vmsplice(fd, &iov, 1, 0);
+            if (r == -9 /* -EBADF */) {
+                fut_printf("[MISC-TEST] ✓ Test 1195: vmsplice to file → EBADF\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1195: returned %ld (want -EBADF)\n", r);
+                fut_test_fail(1195);
+            }
+            sys_close(fd);
+        }
+    }
+
+    /* Test 1196: tee() copies data from one pipe to another without consuming it */
+    fut_printf("[MISC-TEST] Test 1196: tee() duplicates pipe data\n");
+    {
+        int src[2] = {-1, -1};
+        int dst[2] = {-1, -1};
+        if (sys_pipe(src) != 0 || sys_pipe(dst) != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1196: pipe() failed\n");
+            fut_test_fail(1196);
+        } else {
+            /* Write 5 bytes into src write end */
+            char wbuf[5] = "teexx";
+            sys_write(src[1], wbuf, 5);
+
+            /* tee: copy from src read end to dst write end */
+            long nr_tee = sys_tee(src[0], dst[1], 5, 0);
+            if (nr_tee != 5) {
+                fut_printf("[MISC-TEST] ✗ Test 1196: tee returned %ld (want 5)\n", nr_tee);
+                fut_test_fail(1196);
+            } else {
+                /* Read from dst — should have the tee'd copy */
+                char dbuf[8] = {0};
+                ssize_t rd = sys_read(dst[0], dbuf, 5);
+                /* Data from src should still be readable (tee doesn't consume) */
+                char sbuf[8] = {0};
+                ssize_t rs = sys_read(src[0], sbuf, 5);
+                if (rd == 5 && dbuf[0] == 't' && rs == 5 && sbuf[0] == 't') {
+                    fut_printf("[MISC-TEST] ✓ Test 1196: tee copied '%.*s', src still '%.*s'\n",
+                               (int)rd, dbuf, (int)rs, sbuf);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1196: tee rd=%zd dbuf[0]=%c rs=%zd sbuf[0]=%c\n",
+                               rd, dbuf[0], rs, sbuf[0]);
+                    fut_test_fail(1196);
+                }
+            }
+            sys_close(src[0]); sys_close(src[1]);
+            sys_close(dst[0]); sys_close(dst[1]);
+        }
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -39589,6 +39748,7 @@ void fut_misc_test_thread(void *arg) {
     test_mempolicy();                  /* Tests 1180-1183: mbind/get_mempolicy/set_mempolicy single-node */
     test_enosys_stubs();               /* Tests 1184-1188: perf_event_open/fanotify/userfaultfd/bpf stubs */
     test_inet_peer_addr();             /* Tests 1189-1191: getpeername AF_INET ENOTCONN + recvfrom src_addr */
+    test_vmsplice_tee();               /* Tests 1192-1196: vmsplice write+read, EFAULT, EINVAL, EBADF, tee dup */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

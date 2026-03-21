@@ -47348,6 +47348,85 @@ static void test_openat2_resolve_no_symlinks(void) {
 }
 
 /* ============================================================
+ * Tests 1482-1483: sendfile/copy_file_range reject non-regular source
+ * ============================================================ */
+static void test_sendfile_rejects_socket_source(void) {
+    fut_printf("[MISC-TEST] Test 1482: sendfile from socket source → EINVAL\n");
+    extern long sys_sendfile(int out_fd, int in_fd, int64_t *offset, size_t count);
+    extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+    extern long sys_unlink(const char *path);
+
+    /* Create a socket pair */
+    int sv[2] = {-1, -1};
+    long r = sys_socketpair(1 /* AF_UNIX */, 1 /* SOCK_STREAM */, 0, sv);
+    if (r < 0 || sv[0] < 0 || sv[1] < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1482: socketpair failed: %ld\n", r);
+        fut_test_fail(1482); return;
+    }
+
+    /* Create a regular output file */
+    int outfd = (int)fut_vfs_open("/sf_reject_test.txt", 0x42 /* O_RDWR|O_CREAT */, 0644);
+    if (outfd < 0) {
+        fut_vfs_close(sv[0]); fut_vfs_close(sv[1]);
+        fut_test_fail(1482); return;
+    }
+
+    /* sendfile from socket → should return EINVAL */
+    long ret = sys_sendfile(outfd, sv[0], (int64_t *)0, 1024);
+    fut_vfs_close(outfd);
+    fut_vfs_close(sv[0]);
+    fut_vfs_close(sv[1]);
+    sys_unlink("/sf_reject_test.txt");
+
+    if (ret == -22 /* -EINVAL */) {
+        fut_printf("[MISC-TEST] ✓ Test 1482: sendfile from socket → EINVAL\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1482: sendfile from socket: expected -22, got %ld\n", ret);
+        fut_test_fail(1482);
+    }
+}
+
+static void test_copy_file_range_rejects_pipe(void) {
+    fut_printf("[MISC-TEST] Test 1483: copy_file_range from pipe → EINVAL\n");
+    extern long sys_copy_file_range(int fd_in, int64_t *off_in,
+                                     int fd_out, int64_t *off_out,
+                                     size_t len, unsigned int flags);
+    extern long sys_pipe2(int pipefd[2], int flags);
+    extern long sys_unlink(const char *path);
+
+    /* Create a pipe */
+    int pipefd[2] = {-1, -1};
+    long r = sys_pipe2(pipefd, 0);
+    if (r < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1483: pipe2 failed: %ld\n", r);
+        fut_test_fail(1483); return;
+    }
+
+    /* Create a regular output file */
+    int outfd = (int)fut_vfs_open("/cfr_reject_test.txt", 0x42 /* O_RDWR|O_CREAT */, 0644);
+    if (outfd < 0) {
+        fut_vfs_close(pipefd[0]); fut_vfs_close(pipefd[1]);
+        fut_test_fail(1483); return;
+    }
+
+    /* copy_file_range from pipe → should return EINVAL */
+    long ret = sys_copy_file_range(pipefd[0], (int64_t *)0, outfd, (int64_t *)0, 1024, 0);
+    fut_vfs_close(outfd);
+    fut_vfs_close(pipefd[0]);
+    fut_vfs_close(pipefd[1]);
+    sys_unlink("/cfr_reject_test.txt");
+
+    if (ret == -22 /* -EINVAL */) {
+        fut_printf("[MISC-TEST] ✓ Test 1483: copy_file_range from pipe → EINVAL\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1483: copy_file_range from pipe: expected -22, got %ld\n", ret);
+        fut_test_fail(1483);
+    }
+}
+
+/* ============================================================
  * Tests 1479-1481: openat2 RESOLVE_IN_ROOT enforcement
  * ============================================================ */
 #define TEST_RESOLVE_IN_ROOT 0x10
@@ -48166,6 +48245,8 @@ void fut_misc_test_thread(void *arg) {
     test_openat2_resolve_no_symlinks();     /* Tests 1475-1477: RESOLVE_NO_SYMLINKS enforcement */
     test_fcntl_setfl_o_direct();            /* Test 1478: F_SETFL O_DIRECT set/clear */
     test_openat2_resolve_in_root();         /* Tests 1479-1481: RESOLVE_IN_ROOT enforcement */
+    test_sendfile_rejects_socket_source();  /* Test 1482: sendfile from socket → EINVAL */
+    test_copy_file_range_rejects_pipe();    /* Test 1483: copy_file_range from pipe → EINVAL */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

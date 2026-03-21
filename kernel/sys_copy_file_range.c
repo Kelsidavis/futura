@@ -104,6 +104,13 @@ long sys_copy_file_range(int fd_in, int64_t *off_in,
     if ((f_out->flags & O_ACCMODE) == O_RDONLY)
         return -EBADF;
 
+    /* Both FDs must be regular files (Linux 5.3+).
+     * Sockets and pipes are not supported by copy_file_range. */
+    if (!f_in->vnode || f_in->vnode->type != VN_REG)
+        return -EINVAL;
+    if (!f_out->vnode || f_out->vnode->type != VN_REG)
+        return -EINVAL;
+
     /* Read explicit offsets if provided */
     int64_t pos_in = -1, pos_out = -1;
     if (off_in) {

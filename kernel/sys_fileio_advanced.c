@@ -247,8 +247,14 @@ long sys_sendfile(int out_fd, int in_fd, int64_t *offset, size_t count) {
         }
     }
 
-    /* Check if out_fd is a socket — socket sends use fut_socket_send, not vnode write */
+    /* Reject socket source — sendfile() only reads from regular files/pipes.
+     * Linux returns EINVAL when in_fd is a socket. */
     extern fut_socket_t *get_socket_from_fd(int fd);
+    if (get_socket_from_fd(local_in_fd)) {
+        return -EINVAL;
+    }
+
+    /* Check if out_fd is a socket — socket sends use fut_socket_send, not vnode write */
     fut_socket_t *out_sock = get_socket_from_fd(local_out_fd);
 
     /* Validate out_file supports writing (sockets are always writable) */

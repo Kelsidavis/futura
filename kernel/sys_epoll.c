@@ -278,6 +278,7 @@ struct epoll_fd_entry {
     bool oneshot;              /* Report only once, then auto-unregister */
     bool last_was_readable;    /* Last state for edge-triggered EPOLLIN */
     bool last_was_writable;    /* Last state for edge-triggered EPOLLOUT */
+    bool last_was_hup;         /* Last state for edge-triggered EPOLLHUP/EPOLLERR */
 };
 
 /* Internal epoll set structure */
@@ -1539,21 +1540,26 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
                 }
             }
 
-            /* Phase 3: Handle edge-triggered mode - only report on transitions */
+            /* Phase 3: Handle edge-triggered mode - only report on transitions.
+             * EPOLLHUP and EPOLLERR are always reported (per Linux semantics)
+             * but in ET mode they only fire once on the transition. */
             bool should_report = false;
             if (events_ready) {
                 if (set->fds[i].edge_triggered) {
                     /* Edge-triggered: report only if transitioning from no event to event */
                     bool is_readable = (events_ready & (EPOLLIN | EPOLLRDNORM)) != 0;
                     bool is_writable = (events_ready & (EPOLLOUT | EPOLLWRNORM)) != 0;
+                    bool is_hup_err  = (events_ready & (EPOLLHUP | EPOLLERR)) != 0;
 
                     if ((is_readable && !set->fds[i].last_was_readable) ||
-                        (is_writable && !set->fds[i].last_was_writable)) {
+                        (is_writable && !set->fds[i].last_was_writable) ||
+                        (is_hup_err  && !set->fds[i].last_was_hup)) {
                         should_report = true;
                     }
                     /* Update state for next iteration */
                     if (is_readable) set->fds[i].last_was_readable = true;
                     if (is_writable) set->fds[i].last_was_writable = true;
+                    if (is_hup_err)  set->fds[i].last_was_hup = true;
                 } else {
                     /* Level-triggered: report every iteration while event is ready */
                     should_report = true;
@@ -1563,6 +1569,7 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
                 if (set->fds[i].edge_triggered) {
                     set->fds[i].last_was_readable = false;
                     set->fds[i].last_was_writable = false;
+                    set->fds[i].last_was_hup = false;
                 }
             }
 

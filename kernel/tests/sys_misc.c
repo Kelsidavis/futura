@@ -13318,6 +13318,80 @@ static void test_renameat2_noreplace(void) {
 #undef RENAME_NOREPLACE
 }
 
+/* ============================================================
+ * test_epollet_hup() — Tests 1358-1359
+ *
+ * Verify EPOLLET correctly reports EPOLLHUP on pipe write-end close,
+ * and doesn't re-report on subsequent waits (edge consumed).
+ * ============================================================ */
+static void test_epollet_hup(void) {
+    extern long sys_pipe(int pipefd[2]);
+    extern long sys_epoll_create1(int flags);
+    extern long sys_epoll_ctl(int epfd, int op, int fd, void *event);
+    extern long sys_epoll_wait(int epfd, void *events, int maxevents, int timeout);
+
+#define TEST_EPOLLET (1U << 31)
+#define TEST_EPOLLIN 0x001
+#define TEST_EPOLLHUP 0x010
+
+    /* Test 1358: EPOLLET reports EPOLLHUP when pipe write end closes */
+    fut_printf("[MISC-TEST] Test 1358: EPOLLET reports EPOLLHUP on pipe close\n");
+    {
+        int pipefd[2];
+        long r = sys_pipe(pipefd);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1358: pipe() failed: %ld\n", r);
+            fut_test_fail(1358);
+        } else {
+            long epfd = sys_epoll_create1(0);
+            if (epfd < 0) {
+                fut_printf("[MISC-TEST] ✗ Test 1358: epoll_create1 failed: %ld\n", epfd);
+                fut_vfs_close(pipefd[0]); fut_vfs_close(pipefd[1]);
+                fut_test_fail(1358);
+            } else {
+                struct { uint32_t events; uint64_t data; } __attribute__((packed)) ev = {
+                    .events = TEST_EPOLLIN | TEST_EPOLLET, .data = 1358
+                };
+                sys_epoll_ctl((int)epfd, 1 /* ADD */, pipefd[0], &ev);
+
+                /* Close write end → should trigger EPOLLHUP on read end */
+                fut_vfs_close(pipefd[1]);
+
+                struct { uint32_t events; uint64_t data; } __attribute__((packed)) out = {0};
+                r = sys_epoll_wait((int)epfd, &out, 1, 0);
+                if (r == 1 && (out.events & TEST_EPOLLHUP)) {
+                    fut_printf("[MISC-TEST] ✓ Test 1358: EPOLLET got EPOLLHUP (events=0x%x)\n",
+                               out.events);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1358: epoll_wait=%ld events=0x%x (expected EPOLLHUP)\n",
+                               r, out.events);
+                    fut_test_fail(1358);
+                }
+
+                /* Test 1359: second wait should NOT re-report (edge consumed) */
+                fut_printf("[MISC-TEST] Test 1359: EPOLLET EPOLLHUP not re-reported\n");
+                out.events = 0;
+                r = sys_epoll_wait((int)epfd, &out, 1, 0);
+                if (r == 0) {
+                    fut_printf("[MISC-TEST] ✓ Test 1359: EPOLLET EPOLLHUP edge consumed\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1359: epoll_wait=%ld (expected 0, edge consumed)\n", r);
+                    fut_test_fail(1359);
+                }
+
+                sys_close((int)epfd);
+                fut_vfs_close(pipefd[0]);
+            }
+        }
+    }
+
+#undef TEST_EPOLLET
+#undef TEST_EPOLLIN
+#undef TEST_EPOLLHUP
+}
+
 static void test_proc_fd_anon_types(void) {
     extern long sys_read(int fd, void *buf, size_t count);
     extern long sys_readlink(const char *path, char *buf, size_t bufsiz);
@@ -44341,6 +44415,7 @@ void fut_misc_test_thread(void *arg) {
     test_memfd_extended_flags();             /* Tests 1346-1350: memfd MFD_HUGETLB, MFD_NOEXEC_SEAL, MFD_EXEC */
     test_getdents64_dtype();                 /* Tests 1351-1353: getdents64 returns Linux DT_* values */
     test_renameat2_noreplace();              /* Tests 1354-1357: renameat2 NOREPLACE, readlinkat empty, lseek EOVERFLOW */
+    test_epollet_hup();                      /* Tests 1358-1359: EPOLLET EPOLLHUP on pipe close */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

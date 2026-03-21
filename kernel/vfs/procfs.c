@@ -1300,9 +1300,19 @@ static size_t gen_stat(char *buf, size_t cap, fut_task_t *task, uint64_t tid) {
     uint64_t starttime = task->start_ticks;
 
     /* Signal bitmask fields (fields 31-34):
+     * When reading /proc/<pid>/task/<tid>/stat, use per-thread signal state.
      * Compute sigignore and sigcatch from the signal handler table. */
     uint64_t pending_sig  = task->pending_signals;
     uint64_t blocked_sig  = task->signal_mask;
+    if (tid) {
+        for (fut_thread_t *t = task->threads; t; t = t->next) {
+            if (t->tid == tid) {
+                pending_sig = t->thread_pending_signals;
+                blocked_sig = t->signal_mask;
+                break;
+            }
+        }
+    }
     uint64_t sigignore = 0, sigcatch = 0;
     for (int signo = 1; signo < _NSIG && signo <= 64; signo++) {
         sighandler_t h = task->signal_handlers[signo - 1];  /* handlers indexed 0-based */

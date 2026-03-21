@@ -531,6 +531,7 @@ long sys_renameat2(int olddirfd, const char *oldpath,
     int lookup_ret = fut_vfs_lookup(resolved_newpath, &existing);
     if (lookup_ret == 0) {
         /* newpath exists — RENAME_NOREPLACE requires we fail */
+        fut_vnode_unref(existing);
         fut_printf("[RENAMEAT2] renameat2(newpath='%s', RENAME_NOREPLACE) -> EEXIST (target exists)\n",
                    resolved_newpath);
         return -EEXIST;

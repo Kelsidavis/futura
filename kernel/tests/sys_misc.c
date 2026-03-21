@@ -13223,6 +13223,75 @@ static void test_getdents64_dtype(void) {
 #undef DT_CHR
 }
 
+/* ============================================================
+ * test_renameat2_noreplace() — Tests 1354-1356
+ *
+ * Verify renameat2 RENAME_NOREPLACE semantics and vnode cleanup.
+ * ============================================================ */
+static void test_renameat2_noreplace(void) {
+    extern long sys_renameat2(int olddirfd, const char *oldpath,
+                              int newdirfd, const char *newpath,
+                              unsigned int flags);
+#define RENAME_NOREPLACE (1 << 0)
+
+    /* Test 1354: RENAME_NOREPLACE fails with EEXIST when target exists */
+    fut_printf("[MISC-TEST] Test 1354: renameat2 RENAME_NOREPLACE → EEXIST\n");
+    {
+        /* Create source and destination files */
+        int src = fut_vfs_open("/ren2_src.txt", 0x42, 0644);
+        if (src >= 0) { fut_vfs_write(src, "src", 3); fut_vfs_close(src); }
+        int dst = fut_vfs_open("/ren2_dst.txt", 0x42, 0644);
+        if (dst >= 0) { fut_vfs_write(dst, "dst", 3); fut_vfs_close(dst); }
+
+        long r = sys_renameat2(-100, "/ren2_src.txt", -100, "/ren2_dst.txt", RENAME_NOREPLACE);
+        if (r == -EEXIST) {
+            fut_printf("[MISC-TEST] ✓ Test 1354: RENAME_NOREPLACE → EEXIST\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1354: expected EEXIST, got %ld\n", r);
+            fut_test_fail(1354);
+        }
+        fut_vfs_unlink("/ren2_src.txt");
+        fut_vfs_unlink("/ren2_dst.txt");
+    }
+
+    /* Test 1355: RENAME_NOREPLACE succeeds when target doesn't exist */
+    fut_printf("[MISC-TEST] Test 1355: renameat2 RENAME_NOREPLACE → success\n");
+    {
+        int src = fut_vfs_open("/ren2_ok_src.txt", 0x42, 0644);
+        if (src >= 0) { fut_vfs_write(src, "data", 4); fut_vfs_close(src); }
+        /* Ensure target doesn't exist */
+        fut_vfs_unlink("/ren2_ok_dst.txt");
+
+        long r = sys_renameat2(-100, "/ren2_ok_src.txt", -100, "/ren2_ok_dst.txt", RENAME_NOREPLACE);
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1355: RENAME_NOREPLACE success\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1355: expected 0, got %ld\n", r);
+            fut_test_fail(1355);
+        }
+        fut_vfs_unlink("/ren2_ok_dst.txt");
+    }
+
+    /* Test 1356: readlinkat with empty pathname returns ENOENT */
+    fut_printf("[MISC-TEST] Test 1356: readlinkat empty pathname → ENOENT\n");
+    {
+        extern long sys_readlinkat(int dirfd, const char *pathname, char *buf, size_t bufsiz);
+        char buf[128];
+        long r = sys_readlinkat(-100, "", buf, sizeof(buf));
+        if (r == -ENOENT) {
+            fut_printf("[MISC-TEST] ✓ Test 1356: readlinkat(\"\") → ENOENT\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1356: expected ENOENT(%d), got %ld\n", -ENOENT, r);
+            fut_test_fail(1356);
+        }
+    }
+
+#undef RENAME_NOREPLACE
+}
+
 static void test_proc_fd_anon_types(void) {
     extern long sys_read(int fd, void *buf, size_t count);
     extern long sys_readlink(const char *path, char *buf, size_t bufsiz);
@@ -44245,6 +44314,7 @@ void fut_misc_test_thread(void *arg) {
     test_alarm_large_values();               /* Tests 1343-1345: alarm() POSIX compliance with large values */
     test_memfd_extended_flags();             /* Tests 1346-1350: memfd MFD_HUGETLB, MFD_NOEXEC_SEAL, MFD_EXEC */
     test_getdents64_dtype();                 /* Tests 1351-1353: getdents64 returns Linux DT_* values */
+    test_renameat2_noreplace();              /* Tests 1354-1356: renameat2 NOREPLACE + readlinkat empty */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

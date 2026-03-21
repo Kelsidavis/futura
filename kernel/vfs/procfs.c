@@ -1026,9 +1026,12 @@ static size_t gen_maps(char *buf, size_t cap, fut_task_t *task) {
         pb_char(&b, ' ');
         /* offset — exactly 8 hex chars (Linux %08llx) */
         pb_hex8(&b, vma->file_offset); pb_char(&b, ' ');
-        /* dev:inode — file-backed: "00:01 <ino>"; anonymous: "00:00 0" */
+        /* dev:inode — file-backed: "MM:mm <ino>"; anonymous: "00:00 0" */
         if (vma->vnode) {
-            pb_hex2(&b, 0); pb_char(&b, ':'); pb_hex2(&b, 1);
+            uint64_t dev = (vma->vnode->mount) ? vma->vnode->mount->st_dev : 1;
+            pb_hex2(&b, (unsigned)(dev >> 8) & 0xff);
+            pb_char(&b, ':');
+            pb_hex2(&b, (unsigned)dev & 0xff);
             pb_char(&b, ' '); pb_u64(&b, vma->vnode->ino);
         } else {
             pb_str(&b, "00:00 0");
@@ -1087,7 +1090,10 @@ static size_t gen_smaps(char *buf, size_t cap, fut_task_t *task) {
         pb_char(&b, ' ');
         pb_hex8(&b, vma->file_offset); pb_char(&b, ' ');
         if (vma->vnode) {
-            pb_hex2(&b, 0); pb_char(&b, ':'); pb_hex2(&b, 1);
+            uint64_t dev = (vma->vnode->mount) ? vma->vnode->mount->st_dev : 1;
+            pb_hex2(&b, (unsigned)(dev >> 8) & 0xff);
+            pb_char(&b, ':');
+            pb_hex2(&b, (unsigned)dev & 0xff);
             pb_char(&b, ' '); pb_u64(&b, vma->vnode->ino);
         } else {
             pb_str(&b, "00:00 0");

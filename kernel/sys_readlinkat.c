@@ -155,11 +155,11 @@ long sys_readlinkat(int dirfd, const char *pathname, char *buf, size_t bufsiz) {
         return -ENAMETOOLONG;
     }
 
-    /* Validate pathname is not empty */
+    /* Empty pathname: EINVAL unless we can support AT_EMPTY_PATH semantics.
+     * Note: readlinkat does not take a flags argument, so AT_EMPTY_PATH is not
+     * applicable per POSIX. Empty pathname always returns ENOENT (Linux behavior). */
     if (path_buf[0] == '\0') {
-        fut_printf("[READLINKAT] readlinkat(dirfd=%d, pathname=\"\" [empty]) -> EINVAL (empty pathname)\n",
-                   local_dirfd);
-        return -EINVAL;
+        return -ENOENT;
     }
 
     /* Categorize pathname */

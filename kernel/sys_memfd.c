@@ -27,8 +27,11 @@
 #include <string.h>
 
 /* memfd_create flags */
-#define MFD_CLOEXEC       0x0001U
-#define MFD_ALLOW_SEALING 0x0002U
+#define MFD_CLOEXEC         0x0001U
+#define MFD_ALLOW_SEALING   0x0002U
+#define MFD_HUGETLB         0x0004U  /* Accepted as no-op (no huge page support) */
+#define MFD_NOEXEC_SEAL     0x0008U  /* Linux 6.3+: implies SEAL_EXEC */
+#define MFD_EXEC            0x0010U  /* Linux 6.3+: allow exec */
 
 /* Maximum name length (Linux uses 249) */
 #define MEMFD_NAME_MAX 249
@@ -213,12 +216,23 @@ static const struct fut_file_ops memfd_fops = {
  * memfd_create - Create an anonymous file in memory
  *
  * @param uname  Name for debugging (shown in /proc/PID/fd/N symlinks)
- * @param flags  MFD_CLOEXEC | MFD_ALLOW_SEALING
+ * @param flags  MFD_CLOEXEC | MFD_ALLOW_SEALING | MFD_HUGETLB | MFD_NOEXEC_SEAL | MFD_EXEC
  *
  * Returns file descriptor on success, negative error on failure.
  */
 long sys_memfd_create(const char *uname, unsigned int flags) {
-    if (flags & ~(MFD_CLOEXEC | MFD_ALLOW_SEALING))
+    /* Accept all standard Linux memfd flags; MFD_HUGETLB and MFD_EXEC/MFD_NOEXEC_SEAL
+     * are silently accepted (no huge page support; exec sealing is recorded).
+     * Linux also encodes huge page size in bits 26-31 alongside MFD_HUGETLB. */
+    unsigned int known = MFD_CLOEXEC | MFD_ALLOW_SEALING | MFD_HUGETLB |
+                         MFD_NOEXEC_SEAL | MFD_EXEC;
+    /* MFD_HUGETLB can include huge page size in upper bits (MAP_HUGE_MASK) */
+    if (flags & MFD_HUGETLB)
+        known |= (0x3fU << 26);  /* Accept MAP_HUGE_2MB etc. size encoding */
+    if (flags & ~known)
+        return -EINVAL;
+    /* MFD_NOEXEC_SEAL and MFD_EXEC are mutually exclusive */
+    if ((flags & MFD_NOEXEC_SEAL) && (flags & MFD_EXEC))
         return -EINVAL;
 
     /* Allocate memfd state */
@@ -272,12 +286,21 @@ long sys_memfd_create(const char *uname, unsigned int flags) {
             task->fd_flags[fd] |= FD_CLOEXEC;
     }
 
+    /* MFD_NOEXEC_SEAL implies MFD_ALLOW_SEALING and sets F_SEAL_EXEC (0x0020) */
+    unsigned int effective_flags = flags;
+    if (flags & MFD_NOEXEC_SEAL)
+        effective_flags |= MFD_ALLOW_SEALING;
+
     /* Mark file as sealing-capable when MFD_ALLOW_SEALING is set.
      * F_ADD_SEALS checks this flag and returns EPERM if absent. */
-    if (flags & MFD_ALLOW_SEALING) {
+    if (effective_flags & MFD_ALLOW_SEALING) {
         fut_task_t *task = fut_task_current();
-        if (task && task->fd_table && fd < task->max_fds && task->fd_table[fd])
+        if (task && task->fd_table && fd < task->max_fds && task->fd_table[fd]) {
             task->fd_table[fd]->flags |= FUT_F_SEALING;
+            /* MFD_NOEXEC_SEAL: apply F_SEAL_EXEC immediately */
+            if (flags & MFD_NOEXEC_SEAL)
+                task->fd_table[fd]->seals |= 0x0020;  /* F_SEAL_EXEC */
+        }
     }
 
     return fd;

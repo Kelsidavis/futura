@@ -12962,6 +12962,115 @@ static void test_alarm_large_values(void) {
     sys_sigprocmask(2 /* SIG_SETMASK */, &old_mask, NULL);
 }
 
+/* ============================================================
+ * test_memfd_extended_flags() — Tests 1346-1350
+ *
+ * Verify memfd_create accepts MFD_HUGETLB, MFD_NOEXEC_SEAL, MFD_EXEC
+ * flags per Linux 6.3+ semantics.
+ * ============================================================ */
+static void test_memfd_extended_flags(void) {
+    extern long sys_memfd_create(const char *uname, unsigned int flags);
+    extern long sys_fcntl(int fd, int cmd, uint64_t arg);
+
+#define TEST_MFD_CLOEXEC       0x0001U
+#define TEST_MFD_ALLOW_SEALING 0x0002U
+#define TEST_MFD_HUGETLB       0x0004U
+#define TEST_MFD_NOEXEC_SEAL   0x0008U
+#define TEST_MFD_EXEC          0x0010U
+
+    /* Test 1346: MFD_HUGETLB accepted as no-op */
+    fut_printf("[MISC-TEST] Test 1346: memfd_create(MFD_HUGETLB) accepted\n");
+    {
+        long fd = sys_memfd_create("hugetlb_test", TEST_MFD_HUGETLB);
+        if (fd >= 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1346: MFD_HUGETLB accepted, fd=%ld\n", fd);
+            sys_close((int)fd);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1346: MFD_HUGETLB rejected: %ld\n", fd);
+            fut_test_fail(1346);
+        }
+    }
+
+    /* Test 1347: MFD_HUGETLB with size encoding (MAP_HUGE_2MB) */
+    fut_printf("[MISC-TEST] Test 1347: memfd_create(MFD_HUGETLB | MAP_HUGE_2MB)\n");
+    {
+        /* MAP_HUGE_2MB = 21 << 26 = 0x54000000 */
+        unsigned int flags = TEST_MFD_HUGETLB | (21U << 26);
+        long fd = sys_memfd_create("huge2mb_test", flags);
+        if (fd >= 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1347: MFD_HUGETLB|MAP_HUGE_2MB accepted, fd=%ld\n", fd);
+            sys_close((int)fd);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1347: MFD_HUGETLB|MAP_HUGE_2MB rejected: %ld\n", fd);
+            fut_test_fail(1347);
+        }
+    }
+
+    /* Test 1348: MFD_NOEXEC_SEAL implies ALLOW_SEALING and sets F_SEAL_EXEC */
+    fut_printf("[MISC-TEST] Test 1348: memfd_create(MFD_NOEXEC_SEAL) sets F_SEAL_EXEC\n");
+    {
+        long fd = sys_memfd_create("noexec_test", TEST_MFD_NOEXEC_SEAL);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1348: MFD_NOEXEC_SEAL rejected: %ld\n", fd);
+            fut_test_fail(1348);
+        } else {
+            /* F_GET_SEALS = 1034, F_SEAL_EXEC = 0x0020 */
+            long seals = sys_fcntl((int)fd, 1034, 0);
+            if (seals >= 0 && (seals & 0x0020)) {
+                fut_printf("[MISC-TEST] ✓ Test 1348: F_SEAL_EXEC set, seals=0x%lx\n", seals);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1348: seals=0x%lx (want F_SEAL_EXEC=0x20)\n", seals);
+                fut_test_fail(1348);
+            }
+            sys_close((int)fd);
+        }
+    }
+
+    /* Test 1349: MFD_EXEC accepted (allows exec, no F_SEAL_EXEC) */
+    fut_printf("[MISC-TEST] Test 1349: memfd_create(MFD_EXEC) accepted without F_SEAL_EXEC\n");
+    {
+        long fd = sys_memfd_create("exec_test", TEST_MFD_EXEC | TEST_MFD_ALLOW_SEALING);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1349: MFD_EXEC rejected: %ld\n", fd);
+            fut_test_fail(1349);
+        } else {
+            long seals = sys_fcntl((int)fd, 1034, 0);
+            /* F_SEAL_EXEC should NOT be set when MFD_EXEC is used */
+            if (seals >= 0 && !(seals & 0x0020)) {
+                fut_printf("[MISC-TEST] ✓ Test 1349: MFD_EXEC: no F_SEAL_EXEC, seals=0x%lx\n", seals);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1349: seals=0x%lx (F_SEAL_EXEC should not be set)\n", seals);
+                fut_test_fail(1349);
+            }
+            sys_close((int)fd);
+        }
+    }
+
+    /* Test 1350: MFD_NOEXEC_SEAL + MFD_EXEC → EINVAL (mutually exclusive) */
+    fut_printf("[MISC-TEST] Test 1350: memfd_create(MFD_NOEXEC_SEAL|MFD_EXEC) → EINVAL\n");
+    {
+        long fd = sys_memfd_create("conflict_test", TEST_MFD_NOEXEC_SEAL | TEST_MFD_EXEC);
+        if (fd == -22) {  /* -EINVAL */
+            fut_printf("[MISC-TEST] ✓ Test 1350: MFD_NOEXEC_SEAL|MFD_EXEC → EINVAL\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1350: expected EINVAL, got %ld\n", fd);
+            if (fd >= 0) sys_close((int)fd);
+            fut_test_fail(1350);
+        }
+    }
+
+#undef TEST_MFD_CLOEXEC
+#undef TEST_MFD_ALLOW_SEALING
+#undef TEST_MFD_HUGETLB
+#undef TEST_MFD_NOEXEC_SEAL
+#undef TEST_MFD_EXEC
+}
+
 static void test_proc_fd_anon_types(void) {
     extern long sys_read(int fd, void *buf, size_t count);
     extern long sys_readlink(const char *path, char *buf, size_t bufsiz);
@@ -43982,6 +44091,7 @@ void fut_misc_test_thread(void *arg) {
     test_cpus_allowed_procfs();              /* Tests 1338-1339: /proc/self/status Cpus_allowed dynamic */
     test_proc_fd_anon_types();               /* Tests 1340-1342: /proc/self/fd/ anon_inode types */
     test_alarm_large_values();               /* Tests 1343-1345: alarm() POSIX compliance with large values */
+    test_memfd_extended_flags();             /* Tests 1346-1350: memfd MFD_HUGETLB, MFD_NOEXEC_SEAL, MFD_EXEC */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -15980,6 +15980,119 @@ static void test_suid_clear_chown_fchownat(void) {
     }
 }
 
+/**
+ * test_sgid_dir_inheritance - S_ISGID directory group inheritance
+ *
+ * Tests 1452-1454:
+ * 1452: File in setgid dir inherits parent's group
+ * 1453: Subdir in setgid dir inherits parent's group
+ * 1454: Subdir in setgid dir gets S_ISGID propagated
+ */
+static void test_sgid_dir_inheritance(void) {
+    extern long sys_fstat(int fd, struct fut_stat *statbuf);
+    extern long sys_fchmod(int fd, uint32_t mode);
+    extern long sys_fchown(int fd, uint32_t uid, uint32_t gid);
+    extern long sys_mkdir(const char *pathname, uint32_t mode);
+    extern long sys_write(int fd, const void *buf, size_t count);
+
+    /* Create a directory and set it up as setgid with a specific group */
+    long ret = sys_mkdir("/test_sgid_dir", 0755);
+    if (ret < 0 && ret != -EEXIST) {
+        fut_printf("[MISC-TEST] ✗ Tests 1452-1454: mkdir failed: %ld\n", ret);
+        fut_test_fail(1452);
+        fut_test_fail(1453);
+        fut_test_fail(1454);
+        return;
+    }
+
+    /* Open the dir and set group + S_ISGID */
+    int dirfd = (int)fut_vfs_open("/test_sgid_dir", O_RDONLY, 0);
+    if (dirfd < 0) {
+        fut_printf("[MISC-TEST] ✗ Tests 1452-1454: open dir failed: %d\n", dirfd);
+        fut_test_fail(1452);
+        fut_test_fail(1453);
+        fut_test_fail(1454);
+        return;
+    }
+    sys_fchown(dirfd, 0, 500);  /* Set group to 500 */
+    sys_fchmod(dirfd, 02775);   /* S_ISGID + rwxrwxr-x */
+    fut_vfs_close(dirfd);
+
+    /* Test 1452: File in setgid dir inherits parent's group */
+    fut_printf("[MISC-TEST] Test 1452: file in setgid dir inherits group\n");
+    {
+        int fd = (int)fut_vfs_open("/test_sgid_dir/child_file.txt", O_CREAT | O_RDWR, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1452: create failed: %d\n", fd);
+            fut_test_fail(1452);
+        } else {
+            struct fut_stat st = {0};
+            sys_fstat(fd, &st);
+            if (st.st_gid == 500) {
+                fut_printf("[MISC-TEST] ✓ Test 1452: file inherited group 500 from setgid dir\n");
+                fut_vfs_close(fd);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1452: file gid=%u, expected 500\n", st.st_gid);
+                fut_vfs_close(fd);
+                fut_test_fail(1452);
+            }
+        }
+    }
+
+    /* Test 1453: Subdir in setgid dir inherits parent's group */
+    fut_printf("[MISC-TEST] Test 1453: subdir in setgid dir inherits group\n");
+    {
+        ret = sys_mkdir("/test_sgid_dir/child_subdir", 0755);
+        if (ret < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1453: mkdir subdir failed: %ld\n", ret);
+            fut_test_fail(1453);
+        } else {
+            int fd = (int)fut_vfs_open("/test_sgid_dir/child_subdir", O_RDONLY, 0);
+            if (fd < 0) {
+                fut_printf("[MISC-TEST] ✗ Test 1453: open subdir failed: %d\n", fd);
+                fut_test_fail(1453);
+            } else {
+                struct fut_stat st = {0};
+                sys_fstat(fd, &st);
+                if (st.st_gid == 500) {
+                    fut_printf("[MISC-TEST] ✓ Test 1453: subdir inherited group 500 from setgid dir\n");
+                    fut_vfs_close(fd);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1453: subdir gid=%u, expected 500\n", st.st_gid);
+                    fut_vfs_close(fd);
+                    fut_test_fail(1453);
+                }
+            }
+        }
+    }
+
+    /* Test 1454: Subdir in setgid dir gets S_ISGID propagated */
+    fut_printf("[MISC-TEST] Test 1454: subdir in setgid dir gets S_ISGID bit\n");
+    {
+        int fd = (int)fut_vfs_open("/test_sgid_dir/child_subdir", O_RDONLY, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1454: open subdir failed: %d\n", fd);
+            fut_test_fail(1454);
+        } else {
+            struct fut_stat st = {0};
+            sys_fstat(fd, &st);
+            if (st.st_mode & 02000) {
+                fut_printf("[MISC-TEST] ✓ Test 1454: subdir has S_ISGID propagated (mode=0%o)\n",
+                           st.st_mode & 07777);
+                fut_vfs_close(fd);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1454: subdir missing S_ISGID (mode=0%o)\n",
+                           st.st_mode & 07777);
+                fut_vfs_close(fd);
+                fut_test_fail(1454);
+            }
+        }
+    }
+}
+
 static void test_proc_fd_anon_types(void) {
     extern long sys_read(int fd, void *buf, size_t count);
     extern long sys_readlink(const char *path, char *buf, size_t bufsiz);
@@ -47031,6 +47144,7 @@ void fut_misc_test_thread(void *arg) {
     test_o_noatime();                       /* Tests 1444-1445: O_NOATIME suppresses atime updates */
     test_suid_clear_on_open_trunc();        /* Tests 1446-1448: setuid/setgid clearing on open(O_TRUNC) */
     test_suid_clear_chown_fchownat();       /* Tests 1449-1451: setuid/setgid clearing on chown/fchownat */
+    test_sgid_dir_inheritance();            /* Tests 1452-1454: S_ISGID directory group inheritance */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

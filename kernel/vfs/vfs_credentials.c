@@ -263,7 +263,8 @@ void vfs_init_vnode_ownership(struct fut_vnode *vnode,
 
     /* Group ID inheritance from parent directory (if setgid bit set)
      * Otherwise use creating process's primary group */
-    if (parent && (parent->mode & 02000)) {  /* Parent has setgid bit */
+    int parent_sgid = parent && (parent->mode & 02000);
+    if (parent_sgid) {
         vnode->gid = parent->gid;
     } else {
         vnode->gid = gid;
@@ -280,6 +281,12 @@ void vfs_init_vnode_ownership(struct fut_vnode *vnode,
     } else {
         /* Non-root: allow sticky bit (01000), strip setuid/setgid */
         vnode->mode |= (requested_mode & 01000);
+    }
+
+    /* Linux: propagate S_ISGID to new subdirectories so group inheritance
+     * continues recursively through the directory tree. */
+    if (parent_sgid && vnode->type == VN_DIR) {
+        vnode->mode |= 02000;
     }
 
 }

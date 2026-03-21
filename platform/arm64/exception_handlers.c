@@ -18,7 +18,7 @@ extern int64_t arm64_syscall_dispatch(uint64_t syscall_num,
                                       uint64_t arg0, uint64_t arg1,
                                       uint64_t arg2, uint64_t arg3,
                                       uint64_t arg4, uint64_t arg5);
-extern int fut_signal_deliver(void *task, void *frame);
+/* fut_signal_deliver declared in kernel/signal.h */
 extern int fut_trap_handle_page_fault(void *frame);
 extern void fut_task_signal_exit(int signal);
 

@@ -15045,6 +15045,48 @@ static void test_opath_comprehensive(void) {
             }
         }
 
+        /* Test 1424: fsync on O_PATH → EBADF */
+        fut_printf("[MISC-TEST] Test 1424: fsync(O_PATH fd) → EBADF\n");
+        {
+            extern long sys_fsync(int fd);
+            long r = sys_fsync((int)fd);
+            if (r == -9 /* -EBADF */) {
+                fut_printf("[MISC-TEST] ✓ Test 1424: fsync(O_PATH) = -EBADF\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1424: fsync(O_PATH) = %ld (want -9)\n", r);
+                fut_test_fail(1424);
+            }
+        }
+
+        /* Test 1425: fdatasync on O_PATH → EBADF */
+        fut_printf("[MISC-TEST] Test 1425: fdatasync(O_PATH fd) → EBADF\n");
+        {
+            extern long sys_fdatasync(int fd);
+            long r = sys_fdatasync((int)fd);
+            if (r == -9 /* -EBADF */) {
+                fut_printf("[MISC-TEST] ✓ Test 1425: fdatasync(O_PATH) = -EBADF\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1425: fdatasync(O_PATH) = %ld (want -9)\n", r);
+                fut_test_fail(1425);
+            }
+        }
+
+        /* Test 1426: fadvise64 on O_PATH → EBADF */
+        fut_printf("[MISC-TEST] Test 1426: fadvise64(O_PATH fd) → EBADF\n");
+        {
+            extern long sys_fadvise64(int fd, int64_t offset, int64_t len, int advice);
+            long r = sys_fadvise64((int)fd, 0, 4096, 0 /* POSIX_FADV_NORMAL */);
+            if (r == -9 /* -EBADF */) {
+                fut_printf("[MISC-TEST] ✓ Test 1426: fadvise64(O_PATH) = -EBADF\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1426: fadvise64(O_PATH) = %ld (want -9)\n", r);
+                fut_test_fail(1426);
+            }
+        }
+
         if (nfd >= 0) sys_close((int)nfd);
         sys_close((int)fd);
     }
@@ -46092,7 +46134,7 @@ void fut_misc_test_thread(void *arg) {
     test_fallocate_collapse_range();         /* Tests 1401-1404: fallocate COLLAPSE_RANGE */
     test_fallocate_insert_range();           /* Tests 1405-1408: fallocate INSERT_RANGE */
     test_opath_pread_pwrite();               /* Tests 1409-1412: O_PATH blocks pread64/pwrite64/preadv/pwritev */
-    test_opath_comprehensive();              /* Tests 1413-1423: O_PATH blocks sendfile/ftruncate/fallocate/lseek/ioctl/fchmod/fchown/copy_file_range/readahead */
+    test_opath_comprehensive();              /* Tests 1413-1426: O_PATH blocks sendfile/ftruncate/fallocate/lseek/ioctl/fchmod/fchown/copy_file_range/readahead/fsync/fdatasync/fadvise */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

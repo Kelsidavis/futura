@@ -17,6 +17,7 @@
 #include <kernel/fut_vfs.h>
 #include <kernel/fut_task.h>
 #include <kernel/fut_fd_util.h>
+#include <fcntl.h>
 
 #include <kernel/kprintf.h>
 
@@ -141,6 +142,10 @@ long sys_fsync(int fd) {
                    local_fd, fd_category, task->pid);
         return -EBADF;
     }
+
+    /* O_PATH fds cannot be used for I/O — only path-based operations */
+    if (file->flags & O_PATH)
+        return -EBADF;
 
     /* Phase 2: Identify file type */
     const char *file_type;

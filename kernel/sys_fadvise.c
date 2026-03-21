@@ -12,6 +12,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/fut_vfs.h>
 #include <kernel/errno.h>
+#include <fcntl.h>
 #include <stdint.h>
 
 /* POSIX_FADV_* constants (Linux ABI) */
@@ -60,6 +61,10 @@ long sys_fadvise64(int fd, int64_t offset, int64_t len, int advice) {
     if (!file) {
         return -EBADF;
     }
+
+    /* O_PATH fds cannot be used for I/O — only path-based operations */
+    if (file->flags & O_PATH)
+        return -EBADF;
 
     /* Pipes and sockets are not seekable — fadvise doesn't apply */
     if (file->vnode && (file->vnode->type == VN_FIFO || file->vnode->type == VN_SOCK)) {

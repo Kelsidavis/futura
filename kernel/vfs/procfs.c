@@ -847,6 +847,12 @@ static size_t gen_status(char *buf, size_t cap, fut_task_t *task, uint64_t tid) 
     pb_str(&b, "NoNewPrivs:\t"); pb_u64(&b, task->no_new_privs ? 1 : 0); pb_char(&b, '\n');
     pb_str(&b, "Seccomp:\t");    pb_u64(&b, 0);                        pb_char(&b, '\n');
     pb_str(&b, "Seccomp_filters:\t"); pb_u64(&b, 0);                   pb_char(&b, '\n');
+    /* Speculation mitigations (Linux 4.17+): report as "not vulnerable" since
+     * Futura doesn't execute untrusted code concurrently with kernel data. */
+    pb_str(&b, "Speculation_Store_Bypass:\t");
+    pb_str(&b, "not vulnerable");  pb_char(&b, '\n');
+    pb_str(&b, "SpeculationIndirectBranch:\t");
+    pb_str(&b, "not vulnerable");  pb_char(&b, '\n');
     /* Umask (Linux 4.7+): file creation mask in octal */
     pb_str(&b, "Umask:\t");      pb_oct(&b, task->umask & 0777);       pb_char(&b, '\n');
     /* NStgid/NSpid/NSpgid/NSsid (Linux 4.1+): PID as seen in each namespace.

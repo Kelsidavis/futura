@@ -12094,6 +12094,60 @@ static void test_clone3_clear_sighand(void) {
     }
 }
 
+static void test_proc_status_speculation(void) {
+    extern long sys_open(const char *path, int flags, int mode);
+    extern long sys_read(int fd, void *buf, size_t count);
+    extern long sys_close(int fd);
+
+    /* Test 1309: /proc/self/status has Speculation_Store_Bypass field */
+    fut_printf("[MISC-TEST] Test 1309: /proc/self/status has Speculation_Store_Bypass\n");
+    int fd = (int)sys_open("/proc/self/status", 0 /*O_RDONLY*/, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1309: cannot open /proc/self/status: %d\n", fd);
+        fut_test_fail(1309);
+        fut_test_fail(1310);
+        return;
+    }
+    char buf[4096];
+    long n = sys_read(fd, buf, sizeof(buf) - 1);
+    sys_close(fd);
+    if (n <= 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1309: read failed: %ld\n", n);
+        fut_test_fail(1309);
+        fut_test_fail(1310);
+        return;
+    }
+    buf[n] = '\0';
+
+    /* Check for Speculation_Store_Bypass */
+    bool found_ssb = false;
+    bool found_sib = false;
+    for (long i = 0; i < n - 25; i++) {
+        if (buf[i] == 'S' && __builtin_memcmp(&buf[i], "Speculation_Store_Bypass:", 25) == 0)
+            found_ssb = true;
+        if (buf[i] == 'S' && __builtin_memcmp(&buf[i], "SpeculationIndirectBranch:", 25) == 0)
+            found_sib = true;
+    }
+
+    if (found_ssb) {
+        fut_printf("[MISC-TEST] ✓ Test 1309: Speculation_Store_Bypass present\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1309: Speculation_Store_Bypass missing\n");
+        fut_test_fail(1309);
+    }
+
+    /* Test 1310: /proc/self/status has SpeculationIndirectBranch field */
+    fut_printf("[MISC-TEST] Test 1310: /proc/self/status has SpeculationIndirectBranch\n");
+    if (found_sib) {
+        fut_printf("[MISC-TEST] ✓ Test 1310: SpeculationIndirectBranch present\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1310: SpeculationIndirectBranch missing\n");
+        fut_test_fail(1310);
+    }
+}
+
 static void test_process_madvise_basic(void) {
     /* Test 1292: process_madvise with flags != 0 → EINVAL */
     fut_printf("[MISC-TEST] Test 1292: process_madvise flags=1 → EINVAL\n");
@@ -42955,6 +43009,7 @@ void fut_misc_test_thread(void *arg) {
     test_process_madvise_basic();            /* Tests 1292-1296: process_madvise validation and delegation */
     test_new_mount_api_stubs();              /* Tests 1297-1305: new mount API + file handle stubs */
     test_clone3_clear_sighand();             /* Tests 1306-1308: clone3 CLONE_CLEAR_SIGHAND */
+    test_proc_status_speculation();          /* Tests 1309-1310: /proc/self/status speculation fields */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -307,13 +307,6 @@ long sys_getpeername(int sockfd, void *addr, socklen_t *addrlen) {
         return -EFAULT;
     }
 
-    /* Validate addrlen value */
-    if (len == 0) {
-        fut_printf("[GETPEERNAME] getpeername(sockfd=%d, addrlen=%u) -> EINVAL\n",
-                   local_sockfd, len);
-        return -EINVAL;
-    }
-
     /* Get socket from FD */
     fut_socket_t *socket = get_socket_from_fd(local_sockfd);
     if (!socket) {

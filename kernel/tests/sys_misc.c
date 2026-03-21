@@ -49034,6 +49034,142 @@ static void test_flock_fcntl_edge_cases(void) {
     fut_vfs_unlink(path);
 }
 
+/* ============================================================
+ * Tests 1539-1542: getsockname/getpeername with addrlen=0
+ *
+ * Test 1539: getsockname(AF_UNIX, addrlen=0) → 0 + actual len written
+ * Test 1540: getsockname(AF_INET, addrlen=0) → 0 + actual len=16
+ * Test 1541: getpeername(connected AF_UNIX, addrlen=0) → 0
+ * Test 1542: getpeername(connected AF_INET, addrlen=0) → 0
+ * ============================================================ */
+static void test_sockname_zero_addrlen(void) {
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_bind(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_listen(int sockfd, int backlog);
+    extern long sys_connect(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_accept(int sockfd, void *addr, unsigned int *addrlen);
+    extern long sys_getsockname(int sockfd, void *addr, unsigned int *addrlen);
+    extern long sys_getpeername(int sockfd, void *addr, unsigned int *addrlen);
+    extern long sys_close(int fd);
+
+    fut_printf("[MISC-TEST] Tests 1539-1542: getsockname/getpeername addrlen=0\n");
+
+    /* Test 1539: getsockname(AF_UNIX, addrlen=0) → 0 + writes actual len */
+    fut_printf("[MISC-TEST] Test 1539: getsockname(AF_UNIX, addrlen=0)\n");
+    {
+        long fd = sys_socket(1 /* AF_UNIX */, 1 /* SOCK_STREAM */, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1539: socket failed: %ld\n", fd);
+            fut_test_fail(1539);
+        } else {
+            char buf[128];
+            __builtin_memset(buf, 0, sizeof(buf));
+            unsigned int alen = 0;
+            long r = sys_getsockname((int)fd, buf, &alen);
+            if (r == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1539: getsockname(addrlen=0) → 0, alen=%u\n", alen);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1539: getsockname(addrlen=0) → %ld\n", r);
+                fut_test_fail(1539);
+            }
+            sys_close((int)fd);
+        }
+    }
+
+    /* Test 1540: getsockname(AF_INET, addrlen=0) → 0 + actual_len=16 */
+    fut_printf("[MISC-TEST] Test 1540: getsockname(AF_INET, addrlen=0)\n");
+    {
+        long fd = sys_socket(2 /* AF_INET */, 1 /* SOCK_STREAM */, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1540: socket failed: %ld\n", fd);
+            fut_test_fail(1540);
+        } else {
+            char buf[128];
+            __builtin_memset(buf, 0, sizeof(buf));
+            unsigned int alen = 0;
+            long r = sys_getsockname((int)fd, buf, &alen);
+            if (r == 0 && alen == 16) {
+                fut_printf("[MISC-TEST] ✓ Test 1540: getsockname(AF_INET, addrlen=0) → 0, alen=%u\n", alen);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1540: r=%ld alen=%u (want 0, 16)\n", r, alen);
+                fut_test_fail(1540);
+            }
+            sys_close((int)fd);
+        }
+    }
+
+    /* Test 1541: getpeername(connected AF_UNIX, addrlen=0) → 0 */
+    fut_printf("[MISC-TEST] Test 1541: getpeername(AF_UNIX connected, addrlen=0)\n");
+    {
+        extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+        int sv[2] = {-1, -1};
+        long r = sys_socketpair(1 /* AF_UNIX */, 1 /* SOCK_STREAM */, 0, sv);
+        if (r < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1541: socketpair failed: %ld\n", r);
+            fut_test_fail(1541);
+        } else {
+            char buf[128];
+            __builtin_memset(buf, 0, sizeof(buf));
+            unsigned int alen = 0;
+            r = sys_getpeername(sv[0], buf, &alen);
+            if (r == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1541: getpeername(addrlen=0) → 0, alen=%u\n", alen);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1541: getpeername(addrlen=0) → %ld\n", r);
+                fut_test_fail(1541);
+            }
+            sys_close(sv[0]);
+            sys_close(sv[1]);
+        }
+    }
+
+    /* Test 1542: getpeername(connected AF_INET, addrlen=0) → 0 */
+    fut_printf("[MISC-TEST] Test 1542: getpeername(AF_INET connected, addrlen=0)\n");
+    {
+        /* Create a simple AF_INET TCP connection */
+        long sfd = sys_socket(2 /* AF_INET */, 1 /* SOCK_STREAM */, 0);
+        if (sfd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1542: socket failed: %ld\n", sfd);
+            fut_test_fail(1542);
+        } else {
+            struct { uint16_t sin_family; uint16_t sin_port; uint32_t sin_addr; uint8_t sin_zero[8]; } addr;
+            __builtin_memset(&addr, 0, sizeof(addr));
+            addr.sin_family = 2; /* AF_INET */
+            addr.sin_port = ((12399 >> 8) & 0xFF) | ((12399 & 0xFF) << 8); /* htons */
+            addr.sin_addr = ((127) | (0 << 8) | (0 << 16) | (1 << 24)); /* 127.0.0.1 */
+            long br = sys_bind((int)sfd, &addr, 16);
+            long lr = sys_listen((int)sfd, 1);
+            long cfd = sys_socket(2, 1, 0);
+            long cr = sys_connect((int)cfd, &addr, 16);
+            unsigned int plen = 0;
+            long afd = sys_accept((int)sfd, NULL, NULL);
+            if (br < 0 || lr < 0 || cfd < 0 || cr < 0 || afd < 0) {
+                fut_printf("[MISC-TEST] ✗ Test 1542: setup failed b=%ld l=%ld c=%ld cn=%ld a=%ld\n",
+                           br, lr, cfd, cr, afd);
+                fut_test_fail(1542);
+            } else {
+                char buf[128];
+                __builtin_memset(buf, 0, sizeof(buf));
+                plen = 0;
+                long r = sys_getpeername((int)cfd, buf, &plen);
+                if (r == 0) {
+                    fut_printf("[MISC-TEST] ✓ Test 1542: getpeername(AF_INET, addrlen=0) → 0, alen=%u\n", plen);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1542: getpeername(addrlen=0) → %ld\n", r);
+                    fut_test_fail(1542);
+                }
+                if (afd >= 0) sys_close((int)afd);
+            }
+            if (cfd >= 0) sys_close((int)cfd);
+            sys_close((int)sfd);
+        }
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -49761,6 +49897,7 @@ void fut_misc_test_thread(void *arg) {
     test_af_inet_tcp_extended();           /* Tests 1517-1522: AF_INET getsockname/getpeername/shutdown */
     test_af_inet_edge_cases();             /* Tests 1523-1530: nonblocking, port 0, SO_REUSEADDR, multi-accept */
     test_flock_fcntl_edge_cases();         /* Tests 1531-1538: flock/fcntl locking edge cases */
+    test_sockname_zero_addrlen();          /* Tests 1539-1542: getsockname/getpeername addrlen=0 */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

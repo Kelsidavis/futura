@@ -228,11 +228,16 @@ long sys_mprotect(void *addr, size_t len, int prot) {
     fut_mm_t *mm = fut_task_get_mm(task);
     if (!mm) mm = fut_mm_current();
     if (mm) {
+        /* Linux returns -ENOMEM if any part of [start, end) is not mapped */
+        int found_overlap = 0;
         for (struct fut_vma *vma = mm->vma_list; vma; vma = vma->next) {
             if (vma->end <= start || vma->start >= end)
                 continue;
+            found_overlap = 1;
             vma->prot = prot;
         }
+        if (!found_overlap)
+            return -ENOMEM;
 
         /* Phase 4: Update PTEs for present pages in [start, end).
          * Re-maps each demand-paged page with PTE flags derived from prot

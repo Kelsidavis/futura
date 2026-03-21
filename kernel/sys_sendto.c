@@ -435,6 +435,16 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
         }
     }
 
+    /* Linux: sendto on connected SOCK_STREAM with non-NULL dest_addr → EISCONN */
+    if (local_dest_addr) {
+        extern fut_socket_t *get_socket_from_fd(int fd);
+        fut_socket_t *chk_sock = get_socket_from_fd(local_sockfd);
+        if (chk_sock && chk_sock->socket_type == 1 /* SOCK_STREAM */ &&
+            chk_sock->state == FUT_SOCK_CONNECTED) {
+            return -EISCONN;
+        }
+    }
+
     /* Security hardening: Limit buffer size to prevent memory exhaustion DoS
      * Without size limits, attacker can request gigabytes of kernel memory:
      *   - sendto(sockfd, buf, SIZE_MAX, 0, NULL, 0)

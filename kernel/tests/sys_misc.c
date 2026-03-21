@@ -47855,6 +47855,63 @@ static void test_so_rcvbuf_cap(void) {
 }
 
 /* ============================================================
+ * Test 1499: mprotect on unmapped region → ENOMEM
+ * ============================================================ */
+static void test_mprotect_unmapped(void) {
+    extern long sys_mprotect(void *addr, size_t len, int prot);
+
+    /* Test 1499: mprotect on address that is not mapped → ENOMEM */
+    fut_printf("[MISC-TEST] Test 1499: mprotect(unmapped) → ENOMEM\n");
+    {
+        /* 0x10000000 is very unlikely to be mapped in the kernel selftest */
+        long ret = sys_mprotect((void *)0x10000000UL, 4096, 1 /* PROT_READ */);
+        if (ret == -12 /* -ENOMEM */) {
+            fut_printf("[MISC-TEST] ✓ Test 1499: mprotect(unmapped) → ENOMEM\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1499: expected -12, got %ld\n", ret);
+            fut_test_fail(1499);
+        }
+    }
+}
+
+/* ============================================================
+ * Test 1500: sendto on connected SOCK_STREAM with dest → EISCONN
+ * ============================================================ */
+static void test_sendto_eisconn(void) {
+    extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+    extern long sys_sendto(int fd, const void *buf, size_t len, int flags,
+                           const void *dest_addr, unsigned int addrlen);
+    extern int fut_vfs_close(int fd);
+
+    /* Test 1500: sendto on connected SOCK_STREAM with dest_addr → EISCONN */
+    fut_printf("[MISC-TEST] Test 1500: sendto(connected stream, dest) → EISCONN\n");
+    {
+        int sv[2];
+        long ret = sys_socketpair(1 /* AF_UNIX */, 1 /* SOCK_STREAM */, 0, sv);
+        if (ret < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1500: socketpair failed: %ld\n", ret);
+            fut_test_fail(1500);
+            return;
+        }
+        /* sv[0] and sv[1] are connected SOCK_STREAM sockets */
+        struct { unsigned short sun_family; char sun_path[108]; } addr;
+        addr.sun_family = 1 /* AF_UNIX */;
+        addr.sun_path[0] = '\0';
+        ret = sys_sendto(sv[0], "x", 1, 0, &addr, sizeof(addr.sun_family) + 1);
+        fut_vfs_close(sv[0]);
+        fut_vfs_close(sv[1]);
+        if (ret == -106 /* -EISCONN */) {
+            fut_printf("[MISC-TEST] ✓ Test 1500: sendto(connected, dest) → EISCONN\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1500: expected -106, got %ld\n", ret);
+            fut_test_fail(1500);
+        }
+    }
+}
+
+/* ============================================================
  * Tests 1479-1481: openat2 RESOLVE_IN_ROOT enforcement
  * ============================================================ */
 #define TEST_RESOLVE_IN_ROOT 0x10
@@ -48682,6 +48739,8 @@ void fut_misc_test_thread(void *arg) {
     test_fcntl_dupfd_rlimit();             /* Tests 1494-1495: F_DUPFD with arg >= RLIMIT_NOFILE → EINVAL */
     test_socketpair_invalid_flags();       /* Test  1496: socketpair with invalid type flags → EINVAL */
     test_so_rcvbuf_cap();                  /* Tests 1497-1498: SO_RCVBUF capped at sysctl max */
+    test_mprotect_unmapped();              /* Test  1499: mprotect on unmapped region → ENOMEM */
+    test_sendto_eisconn();                 /* Test  1500: sendto on connected SOCK_STREAM with dest → EISCONN */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

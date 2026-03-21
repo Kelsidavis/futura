@@ -11897,6 +11897,142 @@ static void test_futex_waitv_basic(void) {
 }
 
 /* ============================================================
+ * Tests 1292-1296: process_madvise validation and delegation
+ *
+ * process_madvise (Linux 5.10+) applies madvise hints to another
+ * process's memory via pidfd. Tests parameter validation and
+ * basic functionality.
+ * ============================================================ */
+extern long sys_process_madvise(int pidfd, const void *iovec, unsigned long vlen,
+                                int advice, unsigned int flags);
+
+static void test_process_madvise_basic(void) {
+    /* Test 1292: process_madvise with flags != 0 → EINVAL */
+    fut_printf("[MISC-TEST] Test 1292: process_madvise flags=1 → EINVAL\n");
+    {
+        long ret = sys_process_madvise(0, NULL, 0, 0, 1);
+        if (ret != -EINVAL) {
+            fut_printf("[MISC-TEST] ✗ Test 1292: got %ld, expected -EINVAL\n", ret);
+            fut_test_fail(1292);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1292: flags=1 → EINVAL\n");
+            fut_test_pass();
+        }
+    }
+
+    /* Test 1293: process_madvise with bad pidfd → EBADF */
+    fut_printf("[MISC-TEST] Test 1293: process_madvise bad pidfd → EBADF\n");
+    {
+        long ret = sys_process_madvise(999, NULL, 0, 0, 0);
+        if (ret != -EBADF) {
+            fut_printf("[MISC-TEST] ✗ Test 1293: got %ld, expected -EBADF\n", ret);
+            fut_test_fail(1293);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1293: bad pidfd → EBADF\n");
+            fut_test_pass();
+        }
+    }
+
+    /* Test 1294: process_madvise with vlen=0 via valid pidfd → 0 */
+    fut_printf("[MISC-TEST] Test 1294: process_madvise vlen=0 → 0 (via pidfd_open)\n");
+    {
+        extern long sys_pidfd_open(int pid, unsigned int flags);
+        fut_task_t *self = fut_task_current();
+        int pidfd = -1;
+        if (self) {
+            pidfd = (int)sys_pidfd_open((int)self->pid, 0);
+        }
+        if (pidfd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1294: pidfd_open failed %d\n", pidfd);
+            fut_test_fail(1294);
+        } else {
+            long ret = sys_process_madvise(pidfd, NULL, 0, 0, 0);
+            extern long sys_close(int fd);
+            sys_close(pidfd);
+            if (ret != 0) {
+                fut_printf("[MISC-TEST] ✗ Test 1294: got %ld, expected 0\n", ret);
+                fut_test_fail(1294);
+            } else {
+                fut_printf("[MISC-TEST] ✓ Test 1294: vlen=0 → 0\n");
+                fut_test_pass();
+            }
+        }
+    }
+
+    /* Test 1295: process_madvise with vlen > 1024 → EINVAL */
+    fut_printf("[MISC-TEST] Test 1295: process_madvise vlen=1025 → EINVAL\n");
+    {
+        extern long sys_pidfd_open(int pid, unsigned int flags);
+        fut_task_t *self = fut_task_current();
+        int pidfd = -1;
+        if (self) {
+            pidfd = (int)sys_pidfd_open((int)self->pid, 0);
+        }
+        if (pidfd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1295: pidfd_open failed\n");
+            fut_test_fail(1295);
+        } else {
+            long ret = sys_process_madvise(pidfd, (void *)1, 1025, 0, 0);
+            extern long sys_close(int fd);
+            sys_close(pidfd);
+            if (ret != -EINVAL) {
+                fut_printf("[MISC-TEST] ✗ Test 1295: got %ld, expected -EINVAL\n", ret);
+                fut_test_fail(1295);
+            } else {
+                fut_printf("[MISC-TEST] ✓ Test 1295: vlen=1025 → EINVAL\n");
+                fut_test_pass();
+            }
+        }
+    }
+
+    /* Test 1296: process_madvise with MADV_DONTNEED on mapped memory */
+    fut_printf("[MISC-TEST] Test 1296: process_madvise MADV_DONTNEED on anon memory\n");
+    {
+        extern long sys_pidfd_open(int pid, unsigned int flags);
+        extern long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset);
+        extern long sys_munmap(void *addr, size_t len);
+        extern long sys_close(int fd);
+
+        fut_task_t *self = fut_task_current();
+        int pidfd = -1;
+        if (self) {
+            pidfd = (int)sys_pidfd_open((int)self->pid, 0);
+        }
+        if (pidfd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1296: pidfd_open failed\n");
+            fut_test_fail(1296);
+        } else {
+            /* Map a page of anonymous memory */
+            long page_long = sys_mmap(NULL, 4096, 3 /*PROT_READ|PROT_WRITE*/,
+                                      0x22 /*MAP_PRIVATE|MAP_ANONYMOUS*/, -1, 0);
+            void *page = (void *)(uintptr_t)page_long;
+            if (page_long < 0) {
+                fut_printf("[MISC-TEST] ✗ Test 1296: mmap failed\n");
+                sys_close(pidfd);
+                fut_test_fail(1296);
+            } else {
+                /* Write to it first */
+                *(volatile char *)page = 42;
+                /* Apply MADV_DONTNEED via process_madvise */
+                struct { void *iov_base; size_t iov_len; } iov;
+                iov.iov_base = page;
+                iov.iov_len = 4096;
+                long ret = sys_process_madvise(pidfd, &iov, 1, 4 /*MADV_DONTNEED*/, 0);
+                sys_close(pidfd);
+                sys_munmap(page, 4096);
+                if (ret < 0) {
+                    fut_printf("[MISC-TEST] ✗ Test 1296: got %ld, expected >= 0\n", ret);
+                    fut_test_fail(1296);
+                } else {
+                    fut_printf("[MISC-TEST] ✓ Test 1296: MADV_DONTNEED via pidfd → %ld bytes\n", ret);
+                    fut_test_pass();
+                }
+            }
+        }
+    }
+}
+
+/* ============================================================
  * Tests 241-243: mlock2
  * ============================================================ */
 static void test_mlock2_basic(void) {
@@ -20828,14 +20964,14 @@ static void test_linux_6_10_stubs(void) {
                                unsigned int flags);
     extern long sys_mseal(void *addr, size_t len, unsigned long flags);
 
-    /* Test 477: process_madvise -> ENOSYS */
-    fut_printf("[MISC-TEST] Test 477: process_madvise -> ENOSYS\n");
+    /* Test 477: process_madvise with bad pidfd -> EBADF (now implemented) */
+    fut_printf("[MISC-TEST] Test 477: process_madvise bad pidfd -> EBADF\n");
     long r = sys_process_madvise(-1, NULL, 0, 0, 0);
-    if (r != -38 /*-ENOSYS*/) {
-        fut_printf("[MISC-TEST] ✗ Test 477: process_madvise returned %ld\n", r);
+    if (r != -EBADF) {
+        fut_printf("[MISC-TEST] ✗ Test 477: process_madvise returned %ld, expected -EBADF\n", r);
         fut_test_fail(477);
     } else {
-        fut_printf("[MISC-TEST] ✓ Test 477: process_madvise -> -ENOSYS\n");
+        fut_printf("[MISC-TEST] ✓ Test 477: process_madvise bad pidfd -> -EBADF\n");
         fut_test_pass();
     }
 
@@ -42628,6 +42764,7 @@ void fut_misc_test_thread(void *arg) {
     test_wcoredump_bit();                    /* Tests 1280-1282: WCOREDUMP bit in wait status */
     test_waitid_cld_dumped();                /* Tests 1283-1284: waitid CLD_DUMPED/CLD_KILLED */
     test_futex_waitv_basic();                /* Tests 1285-1291: futex_waitv validation and value-mismatch */
+    test_process_madvise_basic();            /* Tests 1292-1296: process_madvise validation and delegation */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

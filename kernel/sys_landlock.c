@@ -19,8 +19,17 @@
  */
 
 #include <kernel/errno.h>
+#include <kernel/fut_task.h>
+#include <kernel/uaccess.h>
 #include <stdint.h>
 #include <stddef.h>
+#include <sys/types.h>
+
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
 
 /**
  * sys_landlock_create_ruleset() - Create a new Landlock ruleset.
@@ -61,13 +70,83 @@ long sys_memfd_secret(unsigned int flags) {
 }
 
 /**
- * sys_process_madvise() - Apply madvise() hints to another process.
- * Returns -ENOSYS; callers (Android LMKD, systemd-oomd) fall back.
+ * sys_process_madvise() - Apply madvise() hints to another process's memory.
+ *
+ * Used by systemd-oomd, Android LMKD, and memory management daemons to
+ * apply MADV_DONTNEED/MADV_COLD/MADV_PAGEOUT to another process via pidfd.
+ *
+ * In Futura (single address space), delegates directly to sys_madvise
+ * after validating the pidfd and copying the iovec array.
+ *
+ * @param pidfd   Process file descriptor for the target process
+ * @param iovec   Array of struct iovec describing memory ranges
+ * @param vlen    Number of iovec entries
+ * @param advice  MADV_* advice code
+ * @param flags   Must be 0
+ * @return Total bytes advised on success, -errno on error
  */
-long sys_process_madvise(int pidfd, const void *iovec, unsigned long vlen,
+long sys_process_madvise(int pidfd, const void *iovec_ptr, unsigned long vlen,
                          int advice, unsigned int flags) {
-    (void)pidfd; (void)iovec; (void)vlen; (void)advice; (void)flags;
-    return -ENOSYS;
+    /* flags must be 0 (reserved for future use) */
+    if (flags != 0)
+        return -EINVAL;
+
+    /* Validate pidfd → target PID */
+    extern int pidfd_get_pid(int fd);
+    int target_pid = pidfd_get_pid(pidfd);
+    if (target_pid < 0)
+        return -EBADF;
+
+    /* Verify target process exists */
+    extern fut_task_t *fut_task_by_pid(uint64_t pid);
+    fut_task_t *target = fut_task_by_pid((uint64_t)target_pid);
+    if (!target)
+        return -ESRCH;
+
+    /* Permission check: caller must own the target or be root */
+    extern fut_task_t *fut_task_current(void);
+    fut_task_t *caller = fut_task_current();
+    if (!caller)
+        return -ESRCH;
+    if (caller->uid != 0 && caller->uid != target->uid)
+        return -EPERM;
+
+    /* Validate vlen (Linux caps at UIO_MAXIOV=1024) */
+    if (vlen == 0)
+        return 0;
+    if (vlen > 1024)
+        return -EINVAL;
+
+    /* Copy iovec array from user.
+     * struct iovec { void *iov_base; size_t iov_len; } — use matching layout. */
+    struct { void *iov_base; size_t iov_len; } iovecs[1024];
+
+    /* Kernel-pointer bypass for self-tests */
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)iovec_ptr >= KERNEL_VIRTUAL_BASE)
+        __builtin_memcpy(iovecs, iovec_ptr, vlen * sizeof(iovecs[0]));
+    else
+#endif
+    {
+        extern int fut_copy_from_user(void *dst, const void *src, uint64_t n);
+        if (fut_copy_from_user(iovecs, iovec_ptr, vlen * sizeof(iovecs[0])) != 0)
+            return -EFAULT;
+    }
+
+    /* Apply madvise to each iovec range */
+    extern long sys_madvise(void *addr, size_t length, int advice);
+    ssize_t total = 0;
+    for (unsigned long i = 0; i < vlen; i++) {
+        if (iovecs[i].iov_len == 0)
+            continue;
+        long r = sys_madvise(iovecs[i].iov_base, iovecs[i].iov_len, advice);
+        if (r < 0) {
+            /* Return bytes processed so far if any, else propagate error */
+            return (total > 0) ? total : r;
+        }
+        total += (ssize_t)iovecs[i].iov_len;
+    }
+    return total;
 }
 
 /**

@@ -99,6 +99,9 @@ struct fut_vnode {
     uint32_t lock_owner_pid;        /* PID of exclusive lock owner (0 if shared/none) */
     fut_waitq_t lock_waitq;         /* Waitq for processes blocked on lock acquisition */
 
+    /* Per-vnode write lock for O_APPEND atomicity */
+    fut_spinlock_t write_lock;
+
     /* Operations for this vnode */
     const struct fut_vnode_ops *ops;
 };

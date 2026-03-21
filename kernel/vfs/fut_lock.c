@@ -176,6 +176,7 @@ void fut_vnode_lock_init(struct fut_vnode *vnode) {
     vnode->lock_count = 0;
     vnode->lock_owner_pid = 0;
     fut_waitq_init(&vnode->lock_waitq);
+    fut_spinlock_init(&vnode->write_lock);
 }
 
 /**

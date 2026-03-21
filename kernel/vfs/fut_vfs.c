@@ -2504,8 +2504,11 @@ ssize_t fut_vfs_write(int fd, const void *buf, size_t size) {
         return -EPERM;
     }
 
-    /* O_APPEND: atomically seek to end before each write */
-    if (file->flags & O_APPEND) {
+    /* O_APPEND: acquire per-vnode write lock to make seek-to-end + write
+     * atomic with respect to other O_APPEND writers (POSIX requirement). */
+    int is_append = (file->flags & O_APPEND) != 0;
+    if (is_append) {
+        fut_spinlock_acquire(&file->vnode->write_lock);
         file->offset = file->vnode->size;
     }
 
@@ -2523,6 +2526,8 @@ ssize_t fut_vfs_write(int fd, const void *buf, size_t size) {
                         /* Send SIGXFSZ (signal 25) per POSIX */
                         extern int fut_signal_send(struct fut_task *t, int sig);
                         fut_signal_send(wr_task, 25 /* SIGXFSZ */);
+                        if (is_append)
+                            fut_spinlock_release(&file->vnode->write_lock);
                         return -27;  /* EFBIG */
                     }
                     /* Truncate write to fit within limit */
@@ -2572,6 +2577,9 @@ ssize_t fut_vfs_write(int fd, const void *buf, size_t size) {
                 inotify_dispatch_event(dir_path, 0x00000002 /* IN_MODIFY */, file->vnode->name, 0);
         }
     }
+
+    if (is_append)
+        fut_spinlock_release(&file->vnode->write_lock);
 
     VFSDBG("[vfs-write] returning %lld\n", (long long)ret);
     return ret;

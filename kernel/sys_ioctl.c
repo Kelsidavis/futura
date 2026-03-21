@@ -548,6 +548,10 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
         return -EBADF;
     }
 
+    /* O_PATH fds cannot be used for I/O — only path-based operations */
+    if (file->flags & O_PATH)
+        return -EBADF;
+
     /* Try character device operations */
     if (file->chr_ops && file->chr_ops->ioctl) {
         /* Security hardening: Validate argp if non-NULL and appears to be a pointer

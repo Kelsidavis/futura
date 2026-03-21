@@ -13,6 +13,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/fut_vfs.h>
 #include <kernel/errno.h>
+#include <fcntl.h>
 #include <stdint.h>
 
 /**
@@ -38,6 +39,10 @@ long sys_readahead(int fd, int64_t offset, size_t count) {
 
     struct fut_file *file = fut_vfs_get_file(fd);
     if (!file)
+        return -EBADF;
+
+    /* O_PATH fds cannot be used for I/O — only path-based operations */
+    if (file->flags & O_PATH)
         return -EBADF;
 
     /* Pipes and sockets are not seekable */

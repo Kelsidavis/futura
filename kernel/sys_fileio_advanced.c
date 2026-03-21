@@ -12,6 +12,7 @@
 #include <kernel/fut_socket.h>
 #include <kernel/chrdev.h>
 #include <kernel/errno.h>
+#include <fcntl.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -209,6 +210,10 @@ long sys_sendfile(int out_fd, int in_fd, int64_t *offset, size_t count) {
                    local_out_fd, local_in_fd, local_count, task->pid);
         return -EBADF;
     }
+
+    /* O_PATH fds cannot be used for I/O — only path-based operations */
+    if ((in_file->flags & O_PATH) || (out_file->flags & O_PATH))
+        return -EBADF;
 
     /* Enforce access mode: in_fd must be readable; out_fd must be writable */
     if ((in_file->flags & O_ACCMODE) == O_WRONLY)

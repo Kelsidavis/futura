@@ -14866,6 +14866,191 @@ static void test_opath_pread_pwrite(void) {
 #undef O_PATH_FLAG2
 }
 
+static void test_opath_comprehensive(void) {
+    extern long sys_open(const char *path, int flags, int mode);
+    extern long sys_close(int fd);
+    extern long sys_write(int fd, const void *buf, size_t count);
+    extern long sys_sendfile(int out_fd, int in_fd, int64_t *offset, size_t count);
+    extern long sys_splice(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
+                           size_t len, unsigned int flags);
+    extern long sys_ftruncate(int fd, uint64_t length);
+    extern long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len);
+    extern int64_t sys_lseek(int fd, int64_t offset, int whence);
+    extern long sys_ioctl(int fd, unsigned long request, void *argp);
+    extern long sys_fchmod(int fd, uint32_t mode);
+    extern long sys_fchown(int fd, uint32_t uid, uint32_t gid);
+    extern long sys_copy_file_range(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
+                                     size_t len, unsigned int flags);
+    extern long sys_readahead(int fd, int64_t offset, size_t count);
+
+#define O_PATH_FLAG3 010000000
+
+    /* Create a test file first */
+    long wfd = sys_open("/tmp/.t_opath_compr", 0x42 /* O_CREAT|O_RDWR */, 0644);
+    if (wfd >= 0) {
+        sys_write((int)wfd, "opathcomprehensivetest", 21);
+        sys_close((int)wfd);
+    }
+
+    /* Open with O_PATH */
+    long fd = sys_open("/tmp/.t_opath_compr", O_PATH_FLAG3, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Tests 1413-1423: O_PATH open = %ld\n", fd);
+        for (int t = 1413; t <= 1423; t++) fut_test_fail(t);
+    } else {
+        /* Also need a normal writable fd for sendfile/splice/copy_file_range target */
+        long nfd = sys_open("/tmp/.t_opath_target", 0x42 /* O_CREAT|O_RDWR */, 0644);
+
+        /* Test 1413: sendfile with O_PATH in_fd → EBADF */
+        fut_printf("[MISC-TEST] Test 1413: sendfile(O_PATH fd) → EBADF\n");
+        {
+            long r = nfd >= 0 ? sys_sendfile((int)nfd, (int)fd, (int64_t *)0, 8) : -9;
+            if (r == -9 /* -EBADF */) {
+                fut_printf("[MISC-TEST] ✓ Test 1413: sendfile(O_PATH in) = -EBADF\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1413: sendfile(O_PATH in) = %ld (want -9)\n", r);
+                fut_test_fail(1413);
+            }
+        }
+
+        /* Test 1414: ftruncate on O_PATH → EBADF */
+        fut_printf("[MISC-TEST] Test 1414: ftruncate(O_PATH fd) → EBADF\n");
+        {
+            long r = sys_ftruncate((int)fd, 10);
+            if (r == -9 /* -EBADF */) {
+                fut_printf("[MISC-TEST] ✓ Test 1414: ftruncate(O_PATH) = -EBADF\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1414: ftruncate(O_PATH) = %ld (want -9)\n", r);
+                fut_test_fail(1414);
+            }
+        }
+
+        /* Test 1415: fallocate on O_PATH → EBADF */
+        fut_printf("[MISC-TEST] Test 1415: fallocate(O_PATH fd) → EBADF\n");
+        {
+            long r = sys_fallocate((int)fd, 0, 0, 4096);
+            if (r == -9 /* -EBADF */) {
+                fut_printf("[MISC-TEST] ✓ Test 1415: fallocate(O_PATH) = -EBADF\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1415: fallocate(O_PATH) = %ld (want -9)\n", r);
+                fut_test_fail(1415);
+            }
+        }
+
+        /* Test 1416: lseek on O_PATH → EBADF */
+        fut_printf("[MISC-TEST] Test 1416: lseek(O_PATH fd) → EBADF\n");
+        {
+            long r = (long)sys_lseek((int)fd, 0, 0 /* SEEK_SET */);
+            if (r == -9 /* -EBADF */) {
+                fut_printf("[MISC-TEST] ✓ Test 1416: lseek(O_PATH) = -EBADF\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1416: lseek(O_PATH) = %ld (want -9)\n", r);
+                fut_test_fail(1416);
+            }
+        }
+
+        /* Test 1417: ioctl on O_PATH → EBADF */
+        fut_printf("[MISC-TEST] Test 1417: ioctl(O_PATH fd) → EBADF\n");
+        {
+            int nbytes = 0;
+            long r = sys_ioctl((int)fd, 0x541B /* FIONREAD */, &nbytes);
+            if (r == -9 /* -EBADF */) {
+                fut_printf("[MISC-TEST] ✓ Test 1417: ioctl(O_PATH) = -EBADF\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1417: ioctl(O_PATH) = %ld (want -9)\n", r);
+                fut_test_fail(1417);
+            }
+        }
+
+        /* Test 1418: fchmod on O_PATH → EBADF */
+        fut_printf("[MISC-TEST] Test 1418: fchmod(O_PATH fd) → EBADF\n");
+        {
+            long r = sys_fchmod((int)fd, 0644);
+            if (r == -9 /* -EBADF */) {
+                fut_printf("[MISC-TEST] ✓ Test 1418: fchmod(O_PATH) = -EBADF\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1418: fchmod(O_PATH) = %ld (want -9)\n", r);
+                fut_test_fail(1418);
+            }
+        }
+
+        /* Test 1419: fchown on O_PATH → EBADF */
+        fut_printf("[MISC-TEST] Test 1419: fchown(O_PATH fd) → EBADF\n");
+        {
+            long r = sys_fchown((int)fd, (unsigned int)-1, (unsigned int)-1);
+            if (r == -9 /* -EBADF */) {
+                fut_printf("[MISC-TEST] ✓ Test 1419: fchown(O_PATH) = -EBADF\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1419: fchown(O_PATH) = %ld (want -9)\n", r);
+                fut_test_fail(1419);
+            }
+        }
+
+        /* Test 1420: copy_file_range with O_PATH source → EBADF */
+        fut_printf("[MISC-TEST] Test 1420: copy_file_range(O_PATH fd) → EBADF\n");
+        {
+            long r = nfd >= 0 ? sys_copy_file_range((int)fd, (int64_t *)0, (int)nfd, (int64_t *)0, 8, 0) : -9;
+            if (r == -9 /* -EBADF */) {
+                fut_printf("[MISC-TEST] ✓ Test 1420: copy_file_range(O_PATH) = -EBADF\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1420: copy_file_range(O_PATH) = %ld (want -9)\n", r);
+                fut_test_fail(1420);
+            }
+        }
+
+        /* Test 1421: readahead on O_PATH → EBADF */
+        fut_printf("[MISC-TEST] Test 1421: readahead(O_PATH fd) → EBADF\n");
+        {
+            long r = sys_readahead((int)fd, 0, 4096);
+            if (r == -9 /* -EBADF */) {
+                fut_printf("[MISC-TEST] ✓ Test 1421: readahead(O_PATH) = -EBADF\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1421: readahead(O_PATH) = %ld (want -9)\n", r);
+                fut_test_fail(1421);
+            }
+        }
+
+        /* Test 1422: sendfile with O_PATH out_fd → EBADF */
+        fut_printf("[MISC-TEST] Test 1422: sendfile(O_PATH out_fd) → EBADF\n");
+        {
+            long r = nfd >= 0 ? sys_sendfile((int)fd, (int)nfd, (int64_t *)0, 8) : -9;
+            if (r == -9 /* -EBADF */) {
+                fut_printf("[MISC-TEST] ✓ Test 1422: sendfile(O_PATH out) = -EBADF\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1422: sendfile(O_PATH out) = %ld (want -9)\n", r);
+                fut_test_fail(1422);
+            }
+        }
+
+        /* Test 1423: copy_file_range with O_PATH dest → EBADF */
+        fut_printf("[MISC-TEST] Test 1423: copy_file_range(O_PATH dest) → EBADF\n");
+        {
+            long r = nfd >= 0 ? sys_copy_file_range((int)nfd, (int64_t *)0, (int)fd, (int64_t *)0, 8, 0) : -9;
+            if (r == -9 /* -EBADF */) {
+                fut_printf("[MISC-TEST] ✓ Test 1423: copy_file_range(O_PATH dest) = -EBADF\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1423: copy_file_range(O_PATH dest) = %ld (want -9)\n", r);
+                fut_test_fail(1423);
+            }
+        }
+
+        if (nfd >= 0) sys_close((int)nfd);
+        sys_close((int)fd);
+    }
+#undef O_PATH_FLAG3
+}
+
 static void test_proc_fd_anon_types(void) {
     extern long sys_read(int fd, void *buf, size_t count);
     extern long sys_readlink(const char *path, char *buf, size_t bufsiz);
@@ -45907,6 +46092,7 @@ void fut_misc_test_thread(void *arg) {
     test_fallocate_collapse_range();         /* Tests 1401-1404: fallocate COLLAPSE_RANGE */
     test_fallocate_insert_range();           /* Tests 1405-1408: fallocate INSERT_RANGE */
     test_opath_pread_pwrite();               /* Tests 1409-1412: O_PATH blocks pread64/pwrite64/preadv/pwritev */
+    test_opath_comprehensive();              /* Tests 1413-1423: O_PATH blocks sendfile/ftruncate/fallocate/lseek/ioctl/fchmod/fchown/copy_file_range/readahead */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

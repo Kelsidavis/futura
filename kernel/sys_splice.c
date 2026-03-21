@@ -18,6 +18,7 @@
 #include <kernel/uaccess.h>
 #include <kernel/syscalls.h>
 #include <kernel/fut_vfs.h>
+#include <fcntl.h>
 #include <kernel/fut_memory.h>
 #include <kernel/chrdev.h>
 #include <sys/uio.h>
@@ -209,6 +210,10 @@ long sys_splice(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
                    local_fd_in, local_fd_out);
         return -EBADF;
     }
+
+    /* O_PATH fds cannot be used for I/O — only path-based operations */
+    if ((file_in->flags & O_PATH) || (file_out->flags & O_PATH))
+        return -EBADF;
 
     bool in_is_pipe  = (file_in->chr_ops  != NULL && file_in->chr_ops->read  != NULL);
     bool out_is_pipe = (file_out->chr_ops != NULL && file_out->chr_ops->write != NULL);
@@ -447,6 +452,9 @@ long sys_vmsplice(int fd, const void *iov, size_t nr_segs, unsigned int flags) {
     if (local_fd >= task->max_fds) return -EBADF;
     struct fut_file *file = vfs_get_file_from_task(task, local_fd);
     if (!file) return -EBADF;
+
+    /* O_PATH fds cannot be used for I/O */
+    if (file->flags & O_PATH) return -EBADF;
 
     /* vmsplice requires the fd to be a pipe (write end) */
     if (!file->chr_ops || !file->chr_ops->write) {
@@ -703,6 +711,12 @@ long sys_sync_file_range(int fd, int64_t offset, int64_t nbytes, unsigned int fl
                    "-> EINVAL\n", local_fd, local_offset, local_nbytes, local_flags, task->pid);
         return -EINVAL;
     }
+
+    /* Validate fd exists and check O_PATH */
+    if (local_fd >= task->max_fds) return -EBADF;
+    struct fut_file *sfr_file = vfs_get_file_from_task(task, local_fd);
+    if (!sfr_file) return -EBADF;
+    if (sfr_file->flags & O_PATH) return -EBADF;
 
     /* Categorize sync type */
     const char *sync_desc;

@@ -13,6 +13,7 @@
 #include <kernel/fut_memory.h>
 #include <kernel/uaccess.h>
 #include <kernel/errno.h>
+#include <fcntl.h>
 #include <stdint.h>
 #include <stddef.h>
 
@@ -92,6 +93,10 @@ long sys_copy_file_range(int fd_in, int64_t *off_in,
     if (!f_in || !f_out) {
         return -EBADF;
     }
+
+    /* O_PATH fds cannot be used for I/O — only path-based operations */
+    if ((f_in->flags & O_PATH) || (f_out->flags & O_PATH))
+        return -EBADF;
 
     /* Read explicit offsets if provided */
     int64_t pos_in = -1, pos_out = -1;

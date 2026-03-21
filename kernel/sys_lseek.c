@@ -17,6 +17,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
 #include <kernel/fut_fd_util.h>
+#include <fcntl.h>
 #include <stdint.h>
 
 #include <kernel/kprintf.h>
@@ -204,6 +205,13 @@ int64_t sys_lseek(int fd, int64_t offset, int whence) {
 
     /* Phase 2: Categorize FD range */
     const char *fd_category = fut_fd_category(fd);
+
+    /* O_PATH fds cannot be used for I/O — only path-based operations */
+    {
+        struct fut_file *lseek_file = fut_vfs_get_file(fd);
+        if (lseek_file && (lseek_file->flags & O_PATH))
+            return -EBADF;
+    }
 
     /* Phase 2: Get old position before seek (for diagnostics) */
     int64_t old_pos = fut_vfs_lseek(fd, 0, SEEK_CUR);

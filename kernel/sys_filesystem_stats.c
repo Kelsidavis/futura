@@ -11,6 +11,7 @@
 #include <kernel/fut_vfs.h>
 #include <kernel/fut_memory.h>
 #include <kernel/errno.h>
+#include <fcntl.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -339,6 +340,10 @@ long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
                    fd, mode, offset, len, task->pid);
         return -EBADF;
     }
+
+    /* O_PATH fds cannot be used for I/O — only path-based operations */
+    if (file->flags & O_PATH)
+        return -EBADF;
 
     /* Validate mode flags */
     const int FALLOC_FL_KEEP_SIZE = 0x01;

@@ -15,6 +15,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/fut_thread.h>
 #include <kernel/fut_vfs.h>
+#include <fcntl.h>
 #include <platform/platform.h>
 #include <sys/mman.h>
 
@@ -246,6 +247,13 @@ long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset) 
                 }
             }
         }
+    }
+
+    /* O_PATH fds cannot be used for I/O (including memory mapping) */
+    {
+        struct fut_file *mmap_file = fut_vfs_get_file(fd);
+        if (mmap_file && (mmap_file->flags & O_PATH))
+            return -EBADF;
     }
 
     void *mapped = fut_vfs_mmap(fd, addr, len, prot, flags, (off_t)offset);

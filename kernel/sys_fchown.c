@@ -12,6 +12,7 @@
 #include <kernel/errno.h>
 #include <kernel/fut_vfs.h>
 #include <kernel/fut_fd_util.h>
+#include <fcntl.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -73,6 +74,10 @@ long sys_fchown(int fd, uint32_t uid, uint32_t gid) {
                    local_fd, fd_category, local_uid, local_gid);
         return -EBADF;
     }
+
+    /* O_PATH fds cannot be used for fchown — use fchownat instead */
+    if (file->flags & O_PATH)
+        return -EBADF;
 
     /* Get the vnode from the file */
     struct fut_vnode *vnode = file->vnode;

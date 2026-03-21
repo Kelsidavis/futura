@@ -139,6 +139,10 @@ long sys_ftruncate(int fd, uint64_t length) {
         return -EBADF;
     }
 
+    /* O_PATH fds cannot be used for I/O — only path-based operations */
+    if (file->flags & O_PATH)
+        return -EBADF;
+
     /* Enforce RLIMIT_FSIZE: extending beyond the soft limit returns EFBIG and
      * sends SIGXFSZ.  Shrinking is always allowed regardless of the limit. */
     {

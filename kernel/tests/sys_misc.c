@@ -47784,6 +47784,77 @@ static void test_socketpair_invalid_flags(void) {
 }
 
 /* ============================================================
+ * Tests 1497-1498: SO_RCVBUF/SO_SNDBUF capped at sysctl max
+ * ============================================================ */
+static void test_so_rcvbuf_cap(void) {
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_setsockopt(int fd, int level, int optname,
+                               const void *optval, unsigned int optlen);
+    extern long sys_getsockopt(int fd, int level, int optname,
+                               void *optval, unsigned int *optlen);
+    extern int fut_vfs_close(int fd);
+
+    long sockfd = sys_socket(1 /* AF_UNIX */, 1 /* SOCK_STREAM */, 0);
+    if (sockfd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1497-1498: socket create failed: %ld\n", sockfd);
+        fut_test_fail(1497);
+        fut_test_fail(1498);
+        return;
+    }
+
+    /* Test 1497: SO_RCVBUF with huge value is capped at 212992 */
+    fut_printf("[MISC-TEST] Test 1497: setsockopt(SO_RCVBUF, 1000000) capped\n");
+    {
+        int req = 1000000;
+        long ret = sys_setsockopt((int)sockfd, 1 /* SOL_SOCKET */, 8 /* SO_RCVBUF */,
+                                   &req, sizeof(req));
+        if (ret < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1497: setsockopt failed: %ld\n", ret);
+            fut_test_fail(1497);
+        } else {
+            int got = 0;
+            unsigned int glen = sizeof(got);
+            sys_getsockopt((int)sockfd, 1 /* SOL_SOCKET */, 8 /* SO_RCVBUF */,
+                           &got, &glen);
+            /* Linux caps at sysctl_rmem_max (default 212992) */
+            if (got <= 212992) {
+                fut_printf("[MISC-TEST] ✓ Test 1497: SO_RCVBUF capped at %d (≤ 212992)\n", got);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1497: SO_RCVBUF = %d, expected ≤ 212992\n", got);
+                fut_test_fail(1497);
+            }
+        }
+    }
+
+    /* Test 1498: SO_SNDBUF with huge value is capped at 212992 */
+    fut_printf("[MISC-TEST] Test 1498: setsockopt(SO_SNDBUF, 1000000) capped\n");
+    {
+        int req = 1000000;
+        long ret = sys_setsockopt((int)sockfd, 1 /* SOL_SOCKET */, 7 /* SO_SNDBUF */,
+                                   &req, sizeof(req));
+        if (ret < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1498: setsockopt failed: %ld\n", ret);
+            fut_test_fail(1498);
+        } else {
+            int got = 0;
+            unsigned int glen = sizeof(got);
+            sys_getsockopt((int)sockfd, 1 /* SOL_SOCKET */, 7 /* SO_SNDBUF */,
+                           &got, &glen);
+            if (got <= 212992) {
+                fut_printf("[MISC-TEST] ✓ Test 1498: SO_SNDBUF capped at %d (≤ 212992)\n", got);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1498: SO_SNDBUF = %d, expected ≤ 212992\n", got);
+                fut_test_fail(1498);
+            }
+        }
+    }
+
+    fut_vfs_close((int)sockfd);
+}
+
+/* ============================================================
  * Tests 1479-1481: openat2 RESOLVE_IN_ROOT enforcement
  * ============================================================ */
 #define TEST_RESOLVE_IN_ROOT 0x10
@@ -48610,6 +48681,7 @@ void fut_misc_test_thread(void *arg) {
     test_poll_negative_timeout();           /* Test  1493: poll() with timeout < -1 treated as infinite */
     test_fcntl_dupfd_rlimit();             /* Tests 1494-1495: F_DUPFD with arg >= RLIMIT_NOFILE → EINVAL */
     test_socketpair_invalid_flags();       /* Test  1496: socketpair with invalid type flags → EINVAL */
+    test_so_rcvbuf_cap();                  /* Tests 1497-1498: SO_RCVBUF capped at sysctl max */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

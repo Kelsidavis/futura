@@ -504,14 +504,16 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
 
             case SO_SNDBUF:
             case SO_RCVBUF: {
-                /* Linux doubles the requested value; minimum is 2048 bytes */
+                /* Linux doubles the requested value; minimum is 2048 bytes.
+                 * Cap at sysctl_rmem_max/sysctl_wmem_max (default 212992). */
                 if (optlen < (socklen_t)sizeof(int)) return -EINVAL;
                 int req = 0;
                 if (sso_copy_from_user(&req, optval, sizeof(int)) != 0) return -EFAULT;
                 if (req < 0) return -EINVAL;
-                /* Double the requested value, enforce minimum 2048 */
+                /* Double the requested value, enforce min 2048, cap at 212992 */
                 uint32_t effective = (uint32_t)(req * 2);
                 if (effective < 2048) effective = 2048;
+                if (effective > 212992) effective = 212992;
                 if (optname == SO_SNDBUF)
                     socket->sndbuf = effective;
                 else

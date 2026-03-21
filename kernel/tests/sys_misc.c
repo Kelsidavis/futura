@@ -38375,6 +38375,86 @@ static void test_prctl_timerslack_procfs(void) {
 #undef TSNS_PR_GET
 }
 
+static void test_proc_syscall(void) {
+    extern long sys_openat(int dirfd, const char *pathname, int flags, int mode);
+    extern long sys_read(int fd, void *buf, size_t count);
+    extern long sys_close(int fd);
+    /* Test 1169: /proc/self/syscall is openable */
+    fut_printf("[MISC-TEST] Test 1169: /proc/self/syscall is openable\n");
+    {
+        int fd = (int)sys_openat(-100, "/proc/self/syscall", 0, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1169: open /proc/self/syscall failed: %d\n", fd);
+            fut_test_fail(1169);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1169: open /proc/self/syscall ok\n");
+            fut_test_pass();
+            sys_close(fd);
+        }
+    }
+
+    /* Test 1170: /proc/self/syscall content is "running\n" */
+    fut_printf("[MISC-TEST] Test 1170: /proc/self/syscall content is \"running\\n\"\n");
+    {
+        int fd = (int)sys_openat(-100, "/proc/self/syscall", 0, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1170: open failed: %d\n", fd);
+            fut_test_fail(1170);
+        } else {
+            char buf[32];
+            __builtin_memset(buf, 0, sizeof(buf));
+            long n = sys_read(fd, buf, sizeof(buf) - 1);
+            sys_close(fd);
+            if (n >= 7 && buf[0]=='r' && buf[1]=='u' && buf[2]=='n' &&
+                       buf[3]=='n' && buf[4]=='i' && buf[5]=='n' && buf[6]=='g') {
+                fut_printf("[MISC-TEST] ✓ Test 1170: content starts with \"running\"\n");
+                fut_test_pass();
+            } else {
+                if (n > 0) buf[n] = '\0';
+                fut_printf("[MISC-TEST] ✗ Test 1170: unexpected content (n=%ld)\n", n);
+                fut_test_fail(1170);
+            }
+        }
+    }
+
+    /* Test 1171: /proc/<pid>/syscall is accessible via numeric PID path */
+    fut_printf("[MISC-TEST] Test 1171: /proc/<pid>/syscall accessible via numeric PID\n");
+    {
+        /* Use /proc/1/syscall (init/first task) — should be readable */
+        int fd = (int)sys_openat(-100, "/proc/1/syscall", 0, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1171: open /proc/1/syscall failed: %d\n", fd);
+            fut_test_fail(1171);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1171: /proc/1/syscall opened ok\n");
+            fut_test_pass();
+            sys_close(fd);
+        }
+    }
+
+    /* Test 1172: /proc/self/syscall content ends with newline */
+    fut_printf("[MISC-TEST] Test 1172: /proc/self/syscall content ends with newline\n");
+    {
+        int fd = (int)sys_openat(-100, "/proc/self/syscall", 0, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1172: open /proc/self/syscall failed: %d\n", fd);
+            fut_test_fail(1172);
+        } else {
+            char buf[32];
+            __builtin_memset(buf, 0, sizeof(buf));
+            long n = sys_read(fd, buf, sizeof(buf) - 1);
+            sys_close(fd);
+            if (n > 0 && buf[n - 1] == '\n') {
+                fut_printf("[MISC-TEST] ✓ Test 1172: content ends with newline\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1172: no trailing newline (n=%ld)\n", n);
+                fut_test_fail(1172);
+            }
+        }
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -38997,6 +39077,7 @@ void fut_misc_test_thread(void *arg) {
     test_sigaltstack_autodisarm();      /* Tests 1151-1155: SS_AUTODISARM flag support */
     test_prctl_set_vma_anon_name();     /* Tests 1156-1162: PR_SET_VMA_ANON_NAME */
     test_prctl_timerslack_procfs();     /* Tests 1163-1168: PR_SET/GET_TIMERSLACK + /proc/self/timerslack_ns */
+    test_proc_syscall();               /* Tests 1169-1172: /proc/<pid>/syscall file */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

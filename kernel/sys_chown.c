@@ -444,6 +444,21 @@ long sys_chown(const char *pathname, uint32_t uid, uint32_t gid) {
                path_buf, path_type, vnode->ino, ownership_change_buf,
                uid_desc, gid_desc, operation_type);
 
+    /* POSIX/Linux: clear S_ISUID/S_ISGID on ownership change.
+     * uid change clears both; gid-only change clears S_ISGID when S_IXGRP set. */
+    if (vnode->type == VN_REG) {
+        int uid_changed = (local_uid != CHOWN_UNCHANGED && local_uid != old_uid);
+        int gid_changed = (local_gid != CHOWN_UNCHANGED && local_gid != old_gid);
+        if (uid_changed || gid_changed) {
+            if (uid_changed) {
+                vnode->mode &= ~(uint32_t)(04000 | 02000);
+            } else if (gid_changed) {
+                if ((vnode->mode & 02000) && (vnode->mode & 00010))
+                    vnode->mode &= ~(uint32_t)02000;
+            }
+        }
+    }
+
     /* Dispatch IN_ATTRIB inotify event so watchers see the ownership change */
     if (vnode->parent && vnode->name) {
         char dir_path[256];

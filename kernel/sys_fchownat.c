@@ -223,6 +223,8 @@ long sys_fchownat(int dirfd, const char *pathname, uint32_t uid, uint32_t gid, i
         }
 
         struct fut_vnode *vnode = dirfile->vnode;
+        uint32_t ep_old_uid = vnode->uid;
+        uint32_t ep_old_gid = vnode->gid;
         struct fut_stat stat = {0};
         stat.st_mode = (uint32_t)-1;  /* Don't change mode */
         stat.st_uid = uid;
@@ -237,6 +239,20 @@ long sys_fchownat(int dirfd, const char *pathname, uint32_t uid, uint32_t gid, i
                        dirfd, dirfd_desc, vnode->ino, uid_desc, gid_desc,
                        operation_type, flags_desc, ret);
             return ret;
+        }
+
+        /* POSIX/Linux: clear S_ISUID/S_ISGID on ownership change */
+        if (vnode->type == VN_REG) {
+            int ep_uid_changed = (uid != (uint32_t)-1 && uid != ep_old_uid);
+            int ep_gid_changed = (gid != (uint32_t)-1 && gid != ep_old_gid);
+            if (ep_uid_changed || ep_gid_changed) {
+                if (ep_uid_changed) {
+                    vnode->mode &= ~(uint32_t)(04000 | 02000);
+                } else if (ep_gid_changed) {
+                    if ((vnode->mode & 02000) && (vnode->mode & 00010))
+                        vnode->mode &= ~(uint32_t)02000;
+                }
+            }
         }
 
         fut_printf("[FCHOWNAT] fchownat(dirfd=%d [%s], pathname=\"\" [empty, AT_EMPTY_PATH], "
@@ -368,6 +384,10 @@ long sys_fchownat(int dirfd, const char *pathname, uint32_t uid, uint32_t gid, i
         }
     }
 
+    /* Save old ownership for suid/sgid clearing */
+    uint32_t old_uid = vnode->uid;
+    uint32_t old_gid = vnode->gid;
+
     /* Check if filesystem supports ownership changes */
     if (!vnode->ops || !vnode->ops->setattr) {
         fut_printf("[FCHOWNAT] fchownat(dirfd=%d [%s], path='%s' [%s], vnode_ino=%lu, "
@@ -414,6 +434,20 @@ long sys_fchownat(int dirfd, const char *pathname, uint32_t uid, uint32_t gid, i
                    uid_desc, gid_desc, operation_type, flags_desc, ret, error_desc);
         fut_vnode_unref(vnode);
         return ret;
+    }
+
+    /* POSIX/Linux: clear S_ISUID/S_ISGID on ownership change */
+    if (vnode->type == VN_REG) {
+        int uid_changed = (uid != (uint32_t)-1 && uid != old_uid);
+        int gid_changed = (gid != (uint32_t)-1 && gid != old_gid);
+        if (uid_changed || gid_changed) {
+            if (uid_changed) {
+                vnode->mode &= ~(uint32_t)(04000 | 02000);
+            } else if (gid_changed) {
+                if ((vnode->mode & 02000) && (vnode->mode & 00010))
+                    vnode->mode &= ~(uint32_t)02000;
+            }
+        }
     }
 
     /* Phase 3: Success logging with symlink handling status */

@@ -15855,6 +15855,131 @@ static void test_suid_clear_on_open_trunc(void) {
     task->cap_effective = saved_caps;
 }
 
+/**
+ * test_suid_clear_chown_fchownat - S_ISUID/S_ISGID clearing on chown/fchownat
+ *
+ * Tests 1449-1451:
+ * 1449: chown (path-based) clears S_ISUID on uid change
+ * 1450: fchownat clears S_ISUID on uid change
+ * 1451: lchown (delegates to fchownat) clears S_ISUID on uid change
+ */
+static void test_suid_clear_chown_fchownat(void) {
+    extern long sys_write(int fd, const void *buf, size_t count);
+    extern long sys_fchmod(int fd, uint32_t mode);
+    extern long sys_fstat(int fd, struct fut_stat *statbuf);
+    extern long sys_chown(const char *pathname, uint32_t uid, uint32_t gid);
+    extern long sys_fchownat(int dirfd, const char *pathname, uint32_t uid,
+                             uint32_t gid, int flags);
+
+    /* Test 1449: chown (path-based) clears S_ISUID on uid change */
+    fut_printf("[MISC-TEST] Test 1449: chown clears S_ISUID on uid change\n");
+    {
+        int fd = (int)fut_vfs_open("/test_chown_path_suid.txt", O_CREAT | O_RDWR, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1449: open failed: %d\n", fd);
+            fut_test_fail(1449);
+        } else {
+            sys_write(fd, "data", 4);
+            sys_fchmod(fd, 06755);  /* S_ISUID + S_ISGID */
+            fut_vfs_close(fd);
+
+            sys_chown("/test_chown_path_suid.txt", 1000, (uint32_t)-1);
+
+            fd = (int)fut_vfs_open("/test_chown_path_suid.txt", O_RDONLY, 0);
+            if (fd < 0) {
+                fut_printf("[MISC-TEST] ✗ Test 1449: reopen failed: %d\n", fd);
+                fut_test_fail(1449);
+            } else {
+                struct fut_stat st = {0};
+                sys_fstat(fd, &st);
+                if ((st.st_mode & 06000) == 0) {
+                    fut_printf("[MISC-TEST] ✓ Test 1449: S_ISUID|S_ISGID cleared by chown (mode=0%o)\n",
+                               st.st_mode & 07777);
+                    fut_vfs_close(fd);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1449: bits remain: 0%o (mode=0%o)\n",
+                               st.st_mode & 06000, st.st_mode & 07777);
+                    fut_vfs_close(fd);
+                    fut_test_fail(1449);
+                }
+            }
+        }
+    }
+
+    /* Test 1450: fchownat clears S_ISUID on uid change */
+    fut_printf("[MISC-TEST] Test 1450: fchownat clears S_ISUID on uid change\n");
+    {
+        int fd = (int)fut_vfs_open("/test_fchownat_suid.txt", O_CREAT | O_RDWR, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1450: open failed: %d\n", fd);
+            fut_test_fail(1450);
+        } else {
+            sys_write(fd, "data", 4);
+            sys_fchmod(fd, 04755);  /* S_ISUID */
+            fut_vfs_close(fd);
+
+            sys_fchownat(-100 /* AT_FDCWD */, "/test_fchownat_suid.txt", 1000, (uint32_t)-1, 0);
+
+            fd = (int)fut_vfs_open("/test_fchownat_suid.txt", O_RDONLY, 0);
+            if (fd < 0) {
+                fut_printf("[MISC-TEST] ✗ Test 1450: reopen failed: %d\n", fd);
+                fut_test_fail(1450);
+            } else {
+                struct fut_stat st = {0};
+                sys_fstat(fd, &st);
+                if (!(st.st_mode & 04000)) {
+                    fut_printf("[MISC-TEST] ✓ Test 1450: S_ISUID cleared by fchownat (mode=0%o)\n",
+                               st.st_mode & 07777);
+                    fut_vfs_close(fd);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1450: S_ISUID not cleared (mode=0%o)\n",
+                               st.st_mode & 07777);
+                    fut_vfs_close(fd);
+                    fut_test_fail(1450);
+                }
+            }
+        }
+    }
+
+    /* Test 1451: fchownat gid-only change clears S_ISGID when S_IXGRP set */
+    fut_printf("[MISC-TEST] Test 1451: fchownat gid change clears S_ISGID (with S_IXGRP)\n");
+    {
+        int fd = (int)fut_vfs_open("/test_fchownat_sgid.txt", O_CREAT | O_RDWR, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1451: open failed: %d\n", fd);
+            fut_test_fail(1451);
+        } else {
+            sys_write(fd, "data", 4);
+            sys_fchmod(fd, 02755);  /* S_ISGID + S_IXGRP */
+            fut_vfs_close(fd);
+
+            sys_fchownat(-100 /* AT_FDCWD */, "/test_fchownat_sgid.txt", (uint32_t)-1, 1000, 0);
+
+            fd = (int)fut_vfs_open("/test_fchownat_sgid.txt", O_RDONLY, 0);
+            if (fd < 0) {
+                fut_printf("[MISC-TEST] ✗ Test 1451: reopen failed: %d\n", fd);
+                fut_test_fail(1451);
+            } else {
+                struct fut_stat st = {0};
+                sys_fstat(fd, &st);
+                if (!(st.st_mode & 02000)) {
+                    fut_printf("[MISC-TEST] ✓ Test 1451: S_ISGID cleared by fchownat gid change (mode=0%o)\n",
+                               st.st_mode & 07777);
+                    fut_vfs_close(fd);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1451: S_ISGID not cleared (mode=0%o)\n",
+                               st.st_mode & 07777);
+                    fut_vfs_close(fd);
+                    fut_test_fail(1451);
+                }
+            }
+        }
+    }
+}
+
 static void test_proc_fd_anon_types(void) {
     extern long sys_read(int fd, void *buf, size_t count);
     extern long sys_readlink(const char *path, char *buf, size_t bufsiz);
@@ -46905,6 +47030,7 @@ void fut_misc_test_thread(void *arg) {
     test_suid_clear_pwrite_sendfile();      /* Tests 1442-1443: setuid/setgid clearing on pwrite64/sendfile */
     test_o_noatime();                       /* Tests 1444-1445: O_NOATIME suppresses atime updates */
     test_suid_clear_on_open_trunc();        /* Tests 1446-1448: setuid/setgid clearing on open(O_TRUNC) */
+    test_suid_clear_chown_fchownat();       /* Tests 1449-1451: setuid/setgid clearing on chown/fchownat */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

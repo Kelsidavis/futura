@@ -463,6 +463,12 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
     /* Get listening socket from FD */
     fut_socket_t *listen_socket = get_socket_from_fd(local_sockfd);
     if (!listen_socket) {
+        /* Distinguish ENOTSOCK (valid fd, not a socket) from EBADF (invalid fd) */
+        if (local_sockfd < task->max_fds && task->fd_table && task->fd_table[local_sockfd]) {
+            accept_printf("[ACCEPT] accept(local_sockfd=%d, addr_request=%s) -> ENOTSOCK (not a socket)\n",
+                       local_sockfd, addr_request);
+            return -ENOTSOCK;
+        }
         accept_printf("[ACCEPT] accept(local_sockfd=%d, addr_request=%s) -> EBADF (not a socket)\n",
                    local_sockfd, addr_request);
         return -EBADF;

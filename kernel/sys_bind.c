@@ -613,6 +613,12 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
     /* Get socket from file descriptor */
     fut_socket_t *socket = get_socket_from_fd(local_sockfd);
     if (!socket) {
+        /* Distinguish ENOTSOCK (valid fd, not a socket) from EBADF (invalid fd) */
+        if (local_sockfd < task->max_fds && task->fd_table && task->fd_table[local_sockfd]) {
+            bind_printf("[BIND] bind(sockfd=%d, family=%s, path='%s' [%s]) -> ENOTSOCK (not a socket)\n",
+                       local_sockfd, family_name, sock_path, path_type);
+            return -ENOTSOCK;
+        }
         bind_printf("[BIND] bind(sockfd=%d, family=%s, path='%s' [%s]) -> EBADF (not a socket)\n",
                    local_sockfd, family_name, sock_path, path_type);
         return -EBADF;

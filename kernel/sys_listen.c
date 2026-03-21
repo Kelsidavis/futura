@@ -118,6 +118,12 @@ long sys_listen(int sockfd, int backlog) {
     /* Phase 2: Get socket and validate */
     fut_socket_t *socket = get_socket_from_fd(local_sockfd);
     if (!socket) {
+        /* Distinguish ENOTSOCK (valid fd, not a socket) from EBADF (invalid fd) */
+        if (local_sockfd < task->max_fds && task->fd_table && task->fd_table[local_sockfd]) {
+            listen_printf("[LISTEN] listen(sockfd=%d, backlog=%d [%s]) -> ENOTSOCK (not a socket)\n",
+                       local_sockfd, local_backlog, backlog_desc);
+            return -ENOTSOCK;
+        }
         listen_printf("[LISTEN] listen(sockfd=%d, backlog=%d [%s]) -> EBADF (socket not found)\n",
                    local_sockfd, local_backlog, backlog_desc);
         return -EBADF;

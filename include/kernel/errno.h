@@ -243,8 +243,33 @@
 #define EDESTADDRREQ 89  /* Destination address required */
 #endif
 
-#ifndef ERANGE
-#define ERANGE      34   /* Math result not representable */
+#ifndef ENOTSOCK
+#define ENOTSOCK    88   /* Socket operation on non-socket */
+#endif
+
+#ifndef EPROTOTYPE
+#define EPROTOTYPE  91   /* Protocol wrong type for socket */
+#endif
+
+#ifndef ECONNRESET
+#define ECONNRESET  104  /* Connection reset by peer */
+#endif
+
+#ifndef ESHUTDOWN
+#define ESHUTDOWN   108  /* Cannot send after transport endpoint shutdown */
+#endif
+
+#ifndef EADDRNOTAVAIL
+#define EADDRNOTAVAIL 99 /* Cannot assign requested address */
+#endif
+
+#ifndef ENOBUFS
+#define ENOBUFS     105  /* No buffer space available */
+#endif
+
+/* EWOULDBLOCK is the same as EAGAIN on Linux */
+#ifndef EWOULDBLOCK
+#define EWOULDBLOCK EAGAIN
 #endif
 
 #ifndef phys_addr_t

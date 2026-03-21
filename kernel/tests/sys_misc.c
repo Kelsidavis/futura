@@ -14085,6 +14085,164 @@ static void test_listen_connect_edge_cases(void) {
     }
 }
 
+/* Tests 1383-1391: Socket ops on non-socket fds return ENOTSOCK (Linux compat)
+ * Linux returns ENOTSOCK (88) when a valid fd that isn't a socket is passed to
+ * socket-specific syscalls. Previously Futura returned EBADF for all cases. */
+static void test_socket_ops_on_nonsocket(void) {
+    extern long sys_open(const char *path, int flags, int mode);
+    extern long sys_listen(int sockfd, int backlog);
+    extern long sys_bind(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_connect(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_accept(int sockfd, void *addr, unsigned int *addrlen);
+    extern long sys_setsockopt(int sockfd, int level, int optname, const void *optval, unsigned int optlen);
+    extern long sys_getsockopt(int sockfd, int level, int optname, void *optval, unsigned int *optlen);
+    extern long sys_shutdown(int sockfd, int how);
+    extern long sys_getpeername(int sockfd, void *addr, unsigned int *addrlen);
+    extern long sys_getsockname(int sockfd, void *addr, unsigned int *addrlen);
+
+    /* Open a regular file to get a valid non-socket fd */
+    long fd = sys_open("/proc/self/status", 0 /* O_RDONLY */, 0);
+    if (fd < 0) {
+        /* Fallback: use fd 0 (stdin) which should be open in test harness */
+        fd = 0;
+    }
+
+    struct { unsigned short family; char path[108]; } addr;
+    addr.family = 1; /* AF_UNIX */
+    __builtin_memcpy(addr.path, "/tmp/.t_notsock", 16);
+    unsigned int addrlen = 2 + 16;
+
+    /* Test 1383: bind(non-socket) → ENOTSOCK */
+    fut_printf("[MISC-TEST] Test 1383: bind(non-socket fd) → ENOTSOCK\n");
+    {
+        long r = sys_bind((int)fd, &addr, addrlen);
+        if (r == -88 /* -ENOTSOCK */) {
+            fut_printf("[MISC-TEST] ✓ Test 1383: bind(non-socket) = -ENOTSOCK\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1383: bind(non-socket) = %ld (want -88)\n", r);
+            fut_test_fail(1383);
+        }
+    }
+
+    /* Test 1384: listen(non-socket) → ENOTSOCK */
+    fut_printf("[MISC-TEST] Test 1384: listen(non-socket fd) → ENOTSOCK\n");
+    {
+        long r = sys_listen((int)fd, 5);
+        if (r == -88 /* -ENOTSOCK */) {
+            fut_printf("[MISC-TEST] ✓ Test 1384: listen(non-socket) = -ENOTSOCK\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1384: listen(non-socket) = %ld (want -88)\n", r);
+            fut_test_fail(1384);
+        }
+    }
+
+    /* Test 1385: connect(non-socket) → ENOTSOCK */
+    fut_printf("[MISC-TEST] Test 1385: connect(non-socket fd) → ENOTSOCK\n");
+    {
+        long r = sys_connect((int)fd, &addr, addrlen);
+        if (r == -88 /* -ENOTSOCK */) {
+            fut_printf("[MISC-TEST] ✓ Test 1385: connect(non-socket) = -ENOTSOCK\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1385: connect(non-socket) = %ld (want -88)\n", r);
+            fut_test_fail(1385);
+        }
+    }
+
+    /* Test 1386: accept(non-socket) → ENOTSOCK */
+    fut_printf("[MISC-TEST] Test 1386: accept(non-socket fd) → ENOTSOCK\n");
+    {
+        long r = sys_accept((int)fd, (void *)0, (unsigned int *)0);
+        if (r == -88 /* -ENOTSOCK */) {
+            fut_printf("[MISC-TEST] ✓ Test 1386: accept(non-socket) = -ENOTSOCK\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1386: accept(non-socket) = %ld (want -88)\n", r);
+            fut_test_fail(1386);
+        }
+    }
+
+    /* Test 1387: setsockopt(non-socket) → ENOTSOCK */
+    fut_printf("[MISC-TEST] Test 1387: setsockopt(non-socket fd) → ENOTSOCK\n");
+    {
+        int val = 1;
+        long r = sys_setsockopt((int)fd, 1 /* SOL_SOCKET */, 2 /* SO_REUSEADDR */, &val, sizeof(val));
+        if (r == -88 /* -ENOTSOCK */) {
+            fut_printf("[MISC-TEST] ✓ Test 1387: setsockopt(non-socket) = -ENOTSOCK\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1387: setsockopt(non-socket) = %ld (want -88)\n", r);
+            fut_test_fail(1387);
+        }
+    }
+
+    /* Test 1388: getsockopt(non-socket) → ENOTSOCK */
+    fut_printf("[MISC-TEST] Test 1388: getsockopt(non-socket fd) → ENOTSOCK\n");
+    {
+        int val = 0;
+        unsigned int len = sizeof(val);
+        long r = sys_getsockopt((int)fd, 1 /* SOL_SOCKET */, 3 /* SO_TYPE */, &val, &len);
+        if (r == -88 /* -ENOTSOCK */) {
+            fut_printf("[MISC-TEST] ✓ Test 1388: getsockopt(non-socket) = -ENOTSOCK\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1388: getsockopt(non-socket) = %ld (want -88)\n", r);
+            fut_test_fail(1388);
+        }
+    }
+
+    /* Test 1389: shutdown(non-socket) → ENOTSOCK */
+    fut_printf("[MISC-TEST] Test 1389: shutdown(non-socket fd) → ENOTSOCK\n");
+    {
+        long r = sys_shutdown((int)fd, 2 /* SHUT_RDWR */);
+        if (r == -88 /* -ENOTSOCK */) {
+            fut_printf("[MISC-TEST] ✓ Test 1389: shutdown(non-socket) = -ENOTSOCK\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1389: shutdown(non-socket) = %ld (want -88)\n", r);
+            fut_test_fail(1389);
+        }
+    }
+
+    /* Test 1390: getpeername(non-socket) → ENOTSOCK */
+    fut_printf("[MISC-TEST] Test 1390: getpeername(non-socket fd) → ENOTSOCK\n");
+    {
+        char buf[128];
+        unsigned int len = sizeof(buf);
+        long r = sys_getpeername((int)fd, buf, &len);
+        if (r == -88 /* -ENOTSOCK */) {
+            fut_printf("[MISC-TEST] ✓ Test 1390: getpeername(non-socket) = -ENOTSOCK\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1390: getpeername(non-socket) = %ld (want -88)\n", r);
+            fut_test_fail(1390);
+        }
+    }
+
+    /* Test 1391: getsockname(non-socket) → ENOTSOCK */
+    fut_printf("[MISC-TEST] Test 1391: getsockname(non-socket fd) → ENOTSOCK\n");
+    {
+        char buf[128];
+        unsigned int len = sizeof(buf);
+        long r = sys_getsockname((int)fd, buf, &len);
+        if (r == -88 /* -ENOTSOCK */) {
+            fut_printf("[MISC-TEST] ✓ Test 1391: getsockname(non-socket) = -ENOTSOCK\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1391: getsockname(non-socket) = %ld (want -88)\n", r);
+            fut_test_fail(1391);
+        }
+    }
+
+    /* Close the fd if we opened one (don't close fd 0) */
+    if (fd > 0) {
+        extern long sys_close(int fd);
+        sys_close((int)fd);
+    }
+}
+
 static void test_proc_fd_anon_types(void) {
     extern long sys_read(int fd, void *buf, size_t count);
     extern long sys_readlink(const char *path, char *buf, size_t bufsiz);
@@ -45120,6 +45278,7 @@ void fut_misc_test_thread(void *arg) {
     test_msg_dontwait_per_call();            /* Tests 1375-1376: MSG_DONTWAIT doesn't mutate sock->flags */
     test_so_error_read_clear();              /* Tests 1377-1378: SO_ERROR read-and-clear semantics */
     test_listen_connect_edge_cases();        /* Tests 1379-1382: listen DGRAM EOPNOTSUPP, connect AF_UNSPEC */
+    test_socket_ops_on_nonsocket();          /* Tests 1383-1391: socket ops on non-socket fd → ENOTSOCK */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

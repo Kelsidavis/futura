@@ -376,6 +376,11 @@ long sys_getsockname(int sockfd, void *addr, socklen_t *addrlen) {
     /* Get socket from FD */
     fut_socket_t *socket = get_socket_from_fd(local_sockfd);
     if (!socket) {
+        /* Distinguish ENOTSOCK (valid fd, not a socket) from EBADF (invalid fd) */
+        if (local_sockfd < task->max_fds && task->fd_table && task->fd_table[local_sockfd]) {
+            fut_printf("[GETSOCKNAME] getsockname(sockfd=%d) -> ENOTSOCK (not a socket)\n", local_sockfd);
+            return -ENOTSOCK;
+        }
         fut_printf("[GETSOCKNAME] getsockname(sockfd=%d) -> EBADF (not a socket)\n", local_sockfd);
         return -EBADF;
     }

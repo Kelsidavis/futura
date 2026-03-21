@@ -455,6 +455,11 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
     /* Get socket from FD */
     fut_socket_t *socket = get_socket_from_fd(sockfd);
     if (!socket) {
+        /* Distinguish ENOTSOCK (valid fd, not a socket) from EBADF (invalid fd) */
+        if (sockfd >= 0 && sockfd < task->max_fds && task->fd_table && task->fd_table[sockfd]) {
+            fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d) -> ENOTSOCK (not a socket)\n", sockfd);
+            return -ENOTSOCK;
+        }
         fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d) -> EBADF (not a socket)\n", sockfd);
         return -EBADF;
     }

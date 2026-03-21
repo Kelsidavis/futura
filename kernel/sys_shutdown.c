@@ -146,6 +146,12 @@ long sys_shutdown(int sockfd, int how) {
     /* Get socket from FD */
     fut_socket_t *socket = get_socket_from_fd(local_sockfd);
     if (!socket) {
+        /* Distinguish ENOTSOCK (valid fd, not a socket) from EBADF (invalid fd) */
+        if (local_sockfd < task->max_fds && task->fd_table && task->fd_table[local_sockfd]) {
+            fut_printf("[SHUTDOWN] shutdown(sockfd=%d, how=%s) -> ENOTSOCK (not a socket)\n",
+                       local_sockfd, how_desc);
+            return -ENOTSOCK;
+        }
         fut_printf("[SHUTDOWN] shutdown(sockfd=%d, how=%s) -> EBADF (not a socket)\n",
                    local_sockfd, how_desc);
         return -EBADF;

@@ -380,6 +380,8 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
         extern fut_socket_t *get_socket_from_fd(int fd);
         fut_socket_t *unspec_sock = get_socket_from_fd(local_sockfd);
         if (!unspec_sock) {
+            if (local_sockfd < task->max_fds && task->fd_table && task->fd_table[local_sockfd])
+                return -ENOTSOCK;
             return -EBADF;
         }
         if (unspec_sock->socket_type == SOCK_DGRAM) {
@@ -551,6 +553,12 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
     fut_socket_t *socket = get_socket_from_fd(local_sockfd);
     connect_printf("[CONNECT-DBG] get_socket_from_fd returned %p\n", socket);
     if (!socket) {
+        /* Distinguish ENOTSOCK (valid fd, not a socket) from EBADF (invalid fd) */
+        if (local_sockfd < task->max_fds && task->fd_table && task->fd_table[local_sockfd]) {
+            connect_printf("[CONNECT] connect(sockfd=%d, family=%s, path='%s' [%s]) -> ENOTSOCK (not a socket)\n",
+                       local_sockfd, family_name, sock_path, path_type);
+            return -ENOTSOCK;
+        }
         connect_printf("[CONNECT] connect(sockfd=%d, family=%s, path='%s' [%s]) -> EBADF (not a socket)\n",
                    local_sockfd, family_name, sock_path, path_type);
         return -EBADF;

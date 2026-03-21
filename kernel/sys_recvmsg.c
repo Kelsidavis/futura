@@ -15,6 +15,7 @@
 #include <kernel/uaccess.h>
 #include <kernel/errno.h>
 #include <kernel/fut_socket.h>
+#include <kernel/fut_timer.h>
 #include <sys/socket.h>  /* For struct msghdr, cmsghdr, socklen_t, SCM_RIGHTS */
 #include <fcntl.h>
 #include <stddef.h>
@@ -622,6 +623,59 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
                         kmsg.msg_controllen = cred_offset + cred_cmsg_size;
                     }
                     fut_free(kcred_cmsg);
+                }
+            }
+        }
+    }
+
+    /* SO_TIMESTAMP / SO_TIMESTAMPNS: attach receive timestamp cmsg.
+     * When SO_TIMESTAMP is set, deliver SCM_TIMESTAMP with struct timeval (8+8 bytes).
+     * When SO_TIMESTAMPNS is set, deliver SCM_TIMESTAMPNS with struct timespec (8+8 bytes). */
+    if (total_received > 0 && kmsg.msg_control != NULL) {
+        extern fut_socket_t *get_socket_from_fd(int fd);
+        fut_socket_t *ts_sock = get_socket_from_fd(local_sockfd);
+        if (ts_sock && (ts_sock->so_flags & (FUT_SO_F_TIMESTAMP | FUT_SO_F_TIMESTAMPNS))) {
+            extern volatile int64_t g_realtime_offset_sec;
+            uint64_t ticks = fut_get_ticks();
+            uint64_t total_ns = ticks * 10000000ULL;  /* 100 Hz → 10ms/tick */
+
+            bool use_ns = (ts_sock->so_flags & FUT_SO_F_TIMESTAMPNS) != 0;
+            size_t ts_data_size = use_ns ? (2 * sizeof(int64_t)) : (2 * sizeof(int64_t));
+            size_t ts_cmsg_size = CMSG_SPACE(ts_data_size);
+
+            size_t ts_orig_controllen = 0;
+            {
+                struct msghdr user_msg_ts;
+                if (recvmsg_copy_from_user(&user_msg_ts, local_msg, sizeof(struct msghdr)) == 0)
+                    ts_orig_controllen = user_msg_ts.msg_controllen;
+            }
+            size_t ts_offset = kmsg.msg_controllen;  /* Append after SCM_RIGHTS / SCM_CREDENTIALS */
+            if (ts_orig_controllen >= ts_offset + ts_cmsg_size) {
+                void *kts_cmsg = fut_malloc(ts_cmsg_size);
+                if (kts_cmsg) {
+                    for (size_t z = 0; z < ts_cmsg_size; z++) ((uint8_t *)kts_cmsg)[z] = 0;
+                    struct cmsghdr *tc = (struct cmsghdr *)kts_cmsg;
+                    tc->cmsg_level = SOL_SOCKET;
+                    if (use_ns) {
+                        /* struct timespec { tv_sec, tv_nsec } */
+                        tc->cmsg_len  = CMSG_LEN(ts_data_size);
+                        tc->cmsg_type = SCM_TIMESTAMPNS;
+                        int64_t *ts = (int64_t *)CMSG_DATA(tc);
+                        ts[0] = (int64_t)(total_ns / 1000000000ULL) + g_realtime_offset_sec;
+                        ts[1] = (int64_t)(total_ns % 1000000000ULL);
+                    } else {
+                        /* struct timeval { tv_sec, tv_usec } */
+                        tc->cmsg_len  = CMSG_LEN(ts_data_size);
+                        tc->cmsg_type = SCM_TIMESTAMP;
+                        int64_t *tv = (int64_t *)CMSG_DATA(tc);
+                        tv[0] = (int64_t)(total_ns / 1000000000ULL) + g_realtime_offset_sec;
+                        tv[1] = (int64_t)((total_ns % 1000000000ULL) / 1000);
+                    }
+                    if (recvmsg_copy_to_user((char *)kmsg.msg_control + ts_offset,
+                                             kts_cmsg, ts_cmsg_size) == 0) {
+                        kmsg.msg_controllen = ts_offset + ts_cmsg_size;
+                    }
+                    fut_free(kts_cmsg);
                 }
             }
         }

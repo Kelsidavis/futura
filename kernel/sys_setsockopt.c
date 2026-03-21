@@ -545,10 +545,34 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                 return 0;
             }
 
-            case SO_TIMESTAMP:
-                /* Timestamp — accept without enforcement */
+            case SO_TIMESTAMP: {
+                /* SO_TIMESTAMP: deliver SCM_TIMESTAMP cmsg with struct timeval on recvmsg */
                 if (optlen < sizeof(int)) return -EINVAL;
+                int val = 0;
+                if (sso_copy_from_user(&val, optval, sizeof(int)) != 0) return -EFAULT;
+                if (val)
+                    socket->so_flags |= FUT_SO_F_TIMESTAMP;
+                else
+                    socket->so_flags &= ~FUT_SO_F_TIMESTAMP;
+                /* SO_TIMESTAMP and SO_TIMESTAMPNS are mutually exclusive */
+                if (val)
+                    socket->so_flags &= ~FUT_SO_F_TIMESTAMPNS;
                 return 0;
+            }
+
+            case 35: { /* SO_TIMESTAMPNS — deliver SCM_TIMESTAMPNS cmsg with struct timespec */
+                if (optlen < sizeof(int)) return -EINVAL;
+                int val = 0;
+                if (sso_copy_from_user(&val, optval, sizeof(int)) != 0) return -EFAULT;
+                if (val)
+                    socket->so_flags |= FUT_SO_F_TIMESTAMPNS;
+                else
+                    socket->so_flags &= ~FUT_SO_F_TIMESTAMPNS;
+                /* Mutually exclusive with SO_TIMESTAMP */
+                if (val)
+                    socket->so_flags &= ~FUT_SO_F_TIMESTAMP;
+                return 0;
+            }
 
             case 12: /* SO_PRIORITY — socket priority for QoS */
             case 25: /* SO_BINDTODEVICE — bind to specific NIC */
@@ -557,7 +581,6 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
             case 32: /* SO_SNDBUFFORCE — forced send buffer (privileged) */
             case 33: /* SO_RCVBUFFORCE — forced recv buffer (privileged) */
             case 34: /* SO_PASSSEC — SELinux label passing */
-            case 35: /* SO_TIMESTAMPNS — nanosecond timestamp */
             case 36: /* SO_MARK — socket mark for policy routing */
             case 37: /* SO_TIMESTAMPING — hardware timestamping */
             case 41: /* SO_WIFI_STATUS — WiFi status */

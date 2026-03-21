@@ -12418,6 +12418,218 @@ static void test_linux68_stubs(void) {
     }
 }
 
+static void test_so_timestamp(void) {
+    extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+    extern long sys_setsockopt(int fd, int level, int optname, const void *optval, unsigned int optlen);
+    extern long sys_getsockopt(int fd, int level, int optname, void *optval, unsigned int *optlen);
+    extern long sys_write(int fd, const void *buf, size_t count);
+    extern long sys_recvmsg(int sockfd, struct test_msghdr *msg, int flags);
+
+    int sv[2] = {-1, -1};
+    long r = sys_socketpair(1 /* AF_UNIX */, 1 /* SOCK_STREAM */, 0, sv);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ socketpair failed: %ld\n", r);
+        fut_test_fail(1322); fut_test_fail(1323); fut_test_fail(1324);
+        fut_test_fail(1325); fut_test_fail(1326); fut_test_fail(1327);
+        fut_test_fail(1328); fut_test_fail(1329); return;
+    }
+
+    /* Test 1322: setsockopt SO_TIMESTAMP succeeds */
+    fut_printf("[MISC-TEST] Test 1322: setsockopt SO_TIMESTAMP\n");
+    {
+        int enable = 1;
+        r = sys_setsockopt(sv[1], 1 /*SOL_SOCKET*/, 29 /*SO_TIMESTAMP*/, &enable, sizeof(int));
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1322: setsockopt SO_TIMESTAMP → 0\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1322: setsockopt SO_TIMESTAMP → %ld\n", r);
+            fut_test_fail(1322);
+        }
+    }
+
+    /* Test 1323: getsockopt SO_TIMESTAMP returns 1 */
+    fut_printf("[MISC-TEST] Test 1323: getsockopt SO_TIMESTAMP → 1\n");
+    {
+        int got = 0;
+        unsigned int glen = sizeof(int);
+        r = sys_getsockopt(sv[1], 1 /*SOL_SOCKET*/, 29 /*SO_TIMESTAMP*/, &got, &glen);
+        if (r == 0 && got == 1) {
+            fut_printf("[MISC-TEST] ✓ Test 1323: getsockopt SO_TIMESTAMP = %d\n", got);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1323: ret=%ld got=%d\n", r, got);
+            fut_test_fail(1323);
+        }
+    }
+
+    /* Test 1324: recvmsg delivers SCM_TIMESTAMP cmsg */
+    fut_printf("[MISC-TEST] Test 1324: recvmsg delivers SCM_TIMESTAMP cmsg\n");
+    {
+        /* Send data on sv[0] */
+        const char *msg_data = "ts_test";
+        sys_write(sv[0], msg_data, 7);
+
+        /* Receive on sv[1] with control buffer large enough for timestamp */
+        char recv_data[16] = {0};
+        char recv_ctrl[TEST_CMSG_SPACE(2 * sizeof(int64_t))];
+        __builtin_memset(recv_ctrl, 0, sizeof(recv_ctrl));
+        struct iovec recv_iov = { .iov_base = recv_data, .iov_len = sizeof(recv_data) };
+        struct test_msghdr rcv_msg = {
+            .msg_name       = NULL,
+            .msg_namelen    = 0,
+            .msg_iov        = &recv_iov,
+            .msg_iovlen     = 1,
+            .msg_control    = recv_ctrl,
+            .msg_controllen = sizeof(recv_ctrl),
+            .msg_flags      = 0,
+        };
+        long rcvd = sys_recvmsg(sv[1], &rcv_msg, 0);
+        if (rcvd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1324: recvmsg failed: %ld\n", rcvd);
+            fut_test_fail(1324);
+        } else {
+            /* Check the cmsg header */
+            struct test_cmsghdr *cm = (struct test_cmsghdr *)recv_ctrl;
+            if (cm->cmsg_level == 1 /*SOL_SOCKET*/ && cm->cmsg_type == 29 /*SCM_TIMESTAMP*/) {
+                /* Extract struct timeval {tv_sec, tv_usec} */
+                int64_t *tv = (int64_t *)TEST_CMSG_DATA(cm);
+                int64_t sec = tv[0];
+                int64_t usec = tv[1];
+                /* Sanity: sec >= 0, 0 <= usec < 1000000 */
+                if (sec >= 0 && usec >= 0 && usec < 1000000) {
+                    fut_printf("[MISC-TEST] ✓ Test 1324: SCM_TIMESTAMP tv_sec=%ld tv_usec=%ld\n",
+                               (long)sec, (long)usec);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1324: bad timestamp sec=%ld usec=%ld\n",
+                               (long)sec, (long)usec);
+                    fut_test_fail(1324);
+                }
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1324: cmsg level=%d type=%d (want 1/29)\n",
+                           cm->cmsg_level, cm->cmsg_type);
+                fut_test_fail(1324);
+            }
+        }
+    }
+
+    /* Test 1325: disable SO_TIMESTAMP, getsockopt returns 0 */
+    fut_printf("[MISC-TEST] Test 1325: disable SO_TIMESTAMP\n");
+    {
+        int disable = 0;
+        r = sys_setsockopt(sv[1], 1, 29 /*SO_TIMESTAMP*/, &disable, sizeof(int));
+        int got = 99;
+        unsigned int glen = sizeof(int);
+        sys_getsockopt(sv[1], 1, 29, &got, &glen);
+        if (r == 0 && got == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1325: SO_TIMESTAMP disabled → %d\n", got);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1325: ret=%ld got=%d\n", r, got);
+            fut_test_fail(1325);
+        }
+    }
+
+    /* Test 1326: setsockopt SO_TIMESTAMPNS succeeds */
+    fut_printf("[MISC-TEST] Test 1326: setsockopt SO_TIMESTAMPNS\n");
+    {
+        int enable = 1;
+        r = sys_setsockopt(sv[1], 1 /*SOL_SOCKET*/, 35 /*SO_TIMESTAMPNS*/, &enable, sizeof(int));
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1326: setsockopt SO_TIMESTAMPNS → 0\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1326: setsockopt SO_TIMESTAMPNS → %ld\n", r);
+            fut_test_fail(1326);
+        }
+    }
+
+    /* Test 1327: getsockopt SO_TIMESTAMPNS returns 1 */
+    fut_printf("[MISC-TEST] Test 1327: getsockopt SO_TIMESTAMPNS → 1\n");
+    {
+        int got = 0;
+        unsigned int glen = sizeof(int);
+        r = sys_getsockopt(sv[1], 1, 35 /*SO_TIMESTAMPNS*/, &got, &glen);
+        if (r == 0 && got == 1) {
+            fut_printf("[MISC-TEST] ✓ Test 1327: getsockopt SO_TIMESTAMPNS = %d\n", got);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1327: ret=%ld got=%d\n", r, got);
+            fut_test_fail(1327);
+        }
+    }
+
+    /* Test 1328: recvmsg delivers SCM_TIMESTAMPNS cmsg */
+    fut_printf("[MISC-TEST] Test 1328: recvmsg delivers SCM_TIMESTAMPNS cmsg\n");
+    {
+        const char *msg2 = "tsns";
+        sys_write(sv[0], msg2, 4);
+
+        char recv_data2[16] = {0};
+        char recv_ctrl2[TEST_CMSG_SPACE(2 * sizeof(int64_t))];
+        __builtin_memset(recv_ctrl2, 0, sizeof(recv_ctrl2));
+        struct iovec recv_iov2 = { .iov_base = recv_data2, .iov_len = sizeof(recv_data2) };
+        struct test_msghdr rcv_msg2 = {
+            .msg_name       = NULL,
+            .msg_namelen    = 0,
+            .msg_iov        = &recv_iov2,
+            .msg_iovlen     = 1,
+            .msg_control    = recv_ctrl2,
+            .msg_controllen = sizeof(recv_ctrl2),
+            .msg_flags      = 0,
+        };
+        long rcvd2 = sys_recvmsg(sv[1], &rcv_msg2, 0);
+        if (rcvd2 < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1328: recvmsg failed: %ld\n", rcvd2);
+            fut_test_fail(1328);
+        } else {
+            struct test_cmsghdr *cm2 = (struct test_cmsghdr *)recv_ctrl2;
+            if (cm2->cmsg_level == 1 && cm2->cmsg_type == 35 /*SCM_TIMESTAMPNS*/) {
+                int64_t *ts = (int64_t *)TEST_CMSG_DATA(cm2);
+                int64_t sec = ts[0];
+                int64_t nsec = ts[1];
+                if (sec >= 0 && nsec >= 0 && nsec < 1000000000LL) {
+                    fut_printf("[MISC-TEST] ✓ Test 1328: SCM_TIMESTAMPNS sec=%ld nsec=%ld\n",
+                               (long)sec, (long)nsec);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1328: bad ts sec=%ld nsec=%ld\n",
+                               (long)sec, (long)nsec);
+                    fut_test_fail(1328);
+                }
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1328: cmsg level=%d type=%d (want 1/35)\n",
+                           cm2->cmsg_level, cm2->cmsg_type);
+                fut_test_fail(1328);
+            }
+        }
+    }
+
+    /* Test 1329: SO_TIMESTAMP and SO_TIMESTAMPNS are mutually exclusive */
+    fut_printf("[MISC-TEST] Test 1329: SO_TIMESTAMP/SO_TIMESTAMPNS mutual exclusion\n");
+    {
+        /* Currently SO_TIMESTAMPNS is on. Enable SO_TIMESTAMP — should clear TIMESTAMPNS */
+        int enable = 1;
+        sys_setsockopt(sv[1], 1, 29 /*SO_TIMESTAMP*/, &enable, sizeof(int));
+        int got_ts = 0, got_tsns = 0;
+        unsigned int glen = sizeof(int);
+        sys_getsockopt(sv[1], 1, 29, &got_ts, &glen);
+        glen = sizeof(int);
+        sys_getsockopt(sv[1], 1, 35, &got_tsns, &glen);
+        if (got_ts == 1 && got_tsns == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1329: SO_TIMESTAMP=1 cleared TIMESTAMPNS=0\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1329: ts=%d tsns=%d\n", got_ts, got_tsns);
+            fut_test_fail(1329);
+        }
+    }
+
+    sys_close(sv[0]);
+    sys_close(sv[1]);
+}
+
 static void test_process_madvise_basic(void) {
     /* Test 1292: process_madvise with flags != 0 → EINVAL */
     fut_printf("[MISC-TEST] Test 1292: process_madvise flags=1 → EINVAL\n");
@@ -43283,6 +43495,7 @@ void fut_misc_test_thread(void *arg) {
     test_exit_signal_field();                /* Tests 1311-1313: exit_signal field */
     test_clone_parent();                     /* Tests 1314-1316: CLONE_PARENT */
     test_linux68_stubs();                    /* Tests 1317-1321: Linux 6.8+ syscall stubs */
+    test_so_timestamp();                     /* Tests 1322-1329: SO_TIMESTAMP/SO_TIMESTAMPNS cmsg delivery */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

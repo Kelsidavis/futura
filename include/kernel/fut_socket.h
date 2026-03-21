@@ -353,6 +353,7 @@ typedef struct fut_socket {
 #define FUT_SO_F_DONTROUTE  (1u << 5)
 #define FUT_SO_F_DEBUG      (1u << 6)
 #define FUT_SO_F_TIMESTAMP  (1u << 7)
+#define FUT_SO_F_TIMESTAMPNS (1u << 8)
 
     /* Shutdown state (Phase 4) */
     bool shutdown_rd;                       /* Read channel shut down (SHUT_RD) */

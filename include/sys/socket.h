@@ -301,6 +301,12 @@ struct cmsghdr {
 #ifndef SCM_CREDENTIALS
 #define SCM_CREDENTIALS 2   /* Transfer credentials */
 #endif
+#ifndef SCM_TIMESTAMP
+#define SCM_TIMESTAMP   29  /* Packet receive timestamp (struct timeval) */
+#endif
+#ifndef SCM_TIMESTAMPNS
+#define SCM_TIMESTAMPNS 35  /* Packet receive timestamp (struct timespec) */
+#endif
 
 /* CMSG macros for accessing control messages */
 #ifndef CMSG_ALIGN

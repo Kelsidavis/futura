@@ -767,6 +767,22 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
                 if (gso_copy_to_user(optlen, &value_len, sizeof(socklen_t)) != 0) return -EFAULT;
                 return 0;
 
+            case 29: /* SO_TIMESTAMP */
+                int_value = (socket->so_flags & FUT_SO_F_TIMESTAMP) ? 1 : 0;
+                value_len = sizeof(int);
+                copy_len = (len < value_len) ? len : value_len;
+                if (gso_copy_to_user(optval, &int_value, copy_len) != 0) return -EFAULT;
+                if (gso_copy_to_user(optlen, &value_len, sizeof(socklen_t)) != 0) return -EFAULT;
+                return 0;
+
+            case 35: /* SO_TIMESTAMPNS */
+                int_value = (socket->so_flags & FUT_SO_F_TIMESTAMPNS) ? 1 : 0;
+                value_len = sizeof(int);
+                copy_len = (len < value_len) ? len : value_len;
+                if (gso_copy_to_user(optval, &int_value, copy_len) != 0) return -EFAULT;
+                if (gso_copy_to_user(optlen, &value_len, sizeof(socklen_t)) != 0) return -EFAULT;
+                return 0;
+
             case 12: /* SO_PRIORITY */
             case 25: /* SO_BINDTODEVICE — return empty string */
             case 26: /* SO_ATTACH_FILTER */
@@ -774,7 +790,6 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
             case 32: /* SO_SNDBUFFORCE */
             case 33: /* SO_RCVBUFFORCE */
             case 34: /* SO_PASSSEC */
-            case 35: /* SO_TIMESTAMPNS */
             case 36: /* SO_MARK */
             case 37: /* SO_TIMESTAMPING */
             case 41: /* SO_WIFI_STATUS */

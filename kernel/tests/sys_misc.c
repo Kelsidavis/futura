@@ -39656,6 +39656,118 @@ static void test_syslog_actions(void) {
     }
 }
 
+/**
+ * test_socket_eisconn_and_timerfd_cancel() — Tests 1224-1226
+ *
+ *   Test 1224: connect() on already-connected socketpair fd → -EISCONN
+ *   Test 1225: accept() on a socket in CREATED state (not listening) → -EINVAL
+ *   Test 1226: timerfd_settime with TFD_TIMER_CANCEL_ON_SET|TFD_TIMER_ABSTIME
+ *              is accepted without EINVAL (validates flag parsing, not the
+ *              clock-change cancellation itself which requires a realtime jump)
+ */
+static void test_socket_eisconn_and_timerfd_cancel(void) {
+    extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_connect(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_accept(int sockfd, void *addr, unsigned int *addrlen);
+    extern long sys_close(int fd);
+    extern long sys_timerfd_create(int clockid, int flags);
+    extern long sys_timerfd_settime(int ufd, int flags, const void *new_value, void *old_value);
+
+#define TEIC_AF_UNIX    1
+#define TEIC_SOCK_STREAM 1
+#define TEIC_EISCONN    106
+#define TEIC_EINVAL     22
+#define TEIC_CLOCK_MONOTONIC 1
+#define TEIC_TFD_TIMER_ABSTIME     (1 << 0)
+#define TEIC_TFD_TIMER_CANCEL_ON_SET (1 << 1)
+
+    struct teic_itimerspec { long tv_sec; long tv_nsec; long i_tv_sec; long i_tv_nsec; };
+
+    /* ---- Test 1224: connect() on already-connected socket → EISCONN ---- */
+    fut_printf("[MISC-TEST] Test 1224: connect() on connected socket → EISCONN\n");
+    {
+        int sv[2] = {-1, -1};
+        long r = sys_socketpair(TEIC_AF_UNIX, TEIC_SOCK_STREAM, 0, sv);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1224: socketpair failed: %ld\n", r);
+            fut_test_fail(1224);
+            goto t1225;
+        }
+        /* sv[0] and sv[1] are already connected; try to connect sv[0] again */
+        struct { unsigned short family; char pad[14]; } addr = { .family = TEIC_AF_UNIX };
+        r = sys_connect(sv[0], &addr, 16);
+        sys_close(sv[0]); sys_close(sv[1]);
+        if (r == -(long)TEIC_EISCONN) {
+            fut_printf("[MISC-TEST] ✓ Test 1224: connect(connected) = -EISCONN\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1224: connect(connected) = %ld (want -EISCONN)\n", r);
+            fut_test_fail(1224);
+        }
+    }
+
+t1225:
+    /* ---- Test 1225: accept() on non-listening socket → EINVAL ---- */
+    fut_printf("[MISC-TEST] Test 1225: accept() on non-listening socket → EINVAL\n");
+    {
+        long s = sys_socket(TEIC_AF_UNIX, TEIC_SOCK_STREAM, 0);
+        if (s < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1225: socket() failed: %ld\n", s);
+            fut_test_fail(1225);
+            goto t1226;
+        }
+        /* Socket just created, not listening */
+        long r = sys_accept((int)s, NULL, NULL);
+        sys_close((int)s);
+        if (r == -(long)TEIC_EINVAL) {
+            fut_printf("[MISC-TEST] ✓ Test 1225: accept(not-listening) = -EINVAL\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1225: accept(not-listening) = %ld (want -EINVAL)\n", r);
+            fut_test_fail(1225);
+        }
+    }
+
+t1226:
+    /* ---- Test 1226: timerfd TFD_TIMER_CANCEL_ON_SET is accepted ---- */
+    fut_printf("[MISC-TEST] Test 1226: timerfd TFD_TIMER_CANCEL_ON_SET flag accepted\n");
+    {
+        long fd = sys_timerfd_create(TEIC_CLOCK_MONOTONIC, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1226: timerfd_create failed: %ld\n", fd);
+            fut_test_fail(1226);
+            goto done_teic;
+        }
+        /* Arms with TFD_TIMER_ABSTIME|TFD_TIMER_CANCEL_ON_SET; past epoch+1s → fires */
+        struct teic_itimerspec its = {
+            .tv_sec = 1, .tv_nsec = 0,   /* it_value: epoch+1s (past) */
+            .i_tv_sec = 0, .i_tv_nsec = 0 /* it_interval: one-shot */
+        };
+        long r = sys_timerfd_settime((int)fd,
+                    TEIC_TFD_TIMER_ABSTIME | TEIC_TFD_TIMER_CANCEL_ON_SET,
+                    &its, NULL);
+        sys_close((int)fd);
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1226: TFD_TIMER_CANCEL_ON_SET accepted\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1226: timerfd_settime(CANCEL_ON_SET) = %ld (want 0)\n", r);
+            fut_test_fail(1226);
+        }
+    }
+
+done_teic:
+#undef TEIC_AF_UNIX
+#undef TEIC_SOCK_STREAM
+#undef TEIC_EISCONN
+#undef TEIC_EINVAL
+#undef TEIC_CLOCK_MONOTONIC
+#undef TEIC_TFD_TIMER_ABSTIME
+#undef TEIC_TFD_TIMER_CANCEL_ON_SET
+    return;
+}
+
 static void test_getrandom_flags(void) {
     /* Tests 1200-1204: getrandom flag variants (GRND_NONBLOCK, GRND_RANDOM,
      * GRND_INSECURE) and edge cases (buflen=0, NULL buf).
@@ -40518,6 +40630,7 @@ void fut_misc_test_thread(void *arg) {
     test_inotify_close_access_open();  /* Tests 1212-1215: inotify IN_CLOSE_WRITE/IN_CLOSE_NOWRITE/IN_ACCESS/IN_OPEN */
     test_inotify_attrib_and_sndtimeo(); /* Tests 1216-1217: inotify IN_ATTRIB on chmod; SO_SNDTIMEO round-trip */
     test_syslog_actions();              /* Tests 1218-1223: syslog CLOSE/OPEN/READ/READ_CLEAR/CLEAR/SIZE_UNREAD */
+    test_socket_eisconn_and_timerfd_cancel(); /* Tests 1224-1226: EISCONN/accept-not-listening/TFD_CANCEL_ON_SET */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

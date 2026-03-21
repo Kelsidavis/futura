@@ -1640,7 +1640,10 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
                 return 0;  /* Timeout already expired */
             }
             uint64_t remaining = deadline_ticks - now;
-            fut_timer_start(remaining, epoll_timeout_wakeup, &set->epoll_waitq);
+            if (fut_timer_start(remaining, epoll_timeout_wakeup, &set->epoll_waitq) != 0) {
+                /* OOM: cannot start timeout timer, treat as timeout expiry */
+                return 0;
+            }
         }
         fut_waitq_sleep_locked(&set->epoll_waitq, NULL, FUT_THREAD_BLOCKED);
         /* Cancel any outstanding timeout timer (harmless if already fired) */

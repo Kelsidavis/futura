@@ -496,7 +496,13 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
 
             /* Start timer only after the lock is free */
             if (has_timeout) {
-                fut_timer_start(timeout_ticks, futex_timeout_callback, &timeout_ctx);
+                if (fut_timer_start(timeout_ticks, futex_timeout_callback, &timeout_ctx) != 0) {
+                    /* OOM: dequeue thread from waitq, restore state, fail */
+                    fut_waitq_remove_thread(&bucket->waiters, thread);
+                    thread->state = FUT_THREAD_RUNNING;
+                    thread->futex_addr = NULL;
+                    return -ETIMEDOUT;
+                }
             }
 
             /* Yield to scheduler; woken by FUTEX_WAKE or timeout callback */
@@ -1119,8 +1125,15 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
                 }
                 fut_spinlock_release(&bucket->lock);
 
-                if (has_timeout)
-                    fut_timer_start(tctx_ticks, futex_timeout_callback, &tctx);
+                if (has_timeout) {
+                    if (fut_timer_start(tctx_ticks, futex_timeout_callback, &tctx) != 0) {
+                        /* OOM: dequeue thread from waitq, restore state, fail */
+                        fut_waitq_remove_thread(&bucket->waiters, cur);
+                        cur->state = FUT_THREAD_RUNNING;
+                        cur->futex_addr = NULL;
+                        return -ETIMEDOUT;
+                    }
+                }
 
                 fut_schedule();
 
@@ -1725,7 +1738,13 @@ long sys_futex_waitv(const void *waiters_ptr, unsigned int nr_futexes,
         uint64_t timeout_ticks = timeout_ms / 10;
         if (timeout_ms % 10 != 0) timeout_ticks++;
         if (timeout_ticks == 0 && timeout_ms > 0) timeout_ticks = 1;
-        fut_timer_start(timeout_ticks, futex_timeout_callback, &timeout_ctx);
+        if (fut_timer_start(timeout_ticks, futex_timeout_callback, &timeout_ctx) != 0) {
+            /* OOM: dequeue thread from waitq, restore state, fail */
+            fut_waitq_remove_thread(&buckets[0]->waiters, thread);
+            thread->state = FUT_THREAD_RUNNING;
+            thread->futex_addr = NULL;
+            return -ETIMEDOUT;
+        }
     }
 
     /* Yield to scheduler — woken by FUTEX_WAKE or timeout */

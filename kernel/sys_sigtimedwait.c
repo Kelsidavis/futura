@@ -173,7 +173,10 @@ long sys_rt_sigtimedwait(const uint64_t *uthese, void *uinfo,
             /* Use timer+waitq: remain is in ticks (not ms), so start timer
              * for that many ticks and sleep on signal_waitq.
              * fut_signal_send also wakes signal_waitq, so signals interrupt early. */
-            fut_timer_start((uint64_t)remain, stw_timer_wake, &task->signal_waitq);
+            if (fut_timer_start((uint64_t)remain, stw_timer_wake, &task->signal_waitq) != 0) {
+                /* OOM: cannot start timeout timer — thread was not enqueued */
+                return -EAGAIN;
+            }
             fut_spinlock_acquire(&task->signal_waitq.lock);
             fut_waitq_sleep_locked(&task->signal_waitq, &task->signal_waitq.lock,
                                    FUT_THREAD_BLOCKED);

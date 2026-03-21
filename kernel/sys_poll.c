@@ -520,7 +520,14 @@ long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout) {
                     }
                     poll_wq.tail = poll_thr;
                     fut_spinlock_release(&poll_wq.lock);
-                    fut_timer_start(wake_ticks, poll_waitq_wakeup, &poll_wq);
+                    if (fut_timer_start(wake_ticks, poll_waitq_wakeup, &poll_wq) != 0) {
+                        /* OOM: dequeue thread, restore state, clean up and fail */
+                        fut_waitq_remove_thread(&poll_wq, poll_thr);
+                        poll_thr->state = FUT_THREAD_RUNNING;
+                        poll_unwire_fds(kfds, nfds, task, &poll_wq);
+                        fut_free(kfds);
+                        return -EAGAIN;
+                    }
                     fut_schedule();
                     fut_timer_cancel(poll_waitq_wakeup, &poll_wq);
                 }

@@ -259,7 +259,10 @@ long sys_nanosleep(const fut_timespec_t *u_req, fut_timespec_t *u_rem) {
         uint64_t sleep_ticks = millis / 10;
         if (millis % 10 != 0) sleep_ticks++;
         if (sleep_ticks == 0) sleep_ticks = 1;
-        fut_timer_start(sleep_ticks, ns_timer_wakeup, task);
+        if (fut_timer_start(sleep_ticks, ns_timer_wakeup, task) != 0) {
+            /* OOM: cannot start sleep timer — thread was not enqueued */
+            return -EAGAIN;
+        }
         fut_spinlock_acquire(&task->signal_waitq.lock);
         fut_waitq_sleep_locked(&task->signal_waitq, &task->signal_waitq.lock,
                                FUT_THREAD_BLOCKED);

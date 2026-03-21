@@ -564,7 +564,27 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
                     }
                     sel_wq.tail = sel_thr;
                     fut_spinlock_release(&sel_wq.lock);
-                    fut_timer_start(wake_ticks, select_waitq_wakeup, &sel_wq);
+                    if (fut_timer_start(wake_ticks, select_waitq_wakeup, &sel_wq) != 0) {
+                        /* OOM: dequeue thread, restore state, unwire and fail */
+                        fut_waitq_remove_thread(&sel_wq, sel_thr);
+                        sel_thr->state = FUT_THREAD_RUNNING;
+                        for (int ufd = 0; ufd < local_nfds; ufd++) {
+                            if (ufd >= (int)task->max_fds || !task->fd_table || !task->fd_table[ufd]) continue;
+                            struct fut_file *uf = task->fd_table[ufd];
+                            fut_eventfd_set_epoll_notify(uf, NULL);
+                            fut_timerfd_set_epoll_notify(uf, NULL);
+                            fut_signalfd_set_epoll_notify(uf, NULL);
+                            fut_pipe_set_epoll_notify(uf, NULL);
+                            fut_pidfd_set_epoll_notify(uf, NULL);
+                            { extern void fut_inotify_set_epoll_notify(struct fut_file *, fut_waitq_t *); fut_inotify_set_epoll_notify(uf, NULL); }
+                            fut_socket_t *us = get_socket_from_fd(ufd);
+                            if (us) {
+                                if (us->pair_reverse && us->pair_reverse->epoll_notify == &sel_wq) us->pair_reverse->epoll_notify = NULL;
+                                if (us->listener    && us->listener->epoll_notify    == &sel_wq) us->listener->epoll_notify = NULL;
+                            }
+                        }
+                        return -EAGAIN;
+                    }
                     fut_schedule();
                     fut_timer_cancel(select_waitq_wakeup, &sel_wq);
                 }
@@ -1007,7 +1027,27 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
                     }
                     psel_wq.tail = psel_thr;
                     fut_spinlock_release(&psel_wq.lock);
-                    fut_timer_start(wake_ticks, select_waitq_wakeup, &psel_wq);
+                    if (fut_timer_start(wake_ticks, select_waitq_wakeup, &psel_wq) != 0) {
+                        /* OOM: dequeue thread, restore state, unwire and fail */
+                        fut_waitq_remove_thread(&psel_wq, psel_thr);
+                        psel_thr->state = FUT_THREAD_RUNNING;
+                        for (int ufd = 0; ufd < local_nfds; ufd++) {
+                            if (ufd >= (int)task->max_fds || !task->fd_table || !task->fd_table[ufd]) continue;
+                            struct fut_file *uf = task->fd_table[ufd];
+                            fut_eventfd_set_epoll_notify(uf, NULL);
+                            fut_timerfd_set_epoll_notify(uf, NULL);
+                            fut_signalfd_set_epoll_notify(uf, NULL);
+                            fut_pipe_set_epoll_notify(uf, NULL);
+                            fut_pidfd_set_epoll_notify(uf, NULL);
+                            { extern void fut_inotify_set_epoll_notify(struct fut_file *, fut_waitq_t *); fut_inotify_set_epoll_notify(uf, NULL); }
+                            fut_socket_t *us = get_socket_from_fd(ufd);
+                            if (us) {
+                                if (us->pair_reverse && us->pair_reverse->epoll_notify == &psel_wq) us->pair_reverse->epoll_notify = NULL;
+                                if (us->listener    && us->listener->epoll_notify    == &psel_wq) us->listener->epoll_notify = NULL;
+                            }
+                        }
+                        return -EAGAIN;
+                    }
                     fut_schedule();
                     fut_timer_cancel(select_waitq_wakeup, &psel_wq);
                 }

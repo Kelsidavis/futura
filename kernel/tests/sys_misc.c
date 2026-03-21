@@ -47757,6 +47757,33 @@ static void test_fcntl_dupfd_rlimit(void) {
 }
 
 /* ============================================================
+ * Test 1496: socketpair with invalid type flags → EINVAL
+ * ============================================================ */
+static void test_socketpair_invalid_flags(void) {
+    extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+
+    /* Test 1496: socketpair with unknown type flag → EINVAL */
+    fut_printf("[MISC-TEST] Test 1496: socketpair(invalid type flags) → EINVAL\n");
+    {
+        int sv[2] = {-1, -1};
+        /* SOCK_STREAM=1, 0x1000 is an invalid flag bit */
+        long ret = sys_socketpair(1 /* AF_UNIX */, 1 /* SOCK_STREAM */ | 0x1000, 0, sv);
+        if (ret == -22 /* -EINVAL */) {
+            fut_printf("[MISC-TEST] ✓ Test 1496: socketpair(invalid flags) → EINVAL\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1496: expected -22, got %ld\n", ret);
+            if (ret == 0) {
+                extern int fut_vfs_close(int fd);
+                fut_vfs_close(sv[0]);
+                fut_vfs_close(sv[1]);
+            }
+            fut_test_fail(1496);
+        }
+    }
+}
+
+/* ============================================================
  * Tests 1479-1481: openat2 RESOLVE_IN_ROOT enforcement
  * ============================================================ */
 #define TEST_RESOLVE_IN_ROOT 0x10
@@ -48582,6 +48609,7 @@ void fut_misc_test_thread(void *arg) {
     test_open_creat_directory_einval();     /* Tests 1490-1492: open(O_CREAT|O_DIRECTORY) → EINVAL */
     test_poll_negative_timeout();           /* Test  1493: poll() with timeout < -1 treated as infinite */
     test_fcntl_dupfd_rlimit();             /* Tests 1494-1495: F_DUPFD with arg >= RLIMIT_NOFILE → EINVAL */
+    test_socketpair_invalid_flags();       /* Test  1496: socketpair with invalid type flags → EINVAL */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

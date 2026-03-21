@@ -1575,7 +1575,7 @@ static int alloc_fd(struct fut_file *file) {
             return i;
         }
     }
-    return -ENOMEM;
+    return -ENFILE;  /* system-wide file table full (not per-process EMFILE) */
 }
 
 static struct fut_file *get_file(int fd) {

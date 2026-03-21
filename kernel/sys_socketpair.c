@@ -62,6 +62,10 @@ long sys_socketpair(int domain, int type, int protocol, int *sv) {
     if (base_type != SOCK_STREAM && base_type != SOCK_DGRAM && base_type != SOCK_SEQPACKET)
         return -EINVAL;
 
+    /* Reject unknown type flags (only SOCK_NONBLOCK and SOCK_CLOEXEC are valid) */
+    if (type_flags & ~(SOCK_NONBLOCK | SOCK_CLOEXEC))
+        return -EINVAL;
+
     if (protocol != 0)
         return -EINVAL;
 

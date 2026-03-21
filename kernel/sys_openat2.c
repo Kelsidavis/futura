@@ -208,7 +208,15 @@ long sys_openat2(int dirfd, const char *path, const struct open_how *how,
         }
     }
 
+    /* Set transient VFS flags for path resolution control */
+    if (task && (kow.resolve & RESOLVE_NO_SYMLINKS))
+        task->vfs_no_symlinks = 1;
+
     int fd = fut_vfs_open_at(task, dirfd, kpath, (int)kow.flags, (int)kow.mode);
+
+    /* Clear transient flags */
+    if (task)
+        task->vfs_no_symlinks = 0;
 
     /* Set FD_CLOEXEC if O_CLOEXEC requested */
 #define OA2_O_CLOEXEC 0x80000

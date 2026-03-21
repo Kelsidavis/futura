@@ -1024,6 +1024,17 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
 
         /* Follow symlinks during path resolution (unless it's the final component and we want lstat semantics) */
         if (next->type == VN_LNK) {
+            /* RESOLVE_NO_SYMLINKS: reject any symlink traversal (openat2) */
+            {
+                extern fut_task_t *fut_task_current(void);
+                fut_task_t *_t = fut_task_current();
+                if (_t && _t->vfs_no_symlinks) {
+                    release_lookup_ref(current);
+                    release_lookup_ref(next);
+                    fut_free(components);
+                    return -ELOOP;
+                }
+            }
             /* Check if there's a readlink operation */
             if (next->ops && next->ops->readlink) {
                 char link_target[256];
@@ -1204,6 +1215,17 @@ static int lookup_parent_and_name(const char *path,
 
         /* Follow symlinks in intermediate path components */
         if (next->type == VN_LNK) {
+            /* RESOLVE_NO_SYMLINKS check */
+            {
+                extern fut_task_t *fut_task_current(void);
+                fut_task_t *_t = fut_task_current();
+                if (_t && _t->vfs_no_symlinks) {
+                    release_lookup_ref(next);
+                    if (current != root_vnode_base) release_lookup_ref(current);
+                    fut_free(components);
+                    return -ELOOP;
+                }
+            }
             if (next->ops && next->ops->readlink) {
                 char link_target[256];
                 int link_ret = next->ops->readlink(next, link_target, sizeof(link_target) - 1);

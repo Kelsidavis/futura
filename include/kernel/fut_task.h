@@ -159,6 +159,7 @@ struct fut_task {
     int oom_score_adj;                 // /proc/<pid>/oom_score_adj: OOM killer bias (-1000..1000)
     int suppress_sigpipe;              // Transient: suppress SIGPIPE during MSG_NOSIGNAL send
     int msg_dontwait;                  // Transient: per-call MSG_DONTWAIT (avoids mutating sock->flags)
+    int vfs_no_symlinks;               // Transient: openat2 RESOLVE_NO_SYMLINKS — reject symlink traversal
     uint64_t timerslack_ns;            // PR_SET/GET_TIMERSLACK: timer expiry slack (ns); default 50000
 
     /* I/O priority */

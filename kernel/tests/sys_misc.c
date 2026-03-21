@@ -47283,6 +47283,70 @@ static void test_kill_siginfo_sender(void) {
     }
 }
 
+/* ============================================================
+ * Tests 1475-1477: openat2 RESOLVE_NO_SYMLINKS enforcement
+ * ============================================================ */
+#define TEST_RESOLVE_NO_SYMLINKS  0x04
+
+static void test_openat2_resolve_no_symlinks(void) {
+    extern long sys_openat2(int dirfd, const char *path, const struct test_open_how *how,
+                            size_t usize);
+    extern long sys_unlink(const char *path);
+    extern long sys_symlink(const char *target, const char *linkpath);
+
+    /* Create a regular file and a symlink to it */
+    int wfd = (int)fut_vfs_open("/rns_target.txt", O_CREAT | O_RDWR, 0644);
+    if (wfd < 0) { fut_test_fail(1475); fut_test_fail(1476); fut_test_fail(1477); return; }
+    fut_vfs_write(wfd, "data", 4);
+    fut_vfs_close(wfd);
+    sys_symlink("/rns_target.txt", "/rns_link.txt");
+
+    /* Test 1475: open regular file with RESOLVE_NO_SYMLINKS → success */
+    fut_printf("[MISC-TEST] Test 1475: RESOLVE_NO_SYMLINKS on regular file succeeds\n");
+    struct test_open_how how_nosym = { .flags = 0, .mode = 0,
+                                       .resolve = TEST_RESOLVE_NO_SYMLINKS };
+    long fd1 = sys_openat2(-100 /* AT_FDCWD */, "/rns_target.txt", &how_nosym,
+                           TEST_OPEN_HOW_SIZE);
+    if (fd1 >= 0) {
+        fut_printf("[MISC-TEST] ✓ Test 1475: regular file opened: fd=%ld\n", fd1);
+        fut_vfs_close((int)fd1);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1475: regular file: %ld\n", fd1);
+        fut_test_fail(1475);
+    }
+
+    /* Test 1476: open symlink with RESOLVE_NO_SYMLINKS → ELOOP */
+    fut_printf("[MISC-TEST] Test 1476: RESOLVE_NO_SYMLINKS on symlink → ELOOP\n");
+    long fd2 = sys_openat2(-100 /* AT_FDCWD */, "/rns_link.txt", &how_nosym,
+                           TEST_OPEN_HOW_SIZE);
+    if (fd2 == -40 /* -ELOOP */) {
+        fut_printf("[MISC-TEST] ✓ Test 1476: symlink blocked: %ld\n", fd2);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1476: symlink: expected -40 (ELOOP), got %ld\n", fd2);
+        fut_test_fail(1476);
+    }
+    if (fd2 >= 0) fut_vfs_close((int)fd2);
+
+    /* Test 1477: without RESOLVE_NO_SYMLINKS, symlink opens normally */
+    fut_printf("[MISC-TEST] Test 1477: symlink without RESOLVE_NO_SYMLINKS → success\n");
+    struct test_open_how how_normal = { .flags = 0, .mode = 0, .resolve = 0 };
+    long fd3 = sys_openat2(-100 /* AT_FDCWD */, "/rns_link.txt", &how_normal,
+                           TEST_OPEN_HOW_SIZE);
+    if (fd3 >= 0) {
+        fut_printf("[MISC-TEST] ✓ Test 1477: symlink opened normally: fd=%ld\n", fd3);
+        fut_vfs_close((int)fd3);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1477: symlink normal open: %ld\n", fd3);
+        fut_test_fail(1477);
+    }
+
+    sys_unlink("/rns_link.txt");
+    sys_unlink("/rns_target.txt");
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -47985,6 +48049,7 @@ void fut_misc_test_thread(void *arg) {
     test_truncate_updates_timestamps();     /* Tests 1467-1469: truncate mtime/ctime updates */
     test_rename_link_timestamps();          /* Tests 1470-1472: rename/link timestamp updates */
     test_symlink_dir_timestamps();          /* Tests 1473-1474: symlink dir timestamp updates */
+    test_openat2_resolve_no_symlinks();     /* Tests 1475-1477: RESOLVE_NO_SYMLINKS enforcement */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

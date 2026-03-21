@@ -460,6 +460,57 @@ long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
         return 0;
     }
 
+    /* Phase 4: COLLAPSE_RANGE removes a byte range and shifts remaining data down.
+     * The file size shrinks by len bytes.  Both offset and len must be
+     * filesystem-block-aligned (4096 on ramfs). */
+    if (mode & FALLOC_FL_COLLAPSE_RANGE) {
+        /* COLLAPSE_RANGE must not be combined with other flags */
+        if (mode != FALLOC_FL_COLLAPSE_RANGE) {
+            return -EINVAL;
+        }
+
+        if (!vnode || !vnode->ops || !vnode->ops->read || !vnode->ops->write) {
+            return -ENOSYS;
+        }
+
+        /* Linux requires block-aligned offset and len */
+        if ((offset & 0xFFF) || (len & 0xFFF)) {
+            return -EINVAL;
+        }
+
+        /* Range must be within the file; cannot collapse past EOF */
+        if (offset + len > vnode->size) {
+            return -EINVAL;
+        }
+
+        /* Shift data from [offset+len, size) down to [offset, size-len) */
+        uint64_t src = offset + len;
+        uint64_t dst = offset;
+        uint64_t tail_bytes = vnode->size - src;
+        uint8_t chunk_buf[4096];
+
+        while (tail_bytes > 0) {
+            size_t chunk = (tail_bytes > sizeof(chunk_buf))
+                           ? sizeof(chunk_buf) : (size_t)tail_bytes;
+            ssize_t rd = vnode->ops->read(vnode, chunk_buf, chunk, src);
+            if (rd <= 0) break;
+            ssize_t wr = vnode->ops->write(vnode, chunk_buf, (size_t)rd, dst);
+            if (wr <= 0) break;
+            src += (uint64_t)wr;
+            dst += (uint64_t)wr;
+            tail_bytes -= (uint64_t)wr;
+        }
+
+        /* Shrink the file by len bytes */
+        if (vnode->ops->truncate) {
+            vnode->ops->truncate(vnode, vnode->size - len);
+        } else {
+            vnode->size -= len;
+        }
+
+        return 0;
+    }
+
     return 0;
 }
 

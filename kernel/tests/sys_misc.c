@@ -14541,6 +14541,122 @@ static void test_cachestat(void) {
     }
 }
 
+/* Tests 1401-1404: fallocate FALLOC_FL_COLLAPSE_RANGE
+ * Verifies that collapsing a byte range in a file removes data and shifts
+ * remaining content down, shrinking the file. */
+static void test_fallocate_collapse_range(void) {
+    extern long sys_open(const char *path, int flags, int mode);
+    extern long sys_write(int fd, const void *buf, size_t count);
+    extern long sys_read(int fd, void *buf, size_t count);
+    extern long sys_lseek(int fd, long offset, int whence);
+    extern long sys_close(int fd);
+    extern long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len);
+
+    /* Test 1401: COLLAPSE_RANGE removes a 4K block from middle of file */
+    fut_printf("[MISC-TEST] Test 1401: fallocate COLLAPSE_RANGE removes middle block\n");
+    {
+        long fd = sys_open("/tmp/.t1401_collapse", 0x42 /* O_CREAT|O_RDWR */, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1401: open = %ld\n", fd);
+            fut_test_fail(1401);
+        } else {
+            /* Write 3 blocks: 4096 bytes of 'A', 4096 bytes of 'B', 4096 bytes of 'C' */
+            char block[4096];
+            __builtin_memset(block, 'A', 4096);
+            sys_write((int)fd, block, 4096);
+            __builtin_memset(block, 'B', 4096);
+            sys_write((int)fd, block, 4096);
+            __builtin_memset(block, 'C', 4096);
+            sys_write((int)fd, block, 4096);
+
+            /* Collapse the middle block (offset=4096, len=4096) */
+            long r = sys_fallocate((int)fd, 0x04 /* FALLOC_FL_COLLAPSE_RANGE */,
+                                   4096, 4096);
+            if (r != 0) {
+                fut_printf("[MISC-TEST] ✗ Test 1401: fallocate(COLLAPSE) = %ld\n", r);
+                fut_test_fail(1401);
+            } else {
+                /* Read back: should be 'A' block then 'C' block, total 8192 bytes */
+                sys_lseek((int)fd, 0, 0 /* SEEK_SET */);
+                char buf[8192] = {0};
+                long rd = sys_read((int)fd, buf, 8192);
+                int ok = (rd == 8192) && (buf[0] == 'A') && (buf[4095] == 'A')
+                         && (buf[4096] == 'C') && (buf[8191] == 'C');
+                if (ok) {
+                    fut_printf("[MISC-TEST] ✓ Test 1401: COLLAPSE_RANGE removed middle block\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1401: rd=%ld buf[0]=%c buf[4096]=%c\n",
+                               rd, buf[0], buf[4096]);
+                    fut_test_fail(1401);
+                }
+            }
+            sys_close((int)fd);
+        }
+    }
+
+    /* Test 1402: COLLAPSE_RANGE with non-aligned offset → EINVAL */
+    fut_printf("[MISC-TEST] Test 1402: COLLAPSE_RANGE non-aligned → EINVAL\n");
+    {
+        long fd = sys_open("/tmp/.t1401_collapse", 0 /* O_RDONLY */, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1402: open = %ld\n", fd);
+            fut_test_fail(1402);
+        } else {
+            long r = sys_fallocate((int)fd, 0x04, 100 /* not aligned */, 4096);
+            if (r == -22 /* -EINVAL */) {
+                fut_printf("[MISC-TEST] ✓ Test 1402: COLLAPSE_RANGE(off=100) = -EINVAL\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1402: r = %ld (want -22)\n", r);
+                fut_test_fail(1402);
+            }
+            sys_close((int)fd);
+        }
+    }
+
+    /* Test 1403: COLLAPSE_RANGE past EOF → EINVAL */
+    fut_printf("[MISC-TEST] Test 1403: COLLAPSE_RANGE past EOF → EINVAL\n");
+    {
+        long fd = sys_open("/tmp/.t1401_collapse", 0x02 /* O_RDWR */, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1403: open = %ld\n", fd);
+            fut_test_fail(1403);
+        } else {
+            /* File is now 8192 bytes; collapsing at 8192+4096 should fail */
+            long r = sys_fallocate((int)fd, 0x04, 8192, 4096);
+            if (r == -22 /* -EINVAL */) {
+                fut_printf("[MISC-TEST] ✓ Test 1403: COLLAPSE_RANGE(past EOF) = -EINVAL\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1403: r = %ld (want -22)\n", r);
+                fut_test_fail(1403);
+            }
+            sys_close((int)fd);
+        }
+    }
+
+    /* Test 1404: COLLAPSE_RANGE combined with KEEP_SIZE → EINVAL */
+    fut_printf("[MISC-TEST] Test 1404: COLLAPSE_RANGE|KEEP_SIZE → EINVAL\n");
+    {
+        long fd = sys_open("/tmp/.t1401_collapse", 0x02, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1404: open = %ld\n", fd);
+            fut_test_fail(1404);
+        } else {
+            long r = sys_fallocate((int)fd, 0x04 | 0x01 /* COLLAPSE|KEEP_SIZE */, 0, 4096);
+            if (r == -22 /* -EINVAL */) {
+                fut_printf("[MISC-TEST] ✓ Test 1404: COLLAPSE|KEEP_SIZE = -EINVAL\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1404: r = %ld (want -22)\n", r);
+                fut_test_fail(1404);
+            }
+            sys_close((int)fd);
+        }
+    }
+}
+
 static void test_proc_fd_anon_types(void) {
     extern long sys_read(int fd, void *buf, size_t count);
     extern long sys_readlink(const char *path, char *buf, size_t bufsiz);
@@ -45579,6 +45695,7 @@ void fut_misc_test_thread(void *arg) {
     test_socket_ops_on_nonsocket();          /* Tests 1383-1391: socket ops on non-socket fd → ENOTSOCK */
     test_socket_dup_operations();            /* Tests 1392-1395: dup/dup2 on socket fds */
     test_cachestat();                        /* Tests 1396-1400: cachestat syscall */
+    test_fallocate_collapse_range();         /* Tests 1401-1404: fallocate COLLAPSE_RANGE */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

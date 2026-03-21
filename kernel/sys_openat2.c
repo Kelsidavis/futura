@@ -159,7 +159,8 @@ long sys_openat2(int dirfd, const char *path, const struct open_how *how,
 
     /* RESOLVE_NO_XDEV, RESOLVE_NO_MAGICLINKS, RESOLVE_CACHED: naturally satisfied
      * by Futura's in-memory VFS (no mount points or magic links).
-     * RESOLVE_NO_SYMLINKS, RESOLVE_IN_ROOT: accepted as no-op.
+     * RESOLVE_NO_SYMLINKS: enforced via per-task flag in VFS path resolution.
+     * RESOLVE_IN_ROOT: enforced below (absolute paths rewritten, then BENEATH check).
      * RESOLVE_BENEATH: enforced below after path resolution. */
 
     /* Copy pathname to kernel buffer (bypass kernel-pointer EFAULT) */
@@ -178,6 +179,33 @@ long sys_openat2(int dirfd, const char *path, const struct open_how *how,
     kpath[plen] = '\0';
 
     fut_task_t *task = fut_task_current();
+
+    /* Enforce RESOLVE_IN_ROOT: treat dirfd as the filesystem root.
+     * Absolute paths are rewritten relative to dirfd's path, and the
+     * RESOLVE_BENEATH check (reused below) prevents ".." escape.
+     * On Linux, RESOLVE_IN_ROOT implies RESOLVE_BENEATH semantics. */
+    if ((kow.resolve & RESOLVE_IN_ROOT) && dirfd != AT_FDCWD) {
+        struct fut_file *root_file = vfs_get_file_from_task(task, dirfd);
+        if (root_file && root_file->path) {
+            if (kpath[0] == '/') {
+                /* Rewrite absolute path: prepend dirfd's path.
+                 * e.g., dirfd="/chroot", path="/etc/passwd" → "/chroot/etc/passwd" */
+                char combined[FUT_VFS_PATH_BUFFER_SIZE];
+                size_t dlen = 0;
+                while (root_file->path[dlen]) dlen++;
+                /* Remove trailing slash from dir path */
+                while (dlen > 1 && root_file->path[dlen - 1] == '/') dlen--;
+                if (dlen + plen < sizeof(combined) - 1) {
+                    __builtin_memcpy(combined, root_file->path, dlen);
+                    __builtin_memcpy(combined + dlen, kpath, plen + 1); /* includes '\0' */
+                    __builtin_memcpy(kpath, combined, dlen + plen + 1);
+                    plen = dlen + plen;
+                }
+            }
+        }
+        /* RESOLVE_IN_ROOT implies containment — fall through to BENEATH check */
+        kow.resolve |= RESOLVE_BENEATH;
+    }
 
     /* Enforce RESOLVE_BENEATH: the final resolved path must remain within
      * the dirfd's subtree.  Returns -EXDEV on violation (matching Linux). */

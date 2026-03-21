@@ -47348,6 +47348,76 @@ static void test_openat2_resolve_no_symlinks(void) {
 }
 
 /* ============================================================
+ * Tests 1479-1481: openat2 RESOLVE_IN_ROOT enforcement
+ * ============================================================ */
+#define TEST_RESOLVE_IN_ROOT 0x10
+
+static void test_openat2_resolve_in_root(void) {
+    extern long sys_openat2(int dirfd, const char *path, const struct test_open_how *how,
+                            size_t usize);
+    extern int fut_vfs_mkdir(const char *path, uint32_t mode);
+    extern long sys_unlink(const char *path);
+    extern long sys_rmdir(const char *path);
+
+    /* Set up: /rir_root/inner.txt */
+    fut_vfs_mkdir("/rir_root", 0755);
+    int wfd = (int)fut_vfs_open("/rir_root/inner.txt", 0x42 /* O_RDWR|O_CREAT */, 0644);
+    if (wfd < 0) { fut_test_fail(1479); fut_test_fail(1480); fut_test_fail(1481); return; }
+    fut_vfs_write(wfd, "x", 1);
+    fut_vfs_close(wfd);
+
+    int dirfd = (int)fut_vfs_open("/rir_root", 00200000 /* O_DIRECTORY */, 0);
+    if (dirfd < 0) {
+        fut_printf("[MISC-TEST] ✗ Tests 1479-1481: open dirfd failed: %d\n", dirfd);
+        fut_test_fail(1479); fut_test_fail(1480); fut_test_fail(1481);
+        sys_unlink("/rir_root/inner.txt"); sys_rmdir("/rir_root");
+        return;
+    }
+
+    /* Test 1479: RESOLVE_IN_ROOT + relative path → success */
+    fut_printf("[MISC-TEST] Test 1479: RESOLVE_IN_ROOT relative path succeeds\n");
+    struct test_open_how how_inroot = { .flags = 0, .mode = 0,
+                                        .resolve = TEST_RESOLVE_IN_ROOT };
+    long fd1 = sys_openat2(dirfd, "inner.txt", &how_inroot, TEST_OPEN_HOW_SIZE);
+    if (fd1 >= 0) {
+        fut_printf("[MISC-TEST] ✓ Test 1479: relative path: fd=%ld\n", fd1);
+        fut_vfs_close((int)fd1);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1479: relative path: %ld\n", fd1);
+        fut_test_fail(1479);
+    }
+
+    /* Test 1480: RESOLVE_IN_ROOT + absolute path "/inner.txt" → remapped to dirfd */
+    fut_printf("[MISC-TEST] Test 1480: RESOLVE_IN_ROOT absolute path remapped to dirfd\n");
+    long fd2 = sys_openat2(dirfd, "/inner.txt", &how_inroot, TEST_OPEN_HOW_SIZE);
+    if (fd2 >= 0) {
+        fut_printf("[MISC-TEST] ✓ Test 1480: absolute /inner.txt remapped: fd=%ld\n", fd2);
+        fut_vfs_close((int)fd2);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1480: absolute /inner.txt: %ld\n", fd2);
+        fut_test_fail(1480);
+    }
+
+    /* Test 1481: RESOLVE_IN_ROOT + "../" escape → blocked (EXDEV) */
+    fut_printf("[MISC-TEST] Test 1481: RESOLVE_IN_ROOT escape via ../ → EXDEV\n");
+    long fd3 = sys_openat2(dirfd, "../../etc/passwd", &how_inroot, TEST_OPEN_HOW_SIZE);
+    if (fd3 == -18 /* -EXDEV */) {
+        fut_printf("[MISC-TEST] ✓ Test 1481: escape blocked: %ld\n", fd3);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1481: escape: expected -18 (EXDEV), got %ld\n", fd3);
+        fut_test_fail(1481);
+    }
+    if (fd3 >= 0) fut_vfs_close((int)fd3);
+
+    fut_vfs_close(dirfd);
+    sys_unlink("/rir_root/inner.txt");
+    sys_rmdir("/rir_root");
+}
+
+/* ============================================================
  * Test 1478: fcntl F_SETFL includes O_DIRECT in changeable mask
  * ============================================================ */
 static void test_fcntl_setfl_o_direct(void) {
@@ -48095,6 +48165,7 @@ void fut_misc_test_thread(void *arg) {
     test_symlink_dir_timestamps();          /* Tests 1473-1474: symlink dir timestamp updates */
     test_openat2_resolve_no_symlinks();     /* Tests 1475-1477: RESOLVE_NO_SYMLINKS enforcement */
     test_fcntl_setfl_o_direct();            /* Test 1478: F_SETFL O_DIRECT set/clear */
+    test_openat2_resolve_in_root();         /* Tests 1479-1481: RESOLVE_IN_ROOT enforcement */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

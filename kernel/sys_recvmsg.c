@@ -426,9 +426,11 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
         }
 
         /* Read from socket.
+         * MSG_PEEK: read without consuming (peek at data).
          * DGRAM: use fut_socket_recvfrom_dgram directly to track MSG_TRUNC.
          * MSG_WAITALL: loop until the full iovec is filled (stream sockets only). */
         bool do_waitall = (local_flags & MSG_WAITALL) && !(local_flags & MSG_DONTWAIT);
+        bool do_peek = (local_flags & MSG_PEEK) != 0;
         ssize_t ret;
         if (is_dgram_sock) {
             size_t actual_len = 0;
@@ -437,6 +439,11 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
                                             &actual_len);
             if (ret >= 0 && actual_len > iov.iov_len)
                 msg_trunc_set = true;
+        } else if (do_peek) {
+            extern ssize_t fut_socket_recv_peek(fut_socket_t *sock, void *buf, size_t len);
+            extern fut_socket_t *get_socket_from_fd(int fd);
+            fut_socket_t *psock = get_socket_from_fd(local_sockfd);
+            ret = psock ? fut_socket_recv_peek(psock, kbuf, iov.iov_len) : -EBADF;
         } else if (do_waitall) {
             ssize_t got = 0;
             ret = 0;

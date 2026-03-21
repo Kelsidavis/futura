@@ -13392,6 +13392,91 @@ static void test_epollet_hup(void) {
 #undef TEST_EPOLLHUP
 }
 
+/* ============================================================
+ * test_recvmsg_peek() — Tests 1360-1361
+ *
+ * Verify recvmsg() with MSG_PEEK reads without consuming data.
+ * ============================================================ */
+static void test_recvmsg_peek(void) {
+    extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+    extern long sys_recvmsg(int sockfd, struct test_msghdr *msg, int flags);
+    extern long sys_write(int fd, const void *buf, size_t count);
+    extern long sys_read(int fd, void *buf, size_t count);
+
+#define MSG_PEEK_FLAG 0x02
+
+    /* Test 1360: recvmsg(MSG_PEEK) reads without consuming */
+    fut_printf("[MISC-TEST] Test 1360: recvmsg MSG_PEEK reads without consuming\n");
+    {
+        int sv[2];
+        long r = sys_socketpair(1 /* AF_UNIX */, 1 /* SOCK_STREAM */, 0, sv);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1360: socketpair failed: %ld\n", r);
+            fut_test_fail(1360);
+        } else {
+            /* Send data */
+            sys_write(sv[0], "peek_test", 9);
+
+            /* Peek via recvmsg */
+            char peek_buf[32];
+            __builtin_memset(peek_buf, 0, sizeof(peek_buf));
+            struct iovec iov = { peek_buf, sizeof(peek_buf) };
+            struct test_msghdr mhdr;
+            __builtin_memset(&mhdr, 0, sizeof(mhdr));
+            mhdr.msg_iov = &iov;
+            mhdr.msg_iovlen = 1;
+
+            long n = sys_recvmsg(sv[1], &mhdr, MSG_PEEK_FLAG);
+            if (n != 9) {
+                fut_printf("[MISC-TEST] ✗ Test 1360: recvmsg(MSG_PEEK)=%ld (expected 9)\n", n);
+                fut_test_fail(1360);
+            } else {
+                /* Verify data is correct */
+                int ok = 1;
+                const char *expect = "peek_test";
+                for (int i = 0; i < 9; i++) {
+                    if (peek_buf[i] != expect[i]) { ok = 0; break; }
+                }
+                if (!ok) {
+                    fut_printf("[MISC-TEST] ✗ Test 1360: peeked data mismatch\n");
+                    fut_test_fail(1360);
+                } else {
+                    fut_printf("[MISC-TEST] ✓ Test 1360: recvmsg(MSG_PEEK)=%ld, data correct\n", n);
+                    fut_test_pass();
+                }
+            }
+
+            /* Test 1361: data still available after peek */
+            fut_printf("[MISC-TEST] Test 1361: data still available after MSG_PEEK\n");
+            char consume_buf[32];
+            __builtin_memset(consume_buf, 0, sizeof(consume_buf));
+            long n2 = sys_read(sv[1], consume_buf, sizeof(consume_buf));
+            if (n2 == 9) {
+                int ok = 1;
+                const char *expect = "peek_test";
+                for (int i = 0; i < 9; i++) {
+                    if (consume_buf[i] != expect[i]) { ok = 0; break; }
+                }
+                if (ok) {
+                    fut_printf("[MISC-TEST] ✓ Test 1361: data consumed after peek, %ld bytes\n", n2);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1361: consumed data mismatch\n");
+                    fut_test_fail(1361);
+                }
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1361: read after peek=%ld (expected 9)\n", n2);
+                fut_test_fail(1361);
+            }
+
+            sys_close(sv[0]);
+            sys_close(sv[1]);
+        }
+    }
+
+#undef MSG_PEEK_FLAG
+}
+
 static void test_proc_fd_anon_types(void) {
     extern long sys_read(int fd, void *buf, size_t count);
     extern long sys_readlink(const char *path, char *buf, size_t bufsiz);
@@ -44416,6 +44501,7 @@ void fut_misc_test_thread(void *arg) {
     test_getdents64_dtype();                 /* Tests 1351-1353: getdents64 returns Linux DT_* values */
     test_renameat2_noreplace();              /* Tests 1354-1357: renameat2 NOREPLACE, readlinkat empty, lseek EOVERFLOW */
     test_epollet_hup();                      /* Tests 1358-1359: EPOLLET EPOLLHUP on pipe close */
+    test_recvmsg_peek();                     /* Tests 1360-1361: recvmsg MSG_PEEK */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

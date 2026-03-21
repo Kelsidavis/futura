@@ -302,10 +302,13 @@ long sys_chown(const char *pathname, uint32_t uid, uint32_t gid) {
             fut_vnode_unref(vnode);
             return -EPERM;
         }
-        /* Non-privileged: can only change GID if file owner */
-        if (local_gid != CHOWN_UNCHANGED && local_gid != old_gid && task->ruid != old_uid) {
-            fut_vnode_unref(vnode);
-            return -EPERM;
+        /* Non-privileged: can only change GID if file owner AND target
+         * is caller's effective GID (Linux also allows supplementary groups) */
+        if (local_gid != CHOWN_UNCHANGED && local_gid != old_gid) {
+            if (task->ruid != old_uid || local_gid != task->gid) {
+                fut_vnode_unref(vnode);
+                return -EPERM;
+            }
         }
     }
 

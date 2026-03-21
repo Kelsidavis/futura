@@ -378,9 +378,11 @@ long sys_fchownat(int dirfd, const char *pathname, uint32_t uid, uint32_t gid, i
             fut_vnode_unref(vnode);
             return -EPERM;
         }
-        if (gid != (uint32_t)-1 && gid != vnode->gid && task->ruid != vnode->uid) {
-            fut_vnode_unref(vnode);
-            return -EPERM;
+        if (gid != (uint32_t)-1 && gid != vnode->gid) {
+            if (task->ruid != vnode->uid || gid != task->gid) {
+                fut_vnode_unref(vnode);
+                return -EPERM;
+            }
         }
     }
 

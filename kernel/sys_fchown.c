@@ -110,13 +110,19 @@ long sys_fchown(int fd, uint32_t uid, uint32_t gid) {
     }
 
     if (local_gid != (uint32_t)-1 && local_gid != vnode->gid) {
-        /* Changing group requires CAP_CHOWN or special conditions */
-        if (task->uid != 0) {
-            fut_printf("[FCHOWN] fchown(fd=%d [%s], vnode_ino=%lu, uid=%u [%s], gid=%u [%s]) "
-                       "-> EPERM (user %u cannot change group from %u to %u without capability)\n",
-                       local_fd, fd_category, vnode->ino, local_uid, uid_desc, local_gid, gid_desc,
-                       task->uid, vnode->gid, local_gid);
-            return -EPERM;
+        /* Changing group requires CAP_CHOWN, root, or:
+         * file owner changing group to their own effective GID.
+         * Linux allows supplementary groups too, but we check egid. */
+        if (task->uid != 0 &&
+            !(task->cap_effective & (1ULL << 0 /* CAP_CHOWN */))) {
+            /* Non-privileged: must own the file AND target must be own egid */
+            if (task->uid != vnode->uid || local_gid != task->gid) {
+                fut_printf("[FCHOWN] fchown(fd=%d [%s], vnode_ino=%lu, uid=%u [%s], gid=%u [%s]) "
+                           "-> EPERM (user %u cannot change group from %u to %u)\n",
+                           local_fd, fd_category, vnode->ino, local_uid, uid_desc, local_gid, gid_desc,
+                           task->uid, vnode->gid, local_gid);
+                return -EPERM;
+            }
         }
         if (strcmp(capability_status, "none required") == 0) {
             capability_status = "CAP_CHOWN (group transfer)";

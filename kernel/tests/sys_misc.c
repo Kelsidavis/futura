@@ -47975,6 +47975,56 @@ static void test_readlink_bufsiz_zero(void) {
 }
 
 /* ============================================================
+ * Tests 1503-1504: fchown non-root group change permissions
+ * ============================================================ */
+static void test_fchown_group_perms(void) {
+    extern long sys_fchown(int fd, uint32_t uid, uint32_t gid);
+    extern long sys_open(const char *pathname, int flags, int mode);
+    extern int fut_vfs_close(int fd);
+    extern long sys_unlink(const char *path);
+
+    /* Create a test file owned by current user (uid=0, gid=0 in kernel tests) */
+    sys_unlink("/fchown_test.txt");
+    long fd = sys_open("/fchown_test.txt", 0x42 /* O_RDWR|O_CREAT */, 0644);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1503-1504: setup failed: %ld\n", fd);
+        fut_test_fail(1503);
+        fut_test_fail(1504);
+        return;
+    }
+
+    /* Test 1503: fchown(fd, -1, own_gid) should succeed for file owner
+     * (uid=-1 means "don't change", gid=0 is our own gid) */
+    fut_printf("[MISC-TEST] Test 1503: fchown(fd, -1, own_gid) → 0\n");
+    {
+        long ret = sys_fchown((int)fd, (uint32_t)-1, 0);
+        if (ret == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1503: fchown to own gid → 0\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1503: expected 0, got %ld\n", ret);
+            fut_test_fail(1503);
+        }
+    }
+
+    /* Test 1504: fchown(-1) → -EBADF */
+    fut_printf("[MISC-TEST] Test 1504: fchown(-1, -1, 0) → EBADF\n");
+    {
+        long ret = sys_fchown(-1, (uint32_t)-1, 0);
+        if (ret == -9 /* -EBADF */) {
+            fut_printf("[MISC-TEST] ✓ Test 1504: fchown(-1) → EBADF\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1504: expected -9, got %ld\n", ret);
+            fut_test_fail(1504);
+        }
+    }
+
+    fut_vfs_close((int)fd);
+    sys_unlink("/fchown_test.txt");
+}
+
+/* ============================================================
  * Tests 1479-1481: openat2 RESOLVE_IN_ROOT enforcement
  * ============================================================ */
 #define TEST_RESOLVE_IN_ROOT 0x10
@@ -48806,6 +48856,7 @@ void fut_misc_test_thread(void *arg) {
     test_sendto_eisconn();                 /* Test  1500: sendto on connected SOCK_STREAM with dest → EISCONN */
     test_stat_timestamps();                /* Test  1501: stat timestamps are in seconds, not nanoseconds */
     test_readlink_bufsiz_zero();           /* Test  1502: readlink(bufsiz=0) → 0, not EINVAL */
+    test_fchown_group_perms();             /* Tests 1503-1504: fchown non-root group change rules */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

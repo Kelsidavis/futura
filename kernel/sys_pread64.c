@@ -16,6 +16,7 @@
 #include <kernel/errno.h>
 #include <kernel/fut_vfs.h>
 #include <kernel/chrdev.h>
+#include <fcntl.h>
 #include <kernel/fut_fd_util.h>
 #include <stdint.h>
 
@@ -241,6 +242,10 @@ long sys_pread64(unsigned int fd, void *buf, size_t count, int64_t offset) {
                    fd, fd_category, count, count_category, offset, offset_category, task->pid);
         return -EBADF;
     }
+
+    /* O_PATH fds cannot be used for I/O — only path-based operations */
+    if (file->flags & O_PATH)
+        return -EBADF;
 
     /* Check that fd was opened for reading (not write-only) */
     if ((file->flags & O_ACCMODE) == O_WRONLY)

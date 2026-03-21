@@ -14773,6 +14773,99 @@ static void test_fallocate_insert_range(void) {
     }
 }
 
+/* Tests 1409-1412: O_PATH fds reject pread64, pwrite64, preadv, pwritev
+ * Linux enforces that O_PATH fds cannot be used for any I/O, including
+ * positional and vectored variants. */
+static void test_opath_pread_pwrite(void) {
+    extern long sys_open(const char *path, int flags, int mode);
+    extern long sys_pread64(unsigned int fd, void *buf, size_t count, long offset);
+    extern long sys_pwrite64(unsigned int fd, const void *buf, size_t count, long offset);
+    extern long sys_close(int fd);
+
+#define O_PATH_FLAG2 010000000  /* 0x200000 */
+
+    /* Create a file with content first */
+    long wfd = sys_open("/tmp/.t_opath_rw", 0x42 /* O_CREAT|O_RDWR */, 0644);
+    if (wfd >= 0) {
+        extern long sys_write(int fd, const void *buf, size_t count);
+        sys_write((int)wfd, "testdata", 8);
+        sys_close((int)wfd);
+    }
+
+    /* Open with O_PATH */
+    long fd = sys_open("/tmp/.t_opath_rw", O_PATH_FLAG2, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Tests 1409-1412: O_PATH open = %ld\n", fd);
+        fut_test_fail(1409); fut_test_fail(1410);
+        fut_test_fail(1411); fut_test_fail(1412);
+    } else {
+        /* Test 1409: pread64 on O_PATH → EBADF */
+        fut_printf("[MISC-TEST] Test 1409: pread64(O_PATH fd) → EBADF\n");
+        {
+            char buf[16];
+            long r = sys_pread64((unsigned int)fd, buf, 8, 0);
+            if (r == -9 /* -EBADF */) {
+                fut_printf("[MISC-TEST] ✓ Test 1409: pread64(O_PATH) = -EBADF\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1409: pread64(O_PATH) = %ld (want -9)\n", r);
+                fut_test_fail(1409);
+            }
+        }
+
+        /* Test 1410: pwrite64 on O_PATH → EBADF */
+        fut_printf("[MISC-TEST] Test 1410: pwrite64(O_PATH fd) → EBADF\n");
+        {
+            long r = sys_pwrite64((unsigned int)fd, "test", 4, 0);
+            if (r == -9 /* -EBADF */) {
+                fut_printf("[MISC-TEST] ✓ Test 1410: pwrite64(O_PATH) = -EBADF\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1410: pwrite64(O_PATH) = %ld (want -9)\n", r);
+                fut_test_fail(1410);
+            }
+        }
+
+        /* Test 1411: preadv on O_PATH → EBADF */
+        fut_printf("[MISC-TEST] Test 1411: preadv(O_PATH fd) → EBADF\n");
+        {
+            extern ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset);
+            char buf[16];
+            struct iovec iov;
+            iov.iov_base = buf;
+            iov.iov_len = 8;
+            long r = (long)sys_preadv((int)fd, &iov, 1, 0);
+            if (r == -9 /* -EBADF */) {
+                fut_printf("[MISC-TEST] ✓ Test 1411: preadv(O_PATH) = -EBADF\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1411: preadv(O_PATH) = %ld (want -9)\n", r);
+                fut_test_fail(1411);
+            }
+        }
+
+        /* Test 1412: pwritev on O_PATH → EBADF */
+        fut_printf("[MISC-TEST] Test 1412: pwritev(O_PATH fd) → EBADF\n");
+        {
+            extern ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset);
+            struct iovec wiov;
+            wiov.iov_base = (void *)"test";
+            wiov.iov_len = 4;
+            long r = (long)sys_pwritev((int)fd, &wiov, 1, 0);
+            if (r == -9 /* -EBADF */) {
+                fut_printf("[MISC-TEST] ✓ Test 1412: pwritev(O_PATH) = -EBADF\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1412: pwritev(O_PATH) = %ld (want -9)\n", r);
+                fut_test_fail(1412);
+            }
+        }
+
+        sys_close((int)fd);
+    }
+#undef O_PATH_FLAG2
+}
+
 static void test_proc_fd_anon_types(void) {
     extern long sys_read(int fd, void *buf, size_t count);
     extern long sys_readlink(const char *path, char *buf, size_t bufsiz);
@@ -45813,6 +45906,7 @@ void fut_misc_test_thread(void *arg) {
     test_cachestat();                        /* Tests 1396-1400: cachestat syscall */
     test_fallocate_collapse_range();         /* Tests 1401-1404: fallocate COLLAPSE_RANGE */
     test_fallocate_insert_range();           /* Tests 1405-1408: fallocate INSERT_RANGE */
+    test_opath_pread_pwrite();               /* Tests 1409-1412: O_PATH blocks pread64/pwrite64/preadv/pwritev */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

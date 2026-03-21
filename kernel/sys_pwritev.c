@@ -10,6 +10,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
 #include <kernel/fut_vfs.h>
+#include <fcntl.h>
 #include <sys/uio.h>  /* For struct iovec, UIO_MAXIOV, ssize_t */
 #include <stdint.h>
 
@@ -516,6 +517,12 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
     if (!file) {
         fut_printf("[PWRITEV] pwritev(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EBADF (fd not open)\n",
                    fd, iov, iovcnt, offset);
+        fut_free(kernel_iov);
+        return -EBADF;
+    }
+
+    /* O_PATH fds cannot be used for I/O */
+    if (file->flags & O_PATH) {
         fut_free(kernel_iov);
         return -EBADF;
     }

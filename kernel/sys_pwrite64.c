@@ -16,6 +16,7 @@
 #include <kernel/errno.h>
 #include <kernel/fut_vfs.h>
 #include <kernel/chrdev.h>
+#include <fcntl.h>
 #include <kernel/fut_fd_util.h>
 #include <stdint.h>
 
@@ -203,6 +204,10 @@ long sys_pwrite64(unsigned int fd, const void *buf, size_t count, int64_t offset
                    local_fd, fd_category, local_count, count_category, local_offset, offset_category, task->pid);
         return -EBADF;
     }
+
+    /* O_PATH fds cannot be used for I/O — only path-based operations */
+    if (file->flags & O_PATH)
+        return -EBADF;
 
     /* Check that fd was opened for writing (not read-only) */
     if ((file->flags & O_ACCMODE) == O_RDONLY)

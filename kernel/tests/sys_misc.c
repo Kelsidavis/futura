@@ -38375,6 +38375,87 @@ static void test_prctl_timerslack_procfs(void) {
 #undef TSNS_PR_GET
 }
 
+static void test_proc_locks(void) {
+    extern long sys_openat(int dirfd, const char *pathname, int flags, int mode);
+    extern long sys_read(int fd, void *buf, size_t count);
+    extern long sys_close(int fd);
+
+    /* Test 1173: /proc/locks is openable */
+    fut_printf("[MISC-TEST] Test 1173: /proc/locks is openable\n");
+    {
+        int fd = (int)sys_openat(-100, "/proc/locks", 0, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1173: open /proc/locks failed: %d\n", fd);
+            fut_test_fail(1173);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1173: /proc/locks opened ok\n");
+            fut_test_pass();
+            sys_close(fd);
+        }
+    }
+
+    /* Test 1174: /proc/locks is readable (may be empty) */
+    fut_printf("[MISC-TEST] Test 1174: /proc/locks is readable\n");
+    {
+        int fd = (int)sys_openat(-100, "/proc/locks", 0, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1174: open failed: %d\n", fd);
+            fut_test_fail(1174);
+        } else {
+            char buf[256];
+            long n = sys_read(fd, buf, sizeof(buf));
+            sys_close(fd);
+            /* Empty file (n==0) or content with lock entries (n>0) are both valid */
+            if (n >= 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1174: /proc/locks readable (n=%ld bytes)\n", n);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1174: read returned %ld\n", n);
+                fut_test_fail(1174);
+            }
+        }
+    }
+
+    /* Test 1175: /proc/locks appears in /proc directory listing */
+    fut_printf("[MISC-TEST] Test 1175: 'locks' appears in /proc directory\n");
+    {
+        extern long sys_getdents64(unsigned int fd, void *dirp, unsigned int count);
+        /* Struct layout: d_ino(8) + d_off(8) + d_reclen(2) + d_type(1) + d_name[256] */
+        struct { uint64_t d_ino; int64_t d_off; uint16_t d_reclen;
+                 uint8_t d_type; char d_name[256]; } dbuf[64];
+        int fd = (int)sys_openat(-100, "/proc", 0x10000 /*O_DIRECTORY*/, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1175: open /proc failed: %d\n", fd);
+            fut_test_fail(1175);
+        } else {
+            int found = 0;
+            for (;;) {
+                long n = sys_getdents64((unsigned int)fd, dbuf, sizeof(dbuf));
+                if (n <= 0) break;
+                long off = 0;
+                while (off < n) {
+                    uint8_t *p = (uint8_t *)dbuf + off;
+                    uint16_t reclen = ((uint16_t)p[16] | ((uint16_t)p[17] << 8));
+                    if (reclen == 0) break;
+                    const char *nm = (const char *)(p + 19);
+                    if (nm[0]=='l' && nm[1]=='o' && nm[2]=='c' && nm[3]=='k' &&
+                        nm[4]=='s' && nm[5]=='\0') { found = 1; break; }
+                    off += reclen;
+                }
+                if (found) break;
+            }
+            sys_close(fd);
+            if (found) {
+                fut_printf("[MISC-TEST] ✓ Test 1175: 'locks' found in /proc\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1175: 'locks' not found in /proc\n");
+                fut_test_fail(1175);
+            }
+        }
+    }
+}
+
 static void test_proc_syscall(void) {
     extern long sys_openat(int dirfd, const char *pathname, int flags, int mode);
     extern long sys_read(int fd, void *buf, size_t count);
@@ -38453,6 +38534,197 @@ static void test_proc_syscall(void) {
             }
         }
     }
+}
+
+/* Search buf[0..n-1] for 4-char literal. File-scope (pedantic forbids nested fns). */
+static int buf_contains4(const char *buf, long n, const char *needle) {
+    for (long i = 0; i <= n - 4; i++) {
+        if (buf[i]==needle[0] && buf[i+1]==needle[1] &&
+            buf[i+2]==needle[2] && buf[i+3]==needle[3])
+            return 1;
+    }
+    return 0;
+}
+
+/* ============================================================
+ * Tests 1176-1179: /proc/net/tcp and /proc/net/udp socket enumeration
+ * ============================================================
+ * Test 1176: AF_INET SOCK_STREAM bind+listen → entry appears in /proc/net/tcp
+ * Test 1177: /proc/net/tcp entry contains correct hex port "D431"
+ * Test 1178: AF_INET SOCK_DGRAM bind → entry appears in /proc/net/udp
+ * Test 1179: /proc/net/sockstat shows nonzero socket count after socket creation
+ */
+static void test_proc_net_tcp_udp(void) {
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_bind(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_listen(int sockfd, int backlog);
+    extern long sys_close(int fd);
+    extern long sys_openat(int dirfd, const char *pathname, int flags, int mode);
+    extern long sys_read(int fd, void *buf, size_t count);
+
+    /* sockaddr_in layout: sin_family(2) + sin_port(2) + sin_addr(4) + zero(8) = 16 bytes */
+    /* Port 54321 = 0xD431; NBO bytes: [0xD4, 0x31] */
+    unsigned char sin_tcp[16] = {0};
+    sin_tcp[0] = 2; sin_tcp[1] = 0;          /* sin_family = AF_INET (LE) */
+    sin_tcp[2] = 0xD4; sin_tcp[3] = 0x31;    /* sin_port = 54321 in NBO */
+    /* sin_addr = 0.0.0.0 (already zeroed) */
+
+    /* Port 54322 = 0xD432; NBO bytes: [0xD4, 0x32] */
+    unsigned char sin_udp[16] = {0};
+    sin_udp[0] = 2; sin_udp[1] = 0;
+    sin_udp[2] = 0xD4; sin_udp[3] = 0x32;
+
+    /* Test 1176: TCP listening socket appears in /proc/net/tcp */
+    fut_printf("[MISC-TEST] Test 1176: AF_INET SOCK_STREAM listen → in /proc/net/tcp\n");
+    {
+        long tcp_fd = sys_socket(2 /*AF_INET*/, 1 /*SOCK_STREAM*/, 0);
+        if (tcp_fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1176: socket(AF_INET, STREAM) → %ld\n", tcp_fd);
+            fut_test_fail(1176); fut_test_fail(1177);
+            goto skip_tcp;
+        }
+        long r = sys_bind((int)tcp_fd, sin_tcp, 16);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1176: bind → %ld\n", r);
+            sys_close((int)tcp_fd);
+            fut_test_fail(1176); fut_test_fail(1177);
+            goto skip_tcp;
+        }
+        r = sys_listen((int)tcp_fd, 1);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1176: listen → %ld\n", r);
+            sys_close((int)tcp_fd);
+            fut_test_fail(1176); fut_test_fail(1177);
+            goto skip_tcp;
+        }
+
+        /* Read /proc/net/tcp and look for the socket entry */
+        int pfd = (int)sys_openat(-100, "/proc/net/tcp", 0, 0);
+        if (pfd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1176: open /proc/net/tcp → %d\n", pfd);
+            sys_close((int)tcp_fd);
+            fut_test_fail(1176); fut_test_fail(1177);
+            goto skip_tcp;
+        }
+        char tbuf[2048];
+        long n = sys_read(pfd, tbuf, sizeof(tbuf) - 1);
+        sys_close(pfd);
+        if (n <= 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1176: read /proc/net/tcp → %ld\n", n);
+            sys_close((int)tcp_fd);
+            fut_test_fail(1176); fut_test_fail(1177);
+            goto skip_tcp;
+        }
+        tbuf[n] = '\0';
+
+        /* Test 1176: file has header + at least one data line */
+        /* Minimum: header + our socket entry (should have "D431") */
+        if (n > 60) {
+            fut_printf("[MISC-TEST] ✓ Test 1176: /proc/net/tcp has content (n=%ld)\n", n);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1176: /proc/net/tcp too short (n=%ld)\n", n);
+            fut_test_fail(1176);
+        }
+
+        /* Test 1177: entry contains hex port D431 */
+        const char *port_str = "D431";
+        if (buf_contains4(tbuf, n, port_str)) {
+            fut_printf("[MISC-TEST] ✓ Test 1177: /proc/net/tcp contains port D431 (54321)\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1177: port D431 not found in /proc/net/tcp\n");
+            fut_printf("[MISC-TEST]   content: %.256s\n", tbuf);
+            fut_test_fail(1177);
+        }
+
+        sys_close((int)tcp_fd);
+    }
+
+skip_tcp:;
+    /* Test 1178: UDP bound socket appears in /proc/net/udp */
+    fut_printf("[MISC-TEST] Test 1178: AF_INET SOCK_DGRAM bind → in /proc/net/udp\n");
+    {
+        long udp_fd = sys_socket(2 /*AF_INET*/, 2 /*SOCK_DGRAM*/, 0);
+        if (udp_fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1178: socket(AF_INET, DGRAM) → %ld\n", udp_fd);
+            fut_test_fail(1178);
+            goto skip_udp;
+        }
+        long r = sys_bind((int)udp_fd, sin_udp, 16);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1178: bind(UDP) → %ld\n", r);
+            sys_close((int)udp_fd);
+            fut_test_fail(1178);
+            goto skip_udp;
+        }
+
+        int pfd = (int)sys_openat(-100, "/proc/net/udp", 0, 0);
+        if (pfd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1178: open /proc/net/udp → %d\n", pfd);
+            sys_close((int)udp_fd);
+            fut_test_fail(1178);
+            goto skip_udp;
+        }
+        char ubuf[2048];
+        long n = sys_read(pfd, ubuf, sizeof(ubuf) - 1);
+        sys_close(pfd);
+        if (n <= 0) { sys_close((int)udp_fd); fut_test_fail(1178); goto skip_udp; }
+        ubuf[n] = '\0';
+
+        const char *uport = "D432";
+        if (buf_contains4(ubuf, n, uport)) {
+            fut_printf("[MISC-TEST] ✓ Test 1178: /proc/net/udp contains port D432 (54322)\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1178: port D432 not found in /proc/net/udp\n");
+            fut_test_fail(1178);
+        }
+        sys_close((int)udp_fd);
+    }
+
+skip_udp:;
+    /* Test 1179: /proc/net/sockstat shows nonzero socket count */
+    fut_printf("[MISC-TEST] Test 1179: /proc/net/sockstat has nonzero socket count\n");
+    {
+        /* Create a socket so count is at least 1 */
+        long fd = sys_socket(2 /*AF_INET*/, 1 /*SOCK_STREAM*/, 0);
+        int pfd = (int)sys_openat(-100, "/proc/net/sockstat", 0, 0);
+        if (pfd < 0) {
+            if (fd >= 0) sys_close((int)fd);
+            fut_printf("[MISC-TEST] ✗ Test 1179: open /proc/net/sockstat → %d\n", pfd);
+            fut_test_fail(1179);
+        } else {
+            char sbuf[512];
+            long n = sys_read(pfd, sbuf, sizeof(sbuf) - 1);
+            sys_close(pfd);
+            if (fd >= 0) sys_close((int)fd);
+            if (n > 0) {
+                sbuf[n] = '\0';
+                /* Look for "sockets: used " followed by a non-zero digit */
+                const char *hdr = "sockets: used ";
+                int found = 0;
+                for (long i = 0; i <= n - 14; i++) {
+                    int m = 1;
+                    for (int j = 0; j < 14; j++)
+                        if (sbuf[i+j] != hdr[j]) { m = 0; break; }
+                    if (m && i + 14 < n && sbuf[i+14] != '0') { found = 1; break; }
+                }
+                if (found) {
+                    fut_printf("[MISC-TEST] ✓ Test 1179: sockstat shows sockets in use\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1179: sockstat shows 0 sockets\n");
+                    fut_printf("[MISC-TEST]   content: %.256s\n", sbuf);
+                    fut_test_fail(1179);
+                }
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1179: read sockstat → %ld\n", n);
+                fut_test_fail(1179);
+            }
+        }
+    }
+
 }
 
 void fut_misc_test_thread(void *arg) {
@@ -39078,6 +39350,8 @@ void fut_misc_test_thread(void *arg) {
     test_prctl_set_vma_anon_name();     /* Tests 1156-1162: PR_SET_VMA_ANON_NAME */
     test_prctl_timerslack_procfs();     /* Tests 1163-1168: PR_SET/GET_TIMERSLACK + /proc/self/timerslack_ns */
     test_proc_syscall();               /* Tests 1169-1172: /proc/<pid>/syscall file */
+    test_proc_locks();                 /* Tests 1173-1175: /proc/locks file */
+    test_proc_net_tcp_udp();           /* Tests 1176-1179: /proc/net/tcp and /proc/net/udp enumeration */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

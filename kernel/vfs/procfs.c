@@ -524,6 +524,33 @@ static void pb_hex2(struct pbuf *b, uint8_t v) {
     pb_char(b, hex[v & 0xf]);
 }
 
+/* Uppercase hex helpers for /proc/net/tcp and /proc/net/udp */
+static void pb_hex8U(struct pbuf *b, uint32_t v) {
+    static const char hex[] = "0123456789ABCDEF";
+    for (int i = 28; i >= 0; i -= 4)
+        pb_char(b, hex[(v >> i) & 0xf]);
+}
+static void pb_hex4U(struct pbuf *b, uint16_t v) {
+    static const char hex[] = "0123456789ABCDEF";
+    for (int i = 12; i >= 0; i -= 4)
+        pb_char(b, hex[(v >> i) & 0xf]);
+}
+static void pb_hex2U(struct pbuf *b, uint8_t v) {
+    static const char hex[] = "0123456789ABCDEF";
+    pb_char(b, hex[(v >> 4) & 0xf]);
+    pb_char(b, hex[v & 0xf]);
+}
+/* Right-aligned decimal in fixed width (pads with spaces on the left) */
+static void pb_d_padded(struct pbuf *b, uint64_t v, int width) {
+    char tmp[20]; int n = 0;
+    uint64_t w = v;
+    if (w == 0) { tmp[n++] = '0'; }
+    else { do { tmp[n++] = '0' + (int)(w % 10); w /= 10; } while (w); }
+    for (int i = 0, j = n - 1; i < j; i++, j--) { char t = tmp[i]; tmp[i] = tmp[j]; tmp[j] = t; }
+    for (int i = n; i < width; i++) pb_char(b, ' ');
+    for (int i = 0; i < n; i++) pb_char(b, tmp[i]);
+}
+
 /* ============================================================
  *   Forward Declarations
  * ============================================================ */
@@ -1941,6 +1968,78 @@ static size_t gen_vmstat(char *buf, size_t cap) {
 }
 
 /* ============================================================
+ *   /proc/net/tcp and /proc/net/udp — AF_INET socket tables
+ * ============================================================ */
+
+/* Emit one AF_INET SOCK_STREAM socket row in /proc/net/tcp format.
+ * Format matches Linux: sl local_address rem_address st tx:rx_q tr:when uid timeout inode
+ * IPv4 address printed as raw uint32 (LE byte-order = reversed octets, matching Linux). */
+struct net_tcp_ctx { struct pbuf *b; int slot; };
+static void net_tcp_emit_one(const fut_socket_t *s, void *arg) {
+    struct net_tcp_ctx *ctx = (struct net_tcp_ctx *)arg;
+    if (s->address_family != AF_INET || s->socket_type != SOCK_STREAM)
+        return;
+    struct pbuf *b = ctx->b;
+    int sl = ctx->slot++;
+
+    /* TCP state mapping */
+    uint8_t tcp_state;
+    switch (s->state) {
+    case FUT_SOCK_CONNECTED:  tcp_state = 0x01; break;  /* ESTABLISHED */
+    case FUT_SOCK_LISTENING:  tcp_state = 0x0A; break;  /* LISTEN */
+    case FUT_SOCK_CONNECTING: tcp_state = 0x02; break;  /* SYN_SENT */
+    default:                  tcp_state = 0x07; break;  /* CLOSE */
+    }
+
+    /* inet_port is stored in network byte order; swap to host order for display */
+    uint16_t lport = (uint16_t)((s->inet_port >> 8) | ((s->inet_port & 0xFF) << 8));
+
+    pb_d_padded(b, (uint64_t)sl, 4);
+    pb_str(b, ": ");
+    /* local address: raw uint32 (prints reversed octets on LE, matching Linux format) */
+    pb_hex8U(b, s->inet_addr);
+    pb_char(b, ':');
+    pb_hex4U(b, lport);
+    /* remote address: unconnected → 00000000:0000 */
+    pb_str(b, " 00000000:0000 ");
+    pb_hex2U(b, tcp_state);
+    /* tx_queue:rx_queue, timer, uid, timeout, inode */
+    pb_str(b, " 00000000:00000000 00:00000000 00000000     0        0 ");
+    pb_u64(b, (uint64_t)s->socket_id);
+    pb_str(b, " 1 0000000000000000 100 0 0 10 0\n");
+}
+
+/* Emit one AF_INET SOCK_DGRAM socket row in /proc/net/udp format. */
+struct net_udp_ctx { struct pbuf *b; int slot; };
+static void net_udp_emit_one(const fut_socket_t *s, void *arg) {
+    struct net_udp_ctx *ctx = (struct net_udp_ctx *)arg;
+    if (s->address_family != AF_INET || s->socket_type != SOCK_DGRAM)
+        return;
+    struct pbuf *b = ctx->b;
+    int sl = ctx->slot++;
+
+    uint16_t lport = (uint16_t)((s->inet_port >> 8) | ((s->inet_port & 0xFF) << 8));
+
+    pb_d_padded(b, (uint64_t)sl, 4);
+    pb_str(b, ": ");
+    pb_hex8U(b, s->inet_addr);
+    pb_char(b, ':');
+    pb_hex4U(b, lport);
+    pb_str(b, " 00000000:0000 07 00000000:00000000 00:00000000 00000000     0        0 ");
+    pb_u64(b, (uint64_t)s->socket_id);
+    pb_str(b, " 1 0000000000000000 100 0 0 10 0\n");
+}
+
+/* Count sockets by type for /proc/net/sockstat */
+struct sockstat_ctx { int total; int tcp; int udp; };
+static void sockstat_count_one(const fut_socket_t *s, void *arg) {
+    struct sockstat_ctx *ctx = (struct sockstat_ctx *)arg;
+    ctx->total++;
+    if (s->address_family == AF_INET && s->socket_type == SOCK_STREAM) ctx->tcp++;
+    else if (s->address_family == AF_INET && s->socket_type == SOCK_DGRAM) ctx->udp++;
+}
+
+/* ============================================================
  *   /proc/net/ file generators
  * ============================================================ */
 static size_t gen_net_dev(char *buf, size_t cap) {
@@ -1965,6 +2064,17 @@ static size_t gen_net_tcp(char *buf, size_t cap) {
     struct pbuf b = { buf, 0, cap };
     pb_str(&b, "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt"
                "   uid  timeout inode\n");
+    struct net_tcp_ctx ctx = { &b, 0 };
+    fut_socket_foreach(net_tcp_emit_one, &ctx);
+    return b.pos;
+}
+
+static size_t gen_net_udp(char *buf, size_t cap) {
+    struct pbuf b = { buf, 0, cap };
+    pb_str(&b, "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when"
+               " retrnsmt   uid  timeout inode ref pointer drops\n");
+    struct net_udp_ctx ctx = { &b, 0 };
+    fut_socket_foreach(net_udp_emit_one, &ctx);
     return b.pos;
 }
 
@@ -2132,9 +2242,13 @@ static size_t gen_net_sockstat(char *buf, size_t cap) {
     /* /proc/net/sockstat — socket usage statistics.
      * Read by ss, netstat, systemd, and glibc resolver. */
     struct pbuf b = { buf, 0, cap };
-    pb_str(&b, "sockets: used 0\n");
-    pb_str(&b, "TCP: inuse 0 orphan 0 tw 0 alloc 0 mem 0\n");
-    pb_str(&b, "UDP: inuse 0 mem 0\n");
+    struct sockstat_ctx sc = { 0, 0, 0 };
+    fut_socket_foreach(sockstat_count_one, &sc);
+    pb_str(&b, "sockets: used "); pb_u64(&b, (uint64_t)sc.total); pb_char(&b, '\n');
+    pb_str(&b, "TCP: inuse "); pb_u64(&b, (uint64_t)sc.tcp);
+    pb_str(&b, " orphan 0 tw 0 alloc "); pb_u64(&b, (uint64_t)sc.tcp);
+    pb_str(&b, " mem 0\n");
+    pb_str(&b, "UDP: inuse "); pb_u64(&b, (uint64_t)sc.udp); pb_str(&b, " mem 0\n");
     pb_str(&b, "UDPLITE: inuse 0\n");
     pb_str(&b, "RAW: inuse 0\n");
     pb_str(&b, "FRAG: inuse 0 memory 0\n");
@@ -2458,8 +2572,10 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             total = gen_net_route(tmp, GEN_BUF);
             break;
         case PROC_NET_TCP:
-        case PROC_NET_UDP:
             total = gen_net_tcp(tmp, GEN_BUF);
+            break;
+        case PROC_NET_UDP:
+            total = gen_net_udp(tmp, GEN_BUF);
             break;
         case PROC_NET_TCP6:
         case PROC_NET_UDP6:

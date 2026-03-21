@@ -364,6 +364,9 @@
 #define SYS_getgroups        115  /* Linux: 115 */
 #define SYS_setgroups        116  /* Linux: 116 */
 #define SYS_utimes           235  /* Linux: 235 */
+#define SYS_mbind            237  /* Linux: 237 */
+#define SYS_set_mempolicy    238  /* Linux: 238 */
+#define SYS_get_mempolicy    239  /* Linux: 239 */
 #define SYS_vfork            58   /* Linux: 58 */
 #define SYS_socketpair       320  /* Linux: 53 — Futura: 320 (53 used by connect) */
 
@@ -1983,6 +1986,37 @@ static int64_t sys_utime_handler(uint64_t pathname, uint64_t times, uint64_t arg
     (void)arg3; (void)arg4; (void)arg5; (void)arg6;
     extern long sys_utime(const char *pathname, const void *times);
     return sys_utime((const char *)pathname, (const void *)times);
+}
+
+/* NUMA memory policy — single-node stubs (237-239) */
+static int64_t sys_mbind_handler(uint64_t addr, uint64_t len, uint64_t mode,
+                                  uint64_t nodemask, uint64_t maxnode, uint64_t flags) {
+    extern long sys_mbind(unsigned long addr, unsigned long len, int mode,
+                          const unsigned long *nodemask, unsigned long maxnode,
+                          unsigned int flags);
+    return sys_mbind((unsigned long)addr, (unsigned long)len, (int)mode,
+                     (const unsigned long *)nodemask, (unsigned long)maxnode,
+                     (unsigned int)flags);
+}
+static int64_t sys_set_mempolicy_handler(uint64_t mode, uint64_t nodemask,
+                                          uint64_t maxnode, uint64_t arg4,
+                                          uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_set_mempolicy(int mode, const unsigned long *nodemask,
+                                  unsigned long maxnode);
+    return sys_set_mempolicy((int)mode, (const unsigned long *)nodemask,
+                             (unsigned long)maxnode);
+}
+static int64_t sys_get_mempolicy_handler(uint64_t mode_out, uint64_t nodemask_out,
+                                          uint64_t maxnode, uint64_t addr,
+                                          uint64_t flags, uint64_t arg6) {
+    (void)arg6;
+    extern long sys_get_mempolicy(int *mode_out, unsigned long *nodemask_out,
+                                   unsigned long maxnode, unsigned long addr,
+                                   unsigned int flags);
+    return sys_get_mempolicy((int *)mode_out, (unsigned long *)nodemask_out,
+                             (unsigned long)maxnode, (unsigned long)addr,
+                             (unsigned int)flags);
 }
 
 /* Legacy getdents / swap / ioport handlers */
@@ -3904,6 +3938,10 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_setgroups]         = sys_setgroups_handler,
     [SYS_utimes]            = sys_utimes_handler,
     [SYS_utime]             = sys_utime_handler,
+    /* NUMA memory policy — single-node stubs */
+    [SYS_mbind]             = sys_mbind_handler,
+    [SYS_set_mempolicy]     = sys_set_mempolicy_handler,
+    [SYS_get_mempolicy]     = sys_get_mempolicy_handler,
     /* Legacy getdents / swap / ioport */
     [SYS_getdents]          = sys_getdents_handler,
     [SYS_swapon]            = sys_swapon_handler,

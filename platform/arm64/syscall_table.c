@@ -3323,6 +3323,10 @@ struct syscall_entry {
 #define __NR_munlockall     231
 #define __NR_mincore        232
 #define __NR_madvise        233
+/* NUMA memory policy (Linux aarch64: 235=mbind, 236=get_mempolicy, 237=set_mempolicy) */
+#define __NR_mbind          235
+#define __NR_get_mempolicy  236
+#define __NR_set_mempolicy  237
 #define __NR_getrandom      278
 #define __NR_syslog     116
 #define __NR_sched_setaffinity  122
@@ -3829,6 +3833,23 @@ static void arm64_syscall_table_init(void) {
     syscall_table[__NR_mincore].name = "mincore";
     syscall_table[__NR_madvise].handler = (syscall_fn_t)sys_madvise_wrapper;
     syscall_table[__NR_madvise].name = "madvise";
+    /* NUMA memory policy — single-node stubs */
+    {
+        extern long sys_mbind(unsigned long addr, unsigned long len, int mode,
+                              const unsigned long *nodemask, unsigned long maxnode,
+                              unsigned int flags);
+        extern long sys_get_mempolicy(int *mode_out, unsigned long *nodemask_out,
+                                       unsigned long maxnode, unsigned long addr,
+                                       unsigned int flags);
+        extern long sys_set_mempolicy(int mode, const unsigned long *nodemask,
+                                      unsigned long maxnode);
+        syscall_table[__NR_mbind].handler = (syscall_fn_t)sys_mbind;
+        syscall_table[__NR_mbind].name = "mbind";
+        syscall_table[__NR_get_mempolicy].handler = (syscall_fn_t)sys_get_mempolicy;
+        syscall_table[__NR_get_mempolicy].name = "get_mempolicy";
+        syscall_table[__NR_set_mempolicy].handler = (syscall_fn_t)sys_set_mempolicy;
+        syscall_table[__NR_set_mempolicy].name = "set_mempolicy";
+    }
     syscall_table[__NR_wait4].handler = (syscall_fn_t)sys_waitpid_wrapper;
     syscall_table[__NR_wait4].name = "wait4/waitpid";
     syscall_table[__NR_prlimit64].handler = (syscall_fn_t)sys_prlimit64_wrapper;

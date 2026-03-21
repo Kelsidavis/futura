@@ -38727,6 +38727,68 @@ skip_udp:;
 
 }
 
+/* Tests 1180-1183: NUMA memory policy syscalls (single-node stubs) */
+static void test_mempolicy(void) {
+    extern long sys_mbind(unsigned long addr, unsigned long len, int mode,
+                          const unsigned long *nodemask, unsigned long maxnode,
+                          unsigned int flags);
+    extern long sys_get_mempolicy(int *mode_out, unsigned long *nodemask_out,
+                                   unsigned long maxnode, unsigned long addr,
+                                   unsigned int flags);
+    extern long sys_set_mempolicy(int mode, const unsigned long *nodemask,
+                                  unsigned long maxnode);
+    long r;
+
+    /* Test 1180: set_mempolicy(MPOL_DEFAULT=0) → 0 */
+    fut_printf("[MISC-TEST] Test 1180: set_mempolicy(MPOL_DEFAULT) → 0\n");
+    r = sys_set_mempolicy(0 /*MPOL_DEFAULT*/, NULL, 0);
+    if (r == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 1180: set_mempolicy(MPOL_DEFAULT) = 0\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1180: set_mempolicy returned %ld\n", r);
+        fut_test_fail(1180);
+    }
+
+    /* Test 1181: set_mempolicy(invalid mode=99) → -EINVAL */
+    fut_printf("[MISC-TEST] Test 1181: set_mempolicy(99) → -EINVAL\n");
+    r = sys_set_mempolicy(99, NULL, 0);
+    if (r == -22 /* -EINVAL */) {
+        fut_printf("[MISC-TEST] ✓ Test 1181: set_mempolicy(bad mode) → EINVAL\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1181: expected -EINVAL, got %ld\n", r);
+        fut_test_fail(1181);
+    }
+
+    /* Test 1182: get_mempolicy(&mode, &nodemask, 64, 0, 0) → 0; mode=MPOL_DEFAULT */
+    fut_printf("[MISC-TEST] Test 1182: get_mempolicy → mode=0 (MPOL_DEFAULT)\n");
+    {
+        int mode = -1;
+        unsigned long nodemask = (unsigned long)-1;
+        r = sys_get_mempolicy(&mode, &nodemask, 64, 0, 0);
+        if (r == 0 && mode == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1182: get_mempolicy mode=%d nodemask=0x%lx\n",
+                       mode, nodemask);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1182: r=%ld mode=%d\n", r, mode);
+            fut_test_fail(1182);
+        }
+    }
+
+    /* Test 1183: mbind(addr=0, len=0, MPOL_DEFAULT, nodemask=NULL, maxnode=0) → 0 */
+    fut_printf("[MISC-TEST] Test 1183: mbind(MPOL_DEFAULT) → 0\n");
+    r = sys_mbind(0, 0, 0 /*MPOL_DEFAULT*/, NULL, 0, 0);
+    if (r == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 1183: mbind returned 0\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1183: mbind returned %ld\n", r);
+        fut_test_fail(1183);
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -39352,6 +39414,7 @@ void fut_misc_test_thread(void *arg) {
     test_proc_syscall();               /* Tests 1169-1172: /proc/<pid>/syscall file */
     test_proc_locks();                 /* Tests 1173-1175: /proc/locks file */
     test_proc_net_tcp_udp();           /* Tests 1176-1179: /proc/net/tcp and /proc/net/udp enumeration */
+    test_mempolicy();                  /* Tests 1180-1183: mbind/get_mempolicy/set_mempolicy single-node */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

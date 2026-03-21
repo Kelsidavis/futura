@@ -400,10 +400,25 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
         return -EAFNOSUPPORT;
     }
 
-    /* AF_INET/AF_INET6: no real TCP/IP stack — return ECONNREFUSED (same as no server listening) */
-    if (sa_family == AF_INET || sa_family == AF_INET6) {
-        connect_printf("[CONNECT] connect(sockfd=%d, family=%u [%s]) -> ECONNREFUSED (no TCP/IP stack)\n",
-                   local_sockfd, sa_family, family_name);
+    /* AF_INET: wire to fut_socket_connect_inet() */
+    if (sa_family == AF_INET) {
+        if (local_addrlen < 16) return -EINVAL;  /* sizeof(sockaddr_in) = 16 */
+        struct { uint16_t sin_family; uint16_t sin_port; uint32_t sin_addr; uint8_t sin_zero[8]; } sin = {0};
+        if (connect_copy_from_user(&sin, local_addr, 16) != 0) return -EFAULT;
+
+        extern fut_socket_t *get_socket_from_fd(int fd);
+        fut_socket_t *inet_sock = get_socket_from_fd(local_sockfd);
+        if (!inet_sock) return -EBADF;
+
+        int ret = fut_socket_connect_inet(inet_sock, sin.sin_addr, sin.sin_port);
+        connect_printf("[CONNECT] connect(sockfd=%d, family=AF_INET, port=%u) -> %d\n",
+                   local_sockfd, (unsigned)((sin.sin_port >> 8) | ((sin.sin_port & 0xFF) << 8)), ret);
+        return ret;
+    }
+
+    /* AF_INET6: not yet wired */
+    if (sa_family == AF_INET6) {
+        connect_printf("[CONNECT] connect(sockfd=%d, family=AF_INET6) -> ECONNREFUSED\n", local_sockfd);
         return -ECONNREFUSED;
     }
 

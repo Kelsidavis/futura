@@ -533,8 +533,22 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
                 fut_free(kbuf);
                 return -EFAULT;
             }
-            if (dest_sun.sun_family == 2 /* AF_INET */ || dest_sun.sun_family == 10 /* AF_INET6 */) {
-                /* No real TCP/IP stack — network is unreachable */
+            if (dest_sun.sun_family == 2 /* AF_INET */) {
+                /* AF_INET DGRAM: route to locally bound AF_INET socket */
+                if (local_addrlen < 8) { fut_free(kbuf); return -EINVAL; }
+                struct { uint16_t sin_family; uint16_t sin_port; uint32_t sin_addr; } sin;
+                if (sendto_copy_from_user(&sin, local_dest_addr, 8) != 0) {
+                    fut_free(kbuf);
+                    return -EFAULT;
+                }
+                ssize_t ret = fut_socket_sendto_inet_dgram(
+                    sin.sin_addr, sin.sin_port,
+                    src_sock->inet_addr, src_sock->inet_port,
+                    kbuf, local_len);
+                fut_free(kbuf);
+                return ret;
+            }
+            if (dest_sun.sun_family == 10 /* AF_INET6 */) {
                 fut_free(kbuf);
                 return -ENETUNREACH;
             }
@@ -585,6 +599,19 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
             }
             if (dgsock->dgram_peer_path_len > 0) {
                 /* Connected DGRAM: deliver to stored peer */
+                if (dgsock->address_family == AF_INET && dgsock->dgram_peer_path_len == 6) {
+                    /* AF_INET connected DGRAM: peer stored as binary in dgram_peer_path */
+                    uint32_t peer_addr;
+                    uint16_t peer_port;
+                    __builtin_memcpy(&peer_addr, &dgsock->dgram_peer_path[0], 4);
+                    __builtin_memcpy(&peer_port, &dgsock->dgram_peer_path[4], 2);
+                    ssize_t ret = fut_socket_sendto_inet_dgram(
+                        peer_addr, peer_port,
+                        dgsock->inet_addr, dgsock->inet_port,
+                        kbuf, local_len);
+                    fut_free(kbuf);
+                    return ret;
+                }
                 const char *sender_path = "";
                 size_t sender_path_len = 0;
                 if (dgsock->bound_path && dgsock->bound_path_len > 0) {

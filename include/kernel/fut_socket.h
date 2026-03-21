@@ -49,6 +49,14 @@ typedef uint32_t socklen_t;
 #define AF_NETLINK  16  /* Kernel user interface (netlink) */
 #endif
 
+/* IPv4 address constants */
+#ifndef INADDR_ANY
+#define INADDR_ANY       0x00000000U
+#endif
+#ifndef INADDR_LOOPBACK
+#define INADDR_LOOPBACK  0x7f000001U  /* 127.0.0.1 in host byte order */
+#endif
+
 /* ============================================================
  *   Socket Types
  * ============================================================ */
@@ -289,6 +297,9 @@ typedef struct fut_dgram_entry {
     uint16_t sender_path_len;   /* Length including leading NUL for abstract */
     uint16_t data_len;          /* Payload length */
     uint8_t  data[FUT_DGRAM_DATA_MAX];
+    /* AF_INET sender address (used when sender_path_len == 0 && sender_inet_port != 0) */
+    uint32_t sender_inet_addr;  /* IPv4 address in network byte order */
+    uint16_t sender_inet_port;  /* Port in network byte order */
 } fut_dgram_entry_t;
 
 /**
@@ -426,6 +437,9 @@ typedef struct fut_socket {
 
     /* Pending error (SO_ERROR): set by async failures, read-and-cleared by getsockopt */
     int pending_error;
+
+    /* AF_INET tcpip stack linkage (for external network I/O via tcpip.c) */
+    void *inet_tcpip;   /* Points to tcpip_socket_t when connected to real network; NULL for loopback */
 
     /* Refcounting and lifecycle */
     uint64_t refcount;                      /* Reference count */
@@ -629,6 +643,45 @@ ssize_t fut_socket_recvfrom_dgram(fut_socket_t *socket, void *buf, size_t len,
 ssize_t fut_socket_peek_dgram(fut_socket_t *socket, void *buf, size_t len,
                                char *sender_path_out, uint16_t *sender_path_len_out,
                                size_t *actual_datagram_len_out);
+
+/* ============================================================
+ *   AF_INET Socket Layer API (loopback + external)
+ * ============================================================ */
+
+/**
+ * Find AF_INET listening socket by address and port.
+ * Matches port exactly; addr matches if either side is INADDR_ANY or equal.
+ * Returns socket with incremented refcount, or NULL.
+ */
+fut_socket_t *fut_socket_find_inet_listener(uint32_t addr, uint16_t port);
+
+/**
+ * Bind AF_INET socket to address:port.
+ * Checks for port conflicts, allocates dgram_queue for SOCK_DGRAM.
+ * addr/port in network byte order.
+ */
+int fut_socket_bind_inet(fut_socket_t *socket, uint32_t addr, uint16_t port);
+
+/**
+ * Connect AF_INET socket to listener by address:port (loopback path).
+ * Queues connection with matching listener, returns immediately.
+ * addr/port in network byte order.
+ */
+int fut_socket_connect_inet(fut_socket_t *socket, uint32_t addr, uint16_t port);
+
+/**
+ * Find AF_INET bound socket by address:port (any state: BOUND or LISTENING).
+ * Used for UDP datagram delivery. Returns socket with incremented refcount.
+ */
+fut_socket_t *fut_socket_find_inet_bound(uint32_t addr, uint16_t port);
+
+/**
+ * Send datagram to AF_INET socket bound at dest addr:port.
+ * Routes to the destination socket's dgram_queue.
+ */
+ssize_t fut_socket_sendto_inet_dgram(uint32_t dest_addr, uint16_t dest_port,
+                                      uint32_t sender_addr, uint16_t sender_port,
+                                      const void *data, size_t data_len);
 
 /**
  * fut_socket_foreach - Iterate over all live (non-closed) sockets.

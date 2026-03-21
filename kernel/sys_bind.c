@@ -404,7 +404,7 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
         return -EINVAL;
     }
 
-    /* Phase 3: Handle AF_INET (IPv4) addresses */
+    /* AF_INET (IPv4) bind - wire to fut_socket_bind_inet() */
     if (sa_family == AF_INET) {
         sockaddr_in_t inet_addr = {0};
         if (bind_copy_from_user(&inet_addr, local_addr, sizeof(inet_addr)) != 0) {
@@ -413,28 +413,24 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
             return -EFAULT;
         }
 
-        /* Phase 3: Extract port and categorize */
-        uint16_t port = (inet_addr.sin_port >> 8) | ((inet_addr.sin_port & 0xFF) << 8);  /* Network to host byte order */
+        uint16_t port = (inet_addr.sin_port >> 8) | ((inet_addr.sin_port & 0xFF) << 8);  /* ntohs */
         const char *port_cat = categorize_port(port);
 
         /* Enforce CAP_NET_BIND_SERVICE for privileged ports */
-        if (port < 1024 && !has_cap_net_bind_service(task)) {
+        if (port < 1024 && port != 0 && !has_cap_net_bind_service(task)) {
             bind_printf("[BIND] bind(sockfd=%d, family=%s, port=%u [%s]) -> EACCES "
                        "(privileged port requires CAP_NET_BIND_SERVICE, uid=%u)\n",
                        local_sockfd, family_name, port, port_cat, task->uid);
             return -EACCES;
         }
 
-        /* Store the bound address in the socket for getsockname() */
         fut_socket_t *inet_socket = get_socket_from_fd(local_sockfd);
-        if (inet_socket) {
-            inet_socket->inet_addr = inet_addr.sin_addr;
-            inet_socket->inet_port = inet_addr.sin_port;
-            inet_socket->state = FUT_SOCK_BOUND;
-        }
-        bind_printf("[BIND] bind(sockfd=%d, family=%s, port=%u [%s], addrlen=%u) -> 0 (AF_INET stub)\n",
-                   local_sockfd, family_name, port, port_cat, local_addrlen);
-        return 0;
+        if (!inet_socket) return -EBADF;
+
+        int ret = fut_socket_bind_inet(inet_socket, inet_addr.sin_addr, inet_addr.sin_port);
+        bind_printf("[BIND] bind(sockfd=%d, family=%s, port=%u [%s], addrlen=%u) -> %d\n",
+                   local_sockfd, family_name, port, port_cat, local_addrlen, ret);
+        return ret;
     }
 
     /* Phase 3: Handle AF_INET6 (IPv6) addresses */

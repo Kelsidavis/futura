@@ -1844,6 +1844,13 @@ ssize_t fut_socket_recvfrom_dgram(fut_socket_t *socket, void *buf, size_t len,
         if (entry->sender_path_len > 0)
             memcpy(sender_path_out, entry->sender_path, entry->sender_path_len);
         *sender_path_len_out = entry->sender_path_len;
+        /* For AF_INET entries, pack inet addr:port into sender_path_out[0..5]
+         * and set sender_path_len to 0xFFFF as sentinel */
+        if (entry->sender_path_len == 0 && entry->sender_inet_port != 0) {
+            __builtin_memcpy(&sender_path_out[0], &entry->sender_inet_addr, 4);
+            __builtin_memcpy(&sender_path_out[4], &entry->sender_inet_port, 2);
+            *sender_path_len_out = 0xFFFF;  /* sentinel: AF_INET sender */
+        }
     }
 
     if (actual_datagram_len_out)
@@ -1892,6 +1899,11 @@ ssize_t fut_socket_peek_dgram(fut_socket_t *socket, void *buf, size_t len,
         if (entry->sender_path_len > 0)
             memcpy(sender_path_out, entry->sender_path, entry->sender_path_len);
         *sender_path_len_out = entry->sender_path_len;
+        if (entry->sender_path_len == 0 && entry->sender_inet_port != 0) {
+            __builtin_memcpy(&sender_path_out[0], &entry->sender_inet_addr, 4);
+            __builtin_memcpy(&sender_path_out[4], &entry->sender_inet_port, 2);
+            *sender_path_len_out = 0xFFFF;
+        }
     }
     if (actual_datagram_len_out)
         *actual_datagram_len_out = dgram_len;
@@ -1900,4 +1912,281 @@ ssize_t fut_socket_peek_dgram(fut_socket_t *socket, void *buf, size_t len,
     fut_spinlock_release(&dq->lock);
 
     return (ssize_t)copy_len;
+}
+
+/* ============================================================
+ *   AF_INET Socket Layer (loopback path)
+ * ============================================================ */
+
+/**
+ * Match AF_INET addresses with wildcard (INADDR_ANY = 0) support.
+ * Both addr values are in network byte order.
+ */
+static bool inet_addr_match(uint32_t a, uint32_t b) {
+    if (a == 0 || b == 0) return true;  /* INADDR_ANY matches anything */
+    return a == b;
+}
+
+/**
+ * Find AF_INET listening socket by address:port.
+ */
+fut_socket_t *fut_socket_find_inet_listener(uint32_t addr, uint16_t port) {
+    if (port == 0) return NULL;
+
+    fut_spinlock_acquire(&socket_lock);
+    for (int i = 0; i < FUT_SOCKET_MAX; i++) {
+        fut_socket_t *s = socket_registry[i];
+        if (!s || (uintptr_t)(void *)s < 0xFFFF800000000000ULL) {
+            if (s) socket_registry[i] = NULL;
+            continue;
+        }
+        if (s->magic == FUT_SOCKET_MAGIC &&
+            s->address_family == AF_INET &&
+            s->state == FUT_SOCK_LISTENING &&
+            s->inet_port == port &&
+            inet_addr_match(s->inet_addr, addr)) {
+            if (!fut_socket_ref(s)) {
+                socket_registry[i] = NULL;
+                continue;
+            }
+            fut_spinlock_release(&socket_lock);
+            return s;
+        }
+    }
+    fut_spinlock_release(&socket_lock);
+    return NULL;
+}
+
+/**
+ * Find AF_INET bound socket (BOUND or LISTENING) by address:port.
+ * Used for UDP datagram delivery.
+ */
+fut_socket_t *fut_socket_find_inet_bound(uint32_t addr, uint16_t port) {
+    if (port == 0) return NULL;
+
+    fut_spinlock_acquire(&socket_lock);
+    for (int i = 0; i < FUT_SOCKET_MAX; i++) {
+        fut_socket_t *s = socket_registry[i];
+        if (!s || (uintptr_t)(void *)s < 0xFFFF800000000000ULL) {
+            if (s) socket_registry[i] = NULL;
+            continue;
+        }
+        if (s->magic == FUT_SOCKET_MAGIC &&
+            s->address_family == AF_INET &&
+            (s->state == FUT_SOCK_BOUND || s->state == FUT_SOCK_LISTENING) &&
+            s->inet_port == port &&
+            inet_addr_match(s->inet_addr, addr)) {
+            if (!fut_socket_ref(s)) {
+                socket_registry[i] = NULL;
+                continue;
+            }
+            fut_spinlock_release(&socket_lock);
+            return s;
+        }
+    }
+    fut_spinlock_release(&socket_lock);
+    return NULL;
+}
+
+/**
+ * Bind AF_INET socket to address:port.
+ */
+int fut_socket_bind_inet(fut_socket_t *socket, uint32_t addr, uint16_t port) {
+    if (!socket || socket->state != FUT_SOCK_CREATED)
+        return -EINVAL;
+    if (socket->address_family != AF_INET)
+        return -EINVAL;
+
+    /* Auto-assign ephemeral port if port == 0 */
+    if (port == 0) {
+        static uint16_t next_ephemeral = 49152;
+        for (int attempt = 0; attempt < 1000; attempt++) {
+            uint16_t try_port_host = __atomic_fetch_add(&next_ephemeral, 1, __ATOMIC_RELAXED);
+            if (try_port_host > 60999) {
+                __atomic_store_n(&next_ephemeral, 49152, __ATOMIC_RELAXED);
+                try_port_host = 49152;
+            }
+            /* Convert to network byte order for storage */
+            uint16_t try_port_net = (uint16_t)((try_port_host >> 8) | (try_port_host << 8));
+            fut_socket_t *existing = fut_socket_find_inet_bound(addr, try_port_net);
+            if (!existing) {
+                port = try_port_net;
+                break;
+            }
+            fut_socket_unref(existing);
+        }
+        if (port == 0) return -EADDRINUSE;
+    }
+
+    /* Check for address conflicts (unless SO_REUSEADDR/SO_REUSEPORT) */
+    if (!(socket->so_flags & (FUT_SO_F_REUSEADDR | FUT_SO_F_REUSEPORT))) {
+        fut_socket_t *existing = fut_socket_find_inet_bound(addr, port);
+        if (existing) {
+            fut_socket_unref(existing);
+            return -EADDRINUSE;
+        }
+    }
+
+    socket->inet_addr = addr;
+    socket->inet_port = port;
+
+    /* Allocate dgram_queue for SOCK_DGRAM sockets */
+    if (socket->socket_type == SOCK_DGRAM && !socket->dgram_queue) {
+        fut_dgram_queue_t *dq = fut_malloc(sizeof(fut_dgram_queue_t));
+        if (!dq) return -ENOMEM;
+        memset(dq, 0, sizeof(*dq));
+        fut_spinlock_init(&dq->lock);
+        dq->recv_waitq = fut_malloc(sizeof(fut_waitq_t));
+        if (!dq->recv_waitq) {
+            fut_free(dq);
+            return -ENOMEM;
+        }
+        fut_waitq_init(dq->recv_waitq);
+        socket->dgram_queue = dq;
+    }
+
+    socket->state = FUT_SOCK_BOUND;
+    SOCKET_LOG("[SOCKET] AF_INET socket %u bound to port %u\n",
+               socket->socket_id, port);
+    return 0;
+}
+
+/**
+ * Connect AF_INET socket (loopback path).
+ * For SOCK_STREAM: finds listener, queues connection, returns immediately.
+ * For SOCK_DGRAM: sets default peer address.
+ */
+int fut_socket_connect_inet(fut_socket_t *socket, uint32_t addr, uint16_t port) {
+    if (!socket) return -EINVAL;
+
+    /* Store remote address for getsockname/getpeername */
+    socket->inet_addr = socket->inet_addr;  /* keep local addr */
+
+    /* SOCK_DGRAM: just set default destination */
+    if (socket->socket_type == SOCK_DGRAM) {
+        /* Auto-bind if not already bound */
+        if (socket->state == FUT_SOCK_CREATED) {
+            int rc = fut_socket_bind_inet(socket, 0, 0);
+            if (rc < 0) return rc;
+        }
+        /* Store remote peer for connected send() */
+        socket->dgram_peer_path[0] = '\0';
+        socket->dgram_peer_path_len = 0;
+        /* Store inet peer in socket fields that getpeername can return */
+        /* We'll use a convention: for AF_INET DGRAM, remote is in inet_addr fields
+         * but we need separate fields... reuse the existing pair mechanism instead.
+         * For now, store in the existing inet_addr/inet_port fields as "remote" */
+        /* Actually, inet_addr/inet_port are the LOCAL bound address.
+         * We need separate fields for the remote peer. Hack: store in dgram_peer_path
+         * as binary data since it's not used for AF_INET path lookup. */
+        __builtin_memcpy(&socket->dgram_peer_path[0], &addr, 4);
+        __builtin_memcpy(&socket->dgram_peer_path[4], &port, 2);
+        socket->dgram_peer_path_len = 6;  /* sentinel: 6 bytes = AF_INET peer */
+        socket->state = FUT_SOCK_CONNECTED;
+        return 0;
+    }
+
+    /* SOCK_STREAM: find listener and queue connection */
+    if (socket->state == FUT_SOCK_CONNECTED) return -EISCONN;
+    if (socket->state == FUT_SOCK_LISTENING) return -EINVAL;
+    if (socket->state == FUT_SOCK_CONNECTING) return -EALREADY;
+
+    /* Auto-bind to ephemeral port if not already bound */
+    if (socket->state == FUT_SOCK_CREATED) {
+        int rc = fut_socket_bind_inet(socket, 0, 0);
+        if (rc < 0) return rc;
+    }
+
+    fut_socket_t *listener = fut_socket_find_inet_listener(addr, port);
+    if (!listener) return -ECONNREFUSED;
+
+    fut_socket_listener_t *queue = listener->listener;
+    if ((int)queue->queue_count >= queue->backlog) {
+        fut_socket_unref(listener);
+        return -ECONNREFUSED;
+    }
+
+    /* Allocate connect wait queue if needed */
+    if (!socket->connect_waitq) {
+        socket->connect_waitq = fut_malloc(sizeof(fut_waitq_t));
+        if (!socket->connect_waitq) {
+            fut_socket_unref(listener);
+            return -ENOMEM;
+        }
+        fut_waitq_init(socket->connect_waitq);
+    }
+
+    /* Queue pending connection */
+    uint32_t tail = (queue->queue_head + queue->queue_count) % FUT_SOCKET_QUEUE_MAX;
+    queue->queue[tail].peer_socket = socket;
+    queue->queue[tail].flags = 0;
+    queue->queue[tail].timestamp_ns = fut_get_ticks() * 10000000ULL;
+
+    {
+        fut_task_t *ct = fut_task_current();
+        queue->queue[tail].peer_pid = ct ? ct->pid : 0;
+        queue->queue[tail].peer_uid = ct ? ct->uid : 0;
+        queue->queue[tail].peer_gid = ct ? ct->gid : 0;
+    }
+    queue->queue_count++;
+
+    socket->state = FUT_SOCK_CONNECTING;
+
+    /* Wake listener's accept queue */
+    fut_waitq_wake_one(queue->accept_waitq);
+    if (queue->epoll_notify)
+        fut_waitq_wake_one(queue->epoll_notify);
+
+    fut_socket_unref(listener);
+
+    SOCKET_LOG("[SOCKET] AF_INET socket %u connecting to port %u (queued)\n",
+               socket->socket_id, port);
+    return 0;
+}
+
+/**
+ * Send datagram to AF_INET socket bound at dest addr:port.
+ */
+ssize_t fut_socket_sendto_inet_dgram(uint32_t dest_addr, uint16_t dest_port,
+                                      uint32_t sender_addr, uint16_t sender_port,
+                                      const void *data, size_t data_len) {
+    if (!data || data_len == 0) return -EINVAL;
+    if (data_len > FUT_DGRAM_DATA_MAX) return -EMSGSIZE;
+
+    fut_socket_t *dest = fut_socket_find_inet_bound(dest_addr, dest_port);
+    if (!dest) return -ECONNREFUSED;
+
+    if (!dest->dgram_queue) {
+        fut_socket_unref(dest);
+        return -ECONNREFUSED;
+    }
+
+    fut_dgram_queue_t *dq = dest->dgram_queue;
+    fut_spinlock_acquire(&dq->lock);
+
+    if (dq->count >= FUT_DGRAM_QUEUE_MAX) {
+        fut_spinlock_release(&dq->lock);
+        fut_socket_unref(dest);
+        return -EAGAIN;
+    }
+
+    uint32_t idx = (dq->head + dq->count) % FUT_DGRAM_QUEUE_MAX;
+    fut_dgram_entry_t *entry = &dq->msgs[idx];
+
+    entry->sender_path[0] = '\0';
+    entry->sender_path_len = 0;
+    entry->sender_inet_addr = sender_addr;
+    entry->sender_inet_port = sender_port;
+    entry->data_len = (uint16_t)data_len;
+    memcpy(entry->data, data, data_len);
+
+    dq->count++;
+
+    /* Wake any blocked recvfrom */
+    fut_waitq_wake_one(dq->recv_waitq);
+
+    fut_spinlock_release(&dq->lock);
+    fut_socket_unref(dest);
+
+    return (ssize_t)data_len;
 }

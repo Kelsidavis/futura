@@ -36621,7 +36621,7 @@ static void test_udp_sockopt_and_sendto(void) {
         }
     }
 
-    /* Test 890: sendto() AF_INET SOCK_DGRAM with explicit dest → ENETUNREACH */
+    /* Test 890: sendto() AF_INET SOCK_DGRAM with explicit dest → ECONNREFUSED (no listener) */
     {
         /* sockaddr_in: family(2LE) + port(2NBO) + addr(4) + zero(8) */
         unsigned char dest[16] = {0};
@@ -36630,11 +36630,11 @@ static void test_udp_sockopt_and_sendto(void) {
         dest[4] = 127; dest[5] = 0; dest[6] = 0; dest[7] = 1; /* 127.0.0.1 */
         const char *msg = "hello";
         long r = sys_sendto((int)udpfd, msg, 5, 0, dest, 16);
-        if (r == -101 /* ENETUNREACH */) {
-            fut_printf("[MISC-TEST] ✓ Test 890: sendto(AF_INET udp) → ENETUNREACH\n");
+        if (r == -111 /* ECONNREFUSED */) {
+            fut_printf("[MISC-TEST] ✓ Test 890: sendto(AF_INET udp, no listener) → ECONNREFUSED\n");
             fut_test_pass();
         } else {
-            fut_printf("[MISC-TEST] ✗ Test 890: sendto expected ENETUNREACH(-101), got %ld\n", r);
+            fut_printf("[MISC-TEST] ✗ Test 890: sendto expected ECONNREFUSED(-111), got %ld\n", r);
             fut_test_fail(890);
         }
     }
@@ -48168,6 +48168,272 @@ static void test_fcntl_setfl_o_direct(void) {
     fut_test_pass();
 }
 
+/* ============================================================
+ *   AF_INET TCP + UDP loopback tests
+ * ============================================================ */
+
+/* Inline byte swap for test code (no dependency on tcpip.h) */
+static inline uint16_t test_htons(uint16_t x) { return (uint16_t)((x >> 8) | (x << 8)); }
+
+static void test_af_inet_tcp_loopback(void) {
+    fut_printf("[MISC-TEST] Tests 1506-1510: AF_INET TCP loopback connect+accept+send+recv\n");
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_bind(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_listen(int sockfd, int backlog);
+    extern long sys_connect(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_accept(int sockfd, void *addr, unsigned int *addrlen);
+    extern long sys_write(int fd, const void *buf, size_t count);
+    extern long sys_read(int fd, void *buf, size_t count);
+    extern long sys_close(int fd);
+
+    /* sockaddr_in layout: { uint16_t family, uint16_t port, uint32_t addr, uint8_t zero[8] } */
+    struct { uint16_t sin_family; uint16_t sin_port; uint32_t sin_addr; uint8_t sin_zero[8]; } addr;
+
+    /* Test 1506: Create server socket */
+    long server_fd = sys_socket(2 /* AF_INET */, 1 /* SOCK_STREAM */, 0);
+    if (server_fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1506: socket(AF_INET, SOCK_STREAM) failed: %ld\n", server_fd);
+        fut_test_fail(1506); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 1506: socket(AF_INET, SOCK_STREAM) -> %ld\n", server_fd);
+    fut_test_pass();
+
+    /* Test 1507: Bind server to port 12345 */
+    __builtin_memset(&addr, 0, sizeof(addr));
+    addr.sin_family = 2; /* AF_INET */
+    addr.sin_port = test_htons(12345);
+    addr.sin_addr = 0;  /* INADDR_ANY */
+    long br = sys_bind((int)server_fd, &addr, 16);
+    if (br != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1507: bind(port 12345) failed: %ld\n", br);
+        sys_close((int)server_fd);
+        fut_test_fail(1507); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 1507: bind(AF_INET, port 12345) -> 0\n");
+    fut_test_pass();
+
+    /* Listen + connect + accept */
+    long lr = sys_listen((int)server_fd, 5);
+    if (lr != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1508: listen failed: %ld\n", lr);
+        sys_close((int)server_fd);
+        fut_test_fail(1508); return;
+    }
+
+    long client_fd = sys_socket(2, 1, 0);
+    if (client_fd < 0) {
+        sys_close((int)server_fd);
+        fut_test_fail(1508); return;
+    }
+
+    __builtin_memset(&addr, 0, sizeof(addr));
+    addr.sin_family = 2;
+    addr.sin_port = test_htons(12345);
+    addr.sin_addr = 0;  /* connect to INADDR_ANY (same-host loopback) */
+    long cr = sys_connect((int)client_fd, &addr, 16);
+    if (cr != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1508: connect(port 9999) failed: %ld\n", cr);
+        sys_close((int)client_fd); sys_close((int)server_fd);
+        fut_test_fail(1508); return;
+    }
+
+    /* Test 1508: Accept */
+    struct { uint16_t sin_family; uint16_t sin_port; uint32_t sin_addr; uint8_t sin_zero[8]; } peer_addr;
+    unsigned int peer_len = 16;
+    __builtin_memset(&peer_addr, 0, sizeof(peer_addr));
+    long accepted_fd = sys_accept((int)server_fd, &peer_addr, &peer_len);
+    if (accepted_fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1508: accept failed: %ld\n", accepted_fd);
+        sys_close((int)client_fd); sys_close((int)server_fd);
+        fut_test_fail(1508); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 1508: listen+connect+accept -> accepted_fd=%ld\n", accepted_fd);
+    fut_test_pass();
+
+    /* Test 1509: Send from client, recv on accepted */
+    long wr = sys_write((int)client_fd, "hello", 5);
+    if (wr != 5) {
+        fut_printf("[MISC-TEST] ✗ Test 1509: write(client) failed: %ld\n", wr);
+        sys_close((int)accepted_fd); sys_close((int)client_fd); sys_close((int)server_fd);
+        fut_test_fail(1509); return;
+    }
+    char buf[64] = {0};
+    long rr = sys_read((int)accepted_fd, buf, 64);
+    if (rr != 5 || __builtin_memcmp(buf, "hello", 5) != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1509: read(accepted) failed: %ld, data='%.5s'\n", rr, buf);
+        sys_close((int)accepted_fd); sys_close((int)client_fd); sys_close((int)server_fd);
+        fut_test_fail(1509); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 1509: client→server send/recv 'hello' OK\n");
+    fut_test_pass();
+
+    /* Test 1510: Send from accepted (server→client), recv on client */
+    wr = sys_write((int)accepted_fd, "world", 5);
+    if (wr != 5) {
+        fut_printf("[MISC-TEST] ✗ Test 1510: write(accepted) failed: %ld\n", wr);
+        sys_close((int)accepted_fd); sys_close((int)client_fd); sys_close((int)server_fd);
+        fut_test_fail(1510); return;
+    }
+    __builtin_memset(buf, 0, 64);
+    rr = sys_read((int)client_fd, buf, 64);
+    if (rr != 5 || __builtin_memcmp(buf, "world", 5) != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1510: read(client) failed: %ld, data='%.5s'\n", rr, buf);
+        sys_close((int)accepted_fd); sys_close((int)client_fd); sys_close((int)server_fd);
+        fut_test_fail(1510); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 1510: server→client send/recv 'world' OK\n");
+    fut_test_pass();
+
+    sys_close((int)accepted_fd);
+    sys_close((int)client_fd);
+    sys_close((int)server_fd);
+}
+
+static void test_af_inet_udp_loopback(void) {
+    fut_printf("[MISC-TEST] Tests 1511-1513: AF_INET UDP loopback sendto+recvfrom\n");
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_bind(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_sendto(int sockfd, const void *buf, size_t len, int flags,
+                           const void *dest_addr, unsigned int addrlen);
+    extern long sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
+                             void *src_addr, unsigned int *addrlen);
+    extern long sys_close(int fd);
+
+    struct { uint16_t sin_family; uint16_t sin_port; uint32_t sin_addr; uint8_t sin_zero[8]; } addr;
+
+    /* Test 1511: Create + bind recv socket */
+    long recv_fd = sys_socket(2, 2 /* SOCK_DGRAM */, 0);
+    if (recv_fd < 0) { fut_test_fail(1511); return; }
+    __builtin_memset(&addr, 0, sizeof(addr));
+    addr.sin_family = 2;
+    addr.sin_port = test_htons(12388);
+    addr.sin_addr = 0;
+    long br = sys_bind((int)recv_fd, &addr, 16);
+    if (br != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1511: bind(UDP recv, port 12388) failed: %ld\n", br);
+        sys_close((int)recv_fd);
+        fut_test_fail(1511); return;
+    }
+
+    /* Create + bind send socket */
+    long send_fd = sys_socket(2, 2, 0);
+    if (send_fd < 0) { sys_close((int)recv_fd); fut_test_fail(1511); return; }
+    __builtin_memset(&addr, 0, sizeof(addr));
+    addr.sin_family = 2;
+    addr.sin_port = test_htons(12387);
+    addr.sin_addr = 0;
+    br = sys_bind((int)send_fd, &addr, 16);
+    if (br != 0) {
+        sys_close((int)send_fd); sys_close((int)recv_fd);
+        fut_test_fail(1511); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 1511: UDP sockets created and bound\n");
+    fut_test_pass();
+
+    /* Test 1512: sendto + recvfrom */
+    struct { uint16_t sin_family; uint16_t sin_port; uint32_t sin_addr; uint8_t sin_zero[8]; } dest;
+    __builtin_memset(&dest, 0, sizeof(dest));
+    dest.sin_family = 2;
+    dest.sin_port = test_htons(12388);
+    dest.sin_addr = 0;
+    long sr = sys_sendto((int)send_fd, "packet", 6, 0, &dest, 16);
+    if (sr != 6) {
+        fut_printf("[MISC-TEST] ✗ Test 1512: sendto failed: %ld\n", sr);
+        sys_close((int)send_fd); sys_close((int)recv_fd);
+        fut_test_fail(1512); return;
+    }
+
+    char rbuf[64] = {0};
+    struct { uint16_t sin_family; uint16_t sin_port; uint32_t sin_addr; uint8_t sin_zero[8]; } src_addr;
+    __builtin_memset(&src_addr, 0, sizeof(src_addr));
+    unsigned int src_len = 16;
+    long rr = sys_recvfrom((int)recv_fd, rbuf, 64, 0, &src_addr, &src_len);
+    if (rr != 6 || __builtin_memcmp(rbuf, "packet", 6) != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1512: recvfrom failed: %ld, data='%.6s'\n", rr, rbuf);
+        sys_close((int)send_fd); sys_close((int)recv_fd);
+        fut_test_fail(1512); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 1512: UDP sendto+recvfrom 'packet' OK\n");
+    fut_test_pass();
+
+    /* Test 1513: Verify sender address in recvfrom */
+    if (src_addr.sin_family == 2 && src_addr.sin_port == test_htons(12387)) {
+        fut_printf("[MISC-TEST] ✓ Test 1513: recvfrom src_addr correct (family=%u, port=%u)\n",
+                   src_addr.sin_family, (unsigned)test_htons(src_addr.sin_port));
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1513: recvfrom src_addr wrong (family=%u, port=%u, expected port 12387)\n",
+                   src_addr.sin_family, (unsigned)test_htons(src_addr.sin_port));
+        fut_test_fail(1513);
+    }
+
+    sys_close((int)send_fd);
+    sys_close((int)recv_fd);
+}
+
+static void test_af_inet_connect_refused(void) {
+    fut_printf("[MISC-TEST] Test 1514: AF_INET connect to non-listening port → ECONNREFUSED\n");
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_connect(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_close(int fd);
+
+    long fd = sys_socket(2, 1, 0);
+    if (fd < 0) { fut_test_fail(1514); return; }
+
+    struct { uint16_t sin_family; uint16_t sin_port; uint32_t sin_addr; uint8_t sin_zero[8]; } addr;
+    __builtin_memset(&addr, 0, sizeof(addr));
+    addr.sin_family = 2;
+    addr.sin_port = test_htons(7777);  /* nobody listening here */
+    addr.sin_addr = 0;
+    long cr = sys_connect((int)fd, &addr, 16);
+    if (cr == -111 /* ECONNREFUSED */) {
+        fut_printf("[MISC-TEST] ✓ Test 1514: connect(non-listening) → ECONNREFUSED\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1514: connect(non-listening) → %ld (expected -111)\n", cr);
+        fut_test_fail(1514);
+    }
+    sys_close((int)fd);
+}
+
+static void test_af_inet_bind_conflict(void) {
+    fut_printf("[MISC-TEST] Tests 1515-1516: AF_INET bind conflict + double bind\n");
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_bind(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_close(int fd);
+
+    struct { uint16_t sin_family; uint16_t sin_port; uint32_t sin_addr; uint8_t sin_zero[8]; } addr;
+
+    /* Test 1515: First bind succeeds */
+    long fd1 = sys_socket(2, 1, 0);
+    if (fd1 < 0) { fut_test_fail(1515); return; }
+    __builtin_memset(&addr, 0, sizeof(addr));
+    addr.sin_family = 2;
+    addr.sin_port = test_htons(7654);
+    addr.sin_addr = 0;
+    long br1 = sys_bind((int)fd1, &addr, 16);
+    if (br1 != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1515: first bind failed: %ld\n", br1);
+        sys_close((int)fd1); fut_test_fail(1515); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 1515: first bind to port 7654 succeeded\n");
+    fut_test_pass();
+
+    /* Test 1516: Second bind to same port should fail with EADDRINUSE */
+    long fd2 = sys_socket(2, 1, 0);
+    if (fd2 < 0) { sys_close((int)fd1); fut_test_fail(1516); return; }
+    long br2 = sys_bind((int)fd2, &addr, 16);
+    if (br2 == -98 /* EADDRINUSE */) {
+        fut_printf("[MISC-TEST] ✓ Test 1516: second bind → EADDRINUSE\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1516: second bind → %ld (expected -98)\n", br2);
+        fut_test_fail(1516);
+    }
+    sys_close((int)fd2);
+    sys_close((int)fd1);
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -48888,6 +49154,10 @@ void fut_misc_test_thread(void *arg) {
     test_readlink_bufsiz_zero();           /* Test  1502: readlink(bufsiz=0) → 0, not EINVAL */
     test_fchown_group_perms();             /* Tests 1503-1504: fchown non-root group change rules */
     test_prctl_dumpable_root();            /* Test  1505: PR_SET_DUMPABLE accepts SUID_DUMP_ROOT (2) */
+    test_af_inet_tcp_loopback();           /* Tests 1506-1510: AF_INET TCP loopback connect+accept+send+recv */
+    test_af_inet_udp_loopback();           /* Tests 1511-1513: AF_INET UDP loopback sendto+recvfrom */
+    test_af_inet_connect_refused();        /* Test  1514: AF_INET connect non-listening → ECONNREFUSED */
+    test_af_inet_bind_conflict();          /* Tests 1515-1516: AF_INET bind conflict detection */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

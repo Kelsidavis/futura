@@ -544,23 +544,37 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
                 }
             }
             fut_free(kbuf);
-            /* Fill src_addr with sender's AF_UNIX address if requested */
+            /* Fill src_addr with sender address if requested */
             if (local_src_addr && local_addrlen) {
                 socklen_t alen = 0;
                 if (recv_copy_from_user(&alen, local_addrlen, sizeof(socklen_t)) == 0) {
-                    struct {
-                        unsigned short sun_family;
-                        char sun_path[108];
-                    } src_sun;
-                    __builtin_memset(&src_sun, 0, sizeof(src_sun));
-                    src_sun.sun_family = 1; /* AF_UNIX */
-                    size_t copy_path = sender_path_len < 108 ? sender_path_len : 107;
-                    if (copy_path > 0)
-                        __builtin_memcpy(src_sun.sun_path, sender_path, copy_path);
-                    socklen_t actual_len = (socklen_t)(2 + copy_path + (sender_path_len == 0 || sender_path[0] != '\0' ? 1 : 0));
-                    socklen_t to_copy = (actual_len < alen) ? actual_len : alen;
-                    recv_copy_to_user(local_src_addr, &src_sun, to_copy);
-                    recv_copy_to_user(local_addrlen, &actual_len, sizeof(socklen_t));
+                    if (sender_path_len == 0xFFFF) {
+                        /* AF_INET sender: inet addr:port packed in sender_path[0..5] */
+                        struct { uint16_t sin_family; uint16_t sin_port; uint32_t sin_addr; uint8_t sin_zero[8]; } sin;
+                        __builtin_memset(&sin, 0, sizeof(sin));
+                        sin.sin_family = 2; /* AF_INET */
+                        __builtin_memcpy(&sin.sin_addr, &sender_path[0], 4);
+                        __builtin_memcpy(&sin.sin_port, &sender_path[4], 2);
+                        socklen_t actual_len = 16;
+                        socklen_t to_copy = (actual_len < alen) ? actual_len : alen;
+                        recv_copy_to_user(local_src_addr, &sin, to_copy);
+                        recv_copy_to_user(local_addrlen, &actual_len, sizeof(socklen_t));
+                    } else {
+                        /* AF_UNIX sender */
+                        struct {
+                            unsigned short sun_family;
+                            char sun_path[108];
+                        } src_sun;
+                        __builtin_memset(&src_sun, 0, sizeof(src_sun));
+                        src_sun.sun_family = 1; /* AF_UNIX */
+                        size_t copy_path = sender_path_len < 108 ? sender_path_len : 107;
+                        if (copy_path > 0)
+                            __builtin_memcpy(src_sun.sun_path, sender_path, copy_path);
+                        socklen_t actual_len = (socklen_t)(2 + copy_path + (sender_path_len == 0 || sender_path[0] != '\0' ? 1 : 0));
+                        socklen_t to_copy = (actual_len < alen) ? actual_len : alen;
+                        recv_copy_to_user(local_src_addr, &src_sun, to_copy);
+                        recv_copy_to_user(local_addrlen, &actual_len, sizeof(socklen_t));
+                    }
                 }
             }
             /* MSG_TRUNC: return actual datagram length even if buffer was too small */

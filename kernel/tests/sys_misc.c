@@ -5031,7 +5031,7 @@ static void test_dev_stdio_symlinks(void) {
  * Test 94: MSG_PEEK on socket (read without consuming)
  * ============================================================ */
 extern long sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
-                          void *src_addr, void *addrlen);
+                          void *src_addr, unsigned int *addrlen);
 
 static void test_socket_msg_peek(void) {
     fut_printf("[MISC-TEST] Test 94: MSG_PEEK on socket\n");
@@ -13854,7 +13854,7 @@ static void test_msg_dontwait_per_call(void) {
     extern long sys_socket(int domain, int type, int protocol);
     extern long sys_socketpair(int domain, int type, int protocol, int *sv);
     extern long sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
-                             void *src_addr, void *addrlen);
+                             void *src_addr, unsigned int *addrlen);
     /* Test 1375: recvfrom(MSG_DONTWAIT) returns EAGAIN without permanently
      * setting O_NONBLOCK on the socket */
     fut_printf("[MISC-TEST] Test 1375: MSG_DONTWAIT doesn't permanently set O_NONBLOCK\n");
@@ -13974,6 +13974,113 @@ static void test_so_error_read_clear(void) {
                 fut_test_fail(1378);
             }
             sys_close(sv[0]); sys_close(sv[1]);
+        }
+    }
+}
+
+/*
+ * Tests 1379-1382: listen/connect socket edge cases
+ *
+ *   Test 1379: listen(SOCK_DGRAM) → EOPNOTSUPP
+ *   Test 1380: listen(unbound SOCK_STREAM) → EINVAL
+ *   Test 1381: connect(AF_UNSPEC) disconnects DGRAM
+ *   Test 1382: connect(AF_UNSPEC) on SOCK_STREAM → EAFNOSUPPORT
+ */
+static void test_listen_connect_edge_cases(void) {
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+    extern long sys_listen(int sockfd, int backlog);
+    extern long sys_connect(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_bind(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_sendto(int sockfd, const void *buf, size_t len, int flags,
+                           const void *dest_addr, unsigned int addrlen);
+
+    /* Test 1379: listen(SOCK_DGRAM) → EOPNOTSUPP */
+    fut_printf("[MISC-TEST] Test 1379: listen(SOCK_DGRAM) → EOPNOTSUPP\n");
+    {
+        long fd = sys_socket(1 /* AF_UNIX */, 2 /* SOCK_DGRAM */, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1379: socket(DGRAM) = %ld\n", fd);
+            fut_test_fail(1379);
+        } else {
+            /* Bind first so it's in BOUND state */
+            struct { unsigned short family; char path[108]; } addr;
+            addr.family = 1;
+            __builtin_memcpy(addr.path, "/tmp/.t1379_dgram", 18);
+            sys_bind((int)fd, &addr, (unsigned int)(2 + 18));
+            long r = sys_listen((int)fd, 5);
+            if (r == -95 /* -EOPNOTSUPP */) {
+                fut_printf("[MISC-TEST] ✓ Test 1379: listen(DGRAM) = -EOPNOTSUPP\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1379: listen(DGRAM) = %ld (want -95)\n", r);
+                fut_test_fail(1379);
+            }
+            sys_close((int)fd);
+        }
+    }
+
+    /* Test 1380: listen(unbound SOCK_STREAM) → EINVAL */
+    fut_printf("[MISC-TEST] Test 1380: listen(unbound SOCK_STREAM) → EINVAL\n");
+    {
+        long fd = sys_socket(1 /* AF_UNIX */, 1 /* SOCK_STREAM */, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1380: socket(STREAM) = %ld\n", fd);
+            fut_test_fail(1380);
+        } else {
+            long r = sys_listen((int)fd, 5);
+            if (r == -22 /* -EINVAL */) {
+                fut_printf("[MISC-TEST] ✓ Test 1380: listen(unbound) = -EINVAL\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1380: listen(unbound) = %ld (want -22)\n", r);
+                fut_test_fail(1380);
+            }
+            sys_close((int)fd);
+        }
+    }
+
+    /* Test 1381: connect(AF_UNSPEC) disconnects DGRAM */
+    fut_printf("[MISC-TEST] Test 1381: connect(AF_UNSPEC) disconnects DGRAM\n");
+    {
+        int sv[2] = {-1, -1};
+        long r = sys_socketpair(1, 2 /* SOCK_DGRAM */, 0, sv);
+        if (r < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1381: socketpair(DGRAM) = %ld\n", r);
+            fut_test_fail(1381);
+        } else {
+            /* sv[0] is connected to sv[1]; disconnect via AF_UNSPEC */
+            struct { unsigned short family; } unspec = { .family = 0 };
+            r = sys_connect(sv[0], &unspec, sizeof(unspec));
+            if (r == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1381: connect(AF_UNSPEC) = 0 (disconnected)\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1381: connect(AF_UNSPEC) = %ld\n", r);
+                fut_test_fail(1381);
+            }
+            sys_close(sv[0]); sys_close(sv[1]);
+        }
+    }
+
+    /* Test 1382: connect(AF_UNSPEC) on SOCK_STREAM → EAFNOSUPPORT */
+    fut_printf("[MISC-TEST] Test 1382: connect(AF_UNSPEC) on SOCK_STREAM → EAFNOSUPPORT\n");
+    {
+        long fd = sys_socket(1 /* AF_UNIX */, 1 /* SOCK_STREAM */, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1382: socket = %ld\n", fd);
+            fut_test_fail(1382);
+        } else {
+            struct { unsigned short family; } unspec = { .family = 0 };
+            long r = sys_connect((int)fd, &unspec, sizeof(unspec));
+            if (r == -97 /* -EAFNOSUPPORT */) {
+                fut_printf("[MISC-TEST] ✓ Test 1382: connect(AF_UNSPEC, STREAM) = -EAFNOSUPPORT\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1382: connect(AF_UNSPEC, STREAM) = %ld (want -97)\n", r);
+                fut_test_fail(1382);
+            }
+            sys_close((int)fd);
         }
     }
 }
@@ -16846,8 +16953,8 @@ static void test_unix_seqpacket(void) {
     fut_printf("[MISC-TEST] Test 305: AF_UNIX SOCK_SEQPACKET\n");
     extern long sys_socket(int domain, int type, int protocol);
     extern long sys_socketpair(int domain, int type, int protocol, int *sv);
-    extern long sys_sendto(int sockfd, const void *buf, size_t len, int flags, const void *dest_addr, int addrlen);
-    extern long sys_recvfrom(int sockfd, void *buf, size_t len, int flags, void *src_addr, void *addrlen);
+    extern long sys_sendto(int sockfd, const void *buf, size_t len, int flags, const void *dest_addr, unsigned int addrlen);
+    extern long sys_recvfrom(int sockfd, void *buf, size_t len, int flags, void *src_addr, unsigned int *addrlen);
 
     /* SOCK_SEQPACKET (5) must be creatable for AF_UNIX */
     long fd = sys_socket(1 /*AF_UNIX*/, 5 /*SOCK_SEQPACKET*/, 0);
@@ -17228,9 +17335,9 @@ static void test_unix_dgram_connect(void) {
     extern long sys_bind(int sockfd, const void *addr, unsigned int addrlen);
     extern long sys_connect(int sockfd, const void *addr, unsigned int addrlen);
     extern long sys_sendto(int sockfd, const void *buf, size_t len, int flags,
-                           const void *dest_addr, int addrlen);
+                           const void *dest_addr, unsigned int addrlen);
     extern long sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
-                             void *src_addr, void *addrlen);
+                             void *src_addr, unsigned int *addrlen);
 
     /* Create server and client DGRAM sockets */
     long srv = sys_socket(1 /*AF_UNIX*/, 2 /*SOCK_DGRAM*/, 0);
@@ -17418,8 +17525,8 @@ static void test_shutdown_shut_wr_eof(void) {
     fut_printf("[MISC-TEST] Test 328: shutdown(SHUT_WR) signals EOF to peer\n");
     extern long sys_socketpair(int domain, int type, int protocol, int *sv);
     extern long sys_shutdown(int sockfd, int how);
-    extern long sys_sendto(int sockfd, const void *buf, size_t len, int flags, const void *dest_addr, int addrlen);
-    extern long sys_recvfrom(int sockfd, void *buf, size_t len, int flags, void *src_addr, void *addrlen);
+    extern long sys_sendto(int sockfd, const void *buf, size_t len, int flags, const void *dest_addr, unsigned int addrlen);
+    extern long sys_recvfrom(int sockfd, void *buf, size_t len, int flags, void *src_addr, unsigned int *addrlen);
 
     int sv[2] = { -1, -1 };
     long r = sys_socketpair(1 /*AF_UNIX*/, 1 /*SOCK_STREAM*/, 0, sv);
@@ -17560,8 +17667,8 @@ static void test_seqpacket_connect_accept(void) {
 static void test_seqpacket_boundaries(void) {
     fut_printf("[MISC-TEST] Test 325: SOCK_SEQPACKET message boundary preservation\n");
     extern long sys_socketpair(int domain, int type, int protocol, int *sv);
-    extern long sys_sendto(int sockfd, const void *buf, size_t len, int flags, const void *dest_addr, int addrlen);
-    extern long sys_recvfrom(int sockfd, void *buf, size_t len, int flags, void *src_addr, void *addrlen);
+    extern long sys_sendto(int sockfd, const void *buf, size_t len, int flags, const void *dest_addr, unsigned int addrlen);
+    extern long sys_recvfrom(int sockfd, void *buf, size_t len, int flags, void *src_addr, unsigned int *addrlen);
 
     int sv[2] = { -1, -1 };
     long r = sys_socketpair(1 /*AF_UNIX*/, 5 /*SOCK_SEQPACKET*/, 0, sv);
@@ -17613,8 +17720,8 @@ static void test_seqpacket_boundaries(void) {
 static void test_seqpacket_truncation(void) {
     fut_printf("[MISC-TEST] Test 326: SOCK_SEQPACKET truncation\n");
     extern long sys_socketpair(int domain, int type, int protocol, int *sv);
-    extern long sys_sendto(int sockfd, const void *buf, size_t len, int flags, const void *dest_addr, int addrlen);
-    extern long sys_recvfrom(int sockfd, void *buf, size_t len, int flags, void *src_addr, void *addrlen);
+    extern long sys_sendto(int sockfd, const void *buf, size_t len, int flags, const void *dest_addr, unsigned int addrlen);
+    extern long sys_recvfrom(int sockfd, void *buf, size_t len, int flags, void *src_addr, unsigned int *addrlen);
 
     int sv[2] = { -1, -1 };
     long r = sys_socketpair(1 /*AF_UNIX*/, 5 /*SOCK_SEQPACKET*/, 0, sv);
@@ -17663,9 +17770,9 @@ static void test_dgram_msg_peek(void) {
     extern long sys_socket(int domain, int type, int protocol);
     extern long sys_bind(int sockfd, const void *addr, unsigned int addrlen);
     extern long sys_sendto(int sockfd, const void *buf, size_t len, int flags,
-                           const void *dest_addr, int addrlen);
+                           const void *dest_addr, unsigned int addrlen);
     extern long sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
-                             void *src_addr, void *addrlen);
+                             void *src_addr, unsigned int *addrlen);
 
     long recvfd = sys_socket(1, 2, 0);
     long sendfd = sys_socket(1, 2, 0);
@@ -17725,7 +17832,7 @@ static void test_sendmsg_dgram_msgname(void) {
     extern long sys_bind(int sockfd, const void *addr, unsigned int addrlen);
     extern long sys_sendmsg(int sockfd, const struct test_msghdr *msg, int flags);
     extern long sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
-                             void *src_addr, void *addrlen);
+                             void *src_addr, unsigned int *addrlen);
 
     long recvfd = sys_socket(1, 2, 0);
     long sendfd = sys_socket(1, 2, 0);
@@ -17785,7 +17892,7 @@ static void test_recvmsg_dgram_msgname(void) {
     extern long sys_socket(int domain, int type, int protocol);
     extern long sys_bind(int sockfd, const void *addr, unsigned int addrlen);
     extern long sys_sendto(int sockfd, const void *buf, size_t len, int flags,
-                           const void *dest_addr, int addrlen);
+                           const void *dest_addr, unsigned int addrlen);
     extern long sys_recvmsg(int sockfd, struct test_msghdr *msg, int flags);
 
     long recvfd = sys_socket(1, 2, 0);
@@ -17873,9 +17980,9 @@ static void test_msg_trunc_recvfrom(void) {
     extern long sys_socket(int domain, int type, int protocol);
     extern long sys_bind(int sockfd, const void *addr, unsigned int addrlen);
     extern long sys_sendto(int sockfd, const void *buf, size_t len, int flags,
-                           const void *dest_addr, int addrlen);
+                           const void *dest_addr, unsigned int addrlen);
     extern long sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
-                             void *src_addr, void *addrlen);
+                             void *src_addr, unsigned int *addrlen);
 
     /* Create sender and receiver DGRAM sockets */
     long recvfd = sys_socket(1 /*AF_UNIX*/, 2 /*SOCK_DGRAM*/, 0);
@@ -17943,7 +18050,7 @@ static void test_msg_trunc_recvmsg(void) {
     extern long sys_socket(int domain, int type, int protocol);
     extern long sys_bind(int sockfd, const void *addr, unsigned int addrlen);
     extern long sys_sendto(int sockfd, const void *buf, size_t len, int flags,
-                           const void *dest_addr, int addrlen);
+                           const void *dest_addr, unsigned int addrlen);
     extern long sys_recvmsg(int sockfd, struct test_msghdr *msg, int flags);
 
     long recvfd = sys_socket(1 /*AF_UNIX*/, 2 /*SOCK_DGRAM*/, 0);
@@ -18021,7 +18128,7 @@ static void test_dgram_read_syscall(void) {
     extern long sys_socket(int domain, int type, int protocol);
     extern long sys_bind(int sockfd, const void *addr, unsigned int addrlen);
     extern long sys_sendto(int sockfd, const void *buf, size_t len, int flags,
-                           const void *dest_addr, int addrlen);
+                           const void *dest_addr, unsigned int addrlen);
     extern long sys_read(int fd, void *buf, size_t count);
 
     long recvfd = sys_socket(1 /*AF_UNIX*/, 2 /*SOCK_DGRAM*/, 0);
@@ -18170,7 +18277,7 @@ static void test_msg_waitall(void) {
     /* recvfrom with MSG_WAITALL: must get all 100 bytes */
     char rbuf[100];
     extern long sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
-                             void *src_addr, void *addrlen);
+                             void *src_addr, unsigned int *addrlen);
     n = sys_recvfrom(sv[1], rbuf, 100, 0x100 /*MSG_WAITALL*/, NULL, NULL);
     if (n != 100) {
         fut_printf("[MISC-TEST] ✗ recvfrom(MSG_WAITALL) returned %ld, want 100\n", n);
@@ -18422,9 +18529,9 @@ static void test_unix_dgram_sendto(void) {
     extern long sys_socket(int domain, int type, int protocol);
     extern long sys_bind(int sockfd, const void *addr, unsigned int addrlen);
     extern long sys_sendto(int sockfd, const void *buf, size_t len, int flags,
-                           const void *dest_addr, int addrlen);
+                           const void *dest_addr, unsigned int addrlen);
     extern long sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
-                             void *src_addr, void *addrlen);
+                             void *src_addr, unsigned int *addrlen);
 
     /* Create sender and receiver DGRAM sockets */
     long sender = sys_socket(1 /*AF_UNIX*/, 2 /*SOCK_DGRAM*/, 0);
@@ -18513,7 +18620,7 @@ static void test_unix_dgram_sendto(void) {
         unsigned short sun_family;
         char sun_path[16];
     } src_addr;
-    int src_addrlen = (int)sizeof(src_addr);
+    unsigned int src_addrlen = (unsigned int)sizeof(src_addr);
     r = sys_recvfrom((int)receiver, rbuf, sizeof(rbuf), 0, &src_addr, &src_addrlen);
     if (r != 8) {
         fut_printf("[MISC-TEST] ✗ recvfrom returned %ld (want 8)\n", r);
@@ -18928,7 +19035,7 @@ static void test_msg_nosignal(void) {
 
     extern long sys_socketpair(int domain, int type, int protocol, int *sv);
     extern long sys_sendto(int sockfd, const void *buf, size_t len, int flags,
-                           const void *dest_addr, int addrlen);
+                           const void *dest_addr, unsigned int addrlen);
     extern long sys_close(int fd);
 
     /* ---- Part A: without MSG_NOSIGNAL, SIGPIPE is raised ---- */
@@ -33630,7 +33737,7 @@ static void test_udp_sockopt_and_sendto(void) {
     extern long sys_getsockopt(int fd, int level, int optname,
                                void *optval, unsigned int *optlen);
     extern long sys_sendto(int sockfd, const void *buf, size_t len,
-                           int flags, const void *dest_addr, int addrlen);
+                           int flags, const void *dest_addr, unsigned int addrlen);
     extern long sys_close(int fd);
 
     fut_printf("[MISC-TEST] Tests 888-895: IPPROTO_UDP sockopt + AF_INET DGRAM sendto\n");
@@ -41828,7 +41935,7 @@ static void test_inet_peer_addr(void) {
     extern long sys_socketpair(int domain, int type, int protocol, int *sv);
     extern long sys_write(int fd, const void *buf, unsigned long count);
     extern long sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
-                             void *src_addr, void *addrlen);
+                             void *src_addr, unsigned int *addrlen);
     extern long sys_close(int fd);
 
     /* Test 1189: getpeername on AF_INET socket that is not connected → ENOTCONN */
@@ -45012,6 +45119,7 @@ void fut_misc_test_thread(void *arg) {
     test_truncate_negative_length();         /* Tests 1373-1374: ftruncate/truncate reject negative length */
     test_msg_dontwait_per_call();            /* Tests 1375-1376: MSG_DONTWAIT doesn't mutate sock->flags */
     test_so_error_read_clear();              /* Tests 1377-1378: SO_ERROR read-and-clear semantics */
+    test_listen_connect_edge_cases();        /* Tests 1379-1382: listen DGRAM EOPNOTSUPP, connect AF_UNSPEC */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

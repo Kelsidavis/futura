@@ -149,6 +149,13 @@ long sys_listen(int sockfd, int backlog) {
             break;
     }
 
+    /* SOCK_DGRAM does not support listen — Linux returns EOPNOTSUPP */
+    if (socket->socket_type == SOCK_DGRAM) {
+        listen_printf("[LISTEN] listen(sockfd=%d, backlog=%d) -> EOPNOTSUPP (SOCK_DGRAM cannot listen)\n",
+                   local_sockfd, local_backlog);
+        return -EOPNOTSUPP;
+    }
+
     /* Phase 2: Enhanced error messages based on socket state */
     if (socket->state == FUT_SOCK_LISTENING) {
         /* Linux allows listen() on an already-listening socket to update the backlog */

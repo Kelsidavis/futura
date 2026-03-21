@@ -374,6 +374,30 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
             break;
     }
 
+    /* AF_UNSPEC: disconnect a connected SOCK_DGRAM socket (Linux-compat).
+     * For SOCK_STREAM, this is an error. */
+    if (sa_family == 0 /* AF_UNSPEC */) {
+        extern fut_socket_t *get_socket_from_fd(int fd);
+        fut_socket_t *unspec_sock = get_socket_from_fd(local_sockfd);
+        if (!unspec_sock) {
+            return -EBADF;
+        }
+        if (unspec_sock->socket_type == SOCK_DGRAM) {
+            /* Clear the connected peer path to "disconnect" the datagram socket */
+            unspec_sock->dgram_peer_path_len = 0;
+            unspec_sock->dgram_peer_path[0] = '\0';
+            if (unspec_sock->state == FUT_SOCK_CONNECTED)
+                unspec_sock->state = FUT_SOCK_BOUND;
+            connect_printf("[CONNECT] connect(sockfd=%d, AF_UNSPEC) -> 0 (DGRAM disconnected)\n",
+                       local_sockfd);
+            return 0;
+        }
+        /* SOCK_STREAM with AF_UNSPEC: Linux returns EAFNOSUPPORT */
+        connect_printf("[CONNECT] connect(sockfd=%d, AF_UNSPEC) -> EAFNOSUPPORT (not DGRAM)\n",
+                   local_sockfd);
+        return -EAFNOSUPPORT;
+    }
+
     /* AF_INET/AF_INET6: no real TCP/IP stack — return ECONNREFUSED (same as no server listening) */
     if (sa_family == AF_INET || sa_family == AF_INET6) {
         connect_printf("[CONNECT] connect(sockfd=%d, family=%u [%s]) -> ECONNREFUSED (no TCP/IP stack)\n",

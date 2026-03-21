@@ -747,8 +747,20 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
                 if (gso_copy_to_user(optlen, &value_len, sizeof(socklen_t)) != 0) return -EFAULT;
                 return 0;
 
-            case 38: /* SO_PROTOCOL - protocol number (0 for AF_UNIX) */
-                int_value = 0;  /* AF_UNIX always uses protocol 0 */
+            case 38: /* SO_PROTOCOL - protocol number */
+                /* Derive protocol from address family + socket type:
+                 * AF_UNIX: 0, AF_INET/6 STREAM: IPPROTO_TCP(6),
+                 * AF_INET/6 DGRAM: IPPROTO_UDP(17) */
+                if ((socket->address_family == 2 /* AF_INET */ ||
+                     socket->address_family == 10 /* AF_INET6 */) &&
+                    socket->socket_type == 1 /* SOCK_STREAM */)
+                    int_value = 6;   /* IPPROTO_TCP */
+                else if ((socket->address_family == 2 ||
+                          socket->address_family == 10) &&
+                         socket->socket_type == 2 /* SOCK_DGRAM */)
+                    int_value = 17;  /* IPPROTO_UDP */
+                else
+                    int_value = 0;
                 value_len = sizeof(int);
                 copy_len = (len < value_len) ? len : value_len;
                 if (gso_copy_to_user(optval, &int_value, copy_len) != 0) return -EFAULT;

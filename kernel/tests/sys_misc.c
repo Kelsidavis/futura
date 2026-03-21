@@ -49412,6 +49412,171 @@ static void test_socketpair_nonblock(void) {
     }
 }
 
+/**
+ * Test SO_PROTOCOL, SO_DOMAIN, SO_ACCEPTCONN getsockopt.
+ *
+ * Test 1549: SO_PROTOCOL on AF_UNIX socket → 0
+ * Test 1550: SO_PROTOCOL on AF_INET SOCK_STREAM → 6 (IPPROTO_TCP)
+ * Test 1551: SO_PROTOCOL on AF_INET SOCK_DGRAM → 17 (IPPROTO_UDP)
+ * Test 1552: SO_DOMAIN on AF_UNIX → 1
+ * Test 1553: SO_DOMAIN on AF_INET → 2
+ * Test 1554: SO_ACCEPTCONN on non-listening → 0, listening → 1
+ */
+static void test_so_protocol_domain_acceptconn(void) {
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_close(int fd);
+    extern long sys_getsockopt(int fd, int level, int optname, void *optval, unsigned int *optlen);
+    extern long sys_bind(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_listen(int sockfd, int backlog);
+
+    /* Test 1549: SO_PROTOCOL on AF_UNIX → 0 */
+    fut_printf("[MISC-TEST] Test 1549: SO_PROTOCOL(AF_UNIX) → 0\n");
+    {
+        long fd = sys_socket(1 /* AF_UNIX */, 1 /* SOCK_STREAM */, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1549: socket failed: %ld\n", fd);
+            fut_test_fail(1549);
+        } else {
+            int val = -1;
+            unsigned int len = sizeof(val);
+            long r = sys_getsockopt((int)fd, 1 /* SOL_SOCKET */, 38 /* SO_PROTOCOL */, &val, &len);
+            if (r == 0 && val == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1549: SO_PROTOCOL(AF_UNIX) = 0\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1549: r=%ld val=%d (want 0, 0)\n", r, val);
+                fut_test_fail(1549);
+            }
+            sys_close((int)fd);
+        }
+    }
+
+    /* Test 1550: SO_PROTOCOL on AF_INET SOCK_STREAM → 6 (IPPROTO_TCP) */
+    fut_printf("[MISC-TEST] Test 1550: SO_PROTOCOL(AF_INET, STREAM) → 6\n");
+    {
+        long fd = sys_socket(2 /* AF_INET */, 1 /* SOCK_STREAM */, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1550: socket failed: %ld\n", fd);
+            fut_test_fail(1550);
+        } else {
+            int val = -1;
+            unsigned int len = sizeof(val);
+            long r = sys_getsockopt((int)fd, 1, 38, &val, &len);
+            if (r == 0 && val == 6) {
+                fut_printf("[MISC-TEST] ✓ Test 1550: SO_PROTOCOL(AF_INET, STREAM) = 6 (TCP)\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1550: r=%ld val=%d (want 0, 6)\n", r, val);
+                fut_test_fail(1550);
+            }
+            sys_close((int)fd);
+        }
+    }
+
+    /* Test 1551: SO_PROTOCOL on AF_INET SOCK_DGRAM → 17 (IPPROTO_UDP) */
+    fut_printf("[MISC-TEST] Test 1551: SO_PROTOCOL(AF_INET, DGRAM) → 17\n");
+    {
+        long fd = sys_socket(2 /* AF_INET */, 2 /* SOCK_DGRAM */, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1551: socket failed: %ld\n", fd);
+            fut_test_fail(1551);
+        } else {
+            int val = -1;
+            unsigned int len = sizeof(val);
+            long r = sys_getsockopt((int)fd, 1, 38, &val, &len);
+            if (r == 0 && val == 17) {
+                fut_printf("[MISC-TEST] ✓ Test 1551: SO_PROTOCOL(AF_INET, DGRAM) = 17 (UDP)\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1551: r=%ld val=%d (want 0, 17)\n", r, val);
+                fut_test_fail(1551);
+            }
+            sys_close((int)fd);
+        }
+    }
+
+    /* Test 1552: SO_DOMAIN on AF_UNIX → 1 */
+    fut_printf("[MISC-TEST] Test 1552: SO_DOMAIN(AF_UNIX) → 1\n");
+    {
+        long fd = sys_socket(1, 1, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1552: socket failed: %ld\n", fd);
+            fut_test_fail(1552);
+        } else {
+            int val = -1;
+            unsigned int len = sizeof(val);
+            long r = sys_getsockopt((int)fd, 1, 39 /* SO_DOMAIN */, &val, &len);
+            if (r == 0 && val == 1) {
+                fut_printf("[MISC-TEST] ✓ Test 1552: SO_DOMAIN(AF_UNIX) = 1\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1552: r=%ld val=%d (want 0, 1)\n", r, val);
+                fut_test_fail(1552);
+            }
+            sys_close((int)fd);
+        }
+    }
+
+    /* Test 1553: SO_DOMAIN on AF_INET → 2 */
+    fut_printf("[MISC-TEST] Test 1553: SO_DOMAIN(AF_INET) → 2\n");
+    {
+        long fd = sys_socket(2, 1, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1553: socket failed: %ld\n", fd);
+            fut_test_fail(1553);
+        } else {
+            int val = -1;
+            unsigned int len = sizeof(val);
+            long r = sys_getsockopt((int)fd, 1, 39, &val, &len);
+            if (r == 0 && val == 2) {
+                fut_printf("[MISC-TEST] ✓ Test 1553: SO_DOMAIN(AF_INET) = 2\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1553: r=%ld val=%d (want 0, 2)\n", r, val);
+                fut_test_fail(1553);
+            }
+            sys_close((int)fd);
+        }
+    }
+
+    /* Test 1554: SO_ACCEPTCONN: 0 before listen, 1 after listen */
+    fut_printf("[MISC-TEST] Test 1554: SO_ACCEPTCONN before/after listen\n");
+    {
+        long fd = sys_socket(1, 1, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1554: socket failed: %ld\n", fd);
+            fut_test_fail(1554);
+        } else {
+            int val = -1;
+            unsigned int len = sizeof(val);
+            sys_getsockopt((int)fd, 1, 30 /* SO_ACCEPTCONN */, &val, &len);
+            if (val != 0) {
+                fut_printf("[MISC-TEST] ✗ Test 1554: SO_ACCEPTCONN before listen = %d (want 0)\n", val);
+                fut_test_fail(1554);
+            } else {
+                /* Bind + listen */
+                struct { unsigned short family; char path[108]; } addr;
+                addr.family = 1;
+                __builtin_memcpy(addr.path, "/tmp/.t1554_acc", 16);
+                sys_bind((int)fd, &addr, (unsigned int)(2 + 16));
+                sys_listen((int)fd, 5);
+
+                val = -1;
+                len = sizeof(val);
+                sys_getsockopt((int)fd, 1, 30, &val, &len);
+                if (val == 1) {
+                    fut_printf("[MISC-TEST] ✓ Test 1554: SO_ACCEPTCONN = 0 before, 1 after listen\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1554: SO_ACCEPTCONN after listen = %d (want 1)\n", val);
+                    fut_test_fail(1554);
+                }
+            }
+            sys_close((int)fd);
+        }
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -50142,6 +50307,7 @@ void fut_misc_test_thread(void *arg) {
     test_sockname_zero_addrlen();          /* Tests 1539-1542: getsockname/getpeername addrlen=0 */
     test_so_linger();                      /* Tests 1543-1546: SO_LINGER close semantics */
     test_socketpair_nonblock();            /* Tests 1547-1548: socketpair SOCK_NONBLOCK */
+    test_so_protocol_domain_acceptconn();  /* Tests 1549-1554: SO_PROTOCOL/SO_DOMAIN/SO_ACCEPTCONN */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

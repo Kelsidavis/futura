@@ -348,17 +348,12 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
         }
     }
 
-    /* Handle MSG_DONTWAIT flag
-     * Temporarily set O_NONBLOCK on socket if MSG_DONTWAIT is specified.
-     * This ensures the socket returns EAGAIN instead of blocking. */
-    bool restore_blocking = false;
-    fut_socket_t *socket = NULL;
-    if (local_flags & MSG_DONTWAIT) {
-        socket = get_socket_from_fd(local_sockfd);
-        if (socket && !(socket->flags & 0x800)) {  /* O_NONBLOCK */
-            socket->flags |= 0x800;  /* Set O_NONBLOCK temporarily */
-            restore_blocking = true;
-        }
+    /* Apply MSG_DONTWAIT via per-task flag (avoids mutating shared sock->flags) */
+    fut_task_t *dw_task = fut_task_current();
+    int saved_dontwait = 0;
+    if ((local_flags & MSG_DONTWAIT) && dw_task) {
+        saved_dontwait = dw_task->msg_dontwait;
+        dw_task->msg_dontwait = 1;
     }
 
     /* Phase 2: Iterate through iovecs and read each buffer */
@@ -718,9 +713,9 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
                    completion_status, iovecs_filled, kmsg.msg_iovlen, min_iov_len, max_iov_len);
     }
 
-    /* Restore blocking mode if we temporarily set O_NONBLOCK */
-    if (restore_blocking && socket) {
-        socket->flags &= ~0x800;  /* Clear O_NONBLOCK */
+    /* Restore per-task MSG_DONTWAIT flag */
+    if ((local_flags & MSG_DONTWAIT) && dw_task) {
+        dw_task->msg_dontwait = saved_dontwait;
     }
 
     return total_received;

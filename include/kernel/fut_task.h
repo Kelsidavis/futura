@@ -158,6 +158,7 @@ struct fut_task {
     int auto_reap;                     // 1 = parent had SIGCHLD=SIG_IGN or SA_NOCLDWAIT; reap on thread exit
     int oom_score_adj;                 // /proc/<pid>/oom_score_adj: OOM killer bias (-1000..1000)
     int suppress_sigpipe;              // Transient: suppress SIGPIPE during MSG_NOSIGNAL send
+    int msg_dontwait;                  // Transient: per-call MSG_DONTWAIT (avoids mutating sock->flags)
     uint64_t timerslack_ns;            // PR_SET/GET_TIMERSLACK: timer expiry slack (ns); default 50000
 
     /* I/O priority */

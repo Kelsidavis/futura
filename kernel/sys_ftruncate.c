@@ -95,6 +95,15 @@ long sys_ftruncate(int fd, uint64_t length) {
         return -ESRCH;
     }
 
+    /* Reject negative lengths: the Linux ABI passes a signed off_t which
+     * arrives as uint64_t in the syscall handler.  Values with bit 63 set
+     * are negative off_t values and must be rejected per POSIX. */
+    if ((int64_t)length < 0) {
+        fut_printf("[FTRUNCATE] ftruncate(fd=%d, length=%lld) -> EINVAL (negative length)\n",
+                   fd, (long long)(int64_t)length);
+        return -EINVAL;
+    }
+
     /* Phase 2: Validate fd early */
     if (fd < 0) {
         fut_printf("[FTRUNCATE] ftruncate(fd=%d, length=%llu) -> EBADF (negative fd)\n",

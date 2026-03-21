@@ -79,6 +79,18 @@ static inline int socket_memcmp(const void *s1, const void *s2, size_t n) {
 #define memcpy(s1,s2,n)   socket_memcpy(s1, s2, n)
 #define memcmp(s1,s2,n)   socket_memcmp(s1, s2, n)
 
+/* Check if a socket operation should be non-blocking.
+ * Returns true if O_NONBLOCK is set on the socket OR the current task has
+ * the transient msg_dontwait flag set (MSG_DONTWAIT per-call semantics).
+ * This avoids mutating sock->flags for MSG_DONTWAIT, preventing a race
+ * where another thread on the same socket sees the temporary flag. */
+static inline bool socket_nonblock(const fut_socket_t *socket) {
+    if (socket->flags & 0x800)  /* O_NONBLOCK */
+        return true;
+    fut_task_t *t = fut_task_current();
+    return t && t->msg_dontwait;
+}
+
 /* ============================================================
  *   Socket timeout support (SO_RCVTIMEO / SO_SNDTIMEO)
  * ============================================================ */
@@ -1000,7 +1012,7 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
 
     /* Wait for connection to complete if socket is still connecting */
     if (socket->state == FUT_SOCK_CONNECTING) {
-        if (socket->flags & 0x800) {  /* O_NONBLOCK */
+        if (socket_nonblock(socket)) {
             return -EAGAIN;
         }
         /* Block until connection completes */
@@ -1071,7 +1083,7 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
     }
 
     while (available < seqp_needed) {
-        if (socket->flags & 0x800) {  /* O_NONBLOCK */
+        if (socket_nonblock(socket)) {
             fut_spinlock_release(&pair->lock);
             return -EAGAIN;
         }
@@ -1185,7 +1197,7 @@ ssize_t fut_socket_recv(fut_socket_t *socket, void *buf, size_t len) {
 
     /* Wait for connection to complete if socket is still connecting */
     if (socket->state == FUT_SOCK_CONNECTING) {
-        if (socket->flags & 0x800) {  /* O_NONBLOCK */
+        if (socket_nonblock(socket)) {
             return -EAGAIN;
         }
         /* Block until connection completes */
@@ -1246,7 +1258,7 @@ ssize_t fut_socket_recv(fut_socket_t *socket, void *buf, size_t len) {
     }
 
     while (available == 0) {
-        if (socket->flags & 0x800) {  /* O_NONBLOCK */
+        if (socket_nonblock(socket)) {
             fut_spinlock_release(&pair->lock);
             return -EAGAIN;
         }
@@ -1370,7 +1382,7 @@ ssize_t fut_socket_recv_peek(fut_socket_t *socket, void *buf, size_t len) {
     }
 
     if (available == 0) {
-        if (socket->flags & 0x800) {  /* O_NONBLOCK */
+        if (socket_nonblock(socket)) {
             fut_spinlock_release(&pair->lock);
             return -EAGAIN;
         }
@@ -1694,7 +1706,7 @@ ssize_t fut_socket_recvfrom_dgram(fut_socket_t *socket, void *buf, size_t len,
     }
 
     while (dq->count == 0) {
-        if (socket->flags & 0x800) {  /* O_NONBLOCK */
+        if (socket_nonblock(socket)) {
             fut_spinlock_release(&dq->lock);
             return -EAGAIN;
         }
@@ -1786,7 +1798,7 @@ ssize_t fut_socket_peek_dgram(fut_socket_t *socket, void *buf, size_t len,
     fut_spinlock_acquire(&dq->lock);
 
     if (dq->count == 0) {
-        if (socket->flags & 0x800) { /* O_NONBLOCK */
+        if (socket_nonblock(socket)) {
             fut_spinlock_release(&dq->lock);
             return -EAGAIN;
         }

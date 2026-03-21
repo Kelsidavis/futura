@@ -595,15 +595,11 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
         }
     }
 
-    /* Apply MSG_DONTWAIT: temporarily set O_NONBLOCK on the socket */
-    bool dontwait_applied = false;
-    if (local_flags & MSG_DONTWAIT) {
-        extern fut_socket_t *get_socket_from_fd(int fd);
-        fut_socket_t *sock = get_socket_from_fd(local_sockfd);
-        if (sock && !(sock->flags & 0x800)) {
-            sock->flags |= 0x800;
-            dontwait_applied = true;
-        }
+    /* Apply MSG_DONTWAIT via per-task flag (avoids mutating shared sock->flags) */
+    int saved_dontwait = 0;
+    if ((local_flags & MSG_DONTWAIT) && task) {
+        saved_dontwait = task->msg_dontwait;
+        task->msg_dontwait = 1;
     }
 
     /* MSG_NOSIGNAL: suppress SIGPIPE at the source (before fut_vfs_write sends it) */
@@ -616,11 +612,9 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
 
     task->suppress_sigpipe = 0;
 
-    /* Restore O_NONBLOCK if we temporarily set it */
-    if (dontwait_applied) {
-        extern fut_socket_t *get_socket_from_fd(int fd);
-        fut_socket_t *sock = get_socket_from_fd(local_sockfd);
-        if (sock) sock->flags &= ~0x800;
+    /* Restore per-task MSG_DONTWAIT flag */
+    if ((local_flags & MSG_DONTWAIT) && task) {
+        task->msg_dontwait = saved_dontwait;
     }
 
     /* Phase 4: Consume bytes from I/O budget if write succeeded */

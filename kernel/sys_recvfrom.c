@@ -514,8 +514,13 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
             char sender_path[108];
             uint16_t sender_path_len = 0;
             size_t actual_dgram_len = 0;
-            if (local_flags & MSG_DONTWAIT)
-                dgsock->flags |= 0x800;
+            /* Use per-task flag for MSG_DONTWAIT (avoids mutating shared sock->flags) */
+            fut_task_t *dg_task = fut_task_current();
+            int dg_saved = 0;
+            if ((local_flags & MSG_DONTWAIT) && dg_task) {
+                dg_saved = dg_task->msg_dontwait;
+                dg_task->msg_dontwait = 1;
+            }
             ssize_t dg_ret;
             if (local_flags & MSG_PEEK) {
                 dg_ret = fut_socket_peek_dgram(dgsock, kbuf, local_len,
@@ -526,8 +531,8 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
                                                    sender_path, &sender_path_len,
                                                    &actual_dgram_len);
             }
-            if (local_flags & MSG_DONTWAIT)
-                dgsock->flags &= ~0x800;
+            if ((local_flags & MSG_DONTWAIT) && dg_task)
+                dg_task->msg_dontwait = dg_saved;
             if (dg_ret < 0) {
                 fut_free(kbuf);
                 return dg_ret;
@@ -565,15 +570,12 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
         }
     }
 
-    /* Apply MSG_DONTWAIT: temporarily set O_NONBLOCK on the socket for this call */
-    bool dontwait_applied = false;
-    if (local_flags & MSG_DONTWAIT) {
-        extern fut_socket_t *get_socket_from_fd(int fd);
-        fut_socket_t *sock = get_socket_from_fd(local_sockfd);
-        if (sock && !(sock->flags & 0x800)) {
-            sock->flags |= 0x800;
-            dontwait_applied = true;
-        }
+    /* Apply MSG_DONTWAIT via per-task flag (avoids mutating shared sock->flags) */
+    fut_task_t *dw_task = fut_task_current();
+    int saved_dontwait = 0;
+    if ((local_flags & MSG_DONTWAIT) && dw_task) {
+        saved_dontwait = dw_task->msg_dontwait;
+        dw_task->msg_dontwait = 1;
     }
 
     /* Read from socket — use peek path for MSG_PEEK, loop for MSG_WAITALL */
@@ -625,11 +627,9 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
         ret = fut_vfs_read(local_sockfd, kbuf, local_len);
     }
 
-    /* Restore O_NONBLOCK if we temporarily set it */
-    if (dontwait_applied) {
-        extern fut_socket_t *get_socket_from_fd(int fd);
-        fut_socket_t *sock = get_socket_from_fd(local_sockfd);
-        if (sock) sock->flags &= ~0x800;
+    /* Restore per-task MSG_DONTWAIT flag */
+    if ((local_flags & MSG_DONTWAIT) && dw_task) {
+        dw_task->msg_dontwait = saved_dontwait;
     }
 
     if (ret < 0) {

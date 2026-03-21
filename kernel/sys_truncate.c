@@ -65,6 +65,15 @@ long sys_truncate(const char *path, uint64_t length) {
     const char *local_path = path;
     uint64_t local_length = length;
 
+    /* Reject negative lengths: the Linux ABI passes a signed off_t which
+     * arrives as uint64_t in the syscall handler.  Values with bit 63 set
+     * are negative off_t values and must be rejected per POSIX. */
+    if ((int64_t)local_length < 0) {
+        fut_printf("[TRUNCATE] truncate(path=%p, length=%lld) -> EINVAL (negative length)\n",
+                   (const void *)local_path, (long long)(int64_t)local_length);
+        return -EINVAL;
+    }
+
     /* Phase 2: Validate path pointer */
     if (!local_path) {
         fut_printf("[TRUNCATE] truncate(path=NULL, length=%llu) -> EINVAL (NULL path)\n",

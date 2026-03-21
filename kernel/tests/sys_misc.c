@@ -13801,6 +13801,125 @@ static void test_fionbio_pipe(void) {
     }
 }
 
+/*
+ * Tests 1373-1374: ftruncate/truncate reject negative length (EINVAL)
+ */
+static void test_truncate_negative_length(void) {
+    extern long sys_ftruncate(int fd, uint64_t length);
+    extern long sys_truncate(const char *path, uint64_t length);
+    extern long sys_write(int fd, const void *buf, size_t count);
+    extern long sys_openat(int dirfd, const char *pathname, int flags, int mode);
+
+    /* Test 1373: ftruncate with negative length returns EINVAL */
+    fut_printf("[MISC-TEST] Test 1373: ftruncate(fd, -1) → EINVAL\n");
+    {
+        long fd = sys_openat(-100 /* AT_FDCWD */, "/tmp/trunc_neg_test",
+                             0x42 /* O_CREAT|O_RDWR */, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1373: openat → %ld\n", fd);
+            fut_test_fail(1373);
+        } else {
+            sys_write((int)fd, "hello", 5);
+            /* Cast -1 to uint64_t — simulates what the syscall ABI does */
+            long r = sys_ftruncate((int)fd, (uint64_t)(int64_t)-1);
+            if (r == -22 /* EINVAL */) {
+                fut_printf("[MISC-TEST] ✓ Test 1373: ftruncate(fd, -1) → EINVAL\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1373: ftruncate(fd, -1) → %ld (want EINVAL)\n", r);
+                fut_test_fail(1373);
+            }
+            sys_close((int)fd);
+        }
+    }
+
+    /* Test 1374: truncate with negative length returns EINVAL */
+    fut_printf("[MISC-TEST] Test 1374: truncate(path, -1) → EINVAL\n");
+    {
+        long r = sys_truncate("/tmp/trunc_neg_test", (uint64_t)(int64_t)-1);
+        if (r == -22 /* EINVAL */) {
+            fut_printf("[MISC-TEST] ✓ Test 1374: truncate(path, -1) → EINVAL\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1374: truncate(path, -1) → %ld (want EINVAL)\n", r);
+            fut_test_fail(1374);
+        }
+    }
+}
+
+/*
+ * Tests 1375-1376: MSG_DONTWAIT uses per-task flag, doesn't mutate sock->flags
+ */
+static void test_msg_dontwait_per_call(void) {
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+    extern long sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
+                             void *src_addr, void *addrlen);
+    /* Test 1375: recvfrom(MSG_DONTWAIT) returns EAGAIN without permanently
+     * setting O_NONBLOCK on the socket */
+    fut_printf("[MISC-TEST] Test 1375: MSG_DONTWAIT doesn't permanently set O_NONBLOCK\n");
+    {
+        int sv[2];
+        long r = sys_socketpair(1 /* AF_UNIX */, 1 /* SOCK_STREAM */, 0, sv);
+        if (r < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1375: socketpair → %ld\n", r);
+            fut_test_fail(1375);
+        } else {
+            char buf[16];
+            /* Read with MSG_DONTWAIT=0x40 on empty socket → EAGAIN */
+            long rr = sys_recvfrom(sv[0], buf, sizeof(buf), 0x40 /* MSG_DONTWAIT */,
+                                   (void *)0, (void *)0);
+            if (rr != -11 /* EAGAIN */) {
+                fut_printf("[MISC-TEST] ✗ Test 1375: recvfrom(DONTWAIT) → %ld (want EAGAIN)\n", rr);
+                fut_test_fail(1375);
+            } else {
+                /* Now check that the socket is NOT permanently nonblocking.
+                 * Use fcntl(F_GETFL) to verify O_NONBLOCK is NOT set. */
+                extern long sys_fcntl(int fd, int cmd, uint64_t arg);
+                long fl = sys_fcntl(sv[0], 3 /* F_GETFL */, 0);
+                if (fl >= 0 && !(fl & 0x800 /* O_NONBLOCK */)) {
+                    fut_printf("[MISC-TEST] ✓ Test 1375: O_NONBLOCK not set after MSG_DONTWAIT\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1375: O_NONBLOCK leaked: flags=0x%lx\n", fl);
+                    fut_test_fail(1375);
+                }
+            }
+            sys_close(sv[0]); sys_close(sv[1]);
+        }
+    }
+
+    /* Test 1376: recvfrom without MSG_DONTWAIT on socket with data succeeds
+     * (verifies socket is still blocking after a MSG_DONTWAIT call) */
+    fut_printf("[MISC-TEST] Test 1376: normal recv after MSG_DONTWAIT works\n");
+    {
+        int sv[2];
+        long r = sys_socketpair(1 /* AF_UNIX */, 1 /* SOCK_STREAM */, 0, sv);
+        if (r < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1376: socketpair → %ld\n", r);
+            fut_test_fail(1376);
+        } else {
+            /* First do a MSG_DONTWAIT recv (should be EAGAIN) */
+            char buf[16];
+            sys_recvfrom(sv[0], buf, sizeof(buf), 0x40 /* MSG_DONTWAIT */,
+                         (void *)0, (void *)0);
+            /* Now write data and do a normal recv */
+            extern long sys_write(int fd, const void *buf, size_t count);
+            sys_write(sv[1], "ok", 2);
+            long rr = sys_recvfrom(sv[0], buf, sizeof(buf), 0,
+                                   (void *)0, (void *)0);
+            if (rr == 2 && buf[0] == 'o' && buf[1] == 'k') {
+                fut_printf("[MISC-TEST] ✓ Test 1376: normal recv after DONTWAIT: got 2 bytes\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1376: recv → %ld (want 2)\n", rr);
+                fut_test_fail(1376);
+            }
+            sys_close(sv[0]); sys_close(sv[1]);
+        }
+    }
+}
+
 static void test_proc_fd_anon_types(void) {
     extern long sys_read(int fd, void *buf, size_t count);
     extern long sys_readlink(const char *path, char *buf, size_t bufsiz);
@@ -44832,6 +44951,8 @@ void fut_misc_test_thread(void *arg) {
     test_read_write_count_zero();            /* Tests 1364-1366: read/write count=0 EBADF, sendfile neg offset */
     test_tee_correctness();                  /* Tests 1367-1370: tee data integrity, NONBLOCK, same-fd */
     test_fionbio_pipe();                     /* Tests 1371-1372: FIONBIO pipe nonblock propagation */
+    test_truncate_negative_length();         /* Tests 1373-1374: ftruncate/truncate reject negative length */
+    test_msg_dontwait_per_call();            /* Tests 1375-1376: MSG_DONTWAIT doesn't mutate sock->flags */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -39120,6 +39120,119 @@ static void test_vmsplice_tee(void) {
     }
 }
 
+static void test_itimer_virtual_prof(void) {
+    /* Tests 1207-1211: setitimer/getitimer for ITIMER_VIRTUAL (1) and ITIMER_PROF (2).
+     * These are implemented in the kernel but had no test coverage.
+     * ITIMER_VIRTUAL fires SIGVTALRM when user-mode CPU time elapses.
+     * ITIMER_PROF fires SIGPROF on user+system CPU time (used by gprof/pprof). */
+    /* sys_getitimer/sys_setitimer are declared earlier in this file via:
+     *   extern long sys_getitimer(int which, struct itimerval *value);
+     *   extern long sys_setitimer(int which, const struct itimerval *value, struct itimerval *ovalue);
+     * Use them directly. struct itimerval is in sys/time.h. */
+
+#define ITIMER_REAL_T    0
+#define ITIMER_VIRTUAL_T 1
+#define ITIMER_PROF_T    2
+
+    /* Test 1207: getitimer(ITIMER_VIRTUAL) on fresh task returns disarmed timer */
+    fut_printf("[MISC-TEST] Test 1207: getitimer(ITIMER_VIRTUAL) fresh → 0\n");
+    {
+        struct itimerval val = {{0,0},{0,0}};
+        long r = sys_getitimer(ITIMER_VIRTUAL_T, &val);
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1207: getitimer(ITIMER_VIRTUAL) = 0\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1207: getitimer(ITIMER_VIRTUAL) = %ld\n", r);
+            fut_test_fail(1207);
+        }
+    }
+
+    /* Test 1208: setitimer(ITIMER_VIRTUAL, arm, NULL) + getitimer readback */
+    fut_printf("[MISC-TEST] Test 1208: setitimer(ITIMER_VIRTUAL) arm + getitimer readback\n");
+    {
+        /* Arm with 10s/0us interval (we won't wait for it to fire in tests) */
+        struct itimerval arm = {{10, 0}, {10, 0}};
+        long r = sys_setitimer(ITIMER_VIRTUAL_T, &arm, NULL);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1208: setitimer(ITIMER_VIRTUAL, arm) = %ld\n", r);
+            fut_test_fail(1208);
+        } else {
+            struct itimerval cur = {{0,0},{0,0}};
+            r = sys_getitimer(ITIMER_VIRTUAL_T, &cur);
+            /* Disarm after test */
+            struct itimerval disarm = {{0,0},{0,0}};
+            sys_setitimer(ITIMER_VIRTUAL_T, &disarm, NULL);
+            if (r == 0 && cur.it_interval.tv_sec == 10) {
+                fut_printf("[MISC-TEST] ✓ Test 1208: ITIMER_VIRTUAL interval=%lds\n",
+                           cur.it_interval.tv_sec);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1208: getitimer r=%ld interval=%lds\n",
+                           r, cur.it_interval.tv_sec);
+                fut_test_fail(1208);
+            }
+        }
+    }
+
+    /* Test 1209: getitimer(ITIMER_PROF) on fresh task returns disarmed timer */
+    fut_printf("[MISC-TEST] Test 1209: getitimer(ITIMER_PROF) fresh → 0\n");
+    {
+        struct itimerval val = {{0,0},{0,0}};
+        long r = sys_getitimer(ITIMER_PROF_T, &val);
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1209: getitimer(ITIMER_PROF) = 0\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1209: getitimer(ITIMER_PROF) = %ld\n", r);
+            fut_test_fail(1209);
+        }
+    }
+
+    /* Test 1210: setitimer(ITIMER_PROF, arm, NULL) + getitimer readback */
+    fut_printf("[MISC-TEST] Test 1210: setitimer(ITIMER_PROF) arm + readback\n");
+    {
+        struct itimerval arm = {{5, 0}, {5, 0}};
+        long r = sys_setitimer(ITIMER_PROF_T, &arm, NULL);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1210: setitimer(ITIMER_PROF, arm) = %ld\n", r);
+            fut_test_fail(1210);
+        } else {
+            struct itimerval cur = {{0,0},{0,0}};
+            r = sys_getitimer(ITIMER_PROF_T, &cur);
+            struct itimerval disarm = {{0,0},{0,0}};
+            sys_setitimer(ITIMER_PROF_T, &disarm, NULL);
+            if (r == 0 && cur.it_interval.tv_sec == 5) {
+                fut_printf("[MISC-TEST] ✓ Test 1210: ITIMER_PROF interval=%lds\n",
+                           cur.it_interval.tv_sec);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1210: getitimer r=%ld interval=%lds\n",
+                           r, cur.it_interval.tv_sec);
+                fut_test_fail(1210);
+            }
+        }
+    }
+
+    /* Test 1211: setitimer with invalid which → EINVAL */
+    fut_printf("[MISC-TEST] Test 1211: setitimer(which=99) → EINVAL\n");
+    {
+        struct itimerval arm = {{1, 0}, {1, 0}};
+        long r = sys_setitimer(99, &arm, NULL);
+        if (r == -22 /* -EINVAL */) {
+            fut_printf("[MISC-TEST] ✓ Test 1211: setitimer(99) = -EINVAL\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1211: setitimer(99) = %ld (want -EINVAL)\n", r);
+            fut_test_fail(1211);
+        }
+    }
+
+#undef ITIMER_REAL_T
+#undef ITIMER_VIRTUAL_T
+#undef ITIMER_PROF_T
+}
+
 static void test_getrandom_flags(void) {
     /* Tests 1200-1204: getrandom flag variants (GRND_NONBLOCK, GRND_RANDOM,
      * GRND_INSECURE) and edge cases (buflen=0, NULL buf).
@@ -39978,6 +40091,7 @@ void fut_misc_test_thread(void *arg) {
     test_vmsplice_tee();               /* Tests 1192-1196: vmsplice write+read, EFAULT, EINVAL, EBADF, tee dup */
     test_shutdown_dgram();             /* Tests 1197-1199, 1205-1206: shutdown() DGRAM compat + SHUT_WR/SHUT_RD enforcement */
     test_getrandom_flags();            /* Tests 1200-1204: getrandom GRND_NONBLOCK, GRND_RANDOM, GRND_INSECURE, buflen=0, NULL buf */
+    test_itimer_virtual_prof();        /* Tests 1207-1211: setitimer/getitimer ITIMER_VIRTUAL, ITIMER_PROF, EINVAL */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

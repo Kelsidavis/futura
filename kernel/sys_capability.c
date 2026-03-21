@@ -307,116 +307,94 @@ long sys_capset(struct __user_cap_header_struct *hdrp,
         return -EFAULT;
     }
 
-    /* Phase 2: Copy capability header from userspace */
+    /* Copy capability header from userspace */
     struct __user_cap_header_struct hdr;
     if (cap_copy_from_user(&hdr, hdrp, sizeof(hdr)) != 0) {
-        fut_printf("[CAPABILITY] capset(hdrp=?, datap=%p, pid=%d) -> EFAULT "
-                   "(header copy_from_user failed)\n", datap, task->pid);
+        fut_printf("[CAPABILITY] capset: EFAULT copying header\n");
         return -EFAULT;
     }
 
-    /* Phase 2: Copy capability data from userspace */
-    struct __user_cap_data_struct data;
-    if (cap_copy_from_user(&data, datap, sizeof(data)) != 0) {
-        fut_printf("[CAPABILITY] capset(hdrp=?, datap=?, pid=%d) -> EFAULT "
-                   "(data copy_from_user failed)\n", task->pid);
-        return -EFAULT;
-    }
-
-    /* Phase 2: Validate capability version */
-    const char *version_desc;
+    /* Validate version.  Unknown version: write preferred version back and return EINVAL. */
+    int two_structs = 0;
     if (hdr.version == _LINUX_CAPABILITY_VERSION_1) {
-        version_desc = "v1 (obsolete)";
-    } else if (hdr.version == _LINUX_CAPABILITY_VERSION_2) {
-        version_desc = "v2 (legacy)";
-    } else if (hdr.version == _LINUX_CAPABILITY_VERSION_3) {
-        version_desc = "v3 (current)";
+        two_structs = 0;
+    } else if (hdr.version == _LINUX_CAPABILITY_VERSION_2 ||
+               hdr.version == _LINUX_CAPABILITY_VERSION_3) {
+        two_structs = 1;
     } else {
-        version_desc = "unknown/invalid";
+        uint32_t preferred = _LINUX_CAPABILITY_VERSION_3;
+        cap_copy_to_user(&hdrp->version, &preferred, sizeof(preferred));
+        fut_printf("[CAPABILITY] capset: unknown version 0x%x -> EINVAL (wrote V3)\n",
+                   hdr.version);
+        return -EINVAL;
     }
 
-    /* Phase 2: Validate target PID */
-    const char *pid_desc;
-    if (hdr.pid == 0) {
-        pid_desc = "current process";
-    } else if (hdr.pid > 0) {
-        pid_desc = "other process";
-    } else {
-        pid_desc = "invalid (<0)";
+    /* Copy capability data from userspace.
+     * V1: one struct (lo 32 bits).  V2/V3: two structs (lo + hi 32 bits). */
+    struct __user_cap_data_struct cap_data[2] = {{0}, {0}};
+    size_t data_size = two_structs
+        ? 2 * sizeof(struct __user_cap_data_struct)
+        :     sizeof(struct __user_cap_data_struct);
+    if (cap_copy_from_user(cap_data, datap, data_size) != 0) {
+        fut_printf("[CAPABILITY] capset: EFAULT copying %zu bytes of data\n", data_size);
+        return -EFAULT;
     }
 
-    /* Phase 2: Categorize operation type */
-    const char *operation_type;
-    if (data.effective == 0 && data.permitted == 0 && data.inheritable == 0) {
-        operation_type = "drop all capabilities";
-    } else if (data.effective != 0) {
-        operation_type = "modify effective capabilities";
-    } else if (data.permitted != 0) {
-        operation_type = "modify permitted capabilities";
-    } else if (data.inheritable != 0) {
-        operation_type = "modify inheritable capabilities";
-    } else {
-        operation_type = "set capabilities";
+    /* Combine lo/hi halves into full 64-bit capability values */
+    uint64_t new_effective   = (uint64_t)cap_data[0].effective;
+    uint64_t new_permitted   = (uint64_t)cap_data[0].permitted;
+    uint64_t new_inheritable = (uint64_t)cap_data[0].inheritable;
+    if (two_structs) {
+        new_effective   |= (uint64_t)cap_data[1].effective   << 32;
+        new_permitted   |= (uint64_t)cap_data[1].permitted   << 32;
+        new_inheritable |= (uint64_t)cap_data[1].inheritable << 32;
     }
 
-    /*
-     * Phase 3 (Completed): Capability storage and permission checking
-     *
-     * Store new capabilities in task structure, validate permissions, and update effective set
-     */
-
-    /* Phase 3: Retrieve target task (0 = current, >0 = other process) */
-    fut_task_t *target_task = task;  /* Default to current task */
+    /* Resolve target task (0 = current, >0 = other process).
+     * Linux only allows setting own capabilities (EPERM for other PIDs). */
+    fut_task_t *target_task = task;
     if (hdr.pid != 0) {
-        /* Phase 3: For other processes, would need task lookup (simplified to current for now) */
-        if ((uint64_t)hdr.pid != task->pid) {
-            fut_printf("[CAPABILITY] capset(hdrp=? [version=%s, pid=%s], datap=? [op=%s], "
-                       "caller_pid=%d) -> EPERM (can only set own capabilities or require CAP_SETPCAP)\n",
-                       version_desc, pid_desc, operation_type, task->pid);
+        if ((uint64_t)(unsigned int)hdr.pid != task->pid) {
+            fut_printf("[CAPABILITY] capset: pid=%d != self -> EPERM\n", hdr.pid);
             return -EPERM;
         }
     }
 
     /* Validate: new permitted set must not exceed old permitted set.
      * Linux rule: new_permitted ⊆ old_permitted (caps can only be dropped, not added). */
-    if (data.permitted & ~(uint32_t)target_task->cap_permitted) {
-        fut_printf("[CAPABILITY] capset -> EPERM (permitted exceeds old_permitted)\n");
+    if (new_permitted & ~target_task->cap_permitted) {
+        fut_printf("[CAPABILITY] capset -> EPERM (permitted 0x%llx exceeds old 0x%llx)\n",
+                   (unsigned long long)new_permitted,
+                   (unsigned long long)target_task->cap_permitted);
         return -EPERM;
     }
 
     /* Validate: effective ⊆ new_permitted */
-    if (data.effective & ~data.permitted) {
+    if (new_effective & ~new_permitted) {
         fut_printf("[CAPABILITY] capset -> EPERM (effective exceeds permitted)\n");
         return -EPERM;
     }
 
-    /* Validate: inheritable ⊆ (old_inheritable ∪ cap_bset) — simplified: ⊆ bset∩permitted */
-    uint32_t bset_lo = (uint32_t)(target_task->cap_bset & 0xFFFFFFFF);
-    if (data.inheritable & ~((uint32_t)target_task->cap_inheritable | bset_lo)) {
+    /* Validate: inheritable ⊆ (old_inheritable ∪ cap_bset) */
+    if (new_inheritable & ~(target_task->cap_inheritable | target_task->cap_bset)) {
         fut_printf("[CAPABILITY] capset -> EPERM (inheritable exceeds inheritable∪bset)\n");
         return -EPERM;
     }
 
-    /* Phase 3: Store old capabilities for before/after comparison */
-    uint32_t old_effective = (uint32_t)target_task->cap_effective;
+    /* Store old effective for logging */
+    uint64_t old_effective = target_task->cap_effective;
 
-    /* Phase 3: Update task capabilities in structure */
-    target_task->cap_effective   = data.effective & 0xFFFFFFFF;
-    target_task->cap_permitted   = data.permitted & 0xFFFFFFFF;
-    target_task->cap_inheritable = data.inheritable & 0xFFFFFFFF;
+    /* Update task capabilities with full 64-bit values */
+    target_task->cap_effective   = new_effective;
+    target_task->cap_permitted   = new_permitted;
+    target_task->cap_inheritable = new_inheritable;
 
-    /* Phase 3: Identify capability changes for logging */
-    uint32_t added_caps = target_task->cap_effective & ~old_effective;
-    uint32_t removed_caps = old_effective & ~target_task->cap_effective;
-    const char *change_type = (added_caps && removed_caps) ? "mixed" :
-                              (added_caps) ? "added" : (removed_caps) ? "removed" : "unchanged";
-
-    /* Phase 4: Detailed success logging with capability change info */
-    fut_printf("[CAPABILITY] capset(hdrp=? [version=%s, pid=%s], datap=? [op=%s, "
-               "eff: 0x%x->0x%x, perm=0x%x, inh=0x%x, change=%s], caller_pid=%d) "
-               "-> 0 (capabilities updated, Phase 4)\n",
-               version_desc, pid_desc, operation_type, old_effective, target_task->cap_effective,
-               target_task->cap_permitted, target_task->cap_inheritable, change_type, task->pid);
+    fut_printf("[CAPABILITY] capset(pid=%d) -> eff=0x%llx->0x%llx perm=0x%llx inh=0x%llx\n",
+               hdr.pid,
+               (unsigned long long)old_effective,
+               (unsigned long long)new_effective,
+               (unsigned long long)new_permitted,
+               (unsigned long long)new_inheritable);
 
     return 0;
 }

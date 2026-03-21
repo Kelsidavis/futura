@@ -480,7 +480,7 @@ bool fut_trap_handle_page_fault(fut_interrupt_frame_t *frame) {
     }
 
     if ((frame->cs & 0x3u) != 0) {
-        /* Log the unhandled user page fault before terminating */
+        /* Log the unhandled user page fault */
         uint64_t cr2 = fut_read_cr2();
         fut_printf("[#PF-USER] Unhandled user page fault: addr=0x%llx rip=0x%llx err=0x%llx\n",
                    (unsigned long long)cr2,
@@ -495,8 +495,28 @@ bool fut_trap_handle_page_fault(fut_interrupt_frame_t *frame) {
         fut_printf("[#PF-USER] R12=0x%llx R13=0x%llx R14=0x%llx R15=0x%llx\n",
                    (unsigned long long)frame->r12, (unsigned long long)frame->r13,
                    (unsigned long long)frame->r14, (unsigned long long)frame->r15);
-        /* Send SIGSEGV to terminate the faulting process */
+
+        /* Deliver SIGSEGV: if a user handler is installed, redirect the interrupt
+         * frame so the handler runs when we return from the exception.
+         * Default action (no handler): terminate the faulting task immediately. */
+        fut_task_t *pf_task = fut_task_current();
+        if (pf_task) {
+            sighandler_t pf_handler = fut_signal_get_handler(pf_task, SIGSEGV);
+            if (pf_handler != SIG_DFL && pf_handler != SIG_IGN) {
+                bool is_prot_fault = (frame->error_code & 0x1) != 0;
+                siginfo_t pf_info;
+                __builtin_memset(&pf_info, 0, sizeof(pf_info));
+                pf_info.si_signum = SIGSEGV;
+                pf_info.si_code   = is_prot_fault ? SEGV_ACCERR : SEGV_MAPERR;
+                pf_info.si_addr   = (void *)(uintptr_t)cr2;
+                fut_signal_send_with_info(pf_task, SIGSEGV, &pf_info);
+                fut_signal_deliver(pf_task, frame);
+                return true;
+            }
+        }
+        /* SIG_DFL: terminate */
         fut_task_signal_exit(SIGSEGV);
+        return true;
     }
 
     return false;
@@ -595,7 +615,26 @@ bool fut_trap_handle_page_fault(fut_interrupt_frame_t *frame) {
     fut_printf("[#PF-ARM64] sp=0x%llx sp_el0=0x%llx\n",
                (unsigned long long)frame->sp, (unsigned long long)frame->sp_el0);
 
-    return false;
+    /* Deliver SIGSEGV: if a user handler is installed, redirect the exception frame
+     * so the handler runs on ERET.  Default action: terminate immediately. */
+    {
+        fut_task_t *pf_task = fut_task_current();
+        if (pf_task) {
+            sighandler_t pf_handler = fut_signal_get_handler(pf_task, SIGSEGV);
+            if (pf_handler != SIG_DFL && pf_handler != SIG_IGN) {
+                siginfo_t pf_info;
+                __builtin_memset(&pf_info, 0, sizeof(pf_info));
+                pf_info.si_signum = SIGSEGV;
+                pf_info.si_code   = is_access_fault ? SEGV_ACCERR : SEGV_MAPERR;
+                pf_info.si_addr   = (void *)(uintptr_t)fault_addr;
+                fut_signal_send_with_info(pf_task, SIGSEGV, &pf_info);
+                fut_signal_deliver(pf_task, frame);
+                return true;
+            }
+        }
+    }
+    fut_task_signal_exit(SIGSEGV);
+    return true;
 }
 
 #else

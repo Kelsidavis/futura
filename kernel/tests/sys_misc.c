@@ -40657,6 +40657,117 @@ static void test_proc_stat_fields(void) {
     }
 }
 
+/* ============================================================
+ * Tests 1247-1250: page-fault SIGSEGV delivery mechanism
+ *   Test 1247: SEGV_MAPERR==1, SEGV_ACCERR==2 (Linux ABI constants)
+ *   Test 1248: SIG_DFL SIGSEGV → fut_signal_send sets task->term_signal
+ *   Test 1249: user SIGSEGV handler → fut_signal_send_with_info does NOT set term_signal
+ *   Test 1250: fut_signal_send_with_info stores si_code/si_addr correctly
+ * ============================================================ */
+void test_dummy_sigsegv_handler(int sig) { (void)sig; }
+
+static void test_sigsegv_pagefault_delivery(void) {
+    fut_printf("[MISC-TEST] Tests 1247-1250: page-fault SIGSEGV delivery mechanism\n");
+
+    extern fut_task_t *fut_task_current(void);
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        for (int i = 1247; i <= 1250; i++) fut_test_fail(i);
+        return;
+    }
+
+    extern long sys_sigaction(int signum, const void *act, void *oldact);
+    extern int fut_signal_send(struct fut_task *task, int signum);
+    extern int fut_signal_send_with_info(struct fut_task *task, int signum, const void *info);
+
+    struct {
+        void (*sa_handler)(int);
+        unsigned long sa_flags;
+        void (*sa_restorer)(void);
+        uint64_t sa_mask;
+    } act_dfl  = { (void *)0, 0, 0, 0 };
+    struct {
+        void (*sa_handler)(int);
+        unsigned long sa_flags;
+        void (*sa_restorer)(void);
+        uint64_t sa_mask;
+    } act_user = { test_dummy_sigsegv_handler, 0, 0, 0 };
+
+    /* Test 1247: SEGV_MAPERR == 1, SEGV_ACCERR == 2 (Linux ABI values) */
+    if (SEGV_MAPERR == 1 && SEGV_ACCERR == 2) {
+        fut_printf("[MISC-TEST] ✓ Test 1247: SEGV_MAPERR=1 SEGV_ACCERR=2\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1247: SEGV_MAPERR=%d SEGV_ACCERR=%d (expected 1,2)\n",
+                   SEGV_MAPERR, SEGV_ACCERR);
+        fut_test_fail(1247);
+    }
+
+    /* Test 1248: SIG_DFL SIGSEGV → fut_signal_send sets term_signal=11 */
+    {
+        sys_sigaction(11, &act_dfl, NULL);
+        int saved_term = task->term_signal;
+        task->term_signal = 0;
+        fut_signal_send(task, 11 /* SIGSEGV */);
+        int got = task->term_signal;
+        task->term_signal = saved_term;
+        __atomic_and_fetch(&task->pending_signals, ~(1ULL << 10), __ATOMIC_ACQ_REL);
+        if (got == 11) {
+            fut_printf("[MISC-TEST] ✓ Test 1248: SIG_DFL SIGSEGV → term_signal=11\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1248: term_signal=%d (expected 11)\n", got);
+            fut_test_fail(1248);
+        }
+    }
+
+    /* Test 1249: user SIGSEGV handler → fut_signal_send_with_info does NOT set term_signal */
+    {
+        sys_sigaction(11, &act_user, NULL);
+        task->term_signal = 0;
+        siginfo_t pf_info;
+        __builtin_memset(&pf_info, 0, sizeof(pf_info));
+        pf_info.si_signum = 11;
+        pf_info.si_code   = SEGV_MAPERR;
+        pf_info.si_addr   = (void *)0xdeadbee0UL;
+        fut_signal_send_with_info(task, 11, &pf_info);
+        int got = task->term_signal;
+        task->term_signal = 0;
+        __atomic_and_fetch(&task->pending_signals, ~(1ULL << 10), __ATOMIC_ACQ_REL);
+        sys_sigaction(11, &act_dfl, NULL);
+        if (got == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1249: user SIGSEGV handler → term_signal stays 0\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1249: term_signal=%d (expected 0)\n", got);
+            fut_test_fail(1249);
+        }
+    }
+
+    /* Test 1250: siginfo_t si_code and si_addr stored correctly in sig_queue_info */
+    {
+        sys_sigaction(11, &act_user, NULL);
+        siginfo_t pf_info;
+        __builtin_memset(&pf_info, 0, sizeof(pf_info));
+        pf_info.si_signum = 11;
+        pf_info.si_code   = SEGV_ACCERR;
+        pf_info.si_addr   = (void *)0x12345678UL;
+        fut_signal_send_with_info(task, 11, &pf_info);
+        int stored_code = task->sig_queue_info[10].si_code;
+        void *stored_addr = task->sig_queue_info[10].si_addr;
+        __atomic_and_fetch(&task->pending_signals, ~(1ULL << 10), __ATOMIC_ACQ_REL);
+        sys_sigaction(11, &act_dfl, NULL);
+        if (stored_code == SEGV_ACCERR && stored_addr == (void *)0x12345678UL) {
+            fut_printf("[MISC-TEST] ✓ Test 1250: siginfo si_code=SEGV_ACCERR si_addr=0x12345678\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1250: si_code=%d si_addr=%p (expected %d/0x12345678)\n",
+                       stored_code, stored_addr, SEGV_ACCERR);
+            fut_test_fail(1250);
+        }
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -41297,6 +41408,7 @@ void fut_misc_test_thread(void *arg) {
     test_stream_buf_integrity();              /* Tests 1231-1234: stream socket circular-buffer full/wrap integrity */
     test_cleartid_futex_wake();               /* Tests 1235-1238: CLONE_CHILD_CLEARTID TID-zero+futex-wake on thread exit */
     test_proc_stat_fields();                  /* Tests 1239-1246: /proc/self/stat 52-field format + rt_priority/policy/delayacct */
+    test_sigsegv_pagefault_delivery();        /* Tests 1247-1250: page-fault SIGSEGV delivery mechanism */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

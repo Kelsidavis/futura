@@ -2374,8 +2374,11 @@ ssize_t fut_vfs_write(int fd, const void *buf, size_t size) {
         return -EBADF;
     }
 
-    /* Enforce file seals: F_SEAL_WRITE prevents all writes */
-    if (file->seals & 0x0008 /* F_SEAL_WRITE */) {
+    /* Enforce file seals: F_SEAL_WRITE and F_SEAL_FUTURE_WRITE prevent writes.
+     * F_SEAL_WRITE (0x0008): prevents all writes (and adding MAP_SHARED+PROT_WRITE).
+     * F_SEAL_FUTURE_WRITE (0x0010): prevents future write()/writev() calls but
+     *   allows existing shared writable mappings to continue writing via mmap. */
+    if (file->seals & (0x0008 /* F_SEAL_WRITE */ | 0x0010 /* F_SEAL_FUTURE_WRITE */)) {
         return -EPERM;
     }
 

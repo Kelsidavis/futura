@@ -27048,6 +27048,46 @@ t764:
 #undef F_SEAL_GROW_761
     }
 
+    /* Test 766: F_SEAL_FUTURE_WRITE (0x0010) prevents future write() calls
+     * but allows ftruncate (unlike F_SEAL_WRITE which blocks both). */
+    fut_printf("[MISC-TEST] Test 766: F_SEAL_FUTURE_WRITE prevents writes, allows ftruncate\n");
+    {
+#define F_SEAL_FUTURE_WRITE_766  0x0010U
+        long fd = sys_memfd_create("seal_fw_test", MFD_ALLOW_SEALING_761);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 766: memfd_create failed (%ld)\n", fd);
+            fut_test_fail(766);
+        } else {
+            /* Write initial content */
+            char buf[4] = {'a', 'b', 'c', 'd'};
+            sys_write((int)fd, buf, 4);
+
+            /* Add F_SEAL_FUTURE_WRITE */
+            long r = sys_fcntl((int)fd, F_ADD_SEALS_761, (long)F_SEAL_FUTURE_WRITE_766);
+            if (r != 0) {
+                fut_printf("[MISC-TEST] ✗ Test 766: F_ADD_SEALS(F_SEAL_FUTURE_WRITE) → %ld\n", r);
+                fut_test_fail(766);
+            } else {
+                /* Write must now be rejected */
+                long nw = sys_write((int)fd, buf, 4);
+                /* ftruncate to same size must succeed (FUTURE_WRITE ≠ SEAL_WRITE) */
+                long tr = sys_ftruncate((int)fd, 4);
+                sys_close((int)fd);
+                if (nw != -EPERM) {
+                    fut_printf("[MISC-TEST] ✗ Test 766: write returned %ld (expected -EPERM)\n", nw);
+                    fut_test_fail(766);
+                } else if (tr != 0) {
+                    fut_printf("[MISC-TEST] ✗ Test 766: ftruncate returned %ld (expected 0)\n", tr);
+                    fut_test_fail(766);
+                } else {
+                    fut_printf("[MISC-TEST] ✓ Test 766: F_SEAL_FUTURE_WRITE: write→EPERM, ftruncate→0\n");
+                    fut_test_pass();
+                }
+            }
+        }
+#undef F_SEAL_FUTURE_WRITE_766
+    }
+
 #undef MFD_ALLOW_SEALING_761
 #undef F_GET_SEALS_761
 #undef F_ADD_SEALS_761

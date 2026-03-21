@@ -13071,6 +13071,158 @@ static void test_memfd_extended_flags(void) {
 #undef TEST_MFD_EXEC
 }
 
+/* ============================================================
+ * test_getdents64_dtype() — Tests 1351-1353
+ *
+ * Verify getdents64 returns correct Linux DT_* values
+ * (not internal Futura enum values).
+ * ============================================================ */
+static void test_getdents64_dtype(void) {
+    /* Linux DT_* constants */
+#define DT_DIR  4
+#define DT_REG  8
+#define DT_CHR  2
+
+    /* Test 1351: "." entry has DT_DIR (4) */
+    fut_printf("[MISC-TEST] Test 1351: getdents64 d_type for '.' == DT_DIR(4)\n");
+    {
+        int fd = fut_vfs_open("/", 00200000, 0);  /* O_DIRECTORY */
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1351: open / failed: %d\n", fd);
+            fut_test_fail(1351);
+        } else {
+            char buf[2048];
+            long nread = sys_getdents64((unsigned int)fd, buf, sizeof(buf));
+            fut_vfs_close(fd);
+            if (nread <= 0) {
+                fut_printf("[MISC-TEST] ✗ Test 1351: getdents64 returned %ld\n", nread);
+                fut_test_fail(1351);
+            } else {
+                int found_dot = 0;
+                long pos = 0;
+                while (pos < nread) {
+                    struct test_dirent64 *d = (struct test_dirent64 *)(buf + pos);
+                    if (d->d_reclen == 0) break;
+                    if (d->d_name[0] == '.' && d->d_name[1] == '\0') {
+                        if (d->d_type == DT_DIR) {
+                            fut_printf("[MISC-TEST] ✓ Test 1351: '.' d_type=%u == DT_DIR\n", d->d_type);
+                            fut_test_pass();
+                            found_dot = 1;
+                        } else {
+                            fut_printf("[MISC-TEST] ✗ Test 1351: '.' d_type=%u (expected %u)\n",
+                                       d->d_type, DT_DIR);
+                            fut_test_fail(1351);
+                            found_dot = 1;
+                        }
+                        break;
+                    }
+                    pos += d->d_reclen;
+                }
+                if (!found_dot) {
+                    fut_printf("[MISC-TEST] ✗ Test 1351: '.' not found in getdents64 output\n");
+                    fut_test_fail(1351);
+                }
+            }
+        }
+    }
+
+    /* Test 1352: regular file has DT_REG (8) */
+    fut_printf("[MISC-TEST] Test 1352: getdents64 d_type for regular file == DT_REG(8)\n");
+    {
+        /* Create a known file */
+        int tmp = fut_vfs_open("/dtype_test_file.txt", 0x42, 0644);  /* O_CREAT|O_RDWR */
+        if (tmp >= 0) {
+            fut_vfs_write(tmp, "test", 4);
+            fut_vfs_close(tmp);
+        }
+        int fd = fut_vfs_open("/", 00200000, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1352: open / failed: %d\n", fd);
+            fut_test_fail(1352);
+        } else {
+            char buf[4096];
+            long nread = sys_getdents64((unsigned int)fd, buf, sizeof(buf));
+            fut_vfs_close(fd);
+            int found = 0;
+            long pos = 0;
+            while (pos < nread && !found) {
+                struct test_dirent64 *d = (struct test_dirent64 *)(buf + pos);
+                if (d->d_reclen == 0) break;
+                /* Match our test file */
+                int match = 1;
+                const char *expect = "dtype_test_file.txt";
+                for (int i = 0; expect[i]; i++) {
+                    if (d->d_name[i] != expect[i]) { match = 0; break; }
+                }
+                if (match && d->d_name[19] == '\0') {
+                    if (d->d_type == DT_REG) {
+                        fut_printf("[MISC-TEST] ✓ Test 1352: regular file d_type=%u == DT_REG\n",
+                                   d->d_type);
+                        fut_test_pass();
+                    } else {
+                        fut_printf("[MISC-TEST] ✗ Test 1352: file d_type=%u (expected %u DT_REG)\n",
+                                   d->d_type, DT_REG);
+                        fut_test_fail(1352);
+                    }
+                    found = 1;
+                }
+                pos += d->d_reclen;
+            }
+            if (!found) {
+                fut_printf("[MISC-TEST] ✗ Test 1352: dtype_test_file.txt not found\n");
+                fut_test_fail(1352);
+            }
+        }
+    }
+
+    /* Test 1353: /dev directory entries include DT_DIR for subdirs and DT_CHR for devices */
+    fut_printf("[MISC-TEST] Test 1353: getdents64 /dev d_type for '.' == DT_DIR(4)\n");
+    {
+        int fd = fut_vfs_open("/dev", 00200000, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1353: open /dev failed: %d\n", fd);
+            fut_test_fail(1353);
+        } else {
+            char buf[2048];
+            long nread = sys_getdents64((unsigned int)fd, buf, sizeof(buf));
+            fut_vfs_close(fd);
+            if (nread <= 0) {
+                fut_printf("[MISC-TEST] ✗ Test 1353: getdents64 /dev returned %ld\n", nread);
+                fut_test_fail(1353);
+            } else {
+                int found_dot = 0;
+                long pos = 0;
+                while (pos < nread) {
+                    struct test_dirent64 *d = (struct test_dirent64 *)(buf + pos);
+                    if (d->d_reclen == 0) break;
+                    if (d->d_name[0] == '.' && d->d_name[1] == '\0') {
+                        found_dot = 1;
+                        if (d->d_type == DT_DIR) {
+                            fut_printf("[MISC-TEST] ✓ Test 1353: /dev '.' d_type=%u == DT_DIR\n",
+                                       d->d_type);
+                            fut_test_pass();
+                        } else {
+                            fut_printf("[MISC-TEST] ✗ Test 1353: /dev '.' d_type=%u (expected %u)\n",
+                                       d->d_type, DT_DIR);
+                            fut_test_fail(1353);
+                        }
+                        break;
+                    }
+                    pos += d->d_reclen;
+                }
+                if (!found_dot) {
+                    fut_printf("[MISC-TEST] ✗ Test 1353: '.' not found in /dev\n");
+                    fut_test_fail(1353);
+                }
+            }
+        }
+    }
+
+#undef DT_DIR
+#undef DT_REG
+#undef DT_CHR
+}
+
 static void test_proc_fd_anon_types(void) {
     extern long sys_read(int fd, void *buf, size_t count);
     extern long sys_readlink(const char *path, char *buf, size_t bufsiz);
@@ -44092,6 +44244,7 @@ void fut_misc_test_thread(void *arg) {
     test_proc_fd_anon_types();               /* Tests 1340-1342: /proc/self/fd/ anon_inode types */
     test_alarm_large_values();               /* Tests 1343-1345: alarm() POSIX compliance with large values */
     test_memfd_extended_flags();             /* Tests 1346-1350: memfd MFD_HUGETLB, MFD_NOEXEC_SEAL, MFD_EXEC */
+    test_getdents64_dtype();                 /* Tests 1351-1353: getdents64 returns Linux DT_* values */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

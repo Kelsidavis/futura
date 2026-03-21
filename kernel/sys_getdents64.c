@@ -37,6 +37,22 @@ struct linux_dirent64 {
     char     d_name[];
 } __attribute__((packed));
 
+/* Convert internal fut_vdir_type enum to Linux DT_* constants.
+ * Internal values (0-7) don't match Linux DT_* values. */
+static inline uint8_t fut_type_to_dt(uint8_t fut_type) {
+    static const uint8_t map[] = {
+        [0] = 0,   /* FUT_VDIR_TYPE_UNKNOWN → DT_UNKNOWN */
+        [1] = 8,   /* FUT_VDIR_TYPE_REG     → DT_REG     */
+        [2] = 4,   /* FUT_VDIR_TYPE_DIR     → DT_DIR     */
+        [3] = 2,   /* FUT_VDIR_TYPE_CHAR    → DT_CHR     */
+        [4] = 6,   /* FUT_VDIR_TYPE_BLOCK   → DT_BLK     */
+        [5] = 1,   /* FUT_VDIR_TYPE_FIFO    → DT_FIFO    */
+        [6] = 12,  /* FUT_VDIR_TYPE_SOCKET  → DT_SOCK    */
+        [7] = 10,  /* FUT_VDIR_TYPE_SYMLINK → DT_LNK     */
+    };
+    return fut_type < 8 ? map[fut_type] : 0;
+}
+
 /**
  * getdents64() - Read directory entries
  *
@@ -547,7 +563,7 @@ long sys_getdents64(unsigned int fd, void *dirp, unsigned int count) {
         dent->d_ino = vdirent.d_ino;
         dent->d_off = (int64_t)cookie;
         dent->d_reclen = (uint16_t)reclen;
-        dent->d_type = vdirent.d_type;
+        dent->d_type = fut_type_to_dt(vdirent.d_type);
 
         /* Copy name */
         for (size_t i = 0; i <= name_len; i++) {

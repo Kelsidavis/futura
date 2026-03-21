@@ -39971,6 +39971,134 @@ done_tstb:
     return;
 }
 
+/* ============================================================
+ * test_stream_buf_integrity() — Tests 1231-1234
+ *
+ * Verifies that the stream socket circular buffer does NOT silently
+ * discard data when the write pointer wraps around.  Before the fix,
+ * writing exactly recv_size bytes caused head to wrap back to tail,
+ * making the buffer appear empty to the reader.
+ *
+ *   1231: fill buffer to capacity → partial writes sum to FUT_SOCKET_BUFSIZE-1
+ *   1232: read half the buffered data → correct bytes returned
+ *   1233: write more bytes into the freed space → succeeds
+ *   1234: read remaining bytes → all original data verified intact
+ * ============================================================ */
+static void test_stream_buf_integrity(void) {
+    extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+    extern long sys_read(int fd, void *buf, size_t count);
+    extern long sys_write(int fd, const void *buf, size_t count);
+
+#define SBI_AF_UNIX      1
+#define SBI_SOCK_STREAM  1
+#define SBI_BUFSZ        4096   /* FUT_SOCKET_BUFSIZE */
+#define SBI_MAXDATA      (SBI_BUFSZ - 1)   /* max bytes in buffer at once */
+
+    int sv[2] = {-1, -1};
+    long r = sys_socketpair(SBI_AF_UNIX, SBI_SOCK_STREAM, 0, sv);
+    if (r != 0) {
+        fut_printf("[MISC-TEST] ✗ Tests 1231-1234: socketpair failed: %ld\n", r);
+        fut_test_fail(1231); fut_test_fail(1232);
+        fut_test_fail(1233); fut_test_fail(1234);
+        return;
+    }
+
+    /* ---- Test 1231: fill buffer to capacity ---- */
+    fut_printf("[MISC-TEST] Test 1231: stream buffer fill to capacity\n");
+    static unsigned char fill_buf[SBI_BUFSZ];
+    for (int i = 0; i < SBI_BUFSZ; i++) fill_buf[i] = (unsigned char)(i & 0xff);
+    long total_written = 0;
+    /* Write in chunks until we can't write anymore (buffer full) */
+    for (int i = 0; i < SBI_BUFSZ; i++) {
+        long w = sys_write(sv[0], fill_buf + total_written, 1);
+        if (w <= 0) break;
+        total_written += w;
+        if (total_written >= SBI_MAXDATA) break;
+    }
+    if (total_written == SBI_MAXDATA) {
+        fut_printf("[MISC-TEST] ✓ Test 1231: filled %ld bytes (= BUFSIZE-1)\n", total_written);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1231: wrote %ld bytes (expected %d)\n",
+                   total_written, SBI_MAXDATA);
+        fut_test_fail(1231);
+    }
+
+    /* ---- Test 1232: read half the buffered data ---- */
+    fut_printf("[MISC-TEST] Test 1232: read half of buffered data\n");
+    long half = SBI_MAXDATA / 2;
+    static unsigned char read_buf[SBI_BUFSZ * 2];
+    long nr = sys_read(sv[1], read_buf, (size_t)half);
+    if (nr == half) {
+        /* Verify data integrity */
+        int ok = 1;
+        for (long i = 0; i < half; i++) {
+            if (read_buf[i] != (unsigned char)(i & 0xff)) { ok = 0; break; }
+        }
+        if (ok) {
+            fut_printf("[MISC-TEST] ✓ Test 1232: read %ld bytes, data correct\n", nr);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1232: data mismatch after read\n");
+            fut_test_fail(1232);
+        }
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1232: read returned %ld (expected %ld)\n", nr, half);
+        fut_test_fail(1232);
+    }
+
+    /* ---- Test 1233: write more bytes into freed space ---- */
+    fut_printf("[MISC-TEST] Test 1233: write more bytes into freed space\n");
+    long extra = half;
+    long nw = sys_write(sv[0], fill_buf, (size_t)extra);
+    if (nw == extra) {
+        fut_printf("[MISC-TEST] ✓ Test 1233: wrote %ld more bytes into freed space\n", nw);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1233: write returned %ld (expected %ld)\n", nw, extra);
+        fut_test_fail(1233);
+    }
+
+    /* ---- Test 1234: read all remaining data and verify ---- */
+    fut_printf("[MISC-TEST] Test 1234: read remaining data and verify integrity\n");
+    long remaining = (total_written - half) + nw;
+    long nr2 = 0;
+    while (nr2 < remaining) {
+        long n = sys_read(sv[1], read_buf + nr2, (size_t)(remaining - nr2));
+        if (n <= 0) break;
+        nr2 += n;
+    }
+    if (nr2 == remaining) {
+        /* Verify: first (total_written - half) bytes should be fill_buf[half..] */
+        int ok = 1;
+        long second_half_len = total_written - half;
+        for (long i = 0; i < second_half_len; i++) {
+            if (read_buf[i] != (unsigned char)((half + i) & 0xff)) { ok = 0; break; }
+        }
+        /* Verify: next `extra` bytes should be fill_buf[0..extra] */
+        for (long i = 0; i < extra && ok; i++) {
+            if (read_buf[second_half_len + i] != (unsigned char)(i & 0xff)) { ok = 0; break; }
+        }
+        if (ok) {
+            fut_printf("[MISC-TEST] ✓ Test 1234: all %ld remaining bytes correct\n", nr2);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1234: data integrity error in remaining bytes\n");
+            fut_test_fail(1234);
+        }
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1234: read %ld bytes (expected %ld)\n", nr2, remaining);
+        fut_test_fail(1234);
+    }
+
+    sys_close(sv[0]); sys_close(sv[1]);
+
+#undef SBI_AF_UNIX
+#undef SBI_SOCK_STREAM
+#undef SBI_BUFSZ
+#undef SBI_MAXDATA
+}
+
 static void test_getrandom_flags(void) {
     /* Tests 1200-1204: getrandom flag variants (GRND_NONBLOCK, GRND_RANDOM,
      * GRND_INSECURE) and edge cases (buflen=0, NULL buf).
@@ -40847,6 +40975,7 @@ void fut_misc_test_thread(void *arg) {
     test_syslog_actions();              /* Tests 1218-1223: syslog CLOSE/OPEN/READ/READ_CLEAR/CLEAR/SIZE_UNREAD */
     test_socket_eisconn_and_timerfd_cancel(); /* Tests 1224-1226: EISCONN/accept-not-listening/TFD_CANCEL_ON_SET */
     test_sock_timeout_blocking();             /* Tests 1227-1230: SO_SNDTIMEO/SO_RCVTIMEO blocking + clear */
+    test_stream_buf_integrity();              /* Tests 1231-1234: stream socket circular-buffer full/wrap integrity */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -1034,8 +1034,13 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
         return -EPIPE;  /* Peer closed — broken pipe */
     }
 
-    /* Block until send buffer has space (or socket is non-blocking) */
-    uint32_t available = pair->recv_size -
+    /* Block until send buffer has space (or socket is non-blocking).
+     * Use recv_size-1 as capacity: one slot is reserved to distinguish
+     * "full" (head+1==tail) from "empty" (head==tail).  Without this
+     * guard, writing exactly recv_size bytes wraps head back to tail,
+     * making the buffer look empty to the reader and silently discarding
+     * all buffered data. */
+    uint32_t available = pair->recv_size - 1u -
         ((pair->recv_head + pair->recv_size - pair->recv_tail) % pair->recv_size);
 
     /* SEQPACKET: must write entire frame atomically — need space for 4-byte header + body */
@@ -1130,7 +1135,7 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
             return -EPIPE;  /* Peer closed — broken pipe */
         }
 
-        available = pair->recv_size -
+        available = pair->recv_size - 1u -
             ((pair->recv_head + pair->recv_size - pair->recv_tail) % pair->recv_size);
     }
 

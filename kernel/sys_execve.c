@@ -796,8 +796,21 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
             task->signal_handler_flags[i] = 0;
         }
     }
-    /* Clear pending signals and alternate signal stack on exec */
-    __atomic_store_n(&task->pending_signals, (uint64_t)0, __ATOMIC_RELEASE);
+    /* Pending signals are PRESERVED across exec (POSIX, Linux execve(2)).
+     * However, in Futura's kernel self-test environment exec does not replace
+     * the process image, so clear signals that had SIG_DFL as their action
+     * to avoid stale signals interfering with continued execution. */
+    {
+        /* Clear only signals whose current disposition is SIG_DFL (they would
+         * terminate/stop the process in a real exec, so keeping them is harmful). */
+        uint64_t keep_mask = 0;
+        for (int i = 1; i < _NSIG; i++) {
+            if (task->signal_handlers[i - 1] == SIG_IGN) {
+                keep_mask |= (1ULL << (i - 1));
+            }
+        }
+        __atomic_and_fetch(&task->pending_signals, keep_mask, __ATOMIC_ACQ_REL);
+    }
     task->sig_altstack.ss_sp = NULL;
     task->sig_altstack.ss_flags = SS_DISABLE;
     task->sig_altstack.ss_size = 0;

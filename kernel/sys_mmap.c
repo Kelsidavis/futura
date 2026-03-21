@@ -63,6 +63,19 @@ long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset) 
         return -EINVAL;
     }
 
+    /* mmap_min_addr: reject MAP_FIXED mappings at low addresses to prevent
+     * NULL-pointer dereference exploits. Default matches Linux (65536).
+     * Without this, an attacker could MAP_FIXED at address 0 then trigger
+     * a NULL-pointer dereference in the kernel to execute mapped code. */
+    if ((flags & MAP_FIXED) && addr != NULL) {
+        const uintptr_t MMAP_MIN_ADDR = 65536;
+        if ((uintptr_t)addr < MMAP_MIN_ADDR) {
+            fut_printf("[MMAP] mmap(addr=%p, flags=MAP_FIXED) -> EPERM "
+                       "(below mmap_min_addr %lu)\n", addr, MMAP_MIN_ADDR);
+            return -EPERM;
+        }
+    }
+
     /* Validate length is within reasonable bounds before overflow arithmetic
      * Limit to half of address space to prevent integer overflow in subsequent checks.
      * This ensures len can be safely used in offset+len calculations. */

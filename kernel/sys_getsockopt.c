@@ -837,7 +837,71 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
                 case 8:  proto_val = socket->tcp_linger2;      break; /* TCP_LINGER2 */
                 case 9:  proto_val = (int)socket->tcp_defer_accept; break;
                 case 10: proto_val = 0;                        break; /* TCP_WINDOW_CLAMP */
-                case 11: proto_val = 0;                        break; /* TCP_INFO: 0 (no struct) */
+                case 11: { /* TCP_INFO: return struct tcp_info */
+                    /* Linux struct tcp_info — 32 fields commonly queried by curl, nginx, systemd.
+                     * Return plausible defaults for an ESTABLISHED AF_UNIX-backed connection. */
+                    struct tcp_info_kern {
+                        uint8_t  tcpi_state;            /*  0: TCP_ESTABLISHED=1 */
+                        uint8_t  tcpi_ca_state;         /*  1: 0 (Open) */
+                        uint8_t  tcpi_retransmits;      /*  2 */
+                        uint8_t  tcpi_probes;           /*  3 */
+                        uint8_t  tcpi_backoff;          /*  4 */
+                        uint8_t  tcpi_options;          /*  5: TCPI_OPT_TIMESTAMPS=1 */
+                        uint8_t  tcpi_snd_wscale_rcv;   /*  6: snd_wscale:4 | rcv_wscale:4 */
+                        uint8_t  tcpi_delivery_rate_app_limited; /* 7 */
+                        uint32_t tcpi_rto;              /*  8: retransmission timeout (usec) */
+                        uint32_t tcpi_ato;              /* 12: ack timeout (usec) */
+                        uint32_t tcpi_snd_mss;          /* 16 */
+                        uint32_t tcpi_rcv_mss;          /* 20 */
+                        uint32_t tcpi_unacked;          /* 24 */
+                        uint32_t tcpi_sacked;           /* 28 */
+                        uint32_t tcpi_lost;             /* 32 */
+                        uint32_t tcpi_retrans;          /* 36 */
+                        uint32_t tcpi_fackets;          /* 40 */
+                        /* Timing */
+                        uint32_t tcpi_last_data_sent;   /* 44 */
+                        uint32_t tcpi_last_ack_sent;    /* 48 */
+                        uint32_t tcpi_last_data_recv;   /* 52 */
+                        uint32_t tcpi_last_ack_recv;    /* 56 */
+                        /* Metrics */
+                        uint32_t tcpi_pmtu;             /* 60 */
+                        uint32_t tcpi_rcv_ssthresh;     /* 64 */
+                        uint32_t tcpi_rtt;              /* 68: smoothed RTT (usec) */
+                        uint32_t tcpi_rttvar;           /* 72: RTT variance (usec) */
+                        uint32_t tcpi_snd_ssthresh;     /* 76 */
+                        uint32_t tcpi_snd_cwnd;         /* 80 */
+                        uint32_t tcpi_advmss;           /* 84 */
+                        uint32_t tcpi_reordering;       /* 88 */
+                        uint32_t tcpi_rcv_rtt;          /* 92 */
+                        uint32_t tcpi_rcv_space;        /* 96 */
+                        uint32_t tcpi_total_retrans;    /* 100 */
+                    };
+                    struct tcp_info_kern info;
+                    for (size_t i = 0; i < sizeof(info); i++) ((uint8_t *)&info)[i] = 0;
+                    /* Plausible defaults for an established connection */
+                    info.tcpi_state       = 1;     /* TCP_ESTABLISHED */
+                    info.tcpi_options     = 1;     /* TCPI_OPT_TIMESTAMPS */
+                    info.tcpi_snd_wscale_rcv = (7 << 4) | 7;  /* wscale 7/7 */
+                    info.tcpi_rto         = 200000; /* 200ms */
+                    info.tcpi_ato         = 40000;  /* 40ms */
+                    info.tcpi_snd_mss     = socket->tcp_maxseg ? socket->tcp_maxseg : 1460;
+                    info.tcpi_rcv_mss     = socket->tcp_maxseg ? socket->tcp_maxseg : 1460;
+                    info.tcpi_pmtu        = 1500;
+                    info.tcpi_rcv_ssthresh = 87380;
+                    info.tcpi_rtt         = 100;   /* 0.1ms (AF_UNIX is local) */
+                    info.tcpi_rttvar      = 50;
+                    info.tcpi_snd_ssthresh = 0x7fffffff; /* unbounded */
+                    info.tcpi_snd_cwnd    = 10;
+                    info.tcpi_advmss      = 1448;
+                    info.tcpi_reordering  = 3;
+                    info.tcpi_rcv_space   = 87380;
+                    /* Copy the portion the caller can accept */
+                    socklen_t info_len = sizeof(info);
+                    socklen_t info_copy = (len < info_len) ? len : info_len;
+                    if (gso_copy_to_user(optval, &info, info_copy) != 0) return -EFAULT;
+                    if (gso_copy_to_user(optlen, &info_copy, sizeof(socklen_t)) != 0) return -EFAULT;
+                    return 0;
+                }
                 case 12: proto_val = socket->tcp_quickack;     break; /* TCP_QUICKACK */
                 default:
                     if (optname >= 13 && optname <= 31) { proto_val = 0; break; }

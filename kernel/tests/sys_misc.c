@@ -12630,6 +12630,93 @@ static void test_so_timestamp(void) {
     sys_close(sv[1]);
 }
 
+static void test_tcp_info(void) {
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_getsockopt(int fd, int level, int optname, void *optval, unsigned int *optlen);
+
+    /* Test 1330: TCP_INFO returns struct with tcpi_state=ESTABLISHED */
+    fut_printf("[MISC-TEST] Test 1330: TCP_INFO struct on AF_INET socket\n");
+    {
+        long s = sys_socket(2 /* AF_INET */, 1 /* SOCK_STREAM */, 0);
+        if (s < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1330: socket failed: %ld\n", s);
+            fut_test_fail(1330); fut_test_fail(1331); fut_test_fail(1332);
+            fut_test_fail(1333); return;
+        }
+        /* Buffer for tcp_info — at least 104 bytes */
+        uint8_t info_buf[128];
+        __builtin_memset(info_buf, 0xFF, sizeof(info_buf));
+        unsigned int olen = sizeof(info_buf);
+        long r = sys_getsockopt((int)s, 6 /* IPPROTO_TCP */, 11 /* TCP_INFO */, info_buf, &olen);
+        if (r == 0 && olen >= 8) {
+            /* tcpi_state is byte 0 — should be 1 (ESTABLISHED) */
+            uint8_t state = info_buf[0];
+            if (state == 1) {
+                fut_printf("[MISC-TEST] ✓ Test 1330: tcpi_state=%u len=%u\n", state, olen);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1330: tcpi_state=%u (want 1)\n", state);
+                fut_test_fail(1330);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1330: getsockopt ret=%ld olen=%u\n", r, olen);
+            fut_test_fail(1330);
+        }
+
+        /* Test 1331: TCP_INFO tcpi_snd_mss field is plausible (offset 16, uint32_t) */
+        fut_printf("[MISC-TEST] Test 1331: TCP_INFO tcpi_snd_mss\n");
+        if (r == 0 && olen >= 20) {
+            uint32_t snd_mss;
+            __builtin_memcpy(&snd_mss, info_buf + 16, sizeof(uint32_t));
+            if (snd_mss >= 500 && snd_mss <= 65535) {
+                fut_printf("[MISC-TEST] ✓ Test 1331: tcpi_snd_mss=%u\n", snd_mss);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1331: tcpi_snd_mss=%u out of range\n", snd_mss);
+                fut_test_fail(1331);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1331: struct too small (%u)\n", olen);
+            fut_test_fail(1331);
+        }
+
+        /* Test 1332: TCP_INFO tcpi_rtt at offset 68 (uint32_t) is non-zero */
+        fut_printf("[MISC-TEST] Test 1332: TCP_INFO tcpi_rtt\n");
+        if (r == 0 && olen >= 72) {
+            uint32_t rtt;
+            __builtin_memcpy(&rtt, info_buf + 68, sizeof(uint32_t));
+            if (rtt > 0 && rtt < 10000000) { /* < 10 seconds in usec */
+                fut_printf("[MISC-TEST] ✓ Test 1332: tcpi_rtt=%u usec\n", rtt);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1332: tcpi_rtt=%u\n", rtt);
+                fut_test_fail(1332);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1332: struct too small (%u)\n", olen);
+            fut_test_fail(1332);
+        }
+
+        /* Test 1333: TCP_INFO with small buffer truncates correctly */
+        fut_printf("[MISC-TEST] Test 1333: TCP_INFO truncated buffer\n");
+        {
+            uint8_t small_buf[8];
+            __builtin_memset(small_buf, 0xFF, sizeof(small_buf));
+            unsigned int small_len = sizeof(small_buf);
+            long r2 = sys_getsockopt((int)s, 6, 11, small_buf, &small_len);
+            if (r2 == 0 && small_len == 8) {
+                fut_printf("[MISC-TEST] ✓ Test 1333: truncated to %u bytes\n", small_len);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1333: ret=%ld len=%u\n", r2, small_len);
+                fut_test_fail(1333);
+            }
+        }
+
+        sys_close((int)s);
+    }
+}
+
 static void test_process_madvise_basic(void) {
     /* Test 1292: process_madvise with flags != 0 → EINVAL */
     fut_printf("[MISC-TEST] Test 1292: process_madvise flags=1 → EINVAL\n");
@@ -43496,6 +43583,7 @@ void fut_misc_test_thread(void *arg) {
     test_clone_parent();                     /* Tests 1314-1316: CLONE_PARENT */
     test_linux68_stubs();                    /* Tests 1317-1321: Linux 6.8+ syscall stubs */
     test_so_timestamp();                     /* Tests 1322-1329: SO_TIMESTAMP/SO_TIMESTAMPNS cmsg delivery */
+    test_tcp_info();                         /* Tests 1330-1333: TCP_INFO struct getsockopt */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

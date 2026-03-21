@@ -1486,6 +1486,21 @@ int fut_socket_close(fut_socket_t *socket) {
 
     socket->state = FUT_SOCK_CLOSED;
 
+    /* If this is a listening socket, wake all pending connect() callers.
+     * They will see the socket is not CONNECTED and return ECONNREFUSED. */
+    if (socket->listener) {
+        fut_socket_listener_t *lq = socket->listener;
+        for (uint32_t i = 0; i < lq->queue_count; i++) {
+            uint32_t idx = (lq->queue_head + i) % FUT_SOCKET_QUEUE_MAX;
+            fut_socket_t *pending = lq->queue[idx].peer_socket;
+            if (pending && pending->connect_waitq) {
+                pending->state = FUT_SOCK_CLOSED;
+                fut_waitq_wake_all(pending->connect_waitq);
+            }
+        }
+        lq->queue_count = 0;
+    }
+
     /* Nullify peer pointers under lock so send/recv see the close atomically */
     if (socket->pair) {
         fut_spinlock_acquire(&socket->pair->lock);

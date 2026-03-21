@@ -1153,10 +1153,6 @@ static int64_t sys_ioctl_handler(uint64_t fd, uint64_t req, uint64_t argp,
 
 static int64_t sys_mmap_handler(uint64_t addr, uint64_t len, uint64_t prot,
                                 uint64_t flags, uint64_t fd, uint64_t off) {
-    fut_printf("[MMAP-HANDLER] addr=0x%llx len=%llu prot=%llu flags=%llu fd=%llu off=%llu\n",
-               (unsigned long long)addr, (unsigned long long)len,
-               (unsigned long long)prot, (unsigned long long)flags,
-               (unsigned long long)fd, (unsigned long long)off);
     return sys_mmap((void *)addr, (size_t)len, (int)prot, (int)flags, (int)fd, (long)off);
 }
 

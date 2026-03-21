@@ -86,8 +86,8 @@ static inline int cap_access_ok(const void *ptr, size_t n) {
 #define CAP_AUDIT_CONTROL    30  /* Enable and disable kernel auditing */
 #define CAP_SETFCAP          31  /* Set file capabilities */
 
-/* Phase 3: Helper function to categorize capability type */
-static const char *categorize_capability(int cap) {
+/* Helper: human-readable name for a capability index */
+static __attribute__((unused)) const char *categorize_capability(int cap) {
     switch (cap) {
         case CAP_CHOWN:            return "ownership (CHOWN)";
         case CAP_DAC_OVERRIDE:     return "DAC bypass (DAC_OVERRIDE)";
@@ -196,69 +196,59 @@ long sys_capget(struct __user_cap_header_struct *hdrp,
         return -EFAULT;
     }
 
-    /* Phase 2: Validate capability version */
-    const char *version_desc;
+    /* Validate version.  Unknown version: write preferred version back and return EINVAL. */
+    int two_structs = 0;  /* 1 if V2/V3 (two __user_cap_data_struct entries) */
     if (hdr.version == _LINUX_CAPABILITY_VERSION_1) {
-        version_desc = "v1 (obsolete)";
-    } else if (hdr.version == _LINUX_CAPABILITY_VERSION_2) {
-        version_desc = "v2 (legacy)";
-    } else if (hdr.version == _LINUX_CAPABILITY_VERSION_3) {
-        version_desc = "v3 (current)";
+        two_structs = 0;
+    } else if (hdr.version == _LINUX_CAPABILITY_VERSION_2 ||
+               hdr.version == _LINUX_CAPABILITY_VERSION_3) {
+        two_structs = 1;
     } else {
-        version_desc = "unknown/invalid";
+        /* Write back preferred version so caller can retry */
+        uint32_t preferred = _LINUX_CAPABILITY_VERSION_3;
+        cap_copy_to_user(&hdrp->version, &preferred, sizeof(preferred));
+        fut_printf("[CAPABILITY] capget: unknown version 0x%x -> EINVAL (wrote V3)\n",
+                   hdr.version);
+        return -EINVAL;
     }
 
-    /* Phase 2: Validate target PID */
-    const char *pid_desc;
-    if (hdr.pid == 0) {
-        pid_desc = "current process";
-    } else if (hdr.pid > 0) {
-        pid_desc = "other process";
-    } else {
-        pid_desc = "invalid (<0)";
-    }
-
-    /*
-     * Phase 3 (Completed): Capability retrieval from task structure
-     *
-     * Copy task capabilities (effective, permitted, inheritable) to userspace
-     */
-
-    /* Phase 3: Build capability data from task structure */
-    struct __user_cap_data_struct cap_data = {0};
-
-    /* Phase 3: Retrieve effective capabilities (currently active) */
-    cap_data.effective = task->cap_effective & 0xFFFFFFFF;
-
-    /* Phase 3: Retrieve permitted capabilities (can be made effective) */
-    cap_data.permitted = task->cap_permitted & 0xFFFFFFFF;
-
-    /* Phase 3: Retrieve inheritable capabilities (preserved across execve) */
-    cap_data.inheritable = task->cap_inheritable & 0xFFFFFFFF;
-
-    /* Phase 3: Identify highest capability bit set for logging */
-    const char *highest_cap_desc = "none";
-    for (int i = 31; i >= 0; i--) {
-        if (cap_data.effective & (1 << i)) {
-            highest_cap_desc = categorize_capability(i);
-            break;
+    /* Resolve target task by pid (0 = current, >0 = lookup by pid). */
+    fut_task_t *target = task;
+    if (hdr.pid != 0) {
+        target = fut_task_by_pid((uint64_t)(unsigned int)hdr.pid);
+        if (!target) {
+            fut_printf("[CAPABILITY] capget: pid=%d not found -> ESRCH\n", hdr.pid);
+            return -ESRCH;
         }
     }
 
-    /* Phase 3: Copy capability data to userspace */
-    if (cap_copy_to_user(datap, &cap_data, sizeof(cap_data)) != 0) {
-        fut_printf("[CAPABILITY] capget(hdrp=? [version=%s, pid=%s], datap=%p, caller_pid=%d) "
-                   "-> EFAULT (failed to copy capability data to userspace)\n",
-                   version_desc, pid_desc, datap, task->pid);
+    /* Build and copy capability data structs.
+     * V1: one struct (lo 32 bits only).
+     * V2/V3: two structs — [0] low 32 bits, [1] high 32 bits. */
+    struct __user_cap_data_struct cap_data[2] = {{0}, {0}};
+    cap_data[0].effective   = (uint32_t)(target->cap_effective   & 0xFFFFFFFF);
+    cap_data[0].permitted   = (uint32_t)(target->cap_permitted   & 0xFFFFFFFF);
+    cap_data[0].inheritable = (uint32_t)(target->cap_inheritable & 0xFFFFFFFF);
+    if (two_structs) {
+        cap_data[1].effective   = (uint32_t)((target->cap_effective   >> 32) & 0xFFFFFFFF);
+        cap_data[1].permitted   = (uint32_t)((target->cap_permitted   >> 32) & 0xFFFFFFFF);
+        cap_data[1].inheritable = (uint32_t)((target->cap_inheritable >> 32) & 0xFFFFFFFF);
+    }
+
+    size_t copy_size = two_structs
+        ? 2 * sizeof(struct __user_cap_data_struct)
+        :     sizeof(struct __user_cap_data_struct);
+    if (cap_copy_to_user(datap, cap_data, copy_size) != 0) {
+        fut_printf("[CAPABILITY] capget: EFAULT copying %zu bytes to datap=%p\n",
+                   copy_size, datap);
         return -EFAULT;
     }
 
-    /* Phase 4: Detailed success logging with capability info */
-    fut_printf("[CAPABILITY] capget(hdrp=? [version=%s, pid=%s], datap=%p [eff=0x%x, "
-               "perm=0x%x, inh=0x%x, highest=%s], caller_pid=%d) -> 0 (capabilities retrieved, Phase 4)\n",
-               version_desc, pid_desc, datap, cap_data.effective, cap_data.permitted,
-               cap_data.inheritable, highest_cap_desc, task->pid);
-
+    fut_printf("[CAPABILITY] capget(pid=%d) -> eff=0x%x perm=0x%x inh=0x%x "
+               "(hi: eff=0x%x perm=0x%x inh=0x%x)\n",
+               hdr.pid,
+               cap_data[0].effective, cap_data[0].permitted, cap_data[0].inheritable,
+               cap_data[1].effective, cap_data[1].permitted, cap_data[1].inheritable);
     return 0;
 }
 

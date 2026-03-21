@@ -319,6 +319,24 @@ long sys_pwrite64(unsigned int fd, const void *buf, size_t count, int64_t offset
 
     fut_free(kbuf);
 
+    /* POSIX/Linux: clear setuid/setgid bits after successful write */
+    if (file->vnode->type == VN_REG) {
+        uint32_t mode = file->vnode->mode;
+        int needs_clear = 0;
+        if (mode & 04000) needs_clear = 1;
+        if ((mode & 02000) && (mode & 00010)) needs_clear = 1;
+        if (needs_clear) {
+            int has_cap_fsetid = task &&
+                (task->cap_effective & (1ULL << 4 /* CAP_FSETID */));
+            if (!has_cap_fsetid) {
+                if (mode & 04000)
+                    file->vnode->mode &= ~(uint32_t)04000;
+                if ((mode & 02000) && (mode & 00010))
+                    file->vnode->mode &= ~(uint32_t)02000;
+            }
+        }
+    }
+
     /* I/O accounting for /proc/<pid>/io */
     task->io_wchar += (uint64_t)ret;
     task->io_syscw++;

@@ -662,6 +662,24 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
 
     fut_free(kernel_iov);
 
+    /* POSIX/Linux: clear setuid/setgid bits after successful write */
+    if (total_written > 0 && file->vnode && file->vnode->type == VN_REG) {
+        uint32_t mode = file->vnode->mode;
+        int needs_clear = 0;
+        if (mode & 04000) needs_clear = 1;
+        if ((mode & 02000) && (mode & 00010)) needs_clear = 1;
+        if (needs_clear) {
+            int has_cap_fsetid = task &&
+                (task->cap_effective & (1ULL << 4 /* CAP_FSETID */));
+            if (!has_cap_fsetid) {
+                if (mode & 04000)
+                    file->vnode->mode &= ~(uint32_t)04000;
+                if ((mode & 02000) && (mode & 00010))
+                    file->vnode->mode &= ~(uint32_t)02000;
+            }
+        }
+    }
+
     /* Phase 3 implementation with VFS optimization:
      *
      * ssize_t total = fut_vfs_pwritev(fd, kernel_iov, iovcnt, offset);

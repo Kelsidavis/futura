@@ -359,6 +359,24 @@ long sys_splice(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
         goto restore_nb;
     }
 
+    /* POSIX/Linux: clear setuid/setgid bits on destination after successful write */
+    if (transferred > 0 && file_out->vnode && file_out->vnode->type == VN_REG) {
+        uint32_t mode = file_out->vnode->mode;
+        int needs_clear = 0;
+        if (mode & 04000) needs_clear = 1;
+        if ((mode & 02000) && (mode & 00010)) needs_clear = 1;
+        if (needs_clear) {
+            int has_cap_fsetid = task &&
+                (task->cap_effective & (1ULL << 4 /* CAP_FSETID */));
+            if (!has_cap_fsetid) {
+                if (mode & 04000)
+                    file_out->vnode->mode &= ~(uint32_t)04000;
+                if ((mode & 02000) && (mode & 00010))
+                    file_out->vnode->mode &= ~(uint32_t)02000;
+            }
+        }
+    }
+
     fut_printf("[SPLICE] splice(fd_in=%d, fd_out=%d, len=%zu, pid=%d) -> %zu bytes transferred\n",
                local_fd_in, local_fd_out, local_len, task->pid, transferred);
 

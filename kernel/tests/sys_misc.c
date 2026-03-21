@@ -15552,6 +15552,89 @@ static void test_suid_clear_on_truncate_fchown(void) {
     }
 }
 
+/**
+ * test_suid_clear_pwrite_sendfile - S_ISUID clearing on pwrite64 and sendfile
+ *
+ * Tests 1442-1443:
+ * 1442: pwrite64 clears S_ISUID
+ * 1443: sendfile clears S_ISUID on destination
+ */
+static void test_suid_clear_pwrite_sendfile(void) {
+    extern long sys_pwrite64(unsigned int fd, const void *buf, size_t count, int64_t offset);
+    extern long sys_sendfile(int out_fd, int in_fd, int64_t *offset, size_t count);
+    extern long sys_fchmod(int fd, uint32_t mode);
+    extern long sys_fstat(int fd, struct fut_stat *statbuf);
+    extern long sys_write(int fd, const void *buf, size_t count);
+
+    fut_task_t *task = fut_task_current();
+    uint64_t saved_caps = task->cap_effective;
+    task->cap_effective &= ~(1ULL << 4 /* CAP_FSETID */);
+
+    /* Test 1442: pwrite64 clears S_ISUID */
+    fut_printf("[MISC-TEST] Test 1442: pwrite64 clears S_ISUID\n");
+    {
+        int fd = (int)fut_vfs_open("/test_pwrite_suid.txt", O_CREAT | O_RDWR, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1442: open failed: %d\n", fd);
+            fut_test_fail(1442);
+        } else {
+            sys_write(fd, "data", 4);
+            sys_fchmod(fd, 04755);
+            sys_pwrite64(fd, "x", 1, 0);
+            struct fut_stat st = {0};
+            sys_fstat(fd, &st);
+            if (st.st_mode & 04000) {
+                fut_printf("[MISC-TEST] ✗ Test 1442: S_ISUID not cleared after pwrite64 (mode=0%o)\n",
+                           st.st_mode & 07777);
+                fut_vfs_close(fd);
+                fut_test_fail(1442);
+            } else {
+                fut_printf("[MISC-TEST] ✓ Test 1442: S_ISUID cleared after pwrite64 (mode=0%o)\n",
+                           st.st_mode & 07777);
+                fut_vfs_close(fd);
+                fut_test_pass();
+            }
+        }
+    }
+
+    /* Test 1443: sendfile clears S_ISUID on destination */
+    fut_printf("[MISC-TEST] Test 1443: sendfile clears S_ISUID on destination\n");
+    {
+        int src = (int)fut_vfs_open("/test_sf_src.txt", O_CREAT | O_RDWR, 0644);
+        int dst = (int)fut_vfs_open("/test_sf_dst.txt", O_CREAT | O_RDWR, 0644);
+        if (src < 0 || dst < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1443: open failed: src=%d dst=%d\n", src, dst);
+            if (src >= 0) fut_vfs_close(src);
+            if (dst >= 0) fut_vfs_close(dst);
+            fut_test_fail(1443);
+        } else {
+            sys_write(src, "hello", 5);
+            /* Seek src back to start for sendfile to read */
+            extern long sys_lseek(int fd, long offset, int whence);
+            sys_lseek(src, 0, 0 /* SEEK_SET */);
+            sys_fchmod(dst, 04755);
+            sys_sendfile(dst, src, NULL, 5);
+            struct fut_stat st = {0};
+            sys_fstat(dst, &st);
+            if (st.st_mode & 04000) {
+                fut_printf("[MISC-TEST] ✗ Test 1443: S_ISUID not cleared after sendfile (mode=0%o)\n",
+                           st.st_mode & 07777);
+                fut_vfs_close(src);
+                fut_vfs_close(dst);
+                fut_test_fail(1443);
+            } else {
+                fut_printf("[MISC-TEST] ✓ Test 1443: S_ISUID cleared after sendfile (mode=0%o)\n",
+                           st.st_mode & 07777);
+                fut_vfs_close(src);
+                fut_vfs_close(dst);
+                fut_test_pass();
+            }
+        }
+    }
+
+    task->cap_effective = saved_caps;
+}
+
 static void test_proc_fd_anon_types(void) {
     extern long sys_read(int fd, void *buf, size_t count);
     extern long sys_readlink(const char *path, char *buf, size_t bufsiz);
@@ -46599,6 +46682,7 @@ void fut_misc_test_thread(void *arg) {
     test_mmap_min_addr();                   /* Tests 1431-1432: mmap_min_addr enforcement */
     test_suid_sgid_clear_on_write();        /* Tests 1433-1437: setuid/setgid clearing on write */
     test_suid_clear_on_truncate_fchown();   /* Tests 1438-1441: setuid/setgid clearing on truncate/fchown */
+    test_suid_clear_pwrite_sendfile();      /* Tests 1442-1443: setuid/setgid clearing on pwrite64/sendfile */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

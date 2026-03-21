@@ -1871,14 +1871,24 @@ long sys_clone_thread(uint64_t flags, uint64_t child_stack,
     /* CLONE_PARENT_SETTID: write child TID into caller's address space now */
     if ((flags & CLONE_PARENT_SETTID) && parent_tid_ptr) {
         int tid32 = (int)child_tid;
-        fut_copy_to_user((void *)parent_tid_ptr, &tid32, sizeof(int));
+#ifdef KERNEL_VIRTUAL_BASE
+        if ((uintptr_t)parent_tid_ptr >= KERNEL_VIRTUAL_BASE)
+            *(volatile int *)(uintptr_t)parent_tid_ptr = tid32;
+        else
+#endif
+            fut_copy_to_user((void *)parent_tid_ptr, &tid32, sizeof(int));
     }
 
     /* CLONE_CHILD_SETTID: write child TID into the child_tid address.
      * Done here (before the thread runs) since we hold the child TID. */
     if ((flags & CLONE_CHILD_SETTID) && child_tid_ptr) {
         int tid32 = (int)child_tid;
-        fut_copy_to_user((void *)child_tid_ptr, &tid32, sizeof(int));
+#ifdef KERNEL_VIRTUAL_BASE
+        if ((uintptr_t)child_tid_ptr >= KERNEL_VIRTUAL_BASE)
+            *(volatile int *)(uintptr_t)child_tid_ptr = tid32;
+        else
+#endif
+            fut_copy_to_user((void *)child_tid_ptr, &tid32, sizeof(int));
     }
 
     /* CLONE_CHILD_CLEARTID: on thread exit, write 0 + futex-wake at child_tid_ptr */

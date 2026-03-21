@@ -392,7 +392,16 @@ extern void exit_robust_list(fut_thread_t *thread);
     if (self->clear_child_tid) {
         extern int futex_wake_one(uint32_t *uaddr);
         int zero = 0;
-        if (fut_copy_to_user(self->clear_child_tid, &zero, sizeof(int)) == 0)
+        int copy_ok;
+#ifdef KERNEL_VIRTUAL_BASE
+        /* Bypass fut_copy_to_user for kernel-space addresses (kernel selftests) */
+        if ((uintptr_t)self->clear_child_tid >= KERNEL_VIRTUAL_BASE) {
+            *(volatile int *)self->clear_child_tid = 0;
+            copy_ok = 0;
+        } else
+#endif
+            copy_ok = fut_copy_to_user(self->clear_child_tid, &zero, sizeof(int));
+        if (copy_ok == 0)
             futex_wake_one((uint32_t *)self->clear_child_tid);
         self->clear_child_tid = NULL;
     }

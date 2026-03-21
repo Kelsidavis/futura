@@ -40338,6 +40338,104 @@ test1206:;
 #undef TEST_SOCK_DGRAM
 }
 
+/* ============================================================
+ * Tests 1235-1238: CLONE_CHILD_CLEARTID — TID zeroed and futex woken on thread exit
+ *
+ * Verifies the NPTL pthread_join mechanism at the kernel level:
+ *   1235: fut_thread_create returns a valid child thread (TID > 0)
+ *   1236: tid_word contains the child TID (simulating CLONE_CHILD_SETTID)
+ *   1237: FUTEX_WAIT on tid_word returns 0 or -EAGAIN (not -ETIMEDOUT)
+ *   1238: tid_word is 0 after futex returns (clear_child_tid zeroed it)
+ *
+ * sys_clone_thread() requires fut_current_frame (set by syscall trap) and
+ * cannot be called directly from kernel-space test code.  Instead we use
+ * fut_thread_create() + set child->clear_child_tid directly, which is
+ * exactly what sys_clone_thread(CLONE_CHILD_CLEARTID) does internally.
+ * ============================================================ */
+
+/* TID word shared between test thread and child: static so both can see it */
+static volatile int g_cleartid_tidword;
+
+/* Child entry: just exits immediately — clear_child_tid is set by parent before child runs */
+static void cleartid_child_fn(void *arg) {
+    (void)arg;
+    fut_thread_exit();
+}
+
+static void test_cleartid_futex_wake(void) {
+    extern long sys_futex(uint32_t *uaddr, int op, uint32_t val, const void *timeout,
+                          uint32_t *uaddr2, uint32_t val3);
+
+    g_cleartid_tidword = 0;
+
+    fut_task_t *task = fut_task_current();
+    fut_thread_t *parent_thread = fut_thread_current();
+    if (!task || !parent_thread) {
+        fut_printf("[MISC-TEST] ✗ Test 1235: no task/thread context\n");
+        fut_test_fail(1235); fut_test_fail(1236);
+        fut_test_fail(1237); fut_test_fail(1238);
+        return;
+    }
+
+    /* Create child thread — it will call fut_thread_exit() immediately */
+    fut_thread_t *child = fut_thread_create(task, cleartid_child_fn, NULL,
+                                             parent_thread->stack_size,
+                                             parent_thread->priority);
+
+    /* Test 1235: thread creation succeeded */
+    if (!child) {
+        fut_printf("[MISC-TEST] ✗ Test 1235: fut_thread_create failed\n");
+        fut_test_fail(1235); fut_test_fail(1236);
+        fut_test_fail(1237); fut_test_fail(1238);
+        return;
+    }
+    int child_tid = (int)child->tid;
+    fut_printf("[MISC-TEST] ✓ Test 1235: child thread created, tid=%d\n", child_tid);
+    fut_test_pass();
+
+    /* Simulate CLONE_CHILD_SETTID: write child TID into tid_word */
+    g_cleartid_tidword = child_tid;
+
+    /* Simulate CLONE_CHILD_CLEARTID: set clear_child_tid so fut_thread_exit() will
+     * zero tid_word and wake a futex waiter */
+    child->clear_child_tid = (int *)&g_cleartid_tidword;
+
+    /* Test 1236: tid_word now holds the child TID */
+    int snap = g_cleartid_tidword;
+    if (snap != child_tid) {
+        fut_printf("[MISC-TEST] ✗ Test 1236: tid_word=%d expected=%d\n", snap, child_tid);
+        fut_test_fail(1236);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 1236: tid_word=%d (child TID)\n", snap);
+        fut_test_pass();
+    }
+
+    /* Test 1237: FUTEX_WAIT on tid_word returns 0 (woken by CLEARTID) or
+     * -EAGAIN (child already exited — tid_word was zeroed before we got here).
+     * -ETIMEDOUT would mean CLEARTID did not fire → bug. */
+    fut_timespec_t wait_ts = { .tv_sec = 1, .tv_nsec = 0 };
+    long fw = sys_futex((uint32_t *)&g_cleartid_tidword,
+                        0 /* FUTEX_WAIT */ | 128 /* FUTEX_PRIVATE_FLAG */,
+                        (uint32_t)child_tid, &wait_ts, NULL, 0);
+    if (fw != 0 && fw != -EAGAIN) {
+        fut_printf("[MISC-TEST] ✗ Test 1237: futex_wait returned %ld (expected 0 or -EAGAIN)\n", fw);
+        fut_test_fail(1237);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 1237: futex_wait returned %ld (child exited)\n", fw);
+        fut_test_pass();
+    }
+
+    /* Test 1238: tid_word must be 0 — clear_child_tid zeroed it on thread exit */
+    int final_val = g_cleartid_tidword;
+    if (final_val != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1238: tid_word=%d after exit, expected 0\n", final_val);
+        fut_test_fail(1238);
+    } else {
+        fut_printf("[MISC-TEST] ✓ Test 1238: clear_child_tid zeroed tid_word=0\n");
+        fut_test_pass();
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -40976,6 +41074,7 @@ void fut_misc_test_thread(void *arg) {
     test_socket_eisconn_and_timerfd_cancel(); /* Tests 1224-1226: EISCONN/accept-not-listening/TFD_CANCEL_ON_SET */
     test_sock_timeout_blocking();             /* Tests 1227-1230: SO_SNDTIMEO/SO_RCVTIMEO blocking + clear */
     test_stream_buf_integrity();              /* Tests 1231-1234: stream socket circular-buffer full/wrap integrity */
+    test_cleartid_futex_wake();               /* Tests 1235-1238: CLONE_CHILD_CLEARTID TID-zero+futex-wake on thread exit */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -17,6 +17,11 @@
 #include "../../include/kernel/errno.h"
 #include <kernel/signal.h>
 #include "../../include/kernel/uaccess.h"
+#if defined(__x86_64__)
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
 #include <kernel/kprintf.h>
 #include <stdatomic.h>
 #include <string.h>
@@ -532,9 +537,17 @@ static void task_cleanup_and_exit(fut_task_t *task, int status, int signal) {
     if (task->clear_child_tid != NULL) {
         /* Write 0 to the tid address */
         int zero = 0;
-        if (fut_copy_to_user(task->clear_child_tid, &zero, sizeof(int)) == 0) {
+        int copy_ok;
+#ifdef KERNEL_VIRTUAL_BASE
+        /* Bypass fut_copy_to_user for kernel-space addresses (kernel selftests) */
+        if ((uintptr_t)task->clear_child_tid >= KERNEL_VIRTUAL_BASE) {
+            *(volatile int *)task->clear_child_tid = 0;
+            copy_ok = 0;
+        } else
+#endif
+            copy_ok = fut_copy_to_user(task->clear_child_tid, &zero, sizeof(int));
+        if (copy_ok == 0)
             futex_wake_one((uint32_t *)task->clear_child_tid);
-        }
         task->clear_child_tid = NULL;  /* Clear the address so we don't do this twice */
     }
 

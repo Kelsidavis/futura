@@ -38727,6 +38727,73 @@ skip_udp:;
 
 }
 
+/* Tests 1184-1188: perf_event_open/fanotify_init/fanotify_mark/userfaultfd/bpf stubs */
+static void test_enosys_stubs(void) {
+    extern long sys_perf_event_open(const void *attr, int pid, int cpu,
+                                    int group_fd, unsigned long flags);
+    extern long sys_fanotify_init(unsigned int flags, unsigned int event_f_flags);
+    extern long sys_fanotify_mark(int fanotify_fd, unsigned int flags,
+                                   unsigned long mask, int dirfd, const char *pathname);
+    extern long sys_userfaultfd(int flags);
+    extern long sys_bpf(int cmd, const void *attr, unsigned int size);
+    long r;
+
+    /* Test 1184: perf_event_open → -ENOSYS */
+    fut_printf("[MISC-TEST] Test 1184: perf_event_open → -ENOSYS\n");
+    r = sys_perf_event_open(NULL, 0, -1, -1, 0);
+    if (r == -38 /* -ENOSYS */) {
+        fut_printf("[MISC-TEST] ✓ Test 1184: perf_event_open → ENOSYS\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1184: perf_event_open returned %ld\n", r);
+        fut_test_fail(1184);
+    }
+
+    /* Test 1185: fanotify_init → -ENOSYS */
+    fut_printf("[MISC-TEST] Test 1185: fanotify_init → -ENOSYS\n");
+    r = sys_fanotify_init(0, 0);
+    if (r == -38) {
+        fut_printf("[MISC-TEST] ✓ Test 1185: fanotify_init → ENOSYS\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1185: fanotify_init returned %ld\n", r);
+        fut_test_fail(1185);
+    }
+
+    /* Test 1186: fanotify_mark → -ENOSYS */
+    fut_printf("[MISC-TEST] Test 1186: fanotify_mark → -ENOSYS\n");
+    r = sys_fanotify_mark(-1, 0, 0, 0 /*AT_FDCWD*/, NULL);
+    if (r == -38) {
+        fut_printf("[MISC-TEST] ✓ Test 1186: fanotify_mark → ENOSYS\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1186: fanotify_mark returned %ld\n", r);
+        fut_test_fail(1186);
+    }
+
+    /* Test 1187: userfaultfd → -ENOSYS */
+    fut_printf("[MISC-TEST] Test 1187: userfaultfd → -ENOSYS\n");
+    r = sys_userfaultfd(0);
+    if (r == -38) {
+        fut_printf("[MISC-TEST] ✓ Test 1187: userfaultfd → ENOSYS\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1187: userfaultfd returned %ld\n", r);
+        fut_test_fail(1187);
+    }
+
+    /* Test 1188: bpf → -EPERM (unprivileged BPF disabled) */
+    fut_printf("[MISC-TEST] Test 1188: bpf → -EPERM\n");
+    r = sys_bpf(0 /*BPF_MAP_CREATE*/, NULL, 0);
+    if (r == -1 /* -EPERM */) {
+        fut_printf("[MISC-TEST] ✓ Test 1188: bpf → EPERM\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1188: bpf returned %ld (expected -1/-EPERM)\n", r);
+        fut_test_fail(1188);
+    }
+}
+
 /* Tests 1180-1183: NUMA memory policy syscalls (single-node stubs) */
 static void test_mempolicy(void) {
     extern long sys_mbind(unsigned long addr, unsigned long len, int mode,
@@ -39415,6 +39482,7 @@ void fut_misc_test_thread(void *arg) {
     test_proc_locks();                 /* Tests 1173-1175: /proc/locks file */
     test_proc_net_tcp_udp();           /* Tests 1176-1179: /proc/net/tcp and /proc/net/udp enumeration */
     test_mempolicy();                  /* Tests 1180-1183: mbind/get_mempolicy/set_mempolicy single-node */
+    test_enosys_stubs();               /* Tests 1184-1188: perf_event_open/fanotify/userfaultfd/bpf stubs */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

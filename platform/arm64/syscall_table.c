@@ -4131,6 +4131,32 @@ static void arm64_syscall_table_init(void) {
     syscall_table[__NR_mseal].handler = (syscall_fn_t)sys_mseal_wrapper;
     syscall_table[__NR_mseal].name = "mseal";
 
+    /* perf_event_open / fanotify / userfaultfd / bpf stubs */
+#define __NR_perf_event_open  241  /* Linux aarch64: 241 */
+#define __NR_fanotify_init    262  /* Linux aarch64: 262 */
+#define __NR_fanotify_mark    263  /* Linux aarch64: 263 */
+#define __NR_userfaultfd      282  /* Linux aarch64: 282 */
+#define __NR_bpf              280  /* Linux aarch64: 280 */
+    {
+        extern long sys_perf_event_open(const void *attr, int pid, int cpu,
+                                        int group_fd, unsigned long flags);
+        extern long sys_fanotify_init(unsigned int flags, unsigned int event_f_flags);
+        extern long sys_fanotify_mark(int fanotify_fd, unsigned int flags,
+                                       unsigned long mask, int dirfd, const char *pathname);
+        extern long sys_userfaultfd(int flags);
+        extern long sys_bpf(int cmd, const void *attr, unsigned int size);
+        syscall_table[__NR_perf_event_open].handler = (syscall_fn_t)sys_perf_event_open;
+        syscall_table[__NR_perf_event_open].name = "perf_event_open";
+        syscall_table[__NR_fanotify_init].handler = (syscall_fn_t)sys_fanotify_init;
+        syscall_table[__NR_fanotify_init].name = "fanotify_init";
+        syscall_table[__NR_fanotify_mark].handler = (syscall_fn_t)sys_fanotify_mark;
+        syscall_table[__NR_fanotify_mark].name = "fanotify_mark";
+        syscall_table[__NR_userfaultfd].handler = (syscall_fn_t)sys_userfaultfd;
+        syscall_table[__NR_userfaultfd].name = "userfaultfd";
+        syscall_table[__NR_bpf].handler = (syscall_fn_t)sys_bpf;
+        syscall_table[__NR_bpf].name = "bpf";
+    }
+
     syscall_table_initialized = true;
 }
 

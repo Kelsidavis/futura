@@ -152,3 +152,63 @@ long sys_keyctl(int operation, unsigned long arg2, unsigned long arg3,
     (void)operation; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
     return -ENOSYS;
 }
+
+/**
+ * sys_perf_event_open() - Open a performance monitoring file descriptor.
+ * Returns -ENOSYS; callers (perf, BPF programs) fall back to /proc/stat.
+ *
+ * Linux x86_64: 298  Linux aarch64: 241
+ */
+long sys_perf_event_open(const void *attr, int pid, int cpu,
+                         int group_fd, unsigned long flags) {
+    (void)attr; (void)pid; (void)cpu; (void)group_fd; (void)flags;
+    return -ENOSYS;
+}
+
+/**
+ * sys_fanotify_init() - Create a fanotify group.
+ * Returns -ENOSYS; callers (systemd, antivirus) fall back to inotify.
+ *
+ * Linux x86_64: 300  Linux aarch64: 262
+ */
+long sys_fanotify_init(unsigned int flags, unsigned int event_f_flags) {
+    (void)flags; (void)event_f_flags;
+    return -ENOSYS;
+}
+
+/**
+ * sys_fanotify_mark() - Add/remove/modify a fanotify mark.
+ * Returns -ENOSYS.
+ *
+ * Linux x86_64: 301  Linux aarch64: 263
+ */
+long sys_fanotify_mark(int fanotify_fd, unsigned int flags,
+                       unsigned long mask, int dirfd, const char *pathname) {
+    (void)fanotify_fd; (void)flags; (void)mask; (void)dirfd; (void)pathname;
+    return -ENOSYS;
+}
+
+/**
+ * sys_userfaultfd() - Create a userfaultfd file descriptor.
+ * Returns -ENOSYS; callers (CRIU, live migration tools) require kernel support.
+ *
+ * Linux x86_64: 323  Linux aarch64: 282
+ */
+long sys_userfaultfd(int flags) {
+    (void)flags;
+    return -ENOSYS;
+}
+
+/**
+ * sys_bpf() - Execute a BPF command.
+ * Returns -EPERM; programs (systemd, tc, iproute2) probe this at startup.
+ * -EPERM is more accurate than -ENOSYS: it means "BPF available but
+ * unprivileged BPF is disabled", which triggers correct fallback paths.
+ *
+ * Linux x86_64: 321 (conflicts with Futura SYS_memfd_create — remapped to 457)
+ * Linux aarch64: 280
+ */
+long sys_bpf(int cmd, const void *attr, unsigned int size) {
+    (void)cmd; (void)attr; (void)size;
+    return -EPERM;
+}

@@ -335,6 +335,12 @@
 #define SYS_cachestat               454  /* Linux: 451 — Futura: 454 (451 = futex_waitv) */
 #define SYS_fchmodat2               455  /* Linux: 452 — Futura: 455 */
 #define SYS_mseal                   456  /* Linux: 459 — Futura: 456 */
+/* Linux 2.6-5.x syscalls missing from Futura (using their native Linux numbers) */
+#define SYS_perf_event_open         298  /* Linux: 298 */
+#define SYS_fanotify_init           300  /* Linux: 300 */
+#define SYS_fanotify_mark           301  /* Linux: 301 */
+#define SYS_userfaultfd             323  /* Linux: 323 */
+#define SYS_bpf                     457  /* Linux: 321 — Futura: 457 (321 = memfd_create) */
 #define SYS_sethostname      170
 #define SYS_setdomainname    171
 /* Syscalls whose Linux numbers conflict with Futura's custom scheme get
@@ -2280,6 +2286,43 @@ static int64_t sys_mseal_handler(uint64_t addr, uint64_t len, uint64_t flags,
     return sys_mseal((void *)(uintptr_t)addr, (size_t)len, (unsigned long)flags);
 }
 
+/* perf_event_open/fanotify/userfaultfd/bpf stubs (298, 300, 301, 323, 457) */
+static int64_t sys_perf_event_open_handler(uint64_t attr, uint64_t pid, uint64_t cpu,
+                                            uint64_t group_fd, uint64_t flags, uint64_t a6) {
+    (void)a6;
+    extern long sys_perf_event_open(const void *attr, int pid, int cpu,
+                                    int group_fd, unsigned long flags);
+    return sys_perf_event_open((const void *)(uintptr_t)attr, (int)pid, (int)cpu,
+                               (int)group_fd, (unsigned long)flags);
+}
+static int64_t sys_fanotify_init_handler(uint64_t flags, uint64_t event_f_flags,
+                                          uint64_t a3, uint64_t a4, uint64_t a5, uint64_t a6) {
+    (void)a3; (void)a4; (void)a5; (void)a6;
+    extern long sys_fanotify_init(unsigned int flags, unsigned int event_f_flags);
+    return sys_fanotify_init((unsigned int)flags, (unsigned int)event_f_flags);
+}
+static int64_t sys_fanotify_mark_handler(uint64_t fanotify_fd, uint64_t flags,
+                                          uint64_t mask, uint64_t dirfd,
+                                          uint64_t pathname, uint64_t a6) {
+    (void)a6;
+    extern long sys_fanotify_mark(int fanotify_fd, unsigned int flags,
+                                   unsigned long mask, int dirfd, const char *pathname);
+    return sys_fanotify_mark((int)fanotify_fd, (unsigned int)flags,
+                             (unsigned long)mask, (int)dirfd, (const char *)(uintptr_t)pathname);
+}
+static int64_t sys_userfaultfd_handler(uint64_t flags, uint64_t a2, uint64_t a3,
+                                        uint64_t a4, uint64_t a5, uint64_t a6) {
+    (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
+    extern long sys_userfaultfd(int flags);
+    return sys_userfaultfd((int)flags);
+}
+static int64_t sys_bpf_handler(uint64_t cmd, uint64_t attr, uint64_t size,
+                                uint64_t a4, uint64_t a5, uint64_t a6) {
+    (void)a4; (void)a5; (void)a6;
+    extern long sys_bpf(int cmd, const void *attr, unsigned int size);
+    return sys_bpf((int)cmd, (const void *)(uintptr_t)attr, (unsigned int)size);
+}
+
 static int64_t sys_sched_setattr_handler(uint64_t pid, uint64_t uattr, uint64_t flags,
                                           uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     (void)arg4; (void)arg5; (void)arg6;
@@ -4043,6 +4086,12 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_cachestat]               = sys_cachestat_handler,
     [SYS_fchmodat2]               = sys_fchmodat2_handler,
     [SYS_mseal]                   = sys_mseal_handler,
+    /* perf_event_open/fanotify/userfaultfd/bpf stubs */
+    [SYS_perf_event_open]         = sys_perf_event_open_handler,
+    [SYS_fanotify_init]           = sys_fanotify_init_handler,
+    [SYS_fanotify_mark]           = sys_fanotify_mark_handler,
+    [SYS_userfaultfd]             = sys_userfaultfd_handler,
+    [SYS_bpf]                     = sys_bpf_handler,
 };
 
 /* ============================================================

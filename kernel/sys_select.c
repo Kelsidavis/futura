@@ -1169,7 +1169,14 @@ long sys_ppoll(void *fds, unsigned int nfds, void *tmo_p, const void *sigmask) {
 
     /* Restore original signal mask */
     if (mask_applied) {
-        fut_signal_procmask(task, SIGPROCMASK_SETMASK, &saved_mask, NULL);
+        int rret = fut_signal_procmask(task, SIGPROCMASK_SETMASK, &saved_mask, NULL);
+        if (rret < 0) {
+            fut_printf("[PPOLL] failed to restore signal mask for pid=%u: %d\n",
+                       task->pid, rret);
+            if (ret >= 0) {
+                ret = rret;
+            }
+        }
     }
 
     return ret;

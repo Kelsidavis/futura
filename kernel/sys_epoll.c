@@ -1747,7 +1747,8 @@ long sys_epoll_pwait(int epfd, struct epoll_event *events, int maxevents,
         if (fut_copy_from_user(&newmask, sigmask, sizeof(sigset_t)) != 0) {
             return -EFAULT;
         }
-        fut_signal_procmask(task, SIGPROCMASK_SETMASK, &newmask, &saved_mask);
+        int mret = fut_signal_procmask(task, SIGPROCMASK_SETMASK, &newmask, &saved_mask);
+        if (mret < 0) return mret;
         mask_installed = true;
     }
 
@@ -1755,7 +1756,14 @@ long sys_epoll_pwait(int epfd, struct epoll_event *events, int maxevents,
 
     /* Restore original signal mask */
     if (mask_installed && task) {
-        fut_signal_procmask(task, SIGPROCMASK_SETMASK, &saved_mask, NULL);
+        int rret = fut_signal_procmask(task, SIGPROCMASK_SETMASK, &saved_mask, NULL);
+        if (rret < 0) {
+            fut_printf("[EPOLL_PWAIT] failed to restore signal mask for pid=%u: %d\n",
+                       task->pid, rret);
+            if (ret >= 0) {
+                ret = rret;
+            }
+        }
     }
 
     return ret;

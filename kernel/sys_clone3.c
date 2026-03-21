@@ -69,16 +69,27 @@ struct fut_clone_args {
                                CLONE_NEWIPC | CLONE_NEWUSER | CLONE_NEWPID |  \
                                CLONE_NEWNET | CLONE_NEWTIME)
 
-#define CLONE_THREAD  0x00010000
-#define CLONE_VM      0x00000100
-#define CLONE_SIGHAND 0x00000800
-#define CLONE_PIDFD   0x00001000
+#define CLONE_THREAD         0x00010000
+#define CLONE_VM             0x00000100
+#define CLONE_SIGHAND        0x00000800
+#define CLONE_PIDFD          0x00001000
+#define CLONE_PARENT_SETTID  0x00100000
+#define CLONE_CHILD_SETTID   0x01000000
+#define CLONE_CHILD_CLEARTID 0x00200000
+#define CLONE_SETTLS         0x00080000
 
 static inline int clone3_copy_from_user(void *dst, const void *src, size_t n) {
 #ifdef KERNEL_VIRTUAL_BASE
     if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
 #endif
     return fut_copy_from_user(dst, src, n);
+}
+
+static inline int clone3_copy_to_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)dst >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_to_user(dst, src, n);
 }
 
 /**
@@ -130,23 +141,41 @@ long sys_clone3(const struct fut_clone_args *uargs, size_t size) {
     extern long sys_fork(void);
     long child_pid = sys_fork();
 
-    /* In the parent, create and write the pidfd if CLONE_PIDFD was set */
-    if (child_pid > 0 && want_pidfd) {
-        extern long sys_pidfd_open(int pid, unsigned int flags);
-        long pidfd = sys_pidfd_open((int)child_pid, 0);
-        if (pidfd >= 0) {
-            int pidfd_int = (int)pidfd;
-            fut_copy_to_user((void *)(uintptr_t)args.pidfd, &pidfd_int, sizeof(pidfd_int));
-        } else {
-            /* pidfd_open failed; write -1 to indicate failure */
-            int minus1 = -1;
-            fut_copy_to_user((void *)(uintptr_t)args.pidfd, &minus1, sizeof(minus1));
+    if (child_pid > 0) {
+        /* ── Parent context ── */
+
+        /* CLONE_PIDFD: create pidfd and write to caller */
+        if (want_pidfd) {
+            extern long sys_pidfd_open(int pid, unsigned int flags);
+            long pidfd = sys_pidfd_open((int)child_pid, 0);
+            int pidfd_int = (pidfd >= 0) ? (int)pidfd : -1;
+            clone3_copy_to_user((void *)(uintptr_t)args.pidfd,
+                                &pidfd_int, sizeof(pidfd_int));
         }
-    } else if (child_pid <= 0 && want_pidfd) {
-        /* In the child (or error): write -1 */
-        int minus1 = -1;
-        fut_copy_to_user((void *)(uintptr_t)args.pidfd, &minus1, sizeof(minus1));
+
+        /* CLONE_PARENT_SETTID: write child PID to parent_tid address */
+        if ((flags & CLONE_PARENT_SETTID) && args.parent_tid) {
+            int tid_val = (int)child_pid;
+            clone3_copy_to_user((void *)(uintptr_t)args.parent_tid,
+                                &tid_val, sizeof(tid_val));
+        }
+    } else if (child_pid == 0) {
+        /* ── Child context ── */
+        fut_task_t *child_task = fut_task_current();
+
+        /* CLONE_CHILD_SETTID: write child's own TID into child_tid address */
+        if ((flags & CLONE_CHILD_SETTID) && args.child_tid && child_task) {
+            int tid_val = (int)child_task->pid;
+            clone3_copy_to_user((void *)(uintptr_t)args.child_tid,
+                                &tid_val, sizeof(tid_val));
+        }
+
+        /* CLONE_CHILD_CLEARTID: register address for zero+futex-wake on exit */
+        if ((flags & CLONE_CHILD_CLEARTID) && args.child_tid && child_task) {
+            child_task->clear_child_tid = (void *)(uintptr_t)args.child_tid;
+        }
     }
+    /* Error (child_pid < 0): nothing extra to do */
 
     return child_pid;
 }

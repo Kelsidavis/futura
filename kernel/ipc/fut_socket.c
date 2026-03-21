@@ -770,6 +770,13 @@ int fut_socket_accept(fut_socket_t *listener, fut_socket_t **out_socket) {
     accepted->shutdown_rd = false;
     accepted->shutdown_wr = false;
 
+    /* Copy listener's bound AF_INET address to the accepted socket so
+     * getsockname() on the accepted fd returns the correct local address,
+     * and getpeername() on the client fd (which follows pair->peer) also
+     * finds the correct server address. */
+    accepted->inet_addr = listener->inet_addr;
+    accepted->inet_port = listener->inet_port;
+
     /* Allocate wait queue for close operations */
     accepted->close_waitq = fut_malloc(sizeof(fut_waitq_t));
     if (!accepted->close_waitq) {
@@ -2058,9 +2065,6 @@ int fut_socket_bind_inet(fut_socket_t *socket, uint32_t addr, uint16_t port) {
  */
 int fut_socket_connect_inet(fut_socket_t *socket, uint32_t addr, uint16_t port) {
     if (!socket) return -EINVAL;
-
-    /* Store remote address for getsockname/getpeername */
-    socket->inet_addr = socket->inet_addr;  /* keep local addr */
 
     /* SOCK_DGRAM: just set default destination */
     if (socket->socket_type == SOCK_DGRAM) {

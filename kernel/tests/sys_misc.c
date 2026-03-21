@@ -48434,6 +48434,152 @@ static void test_af_inet_bind_conflict(void) {
     sys_close((int)fd1);
 }
 
+/* ============================================================
+ * Tests 1517-1522: AF_INET TCP getsockname/getpeername/shutdown
+ * ============================================================ */
+static void test_af_inet_tcp_extended(void) {
+    fut_printf("[MISC-TEST] Tests 1517-1522: AF_INET TCP getsockname/getpeername/shutdown\n");
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_bind(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_listen(int sockfd, int backlog);
+    extern long sys_connect(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_accept(int sockfd, void *addr, unsigned int *addrlen);
+    extern long sys_getsockname(int sockfd, void *addr, unsigned int *addrlen);
+    extern long sys_getpeername(int sockfd, void *addr, unsigned int *addrlen);
+    extern long sys_shutdown(int sockfd, int how);
+    extern long sys_write(int fd, const void *buf, unsigned long count);
+    extern long sys_read(int fd, void *buf, unsigned long count);
+    extern long sys_close(int fd);
+
+    struct { uint16_t sin_family; uint16_t sin_port; uint32_t sin_addr; uint8_t sin_zero[8]; } addr;
+    unsigned int addrlen;
+
+    /* Set up: server binds port 12346, listens, client connects, server accepts */
+    long server_fd = sys_socket(2, 1, 0);
+    if (server_fd < 0) { fut_test_fail(1517); return; }
+    __builtin_memset(&addr, 0, sizeof(addr));
+    addr.sin_family = 2;
+    addr.sin_port = test_htons(12346);
+    addr.sin_addr = 0;
+    if (sys_bind((int)server_fd, &addr, 16) != 0) {
+        sys_close((int)server_fd); fut_test_fail(1517); return;
+    }
+    if (sys_listen((int)server_fd, 5) != 0) {
+        sys_close((int)server_fd); fut_test_fail(1517); return;
+    }
+
+    long client_fd = sys_socket(2, 1, 0);
+    if (client_fd < 0) {
+        sys_close((int)server_fd); fut_test_fail(1517); return;
+    }
+    __builtin_memset(&addr, 0, sizeof(addr));
+    addr.sin_family = 2;
+    addr.sin_port = test_htons(12346);
+    addr.sin_addr = 0;
+    if (sys_connect((int)client_fd, &addr, 16) != 0) {
+        sys_close((int)client_fd); sys_close((int)server_fd);
+        fut_test_fail(1517); return;
+    }
+
+    struct { uint16_t sin_family; uint16_t sin_port; uint32_t sin_addr; uint8_t sin_zero[8]; } peer_addr;
+    unsigned int peer_len = 16;
+    __builtin_memset(&peer_addr, 0, sizeof(peer_addr));
+    long accepted_fd = sys_accept((int)server_fd, &peer_addr, &peer_len);
+    if (accepted_fd < 0) {
+        sys_close((int)client_fd); sys_close((int)server_fd);
+        fut_test_fail(1517); return;
+    }
+
+    /* Test 1517: getsockname on client → ephemeral port >= 49152 */
+    __builtin_memset(&addr, 0, sizeof(addr));
+    addrlen = 16;
+    long ret = sys_getsockname((int)client_fd, &addr, &addrlen);
+    uint16_t client_port = test_htons(addr.sin_port);
+    if (ret != 0 || addr.sin_family != 2 || client_port < 49152) {
+        fut_printf("[MISC-TEST] ✗ Test 1517: getsockname(client) → ret=%ld family=%u port=%u\n",
+                   ret, addr.sin_family, client_port);
+        sys_close((int)accepted_fd); sys_close((int)client_fd); sys_close((int)server_fd);
+        fut_test_fail(1517); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 1517: getsockname(client) → AF_INET port=%u\n", client_port);
+    fut_test_pass();
+
+    /* Test 1518: getpeername on accepted → client's ephemeral port */
+    __builtin_memset(&addr, 0, sizeof(addr));
+    addrlen = 16;
+    ret = sys_getpeername((int)accepted_fd, &addr, &addrlen);
+    uint16_t reported_peer_port = test_htons(addr.sin_port);
+    if (ret != 0 || addr.sin_family != 2 || reported_peer_port != client_port) {
+        fut_printf("[MISC-TEST] ✗ Test 1518: getpeername(accepted) → ret=%ld family=%u port=%u (expected %u)\n",
+                   ret, addr.sin_family, reported_peer_port, client_port);
+        sys_close((int)accepted_fd); sys_close((int)client_fd); sys_close((int)server_fd);
+        fut_test_fail(1518); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 1518: getpeername(accepted) → client port=%u\n", reported_peer_port);
+    fut_test_pass();
+
+    /* Test 1519: getpeername on client → server port 12346 */
+    __builtin_memset(&addr, 0, sizeof(addr));
+    addrlen = 16;
+    ret = sys_getpeername((int)client_fd, &addr, &addrlen);
+    uint16_t reported_server_port = test_htons(addr.sin_port);
+    if (ret != 0 || addr.sin_family != 2 || reported_server_port != 12346) {
+        fut_printf("[MISC-TEST] ✗ Test 1519: getpeername(client) → ret=%ld family=%u port=%u (expected 12346)\n",
+                   ret, addr.sin_family, reported_server_port);
+        sys_close((int)accepted_fd); sys_close((int)client_fd); sys_close((int)server_fd);
+        fut_test_fail(1519); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 1519: getpeername(client) → server port=12346\n");
+    fut_test_pass();
+
+    /* Test 1520: getsockname on accepted → server port 12346 */
+    __builtin_memset(&addr, 0, sizeof(addr));
+    addrlen = 16;
+    ret = sys_getsockname((int)accepted_fd, &addr, &addrlen);
+    uint16_t accepted_local_port = test_htons(addr.sin_port);
+    if (ret != 0 || addr.sin_family != 2 || accepted_local_port != 12346) {
+        fut_printf("[MISC-TEST] ✗ Test 1520: getsockname(accepted) → ret=%ld family=%u port=%u (expected 12346)\n",
+                   ret, addr.sin_family, accepted_local_port);
+        sys_close((int)accepted_fd); sys_close((int)client_fd); sys_close((int)server_fd);
+        fut_test_fail(1520); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 1520: getsockname(accepted) → server port=12346\n");
+    fut_test_pass();
+
+    /* Test 1521: shutdown(SHUT_WR) on accepted → client read returns 0 (EOF) */
+    ret = sys_shutdown((int)accepted_fd, 1 /* SHUT_WR */);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1521: shutdown(accepted, SHUT_WR) → %ld\n", ret);
+        sys_close((int)accepted_fd); sys_close((int)client_fd); sys_close((int)server_fd);
+        fut_test_fail(1521); return;
+    }
+    char buf[16] = {0};
+    long rr = sys_read((int)client_fd, buf, 16);
+    if (rr != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1521: read(client) after shutdown → %ld (expected 0 EOF)\n", rr);
+        sys_close((int)accepted_fd); sys_close((int)client_fd); sys_close((int)server_fd);
+        fut_test_fail(1521); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 1521: shutdown(SHUT_WR) → client read returns 0 (EOF)\n");
+    fut_test_pass();
+
+    /* Test 1522: client can still write after server SHUT_WR (half-close) */
+    long wr = sys_write((int)client_fd, "ping", 4);
+    __builtin_memset(buf, 0, 16);
+    rr = sys_read((int)accepted_fd, buf, 16);
+    if (wr != 4 || rr != 4 || __builtin_memcmp(buf, "ping", 4) != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1522: half-close write/read → wr=%ld rr=%ld\n", wr, rr);
+        sys_close((int)accepted_fd); sys_close((int)client_fd); sys_close((int)server_fd);
+        fut_test_fail(1522); return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 1522: half-close: client→server write/read still works\n");
+    fut_test_pass();
+
+    sys_close((int)accepted_fd);
+    sys_close((int)client_fd);
+    sys_close((int)server_fd);
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -49158,6 +49304,7 @@ void fut_misc_test_thread(void *arg) {
     test_af_inet_udp_loopback();           /* Tests 1511-1513: AF_INET UDP loopback sendto+recvfrom */
     test_af_inet_connect_refused();        /* Test  1514: AF_INET connect non-listening → ECONNREFUSED */
     test_af_inet_bind_conflict();          /* Tests 1515-1516: AF_INET bind conflict detection */
+    test_af_inet_tcp_extended();           /* Tests 1517-1522: AF_INET getsockname/getpeername/shutdown */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

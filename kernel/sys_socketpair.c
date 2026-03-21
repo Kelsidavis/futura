@@ -199,6 +199,10 @@ pair_alloc_fail:
                     struct fut_file *f = task->fd_table[fd1];
                     if (f) f->flags |= O_NONBLOCK;
                 }
+                /* Also propagate to socket structs so socket_nonblock()
+                 * returns true in fut_socket_recv/send. */
+                s0->flags |= O_NONBLOCK;
+                s1->flags |= O_NONBLOCK;
             }
             if (type_flags & SOCK_CLOEXEC) {
                 if (fd0 < task->max_fds)

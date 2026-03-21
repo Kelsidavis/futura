@@ -49352,6 +49352,66 @@ static void test_so_linger(void) {
     }
 }
 
+/**
+ * Test socketpair SOCK_NONBLOCK propagation.
+ *
+ * Test 1547: socketpair(SOCK_NONBLOCK) recv on empty returns EAGAIN.
+ * Test 1548: socketpair(no flags) recv blocks (we send data to unblock).
+ */
+static void test_socketpair_nonblock(void) {
+    extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+    extern long sys_close(int fd);
+    extern ssize_t sys_read(int fd, void *buf, size_t count);
+    extern ssize_t sys_write(int fd, const void *buf, size_t count);
+
+    /* Test 1547: socketpair(SOCK_STREAM|SOCK_NONBLOCK) recv on empty → EAGAIN */
+    fut_printf("[MISC-TEST] Test 1547: socketpair(SOCK_NONBLOCK) recv → EAGAIN\n");
+    {
+        int sv[2] = {-1, -1};
+        long r = sys_socketpair(1 /* AF_UNIX */, 1 | 0x800 /* SOCK_STREAM|SOCK_NONBLOCK */, 0, sv);
+        if (r < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1547: socketpair failed: %ld\n", r);
+            fut_test_fail(1547);
+        } else {
+            char buf[16];
+            ssize_t nr = sys_read(sv[0], buf, sizeof(buf));
+            if (nr == -11 /* -EAGAIN */) {
+                fut_printf("[MISC-TEST] ✓ Test 1547: recv on NONBLOCK empty socketpair = -EAGAIN\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1547: recv = %ld (want -11 EAGAIN)\n", (long)nr);
+                fut_test_fail(1547);
+            }
+            sys_close(sv[0]);
+            sys_close(sv[1]);
+        }
+    }
+
+    /* Test 1548: socketpair(no flags) send/recv works */
+    fut_printf("[MISC-TEST] Test 1548: socketpair(no flags) send+recv roundtrip\n");
+    {
+        int sv[2] = {-1, -1};
+        long r = sys_socketpair(1, 1, 0, sv);
+        if (r < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1548: socketpair failed: %ld\n", r);
+            fut_test_fail(1548);
+        } else {
+            sys_write(sv[0], "ping", 4);
+            char buf[16];
+            ssize_t nr = sys_read(sv[1], buf, sizeof(buf));
+            if (nr == 4) {
+                fut_printf("[MISC-TEST] ✓ Test 1548: socketpair send+recv roundtrip OK (%ld bytes)\n", (long)nr);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1548: recv = %ld (want 4)\n", (long)nr);
+                fut_test_fail(1548);
+            }
+            sys_close(sv[0]);
+            sys_close(sv[1]);
+        }
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -50081,6 +50141,7 @@ void fut_misc_test_thread(void *arg) {
     test_flock_fcntl_edge_cases();         /* Tests 1531-1538: flock/fcntl locking edge cases */
     test_sockname_zero_addrlen();          /* Tests 1539-1542: getsockname/getpeername addrlen=0 */
     test_so_linger();                      /* Tests 1543-1546: SO_LINGER close semantics */
+    test_socketpair_nonblock();            /* Tests 1547-1548: socketpair SOCK_NONBLOCK */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

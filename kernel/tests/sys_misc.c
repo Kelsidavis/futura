@@ -11764,6 +11764,139 @@ t1284:;
 }
 
 /* ============================================================
+ * Tests 1285-1291: futex_waitv validation and value-mismatch
+ *
+ * futex_waitv (Linux 5.16+) waits on multiple futexes simultaneously.
+ * Test parameter validation and the EAGAIN path (value mismatch at entry).
+ * ============================================================ */
+extern long sys_futex_waitv(const void *waiters, unsigned int nr_futexes,
+                            unsigned int flags, const void *timeout,
+                            int32_t clockid);
+
+struct test_futex_waitv {
+    uint64_t val;
+    uint64_t uaddr;
+    uint32_t flags;
+    uint32_t __reserved;
+};
+
+static void test_futex_waitv_basic(void) {
+    /* Test 1285: futex_waitv with nr_futexes=0 → EINVAL */
+    fut_printf("[MISC-TEST] Test 1285: futex_waitv nr_futexes=0 → EINVAL\n");
+    {
+        long ret = sys_futex_waitv(NULL, 0, 0, NULL, 1);
+        if (ret != -EINVAL) {
+            fut_printf("[MISC-TEST] ✗ Test 1285: got %ld, expected -EINVAL\n", ret);
+            fut_test_fail(1285);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1285: nr_futexes=0 → EINVAL\n");
+            fut_test_pass();
+        }
+    }
+
+    /* Test 1286: futex_waitv with nr_futexes > 128 → EINVAL */
+    fut_printf("[MISC-TEST] Test 1286: futex_waitv nr_futexes=129 → EINVAL\n");
+    {
+        long ret = sys_futex_waitv(NULL, 129, 0, NULL, 1);
+        if (ret != -EINVAL) {
+            fut_printf("[MISC-TEST] ✗ Test 1286: got %ld, expected -EINVAL\n", ret);
+            fut_test_fail(1286);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1286: nr_futexes=129 → EINVAL\n");
+            fut_test_pass();
+        }
+    }
+
+    /* Test 1287: futex_waitv with flags != 0 → EINVAL */
+    fut_printf("[MISC-TEST] Test 1287: futex_waitv flags=1 → EINVAL\n");
+    {
+        long ret = sys_futex_waitv(NULL, 1, 1, NULL, 1);
+        if (ret != -EINVAL) {
+            fut_printf("[MISC-TEST] ✗ Test 1287: got %ld, expected -EINVAL\n", ret);
+            fut_test_fail(1287);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1287: flags=1 → EINVAL\n");
+            fut_test_pass();
+        }
+    }
+
+    /* Test 1288: futex_waitv with invalid clockid → EINVAL */
+    fut_printf("[MISC-TEST] Test 1288: futex_waitv clockid=99 → EINVAL\n");
+    {
+        long ret = sys_futex_waitv(NULL, 1, 0, NULL, 99);
+        if (ret != -EINVAL) {
+            fut_printf("[MISC-TEST] ✗ Test 1288: got %ld, expected -EINVAL\n", ret);
+            fut_test_fail(1288);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1288: clockid=99 → EINVAL\n");
+            fut_test_pass();
+        }
+    }
+
+    /* Test 1289: futex_waitv with __reserved != 0 → EINVAL */
+    fut_printf("[MISC-TEST] Test 1289: futex_waitv __reserved != 0 → EINVAL\n");
+    {
+        uint32_t futex_word = 42;
+        struct test_futex_waitv wv;
+        wv.val = 42;
+        wv.uaddr = (uint64_t)(uintptr_t)&futex_word;
+        wv.flags = 0x02;  /* FUTEX2_SIZE_U32 */
+        wv.__reserved = 1;  /* invalid: must be 0 */
+        long ret = sys_futex_waitv(&wv, 1, 0, NULL, 1);
+        if (ret != -EINVAL) {
+            fut_printf("[MISC-TEST] ✗ Test 1289: got %ld, expected -EINVAL\n", ret);
+            fut_test_fail(1289);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1289: __reserved != 0 → EINVAL\n");
+            fut_test_pass();
+        }
+    }
+
+    /* Test 1290: futex_waitv value mismatch on first futex → EAGAIN */
+    fut_printf("[MISC-TEST] Test 1290: futex_waitv value mismatch → EAGAIN\n");
+    {
+        uint32_t futex_word = 100;
+        struct test_futex_waitv wv;
+        wv.val = 999;  /* doesn't match futex_word */
+        wv.uaddr = (uint64_t)(uintptr_t)&futex_word;
+        wv.flags = 0x02 | 0x80;  /* FUTEX2_SIZE_U32 | FUTEX2_PRIVATE */
+        wv.__reserved = 0;
+        long ret = sys_futex_waitv(&wv, 1, 0, NULL, 1);
+        if (ret != -EAGAIN) {
+            fut_printf("[MISC-TEST] ✗ Test 1290: got %ld, expected -EAGAIN\n", ret);
+            fut_test_fail(1290);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1290: value mismatch → EAGAIN\n");
+            fut_test_pass();
+        }
+    }
+
+    /* Test 1291: futex_waitv value mismatch on second futex → EAGAIN */
+    fut_printf("[MISC-TEST] Test 1291: futex_waitv multi-futex mismatch → EAGAIN\n");
+    {
+        uint32_t futex_a = 10;
+        uint32_t futex_b = 20;
+        struct test_futex_waitv wv[2];
+        wv[0].val = 10;  /* matches futex_a */
+        wv[0].uaddr = (uint64_t)(uintptr_t)&futex_a;
+        wv[0].flags = 0x02;  /* FUTEX2_SIZE_U32 */
+        wv[0].__reserved = 0;
+        wv[1].val = 99;  /* doesn't match futex_b=20 */
+        wv[1].uaddr = (uint64_t)(uintptr_t)&futex_b;
+        wv[1].flags = 0x02;
+        wv[1].__reserved = 0;
+        long ret = sys_futex_waitv(wv, 2, 0, NULL, 1);
+        if (ret != -EAGAIN) {
+            fut_printf("[MISC-TEST] ✗ Test 1291: got %ld, expected -EAGAIN\n", ret);
+            fut_test_fail(1291);
+        } else {
+            fut_printf("[MISC-TEST] ✓ Test 1291: multi-futex mismatch → EAGAIN\n");
+            fut_test_pass();
+        }
+    }
+}
+
+/* ============================================================
  * Tests 241-243: mlock2
  * ============================================================ */
 static void test_mlock2_basic(void) {
@@ -20601,14 +20734,14 @@ static void test_linux_5_16_enosys_stubs(void) {
         fut_test_pass();
     }
 
-    /* Test 472: futex_waitv returns ENOSYS */
-    fut_printf("[MISC-TEST] Test 472: futex_waitv -> ENOSYS\n");
+    /* Test 472: futex_waitv with nr_futexes=0 returns EINVAL (now implemented) */
+    fut_printf("[MISC-TEST] Test 472: futex_waitv nr_futexes=0 -> EINVAL\n");
     r = sys_futex_waitv(NULL, 0, 0, NULL, 0);
-    if (r != -38 /*-ENOSYS*/) {
-        fut_printf("[MISC-TEST] ✗ Test 472: futex_waitv returned %ld, expected -ENOSYS\n", r);
+    if (r != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ Test 472: futex_waitv returned %ld, expected -EINVAL\n", r);
         fut_test_fail(472);
     } else {
-        fut_printf("[MISC-TEST] ✓ Test 472: futex_waitv -> -ENOSYS\n");
+        fut_printf("[MISC-TEST] ✓ Test 472: futex_waitv nr_futexes=0 -> -EINVAL\n");
         fut_test_pass();
     }
 }
@@ -42494,6 +42627,7 @@ void fut_misc_test_thread(void *arg) {
     test_capset_correctness();               /* Tests 1276-1279: capset version/two-struct/validation */
     test_wcoredump_bit();                    /* Tests 1280-1282: WCOREDUMP bit in wait status */
     test_waitid_cld_dumped();                /* Tests 1283-1284: waitid CLD_DUMPED/CLD_KILLED */
+    test_futex_waitv_basic();                /* Tests 1285-1291: futex_waitv validation and value-mismatch */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

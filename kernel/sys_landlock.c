@@ -11,7 +11,6 @@
  *   landlock_add_rule        445   (Linux 5.13)
  *   landlock_restrict_self   446   (Linux 5.13)
  *   memfd_secret             447   (Linux 5.14)
- *   futex_waitv              449   (Linux 5.16)
  *   process_madvise          440   (Linux 5.10) — remapped in Futura
  *   set_mempolicy_home_node  450   (Linux 5.17) — remapped in Futura
  *   cachestat                451   (Linux 6.5)  — remapped in Futura
@@ -58,17 +57,6 @@ long sys_landlock_restrict_self(int ruleset_fd, uint32_t flags) {
  */
 long sys_memfd_secret(unsigned int flags) {
     (void)flags;
-    return -ENOSYS;
-}
-
-/**
- * sys_futex_waitv() - Wait on multiple futexes simultaneously (Wine/Proton).
- * Returns -ENOSYS; callers fall back to sequential futex waits.
- */
-long sys_futex_waitv(const void *waiters, unsigned int nr_futexes,
-                     unsigned int flags, const void *timeout,
-                     int32_t clockid) {
-    (void)waiters; (void)nr_futexes; (void)flags; (void)timeout; (void)clockid;
     return -ENOSYS;
 }
 

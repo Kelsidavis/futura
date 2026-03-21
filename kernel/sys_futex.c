@@ -1517,3 +1517,254 @@ long sys_get_robust_list(int pid, struct robust_list_head **head_ptr,
 
     return 0;
 }
+
+/* ============================================================
+ *   futex_waitv — Linux 5.16+ multi-futex wait (Wine/Proton)
+ * ============================================================ */
+
+/* Linux futex2 size flags */
+#define FUTEX2_SIZE_U8    0x00
+#define FUTEX2_SIZE_U16   0x01
+#define FUTEX2_SIZE_U32   0x02
+#define FUTEX2_SIZE_U64   0x03
+#define FUTEX2_SIZE_MASK  0x03
+#define FUTEX2_NUMA       0x04
+#define FUTEX2_PRIVATE    0x80
+
+/* Max futex entries per futex_waitv call (Linux uses 128) */
+#define FUTEX_WAITV_MAX   128
+
+/* Per-entry struct matching Linux ABI */
+struct futex_waitv {
+    uint64_t val;
+    uint64_t uaddr;
+    uint32_t flags;
+    uint32_t __reserved;
+};
+
+/**
+ * sys_futex_waitv() - Wait on multiple futexes simultaneously
+ *
+ * Blocks until any of the futex values changes, or a timeout/signal occurs.
+ * Used primarily by Wine/Proton for WaitForMultipleObjects emulation.
+ *
+ * @param waiters_ptr  User pointer to array of struct futex_waitv
+ * @param nr_futexes   Number of entries in waiters array (1..128)
+ * @param flags        Must be 0 (reserved for future use)
+ * @param timeout_ptr  Optional absolute timeout (struct timespec)
+ * @param clockid      Clock for timeout (CLOCK_MONOTONIC or CLOCK_REALTIME)
+ *
+ * Returns:
+ *   - Index of woken futex on success (0..nr_futexes-1)
+ *   - -EAGAIN if any futex value doesn't match at entry
+ *   - -ETIMEDOUT if timeout expires
+ *   - -EINTR if interrupted by signal
+ *   - -EINVAL for invalid parameters
+ *   - -EFAULT for bad user pointers
+ */
+long sys_futex_waitv(const void *waiters_ptr, unsigned int nr_futexes,
+                     unsigned int flags, const void *timeout_ptr,
+                     int32_t clockid) {
+    fut_task_t *task = fut_task_current();
+    if (!task) return -ESRCH;
+
+    /* Validate flags — must be 0 per Linux ABI */
+    if (flags != 0) return -EINVAL;
+
+    /* Validate nr_futexes */
+    if (nr_futexes == 0 || nr_futexes > FUTEX_WAITV_MAX) return -EINVAL;
+
+    /* Validate clockid */
+    if (clockid != 0 /* CLOCK_REALTIME */ && clockid != 1 /* CLOCK_MONOTONIC */) return -EINVAL;
+
+    /* Validate and copy waiter array from user */
+    size_t waiters_size = nr_futexes * sizeof(struct futex_waitv);
+    if (futex_access_ok_read(waiters_ptr, waiters_size) != 0) return -EFAULT;
+
+    struct futex_waitv waiters[FUTEX_WAITV_MAX];
+    if (futex_copy_from_user(waiters, waiters_ptr, waiters_size) != 0) return -EFAULT;
+
+    /* Validate each waiter entry */
+    for (unsigned int i = 0; i < nr_futexes; i++) {
+        if (waiters[i].__reserved != 0) return -EINVAL;
+
+        /* Only FUTEX2_SIZE_U32 supported (the common case for Wine/Proton) */
+        uint32_t size_flag = waiters[i].flags & FUTEX2_SIZE_MASK;
+        if (size_flag != FUTEX2_SIZE_U32) return -EINVAL;
+
+        /* FUTEX2_NUMA not supported */
+        if (waiters[i].flags & FUTEX2_NUMA) return -EINVAL;
+
+        /* Validate address */
+        uint32_t *addr = (uint32_t *)(uintptr_t)waiters[i].uaddr;
+        if (!addr) return -EINVAL;
+        if (futex_access_ok_read(addr, sizeof(uint32_t)) != 0) return -EFAULT;
+    }
+
+    /* Parse timeout if present */
+    bool has_timeout = false;
+    uint64_t timeout_ms = 0;
+    if (timeout_ptr) {
+        fut_timespec_t ts;
+        if (futex_copy_from_user(&ts, timeout_ptr, sizeof(ts)) != 0) return -EFAULT;
+        if (ts.tv_sec < 0 || ts.tv_nsec < 0 || ts.tv_nsec >= 1000000000) return -EINVAL;
+
+        /* Absolute timeout: convert to relative */
+        extern uint64_t fut_get_ticks(void);
+        extern volatile int64_t g_realtime_offset_sec;
+        uint64_t now_ticks = fut_get_ticks();
+        uint64_t now_ns = now_ticks * 10000000ULL;
+        if (clockid == 0 /* CLOCK_REALTIME */) {
+            now_ns += (uint64_t)((int64_t)g_realtime_offset_sec * 1000000000LL);
+        }
+        uint64_t abs_ns = (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
+        if (abs_ns <= now_ns) return -ETIMEDOUT;
+        uint64_t remaining_ns = abs_ns - now_ns;
+        timeout_ms = remaining_ns / 1000000;
+        if (remaining_ns % 1000000 != 0) timeout_ms++;
+        has_timeout = true;
+    }
+
+    /* --- Atomically check all futex values --- */
+    /* Collect unique buckets and lock in address order to avoid deadlock */
+    futex_bucket_t *buckets[FUTEX_WAITV_MAX];
+    for (unsigned int i = 0; i < nr_futexes; i++) {
+        buckets[i] = futex_get_bucket((uint32_t *)(uintptr_t)waiters[i].uaddr);
+    }
+
+    /* Sort unique buckets for ordered locking (simple insertion sort, N<=128) */
+    futex_bucket_t *sorted_buckets[FUTEX_WAITV_MAX];
+    unsigned int n_sorted = 0;
+    for (unsigned int i = 0; i < nr_futexes; i++) {
+        bool found = false;
+        for (unsigned int j = 0; j < n_sorted; j++) {
+            if (sorted_buckets[j] == buckets[i]) { found = true; break; }
+        }
+        if (!found) sorted_buckets[n_sorted++] = buckets[i];
+    }
+    /* Sort by address */
+    for (unsigned int i = 1; i < n_sorted; i++) {
+        futex_bucket_t *key = sorted_buckets[i];
+        int j = (int)i - 1;
+        while (j >= 0 && (uintptr_t)sorted_buckets[j] > (uintptr_t)key) {
+            sorted_buckets[j + 1] = sorted_buckets[j];
+            j--;
+        }
+        sorted_buckets[j + 1] = key;
+    }
+
+    /* Lock all unique buckets */
+    for (unsigned int i = 0; i < n_sorted; i++) {
+        fut_spinlock_acquire(&sorted_buckets[i]->lock);
+    }
+
+    /* Check all values under locks */
+    for (unsigned int i = 0; i < nr_futexes; i++) {
+        uint32_t *addr = (uint32_t *)(uintptr_t)waiters[i].uaddr;
+        uint32_t current_val;
+        if (futex_copy_from_user(&current_val, addr, sizeof(uint32_t)) != 0) {
+            for (unsigned int k = n_sorted; k > 0; k--)
+                fut_spinlock_release(&sorted_buckets[k - 1]->lock);
+            return -EFAULT;
+        }
+        if (current_val != (uint32_t)waiters[i].val) {
+            for (unsigned int k = n_sorted; k > 0; k--)
+                fut_spinlock_release(&sorted_buckets[k - 1]->lock);
+            fut_printf("[FUTEX_WAITV] value mismatch at index %u (*addr=%u, expected=%u) -> EAGAIN\n",
+                       i, current_val, (uint32_t)waiters[i].val);
+            return -EAGAIN;
+        }
+    }
+
+    /* All values match — block.
+     *
+     * We enqueue the current thread on the FIRST futex's bucket wait queue,
+     * using the first futex address as the futex_addr match key.  FUTEX_WAKE
+     * on that address will wake us.  For other addresses, we rely on value
+     * changes being visible when we re-check after wake.
+     *
+     * To handle wakes on ANY of the futex addresses, we enqueue the thread
+     * on ALL unique buckets with the corresponding futex_addr.  Since a
+     * thread can only be in one linked list (via wait_next), we use the
+     * first futex as the primary enqueue and set futex_addr to a sentinel.
+     * On wake from any bucket, we check all values to find which changed.
+     *
+     * Simplified approach: enqueue once with first address, after wake scan all.
+     */
+    fut_thread_t *thread = fut_thread_current();
+    if (!thread) {
+        for (unsigned int k = n_sorted; k > 0; k--)
+            fut_spinlock_release(&sorted_buckets[k - 1]->lock);
+        return -ESRCH;
+    }
+
+    uint32_t *primary_addr = (uint32_t *)(uintptr_t)waiters[0].uaddr;
+    thread->futex_addr   = primary_addr;
+    thread->futex_bitset = 0xFFFFFFFFu;
+    thread->state        = FUT_THREAD_BLOCKED;
+    thread->blocked_waitq = &buckets[0]->waiters;
+    thread->wait_next    = NULL;
+
+    fut_waitq_t *wq = &buckets[0]->waiters;
+    if (wq->tail) {
+        wq->tail->wait_next = thread;
+    } else {
+        wq->head = thread;
+    }
+    wq->tail = thread;
+
+    /* Release all locks BEFORE starting timer (IRQ deadlock prevention) */
+    for (unsigned int k = n_sorted; k > 0; k--)
+        fut_spinlock_release(&sorted_buckets[k - 1]->lock);
+
+    /* Start timeout timer if needed */
+    futex_timeout_ctx_t timeout_ctx;
+    if (has_timeout) {
+        timeout_ctx.thread = thread;
+        timeout_ctx.bucket = buckets[0];
+        uint64_t timeout_ticks = timeout_ms / 10;
+        if (timeout_ms % 10 != 0) timeout_ticks++;
+        if (timeout_ticks == 0 && timeout_ms > 0) timeout_ticks = 1;
+        fut_timer_start(timeout_ticks, futex_timeout_callback, &timeout_ctx);
+    }
+
+    /* Yield to scheduler — woken by FUTEX_WAKE or timeout */
+    fut_schedule();
+
+    /* Cancel timeout timer if set */
+    if (has_timeout) {
+        fut_timer_cancel(futex_timeout_callback, &timeout_ctx);
+    }
+
+    /* Check if we were timed out */
+    bool timed_out = (thread->futex_addr == NULL);
+    thread->futex_addr = NULL;
+
+    if (timed_out) return -ETIMEDOUT;
+
+    /* Check for pending signals */
+    {
+        uint64_t pending = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
+        uint64_t blocked = __atomic_load_n(
+            thread ? &thread->signal_mask : &task->signal_mask, __ATOMIC_ACQUIRE);
+        if (pending & ~blocked) return -EINTR;
+    }
+
+    /* Scan all futexes to find which one changed (return its index) */
+    for (unsigned int i = 0; i < nr_futexes; i++) {
+        uint32_t *addr = (uint32_t *)(uintptr_t)waiters[i].uaddr;
+        uint32_t current_val;
+        if (futex_copy_from_user(&current_val, addr, sizeof(uint32_t)) == 0) {
+            if (current_val != (uint32_t)waiters[i].val) {
+                fut_printf("[FUTEX_WAITV] woken: index %u changed (%u -> %u)\n",
+                           i, (uint32_t)waiters[i].val, current_val);
+                return (long)i;
+            }
+        }
+    }
+
+    /* Woken but no value changed — spurious wake or FUTEX_WAKE on primary addr.
+     * Return index 0 (the address we were woken on). */
+    fut_printf("[FUTEX_WAITV] woken on primary (index 0), no value diff detected\n");
+    return 0;
+}

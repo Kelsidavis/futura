@@ -26871,7 +26871,7 @@ static void test_fstat_signalfd_fstatat_empty(void) {
 }
 
 /**
- * test_memfd_sealing - Tests 761-764
+ * test_memfd_sealing - Tests 761-765, 1266
  *
  * Test 761: F_GET_SEALS on memfd without MFD_ALLOW_SEALING → EPERM
  * Test 762: F_ADD_SEALS on memfd without MFD_ALLOW_SEALING → EPERM;
@@ -26879,6 +26879,7 @@ static void test_fstat_signalfd_fstatat_empty(void) {
  *           then write → EPERM (seal enforced)
  * Test 763: F_ADD_SEALS(F_SEAL_SEAL) prevents further F_ADD_SEALS
  * Test 764: F_ADD_SEALS(F_SEAL_SHRINK) prevents ftruncate shrink
+ * Test 1266: F_SEAL_FUTURE_WRITE prevents write() but allows ftruncate
  */
 static void test_memfd_sealing(void) {
     extern long sys_memfd_create(const char *uname, unsigned int flags);
@@ -27048,25 +27049,25 @@ t764:
 #undef F_SEAL_GROW_761
     }
 
-    /* Test 766: F_SEAL_FUTURE_WRITE (0x0010) prevents future write() calls
+    /* Test 1266: F_SEAL_FUTURE_WRITE (0x0010) prevents future write() calls
      * but allows ftruncate (unlike F_SEAL_WRITE which blocks both). */
-    fut_printf("[MISC-TEST] Test 766: F_SEAL_FUTURE_WRITE prevents writes, allows ftruncate\n");
+    fut_printf("[MISC-TEST] Test 1266: F_SEAL_FUTURE_WRITE prevents writes, allows ftruncate\n");
     {
-#define F_SEAL_FUTURE_WRITE_766  0x0010U
+#define F_SEAL_FUTURE_WRITE_1266  0x0010U
         long fd = sys_memfd_create("seal_fw_test", MFD_ALLOW_SEALING_761);
         if (fd < 0) {
-            fut_printf("[MISC-TEST] ✗ Test 766: memfd_create failed (%ld)\n", fd);
-            fut_test_fail(766);
+            fut_printf("[MISC-TEST] ✗ Test 1266: memfd_create failed (%ld)\n", fd);
+            fut_test_fail(1266);
         } else {
             /* Write initial content */
             char buf[4] = {'a', 'b', 'c', 'd'};
             sys_write((int)fd, buf, 4);
 
             /* Add F_SEAL_FUTURE_WRITE */
-            long r = sys_fcntl((int)fd, F_ADD_SEALS_761, (long)F_SEAL_FUTURE_WRITE_766);
+            long r = sys_fcntl((int)fd, F_ADD_SEALS_761, (long)F_SEAL_FUTURE_WRITE_1266);
             if (r != 0) {
-                fut_printf("[MISC-TEST] ✗ Test 766: F_ADD_SEALS(F_SEAL_FUTURE_WRITE) → %ld\n", r);
-                fut_test_fail(766);
+                fut_printf("[MISC-TEST] ✗ Test 1266: F_ADD_SEALS(F_SEAL_FUTURE_WRITE) → %ld\n", r);
+                fut_test_fail(1266);
             } else {
                 /* Write must now be rejected */
                 long nw = sys_write((int)fd, buf, 4);
@@ -27074,18 +27075,18 @@ t764:
                 long tr = sys_ftruncate((int)fd, 4);
                 sys_close((int)fd);
                 if (nw != -EPERM) {
-                    fut_printf("[MISC-TEST] ✗ Test 766: write returned %ld (expected -EPERM)\n", nw);
-                    fut_test_fail(766);
+                    fut_printf("[MISC-TEST] ✗ Test 1266: write returned %ld (expected -EPERM)\n", nw);
+                    fut_test_fail(1266);
                 } else if (tr != 0) {
-                    fut_printf("[MISC-TEST] ✗ Test 766: ftruncate returned %ld (expected 0)\n", tr);
-                    fut_test_fail(766);
+                    fut_printf("[MISC-TEST] ✗ Test 1266: ftruncate returned %ld (expected 0)\n", tr);
+                    fut_test_fail(1266);
                 } else {
-                    fut_printf("[MISC-TEST] ✓ Test 766: F_SEAL_FUTURE_WRITE: write→EPERM, ftruncate→0\n");
+                    fut_printf("[MISC-TEST] ✓ Test 1266: F_SEAL_FUTURE_WRITE: write→EPERM, ftruncate→0\n");
                     fut_test_pass();
                 }
             }
         }
-#undef F_SEAL_FUTURE_WRITE_766
+#undef F_SEAL_FUTURE_WRITE_1266
     }
 
 #undef MFD_ALLOW_SEALING_761
@@ -41805,7 +41806,7 @@ void fut_misc_test_thread(void *arg) {
     test_prlimit_other_pid();                /* Tests 751-753: prlimit64 by explicit self pid; ESRCH; RLIMIT_STACK */
     test_fstat_special_fds();                /* Tests 754-757: fstat st_mode: pipe→S_IFIFO, sock→S_IFSOCK, efd→S_IFCHR, tfd→S_IFREG */
     test_fstat_signalfd_fstatat_empty();     /* Tests 758-760: signalfd fstat S_IFREG; fstatat AT_EMPTY_PATH pipe+socket */
-    test_memfd_sealing();                    /* Tests 761-765: memfd sealing: EPERM w/o MFD_ALLOW_SEALING; F_SEAL_WRITE/SEAL/SHRINK/GROW enforcement */
+    test_memfd_sealing();                    /* Tests 761-765,1266: memfd sealing: EPERM w/o MFD_ALLOW_SEALING; F_SEAL_WRITE/SEAL/SHRINK/GROW/FUTURE_WRITE enforcement */
     test_timerfd_abstime_past();             /* Test 766: timerfd TFD_TIMER_ABSTIME past time → fires ASAP */
     test_timerfd_disarm();                   /* Test 767: timerfd_settime({0,0}) disarms running timer */
     test_timerfd_abstime_realtime();         /* Test 768: timerfd CLOCK_REALTIME TFD_TIMER_ABSTIME fires */

@@ -146,12 +146,14 @@ long sys_rt_sigtimedwait(const uint64_t *uthese, void *uinfo,
                 /* Read si_code from the per-signal queue info populated by
                  * fut_signal_send() (SI_USER for kill/raise), rt_sigqueueinfo
                  * (SI_QUEUE), tgkill (SI_TKILL), or POSIX timer (SI_TIMER). */
-                if (from_thread && cur_thread)
-                    info.si_code = cur_thread->thread_sig_queue_info[signo - 1].si_code;
-                else
-                    info.si_code = task->sig_queue_info[signo - 1].si_code;
-                info.si_pid = task->pid;
-                info.si_uid = task->uid;
+                const siginfo_t *qi = (from_thread && cur_thread)
+                    ? &cur_thread->thread_sig_queue_info[signo - 1]
+                    : &task->sig_queue_info[signo - 1];
+                info.si_code = qi->si_code;
+                /* Copy sender identity from the stored siginfo (populated by
+                 * fut_signal_send with the SENDER's pid/uid, not the target's). */
+                info.si_pid  = (uint32_t)qi->si_pid;
+                info.si_uid  = qi->si_uid;
                 sigtimedwait_copy_to_user(uinfo, &info, sizeof(info));
             }
 

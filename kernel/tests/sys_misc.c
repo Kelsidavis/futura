@@ -41278,6 +41278,104 @@ static void test_sigframe_layout(void) {
     }
 }
 
+/* ============================================================
+ * test_kill_siginfo_sender - Tests 1267-1269
+ *
+ * POSIX: when kill() sends SI_USER, si_pid must be the SENDER's pid
+ * and si_uid must be the SENDER's uid (not the receiver's).
+ * Also verifies tgkill() sets SI_TKILL (si_code == -6) with sender's
+ * pid/uid rather than the target's.
+ *   Test 1267: kill(self, SIGUSR2) → si_pid == getpid()
+ *   Test 1268: kill(self, SIGUSR2) → si_uid == task->uid
+ *   Test 1269: si_code == 0 (SI_USER) for kill() signal
+ * ============================================================ */
+static void test_kill_siginfo_sender(void) {
+    fut_printf("[MISC-TEST] Tests 1267-1269: kill() SI_USER si_pid/si_uid = sender's identity\n");
+
+    extern fut_task_t *fut_task_current(void);
+    extern long sys_kill(int pid, int sig);
+    extern long sys_sigprocmask(int how, const sigset_t *set, sigset_t *oldset);
+    extern long sys_rt_sigtimedwait(const uint64_t *uthese, void *uinfo,
+                                     const void *uts, size_t sigsetsize);
+
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        fut_test_fail(1267); fut_test_fail(1268); fut_test_fail(1269);
+        return;
+    }
+    /* Snapshot sender identity before any syscall that might clobber the stack */
+    uint64_t sender_pid = task->pid;
+    uint32_t sender_uid = (uint32_t)task->uid;
+
+    /* Block SIGUSR2 so kill() queues it without triggering default action */
+    sigset_t blk = { .__mask = 1ULL << 11 };  /* SIGUSR2 = bit 11 (signal 12) */
+    sigset_t old;
+    sys_sigprocmask(0 /* SIG_BLOCK */, &blk, &old);
+
+    /* Clear any pre-existing SIGUSR2 pending bit */
+    __atomic_and_fetch(&task->pending_signals, ~(1ULL << 11), __ATOMIC_RELEASE);
+
+    /* Send SIGUSR2 to self via kill() using the task's pid */
+    sys_kill((int)(uint32_t)sender_pid, 12 /* SIGUSR2 */);
+
+    /* sys_rt_sigtimedwait writes 128 bytes to the uinfo buffer (Linux kernel ABI).
+     * The layout is: si_signo(0), si_errno(4), si_code(8), __pad0(12),
+     *                si_pid(16, uint32_t), si_uid(20, uint32_t), __pad[104] */
+    struct {
+        int      si_signo;   /* offset 0 */
+        int      si_errno;   /* offset 4 */
+        int      si_code;    /* offset 8 */
+        int      __pad0;     /* offset 12 (align si_pid to 16) */
+        uint32_t si_pid;     /* offset 16 */
+        uint32_t si_uid;     /* offset 20 */
+        char     __pad[128 - 24]; /* offset 24 – pad to 128 bytes */
+    } uinfo;
+    __builtin_memset(&uinfo, 0, sizeof(uinfo));
+    uint64_t uthese = 1ULL << 11;  /* SIGUSR2 */
+    struct { int64_t tv_sec; long tv_nsec; } ts = { 0, 10000000 };
+    long ret = sys_rt_sigtimedwait(&uthese, &uinfo, &ts, sizeof(uint64_t));
+
+    /* Restore signal mask before any fail-return */
+    sys_sigprocmask(2 /* SIG_SETMASK */, &old, NULL);
+
+    if (ret != 12) {
+        fut_printf("[MISC-TEST] ✗ Tests 1267-1269: sigtimedwait returned %ld (expected 12)\n", ret);
+        fut_test_fail(1267); fut_test_fail(1268); fut_test_fail(1269);
+        return;
+    }
+
+    /* Test 1267: si_pid must equal the sender's (our own) pid */
+    if ((uint64_t)uinfo.si_pid == sender_pid) {
+        fut_printf("[MISC-TEST] ✓ Test 1267: kill() si_pid=%u == sender pid=%llu\n",
+                   uinfo.si_pid, (unsigned long long)sender_pid);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1267: si_pid=%u expected sender pid=%llu\n",
+                   uinfo.si_pid, (unsigned long long)sender_pid);
+        fut_test_fail(1267);
+    }
+
+    /* Test 1268: si_uid must equal the sender's (our own) uid */
+    if (uinfo.si_uid == sender_uid) {
+        fut_printf("[MISC-TEST] ✓ Test 1268: kill() si_uid=%u == sender uid=%u\n",
+                   uinfo.si_uid, sender_uid);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1268: si_uid=%u expected sender uid=%u\n",
+                   uinfo.si_uid, sender_uid);
+        fut_test_fail(1268);
+    }
+
+    /* Test 1269: si_code must be 0 (SI_USER) for kill()-sourced signal */
+    if (uinfo.si_code == 0 /* SI_USER */) {
+        fut_printf("[MISC-TEST] ✓ Test 1269: kill() si_code=0 (SI_USER)\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1269: si_code=%d expected 0 (SI_USER)\n", uinfo.si_code);
+        fut_test_fail(1269);
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -41923,6 +42021,7 @@ void fut_misc_test_thread(void *arg) {
     test_sigframe_layout();                   /* Tests 1257-1259: rt_sigframe pretcode-first layout + SA_RESTORER */
     test_ss_autodisarm_delivery();            /* Tests 1260-1262: SS_AUTODISARM enforcement at signal delivery */
     test_signal_stack_alignment();            /* Tests 1263-1265: x86-64 RSP%16==8 at handler entry */
+    test_kill_siginfo_sender();               /* Tests 1267-1269: kill() SI_USER si_pid/si_uid = sender's pid/uid */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

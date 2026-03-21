@@ -160,14 +160,17 @@ int fut_signal_send(struct fut_task *task, int signum) {
     }
 
     /* Fill default siginfo_t (SI_USER) for SA_SIGINFO handlers.
-     * Overwritten by fut_signal_send_with_info() for rt_sigqueueinfo. */
+     * Overwritten by fut_signal_send_with_info() for rt_sigqueueinfo.
+     * si_pid/si_uid must be the SENDER's identity (POSIX: SI_USER signals
+     * from kill() carry the calling process's pid and uid, not the target's). */
     {
         siginfo_t *qi = &task->sig_queue_info[signum - 1];
+        fut_task_t *sender = fut_task_current();
         qi->si_signum  = signum;
         qi->si_errno   = 0;
         qi->si_code    = SI_USER;
-        qi->si_pid     = (int64_t)task->pid;
-        qi->si_uid     = (uint32_t)task->uid;
+        qi->si_pid     = sender ? (int64_t)sender->pid : 0;
+        qi->si_uid     = sender ? (uint32_t)sender->uid : 0;
         qi->si_status  = 0;
         qi->si_addr    = (void *)0;
         qi->si_value   = 0;
@@ -299,14 +302,16 @@ int fut_signal_send_thread(struct fut_thread *thread, int signum) {
     if (task->signal_handlers[signum - 1] == SIG_IGN)
         return 0;
 
-    /* Fill default SI_TKILL siginfo_t for SA_SIGINFO delivery. */
+    /* Fill default SI_TKILL siginfo_t for SA_SIGINFO delivery.
+     * si_pid/si_uid must be the SENDER's identity (tgkill() caller). */
     {
         siginfo_t *qi = &thread->thread_sig_queue_info[signum - 1];
+        fut_task_t *sender = fut_task_current();
         qi->si_signum  = signum;
         qi->si_errno   = 0;
         qi->si_code    = SI_TKILL;
-        qi->si_pid     = (int64_t)task->pid;
-        qi->si_uid     = (uint32_t)task->uid;
+        qi->si_pid     = sender ? (int64_t)sender->pid : 0;
+        qi->si_uid     = sender ? (uint32_t)sender->uid : 0;
         qi->si_status  = 0;
         qi->si_addr    = (void *)0;
         qi->si_value   = 0;

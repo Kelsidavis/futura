@@ -40920,6 +40920,78 @@ static void test_hw_exception_signals(void) {
     }
 }
 
+static void test_fake_restorer_fn(void) { /* fake sa_restorer for test 1259 */ }
+
+/* ============================================================
+ * Tests 1257-1259: rt_sigframe layout and SA_RESTORER delivery
+ *   Test 1257: return_address is at offset 0 (pretcode-first, Linux-compatible)
+ *   Test 1258: info field follows return_address at offset sizeof(void*)
+ *   Test 1259: SA_RESTORER flag causes restorer to be stored in task
+ * ============================================================ */
+static void test_sigframe_layout(void) {
+    fut_printf("[MISC-TEST] Tests 1257-1259: rt_sigframe layout and SA_RESTORER\n");
+
+    extern fut_task_t *fut_task_current(void);
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        for (int i = 1257; i <= 1259; i++) fut_test_fail(i);
+        return;
+    }
+    extern long sys_sigaction(int signum, const void *act, void *oldact);
+
+    /* Test 1257: return_address must be at offset 0 for x86_64 signal return
+     * (RSP points to &sigframe on handler entry; 'ret' pops return_address) */
+    if (offsetof(struct rt_sigframe, return_address) == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 1257: rt_sigframe.return_address at offset 0\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1257: return_address at offset %zu (expected 0)\n",
+                   offsetof(struct rt_sigframe, return_address));
+        fut_test_fail(1257);
+    }
+
+    /* Test 1258: info field follows return_address (offset = sizeof(void*)) */
+    if (offsetof(struct rt_sigframe, info) == sizeof(void *)) {
+        fut_printf("[MISC-TEST] ✓ Test 1258: rt_sigframe.info at offset %zu\n",
+                   offsetof(struct rt_sigframe, info));
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1258: info at offset %zu (expected %zu)\n",
+                   offsetof(struct rt_sigframe, info), sizeof(void *));
+        fut_test_fail(1258);
+    }
+
+    /* Test 1259: SA_RESTORER flag causes restorer to be stored in task */
+    {
+#define SA_RESTORER_TEST 0x04000000UL
+        struct {
+            void (*sa_handler)(int);
+            unsigned long sa_flags;
+            void (*sa_restorer)(void);
+            uint64_t sa_mask;
+        } act = { test_dummy_sigsegv_handler, SA_RESTORER_TEST, test_fake_restorer_fn, 0 };
+        struct {
+            void (*sa_handler)(int);
+            unsigned long sa_flags;
+            void (*sa_restorer)(void);
+            uint64_t sa_mask;
+        } act_dfl = { (void *)0, 0, 0, 0 };
+        sys_sigaction(10 /* SIGUSR1 */, &act, NULL);
+        void (*stored)(void) = task->signal_handler_restorers[9];
+        sys_sigaction(10, &act_dfl, NULL);
+#undef SA_RESTORER_TEST
+        if (stored == test_fake_restorer_fn) {
+            fut_printf("[MISC-TEST] ✓ Test 1259: SA_RESTORER stored signal_handler_restorers[9]=%p\n",
+                       (void *)(uintptr_t)stored);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1259: restorer=%p (expected %p)\n",
+                       (void *)(uintptr_t)stored, (void *)(uintptr_t)test_fake_restorer_fn);
+            fut_test_fail(1259);
+        }
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -41562,6 +41634,7 @@ void fut_misc_test_thread(void *arg) {
     test_proc_stat_fields();                  /* Tests 1239-1246: /proc/self/stat 52-field format + rt_priority/policy/delayacct */
     test_sigsegv_pagefault_delivery();        /* Tests 1247-1250: page-fault SIGSEGV delivery mechanism */
     test_hw_exception_signals();              /* Tests 1251-1256: hardware exception → signal delivery */
+    test_sigframe_layout();                   /* Tests 1257-1259: rt_sigframe pretcode-first layout + SA_RESTORER */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

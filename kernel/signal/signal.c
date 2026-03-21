@@ -643,6 +643,12 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
     /* Signal mask for restoration — save current thread's mask */
     sframe.uc.uc_sigmask.__mask = cur_mask;
 
+    /* Set return_address field for struct consistency.
+     * ARM64 uses x30 (LR) for the actual return, not a stack pop. */
+    sframe.return_address = ((handler_flags & SA_RESTORER) &&
+                              task->signal_handler_restorers[signum - 1])
+        ? task->signal_handler_restorers[signum - 1] : NULL;
+
     /* Copy rt_sigframe to user stack */
     if (fut_copy_to_user((void *)sp, &sframe, sizeof(sframe)) != 0) {
         return -EFAULT;
@@ -656,10 +662,16 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
      * x0 = signal number
      * x1 = pointer to siginfo_t (within rt_sigframe)
      * x2 = pointer to ucontext_t (within rt_sigframe)
-     */
+     * x30 (LR) = sa_restorer: when handler executes 'ret' (br x30), CPU
+     *            jumps to sa_restorer which calls rt_sigreturn to restore
+     *            the interrupted context. */
     f->x[0] = signum;
     f->x[1] = sp + offsetof(struct rt_sigframe, info);
     f->x[2] = sp + offsetof(struct rt_sigframe, uc);
+    /* Set LR to sa_restorer so handler return reaches the trampoline */
+    f->x[30] = ((handler_flags & SA_RESTORER) &&
+                task->signal_handler_restorers[signum - 1])
+        ? (uint64_t)(uintptr_t)task->signal_handler_restorers[signum - 1] : 0;
 
     /* Block signals during handler: sa_mask + the delivered signal itself.
      * SA_NODEFER: don't block the delivered signal (allow recursive delivery).
@@ -852,8 +864,14 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
     /* Signal mask for restoration — save current thread's mask */
     sframe.uc.uc_sigmask.__mask = cur_mask;
 
-    /* Set return address to NULL - handler should call sigreturn explicitly */
-    sframe.return_address = NULL;
+    /* Set return address to sa_restorer if SA_RESTORER is set (libc trampoline).
+     * On x86_64 RSP is set to &sigframe (offset 0 = return_address), so when
+     * the handler executes 'ret', CPU pops return_address into RIP → restorer
+     * calls rt_sigreturn to restore the interrupted context. */
+    unsigned long h_flags_ret = task->signal_handler_flags[signum - 1];
+    sframe.return_address = ((h_flags_ret & SA_RESTORER) &&
+                              task->signal_handler_restorers[signum - 1])
+        ? task->signal_handler_restorers[signum - 1] : NULL;
 
     /* Copy rt_sigframe to user stack */
     if (fut_copy_to_user((void *)sp, &sframe, sizeof(sframe)) != 0) {
@@ -862,7 +880,8 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
         return -EFAULT;
     }
 
-    /* Modify interrupt frame to invoke signal handler */
+    /* Modify interrupt frame to invoke signal handler.
+     * RSP points to &sigframe.return_address (offset 0) so 'ret' lands there. */
     f->rip = (uint64_t)handler;
     f->rsp = sp;
 

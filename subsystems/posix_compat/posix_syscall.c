@@ -4408,12 +4408,17 @@ static bool posix_deliver_signal(fut_task_t *current, int signum,
      *   x0 = signal number
      *   x1 = siginfo_t *
      *   x2 = ucontext_t *
+     *   x30 (LR) = sa_restorer: handler 'ret' (br x30) → trampoline → rt_sigreturn
      */
     frame->x[0] = (uint64_t)signum;
     frame->x[1] = siginfo_addr;
     frame->x[2] = ucontext_addr;
     frame->pc = (uint64_t)handler;
     frame->sp = user_sp;
+    frame->x[30] = (signum > 0 && signum < _NSIG &&
+                    (current->signal_handler_flags[signum - 1] & SA_RESTORER) &&
+                    current->signal_handler_restorers[signum - 1] != NULL)
+        ? (uint64_t)(uintptr_t)current->signal_handler_restorers[signum - 1] : 0;
 #else
 #error "Unsupported architecture for signal frame modification"
 #endif

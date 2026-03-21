@@ -129,27 +129,36 @@ typedef struct {
  *   [user code that was interrupted]
  *   SP → [rt_sigframe structure below]
  *
+ * IMPORTANT: return_address is the FIRST field.  On x86_64, RSP is set
+ * to user_sp = &sigframe.return_address so that when the signal handler
+ * executes 'ret', the CPU pops return_address (= sa_restorer) into RIP.
+ * On ARM64, x30 (LR) is set to sa_restorer directly; the return_address
+ * field is kept for struct symmetry but not used for the return path.
+ *
+ * This matches Linux's rt_sigframe layout (pretcode first).
+ *
  * The signal handler receives (architecture-specific calling convention):
  *   x86-64:
  *     rdi = signal number
- *     rsi = siginfo_t *
- *     rdx = ucontext_t *
+ *     rsi = siginfo_t *  (= SP + offsetof(info))
+ *     rdx = ucontext_t * (= SP + offsetof(uc))
  *   ARM64:
  *     x0 = signal number
  *     x1 = siginfo_t *
  *     x2 = ucontext_t *
  */
 struct rt_sigframe {
+    /* Return address — MUST be first field (offset 0).
+     * x86_64: RSP points here on handler entry so 'ret' lands in sa_restorer.
+     * ARM64:  x30 (LR) is set to sa_restorer; this field is set for consistency. */
+    void (*return_address)(void);
+
     /* Signal info - passed as second argument to handler */
     siginfo_t info;
 
     /* User context - passed as third argument to handler
      * Contains all registers and state from interrupted code */
     ucontext_t uc;
-
-    /* Return address (for trampoline code on user stack)
-     * When signal handler returns, this points to code that calls sigreturn() */
-    void (*return_address)(void);
 
     /* Padding for alignment (16-byte stack alignment on entry) */
     uint64_t pad;

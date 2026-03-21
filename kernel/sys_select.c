@@ -541,13 +541,33 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
                 if (counted) ready_count++;
             }
             if (ready_count == 0) {
-                /* Sleep until an event or timeout */
+                /* Sleep until an event or timeout.
+                 * Enqueue the thread BEFORE starting the timer to prevent a
+                 * lost-wakeup: if the timer fires between fut_timer_start and
+                 * the enqueue, the wake_all() finds an empty queue and the
+                 * thread sleeps with no future wakeup.  Also, release the
+                 * lock BEFORE fut_timer_start to prevent the single-CPU
+                 * IRQ-spinlock deadlock (callback spins on a held lock). */
                 uint64_t now = fut_get_ticks();
                 uint64_t wake_ticks = (has_timeout && deadline_ticks > now)
                                       ? (deadline_ticks - now) : 5u;
-                fut_timer_start(wake_ticks, select_waitq_wakeup, &sel_wq);
-                fut_waitq_sleep_locked(&sel_wq, NULL, FUT_THREAD_BLOCKED);
-                fut_timer_cancel(select_waitq_wakeup, &sel_wq);
+                fut_thread_t *sel_thr = fut_thread_current();
+                if (sel_thr) {
+                    sel_thr->state         = FUT_THREAD_BLOCKED;
+                    sel_thr->blocked_waitq = &sel_wq;
+                    sel_thr->wait_next     = NULL;
+                    fut_spinlock_acquire(&sel_wq.lock);
+                    if (sel_wq.tail) {
+                        sel_wq.tail->wait_next = sel_thr;
+                    } else {
+                        sel_wq.head = sel_thr;
+                    }
+                    sel_wq.tail = sel_thr;
+                    fut_spinlock_release(&sel_wq.lock);
+                    fut_timer_start(wake_ticks, select_waitq_wakeup, &sel_wq);
+                    fut_schedule();
+                    fut_timer_cancel(select_waitq_wakeup, &sel_wq);
+                }
             }
             /* Unwire */
             for (int ufd = 0; ufd < local_nfds; ufd++) {
@@ -970,13 +990,27 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
                 if (counted) ready_count++;
             }
             if (ready_count == 0) {
-                /* Sleep until an event or timeout */
+                /* Same enqueue-before-timer fix as select4 path above */
                 uint64_t now = fut_get_ticks();
                 uint64_t wake_ticks = (ps_has_timeout && ps_deadline_ticks > now)
                                       ? (ps_deadline_ticks - now) : 5u;
-                fut_timer_start(wake_ticks, select_waitq_wakeup, &psel_wq);
-                fut_waitq_sleep_locked(&psel_wq, NULL, FUT_THREAD_BLOCKED);
-                fut_timer_cancel(select_waitq_wakeup, &psel_wq);
+                fut_thread_t *psel_thr = fut_thread_current();
+                if (psel_thr) {
+                    psel_thr->state         = FUT_THREAD_BLOCKED;
+                    psel_thr->blocked_waitq = &psel_wq;
+                    psel_thr->wait_next     = NULL;
+                    fut_spinlock_acquire(&psel_wq.lock);
+                    if (psel_wq.tail) {
+                        psel_wq.tail->wait_next = psel_thr;
+                    } else {
+                        psel_wq.head = psel_thr;
+                    }
+                    psel_wq.tail = psel_thr;
+                    fut_spinlock_release(&psel_wq.lock);
+                    fut_timer_start(wake_ticks, select_waitq_wakeup, &psel_wq);
+                    fut_schedule();
+                    fut_timer_cancel(select_waitq_wakeup, &psel_wq);
+                }
             }
             /* Unwire */
             for (int ufd = 0; ufd < local_nfds; ufd++) {

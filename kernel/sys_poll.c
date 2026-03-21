@@ -493,14 +493,37 @@ long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout) {
                 /* Use caller's deadline; fall back to 50ms for infinite-timeout */
                 uint64_t wake_ticks = (timeout > 0 && deadline > now)
                                       ? (deadline - now) : 5u;
-                /* Hold the wait queue lock while starting the timer so a
-                 * very fast timer callback cannot fire and call wake_all()
-                 * before the thread has been enqueued.  sleep_locked with
-                 * released_lock == &poll_wq.lock handles this atomically. */
-                fut_spinlock_acquire(&poll_wq.lock);
-                fut_timer_start(wake_ticks, poll_waitq_wakeup, &poll_wq);
-                fut_waitq_sleep_locked(&poll_wq, &poll_wq.lock, FUT_THREAD_BLOCKED);
-                fut_timer_cancel(poll_waitq_wakeup, &poll_wq);
+                /* Enqueue the thread into poll_wq while holding its lock,
+                 * then release the lock BEFORE starting the timer.
+                 *
+                 * The original pattern (lock → timer_start → sleep_locked)
+                 * causes a single-CPU IRQ-spinlock deadlock: FD callbacks
+                 * (e.g. timerfd_timer_cb) call fut_waitq_wake_one(poll_wq)
+                 * from timer IRQ context, which spins on poll_wq.lock.
+                 * If we hold poll_wq.lock when that IRQ fires, the IRQ
+                 * handler spins forever on a lock the preempted thread holds
+                 * but can never release while the CPU is in the IRQ handler.
+                 *
+                 * Fix: enqueue under poll_wq.lock, release the lock, THEN
+                 * start the timer. The callback can now always acquire
+                 * poll_wq.lock safely from IRQ context. */
+                fut_thread_t *poll_thr = fut_thread_current();
+                if (poll_thr) {
+                    poll_thr->state         = FUT_THREAD_BLOCKED;
+                    poll_thr->blocked_waitq = &poll_wq;
+                    poll_thr->wait_next     = NULL;
+                    fut_spinlock_acquire(&poll_wq.lock);
+                    if (poll_wq.tail) {
+                        poll_wq.tail->wait_next = poll_thr;
+                    } else {
+                        poll_wq.head = poll_thr;
+                    }
+                    poll_wq.tail = poll_thr;
+                    fut_spinlock_release(&poll_wq.lock);
+                    fut_timer_start(wake_ticks, poll_waitq_wakeup, &poll_wq);
+                    fut_schedule();
+                    fut_timer_cancel(poll_waitq_wakeup, &poll_wq);
+                }
             }
             poll_unwire_fds(kfds, nfds, task, &poll_wq);
             stats = poll_scan_fds(kfds, nfds, task);

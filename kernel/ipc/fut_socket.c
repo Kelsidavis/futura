@@ -1077,10 +1077,13 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
     uint32_t available = pair->recv_size - 1u -
         ((pair->recv_head + pair->recv_size - pair->recv_tail) % pair->recv_size);
 
-    /* SEQPACKET: must write entire frame atomically — need space for 4-byte header + body */
-    bool seqp = (socket->socket_type == SOCK_SEQPACKET);
-    uint32_t seqp_needed = seqp ? (uint32_t)(4 + len) : 1u;
-    if (seqp && seqp_needed > pair->recv_size - 1u) {
+    /* SEQPACKET and DGRAM socketpairs: must write entire frame atomically —
+     * need space for 4-byte length header + body.  DGRAM socketpairs use the
+     * same framing as SEQPACKET to preserve message boundaries (Linux compat). */
+    bool framed = (socket->socket_type == SOCK_SEQPACKET ||
+                   (socket->socket_type == SOCK_DGRAM && socket->pair != NULL));
+    uint32_t seqp_needed = framed ? (uint32_t)(4 + len) : 1u;
+    if (framed && seqp_needed > pair->recv_size - 1u) {
         fut_spinlock_release(&pair->lock);
         return -EMSGSIZE;
     }
@@ -1104,7 +1107,7 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
         snd_tmo_ctx.fired  = false;
     }
 
-    while (available < seqp_needed) {
+    while (available < (framed ? seqp_needed : 1u)) {
         if (socket_nonblock(socket)) {
             fut_spinlock_release(&pair->lock);
             return -EAGAIN;
@@ -1191,8 +1194,8 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
             ((pair->recv_head + pair->recv_size - pair->recv_tail) % pair->recv_size);
     }
 
-    if (seqp) {
-        /* SEQPACKET: write 4-byte little-endian length header then message body */
+    if (framed) {
+        /* SEQPACKET/DGRAM socketpair: write 4-byte little-endian length header then message body */
         uint32_t ml = (uint32_t)len;
         uint8_t hdr[4] = { (uint8_t)ml, (uint8_t)(ml >> 8),
                            (uint8_t)(ml >> 16), (uint8_t)(ml >> 24) };
@@ -1391,8 +1394,10 @@ ssize_t fut_socket_recv(fut_socket_t *socket, void *buf, size_t len) {
     }
 
     size_t to_read;
-    if (socket->socket_type == SOCK_SEQPACKET) {
-        /* SEQPACKET: read 4-byte frame header, then exactly one message */
+    bool recv_framed = (socket->socket_type == SOCK_SEQPACKET ||
+                        (socket->socket_type == SOCK_DGRAM && socket->pair != NULL));
+    if (recv_framed) {
+        /* SEQPACKET/DGRAM socketpair: read 4-byte frame header, then exactly one message */
         uint8_t hdr[4];
         circ_buf_read(pair, hdr, 4);
         uint32_t msglen = (uint32_t)hdr[0] | ((uint32_t)hdr[1] << 8)
@@ -1467,8 +1472,10 @@ ssize_t fut_socket_recv_peek(fut_socket_t *socket, void *buf, size_t len) {
     }
 
     size_t to_read;
-    if (socket->socket_type == SOCK_SEQPACKET) {
-        /* SEQPACKET peek: read 4-byte header from temp position, then peek data */
+    bool peek_framed = (socket->socket_type == SOCK_SEQPACKET ||
+                        (socket->socket_type == SOCK_DGRAM && socket->pair != NULL));
+    if (peek_framed) {
+        /* SEQPACKET/DGRAM socketpair peek: read 4-byte header from temp position, then peek data */
         uint32_t t = pair->recv_tail, sz = pair->recv_size;
         uint8_t hdr[4];
         for (int i = 0; i < 4; i++) { hdr[i] = pair->recv_buf[t]; t = (t + 1) % sz; }

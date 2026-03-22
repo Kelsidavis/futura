@@ -90,6 +90,12 @@ long sys_setgroups(int size, const uint32_t *list) {
     if (!task)
         return -ESRCH;
 
+    /* CAP_SETGID required to modify supplementary groups (Linux behavior) */
+#define CAP_SETGID_BIT 6
+    if (!(task->cap_effective & (1ULL << CAP_SETGID_BIT))) {
+        return -EPERM;
+    }
+
     if (size < 0 || size > NGROUPS_MAX)
         return -EINVAL;
 

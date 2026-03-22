@@ -51947,6 +51947,27 @@ void fut_misc_test_thread(void *arg) {
     test_dup2_newfd_out_of_range();       /* Tests 1598-1599: dup2/dup3 EINVAL for out-of-range newfd */
     test_wait_flag_validation();          /* Tests 1600-1603: waitpid/waitid flag validation */
 
+    /* Test 1604: setgroups requires CAP_SETGID */
+    {
+        extern long sys_setgroups(int size, const uint32_t *list);
+        fut_printf("[MISC-TEST] Test 1604: setgroups without CAP_SETGID → EPERM\n");
+        fut_task_t *task = fut_task_current();
+        uint64_t saved_caps = task->cap_effective;
+        /* Drop CAP_SETGID (bit 6) */
+        task->cap_effective &= ~(1ULL << 6);
+        uint32_t groups[] = {100, 200};
+        long ret = sys_setgroups(2, groups);
+        /* Restore caps */
+        task->cap_effective = saved_caps;
+        if (ret == -1 /* EPERM */) {
+            fut_printf("[MISC-TEST] ✓ Test 1604: setgroups() without CAP_SETGID → EPERM\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1604: setgroups() without CAP_SETGID → %ld (expected EPERM=-1)\n", ret);
+            fut_test_fail(1604);
+        }
+    }
+
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");
     fut_printf("[MISC-TEST] ========================================\n");

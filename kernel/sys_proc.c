@@ -209,7 +209,7 @@ long sys_setpgrp(void) {
  *   - -ESRCH if pid not found or not callable
  *   - -EINVAL if pgid is negative
  *   - -EPERM if operation not permitted
- *   - -EACCES if target has exec'd (simplified: we skip this check)
+ *   - -EACCES if target child has already called exec
  */
 long sys_setpgid(uint64_t pid, uint64_t pgid) {
     fut_task_t *current = fut_task_current();
@@ -248,6 +248,12 @@ long sys_setpgid(uint64_t pid, uint64_t pgid) {
         if (target->parent != current) {
             fut_printf("[PROC] setpgid(pid=%llu, pgid=%llu) -> ESRCH (not our child)\n", pid, pgid);
             return -ESRCH;
+        }
+
+        /* POSIX: cannot change pgid of a child that has called exec */
+        if (target->did_exec) {
+            fut_printf("[PROC] setpgid(pid=%llu, pgid=%llu) -> EACCES (child has exec'd)\n", pid, pgid);
+            return -EACCES;
         }
     }
 

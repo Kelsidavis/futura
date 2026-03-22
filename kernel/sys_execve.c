@@ -820,6 +820,8 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
     task->pdeathsig = 0;
     /* Linux: timer_slack_ns resets to default (50µs) on exec */
     task->timerslack_ns = 50000;
+    /* Mark that this process has called exec (blocks setpgid from parent) */
+    task->did_exec = 1;
 
     /* Phase 2: Detailed pre-exec logging (use kernel_pathname for SMAP safety) */
     char msg[256];

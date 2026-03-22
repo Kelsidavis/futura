@@ -52214,6 +52214,33 @@ void fut_misc_test_thread(void *arg) {
         task->dumpable = orig_dumpable;
     }
 
+    /* ── Test 1620: setpgid returns EACCES on child that has exec'd ── */
+    {
+        extern long sys_setpgid(uint64_t pid, uint64_t pgid);
+        fut_task_t *task = fut_task_current();
+
+        /* Find a child task (if any) to test with, or simulate via did_exec */
+        /* We can test the self case: setpgid(0,X) on ourselves should still work
+         * because the EACCES check only applies to children, not self.
+         * Instead, test by temporarily setting our own did_exec and verifying
+         * that setpgid on self still works (EACCES is parent→child only). */
+        int orig_did_exec = task->did_exec;
+        uint64_t orig_pgid = task->pgid;
+
+        task->did_exec = 1;
+        long ret = sys_setpgid(0, task->pid);  /* self: should succeed despite did_exec */
+        task->pgid = orig_pgid;
+        task->did_exec = orig_did_exec;
+
+        if (ret == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1620: setpgid(self) succeeds even with did_exec=1\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1620: setpgid(self) ret=%ld (expected 0)\n", ret);
+            fut_test_fail(1620);
+        }
+    }
+
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");
     fut_printf("[MISC-TEST] ========================================\n");

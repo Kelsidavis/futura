@@ -271,6 +271,13 @@ long sys_socket(int domain, int type, int protocol) {
         return -EMFILE;
     }
 
+    /* Store file back-pointer for O_ASYNC/SIGIO delivery */
+    {
+        fut_task_t *ftask = fut_task_current();
+        if (ftask && sockfd < ftask->max_fds && ftask->fd_table)
+            socket->socket_file = ftask->fd_table[sockfd];
+    }
+
     /* Apply SOCK_NONBLOCK and SOCK_CLOEXEC directly on the FD structure
      * to avoid race windows between fd allocation and flag application.
      * (Using sys_fcntl would leave a gap where another thread could

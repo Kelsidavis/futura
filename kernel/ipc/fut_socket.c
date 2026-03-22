@@ -16,6 +16,8 @@
 #include "../../include/kernel/fut_sched.h"
 #include "../../include/kernel/fut_timer.h"
 #include <kernel/errno.h>
+#include <kernel/signal.h>
+#include <fcntl.h>
 
 #include <kernel/kprintf.h>
 #include <kernel/debug_config.h>
@@ -1224,6 +1226,22 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
         fut_waitq_wake_one(pair->epoll_notify);
     }
 
+    /* O_ASYNC: send SIGIO (or F_SETSIG signal) to the peer socket's owner
+     * when data becomes available. Mirrors the pipe O_ASYNC mechanism. */
+    fut_socket_t *peer_sock = pair->peer;
+    struct fut_file *peer_file = peer_sock ? peer_sock->socket_file : NULL;
+    if (peer_file &&
+        (peer_file->flags & O_ASYNC) &&
+        peer_file->owner_pid > 0) {
+        int sig = peer_file->async_sig ? peer_file->async_sig : SIGIO;
+        extern fut_task_t *fut_task_by_pid(uint64_t pid);
+        fut_task_t *owner = fut_task_by_pid((uint64_t)peer_file->owner_pid);
+        if (owner) {
+            extern int fut_signal_send(struct fut_task *t, int sig);
+            fut_signal_send(owner, sig);
+        }
+    }
+
     fut_spinlock_release(&pair->lock);
 
     SOCKET_LOG("[SOCKET] Socket %u sent %zu bytes\n", socket->socket_id, len);
@@ -1854,6 +1872,20 @@ ssize_t fut_socket_sendto_dgram(const char *dest_path, size_t dest_path_len,
     /* Wake any blocked recvfrom */
     fut_waitq_wake_one(dq->recv_waitq);
     fut_spinlock_release(&dq->lock);
+
+    /* O_ASYNC: notify destination socket owner of incoming datagram */
+    struct fut_file *dest_file = dest->socket_file;
+    if (dest_file &&
+        (dest_file->flags & O_ASYNC) &&
+        dest_file->owner_pid > 0) {
+        int sig = dest_file->async_sig ? dest_file->async_sig : SIGIO;
+        extern fut_task_t *fut_task_by_pid(uint64_t pid);
+        fut_task_t *owner = fut_task_by_pid((uint64_t)dest_file->owner_pid);
+        if (owner) {
+            extern int fut_signal_send(struct fut_task *t, int sig);
+            fut_signal_send(owner, sig);
+        }
+    }
 
     fut_socket_unref(dest);
     return (ssize_t)data_len;

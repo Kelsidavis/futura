@@ -183,6 +183,17 @@ pair_alloc_fail:
         return fd1;
     }
 
+    /* Store file back-pointers for O_ASYNC/SIGIO delivery */
+    {
+        fut_task_t *ftask = fut_task_current();
+        if (ftask && ftask->fd_table) {
+            if (fd0 < ftask->max_fds)
+                s0->socket_file = ftask->fd_table[fd0];
+            if (fd1 < ftask->max_fds)
+                s1->socket_file = ftask->fd_table[fd1];
+        }
+    }
+
     /* Apply SOCK_NONBLOCK and SOCK_CLOEXEC directly on the FD structures
      * to avoid race windows between fd allocation and flag application.
      * (Using sys_fcntl would leave a gap where another thread could

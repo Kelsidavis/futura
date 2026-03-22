@@ -53601,6 +53601,62 @@ void fut_misc_test_thread(void *arg) {
         }
     }
 
+    /***********************************************************************
+     * Test 1654: O_ASYNC/SIGIO delivery on socket send (socketpair)         *
+     ***********************************************************************/
+    fut_printf("[MISC-TEST] Test 1654: O_ASYNC SIGIO delivery on socketpair send\n");
+    {
+        extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+        extern long sys_fcntl(int fd, int cmd, uint64_t arg);
+        extern long sys_close(int fd);
+        extern ssize_t sys_sendto(int sockfd, const void *buf, size_t len,
+                                  int flags, const void *dest_addr, uint32_t addrlen);
+
+        int sv[2] = {-1, -1};
+        long sr = sys_socketpair(1 /* AF_UNIX */, 1 /* SOCK_STREAM */, 0, sv);
+        if (sr != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1654: socketpair() failed %ld\n", sr);
+            fut_test_fail(1654);
+        } else {
+            fut_task_t *me = fut_task_current();
+            if (!me) {
+                fut_printf("[MISC-TEST] ✗ Test 1654: no current task\n");
+                fut_test_fail(1654);
+                sys_close(sv[0]);
+                sys_close(sv[1]);
+            } else {
+                /* Block SIGIO (signal 29, bit 28) so it stays pending */
+                uint64_t old_mask = me->signal_mask;
+                me->signal_mask |= (1ULL << (29 - 1));
+                __atomic_and_fetch(&me->pending_signals, ~(1ULL << (29 - 1)), __ATOMIC_SEQ_CST);
+
+                /* Set O_ASYNC on sv[1] (the receiving end) and F_SETOWN to us */
+                sys_fcntl(sv[1], 4 /* F_SETFL */, (uint64_t)O_ASYNC);
+                sys_fcntl(sv[1], 8 /* F_SETOWN */, (uint64_t)me->pid);
+
+                /* Send data to sv[0] — peer is sv[1], should trigger SIGIO */
+                char msg[] = "sock";
+                sys_sendto(sv[0], msg, 4, 0, NULL, 0);
+
+                /* Check SIGIO pending */
+                uint64_t pending = __atomic_load_n(&me->pending_signals, __ATOMIC_ACQUIRE);
+                if (pending & (1ULL << (29 - 1))) {
+                    fut_printf("[MISC-TEST] ✓ Test 1654: SIGIO pending after socket send with O_ASYNC\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1654: SIGIO not pending (pending=0x%lx)\n", pending);
+                    fut_test_fail(1654);
+                }
+
+                /* Restore */
+                me->signal_mask = old_mask;
+                __atomic_and_fetch(&me->pending_signals, ~(1ULL << (29 - 1)), __ATOMIC_SEQ_CST);
+                sys_close(sv[0]);
+                sys_close(sv[1]);
+            }
+        }
+    }
+
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");
     fut_printf("[MISC-TEST] ========================================\n");

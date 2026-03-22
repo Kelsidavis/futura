@@ -577,6 +577,13 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
         return -EMFILE;
     }
 
+    /* Store file back-pointer for O_ASYNC/SIGIO delivery */
+    {
+        fut_task_t *ftask = fut_task_current();
+        if (ftask && newfd < ftask->max_fds && ftask->fd_table)
+            accepted_socket->socket_file = ftask->fd_table[newfd];
+    }
+
     /* Handle peer address return if requested */
     if (local_addr != NULL && local_addrlen != NULL) {
         /* Build peer address based on address family */

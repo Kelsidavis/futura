@@ -450,6 +450,11 @@ typedef struct fut_socket {
     /* AF_INET tcpip stack linkage (for external network I/O via tcpip.c) */
     void *inet_tcpip;   /* Points to tcpip_socket_t when connected to real network; NULL for loopback */
 
+    /* Back-pointer to the VFS file struct for O_ASYNC/SIGIO delivery.
+     * Set when the socket fd is allocated (socket(), accept(), socketpair()).
+     * Checked by fut_socket_send() to deliver SIGIO to the peer. */
+    struct fut_file *socket_file;
+
     /* Refcounting and lifecycle */
     uint64_t refcount;                      /* Reference count */
     struct fut_waitq *close_waitq;          /* Wait queue for close completion */

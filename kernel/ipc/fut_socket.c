@@ -770,6 +770,12 @@ int fut_socket_accept(fut_socket_t *listener, fut_socket_t **out_socket) {
     accepted->is_accepted = true;  /* Server side */
     accepted->shutdown_rd = false;
     accepted->shutdown_wr = false;
+    /* Inherit buffer size defaults (memset zeroed these) */
+    accepted->sndbuf = 2 * FUT_SOCKET_BUFSIZE;
+    accepted->rcvbuf = 2 * FUT_SOCKET_BUFSIZE;
+    accepted->rcvlowat = 1;
+    /* Default IP TTL for accepted sockets */
+    accepted->ip_ttl = 64;
 
     /* Copy listener's bound AF_INET address to the accepted socket so
      * getsockname() on the accepted fd returns the correct local address,

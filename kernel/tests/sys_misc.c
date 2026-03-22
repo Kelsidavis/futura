@@ -49745,6 +49745,122 @@ static void test_so_rcvlowat(void) {
     sys_close(sv[1]);
 }
 
+/**
+ * test_accepted_socket_defaults - Verify accepted sockets have correct default options
+ *
+ * Tests 1562-1564:
+ *   1562: accepted socket SO_RCVBUF is non-zero
+ *   1563: accepted socket SO_SNDBUF is non-zero
+ *   1564: accepted socket SO_RCVLOWAT defaults to 1
+ */
+static void test_accepted_socket_defaults(void) {
+    fut_printf("[MISC-TEST] Tests 1562-1564: accepted socket option defaults\n");
+
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_bind(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_listen(int sockfd, int backlog);
+    extern long sys_connect(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_accept(int sockfd, void *addr, unsigned int *addrlen);
+    extern long sys_getsockopt(int fd, int level, int optname, void *optval, unsigned int *optlen);
+
+    /* Create a listener on a unique path */
+    long lfd = sys_socket(1 /* AF_UNIX */, 1 /* SOCK_STREAM */, 0);
+    if (lfd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1562: socket() failed: %ld\n", lfd);
+        fut_test_fail(1562); fut_test_fail(1563); fut_test_fail(1564);
+        return;
+    }
+
+    struct { uint16_t family; char path[108]; } addr;
+    __builtin_memset(&addr, 0, sizeof(addr));
+    addr.family = 1; /* AF_UNIX */
+    __builtin_memcpy(addr.path, "/tmp/.fut_accept_opts", 22);
+
+    /* Remove any stale socket file */
+    extern long sys_unlink(const char *pathname);
+    sys_unlink(addr.path);
+
+    long ret = sys_bind((int)lfd, &addr, (unsigned int)(2 + 22));
+    if (ret < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1562: bind() failed: %ld\n", ret);
+        sys_close((int)lfd);
+        fut_test_fail(1562); fut_test_fail(1563); fut_test_fail(1564);
+        return;
+    }
+    ret = sys_listen((int)lfd, 5);
+    if (ret < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1562: listen() failed: %ld\n", ret);
+        sys_close((int)lfd);
+        fut_test_fail(1562); fut_test_fail(1563); fut_test_fail(1564);
+        return;
+    }
+
+    /* Connect a client */
+    long cfd = sys_socket(1, 1, 0);
+    if (cfd < 0) {
+        sys_close((int)lfd);
+        fut_test_fail(1562); fut_test_fail(1563); fut_test_fail(1564);
+        return;
+    }
+    ret = sys_connect((int)cfd, &addr, (unsigned int)(2 + 22));
+    if (ret < 0) {
+        sys_close((int)cfd);
+        sys_close((int)lfd);
+        fut_test_fail(1562); fut_test_fail(1563); fut_test_fail(1564);
+        return;
+    }
+
+    /* Accept */
+    long afd = sys_accept((int)lfd, (void *)0, (unsigned int *)0);
+    if (afd < 0) {
+        sys_close((int)cfd);
+        sys_close((int)lfd);
+        fut_test_fail(1562); fut_test_fail(1563); fut_test_fail(1564);
+        return;
+    }
+
+    /* Test 1562: SO_RCVBUF on accepted socket should be non-zero */
+    int val = 0;
+    unsigned int olen = (unsigned int)sizeof(val);
+    ret = sys_getsockopt((int)afd, 1 /* SOL_SOCKET */, 8 /* SO_RCVBUF */, &val, &olen);
+    if (ret == 0 && val > 0) {
+        fut_printf("[MISC-TEST] ✓ Test 1562: accepted SO_RCVBUF = %d\n", val);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1562: accepted SO_RCVBUF ret=%ld val=%d (expected >0)\n", ret, val);
+        fut_test_fail(1562);
+    }
+
+    /* Test 1563: SO_SNDBUF on accepted socket should be non-zero */
+    val = 0;
+    olen = (unsigned int)sizeof(val);
+    ret = sys_getsockopt((int)afd, 1 /* SOL_SOCKET */, 7 /* SO_SNDBUF */, &val, &olen);
+    if (ret == 0 && val > 0) {
+        fut_printf("[MISC-TEST] ✓ Test 1563: accepted SO_SNDBUF = %d\n", val);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1563: accepted SO_SNDBUF ret=%ld val=%d (expected >0)\n", ret, val);
+        fut_test_fail(1563);
+    }
+
+    /* Test 1564: SO_RCVLOWAT on accepted socket should default to 1 */
+    val = -1;
+    olen = (unsigned int)sizeof(val);
+    ret = sys_getsockopt((int)afd, 1 /* SOL_SOCKET */, 18 /* SO_RCVLOWAT */, &val, &olen);
+    if (ret == 0 && val == 1) {
+        fut_printf("[MISC-TEST] ✓ Test 1564: accepted SO_RCVLOWAT = %d\n", val);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1564: accepted SO_RCVLOWAT ret=%ld val=%d (expected 1)\n", ret, val);
+        fut_test_fail(1564);
+    }
+
+    sys_close((int)afd);
+    sys_close((int)cfd);
+    sys_close((int)lfd);
+    sys_unlink(addr.path);
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -50478,6 +50594,7 @@ void fut_misc_test_thread(void *arg) {
     test_so_protocol_domain_acceptconn();  /* Tests 1549-1554: SO_PROTOCOL/SO_DOMAIN/SO_ACCEPTCONN */
     test_tiocoutq();                       /* Tests 1555-1557: TIOCOUTQ ioctl */
     test_so_rcvlowat();                    /* Tests 1558-1561: SO_RCVLOWAT enforcement */
+    test_accepted_socket_defaults();       /* Tests 1562-1564: accepted socket option defaults */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

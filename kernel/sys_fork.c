@@ -944,7 +944,8 @@ long sys_fork(void) {
 
     /* Enforce global PID limit (Attack Scenario 3 defense) */
     /* Reserve some PIDs for root to allow admin recovery during fork bomb */
-    if (!fut_task_can_fork(parent_task->uid == 0)) {
+    if (!fut_task_can_fork(parent_task->uid == 0 ||
+                           (parent_task->cap_effective & (1ULL << 24 /* CAP_SYS_RESOURCE */)))) {
         FORK_LOG("[FORK] fork(parent_pid=%u, uid=%u) -> EAGAIN "
                    "(global PID limit reached: %u tasks)\n",
                    parent_task->pid, parent_task->uid, fut_task_get_global_count());

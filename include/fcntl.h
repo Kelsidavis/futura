@@ -53,6 +53,12 @@
 #ifndef O_NONBLOCK
 #define O_NONBLOCK  00004000    /* Non-blocking mode */
 #endif
+#ifndef FASYNC
+#define FASYNC      00020000    /* Enable async I/O (SIGIO on ready) */
+#endif
+#ifndef O_ASYNC
+#define O_ASYNC     FASYNC      /* Alias for FASYNC */
+#endif
 #ifndef O_DSYNC
 #define O_DSYNC     00010000    /* Synchronized data writes */
 #endif

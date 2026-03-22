@@ -1016,6 +1016,12 @@ long sys_fork(void) {
     child_task->ioprio_class = parent_task->ioprio_class;
     child_task->ioprio_level = parent_task->ioprio_level;
 
+    /* Inherit OOM score adjustment (visible via /proc/pid/oom_score_adj) */
+    child_task->oom_score_adj = parent_task->oom_score_adj;
+
+    /* Inherit keepcaps (PR_SET_KEEPCAPS is sticky across fork) */
+    child_task->keepcaps = parent_task->keepcaps;
+
     /* Inherit chroot jail (POSIX: child stays in parent's chroot) */
     if (parent_task->chroot_vnode) {
         child_task->chroot_vnode = parent_task->chroot_vnode;

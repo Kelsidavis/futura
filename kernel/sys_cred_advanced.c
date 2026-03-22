@@ -27,13 +27,19 @@
 #define ROOT_UID 0
 
 /**
- * cred_is_privileged - Check if task has privilege to change credentials
- *
- * A task is privileged if its effective UID is 0 (root).
+ * cred_is_privileged_uid - Check if task has privilege to change UID credentials
  */
-static inline int cred_is_privileged(fut_task_t *task) {
+static inline int cred_is_privileged_uid(fut_task_t *task) {
     return task->uid == ROOT_UID ||
            (task->cap_effective & (1ULL << 7 /* CAP_SETUID */));
+}
+
+/**
+ * cred_is_privileged_gid - Check if task has privilege to change GID credentials
+ */
+static inline int cred_is_privileged_gid(fut_task_t *task) {
+    return task->uid == ROOT_UID ||
+           (task->cap_effective & (1ULL << 6 /* CAP_SETGID */));
 }
 
 /**
@@ -92,9 +98,10 @@ long sys_setreuid(uint32_t ruid, uint32_t euid) {
         return -ESRCH;
     }
 
-    int privileged = cred_is_privileged(task);
+    int privileged = cred_is_privileged_uid(task);
+    uint32_t old_ruid = task->ruid;
 
-    /* Phase 2: Validate ruid (if changing) */
+    /* Validate ruid (if changing) */
     if (ruid != UID_NO_CHANGE) {
         if (!privileged && ruid != task->ruid && ruid != task->uid) {
             fut_printf("[CRED] setreuid(ruid=%u, euid=%u, pid=%llu) -> EPERM "
@@ -104,7 +111,7 @@ long sys_setreuid(uint32_t ruid, uint32_t euid) {
         }
     }
 
-    /* Phase 2: Validate euid (if changing) */
+    /* Validate euid (if changing) */
     if (euid != UID_NO_CHANGE) {
         if (!privileged && !cred_uid_valid(task, euid)) {
             fut_printf("[CRED] setreuid(ruid=%u, euid=%u, pid=%llu) -> EPERM "
@@ -114,10 +121,7 @@ long sys_setreuid(uint32_t ruid, uint32_t euid) {
         }
     }
 
-    /* Store old values for logging */
     /* Apply changes */
-
-    /* Phase 2: Apply changes */
     if (ruid != UID_NO_CHANGE) {
         task->ruid = ruid;
     }
@@ -125,8 +129,11 @@ long sys_setreuid(uint32_t ruid, uint32_t euid) {
         task->uid = euid;
     }
 
-    /* POSIX: If real UID was changed, set saved UID to new effective UID */
-    if (ruid != UID_NO_CHANGE) {
+    /* Linux: saved UID is set to new effective UID if either:
+     * - real UID was changed, OR
+     * - effective UID was set to a value different from the old real UID */
+    if (ruid != UID_NO_CHANGE ||
+        (euid != UID_NO_CHANGE && euid != old_ruid)) {
         task->suid = task->uid;
     }
 
@@ -161,9 +168,10 @@ long sys_setregid(uint32_t rgid, uint32_t egid) {
         return -ESRCH;
     }
 
-    int privileged = cred_is_privileged(task);
+    int privileged = cred_is_privileged_gid(task);
+    uint32_t old_rgid = task->rgid;
 
-    /* Phase 2: Validate rgid (if changing) */
+    /* Validate rgid (if changing) */
     if (rgid != GID_NO_CHANGE) {
         if (!privileged && rgid != task->rgid && rgid != task->gid) {
             fut_printf("[CRED] setregid(rgid=%u, egid=%u, pid=%llu) -> EPERM "
@@ -173,7 +181,7 @@ long sys_setregid(uint32_t rgid, uint32_t egid) {
         }
     }
 
-    /* Phase 2: Validate egid (if changing) */
+    /* Validate egid (if changing) */
     if (egid != GID_NO_CHANGE) {
         if (!privileged && !cred_gid_valid(task, egid)) {
             fut_printf("[CRED] setregid(rgid=%u, egid=%u, pid=%llu) -> EPERM "
@@ -183,10 +191,7 @@ long sys_setregid(uint32_t rgid, uint32_t egid) {
         }
     }
 
-    /* Store old values for logging */
     /* Apply changes */
-
-    /* Phase 2: Apply changes */
     if (rgid != GID_NO_CHANGE) {
         task->rgid = rgid;
     }
@@ -194,8 +199,11 @@ long sys_setregid(uint32_t rgid, uint32_t egid) {
         task->gid = egid;
     }
 
-    /* POSIX: If real GID was changed, set saved GID to new effective GID */
-    if (rgid != GID_NO_CHANGE) {
+    /* Linux: saved GID is set to new effective GID if either:
+     * - real GID was changed, OR
+     * - effective GID was set to a value different from the old real GID */
+    if (rgid != GID_NO_CHANGE ||
+        (egid != GID_NO_CHANGE && egid != old_rgid)) {
         task->sgid = task->gid;
     }
 
@@ -230,7 +238,7 @@ long sys_setresuid(uint32_t ruid, uint32_t euid, uint32_t suid) {
         return -ESRCH;
     }
 
-    int privileged = cred_is_privileged(task);
+    int privileged = cred_is_privileged_uid(task);
 
     /* Phase 2: Validate all UIDs (if changing) - unprivileged can only set
      * to current real, effective, or saved UID */
@@ -300,7 +308,7 @@ long sys_setresgid(uint32_t rgid, uint32_t egid, uint32_t sgid) {
         return -ESRCH;
     }
 
-    int privileged = cred_is_privileged(task);
+    int privileged = cred_is_privileged_gid(task);
 
     /* Phase 2: Validate all GIDs (if changing) - unprivileged can only set
      * to current real, effective, or saved GID */

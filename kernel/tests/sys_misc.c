@@ -51968,6 +51968,96 @@ void fut_misc_test_thread(void *arg) {
         }
     }
 
+    /* Tests 1605-1610: setreuid/setregid saved UID/GID update semantics */
+    {
+        extern long sys_setreuid(uint32_t ruid, uint32_t euid);
+        extern long sys_setregid(uint32_t rgid, uint32_t egid);
+        fut_task_t *task = fut_task_current();
+
+        fut_printf("[MISC-TEST] Tests 1605-1610: setreuid/setregid saved ID semantics\n");
+
+        /* Save original values */
+        uint32_t orig_ruid = task->ruid, orig_uid = task->uid, orig_suid = task->suid;
+        uint32_t orig_rgid = task->rgid, orig_gid = task->gid, orig_sgid = task->sgid;
+
+        /* Test 1605: setreuid(-1, euid) where euid != old_ruid should update saved UID */
+        task->ruid = 1000; task->uid = 1000; task->suid = 1000;
+        long ret = sys_setreuid((uint32_t)-1, 1000);  /* euid == old ruid → no suid update */
+        if (ret == 0 && task->suid == 1000) {
+            fut_printf("[MISC-TEST] ✓ Test 1605: setreuid(-1, same_as_ruid) → suid unchanged\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1605: setreuid suid=%u (expected 1000)\n", task->suid);
+            fut_test_fail(1605);
+        }
+
+        /* Test 1606: setreuid(-1, euid) where euid != old_ruid → suid = new euid */
+        task->ruid = 1000; task->uid = 1000; task->suid = 1000;
+        ret = sys_setreuid((uint32_t)-1, 0);  /* euid=0 != old_ruid=1000 → suid=0 */
+        if (ret == 0 && task->suid == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1606: setreuid(-1, diff_from_ruid) → suid updated to euid\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1606: setreuid suid=%u (expected 0)\n", task->suid);
+            fut_test_fail(1606);
+        }
+
+        /* Test 1607: setreuid(ruid, -1) → suid = current euid (ruid changed) */
+        task->ruid = 1000; task->uid = 500; task->suid = 1000;
+        ret = sys_setreuid(500, (uint32_t)-1);  /* change ruid → suid = euid */
+        if (ret == 0 && task->suid == 500 && task->ruid == 500) {
+            fut_printf("[MISC-TEST] ✓ Test 1607: setreuid(new_ruid, -1) → suid updated\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1607: ruid=%u suid=%u (expected ruid=500 suid=500)\n",
+                       task->ruid, task->suid);
+            fut_test_fail(1607);
+        }
+
+        /* Test 1608: setregid(-1, egid) where egid != old_rgid → sgid = new egid */
+        task->rgid = 1000; task->gid = 1000; task->sgid = 1000;
+        ret = sys_setregid((uint32_t)-1, 0);  /* egid=0 != old_rgid=1000 → sgid=0 */
+        if (ret == 0 && task->sgid == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1608: setregid(-1, diff_from_rgid) → sgid updated\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1608: setregid sgid=%u (expected 0)\n", task->sgid);
+            fut_test_fail(1608);
+        }
+
+        /* Test 1609: seteuid can set to saved UID */
+        {
+            extern long sys_seteuid(uint32_t euid);
+            task->ruid = 1000; task->uid = 1000; task->suid = 500;
+            ret = sys_seteuid(500);  /* set euid to saved UID */
+            if (ret == 0 && task->uid == 500) {
+                fut_printf("[MISC-TEST] ✓ Test 1609: seteuid(saved_uid) → accepted\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1609: seteuid(500) → %ld, euid=%u\n", ret, task->uid);
+                fut_test_fail(1609);
+            }
+        }
+
+        /* Test 1610: setegid can set to saved GID */
+        {
+            extern long sys_setegid(uint32_t egid);
+            task->rgid = 1000; task->gid = 1000; task->sgid = 500;
+            ret = sys_setegid(500);  /* set egid to saved GID */
+            if (ret == 0 && task->gid == 500) {
+                fut_printf("[MISC-TEST] ✓ Test 1610: setegid(saved_gid) → accepted\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1610: setegid(500) → %ld, egid=%u\n", ret, task->gid);
+                fut_test_fail(1610);
+            }
+        }
+
+        /* Restore original values */
+        task->ruid = orig_ruid; task->uid = orig_uid; task->suid = orig_suid;
+        task->rgid = orig_rgid; task->gid = orig_gid; task->sgid = orig_sgid;
+    }
+
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");
     fut_printf("[MISC-TEST] ========================================\n");

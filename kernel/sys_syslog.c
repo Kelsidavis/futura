@@ -167,7 +167,8 @@ long sys_syslog(int type, char *buf, int len) {
 
     case SYSLOG_ACTION_CLEAR:
         /* Clear the ring buffer */
-        if (task && task->uid != 0) {
+        if (task && task->uid != 0 &&
+            !(task->cap_effective & (1ULL << 34 /* CAP_SYSLOG */))) {
             return -EPERM;
         }
         klog_count = 0;

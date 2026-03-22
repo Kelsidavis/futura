@@ -408,6 +408,13 @@ extern long sys_getpid(void);
 extern long sys_getppid(void);
 extern long sys_exit_group(int status);
 
+/* sys_exit_group wrapper - terminate all threads */
+static int64_t sys_exit_group_wrapper(uint64_t exit_code, uint64_t arg1, uint64_t arg2,
+                                       uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+    return (int64_t)sys_exit_group((int)exit_code);
+}
+
 /* sys_getpid - get process ID wrapper
  * Returns: current process ID
  */
@@ -3670,7 +3677,7 @@ static void arm64_syscall_table_init(void) {
     syscall_table[__NR_sched_getaffinity].name = "sched_getaffinity";
     syscall_table[__NR_exit].handler = (syscall_fn_t)sys_exit;
     syscall_table[__NR_exit].name = "exit";
-    syscall_table[__NR_exit_group].handler = (syscall_fn_t)sys_exit_group;
+    syscall_table[__NR_exit_group].handler = (syscall_fn_t)sys_exit_group_wrapper;
     syscall_table[__NR_exit_group].name = "exit_group";
     syscall_table[__NR_waitid].handler = (syscall_fn_t)sys_waitid_wrapper;
     syscall_table[__NR_waitid].name = "waitid";

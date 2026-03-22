@@ -604,15 +604,17 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
         }
     } else if ((local_flags & MSG_WAITALL) && !(local_flags & MSG_DONTWAIT)) {
         /* MSG_WAITALL: keep reading until the full buffer is filled, EOF, or error.
-         * Only applies to SOCK_STREAM (connection-oriented); datagram sockets
-         * ignore MSG_WAITALL (each recv is one datagram).
-         * We detect SOCK_STREAM by checking that this is not a DGRAM socket. */
+         * Only applies to SOCK_STREAM; message-oriented sockets (DGRAM and
+         * SEQPACKET) ignore MSG_WAITALL — each recv returns exactly one message.
+         * Looping on SEQPACKET would concatenate messages, breaking boundaries. */
         extern fut_socket_t *get_socket_from_fd(int fd);
         fut_socket_t *wtsock = get_socket_from_fd(local_sockfd);
-        bool is_dgram = wtsock && wtsock->socket_type == 2 /* SOCK_DGRAM */;
+        bool is_msg_oriented = wtsock &&
+            (wtsock->socket_type == 2 /* SOCK_DGRAM */ ||
+             wtsock->socket_type == 5 /* SOCK_SEQPACKET */);
 
-        if (is_dgram) {
-            /* DGRAM: single receive, MSG_WAITALL ignored */
+        if (is_msg_oriented) {
+            /* DGRAM/SEQPACKET: single receive, MSG_WAITALL ignored */
             ret = fut_vfs_read(local_sockfd, kbuf, local_len);
         } else {
             /* STREAM: loop until full */

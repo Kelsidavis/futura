@@ -50227,6 +50227,72 @@ static void test_peek_trunc_dgram_size(void) {
     sys_close(sv[1]);
 }
 
+/*
+ * test_seqpacket_msg_waitall - MSG_WAITALL ignored on SEQPACKET (message boundary)
+ *
+ *   Test 1575: SEQPACKET recvfrom(MSG_WAITALL) returns one message, not concatenated.
+ *   Test 1576: Second message still available after first recv.
+ *
+ * On Linux, MSG_WAITALL is only meaningful for SOCK_STREAM.  For SEQPACKET,
+ * each recv returns exactly one message.  If the implementation incorrectly
+ * loops for MSG_WAITALL on SEQPACKET, it would concatenate messages.
+ */
+static void test_seqpacket_msg_waitall(void) {
+    extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+    extern long sys_sendto(int sockfd, const void *buf, size_t len, int flags,
+                           const void *dest_addr, unsigned int addrlen);
+    extern long sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
+                             void *src_addr, unsigned int *addrlen);
+    fut_printf("[MISC-TEST] Tests 1575-1576: SEQPACKET MSG_WAITALL preserves message boundaries\n");
+
+    int sv[2];
+    long sr = sys_socketpair(1 /* AF_UNIX */, 5 /* SOCK_SEQPACKET */, 0, sv);
+    if (sr < 0) {
+        fut_printf("[MISC-TEST] ✗ Tests 1575-1576: socketpair failed: %ld\n", sr);
+        fut_test_fail(1575);
+        fut_test_fail(1576);
+        return;
+    }
+
+    /* Send two separate 10-byte messages */
+    const char msg1[10] = "AAAAAAAAAA";
+    const char msg2[10] = "BBBBBBBBBB";
+    sys_sendto(sv[0], msg1, 10, 0, 0, 0);
+    sys_sendto(sv[0], msg2, 10, 0, 0, 0);
+
+    /* recv with MSG_WAITALL and a 20-byte buffer.
+     * Correct: returns 10 (one message).
+     * Bug: would return 20 (concatenated both messages). */
+    char buf[20];
+    __builtin_memset(buf, 0, sizeof(buf));
+    long nr = sys_recvfrom(sv[1], buf, 20,
+                           0x100 /* MSG_WAITALL */, 0, 0);
+
+    /* Test 1575: Should get exactly 10 bytes (one message) */
+    fut_printf("[MISC-TEST] Test 1575: SEQPACKET recvfrom(MSG_WAITALL, buf=20) returned %ld\n", nr);
+    if (nr == 10) {
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1575: expected 10, got %ld (messages concatenated?)\n", nr);
+        fut_test_fail(1575);
+    }
+
+    /* Test 1576: Second message should still be available */
+    __builtin_memset(buf, 0, sizeof(buf));
+    nr = sys_recvfrom(sv[1], buf, 20, 0, 0, 0);
+    fut_printf("[MISC-TEST] Test 1576: second recv returned %ld\n", nr);
+    if (nr == 10 && buf[0] == 'B') {
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1576: expected 10 bytes of 'B', got %ld bytes, first='%c'\n",
+                   nr, buf[0]);
+        fut_test_fail(1576);
+    }
+
+    sys_close(sv[0]);
+    sys_close(sv[1]);
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -50966,6 +51032,7 @@ void fut_misc_test_thread(void *arg) {
     test_dgram_socketpair_trunc();         /* Tests 1569-1570: DGRAM socketpair MSG_TRUNC */
     test_recv_msg_trunc_flag();            /* Tests 1571-1572: recv(MSG_TRUNC) returns actual size */
     test_peek_trunc_dgram_size();          /* Tests 1573-1574: MSG_PEEK|MSG_TRUNC datagram size */
+    test_seqpacket_msg_waitall();          /* Tests 1575-1576: SEQPACKET MSG_WAITALL preserves boundaries */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

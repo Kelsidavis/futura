@@ -156,6 +156,7 @@ struct fut_task {
     unsigned long no_new_privs;        // PR_SET_NO_NEW_PRIVS flag (sticky, prevents execve setuid)
     int dumpable;                      // PR_SET_DUMPABLE (1=dumpable, 0=not, default 1)
     int did_exec;                      // Set after first execve (blocks setpgid from parent)
+    int keepcaps;                      // PR_SET_KEEPCAPS: retain caps across setuid 0→non-0
     int auto_reap;                     // 1 = parent had SIGCHLD=SIG_IGN or SA_NOCLDWAIT; reap on thread exit
     int oom_score_adj;                 // /proc/<pid>/oom_score_adj: OOM killer bias (-1000..1000)
     int suppress_sigpipe;              // Transient: suppress SIGPIPE during MSG_NOSIGNAL send

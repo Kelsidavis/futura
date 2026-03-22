@@ -32,6 +32,36 @@ static inline int cred_copy_to_user(void *dst, const void *src, size_t n) {
     return fut_copy_to_user(dst, src, n);
 }
 
+/**
+ * Linux capability adjustment on UID transitions (capabilities(7)).
+ * Must be called after any change to ruid, euid, or suid.
+ *
+ * Rules (applied in order):
+ * 1. If any of {old_ruid, old_euid, old_suid} was 0 and ALL of {new ruid, euid, suid}
+ *    are non-0: clear permitted+effective (unless keepcaps retains permitted).
+ * 2. If euid transitions 0→non-0: clear effective capabilities.
+ * 3. If euid transitions non-0→0: set effective = permitted.
+ */
+void cred_adjust_caps_uid(fut_task_t *task,
+                          uint32_t old_ruid, uint32_t old_euid, uint32_t old_suid) {
+    /* Rule 1: root-to-fully-unprivileged transition */
+    if ((old_ruid == 0 || old_euid == 0 || old_suid == 0) &&
+        (task->ruid != 0 && task->uid != 0 && task->suid != 0)) {
+        if (!task->keepcaps) {
+            task->cap_permitted = 0;
+        }
+        task->cap_effective = 0;
+    }
+    /* Rule 2: euid 0→non-0: clear effective */
+    if (old_euid == 0 && task->uid != 0) {
+        task->cap_effective = 0;
+    }
+    /* Rule 3: euid non-0→0: restore effective from permitted */
+    if (old_euid != 0 && task->uid == 0) {
+        task->cap_effective = task->cap_permitted;
+    }
+}
+
 /* Helper to categorize UID/GID values */
 static const char *categorize_id(uint32_t id) {
     if (id == 0) {
@@ -273,7 +303,9 @@ long sys_setuid(uint32_t uid) {
     int is_privileged = (task->uid == 0) ||
                         (task->cap_effective & (1ULL << 7 /* CAP_SETUID */));
 
+    uint32_t old_ruid = task->ruid;
     uint32_t old_euid = task->uid;
+    uint32_t old_suid = task->suid;
 
     if (is_privileged) {
         /* Privileged: set all three IDs (real, effective, saved) */
@@ -281,12 +313,14 @@ long sys_setuid(uint32_t uid) {
         task->uid = uid;
         task->suid = uid;
         if (uid != old_euid) task->dumpable = 0;
+        cred_adjust_caps_uid(task, old_ruid, old_euid, old_suid);
         return 0;
     } else {
         /* Non-root can only set effective UID to real or saved UID */
         if (uid == task->ruid || uid == task->suid) {
             task->uid = uid;
             if (uid != old_euid) task->dumpable = 0;
+            cred_adjust_caps_uid(task, old_ruid, old_euid, old_suid);
             return 0;
         } else {
             fut_printf("[CRED] setuid(uid=%u [%s], pid=%u, ruid=%u [%s], "
@@ -367,11 +401,13 @@ long sys_seteuid(uint32_t euid) {
     if (is_privileged) {
         task->uid = euid;
         if (euid != old_euid) task->dumpable = 0;
+        cred_adjust_caps_uid(task, task->ruid, old_euid, task->suid);
         return 0;
     } else {
         if (euid == task->ruid || euid == task->suid) {
             task->uid = euid;
             if (euid != old_euid) task->dumpable = 0;
+            cred_adjust_caps_uid(task, task->ruid, old_euid, task->suid);
             return 0;
         } else {
             fut_printf("[CRED] seteuid(euid=%u [%s], pid=%u, ruid=%u [%s], "
@@ -647,7 +683,10 @@ long sys_setfsuid(uint32_t fsuid) {
         bool is_root = (task->uid == 0 || task->ruid == 0 || task->suid == 0);
         if (is_root || fsuid == task->ruid || fsuid == task->uid || fsuid == task->suid) {
             task->uid = fsuid;
-            if (fsuid != prev) task->dumpable = 0;
+            if (fsuid != prev) {
+                task->dumpable = 0;
+                cred_adjust_caps_uid(task, task->ruid, prev, task->suid);
+            }
         }
     }
     return (long)(uint32_t)prev;

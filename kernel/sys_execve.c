@@ -822,6 +822,8 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
     task->timerslack_ns = 50000;
     /* Mark that this process has called exec (blocks setpgid from parent) */
     task->did_exec = 1;
+    /* Linux: PR_SET_KEEPCAPS is cleared on exec */
+    task->keepcaps = 0;
 
     /* Phase 2: Detailed pre-exec logging (use kernel_pathname for SMAP safety) */
     char msg[256];

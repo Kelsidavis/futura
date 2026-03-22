@@ -300,12 +300,12 @@ long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
         return 0;
 
     case PR_GET_KEEPCAPS:
-        return 0;  /* Not keeping capabilities across setuid */
+        return task->keepcaps;
 
     case PR_SET_KEEPCAPS:
-        /* Accept flag (arg2 must be 0 or 1) */
         if (arg2 != 0 && arg2 != 1)
             return -EINVAL;
+        task->keepcaps = (int)arg2;
         return 0;
 
     case PR_MCE_KILL:

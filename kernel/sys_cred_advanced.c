@@ -23,6 +23,10 @@
 #define UID_NO_CHANGE ((uint32_t)-1)
 #define GID_NO_CHANGE ((uint32_t)-1)
 
+/* From sys_cred.c: capability adjustment on UID transitions */
+extern void cred_adjust_caps_uid(fut_task_t *task,
+                                 uint32_t old_ruid, uint32_t old_euid, uint32_t old_suid);
+
 /* Root UID for privilege checks */
 #define ROOT_UID 0
 
@@ -101,6 +105,7 @@ long sys_setreuid(uint32_t ruid, uint32_t euid) {
     int privileged = cred_is_privileged_uid(task);
     uint32_t old_ruid = task->ruid;
     uint32_t old_euid = task->uid;
+    uint32_t old_suid = task->suid;
 
     /* Validate ruid (if changing) */
     if (ruid != UID_NO_CHANGE) {
@@ -140,6 +145,9 @@ long sys_setreuid(uint32_t ruid, uint32_t euid) {
 
     /* Linux: clear dumpable when effective UID changes */
     if (task->uid != old_euid) task->dumpable = 0;
+
+    /* Linux: adjust capabilities on UID transitions */
+    cred_adjust_caps_uid(task, old_ruid, old_euid, old_suid);
 
     return 0;
 }
@@ -247,7 +255,9 @@ long sys_setresuid(uint32_t ruid, uint32_t euid, uint32_t suid) {
     }
 
     int privileged = cred_is_privileged_uid(task);
+    uint32_t old_ruid = task->ruid;
     uint32_t old_euid = task->uid;
+    uint32_t old_suid = task->suid;
 
     /* Phase 2: Validate all UIDs (if changing) - unprivileged can only set
      * to current real, effective, or saved UID */
@@ -272,11 +282,7 @@ long sys_setresuid(uint32_t ruid, uint32_t euid, uint32_t suid) {
         }
     }
 
-    /* Store old values for logging */
     /* Apply changes */
-    /* setresuid: apply new UIDs */
-
-    /* Phase 2: Apply changes */
     if (ruid != UID_NO_CHANGE) {
         task->ruid = ruid;
     }
@@ -289,6 +295,9 @@ long sys_setresuid(uint32_t ruid, uint32_t euid, uint32_t suid) {
 
     /* Linux: clear dumpable when effective UID changes */
     if (task->uid != old_euid) task->dumpable = 0;
+
+    /* Linux: adjust capabilities on UID transitions */
+    cred_adjust_caps_uid(task, old_ruid, old_euid, old_suid);
 
     return 0;
 }

@@ -1456,7 +1456,9 @@ static void test_cap_enforcement(void) {
     /* Save credentials */
     uint32_t saved_ruid = task->ruid;
     uint32_t saved_uid = task->uid;
+    uint32_t saved_suid = task->suid;
     uint64_t saved_caps = task->cap_effective;
+    uint64_t saved_perm = task->cap_permitted;
 
     /* As root, setuid(1000) should succeed */
     extern long sys_setuid(uint32_t uid);
@@ -1465,7 +1467,9 @@ static void test_cap_enforcement(void) {
         fut_printf("[MISC-TEST] ✗ setuid(1000) as root failed: %ld\n", ret);
         task->ruid = saved_ruid;
         task->uid = saved_uid;
+        task->suid = saved_suid;
         task->cap_effective = saved_caps;
+        task->cap_permitted = saved_perm;
         fut_test_fail(31);
         return;
     }
@@ -1477,7 +1481,9 @@ static void test_cap_enforcement(void) {
     /* Restore root credentials */
     task->ruid = saved_ruid;
     task->uid = saved_uid;
+    task->suid = saved_suid;
     task->cap_effective = saved_caps;
+    task->cap_permitted = saved_perm;
 
     if (ret != -EPERM) {
         fut_printf("[MISC-TEST] ✗ setuid(2000) as uid=1000 returned %ld (expected EPERM)\n", ret);
@@ -9068,17 +9074,19 @@ static void test_setresuid_setresgid(void) {
     extern long sys_getresuid(uint32_t *ruid, uint32_t *euid, uint32_t *suid);
     extern long sys_getresgid(uint32_t *rgid, uint32_t *egid, uint32_t *sgid);
 
-    /* Save current state */
+    /* Save current state (including capabilities since UID changes affect them) */
     fut_task_t *task = fut_task_current();
     if (!task) { fut_test_fail(193); return; }
     uint32_t saved_ruid = task->ruid, saved_uid = task->uid, saved_suid = task->suid;
     uint32_t saved_rgid = task->rgid, saved_gid = task->gid, saved_sgid = task->sgid;
+    uint64_t saved_cap_eff = task->cap_effective, saved_cap_perm = task->cap_permitted;
 
     /* As root: setresuid(500, 600, 700) */
     long ret = sys_setresuid(500, 600, 700);
     if (ret != 0) {
         fut_printf("[MISC-TEST] ✗ setresuid(500,600,700) returned %ld\n", ret);
         task->ruid = saved_ruid; task->uid = saved_uid; task->suid = saved_suid;
+        task->cap_effective = saved_cap_eff; task->cap_permitted = saved_cap_perm;
         fut_test_fail(193); return;
     }
 
@@ -9087,11 +9095,13 @@ static void test_setresuid_setresgid(void) {
     if (ret != 0 || ruid != 500 || euid != 600 || suid != 700) {
         fut_printf("[MISC-TEST] ✗ getresuid returned %ld r=%u e=%u s=%u\n", ret, ruid, euid, suid);
         task->ruid = saved_ruid; task->uid = saved_uid; task->suid = saved_suid;
+        task->cap_effective = saved_cap_eff; task->cap_permitted = saved_cap_perm;
         fut_test_fail(193); return;
     }
 
-    /* Restore UIDs */
+    /* Restore UIDs and capabilities (cap clearing happened from 0→non-0 transition) */
     task->ruid = saved_ruid; task->uid = saved_uid; task->suid = saved_suid;
+    task->cap_effective = saved_cap_eff; task->cap_permitted = saved_cap_perm;
 
     /* setresgid round-trip */
     ret = sys_setresgid(501, 601, 701);
@@ -9109,20 +9119,34 @@ static void test_setresuid_setresgid(void) {
         fut_test_fail(193); return;
     }
 
-    /* setresuid with UID_NO_CHANGE (-1) only changes specified fields */
-    task->ruid = 100; task->uid = 200; task->suid = 300;
+    /* setresuid with UID_NO_CHANGE (-1) only changes specified fields.
+     * Use root for privilege, so the -1/250/-1 call succeeds. */
+    task->ruid = 0; task->uid = 0; task->suid = 0;
+    task->cap_effective = saved_cap_eff; task->cap_permitted = saved_cap_perm;
+    ret = sys_setresuid(100, 200, 300);  /* set up as root first */
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ setresuid(100,200,300) setup returned %ld\n", ret);
+        task->ruid = saved_ruid; task->uid = saved_uid; task->suid = saved_suid;
+        task->cap_effective = saved_cap_eff; task->cap_permitted = saved_cap_perm;
+        fut_test_fail(193); return;
+    }
+    /* Now 250 must be valid for unprivileged setresuid: need euid=200 and 250 must
+     * match ruid(100), euid(200), or suid(300). 250 doesn't match any → use direct. */
+    task->cap_effective = saved_cap_eff; /* Re-grant caps so the call is privileged */
     ret = sys_setresuid((uint32_t)-1, 250, (uint32_t)-1);
     if (ret != 0 || task->ruid != 100 || task->uid != 250 || task->suid != 300) {
         fut_printf("[MISC-TEST] ✗ setresuid(-1,250,-1): ruid=%u euid=%u suid=%u\n",
                    task->ruid, task->uid, task->suid);
         task->ruid = saved_ruid; task->uid = saved_uid; task->suid = saved_suid;
         task->rgid = saved_rgid; task->gid = saved_gid; task->sgid = saved_sgid;
+        task->cap_effective = saved_cap_eff; task->cap_permitted = saved_cap_perm;
         fut_test_fail(193); return;
     }
 
     /* Restore all */
     task->ruid = saved_ruid; task->uid = saved_uid; task->suid = saved_suid;
     task->rgid = saved_rgid; task->gid = saved_gid; task->sgid = saved_sgid;
+    task->cap_effective = saved_cap_eff; task->cap_permitted = saved_cap_perm;
 
     fut_printf("[MISC-TEST] ✓ setresuid/setresgid: round-trips OK, -1 preserves unchanged fields\n");
     fut_test_pass();
@@ -51980,6 +52004,7 @@ void fut_misc_test_thread(void *arg) {
         uint32_t orig_ruid = task->ruid, orig_uid = task->uid, orig_suid = task->suid;
         uint32_t orig_rgid = task->rgid, orig_gid = task->gid, orig_sgid = task->sgid;
         uint64_t orig_caps = task->cap_effective;
+        uint64_t orig_perm = task->cap_permitted;
 
         /* Test 1605: setreuid(-1, euid) where euid != old_ruid should update saved UID */
         task->ruid = 1000; task->uid = 1000; task->suid = 1000;
@@ -52105,6 +52130,7 @@ void fut_misc_test_thread(void *arg) {
         task->ruid = orig_ruid; task->uid = orig_uid; task->suid = orig_suid;
         task->rgid = orig_rgid; task->gid = orig_gid; task->sgid = orig_sgid;
         task->cap_effective = orig_caps;
+        task->cap_permitted = orig_perm;
     }
 
     /* ── Tests 1614–1619: credential changes clear dumpable ── */
@@ -52113,6 +52139,7 @@ void fut_misc_test_thread(void *arg) {
         uint32_t orig_ruid = task->ruid, orig_uid = task->uid, orig_suid = task->suid;
         uint32_t orig_rgid = task->rgid, orig_gid = task->gid, orig_sgid = task->sgid;
         uint64_t orig_caps = task->cap_effective;
+        uint64_t orig_perm = task->cap_permitted;
         int orig_dumpable = task->dumpable;
         long ret;
 
@@ -52120,6 +52147,7 @@ void fut_misc_test_thread(void *arg) {
         {
             extern long sys_setuid(uint32_t uid);
             task->ruid = 0; task->uid = 0; task->suid = 0;
+            task->cap_effective = orig_caps; task->cap_permitted = orig_perm;
             task->dumpable = 1;
             ret = sys_setuid(1000);  /* privileged: sets all three to 1000 */
             if (ret == 0 && task->dumpable == 0) {
@@ -52135,6 +52163,7 @@ void fut_misc_test_thread(void *arg) {
         {
             extern long sys_seteuid(uint32_t euid);
             task->ruid = 0; task->uid = 0; task->suid = 0;
+            task->cap_effective = orig_caps; task->cap_permitted = orig_perm;
             task->dumpable = 1;
             ret = sys_seteuid(1000);  /* privileged: changes euid to 1000 */
             if (ret == 0 && task->dumpable == 0) {
@@ -52150,6 +52179,7 @@ void fut_misc_test_thread(void *arg) {
         {
             extern long sys_setuid(uint32_t uid);
             task->ruid = 0; task->uid = 0; task->suid = 0;
+            task->cap_effective = orig_caps; task->cap_permitted = orig_perm;
             task->dumpable = 1;
             ret = sys_setuid(0);  /* no change to euid */
             if (ret == 0 && task->dumpable == 1) {
@@ -52165,6 +52195,7 @@ void fut_misc_test_thread(void *arg) {
         {
             extern long sys_setreuid(uint32_t ruid, uint32_t euid);
             task->ruid = 0; task->uid = 0; task->suid = 0;
+            task->cap_effective = orig_caps; task->cap_permitted = orig_perm;
             task->dumpable = 1;
             ret = sys_setreuid((uint32_t)-1, 500);  /* change euid only */
             if (ret == 0 && task->dumpable == 0) {
@@ -52180,6 +52211,7 @@ void fut_misc_test_thread(void *arg) {
         {
             extern long sys_setresuid(uint32_t ruid, uint32_t euid, uint32_t suid);
             task->ruid = 0; task->uid = 0; task->suid = 0;
+            task->cap_effective = orig_caps; task->cap_permitted = orig_perm;
             task->dumpable = 1;
             ret = sys_setresuid((uint32_t)-1, 500, (uint32_t)-1);
             if (ret == 0 && task->dumpable == 0) {
@@ -52196,6 +52228,7 @@ void fut_misc_test_thread(void *arg) {
             extern long sys_setgid(uint32_t gid);
             task->ruid = 0; task->uid = 0;  /* root for privilege */
             task->rgid = 0; task->gid = 0; task->sgid = 0;
+            task->cap_effective = orig_caps; task->cap_permitted = orig_perm;
             task->dumpable = 1;
             ret = sys_setgid(1000);
             if (ret == 0 && task->dumpable == 0) {
@@ -52210,7 +52243,7 @@ void fut_misc_test_thread(void *arg) {
         /* Restore original values */
         task->ruid = orig_ruid; task->uid = orig_uid; task->suid = orig_suid;
         task->rgid = orig_rgid; task->gid = orig_gid; task->sgid = orig_sgid;
-        task->cap_effective = orig_caps;
+        task->cap_effective = orig_caps; task->cap_permitted = orig_perm;
         task->dumpable = orig_dumpable;
     }
 
@@ -52239,6 +52272,97 @@ void fut_misc_test_thread(void *arg) {
             fut_printf("[MISC-TEST] ✗ Test 1620: setpgid(self) ret=%ld (expected 0)\n", ret);
             fut_test_fail(1620);
         }
+    }
+
+    /* ── Tests 1621–1624: capability transitions on UID changes ── */
+    {
+        extern long sys_setuid(uint32_t uid);
+        extern long sys_seteuid(uint32_t euid);
+        fut_task_t *task = fut_task_current();
+        uint32_t orig_ruid = task->ruid, orig_uid = task->uid, orig_suid = task->suid;
+        uint64_t orig_cap_eff = task->cap_effective;
+        uint64_t orig_cap_perm = task->cap_permitted;
+        int orig_keepcaps = task->keepcaps;
+        long ret;
+
+        /* Test 1621: setuid 0→non-0 clears effective capabilities */
+        {
+            task->ruid = 0; task->uid = 0; task->suid = 0;
+            task->cap_effective = (1ULL << 41) - 1;
+            task->cap_permitted = (1ULL << 41) - 1;
+            task->keepcaps = 0;
+            ret = sys_setuid(1000);  /* privileged: all three to 1000 */
+            if (ret == 0 && task->cap_effective == 0 && task->cap_permitted == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1621: setuid(0→1000) clears effective+permitted caps\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1621: eff=0x%llx perm=0x%llx (expected both 0)\n",
+                           (unsigned long long)task->cap_effective,
+                           (unsigned long long)task->cap_permitted);
+                fut_test_fail(1621);
+            }
+        }
+
+        /* Test 1622: seteuid 0→non-0 clears effective caps only */
+        {
+            task->ruid = 0; task->uid = 0; task->suid = 0;
+            task->cap_effective = (1ULL << 41) - 1;
+            task->cap_permitted = (1ULL << 41) - 1;
+            task->keepcaps = 0;
+            ret = sys_seteuid(1000);  /* only euid changes, ruid/suid stay 0 */
+            /* Rule 2: euid 0→non-0 clears effective. Rule 1 doesn't fire (ruid/suid still 0) */
+            if (ret == 0 && task->cap_effective == 0 && task->cap_permitted == (1ULL << 41) - 1) {
+                fut_printf("[MISC-TEST] ✓ Test 1622: seteuid(0→1000) clears effective, keeps permitted\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1622: eff=0x%llx perm=0x%llx\n",
+                           (unsigned long long)task->cap_effective,
+                           (unsigned long long)task->cap_permitted);
+                fut_test_fail(1622);
+            }
+        }
+
+        /* Test 1623: seteuid non-0→0 restores effective from permitted */
+        {
+            task->ruid = 0; task->uid = 1000; task->suid = 0;
+            task->cap_effective = 0;
+            task->cap_permitted = (1ULL << 41) - 1;
+            task->keepcaps = 0;
+            ret = sys_seteuid(0);  /* euid goes non-0→0 */
+            if (ret == 0 && task->cap_effective == task->cap_permitted) {
+                fut_printf("[MISC-TEST] ✓ Test 1623: seteuid(1000→0) restores effective from permitted\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1623: eff=0x%llx perm=0x%llx\n",
+                           (unsigned long long)task->cap_effective,
+                           (unsigned long long)task->cap_permitted);
+                fut_test_fail(1623);
+            }
+        }
+
+        /* Test 1624: keepcaps retains permitted on full root→non-root */
+        {
+            task->ruid = 0; task->uid = 0; task->suid = 0;
+            task->cap_effective = (1ULL << 41) - 1;
+            task->cap_permitted = (1ULL << 41) - 1;
+            task->keepcaps = 1;
+            ret = sys_setuid(1000);  /* all three to 1000 with keepcaps */
+            /* Rule 1 fires but keepcaps retains permitted; effective still cleared */
+            if (ret == 0 && task->cap_permitted == (1ULL << 41) - 1 && task->cap_effective == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1624: keepcaps retains permitted across setuid\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1624: eff=0x%llx perm=0x%llx\n",
+                           (unsigned long long)task->cap_effective,
+                           (unsigned long long)task->cap_permitted);
+                fut_test_fail(1624);
+            }
+        }
+
+        /* Restore */
+        task->ruid = orig_ruid; task->uid = orig_uid; task->suid = orig_suid;
+        task->cap_effective = orig_cap_eff; task->cap_permitted = orig_cap_perm;
+        task->keepcaps = orig_keepcaps;
     }
 
     fut_printf("[MISC-TEST] ========================================\n");

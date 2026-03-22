@@ -443,6 +443,14 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
             cmd_name = "F_GETOWN";
             cmd_category = "get owner process";
             break;
+        case F_SETOWN_EX:
+            cmd_name = "F_SETOWN_EX";
+            cmd_category = "set extended owner";
+            break;
+        case F_GETOWN_EX:
+            cmd_name = "F_GETOWN_EX";
+            cmd_category = "get extended owner";
+            break;
         default:
             cmd_name = "unknown";
             cmd_category = "invalid command";
@@ -999,17 +1007,29 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
             return -EINVAL;
         }
 
-        /* Store owner PID in file structure for async signal delivery */
-        /* For Phase 3, we just track it - Phase 4 would actually send signals */
+        /* Store owner PID in file structure for async signal delivery.
+         * F_SETOWN with positive arg sets F_OWNER_PID; negative sets F_OWNER_PGRP
+         * with the negated value as the group ID. */
         if (file) {
-            file->owner_pid = owner_pid;
+            if (owner_pid > 0) {
+                file->owner_pid = owner_pid;
+                file->owner_type = 1; /* F_OWNER_PID */
+            } else {
+                file->owner_pid = -owner_pid;
+                file->owner_type = 2; /* F_OWNER_PGRP */
+            }
         }
 
         return 0;
     }
 
     case F_GETOWN:
-        return (long)(file ? file->owner_pid : 0);
+        /* F_GETOWN returns positive pid for F_OWNER_PID/F_OWNER_TID,
+         * negative pgid for F_OWNER_PGRP. */
+        if (!file) return 0;
+        if (file->owner_type == 2 /* F_OWNER_PGRP */)
+            return (long)(-file->owner_pid);
+        return (long)file->owner_pid;
 
     case F_SETSIG: {
         /* F_SETSIG (Linux): set signal sent when async I/O is ready.
@@ -1043,10 +1063,40 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
         /* Accept and ignore: Futura does not deliver DN_* events. */
         return 0;
 
-    case 1028: /* F_SETOWN_EX — set owner with extended type/pid */
-    case 1029: /* F_GETOWN_EX — get owner with extended type/pid */
-        /* Silently accept for now; extended owner info is not used. */
+    case F_SETOWN_EX: { /* Set owner with extended type/pid */
+        struct f_owner_ex owner;
+#ifdef KERNEL_VIRTUAL_BASE
+        if ((uintptr_t)local_arg >= KERNEL_VIRTUAL_BASE)
+            __builtin_memcpy(&owner, (const void *)local_arg, sizeof(owner));
+        else
+#endif
+        if (fut_copy_from_user(&owner, (const void *)local_arg, sizeof(owner)) != 0)
+            return -EFAULT;
+        if (owner.type < 0 || owner.type > 2) /* F_OWNER_TID..F_OWNER_PGRP */
+            return -EINVAL;
+        if (owner.pid <= 0)
+            return -EINVAL;
+        if (file) {
+            file->owner_pid = owner.pid;
+            file->owner_type = owner.type;
+        }
         return 0;
+    }
+
+    case F_GETOWN_EX: { /* Get owner with extended type/pid */
+        struct f_owner_ex owner;
+        owner.type = file ? file->owner_type : 0;
+        owner.pid = file ? file->owner_pid : 0;
+#ifdef KERNEL_VIRTUAL_BASE
+        if ((uintptr_t)local_arg >= KERNEL_VIRTUAL_BASE) {
+            __builtin_memcpy((void *)local_arg, &owner, sizeof(owner));
+            return 0;
+        }
+#endif
+        if (fut_copy_to_user((void *)local_arg, &owner, sizeof(owner)) != 0)
+            return -EFAULT;
+        return 0;
+    }
 
     default:
         /* Unknown command */

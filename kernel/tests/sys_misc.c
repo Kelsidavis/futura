@@ -24950,7 +24950,7 @@ static void test_fcntl_setsig_lease_notify(void) {
 #define F_SETLEASE_T 1024
 #define F_GETLEASE_T 1025
 #define F_NOTIFY_T   1026
-#define F_SETOWN_EX_T 1028
+#define F_SETOWN_EX_T 15
 
     /* Open a real file for these tests */
     long fd = sys_open("/proc/self/comm", 0 /*O_RDONLY*/, 0);
@@ -25026,10 +25026,12 @@ static void test_fcntl_setsig_lease_notify(void) {
         }
     }
 
-    /* Test 455: F_SETOWN_EX(NULL) */
-    fut_printf("[MISC-TEST] Test 455: fcntl F_SETOWN_EX(NULL) accepted\n");
+    /* Test 455: F_SETOWN_EX with valid struct */
+    fut_printf("[MISC-TEST] Test 455: fcntl F_SETOWN_EX accepted\n");
     {
-        long r = sys_fcntl((int)fd, F_SETOWN_EX_T, 0);
+        fut_task_t *t455 = fut_task_current();
+        struct { int type; int pid; } owner455 = { 1 /* F_OWNER_PID */, t455 ? (int)t455->pid : 1 };
+        long r = sys_fcntl((int)fd, F_SETOWN_EX_T, (uint64_t)&owner455);
         if (r == 0) {
             fut_printf("[MISC-TEST] ✓ Test 455: F_SETOWN_EX accepted\n");
             fut_test_pass();
@@ -53785,6 +53787,107 @@ void fut_misc_test_thread(void *arg) {
                 __atomic_and_fetch(&me->pending_signals, ~(1ULL << (29 - 1)), __ATOMIC_SEQ_CST);
                 sys_close(sv[0]);
                 sys_close(sv[1]);
+            }
+        }
+    }
+
+    /***********************************************************************
+     * Test 1657: F_SETOWN_EX / F_GETOWN_EX roundtrip                       *
+     ***********************************************************************/
+    fut_printf("[MISC-TEST] Test 1657: F_SETOWN_EX / F_GETOWN_EX roundtrip\n");
+    {
+        extern long sys_pipe(int pipefd[2]);
+        extern long sys_fcntl(int fd, int cmd, uint64_t arg);
+        extern long sys_close(int fd);
+
+        int p[2] = {-1, -1};
+        long pr = sys_pipe(p);
+        if (pr != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1657: pipe() failed %ld\n", pr);
+            fut_test_fail(1657);
+        } else {
+            fut_task_t *me = fut_task_current();
+            if (!me) {
+                fut_printf("[MISC-TEST] ✗ Test 1657: no current task\n");
+                fut_test_fail(1657);
+                sys_close(p[0]);
+                sys_close(p[1]);
+            } else {
+                /* Set extended owner: type=F_OWNER_PID(1), pid=current */
+                struct {
+                    int type;
+                    int pid;
+                } owner_set = { 1 /* F_OWNER_PID */, (int)me->pid };
+                long sr = sys_fcntl(p[0], 15 /* F_SETOWN_EX */, (uint64_t)&owner_set);
+
+                /* Get it back */
+                struct {
+                    int type;
+                    int pid;
+                } owner_get = { -1, -1 };
+                long gr = sys_fcntl(p[0], 16 /* F_GETOWN_EX */, (uint64_t)&owner_get);
+
+                if (sr == 0 && gr == 0 &&
+                    owner_get.type == 1 && owner_get.pid == (int)me->pid) {
+                    fut_printf("[MISC-TEST] ✓ Test 1657: F_SETOWN_EX/F_GETOWN_EX type=%d pid=%d\n",
+                               owner_get.type, owner_get.pid);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1657: sr=%ld gr=%ld type=%d pid=%d (expected 1,%d)\n",
+                               sr, gr, owner_get.type, owner_get.pid, (int)me->pid);
+                    fut_test_fail(1657);
+                }
+
+                sys_close(p[0]);
+                sys_close(p[1]);
+            }
+        }
+    }
+
+    /***********************************************************************
+     * Test 1658: F_SETOWN_EX with F_OWNER_PGRP and F_GETOWN consistency   *
+     ***********************************************************************/
+    fut_printf("[MISC-TEST] Test 1658: F_SETOWN_EX PGRP + F_GETOWN returns negative\n");
+    {
+        extern long sys_pipe(int pipefd[2]);
+        extern long sys_fcntl(int fd, int cmd, uint64_t arg);
+        extern long sys_close(int fd);
+
+        int p[2] = {-1, -1};
+        long pr = sys_pipe(p);
+        if (pr != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1658: pipe() failed %ld\n", pr);
+            fut_test_fail(1658);
+        } else {
+            fut_task_t *me = fut_task_current();
+            if (!me) {
+                fut_printf("[MISC-TEST] ✗ Test 1658: no current task\n");
+                fut_test_fail(1658);
+                sys_close(p[0]);
+                sys_close(p[1]);
+            } else {
+                /* Set owner as process group */
+                struct {
+                    int type;
+                    int pid;
+                } owner_set = { 2 /* F_OWNER_PGRP */, (int)me->pid };
+                long sr = sys_fcntl(p[0], 15 /* F_SETOWN_EX */, (uint64_t)&owner_set);
+
+                /* F_GETOWN should return negative pgid for process groups */
+                long gown = sys_fcntl(p[0], 9 /* F_GETOWN */, 0);
+
+                if (sr == 0 && gown == -(long)me->pid) {
+                    fut_printf("[MISC-TEST] ✓ Test 1658: F_GETOWN returns -%d for PGRP owner\n",
+                               (int)me->pid);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1658: sr=%ld gown=%ld (expected -%d)\n",
+                               sr, gown, (int)me->pid);
+                    fut_test_fail(1658);
+                }
+
+                sys_close(p[0]);
+                sys_close(p[1]);
             }
         }
     }

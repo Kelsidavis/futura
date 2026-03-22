@@ -174,6 +174,12 @@
 #ifndef F_SETPIPE_SZ
 #define F_SETPIPE_SZ    1033 /* Set pipe buffer size (shares value with F_ADD_SEALS) */
 #endif
+#ifndef F_SETOWN_EX
+#define F_SETOWN_EX     15  /* Set owner with extended type/pid */
+#endif
+#ifndef F_GETOWN_EX
+#define F_GETOWN_EX     16  /* Get owner with extended type/pid */
+#endif
 #ifndef F_OFD_GETLK
 #define F_OFD_GETLK     36  /* Get open file description lock (Linux 3.15+) */
 #endif
@@ -209,6 +215,25 @@
 #ifndef F_SEAL_FUTURE_WRITE
 #define F_SEAL_FUTURE_WRITE 0x0010 /* Prevent future writes while mapped */
 #endif
+
+/* ============================================================
+ *   F_SETOWN_EX Owner Types
+ * ============================================================ */
+
+#ifndef F_OWNER_TID
+#define F_OWNER_TID     0   /* Owner is a thread ID */
+#endif
+#ifndef F_OWNER_PID
+#define F_OWNER_PID     1   /* Owner is a process ID */
+#endif
+#ifndef F_OWNER_PGRP
+#define F_OWNER_PGRP    2   /* Owner is a process group ID */
+#endif
+
+struct f_owner_ex {
+    int type;   /* F_OWNER_TID, F_OWNER_PID, or F_OWNER_PGRP */
+    int pid;    /* Thread/process/group ID */
+};
 
 /* ============================================================
  *   File Descriptor Flags

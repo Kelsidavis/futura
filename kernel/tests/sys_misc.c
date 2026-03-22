@@ -51979,6 +51979,7 @@ void fut_misc_test_thread(void *arg) {
         /* Save original values */
         uint32_t orig_ruid = task->ruid, orig_uid = task->uid, orig_suid = task->suid;
         uint32_t orig_rgid = task->rgid, orig_gid = task->gid, orig_sgid = task->sgid;
+        uint64_t orig_caps = task->cap_effective;
 
         /* Test 1605: setreuid(-1, euid) where euid != old_ruid should update saved UID */
         task->ruid = 1000; task->uid = 1000; task->suid = 1000;
@@ -52053,9 +52054,57 @@ void fut_misc_test_thread(void *arg) {
             }
         }
 
+        /* Test 1611: privileged setuid sets all three IDs */
+        {
+            extern long sys_setuid(uint32_t uid);
+            task->ruid = 0; task->uid = 0; task->suid = 0;
+            ret = sys_setuid(1000);
+            if (ret == 0 && task->ruid == 1000 && task->uid == 1000 && task->suid == 1000) {
+                fut_printf("[MISC-TEST] ✓ Test 1611: privileged setuid(1000) → all three IDs set\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1611: setuid ruid=%u euid=%u suid=%u (expected all 1000)\n",
+                           task->ruid, task->uid, task->suid);
+                fut_test_fail(1611);
+            }
+        }
+
+        /* Test 1612: unprivileged setuid to saved UID */
+        {
+            extern long sys_setuid(uint32_t uid);
+            task->ruid = 1000; task->uid = 1000; task->suid = 500;
+            task->cap_effective &= ~(1ULL << 7); /* drop CAP_SETUID */
+            ret = sys_setuid(500);  /* set euid to saved UID */
+            task->cap_effective = orig_caps;
+            if (ret == 0 && task->uid == 500) {
+                fut_printf("[MISC-TEST] ✓ Test 1612: unprivileged setuid(saved_uid) → accepted\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1612: setuid(500) → %ld, euid=%u\n", ret, task->uid);
+                fut_test_fail(1612);
+            }
+        }
+
+        /* Test 1613: privileged setgid sets all three GIDs */
+        {
+            extern long sys_setgid(uint32_t gid);
+            task->ruid = 0; task->uid = 0; /* root for privilege */
+            task->rgid = 0; task->gid = 0; task->sgid = 0;
+            ret = sys_setgid(1000);
+            if (ret == 0 && task->rgid == 1000 && task->gid == 1000 && task->sgid == 1000) {
+                fut_printf("[MISC-TEST] ✓ Test 1613: privileged setgid(1000) → all three GIDs set\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1613: setgid rgid=%u egid=%u sgid=%u (expected all 1000)\n",
+                           task->rgid, task->gid, task->sgid);
+                fut_test_fail(1613);
+            }
+        }
+
         /* Restore original values */
         task->ruid = orig_ruid; task->uid = orig_uid; task->suid = orig_suid;
         task->rgid = orig_rgid; task->gid = orig_gid; task->sgid = orig_sgid;
+        task->cap_effective = orig_caps;
     }
 
     fut_printf("[MISC-TEST] ========================================\n");

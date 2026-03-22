@@ -274,14 +274,15 @@ long sys_setuid(uint32_t uid) {
                         (task->cap_effective & (1ULL << 7 /* CAP_SETUID */));
 
     if (is_privileged) {
-        /* Root can set both IDs to any value */
+        /* Privileged: set all three IDs (real, effective, saved) */
         task->ruid = uid;
         task->uid = uid;
+        task->suid = uid;
 
         return 0;
     } else {
-        /* Non-root can only set effective UID to real UID */
-        if (uid == task->ruid) {
+        /* Non-root can only set effective UID to real or saved UID */
+        if (uid == task->ruid || uid == task->suid) {
             task->uid = uid;
             return 0;
         } else {
@@ -419,18 +420,19 @@ long sys_setgid(uint32_t gid) {
     const char *old_egid_category = categorize_id(task->gid);
     const char *old_rgid_category = categorize_id(task->rgid);
 
-    /* Check if process is privileged (egid=0 or CAP_SETGID) */
-    int is_privileged = (task->gid == 0) ||
+    /* Check if process is privileged (uid=0 or CAP_SETGID) */
+    int is_privileged = (task->uid == 0) ||
                         (task->cap_effective & (1ULL << 6 /* CAP_SETGID */));
 
     if (is_privileged) {
-        /* Root group can set both GIDs to any value */
+        /* Privileged: set all three GIDs (real, effective, saved) */
         task->rgid = gid;
         task->gid = gid;
+        task->sgid = gid;
         return 0;
     } else {
-        /* Non-root can only set effective GID to real GID */
-        if (gid == task->rgid) {
+        /* Non-root can only set effective GID to real or saved GID */
+        if (gid == task->rgid || gid == task->sgid) {
             task->gid = gid;
             return 0;
         } else {
@@ -486,7 +488,7 @@ long sys_setegid(uint32_t egid) {
     const char *old_egid_category = categorize_id(task->gid);
     const char *rgid_category = categorize_id(task->rgid);
 
-    int is_privileged = (task->gid == 0) ||
+    int is_privileged = (task->uid == 0) ||
                         (task->cap_effective & (1ULL << 6 /* CAP_SETGID */));
 
     if (is_privileged) {

@@ -53965,6 +53965,68 @@ void fut_misc_test_thread(void *arg) {
         }
     }
 
+    /***********************************************************************
+     * Test 1661: F_GETFL masks out creation flags (O_CREAT, O_TRUNC)     *
+     ***********************************************************************/
+    fut_printf("[MISC-TEST] Test 1661: F_GETFL masks out creation flags\n");
+    {
+        extern long sys_open(const char *path, int flags, int mode);
+        extern long sys_fcntl(int fd, int cmd, uint64_t arg);
+        extern long sys_close(int fd);
+
+        /* Open a file with O_CREAT | O_TRUNC — these are creation-only flags
+         * that should NOT appear in F_GETFL results (POSIX/Linux behavior). */
+        long fd = sys_open("/tmp/test_fgetfl.txt",
+                           0x0002 /* O_RDWR */ | 0x0040 /* O_CREAT */ | 0x0200 /* O_TRUNC */,
+                           0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1661: open failed %ld\n", fd);
+            fut_test_fail(1661);
+        } else {
+            long flags = sys_fcntl((int)fd, 3 /* F_GETFL */, 0);
+            /* O_CREAT=0100, O_TRUNC=01000 — neither should be set */
+            if (flags >= 0 && !(flags & 0x0040) && !(flags & 0x0200)) {
+                fut_printf("[MISC-TEST] ✓ Test 1661: F_GETFL=0x%lx (no O_CREAT/O_TRUNC)\n", flags);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1661: F_GETFL=0x%lx (expected creation flags masked)\n", flags);
+                fut_test_fail(1661);
+            }
+            sys_close((int)fd);
+        }
+    }
+
+    /***********************************************************************
+     * Test 1662: F_GETFL preserves file status flags (O_APPEND, O_NONBLOCK) *
+     ***********************************************************************/
+    fut_printf("[MISC-TEST] Test 1662: F_GETFL preserves status flags\n");
+    {
+        extern long sys_open(const char *path, int flags, int mode);
+        extern long sys_fcntl(int fd, int cmd, uint64_t arg);
+        extern long sys_close(int fd);
+
+        /* Open with O_APPEND — this is a file status flag that SHOULD
+         * appear in F_GETFL results. */
+        long fd = sys_open("/tmp/test_fgetfl2.txt",
+                           0x0002 /* O_RDWR */ | 0x0040 /* O_CREAT */ | 0x0400 /* O_APPEND */,
+                           0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1662: open failed %ld\n", fd);
+            fut_test_fail(1662);
+        } else {
+            long flags = sys_fcntl((int)fd, 3 /* F_GETFL */, 0);
+            /* O_APPEND=0x0400 should be set, O_CREAT=0x0040 should NOT be set */
+            if (flags >= 0 && (flags & 0x0400) && !(flags & 0x0040)) {
+                fut_printf("[MISC-TEST] ✓ Test 1662: F_GETFL=0x%lx (O_APPEND set, O_CREAT masked)\n", flags);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1662: F_GETFL=0x%lx\n", flags);
+                fut_test_fail(1662);
+            }
+            sys_close((int)fd);
+        }
+    }
+
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");
     fut_printf("[MISC-TEST] ========================================\n");

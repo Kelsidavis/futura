@@ -473,7 +473,10 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
     }
 
     case F_GETFL:
-        return file->flags;
+        /* Return file status flags, masking out creation-only flags that are
+         * not meaningful for an open file (POSIX/Linux: F_GETFL returns the
+         * file access mode and file status flags, not creation flags). */
+        return file->flags & ~(O_CREAT | O_EXCL | O_NOCTTY | O_TRUNC);
 
     case F_SETFL: {
         /* Set file status flags. Per Linux, F_SETFL only modifies O_APPEND,

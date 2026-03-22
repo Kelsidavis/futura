@@ -50356,6 +50356,68 @@ static void test_fionread_dgram_next_msg(void) {
     sys_close(sv[1]);
 }
 
+/*
+ * test_recv_eof_after_shutdown_wr - recv returns 0 (EOF) after peer shutdown(SHUT_WR)
+ *
+ *   Test 1579: After peer calls shutdown(SHUT_WR), recv on our end returns 0 (EOF).
+ *   Test 1580: send after shutdown(SHUT_WR) returns EPIPE.
+ *
+ * These behaviors are critical for half-close semantics in network programming.
+ */
+static void test_recv_eof_after_shutdown_wr(void) {
+    extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+    extern long sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
+                             void *src_addr, unsigned int *addrlen);
+    extern long sys_sendto(int sockfd, const void *buf, size_t len, int flags,
+                           const void *dest_addr, unsigned int addrlen);
+    extern long sys_shutdown(int sockfd, int how);
+    fut_printf("[MISC-TEST] Tests 1579-1580: recv EOF / send EPIPE after shutdown(SHUT_WR)\n");
+
+    int sv[2];
+    long sr = sys_socketpair(1 /* AF_UNIX */, 1 /* SOCK_STREAM */, 0, sv);
+    if (sr < 0) {
+        fut_printf("[MISC-TEST] ✗ Tests 1579-1580: socketpair failed: %ld\n", sr);
+        fut_test_fail(1579);
+        fut_test_fail(1580);
+        return;
+    }
+
+    /* sv[0] shuts down its write side — sv[1] should see EOF */
+    long sh = sys_shutdown(sv[0], 1 /* SHUT_WR */);
+    if (sh < 0) {
+        fut_printf("[MISC-TEST] ✗ Tests 1579-1580: shutdown failed: %ld\n", sh);
+        fut_test_fail(1579);
+        fut_test_fail(1580);
+        sys_close(sv[0]);
+        sys_close(sv[1]);
+        return;
+    }
+
+    /* Test 1579: recv on sv[1] should return 0 (EOF) immediately */
+    char buf[16];
+    long nr = sys_recvfrom(sv[1], buf, 16, 0x40 /* MSG_DONTWAIT */, 0, 0);
+    fut_printf("[MISC-TEST] Test 1579: recv after peer shutdown(SHUT_WR) returned %ld\n", nr);
+    if (nr == 0) {
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1579: expected 0 (EOF), got %ld\n", nr);
+        fut_test_fail(1579);
+    }
+
+    /* Test 1580: send on sv[0] (after SHUT_WR) should return EPIPE */
+    long wr = sys_sendto(sv[0], "x", 1, 0x4000 /* MSG_NOSIGNAL */, 0, 0);
+    fut_printf("[MISC-TEST] Test 1580: send after shutdown(SHUT_WR) returned %ld\n", wr);
+    if (wr == -32 /* -EPIPE */) {
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1580: expected -EPIPE(-32), got %ld\n", wr);
+        fut_test_fail(1580);
+    }
+
+    sys_close(sv[0]);
+    sys_close(sv[1]);
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -51097,6 +51159,7 @@ void fut_misc_test_thread(void *arg) {
     test_peek_trunc_dgram_size();          /* Tests 1573-1574: MSG_PEEK|MSG_TRUNC datagram size */
     test_seqpacket_msg_waitall();          /* Tests 1575-1576: SEQPACKET MSG_WAITALL preserves boundaries */
     test_fionread_dgram_next_msg();        /* Tests 1577-1578: FIONREAD returns next datagram size */
+    test_recv_eof_after_shutdown_wr();     /* Tests 1579-1580: recv returns 0 after peer shutdown(SHUT_WR) */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

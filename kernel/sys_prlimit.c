@@ -154,9 +154,10 @@ long sys_prlimit64(int pid, int resource,
             return -EFAULT;
         }
 
-        /* Soft limit cannot exceed hard limit */
-        if (knl_new.rlim_cur > knl_new.rlim_max &&
-            knl_new.rlim_max != RLIM64_INFINITY) {
+        /* Soft limit cannot exceed hard limit.
+         * RLIM64_INFINITY is the maximum value, so soft=INFINITY is only valid
+         * when hard=INFINITY. */
+        if (knl_new.rlim_cur > knl_new.rlim_max) {
             fut_printf("[PRLIMIT] prlimit64(pid=%d, resource=%s) -> EINVAL "
                        "(cur=%llu > max=%llu)\n",
                        local_pid, resource_name,

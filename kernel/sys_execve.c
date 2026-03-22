@@ -818,6 +818,8 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
     task->clear_child_tid = NULL;
     /* Linux: pdeathsig is cleared on exec (signal was registered by the old image's parent) */
     task->pdeathsig = 0;
+    /* Linux: timer_slack_ns resets to default (50µs) on exec */
+    task->timerslack_ns = 50000;
 
     /* Phase 2: Detailed pre-exec logging (use kernel_pathname for SMAP safety) */
     char msg[256];
@@ -915,6 +917,30 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
         if (task->uid != old_uid || task->gid != old_gid) {
             task->dumpable = 0;
         }
+
+        /* Linux capability transformation on execve (capabilities(7)).
+         *
+         * Without file capability xattrs (Futura has no xattr support):
+         *   fP=0, fI=0, fE=0  →  P'(permitted) = P'(ambient) = 0
+         *
+         * However, Linux applies a "root fixup": when the new effective UID
+         * is 0 (root), the binary is treated as having fP=~0, fI=~0, fE=1,
+         * giving:
+         *   P'(permitted) = (P(inheritable) & ~0) | (~0 & bset) = bset
+         *   P'(effective) = P'(permitted)
+         *
+         * If no_new_privs is set, root fixup is suppressed.
+         * Inheritable and bounding sets are always unchanged. */
+        if (task->uid == 0 && !(task->no_new_privs)) {
+            /* Root fixup: full caps from bounding set */
+            task->cap_permitted = task->cap_inheritable | task->cap_bset;
+            task->cap_effective = task->cap_permitted;
+        } else if (task->uid != 0) {
+            /* Non-root: clear permitted and effective (no file caps, no ambient) */
+            task->cap_permitted = 0;
+            task->cap_effective = 0;
+        }
+        /* else: uid==0 && no_new_privs → keep existing caps (no escalation) */
     }
 
     /* Record executable path for /proc/self/exe */

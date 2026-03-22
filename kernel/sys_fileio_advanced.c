@@ -302,8 +302,16 @@ long sys_sendfile(int out_fd, int in_fd, int64_t *offset, size_t count) {
             if (nwritten > 0)
                 out_file->offset = (uint64_t)pos;
         } else {
+            /* O_APPEND: seek to end atomically before each write */
+            int sf_append = (out_file->flags & O_APPEND) != 0;
+            if (sf_append) {
+                fut_spinlock_acquire(&out_file->vnode->write_lock);
+                out_file->offset = out_file->vnode->size;
+            }
             nwritten = out_file->vnode->ops->write(out_file->vnode, kbuf, (size_t)nread,
                                                    out_file->offset);
+            if (sf_append)
+                fut_spinlock_release(&out_file->vnode->write_lock);
             if (nwritten > 0)
                 out_file->offset += nwritten;
         }

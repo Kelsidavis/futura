@@ -50982,6 +50982,80 @@ static void test_splice_o_append(void) {
     }
 }
 
+/* ============================================================
+ * Tests 1594-1595: sendfile respects O_APPEND on output file
+ * ============================================================ */
+static void test_sendfile_o_append(void) {
+    extern long sys_sendfile(int out_fd, int in_fd, int64_t *offset, size_t count);
+
+    fut_printf("[MISC-TEST] Tests 1594-1595: sendfile with O_APPEND output file\n");
+
+    /* Create source file "CCCC" */
+    int src = fut_vfs_open("/sendfile_src.txt", 0x42 /* O_RDWR|O_CREAT */, 0644);
+    if (src < 0) {
+        fut_printf("[MISC-TEST] ✗ create source failed: %d\n", src);
+        fut_test_fail(1594); fut_test_fail(1595);
+        return;
+    }
+    fut_vfs_write(src, "CCCC", 4);
+    fut_vfs_close(src);
+
+    /* Create dest file with initial "DDDD" */
+    int dst = fut_vfs_open("/sendfile_dst.txt", 0x42 /* O_RDWR|O_CREAT */, 0644);
+    if (dst < 0) {
+        fut_printf("[MISC-TEST] ✗ create dest failed: %d\n", dst);
+        fut_test_fail(1594); fut_test_fail(1595);
+        return;
+    }
+    fut_vfs_write(dst, "DDDD", 4);
+    fut_vfs_close(dst);
+
+    /* Reopen source for reading, dest with O_APPEND */
+    src = fut_vfs_open("/sendfile_src.txt", 0 /* O_RDONLY */, 0);
+    dst = fut_vfs_open("/sendfile_dst.txt", 0x402 /* O_RDWR|O_APPEND */, 0);
+    if (src < 0 || dst < 0) {
+        fut_printf("[MISC-TEST] ✗ reopen failed: src=%d dst=%d\n", src, dst);
+        if (src >= 0) fut_vfs_close(src);
+        if (dst >= 0) fut_vfs_close(dst);
+        fut_test_fail(1594); fut_test_fail(1595);
+        return;
+    }
+
+    int64_t off = 0;
+    long ret = sys_sendfile(dst, src, &off, 4);
+    fut_vfs_close(src);
+    fut_vfs_close(dst);
+
+    /* Test 1594: sendfile succeeded */
+    if (ret == 4) {
+        fut_printf("[MISC-TEST] ✓ Test 1594: sendfile to O_APPEND wrote 4 bytes\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1594: sendfile returned %ld (expected 4)\n", ret);
+        fut_test_fail(1594);
+    }
+
+    /* Test 1595: verify file content is "DDDDCCCC" */
+    dst = fut_vfs_open("/sendfile_dst.txt", 0 /* O_RDONLY */, 0);
+    if (dst < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1595: reopen failed: %d\n", dst);
+        fut_test_fail(1595);
+        return;
+    }
+    char buf[16];
+    long n = fut_vfs_read(dst, buf, sizeof(buf) - 1);
+    fut_vfs_close(dst);
+    buf[n > 0 ? n : 0] = '\0';
+
+    if (n == 8 && buf[0] == 'D' && buf[3] == 'D' && buf[4] == 'C' && buf[7] == 'C') {
+        fut_printf("[MISC-TEST] ✓ Test 1595: file content is \"%s\" (appended correctly)\n", buf);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1595: file content is \"%s\" (expected \"DDDDCCCC\")\n", buf);
+        fut_test_fail(1595);
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -51729,6 +51803,7 @@ void fut_misc_test_thread(void *arg) {
     test_mprotect_vma_split();            /* Tests 1588-1590: mprotect VMA splitting */
     test_mprotect_vma_merge();            /* Test 1591: mprotect VMA merge after restoring prot */
     test_splice_o_append();               /* Tests 1592-1593: splice respects O_APPEND */
+    test_sendfile_o_append();             /* Tests 1594-1595: sendfile respects O_APPEND */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

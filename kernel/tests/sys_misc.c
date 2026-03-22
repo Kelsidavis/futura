@@ -49577,6 +49577,82 @@ static void test_so_protocol_domain_acceptconn(void) {
     }
 }
 
+/**
+ * test_tiocoutq - TIOCOUTQ ioctl returns bytes pending in socket send buffer
+ *
+ * Tests 1555-1557:
+ *   1555: TIOCOUTQ on empty send buffer returns 0
+ *   1556: TIOCOUTQ after send reflects buffered bytes
+ *   1557: TIOCOUTQ on non-socket returns ENOTTY
+ */
+static void test_tiocoutq(void) {
+    fut_printf("[MISC-TEST] Tests 1555-1557: TIOCOUTQ ioctl\n");
+
+#define TIOCOUTQ_TEST 0x5411
+
+    /* Create a connected socketpair */
+    int sv[2] = {-1, -1};
+    long ret = sys_socketpair(1 /* AF_UNIX */, 1 /* SOCK_STREAM */, 0, sv);
+    if (ret < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1555: socketpair failed: %ld\n", ret);
+        fut_test_fail(1555);
+        fut_test_fail(1556);
+        fut_test_fail(1557);
+        return;
+    }
+
+    /* Test 1555: TIOCOUTQ on empty send buffer should return 0 */
+    int nbytes = -1;
+    ret = sys_ioctl(sv[0], (unsigned long)TIOCOUTQ_TEST, (void *)&nbytes);
+    if (ret == 0 && nbytes == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 1555: TIOCOUTQ(empty) = 0\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1555: TIOCOUTQ(empty) ret=%ld nbytes=%d\n", ret, nbytes);
+        fut_test_fail(1555);
+    }
+
+    /* Test 1556: Write 7 bytes from sv[0], don't read from sv[1].
+     * TIOCOUTQ on sv[0] should show 7 bytes pending. */
+    extern ssize_t sys_write(int fd, const void *buf, size_t count);
+    const char *msg = "hello!\n";
+    sys_write(sv[0], msg, 7);
+    nbytes = -1;
+    ret = sys_ioctl(sv[0], (unsigned long)TIOCOUTQ_TEST, (void *)&nbytes);
+    if (ret == 0 && nbytes == 7) {
+        fut_printf("[MISC-TEST] ✓ Test 1556: TIOCOUTQ(7 sent) = %d\n", nbytes);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1556: TIOCOUTQ(7 sent) ret=%ld nbytes=%d (expected 7)\n", ret, nbytes);
+        fut_test_fail(1556);
+    }
+
+    sys_close(sv[0]);
+    sys_close(sv[1]);
+
+    /* Test 1557: TIOCOUTQ on a pipe should return ENOTTY */
+    int pipefd[2];
+    ret = sys_pipe((int *)pipefd);
+    if (ret == 0) {
+        nbytes = -1;
+        ret = sys_ioctl(pipefd[0], (unsigned long)TIOCOUTQ_TEST, (void *)&nbytes);
+        if (ret == -ENOTTY) {
+            fut_printf("[MISC-TEST] ✓ Test 1557: TIOCOUTQ(pipe) = ENOTTY\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1557: TIOCOUTQ(pipe) ret=%ld (expected ENOTTY)\n", ret);
+            fut_test_fail(1557);
+        }
+        sys_close(pipefd[0]);
+        sys_close(pipefd[1]);
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1557: pipe() failed: %ld\n", ret);
+        fut_test_fail(1557);
+    }
+
+#undef TIOCOUTQ_TEST
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -50308,6 +50384,7 @@ void fut_misc_test_thread(void *arg) {
     test_so_linger();                      /* Tests 1543-1546: SO_LINGER close semantics */
     test_socketpair_nonblock();            /* Tests 1547-1548: socketpair SOCK_NONBLOCK */
     test_so_protocol_domain_acceptconn();  /* Tests 1549-1554: SO_PROTOCOL/SO_DOMAIN/SO_ACCEPTCONN */
+    test_tiocoutq();                       /* Tests 1555-1557: TIOCOUTQ ioctl */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

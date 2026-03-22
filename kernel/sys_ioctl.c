@@ -29,6 +29,7 @@
 #define TIOCGWINSZ  0x5413
 #define TIOCSWINSZ  0x5414
 #define FIONREAD    0x541B
+#define TIOCOUTQ    0x5411
 #define FIONBIO     0x5421
 #define TIOCSPGRP   0x5410
 #define TIOCGPGRP   0x540F
@@ -511,6 +512,9 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
         case FIONREAD:
             request_name = "FIONREAD";
             break;
+        case TIOCOUTQ:
+            request_name = "TIOCOUTQ";
+            break;
         case FIONBIO:
             request_name = "FIONBIO";
             break;
@@ -571,7 +575,8 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
                                    request == TIOCGWINSZ || request == TIOCSWINSZ ||
                                    request == TCGETS || request == TCSETS ||
                                    request == TCSETSW || request == TCSETSF ||
-                                   request == TIOCGPGRP || request == TIOCGSID);
+                                   request == TIOCGPGRP || request == TIOCGSID ||
+                                   request == TIOCOUTQ);
                 if (argp_val >= KERNEL_VIRTUAL_BASE && !is_builtin) {
                     return -EFAULT;
                 }
@@ -650,6 +655,7 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
                 case TCGETS:         /* Get terminal settings - writes termios to argp */
                 case TIOCGWINSZ:     /* Get window size - writes winsize to argp */
                 case FIONREAD:       /* Get bytes available - writes int to argp */
+                case TIOCOUTQ:       /* Get bytes pending in send buffer - writes int to argp */
                 case TIOCGPGRP:      /* Get foreground pgrp - writes pid_t to argp */
                 case TIOCGSID:       /* Get session ID - writes pid_t to argp */
                 /* Network interface get ioctls - write ifreq/ifconf to argp */
@@ -748,7 +754,7 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
             request != TCGETS && request != TCSETS &&
             request != TCSETSW && request != TCSETSF &&
             request != TIOCGWINSZ && request != TIOCSWINSZ &&
-            request != TIOCGPGRP &&
+            request != TIOCGPGRP && request != TIOCOUTQ &&
             request != TIOCSPGRP && request != TIOCGSID &&
             request != TIOCSCTTY && request != TIOCNOTTY &&
             request != SIOCGIFCONF && request != SIOCGIFFLAGS &&
@@ -949,6 +955,35 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
             }
 
             /* Success */
+            return 0;
+        }
+        case TIOCOUTQ: {
+            /* TIOCOUTQ/SIOCOUTQ - Return number of unsent bytes in send buffer.
+             * Only meaningful for sockets; pipes and regular files return ENOTTY. */
+            if (!argp)
+                return -EFAULT;
+
+            int bytes_pending = 0;
+
+            /* Only sockets support TIOCOUTQ */
+            extern fut_socket_t *get_socket_from_fd(int fd);
+            extern int fut_socket_bytes_pending(int sockfd);
+            fut_socket_t *outq_sock = get_socket_from_fd(fd);
+            if (!outq_sock)
+                return -ENOTTY;
+
+            int sock_pending = fut_socket_bytes_pending(fd);
+            if (sock_pending >= 0)
+                bytes_pending = sock_pending;
+
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
+                __builtin_memcpy(argp, &bytes_pending, sizeof(int));
+            else
+#endif
+            if (fut_copy_to_user(argp, &bytes_pending, sizeof(int)) != 0)
+                return -EFAULT;
+
             return 0;
         }
         case FIONBIO: {

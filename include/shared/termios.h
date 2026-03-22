@@ -153,6 +153,7 @@
 #define TIOCGPGRP   0x540F  /* Get process group */
 #define TIOCSPGRP   0x5410  /* Set process group */
 #define FIONREAD    0x541B  /* Bytes available to read */
+#define TIOCOUTQ    0x5411  /* Bytes pending in send buffer */
 
 /* ======================================================================
  * STRUCTURES

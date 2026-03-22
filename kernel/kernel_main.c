@@ -1336,7 +1336,7 @@ void fut_kernel_main(void) {
         planned_tests += 17u; /* clock_sched: getres, sched_param, sched_policy, itimer, rusage, times, getpriority, setpriority, getpriority(-who), setpriority(-who), unshare(0), unshare(invalid), rr_get_interval, clock_gettime, posix_timer_sigev_value, posix_timer_si_timer, itimer_virtual */
         planned_tests += 22u; /* vfs: O_TRUNC, O_APPEND, relpath, dir_mtime, readlink, hardlink, mount, renameat2, inotify, inotify_rename, inotify_attrib, inotify_close, inotify_access, inotify_modify, inotify_ftruncate, inotify_utimensat, inotify_truncate, inotify_delete, umount expire, dotdot, eisdir, chdir_dotdot */
         planned_tests += 17u; /* poll: file ready, eventfd not-ready, eventfd ready, POLLNVAL, select file, select pipe, pselect6 pipe, pselect6 sigmask restore, timeout-only sleep, timerfd readiness, signalfd readiness, pipe EOF, select pipe EOF, select timerfd wakeup, poll negative fd, POLLRDNORM, select timeout update */
-        planned_tests += 1554u; /* misc(1554): ..., so_linger (1543-1546), socketpair_nonblock (1547-1548), so_protocol_domain_acceptconn (1549-1554) */
+        planned_tests += 1557u; /* misc(1557): ..., so_linger (1543-1546), socketpair_nonblock (1547-1548), so_protocol_domain_acceptconn (1549-1554), tiocoutq (1555-1557) */
         // planned_tests += 1u; /* block */
         // planned_tests += 1u; /* futfs */
         // planned_tests += 1u; /* net */

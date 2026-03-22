@@ -1678,6 +1678,31 @@ int fut_socket_bytes_available(int sockfd) {
     return (int)bytes_available;
 }
 
+/**
+ * Get number of bytes pending in socket send buffer (for TIOCOUTQ/SIOCOUTQ ioctl).
+ *
+ * @param sockfd Socket file descriptor
+ * @return Number of bytes pending, or -1 on error
+ */
+int fut_socket_bytes_pending(int sockfd) {
+    extern fut_socket_t *get_socket_from_fd(int fd);
+    fut_socket_t *socket = get_socket_from_fd(sockfd);
+
+    if (!socket)
+        return -1;
+
+    if (socket->state != FUT_SOCK_CONNECTED || !socket->pair)
+        return 0;
+
+    /* socket->pair is the send direction; data sits in recv_buf
+     * (sender writes to pair->recv_buf, peer reads from it) */
+    fut_socket_pair_t *send_pair = socket->pair;
+    uint32_t bytes_pending = (send_pair->recv_head + send_pair->recv_size -
+                              send_pair->recv_tail) % send_pair->recv_size;
+
+    return (int)bytes_pending;
+}
+
 /* ============================================================
  *   SOCK_DGRAM Support
  * ============================================================ */

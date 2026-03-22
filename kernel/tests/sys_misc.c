@@ -50676,6 +50676,146 @@ static void test_map_shared_procfs(void) {
     sys_munmap((void *)(uintptr_t)priv_addr, 4096);
 }
 
+/* ============================================================
+ * Tests 1588-1590: mprotect VMA splitting
+ * ============================================================
+ * 1588: mprotect on first page of 2-page region splits VMA
+ * 1589: second page remains writable after first page made read-only
+ * 1590: mprotect on middle page of 3-page region creates 3 VMAs
+ */
+static void test_mprotect_vma_split(void) {
+    extern long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset);
+    extern long sys_munmap(void *addr, size_t len);
+    extern long sys_mprotect(void *addr, size_t len, int prot);
+
+#define MPSPLIT_PRIVATE  0x02
+#define MPSPLIT_ANON     0x20
+#define MPSPLIT_PROT_RW  3   /* PROT_READ | PROT_WRITE */
+#define MPSPLIT_PROT_RO  1   /* PROT_READ */
+
+    fut_printf("[MISC-TEST] Tests 1588-1590: mprotect VMA splitting\n");
+
+    /* Map 2 contiguous pages as RW */
+    long addr2 = sys_mmap(NULL, 4096 * 2, MPSPLIT_PROT_RW,
+                           MPSPLIT_PRIVATE | MPSPLIT_ANON, -1, 0);
+    if (addr2 < 0) {
+        fut_printf("[MISC-TEST] ✗ mmap(2 pages) failed: %ld\n", addr2);
+        fut_test_fail(1588); fut_test_fail(1589); fut_test_fail(1590);
+        return;
+    }
+
+    /* Touch both pages to ensure they're faulted in */
+    volatile int *p1 = (volatile int *)(uintptr_t)addr2;
+    volatile int *p2 = (volatile int *)(uintptr_t)(addr2 + 4096);
+    *p1 = 0x11111111;
+    *p2 = 0x22222222;
+
+    /* mprotect only the first page to PROT_READ */
+    long ret = sys_mprotect((void *)(uintptr_t)addr2, 4096, MPSPLIT_PROT_RO);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1588: mprotect returned %ld\n", ret);
+        sys_munmap((void *)(uintptr_t)addr2, 4096 * 2);
+        fut_test_fail(1588); fut_test_fail(1589); fut_test_fail(1590);
+        return;
+    }
+
+    /* Test 1588: mprotect succeeded (VMA was split) */
+    fut_printf("[MISC-TEST] ✓ Test 1588: mprotect(first page, PROT_READ) succeeded\n");
+    fut_test_pass();
+
+    /* Test 1589: second page should still be writable */
+    *p2 = 0x33333333;
+    if (*p2 == 0x33333333) {
+        fut_printf("[MISC-TEST] ✓ Test 1589: second page still writable after partial mprotect\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1589: second page read-back failed\n");
+        fut_test_fail(1589);
+    }
+
+    sys_munmap((void *)(uintptr_t)addr2, 4096 * 2);
+
+    /* Test 1590: mprotect middle page of 3-page region.
+     * Map 3 pages, mprotect middle to PROT_READ, verify /proc/self/maps
+     * shows the mapping split into 3 entries. */
+    long addr3 = sys_mmap(NULL, 4096 * 3, MPSPLIT_PROT_RW,
+                           MPSPLIT_PRIVATE | MPSPLIT_ANON, -1, 0);
+    if (addr3 < 0) {
+        fut_printf("[MISC-TEST] ✗ mmap(3 pages) failed: %ld\n", addr3);
+        fut_test_fail(1590);
+        return;
+    }
+
+    /* Touch pages so they're faulted in */
+    *(volatile int *)(uintptr_t)addr3 = 1;
+    *(volatile int *)(uintptr_t)(addr3 + 4096) = 2;
+    *(volatile int *)(uintptr_t)(addr3 + 8192) = 3;
+
+    /* mprotect middle page to PROT_READ */
+    ret = sys_mprotect((void *)(uintptr_t)(addr3 + 4096), 4096, MPSPLIT_PROT_RO);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1590: mprotect(middle) returned %ld\n", ret);
+        sys_munmap((void *)(uintptr_t)addr3, 4096 * 3);
+        fut_test_fail(1590);
+        return;
+    }
+
+    /* Read /proc/self/maps and count entries in our 3-page range */
+    int fd = fut_vfs_open("/proc/self/maps", 0, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1590: open /proc/self/maps failed\n");
+        sys_munmap((void *)(uintptr_t)addr3, 4096 * 3);
+        fut_test_fail(1590);
+        return;
+    }
+
+    char mapbuf[4096];
+    long mtotal = 0;
+    while (mtotal < (long)sizeof(mapbuf) - 1) {
+        long rd = fut_vfs_read(fd, mapbuf + mtotal, sizeof(mapbuf) - 1 - mtotal);
+        if (rd <= 0) break;
+        mtotal += rd;
+    }
+    fut_vfs_close(fd);
+    mapbuf[mtotal] = '\0';
+
+    /* Build hex strings for the 3 expected VMA start addresses */
+    unsigned long a0 = (unsigned long)addr3;
+    unsigned long a1 = a0 + 4096;
+    unsigned long a2 = a0 + 8192;
+    char hex0[17], hex1[17], hex2[17];
+    int n0 = 0, n1 = 0, n2 = 0;
+    { unsigned long w = a0; do { hex0[n0++] = "0123456789abcdef"[w & 0xf]; w >>= 4; } while (w); while (n0 < 8) hex0[n0++] = '0'; }
+    { unsigned long w = a1; do { hex1[n1++] = "0123456789abcdef"[w & 0xf]; w >>= 4; } while (w); while (n1 < 8) hex1[n1++] = '0'; }
+    { unsigned long w = a2; do { hex2[n2++] = "0123456789abcdef"[w & 0xf]; w >>= 4; } while (w); while (n2 < 8) hex2[n2++] = '0'; }
+    for (int i = 0; i < n0/2; i++) { char t = hex0[i]; hex0[i] = hex0[n0-1-i]; hex0[n0-1-i] = t; } hex0[n0] = '\0';
+    for (int i = 0; i < n1/2; i++) { char t = hex1[i]; hex1[i] = hex1[n1-1-i]; hex1[n1-1-i] = t; } hex1[n1] = '\0';
+    for (int i = 0; i < n2/2; i++) { char t = hex2[i]; hex2[i] = hex2[n2-1-i]; hex2[n2-1-i] = t; } hex2[n2] = '\0';
+
+    /* Count how many of our 3 expected VMAs appear in the maps output */
+    int vma_count = 0;
+    char *ln = mapbuf;
+    while (*ln) {
+        int m0 = 1, m1 = 1, m2 = 1;
+        for (int i = 0; i < n0 && ln[i]; i++) if (ln[i] != hex0[i]) m0 = 0;
+        for (int i = 0; i < n1 && ln[i]; i++) if (ln[i] != hex1[i]) m1 = 0;
+        for (int i = 0; i < n2 && ln[i]; i++) if (ln[i] != hex2[i]) m2 = 0;
+        if ((m0 || m1 || m2) && ln[n0] == '-') vma_count++;
+        while (*ln && *ln != '\n') ln++;
+        if (*ln == '\n') ln++;
+    }
+
+    fut_printf("[MISC-TEST] Test 1590: 3-page split: found %d VMAs (expect 3)\n", vma_count);
+    if (vma_count == 3) {
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1590: expected 3 VMAs, got %d\n", vma_count);
+        fut_test_fail(1590);
+    }
+
+    sys_munmap((void *)(uintptr_t)addr3, 4096 * 3);
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -51420,6 +51560,7 @@ void fut_misc_test_thread(void *arg) {
     test_recv_eof_after_shutdown_wr();     /* Tests 1579-1580: recv returns 0 after peer shutdown(SHUT_WR) */
     test_epoll_rdhup_vs_hup();            /* Tests 1581-1584: EPOLLRDHUP half-close vs EPOLLHUP full close */
     test_map_shared_procfs();             /* Tests 1585-1587: MAP_SHARED shows 's' in /proc/self/maps */
+    test_mprotect_vma_split();            /* Tests 1588-1590: mprotect VMA splitting */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

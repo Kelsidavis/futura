@@ -14,7 +14,9 @@
 
 #include <kernel/fut_task.h>
 #include <kernel/fut_mm.h>
+#include <kernel/fut_vfs.h>
 #include <kernel/errno.h>
+#include <kernel/fut_memory.h>
 #include <stdint.h>
 
 #include <kernel/kprintf.h>
@@ -224,17 +226,72 @@ long sys_mprotect(void *addr, size_t len, int prot) {
         return -EINVAL;
     }
     /* Phase 3: Update VMA protection metadata for the requested range.
-     * Update vma->prot for all VMAs overlapping [start, end). */
+     * Split VMAs at range boundaries so only [start, end) gets new prot. */
     fut_mm_t *mm = fut_task_get_mm(task);
     if (!mm) mm = fut_mm_current();
     if (mm) {
         /* Linux returns -ENOMEM if any part of [start, end) is not mapped */
         int found_overlap = 0;
-        for (struct fut_vma *vma = mm->vma_list; vma; vma = vma->next) {
-            if (vma->end <= start || vma->start >= end)
+        struct fut_vma *vma = mm->vma_list;
+        while (vma) {
+            if (vma->end <= start || vma->start >= end) {
+                vma = vma->next;
                 continue;
+            }
             found_overlap = 1;
+
+            /* If VMA already has the requested prot, skip splitting */
+            if (vma->prot == prot) {
+                vma = vma->next;
+                continue;
+            }
+
+            /* Split left: VMA starts before [start, end) */
+            if (vma->start < start) {
+                struct fut_vma *right = fut_malloc(sizeof(*right));
+                if (!right) return -ENOMEM;
+                *right = *vma;
+                right->start = start;
+                right->next = vma->next;
+                if (right->vnode) {
+                    right->file_offset = vma->file_offset + (start - vma->start);
+                    fut_vnode_ref(right->vnode);
+                }
+                if (vma->anon_name) {
+                    size_t nlen = __builtin_strlen(vma->anon_name) + 1;
+                    right->anon_name = fut_malloc(nlen);
+                    if (right->anon_name)
+                        __builtin_memcpy(right->anon_name, vma->anon_name, nlen);
+                }
+                vma->end = start;
+                vma->next = right;
+                vma = right; /* continue with the right portion */
+            }
+
+            /* Split right: VMA extends past [start, end) */
+            if (vma->end > end) {
+                struct fut_vma *tail = fut_malloc(sizeof(*tail));
+                if (!tail) return -ENOMEM;
+                *tail = *vma;
+                tail->start = end;
+                tail->next = vma->next;
+                if (tail->vnode) {
+                    tail->file_offset = vma->file_offset + (end - vma->start);
+                    fut_vnode_ref(tail->vnode);
+                }
+                if (vma->anon_name) {
+                    size_t nlen = __builtin_strlen(vma->anon_name) + 1;
+                    tail->anon_name = fut_malloc(nlen);
+                    if (tail->anon_name)
+                        __builtin_memcpy(tail->anon_name, vma->anon_name, nlen);
+                }
+                vma->end = end;
+                vma->next = tail;
+            }
+
+            /* Now vma is exactly within [start, end) — update prot */
             vma->prot = prot;
+            vma = vma->next;
         }
         if (!found_overlap)
             return -ENOMEM;

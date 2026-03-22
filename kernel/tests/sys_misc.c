@@ -51062,6 +51062,46 @@ static void test_sendfile_o_append(void) {
  * 1596: openat(AT_FDCWD, regular_file, O_DIRECTORY) → ENOTDIR
  * 1597: openat(AT_FDCWD, directory, O_DIRECTORY) → success
  */
+static void test_dup2_newfd_out_of_range(void) {
+    extern long sys_dup2(int oldfd, int newfd);
+    extern long sys_dup3(int oldfd, int newfd, int flags);
+
+    fut_printf("[MISC-TEST] Tests 1598-1599: dup2/dup3 out-of-range newfd returns EINVAL\n");
+
+    /* Open a file to use as oldfd */
+    int fd = fut_vfs_open("/dup2_range_test.txt", 0x42 /* O_RDWR|O_CREAT */, 0644);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1598: failed to create test file\n");
+        fut_test_fail(1598);
+        fut_test_fail(1599);
+        return;
+    }
+
+    /* Test 1598: dup2 with newfd = 99999 (well above max_fds) should return EINVAL */
+    long ret = sys_dup2(fd, 99999);
+    if (ret == -22 /* EINVAL */) {
+        fut_printf("[MISC-TEST] ✓ Test 1598: dup2(fd, 99999) → EINVAL (POSIX-correct)\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1598: dup2(fd, 99999) → %ld (expected EINVAL=-22)\n", ret);
+        if (ret >= 0) fut_vfs_close((int)ret);
+        fut_test_fail(1598);
+    }
+
+    /* Test 1599: dup3 with newfd = 99999 should also return EINVAL */
+    ret = sys_dup3(fd, 99999, 0);
+    if (ret == -22 /* EINVAL */) {
+        fut_printf("[MISC-TEST] ✓ Test 1599: dup3(fd, 99999, 0) → EINVAL (POSIX-correct)\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1599: dup3(fd, 99999, 0) → %ld (expected EINVAL=-22)\n", ret);
+        if (ret >= 0) fut_vfs_close((int)ret);
+        fut_test_fail(1599);
+    }
+
+    fut_vfs_close(fd);
+}
+
 static void test_openat_o_directory(void) {
     extern long sys_openat(int dirfd, const char *pathname, int flags, int mode);
 
@@ -51847,6 +51887,7 @@ void fut_misc_test_thread(void *arg) {
     test_splice_o_append();               /* Tests 1592-1593: splice respects O_APPEND */
     test_sendfile_o_append();             /* Tests 1594-1595: sendfile respects O_APPEND */
     test_openat_o_directory();            /* Tests 1596-1597: openat O_DIRECTORY enforcement */
+    test_dup2_newfd_out_of_range();       /* Tests 1598-1599: dup2/dup3 EINVAL for out-of-range newfd */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

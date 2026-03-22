@@ -189,13 +189,15 @@ long sys_dup2(int oldfd, int newfd) {
     }
 
     if (local_newfd >= (int)task->max_fds) {
-        DUP2_LOG("[DUP2] dup2(oldfd=%d, newfd=%d, max_fds=%u) -> EBADF "
-                   "(newfd exceeds max_fds, FD bounds validation)\n",
+        DUP2_LOG("[DUP2] dup2(oldfd=%d, newfd=%d, max_fds=%u) -> EINVAL "
+                   "(newfd exceeds max_fds, POSIX: EINVAL for out-of-range)\n",
                    local_oldfd, local_newfd, task->max_fds);
-        return -EBADF;
+        return -EINVAL;
     }
 
-    /* Enforce RLIMIT_NOFILE: newfd must be below the soft limit */
+    /* Enforce RLIMIT_NOFILE: newfd must be below the soft limit
+     * POSIX: dup2 shall fail with EBADF if newfd >= OPEN_MAX, but Linux
+     * returns EBADF for RLIMIT_NOFILE violations (matching Linux behavior). */
     uint64_t nofile_limit = task->rlimits[7].rlim_cur;  /* RLIMIT_NOFILE */
     if (nofile_limit > 0 && (uint64_t)local_newfd >= nofile_limit) {
         return -EBADF;
@@ -370,12 +372,12 @@ long sys_dup3(int oldfd, int newfd, int flags) {
         return -EINVAL;
     }
 
-    /* Validate newfd upper bound */
+    /* Validate newfd upper bound — POSIX: EINVAL for out-of-range newfd */
     if (local_newfd >= (int)task->max_fds) {
-        fut_printf("[DUP3] dup3(oldfd=%d, newfd=%d, max_fds=%u, flags=0x%x) -> EBADF "
-                   "(newfd exceeds max_fds, FD bounds validation)\n",
+        fut_printf("[DUP3] dup3(oldfd=%d, newfd=%d, max_fds=%u, flags=0x%x) -> EINVAL "
+                   "(newfd exceeds max_fds, POSIX: EINVAL for out-of-range)\n",
                    local_oldfd, local_newfd, task->max_fds, local_flags);
-        return -EBADF;
+        return -EINVAL;
     }
 
     /* Enforce RLIMIT_NOFILE */

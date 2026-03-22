@@ -52640,6 +52640,38 @@ void fut_misc_test_thread(void *arg) {
         #undef TEST_WNOWAIT
     }
 
+    /* ============================================================
+     * Test 1633: mremap rejects old_size spanning VMA boundary
+     * ============================================================ */
+    {
+        fut_printf("[MISC-TEST] Test 1633: mremap rejects region spanning VMA boundary\n");
+        extern long sys_mmap(void *addr, size_t length, int prot, int flags, int fd, long offset);
+        extern long sys_mremap(void *old_address, size_t old_size, size_t new_size,
+                               int flags, void *new_address);
+        extern long sys_munmap(void *addr, size_t length);
+
+        /* Map two separate 4KB pages with a gap between them */
+        long p1 = sys_mmap(NULL, 4096, 3 /* PROT_READ|PROT_WRITE */,
+                           0x22 /* MAP_PRIVATE|MAP_ANONYMOUS */, -1, 0);
+        if (p1 < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1633: mmap p1 failed %ld\n", p1);
+            fut_test_fail(1633);
+        } else {
+            /* Try to mremap with old_size=8192 on a 4096-byte mapping.
+             * This should fail because the region extends beyond the VMA. */
+            long ret = sys_mremap((void *)(uintptr_t)p1, 8192, 4096, 0, NULL);
+            sys_munmap((void *)(uintptr_t)p1, 4096);
+            if (ret == -EFAULT) {
+                fut_printf("[MISC-TEST] ✓ Test 1633: mremap rejects oversized old_size (EFAULT)\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1633: mremap oversized old_size returned %ld (expected -EFAULT)\n", ret);
+                if (ret > 0) sys_munmap((void *)(uintptr_t)ret, 4096);
+                fut_test_fail(1633);
+            }
+        }
+    }
+
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");
     fut_printf("[MISC-TEST] ========================================\n");

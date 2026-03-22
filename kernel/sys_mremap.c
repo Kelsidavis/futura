@@ -259,6 +259,15 @@ long sys_mremap(void *old_address, size_t old_size, size_t new_size,
         return -EFAULT;
     }
 
+    /* Verify entire old region fits within this VMA (Linux requires a single
+     * contiguous mapping; spanning multiple VMAs is not allowed). */
+    uintptr_t old_end = (uintptr_t)old_address + old_aligned;
+    if (old_end > vma->end) {
+        fut_printf("[MREMAP] mremap(%p, %zu pages, %s) -> EFAULT (region spans VMA boundary)\n",
+                   old_address, old_pages, flags_str);
+        return -EFAULT;
+    }
+
     /* Same-size remap: no-op */
     if (new_aligned == old_aligned && !(flags & MREMAP_FIXED)) {
         fut_printf("[MREMAP] mremap(%p, %zu->%zu pages, %s) -> %p (same size, no-op)\n",

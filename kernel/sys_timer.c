@@ -49,12 +49,14 @@ static inline int timer_access_ok_read(const void *ptr, size_t n) {
     return fut_access_ok(ptr, n, 0);
 }
 
-/* Convert timespec to milliseconds (clamped to 0 for negative values) */
+/* Convert timespec to milliseconds (clamped to 0 for negative values).
+ * Sub-millisecond values are rounded UP to 1ms to prevent truncation
+ * to zero which would silently disarm timers. */
 static uint64_t timespec_to_ms(const struct timespec *ts) {
     if (ts->tv_sec < 0)
         return 0;
     uint64_t ms = (uint64_t)ts->tv_sec * 1000;
-    ms += (uint64_t)ts->tv_nsec / 1000000;
+    ms += ((uint64_t)ts->tv_nsec + 999999) / 1000000;
     return ms;
 }
 

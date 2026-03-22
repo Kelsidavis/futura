@@ -1344,9 +1344,10 @@ static const struct fut_file_ops timerfd_fops = {
     .mmap = NULL,
 };
 
-/* Convert timespec to milliseconds */
+/* Convert timespec to milliseconds.
+ * Round UP sub-ms values to 1ms to prevent silent timer disarming. */
 static uint64_t timespec_to_ms(const struct timespec *ts) {
-    return (uint64_t)ts->tv_sec * 1000ULL + (uint64_t)ts->tv_nsec / 1000000ULL;
+    return (uint64_t)ts->tv_sec * 1000ULL + ((uint64_t)ts->tv_nsec + 999999ULL) / 1000000ULL;
 }
 
 /* Timer callback - called from timer tick interrupt context */

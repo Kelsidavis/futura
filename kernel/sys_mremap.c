@@ -283,9 +283,15 @@ long sys_mremap(void *old_address, size_t old_size, size_t new_size,
         uintptr_t target = (uintptr_t)new_address;
         /* Unmap any existing mapping at target range */
         fut_mm_unmap(mm, target, new_aligned);
-        /* Map new region at specified address */
-        void *mapped = fut_mm_map_anonymous(mm, target, new_aligned, vma->prot,
-                                             MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED);
+        /* Map new region at specified address, preserving file backing */
+        void *mapped;
+        int mflags = (vma->flags & ~0x2000) | MAP_FIXED; /* strip VMA_SHARED; VMA creation re-adds it */
+        if (vma->vnode) {
+            mapped = fut_mm_map_file(mm, vma->vnode, target, new_aligned,
+                                      vma->prot, mflags, vma->file_offset);
+        } else {
+            mapped = fut_mm_map_anonymous(mm, target, new_aligned, vma->prot, mflags);
+        }
         if (!mapped || (intptr_t)mapped < 0) {
             fut_printf("[MREMAP] mremap(%p, %zu->%zu pages, %s) -> ENOMEM (MREMAP_FIXED map failed)\n",
                        old_address, old_pages, new_pages, flags_str);
@@ -319,8 +325,17 @@ long sys_mremap(void *old_address, size_t old_size, size_t new_size,
             return -ENOMEM;
         }
         /* Extension range is free: map the extra pages in-place */
-        void *ext = fut_mm_map_anonymous(mm, ext_start, new_aligned - old_aligned,
-                                         vma->prot, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED);
+        void *ext;
+        int eflags = (vma->flags & ~0x2000) | MAP_FIXED;
+        if (vma->vnode) {
+            uint64_t ext_offset = vma->file_offset + old_aligned;
+            ext = fut_mm_map_file(mm, vma->vnode, ext_start,
+                                   new_aligned - old_aligned, vma->prot,
+                                   eflags, ext_offset);
+        } else {
+            ext = fut_mm_map_anonymous(mm, ext_start, new_aligned - old_aligned,
+                                        vma->prot, eflags);
+        }
         if (!ext || (intptr_t)ext < 0) {
             fut_printf("[MREMAP] mremap(%p, %zu->%zu, %s) -> ENOMEM (in-place ext failed)\n",
                        old_address, old_pages, new_pages, flags_str);
@@ -331,9 +346,16 @@ long sys_mremap(void *old_address, size_t old_size, size_t new_size,
         return (long)(uintptr_t)old_address;
     }
 
-    /* MREMAP_MAYMOVE: allocate new region, copy, free old */
-    void *new_addr = fut_mm_map_anonymous(mm, 0, new_aligned, vma->prot,
-                                           MAP_PRIVATE | MAP_ANONYMOUS);
+    /* MREMAP_MAYMOVE: allocate new region, copy, free old.
+     * Preserve file backing and original VMA flags. */
+    void *new_addr;
+    int nflags = (vma->flags & ~0x2000) & ~MAP_FIXED;
+    if (vma->vnode) {
+        new_addr = fut_mm_map_file(mm, vma->vnode, 0, new_aligned,
+                                    vma->prot, nflags, vma->file_offset);
+    } else {
+        new_addr = fut_mm_map_anonymous(mm, 0, new_aligned, vma->prot, nflags);
+    }
     if (!new_addr || (intptr_t)new_addr < 0) {
         fut_printf("[MREMAP] mremap(%p, %zu->%zu pages, %s) -> ENOMEM (new mapping failed)\n",
                    old_address, old_pages, new_pages, flags_str);

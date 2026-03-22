@@ -886,20 +886,25 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
     /* Check setuid/setgid bits on the executable and update credentials.
      * POSIX: if the file has S_ISUID set, effective UID becomes file owner.
      * If S_ISGID set, effective GID becomes file group.
-     * Blocked by no_new_privs (prctl PR_SET_NO_NEW_PRIVS). */
+     * Blocked by no_new_privs (prctl PR_SET_NO_NEW_PRIVS).
+     *
+     * Per execve(2): after applying setuid/setgid bits, the saved set-user-ID
+     * and saved set-group-ID are always copied from the (possibly new) effective
+     * UID/GID. This happens even if no setuid bit was set. */
     if (!(task->no_new_privs)) {
         struct fut_stat exec_stat;
         if (fut_vfs_stat(kernel_pathname, &exec_stat) == 0) {
             if (exec_stat.st_mode & 04000) {  /* S_ISUID */
-                task->suid = task->uid;
                 task->uid = exec_stat.st_uid;
             }
             if (exec_stat.st_mode & 02000) {  /* S_ISGID */
-                task->sgid = task->gid;
                 task->gid = exec_stat.st_gid;
             }
         }
     }
+    /* Saved IDs are always set to current effective IDs after execve */
+    task->suid = task->uid;
+    task->sgid = task->gid;
 
     /* Record executable path for /proc/self/exe */
     {

@@ -51056,6 +51056,48 @@ static void test_sendfile_o_append(void) {
     }
 }
 
+/* ============================================================
+ * Tests 1596-1597: openat() O_DIRECTORY enforcement
+ * ============================================================
+ * 1596: openat(AT_FDCWD, regular_file, O_DIRECTORY) → ENOTDIR
+ * 1597: openat(AT_FDCWD, directory, O_DIRECTORY) → success
+ */
+static void test_openat_o_directory(void) {
+    extern long sys_openat(int dirfd, const char *pathname, int flags, int mode);
+
+    fut_printf("[MISC-TEST] Tests 1596-1597: openat O_DIRECTORY enforcement\n");
+
+    /* Create a regular file */
+    int fd = fut_vfs_open("/openat_odir_test.txt", 0x42 /* O_RDWR|O_CREAT */, 0644);
+    if (fd >= 0) {
+        fut_vfs_write(fd, "x", 1);
+        fut_vfs_close(fd);
+    }
+
+    /* Test 1596: openat with O_DIRECTORY on regular file should fail */
+    long ret = sys_openat(-100 /* AT_FDCWD */, "/openat_odir_test.txt",
+                           0200000 /* O_DIRECTORY */, 0);
+    if (ret == -20 /* ENOTDIR */) {
+        fut_printf("[MISC-TEST] ✓ Test 1596: openat(O_DIRECTORY) on file → ENOTDIR\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1596: openat(O_DIRECTORY) on file → %ld (expected ENOTDIR)\n", ret);
+        if (ret >= 0) fut_vfs_close((int)ret);
+        fut_test_fail(1596);
+    }
+
+    /* Test 1597: openat with O_DIRECTORY on a directory should succeed */
+    ret = sys_openat(-100, "/proc", 0200000 /* O_DIRECTORY */, 0);
+    if (ret >= 0) {
+        fut_printf("[MISC-TEST] ✓ Test 1597: openat(O_DIRECTORY) on /proc → fd=%ld\n", ret);
+        fut_vfs_close((int)ret);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1597: openat(O_DIRECTORY) on /proc → %ld\n", ret);
+        fut_test_fail(1597);
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -51804,6 +51846,7 @@ void fut_misc_test_thread(void *arg) {
     test_mprotect_vma_merge();            /* Test 1591: mprotect VMA merge after restoring prot */
     test_splice_o_append();               /* Tests 1592-1593: splice respects O_APPEND */
     test_sendfile_o_append();             /* Tests 1594-1595: sendfile respects O_APPEND */
+    test_openat_o_directory();            /* Tests 1596-1597: openat O_DIRECTORY enforcement */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

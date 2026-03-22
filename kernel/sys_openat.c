@@ -217,6 +217,17 @@ long sys_openat(int dirfd, const char *pathname, int flags, int mode) {
     /* Open via VFS, using fut_vfs_open_at to handle dirfd-relative paths */
     int result = fut_vfs_open_at(open_task, local_dirfd, kpath, local_flags, local_mode);
 
+    /* Validate O_DIRECTORY flag — file must be a directory */
+    if (result >= 0 && (local_flags & O_DIRECTORY)) {
+        struct fut_file *file = fut_vfs_get_file(result);
+        if (file && file->vnode && file->vnode->type != VN_DIR) {
+            fut_vfs_close(result);
+            fut_printf("[OPENAT] openat(dirfd=%d, path='%s', O_DIRECTORY) -> ENOTDIR\n",
+                       local_dirfd, kpath);
+            return -ENOTDIR;
+        }
+    }
+
     /* Set FD_CLOEXEC if O_CLOEXEC was requested (per-FD flag) */
     if (result >= 0 && (local_flags & O_CLOEXEC)) {
         if (open_task && open_task->fd_flags && result < open_task->max_fds)

@@ -483,7 +483,7 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
         }
         if (dgsock && (dgsock->socket_type == SOCK_DGRAM || dgsock->socket_type == SOCK_SEQPACKET)
             && dgsock->pair != NULL) {
-            if (dgsock->last_recv_truncated)
+            if (dgsock->last_recv_full_msg_len > 0)
                 msg_trunc_set = true;
             break;
         }

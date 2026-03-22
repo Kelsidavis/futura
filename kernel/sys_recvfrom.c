@@ -777,5 +777,16 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
         }
     }
 
+    /* MSG_TRUNC on socketpair DGRAM/SEQPACKET: return actual datagram size.
+     * Named DGRAM sockets handle this above (line 581). For socketpairs, the
+     * framed recv path in fut_socket_recv stores the full message length when
+     * truncation occurs. Return that instead of the truncated byte count. */
+    if ((local_flags & MSG_TRUNC) && ret > 0) {
+        extern fut_socket_t *get_socket_from_fd(int fd);
+        fut_socket_t *tsock = get_socket_from_fd(local_sockfd);
+        if (tsock && tsock->pair != NULL && tsock->last_recv_full_msg_len > 0)
+            return (ssize_t)tsock->last_recv_full_msg_len;
+    }
+
     return ret;
 }

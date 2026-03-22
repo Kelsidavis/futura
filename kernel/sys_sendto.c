@@ -591,7 +591,9 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
     {
         extern fut_socket_t *get_socket_from_fd(int fd);
         fut_socket_t *dgsock = get_socket_from_fd(local_sockfd);
-        if (dgsock && dgsock->socket_type == 2 /* SOCK_DGRAM */) {
+        if (dgsock && dgsock->socket_type == 2 /* SOCK_DGRAM */ && !dgsock->pair) {
+            /* Named DGRAM only (not socketpairs — those fall through to fut_vfs_write
+             * which handles framed send via the pair's circular buffer). */
             /* Enforce shutdown(SHUT_WR) on DGRAM sockets */
             if (dgsock->shutdown_wr) {
                 fut_free(kbuf);

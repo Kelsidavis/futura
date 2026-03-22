@@ -50078,6 +50078,93 @@ static void test_dgram_socketpair_trunc(void) {
     sys_close(sv[1]);
 }
 
+/*
+ * test_recv_msg_trunc_flag - recv(MSG_TRUNC) returns actual datagram size
+ *
+ * Tests 1571-1572:
+ *   1571: recv(MSG_TRUNC) on DGRAM socketpair returns actual datagram size, not truncated
+ *   1572: recv(MSG_TRUNC) on SEQPACKET socketpair returns actual message size
+ */
+static void test_recv_msg_trunc_flag(void) {
+    fut_printf("[MISC-TEST] Tests 1571-1572: recv(MSG_TRUNC) returns actual datagram size\n");
+
+    extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+    extern long sys_sendto(int sockfd, const void *buf, size_t len, int flags,
+                           const void *dest_addr, unsigned int addrlen);
+    extern long sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
+                             void *src_addr, unsigned int *addrlen);
+    extern ssize_t sys_recvmsg(int sockfd, struct test_msghdr *msg, int flags);
+
+    /* Test 1571: sendto/recvfrom(MSG_TRUNC) on DGRAM socketpair returns actual datagram size.
+     * Linux: when MSG_TRUNC is passed as input flag to recv/recvfrom on a DGRAM socket,
+     * the return value is the actual datagram size even if it was truncated. */
+    {
+        int sv[2] = {-1, -1};
+        long ret = sys_socketpair(1 /* AF_UNIX */, 2 /* SOCK_DGRAM */, 0, sv);
+        if (ret < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1571: socketpair(DGRAM) failed: %ld\n", ret);
+            fut_test_fail(1571);
+        } else {
+            char msg[20];
+            for (int i = 0; i < 20; i++) msg[i] = (char)('a' + i % 26);
+            /* Use sendto (with NULL dest_addr) — tests the sendto fix for DGRAM socketpairs */
+            long nw = sys_sendto(sv[0], msg, 20, 0, 0, 0);
+            if (nw < 0) {
+                fut_printf("[MISC-TEST] ✗ Test 1571: sendto on DGRAM socketpair failed: %ld\n", nw);
+                fut_test_fail(1571);
+            } else {
+                char rbuf[10];
+                long nr = sys_recvfrom(sv[1], rbuf, 10, 0x20 /* MSG_TRUNC */, 0, 0);
+                if (nr == 20) {
+                    fut_printf("[MISC-TEST] ✓ Test 1571: recvfrom(MSG_TRUNC) returned %ld (actual datagram size)\n",
+                               nr);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1571: recvfrom(MSG_TRUNC) returned %ld (expected 20)\n", nr);
+                    fut_test_fail(1571);
+                }
+            }
+            sys_close(sv[0]);
+            sys_close(sv[1]);
+        }
+    }
+
+    /* Test 1572: SEQPACKET recvmsg MSG_TRUNC in msg_flags */
+    {
+        int sv[2] = {-1, -1};
+        long ret = sys_socketpair(1 /* AF_UNIX */, 5 /* SOCK_SEQPACKET */, 0, sv);
+        if (ret < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1572: socketpair(SEQPACKET) failed: %ld\n", ret);
+            fut_test_fail(1572);
+        } else {
+            char msg[30];
+            for (int i = 0; i < 30; i++) msg[i] = (char)('A' + i % 26);
+            long nw = sys_sendto(sv[0], msg, 30, 0, 0, 0);
+
+            char rbuf[8];
+            struct iovec riov = { .iov_base = rbuf, .iov_len = 8 };
+            struct test_msghdr rmsg;
+            __builtin_memset(&rmsg, 0, sizeof(rmsg));
+            rmsg.msg_iov = &riov;
+            rmsg.msg_iovlen = 1;
+
+            ssize_t nr = sys_recvmsg(sv[1], &rmsg, 0);
+            if (nr == 8 && (rmsg.msg_flags & 0x20)) {
+                fut_printf("[MISC-TEST] ✓ Test 1572: SEQPACKET recvmsg truncated to %ld, MSG_TRUNC set\n",
+                           (long)nr);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1572: recvmsg returned %ld, msg_flags=0x%x\n",
+                           (long)nr, rmsg.msg_flags);
+                fut_test_fail(1572);
+            }
+            (void)nw;
+            sys_close(sv[0]);
+            sys_close(sv[1]);
+        }
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -50815,6 +50902,7 @@ void fut_misc_test_thread(void *arg) {
     test_seqpacket_msg_eor();              /* Tests 1565-1566: SEQPACKET MSG_EOR in recvmsg */
     test_dgram_socketpair_boundaries();    /* Tests 1567-1568: DGRAM socketpair message boundaries */
     test_dgram_socketpair_trunc();         /* Tests 1569-1570: DGRAM socketpair MSG_TRUNC */
+    test_recv_msg_trunc_flag();            /* Tests 1571-1572: recv(MSG_TRUNC) returns actual size */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

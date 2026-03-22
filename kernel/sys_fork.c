@@ -1033,6 +1033,16 @@ long sys_fork(void) {
         child_task->cwd_cache = child_task->cwd_cache_buf;
     }
 
+    /* Inherit /proc/self/cmdline (Linux: child has same cmdline until exec) */
+    if (parent_task->proc_cmdline_len > 0) {
+        __builtin_memcpy(child_task->proc_cmdline, parent_task->proc_cmdline,
+                         parent_task->proc_cmdline_len);
+        child_task->proc_cmdline_len = parent_task->proc_cmdline_len;
+    }
+
+    /* Inherit alternate signal stack (Linux: child inherits parent's sigaltstack) */
+    child_task->sig_altstack = parent_task->sig_altstack;
+
     /* Inherit chroot jail (POSIX: child stays in parent's chroot) */
     if (parent_task->chroot_vnode) {
         child_task->chroot_vnode = parent_task->chroot_vnode;

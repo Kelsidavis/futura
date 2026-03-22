@@ -885,7 +885,8 @@ int fut_task_waitpid_ex(int pid, int *status_out, int flags, uint32_t *uid_out) 
                     int stop_status = 0x7f | ((child->stop_signal & 0xff) << 8);
                     uint64_t child_pid = child->pid;
                     uint32_t child_uid = child->ruid;
-                    child->stop_reported = 1;
+                    if (!peek)
+                        child->stop_reported = 1;
                     fut_spinlock_release(&task_list_lock);
                     if (status_out) *status_out = stop_status;
                     if (uid_out)    *uid_out    = child_uid;
@@ -895,7 +896,8 @@ int fut_task_waitpid_ex(int pid, int *status_out, int flags, uint32_t *uid_out) 
                 if ((flags & 8) && child->stop_signal == -1) {
                     uint64_t child_pid = child->pid;
                     uint32_t child_uid = child->ruid;
-                    child->stop_signal = 0;
+                    if (!peek)
+                        child->stop_signal = 0;
                     fut_spinlock_release(&task_list_lock);
                     if (status_out) *status_out = 0xffff;
                     if (uid_out)    *uid_out    = child_uid;

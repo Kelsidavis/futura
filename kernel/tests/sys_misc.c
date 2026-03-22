@@ -52521,6 +52521,125 @@ void fut_misc_test_thread(void *arg) {
         }
     }
 
+    /* ============================================================
+     * Tests 1631-1632: WNOWAIT leaves stopped/continued children waitable
+     * ============================================================ */
+    {
+        fut_printf("[MISC-TEST] Tests 1631-1632: WNOWAIT preserves waitable state\n");
+        extern int fut_task_waitpid_ex(int pid, int *status_out, int flags, uint32_t *uid_out);
+        extern long sys_waitpid(int pid, int *status, int flags);
+        extern fut_task_t *fut_task_create(void);
+        extern void fut_task_do_cont(fut_task_t *task);
+
+        /* WNOWAIT=0x01000000, WUNTRACED=2, WCONTINUED=8, WNOHANG=1 */
+        #define TEST_WNOWAIT 0x01000000
+
+        fut_task_t *child = fut_task_create();
+        if (!child) {
+            fut_printf("[MISC-TEST] ✗ WNOWAIT test: fut_task_create failed\n");
+            fut_test_fail(1631);
+            fut_test_fail(1632);
+        } else {
+            int cpid = (int)child->pid;
+
+            /* Test 1631: WNOWAIT with WUNTRACED: peek at stopped child,
+             * then wait again without WNOWAIT to confirm it's still waitable */
+            child->state = FUT_TASK_STOPPED;
+            child->stop_signal = 19; /* SIGSTOP */
+            child->stop_reported = 0;
+
+            int status = 0;
+            uint32_t uid = 0;
+            /* Use fut_task_waitpid_ex directly since sys_waitpid rejects WNOWAIT */
+            int rc = fut_task_waitpid_ex(cpid, &status, TEST_WNOWAIT | 2 | 1, &uid);
+            if (rc != cpid || !WIFSTOPPED(status)) {
+                fut_printf("[MISC-TEST] ✗ Test 1631: WNOWAIT peek failed rc=%d status=0x%x\n", rc, status);
+                child->state = FUT_TASK_ZOMBIE;
+                child->exit_code = 0;
+                child->term_signal = 0;
+                sys_waitpid(cpid, &status, 0);
+                fut_test_fail(1631);
+            } else {
+                /* Key check: stop_reported should still be 0 after WNOWAIT */
+                if (child->stop_reported != 0) {
+                    fut_printf("[MISC-TEST] ✗ Test 1631: WNOWAIT set stop_reported (should be 0)\n");
+                    child->state = FUT_TASK_ZOMBIE;
+                    child->exit_code = 0;
+                    child->term_signal = 0;
+                    sys_waitpid(cpid, &status, 0);
+                    fut_test_fail(1631);
+                } else {
+                    /* Second wait without WNOWAIT should also succeed */
+                    status = 0;
+                    int rc2 = fut_task_waitpid_ex(cpid, &status, 2 | 1, &uid);
+                    if (rc2 != cpid || !WIFSTOPPED(status)) {
+                        fut_printf("[MISC-TEST] ✗ Test 1631: second wait after WNOWAIT failed rc=%d\n", rc2);
+                        child->state = FUT_TASK_ZOMBIE;
+                        child->exit_code = 0;
+                        child->term_signal = 0;
+                        sys_waitpid(cpid, &status, 0);
+                        fut_test_fail(1631);
+                    } else {
+                        fut_printf("[MISC-TEST] ✓ Test 1631: WNOWAIT preserves stopped child waitable state\n");
+                        fut_test_pass();
+                    }
+                }
+            }
+
+            /* Test 1632: WNOWAIT with WCONTINUED: peek at continued child */
+            child->stop_reported = 0;
+            child->state = FUT_TASK_STOPPED;
+            child->stop_signal = 19;
+            fut_task_do_cont(child);
+            /* After cont: state=RUNNING, stop_signal=-1 */
+
+            status = 0;
+            rc = fut_task_waitpid_ex(cpid, &status, TEST_WNOWAIT | 8 | 1, &uid);
+            if (rc != cpid || !WIFCONTINUED(status)) {
+                fut_printf("[MISC-TEST] ✗ Test 1632: WNOWAIT continued peek failed rc=%d status=0x%x\n", rc, status);
+                child->state = FUT_TASK_ZOMBIE;
+                child->exit_code = 0;
+                child->term_signal = 0;
+                sys_waitpid(cpid, &status, 0);
+                fut_test_fail(1632);
+            } else {
+                /* Key check: stop_signal should still be -1 (not cleared) */
+                if (child->stop_signal != -1) {
+                    fut_printf("[MISC-TEST] ✗ Test 1632: WNOWAIT cleared stop_signal (should be -1)\n");
+                    child->state = FUT_TASK_ZOMBIE;
+                    child->exit_code = 0;
+                    child->term_signal = 0;
+                    sys_waitpid(cpid, &status, 0);
+                    fut_test_fail(1632);
+                } else {
+                    /* Second wait without WNOWAIT should also succeed */
+                    status = 0;
+                    int rc2 = fut_task_waitpid_ex(cpid, &status, 8 | 1, &uid);
+                    if (rc2 != cpid || !WIFCONTINUED(status)) {
+                        fut_printf("[MISC-TEST] ✗ Test 1632: second wait after WNOWAIT failed rc=%d\n", rc2);
+                        child->state = FUT_TASK_ZOMBIE;
+                        child->exit_code = 0;
+                        child->term_signal = 0;
+                        sys_waitpid(cpid, &status, 0);
+                        fut_test_fail(1632);
+                    } else {
+                        fut_printf("[MISC-TEST] ✓ Test 1632: WNOWAIT preserves continued child waitable state\n");
+                        fut_test_pass();
+                    }
+                }
+            }
+
+            /* Clean up: reap child */
+            child->state = FUT_TASK_ZOMBIE;
+            child->exit_code = 0;
+            child->term_signal = 0;
+            status = 0;
+            sys_waitpid(cpid, &status, 0);
+        }
+
+        #undef TEST_WNOWAIT
+    }
+
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");
     fut_printf("[MISC-TEST] ========================================\n");

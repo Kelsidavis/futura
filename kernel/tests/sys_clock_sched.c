@@ -416,36 +416,40 @@ static void test_setpriority(void) {
 }
 
 /* ============================================================
- * Test 9: getpriority rejects negative who with EINVAL
+ * Test 9: getpriority with negative who returns ESRCH (Linux compat)
+ *
+ * Linux does NOT return EINVAL for negative who — it simply doesn't
+ * match any process and returns ESRCH.  Only invalid 'which' gets
+ * EINVAL.  See kernel/sys.c: SYSCALL_DEFINE2(getpriority, ...).
  * ============================================================ */
 static void test_getpriority_negative_who(void) {
-    fut_printf("[CLKSCHED-TEST] Test 9: getpriority(PRIO_PROCESS, -1) -> EINVAL\n");
+    fut_printf("[CLKSCHED-TEST] Test 9: getpriority(PRIO_PROCESS, -1) -> ESRCH\n");
 
     long ret = sys_getpriority(TEST_PRIO_PROCESS, -1);
-    if (ret != -EINVAL) {
-        fut_printf("[CLKSCHED-TEST] ✗ getpriority(-1): expected -EINVAL, got %ld\n", ret);
+    if (ret != -ESRCH) {
+        fut_printf("[CLKSCHED-TEST] ✗ getpriority(-1): expected -ESRCH, got %ld\n", ret);
         fut_test_fail(CLKSCHED_TEST_GETPRIO_NEGWHO);
         return;
     }
 
-    fut_printf("[CLKSCHED-TEST] ✓ getpriority negative who rejected with EINVAL\n");
+    fut_printf("[CLKSCHED-TEST] ✓ getpriority negative who returns ESRCH (Linux compat)\n");
     fut_test_pass();
 }
 
 /* ============================================================
- * Test 10: setpriority rejects negative who with EINVAL
+ * Test 10: setpriority with negative who returns ESRCH (Linux compat)
  * ============================================================ */
 static void test_setpriority_negative_who(void) {
-    fut_printf("[CLKSCHED-TEST] Test 10: setpriority(PRIO_PROCESS, -1, 0) -> EINVAL\n");
+    fut_printf("[CLKSCHED-TEST] Test 10: setpriority(PRIO_PROCESS, -1, 0) -> ESRCH\n");
 
     long ret = sys_setpriority(TEST_PRIO_PROCESS, -1, 0);
-    if (ret != -EINVAL) {
-        fut_printf("[CLKSCHED-TEST] ✗ setpriority(-1,0): expected -EINVAL, got %ld\n", ret);
+    if (ret != -ESRCH) {
+        fut_printf("[CLKSCHED-TEST] ✗ setpriority(-1,0): expected -ESRCH, got %ld\n", ret);
         fut_test_fail(CLKSCHED_TEST_SETPRIO_NEGWHO);
         return;
     }
 
-    fut_printf("[CLKSCHED-TEST] ✓ setpriority negative who rejected with EINVAL\n");
+    fut_printf("[CLKSCHED-TEST] ✓ setpriority negative who returns ESRCH (Linux compat)\n");
     fut_test_pass();
 }
 

@@ -114,11 +114,9 @@ long sys_getpriority(int which, int who) {
             return -EINVAL;
     }
 
-    if (who < 0) {
-        fut_printf("[SCHED] getpriority(%s, who=%d) -> EINVAL (negative who)\n",
-                   which_desc, who);
-        return -EINVAL;
-    }
+    /* Linux does NOT reject negative who — it just won't match any
+     * process/group/user, so the search falls through to ESRCH.
+     * Only 'which' is validated for EINVAL. */
 
     /* Traverse task list without holding the lock (accepting benign races,
      * same pattern used by fut_timer.c).  For PRIO_PROCESS / PRIO_PGRP /
@@ -222,11 +220,8 @@ long sys_setpriority(int which, int who, int prio) {
             return -EINVAL;
     }
 
-    if (who < 0) {
-        fut_printf("[SCHED] setpriority(%s, who=%d, prio=%d) -> EINVAL (negative who)\n",
-                   which_desc, who, prio);
-        return -EINVAL;
-    }
+    /* Linux does NOT reject negative who — search finds no match → ESRCH.
+     * Only 'which' is validated for EINVAL. */
 
     /* Validate priority range */
     if (prio < PRIO_MIN || prio > PRIO_MAX) {

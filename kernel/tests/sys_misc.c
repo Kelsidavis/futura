@@ -52422,6 +52422,37 @@ void fut_misc_test_thread(void *arg) {
         }
     }
 
+    /* ================================================================
+     * Tests 1627-1628: getpriority/setpriority with negative who
+     *
+     * Linux does NOT return EINVAL for negative who values — it just
+     * doesn't match any process and returns ESRCH.  Only invalid 'which'
+     * produces EINVAL.
+     * ================================================================ */
+    {
+        fut_printf("[MISC-TEST] Tests 1627-1628: getpriority/setpriority negative who → ESRCH\n");
+
+        /* Test 1627: getpriority(PRIO_PROCESS, -1) → ESRCH */
+        long ret = sys_getpriority(0 /* PRIO_PROCESS */, -1);
+        if (ret == -ESRCH) {
+            fut_printf("[MISC-TEST] ✓ Test 1627: getpriority(PRIO_PROCESS, -1) → ESRCH\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1627: getpriority(PRIO_PROCESS, -1) → %ld (expected -ESRCH)\n", ret);
+            fut_test_fail(1627);
+        }
+
+        /* Test 1628: setpriority(PRIO_PROCESS, -1, 0) → ESRCH */
+        ret = sys_setpriority(0 /* PRIO_PROCESS */, -1, 0);
+        if (ret == -ESRCH) {
+            fut_printf("[MISC-TEST] ✓ Test 1628: setpriority(PRIO_PROCESS, -1, 0) → ESRCH\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1628: setpriority(PRIO_PROCESS, -1, 0) → %ld (expected -ESRCH)\n", ret);
+            fut_test_fail(1628);
+        }
+    }
+
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");
     fut_printf("[MISC-TEST] ========================================\n");

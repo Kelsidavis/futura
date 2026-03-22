@@ -50165,6 +50165,68 @@ static void test_recv_msg_trunc_flag(void) {
     }
 }
 
+/*
+ * test_peek_trunc_dgram_size - MSG_PEEK|MSG_TRUNC returns actual datagram size
+ *
+ * Tests 1573-1574:
+ *   1573: recv(MSG_PEEK|MSG_TRUNC) on DGRAM socketpair returns actual datagram size
+ *   1574: After MSG_PEEK|MSG_TRUNC, the datagram is still available for normal recv
+ */
+static void test_peek_trunc_dgram_size(void) {
+    fut_printf("[MISC-TEST] Tests 1573-1574: MSG_PEEK|MSG_TRUNC datagram size discovery\n");
+
+    extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+    extern ssize_t sys_write(int fd, const void *buf, size_t count);
+    extern long sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
+                             void *src_addr, unsigned int *addrlen);
+
+    int sv[2] = {-1, -1};
+    long ret = sys_socketpair(1 /* AF_UNIX */, 2 /* SOCK_DGRAM */, 0, sv);
+    if (ret < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1573: socketpair failed: %ld\n", ret);
+        fut_test_fail(1573);
+        fut_test_fail(1574);
+        return;
+    }
+
+    /* Send a 25-byte datagram */
+    char msg[25];
+    for (int i = 0; i < 25; i++) msg[i] = (char)('A' + i % 26);
+    ssize_t nw = sys_write(sv[0], msg, 25);
+    if (nw != 25) {
+        fut_printf("[MISC-TEST] ✗ Test 1573: write returned %ld\n", (long)nw);
+        sys_close(sv[0]); sys_close(sv[1]);
+        fut_test_fail(1573);
+        fut_test_fail(1574);
+        return;
+    }
+
+    /* Test 1573: recv(MSG_PEEK|MSG_TRUNC) with a 1-byte buffer should return 25 */
+    char tiny[1];
+    long nr = sys_recvfrom(sv[1], tiny, 1, 0x22 /* MSG_PEEK(0x2)|MSG_TRUNC(0x20) */, 0, 0);
+    if (nr == 25) {
+        fut_printf("[MISC-TEST] ✓ Test 1573: MSG_PEEK|MSG_TRUNC returned %ld (actual datagram size)\n", nr);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1573: returned %ld (expected 25)\n", nr);
+        fut_test_fail(1573);
+    }
+
+    /* Test 1574: Datagram should still be available (MSG_PEEK doesn't consume) */
+    char full[32];
+    nr = sys_recvfrom(sv[1], full, 32, 0, 0, 0);
+    if (nr == 25 && __builtin_memcmp(full, msg, 25) == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 1574: datagram still available after peek (%ld bytes)\n", nr);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1574: recv returned %ld (expected 25)\n", nr);
+        fut_test_fail(1574);
+    }
+
+    sys_close(sv[0]);
+    sys_close(sv[1]);
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -50903,6 +50965,7 @@ void fut_misc_test_thread(void *arg) {
     test_dgram_socketpair_boundaries();    /* Tests 1567-1568: DGRAM socketpair message boundaries */
     test_dgram_socketpair_trunc();         /* Tests 1569-1570: DGRAM socketpair MSG_TRUNC */
     test_recv_msg_trunc_flag();            /* Tests 1571-1572: recv(MSG_TRUNC) returns actual size */
+    test_peek_trunc_dgram_size();          /* Tests 1573-1574: MSG_PEEK|MSG_TRUNC datagram size */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

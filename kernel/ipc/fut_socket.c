@@ -1486,6 +1486,11 @@ ssize_t fut_socket_recv_peek(fut_socket_t *socket, void *buf, size_t len) {
         uint32_t msglen = (uint32_t)hdr[0] | ((uint32_t)hdr[1] << 8)
                         | ((uint32_t)hdr[2] << 16) | ((uint32_t)hdr[3] << 24);
         to_read = (len < (size_t)msglen) ? len : (size_t)msglen;
+        /* Track full message length for MSG_PEEK|MSG_TRUNC (datagram size discovery) */
+        if (to_read < (size_t)msglen)
+            socket->last_recv_full_msg_len = msglen;
+        else
+            socket->last_recv_full_msg_len = 0;
         /* Copy data from t without advancing recv_tail */
         uint32_t fc = sz - t;
         if (to_read <= fc) {

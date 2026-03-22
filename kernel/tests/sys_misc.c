@@ -14570,7 +14570,7 @@ static void test_fallocate_collapse_range(void) {
             sys_write((int)fd, block, 4096);
 
             /* Collapse the middle block (offset=4096, len=4096) */
-            long r = sys_fallocate((int)fd, 0x04 /* FALLOC_FL_COLLAPSE_RANGE */,
+            long r = sys_fallocate((int)fd, 0x08 /* FALLOC_FL_COLLAPSE_RANGE */,
                                    4096, 4096);
             if (r != 0) {
                 fut_printf("[MISC-TEST] ✗ Test 1401: fallocate(COLLAPSE) = %ld\n", r);
@@ -14603,7 +14603,7 @@ static void test_fallocate_collapse_range(void) {
             fut_printf("[MISC-TEST] ✗ Test 1402: open = %ld\n", fd);
             fut_test_fail(1402);
         } else {
-            long r = sys_fallocate((int)fd, 0x04, 100 /* not aligned */, 4096);
+            long r = sys_fallocate((int)fd, 0x08, 100 /* not aligned */, 4096);
             if (r == -22 /* -EINVAL */) {
                 fut_printf("[MISC-TEST] ✓ Test 1402: COLLAPSE_RANGE(off=100) = -EINVAL\n");
                 fut_test_pass();
@@ -14624,7 +14624,7 @@ static void test_fallocate_collapse_range(void) {
             fut_test_fail(1403);
         } else {
             /* File is now 8192 bytes; collapsing at 8192+4096 should fail */
-            long r = sys_fallocate((int)fd, 0x04, 8192, 4096);
+            long r = sys_fallocate((int)fd, 0x08, 8192, 4096);
             if (r == -22 /* -EINVAL */) {
                 fut_printf("[MISC-TEST] ✓ Test 1403: COLLAPSE_RANGE(past EOF) = -EINVAL\n");
                 fut_test_pass();
@@ -14644,7 +14644,7 @@ static void test_fallocate_collapse_range(void) {
             fut_printf("[MISC-TEST] ✗ Test 1404: open = %ld\n", fd);
             fut_test_fail(1404);
         } else {
-            long r = sys_fallocate((int)fd, 0x04 | 0x01 /* COLLAPSE|KEEP_SIZE */, 0, 4096);
+            long r = sys_fallocate((int)fd, 0x08 | 0x01 /* COLLAPSE|KEEP_SIZE */, 0, 4096);
             if (r == -22 /* -EINVAL */) {
                 fut_printf("[MISC-TEST] ✓ Test 1404: COLLAPSE|KEEP_SIZE = -EINVAL\n");
                 fut_test_pass();
@@ -27920,7 +27920,7 @@ static void test_fallocate_basic(void) {
 
 #define FALLOC_FL_KEEP_SIZE  0x01
 #define FALLOC_FL_PUNCH_HOLE 0x02
-#define FALLOC_FL_ZERO_RANGE 0x08
+#define FALLOC_FL_ZERO_RANGE 0x10
 
     /* --- Test 536: mode=0 extends file size --- */
     fut_printf("[MISC-TEST] Test 536: fallocate(mode=0) extends file size\n");

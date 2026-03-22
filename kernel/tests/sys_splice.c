@@ -362,7 +362,7 @@ static void test_vmsplice(void) {
  * ============================================================ */
 #define FALLOCATE_FL_KEEP_SIZE  0x01
 #define FALLOCATE_FL_PUNCH_HOLE 0x02
-#define FALLOCATE_FL_ZERO_RANGE 0x08
+#define FALLOCATE_FL_ZERO_RANGE 0x10
 #define FALLOCATE_SCRATCH       "/tmp/fallocate_test"
 
 static void test_fallocate(void) {

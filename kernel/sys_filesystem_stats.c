@@ -349,11 +349,11 @@ long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
     if ((file->flags & O_ACCMODE) == O_RDONLY)
         return -EBADF;
 
-    /* Validate mode flags */
+    /* Validate mode flags (values must match Linux uapi/linux/falloc.h) */
     const int FALLOC_FL_KEEP_SIZE = 0x01;
     const int FALLOC_FL_PUNCH_HOLE = 0x02;
-    const int FALLOC_FL_COLLAPSE_RANGE = 0x04;
-    const int FALLOC_FL_ZERO_RANGE = 0x08;
+    const int FALLOC_FL_COLLAPSE_RANGE = 0x08;
+    const int FALLOC_FL_ZERO_RANGE = 0x10;
     const int FALLOC_FL_INSERT_RANGE = 0x20;
     const int VALID_FLAGS = FALLOC_FL_KEEP_SIZE | FALLOC_FL_PUNCH_HOLE |
                             FALLOC_FL_COLLAPSE_RANGE | FALLOC_FL_ZERO_RANGE |

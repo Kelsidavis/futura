@@ -52948,6 +52948,44 @@ void fut_misc_test_thread(void *arg) {
         }
     }
 
+    /*
+     * Test 1642: brk() enforces RLIMIT_AS (address-space limit).
+     * Set a small RLIMIT_AS, attempt to expand brk beyond it, expect ENOMEM.
+     */
+    {
+        extern long sys_brk(uintptr_t new_break);
+
+        /* Save current RLIMIT_AS */
+        struct { uint64_t cur; uint64_t max; } old_as, new_as;
+        sys_prlimit64(0, 9 /* RLIMIT_AS */, NULL, &old_as);
+
+        /* Query current break */
+        long cur_brk = sys_brk(0);
+
+        /* Set RLIMIT_AS to current_vsize + 4096 (barely any room to grow) */
+        new_as.cur = (uint64_t)cur_brk + 4096;
+        new_as.max = old_as.max;
+        sys_prlimit64(0, 9, &new_as, NULL);
+
+        /* Try expanding brk by 1MB — should fail with ENOMEM */
+        long big_brk = sys_brk((uintptr_t)cur_brk + 1048576);
+
+        /* Restore original RLIMIT_AS */
+        sys_prlimit64(0, 9, &old_as, NULL);
+
+        if (big_brk == -ENOMEM) {
+            fut_printf("[MISC-TEST] ✓ Test 1642: brk rejects expansion exceeding RLIMIT_AS\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1642: brk returned %ld (expected -ENOMEM=%d)\n",
+                       big_brk, -ENOMEM);
+            fut_test_fail(1642);
+            /* Shrink back if brk succeeded */
+            if (big_brk > 0)
+                sys_brk((uintptr_t)cur_brk);
+        }
+    }
+
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");
     fut_printf("[MISC-TEST] ========================================\n");

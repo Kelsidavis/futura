@@ -786,12 +786,17 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
          * (F_ADD_SEALS and F_SETPIPE_SZ share value 1033, disambiguated by fd type.) */
         if (file->flags & FUT_F_SEALING) goto do_seal;
         if (file->chr_ops && !file->vnode) {
-            /* Get pipe_buffer from private data */
-            struct pipe_buffer_hdr {
+            /* Get pipe_buffer from private data — struct must match sys_pipe.c layout */
+            struct pipe_buffer_full {
                 uint8_t *data; size_t size; size_t read_pos;
                 size_t write_pos; size_t count;
+                uint32_t refcount;
+                bool write_closed; bool read_closed;
+                bool read_nonblock; bool write_nonblock;
+                fut_waitq_t read_waitq; fut_waitq_t write_waitq;
+                fut_spinlock_t lock;
             };
-            struct pipe_buffer_hdr *pipe = (struct pipe_buffer_hdr *)file->chr_private;
+            struct pipe_buffer_full *pipe = (struct pipe_buffer_full *)file->chr_private;
             if (!pipe) return -EBADF;
 
             /* Round requested size to power of 2, minimum 4096 (PIPE_BUF) */
@@ -808,26 +813,40 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
             if (new_size < pipe->count)
                 return -EBUSY;
 
-            /* Allocate new buffer and linearize existing data */
+            /* Allocate new buffer outside the lock (fut_malloc may block) */
             uint8_t *new_data = fut_malloc(new_size);
             if (!new_data) return -ENOMEM;
 
+            /* Hold pipe lock while swapping buffers to prevent concurrent
+             * read/write from accessing freed memory (use-after-free). */
+            fut_spinlock_acquire(&pipe->lock);
+
+            /* Re-check under lock — count may have changed */
+            if (new_size < pipe->count) {
+                fut_spinlock_release(&pipe->lock);
+                fut_free(new_data);
+                return -EBUSY;
+            }
+
+            uint8_t *old_data = pipe->data;
             if (pipe->count > 0) {
                 /* Copy from read_pos, wrapping around if needed */
                 size_t first = pipe->size - pipe->read_pos;
                 if (first > pipe->count) first = pipe->count;
                 for (size_t i = 0; i < first; i++)
-                    new_data[i] = pipe->data[pipe->read_pos + i];
+                    new_data[i] = old_data[pipe->read_pos + i];
                 size_t second = pipe->count - first;
                 for (size_t i = 0; i < second; i++)
-                    new_data[first + i] = pipe->data[i];
+                    new_data[first + i] = old_data[i];
             }
 
-            fut_free(pipe->data);
             pipe->data = new_data;
             pipe->size = new_size;
             pipe->read_pos = 0;
             pipe->write_pos = pipe->count;
+
+            fut_spinlock_release(&pipe->lock);
+            fut_free(old_data);
 
             return (long)new_size;
         }

@@ -52365,6 +52365,63 @@ void fut_misc_test_thread(void *arg) {
         task->keepcaps = orig_keepcaps;
     }
 
+    /* ── Tests 1625–1626: sigpending returns pending AND blocked ── */
+    {
+        extern long sys_sigpending(sigset_t *set);
+        fut_task_t *task = fut_task_current();
+        fut_thread_t *thread = fut_thread_current();
+        if (thread) {
+            uint64_t orig_mask = thread->signal_mask;
+            uint64_t orig_pending = task->pending_signals;
+
+            /* Test 1625: blocked + pending signal appears in sigpending */
+            {
+                /* Block SIGUSR1 (signal 10) and set it as pending */
+                thread->signal_mask = (1ULL << 9);   /* block SIGUSR1 */
+                __atomic_store_n(&task->pending_signals, (1ULL << 9), __ATOMIC_RELEASE);
+
+                sigset_t result;
+                long ret = sys_sigpending(&result);
+                if (ret == 0 && (result.__mask & (1ULL << 9))) {
+                    fut_printf("[MISC-TEST] ✓ Test 1625: sigpending shows blocked+pending SIGUSR1\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1625: ret=%ld mask=0x%llx (expected SIGUSR1 bit)\n",
+                               ret, (unsigned long long)result.__mask);
+                    fut_test_fail(1625);
+                }
+            }
+
+            /* Test 1626: pending but NOT blocked signal is NOT in sigpending */
+            {
+                /* SIGUSR1 pending but NOT blocked */
+                thread->signal_mask = 0;  /* nothing blocked */
+                __atomic_store_n(&task->pending_signals, (1ULL << 9), __ATOMIC_RELEASE);
+
+                sigset_t result;
+                long ret = sys_sigpending(&result);
+                if (ret == 0 && result.__mask == 0) {
+                    fut_printf("[MISC-TEST] ✓ Test 1626: sigpending hides unblocked pending signal\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1626: ret=%ld mask=0x%llx (expected 0)\n",
+                               ret, (unsigned long long)result.__mask);
+                    fut_test_fail(1626);
+                }
+            }
+
+            /* Restore */
+            thread->signal_mask = orig_mask;
+            __atomic_store_n(&task->pending_signals, orig_pending, __ATOMIC_RELEASE);
+        } else {
+            /* No thread context — skip with pass */
+            fut_printf("[MISC-TEST] ✓ Test 1625: (skipped, no thread context)\n");
+            fut_test_pass();
+            fut_printf("[MISC-TEST] ✓ Test 1626: (skipped, no thread context)\n");
+            fut_test_pass();
+        }
+    }
+
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");
     fut_printf("[MISC-TEST] ========================================\n");

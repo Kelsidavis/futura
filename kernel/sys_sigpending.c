@@ -50,9 +50,9 @@ static inline int sigpend_copy_to_user(void *dst, const void *src, size_t n) {
  *   - -EFAULT if set points to invalid memory
  *
  * Behavior:
- *   - Returns pending_signals AND (NOT signal_mask)
- *   - Only signals that are both pending AND unblocked are returned
- *   - Signals that are pending but blocked are NOT returned
+ *   - Returns pending_signals AND signal_mask (blocked)
+ *   - Only signals that are both pending AND blocked are returned
+ *   - Signals that are pending but unblocked are delivered immediately
  *   - Does not modify any signal state
  *   - Atomic read of pending signal state
  *
@@ -92,7 +92,7 @@ static inline int sigpend_copy_to_user(void *dst, const void *src, size_t n) {
  *   1. Signal is sent to process
  *   2. If blocked, added to pending_signals
  *   3. If unblocked, delivered to handler immediately
- *   4. sigpending() returns pending AND (NOT blocked)
+ *   4. sigpending() returns pending AND blocked
  *   5. Unblocking signal triggers delivery of pending
  *
  * Pending signal accumulation:
@@ -128,15 +128,20 @@ long sys_sigpending(sigset_t *set) {
         return -EFAULT;
     }
 
-    /* POSIX: sigpending returns ALL pending signals, including blocked ones.
-     * Include both task-wide (kill) and per-thread (tgkill) pending. */
+    /* POSIX/Linux: sigpending returns signals that are both pending AND blocked.
+     * Include both task-wide (kill) and per-thread (tgkill) pending signals,
+     * then intersect with the thread's blocked signal mask. */
     sigset_t pending;
     uint64_t cur_pending = __atomic_load_n(&current->pending_signals, __ATOMIC_ACQUIRE);
     /* OR in per-thread directed signals for the calling thread */
     fut_thread_t *cur_thread = fut_thread_current();
-    if (cur_thread)
+    uint64_t blocked_mask = 0;
+    if (cur_thread) {
         cur_pending |= __atomic_load_n(&cur_thread->thread_pending_signals, __ATOMIC_ACQUIRE);
-    pending.__mask = cur_pending;
+        blocked_mask = __atomic_load_n(&cur_thread->signal_mask, __ATOMIC_ACQUIRE);
+    }
+    /* Return only signals that are pending AND blocked (Linux do_sigpending) */
+    pending.__mask = cur_pending & blocked_mask;
 
     /* Copy result to user space */
     if (sigpend_copy_to_user(set, &pending, sizeof(sigset_t)) != 0) {

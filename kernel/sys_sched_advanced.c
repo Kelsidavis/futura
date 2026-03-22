@@ -27,6 +27,9 @@
 
 /* SCHED_* constants and struct sched_param provided by sched.h */
 
+#define CAP_SYS_NICE_BIT 23
+#define HAS_CAP_SYS_NICE(t) ((t)->cap_effective & (1ULL << CAP_SYS_NICE_BIT))
+
 /* Kernel-pointer-safe copy helpers: if the pointer is a kernel virtual
  * address, bypass fut_copy_from/to_user (which assume user pages).     */
 static inline int sched_copy_from_user(void *dst, const void *src, size_t n) {
@@ -102,7 +105,7 @@ long sys_sched_setparam(int pid, const struct sched_param *param) {
     /* RLIMIT_RTPRIO enforcement for setparam:
      * If current thread is already on an RT policy, RLIMIT_RTPRIO limits
      * the priority that can be set. Root is exempt. */
-    if (task->uid != 0 && kparam.sched_priority > 0) {
+    if (task->uid != 0 && !HAS_CAP_SYS_NICE(task) && kparam.sched_priority > 0) {
         /* Only enforce if current or target policy is RT — checked after lookup */
     }
 
@@ -117,7 +120,7 @@ long sys_sched_setparam(int pid, const struct sched_param *param) {
     }
 
     /* Enforce RLIMIT_RTPRIO for RT policies */
-    if (task->uid != 0 && target_thread &&
+    if (task->uid != 0 && !HAS_CAP_SYS_NICE(task) && target_thread &&
         (target_thread->sched_policy == SCHED_FIFO ||
          target_thread->sched_policy == SCHED_RR)) {
         uint64_t rtprio_limit = task->rlimits[14 /* RLIMIT_RTPRIO */].rlim_cur;
@@ -261,7 +264,8 @@ long sys_sched_setscheduler(int pid, int policy, const struct sched_param *param
     /* RLIMIT_RTPRIO enforcement (Linux semantics):
      * Unprivileged processes may only set RT priority up to RLIMIT_RTPRIO.
      * Root (uid=0) is exempt. */
-    if (task->uid != 0 && (policy == SCHED_FIFO || policy == SCHED_RR)) {
+    if (task->uid != 0 && !HAS_CAP_SYS_NICE(task) &&
+        (policy == SCHED_FIFO || policy == SCHED_RR)) {
         uint64_t rtprio_limit = task->rlimits[14 /* RLIMIT_RTPRIO */].rlim_cur;
         if ((uint64_t)kparam.sched_priority > rtprio_limit) {
             fut_printf("[SCHED] sched_setscheduler(pid=%d, policy=%s, priority=%d) -> EPERM "

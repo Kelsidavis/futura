@@ -1506,8 +1506,10 @@ long sys_get_robust_list(int pid, struct robust_list_head **head_ptr,
         if (!target_task) {
             return -ESRCH;
         }
-        /* Permission check: only root or same-UID may query another task */
-        if (task->uid != 0 && task->uid != target_task->uid) {
+        /* Permission check: only root, CAP_SYS_PTRACE, or same-UID may query another task */
+        if (task->uid != 0 &&
+            !(task->cap_effective & (1ULL << 19 /* CAP_SYS_PTRACE */)) &&
+            task->uid != target_task->uid) {
             return -EPERM;
         }
         thread = target_task->threads;

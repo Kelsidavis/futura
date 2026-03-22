@@ -109,7 +109,9 @@ long sys_process_madvise(int pidfd, const void *iovec_ptr, unsigned long vlen,
     fut_task_t *caller = fut_task_current();
     if (!caller)
         return -ESRCH;
-    if (caller->uid != 0 && caller->uid != target->uid)
+    if (caller->uid != 0 &&
+        !(caller->cap_effective & (1ULL << 19 /* CAP_SYS_PTRACE */)) &&
+        caller->uid != target->uid)
         return -EPERM;
 
     /* Validate vlen (Linux caps at UIO_MAXIOV=1024) */

@@ -355,13 +355,14 @@ long sys_seteuid(uint32_t euid) {
     const char *old_euid_category = categorize_id(task->uid);
     const char *ruid_category = categorize_id(task->ruid);
 
-    int is_privileged = (task->uid == 0);
+    int is_privileged = (task->uid == 0) ||
+                        (task->cap_effective & (1ULL << 7 /* CAP_SETUID */));
 
     if (is_privileged) {
         task->uid = euid;
         return 0;
     } else {
-        if (euid == task->ruid) {
+        if (euid == task->ruid || euid == task->suid) {
             task->uid = euid;
             return 0;
         } else {
@@ -485,13 +486,14 @@ long sys_setegid(uint32_t egid) {
     const char *old_egid_category = categorize_id(task->gid);
     const char *rgid_category = categorize_id(task->rgid);
 
-    int is_privileged = (task->gid == 0);
+    int is_privileged = (task->gid == 0) ||
+                        (task->cap_effective & (1ULL << 6 /* CAP_SETGID */));
 
     if (is_privileged) {
         task->gid = egid;
         return 0;
     } else {
-        if (egid == task->rgid) {
+        if (egid == task->rgid || egid == task->sgid) {
             task->gid = egid;
             return 0;
         } else {

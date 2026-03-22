@@ -55,6 +55,7 @@ struct pipe_buffer {
     fut_waitq_t write_waitq; /* Writers waiting for space */
     fut_spinlock_t lock;     /* Protects pipe state */
     fut_waitq_t *epoll_notify; /* Wakes epoll_wait on data/HUP */
+    struct fut_file *read_end_file; /* Read-end file for O_ASYNC/SIGIO delivery */
 };
 
 /* File operations for pipe read/write ends */
@@ -131,6 +132,7 @@ static struct pipe_buffer *pipe_buffer_create(void) {
     pipe->read_nonblock = false;
     pipe->write_nonblock = false;
     pipe->epoll_notify = NULL;
+    pipe->read_end_file = NULL;
 
     /* Initialize wait queues and lock */
     fut_waitq_init(&pipe->read_waitq);
@@ -321,6 +323,21 @@ static ssize_t pipe_write(void *inode, void *priv, const void *buf, size_t len, 
     if (pipe->epoll_notify)
         fut_waitq_wake_one(pipe->epoll_notify);
 
+    /* O_ASYNC: send SIGIO (or F_SETSIG signal) to the read-end owner when
+     * data becomes available.  This implements the FASYNC/SIGIO mechanism
+     * that Linux uses for async I/O notification on pipes. */
+    if (pipe->read_end_file &&
+        (pipe->read_end_file->flags & O_ASYNC) &&
+        pipe->read_end_file->owner_pid > 0) {
+        int sig = pipe->read_end_file->async_sig ? pipe->read_end_file->async_sig : SIGIO;
+        extern fut_task_t *fut_task_by_pid(uint64_t pid);
+        fut_task_t *owner = fut_task_by_pid((uint64_t)pipe->read_end_file->owner_pid);
+        if (owner) {
+            extern int fut_signal_send(struct fut_task *t, int sig);
+            fut_signal_send(owner, sig);
+        }
+    }
+
     return (ssize_t)bytes_written;
 }
 
@@ -337,6 +354,7 @@ static int pipe_release_read(void *inode, void *priv) {
 
     fut_spinlock_acquire(&pipe->lock);
     pipe->read_closed = true;
+    pipe->read_end_file = NULL;  /* Prevent stale SIGIO delivery */
     pipe->refcount--;
     uint32_t remaining = pipe->refcount;
     fut_spinlock_release(&pipe->lock);
@@ -589,6 +607,8 @@ long sys_pipe(int pipefd[2]) {
         struct fut_file *wfile = vfs_get_file(write_fd);
         if (rfile) rfile->flags = O_RDONLY;
         if (wfile) wfile->flags = O_WRONLY;
+        /* Store read-end file pointer for O_ASYNC/SIGIO delivery */
+        pipe->read_end_file = rfile;
     }
 
     /* Copy file descriptors to userspace safely */
@@ -703,6 +723,8 @@ long sys_pipe2(int pipefd[2], int flags) {
         struct fut_file *wfile = vfs_get_file(write_fd);
         if (rfile) rfile->flags = O_RDONLY;
         if (wfile) wfile->flags = O_WRONLY;
+        /* Store read-end file pointer for O_ASYNC/SIGIO delivery */
+        pipe->read_end_file = rfile;
     }
 
     /* Apply O_NONBLOCK and O_CLOEXEC directly on the FD structures

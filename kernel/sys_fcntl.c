@@ -1014,8 +1014,8 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
     case F_SETSIG: {
         /* F_SETSIG (Linux): set signal sent when async I/O is ready.
          * arg == 0 → use SIGIO (default); any other real-time or standard signal
-         * can be specified.  Store for F_GETSIG; actual delivery via async I/O
-         * is not yet implemented in Futura. */
+         * can be specified.  Delivery occurs in pipe_write() when O_ASYNC is set
+         * and owner_pid is registered via F_SETOWN. */
         int sig = (int)(uint64_t)local_arg;
         if (sig < 0 || sig > 64)
             return -EINVAL;

@@ -53471,6 +53471,136 @@ void fut_misc_test_thread(void *arg) {
         }
     }
 
+    /***********************************************************************
+     * Test 1652: O_ASYNC/SIGIO delivery on pipe write                      *
+     ***********************************************************************/
+    fut_printf("[MISC-TEST] Test 1652: O_ASYNC SIGIO delivery on pipe write\n");
+    {
+        extern long sys_pipe(int pipefd[2]);
+        extern long sys_fcntl(int fd, int cmd, uint64_t arg);
+        extern long sys_close(int fd);
+
+        int p[2] = {-1, -1};
+        long pr = sys_pipe(p);
+        if (pr != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1652: pipe() failed %ld\n", pr);
+            fut_test_fail(1652);
+        } else {
+            fut_task_t *me = fut_task_current();
+            if (!me) {
+                fut_printf("[MISC-TEST] ✗ Test 1652: no current task\n");
+                fut_test_fail(1652);
+                sys_close(p[0]);
+                sys_close(p[1]);
+            } else {
+                /* Block SIGIO (signal 29) so it stays pending.
+                 * Signal N uses bit (N-1) in the signal mask/pending bitmaps. */
+                uint64_t old_mask = me->signal_mask;
+                me->signal_mask |= (1ULL << (29 - 1));
+
+                /* Clear any stale SIGIO pending bit */
+                __atomic_and_fetch(&me->pending_signals, ~(1ULL << (29 - 1)), __ATOMIC_SEQ_CST);
+
+                /* Set O_ASYNC on read end */
+                #define F_SETFL_1652 4
+                #define F_SETOWN_1652 8
+                #ifndef O_ASYNC
+                #define O_ASYNC 020000
+                #endif
+                sys_fcntl(p[0], F_SETFL_1652, (uint64_t)O_ASYNC);
+
+                /* Set owner to current PID */
+                sys_fcntl(p[0], F_SETOWN_1652, (uint64_t)me->pid);
+
+                /* Write to the write end — should trigger SIGIO on the read-end owner */
+                extern ssize_t fut_vfs_write(int fd, const void *buf, size_t size);
+                char msg[] = "async";
+                fut_vfs_write(p[1], msg, 5);
+
+                /* Check that SIGIO is now pending */
+                uint64_t pending = __atomic_load_n(&me->pending_signals, __ATOMIC_ACQUIRE);
+                if (pending & (1ULL << (29 - 1))) {
+                    fut_printf("[MISC-TEST] ✓ Test 1652: SIGIO pending after pipe write with O_ASYNC\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1652: SIGIO not pending (pending=0x%lx)\n", pending);
+                    fut_test_fail(1652);
+                }
+
+                /* Restore signal mask and clear pending SIGIO */
+                me->signal_mask = old_mask;
+                __atomic_and_fetch(&me->pending_signals, ~(1ULL << (29 - 1)), __ATOMIC_SEQ_CST);
+                sys_close(p[0]);
+                sys_close(p[1]);
+            }
+        }
+    }
+
+    /***********************************************************************
+     * Test 1653: F_SETSIG overrides SIGIO with custom signal               *
+     ***********************************************************************/
+    fut_printf("[MISC-TEST] Test 1653: F_SETSIG custom signal on pipe O_ASYNC\n");
+    {
+        extern long sys_pipe(int pipefd[2]);
+        extern long sys_fcntl(int fd, int cmd, uint64_t arg);
+        extern long sys_close(int fd);
+
+        int p[2] = {-1, -1};
+        long pr = sys_pipe(p);
+        if (pr != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1653: pipe() failed %ld\n", pr);
+            fut_test_fail(1653);
+        } else {
+            fut_task_t *me = fut_task_current();
+            if (!me) {
+                fut_printf("[MISC-TEST] ✗ Test 1653: no current task\n");
+                fut_test_fail(1653);
+                sys_close(p[0]);
+                sys_close(p[1]);
+            } else {
+                /* Use SIGUSR1 (signal 10) instead of SIGIO */
+                #define F_SETSIG_1653 10
+                #define F_SETFL_1653 4
+                #define F_SETOWN_1653 8
+
+                /* Block SIGUSR1 (signal 10) so it stays pending.
+                 * Signal N uses bit (N-1). */
+                uint64_t old_mask = me->signal_mask;
+                me->signal_mask |= (1ULL << (10 - 1));
+                __atomic_and_fetch(&me->pending_signals, ~(1ULL << (10 - 1)), __ATOMIC_SEQ_CST);
+
+                /* Set F_SETSIG to SIGUSR1, O_ASYNC, and owner PID */
+                sys_fcntl(p[0], F_SETSIG_1653, 10 /* SIGUSR1 */);
+                sys_fcntl(p[0], F_SETFL_1653, (uint64_t)O_ASYNC);
+                sys_fcntl(p[0], F_SETOWN_1653, (uint64_t)me->pid);
+
+                /* Write to pipe */
+                extern ssize_t fut_vfs_write(int fd, const void *buf, size_t size);
+                char msg[] = "sig";
+                fut_vfs_write(p[1], msg, 3);
+
+                /* Check SIGUSR1 is pending (not SIGIO) */
+                uint64_t pending = __atomic_load_n(&me->pending_signals, __ATOMIC_ACQUIRE);
+                bool usr1_pending = (pending & (1ULL << (10 - 1))) != 0;
+                bool sigio_pending = (pending & (1ULL << (29 - 1))) != 0;
+                if (usr1_pending && !sigio_pending) {
+                    fut_printf("[MISC-TEST] ✓ Test 1653: SIGUSR1 pending (not SIGIO) with F_SETSIG\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1653: pending=0x%lx (SIGUSR1=%d, SIGIO=%d)\n",
+                               pending, usr1_pending, sigio_pending);
+                    fut_test_fail(1653);
+                }
+
+                /* Restore */
+                me->signal_mask = old_mask;
+                __atomic_and_fetch(&me->pending_signals, ~((1ULL << (10 - 1)) | (1ULL << (29 - 1))), __ATOMIC_SEQ_CST);
+                sys_close(p[0]);
+                sys_close(p[1]);
+            }
+        }
+    }
+
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");
     fut_printf("[MISC-TEST] ========================================\n");

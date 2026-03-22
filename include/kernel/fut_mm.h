@@ -100,6 +100,8 @@ void *fut_mm_map_file(fut_mm_t *mm, struct fut_vnode *vnode, uintptr_t hint,
                        size_t len, int prot, int flags, uint64_t file_offset);
 int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len);
 int fut_mm_mprotect(fut_mm_t *mm, uintptr_t start, uintptr_t end, int prot);
+void vma_try_merge_neighbors(fut_mm_t *mm, struct fut_vma *vma);
+void fut_mm_merge_adjacent_vmas(fut_mm_t *mm);
 
 /* VMA management for fork() */
 int fut_mm_add_vma(fut_mm_t *mm, uintptr_t start, uintptr_t end, int prot, int flags);

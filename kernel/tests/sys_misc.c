@@ -50816,6 +50816,94 @@ static void test_mprotect_vma_split(void) {
     sys_munmap((void *)(uintptr_t)addr3, 4096 * 3);
 }
 
+/* ============================================================
+ * Test 1591: mprotect VMA merge after restoring original prot
+ * ============================================================
+ * Split a 3-page RW region by mprotecting the middle page to RO,
+ * then mprotect it back to RW. Verify the 3 VMAs merge back to 1.
+ */
+static void test_mprotect_vma_merge(void) {
+    extern long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset);
+    extern long sys_munmap(void *addr, size_t len);
+    extern long sys_mprotect(void *addr, size_t len, int prot);
+
+    fut_printf("[MISC-TEST] Test 1591: mprotect VMA merge after restoring prot\n");
+
+    /* Map 3 contiguous pages as RW */
+    long addr = sys_mmap(NULL, 4096 * 3, 3 /* PROT_RW */,
+                          0x02 | 0x20 /* MAP_PRIVATE|MAP_ANONYMOUS */, -1, 0);
+    if (addr < 0) {
+        fut_printf("[MISC-TEST] ✗ mmap(3 pages) failed: %ld\n", addr);
+        fut_test_fail(1591);
+        return;
+    }
+
+    /* Touch all pages */
+    *(volatile int *)(uintptr_t)addr = 1;
+    *(volatile int *)(uintptr_t)(addr + 4096) = 2;
+    *(volatile int *)(uintptr_t)(addr + 8192) = 3;
+
+    /* Split: mprotect middle page to PROT_READ */
+    sys_mprotect((void *)(uintptr_t)(addr + 4096), 4096, 1 /* PROT_READ */);
+
+    /* Restore: mprotect middle page back to PROT_READ|PROT_WRITE */
+    sys_mprotect((void *)(uintptr_t)(addr + 4096), 4096, 3 /* PROT_RW */);
+
+    /* Count VMAs in /proc/self/maps covering our range */
+    int fd = fut_vfs_open("/proc/self/maps", 0, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1591: open /proc/self/maps failed\n");
+        sys_munmap((void *)(uintptr_t)addr, 4096 * 3);
+        fut_test_fail(1591);
+        return;
+    }
+    char buf[4096];
+    long total = 0;
+    while (total < (long)sizeof(buf) - 1) {
+        long rd = fut_vfs_read(fd, buf + total, sizeof(buf) - 1 - total);
+        if (rd <= 0) break;
+        total += rd;
+    }
+    fut_vfs_close(fd);
+    buf[total] = '\0';
+
+    /* Build hex for start addr and start+4096 and start+8192 */
+    unsigned long a0 = (unsigned long)addr;
+    unsigned long a1 = a0 + 4096;
+    unsigned long a2 = a0 + 8192;
+    char h0[17], h1[17], h2[17];
+    int n0 = 0, n1 = 0, n2 = 0;
+    { unsigned long w = a0; do { h0[n0++] = "0123456789abcdef"[w & 0xf]; w >>= 4; } while (w); while (n0 < 8) h0[n0++] = '0'; }
+    { unsigned long w = a1; do { h1[n1++] = "0123456789abcdef"[w & 0xf]; w >>= 4; } while (w); while (n1 < 8) h1[n1++] = '0'; }
+    { unsigned long w = a2; do { h2[n2++] = "0123456789abcdef"[w & 0xf]; w >>= 4; } while (w); while (n2 < 8) h2[n2++] = '0'; }
+    for (int i = 0; i < n0/2; i++) { char t = h0[i]; h0[i] = h0[n0-1-i]; h0[n0-1-i] = t; } h0[n0] = '\0';
+    for (int i = 0; i < n1/2; i++) { char t = h1[i]; h1[i] = h1[n1-1-i]; h1[n1-1-i] = t; } h1[n1] = '\0';
+    for (int i = 0; i < n2/2; i++) { char t = h2[i]; h2[i] = h2[n2-1-i]; h2[n2-1-i] = t; } h2[n2] = '\0';
+
+    /* Count entries starting with a0, a1, or a2 */
+    int vma_count = 0;
+    char *ln = buf;
+    while (*ln) {
+        int m0 = 1, m1 = 1, m2 = 1;
+        for (int i = 0; i < n0 && ln[i]; i++) if (ln[i] != h0[i]) m0 = 0;
+        for (int i = 0; i < n1 && ln[i]; i++) if (ln[i] != h1[i]) m1 = 0;
+        for (int i = 0; i < n2 && ln[i]; i++) if (ln[i] != h2[i]) m2 = 0;
+        if ((m0 || m1 || m2) && ln[n0] == '-') vma_count++;
+        while (*ln && *ln != '\n') ln++;
+        if (*ln == '\n') ln++;
+    }
+
+    fut_printf("[MISC-TEST] Test 1591: after restore, found %d VMAs (expect 1 = merged)\n", vma_count);
+    if (vma_count == 1) {
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1591: expected 1 merged VMA, got %d\n", vma_count);
+        fut_test_fail(1591);
+    }
+
+    sys_munmap((void *)(uintptr_t)addr, 4096 * 3);
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -51561,6 +51649,7 @@ void fut_misc_test_thread(void *arg) {
     test_epoll_rdhup_vs_hup();            /* Tests 1581-1584: EPOLLRDHUP half-close vs EPOLLHUP full close */
     test_map_shared_procfs();             /* Tests 1585-1587: MAP_SHARED shows 's' in /proc/self/maps */
     test_mprotect_vma_split();            /* Tests 1588-1590: mprotect VMA splitting */
+    test_mprotect_vma_merge();            /* Test 1591: mprotect VMA merge after restoring prot */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

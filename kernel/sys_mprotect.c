@@ -296,6 +296,10 @@ long sys_mprotect(void *addr, size_t len, int prot) {
         if (!found_overlap)
             return -ENOMEM;
 
+        /* Merge adjacent VMAs that now have identical attributes.
+         * This prevents VMA fragmentation from repeated split+mprotect cycles. */
+        fut_mm_merge_adjacent_vmas(mm);
+
         /* Phase 4: Update PTEs for present pages in [start, end).
          * Re-maps each demand-paged page with PTE flags derived from prot
          * so hardware enforces the new protection immediately.

@@ -50,7 +50,7 @@ static fut_mm_t *active_mm = NULL;
 /* Forward declarations for VMA management - defined in platform-independent section */
 static bool vma_can_merge(const fut_vma_t *vma1, const fut_vma_t *vma2);
 static fut_vma_t *vma_merge(fut_vma_t *vma1, fut_vma_t *vma2);
-static void vma_try_merge_neighbors(fut_mm_t *mm, fut_vma_t *vma);
+void vma_try_merge_neighbors(fut_mm_t *mm, fut_vma_t *vma);
 static void vma_insert_sorted(fut_mm_t *mm, fut_vma_t *vma);
 
 /* Check if [start, end) overlaps any existing VMA */
@@ -1671,7 +1671,7 @@ static fut_vma_t *vma_merge(fut_vma_t *vma1, fut_vma_t *vma2) {
 /**
  * Try to merge VMA with neighbors (left/right) after modifications.
  */
-static void vma_try_merge_neighbors(fut_mm_t *mm, fut_vma_t *vma) {
+void vma_try_merge_neighbors(fut_mm_t *mm, fut_vma_t *vma) {
     if (!mm || !vma) {
         return;
     }
@@ -1690,6 +1690,23 @@ static void vma_try_merge_neighbors(fut_mm_t *mm, fut_vma_t *vma) {
 
         if (prev && vma_can_merge(prev, vma)) {
             vma_merge(prev, vma);
+        }
+    }
+}
+
+/**
+ * Merge all adjacent compatible VMAs in the mm's VMA list.
+ * Uses a simple forward pass, restarting only when a merge occurs.
+ */
+void fut_mm_merge_adjacent_vmas(fut_mm_t *mm) {
+    if (!mm || !mm->vma_list) return;
+    fut_vma_t *curr = mm->vma_list;
+    while (curr && curr->next) {
+        if (vma_can_merge(curr, curr->next)) {
+            vma_merge(curr, curr->next);
+            /* Don't advance — try merging with new next */
+        } else {
+            curr = curr->next;
         }
     }
 }

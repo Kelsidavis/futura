@@ -49861,6 +49861,75 @@ static void test_accepted_socket_defaults(void) {
     sys_unlink(addr.path);
 }
 
+/**
+ * test_seqpacket_msg_eor - recvmsg on SOCK_SEQPACKET sets MSG_EOR
+ *
+ * Tests 1565-1566:
+ *   1565: recvmsg on SEQPACKET socketpair receives data correctly
+ *   1566: recvmsg msg_flags includes MSG_EOR for SEQPACKET
+ */
+static void test_seqpacket_msg_eor(void) {
+    fut_printf("[MISC-TEST] Tests 1565-1566: SEQPACKET MSG_EOR\n");
+
+    extern ssize_t sys_write(int fd, const void *buf, size_t count);
+    extern ssize_t sys_recvmsg(int sockfd, struct test_msghdr *msg, int flags);
+
+    int sv[2] = {-1, -1};
+    long ret = sys_socketpair(1 /* AF_UNIX */, 5 /* SOCK_SEQPACKET */, 0, sv);
+    if (ret < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1565: socketpair(SEQPACKET) failed: %ld\n", ret);
+        fut_test_fail(1565);
+        fut_test_fail(1566);
+        return;
+    }
+
+    /* Send a message via write (simpler than sendmsg for this test) */
+    const char *msg_data = "seqpkt";
+    ssize_t nw = sys_write(sv[0], msg_data, 6);
+    if (nw != 6) {
+        fut_printf("[MISC-TEST] ✗ Test 1565: write returned %ld\n", (long)nw);
+        fut_test_fail(1565);
+        fut_test_fail(1566);
+        sys_close(sv[0]);
+        sys_close(sv[1]);
+        return;
+    }
+
+    /* Receive via recvmsg to check msg_flags */
+    char rbuf[32];
+    struct iovec riov;
+    riov.iov_base = rbuf;
+    riov.iov_len = sizeof(rbuf);
+
+    struct test_msghdr rmsg;
+    __builtin_memset(&rmsg, 0, sizeof(rmsg));
+    rmsg.msg_iov = &riov;
+    rmsg.msg_iovlen = 1;
+
+    long nr = sys_recvmsg(sv[1], &rmsg, 0);
+
+    /* Test 1565: received correct data */
+    if (nr == 6 && __builtin_memcmp(rbuf, "seqpkt", 6) == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 1565: SEQPACKET recvmsg received %ld bytes\n", nr);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1565: SEQPACKET recvmsg returned %ld\n", nr);
+        fut_test_fail(1565);
+    }
+
+    /* Test 1566: msg_flags should include MSG_EOR (0x80) */
+    if (rmsg.msg_flags & 0x80 /* MSG_EOR */) {
+        fut_printf("[MISC-TEST] ✓ Test 1566: SEQPACKET msg_flags has MSG_EOR (0x%x)\n", rmsg.msg_flags);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1566: SEQPACKET msg_flags=0x%x (expected MSG_EOR 0x80)\n", rmsg.msg_flags);
+        fut_test_fail(1566);
+    }
+
+    sys_close(sv[0]);
+    sys_close(sv[1]);
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -50595,6 +50664,7 @@ void fut_misc_test_thread(void *arg) {
     test_tiocoutq();                       /* Tests 1555-1557: TIOCOUTQ ioctl */
     test_so_rcvlowat();                    /* Tests 1558-1561: SO_RCVLOWAT enforcement */
     test_accepted_socket_defaults();       /* Tests 1562-1564: accepted socket option defaults */
+    test_seqpacket_msg_eor();              /* Tests 1565-1566: SEQPACKET MSG_EOR in recvmsg */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

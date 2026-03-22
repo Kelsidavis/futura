@@ -505,6 +505,15 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
 
     kmsg.msg_flags = msg_trunc_set ? MSG_TRUNC : 0;
 
+    /* SOCK_SEQPACKET: set MSG_EOR when a complete message boundary is received.
+     * Each SEQPACKET read returns exactly one message, so MSG_EOR is always set. */
+    if (total_received > 0) {
+        extern fut_socket_t *get_socket_from_fd(int fd);
+        fut_socket_t *eor_sock = get_socket_from_fd(local_sockfd);
+        if (eor_sock && eor_sock->socket_type == SOCK_SEQPACKET)
+            kmsg.msg_flags |= MSG_EOR;
+    }
+
     /* Phase 4: SCM_RIGHTS - dequeue FDs from socket pair and deliver to receiver */
     kmsg.msg_controllen = 0;  /* Default: no ancillary data */
 

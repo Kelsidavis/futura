@@ -1396,6 +1396,8 @@ ssize_t fut_socket_recv(fut_socket_t *socket, void *buf, size_t len) {
     size_t to_read;
     bool recv_framed = (socket->socket_type == SOCK_SEQPACKET ||
                         (socket->socket_type == SOCK_DGRAM && socket->pair != NULL));
+    /* Clear truncation flag before each framed recv */
+    socket->last_recv_truncated = false;
     if (recv_framed) {
         /* SEQPACKET/DGRAM socketpair: read 4-byte frame header, then exactly one message */
         uint8_t hdr[4];
@@ -1404,8 +1406,10 @@ ssize_t fut_socket_recv(fut_socket_t *socket, void *buf, size_t len) {
                         | ((uint32_t)hdr[2] << 16) | ((uint32_t)hdr[3] << 24);
         to_read = (len < (size_t)msglen) ? len : (size_t)msglen;
         circ_buf_read(pair, buf, (uint32_t)to_read);
-        if (to_read < (size_t)msglen)
+        if (to_read < (size_t)msglen) {
             circ_buf_skip(pair, msglen - (uint32_t)to_read);
+            socket->last_recv_truncated = true;
+        }
     } else {
         to_read = (len > available) ? available : len;
         /* Handle circular buffer wrap-around with two-chunk copy */

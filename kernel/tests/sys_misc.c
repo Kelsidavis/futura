@@ -50007,6 +50007,77 @@ static void test_dgram_socketpair_boundaries(void) {
     sys_close(sv[1]);
 }
 
+/**
+ * test_dgram_socketpair_trunc - recvmsg sets MSG_TRUNC when DGRAM socketpair message truncated
+ *
+ * Tests 1569-1570:
+ *   1569: DGRAM socketpair truncation — recv with small buffer returns truncated data
+ *   1570: MSG_TRUNC set in recvmsg msg_flags when datagram was truncated
+ */
+static void test_dgram_socketpair_trunc(void) {
+    fut_printf("[MISC-TEST] Tests 1569-1570: DGRAM socketpair MSG_TRUNC\n");
+
+    extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+    extern ssize_t sys_write(int fd, const void *buf, size_t count);
+    extern ssize_t sys_recvmsg(int sockfd, struct test_msghdr *msg, int flags);
+
+    int sv[2] = {-1, -1};
+    long ret = sys_socketpair(1 /* AF_UNIX */, 2 /* SOCK_DGRAM */, 0, sv);
+    if (ret < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1569: socketpair(DGRAM) failed: %ld\n", ret);
+        fut_test_fail(1569);
+        fut_test_fail(1570);
+        return;
+    }
+
+    /* Send a 20-byte message */
+    char big_msg[20];
+    for (int i = 0; i < 20; i++) big_msg[i] = (char)('A' + i);
+    ssize_t nw = sys_write(sv[0], big_msg, 20);
+    if (nw != 20) {
+        fut_printf("[MISC-TEST] ✗ Test 1569: write returned %ld\n", (long)nw);
+        sys_close(sv[0]); sys_close(sv[1]);
+        fut_test_fail(1569);
+        fut_test_fail(1570);
+        return;
+    }
+
+    /* Receive with a 10-byte buffer via recvmsg */
+    char rbuf[10];
+    struct iovec riov;
+    riov.iov_base = rbuf;
+    riov.iov_len = sizeof(rbuf);
+
+    struct test_msghdr rmsg;
+    __builtin_memset(&rmsg, 0, sizeof(rmsg));
+    rmsg.msg_iov = &riov;
+    rmsg.msg_iovlen = 1;
+
+    ssize_t nr = sys_recvmsg(sv[1], &rmsg, 0);
+
+    /* Test 1569: recv should return 10 bytes (truncated) */
+    if (nr == 10 && __builtin_memcmp(rbuf, "ABCDEFGHIJ", 10) == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 1569: DGRAM truncated to %ld bytes\n", (long)nr);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1569: recvmsg returned %ld (expected 10)\n", (long)nr);
+        fut_test_fail(1569);
+    }
+
+    /* Test 1570: msg_flags should include MSG_TRUNC (0x20) */
+    if (rmsg.msg_flags & 0x20 /* MSG_TRUNC */) {
+        fut_printf("[MISC-TEST] ✓ Test 1570: msg_flags has MSG_TRUNC (0x%x)\n", rmsg.msg_flags);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1570: msg_flags=0x%x (expected MSG_TRUNC 0x20)\n",
+                   rmsg.msg_flags);
+        fut_test_fail(1570);
+    }
+
+    sys_close(sv[0]);
+    sys_close(sv[1]);
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -50743,6 +50814,7 @@ void fut_misc_test_thread(void *arg) {
     test_accepted_socket_defaults();       /* Tests 1562-1564: accepted socket option defaults */
     test_seqpacket_msg_eor();              /* Tests 1565-1566: SEQPACKET MSG_EOR in recvmsg */
     test_dgram_socketpair_boundaries();    /* Tests 1567-1568: DGRAM socketpair message boundaries */
+    test_dgram_socketpair_trunc();         /* Tests 1569-1570: DGRAM socketpair MSG_TRUNC */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

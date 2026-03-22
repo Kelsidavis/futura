@@ -476,8 +476,15 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
             break;
         }
 
-        /* DGRAM: each recvmsg reads exactly one datagram; stop after first iovec */
+        /* DGRAM/SEQPACKET: each recvmsg reads exactly one message; stop after first iovec.
+         * Also check the truncation flag for socketpair DGRAM/SEQPACKET sockets. */
         if (is_dgram_sock) {
+            break;
+        }
+        if (dgsock && (dgsock->socket_type == SOCK_DGRAM || dgsock->socket_type == SOCK_SEQPACKET)
+            && dgsock->pair != NULL) {
+            if (dgsock->last_recv_truncated)
+                msg_trunc_set = true;
             break;
         }
 

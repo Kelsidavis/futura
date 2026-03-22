@@ -376,6 +376,10 @@ typedef struct fut_socket {
     /* Credential passing (SO_PASSCRED) */
     bool passcred;                          /* Attach SCM_CREDENTIALS cmsg on every recvmsg */
 
+    /* Framed recv truncation flag (set by fut_socket_recv when a DGRAM/SEQPACKET
+     * message is truncated to fit the caller's buffer; cleared before each recv) */
+    bool last_recv_truncated;
+
     /* Datagram receive queue (SOCK_DGRAM only, allocated on bind) */
     fut_dgram_queue_t *dgram_queue;
 

@@ -521,6 +521,10 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
             /* Enforce shutdown(SHUT_WR) on DGRAM sockets */
             if (src_sock->shutdown_wr) {
                 fut_free(kbuf);
+                if (!(local_flags & 0x4000 /* MSG_NOSIGNAL */)) {
+                    fut_task_t *t = fut_task_current();
+                    if (t) fut_signal_send(t, 13 /* SIGPIPE */);
+                }
                 return -EPIPE;
             }
             /* Parse sockaddr_un from dest_addr */
@@ -597,6 +601,10 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
             /* Enforce shutdown(SHUT_WR) on DGRAM sockets */
             if (dgsock->shutdown_wr) {
                 fut_free(kbuf);
+                if (!(local_flags & 0x4000 /* MSG_NOSIGNAL */)) {
+                    fut_task_t *t = fut_task_current();
+                    if (t) fut_signal_send(t, 13 /* SIGPIPE */);
+                }
                 return -EPIPE;
             }
             if (dgsock->dgram_peer_path_len > 0) {

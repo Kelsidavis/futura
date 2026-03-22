@@ -891,20 +891,31 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
      * Per execve(2): after applying setuid/setgid bits, the saved set-user-ID
      * and saved set-group-ID are always copied from the (possibly new) effective
      * UID/GID. This happens even if no setuid bit was set. */
-    if (!(task->no_new_privs)) {
-        struct fut_stat exec_stat;
-        if (fut_vfs_stat(kernel_pathname, &exec_stat) == 0) {
-            if (exec_stat.st_mode & 04000) {  /* S_ISUID */
-                task->uid = exec_stat.st_uid;
-            }
-            if (exec_stat.st_mode & 02000) {  /* S_ISGID */
-                task->gid = exec_stat.st_gid;
+    {
+        uint32_t old_uid = task->uid;
+        uint32_t old_gid = task->gid;
+
+        if (!(task->no_new_privs)) {
+            struct fut_stat exec_stat;
+            if (fut_vfs_stat(kernel_pathname, &exec_stat) == 0) {
+                if (exec_stat.st_mode & 04000) {  /* S_ISUID */
+                    task->uid = exec_stat.st_uid;
+                }
+                if (exec_stat.st_mode & 02000) {  /* S_ISGID */
+                    task->gid = exec_stat.st_gid;
+                }
             }
         }
+        /* Saved IDs are always set to current effective IDs after execve */
+        task->suid = task->uid;
+        task->sgid = task->gid;
+
+        /* Linux: clear dumpable flag when credentials changed via setuid/setgid bits.
+         * This prevents core dumps from leaking privileged memory. */
+        if (task->uid != old_uid || task->gid != old_gid) {
+            task->dumpable = 0;
+        }
     }
-    /* Saved IDs are always set to current effective IDs after execve */
-    task->suid = task->uid;
-    task->sgid = task->gid;
 
     /* Record executable path for /proc/self/exe */
     {

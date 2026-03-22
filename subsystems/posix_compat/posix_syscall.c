@@ -1626,8 +1626,11 @@ static int64_t sys_sigaction_handler(uint64_t signum, uint64_t act, uint64_t old
  * @arg3: oldset (old mask output)
  */
 static int64_t sys_sigprocmask_handler(uint64_t how, uint64_t set, uint64_t oldset,
-                                       uint64_t arg4, uint64_t arg5, uint64_t arg6) {
-    (void)arg4; (void)arg5; (void)arg6;
+                                       uint64_t sigsetsize, uint64_t arg5, uint64_t arg6) {
+    (void)arg5; (void)arg6;
+    /* x86_64 syscall 14 is rt_sigprocmask: validate sigsetsize */
+    if (sigsetsize != sizeof(sigset_t))
+        return -EINVAL;
     extern long sys_sigprocmask(int how, const sigset_t *set, sigset_t *oldset);
     return sys_sigprocmask((int)how, (const sigset_t *)set, (sigset_t *)oldset);
 }
@@ -1837,18 +1840,22 @@ static int64_t sys_ppoll_handler(uint64_t fds, uint64_t nfds, uint64_t tmo_p,
                      (const void *)sigmask, (size_t)sigsetsize);
 }
 
-/* sigpending() handler */
-static int64_t sys_sigpending_handler(uint64_t set, uint64_t arg2, uint64_t arg3,
+/* rt_sigpending() handler — x86_64 syscall 127 */
+static int64_t sys_sigpending_handler(uint64_t set, uint64_t sigsetsize, uint64_t arg3,
                                        uint64_t arg4, uint64_t arg5, uint64_t arg6) {
-    (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    if (sigsetsize != sizeof(sigset_t))
+        return -EINVAL;
     extern long sys_sigpending(sigset_t *set);
     return sys_sigpending((sigset_t *)(uintptr_t)set);
 }
 
-/* sigsuspend() handler */
-static int64_t sys_sigsuspend_handler(uint64_t mask, uint64_t arg2, uint64_t arg3,
+/* rt_sigsuspend() handler — x86_64 syscall 130 */
+static int64_t sys_sigsuspend_handler(uint64_t mask, uint64_t sigsetsize, uint64_t arg3,
                                        uint64_t arg4, uint64_t arg5, uint64_t arg6) {
-    (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    if (sigsetsize != sizeof(sigset_t))
+        return -EINVAL;
     extern long sys_sigsuspend(const sigset_t *mask);
     return sys_sigsuspend((const sigset_t *)(uintptr_t)mask);
 }

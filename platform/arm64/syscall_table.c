@@ -1126,8 +1126,10 @@ static int64_t sys_rt_sigaction_wrapper(uint64_t signum, uint64_t act, uint64_t 
  */
 static int64_t sys_rt_sigprocmask_wrapper(uint64_t how, uint64_t set, uint64_t oldset,
                                            uint64_t sigsetsize, uint64_t arg4, uint64_t arg5) {
-    (void)sigsetsize; (void)arg4; (void)arg5;
-    /* For now, ignore sigsetsize and delegate to standard sigprocmask */
+    (void)arg4; (void)arg5;
+    /* Linux requires sigsetsize == sizeof(sigset_t) */
+    if (sigsetsize != sizeof(sigset_t))
+        return -EINVAL;
     return sys_sigprocmask((int)how, (const sigset_t *)set, (sigset_t *)oldset);
 }
 
@@ -1137,8 +1139,10 @@ static int64_t sys_rt_sigprocmask_wrapper(uint64_t how, uint64_t set, uint64_t o
  */
 static int64_t sys_rt_sigpending_wrapper(uint64_t set, uint64_t sigsetsize, uint64_t arg2,
                                           uint64_t arg3, uint64_t arg4, uint64_t arg5) {
-    (void)sigsetsize; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
-    /* For now, ignore sigsetsize and delegate to standard sigpending */
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+    /* Linux requires sigsetsize == sizeof(sigset_t) */
+    if (sigsetsize != sizeof(sigset_t))
+        return -EINVAL;
     return sys_sigpending((sigset_t *)set);
 }
 
@@ -1148,8 +1152,10 @@ static int64_t sys_rt_sigpending_wrapper(uint64_t set, uint64_t sigsetsize, uint
  */
 static int64_t sys_rt_sigsuspend_wrapper(uint64_t mask, uint64_t sigsetsize, uint64_t arg2,
                                           uint64_t arg3, uint64_t arg4, uint64_t arg5) {
-    (void)sigsetsize; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
-    /* For now, ignore sigsetsize and delegate to standard sigsuspend */
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+    /* Linux requires sigsetsize == sizeof(sigset_t) */
+    if (sigsetsize != sizeof(sigset_t))
+        return -EINVAL;
     return sys_sigsuspend((const sigset_t *)mask);
 }
 

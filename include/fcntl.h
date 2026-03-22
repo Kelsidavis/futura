@@ -57,7 +57,7 @@
 #define O_DSYNC     00010000    /* Synchronized data writes */
 #endif
 #ifndef __O_SYNC
-#define __O_SYNC    00020000    /* Synchronized I/O (internal flag) */
+#define __O_SYNC    04000000    /* Synchronized I/O (internal flag, 0x100000) */
 #endif
 #ifndef O_SYNC
 #define O_SYNC      (__O_SYNC | O_DSYNC)  /* Full synchronous writes (data + metadata) */

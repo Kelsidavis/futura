@@ -403,9 +403,10 @@ static int64_t sys_exit(uint64_t exit_code, uint64_t arg1, uint64_t arg2,
     return 0;  /* Never reached */
 }
 
-/* Use real kernel implementations for getpid/getppid */
+/* Use real kernel implementations for getpid/getppid/exit_group */
 extern long sys_getpid(void);
 extern long sys_getppid(void);
+extern long sys_exit_group(int status);
 
 /* sys_getpid - get process ID wrapper
  * Returns: current process ID
@@ -3669,7 +3670,7 @@ static void arm64_syscall_table_init(void) {
     syscall_table[__NR_sched_getaffinity].name = "sched_getaffinity";
     syscall_table[__NR_exit].handler = (syscall_fn_t)sys_exit;
     syscall_table[__NR_exit].name = "exit";
-    syscall_table[__NR_exit_group].handler = (syscall_fn_t)sys_exit;
+    syscall_table[__NR_exit_group].handler = (syscall_fn_t)sys_exit_group;
     syscall_table[__NR_exit_group].name = "exit_group";
     syscall_table[__NR_waitid].handler = (syscall_fn_t)sys_waitid_wrapper;
     syscall_table[__NR_waitid].name = "waitid";

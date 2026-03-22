@@ -394,6 +394,7 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
                     if (socket_ready & 0x1)  epoll_ready |= EPOLLIN;
                     if (socket_ready & 0x4)  epoll_ready |= EPOLLOUT;
                     if (socket_ready & 0x10) epoll_ready |= EPOLLHUP;
+                    /* POLLRDHUP (0x2000) is ignored for select — already in POLLIN */
                     if (socket_ready & 0x8)  epoll_ready |= EPOLLERR;
                     handled = true;
                 }
@@ -521,6 +522,7 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
                         if (socket_ready & 0x1)  epoll_ready |= EPOLLIN;
                         if (socket_ready & 0x4)  epoll_ready |= EPOLLOUT;
                         if (socket_ready & 0x10) epoll_ready |= EPOLLHUP;
+                    /* POLLRDHUP (0x2000) is ignored for select — already in POLLIN */
                         if (socket_ready & 0x8)  epoll_ready |= EPOLLERR;
                         handled = true;
                     }
@@ -890,6 +892,7 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
                     if (socket_ready & 0x1)  epoll_ready |= EPOLLIN;
                     if (socket_ready & 0x4)  epoll_ready |= EPOLLOUT;
                     if (socket_ready & 0x10) epoll_ready |= EPOLLHUP;
+                    /* POLLRDHUP (0x2000) is ignored for select — already in POLLIN */
                     if (socket_ready & 0x8)  epoll_ready |= EPOLLERR;
                     handled = true;
                 }
@@ -1006,6 +1009,7 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
                         if (socket_ready & 0x1)  epoll_ready |= EPOLLIN;
                         if (socket_ready & 0x4)  epoll_ready |= EPOLLOUT;
                         if (socket_ready & 0x10) epoll_ready |= EPOLLHUP;
+                    /* POLLRDHUP (0x2000) is ignored for select — already in POLLIN */
                         if (socket_ready & 0x8)  epoll_ready |= EPOLLERR;
                         handled = true;
                     }

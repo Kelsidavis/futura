@@ -50418,6 +50418,118 @@ static void test_recv_eof_after_shutdown_wr(void) {
     sys_close(sv[1]);
 }
 
+/* ============================================================
+ * test_epoll_rdhup_vs_hup - EPOLLRDHUP on half-close vs EPOLLHUP on full close
+ *
+ *   Test 1581: poll(POLLRDHUP) reports POLLRDHUP on peer shutdown(SHUT_WR)
+ *   Test 1582: poll(POLLRDHUP) does NOT report POLLHUP on half-close
+ *   Test 1583: epoll with EPOLLRDHUP reports EPOLLRDHUP on peer shutdown(SHUT_WR)
+ *   Test 1584: epoll reports EPOLLHUP|EPOLLRDHUP after full peer close
+ *
+ * EPOLLRDHUP (Linux 2.6.17+) is critical for event-driven servers (nginx,
+ * HAProxy) to distinguish graceful half-close from connection drop.
+ */
+static void test_epoll_rdhup_vs_hup(void) {
+    extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+    extern long sys_shutdown(int sockfd, int how);
+    extern long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout);
+    extern long sys_epoll_create1(int flags);
+    extern long sys_epoll_ctl(int epfd, int op, int fd, void *event);
+    extern long sys_epoll_wait(int epfd, void *events, int maxevents, int timeout);
+
+    /* epoll_event: events(u32) + pad(u32) + data(u64) = 16 bytes */
+    typedef struct { uint32_t events; uint32_t pad; uint64_t data; } epev_t;
+
+    fut_printf("[MISC-TEST] Tests 1581-1584: EPOLLRDHUP half-close vs EPOLLHUP full close\n");
+
+    int sv[2];
+    long sr = sys_socketpair(1 /* AF_UNIX */, 1 /* SOCK_STREAM */, 0, sv);
+    if (sr < 0) {
+        fut_printf("[MISC-TEST] ✗ socketpair failed: %ld\n", sr);
+        fut_test_fail(1581); fut_test_fail(1582);
+        fut_test_fail(1583); fut_test_fail(1584);
+        return;
+    }
+
+    /* sv[0] shuts down its write side (half-close) */
+    long sh = sys_shutdown(sv[0], 1 /* SHUT_WR */);
+    if (sh < 0) {
+        fut_printf("[MISC-TEST] ✗ shutdown failed: %ld\n", sh);
+        fut_test_fail(1581); fut_test_fail(1582);
+        fut_test_fail(1583); fut_test_fail(1584);
+        sys_close(sv[0]); sys_close(sv[1]);
+        return;
+    }
+
+    /* Test 1581: poll(POLLRDHUP) on sv[1] should report POLLRDHUP */
+    struct pollfd pfd;
+    pfd.fd = sv[1];
+    pfd.events = 0x2000 | 0x1;  /* POLLRDHUP | POLLIN */
+    pfd.revents = 0;
+    long pr = sys_poll(&pfd, 1, 0);
+    fut_printf("[MISC-TEST] Test 1581: poll revents=0x%x (expect POLLRDHUP 0x2000)\n",
+               (unsigned)pfd.revents);
+    if (pr >= 1 && (pfd.revents & 0x2000)) {
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1581: POLLRDHUP not set (revents=0x%x, ret=%ld)\n",
+                   (unsigned)pfd.revents, pr);
+        fut_test_fail(1581);
+    }
+
+    /* Test 1582: POLLHUP should NOT be set on half-close (peer only shut write) */
+    fut_printf("[MISC-TEST] Test 1582: poll revents=0x%x (expect NO POLLHUP 0x10)\n",
+               (unsigned)pfd.revents);
+    if (!(pfd.revents & 0x10)) {
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1582: POLLHUP wrongly set on half-close\n");
+        fut_test_fail(1582);
+    }
+
+    /* Test 1583: epoll with EPOLLRDHUP on sv[1] should report EPOLLRDHUP */
+    int epfd = (int)sys_epoll_create1(0);
+    if (epfd < 0) {
+        fut_printf("[MISC-TEST] ✗ epoll_create1 failed: %d\n", epfd);
+        fut_test_fail(1583); fut_test_fail(1584);
+        sys_close(sv[0]); sys_close(sv[1]);
+        return;
+    }
+    epev_t ev = { 0x2000 | 0x1, 0, (uint64_t)sv[1] };  /* EPOLLRDHUP | EPOLLIN */
+    sys_epoll_ctl(epfd, 1 /* EPOLL_CTL_ADD */, sv[1], &ev);
+
+    epev_t out = { 0, 0, 0 };
+    long er = sys_epoll_wait(epfd, &out, 1, 0);
+    fut_printf("[MISC-TEST] Test 1583: epoll events=0x%x (expect EPOLLRDHUP 0x2000)\n",
+               er >= 1 ? out.events : 0);
+    if (er >= 1 && (out.events & 0x2000)) {
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1583: EPOLLRDHUP not set (events=0x%x, ret=%ld)\n",
+                   er >= 1 ? out.events : 0, er);
+        fut_test_fail(1583);
+    }
+
+    /* Now fully close sv[0] → sv[1] should get POLLHUP */
+    sys_close(sv[0]);
+
+    /* Test 1584: After full close, epoll should report both EPOLLHUP and EPOLLRDHUP */
+    out = (epev_t){ 0, 0, 0 };
+    er = sys_epoll_wait(epfd, &out, 1, 0);
+    fut_printf("[MISC-TEST] Test 1584: after close, epoll events=0x%x (expect HUP|RDHUP)\n",
+               er >= 1 ? out.events : 0);
+    if (er >= 1 && (out.events & 0x10) && (out.events & 0x2000)) {
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1584: expected EPOLLHUP(0x10)|EPOLLRDHUP(0x2000), got 0x%x\n",
+                   er >= 1 ? out.events : 0);
+        fut_test_fail(1584);
+    }
+
+    sys_close(epfd);
+    sys_close(sv[1]);
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -51160,6 +51272,7 @@ void fut_misc_test_thread(void *arg) {
     test_seqpacket_msg_waitall();          /* Tests 1575-1576: SEQPACKET MSG_WAITALL preserves boundaries */
     test_fionread_dgram_next_msg();        /* Tests 1577-1578: FIONREAD returns next datagram size */
     test_recv_eof_after_shutdown_wr();     /* Tests 1579-1580: recv returns 0 after peer shutdown(SHUT_WR) */
+    test_epoll_rdhup_vs_hup();            /* Tests 1581-1584: EPOLLRDHUP half-close vs EPOLLHUP full close */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

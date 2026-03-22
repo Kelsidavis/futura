@@ -1639,10 +1639,22 @@ int fut_socket_poll(fut_socket_t *socket, int events) {
             ready |= 0x1;
         }
     } else if (socket->state == FUT_SOCK_CONNECTED && socket->pair && socket->pair_reverse) {
-        /* Check for peer closure → POLLHUP (always reported) */
+        /* Distinguish half-close (POLLRDHUP) from full close (POLLHUP).
+         *
+         * shutdown(SHUT_WR) on peer: only pair_reverse->peer is NULLed.
+         *   → POLLRDHUP (0x2000): peer stopped writing, we can still send.
+         * close() on peer: BOTH pair_reverse->peer AND pair->peer are NULLed.
+         *   → POLLHUP (0x10): connection fully dead in both directions.
+         *
+         * Linux: POLLHUP implies POLLRDHUP; half-close reports only POLLRDHUP.
+         * Programs (nginx, HAProxy) use EPOLLRDHUP to detect graceful shutdown
+         * vs connection drop. */
         if (!socket->pair_reverse->peer) {
-            ready |= 0x10;  /* POLLHUP */
-            ready |= 0x1;   /* POLLIN (EOF is readable) */
+            ready |= 0x2000;  /* POLLRDHUP — peer write-half is closed */
+            ready |= 0x1;     /* POLLIN (EOF is readable) */
+            if (!socket->pair->peer) {
+                ready |= 0x10;  /* POLLHUP — full close (both directions dead) */
+            }
         }
         if ((events & 0x1)) {  /* POLLIN - readable if data available in pair_reverse */
             if (socket->shutdown_rd) {

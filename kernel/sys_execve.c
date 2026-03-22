@@ -955,6 +955,27 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
         task->exe_path[plen] = '\0';
     }
 
+    /* Update process name (comm) to basename of executable.
+     * Linux updates comm on every exec; visible via /proc/pid/comm, ps, etc. */
+    {
+        const char *base = kernel_pathname;
+        for (const char *p = kernel_pathname; *p; p++) {
+            if (*p == '/')
+                base = p + 1;
+        }
+        size_t i = 0;
+        while (base[i] && i < sizeof(task->comm) - 1) {
+            task->comm[i] = base[i];
+            i++;
+        }
+        task->comm[i] = '\0';
+        /* Also update the main thread's comm */
+        fut_thread_t *thread = fut_thread_current();
+        if (thread) {
+            __builtin_memcpy(thread->comm, task->comm, sizeof(thread->comm));
+        }
+    }
+
     /* Record full argv for /proc/self/cmdline (null-separated Linux format) */
     {
         char *dst = task->proc_cmdline;

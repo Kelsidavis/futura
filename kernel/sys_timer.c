@@ -254,12 +254,18 @@ long sys_timer_settime(timer_t timerid, int flags,
     pt->interval_ms = intv_ms / 10;
     if (intv_ms % 10 != 0) pt->interval_ms++;
 
-    /* Arm timer: convert value_ms to ticks */
-    uint64_t value_ticks = value_ms / 10;
-    if (value_ms % 10 != 0) value_ticks++;
-    if (value_ticks == 0 && value_ms > 0) value_ticks = 1;
-
+    /* Arm timer: convert value_ms to ticks.
+     * For relative timers, round UP to guarantee minimum sleep duration.
+     * For absolute timers, truncate so the timer fires at or before the
+     * requested time (rounding up would delay expiry past the deadline). */
     uint64_t now = fut_get_ticks();
+    uint64_t value_ticks = value_ms / 10;
+    if (!(local_flags & 1 /* TIMER_ABSTIME */)) {
+        /* Relative: round up */
+        if (value_ms % 10 != 0) value_ticks++;
+        if (value_ticks == 0 && value_ms > 0) value_ticks = 1;
+    }
+
     if (local_flags & 1 /* TIMER_ABSTIME */) {
         /* For CLOCK_REALTIME, convert wall-clock absolute to monotonic ticks */
         if (pt->clockid == 0 /* CLOCK_REALTIME */) {

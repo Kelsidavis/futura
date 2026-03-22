@@ -1024,6 +1024,15 @@ long sys_fork(void) {
     /* Inherit keepcaps (PR_SET_KEEPCAPS is sticky across fork) */
     child_task->keepcaps = parent_task->keepcaps;
 
+    /* Inherit current working directory (POSIX: child inherits parent's cwd) */
+    child_task->current_dir_ino = parent_task->current_dir_ino;
+    if (parent_task->cwd_cache) {
+        /* Copy the cwd path string into the child's own buffer */
+        __builtin_memcpy(child_task->cwd_cache_buf, parent_task->cwd_cache_buf,
+                         sizeof(child_task->cwd_cache_buf));
+        child_task->cwd_cache = child_task->cwd_cache_buf;
+    }
+
     /* Inherit chroot jail (POSIX: child stays in parent's chroot) */
     if (parent_task->chroot_vnode) {
         child_task->chroot_vnode = parent_task->chroot_vnode;
@@ -1739,6 +1748,11 @@ static fut_thread_t *clone_thread(fut_thread_t *parent_thread, fut_task_t *child
         child_thread->rt_priority  = parent_thread->rt_priority;
     }
 
+    /* Inherit CPU affinity mask (Linux: child inherits parent's affinity).
+     * This is done after the #endif so it applies to both x86_64 and ARM64. */
+    child_thread->cpu_affinity_mask = parent_thread->cpu_affinity_mask;
+    child_thread->hard_affinity     = parent_thread->hard_affinity;
+
     return child_thread;
 }
 
@@ -1912,6 +1926,10 @@ long sys_clone_thread(uint64_t flags, uint64_t child_stack,
 
     /* Inherit parent thread's name (child gets same comm to start with) */
     __builtin_memcpy(child_thread->comm, parent_thread->comm, sizeof(child_thread->comm));
+
+    /* Inherit CPU affinity mask (Linux: clone threads share parent's affinity) */
+    child_thread->cpu_affinity_mask = parent_thread->cpu_affinity_mask;
+    child_thread->hard_affinity     = parent_thread->hard_affinity;
 
 #ifdef __x86_64__
     FORK_LOG("[CLONE] thread tid=%llu rip=0x%llx rsp=0x%llx fs_base=0x%llx\n",

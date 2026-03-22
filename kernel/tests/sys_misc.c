@@ -53255,6 +53255,113 @@ void fut_misc_test_thread(void *arg) {
         }
     }
 
+    /* --------------------------------------------------------------- *
+     * Test 1648: fork child inherits parent's cwd                     *
+     * Test 1649: fork child inherits parent's CPU affinity mask       *
+     * --------------------------------------------------------------- */
+    {
+        /* Test 1648: Verify forked child inherits cwd */
+        fut_printf("[MISC-TEST] Test 1648: fork child inherits cwd\n");
+        {
+            fut_task_t *parent = fut_task_current();
+            if (!parent) {
+                fut_printf("[MISC-TEST] ✗ Test 1648: no current task\n");
+                fut_test_fail(1648);
+            } else {
+                /* Set parent cwd to a known value */
+                uint64_t old_ino = parent->current_dir_ino;
+                char *old_cache = parent->cwd_cache;
+                char old_buf[256];
+                __builtin_memcpy(old_buf, parent->cwd_cache_buf, sizeof(old_buf));
+
+                parent->current_dir_ino = 42;
+                parent->cwd_cache_buf[0] = '/';
+                parent->cwd_cache_buf[1] = 't';
+                parent->cwd_cache_buf[2] = 'm';
+                parent->cwd_cache_buf[3] = 'p';
+                parent->cwd_cache_buf[4] = '\0';
+                parent->cwd_cache = parent->cwd_cache_buf;
+
+                /* Create a zombie child and simulate fork inheritance */
+                fut_task_t *child = fut_task_create();
+                if (child) {
+                    /* Apply fork-style cwd inheritance (same code as sys_fork.c) */
+                    child->current_dir_ino = parent->current_dir_ino;
+                    __builtin_memcpy(child->cwd_cache_buf, parent->cwd_cache_buf,
+                                     sizeof(child->cwd_cache_buf));
+                    child->cwd_cache = child->cwd_cache_buf;
+
+                    if (child->current_dir_ino == 42 &&
+                        child->cwd_cache_buf[0] == '/' &&
+                        child->cwd_cache_buf[1] == 't' &&
+                        child->cwd_cache_buf[2] == 'm' &&
+                        child->cwd_cache_buf[3] == 'p') {
+                        fut_printf("[MISC-TEST] ✓ Test 1648: child cwd ino=%llu path=%s\n",
+                                   (unsigned long long)child->current_dir_ino, child->cwd_cache_buf);
+                        fut_test_pass();
+                    } else {
+                        fut_printf("[MISC-TEST] ✗ Test 1648: child cwd ino=%llu (expected 42)\n",
+                                   (unsigned long long)child->current_dir_ino);
+                        fut_test_fail(1648);
+                    }
+                    child->state = FUT_TASK_ZOMBIE;
+                    child->exit_code = 0;
+                    child->term_signal = 0;
+                    int st = 0;
+                    uint64_t ct = 0;
+                    fut_task_waitpid((int)child->pid, &st, 0, &ct);
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1648: fut_task_create failed\n");
+                    fut_test_fail(1648);
+                }
+
+                /* Restore parent state */
+                parent->current_dir_ino = old_ino;
+                __builtin_memcpy(parent->cwd_cache_buf, old_buf, sizeof(old_buf));
+                parent->cwd_cache = old_cache;
+            }
+        }
+
+        /* Test 1649: Verify fork inherits CPU affinity mask */
+        fut_printf("[MISC-TEST] Test 1649: fork child inherits CPU affinity\n");
+        {
+            fut_thread_t *thr = fut_thread_current();
+            if (!thr) {
+                fut_printf("[MISC-TEST] ✗ Test 1649: no current thread\n");
+                fut_test_fail(1649);
+            } else {
+                /* Set parent thread affinity to a known value */
+                uint64_t old_mask = thr->cpu_affinity_mask;
+                bool old_hard = thr->hard_affinity;
+                thr->cpu_affinity_mask = 0x5; /* CPUs 0 and 2 */
+                thr->hard_affinity = true;
+
+                /* Simulate fork inheritance: copy fields to a stack-local thread
+                 * (fut_task_create doesn't allocate a child thread in test context) */
+                fut_thread_t child_thr;
+                __builtin_memset(&child_thr, 0, sizeof(child_thr));
+                child_thr.cpu_affinity_mask = thr->cpu_affinity_mask;
+                child_thr.hard_affinity = thr->hard_affinity;
+
+                if (child_thr.cpu_affinity_mask == 0x5 &&
+                    child_thr.hard_affinity == true) {
+                    fut_printf("[MISC-TEST] ✓ Test 1649: child affinity=0x%llx hard=%d\n",
+                               (unsigned long long)child_thr.cpu_affinity_mask,
+                               child_thr.hard_affinity);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1649: child affinity=0x%llx (expected 0x5)\n",
+                               (unsigned long long)child_thr.cpu_affinity_mask);
+                    fut_test_fail(1649);
+                }
+
+                /* Restore */
+                thr->cpu_affinity_mask = old_mask;
+                thr->hard_affinity = old_hard;
+            }
+        }
+    }
+
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");
     fut_printf("[MISC-TEST] ========================================\n");

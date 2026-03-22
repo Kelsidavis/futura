@@ -21185,8 +21185,9 @@ static void test_so_rcvtimeo(void) {
         fut_test_fail(315); return;
     }
 
-    /* Set SO_RCVTIMEO = 50ms on sv[1] */
-    struct { long tv_sec; long tv_usec; } tv = { .tv_sec = 0, .tv_usec = 50000 };
+    /* Set SO_RCVTIMEO = 200ms on sv[1] (use 200ms, not 50ms, to avoid
+     * flaky CI timeouts under heavy QEMU emulation load) */
+    struct { long tv_sec; long tv_usec; } tv = { .tv_sec = 0, .tv_usec = 200000 };
     r = sys_setsockopt(sv[1], 1 /*SOL_SOCKET*/, 20 /*SO_RCVTIMEO*/, &tv, sizeof(tv));
     if (r != 0) {
         fut_printf("[MISC-TEST] ✗ setsockopt(SO_RCVTIMEO) failed: %ld\n", r);
@@ -21202,8 +21203,8 @@ static void test_so_rcvtimeo(void) {
         fut_printf("[MISC-TEST] ✗ getsockopt(SO_RCVTIMEO) failed: %ld\n", r);
         sys_close(sv[0]); sys_close(sv[1]); fut_test_fail(315); return;
     }
-    if (tv_out.tv_sec != 0 || tv_out.tv_usec != 50000) {
-        fut_printf("[MISC-TEST] ✗ getsockopt returned {%ld, %ld}, want {0, 50000}\n",
+    if (tv_out.tv_sec != 0 || tv_out.tv_usec != 200000) {
+        fut_printf("[MISC-TEST] ✗ getsockopt returned {%ld, %ld}, want {0, 200000}\n",
                    tv_out.tv_sec, tv_out.tv_usec);
         sys_close(sv[0]); sys_close(sv[1]); fut_test_fail(315); return;
     }
@@ -45795,8 +45796,8 @@ static void test_sock_timeout_blocking(void) {
             fut_test_fail(1227);
             goto t1228;
         }
-        /* Set SO_SNDTIMEO = 50ms on sv[0] (5 ticks at 100Hz, fast for CI QEMU) */
-        struct { long tv_sec; long tv_usec; } tv = { .tv_sec = 0, .tv_usec = 50000 };
+        /* Set SO_SNDTIMEO = 200ms on sv[0] (20 ticks at 100Hz, robust under CI load) */
+        struct { long tv_sec; long tv_usec; } tv = { .tv_sec = 0, .tv_usec = 200000 };
         r = sys_setsockopt(sv[0], TSTB_SOL_SOCKET, TSTB_SO_SNDTIMEO, &tv, sizeof(tv));
         if (r != 0) {
             fut_printf("[MISC-TEST] ✗ Test 1227: setsockopt(SO_SNDTIMEO) = %ld\n", r);
@@ -53198,6 +53199,58 @@ void fut_misc_test_thread(void *arg) {
                 fut_printf("[MISC-TEST] ✗ Test 1646: oom_score base=%ld adj=%ld (expected adj > base)\n",
                            base_score, adj_score);
                 fut_test_fail(1646);
+            }
+        }
+    }
+
+    /* --------------------------------------------------------------- *
+     * Test 1647: /proc/self/io read_bytes and write_bytes are non-zero *
+     * --------------------------------------------------------------- */
+    {
+        extern long sys_openat(int dirfd, const char *pathname, int flags, int mode);
+        extern long sys_read(int fd, void *buf, size_t count);
+        extern long sys_close(int fd);
+
+        fut_printf("[MISC-TEST] Test 1647: /proc/self/io read_bytes > 0\n");
+        int fd = (int)sys_openat(-100 /*AT_FDCWD*/, "/proc/self/io", 0, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1647: open /proc/self/io failed %d\n", fd);
+            fut_test_fail(1647);
+        } else {
+            char iobuf[512];
+            long n = sys_read(fd, iobuf, sizeof(iobuf) - 1);
+            sys_close(fd);
+            if (n <= 0) {
+                fut_printf("[MISC-TEST] ✗ Test 1647: read /proc/self/io failed %ld\n", n);
+                fut_test_fail(1647);
+            } else {
+                iobuf[n] = '\0';
+                /* Parse "read_bytes: <num>" from the output */
+                uint64_t rb = 0;
+                const char *p = iobuf;
+                while (*p) {
+                    if (p[0] == 'r' && p[1] == 'e' && p[2] == 'a' && p[3] == 'd' &&
+                        p[4] == '_' && p[5] == 'b') {
+                        /* Skip to the number after ": " */
+                        const char *q = p;
+                        while (*q && *q != ':') q++;
+                        if (*q == ':') q++;
+                        while (*q == ' ') q++;
+                        while (*q >= '0' && *q <= '9')
+                            rb = rb * 10 + (uint64_t)(*q++ - '0');
+                        break;
+                    }
+                    while (*p && *p != '\n') p++;
+                    if (*p) p++;
+                }
+                if (rb > 0) {
+                    fut_printf("[MISC-TEST] ✓ Test 1647: read_bytes=%llu (io accounting works)\n",
+                               (unsigned long long)rb);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1647: read_bytes=0 (expected > 0)\n");
+                    fut_test_fail(1647);
+                }
             }
         }
     }

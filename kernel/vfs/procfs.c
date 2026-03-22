@@ -1007,8 +1007,11 @@ static size_t gen_io(char *buf, size_t cap, fut_task_t *task) {
     pb_str(&b, "wchar: ");    pb_u64(&b, task->io_wchar);    pb_char(&b, '\n');
     pb_str(&b, "syscr: ");    pb_u64(&b, task->io_syscr);    pb_char(&b, '\n');
     pb_str(&b, "syscw: ");    pb_u64(&b, task->io_syscw);    pb_char(&b, '\n');
-    pb_str(&b, "read_bytes: ");  pb_u64(&b, 0);  pb_char(&b, '\n');
-    pb_str(&b, "write_bytes: "); pb_u64(&b, 0);  pb_char(&b, '\n');
+    /* Futura has no block layer — all I/O is VFS-level, so read_bytes and
+     * write_bytes reflect the same counters as rchar/wchar.  This gives
+     * iotop/pidstat useful data instead of hardcoded zeros. */
+    pb_str(&b, "read_bytes: ");  pb_u64(&b, task->io_rchar);  pb_char(&b, '\n');
+    pb_str(&b, "write_bytes: "); pb_u64(&b, task->io_wchar);  pb_char(&b, '\n');
     pb_str(&b, "cancelled_write_bytes: "); pb_u64(&b, 0); pb_char(&b, '\n');
     return b.pos;
 }

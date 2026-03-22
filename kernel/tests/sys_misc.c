@@ -52812,6 +52812,45 @@ void fut_misc_test_thread(void *arg) {
         }
     }
 
+    /*
+     * Test 1639: mprotect rejects range with unmapped gap
+     * Map two non-adjacent pages, then mprotect the entire span.
+     * The gap in the middle should cause -ENOMEM.
+     */
+    {
+        extern long sys_mmap(void *addr, size_t length, int prot, int flags, int fd, long offset);
+        extern long sys_munmap(void *addr, size_t length);
+        extern long sys_mprotect(void *addr, size_t len, int prot);
+
+        /* Map 3 contiguous pages, then unmap the middle one to create a gap */
+        void *base = (void *)sys_mmap(NULL, 3 * 4096, 3 /* PROT_READ|PROT_WRITE */,
+                                       0x22 /* MAP_PRIVATE|MAP_ANONYMOUS */, -1, 0);
+        if ((long)base > 0) {
+            /* Unmap the middle page to create a gap */
+            long ur = sys_munmap((void *)((uintptr_t)base + 4096), 4096);
+            if (ur == 0) {
+                /* mprotect across the gap: [page0, gap, page2] → should fail */
+                long mr = sys_mprotect(base, 3 * 4096, 1 /* PROT_READ */);
+                if (mr == -ENOMEM) {
+                    fut_printf("[MISC-TEST] ✓ Test 1639: mprotect rejects range with gap (ENOMEM)\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1639: mprotect returned %ld (expected -ENOMEM)\n", mr);
+                    fut_test_fail(1639);
+                }
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1639: munmap middle page failed %ld\n", ur);
+                fut_test_fail(1639);
+            }
+            /* Clean up remaining pages */
+            sys_munmap(base, 4096);
+            sys_munmap((void *)((uintptr_t)base + 2 * 4096), 4096);
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1639: mmap failed %ld\n", (long)base);
+            fut_test_fail(1639);
+        }
+    }
+
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");
     fut_printf("[MISC-TEST] ========================================\n");

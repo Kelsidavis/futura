@@ -230,15 +230,23 @@ long sys_mprotect(void *addr, size_t len, int prot) {
     fut_mm_t *mm = fut_task_get_mm(task);
     if (!mm) mm = fut_mm_current();
     if (mm) {
-        /* Linux returns -ENOMEM if any part of [start, end) is not mapped */
+        /* Linux returns -ENOMEM if any part of [start, end) is not mapped.
+         * Track coverage to detect gaps in the VMA list. */
         int found_overlap = 0;
+        uintptr_t coverage = start;  /* tracks how far we've verified */
         struct fut_vma *vma = mm->vma_list;
         while (vma) {
             if (vma->end <= start || vma->start >= end) {
                 vma = vma->next;
                 continue;
             }
+            /* Gap before this VMA — unmapped region in [start, end) */
+            if (vma->start > coverage) {
+                return -ENOMEM;
+            }
             found_overlap = 1;
+            if (vma->end > coverage)
+                coverage = vma->end;
 
             /* If VMA already has the requested prot, skip splitting */
             if (vma->prot == prot) {
@@ -294,6 +302,9 @@ long sys_mprotect(void *addr, size_t len, int prot) {
             vma = vma->next;
         }
         if (!found_overlap)
+            return -ENOMEM;
+        /* Uncovered tail — gap at the end of the range */
+        if (coverage < end)
             return -ENOMEM;
 
         /* Merge adjacent VMAs that now have identical attributes.

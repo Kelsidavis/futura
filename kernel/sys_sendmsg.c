@@ -521,6 +521,19 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
                             int nfds = (int)(payload_len / sizeof(int));
                             int *fds = (int *)CMSG_DATA(cmsg);
 
+                            /* Validate all fds BEFORE queuing any (Linux rejects the
+                             * entire sendmsg with EBADF if any fd is invalid). */
+                            int scm_err = 0;
+                            for (int fi = 0; fi < nfds; fi++) {
+                                struct fut_file *file = vfs_get_file_from_task(
+                                    (struct fut_task *)task, fds[fi]);
+                                if (!file) { scm_err = 1; break; }
+                            }
+                            if (scm_err) {
+                                fut_free(kcontrol);
+                                return -EBADF;
+                            }
+
                             fut_spinlock_acquire(&sock->pair->lock);
                             for (int fi = 0; fi < nfds; fi++) {
                                 if (sock->pair->fd_queue_count >= FUT_SOCKET_FD_QUEUE_MAX) {

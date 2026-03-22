@@ -423,8 +423,13 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
         /* Read from socket.
          * MSG_PEEK: read without consuming (peek at data).
          * DGRAM: use fut_socket_recvfrom_dgram directly to track MSG_TRUNC.
-         * MSG_WAITALL: loop until the full iovec is filled (stream sockets only). */
-        bool do_waitall = (local_flags & MSG_WAITALL) && !(local_flags & MSG_DONTWAIT);
+         * MSG_WAITALL: loop until the full iovec is filled (stream sockets only).
+         * SEQPACKET is message-oriented: MSG_WAITALL must be ignored to avoid
+         * concatenating messages across boundaries (same fix as sys_recvfrom.c). */
+        bool is_msg_socket = dgsock &&
+            (dgsock->socket_type == SOCK_DGRAM || dgsock->socket_type == SOCK_SEQPACKET);
+        bool do_waitall = (local_flags & MSG_WAITALL) && !(local_flags & MSG_DONTWAIT)
+                          && !is_msg_socket;
         bool do_peek = (local_flags & MSG_PEEK) != 0;
         ssize_t ret;
         if (is_dgram_sock) {

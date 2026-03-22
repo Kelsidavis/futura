@@ -3470,6 +3470,85 @@ static int64_t sys_fchmodat2_wrapper(uint64_t dirfd, uint64_t pathname, uint64_t
                           (unsigned int)mode, (unsigned int)flags);
 }
 
+/* landlock wrappers — Landlock LSM sandbox (Linux 5.13+) */
+static int64_t sys_landlock_create_ruleset_wrapper(uint64_t attr, uint64_t size,
+                                                    uint64_t flags, uint64_t a4,
+                                                    uint64_t a5, uint64_t a6) {
+    (void)a4; (void)a5; (void)a6;
+    extern long sys_landlock_create_ruleset(const void *attr, size_t size, uint32_t flags);
+    return sys_landlock_create_ruleset((const void *)(uintptr_t)attr, (size_t)size,
+                                       (uint32_t)flags);
+}
+static int64_t sys_landlock_add_rule_wrapper(uint64_t ruleset_fd, uint64_t rule_type,
+                                              uint64_t rule_attr, uint64_t flags,
+                                              uint64_t a5, uint64_t a6) {
+    (void)a5; (void)a6;
+    extern long sys_landlock_add_rule(int ruleset_fd, unsigned int rule_type,
+                                      const void *rule_attr, uint32_t flags);
+    return sys_landlock_add_rule((int)ruleset_fd, (unsigned int)rule_type,
+                                  (const void *)(uintptr_t)rule_attr, (uint32_t)flags);
+}
+static int64_t sys_landlock_restrict_self_wrapper(uint64_t ruleset_fd, uint64_t flags,
+                                                   uint64_t a3, uint64_t a4,
+                                                   uint64_t a5, uint64_t a6) {
+    (void)a3; (void)a4; (void)a5; (void)a6;
+    extern long sys_landlock_restrict_self(int ruleset_fd, uint32_t flags);
+    return sys_landlock_restrict_self((int)ruleset_fd, (uint32_t)flags);
+}
+
+/* memfd_secret wrapper — Linux 5.14+ */
+static int64_t sys_memfd_secret_wrapper(uint64_t flags, uint64_t a2, uint64_t a3,
+                                         uint64_t a4, uint64_t a5, uint64_t a6) {
+    (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
+    extern long sys_memfd_secret(unsigned int flags);
+    return sys_memfd_secret((unsigned int)flags);
+}
+
+/* futex_waitv wrapper — Linux 5.16+ multi-futex wait (Wine/Proton) */
+static int64_t sys_futex_waitv_wrapper(uint64_t waiters, uint64_t nr_futexes,
+                                        uint64_t flags, uint64_t timeout,
+                                        uint64_t clockid, uint64_t a6) {
+    (void)a6;
+    extern long sys_futex_waitv(const void *waiters, unsigned int nr_futexes,
+                                unsigned int flags, const void *timeout,
+                                int32_t clockid);
+    return sys_futex_waitv((const void *)(uintptr_t)waiters, (unsigned int)nr_futexes,
+                            (unsigned int)flags, (const void *)(uintptr_t)timeout,
+                            (int32_t)clockid);
+}
+
+/* process_madvise wrapper — Linux 5.10+ */
+static int64_t sys_process_madvise_wrapper(uint64_t pidfd, uint64_t iovec, uint64_t vlen,
+                                            uint64_t advice, uint64_t flags, uint64_t a6) {
+    (void)a6;
+    extern long sys_process_madvise(int pidfd, const void *iovec, unsigned long vlen,
+                                     int advice, unsigned int flags);
+    return sys_process_madvise((int)pidfd, (const void *)(uintptr_t)iovec,
+                                (unsigned long)vlen, (int)advice, (unsigned int)flags);
+}
+
+/* cachestat wrapper — Linux 6.5+ */
+static int64_t sys_cachestat_wrapper(uint64_t fd, uint64_t cachestat_range,
+                                      uint64_t cachestat, uint64_t flags,
+                                      uint64_t a5, uint64_t a6) {
+    (void)a5; (void)a6;
+    extern long sys_cachestat(unsigned int fd, const void *cachestat_range,
+                               void *cachestat, unsigned int flags);
+    return sys_cachestat((unsigned int)fd, (const void *)(uintptr_t)cachestat_range,
+                          (void *)(uintptr_t)cachestat, (unsigned int)flags);
+}
+
+/* set_mempolicy_home_node wrapper — Linux 5.17+ (NUMA, returns ENOSYS) */
+static int64_t sys_set_mempolicy_home_node_wrapper(uint64_t start, uint64_t len,
+                                                    uint64_t home_node, uint64_t flags,
+                                                    uint64_t a5, uint64_t a6) {
+    (void)a5; (void)a6;
+    extern long sys_set_mempolicy_home_node(unsigned long start, unsigned long len,
+                                             unsigned long home_node, unsigned long flags);
+    return sys_set_mempolicy_home_node((unsigned long)start, (unsigned long)len,
+                                        (unsigned long)home_node, (unsigned long)flags);
+}
+
 /* Initialize syscall table at runtime to avoid ARM64 relocation issues */
 static void arm64_syscall_table_init(void) {
     if (syscall_table_initialized) {
@@ -4164,34 +4243,34 @@ static void arm64_syscall_table_init(void) {
     syscall_table[__NR_keyctl].handler = (syscall_fn_t)sys_enosys_stub;
     syscall_table[__NR_keyctl].name = "keyctl";
 
-    /* Linux 5.13-5.16 stubs — return ENOSYS so callers fall back gracefully */
+    /* Linux 5.13-5.16 — wire to real implementations */
 #define __NR_landlock_create_ruleset 444
 #define __NR_landlock_add_rule       445
 #define __NR_landlock_restrict_self  446
 #define __NR_memfd_secret            447
 #define __NR_futex_waitv             449
-    syscall_table[__NR_landlock_create_ruleset].handler = (syscall_fn_t)sys_enosys_stub;
+    syscall_table[__NR_landlock_create_ruleset].handler = (syscall_fn_t)sys_landlock_create_ruleset_wrapper;
     syscall_table[__NR_landlock_create_ruleset].name = "landlock_create_ruleset";
-    syscall_table[__NR_landlock_add_rule].handler = (syscall_fn_t)sys_enosys_stub;
+    syscall_table[__NR_landlock_add_rule].handler = (syscall_fn_t)sys_landlock_add_rule_wrapper;
     syscall_table[__NR_landlock_add_rule].name = "landlock_add_rule";
-    syscall_table[__NR_landlock_restrict_self].handler = (syscall_fn_t)sys_enosys_stub;
+    syscall_table[__NR_landlock_restrict_self].handler = (syscall_fn_t)sys_landlock_restrict_self_wrapper;
     syscall_table[__NR_landlock_restrict_self].name = "landlock_restrict_self";
-    syscall_table[__NR_memfd_secret].handler = (syscall_fn_t)sys_enosys_stub;
+    syscall_table[__NR_memfd_secret].handler = (syscall_fn_t)sys_memfd_secret_wrapper;
     syscall_table[__NR_memfd_secret].name = "memfd_secret";
-    syscall_table[__NR_futex_waitv].handler = (syscall_fn_t)sys_enosys_stub;
+    syscall_table[__NR_futex_waitv].handler = (syscall_fn_t)sys_futex_waitv_wrapper;
     syscall_table[__NR_futex_waitv].name = "futex_waitv";
 
-    /* Linux 5.10-6.10 stubs */
+    /* Linux 5.10-6.10 — wire to real implementations */
 #define __NR_process_madvise         440
 #define __NR_set_mempolicy_home_node 450
 #define __NR_cachestat               451
 #define __NR_fchmodat2               452
 #define __NR_mseal                   462
-    syscall_table[__NR_process_madvise].handler = (syscall_fn_t)sys_enosys_stub;
+    syscall_table[__NR_process_madvise].handler = (syscall_fn_t)sys_process_madvise_wrapper;
     syscall_table[__NR_process_madvise].name = "process_madvise";
-    syscall_table[__NR_set_mempolicy_home_node].handler = (syscall_fn_t)sys_enosys_stub;
+    syscall_table[__NR_set_mempolicy_home_node].handler = (syscall_fn_t)sys_set_mempolicy_home_node_wrapper;
     syscall_table[__NR_set_mempolicy_home_node].name = "set_mempolicy_home_node";
-    syscall_table[__NR_cachestat].handler = (syscall_fn_t)sys_enosys_stub;
+    syscall_table[__NR_cachestat].handler = (syscall_fn_t)sys_cachestat_wrapper;
     syscall_table[__NR_cachestat].name = "cachestat";
     syscall_table[__NR_fchmodat2].handler = (syscall_fn_t)sys_fchmodat2_wrapper;
     syscall_table[__NR_fchmodat2].name = "fchmodat2";

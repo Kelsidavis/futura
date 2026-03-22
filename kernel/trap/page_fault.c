@@ -467,7 +467,10 @@ bool fut_trap_handle_page_fault(fut_interrupt_frame_t *frame) {
         bool is_write = (frame->error_code & 0x2) != 0;
         bool is_present = (frame->error_code & 0x1) != 0;
         if (handle_cow_fault_generic(fault_addr, is_write, is_present)) {
-            return true;  /* COW fault handled successfully */
+            /* Minor fault: resolved without I/O */
+            fut_task_t *cow_task = fut_task_current();
+            if (cow_task) cow_task->minflt++;
+            return true;
         }
     }
 
@@ -475,11 +478,18 @@ bool fut_trap_handle_page_fault(fut_interrupt_frame_t *frame) {
     if ((frame->cs & 0x3u) != 0) {  /* User mode fault */
         fut_mm_t *mm = fut_mm_current();
         if (handle_demand_paging_fault(fault_addr, mm)) {
-            return true;  /* Demand paging fault handled successfully */
+            /* Minor fault: resolved without I/O (no swap in Futura) */
+            fut_task_t *dp_task = fut_task_current();
+            if (dp_task) dp_task->minflt++;
+            return true;
         }
     }
 
     if ((frame->cs & 0x3u) != 0) {
+        /* Major fault: unresolvable — would require I/O in a full system */
+        fut_task_t *maj_task = fut_task_current();
+        if (maj_task) maj_task->majflt++;
+
         /* Log the unhandled user page fault */
         uint64_t cr2 = fut_read_cr2();
         fut_printf("[#PF-USER] Unhandled user page fault: addr=0x%llx rip=0x%llx err=0x%llx\n",
@@ -602,12 +612,22 @@ bool fut_trap_handle_page_fault(fut_interrupt_frame_t *frame) {
 
     /* Try to handle as COW fault if write */
     if (is_write && handle_cow_fault_generic(fault_addr, is_write, is_present)) {
+        fut_task_t *cow_task = fut_task_current();
+        if (cow_task) cow_task->minflt++;
         return true;  /* COW fault handled successfully */
     }
 
     /* Try to handle as demand paging fault */
     if (handle_demand_paging_fault(fault_addr, mm)) {
+        fut_task_t *dp_task = fut_task_current();
+        if (dp_task) dp_task->minflt++;
         return true;  /* Demand paging fault handled successfully */
+    }
+
+    /* Major fault: unresolvable */
+    {
+        fut_task_t *maj_task = fut_task_current();
+        if (maj_task) maj_task->majflt++;
     }
 
     fut_printf("[#PF-ARM64] user fault addr=0x%llx esr=0x%llx pc=0x%llx\n",

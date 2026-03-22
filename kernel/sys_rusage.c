@@ -198,6 +198,16 @@ long sys_getrusage(int who, struct rusage *usage) {
         ru.ru_oublock  = (long)task->io_syscw;
     }
 
+    /* Phase 7: Page fault counters from per-task accounting. */
+    if (who == RUSAGE_SELF || who == RUSAGE_THREAD) {
+        ru.ru_minflt = (long)task->minflt;
+        ru.ru_majflt = (long)task->majflt;
+    }
+    if (who == RUSAGE_CHILDREN) {
+        ru.ru_minflt = (long)task->child_minflt;
+        ru.ru_majflt = (long)task->child_majflt;
+    }
+
     /* Copy to userspace */
     if (rusage_copy_to_user(usage, &ru, sizeof(struct rusage)) != 0) {
         fut_printf("[RUSAGE] getrusage(who=%s, usage=%p) -> EFAULT (copy_to_user failed)\n",

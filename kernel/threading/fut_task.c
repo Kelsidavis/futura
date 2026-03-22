@@ -802,6 +802,9 @@ int fut_task_waitpid(int pid, int *status_out, int flags, uint64_t *child_ticks_
             /* Track peak RSS (max of all children, including grandchildren) */
             if (match->child_maxrss_kb > parent->child_maxrss_kb)
                 parent->child_maxrss_kb = match->child_maxrss_kb;
+            /* Accumulate page fault counters from child and its reaped children */
+            parent->child_minflt += match->minflt + match->child_minflt;
+            parent->child_majflt += match->majflt + match->child_majflt;
 
             task_detach_child(parent, match);
             fut_spinlock_release(&task_list_lock);
@@ -942,6 +945,8 @@ int fut_task_waitpid_ex(int pid, int *status_out, int flags, uint32_t *uid_out) 
             parent->child_context_switches += child_switches + match->child_context_switches;
             if (match->child_maxrss_kb > parent->child_maxrss_kb)
                 parent->child_maxrss_kb = match->child_maxrss_kb;
+            parent->child_minflt += match->minflt + match->child_minflt;
+            parent->child_majflt += match->majflt + match->child_majflt;
 
             task_detach_child(parent, match);
             fut_spinlock_release(&task_list_lock);

@@ -52986,6 +52986,67 @@ void fut_misc_test_thread(void *arg) {
         }
     }
 
+    /*
+     * Test 1643: RUSAGE_CHILDREN includes minflt/majflt from reaped child.
+     * Set synthetic minflt on a zombie child, reap it, verify RUSAGE_CHILDREN
+     * reflects the value. (Cannot trigger real page faults from kernel context.)
+     */
+    {
+        typedef struct {
+            long long utime_sec, utime_usec;
+            long long stime_sec, stime_usec;
+            long ru_maxrss;
+            long ru_ixrss, ru_idrss, ru_isrss;
+            long ru_minflt, ru_majflt, ru_nswap;
+            long ru_inblock, ru_oublock;
+            long ru_msgsnd, ru_msgrcv, ru_nsignals;
+            long ru_nvcsw, ru_nivcsw;
+        } full_ru_t;
+
+        extern long sys_getrusage(int who, void *rusage);
+        extern long sys_waitpid(int pid, int *status, int flags);
+
+        /* Snapshot RUSAGE_CHILDREN before */
+        full_ru_t ru_before;
+        __builtin_memset(&ru_before, 0, sizeof(ru_before));
+        sys_getrusage(-1 /* RUSAGE_CHILDREN */, &ru_before);
+
+        /* Create zombie child with synthetic page fault counts */
+        fut_task_t *child = fut_task_create();
+        if (child) {
+            child->state = FUT_TASK_ZOMBIE;
+            child->exit_code = 0;
+            child->minflt = 100;
+            child->majflt = 5;
+
+            int status = 0;
+            long pid = sys_waitpid((int)child->pid, &status, 0);
+            if (pid > 0) {
+                full_ru_t ru_after;
+                __builtin_memset(&ru_after, 0, sizeof(ru_after));
+                sys_getrusage(-1, &ru_after);
+
+                long delta_min = ru_after.ru_minflt - ru_before.ru_minflt;
+                long delta_maj = ru_after.ru_majflt - ru_before.ru_majflt;
+                if (delta_min >= 100 && delta_maj >= 5) {
+                    fut_printf("[MISC-TEST] ✓ Test 1643: RUSAGE_CHILDREN minflt delta=%ld majflt delta=%ld\n",
+                               delta_min, delta_maj);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1643: minflt delta=%ld majflt delta=%ld "
+                               "(expected >=100, >=5)\n", delta_min, delta_maj);
+                    fut_test_fail(1643);
+                }
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1643: waitpid failed %ld\n", pid);
+                fut_test_fail(1643);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1643: fut_task_create failed\n");
+            fut_test_fail(1643);
+        }
+    }
+
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");
     fut_printf("[MISC-TEST] ========================================\n");

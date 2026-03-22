@@ -1350,11 +1350,11 @@ static size_t gen_stat(char *buf, size_t cap, fut_task_t *task, uint64_t tid) {
     pb_char(&b, '-'); pb_char(&b, '1'); pb_char(&b, ' ');
     /* Field 9: flags */
     pb_char(&b, '0'); pb_char(&b, ' ');
-    /* Fields 10-12: minflt cminflt majflt cmajflt (0) */
-    pb_char(&b, '0'); pb_char(&b, ' ');
-    pb_char(&b, '0'); pb_char(&b, ' ');
-    pb_char(&b, '0'); pb_char(&b, ' ');
-    pb_char(&b, '0'); pb_char(&b, ' ');
+    /* Fields 10-13: minflt cminflt majflt cmajflt */
+    pb_u64(&b, task->minflt);        pb_char(&b, ' ');
+    pb_u64(&b, task->child_minflt);  pb_char(&b, ' ');
+    pb_u64(&b, task->majflt);        pb_char(&b, ' ');
+    pb_u64(&b, task->child_majflt);  pb_char(&b, ' ');
     /* Fields 13-16: utime stime cutime cstime */
     pb_u64(&b, utime);  pb_char(&b, ' ');
     pb_u64(&b, stime);  pb_char(&b, ' ');

@@ -175,6 +175,12 @@ struct fut_task {
     uint64_t io_syscr;                 // Number of read-family syscall invocations
     uint64_t io_syscw;                 // Number of write-family syscall invocations
 
+    /* Page fault counters (Linux compat: getrusage, /proc/pid/stat fields 10-13) */
+    uint64_t minflt;                   // Minor (soft) page faults — COW, demand paging
+    uint64_t majflt;                   // Major (hard) page faults — would require I/O
+    uint64_t child_minflt;             // Accumulated minflt from reaped children
+    uint64_t child_majflt;             // Accumulated majflt from reaped children
+
     /* POSIX capabilities */
     uint64_t cap_effective;            // Effective capability set
     uint64_t cap_permitted;            // Permitted capability set

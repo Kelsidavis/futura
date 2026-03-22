@@ -259,9 +259,21 @@ void inotify_dispatch_event(const char *dir_path, uint32_t mask, const char *fil
                     fut_waitq_wake_all(inst->epoll_notify);
             }
 
-            /* IN_ONESHOT: remove watch after first event */
+            /* IN_ONESHOT: remove watch after first event and queue IN_IGNORED */
             if (w->mask & IN_ONESHOT) {
+                int removed_wd = w->wd;
                 w->wd = 0;  /* mark as removed */
+
+                /* Queue IN_IGNORED event (Linux sends this when a watch is removed) */
+                if (inst->ev_count < INOTIFY_MAX_EVENTS) {
+                    int itail = inst->ev_tail;
+                    inst->events[itail].wd     = removed_wd;
+                    inst->events[itail].mask   = IN_IGNORED;
+                    inst->events[itail].cookie = 0;
+                    inst->events[itail].name[0] = '\0';
+                    inst->ev_tail  = (itail + 1) % INOTIFY_MAX_EVENTS;
+                    inst->ev_count++;
+                }
             }
         }
 
@@ -570,7 +582,7 @@ long sys_inotify_add_watch(int fd, const char *pathname, uint32_t mask) {
 
     /* Check if path is already watched — update mask if so (or add if IN_MASK_ADD) */
     for (int i = 0; i < inst->watch_count; i++) {
-        if (strncmp(inst->watches[i].path, path_buf, INOTIFY_PATH_MAX) == 0) {
+        if (strcmp(inst->watches[i].path, path_buf) == 0) {
             int wd = inst->watches[i].wd;
             /* IN_MASK_CREATE: fail if watch already exists (Linux 4.18+) */
             if (mask & IN_MASK_CREATE) {

@@ -126,6 +126,12 @@ struct fut_thread {
     /* Per-thread name: set via prctl(PR_SET_NAME) or /proc/<pid>/task/<tid>/comm.
      * Initialized from task->comm at thread creation; max 15 chars + NUL. */
     char comm[16];
+
+    /* Restartable sequences (rseq): per-thread registration.
+     * rseq_ptr: userspace struct rseq pointer (NULL = not registered).
+     * rseq_sig: expected abort handler signature. */
+    void *rseq_ptr;
+    uint32_t rseq_sig;
 };
 
 /* ============================================================

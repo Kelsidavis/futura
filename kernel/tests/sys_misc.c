@@ -53892,6 +53892,79 @@ void fut_misc_test_thread(void *arg) {
         }
     }
 
+    /***********************************************************************
+     * Test 1659: rseq register/unregister tracking                        *
+     ***********************************************************************/
+    fut_printf("[MISC-TEST] Test 1659: rseq register/unregister tracking\n");
+    {
+        extern long sys_rseq(void *rseq, uint32_t rseq_len, int flags, uint32_t sig);
+
+        /* Allocate a 32-byte struct rseq on stack */
+        uint8_t rseq_buf[32];
+        __builtin_memset(rseq_buf, 0xff, sizeof(rseq_buf));
+
+        /* Register */
+        long r1 = sys_rseq(rseq_buf, 32, 0, 0xdeadbeef);
+        /* Double-register should return -EBUSY */
+        long r2 = sys_rseq(rseq_buf, 32, 0, 0xdeadbeef);
+        /* Unregister */
+        long r3 = sys_rseq(rseq_buf, 32, 1 /* RSEQ_FLAG_UNREGISTER */, 0xdeadbeef);
+        /* After unregister, re-register should succeed */
+        long r4 = sys_rseq(rseq_buf, 32, 0, 0xcafebabe);
+        /* Unregister with wrong sig should fail */
+        long r5 = sys_rseq(rseq_buf, 32, 1, 0x11111111);
+        /* Unregister with correct sig should succeed */
+        long r6 = sys_rseq(rseq_buf, 32, 1, 0xcafebabe);
+
+        if (r1 == 0 && r2 == -16 /* -EBUSY */ && r3 == 0 &&
+            r4 == 0 && r5 == -22 /* -EINVAL */ && r6 == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1659: rseq register/unregister tracking works\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1659: r1=%ld r2=%ld r3=%ld r4=%ld r5=%ld r6=%ld\n",
+                       r1, r2, r3, r4, r5, r6);
+            fut_test_fail(1659);
+        }
+    }
+
+    /***********************************************************************
+     * Test 1660: rseq initializes cpu_id field                            *
+     ***********************************************************************/
+    fut_printf("[MISC-TEST] Test 1660: rseq initializes cpu_id fields\n");
+    {
+        extern long sys_rseq(void *rseq, uint32_t rseq_len, int flags, uint32_t sig);
+
+        /* struct rseq layout (first 12 bytes):
+         *   offset 0: __u32 cpu_id_start  → initialized by kernel
+         *   offset 4: __u32 cpu_id_start  → initialized by kernel
+         *   offset 8: __u32 cpu_id        → initialized by kernel */
+        uint8_t rseq_buf[32];
+        __builtin_memset(rseq_buf, 0xff, sizeof(rseq_buf));
+
+        long r = sys_rseq(rseq_buf, 32, 0, 0xabcd1234);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1660: rseq register failed %ld\n", r);
+            fut_test_fail(1660);
+        } else {
+            /* Read cpu_id_start (offset 4) and cpu_id (offset 8) */
+            uint32_t cpu_id_start, cpu_id;
+            __builtin_memcpy(&cpu_id_start, &rseq_buf[4], 4);
+            __builtin_memcpy(&cpu_id, &rseq_buf[8], 4);
+
+            if (cpu_id_start == 0 && cpu_id == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1660: cpu_id_start=0 cpu_id=0 (uniprocessor)\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1660: cpu_id_start=%u cpu_id=%u\n",
+                           cpu_id_start, cpu_id);
+                fut_test_fail(1660);
+            }
+
+            /* Clean up */
+            sys_rseq(rseq_buf, 32, 1, 0xabcd1234);
+        }
+    }
+
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");
     fut_printf("[MISC-TEST] ========================================\n");

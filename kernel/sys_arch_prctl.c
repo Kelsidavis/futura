@@ -99,9 +99,12 @@ long sys_arch_prctl(int code, unsigned long addr) {
     }
 
     case ARCH_SET_GS:
-#ifdef __x86_64__
-        wrmsr(MSR_GS_BASE, addr);
-#endif
+        /* Store in thread struct only — do NOT write MSR_GS_BASE because
+         * Futura uses GS for per-CPU data (no SWAPGS implemented).
+         * User-mode GS accesses won't use this base, but the value is
+         * preserved for ARCH_GET_GS and potential future SWAPGS support. */
+        if (thread)
+            thread->gs_base = addr;
         return 0;
 
     case ARCH_GET_GS: {
@@ -109,10 +112,7 @@ long sys_arch_prctl(int code, unsigned long addr) {
         if (!uptr) {
             return -EFAULT;
         }
-        uint64_t val = 0;
-#ifdef __x86_64__
-        val = rdmsr(MSR_GS_BASE);
-#endif
+        uint64_t val = thread ? thread->gs_base : 0;
         if (fut_copy_to_user(uptr, &val, sizeof(val)) != 0) {
             *uptr = val;
         }

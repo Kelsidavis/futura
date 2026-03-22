@@ -73,6 +73,7 @@ struct fut_thread {
     fut_cpu_context_t context;            // Saved CPU context (64-bit, 16-byte aligned)
     fut_interrupt_frame_t *irq_frame;     // Saved interrupt frame (for IRQ context switches)
     uint64_t fs_base;                     // Thread Local Storage base (MSR_FS_BASE)
+    uint64_t gs_base;                     // GS base (MSR_GS_BASE, set via arch_prctl)
     enum fut_thread_state state;          // Current state
     int priority;                         // Effective priority (0-255, higher = higher priority)
     int base_priority;                    // Base priority (restored after PI)

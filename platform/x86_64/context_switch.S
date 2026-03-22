@@ -1045,7 +1045,9 @@ fut_switch_context_irq:
      * clear the MSR value. By writing it here (after segment restore,
      * before GPR restore), we ensure it's correct when the thread runs.
      * r13 still contains the next thread pointer at this point.
-     * Thread struct layout: fs_base is at offset 728 (after irq_frame at 720). */
+     * Thread struct layout: fs_base at offset 728.
+     * Note: GS_BASE is NOT restored here — GS is used for per-CPU data
+     * (no SWAPGS), so only the kernel's GS_BASE must persist. */
     pushq %rax
     pushq %rcx
     pushq %rdx

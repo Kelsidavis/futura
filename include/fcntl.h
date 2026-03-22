@@ -56,11 +56,14 @@
 #ifndef O_DSYNC
 #define O_DSYNC     00010000    /* Synchronized data writes */
 #endif
+#ifndef __O_SYNC
+#define __O_SYNC    00020000    /* Synchronized I/O (internal flag) */
+#endif
 #ifndef O_SYNC
-#define O_SYNC      00010000    /* Synchronous writes */
+#define O_SYNC      (__O_SYNC | O_DSYNC)  /* Full synchronous writes (data + metadata) */
 #endif
 #ifndef O_RSYNC
-#define O_RSYNC     00010000    /* Synchronized read operations */
+#define O_RSYNC     O_SYNC      /* Synchronized read operations (alias for O_SYNC) */
 #endif
 #ifndef O_DIRECTORY
 #define O_DIRECTORY 00200000    /* Must be a directory */

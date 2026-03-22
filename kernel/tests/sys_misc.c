@@ -53047,6 +53047,56 @@ void fut_misc_test_thread(void *arg) {
         }
     }
 
+    /*
+     * Test 1644: wait4 rusage includes minflt from reaped child.
+     * Create zombie child with synthetic minflt, reap via wait4 with
+     * rusage pointer, verify ru_minflt in the returned struct.
+     */
+    {
+        typedef struct {
+            long long utime_sec, utime_usec;
+            long long stime_sec, stime_usec;
+            long ru_maxrss;
+            long ru_ixrss, ru_idrss, ru_isrss;
+            long ru_minflt, ru_majflt, ru_nswap;
+            long ru_inblock, ru_oublock;
+            long ru_msgsnd, ru_msgrcv, ru_nsignals;
+            long ru_nvcsw, ru_nivcsw;
+        } full_ru_t;
+
+        extern long sys_wait4(int pid, int *status, int options, void *rusage);
+
+        fut_task_t *child = fut_task_create();
+        if (child) {
+            child->state = FUT_TASK_ZOMBIE;
+            child->exit_code = 0;
+            child->minflt = 200;
+            child->child_context_switches = 30;
+
+            int status = 0;
+            full_ru_t ru;
+            __builtin_memset(&ru, 0, sizeof(ru));
+            long pid = sys_wait4((int)child->pid, &status, 0, &ru);
+            if (pid > 0) {
+                if (ru.ru_minflt >= 200 && ru.ru_nvcsw >= 30) {
+                    fut_printf("[MISC-TEST] ✓ Test 1644: wait4 rusage minflt=%ld nvcsw=%ld\n",
+                               ru.ru_minflt, ru.ru_nvcsw);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1644: minflt=%ld nvcsw=%ld "
+                               "(expected >=200, >=30)\n", ru.ru_minflt, ru.ru_nvcsw);
+                    fut_test_fail(1644);
+                }
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1644: wait4 failed %ld\n", pid);
+                fut_test_fail(1644);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1644: fut_task_create failed\n");
+            fut_test_fail(1644);
+        }
+    }
+
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");
     fut_printf("[MISC-TEST] ========================================\n");

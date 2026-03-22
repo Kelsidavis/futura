@@ -403,6 +403,14 @@ long sys_wait4(int pid, int *u_status, int flags, void *rusage_ptr) {
             return -EFAULT;
     }
 
+    /* Snapshot parent's accumulated child stats before reap so we can
+     * compute the delta (= reaped child's own stats) for wait4 rusage. */
+    fut_task_t *w4_task = fut_task_current();
+    uint64_t pre_child_minflt  = w4_task ? w4_task->child_minflt : 0;
+    uint64_t pre_child_majflt  = w4_task ? w4_task->child_majflt : 0;
+    uint64_t pre_child_nvcsw   = w4_task ? w4_task->child_context_switches : 0;
+    uint64_t pre_child_maxrss  = w4_task ? w4_task->child_maxrss_kb : 0;
+
     int status = 0;
     uint64_t child_ticks = 0;
     int rc = fut_task_waitpid(pid, &status, flags, &child_ticks);
@@ -421,24 +429,51 @@ long sys_wait4(int pid, int *u_status, int flags, void *rusage_ptr) {
             return -EFAULT;
     }
 
-    /* Fill struct rusage if requested */
+    /* Fill struct rusage for the reaped child.
+     * Linux's wait4 returns the child's own usage + its reaped children.
+     * Since fut_task_waitpid accumulated the child's stats into parent->child_*,
+     * the delta gives us exactly the reaped child's total usage.
+     *
+     * struct rusage layout (Linux ABI, 144 bytes):
+     *   [0]   timeval ru_utime  (tv_sec:8, tv_usec:8)
+     *   [16]  timeval ru_stime  (tv_sec:8, tv_usec:8)
+     *   [32]  long ru_maxrss
+     *   [40]  long ru_ixrss     (0)
+     *   [48]  long ru_idrss     (0)
+     *   [56]  long ru_isrss     (0)
+     *   [64]  long ru_minflt
+     *   [72]  long ru_majflt
+     *   [80]  long ru_nswap     (0)
+     *   [88]  long ru_inblock   (0)
+     *   [96]  long ru_oublock   (0)
+     *   [104] long ru_msgsnd    (0)
+     *   [112] long ru_msgrcv    (0)
+     *   [120] long ru_nsignals  (0)
+     *   [128] long ru_nvcsw
+     *   [136] long ru_nivcsw    (0)
+     */
     if (rusage_ptr) {
-        /* struct rusage layout (Linux ABI, 144 bytes):
-         *   timeval ru_utime (16 bytes: tv_sec int64, tv_usec int64)
-         *   timeval ru_stime (16 bytes)
-         *   ... 112 bytes of other fields (zero-filled) */
         char rusage_buf[144];
         __builtin_memset(rusage_buf, 0, sizeof(rusage_buf));
 
-        /* Convert CPU ticks → microseconds for ru_utime */
+        /* ru_utime: CPU ticks of the reaped child */
         uint64_t usec = child_ticks * USEC_PER_TICK;
         int64_t tv_sec  = (int64_t)(usec / 1000000ULL);
         int64_t tv_usec = (int64_t)(usec % 1000000ULL);
-
-        /* Write ru_utime at offset 0: two int64 fields */
         __builtin_memcpy(rusage_buf + 0,  &tv_sec,  8);
         __builtin_memcpy(rusage_buf + 8,  &tv_usec, 8);
-        /* ru_stime at offset 16: zero (no kernel/user distinction) */
+
+        /* Compute deltas from parent's accumulated child stats */
+        if (w4_task) {
+            long maxrss = (long)(w4_task->child_maxrss_kb - pre_child_maxrss);
+            long minflt = (long)(w4_task->child_minflt - pre_child_minflt);
+            long majflt = (long)(w4_task->child_majflt - pre_child_majflt);
+            long nvcsw  = (long)(w4_task->child_context_switches - pre_child_nvcsw);
+            __builtin_memcpy(rusage_buf + 32, &maxrss, 8);  /* ru_maxrss */
+            __builtin_memcpy(rusage_buf + 64, &minflt, 8);  /* ru_minflt */
+            __builtin_memcpy(rusage_buf + 72, &majflt, 8);  /* ru_majflt */
+            __builtin_memcpy(rusage_buf + 128, &nvcsw, 8);  /* ru_nvcsw */
+        }
 
         if (use_memcpy_rusage)
             __builtin_memcpy(rusage_ptr, rusage_buf, sizeof(rusage_buf));

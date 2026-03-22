@@ -199,6 +199,11 @@ typedef struct {
     apple_rtkit_ctx_t *rtkit;           /* RTKit context */
     uint8_t ans2_endpoint;              /* ANS2 application endpoint */
 
+    /* PRP list pool for multi-page transfers */
+    void *prp_list_pool[8];         /* Up to 8 PRP list pages */
+    uint64_t prp_list_pool_phys[8]; /* Physical addresses of PRP pages */
+    uint32_t prp_pool_next;         /* Next free PRP list slot */
+
     /* Device identification */
     char serial[20];
     char model[40];

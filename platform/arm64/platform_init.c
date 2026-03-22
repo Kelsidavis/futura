@@ -63,11 +63,17 @@
  *   - Timer: ARM Generic Timer
  *   - Memory: Configurable (512 MB default)
  *
- * Apple Silicon (M1/M2/M3):
+ * Apple Silicon (M1/M2/M3/M4):
  *   - UART: Apple s5l-uart (from platform/arm64/drivers/apple_uart.c)
  *   - Interrupt Controller: Apple AIC (from platform/arm64/interrupt/apple_aic.c)
  *   - NVMe: ANS2 controller (from platform/arm64/drivers/apple_ans2.c)
  *   - RTKit: Mailbox IPC (from platform/arm64/drivers/apple_rtkit.c)
+ *   - Display: DCP + DART IOMMU (from platform/arm64/drivers/apple_dcp.c)
+ *   - Input: SPI/I2C HID keyboard + trackpad (from platform/arm64/drivers/apple_hid.c)
+ *   - Power: SMC battery/thermal/fan (from platform/arm64/drivers/apple_power.c)
+ *   - USB: xHCI via PCIe (from platform/arm64/drivers/apple_xhci.c)
+ *   - Network: USB CDC-ECM Ethernet (from platform/arm64/drivers/usb_cdc_ecm.c)
+ *   - Audio: MCA I2S + codec (from platform/arm64/drivers/apple_audio.c)
  *
  * MMIO Operations
  * ================
@@ -137,6 +143,13 @@
 #pragma GCC diagnostic pop
 #include <platform/arm64/interrupt/irq.h>
 #include <platform/platform.h>
+#include <platform/arm64/dtb.h>
+#include <platform/arm64/apple_dcp.h>
+#include <platform/arm64/apple_ans2.h>
+#include <platform/arm64/apple_hid.h>
+#include <platform/arm64/apple_power.h>
+#include <platform/arm64/apple_xhci.h>
+#include <platform/arm64/apple_audio.h>
 #include <config/futura_config.h>
 #include <kernel/fut_waitq.h>
 #include <kernel/fut_task.h>
@@ -1122,7 +1135,41 @@ void fut_platform_early_init(uint32_t boot_magic, void *boot_info) {
 }
 
 void fut_platform_late_init(void) {
-    /* Late initialization placeholder (currently unused) */
+    fut_serial_puts("[INIT] ARM64 platform late initialization...\n");
+
+    /* Parse device tree and initialize Apple Silicon drivers if applicable */
+    if (g_dtb_ptr != 0) {
+        fut_platform_info_t info = fut_dtb_parse(g_dtb_ptr);
+
+        if (info.has_aic) {
+            fut_serial_puts("[INIT] Apple Silicon detected, initializing drivers...\n");
+
+            /* Storage: ANS2 NVMe */
+            if (info.ans_nvme_base != 0) {
+                fut_apple_ans2_platform_init(&info);
+            }
+
+            /* Display: DCP + DART */
+            if (info.has_dcp) {
+                fut_apple_dcp_platform_init(&info);
+            }
+
+            /* Power management: SMC */
+            apple_power_platform_init(&info);
+
+            /* Input: SPI/I2C HID keyboard + trackpad */
+            apple_hid_platform_init(&info);
+
+            /* USB: xHCI via PCIe */
+            apple_xhci_platform_init(&info);
+
+            /* Audio: MCA + codec */
+            apple_audio_platform_init(&info);
+
+            fut_serial_puts("[INIT] Apple Silicon driver init complete\n");
+        }
+    }
+
     fut_serial_puts("[INIT] ARM64 platform late initialization complete\n\n");
 }
 
@@ -1368,6 +1415,10 @@ static void arm64_init_spawner_thread(void *arg) {
 void arch_late_init(void) {
 
     fut_printf("\n[ARM64] Late initialization\n");
+
+    /* Initialize Apple Silicon drivers (NVMe, display, input, power, USB, audio) */
+    fut_platform_late_init();
+
     fut_printf("[ARM64] Userland spawner enabled - testing init process\n");
 
     /* Re-enabled for userland testing */

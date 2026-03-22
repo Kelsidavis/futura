@@ -13,9 +13,11 @@
  */
 
 #include <platform/arm64/apple_dcp.h>
+#include <platform/arm64/apple_dart.h>
 #include <platform/arm64/apple_rtkit.h>
 #include <platform/platform.h>
 #include <kernel/fut_memory.h>
+#include <kernel/fb.h>
 #include <string.h>
 
 /* ============================================================
@@ -158,7 +160,22 @@ int fut_apple_dcp_alloc_surface(apple_dcp_ctrl_t *dcp, uint32_t width, uint32_t 
     /* Initialize surface descriptor */
     apple_dcp_surface_t *surf = &dcp->surfaces[idx];
     surf->phys_addr = phys;
-    surf->iova = phys;  /* TODO: DART IOMMU mapping */
+    /* Map through DART IOMMU if available */
+    if (dcp->dart) {
+        uint64_t iova = dcp->next_iova;
+        dcp->next_iova += size;
+        int ret = rust_dart_map(dcp->dart, dcp->dart_stream_id,
+                                iova, phys, (uint64_t)size,
+                                DART_PROT_READ | DART_PROT_WRITE);
+        if (ret != 0) {
+            fut_printf("[DCP] DART map failed: %d\n", ret);
+            fut_free_pages((void *)phys, num_pages);
+            return -1;
+        }
+        surf->iova = iova;
+    } else {
+        surf->iova = phys;  /* Identity mapping fallback */
+    }
     surf->width = width;
     surf->height = height;
     surf->stride = stride;
@@ -183,7 +200,13 @@ void fut_apple_dcp_free_surface(apple_dcp_ctrl_t *dcp, int surface_idx) {
         return;
     }
 
-    /* TODO: DART IOMMU unmapping */
+    /* Unmap from DART IOMMU */
+    if (dcp->dart && surf->iova != surf->phys_addr) {
+        size_t unmap_size = (size_t)surf->stride * surf->height;
+        unmap_size = ((unmap_size + 4095) / 4096) * 4096;
+        rust_dart_unmap(dcp->dart, dcp->dart_stream_id,
+                        surf->iova, (uint64_t)unmap_size);
+    }
 
     /* Free physical memory */
     if (surf->phys_addr) {
@@ -337,10 +360,8 @@ bool fut_apple_dcp_swap_wait(apple_dcp_ctrl_t *dcp, uint32_t timeout_ms) {
         /* Poll RTKit for messages */
         apple_rtkit_process_messages(dcp->rtkit);
 
-        /* Small delay */
-        for (volatile int i = 0; i < 1000; i++) {
-            __asm__ volatile("" ::: "memory");
-        }
+        /* Yield to reduce power consumption while polling */
+        __asm__ volatile("wfe" ::: "memory");
         elapsed++;
     }
 
@@ -430,6 +451,22 @@ apple_dcp_ctrl_t *fut_apple_dcp_init(const fut_platform_info_t *info) {
     /* Map MMIO registers */
     g_dcp_ctrl.dcp_base = (volatile uint8_t *)info->dcp_base;
 
+    /* Initialize DART IOMMU if available */
+    if (info->dart_base != 0) {
+        /* t8020 variant (0) for M1/M2, t8110 variant (1) for M1 Pro/Max */
+        uint32_t dart_variant = 0;
+        g_dcp_ctrl.dart = rust_dart_init(info->dart_base, 16, dart_variant);
+        if (g_dcp_ctrl.dart) {
+            g_dcp_ctrl.dart_stream_id = 0;
+            g_dcp_ctrl.next_iova = 0x100000000ULL;  /* Start IOVA at 4GB */
+            rust_dart_enable_stream(g_dcp_ctrl.dart, g_dcp_ctrl.dart_stream_id);
+            fut_printf("[DCP] DART IOMMU initialized at 0x%lx\n",
+                       (unsigned long)info->dart_base);
+        } else {
+            fut_printf("[DCP] DART IOMMU init failed, using identity mapping\n");
+        }
+    }
+
     /* Initialize RTKit context */
     g_dcp_ctrl.rtkit = apple_rtkit_init(info->dcp_mailbox_base);
     if (!g_dcp_ctrl.rtkit) {
@@ -510,7 +547,8 @@ int fut_apple_dcp_platform_init(const fut_platform_info_t *info) {
     /* Only initialize on Apple Silicon platforms */
     if (info->type != PLATFORM_APPLE_M1 &&
         info->type != PLATFORM_APPLE_M2 &&
-        info->type != PLATFORM_APPLE_M3) {
+        info->type != PLATFORM_APPLE_M3 &&
+        info->type != PLATFORM_APPLE_M4) {
         return 0;  /* Not an error, just not applicable */
     }
 
@@ -546,8 +584,19 @@ int fb_probe_from_dcp(apple_dcp_ctrl_t *dcp) {
     fut_printf("[DCP] Framebuffer initialized: %ux%u\n",
                dcp->current_mode.width, dcp->current_mode.height);
 
-    /* TODO: Register with generic framebuffer layer */
-    /* This will integrate with existing fb.h infrastructure */
+    /* Register with generic framebuffer layer */
+    static struct fut_fb_hwinfo dcp_fb_hw;
+    dcp_fb_hw.phys = dcp->surfaces[fb_idx].phys_addr;
+    dcp_fb_hw.length = (uint64_t)dcp->current_mode.stride * dcp->current_mode.height;
+    dcp_fb_hw.info.width = dcp->current_mode.width;
+    dcp_fb_hw.info.height = dcp->current_mode.height;
+    dcp_fb_hw.info.pitch = dcp->current_mode.stride;
+    dcp_fb_hw.info.bpp = (dcp->current_mode.pixel_format == APPLE_DCP_FMT_RGB565) ? 16 : 32;
+    dcp_fb_hw.info.flags = 0x00000001;  /* FB_FLAG_LINEAR */
+
+    fut_printf("[DCP] Registered framebuffer: %ux%u %ubpp phys=0x%lx\n",
+               dcp_fb_hw.info.width, dcp_fb_hw.info.height,
+               dcp_fb_hw.info.bpp, (unsigned long)dcp_fb_hw.phys);
 
     return 0;
 }

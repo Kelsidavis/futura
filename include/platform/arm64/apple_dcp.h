@@ -56,8 +56,9 @@
  *   DCP Structures
  * ============================================================ */
 
-/* Forward declaration */
+/* Forward declarations */
 struct apple_rtkit_ctx;
+struct AppleDart;
 
 /**
  * Display mode information
@@ -95,6 +96,11 @@ typedef struct {
     /* RTKit co-processor IPC */
     struct apple_rtkit_ctx *rtkit;  /* RTKit context */
     uint8_t dcp_endpoint;        /* DCP application endpoint */
+
+    /* DART IOMMU */
+    struct AppleDart *dart;      /* DART IOMMU handle (NULL if unavailable) */
+    uint32_t dart_stream_id;     /* DART stream ID for DCP */
+    uint64_t next_iova;          /* Next available IOVA for allocation */
 
     /* Current display mode */
     apple_dcp_mode_t current_mode;

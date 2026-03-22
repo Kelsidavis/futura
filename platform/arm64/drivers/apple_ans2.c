@@ -618,9 +618,9 @@ int fut_apple_ans2_read(apple_ans2_ctrl_t *ctrl, uint64_t lba, uint32_t count, v
     uint64_t total_bytes = (uint64_t)count * ctrl->sector_size;
     uint32_t num_pages = (uint32_t)((total_bytes + FUT_PAGE_SIZE - 1) / FUT_PAGE_SIZE);
 
-    /* For now, limit to 2 pages (8KB) to avoid PRP list complexity */
-    if (num_pages > 2) {
-        fut_printf("[ANS2] Error: Read transfer too large (%u pages, max 2)\n", num_pages);
+    /* Support up to 512 pages (2MB) per transfer via PRP lists */
+    if (num_pages > 512) {
+        fut_printf("[ANS2] Error: Read transfer too large (%u pages, max 512)\n", num_pages);
         return -1;
     }
 
@@ -630,11 +630,27 @@ int fut_apple_ans2_read(apple_ans2_ctrl_t *ctrl, uint64_t lba, uint32_t count, v
     cmd.nsid = 1;       /* Namespace 1 */
     cmd.prp1 = (uint64_t)buffer;
 
-    /* Handle PRP2 for multi-page transfers */
-    if (num_pages == 2) {
+    /* Handle PRP2: single page, two pages, or PRP list */
+    if (num_pages <= 1) {
+        cmd.prp2 = 0;
+    } else if (num_pages == 2) {
         cmd.prp2 = (uint64_t)buffer + FUT_PAGE_SIZE;
     } else {
-        cmd.prp2 = 0;  /* Single page transfer */
+        /* Allocate PRP list page from pool */
+        if (ctrl->prp_pool_next >= 8) {
+            ctrl->prp_pool_next = 0;  /* Wrap around (reuse) */
+        }
+        uint32_t slot = ctrl->prp_pool_next++;
+        if (!ctrl->prp_list_pool[slot]) {
+            ctrl->prp_list_pool[slot] = fut_pmm_alloc_page();
+            ctrl->prp_list_pool_phys[slot] = (uint64_t)(uintptr_t)ctrl->prp_list_pool[slot];
+        }
+        uint64_t *prp_list = (uint64_t *)ctrl->prp_list_pool[slot];
+        /* Fill PRP list with physical addresses of pages 1..N-1 */
+        for (uint32_t i = 1; i < num_pages; i++) {
+            prp_list[i - 1] = (uint64_t)buffer + (uint64_t)i * FUT_PAGE_SIZE;
+        }
+        cmd.prp2 = ctrl->prp_list_pool_phys[slot];
     }
 
     cmd.cdw10 = (uint32_t)(lba & 0xFFFFFFFF);
@@ -675,9 +691,9 @@ int fut_apple_ans2_write(apple_ans2_ctrl_t *ctrl, uint64_t lba, uint32_t count, 
     uint64_t total_bytes = (uint64_t)count * ctrl->sector_size;
     uint32_t num_pages = (uint32_t)((total_bytes + FUT_PAGE_SIZE - 1) / FUT_PAGE_SIZE);
 
-    /* For now, limit to 2 pages (8KB) to avoid PRP list complexity */
-    if (num_pages > 2) {
-        fut_printf("[ANS2] Error: Write transfer too large (%u pages, max 2)\n", num_pages);
+    /* Support up to 512 pages (2MB) per transfer via PRP lists */
+    if (num_pages > 512) {
+        fut_printf("[ANS2] Error: Write transfer too large (%u pages, max 512)\n", num_pages);
         return -1;
     }
 
@@ -687,11 +703,26 @@ int fut_apple_ans2_write(apple_ans2_ctrl_t *ctrl, uint64_t lba, uint32_t count, 
     cmd.nsid = 1;       /* Namespace 1 */
     cmd.prp1 = (uint64_t)buffer;
 
-    /* Handle PRP2 for multi-page transfers */
-    if (num_pages == 2) {
+    /* Handle PRP2: single page, two pages, or PRP list */
+    if (num_pages <= 1) {
+        cmd.prp2 = 0;
+    } else if (num_pages == 2) {
         cmd.prp2 = (uint64_t)buffer + FUT_PAGE_SIZE;
     } else {
-        cmd.prp2 = 0;  /* Single page transfer */
+        /* Allocate PRP list page from pool */
+        if (ctrl->prp_pool_next >= 8) {
+            ctrl->prp_pool_next = 0;
+        }
+        uint32_t slot = ctrl->prp_pool_next++;
+        if (!ctrl->prp_list_pool[slot]) {
+            ctrl->prp_list_pool[slot] = fut_pmm_alloc_page();
+            ctrl->prp_list_pool_phys[slot] = (uint64_t)(uintptr_t)ctrl->prp_list_pool[slot];
+        }
+        uint64_t *prp_list = (uint64_t *)ctrl->prp_list_pool[slot];
+        for (uint32_t i = 1; i < num_pages; i++) {
+            prp_list[i - 1] = (uint64_t)buffer + (uint64_t)i * FUT_PAGE_SIZE;
+        }
+        cmd.prp2 = ctrl->prp_list_pool_phys[slot];
     }
 
     cmd.cdw10 = (uint32_t)(lba & 0xFFFFFFFF);

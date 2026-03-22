@@ -55,7 +55,8 @@ typedef enum {
     PLATFORM_QEMU_VIRT = 4,
     PLATFORM_APPLE_M1 = 5,
     PLATFORM_APPLE_M2 = 6,
-    PLATFORM_APPLE_M3 = 7
+    PLATFORM_APPLE_M3 = 7,
+    PLATFORM_APPLE_M4 = 8
 } fut_platform_type_t;
 
 typedef struct {
@@ -72,6 +73,13 @@ typedef struct {
     uint64_t dcp_base;           /* Apple DCP base (Apple Silicon only) */
     uint64_t dcp_mailbox_base;   /* Apple DCP mailbox base (Apple Silicon only) */
     uint64_t dart_base;          /* Apple DART IOMMU base (Apple Silicon only) */
+    uint64_t smc_base;           /* Apple SMC mailbox base (Apple Silicon only) */
+    uint64_t gpio_base_apple;    /* Apple GPIO controller base (Apple Silicon only) */
+    uint64_t spi0_base;          /* Apple SPI0 base (keyboard HID) (Apple Silicon only) */
+    uint64_t i2c0_base;          /* Apple I2C0 base (trackpad HID) (Apple Silicon only) */
+    uint64_t pcie_base;          /* Apple PCIe RC base (Apple Silicon only) */
+    uint64_t pcie_cfg_base;      /* Apple PCIe config space base (Apple Silicon only) */
+    uint32_t pcie_num_ports;     /* Apple PCIe number of ports (Apple Silicon only) */
     uint32_t display_width;      /* Native panel width (Apple Silicon only) */
     uint32_t display_height;     /* Native panel height (Apple Silicon only) */
     bool has_gic;                /* Has GICv2 support */

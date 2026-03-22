@@ -170,8 +170,12 @@ fut_platform_type_t fut_dtb_detect_platform(uint64_t dtb_ptr) {
         strstr(compatible, "apple,j493") != NULL) {   /* MacBook Pro 13" M2 (A2338) */
         return PLATFORM_APPLE_M2;
     }
-    if (strstr(compatible, "apple,t8103") != NULL) { /* M3 */
+    if (strstr(compatible, "apple,t8122") != NULL) { /* M3 */
         return PLATFORM_APPLE_M3;
+    }
+    if (strstr(compatible, "apple,t6031") != NULL || /* M4 */
+        strstr(compatible, "apple,t6030") != NULL) {  /* M4 Pro */
+        return PLATFORM_APPLE_M4;
     }
 
     return PLATFORM_UNKNOWN;
@@ -399,107 +403,96 @@ fut_platform_info_t fut_dtb_parse(uint64_t dtb_ptr) {
             break;
 
         case PLATFORM_APPLE_M1:
-            info.name = "Apple M1";
-            info.cpu_freq = 24000000;  /* 24 MHz timer frequency */
-            info.uart_base = 0x235200000;  /* Apple s5l-uart (default fallback) */
-            info.gpio_base = 0;  /* GPIO controller varies by device */
-            info.aic_base = 0x23B100000;  /* Apple Interrupt Controller (default fallback) */
-            info.has_gic = false;
-            info.has_aic = true;
-            info.has_generic_timer = true;  /* ARM Generic Timer present */
-
-            /* Parse Apple-specific device tree nodes */
-            /* Note: Paths vary by device - try common locations with fallback to defaults */
-            uint64_t uart_addr, aic_addr, ans_mailbox, ans_nvme;
-
-            /* Try to parse UART address from device tree */
-            if (fut_dtb_get_reg(dtb_ptr, "/soc/serial@235200000", &uart_addr, NULL) ||
-                fut_dtb_get_reg(dtb_ptr, "/arm-io/uart0", &uart_addr, NULL)) {
-                info.uart_base = uart_addr;
-            }
-
-            /* Try to parse AIC address from device tree */
-            if (fut_dtb_get_reg(dtb_ptr, "/soc/aic@23b100000", &aic_addr, NULL) ||
-                fut_dtb_get_reg(dtb_ptr, "/arm-io/aic", &aic_addr, NULL)) {
-                info.aic_base = aic_addr;
-            }
-
-            /* Parse ANS/mailbox nodes */
-            if (fut_dtb_get_reg(dtb_ptr, "/arm-io/ans", &ans_nvme, NULL)) {
-                info.ans_nvme_base = ans_nvme;
-            }
-            if (fut_dtb_get_reg(dtb_ptr, "/arm-io/ans/mailbox", &ans_mailbox, NULL)) {
-                info.ans_mailbox_base = ans_mailbox;
-            }
-            break;
-
         case PLATFORM_APPLE_M2:
-            info.name = "Apple M2";
-            info.cpu_freq = 24000000;  /* 24 MHz timer frequency */
-            info.uart_base = 0x235200000;  /* Apple s5l-uart (default fallback) */
-            info.gpio_base = 0;  /* GPIO controller varies by device */
-            info.aic_base = 0x23B100000;  /* Apple Interrupt Controller (default fallback) */
-            info.has_gic = false;
-            info.has_aic = true;
-            info.has_generic_timer = true;
-
-            /* Parse Apple-specific device tree nodes */
-            uint64_t uart_addr_m2, aic_addr_m2, ans_mailbox_m2, ans_nvme_m2;
-
-            /* Try to parse UART address from device tree */
-            if (fut_dtb_get_reg(dtb_ptr, "/soc/serial@235200000", &uart_addr_m2, NULL) ||
-                fut_dtb_get_reg(dtb_ptr, "/arm-io/uart0", &uart_addr_m2, NULL)) {
-                info.uart_base = uart_addr_m2;
-            }
-
-            /* Try to parse AIC address from device tree */
-            if (fut_dtb_get_reg(dtb_ptr, "/soc/aic@23b100000", &aic_addr_m2, NULL) ||
-                fut_dtb_get_reg(dtb_ptr, "/arm-io/aic", &aic_addr_m2, NULL)) {
-                info.aic_base = aic_addr_m2;
-            }
-
-            /* Parse ANS/mailbox nodes */
-            if (fut_dtb_get_reg(dtb_ptr, "/arm-io/ans", &ans_nvme_m2, NULL)) {
-                info.ans_nvme_base = ans_nvme_m2;
-            }
-            if (fut_dtb_get_reg(dtb_ptr, "/arm-io/ans/mailbox", &ans_mailbox_m2, NULL)) {
-                info.ans_mailbox_base = ans_mailbox_m2;
-            }
-            break;
-
         case PLATFORM_APPLE_M3:
-            info.name = "Apple M3";
+        case PLATFORM_APPLE_M4: {
+            /* Shared Apple Silicon initialization */
+            static const char *apple_names[] = {
+                [PLATFORM_APPLE_M1] = "Apple M1",
+                [PLATFORM_APPLE_M2] = "Apple M2",
+                [PLATFORM_APPLE_M3] = "Apple M3",
+                [PLATFORM_APPLE_M4] = "Apple M4",
+            };
+            info.name = apple_names[info.type];
             info.cpu_freq = 24000000;  /* 24 MHz timer frequency */
             info.uart_base = 0x235200000;  /* Apple s5l-uart (default fallback) */
-            info.gpio_base = 0;  /* GPIO controller varies by device */
+            info.gpio_base = 0;
             info.aic_base = 0x23B100000;  /* Apple Interrupt Controller (default fallback) */
             info.has_gic = false;
             info.has_aic = true;
             info.has_generic_timer = true;
 
             /* Parse Apple-specific device tree nodes */
-            uint64_t uart_addr_m3, aic_addr_m3, ans_mailbox_m3, ans_nvme_m3;
+            uint64_t tmp_addr;
 
-            /* Try to parse UART address from device tree */
-            if (fut_dtb_get_reg(dtb_ptr, "/soc/serial@235200000", &uart_addr_m3, NULL) ||
-                fut_dtb_get_reg(dtb_ptr, "/arm-io/uart0", &uart_addr_m3, NULL)) {
-                info.uart_base = uart_addr_m3;
-            }
-
-            /* Try to parse AIC address from device tree */
-            if (fut_dtb_get_reg(dtb_ptr, "/soc/aic@23b100000", &aic_addr_m3, NULL) ||
-                fut_dtb_get_reg(dtb_ptr, "/arm-io/aic", &aic_addr_m3, NULL)) {
-                info.aic_base = aic_addr_m3;
+            /* UART */
+            if (fut_dtb_get_reg(dtb_ptr, "/soc/serial@235200000", &tmp_addr, NULL) ||
+                fut_dtb_get_reg(dtb_ptr, "/arm-io/uart0", &tmp_addr, NULL)) {
+                info.uart_base = tmp_addr;
             }
 
-            /* Parse ANS/mailbox nodes */
-            if (fut_dtb_get_reg(dtb_ptr, "/arm-io/ans", &ans_nvme_m3, NULL)) {
-                info.ans_nvme_base = ans_nvme_m3;
+            /* AIC (Interrupt Controller) */
+            if (fut_dtb_get_reg(dtb_ptr, "/soc/aic@23b100000", &tmp_addr, NULL) ||
+                fut_dtb_get_reg(dtb_ptr, "/arm-io/aic", &tmp_addr, NULL)) {
+                info.aic_base = tmp_addr;
             }
-            if (fut_dtb_get_reg(dtb_ptr, "/arm-io/ans/mailbox", &ans_mailbox_m3, NULL)) {
-                info.ans_mailbox_base = ans_mailbox_m3;
+
+            /* ANS2 NVMe */
+            if (fut_dtb_get_reg(dtb_ptr, "/arm-io/ans", &tmp_addr, NULL)) {
+                info.ans_nvme_base = tmp_addr;
             }
+            if (fut_dtb_get_reg(dtb_ptr, "/arm-io/ans/mailbox", &tmp_addr, NULL)) {
+                info.ans_mailbox_base = tmp_addr;
+            }
+
+            /* DCP (Display Co-Processor) */
+            if (fut_dtb_get_reg(dtb_ptr, "/arm-io/dcp", &tmp_addr, NULL)) {
+                info.dcp_base = tmp_addr;
+                info.has_dcp = true;
+            }
+            if (fut_dtb_get_reg(dtb_ptr, "/arm-io/dcp/mailbox", &tmp_addr, NULL)) {
+                info.dcp_mailbox_base = tmp_addr;
+            }
+
+            /* DART IOMMU */
+            if (fut_dtb_get_reg(dtb_ptr, "/arm-io/dart-dcp", &tmp_addr, NULL)) {
+                info.dart_base = tmp_addr;
+            }
+
+            /* SMC (System Management Controller) */
+            if (fut_dtb_get_reg(dtb_ptr, "/arm-io/smc", &tmp_addr, NULL) ||
+                fut_dtb_get_reg(dtb_ptr, "/arm-io/smc/mailbox", &tmp_addr, NULL)) {
+                info.smc_base = tmp_addr;
+            }
+
+            /* GPIO */
+            if (fut_dtb_get_reg(dtb_ptr, "/arm-io/gpio", &tmp_addr, NULL) ||
+                fut_dtb_get_reg(dtb_ptr, "/arm-io/pinctrl", &tmp_addr, NULL)) {
+                info.gpio_base_apple = tmp_addr;
+            }
+
+            /* SPI0 (keyboard HID) */
+            if (fut_dtb_get_reg(dtb_ptr, "/arm-io/spi0", &tmp_addr, NULL)) {
+                info.spi0_base = tmp_addr;
+            }
+
+            /* I2C0 (trackpad HID) */
+            if (fut_dtb_get_reg(dtb_ptr, "/arm-io/i2c0", &tmp_addr, NULL)) {
+                info.i2c0_base = tmp_addr;
+            }
+
+            /* PCIe */
+            if (fut_dtb_get_reg(dtb_ptr, "/arm-io/pcie", &tmp_addr, NULL) ||
+                fut_dtb_get_reg(dtb_ptr, "/arm-io/pciec0", &tmp_addr, NULL)) {
+                info.pcie_base = tmp_addr;
+                info.pcie_num_ports = 3;  /* Default: 3 ports on M1/M2 */
+            }
+            if (fut_dtb_get_reg(dtb_ptr, "/arm-io/pcie/ecam", &tmp_addr, NULL)) {
+                info.pcie_cfg_base = tmp_addr;
+            }
+
             break;
+        }
 
         default:
             break;

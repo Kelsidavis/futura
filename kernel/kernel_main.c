@@ -1336,7 +1336,7 @@ void fut_kernel_main(void) {
         planned_tests += 17u; /* clock_sched: getres, sched_param, sched_policy, itimer, rusage, times, getpriority, setpriority, getpriority(-who), setpriority(-who), unshare(0), unshare(invalid), rr_get_interval, clock_gettime, posix_timer_sigev_value, posix_timer_si_timer, itimer_virtual */
         planned_tests += 22u; /* vfs: O_TRUNC, O_APPEND, relpath, dir_mtime, readlink, hardlink, mount, renameat2, inotify, inotify_rename, inotify_attrib, inotify_close, inotify_access, inotify_modify, inotify_ftruncate, inotify_utimensat, inotify_truncate, inotify_delete, umount expire, dotdot, eisdir, chdir_dotdot */
         planned_tests += 17u; /* poll: file ready, eventfd not-ready, eventfd ready, POLLNVAL, select file, select pipe, pselect6 pipe, pselect6 sigmask restore, timeout-only sleep, timerfd readiness, signalfd readiness, pipe EOF, select pipe EOF, select timerfd wakeup, poll negative fd, POLLRDNORM, select timeout update */
-        planned_tests += 1576u; /* misc(1576): ..., seqpacket_msg_eor (1565-1566), dgram_boundaries (1567-1568), dgram_trunc (1569-1570), recv_trunc_flag (1571-1572), peek_trunc_size (1573-1574), seqpacket_waitall (1575-1576) */
+        planned_tests += 1578u; /* misc(1578): ..., dgram_trunc (1569-1570), recv_trunc_flag (1571-1572), peek_trunc_size (1573-1574), seqpacket_waitall (1575-1576), fionread_dgram (1577-1578) */
         // planned_tests += 1u; /* block */
         // planned_tests += 1u; /* futfs */
         // planned_tests += 1u; /* net */

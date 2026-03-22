@@ -1700,6 +1700,25 @@ int fut_socket_bytes_available(int sockfd) {
     uint32_t bytes_available = (recv_pair->recv_head + recv_pair->recv_size -
                                 recv_pair->recv_tail) % recv_pair->recv_size;
 
+    /* DGRAM/SEQPACKET socketpairs: FIONREAD returns the size of the NEXT datagram,
+     * not total bytes in buffer.  On Linux, ioctl(FIONREAD) on a DGRAM socket
+     * returns the length of the first pending datagram (or 0 if none).
+     * The framing format is: 4-byte LE length header + message body. */
+    if (socket->pair != NULL &&
+        (socket->socket_type == SOCK_DGRAM || socket->socket_type == SOCK_SEQPACKET)) {
+        if (bytes_available < 4)
+            return 0;  /* No complete frame header available */
+        /* Peek at the 4-byte length header without consuming it */
+        uint32_t sz = recv_pair->recv_size;
+        uint32_t t = recv_pair->recv_tail;
+        uint8_t hdr[4];
+        for (int i = 0; i < 4; i++)
+            hdr[i] = recv_pair->recv_buf[(t + (uint32_t)i) % sz];
+        uint32_t msglen = (uint32_t)hdr[0] | ((uint32_t)hdr[1] << 8)
+                        | ((uint32_t)hdr[2] << 16) | ((uint32_t)hdr[3] << 24);
+        return (int)msglen;
+    }
+
     return (int)bytes_available;
 }
 

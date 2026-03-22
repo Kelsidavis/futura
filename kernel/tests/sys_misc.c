@@ -50293,6 +50293,69 @@ static void test_seqpacket_msg_waitall(void) {
     sys_close(sv[1]);
 }
 
+/*
+ * test_fionread_dgram_next_msg - FIONREAD on DGRAM socket returns next datagram size
+ *
+ *   Test 1577: FIONREAD with two datagrams (10 + 20 bytes) returns 10 (first msg only).
+ *   Test 1578: After consuming first datagram, FIONREAD returns 20 (second msg).
+ *
+ * On Linux, ioctl(FIONREAD) on a DGRAM socket returns the size of the NEXT
+ * pending datagram, not the total bytes in the buffer.
+ */
+static void test_fionread_dgram_next_msg(void) {
+    extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+    extern long sys_sendto(int sockfd, const void *buf, size_t len, int flags,
+                           const void *dest_addr, unsigned int addrlen);
+    extern long sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
+                             void *src_addr, unsigned int *addrlen);
+    extern long sys_ioctl(int fd, unsigned long request, void *argp);
+    fut_printf("[MISC-TEST] Tests 1577-1578: FIONREAD returns next datagram size\n");
+
+    int sv[2];
+    long sr = sys_socketpair(1 /* AF_UNIX */, 2 /* SOCK_DGRAM */, 0, sv);
+    if (sr < 0) {
+        fut_printf("[MISC-TEST] ✗ Tests 1577-1578: socketpair failed: %ld\n", sr);
+        fut_test_fail(1577);
+        fut_test_fail(1578);
+        return;
+    }
+
+    /* Send two datagrams of different sizes */
+    char msg1[10]; __builtin_memset(msg1, 'A', 10);
+    char msg2[20]; __builtin_memset(msg2, 'B', 20);
+    sys_sendto(sv[0], msg1, 10, 0, 0, 0);
+    sys_sendto(sv[0], msg2, 20, 0, 0, 0);
+
+    /* Test 1577: FIONREAD should return 10 (first datagram size), not 30 (total) */
+    int avail = 0;
+    long r = sys_ioctl(sv[1], 0x541B /* FIONREAD */, &avail);
+    fut_printf("[MISC-TEST] Test 1577: FIONREAD returned %d (ioctl=%ld)\n", avail, r);
+    if (r == 0 && avail == 10) {
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1577: expected FIONREAD=10, got %d (ioctl=%ld)\n", avail, r);
+        fut_test_fail(1577);
+    }
+
+    /* Consume the first datagram */
+    char discard[10];
+    sys_recvfrom(sv[1], discard, 10, 0, 0, 0);
+
+    /* Test 1578: FIONREAD should now return 20 (second datagram size) */
+    avail = 0;
+    r = sys_ioctl(sv[1], 0x541B /* FIONREAD */, &avail);
+    fut_printf("[MISC-TEST] Test 1578: FIONREAD after consuming first msg returned %d\n", avail);
+    if (r == 0 && avail == 20) {
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1578: expected FIONREAD=20, got %d\n", avail);
+        fut_test_fail(1578);
+    }
+
+    sys_close(sv[0]);
+    sys_close(sv[1]);
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -51033,6 +51096,7 @@ void fut_misc_test_thread(void *arg) {
     test_recv_msg_trunc_flag();            /* Tests 1571-1572: recv(MSG_TRUNC) returns actual size */
     test_peek_trunc_dgram_size();          /* Tests 1573-1574: MSG_PEEK|MSG_TRUNC datagram size */
     test_seqpacket_msg_waitall();          /* Tests 1575-1576: SEQPACKET MSG_WAITALL preserves boundaries */
+    test_fionread_dgram_next_msg();        /* Tests 1577-1578: FIONREAD returns next datagram size */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

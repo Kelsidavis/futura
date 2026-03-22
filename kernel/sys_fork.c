@@ -968,9 +968,11 @@ long sys_fork(void) {
     child_task->suid = parent_task->suid;
     child_task->sgid = parent_task->sgid;
 
-    /* Inherit supplementary groups */
-    child_task->ngroups = parent_task->ngroups;
-    for (int i = 0; i < parent_task->ngroups; i++)
+    /* Inherit supplementary groups (clamped to array size) */
+    int ng = parent_task->ngroups;
+    if (ng > 32) ng = 32;
+    child_task->ngroups = ng;
+    for (int i = 0; i < ng; i++)
         child_task->groups[i] = parent_task->groups[i];
 
     /* Inherit parent's signal handlers and mask (POSIX requirement) */

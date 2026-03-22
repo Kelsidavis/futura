@@ -143,7 +143,14 @@ long sys_clone3(const struct fut_clone_args *uargs, size_t size) {
         extern long sys_clone_thread(uint64_t flags, uint64_t child_stack,
                                      uint64_t parent_tid_ptr, uint64_t child_tid_ptr,
                                      uint64_t tls);
-        return sys_clone_thread(flags, args.stack, args.parent_tid,
+        /* clone3's stack field is the BASE (lowest address); sys_clone_thread
+         * expects the TOP (highest address, where SP starts).  Compute top
+         * from base + size.  If stack_size is 0, pass stack as-is (caller
+         * already computed the top, matching legacy clone() semantics). */
+        uint64_t stack_top = args.stack;
+        if (args.stack_size > 0)
+            stack_top = args.stack + args.stack_size;
+        return sys_clone_thread(flags, stack_top, args.parent_tid,
                                 args.child_tid, args.tls);
     }
 

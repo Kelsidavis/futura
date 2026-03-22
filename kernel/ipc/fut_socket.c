@@ -1689,6 +1689,15 @@ int fut_socket_bytes_available(int sockfd) {
         return -1;
     }
 
+    /* Named DGRAM sockets: check dgram_queue for next datagram size */
+    if (socket->dgram_queue) {
+        fut_dgram_queue_t *dq = socket->dgram_queue;
+        if (dq->count == 0)
+            return 0;
+        /* Return size of next (head) datagram */
+        return (int)dq->msgs[dq->head].data_len;
+    }
+
     /* Only connected sockets have data to read */
     if (socket->state != FUT_SOCK_CONNECTED || !socket->pair_reverse) {
         return 0;

@@ -52705,6 +52705,113 @@ void fut_misc_test_thread(void *arg) {
         }
     }
 
+    /*
+     * Tests 1636-1638: epoll maxevents and EPOLLERR/EPOLLHUP fixes
+     */
+    {
+        /* Packed epoll_event matching kernel layout */
+        typedef struct { uint32_t events; uint64_t data; } __attribute__((packed)) epev_t;
+
+        /* Test 1636: epoll_wait accepts maxevents > MAX_EPOLL_FDS (64).
+         * Linux only requires maxevents > 0; Futura was rejecting > 64. */
+        long epfd = sys_epoll_create1(0);
+        if (epfd >= 0) {
+            epev_t ev;
+            long ret = sys_epoll_wait((int)epfd, &ev, 128, 0);
+            if (ret == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1636: epoll_wait(maxevents=128) accepted\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1636: epoll_wait(maxevents=128) returned %ld\n", ret);
+                fut_test_fail(1636);
+            }
+            sys_close((int)epfd);
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1636: epoll_create1 failed %ld\n", epfd);
+            fut_test_fail(1636);
+        }
+
+        /* Test 1637: epoll_wait caps returned events at maxevents.
+         * Create 2 pipes, add both read ends, but request maxevents=1.
+         * Should return exactly 1 event even though 2 fds are ready. */
+        {
+            int pipe1[2], pipe2[2];
+            extern long sys_pipe2(int pipefd[2], int flags);
+            long r1 = sys_pipe2(pipe1, 0);
+            long r2 = sys_pipe2(pipe2, 0);
+            if (r1 == 0 && r2 == 0) {
+                extern long sys_write(int fd, const void *buf, unsigned long count);
+                char byte = 'X';
+                sys_write(pipe1[1], &byte, 1);
+                sys_write(pipe2[1], &byte, 1);
+
+                long ep = sys_epoll_create1(0);
+                if (ep >= 0) {
+                    epev_t ev1 = { .events = 0x001 /* EPOLLIN */, .data = (uint64_t)pipe1[0] };
+                    epev_t ev2 = { .events = 0x001, .data = (uint64_t)pipe2[0] };
+                    sys_epoll_ctl((int)ep, 1, pipe1[0], &ev1);
+                    sys_epoll_ctl((int)ep, 1, pipe2[0], &ev2);
+
+                    epev_t out[2];
+                    long n = sys_epoll_wait((int)ep, out, 1, 0);
+                    if (n == 1) {
+                        fut_printf("[MISC-TEST] ✓ Test 1637: epoll_wait(maxevents=1) capped at 1\n");
+                        fut_test_pass();
+                    } else {
+                        fut_printf("[MISC-TEST] ✗ Test 1637: returned %ld (expected 1)\n", n);
+                        fut_test_fail(1637);
+                    }
+                    sys_close((int)ep);
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1637: epoll_create1 failed\n");
+                    fut_test_fail(1637);
+                }
+                sys_close(pipe1[0]); sys_close(pipe1[1]);
+                sys_close(pipe2[0]); sys_close(pipe2[1]);
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1637: pipe2 failed\n");
+                fut_test_fail(1637);
+            }
+        }
+
+        /* Test 1638: EPOLLHUP reported even when not in requested events mask.
+         * Create a pipe, close write end, watch read end with only EPOLLOUT.
+         * Should still get EPOLLHUP in returned events. */
+        {
+            int pfds[2];
+            extern long sys_pipe2(int pipefd[2], int flags);
+            long pr = sys_pipe2(pfds, 0);
+            if (pr == 0) {
+                sys_close(pfds[1]);  /* Close write end → EPOLLHUP on read end */
+
+                long ep = sys_epoll_create1(0);
+                if (ep >= 0) {
+                    epev_t ev = { .events = 0x004 /* EPOLLOUT */, .data = (uint64_t)pfds[0] };
+                    sys_epoll_ctl((int)ep, 1, pfds[0], &ev);
+
+                    epev_t out;
+                    long n = sys_epoll_wait((int)ep, &out, 1, 0);
+                    if (n == 1 && (out.events & 0x010 /* EPOLLHUP */)) {
+                        fut_printf("[MISC-TEST] ✓ Test 1638: EPOLLHUP reported without being in mask\n");
+                        fut_test_pass();
+                    } else {
+                        fut_printf("[MISC-TEST] ✗ Test 1638: n=%ld events=0x%x (expected EPOLLHUP)\n",
+                                   n, n > 0 ? out.events : 0);
+                        fut_test_fail(1638);
+                    }
+                    sys_close((int)ep);
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1638: epoll_create1 failed\n");
+                    fut_test_fail(1638);
+                }
+                sys_close(pfds[0]);
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1638: pipe2 failed\n");
+                fut_test_fail(1638);
+            }
+        }
+    }
+
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");
     fut_printf("[MISC-TEST] ========================================\n");

@@ -1066,8 +1066,11 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
         set->fds[slot].last_was_writable = false;
         set->fds[slot].last_was_hup = false;
 
-        /* Phase 3: Mask out modifier flags from events for actual event checking */
+        /* Phase 3: Mask out modifier flags from events for actual event checking.
+         * Always include EPOLLERR|EPOLLHUP — Linux reports these regardless
+         * of the requested mask (ep_insert forces them in). */
         uint32_t base_events = ev.events & ~(EPOLL_ET | EPOLL_ONESHOT);
+        base_events |= EPOLLERR | EPOLLHUP;
         set->fds[slot].events = base_events;
 
         set->count++;
@@ -1125,8 +1128,10 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
                 set->fds[i].last_was_writable = false;
                 set->fds[i].last_was_hup = false;
 
-                /* Strip modifier flags from events for actual event checking */
+                /* Strip modifier flags from events for actual event checking.
+                 * Always include EPOLLERR|EPOLLHUP (Linux forces these). */
                 uint32_t base_events = ev.events & ~(EPOLL_ET | EPOLL_ONESHOT);
+                base_events |= EPOLLERR | EPOLLHUP;
                 set->fds[i].events = base_events;
 
                 return 0;
@@ -1286,14 +1291,6 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
         msg[pos] = '\0';
         fut_printf("%s", msg);
 
-        return -EINVAL;
-    }
-
-    /* Phase 3: Validate maxevents doesn't exceed system capability (MAX_EPOLL_FDS) */
-    if (maxevents > MAX_EPOLL_FDS) {
-        fut_printf("[EPOLL_WAIT] epoll_wait(epfd=%d, maxevents=%d) -> EINVAL "
-                   "(maxevents exceeds MAX_EPOLL_FDS %d, Phase 3)\n",
-                   epfd, maxevents, MAX_EPOLL_FDS);
         return -EINVAL;
     }
 
@@ -1589,6 +1586,10 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
                 if (set->fds[i].oneshot) {
                     set->fds[i].events = 0;  /* Disable all events */
                 }
+
+                /* Cap at maxevents — Linux returns at most maxevents entries */
+                if (ready_count >= maxevents)
+                    break;
             }
         }
 

@@ -433,10 +433,10 @@ long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
         ((mode & FALLOC_FL_PUNCH_HOLE) && (mode & FALLOC_FL_KEEP_SIZE))) {
 
         if (!vnode || !vnode->ops || !vnode->ops->write) {
-            fut_printf("[FALLOCATE] fallocate(fd=%d, mode=0x%x [%s], pid=%d) -> ENOSYS "
+            fut_printf("[FALLOCATE] fallocate(fd=%d, mode=0x%x [%s], pid=%d) -> EOPNOTSUPP "
                        "(filesystem does not support write)\n",
                        fd, mode, op_type, task->pid);
-            return -ENOSYS;
+            return -EOPNOTSUPP;
         }
 
         /* Guard: range must lie within the current file */
@@ -483,7 +483,7 @@ long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
         }
 
         if (!vnode || !vnode->ops || !vnode->ops->read || !vnode->ops->write) {
-            return -ENOSYS;
+            return -EOPNOTSUPP;
         }
 
         /* Linux requires block-aligned offset and len */
@@ -533,7 +533,7 @@ long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
         }
 
         if (!vnode || !vnode->ops || !vnode->ops->read || !vnode->ops->write) {
-            return -ENOSYS;
+            return -EOPNOTSUPP;
         }
 
         /* Linux requires block-aligned offset and len */

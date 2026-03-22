@@ -52851,6 +52851,45 @@ void fut_misc_test_thread(void *arg) {
         }
     }
 
+    /*
+     * Test 1640: signalfd populates ssi_code and ssi_pid from siginfo_t
+     * Send SIGUSR1 via kill(), verify ssi_code=SI_USER(0) and ssi_pid=self.
+     */
+    {
+        extern long sys_signalfd4(int ufd, const void *mask, size_t sizemask, int flags);
+        extern long sys_kill(int pid, int sig);
+        extern long sys_read(int fd, void *buf, size_t count);
+        extern long sys_getpid(void);
+
+        uint64_t mask = 1ULL << (10 - 1);  /* SIGUSR1 = 10 */
+        int sfd = (int)sys_signalfd4(-1, &mask, sizeof(mask), 0x800 /* SFD_NONBLOCK */);
+        if (sfd >= 0) {
+            long pid = sys_getpid();
+            sys_kill((int)pid, 10);
+
+            struct test_signalfd_siginfo info;
+            __builtin_memset(&info, 0, sizeof(info));
+            long n = sys_read(sfd, &info, sizeof(info));
+            fut_vfs_close(sfd);
+
+            if (n == (long)sizeof(info) &&
+                info.ssi_signo == 10 &&
+                info.ssi_code == 0 /* SI_USER */ &&
+                info.ssi_pid == (unsigned int)pid) {
+                fut_printf("[MISC-TEST] ✓ Test 1640: signalfd ssi_code=%d ssi_pid=%u correct\n",
+                           info.ssi_code, info.ssi_pid);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1640: n=%ld signo=%u code=%d pid=%u (expected code=0 pid=%ld)\n",
+                           n, info.ssi_signo, info.ssi_code, info.ssi_pid, pid);
+                fut_test_fail(1640);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1640: signalfd4 failed %d\n", sfd);
+            fut_test_fail(1640);
+        }
+    }
+
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");
     fut_printf("[MISC-TEST] ========================================\n");

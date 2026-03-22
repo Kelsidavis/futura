@@ -1167,17 +1167,22 @@ static ssize_t signalfd_read_op(void *inode, void *priv,
         task->pending_signals &= ~bit;
         fut_spinlock_release(&ctx->lock);
 
-        /* Fill in signalfd_siginfo */
+        /* Fill in signalfd_siginfo from the per-signal queue info.
+         * Linux copies all available siginfo_t fields so applications
+         * (e.g. SIGCHLD handlers, timer consumers) get complete data. */
         struct signalfd_siginfo info;
         __builtin_memset(&info, 0, sizeof(info));
-        info.ssi_signo = (uint32_t)signo;
-        /* Copy sender identity from sig_queue_info (populated by fut_signal_send
-         * with the SENDER's pid/uid, not the receiving task's). */
-        info.ssi_pid   = (uint32_t)task->sig_queue_info[signo - 1].si_pid;
-        info.ssi_uid   = task->sig_queue_info[signo - 1].si_uid;
-        /* Copy si_code and si_int/si_ptr from per-signal queue info */
-        info.ssi_code  = task->sig_queue_info[signo - 1].si_code;
-        info.ssi_int   = (int32_t)task->sig_queue_info[signo - 1].si_value;
+        const siginfo_t *qi = &task->sig_queue_info[signo - 1];
+        info.ssi_signo   = (uint32_t)signo;
+        info.ssi_errno   = qi->si_errno;
+        info.ssi_code    = qi->si_code;
+        info.ssi_pid     = (uint32_t)qi->si_pid;
+        info.ssi_uid     = qi->si_uid;
+        info.ssi_status  = qi->si_status;
+        info.ssi_int     = (int32_t)qi->si_value;
+        info.ssi_ptr     = (uint64_t)qi->si_value;
+        info.ssi_addr    = (uint64_t)(uintptr_t)qi->si_addr;
+        info.ssi_overrun = (uint32_t)qi->si_overrun;
 
         if (sfd_copy_to_user(out, &info, sizeof(info)) != 0)
             return total > 0 ? total : -EFAULT;

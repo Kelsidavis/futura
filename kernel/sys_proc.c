@@ -616,23 +616,14 @@ long sys_setrlimit(int resource, const struct rlimit *rlim) {
         return -EFAULT;
     }
 
-    /* Validate that soft limit <= hard limit */
-    if (new_limit.rlim_cur != RLIM_INFINITY &&
-        new_limit.rlim_max != RLIM_INFINITY &&
-        new_limit.rlim_cur > new_limit.rlim_max) {
-        const char *cur_str = (new_limit.rlim_cur == RLIM_INFINITY) ? "unlimited" : NULL;
-        const char *max_str = (new_limit.rlim_max == RLIM_INFINITY) ? "unlimited" : NULL;
-
-        if (cur_str) {
-            fut_printf("[PROC] setrlimit(resource=%s [%s]) -> EINVAL (soft=unlimited > hard=%llu)\n",
-                       resource_name, resource_desc, new_limit.rlim_max);
-        } else if (max_str) {
-            fut_printf("[PROC] setrlimit(resource=%s [%s]) -> EINVAL (soft=%llu > hard=unlimited)\n",
-                       resource_name, resource_desc, new_limit.rlim_cur);
-        } else {
-            fut_printf("[PROC] setrlimit(resource=%s [%s]) -> EINVAL (soft=%llu > hard=%llu)\n",
-                       resource_name, resource_desc, new_limit.rlim_cur, new_limit.rlim_max);
-        }
+    /* Validate that soft limit <= hard limit.
+     * RLIM_INFINITY is the maximum value, so soft=INFINITY is only valid
+     * when hard=INFINITY. */
+    if (new_limit.rlim_cur > new_limit.rlim_max) {
+        fut_printf("[PROC] setrlimit(resource=%s [%s]) -> EINVAL (soft=%llu > hard=%llu)\n",
+                   resource_name, resource_desc,
+                   (unsigned long long)new_limit.rlim_cur,
+                   (unsigned long long)new_limit.rlim_max);
         return -EINVAL;
     }
 
@@ -656,9 +647,10 @@ long sys_setrlimit(int resource, const struct rlimit *rlim) {
     /* Phase 4: Store limits in task->rlimits so getrlimit can retrieve them */
     fut_task_t *task = fut_task_current();
     if (task) {
-        /* Raising hard limit requires root or CAP_SYS_RESOURCE */
-        if (new_limit.rlim_max > task->rlimits[resource].rlim_max &&
-            new_limit.rlim_max != RLIM_INFINITY) {
+        /* Raising hard limit requires root or CAP_SYS_RESOURCE.
+         * RLIM_INFINITY is treated as the maximum possible value, so raising
+         * to it also requires privilege. */
+        if (new_limit.rlim_max > task->rlimits[resource].rlim_max) {
             if (task->uid != 0 &&
                 !(task->cap_effective & (1ULL << 24 /* CAP_SYS_RESOURCE */))) {
                 return -EPERM;

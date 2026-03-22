@@ -328,9 +328,17 @@ long sys_splice(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
                                                 kbuf, (size_t)nread, &pos);
             write_off = (int64_t)pos;
         } else {
+            /* O_APPEND: seek to end atomically, like fut_vfs_write() */
+            int append = (file_out->flags & O_APPEND) != 0;
+            if (append) {
+                fut_spinlock_acquire(&file_out->vnode->write_lock);
+                write_off = (int64_t)file_out->vnode->size;
+            }
             nwritten = file_out->vnode->ops->write(file_out->vnode, kbuf,
                                                     (size_t)nread,
                                                     (uint64_t)write_off);
+            if (append)
+                fut_spinlock_release(&file_out->vnode->write_lock);
             if (nwritten > 0) write_off += nwritten;
         }
 

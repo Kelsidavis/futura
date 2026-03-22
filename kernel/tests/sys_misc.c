@@ -50904,6 +50904,84 @@ static void test_mprotect_vma_merge(void) {
     sys_munmap((void *)(uintptr_t)addr, 4096 * 3);
 }
 
+/* ============================================================
+ * Tests 1592-1593: splice respects O_APPEND on output file
+ * ============================================================
+ * 1592: splice from pipe to O_APPEND file appends at end
+ * 1593: data appears after existing content, not at offset 0
+ */
+static void test_splice_o_append(void) {
+    extern long sys_splice(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
+                            size_t len, unsigned int flags);
+    extern long sys_pipe2(int pipefd[2], int flags);
+
+    fut_printf("[MISC-TEST] Tests 1592-1593: splice with O_APPEND output file\n");
+
+    /* Create a file with initial content "AAAA" */
+    int fd = fut_vfs_open("/splice_append_test.txt", 0x42 /* O_RDWR|O_CREAT */, 0644);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ create file failed: %d\n", fd);
+        fut_test_fail(1592); fut_test_fail(1593);
+        return;
+    }
+    fut_vfs_write(fd, "AAAA", 4);
+    fut_vfs_close(fd);
+
+    /* Reopen with O_APPEND */
+    fd = fut_vfs_open("/splice_append_test.txt", 0x402 /* O_RDWR|O_APPEND */, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open O_APPEND failed: %d\n", fd);
+        fut_test_fail(1592); fut_test_fail(1593);
+        return;
+    }
+
+    /* Create a pipe and write "BBBB" into it */
+    int pipefd[2];
+    long ret = sys_pipe2(pipefd, 0);
+    if (ret < 0) {
+        fut_printf("[MISC-TEST] ✗ pipe2 failed: %ld\n", ret);
+        fut_vfs_close(fd);
+        fut_test_fail(1592); fut_test_fail(1593);
+        return;
+    }
+    fut_vfs_write(pipefd[1], "BBBB", 4);
+
+    /* splice from pipe to O_APPEND file */
+    ret = sys_splice(pipefd[0], NULL, fd, NULL, 4, 0);
+    fut_vfs_close(pipefd[0]);
+    fut_vfs_close(pipefd[1]);
+    fut_vfs_close(fd);
+
+    /* Test 1592: splice succeeded */
+    if (ret == 4) {
+        fut_printf("[MISC-TEST] ✓ Test 1592: splice to O_APPEND file wrote 4 bytes\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1592: splice returned %ld (expected 4)\n", ret);
+        fut_test_fail(1592);
+    }
+
+    /* Test 1593: verify file content is "AAAABBBB" */
+    fd = fut_vfs_open("/splice_append_test.txt", 0 /* O_RDONLY */, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1593: reopen failed: %d\n", fd);
+        fut_test_fail(1593);
+        return;
+    }
+    char buf[16];
+    long n = fut_vfs_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    buf[n > 0 ? n : 0] = '\0';
+
+    if (n == 8 && buf[0] == 'A' && buf[3] == 'A' && buf[4] == 'B' && buf[7] == 'B') {
+        fut_printf("[MISC-TEST] ✓ Test 1593: file content is \"%s\" (appended correctly)\n", buf);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1593: file content is \"%s\" (expected \"AAAABBBB\")\n", buf);
+        fut_test_fail(1593);
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -51650,6 +51728,7 @@ void fut_misc_test_thread(void *arg) {
     test_map_shared_procfs();             /* Tests 1585-1587: MAP_SHARED shows 's' in /proc/self/maps */
     test_mprotect_vma_split();            /* Tests 1588-1590: mprotect VMA splitting */
     test_mprotect_vma_merge();            /* Test 1591: mprotect VMA merge after restoring prot */
+    test_splice_o_append();               /* Tests 1592-1593: splice respects O_APPEND */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

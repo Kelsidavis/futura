@@ -362,6 +362,7 @@ fut_socket_t *fut_socket_create(int family, int type) {
     /* SO_SNDBUF / SO_RCVBUF: Linux doubles the requested value; default = 2×BUFSIZE */
     socket->sndbuf = 2 * FUT_SOCKET_BUFSIZE;
     socket->rcvbuf = 2 * FUT_SOCKET_BUFSIZE;
+    socket->rcvlowat = 1;  /* POSIX default SO_RCVLOWAT */
 
     /* Allocate wait queue for close operations */
     socket->close_waitq = fut_malloc(sizeof(fut_waitq_t));
@@ -1627,7 +1628,9 @@ int fut_socket_poll(fut_socket_t *socket, int events) {
             } else {
                 uint32_t recv_available = (socket->pair_reverse->recv_head + socket->pair_reverse->recv_size -
                                            socket->pair_reverse->recv_tail) % socket->pair_reverse->recv_size;
-                if (recv_available > 0) {
+                /* SO_RCVLOWAT: only report readable when available >= low-water mark */
+                uint32_t lowat = socket->rcvlowat ? socket->rcvlowat : 1;
+                if (recv_available >= lowat) {
                     ready |= 0x1;
                 }
             }

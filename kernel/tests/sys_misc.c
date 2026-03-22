@@ -49653,6 +49653,98 @@ static void test_tiocoutq(void) {
 #undef TIOCOUTQ_TEST
 }
 
+/**
+ * test_so_rcvlowat - SO_RCVLOWAT setsockopt/getsockopt round-trip and poll enforcement
+ *
+ * Tests 1558-1561:
+ *   1558: getsockopt(SO_RCVLOWAT) default is 1
+ *   1559: setsockopt(SO_RCVLOWAT) round-trips correctly
+ *   1560: poll does not report POLLIN when data < rcvlowat
+ *   1561: poll reports POLLIN when data >= rcvlowat
+ */
+static void test_so_rcvlowat(void) {
+    fut_printf("[MISC-TEST] Tests 1558-1561: SO_RCVLOWAT\n");
+
+    extern long sys_getsockopt(int fd, int level, int optname, void *optval, unsigned int *optlen);
+    extern long sys_setsockopt(int fd, int level, int optname, const void *optval, unsigned int optlen);
+    extern long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout);
+    extern ssize_t sys_write(int fd, const void *buf, size_t count);
+
+    int sv[2] = {-1, -1};
+    long ret = sys_socketpair(1 /* AF_UNIX */, 1 /* SOCK_STREAM */, 0, sv);
+    if (ret < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1558: socketpair failed: %ld\n", ret);
+        fut_test_fail(1558);
+        fut_test_fail(1559);
+        fut_test_fail(1560);
+        fut_test_fail(1561);
+        return;
+    }
+
+    /* Test 1558: Default SO_RCVLOWAT is 1 */
+    int lowat = -1;
+    unsigned int olen = (unsigned int)sizeof(lowat);
+    ret = sys_getsockopt(sv[1], 1 /* SOL_SOCKET */, 18 /* SO_RCVLOWAT */, &lowat, (unsigned int *)&olen);
+    if (ret == 0 && lowat == 1) {
+        fut_printf("[MISC-TEST] ✓ Test 1558: SO_RCVLOWAT default = %d\n", lowat);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1558: SO_RCVLOWAT default ret=%ld val=%d (expected 1)\n", ret, lowat);
+        fut_test_fail(1558);
+    }
+
+    /* Test 1559: Set SO_RCVLOWAT to 10 and read it back */
+    int new_lowat = 10;
+    ret = sys_setsockopt(sv[1], 1 /* SOL_SOCKET */, 18 /* SO_RCVLOWAT */, &new_lowat, sizeof(new_lowat));
+    if (ret < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1559: setsockopt(SO_RCVLOWAT) failed: %ld\n", ret);
+        fut_test_fail(1559);
+    } else {
+        lowat = -1;
+        olen = (unsigned int)sizeof(lowat);
+        ret = sys_getsockopt(sv[1], 1 /* SOL_SOCKET */, 18 /* SO_RCVLOWAT */, &lowat, (unsigned int *)&olen);
+        if (ret == 0 && lowat == 10) {
+            fut_printf("[MISC-TEST] ✓ Test 1559: SO_RCVLOWAT set/get round-trip = %d\n", lowat);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1559: SO_RCVLOWAT round-trip ret=%ld val=%d (expected 10)\n", ret, lowat);
+            fut_test_fail(1559);
+        }
+    }
+
+    /* Test 1560: Write 5 bytes (less than lowat=10), poll sv[1] should NOT be readable */
+    sys_write(sv[0], "hello", 5);
+    struct pollfd pfd;
+    pfd.fd = sv[1];
+    pfd.events = 1; /* POLLIN */
+    pfd.revents = 0;
+    ret = sys_poll(&pfd, 1, 0);  /* Non-blocking poll */
+    if (ret == 0 && !(pfd.revents & 1)) {
+        fut_printf("[MISC-TEST] ✓ Test 1560: poll(5 bytes < lowat=10) not readable\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1560: poll(5 bytes < lowat=10) ret=%ld revents=0x%x (expected not readable)\n", ret, pfd.revents);
+        fut_test_fail(1560);
+    }
+
+    /* Test 1561: Write 5 more bytes (total 10 >= lowat=10), poll sv[1] should be readable */
+    sys_write(sv[0], "world", 5);
+    pfd.fd = sv[1];
+    pfd.events = 1; /* POLLIN */
+    pfd.revents = 0;
+    ret = sys_poll(&pfd, 1, 0);
+    if (ret > 0 && (pfd.revents & 1)) {
+        fut_printf("[MISC-TEST] ✓ Test 1561: poll(10 bytes >= lowat=10) readable\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1561: poll(10 bytes >= lowat=10) ret=%ld revents=0x%x (expected readable)\n", ret, pfd.revents);
+        fut_test_fail(1561);
+    }
+
+    sys_close(sv[0]);
+    sys_close(sv[1]);
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -50385,6 +50477,7 @@ void fut_misc_test_thread(void *arg) {
     test_socketpair_nonblock();            /* Tests 1547-1548: socketpair SOCK_NONBLOCK */
     test_so_protocol_domain_acceptconn();  /* Tests 1549-1554: SO_PROTOCOL/SO_DOMAIN/SO_ACCEPTCONN */
     test_tiocoutq();                       /* Tests 1555-1557: TIOCOUTQ ioctl */
+    test_so_rcvlowat();                    /* Tests 1558-1561: SO_RCVLOWAT enforcement */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

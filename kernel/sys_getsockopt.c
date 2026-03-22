@@ -658,19 +658,25 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
             }
 
             case SO_RCVLOWAT:
+                /* SO_RCVLOWAT: return stored receive low-water mark */
+                int_value = (int)socket->rcvlowat;
+                value_len = sizeof(int);
+                copy_len = (len < value_len) ? len : value_len;
+                if (gso_copy_to_user(optval, &int_value, copy_len) != 0)
+                    return -EFAULT;
+                if (gso_copy_to_user(optlen, &value_len, sizeof(socklen_t)) != 0)
+                    return -EFAULT;
+                return 0;
+
             case SO_SNDLOWAT:
-                /* Low-water mark - return 1 (POSIX default) */
+                /* SO_SNDLOWAT: always 1 (Linux does not allow changing) */
                 int_value = 1;
                 value_len = sizeof(int);
-
                 copy_len = (len < value_len) ? len : value_len;
-                if (gso_copy_to_user(optval, &int_value, copy_len) != 0) {
+                if (gso_copy_to_user(optval, &int_value, copy_len) != 0)
                     return -EFAULT;
-                }
-                if (gso_copy_to_user(optlen, &value_len, sizeof(socklen_t)) != 0) {
+                if (gso_copy_to_user(optlen, &value_len, sizeof(socklen_t)) != 0)
                     return -EFAULT;
-                }
-
                 return 0;
 
             case SO_RCVTIMEO:

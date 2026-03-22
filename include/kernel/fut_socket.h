@@ -395,6 +395,9 @@ typedef struct fut_socket {
     uint32_t sndbuf;                    /* Send buffer size (default 2*FUT_SOCKET_BUFSIZE) */
     uint32_t rcvbuf;                    /* Receive buffer size (default 2*FUT_SOCKET_BUFSIZE) */
 
+    /* SO_RCVLOWAT: receive low-water mark (default 1) */
+    uint32_t rcvlowat;                  /* Min bytes before poll/select reports readable */
+
     /* IPPROTO_TCP options (stored for round-trip; enforcement is best-effort) */
     uint8_t  tcp_nodelay;      /* TCP_NODELAY (1) — disable Nagle */
     uint8_t  tcp_cork;         /* TCP_CORK (3) — cork output */

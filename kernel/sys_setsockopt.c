@@ -521,11 +521,19 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                 return 0;
             }
 
-            case SO_RCVLOWAT:
-            case SO_SNDLOWAT:
-                /* Low-water mark — accept without enforcement */
-                if (optlen < sizeof(int)) return -EINVAL;
+            case SO_RCVLOWAT: {
+                /* SO_RCVLOWAT: minimum bytes before poll/select reports readable.
+                 * Stored and used by poll/select readiness checks. */
+                if (optlen < (socklen_t)sizeof(int)) return -EINVAL;
+                int lowat = 0;
+                if (sso_copy_from_user(&lowat, optval, sizeof(int)) != 0) return -EFAULT;
+                if (lowat < 1) lowat = 1;  /* POSIX minimum is 1 */
+                socket->rcvlowat = (uint32_t)lowat;
                 return 0;
+            }
+            case SO_SNDLOWAT:
+                /* SO_SNDLOWAT — Linux does not allow setting, return ENOPROTOOPT */
+                return -ENOPROTOOPT;
 
             case SO_RCVTIMEO:
             case SO_SNDTIMEO: {

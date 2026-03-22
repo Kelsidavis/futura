@@ -273,17 +273,20 @@ long sys_setuid(uint32_t uid) {
     int is_privileged = (task->uid == 0) ||
                         (task->cap_effective & (1ULL << 7 /* CAP_SETUID */));
 
+    uint32_t old_euid = task->uid;
+
     if (is_privileged) {
         /* Privileged: set all three IDs (real, effective, saved) */
         task->ruid = uid;
         task->uid = uid;
         task->suid = uid;
-
+        if (uid != old_euid) task->dumpable = 0;
         return 0;
     } else {
         /* Non-root can only set effective UID to real or saved UID */
         if (uid == task->ruid || uid == task->suid) {
             task->uid = uid;
+            if (uid != old_euid) task->dumpable = 0;
             return 0;
         } else {
             fut_printf("[CRED] setuid(uid=%u [%s], pid=%u, ruid=%u [%s], "
@@ -359,12 +362,16 @@ long sys_seteuid(uint32_t euid) {
     int is_privileged = (task->uid == 0) ||
                         (task->cap_effective & (1ULL << 7 /* CAP_SETUID */));
 
+    uint32_t old_euid = task->uid;
+
     if (is_privileged) {
         task->uid = euid;
+        if (euid != old_euid) task->dumpable = 0;
         return 0;
     } else {
         if (euid == task->ruid || euid == task->suid) {
             task->uid = euid;
+            if (euid != old_euid) task->dumpable = 0;
             return 0;
         } else {
             fut_printf("[CRED] seteuid(euid=%u [%s], pid=%u, ruid=%u [%s], "
@@ -424,16 +431,20 @@ long sys_setgid(uint32_t gid) {
     int is_privileged = (task->uid == 0) ||
                         (task->cap_effective & (1ULL << 6 /* CAP_SETGID */));
 
+    uint32_t old_egid = task->gid;
+
     if (is_privileged) {
         /* Privileged: set all three GIDs (real, effective, saved) */
         task->rgid = gid;
         task->gid = gid;
         task->sgid = gid;
+        if (gid != old_egid) task->dumpable = 0;
         return 0;
     } else {
         /* Non-root can only set effective GID to real or saved GID */
         if (gid == task->rgid || gid == task->sgid) {
             task->gid = gid;
+            if (gid != old_egid) task->dumpable = 0;
             return 0;
         } else {
             fut_printf("[CRED] setgid(gid=%u [%s], pid=%u, rgid=%u [%s], "
@@ -491,12 +502,16 @@ long sys_setegid(uint32_t egid) {
     int is_privileged = (task->uid == 0) ||
                         (task->cap_effective & (1ULL << 6 /* CAP_SETGID */));
 
+    uint32_t old_egid = task->gid;
+
     if (is_privileged) {
         task->gid = egid;
+        if (egid != old_egid) task->dumpable = 0;
         return 0;
     } else {
         if (egid == task->rgid || egid == task->sgid) {
             task->gid = egid;
+            if (egid != old_egid) task->dumpable = 0;
             return 0;
         } else {
             fut_printf("[CRED] setegid(egid=%u [%s], pid=%u, rgid=%u [%s], "
@@ -630,8 +645,10 @@ long sys_setfsuid(uint32_t fsuid) {
 
     if (task) {
         bool is_root = (task->uid == 0 || task->ruid == 0 || task->suid == 0);
-        if (is_root || fsuid == task->ruid || fsuid == task->uid || fsuid == task->suid)
+        if (is_root || fsuid == task->ruid || fsuid == task->uid || fsuid == task->suid) {
             task->uid = fsuid;
+            if (fsuid != prev) task->dumpable = 0;
+        }
     }
     return (long)(uint32_t)prev;
 }
@@ -648,8 +665,10 @@ long sys_setfsgid(uint32_t fsgid) {
 
     if (task) {
         bool is_root = (task->uid == 0 || task->ruid == 0 || task->suid == 0);
-        if (is_root || fsgid == task->rgid || fsgid == task->gid || fsgid == task->sgid)
+        if (is_root || fsgid == task->rgid || fsgid == task->gid || fsgid == task->sgid) {
             task->gid = fsgid;
+            if (fsgid != prev) task->dumpable = 0;
+        }
     }
     return (long)(uint32_t)prev;
 }

@@ -52107,6 +52107,113 @@ void fut_misc_test_thread(void *arg) {
         task->cap_effective = orig_caps;
     }
 
+    /* ── Tests 1614–1619: credential changes clear dumpable ── */
+    {
+        fut_task_t *task = fut_task_current();
+        uint32_t orig_ruid = task->ruid, orig_uid = task->uid, orig_suid = task->suid;
+        uint32_t orig_rgid = task->rgid, orig_gid = task->gid, orig_sgid = task->sgid;
+        uint64_t orig_caps = task->cap_effective;
+        int orig_dumpable = task->dumpable;
+        long ret;
+
+        /* Test 1614: setuid clears dumpable when euid changes */
+        {
+            extern long sys_setuid(uint32_t uid);
+            task->ruid = 0; task->uid = 0; task->suid = 0;
+            task->dumpable = 1;
+            ret = sys_setuid(1000);  /* privileged: sets all three to 1000 */
+            if (ret == 0 && task->dumpable == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1614: setuid(1000) clears dumpable\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1614: setuid ret=%ld dumpable=%d (expected 0)\n", ret, task->dumpable);
+                fut_test_fail(1614);
+            }
+        }
+
+        /* Test 1615: seteuid clears dumpable when euid changes */
+        {
+            extern long sys_seteuid(uint32_t euid);
+            task->ruid = 0; task->uid = 0; task->suid = 0;
+            task->dumpable = 1;
+            ret = sys_seteuid(1000);  /* privileged: changes euid to 1000 */
+            if (ret == 0 && task->dumpable == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1615: seteuid(1000) clears dumpable\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1615: seteuid ret=%ld dumpable=%d (expected 0)\n", ret, task->dumpable);
+                fut_test_fail(1615);
+            }
+        }
+
+        /* Test 1616: setuid does NOT clear dumpable when euid stays same */
+        {
+            extern long sys_setuid(uint32_t uid);
+            task->ruid = 0; task->uid = 0; task->suid = 0;
+            task->dumpable = 1;
+            ret = sys_setuid(0);  /* no change to euid */
+            if (ret == 0 && task->dumpable == 1) {
+                fut_printf("[MISC-TEST] ✓ Test 1616: setuid(same) preserves dumpable\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1616: setuid ret=%ld dumpable=%d (expected 1)\n", ret, task->dumpable);
+                fut_test_fail(1616);
+            }
+        }
+
+        /* Test 1617: setreuid clears dumpable when euid changes */
+        {
+            extern long sys_setreuid(uint32_t ruid, uint32_t euid);
+            task->ruid = 0; task->uid = 0; task->suid = 0;
+            task->dumpable = 1;
+            ret = sys_setreuid((uint32_t)-1, 500);  /* change euid only */
+            if (ret == 0 && task->dumpable == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1617: setreuid(-1,500) clears dumpable\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1617: setreuid ret=%ld dumpable=%d (expected 0)\n", ret, task->dumpable);
+                fut_test_fail(1617);
+            }
+        }
+
+        /* Test 1618: setresuid clears dumpable when euid changes */
+        {
+            extern long sys_setresuid(uint32_t ruid, uint32_t euid, uint32_t suid);
+            task->ruid = 0; task->uid = 0; task->suid = 0;
+            task->dumpable = 1;
+            ret = sys_setresuid((uint32_t)-1, 500, (uint32_t)-1);
+            if (ret == 0 && task->dumpable == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1618: setresuid(-1,500,-1) clears dumpable\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1618: setresuid ret=%ld dumpable=%d (expected 0)\n", ret, task->dumpable);
+                fut_test_fail(1618);
+            }
+        }
+
+        /* Test 1619: setgid clears dumpable when egid changes */
+        {
+            extern long sys_setgid(uint32_t gid);
+            task->ruid = 0; task->uid = 0;  /* root for privilege */
+            task->rgid = 0; task->gid = 0; task->sgid = 0;
+            task->dumpable = 1;
+            ret = sys_setgid(1000);
+            if (ret == 0 && task->dumpable == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1619: setgid(1000) clears dumpable\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1619: setgid ret=%ld dumpable=%d (expected 0)\n", ret, task->dumpable);
+                fut_test_fail(1619);
+            }
+        }
+
+        /* Restore original values */
+        task->ruid = orig_ruid; task->uid = orig_uid; task->suid = orig_suid;
+        task->rgid = orig_rgid; task->gid = orig_gid; task->sgid = orig_sgid;
+        task->cap_effective = orig_caps;
+        task->dumpable = orig_dumpable;
+    }
+
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");
     fut_printf("[MISC-TEST] ========================================\n");

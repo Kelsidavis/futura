@@ -100,6 +100,7 @@ long sys_setreuid(uint32_t ruid, uint32_t euid) {
 
     int privileged = cred_is_privileged_uid(task);
     uint32_t old_ruid = task->ruid;
+    uint32_t old_euid = task->uid;
 
     /* Validate ruid (if changing) */
     if (ruid != UID_NO_CHANGE) {
@@ -137,6 +138,9 @@ long sys_setreuid(uint32_t ruid, uint32_t euid) {
         task->suid = task->uid;
     }
 
+    /* Linux: clear dumpable when effective UID changes */
+    if (task->uid != old_euid) task->dumpable = 0;
+
     return 0;
 }
 
@@ -170,6 +174,7 @@ long sys_setregid(uint32_t rgid, uint32_t egid) {
 
     int privileged = cred_is_privileged_gid(task);
     uint32_t old_rgid = task->rgid;
+    uint32_t old_egid = task->gid;
 
     /* Validate rgid (if changing) */
     if (rgid != GID_NO_CHANGE) {
@@ -207,6 +212,9 @@ long sys_setregid(uint32_t rgid, uint32_t egid) {
         task->sgid = task->gid;
     }
 
+    /* Linux: clear dumpable when effective GID changes */
+    if (task->gid != old_egid) task->dumpable = 0;
+
     return 0;
 }
 
@@ -239,6 +247,7 @@ long sys_setresuid(uint32_t ruid, uint32_t euid, uint32_t suid) {
     }
 
     int privileged = cred_is_privileged_uid(task);
+    uint32_t old_euid = task->uid;
 
     /* Phase 2: Validate all UIDs (if changing) - unprivileged can only set
      * to current real, effective, or saved UID */
@@ -278,6 +287,9 @@ long sys_setresuid(uint32_t ruid, uint32_t euid, uint32_t suid) {
         task->suid = suid;
     }
 
+    /* Linux: clear dumpable when effective UID changes */
+    if (task->uid != old_euid) task->dumpable = 0;
+
     return 0;
 }
 
@@ -309,6 +321,7 @@ long sys_setresgid(uint32_t rgid, uint32_t egid, uint32_t sgid) {
     }
 
     int privileged = cred_is_privileged_gid(task);
+    uint32_t old_egid = task->gid;
 
     /* Phase 2: Validate all GIDs (if changing) - unprivileged can only set
      * to current real, effective, or saved GID */
@@ -347,6 +360,9 @@ long sys_setresgid(uint32_t rgid, uint32_t egid, uint32_t sgid) {
     if (sgid != GID_NO_CHANGE) {
         task->sgid = sgid;
     }
+
+    /* Linux: clear dumpable when effective GID changes */
+    if (task->gid != old_egid) task->dumpable = 0;
 
     return 0;
 }

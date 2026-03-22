@@ -197,6 +197,9 @@ long sys_getpriority(int which, int who) {
  * Phase 3 (Completed): Priority range validation with detailed categorization
  * Phase 4 (Completed): Actual nice storage, privilege checking, PRIO_PGRP/PRIO_USER
  */
+#define CAP_SYS_NICE_BIT 23
+#define HAS_CAP_SYS_NICE(t) ((t)->cap_effective & (1ULL << CAP_SYS_NICE_BIT))
+
 long sys_setpriority(int which, int who, int prio) {
     fut_task_t *task = fut_task_current();
     if (!task) {
@@ -259,12 +262,12 @@ long sys_setpriority(int which, int who, int prio) {
                        which_desc, who, prio);
             return -ESRCH;
         }
-        if (task->uid != 0 && task->uid != target_task->uid) {
+        if (task->uid != 0 && !HAS_CAP_SYS_NICE(task) && task->uid != target_task->uid) {
             fut_printf("[SCHED] setpriority(%s, who=%d, prio=%d) -> EPERM (uid mismatch)\n",
                        which_desc, who, prio);
             return -EPERM;
         }
-        if (prio < target_task->nice && task->uid != 0) {
+        if (prio < target_task->nice && task->uid != 0 && !HAS_CAP_SYS_NICE(task)) {
             fut_printf("[SCHED] setpriority(%s, who=%d, prio=%d) -> EACCES (not privileged)\n",
                        which_desc, who, prio);
             return -EACCES;
@@ -277,13 +280,13 @@ long sys_setpriority(int which, int who, int prio) {
             if (t->pid != target_pid || t->state == FUT_TASK_ZOMBIE)
                 continue;
             /* Permission check: only root or same-UID can change another's priority */
-            if (task->uid != 0 && task->uid != t->uid) {
+            if (task->uid != 0 && !HAS_CAP_SYS_NICE(task) && task->uid != t->uid) {
                 fut_printf("[SCHED] setpriority(%s, who=%d, prio=%d) -> EPERM (uid mismatch)\n",
                            which_desc, who, prio);
                 return -EPERM;
             }
             /* Privilege check: raising priority (lowering nice) requires root */
-            if (prio < t->nice && task->uid != 0) {
+            if (prio < t->nice && task->uid != 0 && !HAS_CAP_SYS_NICE(task)) {
                 fut_printf("[SCHED] setpriority(%s, who=%d, prio=%d) -> EACCES (not privileged)\n",
                            which_desc, who, prio);
                 return -EACCES;
@@ -296,11 +299,11 @@ long sys_setpriority(int which, int who, int prio) {
         for (fut_task_t *t = fut_task_list; t; t = t->next) {
             if (t->pgid != target_pgid || t->state == FUT_TASK_ZOMBIE)
                 continue;
-            if (task->uid != 0 && task->uid != t->uid) {
+            if (task->uid != 0 && !HAS_CAP_SYS_NICE(task) && task->uid != t->uid) {
                 saw_uid_mismatch = 1;
                 continue; /* skip tasks we don't own in group */
             }
-            if (prio < t->nice && task->uid != 0) {
+            if (prio < t->nice && task->uid != 0 && !HAS_CAP_SYS_NICE(task)) {
                 saw_need_privilege = 1;
                 continue; /* skip tasks we can't raise priority for */
             }
@@ -310,7 +313,7 @@ long sys_setpriority(int which, int who, int prio) {
     } else { /* PRIO_USER */
         uint32_t target_uid = (who == 0) ? task->uid : (uint32_t)who;
         /* Non-root can only modify own user's tasks */
-        if (task->uid != 0 && task->uid != target_uid) {
+        if (task->uid != 0 && !HAS_CAP_SYS_NICE(task) && task->uid != target_uid) {
             fut_printf("[SCHED] setpriority(%s, who=%d, prio=%d) -> EPERM (uid mismatch)\n",
                        which_desc, who, prio);
             return -EPERM;
@@ -318,7 +321,7 @@ long sys_setpriority(int which, int who, int prio) {
         for (fut_task_t *t = fut_task_list; t; t = t->next) {
             if (t->uid != target_uid || t->state == FUT_TASK_ZOMBIE)
                 continue;
-            if (prio < t->nice && task->uid != 0) {
+            if (prio < t->nice && task->uid != 0 && !HAS_CAP_SYS_NICE(task)) {
                 saw_need_privilege = 1;
                 continue; /* skip tasks we can't raise priority for */
             }

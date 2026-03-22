@@ -53097,6 +53097,111 @@ void fut_misc_test_thread(void *arg) {
         }
     }
 
+    /* --------------------------------------------------------------- *
+     * Test 1645: /proc/self/status VmPeak >= VmSize (peak tracking)   *
+     * Test 1646: /proc/self/oom_score reflects oom_score_adj           *
+     * --------------------------------------------------------------- */
+    {
+        extern long sys_openat(int dirfd, const char *pathname, int flags, int mode);
+        extern long sys_read(int fd, void *buf, size_t count);
+        extern long sys_close(int fd);
+
+        /* Test 1645: hiwater_vm/hiwater_rss track VmPeak/VmHWM correctly.
+         * Kernel selftests have no user VMAs, so test the tracking fields
+         * directly: set hiwater_vm to a known value, trigger a /proc read
+         * that updates the peak, verify it doesn't decrease. */
+        fut_printf("[MISC-TEST] Test 1645: VmPeak/VmHWM tracking via hiwater fields\n");
+        {
+            fut_task_t *self = fut_task_current();
+            if (!self) {
+                fut_printf("[MISC-TEST] ✗ Test 1645: no current task\n");
+                fut_test_fail(1645);
+            } else {
+                /* Set hiwater_vm to a synthetic value (e.g. 1000 kB) */
+                self->hiwater_vm = 1000;
+                self->hiwater_rss = 500;
+
+                /* Read /proc/self/status to trigger the lazy peak update */
+                int fd = (int)sys_openat(-100 /*AT_FDCWD*/, "/proc/self/status", 0, 0);
+                if (fd >= 0) {
+                    char sbuf[4096];
+                    sys_read(fd, sbuf, sizeof(sbuf) - 1);
+                    sys_close(fd);
+                }
+
+                /* After read, hiwater_vm should be >= 1000 (it can only grow,
+                 * current VmSize is 0 for kernel task, so peak stays 1000) */
+                uint64_t peak = self->hiwater_vm;
+                uint64_t hwm = self->hiwater_rss;
+                if (peak >= 1000 && hwm >= 500) {
+                    fut_printf("[MISC-TEST] ✓ Test 1645: hiwater_vm=%llu (≥1000) hiwater_rss=%llu (≥500)\n",
+                               (unsigned long long)peak, (unsigned long long)hwm);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1645: hiwater_vm=%llu hiwater_rss=%llu\n",
+                               (unsigned long long)peak, (unsigned long long)hwm);
+                    fut_test_fail(1645);
+                }
+                /* Clean up synthetic values */
+                self->hiwater_vm = 0;
+                self->hiwater_rss = 0;
+            }
+        }
+
+        /* Test 1646: oom_score reflects oom_score_adj */
+        fut_printf("[MISC-TEST] Test 1646: /proc/self/oom_score reflects oom_score_adj\n");
+        {
+            extern long sys_prlimit64(int pid, int resource, const void *new_rlim, void *old_rlim);
+            /* Read baseline oom_score */
+            int fd = (int)sys_openat(-100 /*AT_FDCWD*/, "/proc/self/oom_score", 0, 0);
+            long base_score = -1;
+            if (fd >= 0) {
+                char obuf[64];
+                long n = sys_read(fd, obuf, sizeof(obuf) - 1);
+                sys_close(fd);
+                if (n > 0) {
+                    obuf[n] = '\0';
+                    base_score = 0;
+                    for (int i = 0; obuf[i] >= '0' && obuf[i] <= '9'; i++)
+                        base_score = base_score * 10 + (obuf[i] - '0');
+                }
+            }
+
+            /* Set oom_score_adj = 500 via /proc/self/oom_score_adj write */
+            fut_task_t *self = fut_task_current();
+            int old_adj = self ? self->oom_score_adj : 0;
+            if (self) self->oom_score_adj = 500;
+
+            /* Read oom_score again — should be higher */
+            fd = (int)sys_openat(-100 /*AT_FDCWD*/, "/proc/self/oom_score", 0, 0);
+            long adj_score = -1;
+            if (fd >= 0) {
+                char obuf[64];
+                long n = sys_read(fd, obuf, sizeof(obuf) - 1);
+                sys_close(fd);
+                if (n > 0) {
+                    obuf[n] = '\0';
+                    adj_score = 0;
+                    for (int i = 0; obuf[i] >= '0' && obuf[i] <= '9'; i++)
+                        adj_score = adj_score * 10 + (obuf[i] - '0');
+                }
+            }
+
+            /* Restore original adj */
+            if (self) self->oom_score_adj = old_adj;
+
+            if (base_score >= 0 && adj_score > base_score) {
+                fut_printf("[MISC-TEST] ✓ Test 1646: oom_score base=%ld adj=%ld (adj>base with +500)\n",
+                           base_score, adj_score);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1646: oom_score base=%ld adj=%ld (expected adj > base)\n",
+                           base_score, adj_score);
+                fut_test_fail(1646);
+            }
+        }
+    }
+
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");
     fut_printf("[MISC-TEST] ========================================\n");

@@ -797,12 +797,18 @@ static size_t gen_status(char *buf, size_t cap, fut_task_t *task, uint64_t tid) 
     }
     pb_char(&b, '\n');
     pb_str(&b, "Threads:\t");    pb_u64(&b, task->thread_count); pb_char(&b, '\n');
-    pb_str(&b, "VmPeak:\t");     pb_u64(&b, rss_kb);      pb_str(&b, " kB\n");
-    pb_str(&b, "VmSize:\t");     pb_u64(&b, rss_kb);      pb_str(&b, " kB\n");
-    pb_str(&b, "VmLck:\t");      pb_u64(&b, vm_lck_kb);   pb_str(&b, " kB\n");
-    pb_str(&b, "VmPin:\t");      pb_u64(&b, 0);            pb_str(&b, " kB\n");
-    pb_str(&b, "VmHWM:\t");      pb_u64(&b, rss_kb);      pb_str(&b, " kB\n");
-    pb_str(&b, "VmRSS:\t");      pb_u64(&b, rss_kb);      pb_str(&b, " kB\n");
+    /* Update high-water marks: VmPeak = peak VmSize, VmHWM = peak VmRSS.
+     * In Futura pages are eagerly mapped, so VmSize ≈ VmRSS = rss_kb. */
+    if (rss_kb > task->hiwater_vm)
+        task->hiwater_vm = rss_kb;
+    if (rss_kb > task->hiwater_rss)
+        task->hiwater_rss = rss_kb;
+    pb_str(&b, "VmPeak:\t");     pb_u64(&b, task->hiwater_vm);  pb_str(&b, " kB\n");
+    pb_str(&b, "VmSize:\t");     pb_u64(&b, rss_kb);            pb_str(&b, " kB\n");
+    pb_str(&b, "VmLck:\t");      pb_u64(&b, vm_lck_kb);         pb_str(&b, " kB\n");
+    pb_str(&b, "VmPin:\t");      pb_u64(&b, 0);                  pb_str(&b, " kB\n");
+    pb_str(&b, "VmHWM:\t");      pb_u64(&b, task->hiwater_rss); pb_str(&b, " kB\n");
+    pb_str(&b, "VmRSS:\t");      pb_u64(&b, rss_kb);            pb_str(&b, " kB\n");
     pb_str(&b, "RssAnon:\t");    pb_u64(&b, rss_anon_kb); pb_str(&b, " kB\n");
     pb_str(&b, "RssFile:\t");    pb_u64(&b, rss_file_kb); pb_str(&b, " kB\n");
     pb_str(&b, "RssShmem:\t");   pb_u64(&b, rss_shmem_kb);pb_str(&b, " kB\n");
@@ -2732,9 +2738,30 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             break;
         }
         case PROC_OOM_SCORE: {
-            /* OOM score 0 = least likely to be killed; simple RAM-model */
+            /* OOM score: (task RSS / total RAM) * 1000 + oom_score_adj,
+             * clamped to [0, 1000].  oom_score_adj == -1000 → OOM-exempt (0). */
             struct pbuf b = { tmp, 0, GEN_BUF };
-            pb_str(&b, "0\n");
+            fut_task_t *otask = fut_task_by_pid(n->pid);
+            long score = 0;
+            if (otask) {
+                int adj = otask->oom_score_adj;
+                if (adj != -1000) {
+                    /* Compute RSS in pages from VMAs */
+                    uint64_t rss_pages = 0;
+                    if (otask->mm) {
+                        struct fut_vma *v = otask->mm->vma_list;
+                        while (v) { rss_pages += (v->end - v->start) / 4096; v = v->next; }
+                    }
+                    uint64_t total_pages = fut_pmm_total_pages();
+                    if (total_pages > 0)
+                        score = (long)((rss_pages * 1000) / total_pages);
+                    score += adj;
+                    if (score < 0) score = 0;
+                    if (score > 1000) score = 1000;
+                }
+            }
+            pb_u64(&b, (uint64_t)score);
+            pb_char(&b, '\n');
             total = b.pos;
             break;
         }

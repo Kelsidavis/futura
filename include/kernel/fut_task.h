@@ -175,6 +175,10 @@ struct fut_task {
     uint64_t io_syscr;                 // Number of read-family syscall invocations
     uint64_t io_syscw;                 // Number of write-family syscall invocations
 
+    /* Virtual memory high-water marks (/proc/[pid]/status: VmPeak, VmHWM) */
+    uint64_t hiwater_vm;               // Peak VmSize in kB (total virtual address space)
+    uint64_t hiwater_rss;              // Peak VmRSS in kB (resident set size)
+
     /* Page fault counters (Linux compat: getrusage, /proc/pid/stat fields 10-13) */
     uint64_t minflt;                   // Minor (soft) page faults — COW, demand paging
     uint64_t majflt;                   // Major (hard) page faults — would require I/O

@@ -542,7 +542,7 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                 struct { long tv_sec; long tv_usec; } tv = {0, 0};
                 if (sso_copy_from_user(&tv, optval, sizeof(tv)) != 0) return -EFAULT;
                 uint64_t ms = (uint64_t)tv.tv_sec * 1000ULL +
-                              (uint64_t)tv.tv_usec / 1000ULL;
+                              ((uint64_t)tv.tv_usec + 999ULL) / 1000ULL;
                 if (optname == SO_RCVTIMEO)
                     socket->rcvtimeo_ms = ms;
                 else
@@ -620,7 +620,7 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                 struct { int64_t tv_sec; int64_t tv_usec; } tv = {0, 0};
                 if (sso_copy_from_user(&tv, optval, sizeof(tv)) != 0) return -EFAULT;
                 uint64_t ms = (uint64_t)tv.tv_sec * 1000ULL +
-                              (uint64_t)tv.tv_usec / 1000ULL;
+                              ((uint64_t)tv.tv_usec + 999ULL) / 1000ULL;
                 if (optname == 62)
                     socket->rcvtimeo_ms = ms;
                 else

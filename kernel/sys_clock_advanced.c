@@ -614,9 +614,9 @@ long sys_setitimer(int which, const struct itimerval *value, struct itimerval *o
     /* Arm / disarm the timer.
      * Convert user-provided ms values to ticks (100 Hz = 10ms/tick). */
     uint64_t value_ms = (uint64_t)new_timer.it_value.tv_sec * 1000 +
-                        (uint64_t)new_timer.it_value.tv_usec / 1000;
+                        ((uint64_t)new_timer.it_value.tv_usec + 999) / 1000;
     uint64_t intv_ms  = (uint64_t)new_timer.it_interval.tv_sec * 1000 +
-                        (uint64_t)new_timer.it_interval.tv_usec / 1000;
+                        ((uint64_t)new_timer.it_interval.tv_usec + 999) / 1000;
 
     if (local_which == ITIMER_REAL) {
         /* Convert ms to ticks for storage */

@@ -332,7 +332,7 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
             is_immediate = 1;
         } else {
             has_timeout = 1;
-            uint64_t timeout_ms = (uint64_t)ktv.tv_sec * 1000 + (uint64_t)ktv.tv_usec / 1000;
+            uint64_t timeout_ms = (uint64_t)ktv.tv_sec * 1000 + ((uint64_t)ktv.tv_usec + 999) / 1000;
             uint64_t timeout_ticks = timeout_ms / 10;
             if (timeout_ms % 10 != 0) timeout_ticks++;
             if (timeout_ticks == 0) timeout_ticks = 1;

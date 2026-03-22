@@ -53657,6 +53657,138 @@ void fut_misc_test_thread(void *arg) {
         }
     }
 
+    /***********************************************************************
+     * Test 1655: O_ASYNC SIGIO delivery on pipe read (write-end notification) *
+     ***********************************************************************/
+    fut_printf("[MISC-TEST] Test 1655: O_ASYNC SIGIO delivery on pipe read (write-end)\n");
+    {
+        extern long sys_pipe(int pipefd[2]);
+        extern long sys_fcntl(int fd, int cmd, uint64_t arg);
+        extern long sys_close(int fd);
+
+        int p[2] = {-1, -1};
+        long pr = sys_pipe(p);
+        if (pr != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1655: pipe() failed %ld\n", pr);
+            fut_test_fail(1655);
+        } else {
+            fut_task_t *me = fut_task_current();
+            if (!me) {
+                fut_printf("[MISC-TEST] ✗ Test 1655: no current task\n");
+                fut_test_fail(1655);
+                sys_close(p[0]);
+                sys_close(p[1]);
+            } else {
+                /* Block SIGIO so it stays pending */
+                uint64_t old_mask = me->signal_mask;
+                me->signal_mask |= (1ULL << (29 - 1));
+                __atomic_and_fetch(&me->pending_signals, ~(1ULL << (29 - 1)), __ATOMIC_SEQ_CST);
+
+                /* First, write data so there's something to read */
+                extern ssize_t fut_vfs_write(int fd, const void *buf, size_t size);
+                char msg[] = "hello";
+                fut_vfs_write(p[1], msg, 5);
+
+                /* Set O_ASYNC on the WRITE end — should get SIGIO when read drains data */
+                #ifndef O_ASYNC
+                #define O_ASYNC 020000
+                #endif
+                sys_fcntl(p[1], 4 /* F_SETFL */, (uint64_t)(O_WRONLY | O_ASYNC));
+                sys_fcntl(p[1], 8 /* F_SETOWN */, (uint64_t)me->pid);
+
+                /* Clear any pending SIGIO from the write above */
+                __atomic_and_fetch(&me->pending_signals, ~(1ULL << (29 - 1)), __ATOMIC_SEQ_CST);
+
+                /* Read from the read end — should trigger SIGIO on the write-end owner */
+                extern ssize_t fut_vfs_read(int fd, void *buf, size_t size);
+                char rbuf[16];
+                fut_vfs_read(p[0], rbuf, sizeof(rbuf));
+
+                /* Check that SIGIO is now pending */
+                uint64_t pending = __atomic_load_n(&me->pending_signals, __ATOMIC_ACQUIRE);
+                if (pending & (1ULL << (29 - 1))) {
+                    fut_printf("[MISC-TEST] ✓ Test 1655: SIGIO pending after pipe read (write-end O_ASYNC)\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1655: SIGIO not pending (pending=0x%lx)\n", pending);
+                    fut_test_fail(1655);
+                }
+
+                /* Restore */
+                me->signal_mask = old_mask;
+                __atomic_and_fetch(&me->pending_signals, ~(1ULL << (29 - 1)), __ATOMIC_SEQ_CST);
+                sys_close(p[0]);
+                sys_close(p[1]);
+            }
+        }
+    }
+
+    /***********************************************************************
+     * Test 1656: O_ASYNC SIGIO delivery on socket recv (write-end notification) *
+     ***********************************************************************/
+    fut_printf("[MISC-TEST] Test 1656: O_ASYNC SIGIO on socket recv (sender notification)\n");
+    {
+        extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+        extern long sys_fcntl(int fd, int cmd, uint64_t arg);
+        extern long sys_close(int fd);
+
+        int sv[2] = {-1, -1};
+        long sr = sys_socketpair(1 /* AF_UNIX */, 1 /* SOCK_STREAM */, 0, sv);
+        if (sr != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1656: socketpair() failed %ld\n", sr);
+            fut_test_fail(1656);
+        } else {
+            fut_task_t *me = fut_task_current();
+            if (!me) {
+                fut_printf("[MISC-TEST] ✗ Test 1656: no current task\n");
+                fut_test_fail(1656);
+                sys_close(sv[0]);
+                sys_close(sv[1]);
+            } else {
+                /* Block SIGIO so it stays pending */
+                uint64_t old_mask = me->signal_mask;
+                me->signal_mask |= (1ULL << (29 - 1));
+                __atomic_and_fetch(&me->pending_signals, ~(1ULL << (29 - 1)), __ATOMIC_SEQ_CST);
+
+                /* Send data on sv[0] so sv[1] has something to recv */
+                extern ssize_t fut_vfs_write(int fd, const void *buf, size_t size);
+                char msg[] = "test";
+                fut_vfs_write(sv[0], msg, 4);
+
+                /* Set O_ASYNC on sv[0] (the sender) — should get SIGIO when peer recvs */
+                #ifndef O_ASYNC
+                #define O_ASYNC 020000
+                #endif
+                sys_fcntl(sv[0], 4 /* F_SETFL */, (uint64_t)O_ASYNC);
+                sys_fcntl(sv[0], 8 /* F_SETOWN */, (uint64_t)me->pid);
+
+                /* Clear any pending SIGIO */
+                __atomic_and_fetch(&me->pending_signals, ~(1ULL << (29 - 1)), __ATOMIC_SEQ_CST);
+
+                /* Recv on sv[1] — should trigger SIGIO on sv[0]'s owner */
+                extern ssize_t fut_vfs_read(int fd, void *buf, size_t size);
+                char rbuf[16];
+                fut_vfs_read(sv[1], rbuf, sizeof(rbuf));
+
+                /* Check SIGIO pending */
+                uint64_t pending = __atomic_load_n(&me->pending_signals, __ATOMIC_ACQUIRE);
+                if (pending & (1ULL << (29 - 1))) {
+                    fut_printf("[MISC-TEST] ✓ Test 1656: SIGIO pending after socket recv (sender O_ASYNC)\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1656: SIGIO not pending (pending=0x%lx)\n", pending);
+                    fut_test_fail(1656);
+                }
+
+                /* Restore */
+                me->signal_mask = old_mask;
+                __atomic_and_fetch(&me->pending_signals, ~(1ULL << (29 - 1)), __ATOMIC_SEQ_CST);
+                sys_close(sv[0]);
+                sys_close(sv[1]);
+            }
+        }
+    }
+
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");
     fut_printf("[MISC-TEST] ========================================\n");

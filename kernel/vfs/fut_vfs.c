@@ -1742,6 +1742,7 @@ static int try_open_chrdev(const char *path, int flags) {
     file->chr_inode = inode;
     file->chr_private = NULL;
     file->owner_pid = 0;
+    file->async_sig = 0;
     file->fd_flags = 0;
     file->seals = 0;
     file->path = NULL;
@@ -1803,6 +1804,7 @@ int chrdev_alloc_fd(const struct fut_file_ops *ops, void *inode, void *priv) {
     file->chr_private = priv;
     file->fd_flags = 0;  /* No close-on-exec for device files by default */
     file->owner_pid = 0;
+    file->async_sig = 0;
     file->seals = 0;
     file->path = NULL;
 
@@ -2095,6 +2097,7 @@ int fut_vfs_open(const char *path, int flags, int mode) {
     file->chr_inode = NULL;
     file->chr_private = NULL;
     file->owner_pid = 0;
+    file->async_sig = 0;
     file->fd_flags = 0;
     file->seals = 0;
 

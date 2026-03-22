@@ -1447,6 +1447,27 @@ ssize_t fut_socket_recv(fut_socket_t *socket, void *buf, size_t len) {
     if (pair->epoll_notify)
         fut_waitq_wake_one(pair->epoll_notify);
 
+    /* O_ASYNC: notify the sending peer when space becomes available
+     * after recv drains data from the buffer.
+     * pair = socket->pair_reverse (the buffer we recv from).
+     * The sender is socket->pair->peer (the other end of the connection). */
+    {
+        fut_socket_t *peer_sock = (socket->pair && socket->pair->peer)
+                                  ? socket->pair->peer : NULL;
+        struct fut_file *peer_file = peer_sock ? peer_sock->socket_file : NULL;
+        if (peer_file &&
+            (peer_file->flags & O_ASYNC) &&
+            peer_file->owner_pid > 0) {
+            int sig = peer_file->async_sig ? peer_file->async_sig : SIGIO;
+            extern fut_task_t *fut_task_by_pid(uint64_t pid);
+            fut_task_t *owner = fut_task_by_pid((uint64_t)peer_file->owner_pid);
+            if (owner) {
+                extern int fut_signal_send(struct fut_task *t, int sig);
+                fut_signal_send(owner, sig);
+            }
+        }
+    }
+
     fut_spinlock_release(&pair->lock);
 
     SOCKET_LOG("[SOCKET] Socket %u received %zu bytes\n", socket->socket_id, to_read);

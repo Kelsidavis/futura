@@ -415,10 +415,7 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
                 } else {
                     /* FUTEX_WAIT: relative timeout */
                     timeout_ms = (uint64_t)ts.tv_sec * 1000 +
-                                 (uint64_t)ts.tv_nsec / 1000000;
-                    if (timeout_ms == 0 && ts.tv_nsec > 0) {
-                        timeout_ms = 1; /* Round up sub-millisecond to 1ms */
-                    }
+                                 ((uint64_t)ts.tv_nsec + 999999) / 1000000;
                 }
                 has_timeout = true;
             }

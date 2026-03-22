@@ -482,7 +482,7 @@ long sys_semtimedop(int semid, void *sops, unsigned int nsops,
         extern uint64_t fut_timer_ticks(void);
         uint64_t now_ticks = fut_get_ticks();
         uint64_t timeout_ticks = (uint64_t)ts.tv_sec * 100u +
-                                  (uint64_t)ts.tv_nsec / 10000000u;
+                                  ((uint64_t)ts.tv_nsec + 9999999u) / 10000000u;
         deadline_ticks = now_ticks + timeout_ticks;
         (void)deadline_ticks; /* used below */
     }

@@ -756,7 +756,7 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
             ps_is_immediate = 1;
         } else {
             ps_has_timeout = 1;
-            uint64_t timeout_ms = (uint64_t)kts.tv_sec * 1000 + (uint64_t)kts.tv_nsec / 1000000;
+            uint64_t timeout_ms = (uint64_t)kts.tv_sec * 1000 + ((uint64_t)kts.tv_nsec + 999999) / 1000000;
             uint64_t timeout_ticks = timeout_ms / 10;
             if (timeout_ms % 10 != 0) timeout_ticks++;
             if (timeout_ticks == 0) timeout_ticks = 1;
@@ -1208,7 +1208,7 @@ long sys_ppoll(void *fds, unsigned int nfds, void *tmo_p, const void *sigmask,
         if (kts.tv_sec < 0 || kts.tv_nsec < 0 || kts.tv_nsec >= 1000000000L)
             return -EINVAL;
         /* Convert to ms, cap at INT_MAX */
-        uint64_t ms = (uint64_t)kts.tv_sec * 1000ULL + (uint64_t)kts.tv_nsec / 1000000ULL;
+        uint64_t ms = (uint64_t)kts.tv_sec * 1000ULL + ((uint64_t)kts.tv_nsec + 999999ULL) / 1000000ULL;
         timeout_ms = (ms > (uint64_t)2147483647) ? 2147483647 : (int)ms;
     }
 

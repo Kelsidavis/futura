@@ -184,10 +184,7 @@ long sys_nanosleep(const fut_timespec_t *u_req, fut_timespec_t *u_rem) {
 
     /* Phase 2: Calculate total time and categorize duration */
     uint64_t total_ns = (uint64_t)req.tv_sec * 1000000000ULL + (uint64_t)req.tv_nsec;
-    uint64_t millis = total_ns / 1000000ULL;
-    if (total_ns != 0 && millis == 0) {
-        millis = 1;  /* Round up sub-millisecond sleeps to 1ms */
-    }
+    uint64_t millis = (total_ns + 999999ULL) / 1000000ULL;
 
     const char *duration_category;
     const char *duration_desc;

@@ -98,7 +98,7 @@ long sys_rt_sigtimedwait(const uint64_t *uthese, void *uinfo,
             return -EINVAL;
         /* Convert to ticks: sec*100 + nsec/10000000 */
         uint64_t timeout_ticks = (uint64_t)ts.tv_sec * 100;
-        timeout_ticks += (uint64_t)ts.tv_nsec / 10000000ULL;
+        timeout_ticks += ((uint64_t)ts.tv_nsec + 9999999ULL) / 10000000ULL;
         if (timeout_ticks == 0 && (ts.tv_sec > 0 || ts.tv_nsec > 0))
             timeout_ticks = 1;
         deadline_ticks = (int64_t)(fut_get_ticks() + timeout_ticks);

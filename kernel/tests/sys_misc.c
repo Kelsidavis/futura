@@ -51102,6 +51102,63 @@ static void test_dup2_newfd_out_of_range(void) {
     fut_vfs_close(fd);
 }
 
+/* ============================================================
+ * Tests 1600-1603: waitpid/waitid flag validation
+ * ============================================================
+ * 1600: waitpid with unknown flags → EINVAL
+ * 1601: waitpid with __WALL | WNOHANG → accepted (returns ECHILD, not EINVAL)
+ * 1602: waitid with unknown option bits → EINVAL
+ * 1603: waitid with __WALL | WEXITED | WNOHANG → accepted (returns ECHILD, not EINVAL)
+ */
+static void test_wait_flag_validation(void) {
+    extern long sys_waitpid(int pid, int *u_status, int flags);
+    extern long sys_waitid(int idtype, int id, void *infop, int options, void *rusage);
+
+    fut_printf("[MISC-TEST] Tests 1600-1603: waitpid/waitid flag validation\n");
+
+    /* Test 1600: waitpid with bogus flag bit 0x100 → EINVAL */
+    long ret = sys_waitpid(-1, NULL, 0x100);
+    if (ret == -22 /* EINVAL */) {
+        fut_printf("[MISC-TEST] ✓ Test 1600: waitpid(-1, NULL, 0x100) → EINVAL\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1600: waitpid(-1, NULL, 0x100) → %ld (expected EINVAL)\n", ret);
+        fut_test_fail(1600);
+    }
+
+    /* Test 1601: waitpid with __WALL | WNOHANG → should NOT return EINVAL
+     * (no children → ECHILD is expected) */
+    ret = sys_waitpid(-1, NULL, 0x40000001 /* __WALL | WNOHANG */);
+    if (ret != -22 /* not EINVAL */) {
+        fut_printf("[MISC-TEST] ✓ Test 1601: waitpid(-1, NULL, __WALL|WNOHANG) → %ld (accepted)\n", ret);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1601: waitpid(-1, NULL, __WALL|WNOHANG) → EINVAL (should accept)\n");
+        fut_test_fail(1601);
+    }
+
+    /* Test 1602: waitid with bogus option bit 0x100 → EINVAL */
+    ret = sys_waitid(0 /* P_ALL */, 0, NULL, 0x104 /* WEXITED | 0x100 */, NULL);
+    if (ret == -22 /* EINVAL */) {
+        fut_printf("[MISC-TEST] ✓ Test 1602: waitid(P_ALL, 0, NULL, WEXITED|0x100) → EINVAL\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1602: waitid(P_ALL, 0, NULL, WEXITED|0x100) → %ld (expected EINVAL)\n", ret);
+        fut_test_fail(1602);
+    }
+
+    /* Test 1603: waitid with __WALL | WEXITED | WNOHANG → should NOT return EINVAL
+     * (infop=NULL → EFAULT, but NOT EINVAL; proves flag validation passes) */
+    ret = sys_waitid(0 /* P_ALL */, 0, NULL, 0x40000005 /* __WALL | WEXITED | WNOHANG */, NULL);
+    if (ret != -22 /* not EINVAL */) {
+        fut_printf("[MISC-TEST] ✓ Test 1603: waitid(P_ALL, __WALL|WEXITED|WNOHANG) → %ld (accepted)\n", ret);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1603: waitid(P_ALL, __WALL|WEXITED|WNOHANG) → EINVAL (should accept)\n");
+        fut_test_fail(1603);
+    }
+}
+
 static void test_openat_o_directory(void) {
     extern long sys_openat(int dirfd, const char *pathname, int flags, int mode);
 
@@ -51888,6 +51945,7 @@ void fut_misc_test_thread(void *arg) {
     test_sendfile_o_append();             /* Tests 1594-1595: sendfile respects O_APPEND */
     test_openat_o_directory();            /* Tests 1596-1597: openat O_DIRECTORY enforcement */
     test_dup2_newfd_out_of_range();       /* Tests 1598-1599: dup2/dup3 EINVAL for out-of-range newfd */
+    test_wait_flag_validation();          /* Tests 1600-1603: waitpid/waitid flag validation */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

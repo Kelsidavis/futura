@@ -113,6 +113,14 @@ long sys_waitid(int idtype, int id, siginfo_t *infop, int options,
         idtype_desc = "P_PIDFD->P_PID";
     }
 
+    /* Reject unknown option bits (Linux returns EINVAL) */
+#define WAITID_VALID_OPTIONS (WNOHANG | WEXITED | WSTOPPED | WCONTINUED | WNOWAIT | __WALL | __WCLONE | __WNOTHREAD)
+    if (options & ~WAITID_VALID_OPTIONS) {
+        fut_printf("[WAITID] waitid(options=0x%x) -> EINVAL (unknown flags 0x%x)\n",
+                   options, options & ~WAITID_VALID_OPTIONS);
+        return -EINVAL;
+    }
+
     /* options must include at least one event type */
     if (!(options & (WEXITED | WSTOPPED | WCONTINUED))) {
         fut_printf("[WAITID] waitid(options=0x%x) -> EINVAL (no event type in options)\n", options);

@@ -38,6 +38,20 @@
 #endif
 
 /* ============================================================
+ *   Linux-specific Wait Flags (non-POSIX extensions)
+ * ============================================================ */
+
+#ifndef __WNOTHREAD
+#define __WNOTHREAD 0x20000000  /* Don't wait on children of other threads */
+#endif
+#ifndef __WALL
+#define __WALL      0x40000000  /* Wait for all children (clone and non-clone) */
+#endif
+#ifndef __WCLONE
+#define __WCLONE    0x80000000  /* Wait for clone children only */
+#endif
+
+/* ============================================================
  *   Status Evaluation Macros
  *
  *   These macros interpret the status value returned by wait/waitpid.

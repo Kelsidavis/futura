@@ -151,6 +151,9 @@ static inline int waitpid_access_ok_write(const void *ptr, size_t n) {
  * Phase 3 (Completed): Non-blocking wait (WNOHANG), process group support
  * Phase 4: Advanced options (WUNTRACED, WCONTINUED), waitid, rusage
  */
+/* Valid waitpid/wait4 flags (Linux kernel compat) */
+#define WAITPID_VALID_FLAGS (WNOHANG | WUNTRACED | WCONTINUED | __WALL | __WCLONE | __WNOTHREAD)
+
 long sys_waitpid(int pid, int *u_status, int flags) {
     /* ARM64 FIX: Copy parameters to local variables immediately to ensure they're preserved
      * on the stack across blocking calls. When fut_task_waitpid blocks and resumes,
@@ -158,6 +161,13 @@ long sys_waitpid(int pid, int *u_status, int flags) {
     int local_pid = pid;
     int *local_u_status = u_status;
     int local_flags = flags;
+
+    /* Reject unknown flag bits (Linux returns EINVAL) */
+    if (local_flags & ~WAITPID_VALID_FLAGS) {
+        fut_printf("[WAITPID] waitpid(pid=%d, flags=0x%x) -> EINVAL (unknown flags 0x%x)\n",
+                   local_pid, local_flags, local_flags & ~WAITPID_VALID_FLAGS);
+        return -EINVAL;
+    }
 
     /* Validate u_status write permission early (kernel writes exit status)
      * VULNERABILITY: Invalid Output Buffer Pointer
@@ -363,6 +373,11 @@ long sys_waitpid(int pid, int *u_status, int flags) {
 #define USEC_PER_TICK (1000000ULL / FUT_TIMER_HZ)
 
 long sys_wait4(int pid, int *u_status, int flags, void *rusage_ptr) {
+    /* Reject unknown flag bits (same validation as waitpid) */
+    if (flags & ~WAITPID_VALID_FLAGS) {
+        return -EINVAL;
+    }
+
     /* Kernel-pointer bypass for rusage: same pattern as other syscalls */
 #ifdef KERNEL_VIRTUAL_BASE
     int use_memcpy_rusage = rusage_ptr && ((uintptr_t)rusage_ptr >= KERNEL_VIRTUAL_BASE);

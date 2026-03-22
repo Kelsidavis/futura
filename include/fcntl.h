@@ -159,6 +159,12 @@
 #ifndef F_DUPFD_CLOEXEC
 #define F_DUPFD_CLOEXEC 1030 /* Duplicate FD with close-on-exec */
 #endif
+#ifndef F_GETPIPE_SZ
+#define F_GETPIPE_SZ    1032 /* Get pipe buffer size */
+#endif
+#ifndef F_SETPIPE_SZ
+#define F_SETPIPE_SZ    1033 /* Set pipe buffer size (shares value with F_ADD_SEALS) */
+#endif
 #ifndef F_OFD_GETLK
 #define F_OFD_GETLK     36  /* Get open file description lock (Linux 3.15+) */
 #endif

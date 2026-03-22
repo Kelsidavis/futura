@@ -50530,6 +50530,152 @@ static void test_epoll_rdhup_vs_hup(void) {
     sys_close(sv[1]);
 }
 
+/* ============================================================
+ * Tests 1585-1587: MAP_SHARED → /proc/self/maps shows 's'
+ * ============================================================
+ * 1585: MAP_SHARED anon mapping shows 's' in /proc/self/maps
+ * 1586: MAP_PRIVATE anon mapping shows 'p' in /proc/self/maps
+ * 1587: MAP_SHARED|MAP_ANONYMOUS flags preserved after mmap
+ */
+static void test_map_shared_procfs(void) {
+    extern long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset);
+    extern long sys_munmap(void *addr, size_t len);
+
+#define MSP_MAP_SHARED    0x01
+#define MSP_MAP_PRIVATE   0x02
+#define MSP_MAP_ANON      0x20
+#define MSP_PROT_RW       3
+
+    fut_printf("[MISC-TEST] Tests 1585-1587: MAP_SHARED vs MAP_PRIVATE in /proc/self/maps\n");
+
+    /* Create both a shared and a private anonymous mapping */
+    long shared_addr = sys_mmap(NULL, 4096, MSP_PROT_RW,
+                                 MSP_MAP_SHARED | MSP_MAP_ANON, -1, 0);
+    if (shared_addr < 0) {
+        fut_printf("[MISC-TEST] ✗ mmap(MAP_SHARED) failed: %ld\n", shared_addr);
+        fut_test_fail(1585); fut_test_fail(1586); fut_test_fail(1587);
+        return;
+    }
+
+    long priv_addr = sys_mmap(NULL, 4096, MSP_PROT_RW,
+                               MSP_MAP_PRIVATE | MSP_MAP_ANON, -1, 0);
+    if (priv_addr < 0) {
+        fut_printf("[MISC-TEST] ✗ mmap(MAP_PRIVATE) failed: %ld\n", priv_addr);
+        sys_munmap((void *)(uintptr_t)shared_addr, 4096);
+        fut_test_fail(1585); fut_test_fail(1586); fut_test_fail(1587);
+        return;
+    }
+
+    /* Read /proc/self/maps */
+    int fd = fut_vfs_open("/proc/self/maps", 0 /* O_RDONLY */, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open /proc/self/maps: %d\n", fd);
+        sys_munmap((void *)(uintptr_t)shared_addr, 4096);
+        sys_munmap((void *)(uintptr_t)priv_addr, 4096);
+        fut_test_fail(1585); fut_test_fail(1586); fut_test_fail(1587);
+        return;
+    }
+
+    /* Read a large chunk — maps can be long */
+    char buf[4096];
+    long total = 0;
+    long n;
+    while (total < (long)sizeof(buf) - 1) {
+        n = fut_vfs_read(fd, buf + total, sizeof(buf) - 1 - total);
+        if (n <= 0) break;
+        total += n;
+    }
+    fut_vfs_close(fd);
+    buf[total] = '\0';
+
+    /* Helper: convert addr to lowercase hex string (pb_hex8 uses at least 8 digits) */
+    char shared_hex[17], priv_hex[17];
+    unsigned long sa = (unsigned long)shared_addr;
+    unsigned long pa = (unsigned long)priv_addr;
+
+    /* Build hex string from LSB, then reverse — mirrors pb_hex8 logic */
+    int sn = 0, pn = 0;
+    { unsigned long w = sa; do { shared_hex[sn++] = "0123456789abcdef"[w & 0xf]; w >>= 4; } while (w); while (sn < 8) shared_hex[sn++] = '0'; }
+    { unsigned long w = pa; do { priv_hex[pn++] = "0123456789abcdef"[w & 0xf]; w >>= 4; } while (w); while (pn < 8) priv_hex[pn++] = '0'; }
+    /* Reverse in place */
+    for (int i = 0; i < sn / 2; i++) { char t = shared_hex[i]; shared_hex[i] = shared_hex[sn-1-i]; shared_hex[sn-1-i] = t; }
+    shared_hex[sn] = '\0';
+    for (int i = 0; i < pn / 2; i++) { char t = priv_hex[i]; priv_hex[i] = priv_hex[pn-1-i]; priv_hex[pn-1-i] = t; }
+    priv_hex[pn] = '\0';
+
+    int found_shared = 0, found_private = 0;
+    char shared_flag = '?', priv_flag = '?';
+
+    /* Scan line by line.
+     * Format: "ADDR-ADDR rw-s ..."
+     * The perms field is after the second addr and a space.
+     * The s/p char is the 4th character of the perms field. */
+    char *line = buf;
+    while (*line) {
+        /* Check if this line starts with our address */
+        int match_shared = 1, match_private = 1;
+        for (int i = 0; i < sn && line[i]; i++) {
+            if (line[i] != shared_hex[i]) match_shared = 0;
+        }
+        for (int i = 0; i < pn && line[i]; i++) {
+            if (line[i] != priv_hex[i]) match_private = 0;
+        }
+
+        if ((match_shared || match_private) && line[sn] == '-') {
+            /* Find the perms field: skip "ADDR-ADDR " */
+            char *p = line;
+            while (*p && *p != ' ' && *p != '\n') p++; /* skip "ADDR-ADDR" */
+            if (*p == ' ') p++; /* skip space before perms */
+            /* p now points to "rw-s" or "rw-p" — 4th char is s/p */
+            if (p[0] && p[1] && p[2] && p[3]) {
+                if (match_shared) { shared_flag = p[3]; found_shared = 1; }
+                if (match_private) { priv_flag = p[3]; found_private = 1; }
+            }
+        }
+
+        /* Advance to next line */
+        while (*line && *line != '\n') line++;
+        if (*line == '\n') line++;
+    }
+
+    /* Test 1585: shared mapping shows 's' */
+    fut_printf("[MISC-TEST] Test 1585: shared mapping %s, flag='%c'\n",
+               found_shared ? "found" : "NOT FOUND", shared_flag);
+    if (found_shared && shared_flag == 's') {
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1585: expected 's', got '%c' (found=%d)\n",
+                   shared_flag, found_shared);
+        fut_test_fail(1585);
+    }
+
+    /* Test 1586: private mapping shows 'p' */
+    fut_printf("[MISC-TEST] Test 1586: private mapping %s, flag='%c'\n",
+               found_private ? "found" : "NOT FOUND", priv_flag);
+    if (found_private && priv_flag == 'p') {
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1586: expected 'p', got '%c' (found=%d)\n",
+                   priv_flag, found_private);
+        fut_test_fail(1586);
+    }
+
+    /* Test 1587: MAP_SHARED flag is properly stored (we already proved it works
+     * via procfs, but let's also verify the mapping itself is functional) */
+    volatile int *shared_ptr = (volatile int *)(uintptr_t)shared_addr;
+    *shared_ptr = 0xDEADBEEF;
+    if (*shared_ptr == (int)0xDEADBEEF) {
+        fut_printf("[MISC-TEST] ✓ Test 1587: MAP_SHARED mapping read/write works\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1587: MAP_SHARED read-back failed\n");
+        fut_test_fail(1587);
+    }
+
+    sys_munmap((void *)(uintptr_t)shared_addr, 4096);
+    sys_munmap((void *)(uintptr_t)priv_addr, 4096);
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -51273,6 +51419,7 @@ void fut_misc_test_thread(void *arg) {
     test_fionread_dgram_next_msg();        /* Tests 1577-1578: FIONREAD returns next datagram size */
     test_recv_eof_after_shutdown_wr();     /* Tests 1579-1580: recv returns 0 after peer shutdown(SHUT_WR) */
     test_epoll_rdhup_vs_hup();            /* Tests 1581-1584: EPOLLRDHUP half-close vs EPOLLHUP full close */
+    test_map_shared_procfs();             /* Tests 1585-1587: MAP_SHARED shows 's' in /proc/self/maps */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

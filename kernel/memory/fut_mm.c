@@ -490,6 +490,9 @@ void *fut_mm_map_anonymous(fut_mm_t *mm, uintptr_t hint, size_t len, int prot, i
     vma->end = end;
     vma->prot = prot;
     vma->flags = flags;
+    /* Translate MAP_SHARED (0x01) → VMA_SHARED (0x2000) so procfs/madvise/fork
+     * can test a single canonical flag.  Keep MAP_SHARED for ABI compatibility. */
+    if (flags & 0x01) vma->flags |= VMA_SHARED;
     vma->vnode = NULL;  /* Anonymous mapping */
     vma->file_offset = 0;
     vma->anon_name = NULL;
@@ -783,6 +786,7 @@ void *fut_mm_map_file(fut_mm_t *mm, struct fut_vnode *vnode, uintptr_t hint,
     vma->end = end;
     vma->prot = prot;
     vma->flags = flags;
+    if (flags & 0x01) vma->flags |= VMA_SHARED;
     vma->vnode = vnode;
     vma->file_offset = file_offset;
     vma->anon_name = NULL;
@@ -1287,6 +1291,9 @@ void *fut_mm_map_anonymous(fut_mm_t *mm, uintptr_t hint, size_t len, int prot, i
     vma->end = end;
     vma->prot = prot;
     vma->flags = flags;
+    /* Translate MAP_SHARED (0x01) → VMA_SHARED (0x2000) so procfs/madvise/fork
+     * can test a single canonical flag.  Keep MAP_SHARED for ABI compatibility. */
+    if (flags & 0x01) vma->flags |= VMA_SHARED;
     vma->vnode = NULL;  /* Anonymous mapping */
     vma->file_offset = 0;
     vma->anon_name = NULL;
@@ -1570,6 +1577,7 @@ void *fut_mm_map_file(fut_mm_t *mm, struct fut_vnode *vnode, uintptr_t hint,
     vma->end = end;
     vma->prot = prot;
     vma->flags = flags;
+    if (flags & 0x01) vma->flags |= VMA_SHARED;
     vma->vnode = vnode;
     vma->file_offset = file_offset;
     vma->anon_name = NULL;
@@ -1753,6 +1761,7 @@ int fut_mm_add_vma(fut_mm_t *mm, uintptr_t start, uintptr_t end, int prot, int f
     vma->end = end;
     vma->prot = prot;
     vma->flags = flags;
+    if (flags & 0x01) vma->flags |= VMA_SHARED;
     vma->vnode = NULL;  /* Set by caller if file-backed */
     vma->file_offset = 0;
     vma->anon_name = NULL;

@@ -1217,8 +1217,8 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
     struct fut_vma *parent_vma = parent_mm->vma_list;
     while (child_vma && parent_vma) {
         /* Mark both parent and child VMAs as COW if writable and not shared.
-         * Note: mmap stores MAP_SHARED (0x01), not VMA_SHARED (0x2000) */
-        if ((parent_vma->prot & 0x2) && !(parent_vma->flags & MAP_SHARED)) {
+         * VMA_SHARED is set by fut_mm_map_anonymous / fut_mm_map_file. */
+        if ((parent_vma->prot & 0x2) && !(parent_vma->flags & VMA_SHARED)) {
             parent_vma->flags |= VMA_COW;
             child_vma->flags |= VMA_COW;
         }

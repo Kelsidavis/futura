@@ -456,9 +456,15 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
             }
 
             /* Store futex address and bitset in thread for later matching during wake.
-             * FUTEX_WAIT uses bitset=0xffffffff (match any); FUTEX_WAIT_BITSET uses val3. */
+             * FUTEX_WAIT uses bitset=0xffffffff (match any); FUTEX_WAIT_BITSET uses val3.
+             * A bitset of 0 is invalid — no wake could ever match it (Linux returns EINVAL). */
+            uint32_t wait_bitset = (cmd == FUTEX_WAIT_BITSET) ? val3 : 0xFFFFFFFFu;
+            if (wait_bitset == 0) {
+                fut_spinlock_release(&bucket->lock);
+                return -EINVAL;
+            }
             thread->futex_addr   = uaddr;
-            thread->futex_bitset = (cmd == FUTEX_WAIT_BITSET) ? val3 : 0xFFFFFFFFu;
+            thread->futex_bitset = wait_bitset;
 
             /* Pre-compute timeout ticks before enqueuing */
             futex_timeout_ctx_t timeout_ctx;
@@ -539,8 +545,11 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
         case FUTEX_WAKE_BITSET: {
             /* FUTEX_WAKE: Wake up to 'val' threads waiting on futex at uaddr.
              * FUTEX_WAKE_BITSET: only wake threads whose wait-bitset intersects
-             * with the wake bitset (val3).  FUTEX_WAKE uses val3=0xffffffff. */
+             * with the wake bitset (val3).  FUTEX_WAKE uses val3=0xffffffff.
+             * A bitset of 0 is invalid — it can never match anything (Linux returns EINVAL). */
             uint32_t wake_bitset = (cmd == FUTEX_WAKE_BITSET) ? val3 : 0xFFFFFFFFu;
+            if (wake_bitset == 0)
+                return -EINVAL;
 
             futex_bucket_t *bucket = futex_get_bucket(uaddr);
             fut_spinlock_acquire(&bucket->lock);

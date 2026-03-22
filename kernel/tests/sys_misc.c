@@ -52672,6 +52672,39 @@ void fut_misc_test_thread(void *arg) {
         }
     }
 
+    /* ============================================================
+     * Tests 1634-1635: FUTEX_WAIT_BITSET / FUTEX_WAKE_BITSET reject bitset=0
+     * ============================================================ */
+    {
+        fut_printf("[MISC-TEST] Tests 1634-1635: futex bitset=0 returns EINVAL\n");
+        extern long sys_futex(uint32_t *uaddr, int futex_op, uint32_t val,
+                              const void *timeout, uint32_t *uaddr2, uint32_t val3);
+
+        uint32_t futex_var = 42;
+
+        /* Test 1634: FUTEX_WAIT_BITSET with bitset=0 → EINVAL */
+        /* FUTEX_WAIT_BITSET=9, FUTEX_PRIVATE_FLAG=128 */
+        long ret = sys_futex(&futex_var, 9 | 128, 42, NULL, NULL, 0);
+        if (ret == -EINVAL) {
+            fut_printf("[MISC-TEST] ✓ Test 1634: FUTEX_WAIT_BITSET(bitset=0) → EINVAL\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1634: FUTEX_WAIT_BITSET(bitset=0) returned %ld\n", ret);
+            fut_test_fail(1634);
+        }
+
+        /* Test 1635: FUTEX_WAKE_BITSET with bitset=0 → EINVAL */
+        /* FUTEX_WAKE_BITSET=10, FUTEX_PRIVATE_FLAG=128 */
+        ret = sys_futex(&futex_var, 10 | 128, 1, NULL, NULL, 0);
+        if (ret == -EINVAL) {
+            fut_printf("[MISC-TEST] ✓ Test 1635: FUTEX_WAKE_BITSET(bitset=0) → EINVAL\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1635: FUTEX_WAKE_BITSET(bitset=0) returned %ld\n", ret);
+            fut_test_fail(1635);
+        }
+    }
+
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");
     fut_printf("[MISC-TEST] ========================================\n");

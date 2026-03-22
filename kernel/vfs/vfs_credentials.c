@@ -270,17 +270,23 @@ void vfs_init_vnode_ownership(struct fut_vnode *vnode,
         vnode->gid = gid;
     }
 
-    /* Apply umask to requested mode */
+    /* Apply umask to requested mode (permission bits only; special bits
+     * are not affected by umask per POSIX). */
     vnode->mode = (requested_mode & 0777) & ~vfs_get_current_umask();
 
-    /* Preserve special bits from requested mode, but only allow
-     * root (uid 0) to set setuid/setgid bits. Non-root users
-     * could otherwise create setuid executables to escalate privileges. */
-    if (uid == 0) {
-        vnode->mode |= (requested_mode & 07000);
-    } else {
-        /* Non-root: allow sticky bit (01000), strip setuid/setgid */
-        vnode->mode |= (requested_mode & 01000);
+    /* Preserve special bits (setuid, setgid, sticky) from requested mode.
+     * Linux strips S_ISGID on creation when the caller is not in the
+     * file's group and lacks CAP_FSETID. S_ISUID and S_ISVTX are
+     * always preserved for the file creator. */
+    vnode->mode |= (requested_mode & (04000 | 01000));  /* S_ISUID + sticky */
+    if (requested_mode & 02000) {  /* S_ISGID requested */
+        fut_task_t *task = fut_task_current();
+        int has_cap_fsetid = task &&
+            (task->cap_effective & (1ULL << 4 /* CAP_FSETID */));
+        if (has_cap_fsetid || gid == vnode->gid) {
+            vnode->mode |= 02000;
+        }
+        /* else: silently strip S_ISGID (Linux behavior) */
     }
 
     /* Linux: propagate S_ISGID to new subdirectories so group inheritance

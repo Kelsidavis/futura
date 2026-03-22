@@ -36,6 +36,7 @@
 #define TIOCSCTTY   0x540E
 #define TIOCNOTTY   0x5422
 #define TIOCGSID    0x5429
+#define FIOASYNC    0x5452
 #define FIOCLEX     0x5451
 #define FIONCLEX    0x5450
 #define TCSETSW     0x5403  /* set termios, drain output first */
@@ -518,6 +519,9 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
         case FIONBIO:
             request_name = "FIONBIO";
             break;
+        case FIOASYNC:
+            request_name = "FIOASYNC";
+            break;
         case FIOCLEX:
             request_name = "FIOCLEX";
             break;
@@ -571,7 +575,7 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
                 /* Skip kernel address check for built-in ioctls that handle
                  * their own copy_to_user (FIONREAD, FIONBIO, etc.) and for
                  * kernel selftest callers. Only enforce for device dispatch. */
-                bool is_builtin = (request == FIONREAD || request == FIONBIO ||
+                bool is_builtin = (request == FIONREAD || request == FIONBIO || request == FIOASYNC ||
                                    request == TIOCGWINSZ || request == TIOCSWINSZ ||
                                    request == TCGETS || request == TCSETS ||
                                    request == TCSETSW || request == TCSETSF ||
@@ -675,6 +679,7 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
                 case TCSETSW:
                 case TCSETSF:
                 case FIONBIO:     /* Set non-blocking - reads int from argp */
+                case FIOASYNC:    /* Set async I/O - reads int from argp */
                 case TIOCSPGRP:   /* Set foreground pgrp - reads pid_t from argp */
                 case SIOCSIFFLAGS:
                     requires_read = 1;
@@ -749,7 +754,7 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
         }
 
         /* For built-in ioctls, skip device dispatch and use kernel handler */
-        if (request != FIONREAD && request != FIONBIO &&
+        if (request != FIONREAD && request != FIONBIO && request != FIOASYNC &&
             request != FIOCLEX && request != FIONCLEX &&
             request != TCGETS && request != TCSETS &&
             request != TCSETSW && request != TCSETSF &&
@@ -1018,6 +1023,36 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
                     sock->flags |= O_NONBLOCK;
                 else
                     sock->flags &= ~O_NONBLOCK;
+            }
+            return 0;
+        }
+        case FIOASYNC: {
+            /* FIOASYNC - Set/clear async I/O notification (O_ASYNC) on the file.
+             * argp points to an int: non-zero = set O_ASYNC, zero = clear.
+             * Equivalent to fcntl(fd, F_SETFL, O_ASYNC). When O_ASYNC is set
+             * and an owner is established (F_SETOWN), SIGIO is sent when I/O
+             * becomes possible on the file descriptor. */
+            if (!argp)
+                return -EFAULT;
+            int async_flag = 0;
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
+                __builtin_memcpy(&async_flag, argp, sizeof(int));
+            else
+#endif
+            if (fut_copy_from_user(&async_flag, argp, sizeof(int)) != 0)
+                return -EFAULT;
+            if (async_flag)
+                file->flags |= O_ASYNC;
+            else
+                file->flags &= ~O_ASYNC;
+            /* Propagate to socket if applicable */
+            fut_socket_t *sock = get_socket_from_fd(fd);
+            if (sock) {
+                if (async_flag)
+                    sock->flags |= O_ASYNC;
+                else
+                    sock->flags &= ~O_ASYNC;
             }
             return 0;
         }

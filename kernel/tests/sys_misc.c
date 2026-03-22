@@ -54027,6 +54027,68 @@ void fut_misc_test_thread(void *arg) {
         }
     }
 
+    /***********************************************************************
+     * Test 1663: FIOASYNC ioctl sets O_ASYNC flag                         *
+     ***********************************************************************/
+    fut_printf("[MISC-TEST] Test 1663: FIOASYNC ioctl sets O_ASYNC\n");
+    {
+        extern long sys_open(const char *path, int flags, int mode);
+        extern long sys_ioctl(int fd, unsigned long request, void *argp);
+        extern long sys_fcntl(int fd, int cmd, uint64_t arg);
+        extern long sys_close(int fd);
+
+        long fd = sys_open("/tmp/test_fioasync.txt", 0x0002 /* O_RDWR */ | 0x0040 /* O_CREAT */, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1663: open failed %ld\n", fd);
+            fut_test_fail(1663);
+        } else {
+            int enable = 1;
+            long r = sys_ioctl((int)fd, 0x5452 /* FIOASYNC */, &enable);
+            long flags = sys_fcntl((int)fd, 3 /* F_GETFL */, 0);
+            if (r == 0 && (flags & 0x2000 /* O_ASYNC/FASYNC */)) {
+                fut_printf("[MISC-TEST] ✓ Test 1663: FIOASYNC set O_ASYNC (flags=0x%lx)\n", flags);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1663: r=%ld flags=0x%lx\n", r, flags);
+                fut_test_fail(1663);
+            }
+            sys_close((int)fd);
+        }
+    }
+
+    /***********************************************************************
+     * Test 1664: FIOASYNC ioctl clears O_ASYNC flag                       *
+     ***********************************************************************/
+    fut_printf("[MISC-TEST] Test 1664: FIOASYNC ioctl clears O_ASYNC\n");
+    {
+        extern long sys_open(const char *path, int flags, int mode);
+        extern long sys_ioctl(int fd, unsigned long request, void *argp);
+        extern long sys_fcntl(int fd, int cmd, uint64_t arg);
+        extern long sys_close(int fd);
+
+        long fd = sys_open("/tmp/test_fioasync2.txt", 0x0002 /* O_RDWR */ | 0x0040 /* O_CREAT */, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1664: open failed %ld\n", fd);
+            fut_test_fail(1664);
+        } else {
+            /* Set O_ASYNC first */
+            int enable = 1;
+            sys_ioctl((int)fd, 0x5452 /* FIOASYNC */, &enable);
+            /* Now clear it */
+            int disable = 0;
+            long r = sys_ioctl((int)fd, 0x5452 /* FIOASYNC */, &disable);
+            long flags = sys_fcntl((int)fd, 3 /* F_GETFL */, 0);
+            if (r == 0 && !(flags & 0x2000 /* O_ASYNC/FASYNC */)) {
+                fut_printf("[MISC-TEST] ✓ Test 1664: FIOASYNC cleared O_ASYNC (flags=0x%lx)\n", flags);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1664: r=%ld flags=0x%lx\n", r, flags);
+                fut_test_fail(1664);
+            }
+            sys_close((int)fd);
+        }
+    }
+
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");
     fut_printf("[MISC-TEST] ========================================\n");

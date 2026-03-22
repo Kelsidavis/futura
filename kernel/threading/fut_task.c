@@ -788,14 +788,20 @@ int fut_task_waitpid(int pid, int *status_out, int flags, uint64_t *child_ticks_
             int status = encode_wait_status(match);
             uint64_t child_pid = match->pid;
 
-            /* Accumulate child's CPU ticks into parent before reaping.
-             * This provides tms_cutime data for sys_times(). */
+            /* Accumulate child's stats into parent before reaping.
+             * Provides tms_cutime and RUSAGE_CHILDREN data. */
             uint64_t child_ticks = 0;
+            uint64_t child_switches = 0;
             for (fut_thread_t *t = match->threads; t; t = t->next) {
                 child_ticks += t->stats.cpu_ticks;
+                child_switches += t->stats.context_switches;
             }
             uint64_t total_child_ticks = child_ticks + match->child_cpu_ticks;
             parent->child_cpu_ticks += total_child_ticks;
+            parent->child_context_switches += child_switches + match->child_context_switches;
+            /* Track peak RSS (max of all children, including grandchildren) */
+            if (match->child_maxrss_kb > parent->child_maxrss_kb)
+                parent->child_maxrss_kb = match->child_maxrss_kb;
 
             task_detach_child(parent, match);
             fut_spinlock_release(&task_list_lock);
@@ -925,12 +931,17 @@ int fut_task_waitpid_ex(int pid, int *status_out, int flags, uint32_t *uid_out) 
                 return (int)child_pid;
             }
 
-            /* Normal reap path */
+            /* Normal reap path — accumulate child stats */
             uint64_t child_ticks = 0;
+            uint64_t child_switches = 0;
             for (fut_thread_t *t = match->threads; t; t = t->next) {
                 child_ticks += t->stats.cpu_ticks;
+                child_switches += t->stats.context_switches;
             }
             parent->child_cpu_ticks += child_ticks + match->child_cpu_ticks;
+            parent->child_context_switches += child_switches + match->child_context_switches;
+            if (match->child_maxrss_kb > parent->child_maxrss_kb)
+                parent->child_maxrss_kb = match->child_maxrss_kb;
 
             task_detach_child(parent, match);
             fut_spinlock_release(&task_list_lock);

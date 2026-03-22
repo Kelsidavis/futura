@@ -52890,6 +52890,64 @@ void fut_misc_test_thread(void *arg) {
         }
     }
 
+    /*
+     * Test 1641: RUSAGE_CHILDREN includes context switches from reaped child.
+     * Create a zombie child with known context_switches, reap it, then
+     * verify getrusage(RUSAGE_CHILDREN) has non-zero ru_nvcsw.
+     */
+    {
+        /* Full rusage struct — ru_nvcsw is at offset 128 (field 16 counting longs) */
+        typedef struct {
+            long long utime_sec, utime_usec;   /* ru_utime */
+            long long stime_sec, stime_usec;   /* ru_stime */
+            long ru_maxrss;
+            long ru_ixrss, ru_idrss, ru_isrss;
+            long ru_minflt, ru_majflt, ru_nswap;
+            long ru_inblock, ru_oublock;
+            long ru_msgsnd, ru_msgrcv, ru_nsignals;
+            long ru_nvcsw, ru_nivcsw;
+        } full_ru_t;
+
+        extern long sys_getrusage(int who, void *rusage);
+        extern long sys_waitpid(int pid, int *status, int flags);
+
+        /* Snapshot RUSAGE_CHILDREN before */
+        full_ru_t ru_before;
+        __builtin_memset(&ru_before, 0, sizeof(ru_before));
+        sys_getrusage(-1 /* RUSAGE_CHILDREN */, &ru_before);
+
+        /* Create zombie child with 50 context switches (accumulated from grandchildren) */
+        fut_task_t *child = fut_task_create();
+        if (child) {
+            child->state = FUT_TASK_ZOMBIE;
+            child->exit_code = 0;
+            child->child_context_switches = 50;  /* as if child already reaped grandchildren */
+
+            int status = 0;
+            long pid = sys_waitpid((int)child->pid, &status, 0);
+            if (pid > 0) {
+                full_ru_t ru_after;
+                __builtin_memset(&ru_after, 0, sizeof(ru_after));
+                sys_getrusage(-1, &ru_after);
+
+                long delta_nvcsw = ru_after.ru_nvcsw - ru_before.ru_nvcsw;
+                if (delta_nvcsw >= 50) {
+                    fut_printf("[MISC-TEST] ✓ Test 1641: RUSAGE_CHILDREN nvcsw delta=%ld\n", delta_nvcsw);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1641: nvcsw delta=%ld (expected >=50)\n", delta_nvcsw);
+                    fut_test_fail(1641);
+                }
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1641: waitpid failed %ld\n", pid);
+                fut_test_fail(1641);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1641: fut_task_create failed\n");
+            fut_test_fail(1641);
+        }
+    }
+
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");
     fut_printf("[MISC-TEST] ========================================\n");

@@ -210,8 +210,10 @@ struct fut_task {
     /* chroot(2) filesystem isolation */
     struct fut_vnode *chroot_vnode;    // chroot jail root vnode (NULL = use global VFS root)
 
-    /* Accumulated CPU ticks from reaped children (for tms_cutime in sys_times) */
+    /* Accumulated stats from reaped children (for RUSAGE_CHILDREN / tms_cutime) */
     uint64_t child_cpu_ticks;
+    uint64_t child_context_switches;
+    uint64_t child_maxrss_kb;
 
     /* Monotonic tick count when the task was created (for /proc/pid/stat starttime field) */
     uint64_t start_ticks;

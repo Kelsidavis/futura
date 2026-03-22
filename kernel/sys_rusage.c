@@ -164,11 +164,13 @@ long sys_getrusage(int who, struct rusage *usage) {
         ru.ru_nvcsw = (long)total_switches;
     }
     if (who == RUSAGE_CHILDREN) {
-        /* child_cpu_ticks is accumulated by waitpid when reaping zombie children */
+        /* Accumulated by waitpid when reaping zombie children */
         uint64_t child_ticks = task->child_cpu_ticks;
         uint64_t child_usec = child_ticks * (1000000UL / FUT_TIMER_HZ);
         ru.ru_utime.tv_sec  = (long)(child_usec / 1000000UL);
         ru.ru_utime.tv_usec = (long)(child_usec % 1000000UL);
+        ru.ru_nvcsw  = (long)task->child_context_switches;
+        ru.ru_maxrss = (long)task->child_maxrss_kb;
     }
 
     /*

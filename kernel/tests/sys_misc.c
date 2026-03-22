@@ -52453,6 +52453,74 @@ void fut_misc_test_thread(void *arg) {
         }
     }
 
+    /* ================================================================
+     * Tests 1629-1630: faccessat AT_EACCESS uses effective UID
+     *
+     * AT_EACCESS tells faccessat to check using effective IDs instead
+     * of real IDs.  Verify that when euid differs from ruid, AT_EACCESS
+     * uses the effective UID for permission checks.
+     * ================================================================ */
+    {
+        fut_printf("[MISC-TEST] Tests 1629-1630: faccessat AT_EACCESS uses effective UID\n");
+
+        extern long sys_faccessat(int dirfd, const char *pathname, int mode, int flags);
+        #define TEST_AT_EACCESS 0x200
+
+        /* Test 1629: faccessat(AT_EACCESS) F_OK on /proc succeeds (basic sanity) */
+        long ret = sys_faccessat(-100 /* AT_FDCWD */, "/proc", 0 /* F_OK */, TEST_AT_EACCESS);
+        if (ret == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1629: faccessat(AT_EACCESS, /proc, F_OK) → 0\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1629: faccessat(AT_EACCESS, /proc, F_OK) → %ld\n", ret);
+            fut_test_fail(1629);
+        }
+
+        /* Test 1630: faccessat(AT_EACCESS) with euid=1000 on root-only file
+         * Create a file owned by root (uid=0), then switch euid to 1000 and
+         * verify that AT_EACCESS correctly uses the effective UID (1000) which
+         * should NOT have write access to a mode-0700 root-owned file. */
+        {
+            fut_task_t *t = fut_task_current();
+            /* Save original */
+            uint32_t saved_euid = t->uid;
+            uint32_t saved_ruid = t->ruid;
+
+            /* Create a test file owned by root with mode 0700 */
+            extern long sys_openat(int dirfd, const char *pathname, int flags, int mode);
+            extern long sys_close(int fd);
+            extern long sys_chmod(const char *path, uint32_t mode);
+            long fd = sys_openat(-100, "/eaccess_test", 0102 /* O_CREAT|O_RDWR */, 0700);
+            if (fd >= 0) sys_close((int)fd);
+            sys_chmod("/eaccess_test", 0700);
+
+            /* Set euid=1000 (non-root), keep ruid=0 (root) */
+            t->uid = 1000;
+            t->ruid = 0;
+
+            /* AT_EACCESS should use euid=1000 → EACCES for W_OK on root-owned 0700 */
+            ret = sys_faccessat(-100, "/eaccess_test", 2 /* W_OK */, TEST_AT_EACCESS);
+            int at_eaccess_result = (int)ret;
+
+            /* Without AT_EACCESS should use ruid=0 → success (root) */
+            long ret2 = sys_faccessat(-100, "/eaccess_test", 2 /* W_OK */, 0);
+            int no_eaccess_result = (int)ret2;
+
+            /* Restore */
+            t->uid = saved_euid;
+            t->ruid = saved_ruid;
+
+            if (at_eaccess_result == -EACCES && no_eaccess_result == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1630: AT_EACCESS uses euid (EACCES), no flag uses ruid (OK)\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1630: AT_EACCESS=%d (exp -EACCES), no_flag=%d (exp 0)\n",
+                           at_eaccess_result, no_eaccess_result);
+                fut_test_fail(1630);
+            }
+        }
+    }
+
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");
     fut_printf("[MISC-TEST] ========================================\n");

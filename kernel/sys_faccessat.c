@@ -468,8 +468,58 @@ long sys_faccessat(int dirfd, const char *pathname, int mode, int flags) {
 
         ret = 0;
         goto success;
+    } else if (local_flags & AT_EACCESS) {
+        /* AT_EACCESS without AT_SYMLINK_NOFOLLOW: follow symlinks but
+         * use effective IDs for the check.  Cannot delegate to sys_access()
+         * because it always uses real IDs. */
+        extern int fut_vfs_stat(const char *path, struct fut_stat *stat);
+        struct fut_stat st;
+
+        ret = fut_vfs_stat(resolved_path, &st);
+        if (ret < 0) {
+            goto handle_error;
+        }
+
+        if (local_mode == F_OK) {
+            ret = 0;
+            goto success;
+        }
+
+        uint32_t file_mode = st.st_mode & 0777;
+        uint32_t perm_bits;
+
+        if (check_uid == 0) {
+            if ((local_mode & X_OK) && !(file_mode & 0111)) {
+                ret = -EACCES;
+                goto handle_error;
+            }
+            ret = 0;
+            goto success;
+        } else if (check_uid == st.st_uid) {
+            perm_bits = (file_mode >> 6) & 7;
+        } else if (check_gid == st.st_gid) {
+            perm_bits = (file_mode >> 3) & 7;
+        } else {
+            int in_group = 0;
+            if (task) {
+                for (int i = 0; i < task->ngroups; i++) {
+                    if (task->groups[i] == st.st_gid) {
+                        in_group = 1;
+                        break;
+                    }
+                }
+            }
+            perm_bits = in_group ? ((file_mode >> 3) & 7) : (file_mode & 7);
+        }
+
+        if ((local_mode & R_OK) && !(perm_bits & 4)) { ret = -EACCES; goto handle_error; }
+        if ((local_mode & W_OK) && !(perm_bits & 2)) { ret = -EACCES; goto handle_error; }
+        if ((local_mode & X_OK) && !(perm_bits & 1)) { ret = -EACCES; goto handle_error; }
+
+        ret = 0;
+        goto success;
     } else {
-        /* Default behavior: follow symlinks (delegate to sys_access) */
+        /* Default behavior: follow symlinks, use real IDs (delegate to sys_access) */
         ret = (int)sys_access(resolved_path, local_mode);
     }
 

@@ -44,16 +44,13 @@ void gic_handle_irq(void) {
         return;
     }
 
-    /* Dispatch to appropriate handler based on IRQ ID */
-    switch (irq_id) {
-        case ARM_TIMER_IRQ:
-            /* ARM Generic Timer virtual timer interrupt */
-            fut_timer_tick();
-            break;
-
-        default:
-            /* Unknown interrupt - ignore for now */
-            break;
+    /* Dispatch to appropriate handler */
+    if (irq_id == ARM_TIMER_IRQ) {
+        fut_timer_tick();
+    } else {
+        /* Dispatch to registered handler from irq_handlers table */
+        extern int fut_dispatch_irq(uint32_t irq_id);
+        fut_dispatch_irq(irq_id);
     }
 
     /* Send End of Interrupt signal to GIC */

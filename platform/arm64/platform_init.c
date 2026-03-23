@@ -370,7 +370,26 @@ void fut_serial_init(void) {
     /* Register unified UART interrupt handler (type cast for C compatibility) */
     fut_register_irq_handler(FUT_IRQ_UART, (fut_irq_handler_t)uart_irq_handler);
 
-    /* Enable UART IRQ in GIC */
+    /* Configure UART IRQ as level-triggered in GIC and enable */
+    {
+        /* ICFGR for IRQ 33: register 33/16 = 2, field (33%16)*2 = bit 2 */
+        /* Level-triggered = 0b00 (default), edge-triggered = 0b10 */
+        uint32_t icfgr_idx = FUT_IRQ_UART / 16;
+        uint32_t icfgr_off = (GICD_ICFGR + icfgr_idx * 4);
+        uint32_t icfgr_val = mmio_read32(&gicd[icfgr_off / 4]);
+        uint32_t bit_pos = (FUT_IRQ_UART % 16) * 2;
+        icfgr_val &= ~(3U << bit_pos);  /* Level-triggered (0b00) */
+        mmio_write32(&gicd[icfgr_off / 4], icfgr_val);
+
+        /* Set priority to high (lower number = higher priority) */
+        uint32_t prio_idx = FUT_IRQ_UART / 4;
+        uint32_t prio_off = GICD_IPRIORITYR + prio_idx * 4;
+        uint32_t prio_val = mmio_read32(&gicd[prio_off / 4]);
+        uint32_t prio_byte = (FUT_IRQ_UART % 4) * 8;
+        prio_val &= ~(0xFF << prio_byte);
+        prio_val |= (0x80 << prio_byte);  /* Priority 0x80 (higher than default 0xA0) */
+        mmio_write32(&gicd[prio_off / 4], prio_val);
+    }
     fut_irq_enable(FUT_IRQ_UART);
 
     /* Initialize UART RX wait queue for blocking I/O */
@@ -508,14 +527,11 @@ void fut_serial_puts(const char *str) {
 int fut_serial_getc(void) {
     volatile uint8_t *uart = (volatile uint8_t *)UART0_BASE;
 
-    /* Read character from RX buffer if in interrupt mode */
-    if (uart_rx_irq_mode) {
-        if (uart_rx_tail != uart_rx_head) {
-            char c = uart_rx_buffer[uart_rx_tail];
-            uart_rx_tail = (uart_rx_tail + 1) % UART_RX_BUFFER_SIZE;
-            return (int)(unsigned char)c;
-        }
-        return -1;
+    /* Check interrupt-mode RX buffer first */
+    if (uart_rx_tail != uart_rx_head) {
+        char c = uart_rx_buffer[uart_rx_tail];
+        uart_rx_tail = (uart_rx_tail + 1) % UART_RX_BUFFER_SIZE;
+        return (int)(unsigned char)c;
     }
 
     /* In polling mode, read directly from UART FIFO */
@@ -1027,6 +1043,20 @@ int fut_register_irq_handler(int irq, fut_irq_handler_t handler) {
     }
 
     irq_handlers[irq] = handler;
+    return 0;
+}
+
+int fut_dispatch_irq(uint32_t irq_id) {
+    if (irq_id >= FUT_MAX_IRQS) {
+        return -1;
+    }
+    if (!irq_handlers[irq_id]) {
+        static uint32_t unhandled_count = 0;
+        if (++unhandled_count <= 5)
+            fut_printf("[IRQ] Unhandled IRQ %u (no handler)\n", irq_id);
+        return -1;
+    }
+    irq_handlers[irq_id]((int)irq_id, NULL);
     return 0;
 }
 

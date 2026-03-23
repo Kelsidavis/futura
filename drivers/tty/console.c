@@ -53,11 +53,16 @@ static void console_input_thread(void *arg) {
     }
 
     while (1) {
-        /* Read character from serial (blocking) */
-        int c = fut_serial_getc_blocking();
+        /* Read character from serial — use polling with yield for ARM64
+         * since UART interrupts may not fire in all QEMU configurations */
+        int c = fut_serial_getc();
         if (c >= 0) {
             /* Feed to line discipline */
             tty_ldisc_input(&console_ldisc, (char)c);
+        } else {
+            /* No data — yield to other threads briefly */
+            extern void fut_thread_yield(void);
+            fut_thread_yield();
         }
     }
 }

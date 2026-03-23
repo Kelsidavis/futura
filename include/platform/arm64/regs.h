@@ -202,6 +202,7 @@ typedef struct fut_interrupt_frame {
 #define GICD_ICPENDR            0x280       /* Interrupt clear-pending */
 #define GICD_IPRIORITYR         0x400       /* Interrupt priority */
 #define GICD_ITARGETSR          0x800       /* Interrupt processor targets */
+#define GICD_ICFGR              0xC00       /* Interrupt configuration (edge/level) */
 
 /* GICC registers */
 #define GICC_CTLR               0x000       /* Control register */

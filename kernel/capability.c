@@ -15,6 +15,7 @@
 #include <kernel/fut_vfs.h>
 #include <kernel/fut_timer.h>
 #include <kernel/errno.h>
+#include <sys/stat.h>
 
 #include <kernel/kprintf.h>
 

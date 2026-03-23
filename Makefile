@@ -210,7 +210,7 @@ export REPRO_LDFLAGS
 
 # C standard and compiler flags
 CFLAGS := -std=c2x -ffreestanding -nostdlib -fno-builtin -fno-stack-protector -fno-asynchronous-unwind-tables
-CFLAGS += -Wall -Wextra -Wpedantic -Werror
+CFLAGS += -Wall -Wextra -Wpedantic -Werror -Wno-unterminated-string-initialization
 CFLAGS += -fno-pic -fno-pie  # Disable PIC/PIE for kernel code
 CFLAGS += -fcf-protection=none  # Disable CET (Control-flow Enforcement Technology)
 CFLAGS += -I.
@@ -1200,13 +1200,12 @@ stage: userland
 	@rm -rf $(INITROOT)
 	@mkdir -p $(INITROOT)/sbin $(INITROOT)/bin $(INITROOT)/lib $(INITROOT)/tmp
 	@chmod 1777 $(INITROOT)/tmp
-	@install -m 0755 $(WAYLAND_COMPOSITOR_BIN) $(INITROOT)/sbin/futura-wayland
-	@install -m 0755 $(WL_TERM_BIN) $(INITROOT)/bin/wl-term
-	@install -m 0755 $(WAYLAND_CLIENT_BIN) $(INITROOT)/bin/wl-simple
-	@install -m 0755 $(WAYLAND_COLOR_BIN) $(INITROOT)/bin/wl-colorwheel
-	@install -m 0755 $(WAYLAND_SHELL_BIN) $(INITROOT)/sbin/futura-shell
-	@install -m 0755 $(WAYLAND_SHELL_BIN) $(INITROOT)/bin/futura-shell
-	@install -m 0755 src/user/shell/futura-shell/launch_shell.sh $(INITROOT)/sbin/launch-shell
+	@if [ -f $(WAYLAND_COMPOSITOR_BIN) ]; then install -m 0755 $(WAYLAND_COMPOSITOR_BIN) $(INITROOT)/sbin/futura-wayland; fi
+	@if [ -f $(WL_TERM_BIN) ]; then install -m 0755 $(WL_TERM_BIN) $(INITROOT)/bin/wl-term; fi
+	@if [ -f $(WAYLAND_CLIENT_BIN) ]; then install -m 0755 $(WAYLAND_CLIENT_BIN) $(INITROOT)/bin/wl-simple; fi
+	@if [ -f $(WAYLAND_COLOR_BIN) ]; then install -m 0755 $(WAYLAND_COLOR_BIN) $(INITROOT)/bin/wl-colorwheel; fi
+	@if [ -f $(WAYLAND_SHELL_BIN) ]; then install -m 0755 $(WAYLAND_SHELL_BIN) $(INITROOT)/sbin/futura-shell && install -m 0755 $(WAYLAND_SHELL_BIN) $(INITROOT)/bin/futura-shell; fi
+	@if [ -f src/user/shell/futura-shell/launch_shell.sh ]; then install -m 0755 src/user/shell/futura-shell/launch_shell.sh $(INITROOT)/sbin/launch-shell; fi
 	@if [ -f $(BUILD_DIR)/lib/libopen_wrapper.so ]; then install -m 0755 $(BUILD_DIR)/lib/libopen_wrapper.so $(INITROOT)/lib/libopen_wrapper.so; fi
 	@if [ -f $(INIT_BIN) ]; then install -m 0755 $(INIT_BIN) $(INITROOT)/sbin/init; fi
 	@if [ -f $(SECOND_STUB_BIN) ]; then install -m 0755 $(SECOND_STUB_BIN) $(INITROOT)/sbin/second; fi

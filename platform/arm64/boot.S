@@ -235,7 +235,7 @@ bss_cleared:
     adrp    x0, boot_l2_table_peripherals
     add     x0, x0, :lo12:boot_l2_table_peripherals
     mov     x1, #0x00000000           /* Start PA */
-    mov     x3, #256                  /* Map 512MB to include PCI MMIO window */
+    mov     x3, #512                  /* Map full 1GB to cover PCI MMIO + ECAM window */
     movz    x5, #0x0020, lsl #16      /* 2MB block size = 0x200000 */
 2:  mov     x2, #0x405                /* Valid (bit 0) | Block (bit 1=0) | AttrIndx=1 (bit 2) | AF (bit 10) */
     orr     x2, x2, #(2 << 8)         /* SH=10: Outer Shareable */
@@ -309,7 +309,7 @@ bss_cleared:
     adrp    x0, kernel_l2_table_peripherals
     add     x0, x0, :lo12:kernel_l2_table_peripherals
     mov     x1, #0x00000000           /* Start PA */
-    mov     x3, #256                  /* 256 x 2MB = 512MB */
+    mov     x3, #512                  /* 512 x 2MB = 1GB (match boot table) */
     movz    x5, #0x0020, lsl #16      /* 2MB block size */
 5:  mov     x2, #0x405                /* Valid | Block | AttrIndx=1 (device) | AF */
     orr     x2, x2, #(2 << 8)         /* SH=10: Outer Shareable */
@@ -319,13 +319,12 @@ bss_cleared:
     subs    x3, x3, #1
     bne     5b
 
-    /* Setup kernel_l2_table_dram: Map high VA to where QEMU actually loaded kernel
-     * QEMU virt reserves 0x40000000-0x40200000 for DTB, loads kernel at 0x40200000
-     * Identity map (boot_l2_table_dram above) keeps PA 0x40000000 for DTB access
-     * High-VA kernel mapping must point to actual kernel PA 0x40200000 */
+    /* Setup kernel_l2_table_dram: Map high VA to kernel physical address
+     * ELF PhysAddr = 0x40000000 (QEMU loads kernel here)
+     * High-VA kernel mapping: VA 0xFFFFFF8040000000 → PA 0x40000000 */
     adrp    x0, kernel_l2_table_dram
     add     x0, x0, :lo12:kernel_l2_table_dram
-    movz    x1, #0x4020, lsl #16      /* Start PA = 0x40200000 (QEMU kernel load address) */
+    movz    x1, #0x4000, lsl #16      /* Start PA = 0x40000000 (ELF PhysAddr) */
     mov     x3, #512                  /* 512 x 2MB = 1GB */
     movz    x5, #0x0020, lsl #16      /* 2MB block size */
 6:  mov     x2, #0x401                /* Valid | Block | AttrIndx=0 (normal) | AF */
@@ -443,8 +442,8 @@ bss_cleared:
      * Page tables map VA 0xFFFFFF8040000000 → PA 0x40200000
      * So: PA 0x40200xxx → VA 0xFFFFFF8040000xxx (subtract PA base, add VA base)
      */
-    adr     x0, .Lhigh_va_entry       /* Get actual PA (PC-relative, ~0x4020xxxx) */
-    movz    x1, #0x4020, lsl #16      /* PA base = 0x40200000 */
+    adr     x0, .Lhigh_va_entry       /* Get actual PA (PC-relative, ~0x4000xxxx) */
+    movz    x1, #0x4000, lsl #16      /* PA base = 0x40000000 (QEMU kernel load address) */
     sub     x0, x0, x1                /* x0 = offset from PA base */
     movz    x1, #0xFFFF, lsl #48      /* VA base (high 16 bits) */
     movk    x1, #0xFF80, lsl #32      /* VA base (bits 47:32) */

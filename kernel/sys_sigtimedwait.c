@@ -13,7 +13,7 @@
 #include <kernel/errno.h>
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
-#include <signal.h>
+#include <kernel/signal.h>
 #include <stdint.h>
 #include <string.h>
 

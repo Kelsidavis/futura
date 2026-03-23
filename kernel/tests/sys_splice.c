@@ -376,7 +376,7 @@ static void test_fallocate(void) {
         return;
     }
 
-    const char data[16] = "AAAAAAAABBBBBBBB";
+    const char data[17] = "AAAAAAAABBBBBBBB";
     ssize_t wr = fut_vfs_write(fd, data, 16);
     if (wr != 16) {
         fut_printf("[SPLICE-TEST] ✗ fallocate: write failed %ld\n", wr);

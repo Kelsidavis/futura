@@ -11,6 +11,7 @@
  * (zero timeout), treat subsequent messages as non-blocking.
  */
 
+#include <time.h>
 #include <kernel/fut_task.h>
 #include <kernel/fut_memory.h>
 #include <kernel/fut_socket.h>

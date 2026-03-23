@@ -22,7 +22,7 @@
  * ============================================================ */
 
 /* Uncomment to enable verbose ARM64 paging debug output */
-#define DEBUG_ARM64_PAGING
+/* #define DEBUG_ARM64_PAGING */
 
 #ifdef DEBUG_ARM64_PAGING
 #define PAGING_DEBUG(...) fut_printf(__VA_ARGS__)
@@ -680,7 +680,7 @@ int fut_identity_map(fut_vmem_context_t *ctx, uint64_t paddr, uint64_t size, uin
  * @return New VM context with identity-mapped address space, or NULL on failure
  */
 fut_vmem_context_t *fut_vmem_create(void) {
-    extern page_table_t boot_l1_table;  /* Boot page table with identity mappings */
+    /* boot_l1_table no longer copied — user PGD starts empty */
 
     fut_vmem_context_t *ctx = (fut_vmem_context_t *)fut_malloc(sizeof(fut_vmem_context_t));
     if (!ctx) {
@@ -698,31 +698,9 @@ fut_vmem_context_t *fut_vmem_create(void) {
      * No boot L1 entries are copied — TTBR0 is purely for user address space. */
     memset(ctx->pgd->entries, 0, 512 * sizeof(pte_t));
 
-    /* Debug: Verify critical entries were copied */
-    fut_printf("[VMEM-CREATE] boot_l1_table @ %p, new pgd @ %p\n",
-               (void*)&boot_l1_table, (void*)ctx->pgd);
-    fut_printf("[VMEM-CREATE] boot L1[0] = 0x%llx (peripherals)\n",
-               (unsigned long long)boot_l1_table.entries[0]);
-    fut_printf("[VMEM-CREATE] boot L1[1] = 0x%llx (DRAM - kernel/user code)\n",
-               (unsigned long long)boot_l1_table.entries[1]);
-    fut_printf("[VMEM-CREATE] boot L1[256] = 0x%llx (PCIe)\n",
-               (unsigned long long)boot_l1_table.entries[256]);
-    fut_printf("[VMEM-CREATE] new L1[0] = 0x%llx\n",
-               (unsigned long long)ctx->pgd->entries[0]);
-    fut_printf("[VMEM-CREATE] new L1[1] = 0x%llx\n",
-               (unsigned long long)ctx->pgd->entries[1]);
-    fut_printf("[VMEM-CREATE] new L1[256] = 0x%llx\n",
-               (unsigned long long)ctx->pgd->entries[256]);
-
-    /* CRITICAL: TTBR0_EL1 must contain physical address, not virtual
-     * ctx->pgd is a kernel VA (0xFFFFFF80...), convert to PA */
+    /* CRITICAL: TTBR0_EL1 must contain physical address, not virtual */
     ctx->ttbr0_el1 = pmap_virt_to_phys((uintptr_t)ctx->pgd);
     ctx->ref_count = 1;
-
-    fut_printf("[VMEM-CREATE] PGD VA=0x%llx PA=0x%llx, TTBR0=0x%llx\n",
-               (unsigned long long)ctx->pgd,
-               (unsigned long long)ctx->ttbr0_el1,
-               (unsigned long long)ctx->ttbr0_el1);
 
     return ctx;
 }

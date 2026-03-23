@@ -2226,11 +2226,7 @@ static int build_user_stack(fut_mm_t *mm,
     uint64_t sp = info->stack;
     fut_task_t *task = info->task;
 
-    fut_printf("[TRAMPOLINE] Received: arg=%p info=%p entry=0x%llx sp=0x%llx task=%p\n",
-               arg, info,
-               (unsigned long long)entry,
-               (unsigned long long)sp,
-               task);
+    (void)arg; /* Suppress unused warning */
 
     /* Get the PGD physical address from the task's memory manager */
     fut_mm_t *mm = task->mm;
@@ -2293,18 +2289,8 @@ static int build_user_stack(fut_mm_t *mm,
     __asm__ volatile("dsb ish" ::: "memory");
     __asm__ volatile("isb" ::: "memory");
 
-    /* Debug: verify PGD has entries for user address space */
-    {
-        uint64_t *pgd_va = (uint64_t *)mm->ctx.pgd;
-        fut_printf("[TRAMPOLINE] PGD VA=%p PA=0x%llx PGD[0]=0x%llx PGD[1]=0x%llx\n",
-                   pgd_va, (unsigned long long)pgd_phys,
-                   (unsigned long long)pgd_va[0], (unsigned long long)pgd_va[1]);
-    }
-
-    fut_printf("[TRAMPOLINE] About to ERET to entry=0x%llx with sp=0x%llx pgd_phys=0x%llx\n",
-               (unsigned long long)entry,
-               (unsigned long long)sp,
-               (unsigned long long)pgd_phys);
+    fut_printf("[EXEC] Starting user process: entry=0x%llx sp=0x%llx\n",
+               (unsigned long long)entry, (unsigned long long)sp);
 
     __asm__ volatile(
         /* Set ELR_EL1 (return address for ERET) */
@@ -2352,9 +2338,7 @@ static int map_segment_from_memory(fut_mm_t *mm, const void *elf_data, const elf
     uintptr_t addr = PAGE_ALIGN_DOWN(phdr->p_vaddr);
     size_t pages_needed = (phdr->p_vaddr + phdr->p_memsz - addr + PAGE_SIZE - 1) / PAGE_SIZE;
 
-    fut_printf("[MAP-SEG] vaddr=0x%llx memsz=%llu pages=%zu prot=%d\n",
-               (unsigned long long)phdr->p_vaddr, (unsigned long long)phdr->p_memsz,
-               pages_needed, prot);
+    /* Verbose logging disabled for clean boot */
 
     /* Allocate and map pages */
     for (size_t i = 0; i < pages_needed; i++) {
@@ -2366,8 +2350,7 @@ static int map_segment_from_memory(fut_mm_t *mm, const void *elf_data, const elf
         }
 
         phys_addr_t phys = pmap_virt_to_phys((uintptr_t)page);
-        fut_printf("[MAP-SEG] Mapping page %zu: vaddr=0x%llx phys=0x%llx\n",
-                   i, (unsigned long long)page_addr, (unsigned long long)phys);
+        /* fut_printf("[MAP-SEG] page %zu: 0x%llx -> 0x%llx\n", i, page_addr, phys); */
 
         int map_result = pmap_map_user(vmem, page_addr, phys, PAGE_SIZE, prot);
         if (map_result != 0) {
@@ -2377,7 +2360,7 @@ static int map_segment_from_memory(fut_mm_t *mm, const void *elf_data, const elf
         }
     }
 
-    fut_printf("[MAP-SEG] Successfully mapped %zu pages\n", pages_needed);
+    /* Pages mapped successfully */
 
     /* Copy file data from memory buffer into mapped pages */
     if (phdr->p_filesz > 0) {

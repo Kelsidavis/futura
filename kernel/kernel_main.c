@@ -1034,7 +1034,7 @@ void fut_kernel_main(void) {
                    (unsigned long long)(bss_va - bss_pa));
 
         /* Expected offset: Virtual base 0xFFFFFF8040000000 - Physical load 0x40000000 */
-        uint64_t expected_offset = 0xFFFFFF7FFFE00000ULL;
+        uint64_t expected_offset = KERN_VA_BASE - KERN_PA_BASE;
         uint64_t actual_offset = bss_va - bss_pa;
         if (actual_offset != expected_offset) {
             fut_printf("[VA-PA-CHECK] WARNING: Offset mismatch! Expected=0x%016llx Actual=0x%016llx Diff=0x%016llx\n",

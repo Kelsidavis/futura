@@ -14,23 +14,8 @@
  *   pc_val - value loaded from [ctx + 264] (pc field)
  */
 void debug_context_switch(void *ctx, uint64_t lr_val, uint64_t pc_val) {
-    /* Only log if we're switching to a userspace context (pc in user range) */
-    if (pc_val >= 0x400000 && pc_val < 0x500000) {
-        fut_printf("[CTX-SWITCH] ctx=%p lr@240=0x%llx pc@264=0x%llx\n",
-                   ctx,
-                   (unsigned long long)lr_val,
-                   (unsigned long long)pc_val);
-
-        /* If PC matches LR, we have a smoking gun! */
-        if (pc_val == lr_val) {
-            fut_printf("[CTX-SWITCH] *** BUG: PC == LR! Wrong offset being used? ***\n");
-        }
-
-        /* If PC is 0x400168 (the known bad value), flag it */
-        if (pc_val == 0x400168) {
-            fut_printf("[CTX-SWITCH] *** BUG: PC=0x400168 (should be 0x400170)! ***\n");
-        }
-    }
+    (void)ctx; (void)lr_val; (void)pc_val;
+    /* Debug logging disabled for clean boot output */
 }
 
 /* Called when ELR_EL1 doesn't match what we tried to set

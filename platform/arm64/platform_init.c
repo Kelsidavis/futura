@@ -372,23 +372,21 @@ void fut_serial_init(void) {
 
     /* Configure UART IRQ as level-triggered in GIC and enable */
     {
-        /* ICFGR for IRQ 33: register 33/16 = 2, field (33%16)*2 = bit 2 */
-        /* Level-triggered = 0b00 (default), edge-triggered = 0b10 */
+        volatile uint32_t *gicd_early = (volatile uint32_t *)GICD_BASE;
+        /* ICFGR: set level-triggered */
         uint32_t icfgr_idx = FUT_IRQ_UART / 16;
-        uint32_t icfgr_off = (GICD_ICFGR + icfgr_idx * 4);
-        uint32_t icfgr_val = mmio_read32(&gicd[icfgr_off / 4]);
+        uint32_t icfgr_val = mmio_read32(&gicd_early[(GICD_ICFGR + icfgr_idx * 4) / 4]);
         uint32_t bit_pos = (FUT_IRQ_UART % 16) * 2;
-        icfgr_val &= ~(3U << bit_pos);  /* Level-triggered (0b00) */
-        mmio_write32(&gicd[icfgr_off / 4], icfgr_val);
+        icfgr_val &= ~(3U << bit_pos);
+        mmio_write32(&gicd_early[(GICD_ICFGR + icfgr_idx * 4) / 4], icfgr_val);
 
-        /* Set priority to high (lower number = higher priority) */
+        /* Set higher priority */
         uint32_t prio_idx = FUT_IRQ_UART / 4;
-        uint32_t prio_off = GICD_IPRIORITYR + prio_idx * 4;
-        uint32_t prio_val = mmio_read32(&gicd[prio_off / 4]);
+        uint32_t prio_val = mmio_read32(&gicd_early[(GICD_IPRIORITYR + prio_idx * 4) / 4]);
         uint32_t prio_byte = (FUT_IRQ_UART % 4) * 8;
-        prio_val &= ~(0xFF << prio_byte);
-        prio_val |= (0x80 << prio_byte);  /* Priority 0x80 (higher than default 0xA0) */
-        mmio_write32(&gicd[prio_off / 4], prio_val);
+        prio_val &= ~(0xFFU << prio_byte);
+        prio_val |= (0x80U << prio_byte);
+        mmio_write32(&gicd_early[(GICD_IPRIORITYR + prio_idx * 4) / 4], prio_val);
     }
     fut_irq_enable(FUT_IRQ_UART);
 
@@ -1395,47 +1393,14 @@ static void arm64_init_spawner_thread(void *arg) {
         }
     }
 
-    /* Spawn test program */
-    fut_printf("\n====================================\n");
-    fut_printf("  SPAWNING TEST PROGRAM\n");
-    fut_printf("====================================\n\n");
-
-    /* Run forktest to verify multi-process functionality */
+    /* Run forktest */
     char *forktest_argv[] = {"/bin/forktest", NULL};
     char *forktest_envp[] = {"PATH=/sbin:/bin", NULL};
-
-    fut_printf("[ARM64-SPAWNER] Running forktest to verify multi-process support...\n");
+    fut_printf("[ARM64-SPAWNER] Running forktest...\n");
     ret = fut_exec_elf("/bin/forktest", forktest_argv, forktest_envp);
-
     if (ret == 0) {
-        fut_printf("[ARM64-SPAWNER] ✓ Forktest process spawned successfully!\n");
-        /* Wait for forktest to complete */
+        fut_printf("[ARM64-SPAWNER] ✓ Forktest process spawned\n");
         for (volatile int i = 0; i < 50000000; i++);
-    } else {
-        fut_printf("[ARM64-SPAWNER] ERROR: Failed to spawn forktest! Error code: %d\n", ret);
-        if (ret == -EINVAL) {
-            fut_printf("  EINVAL (invalid argument)\n");
-        } else if (ret == -ENOMEM) {
-            fut_printf("  ENOMEM (out of memory)\n");
-        } else if (ret == -ENOENT) {
-            fut_printf("  ENOENT (file not found)\n");
-        }
-    }
-
-    /* UIDemo framebuffer/mmap test with periodic yields
-     * Now yields every 10,000 pixels to share CPU time */
-    char *uidemo_argv[] = {"/bin/arm64_uidemo", NULL};
-    char *uidemo_envp[] = {"PATH=/sbin:/bin", NULL};
-
-    fut_printf("[ARM64-SPAWNER] Running uidemo to test framebuffer and mmap...\n");
-    ret = fut_exec_elf("/bin/arm64_uidemo", uidemo_argv, uidemo_envp);
-
-    if (ret == 0) {
-        fut_printf("[ARM64-SPAWNER] ✓ UIDemo process spawned successfully!\n");
-        /* Wait for uidemo to complete */
-        for (volatile int i = 0; i < 100000000; i++);
-    } else {
-        fut_printf("[ARM64-SPAWNER] ERROR: Failed to spawn uidemo! Error code: %d\n", ret);
     }
 
     /* Launch shell */

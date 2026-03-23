@@ -26,6 +26,7 @@
 #include <platform/arm64/memory/paging.h>
 #endif
 static inline int write_copy_from_user(void *dst, const void *src, size_t n) {
+    if (!src || (uintptr_t)src == (uintptr_t)-1) return -EFAULT;
 #ifdef KERNEL_VIRTUAL_BASE
     if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
 #endif

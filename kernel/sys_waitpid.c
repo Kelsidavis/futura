@@ -35,6 +35,7 @@
  * are provided by sys/wait.h */
 
 static inline int waitpid_copy_to_user(void *dst, const void *src, size_t n) {
+    if (!dst || (uintptr_t)dst == (uintptr_t)-1) return -EFAULT;
 #ifdef KERNEL_VIRTUAL_BASE
     if ((uintptr_t)dst >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
 #endif

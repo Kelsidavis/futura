@@ -111,7 +111,13 @@ ifeq ($(PLATFORM),x86_64)
 RUN_QEMU_FLAGS += -device isa-debug-exit,iobase=0xf4,iosize=0x4
 endif
 
+ifeq ($(PLATFORM),arm64)
+# ARM64 virt: use explicit MMIO device types
+RUN_QEMU_FLAGS += -drive file=$(QEMU_DISK_IMG),if=none,id=hd0 -device virtio-blk-device,drive=hd0
+RUN_QEMU_FLAGS += -netdev user,id=net0 -device virtio-net-device,netdev=net0
+else
 RUN_QEMU_FLAGS += -drive if=virtio,file=$(QEMU_DISK_IMG),format=raw
+endif
 RUN_QEMU_FLAGS += $(EXTRA_QEMU_FLAGS)
 
 ifeq ($(strip $(KAPPEND)),)

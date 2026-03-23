@@ -1015,6 +1015,9 @@ void fut_kernel_main(void) {
     /* Mark per-CPU data as safe to access (enables fut_thread_current()) */
     fut_thread_mark_percpu_safe();
     fut_serial_puts("[INIT] Per-CPU data initialized for CPU 0\n");
+
+    /* Provide a bootstrap task/thread context so VFS/syscalls work before scheduler */
+    fut_thread_init_bootstrap();
 #endif
 
     fut_boot_banner();
@@ -1030,8 +1033,7 @@ void fut_kernel_main(void) {
                    (unsigned long long)bss_va, (unsigned long long)bss_pa,
                    (unsigned long long)(bss_va - bss_pa));
 
-        /* Expected offset: Virtual base 0xFFFFFF8040000000 - Physical load 0x40200000
-         * (QEMU virt reserves 0x40000000-0x40200000 for DTB) */
+        /* Expected offset: Virtual base 0xFFFFFF8040000000 - Physical load 0x40000000 */
         uint64_t expected_offset = 0xFFFFFF7FFFE00000ULL;
         uint64_t actual_offset = bss_va - bss_pa;
         if (actual_offset != expected_offset) {

@@ -581,7 +581,61 @@ void fut_thread_init_bootstrap(void) {
 }
 #else
 void fut_thread_init_bootstrap(void) {
-    /* ARM64 platform wires up its boot thread via arm64_init_boot_thread(). */
+    fut_percpu_t *percpu = fut_percpu_get();
+    if (!percpu) {
+        fut_printf("[THREAD] ARM64 bootstrap init failed: percpu unavailable\n");
+        return;
+    }
+    if (percpu->current_thread) {
+        return;  /* Already have a current thread */
+    }
+
+    static bool bootstrap_ready = false;
+    static fut_task_t bootstrap_task;
+    static fut_thread_t bootstrap_thread;
+    static uint8_t bootstrap_stack[8192] __attribute__((aligned(16)));
+
+    if (!bootstrap_ready) {
+        memset(&bootstrap_task, 0, sizeof(bootstrap_task));
+        bootstrap_task.pid = 1;
+        bootstrap_task.state = FUT_TASK_RUNNING;
+        bootstrap_task.current_dir_ino = 1;  /* Root */
+        bootstrap_task.uid = 0;
+        bootstrap_task.gid = 0;
+        bootstrap_task.max_fds = FUT_FD_TABLE_INITIAL_SIZE;
+        bootstrap_task.fd_table = fut_malloc(sizeof(struct fut_file *) * bootstrap_task.max_fds);
+        if (!bootstrap_task.fd_table) {
+            fut_printf("[THREAD] ARM64 bootstrap init failed: no fd table\n");
+            return;
+        }
+        memset(bootstrap_task.fd_table, 0, sizeof(struct fut_file *) * bootstrap_task.max_fds);
+        bootstrap_task.fd_flags = fut_malloc(sizeof(int) * bootstrap_task.max_fds);
+        if (bootstrap_task.fd_flags)
+            memset(bootstrap_task.fd_flags, 0, sizeof(int) * bootstrap_task.max_fds);
+        bootstrap_task.next_fd = 0;
+
+        memset(&bootstrap_thread, 0, sizeof(bootstrap_thread));
+        bootstrap_thread.tid = 1;
+        bootstrap_thread.task = &bootstrap_task;
+        bootstrap_thread.state = FUT_THREAD_RUNNING;
+        bootstrap_thread.priority = FUT_DEFAULT_PRIORITY;
+        bootstrap_thread.stack_base = bootstrap_stack;
+        bootstrap_thread.stack_size = sizeof(bootstrap_stack);
+
+        /* ARM64 context: set SP to top of bootstrap stack.
+         * PC set to fut_thread_exit as safe fallback if context restored. */
+        extern void fut_thread_exit(void);
+        bootstrap_thread.context.pc = (uint64_t)(uintptr_t)&fut_thread_exit;
+        bootstrap_thread.context.sp = (uint64_t)(uintptr_t)(bootstrap_stack + sizeof(bootstrap_stack));
+
+        bootstrap_task.threads = &bootstrap_thread;
+        bootstrap_task.thread_count = 1;
+
+        bootstrap_ready = true;
+        fut_printf("[THREAD] ARM64 bootstrap task/thread created (pid=1 tid=1)\n");
+    }
+
+    percpu->current_thread = &bootstrap_thread;
 }
 #endif
 

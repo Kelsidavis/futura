@@ -218,11 +218,17 @@ int fut_copy_from_user(void *k_dst, const void *u_src, size_t n) {
      * During syscalls, TTBR0 may have been switched to kernel page table by page table operations. */
     __asm__ volatile("mrs %0, ttbr0_el1" : "=r"(saved_ttbr0));
 
+    /* Use TTBR0 as-is if already set by exec/syscall path.
+     * Check mm for override only if TTBR0 looks unset (points to boot table). */
     mm = fut_mm_current();
     if (mm && mm->ctx.ttbr0_el1 && saved_ttbr0 != mm->ctx.ttbr0_el1) {
         __asm__ volatile("msr ttbr0_el1, %0" :: "r"(mm->ctx.ttbr0_el1));
-        __asm__ volatile("isb" ::: "memory");
+        saved_ttbr0 = mm->ctx.ttbr0_el1;
     }
+    /* Full TLB invalidation to ensure walker sees freshly-mapped user pages */
+    __asm__ volatile("tlbi vmalle1is" ::: "memory");
+    __asm__ volatile("dsb ish" ::: "memory");
+    __asm__ volatile("isb" ::: "memory");
 #endif
 
     size_t remaining = n;
@@ -307,10 +313,27 @@ int fut_copy_to_user(void *u_dst, const void *k_src, size_t n) {
      * kernel memory if the VA happens to alias a kernel mapping. */
     __asm__ volatile("mrs %0, ttbr0_el1" : "=r"(saved_ttbr0));
 
+    /* Use TTBR0 as-is if already set by exec/syscall path.
+     * Check mm for override only if TTBR0 looks unset (points to boot table). */
     mm = fut_mm_current();
     if (mm && mm->ctx.ttbr0_el1 && saved_ttbr0 != mm->ctx.ttbr0_el1) {
         __asm__ volatile("msr ttbr0_el1, %0" :: "r"(mm->ctx.ttbr0_el1));
-        __asm__ volatile("isb" ::: "memory");
+        saved_ttbr0 = mm->ctx.ttbr0_el1;
+    }
+    /* Full TLB invalidation to ensure walker sees freshly-mapped user pages */
+    __asm__ volatile("tlbi vmalle1is" ::: "memory");
+    __asm__ volatile("dsb ish" ::: "memory");
+    __asm__ volatile("isb" ::: "memory");
+
+    /* Debug: dump TTBR0 and PGD[0] before copy */
+    {
+        uint64_t cur_ttbr0;
+        __asm__ volatile("mrs %0, ttbr0_el1" : "=r"(cur_ttbr0));
+        uint64_t *pgd_va = (uint64_t *)pmap_phys_to_virt(cur_ttbr0 & ~0xFFFULL);
+        extern void fut_printf(const char *, ...);
+        fut_printf("[COPY-TO-USER] dst=0x%lx n=%lu TTBR0=0x%lx PGD[0]=0x%lx\n",
+                   (unsigned long)(uintptr_t)u_dst, (unsigned long)n,
+                   (unsigned long)cur_ttbr0, (unsigned long)pgd_va[0]);
     }
 #endif
 

@@ -356,9 +356,10 @@ int fut_identity_map(fut_vmem_context_t *ctx, uint64_t paddr, uint64_t size, uin
  * @param vaddr Virtual address to flush
  */
 static inline void fut_flush_tlb_single(uint64_t vaddr) {
-    /* ARM64: TLBI VALE1 - TLB invalidate by VA at EL1 */
-    __asm__ volatile("tlbi vale1, %0" :: "r"(vaddr >> 12) : "memory");
-    __asm__ volatile("dsb sy" ::: "memory");
+    /* ARM64: TLBI VAE1IS - TLB invalidate by VA, both EL0 and EL1, inner shareable */
+    __asm__ volatile("tlbi vae1is, %0" :: "r"(vaddr >> 12) : "memory");
+    __asm__ volatile("dsb ish" ::: "memory");
+    __asm__ volatile("isb" ::: "memory");
 }
 
 /**

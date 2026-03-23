@@ -167,35 +167,17 @@ static void free_page_table(page_table_t *pt) {
  */
 static page_table_t *get_or_create_table(page_table_t *parent_table, int index, bool allocate) {
 
-    /* Temporarily switch to kernel page table for page table operations
-     * to ensure we can access all physical memory. Save/restore user TTBR0.
-     * Disable interrupts to prevent preemptive context switch while TTBR0
-     * points to the kernel page table instead of the user process's table.
-     */
-    extern page_table_t boot_l1_table;
-    uint64_t saved_daif;
-    __asm__ volatile("mrs %0, daif" : "=r"(saved_daif));
-    __asm__ volatile("msr daifset, #0xf" ::: "memory");  /* Disable all interrupts */
-
-    uint64_t user_ttbr0;
-    __asm__ volatile("mrs %0, ttbr0_el1" : "=r"(user_ttbr0));
-    __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"(pmap_virt_to_phys((uintptr_t)&boot_l1_table)));
-
+    /* Page table structures are in kernel heap (TTBR1 address space).
+     * No TTBR0 switch needed — all accesses go through TTBR1. */
     pte_t entry = parent_table->entries[index];
 
     if (!fut_pte_is_present(entry)) {
         if (!allocate) {
-            /* Restore user page table and interrupts before returning */
-            __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"(user_ttbr0));
-            __asm__ volatile("msr daif, %0" :: "r"(saved_daif) : "memory");
             return NULL;
         }
 
         page_table_t *new_table = alloc_page_table();
         if (!new_table) {
-            /* Restore user page table and interrupts before returning */
-            __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"(user_ttbr0));
-            __asm__ volatile("msr daif, %0" :: "r"(saved_daif) : "memory");
             return NULL;
         }
 
@@ -205,16 +187,13 @@ static page_table_t *get_or_create_table(page_table_t *parent_table, int index, 
         pte_t table_desc = fut_make_pte(phys_addr, PTE_VALID | PTE_TABLE);
         parent_table->entries[index] = table_desc;
 
-        /* Clean the table descriptor to PoC so MMU walker can see it */
+        /* Clean the table descriptor to PoC so MMU page table walker can see it */
         __asm__ volatile("dc cvac, %0" :: "r"(&parent_table->entries[index]) : "memory");
         __asm__ volatile("dsb ish" ::: "memory");
 
         PAGING_DEBUG("[PT] Created table: parent=%p idx=%d new=%p desc=0x%llx\n",
                    parent_table, index, new_table, (unsigned long long)table_desc);
 
-        /* Restore user page table and interrupts before returning */
-        __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"(user_ttbr0));
-        __asm__ volatile("msr daif, %0" :: "r"(saved_daif) : "memory");
         return new_table;
     }
 
@@ -224,12 +203,7 @@ static page_table_t *get_or_create_table(page_table_t *parent_table, int index, 
         PAGING_DEBUG("[PT] Reusing table: idx=%d entry=0x%llx phys=0x%llx\n",
                    index, (unsigned long long)entry, (unsigned long long)phys);
 
-        page_table_t *result = (page_table_t *)pmap_phys_to_virt(phys);
-
-        /* Restore user page table and interrupts before returning */
-        __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"(user_ttbr0));
-        __asm__ volatile("msr daif, %0" :: "r"(saved_daif) : "memory");
-        return result;
+        return (page_table_t *)pmap_phys_to_virt(phys);
     }
 
     /* Block descriptor found - split it into L3 page table for finer-grained mapping.
@@ -237,17 +211,12 @@ static page_table_t *get_or_create_table(page_table_t *parent_table, int index, 
      * (e.g., user-accessible thread stacks) within a 2MB kernel-only DRAM block. */
     if (fut_pte_is_block(entry)) {
         if (!allocate) {
-            /* Restore user page table before returning */
-            __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"(user_ttbr0));
             return NULL;  /* Can't split without allocation */
         }
 
         /* Allocate new L3 page table */
         page_table_t *new_l3_table = alloc_page_table();
         if (!new_l3_table) {
-            /* Restore user page table and interrupts before returning */
-            __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"(user_ttbr0));
-            __asm__ volatile("msr daif, %0" :: "r"(saved_daif) : "memory");
             return NULL;
         }
 
@@ -280,17 +249,11 @@ static page_table_t *get_or_create_table(page_table_t *parent_table, int index, 
         extern void fut_flush_tlb_all(void);
         fut_flush_tlb_all();
 
-        /* Restore user page table and interrupts before returning */
-        __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"(user_ttbr0));
-        __asm__ volatile("msr daif, %0" :: "r"(saved_daif) : "memory");
         return new_l3_table;
     }
 
     PAGING_DEBUG("[PT] ERROR: Unknown entry type at idx=%d entry=0x%llx\n",
                index, (unsigned long long)entry);
-    /* Restore user page table and interrupts before returning */
-    __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"(user_ttbr0));
-    __asm__ volatile("msr daif, %0" :: "r"(saved_daif) : "memory");
     return NULL;
 }
 
@@ -730,16 +693,10 @@ fut_vmem_context_t *fut_vmem_create(void) {
         return NULL;
     }
 
-    /* Copy entire page table from boot_l1_table to get identity mappings.
-     * This includes:
-     *   - L1[0]: Peripherals (0x00000000-0x3FFFFFFF)
-     *   - L1[1]: DRAM (0x40000000-0x7FFFFFFF) - where user code lives
-     *   - L1[256]: PCIe ECAM (0x4000000000+)
-     *
-     * TODO: Once higher-half kernel is implemented, only copy lower half (0-255)
-     * and map kernel to upper half (256-511) separately.
-     */
-    memcpy(ctx->pgd->entries, boot_l1_table.entries, 512 * sizeof(pte_t));
+    /* User page table starts empty — kernel lives in TTBR1 (high VA).
+     * User code will be mapped at low VA via map_page() as ELF segments load.
+     * No boot L1 entries are copied — TTBR0 is purely for user address space. */
+    memset(ctx->pgd->entries, 0, 512 * sizeof(pte_t));
 
     /* Debug: Verify critical entries were copied */
     fut_printf("[VMEM-CREATE] boot_l1_table @ %p, new pgd @ %p\n",

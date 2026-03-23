@@ -325,16 +325,6 @@ int fut_copy_to_user(void *u_dst, const void *k_src, size_t n) {
     __asm__ volatile("dsb ish" ::: "memory");
     __asm__ volatile("isb" ::: "memory");
 
-    /* Debug: dump TTBR0 and PGD[0] before copy */
-    {
-        uint64_t cur_ttbr0;
-        __asm__ volatile("mrs %0, ttbr0_el1" : "=r"(cur_ttbr0));
-        uint64_t *pgd_va = (uint64_t *)pmap_phys_to_virt(cur_ttbr0 & ~0xFFFULL);
-        extern void fut_printf(const char *, ...);
-        fut_printf("[COPY-TO-USER] dst=0x%lx n=%lu TTBR0=0x%lx PGD[0]=0x%lx\n",
-                   (unsigned long)(uintptr_t)u_dst, (unsigned long)n,
-                   (unsigned long)cur_ttbr0, (unsigned long)pgd_va[0]);
-    }
 #endif
 
     size_t remaining = n;

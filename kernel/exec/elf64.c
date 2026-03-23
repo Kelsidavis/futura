@@ -1809,26 +1809,34 @@ static int read_exact(int fd, void *buf, size_t len) {
 }
 
 static int exec_copy_to_user(fut_mm_t *mm, uint64_t dest, const void *src, size_t len) {
-    /* For ELF loading during exec, we need to write to pages in the NEW process's
-     * address space. Since we're still running with the OLD process's CR3, we must
-     * temporarily switch to the target MM context to access those pages via SMAP. */
+    /* Copy data to user memory by walking the page table to find the physical
+     * address, then writing via the kernel virtual address. This avoids TTBR0
+     * switching which is unreliable during exec context setup. */
+    fut_vmem_context_t *vmem = fut_mm_context(mm);
+    const uint8_t *src_bytes = (const uint8_t *)src;
+    size_t remaining = len;
+    uint64_t vaddr = dest;
 
-    extern fut_mm_t *fut_mm_current(void);
-    extern void fut_mm_switch(fut_mm_t *mm);
+    while (remaining > 0) {
+        uint64_t page_offset = vaddr & 0xFFF;
+        size_t chunk_size = 0x1000 - page_offset;
+        if (chunk_size > remaining) chunk_size = remaining;
 
-    /* Save current MM context */
-    fut_mm_t *saved_mm = fut_mm_current();
+        uint64_t pte = 0;
+        extern int pmap_probe_pte(fut_vmem_context_t *, uint64_t, uint64_t *);
+        if (pmap_probe_pte(vmem, vaddr, &pte) != 0) {
+            return -EFAULT;
+        }
 
-    /* Switch to target MM context so we can access the new pages */
-    fut_mm_switch(mm);
+        uint64_t phys = (pte & 0xFFFFFFFFF000ULL) + page_offset;
+        void *kern_addr = (void *)pmap_phys_to_virt(phys);
+        memcpy(kern_addr, src_bytes, chunk_size);
 
-    /* Use standard fut_copy_to_user which handles SMAP correctly */
-    int result = fut_copy_to_user((void *)dest, src, len);
-
-    /* Restore original MM context */
-    fut_mm_switch(saved_mm);
-
-    return result;
+        src_bytes += chunk_size;
+        vaddr += chunk_size;
+        remaining -= chunk_size;
+    }
+    return 0;
 }
 
 /* Map a single LOAD segment from file */
@@ -2281,6 +2289,14 @@ static int build_user_stack(fut_mm_t *mm,
     /* page table updates are visible to the hardware page table walker */
     __asm__ volatile("dsb ish" ::: "memory");
     __asm__ volatile("isb" ::: "memory");
+
+    /* Debug: verify PGD has entries for user address space */
+    {
+        uint64_t *pgd_va = (uint64_t *)mm->ctx.pgd;
+        fut_printf("[TRAMPOLINE] PGD VA=%p PA=0x%llx PGD[0]=0x%llx PGD[1]=0x%llx\n",
+                   pgd_va, (unsigned long long)pgd_phys,
+                   (unsigned long long)pgd_va[0], (unsigned long long)pgd_va[1]);
+    }
 
     fut_printf("[TRAMPOLINE] About to ERET to entry=0x%llx with sp=0x%llx pgd_phys=0x%llx\n",
                (unsigned long long)entry,

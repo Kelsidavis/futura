@@ -1402,10 +1402,23 @@ static void arm64_init_spawner_thread(void *arg) {
 
     if (ret == 0) {
         fut_printf("[ARM64-SPAWNER] ✓ UIDemo process spawned successfully!\n");
-        /* Wait for uidemo to complete (yields allow other processes to run) */
+        /* Wait for uidemo to complete */
         for (volatile int i = 0; i < 100000000; i++);
     } else {
         fut_printf("[ARM64-SPAWNER] ERROR: Failed to spawn uidemo! Error code: %d\n", ret);
+    }
+
+    /* Launch shell */
+    char *shell_argv[] = {"/bin/shell", NULL};
+    char *shell_envp[] = {"PATH=/sbin:/bin", "HOME=/", "TERM=vt100", NULL};
+
+    fut_printf("[ARM64-SPAWNER] Launching shell...\n");
+    ret = fut_exec_elf("/bin/shell", shell_argv, shell_envp);
+
+    if (ret == 0) {
+        fut_printf("[ARM64-SPAWNER] ✓ Shell spawned successfully!\n");
+    } else {
+        fut_printf("[ARM64-SPAWNER] ERROR: Failed to spawn shell! Error code: %d\n", ret);
     }
 
     /* Thread exits naturally */

@@ -11,6 +11,11 @@
 #include <kernel/signal.h>
 #include <kernel/fut_siginfo.h>
 #include <kernel/kprintf.h>
+/* Forward declarations to avoid header conflicts */
+typedef struct fut_task fut_task_t;
+extern fut_task_t *fut_task_current(void);
+extern void fut_task_exit_current(int status);
+extern void fut_schedule(void);
 
 /* Forward declarations */
 extern void fut_serial_puts(const char *str);
@@ -335,11 +340,20 @@ void arm64_exception_dispatch(fut_interrupt_frame_t *frame) {
             fut_printf("[DATA-ABORT-DEBUG] X0=0x%016llx X1=0x%016llx\n",
                        (unsigned long long)frame->x[0], (unsigned long long)frame->x[1]);
             if (ec == ESR_EC_DABT_EL1) {
-                /* Kernel data abort is unrecoverable — panic */
-                fut_serial_puts("[PANIC] Unhandled kernel data abort\n");
-                handle_unknown(frame);
+                /* Kernel data abort — try to kill the offending process instead
+                 * of panicking the whole kernel */
+                fut_task_t *faulting = fut_task_current();
+                if (faulting) {
+                    fut_printf("[DATA-ABORT] Killing faulted process, system continues\n");
+                    fut_task_exit_current(-11);  /* SIGSEGV */
+                    /* Should not return */
+                }
+                /* No task context — schedule away from this thread */
+                fut_printf("[DATA-ABORT] No task context, scheduling away\n");
+                fut_schedule();
+                for (;;) __asm__ volatile("wfe");
             }
-            /* EL0 data abort not handled by page_fault.c (shouldn't happen now) */
+            /* EL0 data abort not handled by page_fault.c */
             arm64_deliver_exception_signal(frame, SIGSEGV, SEGV_MAPERR,
                                            (void *)(uintptr_t)frame->far);
             return;

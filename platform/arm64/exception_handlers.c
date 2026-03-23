@@ -304,6 +304,11 @@ void arm64_exception_dispatch(fut_interrupt_frame_t *frame) {
                 else if (dfsc == 0x0f) fut_serial_puts("Permission fault L3");
                 else fut_serial_puts("Unknown");
                 fut_serial_puts(")\n");
+                /* Print faulting address */
+                uint64_t far_el1;
+                __asm__ volatile("mrs %0, far_el1" : "=r"(far_el1));
+                fut_printf("[EXCEPTION] FAR_EL1=0x%016llx PC=0x%016llx\n",
+                           (unsigned long long)far_el1, (unsigned long long)frame->pc);
             }
             /* Try to handle as page fault */
             if (fut_trap_handle_page_fault(frame)) {

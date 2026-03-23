@@ -1381,6 +1381,13 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
         for (uint64_t page = vma->start; page < vma->end; page += FUT_PAGE_SIZE) {
             uint64_t pte = 0;
 
+            /* Skip pages already handled by fixed-region scan (program + stack).
+             * These were already deep-copied with correct permissions. */
+            if ((page >= CLONE_SCAN_START && page < CLONE_SCAN_END) ||
+                (page >= STACK_SCAN_START && page < STACK_SCAN_END)) {
+                continue;
+            }
+
             /* Check if this page is mapped in parent */
             if (pmap_probe_pte(parent_ctx, page, &pte) != 0) {
                 continue;  /* Not mapped */

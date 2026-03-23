@@ -1878,9 +1878,12 @@ static int map_segment(fut_mm_t *mm, int fd, const elf64_phdr_t *phdr) {
         /* Check if this page is already mapped (happens when segments overlap) */
         uint64_t existing_pte = 0;
         if (pmap_probe_pte(vmem, page_addr, &existing_pte) == 0) {
-            /* Page already mapped, skip allocation/mapping but verify it's present */
-            fut_printf("[MAP-SEG-ARM64] Page %llu at 0x%llx already mapped (overlapping segment), skipping\n",
-                       (unsigned long long)i, (unsigned long long)page_addr);
+            /* Page already mapped — upgrade permissions if new segment needs write */
+            if (prot & PROT_WRITE) {
+                /* Remap with upgraded permissions (RO → RW) */
+                phys_addr_t existing_phys = existing_pte & 0xFFFFFFFFF000ULL;
+                pmap_map_user(vmem, page_addr, existing_phys, PAGE_SIZE, prot);
+            }
             continue;
         }
 

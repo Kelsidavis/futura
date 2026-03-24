@@ -481,7 +481,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     const char *builtins[] = {
         "bg", "cd", "chmod", "clear", "date", "dd", "df", "dmesg", "echo", "edit", "hexdump", "lsof", "nc", "poweroff", "reboot", "seq", "sleep", "time", "wget", "exit", "export", "fg", "free",
         "help", "hostname", "id", "ifconfig", "jobs", "kill", "ls", "mount",
-        ".", "alias", "basename", "dirname", "du", "exec", "false", "history", "ln", "more", "printf", "ps", "pwd", "read", "readlink", "set", "source", "stat", "sync", "sysinfo", "test", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "wait", "which", "whoami", "xargs", NULL
+        ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "history", "ln", "more", "nproc", "printf", "ps", "pwd", "read", "readlink", "set", "source", "stat", "sync", "sysinfo", "test", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "wait", "which", "whoami", "xargs", NULL
     };
 
     /* External commands we might have */
@@ -5621,6 +5621,16 @@ static int execute_command(int argc, char *argv[]) {
         for (int i = 0; i < MAX_ALIASES; i++)
             if (aliases[i].used && strcmp_simple(aliases[i].name, argv[1]) == 0) { aliases[i].used = 0; break; }
         return 0;
+    } else if (strcmp_simple(argv[0], "nproc") == 0) {
+        write_str(1, "1\n");  /* Single CPU for now */
+        return 0;
+    } else if (strcmp_simple(argv[0], "arch") == 0) {
+#ifdef __aarch64__
+        write_str(1, "aarch64\n");
+#else
+        write_str(1, "x86_64\n");
+#endif
+        return 0;
     } else if (strcmp_simple(argv[0], "sysinfo") == 0) {
         cmd_sysinfo(argc, argv);
         return 0;
@@ -5854,6 +5864,8 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "cp") == 0 ||
             strcmp_simple(cmd, "sync") == 0 ||
             strcmp_simple(cmd, "alias") == 0 ||
+            strcmp_simple(cmd, "arch") == 0 ||
+            strcmp_simple(cmd, "nproc") == 0 ||
             strcmp_simple(cmd, "unalias") == 0 ||
             strcmp_simple(cmd, "sysinfo") == 0 ||
             strcmp_simple(cmd, "wait") == 0 ||
@@ -6560,7 +6572,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.4                   |\n");
-    write_str(1, "|   63 built-in commands — type 'help'     |\n");
+    write_str(1, "|   65 built-in commands — type 'help'     |\n");
     write_str(1, "|   nano editor available at /bin/nano      |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");

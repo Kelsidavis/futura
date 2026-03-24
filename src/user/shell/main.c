@@ -436,7 +436,7 @@ static size_t common_prefix_len(const char *s1, const char *s2) {
 static void complete_command(char *buf, size_t *pos, size_t max_len) {
     /* List of builtin commands */
     const char *builtins[] = {
-        "bg", "cd", "clear", "date", "df", "dmesg", "echo", "edit", "hexdump", "nc", "seq", "sleep", "time", "wget", "exit", "export", "fg", "free",
+        "bg", "cd", "clear", "date", "df", "dmesg", "echo", "edit", "hexdump", "lsof", "nc", "seq", "sleep", "time", "wget", "exit", "export", "fg", "free",
         "help", "hostname", "id", "ifconfig", "jobs", "kill", "ls", "mount",
         "ps", "pwd", "test", "uname", "uptime", "version", "whoami", NULL
     };
@@ -1468,6 +1468,53 @@ static void cmd_hexdump(int argc, char *argv[]) {
 
 
 static int execute_command(int argc, char *argv[]); /* forward decl */
+
+/* Built-in: lsof - List open file descriptors */
+static void cmd_lsof(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    write_str(1, "FD   TYPE  NAME\n");
+
+    /* Read /proc/self/fd directory */
+    long pid = sys_call0(39 /* getpid */);
+    char path[64];
+    int pi = 0;
+    const char *prefix = "/proc/";
+    while (prefix[pi]) { path[pi] = prefix[pi]; pi++; }
+    /* Write pid */
+    char pbuf[16];
+    int_to_str(pid, pbuf, 16);
+    for (int i = 0; pbuf[i]; i++) path[pi++] = pbuf[i];
+    const char *suffix = "/fd";
+    for (int i = 0; suffix[i]; i++) path[pi++] = suffix[i];
+    path[pi] = '\0';
+
+    int fd = sys_open(path, O_RDONLY, 0);
+    if (fd < 0) {
+        write_str(1, "lsof: cannot open /proc/self/fd\n");
+        return;
+    }
+
+    char dirent_buf[1024];
+    ssize_t nread;
+    while ((nread = sys_getdents64(fd, dirent_buf, sizeof(dirent_buf))) > 0) {
+        ssize_t pos = 0;
+        while (pos < nread) {
+            uint16_t reclen = *(uint16_t *)(dirent_buf + pos + 16);
+            char *name = dirent_buf + pos + 19;
+
+            if (name[0] >= '0' && name[0] <= '9') {
+                write_str(1, name);
+                int pad = 5 - (int)strlen_simple(name);
+                while (pad-- > 0) write_char(1, ' ');
+                write_str(1, "file  (open)\n");
+            }
+
+            if (reclen == 0) break;
+            pos += reclen;
+        }
+    }
+    sys_close(fd);
+}
 
 /* Built-in: time - Time a command */
 static void cmd_time(int argc, char *argv[]) {
@@ -4268,6 +4315,9 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "wget") == 0) {
         cmd_wget(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "lsof") == 0) {
+        cmd_lsof(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "time") == 0) {
         cmd_time(argc, argv);
         return 0;
@@ -4421,6 +4471,7 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "uname") == 0 ||
             strcmp_simple(cmd, "date") == 0 ||
             strcmp_simple(cmd, "nc") == 0 ||
+            strcmp_simple(cmd, "lsof") == 0 ||
             strcmp_simple(cmd, "time") == 0 ||
             strcmp_simple(cmd, "sleep") == 0 ||
             strcmp_simple(cmd, "hexdump") == 0 ||
@@ -5014,7 +5065,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.3                   |\n");
-    write_str(1, "|   33 built-in commands — type 'help'     |\n");
+    write_str(1, "|   34 built-in commands — type 'help'     |\n");
     write_str(1, "|   nano editor available at /bin/nano      |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");

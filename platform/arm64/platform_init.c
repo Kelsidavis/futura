@@ -1520,6 +1520,22 @@ static void arm64_init_spawner_thread(void *arg) {
                     fut_printf("[INIT] ✗ FuturaFS rename: %d\n", rn);
                 }
             }
+            /* Test unlink: delete /mnt/renamed.txt, verify gone */
+            {
+                extern int fut_vfs_unlink(const char *);
+                int ul = fut_vfs_unlink("/mnt/renamed.txt");
+                if (ul == 0) {
+                    int uf = fut_vfs_open("/mnt/renamed.txt", 0, 0);
+                    if (uf < 0) {
+                        fut_printf("[INIT] ✓ FuturaFS unlink test passed\n");
+                    } else {
+                        fut_vfs_close(uf);
+                        fut_printf("[INIT] ✗ FuturaFS unlink: file still exists\n");
+                    }
+                } else {
+                    fut_printf("[INIT] ✗ FuturaFS unlink: %d\n", ul);
+                }
+            }
             }
         } else {
             fut_printf("[INIT] ✗ FuturaFS create failed: %d\n", tfd);

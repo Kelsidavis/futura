@@ -428,8 +428,8 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     /* List of builtin commands */
     const char *builtins[] = {
         "bg", "cd", "clear", "date", "echo", "exit", "export", "fg", "free",
-        "help", "hostname", "ifconfig", "jobs", "ls", "mount", "pwd", "test",
-        "uname", "uptime", "whoami", NULL
+        "help", "hostname", "ifconfig", "jobs", "ls", "mount", "ps", "pwd",
+        "test", "uname", "uptime", "whoami", NULL
     };
 
     /* External commands we might have */
@@ -867,6 +867,7 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  mv <src> <dst>  - Move/rename file\n");
     write_str(1, "\n");
     write_str(1, "System:\n");
+    write_str(1, "  ps              - List running processes\n");
     write_str(1, "  uname [-a]      - Print system information\n");
     write_str(1, "  whoami          - Print current user\n");
     write_str(1, "  date            - Show system uptime\n");
@@ -1085,6 +1086,94 @@ static void cmd_mount(int argc, char *argv[]) {
     } else {
         write_str(1, "mount: /proc/mounts not available\n");
     }
+}
+
+/* Built-in: ps - List processes */
+static void cmd_ps(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    write_str(1, "  PID  STATE  NAME\n");
+
+    /* Scan /proc for numeric directories (PIDs) */
+    int proc_fd = sys_open("/proc", O_RDONLY, 0);
+    if (proc_fd < 0) {
+        write_str(1, "ps: cannot open /proc\n");
+        return;
+    }
+
+    char dirent_buf[2048];
+    ssize_t nread;
+    while ((nread = sys_getdents64(proc_fd, dirent_buf, sizeof(dirent_buf))) > 0) {
+        ssize_t pos = 0;
+        while (pos < nread) {
+            /* Linux dirent64: d_ino(8), d_off(8), d_reclen(2), d_type(1), d_name[] */
+            uint16_t reclen = *(uint16_t *)(dirent_buf + pos + 16);
+            char *name = dirent_buf + pos + 19;
+
+            /* Check if directory name is numeric (PID) */
+            if (name[0] >= '1' && name[0] <= '9') {
+                /* Read /proc/<pid>/status */
+                char path[64];
+                int pi = 0;
+                const char *prefix = "/proc/";
+                while (prefix[pi]) { path[pi] = prefix[pi]; pi++; }
+                int ni = 0;
+                while (name[ni] && name[ni] != '\0') { path[pi++] = name[ni++]; }
+                const char *suffix = "/status";
+                ni = 0;
+                while (suffix[ni]) { path[pi++] = suffix[ni++]; }
+                path[pi] = '\0';
+
+                int sfd = sys_open(path, O_RDONLY, 0);
+                if (sfd >= 0) {
+                    char sbuf[512];
+                    ssize_t sn = sys_read(sfd, sbuf, sizeof(sbuf) - 1);
+                    sys_close(sfd);
+                    if (sn > 0) {
+                        sbuf[sn] = '\0';
+                        /* Parse Name: and State: lines */
+                        char pname[32] = "?";
+                        char state[16] = "?";
+                        char *p = sbuf;
+                        while (*p) {
+                            if (p[0] == 'N' && p[1] == 'a' && p[2] == 'm' && p[3] == 'e' && p[4] == ':') {
+                                p += 5;
+                                while (*p == ' ' || *p == '\t') p++;
+                                int j = 0;
+                                while (*p && *p != '\n' && j < 31) pname[j++] = *p++;
+                                pname[j] = '\0';
+                            }
+                            if (p[0] == 'S' && p[1] == 't' && p[2] == 'a' && p[3] == 't' && p[4] == 'e' && p[5] == ':') {
+                                p += 6;
+                                while (*p == ' ' || *p == '\t') p++;
+                                int j = 0;
+                                while (*p && *p != '\n' && *p != ' ' && j < 15) state[j++] = *p++;
+                                state[j] = '\0';
+                            }
+                            while (*p && *p != '\n') p++;
+                            if (*p == '\n') p++;
+                        }
+                        /* Print: PID STATE NAME */
+                        write_str(1, "  ");
+                        write_str(1, name);
+                        /* Pad to column 7 */
+                        int pad = 5 - (int)strlen_simple(name);
+                        while (pad-- > 0) write_char(1, ' ');
+                        write_str(1, "  ");
+                        write_str(1, state);
+                        pad = 6 - (int)strlen_simple(state);
+                        while (pad-- > 0) write_char(1, ' ');
+                        write_str(1, "  ");
+                        write_str(1, pname);
+                        write_char(1, '\n');
+                    }
+                }
+            }
+
+            if (reclen == 0) break;
+            pos += reclen;
+        }
+    }
+    sys_close(proc_fd);
 }
 
 /* Built-in: hostname - Show system hostname */
@@ -3648,6 +3737,9 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "hostname") == 0) {
         cmd_hostname(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "ps") == 0) {
+        cmd_ps(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "ifconfig") == 0) {
         cmd_ifconfig(argc, argv);
         return 0;
@@ -3764,6 +3856,7 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "free") == 0 ||
             strcmp_simple(cmd, "hostname") == 0 ||
             strcmp_simple(cmd, "ifconfig") == 0 ||
+            strcmp_simple(cmd, "ps") == 0 ||
             strcmp_simple(cmd, "uptime") == 0 ||
             strcmp_simple(cmd, "mount") == 0 ||
             strcmp_simple(cmd, "whoami") == 0 ||

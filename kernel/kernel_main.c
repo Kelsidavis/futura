@@ -1183,9 +1183,9 @@ void fut_kernel_main(void) {
     }
 
     /* Mount ramfs at /tmp to make it writable for Wayland sockets and other temporary files */
-    fut_printf("[INIT] About to mount ramfs at /tmp\n");
+    /* Mount /tmp */
     int tmp_mount_ret = fut_vfs_mount(NULL, "/tmp", "ramfs", 0, NULL, FUT_INVALID_HANDLE);
-    fut_printf("[INIT] Mount ramfs /tmp result: %d\n", tmp_mount_ret);
+    (void)tmp_mount_ret;
     if (tmp_mount_ret == 0) {
         fut_printf("[INIT] ✓ Mounted writable ramfs at /tmp\n");
     } else {

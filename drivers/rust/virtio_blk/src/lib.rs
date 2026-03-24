@@ -697,7 +697,7 @@ impl VirtQueue {
 
     fn poll_completion(&self, isr_ptr: *const u8) -> FutStatus {
         let mut waited = 0u32;
-        const TIMEOUT_ITERATIONS: u32 = 1_000_000;  // Increased timeout for interrupt-driven I/O
+        const TIMEOUT_ITERATIONS: u32 = 10_000;  // Fast timeout — MMIO notify issue on ARM64
 
         let irq_vector = VIRTIO_BLK_IRQ_VECTOR.load(Ordering::Relaxed);
         unsafe {
@@ -920,6 +920,7 @@ impl VirtioBlkDevice {
             log("virtio-blk: capability discovery failed");
             return Err(ENODEV);
         }
+        #[cfg(not(target_arch = "aarch64"))]
         dev.enable_bus_master();
         dev.negotiate_features()?;
         dev.init_queue()?;
@@ -949,11 +950,8 @@ impl VirtioBlkDevice {
             let current_status = dev.mmio_read32(VIRTIO_MMIO_STATUS) as u8;
             dev.mmio_write32(VIRTIO_MMIO_STATUS, (current_status | VIRTIO_STATUS_DRIVER_OK) as u32);
 
-            let final_status = dev.mmio_read32(VIRTIO_MMIO_STATUS);
-            log("virtio-blk: DRIVER_OK set via MMIO");
-            unsafe {
-                fut_printf(b"[virtio-blk] DRIVER_OK set: status=0x%x\n\0".as_ptr(), final_status);
-            }
+            let _final_status = dev.mmio_read32(VIRTIO_MMIO_STATUS);
+            log("virtio-blk: initialized OK");
         }
 
         Ok(dev)

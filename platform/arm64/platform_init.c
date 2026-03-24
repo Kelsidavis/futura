@@ -1255,10 +1255,13 @@ void arch_early_init(void) {
  * arch_memory_config - Provide ARM64 memory layout
  */
 void arch_memory_config(uintptr_t *ram_start, uintptr_t *ram_end, size_t *heap_size) {
-    /* ARM64 memory layout for QEMU virt machine */
-    *ram_start = 0x40800000;  /* After kernel/stack */
-    *ram_end   = 0x48000000;  /* 120MB total */
-    *heap_size = 16 * 1024 * 1024;  /* 16MB kernel heap */
+    /* ARM64 memory layout for QEMU virt machine (-m 512M)
+     * DRAM: 0x40000000 - 0x60000000 (512MB)
+     * Kernel loaded at 0x40000000, reserve first 8MB for kernel text/data/stack.
+     * Boot page tables map full 1GB (0x40000000-0x80000000) via L2_dram. */
+    *ram_start = 0x40800000;  /* After kernel/stack (8MB reserved) */
+    *ram_end   = 0x60000000;  /* 512MB DRAM end */
+    *heap_size = 32 * 1024 * 1024;  /* 32MB kernel heap */
 }
 
 /**

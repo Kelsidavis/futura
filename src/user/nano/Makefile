@@ -1,18 +1,19 @@
-CC      := /opt/homebrew/bin/aarch64-elf-gcc
-LD      := /opt/homebrew/bin/aarch64-elf-ld
-OBJDUMP := /opt/homebrew/bin/aarch64-elf-objdump
+CROSS_COMPILE ?= $(shell command -v aarch64-elf-gcc >/dev/null 2>&1 && echo "aarch64-elf-" || echo "aarch64-linux-gnu-")
+CC      := $(CROSS_COMPILE)gcc
+LD      := $(CROSS_COMPILE)ld
 
-CFLAGS  := -std=c23 -O2 -g -Wall -Wextra -Werror \
+CFLAGS  := -std=c2x -O2 -g -Wall -Wextra -Werror \
+           -Wno-unterminated-string-initialization \
            -ffreestanding -nostdlib -I../../../include \
            -fno-stack-protector -fno-pic -fno-pie \
-           -mcmodel=large -march=armv8-a -mno-outline-atomics
+           -march=armv8-a -mno-outline-atomics
 
 LDFLAGS := -nostdlib -static --build-id=none \
            -T ../libfutura/userland_arm64.ld
 
 LIBFUTURA := ../../../build/lib/arm64/libfutura.a
 CRT0      := ../../../build/lib/arm64/crt0.o
-LIBGCC    := /opt/homebrew/Cellar/aarch64-elf-gcc/15.2.0/lib/gcc/aarch64-elf/15.2.0/libgcc.a
+LIBGCC    := $(shell $(CC) -print-libgcc-file-name 2>/dev/null)
 
 TARGET := ../../../build/bin/arm64/user/nano
 

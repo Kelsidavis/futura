@@ -1773,6 +1773,7 @@ impl VirtioBlkDevice {
         let rc = self.queue.poll_completion(self.isr as *const u8);
         log("virtio-blk: poll_completion returned");
         // Invalidate cache for DMA buffer to see device's status write
+        #[cfg(target_arch = "aarch64")]
         unsafe {
             let dma_addr = self.dma as usize;
             core::arch::asm!("dc civac, {}", in(reg) dma_addr, options(nostack));

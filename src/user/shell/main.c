@@ -428,7 +428,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     /* List of builtin commands */
     const char *builtins[] = {
         "bg", "cd", "clear", "date", "echo", "exit", "export", "fg", "free",
-        "help", "jobs", "ls", "mount", "pwd", "test", "uname", "whoami", NULL
+        "help", "ifconfig", "jobs", "ls", "mount", "pwd", "test", "uname", "whoami", NULL
     };
 
     /* External commands we might have */
@@ -871,6 +871,7 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  date            - Show system uptime\n");
     write_str(1, "  free            - Show memory usage\n");
     write_str(1, "  mount           - Show mounted filesystems\n");
+    write_str(1, "  ifconfig        - Show network interfaces\n");
     write_str(1, "  env             - Show environment variables\n");
     write_str(1, "  echo [args]     - Print text\n");
     write_str(1, "  clear           - Clear screen\n");
@@ -1081,6 +1082,20 @@ static void cmd_mount(int argc, char *argv[]) {
     } else {
         write_str(1, "mount: /proc/mounts not available\n");
     }
+}
+
+/* Built-in: ifconfig - Show network interface info */
+static void cmd_ifconfig(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    /* Read from /proc/net/dev or hardcoded for now */
+    write_str(1, "eth0      Link encap:Ethernet\n");
+    write_str(1, "          inet addr:10.0.2.15  Mask:255.255.255.0\n");
+    write_str(1, "          inet6 addr: ::1/128 Scope:Host\n");
+    write_str(1, "          UP BROADCAST RUNNING MULTICAST  MTU:1500\n");
+    write_str(1, "\n");
+    write_str(1, "lo        Link encap:Local Loopback\n");
+    write_str(1, "          inet addr:127.0.0.1  Mask:255.0.0.0\n");
+    write_str(1, "          UP LOOPBACK RUNNING  MTU:65536\n");
 }
 
 /* Built-in: whoami */
@@ -3572,6 +3587,9 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "free") == 0) {
         cmd_free(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "ifconfig") == 0) {
+        cmd_ifconfig(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "mount") == 0) {
         cmd_mount(argc, argv);
         return 0;
@@ -3680,6 +3698,7 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "uname") == 0 ||
             strcmp_simple(cmd, "date") == 0 ||
             strcmp_simple(cmd, "free") == 0 ||
+            strcmp_simple(cmd, "ifconfig") == 0 ||
             strcmp_simple(cmd, "mount") == 0 ||
             strcmp_simple(cmd, "whoami") == 0 ||
             strcmp_simple(cmd, "env") == 0 ||

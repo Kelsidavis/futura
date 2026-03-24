@@ -1362,8 +1362,11 @@ void fut_kernel_main(void) {
     fut_blockdev_init();
     fut_blk_core_init();
     fut_status_t vblk_rc = virtio_blk_init(0);
-    if (vblk_rc != 0 && vblk_rc != -19) {  /* -19 = ENODEV (no device found) */
-        fut_printf("[virtio-blk] init failed: %d\n", vblk_rc);
+    if (vblk_rc == 0) {
+        fut_printf("[INIT] VirtIO block device initialized\n");
+    } else if (vblk_rc != -19 && vblk_rc != -22) {
+        /* -19 = ENODEV (no device), -22 = EINVAL (empty/no-capacity disk) */
+        fut_printf("[virtio-blk] init: %d\n", vblk_rc);
     }
 #ifdef __x86_64__
     /* ahci_init(); */  /* AHCI not yet implemented */

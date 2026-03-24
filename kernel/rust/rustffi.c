@@ -23,7 +23,14 @@ void fut_log(const char *msg) {
         int is_important = 0;
         while (*p) {
             if ((*p == 'E' || *p == 'e') && p[1] == 'r' && p[2] == 'r') { is_important = 1; break; }
-            if ((*p == 'F' || *p == 'f') && p[1] == 'a' && p[2] == 'i') { is_important = 1; break; }
+            if ((*p == 'F' || *p == 'f') && p[1] == 'a' && p[2] == 'i' && p[3] == 'l' && p[4] == 'e' && p[5] == 'd') {
+                /* Suppress "registration failed" (expected with empty disk) */
+                const char *q = msg;
+                int is_reg = 0;
+                while (*q) { if (*q == 'r' && q[1] == 'e' && q[2] == 'g') { is_reg = 1; break; } q++; }
+                if (!is_reg) { is_important = 1; break; }
+                break;  /* Skip "registration failed" */
+            }
             if (*p == 'O' && p[1] == 'K') { is_important = 1; break; }
             if (*p == 's' && p[1] == 'u' && p[2] == 'c' && p[3] == 'c') { is_important = 1; break; }
             p++;

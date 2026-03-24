@@ -1963,7 +1963,7 @@ try_ramdisk: (void)0;
     fut_printf("\n");
     fut_printf("=======================================================\n");
     fut_printf("   Kernel initialization complete!\n");
-    fut_printf("   Calling platform late init...\n");
+    /* calling late init */
     fut_printf("=======================================================\n\n");
 
     /* Platform-specific late initialization (spawn init, etc.) */
@@ -1973,7 +1973,7 @@ try_ramdisk: (void)0;
      *   Step 9: Enter Idle Loop
      * ======================================== */
 
-    fut_printf("[INIT] Kernel init complete. Entering idle loop.\n");
+    /* idle */
 
     /* Signal test thread that init is done — safe to access VFS now.
      * Full memory barrier ensures all preceding writes (VFS init, directory
@@ -1984,7 +1984,7 @@ try_ramdisk: (void)0;
     /* Exit the boot thread to let the idle thread take over.
      * The scheduler has already been initialized with user threads in the ready queue.
      * Timer IRQs will drive scheduling between idle and user threads. */
-    fut_printf("[INIT] Boot thread exiting, idle thread will take over\n");
+    /* boot thread done */
     extern void fut_thread_exit(void) __attribute__((noreturn));
     fut_thread_exit();
 
@@ -1999,13 +1999,13 @@ try_ramdisk: (void)0;
     fut_irq_enable(27);  /* Enable ARM Generic Timer virtual timer interrupt */
 
     /* Enable interrupts and start scheduling */
-    fut_printf("[INIT] ARM64: Enabling interrupts and starting scheduler...\n");
+    /* entering idle */
     fut_enable_interrupts();
 
     /* Exit the boot thread to let the idle thread (tid=3, priority=0) take over.
      * The boot thread was causing livelock by staying in READY state in a yield loop.
      * Now only the idle thread and actual work threads will be scheduled. */
-    fut_printf("[INIT] Boot thread exiting, idle thread will take over\n");
+    /* boot thread done */
     extern void fut_thread_exit(void) __attribute__((noreturn));
     fut_thread_exit();
 

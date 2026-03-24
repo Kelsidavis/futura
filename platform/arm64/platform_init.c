@@ -1144,7 +1144,7 @@ void fut_platform_early_init(uint32_t boot_magic, void *boot_info) {
 }
 
 void fut_platform_late_init(void) {
-    fut_serial_puts("[INIT] ARM64 platform late initialization...\n");
+    /* ARM64 late init */
 
     /* Parse device tree and initialize Apple Silicon drivers if applicable */
     if (g_dtb_ptr != 0) {
@@ -1179,7 +1179,7 @@ void fut_platform_late_init(void) {
         }
     }
 
-    fut_serial_puts("[INIT] ARM64 platform late initialization complete\n\n");
+    /* done */
 }
 
 /* ============================================================

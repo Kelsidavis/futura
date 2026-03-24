@@ -4311,8 +4311,31 @@ static void arm64_syscall_table_init(void) {
     syscall_table[103].name = "syslog";
     syscall_table[__NR_syslog].handler = (syscall_fn_t)sys_syslog_wrapper;
     syscall_table[__NR_syslog].name = "syslog";
-    /* Note: fcntl(72) and ftruncate(77) aliases omitted — fcntl compat
-     * changes shell behavior (F_GETFL now succeeds, changing stdio setup) */
+    /* readv/writev (x86_64: 19/20, ARM64: 65/66) */
+    syscall_table[19].handler = syscall_table[__NR_readv].handler;
+    syscall_table[19].name = "readv";
+    syscall_table[20].handler = syscall_table[__NR_writev].handler;
+    syscall_table[20].name = "writev";
+    /* pread64/pwrite64 (x86_64: 17/18, ARM64: 67/68) */
+    syscall_table[17].handler = syscall_table[__NR_pread64].handler;
+    syscall_table[17].name = "pread64";
+    syscall_table[18].handler = syscall_table[__NR_pwrite64].handler;
+    syscall_table[18].name = "pwrite64";
+    /* socket (x86_64: 41, ARM64: 198) */
+    syscall_table[41].handler = syscall_table[__NR_socket].handler;
+    syscall_table[41].name = "socket";
+    /* connect (x86_64: 42, ARM64: 203) */
+    syscall_table[42].handler = syscall_table[__NR_connect].handler;
+    syscall_table[42].name = "connect";
+    /* sendto (x86_64: 44, ARM64: 206) */
+    syscall_table[44].handler = syscall_table[__NR_sendto].handler;
+    syscall_table[44].name = "sendto";
+    /* recvfrom (x86_64: 45, ARM64: 207) */
+    syscall_table[45].handler = syscall_table[__NR_recvfrom].handler;
+    syscall_table[45].name = "recvfrom";
+    /* madvise (x86_64: 28, ARM64: 233) */
+    syscall_table[28].handler = syscall_table[__NR_madvise].handler;
+    syscall_table[28].name = "madvise";
 
     syscall_table_initialized = true;
 }

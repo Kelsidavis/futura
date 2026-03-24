@@ -116,17 +116,8 @@ static ssize_t vinput_read(void *inode, void *priv,
     return fut_input_queue_read(&f->dev->queue, f->flags, u_buf, n);
 }
 
-static const struct fut_file_ops vkbd_fops = {
-    .open    = vinput_open,
-    .release = vinput_release,
-    .read    = vinput_read,
-};
-
-static const struct fut_file_ops vmouse_fops = {
-    .open    = vinput_open,
-    .release = vinput_release,
-    .read    = vinput_read,
-};
+static struct fut_file_ops vkbd_fops;
+static struct fut_file_ops vmouse_fops;
 
 /* ── Public API called from the Rust driver ────────────────────── */
 
@@ -206,6 +197,19 @@ void virtio_input_post_event(uint16_t type, uint16_t code, int32_t value)
  */
 int virtio_input_hw_init(void)
 {
+    static int vinput_fops_inited = 0;
+    if (!vinput_fops_inited) {
+        vkbd_fops.open = vinput_open;
+        vkbd_fops.release = vinput_release;
+        vkbd_fops.read = vinput_read;
+
+        vmouse_fops.open = vinput_open;
+        vmouse_fops.release = vinput_release;
+        vmouse_fops.read = vinput_read;
+
+        vinput_fops_inited = 1;
+    }
+
     fut_input_queue_init(&g_vkbd.queue);
     fut_input_queue_init(&g_vmouse.queue);
 

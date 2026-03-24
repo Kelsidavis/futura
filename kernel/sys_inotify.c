@@ -286,14 +286,7 @@ void inotify_dispatch_event(const char *dir_path, uint32_t mask, const char *fil
 static ssize_t inotify_read_op(void *inode, void *priv, void *u_buf, size_t len, off_t *pos);
 static int     inotify_release(void *inode, void *priv);
 
-static const struct fut_file_ops inotify_fops = {
-    .open    = NULL,
-    .release = inotify_release,
-    .read    = inotify_read_op,
-    .write   = NULL,
-    .ioctl   = NULL,
-    .mmap    = NULL,
-};
+static struct fut_file_ops inotify_fops;
 
 /* Read inotify events from the queue.
  * Returns one or more struct inotify_event records with optional name field (Phase 5). */
@@ -458,6 +451,17 @@ long sys_inotify_init1(int flags) {
     if (!task) {
         fut_printf("[INOTIFY] inotify_init1(flags=0x%x) -> ESRCH (no current task)\n", flags);
         return -ESRCH;
+    }
+
+    static int inotify_fops_inited = 0;
+    if (!inotify_fops_inited) {
+        inotify_fops.open = NULL;
+        inotify_fops.release = inotify_release;
+        inotify_fops.read = inotify_read_op;
+        inotify_fops.write = NULL;
+        inotify_fops.ioctl = NULL;
+        inotify_fops.mmap = NULL;
+        inotify_fops_inited = 1;
     }
 
     const int VALID_FLAGS = IN_CLOEXEC | IN_NONBLOCK;

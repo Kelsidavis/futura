@@ -40,14 +40,7 @@ struct pidfd_ctx {
 /* Forward declaration so pidfd_fops can reference it */
 static int pidfd_release(void *inode, void *priv);
 
-static const struct fut_file_ops pidfd_fops = {
-    .open    = NULL,
-    .release = pidfd_release,
-    .read    = NULL,
-    .write   = NULL,
-    .ioctl   = NULL,
-    .mmap    = NULL,
-};
+static struct fut_file_ops pidfd_fops;
 
 static int pidfd_release(void *inode, void *priv) {
     (void)inode;
@@ -149,6 +142,9 @@ bool fut_pidfd_poll(struct fut_file *file, uint32_t requested, uint32_t *ready_o
  * @return New file descriptor, or -errno
  */
 long sys_pidfd_open(int pid, unsigned int flags) {
+    if (!pidfd_fops.release) {
+        pidfd_fops.release = pidfd_release;
+    }
     if (pid <= 0)
         return -EINVAL;
     if (flags & ~PIDFD_NONBLOCK)

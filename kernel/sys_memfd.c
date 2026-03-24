@@ -203,14 +203,8 @@ static void *memfd_mmap(void *inode, void *priv, void *u_addr,
     return vaddr;
 }
 
-static const struct fut_file_ops memfd_fops = {
-    .read    = memfd_read,
-    .write   = memfd_write,
-    .release = memfd_release,
-    .open    = NULL,
-    .ioctl   = memfd_ioctl,
-    .mmap    = memfd_mmap,
-};
+/* Runtime-initialized for ARM64 relocation safety */
+static struct fut_file_ops memfd_fops;
 
 /**
  * memfd_create - Create an anonymous file in memory
@@ -221,6 +215,14 @@ static const struct fut_file_ops memfd_fops = {
  * Returns file descriptor on success, negative error on failure.
  */
 long sys_memfd_create(const char *uname, unsigned int flags) {
+    /* Runtime init file ops (ARM64 relocation safety) */
+    if (!memfd_fops.read) {
+        memfd_fops.read = memfd_read;
+        memfd_fops.write = memfd_write;
+        memfd_fops.release = memfd_release;
+        memfd_fops.ioctl = memfd_ioctl;
+        memfd_fops.mmap = memfd_mmap;
+    }
     /* Accept all standard Linux memfd flags; MFD_HUGETLB and MFD_EXEC/MFD_NOEXEC_SEAL
      * are silently accepted (no huge page support; exec sealing is recorded).
      * Linux also encodes huge page size in bits 26-31 alongside MFD_HUGETLB. */

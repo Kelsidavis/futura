@@ -572,14 +572,7 @@ static ssize_t eventfd_read(void *inode, void *priv, void *u_buf, size_t len, of
 static ssize_t eventfd_write(void *inode, void *priv, const void *u_buf, size_t len, off_t *pos);
 static int eventfd_release(void *inode, void *priv);
 
-static const struct fut_file_ops eventfd_fops = {
-    .open = NULL,
-    .release = eventfd_release,
-    .read = eventfd_read,
-    .write = eventfd_write,
-    .ioctl = NULL,
-    .mmap = NULL,
-};
+static struct fut_file_ops eventfd_fops;
 
 static bool eventfd_is_nonblock(struct eventfd_file *file) {
     if (!file || !file->file) {
@@ -958,6 +951,17 @@ long sys_eventfd2(unsigned int initval, int flags) {
         return -ESRCH;
     }
 
+    static int eventfd_fops_inited = 0;
+    if (!eventfd_fops_inited) {
+        eventfd_fops.open = NULL;
+        eventfd_fops.release = eventfd_release;
+        eventfd_fops.read = eventfd_read;
+        eventfd_fops.write = eventfd_write;
+        eventfd_fops.ioctl = NULL;
+        eventfd_fops.mmap = NULL;
+        eventfd_fops_inited = 1;
+    }
+
     /* Phase 3: Validate initval doesn't exceed counter capacity */
     /* eventfd counter is uint64_t, reject overly large initial values */
     if (initval > 0xFFFFFFFE) {
@@ -1095,14 +1099,7 @@ static ssize_t signalfd_read_op(void *inode, void *priv,
                                 void *u_buf, size_t len, off_t *pos);
 static int signalfd_release(void *inode, void *priv);
 
-static const struct fut_file_ops signalfd_fops = {
-    .open    = NULL,
-    .release = signalfd_release,
-    .read    = signalfd_read_op,
-    .write   = NULL,
-    .ioctl   = NULL,
-    .mmap    = NULL,
-};
+static struct fut_file_ops signalfd_fops;
 
 /* Read pending signals matching ctx->sigmask from task->pending_signals.
  * Returns one struct signalfd_siginfo (128 bytes) per consumed signal.
@@ -1227,6 +1224,17 @@ long sys_signalfd4(int ufd, const void *mask, size_t sizemask, int flags) {
     fut_task_t *task = fut_task_current();
     if (!task) return -ESRCH;
 
+    static int signalfd_fops_inited = 0;
+    if (!signalfd_fops_inited) {
+        signalfd_fops.open = NULL;
+        signalfd_fops.release = signalfd_release;
+        signalfd_fops.read = signalfd_read_op;
+        signalfd_fops.write = NULL;
+        signalfd_fops.ioctl = NULL;
+        signalfd_fops.mmap = NULL;
+        signalfd_fops_inited = 1;
+    }
+
     /* Validate flags */
     int valid_flags = SFD_CLOEXEC | SFD_NONBLOCK;
     if (flags & ~valid_flags) return -EINVAL;
@@ -1340,14 +1348,7 @@ struct timerfd_file {
 static ssize_t timerfd_read_op(void *inode, void *priv, void *u_buf, size_t len, off_t *pos);
 static int timerfd_release(void *inode, void *priv);
 
-static const struct fut_file_ops timerfd_fops = {
-    .open = NULL,
-    .release = timerfd_release,
-    .read = timerfd_read_op,
-    .write = NULL,
-    .ioctl = NULL,
-    .mmap = NULL,
-};
+static struct fut_file_ops timerfd_fops;
 
 /* Convert timespec to milliseconds.
  * Round UP sub-ms values to 1ms to prevent silent timer disarming. */
@@ -1555,6 +1556,17 @@ long sys_timerfd_create(int clockid, int flags) {
     fut_task_t *task = fut_task_current();
     if (!task) {
         return -ESRCH;
+    }
+
+    static int timerfd_fops_inited = 0;
+    if (!timerfd_fops_inited) {
+        timerfd_fops.open = NULL;
+        timerfd_fops.release = timerfd_release;
+        timerfd_fops.read = timerfd_read_op;
+        timerfd_fops.write = NULL;
+        timerfd_fops.ioctl = NULL;
+        timerfd_fops.mmap = NULL;
+        timerfd_fops_inited = 1;
     }
 
     /* Validate clockid — accept all Linux timerfd-compatible clocks.

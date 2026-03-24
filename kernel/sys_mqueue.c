@@ -41,8 +41,8 @@
 #include <kernel/signal.h>
 #include <shared/fut_sigevent.h>
 
-/* Forward declaration: mq_fops is defined after mq_fd_lookup */
-static const struct fut_file_ops mq_fops;
+/* Forward declaration: runtime-initialized in sys_mq_open */
+static struct fut_file_ops mq_fops;
 
 #ifdef __x86_64__
 #include <platform/x86_64/memory/paging.h>
@@ -249,20 +249,18 @@ static ssize_t mq_fop_write(void *inode, void *priv, const void *buf, size_t cou
     return -EBADF; /* use mq_timedsend, not write() */
 }
 
-static const struct fut_file_ops mq_fops = {
-    .open    = NULL,
-    .release = mq_fop_release,
-    .read    = mq_fop_read,
-    .write   = mq_fop_write,
-    .ioctl   = NULL,
-    .mmap    = NULL,
-};
+static struct fut_file_ops mq_fops;
 
 /* ---- sys_mq_open -------------------------------------------------- */
 
 long sys_mq_open(const char *name, int oflag, unsigned int mode,
                  const struct mq_attr *attr)
 {
+    if (!mq_fops.read) {
+        mq_fops.release = mq_fop_release;
+        mq_fops.read = mq_fop_read;
+        mq_fops.write = mq_fop_write;
+    }
     (void)mode; /* mode applies to newly created queues; not checked against umask */
     mq_global_init();
 

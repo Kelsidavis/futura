@@ -1203,6 +1203,8 @@ extern char _binary_build_bin_arm64_user_shell_start[];
 extern char _binary_build_bin_arm64_user_shell_end[];
 extern char _binary_build_bin_arm64_user_forktest_start[];
 extern char _binary_build_bin_arm64_user_forktest_end[];
+extern char _binary_build_bin_arm64_user_nano_start[];
+extern char _binary_build_bin_arm64_user_nano_end[];
 extern int fut_exec_elf_memory(const void *elf_data, size_t elf_size, char *const argv[], char *const envp[]);
 
 /**
@@ -1333,6 +1335,15 @@ static void arm64_init_spawner_thread(void *arg) {
         ret = stage_arm64_blob((const uint8_t *)_binary_build_bin_arm64_user_forktest_start,
                               (const uint8_t *)_binary_build_bin_arm64_user_forktest_end, "/bin/forktest");
         if (ret == 0) staged++;
+    }
+    {
+        uintptr_t nano_size = (uintptr_t)_binary_build_bin_arm64_user_nano_end -
+                              (uintptr_t)_binary_build_bin_arm64_user_nano_start;
+        if (nano_size > 0) {
+            ret = stage_arm64_blob((const uint8_t *)_binary_build_bin_arm64_user_nano_start,
+                                  (const uint8_t *)_binary_build_bin_arm64_user_nano_end, "/bin/nano");
+            if (ret == 0) staged++;
+        }
     }
     fut_printf("[INIT] Staged %d userland binaries to ramfs\n", staged);
 

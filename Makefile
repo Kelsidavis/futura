@@ -822,6 +822,8 @@ ARM64_UIDEMO_BIN := $(BIN_DIR)/arm64/user/arm64_uidemo
 ARM64_UIDEMO_BLOB := $(OBJ_DIR)/kernel/blobs/arm64_uidemo_blob.o
 ARM64_FORKTEST_BIN := $(BIN_DIR)/arm64/user/forktest
 ARM64_FORKTEST_BLOB := $(OBJ_DIR)/kernel/blobs/arm64_forktest_blob.o
+ARM64_NANO_BIN := $(BIN_DIR)/arm64/user/nano
+ARM64_NANO_BLOB := $(OBJ_DIR)/kernel/blobs/arm64_nano_blob.o
 
 ifeq ($(PLATFORM),x86_64)
 # Skip shell blob on macOS (uses GNU nested functions not supported by clang)
@@ -844,7 +846,7 @@ endif
 endif
 else ifeq ($(PLATFORM),arm64)
 # Re-enabled for UI testing
-OBJECTS += $(ARM64_INIT_BLOB) $(ARM64_UIDEMO_BLOB) $(ARM64_SHELL_BLOB) $(ARM64_FORKTEST_BLOB)
+OBJECTS += $(ARM64_INIT_BLOB) $(ARM64_UIDEMO_BLOB) $(ARM64_SHELL_BLOB) $(ARM64_FORKTEST_BLOB) $(ARM64_NANO_BLOB)
 endif
 
 # ============================================================
@@ -1175,6 +1177,14 @@ $(ARM64_UIDEMO_BLOB): $(ARM64_UIDEMO_BIN) | $(OBJ_DIR)/kernel/blobs
 $(ARM64_FORKTEST_BLOB): $(ARM64_FORKTEST_BIN) | $(OBJ_DIR)/kernel/blobs
 	@echo "OBJCOPY $@"
 	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
+
+$(ARM64_NANO_BLOB): $(ARM64_NANO_BIN) | $(OBJ_DIR)/kernel/blobs
+	@echo "OBJCOPY $@"
+	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
+
+$(ARM64_NANO_BIN):
+	@echo "Building nano editor..."
+	@$(MAKE) -C src/user/nano all
 
 # Build userland services (all user binaries: compositor, shell, utilities)
 userland: libfutura vendor

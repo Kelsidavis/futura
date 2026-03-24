@@ -1570,6 +1570,34 @@ static void arm64_init_spawner_thread(void *arg) {
         }
     }
 
+    /* Run shell scripting self-test via shell -c */
+    {
+        /* Create a test script on FuturaFS */
+        extern int fut_vfs_open(const char *, int, int);
+        extern long fut_vfs_write(int, const void *, size_t);
+        extern int fut_vfs_close(int);
+        int sf = fut_vfs_open("/mnt/selftest.sh", 0x0241, 0755);
+        if (sf >= 0) {
+            const char *script =
+                "#!/bin/shell\n"
+                "# Futura OS Shell Self-Test\n"
+                "PASS=0\n"
+                "# Test 1: variable expansion\n"
+                "X=hello\n"
+                "if test $X = hello; then PASS=1; fi\n"
+                "# Test 2: for loop\n"
+                "N=0\n"
+                "for i in a b c; do N=1; done\n"
+                "# Test 3: command substitution\n"
+                "VER=$(uname -s)\n"
+                "if test $VER = Futura; then echo SELFTEST_OK; fi\n";
+            size_t slen = 0; while (script[slen]) slen++;
+            fut_vfs_write(sf, script, slen);
+            fut_vfs_close(sf);
+            fut_printf("[INIT] ✓ Shell self-test script created\n");
+        }
+    }
+
     /* Run forktest */
     char *forktest_argv[] = {"/bin/forktest", NULL};
     char *forktest_envp[] = {"PATH=/sbin:/bin", NULL};

@@ -3276,7 +3276,19 @@ static ssize_t futurafs_vnode_write(struct fut_vnode *vnode, const void *buf, si
     struct futurafs_inode_info *inode_info = (struct futurafs_inode_info *)vnode->fs_data;
 
     /* Use async I/O path via synchronous wrapper */
-    return futurafs_file_write_sync(inode_info, buf, size, offset);
+    ssize_t ret = futurafs_file_write_sync(inode_info, buf, size, offset);
+
+    /* Sync vnode size and update timestamps after write */
+    if (ret > 0) {
+        vnode->size = inode_info->disk_inode.size;
+
+        /* Update mtime/ctime (seconds since epoch from kernel ticks) */
+        extern uint64_t fut_get_ticks(void);
+        uint64_t now = fut_get_ticks() / 100;  /* ticks at 100Hz → seconds */
+        inode_info->disk_inode.mtime = now;
+        inode_info->disk_inode.ctime = now;
+    }
+    return ret;
 }
 
 static int futurafs_vnode_readdir(struct fut_vnode *dir,
@@ -3903,6 +3915,37 @@ static int futurafs_vnode_truncate(struct fut_vnode *vnode, uint64_t length) {
     return 0;
 }
 
+/**
+ * Get file attributes for FuturaFS files.
+ * Returns accurate block count and size from the on-disk inode.
+ */
+static int futurafs_vnode_getattr(struct fut_vnode *vnode, struct fut_stat *st) {
+    if (!vnode || !st) return -EINVAL;
+
+    struct futurafs_inode_info *info = (struct futurafs_inode_info *)vnode->fs_data;
+    if (!info) return -EIO;
+
+    st->st_ino = vnode->ino;
+    st->st_mode = info->disk_inode.mode;
+    st->st_nlink = info->disk_inode.nlinks;
+    st->st_uid = info->disk_inode.uid;
+    st->st_gid = info->disk_inode.gid;
+    st->st_size = info->disk_inode.size;
+    st->st_blksize = FUTURAFS_BLOCK_SIZE;
+    st->st_blocks = (uint64_t)info->disk_inode.blocks * (FUTURAFS_BLOCK_SIZE / 512);
+    st->st_dev = vnode->mount ? vnode->mount->st_dev : 0;
+
+    /* Timestamps from disk inode (stored as seconds since epoch) */
+    st->st_atime = info->disk_inode.atime;
+    st->st_atime_nsec = 0;
+    st->st_mtime = info->disk_inode.mtime;
+    st->st_mtime_nsec = 0;
+    st->st_ctime = info->disk_inode.ctime;
+    st->st_ctime_nsec = 0;
+
+    return 0;
+}
+
 /* Initialize FuturaFS vnode operations at runtime */
 static void futurafs_init_vnode_ops(void) {
     futurafs_vnode_ops.open = NULL;
@@ -3915,7 +3958,7 @@ static void futurafs_init_vnode_ops(void) {
     futurafs_vnode_ops.unlink = futurafs_vnode_unlink;
     futurafs_vnode_ops.mkdir = futurafs_vnode_mkdir;
     futurafs_vnode_ops.rmdir = futurafs_vnode_rmdir;
-    futurafs_vnode_ops.getattr = NULL;
+    futurafs_vnode_ops.getattr = futurafs_vnode_getattr;
     futurafs_vnode_ops.setattr = futurafs_vnode_setattr;
     futurafs_vnode_ops.truncate = futurafs_vnode_truncate;
     futurafs_vnode_ops.sync = NULL;

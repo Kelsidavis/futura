@@ -2415,23 +2415,14 @@ static int map_segment_from_memory(fut_mm_t *mm, const void *elf_data, const elf
         /* Data synchronization barrier */
         __asm__ volatile("dsb ish" ::: "memory");
 
-        /* Invalidate instruction cache by virtual address range */
-        for (uint64_t vaddr = start_addr; vaddr < end_addr; vaddr += PAGE_SIZE) {
-            uint64_t pte = 0;
-            if (pmap_probe_pte(vmem, vaddr, &pte) == 0) {
-                phys_addr_t phys_page = fut_pte_to_phys(pte);
-                void *phys_ptr = (void *)pmap_phys_to_virt(phys_page);
-
-                for (uintptr_t offset = 0; offset < PAGE_SIZE; offset += 64) {
-                    uintptr_t cache_addr = (uintptr_t)phys_ptr + offset;
-                    __asm__ volatile("ic ivau, %0" :: "r"(cache_addr) : "memory");
-                }
-            }
-        }
-
-        /* Data synchronization barrier */
+        /* Invalidate the ENTIRE instruction cache.  IC IVAU operates by VA,
+         * but the user will access these pages at a different VA than the kernel.
+         * On VIPT I-caches (Cortex-A53), different VAs index different cache
+         * sets, so per-VA invalidation at the kernel VA misses the user's
+         * stale entries.  IC IALLU flushes all I-cache entries, ensuring the
+         * user process fetches the newly loaded instructions. */
+        __asm__ volatile("ic iallu" ::: "memory");
         __asm__ volatile("dsb ish" ::: "memory");
-        /* Instruction synchronization barrier */
         __asm__ volatile("isb" ::: "memory");
     }
 

@@ -1184,9 +1184,9 @@ static void print_prompt(void) {
 
     /* Color prompt: green user@host, blue cwd, reset */
     write_str(1, "\033[32m");
-    write_str(1, user);
+    write_str(1, (user && *user) ? user : "root");
     write_str(1, "@");
-    write_str(1, host);
+    write_str(1, (host && *host) ? host : "futura");
     write_str(1, "\033[0m:\033[34m");
     if (ret > 0) {
         /* Abbreviate home dir with ~ */

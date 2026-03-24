@@ -650,6 +650,10 @@ bool fut_trap_handle_page_fault(fut_interrupt_frame_t *frame) {
     fut_printf("[#PF-ARM64] x4=0x%llx x5=0x%llx x6=0x%llx x7=0x%llx\n",
                (unsigned long long)frame->x[4], (unsigned long long)frame->x[5],
                (unsigned long long)frame->x[6], (unsigned long long)frame->x[7]);
+    fut_printf("[#PF-ARM64] x8=0x%llx x9=0x%llx x10=0x%llx x11=0x%llx x12=0x%llx\n",
+               (unsigned long long)frame->x[8], (unsigned long long)frame->x[9],
+               (unsigned long long)frame->x[10], (unsigned long long)frame->x[11],
+               (unsigned long long)frame->x[12]);
     fut_printf("[#PF-ARM64] sp=0x%llx sp_el0=0x%llx\n",
                (unsigned long long)frame->sp, (unsigned long long)frame->sp_el0);
 

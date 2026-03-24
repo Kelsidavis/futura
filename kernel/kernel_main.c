@@ -1287,7 +1287,7 @@ void fut_kernel_main(void) {
                   "\n"
                   "  Welcome to Futura OS 0.4.0 (aarch64)\n"
                   "\n"
-                  "  * 53 shell commands — type 'help'\n"
+                  "  * 59 shell commands — type 'help'\n"
                   "  * FuturaFS at /mnt — try: echo hello > /mnt/file && cat /mnt/file\n"
                   "  * Scripting: for/while/if loops, source, pipes, redirects\n"
                   "  * System info: uname -a, free, df, uptime, ps\n"

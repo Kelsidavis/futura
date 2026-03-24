@@ -439,7 +439,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     const char *builtins[] = {
         "bg", "cd", "chmod", "clear", "date", "dd", "df", "dmesg", "echo", "edit", "hexdump", "lsof", "nc", "poweroff", "reboot", "seq", "sleep", "time", "wget", "exit", "export", "fg", "free",
         "help", "hostname", "id", "ifconfig", "jobs", "kill", "ls", "mount",
-        "ln", "ps", "pwd", "readlink", "stat", "test", "tree", "uname", "uptime", "version", "whoami", NULL
+        "du", "ln", "ps", "pwd", "readlink", "stat", "test", "tree", "uname", "uptime", "version", "which", "whoami", NULL
     };
 
     /* External commands we might have */
@@ -905,6 +905,11 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  poweroff        - Power off system\n");
     write_str(1, "  version         - Show kernel version\n");
     write_str(1, "  lsof            - List open files\n");
+    write_str(1, "  which <cmd>     - Find command in PATH\n");
+    write_str(1, "  du [path]       - Show disk usage (KB)\n");
+    write_str(1, "  tree [path]     - Show directory tree\n");
+    write_str(1, "  ln -s tgt link  - Create symbolic link\n");
+    write_str(1, "  readlink <path> - Print symlink target\n");
     write_str(1, "\n");
     write_str(1, "Shell:\n");
     write_str(1, "  help            - Show this help message\n");
@@ -938,15 +943,40 @@ static void cmd_clear(int argc, char *argv[]) {
     write_str(1, "\033[H");   /* Move cursor to home */
 }
 
-/* Print shell prompt showing current directory: "futura:/path$ " */
+/* Print shell prompt showing current directory: "root@futura:/path# " */
 static void print_prompt(void) {
     char cwd[256] = {0};
     long ret = sys_getcwd(cwd, sizeof(cwd));
+    const char *home = get_var("HOME");
+    const char *user = get_var("USER");
+    const char *host = get_var("HOSTNAME");
+    if (!user) user = "root";
+    if (!host) host = "futura";
+
     /* Color prompt: green user@host, blue cwd, reset */
-    write_str(1, "\033[32mroot@futura\033[0m:\033[34m");
+    write_str(1, "\033[32m");
+    write_str(1, user);
+    write_str(1, "@");
+    write_str(1, host);
+    write_str(1, "\033[0m:\033[34m");
     if (ret > 0) {
-        /* Abbreviate home dir */
-        write_str(1, cwd);
+        /* Abbreviate home dir with ~ */
+        if (home && home[0] != '/' && home[1] != '\0') home = NULL; /* invalid HOME */
+        if (home && home[0] == '/' && home[1] != '\0') {
+            size_t hlen = strlen_simple(home);
+            int match = 1;
+            for (size_t i = 0; i < hlen; i++) {
+                if (cwd[i] != home[i]) { match = 0; break; }
+            }
+            if (match && (cwd[hlen] == '/' || cwd[hlen] == '\0')) {
+                write_str(1, "~");
+                write_str(1, cwd + hlen);
+            } else {
+                write_str(1, cwd);
+            }
+        } else {
+            write_str(1, cwd);
+        }
     } else {
         write_str(1, "?");
     }
@@ -4187,6 +4217,102 @@ static void cmd_mv(int argc, char *argv[]) {
 }
 
 /* Built-in: chmod - Change file permissions */
+/* Forward declaration */
+static int is_builtin(const char *cmd);
+
+/* Built-in: which - Find command in PATH */
+static void cmd_which(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: which <command>\n");
+        return;
+    }
+    const char *cmd = argv[1];
+
+    /* Check builtins first */
+    if (is_builtin(cmd)) {
+        write_str(1, cmd);
+        write_str(1, ": shell built-in command\n");
+        return;
+    }
+
+    /* Search PATH */
+    const char *path_env = get_var("PATH");
+    if (!path_env) path_env = "/bin:/sbin";
+    const char *p = path_env;
+    char pbuf[256];
+
+    while (*p) {
+        int dlen = 0;
+        while (p[dlen] && p[dlen] != ':') dlen++;
+        size_t clen = strlen_simple(cmd);
+        if (dlen + 1 + clen < sizeof(pbuf)) {
+            int j = 0;
+            for (int k = 0; k < dlen; k++) pbuf[j++] = p[k];
+            if (j > 0 && pbuf[j-1] != '/') pbuf[j++] = '/';
+            for (size_t k = 0; k < clen; k++) pbuf[j++] = cmd[k];
+            pbuf[j] = '\0';
+            /* Check if file exists */
+            struct stat st;
+            if (sys_call2(__NR_stat, (long)pbuf, (long)&st) == 0) {
+                write_str(1, pbuf);
+                write_str(1, "\n");
+                return;
+            }
+        }
+        p += dlen;
+        if (*p == ':') p++;
+    }
+    write_str(2, cmd);
+    write_str(2, " not found\n");
+}
+
+/* Built-in: du - Disk usage (simplified) */
+static void du_recurse(const char *path, long *total_blocks) {
+    struct linux_dirent64 {
+        unsigned long long d_ino; long long d_off;
+        unsigned short d_reclen; unsigned char d_type; char d_name[256];
+    };
+    int fd = sys_open(path, O_RDONLY, 0);
+    if (fd < 0) return;
+    char buf[2048];
+    long nread;
+    while ((nread = sys_getdents64(fd, buf, sizeof(buf))) > 0) {
+        char *ptr = buf;
+        while (ptr < buf + nread) {
+            struct linux_dirent64 *d = (struct linux_dirent64 *)ptr;
+            if (d->d_name[0] != '.' || (d->d_name[1] && d->d_name[1] != '.')) {
+                char child[512];
+                int cp = 0;
+                for (int k = 0; path[k] && cp < 500; k++) child[cp++] = path[k];
+                if (cp > 0 && child[cp-1] != '/') child[cp++] = '/';
+                for (int k = 0; d->d_name[k] && cp < 510; k++) child[cp++] = d->d_name[k];
+                child[cp] = '\0';
+                struct stat st;
+                if (sys_call2(__NR_stat, (long)child, (long)&st) == 0) {
+                    *total_blocks += st.st_blocks;
+                }
+                if (d->d_type == 4) du_recurse(child, total_blocks);
+            }
+            ptr += d->d_reclen;
+        }
+    }
+    sys_close(fd);
+}
+
+static void cmd_du(int argc, char *argv[]) {
+    const char *path = argc > 1 ? argv[1] : ".";
+    long blocks = 0;
+    du_recurse(path, &blocks);
+    /* blocks are in 512-byte units, show in KB */
+    long kb = blocks / 2;
+    char nbuf[20];
+    int_to_str(kb, nbuf, 20);
+    write_str(1, nbuf);
+    write_str(1, "\t");
+    write_str(1, path);
+    write_str(1, "\n");
+}
+
 static void cmd_chmod(int argc, char *argv[]) {
     if (argc < 3) {
         write_str(2, "usage: chmod <mode> <file>\n");
@@ -4913,6 +5039,12 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "stat") == 0) {
         cmd_stat(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "which") == 0) {
+        cmd_which(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "du") == 0) {
+        cmd_du(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "tree") == 0) {
         cmd_tree(argc, argv);
         return 0;
@@ -5008,6 +5140,8 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "rmdir") == 0 ||
             strcmp_simple(cmd, "rm") == 0 ||
             strcmp_simple(cmd, "touch") == 0 ||
+            strcmp_simple(cmd, "which") == 0 ||
+            strcmp_simple(cmd, "du") == 0 ||
             strcmp_simple(cmd, "tree") == 0 ||
             strcmp_simple(cmd, "ln") == 0 ||
             strcmp_simple(cmd, "readlink") == 0 ||
@@ -5663,7 +5797,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.3                   |\n");
-    write_str(1, "|   42 built-in commands — type 'help'     |\n");
+    write_str(1, "|   44 built-in commands — type 'help'     |\n");
     write_str(1, "|   nano editor available at /bin/nano      |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");

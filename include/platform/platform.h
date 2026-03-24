@@ -14,6 +14,15 @@
 #include <stdbool.h>
 #include <config/futura_config.h>
 
+/* Architecture-specific paging/memory headers — unified include point.
+ * Kernel code should include <platform/platform.h> instead of
+ * #ifdef __x86_64__ / #elif __aarch64__ for paging headers. */
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
 /* Forward declarations */
 struct fut_thread;
 struct fut_interrupt_frame;

@@ -1029,12 +1029,8 @@ static void cmd_date(int argc, char *argv[]) {
     (void)argc; (void)argv;
     /* Use clock_gettime(CLOCK_MONOTONIC) to get uptime */
     struct { long tv_sec; long tv_nsec; } ts = {0, 0};
-    /* ARM64 syscall number for clock_gettime */
-#ifdef __aarch64__
-    long ret = sys_call2(113 /* __NR_clock_gettime */, 1 /* CLOCK_MONOTONIC */, (long)&ts);
-#else
-    long ret = sys_call2(228 /* __NR_clock_gettime */, 1 /* CLOCK_MONOTONIC */, (long)&ts);
-#endif
+    /* clock_gettime — x86_64 compat alias at 98, also ARM64 at 113 */
+    long ret = sys_call2(98 /* SYS_clock_gettime x86 compat */, 1 /* CLOCK_MONOTONIC */, (long)&ts);
     if (ret == 0) {
         char buf[64];
         long secs = ts.tv_sec;
@@ -1151,7 +1147,7 @@ static void cmd_kill(int argc, char *argv[]) {
         return;
     }
 
-    long ret = sys_call2(129 /* __NR_kill */, pid, sig);
+    long ret = sys_call2(62 /* SYS_kill x86 compat */, pid, sig);
     if (ret < 0) {
         write_str(1, "kill: ");
         char buf[16];
@@ -1164,8 +1160,8 @@ static void cmd_kill(int argc, char *argv[]) {
 /* Built-in: id - Print user/group IDs */
 static void cmd_id(int argc, char *argv[]) {
     (void)argc; (void)argv;
-    long uid = sys_call0(174 /* __NR_getuid */);
-    long gid = sys_call0(176 /* __NR_getgid */);
+    long uid = sys_call0(102 /* SYS_getuid x86 compat */);
+    long gid = sys_call0(104 /* SYS_getgid x86 compat */);
     write_str(1, "uid=");
     char buf[16];
     int_to_str(uid, buf, 16);

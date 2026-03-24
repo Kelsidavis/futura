@@ -2290,8 +2290,7 @@ static int build_user_stack(fut_mm_t *mm,
     __asm__ volatile("dsb ish" ::: "memory");
     __asm__ volatile("isb" ::: "memory");
 
-    fut_printf("[EXEC] Starting user process: entry=0x%llx sp=0x%llx\n",
-               (unsigned long long)entry, (unsigned long long)sp);
+    /* Process starting at entry with sp */
 
     __asm__ volatile(
         /* Set ELR_EL1 (return address for ERET) */

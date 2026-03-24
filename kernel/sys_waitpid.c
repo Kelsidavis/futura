@@ -343,23 +343,9 @@ long sys_waitpid(int pid, int *u_status, int flags) {
         status_category = "unknown status";
     }
 
-    /* Detailed success logging with status encoding validation */
-    if (WIFEXITED(status)) {
-        fut_printf("[WAITPID] waitpid(pid=%d [%s: %s], flags=0x%x [%s]) -> %d "
-                   "(child pid, %s, exit_code=%d, status encoding validation)\n",
-                   local_pid, pid_category, pid_meaning, local_flags, flags_desc, rc,
-                   status_category, exit_code);
-    } else if (WIFSIGNALED(status)) {
-        fut_printf("[WAITPID] waitpid(pid=%d [%s: %s], flags=0x%x [%s]) -> %d "
-                   "(child pid, %s, signal=%d, status encoding validation)\n",
-                   local_pid, pid_category, pid_meaning, local_flags, flags_desc, rc,
-                   status_category, term_signal);
-    } else {
-        fut_printf("[WAITPID] waitpid(pid=%d [%s: %s], flags=0x%x [%s]) -> %d "
-                   "(child pid, %s, status encoding validation)\n",
-                   local_pid, pid_category, pid_meaning, local_flags, flags_desc, rc,
-                   status_category);
-    }
+    /* Success logging suppressed for clean output */
+    (void)pid_category; (void)pid_meaning; (void)flags_desc;
+    (void)status_category; (void)exit_code; (void)term_signal;
 
     return rc;
 }

@@ -369,33 +369,6 @@ static int64_t sys_exit(uint64_t exit_code, uint64_t arg1, uint64_t arg2,
                         uint64_t arg3, uint64_t arg4, uint64_t arg5) {
     (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
 
-    fut_serial_puts("[SYSCALL] Process exiting with code: ");
-    if (exit_code == 0) {
-        fut_serial_puts("0 (success)\n");
-    } else {
-        /* Print the exit code */
-        char buf[32];
-        int i = 0;
-        uint64_t val = exit_code;
-        if (val == 0) {
-            buf[i++] = '0';
-        } else {
-            while (val > 0) {
-                buf[i++] = '0' + (val % 10);
-                val /= 10;
-            }
-        }
-        buf[i] = '\0';
-        /* Reverse */
-        for (int j = 0; j < i / 2; j++) {
-            char tmp = buf[j];
-            buf[j] = buf[i - 1 - j];
-            buf[i - 1 - j] = tmp;
-        }
-        fut_serial_puts(buf);
-        fut_serial_puts("\n");
-    }
-
     /* Call kernel exit function - marks task as zombie and reschedules */
     fut_task_exit_current((int)exit_code);
 

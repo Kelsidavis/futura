@@ -4287,6 +4287,14 @@ static void arm64_syscall_table_init(void) {
     /* dup2 (x86_64: 33) — use proper sys_dup2 handler instead of mknodat */
     syscall_table[33].handler = (syscall_fn_t)sys_dup2_wrapper;
     syscall_table[33].name = "dup2";
+    /* kill (x86_64: 62, ARM64: 129) */
+    syscall_table[62].handler = syscall_table[__NR_kill].handler;
+    syscall_table[62].name = "kill";
+    /* clock_gettime (x86_64: 98, ARM64: 113) — for shell 'date' command */
+    syscall_table[98].handler = syscall_table[__NR_clock_gettime].handler;
+    syscall_table[98].name = "clock_gettime";
+    /* Note: fcntl(72) and ftruncate(77) aliases omitted — fcntl compat
+     * changes shell behavior (F_GETFL now succeeds, changing stdio setup) */
 
     syscall_table_initialized = true;
 }

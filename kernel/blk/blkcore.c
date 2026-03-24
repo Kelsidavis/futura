@@ -347,6 +347,16 @@ int fut_blk_write(void *backend_ctx, uint64_t sector, uint32_t count, const void
     return dev->backend->write(dev->backend_ctx, sector, count, buffer);
 }
 
+/* Find a blkcore device by name. Returns the device pointer (for bridging
+ * to legacy blockdev API), or NULL if not found. */
+void *fut_blk_find_device(const char *name) {
+    if (!name) return NULL;
+    fut_spinlock_acquire(&g_dev_lock);
+    fut_blkcore_state_t *state = find_device_locked(name);
+    fut_spinlock_release(&g_dev_lock);
+    return state ? state->dev : NULL;
+}
+
 fut_status_t fut_blk_acquire(const char *name, uint32_t rights, fut_handle_t *out_handle) {
     if (!name || !out_handle || rights == 0u) {
         return -EINVAL;

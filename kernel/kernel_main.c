@@ -894,6 +894,16 @@ static void selftest_sequential_runner(void *arg) {
     fut_misc_test_thread(NULL);
 }
 
+/* Bridge functions: legacy blockdev read/write → blkcore read/write */
+static int blkcore_bridge_read(struct fut_blockdev *dev, uint64_t lba, uint64_t count, void *buf) {
+    extern int fut_blk_read(void *ctx, uint64_t sector, uint32_t cnt, void *buffer);
+    return fut_blk_read(dev->private_data, lba, (uint32_t)count, buf);
+}
+static int blkcore_bridge_write(struct fut_blockdev *dev, uint64_t lba, uint64_t count, const void *buf) {
+    extern int fut_blk_write(void *ctx, uint64_t sector, uint32_t cnt, const void *buffer);
+    return fut_blk_write(dev->private_data, lba, (uint32_t)count, buf);
+}
+
 void fut_kernel_main(void) {
 
     /* Core Wayland variables (production) */
@@ -1579,8 +1589,32 @@ void fut_kernel_main(void) {
     if (!run_async_selftests) {
         /* Skip block device I/O during automated tests — virtio-blk interrupt
          * delivery is unreliable in the CI test harness and causes timeouts. */
+        /* Try legacy blockdev first, then blkcore */
         extern struct fut_blockdev *fut_blockdev_find(const char *name);
         struct fut_blockdev *vda = fut_blockdev_find("blk:vda");
+        if (!vda) {
+            /* Rust VirtIO driver registers with blkcore, not legacy.
+             * Create a legacy wrapper so FuturaFS can use it. */
+            extern void *fut_blk_find_device(const char *name);
+            extern int fut_blk_read(void *ctx, uint64_t sector, uint32_t count, void *buf);
+            void *blkcore_dev = fut_blk_find_device("blk:vda");
+            if (blkcore_dev) {
+                fut_printf("[INIT] Found blk:vda via blkcore, creating legacy wrapper\n");
+                static struct fut_blockdev legacy_vda;
+                static struct fut_blockdev_ops legacy_ops;
+                legacy_ops.read = blkcore_bridge_read;
+                legacy_ops.write = blkcore_bridge_write;
+                legacy_vda.name[0] = 'b'; legacy_vda.name[1] = 'l';
+                legacy_vda.name[2] = 'k'; legacy_vda.name[3] = ':';
+                legacy_vda.name[4] = 'v'; legacy_vda.name[5] = 'd';
+                legacy_vda.name[6] = 'a'; legacy_vda.name[7] = '\0';
+                legacy_vda.block_size = 512;
+                legacy_vda.num_blocks = 131072;  /* 64MB / 512 */
+                legacy_vda.ops = &legacy_ops;
+                legacy_vda.private_data = blkcore_dev;
+                vda = &legacy_vda;
+            }
+        }
         if (vda) {
             fut_printf("[INIT] Found block device blk:vda, attempting FuturaFS mount...\n");
 

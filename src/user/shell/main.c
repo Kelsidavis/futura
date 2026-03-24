@@ -436,7 +436,7 @@ static size_t common_prefix_len(const char *s1, const char *s2) {
 static void complete_command(char *buf, size_t *pos, size_t max_len) {
     /* List of builtin commands */
     const char *builtins[] = {
-        "bg", "cd", "clear", "date", "df", "dmesg", "echo", "edit", "exit", "export", "fg", "free",
+        "bg", "cd", "clear", "date", "df", "dmesg", "echo", "edit", "nc", "exit", "export", "fg", "free",
         "help", "hostname", "id", "ifconfig", "jobs", "kill", "ls", "mount",
         "ps", "pwd", "test", "uname", "uptime", "version", "whoami", NULL
     };
@@ -1195,6 +1195,82 @@ static void cmd_dmesg(int argc, char *argv[]) {
             write_str(1, "dmesg: kernel log not available\n");
         }
     }
+}
+
+/* Built-in: nc - Simple netcat (connect to host:port) */
+static void cmd_nc(int argc, char *argv[]) {
+    if (argc < 3) {
+        write_str(1, "usage: nc <host> <port>\n");
+        write_str(1, "  Connect to a TCP server and relay stdin/stdout.\n");
+        write_str(1, "  Example: nc 10.0.2.2 80\n");
+        return;
+    }
+
+    /* Parse IP address (simple dotted quad parser) */
+    const char *host = argv[1];
+    int port = 0;
+    for (int i = 0; argv[2][i]; i++)
+        port = port * 10 + (argv[2][i] - '0');
+
+    /* Parse dotted quad to uint32 (network byte order) */
+    uint32_t ip = 0;
+    int octet = 0, shift = 24;
+    for (int i = 0; host[i]; i++) {
+        if (host[i] == '.') {
+            ip |= (octet & 0xFF) << shift;
+            shift -= 8;
+            octet = 0;
+        } else {
+            octet = octet * 10 + (host[i] - '0');
+        }
+    }
+    ip |= (octet & 0xFF) << shift;
+
+    /* Convert to network byte order */
+    uint32_t ip_be = ((ip >> 24) & 0xFF) | ((ip >> 8) & 0xFF00) |
+                     ((ip << 8) & 0xFF0000) | ((ip << 24) & 0xFF000000);
+
+    /* Create socket */
+    long fd = sys_call3(41 /* socket */, 2 /* AF_INET */, 1 /* SOCK_STREAM */, 0);
+    if (fd < 0) {
+        write_str(1, "nc: socket failed\n");
+        return;
+    }
+
+    /* Connect — struct sockaddr_in is 16 bytes */
+    struct { uint16_t family; uint16_t port; uint32_t addr; uint8_t pad[8]; } sa;
+    sa.family = 2; /* AF_INET */
+    sa.port = (uint16_t)(((port >> 8) & 0xFF) | ((port & 0xFF) << 8)); /* htons */
+    sa.addr = ip_be;
+    for (int i = 0; i < 8; i++) sa.pad[i] = 0;
+
+    long ret = sys_call3(42 /* connect */, fd, (long)&sa, 16);
+    if (ret < 0) {
+        write_str(1, "nc: connect failed\n");
+        sys_close(fd);
+        return;
+    }
+
+    write_str(1, "Connected. Type text, Ctrl+D to close.\n");
+
+    /* Simple relay: read from stdin, write to socket */
+    char buf[256];
+    while (1) {
+        ssize_t n = sys_read(0, buf, sizeof(buf));
+        if (n <= 0) break;
+
+        /* Send to socket */
+        sys_call6(44 /* sendto */, fd, (long)buf, n, 0, 0, 0);
+
+        /* Try to receive response */
+        ssize_t r = sys_call6(45 /* recvfrom */, fd, (long)buf, sizeof(buf) - 1, 0x40 /* MSG_DONTWAIT */, 0, 0);
+        if (r > 0) {
+            buf[r] = '\0';
+            write_str(1, buf);
+        }
+    }
+
+    sys_close(fd);
 }
 
 /* Built-in: df - Show filesystem disk space usage */
@@ -3968,6 +4044,9 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "date") == 0) {
         cmd_date(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "nc") == 0) {
+        cmd_nc(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "df") == 0) {
         cmd_df(argc, argv);
         return 0;
@@ -4108,6 +4187,7 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "clear") == 0 ||
             strcmp_simple(cmd, "uname") == 0 ||
             strcmp_simple(cmd, "date") == 0 ||
+            strcmp_simple(cmd, "nc") == 0 ||
             strcmp_simple(cmd, "df") == 0 ||
             strcmp_simple(cmd, "dmesg") == 0 ||
             strcmp_simple(cmd, "edit") == 0 ||
@@ -4696,7 +4776,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.3                   |\n");
-    write_str(1, "|   27 built-in commands — type 'help'     |\n");
+    write_str(1, "|   28 built-in commands — type 'help'     |\n");
     write_str(1, "|   nano editor available at /bin/nano      |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");

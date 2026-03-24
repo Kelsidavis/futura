@@ -187,16 +187,33 @@ long sys_statfs(const char *path, struct fut_linux_statfs *buf) {
     }
     path_preview[preview_len] = '\0';
 
-    /* Phase 2: Return real physical memory stats as filesystem space.
-     * Phase 3: Set correct f_type for well-known mount points (/proc, /sys). */
+    /* Try to get real filesystem stats from the mounted filesystem.
+     * Look up the vnode, find its mount, and call the fs's statfs if available. */
     struct fut_linux_statfs real_stats = {0};
-    fill_statfs_from_pmm(&real_stats);
+    {
+        extern int fut_vfs_statfs(const char *mountpoint, struct fut_statfs *out);
+        struct fut_statfs vfs_stats = {0};
+        int fs_rc = fut_vfs_statfs(path_preview, &vfs_stats);
+        if (fs_rc == 0 && vfs_stats.block_size > 0) {
+            /* Use real filesystem stats */
+            real_stats.f_type = 0x46555446ULL; /* "FUTF" */
+            real_stats.f_bsize = vfs_stats.block_size;
+            real_stats.f_blocks = vfs_stats.blocks_total;
+            real_stats.f_bfree = vfs_stats.blocks_free;
+            real_stats.f_bavail = vfs_stats.blocks_free;
+            real_stats.f_files = vfs_stats.inodes_total;
+            real_stats.f_ffree = vfs_stats.inodes_free;
+            real_stats.f_namelen = 255;
+            real_stats.f_frsize = vfs_stats.block_size;
+        } else {
+            /* Fall back to PMM-based stats */
+            fill_statfs_from_pmm(&real_stats);
+        }
+    }
     real_stats.f_type = statfs_magic_for_path(path_preview);
 
     /* Copy to user or kernel buffer */
     if (statfs_copy_to_buf(buf, &real_stats, sizeof(struct fut_linux_statfs)) != 0) {
-        fut_printf("[STATFS] statfs(path='%s%s', pid=%d) -> EFAULT (copy_to_user failed)\n",
-                   path_preview, (path_len > 64) ? "..." : "", task->pid);
         return -EFAULT;
     }
 

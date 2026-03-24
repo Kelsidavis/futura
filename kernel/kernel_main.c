@@ -1280,7 +1280,14 @@ void fut_kernel_main(void) {
                   "export PATH=/bin:/sbin:/bin/user\n"
                   "export HOME=/root\n"
                   "export TERM=vt100\n"
-                  "export PS1='\\u@\\h:\\w# '\n"
+                  "# Common aliases\n"
+                  "alias ll='ls -l'\n"
+                  "alias la='ls -la'\n"
+                  "alias l='ls'\n"
+                  "alias ..='cd ..'\n"
+                  "alias ...='cd ../..'\n"
+                  "alias h='history'\n"
+                  "alias q='exit'\n"
                   "# Display motd\n"
                   "if test -f /etc/motd; then cat /etc/motd; fi\n");
         ETC_WRITE("/etc/motd",

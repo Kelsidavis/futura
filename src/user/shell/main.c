@@ -436,7 +436,7 @@ static size_t common_prefix_len(const char *s1, const char *s2) {
 static void complete_command(char *buf, size_t *pos, size_t max_len) {
     /* List of builtin commands */
     const char *builtins[] = {
-        "bg", "cd", "clear", "date", "df", "dmesg", "echo", "edit", "nc", "seq", "wget", "exit", "export", "fg", "free",
+        "bg", "cd", "clear", "date", "df", "dmesg", "echo", "edit", "hexdump", "nc", "seq", "sleep", "wget", "exit", "export", "fg", "free",
         "help", "hostname", "id", "ifconfig", "jobs", "kill", "ls", "mount",
         "ps", "pwd", "test", "uname", "uptime", "version", "whoami", NULL
     };
@@ -888,6 +888,12 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  free            - Show memory usage\n");
     write_str(1, "  mount           - Show mounted filesystems\n");
     write_str(1, "  ifconfig        - Show network interfaces\n");
+    write_str(1, "  df              - Show filesystem usage\n");
+    write_str(1, "  nc host port    - TCP netcat client\n");
+    write_str(1, "  wget url        - Fetch HTTP content\n");
+    write_str(1, "  hexdump file    - Hex dump of file contents\n");
+    write_str(1, "  seq [s] n       - Print number sequence\n");
+    write_str(1, "  sleep secs      - Pause for N seconds\n");
     write_str(1, "  env             - Show environment variables\n");
     write_str(1, "  echo [args]     - Print text\n");
     write_str(1, "  clear           - Clear screen\n");
@@ -1401,6 +1407,63 @@ static void cmd_seq(int argc, char *argv[]) {
         write_str(1, buf);
         write_char(1, '\n');
     }
+}
+
+
+/* Built-in: sleep - Pause for N seconds */
+static void cmd_sleep(int argc, char *argv[]) {
+    if (argc < 2) { write_str(1, "usage: sleep <seconds>\n"); return; }
+    int secs = 0;
+    for (int i = 0; argv[1][i]; i++)
+        secs = secs * 10 + (argv[1][i] - '0');
+    struct { long tv_sec; long tv_nsec; } ts = { secs, 0 };
+    sys_call2(35 /* nanosleep */, (long)&ts, 0);
+}
+
+/* Built-in: hexdump - Display file contents in hex */
+static void cmd_hexdump(int argc, char *argv[]) {
+    if (argc < 2) { write_str(1, "usage: hexdump <file>\n"); return; }
+    int fd = sys_open(argv[1], O_RDONLY, 0);
+    if (fd < 0) { write_str(1, "hexdump: cannot open file\n"); return; }
+    
+    char buf[16];
+    ssize_t n;
+    int offset = 0;
+    while ((n = sys_read(fd, buf, 16)) > 0) {
+        /* Print offset */
+        char obuf[16];
+        for (int i = 7; i >= 0; i--) {
+            int nibble = (offset >> (i*4)) & 0xF;
+            obuf[7-i] = nibble < 10 ? '0'+nibble : 'a'+nibble-10;
+        }
+        obuf[8] = 0;
+        write_str(1, obuf);
+        write_str(1, "  ");
+        
+        /* Print hex bytes */
+        for (int i = 0; i < 16; i++) {
+            if (i < n) {
+                char h[3];
+                h[0] = "0123456789abcdef"[(unsigned char)buf[i] >> 4];
+                h[1] = "0123456789abcdef"[(unsigned char)buf[i] & 0xF];
+                h[2] = 0;
+                write_str(1, h);
+                write_char(1, ' ');
+            } else {
+                write_str(1, "   ");
+            }
+            if (i == 7) write_char(1, ' ');
+        }
+        write_str(1, " |");
+        /* Print ASCII */
+        for (int i = 0; i < n; i++) {
+            char c = buf[i];
+            write_char(1, (c >= 32 && c < 127) ? c : '.');
+        }
+        write_str(1, "|\n");
+        offset += n;
+    }
+    sys_close(fd);
 }
 
 /* Built-in: df - Show filesystem disk space usage */
@@ -4180,6 +4243,12 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "wget") == 0) {
         cmd_wget(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "sleep") == 0) {
+        cmd_sleep(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "hexdump") == 0) {
+        cmd_hexdump(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "seq") == 0) {
         cmd_seq(argc, argv);
         return 0;
@@ -4324,6 +4393,8 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "uname") == 0 ||
             strcmp_simple(cmd, "date") == 0 ||
             strcmp_simple(cmd, "nc") == 0 ||
+            strcmp_simple(cmd, "sleep") == 0 ||
+            strcmp_simple(cmd, "hexdump") == 0 ||
             strcmp_simple(cmd, "seq") == 0 ||
             strcmp_simple(cmd, "wget") == 0 ||
             strcmp_simple(cmd, "df") == 0 ||
@@ -4914,7 +4985,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.3                   |\n");
-    write_str(1, "|   30 built-in commands — type 'help'     |\n");
+    write_str(1, "|   32 built-in commands — type 'help'     |\n");
     write_str(1, "|   nano editor available at /bin/nano      |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");

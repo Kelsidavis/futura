@@ -3144,13 +3144,21 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             total = gen_sysctl_str(tmp, GEN_BUF, "4096\t65536\t16777216");
             break;
         case PROC_INTERRUPTS: {
-            /* Minimal stub: 1 CPU, timer interrupt only */
             struct pbuf b = { tmp, 0, GEN_BUF };
+            uint64_t ticks = fut_get_ticks();
             pb_str(&b, "           CPU0\n");
-            pb_str(&b, "  0:       1234   IO-APIC    2-edge      timer\n");
+#ifdef __aarch64__
+            /* ARM64: GIC timer IRQ 27, UART IRQ 33 */
+            pb_str(&b, " 27: "); pb_u64(&b, ticks);
+            pb_str(&b, "   GICv2    ARM Generic Timer\n");
+            pb_str(&b, " 33:          0   GICv2    PL011 UART\n");
+#else
+            /* x86_64: PIT timer, keyboard */
+            pb_str(&b, "  0: "); pb_u64(&b, ticks);
+            pb_str(&b, "   IO-APIC    2-edge      timer\n");
             pb_str(&b, "  1:          0   IO-APIC    1-edge      i8042\n");
-            pb_str(&b, "NMI:          0   Non-maskable interrupts\n");
-            pb_str(&b, "LOC:       1234   Local timer interrupts\n");
+#endif
+            pb_str(&b, "ERR:          0\n");
             total = b.pos;
             break;
         }

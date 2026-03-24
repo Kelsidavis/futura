@@ -12,11 +12,6 @@
 #include <kernel/errno.h>
 #include <kernel/kprintf.h>
 
-#if defined(__x86_64__)
-#include <platform/x86_64/memory/pmap.h>
-#elif defined(__aarch64__)
-#include <platform/arm64/memory/pmap.h>
-#endif
 
 /* ============================================================
  *   Physical Memory Manager (Bitmap-based)

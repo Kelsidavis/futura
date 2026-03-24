@@ -1598,6 +1598,30 @@ static void arm64_init_spawner_thread(void *arg) {
         }
     }
 
+    /* Kernel subsystem self-tests */
+    {
+        /* Test pipe: create pipe, write, read back */
+        extern long sys_pipe(int pipefd[2]);
+        extern long sys_read(int fd, void *buf, size_t count);
+        extern long sys_write(int fd, const void *buf, size_t count);
+        extern int fut_vfs_close(int);
+        int pfd[2];
+        if (sys_pipe(pfd) == 0) {
+            sys_write(pfd[1], "PIPE", 4);
+            fut_vfs_close(pfd[1]);
+            char pb[8] = {0};
+            long pr = sys_read(pfd[0], pb, 4);
+            fut_vfs_close(pfd[0]);
+            if (pr == 4 && pb[0] == 'P' && pb[1] == 'I') {
+                fut_printf("[INIT] ✓ Pipe read/write test passed\n");
+            } else {
+                fut_printf("[INIT] ✗ Pipe test: got %d bytes\n", (int)pr);
+            }
+        }
+
+        /* Note: fork/waitpid tested by /bin/forktest userland binary below */
+    }
+
     /* Run forktest */
     char *forktest_argv[] = {"/bin/forktest", NULL};
     char *forktest_envp[] = {"PATH=/sbin:/bin", NULL};

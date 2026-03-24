@@ -1004,6 +1004,57 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
         task->proc_environ_len = (uint16_t)(pos < cap ? pos : cap);
     }
 
+    /* Shebang (#!) support: if file starts with #!, extract interpreter and re-exec.
+     * This enables ./script.sh execution where the script has #!/bin/shell at the top. */
+    {
+        int shebang_fd = fut_vfs_open(kernel_pathname, 0 /* O_RDONLY */, 0);
+        if (shebang_fd >= 0) {
+            char hdr[2];
+            extern long fut_vfs_read(int, void *, size_t);
+            long nr = fut_vfs_read(shebang_fd, hdr, 2);
+            fut_vfs_close(shebang_fd);
+            if (nr == 2 && hdr[0] == '#' && hdr[1] == '!') {
+                /* Read full shebang line */
+                shebang_fd = fut_vfs_open(kernel_pathname, 0, 0);
+                if (shebang_fd >= 0) {
+                    char line[128];
+                    nr = fut_vfs_read(shebang_fd, line, 127);
+                    fut_vfs_close(shebang_fd);
+                    if (nr > 2) {
+                        line[nr] = '\0';
+                        /* Parse interpreter path from "#!<interp> [arg]\n" */
+                        char *ip = line + 2;
+                        while (*ip == ' ') ip++;
+                        char *ie = ip;
+                        while (*ie && *ie != ' ' && *ie != '\n' && *ie != '\r') ie++;
+                        *ie = '\0';
+                        if (ip[0] == '/') {
+                            /* Build new argv: [interp, script_path, original_args...] */
+                            char *new_argv[32];
+                            int nac = 0;
+                            new_argv[nac++] = ip;
+                            new_argv[nac++] = kernel_pathname;
+                            if (kernel_argv) {
+                                for (int i = 1; kernel_argv[i] && nac < 31; i++)
+                                    new_argv[nac++] = kernel_argv[i];
+                            }
+                            new_argv[nac] = NULL;
+                            int sret = fut_exec_elf(ip, new_argv,
+                                kernel_envp ? kernel_envp : (char *const *)local_envp);
+                            if (sret == 0) {
+                                if (kernel_argv) fut_free(kernel_argv);
+                                if (kernel_envp) fut_free(kernel_envp);
+                                extern void fut_thread_exit(void) __attribute__((noreturn));
+                                fut_thread_exit();
+                            }
+                            /* Shebang exec failed — fall through to try direct ELF */
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /* Call ELF loader with kernel-space argv/envp
      * This prevents TOCTOU race: userspace can no longer modify arguments after validation.
      * kernel_argv, kernel_envp, and kernel_pathname are immutable kernel copies. */

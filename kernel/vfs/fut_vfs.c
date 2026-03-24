@@ -1648,8 +1648,8 @@ int fut_vfs_readdir_fd(int fd, uint64_t *cookie, struct fut_vdirent *dirent) {
     int ret = dir->ops->readdir(dir, &pos, dirent);
 
     /* Update the file descriptor's offset for next read.
-     * readdir returns 0 on success (found entry), negative on error/end. */
-    if (ret == 0) {
+     * readdir returns 0 (FuturaFS) or 1 (ramfs) on success, negative on error/end. */
+    if (ret >= 0) {
         file->offset = pos;
     }
 

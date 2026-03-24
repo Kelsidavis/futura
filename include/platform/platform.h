@@ -19,8 +19,10 @@
  * #ifdef __x86_64__ / #elif __aarch64__ for paging headers. */
 #ifdef __x86_64__
 #include <platform/x86_64/memory/paging.h>
+#include <platform/x86_64/memory/pmap.h>
 #elif defined(__aarch64__)
 #include <platform/arm64/memory/paging.h>
+#include <platform/arm64/memory/pmap.h>
 #endif
 
 /* Forward declarations */

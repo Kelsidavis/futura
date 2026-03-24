@@ -33,11 +33,7 @@
 #include <platform/platform.h>
 
 /* Platform-specific memory mapping */
-#if defined(__x86_64__)
-#include <platform/x86_64/memory/pmap.h>
-#elif defined(__aarch64__)
-#include <platform/arm64/memory/pmap.h>
-#endif
+#include <platform/platform.h>
 #include <kernel/fut_percpu.h>
 #include <kernel/input.h>
 #include <kernel/platform_hooks.h>
@@ -49,12 +45,10 @@
 #include "tests/test_api.h"
 #include "tests/perf.h"
 #include <kernel/tests/test_main.h>
+/* Architecture-specific headers (non-paging; pmap via platform.h) */
 #if defined(__x86_64__)
-#include <platform/x86_64/memory/paging.h>
-#include <platform/x86_64/memory/pmap.h>
 #include <platform/x86_64/interrupt/lapic.h>
 #elif defined(__aarch64__)
-#include <platform/arm64/memory/paging.h>
 #include <platform/arm64/interrupt/irq.h>
 #include <platform/arm64/process.h>
 #endif

@@ -105,6 +105,9 @@ static void complete_command(char *buf, size_t *pos, size_t max_len);
 /* Forward declaration for source (defined after execute_command_chain) */
 static void cmd_source(int argc, char *argv[]);
 
+/* Forward declaration for full line execution (defined after main) */
+static int execute_full_line(char *line);
+
 /* Forward declaration for exec builtin */
 static void exec_external_command(int argc, char *argv[]);
 static void build_envp(void);
@@ -6429,16 +6432,7 @@ static void cmd_source(int argc, char *argv[]) {
         char saved = *end;
         *end = '\0';
         if (line[0] && line[0] != '#') {
-            char vn[64], vv[256];
-            if (is_var_assignment(line, vn, vv)) {
-                char ev[256];
-                expand_variables(ev, vv, 256);
-                set_var(vn, ev, 0);
-            } else {
-                char el[512];
-                expand_variables(el, line, 512);
-                execute_command_chain(el);
-            }
+            execute_full_line(line);
         }
         if (saved == '\0') break;
         line = end + 1;
@@ -6567,17 +6561,7 @@ int main(int argc, char **argv, char **envp) {
                     char saved = *end;
                     *end = '\0';
                     if (line[0] && line[0] != '#') {
-                        /* Check for variable assignment first */
-                        char vn[64], vv[256];
-                        if (is_var_assignment(line, vn, vv)) {
-                            char ev[256];
-                            expand_variables(ev, vv, 256);
-                            set_var(vn, ev, 0);
-                        } else {
-                            char el[512];
-                            expand_variables(el, line, 512);
-                            execute_command_chain(el);
-                        }
+                        execute_full_line(line);
                     }
                     if (saved == '\0') break;
                     line = end + 1;
@@ -6839,4 +6823,44 @@ int main(int argc, char **argv, char **envp) {
 
     write_str(1, "\nShell terminated\n");
     return 0;
+}
+
+/* Execute a single line with full shell semantics (aliases, variables,
+ * for/while/if constructs, command chains). Used by source and profile. */
+static int execute_full_line(char *line) {
+    if (!line || !line[0] || line[0] == '#') return 0;
+
+    /* Variable assignment */
+    char vn[MAX_VAR_NAME], vv[MAX_VAR_VALUE];
+    if (is_var_assignment(line, vn, vv)) {
+        char ev[MAX_VAR_VALUE];
+        expand_variables(ev, vv, MAX_VAR_VALUE);
+        set_var(vn, ev, 0);
+        return 0;
+    }
+
+    /* Alias expansion */
+    {
+        char *first = line;
+        while (*first == ' ' || *first == '\t') first++;
+        char word[32];
+        int wl = 0;
+        while (first[wl] && first[wl] != ' ' && first[wl] != '\t' && wl < 31) { word[wl] = first[wl]; wl++; }
+        word[wl] = '\0';
+        const char *aval = get_alias(word);
+        if (aval) {
+            char tmp[512];
+            int tp = 0;
+            for (const char *a = aval; *a && tp < 500; a++) tmp[tp++] = *a;
+            for (const char *r = first + wl; *r && tp < 510; r++) tmp[tp++] = *r;
+            tmp[tp] = '\0';
+            for (int j = 0; j <= tp; j++) line[j] = tmp[j];
+        }
+    }
+
+    /* Expand variables */
+    char expanded[512];
+    expand_variables(expanded, line, sizeof(expanded));
+
+    return execute_command_chain(expanded);
 }

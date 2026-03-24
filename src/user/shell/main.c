@@ -928,13 +928,15 @@ static void cmd_clear(int argc, char *argv[]) {
 static void print_prompt(void) {
     char cwd[256] = {0};
     long ret = sys_getcwd(cwd, sizeof(cwd));
-    write_str(1, "futura:");
+    /* Color prompt: green user@host, blue cwd, reset */
+    write_str(1, "\033[32mroot@futura\033[0m:\033[34m");
     if (ret > 0) {
+        /* Abbreviate home dir */
         write_str(1, cwd);
     } else {
         write_str(1, "?");
     }
-    write_str(1, "$ ");
+    write_str(1, "\033[0m# ");
 }
 
 /* Built-in: pwd */

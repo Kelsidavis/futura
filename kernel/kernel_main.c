@@ -1283,12 +1283,12 @@ void fut_kernel_main(void) {
                   "alias h='history'\n"
                   "alias q='exit'\n"
                   "# Display motd\n"
-                  "if test -f /etc/motd; then cat /etc/motd; fi\n");
+                  "cat /etc/motd\n");
         ETC_WRITE("/etc/motd",
                   "\n"
                   "  Welcome to Futura OS 0.4.0 (aarch64)\n"
                   "\n"
-                  "  * 65 shell commands — type 'help'\n"
+                  "  * 65 built-in commands — type 'help'\n"
                   "  * Glob expansion: ls *.txt, cat /etc/*\n"
                   "  * Command substitution: VAR=$(cmd), echo $(date)\n"
                   "  * Scripting: for/while/if, source, pipes, redirects\n"

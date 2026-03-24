@@ -421,6 +421,34 @@ static void add_to_history(const char *cmd) {
     history_count++;
 }
 
+/* Alias table */
+#define MAX_ALIASES 32
+static struct { int used; char name[32]; char value[128]; } aliases[MAX_ALIASES];
+
+static const char *get_alias(const char *name) {
+    for (int i = 0; i < MAX_ALIASES; i++)
+        if (aliases[i].used && strcmp_simple(aliases[i].name, name) == 0)
+            return aliases[i].value;
+    return NULL;
+}
+
+static void set_alias(const char *name, const char *value) {
+    for (int i = 0; i < MAX_ALIASES; i++) {
+        if (aliases[i].used && strcmp_simple(aliases[i].name, name) == 0) {
+            strncpy_simple(aliases[i].value, value, 128);
+            return;
+        }
+    }
+    for (int i = 0; i < MAX_ALIASES; i++) {
+        if (!aliases[i].used) {
+            aliases[i].used = 1;
+            strncpy_simple(aliases[i].name, name, 32);
+            strncpy_simple(aliases[i].value, value, 128);
+            return;
+        }
+    }
+}
+
 /* String starts with prefix */
 static int starts_with_prefix(const char *str, const char *prefix) {
     while (*prefix) {
@@ -453,7 +481,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     const char *builtins[] = {
         "bg", "cd", "chmod", "clear", "date", "dd", "df", "dmesg", "echo", "edit", "hexdump", "lsof", "nc", "poweroff", "reboot", "seq", "sleep", "time", "wget", "exit", "export", "fg", "free",
         "help", "hostname", "id", "ifconfig", "jobs", "kill", "ls", "mount",
-        ".", "basename", "dirname", "du", "exec", "false", "history", "ln", "more", "printf", "ps", "pwd", "read", "readlink", "set", "source", "stat", "sync", "sysinfo", "test", "tree", "true", "type", "umask", "uname", "uptime", "version", "wait", "which", "whoami", "xargs", NULL
+        ".", "alias", "basename", "dirname", "du", "exec", "false", "history", "ln", "more", "printf", "ps", "pwd", "read", "readlink", "set", "source", "stat", "sync", "sysinfo", "test", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "wait", "which", "whoami", "xargs", NULL
     };
 
     /* External commands we might have */
@@ -5563,6 +5591,36 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "dd") == 0) {
         cmd_dd(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "alias") == 0) {
+        if (argc < 2) {
+            /* List all aliases */
+            for (int i = 0; i < MAX_ALIASES; i++)
+                if (aliases[i].used) {
+                    write_str(1, "alias ");
+                    write_str(1, aliases[i].name);
+                    write_str(1, "='");
+                    write_str(1, aliases[i].value);
+                    write_str(1, "'\n");
+                }
+        } else {
+            /* Parse name=value */
+            char *eq = argv[1];
+            while (*eq && *eq != '=') eq++;
+            if (*eq == '=') {
+                *eq = '\0';
+                set_alias(argv[1], eq + 1);
+            } else {
+                const char *v = get_alias(argv[1]);
+                if (v) { write_str(1, "alias "); write_str(1, argv[1]); write_str(1, "='"); write_str(1, v); write_str(1, "'\n"); }
+                else { write_str(2, "alias: "); write_str(2, argv[1]); write_str(2, ": not found\n"); }
+            }
+        }
+        return 0;
+    } else if (strcmp_simple(argv[0], "unalias") == 0) {
+        if (argc < 2) { write_str(2, "usage: unalias <name>\n"); return 1; }
+        for (int i = 0; i < MAX_ALIASES; i++)
+            if (aliases[i].used && strcmp_simple(aliases[i].name, argv[1]) == 0) { aliases[i].used = 0; break; }
+        return 0;
     } else if (strcmp_simple(argv[0], "sysinfo") == 0) {
         cmd_sysinfo(argc, argv);
         return 0;
@@ -5795,6 +5853,8 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "chmod") == 0 ||
             strcmp_simple(cmd, "cp") == 0 ||
             strcmp_simple(cmd, "sync") == 0 ||
+            strcmp_simple(cmd, "alias") == 0 ||
+            strcmp_simple(cmd, "unalias") == 0 ||
             strcmp_simple(cmd, "sysinfo") == 0 ||
             strcmp_simple(cmd, "wait") == 0 ||
             strcmp_simple(cmd, "umask") == 0 ||
@@ -6500,7 +6560,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.4                   |\n");
-    write_str(1, "|   61 built-in commands — type 'help'     |\n");
+    write_str(1, "|   63 built-in commands — type 'help'     |\n");
     write_str(1, "|   nano editor available at /bin/nano      |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");
@@ -6700,6 +6760,25 @@ int main(int argc, char **argv, char **envp) {
             set_var(var_name, expanded_value, 0);
             last_exit_status = 0;
             continue;
+        }
+
+        /* Expand aliases: check if first word matches an alias */
+        {
+            char *first = cmdline;
+            while (*first == ' ' || *first == '\t') first++;
+            char word[32];
+            int wl = 0;
+            while (first[wl] && first[wl] != ' ' && first[wl] != '\t' && wl < 31) { word[wl] = first[wl]; wl++; }
+            word[wl] = '\0';
+            const char *aval = get_alias(word);
+            if (aval) {
+                char tmp[512];
+                int tp = 0;
+                for (const char *a = aval; *a && tp < 500; a++) tmp[tp++] = *a;
+                for (const char *r = first + wl; *r && tp < 510; r++) tmp[tp++] = *r;
+                tmp[tp] = '\0';
+                for (int j = 0; j <= tp; j++) cmdline[j] = tmp[j];
+            }
         }
 
         /* Expand variables in command line */

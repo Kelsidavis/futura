@@ -1044,33 +1044,62 @@ static void int_to_str(long n, char *buf, int size);
 /* Built-in: date - Show uptime (no RTC) */
 static void cmd_date(int argc, char *argv[]) {
     (void)argc; (void)argv;
-    /* Use clock_gettime(CLOCK_MONOTONIC) to get uptime */
+    /* Use CLOCK_REALTIME (0) for wall-clock time */
     struct { long tv_sec; long tv_nsec; } ts = {0, 0};
-    /* clock_gettime — x86_64 compat alias at 98, also ARM64 at 113 */
-    long ret = sys_call2(98 /* SYS_clock_gettime x86 compat */, 1 /* CLOCK_MONOTONIC */, (long)&ts);
-    if (ret == 0) {
-        char buf[64];
-        long secs = ts.tv_sec;
-        long hours = secs / 3600;
-        long mins = (secs % 3600) / 60;
-        long s = secs % 60;
-        /* Format: "up Xh Ym Zs" */
-        int pos = 0;
-        buf[pos++] = 'u'; buf[pos++] = 'p'; buf[pos++] = ' ';
-        if (hours > 0) {
-            char tmp[16]; int_to_str(hours, tmp, 16);
-            for (int i = 0; tmp[i]; i++) buf[pos++] = tmp[i];
-            buf[pos++] = 'h'; buf[pos++] = ' ';
+    long ret = sys_call2(98 /* clock_gettime x86 compat */, 0 /* CLOCK_REALTIME */, (long)&ts);
+    if (ret == 0 && ts.tv_sec > 1000000000L) {
+        /* Convert epoch seconds to date/time (simplified UTC) */
+        long t = ts.tv_sec;
+        long days = t / 86400;
+        long daytime = t % 86400;
+        long hour = daytime / 3600;
+        long min = (daytime % 3600) / 60;
+        long sec = daytime % 60;
+
+        /* Calculate year/month/day from days since epoch */
+        long y = 1970;
+        while (1) {
+            long ydays = (y % 4 == 0 && (y % 100 != 0 || y % 400 == 0)) ? 366 : 365;
+            if (days < ydays) break;
+            days -= ydays;
+            y++;
         }
-        { char tmp[16]; int_to_str(mins, tmp, 16);
-          for (int i = 0; tmp[i]; i++) buf[pos++] = tmp[i]; }
-        buf[pos++] = 'm'; buf[pos++] = ' ';
-        { char tmp[16]; int_to_str(s, tmp, 16);
-          for (int i = 0; tmp[i]; i++) buf[pos++] = tmp[i]; }
-        buf[pos++] = 's'; buf[pos++] = '\n'; buf[pos] = '\0';
+        int leap = (y % 4 == 0 && (y % 100 != 0 || y % 400 == 0));
+        int mdays[] = {31,28+leap,31,30,31,30,31,31,30,31,30,31};
+        const char *mnames[] = {"Jan","Feb","Mar","Apr","May","Jun",
+                                "Jul","Aug","Sep","Oct","Nov","Dec"};
+        const char *wnames[] = {"Thu","Fri","Sat","Sun","Mon","Tue","Wed"};
+        int m = 0;
+        while (m < 12 && days >= mdays[m]) { days -= mdays[m]; m++; }
+        int day = (int)days + 1;
+        int wday = (int)((ts.tv_sec / 86400 + 4) % 7);  /* Jan 1 1970 = Thursday */
+
+        char buf[64];
+        int p = 0;
+        /* "Wed Mar 24 06:53:28 UTC 2026" */
+        for (int i = 0; wnames[wday][i]; i++) buf[p++] = wnames[wday][i];
+        buf[p++] = ' ';
+        for (int i = 0; mnames[m][i]; i++) buf[p++] = mnames[m][i];
+        buf[p++] = ' ';
+        if (day < 10) buf[p++] = ' ';
+        { char tmp[8]; int_to_str(day, tmp, 8); for (int i = 0; tmp[i]; i++) buf[p++] = tmp[i]; }
+        buf[p++] = ' ';
+        buf[p++] = '0' + (char)(hour / 10); buf[p++] = '0' + (char)(hour % 10);
+        buf[p++] = ':';
+        buf[p++] = '0' + (char)(min / 10); buf[p++] = '0' + (char)(min % 10);
+        buf[p++] = ':';
+        buf[p++] = '0' + (char)(sec / 10); buf[p++] = '0' + (char)(sec % 10);
+        buf[p++] = ' '; buf[p++] = 'U'; buf[p++] = 'T'; buf[p++] = 'C'; buf[p++] = ' ';
+        { char tmp[8]; int_to_str((long)y, tmp, 8); for (int i = 0; tmp[i]; i++) buf[p++] = tmp[i]; }
+        buf[p++] = '\n'; buf[p] = '\0';
         write_str(1, buf);
     } else {
-        write_str(1, "date: clock_gettime failed\n");
+        /* Fallback: show uptime */
+        struct { long tv_sec; long tv_nsec; } mono = {0, 0};
+        sys_call2(98, 1 /* CLOCK_MONOTONIC */, (long)&mono);
+        write_str(1, "up ");
+        char tmp[16]; int_to_str(mono.tv_sec, tmp, 16);
+        write_str(1, tmp); write_str(1, "s\n");
     }
 }
 

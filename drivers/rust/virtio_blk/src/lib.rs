@@ -767,9 +767,10 @@ impl VirtQueue {
                 return ETIMEDOUT;
             }
 
-            // Yield to scheduler instead of busy-waiting
-            // This allows other threads to run and prevents CPU waste
-            thread_yield();
+            // Brief spin delay — yield may not work in all contexts (e.g., early boot)
+            for _ in 0..100u32 {
+                core::hint::spin_loop();
+            }
             waited += 1;
         }
     }
@@ -947,6 +948,10 @@ impl VirtioBlkDevice {
 
         #[cfg(target_arch = "aarch64")]
         {
+            // Set ISR pointer for MMIO (interrupt status at base + 0x60)
+            dev.isr = (dev.mmio_base + VIRTIO_MMIO_INTERRUPT_STATUS as u64) as *mut u8;
+            VIRTIO_ISR_PTR.store(dev.isr as u64, Ordering::Release);
+
             // On ARM64 MMIO, set DRIVER_OK via MMIO status register
             let current_status = dev.mmio_read32(VIRTIO_MMIO_STATUS) as u8;
             dev.mmio_write32(VIRTIO_MMIO_STATUS, (current_status | VIRTIO_STATUS_DRIVER_OK) as u32);
@@ -1691,11 +1696,15 @@ impl VirtioBlkDevice {
     #[cfg(target_arch = "aarch64")]
     fn notify_queue(&self) {
         // MMIO: write queue index to QUEUE_NOTIFY register
+        // CRITICAL: Use DSB SY (not just DMB/fence) to ensure the MMIO write
+        // reaches the device before we start polling for completion.
         unsafe {
             let reg = (self.mmio_base + VIRTIO_MMIO_QUEUE_NOTIFY as u64) as *mut u32;
+            // DSB before write to ensure all prior descriptor/avail writes are visible
+            core::arch::asm!("dsb sy", options(nostack, nomem));
             write_volatile(reg, 0);
-            // Memory barrier
-            core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+            // DSB after write to ensure the MMIO write reaches the device
+            core::arch::asm!("dsb sy", options(nostack, nomem));
         }
     }
 

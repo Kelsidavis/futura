@@ -1615,34 +1615,8 @@ void fut_kernel_main(void) {
                 vda = &legacy_vda;
             }
         }
-        /* Test C-side VirtIO block read before trying FuturaFS */
-        {
-            extern int virtio_mmio_blk_read(int dev_idx, uint64_t sector, uint32_t count, void *buffer);
-            extern int virtio_mmio_find_device(uint32_t device_type);
-            /* Find block device even if claimed by Rust driver */
-            extern int virtio_mmio_find_device_any(uint32_t device_type);
-            int blk_idx = virtio_mmio_find_device_any(2);  /* VIRTIO_DEV_BLOCK=2 */
-            fut_printf("[INIT] C-side blk test: blk_idx=%d\n", blk_idx);
-            if (blk_idx >= 0) {
-                /* The C MMIO device may not have its queue initialized (Rust driver
-                 * uses its own queue). Re-initialize queue for C-side test. */
-                extern void *fut_pmm_alloc_page(void);
-                void *test_buf = fut_pmm_alloc_page();
-                if (test_buf) {
-                    fut_printf("[INIT] Testing C-side VirtIO block read (sector 0)...\n");
-                    int rc = virtio_mmio_blk_read(blk_idx, 0, 1, test_buf);
-                    fut_printf("[INIT] C-side block read result: %d\n", rc);
-                    if (rc == 0) {
-                        uint8_t *data = (uint8_t *)test_buf;
-                        fut_printf("[INIT] First 16 bytes: %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x\n",
-                                   data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
-                                   data[8], data[9], data[10], data[11], data[12], data[13], data[14], data[15]);
-                    }
-                    extern void fut_pmm_free_page(void *);
-                    fut_pmm_free_page(test_buf);
-                }
-            }
-        }
+        /* C-side block test removed — it resets the device and destroys
+         * the Rust driver's queue state. Let the Rust driver handle I/O. */
 
         if (vda) {
             fut_printf("[INIT] Found block device blk:vda, attempting FuturaFS mount...\n");

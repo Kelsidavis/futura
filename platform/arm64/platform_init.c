@@ -532,11 +532,10 @@ int fut_serial_getc(void) {
         return (int)(unsigned char)c;
     }
 
-    /* In polling mode, read directly from UART FIFO */
-    /* Check if RX FIFO is empty (UART_FR bit 4 = RXFE) */
+    /* Poll UART FIFO directly */
     uint32_t fr = mmio_read32((volatile void *)(uart + UART_FR));
     if (fr & UART_FR_RXFE) {
-        return -1;  /* No data available */
+        return -1;
     }
 
     uint32_t data = mmio_read32((volatile void *)(uart + UART_DR));

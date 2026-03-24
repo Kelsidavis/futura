@@ -281,6 +281,7 @@ int fut_copy_to_user(void *u_dst, const void *k_src, size_t n) {
 #if defined(__aarch64__)
     uint64_t saved_ttbr0;
     struct fut_mm *mm;
+    /* (no debug) */
 #endif
 
     if (n == 0) {

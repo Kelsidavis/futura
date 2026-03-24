@@ -270,44 +270,70 @@ lower_el_aarch32_serror:
  *   Exception Entry Stubs
  * ============================================================ */
 
-/* IRQ Exception Entry - saves state and calls C handler */
+/* IRQ Exception Entry - saves state and calls C handler
+ * Must build a proper fut_interrupt_frame_t so that arm64_handle_irq()
+ * can read frame->pstate to determine whether we're returning to EL0
+ * (userspace) or EL1 (kernel), and so signal delivery can modify
+ * frame->pc / frame->x[0] when returning to userspace. */
 irq_exception_entry:
-    /* Save ALL caller-saved registers (x0-x18) that C code can clobber
-     * This is critical for fork: if IRQ fires during context switch return,
-     * we must preserve all registers including x7 (string table pointer) */
     sub     sp, sp, #880
 
-    /* Save x0-x18 (all caller-saved registers) */
+    /* Save all general purpose registers x0-x30 at correct struct offsets */
     stp     x0, x1, [sp, #0]
     stp     x2, x3, [sp, #16]
     stp     x4, x5, [sp, #32]
-    stp     x6, x7, [sp, #48]      // Critical: x7 must be preserved!
+    stp     x6, x7, [sp, #48]
     stp     x8, x9, [sp, #64]
     stp     x10, x11, [sp, #80]
     stp     x12, x13, [sp, #96]
     stp     x14, x15, [sp, #112]
     stp     x16, x17, [sp, #128]
-    str     x18, [sp, #144]
+    stp     x18, x19, [sp, #144]
+    stp     x20, x21, [sp, #160]
+    stp     x22, x23, [sp, #176]
+    stp     x24, x25, [sp, #192]
+    stp     x26, x27, [sp, #208]
+    stp     x28, x29, [sp, #224]
+    str     x30, [sp, #240]
 
-    /* Save callee-saved registers and FP/LR */
-    stp     x29, x30, [sp, #224]
+    /* Save system registers into frame so C handler can inspect them */
+    mrs     x0, elr_el1
+    str     x0, [sp, #256]         /* frame->pc */
+    mrs     x0, spsr_el1
+    str     x0, [sp, #264]         /* frame->pstate — checked by arm64_handle_irq */
+    mrs     x0, sp_el0
+    str     x0, [sp, #808]         /* frame->sp_el0 */
 
-    /* Call C IRQ handler */
+    /* Call C IRQ handler with frame pointer */
     mov     x0, sp
     bl      arm64_handle_irq
 
-    /* Restore ALL registers in reverse order */
-    ldp     x29, x30, [sp, #224]
+    /* Restore system registers (signal delivery may have modified frame->pc) */
+    ldr     x0, [sp, #256]
+    msr     elr_el1, x0            /* Restore ELR_EL1 */
+    ldr     x0, [sp, #264]
+    msr     spsr_el1, x0           /* Restore SPSR_EL1 */
+    ldr     x0, [sp, #808]
+    msr     sp_el0, x0             /* Restore SP_EL0 */
 
-    ldr     x18, [sp, #144]
-    ldp     x16, x17, [sp, #128]
-    ldp     x14, x15, [sp, #112]
-    ldp     x12, x13, [sp, #96]
-    ldp     x10, x11, [sp, #80]
-    ldp     x8, x9, [sp, #64]
-    ldp     x6, x7, [sp, #48]      // Restore x7!
-    ldp     x4, x5, [sp, #32]
+    /* Restore all general purpose registers */
     ldp     x2, x3, [sp, #16]
+    ldp     x4, x5, [sp, #32]
+    ldp     x6, x7, [sp, #48]
+    ldp     x8, x9, [sp, #64]
+    ldp     x10, x11, [sp, #80]
+    ldp     x12, x13, [sp, #96]
+    ldp     x14, x15, [sp, #112]
+    ldp     x16, x17, [sp, #128]
+    ldp     x18, x19, [sp, #144]
+    ldp     x20, x21, [sp, #160]
+    ldp     x22, x23, [sp, #176]
+    ldp     x24, x25, [sp, #192]
+    ldp     x26, x27, [sp, #208]
+    ldp     x28, x29, [sp, #224]
+    ldr     x30, [sp, #240]
+
+    /* Restore x0, x1 last (signal delivery may have set x0 = signal number) */
     ldp     x0, x1, [sp, #0]
 
     add     sp, sp, #880

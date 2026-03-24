@@ -236,27 +236,22 @@ sync_exception_entry:
     ldp     d28, d29, [x1, #0]
     ldp     d30, d31, [x1, #16]
 
-    /* Restore ELR_EL1 and SPSR_EL1 from frame BEFORE restoring x0 */
+    /* Restore ELR_EL1 and SPSR_EL1 from frame BEFORE restoring GPRs */
     ldr     x1, [x0, #256]      /* Load PC from frame->pc */
     msr     elr_el1, x1         /* Restore ELR_EL1 (exception return address) */
 
     ldr     x1, [x0, #264]      /* Load PSTATE from frame->pstate */
     msr     spsr_el1, x1        /* Restore SPSR_EL1 (exception return state) */
 
-    /* Restore SP from frame */
-    ldr     x1, [x0, #248]      /* Load SP from frame->sp */
-    mov     sp, x1              /* Restore SP */
-
-    /* Restore SP_EL0 (user stack pointer) - critical for userspace returns! */
+    /* Restore SP_EL0 and TTBR0 while frame is still live (SP hasn't moved yet) */
     ldr     x1, [x0, #808]      /* Load SP_EL0 from offset 808 */
     msr     sp_el0, x1          /* Restore SP_EL0 */
 
-    /* Restore user TTBR0 before returning to userspace */
     ldr     x1, [x0, #816]      /* Load TTBR0_EL1 from offset 816 */
     msr     ttbr0_el1, x1       /* Restore TTBR0_EL1 */
     isb
 
-    /* Restore general purpose registers x2-x30 */
+    /* Restore general purpose registers x2-x30 while frame is still live */
     ldp     x2, x3, [x0, #16]
     ldp     x4, x5, [x0, #32]
     ldp     x6, x7, [x0, #48]
@@ -273,12 +268,21 @@ sync_exception_entry:
     ldp     x28, x29, [x0, #224]
     ldr     x30, [x0, #240]
 
-    /* Restore x0, x1 LAST (x0 contains syscall return value) */
-    ldp     x0, x1, [x0, #0]   /* Load x0, x1 from frame->x[0] and frame->x[1] */
+    /* Mask IRQs before deallocating frame.  If a timer IRQ fires between
+     * SP restore (which deallocates the frame) and ERET, the IRQ handler's
+     * stack frame would occupy the SAME memory as our exception frame,
+     * corrupting the x0/x1 values we haven't loaded yet.
+     * ERET atomically restores PSTATE from SPSR_EL1, which re-enables
+     * interrupts if they were enabled before the exception. */
+    msr     daifset, #3          /* Mask IRQ and FIQ */
 
-    /* Return from exception
-     * ERET will use ELR_EL1 (PC) and SPSR_EL1 (PSTATE) to return to caller
-     */
+    /* Restore SP (deallocates frame), then x0/x1.  IRQs are masked so
+     * the frame memory below SP cannot be overwritten before we finish. */
+    ldr     x1, [x0, #248]      /* x1 = original SP from frame->sp */
+    mov     sp, x1               /* Restore SP — frame now below SP */
+    ldp     x0, x1, [x0, #0]   /* Restore x0, x1 from frame (uses pre-write x0) */
+
+    /* Return from exception */
     eret
 
 /* ============================================================

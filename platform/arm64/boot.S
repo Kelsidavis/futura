@@ -255,7 +255,10 @@ bss_cleared:
      */
     adrp    x0, boot_l2_table_dram
     add     x0, x0, :lo12:boot_l2_table_dram
-    movz    x1, #0x4000, lsl #16      /* Start PA = 0x40000000 */
+    /* Boot table: identity mapping PA=VA from PA 0x40000000 (RAM start).
+     * Even though kernel is at PA 0x40200000, we map from RAM start so
+     * identity mapping covers both DTB (0x40000000) and kernel (0x40200000+). */
+    movz    x1, #0x4000, lsl #16      /* Start PA = 0x40000000 (RAM start) */
     mov     x3, #512                  /* 512 entries = 1GB */
     movz    x5, #0x0020, lsl #16      /* 2MB block size = 0x200000 */
 3:  mov     x2, #0x401                /* Valid (bit 0) | Block (bit 1=0) | AttrIndx=0 | AF (bit 10) */
@@ -324,7 +327,11 @@ bss_cleared:
      * High-VA kernel mapping: VA 0xFFFFFF8040000000 → PA 0x40000000 */
     adrp    x0, kernel_l2_table_dram
     add     x0, x0, :lo12:kernel_l2_table_dram
-    movz    x1, #0x4000, lsl #16      /* Start PA = 0x40000000 (ELF PhysAddr) */
+    /* Kernel DRAM: map from PA 0x40200000 where QEMU actually loads the kernel.
+     * L2[0] maps VA 0xFFFFFF8040000000 → PA 0x40200000 (kernel .text.boot)
+     * L2[1] maps VA 0xFFFFFF8040200000 → PA 0x40400000 (kernel .text cont'd)
+     * etc. */
+    movz    x1, #0x4020, lsl #16      /* Start PA = 0x40200000 (kernel load addr) */
     mov     x3, #512                  /* 512 x 2MB = 1GB */
     movz    x5, #0x0020, lsl #16      /* 2MB block size */
 6:  mov     x2, #0x401                /* Valid | Block | AttrIndx=0 (normal) | AF */
@@ -341,13 +348,13 @@ bss_cleared:
     // strb    w11, [x10] 
 
     /* Configure MAIR_EL1 (Memory Attribute Indirection Register)
-     * Attr0 = 0xFF (Normal memory, Inner/Outer Write-Back Cacheable)
-     * Attr1 = 0x00 (Device-nGnRnE - for UART, GIC, etc.)
-     * Attr5 = 0xFF (Normal memory - used by user stack pages)
-     * Combined value: 0xFF000000_000000FF
+     * Index 0 = 0xFF (Normal memory, Inner/Outer Write-Back, Read/Write Allocate)
+     *           Used by boot page tables and PTE_ATTR_NORMAL
+     * Index 1 = 0x00 (Device-nGnRnE - for UART, GIC, framebuffer MMIO)
+     *           Used by PTE_ATTR_DEVICE_nGnRnE
+     * Combined value: 0x00000000_000000FF
      */
-    movz    x0, #0x00FF               /* Attr0=0xFF (normal), Attr1=0x00 (device) */
-    movk    x0, #0xFF00, lsl #32      /* Attr5=0xFF (normal for user pages) */
+    movz    x0, #0x00FF               /* Idx0=0xFF(Normal), Idx1=0x00(Device) */
     msr     mair_el1, x0
 
     /* Debug: MAIR configured */
@@ -445,8 +452,8 @@ bss_cleared:
      * Page tables map VA 0xFFFFFF8040000000 → PA 0x40200000
      * So: PA 0x40200xxx → VA 0xFFFFFF8040000xxx (subtract PA base, add VA base)
      */
-    adr     x0, .Lhigh_va_entry       /* Get actual PA (PC-relative, ~0x4000xxxx) */
-    movz    x1, #0x4000, lsl #16      /* PA base = 0x40000000 (QEMU kernel load address) */
+    adr     x0, .Lhigh_va_entry       /* Get actual PA (PC-relative, ~0x4020xxxx) */
+    movz    x1, #0x4020, lsl #16      /* PA base = 0x40200000 (QEMU kernel load address) */
     sub     x0, x0, x1                /* x0 = offset from PA base */
     movz    x1, #0xFFFF, lsl #48      /* VA base (high 16 bits) */
     movk    x1, #0xFF80, lsl #32      /* VA base (bits 47:32) */

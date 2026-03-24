@@ -588,13 +588,23 @@ bool fut_trap_handle_page_fault(fut_interrupt_frame_t *frame) {
                                 ((fsc & 0x3F) == 0x0F) || ((fsc & 0x3F) == 0x10);
     bool is_access_fault = ((fsc & 0x3C) == 0x14) || ((fsc & 0x3F) == 0x16);
 
-    if (!is_translation_fault && !is_access_fault) {
-        return false;  /* Not a page fault we can handle */
+    bool is_permission_fault = ((fsc & 0x3C) == 0x0C);  /* L1-L3 permission faults */
+
+    if (!is_translation_fault && !is_access_fault && !is_permission_fault) {
+        return false;  /* Not a fault type we can handle */
     }
 
-    /* Only handle user-space faults (lower EL = EL0 = user) */
+    /* For EL1 faults (kernel accessing user memory via copy_from/to_user):
+     * Check if there's an active uaccess window — if so, signal the fault
+     * and redirect to the recovery label instead of crashing. */
     if (!is_lower_el && !is_iabt_el0) {
-        return false;  /* Kernel page fault - not handled here */
+        const struct fut_uaccess_window *window = fut_uaccess_window_current();
+        if (window && window->resume) {
+            fut_uaccess_window_fault(-EFAULT);
+            frame->pc = (uint64_t)(uintptr_t)window->resume;
+            return true;  /* Redirect to copy fault handler */
+        }
+        return false;  /* Kernel fault without uaccess window — unhandled */
     }
 
     /* Extract write flag from ESR bit 6 (WnR: Write not Read).

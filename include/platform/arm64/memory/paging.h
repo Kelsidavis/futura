@@ -61,13 +61,17 @@
 #define PTE_VALID               (1ULL << 0)             /* Valid/present bit */
 #define PTE_TABLE               (1ULL << 1)             /* Table descriptor bit */
 
-/* Memory attributes (bits 2-4) */
+/* Memory attributes (bits [4:2] = AttrIndx into MAIR_EL1)
+ * MAIR_EL1 layout (set in boot.S):
+ *   Index 0 = 0xFF  Normal memory (WB/WA cacheable)
+ *   Index 1 = 0x00  Device-nGnRnE
+ * AttrIndx values must match MAIR configuration! */
 #define PTE_ATTR_SHIFT          2
 #define PTE_ATTR_MASK           (0x7ULL << PTE_ATTR_SHIFT)
-#define PTE_ATTR_DEVICE_nGnRnE  (0x0ULL << PTE_ATTR_SHIFT)  /* Device, no gather, no reorder, no early ack */
-#define PTE_ATTR_DEVICE_nGnRE   (0x1ULL << PTE_ATTR_SHIFT)  /* Device, no gather, reorder ok */
-#define PTE_ATTR_DEVICE_GRE     (0x2ULL << PTE_ATTR_SHIFT)  /* Device, gather/reorder ok */
-#define PTE_ATTR_NORMAL         (0x4ULL << PTE_ATTR_SHIFT)  /* Normal (cacheable) memory */
+#define PTE_ATTR_NORMAL         (0x0ULL << PTE_ATTR_SHIFT)  /* MAIR index 0: Normal (cacheable) memory */
+#define PTE_ATTR_DEVICE_nGnRnE  (0x1ULL << PTE_ATTR_SHIFT)  /* MAIR index 1: Device, no gather/reorder/early-ack */
+#define PTE_ATTR_DEVICE_nGnRE   (0x1ULL << PTE_ATTR_SHIFT)  /* MAIR index 1: Device (alias) */
+#define PTE_ATTR_DEVICE_GRE     (0x1ULL << PTE_ATTR_SHIFT)  /* MAIR index 1: Device (alias) */
 
 /* Access control bits */
 #define PTE_SH_SHIFT            8
@@ -450,24 +454,23 @@ static inline void fut_vmem_set_reload_value(fut_vmem_context_t *ctx, uint64_t v
 
 /**
  * Convert root page table pointer to physical address.
- * Assumes the PGD pointer is a virtual kernel address.
+ * VA→PA: subtract the kernel virtual offset (KERN_VA_BASE - KERN_PA_BASE).
  */
 static inline uint64_t fut_vmem_root_to_phys(void *root) {
-    /* ARM64: strip the high bits to get physical address */
     uintptr_t virt = (uintptr_t)root;
-    if (virt >= KERNEL_VIRTUAL_BASE) {
-        return (uint64_t)(virt & ~KERNEL_VIRTUAL_BASE);
+    /* KERN_VA_BASE=0xFFFFFF8040000000, KERN_PA_BASE=0x40200000 */
+    if (virt >= 0xFFFFFF8040000000ULL) {
+        return (uint64_t)virt - (0xFFFFFF8040000000ULL - 0x40200000ULL);
     }
     return (uint64_t)virt;
 }
 
 /**
  * Convert physical address to root page table pointer.
- * Returns a kernel virtual address from a physical address.
+ * PA→VA: add the kernel virtual offset.
  */
 static inline void *fut_vmem_phys_to_root(uint64_t phys) {
-    /* ARM64 kernel space mapping: physical + KERNEL_VIRTUAL_BASE */
-    return (void *)(KERNEL_VIRTUAL_BASE | phys);
+    return (void *)(phys + (0xFFFFFF8040000000ULL - 0x40200000ULL));
 }
 
 /* ============================================================

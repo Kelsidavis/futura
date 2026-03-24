@@ -484,7 +484,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     const char *builtins[] = {
         "bg", "cd", "chmod", "clear", "date", "dd", "df", "dmesg", "echo", "edit", "hexdump", "lsof", "nc", "poweroff", "reboot", "seq", "sleep", "time", "wget", "exit", "export", "fg", "free",
         "help", "hostname", "id", "ifconfig", "jobs", "kill", "ls", "mount",
-        ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "history", "ip", "ln", "mktemp", "more", "nproc", "ping", "printf", "ps", "pwd", "read", "readlink", "set", "sha256sum", "source", "ss", "stat", "sync", "sysinfo", "test", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "wait", "which", "whoami", "xargs", "yes", NULL
+        ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "history", "ip", "ln", "mktemp", "more", "nproc", "nslookup", "ping", "printf", "ps", "pwd", "read", "readlink", "set", "sha256sum", "source", "ss", "stat", "sync", "sysinfo", "test", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "wait", "which", "whoami", "xargs", "yes", NULL
     };
 
     /* External commands we might have */
@@ -5836,6 +5836,88 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "stat") == 0) {
         cmd_stat(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "nslookup") == 0) {
+        /* DNS lookup via UDP socket to DNS server */
+        if (argc < 2) { write_str(2, "usage: nslookup <domain>\n"); return 1; }
+        /* Build DNS query packet */
+        uint8_t pkt[512];
+        int pos = 0;
+        /* Header: ID=0x1234, flags=0x0100 (standard query), qdcount=1 */
+        pkt[pos++] = 0x12; pkt[pos++] = 0x34; /* ID */
+        pkt[pos++] = 0x01; pkt[pos++] = 0x00; /* Flags: RD=1 */
+        pkt[pos++] = 0x00; pkt[pos++] = 0x01; /* QDCOUNT=1 */
+        pkt[pos++] = 0x00; pkt[pos++] = 0x00; /* ANCOUNT=0 */
+        pkt[pos++] = 0x00; pkt[pos++] = 0x00; /* NSCOUNT=0 */
+        pkt[pos++] = 0x00; pkt[pos++] = 0x00; /* ARCOUNT=0 */
+        /* Encode domain name */
+        const char *d = argv[1];
+        while (*d) {
+            const char *dot = d;
+            while (*dot && *dot != '.') dot++;
+            int len = (int)(dot - d);
+            pkt[pos++] = (uint8_t)len;
+            for (int i = 0; i < len; i++) pkt[pos++] = d[i];
+            d = dot;
+            if (*d == '.') d++;
+        }
+        pkt[pos++] = 0; /* Root label */
+        pkt[pos++] = 0x00; pkt[pos++] = 0x01; /* QTYPE=A */
+        pkt[pos++] = 0x00; pkt[pos++] = 0x01; /* QCLASS=IN */
+
+        /* Send to DNS server 10.0.2.3 (QEMU default) */
+        long fd = sys_call3(41, 2 /* AF_INET */, 2 /* SOCK_DGRAM */, 0);
+        if (fd < 0) { write_str(2, "nslookup: socket failed\n"); return 1; }
+
+        struct { uint16_t family; uint16_t port; uint32_t addr; uint8_t pad[8]; } sa;
+        sa.family = 2;
+        sa.port = (53 >> 8) | ((53 & 0xFF) << 8); /* htons(53) */
+        sa.addr = 0x0302000A; /* 10.0.2.3 in network byte order */
+        for (int i = 0; i < 8; i++) sa.pad[i] = 0;
+
+        sys_call6(44 /* sendto */, fd, (long)pkt, pos, 0, (long)&sa, 16);
+
+        /* Read response */
+        uint8_t resp[512];
+        long rn = sys_call6(45 /* recvfrom */, fd, (long)resp, 512, 0, 0, 0);
+        sys_close(fd);
+
+        if (rn > 12) {
+            int ancount = (resp[6] << 8) | resp[7];
+            if (ancount > 0) {
+                /* Skip query section to find answer */
+                int rp = 12;
+                /* Skip QNAME */
+                while (rp < (int)rn && resp[rp] != 0) {
+                    if ((resp[rp] & 0xC0) == 0xC0) { rp += 2; break; }
+                    rp += resp[rp] + 1;
+                }
+                if (resp[rp] == 0) rp++; /* null terminator */
+                rp += 4; /* QTYPE + QCLASS */
+                /* Parse first answer */
+                if (rp + 12 <= (int)rn) {
+                    /* Skip NAME (may be pointer) */
+                    if ((resp[rp] & 0xC0) == 0xC0) rp += 2;
+                    else { while (rp < (int)rn && resp[rp] != 0) rp += resp[rp] + 1; rp++; }
+                    int atype = (resp[rp] << 8) | resp[rp+1]; rp += 2;
+                    rp += 2; /* CLASS */ rp += 4; /* TTL */
+                    int rdlen = (resp[rp] << 8) | resp[rp+1]; rp += 2;
+                    if (atype == 1 && rdlen == 4 && rp + 4 <= (int)rn) {
+                        write_str(1, "Server:  10.0.2.3\nName:    ");
+                        write_str(1, argv[1]);
+                        write_str(1, "\nAddress: ");
+                        char nb[4]; int_to_str(resp[rp], nb, 4); write_str(1, nb); write_char(1, '.');
+                        int_to_str(resp[rp+1], nb, 4); write_str(1, nb); write_char(1, '.');
+                        int_to_str(resp[rp+2], nb, 4); write_str(1, nb); write_char(1, '.');
+                        int_to_str(resp[rp+3], nb, 4); write_str(1, nb); write_char(1, '\n');
+                        return 0;
+                    }
+                }
+            }
+            write_str(2, "nslookup: no answer\n");
+        } else {
+            write_str(2, "nslookup: no response from DNS server\n");
+        }
+        return 1;
     } else if (strcmp_simple(argv[0], "sha256sum") == 0) {
         /* Simple SHA-256 hash of file contents */
         if (argc < 2) { write_str(2, "usage: sha256sum <file>\n"); return 1; }
@@ -6267,7 +6349,8 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "fg") == 0 ||
             strcmp_simple(cmd, "bg") == 0 ||
             strcmp_simple(cmd, "read") == 0 ||
-            strcmp_simple(cmd, "set") == 0);
+            strcmp_simple(cmd, "set") == 0 ||
+            strcmp_simple(cmd, "nslookup") == 0);
 }
 
 /* Parse command line into pipeline stages separated by '|' */
@@ -6935,7 +7018,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.4                   |\n");
-    write_str(1, "|   71 built-in commands — type 'help'     |\n");
+    write_str(1, "|   72 built-in commands — type 'help'     |\n");
     write_str(1, "|   nano editor available at /bin/nano      |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");

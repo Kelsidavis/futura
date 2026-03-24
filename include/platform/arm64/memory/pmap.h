@@ -26,8 +26,9 @@
  *   0x0000000000400000 - ...  User code/data/stack
  */
 
-/* Kernel physical base (where QEMU virt loads the kernel ELF) */
-#define KERN_PA_BASE      0x40000000ULL
+/* Kernel physical base — QEMU virt places DTB at RAM base (0x40000000) and
+ * loads the kernel Image at the next 2MB boundary (0x40200000). */
+#define KERN_PA_BASE      0x40200000ULL
 
 /* Kernel virtual base (where kernel is linked) */
 #define KERN_VA_BASE      0xFFFFFF8040000000ULL

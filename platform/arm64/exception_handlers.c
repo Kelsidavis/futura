@@ -20,6 +20,13 @@ extern void fut_schedule(void);
 /* Forward declarations */
 extern void fut_serial_puts(const char *str);
 extern void fut_serial_putc(char c);
+struct fut_uaccess_window {
+    const void *user_ptr;
+    unsigned long length;
+    int to_user;
+    void *resume;
+};
+extern const struct fut_uaccess_window *fut_uaccess_window_current(void);
 extern int64_t arm64_syscall_dispatch(uint64_t syscall_num,
                                       uint64_t arg0, uint64_t arg1,
                                       uint64_t arg2, uint64_t arg3,
@@ -131,14 +138,11 @@ static void handle_svc(fut_interrupt_frame_t *frame) {
     /* Dispatch to syscall handler */
     int64_t result = arm64_syscall_dispatch(syscall_num, arg0, arg1, arg2, arg3, arg4, arg5);
 
-    /* Store return value in x0, sanitize unused argument registers to
-     * prevent kernel data from leaking to userspace via registers. */
+    /* Store return value in x0.  The ARM64 syscall ABI preserves x1-x7
+     * across system calls (only x0 is the return value).  Clearing them
+     * would violate the ABI — compilers keep live values in x1-x7 across
+     * SVC instructions.  x8 (syscall number) may be clobbered. */
     frame->x[0] = (uint64_t)result;
-    frame->x[1] = 0;
-    frame->x[2] = 0;
-    frame->x[3] = 0;
-    frame->x[4] = 0;
-    frame->x[5] = 0;
     frame->x[8] = 0;  /* Clear syscall number register */
 
     /* Check for pending signals before returning to userspace
@@ -271,14 +275,21 @@ void arm64_exception_dispatch(fut_interrupt_frame_t *frame) {
      * handling one at EL1, print diagnostics and halt immediately. */
     int depth = __atomic_add_fetch(&exception_depth, 1, __ATOMIC_SEQ_CST);
     if (depth > 1 && (frame->pstate & 0xF) != 0) {
-        /* Nested exception from EL1 — double fault */
-        fut_serial_puts("\n*** DOUBLE FAULT ***\n");
-        fut_printf("  PC=0x%016llx ESR=0x%016llx FAR=0x%016llx\n",
-                   (unsigned long long)frame->pc,
-                   (unsigned long long)frame->esr,
-                   (unsigned long long)frame->far);
-        __asm__ volatile("msr daifset, #15");
-        for (;;) __asm__ volatile("wfi");
+        /* Nested exception from EL1.  If there's an active uaccess window
+         * (copy_from/to_user in progress), this is an expected fault that
+         * the page fault handler can recover from — not a real double fault. */
+        const struct fut_uaccess_window *w = fut_uaccess_window_current();
+        if (!w || !w->resume) {
+            /* No uaccess window — genuine double fault */
+            fut_serial_puts("\n*** DOUBLE FAULT ***\n");
+            fut_printf("  PC=0x%016llx ESR=0x%016llx FAR=0x%016llx\n",
+                       (unsigned long long)frame->pc,
+                       (unsigned long long)frame->esr,
+                       (unsigned long long)frame->far);
+            __asm__ volatile("msr daifset, #15");
+            for (;;) __asm__ volatile("wfi");
+        }
+        /* Uaccess window active — let the page fault handler recover */
     }
 
     uint64_t esr = frame->esr;
@@ -341,7 +352,7 @@ void arm64_exception_dispatch(fut_interrupt_frame_t *frame) {
             }
             /* Try to handle as page fault */
             if (fut_trap_handle_page_fault(frame)) {
-                return;  /* Handled successfully */
+                break;  /* Handled successfully */
             }
 
             /* Unhandled data abort - signal task with SIGSEGV */
@@ -380,19 +391,19 @@ void arm64_exception_dispatch(fut_interrupt_frame_t *frame) {
             /* EL0 data abort not handled by page_fault.c */
             arm64_deliver_exception_signal(frame, SIGSEGV, SEGV_MAPERR,
                                            (void *)(uintptr_t)frame->far);
-            return;
+            break;
 
         case ESR_EC_IABT_EL0:
             fut_serial_puts("[EXCEPTION] Instruction abort from lower EL (userspace)\n");
             /* Instruction fetch fault: page not mapped or not executable.
              * Try demand-paging first (executable mapping may not be loaded). */
             if (fut_trap_handle_page_fault(frame)) {
-                return;
+                break;
             }
             /* Unresolvable instruction abort → SIGSEGV */
             arm64_deliver_exception_signal(frame, SIGSEGV, SEGV_MAPERR,
                                            (void *)(uintptr_t)frame->pc);
-            return;
+            break;
 
         case ESR_EC_IABT_EL1:
             fut_serial_puts("[EXCEPTION] Instruction abort from same EL (kernel)\n");
@@ -434,7 +445,7 @@ void arm64_exception_dispatch(fut_interrupt_frame_t *frame) {
             if ((frame->pstate & 0xF) == 0) {
                 arm64_deliver_exception_signal(frame, SIGILL, ILL_ILLOPC,
                                                (void *)(uintptr_t)frame->pc);
-                return;
+                break;
             }
             handle_unknown(frame);
             break;

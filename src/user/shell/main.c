@@ -427,7 +427,7 @@ static size_t common_prefix_len(const char *s1, const char *s2) {
 static void complete_command(char *buf, size_t *pos, size_t max_len) {
     /* List of builtin commands */
     const char *builtins[] = {
-        "bg", "cd", "clear", "echo", "exit", "export", "fg", "help",
+        "bg", "cd", "clear", "date", "echo", "exit", "export", "fg", "help",
         "jobs", "ls", "pwd", "test", "uname", "whoami", NULL
     };
 
@@ -971,10 +971,70 @@ static void cmd_echo(int argc, char *argv[]) {
 
 /* Built-in: uname */
 static void cmd_uname(int argc, char *argv[]) {
-    (void)argc;
-    (void)argv;
+    /* uname [-a|-s|-n|-r|-m] */
+    int show_all = 0, show_sys = 0, show_node = 0, show_rel = 0, show_mach = 0;
 
-    write_str(1, "Futura\n");
+    if (argc <= 1) {
+        show_sys = 1;
+    } else {
+        for (int i = 1; i < argc; i++) {
+            if (argv[i][0] == '-') {
+                for (int j = 1; argv[i][j]; j++) {
+                    switch (argv[i][j]) {
+                        case 'a': show_all = 1; break;
+                        case 's': show_sys = 1; break;
+                        case 'n': show_node = 1; break;
+                        case 'r': show_rel = 1; break;
+                        case 'm': show_mach = 1; break;
+                    }
+                }
+            }
+        }
+    }
+
+    if (show_all) { show_sys = show_node = show_rel = show_mach = 1; }
+
+    int first = 1;
+    if (show_sys)  { if (!first) write_char(1, ' '); write_str(1, "Futura"); first = 0; }
+    if (show_node) { if (!first) write_char(1, ' '); write_str(1, "futura"); first = 0; }
+    if (show_rel)  { if (!first) write_char(1, ' '); write_str(1, "0.3.1"); first = 0; }
+    if (show_mach) { if (!first) write_char(1, ' '); write_str(1, "aarch64"); first = 0; }
+    write_char(1, '\n');
+}
+
+/* Forward declaration */
+static void int_to_str(long n, char *buf, int size);
+
+/* Built-in: date - Show uptime (no RTC) */
+static void cmd_date(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    /* Use clock_gettime(CLOCK_MONOTONIC) to get uptime */
+    struct { long tv_sec; long tv_nsec; } ts = {0, 0};
+    long ret = sys_call2(228 /* clock_gettime */, 1 /* CLOCK_MONOTONIC */, (long)&ts);
+    if (ret == 0) {
+        char buf[64];
+        long secs = ts.tv_sec;
+        long hours = secs / 3600;
+        long mins = (secs % 3600) / 60;
+        long s = secs % 60;
+        /* Format: "up Xh Ym Zs" */
+        int pos = 0;
+        buf[pos++] = 'u'; buf[pos++] = 'p'; buf[pos++] = ' ';
+        if (hours > 0) {
+            char tmp[16]; int_to_str(hours, tmp, 16);
+            for (int i = 0; tmp[i]; i++) buf[pos++] = tmp[i];
+            buf[pos++] = 'h'; buf[pos++] = ' ';
+        }
+        { char tmp[16]; int_to_str(mins, tmp, 16);
+          for (int i = 0; tmp[i]; i++) buf[pos++] = tmp[i]; }
+        buf[pos++] = 'm'; buf[pos++] = ' ';
+        { char tmp[16]; int_to_str(s, tmp, 16);
+          for (int i = 0; tmp[i]; i++) buf[pos++] = tmp[i]; }
+        buf[pos++] = 's'; buf[pos++] = '\n'; buf[pos] = '\0';
+        write_str(1, buf);
+    } else {
+        write_str(1, "date: clock_gettime failed\n");
+    }
 }
 
 /* Built-in: whoami */
@@ -3460,6 +3520,9 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "whoami") == 0) {
         cmd_whoami(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "date") == 0) {
+        cmd_date(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "env") == 0) {
         cmd_env(argc, argv);
         return 0;
@@ -3563,6 +3626,7 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "echo") == 0 ||
             strcmp_simple(cmd, "clear") == 0 ||
             strcmp_simple(cmd, "uname") == 0 ||
+            strcmp_simple(cmd, "date") == 0 ||
             strcmp_simple(cmd, "whoami") == 0 ||
             strcmp_simple(cmd, "env") == 0 ||
             strcmp_simple(cmd, "export") == 0 ||

@@ -449,11 +449,20 @@ extern void gic_handle_irq(void);   /* GIC interrupt dispatcher */
 
 /* ARM64 IRQ Handler - called from IRQ exception vector */
 void arm64_handle_irq(fut_interrupt_frame_t *frame) {
-    (void)frame;  /* Frame available if needed for context */
-
     /* Acknowledge and handle IRQ via GIC */
-    /* The GIC will determine which interrupt fired and dispatch to appropriate handler */
     gic_handle_irq();
+
+    /* If returning to EL0 (userspace), check for pending signals.
+     * SPSR_EL1 bits [3:0] encode the exception level we're returning to.
+     * 0b0000 = EL0t (user mode). */
+    if ((frame->pstate & 0xF) == 0) {
+        struct fut_task *task = fut_task_current();
+        if (task) {
+            fut_current_frame = frame;
+            fut_signal_deliver(task, frame);
+            fut_current_frame = NULL;
+        }
+    }
 }
 
 /* ARM64 SError (System Error) Handler */

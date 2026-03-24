@@ -914,13 +914,12 @@ void fut_platform_udelay(uint32_t usec) {
 void fut_platform_mem_init(uint64_t mem_lower, uint64_t mem_upper) {
     (void)mem_lower;
     (void)mem_upper;
-    /* ARM64 memory management initialization handled by arm64_enable_mmu() */
-    fut_serial_puts("[MEM] ARM64 memory management stub\n");
+    /* ARM64 memory management handled by arm64_enable_mmu() in boot.S */
 }
 
 uint64_t fut_platform_get_mem_size(void) {
-    /* Phase 2: Return fixed size, should read from device tree */
-    return 128 * 1024 * 1024;  /* 128 MB */
+    /* QEMU virt machine typically provides 512MB; read from DTB in future */
+    return 512 * 1024 * 1024;  /* 512 MB (matches QEMU -m 512M) */
 }
 
 void fut_platform_tlb_flush(void) {
@@ -980,18 +979,54 @@ uint64_t fut_platform_get_dtb(void) {
  * ============================================================ */
 
 void fut_platform_dump_registers(struct fut_interrupt_frame *frame) {
-    fut_serial_puts("[REGS] ARM64 register dump:\n");
-    if (frame) {
-        fut_serial_puts("  PC=");
-        fut_serial_puts("\n");
-        fut_serial_puts("  SP=");
-        fut_serial_puts("\n");
+    if (!frame) {
+        fut_printf("[REGS] ARM64 register dump: no frame\n");
+        return;
+    }
+    fut_printf("[REGS] ARM64 register dump:\n");
+    fut_printf("  PC  = 0x%016llx  PSTATE = 0x%016llx\n",
+               (unsigned long long)frame->pc, (unsigned long long)frame->pstate);
+    fut_printf("  SP  = 0x%016llx  ESR    = 0x%016llx\n",
+               (unsigned long long)frame->sp, (unsigned long long)frame->esr);
+    fut_printf("  FAR = 0x%016llx\n", (unsigned long long)frame->far);
+    for (int i = 0; i < 31; i += 2) {
+        if (i + 1 < 31) {
+            fut_printf("  x%-2d = 0x%016llx  x%-2d = 0x%016llx\n",
+                       i, (unsigned long long)frame->x[i],
+                       i+1, (unsigned long long)frame->x[i+1]);
+        } else {
+            fut_printf("  x%-2d = 0x%016llx\n",
+                       i, (unsigned long long)frame->x[i]);
+        }
     }
 }
 
 void fut_platform_stack_trace(int max_frames) {
-    fut_serial_puts("[TRACE] ARM64 stack trace not implemented\n");
-    (void)max_frames;
+    if (max_frames <= 0) max_frames = 16;
+
+    /* ARM64 frame pointer chain: x29 (FP) points to the previous frame,
+     * x30 (LR) is saved at FP+8. Each frame record is: [prev_fp, lr]. */
+    uint64_t fp;
+    __asm__ volatile("mov %0, x29" : "=r"(fp));
+
+    fut_printf("[TRACE] ARM64 stack trace (max %d frames):\n", max_frames);
+
+    for (int i = 0; i < max_frames && fp != 0; i++) {
+        /* Validate frame pointer is in kernel address range and aligned */
+        if (fp < 0xFFFFFF8000000000ULL || (fp & 0xF) != 0) {
+            fut_printf("  #%d  <invalid FP: 0x%016llx>\n", i, (unsigned long long)fp);
+            break;
+        }
+
+        /* Read saved LR (return address) at fp+8 */
+        uint64_t lr = *(volatile uint64_t *)(fp + 8);
+        uint64_t prev_fp = *(volatile uint64_t *)fp;
+
+        fut_printf("  #%d  0x%016llx\n", i, (unsigned long long)lr);
+
+        /* Walk to previous frame */
+        fp = prev_fp;
+    }
 }
 
 /* ============================================================

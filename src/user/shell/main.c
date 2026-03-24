@@ -453,7 +453,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     const char *builtins[] = {
         "bg", "cd", "chmod", "clear", "date", "dd", "df", "dmesg", "echo", "edit", "hexdump", "lsof", "nc", "poweroff", "reboot", "seq", "sleep", "time", "wget", "exit", "export", "fg", "free",
         "help", "hostname", "id", "ifconfig", "jobs", "kill", "ls", "mount",
-        ".", "basename", "dirname", "du", "exec", "false", "history", "ln", "more", "printf", "ps", "pwd", "read", "readlink", "set", "source", "stat", "sync", "test", "tree", "true", "type", "umask", "uname", "uptime", "version", "wait", "which", "whoami", "xargs", NULL
+        ".", "basename", "dirname", "du", "exec", "false", "history", "ln", "more", "printf", "ps", "pwd", "read", "readlink", "set", "source", "stat", "sync", "sysinfo", "test", "tree", "true", "type", "umask", "uname", "uptime", "version", "wait", "which", "whoami", "xargs", NULL
     };
 
     /* External commands we might have */
@@ -2411,6 +2411,77 @@ static void cmd_history(int argc, char *argv[]) {
             write_char(1, '\n');
         }
     }
+}
+
+/* Built-in: sysinfo — show comprehensive system summary */
+static void cmd_sysinfo(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    /* Kernel version */
+    write_str(1, "\033[1mSystem Information\033[0m\n");
+    int fd = sys_open("/proc/version", O_RDONLY, 0);
+    if (fd >= 0) {
+        char buf[256]; ssize_t n = sys_read(fd, buf, 255);
+        sys_close(fd); if (n > 0) { buf[n] = '\0'; write_str(1, "  Kernel:  "); write_str(1, buf); }
+    }
+    /* CPU */
+    fd = sys_open("/proc/cpuinfo", O_RDONLY, 0);
+    if (fd >= 0) {
+        char buf[512]; ssize_t n = sys_read(fd, buf, 511);
+        sys_close(fd);
+        if (n > 0) {
+            buf[n] = '\0';
+            /* Extract CPU part line */
+            char *p = buf;
+            while (*p) {
+                if (p[0] == 'C' && p[1] == 'P' && p[2] == 'U' && p[3] == ' ' && p[4] == 'p') {
+                    write_str(1, "  ");
+                    while (*p && *p != '\n') { write_char(1, *p++); }
+                    write_char(1, '\n');
+                    break;
+                }
+                while (*p && *p != '\n') p++;
+                if (*p == '\n') p++;
+            }
+        }
+    }
+    /* Memory */
+    fd = sys_open("/proc/meminfo", O_RDONLY, 0);
+    if (fd >= 0) {
+        char buf[256]; ssize_t n = sys_read(fd, buf, 255);
+        sys_close(fd);
+        if (n > 0) { buf[n] = '\0'; write_str(1, "  "); /* First line = MemTotal */
+            for (int i = 0; buf[i] && buf[i] != '\n'; i++) write_char(1, buf[i]);
+            write_char(1, '\n');
+        }
+    }
+    /* Uptime */
+    fd = sys_open("/proc/uptime", O_RDONLY, 0);
+    if (fd >= 0) {
+        char buf[32]; ssize_t n = sys_read(fd, buf, 31);
+        sys_close(fd);
+        if (n > 0) { buf[n] = '\0'; write_str(1, "  Uptime:  "); write_str(1, buf); }
+    }
+    /* Process count */
+    int pcount = 0;
+    fd = sys_open("/proc", O_RDONLY, 0);
+    if (fd >= 0) {
+        char db[2048]; long nr;
+        while ((nr = sys_getdents64(fd, db, sizeof(db))) > 0) {
+            char *ptr = db;
+            while (ptr < db + nr) {
+                unsigned short reclen = *(unsigned short *)(ptr + 16);
+                char *name = ptr + 19;
+                if (name[0] >= '1' && name[0] <= '9') pcount++;
+                ptr += reclen;
+            }
+        }
+        sys_close(fd);
+    }
+    write_str(1, "  Tasks:   ");
+    char nbuf[8]; int_to_str(pcount, nbuf, 8);
+    write_str(1, nbuf); write_str(1, " running\n");
+    /* Shell */
+    write_str(1, "  Shell:   Futura Shell v0.4 (60 builtins)\n");
 }
 
 /* Helper: count lines, words, and bytes in a file descriptor */
@@ -5492,6 +5563,9 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "dd") == 0) {
         cmd_dd(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "sysinfo") == 0) {
+        cmd_sysinfo(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "wait") == 0) {
         /* Wait for background jobs to finish */
         if (argc > 1) {
@@ -5721,6 +5795,7 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "chmod") == 0 ||
             strcmp_simple(cmd, "cp") == 0 ||
             strcmp_simple(cmd, "sync") == 0 ||
+            strcmp_simple(cmd, "sysinfo") == 0 ||
             strcmp_simple(cmd, "wait") == 0 ||
             strcmp_simple(cmd, "umask") == 0 ||
             strcmp_simple(cmd, "exec") == 0 ||
@@ -6425,7 +6500,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.4                   |\n");
-    write_str(1, "|   60 built-in commands — type 'help'     |\n");
+    write_str(1, "|   61 built-in commands — type 'help'     |\n");
     write_str(1, "|   nano editor available at /bin/nano      |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");

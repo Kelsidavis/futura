@@ -87,8 +87,16 @@ long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset) 
         return -EINVAL;
     }
 
-    /* Validate prot flags don't contain unsupported bits.
-     * PROT_SEM (0x8) is accepted by Linux but ignored — include it as valid. */
+    /* W^X enforcement: deny simultaneous write+execute unless task has
+     * explicit capability. Prevents code injection via writable+executable pages. */
+    if ((prot & PROT_WRITE) && (prot & PROT_EXEC)) {
+        fut_task_t *wxchk = fut_task_current();
+        if (!wxchk || !(wxchk->cap_effective & (1ULL << 23 /* CAP_SYS_RAWIO */))) {
+            prot &= ~PROT_EXEC;  /* Strip EXEC from RWX — downgrade to RW */
+        }
+    }
+
+    /* Validate prot flags don't contain unsupported bits. */
     int valid_prot = PROT_NONE | PROT_READ | PROT_WRITE | PROT_EXEC | PROT_SEM;
     if (prot & ~valid_prot) {
         int invalid_bits = prot & ~valid_prot;

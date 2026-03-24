@@ -216,9 +216,17 @@ fut_mm_t *fut_mm_create(void) {
     mm->brk_current = 0;
     mm->heap_limit = USER_VMA_MAX;
     mm->heap_mapped_end = 0;
-    mm->mmap_base = USER_MMAP_BASE;
+    /* ASLR: randomize mmap_base by up to 256MB to make address layout
+     * unpredictable. Uses kernel tick counter as entropy source. */
+    {
+        extern uint64_t fut_get_ticks(void);
+        uint64_t entropy = fut_get_ticks();
+        entropy = entropy * 6364136223846793005ULL + 1442695040888963407ULL;
+        uint64_t offset = (entropy >> 12) & 0xFFFFF000ULL; /* page-aligned, up to ~256MB */
+        mm->mmap_base = USER_MMAP_BASE + offset;
+    }
     mm->vma_list = NULL;
-    mm->locked_vm = 0;  /* Phase 3: Initialize locked pages counter */
+    mm->locked_vm = 0;
     mm_create_printf("[MM-CREATE] Line 172: all fields set\n");
 
     /* Restore original CR3 before returning */

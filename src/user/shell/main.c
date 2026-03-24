@@ -442,7 +442,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     const char *builtins[] = {
         "bg", "cd", "chmod", "clear", "date", "dd", "df", "dmesg", "echo", "edit", "hexdump", "lsof", "nc", "poweroff", "reboot", "seq", "sleep", "time", "wget", "exit", "export", "fg", "free",
         "help", "hostname", "id", "ifconfig", "jobs", "kill", "ls", "mount",
-        ".", "basename", "dirname", "du", "history", "ln", "ps", "pwd", "readlink", "source", "stat", "test", "tree", "uname", "uptime", "version", "which", "whoami", NULL
+        ".", "basename", "dirname", "du", "false", "history", "ln", "printf", "ps", "pwd", "readlink", "source", "stat", "test", "tree", "true", "uname", "uptime", "version", "which", "whoami", NULL
     };
 
     /* External commands we might have */
@@ -5126,6 +5126,33 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "dd") == 0) {
         cmd_dd(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "true") == 0) {
+        return 0;
+    } else if (strcmp_simple(argv[0], "false") == 0) {
+        return 1;
+    } else if (strcmp_simple(argv[0], "printf") == 0) {
+        /* Simple printf: handles %s and literal text, \n \t escapes */
+        if (argc < 2) return 0;
+        const char *fmt = argv[1];
+        int ai = 2;
+        for (int i = 0; fmt[i]; i++) {
+            if (fmt[i] == '\\' && fmt[i+1]) {
+                i++;
+                if (fmt[i] == 'n') write_char(1, '\n');
+                else if (fmt[i] == 't') write_char(1, '\t');
+                else if (fmt[i] == '\\') write_char(1, '\\');
+                else { write_char(1, '\\'); write_char(1, fmt[i]); }
+            } else if (fmt[i] == '%' && fmt[i+1] == 's' && ai < argc) {
+                write_str(1, argv[ai++]);
+                i++;
+            } else if (fmt[i] == '%' && fmt[i+1] == 'd' && ai < argc) {
+                write_str(1, argv[ai++]);
+                i++;
+            } else {
+                write_char(1, fmt[i]);
+            }
+        }
+        return 0;
     } else if (strcmp_simple(argv[0], "basename") == 0) {
         if (argc < 2) { write_str(2, "usage: basename <path>\n"); return 1; }
         const char *p = argv[1], *last = p;
@@ -5232,6 +5259,9 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "stat") == 0 ||
             strcmp_simple(cmd, "chmod") == 0 ||
             strcmp_simple(cmd, "cp") == 0 ||
+            strcmp_simple(cmd, "true") == 0 ||
+            strcmp_simple(cmd, "false") == 0 ||
+            strcmp_simple(cmd, "printf") == 0 ||
             strcmp_simple(cmd, "basename") == 0 ||
             strcmp_simple(cmd, "dirname") == 0 ||
             strcmp_simple(cmd, "dd") == 0 ||
@@ -5925,7 +5955,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.3                   |\n");
-    write_str(1, "|   48 built-in commands — type 'help'     |\n");
+    write_str(1, "|   51 built-in commands — type 'help'     |\n");
     write_str(1, "|   nano editor available at /bin/nano      |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");

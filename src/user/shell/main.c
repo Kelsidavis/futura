@@ -484,7 +484,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     const char *builtins[] = {
         "bg", "cd", "chmod", "clear", "date", "dd", "df", "dmesg", "echo", "edit", "hexdump", "lsof", "nc", "poweroff", "reboot", "seq", "sleep", "time", "wget", "exit", "export", "fg", "free",
         "help", "hostname", "id", "ifconfig", "jobs", "kill", "ls", "mount",
-        ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "history", "ln", "mktemp", "more", "nproc", "ping", "printf", "ps", "pwd", "read", "readlink", "set", "source", "stat", "sync", "sysinfo", "test", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "wait", "which", "whoami", "xargs", "yes", NULL
+        ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "history", "ip", "ln", "mktemp", "more", "nproc", "ping", "printf", "ps", "pwd", "read", "readlink", "set", "source", "ss", "stat", "sync", "sysinfo", "test", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "wait", "which", "whoami", "xargs", "yes", NULL
     };
 
     /* External commands we might have */
@@ -1648,12 +1648,64 @@ static void cmd_ping(int argc, char *argv[]) {
     sys_close(fd);
 }
 
-/* Built-in: nc - Simple netcat (connect to host:port) */
+/* Built-in: nc - Simple netcat (connect or listen) */
 static void cmd_nc(int argc, char *argv[]) {
+    int listen_mode = 0;
+    int arg_start = 1;
+
+    if (argc > 1 && argv[1][0] == '-' && argv[1][1] == 'l') {
+        listen_mode = 1;
+        arg_start = 2;
+    }
+
+    if (listen_mode) {
+        /* nc -l <port> — listen for incoming connection */
+        if (arg_start >= argc) {
+            write_str(2, "usage: nc -l <port>\n");
+            return;
+        }
+        int port = 0;
+        for (int i = 0; argv[arg_start][i]; i++)
+            port = port * 10 + (argv[arg_start][i] - '0');
+
+        long sfd = sys_call3(41 /* socket */, 2, 1 /* SOCK_STREAM */, 0);
+        if (sfd < 0) { write_str(2, "nc: socket failed\n"); return; }
+
+        struct { uint16_t family; uint16_t port; uint32_t addr; uint8_t pad[8]; } sa;
+        sa.family = 2; sa.port = (uint16_t)(((port >> 8) & 0xFF) | ((port & 0xFF) << 8));
+        sa.addr = 0; /* INADDR_ANY */
+        for (int i = 0; i < 8; i++) sa.pad[i] = 0;
+
+        if (sys_call3(49 /* bind */, sfd, (long)&sa, 16) < 0) {
+            write_str(2, "nc: bind failed\n"); sys_close(sfd); return;
+        }
+        if (sys_call2(50 /* listen */, sfd, 1) < 0) {
+            write_str(2, "nc: listen failed\n"); sys_close(sfd); return;
+        }
+
+        write_str(1, "Listening on port ");
+        char nb[8]; int_to_str(port, nb, 8); write_str(1, nb);
+        write_str(1, "...\n");
+
+        long cfd = sys_call3(43 /* accept */, sfd, 0, 0);
+        sys_close(sfd);
+        if (cfd < 0) { write_str(2, "nc: accept failed\n"); return; }
+
+        write_str(1, "Connection accepted\n");
+        /* Relay data between socket and stdout */
+        char buf[256];
+        long n;
+        while ((n = sys_read(cfd, buf, sizeof(buf))) > 0) {
+            sys_write(1, buf, n);
+        }
+        sys_close(cfd);
+        return;
+    }
+
     if (argc < 3) {
-        write_str(1, "usage: nc <host> <port>\n");
-        write_str(1, "  Connect to a TCP server and relay stdin/stdout.\n");
-        write_str(1, "  Example: nc 10.0.2.2 80\n");
+        write_str(1, "usage: nc [-l] <host> <port>\n");
+        write_str(1, "  nc host port     — Connect to TCP server\n");
+        write_str(1, "  nc -l port       — Listen for incoming connection\n");
         return;
     }
 
@@ -5784,6 +5836,38 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "stat") == 0) {
         cmd_stat(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "ss") == 0) {
+        /* ss — show socket statistics from /proc/net/tcp and /proc/net/udp */
+        write_str(1, "Netid  State      Local Address:Port    Peer Address:Port\n");
+        int fd = sys_open("/proc/net/tcp", O_RDONLY, 0);
+        if (fd >= 0) {
+            char buf[512];
+            ssize_t n = sys_read(fd, buf, sizeof(buf) - 1);
+            sys_close(fd);
+            if (n > 0) { buf[n] = '\0'; write_str(1, buf); }
+        }
+        fd = sys_open("/proc/net/udp", O_RDONLY, 0);
+        if (fd >= 0) {
+            char buf[512];
+            ssize_t n = sys_read(fd, buf, sizeof(buf) - 1);
+            sys_close(fd);
+            if (n > 0) { buf[n] = '\0'; write_str(1, buf); }
+        }
+        return 0;
+    } else if (strcmp_simple(argv[0], "ip") == 0) {
+        /* ip addr — show IP configuration */
+        if (argc > 1 && (strcmp_simple(argv[1], "addr") == 0 || strcmp_simple(argv[1], "a") == 0)) {
+            write_str(1, "1: lo: <LOOPBACK,UP> mtu 65536\n");
+            write_str(1, "    inet 127.0.0.1/8 scope host lo\n");
+            write_str(1, "2: eth0: <BROADCAST,MULTICAST,UP> mtu 1500\n");
+            write_str(1, "    inet 10.0.2.15/24 brd 10.0.2.255 scope global eth0\n");
+        } else if (argc > 1 && (strcmp_simple(argv[1], "route") == 0 || strcmp_simple(argv[1], "r") == 0)) {
+            write_str(1, "default via 10.0.2.2 dev eth0\n");
+            write_str(1, "10.0.2.0/24 dev eth0 proto kernel scope link\n");
+        } else {
+            write_str(1, "usage: ip addr|route\n");
+        }
+        return 0;
     } else if (strcmp_simple(argv[0], "ping") == 0) {
         cmd_ping(argc, argv);
         return 0;
@@ -6113,6 +6197,8 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "source") == 0 ||
             (cmd[0] == '.' && cmd[1] == '\0') ||
             strcmp_simple(cmd, "xargs") == 0 ||
+            strcmp_simple(cmd, "ss") == 0 ||
+            strcmp_simple(cmd, "ip") == 0 ||
             strcmp_simple(cmd, "ping") == 0 ||
             strcmp_simple(cmd, "yes") == 0 ||
             strcmp_simple(cmd, "mktemp") == 0 ||
@@ -6817,7 +6903,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.4                   |\n");
-    write_str(1, "|   68 built-in commands — type 'help'     |\n");
+    write_str(1, "|   70 built-in commands — type 'help'     |\n");
     write_str(1, "|   nano editor available at /bin/nano      |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");

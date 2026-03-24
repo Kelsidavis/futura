@@ -1273,7 +1273,7 @@ void fut_kernel_main(void) {
                   "VERSION=\"0.4.0\"\n"
                   "ID=futura\n"
                   "VERSION_ID=0.4.0\n"
-                  "PRETTY_NAME=\"Futura OS 1.0\"\n"
+                  "PRETTY_NAME=\"Futura OS 0.4.0\"\n"
                   "HOME_URL=\"https://github.com/netrunner-labs/futura\"\n");
         ETC_WRITE("/etc/profile",
                   "# Futura OS system profile\n"
@@ -1294,7 +1294,7 @@ void fut_kernel_main(void) {
                   "\n"
                   "  Welcome to Futura OS 0.4.0 (aarch64)\n"
                   "\n"
-                  "  * 60 shell commands — type 'help'\n"
+                  "  * 65 shell commands — type 'help'\n"
                   "  * Glob expansion: ls *.txt, cat /etc/*\n"
                   "  * Command substitution: VAR=$(cmd), echo $(date)\n"
                   "  * Scripting: for/while/if, source, pipes, redirects\n"
@@ -1314,7 +1314,6 @@ void fut_kernel_main(void) {
         int run_mount_ret = fut_vfs_mount(NULL, "/run", "ramfs", 0, NULL, FUT_INVALID_HANDLE);
         if (run_mount_ret == 0) {
             fut_printf("[INIT] ✓ Mounted ramfs at /run\n");
-            /* Create standard subdirectories after mount */
             fut_vfs_mkdir("/run/lock",    01777);
             fut_vfs_mkdir("/run/user",    0755);
             fut_vfs_mkdir("/run/user/0",  0700);
@@ -1322,6 +1321,14 @@ void fut_kernel_main(void) {
             fut_printf("[WARN] ✗ Failed to mount ramfs at /run (error %d)\n", run_mount_ret);
         }
     }
+
+    /* Create standard directory hierarchy */
+    fut_vfs_mkdir("/root", 0700);
+    fut_vfs_mkdir("/home", 0755);
+    fut_vfs_mkdir("/var", 0755);
+    fut_vfs_mkdir("/var/log", 0755);
+    fut_vfs_mkdir("/var/tmp", 01777);
+    fut_vfs_mkdir("/opt", 0755);
 
     bool run_async_selftests = boot_flag_enabled("async-tests", false);
 

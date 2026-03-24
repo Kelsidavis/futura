@@ -439,7 +439,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     const char *builtins[] = {
         "bg", "cd", "chmod", "clear", "date", "dd", "df", "dmesg", "echo", "edit", "hexdump", "lsof", "nc", "poweroff", "reboot", "seq", "sleep", "time", "wget", "exit", "export", "fg", "free",
         "help", "hostname", "id", "ifconfig", "jobs", "kill", "ls", "mount",
-        "ps", "pwd", "test", "uname", "uptime", "version", "whoami", NULL
+        "ps", "pwd", "stat", "test", "uname", "uptime", "version", "whoami", NULL
     };
 
     /* External commands we might have */
@@ -4193,6 +4193,61 @@ static void cmd_dd(int argc, char *argv[]) {
     write_str(2, nbuf); write_str(2, " bytes copied\n");
 }
 
+/* Built-in: stat - Show file information */
+static void cmd_stat(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: stat <file>\n");
+        return;
+    }
+    struct stat st;
+    long ret = sys_call2(__NR_stat, (long)argv[1], (long)&st);
+    if (ret < 0) {
+        write_str(2, "stat: ");
+        write_str(2, argv[1]);
+        write_str(2, ": cannot stat\n");
+        return;
+    }
+    write_str(1, "  File: ");
+    write_str(1, argv[1]);
+    write_str(1, "\n  Size: ");
+    char numbuf[20];
+    int_to_str((long)st.st_size, numbuf, 20);
+    write_str(1, numbuf);
+    write_str(1, "\tBlocks: ");
+    int_to_str((long)st.st_blocks, numbuf, 20);
+    write_str(1, numbuf);
+    write_str(1, "\n");
+    /* Mode */
+    char modebuf[11];
+    format_mode(st.st_mode, modebuf);
+    write_str(1, "Access: (0");
+    /* Octal permission digits */
+    char oct[4];
+    oct[0] = '0' + ((st.st_mode >> 6) & 7);
+    oct[1] = '0' + ((st.st_mode >> 3) & 7);
+    oct[2] = '0' + (st.st_mode & 7);
+    oct[3] = '\0';
+    write_str(1, oct);
+    write_str(1, "/");
+    write_str(1, modebuf);
+    write_str(1, ")  Uid: ");
+    int_to_str(st.st_uid, numbuf, 20);
+    write_str(1, numbuf);
+    write_str(1, "  Gid: ");
+    int_to_str(st.st_gid, numbuf, 20);
+    write_str(1, numbuf);
+    write_str(1, "\nDevice: ");
+    int_to_str((long)st.st_dev, numbuf, 20);
+    write_str(1, numbuf);
+    write_str(1, "\tInode: ");
+    int_to_str((long)st.st_ino, numbuf, 20);
+    write_str(1, numbuf);
+    write_str(1, "\tLinks: ");
+    int_to_str(st.st_nlink, numbuf, 20);
+    write_str(1, numbuf);
+    write_str(1, "\n");
+}
+
 /* Built-in: export */
 static void cmd_export(int argc, char *argv[]) {
     if (argc < 2) {
@@ -4620,6 +4675,9 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "mv") == 0) {
         cmd_mv(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "stat") == 0) {
+        cmd_stat(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "chmod") == 0) {
         cmd_chmod(argc, argv);
         return 0;
@@ -4706,6 +4764,7 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "rmdir") == 0 ||
             strcmp_simple(cmd, "rm") == 0 ||
             strcmp_simple(cmd, "touch") == 0 ||
+            strcmp_simple(cmd, "stat") == 0 ||
             strcmp_simple(cmd, "chmod") == 0 ||
             strcmp_simple(cmd, "cp") == 0 ||
             strcmp_simple(cmd, "dd") == 0 ||
@@ -5274,7 +5333,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.3                   |\n");
-    write_str(1, "|   38 built-in commands — type 'help'     |\n");
+    write_str(1, "|   39 built-in commands — type 'help'     |\n");
     write_str(1, "|   nano editor available at /bin/nano      |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");

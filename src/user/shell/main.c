@@ -2216,6 +2216,54 @@ static void int_to_str(long n, char *buf, int size) {
     }
 }
 
+/* Glob pattern matching (* and ?) */
+static int glob_match(const char *pat, const char *str) {
+    while (*pat) {
+        if (*pat == '*') { pat++; if (!*pat) return 1; while (*str) { if (glob_match(pat, str)) return 1; str++; } return 0; }
+        else if (*pat == '?') { if (!*str) return 0; pat++; str++; }
+        else { if (*pat != *str) return 0; pat++; str++; }
+    }
+    return !*str;
+}
+
+static char _gbuf[2048];
+static char *_gptrs[64];
+static int expand_globs(int argc, char *argv[], int max_args) {
+    int nc = 0, bp = 0;
+    for (int i = 0; i < argc && nc < max_args - 1; i++) {
+        int hg = 0;
+        for (const char *p = argv[i]; *p; p++) if (*p == '*' || *p == '?') hg = 1;
+        if (!hg) { _gptrs[nc++] = argv[i]; continue; }
+        char dir[256] = "."; const char *pat = argv[i]; int ls = -1;
+        for (int j = 0; argv[i][j]; j++) if (argv[i][j] == '/') ls = j;
+        if (ls >= 0) { int dl = 0; for (int j = 0; j < ls && dl < 255; j++) dir[dl++] = argv[i][j]; if (!dl) dir[dl++] = '/'; dir[dl] = '\0'; pat = argv[i] + ls + 1; }
+        struct { unsigned long long d_ino; long long d_off; unsigned short d_reclen; unsigned char d_type; char d_name[256]; } *d;
+        int fd = sys_open(dir, O_RDONLY, 0), matched = 0;
+        if (fd >= 0) {
+            char db[1024]; long n;
+            while ((n = sys_getdents64(fd, db, sizeof(db))) > 0 && nc < max_args - 1) {
+                char *ptr = db;
+                while (ptr < db + n && nc < max_args - 1) {
+                    d = (void *)ptr;
+                    if (d->d_name[0] != '.' && glob_match(pat, d->d_name)) {
+                        int pl = 0;
+                        if (ls >= 0) { for (int k = 0; dir[k] && bp+pl < 2040; k++) _gbuf[bp+pl++] = dir[k]; _gbuf[bp+pl++] = '/'; }
+                        for (int k = 0; d->d_name[k] && bp+pl < 2046; k++) _gbuf[bp+pl++] = d->d_name[k];
+                        _gbuf[bp+pl] = '\0'; _gptrs[nc++] = _gbuf+bp; bp += pl+1; matched++;
+                    }
+                    ptr += d->d_reclen;
+                }
+            }
+            sys_close(fd);
+        }
+        if (!matched) _gptrs[nc++] = argv[i];
+    }
+    _gptrs[nc] = NULL;
+    for (int i = 0; i < nc; i++) argv[i] = _gptrs[i];
+    argv[nc] = NULL;
+    return nc;
+}
+
 /* Built-in: history */
 /* Built-in: more — simple pager (24 lines at a time) */
 static void cmd_more(int argc, char *argv[]) {
@@ -5826,6 +5874,7 @@ static int execute_pipeline(int num_stages, char *stages[], int background, cons
     if (num_stages == 1) {
         char *argv[32];
         int argc = parse_command(stages[0], argv, 32);
+        if (argc > 0) argc = expand_globs(argc, argv, 32);
         if (argc > 0) {
             /* Parse redirections */
             struct redir_info redir;
@@ -5929,6 +5978,7 @@ static int execute_pipeline(int num_stages, char *stages[], int background, cons
         char *argv[32];
         int argc = parse_command(stages[i], argv, 32);
 
+        if (argc > 0) argc = expand_globs(argc, argv, 32);
         if (argc == 0) continue;
 
         /* Parse redirections */

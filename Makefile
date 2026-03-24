@@ -1158,28 +1158,30 @@ $(ARM64_FORKTEST_BIN): arm64-libfutura
 	@$(MAKE) -C src/user/forktest PLATFORM=arm64 all
 endif
 
+# Strip debug symbols before embedding. The symbol names are derived from
+# the input file path, so we must use the original path as input.
 $(ARM64_INIT_BLOB): $(ARM64_INIT_BIN) | $(OBJ_DIR)/kernel/blobs
-	@echo "OBJCOPY $@"
+	@$(OBJCOPY) --strip-debug $< $<.tmp && mv $<.tmp $<
 	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
 
 $(ARM64_SHELL_BLOB): $(ARM64_SHELL_BIN) | $(OBJ_DIR)/kernel/blobs
-	@echo "OBJCOPY $@"
+	@$(OBJCOPY) --strip-debug $< $<.tmp && mv $<.tmp $<
 	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
 
 $(ARM64_FBTEST_BLOB): $(ARM64_FBTEST_BIN) | $(OBJ_DIR)/kernel/blobs
-	@echo "OBJCOPY $@"
+	@$(OBJCOPY) --strip-debug $< $<.tmp && mv $<.tmp $<
 	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
 
 $(ARM64_UIDEMO_BLOB): $(ARM64_UIDEMO_BIN) | $(OBJ_DIR)/kernel/blobs
-	@echo "OBJCOPY $@"
+	@$(OBJCOPY) --strip-debug $< $<.tmp && mv $<.tmp $<
 	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
 
 $(ARM64_FORKTEST_BLOB): $(ARM64_FORKTEST_BIN) | $(OBJ_DIR)/kernel/blobs
-	@echo "OBJCOPY $@"
+	@$(OBJCOPY) --strip-debug $< $<.tmp && mv $<.tmp $<
 	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
 
 $(ARM64_NANO_BLOB): $(ARM64_NANO_BIN) | $(OBJ_DIR)/kernel/blobs
-	@echo "OBJCOPY $@"
+	@$(OBJCOPY) --strip-debug $< $<.tmp && mv $<.tmp $<
 	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
 
 $(ARM64_NANO_BIN):

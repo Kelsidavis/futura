@@ -3536,6 +3536,15 @@ static int64_t sys_set_mempolicy_home_node_wrapper(uint64_t start, uint64_t len,
 }
 
 /* Initialize syscall table at runtime to avoid ARM64 relocation issues */
+/* x86_64 compat: rename(old, new) */
+int64_t sys_rename_compat(uint64_t a, uint64_t b, uint64_t c, uint64_t d, uint64_t e, uint64_t f) {
+    (void)c;(void)d;(void)e;(void)f;
+    if (a == 0 || a >= 0xFFFFFF8000000000ULL) return -14;
+    if (b == 0 || b >= 0xFFFFFF8000000000ULL) return -14;
+    extern long sys_rename(const char *, const char *);
+    return (int64_t)sys_rename((const char *)a, (const char *)b);
+}
+
 static void arm64_syscall_table_init(void) {
     if (syscall_table_initialized) {
         return;
@@ -4290,6 +4299,10 @@ static void arm64_syscall_table_init(void) {
     /* kill (x86_64: 62, ARM64: 129) */
     syscall_table[62].handler = syscall_table[__NR_kill].handler;
     syscall_table[62].name = "kill";
+    /* rename (x86_64: 82) — shell 'mv' command */
+    extern int64_t sys_rename_compat(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
+    syscall_table[82].handler = (syscall_fn_t)sys_rename_compat;
+    syscall_table[82].name = "rename";
     /* clock_gettime (x86_64: 98, ARM64: 113) — for shell 'date' command */
     syscall_table[98].handler = syscall_table[__NR_clock_gettime].handler;
     syscall_table[98].name = "clock_gettime";

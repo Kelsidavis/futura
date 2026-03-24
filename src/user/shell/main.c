@@ -436,7 +436,7 @@ static size_t common_prefix_len(const char *s1, const char *s2) {
 static void complete_command(char *buf, size_t *pos, size_t max_len) {
     /* List of builtin commands */
     const char *builtins[] = {
-        "bg", "cd", "clear", "date", "dmesg", "echo", "edit", "exit", "export", "fg", "free",
+        "bg", "cd", "clear", "date", "df", "dmesg", "echo", "edit", "exit", "export", "fg", "free",
         "help", "hostname", "id", "ifconfig", "jobs", "kill", "ls", "mount",
         "ps", "pwd", "test", "uname", "uptime", "version", "whoami", NULL
     };
@@ -1194,6 +1194,57 @@ static void cmd_dmesg(int argc, char *argv[]) {
         } else {
             write_str(1, "dmesg: kernel log not available\n");
         }
+    }
+}
+
+/* Built-in: df - Show filesystem disk space usage */
+static void cmd_df(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    write_str(1, "Filesystem      Size  Used  Avail  Use%  Mounted on\n");
+    /* Read /proc/mounts to enumerate filesystems */
+    int fd = sys_open("/proc/mounts", O_RDONLY, 0);
+    if (fd >= 0) {
+        char buf[1024];
+        ssize_t n = sys_read(fd, buf, sizeof(buf) - 1);
+        sys_close(fd);
+        if (n > 0) {
+            buf[n] = '\0';
+            /* Parse each line: device mountpoint fstype ... */
+            char *p = buf;
+            while (*p) {
+                /* Extract mount point (2nd field) */
+                char dev[32] = "", mount[32] = "", fstype[16] = "";
+                int field = 0, j = 0;
+                char *line_start = p;
+                while (*p && *p != '\n') {
+                    if (*p == ' ' || *p == '\t') {
+                        field++;
+                        j = 0;
+                    } else {
+                        if (field == 0 && j < 31) dev[j++] = *p;
+                        if (field == 1 && j < 31) mount[j++] = *p;
+                        if (field == 2 && j < 15) fstype[j++] = *p;
+                    }
+                    if (field == 0) dev[j] = '\0';
+                    if (field == 1) mount[j] = '\0';
+                    if (field == 2) fstype[j] = '\0';
+                    p++;
+                }
+                if (*p == '\n') p++;
+                (void)line_start;
+                if (dev[0]) {
+                    write_str(1, fstype);
+                    int pad = 16 - (int)strlen_simple(fstype);
+                    while (pad-- > 0) write_char(1, ' ');
+                    write_str(1, "-     -     -      -     ");
+                    write_str(1, mount);
+                    write_char(1, '\n');
+                }
+            }
+        }
+    } else {
+        write_str(1, "ramfs            -     -     -      -     /\n");
+        write_str(1, "futurafs         1M    -     -      -     /mnt\n");
     }
 }
 
@@ -3917,6 +3968,9 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "date") == 0) {
         cmd_date(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "df") == 0) {
+        cmd_df(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "dmesg") == 0) {
         cmd_dmesg(argc, argv);
         return 0;
@@ -4054,6 +4108,7 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "clear") == 0 ||
             strcmp_simple(cmd, "uname") == 0 ||
             strcmp_simple(cmd, "date") == 0 ||
+            strcmp_simple(cmd, "df") == 0 ||
             strcmp_simple(cmd, "dmesg") == 0 ||
             strcmp_simple(cmd, "edit") == 0 ||
             strcmp_simple(cmd, "free") == 0 ||
@@ -4641,7 +4696,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.3                   |\n");
-    write_str(1, "|   26 built-in commands — type 'help'     |\n");
+    write_str(1, "|   27 built-in commands — type 'help'     |\n");
     write_str(1, "|   nano editor available at /bin/nano      |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");

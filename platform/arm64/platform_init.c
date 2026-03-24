@@ -1646,6 +1646,31 @@ static void arm64_init_spawner_thread(void *arg) {
         }
     }
 
+    /* Test /dev/null and /dev/zero */
+    {
+        extern int fut_vfs_open(const char *, int, int);
+        extern long fut_vfs_read(int, void *, size_t);
+        extern long fut_vfs_write(int, const void *, size_t);
+        extern int fut_vfs_close(int);
+
+        int nfd = fut_vfs_open("/dev/null", 0x0002 /* O_RDWR */, 0);
+        int zfd = fut_vfs_open("/dev/zero", 0, 0);
+        if (nfd >= 0 && zfd >= 0) {
+            /* Write to /dev/null should succeed */
+            long nw = fut_vfs_write(nfd, "test", 4);
+            /* Read from /dev/zero should return zeros */
+            char zb[4] = {1,1,1,1};
+            long zr = fut_vfs_read(zfd, zb, 4);
+            fut_vfs_close(nfd);
+            fut_vfs_close(zfd);
+            if (nw == 4 && zr == 4 && zb[0] == 0 && zb[3] == 0) {
+                fut_printf("[INIT] ✓ /dev/null and /dev/zero working\n");
+            } else {
+                fut_printf("[INIT] ✗ dev test: null_w=%d zero_r=%d\n", (int)nw, (int)zr);
+            }
+        }
+    }
+
     /* Run forktest */
     char *forktest_argv[] = {"/bin/forktest", NULL};
     char *forktest_envp[] = {"PATH=/sbin:/bin", NULL};

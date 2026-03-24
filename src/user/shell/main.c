@@ -1013,7 +1013,12 @@ static void cmd_date(int argc, char *argv[]) {
     (void)argc; (void)argv;
     /* Use clock_gettime(CLOCK_MONOTONIC) to get uptime */
     struct { long tv_sec; long tv_nsec; } ts = {0, 0};
-    long ret = sys_call2(228 /* clock_gettime */, 1 /* CLOCK_MONOTONIC */, (long)&ts);
+    /* ARM64 syscall number for clock_gettime */
+#ifdef __aarch64__
+    long ret = sys_call2(113 /* __NR_clock_gettime */, 1 /* CLOCK_MONOTONIC */, (long)&ts);
+#else
+    long ret = sys_call2(228 /* __NR_clock_gettime */, 1 /* CLOCK_MONOTONIC */, (long)&ts);
+#endif
     if (ret == 0) {
         char buf[64];
         long secs = ts.tv_sec;

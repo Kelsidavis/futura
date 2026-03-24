@@ -480,8 +480,8 @@ static int64_t sys_clock_gettime(uint64_t clockid, uint64_t ts_ptr,
                                   uint64_t arg4, uint64_t arg5) {
     (void)arg2; (void)arg3; (void)arg4; (void)arg5;
 
-    if (ts_ptr == 0) {
-        return -EINVAL;
+    if (ts_ptr == 0 || ts_ptr >= 0xFFFFFF8000000000ULL) {
+        return -EFAULT;
     }
 
     /* Get current cycle count */

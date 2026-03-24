@@ -161,8 +161,8 @@ clear_bss:
 bss_cleared:
     /* Early debug: Write 'A' to UART before MMU (proves kernel started) */
     movz    x10, #0x0900, lsl #16     /* UART0 base = 0x09000000 */
-    mov     x11, #0x41                /* ASCII 'A' */
-    strb    w11, [x10]                /* Write to UART data register */
+    // mov     x11, #0x41                
+    // strb    w11, [x10]                /* Write to UART data register */ 
 
     /* ========================================
      *   MMU Initialization
@@ -193,8 +193,8 @@ bss_cleared:
 
     /* Debug: Tables zeroed */
     movz    x10, #0x0900, lsl #16
-    mov     x11, #0x31                /* '1' */
-    strb    w11, [x10]
+    // mov     x11, #0x31                
+    // strb    w11, [x10] 
 
     /* Setup L1 table (this is the root table for 39-bit VA)
      * L1 entry 0 (VA 0x00000000-0x3FFFFFFF): Point to L2_peripherals
@@ -225,8 +225,8 @@ bss_cleared:
 
     /* Debug: L1 table configured */
     movz    x10, #0x0900, lsl #16
-    mov     x11, #0x32                /* '2' */
-    strb    w11, [x10]
+    // mov     x11, #0x32                
+    // strb    w11, [x10] 
 
     /* Setup L2_peripherals: 256 x 2MB blocks for 0x00000000-0x20000000 (512MB peripherals)
      * Each 2MB block, device memory
@@ -247,8 +247,8 @@ bss_cleared:
 
     /* Debug: L2 peripherals configured */
     movz    x10, #0x0900, lsl #16
-    mov     x11, #0x33                /* '3' */
-    strb    w11, [x10]
+    // mov     x11, #0x33                
+    // strb    w11, [x10] 
 
     /* Setup L2_dram: 512 x 2MB blocks for 0x40000000-0x80000000 (1GB DRAM)
      * Each 2MB block, normal memory
@@ -268,8 +268,8 @@ bss_cleared:
 
     /* Debug: L2 DRAM configured */
     movz    x10, #0x0900, lsl #16
-    mov     x11, #0x34                /* '4' */
-    strb    w11, [x10]
+    // mov     x11, #0x34                
+    // strb    w11, [x10] 
 
     /* ========================================
      *   Setup Kernel Page Tables (TTBR1_EL1)
@@ -337,8 +337,8 @@ bss_cleared:
 
     /* Debug: Kernel tables configured */
     movz    x10, #0x0900, lsl #16
-    mov     x11, #0x4B                /* 'K' for Kernel */
-    strb    w11, [x10]
+    // mov     x11, #0x4B                
+    // strb    w11, [x10] 
 
     /* Configure MAIR_EL1 (Memory Attribute Indirection Register)
      * Attr0 = 0xFF (Normal memory, Inner/Outer Write-Back Cacheable)
@@ -352,8 +352,8 @@ bss_cleared:
 
     /* Debug: MAIR configured */
     movz    x10, #0x0900, lsl #16
-    mov     x11, #0x35                /* '5' */
-    strb    w11, [x10]
+    // mov     x11, #0x35                
+    // strb    w11, [x10] 
 
     /* Configure TCR_EL1 (Translation Control Register)
      * T0SZ = 25 (bits 5:0): VA size = 64 - 25 = 39 bits
@@ -377,8 +377,8 @@ bss_cleared:
 
     /* Debug: TCR configured */
     movz    x10, #0x0900, lsl #16
-    mov     x11, #0x36                /* '6' */
-    strb    w11, [x10]
+    // mov     x11, #0x36                
+    // strb    w11, [x10] 
 
     /* Set TTBR0_EL1 to boot table (identity mapping for early boot) */
     adrp    x0, boot_l1_table
@@ -392,8 +392,8 @@ bss_cleared:
 
     /* Debug: TTBR configured */
     movz    x10, #0x0900, lsl #16
-    mov     x11, #0x37                /* '7' */
-    strb    w11, [x10]
+    // mov     x11, #0x37                
+    // strb    w11, [x10] 
 
     /* Verify L2_dram[0] descriptor (debug) */
     adrp    x0, boot_l2_table_dram
@@ -409,8 +409,8 @@ bss_cleared:
 
     /* Debug: About to enable MMU */
     movz    x10, #0x0900, lsl #16
-    mov     x11, #0x38                /* '8' */
-    strb    w11, [x10]
+    // mov     x11, #0x38                
+    // strb    w11, [x10] 
 
     /* Enable MMU (2025-11-05: Fixed page table level bug!)
      *
@@ -431,8 +431,8 @@ bss_cleared:
 
     /* Debug: Write 'B' to UART after MMU enable (proves MMU worked!) */
     movz    x10, #0x0900, lsl #16     /* UART0 base = 0x09000000 */
-    mov     x11, #0x42                /* ASCII 'B' */
-    strb    w11, [x10]                /* Write to UART data register */
+    // mov     x11, #0x42                
+    // strb    w11, [x10]                /* Write to UART data register */ 
 
     /* Jump to high VA kernel address
      * Currently executing at low VA (identity mapped via TTBR0)
@@ -461,8 +461,8 @@ bss_cleared:
     movz    x10, #0xFFFF, lsl #48     /* High VA base (0xFFFF000000000000) */
     movk    x10, #0xFF80, lsl #32     /* Add kernel offset (0xFFFFFF8000000000) */
     movk    x10, #0x0900, lsl #16     /* Add UART offset (0x09000000) */
-    mov     x11, #0x48                /* ASCII 'H' for High VA */
-    strb    w11, [x10]
+    // mov     x11, #0x48                
+    // strb    w11, [x10] 
 
     /* Update VBAR_EL1 to high VA exception vectors
      * The exception vector table is now at high VA, so update VBAR
@@ -476,8 +476,8 @@ bss_cleared:
     movz    x10, #0xFFFF, lsl #48
     movk    x10, #0xFF80, lsl #32
     movk    x10, #0x0900, lsl #16
-    mov     x11, #0x56                /* 'V' for VBAR */
-    strb    w11, [x10]
+    // mov     x11, #0x56                
+    // strb    w11, [x10] 
 
     /* Clear TTBR0_EL1 now that we're running at high VA
      * User processes will set their own TTBR0 page tables later
@@ -490,8 +490,8 @@ bss_cleared:
     movz    x10, #0xFFFF, lsl #48
     movk    x10, #0xFF80, lsl #32
     movk    x10, #0x0900, lsl #16
-    mov     x11, #0x54                /* 'T' for TTBR0 cleared */
-    strb    w11, [x10]
+    // mov     x11, #0x54                
+    // strb    w11, [x10] 
 
     /* Fix stack pointer for high VA execution
      * SP_EL1 was set up at low VA during early boot. Now that we're executing
@@ -506,8 +506,8 @@ bss_cleared:
     movz    x10, #0xFFFF, lsl #48
     movk    x10, #0xFF80, lsl #32
     movk    x10, #0x0900, lsl #16
-    mov     x11, #0x53                /* 'S' for Stack updated */
-    strb    w11, [x10]
+    // mov     x11, #0x53                
+    // strb    w11, [x10] 
 
     /* Restore device tree address and call platform init */
     mov     x0, #0                    /* boot_magic = 0 */
@@ -517,8 +517,8 @@ bss_cleared:
     movz    x10, #0xFFFF, lsl #48     /* High VA base */
     movk    x10, #0xFF80, lsl #32     /* Add kernel offset */
     movk    x10, #0x0900, lsl #16     /* Add UART offset */
-    mov     x11, #0x43                /* ASCII 'C' */
-    strb    w11, [x10]
+    // mov     x11, #0x43                
+    // strb    w11, [x10] 
 
     bl      fut_platform_init
 

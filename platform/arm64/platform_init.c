@@ -1065,14 +1065,11 @@ void fut_platform_early_init(uint32_t boot_magic, void *boot_info) {
     /* Save DTB pointer for later use (convert physical to virtual address) */
     g_dtb_ptr = (uint64_t)pmap_phys_to_virt((uint64_t)boot_info);
 
-    /* Debug: Mark entry to early_init */
     volatile uint32_t *uart = (volatile uint32_t *)0xFFFFFF8009000000UL;
-    *uart = 'E';  /* 'E' for Early init */
+    (void)uart;  /* Used for early debug if needed */
 
-    /* Initialize serial console first */
-    *uart = 'I';  /* 'I' before serial init */
+    /* Initialize serial console */
     fut_serial_init();
-    *uart = 'X';  /* 'X' after serial init */
     fut_serial_puts("\nFutura OS ARM64 Platform Initialization\n");
     fut_serial_puts("========================================\n\n");
 
@@ -1277,7 +1274,7 @@ static int stage_arm64_blob(const uint8_t *start, const uint8_t *end, const char
 #if 1  /* Re-enabled for UI testing */
 static void arm64_init_spawner_thread(void *arg) {
     /* serial_puts defined in this file and declared in platform/platform.h */
-    serial_puts("[SPAWNER] *** ENTERED ARM64 SPAWNER FUNCTION ***\n");
+    /* Spawner thread started */
 
     (void)arg;
 
@@ -1286,7 +1283,7 @@ static void arm64_init_spawner_thread(void *arg) {
 
     /* EEXIST provided by kernel/errno.h */
 
-    fut_printf("[ARM64-SPAWNER] Init spawner thread running!\n");
+    /* Init spawner running */
 
     /* Check embedded userland binaries */
     uintptr_t init_size = (uintptr_t)_binary_build_bin_arm64_user_init_end -
@@ -1300,103 +1297,55 @@ static void arm64_init_spawner_thread(void *arg) {
     uintptr_t forktest_size = (uintptr_t)_binary_build_bin_arm64_user_forktest_end -
                               (uintptr_t)_binary_build_bin_arm64_user_forktest_start;
 
-    fut_printf("[ARM64-SPAWNER] Embedded userland binaries:\n");
-    fut_printf("  - init:     %llu bytes %s\n", (unsigned long long)init_size, init_size > 0 ? "present" : "MISSING!");
-    fut_printf("  - shell:    %llu bytes %s\n", (unsigned long long)shell_size, shell_size > 0 ? "present" : "MISSING!");
-    fut_printf("  - uidemo:   %llu bytes %s\n", (unsigned long long)uidemo_size, uidemo_size > 0 ? "present" : "MISSING!");
-    fut_printf("  - forktest: %llu bytes %s\n\n", (unsigned long long)forktest_size, forktest_size > 0 ? "present" : "MISSING!");
-
     if (init_size == 0) {
-        fut_printf("[ARM64-SPAWNER] ERROR: No init binary embedded!\n");
+        fut_printf("[INIT] ERROR: No init binary embedded!\n");
         return;
     }
 
     /* Create directories */
-    fut_printf("[ARM64-SPAWNER] Creating /sbin directory...\n");
     int ret = fut_vfs_mkdir("/sbin", 0755);
-    fut_printf("[ARM64-SPAWNER] mkdir /sbin returned: %d\n", ret);
-    if (ret < 0 && ret != -EEXIST) {
-        fut_printf("[ARM64-SPAWNER] WARN: mkdir /sbin failed: %d\n", ret);
-    }
-
-    fut_printf("[ARM64-SPAWNER] Creating /bin directory...\n");
-    ret = fut_vfs_mkdir("/bin", 0755);
-    fut_printf("[ARM64-SPAWNER] mkdir /bin returned: %d\n", ret);
-    if (ret < 0 && ret != -EEXIST) {
-        fut_printf("[ARM64-SPAWNER] WARN: mkdir /bin failed: %d\n", ret);
-    }
+    (void)ret;
+    fut_vfs_mkdir("/bin", 0755);
 
     /* Stage init binary to filesystem */
-    fut_printf("[ARM64-SPAWNER] Staging init to /sbin/init (%llu bytes)...\n", (unsigned long long)init_size);
+    /* Stage userland binaries to ramfs */
+    int staged = 0;
     ret = stage_arm64_blob((const uint8_t *)_binary_build_bin_arm64_user_init_start,
-                          (const uint8_t *)_binary_build_bin_arm64_user_init_end,
-                          "/sbin/init");
-    if (ret != 0) {
-        fut_printf("[ARM64-SPAWNER] ERROR: Failed to stage init binary: %d\n", ret);
-        return;
-    }
+                          (const uint8_t *)_binary_build_bin_arm64_user_init_end, "/sbin/init");
+    if (ret != 0) { fut_printf("[INIT] ERROR: Failed to stage init: %d\n", ret); return; }
+    staged++;
 
-    fut_printf("[ARM64-SPAWNER] Init binary staged successfully!\n");
-
-    /* Stage uidemo binary to filesystem */
     if (uidemo_size > 0) {
-        fut_printf("[ARM64-SPAWNER] Staging uidemo to /bin/arm64_uidemo (%llu bytes)...\n", (unsigned long long)uidemo_size);
         ret = stage_arm64_blob((const uint8_t *)_binary_build_bin_arm64_user_arm64_uidemo_start,
-                              (const uint8_t *)_binary_build_bin_arm64_user_arm64_uidemo_end,
-                              "/bin/arm64_uidemo");
-        if (ret != 0) {
-            fut_printf("[ARM64-SPAWNER] ERROR: Failed to stage uidemo binary: %d\n", ret);
-        } else {
-            fut_printf("[ARM64-SPAWNER] Gfxtest binary staged successfully!\n");
-        }
+                              (const uint8_t *)_binary_build_bin_arm64_user_arm64_uidemo_end, "/bin/arm64_uidemo");
+        if (ret == 0) staged++;
     }
-
-    /* Stage shell binary to filesystem */
     if (shell_size > 0) {
-        fut_printf("[ARM64-SPAWNER] Staging shell to /bin/shell (%llu bytes)...\n", (unsigned long long)shell_size);
         ret = stage_arm64_blob((const uint8_t *)_binary_build_bin_arm64_user_shell_start,
-                              (const uint8_t *)_binary_build_bin_arm64_user_shell_end,
-                              "/bin/shell");
-        if (ret != 0) {
-            fut_printf("[ARM64-SPAWNER] ERROR: Failed to stage shell binary: %d\n", ret);
-        } else {
-            fut_printf("[ARM64-SPAWNER] Shell binary staged successfully!\n");
-        }
+                              (const uint8_t *)_binary_build_bin_arm64_user_shell_end, "/bin/shell");
+        if (ret == 0) staged++;
     }
-
-    /* Stage forktest binary to filesystem */
     if (forktest_size > 0) {
-        fut_printf("[ARM64-SPAWNER] Staging forktest to /bin/forktest (%llu bytes)...\n", (unsigned long long)forktest_size);
         ret = stage_arm64_blob((const uint8_t *)_binary_build_bin_arm64_user_forktest_start,
-                              (const uint8_t *)_binary_build_bin_arm64_user_forktest_end,
-                              "/bin/forktest");
-        if (ret != 0) {
-            fut_printf("[ARM64-SPAWNER] ERROR: Failed to stage forktest binary: %d\n", ret);
-        } else {
-            fut_printf("[ARM64-SPAWNER] Forktest binary staged successfully!\n");
-        }
+                              (const uint8_t *)_binary_build_bin_arm64_user_forktest_end, "/bin/forktest");
+        if (ret == 0) staged++;
     }
+    fut_printf("[INIT] Staged %d userland binaries to ramfs\n", staged);
 
     /* Run forktest */
     char *forktest_argv[] = {"/bin/forktest", NULL};
     char *forktest_envp[] = {"PATH=/sbin:/bin", NULL};
-    fut_printf("[ARM64-SPAWNER] Running forktest...\n");
     ret = fut_exec_elf("/bin/forktest", forktest_argv, forktest_envp);
     if (ret == 0) {
-        fut_printf("[ARM64-SPAWNER] ✓ Forktest process spawned\n");
         for (volatile int i = 0; i < 50000000; i++);
     }
 
     /* Launch shell */
     char *shell_argv[] = {"/bin/shell", NULL};
     char *shell_envp[] = {"PATH=/sbin:/bin", "HOME=/", "TERM=vt100", NULL};
-
-    fut_printf("[ARM64-SPAWNER] Launching shell...\n");
     ret = fut_exec_elf("/bin/shell", shell_argv, shell_envp);
 
-    if (ret == 0) {
-        fut_printf("[ARM64-SPAWNER] ✓ Shell spawned successfully!\n");
-    } else {
+    if (ret != 0) {
         fut_printf("[ARM64-SPAWNER] ERROR: Failed to spawn shell! Error code: %d\n", ret);
     }
 
@@ -1424,7 +1373,7 @@ void arch_late_init(void) {
         return;
     }
 
-    fut_printf("[ARM64] Creating init spawner thread...\n");
+    /* Create init spawner thread */
 
     /* Create thread to stage binaries and spawn init (runs after scheduler starts) */
     fut_thread_t *spawner_thread = fut_thread_create(
@@ -1441,10 +1390,7 @@ void arch_late_init(void) {
     }
 
     fut_printf("[ARM64] Init spawner thread created successfully!\n");
-    fut_printf("[ARM64]   Thread address: %p\n", (void *)spawner_thread);
-    fut_printf("[ARM64]   Task address: %p\n", (void *)kernel_task);
-    fut_printf("[ARM64] Thread should be added to scheduler and run after scheduler starts\n");
-    fut_printf("[ARM64] Returning to main kernel...\n");
+    (void)kernel_task;
     #endif
 }
 
@@ -1460,9 +1406,7 @@ void arch_idle_loop(void) {
 
 /* Main platform entry point (called from boot.S) */
 void fut_platform_init(uint32_t boot_magic, void *boot_info) {
-    /* Debug: Write 'P' to UART to confirm we entered platform_init at high VA */
-    volatile uint32_t *uart = (volatile uint32_t *)0xFFFFFF8009000000UL;
-    *uart = 'P';  /* PL011 UART data register */
+    /* Platform init at high VA */
 
     /* Early initialization */
     fut_platform_early_init(boot_magic, boot_info);

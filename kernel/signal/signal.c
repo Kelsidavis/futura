@@ -957,3 +957,20 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
 #else
 #error "Unsupported architecture for signal delivery"
 #endif
+
+/**
+ * Send signal to the foreground process group.
+ * Used by the console driver for Ctrl+C (SIGINT), Ctrl+Z (SIGTSTP), etc.
+ * Sends to all user processes (PID > 1) that are running or blocked.
+ */
+void fut_signal_send_group(int sig) {
+    extern fut_task_t *fut_task_list;
+    fut_task_t *task = fut_task_list;
+    while (task) {
+        /* Send to user processes only (skip kernel tasks like PID 1) */
+        if (task->pid > 1 && task->state != FUT_TASK_ZOMBIE) {
+            fut_signal_send(task, sig);
+        }
+        task = task->next;
+    }
+}

@@ -32,8 +32,10 @@ static void console_echo(char c) {
  * Signal callback - sends signal to current task.
  */
 static void console_signal(int sig) {
-    fut_printf("[CONSOLE] Received signal %d\n", sig);
-    fut_task_signal_exit(sig);
+    /* Send signal to all processes with the console as controlling terminal.
+     * For now, broadcast to the foreground process group (all user tasks). */
+    extern void fut_signal_send_group(int sig);
+    fut_signal_send_group(sig);
 }
 
 #if 1

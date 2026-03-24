@@ -29,7 +29,7 @@ CFLAGS := -std=c23 -O2 -g -Wall -Wextra -Werror \
 	-fno-stack-protector \
 	-fno-pic -fno-pie \
 	-mcmodel=large \
-	-march=armv8-a -mno-outline-atomics
+	-march=armv8-a -mno-outline-atomics -mstrict-align
 
 LDFLAGS := -nostdlib -static --build-id=none
 

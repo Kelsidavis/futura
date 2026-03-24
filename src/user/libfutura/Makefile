@@ -16,7 +16,7 @@ ifeq ($(PLATFORM),arm64)
     endif
     AS := $(CROSS_COMPILE)as
     AR := $(CROSS_COMPILE)ar
-    ARCH_CFLAGS := -march=armv8-a -mtune=cortex-a53 -mno-outline-atomics
+    ARCH_CFLAGS := -march=armv8-a -mtune=cortex-a53 -mno-outline-atomics -mstrict-align
     ARCH_ASFLAGS :=
 else
     # x86_64 platform - use cross-compiler on macOS

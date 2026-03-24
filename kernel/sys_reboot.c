@@ -63,9 +63,17 @@ long sys_reboot(unsigned int magic1, unsigned int magic2,
         return -EPERM;
     }
 
+    /* Sync all filesystems before shutdown/reboot */
+    {
+        extern long sys_sync(void);
+        fut_printf("[REBOOT] Syncing filesystems...\n");
+        sys_sync();
+        fut_printf("[REBOOT] Filesystems synced\n");
+    }
+
     switch (cmd) {
         case LINUX_REBOOT_CMD_POWER_OFF:
-            fut_printf("[REBOOT] Power off requested\n");
+            fut_printf("[REBOOT] System going down for power off NOW\n");
 #ifdef __x86_64__
             acpi_shutdown();
             /* Fallback: QEMU debug exit */
@@ -99,7 +107,7 @@ long sys_reboot(unsigned int magic1, unsigned int magic2,
 
         case LINUX_REBOOT_CMD_RESTART:
         case LINUX_REBOOT_CMD_RESTART2:
-            fut_printf("[REBOOT] Restart requested\n");
+            fut_printf("[REBOOT] System going down for restart NOW\n");
 #ifdef __x86_64__
             /* Triple fault via null IDT causes CPU reset */
             {

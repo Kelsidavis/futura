@@ -1754,6 +1754,10 @@ static size_t gen_schedstat(char *buf, size_t cap, fut_task_t *task) {
  */
 static size_t gen_cmdline_global(char *buf, size_t cap) {
     struct pbuf b = { buf, 0, cap };
+    pb_str(&b, "console=ttyS0 root=/dev/ram0 rw init=/sbin/init");
+#ifdef __aarch64__
+    pb_str(&b, " earlycon=pl011,0x09000000");
+#endif
     pb_char(&b, '\n');
     return b.pos;
 }

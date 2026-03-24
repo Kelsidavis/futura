@@ -538,7 +538,7 @@ static int64_t sys_uname(uint64_t buf_ptr, uint64_t arg1, uint64_t arg2,
     /* Fill in system information */
     const char *sysname = "Futura";
     const char *nodename = "futura";
-    const char *release = "0.3.1";
+    const char *release = "0.4.0";
     const char *version = "Futura OS ARM64 SMP";
     const char *machine = "aarch64";
     const char *domainname = "(none)";

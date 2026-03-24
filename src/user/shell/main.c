@@ -848,7 +848,7 @@ static void cmd_help(int argc, char *argv[]) {
     (void)argc;
     (void)argv;
 
-    write_str(1, "Futura OS Shell v0.3 - Available Commands:\n");
+    write_str(1, "Futura OS Shell v0.4 - Available Commands:\n");
     write_str(1, "\n");
     write_str(1, "Navigation:\n");
     write_str(1, "  cd [dir]        - Change directory\n");
@@ -1914,39 +1914,63 @@ static void cmd_hostname(int argc, char *argv[]) {
 /* Built-in: uptime - Show system uptime */
 static void cmd_uptime(int argc, char *argv[]) {
     (void)argc; (void)argv;
+    /* Show current time */
+    struct { long tv_sec; long tv_nsec; } ts = {0, 0};
+    long ret = sys_call2(98 /* clock_gettime */, 0 /* CLOCK_REALTIME */, (long)&ts);
+    if (ret == 0 && ts.tv_sec > 1000000000L) {
+        long daytime = ts.tv_sec % 86400;
+        long hour = daytime / 3600;
+        long min = (daytime % 3600) / 60;
+        write_char(1, ' ');
+        write_char(1, '0' + (char)(hour / 10));
+        write_char(1, '0' + (char)(hour % 10));
+        write_char(1, ':');
+        write_char(1, '0' + (char)(min / 10));
+        write_char(1, '0' + (char)(min % 10));
+    }
+
+    /* Show uptime */
     int fd = sys_open("/proc/uptime", O_RDONLY, 0);
     if (fd >= 0) {
         char buf[64];
         ssize_t n = sys_read(fd, buf, sizeof(buf) - 1);
+        sys_close(fd);
         if (n > 0) {
             buf[n] = '\0';
-            /* Parse seconds from "123.45 0.00\n" format */
             long secs = 0;
             for (int i = 0; buf[i] && buf[i] != '.'; i++) {
                 if (buf[i] >= '0' && buf[i] <= '9')
                     secs = secs * 10 + (buf[i] - '0');
             }
-            char out[64];
-            int pos = 0;
-            out[pos++] = 'u'; out[pos++] = 'p'; out[pos++] = ' ';
-            long h = secs / 3600, m = (secs % 3600) / 60, s = secs % 60;
+            write_str(1, "  up ");
+            long h = secs / 3600, m = (secs % 3600) / 60;
             if (h > 0) {
                 char tmp[16]; int_to_str(h, tmp, 16);
-                for (int i = 0; tmp[i]; i++) out[pos++] = tmp[i];
-                out[pos++] = 'h'; out[pos++] = ' ';
+                write_str(1, tmp); write_str(1, "h ");
             }
-            { char tmp[16]; int_to_str(m, tmp, 16);
-              for (int i = 0; tmp[i]; i++) out[pos++] = tmp[i]; }
-            out[pos++] = 'm'; out[pos++] = ' ';
-            { char tmp[16]; int_to_str(s, tmp, 16);
-              for (int i = 0; tmp[i]; i++) out[pos++] = tmp[i]; }
-            out[pos++] = 's'; out[pos++] = '\n'; out[pos] = '\0';
-            write_str(1, out);
+            char tmp[16]; int_to_str(m, tmp, 16);
+            write_str(1, tmp); write_str(1, "m");
         }
-        sys_close(fd);
-    } else {
-        write_str(1, "uptime: /proc/uptime not available\n");
     }
+
+    /* Show load average */
+    fd = sys_open("/proc/loadavg", O_RDONLY, 0);
+    if (fd >= 0) {
+        char buf[64];
+        ssize_t n = sys_read(fd, buf, sizeof(buf) - 1);
+        sys_close(fd);
+        if (n > 0) {
+            buf[n] = '\0';
+            write_str(1, ",  load average: ");
+            /* Print first 3 fields (1/5/15 min load) */
+            int fields = 0;
+            for (int i = 0; buf[i] && fields < 3; i++) {
+                if (buf[i] == ' ') { fields++; if (fields < 3) write_str(1, ", "); }
+                else write_char(1, buf[i]);
+            }
+        }
+    }
+    write_char(1, '\n');
 }
 
 /* Built-in: ifconfig - Show network interface info */
@@ -5996,7 +6020,7 @@ int main(int argc, char **argv, char **envp) {
 
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
-    write_str(1, "|   Futura OS Shell v0.3                   |\n");
+    write_str(1, "|   Futura OS Shell v0.4                   |\n");
     write_str(1, "|   52 built-in commands — type 'help'     |\n");
     write_str(1, "|   nano editor available at /bin/nano      |\n");
     write_str(1, "+------------------------------------------+\n");

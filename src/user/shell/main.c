@@ -360,6 +360,13 @@ static ssize_t read_line(int fd, char *buf, size_t max_len) {
             write_str(1, "^C\n");
             buf[0] = '\0';
             return 0;
+        } else if (c == 0x0C) {
+            /* Ctrl+L - clear screen and redraw prompt */
+            write_str(1, "\033[2J\033[H");
+            print_prompt();
+            /* Redraw current input */
+            buf[pos] = '\0';
+            write_str(1, buf);
         } else if (c == 0x09) {
             /* Tab - command completion */
             buf[pos] = '\0';  /* Null-terminate for completion */
@@ -1825,13 +1832,28 @@ static void cmd_kill(int argc, char *argv[]) {
 
     /* Check for -signal argument */
     if (argv[1][0] == '-') {
-        /* Parse signal number */
-        sig = 0;
-        for (int i = 1; argv[1][i]; i++) {
-            if (argv[1][i] >= '0' && argv[1][i] <= '9')
-                sig = sig * 10 + (argv[1][i] - '0');
+        const char *s = argv[1] + 1;
+        /* Try signal names first */
+        if (strcmp_simple(s, "TERM") == 0 || strcmp_simple(s, "term") == 0) sig = 15;
+        else if (strcmp_simple(s, "KILL") == 0 || strcmp_simple(s, "kill") == 0) sig = 9;
+        else if (strcmp_simple(s, "INT") == 0 || strcmp_simple(s, "int") == 0) sig = 2;
+        else if (strcmp_simple(s, "HUP") == 0 || strcmp_simple(s, "hup") == 0) sig = 1;
+        else if (strcmp_simple(s, "QUIT") == 0 || strcmp_simple(s, "quit") == 0) sig = 3;
+        else if (strcmp_simple(s, "STOP") == 0 || strcmp_simple(s, "stop") == 0) sig = 19;
+        else if (strcmp_simple(s, "CONT") == 0 || strcmp_simple(s, "cont") == 0) sig = 18;
+        else if (strcmp_simple(s, "USR1") == 0 || strcmp_simple(s, "usr1") == 0) sig = 10;
+        else if (strcmp_simple(s, "USR2") == 0 || strcmp_simple(s, "usr2") == 0) sig = 12;
+        else if (strcmp_simple(s, "PIPE") == 0 || strcmp_simple(s, "pipe") == 0) sig = 13;
+        else if (strcmp_simple(s, "ALRM") == 0 || strcmp_simple(s, "alrm") == 0) sig = 14;
+        else {
+            /* Parse as number */
+            sig = 0;
+            for (int i = 0; s[i]; i++) {
+                if (s[i] >= '0' && s[i] <= '9')
+                    sig = sig * 10 + (s[i] - '0');
+            }
+            if (sig == 0) sig = 15;
         }
-        if (sig == 0) sig = 15;  /* -0 means SIGTERM */
         pid_arg = 2;
         if (argc < 3) {
             write_str(1, "usage: kill [-signal] pid\n");
@@ -1879,7 +1901,7 @@ static void cmd_id(int argc, char *argv[]) {
 /* Built-in: ps - List processes */
 static void cmd_ps(int argc, char *argv[]) {
     (void)argc; (void)argv;
-    write_str(1, "  PID  STATE  NAME\n");
+    write_str(1, "  PID  STATE   RSS  NAME\n");
 
     /* Scan /proc for numeric directories (PIDs) */
     int proc_fd = sys_open("/proc", O_RDONLY, 0);
@@ -1918,9 +1940,10 @@ static void cmd_ps(int argc, char *argv[]) {
                     sys_close(sfd);
                     if (sn > 0) {
                         sbuf[sn] = '\0';
-                        /* Parse Name: and State: lines */
+                        /* Parse Name:, State:, VmRSS: lines */
                         char pname[32] = "?";
                         char state[16] = "?";
+                        char rss[16] = "0";
                         char *p = sbuf;
                         while (*p) {
                             if (p[0] == 'N' && p[1] == 'a' && p[2] == 'm' && p[3] == 'e' && p[4] == ':') {
@@ -1937,17 +1960,29 @@ static void cmd_ps(int argc, char *argv[]) {
                                 while (*p && *p != '\n' && *p != ' ' && j < 15) state[j++] = *p++;
                                 state[j] = '\0';
                             }
+                            if (p[0] == 'V' && p[1] == 'm' && p[2] == 'R' && p[3] == 'S' && p[4] == 'S' && p[5] == ':') {
+                                p += 6;
+                                while (*p == ' ' || *p == '\t') p++;
+                                int j = 0;
+                                while (*p && *p != '\n' && *p != ' ' && j < 15) rss[j++] = *p++;
+                                rss[j] = '\0';
+                            }
                             while (*p && *p != '\n') p++;
                             if (*p == '\n') p++;
                         }
-                        /* Print: PID STATE NAME */
+                        /* Print: PID STATE RSS NAME */
                         write_str(1, "  ");
                         write_str(1, name);
-                        /* Pad to column 7 */
                         int pad = 5 - (int)strlen_simple(name);
                         while (pad-- > 0) write_char(1, ' ');
                         write_str(1, "  ");
                         write_str(1, state);
+                        pad = 6 - (int)strlen_simple(state);
+                        while (pad-- > 0) write_char(1, ' ');
+                        /* Right-align RSS */
+                        pad = 5 - (int)strlen_simple(rss);
+                        while (pad-- > 0) write_char(1, ' ');
+                        write_str(1, rss);
                         pad = 6 - (int)strlen_simple(state);
                         while (pad-- > 0) write_char(1, ' ');
                         write_str(1, "  ");

@@ -185,10 +185,6 @@ int fut_access_ok(const void *u_ptr, size_t len, int write) {
 }
 
 int fut_copy_from_user(void *k_dst, const void *u_src, size_t n) {
-#if defined(__aarch64__)
-    uint64_t saved_ttbr0;
-    struct fut_mm *mm;
-#endif
 
     if (n == 0) {
         return 0;
@@ -213,21 +209,10 @@ int fut_copy_from_user(void *k_dst, const void *u_src, size_t n) {
 #if defined(__x86_64__)
     smap_stac();
 #elif defined(__aarch64__)
-    /* ARM64: Save current TTBR0, load the user's TTBR0, then restore after copy.
-     * During syscalls, TTBR0 may have been switched to kernel page table by page table operations. */
-    __asm__ volatile("mrs %0, ttbr0_el1" : "=r"(saved_ttbr0));
-
-    /* Use TTBR0 as-is if already set by exec/syscall path.
-     * Check mm for override only if TTBR0 looks unset (points to boot table). */
-    mm = fut_mm_current();
-    if (mm && mm->ctx.ttbr0_el1 && saved_ttbr0 != mm->ctx.ttbr0_el1) {
-        __asm__ volatile("msr ttbr0_el1, %0" :: "r"(mm->ctx.ttbr0_el1));
-        saved_ttbr0 = mm->ctx.ttbr0_el1;
-    }
-    /* Full TLB invalidation to ensure walker sees freshly-mapped user pages */
-    __asm__ volatile("tlbi vmalle1is" ::: "memory");
-    __asm__ volatile("dsb ish" ::: "memory");
-    __asm__ volatile("isb" ::: "memory");
+    /* ARM64: TTBR0 is preserved by sync_exception_entry and restored by IRQ
+     * handler, so it always holds the correct user page table during syscalls.
+     * No TTBR0 switching needed here — doing so after a context switch would
+     * load the WRONG task's page table. */
 #endif
 
     size_t remaining = n;
@@ -244,15 +229,9 @@ int fut_copy_from_user(void *k_dst, const void *u_src, size_t n) {
         remaining -= chunk;
     }
 
-    /* Clear AC flag / Restore TTBR0 */
+    /* Clear AC flag */
 #if defined(__x86_64__)
     smap_clac();
-#elif defined(__aarch64__)
-    /* ARM64: Restore original TTBR0 */
-    if (mm && mm->ctx.ttbr0_el1 && saved_ttbr0 != mm->ctx.ttbr0_el1) {
-        __asm__ volatile("msr ttbr0_el1, %0" :: "r"(saved_ttbr0));
-        __asm__ volatile("isb" ::: "memory");
-    }
 #endif
 
     uaccess_clear();
@@ -260,15 +239,9 @@ int fut_copy_from_user(void *k_dst, const void *u_src, size_t n) {
 
 copy_fault:
     {
-        /* Clear AC flag / Restore TTBR0 on fault path */
+        /* Clear AC flag on fault path */
 #if defined(__x86_64__)
         smap_clac();
-#elif defined(__aarch64__)
-        /* ARM64: Restore original TTBR0 */
-        if (mm && mm->ctx.ttbr0_el1 && saved_ttbr0 != mm->ctx.ttbr0_el1) {
-            __asm__ volatile("msr ttbr0_el1, %0" :: "r"(saved_ttbr0));
-            __asm__ volatile("isb" ::: "memory");
-        }
 #endif
         int err = fut_uaccess_window_error();
         uaccess_clear();
@@ -277,12 +250,6 @@ copy_fault:
 }
 
 int fut_copy_to_user(void *u_dst, const void *k_src, size_t n) {
-#if defined(__aarch64__)
-    uint64_t saved_ttbr0;
-    struct fut_mm *mm;
-    /* (no debug) */
-#endif
-
     if (n == 0) {
         return 0;
     }
@@ -302,27 +269,12 @@ int fut_copy_to_user(void *u_dst, const void *k_src, size_t n) {
     volatile uint8_t *dst = (volatile uint8_t *)u_dst;
     const uint8_t *src = (const uint8_t *)k_src;
 
-    /* Set AC flag for SMAP (x86-64) or ensure user page table is loaded (ARM64) */
+    /* Set AC flag for SMAP (x86-64) */
 #if defined(__x86_64__)
     smap_stac();
 #elif defined(__aarch64__)
-    /* ARM64 must ensure the user's TTBR0 is loaded before writing to
-     * user memory, matching the pattern in fut_copy_from_user.  During syscalls,
-     * TTBR0 may have been switched to the kernel page table by page table
-     * operations, causing writes to user addresses to fault or silently corrupt
-     * kernel memory if the VA happens to alias a kernel mapping. */
-    __asm__ volatile("mrs %0, ttbr0_el1" : "=r"(saved_ttbr0));
-
-    /* Use TTBR0 as-is if already set by exec/syscall path.
-     * Check mm for override only if TTBR0 looks unset (points to boot table). */
-    mm = fut_mm_current();
-    if (mm && mm->ctx.ttbr0_el1 && saved_ttbr0 != mm->ctx.ttbr0_el1) {
-        __asm__ volatile("msr ttbr0_el1, %0" :: "r"(mm->ctx.ttbr0_el1));
-        saved_ttbr0 = mm->ctx.ttbr0_el1;
-    }
-    /* Full TLB invalidation to ensure walker sees freshly-mapped user pages */
-    __asm__ volatile("tlbi vmalle1is" ::: "memory");
-    __asm__ volatile("dsb ish" ::: "memory");
+    /* ARM64: TTBR0 is preserved throughout the syscall by sync_exception_entry
+     * and the IRQ handler's TTBR0 save/restore. No switching needed. */
     __asm__ volatile("isb" ::: "memory");
 
 #endif
@@ -341,15 +293,9 @@ int fut_copy_to_user(void *u_dst, const void *k_src, size_t n) {
         remaining -= chunk;
     }
 
-    /* Clear AC flag / Restore TTBR0 */
+    /* Clear AC flag */
 #if defined(__x86_64__)
     smap_clac();
-#elif defined(__aarch64__)
-    /* ARM64: Restore original TTBR0 */
-    if (mm && mm->ctx.ttbr0_el1 && saved_ttbr0 != mm->ctx.ttbr0_el1) {
-        __asm__ volatile("msr ttbr0_el1, %0" :: "r"(saved_ttbr0));
-        __asm__ volatile("isb" ::: "memory");
-    }
 #endif
 
     uaccess_clear();
@@ -357,15 +303,9 @@ int fut_copy_to_user(void *u_dst, const void *k_src, size_t n) {
 
 copy_fault:
     {
-        /* Clear AC flag / Restore TTBR0 on fault path */
+        /* Clear AC flag on fault path */
 #if defined(__x86_64__)
         smap_clac();
-#elif defined(__aarch64__)
-        /* ARM64: Restore original TTBR0 */
-        if (mm && mm->ctx.ttbr0_el1 && saved_ttbr0 != mm->ctx.ttbr0_el1) {
-            __asm__ volatile("msr ttbr0_el1, %0" :: "r"(saved_ttbr0));
-            __asm__ volatile("isb" ::: "memory");
-        }
 #endif
         int err = fut_uaccess_window_error();
         uaccess_clear();

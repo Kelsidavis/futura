@@ -303,12 +303,21 @@ irq_exception_entry:
     str     x0, [sp, #264]         /* frame->pstate — checked by arm64_handle_irq */
     mrs     x0, sp_el0
     str     x0, [sp, #808]         /* frame->sp_el0 */
+    mrs     x0, ttbr0_el1
+    str     x0, [sp, #816]         /* frame->ttbr0_el1 — preserve across context switch */
 
     /* Call C IRQ handler with frame pointer */
     mov     x0, sp
     bl      arm64_handle_irq
 
-    /* Restore system registers (signal delivery may have modified frame->pc) */
+    /* Restore system registers.  TTBR0 must be restored because a context
+     * switch inside the IRQ handler (timer tick → scheduler) changes TTBR0
+     * to the new task's page table.  If the IRQ interrupted a syscall that
+     * was accessing user memory, the interrupted code needs the ORIGINAL
+     * task's TTBR0, not the switched-to task's. */
+    ldr     x0, [sp, #816]
+    msr     ttbr0_el1, x0          /* Restore TTBR0_EL1 (user page table) */
+    isb
     ldr     x0, [sp, #256]
     msr     elr_el1, x0            /* Restore ELR_EL1 */
     ldr     x0, [sp, #264]

@@ -922,10 +922,17 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  help            - Show this help message\n");
     write_str(1, "  exit [code]     - Exit shell\n");
     write_str(1, "  export VAR=val  - Export environment variable\n");
+    write_str(1, "  source <file>   - Execute script in current shell\n");
+    write_str(1, "  exec <cmd>      - Replace shell with command\n");
     write_str(1, "  test / [        - Test conditions (see below)\n");
+    write_str(1, "  history         - Show command history\n");
     write_str(1, "  jobs            - List background jobs\n");
     write_str(1, "  fg [job_id]     - Bring job to foreground\n");
-    write_str(1, "  bg [job_id]     - Resume job in background (not supported)\n");
+    write_str(1, "\n");
+    write_str(1, "Scripting:\n");
+    write_str(1, "  for VAR in LIST; do BODY; done\n");
+    write_str(1, "  while CMD; do BODY; done\n");
+    write_str(1, "  if CMD; then BODY; [else BODY;] fi\n");
     write_str(1, "\n");
     write_str(1, "Features:\n");
     write_str(1, "  Variables:      VAR=value, $VAR, ${VAR}, $?\n");

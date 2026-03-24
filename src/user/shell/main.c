@@ -446,7 +446,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     const char *builtins[] = {
         "bg", "cd", "chmod", "clear", "date", "dd", "df", "dmesg", "echo", "edit", "hexdump", "lsof", "nc", "poweroff", "reboot", "seq", "sleep", "time", "wget", "exit", "export", "fg", "free",
         "help", "hostname", "id", "ifconfig", "jobs", "kill", "ls", "mount",
-        ".", "basename", "dirname", "du", "exec", "false", "history", "ln", "printf", "ps", "pwd", "readlink", "source", "stat", "test", "tree", "true", "type", "uname", "uptime", "version", "which", "whoami", NULL
+        ".", "basename", "dirname", "du", "exec", "false", "history", "ln", "printf", "ps", "pwd", "readlink", "source", "stat", "sync", "test", "tree", "true", "type", "umask", "uname", "uptime", "version", "which", "whoami", NULL
     };
 
     /* External commands we might have */
@@ -1756,16 +1756,26 @@ static void cmd_version(int argc, char *argv[]) {
 #define REBOOT_CMD_RESTART   0x01234567
 #define REBOOT_CMD_POWEROFF  0x4321FEDC
 
+/* Built-in: sync - Flush filesystem buffers */
+static void cmd_sync(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    sys_call0(162 /* sync */);
+    write_str(1, "sync: done\n");
+}
+
 static void cmd_reboot(int argc, char *argv[]) {
     (void)argc; (void)argv;
+    write_str(1, "Syncing filesystems...\n");
+    sys_call0(162 /* sync */);
     write_str(1, "Rebooting...\n");
-    /* reboot(2): x86_64=169, ARM64=142; using x86_64 compat alias */
     sys_call4(169, REBOOT_MAGIC1, REBOOT_MAGIC2, REBOOT_CMD_RESTART, 0);
     write_str(2, "reboot: failed\n");
 }
 
 static void cmd_poweroff(int argc, char *argv[]) {
     (void)argc; (void)argv;
+    write_str(1, "Syncing filesystems...\n");
+    sys_call0(162 /* sync */);
     write_str(1, "Powering off...\n");
     sys_call4(169, REBOOT_MAGIC1, REBOOT_MAGIC2, REBOOT_CMD_POWEROFF, 0);
     write_str(2, "poweroff: failed\n");
@@ -5178,6 +5188,31 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "dd") == 0) {
         cmd_dd(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "sync") == 0) {
+        cmd_sync(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "umask") == 0) {
+        if (argc > 1) {
+            /* Set umask from octal */
+            unsigned int mask = 0;
+            for (int j = 0; argv[1][j]; j++) {
+                if (argv[1][j] >= '0' && argv[1][j] <= '7')
+                    mask = (mask << 3) | (argv[1][j] - '0');
+            }
+            sys_call1(95 /* umask */, mask);
+        } else {
+            /* Display current umask */
+            long old = sys_call1(95, 0);  /* Read current */
+            sys_call1(95, old);  /* Restore */
+            char buf[5];
+            buf[0] = '0';
+            buf[1] = '0' + (char)((old >> 6) & 7);
+            buf[2] = '0' + (char)((old >> 3) & 7);
+            buf[3] = '0' + (char)(old & 7);
+            buf[4] = '\0';
+            write_str(1, buf); write_char(1, '\n');
+        }
+        return 0;
     } else if (strcmp_simple(argv[0], "exec") == 0) {
         if (argc < 2) { write_str(2, "usage: exec <command> [args...]\n"); return 1; }
         /* Replace current shell with the command */
@@ -5359,6 +5394,8 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "stat") == 0 ||
             strcmp_simple(cmd, "chmod") == 0 ||
             strcmp_simple(cmd, "cp") == 0 ||
+            strcmp_simple(cmd, "sync") == 0 ||
+            strcmp_simple(cmd, "umask") == 0 ||
             strcmp_simple(cmd, "exec") == 0 ||
             strcmp_simple(cmd, "type") == 0 ||
             strcmp_simple(cmd, "true") == 0 ||
@@ -6057,7 +6094,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.4                   |\n");
-    write_str(1, "|   53 built-in commands — type 'help'     |\n");
+    write_str(1, "|   55 built-in commands — type 'help'     |\n");
     write_str(1, "|   nano editor available at /bin/nano      |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");

@@ -4461,6 +4461,13 @@ static void arm64_syscall_table_init(void) {
         syscall_table[89].name = "readlink";
     }
 
+    /* sync (x86_64: 162, ARM64: 81) — for shell sync command */
+    syscall_table[162].handler = syscall_table[__NR_sync].handler;
+    syscall_table[162].name = "sync";
+    /* umask (x86_64: 95, ARM64: 166) */
+    syscall_table[95].handler = syscall_table[__NR_umask].handler;
+    syscall_table[95].name = "umask";
+
     syscall_table_initialized = true;
 }
 

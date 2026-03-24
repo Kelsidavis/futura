@@ -683,6 +683,28 @@ static const char *get_var(const char *name) {
         return rand_buf;
     }
 
+    /* $PPID */
+    if (strcmp_simple(name, "PPID") == 0) {
+        static char ppid_buf[16];
+        long ppid = sys_call0(110 /* getppid */);
+        int pi = 0;
+        if (ppid == 0) { ppid_buf[pi++] = '0'; }
+        else { char pt[16]; int pj = 0; long tmp = ppid;
+               while (tmp > 0) { pt[pj++] = '0' + (char)(tmp % 10); tmp /= 10; }
+               while (pj > 0) ppid_buf[pi++] = pt[--pj]; }
+        ppid_buf[pi] = '\0';
+        return ppid_buf;
+    }
+
+    /* $EUID */
+    if (strcmp_simple(name, "EUID") == 0) {
+        static char euid_buf[8];
+        long euid = sys_call0(107 /* geteuid */);
+        euid_buf[0] = '0' + (char)(euid % 10);
+        euid_buf[1] = '\0';
+        return euid_buf;
+    }
+
     /* Look up user variable */
     for (int i = 0; i < MAX_VARS; i++) {
         if (shell_vars[i].used && strcmp_simple(shell_vars[i].name, name) == 0) {
@@ -832,6 +854,64 @@ static void expand_variables(char *dest, const char *src, size_t dest_size) {
                 /* $! = last background PID (stub: 0) */
                 p++;
                 dest[dest_pos++] = '0';
+                continue;
+            }
+            if (*p == '(' && p[1] == '(') {
+                /* $((...)) arithmetic expansion */
+                p += 2;
+                char expr[128];
+                int el = 0;
+                int depth = 2;
+                while (*p && depth > 0 && el < 127) {
+                    if (*p == ')') depth--;
+                    if (depth > 0) expr[el++] = *p;
+                    p++;
+                }
+                expr[el] = '\0';
+                /* Simple arithmetic: parse "a OP b" */
+                long result = 0;
+                char *ep = expr;
+                while (*ep == ' ') ep++;
+                /* Parse first operand */
+                long a = 0; int neg = 0;
+                if (*ep == '-') { neg = 1; ep++; }
+                while (*ep >= '0' && *ep <= '9') { a = a * 10 + (*ep - '0'); ep++; }
+                if (neg) a = -a;
+                while (*ep == ' ') ep++;
+                if (*ep) {
+                    char op = *ep++; char op2 = 0;
+                    if (*ep == '=' || *ep == op) { op2 = *ep++; }
+                    while (*ep == ' ') ep++;
+                    long b = 0; neg = 0;
+                    if (*ep == '-') { neg = 1; ep++; }
+                    while (*ep >= '0' && *ep <= '9') { b = b * 10 + (*ep - '0'); ep++; }
+                    if (neg) b = -b;
+                    if (op == '+') result = a + b;
+                    else if (op == '-') result = a - b;
+                    else if (op == '*') result = a * b;
+                    else if (op == '/' && b != 0) result = a / b;
+                    else if (op == '%' && b != 0) result = a % b;
+                    else if (op == '<' && op2 == '=') result = a <= b;
+                    else if (op == '>' && op2 == '=') result = a >= b;
+                    else if (op == '<') result = a < b;
+                    else if (op == '>') result = a > b;
+                    else if (op == '=' && op2 == '=') result = a == b;
+                    else if (op == '!' && op2 == '=') result = a != b;
+                    else result = a;
+                } else {
+                    result = a;
+                }
+                /* Convert to string */
+                char rbuf[20];
+                int ri = 0;
+                if (result < 0) { rbuf[ri++] = '-'; result = -result; }
+                if (result == 0) { rbuf[ri++] = '0'; }
+                else { char rt[20]; int rj = 0;
+                       while (result > 0) { rt[rj++] = '0' + (char)(result % 10); result /= 10; }
+                       while (rj > 0) rbuf[ri++] = rt[--rj]; }
+                rbuf[ri] = '\0';
+                for (int i = 0; rbuf[i] && dest_pos < dest_size - 1; i++)
+                    dest[dest_pos++] = rbuf[i];
                 continue;
             }
             if (*p == '(') {

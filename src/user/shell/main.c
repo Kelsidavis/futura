@@ -1870,10 +1870,21 @@ static void cmd_uptime(int argc, char *argv[]) {
 /* Built-in: ifconfig - Show network interface info */
 static void cmd_ifconfig(int argc, char *argv[]) {
     (void)argc; (void)argv;
-    /* Read from /proc/net/dev or hardcoded for now */
+    /* Try reading /proc/net/dev for real interface stats */
+    int fd = sys_open("/proc/net/dev", O_RDONLY, 0);
+    if (fd >= 0) {
+        char buf[1024];
+        ssize_t n = sys_read(fd, buf, sizeof(buf) - 1);
+        sys_close(fd);
+        if (n > 0) {
+            buf[n] = '\0';
+            write_str(1, buf);
+            write_str(1, "\n");
+        }
+    }
+    /* Show interface configuration */
     write_str(1, "eth0      Link encap:Ethernet\n");
     write_str(1, "          inet addr:10.0.2.15  Mask:255.255.255.0\n");
-    write_str(1, "          inet6 addr: ::1/128 Scope:Host\n");
     write_str(1, "          UP BROADCAST RUNNING MULTICAST  MTU:1500\n");
     write_str(1, "\n");
     write_str(1, "lo        Link encap:Local Loopback\n");

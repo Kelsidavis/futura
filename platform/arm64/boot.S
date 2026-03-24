@@ -426,6 +426,9 @@ bss_cleared:
     orr     x0, x0, #(1 << 0)    /* M: Enable MMU */
     orr     x0, x0, #(1 << 2)    /* C: Enable data cache */
     orr     x0, x0, #(1 << 12)   /* I: Enable instruction cache */
+    bic     x0, x0, #(1 << 1)    /* A: Disable alignment checking */
+    bic     x0, x0, #(1 << 3)    /* SA: Disable stack alignment EL1 */
+    bic     x0, x0, #(1 << 4)    /* SA0: Disable stack alignment EL0 */
     msr     sctlr_el1, x0
     isb
 

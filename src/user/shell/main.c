@@ -146,7 +146,15 @@ static inline long sys_pipe(int pipefd[2]) {
 }
 
 static inline long sys_dup2(int oldfd, int newfd) {
-    return sys_call2(SYS_dup2, oldfd, newfd);
+    return sys_dup2_call(oldfd, newfd);
+}
+
+static inline long sys_dup(int oldfd) {
+#ifdef __aarch64__
+    return sys_call1(23 /* __NR_dup on ARM64 */, oldfd);
+#else
+    return sys_call1(SYS_dup, oldfd);
+#endif
 }
 
 static inline long sys_waitpid(int pid, int *status, int options) {
@@ -4172,15 +4180,39 @@ static int execute_pipeline(int num_stages, char *stages[], int background, cons
 
             /* Execute directly if builtin */
             if (is_builtin(argv[0])) {
-                /* Builtins with redirections need special handling */
-                if (redir.input_type != REDIR_NONE || redir.output_type != REDIR_NONE) {
-                    write_str(2, "Warning: Redirections not supported for builtins yet\n");
+                int saved_stdin = -1, saved_stdout = -1;
+                int has_redir = (redir.input_type != REDIR_NONE || redir.output_type != REDIR_NONE);
+
+                /* Save and apply redirections for builtins */
+                if (has_redir) {
+                    if (redir.output_type != REDIR_NONE && redir.output_file) {
+                        saved_stdout = sys_dup(1);
+                        int flags = (redir.output_type == REDIR_APPEND)
+                            ? (O_WRONLY | O_CREAT | O_APPEND)
+                            : (O_WRONLY | O_CREAT | O_TRUNC);
+                        int fd = sys_open(redir.output_file, flags, 0644);
+                        if (fd >= 0) {
+                            sys_dup2(fd, 1);
+                            sys_close(fd);
+                        }
+                    }
+                    if (redir.input_type == REDIR_INPUT && redir.input_file) {
+                        saved_stdin = sys_dup(0);
+                        int fd = sys_open(redir.input_file, O_RDONLY, 0);
+                        if (fd >= 0) {
+                            sys_dup2(fd, 0);
+                            sys_close(fd);
+                        }
+                    }
                 }
-                /* Builtins cannot be backgrounded */
-                if (background) {
-                    write_str(2, "Warning: Cannot background builtin commands\n");
-                }
-                return execute_command(argc, argv);
+
+                int result = execute_command(argc, argv);
+
+                /* Restore original fds */
+                if (saved_stdout >= 0) { sys_dup2(saved_stdout, 1); sys_close(saved_stdout); }
+                if (saved_stdin >= 0) { sys_dup2(saved_stdin, 0); sys_close(saved_stdin); }
+
+                return result;
             } else {
                 /* External command - fork and exec */
                 pid_t pid = sys_fork();

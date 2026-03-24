@@ -577,9 +577,7 @@ impl VirtQueue {
 
             // Verify no overlap (should be impossible with our fixed spacing)
             if desc_base == avail_base || desc_base == used_base || avail_base == used_base {
-                fut_printf(b"[virtio-blk] ERROR: Queue structures overlap after alignment!\n\0".as_ptr());
-                fut_printf(b"[virtio-blk]   desc=0x%lx avail=0x%lx used=0x%lx\n\0".as_ptr(),
-                    desc_base, avail_base, used_base);
+                log("virtio-blk: ERROR: Queue structures overlap");
                 free(base_ptr);
                 return Err(ENOMEM);
             }
@@ -596,17 +594,16 @@ impl VirtQueue {
             self.used_phys = virt_to_phys_addr(used as usize);
 
             /* CRITICAL: Verify all queue regions are page-aligned for QEMU */
-            fut_printf(b"[virtio-blk] queue addrs: desc=0x%lx avail=0x%lx used=0x%lx\n\0".as_ptr(),
-                self.desc_phys, self.avail_phys, self.used_phys);
+            // fut_printf removed: variadic FFI broken on ARM64
 
             if (self.desc_phys % 4096) != 0 {
-                fut_printf(b"[virtio-blk] ERROR: desc_phys not page-aligned! (0x%lx)\n\0".as_ptr(), self.desc_phys);
+//                fut_printf(b"[virtio-blk] ERROR: desc_phys not page-aligned! (0x%lx)\n\0".as_ptr(), self.desc_phys);
             }
             if (self.avail_phys % 4096) != 0 {
-                fut_printf(b"[virtio-blk] ERROR: avail_phys not page-aligned! (0x%lx)\n\0".as_ptr(), self.avail_phys);
+//                fut_printf(b"[virtio-blk] ERROR: avail_phys not page-aligned! (0x%lx)\n\0".as_ptr(), self.avail_phys);
             }
             if (self.used_phys % 4096) != 0 {
-                fut_printf(b"[virtio-blk] ERROR: used_phys not page-aligned! (0x%lx)\n\0".as_ptr(), self.used_phys);
+//                fut_printf(b"[virtio-blk] ERROR: used_phys not page-aligned! (0x%lx)\n\0".as_ptr(), self.used_phys);
             }
 
             self.next_avail.store(0, Ordering::Relaxed);
@@ -647,9 +644,7 @@ impl VirtQueue {
             let next_ptr = core::ptr::addr_of_mut!((*desc_ptr).next);
             let next_val = if req_type == VIRTIO_BLK_T_FLUSH { desc_status } else { desc_data };
             write_volatile(next_ptr, next_val);
-            fut_printf(b"[virtio-blk] desc[%d]: addr=0x%lx len=%d flags=0x%x next=%d\n\0".as_ptr(),
-                desc_head as u32, header_phys, size_of::<VirtioBlkReqHeader>() as u32,
-                VIRTQ_DESC_F_NEXT as u32, next_val as u32);
+            // fut_printf removed (3 lines): variadic FFI broken on ARM64
 
             if req_type != VIRTIO_BLK_T_FLUSH {
                 let mut flags = VIRTQ_DESC_F_NEXT;
@@ -666,8 +661,8 @@ impl VirtQueue {
                 write_volatile(flags_ptr, flags);
                 let next_ptr = core::ptr::addr_of_mut!((*desc_ptr).next);
                 write_volatile(next_ptr, desc_status);
-                fut_printf(b"[virtio-blk] desc[%d]: addr=0x%lx len=%d flags=0x%x next=%d\n\0".as_ptr(),
-                    desc_data as u32, data_phys, data_len as u32, flags as u32, desc_status as u32);
+//                fut_printf(b"[virtio-blk] desc[%d]: addr=0x%lx len=%d flags=0x%x next=%d\n\0".as_ptr(),
+//                    desc_data as u32, data_phys, data_len as u32, flags as u32, desc_status as u32);
             }
 
             // Status descriptor - write each field separately
@@ -680,8 +675,7 @@ impl VirtQueue {
             write_volatile(flags_ptr, VIRTQ_DESC_F_WRITE);
             let next_ptr = core::ptr::addr_of_mut!((*desc_ptr).next);
             write_volatile(next_ptr, 0);
-            fut_printf(b"[virtio-blk] desc[%d]: addr=0x%lx len=1 flags=0x%x next=0\n\0".as_ptr(),
-                desc_status as u32, status_phys, VIRTQ_DESC_F_WRITE as u32);
+            // fut_printf removed: variadic FFI broken on ARM64
 
             // CRITICAL: Memory fence to ensure ALL descriptor writes are visible before updating available ring
             core::sync::atomic::fence(Ordering::SeqCst);
@@ -695,8 +689,7 @@ impl VirtQueue {
             let old_idx = read_volatile(idx_ptr);
             let new_idx = old_idx.wrapping_add(1);
             write_volatile(idx_ptr, new_idx);  // CRITICAL: Volatile write for device visibility
-            fut_printf(b"[virtio-blk] enqueue: slot=%d desc_head=%d avail.idx %d -> %d avail.flags=%d\n\0".as_ptr(),
-                slot as u32, desc_head as u32, old_idx as u32, new_idx as u32, avail.flags as u32);
+            // fut_printf removed: variadic FFI broken on ARM64
         }
         self.next_avail.fetch_add(1, Ordering::Release);
         Ok(())
@@ -708,8 +701,8 @@ impl VirtQueue {
 
         let irq_vector = VIRTIO_BLK_IRQ_VECTOR.load(Ordering::Relaxed);
         unsafe {
-            fut_printf(b"[virtio-blk] waiting for interrupt (vector=%d)...\n\0".as_ptr(),
-                irq_vector as u32);
+//            fut_printf(b"[virtio-blk] waiting for interrupt (vector=%d)...\n\0".as_ptr(),
+//                irq_vector as u32);
         }
 
         loop {
@@ -734,11 +727,11 @@ impl VirtQueue {
 
                 unsafe {
                     if int_flag != 0 {
-                        fut_printf(b"[virtio-blk] interrupt received! last_used=%d used_idx=%d isr=0x%x\n\0".as_ptr(),
-                            last as u32, used_idx as u32, isr_status as u32);
+//                        fut_printf(b"[virtio-blk] interrupt received! last_used=%d used_idx=%d isr=0x%x\n\0".as_ptr(),
+//                            last as u32, used_idx as u32, isr_status as u32);
                     } else {
-                        fut_printf(b"[virtio-blk] completion without interrupt! last_used=%d used_idx=%d isr=0x%x\n\0".as_ptr(),
-                            last as u32, used_idx as u32, isr_status as u32);
+//                        fut_printf(b"[virtio-blk] completion without interrupt! last_used=%d used_idx=%d isr=0x%x\n\0".as_ptr(),
+//                            last as u32, used_idx as u32, isr_status as u32);
                     }
                 }
 
@@ -747,22 +740,22 @@ impl VirtQueue {
                     return 0;
                 } else {
                     unsafe {
-                        fut_printf(b"[virtio-blk] WARNING: interrupt but no used ring update\n\0".as_ptr());
+//                        fut_printf(b"[virtio-blk] WARNING: interrupt but no used ring update\n\0".as_ptr());
                     }
                 }
             }
 
             if waited == 10000 {
                 unsafe {
-                    fut_printf(b"[virtio-blk] still waiting after 10k iterations... (used=%d last=%d isr=0x%x)\n\0".as_ptr(),
-                        used_idx as u32, last as u32, isr_status as u32);
+//                    fut_printf(b"[virtio-blk] still waiting after 10k iterations... (used=%d last=%d isr=0x%x)\n\0".as_ptr(),
+//                        used_idx as u32, last as u32, isr_status as u32);
                 }
             }
 
             if waited > TIMEOUT_ITERATIONS {
                 unsafe {
-                    fut_printf(b"[virtio-blk] TIMEOUT: no interrupt received (last=%d used=%d isr=0x%x)\n\0".as_ptr(),
-                        last as u32, used_idx as u32, isr_status as u32);
+//                    fut_printf(b"[virtio-blk] TIMEOUT: no interrupt received (last=%d used=%d isr=0x%x)\n\0".as_ptr(),
+//                        last as u32, used_idx as u32, isr_status as u32);
                 }
                 return ETIMEDOUT;
             }
@@ -1695,16 +1688,17 @@ impl VirtioBlkDevice {
 
     #[cfg(target_arch = "aarch64")]
     fn notify_queue(&self) {
-        // MMIO: write queue index to QUEUE_NOTIFY register
-        // CRITICAL: Use DSB SY (not just DMB/fence) to ensure the MMIO write
-        // reaches the device before we start polling for completion.
+        // MMIO: write queue index 0 to QUEUE_NOTIFY register at offset 0x50
         unsafe {
-            let reg = (self.mmio_base + VIRTIO_MMIO_QUEUE_NOTIFY as u64) as *mut u32;
-            // DSB before write to ensure all prior descriptor/avail writes are visible
-            core::arch::asm!("dsb sy", options(nostack, nomem));
-            write_volatile(reg, 0);
-            // DSB after write to ensure the MMIO write reaches the device
-            core::arch::asm!("dsb sy", options(nostack, nomem));
+            let addr = self.mmio_base + 0x50;
+            // Use DSB + STR + DSB pattern for device memory writes
+            core::arch::asm!(
+                "dsb sy",
+                "str wzr, [{addr}]",     // Write 0 to QUEUE_NOTIFY
+                "dsb sy",
+                addr = in(reg) addr,
+                options(nostack)
+            );
         }
     }
 
@@ -1741,8 +1735,8 @@ impl VirtioBlkDevice {
             let status_ptr = core::ptr::addr_of_mut!((*self.dma).status);
             write_volatile(status_ptr, 0xFF);
 
-            fut_printf(b"[virtio-blk] request: type=%d lba=%ld nsectors=%d\n\0".as_ptr(),
-                req_type, lba, nsectors as u32);
+            // fut_printf removed: variadic FFI broken on ARM64
+//            log("virtio-blk: submitting request");
 
             if req_type != VIRTIO_BLK_T_FLUSH {
                 if buf.is_null() {
@@ -1766,10 +1760,7 @@ impl VirtioBlkDevice {
         let header_phys = self.dma_phys;
         let status_phys = self.dma_phys + DMA_STATUS_OFFSET;
 
-        unsafe {
-            fut_printf(b"[virtio-blk] I/O: header_phys=0x%lx data_phys=0x%lx status_phys=0x%lx\n\0".as_ptr(),
-                header_phys, data_phys, status_phys);
-        }
+        log("virtio-blk: enqueueing request");
 
         if let Err(err) = self.queue.enqueue(header_phys, data_phys, status_phys, req_type, data_bytes, write) {
             if !bounce.is_null() {
@@ -1782,9 +1773,12 @@ impl VirtioBlkDevice {
         self.notify_queue();
 
         let rc = self.queue.poll_completion(self.isr as *const u8);
+        log("virtio-blk: poll_completion returned");
+        // Invalidate cache for DMA buffer to see device's status write
         unsafe {
-            let status_byte = (*self.dma).status;
-            fut_printf(b"[virtio-blk] after poll: rc=%d status_byte=%d\n\0".as_ptr(), rc, status_byte as u32);
+            let dma_addr = self.dma as usize;
+            core::arch::asm!("dc civac, {}", in(reg) dma_addr, options(nostack));
+            core::arch::asm!("dsb sy", options(nostack, nomem));
         }
         if rc != 0 {
             if !bounce.is_null() {

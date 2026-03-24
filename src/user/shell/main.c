@@ -436,7 +436,7 @@ static size_t common_prefix_len(const char *s1, const char *s2) {
 static void complete_command(char *buf, size_t *pos, size_t max_len) {
     /* List of builtin commands */
     const char *builtins[] = {
-        "bg", "cd", "clear", "date", "echo", "exit", "export", "fg", "free",
+        "bg", "cd", "clear", "date", "dmesg", "echo", "exit", "export", "fg", "free",
         "help", "hostname", "id", "ifconfig", "jobs", "kill", "ls", "mount",
         "ps", "pwd", "test", "uname", "uptime", "version", "whoami", NULL
     };
@@ -882,6 +882,7 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  uname [-a]      - Print system information\n");
     write_str(1, "  whoami          - Print current user\n");
     write_str(1, "  date            - Show system uptime\n");
+    write_str(1, "  dmesg           - Show kernel log buffer\n");
     write_str(1, "  uptime          - Show system uptime (from /proc)\n");
     write_str(1, "  hostname        - Show system hostname\n");
     write_str(1, "  free            - Show memory usage\n");
@@ -1092,6 +1093,33 @@ static void cmd_mount(int argc, char *argv[]) {
         sys_close(fd);
     } else {
         write_str(1, "mount: /proc/mounts not available\n");
+    }
+}
+
+/* Built-in: dmesg - Show kernel log ring buffer */
+static void cmd_dmesg(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    /* Read /proc/kmsg if available, otherwise use syslog syscall */
+    int fd = sys_open("/proc/kmsg", O_RDONLY, 0);
+    if (fd >= 0) {
+        char buf[4096];
+        ssize_t n;
+        while ((n = sys_read(fd, buf, sizeof(buf) - 1)) > 0) {
+            buf[n] = '\0';
+            write_str(1, buf);
+        }
+        sys_close(fd);
+    } else {
+        /* Fall back to syslog syscall (103 on x86_64) */
+        /* Type 3 = SYSLOG_ACTION_READ_ALL, read entire ring buffer */
+        char buf[8192];
+        long ret = sys_call3(103 /* syslog */, 3, (long)buf, sizeof(buf) - 1);
+        if (ret > 0) {
+            buf[ret] = '\0';
+            write_str(1, buf);
+        } else {
+            write_str(1, "dmesg: kernel log not available\n");
+        }
     }
 }
 
@@ -3815,6 +3843,9 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "date") == 0) {
         cmd_date(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "dmesg") == 0) {
+        cmd_dmesg(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "free") == 0) {
         cmd_free(argc, argv);
         return 0;
@@ -3946,6 +3977,7 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "clear") == 0 ||
             strcmp_simple(cmd, "uname") == 0 ||
             strcmp_simple(cmd, "date") == 0 ||
+            strcmp_simple(cmd, "dmesg") == 0 ||
             strcmp_simple(cmd, "free") == 0 ||
             strcmp_simple(cmd, "hostname") == 0 ||
             strcmp_simple(cmd, "id") == 0 ||
@@ -4531,7 +4563,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.3                   |\n");
-    write_str(1, "|   24 built-in commands — type 'help'     |\n");
+    write_str(1, "|   25 built-in commands — type 'help'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\n");
 

@@ -4306,6 +4306,11 @@ static void arm64_syscall_table_init(void) {
     /* clock_gettime (x86_64: 98, ARM64: 113) — for shell 'date' command */
     syscall_table[98].handler = syscall_table[__NR_clock_gettime].handler;
     syscall_table[98].name = "clock_gettime";
+    /* syslog (x86_64: 103, ARM64: 116) — for dmesg */
+    syscall_table[103].handler = (syscall_fn_t)sys_syslog_wrapper;
+    syscall_table[103].name = "syslog";
+    syscall_table[__NR_syslog].handler = (syscall_fn_t)sys_syslog_wrapper;
+    syscall_table[__NR_syslog].name = "syslog";
     /* Note: fcntl(72) and ftruncate(77) aliases omitted — fcntl compat
      * changes shell behavior (F_GETFL now succeeds, changing stdio setup) */
 

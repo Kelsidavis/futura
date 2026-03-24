@@ -443,6 +443,10 @@ void fut_serial_enable_irq_mode(void) {
 }
 
 void fut_serial_putc(char c) {
+    /* Capture in kernel log ring buffer for dmesg */
+    extern void klog_write(const char *data, size_t len);
+    klog_write(&c, 1);
+
     volatile uint8_t *uart = (volatile uint8_t *)UART0_BASE;
 
     if (!uart_tx_irq_mode) {

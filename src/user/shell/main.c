@@ -439,7 +439,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     const char *builtins[] = {
         "bg", "cd", "chmod", "clear", "date", "dd", "df", "dmesg", "echo", "edit", "hexdump", "lsof", "nc", "poweroff", "reboot", "seq", "sleep", "time", "wget", "exit", "export", "fg", "free",
         "help", "hostname", "id", "ifconfig", "jobs", "kill", "ls", "mount",
-        "ln", "ps", "pwd", "readlink", "stat", "test", "uname", "uptime", "version", "whoami", NULL
+        "ln", "ps", "pwd", "readlink", "stat", "test", "tree", "uname", "uptime", "version", "whoami", NULL
     };
 
     /* External commands we might have */
@@ -4173,6 +4173,105 @@ static void cmd_chmod(int argc, char *argv[]) {
     }
 }
 
+/* Built-in: tree - Display directory tree */
+static void tree_recurse(const char *path, const char *prefix, int *file_count, int *dir_count) {
+    struct linux_dirent64 {
+        unsigned long long d_ino;
+        long long d_off;
+        unsigned short d_reclen;
+        unsigned char d_type;
+        char d_name[256];
+    };
+
+    int fd = sys_open(path, O_RDONLY, 0);
+    if (fd < 0) return;
+
+    char buf[2048];
+    long nread;
+    /* Collect entries first to know which is last */
+    struct { char name[128]; unsigned char type; } entries[64];
+    int count = 0;
+
+    while ((nread = sys_getdents64(fd, buf, sizeof(buf))) > 0 && count < 64) {
+        char *ptr = buf;
+        while (ptr < buf + nread && count < 64) {
+            struct linux_dirent64 *d = (struct linux_dirent64 *)ptr;
+            if (d->d_name[0] != '.') {
+                int j = 0;
+                while (d->d_name[j] && j < 127) { entries[count].name[j] = d->d_name[j]; j++; }
+                entries[count].name[j] = '\0';
+                entries[count].type = d->d_type;
+                count++;
+            }
+            ptr += d->d_reclen;
+        }
+    }
+    sys_close(fd);
+
+    for (int i = 0; i < count; i++) {
+        int is_last = (i == count - 1);
+        write_str(1, prefix);
+        write_str(1, is_last ? "└── " : "├── ");
+
+        if (entries[i].type == 4) {  /* DT_DIR */
+            write_str(1, "\033[34m");
+            write_str(1, entries[i].name);
+            write_str(1, "\033[0m\n");
+            (*dir_count)++;
+
+            /* Build child path */
+            char child[512];
+            int p = 0;
+            for (int k = 0; path[k] && p < 500; k++) child[p++] = path[k];
+            if (p > 0 && child[p-1] != '/') child[p++] = '/';
+            for (int k = 0; entries[i].name[k] && p < 510; k++) child[p++] = entries[i].name[k];
+            child[p] = '\0';
+
+            /* Build child prefix */
+            char cpfx[256];
+            int pp = 0;
+            for (int k = 0; prefix[k] && pp < 240; k++) cpfx[pp++] = prefix[k];
+            const char *add = is_last ? "    " : "│   ";
+            for (int k = 0; add[k] && pp < 250; k++) cpfx[pp++] = add[k];
+            cpfx[pp] = '\0';
+
+            tree_recurse(child, cpfx, file_count, dir_count);
+        } else if (entries[i].type == 10) {  /* DT_LNK */
+            write_str(1, "\033[36m");
+            write_str(1, entries[i].name);
+            write_str(1, "\033[0m\n");
+            (*file_count)++;
+        } else {
+            write_str(1, entries[i].name);
+            write_str(1, "\n");
+            (*file_count)++;
+        }
+    }
+}
+
+static void cmd_tree(int argc, char *argv[]) {
+    const char *path = argc > 1 ? argv[1] : ".";
+    write_str(1, "\033[34m");
+    write_str(1, path);
+    write_str(1, "\033[0m\n");
+
+    int files = 0, dirs = 0;
+    tree_recurse(path, "", &files, &dirs);
+
+    char numbuf[16];
+    write_str(1, "\n");
+    int_to_str(dirs, numbuf, 16);
+    write_str(1, numbuf);
+    write_str(1, " director");
+    write_str(1, dirs == 1 ? "y" : "ies");
+    write_str(1, ", ");
+    int_to_str(files, numbuf, 16);
+    write_str(1, numbuf);
+    write_str(1, " file");
+    if (files != 1) write_str(1, "s");
+    write_str(1, "\n");
+}
+
 /* Built-in: ln - Create links */
 static void cmd_ln(int argc, char *argv[]) {
     int symbolic = 0;
@@ -4778,6 +4877,9 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "stat") == 0) {
         cmd_stat(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "tree") == 0) {
+        cmd_tree(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "ln") == 0) {
         cmd_ln(argc, argv);
         return 0;
@@ -4870,6 +4972,7 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "rmdir") == 0 ||
             strcmp_simple(cmd, "rm") == 0 ||
             strcmp_simple(cmd, "touch") == 0 ||
+            strcmp_simple(cmd, "tree") == 0 ||
             strcmp_simple(cmd, "ln") == 0 ||
             strcmp_simple(cmd, "readlink") == 0 ||
             strcmp_simple(cmd, "stat") == 0 ||
@@ -5441,7 +5544,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.3                   |\n");
-    write_str(1, "|   41 built-in commands — type 'help'     |\n");
+    write_str(1, "|   42 built-in commands — type 'help'     |\n");
     write_str(1, "|   nano editor available at /bin/nano      |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");

@@ -1480,6 +1480,24 @@ static void arm64_init_spawner_thread(void *arg) {
                     fut_printf("[INIT] ✗ FuturaFS symlink create: %d\n", sl);
                 }
             }
+            /* Test mkdir: create /mnt/subdir and file inside it */
+            {
+                extern int fut_vfs_mkdir(const char *, int);
+                int md = fut_vfs_mkdir("/mnt/subdir", 0755);
+                if (md == 0) {
+                    int sfd = fut_vfs_open("/mnt/subdir/hello.txt",
+                                           0x0241 /* O_WRONLY|O_CREAT|O_TRUNC */, 0644);
+                    if (sfd >= 0) {
+                        fut_vfs_write(sfd, "nested!\n", 8);
+                        fut_vfs_close(sfd);
+                        fut_printf("[INIT] ✓ FuturaFS mkdir + nested file test passed\n");
+                    } else {
+                        fut_printf("[INIT] ✗ FuturaFS nested create: %d\n", sfd);
+                    }
+                } else {
+                    fut_printf("[INIT] ✗ FuturaFS mkdir: %d\n", md);
+                }
+            }
             }
         } else {
             fut_printf("[INIT] ✗ FuturaFS create failed: %d\n", tfd);

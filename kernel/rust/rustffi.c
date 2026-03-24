@@ -15,16 +15,17 @@ void fut_log(const char *msg) {
     if (!msg) {
         return;
     }
-    /* Suppress verbose VirtIO driver init messages for clean boot.
-     * Keep error messages and important status. */
-    if (msg[0] == 'v' && msg[1] == 'i' && msg[2] == 'r' && msg[3] == 't') {
-        /* "virtio-*: ..." — suppress unless it contains "error" or "fail" or "initialized" */
+    /* Suppress verbose Rust driver init messages for clean boot.
+     * Keep errors and final "initialized OK" / "successful" messages. */
+    if ((msg[0] == 'v' && msg[1] == 'i' && msg[2] == 'r' && msg[3] == 't') ||
+        (msg[0] == '[' && msg[1] == 'V' && msg[2] == 'I' && msg[3] == 'N')) {
         const char *p = msg;
         int is_important = 0;
         while (*p) {
             if ((*p == 'E' || *p == 'e') && p[1] == 'r' && p[2] == 'r') { is_important = 1; break; }
             if ((*p == 'F' || *p == 'f') && p[1] == 'a' && p[2] == 'i') { is_important = 1; break; }
-            if (*p == 'i' && p[1] == 'n' && p[2] == 'i' && p[3] == 't' && p[4] == 'i') { is_important = 1; break; }
+            if (*p == 'O' && p[1] == 'K') { is_important = 1; break; }
+            if (*p == 's' && p[1] == 'u' && p[2] == 'c' && p[3] == 'c') { is_important = 1; break; }
             p++;
         }
         if (!is_important) return;

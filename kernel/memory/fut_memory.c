@@ -195,9 +195,8 @@ void fut_pmm_reserve_range(uintptr_t phys_addr, size_t size_bytes) {
         }
     }
 
-    fut_printf("[PMM-RESERVE] Reserved %llu pages (0x%llx-0x%llx), %llu pages now free\n",
-               reserved_count, (unsigned long long)phys_addr,
-               (unsigned long long)(phys_addr + size_bytes), pmm_free);
+    /* pmm reserved */
+    (void)reserved_count;
 }
 
 /* ============================================================
@@ -220,9 +219,7 @@ void fut_heap_init(uintptr_t heap_start, uintptr_t heap_end) {
         heap_base = bitmap_guard;
     }
 
-    fut_printf("[HEAP-INIT] heap_base=%p heap_limit=%p (size=%llu KB)\n",
-               (void*)heap_base, (void*)heap_limit,
-               (unsigned long long)((heap_limit - heap_base) / 1024));
+    /* heap init */
 
     if (heap_limit > heap_base) {
         /* Reserve the physical memory range to prevent PMM from reallocating it.
@@ -230,10 +227,7 @@ void fut_heap_init(uintptr_t heap_start, uintptr_t heap_end) {
         phys_addr_t heap_base_phys = pmap_virt_to_phys((uintptr_t)heap_base);
         size_t heap_size = heap_limit - heap_base;
         fut_pmm_reserve_range(heap_base_phys, heap_size + FUT_PAGE_SIZE);
-        fut_printf("[HEAP-INIT] Reserved physical memory range: 0x%llx - 0x%llx (%llu KB)\n",
-                   (unsigned long long)heap_base_phys,
-                   (unsigned long long)(heap_base_phys + heap_size),
-                   (unsigned long long)(heap_size / 1024));
+        /* heap reserved */
     }
 
     FUT_ASSERT(heap_base >= bitmap_guard);

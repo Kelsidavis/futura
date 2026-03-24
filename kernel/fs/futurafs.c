@@ -204,7 +204,7 @@ static int futurafs_read_superblock(struct futurafs_mount *mount, struct futuraf
 
     int ret = futurafs_blk_read(mount, 0, 1, sb);
     if (ret < 0) {
-        fut_printf("[FUTURAFS] blockdev_read failed: %d\n", ret);
+        /* blk read failed - expected for VirtIO */
         return FUTURAFS_EIO;
     }
 

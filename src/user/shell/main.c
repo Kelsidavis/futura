@@ -875,6 +875,9 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  rm <file>       - Remove file\n");
     write_str(1, "  cp <src> <dst>  - Copy file\n");
     write_str(1, "  mv <src> <dst>  - Move/rename file\n");
+    write_str(1, "  chmod <mode> <file> - Change permissions (octal)\n");
+    write_str(1, "  stat <file>     - Show file information\n");
+    write_str(1, "  dd [if=] [of=] [bs=] [count=] - Copy data\n");
     write_str(1, "\n");
     write_str(1, "System:\n");
     write_str(1, "  ps              - List running processes\n");
@@ -898,6 +901,10 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  env             - Show environment variables\n");
     write_str(1, "  echo [args]     - Print text\n");
     write_str(1, "  clear           - Clear screen\n");
+    write_str(1, "  reboot          - Reboot system\n");
+    write_str(1, "  poweroff        - Power off system\n");
+    write_str(1, "  version         - Show kernel version\n");
+    write_str(1, "  lsof            - List open files\n");
     write_str(1, "\n");
     write_str(1, "Shell:\n");
     write_str(1, "  help            - Show this help message\n");

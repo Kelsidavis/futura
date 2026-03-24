@@ -442,7 +442,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     const char *builtins[] = {
         "bg", "cd", "chmod", "clear", "date", "dd", "df", "dmesg", "echo", "edit", "hexdump", "lsof", "nc", "poweroff", "reboot", "seq", "sleep", "time", "wget", "exit", "export", "fg", "free",
         "help", "hostname", "id", "ifconfig", "jobs", "kill", "ls", "mount",
-        ".", "basename", "dirname", "du", "false", "history", "ln", "printf", "ps", "pwd", "readlink", "source", "stat", "test", "tree", "true", "uname", "uptime", "version", "which", "whoami", NULL
+        ".", "basename", "dirname", "du", "false", "history", "ln", "printf", "ps", "pwd", "readlink", "source", "stat", "test", "tree", "true", "type", "uname", "uptime", "version", "which", "whoami", NULL
     };
 
     /* External commands we might have */
@@ -5126,6 +5126,47 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "dd") == 0) {
         cmd_dd(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "type") == 0) {
+        if (argc < 2) { write_str(2, "usage: type <command>\n"); return 1; }
+        if (is_builtin(argv[1])) {
+            write_str(1, argv[1]);
+            write_str(1, " is a shell builtin\n");
+        } else {
+            /* Search PATH */
+            const char *pe = get_var("PATH");
+            if (!pe) pe = "/bin:/sbin";
+            char pb[256];
+            const char *p = pe;
+            int found = 0;
+            while (*p && !found) {
+                int dl = 0;
+                while (p[dl] && p[dl] != ':') dl++;
+                size_t cl = strlen_simple(argv[1]);
+                if (dl + 1 + cl < sizeof(pb)) {
+                    int j = 0;
+                    for (int k = 0; k < dl; k++) pb[j++] = p[k];
+                    if (j > 0 && pb[j-1] != '/') pb[j++] = '/';
+                    for (size_t k = 0; k < cl; k++) pb[j++] = argv[1][k];
+                    pb[j] = '\0';
+                    struct stat st;
+                    if (sys_call2(__NR_stat, (long)pb, (long)&st) == 0) {
+                        write_str(1, argv[1]);
+                        write_str(1, " is ");
+                        write_str(1, pb);
+                        write_str(1, "\n");
+                        found = 1;
+                    }
+                }
+                p += dl;
+                if (*p == ':') p++;
+            }
+            if (!found) {
+                write_str(2, argv[1]);
+                write_str(2, ": not found\n");
+                return 1;
+            }
+        }
+        return 0;
     } else if (strcmp_simple(argv[0], "true") == 0) {
         return 0;
     } else if (strcmp_simple(argv[0], "false") == 0) {
@@ -5259,6 +5300,7 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "stat") == 0 ||
             strcmp_simple(cmd, "chmod") == 0 ||
             strcmp_simple(cmd, "cp") == 0 ||
+            strcmp_simple(cmd, "type") == 0 ||
             strcmp_simple(cmd, "true") == 0 ||
             strcmp_simple(cmd, "false") == 0 ||
             strcmp_simple(cmd, "printf") == 0 ||
@@ -5955,7 +5997,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.3                   |\n");
-    write_str(1, "|   51 built-in commands — type 'help'     |\n");
+    write_str(1, "|   52 built-in commands — type 'help'     |\n");
     write_str(1, "|   nano editor available at /bin/nano      |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");

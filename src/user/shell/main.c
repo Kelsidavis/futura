@@ -13,6 +13,7 @@
 #include <user/sys.h>
 #include <user/sysnums.h>
 #include <user/libfutura.h>
+#include <sys/stat.h>
 
 /* Syscall number aliases for shell code */
 #define __NR_read       SYS_read
@@ -3536,14 +3537,45 @@ static void cmd_sort(int argc, char *argv[]) {
 }
 
 /* Built-in: ls - List directory contents */
+/* Helper: format file mode as rwx string */
+static void format_mode(unsigned int mode, char *buf) {
+    /* File type character */
+    unsigned int ft = mode & 0170000;
+    if (ft == 0040000)       buf[0] = 'd';
+    else if (ft == 0120000)  buf[0] = 'l';
+    else if (ft == 0020000)  buf[0] = 'c';
+    else if (ft == 0060000)  buf[0] = 'b';
+    else if (ft == 0010000)  buf[0] = 'p';
+    else if (ft == 0140000)  buf[0] = 's';
+    else                     buf[0] = '-';
+    /* Owner */
+    buf[1] = (mode & 0400) ? 'r' : '-';
+    buf[2] = (mode & 0200) ? 'w' : '-';
+    buf[3] = (mode & 0100) ? 'x' : '-';
+    /* Group */
+    buf[4] = (mode & 040)  ? 'r' : '-';
+    buf[5] = (mode & 020)  ? 'w' : '-';
+    buf[6] = (mode & 010)  ? 'x' : '-';
+    /* Other */
+    buf[7] = (mode & 04)   ? 'r' : '-';
+    buf[8] = (mode & 02)   ? 'w' : '-';
+    buf[9] = (mode & 01)   ? 'x' : '-';
+    buf[10] = '\0';
+}
+
 static void cmd_ls(int argc, char *argv[]) {
     int show_all = 0;
+    int long_format = 0;
     int arg_start = 1;
 
-    /* Parse -a option (show all files including hidden) */
-    if (argc > 1 && strcmp_simple(argv[1], "-a") == 0) {
-        show_all = 1;
-        arg_start = 2;
+    /* Parse options */
+    while (arg_start < argc && argv[arg_start][0] == '-') {
+        const char *opt = argv[arg_start];
+        for (int j = 1; opt[j]; j++) {
+            if (opt[j] == 'a') show_all = 1;
+            else if (opt[j] == 'l') long_format = 1;
+        }
+        arg_start++;
     }
 
     const char *path = arg_start < argc ? argv[arg_start] : ".";
@@ -3574,19 +3606,61 @@ static void cmd_ls(int argc, char *argv[]) {
         while (ptr < buf + nread) {
             struct linux_dirent64 *d = (struct linux_dirent64 *)ptr;
 
-            /* Skip hidden files (starting with '.') unless -a flag is set */
-            int is_hidden = d->d_name[0] == '.';
-            if (!show_all && is_hidden) {
-                /* Skip this entry */
+            /* Skip hidden files unless -a */
+            if (!show_all && d->d_name[0] == '.') {
                 ptr += d->d_reclen;
                 continue;
             }
 
-            /* Print entry name */
+            if (long_format) {
+                /* Build full path for stat */
+                char fullpath[512];
+                int pi = 0;
+                for (int i = 0; path[i] && pi < 500; i++)
+                    fullpath[pi++] = path[i];
+                if (pi > 0 && fullpath[pi-1] != '/')
+                    fullpath[pi++] = '/';
+                for (int i = 0; d->d_name[i] && pi < 510; i++)
+                    fullpath[pi++] = d->d_name[i];
+                fullpath[pi] = '\0';
+
+                struct stat st;
+                int rc = sys_call2(__NR_stat, (long)fullpath, (long)&st);
+                if (rc == 0) {
+                    char modebuf[11];
+                    format_mode(st.st_mode, modebuf);
+                    write_str(1, modebuf);
+                    write_str(1, " ");
+
+                    /* Size */
+                    char numbuf[20];
+                    int_to_str((long)st.st_size, numbuf, 20);
+                    /* Right-align size in 8 chars */
+                    int slen = 0;
+                    while (numbuf[slen]) slen++;
+                    for (int p = slen; p < 8; p++) write_str(1, " ");
+                    write_str(1, numbuf);
+                    write_str(1, " ");
+                } else {
+                    /* Type from d_type */
+                    char tc = '-';
+                    if (d->d_type == 4) tc = 'd';
+                    else if (d->d_type == 10) tc = 'l';
+                    char tb[3] = {tc, ' ', '\0'};
+                    write_str(1, tb);
+                }
+            }
+
+            /* Color directories blue, executables green */
+            if (d->d_type == 4) write_str(1, "\033[34m");
+            else if (d->d_type == 10) write_str(1, "\033[36m");
+
             write_str(1, d->d_name);
+
+            if (d->d_type == 4 || d->d_type == 10)
+                write_str(1, "\033[0m");
             write_str(1, "\n");
 
-            /* Move to next entry */
             ptr += d->d_reclen;
         }
     }

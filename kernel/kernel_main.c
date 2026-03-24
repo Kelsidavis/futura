@@ -862,12 +862,7 @@ extern void fut_splice_test_thread(void *arg);
 extern void fut_clock_sched_test_thread(void *arg);
 extern void fut_vfs_test_thread(void *arg);
 extern void fut_poll_test_thread(void *arg);
-/* sys_misc tests excluded from ARM64 production builds for binary size */
-#ifdef __x86_64__
 extern void fut_misc_test_thread(void *arg);
-#else
-static inline void fut_misc_test_thread(void *arg) { (void)arg; }
-#endif
 
 /* Set by boot thread after all initialization is complete.
  * Test thread waits for this before starting to avoid races with init. */
@@ -1037,15 +1032,8 @@ void fut_kernel_main(void) {
 
     fut_boot_banner();
 
-    /* ARM64: Debug check for VA-to-PA mapping using known kernel symbols */
-#ifdef __aarch64__
-    {
-        /* VA-PA mapping verified: offset = KERN_VA_BASE - KERN_PA_BASE */
-    }
-#endif
-
 #if defined(__aarch64__)
-    bool fb_enabled = true;  /* Display always on for ARM64 demos */
+    bool fb_enabled = true;  /* Display always on for ARM64 */
 #else
     /* Enable framebuffer by default when Wayland demo is enabled, since the
      * compositor needs /dev/fb0 for hardware-accelerated rendering.
@@ -1583,9 +1571,9 @@ void fut_kernel_main(void) {
      *   Memory Management Tests
      * ======================================== */
 
+    /* Memory management tests — default OFF, enable via boot flag on x86_64 */
 #ifdef __x86_64__
-    bool mm_tests_enabled = boot_flag_enabled("mm-tests", false);  /* Default OFF - enable with mm-tests boot flag */
-    if (mm_tests_enabled) {
+    if (boot_flag_enabled("mm-tests", false)) {
         fut_mm_tests_run();
     }
 #endif

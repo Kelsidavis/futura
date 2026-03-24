@@ -1409,6 +1409,26 @@ static void arm64_init_spawner_thread(void *arg) {
                     fut_printf("[INIT] ✗ FuturaFS read returned %d bytes\n", (int)n);
                 }
             }
+
+            /* Test O_TRUNC: overwrite existing file */
+            tfd = fut_vfs_open("/mnt/test.txt", 0x0241 /* O_WRONLY|O_CREAT|O_TRUNC */, 0644);
+            if (tfd >= 0) {
+                const char *msg2 = "Overwritten!\n";
+                fut_vfs_write(tfd, msg2, 13);
+                fut_vfs_close(tfd);
+                tfd = fut_vfs_open("/mnt/test.txt", 0, 0);
+                if (tfd >= 0) {
+                    char rbuf2[64] = {0};
+                    long n2 = fut_vfs_read(tfd, rbuf2, sizeof(rbuf2) - 1);
+                    fut_vfs_close(tfd);
+                    if (n2 == 13 && rbuf2[0] == 'O') {
+                        fut_printf("[INIT] ✓ FuturaFS O_TRUNC overwrite test passed\n");
+                    } else {
+                        fut_printf("[INIT] ✗ FuturaFS O_TRUNC: got %d bytes, first='%c'\n",
+                                   (int)n2, n2 > 0 ? rbuf2[0] : '?');
+                    }
+                }
+            }
         } else {
             fut_printf("[INIT] ✗ FuturaFS create failed: %d\n", tfd);
         }

@@ -3852,6 +3852,57 @@ static int futurafs_vnode_rmdir(struct fut_vnode *dir, const char *name) {
     return 0;
 }
 
+/**
+ * Truncate a FuturaFS file to the specified length.
+ * Currently only supports truncation to 0 (used by O_TRUNC).
+ */
+static int futurafs_vnode_truncate(struct fut_vnode *vnode, uint64_t length) {
+    if (!vnode || vnode->type != VN_REG) {
+        return FUTURAFS_EINVAL;
+    }
+
+    struct futurafs_inode_info *info = (struct futurafs_inode_info *)vnode->fs_data;
+    if (!info || !info->mount) {
+        return FUTURAFS_EIO;
+    }
+
+    struct futurafs_mount *mount = info->mount;
+
+    if (length == 0) {
+        /* Truncate to zero: release all data blocks */
+        int ret = futurafs_inode_release_blocks(mount, &info->disk_inode);
+        if (ret < 0) {
+            return ret;
+        }
+        info->disk_inode.size = 0;
+        info->dirty = true;
+        vnode->size = 0;
+
+        /* Write inode to disk */
+        ret = futurafs_write_inode(mount, info->ino, &info->disk_inode);
+        if (ret < 0) {
+            return ret;
+        }
+        info->dirty = false;
+
+        /* Sync bitmaps */
+        return futurafs_sync_metadata(mount);
+    }
+
+    /* Truncation to non-zero length: just update size (blocks stay allocated) */
+    if (length < info->disk_inode.size) {
+        info->disk_inode.size = length;
+        info->dirty = true;
+        vnode->size = length;
+
+        int ret = futurafs_write_inode(mount, info->ino, &info->disk_inode);
+        if (ret < 0) return ret;
+        info->dirty = false;
+    }
+
+    return 0;
+}
+
 /* Initialize FuturaFS vnode operations at runtime */
 static void futurafs_init_vnode_ops(void) {
     futurafs_vnode_ops.open = NULL;
@@ -3866,6 +3917,7 @@ static void futurafs_init_vnode_ops(void) {
     futurafs_vnode_ops.rmdir = futurafs_vnode_rmdir;
     futurafs_vnode_ops.getattr = NULL;
     futurafs_vnode_ops.setattr = futurafs_vnode_setattr;
+    futurafs_vnode_ops.truncate = futurafs_vnode_truncate;
     futurafs_vnode_ops.sync = NULL;
     futurafs_vnode_ops.datasync = NULL;
 }

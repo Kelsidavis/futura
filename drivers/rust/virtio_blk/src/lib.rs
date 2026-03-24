@@ -1488,15 +1488,20 @@ impl VirtioBlkDevice {
         // Announce driver
         self.mmio_write32(VIRTIO_MMIO_STATUS, (VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER) as u32);
 
-        // Read device features
+        // Read device features (both low and high words)
         self.mmio_write32(VIRTIO_MMIO_DEVICE_FEATURES_SEL, 0);
-        let device_features = self.mmio_read32(VIRTIO_MMIO_DEVICE_FEATURES);
+        let device_features_lo = self.mmio_read32(VIRTIO_MMIO_DEVICE_FEATURES);
+        self.mmio_write32(VIRTIO_MMIO_DEVICE_FEATURES_SEL, 1);
+        let device_features_hi = self.mmio_read32(VIRTIO_MMIO_DEVICE_FEATURES);
 
         log("virtio-blk: Device offers features");
 
-        // Accept all offered features for now
+        // Accept low features + MUST set VIRTIO_F_VERSION_1 (bit 0 of high word)
+        // for VirtIO MMIO v2 (modern transport)
         self.mmio_write32(VIRTIO_MMIO_DRIVER_FEATURES_SEL, 0);
-        self.mmio_write32(VIRTIO_MMIO_DRIVER_FEATURES, device_features);
+        self.mmio_write32(VIRTIO_MMIO_DRIVER_FEATURES, device_features_lo);
+        self.mmio_write32(VIRTIO_MMIO_DRIVER_FEATURES_SEL, 1);
+        self.mmio_write32(VIRTIO_MMIO_DRIVER_FEATURES, device_features_hi | 1); // VERSION_1
 
         self.mmio_write32(VIRTIO_MMIO_STATUS,
             (VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK) as u32);

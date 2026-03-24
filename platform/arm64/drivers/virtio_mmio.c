@@ -206,8 +206,9 @@ static int virtio_mmio_init_queue(virtio_mmio_device_t *dev, uint32_t queue_idx,
     size_t avail_size = sizeof(struct virtq_avail) + sizeof(uint16_t) * queue_size + sizeof(uint16_t);
     size_t used_size = sizeof(struct virtq_used) + sizeof(struct virtq_used_elem) * queue_size + sizeof(uint16_t);
 
-    /* Allocate contiguous pages (already mapped in kernel virtual address space) */
-    size_t total_size = desc_size + avail_size + used_size;
+    /* Allocate contiguous pages — used ring needs page alignment */
+    size_t used_offset = (desc_size + avail_size + 4095) & ~4095UL;
+    size_t total_size = used_offset + used_size;
     size_t total_pages = (total_size + 4095) / 4096;
 
     void *desc_virt = fut_malloc_pages(total_pages);
@@ -218,15 +219,20 @@ static int virtio_mmio_init_queue(virtio_mmio_device_t *dev, uint32_t queue_idx,
     /* Zero the memory */
     memset(desc_virt, 0, total_pages * 4096);
 
-    /* Convert virtual addresses to physical addresses for device */
+    /* Convert virtual addresses to physical addresses for device.
+     * CRITICAL: VirtIO MMIO requires used ring to be page-aligned (or at least
+     * aligned to VIRTQ_USED_ALIGN=4 in VirtIO 1.0, but QEMU may require 4096). */
     phys_addr_t desc_phys = pmap_virt_to_phys((uintptr_t)desc_virt);
     phys_addr_t avail_phys = desc_phys + desc_size;
-    phys_addr_t used_phys = desc_phys + desc_size + avail_size;
+    /* Align used ring to page boundary for reliable MMIO operation */
+    phys_addr_t used_phys = (desc_phys + desc_size + avail_size + 4095) & ~4095ULL;
 
     /* Setup queue pointers (virtual addresses for CPU access) */
     dev->desc = (struct virtq_desc *)desc_virt;
     dev->avail = (struct virtq_avail *)((uintptr_t)desc_virt + desc_size);
-    dev->used = (struct virtq_used *)((uintptr_t)desc_virt + desc_size + avail_size);
+    /* Used ring: align to page boundary to match physical address alignment */
+    uintptr_t used_virt_offset = (desc_size + avail_size + 4095) & ~4095UL;
+    dev->used = (struct virtq_used *)((uintptr_t)desc_virt + used_virt_offset);
 
     /* Save physical addresses for device configuration */
     dev->desc_phys = desc_phys;
@@ -367,6 +373,16 @@ int virtio_mmio_find_device(uint32_t device_type) {
     return -1;
 }
 
+/* Find device regardless of in_use state (for testing) */
+int virtio_mmio_find_device_any(uint32_t device_type) {
+    for (int i = 0; i < virtio_device_count; i++) {
+        if (virtio_devices[i].device_type == device_type) {
+            return i;
+        }
+    }
+    return -1;
+}
+
 /**
  * Claim a virtio device for use.
  */
@@ -459,4 +475,170 @@ void virtio_mmio_notify(virtio_mmio_device_t *dev, uint32_t queue_idx) {
 bool virtio_mmio_has_used_buffers(virtio_mmio_device_t *dev) {
     __asm__ volatile("dsb sy" ::: "memory");
     return dev->last_used_idx != dev->used->idx;
+}
+
+/* ============================================================
+ *   VirtIO Block Read (C implementation for ARM64 MMIO)
+ * ============================================================ */
+
+/* VirtIO block request header */
+struct virtio_blk_req {
+    uint32_t type;    /* VIRTIO_BLK_T_IN=0, VIRTIO_BLK_T_OUT=1 */
+    uint32_t reserved;
+    uint64_t sector;
+} __attribute__((packed));
+
+/**
+ * Read sectors from a VirtIO block device using the C MMIO transport.
+ * This bypasses the Rust driver for ARM64 where Rust printf is broken.
+ *
+ * @param dev_idx: Device index from virtio_mmio_find_device(VIRTIO_DEV_BLOCK)
+ * @param sector: Starting sector (LBA)
+ * @param count: Number of sectors to read
+ * @param buffer: Output buffer (must be page-aligned)
+ * @return: 0 on success, negative on error
+ */
+int virtio_mmio_blk_read(int dev_idx, uint64_t sector, uint32_t count, void *buffer) {
+    extern phys_addr_t pmap_virt_to_phys(uintptr_t virt);
+
+    if (dev_idx < 0 || dev_idx >= virtio_device_count) return -1;
+    virtio_mmio_device_t *dev = &virtio_devices[dev_idx];
+    if (dev->device_type != VIRTIO_DEV_BLOCK) return -1;
+
+    /* Initialize queue if not set up (Rust driver uses its own queue) */
+    if (!dev->desc) {
+        fut_printf("[MMIO-BLK] Initializing C-side queue for block device\n");
+        /* Reset device and do full handshake */
+        virtio_mmio_reset(dev);
+        virtio_mmio_set_status(dev, VIRTIO_STATUS_ACKNOWLEDGE);
+        virtio_mmio_set_status(dev, VIRTIO_STATUS_DRIVER);
+
+        /* Feature negotiation — must accept VIRTIO_F_VERSION_1 for MMIO v2 */
+        virtio_mmio_write32(dev->base_addr, VIRTIO_MMIO_DEVICE_FEATURES_SEL, 0);
+        uint32_t features_lo = virtio_mmio_read32(dev->base_addr, VIRTIO_MMIO_DEVICE_FEATURES);
+        virtio_mmio_write32(dev->base_addr, VIRTIO_MMIO_DEVICE_FEATURES_SEL, 1);
+        uint32_t features_hi = virtio_mmio_read32(dev->base_addr, VIRTIO_MMIO_DEVICE_FEATURES);
+        /* Accept low features + VIRTIO_F_VERSION_1 (bit 32, in high word bit 0) */
+        virtio_mmio_write32(dev->base_addr, VIRTIO_MMIO_DRIVER_FEATURES_SEL, 0);
+        virtio_mmio_write32(dev->base_addr, VIRTIO_MMIO_DRIVER_FEATURES, features_lo);
+        virtio_mmio_write32(dev->base_addr, VIRTIO_MMIO_DRIVER_FEATURES_SEL, 1);
+        virtio_mmio_write32(dev->base_addr, VIRTIO_MMIO_DRIVER_FEATURES, features_hi | 1);
+        virtio_mmio_set_status(dev, VIRTIO_STATUS_FEATURES_OK);
+        (void)features_lo; (void)features_hi;
+
+        /* Check FEATURES_OK */
+        uint32_t status = virtio_mmio_read32(dev->base_addr, VIRTIO_MMIO_STATUS);
+        if (!(status & VIRTIO_STATUS_FEATURES_OK)) {
+            fut_printf("[MMIO-BLK] FEATURES_OK not set\n");
+            return -1;
+        }
+
+        /* Setup queue */
+        if (virtio_mmio_init_queue(dev, 0, 16) != 0) {
+            fut_printf("[MMIO-BLK] Queue init failed\n");
+            return -1;
+        }
+
+        /* Set DRIVER_OK */
+        virtio_mmio_set_status(dev, VIRTIO_STATUS_DRIVER_OK);
+        fut_printf("[MMIO-BLK] Device initialized, queue ready\n");
+    }
+
+    /* Allocate request header and status byte from page-aligned memory */
+    static struct virtio_blk_req req __attribute__((aligned(4096)));
+    static uint8_t status_byte __attribute__((aligned(4096)));
+
+    req.type = 0;  /* VIRTIO_BLK_T_IN = read */
+    req.reserved = 0;
+    req.sector = sector;
+    status_byte = 0xFF;
+
+    /* Physical addresses for device DMA */
+    uint64_t req_phys = pmap_virt_to_phys((uintptr_t)&req);
+    uint64_t buf_phys = pmap_virt_to_phys((uintptr_t)buffer);
+    uint64_t status_phys = pmap_virt_to_phys((uintptr_t)&status_byte);
+    uint32_t data_len = count * 512;
+
+    fut_printf("[MMIO-BLK] read: sector=%llu count=%u req_phys=0x%llx buf_phys=0x%llx status_phys=0x%llx\n",
+               (unsigned long long)sector, count,
+               (unsigned long long)req_phys, (unsigned long long)buf_phys,
+               (unsigned long long)status_phys);
+
+    /* Set up 3-descriptor chain: header → data → status */
+    /* Descriptor 0: request header (device reads) */
+    dev->desc[0].addr = req_phys;
+    dev->desc[0].len = sizeof(struct virtio_blk_req);
+    dev->desc[0].flags = VIRTQ_DESC_F_NEXT;
+    dev->desc[0].next = 1;
+
+    /* Descriptor 1: data buffer (device writes) */
+    dev->desc[1].addr = buf_phys;
+    dev->desc[1].len = data_len;
+    dev->desc[1].flags = VIRTQ_DESC_F_WRITE | VIRTQ_DESC_F_NEXT;
+    dev->desc[1].next = 2;
+
+    /* Descriptor 2: status byte (device writes) */
+    dev->desc[2].addr = status_phys;
+    dev->desc[2].len = 1;
+    dev->desc[2].flags = VIRTQ_DESC_F_WRITE;
+    dev->desc[2].next = 0;
+
+    /* Flush cache for DMA buffers so device sees correct data */
+    __asm__ volatile("dc civac, %0" :: "r"(&req) : "memory");
+    __asm__ volatile("dc civac, %0" :: "r"(&status_byte) : "memory");
+    __asm__ volatile("dc civac, %0" :: "r"(buffer) : "memory");
+    /* Ensure descriptors and data are visible before updating avail ring */
+    __asm__ volatile("dsb sy" ::: "memory");
+
+    /* Add to available ring */
+    uint16_t avail_idx = dev->avail->idx;
+    dev->avail->ring[avail_idx % dev->queue_size] = 0;  /* Descriptor chain head = 0 */
+    __asm__ volatile("dsb sy" ::: "memory");
+    dev->avail->idx = avail_idx + 1;
+    __asm__ volatile("dsb sy" ::: "memory");
+
+    /* Notify device — write queue index 0 to QUEUE_NOTIFY register */
+    /* Verify avail ring is correct before notify */
+    fut_printf("[MMIO-BLK] avail->idx=%u avail->ring[0]=%u\n",
+               (unsigned)dev->avail->idx, (unsigned)dev->avail->ring[0]);
+    fut_printf("[MMIO-BLK] desc[0]: addr=0x%llx len=%u flags=0x%x next=%u\n",
+               (unsigned long long)dev->desc[0].addr, dev->desc[0].len,
+               dev->desc[0].flags, dev->desc[0].next);
+
+    /* Notify device */
+    volatile uint32_t *notify_reg = (volatile uint32_t *)(dev->base_addr + VIRTIO_MMIO_QUEUE_NOTIFY);
+    *notify_reg = 0;
+    __asm__ volatile("dsb sy" ::: "memory");
+
+    /* Read status to verify device is alive */
+    uint32_t status_after = virtio_mmio_read32(dev->base_addr, VIRTIO_MMIO_STATUS);
+    uint32_t isr_after = virtio_mmio_read32(dev->base_addr, VIRTIO_MMIO_INTERRUPT_STATUS);
+    fut_printf("[MMIO-BLK] After notify: status=0x%x isr=0x%x\n", status_after, isr_after);
+
+    /* Poll for completion */
+    for (int i = 0; i < 1000000; i++) {
+        __asm__ volatile("dsb sy" ::: "memory");
+        if (dev->used->idx != dev->last_used_idx) {
+            dev->last_used_idx = dev->used->idx;
+
+            /* Check status byte */
+            __asm__ volatile("dsb sy" ::: "memory");
+            uint8_t final_status = *(volatile uint8_t *)&status_byte;
+            fut_printf("[MMIO-BLK] completion: status=%u used_idx=%u\n",
+                       (unsigned)final_status, (unsigned)dev->used->idx);
+
+            /* Acknowledge interrupt */
+            uint32_t isr = virtio_mmio_read32(dev->base_addr, VIRTIO_MMIO_INTERRUPT_STATUS);
+            if (isr) {
+                virtio_mmio_write32(dev->base_addr, VIRTIO_MMIO_INTERRUPT_ACK, isr);
+            }
+
+            return (final_status == 0) ? 0 : -5;
+        }
+        for (volatile int j = 0; j < 10; j++);
+    }
+
+    fut_printf("[MMIO-BLK] TIMEOUT: used_idx=%u last=%u\n",
+               (unsigned)dev->used->idx, (unsigned)dev->last_used_idx);
+    return -5;  /* Timeout */
 }

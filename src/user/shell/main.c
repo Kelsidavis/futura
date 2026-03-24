@@ -1101,25 +1101,32 @@ static void cmd_cd(int argc, char *argv[]) {
 
 /* Built-in: echo */
 static void cmd_echo(int argc, char *argv[]) {
-    int newline = 1;
-    int arg_start = 1;
-
-    /* Parse -n option (suppress trailing newline) */
-    if (argc > 1 && strcmp_simple(argv[1], "-n") == 0) {
-        newline = 0;
-        arg_start = 2;
+    int newline = 1, escapes = 0, arg_start = 1;
+    while (arg_start < argc && argv[arg_start][0] == '-') {
+        int ok = 0;
+        for (int j = 1; argv[arg_start][j]; j++) {
+            if (argv[arg_start][j] == 'n') { newline = 0; ok = 1; }
+            else if (argv[arg_start][j] == 'e') { escapes = 1; ok = 1; }
+        }
+        if (!ok) break;
+        arg_start++;
     }
-
-    /* Output arguments */
     for (int i = arg_start; i < argc; i++) {
-        write_str(1, argv[i]);
+        if (escapes) {
+            for (const char *s = argv[i]; *s; s++) {
+                if (*s == '\\' && s[1]) {
+                    s++;
+                    if (*s == 'n') write_char(1, '\n');
+                    else if (*s == 't') write_char(1, '\t');
+                    else if (*s == 'r') write_char(1, '\r');
+                    else if (*s == '\\') write_char(1, '\\');
+                    else { write_char(1, '\\'); write_char(1, *s); }
+                } else write_char(1, *s);
+            }
+        } else write_str(1, argv[i]);
         if (i < argc - 1) write_char(1, ' ');
     }
-
-    /* Output newline unless -n was specified */
-    if (newline) {
-        write_char(1, '\n');
-    }
+    if (newline) write_char(1, '\n');
 }
 
 /* Built-in: uname */

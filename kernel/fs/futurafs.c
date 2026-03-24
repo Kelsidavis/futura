@@ -3975,6 +3975,8 @@ static ssize_t futurafs_vnode_readlink(struct fut_vnode *vnode, char *buf, size_
     return (ssize_t)target_len;
 }
 
+/* Hard link not implemented at vnode ops level (VFS handles it via sys_link) */
+
 /**
  * Truncate a FuturaFS file to the specified length.
  * Currently only supports truncation to 0 (used by O_TRUNC).

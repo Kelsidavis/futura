@@ -442,7 +442,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     const char *builtins[] = {
         "bg", "cd", "chmod", "clear", "date", "dd", "df", "dmesg", "echo", "edit", "hexdump", "lsof", "nc", "poweroff", "reboot", "seq", "sleep", "time", "wget", "exit", "export", "fg", "free",
         "help", "hostname", "id", "ifconfig", "jobs", "kill", "ls", "mount",
-        ".", "du", "history", "ln", "ps", "pwd", "readlink", "source", "stat", "test", "tree", "uname", "uptime", "version", "which", "whoami", NULL
+        ".", "basename", "dirname", "du", "history", "ln", "ps", "pwd", "readlink", "source", "stat", "test", "tree", "uname", "uptime", "version", "which", "whoami", NULL
     };
 
     /* External commands we might have */
@@ -3845,28 +3845,53 @@ static int cat_process_fd(int fd);
 
 /* Built-in: cat - Display file contents */
 static void cmd_cat(int argc, char *argv[]) {
-    /* Process files or stdin */
-    if (argc < 2) {
-        /* Read from stdin */
-        cat_process_fd(0);
-    } else {
-        /* Process each file */
-        for (int i = 1; i < argc; i++) {
-            const char *path = argv[i];
+    int show_numbers = 0;
+    int arg_start = 1;
 
-            /* Open the file */
-            int fd = sys_open(path, O_RDONLY, 0);
+    /* Parse -n flag */
+    if (argc > 1 && argv[1][0] == '-' && argv[1][1] == 'n') {
+        show_numbers = 1;
+        arg_start = 2;
+    }
+
+    if (arg_start >= argc) {
+        cat_process_fd(0);  /* stdin */
+    } else {
+        for (int i = arg_start; i < argc; i++) {
+            int fd = sys_open(argv[i], O_RDONLY, 0);
             if (fd < 0) {
                 write_str(2, "cat: ");
-                write_str(2, path);
+                write_str(2, argv[i]);
                 write_str(2, ": cannot open file\n");
                 continue;
             }
-
-            /* Process file */
-            cat_process_fd(fd);
-
-            /* Close file */
+            if (show_numbers) {
+                /* Line-numbered output */
+                char buf[256];
+                long n;
+                int line = 1;
+                int at_line_start = 1;
+                while ((n = sys_read(fd, buf, sizeof(buf))) > 0) {
+                    for (long j = 0; j < n; j++) {
+                        if (at_line_start) {
+                            char numbuf[8];
+                            int_to_str(line, numbuf, 8);
+                            int pad = 6 - (int)strlen_simple(numbuf);
+                            while (pad-- > 0) write_char(1, ' ');
+                            write_str(1, numbuf);
+                            write_str(1, "\t");
+                            at_line_start = 0;
+                        }
+                        write_char(1, buf[j]);
+                        if (buf[j] == '\n') {
+                            line++;
+                            at_line_start = 1;
+                        }
+                    }
+                }
+            } else {
+                cat_process_fd(fd);
+            }
             sys_close(fd);
         }
     }
@@ -5101,6 +5126,21 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "dd") == 0) {
         cmd_dd(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "basename") == 0) {
+        if (argc < 2) { write_str(2, "usage: basename <path>\n"); return 1; }
+        const char *p = argv[1], *last = p;
+        while (*p) { if (*p == '/') last = p + 1; p++; }
+        write_str(1, last); write_char(1, '\n');
+        return 0;
+    } else if (strcmp_simple(argv[0], "dirname") == 0) {
+        if (argc < 2) { write_str(2, "usage: dirname <path>\n"); return 1; }
+        const char *p = argv[1];
+        int last_slash = -1;
+        for (int i = 0; p[i]; i++) { if (p[i] == '/') last_slash = i; }
+        if (last_slash <= 0) { write_str(1, last_slash == 0 ? "/" : "."); }
+        else { for (int i = 0; i < last_slash; i++) write_char(1, p[i]); }
+        write_char(1, '\n');
+        return 0;
     } else if (strcmp_simple(argv[0], "export") == 0) {
         cmd_export(argc, argv);
         return 0;
@@ -5192,6 +5232,8 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "stat") == 0 ||
             strcmp_simple(cmd, "chmod") == 0 ||
             strcmp_simple(cmd, "cp") == 0 ||
+            strcmp_simple(cmd, "basename") == 0 ||
+            strcmp_simple(cmd, "dirname") == 0 ||
             strcmp_simple(cmd, "dd") == 0 ||
             strcmp_simple(cmd, "mv") == 0 ||
             strcmp_simple(cmd, "test") == 0 ||
@@ -5883,7 +5925,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.3                   |\n");
-    write_str(1, "|   46 built-in commands — type 'help'     |\n");
+    write_str(1, "|   48 built-in commands — type 'help'     |\n");
     write_str(1, "|   nano editor available at /bin/nano      |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");

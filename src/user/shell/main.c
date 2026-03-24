@@ -102,6 +102,9 @@ static const char *get_history(int index);
 /* Forward declaration for tab completion */
 static void complete_command(char *buf, size_t *pos, size_t max_len);
 
+/* Forward declaration for source (defined after execute_command_chain) */
+static void cmd_source(int argc, char *argv[]);
+
 /* Forward declaration for prompt */
 static void print_prompt(void);
 
@@ -439,7 +442,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     const char *builtins[] = {
         "bg", "cd", "chmod", "clear", "date", "dd", "df", "dmesg", "echo", "edit", "hexdump", "lsof", "nc", "poweroff", "reboot", "seq", "sleep", "time", "wget", "exit", "export", "fg", "free",
         "help", "hostname", "id", "ifconfig", "jobs", "kill", "ls", "mount",
-        "du", "history", "ln", "ps", "pwd", "readlink", "stat", "test", "tree", "uname", "uptime", "version", "which", "whoami", NULL
+        ".", "du", "history", "ln", "ps", "pwd", "readlink", "source", "stat", "test", "tree", "uname", "uptime", "version", "which", "whoami", NULL
     };
 
     /* External commands we might have */
@@ -5070,6 +5073,10 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "stat") == 0) {
         cmd_stat(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "source") == 0 ||
+               (argv[0][0] == '.' && argv[0][1] == '\0')) {
+        cmd_source(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "history") == 0) {
         cmd_history(argc, argv);
         return 0;
@@ -5174,6 +5181,8 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "rmdir") == 0 ||
             strcmp_simple(cmd, "rm") == 0 ||
             strcmp_simple(cmd, "touch") == 0 ||
+            strcmp_simple(cmd, "source") == 0 ||
+            (cmd[0] == '.' && cmd[1] == '\0') ||
             strcmp_simple(cmd, "history") == 0 ||
             strcmp_simple(cmd, "which") == 0 ||
             strcmp_simple(cmd, "du") == 0 ||
@@ -5675,6 +5684,48 @@ static int execute_command_chain(char *cmdline) {
     return last_status;
 }
 
+/* Built-in: source / . — execute script in current shell context */
+static void cmd_source(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: source <file>\n");
+        return;
+    }
+    int fd = sys_open(argv[1], O_RDONLY, 0);
+    if (fd < 0) {
+        write_str(2, "source: ");
+        write_str(2, argv[1]);
+        write_str(2, ": not found\n");
+        return;
+    }
+    char buf[2048];
+    ssize_t n = sys_read(fd, buf, sizeof(buf) - 1);
+    sys_close(fd);
+    if (n <= 0) return;
+    buf[n] = '\0';
+
+    char *line = buf;
+    while (*line) {
+        char *end = line;
+        while (*end && *end != '\n') end++;
+        char saved = *end;
+        *end = '\0';
+        if (line[0] && line[0] != '#') {
+            char vn[64], vv[256];
+            if (is_var_assignment(line, vn, vv)) {
+                char ev[256];
+                expand_variables(ev, vv, 256);
+                set_var(vn, ev, 0);
+            } else {
+                char el[512];
+                expand_variables(el, line, 512);
+                execute_command_chain(el);
+            }
+        }
+        if (saved == '\0') break;
+        line = end + 1;
+    }
+}
+
 int main(int argc, char **argv, char **envp) {
     /* Check for -c mode: shell -c "command string" */
     int script_mode = 0;
@@ -5832,7 +5883,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.3                   |\n");
-    write_str(1, "|   45 built-in commands — type 'help'     |\n");
+    write_str(1, "|   46 built-in commands — type 'help'     |\n");
     write_str(1, "|   nano editor available at /bin/nano      |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");

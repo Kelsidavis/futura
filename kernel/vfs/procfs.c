@@ -556,9 +556,9 @@ static void pb_d_padded(struct pbuf *b, uint64_t v, int width) {
  *   Forward Declarations
  * ============================================================ */
 
-static const struct fut_vnode_ops procfs_dir_ops;
-static const struct fut_vnode_ops procfs_file_ops;
-static const struct fut_vnode_ops procfs_link_ops;
+static struct fut_vnode_ops procfs_dir_ops;
+static struct fut_vnode_ops procfs_file_ops;
+static struct fut_vnode_ops procfs_link_ops;
 
 /* ============================================================
  *   Vnode Allocation
@@ -5538,22 +5538,7 @@ static int procfs_dir_getattr(struct fut_vnode *vnode, struct fut_stat *st) {
  *   VNode Ops Tables
  * ============================================================ */
 
-static const struct fut_vnode_ops procfs_file_ops = {
-    .read    = procfs_file_read,
-    .write   = procfs_file_write,
-    .getattr = procfs_file_getattr,
-};
-
-static const struct fut_vnode_ops procfs_link_ops = {
-    .readlink = procfs_link_readlink,
-    .getattr  = procfs_link_getattr,
-};
-
-static const struct fut_vnode_ops procfs_dir_ops = {
-    .lookup  = procfs_dir_lookup,
-    .readdir = procfs_dir_readdir,
-    .getattr = procfs_dir_getattr,
-};
+/* procfs vnode ops — runtime initialized in procfs_mount for ARM64 safety */
 
 /* ============================================================
  *   Mount / Unmount
@@ -5563,6 +5548,18 @@ static int procfs_mount(const char *device, int flags, void *data,
                         fut_handle_t block_device_handle,
                         struct fut_mount **mount_out) {
     (void)device; (void)flags; (void)data; (void)block_device_handle;
+
+    /* Runtime-init vnode ops (ARM64 static const fn ptr relocation safety) */
+    if (!procfs_file_ops.read) {
+        procfs_file_ops.read = procfs_file_read;
+        procfs_file_ops.write = procfs_file_write;
+        procfs_file_ops.getattr = procfs_file_getattr;
+        procfs_link_ops.readlink = procfs_link_readlink;
+        procfs_link_ops.getattr = procfs_link_getattr;
+        procfs_dir_ops.lookup = procfs_dir_lookup;
+        procfs_dir_ops.readdir = procfs_dir_readdir;
+        procfs_dir_ops.getattr = procfs_dir_getattr;
+    }
 
     struct fut_mount *mount = fut_malloc(sizeof(struct fut_mount));
     if (!mount) return -ENOMEM;

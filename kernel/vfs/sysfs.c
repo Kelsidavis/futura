@@ -153,8 +153,8 @@ typedef struct {
  *   Forward declarations
  * ============================================================ */
 
-static const struct fut_vnode_ops sysfs_dir_ops;
-static const struct fut_vnode_ops sysfs_file_ops;
+static struct fut_vnode_ops sysfs_dir_ops;
+static struct fut_vnode_ops sysfs_file_ops;
 
 /* ============================================================
  *   Vnode allocation
@@ -282,14 +282,7 @@ static int sysfs_file_close(struct fut_vnode *vnode) {
     (void)vnode; return 0;
 }
 
-static const struct fut_vnode_ops sysfs_file_ops = {
-    .open    = sysfs_file_open,
-    .close   = sysfs_file_close,
-    .read    = sysfs_file_read,
-    .write   = sysfs_file_write,
-    .readdir = NULL,
-    .lookup  = NULL,
-};
+/* sysfs_file_ops — runtime initialized in sysfs_mount */
 
 /* ============================================================
  *   Directory operations
@@ -613,14 +606,7 @@ static ssize_t sysfs_dir_write(struct fut_vnode *v, const void *b, size_t s, uin
     (void)v; (void)b; (void)s; (void)o; return -EISDIR;
 }
 
-static const struct fut_vnode_ops sysfs_dir_ops = {
-    .open    = sysfs_dir_open,
-    .close   = sysfs_dir_close,
-    .read    = sysfs_dir_read,
-    .write   = sysfs_dir_write,
-    .readdir = sysfs_dir_readdir,
-    .lookup  = sysfs_dir_lookup,
-};
+/* sysfs_dir_ops — runtime initialized in sysfs_mount */
 
 /* ============================================================
  *   Mount / Unmount
@@ -630,6 +616,20 @@ static int sysfs_mount(const char *device, int flags, void *data,
                        fut_handle_t block_device_handle,
                        struct fut_mount **mount_out) {
     (void)device; (void)flags; (void)data; (void)block_device_handle;
+
+    /* Runtime-init vnode ops (ARM64 relocation safety) */
+    if (!sysfs_file_ops.read) {
+        sysfs_file_ops.open = sysfs_file_open;
+        sysfs_file_ops.close = sysfs_file_close;
+        sysfs_file_ops.read = sysfs_file_read;
+        sysfs_file_ops.write = sysfs_file_write;
+        sysfs_dir_ops.open = sysfs_dir_open;
+        sysfs_dir_ops.close = sysfs_dir_close;
+        sysfs_dir_ops.read = sysfs_dir_read;
+        sysfs_dir_ops.write = sysfs_dir_write;
+        sysfs_dir_ops.readdir = sysfs_dir_readdir;
+        sysfs_dir_ops.lookup = sysfs_dir_lookup;
+    }
 
     struct fut_mount *mount = fut_malloc(sizeof(struct fut_mount));
     if (!mount) return -ENOMEM;

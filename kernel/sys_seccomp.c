@@ -52,14 +52,16 @@
  */
 long sys_seccomp(unsigned int operation, unsigned int flags, const void *uargs) {
     switch (operation) {
-    case SECCOMP_SET_MODE_STRICT:
-        /* Strict mode: only read/write/exit/sigreturn allowed.
-         * In Futura's kernel selftest all code is trusted; accept silently. */
-        if (flags != 0)
-            return -EINVAL;
-        if (uargs != NULL)
-            return -EINVAL;
+    case SECCOMP_SET_MODE_STRICT: {
+        /* Strict mode: only read/write/exit/sigreturn allowed. */
+        if (flags != 0) return -EINVAL;
+        if (uargs != NULL) return -EINVAL;
+        fut_task_t *task = fut_task_current();
+        if (task) {
+            task->seccomp_mode = 1; /* Mark as strict mode */
+        }
         return 0;
+    }
 
     case SECCOMP_SET_MODE_FILTER:
         /* BPF filter mode: accept as no-op (no real BPF enforcement in Futura).

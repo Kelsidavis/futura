@@ -4519,6 +4519,28 @@ int64_t arm64_syscall_dispatch(uint64_t syscall_num,
     /* Initialize syscall table on first call */
     arm64_syscall_table_init();
 
+    /* Seccomp strict mode enforcement: only allow read(0), write(1),
+     * exit(93), exit_group(94), rt_sigreturn(139) */
+    {
+        fut_task_t *_sc_task = fut_task_current();
+        if (_sc_task && _sc_task->seccomp_mode == 1) {
+            if (syscall_num != 63 /* read */ && syscall_num != 64 /* write */ &&
+                syscall_num != 93 /* exit */ && syscall_num != 94 /* exit_group */ &&
+                syscall_num != 139 /* rt_sigreturn */ &&
+                /* Also allow x86_64 compat numbers */
+                syscall_num != 0 /* read */ && syscall_num != 1 /* write */ &&
+                syscall_num != 60 /* exit */) {
+                /* Kill process with SIGKILL for seccomp violation */
+                fut_printf("[SECCOMP] Blocked syscall %llu in strict mode (pid=%llu)\n",
+                           (unsigned long long)syscall_num,
+                           (unsigned long long)_sc_task->pid);
+                extern void fut_task_signal_exit(int signal);
+                fut_task_signal_exit(31 /* SIGSYS */);
+                return -EPERM;
+            }
+        }
+    }
+
     /* Validate syscall number */
     if (syscall_num >= MAX_SYSCALL) {
         fut_serial_puts("[SYSCALL] Invalid syscall number: ");

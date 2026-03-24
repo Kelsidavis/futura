@@ -429,7 +429,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     const char *builtins[] = {
         "bg", "cd", "clear", "date", "echo", "exit", "export", "fg", "free",
         "help", "hostname", "id", "ifconfig", "jobs", "kill", "ls", "mount",
-        "ps", "pwd", "test", "uname", "uptime", "whoami", NULL
+        "ps", "pwd", "test", "uname", "uptime", "version", "whoami", NULL
     };
 
     /* External commands we might have */
@@ -1087,6 +1087,20 @@ static void cmd_mount(int argc, char *argv[]) {
         sys_close(fd);
     } else {
         write_str(1, "mount: /proc/mounts not available\n");
+    }
+}
+
+/* Built-in: version - Show kernel version from /proc/version */
+static void cmd_version(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    int fd = sys_open("/proc/version", O_RDONLY, 0);
+    if (fd >= 0) {
+        char buf[256];
+        ssize_t n = sys_read(fd, buf, sizeof(buf) - 1);
+        if (n > 0) { buf[n] = '\0'; write_str(1, buf); }
+        sys_close(fd);
+    } else {
+        write_str(1, "Futura OS\n");
     }
 }
 
@@ -3817,6 +3831,9 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "uptime") == 0) {
         cmd_uptime(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "version") == 0) {
+        cmd_version(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "mount") == 0) {
         cmd_mount(argc, argv);
         return 0;
@@ -3931,6 +3948,7 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "kill") == 0 ||
             strcmp_simple(cmd, "ps") == 0 ||
             strcmp_simple(cmd, "uptime") == 0 ||
+            strcmp_simple(cmd, "version") == 0 ||
             strcmp_simple(cmd, "mount") == 0 ||
             strcmp_simple(cmd, "whoami") == 0 ||
             strcmp_simple(cmd, "env") == 0 ||
@@ -4482,7 +4500,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.3                   |\n");
-    write_str(1, "|   Type 'help' for available commands     |\n");
+    write_str(1, "|   24 built-in commands — type 'help'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\n");
 

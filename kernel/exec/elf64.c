@@ -37,8 +37,8 @@
 
 #include <kernel/debug_config.h>
 
-/* ELF debugging - temporarily enabled for debugging */
-#define ELF_LOG(...) fut_printf(__VA_ARGS__)
+/* ELF debugging disabled for clean boot */
+#define ELF_LOG(...) do {} while(0)
 
 /* TLS block address - placed below stack in user address space */
 #define USER_TLS_BASE   0x00007FFE000000ULL
@@ -1716,9 +1716,10 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
 #include <stdbool.h>
 #include <sys/mman.h>
 
-/* Logging macros (also defined in x86_64 section above) */
-#define ELF_LOG(...) fut_printf(__VA_ARGS__)
-#define stack_printf(...) do { fut_printf(__VA_ARGS__); } while(0)
+/* Logging macros disabled for clean boot */
+#undef ELF_LOG
+#define ELF_LOG(...) do {} while(0)
+#define stack_printf(...) do {} while(0)
 
 /* ELF metadata for auxiliary vector (also defined in x86_64 section) */
 static uint64_t g_exec_entry = 0;

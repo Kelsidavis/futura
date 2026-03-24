@@ -234,7 +234,7 @@ fut_thread_t *fut_thread_create(
     thread->irq_frame->cs = GDT_KERNEL_CODE;
 #endif
 
-#if defined(__aarch64__)
+#if defined(__aarch64__) && defined(DEBUG_THREADS)
     fut_printf("[THREAD-CREATE] tid=%llu priority=%d entry=%p thread=%p\n",
                (unsigned long long)new_tid, priority, entry, (void*)thread);
 #endif
@@ -311,9 +311,10 @@ fut_thread_t *fut_thread_create(
     ctx->x0 = (uint64_t)entry;
     ctx->x1 = (uint64_t)arg;
 
-    // Debug: log the trampoline address
+#ifdef DEBUG_THREADS
     fut_printf("[THREAD-CTX] PC set to fut_thread_trampoline=%p x0=%p x1=%p\n",
                (void*)(uintptr_t)ctx->pc, (void*)ctx->x0, (void*)ctx->x1);
+#endif
 
 #ifdef DEBUG_THREAD
     fut_printf("[THREAD-CREATE] ARM64 thread %llu: entry=%p arg=%p\n",

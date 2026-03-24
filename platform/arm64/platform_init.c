@@ -427,16 +427,9 @@ void fut_serial_enable_irq_mode(void) {
     uint32_t mis = mmio_read32((volatile void *)(uart + UART_MIS));
     uint32_t fr = mmio_read32((volatile void *)(uart + UART_FR));
 
-    fut_serial_puts("[UART] Enabling interrupt-driven mode\n");
-    fut_printf("[UART] Status: IMSC=0x%x MIS=0x%x FR=0x%x\n", imsc, mis, fr);
-
-    fut_serial_puts("[UART] About to enable interrupt mode...\n");
-    /* Enable interrupt mode for RX only (blocking I/O with wait queues)
-     * TX remains in polling mode due to QEMU ARM64 PL011 limitations */
+    /* Enable interrupt mode for RX */
     uart_rx_irq_mode = 1;
-    fut_serial_puts("[UART] Interrupt mode variable set\n");
-    fut_printf("[UART] RX interrupt mode enabled (TX remains polling)\n");
-    fut_serial_puts("[UART] Done with interrupt mode setup\n");
+    (void)imsc; (void)mis; (void)fr;
 
     /* Handler and GIC infrastructure confirmed working via:
      * 1. Handler symbol present in binary

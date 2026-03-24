@@ -373,7 +373,8 @@ void fut_sched_add_thread(fut_thread_t *thread) {
 
     // Debug: Log when threads are added (limited for perf)
     static int add_count = 0;
-    if (add_count < 20) {
+    (void)add_count; /* Quiet - thread scheduling is working */
+    if (0) {
         fut_printf("[SCHED] Added thread tid=%llu to ready queue (count now %llu)\n",
                    (unsigned long long)thread->tid, (unsigned long long)target_percpu->ready_count);
         add_count++;

@@ -428,7 +428,8 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     /* List of builtin commands */
     const char *builtins[] = {
         "bg", "cd", "clear", "date", "echo", "exit", "export", "fg", "free",
-        "help", "ifconfig", "jobs", "ls", "mount", "pwd", "test", "uname", "whoami", NULL
+        "help", "hostname", "ifconfig", "jobs", "ls", "mount", "pwd", "test",
+        "uname", "uptime", "whoami", NULL
     };
 
     /* External commands we might have */
@@ -869,6 +870,8 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  uname [-a]      - Print system information\n");
     write_str(1, "  whoami          - Print current user\n");
     write_str(1, "  date            - Show system uptime\n");
+    write_str(1, "  uptime          - Show system uptime (from /proc)\n");
+    write_str(1, "  hostname        - Show system hostname\n");
     write_str(1, "  free            - Show memory usage\n");
     write_str(1, "  mount           - Show mounted filesystems\n");
     write_str(1, "  ifconfig        - Show network interfaces\n");
@@ -1081,6 +1084,61 @@ static void cmd_mount(int argc, char *argv[]) {
         sys_close(fd);
     } else {
         write_str(1, "mount: /proc/mounts not available\n");
+    }
+}
+
+/* Built-in: hostname - Show system hostname */
+static void cmd_hostname(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    int fd = sys_open("/etc/hostname", O_RDONLY, 0);
+    if (fd >= 0) {
+        char buf[64];
+        ssize_t n = sys_read(fd, buf, sizeof(buf) - 1);
+        if (n > 0) {
+            buf[n] = '\0';
+            write_str(1, buf);
+        }
+        sys_close(fd);
+    } else {
+        write_str(1, "futura\n");
+    }
+}
+
+/* Built-in: uptime - Show system uptime */
+static void cmd_uptime(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    int fd = sys_open("/proc/uptime", O_RDONLY, 0);
+    if (fd >= 0) {
+        char buf[64];
+        ssize_t n = sys_read(fd, buf, sizeof(buf) - 1);
+        if (n > 0) {
+            buf[n] = '\0';
+            /* Parse seconds from "123.45 0.00\n" format */
+            long secs = 0;
+            for (int i = 0; buf[i] && buf[i] != '.'; i++) {
+                if (buf[i] >= '0' && buf[i] <= '9')
+                    secs = secs * 10 + (buf[i] - '0');
+            }
+            char out[64];
+            int pos = 0;
+            out[pos++] = 'u'; out[pos++] = 'p'; out[pos++] = ' ';
+            long h = secs / 3600, m = (secs % 3600) / 60, s = secs % 60;
+            if (h > 0) {
+                char tmp[16]; int_to_str(h, tmp, 16);
+                for (int i = 0; tmp[i]; i++) out[pos++] = tmp[i];
+                out[pos++] = 'h'; out[pos++] = ' ';
+            }
+            { char tmp[16]; int_to_str(m, tmp, 16);
+              for (int i = 0; tmp[i]; i++) out[pos++] = tmp[i]; }
+            out[pos++] = 'm'; out[pos++] = ' ';
+            { char tmp[16]; int_to_str(s, tmp, 16);
+              for (int i = 0; tmp[i]; i++) out[pos++] = tmp[i]; }
+            out[pos++] = 's'; out[pos++] = '\n'; out[pos] = '\0';
+            write_str(1, out);
+        }
+        sys_close(fd);
+    } else {
+        write_str(1, "uptime: /proc/uptime not available\n");
     }
 }
 
@@ -3587,8 +3645,14 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "free") == 0) {
         cmd_free(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "hostname") == 0) {
+        cmd_hostname(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "ifconfig") == 0) {
         cmd_ifconfig(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "uptime") == 0) {
+        cmd_uptime(argc, argv);
         return 0;
     } else if (strcmp_simple(argv[0], "mount") == 0) {
         cmd_mount(argc, argv);
@@ -3698,7 +3762,9 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "uname") == 0 ||
             strcmp_simple(cmd, "date") == 0 ||
             strcmp_simple(cmd, "free") == 0 ||
+            strcmp_simple(cmd, "hostname") == 0 ||
             strcmp_simple(cmd, "ifconfig") == 0 ||
+            strcmp_simple(cmd, "uptime") == 0 ||
             strcmp_simple(cmd, "mount") == 0 ||
             strcmp_simple(cmd, "whoami") == 0 ||
             strcmp_simple(cmd, "env") == 0 ||

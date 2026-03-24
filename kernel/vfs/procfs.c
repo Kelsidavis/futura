@@ -23,6 +23,7 @@
  */
 
 #include <kernel/fut_vfs.h>
+#include <generated/version.h>
 #include <kernel/fut_task.h>
 #include <kernel/fut_mm.h>
 #include <kernel/fut_memory.h>
@@ -679,8 +680,13 @@ static size_t gen_meminfo(char *buf, size_t cap) {
 
 static size_t gen_version(char *buf, size_t cap) {
     struct pbuf b = { buf, 0, cap };
-    pb_str(&b, "Linux version 6.1.0-futura (futura@kernel) "
-               "(gcc version 14.0.0) #1 SMP PREEMPT\n");
+    pb_str(&b, "Futura version 0.3.1 (");
+    pb_str(&b, FUT_BUILD_USER);
+    pb_str(&b, "@");
+    pb_str(&b, FUT_BUILD_HOST);
+    pb_str(&b, ") (aarch64-elf-gcc " __VERSION__ ") ");
+    pb_str(&b, FUT_BUILD_DATE);
+    pb_str(&b, " SMP PREEMPT\n");
     return b.pos;
 }
 

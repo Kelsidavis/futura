@@ -5039,12 +5039,14 @@ static void strcpy_simple(char *dest, const char *src) {
 }
 
 /* Simple string concatenation */
+__attribute__((unused))
 static void strcat_simple(char *dest, const char *src) {
     while (*dest) dest++;
     strcpy_simple(dest, src);
 }
 
 /* Check if string starts with a character */
+__attribute__((unused))
 static int starts_with(const char *str, char c) {
     return str[0] == c;
 }
@@ -5149,20 +5151,31 @@ static void exec_external_command(int argc, char *argv[]) {
     build_envp();
 
     /* If command contains '/', use as-is (absolute or relative path) */
-    if (starts_with(cmd, '/')) {
-        /* Absolute path */
+    if (cmd[0] == '/' || (cmd[0] == '.' && cmd[1] == '/')) {
         sys_execve(cmd, argv, envp);
     } else {
-        /* Try PATH-like search: /bin, /sbin, /bin/user */
-        static const char *search_dirs[] = { "/bin/", "/sbin/", "/bin/user/", NULL };
-        size_t cmd_len = strlen_simple(cmd);
-        for (int i = 0; search_dirs[i]; i++) {
-            size_t prefix_len = strlen_simple(search_dirs[i]);
-            if (prefix_len + cmd_len < sizeof(path_buf)) {
-                strcpy_simple(path_buf, search_dirs[i]);
-                strcat_simple(path_buf, cmd);
+        /* Search $PATH for the command */
+        const char *path_env = get_var("PATH");
+        if (!path_env) path_env = "/bin:/sbin:/bin/user";
+
+        const char *p = path_env;
+        while (*p) {
+            /* Extract next directory from PATH (colon-separated) */
+            int dlen = 0;
+            while (p[dlen] && p[dlen] != ':') dlen++;
+
+            size_t cmd_len = strlen_simple(cmd);
+            if (dlen + 1 + cmd_len < sizeof(path_buf)) {
+                int j = 0;
+                for (int k = 0; k < dlen; k++) path_buf[j++] = p[k];
+                if (j > 0 && path_buf[j-1] != '/') path_buf[j++] = '/';
+                for (size_t k = 0; k < cmd_len; k++) path_buf[j++] = cmd[k];
+                path_buf[j] = '\0';
                 sys_execve(path_buf, argv, envp);
             }
+
+            p += dlen;
+            if (*p == ':') p++;
         }
     }
 

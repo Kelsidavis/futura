@@ -238,7 +238,7 @@ int virtio_input_hw_init(void)
         return rc;
     }
 
-    fut_printf("[VINPUT] ready (/dev/input/kbd0, /dev/input/mouse0)\n");
+    /* input devices ready */
 
     /* Start the Rust virtio-input driver (probe devices, start poll thread) */
     virtio_input_rust_init();

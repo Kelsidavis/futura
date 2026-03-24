@@ -1086,7 +1086,7 @@ void fut_kernel_main(void) {
      *   Post-Subsystem Initialization
      * ======================================== */
 
-    fut_serial_puts("[INIT] Smoke tests disabled\n");
+    /* smoke tests disabled */
 
     /* Diagnostic check for interrupt-driven UART on ARM64 */
 #ifdef __aarch64__
@@ -1095,7 +1095,7 @@ void fut_kernel_main(void) {
 
     /* Initialize input drivers - REQUIRED for Wayland compositor */
 #ifdef ENABLE_WAYLAND
-    fut_serial_puts("[INIT] Initializing input drivers for Wayland...\n");
+    /* input init */
     __attribute__((unused)) bool input_enabled = true;  /* Required for interactive mode */
     int input_rc = fut_input_hw_init(true, true);
     if (input_rc != 0) {
@@ -1338,7 +1338,7 @@ void fut_kernel_main(void) {
         // planned_tests += 1u; /* net */
         /* perf tests disabled — not included in sequential runner */
     }
-    fut_printf("[INIT] Planning %u tests\n", planned_tests);
+    (void)planned_tests;
     fut_test_plan(planned_tests);
 
     /* DISABLED: VFS and exec double tests consume too much physical memory */
@@ -1346,7 +1346,7 @@ void fut_kernel_main(void) {
     test_vfs_operations();
     fut_exec_double_smoke();
     */
-    fut_printf("[INIT] VFS and exec tests disabled to free physical pages for wayland\n");
+    /* tests disabled */
 
     /* ========================================
      *   Step 4: Initialize Block Device Subsystem

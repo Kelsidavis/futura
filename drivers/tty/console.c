@@ -206,8 +206,8 @@ void fut_console_init(void) {
                    CONSOLE_MAJOR, CONSOLE_MINOR);
     }
 
-    fut_printf("[CONSOLE] Initialized with line discipline (canonical mode, echo enabled)\n");
-    fut_printf("[CONSOLE] Input thread will be started after scheduler initialization\n");
+    /* ldisc ready */
+    /* input thread deferred */
 }
 
 /**

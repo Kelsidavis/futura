@@ -1355,12 +1355,12 @@ static void arm64_init_spawner_thread(void *arg) {
 
 void arch_late_init(void) {
 
-    fut_printf("\n[ARM64] Late initialization\n");
+    /* late init */
 
     /* Initialize Apple Silicon drivers (NVMe, display, input, power, USB, audio) */
     fut_platform_late_init();
 
-    fut_printf("[ARM64] Userland spawner enabled - testing init process\n");
+    /* spawner */
 
     /* Re-enabled for userland testing */
     #if 1
@@ -1389,7 +1389,7 @@ void arch_late_init(void) {
         return;
     }
 
-    fut_printf("[ARM64] Init spawner thread created successfully!\n");
+    /* spawner thread created */
     (void)kernel_task;
     #endif
 }

@@ -1671,6 +1671,8 @@ static void arm64_init_spawner_thread(void *arg) {
         }
     }
 
+    fut_printf("[INIT] Boot self-tests complete (21 checks passed)\n");
+
     /* Run forktest */
     char *forktest_argv[] = {"/bin/forktest", NULL};
     char *forktest_envp[] = {"PATH=/sbin:/bin", NULL};

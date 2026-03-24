@@ -1829,14 +1829,23 @@ static DEVICE: SpinLock<DeviceHolder> = SpinLock::new(DeviceHolder {
 
 static DEVICE_NAME: &[u8] = b"blk:vda\0";
 
-static BACKEND: FutBlkBackend = FutBlkBackend {
-    read: Some(backend_read),
-    write: Some(backend_write),
-    flush: Some(backend_flush),
+// Runtime-initialized to avoid ARM64 relocation issues with static function pointers.
+// The BACKEND struct is initialized in virtio_blk_init before first use.
+static mut BACKEND: FutBlkBackend = FutBlkBackend {
+    read: None,
+    write: None,
+    flush: None,
 };
 
 #[unsafe(no_mangle)]
 pub extern "C" fn virtio_blk_init(pci_addr: u64) -> FutStatus {
+    // Runtime-init BACKEND to avoid ARM64 static relocation issues
+    unsafe {
+        BACKEND.read = Some(backend_read);
+        BACKEND.write = Some(backend_write);
+        BACKEND.flush = Some(backend_flush);
+    }
+
     let mut rc = 0;
     DEVICE.with(|holder| {
         if holder.ready {
@@ -1853,7 +1862,7 @@ pub extern "C" fn virtio_blk_init(pci_addr: u64) -> FutStatus {
                     block_size: dev.block_size,
                     block_count: dev.capacity_sectors,
                     allowed_rights: FUT_BLK_READ | FUT_BLK_WRITE | FUT_BLK_ADMIN,
-                    backend: &BACKEND,
+                    backend: &raw const BACKEND,
                     backend_ctx: dev_ptr.cast::<c_void>(),
                     core: ptr::null_mut(),
                 });

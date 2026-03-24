@@ -1282,6 +1282,12 @@ void fut_kernel_main(void) {
                   "VERSION_ID=1.0\n"
                   "PRETTY_NAME=\"Futura OS 1.0\"\n"
                   "HOME_URL=\"https://github.com/netrunner-labs/futura\"\n");
+        ETC_WRITE("/etc/profile",
+                  "# Futura OS system profile\n"
+                  "export PATH=/bin:/sbin:/bin/user\n"
+                  "export HOME=/root\n"
+                  "export TERM=vt100\n"
+                  "export PS1='\\u@\\h:\\w# '\n");
 #undef ETC_WRITE
 
         fut_printf("[INIT] ✓ Created /etc config files\n");

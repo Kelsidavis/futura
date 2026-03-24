@@ -5302,18 +5302,7 @@ static int execute_pipeline(int num_stages, char *stages[], int background, cons
             return -1;
         }
 
-        /* Builtins can't be in pipelines (for now) */
-        if (is_builtin(argv[0])) {
-            write_str(2, "Error: Builtin '");
-            write_str(2, argv[0]);
-            write_str(2, "' cannot be used in a pipeline\n");
-            /* Close all pipes and return */
-            for (int j = 0; j < num_stages - 1; j++) {
-                sys_close(pipes[j][0]);
-                sys_close(pipes[j][1]);
-            }
-            return -1;
-        }
+        int cmd_is_builtin = is_builtin(argv[0]);
 
         pid_t pid = sys_fork();
 
@@ -5346,7 +5335,11 @@ static int execute_pipeline(int num_stages, char *stages[], int background, cons
                 syscall1(__NR_exit, 1);
             }
 
-            /* Execute the command */
+            /* Execute the command — builtins run in forked child for pipelines */
+            if (cmd_is_builtin) {
+                int rc = execute_command(argc, argv);
+                syscall1(__NR_exit, rc);
+            }
             exec_external_command(argc, argv);
 
             /* Should not reach here */
@@ -5554,6 +5547,66 @@ int main(int argc, char **argv, char **envp) {
         for (int i = 0; i < 16; i++) sa[i] = 0;
         sa[0] = 1;  /* sa_handler = SIG_IGN */
         sys_call4(13 /* rt_sigaction */, 2 /* SIGINT */, (long)sa, 0, 8);
+    }
+
+    /* Set default environment variables if not inherited from parent */
+    if (!get_var("PATH"))
+        set_var("PATH", "/bin:/sbin:/bin/user", 1);
+    if (!get_var("HOME"))
+        set_var("HOME", "/", 1);
+    if (!get_var("TERM"))
+        set_var("TERM", "vt100", 1);
+    if (!get_var("SHELL"))
+        set_var("SHELL", "/bin/shell", 1);
+    if (!get_var("USER"))
+        set_var("USER", "root", 1);
+    if (!get_var("HOSTNAME"))
+        set_var("HOSTNAME", "futura", 1);
+    /* Set PWD from getcwd */
+    {
+        char cwd[256];
+        long cwdret = sys_call2(__NR_getcwd, (long)cwd, 256);
+        if (cwdret > 0) {
+            set_var("PWD", cwd, 1);
+        } else {
+            set_var("PWD", "/", 1);
+        }
+    }
+
+    /* Source /etc/profile if it exists */
+    {
+        int pfd = sys_open("/etc/profile", O_RDONLY, 0);
+        if (pfd >= 0) {
+            char pbuf[1024];
+            ssize_t pn = sys_read(pfd, pbuf, sizeof(pbuf) - 1);
+            sys_close(pfd);
+            if (pn > 0) {
+                pbuf[pn] = '\0';
+                /* Execute each line */
+                char *line = pbuf;
+                while (*line) {
+                    char *end = line;
+                    while (*end && *end != '\n') end++;
+                    char saved = *end;
+                    *end = '\0';
+                    if (line[0] && line[0] != '#') {
+                        /* Check for variable assignment first */
+                        char vn[64], vv[256];
+                        if (is_var_assignment(line, vn, vv)) {
+                            char ev[256];
+                            expand_variables(ev, vv, 256);
+                            set_var(vn, ev, 0);
+                        } else {
+                            char el[512];
+                            expand_variables(el, line, 512);
+                            execute_command_chain(el);
+                        }
+                    }
+                    if (saved == '\0') break;
+                    line = end + 1;
+                }
+            }
+        }
     }
 
     write_str(1, "\n\033[1m");

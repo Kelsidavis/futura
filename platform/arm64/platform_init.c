@@ -1133,6 +1133,19 @@ void fut_platform_early_init(uint32_t boot_magic, void *boot_info) {
     fut_serial_puts("[INIT] Initializing ARM Generic Timer...\n");
     fut_timer_init(CONFIG_TIMER_HZ);
 
+    /* Read PL031 RTC to set wall-clock time offset.
+     * QEMU virt machine has PL031 at PA 0x09010000 (KVA +0xFFFFFF8000000000).
+     * DR (Data Register) at offset 0x000 returns seconds since epoch. */
+    {
+        volatile uint32_t *pl031 = (volatile uint32_t *)0xFFFFFF8009010000UL;
+        uint32_t rtc_sec = pl031[0];  /* Read DR register */
+        if (rtc_sec > 1000000000UL) {  /* Sanity check: after ~2001 */
+            extern volatile int64_t g_realtime_offset_sec;
+            g_realtime_offset_sec = (int64_t)rtc_sec;
+            fut_printf("[RTC] PL031: epoch=%u (wall-clock set)\n", rtc_sec);
+        }
+    }
+
     /* Enable interrupts */
     fut_serial_puts("[INIT] Enabling interrupts...\n");
     fut_enable_interrupts();

@@ -4461,12 +4461,42 @@ static void arm64_syscall_table_init(void) {
         syscall_table[89].name = "readlink";
     }
 
-    /* sync (x86_64: 162, ARM64: 81) — for shell sync command */
+    /* sync (x86_64: 162, ARM64: 81) */
     syscall_table[162].handler = syscall_table[__NR_sync].handler;
     syscall_table[162].name = "sync";
     /* umask (x86_64: 95, ARM64: 166) */
     syscall_table[95].handler = syscall_table[__NR_umask].handler;
     syscall_table[95].name = "umask";
+    /* getpid (x86_64: 39, ARM64: 172) */
+    syscall_table[39].handler = syscall_table[__NR_getpid].handler;
+    syscall_table[39].name = "getpid";
+    /* getppid (x86_64: 110, ARM64: 173) */
+    syscall_table[110].handler = syscall_table[__NR_getppid].handler;
+    syscall_table[110].name = "getppid";
+    /* getuid (x86_64: 102, ARM64: 174) */
+    syscall_table[102].handler = syscall_table[__NR_getuid].handler;
+    syscall_table[102].name = "getuid";
+    /* getgid (x86_64: 104, ARM64: 176) */
+    syscall_table[104].handler = syscall_table[__NR_getgid].handler;
+    syscall_table[104].name = "getgid";
+    /* geteuid (x86_64: 107, ARM64: 175) */
+    syscall_table[107].handler = syscall_table[__NR_geteuid].handler;
+    syscall_table[107].name = "geteuid";
+    /* getegid (x86_64: 108, ARM64: 177) */
+    syscall_table[108].handler = syscall_table[__NR_getegid].handler;
+    syscall_table[108].name = "getegid";
+    /* setsid (x86_64: 112, ARM64: 157) */
+    syscall_table[112].handler = syscall_table[__NR_setsid].handler;
+    syscall_table[112].name = "setsid";
+    /* getsid (x86_64: 124, ARM64: 156) */
+    syscall_table[124].handler = syscall_table[__NR_getsid].handler;
+    syscall_table[124].name = "getsid";
+    /* setpgid (x86_64: 109, ARM64: 154) */
+    syscall_table[109].handler = syscall_table[__NR_setpgid].handler;
+    syscall_table[109].name = "setpgid";
+    /* getpgid (x86_64: 121, ARM64: 155) */
+    syscall_table[121].handler = syscall_table[__NR_getpgid].handler;
+    syscall_table[121].name = "getpgid";
 
     syscall_table_initialized = true;
 }

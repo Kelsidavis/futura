@@ -135,20 +135,22 @@ static ssize_t ps2_kbd_read(void *inode, void *priv, void *u_buf, size_t n, off_
     return fut_input_queue_read(&file->dev->queue, file->flags, u_buf, n);
 }
 
-static const struct fut_file_ops kbd_fops = {
-    .open = ps2_kbd_open,
-    .release = ps2_kbd_release,
-    .read = ps2_kbd_read,
-    .write = NULL,
-    .ioctl = NULL,
-    .mmap = NULL,
-};
+static struct fut_file_ops kbd_fops;
 
 int ps2_kbd_init(void) {
     fut_input_queue_init(&g_ps2_kbd.queue);
     g_ps2_kbd.open_count = 0;
     g_ps2_kbd.active = true;
     g_ps2_kbd.extended = false;
+
+    if (!kbd_fops.open) {
+        kbd_fops.open = ps2_kbd_open;
+        kbd_fops.release = ps2_kbd_release;
+        kbd_fops.read = ps2_kbd_read;
+        kbd_fops.write = NULL;
+        kbd_fops.ioctl = NULL;
+        kbd_fops.mmap = NULL;
+    }
 
     int rc = chrdev_register(KBD_MAJOR, KBD_MINOR, &kbd_fops, "kbd0", NULL);
     if (rc != 0) {

@@ -149,14 +149,7 @@ static ssize_t ps2_mouse_read(void *inode, void *priv, void *u_buf, size_t n, of
     return fut_input_queue_read(&file->dev->queue, file->flags, u_buf, n);
 }
 
-static const struct fut_file_ops mouse_fops = {
-    .open = ps2_mouse_open,
-    .release = ps2_mouse_release,
-    .read = ps2_mouse_read,
-    .write = NULL,
-    .ioctl = NULL,
-    .mmap = NULL,
-};
+static struct fut_file_ops mouse_fops;
 
 int ps2_mouse_init(void) {
     fut_input_queue_init(&g_ps2_mouse.queue);
@@ -164,6 +157,15 @@ int ps2_mouse_init(void) {
     g_ps2_mouse.active = true;
     g_ps2_mouse.index = 0;
     g_ps2_mouse.buttons = 0;
+
+    if (!mouse_fops.open) {
+        mouse_fops.open = ps2_mouse_open;
+        mouse_fops.release = ps2_mouse_release;
+        mouse_fops.read = ps2_mouse_read;
+        mouse_fops.write = NULL;
+        mouse_fops.ioctl = NULL;
+        mouse_fops.mmap = NULL;
+    }
 
     int rc = chrdev_register(MOUSE_MAJOR, MOUSE_MINOR, &mouse_fops, "mouse0", NULL);
     if (rc != 0) {

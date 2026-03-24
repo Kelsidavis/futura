@@ -4076,6 +4076,90 @@ static int futurafs_vnode_sync(struct fut_vnode *vnode) {
     return futurafs_sync_metadata(info->mount);
 }
 
+/**
+ * Rename a file or directory within the same FuturaFS directory.
+ */
+static int futurafs_vnode_rename(struct fut_vnode *dir, const char *oldname,
+                                 const char *newname) {
+    if (!dir || !oldname || !newname) {
+        return FUTURAFS_EINVAL;
+    }
+
+    if (dir->type != VN_DIR) {
+        return FUTURAFS_ENOTDIR;
+    }
+
+    size_t oldname_len = strnlen(oldname, FUTURAFS_NAME_MAX);
+    size_t newname_len = strnlen(newname, FUTURAFS_NAME_MAX);
+    if (oldname_len == 0 || oldname_len > FUTURAFS_NAME_MAX ||
+        newname_len == 0 || newname_len > FUTURAFS_NAME_MAX) {
+        return FUTURAFS_EINVAL;
+    }
+
+    struct futurafs_inode_info *dir_info = (struct futurafs_inode_info *)dir->fs_data;
+    struct futurafs_mount *mount = dir_info->mount;
+
+    /* Look up the old entry */
+    uint8_t block_buf[FUTURAFS_BLOCK_SIZE];
+    struct futurafs_dirent entry = {0};
+    uint64_t block_num = 0;
+    size_t block_offset = 0;
+
+    int ret = futurafs_dir_lookup_entry(dir_info, oldname, oldname_len,
+                                        &block_num, &block_offset, &entry,
+                                        block_buf);
+    if (ret < 0) {
+        return ret;
+    }
+
+    /* Check the new name doesn't already exist */
+    struct futurafs_dirent existing = {0};
+    ret = futurafs_dir_lookup_entry(dir_info, newname, newname_len,
+                                    NULL, NULL, &existing, NULL);
+    if (ret == 0) {
+        return FUTURAFS_EEXIST;
+    }
+
+    /* Save the inode number and file type before removing */
+    uint64_t ino = entry.ino;
+    uint8_t file_type = entry.file_type;
+
+    /* Remove the old directory entry */
+    ret = futurafs_dir_remove_entry(dir_info, block_num, block_offset,
+                                    block_buf);
+    if (ret < 0) {
+        return ret;
+    }
+
+    /* Add a new directory entry with the same inode but new name */
+    ret = futurafs_dir_add_entry(dir, dir_info, newname, newname_len, ino,
+                                 file_type);
+    if (ret < 0) {
+        return ret;
+    }
+
+    /* Write the updated directory inode */
+    dir_info->disk_inode.size = dir_info->disk_inode.blocks * FUTURAFS_BLOCK_SIZE;
+    dir->size = dir_info->disk_inode.size;
+
+    if (dir_info->dirty) {
+        ret = futurafs_write_inode(mount, dir_info->ino, &dir_info->disk_inode);
+        if (ret < 0) {
+            dir_info->dirty = true;
+            return FUTURAFS_EIO;
+        }
+        dir_info->dirty = false;
+    }
+
+    /* Sync metadata */
+    ret = futurafs_sync_metadata(mount);
+    if (ret < 0) {
+        return ret;
+    }
+
+    return 0;
+}
+
 /* Initialize FuturaFS vnode operations at runtime */
 static void futurafs_init_vnode_ops(void) {
     futurafs_vnode_ops.open = NULL;
@@ -4093,6 +4177,7 @@ static void futurafs_init_vnode_ops(void) {
     futurafs_vnode_ops.truncate = futurafs_vnode_truncate;
     futurafs_vnode_ops.symlink = futurafs_vnode_symlink;
     futurafs_vnode_ops.readlink = futurafs_vnode_readlink;
+    futurafs_vnode_ops.rename = futurafs_vnode_rename;
     futurafs_vnode_ops.sync = futurafs_vnode_sync;
     futurafs_vnode_ops.datasync = futurafs_vnode_sync;  /* datasync same as sync for FuturaFS */
 }

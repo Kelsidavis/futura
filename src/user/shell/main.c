@@ -446,7 +446,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     const char *builtins[] = {
         "bg", "cd", "chmod", "clear", "date", "dd", "df", "dmesg", "echo", "edit", "hexdump", "lsof", "nc", "poweroff", "reboot", "seq", "sleep", "time", "wget", "exit", "export", "fg", "free",
         "help", "hostname", "id", "ifconfig", "jobs", "kill", "ls", "mount",
-        ".", "basename", "dirname", "du", "exec", "false", "history", "ln", "printf", "ps", "pwd", "readlink", "source", "stat", "sync", "test", "tree", "true", "type", "umask", "uname", "uptime", "version", "which", "whoami", NULL
+        ".", "basename", "dirname", "du", "exec", "false", "history", "ln", "printf", "ps", "pwd", "read", "readlink", "set", "source", "stat", "sync", "test", "tree", "true", "type", "umask", "uname", "uptime", "version", "which", "whoami", NULL
     };
 
     /* External commands we might have */
@@ -1779,6 +1779,38 @@ static void cmd_poweroff(int argc, char *argv[]) {
     write_str(1, "Powering off...\n");
     sys_call4(169, REBOOT_MAGIC1, REBOOT_MAGIC2, REBOOT_CMD_POWEROFF, 0);
     write_str(2, "poweroff: failed\n");
+}
+
+/* Built-in: read - Read a line from stdin into a variable */
+static void cmd_read(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: read VAR\n");
+        return;
+    }
+    char line[MAX_VAR_VALUE];
+    int pos = 0;
+    while (pos < MAX_VAR_VALUE - 1) {
+        char ch;
+        long r = sys_call3(__NR_read, 0, (long)&ch, 1);
+        if (r <= 0 || ch == '\n')
+            break;
+        line[pos++] = ch;
+    }
+    line[pos] = '\0';
+    set_var(argv[1], line, 0);
+}
+
+/* Built-in: set - Show all shell variables */
+static void cmd_set(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    for (int i = 0; i < MAX_VARS; i++) {
+        if (shell_vars[i].used) {
+            write_str(1, shell_vars[i].name);
+            write_char(1, '=');
+            write_str(1, shell_vars[i].value);
+            write_char(1, '\n');
+        }
+    }
 }
 
 /* Built-in: kill - Send signal to process */
@@ -5213,6 +5245,12 @@ static int execute_command(int argc, char *argv[]) {
             write_str(1, buf); write_char(1, '\n');
         }
         return 0;
+    } else if (strcmp_simple(argv[0], "read") == 0) {
+        cmd_read(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "set") == 0) {
+        cmd_set(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exec") == 0) {
         if (argc < 2) { write_str(2, "usage: exec <command> [args...]\n"); return 1; }
         /* Replace current shell with the command */
@@ -5409,7 +5447,9 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "[") == 0 ||
             strcmp_simple(cmd, "jobs") == 0 ||
             strcmp_simple(cmd, "fg") == 0 ||
-            strcmp_simple(cmd, "bg") == 0);
+            strcmp_simple(cmd, "bg") == 0 ||
+            strcmp_simple(cmd, "read") == 0 ||
+            strcmp_simple(cmd, "set") == 0);
 }
 
 /* Parse command line into pipeline stages separated by '|' */
@@ -6094,7 +6134,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.4                   |\n");
-    write_str(1, "|   55 built-in commands — type 'help'     |\n");
+    write_str(1, "|   57 built-in commands — type 'help'     |\n");
     write_str(1, "|   nano editor available at /bin/nano      |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");

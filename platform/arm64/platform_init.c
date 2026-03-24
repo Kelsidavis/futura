@@ -1620,6 +1620,30 @@ static void arm64_init_spawner_thread(void *arg) {
         }
 
         /* Note: fork/waitpid tested by /bin/forktest userland binary below */
+
+        /* Test /proc/self/status readability */
+        {
+            extern int fut_vfs_open(const char *, int, int);
+            extern long fut_vfs_read(int, void *, size_t);
+            int psfd = fut_vfs_open("/proc/self/status", 0, 0);
+            if (psfd >= 0) {
+                char pb2[128] = {0};
+                long pn = fut_vfs_read(psfd, pb2, 127);
+                fut_vfs_close(psfd);
+                /* Check for "Name:" line */
+                int found = 0;
+                for (int i = 0; i < (int)pn - 4; i++) {
+                    if (pb2[i] == 'N' && pb2[i+1] == 'a' && pb2[i+2] == 'm' && pb2[i+3] == 'e') {
+                        found = 1; break;
+                    }
+                }
+                if (found) {
+                    fut_printf("[INIT] ✓ /proc/self/status readable\n");
+                } else {
+                    fut_printf("[INIT] ✗ /proc/self/status: no Name field\n");
+                }
+            }
+        }
     }
 
     /* Run forktest */

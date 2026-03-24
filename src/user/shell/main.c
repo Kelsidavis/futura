@@ -453,7 +453,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     const char *builtins[] = {
         "bg", "cd", "chmod", "clear", "date", "dd", "df", "dmesg", "echo", "edit", "hexdump", "lsof", "nc", "poweroff", "reboot", "seq", "sleep", "time", "wget", "exit", "export", "fg", "free",
         "help", "hostname", "id", "ifconfig", "jobs", "kill", "ls", "mount",
-        ".", "basename", "dirname", "du", "exec", "false", "history", "ln", "more", "printf", "ps", "pwd", "read", "readlink", "set", "source", "stat", "sync", "test", "tree", "true", "type", "umask", "uname", "uptime", "version", "which", "whoami", NULL
+        ".", "basename", "dirname", "du", "exec", "false", "history", "ln", "more", "printf", "ps", "pwd", "read", "readlink", "set", "source", "stat", "sync", "test", "tree", "true", "type", "umask", "uname", "uptime", "version", "which", "whoami", "xargs", NULL
     };
 
     /* External commands we might have */
@@ -2208,6 +2208,46 @@ static void cmd_more(int argc, char *argv[]) {
     }
     (void)at_line_start;
     if (argc > 1) sys_close(in_fd);
+}
+
+/* Built-in: xargs — read args from stdin and execute command */
+static void cmd_xargs(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: xargs <command> [args...]\n");
+        return;
+    }
+
+    /* Read all of stdin into a buffer */
+    char input[4096];
+    int total = 0;
+    long n;
+    while ((n = sys_read(0, input + total, sizeof(input) - total - 1)) > 0) {
+        total += (int)n;
+        if (total >= (int)sizeof(input) - 1) break;
+    }
+    input[total] = '\0';
+
+    /* Split input into words and build argv */
+    char *xargv[64];
+    int xargc = 0;
+    /* First, copy the command and its args */
+    for (int i = 1; i < argc && xargc < 60; i++) {
+        xargv[xargc++] = argv[i];
+    }
+    /* Then add words from stdin */
+    char *p = input;
+    while (*p && xargc < 63) {
+        while (*p == ' ' || *p == '\t' || *p == '\n') p++;
+        if (!*p) break;
+        xargv[xargc++] = p;
+        while (*p && *p != ' ' && *p != '\t' && *p != '\n') p++;
+        if (*p) *p++ = '\0';
+    }
+    xargv[xargc] = NULL;
+
+    if (xargc > 0) {
+        execute_command(xargc, xargv);
+    }
 }
 
 static void cmd_history(int argc, char *argv[]) {
@@ -5276,6 +5316,9 @@ static int execute_command(int argc, char *argv[]) {
                (argv[0][0] == '.' && argv[0][1] == '\0')) {
         cmd_source(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "xargs") == 0) {
+        cmd_xargs(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "more") == 0) {
         cmd_more(argc, argv);
         return 0;
@@ -5506,6 +5549,7 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "touch") == 0 ||
             strcmp_simple(cmd, "source") == 0 ||
             (cmd[0] == '.' && cmd[1] == '\0') ||
+            strcmp_simple(cmd, "xargs") == 0 ||
             strcmp_simple(cmd, "more") == 0 ||
             strcmp_simple(cmd, "history") == 0 ||
             strcmp_simple(cmd, "which") == 0 ||
@@ -6218,7 +6262,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.4                   |\n");
-    write_str(1, "|   58 built-in commands — type 'help'     |\n");
+    write_str(1, "|   59 built-in commands — type 'help'     |\n");
     write_str(1, "|   nano editor available at /bin/nano      |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");

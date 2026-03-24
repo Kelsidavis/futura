@@ -1058,8 +1058,8 @@ static void cmd_echo(int argc, char *argv[]) {
 
 /* Built-in: uname */
 static void cmd_uname(int argc, char *argv[]) {
-    /* uname [-a|-s|-n|-r|-m] */
-    int show_all = 0, show_sys = 0, show_node = 0, show_rel = 0, show_mach = 0;
+    /* uname [-a|-s|-n|-r|-v|-m] using real syscall */
+    int show_all = 0, show_sys = 0, show_node = 0, show_rel = 0, show_ver = 0, show_mach = 0;
 
     if (argc <= 1) {
         show_sys = 1;
@@ -1072,6 +1072,7 @@ static void cmd_uname(int argc, char *argv[]) {
                         case 's': show_sys = 1; break;
                         case 'n': show_node = 1; break;
                         case 'r': show_rel = 1; break;
+                        case 'v': show_ver = 1; break;
                         case 'm': show_mach = 1; break;
                     }
                 }
@@ -1079,13 +1080,25 @@ static void cmd_uname(int argc, char *argv[]) {
         }
     }
 
-    if (show_all) { show_sys = show_node = show_rel = show_mach = 1; }
+    if (show_all) { show_sys = show_node = show_rel = show_ver = show_mach = 1; }
+
+    /* Call uname syscall (x86_64: 63) */
+    struct { char sysname[65]; char nodename[65]; char release[65];
+             char version[65]; char machine[65]; char domainname[65]; } uts;
+    for (int i = 0; i < (int)sizeof(uts); i++) ((char*)&uts)[i] = 0;
+    long ret = sys_call1(63 /* uname */, (long)&uts);
+    if (ret < 0) {
+        /* Fallback to hardcoded */
+        write_str(1, "Futura futura 0.3.1 aarch64\n");
+        return;
+    }
 
     int first = 1;
-    if (show_sys)  { if (!first) write_char(1, ' '); write_str(1, "Futura"); first = 0; }
-    if (show_node) { if (!first) write_char(1, ' '); write_str(1, "futura"); first = 0; }
-    if (show_rel)  { if (!first) write_char(1, ' '); write_str(1, "0.3.1"); first = 0; }
-    if (show_mach) { if (!first) write_char(1, ' '); write_str(1, "aarch64"); first = 0; }
+    if (show_sys)  { if (!first) write_char(1, ' '); write_str(1, uts.sysname); first = 0; }
+    if (show_node) { if (!first) write_char(1, ' '); write_str(1, uts.nodename); first = 0; }
+    if (show_rel)  { if (!first) write_char(1, ' '); write_str(1, uts.release); first = 0; }
+    if (show_ver)  { if (!first) write_char(1, ' '); write_str(1, uts.version); first = 0; }
+    if (show_mach) { if (!first) write_char(1, ' '); write_str(1, uts.machine); first = 0; }
     write_char(1, '\n');
 }
 

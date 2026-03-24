@@ -18,11 +18,7 @@
 #include <kernel/fut_vfs.h>
 #include <stdint.h>
 
-#ifdef __x86_64__
-#include <platform/x86_64/memory/paging.h>
-#elif defined(__aarch64__)
-#include <platform/arm64/memory/paging.h>
-#endif
+#include <platform/platform.h>
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>

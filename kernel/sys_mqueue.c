@@ -44,11 +44,7 @@
 /* Forward declaration: runtime-initialized in sys_mq_open */
 static struct fut_file_ops mq_fops;
 
-#ifdef __x86_64__
-#include <platform/x86_64/memory/paging.h>
-#elif defined(__aarch64__)
-#include <platform/arm64/memory/paging.h>
-#endif
+#include <platform/platform.h>
 
 /* ---- POSIX mq_attr ABI structure ---------------------------------- */
 

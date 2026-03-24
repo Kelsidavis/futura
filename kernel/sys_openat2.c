@@ -28,11 +28,7 @@
 #include <stdint.h>
 #include <string.h>
 
-#ifdef __x86_64__
-#include <platform/x86_64/memory/paging.h>
-#elif defined(__aarch64__)
-#include <platform/arm64/memory/paging.h>
-#endif
+#include <platform/platform.h>
 
 /* struct open_how — matches Linux uapi/linux/openat2.h */
 struct open_how {

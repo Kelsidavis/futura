@@ -22,11 +22,7 @@
 #include <kernel/uaccess.h>
 #include <kernel/fut_timer.h>
 
-#ifdef __x86_64__
-#include <platform/x86_64/memory/paging.h>
-#elif defined(__aarch64__)
-#include <platform/arm64/memory/paging.h>
-#endif
+#include <platform/platform.h>
 
 /* Kernel-pointer bypass: allow kernel selftests to pass kernel stack pointers */
 static inline int fstat_access_ok_write(const void *ptr, size_t n) {

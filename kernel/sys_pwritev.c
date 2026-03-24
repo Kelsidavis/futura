@@ -18,11 +18,7 @@
 #include <kernel/uaccess.h>
 #include <kernel/fut_memory.h>
 
-#ifdef __x86_64__
-#include <platform/x86_64/memory/paging.h>
-#elif defined(__aarch64__)
-#include <platform/arm64/memory/paging.h>
-#endif
+#include <platform/platform.h>
 
 static inline int pwritev_copy_from_user(void *dst, const void *src, size_t n) {
 #ifdef KERNEL_VIRTUAL_BASE

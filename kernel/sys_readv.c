@@ -17,11 +17,7 @@
 #include <kernel/fut_memory.h>
 #include <kernel/fut_vfs.h>
 
-#ifdef __x86_64__
-#include <platform/x86_64/memory/paging.h>
-#elif defined(__aarch64__)
-#include <platform/arm64/memory/paging.h>
-#endif
+#include <platform/platform.h>
 
 /* ============================================================================
  * PHASE 5 SECURITY HARDENING: readv() - Scatter-Gather I/O Vector Validation

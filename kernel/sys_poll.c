@@ -25,11 +25,7 @@
 #include <sys/epoll.h>
 
 /* Architecture-specific paging headers for KERNEL_VIRTUAL_BASE */
-#ifdef __x86_64__
-#include <platform/x86_64/memory/paging.h>
-#elif defined(__aarch64__)
-#include <platform/arm64/memory/paging.h>
-#endif
+#include <platform/platform.h>
 
 /* Poll debugging (controlled via debug_config.h) */
 #define poll_printf(...) do { if (POLL_DEBUG) fut_printf(__VA_ARGS__); } while(0)

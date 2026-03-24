@@ -20,11 +20,7 @@
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
 #include <kernel/debug_config.h>
-#ifdef __x86_64__
-#include <platform/x86_64/memory/paging.h>
-#elif defined(__aarch64__)
-#include <platform/arm64/memory/paging.h>
-#endif
+#include <platform/platform.h>
 
 /* Clock nanosleep debugging (controlled via debug_config.h) */
 #define clock_nanosleep_printf(...) do { if (NANOSLEEP_DEBUG) fut_printf(__VA_ARGS__); } while(0)

@@ -17,11 +17,7 @@
 #include <stdint.h>
 
 /* Architecture-specific paging headers for KERNEL_VIRTUAL_BASE */
-#ifdef __x86_64__
-#include <platform/x86_64/memory/paging.h>
-#elif defined(__aarch64__)
-#include <platform/arm64/memory/paging.h>
-#endif
+#include <platform/platform.h>
 #include <stddef.h>
 
 /* getrandom flags */

@@ -30,11 +30,7 @@
 #include <kernel/kprintf.h>
 
 /* Architecture-specific paging headers for KERNEL_VIRTUAL_BASE (kernel pointer detection) */
-#ifdef __x86_64__
-#include <platform/x86_64/memory/paging.h>
-#elif defined(__aarch64__)
-#include <platform/arm64/memory/paging.h>
-#endif
+#include <platform/platform.h>
 
 /* Copy from user or kernel buffer transparently */
 static inline int splice_copy_from(void *dst, const void *src, size_t n) {

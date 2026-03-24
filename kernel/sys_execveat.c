@@ -21,11 +21,7 @@
 #include <stddef.h>
 #include <string.h>
 
-#ifdef __x86_64__
-#include <platform/x86_64/memory/paging.h>
-#elif defined(__aarch64__)
-#include <platform/arm64/memory/paging.h>
-#endif
+#include <platform/platform.h>
 
 /* Supported flags */
 #define EXECVEAT_AT_EMPTY_PATH       0x1000

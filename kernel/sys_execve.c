@@ -19,11 +19,7 @@
 #include <stddef.h>
 #include <string.h>
 
-#ifdef __x86_64__
-#include <platform/x86_64/memory/paging.h>
-#elif defined(__aarch64__)
-#include <platform/arm64/memory/paging.h>
-#endif
+#include <platform/platform.h>
 
 static inline int execve_is_kptr(const void *p) {
 #ifdef KERNEL_VIRTUAL_BASE

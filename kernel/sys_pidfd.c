@@ -25,11 +25,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#ifdef __x86_64__
-#include <platform/x86_64/memory/paging.h>
-#elif defined(__aarch64__)
-#include <platform/arm64/memory/paging.h>
-#endif
+#include <platform/platform.h>
 
 /* pidfd context: remembers the PID at open time */
 struct pidfd_ctx {

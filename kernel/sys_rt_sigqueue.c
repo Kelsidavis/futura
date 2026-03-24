@@ -34,11 +34,7 @@
 #include <stddef.h>
 #include <string.h>
 
-#ifdef __x86_64__
-#include <platform/x86_64/memory/paging.h>
-#elif defined(__aarch64__)
-#include <platform/arm64/memory/paging.h>
-#endif
+#include <platform/platform.h>
 
 /* Bypass helper: kernel selftest pointers don't go through copy_from_user */
 static inline int rtq_copy_from_user(void *dst, const void *src, size_t n) {

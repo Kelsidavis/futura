@@ -17,11 +17,7 @@
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
 #include <kernel/fut_timer.h>
-#ifdef __x86_64__
-#include <platform/x86_64/memory/paging.h>
-#elif defined(__aarch64__)
-#include <platform/arm64/memory/paging.h>
-#endif
+#include <platform/platform.h>
 
 static inline int rusage_access_ok_write(const void *ptr, size_t n) {
 #ifdef KERNEL_VIRTUAL_BASE

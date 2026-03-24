@@ -26,11 +26,7 @@
 #include <stddef.h>
 #include <sys/types.h>
 
-#ifdef __x86_64__
-#include <platform/x86_64/memory/paging.h>
-#elif defined(__aarch64__)
-#include <platform/arm64/memory/paging.h>
-#endif
+#include <platform/platform.h>
 
 /**
  * sys_landlock_create_ruleset() - Create a new Landlock ruleset.

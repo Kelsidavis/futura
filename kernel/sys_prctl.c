@@ -16,11 +16,7 @@
 #include <kernel/kprintf.h>
 #include <stdint.h>
 #include <string.h>
-#ifdef __x86_64__
-#include <platform/x86_64/memory/paging.h>
-#elif defined(__aarch64__)
-#include <platform/arm64/memory/paging.h>
-#endif
+#include <platform/platform.h>
 
 /* prctl option constants (Linux ABI) */
 #define PR_SET_PDEATHSIG     1

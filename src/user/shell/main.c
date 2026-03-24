@@ -436,7 +436,7 @@ static size_t common_prefix_len(const char *s1, const char *s2) {
 static void complete_command(char *buf, size_t *pos, size_t max_len) {
     /* List of builtin commands */
     const char *builtins[] = {
-        "bg", "cd", "clear", "date", "df", "dmesg", "echo", "edit", "hexdump", "nc", "seq", "sleep", "wget", "exit", "export", "fg", "free",
+        "bg", "cd", "clear", "date", "df", "dmesg", "echo", "edit", "hexdump", "nc", "seq", "sleep", "time", "wget", "exit", "export", "fg", "free",
         "help", "hostname", "id", "ifconfig", "jobs", "kill", "ls", "mount",
         "ps", "pwd", "test", "uname", "uptime", "version", "whoami", NULL
     };
@@ -1464,6 +1464,31 @@ static void cmd_hexdump(int argc, char *argv[]) {
         offset += n;
     }
     sys_close(fd);
+}
+
+
+static int execute_command(int argc, char *argv[]); /* forward decl */
+
+/* Built-in: time - Time a command */
+static void cmd_time(int argc, char *argv[]) {
+    if (argc < 2) { write_str(1, "usage: time <command>\n"); return; }
+    /* Get start time */
+    struct { long tv_sec; long tv_nsec; } start = {0,0}, end_ts = {0,0};
+    sys_call2(98 /* clock_gettime */, 1, (long)&start);
+    
+    /* Execute the rest as a command */
+    /* For simplicity, just run it as a builtin */
+    execute_command(argc - 1, &argv[1]);
+    
+    sys_call2(98 /* clock_gettime */, 1, (long)&end_ts);
+    
+    long elapsed_ms = (end_ts.tv_sec - start.tv_sec) * 1000 +
+                      (end_ts.tv_nsec - start.tv_nsec) / 1000000;
+    char buf[32];
+    int_to_str(elapsed_ms, buf, 32);
+    write_str(2, "\nreal\t0m");
+    write_str(2, buf);
+    write_str(2, "ms\n");
 }
 
 /* Built-in: df - Show filesystem disk space usage */
@@ -4243,6 +4268,9 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "wget") == 0) {
         cmd_wget(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "time") == 0) {
+        cmd_time(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "sleep") == 0) {
         cmd_sleep(argc, argv);
         return 0;
@@ -4393,6 +4421,7 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "uname") == 0 ||
             strcmp_simple(cmd, "date") == 0 ||
             strcmp_simple(cmd, "nc") == 0 ||
+            strcmp_simple(cmd, "time") == 0 ||
             strcmp_simple(cmd, "sleep") == 0 ||
             strcmp_simple(cmd, "hexdump") == 0 ||
             strcmp_simple(cmd, "seq") == 0 ||
@@ -4985,7 +5014,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.3                   |\n");
-    write_str(1, "|   32 built-in commands — type 'help'     |\n");
+    write_str(1, "|   33 built-in commands — type 'help'     |\n");
     write_str(1, "|   nano editor available at /bin/nano      |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");

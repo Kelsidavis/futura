@@ -352,6 +352,10 @@ extern ssize_t sys_write(int fd, const void *buf, size_t count);
 static int64_t sys_write_wrapper(uint64_t fd, uint64_t buf, uint64_t count,
                                  uint64_t arg3, uint64_t arg4, uint64_t arg5) {
     (void)arg3; (void)arg4; (void)arg5;
+    /* Validate user buffer pointer — reject kernel addresses and sentinel values */
+    if (buf == 0 || buf >= 0xFFFFFF8000000000ULL) {
+        return -14;  /* -EFAULT */
+    }
     return (int64_t)sys_write((int)fd, (const void *)buf, (size_t)count);
 }
 
@@ -479,6 +483,9 @@ extern ssize_t sys_read(int fd, void *buf, size_t count);
 static int64_t sys_read_wrapper(uint64_t fd, uint64_t buf, uint64_t count,
                                 uint64_t arg3, uint64_t arg4, uint64_t arg5) {
     (void)arg3; (void)arg4; (void)arg5;
+    if (buf == 0 || buf >= 0xFFFFFF8000000000ULL) {
+        return -14;  /* -EFAULT */
+    }
     return (int64_t)sys_read((int)fd, (void *)buf, (size_t)count);
 }
 

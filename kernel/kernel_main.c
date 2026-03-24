@@ -862,7 +862,12 @@ extern void fut_splice_test_thread(void *arg);
 extern void fut_clock_sched_test_thread(void *arg);
 extern void fut_vfs_test_thread(void *arg);
 extern void fut_poll_test_thread(void *arg);
+/* sys_misc tests excluded from ARM64 production builds for binary size */
+#ifdef __x86_64__
 extern void fut_misc_test_thread(void *arg);
+#else
+static inline void fut_misc_test_thread(void *arg) { (void)arg; }
+#endif
 
 /* Set by boot thread after all initialization is complete.
  * Test thread waits for this before starting to avoid races with init. */

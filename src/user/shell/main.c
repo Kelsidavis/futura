@@ -439,7 +439,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     const char *builtins[] = {
         "bg", "cd", "chmod", "clear", "date", "dd", "df", "dmesg", "echo", "edit", "hexdump", "lsof", "nc", "poweroff", "reboot", "seq", "sleep", "time", "wget", "exit", "export", "fg", "free",
         "help", "hostname", "id", "ifconfig", "jobs", "kill", "ls", "mount",
-        "du", "ln", "ps", "pwd", "readlink", "stat", "test", "tree", "uname", "uptime", "version", "which", "whoami", NULL
+        "du", "history", "ln", "ps", "pwd", "readlink", "stat", "test", "tree", "uname", "uptime", "version", "which", "whoami", NULL
     };
 
     /* External commands we might have */
@@ -2029,6 +2029,24 @@ static void int_to_str(long n, char *buf, int size) {
         char tmp = buf[j];
         buf[j] = buf[i - 1 - j];
         buf[i - 1 - j] = tmp;
+    }
+}
+
+/* Built-in: history */
+static void cmd_history(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    for (int i = 0; i < history_count; i++) {
+        const char *h = get_history(i);
+        if (h) {
+            char numbuf[8];
+            int_to_str(i + 1, numbuf, 8);
+            int pad = 4 - (int)strlen_simple(numbuf);
+            while (pad-- > 0) write_char(1, ' ');
+            write_str(1, numbuf);
+            write_str(1, "  ");
+            write_str(1, h);
+            write_char(1, '\n');
+        }
     }
 }
 
@@ -5052,6 +5070,9 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "stat") == 0) {
         cmd_stat(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "history") == 0) {
+        cmd_history(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "which") == 0) {
         cmd_which(argc, argv);
         return 0;
@@ -5153,6 +5174,7 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "rmdir") == 0 ||
             strcmp_simple(cmd, "rm") == 0 ||
             strcmp_simple(cmd, "touch") == 0 ||
+            strcmp_simple(cmd, "history") == 0 ||
             strcmp_simple(cmd, "which") == 0 ||
             strcmp_simple(cmd, "du") == 0 ||
             strcmp_simple(cmd, "tree") == 0 ||

@@ -5062,6 +5062,16 @@ int main(int argc, char **argv, char **envp) {
         }
     }
 
+    /* Set up signal handlers — ignore SIGINT in shell (children inherit default) */
+    {
+        /* struct sigaction: sa_handler at offset 0, sa_flags, sa_mask */
+        /* SIG_IGN = 1 */
+        long sa[16];  /* 128 bytes — enough for struct sigaction */
+        for (int i = 0; i < 16; i++) sa[i] = 0;
+        sa[0] = 1;  /* sa_handler = SIG_IGN */
+        sys_call4(13 /* rt_sigaction */, 2 /* SIGINT */, (long)sa, 0, 8);
+    }
+
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.3                   |\n");

@@ -31,14 +31,8 @@ static ssize_t null_write(void *inode, void *priv, const void *buf, size_t n, of
     return (ssize_t)n;  /* Accept and discard all data */
 }
 
-static const struct fut_file_ops null_fops = {
-    .read = null_read,
-    .write = null_write,
-    .open = NULL,
-    .release = NULL,
-    .ioctl = NULL,
-    .mmap = NULL,
-};
+/* Initialized at runtime to avoid ARM64 relocation issues */
+static struct fut_file_ops null_fops;
 
 /* /dev/zero: read returns zero bytes, write succeeds */
 static ssize_t zero_read(void *inode, void *priv, void *buf, size_t n, off_t *pos) {
@@ -66,14 +60,7 @@ static void *zero_mmap_op(void *inode, void *priv, void *u_addr, size_t len,
     return fut_mm_map_anonymous(mm, (uintptr_t)u_addr, len, prot, anon_flags);
 }
 
-static const struct fut_file_ops zero_fops = {
-    .read = zero_read,
-    .write = null_write,  /* Same as /dev/null — discard */
-    .open = NULL,
-    .release = NULL,
-    .ioctl = NULL,
-    .mmap = zero_mmap_op,
-};
+static struct fut_file_ops zero_fops;
 
 /* /dev/urandom: read returns random bytes (from getrandom), write succeeds */
 static ssize_t urandom_read(void *inode, void *priv, void *buf, size_t n, off_t *pos) {
@@ -83,14 +70,7 @@ static ssize_t urandom_read(void *inode, void *priv, void *buf, size_t n, off_t 
     return (ret < 0) ? ret : (ssize_t)ret;
 }
 
-static const struct fut_file_ops urandom_fops = {
-    .read = urandom_read,
-    .write = null_write,  /* Accept and discard (seeds entropy pool) */
-    .open = NULL,
-    .release = NULL,
-    .ioctl = NULL,
-    .mmap = NULL,
-};
+static struct fut_file_ops urandom_fops;
 
 /* /dev/full: read returns zero bytes (like /dev/zero), write returns ENOSPC */
 static ssize_t full_write(void *inode, void *priv, const void *buf, size_t n, off_t *pos) {
@@ -98,20 +78,27 @@ static ssize_t full_write(void *inode, void *priv, const void *buf, size_t n, of
     return -28;  /* -ENOSPC: No space left on device */
 }
 
-static const struct fut_file_ops full_fops = {
-    .read = zero_read,     /* Same as /dev/zero — returns zeroes */
-    .write = full_write,
-    .open = NULL,
-    .release = NULL,
-    .ioctl = NULL,
-    .mmap = NULL,
-};
+static struct fut_file_ops full_fops;
 
 /**
  * Initialize /dev/null, /dev/zero, /dev/full, and /dev/urandom devices.
  * Call from kernel_main during boot.
  */
 void dev_null_init(void) {
+    /* Initialize file ops at runtime to avoid ARM64 relocation issues */
+    null_fops.read = null_read;
+    null_fops.write = null_write;
+
+    zero_fops.read = zero_read;
+    zero_fops.write = null_write;
+    zero_fops.mmap = zero_mmap_op;
+
+    urandom_fops.read = urandom_read;
+    urandom_fops.write = null_write;
+
+    full_fops.read = zero_read;
+    full_fops.write = full_write;
+
     /* Linux device numbers: /dev/null = (1,3), /dev/zero = (1,5) */
     chrdev_register(1, 3, &null_fops, "null", NULL);
     devfs_create_chr("/dev/null", 1, 3);

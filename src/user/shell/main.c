@@ -1621,7 +1621,24 @@ static void cmd_lsof(int argc, char *argv[]) {
                 write_str(1, name);
                 int pad = 5 - (int)strlen_simple(name);
                 while (pad-- > 0) write_char(1, ' ');
-                write_str(1, "file  (open)\n");
+
+                /* Try to readlink to get actual path */
+                char fdpath[80];
+                int fp = 0;
+                for (int k = 0; path[k] && fp < 60; k++) fdpath[fp++] = path[k];
+                fdpath[fp++] = '/';
+                for (int k = 0; name[k] && fp < 78; k++) fdpath[fp++] = name[k];
+                fdpath[fp] = '\0';
+
+                char target[128];
+                long rl = sys_call3(89 /* readlink */, (long)fdpath, (long)target, 127);
+                if (rl > 0) {
+                    target[rl] = '\0';
+                    write_str(1, target);
+                } else {
+                    write_str(1, "(open)");
+                }
+                write_char(1, '\n');
             }
 
             if (reclen == 0) break;

@@ -1275,16 +1275,16 @@ void fut_kernel_main(void) {
                   "protocols: files\n"
                   "services: files\n");
         ETC_WRITE("/etc/passwd",
-                  "root:x:0:0:root:/root:/bin/sh\n"
+                  "root:x:0:0:root:/root:/bin/shell\n"
                   "nobody:x:65534:65534:nobody:/nonexistent:/usr/sbin/nologin\n");
         ETC_WRITE("/etc/group",
                   "root:x:0:\n"
                   "nobody:x:65534:\n");
         ETC_WRITE("/etc/os-release",
                   "NAME=\"Futura OS\"\n"
-                  "VERSION=\"1.0\"\n"
+                  "VERSION=\"0.4.0\"\n"
                   "ID=futura\n"
-                  "VERSION_ID=1.0\n"
+                  "VERSION_ID=0.4.0\n"
                   "PRETTY_NAME=\"Futura OS 1.0\"\n"
                   "HOME_URL=\"https://github.com/netrunner-labs/futura\"\n");
         ETC_WRITE("/etc/profile",

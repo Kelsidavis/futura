@@ -1660,11 +1660,20 @@ static void cmd_seq(int argc, char *argv[]) {
 
 /* Built-in: sleep - Pause for N seconds */
 static void cmd_sleep(int argc, char *argv[]) {
-    if (argc < 2) { write_str(1, "usage: sleep <seconds>\n"); return; }
-    int secs = 0;
-    for (int i = 0; argv[1][i]; i++)
-        secs = secs * 10 + (argv[1][i] - '0');
-    struct { long tv_sec; long tv_nsec; } ts = { secs, 0 };
+    if (argc < 2) { write_str(1, "usage: sleep <seconds[.frac]>\n"); return; }
+    long secs = 0, nsec = 0;
+    const char *s = argv[1];
+    while (*s >= '0' && *s <= '9') { secs = secs * 10 + (*s - '0'); s++; }
+    if (*s == '.') {
+        s++;
+        long mult = 100000000L;  /* 0.1s in ns */
+        while (*s >= '0' && *s <= '9' && mult > 0) {
+            nsec += (*s - '0') * mult;
+            mult /= 10;
+            s++;
+        }
+    }
+    struct { long tv_sec; long tv_nsec; } ts = { secs, nsec };
     sys_call2(35 /* nanosleep */, (long)&ts, 0);
 }
 

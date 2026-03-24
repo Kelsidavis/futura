@@ -3865,6 +3865,117 @@ static int futurafs_vnode_rmdir(struct fut_vnode *dir, const char *name) {
 }
 
 /**
+ * Create a symbolic link on FuturaFS.
+ * Stores the target path in the first data block of the new inode.
+ */
+static int futurafs_vnode_symlink(struct fut_vnode *parent, const char *linkname,
+                                   const char *target) {
+    if (!parent || !linkname || !target) return FUTURAFS_EINVAL;
+    if (parent->type != VN_DIR) return FUTURAFS_ENOTDIR;
+
+    size_t link_len = strnlen(linkname, FUTURAFS_NAME_MAX);
+    size_t target_len = strnlen(target, FUTURAFS_BLOCK_SIZE - 1);
+    if (link_len == 0 || link_len > FUTURAFS_NAME_MAX) return FUTURAFS_EINVAL;
+    if (target_len == 0 || target_len >= FUTURAFS_BLOCK_SIZE) return FUTURAFS_EINVAL;
+
+    struct futurafs_inode_info *dir_info = (struct futurafs_inode_info *)parent->fs_data;
+    struct futurafs_mount *mount = dir_info->mount;
+
+    /* Allocate inode for symlink */
+    uint64_t new_ino;
+    int ret = futurafs_alloc_inode(mount, &new_ino);
+    if (ret < 0) return ret;
+
+    /* Set up symlink inode */
+    struct futurafs_inode inode = {0};
+    inode.mode = FUTURAFS_S_IFLNK | 0777;
+    inode.nlinks = 1;
+    inode.size = target_len;
+
+    /* Allocate a data block for the target path */
+    uint64_t block_num;
+    ret = futurafs_alloc_block(mount, &block_num);
+    if (ret < 0) {
+        futurafs_free_inode(mount, new_ino);
+        futurafs_sync_metadata(mount);
+        return ret;
+    }
+    inode.direct[0] = block_num;
+    inode.blocks = 1;
+
+    /* Write target path to data block */
+    uint8_t block_buf[FUTURAFS_BLOCK_SIZE];
+    for (size_t i = 0; i < FUTURAFS_BLOCK_SIZE; i++) block_buf[i] = 0;
+    for (size_t i = 0; i < target_len; i++) block_buf[i] = (uint8_t)target[i];
+
+    ret = futurafs_blk_write(mount, block_num, 1, block_buf);
+    if (ret < 0) {
+        futurafs_free_block(mount, block_num);
+        futurafs_free_inode(mount, new_ino);
+        futurafs_sync_metadata(mount);
+        return FUTURAFS_EIO;
+    }
+
+    /* Write inode */
+    ret = futurafs_write_inode(mount, new_ino, &inode);
+    if (ret < 0) {
+        futurafs_free_block(mount, block_num);
+        futurafs_free_inode(mount, new_ino);
+        futurafs_sync_metadata(mount);
+        return ret;
+    }
+
+    /* Add directory entry */
+    ret = futurafs_dir_add_entry(parent, dir_info, linkname, link_len, new_ino,
+                                  FUTURAFS_FT_SYMLINK);
+    if (ret < 0) {
+        futurafs_free_block(mount, block_num);
+        futurafs_free_inode(mount, new_ino);
+        futurafs_sync_metadata(mount);
+        return ret;
+    }
+
+    /* Update parent directory */
+    parent->size = dir_info->disk_inode.size;
+    futurafs_write_inode(mount, dir_info->ino, &dir_info->disk_inode);
+    dir_info->dirty = false;
+    futurafs_sync_metadata(mount);
+
+    return 0;
+}
+
+/**
+ * Read a symbolic link target from FuturaFS.
+ * The target path is stored in the first data block.
+ */
+static ssize_t futurafs_vnode_readlink(struct fut_vnode *vnode, char *buf, size_t size) {
+    if (!vnode || !buf || size == 0) return -EINVAL;
+    if (vnode->type != VN_LNK) return -EINVAL;
+
+    struct futurafs_inode_info *info = (struct futurafs_inode_info *)vnode->fs_data;
+    if (!info) return -EIO;
+
+    struct futurafs_mount *mount = info->mount;
+    uint64_t target_len = info->disk_inode.size;
+    if (target_len == 0) return 0;
+    if (target_len > size) target_len = size;
+
+    /* Read target from first data block */
+    uint64_t block_num = info->disk_inode.direct[0];
+    if (block_num == 0) return -EIO;
+
+    uint8_t block_buf[FUTURAFS_BLOCK_SIZE];
+    int ret = futurafs_blk_read(mount, block_num, 1, block_buf);
+    if (ret < 0) return -EIO;
+
+    for (size_t i = 0; i < target_len; i++) {
+        buf[i] = (char)block_buf[i];
+    }
+
+    return (ssize_t)target_len;
+}
+
+/**
  * Truncate a FuturaFS file to the specified length.
  * Currently only supports truncation to 0 (used by O_TRUNC).
  */
@@ -3961,6 +4072,8 @@ static void futurafs_init_vnode_ops(void) {
     futurafs_vnode_ops.getattr = futurafs_vnode_getattr;
     futurafs_vnode_ops.setattr = futurafs_vnode_setattr;
     futurafs_vnode_ops.truncate = futurafs_vnode_truncate;
+    futurafs_vnode_ops.symlink = futurafs_vnode_symlink;
+    futurafs_vnode_ops.readlink = futurafs_vnode_readlink;
     futurafs_vnode_ops.sync = NULL;
     futurafs_vnode_ops.datasync = NULL;
 }

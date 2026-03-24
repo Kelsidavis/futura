@@ -1456,6 +1456,30 @@ static void arm64_init_spawner_thread(void *arg) {
                     }
                 }
             }
+
+            /* Test symlink: create /mnt/link -> /mnt/test.txt */
+            {
+                extern int fut_vfs_symlink(const char *target, const char *linkpath);
+                int sl = fut_vfs_symlink("/mnt/test.txt", "/mnt/link");
+                if (sl == 0) {
+                    /* Read back via symlink */
+                    int lfd = fut_vfs_open("/mnt/link", 0, 0);
+                    if (lfd >= 0) {
+                        char lbuf[32] = {0};
+                        long ln = fut_vfs_read(lfd, lbuf, sizeof(lbuf) - 1);
+                        fut_vfs_close(lfd);
+                        if (ln > 0 && lbuf[0] == 'O') {
+                            fut_printf("[INIT] ✓ FuturaFS symlink test passed\n");
+                        } else {
+                            fut_printf("[INIT] ✗ FuturaFS symlink read: %d bytes\n", (int)ln);
+                        }
+                    } else {
+                        fut_printf("[INIT] ✗ FuturaFS symlink open: %d\n", lfd);
+                    }
+                } else {
+                    fut_printf("[INIT] ✗ FuturaFS symlink create: %d\n", sl);
+                }
+            }
             }
         } else {
             fut_printf("[INIT] ✗ FuturaFS create failed: %d\n", tfd);

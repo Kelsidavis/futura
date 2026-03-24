@@ -439,7 +439,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     const char *builtins[] = {
         "bg", "cd", "chmod", "clear", "date", "dd", "df", "dmesg", "echo", "edit", "hexdump", "lsof", "nc", "poweroff", "reboot", "seq", "sleep", "time", "wget", "exit", "export", "fg", "free",
         "help", "hostname", "id", "ifconfig", "jobs", "kill", "ls", "mount",
-        "ps", "pwd", "stat", "test", "uname", "uptime", "version", "whoami", NULL
+        "ln", "ps", "pwd", "readlink", "stat", "test", "uname", "uptime", "version", "whoami", NULL
     };
 
     /* External commands we might have */
@@ -4173,6 +4173,59 @@ static void cmd_chmod(int argc, char *argv[]) {
     }
 }
 
+/* Built-in: ln - Create links */
+static void cmd_ln(int argc, char *argv[]) {
+    int symbolic = 0;
+    int arg_start = 1;
+
+    if (argc > 1 && argv[1][0] == '-' && argv[1][1] == 's') {
+        symbolic = 1;
+        arg_start = 2;
+    }
+
+    if (argc - arg_start < 2) {
+        write_str(2, "usage: ln [-s] <target> <linkname>\n");
+        return;
+    }
+
+    const char *target = argv[arg_start];
+    const char *linkname = argv[arg_start + 1];
+
+    if (symbolic) {
+        /* symlink(target, linkpath) — x86_64: 88, ARM64: 36 */
+        long ret = sys_call2(88 /* symlink */, (long)target, (long)linkname);
+        if (ret < 0) {
+            write_str(2, "ln: failed to create symlink\n");
+        }
+    } else {
+        /* link(oldpath, newpath) — x86_64: 86, ARM64: 37 */
+        long ret = sys_call2(86 /* link */, (long)target, (long)linkname);
+        if (ret < 0) {
+            write_str(2, "ln: failed to create hard link\n");
+        }
+    }
+}
+
+/* Built-in: readlink - Print symlink target */
+static void cmd_readlink(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: readlink <path>\n");
+        return;
+    }
+    char buf[256];
+    /* readlink(path, buf, size) — x86_64: 89, ARM64: 78 */
+    long ret = sys_call3(89 /* readlink */, (long)argv[1], (long)buf, 255);
+    if (ret > 0) {
+        buf[ret] = '\0';
+        write_str(1, buf);
+        write_str(1, "\n");
+    } else {
+        write_str(2, "readlink: ");
+        write_str(2, argv[1]);
+        write_str(2, ": not a symlink\n");
+    }
+}
+
 /* Built-in: dd - Copy and convert data */
 static void cmd_dd(int argc, char *argv[]) {
     const char *if_path = NULL;
@@ -4725,6 +4778,12 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "stat") == 0) {
         cmd_stat(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "ln") == 0) {
+        cmd_ln(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "readlink") == 0) {
+        cmd_readlink(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "chmod") == 0) {
         cmd_chmod(argc, argv);
         return 0;
@@ -4811,6 +4870,8 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "rmdir") == 0 ||
             strcmp_simple(cmd, "rm") == 0 ||
             strcmp_simple(cmd, "touch") == 0 ||
+            strcmp_simple(cmd, "ln") == 0 ||
+            strcmp_simple(cmd, "readlink") == 0 ||
             strcmp_simple(cmd, "stat") == 0 ||
             strcmp_simple(cmd, "chmod") == 0 ||
             strcmp_simple(cmd, "cp") == 0 ||
@@ -5380,7 +5441,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.3                   |\n");
-    write_str(1, "|   39 built-in commands — type 'help'     |\n");
+    write_str(1, "|   41 built-in commands — type 'help'     |\n");
     write_str(1, "|   nano editor available at /bin/nano      |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");

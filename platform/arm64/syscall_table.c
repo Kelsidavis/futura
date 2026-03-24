@@ -3536,6 +3536,33 @@ static int64_t sys_set_mempolicy_home_node_wrapper(uint64_t start, uint64_t len,
 }
 
 /* Initialize syscall table at runtime to avoid ARM64 relocation issues */
+/* x86_64 compat wrappers for path-based syscalls */
+static int64_t sys_symlink_compat(uint64_t target, uint64_t linkpath,
+                                   uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a2; (void)a3; (void)a4; (void)a5;
+    if (target == 0 || target >= 0xFFFFFF8000000000ULL) return -14;
+    if (linkpath == 0 || linkpath >= 0xFFFFFF8000000000ULL) return -14;
+    extern long sys_symlink(const char *, const char *);
+    return sys_symlink((const char *)target, (const char *)linkpath);
+}
+
+static int64_t sys_link_compat(uint64_t oldpath, uint64_t newpath,
+                                uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a2; (void)a3; (void)a4; (void)a5;
+    if (oldpath == 0 || oldpath >= 0xFFFFFF8000000000ULL) return -14;
+    if (newpath == 0 || newpath >= 0xFFFFFF8000000000ULL) return -14;
+    extern long sys_link(const char *, const char *);
+    return sys_link((const char *)oldpath, (const char *)newpath);
+}
+
+static int64_t sys_readlink_compat(uint64_t path, uint64_t buf, uint64_t size,
+                                    uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a3; (void)a4; (void)a5;
+    if (path == 0 || path >= 0xFFFFFF8000000000ULL) return -14;
+    extern long sys_readlink(const char *, char *, size_t);
+    return sys_readlink((const char *)path, (char *)buf, (size_t)size);
+}
+
 /* x86_64 compat: chmod(path, mode) — x86_64 #90 takes path, ARM64 fchmod takes fd */
 static int64_t sys_chmod_compat(uint64_t path, uint64_t mode,
                                  uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5) {
@@ -4409,6 +4436,24 @@ static void arm64_syscall_table_init(void) {
     /* fcntl (x86_64: 72, ARM64: 25) — needed by shell for F_GETFL on stdio */
     syscall_table[72].handler = syscall_table[__NR_fcntl].handler;
     syscall_table[72].name = "fcntl";
+    /* symlink (x86_64: 88) → wrapper calls sys_symlink(target, linkpath) */
+    {
+        extern long sys_symlink(const char *, const char *);
+        syscall_table[88].handler = (syscall_fn_t)sys_symlink_compat;
+        syscall_table[88].name = "symlink";
+    }
+    /* link (x86_64: 86) → wrapper calls sys_link(old, new) */
+    {
+        extern long sys_link(const char *, const char *);
+        syscall_table[86].handler = (syscall_fn_t)sys_link_compat;
+        syscall_table[86].name = "link";
+    }
+    /* readlink (x86_64: 89) → wrapper calls sys_readlink(path, buf, size) */
+    {
+        extern long sys_readlink(const char *, char *, size_t);
+        syscall_table[89].handler = (syscall_fn_t)sys_readlink_compat;
+        syscall_table[89].name = "readlink";
+    }
 
     syscall_table_initialized = true;
 }

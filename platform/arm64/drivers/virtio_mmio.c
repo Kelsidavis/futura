@@ -201,38 +201,24 @@ static int virtio_mmio_init_queue(virtio_mmio_device_t *dev, uint32_t queue_idx,
         return -1;  /* Queue size must be at least 1 */
     }
 
-    /* Allocate queue memory (descriptor, available, and used rings) */
-    size_t desc_size = sizeof(struct virtq_desc) * queue_size;
-    size_t avail_size = sizeof(struct virtq_avail) + sizeof(uint16_t) * queue_size + sizeof(uint16_t);
-    size_t used_size = sizeof(struct virtq_used) + sizeof(struct virtq_used_elem) * queue_size + sizeof(uint16_t);
-
-    /* Allocate contiguous pages — used ring needs page alignment */
-    size_t used_offset = (desc_size + avail_size + 4095) & ~4095UL;
-    size_t total_size = used_offset + used_size;
-    size_t total_pages = (total_size + 4095) / 4096;
-
-    void *desc_virt = fut_malloc_pages(total_pages);
-    if (!desc_virt) {
+    /* Allocate separate pages for each queue component for alignment */
+    void *desc_virt = fut_malloc_pages(1);
+    void *avail_virt = fut_malloc_pages(1);
+    void *used_virt = fut_malloc_pages(1);
+    if (!desc_virt || !avail_virt || !used_virt) {
         return -1;
     }
+    memset(desc_virt, 0, 4096);
+    memset(avail_virt, 0, 4096);
+    memset(used_virt, 0, 4096);
 
-    /* Zero the memory */
-    memset(desc_virt, 0, total_pages * 4096);
-
-    /* Convert virtual addresses to physical addresses for device.
-     * CRITICAL: VirtIO MMIO requires used ring to be page-aligned (or at least
-     * aligned to VIRTQ_USED_ALIGN=4 in VirtIO 1.0, but QEMU may require 4096). */
     phys_addr_t desc_phys = pmap_virt_to_phys((uintptr_t)desc_virt);
-    phys_addr_t avail_phys = desc_phys + desc_size;
-    /* Align used ring to page boundary for reliable MMIO operation */
-    phys_addr_t used_phys = (desc_phys + desc_size + avail_size + 4095) & ~4095ULL;
+    phys_addr_t avail_phys = pmap_virt_to_phys((uintptr_t)avail_virt);
+    phys_addr_t used_phys = pmap_virt_to_phys((uintptr_t)used_virt);
 
-    /* Setup queue pointers (virtual addresses for CPU access) */
     dev->desc = (struct virtq_desc *)desc_virt;
-    dev->avail = (struct virtq_avail *)((uintptr_t)desc_virt + desc_size);
-    /* Used ring: align to page boundary to match physical address alignment */
-    uintptr_t used_virt_offset = (desc_size + avail_size + 4095) & ~4095UL;
-    dev->used = (struct virtq_used *)((uintptr_t)desc_virt + used_virt_offset);
+    dev->avail = (struct virtq_avail *)avail_virt;
+    dev->used = (struct virtq_used *)used_virt;
 
     /* Save physical addresses for device configuration */
     dev->desc_phys = desc_phys;
@@ -528,8 +514,9 @@ int virtio_mmio_blk_read(int dev_idx, uint64_t sector, uint32_t count, void *buf
 
         /* Check FEATURES_OK */
         uint32_t status = virtio_mmio_read32(dev->base_addr, VIRTIO_MMIO_STATUS);
+        fut_printf("[MMIO-BLK] After FEATURES_OK: status=0x%x\n", status);
         if (!(status & VIRTIO_STATUS_FEATURES_OK)) {
-            fut_printf("[MMIO-BLK] FEATURES_OK not set\n");
+            fut_printf("[MMIO-BLK] FEATURES_OK not set! Device rejected features.\n");
             return -1;
         }
 
@@ -539,9 +526,19 @@ int virtio_mmio_blk_read(int dev_idx, uint64_t sector, uint32_t count, void *buf
             return -1;
         }
 
+        /* Acknowledge any stale interrupts before setting DRIVER_OK */
+        uint32_t stale_isr = virtio_mmio_read32(dev->base_addr, VIRTIO_MMIO_INTERRUPT_STATUS);
+        if (stale_isr) {
+            virtio_mmio_write32(dev->base_addr, VIRTIO_MMIO_INTERRUPT_ACK, stale_isr);
+        }
+
         /* Set DRIVER_OK */
         virtio_mmio_set_status(dev, VIRTIO_STATUS_DRIVER_OK);
-        fut_printf("[MMIO-BLK] Device initialized, queue ready\n");
+
+        /* Read back config to verify device is alive */
+        uint64_t capacity = virtio_mmio_read32(dev->base_addr, VIRTIO_MMIO_CONFIG + 0);
+        capacity |= (uint64_t)virtio_mmio_read32(dev->base_addr, VIRTIO_MMIO_CONFIG + 4) << 32;
+        fut_printf("[MMIO-BLK] Device ready, capacity=%llu sectors\n", (unsigned long long)capacity);
     }
 
     /* Allocate request header and status byte from page-aligned memory */

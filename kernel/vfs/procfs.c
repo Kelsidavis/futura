@@ -2208,14 +2208,21 @@ static size_t gen_net_dev(char *buf, size_t cap) {
                "bytes    packets errs drop fifo colls carrier compressed\n");
     pb_str(&b, "    lo:       0       0    0    0    0     0          0         0"
                "        0       0    0    0    0     0       0          0\n");
+    /* eth0: virtio-net interface (packet counters not tracked yet) */
+    pb_str(&b, "  eth0:       0       0    0    0    0     0          0         0"
+               "        0       0    0    0    0     0       0          0\n");
     return b.pos;
 }
 
 static size_t gen_net_route(char *buf, size_t cap) {
     struct pbuf b = { buf, 0, cap };
     pb_str(&b, "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n");
-    /* Loopback route: 127.0.0.0/8 → lo, flags RTF_UP(0x1) */
+    /* Loopback route: 127.0.0.0/8 → lo */
     pb_str(&b, "lo\t0000007F\t00000000\t0001\t0\t0\t0\t000000FF\t0\t0\t0\n");
+    /* Default route: 0.0.0.0/0 → gateway 10.0.2.2 via eth0 */
+    pb_str(&b, "eth0\t00000000\t0202000A\t0003\t0\t0\t100\t00000000\t1500\t0\t0\n");
+    /* Local subnet: 10.0.2.0/24 → eth0 */
+    pb_str(&b, "eth0\t0002000A\t00000000\t0001\t0\t0\t100\t00FFFFFF\t1500\t0\t0\n");
     return b.pos;
 }
 

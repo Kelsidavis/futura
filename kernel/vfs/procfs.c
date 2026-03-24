@@ -686,7 +686,7 @@ static size_t gen_version(char *buf, size_t cap) {
     pb_str(&b, FUT_BUILD_USER);
     pb_str(&b, "@");
     pb_str(&b, FUT_BUILD_HOST);
-    pb_str(&b, ") (aarch64-elf-gcc " __VERSION__ ") ");
+    pb_str(&b, ") (gcc " __VERSION__ ") ");
     pb_str(&b, FUT_BUILD_DATE);
     pb_str(&b, " SMP PREEMPT\n");
     return b.pos;

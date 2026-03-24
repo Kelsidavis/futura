@@ -1062,10 +1062,8 @@ void fut_kernel_main(void) {
     if (fb_enabled) {
         bool should_init_fb = wayland_interactive_boot || fb_available;
         if (should_init_fb) {
-#ifndef __aarch64__
-            /* x86_64: Show boot splash now that framebuffer is ready */
+            /* Initialize graphics device and show boot splash */
             fb_boot_splash();
-#endif
             fb_char_init();
 
             struct fut_fb_hwinfo fbinfo = {0};

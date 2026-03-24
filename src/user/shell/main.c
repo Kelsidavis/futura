@@ -453,7 +453,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     const char *builtins[] = {
         "bg", "cd", "chmod", "clear", "date", "dd", "df", "dmesg", "echo", "edit", "hexdump", "lsof", "nc", "poweroff", "reboot", "seq", "sleep", "time", "wget", "exit", "export", "fg", "free",
         "help", "hostname", "id", "ifconfig", "jobs", "kill", "ls", "mount",
-        ".", "basename", "dirname", "du", "exec", "false", "history", "ln", "printf", "ps", "pwd", "read", "readlink", "set", "source", "stat", "sync", "test", "tree", "true", "type", "umask", "uname", "uptime", "version", "which", "whoami", NULL
+        ".", "basename", "dirname", "du", "exec", "false", "history", "ln", "more", "printf", "ps", "pwd", "read", "readlink", "set", "source", "stat", "sync", "test", "tree", "true", "type", "umask", "uname", "uptime", "version", "which", "whoami", NULL
     };
 
     /* External commands we might have */
@@ -2165,6 +2165,51 @@ static void int_to_str(long n, char *buf, int size) {
 }
 
 /* Built-in: history */
+/* Built-in: more — simple pager (24 lines at a time) */
+static void cmd_more(int argc, char *argv[]) {
+    int in_fd = 0;  /* default stdin */
+    if (argc > 1) {
+        in_fd = sys_open(argv[1], O_RDONLY, 0);
+        if (in_fd < 0) {
+            write_str(2, "more: cannot open ");
+            write_str(2, argv[1]);
+            write_str(2, "\n");
+            return;
+        }
+    }
+
+    char buf[256];
+    int lines = 0;
+    int at_line_start = 1;
+    long n;
+    while ((n = sys_read(in_fd, buf, sizeof(buf))) > 0) {
+        for (long i = 0; i < n; i++) {
+            write_char(1, buf[i]);
+            if (buf[i] == '\n') {
+                lines++;
+                at_line_start = 1;
+                if (lines >= 24) {
+                    write_str(1, "\033[7m--More--\033[0m");
+                    /* Wait for keypress */
+                    char key;
+                    sys_read(0, &key, 1);
+                    /* Clear the --More-- line */
+                    write_str(1, "\r            \r");
+                    if (key == 'q' || key == 'Q') {
+                        if (argc > 1) sys_close(in_fd);
+                        return;
+                    }
+                    lines = (key == ' ') ? 0 : lines - 1;  /* space=next page, enter=next line */
+                }
+            } else {
+                at_line_start = 0;
+            }
+        }
+    }
+    (void)at_line_start;
+    if (argc > 1) sys_close(in_fd);
+}
+
 static void cmd_history(int argc, char *argv[]) {
     (void)argc; (void)argv;
     for (int i = 0; i < history_count; i++) {
@@ -5231,6 +5276,9 @@ static int execute_command(int argc, char *argv[]) {
                (argv[0][0] == '.' && argv[0][1] == '\0')) {
         cmd_source(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "more") == 0) {
+        cmd_more(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "history") == 0) {
         cmd_history(argc, argv);
         return 0;
@@ -5458,6 +5506,7 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "touch") == 0 ||
             strcmp_simple(cmd, "source") == 0 ||
             (cmd[0] == '.' && cmd[1] == '\0') ||
+            strcmp_simple(cmd, "more") == 0 ||
             strcmp_simple(cmd, "history") == 0 ||
             strcmp_simple(cmd, "which") == 0 ||
             strcmp_simple(cmd, "du") == 0 ||
@@ -6169,7 +6218,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.4                   |\n");
-    write_str(1, "|   57 built-in commands — type 'help'     |\n");
+    write_str(1, "|   58 built-in commands — type 'help'     |\n");
     write_str(1, "|   nano editor available at /bin/nano      |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");

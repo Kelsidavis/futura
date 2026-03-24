@@ -2020,17 +2020,38 @@ static void cmd_kill(int argc, char *argv[]) {
 
 /* Built-in: id - Print user/group IDs */
 static void cmd_id(int argc, char *argv[]) {
-    (void)argc; (void)argv;
-    long uid = sys_call0(102 /* SYS_getuid x86 compat */);
-    long gid = sys_call0(104 /* SYS_getgid x86 compat */);
-    write_str(1, "uid=");
+    long uid = sys_call0(102 /* getuid */);
+    long gid = sys_call0(104 /* getgid */);
+    long euid = sys_call0(107 /* geteuid */);
+    long egid = sys_call0(108 /* getegid */);
     char buf[16];
-    int_to_str(uid, buf, 16);
-    write_str(1, buf);
+
+    /* Support -u (uid only) and -g (gid only) flags */
+    if (argc > 1 && argv[1][0] == '-') {
+        if (argv[1][1] == 'u') {
+            int_to_str(uid, buf, 16); write_str(1, buf); write_char(1, '\n'); return;
+        } else if (argv[1][1] == 'g') {
+            int_to_str(gid, buf, 16); write_str(1, buf); write_char(1, '\n'); return;
+        } else if (argv[1][1] == 'n') {
+            /* -un or -gn: print name */
+            write_str(1, "root\n"); return;
+        }
+    }
+
+    write_str(1, "uid=");
+    int_to_str(uid, buf, 16); write_str(1, buf);
     write_str(1, "(root) gid=");
-    int_to_str(gid, buf, 16);
-    write_str(1, buf);
-    write_str(1, "(root)\n");
+    int_to_str(gid, buf, 16); write_str(1, buf);
+    write_str(1, "(root)");
+    if (euid != uid) {
+        write_str(1, " euid=");
+        int_to_str(euid, buf, 16); write_str(1, buf);
+    }
+    if (egid != gid) {
+        write_str(1, " egid=");
+        int_to_str(egid, buf, 16); write_str(1, buf);
+    }
+    write_str(1, " groups=0(root)\n");
 }
 
 /* Built-in: ps - List processes */

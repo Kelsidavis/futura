@@ -6637,16 +6637,23 @@ int main(int argc, char **argv, char **envp) {
                     while (trim > 0 && (body[trim-1] == ' ' || body[trim-1] == ';')) trim--;
                     body[trim] = '\0';
                 }
-                /* Iterate over words in list */
-                char *word = p;
-                while (*word) {
-                    while (*word == ' ') word++;
-                    if (!*word) break;
-                    char *wend = word;
-                    while (*wend && *wend != ' ') wend++;
-                    char saved = *wend;
-                    *wend = '\0';
-                    /* Set variable and execute body */
+                /* Expand globs in word list, then iterate */
+                char *wargv[64];
+                int wargc = 0;
+                { char *ws = p;
+                  while (*ws && wargc < 63) {
+                    while (*ws == ' ') ws++;
+                    if (!*ws) break;
+                    wargv[wargc] = ws;
+                    while (*ws && *ws != ' ') ws++;
+                    if (*ws) *ws++ = '\0';
+                    wargc++;
+                  }
+                  wargv[wargc] = NULL;
+                  wargc = expand_globs(wargc, wargv, 64);
+                }
+                for (int wi = 0; wi < wargc; wi++) {
+                    char *word = wargv[wi];
                     set_var(fvar, word, 0);
                     char exp_body[512];
                     expand_variables(exp_body, body, sizeof(exp_body));
@@ -6661,8 +6668,6 @@ int main(int argc, char **argv, char **envp) {
                         if (sc == '\0') break;
                         bcmd = semi + 1;
                     }
-                    *wend = saved;
-                    word = wend;
                 }
                 last_exit_status = 0;
                 continue;

@@ -484,7 +484,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     const char *builtins[] = {
         "bg", "cd", "chmod", "clear", "date", "dd", "df", "dmesg", "echo", "edit", "hexdump", "lsof", "nc", "poweroff", "reboot", "seq", "sleep", "time", "wget", "exit", "export", "fg", "free",
         "help", "hostname", "id", "ifconfig", "jobs", "kill", "ls", "mount",
-        ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "history", "ln", "more", "nproc", "printf", "ps", "pwd", "read", "readlink", "set", "source", "stat", "sync", "sysinfo", "test", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "wait", "which", "whoami", "xargs", NULL
+        ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "history", "ln", "mktemp", "more", "nproc", "printf", "ps", "pwd", "read", "readlink", "set", "source", "stat", "sync", "sysinfo", "test", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "wait", "which", "whoami", "xargs", "yes", NULL
     };
 
     /* External commands we might have */
@@ -5596,6 +5596,37 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "stat") == 0) {
         cmd_stat(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "yes") == 0) {
+        /* yes [string] — repeatedly output a line */
+        const char *s = argc > 1 ? argv[1] : "y";
+        for (int i = 0; i < 100; i++) {  /* limit to avoid infinite */
+            write_str(1, s);
+            write_char(1, '\n');
+        }
+        return 0;
+    } else if (strcmp_simple(argv[0], "mktemp") == 0) {
+        /* mktemp — create a unique temp file */
+        struct { long tv_sec; long tv_nsec; } ts = {0, 0};
+        sys_call2(98, 1, (long)&ts);
+        char path[64] = "/tmp/tmp.";
+        int p = 9;
+        unsigned int r = (unsigned int)(ts.tv_nsec ^ ts.tv_sec);
+        for (int i = 0; i < 8; i++) {
+            r = r * 1103515245 + 12345;
+            int c = ((r >> 16) & 0x1F);
+            path[p++] = (c < 10) ? '0' + c : 'a' + c - 10;
+        }
+        path[p] = '\0';
+        int fd = sys_open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+        if (fd >= 0) {
+            sys_close(fd);
+            write_str(1, path);
+            write_char(1, '\n');
+        } else {
+            write_str(2, "mktemp: failed\n");
+            return 1;
+        }
+        return 0;
     } else if (strcmp_simple(argv[0], "source") == 0 ||
                (argv[0][0] == '.' && argv[0][1] == '\0')) {
         cmd_source(argc, argv);
@@ -5891,6 +5922,8 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "source") == 0 ||
             (cmd[0] == '.' && cmd[1] == '\0') ||
             strcmp_simple(cmd, "xargs") == 0 ||
+            strcmp_simple(cmd, "yes") == 0 ||
+            strcmp_simple(cmd, "mktemp") == 0 ||
             strcmp_simple(cmd, "more") == 0 ||
             strcmp_simple(cmd, "history") == 0 ||
             strcmp_simple(cmd, "which") == 0 ||
@@ -6592,7 +6625,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.4                   |\n");
-    write_str(1, "|   65 built-in commands — type 'help'     |\n");
+    write_str(1, "|   67 built-in commands — type 'help'     |\n");
     write_str(1, "|   nano editor available at /bin/nano      |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");

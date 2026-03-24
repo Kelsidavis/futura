@@ -267,6 +267,12 @@ int fb_console_init(void) {
         fut_printf("[FB_CONSOLE] Failed to get framebuffer virtual address\n");
         return -EFAULT;
     }
+#elif defined(__aarch64__)
+    /* On ARM64, convert physical address to kernel virtual address.
+     * The kernel TTBR1 page tables map peripherals starting at
+     * 0xFFFFFF8000000000. TTBR0 identity mapping is overwritten when
+     * user processes are scheduled, so we must use kernel VA. */
+    cons->fb_mem = (volatile uint8_t *)((uintptr_t)hw_info.phys + 0xFFFFFF8000000000ULL);
 #else
     cons->fb_mem = (volatile uint8_t *)hw_info.phys;
 #endif

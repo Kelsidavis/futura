@@ -66,10 +66,16 @@ long sys_reboot(unsigned int magic1, unsigned int magic2,
     switch (cmd) {
         case LINUX_REBOOT_CMD_POWER_OFF:
             fut_printf("[REBOOT] Power off requested\n");
-            acpi_shutdown();
 #ifdef __x86_64__
+            acpi_shutdown();
             /* Fallback: QEMU debug exit */
             __asm__ volatile("outw %0, %1" :: "a"((uint16_t)0x2000), "Nd"((uint16_t)0x604));
+#elif defined(__aarch64__)
+            /* PSCI SYSTEM_OFF (0x84000008) */
+            {
+                register uint64_t x0 __asm__("x0") = 0x84000008ULL;
+                __asm__ volatile("hvc #0" :: "r"(x0));
+            }
 #endif
             /* If we get here, shutdown failed */
             fut_printf("[REBOOT] Power off failed, halting CPU\n");

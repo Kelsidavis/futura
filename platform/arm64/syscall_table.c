@@ -4394,6 +4394,9 @@ static void arm64_syscall_table_init(void) {
     syscall_table[93].name = "fchown";
     syscall_table[217].handler = syscall_table[__NR_getdents64].handler;
     syscall_table[217].name = "getdents64";
+    /* reboot (x86_64: 169, ARM64: 142) — for shell reboot/poweroff commands */
+    syscall_table[169].handler = syscall_table[__NR_reboot].handler;
+    syscall_table[169].name = "reboot";
 
     syscall_table_initialized = true;
 }

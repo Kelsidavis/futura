@@ -437,7 +437,7 @@ static size_t common_prefix_len(const char *s1, const char *s2) {
 static void complete_command(char *buf, size_t *pos, size_t max_len) {
     /* List of builtin commands */
     const char *builtins[] = {
-        "bg", "cd", "clear", "date", "df", "dmesg", "echo", "edit", "hexdump", "lsof", "nc", "seq", "sleep", "time", "wget", "exit", "export", "fg", "free",
+        "bg", "cd", "clear", "date", "df", "dmesg", "echo", "edit", "hexdump", "lsof", "nc", "poweroff", "reboot", "seq", "sleep", "time", "wget", "exit", "export", "fg", "free",
         "help", "hostname", "id", "ifconfig", "jobs", "kill", "ls", "mount",
         "ps", "pwd", "test", "uname", "uptime", "version", "whoami", NULL
     };
@@ -1602,6 +1602,27 @@ static void cmd_version(int argc, char *argv[]) {
     } else {
         write_str(1, "Futura OS\n");
     }
+}
+
+/* Built-in: reboot/poweroff - System power control via reboot(2) syscall */
+#define REBOOT_MAGIC1  0xfee1dead
+#define REBOOT_MAGIC2  672274793
+#define REBOOT_CMD_RESTART   0x01234567
+#define REBOOT_CMD_POWEROFF  0x4321FEDC
+
+static void cmd_reboot(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    write_str(1, "Rebooting...\n");
+    /* reboot(2): x86_64=169, ARM64=142; using x86_64 compat alias */
+    sys_call4(169, REBOOT_MAGIC1, REBOOT_MAGIC2, REBOOT_CMD_RESTART, 0);
+    write_str(2, "reboot: failed\n");
+}
+
+static void cmd_poweroff(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    write_str(1, "Powering off...\n");
+    sys_call4(169, REBOOT_MAGIC1, REBOOT_MAGIC2, REBOOT_CMD_POWEROFF, 0);
+    write_str(2, "poweroff: failed\n");
 }
 
 /* Built-in: kill - Send signal to process */
@@ -4437,6 +4458,12 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "version") == 0) {
         cmd_version(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "reboot") == 0) {
+        cmd_reboot(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "poweroff") == 0) {
+        cmd_poweroff(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "mount") == 0) {
         cmd_mount(argc, argv);
         return 0;
@@ -5149,7 +5176,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.3                   |\n");
-    write_str(1, "|   34 built-in commands — type 'help'     |\n");
+    write_str(1, "|   36 built-in commands — type 'help'     |\n");
     write_str(1, "|   nano editor available at /bin/nano      |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");

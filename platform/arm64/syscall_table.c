@@ -4280,6 +4280,14 @@ static void arm64_syscall_table_init(void) {
     syscall_table[__NR_bpf].handler = (syscall_fn_t)sys_bpf_wrapper;
     syscall_table[__NR_bpf].name = "bpf";
 
+    /* x86_64 compatibility aliases — Futura userland uses x86_64 syscall numbers */
+    /* dup (x86_64: 32, ARM64: 23) */
+    syscall_table[32].handler = syscall_table[__NR_dup].handler;
+    syscall_table[32].name = "dup";
+    /* dup2 (x86_64: 33) — use proper sys_dup2 handler instead of mknodat */
+    syscall_table[33].handler = (syscall_fn_t)sys_dup2_wrapper;
+    syscall_table[33].name = "dup2";
+
     syscall_table_initialized = true;
 }
 

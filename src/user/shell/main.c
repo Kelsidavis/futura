@@ -146,6 +146,7 @@ static inline long sys_pipe(int pipefd[2]) {
 }
 
 static inline long sys_dup2(int oldfd, int newfd) {
+    if (oldfd == newfd) return newfd;
     return sys_dup2_call(oldfd, newfd);
 }
 

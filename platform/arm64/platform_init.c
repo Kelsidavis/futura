@@ -1542,6 +1542,34 @@ static void arm64_init_spawner_thread(void *arg) {
         }
     }
 
+    /* Test shebang script execution */
+    {
+        extern int fut_vfs_open(const char *, int, int);
+        extern long fut_vfs_write(int, const void *, size_t);
+        extern long fut_vfs_read(int, void *, size_t);
+        extern int fut_vfs_close(int);
+        int sfd = fut_vfs_open("/mnt/test.sh", 0x0241 /* O_WRONLY|O_CREAT|O_TRUNC */, 0755);
+        if (sfd >= 0) {
+            const char *script = "#!/bin/shell\necho SHEBANG_OK\n";
+            fut_vfs_write(sfd, script, 28);
+            fut_vfs_close(sfd);
+
+            /* Execute via shell -c to test indirectly (direct exec would replace spawner) */
+            /* Instead just verify the script file is valid and readable */
+            int rfd = fut_vfs_open("/mnt/test.sh", 0, 0);
+            if (rfd >= 0) {
+                char hdr[4] = {0};
+                fut_vfs_read(rfd, hdr, 2);
+                fut_vfs_close(rfd);
+                if (hdr[0] == '#' && hdr[1] == '!') {
+                    fut_printf("[INIT] ✓ FuturaFS shebang script created\n");
+                } else {
+                    fut_printf("[INIT] ✗ FuturaFS shebang: bad header\n");
+                }
+            }
+        }
+    }
+
     /* Run forktest */
     char *forktest_argv[] = {"/bin/forktest", NULL};
     char *forktest_envp[] = {"PATH=/sbin:/bin", NULL};

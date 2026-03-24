@@ -1441,6 +1441,21 @@ static void arm64_init_spawner_thread(void *arg) {
                                    (int)n2, n2 > 0 ? rbuf2[0] : '?');
                     }
                 }
+            /* Test readdir: list /mnt directory via getdents64 */
+            {
+                int dfd = fut_vfs_open("/mnt", 0 /* O_RDONLY */, 0);
+                if (dfd >= 0) {
+                    extern long sys_getdents64(int fd, void *dirp, unsigned int count);
+                    char dbuf[512];
+                    long dn = sys_getdents64(dfd, dbuf, sizeof(dbuf));
+                    fut_vfs_close(dfd);
+                    if (dn > 0) {
+                        fut_printf("[INIT] ✓ FuturaFS readdir: %d bytes from /mnt\n", (int)dn);
+                    } else {
+                        fut_printf("[INIT] ✗ FuturaFS readdir: returned %d\n", (int)dn);
+                    }
+                }
+            }
             }
         } else {
             fut_printf("[INIT] ✗ FuturaFS create failed: %d\n", tfd);

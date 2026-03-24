@@ -453,32 +453,15 @@ long sys_getdents64(unsigned int fd, void *dirp, unsigned int count) {
         int rc = fut_vfs_readdir_fd((int)fd, &cookie, &vdirent);
 
         if (rc < 0) {
-            if (total_bytes == 0) {
-                const char *error_desc;
-                switch (rc) {
-                    case -EBADF:
-                        error_desc = "invalid file descriptor";
-                        break;
-                    case -ENOTDIR:
-                        error_desc = "not a directory";
-                        break;
-                    default:
-                        error_desc = "readdir error";
-                        break;
-                }
-                fut_printf("[GETDENTS64] getdents64(fd=%u [%s], ino=%lu, count=%u [%s]) -> %d "
-                           "(%s, pid=%d)\n",
-                           fd, fd_category, file->vnode->ino, count, count_category,
-                           rc, error_desc, task->pid);
+            /* readdir returns -ENOENT at end of directory, other negatives are errors */
+            if (total_bytes == 0 && rc != -ENOENT && rc != -2) {
                 fut_free(kbuf);
                 return rc;  /* Error on first entry */
             }
-            break;  /* No more entries */
+            break;  /* End of directory or error after partial read */
         }
 
-        if (rc == 0) {
-            break;  /* End of directory */
-        }
+        /* rc == 0 means success (found an entry) — continue processing */
 
         if (cookie < prev_cookie && prev_cookie > 0) {
             fut_printf("[GETDENTS64] getdents64(fd=%u) -> EOVERFLOW "

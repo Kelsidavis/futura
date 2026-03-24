@@ -1525,14 +1525,55 @@ static size_t gen_cpuinfo(char *buf, size_t cap) {
     pb_str(&b, "cache_alignment\t: 64\n");
     pb_str(&b, "address sizes\t: 39 bits physical, 48 bits virtual\n");
 #elif defined(__aarch64__)
-    pb_str(&b, "CPU implementer\t: 0x41\n");
-    pb_str(&b, "CPU architecture: 8\n");
-    pb_str(&b, "CPU variant\t: 0x0\n");
-    pb_str(&b, "CPU part\t: 0xd08\n");
-    pb_str(&b, "CPU revision\t: 3\n");
-    pb_str(&b, "Features\t: fp asimd evtstrm aes pmull sha1 sha2 crc32 "
-               "atomics fphp asimdhp cpuid asimdrdm lrcpc dcpop asimddp\n");
-    pb_str(&b, "BogoMIPS\t: 125.00\n");
+    {
+        /* Read MIDR_EL1 for real CPU identification */
+        uint64_t midr;
+        __asm__ volatile("mrs %0, midr_el1" : "=r"(midr));
+        unsigned impl = (midr >> 24) & 0xFF;
+        unsigned var  = (midr >> 20) & 0xF;
+        unsigned arch = (midr >> 16) & 0xF;
+        unsigned part = (midr >>  4) & 0xFFF;
+        unsigned rev  = midr & 0xF;
+
+        pb_str(&b, "CPU implementer\t: 0x");
+        pb_hex2(&b, (uint8_t)impl);
+        pb_char(&b, '\n');
+        pb_str(&b, "CPU architecture: ");
+        pb_u64(&b, arch == 0xF ? 8 : arch);
+        pb_char(&b, '\n');
+        pb_str(&b, "CPU variant\t: 0x");
+        { char hd = (var < 10) ? '0' + var : 'a' + var - 10; pb_char(&b, hd); }
+        pb_char(&b, '\n');
+        pb_str(&b, "CPU part\t: 0x");
+        { /* 3 hex digits */
+          char h2 = ((part >> 8) & 0xF); pb_char(&b, h2 < 10 ? '0' + h2 : 'a' + h2 - 10);
+          char h1 = ((part >> 4) & 0xF); pb_char(&b, h1 < 10 ? '0' + h1 : 'a' + h1 - 10);
+          char h0 = (part & 0xF);        pb_char(&b, h0 < 10 ? '0' + h0 : 'a' + h0 - 10);
+        }
+        pb_char(&b, '\n');
+        pb_str(&b, "CPU revision\t: ");
+        pb_u64(&b, rev);
+        pb_char(&b, '\n');
+
+        /* Read AA64ISAR0 for feature detection */
+        uint64_t isar0;
+        __asm__ volatile("mrs %0, id_aa64isar0_el1" : "=r"(isar0));
+        pb_str(&b, "Features\t: fp asimd");
+        if ((isar0 >> 4) & 0xF)  pb_str(&b, " aes");
+        if ((isar0 >> 8) & 0xF)  pb_str(&b, " pmull");
+        if ((isar0 >> 12) & 0xF) pb_str(&b, " sha1");
+        if ((isar0 >> 16) & 0xF) pb_str(&b, " sha2");
+        if ((isar0 >> 20) & 0xF) pb_str(&b, " crc32");
+        if ((isar0 >> 24) & 0xF) pb_str(&b, " atomics");
+        pb_char(&b, '\n');
+
+        /* Read timer frequency for BogoMIPS approximation */
+        uint64_t cntfrq;
+        __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(cntfrq));
+        pb_str(&b, "BogoMIPS\t: ");
+        pb_u64(&b, cntfrq / 500000);
+        pb_str(&b, ".00\n");
+    }
 #else
     pb_str(&b, "model name\t: Futura Virtual Processor\n");
 #endif

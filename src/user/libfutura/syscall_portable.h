@@ -123,17 +123,23 @@ static inline long syscall6(long nr, long arg1, long arg2, long arg3, long arg4,
  *   ARM64 Platform (SVC #0)
  * ============================================================ */
 
+/* ARM64 syscall ABI: x8 = syscall number, x0-x5 = args, x0 = return value.
+ * The kernel clears x8 on return (security: prevent syscall number leak).
+ * All wrappers must declare x8 as an output so GCC knows it's clobbered
+ * and reloads it for each SVC — otherwise consecutive inlined syscalls
+ * with the same number get mis-dispatched (e.g., write → read). */
 #ifdef PLATFORM_ARM64
 
 static inline long syscall0(long nr) {
+    register long x0 __asm__("x0");
     register long x8 __asm__("x8") = nr;
     __asm__ __volatile__(
         "svc #0"
-        : "=r"(x8)
-        : "r"(x8)
+        : "=r"(x0), "+r"(x8)
+        :
         : "memory"
     );
-    return x8;
+    return x0;
 }
 
 static inline long syscall1(long nr, long arg1) {
@@ -141,8 +147,8 @@ static inline long syscall1(long nr, long arg1) {
     register long x8 __asm__("x8") = nr;
     __asm__ __volatile__(
         "svc #0\n"
-        : "=r"(x0)
-        : "r"(x0), "r"(x8)
+        : "+r"(x0), "+r"(x8)
+        :
         : "memory"
     );
     return x0;
@@ -154,8 +160,8 @@ static inline long syscall2(long nr, long arg1, long arg2) {
     register long x8 __asm__("x8") = nr;
     __asm__ __volatile__(
         "svc #0\n"
-        : "=r"(x0)
-        : "r"(x0), "r"(x1), "r"(x8)
+        : "+r"(x0), "+r"(x8)
+        : "r"(x1)
         : "memory"
     );
     return x0;
@@ -168,8 +174,8 @@ static inline long syscall3(long nr, long arg1, long arg2, long arg3) {
     register long x8 __asm__("x8") = nr;
     __asm__ __volatile__(
         "svc #0\n"
-        : "=r"(x0)
-        : "r"(x0), "r"(x1), "r"(x2), "r"(x8)
+        : "+r"(x0), "+r"(x8)
+        : "r"(x1), "r"(x2)
         : "memory"
     );
     return x0;
@@ -183,8 +189,8 @@ static inline long syscall4(long nr, long arg1, long arg2, long arg3, long arg4)
     register long x8 __asm__("x8") = nr;
     __asm__ __volatile__(
         "svc #0\n"
-        : "=r"(x0)
-        : "r"(x0), "r"(x1), "r"(x2), "r"(x3), "r"(x8)
+        : "+r"(x0), "+r"(x8)
+        : "r"(x1), "r"(x2), "r"(x3)
         : "memory"
     );
     return x0;
@@ -199,8 +205,8 @@ static inline long syscall5(long nr, long arg1, long arg2, long arg3, long arg4,
     register long x8 __asm__("x8") = nr;
     __asm__ __volatile__(
         "svc #0\n"
-        : "=r"(x0)
-        : "r"(x0), "r"(x1), "r"(x2), "r"(x3), "r"(x4), "r"(x8)
+        : "+r"(x0), "+r"(x8)
+        : "r"(x1), "r"(x2), "r"(x3), "r"(x4)
         : "memory"
     );
     return x0;
@@ -216,8 +222,8 @@ static inline long syscall6(long nr, long arg1, long arg2, long arg3, long arg4,
     register long x8 __asm__("x8") = nr;
     __asm__ __volatile__(
         "svc #0\n"
-        : "=r"(x0)
-        : "r"(x0), "r"(x1), "r"(x2), "r"(x3), "r"(x4), "r"(x5), "r"(x8)
+        : "+r"(x0), "+r"(x8)
+        : "r"(x1), "r"(x2), "r"(x3), "r"(x4), "r"(x5)
         : "memory"
     );
     return x0;

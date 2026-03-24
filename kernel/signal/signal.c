@@ -500,17 +500,20 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
         return 0;
     }
 
-    /* ARM64 exception frame type */
+    /* ARM64 exception frame type (must match fut_interrupt_frame_t in
+     * exception_handlers.c and the layout built by arm64_exception_entry.S) */
     typedef struct {
         uint64_t x[31];
-        uint64_t sp;
-        uint64_t pc;
-        uint64_t pstate;
-        uint64_t esr;
-        uint64_t far;
-        uint64_t fpu_state[64];
-        uint32_t fpsr;
-        uint32_t fpcr;
+        uint64_t sp;         /* offset 248: kernel SP (SP_EL1) — NOT the user SP */
+        uint64_t pc;         /* offset 256: ELR_EL1 */
+        uint64_t pstate;     /* offset 264: SPSR_EL1 */
+        uint64_t esr;        /* offset 272 */
+        uint64_t far;        /* offset 280 */
+        uint64_t fpu_state[64]; /* offset 288..799 */
+        uint32_t fpsr;       /* offset 800 */
+        uint32_t fpcr;       /* offset 804 */
+        uint64_t sp_el0;     /* offset 808: user mode stack pointer */
+        uint64_t ttbr0_el1;  /* offset 816: user page table base */
     } arm64_frame_t;
 
     arm64_frame_t *f = (arm64_frame_t *)frame;
@@ -580,7 +583,16 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
         if (task->sig_altstack.ss_flags & SS_AUTODISARM)
             task->sig_altstack.ss_flags = SS_DISABLE;
     } else {
+        /* Use the user-mode stack pointer (SP_EL0), not the kernel stack.
+         * f->sp holds the kernel stack pointer (SP_EL1) on ARM64, while
+         * f->sp_el0 holds the actual user stack pointer saved on exception
+         * entry.  Using f->sp would push the signal frame onto the kernel
+         * stack (or garbage if the frame is from an IRQ handler). */
+#if defined(__aarch64__)
+        sp = f->sp_el0;
+#else
         sp = f->sp;
+#endif
     }
 
     /* Allocate rt_sigframe on selected stack with 16-byte alignment.
@@ -629,7 +641,11 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
     for (int i = 0; i < 31; i++) {
         sframe.uc.uc_mcontext.gregs.x[i] = f->x[i];
     }
+#if defined(__aarch64__)
+    sframe.uc.uc_mcontext.gregs.sp = f->sp_el0;  /* User SP, not kernel SP */
+#else
     sframe.uc.uc_mcontext.gregs.sp = f->sp;
+#endif
     /* SA_RESTART: if syscall was interrupted (x0 == -EINTR) and handler
      * has SA_RESTART, rewind PC to 'svc' instruction (4 bytes back) so
      * the syscall is transparently restarted after the handler returns. */

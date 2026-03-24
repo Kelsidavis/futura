@@ -135,6 +135,8 @@ static void handle_svc(fut_interrupt_frame_t *frame) {
     uint64_t arg4 = frame->x[4];
     uint64_t arg5 = frame->x[5];
 
+    /* (debug removed) */
+
     /* Dispatch to syscall handler */
     int64_t result = arm64_syscall_dispatch(syscall_num, arg0, arg1, arg2, arg3, arg4, arg5);
 
@@ -143,7 +145,10 @@ static void handle_svc(fut_interrupt_frame_t *frame) {
      * would violate the ABI — compilers keep live values in x1-x7 across
      * SVC instructions.  x8 (syscall number) may be clobbered. */
     frame->x[0] = (uint64_t)result;
-    frame->x[8] = 0;  /* Clear syscall number register */
+    /* x8 is preserved (not cleared) — the inline asm syscall wrappers
+     * declare x8 as "+r" (input+output) so GCC knows it may be clobbered,
+     * but preserving it avoids issues with hand-written asm (write_str)
+     * that may rely on x8 being stable across consecutive SVCs. */
 
     /* Check for pending signals before returning to userspace
      * Signal delivery may modify frame->pc to point to signal handler

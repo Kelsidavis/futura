@@ -256,7 +256,24 @@ static void handle_unknown(fut_interrupt_frame_t *frame) {
  * - Handlers can modify frame->pc to point to signal handler
  * - User code executes signal handler, calls sigreturn()
  */
+/* Double-fault detection: track if we're already handling an exception */
+static volatile int exception_depth = 0;
+
 void arm64_exception_dispatch(fut_interrupt_frame_t *frame) {
+    /* Double-fault detection: if we take an exception while already
+     * handling one at EL1, print diagnostics and halt immediately. */
+    int depth = __atomic_add_fetch(&exception_depth, 1, __ATOMIC_SEQ_CST);
+    if (depth > 1 && (frame->pstate & 0xF) != 0) {
+        /* Nested exception from EL1 — double fault */
+        fut_serial_puts("\n*** DOUBLE FAULT ***\n");
+        fut_printf("  PC=0x%016llx ESR=0x%016llx FAR=0x%016llx\n",
+                   (unsigned long long)frame->pc,
+                   (unsigned long long)frame->esr,
+                   (unsigned long long)frame->far);
+        __asm__ volatile("msr daifset, #15");
+        for (;;) __asm__ volatile("wfi");
+    }
+
     uint64_t esr = frame->esr;
     uint32_t ec = esr_get_ec(esr);
 
@@ -429,6 +446,8 @@ void arm64_exception_dispatch(fut_interrupt_frame_t *frame) {
             handle_unknown(frame);
             break;
     }
+
+    __atomic_sub_fetch(&exception_depth, 1, __ATOMIC_SEQ_CST);
 }
 
 /* Safe idle loop to return to after SVC */

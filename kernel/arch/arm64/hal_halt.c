@@ -4,7 +4,7 @@
  */
 
 #include <kernel/hal/halt.h>
-
+#include <stdint.h>
 #include <kernel/kprintf.h>
 
 /**
@@ -34,13 +34,34 @@ void hal_cpu_wait_intr(void) {
 
 /**
  * Halt the CPU with a panic message.
+ * Prints stack trace to aid post-mortem debugging.
  */
 void hal_cpu_panic_halt(const char *msg) {
+    /* Disable interrupts immediately to prevent further damage */
+    __asm__ volatile("msr daifset, #15");  /* Disable all exceptions */
+
+    fut_printf("\n*** KERNEL PANIC ***\n");
     if (msg) {
-        fut_printf("PANIC: %s\n", msg);
+        fut_printf("  %s\n", msg);
     }
-    /* Disable interrupts and halt in a loop (wfi can wake spuriously) */
-    __asm__ volatile("msr daifset, #2");  /* Disable IRQ */
+
+    /* Print stack trace */
+    extern void fut_platform_stack_trace(int max_frames);
+    fut_platform_stack_trace(16);
+
+    /* Print CPU state */
+    uint64_t elr, esr, far_val, sp;
+    __asm__ volatile("mrs %0, elr_el1" : "=r"(elr));
+    __asm__ volatile("mrs %0, esr_el1" : "=r"(esr));
+    __asm__ volatile("mrs %0, far_el1" : "=r"(far_val));
+    __asm__ volatile("mov %0, sp" : "=r"(sp));
+    fut_printf("  ELR=0x%016llx ESR=0x%016llx\n",
+               (unsigned long long)elr, (unsigned long long)esr);
+    fut_printf("  FAR=0x%016llx SP=0x%016llx\n",
+               (unsigned long long)far_val, (unsigned long long)sp);
+
+    fut_printf("*** System halted ***\n");
+
     for (;;) {
         hal_cpu_halt();
     }

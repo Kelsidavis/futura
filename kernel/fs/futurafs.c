@@ -4057,6 +4057,23 @@ static int futurafs_vnode_getattr(struct fut_vnode *vnode, struct fut_stat *st) 
     return 0;
 }
 
+/**
+ * Sync a FuturaFS file — flush dirty inode and metadata to disk.
+ */
+static int futurafs_vnode_sync(struct fut_vnode *vnode) {
+    if (!vnode) return -EINVAL;
+
+    struct futurafs_inode_info *info = (struct futurafs_inode_info *)vnode->fs_data;
+    if (!info || !info->mount) return -EIO;
+
+    if (info->dirty) {
+        int ret = futurafs_write_inode(info->mount, info->ino, &info->disk_inode);
+        if (ret < 0) return ret;
+        info->dirty = false;
+    }
+    return futurafs_sync_metadata(info->mount);
+}
+
 /* Initialize FuturaFS vnode operations at runtime */
 static void futurafs_init_vnode_ops(void) {
     futurafs_vnode_ops.open = NULL;
@@ -4074,8 +4091,8 @@ static void futurafs_init_vnode_ops(void) {
     futurafs_vnode_ops.truncate = futurafs_vnode_truncate;
     futurafs_vnode_ops.symlink = futurafs_vnode_symlink;
     futurafs_vnode_ops.readlink = futurafs_vnode_readlink;
-    futurafs_vnode_ops.sync = NULL;
-    futurafs_vnode_ops.datasync = NULL;
+    futurafs_vnode_ops.sync = futurafs_vnode_sync;
+    futurafs_vnode_ops.datasync = futurafs_vnode_sync;  /* datasync same as sync for FuturaFS */
 }
 
 /* ============================================================

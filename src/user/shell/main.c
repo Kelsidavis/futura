@@ -428,8 +428,8 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     /* List of builtin commands */
     const char *builtins[] = {
         "bg", "cd", "clear", "date", "echo", "exit", "export", "fg", "free",
-        "help", "hostname", "ifconfig", "jobs", "ls", "mount", "ps", "pwd",
-        "test", "uname", "uptime", "whoami", NULL
+        "help", "hostname", "id", "ifconfig", "jobs", "kill", "ls", "mount",
+        "ps", "pwd", "test", "uname", "uptime", "whoami", NULL
     };
 
     /* External commands we might have */
@@ -868,6 +868,8 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "\n");
     write_str(1, "System:\n");
     write_str(1, "  ps              - List running processes\n");
+    write_str(1, "  kill [-sig] pid - Send signal to process\n");
+    write_str(1, "  id              - Print user/group IDs\n");
     write_str(1, "  uname [-a]      - Print system information\n");
     write_str(1, "  whoami          - Print current user\n");
     write_str(1, "  date            - Show system uptime\n");
@@ -1086,6 +1088,69 @@ static void cmd_mount(int argc, char *argv[]) {
     } else {
         write_str(1, "mount: /proc/mounts not available\n");
     }
+}
+
+/* Built-in: kill - Send signal to process */
+static void cmd_kill(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "usage: kill [-signal] pid\n");
+        return;
+    }
+
+    int sig = 9;  /* Default: SIGKILL */
+    int pid_arg = 1;
+
+    /* Check for -signal argument */
+    if (argv[1][0] == '-') {
+        /* Parse signal number */
+        sig = 0;
+        for (int i = 1; argv[1][i]; i++) {
+            if (argv[1][i] >= '0' && argv[1][i] <= '9')
+                sig = sig * 10 + (argv[1][i] - '0');
+        }
+        if (sig == 0) sig = 15;  /* -0 means SIGTERM */
+        pid_arg = 2;
+        if (argc < 3) {
+            write_str(1, "usage: kill [-signal] pid\n");
+            return;
+        }
+    }
+
+    /* Parse PID */
+    long pid = 0;
+    for (int i = 0; argv[pid_arg][i]; i++) {
+        if (argv[pid_arg][i] >= '0' && argv[pid_arg][i] <= '9')
+            pid = pid * 10 + (argv[pid_arg][i] - '0');
+    }
+
+    if (pid <= 0) {
+        write_str(1, "kill: invalid pid\n");
+        return;
+    }
+
+    long ret = sys_call2(129 /* __NR_kill */, pid, sig);
+    if (ret < 0) {
+        write_str(1, "kill: ");
+        char buf[16];
+        int_to_str(ret, buf, 16);
+        write_str(1, buf);
+        write_char(1, '\n');
+    }
+}
+
+/* Built-in: id - Print user/group IDs */
+static void cmd_id(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    long uid = sys_call0(174 /* __NR_getuid */);
+    long gid = sys_call0(176 /* __NR_getgid */);
+    write_str(1, "uid=");
+    char buf[16];
+    int_to_str(uid, buf, 16);
+    write_str(1, buf);
+    write_str(1, "(root) gid=");
+    int_to_str(gid, buf, 16);
+    write_str(1, buf);
+    write_str(1, "(root)\n");
 }
 
 /* Built-in: ps - List processes */
@@ -3737,6 +3802,12 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "hostname") == 0) {
         cmd_hostname(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "id") == 0) {
+        cmd_id(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "kill") == 0) {
+        cmd_kill(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "ps") == 0) {
         cmd_ps(argc, argv);
         return 0;
@@ -3855,7 +3926,9 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "date") == 0 ||
             strcmp_simple(cmd, "free") == 0 ||
             strcmp_simple(cmd, "hostname") == 0 ||
+            strcmp_simple(cmd, "id") == 0 ||
             strcmp_simple(cmd, "ifconfig") == 0 ||
+            strcmp_simple(cmd, "kill") == 0 ||
             strcmp_simple(cmd, "ps") == 0 ||
             strcmp_simple(cmd, "uptime") == 0 ||
             strcmp_simple(cmd, "mount") == 0 ||

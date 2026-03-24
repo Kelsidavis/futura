@@ -1292,7 +1292,18 @@ void fut_kernel_main(void) {
                   "export PATH=/bin:/sbin:/bin/user\n"
                   "export HOME=/root\n"
                   "export TERM=vt100\n"
-                  "export PS1='\\u@\\h:\\w# '\n");
+                  "export PS1='\\u@\\h:\\w# '\n"
+                  "# Display motd\n"
+                  "if test -f /etc/motd; then cat /etc/motd; fi\n");
+        ETC_WRITE("/etc/motd",
+                  "\n"
+                  "  Welcome to Futura OS 0.4.0 (aarch64)\n"
+                  "\n"
+                  "  * 53 shell commands — type 'help'\n"
+                  "  * FuturaFS at /mnt — try: echo hello > /mnt/file && cat /mnt/file\n"
+                  "  * Scripting: for/while/if loops, source, pipes, redirects\n"
+                  "  * System info: uname -a, free, df, uptime, ps\n"
+                  "\n");
 #undef ETC_WRITE
 
         fut_printf("[INIT] ✓ Created /etc config files\n");

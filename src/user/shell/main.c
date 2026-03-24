@@ -6930,6 +6930,60 @@ int main(int argc, char **argv, char **envp) {
             continue;
         }
 
+        /* Handle 'case WORD in PAT) BODY;; ... esac' */
+        if (cmdline[0] == 'c' && cmdline[1] == 'a' && cmdline[2] == 's' &&
+            cmdline[3] == 'e' && cmdline[4] == ' ') {
+            char *cp = cmdline + 5;
+            while (*cp == ' ') cp++;
+            /* Extract WORD */
+            char cword[128];
+            int cwl = 0;
+            while (*cp && *cp != ' ' && cwl < 127) cword[cwl++] = *cp++;
+            cword[cwl] = '\0';
+            while (*cp == ' ') cp++;
+            /* Expect "in" */
+            if (cp[0] == 'i' && cp[1] == 'n' && (cp[2] == ' ' || cp[2] == ';')) {
+                cp += 2;
+                while (*cp == ' ' || *cp == ';') cp++;
+                /* Expand the word */
+                char exp_word[128];
+                expand_variables(exp_word, cword, sizeof(exp_word));
+                /* Process pattern) body;; pairs until esac */
+                int matched = 0;
+                while (*cp) {
+                    /* Skip whitespace */
+                    while (*cp == ' ') cp++;
+                    if (cp[0] == 'e' && cp[1] == 's' && cp[2] == 'a' && cp[3] == 'c') break;
+                    /* Extract pattern (up to ')') */
+                    char pat[64];
+                    int pl = 0;
+                    while (*cp && *cp != ')' && pl < 63) pat[pl++] = *cp++;
+                    pat[pl] = '\0';
+                    if (*cp == ')') cp++;
+                    while (*cp == ' ') cp++;
+                    /* Extract body (up to ';;') */
+                    char body[256];
+                    int bl = 0;
+                    while (*cp && bl < 254) {
+                        if (cp[0] == ';' && cp[1] == ';') { cp += 2; break; }
+                        body[bl++] = *cp++;
+                    }
+                    body[bl] = '\0';
+                    while (*cp == ' ') cp++;
+                    /* Check if pattern matches (support * wildcard) */
+                    if (!matched && (glob_match(pat, exp_word) ||
+                                     (pat[0] == '*' && pat[1] == '\0'))) {
+                        char exp_body[512];
+                        expand_variables(exp_body, body, sizeof(exp_body));
+                        execute_command_chain(exp_body);
+                        matched = 1;
+                    }
+                }
+            }
+            last_exit_status = 0;
+            continue;
+        }
+
         /* Check for variable assignment */
         char var_name[MAX_VAR_NAME];
         char var_value[MAX_VAR_VALUE];

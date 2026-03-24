@@ -1287,10 +1287,11 @@ void fut_kernel_main(void) {
                   "\n"
                   "  Welcome to Futura OS 0.4.0 (aarch64)\n"
                   "\n"
-                  "  * 59 shell commands — type 'help'\n"
-                  "  * FuturaFS at /mnt — try: echo hello > /mnt/file && cat /mnt/file\n"
-                  "  * Scripting: for/while/if loops, source, pipes, redirects\n"
-                  "  * System info: uname -a, free, df, uptime, ps\n"
+                  "  * 60 shell commands — type 'help'\n"
+                  "  * Glob expansion: ls *.txt, cat /etc/*\n"
+                  "  * Command substitution: VAR=$(cmd), echo $(date)\n"
+                  "  * Scripting: for/while/if, source, pipes, redirects\n"
+                  "  * FuturaFS at /mnt — try: echo hello > /mnt/file\n"
                   "\n");
 #undef ETC_WRITE
 

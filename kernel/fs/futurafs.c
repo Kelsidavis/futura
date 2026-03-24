@@ -3268,8 +3268,14 @@ static int futurafs_dir_is_empty(struct futurafs_mount *mount,
 static ssize_t futurafs_vnode_read(struct fut_vnode *vnode, void *buf, size_t size, uint64_t offset) {
     struct futurafs_inode_info *inode_info = (struct futurafs_inode_info *)vnode->fs_data;
 
-    /* Use async I/O path via synchronous wrapper */
-    return futurafs_file_read_sync(inode_info, buf, size, offset);
+    ssize_t ret = futurafs_file_read_sync(inode_info, buf, size, offset);
+
+    /* Update atime on successful read (POSIX) */
+    if (ret > 0) {
+        extern uint64_t fut_get_ticks(void);
+        inode_info->disk_inode.atime = fut_get_ticks() / 100;
+    }
+    return ret;
 }
 
 static ssize_t futurafs_vnode_write(struct fut_vnode *vnode, const void *buf, size_t size, uint64_t offset) {

@@ -971,14 +971,35 @@ static void cmd_pwd(int argc, char *argv[]) {
 
 /* Built-in: cd */
 static void cmd_cd(int argc, char *argv[]) {
-    const char *path = argc > 1 ? argv[1] : "/";
+    const char *path;
+    if (argc < 2 || strcmp_simple(argv[1], "~") == 0) {
+        /* cd with no args or cd ~ → go to $HOME */
+        path = get_var("HOME");
+        if (!path) path = "/";
+    } else if (strcmp_simple(argv[1], "-") == 0) {
+        /* cd - → go to $OLDPWD */
+        path = get_var("OLDPWD");
+        if (!path) { write_str(2, "cd: OLDPWD not set\n"); return; }
+    } else {
+        path = argv[1];
+    }
+
+    /* Save current dir as OLDPWD */
+    char oldcwd[256];
+    long cwdret = sys_call2(__NR_getcwd, (long)oldcwd, 256);
 
     long ret = sys_chdir(path);
-
     if (ret != 0) {
-        write_str(1, "cd: cannot change directory to ");
-        write_str(1, path);
-        write_char(1, '\n');
+        write_str(2, "cd: cannot change directory to ");
+        write_str(2, path);
+        write_char(2, '\n');
+    } else {
+        /* Update $PWD and $OLDPWD */
+        if (cwdret > 0) set_var("OLDPWD", oldcwd, 1);
+        char newcwd[256];
+        if (sys_call2(__NR_getcwd, (long)newcwd, 256) > 0) {
+            set_var("PWD", newcwd, 1);
+        }
     }
 }
 

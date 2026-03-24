@@ -993,10 +993,11 @@ long sys_fork(void) {
     child_task->cap_bset        = parent_task->cap_bset;    /* Bounding set inherited */
     child_task->cap_ambient     = parent_task->cap_ambient; /* Ambient set inherited */
 
-    /* Inherit personality, dumpable, no_new_privs (POSIX/Linux semantics) */
+    /* Inherit personality, dumpable, no_new_privs, seccomp (POSIX/Linux semantics) */
     child_task->personality   = parent_task->personality;
     child_task->dumpable      = parent_task->dumpable;
     child_task->no_new_privs  = parent_task->no_new_privs;
+    child_task->seccomp_mode  = parent_task->seccomp_mode;
     /* Inherit sched_flags; RESET_ON_FORK is NOT passed to child */
     child_task->sched_flags   = parent_task->sched_flags & ~(uint64_t)SCHED_FLAG_RESET_ON_FORK;
     /* nice value is always inherited (RESET_ON_FORK only affects RT policy) */

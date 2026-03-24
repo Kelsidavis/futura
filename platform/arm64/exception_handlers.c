@@ -131,8 +131,15 @@ static void handle_svc(fut_interrupt_frame_t *frame) {
     /* Dispatch to syscall handler */
     int64_t result = arm64_syscall_dispatch(syscall_num, arg0, arg1, arg2, arg3, arg4, arg5);
 
-    /* Store return value in x0 (visible to userspace caller) */
+    /* Store return value in x0, sanitize unused argument registers to
+     * prevent kernel data from leaking to userspace via registers. */
     frame->x[0] = (uint64_t)result;
+    frame->x[1] = 0;
+    frame->x[2] = 0;
+    frame->x[3] = 0;
+    frame->x[4] = 0;
+    frame->x[5] = 0;
+    frame->x[8] = 0;  /* Clear syscall number register */
 
     /* Check for pending signals before returning to userspace
      * Signal delivery may modify frame->pc to point to signal handler

@@ -11,6 +11,7 @@
 #include <kernel/uaccess.h>
 #include <kernel/errno.h>
 #include <kernel/kprintf.h>
+#include <kernel/fut_timer.h>
 #include <stdint.h>
 #include <stddef.h>
 
@@ -48,21 +49,64 @@ static size_t klog_read_pos = 0;    /* Next read position for ACTION_READ */
 static size_t klog_count = 0;       /* Total bytes in buffer */
 static int klog_console_level = 7;  /* Default: show all but debug */
 
+/* Track whether we're at the start of a new line for timestamp injection */
+static int klog_at_line_start = 1;
+
+/* Write a single byte to the ring buffer */
+static void klog_put(char c) {
+    klog_buf[klog_write_pos] = c;
+    klog_write_pos = (klog_write_pos + 1) % KLOG_BUF_SIZE;
+    if (klog_count < KLOG_BUF_SIZE) {
+        klog_count++;
+    } else {
+        klog_read_pos = (klog_read_pos + 1) % KLOG_BUF_SIZE;
+    }
+}
+
 /**
  * klog_write - Append data to the kernel log buffer
  *
  * Called by kprintf infrastructure to record kernel messages.
  * This is a ring buffer — old data is overwritten when full.
+ * Prepends [seconds.microseconds] timestamp at the start of each line.
  */
 void klog_write(const char *data, size_t len) {
     for (size_t i = 0; i < len; i++) {
-        klog_buf[klog_write_pos] = data[i];
-        klog_write_pos = (klog_write_pos + 1) % KLOG_BUF_SIZE;
-        if (klog_count < KLOG_BUF_SIZE) {
-            klog_count++;
-        } else {
-            /* Buffer full — advance read position */
-            klog_read_pos = (klog_read_pos + 1) % KLOG_BUF_SIZE;
+        if (klog_at_line_start && data[i] != '\n') {
+            /* Inject timestamp: [secs.usecs] */
+            uint64_t ticks = fut_get_ticks();
+            uint32_t hz = FUT_TIMER_HZ;
+            uint64_t secs = ticks / hz;
+            uint64_t usecs = ((ticks % hz) * 1000000ULL) / hz;
+
+            klog_put('[');
+            /* Write seconds (up to 5 digits) */
+            char numbuf[12];
+            int pos = 0;
+            uint64_t tmp = secs;
+            if (tmp == 0) { numbuf[pos++] = '0'; }
+            else {
+                char rev[12]; int rp = 0;
+                while (tmp > 0) { rev[rp++] = '0' + (tmp % 10); tmp /= 10; }
+                while (rp > 0) { numbuf[pos++] = rev[--rp]; }
+            }
+            for (int j = 0; j < pos; j++) klog_put(numbuf[j]);
+            klog_put('.');
+            /* Write microseconds (6 digits, zero-padded) */
+            for (int d = 5; d >= 0; d--) {
+                uint64_t div = 1;
+                for (int k = 0; k < d; k++) div *= 10;
+                klog_put('0' + (char)((usecs / div) % 10));
+            }
+            klog_put(']');
+            klog_put(' ');
+            klog_at_line_start = 0;
+        }
+
+        klog_put(data[i]);
+
+        if (data[i] == '\n') {
+            klog_at_line_start = 1;
         }
     }
 }

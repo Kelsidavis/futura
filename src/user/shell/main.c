@@ -437,7 +437,7 @@ static size_t common_prefix_len(const char *s1, const char *s2) {
 static void complete_command(char *buf, size_t *pos, size_t max_len) {
     /* List of builtin commands */
     const char *builtins[] = {
-        "bg", "cd", "clear", "date", "df", "dmesg", "echo", "edit", "hexdump", "lsof", "nc", "poweroff", "reboot", "seq", "sleep", "time", "wget", "exit", "export", "fg", "free",
+        "bg", "cd", "chmod", "clear", "date", "dd", "df", "dmesg", "echo", "edit", "hexdump", "lsof", "nc", "poweroff", "reboot", "seq", "sleep", "time", "wget", "exit", "export", "fg", "free",
         "help", "hostname", "id", "ifconfig", "jobs", "kill", "ls", "mount",
         "ps", "pwd", "test", "uname", "uptime", "version", "whoami", NULL
     };
@@ -4103,6 +4103,96 @@ static void cmd_mv(int argc, char *argv[]) {
     }
 }
 
+/* Built-in: chmod - Change file permissions */
+static void cmd_chmod(int argc, char *argv[]) {
+    if (argc < 3) {
+        write_str(2, "usage: chmod <mode> <file>\n");
+        return;
+    }
+    /* Parse octal mode */
+    const char *ms = argv[1];
+    unsigned int mode = 0;
+    for (int i = 0; ms[i]; i++) {
+        if (ms[i] < '0' || ms[i] > '7') {
+            write_str(2, "chmod: invalid mode (use octal, e.g. 755)\n");
+            return;
+        }
+        mode = (mode << 3) | (ms[i] - '0');
+    }
+    /* chmod syscall: x86_64=90, ARM64 uses fchmodat */
+    long ret = sys_call3(90 /* chmod */, (long)argv[2], (long)mode, 0);
+    if (ret < 0) {
+        write_str(2, "chmod: failed\n");
+    }
+}
+
+/* Built-in: dd - Copy and convert data */
+static void cmd_dd(int argc, char *argv[]) {
+    const char *if_path = NULL;
+    const char *of_path = NULL;
+    long bs = 512;
+    long count = -1;  /* -1 = unlimited */
+
+    for (int i = 1; i < argc; i++) {
+        if (argv[i][0] == 'i' && argv[i][1] == 'f' && argv[i][2] == '=') {
+            if_path = argv[i] + 3;
+        } else if (argv[i][0] == 'o' && argv[i][1] == 'f' && argv[i][2] == '=') {
+            of_path = argv[i] + 3;
+        } else if (argv[i][0] == 'b' && argv[i][1] == 's' && argv[i][2] == '=') {
+            bs = 0;
+            for (const char *p = argv[i] + 3; *p >= '0' && *p <= '9'; p++)
+                bs = bs * 10 + (*p - '0');
+            if (bs <= 0 || bs > 65536) bs = 512;
+        } else if (argv[i][0] == 'c' && argv[i][1] == 'o' && argv[i][2] == 'u' &&
+                   argv[i][3] == 'n' && argv[i][4] == 't' && argv[i][5] == '=') {
+            count = 0;
+            for (const char *p = argv[i] + 6; *p >= '0' && *p <= '9'; p++)
+                count = count * 10 + (*p - '0');
+        }
+    }
+
+    int in_fd = 0;   /* default: stdin */
+    int out_fd = 1;  /* default: stdout */
+
+    if (if_path) {
+        in_fd = sys_open(if_path, O_RDONLY, 0);
+        if (in_fd < 0) { write_str(2, "dd: cannot open input\n"); return; }
+    }
+    if (of_path) {
+        out_fd = sys_open(of_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (out_fd < 0) {
+            write_str(2, "dd: cannot open output\n");
+            if (if_path) sys_close(in_fd);
+            return;
+        }
+    }
+
+    char buf[65536];
+    long total_bytes = 0;
+    long blocks_in = 0, blocks_out = 0;
+
+    while (count < 0 || blocks_in < count) {
+        long n = sys_read(in_fd, buf, bs);
+        if (n <= 0) break;
+        blocks_in++;
+        long w = sys_write(out_fd, buf, n);
+        if (w > 0) { total_bytes += w; blocks_out++; }
+        if (w != n) break;
+    }
+
+    if (if_path) sys_close(in_fd);
+    if (of_path) sys_close(out_fd);
+
+    /* Print stats */
+    char nbuf[20];
+    int_to_str(blocks_in, nbuf, 20);
+    write_str(2, nbuf); write_str(2, "+0 records in\n");
+    int_to_str(blocks_out, nbuf, 20);
+    write_str(2, nbuf); write_str(2, "+0 records out\n");
+    int_to_str(total_bytes, nbuf, 20);
+    write_str(2, nbuf); write_str(2, " bytes copied\n");
+}
+
 /* Built-in: export */
 static void cmd_export(int argc, char *argv[]) {
     if (argc < 2) {
@@ -4530,6 +4620,12 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "mv") == 0) {
         cmd_mv(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "chmod") == 0) {
+        cmd_chmod(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "dd") == 0) {
+        cmd_dd(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "export") == 0) {
         cmd_export(argc, argv);
         return 0;
@@ -4610,7 +4706,9 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "rmdir") == 0 ||
             strcmp_simple(cmd, "rm") == 0 ||
             strcmp_simple(cmd, "touch") == 0 ||
+            strcmp_simple(cmd, "chmod") == 0 ||
             strcmp_simple(cmd, "cp") == 0 ||
+            strcmp_simple(cmd, "dd") == 0 ||
             strcmp_simple(cmd, "mv") == 0 ||
             strcmp_simple(cmd, "test") == 0 ||
             strcmp_simple(cmd, "[") == 0 ||
@@ -5176,7 +5274,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.3                   |\n");
-    write_str(1, "|   36 built-in commands — type 'help'     |\n");
+    write_str(1, "|   38 built-in commands — type 'help'     |\n");
     write_str(1, "|   nano editor available at /bin/nano      |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");

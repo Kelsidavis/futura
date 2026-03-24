@@ -3536,6 +3536,14 @@ static int64_t sys_set_mempolicy_home_node_wrapper(uint64_t start, uint64_t len,
 }
 
 /* Initialize syscall table at runtime to avoid ARM64 relocation issues */
+/* x86_64 compat: chmod(path, mode) — x86_64 #90 takes path, ARM64 fchmod takes fd */
+static int64_t sys_chmod_compat(uint64_t path, uint64_t mode,
+                                 uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a2; (void)a3; (void)a4; (void)a5;
+    if (path == 0 || path >= 0xFFFFFF8000000000ULL) return -14;
+    return sys_chmod((const char *)path, (uint32_t)mode);
+}
+
 /* x86_64 compat: rename(old, new) */
 int64_t sys_rename_compat(uint64_t a, uint64_t b, uint64_t c, uint64_t d, uint64_t e, uint64_t f) {
     (void)c;(void)d;(void)e;(void)f;
@@ -4360,7 +4368,8 @@ static void arm64_syscall_table_init(void) {
     syscall_table[55].handler = syscall_table[__NR_getsockopt].handler;
     syscall_table[55].name = "getsockopt";
     /* File permission syscalls */
-    syscall_table[90].handler = syscall_table[__NR_fchmod].handler;
+    /* x86_64 chmod(90) takes (path, mode), NOT fd — use sys_chmod directly */
+    syscall_table[90].handler = (syscall_fn_t)sys_chmod_compat;
     syscall_table[90].name = "chmod";
     syscall_table[91].handler = syscall_table[__NR_fchmod].handler;
     syscall_table[91].name = "fchmod";

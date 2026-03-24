@@ -1,5 +1,10 @@
-CROSS_COMPILE ?= $(shell command -v aarch64-elf-gcc >/dev/null 2>&1 && echo "aarch64-elf-" || echo "aarch64-linux-gnu-")
-CC      := $(CROSS_COMPILE)gcc
+# Auto-detect cross compiler: try aarch64-elf-gcc (macOS), then aarch64-linux-gnu-gcc-14 (CI), then aarch64-linux-gnu-gcc
+CROSS_COMPILE ?= $(shell \
+  if command -v aarch64-elf-gcc >/dev/null 2>&1; then echo "aarch64-elf-"; \
+  elif command -v aarch64-linux-gnu-gcc-14 >/dev/null 2>&1; then echo "aarch64-linux-gnu-"; \
+  else echo "aarch64-linux-gnu-"; fi)
+CC_SUFFIX ?= $(shell command -v $(CROSS_COMPILE)gcc >/dev/null 2>&1 && echo "" || echo "-14")
+CC      := $(CROSS_COMPILE)gcc$(CC_SUFFIX)
 LD      := $(CROSS_COMPILE)ld
 
 CFLAGS  := -std=c2x -O2 -g -Wall -Wextra -Werror \

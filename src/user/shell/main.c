@@ -427,8 +427,8 @@ static size_t common_prefix_len(const char *s1, const char *s2) {
 static void complete_command(char *buf, size_t *pos, size_t max_len) {
     /* List of builtin commands */
     const char *builtins[] = {
-        "bg", "cd", "clear", "date", "echo", "exit", "export", "fg", "help",
-        "jobs", "ls", "pwd", "test", "uname", "whoami", NULL
+        "bg", "cd", "clear", "date", "echo", "exit", "export", "fg", "free",
+        "help", "jobs", "ls", "mount", "pwd", "test", "uname", "whoami", NULL
     };
 
     /* External commands we might have */
@@ -866,8 +866,11 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  mv <src> <dst>  - Move/rename file\n");
     write_str(1, "\n");
     write_str(1, "System:\n");
-    write_str(1, "  uname           - Print system information\n");
+    write_str(1, "  uname [-a]      - Print system information\n");
     write_str(1, "  whoami          - Print current user\n");
+    write_str(1, "  date            - Show system uptime\n");
+    write_str(1, "  free            - Show memory usage\n");
+    write_str(1, "  mount           - Show mounted filesystems\n");
     write_str(1, "  env             - Show environment variables\n");
     write_str(1, "  echo [args]     - Print text\n");
     write_str(1, "  clear           - Clear screen\n");
@@ -1034,6 +1037,44 @@ static void cmd_date(int argc, char *argv[]) {
         write_str(1, buf);
     } else {
         write_str(1, "date: clock_gettime failed\n");
+    }
+}
+
+/* Built-in: free - Show memory usage (reads /proc/meminfo) */
+static void cmd_free(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    int fd = sys_open("/proc/meminfo", O_RDONLY, 0);
+    if (fd >= 0) {
+        char buf[512];
+        ssize_t n = sys_read(fd, buf, sizeof(buf) - 1);
+        if (n > 0) {
+            buf[n] = '\0';
+            write_str(1, buf);
+        } else {
+            write_str(1, "free: cannot read /proc/meminfo\n");
+        }
+        sys_close(fd);
+    } else {
+        write_str(1, "free: /proc/meminfo not available\n");
+    }
+}
+
+/* Built-in: mount - Show mounted filesystems (reads /proc/mounts) */
+static void cmd_mount(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    int fd = sys_open("/proc/mounts", O_RDONLY, 0);
+    if (fd >= 0) {
+        char buf[1024];
+        ssize_t n = sys_read(fd, buf, sizeof(buf) - 1);
+        if (n > 0) {
+            buf[n] = '\0';
+            write_str(1, buf);
+        } else {
+            write_str(1, "mount: cannot read /proc/mounts\n");
+        }
+        sys_close(fd);
+    } else {
+        write_str(1, "mount: /proc/mounts not available\n");
     }
 }
 
@@ -3523,6 +3564,12 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "date") == 0) {
         cmd_date(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "free") == 0) {
+        cmd_free(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "mount") == 0) {
+        cmd_mount(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "env") == 0) {
         cmd_env(argc, argv);
         return 0;
@@ -3627,6 +3674,8 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "clear") == 0 ||
             strcmp_simple(cmd, "uname") == 0 ||
             strcmp_simple(cmd, "date") == 0 ||
+            strcmp_simple(cmd, "free") == 0 ||
+            strcmp_simple(cmd, "mount") == 0 ||
             strcmp_simple(cmd, "whoami") == 0 ||
             strcmp_simple(cmd, "env") == 0 ||
             strcmp_simple(cmd, "export") == 0 ||

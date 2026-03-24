@@ -4130,14 +4130,16 @@ static void exec_external_command(int argc, char *argv[]) {
         /* Absolute path */
         sys_execve(cmd, argv, envp);
     } else {
-        /* Try to find in /bin/user/ */
-        const char *prefix = "/bin/user/";
-        size_t prefix_len = 10;  /* strlen("/bin/user/") */
+        /* Try PATH-like search: /bin, /sbin, /bin/user */
+        static const char *search_dirs[] = { "/bin/", "/sbin/", "/bin/user/", NULL };
         size_t cmd_len = strlen_simple(cmd);
-        if (prefix_len + cmd_len < sizeof(path_buf)) {
-            strcpy_simple(path_buf, prefix);
-            strcat_simple(path_buf, cmd);
-            sys_execve(path_buf, argv, envp);
+        for (int i = 0; search_dirs[i]; i++) {
+            size_t prefix_len = strlen_simple(search_dirs[i]);
+            if (prefix_len + cmd_len < sizeof(path_buf)) {
+                strcpy_simple(path_buf, search_dirs[i]);
+                strcat_simple(path_buf, cmd);
+                sys_execve(path_buf, argv, envp);
+            }
         }
     }
 

@@ -630,6 +630,28 @@ static const char *get_var(const char *name) {
         return exit_status_buf;
     }
 
+    /* Special dynamic variables */
+    if (strcmp_simple(name, "RANDOM") == 0) {
+        /* Simple PRNG using kernel tick counter */
+        static uint32_t rng_state = 0;
+        if (rng_state == 0) {
+            struct { long tv_sec; long tv_nsec; } ts = {0, 0};
+            sys_call2(98, 1, (long)&ts);
+            rng_state = (uint32_t)(ts.tv_nsec ^ ts.tv_sec);
+        }
+        rng_state = rng_state * 1103515245 + 12345;
+        static char rand_buf[8];
+        int rv = (int)((rng_state >> 16) & 0x7FFF);
+        /* Simple itoa inline to avoid forward declaration */
+        int ri = 0;
+        if (rv == 0) { rand_buf[ri++] = '0'; }
+        else { char rt[8]; int rj = 0; int tmp = rv;
+               while (tmp > 0) { rt[rj++] = '0' + tmp % 10; tmp /= 10; }
+               while (rj > 0) rand_buf[ri++] = rt[--rj]; }
+        rand_buf[ri] = '\0';
+        return rand_buf;
+    }
+
     /* Look up user variable */
     for (int i = 0; i < MAX_VARS; i++) {
         if (shell_vars[i].used && strcmp_simple(shell_vars[i].name, name) == 0) {
@@ -758,6 +780,29 @@ static void expand_variables(char *dest, const char *src, size_t dest_size) {
     while (*p && dest_pos < dest_size - 1) {
         if (*p == '$') {
             p++;
+            /* Special variables */
+            if (*p == '$') {
+                /* $$ = current PID */
+                p++;
+                long pid = sys_call0(39 /* getpid */);
+                char pbuf[16];
+                /* Inline itoa */
+                int pi2 = 0;
+                if (pid == 0) { pbuf[pi2++] = '0'; }
+                else { char pt[16]; int pj = 0; long tmp = pid;
+                       while (tmp > 0) { pt[pj++] = '0' + (char)(tmp % 10); tmp /= 10; }
+                       while (pj > 0) pbuf[pi2++] = pt[--pj]; }
+                pbuf[pi2] = '\0';
+                for (int i = 0; pbuf[i] && dest_pos < dest_size - 1; i++)
+                    dest[dest_pos++] = pbuf[i];
+                continue;
+            }
+            if (*p == '!') {
+                /* $! = last background PID (stub: 0) */
+                p++;
+                dest[dest_pos++] = '0';
+                continue;
+            }
             if (*p == '{') {
                 /* ${VAR} syntax */
                 p++;

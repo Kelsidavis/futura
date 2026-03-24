@@ -1110,8 +1110,13 @@ fn virt_to_phys(virt: usize) -> u64 {
 
 #[cfg(target_arch = "aarch64")]
 fn virt_to_phys(virt: usize) -> u64 {
-    // ARM64: MMU disabled, addresses are already physical
-    virt as u64
+    // ARM64: Kernel VA 0xFFFFFF80_XXXXXXXX → PA 0x_XXXXXXXX
+    const KERN_VA_BASE: usize = 0xFFFFFF80_00000000;
+    if virt >= KERN_VA_BASE {
+        (virt - KERN_VA_BASE) as u64
+    } else {
+        virt as u64
+    }
 }
 
 // Platform-conditional device detection

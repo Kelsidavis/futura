@@ -2413,6 +2413,12 @@ fn virt_to_phys_addr(addr: usize) -> u64 {
 #[inline(always)]
 #[cfg(target_arch = "aarch64")]
 fn virt_to_phys_addr(addr: usize) -> u64 {
-    // ARM64: MMU disabled, addresses are already physical
-    addr as u64
+    // ARM64: Kernel VA 0xFFFFFF80_XXXXXXXX → PA 0x_XXXXXXXX
+    // Subtract kernel VA base to get physical address
+    const KERN_VA_BASE: usize = 0xFFFFFF80_00000000;
+    if addr >= KERN_VA_BASE {
+        (addr - KERN_VA_BASE) as u64
+    } else {
+        addr as u64  // Already physical (shouldn't happen)
+    }
 }

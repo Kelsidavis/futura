@@ -53,12 +53,17 @@ static void console_input_thread(void *arg) {
     }
 
     while (1) {
+        /* Try non-blocking read first */
         int c = fut_serial_getc();
         if (c >= 0) {
             tty_ldisc_input(&console_ldisc, (char)c);
+            continue;  /* Check for more data immediately */
         }
-        /* Brief pause — preemptive scheduler will time-slice this thread */
-        for (volatile int i = 0; i < 5000; i++);
+        /* No data — block until UART has data (interrupt or polling fallback) */
+        c = fut_serial_getc_blocking();
+        if (c >= 0) {
+            tty_ldisc_input(&console_ldisc, (char)c);
+        }
     }
 }
 #endif

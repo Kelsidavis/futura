@@ -558,19 +558,11 @@ int fut_serial_getc_blocking(void) {
             return c;
         }
 
-        /* No data available - sleep on wait queue until interrupt wakes us */
-        fut_spinlock_acquire(&uart_rx_waitq.lock);
-
-        /* Double-check buffer while holding lock */
-        c = fut_serial_getc();
-        if (c >= 0) {
-            fut_spinlock_release(&uart_rx_waitq.lock);
-            return c;
-        }
-
-        /* Sleep until uart_handle_rx() wakes us */
-        fut_waitq_sleep_locked(&uart_rx_waitq, &uart_rx_waitq.lock, FUT_THREAD_BLOCKED);
-        fut_spinlock_release(&uart_rx_waitq.lock);
+        /* No data — yield to let other threads run, then retry.
+         * On ARM64 QEMU, UART interrupts may not fire, so we poll
+         * with cooperative yielding instead of blocking on waitq. */
+        extern void fut_thread_yield(void);
+        fut_thread_yield();
     }
 }
 

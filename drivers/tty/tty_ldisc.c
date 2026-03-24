@@ -351,9 +351,10 @@ ssize_t tty_ldisc_read(tty_ldisc_t *ldisc, void *buf, size_t len) {
     if (ldisc->flags & TTY_CANONICAL) {
         while (!tty_ldisc_data_available(ldisc)) {
             if (ldisc->read_waitq) {
-                /* Sleep on wait queue - lock will be released during sleep */
+                /* Sleep on wait queue - lock is released during sleep */
                 fut_waitq_sleep_locked(ldisc->read_waitq, &ldisc->lock, FUT_THREAD_BLOCKED);
-                /* Lock is automatically re-acquired after waking up */
+                /* Re-acquire lock after waking — sleep_locked released it */
+                fut_spinlock_acquire(&ldisc->lock);
             } else {
                 /* No wait queue - error condition */
                 fut_spinlock_release(&ldisc->lock);

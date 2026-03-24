@@ -130,6 +130,12 @@ void fut_pmm_free_page(void *addr) {
 
     // Validate and free
     if (idx < pmm_total && BITMAP_TST(idx)) {
+        /* Zero the page before freeing to prevent information leakage.
+         * This ensures a subsequently allocated page doesn't contain
+         * data from a previous process (passwords, keys, etc). */
+        volatile uint8_t *p = (volatile uint8_t *)addr;
+        for (size_t i = 0; i < FUT_PAGE_SIZE; i++) p[i] = 0;
+
         BITMAP_CLR(idx);
         ++pmm_free;
     }

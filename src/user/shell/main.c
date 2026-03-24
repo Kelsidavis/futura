@@ -484,7 +484,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     const char *builtins[] = {
         "bg", "cd", "chmod", "clear", "date", "dd", "df", "dmesg", "echo", "edit", "hexdump", "lsof", "nc", "poweroff", "reboot", "seq", "sleep", "time", "wget", "exit", "export", "fg", "free",
         "help", "hostname", "id", "ifconfig", "jobs", "kill", "ls", "mount",
-        ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "history", "ln", "mktemp", "more", "nproc", "printf", "ps", "pwd", "read", "readlink", "set", "source", "stat", "sync", "sysinfo", "test", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "wait", "which", "whoami", "xargs", "yes", NULL
+        ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "history", "ln", "mktemp", "more", "nproc", "ping", "printf", "ps", "pwd", "read", "readlink", "set", "source", "stat", "sync", "sysinfo", "test", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "wait", "which", "whoami", "xargs", "yes", NULL
     };
 
     /* External commands we might have */
@@ -1568,6 +1568,84 @@ static void cmd_dmesg(int argc, char *argv[]) {
             write_str(1, "dmesg: kernel log not available\n");
         }
     }
+}
+
+/* Built-in: ping - Send ICMP echo requests */
+static void cmd_ping(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "usage: ping <host>\n");
+        return;
+    }
+    /* Parse IP */
+    const char *host = argv[1];
+    uint32_t ip = 0;
+    int octet = 0, shift = 24;
+    for (int i = 0; host[i]; i++) {
+        if (host[i] == '.') { ip |= (octet & 0xFF) << shift; shift -= 8; octet = 0; }
+        else octet = octet * 10 + (host[i] - '0');
+    }
+    ip |= (octet & 0xFF) << shift;
+    uint32_t ip_be = ((ip >> 24) & 0xFF) | ((ip >> 8) & 0xFF00) |
+                     ((ip << 8) & 0xFF0000) | ((ip << 24) & 0xFF000000);
+
+    /* Create raw ICMP socket */
+    long fd = sys_call3(41 /* socket */, 2 /* AF_INET */, 3 /* SOCK_RAW */, 1 /* IPPROTO_ICMP */);
+    if (fd < 0) {
+        /* Fallback: try SOCK_DGRAM with ICMP */
+        fd = sys_call3(41, 2, 2 /* SOCK_DGRAM */, 1);
+        if (fd < 0) { write_str(2, "ping: socket failed\n"); return; }
+    }
+
+    /* Send 4 pings */
+    struct { uint16_t family; uint16_t port; uint32_t addr; uint8_t pad[8]; } sa;
+    sa.family = 2; sa.port = 0; sa.addr = ip_be;
+    for (int i = 0; i < 8; i++) sa.pad[i] = 0;
+
+    write_str(1, "PING ");
+    write_str(1, host);
+    write_str(1, "\n");
+
+    for (int seq = 0; seq < 4; seq++) {
+        /* Simple ICMP echo: type=8, code=0, checksum, id, seq */
+        uint8_t pkt[64];
+        for (int j = 0; j < 64; j++) pkt[j] = 0;
+        pkt[0] = 8; /* ICMP_ECHO_REQUEST */
+        pkt[4] = 0; pkt[5] = 1; /* id=1 */
+        pkt[6] = (uint8_t)(seq >> 8); pkt[7] = (uint8_t)(seq & 0xFF);
+        /* Checksum */
+        uint32_t sum = 0;
+        for (int j = 0; j < 64; j += 2) sum += (pkt[j] << 8) | pkt[j+1];
+        while (sum >> 16) sum = (sum & 0xFFFF) + (sum >> 16);
+        uint16_t csum = ~(uint16_t)sum;
+        pkt[2] = (uint8_t)(csum >> 8); pkt[3] = (uint8_t)(csum & 0xFF);
+
+        long sent = sys_call6(44 /* sendto */, fd, (long)pkt, 64, 0, (long)&sa, 16);
+        if (sent > 0) {
+            /* Wait for reply */
+            struct { long tv_sec; long tv_nsec; } start = {0,0};
+            sys_call2(98, 1, (long)&start);
+            char rbuf[128];
+            long rcv = sys_call6(45 /* recvfrom */, fd, (long)rbuf, 128, 0, 0, 0);
+            struct { long tv_sec; long tv_nsec; } end_t = {0,0};
+            sys_call2(98, 1, (long)&end_t);
+            long ms = (end_t.tv_sec - start.tv_sec) * 1000 + (end_t.tv_nsec - start.tv_nsec) / 1000000;
+            if (rcv > 0) {
+                write_str(1, "64 bytes from ");
+                write_str(1, host);
+                write_str(1, ": seq=");
+                char nb[8]; int_to_str(seq, nb, 8); write_str(1, nb);
+                write_str(1, " time=");
+                int_to_str((long)ms, nb, 8); write_str(1, nb);
+                write_str(1, "ms\n");
+            }
+        }
+        /* Sleep 1 second between pings */
+        if (seq < 3) {
+            struct { long tv_sec; long tv_nsec; } ts = {1, 0};
+            sys_call2(35, (long)&ts, 0);
+        }
+    }
+    sys_close(fd);
 }
 
 /* Built-in: nc - Simple netcat (connect to host:port) */
@@ -5706,6 +5784,9 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "stat") == 0) {
         cmd_stat(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "ping") == 0) {
+        cmd_ping(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "yes") == 0) {
         /* yes [string] — repeatedly output a line */
         const char *s = argc > 1 ? argv[1] : "y";
@@ -6032,6 +6113,7 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "source") == 0 ||
             (cmd[0] == '.' && cmd[1] == '\0') ||
             strcmp_simple(cmd, "xargs") == 0 ||
+            strcmp_simple(cmd, "ping") == 0 ||
             strcmp_simple(cmd, "yes") == 0 ||
             strcmp_simple(cmd, "mktemp") == 0 ||
             strcmp_simple(cmd, "more") == 0 ||
@@ -6735,7 +6817,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.4                   |\n");
-    write_str(1, "|   67 built-in commands — type 'help'     |\n");
+    write_str(1, "|   68 built-in commands — type 'help'     |\n");
     write_str(1, "|   nano editor available at /bin/nano      |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");

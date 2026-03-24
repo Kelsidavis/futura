@@ -4336,6 +4336,49 @@ static void arm64_syscall_table_init(void) {
     /* madvise (x86_64: 28, ARM64: 233) */
     syscall_table[28].handler = syscall_table[__NR_madvise].handler;
     syscall_table[28].name = "madvise";
+    /* Network syscalls (x86_64 → ARM64 compat) */
+    syscall_table[43].handler = syscall_table[__NR_accept].handler;
+    syscall_table[43].name = "accept";
+    syscall_table[46].handler = syscall_table[__NR_sendmsg].handler;
+    syscall_table[46].name = "sendmsg";
+    syscall_table[47].handler = syscall_table[__NR_recvmsg].handler;
+    syscall_table[47].name = "recvmsg";
+    syscall_table[48].handler = syscall_table[__NR_shutdown].handler;
+    syscall_table[48].name = "shutdown";
+    syscall_table[49].handler = syscall_table[__NR_bind].handler;
+    syscall_table[49].name = "bind";
+    syscall_table[50].handler = syscall_table[__NR_listen].handler;
+    syscall_table[50].name = "listen";
+    syscall_table[51].handler = syscall_table[__NR_getsockname].handler;
+    syscall_table[51].name = "getsockname";
+    syscall_table[52].handler = syscall_table[__NR_getpeername].handler;
+    syscall_table[52].name = "getpeername";
+    syscall_table[53].handler = syscall_table[__NR_connect].handler;
+    syscall_table[53].name = "connect";
+    syscall_table[54].handler = syscall_table[__NR_setsockopt].handler;
+    syscall_table[54].name = "setsockopt";
+    syscall_table[55].handler = syscall_table[__NR_getsockopt].handler;
+    syscall_table[55].name = "getsockopt";
+    /* File permission syscalls */
+    syscall_table[90].handler = syscall_table[__NR_fchmod].handler;
+    syscall_table[90].name = "chmod";
+    syscall_table[91].handler = syscall_table[__NR_fchmod].handler;
+    syscall_table[91].name = "fchmod";
+    /* Signal syscalls (x86_64: 13/14, ARM64: 134/135) */
+    syscall_table[13].handler = syscall_table[__NR_rt_sigaction].handler;
+    syscall_table[13].name = "rt_sigaction";
+    syscall_table[14].handler = syscall_table[__NR_rt_sigprocmask].handler;
+    syscall_table[14].name = "rt_sigprocmask";
+    /* epoll (x86_64: 229/230/291, ARM64: 21/22/20) */
+    syscall_table[229].handler = syscall_table[__NR_epoll_ctl].handler;
+    syscall_table[229].name = "epoll_ctl";
+    syscall_table[230].handler = syscall_table[__NR_epoll_pwait].handler;
+    syscall_table[230].name = "epoll_wait";
+    syscall_table[291].handler = syscall_table[__NR_epoll_create1].handler;
+    syscall_table[291].name = "epoll_create1";
+    /* eventfd2 (x86_64: 290, ARM64: 19) */
+    syscall_table[290].handler = syscall_table[__NR_eventfd2].handler;
+    syscall_table[290].name = "eventfd2";
 
     syscall_table_initialized = true;
 }

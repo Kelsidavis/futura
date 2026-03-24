@@ -449,6 +449,7 @@ long sys_getdents64(unsigned int fd, void *dirp, unsigned int count) {
         }
 
         struct fut_vdirent vdirent;
+        __builtin_memset(&vdirent, 0, sizeof(vdirent));
         uint64_t prev_cookie = cookie;
         int rc = fut_vfs_readdir_fd((int)fd, &cookie, &vdirent);
 
@@ -461,7 +462,14 @@ long sys_getdents64(unsigned int fd, void *dirp, unsigned int count) {
             break;  /* End of directory or error after partial read */
         }
 
-        /* rc == 0 means success (found an entry) — continue processing */
+        /* rc == 0 means end of directory for ramfs (returns 0 when no more entries).
+         * rc > 0 means found entry (ramfs returns 1, FuturaFS returns 0 via different path).
+         * FuturaFS returns 0 for success and -ENOENT for end, so rc==0 from FuturaFS
+         * means found entry. But ramfs returns 0 for END. We need a unified check.
+         * Solution: if readdir returned 0 AND dirent has d_ino==0, it's end-of-dir. */
+        if (rc == 0 && vdirent.d_ino == 0) {
+            break;  /* End of directory (ramfs convention: ret=0, no entry filled) */
+        }
 
         if (cookie < prev_cookie && prev_cookie > 0) {
             fut_printf("[GETDENTS64] getdents64(fd=%u) -> EOVERFLOW "

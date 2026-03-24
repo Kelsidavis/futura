@@ -11,6 +11,7 @@
 #include <kernel/fut_memory.h>
 #include <kernel/kprintf.h>
 #include <stddef.h>
+#include <string.h>
 
 /* ============================================================
  *   Ramdisk Private Data
@@ -143,12 +144,11 @@ static void ramdisk_init_ops(void) {
 static struct fut_blockdev *ramdisk_create_common(const char *name,
                                                   size_t size_bytes,
                                                   uint32_t block_size) {
-    fut_printf("[RAMDISK] Creating ramdisk: name=%s size=%llu block_size=%u\n",
-               name, (unsigned long long)size_bytes, block_size);
+    /* Ramdisk creation */
 
     /* Allocate ramdisk data structure */
     struct ramdisk_data *data = fut_malloc(sizeof(struct ramdisk_data));
-    fut_printf("[RAMDISK] Allocated ramdisk_data: %p\n", (void*)data);
+    /* fut_printf("[RAMDISK] Allocated ramdisk_data: %p\n", (void*)data); */
     if (!data) {
         return NULL;
     }
@@ -157,37 +157,21 @@ static struct fut_blockdev *ramdisk_create_common(const char *name,
 
     /* Allocate storage buffer */
     uint8_t *storage = fut_malloc(size_bytes);
-    fut_printf("[RAMDISK] Allocated storage buffer: %p (size=%llu)\n", (void*)storage, (unsigned long long)size_bytes);
+    /* fut_printf("[RAMDISK] Allocated storage buffer: %p (size=%llu)\n", (void*)storage, (unsigned long long)size_bytes); */
     if (!storage) {
         fut_free(data);
         return NULL;
     }
 
-    /* Zero initialize storage using byte-by-byte writes
-     * Must use byte writes to avoid alignment faults on potentially misaligned memory */
-    fut_printf("[RAMDISK] Zeroing storage buffer... storage=%p size=%llu\n", (void*)storage, (unsigned long long)size_bytes);
-
-    /* Use volatile to prevent optimization issues */
-    volatile uint8_t *volatile_storage = storage;
-
-    /* Zero in chunks - safer than all at once */
-    for (size_t chunk = 0; chunk < size_bytes; chunk += 4096) {
-        size_t chunk_size = (size_bytes - chunk < 4096) ? (size_bytes - chunk) : 4096;
-        for (size_t i = 0; i < chunk_size; i++) {
-            volatile_storage[chunk + i] = 0;
-        }
-        if (chunk % 32768 == 0) {
-            fut_printf("[RAMDISK] Zeroed %llu / %llu bytes...\n", (unsigned long long)chunk, (unsigned long long)size_bytes);
-        }
-    }
-    fut_printf("[RAMDISK] Storage buffer zeroed successfully\n");
+    /* Zero initialize storage */
+    memset(storage, 0, size_bytes);
 
     data->storage = storage;
     data->size = size_bytes;
 
     /* Allocate block device structure */
     struct fut_blockdev *dev = fut_malloc(sizeof(struct fut_blockdev));
-    fut_printf("[RAMDISK] Allocated blockdev struct: %p (size=%zu)\n", (void*)dev, sizeof(struct fut_blockdev));
+    /* fut_printf("[RAMDISK] Allocated blockdev struct: %p (size=%zu)\n", (void*)dev, sizeof(struct fut_blockdev)); */
     if (!dev) {
         fut_free(storage);
         fut_free(data);
@@ -196,13 +180,13 @@ static struct fut_blockdev *ramdisk_create_common(const char *name,
 
     /* Clear structure to avoid stale data using byte-by-byte writes
      * Must use byte writes to avoid alignment faults on potentially misaligned memory */
-    fut_printf("[RAMDISK] Zeroing blockdev struct...\n");
+    /* fut_printf("[RAMDISK] Zeroing blockdev struct...\n"); */
     uint8_t *p8_dev = (uint8_t *)dev;
     size_t dev_size = sizeof(struct fut_blockdev);
     for (size_t i = 0; i < dev_size; i++) {
         p8_dev[i] = 0;
     }
-    fut_printf("[RAMDISK] Blockdev struct zeroed, initializing fields...\n");
+    /* debug suppressed */
 
     /* Copy device name */
     size_t i = 0;
@@ -213,7 +197,7 @@ static struct fut_blockdev *ramdisk_create_common(const char *name,
     dev->name[i] = '\0';
 
     /* Initialize block device metadata */
-    fut_printf("[RAMDISK] Setting dev->type = BLOCKDEV_RAMDISK\n");
+    /* debug suppressed */
     dev->type = BLOCKDEV_RAMDISK;
     dev->num_blocks = size_bytes / block_size;
     dev->block_size = block_size;

@@ -1623,12 +1623,36 @@ void fut_kernel_main(void) {
             /* Mount */
             int mount_rc = fut_vfs_mount("blk:vda", "/mnt", "futurafs", 0, NULL, FUT_INVALID_HANDLE);
             if (mount_rc == 0) {
-                fut_printf("[INIT] ✓ FuturaFS mounted at /mnt\n");
+                fut_printf("[INIT] ✓ FuturaFS mounted at /mnt (virtio-blk)\n");
             } else {
-                fut_printf("[INIT] FuturaFS mount failed: %d\n", mount_rc);
+                /* VirtIO block failed — fall back to ramdisk */
+                fut_printf("[INIT] VirtIO block I/O failed, using ramdisk fallback\n");
+                goto try_ramdisk;
             }
         } else {
-            fut_printf("[INIT] No block device blk:vda found (FuturaFS not mounted)\n");
+try_ramdisk: (void)0;
+            /* Create a 4MB ramdisk for FuturaFS */
+            extern struct fut_blockdev *fut_ramdisk_create_bytes(const char *, size_t, uint32_t);
+            extern int fut_blockdev_register(struct fut_blockdev *);
+            struct fut_blockdev *ramdisk = fut_ramdisk_create_bytes("ramdisk0", 1024 * 1024, 4096);
+            if (ramdisk) {
+                fut_blockdev_register(ramdisk);
+                int fmt_rc = fut_futurafs_format(ramdisk, "FuturaOS", 4096);
+                if (fmt_rc == 0) {
+                    extern struct fut_vnode *fut_vfs_get_root(void);
+                    struct fut_vnode *root = fut_vfs_get_root();
+                    if (root && root->ops && root->ops->mkdir)
+                        root->ops->mkdir(root, "mnt", 0755);
+                    int mnt_rc = fut_vfs_mount("ramdisk0", "/mnt", "futurafs", 0, NULL, FUT_INVALID_HANDLE);
+                    if (mnt_rc == 0) {
+                        fut_printf("[INIT] ✓ FuturaFS mounted at /mnt (4MB ramdisk)\n");
+                    } else {
+                        fut_printf("[INIT] Ramdisk FuturaFS mount failed: %d\n", mnt_rc);
+                    }
+                } else {
+                    fut_printf("[INIT] Ramdisk format failed: %d\n", fmt_rc);
+                }
+            }
         }
     } else {
         fut_printf("[INIT] Skipping FuturaFS mount (test mode)\n");

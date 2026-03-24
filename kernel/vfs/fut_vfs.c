@@ -1991,7 +1991,7 @@ int fut_vfs_open(const char *path, int flags, int mode) {
                 return -ENOSYS;
             }
 
-            VFSDBG("[vfs-open] calling parent->ops->create\n");
+            VFSDBG("[vfs-open] parent=%p leaf='%s'\n", (void*)parent, leaf);
             struct fut_vnode *new_node = NULL;
             int create_ret = parent->ops->create(parent, leaf, (uint32_t)mode, &new_node);
             VFSDBG("[vfs-open] create returned %d new_node=%p\n", create_ret, (void*)new_node);

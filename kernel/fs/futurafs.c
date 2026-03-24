@@ -525,6 +525,17 @@ static void futurafs_inode_write_stage1_callback(int result, void *ctx) {
     uint64_t block_num = inode_ctx->base.mount->sb->inode_table_block +
                          (inode_index / inode_ctx->base.mount->inodes_per_block);
 
+    /* Write block back - use sync path if no valid handle */
+    if (inode_ctx->base.mount->block_device_handle == FUT_INVALID_HANDLE) {
+        /* Synchronous fallback: write directly and call completion */
+        int ret = fut_blockdev_write(inode_ctx->base.mount->dev,
+                                     block_num, 1, inode_ctx->block_buffer);
+        inode_ctx->base.callback(ret < 0 ? FUTURAFS_EIO : 0,
+                                 inode_ctx->base.callback_ctx);
+        fut_free(inode_ctx);
+        return;
+    }
+
     /* Submit async block write (stage 2) */
     int ret = fut_blk_write_async(inode_ctx->base.mount->block_device_handle,
                                   block_num, 1, inode_ctx->block_buffer,
@@ -649,6 +660,15 @@ int futurafs_read_block_async(struct futurafs_mount *mount,
     block_ctx->block_num = block_num;
     block_ctx->buffer = buffer;
 
+    /* Use sync fallback if no valid handle */
+    if (mount->block_device_handle == FUT_INVALID_HANDLE) {
+        int ret = fut_blockdev_read(mount->dev, block_num, 1, buffer);
+        block_ctx->base.callback(ret < 0 ? FUTURAFS_EIO : 0,
+                                 block_ctx->base.callback_ctx);
+        fut_free(block_ctx);
+        return 0;
+    }
+
     /* Submit async block read */
     int ret = fut_blk_read_async(mount->block_device_handle, block_num, 1,
                                  buffer, futurafs_block_read_callback, block_ctx);
@@ -710,6 +730,15 @@ int futurafs_write_block_async(struct futurafs_mount *mount,
     block_ctx->base.mount = mount;
     block_ctx->block_num = block_num;
     block_ctx->buffer = buffer;
+
+    /* Use sync fallback if no valid handle */
+    if (mount->block_device_handle == FUT_INVALID_HANDLE) {
+        int ret = fut_blockdev_write(mount->dev, block_num, 1, buffer);
+        block_ctx->base.callback(ret < 0 ? FUTURAFS_EIO : 0,
+                                 block_ctx->base.callback_ctx);
+        fut_free(block_ctx);
+        return 0;
+    }
 
     /* Submit async block write */
     int ret = fut_blk_write_async(mount->block_device_handle, block_num, 1,
@@ -4048,12 +4077,8 @@ static int futurafs_statfs_impl(struct fut_mount *mount, struct fut_statfs *out)
     return 0;
 }
 
-static const struct fut_fs_type futurafs_type = {
-    .name = "futurafs",
-    .mount = futurafs_mount_impl,
-    .unmount = futurafs_unmount_impl,
-    .statfs = futurafs_statfs_impl,
-};
+/* Initialized at runtime to avoid ARM64 relocation issues with static const structs */
+static struct fut_fs_type futurafs_type;
 
 /* ============================================================
  *   Public API
@@ -4062,6 +4087,12 @@ static const struct fut_fs_type futurafs_type = {
 void fut_futurafs_init(void) {
     /* Initialize vnode operations at runtime */
     futurafs_init_vnode_ops();
+
+    /* Initialize fs type struct at runtime to avoid ARM64 relocation issues */
+    futurafs_type.name = "futurafs";
+    futurafs_type.mount = futurafs_mount_impl;
+    futurafs_type.unmount = futurafs_unmount_impl;
+    futurafs_type.statfs = futurafs_statfs_impl;
 
     fut_vfs_register_fs(&futurafs_type);
 }

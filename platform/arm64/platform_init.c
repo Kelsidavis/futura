@@ -1347,6 +1347,35 @@ static void arm64_init_spawner_thread(void *arg) {
     }
     fut_printf("[INIT] Staged %d userland binaries to ramfs\n", staged);
 
+    /* Quick FuturaFS write/read self-test */
+    {
+        extern int fut_vfs_open(const char *, int, int);
+        extern long fut_vfs_write(int, const void *, size_t);
+        extern long fut_vfs_read(int, void *, size_t);
+        extern int fut_vfs_close(int);
+        int tfd = fut_vfs_open("/mnt/test.txt", 0x0241 /* O_WRONLY|O_CREAT|O_TRUNC */, 0644);
+        if (tfd >= 0) {
+            const char *msg = "Hello from Futura OS!\n";
+            fut_vfs_write(tfd, msg, 22);
+            fut_vfs_close(tfd);
+
+            /* Read back */
+            tfd = fut_vfs_open("/mnt/test.txt", 0 /* O_RDONLY */, 0);
+            if (tfd >= 0) {
+                char rbuf[64] = {0};
+                long n = fut_vfs_read(tfd, rbuf, sizeof(rbuf) - 1);
+                fut_vfs_close(tfd);
+                if (n > 0 && rbuf[0] == 'H') {
+                    fut_printf("[INIT] ✓ FuturaFS write/read test passed\n");
+                } else {
+                    fut_printf("[INIT] ✗ FuturaFS read returned %d bytes\n", (int)n);
+                }
+            }
+        } else {
+            fut_printf("[INIT] ✗ FuturaFS create failed: %d\n", tfd);
+        }
+    }
+
     /* Run forktest */
     char *forktest_argv[] = {"/bin/forktest", NULL};
     char *forktest_envp[] = {"PATH=/sbin:/bin", NULL};

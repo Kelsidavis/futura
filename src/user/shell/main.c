@@ -436,7 +436,7 @@ static size_t common_prefix_len(const char *s1, const char *s2) {
 static void complete_command(char *buf, size_t *pos, size_t max_len) {
     /* List of builtin commands */
     const char *builtins[] = {
-        "bg", "cd", "clear", "date", "dmesg", "echo", "exit", "export", "fg", "free",
+        "bg", "cd", "clear", "date", "dmesg", "echo", "edit", "exit", "export", "fg", "free",
         "help", "hostname", "id", "ifconfig", "jobs", "kill", "ls", "mount",
         "ps", "pwd", "test", "uname", "uptime", "version", "whoami", NULL
     };
@@ -1093,6 +1093,78 @@ static void cmd_mount(int argc, char *argv[]) {
         sys_close(fd);
     } else {
         write_str(1, "mount: /proc/mounts not available\n");
+    }
+}
+
+/* Built-in: edit - Simple line editor for files */
+static void cmd_edit(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "usage: edit <file>\n");
+        write_str(1, "  Enter text line by line. Type '.' on a line by itself to save.\n");
+        write_str(1, "  Type ':q' to quit without saving.\n");
+        return;
+    }
+
+    const char *path = argv[1];
+
+    /* Show existing content if file exists */
+    int rfd = sys_open(path, O_RDONLY, 0);
+    if (rfd >= 0) {
+        write_str(1, "--- Current content ---\n");
+        char buf[256];
+        ssize_t n;
+        while ((n = sys_read(rfd, buf, sizeof(buf) - 1)) > 0) {
+            buf[n] = '\0';
+            write_str(1, buf);
+        }
+        sys_close(rfd);
+        write_str(1, "--- End ---\n");
+    }
+
+    write_str(1, "Enter text (. to save, :q to quit):\n");
+
+    /* Open file for writing */
+    int wfd = sys_open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (wfd < 0) {
+        write_str(1, "edit: cannot open file for writing\n");
+        return;
+    }
+
+    char line[256];
+    int saved = 0;
+    while (1) {
+        write_str(1, "> ");
+        ssize_t n = sys_read(0, line, sizeof(line) - 1);
+        if (n <= 0) break;
+        line[n] = '\0';
+
+        /* Remove trailing newline */
+        if (n > 0 && line[n-1] == '\n') line[n-1] = '\0';
+
+        /* Check for save command */
+        if (line[0] == '.' && line[1] == '\0') {
+            saved = 1;
+            break;
+        }
+        /* Check for quit command */
+        if (line[0] == ':' && line[1] == 'q' && line[2] == '\0') {
+            break;
+        }
+
+        /* Write line + newline to file */
+        sys_write(wfd, line, strlen_simple(line));
+        sys_write(wfd, "\n", 1);
+    }
+
+    sys_close(wfd);
+
+    if (saved) {
+        write_str(1, "Saved to ");
+        write_str(1, path);
+        write_char(1, '\n');
+    } else {
+        /* Quit without saving — truncate the file */
+        write_str(1, "Discarded.\n");
     }
 }
 
@@ -3846,6 +3918,9 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "dmesg") == 0) {
         cmd_dmesg(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "edit") == 0) {
+        cmd_edit(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "free") == 0) {
         cmd_free(argc, argv);
         return 0;
@@ -3978,6 +4053,7 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "uname") == 0 ||
             strcmp_simple(cmd, "date") == 0 ||
             strcmp_simple(cmd, "dmesg") == 0 ||
+            strcmp_simple(cmd, "edit") == 0 ||
             strcmp_simple(cmd, "free") == 0 ||
             strcmp_simple(cmd, "hostname") == 0 ||
             strcmp_simple(cmd, "id") == 0 ||
@@ -4563,7 +4639,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.3                   |\n");
-    write_str(1, "|   25 built-in commands — type 'help'     |\n");
+    write_str(1, "|   26 built-in commands — type 'help'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\n");
 

@@ -4379,6 +4379,21 @@ static void arm64_syscall_table_init(void) {
     /* eventfd2 (x86_64: 290, ARM64: 19) */
     syscall_table[290].handler = syscall_table[__NR_eventfd2].handler;
     syscall_table[290].name = "eventfd2";
+    /* File ops batch */
+    syscall_table[73].handler = syscall_table[__NR_flock].handler;
+    syscall_table[73].name = "flock";
+    syscall_table[74].handler = syscall_table[__NR_fsync].handler;
+    syscall_table[74].name = "fsync";
+    syscall_table[75].handler = syscall_table[__NR_fdatasync].handler;
+    syscall_table[75].name = "fdatasync";
+    syscall_table[76].handler = syscall_table[__NR_truncate].handler;
+    syscall_table[76].name = "truncate";
+    syscall_table[77].handler = syscall_table[__NR_ftruncate].handler;
+    syscall_table[77].name = "ftruncate";
+    syscall_table[93].handler = syscall_table[__NR_fchown].handler;
+    syscall_table[93].name = "fchown";
+    syscall_table[217].handler = syscall_table[__NR_getdents64].handler;
+    syscall_table[217].name = "getdents64";
 
     syscall_table_initialized = true;
 }

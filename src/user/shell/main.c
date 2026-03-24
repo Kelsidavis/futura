@@ -1294,25 +1294,55 @@ static void cmd_date(int argc, char *argv[]) {
         int day = (int)days + 1;
         int wday = (int)((ts.tv_sec / 86400 + 4) % 7);  /* Jan 1 1970 = Thursday */
 
-        char buf[64];
-        int p = 0;
-        /* "Wed Mar 24 06:53:28 UTC 2026" */
-        for (int i = 0; wnames[wday][i]; i++) buf[p++] = wnames[wday][i];
-        buf[p++] = ' ';
-        for (int i = 0; mnames[m][i]; i++) buf[p++] = mnames[m][i];
-        buf[p++] = ' ';
-        if (day < 10) buf[p++] = ' ';
-        { char tmp[8]; int_to_str(day, tmp, 8); for (int i = 0; tmp[i]; i++) buf[p++] = tmp[i]; }
-        buf[p++] = ' ';
-        buf[p++] = '0' + (char)(hour / 10); buf[p++] = '0' + (char)(hour % 10);
-        buf[p++] = ':';
-        buf[p++] = '0' + (char)(min / 10); buf[p++] = '0' + (char)(min % 10);
-        buf[p++] = ':';
-        buf[p++] = '0' + (char)(sec / 10); buf[p++] = '0' + (char)(sec % 10);
-        buf[p++] = ' '; buf[p++] = 'U'; buf[p++] = 'T'; buf[p++] = 'C'; buf[p++] = ' ';
-        { char tmp[8]; int_to_str((long)y, tmp, 8); for (int i = 0; tmp[i]; i++) buf[p++] = tmp[i]; }
-        buf[p++] = '\n'; buf[p] = '\0';
-        write_str(1, buf);
+        /* Check for +FORMAT argument */
+        if (argc > 1 && argv[1][0] == '+') {
+            const char *fmt = argv[1] + 1;
+            char buf[128];
+            int p = 0;
+            while (*fmt && p < 126) {
+                if (*fmt == '%' && fmt[1]) {
+                    fmt++;
+                    char tmp[8];
+                    switch (*fmt) {
+                        case 'Y': int_to_str((long)y, tmp, 8); for (int i=0;tmp[i];i++) buf[p++]=tmp[i]; break;
+                        case 'm': buf[p++]='0'+(char)((m+1)/10); buf[p++]='0'+(char)((m+1)%10); break;
+                        case 'd': buf[p++]='0'+(char)(day/10); buf[p++]='0'+(char)(day%10); break;
+                        case 'H': buf[p++]='0'+(char)(hour/10); buf[p++]='0'+(char)(hour%10); break;
+                        case 'M': buf[p++]='0'+(char)(min/10); buf[p++]='0'+(char)(min%10); break;
+                        case 'S': buf[p++]='0'+(char)(sec/10); buf[p++]='0'+(char)(sec%10); break;
+                        case 'A': for (int i=0;wnames[wday][i];i++) buf[p++]=wnames[wday][i]; break;
+                        case 'B': for (int i=0;mnames[m][i];i++) buf[p++]=mnames[m][i]; break;
+                        case 's': { int_to_str(ts.tv_sec, tmp, 8); for (int i=0;tmp[i];i++) buf[p++]=tmp[i]; break; }
+                        default: buf[p++]='%'; buf[p++]=*fmt; break;
+                    }
+                    fmt++;
+                } else {
+                    buf[p++] = *fmt++;
+                }
+            }
+            buf[p++] = '\n'; buf[p] = '\0';
+            write_str(1, buf);
+        } else {
+            /* Default format: "Wed Mar 24 06:53:28 UTC 2026" */
+            char buf[64];
+            int p = 0;
+            for (int i = 0; wnames[wday][i]; i++) buf[p++] = wnames[wday][i];
+            buf[p++] = ' ';
+            for (int i = 0; mnames[m][i]; i++) buf[p++] = mnames[m][i];
+            buf[p++] = ' ';
+            if (day < 10) buf[p++] = ' ';
+            { char tmp[8]; int_to_str(day, tmp, 8); for (int i = 0; tmp[i]; i++) buf[p++] = tmp[i]; }
+            buf[p++] = ' ';
+            buf[p++] = '0' + (char)(hour / 10); buf[p++] = '0' + (char)(hour % 10);
+            buf[p++] = ':';
+            buf[p++] = '0' + (char)(min / 10); buf[p++] = '0' + (char)(min % 10);
+            buf[p++] = ':';
+            buf[p++] = '0' + (char)(sec / 10); buf[p++] = '0' + (char)(sec % 10);
+            buf[p++] = ' '; buf[p++] = 'U'; buf[p++] = 'T'; buf[p++] = 'C'; buf[p++] = ' ';
+            { char tmp[8]; int_to_str((long)y, tmp, 8); for (int i = 0; tmp[i]; i++) buf[p++] = tmp[i]; }
+            buf[p++] = '\n'; buf[p] = '\0';
+            write_str(1, buf);
+        }
     } else {
         /* Fallback: show uptime */
         struct { long tv_sec; long tv_nsec; } mono = {0, 0};

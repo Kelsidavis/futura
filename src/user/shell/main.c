@@ -5507,9 +5507,13 @@ static int execute_command_chain(char *cmdline) {
 }
 
 int main(int argc, char **argv, char **envp) {
-    (void)argc;
-    (void)argv;
-    (void)envp;
+    /* Check for -c mode: shell -c "command string" */
+    int script_mode = 0;
+    const char *script_cmd = NULL;
+    if (argc >= 3 && argv[1][0] == '-' && argv[1][1] == 'c') {
+        script_mode = 1;
+        script_cmd = argv[2];
+    }
 
     /* Initialize shell environment from parent's environment variables */
     if (envp && envp[0] != NULL) {
@@ -5641,6 +5645,19 @@ int main(int argc, char **argv, char **envp) {
                 }
             }
         }
+    }
+
+    /* If -c mode, execute command and exit */
+    if (script_mode && script_cmd) {
+        char cmd_copy[512];
+        size_t cl = strlen_simple(script_cmd);
+        if (cl >= sizeof(cmd_copy)) cl = sizeof(cmd_copy) - 1;
+        for (size_t i = 0; i < cl; i++) cmd_copy[i] = script_cmd[i];
+        cmd_copy[cl] = '\0';
+        char expanded[512];
+        expand_variables(expanded, cmd_copy, sizeof(expanded));
+        int rc = execute_command_chain(expanded);
+        return rc < 0 ? 1 : 0;
     }
 
     write_str(1, "\n\033[1m");

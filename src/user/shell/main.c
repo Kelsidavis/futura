@@ -453,7 +453,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     const char *builtins[] = {
         "bg", "cd", "chmod", "clear", "date", "dd", "df", "dmesg", "echo", "edit", "hexdump", "lsof", "nc", "poweroff", "reboot", "seq", "sleep", "time", "wget", "exit", "export", "fg", "free",
         "help", "hostname", "id", "ifconfig", "jobs", "kill", "ls", "mount",
-        ".", "basename", "dirname", "du", "exec", "false", "history", "ln", "more", "printf", "ps", "pwd", "read", "readlink", "set", "source", "stat", "sync", "test", "tree", "true", "type", "umask", "uname", "uptime", "version", "which", "whoami", "xargs", NULL
+        ".", "basename", "dirname", "du", "exec", "false", "history", "ln", "more", "printf", "ps", "pwd", "read", "readlink", "set", "source", "stat", "sync", "test", "tree", "true", "type", "umask", "uname", "uptime", "version", "wait", "which", "whoami", "xargs", NULL
     };
 
     /* External commands we might have */
@@ -801,6 +801,52 @@ static void expand_variables(char *dest, const char *src, size_t dest_size) {
                 /* $! = last background PID (stub: 0) */
                 p++;
                 dest[dest_pos++] = '0';
+                continue;
+            }
+            if (*p == '(') {
+                /* $() command substitution */
+                p++;
+                char cmd[256];
+                int cl = 0;
+                int depth = 1;
+                while (*p && depth > 0 && cl < 255) {
+                    if (*p == '(') depth++;
+                    else if (*p == ')') { depth--; if (depth == 0) { p++; break; } }
+                    cmd[cl++] = *p++;
+                }
+                cmd[cl] = '\0';
+                /* Execute command with pipe to capture output */
+                int pipefd[2];
+                if (sys_pipe(pipefd) == 0) {
+                    pid_t pid = sys_fork();
+                    if (pid == 0) {
+                        /* Child: redirect stdout to pipe, exec command */
+                        sys_close(pipefd[0]);
+                        sys_dup2(pipefd[1], 1);
+                        sys_close(pipefd[1]);
+                        /* Use shell -c to execute */
+                        char *sh_argv[] = {"/bin/shell", "-c", cmd, NULL};
+                        char *sh_envp[] = {NULL};
+                        sys_execve("/bin/shell", sh_argv, sh_envp);
+                        syscall1(__NR_exit, 1);
+                    }
+                    sys_close(pipefd[1]);
+                    /* Read output */
+                    char obuf[256];
+                    long nr;
+                    while ((nr = sys_read(pipefd[0], obuf, sizeof(obuf))) > 0) {
+                        for (long j = 0; j < nr && dest_pos < dest_size - 1; j++) {
+                            if (obuf[j] != '\n' || j < nr - 1) /* trim trailing newline */
+                                dest[dest_pos++] = obuf[j];
+                        }
+                    }
+                    sys_close(pipefd[0]);
+                    /* Trim trailing newlines */
+                    while (dest_pos > 0 && dest[dest_pos-1] == '\n') dest_pos--;
+                    int status;
+                    extern long sys_waitpid(int, int *, int);
+                    sys_waitpid(pid, &status, 0);
+                }
                 continue;
             }
             if (*p == '{') {
@@ -5446,6 +5492,20 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "dd") == 0) {
         cmd_dd(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "wait") == 0) {
+        /* Wait for background jobs to finish */
+        if (argc > 1) {
+            long pid = 0;
+            for (int j = 0; argv[1][j]; j++) pid = pid * 10 + (argv[1][j] - '0');
+            int st;
+            extern long sys_waitpid(int, int *, int);
+            sys_waitpid((int)pid, &st, 0);
+        } else {
+            int st;
+            extern long sys_waitpid(int, int *, int);
+            while (sys_waitpid(-1, &st, 1 /* WNOHANG */) > 0) {}
+        }
+        return 0;
     } else if (strcmp_simple(argv[0], "sync") == 0) {
         cmd_sync(argc, argv);
         return 0;
@@ -5661,6 +5721,7 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "chmod") == 0 ||
             strcmp_simple(cmd, "cp") == 0 ||
             strcmp_simple(cmd, "sync") == 0 ||
+            strcmp_simple(cmd, "wait") == 0 ||
             strcmp_simple(cmd, "umask") == 0 ||
             strcmp_simple(cmd, "exec") == 0 ||
             strcmp_simple(cmd, "type") == 0 ||
@@ -6364,7 +6425,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.4                   |\n");
-    write_str(1, "|   59 built-in commands — type 'help'     |\n");
+    write_str(1, "|   60 built-in commands — type 'help'     |\n");
     write_str(1, "|   nano editor available at /bin/nano      |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");

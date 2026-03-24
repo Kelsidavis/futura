@@ -105,6 +105,10 @@ static void complete_command(char *buf, size_t *pos, size_t max_len);
 /* Forward declaration for source (defined after execute_command_chain) */
 static void cmd_source(int argc, char *argv[]);
 
+/* Forward declaration for exec builtin */
+static void exec_external_command(int argc, char *argv[]);
+static void build_envp(void);
+
 /* Forward declaration for prompt */
 static void print_prompt(void);
 
@@ -442,7 +446,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     const char *builtins[] = {
         "bg", "cd", "chmod", "clear", "date", "dd", "df", "dmesg", "echo", "edit", "hexdump", "lsof", "nc", "poweroff", "reboot", "seq", "sleep", "time", "wget", "exit", "export", "fg", "free",
         "help", "hostname", "id", "ifconfig", "jobs", "kill", "ls", "mount",
-        ".", "basename", "dirname", "du", "false", "history", "ln", "printf", "ps", "pwd", "readlink", "source", "stat", "test", "tree", "true", "type", "uname", "uptime", "version", "which", "whoami", NULL
+        ".", "basename", "dirname", "du", "exec", "false", "history", "ln", "printf", "ps", "pwd", "readlink", "source", "stat", "test", "tree", "true", "type", "uname", "uptime", "version", "which", "whoami", NULL
     };
 
     /* External commands we might have */
@@ -5150,6 +5154,13 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "dd") == 0) {
         cmd_dd(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "exec") == 0) {
+        if (argc < 2) { write_str(2, "usage: exec <command> [args...]\n"); return 1; }
+        /* Replace current shell with the command */
+        build_envp();
+        exec_external_command(argc - 1, argv + 1);
+        write_str(2, "exec: failed\n");
+        return 1;
     } else if (strcmp_simple(argv[0], "type") == 0) {
         if (argc < 2) { write_str(2, "usage: type <command>\n"); return 1; }
         if (is_builtin(argv[1])) {
@@ -5324,6 +5335,7 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "stat") == 0 ||
             strcmp_simple(cmd, "chmod") == 0 ||
             strcmp_simple(cmd, "cp") == 0 ||
+            strcmp_simple(cmd, "exec") == 0 ||
             strcmp_simple(cmd, "type") == 0 ||
             strcmp_simple(cmd, "true") == 0 ||
             strcmp_simple(cmd, "false") == 0 ||
@@ -6021,7 +6033,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.4                   |\n");
-    write_str(1, "|   52 built-in commands — type 'help'     |\n");
+    write_str(1, "|   53 built-in commands — type 'help'     |\n");
     write_str(1, "|   nano editor available at /bin/nano      |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");
@@ -6050,6 +6062,127 @@ int main(int argc, char **argv, char **envp) {
 
         /* Add command to history */
         add_to_history(cmdline);
+
+        /* Handle 'for VAR in LIST; do BODY; done' */
+        if (cmdline[0] == 'f' && cmdline[1] == 'o' && cmdline[2] == 'r' && cmdline[3] == ' ') {
+            char *p = cmdline + 4;
+            while (*p == ' ') p++;
+            /* Extract variable name */
+            char fvar[64];
+            int vi = 0;
+            while (*p && *p != ' ' && vi < 63) fvar[vi++] = *p++;
+            fvar[vi] = '\0';
+            while (*p == ' ') p++;
+            /* Expect "in" */
+            if (p[0] == 'i' && p[1] == 'n' && p[2] == ' ') {
+                p += 3;
+                while (*p == ' ') p++;
+                /* Find "; do" */
+                char *do_ptr = p;
+                while (*do_ptr) {
+                    if (do_ptr[0] == ';' && do_ptr[1] == ' ' && do_ptr[2] == 'd' && do_ptr[3] == 'o') {
+                        *do_ptr = '\0';
+                        do_ptr += 4;
+                        while (*do_ptr == ' ') do_ptr++;
+                        break;
+                    }
+                    do_ptr++;
+                }
+                /* Find "; done" at end */
+                char *body = do_ptr;
+                int blen = (int)strlen_simple(body);
+                if (blen >= 6 && body[blen-1] == 'e' && body[blen-2] == 'n' && body[blen-3] == 'o' &&
+                    body[blen-4] == 'd' && (body[blen-5] == ';' || body[blen-5] == ' ')) {
+                    /* Trim "; done" or " done" */
+                    int trim = blen - 5;
+                    while (trim > 0 && (body[trim-1] == ' ' || body[trim-1] == ';')) trim--;
+                    body[trim] = '\0';
+                }
+                /* Iterate over words in list */
+                char *word = p;
+                while (*word) {
+                    while (*word == ' ') word++;
+                    if (!*word) break;
+                    char *wend = word;
+                    while (*wend && *wend != ' ') wend++;
+                    char saved = *wend;
+                    *wend = '\0';
+                    /* Set variable and execute body */
+                    set_var(fvar, word, 0);
+                    char exp_body[512];
+                    expand_variables(exp_body, body, sizeof(exp_body));
+                    /* Handle semicolons in body */
+                    char *bcmd = exp_body;
+                    while (*bcmd) {
+                        char *semi = bcmd;
+                        while (*semi && *semi != ';') semi++;
+                        char sc = *semi; *semi = '\0';
+                        while (*bcmd == ' ') bcmd++;
+                        if (*bcmd) execute_command_chain(bcmd);
+                        if (sc == '\0') break;
+                        bcmd = semi + 1;
+                    }
+                    *wend = saved;
+                    word = wend;
+                }
+                last_exit_status = 0;
+                continue;
+            }
+        }
+
+        /* Handle 'if CMD; then CMD; [else CMD;] fi' */
+        if (cmdline[0] == 'i' && cmdline[1] == 'f' && cmdline[2] == ' ') {
+            char *p = cmdline + 3;
+            /* Find "; then" */
+            char *then_ptr = p;
+            while (*then_ptr) {
+                if (then_ptr[0] == ';' && then_ptr[1] == ' ' && then_ptr[2] == 't' &&
+                    then_ptr[3] == 'h' && then_ptr[4] == 'e' && then_ptr[5] == 'n') {
+                    *then_ptr = '\0';
+                    then_ptr += 6;
+                    while (*then_ptr == ' ') then_ptr++;
+                    break;
+                }
+                then_ptr++;
+            }
+            /* Execute condition */
+            char exp_cond[512];
+            expand_variables(exp_cond, p, sizeof(exp_cond));
+            int cond_rc = execute_command_chain(exp_cond);
+
+            /* Find "; else" and "; fi" */
+            char *else_body = NULL;
+            char *then_body = then_ptr;
+            char *scan = then_ptr;
+            while (*scan) {
+                if (scan[0] == ';' && scan[1] == ' ' && scan[2] == 'e' && scan[3] == 'l' &&
+                    scan[4] == 's' && scan[5] == 'e') {
+                    *scan = '\0';
+                    else_body = scan + 7;
+                    break;
+                }
+                scan++;
+            }
+            /* Trim "; fi" from whichever body is last */
+            char *last_body = else_body ? else_body : then_body;
+            int lb = (int)strlen_simple(last_body);
+            if (lb >= 3 && last_body[lb-1] == 'i' && last_body[lb-2] == 'f' &&
+                (last_body[lb-3] == ';' || last_body[lb-3] == ' ')) {
+                int trim = lb - 3;
+                while (trim > 0 && (last_body[trim-1] == ' ' || last_body[trim-1] == ';')) trim--;
+                last_body[trim] = '\0';
+            }
+
+            char *chosen = (cond_rc == 0) ? then_body : else_body;
+            if (chosen && *chosen) {
+                char exp[512];
+                expand_variables(exp, chosen, sizeof(exp));
+                last_exit_status = execute_command_chain(exp);
+            } else {
+                last_exit_status = 0;
+            }
+            continue;
+        }
 
         /* Check for variable assignment */
         char var_name[MAX_VAR_NAME];

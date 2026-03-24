@@ -380,14 +380,7 @@ ssize_t fut_blockdev_write_bytes(struct fut_blockdev *dev, uint64_t offset, size
     post_canary[0] = CANARY_PATTERN;
     post_canary[1] = CANARY_PATTERN;
 
-    fut_printf("[BLOCKDEV-WRITE-BYTES] dev=%s offset=%llu size=%llu block_size=%u blocks=%llu\n",
-               dev->name,
-               (unsigned long long)offset,
-               (unsigned long long)size,
-               block_size,
-               (unsigned long long)num_blocks);
-    fut_printf("[BLOCKDEV-WRITE-BYTES] temp_buffer=%p buffer_size=%llu (with %d-byte canaries)\n",
-               (void*)temp_buffer, (unsigned long long)buffer_size, CANARY_SIZE);
+    /* verbose debug suppressed */
 
     /* Read existing blocks first (for partial block writes) */
     int ret = fut_blockdev_read(dev, start_block, num_blocks, temp_buffer);
@@ -462,8 +455,8 @@ ssize_t fut_blockdev_write_bytes(struct fut_blockdev *dev, uint64_t offset, size
         return BLOCKDEV_EIO;
     }
 
-    fut_printf("[BLOCKDEV-WRITE-BYTES] write complete dev=%s (canaries intact)\n", dev->name);
-    fut_free(alloc_buffer);
+    /* verbose suppressed */
+    /* continuation */
     return (ssize_t)size;
 }
 

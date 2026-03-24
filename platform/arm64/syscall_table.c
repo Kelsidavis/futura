@@ -4433,6 +4433,9 @@ static void arm64_syscall_table_init(void) {
     /* reboot (x86_64: 169, ARM64: 142) — for shell reboot/poweroff commands */
     syscall_table[169].handler = syscall_table[__NR_reboot].handler;
     syscall_table[169].name = "reboot";
+    /* statfs (x86_64: 137, ARM64: 43) — for df command */
+    syscall_table[137].handler = syscall_table[__NR_statfs].handler;
+    syscall_table[137].name = "statfs";
     /* fcntl (x86_64: 72, ARM64: 25) — needed by shell for F_GETFL on stdio */
     syscall_table[72].handler = syscall_table[__NR_fcntl].handler;
     syscall_table[72].name = "fcntl";

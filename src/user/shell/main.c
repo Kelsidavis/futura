@@ -1576,53 +1576,68 @@ static void cmd_time(int argc, char *argv[]) {
 }
 
 /* Built-in: df - Show filesystem disk space usage */
+/* Helper: format KB/MB/GB size for df */
+static void df_format_size(long kb, char *out, int outlen) {
+    if (kb < 1024) {
+        int_to_str(kb, out, outlen);
+        int l = (int)strlen_simple(out);
+        if (l + 1 < outlen) { out[l] = 'K'; out[l+1] = '\0'; }
+    } else if (kb < 1024 * 1024) {
+        int_to_str(kb / 1024, out, outlen);
+        int l = (int)strlen_simple(out);
+        if (l + 1 < outlen) { out[l] = 'M'; out[l+1] = '\0'; }
+    } else {
+        int_to_str(kb / (1024 * 1024), out, outlen);
+        int l = (int)strlen_simple(out);
+        if (l + 1 < outlen) { out[l] = 'G'; out[l+1] = '\0'; }
+    }
+}
+
 static void cmd_df(int argc, char *argv[]) {
     (void)argc; (void)argv;
-    write_str(1, "Filesystem      Size  Used  Avail  Use%  Mounted on\n");
-    /* Read /proc/mounts to enumerate filesystems */
-    int fd = sys_open("/proc/mounts", O_RDONLY, 0);
-    if (fd >= 0) {
-        char buf[1024];
-        ssize_t n = sys_read(fd, buf, sizeof(buf) - 1);
-        sys_close(fd);
-        if (n > 0) {
-            buf[n] = '\0';
-            /* Parse each line: device mountpoint fstype ... */
-            char *p = buf;
-            while (*p) {
-                /* Extract mount point (2nd field) */
-                char dev[32] = "", mount[32] = "", fstype[16] = "";
-                int field = 0, j = 0;
-                char *line_start = p;
-                while (*p && *p != '\n') {
-                    if (*p == ' ' || *p == '\t') {
-                        field++;
-                        j = 0;
-                    } else {
-                        if (field == 0 && j < 31) dev[j++] = *p;
-                        if (field == 1 && j < 31) mount[j++] = *p;
-                        if (field == 2 && j < 15) fstype[j++] = *p;
-                    }
-                    if (field == 0) dev[j] = '\0';
-                    if (field == 1) mount[j] = '\0';
-                    if (field == 2) fstype[j] = '\0';
-                    p++;
-                }
-                if (*p == '\n') p++;
-                (void)line_start;
-                if (dev[0]) {
-                    write_str(1, fstype);
-                    int pad = 16 - (int)strlen_simple(fstype);
-                    while (pad-- > 0) write_char(1, ' ');
-                    write_str(1, "-     -     -      -     ");
-                    write_str(1, mount);
-                    write_char(1, '\n');
-                }
-            }
+    write_str(1, "Filesystem      Size  Used  Avail Use% Mounted on\n");
+
+    /* Key mount points to check */
+    const char *mounts[] = {"/", "/mnt", "/tmp", "/proc", NULL};
+    const char *names[]  = {"ramfs", "futurafs", "tmpfs", "proc"};
+
+    struct { long f_bsize; long f_blocks; long f_bfree; long f_bavail;
+             long f_files; long f_ffree; long f_fsid[2]; long f_namelen;
+             long f_frsize; long f_flags; long f_spare[4]; } sfs;
+
+    for (int i = 0; mounts[i]; i++) {
+        long ret = sys_call2(137 /* statfs */, (long)mounts[i], (long)&sfs);
+        write_str(1, names[i]);
+        int pad = 16 - (int)strlen_simple(names[i]);
+        while (pad-- > 0) write_char(1, ' ');
+
+        if (ret == 0 && sfs.f_bsize > 0 && sfs.f_blocks > 0) {
+            long blk_kb = sfs.f_bsize / 1024;
+            if (blk_kb == 0) blk_kb = 1;
+            long total_kb = sfs.f_blocks * blk_kb;
+            long free_kb = sfs.f_bfree * blk_kb;
+            long used_kb = total_kb - free_kb;
+            long avail_kb = sfs.f_bavail * blk_kb;
+            int pct = total_kb > 0 ? (int)((used_kb * 100) / total_kb) : 0;
+
+            char sbuf[16];
+            df_format_size(total_kb, sbuf, 16);
+            write_str(1, sbuf);
+            pad = 6 - (int)strlen_simple(sbuf); while (pad-- > 0) write_char(1, ' ');
+            df_format_size(used_kb, sbuf, 16);
+            write_str(1, sbuf);
+            pad = 6 - (int)strlen_simple(sbuf); while (pad-- > 0) write_char(1, ' ');
+            df_format_size(avail_kb, sbuf, 16);
+            write_str(1, sbuf);
+            pad = 5 - (int)strlen_simple(sbuf); while (pad-- > 0) write_char(1, ' ');
+            int_to_str(pct, sbuf, 16);
+            pad = 3 - (int)strlen_simple(sbuf); while (pad-- > 0) write_char(1, ' ');
+            write_str(1, sbuf); write_str(1, "% ");
+        } else {
+            write_str(1, "  -     -     -    -  ");
         }
-    } else {
-        write_str(1, "ramfs            -     -     -      -     /\n");
-        write_str(1, "futurafs         1M    -     -      -     /mnt\n");
+        write_str(1, mounts[i]);
+        write_char(1, '\n');
     }
 }
 

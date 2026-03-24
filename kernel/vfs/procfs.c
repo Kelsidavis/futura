@@ -680,7 +680,9 @@ static size_t gen_meminfo(char *buf, size_t cap) {
 
 static size_t gen_version(char *buf, size_t cap) {
     struct pbuf b = { buf, 0, cap };
-    pb_str(&b, "Futura version 0.4.0 (");
+    pb_str(&b, "Futura version 0.4.0 ");
+    pb_str(&b, FUT_BUILD_GIT);
+    pb_str(&b, " (");
     pb_str(&b, FUT_BUILD_USER);
     pb_str(&b, "@");
     pb_str(&b, FUT_BUILD_HOST);

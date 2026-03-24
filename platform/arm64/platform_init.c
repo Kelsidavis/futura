@@ -1498,6 +1498,28 @@ static void arm64_init_spawner_thread(void *arg) {
                     fut_printf("[INIT] ✗ FuturaFS mkdir: %d\n", md);
                 }
             }
+            /* Test rename: mv /mnt/test.txt -> /mnt/renamed.txt */
+            {
+                extern int fut_vfs_rename(const char *, const char *);
+                int rn = fut_vfs_rename("/mnt/test.txt", "/mnt/renamed.txt");
+                if (rn == 0) {
+                    int rf = fut_vfs_open("/mnt/renamed.txt", 0, 0);
+                    if (rf >= 0) {
+                        char rb[32] = {0};
+                        long rn2 = fut_vfs_read(rf, rb, sizeof(rb) - 1);
+                        fut_vfs_close(rf);
+                        if (rn2 > 0 && rb[0] == 'O') {
+                            fut_printf("[INIT] ✓ FuturaFS rename test passed\n");
+                        } else {
+                            fut_printf("[INIT] ✗ FuturaFS rename read: %d\n", (int)rn2);
+                        }
+                    } else {
+                        fut_printf("[INIT] ✗ FuturaFS renamed file open: %d\n", rf);
+                    }
+                } else {
+                    fut_printf("[INIT] ✗ FuturaFS rename: %d\n", rn);
+                }
+            }
             }
         } else {
             fut_printf("[INIT] ✗ FuturaFS create failed: %d\n", tfd);

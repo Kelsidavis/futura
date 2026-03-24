@@ -6184,6 +6184,45 @@ int main(int argc, char **argv, char **envp) {
             continue;
         }
 
+        /* Handle 'while CMD; do BODY; done' */
+        if (cmdline[0] == 'w' && cmdline[1] == 'h' && cmdline[2] == 'i' &&
+            cmdline[3] == 'l' && cmdline[4] == 'e' && cmdline[5] == ' ') {
+            char wcopy[512];
+            size_t wl = strlen_simple(cmdline);
+            for (size_t i = 0; i <= wl; i++) wcopy[i] = cmdline[i];
+            char *wp = wcopy + 6;
+            /* Find "; do" */
+            char *wdo = wp;
+            while (*wdo) {
+                if (wdo[0] == ';' && wdo[1] == ' ' && wdo[2] == 'd' && wdo[3] == 'o') {
+                    *wdo = '\0'; wdo += 4; while (*wdo == ' ') wdo++; break;
+                }
+                wdo++;
+            }
+            /* Find "; done" */
+            char *wbody = wdo;
+            int wb = (int)strlen_simple(wbody);
+            if (wb >= 6 && wbody[wb-1] == 'e' && wbody[wb-2] == 'n' &&
+                wbody[wb-3] == 'o' && wbody[wb-4] == 'd') {
+                int trim = wb - 5;
+                while (trim > 0 && (wbody[trim-1] == ' ' || wbody[trim-1] == ';')) trim--;
+                wbody[trim] = '\0';
+            }
+            /* Loop: evaluate condition, execute body if 0 */
+            int iters = 0;
+            while (iters < 1000) {
+                char exp_c[512];
+                expand_variables(exp_c, wp, sizeof(exp_c));
+                if (execute_command_chain(exp_c) != 0) break;
+                char exp_b[512];
+                expand_variables(exp_b, wbody, sizeof(exp_b));
+                execute_command_chain(exp_b);
+                iters++;
+            }
+            last_exit_status = 0;
+            continue;
+        }
+
         /* Check for variable assignment */
         char var_name[MAX_VAR_NAME];
         char var_value[MAX_VAR_VALUE];

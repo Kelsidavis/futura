@@ -1512,16 +1512,27 @@ static void arm64_init_spawner_thread(void *arg) {
         for (volatile int i = 0; i < 50000000; i++);
     }
 
-    /* Launch shell */
+    /* Launch shell — restart if it exits */
     char *shell_argv[] = {"/bin/shell", NULL};
-    char *shell_envp[] = {"PATH=/sbin:/bin", "HOME=/", "TERM=vt100", NULL};
-    ret = fut_exec_elf("/bin/shell", shell_argv, shell_envp);
-
-    if (ret != 0) {
-        fut_printf("[ARM64-SPAWNER] ERROR: Failed to spawn shell! Error code: %d\n", ret);
+    char *shell_envp[] = {"PATH=/bin:/sbin", "HOME=/", "TERM=vt100",
+                          "USER=root", "HOSTNAME=futura", "SHELL=/bin/shell", NULL};
+    int shell_attempts = 0;
+    while (shell_attempts < 5) {
+        ret = fut_exec_elf("/bin/shell", shell_argv, shell_envp);
+        if (ret != 0) {
+            fut_printf("[INIT] Shell exited (attempt %d, rc=%d)\n", shell_attempts + 1, ret);
+            shell_attempts++;
+            /* Wait a bit before restarting */
+            for (volatile int i = 0; i < 10000000; i++);
+        } else {
+            /* exec succeeded — wait for child to exit */
+            extern long sys_waitpid(int pid, int *status, int options);
+            int status = 0;
+            sys_waitpid(-1, &status, 0);
+            fut_printf("[INIT] Shell process exited, restarting...\n");
+        }
     }
-
-    /* Thread exits naturally */
+    fut_printf("[INIT] Shell failed to start after %d attempts\n", shell_attempts);
 }
 #endif  /* End of disabled userland spawner */
 

@@ -436,7 +436,7 @@ static size_t common_prefix_len(const char *s1, const char *s2) {
 static void complete_command(char *buf, size_t *pos, size_t max_len) {
     /* List of builtin commands */
     const char *builtins[] = {
-        "bg", "cd", "clear", "date", "df", "dmesg", "echo", "edit", "nc", "exit", "export", "fg", "free",
+        "bg", "cd", "clear", "date", "df", "dmesg", "echo", "edit", "nc", "seq", "wget", "exit", "export", "fg", "free",
         "help", "hostname", "id", "ifconfig", "jobs", "kill", "ls", "mount",
         "ps", "pwd", "test", "uname", "uptime", "version", "whoami", NULL
     };
@@ -1271,6 +1271,136 @@ static void cmd_nc(int argc, char *argv[]) {
     }
 
     sys_close(fd);
+}
+
+/* Built-in: wget - Fetch HTTP content */
+static void cmd_wget(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "usage: wget <url>\n");
+        write_str(1, "  Fetch HTTP content. URL format: http://host/path\n");
+        write_str(1, "  Example: wget http://10.0.2.2/index.html\n");
+        return;
+    }
+
+    /* Parse URL: http://host[:port]/path */
+    const char *url = argv[1];
+    char host[64] = "";
+    char path[128] = "/";
+    int port = 80;
+
+    /* Skip http:// */
+    if (url[0]=='h' && url[1]=='t' && url[2]=='t' && url[3]=='p' &&
+        url[4]==':' && url[5]=='/' && url[6]=='/') {
+        url += 7;
+    }
+
+    /* Extract host and path */
+    int hi = 0, pi = 0;
+    while (*url && *url != '/' && *url != ':' && hi < 63)
+        host[hi++] = *url++;
+    host[hi] = '\0';
+    if (*url == ':') {
+        url++;
+        port = 0;
+        while (*url >= '0' && *url <= '9')
+            port = port * 10 + (*url++ - '0');
+    }
+    if (*url == '/') {
+        pi = 0;
+        while (*url && pi < 127)
+            path[pi++] = *url++;
+        path[pi] = '\0';
+    }
+
+    /* Parse IP */
+    uint32_t ip = 0;
+    int octet = 0, shift = 24;
+    for (int i = 0; host[i]; i++) {
+        if (host[i] == '.') {
+            ip |= (octet & 0xFF) << shift;
+            shift -= 8; octet = 0;
+        } else {
+            octet = octet * 10 + (host[i] - '0');
+        }
+    }
+    ip |= (octet & 0xFF) << shift;
+    uint32_t ip_be = ((ip >> 24) & 0xFF) | ((ip >> 8) & 0xFF00) |
+                     ((ip << 8) & 0xFF0000) | ((ip << 24) & 0xFF000000);
+
+    /* Connect */
+    long fd = sys_call3(41, 2, 1, 0);
+    if (fd < 0) { write_str(2, "wget: socket failed\n"); return; }
+
+    struct { uint16_t family; uint16_t port; uint32_t addr; uint8_t pad[8]; } sa;
+    sa.family = 2;
+    sa.port = (uint16_t)(((port >> 8) & 0xFF) | ((port & 0xFF) << 8));
+    sa.addr = ip_be;
+    for (int i = 0; i < 8; i++) sa.pad[i] = 0;
+
+    if (sys_call3(42, fd, (long)&sa, 16) < 0) {
+        write_str(2, "wget: connect failed\n");
+        sys_close(fd); return;
+    }
+
+    /* Send HTTP GET request */
+    char req[256];
+    int ri = 0;
+    const char *get = "GET ";
+    while (*get) req[ri++] = *get++;
+    for (int i = 0; path[i]; i++) req[ri++] = path[i];
+    const char *http = " HTTP/1.0\r\nHost: ";
+    while (*http) req[ri++] = *http++;
+    for (int i = 0; host[i]; i++) req[ri++] = host[i];
+    const char *end = "\r\nConnection: close\r\n\r\n";
+    while (*end) req[ri++] = *end++;
+    req[ri] = '\0';
+
+    sys_call6(44, fd, (long)req, ri, 0, 0, 0);
+
+    /* Receive and print response */
+    char buf[512];
+    ssize_t total = 0;
+    while (1) {
+        ssize_t n = sys_read(fd, buf, sizeof(buf) - 1);
+        if (n <= 0) break;
+        buf[n] = '\0';
+        write_str(1, buf);
+        total += n;
+    }
+    sys_close(fd);
+
+    write_str(2, "\n--- ");
+    char nbuf[16];
+    int_to_str(total, nbuf, 16);
+    write_str(2, nbuf);
+    write_str(2, " bytes received ---\n");
+}
+
+/* Built-in: seq - Print sequence of numbers */
+static void cmd_seq(int argc, char *argv[]) {
+    int start = 1, end_val = 0, step = 1;
+    if (argc == 2) {
+        end_val = 0;
+        for (int i = 0; argv[1][i]; i++)
+            end_val = end_val * 10 + (argv[1][i] - '0');
+    } else if (argc == 3) {
+        start = 0;
+        for (int i = 0; argv[1][i]; i++)
+            start = start * 10 + (argv[1][i] - '0');
+        end_val = 0;
+        for (int i = 0; argv[2][i]; i++)
+            end_val = end_val * 10 + (argv[2][i] - '0');
+    } else {
+        write_str(1, "usage: seq [start] end\n");
+        return;
+    }
+
+    char buf[16];
+    for (int i = start; i <= end_val; i += step) {
+        int_to_str(i, buf, 16);
+        write_str(1, buf);
+        write_char(1, '\n');
+    }
 }
 
 /* Built-in: df - Show filesystem disk space usage */
@@ -4047,6 +4177,12 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "nc") == 0) {
         cmd_nc(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "wget") == 0) {
+        cmd_wget(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "seq") == 0) {
+        cmd_seq(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "df") == 0) {
         cmd_df(argc, argv);
         return 0;
@@ -4188,6 +4324,8 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "uname") == 0 ||
             strcmp_simple(cmd, "date") == 0 ||
             strcmp_simple(cmd, "nc") == 0 ||
+            strcmp_simple(cmd, "seq") == 0 ||
+            strcmp_simple(cmd, "wget") == 0 ||
             strcmp_simple(cmd, "df") == 0 ||
             strcmp_simple(cmd, "dmesg") == 0 ||
             strcmp_simple(cmd, "edit") == 0 ||
@@ -4776,7 +4914,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.3                   |\n");
-    write_str(1, "|   28 built-in commands — type 'help'     |\n");
+    write_str(1, "|   30 built-in commands — type 'help'     |\n");
     write_str(1, "|   nano editor available at /bin/nano      |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");

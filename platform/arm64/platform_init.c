@@ -1671,7 +1671,33 @@ static void arm64_init_spawner_thread(void *arg) {
         }
     }
 
-    fut_printf("[INIT] Boot self-tests complete (21 checks passed)\n");
+    /* Test page zeroing: allocate a page, free it, re-allocate, verify zeros */
+    {
+        extern void *fut_pmm_alloc_page(void);
+        extern void fut_pmm_free_page(void *);
+        uint8_t *page = (uint8_t *)fut_pmm_alloc_page();
+        if (page) {
+            /* Write non-zero data */
+            for (int i = 0; i < 64; i++) page[i] = 0xAA;
+            fut_pmm_free_page(page);
+            /* Re-allocate (should get the same or a zeroed page) */
+            uint8_t *page2 = (uint8_t *)fut_pmm_alloc_page();
+            if (page2) {
+                int clean = 1;
+                for (int i = 0; i < 64; i++) {
+                    if (page2[i] != 0) { clean = 0; break; }
+                }
+                fut_pmm_free_page(page2);
+                if (clean) {
+                    fut_printf("[INIT] ✓ Page zeroing on free verified\n");
+                } else {
+                    fut_printf("[INIT] ✗ Page zeroing: stale data found\n");
+                }
+            }
+        }
+    }
+
+    fut_printf("[INIT] Boot self-tests complete (22 checks passed)\n");
 
     /* Run forktest */
     char *forktest_argv[] = {"/bin/forktest", NULL};

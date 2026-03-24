@@ -94,7 +94,7 @@ void arm64_init_boot_thread(void) {
     extern void fut_thread_mark_percpu_safe(void);
     fut_thread_mark_percpu_safe();
 
-    fut_serial_puts("[ARM64_THREAD] Boot thread initialized successfully\n");
+    /* boot thread ready */
 }
 
 /**

@@ -51222,6 +51222,119 @@ static void test_openat_o_directory(void) {
     }
 }
 
+/* Tests 1701-1704: SIGWINCH delivery on PTY TIOCSWINSZ */
+__attribute__((noinline)) static void test_pty_sigwinch(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_close(int);
+    extern long sys_ioctl(int fd, unsigned long request, void *argp);
+    extern long sys_kill(int pid, int sig);
+    extern long sys_getpid(void);
+
+    /* Open PTY pair */
+    long mfd = sys_open("/dev/ptmx", 0x0002, 0);
+    int pn = -1, zv = 0;
+    if (mfd >= 0) sys_ioctl((int)mfd, 0x80045430, &pn);
+    if (mfd >= 0) sys_ioctl((int)mfd, 0x40045431, &zv);
+    static char pp[24];
+    { const char *pfx = "/dev/pts/"; int i = 0; while (pfx[i]) { pp[i] = pfx[i]; i++; }
+      if (pn >= 10) { pp[i++] = (char)('0'+pn/10); } pp[i++] = (char)('0'+pn%10); pp[i] = '\0'; }
+    long sfd = (pn >= 0) ? sys_open(pp, 0x0002, 0) : -1;
+
+    /* Test 1701: TIOCSWINSZ on master delivers SIGWINCH when handler installed */
+    fut_printf("[MISC-TEST] Test 1701: TIOCSWINSZ delivers SIGWINCH\n");
+    if (mfd >= 0 && sfd >= 0) {
+        fut_task_t *task = fut_task_current();
+        /* Install a dummy SIGWINCH handler (SIG_DFL=ignore discards the signal) */
+        sighandler_t old_h = task ? task->signal_handlers[28 - 1] : (sighandler_t)0;
+        if (task) task->signal_handlers[28 - 1] = (sighandler_t)2; /* dummy non-SIG_DFL handler */
+        /* Clear pending */
+        if (task) __atomic_and_fetch(&task->pending_signals, ~(1ULL << (28 - 1)), __ATOMIC_RELEASE);
+        struct { uint16_t r, c, xp, yp; } ws = {30, 100, 0, 0};
+        sys_ioctl((int)mfd, 0x5414 /* TIOCSWINSZ */, &ws);
+        uint64_t pending = task ? __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE) : 0;
+        if (pending & (1ULL << (28 - 1))) {
+            fut_printf("[MISC-TEST] ✓ Test 1701: SIGWINCH pending after TIOCSWINSZ\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1701: pending=0x%lx (no SIGWINCH)\n",
+                       (unsigned long)pending);
+            fut_test_fail(1701);
+        }
+        if (task) { __atomic_and_fetch(&task->pending_signals, ~(1ULL << (28 - 1)), __ATOMIC_RELEASE);
+                     task->signal_handlers[28 - 1] = old_h; }
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1701: PTY open failed\n");
+        fut_test_fail(1701);
+    }
+
+    /* Test 1702: TIOCSWINSZ on slave also delivers SIGWINCH */
+    fut_printf("[MISC-TEST] Test 1702: slave TIOCSWINSZ delivers SIGWINCH\n");
+    if (sfd >= 0) {
+        fut_task_t *task = fut_task_current();
+        sighandler_t old_h = task ? task->signal_handlers[28 - 1] : (sighandler_t)0;
+        if (task) task->signal_handlers[28 - 1] = (sighandler_t)2;
+        if (task) __atomic_and_fetch(&task->pending_signals, ~(1ULL << (28 - 1)), __ATOMIC_RELEASE);
+        struct { uint16_t r, c, xp, yp; } ws = {40, 120, 0, 0};
+        sys_ioctl((int)sfd, 0x5414, &ws);
+        uint64_t pending = task ? __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE) : 0;
+        if (pending & (1ULL << (28 - 1))) {
+            fut_printf("[MISC-TEST] ✓ Test 1702: slave SIGWINCH pending\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1702: pending=0x%lx\n", (unsigned long)pending);
+            fut_test_fail(1702);
+        }
+        if (task) { __atomic_and_fetch(&task->pending_signals, ~(1ULL << (28 - 1)), __ATOMIC_RELEASE);
+                     task->signal_handlers[28 - 1] = old_h; }
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1702: skipped\n");
+        fut_test_fail(1702);
+    }
+
+    /* Test 1703: TIOCGWINSZ reads the updated size back */
+    fut_printf("[MISC-TEST] Test 1703: TIOCGWINSZ reads updated size\n");
+    if (mfd >= 0) {
+        struct { uint16_t r, c, xp, yp; } ws = {0};
+        sys_ioctl((int)mfd, 0x5413 /* TIOCGWINSZ */, &ws);
+        if (ws.r == 40 && ws.c == 120) {
+            fut_printf("[MISC-TEST] ✓ Test 1703: winsize 40×120\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1703: row=%u col=%u\n", ws.r, ws.c);
+            fut_test_fail(1703);
+        }
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1703: skipped\n");
+        fut_test_fail(1703);
+    }
+
+    /* Test 1704: TIOCSWINSZ with SIG_IGN does not crash */
+    fut_printf("[MISC-TEST] Test 1704: TIOCSWINSZ with SIGWINCH ignored\n");
+    if (mfd >= 0) {
+        /* Set SIGWINCH to SIG_IGN */
+        fut_task_t *task = fut_task_current();
+        sighandler_t old_handler = task ? task->signal_handlers[28 - 1] : (sighandler_t)0;
+        if (task) task->signal_handlers[28 - 1] = (sighandler_t)1; /* SIG_IGN */
+        struct { uint16_t r, c, xp, yp; } ws = {25, 80, 0, 0};
+        long r = sys_ioctl((int)mfd, 0x5414, &ws);
+        /* Restore handler */
+        if (task) task->signal_handlers[28 - 1] = old_handler;
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1704: TIOCSWINSZ with SIG_IGN → 0\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1704: returned %ld\n", r);
+            fut_test_fail(1704);
+        }
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1704: skipped\n");
+        fut_test_fail(1704);
+    }
+
+    if (sfd >= 0) sys_close((int)sfd);
+    if (mfd >= 0) sys_close((int)mfd);
+}
+
 /* Tests 1697-1700: PIE/ET_DYN load bias and auxv correctness */
 __attribute__((noinline)) static void test_pie_load_bias(void) {
     static struct { uint64_t key; uint64_t val; } entries[24];
@@ -55042,6 +55155,7 @@ void fut_misc_test_thread(void *arg) {
     test_pts_dir_readdir();  /* Tests 1689-1692 */
     test_pty_refcount();     /* Tests 1693-1696 */
     test_pie_load_bias();    /* Tests 1697-1700 */
+    test_pty_sigwinch();     /* Tests 1701-1704 */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

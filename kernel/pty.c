@@ -249,6 +249,13 @@ static int ptmx_ioctl(void *inode, void *priv, unsigned long req, unsigned long 
             memcpy(&p->winsize, (void *)arg, 8);
         else if (fut_copy_from_user(&p->winsize, (void *)arg, 8) != 0)
             return -EFAULT;
+        /* Deliver SIGWINCH to the foreground process group (Linux behavior) */
+        {
+            extern long sys_kill(int pid, int sig);
+            fut_task_t *task = fut_task_current();
+            if (task && task->pgid)
+                sys_kill(-(int)task->pgid, 28 /* SIGWINCH */);
+        }
         return 0;
     }
     case TCGETS: {
@@ -401,6 +408,13 @@ static int pts_ioctl(void *inode, void *priv, unsigned long req, unsigned long a
             memcpy(&p->winsize, (void *)arg, 8);
         else if (fut_copy_from_user(&p->winsize, (void *)arg, 8) != 0)
             return -EFAULT;
+        /* Deliver SIGWINCH to the foreground process group */
+        {
+            extern long sys_kill(int pid, int sig);
+            fut_task_t *task = fut_task_current();
+            if (task && task->pgid)
+                sys_kill(-(int)task->pgid, 28 /* SIGWINCH */);
+        }
         return 0;
     case TCGETS:
         if ((uintptr_t)arg >= 0xFFFF800000000000ULL)

@@ -760,6 +760,9 @@ static int build_user_stack(fut_mm_t *mm,
     while (1) { __asm__ volatile("hlt"); }
 }
 
+/* PT_GNU_STACK: when true, stack pages are mapped without PTE_NX (executable) */
+static bool g_stack_exec = false;
+
 static int stage_stack_pages(fut_mm_t *mm, uint64_t *out_stack_top) {
     uint64_t base = USER_STACK_TOP - (uint64_t)USER_STACK_PAGES * PAGE_SIZE;
     uint8_t *pages[USER_STACK_PAGES];
@@ -785,11 +788,13 @@ static int stage_stack_pages(fut_mm_t *mm, uint64_t *out_stack_top) {
         pages[i] = page;
         EXEC_DEBUG("[EXEC] stage_stack page[%u]=%p\n", (unsigned)i, (void *)page);
 
+        uint64_t sflags = PTE_PRESENT | PTE_USER | PTE_WRITABLE;
+        if (!g_stack_exec) sflags |= PTE_NX;  /* PT_GNU_STACK controls NX */
         int rc = pmap_map_user(mm_context(mm),
                                base + (uint64_t)i * PAGE_SIZE,
                                phys,
                                PAGE_SIZE,
-                               PTE_PRESENT | PTE_USER | PTE_WRITABLE | PTE_NX);
+                               sflags);
         if (rc != 0) {
             fut_pmm_free_page(page);
             /* Note: Use j < i (not j <= i) because pages[i] points to the same
@@ -1514,6 +1519,25 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
         }
     }
 
+    /* PT_GNU_STACK: controls stack executability (default: NX).
+     * If PF_X is set, the binary needs an executable stack (libffi, nested funcs).
+     * PT_GNU_RELRO: region to mark read-only after relocation. */
+    bool stack_exec = false;
+    uint64_t relro_start = 0, relro_end = 0;
+    for (uint16_t i = 0; i < ehdr.e_phnum; i++) {
+        if (phdrs[i].p_type == 0x6474e551 /* PT_GNU_STACK */) {
+            stack_exec = (phdrs[i].p_flags & PF_X) != 0;
+            EXEC_DEBUG("[EXEC] PT_GNU_STACK: %s stack\n",
+                       stack_exec ? "executable" : "non-executable");
+        }
+        if (phdrs[i].p_type == 0x6474e552 /* PT_GNU_RELRO */) {
+            relro_start = phdrs[i].p_vaddr;  /* already biased for ET_DYN */
+            relro_end = relro_start + phdrs[i].p_memsz;
+            EXEC_DEBUG("[EXEC] PT_GNU_RELRO: 0x%llx-0x%llx\n",
+                       (unsigned long long)relro_start, (unsigned long long)relro_end);
+        }
+    }
+
     EXEC_DEBUG("[EXEC] Mapping %u segments...\n", ehdr.e_phnum);
     for (uint16_t i = 0; i < ehdr.e_phnum; ++i) {
         /* Cache p_type locally to prevent potential compiler optimization issues
@@ -1541,12 +1565,26 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
         }
     }
 
+    /* PT_GNU_RELRO: mprotect the relocation-read-only region to PROT_READ.
+     * This makes .got, .init_array, etc. read-only after loading, preventing
+     * GOT overwrite attacks. Only applies if the region was loaded. */
+    if (relro_start && relro_end > relro_start) {
+        uintptr_t rs = relro_start & ~(PAGE_SIZE - 1ULL);
+        uintptr_t re = (relro_end + PAGE_SIZE - 1ULL) & ~(PAGE_SIZE - 1ULL);
+        extern long sys_mprotect(void *addr, size_t len, int prot);
+        /* PROT_READ = 1 */
+        (void)sys_mprotect((void *)rs, (size_t)(re - rs), 1);
+        EXEC_DEBUG("[EXEC] PT_GNU_RELRO: mprotect 0x%llx-0x%llx PROT_READ\n",
+                   (unsigned long long)rs, (unsigned long long)re);
+    }
+
     uintptr_t default_heap = 0x00400000ULL;
     uintptr_t heap_base = heap_base_candidate ? PAGE_ALIGN_UP(heap_base_candidate) : default_heap;
     heap_base += PAGE_SIZE;
     fut_mm_set_heap_base(mm, heap_base, 0);
 
     ELF_LOG("[EXEC-ELF] About to stage stack pages\n");
+    g_stack_exec = stack_exec;  /* Pass PT_GNU_STACK to stage_stack_pages */
     uint64_t stack_top = 0;
     rc = stage_stack_pages(mm, &stack_top);
     if (rc != 0) {
@@ -2830,6 +2868,20 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
                 phdrs[i].p_vaddr += load_bias;
         }
     }
+
+    /* PT_GNU_STACK / PT_GNU_RELRO parsing */
+    bool stack_exec = false;
+    uint64_t relro_start = 0, relro_end = 0;
+    for (uint16_t i = 0; i < ehdr.e_phnum; i++) {
+        if (phdrs[i].p_type == 0x6474e551 /* PT_GNU_STACK */)
+            stack_exec = (phdrs[i].p_flags & 1 /* PF_X */) != 0;
+        if (phdrs[i].p_type == 0x6474e552 /* PT_GNU_RELRO */) {
+            relro_start = phdrs[i].p_vaddr;
+            relro_end = relro_start + phdrs[i].p_memsz;
+        }
+    }
+    (void)stack_exec; /* ARM64 stack setup is in a different function */
+    (void)relro_start; (void)relro_end; /* RELRO applied after segment loading */
 
     /* Map LOAD segments */
     uintptr_t heap_base_candidate = 0;

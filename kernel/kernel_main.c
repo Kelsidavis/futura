@@ -1288,7 +1288,7 @@ void fut_kernel_main(void) {
                   "\n"
                   "  Welcome to Futura OS 0.4.0 (aarch64)\n"
                   "\n"
-                  "  * 65 built-in commands — type 'help'\n"
+                  "  * 72 built-in commands — type 'help'\n"
                   "  * Glob expansion: ls *.txt, cat /etc/*\n"
                   "  * Command substitution: VAR=$(cmd), echo $(date)\n"
                   "  * Scripting: for/while/if, source, pipes, redirects\n"

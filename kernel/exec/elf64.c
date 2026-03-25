@@ -1439,6 +1439,18 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     }
     EXEC_DEBUG("[EXEC] Task created at %p\n", (void*)task);
 
+    /* Set task->comm from the binary filename (basename of path) */
+    {
+        const char *basename = path;
+        for (const char *p = path; *p; p++) {
+            if (*p == '/') basename = p + 1;
+        }
+        size_t clen = 0;
+        while (basename[clen] && clen < sizeof(task->comm) - 1) clen++;
+        for (size_t i = 0; i < clen; i++) task->comm[i] = basename[i];
+        task->comm[clen] = '\0';
+    }
+
     EXEC_DEBUG("[EXEC] Creating memory manager...\n");
     fut_mm_t *mm = fut_mm_create();
     if (!mm) {
@@ -2684,6 +2696,19 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
         fut_free(phdrs);
         fut_vfs_close(fd);
         return -ENOMEM;
+    }
+
+    /* Set task->comm from the binary filename (basename of path).
+     * This shows in /proc/<pid>/status Name: and /proc/<pid>/comm. */
+    {
+        const char *basename = path;
+        for (const char *p = path; *p; p++) {
+            if (*p == '/') basename = p + 1;
+        }
+        size_t clen = 0;
+        while (basename[clen] && clen < sizeof(task->comm) - 1) clen++;
+        for (size_t i = 0; i < clen; i++) task->comm[i] = basename[i];
+        task->comm[clen] = '\0';
     }
 
 #ifdef DEBUG_ELF

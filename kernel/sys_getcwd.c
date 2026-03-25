@@ -218,7 +218,7 @@ long sys_getcwd(char *buf, size_t size) {
      * The field current_dir_ino is already initialized to root (inode 1)
      * and updated by chdir() when the working directory changes.
      */
-    uint64_t cwd_inode = task->current_dir_ino;
+    (void)task->current_dir_ino;  /* inode used for VFS path walking (future) */
 
     /* Phase 3: Build path from current directory
      * For root directory, return "/" directly.
@@ -231,11 +231,13 @@ long sys_getcwd(char *buf, size_t size) {
      */
     char root_path[] = "/";  /* Build path in kernel buffer first */
 
-    /* Determine the path string to return */
+    /* Determine the path string to return.
+     * Always prefer cwd_cache when available — the inode-based check
+     * (cwd_inode != 1) fails for mount point roots which also have inode 1. */
     const char *path_str = root_path;
     size_t path_len = 1;
 
-    if (cwd_inode != 1 && task->cwd_cache && task->cwd_cache[0] != '\0') {
+    if (task->cwd_cache && task->cwd_cache[0] != '\0') {
         /* Use cached path from chdir() */
         path_str = task->cwd_cache;
         path_len = strnlen(path_str, 255);

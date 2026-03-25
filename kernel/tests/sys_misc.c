@@ -51308,6 +51308,111 @@ __attribute__((noinline)) static void test_auxv_and_status_fields(void) {
     }
 }
 
+/* Tests 1717-1720: chdir + getcwd round-trip verification */
+__attribute__((noinline)) static void test_chdir_getcwd_roundtrip(void) {
+    extern long sys_chdir(const char *path);
+    extern long sys_getcwd(char *buf, size_t size);
+    extern long sys_fchdir(int fd);
+    extern long sys_open(const char *, int, int);
+    extern long sys_close(int);
+    static char cwdbuf[256];
+
+    /* Save original cwd */
+    sys_getcwd(cwdbuf, sizeof(cwdbuf));
+    static char saved_cwd[256];
+    for (int i = 0; i < 256; i++) { saved_cwd[i] = cwdbuf[i]; if (!cwdbuf[i]) break; }
+
+    /* Test 1717: chdir("/tmp") + getcwd() → "/tmp" */
+    fut_printf("[MISC-TEST] Test 1717: chdir+getcwd round-trip\n");
+    {
+        long r = sys_chdir("/tmp");
+        if (r == 0) {
+            sys_getcwd(cwdbuf, sizeof(cwdbuf));
+            if (cwdbuf[0] == '/' && cwdbuf[1] == 't' && cwdbuf[2] == 'm' &&
+                cwdbuf[3] == 'p' && (cwdbuf[4] == '\0' || cwdbuf[4] == '/')) {
+                fut_printf("[MISC-TEST] ✓ Test 1717: getcwd='%s'\n", cwdbuf);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1717: getcwd='%s' (expected /tmp)\n", cwdbuf);
+                fut_test_fail(1717);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1717: chdir /tmp → %ld\n", r);
+            fut_test_fail(1717);
+        }
+    }
+
+    /* Test 1718: chdir("..") from /tmp → getcwd returns "/" */
+    fut_printf("[MISC-TEST] Test 1718: chdir(..) from /tmp → /\n");
+    {
+        sys_chdir("/tmp");
+        long r = sys_chdir("..");
+        if (r == 0) {
+            sys_getcwd(cwdbuf, sizeof(cwdbuf));
+            if (cwdbuf[0] == '/' && cwdbuf[1] == '\0') {
+                fut_printf("[MISC-TEST] ✓ Test 1718: chdir(..) → '%s'\n", cwdbuf);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1718: getcwd='%s' (expected /)\n", cwdbuf);
+                fut_test_fail(1718);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1718: chdir(..) → %ld\n", r);
+            fut_test_fail(1718);
+        }
+    }
+
+    /* Test 1719: fchdir(dirfd) works */
+    fut_printf("[MISC-TEST] Test 1719: fchdir(dirfd) changes cwd\n");
+    {
+        sys_chdir("/");  /* reset to root */
+        long dirfd = sys_open("/tmp", 0x10000 /* O_DIRECTORY */, 0);
+        if (dirfd >= 0) {
+            long r = sys_fchdir((int)dirfd);
+            sys_close((int)dirfd);
+            if (r == 0) {
+                sys_getcwd(cwdbuf, sizeof(cwdbuf));
+                if (cwdbuf[0] == '/' && cwdbuf[1] == 't' && cwdbuf[2] == 'm' && cwdbuf[3] == 'p') {
+                    fut_printf("[MISC-TEST] ✓ Test 1719: fchdir → '%s'\n", cwdbuf);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1719: getcwd='%s'\n", cwdbuf);
+                    fut_test_fail(1719);
+                }
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1719: fchdir → %ld\n", r);
+                fut_test_fail(1719);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1719: open /tmp dir → %ld\n", dirfd);
+            fut_test_fail(1719);
+        }
+    }
+
+    /* Test 1720: chdir to nested path /dev/pts works */
+    fut_printf("[MISC-TEST] Test 1720: chdir to nested /dev/pts\n");
+    {
+        long r = sys_chdir("/dev/pts");
+        if (r == 0) {
+            sys_getcwd(cwdbuf, sizeof(cwdbuf));
+            if (cwdbuf[0] == '/' && cwdbuf[1] == 'd' && cwdbuf[2] == 'e' && cwdbuf[3] == 'v' &&
+                cwdbuf[4] == '/' && cwdbuf[5] == 'p' && cwdbuf[6] == 't' && cwdbuf[7] == 's') {
+                fut_printf("[MISC-TEST] ✓ Test 1720: nested getcwd='%s'\n", cwdbuf);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1720: getcwd='%s' (expected /dev/pts)\n", cwdbuf);
+                fut_test_fail(1720);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1720: chdir /dev/pts → %ld\n", r);
+            fut_test_fail(1720);
+        }
+    }
+
+    /* Restore original cwd */
+    sys_chdir(saved_cwd);
+}
+
 /* Tests 1713-1716: PT_INTERP parsing + exec edge cases */
 __attribute__((noinline)) static void test_pt_interp_and_exec(void) {
     extern long sys_execve(const char *, char *const *, char *const *);
@@ -55382,6 +55487,7 @@ void fut_misc_test_thread(void *arg) {
     test_auxv_and_status_fields(); /* Tests 1705-1708 */
     test_elf_phdr_handling();      /* Tests 1709-1712 */
     test_pt_interp_and_exec();    /* Tests 1713-1716 */
+    test_chdir_getcwd_roundtrip(); /* Tests 1717-1720 */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -215,11 +215,20 @@ long sys_fchdir(int fd) {
      * walking the vnode->parent chain (same as sys_chdir and fut_vfs_chdir). */
     {
         char *built = fut_vnode_build_path(vnode, task->cwd_cache_buf, 256);
-        if (built && task->cwd_cache_buf[0] != '\0') {
+        /* If build_path returned "/" but we have a real path from the file
+         * struct, use that instead (handles mount-point roots). */
+        if (built && task->cwd_cache_buf[0] == '/' && task->cwd_cache_buf[1] == '\0' &&
+            file->path && file->path[0] == '/' && file->path[1] != '\0') {
+            size_t plen = 0;
+            while (file->path[plen] && plen < 255) {
+                task->cwd_cache_buf[plen] = file->path[plen];
+                plen++;
+            }
+            task->cwd_cache_buf[plen] = '\0';
+        }
+        if (task->cwd_cache_buf[0] != '\0') {
             task->cwd_cache = task->cwd_cache_buf;
         } else {
-            /* Fallback: if build fails, clear the cache so getcwd returns "/" */
-            task->cwd_cache_buf[0] = '\0';
             task->cwd_cache = NULL;
         }
     }

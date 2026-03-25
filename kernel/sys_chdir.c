@@ -338,8 +338,14 @@ long sys_chdir(const char *pathname) {
     char *cache_path = task->cwd_cache_buf;
     if (cache_path) {
         char *built = fut_vnode_build_path(vnode, cache_path, 256);
-        if (!built || cache_path[0] == '\0') {
-            /* Fallback: copy raw path if vnode chain doesn't work */
+        /* Fallback: if build_path returned "/" but input is an absolute path
+         * that isn't "/", the vnode is a mount root and the parent chain can't
+         * see the mount point name.  Use the raw input path instead.
+         * Only for absolute paths — relative paths like ".." should use the
+         * built path since we don't resolve them here. */
+        if (!built || cache_path[0] == '\0' ||
+            (cache_path[0] == '/' && cache_path[1] == '\0' &&
+             kpath[0] == '/' && kpath[1] != '\0')) {
             size_t path_len = 0;
             while (kpath[path_len] && path_len < 255) {
                 cache_path[path_len] = kpath[path_len];

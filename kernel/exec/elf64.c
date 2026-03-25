@@ -1569,15 +1569,6 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     /* NOW it's safe to attach mm to task - all user pages are mapped */
     fut_task_set_mm(task, mm);
 
-    /* Close the ELF binary fd BEFORE inheriting fds to the child task.
-     * The binary was opened in the caller's fd table for reading ELF segments.
-     * If not closed before inheritance, the child would inherit it (potentially
-     * as fd 0/stdin), causing the child to read ELF data instead of console. */
-    fut_vfs_close(fd);
-    fut_free(phdrs);
-    fd = -1;     /* Mark as closed to prevent double-close later */
-    phdrs = NULL;
-
     /* Inherit non-CLOEXEC file descriptors from the calling task, then fill
      * any missing stdio fds (0, 1, 2) with /dev/console.  POSIX requires
      * execve to preserve open file descriptors (minus those with FD_CLOEXEC).
@@ -1680,8 +1671,8 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     thread->fs_base = USER_TLS_BASE;
     __asm__ volatile("" ::: "memory");  /* Ensure store is visible */
     __asm__ volatile("sti" ::: "memory");
-    if (phdrs) fut_free(phdrs);
-    if (fd >= 0) fut_vfs_close(fd);
+    fut_free(phdrs);
+    fut_vfs_close(fd);
 
     /* Free the kernel copies of argv/envp - they've been copied to user stack */
     if (kargv && kargv_needs_free) {

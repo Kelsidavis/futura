@@ -1702,14 +1702,28 @@ static void arm64_init_spawner_thread(void *arg) {
 
     fut_printf("[INIT] Boot self-tests complete (22 checks passed)\n");
 
-    /* Forktest disabled — running it concurrently with the shell causes
-     * page interference (the forktest's freed pages are reused by the
-     * shell with stale data, corrupting code pages). */
-    /* {
+    /* Run forktest and wait for completion before launching the shell.
+     * The forktest must finish before the shell starts, otherwise its
+     * freed PMM pages may be reused by the shell with stale data. */
+    {
         char *forktest_argv[] = {"/bin/forktest", NULL};
         char *forktest_envp[] = {"PATH=/sbin:/bin", NULL};
         ret = fut_exec_elf("/bin/forktest", forktest_argv, forktest_envp);
-    } */
+        if (ret == 0) {
+            extern long sys_waitpid(int pid, int *status, int options);
+            int forktest_status = 0;
+            long wr;
+            /* Wait for forktest + its children to finish.  Loop because
+             * waitpid may return -EINTR from signals or return the child
+             * PID before the parent PID. */
+            for (int tries = 0; tries < 10; tries++) {
+                wr = sys_waitpid(-1, &forktest_status, 0);
+                if (wr < 0 && wr != -4 /* EINTR */) break;
+                /* Small delay for task cleanup to complete */
+                for (volatile int d = 0; d < 5000000; d++);
+            }
+        }
+    }
 
     /* Launch shell — restart if it exits */
     char *shell_argv[] = {"/bin/shell", NULL};

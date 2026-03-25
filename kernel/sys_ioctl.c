@@ -795,18 +795,13 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
             }
             if (!argp)
                 return -EFAULT;
-            /*
-             * struct termios layout (asm/termbits.h):
-             *   offset  0: c_iflag (u32)
-             *   offset  4: c_oflag (u32)
-             *   offset  8: c_cflag (u32)
-             *   offset 12: c_lflag (u32)
-             *   offset 16: c_line  (u8)
-             *   offset 17: c_cc[19] (u8 × 19) — NCCS=19 on Linux
-             *
-             * Return canonical-mode settings matching a freshly-opened Linux
-             * terminal so that applications see a sane line-discipline state.
-             */
+            /* Delegate to chrdev ioctl if available (e.g. PTY has per-pair termios) */
+            if (file->chr_ops->ioctl) {
+                int rc = file->chr_ops->ioctl(file->chr_inode, file->chr_private,
+                                               request, (unsigned long)argp);
+                if (rc != -ENOTTY) return rc;
+            }
+            /* Fall through to global termios for console/UART */
             termios_init();
             if (fut_copy_to_user(argp, g_termios, sizeof(g_termios)) != 0)
                 return -EFAULT;
@@ -819,6 +814,12 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
                 return -ENOTTY;
             if (!argp)
                 return -EFAULT;
+            /* Delegate to chrdev ioctl if available (e.g. PTY has per-pair termios) */
+            if (file->chr_ops->ioctl) {
+                int rc = file->chr_ops->ioctl(file->chr_inode, file->chr_private,
+                                               request, (unsigned long)argp);
+                if (rc != -ENOTTY) return rc;
+            }
             termios_init();
             char new_termios[60];
             if (fut_copy_from_user(new_termios, argp, sizeof(new_termios)) != 0)
@@ -831,6 +832,12 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
                 return -ENOTTY;
             if (!argp)
                 return -EFAULT;
+            /* Delegate to chrdev ioctl if available (e.g. PTY has per-pair winsize) */
+            if (file->chr_ops->ioctl) {
+                int rc = file->chr_ops->ioctl(file->chr_inode, file->chr_private,
+                                               request, (unsigned long)argp);
+                if (rc != -ENOTTY) return rc;
+            }
 #ifdef KERNEL_VIRTUAL_BASE
             if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE) {
                 __builtin_memcpy(argp, &g_winsize, sizeof(g_winsize));
@@ -845,6 +852,12 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
                 return -ENOTTY;
             if (!argp)
                 return -EFAULT;
+            /* Delegate to chrdev ioctl if available (e.g. PTY has per-pair winsize) */
+            if (file->chr_ops->ioctl) {
+                int rc = file->chr_ops->ioctl(file->chr_inode, file->chr_private,
+                                               request, (unsigned long)argp);
+                if (rc != -ENOTTY) return rc;
+            }
             struct { uint16_t ws_row; uint16_t ws_col;
                      uint16_t ws_xpixel; uint16_t ws_ypixel; } new_ws;
 #ifdef KERNEL_VIRTUAL_BASE

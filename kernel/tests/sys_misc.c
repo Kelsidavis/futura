@@ -54246,6 +54246,147 @@ void fut_misc_test_thread(void *arg) {
         }
     }
 
+    /* ============================================================
+     * Tests 1673-1676: PTY per-pair TCGETS/TCSETS independence
+     * ============================================================ */
+    {
+        extern long sys_open(const char *, int, int);
+        extern long sys_close(int);
+        extern long sys_ioctl(int fd, unsigned long request, void *argp);
+
+        /* Open two independent PTY pairs */
+        long m1 = sys_open("/dev/ptmx", 0x0002, 0);
+        long m2 = sys_open("/dev/ptmx", 0x0002, 0);
+        int n1 = -1, n2 = -1;
+        if (m1 >= 0) sys_ioctl((int)m1, 0x80045430, &n1);
+        if (m2 >= 0) sys_ioctl((int)m2, 0x80045430, &n2);
+        /* Unlock both */
+        int zero = 0;
+        if (m1 >= 0) sys_ioctl((int)m1, 0x40045431, &zero);
+        if (m2 >= 0) sys_ioctl((int)m2, 0x40045431, &zero);
+        /* Open slave endpoints */
+        char p1[24], p2[24];
+        {
+            const char *pfx = "/dev/pts/";
+            int i = 0; while (pfx[i]) { p1[i] = pfx[i]; p2[i] = pfx[i]; i++; }
+            if (n1 >= 10) p1[i++] = (char)('0' + n1/10);
+            p1[i++] = (char)('0' + n1%10); p1[i] = '\0';
+            i = 9;
+            if (n2 >= 10) p2[i++] = (char)('0' + n2/10);
+            p2[i++] = (char)('0' + n2%10); p2[i] = '\0';
+        }
+        long s1 = (n1 >= 0) ? sys_open(p1, 0x0002, 0) : -1;
+        long s2 = (n2 >= 0) ? sys_open(p2, 0x0002, 0) : -1;
+
+        /* Test 1673: TCSETS on PTY1 does not affect PTY2 */
+        fut_printf("[MISC-TEST] Test 1673: per-PTY TCSETS independence\n");
+        if (s1 >= 0 && s2 >= 0) {
+            /* Read original termios from PTY2 */
+            char orig[60];
+            sys_ioctl((int)s2, 0x5401 /* TCGETS */, orig);
+            /* Modify PTY1 termios: clear ECHO (bit 3 in c_lflag at offset 12) */
+            char t1[60];
+            sys_ioctl((int)s1, 0x5401, t1);
+            uint32_t lflag;
+            __builtin_memcpy(&lflag, t1 + 12, 4);
+            lflag &= ~(uint32_t)8;  /* Clear ECHO */
+            __builtin_memcpy(t1 + 12, &lflag, 4);
+            sys_ioctl((int)s1, 0x5402 /* TCSETS */, t1);
+            /* Read PTY2 termios — should be unchanged */
+            char t2[60];
+            sys_ioctl((int)s2, 0x5401, t2);
+            uint32_t lflag2;
+            __builtin_memcpy(&lflag2, t2 + 12, 4);
+            if (lflag2 & 8) {  /* ECHO still set on PTY2 */
+                fut_printf("[MISC-TEST] ✓ Test 1673: PTY2 ECHO still set after PTY1 cleared it\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1673: PTY2 lflag=0x%x (ECHO cleared, leaked!)\n", lflag2);
+                fut_test_fail(1673);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1673: could not open two PTY pairs\n");
+            fut_test_fail(1673);
+        }
+
+        /* Test 1674: TCGETS on PTY slave returns per-pair termios, not global */
+        fut_printf("[MISC-TEST] Test 1674: TCGETS on PTY slave returns per-pair termios\n");
+        if (s1 >= 0) {
+            char t_slave[60], t_master[60];
+            sys_ioctl((int)s1, 0x5401, t_slave);
+            sys_ioctl((int)m1, 0x5401, t_master);
+            /* Both should see the same modified termios (ECHO cleared in test 1673) */
+            uint32_t lf_s, lf_m;
+            __builtin_memcpy(&lf_s, t_slave + 12, 4);
+            __builtin_memcpy(&lf_m, t_master + 12, 4);
+            if (!(lf_s & 8) && !(lf_m & 8)) {  /* Both have ECHO cleared */
+                fut_printf("[MISC-TEST] ✓ Test 1674: slave+master see same termios (ECHO cleared)\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1674: slave lflag=0x%x master lflag=0x%x\n", lf_s, lf_m);
+                fut_test_fail(1674);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1674: skipped\n");
+            fut_test_fail(1674);
+        }
+
+        /* Test 1675: per-PTY TIOCGWINSZ independence */
+        fut_printf("[MISC-TEST] Test 1675: per-PTY TIOCGWINSZ independence\n");
+        if (m1 >= 0 && m2 >= 0) {
+            struct { uint16_t r, c, xp, yp; } ws1 = {40, 100, 0, 0};
+            struct { uint16_t r, c, xp, yp; } ws2 = {25, 80, 0, 0};
+            sys_ioctl((int)m1, 0x5414 /* TIOCSWINSZ */, &ws1);
+            sys_ioctl((int)m2, 0x5414, &ws2);
+            struct { uint16_t r, c, xp, yp; } got1 = {0}, got2 = {0};
+            sys_ioctl((int)m1, 0x5413 /* TIOCGWINSZ */, &got1);
+            sys_ioctl((int)m2, 0x5413, &got2);
+            if (got1.r == 40 && got1.c == 100 && got2.r == 25 && got2.c == 80) {
+                fut_printf("[MISC-TEST] ✓ Test 1675: PTY1=40×100 PTY2=25×80 (independent)\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1675: PTY1=%ux%u PTY2=%ux%u\n",
+                           got1.r, got1.c, got2.r, got2.c);
+                fut_test_fail(1675);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1675: skipped\n");
+            fut_test_fail(1675);
+        }
+
+        /* Test 1676: TCSETS on PTY master, TCGETS on slave sees change */
+        fut_printf("[MISC-TEST] Test 1676: TCSETS master → TCGETS slave sees change\n");
+        if (m2 >= 0 && s2 >= 0) {
+            char t[60];
+            sys_ioctl((int)m2, 0x5401, t);
+            /* Set a distinctive c_iflag: ICRNL = 0x100 */
+            uint32_t iflag = 0x100;
+            __builtin_memcpy(t, &iflag, 4);
+            sys_ioctl((int)m2, 0x5402, t);
+            /* Read back from slave */
+            char t_s[60];
+            sys_ioctl((int)s2, 0x5401, t_s);
+            uint32_t iflag_s;
+            __builtin_memcpy(&iflag_s, t_s, 4);
+            if (iflag_s == 0x100) {
+                fut_printf("[MISC-TEST] ✓ Test 1676: slave sees master's TCSETS (iflag=0x100)\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1676: slave iflag=0x%x (expected 0x100)\n", iflag_s);
+                fut_test_fail(1676);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1676: skipped\n");
+            fut_test_fail(1676);
+        }
+
+        /* Cleanup */
+        if (s1 >= 0) sys_close((int)s1);
+        if (s2 >= 0) sys_close((int)s2);
+        if (m1 >= 0) sys_close((int)m1);
+        if (m2 >= 0) sys_close((int)m2);
+    }
+
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");
     fut_printf("[MISC-TEST] ========================================\n");

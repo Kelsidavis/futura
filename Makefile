@@ -572,6 +572,7 @@ KERNEL_SOURCES := \
     kernel/sys_copy_file_range.c \
     kernel/sys_rseq.c \
     kernel/dev_null.c \
+    kernel/pty.c \
     kernel/sys_statx.c \
     kernel/sys_tgkill.c \
     kernel/sys_getcpu.c \

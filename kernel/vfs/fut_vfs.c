@@ -1717,6 +1717,18 @@ void vfs_close_fd_in_task(struct fut_task *task, int fd) {
 }
 
 static int try_open_chrdev(const char *path, int flags) {
+    /* Dynamic PTY slave: /dev/pts/<n> — not pre-registered in devfs */
+    if (path[0] == '/' && path[1] == 'd' && path[2] == 'e' && path[3] == 'v' &&
+        path[4] == '/' && path[5] == 'p' && path[6] == 't' && path[7] == 's' &&
+        path[8] == '/' && path[9] >= '0' && path[9] <= '9') {
+        int idx = 0;
+        for (const char *p = path + 9; *p >= '0' && *p <= '9'; p++)
+            idx = idx * 10 + (*p - '0');
+        extern int pty_open_slave(int index);
+        (void)flags;
+        return pty_open_slave(idx);
+    }
+
     unsigned major = 0;
     unsigned minor = 0;
     int devfs_ret = devfs_lookup_chr(path, &major, &minor);

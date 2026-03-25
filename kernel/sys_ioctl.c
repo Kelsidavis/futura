@@ -580,7 +580,9 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
                                    request == TCGETS || request == TCSETS ||
                                    request == TCSETSW || request == TCSETSF ||
                                    request == TIOCGPGRP || request == TIOCGSID ||
-                                   request == TIOCOUTQ);
+                                   request == TIOCOUTQ ||
+                                   request == 0x80045430 /* TIOCGPTN */ ||
+                                   request == 0x40045431 /* TIOCSPTLCK */);
                 if (argp_val >= KERNEL_VIRTUAL_BASE && !is_builtin) {
                     return -EFAULT;
                 }
@@ -702,8 +704,14 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
 
             /* Validate buffer size for _IOC-encoded ioctls
              * Uses _IOC_SIZE to check that argp buffer covers the encoded size.
-             * Prevents buffer overflows when device handlers copy full struct. */
-            if ((requires_write || requires_read) && argp != NULL && _IOC_IS_ENCODED(request)) {
+             * Prevents buffer overflows when device handlers copy full struct.
+             * Skip for kernel pointers (selftest callers with stack addresses). */
+            bool argp_is_kernel = false;
+#ifdef KERNEL_VIRTUAL_BASE
+            argp_is_kernel = ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE);
+#endif
+            if ((requires_write || requires_read) && argp != NULL &&
+                _IOC_IS_ENCODED(request) && !argp_is_kernel) {
                 unsigned int ioc_size = _IOC_SIZE(request);
                 if (ioc_size > 0 && ioc_size <= 16384) {
                     /* Validate full buffer accessibility */
@@ -932,6 +940,13 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
                     if (sock_bytes >= 0)
                         bytes_available = sock_bytes;
                 } else {
+                    /* PTY: delegate to chr_ops->ioctl which handles FIONREAD */
+                    if (file->chr_ops && file->chr_ops->ioctl) {
+                        int pty_rc = file->chr_ops->ioctl(file->chr_inode,
+                                        file->chr_private, FIONREAD, (unsigned long)argp);
+                        if (pty_rc == 0)
+                            return 0;  /* chr_ops handled FIONREAD (e.g. PTY) */
+                    }
                     /* Eventfd: 0 or 8 depending on counter */
                     extern int eventfd_fionread(struct fut_file *file);
                     int efd_bytes = eventfd_fionread(file);

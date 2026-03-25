@@ -157,6 +157,11 @@ static struct poll_scan_stats poll_scan_fds(struct pollfd *kfds, unsigned long n
             if (fut_inotify_poll(file, epoll_req, &epoll_ready))
                 handled = true;
         }
+        if (!handled) {
+            extern bool fut_pty_poll(struct fut_file *f, uint32_t req, uint32_t *out);
+            if (fut_pty_poll(file, epoll_req, &epoll_ready))
+                handled = true;
+        }
 
         if (!handled) {
             fut_socket_t *socket = get_socket_from_fd(kfds[i].fd);

@@ -54089,6 +54089,163 @@ void fut_misc_test_thread(void *arg) {
         }
     }
 
+    /* ============================================================
+     * Tests 1665-1672: PTY (pseudo-terminal) subsystem
+     * ============================================================ */
+    {
+        extern long sys_open(const char *, int, int);
+        extern long sys_close(int);
+        extern long sys_read(int, void *, size_t);
+        extern long sys_write(int, const void *, size_t);
+        extern long sys_ioctl(int fd, unsigned long request, void *argp);
+
+        /* Test 1665: open /dev/ptmx returns valid fd */
+        fut_printf("[MISC-TEST] Test 1665: open /dev/ptmx returns valid fd\n");
+        long mfd = sys_open("/dev/ptmx", 0x0002 /* O_RDWR */, 0);
+        if (mfd >= 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1665: /dev/ptmx fd=%ld\n", mfd);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1665: open /dev/ptmx returned %ld\n", mfd);
+            fut_test_fail(1665);
+        }
+
+        /* Test 1666: TIOCGPTN returns valid pts number */
+        fut_printf("[MISC-TEST] Test 1666: TIOCGPTN returns pts number\n");
+        int pts_num = -1;
+        long r = sys_ioctl((int)mfd, 0x80045430 /* TIOCGPTN */, (void *)&pts_num);
+        if (r == 0 && pts_num >= 0 && pts_num < 64) {
+            fut_printf("[MISC-TEST] ✓ Test 1666: TIOCGPTN pts_num=%d\n", pts_num);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1666: TIOCGPTN r=%ld pts_num=%d\n", r, pts_num);
+            fut_test_fail(1666);
+        }
+
+        /* Test 1667: unlock slave and open /dev/pts/<n> */
+        fut_printf("[MISC-TEST] Test 1667: unlock + open /dev/pts/%d\n", pts_num);
+        int zero = 0;
+        sys_ioctl((int)mfd, 0x40045431 /* TIOCSPTLCK */, (void *)&zero);
+        char pts_path[32];
+        {
+            /* Build "/dev/pts/<n>" path */
+            const char *prefix = "/dev/pts/";
+            int pi = 0;
+            while (prefix[pi]) { pts_path[pi] = prefix[pi]; pi++; }
+            if (pts_num >= 10) { pts_path[pi++] = (char)('0' + pts_num / 10); }
+            pts_path[pi++] = (char)('0' + pts_num % 10);
+            pts_path[pi] = '\0';
+        }
+        long sfd = sys_open(pts_path, 0x0002 /* O_RDWR */, 0);
+        if (sfd >= 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1667: opened %s fd=%ld\n", pts_path, sfd);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1667: open %s returned %ld\n", pts_path, sfd);
+            fut_test_fail(1667);
+        }
+
+        /* Test 1668: write master → read slave */
+        fut_printf("[MISC-TEST] Test 1668: write master → read slave\n");
+        if (sfd >= 0) {
+            const char *msg = "hello pty";
+            long wr = sys_write((int)mfd, msg, 9);
+            char rbuf[16] = {0};
+            long rd = sys_read((int)sfd, rbuf, 16);
+            if (wr == 9 && rd == 9 && __builtin_memcmp(rbuf, "hello pty", 9) == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1668: master→slave 'hello pty'\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1668: wr=%ld rd=%ld buf='%.9s'\n", wr, rd, rbuf);
+                fut_test_fail(1668);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1668: skipped (no slave fd)\n");
+            fut_test_fail(1668);
+        }
+
+        /* Test 1669: write slave → read master */
+        fut_printf("[MISC-TEST] Test 1669: write slave → read master\n");
+        if (sfd >= 0) {
+            const char *msg = "world";
+            long wr = sys_write((int)sfd, msg, 5);
+            char rbuf[16] = {0};
+            long rd = sys_read((int)mfd, rbuf, 16);
+            if (wr == 5 && rd == 5 && __builtin_memcmp(rbuf, "world", 5) == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1669: slave→master 'world'\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1669: wr=%ld rd=%ld buf='%.5s'\n", wr, rd, rbuf);
+                fut_test_fail(1669);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1669: skipped (no slave fd)\n");
+            fut_test_fail(1669);
+        }
+
+        /* Test 1670: TIOCGWINSZ / TIOCSWINSZ round-trip */
+        fut_printf("[MISC-TEST] Test 1670: TIOCSWINSZ/TIOCGWINSZ round-trip\n");
+        {
+            struct { uint16_t ws_row, ws_col, ws_xpixel, ws_ypixel; } ws_set = {50, 132, 0, 0};
+            struct { uint16_t ws_row, ws_col, ws_xpixel, ws_ypixel; } ws_get = {0};
+            sys_ioctl((int)mfd, 0x5414 /* TIOCSWINSZ */, (void *)&ws_set);
+            r = sys_ioctl((int)sfd >= 0 ? (int)sfd : (int)mfd,
+                          0x5413 /* TIOCGWINSZ */, (void *)&ws_get);
+            if (r == 0 && ws_get.ws_row == 50 && ws_get.ws_col == 132) {
+                fut_printf("[MISC-TEST] ✓ Test 1670: winsize 50×132\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1670: r=%ld row=%u col=%u\n",
+                           r, ws_get.ws_row, ws_get.ws_col);
+                fut_test_fail(1670);
+            }
+        }
+
+        /* Test 1671: FIONREAD on master after slave write */
+        fut_printf("[MISC-TEST] Test 1671: FIONREAD on master\n");
+        if (sfd >= 0) {
+            /* Clear any leftover data first */
+            char drain[256];
+            sys_read((int)mfd, drain, sizeof(drain));
+            /* Write 7 bytes from slave */
+            sys_write((int)sfd, "testing", 7);
+            int avail = 0;
+            r = sys_ioctl((int)mfd, 0x541B /* FIONREAD */, (void *)&avail);
+            if (r == 0 && avail == 7) {
+                fut_printf("[MISC-TEST] ✓ Test 1671: FIONREAD=%d\n", avail);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1671: r=%ld avail=%d\n", r, avail);
+                fut_test_fail(1671);
+            }
+            /* Drain data */
+            sys_read((int)mfd, drain, sizeof(drain));
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1671: skipped (no slave fd)\n");
+            fut_test_fail(1671);
+        }
+
+        /* Test 1672: close master → slave read returns 0 (EOF) */
+        fut_printf("[MISC-TEST] Test 1672: close master → slave EOF\n");
+        if (sfd >= 0) {
+            sys_close((int)mfd);
+            char rbuf[8] = {0};
+            long rd = sys_read((int)sfd, rbuf, 8);
+            if (rd == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1672: slave read=0 (EOF after master close)\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1672: slave read=%ld (expected 0)\n", rd);
+                fut_test_fail(1672);
+            }
+            sys_close((int)sfd);
+        } else {
+            if (mfd >= 0) sys_close((int)mfd);
+            fut_printf("[MISC-TEST] ✗ Test 1672: skipped (no slave fd)\n");
+            fut_test_fail(1672);
+        }
+    }
+
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");
     fut_printf("[MISC-TEST] ========================================\n");

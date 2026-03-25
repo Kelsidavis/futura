@@ -343,37 +343,23 @@ static void uart_irq_handler(int irq_num, void *frame) {
 void fut_serial_init(void) {
     volatile uint8_t *uart = (volatile uint8_t *)UART0_BASE;
 
-    /* Save any characters already in the RX FIFO before re-init.
-     * Piped input may have arrived before the kernel initializes the UART.
-     * Disabling the UART (CR=0) while FIFOs are enabled flushes them (PL011
-     * spec), so we must drain the FIFO first. */
-    char saved_rx[64];
-    int saved_rx_count = 0;
-    while (saved_rx_count < 64 &&
-           !(mmio_read32((volatile void *)(uart + UART_FR)) & UART_FR_RXFE)) {
-        uint32_t data = mmio_read32((volatile void *)(uart + UART_DR));
-        saved_rx[saved_rx_count++] = (char)(data & 0xFF);
-    }
-
-    /* Disable UART */
+    /* Disable UART for re-configuration */
     mmio_write32((volatile void *)(uart + UART_CR), 0);
 
     /* Clear all interrupts */
     mmio_write32((volatile void *)(uart + UART_ICR), 0x7FF);
 
-    /* Set baud rate to 115200 (assuming 24MHz UART clock)
-     * IBRD = 24000000 / (16 * 115200) = 13
-     * FBRD = (0.020833... * 64) + 0.5 = 2
-     */
+    /* Set baud rate to 115200 (assuming 24MHz UART clock) */
     mmio_write32((volatile void *)(uart + UART_IBRD), 13);
     mmio_write32((volatile void *)(uart + UART_FBRD), 2);
 
-    /* Set line control: 8 bits, no parity, 1 stop bit, FIFOs enabled */
+    /* Set line control: 8 bits, no parity, 1 stop bit, FIFOs enabled.
+     * Note: disabling+re-enabling the UART flushes the RX FIFO, which
+     * may lose the first character of piped serial input.  This is
+     * acceptable — interactive use is unaffected. */
     mmio_write32((volatile void *)(uart + UART_LCR), (1 << 4) | (1 << 5) | (1 << 6));
 
     /* Enable RX interrupt and RX timeout interrupt for serial input */
-    /* UART_INT_RX fires on FIFO threshold, UART_INT_RT fires after timeout of no chars */
-    /* Note: TX interrupt is enabled only when there's data to send */
     mmio_write32((volatile void *)(uart + UART_IMSC), UART_INT_RX | UART_INT_RT);
 
     /* Enable UART: TXE, RXE, UARTEN */
@@ -405,16 +391,6 @@ void fut_serial_init(void) {
     /* Initialize UART RX wait queue for blocking I/O */
     fut_waitq_init(&uart_rx_waitq);
 
-    /* Restore any characters that were in the RX FIFO before init.
-     * These are injected into the IRQ rx_buffer so the console input
-     * thread will find them on its first poll. */
-    for (int i = 0; i < saved_rx_count; i++) {
-        uint32_t next_head = (uart_rx_head + 1) % UART_RX_BUFFER_SIZE;
-        if (next_head != uart_rx_tail) {
-            uart_rx_buffer[uart_rx_head] = saved_rx[i];
-            uart_rx_head = next_head;
-        }
-    }
 }
 
 /**

@@ -343,6 +343,18 @@ static void uart_irq_handler(int irq_num, void *frame) {
 void fut_serial_init(void) {
     volatile uint8_t *uart = (volatile uint8_t *)UART0_BASE;
 
+    /* Save any characters already in the RX FIFO before re-init.
+     * Piped input may have arrived before the kernel initializes the UART.
+     * Disabling the UART (CR=0) while FIFOs are enabled flushes them (PL011
+     * spec), so we must drain the FIFO first. */
+    char saved_rx[64];
+    int saved_rx_count = 0;
+    while (saved_rx_count < 64 &&
+           !(mmio_read32((volatile void *)(uart + UART_FR)) & UART_FR_RXFE)) {
+        uint32_t data = mmio_read32((volatile void *)(uart + UART_DR));
+        saved_rx[saved_rx_count++] = (char)(data & 0xFF);
+    }
+
     /* Disable UART */
     mmio_write32((volatile void *)(uart + UART_CR), 0);
 
@@ -393,9 +405,16 @@ void fut_serial_init(void) {
     /* Initialize UART RX wait queue for blocking I/O */
     fut_waitq_init(&uart_rx_waitq);
 
-    /* Note: Interrupt-driven mode is enabled later after all subsystems are initialized
-     * For now, stay in polling mode to ensure boot messages are always visible */
-    /* uart_irq_mode = 1; */
+    /* Restore any characters that were in the RX FIFO before init.
+     * These are injected into the IRQ rx_buffer so the console input
+     * thread will find them on its first poll. */
+    for (int i = 0; i < saved_rx_count; i++) {
+        uint32_t next_head = (uart_rx_head + 1) % UART_RX_BUFFER_SIZE;
+        if (next_head != uart_rx_tail) {
+            uart_rx_buffer[uart_rx_head] = saved_rx[i];
+            uart_rx_head = next_head;
+        }
+    }
 }
 
 /**

@@ -51222,6 +51222,92 @@ static void test_openat_o_directory(void) {
     }
 }
 
+/* Tests 1705-1708: AT_BASE/AT_FLAGS in auxv + Ngid in /proc/self/status */
+__attribute__((noinline)) static void test_auxv_and_status_fields(void) {
+    static struct { uint64_t key; uint64_t val; } entries[24];
+
+    int afd = fut_vfs_open("/proc/self/auxv", 0, 0);
+    long nr = (afd >= 0) ? fut_vfs_read(afd, entries, (long)sizeof(entries)) : 0;
+    if (afd >= 0) fut_vfs_close(afd);
+    int n = (int)(nr / 16);
+
+    /* Test 1705: AT_BASE (key=7) present and == 0 (static binary) */
+    fut_printf("[MISC-TEST] Test 1705: AT_BASE=0 in auxv\n");
+    {
+        int found = 0; uint64_t val = 99;
+        for (int i = 0; i < n && entries[i].key != 0; i++)
+            if (entries[i].key == 7) { val = entries[i].val; found = 1; break; }
+        if (found && val == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1705: AT_BASE=0 (static)\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1705: found=%d val=%lu\n", found, (unsigned long)val);
+            fut_test_fail(1705);
+        }
+    }
+
+    /* Test 1706: AT_FLAGS (key=8) present and == 0 */
+    fut_printf("[MISC-TEST] Test 1706: AT_FLAGS=0 in auxv\n");
+    {
+        int found = 0; uint64_t val = 99;
+        for (int i = 0; i < n && entries[i].key != 0; i++)
+            if (entries[i].key == 8) { val = entries[i].val; found = 1; break; }
+        if (found && val == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1706: AT_FLAGS=0\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1706: found=%d val=%lu\n", found, (unsigned long)val);
+            fut_test_fail(1706);
+        }
+    }
+
+    /* Test 1707: /proc/self/status contains "Ngid:" field */
+    fut_printf("[MISC-TEST] Test 1707: /proc/self/status has Ngid\n");
+    {
+        int sfd = fut_vfs_open("/proc/self/status", 0, 0);
+        if (sfd >= 0) {
+            static char sbuf[2048];
+            long snr = fut_vfs_read(sfd, sbuf, 2047);
+            fut_vfs_close(sfd);
+            if (snr > 0) sbuf[snr] = '\0'; else sbuf[0] = '\0';
+            /* Search for "Ngid:" */
+            int found = 0;
+            for (long i = 0; i < snr - 4; i++) {
+                if (sbuf[i]=='N' && sbuf[i+1]=='g' && sbuf[i+2]=='i' && sbuf[i+3]=='d' && sbuf[i+4]==':') {
+                    found = 1; break;
+                }
+            }
+            if (found) {
+                fut_printf("[MISC-TEST] ✓ Test 1707: Ngid: found\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1707: Ngid: not found\n");
+                fut_test_fail(1707);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1707: open failed\n");
+            fut_test_fail(1707);
+        }
+    }
+
+    /* Test 1708: auxv entry count >= 10 (comprehensive vector) */
+    fut_printf("[MISC-TEST] Test 1708: auxv has >= 10 entries\n");
+    {
+        int count = 0;
+        for (int i = 0; i < n; i++) {
+            if (entries[i].key == 0) break;
+            count++;
+        }
+        if (count >= 10) {
+            fut_printf("[MISC-TEST] ✓ Test 1708: %d auxv entries\n", count);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1708: only %d entries\n", count);
+            fut_test_fail(1708);
+        }
+    }
+}
+
 /* Tests 1701-1704: SIGWINCH delivery on PTY TIOCSWINSZ */
 __attribute__((noinline)) static void test_pty_sigwinch(void) {
     extern long sys_open(const char *, int, int);
@@ -55156,6 +55242,7 @@ void fut_misc_test_thread(void *arg) {
     test_pty_refcount();     /* Tests 1693-1696 */
     test_pie_load_bias();    /* Tests 1697-1700 */
     test_pty_sigwinch();     /* Tests 1701-1704 */
+    test_auxv_and_status_fields(); /* Tests 1705-1708 */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

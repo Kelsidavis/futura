@@ -533,6 +533,8 @@ static int build_user_stack(fut_mm_t *mm,
             { 14 /* AT_EGID */,  egid },
             { 23 /* AT_SECURE */, secure },
             { 16 /* AT_HWCAP */,  hwcap_val },
+            { 7 /* AT_BASE */,   0 },  /* interpreter base (0 = no interp / static) */
+            { 8 /* AT_FLAGS */,  0 },  /* ELF flags (always 0) */
             { 0 /* AT_NULL */,   0 },
         };
         for (int ai = (int)(sizeof(auxv)/sizeof(auxv[0])) - 1; ai >= 0; ai--) {
@@ -2224,6 +2226,8 @@ static int build_user_stack(fut_mm_t *mm,
         { AT_EGID,   0 },
         { AT_SECURE, 0 },
         { AT_HWCAP,  arm64_hwcap },
+        { 7 /* AT_BASE */,  0 },  /* interpreter base (0 = static) */
+        { 8 /* AT_FLAGS */, 0 },
         { AT_NULL,   0 },  /* Terminator */
     };
     size_t auxv_count = sizeof(auxv_entries) / sizeof(auxv_entries[0]);

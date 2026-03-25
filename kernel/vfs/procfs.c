@@ -785,6 +785,7 @@ static size_t gen_status(char *buf, size_t cap, fut_task_t *task, uint64_t tid) 
     pb_str(&b, "Pid:\t");        pb_u64(&b, tid ? tid : task->pid); pb_char(&b, '\n');
     pb_str(&b, "PPid:\t");       pb_u64(&b, ppid);       pb_char(&b, '\n');
     pb_str(&b, "TracerPid:\t");  pb_u64(&b, 0);          pb_char(&b, '\n');
+    pb_str(&b, "Ngid:\t");        pb_u64(&b, 0);          pb_char(&b, '\n');
     pb_str(&b, "Uid:\t");        pb_u64(&b, task->ruid); pb_char(&b, '\t');
                                   pb_u64(&b, task->uid);  pb_char(&b, '\t');
                                   pb_u64(&b, task->suid); pb_char(&b, '\t');
@@ -2662,6 +2663,8 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
                     AUXV_PUSH(16, hwcap);
                 }
                 AUXV_PUSH(17, 100ULL);                  /* AT_CLKTCK */
+                AUXV_PUSH(7,  0ULL);                    /* AT_BASE — interpreter base (0=static) */
+                AUXV_PUSH(8,  0ULL);                    /* AT_FLAGS */
                 AUXV_PUSH(0,  0ULL);                    /* AT_NULL — terminator */
 #undef AUXV_PUSH
                 total = (size_t)ai * sizeof(av[0]);

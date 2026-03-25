@@ -1874,87 +1874,92 @@ static int map_segment(fut_mm_t *mm, int fd, const elf64_phdr_t *phdr) {
                (unsigned long long)pages_needed, prot);
 #endif
 
+    /* Allocate pages, map them, and record kernel VAs for direct copy */
+    void **pages = fut_malloc(pages_needed * sizeof(void *));
+    if (!pages) return -ENOMEM;
+
     for (size_t i = 0; i < pages_needed; i++) {
         uint64_t page_addr = addr + (i * PAGE_SIZE);
 
         /* Check if this page is already mapped (happens when segments overlap) */
         uint64_t existing_pte = 0;
         if (pmap_probe_pte(vmem, page_addr, &existing_pte) == 0) {
-            /* Page already mapped — upgrade permissions if new segment needs write */
             if (prot & PROT_WRITE) {
-                /* Remap with upgraded permissions (RO → RW) */
                 phys_addr_t existing_phys = existing_pte & 0xFFFFFFFFF000ULL;
                 pmap_map_user(vmem, page_addr, existing_phys, PAGE_SIZE, prot);
             }
+            /* Use the existing page's kernel VA for copying */
+            phys_addr_t ep = existing_pte & 0xFFFFFFFFF000ULL;
+            pages[i] = pmap_phys_to_virt(ep);
             continue;
         }
 
         void *page = fut_pmm_alloc_page();
         if (!page) {
-            fut_printf("[MAP-SEG-ARM64] ERROR: PMM alloc failed at page %llu/%llu\n",
-                       (unsigned long long)i, (unsigned long long)pages_needed);
+            fut_free(pages);
             return -ENOMEM;
         }
+        memset(page, 0, PAGE_SIZE);
 
         phys_addr_t phys = pmap_virt_to_phys((uintptr_t)page);
-#ifdef DEBUG_ELF
-        fut_printf("[MAP-SEG-ARM64] Page %llu: vaddr=0x%llx phys=0x%llx prot=%d\n",
-                   (unsigned long long)i, (unsigned long long)page_addr, (unsigned long long)phys, prot);
-#endif
-
         if (pmap_map_user(vmem, page_addr, phys, PAGE_SIZE, prot) != 0) {
-            fut_printf("[MAP-SEG-ARM64] ERROR: pmap_map_user failed for page %llu\n",
-                       (unsigned long long)i);
             fut_pmm_free_page(page);
+            fut_free(pages);
             return -EFAULT;
+        }
+        pages[i] = page;
+    }
+
+    /* Read file data into a kernel buffer */
+    int64_t seek_pos = fut_vfs_lseek(fd, (int64_t)phdr->p_offset, SEEK_SET);
+    if (seek_pos < 0) { fut_free(pages); return (int)seek_pos; }
+
+    uint8_t *buf = fut_malloc(phdr->p_filesz ? phdr->p_filesz : 1);
+    if (!buf) { fut_free(pages); return -ENOMEM; }
+
+    int rc = 0;
+    if (phdr->p_filesz > 0) {
+        rc = read_exact(fd, buf, phdr->p_filesz);
+        if (rc != 0) { fut_free(buf); fut_free(pages); return rc; }
+    }
+
+    /* Copy data DIRECTLY to the allocated pages using kernel VAs.
+     * This avoids exec_copy_to_user's PTE walk which had issues with
+     * page table coherence on ARM64. */
+    {
+        size_t remaining = (size_t)phdr->p_filesz;
+        size_t page_index = 0;
+        size_t page_offset = (size_t)(phdr->p_vaddr - addr);  /* offset within first page */
+        uint8_t *src = buf;
+
+        while (remaining > 0 && page_index < pages_needed) {
+            size_t chunk = PAGE_SIZE - page_offset;
+            if (chunk > remaining) chunk = remaining;
+            memcpy((uint8_t *)pages[page_index] + page_offset, src, chunk);
+            src += chunk;
+            remaining -= chunk;
+            page_index++;
+            page_offset = 0;
         }
     }
 
-#ifdef DEBUG_ELF
-    fut_printf("[MAP-SEG-ARM64] Successfully mapped %llu pages\n", (unsigned long long)pages_needed);
-#endif
+    fut_free(buf);
 
-    /* Read file data into mapped pages */
-#ifdef DEBUG_ELF
-    fut_printf("[MAP-SEG-ARM64] Seeking to file offset 0x%llx\n", (unsigned long long)phdr->p_offset);
-#endif
-    int64_t seek_pos = fut_vfs_lseek(fd, (int64_t)phdr->p_offset, SEEK_SET);
-    if (seek_pos < 0) {
-        fut_printf("[MAP-SEG-ARM64] ERROR: lseek failed with %lld\n", (long long)seek_pos);
-        return (int)seek_pos;
+    /* D-cache clean + I-cache invalidation for executable segments */
+    if (phdr->p_flags & PF_X) {
+        for (size_t i = 0; i < pages_needed; i++) {
+            for (uintptr_t off = 0; off < PAGE_SIZE; off += 64) {
+                uintptr_t a = (uintptr_t)pages[i] + off;
+                __asm__ volatile("dc cvau, %0" :: "r"(a) : "memory");
+            }
+        }
+        __asm__ volatile("dsb ish" ::: "memory");
+        __asm__ volatile("ic iallu" ::: "memory");
+        __asm__ volatile("dsb ish" ::: "memory");
+        __asm__ volatile("isb" ::: "memory");
     }
 
-#ifdef DEBUG_ELF
-    fut_printf("[MAP-SEG-ARM64] Allocating buffer for %llu bytes\n", (unsigned long long)phdr->p_filesz);
-#endif
-    uint8_t *buf = fut_malloc(phdr->p_filesz);
-    if (!buf) {
-        fut_printf("[MAP-SEG-ARM64] ERROR: malloc failed for buffer\n");
-        return -ENOMEM;
-    }
-
-#ifdef DEBUG_ELF
-    fut_printf("[MAP-SEG-ARM64] Reading %llu bytes from file\n", (unsigned long long)phdr->p_filesz);
-#endif
-    int rc = read_exact(fd, buf, phdr->p_filesz);
-    if (rc != 0) {
-        fut_printf("[MAP-SEG-ARM64] ERROR: read_exact failed with %d\n", rc);
-        fut_free(buf);
-        return rc;
-    }
-
-#ifdef DEBUG_ELF
-    fut_printf("[MAP-SEG-ARM64] Copying data to user space at 0x%llx\n", (unsigned long long)phdr->p_vaddr);
-#endif
-    if (exec_copy_to_user(mm, phdr->p_vaddr, buf, phdr->p_filesz) != 0) {
-        fut_printf("[MAP-SEG-ARM64] ERROR: exec_copy_to_user failed\n");
-        fut_free(buf);
-        return -EFAULT;
-    }
-
-#ifdef DEBUG_ELF
-    fut_printf("[MAP-SEG-ARM64] Segment load complete\n");
-#endif
+    fut_free(pages);
     __asm__ volatile("dmb sy" ::: "memory");
     fut_free(buf);
     return 0;

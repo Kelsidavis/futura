@@ -1495,6 +1495,23 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
 
     uintptr_t heap_base_candidate = 0;
 
+    /* PIE (ET_DYN) load bias: position-independent executables have 0-based
+     * p_vaddr values; we must relocate them to a non-zero base address.
+     * Linux uses 0x555555554000 (with ASLR) or a fixed base.  We use
+     * 0x400000 which is the traditional x86_64 exec base. */
+    uint64_t load_bias = 0;
+    if (ehdr.e_type == 3 /* ET_DYN */) {
+        load_bias = 0x400000ULL;
+        EXEC_DEBUG("[EXEC] ET_DYN (PIE): applying load_bias=0x%llx\n",
+                   (unsigned long long)load_bias);
+        for (uint16_t i = 0; i < ehdr.e_phnum; i++) {
+            if (phdrs[i].p_type == 1 /* PT_LOAD */ ||
+                phdrs[i].p_type == 6 /* PT_PHDR */) {
+                phdrs[i].p_vaddr += load_bias;
+            }
+        }
+    }
+
     EXEC_DEBUG("[EXEC] Mapping %u segments...\n", ehdr.e_phnum);
     for (uint16_t i = 0; i < ehdr.e_phnum; ++i) {
         /* Cache p_type locally to prevent potential compiler optimization issues
@@ -1559,15 +1576,18 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     uint64_t user_rsp = 0;
     uint64_t user_argv = 0;
     uint64_t user_argc = 0;
-    /* Set ELF metadata globals for auxv in build_user_stack */
-    g_exec_entry = ehdr.e_entry;
+    /* Set ELF metadata globals for auxv in build_user_stack.
+     * For PIE (ET_DYN), the entry point and phdr already include the
+     * load_bias via the adjusted phdrs[].p_vaddr above. */
+    g_exec_entry = ehdr.e_entry + load_bias;
     g_exec_phent = ehdr.e_phentsize;
     g_exec_phnum = ehdr.e_phnum;
-    /* Find PT_PHDR or compute phdr address from first PT_LOAD */
+    /* Find PT_PHDR or compute phdr address from first PT_LOAD.
+     * Note: phdrs[].p_vaddr already includes load_bias for ET_DYN. */
     g_exec_phdr = 0;
     for (uint16_t i = 0; i < ehdr.e_phnum; i++) {
         if (phdrs[i].p_type == 6 /* PT_PHDR */) {
-            g_exec_phdr = phdrs[i].p_vaddr;
+            g_exec_phdr = phdrs[i].p_vaddr;  /* already biased */
             break;
         }
     }
@@ -2797,6 +2817,16 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     }
 #endif
 
+    /* PIE (ET_DYN) load bias for position-independent executables */
+    uint64_t load_bias = 0;
+    if (ehdr.e_type == 3 /* ET_DYN */) {
+        load_bias = 0x400000ULL;
+        for (uint16_t i = 0; i < ehdr.e_phnum; i++) {
+            if (phdrs[i].p_type == 1 /* PT_LOAD */ || phdrs[i].p_type == 6 /* PT_PHDR */)
+                phdrs[i].p_vaddr += load_bias;
+        }
+    }
+
     /* Map LOAD segments */
     uintptr_t heap_base_candidate = 0;
 #ifdef DEBUG_ELF
@@ -2869,14 +2899,15 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     if (argv) {
         while (argv[argc]) argc++;
     }
-    /* Set ELF metadata globals for auxv in build_user_stack */
-    g_exec_entry = ehdr.e_entry;
+    /* Set ELF metadata globals for auxv in build_user_stack.
+     * For PIE (ET_DYN), phdrs already include load_bias. */
+    g_exec_entry = ehdr.e_entry + load_bias;
     g_exec_phent = ehdr.e_phentsize;
     g_exec_phnum = ehdr.e_phnum;
     g_exec_phdr = 0;
     for (uint16_t pi = 0; pi < ehdr.e_phnum; pi++) {
         if (phdrs[pi].p_type == 6 /* PT_PHDR */) {
-            g_exec_phdr = phdrs[pi].p_vaddr;
+            g_exec_phdr = phdrs[pi].p_vaddr;  /* already biased */
             break;
         }
     }

@@ -51222,6 +51222,79 @@ static void test_openat_o_directory(void) {
     }
 }
 
+/* Tests 1697-1700: PIE/ET_DYN load bias and auxv correctness */
+__attribute__((noinline)) static void test_pie_load_bias(void) {
+    static struct { uint64_t key; uint64_t val; } entries[24];
+
+    /* Read auxv */
+    int afd = fut_vfs_open("/proc/self/auxv", 0, 0);
+    long nr = (afd >= 0) ? fut_vfs_read(afd, entries, (long)sizeof(entries)) : 0;
+    if (afd >= 0) fut_vfs_close(afd);
+    int n = (int)(nr / 16);
+
+    uint64_t at_uid = 0, at_euid = 0, at_secure = 0;
+    int found_uid = 0, found_euid = 0, found_secure = 0, found_null = 0;
+    for (int i = 0; i < n; i++) {
+        if (entries[i].key == 11) { at_uid = entries[i].val; found_uid = 1; }
+        if (entries[i].key == 12) { at_euid = entries[i].val; found_euid = 1; }
+        if (entries[i].key == 23) { at_secure = entries[i].val; found_secure = 1; }
+        if (entries[i].key == 0)  { found_null = 1; break; }
+    }
+
+    /* Test 1697: AT_UID matches getuid() */
+    fut_printf("[MISC-TEST] Test 1697: AT_UID matches getuid()\n");
+    {
+        extern long sys_getuid(void);
+        long uid = sys_getuid();
+        if (found_uid && at_uid == (uint64_t)uid) {
+            fut_printf("[MISC-TEST] ✓ Test 1697: AT_UID=%lu == getuid()=%ld\n",
+                       (unsigned long)at_uid, uid);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1697: AT_UID=%lu getuid=%ld found=%d\n",
+                       (unsigned long)at_uid, uid, found_uid);
+            fut_test_fail(1697);
+        }
+    }
+
+    /* Test 1698: AT_EUID matches geteuid() */
+    fut_printf("[MISC-TEST] Test 1698: AT_EUID matches geteuid()\n");
+    {
+        extern long sys_geteuid(void);
+        long euid = sys_geteuid();
+        if (found_euid && at_euid == (uint64_t)euid) {
+            fut_printf("[MISC-TEST] ✓ Test 1698: AT_EUID=%lu == geteuid()=%ld\n",
+                       (unsigned long)at_euid, euid);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1698: AT_EUID=%lu geteuid=%ld\n",
+                       (unsigned long)at_euid, euid);
+            fut_test_fail(1698);
+        }
+    }
+
+    /* Test 1699: AT_SECURE is 0 when running as root (uid==euid) */
+    fut_printf("[MISC-TEST] Test 1699: AT_SECURE=0 (non-setuid)\n");
+    if (found_secure && at_secure == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 1699: AT_SECURE=0\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1699: AT_SECURE=%lu found=%d\n",
+                   (unsigned long)at_secure, found_secure);
+        fut_test_fail(1699);
+    }
+
+    /* Test 1700: auxv terminates with AT_NULL (key=0) */
+    fut_printf("[MISC-TEST] Test 1700: auxv terminates with AT_NULL\n");
+    if (found_null) {
+        fut_printf("[MISC-TEST] ✓ Test 1700: AT_NULL found\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1700: no AT_NULL in auxv\n");
+        fut_test_fail(1700);
+    }
+}
+
 /* Tests 1693-1696: PTY refcounting — multiple slave opens don't break pair */
 __attribute__((noinline)) static void test_pty_refcount(void) {
     extern long sys_open(const char *, int, int);
@@ -54968,6 +55041,7 @@ void fut_misc_test_thread(void *arg) {
 
     test_pts_dir_readdir();  /* Tests 1689-1692 */
     test_pty_refcount();     /* Tests 1693-1696 */
+    test_pie_load_bias();    /* Tests 1697-1700 */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

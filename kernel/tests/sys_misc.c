@@ -51222,6 +51222,118 @@ static void test_openat_o_directory(void) {
     }
 }
 
+/* Tests 1693-1696: PTY refcounting — multiple slave opens don't break pair */
+__attribute__((noinline)) static void test_pty_refcount(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_close(int);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_write(int, const void *, size_t);
+    extern long sys_ioctl(int fd, unsigned long request, void *argp);
+
+    /* Open PTY pair */
+    long mfd = sys_open("/dev/ptmx", 0x0002, 0);
+    int pn = -1, zv = 0;
+    if (mfd >= 0) sys_ioctl((int)mfd, 0x80045430, &pn);
+    if (mfd >= 0) sys_ioctl((int)mfd, 0x40045431, &zv);
+    static char pp[24];
+    { const char *pfx = "/dev/pts/"; int i = 0; while (pfx[i]) { pp[i] = pfx[i]; i++; }
+      if (pn >= 10) { pp[i++] = (char)('0'+pn/10); } pp[i++] = (char)('0'+pn%10); pp[i] = '\0'; }
+    long s1 = (pn >= 0) ? sys_open(pp, 0x0002, 0) : -1;
+    long s2 = (pn >= 0) ? sys_open(pp, 0x0002, 0) : -1;
+
+    /* Test 1693: two slave opens succeed */
+    fut_printf("[MISC-TEST] Test 1693: two slave opens on same PTY\n");
+    if (s1 >= 0 && s2 >= 0) {
+        fut_printf("[MISC-TEST] ✓ Test 1693: s1=%ld s2=%ld\n", s1, s2);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1693: s1=%ld s2=%ld\n", s1, s2);
+        fut_test_fail(1693);
+    }
+
+    /* Test 1694: close first slave, master write still works (pair alive) */
+    fut_printf("[MISC-TEST] Test 1694: close one slave, master→slave still works\n");
+    if (s1 >= 0 && s2 >= 0) {
+        sys_close((int)s1); s1 = -1;
+        long wr = sys_write((int)mfd, "alive", 5);
+        static char rb[16];
+        long rd = sys_read((int)s2, rb, 16);
+        if (wr == 5 && rd == 5 && __builtin_memcmp(rb, "alive", 5) == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1694: pair alive after first close\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1694: wr=%ld rd=%ld\n", wr, rd);
+            fut_test_fail(1694);
+        }
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1694: skipped\n");
+        fut_test_fail(1694);
+    }
+
+    /* Test 1695: close second slave, master read returns EOF */
+    fut_printf("[MISC-TEST] Test 1695: close last slave → master EOF\n");
+    if (s2 >= 0) {
+        sys_close((int)s2); s2 = -1;
+        static char rb2[8];
+        long rd = sys_read((int)mfd, rb2, 8);
+        if (rd == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1695: master EOF after last slave close\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1695: master read=%ld\n", rd);
+            fut_test_fail(1695);
+        }
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1695: skipped\n");
+        fut_test_fail(1695);
+    }
+
+    /* Test 1696: /dev/pts/<n> entry persists until last slave closes */
+    fut_printf("[MISC-TEST] Test 1696: /dev/pts entry persists with refcount\n");
+    if (mfd >= 0) sys_close((int)mfd);
+    /* Open a fresh pair, open slave twice, close once, check dir */
+    mfd = sys_open("/dev/ptmx", 0x0002, 0);
+    pn = -1;
+    if (mfd >= 0) sys_ioctl((int)mfd, 0x80045430, &pn);
+    if (mfd >= 0) sys_ioctl((int)mfd, 0x40045431, &zv);
+    { const char *pfx = "/dev/pts/"; int i = 0; while (pfx[i]) { pp[i] = pfx[i]; i++; }
+      if (pn >= 10) { pp[i++] = (char)('0'+pn/10); } pp[i++] = (char)('0'+pn%10); pp[i] = '\0'; }
+    s1 = (pn >= 0) ? sys_open(pp, 0x0002, 0) : -1;
+    s2 = (pn >= 0) ? sys_open(pp, 0x0002, 0) : -1;
+    if (s1 >= 0) { sys_close((int)s1); s1 = -1; }
+    /* s2 still open — check /dev/pts/ still has entry */
+    {
+        extern long sys_getdents64(unsigned int fd, void *dirp, unsigned int count);
+        int dfd = (int)sys_open("/dev/pts", 0x10000, 0);
+        if (dfd >= 0 && s2 >= 0) {
+            static char db[256];
+            long nr = sys_getdents64(dfd, db, 256);
+            sys_close(dfd);
+            int real = 0; long off = 0;
+            while (off < nr) {
+                struct { uint64_t d_ino; int64_t d_off; uint16_t d_reclen; uint8_t d_type; char d_name[1]; }
+                    *de = (void*)(db+off);
+                if (de->d_name[0] != '.') real++;
+                off += de->d_reclen;
+            }
+            if (real >= 1) {
+                fut_printf("[MISC-TEST] ✓ Test 1696: entry persists (%d entries)\n", real);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1696: 0 entries (expected >=1)\n");
+                fut_test_fail(1696);
+            }
+        } else {
+            if (dfd >= 0) sys_close(dfd);
+            fut_printf("[MISC-TEST] ✗ Test 1696: skipped\n");
+            fut_test_fail(1696);
+        }
+    }
+    if (s1 >= 0) sys_close((int)s1);
+    if (s2 >= 0) sys_close((int)s2);
+    if (mfd >= 0) sys_close((int)mfd);
+}
+
 /* Separate function to avoid growing fut_misc_test_thread's stack frame
  * (the main function is ~55K lines and near the kernel stack limit). */
 __attribute__((noinline)) static void test_pts_dir_readdir(void) {
@@ -54855,6 +54967,7 @@ void fut_misc_test_thread(void *arg) {
     }
 
     test_pts_dir_readdir();  /* Tests 1689-1692 */
+    test_pty_refcount();     /* Tests 1693-1696 */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

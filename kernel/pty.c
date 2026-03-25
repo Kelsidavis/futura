@@ -88,8 +88,8 @@ static size_t ring_read(struct pty_ring *r, void *data, size_t n) {
 /* PTY pair state */
 struct pty_pair {
     bool            active;
-    bool            master_open;
-    bool            slave_open;
+    uint32_t        master_refcnt;   /* number of open master fds (>0 = open) */
+    uint32_t        slave_refcnt;    /* number of open slave fds (>0 = open) */
     bool            locked;          /* TIOCSPTLCK */
     int             index;           /* /dev/pts/<index> */
 
@@ -169,7 +169,7 @@ static ssize_t ptmx_read(void *inode, void *priv, void *buf, size_t n, off_t *po
 
     fut_spinlock_acquire(&p->lock);
     /* If slave closed and buffer empty → EOF */
-    if (!p->slave_open && ring_empty(&p->s2m)) {
+    if (p->slave_refcnt == 0 && ring_empty(&p->s2m)) {
         fut_spinlock_release(&p->lock);
         return 0;
     }
@@ -195,7 +195,7 @@ static ssize_t ptmx_write(void *inode, void *priv, const void *buf, size_t n, of
     struct pty_pair *p = pp->pair;
 
     fut_spinlock_acquire(&p->lock);
-    if (!p->slave_open) {
+    if (p->slave_refcnt == 0) {
         fut_spinlock_release(&p->lock);
         return -EIO;
     }
@@ -287,17 +287,20 @@ static int ptmx_release(void *inode, void *priv) {
     struct pty_pair *p = pp->pair;
 
     fut_spinlock_acquire(&p->lock);
-    p->master_open = false;
+    if (p->master_refcnt > 0) p->master_refcnt--;
+    bool last_master = (p->master_refcnt == 0);
     fut_spinlock_release(&p->lock);
 
-    /* Wake slave so it sees HUP */
-    fut_waitq_wake_all(&p->slave_wq);
-    if (p->slave_epoll_wq)
-        fut_waitq_wake_all(p->slave_epoll_wq);
+    if (last_master) {
+        /* Wake slave so it sees HUP only when last master fd closes */
+        fut_waitq_wake_all(&p->slave_wq);
+        if (p->slave_epoll_wq)
+            fut_waitq_wake_all(p->slave_epoll_wq);
+    }
 
-    /* If slave also closed, free the pair */
+    /* If both sides fully closed, free the pair */
     fut_spinlock_acquire(&p->lock);
-    if (!p->slave_open)
+    if (p->master_refcnt == 0 && p->slave_refcnt == 0)
         p->active = false;
     fut_spinlock_release(&p->lock);
 
@@ -321,7 +324,7 @@ static int ptmx_open(void *inode, int flags, void **private_data) {
     if (!pp) { p->active = false; return -ENOMEM; }
     pp->tag  = PTY_MASTER_TAG;
     pp->pair = p;
-    p->master_open = true;
+    p->master_refcnt++;
 
     *private_data = pp;
     return 0;
@@ -338,7 +341,7 @@ static ssize_t pts_read(void *inode, void *priv, void *buf, size_t n, off_t *pos
     struct pty_pair *p = pp->pair;
 
     fut_spinlock_acquire(&p->lock);
-    if (!p->master_open && ring_empty(&p->m2s)) {
+    if (p->master_refcnt == 0 && ring_empty(&p->m2s)) {
         fut_spinlock_release(&p->lock);
         return 0;  /* EOF: master closed */
     }
@@ -364,7 +367,7 @@ static ssize_t pts_write(void *inode, void *priv, const void *buf, size_t n, off
     struct pty_pair *p = pp->pair;
 
     fut_spinlock_acquire(&p->lock);
-    if (!p->master_open) {
+    if (p->master_refcnt == 0) {
         fut_spinlock_release(&p->lock);
         return -EIO;
     }
@@ -434,11 +437,12 @@ static int pts_release(void *inode, void *priv) {
 
     fut_spinlock_acquire(&p->lock);
     int slave_idx = p->index;
-    p->slave_open = false;
+    if (p->slave_refcnt > 0) p->slave_refcnt--;
+    bool last_slave = (p->slave_refcnt == 0);
     fut_spinlock_release(&p->lock);
 
-    /* Remove /dev/pts/<n> ramfs entry */
-    {
+    if (last_slave) {
+        /* Remove /dev/pts/<n> ramfs entry only when last slave fd closes */
         char pts_path[20];
         const char *pfx = "/dev/pts/";
         int pi = 0;
@@ -448,16 +452,16 @@ static int pts_release(void *inode, void *priv) {
         pts_path[pi] = '\0';
         extern int fut_vfs_unlink(const char *path);
         fut_vfs_unlink(pts_path);
+
+        /* Wake master so it sees EOF */
+        fut_waitq_wake_all(&p->master_wq);
+        if (p->master_epoll_wq)
+            fut_waitq_wake_all(p->master_epoll_wq);
     }
 
-    /* Wake master so it sees EOF */
-    fut_waitq_wake_all(&p->master_wq);
-    if (p->master_epoll_wq)
-        fut_waitq_wake_all(p->master_epoll_wq);
-
-    /* If master also closed, free the pair */
+    /* If both sides fully closed, free the pair */
     fut_spinlock_acquire(&p->lock);
-    if (!p->master_open)
+    if (p->master_refcnt == 0 && p->slave_refcnt == 0)
         p->active = false;
     fut_spinlock_release(&p->lock);
 
@@ -477,7 +481,7 @@ int pty_open_slave(int index) {
     struct pty_pair *p = &g_ptys[index];
 
     fut_spinlock_acquire(&p->lock);
-    if (!p->active || !p->master_open) {
+    if (!p->active || p->master_refcnt == 0) {
         fut_spinlock_release(&p->lock);
         return -ENOENT;
     }
@@ -485,18 +489,18 @@ int pty_open_slave(int index) {
         fut_spinlock_release(&p->lock);
         return -EIO;  /* Slave is locked */
     }
-    p->slave_open = true;
+    p->slave_refcnt++;
     fut_spinlock_release(&p->lock);
 
     struct pty_priv *pp = fut_malloc(sizeof(*pp));
-    if (!pp) { p->slave_open = false; return -ENOMEM; }
+    if (!pp) { if (p->slave_refcnt > 0) p->slave_refcnt--; return -ENOMEM; }
     pp->tag  = PTY_SLAVE_TAG;
     pp->pair = p;
 
     int fd = chrdev_alloc_fd(&pts_fops, NULL, pp);
     if (fd < 0) {
         fut_free(pp);
-        p->slave_open = false;
+        if (p->slave_refcnt > 0) p->slave_refcnt--;
         return fd;
     }
 
@@ -548,23 +552,23 @@ bool fut_pty_poll(struct fut_file *file, uint32_t requested, uint32_t *ready_out
 
     if (pp->tag == PTY_MASTER_TAG) {
         /* Master: readable if s2m has data or slave closed */
-        if (!ring_empty(&p->s2m) || !p->slave_open)
+        if (!ring_empty(&p->s2m) || p->slave_refcnt == 0)
             ready |= EPOLLIN | EPOLLRDNORM;
         /* Master: writable if m2s has space and slave open */
-        if (ring_free(&p->m2s) > 0 && p->slave_open)
+        if (ring_free(&p->m2s) > 0 && p->slave_refcnt > 0)
             ready |= EPOLLOUT | EPOLLWRNORM;
         /* HUP if slave closed */
-        if (!p->slave_open)
+        if (p->slave_refcnt == 0)
             ready |= EPOLLHUP;
     } else {
         /* Slave: readable if m2s has data or master closed */
-        if (!ring_empty(&p->m2s) || !p->master_open)
+        if (!ring_empty(&p->m2s) || p->master_refcnt == 0)
             ready |= EPOLLIN | EPOLLRDNORM;
         /* Slave: writable if s2m has space and master open */
-        if (ring_free(&p->s2m) > 0 && p->master_open)
+        if (ring_free(&p->s2m) > 0 && p->master_refcnt > 0)
             ready |= EPOLLOUT | EPOLLWRNORM;
         /* HUP if master closed */
-        if (!p->master_open)
+        if (p->master_refcnt == 0)
             ready |= EPOLLHUP;
     }
 

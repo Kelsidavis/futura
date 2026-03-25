@@ -520,23 +520,30 @@ void fut_serial_puts(const char *str) {
  * Returns the character if available, -1 if no data pending.
  */
 int fut_serial_getc(void) {
-    volatile uint8_t *uart = (volatile uint8_t *)UART0_BASE;
-
-    /* Check interrupt-mode RX buffer first */
+    /* Check IRQ-filled RX buffer first */
     if (uart_rx_tail != uart_rx_head) {
         char c = uart_rx_buffer[uart_rx_tail];
         uart_rx_tail = (uart_rx_tail + 1) % UART_RX_BUFFER_SIZE;
         return (int)(unsigned char)c;
     }
 
-    /* Poll UART FIFO directly */
+    /* Fallback: poll UART FIFO directly with interrupts DISABLED to prevent
+     * the race where an IRQ fires between our FR check and DR read (which
+     * caused character doubling).  With IRQs masked, only we read the DR. */
+    volatile uint8_t *uart = (volatile uint8_t *)UART0_BASE;
+    uint64_t daif;
+    __asm__ volatile("mrs %0, daif" : "=r"(daif));
+    __asm__ volatile("msr daifset, #2");  /* Mask IRQ */
+
+    int result = -1;
     uint32_t fr = mmio_read32((volatile void *)(uart + UART_FR));
-    if (fr & UART_FR_RXFE) {
-        return -1;
+    if (!(fr & UART_FR_RXFE)) {
+        uint32_t data = mmio_read32((volatile void *)(uart + UART_DR));
+        result = (int)(data & 0xFF);
     }
 
-    uint32_t data = mmio_read32((volatile void *)(uart + UART_DR));
-    return (int)(data & 0xFF);
+    __asm__ volatile("msr daif, %0" :: "r"(daif));  /* Restore IRQ state */
+    return result;
 }
 
 /**

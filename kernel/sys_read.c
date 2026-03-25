@@ -222,6 +222,8 @@ ssize_t sys_read(int fd, void *buf, size_t count) {
     /* Read from VFS */
     ssize_t ret = fut_vfs_read(local_fd, kbuf, local_count);
 
+    /* (trace removed) */
+
     /* Phase 2: Handle error cases with detailed logging */
     if (ret < 0) {
         const char *error_desc;

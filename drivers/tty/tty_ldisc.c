@@ -180,6 +180,8 @@ void tty_ldisc_input(tty_ldisc_t *ldisc, char c) {
         return;  /* Safety check */
     }
 
+    /* (trace removed) */
+
     /* Acquire lock for buffer modification */
     fut_spinlock_acquire(&ldisc->lock);
 

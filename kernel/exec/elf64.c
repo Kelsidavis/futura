@@ -1569,11 +1569,19 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     /* NOW it's safe to attach mm to task - all user pages are mapped */
     fut_task_set_mm(task, mm);
 
+    /* Close the ELF binary fd BEFORE inheriting fds to the child task.
+     * The binary was opened in the caller's fd table for reading ELF segments.
+     * If not closed before inheritance, the child would inherit it (potentially
+     * as fd 0/stdin), causing the child to read ELF data instead of console. */
+    fut_vfs_close(fd);
+    fut_free(phdrs);
+    fd = -1;     /* Mark as closed to prevent double-close later */
+    phdrs = NULL;
+
     /* Inherit non-CLOEXEC file descriptors from the calling task, then fill
      * any missing stdio fds (0, 1, 2) with /dev/console.  POSIX requires
      * execve to preserve open file descriptors (minus those with FD_CLOEXEC).
      * The calling task's CLOEXEC fds were already closed by sys_execve. */
-#if defined(__x86_64__)
     {
         fut_thread_t *cur = fut_thread_current();
         fut_task_t *caller_task = cur ? cur->task : NULL;
@@ -1617,7 +1625,6 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
 
         if (cur) cur->task = saved_task;
     }
-#endif
 
     struct fut_user_entry *entry = fut_malloc(sizeof(*entry));
     if (!entry) {
@@ -1673,8 +1680,8 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     thread->fs_base = USER_TLS_BASE;
     __asm__ volatile("" ::: "memory");  /* Ensure store is visible */
     __asm__ volatile("sti" ::: "memory");
-    fut_free(phdrs);
-    fut_vfs_close(fd);
+    if (phdrs) fut_free(phdrs);
+    if (fd >= 0) fut_vfs_close(fd);
 
     /* Free the kernel copies of argv/envp - they've been copied to user stack */
     if (kargv && kargv_needs_free) {
@@ -2840,6 +2847,11 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
                (unsigned long long)entry->argc);
 #endif
 
+    /* Close the ELF binary fd BEFORE inheriting fds to the child.
+     * Otherwise the child inherits the binary file as an open fd. */
+    fut_vfs_close(fd);
+    fd = -1;
+
     /* Inherit non-CLOEXEC fds from caller, fill missing stdio with /dev/console */
     {
         fut_thread_t *current = fut_thread_current();
@@ -2901,7 +2913,7 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     }
 
     fut_free(phdrs);
-    fut_vfs_close(fd);
+    if (fd >= 0) fut_vfs_close(fd);
 
     (void)thread;
     return 0;

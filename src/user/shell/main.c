@@ -7034,10 +7034,16 @@ int main(int argc, char **argv, char **envp) {
         print_prompt();
 
         /* Read command line with interactive editing */
+        /* Zero cmdline before reading to prevent stale stack data from
+         * being executed if read_line returns early (EOF). */
+        cmdline[0] = '\0';
         nread = read_line(0, cmdline, sizeof(cmdline));
 
-        if (nread < 0) {
-            break; /* EOF or error - exit shell */
+        if (nread <= 0) {
+            if (nread < 0) break;  /* Error — exit shell */
+            /* EOF (nread=0): cmdline is unmodified (may have stale data).
+             * Treat as empty line. */
+            continue;
         }
 
         /* Skip empty lines */

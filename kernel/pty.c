@@ -483,7 +483,30 @@ int pty_open_slave(int index) {
     if (fd < 0) {
         fut_free(pp);
         p->slave_open = false;
+        return fd;
     }
+
+    /* Set file->path so /proc/self/fd/<n> readlink shows /dev/pts/<n> */
+    extern struct fut_file *vfs_get_file(int fd);
+    struct fut_file *file = vfs_get_file(fd);
+    if (file) {
+        char *path = fut_malloc(20);  /* "/dev/pts/" + up to 2 digits + NUL */
+        if (path) {
+            const char *pfx = "/dev/pts/";
+            int pi = 0;
+            while (pfx[pi]) { path[pi] = pfx[pi]; pi++; }
+            if (index >= 10) path[pi++] = (char)('0' + index / 10);
+            path[pi++] = (char)('0' + index % 10);
+            path[pi] = '\0';
+            file->path = path;
+        }
+    }
+
+    /* Set controlling terminal on the opening task (Linux: MKDEV(136, n)) */
+    fut_task_t *task = fut_task_current();
+    if (task && task->tty_nr == 0)
+        task->tty_nr = (136u << 8) | (uint32_t)index;
+
     return fd;
 }
 

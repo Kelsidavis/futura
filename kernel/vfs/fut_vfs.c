@@ -1759,7 +1759,16 @@ static int try_open_chrdev(const char *path, int flags) {
     file->async_sig = 0;
     file->fd_flags = 0;
     file->seals = 0;
-    file->path = NULL;
+    /* Store device path so /proc/self/fd/<n> readlink shows the correct name */
+    {
+        size_t plen = 0;
+        while (path[plen]) plen++;
+        char *pcopy = fut_malloc(plen + 1);
+        if (pcopy) {
+            for (size_t pi = 0; pi <= plen; pi++) pcopy[pi] = path[pi];
+        }
+        file->path = pcopy;
+    }
 
     if (ops->open) {
         int rc = ops->open(inode, flags, &file->chr_private);

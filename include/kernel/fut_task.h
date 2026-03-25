@@ -105,6 +105,7 @@ struct fut_task {
     /* Process group and session (job control) */
     uint64_t pgid;                     // Process group ID (for job control)
     uint64_t sid;                      // Session ID (controlling terminal session)
+    uint32_t tty_nr;                   // Controlling terminal dev_t (0 = none; Linux: MKDEV(136,n) for /dev/pts/n)
 
     /* Signal handling */
     sighandler_t signal_handlers[_NSIG];  // Array of signal handlers (index 1-30)

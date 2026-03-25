@@ -54508,6 +54508,134 @@ void fut_misc_test_thread(void *arg) {
         if (mfd >= 0) sys_close((int)mfd);
     }
 
+    /* ============================================================
+     * Tests 1681-1684: PTY readlink + tty_nr in procfs
+     * ============================================================ */
+    {
+        extern long sys_open(const char *, int, int);
+        extern long sys_close(int);
+        extern long sys_ioctl(int fd, unsigned long request, void *argp);
+        extern long sys_readlink(const char *, char *, size_t);
+
+        /* Open PTY pair */
+        long mfd = sys_open("/dev/ptmx", 0x0002, 0);
+        int pts_n = -1;
+        if (mfd >= 0) sys_ioctl((int)mfd, 0x80045430, &pts_n);
+        int zero = 0;
+        if (mfd >= 0) sys_ioctl((int)mfd, 0x40045431, &zero);
+        char pp[24];
+        { const char *pfx = "/dev/pts/"; int i = 0; while (pfx[i]) { pp[i] = pfx[i]; i++; }
+          if (pts_n >= 10) pp[i++] = (char)('0' + pts_n/10);
+          pp[i++] = (char)('0' + pts_n%10); pp[i] = '\0'; }
+        long sfd = (pts_n >= 0) ? sys_open(pp, 0x0002, 0) : -1;
+
+        /* Test 1681: /proc/self/fd/<master> readlink → /dev/ptmx */
+        fut_printf("[MISC-TEST] Test 1681: readlink /proc/self/fd/<master> → /dev/ptmx\n");
+        if (mfd >= 0) {
+            char link_path[48];
+            {
+                const char *pfx = "/proc/self/fd/";
+                int i = 0; while (pfx[i]) { link_path[i] = pfx[i]; i++; }
+                if (mfd >= 10) link_path[i++] = (char)('0' + mfd/10);
+                link_path[i++] = (char)('0' + mfd%10); link_path[i] = '\0';
+            }
+            char buf[64] = {0};
+            long nr = sys_readlink(link_path, buf, 63);
+            if (nr > 0) buf[nr] = '\0';
+            if (nr >= 9 && __builtin_strncmp(buf, "/dev/ptmx", 9) == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1681: readlink='%s'\n", buf);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1681: readlink='%s' (nr=%ld)\n", buf, nr);
+                fut_test_fail(1681);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1681: skipped\n");
+            fut_test_fail(1681);
+        }
+
+        /* Test 1682: /proc/self/fd/<slave> readlink → /dev/pts/<n> */
+        fut_printf("[MISC-TEST] Test 1682: readlink /proc/self/fd/<slave> → /dev/pts/%d\n", pts_n);
+        if (sfd >= 0) {
+            char link_path[48];
+            {
+                const char *pfx = "/proc/self/fd/";
+                int i = 0; while (pfx[i]) { link_path[i] = pfx[i]; i++; }
+                if (sfd >= 10) link_path[i++] = (char)('0' + sfd/10);
+                link_path[i++] = (char)('0' + sfd%10); link_path[i] = '\0';
+            }
+            char buf[64] = {0};
+            long nr = sys_readlink(link_path, buf, 63);
+            if (nr > 0) buf[nr] = '\0';
+            /* Should be "/dev/pts/<n>" */
+            if (nr >= 10 && __builtin_strncmp(buf, "/dev/pts/", 9) == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1682: readlink='%s'\n", buf);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1682: readlink='%s' (nr=%ld)\n", buf, nr);
+                fut_test_fail(1682);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1682: skipped\n");
+            fut_test_fail(1682);
+        }
+
+        /* Test 1683: /proc/self/stat tty_nr field is nonzero after PTY slave open */
+        fut_printf("[MISC-TEST] Test 1683: /proc/self/stat tty_nr after PTY open\n");
+        if (sfd >= 0) {
+            int stat_fd = fut_vfs_open("/proc/self/stat", 0 /* O_RDONLY */, 0);
+            if (stat_fd >= 0) {
+                char sbuf[512] = {0};
+                long nr = fut_vfs_read(stat_fd, sbuf, 511);
+                fut_vfs_close(stat_fd);
+                if (nr > 0) sbuf[nr] = '\0';
+                /* Parse: skip "PID (COMM) STATE PPID PGRP SID TTY_NR ..." */
+                /* Find closing ')' then skip 5 space-delimited tokens to reach tty_nr */
+                char *p = sbuf;
+                while (*p && *p != ')') p++;
+                if (*p == ')') p++;
+                /* Skip: ' S', ' PPID', ' PGRP', ' SID', ' ' → land on TTY_NR digits */
+                int fields = 0;
+                while (*p && fields < 5) { if (*p == ' ') fields++; p++; }
+                /* Now p points at tty_nr field */
+                long tty_val = 0;
+                while (*p >= '0' && *p <= '9') { tty_val = tty_val * 10 + (*p - '0'); p++; }
+                /* Linux: /dev/pts/N = MKDEV(136, N) = (136 << 8) | N = 34816 + N */
+                if (tty_val >= 34816 && tty_val < 34816 + 64) {
+                    fut_printf("[MISC-TEST] ✓ Test 1683: tty_nr=%ld (pts/%ld)\n",
+                               tty_val, tty_val - 34816);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1683: tty_nr=%ld (expected 34816+)\n", tty_val);
+                    fut_test_fail(1683);
+                }
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1683: open /proc/self/stat failed\n");
+                fut_test_fail(1683);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1683: skipped (no slave fd)\n");
+            fut_test_fail(1683);
+        }
+
+        /* Test 1684: tty_nr persists in task struct after slave close */
+        fut_printf("[MISC-TEST] Test 1684: tty_nr persists in task struct\n");
+        {
+            fut_task_t *cur = fut_task_current();
+            if (cur && cur->tty_nr >= (136u << 8) && cur->tty_nr < (136u << 8) + 64) {
+                fut_printf("[MISC-TEST] ✓ Test 1684: tty_nr=0x%x (pts/%u)\n",
+                           cur->tty_nr, cur->tty_nr & 0xFF);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1684: tty_nr=0x%x\n", cur ? cur->tty_nr : 0);
+                fut_test_fail(1684);
+            }
+        }
+
+        if (sfd >= 0) sys_close((int)sfd);
+        if (mfd >= 0) sys_close((int)mfd);
+    }
+
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");
     fut_printf("[MISC-TEST] ========================================\n");

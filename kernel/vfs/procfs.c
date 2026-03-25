@@ -1357,8 +1357,8 @@ static size_t gen_stat(char *buf, size_t cap, fut_task_t *task, uint64_t tid) {
     pb_u64(&b, pgrp); pb_char(&b, ' ');
     /* Field 6: session */
     pb_u64(&b, session); pb_char(&b, ' ');
-    /* Field 7: tty_nr (0 = no controlling terminal) */
-    pb_char(&b, '0'); pb_char(&b, ' ');
+    /* Field 7: tty_nr (controlling terminal device number, 0 = none) */
+    pb_u64(&b, (uint64_t)task->tty_nr); pb_char(&b, ' ');
     /* Field 8: tpgid (-1 = no terminal foreground group) */
     pb_char(&b, '-'); pb_char(&b, '1'); pb_char(&b, ' ');
     /* Field 9: flags */

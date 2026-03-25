@@ -51308,6 +51308,86 @@ __attribute__((noinline)) static void test_auxv_and_status_fields(void) {
     }
 }
 
+/* Tests 1721-1724: TIMER_ABSTIME for timer_settime and clock_nanosleep */
+__attribute__((noinline)) static void test_timer_abstime(void) {
+    /* timer/clock functions are declared elsewhere — no re-declaration needed. */
+
+    /* Test 1721: timer_settime with TIMER_ABSTIME fires for past time */
+    fut_printf("[MISC-TEST] Test 1721: timer_settime TIMER_ABSTIME past → fires\n");
+    {
+        int tid = -1;
+        struct sigevent sev;
+        __builtin_memset(&sev, 0, sizeof(sev));
+        sev.sigev_signo = 14; /* SIGALRM */
+        extern long sys_timer_create(int, struct sigevent *, timer_t *);
+        long r = sys_timer_create(0 /* CLOCK_REALTIME */, &sev, &tid);
+        if (r == 0 && tid >= 0) {
+            /* Set absolute time in the past → should fire immediately */
+            struct itimerspec its;
+            __builtin_memset(&its, 0, sizeof(its));
+            its.it_value.tv_sec = 1;  /* 1 second since epoch (past) */
+            extern long sys_timer_settime(int, int, const struct itimerspec *, struct itimerspec *);
+            r = sys_timer_settime(tid, 1 /* TIMER_ABSTIME */, &its, NULL);
+            if (r == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1721: timer_settime(ABSTIME) → 0\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1721: timer_settime → %ld\n", r);
+                fut_test_fail(1721);
+            }
+            sys_timer_delete(tid);
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1721: timer_create → %ld\n", r);
+            fut_test_fail(1721);
+        }
+    }
+
+    /* Test 1722: clock_nanosleep TIMER_ABSTIME with past time returns 0 */
+    fut_printf("[MISC-TEST] Test 1722: clock_nanosleep ABSTIME past → 0\n");
+    {
+        fut_timespec_t req = {1, 0};  /* 1 second since epoch (past) */
+        extern long sys_clock_nanosleep(int, int, const fut_timespec_t *, fut_timespec_t *);
+        long r = sys_clock_nanosleep(0 /* CLOCK_REALTIME */, 1 /* TIMER_ABSTIME */, &req, NULL);
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1722: clock_nanosleep(ABSTIME, past) → 0\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1722: returned %ld\n", r);
+            fut_test_fail(1722);
+        }
+    }
+
+    /* Test 1723: clock_nanosleep with invalid clock → EINVAL */
+    fut_printf("[MISC-TEST] Test 1723: clock_nanosleep invalid clock → EINVAL\n");
+    {
+        fut_timespec_t req = {0, 1000000}; /* 1ms */
+        extern long sys_clock_nanosleep(int, int, const fut_timespec_t *, fut_timespec_t *);
+        long r = sys_clock_nanosleep(99 /* invalid */, 0, &req, NULL);
+        if (r == -22 /* EINVAL */) {
+            fut_printf("[MISC-TEST] ✓ Test 1723: invalid clock → EINVAL\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1723: returned %ld\n", r);
+            fut_test_fail(1723);
+        }
+    }
+
+    /* Test 1724: clock_nanosleep with negative nsec → EINVAL */
+    fut_printf("[MISC-TEST] Test 1724: clock_nanosleep bad nsec → EINVAL\n");
+    {
+        fut_timespec_t req = {0, -1};
+        extern long sys_clock_nanosleep(int, int, const fut_timespec_t *, fut_timespec_t *);
+        long r = sys_clock_nanosleep(1 /* CLOCK_MONOTONIC */, 0, &req, NULL);
+        if (r == -22 /* EINVAL */) {
+            fut_printf("[MISC-TEST] ✓ Test 1724: negative nsec → EINVAL\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1724: returned %ld\n", r);
+            fut_test_fail(1724);
+        }
+    }
+}
+
 /* Tests 1717-1720: chdir + getcwd round-trip verification */
 __attribute__((noinline)) static void test_chdir_getcwd_roundtrip(void) {
     extern long sys_chdir(const char *path);
@@ -55488,6 +55568,7 @@ void fut_misc_test_thread(void *arg) {
     test_elf_phdr_handling();      /* Tests 1709-1712 */
     test_pt_interp_and_exec();    /* Tests 1713-1716 */
     test_chdir_getcwd_roundtrip(); /* Tests 1717-1720 */
+    test_timer_abstime();          /* Tests 1721-1724 */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

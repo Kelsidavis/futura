@@ -206,6 +206,22 @@ static bool load_demand_page(uint64_t page_addr, struct fut_vma *vma, fut_vmem_c
         pte_flags &= ~PTE_WRITABLE;  /* Map read-only for COW */
     }
 
+    /* Clean D-cache and invalidate I-cache for executable pages.
+     * After writing file data to the page (via memset + vnode->read),
+     * the data is in the D-cache but the I-cache may have stale (zero)
+     * entries.  Without this, the CPU executes old I-cache data instead
+     * of the newly loaded code, causing register corruption. */
+    if (vma->prot & 0x4) {  /* PROT_EXEC */
+        for (uintptr_t off = 0; off < PAGE_SIZE; off += 64) {
+            uintptr_t addr = (uintptr_t)page + off;
+            __asm__ volatile("dc cvau, %0" :: "r"(addr) : "memory");
+        }
+        __asm__ volatile("dsb ish" ::: "memory");
+        __asm__ volatile("ic iallu" ::: "memory");
+        __asm__ volatile("dsb ish" ::: "memory");
+        __asm__ volatile("isb" ::: "memory");
+    }
+
     /* Map the page */
     phys_addr_t phys = pmap_virt_to_phys((uintptr_t)page);
     if (pmap_map_user(ctx, page_addr, phys, PAGE_SIZE, pte_flags) != 0) {

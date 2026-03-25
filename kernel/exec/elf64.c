@@ -1572,7 +1572,9 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     /* Inherit non-CLOEXEC file descriptors from the calling task, then fill
      * any missing stdio fds (0, 1, 2) with /dev/console.  POSIX requires
      * execve to preserve open file descriptors (minus those with FD_CLOEXEC).
-     * The calling task's CLOEXEC fds were already closed by sys_execve. */
+     * The calling task's CLOEXEC fds were already closed by sys_execve.
+     * NOTE: Only for x86_64 — ARM64 uses the second fut_exec_elf (line ~2583). */
+#if defined(__x86_64__)
     {
         fut_thread_t *cur = fut_thread_current();
         fut_task_t *caller_task = cur ? cur->task : NULL;
@@ -1616,6 +1618,7 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
 
         if (cur) cur->task = saved_task;
     }
+#endif
 
     struct fut_user_entry *entry = fut_malloc(sizeof(*entry));
     if (!entry) {

@@ -2795,6 +2795,17 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
         if (seg_end > heap_base_candidate) {
             heap_base_candidate = (uintptr_t)seg_end;
         }
+
+        /* Create a VMA for this segment so /proc/<pid>/maps shows it */
+        {
+            int vprot = 0;
+            if (phdrs[i].p_flags & PF_R) vprot |= PROT_READ;
+            if (phdrs[i].p_flags & PF_W) vprot |= PROT_WRITE;
+            if (phdrs[i].p_flags & PF_X) vprot |= PROT_EXEC;
+            uint64_t vma_start = phdrs[i].p_vaddr & ~(PAGE_SIZE - 1);
+            uint64_t vma_end = (seg_end + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+            fut_mm_add_vma(mm, vma_start, vma_end, vprot, 0);
+        }
     }
 
     /* Set heap base */

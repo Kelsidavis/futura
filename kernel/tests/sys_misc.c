@@ -54636,6 +54636,124 @@ void fut_misc_test_thread(void *arg) {
         if (mfd >= 0) sys_close((int)mfd);
     }
 
+    /* ============================================================
+     * Tests 1685-1688: ELF auxiliary vector improvements
+     * ============================================================ */
+    {
+        /* Read /proc/self/auxv (binary: array of {uint64_t key, uint64_t val}) */
+        int afd = fut_vfs_open("/proc/self/auxv", 0 /* O_RDONLY */, 0);
+
+        /* Test 1685: AT_HWCAP (key=16) is non-zero */
+        fut_printf("[MISC-TEST] Test 1685: AT_HWCAP in /proc/self/auxv is non-zero\n");
+        if (afd >= 0) {
+            struct { uint64_t key; uint64_t val; } entries[20];
+            long nr = fut_vfs_read(afd, entries, (long)sizeof(entries));
+            fut_vfs_close(afd);
+            int n_entries = (int)(nr / 16);
+            uint64_t hwcap = 0;
+            int found_hwcap = 0;
+            for (int i = 0; i < n_entries; i++) {
+                if (entries[i].key == 16) { hwcap = entries[i].val; found_hwcap = 1; break; }
+                if (entries[i].key == 0) break;  /* AT_NULL */
+            }
+            if (found_hwcap && hwcap != 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1685: AT_HWCAP=0x%lx\n", (unsigned long)hwcap);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1685: AT_HWCAP=%lx found=%d\n",
+                           (unsigned long)hwcap, found_hwcap);
+                fut_test_fail(1685);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1685: open /proc/self/auxv failed\n");
+            fut_test_fail(1685);
+        }
+
+        /* Test 1686: AT_CLKTCK (key=17) is 100 */
+        fut_printf("[MISC-TEST] Test 1686: AT_CLKTCK in /proc/self/auxv is 100\n");
+        afd = fut_vfs_open("/proc/self/auxv", 0, 0);
+        if (afd >= 0) {
+            struct { uint64_t key; uint64_t val; } entries[20];
+            long nr = fut_vfs_read(afd, entries, (long)sizeof(entries));
+            fut_vfs_close(afd);
+            int n_entries = (int)(nr / 16);
+            uint64_t clktck = 0;
+            int found = 0;
+            for (int i = 0; i < n_entries; i++) {
+                if (entries[i].key == 17) { clktck = entries[i].val; found = 1; break; }
+                if (entries[i].key == 0) break;
+            }
+            if (found && clktck == 100) {
+                fut_printf("[MISC-TEST] ✓ Test 1686: AT_CLKTCK=100\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1686: AT_CLKTCK=%lu found=%d\n",
+                           (unsigned long)clktck, found);
+                fut_test_fail(1686);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1686: open /proc/self/auxv failed\n");
+            fut_test_fail(1686);
+        }
+
+        /* Test 1687: AT_PAGESZ (key=6) is PAGE_SIZE */
+        fut_printf("[MISC-TEST] Test 1687: AT_PAGESZ in /proc/self/auxv\n");
+        afd = fut_vfs_open("/proc/self/auxv", 0, 0);
+        if (afd >= 0) {
+            struct { uint64_t key; uint64_t val; } entries[20];
+            long nr = fut_vfs_read(afd, entries, (long)sizeof(entries));
+            fut_vfs_close(afd);
+            int n_entries = (int)(nr / 16);
+            uint64_t pgsz = 0;
+            int found = 0;
+            for (int i = 0; i < n_entries; i++) {
+                if (entries[i].key == 6) { pgsz = entries[i].val; found = 1; break; }
+                if (entries[i].key == 0) break;
+            }
+            if (found && pgsz == 4096) {
+                fut_printf("[MISC-TEST] ✓ Test 1687: AT_PAGESZ=4096\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1687: AT_PAGESZ=%lu found=%d\n",
+                           (unsigned long)pgsz, found);
+                fut_test_fail(1687);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1687: open /proc/self/auxv failed\n");
+            fut_test_fail(1687);
+        }
+
+        /* Test 1688: AT_HWCAP has at least FPU and SSE2 bits on x86_64 */
+        fut_printf("[MISC-TEST] Test 1688: AT_HWCAP has FPU+SSE2 (x86_64)\n");
+        afd = fut_vfs_open("/proc/self/auxv", 0, 0);
+        if (afd >= 0) {
+            struct { uint64_t key; uint64_t val; } entries[20];
+            long nr = fut_vfs_read(afd, entries, (long)sizeof(entries));
+            fut_vfs_close(afd);
+            int n_entries = (int)(nr / 16);
+            uint64_t hwcap = 0;
+            for (int i = 0; i < n_entries; i++) {
+                if (entries[i].key == 16) { hwcap = entries[i].val; break; }
+                if (entries[i].key == 0) break;
+            }
+            /* x86_64: bit 0 = FPU, bit 26 = SSE2 */
+            uint64_t fpu_bit = 1ULL << 0;
+            uint64_t sse2_bit = 1ULL << 26;
+            if ((hwcap & fpu_bit) && (hwcap & sse2_bit)) {
+                fut_printf("[MISC-TEST] ✓ Test 1688: AT_HWCAP has FPU+SSE2 (0x%lx)\n",
+                           (unsigned long)hwcap);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1688: AT_HWCAP=0x%lx missing FPU/SSE2\n",
+                           (unsigned long)hwcap);
+                fut_test_fail(1688);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1688: open /proc/self/auxv failed\n");
+            fut_test_fail(1688);
+        }
+    }
+
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");
     fut_printf("[MISC-TEST] ========================================\n");

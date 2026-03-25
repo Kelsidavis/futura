@@ -2647,7 +2647,21 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
                 /* AT_SECURE: 1 if effective credentials differ from real */
                 uint64_t secure = (task->uid != task->ruid || task->gid != task->rgid) ? 1 : 0;
                 AUXV_PUSH(23, secure);                  /* AT_SECURE */
-                AUXV_PUSH(16, 0ULL);                    /* AT_HWCAP — no special hw caps */
+                /* AT_HWCAP — CPU feature flags from CPUID (x86_64) or defaults */
+                {
+                    uint64_t hwcap = 0;
+#ifdef __x86_64__
+                    uint32_t hc_eax, hc_ebx, hc_ecx, hc_edx;
+                    __asm__ volatile("cpuid"
+                                     : "=a"(hc_eax), "=b"(hc_ebx), "=c"(hc_ecx), "=d"(hc_edx)
+                                     : "a"(1));
+                    hwcap = hc_edx;
+#elif defined(__aarch64__)
+                    hwcap = 0x3; /* HWCAP_FP | HWCAP_ASIMD */
+#endif
+                    AUXV_PUSH(16, hwcap);
+                }
+                AUXV_PUSH(17, 100ULL);                  /* AT_CLKTCK */
                 AUXV_PUSH(0,  0ULL);                    /* AT_NULL — terminator */
 #undef AUXV_PUSH
                 total = (size_t)ai * sizeof(av[0]);

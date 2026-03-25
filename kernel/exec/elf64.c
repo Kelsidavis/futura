@@ -482,6 +482,31 @@ static int build_user_stack(fut_mm_t *mm,
     uint64_t random_addr = sp;
     exec_copy_to_user(mm, sp, random_bytes, 16);
 
+    /* Push AT_PLATFORM string — CPU architecture name used by glibc for
+     * ifunc resolution and getauxval(AT_PLATFORM) queries. */
+#ifdef __x86_64__
+    static const char platform_str[] = "x86_64";
+#elif defined(__aarch64__)
+    static const char platform_str[] = "aarch64";
+#else
+    static const char platform_str[] = "unknown";
+#endif
+    sp -= sizeof(platform_str);  /* includes NUL */
+    uint64_t platform_addr = sp;
+    exec_copy_to_user(mm, sp, platform_str, sizeof(platform_str));
+
+    /* AT_HWCAP: CPU feature flags. On x86_64, use CPUID leaf 1 EDX. */
+    uint64_t hwcap_val = 0;
+#ifdef __x86_64__
+    {
+        uint32_t eax_c, ebx_c, ecx_c, edx_c;
+        __asm__ volatile("cpuid" : "=a"(eax_c), "=b"(ebx_c), "=c"(ecx_c), "=d"(edx_c) : "a"(1));
+        hwcap_val = edx_c;  /* FPU, SSE, SSE2, etc. */
+    }
+#elif defined(__aarch64__)
+    hwcap_val = 0x3;  /* HWCAP_FP | HWCAP_ASIMD — baseline AArch64 */
+#endif
+
     /* Push ELF auxiliary vector (auxv) — highest address, after envp NULL.
      * musl and glibc read these to discover page size, UID, etc. */
     {
@@ -501,12 +526,13 @@ static int build_user_stack(fut_mm_t *mm,
             { 25 /* AT_RANDOM */, random_addr },
             { 17 /* AT_CLKTCK */, 100 },
             { 31 /* AT_EXECFN */, execfn_addr },
+            { 15 /* AT_PLATFORM */, platform_addr },
             { 11 /* AT_UID */,   uid },
             { 12 /* AT_EUID */,  euid },
             { 13 /* AT_GID */,   gid },
             { 14 /* AT_EGID */,  egid },
             { 23 /* AT_SECURE */, secure },
-            { 16 /* AT_HWCAP */,  0 },
+            { 16 /* AT_HWCAP */,  hwcap_val },
             { 0 /* AT_NULL */,   0 },
         };
         for (int ai = (int)(sizeof(auxv)/sizeof(auxv[0])) - 1; ai >= 0; ai--) {
@@ -2149,6 +2175,19 @@ static int build_user_stack(fut_mm_t *mm,
     uint64_t rand_addr = sp;
     exec_copy_to_user(mm, sp, rand_bytes, 16);
 
+    /* Push AT_PLATFORM string */
+#ifdef __aarch64__
+    static const char arm64_platform[] = "aarch64";
+#else
+    static const char arm64_platform[] = "x86_64";
+#endif
+    sp -= sizeof(arm64_platform);
+    uint64_t arm64_platform_addr = sp;
+    exec_copy_to_user(mm, sp, arm64_platform, sizeof(arm64_platform));
+
+    /* AT_HWCAP for ARM64: HWCAP_FP | HWCAP_ASIMD (baseline) */
+    uint64_t arm64_hwcap = 0x3;
+
     struct { uint64_t key; uint64_t val; } auxv_entries[] = {
         { AT_PAGESZ, PAGE_SIZE },
         { AT_ENTRY,  g_exec_entry },
@@ -2158,12 +2197,13 @@ static int build_user_stack(fut_mm_t *mm,
         { AT_RANDOM, rand_addr },
         { 17 /* AT_CLKTCK */, 100 },
         { 31 /* AT_EXECFN */, execfn_addr },
+        { 15 /* AT_PLATFORM */, arm64_platform_addr },
         { AT_UID,    0 },  /* root */
         { AT_EUID,   0 },
         { AT_GID,    0 },
         { AT_EGID,   0 },
         { AT_SECURE, 0 },
-        { AT_HWCAP,  0 },
+        { AT_HWCAP,  arm64_hwcap },
         { AT_NULL,   0 },  /* Terminator */
     };
     size_t auxv_count = sizeof(auxv_entries) / sizeof(auxv_entries[0]);

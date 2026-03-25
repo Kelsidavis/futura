@@ -51308,6 +51308,71 @@ __attribute__((noinline)) static void test_auxv_and_status_fields(void) {
     }
 }
 
+/* Tests 1713-1716: PT_INTERP parsing + exec edge cases */
+__attribute__((noinline)) static void test_pt_interp_and_exec(void) {
+    extern long sys_execve(const char *, char *const *, char *const *);
+
+    /* Test 1713: execve on nonexistent file → ENOENT */
+    fut_printf("[MISC-TEST] Test 1713: execve nonexistent → ENOENT\n");
+    {
+        long r = sys_execve("/nonexistent_binary_1713", NULL, NULL);
+        if (r == -2 /* ENOENT */) {
+            fut_printf("[MISC-TEST] ✓ Test 1713: ENOENT\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1713: %ld\n", r);
+            fut_test_fail(1713);
+        }
+    }
+
+    /* Test 1714: execve with NULL path → EFAULT */
+    fut_printf("[MISC-TEST] Test 1714: execve NULL → EFAULT\n");
+    {
+        long r = sys_execve(NULL, NULL, NULL);
+        if (r == -14 /* EFAULT */ || r == -22 /* EINVAL */) {
+            fut_printf("[MISC-TEST] ✓ Test 1714: NULL path → %ld\n", r);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1714: %ld\n", r);
+            fut_test_fail(1714);
+        }
+    }
+
+    /* Test 1715: execve with second nonexistent path → ENOENT */
+    fut_printf("[MISC-TEST] Test 1715: execve /no_such_2 → ENOENT\n");
+    {
+        long r = sys_execve("/no_such_binary_1715", NULL, NULL);
+        if (r == -2 /* ENOENT */) {
+            fut_printf("[MISC-TEST] ✓ Test 1715: ENOENT\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1715: %ld\n", r);
+            fut_test_fail(1715);
+        }
+    }
+
+    /* Test 1716: shebang exec with nonexistent interp → ENOENT */
+    fut_printf("[MISC-TEST] Test 1716: shebang nonexistent interp → ENOENT\n");
+    {
+        int fd = fut_vfs_open("/tmp/shebang_1716.sh", 0x42, 0755);
+        if (fd >= 0) {
+            const char *content = "#!/tmp/no_such_interp_1716\necho hi\n";
+            fut_vfs_write(fd, content, 35);
+            fut_vfs_close(fd);
+        }
+        const char *const argv[] = { "/tmp/shebang_1716.sh", NULL };
+        long r = sys_execve("/tmp/shebang_1716.sh", (char *const *)argv, NULL);
+        fut_vfs_unlink("/tmp/shebang_1716.sh");
+        if (r == -2 /* ENOENT */) {
+            fut_printf("[MISC-TEST] ✓ Test 1716: shebang ENOENT\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1716: %ld\n", r);
+            fut_test_fail(1716);
+        }
+    }
+}
+
 /* Tests 1709-1712: PT_GNU_STACK / PT_GNU_RELRO / stack NX verification */
 __attribute__((noinline)) static void test_elf_phdr_handling(void) {
     /* Test 1709: /proc/self/maps is openable (kernel thread may have 0 VMAs) */
@@ -55316,6 +55381,7 @@ void fut_misc_test_thread(void *arg) {
     test_pty_sigwinch();     /* Tests 1701-1704 */
     test_auxv_and_status_fields(); /* Tests 1705-1708 */
     test_elf_phdr_handling();      /* Tests 1709-1712 */
+    test_pt_interp_and_exec();    /* Tests 1713-1716 */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

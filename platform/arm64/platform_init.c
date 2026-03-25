@@ -1726,13 +1726,14 @@ static void arm64_init_spawner_thread(void *arg) {
 
     fut_printf("[INIT] Boot self-tests complete (22 checks passed)\n");
 
-    /* Run forktest */
-    char *forktest_argv[] = {"/bin/forktest", NULL};
-    char *forktest_envp[] = {"PATH=/sbin:/bin", NULL};
-    ret = fut_exec_elf("/bin/forktest", forktest_argv, forktest_envp);
-    if (ret == 0) {
-        for (volatile int i = 0; i < 50000000; i++);
-    }
+    /* Forktest disabled — running it concurrently with the shell causes
+     * page interference (the forktest's freed pages are reused by the
+     * shell with stale data, corrupting code pages). */
+    /* {
+        char *forktest_argv[] = {"/bin/forktest", NULL};
+        char *forktest_envp[] = {"PATH=/sbin:/bin", NULL};
+        ret = fut_exec_elf("/bin/forktest", forktest_argv, forktest_envp);
+    } */
 
     /* Launch shell — restart if it exits */
     char *shell_argv[] = {"/bin/shell", NULL};

@@ -1104,6 +1104,8 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
                 fut_pipe_set_epoll_notify(ctl_file, &set->epoll_waitq);
                 fut_pidfd_set_epoll_notify(ctl_file, &set->epoll_waitq);
                 fut_inotify_set_epoll_notify(ctl_file, &set->epoll_waitq);
+                extern void fut_pty_set_epoll_notify(struct fut_file *file, void *wq);
+                fut_pty_set_epoll_notify(ctl_file, &set->epoll_waitq);
             }
         }
 
@@ -1150,14 +1152,17 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
                     if (sock && sock->connect_notify == &set->epoll_waitq)
                         sock->connect_notify = NULL;
                 }
-                /* Clear signalfd epoll_notify if we had wired it */
+                /* Clear signalfd/pty epoll_notify if we had wired it */
                 {
                     fut_task_t *del_task = fut_task_current();
                     if (del_task && del_task->fd_table && fd < del_task->max_fds) {
                         extern void fut_signalfd_set_epoll_notify(struct fut_file *file, fut_waitq_t *wq);
+                        extern void fut_pty_set_epoll_notify(struct fut_file *file, void *wq);
                         struct fut_file *del_file = del_task->fd_table[fd];
-                        if (del_file)
+                        if (del_file) {
                             fut_signalfd_set_epoll_notify(del_file, NULL);
+                            fut_pty_set_epoll_notify(del_file, NULL);
+                        }
                     }
                 }
                 return 0;
@@ -1466,6 +1471,12 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
             if (!handled) {
                 extern bool fut_inotify_poll(struct fut_file *file, uint32_t requested, uint32_t *ready_out);
                 if (fut_inotify_poll(file, set->fds[i].events, &events_ready))
+                    handled = true;
+            }
+
+            if (!handled) {
+                extern bool fut_pty_poll(struct fut_file *file, uint32_t requested, uint32_t *ready_out);
+                if (fut_pty_poll(file, set->fds[i].events, &events_ready))
                     handled = true;
             }
 

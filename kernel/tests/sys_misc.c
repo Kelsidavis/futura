@@ -54387,6 +54387,127 @@ void fut_misc_test_thread(void *arg) {
         if (m2 >= 0) sys_close((int)m2);
     }
 
+    /* ============================================================
+     * Tests 1677-1680: PTY select/epoll integration
+     * ============================================================ */
+    {
+        extern long sys_open(const char *, int, int);
+        extern long sys_close(int);
+        extern long sys_read(int, void *, size_t);
+        extern long sys_write(int, const void *, size_t);
+        extern long sys_ioctl(int fd, unsigned long request, void *argp);
+        extern long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout);
+        extern long sys_select(int nfds, void *readfds, void *writefds, void *exceptfds, void *timeout);
+        extern long sys_epoll_create1(int flags);
+        extern long sys_epoll_ctl(int epfd, int op, int fd, void *event);
+        extern long sys_epoll_wait(int epfd, void *events, int maxevents, int timeout);
+
+        /* Open PTY pair */
+        long mfd = sys_open("/dev/ptmx", 0x0002, 0);
+        int pts_n = -1;
+        if (mfd >= 0) sys_ioctl((int)mfd, 0x80045430, &pts_n);
+        int zero = 0;
+        if (mfd >= 0) sys_ioctl((int)mfd, 0x40045431, &zero);
+        char pp[24];
+        { const char *pfx = "/dev/pts/"; int i = 0; while (pfx[i]) { pp[i] = pfx[i]; i++; }
+          if (pts_n >= 10) pp[i++] = (char)('0' + pts_n/10);
+          pp[i++] = (char)('0' + pts_n%10); pp[i] = '\0'; }
+        long sfd = (pts_n >= 0) ? sys_open(pp, 0x0002, 0) : -1;
+
+        /* Test 1677: poll() detects PTY master writable */
+        fut_printf("[MISC-TEST] Test 1677: poll() PTY master writable\n");
+        if (mfd >= 0 && sfd >= 0) {
+            struct pollfd pfd = { .fd = (int)mfd, .events = 0x0004 /* POLLOUT */, .revents = 0 };
+            long nr = sys_poll(&pfd, 1, 0);
+            if (nr == 1 && (pfd.revents & 0x0004)) {
+                fut_printf("[MISC-TEST] ✓ Test 1677: poll POLLOUT on master\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1677: nr=%ld revents=0x%x\n", nr, pfd.revents);
+                fut_test_fail(1677);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1677: skipped\n");
+            fut_test_fail(1677);
+        }
+
+        /* Test 1678: poll() detects PTY master readable after slave write */
+        fut_printf("[MISC-TEST] Test 1678: poll() PTY master readable after slave write\n");
+        if (mfd >= 0 && sfd >= 0) {
+            sys_write((int)sfd, "abc", 3);
+            struct pollfd pfd = { .fd = (int)mfd, .events = 0x0001 /* POLLIN */, .revents = 0 };
+            long nr = sys_poll(&pfd, 1, 0);
+            if (nr == 1 && (pfd.revents & 0x0001)) {
+                fut_printf("[MISC-TEST] ✓ Test 1678: poll POLLIN on master after slave write\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1678: nr=%ld revents=0x%x\n", nr, pfd.revents);
+                fut_test_fail(1678);
+            }
+            char drain[16]; sys_read((int)mfd, drain, 16);
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1678: skipped\n");
+            fut_test_fail(1678);
+        }
+
+        /* Test 1679: select() detects PTY slave readable after master write */
+        fut_printf("[MISC-TEST] Test 1679: select() PTY slave readable\n");
+        if (mfd >= 0 && sfd >= 0) {
+            sys_write((int)mfd, "xyz", 3);
+            /* Build fd_set for slave fd */
+            uint64_t readfds[2] = {0, 0};
+            int sfd_i = (int)sfd;
+            readfds[sfd_i / 64] |= (1ULL << (sfd_i % 64));
+            struct { long tv_sec; long tv_usec; } tv = {0, 0};
+            long nr = sys_select(sfd_i + 1, readfds, NULL, NULL, &tv);
+            if (nr >= 1 && (readfds[sfd_i / 64] & (1ULL << (sfd_i % 64)))) {
+                fut_printf("[MISC-TEST] ✓ Test 1679: select() reports slave readable\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1679: nr=%ld\n", nr);
+                fut_test_fail(1679);
+            }
+            char drain[16]; sys_read((int)sfd, drain, 16);
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1679: skipped\n");
+            fut_test_fail(1679);
+        }
+
+        /* Test 1680: epoll detects PTY master readable */
+        fut_printf("[MISC-TEST] Test 1680: epoll() PTY master readable\n");
+        if (mfd >= 0 && sfd >= 0) {
+            long epfd = sys_epoll_create1(0);
+            if (epfd >= 0) {
+                struct { uint32_t events; uint64_t data; } __attribute__((packed)) ev;
+                ev.events = 0x0001 /* EPOLLIN */;
+                ev.data = (uint64_t)mfd;
+                sys_epoll_ctl((int)epfd, 1 /* EPOLL_CTL_ADD */, (int)mfd, &ev);
+                /* Write data from slave to make master readable */
+                sys_write((int)sfd, "epoll", 5);
+                struct { uint32_t events; uint64_t data; } __attribute__((packed)) out = {0, 0};
+                long nr = sys_epoll_wait((int)epfd, &out, 1, 0);
+                if (nr == 1 && (out.events & 0x0001)) {
+                    fut_printf("[MISC-TEST] ✓ Test 1680: epoll EPOLLIN on PTY master\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1680: nr=%ld events=0x%x\n", nr, out.events);
+                    fut_test_fail(1680);
+                }
+                sys_close((int)epfd);
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1680: epoll_create1 failed %ld\n", epfd);
+                fut_test_fail(1680);
+            }
+            char drain[16]; sys_read((int)mfd, drain, 16);
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1680: skipped\n");
+            fut_test_fail(1680);
+        }
+
+        if (sfd >= 0) sys_close((int)sfd);
+        if (mfd >= 0) sys_close((int)mfd);
+    }
+
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");
     fut_printf("[MISC-TEST] ========================================\n");

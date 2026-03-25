@@ -381,6 +381,11 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
                     handled = true;
             }
             if (!handled) {
+                extern bool fut_pty_poll(struct fut_file *f, uint32_t req, uint32_t *out);
+                if (fut_pty_poll(file, epoll_req, &epoll_ready))
+                    handled = true;
+            }
+            if (!handled) {
                 fut_socket_t *socket = get_socket_from_fd(fd);
                 if (socket) {
                     int poll_events = 0;
@@ -508,6 +513,7 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
                 if (!handled && fut_pipe_poll(file, epoll_req, &epoll_ready)) handled = true;
                 if (!handled) { extern bool fut_pidfd_poll(struct fut_file *f, uint32_t req, uint32_t *out); if (fut_pidfd_poll(file, epoll_req, &epoll_ready)) handled = true; }
                 if (!handled) { extern bool fut_inotify_poll(struct fut_file *f, uint32_t req, uint32_t *out); if (fut_inotify_poll(file, epoll_req, &epoll_ready)) handled = true; }
+                if (!handled) { extern bool fut_pty_poll(struct fut_file *f, uint32_t req, uint32_t *out); if (fut_pty_poll(file, epoll_req, &epoll_ready)) handled = true; }
                 if (!handled) {
                     fut_socket_t *socket = get_socket_from_fd(fd);
                     if (socket) {
@@ -879,6 +885,11 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
                     handled = true;
             }
             if (!handled) {
+                extern bool fut_pty_poll(struct fut_file *f, uint32_t req, uint32_t *out);
+                if (fut_pty_poll(file, epoll_req, &epoll_ready))
+                    handled = true;
+            }
+            if (!handled) {
                 fut_socket_t *socket = get_socket_from_fd(fd);
                 if (socket) {
                     int poll_events = 0;
@@ -995,6 +1006,7 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
                 if (!handled && fut_pipe_poll(file, epoll_req, &epoll_ready)) handled = true;
                 if (!handled) { extern bool fut_pidfd_poll(struct fut_file *f, uint32_t req, uint32_t *out); if (fut_pidfd_poll(file, epoll_req, &epoll_ready)) handled = true; }
                 if (!handled) { extern bool fut_inotify_poll(struct fut_file *f, uint32_t req, uint32_t *out); if (fut_inotify_poll(file, epoll_req, &epoll_ready)) handled = true; }
+                if (!handled) { extern bool fut_pty_poll(struct fut_file *f, uint32_t req, uint32_t *out); if (fut_pty_poll(file, epoll_req, &epoll_ready)) handled = true; }
                 if (!handled) {
                     fut_socket_t *socket = get_socket_from_fd(fd);
                     if (socket) {

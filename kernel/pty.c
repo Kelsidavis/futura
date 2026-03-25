@@ -433,8 +433,22 @@ static int pts_release(void *inode, void *priv) {
     struct pty_pair *p = pp->pair;
 
     fut_spinlock_acquire(&p->lock);
+    int slave_idx = p->index;
     p->slave_open = false;
     fut_spinlock_release(&p->lock);
+
+    /* Remove /dev/pts/<n> ramfs entry */
+    {
+        char pts_path[20];
+        const char *pfx = "/dev/pts/";
+        int pi = 0;
+        while (pfx[pi]) { pts_path[pi] = pfx[pi]; pi++; }
+        if (slave_idx >= 10) pts_path[pi++] = (char)('0' + slave_idx / 10);
+        pts_path[pi++] = (char)('0' + slave_idx % 10);
+        pts_path[pi] = '\0';
+        extern int fut_vfs_unlink(const char *path);
+        fut_vfs_unlink(pts_path);
+    }
 
     /* Wake master so it sees EOF */
     fut_waitq_wake_all(&p->master_wq);
@@ -500,6 +514,12 @@ int pty_open_slave(int index) {
             path[pi] = '\0';
             file->path = path;
         }
+    }
+
+    /* Create /dev/pts/<n> ramfs entry so getdents64("/dev/pts/") lists it */
+    if (file && file->path) {
+        extern int fut_vfs_create_file(const char *path, uint32_t mode);
+        fut_vfs_create_file(file->path, 0620);  /* crw--w---- like Linux pts */
     }
 
     /* Set controlling terminal on the opening task (Linux: MKDEV(136, n)) */

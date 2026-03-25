@@ -51222,6 +51222,106 @@ static void test_openat_o_directory(void) {
     }
 }
 
+/* Separate function to avoid growing fut_misc_test_thread's stack frame
+ * (the main function is ~55K lines and near the kernel stack limit). */
+__attribute__((noinline)) static void test_pts_dir_readdir(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_close(int);
+    extern long sys_ioctl(int fd, unsigned long request, void *argp);
+    extern long sys_getdents64(unsigned int fd, void *dirp, unsigned int count);
+    static char dbuf[512];  /* static to avoid stack pressure */
+
+    /* Test 1689: /dev/pts/ has no entries when no slaves open */
+    fut_printf("[MISC-TEST] Test 1689: /dev/pts/ empty with no slaves\n");
+    {
+        int dfd = (int)sys_open("/dev/pts", 0x10000 /* O_DIRECTORY */, 0);
+        if (dfd >= 0) {
+            long nr = sys_getdents64(dfd, dbuf, 512);
+            sys_close(dfd);
+            int n = 0; { long _o = 0; while (_o < nr) { struct { uint64_t d_ino; int64_t d_off; uint16_t d_reclen; uint8_t d_type; char d_name[1]; } *_d = (void*)(dbuf+_o); if (_d->d_name[0]!='.') n++; _o += _d->d_reclen; } }
+            if (n == 0) { fut_printf("[MISC-TEST] ✓ Test 1689: /dev/pts/ empty\n"); fut_test_pass(); }
+            else { fut_printf("[MISC-TEST] ✗ Test 1689: %d entries\n", n); fut_test_fail(1689); }
+        } else { fut_printf("[MISC-TEST] ✗ Test 1689: open failed\n"); fut_test_fail(1689); }
+    }
+
+    /* Test 1690: open slave → /dev/pts/ has entry */
+    fut_printf("[MISC-TEST] Test 1690: /dev/pts/ lists opened slave\n");
+    long mfd = sys_open("/dev/ptmx", 0x0002, 0);
+    int pn = -1, zv = 0;
+    if (mfd >= 0) sys_ioctl((int)mfd, 0x80045430, &pn);
+    if (mfd >= 0) sys_ioctl((int)mfd, 0x40045431, &zv);
+    char pp[24];
+    { const char *pfx = "/dev/pts/"; int i = 0; while (pfx[i]) { pp[i] = pfx[i]; i++; }
+      if (pn >= 10) { pp[i++] = (char)('0' + pn/10); }
+      pp[i++] = (char)('0' + pn%10); pp[i] = '\0'; }
+    long sfd = (pn >= 0) ? sys_open(pp, 0x0002, 0) : -1;
+    if (sfd >= 0) {
+        int dfd = (int)sys_open("/dev/pts", 0x10000, 0);
+        if (dfd >= 0) {
+            long nr = sys_getdents64(dfd, dbuf, 512);
+            sys_close(dfd);
+            int found = 0;
+            char exp[4]; int ei = 0;
+            if (pn >= 10) { exp[ei++] = (char)('0' + pn/10); }
+            exp[ei++] = (char)('0' + pn%10); exp[ei] = '\0';
+            long off = 0;
+            while (off < nr) {
+                struct { uint64_t d_ino; int64_t d_off; uint16_t d_reclen; uint8_t d_type; char d_name[1]; }
+                    *de = (void *)(dbuf + off);
+                if (__builtin_strcmp(de->d_name, exp) == 0) found = 1;
+                off += de->d_reclen;
+            }
+            if (found) { fut_printf("[MISC-TEST] ✓ Test 1690: found '%s'\n", exp); fut_test_pass(); }
+            else { fut_printf("[MISC-TEST] ✗ Test 1690: '%s' not found\n", exp); fut_test_fail(1690); }
+        } else { fut_printf("[MISC-TEST] ✗ Test 1690: dir open failed\n"); fut_test_fail(1690); }
+    } else { fut_printf("[MISC-TEST] ✗ Test 1690: slave open failed\n"); fut_test_fail(1690); }
+
+    /* Test 1691: close slave → entry disappears */
+    fut_printf("[MISC-TEST] Test 1691: entry removed after slave close\n");
+    if (sfd >= 0) { sys_close((int)sfd); sfd = -1; }
+    {
+        int dfd = (int)sys_open("/dev/pts", 0x10000, 0);
+        if (dfd >= 0) {
+            long nr = sys_getdents64(dfd, dbuf, 512);
+            sys_close(dfd);
+            int n = 0; { long _o = 0; while (_o < nr) { struct { uint64_t d_ino; int64_t d_off; uint16_t d_reclen; uint8_t d_type; char d_name[1]; } *_d = (void*)(dbuf+_o); if (_d->d_name[0]!='.') n++; _o += _d->d_reclen; } }
+            if (n == 0) { fut_printf("[MISC-TEST] ✓ Test 1691: entry removed\n"); fut_test_pass(); }
+            else { fut_printf("[MISC-TEST] ✗ Test 1691: %d entries remain\n", n); fut_test_fail(1691); }
+        } else { fut_printf("[MISC-TEST] ✗ Test 1691: dir open failed\n"); fut_test_fail(1691); }
+    }
+    if (mfd >= 0) sys_close((int)mfd);
+
+    /* Test 1692: two slaves → 2 entries */
+    fut_printf("[MISC-TEST] Test 1692: two slaves in /dev/pts/\n");
+    {
+        long m1 = sys_open("/dev/ptmx", 0x0002, 0);
+        long m2 = sys_open("/dev/ptmx", 0x0002, 0);
+        int n1 = -1, n2 = -1;
+        if (m1 >= 0) { sys_ioctl((int)m1, 0x80045430, &n1); sys_ioctl((int)m1, 0x40045431, &zv); }
+        if (m2 >= 0) { sys_ioctl((int)m2, 0x80045430, &n2); sys_ioctl((int)m2, 0x40045431, &zv); }
+        char p1[24], p2[24];
+        { const char *pfx = "/dev/pts/"; int i;
+          i = 0; while (pfx[i]) { p1[i] = pfx[i]; i++; } if (n1 >= 10) { p1[i++] = (char)('0'+n1/10); } p1[i++] = (char)('0'+n1%10); p1[i] = '\0';
+          i = 0; while (pfx[i]) { p2[i] = pfx[i]; i++; } if (n2 >= 10) { p2[i++] = (char)('0'+n2/10); } p2[i++] = (char)('0'+n2%10); p2[i] = '\0'; }
+        long s1 = (n1 >= 0) ? sys_open(p1, 0x0002, 0) : -1;
+        long s2 = (n2 >= 0) ? sys_open(p2, 0x0002, 0) : -1;
+        if (s1 >= 0 && s2 >= 0) {
+            int dfd = (int)sys_open("/dev/pts", 0x10000, 0);
+            if (dfd >= 0) {
+                long nr = sys_getdents64(dfd, dbuf, 512);
+                sys_close(dfd);
+                int n = 0; { long _o = 0; while (_o < nr) { struct { uint64_t d_ino; int64_t d_off; uint16_t d_reclen; uint8_t d_type; char d_name[1]; } *_d = (void*)(dbuf+_o); if (_d->d_name[0]!='.') n++; _o += _d->d_reclen; } }
+                if (n == 2) { fut_printf("[MISC-TEST] ✓ Test 1692: 2 entries\n"); fut_test_pass(); }
+                else { fut_printf("[MISC-TEST] ✗ Test 1692: %d entries\n", n); fut_test_fail(1692); }
+            } else { fut_printf("[MISC-TEST] ✗ Test 1692: dir open failed\n"); fut_test_fail(1692); }
+        } else { fut_printf("[MISC-TEST] ✗ Test 1692: slave open failed\n"); fut_test_fail(1692); }
+        if (s1 >= 0) sys_close((int)s1);
+        if (s2 >= 0) sys_close((int)s2);
+        if (m1 >= 0) sys_close((int)m1);
+        if (m2 >= 0) sys_close((int)m2);
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -54753,6 +54853,8 @@ void fut_misc_test_thread(void *arg) {
             fut_test_fail(1688);
         }
     }
+
+    test_pts_dir_readdir();  /* Tests 1689-1692 */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

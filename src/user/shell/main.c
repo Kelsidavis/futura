@@ -6165,6 +6165,67 @@ static int execute_command(int argc, char *argv[]) {
                 if (*eol) p = eol + 1; else break;
                 line++;
             }
+        } else if (argc >= 5 && strcmp_simple(argv[1], "route") == 0 &&
+                   strcmp_simple(argv[2], "add") == 0) {
+            /* ip route add <dest>/<prefix> via <gateway> [dev <iface>]
+             * ip route add default via <gateway> [dev <iface>] */
+            uint32_t dst = 0, gw = 0, mask = 0;
+            const char *devname = NULL;
+            int prefix = 0;
+
+            if (strcmp_simple(argv[3], "default") == 0) {
+                dst = 0; mask = 0; prefix = 0;
+            } else {
+                /* Parse dest/prefix */
+                const char *dp = argv[3];
+                int oc = 0, sh = 24;
+                while (*dp && *dp != '/') {
+                    if (*dp == '.') { dst |= ((uint32_t)oc & 0xFF) << sh; sh -= 8; oc = 0; }
+                    else if (*dp >= '0' && *dp <= '9') oc = oc * 10 + (*dp - '0');
+                    dp++;
+                }
+                dst |= ((uint32_t)oc & 0xFF) << sh;
+                if (*dp == '/') { dp++; prefix = 0; while (*dp >= '0' && *dp <= '9') { prefix = prefix * 10 + (*dp - '0'); dp++; } }
+                mask = (prefix > 0 && prefix <= 32) ? ~((1u << (32 - prefix)) - 1) : 0;
+            }
+            /* Find "via <gw>" and "dev <name>" */
+            for (int i = 3; i < argc - 1; i++) {
+                if (strcmp_simple(argv[i], "via") == 0) {
+                    const char *gp = argv[i+1]; int oc = 0, sh = 24;
+                    while (*gp) {
+                        if (*gp == '.') { gw |= ((uint32_t)oc & 0xFF) << sh; sh -= 8; oc = 0; }
+                        else if (*gp >= '0' && *gp <= '9') oc = oc * 10 + (*gp - '0');
+                        gp++;
+                    }
+                    gw |= ((uint32_t)oc & 0xFF) << sh;
+                }
+                if (strcmp_simple(argv[i], "dev") == 0) devname = argv[i+1];
+            }
+            /* Use SIOCADDRT ioctl */
+            int sock = sys_call3(41, 2, 2, 0);
+            if (sock < 0) { write_str(2, "ip route add: socket failed\n"); return 1; }
+            /* rtentry: 3x sockaddr(16) + short flags(2) + short pad(2) + char dev[16] = 68 bytes */
+            char rt[68];
+            for (int k = 0; k < 68; k++) rt[k] = 0;
+            /* rt_dst */
+            rt[0] = 2; /* AF_INET */
+            rt[4] = (char)((dst >> 24) & 0xFF); rt[5] = (char)((dst >> 16) & 0xFF);
+            rt[6] = (char)((dst >> 8) & 0xFF);  rt[7] = (char)(dst & 0xFF);
+            /* rt_gateway */
+            rt[16] = 2;
+            rt[20] = (char)((gw >> 24) & 0xFF); rt[21] = (char)((gw >> 16) & 0xFF);
+            rt[22] = (char)((gw >> 8) & 0xFF);  rt[23] = (char)(gw & 0xFF);
+            /* rt_genmask */
+            rt[32] = 2;
+            rt[36] = (char)((mask >> 24) & 0xFF); rt[37] = (char)((mask >> 16) & 0xFF);
+            rt[38] = (char)((mask >> 8) & 0xFF);  rt[39] = (char)(mask & 0xFF);
+            /* rt_dev at offset 52 */
+            if (devname) for (int k = 0; devname[k] && k < 15; k++) rt[52+k] = devname[k];
+
+            long rc = sys_call3(16, sock, 0x890B/*SIOCADDRT*/, (long)rt);
+            sys_close(sock);
+            if (rc == 0) { write_str(1, "Route added\n"); }
+            else { write_str(2, "ip route add: failed\n"); return 1; }
         } else if (argc > 1 && (strcmp_simple(argv[1], "route") == 0 || strcmp_simple(argv[1], "r") == 0)) {
             /* Read real routing table from /proc/net/route */
             int fd = sys_open("/proc/net/route", O_RDONLY, 0);

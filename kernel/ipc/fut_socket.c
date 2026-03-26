@@ -786,6 +786,10 @@ int fut_socket_accept(fut_socket_t *listener, fut_socket_t **out_socket) {
     accepted->inet_addr = listener->inet_addr;
     accepted->inet_port = listener->inet_port;
 
+    /* Set peer address to the connecting client's bound address */
+    accepted->inet_peer_addr = peer->inet_addr;
+    accepted->inet_peer_port = peer->inet_port;
+
     /* Allocate wait queue for close operations */
     accepted->close_waitq = fut_malloc(sizeof(fut_waitq_t));
     if (!accepted->close_waitq) {

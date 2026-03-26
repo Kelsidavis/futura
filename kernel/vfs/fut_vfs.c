@@ -1750,6 +1750,26 @@ static int try_open_chrdev(const char *path, int flags) {
         return pty_open_slave(idx);
     }
 
+    /* /dev/tty: open the calling process's controlling terminal.
+     * Linux: major 5, minor 0 — resolves to the process's ctty.
+     * If the process has a PTY controlling terminal (tty_nr = MKDEV(136,N)),
+     * redirect to /dev/pts/N. Otherwise fall through to console device. */
+    if (path[0] == '/' && path[1] == 'd' && path[2] == 'e' && path[3] == 'v' &&
+        path[4] == '/' && path[5] == 't' && path[6] == 't' && path[7] == 'y' &&
+        path[8] == '\0') {
+        fut_task_t *tty_task = fut_task_current();
+        if (tty_task && tty_task->tty_nr != 0) {
+            uint32_t tty_major = (tty_task->tty_nr >> 8) & 0xFF;
+            uint32_t tty_minor = tty_task->tty_nr & 0xFF;
+            if (tty_major == 136) {
+                /* PTY controlling terminal — open the slave */
+                extern int pty_open_slave(int index);
+                return pty_open_slave((int)tty_minor);
+            }
+        }
+        /* Fall through: no PTY ctty, use console device */
+    }
+
     unsigned major = 0;
     unsigned minor = 0;
     int devfs_ret = devfs_lookup_chr(path, &major, &minor);

@@ -51245,6 +51245,126 @@ static void test_openat_o_directory(void) {
 /* Tests 1729-1732: umask enforcement on file/directory creation (POSIX) */
 /* Tests 1761-1764: SIGHUP delivery when session leader exits */
 /* Tests 1765-1768: daemon lifecycle integration (setsid+chdir+devnull) */
+/* Tests 1777-1780: /dev/tty opens process's controlling terminal */
+__attribute__((noinline)) static void test_dev_tty_ctty(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_close(int);
+    extern long sys_write(int, const void *, size_t);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_ioctl(int fd, unsigned long request, void *argp);
+
+    /* Open a PTY pair and set it as controlling terminal */
+    long mfd = sys_open("/dev/ptmx", 0x0002, 0);
+    int pn = -1, zv = 0;
+    if (mfd >= 0) sys_ioctl((int)mfd, 0x80045430, &pn);
+    if (mfd >= 0) sys_ioctl((int)mfd, 0x40045431, &zv);
+    static char pp[24];
+    { const char *pfx = "/dev/pts/"; int i = 0; while (pfx[i]) { pp[i] = pfx[i]; i++; }
+      if (pn >= 10) { pp[i++] = (char)('0'+pn/10); } pp[i++] = (char)('0'+pn%10); pp[i] = '\0'; }
+    long sfd = (pn >= 0) ? sys_open(pp, 0x0002, 0) : -1;
+
+    /* Set PTY as controlling terminal via TIOCSCTTY */
+    fut_task_t *task = fut_task_current();
+    uint32_t saved_tty = task ? task->tty_nr : 0;
+    if (sfd >= 0)
+        sys_ioctl((int)sfd, 0x540E /* TIOCSCTTY */, NULL);
+
+    /* Test 1777: /dev/tty opens PTY slave when ctty is set */
+    fut_printf("[MISC-TEST] Test 1777: /dev/tty → PTY slave\n");
+    if (mfd >= 0 && sfd >= 0 && task && task->tty_nr != 0) {
+        long ttyfd = sys_open("/dev/tty", 0x0002, 0);
+        if (ttyfd >= 0) {
+            /* Write through master, read through /dev/tty — proves it's the same PTY */
+            sys_write((int)mfd, "tty!", 4);
+            static char buf[8];
+            long nr = sys_read((int)ttyfd, buf, 8);
+            sys_close((int)ttyfd);
+            if (nr == 4 && __builtin_memcmp(buf, "tty!", 4) == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1777: /dev/tty reads PTY data\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1777: read=%ld\n", nr);
+                fut_test_fail(1777);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1777: open /dev/tty → %ld\n", ttyfd);
+            fut_test_fail(1777);
+        }
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1777: PTY setup failed\n");
+        fut_test_fail(1777);
+    }
+
+    /* Test 1778: write to /dev/tty goes through to PTY master */
+    fut_printf("[MISC-TEST] Test 1778: write /dev/tty → master reads\n");
+    if (mfd >= 0 && task && task->tty_nr != 0) {
+        long ttyfd = sys_open("/dev/tty", 0x0002, 0);
+        if (ttyfd >= 0) {
+            sys_write((int)ttyfd, "hi", 2);
+            static char buf[8];
+            long nr = sys_read((int)mfd, buf, 8);
+            sys_close((int)ttyfd);
+            if (nr == 2 && buf[0] == 'h' && buf[1] == 'i') {
+                fut_printf("[MISC-TEST] ✓ Test 1778: /dev/tty write → master read\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1778: nr=%ld\n", nr);
+                fut_test_fail(1778);
+            }
+        } else { fut_test_fail(1778); }
+    } else { fut_test_fail(1778); }
+
+    /* Test 1779: /dev/tty still works when stdin is redirected */
+    fut_printf("[MISC-TEST] Test 1779: /dev/tty works with redirected stdin\n");
+    if (mfd >= 0 && task && task->tty_nr != 0) {
+        /* Redirect stdin to /dev/null */
+        extern long sys_dup(int);
+        long saved_stdin = sys_dup(0);
+        long devnull = sys_open("/dev/null", 0x0000, 0);
+        if (devnull >= 0) { sys_dup2((int)devnull, 0); sys_close((int)devnull); }
+        /* /dev/tty should still open the PTY, not /dev/null */
+        long ttyfd = sys_open("/dev/tty", 0x0002, 0);
+        if (ttyfd >= 0) {
+            sys_write((int)mfd, "X", 1);
+            static char buf[4];
+            long nr = sys_read((int)ttyfd, buf, 4);
+            sys_close((int)ttyfd);
+            if (nr == 1 && buf[0] == 'X') {
+                fut_printf("[MISC-TEST] ✓ Test 1779: /dev/tty bypasses stdin redirect\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1779: nr=%ld\n", nr);
+                fut_test_fail(1779);
+            }
+        } else { fut_test_fail(1779); }
+        /* Restore stdin */
+        if (saved_stdin >= 0) { sys_dup2((int)saved_stdin, 0); sys_close((int)saved_stdin); }
+    } else { fut_test_fail(1779); }
+
+    /* Test 1780: /dev/tty without ctty falls through to console */
+    fut_printf("[MISC-TEST] Test 1780: /dev/tty without ctty → console\n");
+    {
+        uint32_t prev = task ? task->tty_nr : 0;
+        if (task) task->tty_nr = 0;  /* remove ctty */
+        long ttyfd = sys_open("/dev/tty", 0x0002, 0);
+        if (task) task->tty_nr = prev;  /* restore */
+        if (ttyfd >= 0) {
+            /* Should have opened the console fallback */
+            fut_printf("[MISC-TEST] ✓ Test 1780: /dev/tty fallback → console fd=%ld\n", ttyfd);
+            sys_close((int)ttyfd);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1780: open → %ld\n", ttyfd);
+            fut_test_fail(1780);
+        }
+    }
+
+    /* Restore state */
+    if (task) task->tty_nr = saved_tty;
+    if (sfd >= 0) sys_close((int)sfd);
+    if (mfd >= 0) sys_close((int)mfd);
+}
+
 /* Tests 1773-1776: PTY termios c_cc[] special character initialization */
 __attribute__((noinline)) static void test_pty_termios_cc(void) {
     extern long sys_open(const char *, int, int);
@@ -57010,6 +57130,7 @@ void fut_misc_test_thread(void *arg) {
     test_timer_abstime();          /* Tests 1721-1724 */
     test_execve_prevalidation();   /* Tests 1725-1728 */
     test_fd_lifecycle_edges();     /* Tests 1737-1740 */
+    test_dev_tty_ctty();             /* Tests 1777-1780 */
     test_pty_termios_cc();           /* Tests 1773-1776 */
     test_fdinfo_various_types();     /* Tests 1769-1772 */
     test_daemon_lifecycle();          /* Tests 1765-1768 */

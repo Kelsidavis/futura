@@ -269,6 +269,8 @@ enum procfs_kind {
     PROC_SYS_NET_NF_DIR,            /* /proc/sys/net/netfilter/ */
     PROC_SYS_NET_NF_CT_MAX,         /* /proc/sys/net/netfilter/nf_conntrack_max */
     PROC_SYS_NET_NF_CT_COUNT,       /* /proc/sys/net/netfilter/nf_conntrack_count */
+    PROC_SYS_KERNEL_PANIC,          /* /proc/sys/kernel/panic */
+    PROC_SYS_KERNEL_PANIC_ON_OOPS,  /* /proc/sys/kernel/panic_on_oops */
 };
 
 typedef struct {
@@ -453,6 +455,8 @@ typedef struct {
 #define PROC_INO_SYS_NET_NF_DIR          417ULL
 #define PROC_INO_SYS_NET_NF_CT_MAX       418ULL
 #define PROC_INO_SYS_NET_NF_CT_COUNT     419ULL
+#define PROC_INO_SYS_KERNEL_PANIC        420ULL
+#define PROC_INO_SYS_KERNEL_PANIC_OOPS   421ULL
 /* /proc/sys/kernel/ extended range: 400-429 */
 #define PROC_INO_SYS_KERNEL_NMI_WD     400ULL
 #define PROC_INO_SYS_KERNEL_WATCHDOG   401ULL
@@ -3883,6 +3887,14 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
         case PROC_SYS_NET_NF_CT_MAX:
             total = gen_sysctl_str(tmp, GEN_BUF, "1024");
             break;
+        case PROC_SYS_KERNEL_PANIC:
+            /* panic timeout in seconds (0 = don't reboot on panic) */
+            total = gen_sysctl_str(tmp, GEN_BUF, "0");
+            break;
+        case PROC_SYS_KERNEL_PANIC_ON_OOPS:
+            /* 0 = continue on oops, 1 = panic on oops */
+            total = gen_sysctl_str(tmp, GEN_BUF, "0");
+            break;
         case PROC_SYS_NET_NF_CT_COUNT: {
             /* Return "0" — active NAT count is dynamic and tracked in nat.c.
              * A proper implementation would iterate the NAT table, but for
@@ -5339,6 +5351,16 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0100644, PROC_SYS_KERNEL_HUNG_TASK, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "panic")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_KERNEL_PANIC,
+                                          0100644, PROC_SYS_KERNEL_PANIC, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "panic_on_oops")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_KERNEL_PANIC_OOPS,
+                                          0100644, PROC_SYS_KERNEL_PANIC_ON_OOPS, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         return -ENOENT;
     }
 
@@ -6077,7 +6099,8 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                    "core_pattern", "core_uses_pid",
                                    "suid_dumpable", "tainted", "version",
                                    "nmi_watchdog", "watchdog",
-                                   "watchdog_thresh", "hung_task_timeout_secs" };
+                                   "watchdog_thresh", "hung_task_timeout_secs",
+                                   "panic", "panic_on_oops" };
         static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
@@ -6117,8 +6140,10 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                       PROC_INO_SYS_KERNEL_NMI_WD,
                                       PROC_INO_SYS_KERNEL_WATCHDOG,
                                       PROC_INO_SYS_KERNEL_WD_THRESH,
-                                      PROC_INO_SYS_KERNEL_HUNG_TASK };
-        if (idx < 33) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+                                      PROC_INO_SYS_KERNEL_HUNG_TASK,
+                                      PROC_INO_SYS_KERNEL_PANIC,
+                                      PROC_INO_SYS_KERNEL_PANIC_OOPS };
+        if (idx < 35) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
         return -ENOENT;
     }
 

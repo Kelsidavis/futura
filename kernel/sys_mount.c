@@ -554,6 +554,38 @@ long sys_mount(const char *source, const char *target, const char *filesystemtyp
             fut_printf("[MOUNT] ✓ mount(source='%s', target='%s', fstype=futurafs) -> 0\n",
                        src_dev, target_buf);
         return ret;
+    } else if (strcmp(fstype_buf, "ext2") == 0 || strcmp(fstype_buf, "ext3") == 0 ||
+               strcmp(fstype_buf, "ext4") == 0) {
+        /* ext2/3/4: mount via the ext2 read-only driver.
+         * Source is a block device name (e.g., "loop0" or "/dev/loop0"). */
+        char src_dev[64];
+        if (!source || mount_copy_from_user(src_dev, source, sizeof(src_dev)) != 0)
+            return -EINVAL;
+        src_dev[63] = '\0';
+        const char *devname = src_dev;
+        if (devname[0] == '/' && devname[1] == 'd' && devname[2] == 'e' &&
+            devname[3] == 'v' && devname[4] == '/')
+            devname = src_dev + 5;
+        extern int fut_vfs_mkdir(const char *, uint32_t);
+        fut_vfs_mkdir(target_buf, 0755);
+        size_t target_len = strlen(target_buf) + 1;
+        char *mountpoint = fut_malloc(target_len);
+        if (!mountpoint) return -ENOMEM;
+        memcpy(mountpoint, target_buf, target_len);
+        int ret = fut_vfs_mount(devname, mountpoint, "ext2",
+                                (int)(mountflags & 0x7fffffff), NULL, FUT_INVALID_HANDLE);
+        if (ret < 0) { fut_free(mountpoint); return ret; }
+        /* Set display type */
+        extern struct fut_mount *fut_vfs_find_mount(const char *);
+        struct fut_mount *mnt = fut_vfs_find_mount(mountpoint);
+        if (mnt) {
+            size_t flen = strlen(fstype_buf) + 1;
+            char *display = fut_malloc(flen);
+            if (display) { memcpy(display, fstype_buf, flen); mnt->fstype_display = display; }
+        }
+        fut_printf("[MOUNT] ✓ mount(source='%s', target='%s', fstype=%s) -> 0\n",
+                   src_dev, target_buf, fstype_buf);
+        return 0;
     } else {
         fut_printf("[MOUNT] mount(target='%s', fstype='%s', pid=%d) -> ENODEV "
                    "(unsupported filesystem type)\n",

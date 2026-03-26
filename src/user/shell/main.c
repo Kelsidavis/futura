@@ -492,7 +492,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     /* List of builtin commands */
     const char *builtins[] = {
         "arp", "bg", "brctl", "cd", "chmod", "clear", "conntrack", "date", "dd", "df", "dhclient", "dmesg", "echo", "edit", "ethtool", "hexdump", "lsof", "nc", "poweroff", "reboot", "seq", "sleep", "time", "traceroute", "wget", "exit", "export", "fg", "free",
-        "help", "hostname", "httpd", "id", "ifconfig", "iostat", "ipcs", "iptables", "jobs", "kill", "losetup", "ls", "lsblk", "lspci", "mkfs", "mount", "netstat",
+        "help", "hostname", "httpd", "id", "ifconfig", "iostat", "ipcs", "iptables", "jobs", "kill", "logger", "losetup", "ls", "lsblk", "lspci", "mkfs", "mount", "netstat",
         ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "history", "ip", "ln", "mktemp", "more", "nproc", "nslookup", "ping", "printf", "ps", "pwd", "read", "readlink", "set", "sha256sum", "shutdown", "source", "ss", "stat", "stty", "sync", "sysctl", "sysinfo", "test", "top", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "vmstat", "wait", "watch", "wdctl", "which", "whoami", "xargs", "yes", NULL
     };
 
@@ -6907,6 +6907,26 @@ static int execute_command(int argc, char *argv[]) {
             }
         }
         return 0;
+    } else if (strcmp_simple(argv[0], "logger") == 0) {
+        /* logger — write message to kernel log (/dev/kmsg) */
+        if (argc < 2) {
+            write_str(2, "usage: logger <message>\n");
+            return 1;
+        }
+        int fd = sys_open("/dev/kmsg", O_WRONLY, 0);
+        if (fd >= 0) {
+            /* Build message from all args */
+            for (int i = 1; i < argc; i++) {
+                sys_write(fd, argv[i], strlen_simple(argv[i]));
+                if (i < argc - 1) sys_write(fd, " ", 1);
+            }
+            sys_write(fd, "\n", 1);
+            sys_close(fd);
+        } else {
+            write_str(2, "logger: cannot open /dev/kmsg\n");
+            return 1;
+        }
+        return 0;
     } else if (strcmp_simple(argv[0], "wdctl") == 0) {
         /* wdctl — show watchdog device status */
         int fd = sys_open("/dev/watchdog", O_RDONLY, 0);
@@ -9032,7 +9052,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   115 built-in commands — type 'help'    |\n");
+    write_str(1, "|   116 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");

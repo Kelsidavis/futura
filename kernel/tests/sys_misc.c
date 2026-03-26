@@ -53543,6 +53543,68 @@ __attribute__((noinline)) static void test_fd_lifecycle_edges(void) {
     }
 }
 
+/* Tests 1831-1834: firewall ioctl management */
+__attribute__((noinline)) static void test_firewall_ioctls(void) {
+    extern long sys_ioctl(int fd, unsigned long request, void *argp);
+    extern long sys_open(const char *, int, int);
+    extern long sys_close(int);
+
+    long sfd = sys_open("/dev/null", 0x0002, 0);
+    if (sfd < 0) {
+        fut_test_fail(1831); fut_test_fail(1832); fut_test_fail(1833); fut_test_fail(1834);
+        return;
+    }
+
+    /* Test 1831: SIOCFWADDRULE adds a rule */
+    fut_printf("[MISC-TEST] Test 1831: SIOCFWADDRULE\n");
+    {
+        static struct { uint8_t chain; uint8_t action; uint8_t protocol; uint8_t _pad;
+                 uint32_t src_ip; uint32_t src_mask; uint32_t dst_ip; uint32_t dst_mask;
+                 uint16_t dport_min; uint16_t dport_max; } fwr;
+        __builtin_memset(&fwr, 0, sizeof(fwr));
+        fwr.chain = 1; fwr.action = 1; fwr.protocol = 6;
+        fwr.dport_min = 8080; fwr.dport_max = 8080;
+        long rc = sys_ioctl((int)sfd, 0x89F0, &fwr);
+        if (rc >= 0) { fut_test_pass(); } else { fut_test_fail(1831); }
+    }
+
+    /* Test 1832: SIOCFWPOLICY */
+    fut_printf("[MISC-TEST] Test 1832: SIOCFWPOLICY\n");
+    {
+        static uint8_t pp[2];
+        pp[0] = 1; pp[1] = 1; /* FORWARD chain, DROP */
+        long rc = sys_ioctl((int)sfd, 0x89F1, pp);
+        if (rc == 0) { fut_test_pass(); } else { fut_test_fail(1832); }
+    }
+
+    /* Test 1833: SIOCFWFLUSH */
+    fut_printf("[MISC-TEST] Test 1833: SIOCFWFLUSH\n");
+    {
+        static uint8_t fc;
+        fc = 1;
+        long rc = sys_ioctl((int)sfd, 0x89F2, &fc);
+        if (rc == 0) { fut_test_pass(); } else { fut_test_fail(1833); }
+        /* Restore policy */
+        static uint8_t pp2[2];
+        pp2[0] = 1; pp2[1] = 0;
+        sys_ioctl((int)sfd, 0x89F1, pp2);
+    }
+
+    /* Test 1834: invalid chain → EINVAL */
+    fut_printf("[MISC-TEST] Test 1834: SIOCFWADDRULE invalid\n");
+    {
+        static struct { uint8_t chain; uint8_t action; uint8_t protocol; uint8_t _pad;
+                 uint32_t src_ip; uint32_t src_mask; uint32_t dst_ip; uint32_t dst_mask;
+                 uint16_t dport_min; uint16_t dport_max; } bad;
+        __builtin_memset(&bad, 0, sizeof(bad));
+        bad.chain = 99;
+        long rc = sys_ioctl((int)sfd, 0x89F0, &bad);
+        if (rc == -22) { fut_test_pass(); } else { fut_test_fail(1834); }
+    }
+
+    sys_close((int)sfd);
+}
+
 /* Tests 1823-1826: writable network sysctls via /proc/sys/net/ */
 __attribute__((noinline)) static void test_writable_net_sysctls(void) {
     extern long sys_open(const char *, int, int);
@@ -58447,6 +58509,8 @@ void fut_misc_test_thread(void *arg) {
             fut_test_fail(1830);
         }
     }
+
+    test_firewall_ioctls();  /* Tests 1831-1834 */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

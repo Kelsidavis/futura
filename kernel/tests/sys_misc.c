@@ -55357,6 +55357,53 @@ __attribute__((noinline)) static void test_pts_dir_readdir(void) {
     }
 }
 
+__attribute__((noinline)) static void test_ipv6_procfs(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_close(int);
+
+    /* Test 1875: /proc/net/if_inet6 has loopback ::1 entry */
+    fut_printf("[MISC-TEST] Test 1875: /proc/net/if_inet6 has ::1 on lo\n");
+    {
+        long fd = sys_open("/proc/net/if_inet6", 0, 0);
+        if (fd >= 0) {
+            static char buf[512];
+            long n = sys_read((int)fd, buf, sizeof(buf) - 1);
+            sys_close((int)fd);
+            if (n > 0) {
+                buf[n] = '\0';
+                /* Check for "00000000000000000000000000000001" (::1) and "lo" */
+                bool has_loopback = false;
+                for (int i = 0; i < n - 5; i++) {
+                    if (buf[i] == '0' && buf[i+1] == '0' && buf[i+2] == '0' &&
+                        buf[i+30] == '0' && buf[i+31] == '1') {
+                        has_loopback = true;
+                        break;
+                    }
+                }
+                bool has_lo = false;
+                for (int i = 0; i < n - 2; i++) {
+                    if (buf[i] == 'l' && buf[i+1] == 'o' && (buf[i+2] == '\n' || buf[i+2] == ' '))
+                        { has_lo = true; break; }
+                }
+                if (has_loopback && has_lo) {
+                    fut_printf("[MISC-TEST] ✓ Test 1875: if_inet6 has ::1 on lo\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1875: lb=%d lo=%d\n", has_loopback, has_lo);
+                    fut_test_fail(1875);
+                }
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1875: empty (%ld)\n", n);
+                fut_test_fail(1875);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1875: open=%ld\n", fd);
+            fut_test_fail(1875);
+        }
+    }
+}
+
 __attribute__((noinline)) static void test_gre_tunnel(void) {
     extern long sys_open(const char *, int, int);
     extern long sys_close(int);
@@ -59553,6 +59600,7 @@ void fut_misc_test_thread(void *arg) {
     test_blockdev_procfs(); /* Tests 1858-1860 */
     test_vlan_interfaces(); /* Tests 1861-1864 */
     test_bridge_interfaces(); /* Tests 1865-1868 */
+    test_ipv6_procfs(); /* Test 1875 */
     test_gre_tunnel(); /* Tests 1872-1874 */
     test_per_iface_conf(); /* Tests 1869-1871 */
 

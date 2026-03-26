@@ -2470,9 +2470,31 @@ static size_t gen_net_udp(char *buf, size_t cap) {
 }
 
 static size_t gen_net_if_inet6(char *buf, size_t cap) {
-    /* Empty — no IPv6 interfaces */
-    (void)buf; (void)cap;
-    return 0;
+    /* /proc/net/if_inet6 — IPv6 address list.
+     * Format: address ifindex prefix_len scope flags ifname
+     * Always show loopback ::1 so IPv6-aware tools see the lo interface. */
+    struct pbuf b = { buf, 0, cap };
+    /* ::1 on lo (index 1, prefix /128, scope host=0x10, flags 0x80=permanent) */
+    pb_str(&b, "00000000000000000000000000000001 01 80 10 80       lo\n");
+    /* Also show link-local fe80::1 on all active interfaces */
+    extern int netif_count(void);
+    extern struct net_iface *netif_by_index(int);
+    for (int idx = 1; idx < 256; idx++) {
+        struct net_iface *iface = netif_by_index(idx);
+        if (!iface || (iface->flags & IFF_LOOPBACK)) continue;
+        /* fe80::1 link-local for each non-loopback interface */
+        pb_str(&b, "fe80000000000000000000000000000");
+        pb_u64(&b, (uint64_t)(idx & 0xF));
+        pb_str(&b, " ");
+        if (idx < 16) pb_str(&b, "0");
+        pb_hex2(&b, (uint8_t)idx);
+        pb_str(&b, " 40 20 80 ");  /* /64, scope link=0x20, permanent */
+        /* Right-pad interface name to 10 chars */
+        pb_str(&b, iface->name);
+        pb_char(&b, '\n');
+        break;  /* Just show first non-lo interface for now */
+    }
+    return b.pos;
 }
 
 static size_t gen_net_tcp6(char *buf, size_t cap) {

@@ -82,6 +82,17 @@
 #define SIOCBRADDIF    0x89a2  /* Add port to bridge */
 #define SIOCBRDELIF    0x89a3  /* Remove port from bridge */
 
+/* Block device ioctls */
+#define BLKROSET    0x125D  /* Set read-only flag */
+#define BLKROGET    0x125E  /* Get read-only flag */
+#define BLKRRPART   0x125F  /* Re-read partition table */
+#define BLKGETSIZE  0x1260  /* Get device size (sectors, 32-bit) */
+#define BLKFLSBUF   0x1261  /* Flush buffer cache */
+#define BLKSSZGET   0x1268  /* Get sector size */
+#define BLKBSZGET   0x80081270  /* Get block size */
+#define BLKBSZSET   0x40081271  /* Set block size */
+#define BLKGETSIZE64 0x80081272 /* Get device size (bytes, 64-bit) */
+
 /* Futura firewall ioctls (custom range 0x89F0-0x89FF) */
 #define SIOCFWADDRULE  0x89F0  /* Add firewall rule */
 #define SIOCFWPOLICY   0x89F1  /* Set chain default policy */
@@ -1916,6 +1927,90 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
             extern int netif_create_vlan(int, uint16_t);
             return netif_create_vlan(parent->index, vreq.vlan_id);
         }
+
+        /* ── Block device ioctls ── */
+        case BLKGETSIZE64: {
+            /* Return device size in bytes (64-bit) */
+            if (!argp) return -EFAULT;
+            uint64_t size_bytes = 0;
+            /* Check if fd refers to a block device (loop, ram, etc.) */
+            fut_task_t *btask = fut_task_current();
+            if (btask && fd >= 0 && fd < btask->max_fds && btask->fd_table[fd]) {
+                struct fut_file *bfile = btask->fd_table[fd];
+                if (bfile->vnode) size_bytes = bfile->vnode->size;
+            }
+            if (size_bytes == 0) size_bytes = 1048576; /* Default 1MB for virtual devices */
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
+                __builtin_memcpy(argp, &size_bytes, sizeof(size_bytes));
+            else
+#endif
+            if (fut_copy_to_user(argp, &size_bytes, sizeof(size_bytes)) != 0)
+                return -EFAULT;
+            return 0;
+        }
+        case BLKGETSIZE: {
+            /* Return device size in 512-byte sectors (32-bit) */
+            if (!argp) return -EFAULT;
+            uint32_t sectors = 2048; /* Default 1MB / 512 */
+            fut_task_t *btask = fut_task_current();
+            if (btask && fd >= 0 && fd < btask->max_fds && btask->fd_table[fd]) {
+                struct fut_file *bfile = btask->fd_table[fd];
+                if (bfile->vnode) sectors = (uint32_t)(bfile->vnode->size / 512);
+            }
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
+                __builtin_memcpy(argp, &sectors, sizeof(sectors));
+            else
+#endif
+            if (fut_copy_to_user(argp, &sectors, sizeof(sectors)) != 0)
+                return -EFAULT;
+            return 0;
+        }
+        case BLKSSZGET: {
+            /* Return logical sector size (always 512) */
+            if (!argp) return -EFAULT;
+            int ss = 512;
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
+                __builtin_memcpy(argp, &ss, sizeof(ss));
+            else
+#endif
+            if (fut_copy_to_user(argp, &ss, sizeof(ss)) != 0)
+                return -EFAULT;
+            return 0;
+        }
+        case BLKBSZGET: {
+            /* Return block size (4096 default) */
+            if (!argp) return -EFAULT;
+            int bs = 4096;
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
+                __builtin_memcpy(argp, &bs, sizeof(bs));
+            else
+#endif
+            if (fut_copy_to_user(argp, &bs, sizeof(bs)) != 0)
+                return -EFAULT;
+            return 0;
+        }
+        case BLKFLSBUF:
+            return 0; /* Flush buffer cache — no-op */
+        case BLKROGET: {
+            if (!argp) return -EFAULT;
+            int ro = 0;
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
+                __builtin_memcpy(argp, &ro, sizeof(ro));
+            else
+#endif
+            if (fut_copy_to_user(argp, &ro, sizeof(ro)) != 0)
+                return -EFAULT;
+            return 0;
+        }
+        case BLKROSET:
+        case BLKBSZSET:
+        case BLKRRPART:
+            return 0; /* Accept silently */
 
         default:
             fut_printf("[IOCTL] ioctl(fd=%d, request=0x%lx [%s], argp=%p) -> ENOTTY (no ioctl op)\n",

@@ -57952,6 +57952,258 @@ __attribute__((noinline)) static void test_net_procfs_devnodes(void) {
 }
 
 /* ============================================================
+ * Tests 2002-2013: sysfs DMI, RTC, block device ioctls
+ * ============================================================ */
+__attribute__((noinline)) static void test_sysfs_dmi_blkdev(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_close(int);
+    extern long sys_ioctl(int fd, unsigned long request, void *argp);
+
+    /* ── Test 2002: /sys/firmware/dmi/id/product_name readable ── */
+    fut_printf("[MISC-TEST] Test 2002: /sys/firmware/dmi/id/product_name\n");
+    {
+        long fd = sys_open("/sys/firmware/dmi/id/product_name", 0, 0);
+        if (fd >= 0) {
+            static char buf[64];
+            long n = sys_read((int)fd, buf, 63);
+            sys_close((int)fd);
+            if (n > 0) {
+                buf[n] = '\0';
+                fut_printf("[MISC-TEST] ✓ Test 2002: product_name=\"%s\"\n", buf);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2002: read=%ld\n", n);
+                fut_test_fail(2002);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2002: open=%ld\n", fd);
+            fut_test_fail(2002);
+        }
+    }
+
+    /* ── Test 2003: /sys/firmware/dmi/id/sys_vendor ── */
+    fut_printf("[MISC-TEST] Test 2003: sys_vendor\n");
+    {
+        long fd = sys_open("/sys/firmware/dmi/id/sys_vendor", 0, 0);
+        if (fd >= 0) {
+            static char buf[64];
+            long n = sys_read((int)fd, buf, 63);
+            sys_close((int)fd);
+            if (n > 0) {
+                fut_printf("[MISC-TEST] ✓ Test 2003: sys_vendor ok (%ld bytes)\n", n);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2003: read=%ld\n", n);
+                fut_test_fail(2003);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2003: open=%ld\n", fd);
+            fut_test_fail(2003);
+        }
+    }
+
+    /* ── Test 2004: /sys/firmware/dmi/id/bios_vendor ── */
+    fut_printf("[MISC-TEST] Test 2004: bios_vendor\n");
+    {
+        long fd = sys_open("/sys/firmware/dmi/id/bios_vendor", 0, 0);
+        if (fd >= 0) {
+            static char buf[64];
+            long n = sys_read((int)fd, buf, 63);
+            sys_close((int)fd);
+            if (n > 0) {
+                fut_printf("[MISC-TEST] ✓ Test 2004: bios_vendor ok\n");
+                fut_test_pass();
+            } else { fut_test_fail(2004); }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2004: open=%ld\n", fd);
+            fut_test_fail(2004);
+        }
+    }
+
+    /* ── Test 2005: /sys/firmware/dmi/id/chassis_type ── */
+    fut_printf("[MISC-TEST] Test 2005: chassis_type\n");
+    {
+        long fd = sys_open("/sys/firmware/dmi/id/chassis_type", 0, 0);
+        if (fd >= 0) {
+            static char buf[16];
+            long n = sys_read((int)fd, buf, 15);
+            sys_close((int)fd);
+            if (n > 0 && buf[0] >= '0' && buf[0] <= '9') {
+                fut_printf("[MISC-TEST] ✓ Test 2005: chassis_type=%c\n", buf[0]);
+                fut_test_pass();
+            } else { fut_test_fail(2005); }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2005: open=%ld\n", fd);
+            fut_test_fail(2005);
+        }
+    }
+
+    /* ── Test 2006: /sys/firmware/dmi/id/modalias ── */
+    fut_printf("[MISC-TEST] Test 2006: dmi modalias\n");
+    {
+        long fd = sys_open("/sys/firmware/dmi/id/modalias", 0, 0);
+        if (fd >= 0) {
+            static char buf[256];
+            long n = sys_read((int)fd, buf, 255);
+            sys_close((int)fd);
+            if (n > 4 && buf[0] == 'd' && buf[1] == 'm' && buf[2] == 'i') {
+                fut_printf("[MISC-TEST] ✓ Test 2006: modalias starts with 'dmi'\n");
+                fut_test_pass();
+            } else { fut_test_fail(2006); }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2006: open=%ld\n", fd);
+            fut_test_fail(2006);
+        }
+    }
+
+    /* ── Test 2007: /sys/class/rtc/rtc0/name ── */
+    fut_printf("[MISC-TEST] Test 2007: /sys/class/rtc/rtc0/name\n");
+    {
+        long fd = sys_open("/sys/class/rtc/rtc0/name", 0, 0);
+        if (fd >= 0) {
+            static char buf[32];
+            long n = sys_read((int)fd, buf, 31);
+            sys_close((int)fd);
+            if (n > 0) {
+                fut_printf("[MISC-TEST] ✓ Test 2007: rtc0 name ok\n");
+                fut_test_pass();
+            } else { fut_test_fail(2007); }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2007: open=%ld\n", fd);
+            fut_test_fail(2007);
+        }
+    }
+
+    /* ── Test 2008: /sys/class/rtc/rtc0/since_epoch ── */
+    fut_printf("[MISC-TEST] Test 2008: rtc0 since_epoch\n");
+    {
+        long fd = sys_open("/sys/class/rtc/rtc0/since_epoch", 0, 0);
+        if (fd >= 0) {
+            static char buf[32];
+            long n = sys_read((int)fd, buf, 31);
+            sys_close((int)fd);
+            if (n > 0 && buf[0] >= '0' && buf[0] <= '9') {
+                fut_printf("[MISC-TEST] ✓ Test 2008: since_epoch ok\n");
+                fut_test_pass();
+            } else { fut_test_fail(2008); }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2008: open=%ld\n", fd);
+            fut_test_fail(2008);
+        }
+    }
+
+    /* ── Test 2009: BLKGETSIZE64 on loop device ── */
+    fut_printf("[MISC-TEST] Test 2009: BLKGETSIZE64\n");
+    {
+        long fd = sys_open("/dev/loop0", 0 /*O_RDONLY*/, 0);
+        if (fd >= 0) {
+            static uint64_t size;
+            size = 0;
+            long r = sys_ioctl((int)fd, 0x80081272 /*BLKGETSIZE64*/, &size);
+            sys_close((int)fd);
+            if (r == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 2009: BLKGETSIZE64=%llu\n",
+                           (unsigned long long)size);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2009: ioctl=%ld\n", r);
+                fut_test_fail(2009);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2009: open=%ld\n", fd);
+            fut_test_fail(2009);
+        }
+    }
+
+    /* ── Test 2010: BLKSSZGET returns 512 ── */
+    fut_printf("[MISC-TEST] Test 2010: BLKSSZGET\n");
+    {
+        long fd = sys_open("/dev/loop0", 0, 0);
+        if (fd >= 0) {
+            static int ss;
+            ss = 0;
+            long r = sys_ioctl((int)fd, 0x1268 /*BLKSSZGET*/, &ss);
+            sys_close((int)fd);
+            if (r == 0 && ss == 512) {
+                fut_printf("[MISC-TEST] ✓ Test 2010: BLKSSZGET=%d\n", ss);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2010: r=%ld ss=%d\n", r, ss);
+                fut_test_fail(2010);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2010: open=%ld\n", fd);
+            fut_test_fail(2010);
+        }
+    }
+
+    /* ── Test 2011: BLKBSZGET returns 4096 ── */
+    fut_printf("[MISC-TEST] Test 2011: BLKBSZGET\n");
+    {
+        long fd = sys_open("/dev/loop0", 0, 0);
+        if (fd >= 0) {
+            static int bs;
+            bs = 0;
+            long r = sys_ioctl((int)fd, 0x80081270 /*BLKBSZGET*/, &bs);
+            sys_close((int)fd);
+            if (r == 0 && bs == 4096) {
+                fut_printf("[MISC-TEST] ✓ Test 2011: BLKBSZGET=%d\n", bs);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2011: r=%ld bs=%d\n", r, bs);
+                fut_test_fail(2011);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2011: open=%ld\n", fd);
+            fut_test_fail(2011);
+        }
+    }
+
+    /* ── Test 2012: BLKROGET returns 0 (read-write) ── */
+    fut_printf("[MISC-TEST] Test 2012: BLKROGET\n");
+    {
+        long fd = sys_open("/dev/loop0", 0, 0);
+        if (fd >= 0) {
+            static int ro;
+            ro = -1;
+            long r = sys_ioctl((int)fd, 0x125E /*BLKROGET*/, &ro);
+            sys_close((int)fd);
+            if (r == 0 && ro == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 2012: BLKROGET=0\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2012: r=%ld ro=%d\n", r, ro);
+                fut_test_fail(2012);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2012: open=%ld\n", fd);
+            fut_test_fail(2012);
+        }
+    }
+
+    /* ── Test 2013: BLKFLSBUF succeeds ── */
+    fut_printf("[MISC-TEST] Test 2013: BLKFLSBUF\n");
+    {
+        long fd = sys_open("/dev/loop0", 0, 0);
+        if (fd >= 0) {
+            long r = sys_ioctl((int)fd, 0x1261 /*BLKFLSBUF*/, NULL);
+            sys_close((int)fd);
+            if (r == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 2013: BLKFLSBUF ok\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2013: r=%ld\n", r);
+                fut_test_fail(2013);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2013: open=%ld\n", fd);
+            fut_test_fail(2013);
+        }
+    }
+}
+
+/* ============================================================
  * Tests 1994-2001: perf_event_open performance counters
  * ============================================================ */
 __attribute__((noinline)) static void test_perf_events(void) {
@@ -62883,6 +63135,7 @@ void fut_misc_test_thread(void *arg) {
     test_loop_device(); /* Tests 1885-1887 */
     test_per_iface_conf(); /* Tests 1869-1871 */
 
+    test_sysfs_dmi_blkdev(); /* Tests 2002-2013 */
     test_perf_events(); /* Tests 1994-2001 */
     test_userfaultfd_statmount(); /* Tests 1982-1993 */
     test_fanotify();  /* Tests 1976-1981 */

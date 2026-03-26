@@ -95,6 +95,27 @@ enum sysfs_kind {
     SYSFS_POWER_STATE,          /* file */
     /* /sys/module/ */
     SYSFS_MODULE_DIR,
+    /* /sys/firmware/ */
+    SYSFS_FIRMWARE_DIR,
+    SYSFS_FIRMWARE_DMI_DIR,
+    SYSFS_FIRMWARE_DMI_ID_DIR,
+    SYSFS_DMI_PRODUCT_NAME,
+    SYSFS_DMI_PRODUCT_VERSION,
+    SYSFS_DMI_SYS_VENDOR,
+    SYSFS_DMI_BOARD_NAME,
+    SYSFS_DMI_BOARD_VENDOR,
+    SYSFS_DMI_BIOS_VENDOR,
+    SYSFS_DMI_BIOS_VERSION,
+    SYSFS_DMI_BIOS_DATE,
+    SYSFS_DMI_CHASSIS_TYPE,
+    SYSFS_DMI_MODALIAS,
+    /* /sys/class/rtc/ */
+    SYSFS_CLASS_RTC_DIR,
+    SYSFS_CLASS_RTC0_DIR,
+    SYSFS_RTC0_NAME,
+    SYSFS_RTC0_DATE,
+    SYSFS_RTC0_TIME,
+    SYSFS_RTC0_SINCE_EPOCH,
 };
 
 typedef struct {
@@ -144,6 +165,25 @@ typedef struct {
 #define SYSFS_INO_CPU0_PKG_ID       543ULL
 #define SYSFS_INO_CPU0_CORE_SIB     544ULL
 #define SYSFS_INO_CPU0_THREAD_SIB   545ULL
+#define SYSFS_INO_FIRMWARE          550ULL
+#define SYSFS_INO_FIRMWARE_DMI      551ULL
+#define SYSFS_INO_FIRMWARE_DMI_ID   552ULL
+#define SYSFS_INO_DMI_PRODUCT_NAME  553ULL
+#define SYSFS_INO_DMI_PRODUCT_VER   554ULL
+#define SYSFS_INO_DMI_SYS_VENDOR    555ULL
+#define SYSFS_INO_DMI_BOARD_NAME    556ULL
+#define SYSFS_INO_DMI_BOARD_VENDOR  557ULL
+#define SYSFS_INO_DMI_BIOS_VENDOR   558ULL
+#define SYSFS_INO_DMI_BIOS_VERSION  559ULL
+#define SYSFS_INO_DMI_BIOS_DATE     560ULL
+#define SYSFS_INO_DMI_CHASSIS_TYPE  561ULL
+#define SYSFS_INO_DMI_MODALIAS      562ULL
+#define SYSFS_INO_CLASS_RTC         563ULL
+#define SYSFS_INO_CLASS_RTC0        564ULL
+#define SYSFS_INO_RTC0_NAME         565ULL
+#define SYSFS_INO_RTC0_DATE         566ULL
+#define SYSFS_INO_RTC0_TIME         567ULL
+#define SYSFS_INO_RTC0_SINCE_EPOCH  568ULL
 #define SYSFS_INO_CLASS_NET_LO      526ULL
 #define SYSFS_INO_NET_LO_IFINDEX    527ULL
 #define SYSFS_INO_NET_LO_OPERSTATE  528ULL
@@ -289,6 +329,93 @@ static ssize_t sysfs_file_read(struct fut_vnode *vnode, void *buf,
         case SYSFS_CPU0_PKG_ID:     total = sysfs_gen_str(tmp, sizeof(tmp), "0\n");   break;
         case SYSFS_CPU0_CORE_SIBLINGS:   total = sysfs_gen_str(tmp, sizeof(tmp), "1\n"); break;
         case SYSFS_CPU0_THREAD_SIBLINGS: total = sysfs_gen_str(tmp, sizeof(tmp), "1\n"); break;
+
+        /* DMI/SMBIOS identity files */
+        case SYSFS_DMI_PRODUCT_NAME:    total = sysfs_gen_str(tmp, sizeof(tmp), "Futura Virtual Machine\n"); break;
+        case SYSFS_DMI_PRODUCT_VERSION: total = sysfs_gen_str(tmp, sizeof(tmp), "1.0\n"); break;
+        case SYSFS_DMI_SYS_VENDOR:      total = sysfs_gen_str(tmp, sizeof(tmp), "Futura Project\n"); break;
+        case SYSFS_DMI_BOARD_NAME:      total = sysfs_gen_str(tmp, sizeof(tmp), "Futura Mainboard\n"); break;
+        case SYSFS_DMI_BOARD_VENDOR:    total = sysfs_gen_str(tmp, sizeof(tmp), "Futura Project\n"); break;
+        case SYSFS_DMI_BIOS_VENDOR:     total = sysfs_gen_str(tmp, sizeof(tmp), "Futura BIOS\n"); break;
+        case SYSFS_DMI_BIOS_VERSION:    total = sysfs_gen_str(tmp, sizeof(tmp), "1.0.0\n"); break;
+        case SYSFS_DMI_BIOS_DATE:       total = sysfs_gen_str(tmp, sizeof(tmp), "03/26/2026\n"); break;
+        case SYSFS_DMI_CHASSIS_TYPE:    total = sysfs_gen_str(tmp, sizeof(tmp), "1\n"); break; /* Other */
+        case SYSFS_DMI_MODALIAS: {
+            total = sysfs_gen_str(tmp, sizeof(tmp),
+                "dmi:bvnFuturaBIOS:bvr1.0.0:bd03/26/2026:svnFuturaProject:"
+                "pnFuturaVirtualMachine:pvr1.0:rvnFuturaProject:"
+                "rnFuturaMainboard:rvr1.0:cvnFuturaProject:ct1:cvr1.0:\n");
+            break;
+        }
+
+        /* /sys/class/rtc/rtc0/ files */
+        case SYSFS_RTC0_NAME: total = sysfs_gen_str(tmp, sizeof(tmp), "rtc_futura\n"); break;
+        case SYSFS_RTC0_DATE: {
+            /* Report current date from realtime clock */
+            extern int64_t g_realtime_offset_sec;
+            extern uint64_t fut_get_ticks(void);
+            uint64_t now_sec = fut_get_ticks() / 100 + (uint64_t)g_realtime_offset_sec;
+            /* Simple date calculation (approximate, epoch-based) */
+            uint64_t days = now_sec / 86400;
+            uint32_t y = 1970; uint32_t m = 1; uint32_t d = 1;
+            /* Approximate year */
+            while (days >= 365) {
+                uint32_t leap = ((y % 4 == 0) && (y % 100 != 0 || y % 400 == 0)) ? 1 : 0;
+                if (days < 365 + leap) break;
+                days -= 365 + leap;
+                y++;
+            }
+            /* Approximate month */
+            static const uint32_t mdays[] = {31,28,31,30,31,30,31,31,30,31,30,31};
+            for (m = 0; m < 12 && days >= mdays[m]; m++)
+                days -= mdays[m];
+            m++; d = (uint32_t)days + 1;
+            int pos = 0;
+            tmp[pos++] = '0' + (char)(y / 1000); tmp[pos++] = '0' + (char)((y/100)%10);
+            tmp[pos++] = '0' + (char)((y/10)%10); tmp[pos++] = '0' + (char)(y%10);
+            tmp[pos++] = '-';
+            tmp[pos++] = '0' + (char)(m/10); tmp[pos++] = '0' + (char)(m%10);
+            tmp[pos++] = '-';
+            tmp[pos++] = '0' + (char)(d/10); tmp[pos++] = '0' + (char)(d%10);
+            tmp[pos++] = '\n'; tmp[pos] = '\0';
+            total = (size_t)pos;
+            break;
+        }
+        case SYSFS_RTC0_TIME: {
+            extern int64_t g_realtime_offset_sec;
+            extern uint64_t fut_get_ticks(void);
+            uint64_t now_sec = fut_get_ticks() / 100 + (uint64_t)g_realtime_offset_sec;
+            uint32_t tod = (uint32_t)(now_sec % 86400);
+            uint32_t h = tod / 3600, mi = (tod % 3600) / 60, s = tod % 60;
+            int pos = 0;
+            tmp[pos++] = '0' + (char)(h/10); tmp[pos++] = '0' + (char)(h%10);
+            tmp[pos++] = ':';
+            tmp[pos++] = '0' + (char)(mi/10); tmp[pos++] = '0' + (char)(mi%10);
+            tmp[pos++] = ':';
+            tmp[pos++] = '0' + (char)(s/10); tmp[pos++] = '0' + (char)(s%10);
+            tmp[pos++] = '\n'; tmp[pos] = '\0';
+            total = (size_t)pos;
+            break;
+        }
+        case SYSFS_RTC0_SINCE_EPOCH: {
+            extern int64_t g_realtime_offset_sec;
+            extern uint64_t fut_get_ticks(void);
+            uint64_t epoch = fut_get_ticks() / 100 + (uint64_t)g_realtime_offset_sec;
+            int pos = 0;
+            char nbuf[20]; int npos = 0;
+            if (epoch == 0) { nbuf[npos++] = '0'; }
+            else {
+                uint64_t v = epoch;
+                char rev[20]; int rp = 0;
+                while (v > 0) { rev[rp++] = '0' + (char)(v % 10); v /= 10; }
+                while (rp > 0) nbuf[npos++] = rev[--rp];
+            }
+            for (int i = 0; i < npos && pos < 250; i++) tmp[pos++] = nbuf[i];
+            tmp[pos++] = '\n'; tmp[pos] = '\0';
+            total = (size_t)pos;
+            break;
+        }
+
         default:
             return -EINVAL;
     }
@@ -355,7 +482,8 @@ static const sysfs_de_t root_entries[] = {
     DE_DIR("fs",       SYSFS_INO_FS,      SYSFS_FS_DIR),
     DE_DIR("block",    SYSFS_INO_BLOCK,   SYSFS_BLOCK_DIR),
     DE_DIR("power",    SYSFS_INO_POWER,   SYSFS_POWER_DIR),
-    DE_DIR("module",   SYSFS_INO_MODULE,  SYSFS_MODULE_DIR),
+    DE_DIR("module",   SYSFS_INO_MODULE,    SYSFS_MODULE_DIR),
+    DE_DIR("firmware", SYSFS_INO_FIRMWARE,  SYSFS_FIRMWARE_DIR),
 };
 #define ROOT_N (sizeof(root_entries)/sizeof(root_entries[0]))
 
@@ -365,8 +493,61 @@ static const sysfs_de_t class_entries[] = {
     DE_DIR("net",    SYSFS_INO_CLASS_NET,   SYSFS_CLASS_NET_DIR),
     DE_DIR("block",  SYSFS_INO_CLASS_BLOCK, SYSFS_CLASS_BLOCK_DIR),
     DE_DIR("tty",    SYSFS_INO_CLASS_TTY,   SYSFS_CLASS_TTY_DIR),
+    DE_DIR("rtc",    SYSFS_INO_CLASS_RTC,   SYSFS_CLASS_RTC_DIR),
 };
 #define CLASS_N (sizeof(class_entries)/sizeof(class_entries[0]))
+
+/* /sys/class/rtc/ */
+static const sysfs_de_t class_rtc_entries[] = {
+    DE_DIR(".",    SYSFS_INO_CLASS_RTC,  SYSFS_CLASS_RTC_DIR),
+    DE_DIR("..",   SYSFS_INO_CLASS,      SYSFS_CLASS_DIR),
+    DE_DIR("rtc0", SYSFS_INO_CLASS_RTC0, SYSFS_CLASS_RTC0_DIR),
+};
+#define CLASS_RTC_N (sizeof(class_rtc_entries)/sizeof(class_rtc_entries[0]))
+
+/* /sys/class/rtc/rtc0/ */
+static const sysfs_de_t rtc0_entries[] = {
+    DE_DIR(".",           SYSFS_INO_CLASS_RTC0,     SYSFS_CLASS_RTC0_DIR),
+    DE_DIR("..",          SYSFS_INO_CLASS_RTC,      SYSFS_CLASS_RTC_DIR),
+    DE_REG("name",        SYSFS_INO_RTC0_NAME,      SYSFS_RTC0_NAME),
+    DE_REG("date",        SYSFS_INO_RTC0_DATE,      SYSFS_RTC0_DATE),
+    DE_REG("time",        SYSFS_INO_RTC0_TIME,      SYSFS_RTC0_TIME),
+    DE_REG("since_epoch", SYSFS_INO_RTC0_SINCE_EPOCH, SYSFS_RTC0_SINCE_EPOCH),
+};
+#define RTC0_N (sizeof(rtc0_entries)/sizeof(rtc0_entries[0]))
+
+/* /sys/firmware/ */
+static const sysfs_de_t firmware_entries[] = {
+    DE_DIR(".",   SYSFS_INO_FIRMWARE,     SYSFS_FIRMWARE_DIR),
+    DE_DIR("..",  SYSFS_INO_ROOT,         SYSFS_ROOT),
+    DE_DIR("dmi", SYSFS_INO_FIRMWARE_DMI, SYSFS_FIRMWARE_DMI_DIR),
+};
+#define FIRMWARE_N (sizeof(firmware_entries)/sizeof(firmware_entries[0]))
+
+/* /sys/firmware/dmi/ */
+static const sysfs_de_t firmware_dmi_entries[] = {
+    DE_DIR(".",  SYSFS_INO_FIRMWARE_DMI,    SYSFS_FIRMWARE_DMI_DIR),
+    DE_DIR("..", SYSFS_INO_FIRMWARE,        SYSFS_FIRMWARE_DIR),
+    DE_DIR("id", SYSFS_INO_FIRMWARE_DMI_ID, SYSFS_FIRMWARE_DMI_ID_DIR),
+};
+#define FIRMWARE_DMI_N (sizeof(firmware_dmi_entries)/sizeof(firmware_dmi_entries[0]))
+
+/* /sys/firmware/dmi/id/ */
+static const sysfs_de_t dmi_id_entries[] = {
+    DE_DIR(".",               SYSFS_INO_FIRMWARE_DMI_ID, SYSFS_FIRMWARE_DMI_ID_DIR),
+    DE_DIR("..",              SYSFS_INO_FIRMWARE_DMI,    SYSFS_FIRMWARE_DMI_DIR),
+    DE_REG("product_name",    SYSFS_INO_DMI_PRODUCT_NAME, SYSFS_DMI_PRODUCT_NAME),
+    DE_REG("product_version", SYSFS_INO_DMI_PRODUCT_VER,  SYSFS_DMI_PRODUCT_VERSION),
+    DE_REG("sys_vendor",      SYSFS_INO_DMI_SYS_VENDOR,   SYSFS_DMI_SYS_VENDOR),
+    DE_REG("board_name",      SYSFS_INO_DMI_BOARD_NAME,   SYSFS_DMI_BOARD_NAME),
+    DE_REG("board_vendor",    SYSFS_INO_DMI_BOARD_VENDOR, SYSFS_DMI_BOARD_VENDOR),
+    DE_REG("bios_vendor",     SYSFS_INO_DMI_BIOS_VENDOR,  SYSFS_DMI_BIOS_VENDOR),
+    DE_REG("bios_version",    SYSFS_INO_DMI_BIOS_VERSION, SYSFS_DMI_BIOS_VERSION),
+    DE_REG("bios_date",       SYSFS_INO_DMI_BIOS_DATE,    SYSFS_DMI_BIOS_DATE),
+    DE_REG("chassis_type",    SYSFS_INO_DMI_CHASSIS_TYPE,  SYSFS_DMI_CHASSIS_TYPE),
+    DE_REG("modalias",        SYSFS_INO_DMI_MODALIAS,      SYSFS_DMI_MODALIAS),
+};
+#define DMI_ID_N (sizeof(dmi_id_entries)/sizeof(dmi_id_entries[0]))
 
 static const sysfs_de_t class_net_entries[] = {
     DE_DIR(".",   SYSFS_INO_CLASS_NET,    SYSFS_CLASS_NET_DIR),
@@ -656,6 +837,11 @@ static int sysfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         case SYSFS_CPU_DIR:          return sysfs_table_readdir(cpu_entries,      CPU_N,      cookie, de);
         case SYSFS_CPU0_DIR:         return sysfs_table_readdir(cpu0_entries,     CPU0_N,     cookie, de);
         case SYSFS_CPU0_TOPOLOGY_DIR:return sysfs_table_readdir(cpu0_topology_entries, CPU0_TOPO_N, cookie, de);
+        case SYSFS_FIRMWARE_DIR:     return sysfs_table_readdir(firmware_entries,  FIRMWARE_N,  cookie, de);
+        case SYSFS_FIRMWARE_DMI_DIR: return sysfs_table_readdir(firmware_dmi_entries, FIRMWARE_DMI_N, cookie, de);
+        case SYSFS_FIRMWARE_DMI_ID_DIR: return sysfs_table_readdir(dmi_id_entries, DMI_ID_N, cookie, de);
+        case SYSFS_CLASS_RTC_DIR:    return sysfs_table_readdir(class_rtc_entries, CLASS_RTC_N, cookie, de);
+        case SYSFS_CLASS_RTC0_DIR:   return sysfs_table_readdir(rtc0_entries, RTC0_N, cookie, de);
         default:
             return sysfs_empty_readdir(dir, cookie, de);
     }
@@ -738,6 +924,16 @@ static int sysfs_dir_lookup(struct fut_vnode *dir, const char *name,
             return sysfs_table_lookup(mnt, cpu0_entries, CPU0_N, name, result);
         case SYSFS_CPU0_TOPOLOGY_DIR:
             return sysfs_table_lookup(mnt, cpu0_topology_entries, CPU0_TOPO_N, name, result);
+        case SYSFS_FIRMWARE_DIR:
+            return sysfs_table_lookup(mnt, firmware_entries, FIRMWARE_N, name, result);
+        case SYSFS_FIRMWARE_DMI_DIR:
+            return sysfs_table_lookup(mnt, firmware_dmi_entries, FIRMWARE_DMI_N, name, result);
+        case SYSFS_FIRMWARE_DMI_ID_DIR:
+            return sysfs_table_lookup(mnt, dmi_id_entries, DMI_ID_N, name, result);
+        case SYSFS_CLASS_RTC_DIR:
+            return sysfs_table_lookup(mnt, class_rtc_entries, CLASS_RTC_N, name, result);
+        case SYSFS_CLASS_RTC0_DIR:
+            return sysfs_table_lookup(mnt, rtc0_entries, RTC0_N, name, result);
         default:
             /* Empty directories: no children beyond . and .. */
             return -ENOENT;

@@ -241,6 +241,9 @@ enum procfs_kind {
     PROC_SYS_FS_OVERFLOWUID,        /* /proc/sys/fs/overflowuid */
     PROC_SYS_FS_OVERFLOWGID,        /* /proc/sys/fs/overflowgid */
     PROC_SYS_FS_LEASE_BREAK_TIME,   /* /proc/sys/fs/lease-break-time */
+    PROC_SYS_FS_BINFMT_MISC_DIR,   /* /proc/sys/fs/binfmt_misc/ */
+    PROC_SYS_FS_BINFMT_STATUS,     /* /proc/sys/fs/binfmt_misc/status */
+    PROC_SYS_FS_BINFMT_REGISTER,   /* /proc/sys/fs/binfmt_misc/register */
     /* Additional /proc/sys/kernel/ entries */
     PROC_SYS_KERNEL_NMI_WD,         /* /proc/sys/kernel/nmi_watchdog */
     PROC_SYS_KERNEL_WATCHDOG,       /* /proc/sys/kernel/watchdog */
@@ -459,6 +462,9 @@ typedef struct {
 #define PROC_INO_SYS_FS_OVERFLOWUID    387ULL
 #define PROC_INO_SYS_FS_OVERFLOWGID    388ULL
 #define PROC_INO_SYS_FS_LEASE_BREAK    389ULL
+#define PROC_INO_SYS_FS_BINFMT_DIR    390ULL
+#define PROC_INO_SYS_FS_BINFMT_STATUS 391ULL
+#define PROC_INO_SYS_FS_BINFMT_REG    392ULL
 /* /proc/sys/net/ipv4/ extended range: 404-407 */
 #define PROC_INO_SYS_NET_KEEPALIVE_TIME  404ULL
 #define PROC_INO_SYS_NET_KEEPALIVE_INTVL 405ULL
@@ -4048,6 +4054,13 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
         case PROC_SYS_FS_LEASE_BREAK_TIME:
             total = gen_sysctl_str(tmp, GEN_BUF, "45");
             break;
+        case PROC_SYS_FS_BINFMT_STATUS:
+            total = gen_sysctl_str(tmp, GEN_BUF, "enabled");
+            break;
+        case PROC_SYS_FS_BINFMT_REGISTER:
+            /* Write-only register file — read returns empty */
+            total = 0;
+            break;
         /* /proc/sys/kernel/ extended entries */
         case PROC_SYS_KERNEL_NMI_WD:
             total = gen_sysctl_str(tmp, GEN_BUF, "0");
@@ -5888,6 +5901,11 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0100644, PROC_SYS_FS_LEASE_BREAK_TIME, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "binfmt_misc")) {
+            *result = procfs_alloc_vnode(mnt, VN_DIR, PROC_INO_SYS_FS_BINFMT_DIR,
+                                          0040555, PROC_SYS_FS_BINFMT_MISC_DIR, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         return -ENOENT;
     }
 
@@ -5905,6 +5923,20 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
         if (STREQ(name, "max_queued_events")) {
             *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_INOTIFY_MAX_QUEUED,
                                           0100644, PROC_SYS_INOTIFY_MAX_QUEUED, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        return -ENOENT;
+    }
+
+    if (dn->kind == PROC_SYS_FS_BINFMT_MISC_DIR) {
+        if (STREQ(name, "status")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_FS_BINFMT_STATUS,
+                                          0100644, PROC_SYS_FS_BINFMT_STATUS, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "register")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_FS_BINFMT_REG,
+                                          0100200, PROC_SYS_FS_BINFMT_REGISTER, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
         return -ENOENT;
@@ -6585,7 +6617,8 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                    "aio-max-nr", "aio-nr",
                                    "protected_hardlinks", "protected_symlinks",
                                    "dentry-state", "inode-state", "inode-nr",
-                                   "overflowuid", "overflowgid", "lease-break-time" };
+                                   "overflowuid", "overflowgid", "lease-break-time",
+                                   "binfmt_misc" };
         static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_DIR,
@@ -6593,7 +6626,8 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
-                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG };
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_DIR };
         static const uint64_t i[] = { PROC_INO_SYS_FS_DIR, PROC_INO_SYS_DIR,
                                       PROC_INO_SYS_FILE_MAX, PROC_INO_SYS_FILE_NR,
                                       PROC_INO_SYS_INOTIFY_DIR,
@@ -6608,8 +6642,20 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                       PROC_INO_SYS_FS_INODE_NR,
                                       PROC_INO_SYS_FS_OVERFLOWUID,
                                       PROC_INO_SYS_FS_OVERFLOWGID,
-                                      PROC_INO_SYS_FS_LEASE_BREAK };
-        if (idx < 11) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+                                      PROC_INO_SYS_FS_LEASE_BREAK,
+                                      PROC_INO_SYS_FS_BINFMT_DIR };
+        if (idx < 12) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+        return -ENOENT;
+    }
+
+    if (dn->kind == PROC_SYS_FS_BINFMT_MISC_DIR) {
+        static const char *e[] = { ".", "..", "status", "register" };
+        static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG };
+        static const uint64_t i2[] = { PROC_INO_SYS_FS_BINFMT_DIR, PROC_INO_SYS_FS_DIR,
+                                      PROC_INO_SYS_FS_BINFMT_STATUS,
+                                      PROC_INO_SYS_FS_BINFMT_REG };
+        if (idx < 4) SYS_DIR_ENTRY(e[idx], t[idx], i2[idx]);
         return -ENOENT;
     }
 

@@ -57952,6 +57952,64 @@ __attribute__((noinline)) static void test_net_procfs_devnodes(void) {
 }
 
 /* ============================================================
+ * Tests 2061-2063: binfmt_misc
+ * ============================================================ */
+__attribute__((noinline)) static void test_binfmt_misc(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_close(int);
+
+    /* ── Test 2061: /proc/sys/fs/binfmt_misc/status readable ── */
+    fut_printf("[MISC-TEST] Test 2061: binfmt_misc/status\n");
+    {
+        long fd = sys_open("/proc/sys/fs/binfmt_misc/status", 0, 0);
+        if (fd >= 0) {
+            static char buf[32];
+            long n = sys_read((int)fd, buf, 31);
+            sys_close((int)fd);
+            if (n > 0 && buf[0] == 'e') { /* "enabled\n" */
+                fut_printf("[MISC-TEST] ✓ Test 2061: status=enabled\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2061: n=%ld\n", n);
+                fut_test_fail(2061);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2061: open=%ld\n", fd);
+            fut_test_fail(2061);
+        }
+    }
+
+    /* ── Test 2062: /proc/sys/fs/binfmt_misc/register exists ── */
+    fut_printf("[MISC-TEST] Test 2062: binfmt_misc/register\n");
+    {
+        long fd = sys_open("/proc/sys/fs/binfmt_misc/register", 02 /*O_RDWR*/, 0);
+        if (fd >= 0) {
+            fut_printf("[MISC-TEST] ✓ Test 2062: register openable\n");
+            sys_close((int)fd);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2062: open=%ld\n", fd);
+            fut_test_fail(2062);
+        }
+    }
+
+    /* ── Test 2063: /proc/sys/fs/binfmt_misc directory listable ── */
+    fut_printf("[MISC-TEST] Test 2063: binfmt_misc dir\n");
+    {
+        long fd = sys_open("/proc/sys/fs/binfmt_misc", 0, 0);
+        if (fd >= 0) {
+            fut_printf("[MISC-TEST] ✓ Test 2063: binfmt_misc dir openable\n");
+            sys_close((int)fd);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2063: open=%ld\n", fd);
+            fut_test_fail(2063);
+        }
+    }
+}
+
+/* ============================================================
  * Tests 2057-2060: scheduler sysctls
  * ============================================================ */
 __attribute__((noinline)) static void test_sched_sysctls(void) {
@@ -64020,6 +64078,7 @@ void fut_misc_test_thread(void *arg) {
     test_loop_device(); /* Tests 1885-1887 */
     test_per_iface_conf(); /* Tests 1869-1871 */
 
+    test_binfmt_misc(); /* Tests 2061-2063 */
     test_sched_sysctls(); /* Tests 2057-2060 */
     test_debugfs(); /* Tests 2051-2056 */
     test_proc_config_gz(); /* Tests 2048-2050 */

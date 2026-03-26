@@ -51245,6 +51245,149 @@ static void test_openat_o_directory(void) {
 /* Tests 1729-1732: umask enforcement on file/directory creation (POSIX) */
 /* Tests 1761-1764: SIGHUP delivery when session leader exits */
 /* Tests 1765-1768: daemon lifecycle integration (setsid+chdir+devnull) */
+/* Tests 1769-1772: /proc/self/fdinfo/<n> for various fd types */
+__attribute__((noinline)) static void test_fdinfo_various_types(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_close(int);
+    extern long sys_ioctl(int fd, unsigned long request, void *argp);
+
+    /* Test 1769: fdinfo for regular file has pos: and flags: */
+    fut_printf("[MISC-TEST] Test 1769: fdinfo regular file\n");
+    {
+        long fd = sys_open("/tmp/fdinfo_1769", 0x42, 0644);
+        if (fd >= 0) {
+            /* Build /proc/self/fdinfo/<fd> path */
+            static char path[48];
+            { const char *pfx = "/proc/self/fdinfo/"; int i = 0;
+              while (pfx[i]) { path[i] = pfx[i]; i++; }
+              if (fd >= 10) { path[i++] = (char)('0' + fd/10); }
+              path[i++] = (char)('0' + fd%10); path[i] = '\0'; }
+            int ifd = fut_vfs_open(path, 0, 0);
+            if (ifd >= 0) {
+                static char buf[128];
+                long nr = fut_vfs_read(ifd, buf, 127);
+                fut_vfs_close(ifd);
+                if (nr > 0) buf[nr] = '\0'; else buf[0] = '\0';
+                /* Check for "pos:" and "flags:" */
+                int has_pos = 0, has_flags = 0;
+                for (long j = 0; j + 3 < nr; j++) {
+                    if (buf[j]=='p' && buf[j+1]=='o' && buf[j+2]=='s' && buf[j+3]==':') has_pos = 1;
+                    if (buf[j]=='f' && buf[j+1]=='l' && buf[j+2]=='a' && buf[j+3]=='g') has_flags = 1;
+                }
+                if (has_pos && has_flags) {
+                    fut_printf("[MISC-TEST] ✓ Test 1769: fdinfo has pos+flags\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1769: pos=%d flags=%d\n", has_pos, has_flags);
+                    fut_test_fail(1769);
+                }
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1769: open fdinfo failed\n");
+                fut_test_fail(1769);
+            }
+            sys_close((int)fd);
+            fut_vfs_unlink("/tmp/fdinfo_1769");
+        } else { fut_test_fail(1769); }
+    }
+
+    /* Test 1770: fdinfo for PTY master has pos: and flags: */
+    fut_printf("[MISC-TEST] Test 1770: fdinfo PTY master\n");
+    {
+        long mfd = sys_open("/dev/ptmx", 0x0002, 0);
+        if (mfd >= 0) {
+            static char path[48];
+            { const char *pfx = "/proc/self/fdinfo/"; int i = 0;
+              while (pfx[i]) { path[i] = pfx[i]; i++; }
+              if (mfd >= 10) { path[i++] = (char)('0' + mfd/10); }
+              path[i++] = (char)('0' + mfd%10); path[i] = '\0'; }
+            int ifd = fut_vfs_open(path, 0, 0);
+            if (ifd >= 0) {
+                static char buf[128];
+                long nr = fut_vfs_read(ifd, buf, 127);
+                fut_vfs_close(ifd);
+                if (nr > 0) buf[nr] = '\0'; else buf[0] = '\0';
+                int has_pos = 0;
+                for (long j = 0; j + 3 < nr; j++)
+                    if (buf[j]=='p' && buf[j+1]=='o' && buf[j+2]=='s' && buf[j+3]==':') has_pos = 1;
+                if (has_pos) {
+                    fut_printf("[MISC-TEST] ✓ Test 1770: PTY master fdinfo OK\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1770: no pos: in PTY fdinfo\n");
+                    fut_test_fail(1770);
+                }
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1770: open fdinfo failed\n");
+                fut_test_fail(1770);
+            }
+            sys_close((int)mfd);
+        } else { fut_test_fail(1770); }
+    }
+
+    /* Test 1771: fdinfo for pipe has pos: */
+    fut_printf("[MISC-TEST] Test 1771: fdinfo pipe\n");
+    {
+        extern long sys_pipe(int pipefd[2]);
+        int pipefd[2] = {-1, -1};
+        long r = sys_pipe(pipefd);
+        if (r == 0 && pipefd[0] >= 0) {
+            static char path[48];
+            { const char *pfx = "/proc/self/fdinfo/"; int i = 0;
+              while (pfx[i]) { path[i] = pfx[i]; i++; }
+              if (pipefd[0] >= 10) { path[i++] = (char)('0' + pipefd[0]/10); }
+              path[i++] = (char)('0' + pipefd[0]%10); path[i] = '\0'; }
+            int ifd = fut_vfs_open(path, 0, 0);
+            if (ifd >= 0) {
+                static char buf[128];
+                long nr = fut_vfs_read(ifd, buf, 127);
+                fut_vfs_close(ifd);
+                if (nr > 0) {
+                    fut_printf("[MISC-TEST] ✓ Test 1771: pipe fdinfo %ld bytes\n", nr);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1771: fdinfo empty\n");
+                    fut_test_fail(1771);
+                }
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1771: open fdinfo failed\n");
+                fut_test_fail(1771);
+            }
+            sys_close(pipefd[0]);
+            sys_close(pipefd[1]);
+        } else { fut_test_fail(1771); }
+    }
+
+    /* Test 1772: /proc/self/fdinfo/ directory listing */
+    fut_printf("[MISC-TEST] Test 1772: fdinfo dir listing\n");
+    {
+        extern long sys_getdents64(unsigned int fd, void *dirp, unsigned int count);
+        int dfd = (int)sys_open("/proc/self/fdinfo", 0x10000, 0);
+        if (dfd >= 0) {
+            static char dbuf[512];
+            long nr = sys_getdents64(dfd, dbuf, 512);
+            sys_close(dfd);
+            /* Count real entries (skip . and ..) */
+            int real = 0; long off = 0;
+            while (off < nr) {
+                struct { uint64_t d_ino; int64_t d_off; uint16_t d_reclen; uint8_t d_type; char d_name[1]; }
+                    *de = (void*)(dbuf + off);
+                if (de->d_name[0] != '.') real++;
+                off += de->d_reclen;
+            }
+            if (real >= 3) {  /* at least stdin/stdout/stderr */
+                fut_printf("[MISC-TEST] ✓ Test 1772: fdinfo dir has %d entries\n", real);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1772: only %d entries\n", real);
+                fut_test_fail(1772);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1772: open fdinfo dir failed\n");
+            fut_test_fail(1772);
+        }
+    }
+}
+
 __attribute__((noinline)) static void test_daemon_lifecycle(void) {
     extern long sys_setsid(void);
     extern long sys_chdir(const char *);
@@ -56784,6 +56927,7 @@ void fut_misc_test_thread(void *arg) {
     test_timer_abstime();          /* Tests 1721-1724 */
     test_execve_prevalidation();   /* Tests 1725-1728 */
     test_fd_lifecycle_edges();     /* Tests 1737-1740 */
+    test_fdinfo_various_types();     /* Tests 1769-1772 */
     test_daemon_lifecycle();          /* Tests 1765-1768 */
     test_sighup_session_leader();    /* Tests 1761-1764 */
     test_task_exit_fd_release();     /* Tests 1757-1760 */

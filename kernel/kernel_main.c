@@ -1408,7 +1408,7 @@ void fut_kernel_main(void) {
         planned_tests += 17u; /* clock_sched: getres, sched_param, sched_policy, itimer, rusage, times, getpriority, setpriority, getpriority(-who), setpriority(-who), unshare(0), unshare(invalid), rr_get_interval, clock_gettime, posix_timer_sigev_value, posix_timer_si_timer, itimer_virtual */
         planned_tests += 22u; /* vfs: O_TRUNC, O_APPEND, relpath, dir_mtime, readlink, hardlink, mount, renameat2, inotify, inotify_rename, inotify_attrib, inotify_close, inotify_access, inotify_modify, inotify_ftruncate, inotify_utimensat, inotify_truncate, inotify_delete, umount expire, dotdot, eisdir, chdir_dotdot */
         planned_tests += 17u; /* poll: file ready, eventfd not-ready, eventfd ready, POLLNVAL, select file, select pipe, pselect6 pipe, pselect6 sigmask restore, timeout-only sleep, timerfd readiness, signalfd readiness, pipe EOF, select pipe EOF, select timerfd wakeup, poll negative fd, POLLRDNORM, select timeout update */
-        planned_tests += 2025u; /* misc(2025): ..., sysfs_dmi_blkdev (2002-2013), dev_rtc_mem (2014-2019), procfs_fs (2020-2025) */
+        planned_tests += 2035u; /* misc(2035): ..., sysfs_dmi_blkdev (2002-2013), dev_rtc_mem (2014-2019), procfs_fs (2020-2025), cgroupfs (2026-2035) */
         // planned_tests += 1u; /* block */
         // planned_tests += 1u; /* futfs */
         // planned_tests += 1u; /* net */
@@ -1492,6 +1492,16 @@ void fut_kernel_main(void) {
         iocg_init();     /* Cgroup v2 I/O controller */
         pidcg_init();    /* Cgroup v2 PID controller */
         freezer_init();  /* Cgroup v2 freezer controller */
+        extern void cgroupfs_init(void);
+        cgroupfs_init(); /* Cgroup v2 filesystem type */
+
+        /* Mount cgroup2 at /cgroup after registering the filesystem type */
+        fut_vfs_mkdir("/cgroup", 0755);
+        int cg_ret = fut_vfs_mount(NULL, "/cgroup", "cgroup2", 0, NULL, FUT_INVALID_HANDLE);
+        if (cg_ret == 0)
+            fut_printf("[INIT] ✓ Mounted cgroup2 at /cgroup\n");
+        else
+            fut_printf("[WARN] ✗ Failed to mount cgroup2 (error %d)\n", cg_ret);
     }
     {
         extern void ipsec_init(void);

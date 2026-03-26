@@ -57952,6 +57952,218 @@ __attribute__((noinline)) static void test_net_procfs_devnodes(void) {
 }
 
 /* ============================================================
+ * Tests 2026-2035: cgroup v2 filesystem
+ * ============================================================ */
+__attribute__((noinline)) static void test_cgroupfs(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_write(int, const void *, size_t);
+    extern long sys_close(int);
+    extern long sys_mkdir(const char *, unsigned int);
+
+    /* ── Test 2026: /cgroup/cgroup.controllers readable ── */
+    fut_printf("[MISC-TEST] Test 2026: cgroup.controllers\n");
+    {
+        long fd = sys_open("/cgroup/cgroup.controllers", 0, 0);
+        if (fd >= 0) {
+            static char buf[128];
+            long n = sys_read((int)fd, buf, 127);
+            sys_close((int)fd);
+            if (n > 0) {
+                buf[n] = '\0';
+                /* Should contain "cpu" and "memory" */
+                bool has_cpu = false, has_mem = false;
+                for (int i = 0; i < n - 2; i++) {
+                    if (buf[i] == 'c' && buf[i+1] == 'p' && buf[i+2] == 'u') has_cpu = true;
+                    if (buf[i] == 'm' && buf[i+1] == 'e' && buf[i+2] == 'm') has_mem = true;
+                }
+                if (has_cpu && has_mem) {
+                    fut_printf("[MISC-TEST] ✓ Test 2026: controllers has cpu+memory\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 2026: controllers=\"%s\"\n", buf);
+                    fut_test_fail(2026);
+                }
+            } else { fut_test_fail(2026); }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2026: open=%ld\n", fd);
+            fut_test_fail(2026);
+        }
+    }
+
+    /* ── Test 2027: cgroup.procs lists PIDs ── */
+    fut_printf("[MISC-TEST] Test 2027: cgroup.procs\n");
+    {
+        long fd = sys_open("/cgroup/cgroup.procs", 0, 0);
+        if (fd >= 0) {
+            static char buf[256];
+            long n = sys_read((int)fd, buf, 255);
+            sys_close((int)fd);
+            if (n > 0 && buf[0] >= '0' && buf[0] <= '9') {
+                fut_printf("[MISC-TEST] ✓ Test 2027: procs has PIDs (%ld bytes)\n", n);
+                fut_test_pass();
+            } else { fut_test_fail(2027); }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2027: open=%ld\n", fd);
+            fut_test_fail(2027);
+        }
+    }
+
+    /* ── Test 2028: memory.current readable ── */
+    fut_printf("[MISC-TEST] Test 2028: memory.current\n");
+    {
+        long fd = sys_open("/cgroup/memory.current", 0, 0);
+        if (fd >= 0) {
+            static char buf[32];
+            long n = sys_read((int)fd, buf, 31);
+            sys_close((int)fd);
+            if (n > 0) {
+                fut_printf("[MISC-TEST] ✓ Test 2028: memory.current ok\n");
+                fut_test_pass();
+            } else { fut_test_fail(2028); }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2028: open=%ld\n", fd);
+            fut_test_fail(2028);
+        }
+    }
+
+    /* ── Test 2029: memory.max is "max\n" ── */
+    fut_printf("[MISC-TEST] Test 2029: memory.max\n");
+    {
+        long fd = sys_open("/cgroup/memory.max", 0, 0);
+        if (fd >= 0) {
+            static char buf[32];
+            long n = sys_read((int)fd, buf, 31);
+            sys_close((int)fd);
+            if (n >= 3 && buf[0] == 'm' && buf[1] == 'a' && buf[2] == 'x') {
+                fut_printf("[MISC-TEST] ✓ Test 2029: memory.max=\"max\"\n");
+                fut_test_pass();
+            } else { fut_test_fail(2029); }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2029: open=%ld\n", fd);
+            fut_test_fail(2029);
+        }
+    }
+
+    /* ── Test 2030: cpu.max readable ── */
+    fut_printf("[MISC-TEST] Test 2030: cpu.max\n");
+    {
+        long fd = sys_open("/cgroup/cpu.max", 0, 0);
+        if (fd >= 0) {
+            static char buf[32];
+            long n = sys_read((int)fd, buf, 31);
+            sys_close((int)fd);
+            if (n > 0) {
+                fut_printf("[MISC-TEST] ✓ Test 2030: cpu.max ok\n");
+                fut_test_pass();
+            } else { fut_test_fail(2030); }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2030: open=%ld\n", fd);
+            fut_test_fail(2030);
+        }
+    }
+
+    /* ── Test 2031: pids.current readable ── */
+    fut_printf("[MISC-TEST] Test 2031: pids.current\n");
+    {
+        long fd = sys_open("/cgroup/pids.current", 0, 0);
+        if (fd >= 0) {
+            static char buf[16];
+            long n = sys_read((int)fd, buf, 15);
+            sys_close((int)fd);
+            if (n > 0 && buf[0] >= '0' && buf[0] <= '9') {
+                fut_printf("[MISC-TEST] ✓ Test 2031: pids.current ok\n");
+                fut_test_pass();
+            } else { fut_test_fail(2031); }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2031: open=%ld\n", fd);
+            fut_test_fail(2031);
+        }
+    }
+
+    /* ── Test 2032: cgroup.type is "domain\n" ── */
+    fut_printf("[MISC-TEST] Test 2032: cgroup.type\n");
+    {
+        long fd = sys_open("/cgroup/cgroup.type", 0, 0);
+        if (fd >= 0) {
+            static char buf[32];
+            long n = sys_read((int)fd, buf, 31);
+            sys_close((int)fd);
+            if (n > 0 && buf[0] == 'd') {
+                fut_printf("[MISC-TEST] ✓ Test 2032: type=domain\n");
+                fut_test_pass();
+            } else { fut_test_fail(2032); }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2032: open=%ld\n", fd);
+            fut_test_fail(2032);
+        }
+    }
+
+    /* ── Test 2033: cgroup.events has populated field ── */
+    fut_printf("[MISC-TEST] Test 2033: cgroup.events\n");
+    {
+        long fd = sys_open("/cgroup/cgroup.events", 0, 0);
+        if (fd >= 0) {
+            static char buf[64];
+            long n = sys_read((int)fd, buf, 63);
+            sys_close((int)fd);
+            if (n > 0) {
+                fut_printf("[MISC-TEST] ✓ Test 2033: events ok\n");
+                fut_test_pass();
+            } else { fut_test_fail(2033); }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2033: open=%ld\n", fd);
+            fut_test_fail(2033);
+        }
+    }
+
+    /* ── Test 2034: mkdir creates child cgroup ── */
+    fut_printf("[MISC-TEST] Test 2034: mkdir child cgroup\n");
+    {
+        long r = sys_mkdir("/cgroup/test_cg", 0755);
+        if (r == 0) {
+            /* Verify child has its own controllers file */
+            long fd = sys_open("/cgroup/test_cg/cgroup.controllers", 0, 0);
+            if (fd >= 0) {
+                static char buf[64];
+                long n = sys_read((int)fd, buf, 63);
+                sys_close((int)fd);
+                if (n > 0) {
+                    fut_printf("[MISC-TEST] ✓ Test 2034: child cgroup created\n");
+                    fut_test_pass();
+                } else { fut_test_fail(2034); }
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2034: child open=%ld\n", fd);
+                fut_test_fail(2034);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2034: mkdir=%ld\n", r);
+            fut_test_fail(2034);
+        }
+    }
+
+    /* ── Test 2035: write to cgroup.subtree_control succeeds ── */
+    fut_printf("[MISC-TEST] Test 2035: write subtree_control\n");
+    {
+        long fd = sys_open("/cgroup/cgroup.subtree_control", 02 /*O_RDWR*/, 0);
+        if (fd >= 0) {
+            long n = sys_write((int)fd, "+memory +pids\n", 14);
+            sys_close((int)fd);
+            if (n == 14) {
+                fut_printf("[MISC-TEST] ✓ Test 2035: subtree_control write ok\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2035: write=%ld\n", n);
+                fut_test_fail(2035);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2035: open=%ld\n", fd);
+            fut_test_fail(2035);
+        }
+    }
+}
+
+/* ============================================================
  * Tests 2020-2025: /proc/sys/fs/ entries
  * ============================================================ */
 __attribute__((noinline)) static void test_procfs_fs_entries(void) {
@@ -63293,6 +63505,7 @@ void fut_misc_test_thread(void *arg) {
     test_loop_device(); /* Tests 1885-1887 */
     test_per_iface_conf(); /* Tests 1869-1871 */
 
+    test_cgroupfs(); /* Tests 2026-2035 */
     test_procfs_fs_entries(); /* Tests 2020-2025 */
     test_dev_rtc_mem(); /* Tests 2014-2019 */
     test_sysfs_dmi_blkdev(); /* Tests 2002-2013 */

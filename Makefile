@@ -486,6 +486,7 @@ KERNEL_SOURCES := \
     kernel/cgroup/iocg.c \
     kernel/cgroup/pidcg.c \
     kernel/cgroup/freezer.c \
+    kernel/cgroup/cgroupfs.c \
     kernel/fs/ext2.c \
     kernel/fs/fat.c \
     kernel/fs/exfat.c \

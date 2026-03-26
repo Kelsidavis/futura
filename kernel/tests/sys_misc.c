@@ -53810,6 +53810,28 @@ __attribute__((noinline)) static void test_dns_cache(void) {
     dns_cache_clear();
 }
 
+/* Test 1851: SNMP stats increment on TTL expiry */
+__attribute__((noinline)) static void test_snmp_ttl_stats(void) {
+    extern struct net_snmp_stats g_net_stats;
+    extern bool g_ip_forward_enabled;
+    extern int ip_forward(const void *, size_t, struct net_iface *);
+    fut_printf("[MISC-TEST] Test 1851: SNMP stats on TTL expiry\n");
+    bool old_fwd = g_ip_forward_enabled;
+    g_ip_forward_enabled = true;
+    uint64_t old_icmp_out = g_net_stats.icmp_out_time_exceeded;
+    uint64_t old_ip_discard = g_net_stats.ip_in_discards;
+    static uint8_t pkt[40];
+    __builtin_memset(pkt, 0, 40);
+    pkt[0] = 0x45; pkt[2] = 0; pkt[3] = 40; pkt[8] = 1; pkt[9] = 6;
+    pkt[12] = 10; pkt[16] = 8; pkt[17] = 8; pkt[18] = 8; pkt[19] = 8;
+    ip_forward(pkt, 40, NULL);
+    g_ip_forward_enabled = old_fwd;
+    if (g_net_stats.icmp_out_time_exceeded > old_icmp_out &&
+        g_net_stats.ip_in_discards > old_ip_discard) {
+        fut_test_pass();
+    } else { fut_test_fail(1851); }
+}
+
 /* Test 1850: NAT masquerade rewrites source IP */
 __attribute__((noinline)) static void test_nat_masquerade(void) {
     extern int nat_masquerade_out(uint8_t *pkt, size_t len, struct net_iface *out);
@@ -58910,6 +58932,7 @@ void fut_misc_test_thread(void *arg) {
     test_dns_cache();    /* Tests 1847-1848 */
     test_tun_create();   /* Test 1849 */
     test_nat_masquerade(); /* Test 1850 */
+    test_snmp_ttl_stats(); /* Test 1851 */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

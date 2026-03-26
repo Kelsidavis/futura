@@ -55357,6 +55357,101 @@ __attribute__((noinline)) static void test_pts_dir_readdir(void) {
     }
 }
 
+__attribute__((noinline)) static void test_bridge_interfaces(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_close(int);
+    extern long sys_ioctl(int fd, unsigned long request, void *argp);
+
+    /* Test 1865: Create bridge interface via SIOCBRADDBR */
+    fut_printf("[MISC-TEST] Test 1865: SIOCBRADDBR creates bridge\n");
+    {
+        long sfd = sys_open("/dev/null", 0x0002, 0);
+        if (sfd >= 0) {
+            static char brname[16];
+            __builtin_memset(brname, 0, 16);
+            __builtin_memcpy(brname, "br0", 3);
+            long rc = sys_ioctl((int)sfd, 0x89a0 /* SIOCBRADDBR */, brname);
+            if (rc >= 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1865: bridge br0 created (idx=%ld)\n", rc);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1865: SIOCBRADDBR=%ld\n", rc);
+                fut_test_fail(1865);
+            }
+            sys_close((int)sfd);
+        } else { fut_test_fail(1865); }
+    }
+
+    /* Test 1866: Add port to bridge via SIOCBRADDIF */
+    fut_printf("[MISC-TEST] Test 1866: SIOCBRADDIF adds port\n");
+    {
+        long sfd = sys_open("/dev/null", 0x0002, 0);
+        if (sfd >= 0) {
+            static struct { char br[16]; char port[16]; } breq;
+            __builtin_memset(&breq, 0, sizeof(breq));
+            __builtin_memcpy(breq.br, "br0", 3);
+            __builtin_memcpy(breq.port, "eth0", 4);
+            long rc = sys_ioctl((int)sfd, 0x89a2 /* SIOCBRADDIF */, &breq);
+            if (rc == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1866: eth0 added to br0\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1866: SIOCBRADDIF=%ld\n", rc);
+                fut_test_fail(1866);
+            }
+            sys_close((int)sfd);
+        } else { fut_test_fail(1866); }
+    }
+
+    /* Test 1867: Duplicate bridge creation returns EEXIST */
+    fut_printf("[MISC-TEST] Test 1867: Duplicate bridge → EEXIST\n");
+    {
+        long sfd = sys_open("/dev/null", 0x0002, 0);
+        if (sfd >= 0) {
+            static char brname[16];
+            __builtin_memset(brname, 0, 16);
+            __builtin_memcpy(brname, "br0", 3);
+            long rc = sys_ioctl((int)sfd, 0x89a0, brname);
+            if (rc == -17 /* EEXIST */) {
+                fut_printf("[MISC-TEST] ✓ Test 1867: duplicate bridge → EEXIST\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1867: expected EEXIST, got %ld\n", rc);
+                fut_test_fail(1867);
+            }
+            sys_close((int)sfd);
+        } else { fut_test_fail(1867); }
+    }
+
+    /* Test 1868: Bridge visible in /proc/net/dev */
+    fut_printf("[MISC-TEST] Test 1868: Bridge visible in /proc/net/dev\n");
+    {
+        extern long sys_read(int, void *, size_t);
+        long fd = sys_open("/proc/net/dev", 0, 0);
+        if (fd >= 0) {
+            static char buf[2048];
+            long n = sys_read((int)fd, buf, sizeof(buf) - 1);
+            sys_close((int)fd);
+            if (n > 0) {
+                buf[n] = '\0';
+                bool found = false;
+                for (int i = 0; i < n - 3; i++) {
+                    if (buf[i] == 'b' && buf[i+1] == 'r' && buf[i+2] == '0') {
+                        found = true; break;
+                    }
+                }
+                if (found) {
+                    fut_printf("[MISC-TEST] ✓ Test 1868: br0 in /proc/net/dev\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1868: br0 not found\n");
+                    fut_test_fail(1868);
+                }
+            } else { fut_test_fail(1868); }
+        } else { fut_test_fail(1868); }
+    }
+}
+
 __attribute__((noinline)) static void test_vlan_interfaces(void) {
     extern long sys_open(const char *, int, int);
     extern long sys_close(int);
@@ -59316,6 +59411,7 @@ void fut_misc_test_thread(void *arg) {
     test_futurafs(); /* Tests 1855-1857 */
     test_blockdev_procfs(); /* Tests 1858-1860 */
     test_vlan_interfaces(); /* Tests 1861-1864 */
+    test_bridge_interfaces(); /* Tests 1865-1868 */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

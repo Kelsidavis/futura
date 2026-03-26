@@ -483,7 +483,7 @@ static size_t common_prefix_len(const char *s1, const char *s2) {
 static void complete_command(char *buf, size_t *pos, size_t max_len) {
     /* List of builtin commands */
     const char *builtins[] = {
-        "arp", "bg", "cd", "chmod", "clear", "date", "dd", "df", "dhclient", "dmesg", "echo", "edit", "hexdump", "lsof", "nc", "poweroff", "reboot", "seq", "sleep", "time", "traceroute", "wget", "exit", "export", "fg", "free",
+        "arp", "bg", "brctl", "cd", "chmod", "clear", "date", "dd", "df", "dhclient", "dmesg", "echo", "edit", "hexdump", "lsof", "nc", "poweroff", "reboot", "seq", "sleep", "time", "traceroute", "wget", "exit", "export", "fg", "free",
         "help", "hostname", "httpd", "id", "ifconfig", "iostat", "ipcs", "iptables", "jobs", "kill", "ls", "lsblk", "lspci", "mount", "netstat",
         ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "history", "ip", "ln", "mktemp", "more", "nproc", "nslookup", "ping", "printf", "ps", "pwd", "read", "readlink", "set", "sha256sum", "shutdown", "source", "ss", "stat", "sync", "sysctl", "sysinfo", "test", "top", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "vmstat", "wait", "watch", "which", "whoami", "xargs", "yes", NULL
     };
@@ -6714,6 +6714,48 @@ static int execute_command(int argc, char *argv[]) {
             write_str(2, "lspci: cannot read /proc/pci\n");
         }
         return 0;
+    } else if (strcmp_simple(argv[0], "brctl") == 0) {
+        /* brctl — bridge control */
+        if (argc < 2) {
+            write_str(1, "usage: brctl addbr <name>\n");
+            write_str(1, "       brctl addif <bridge> <iface>\n");
+            write_str(1, "       brctl delif <bridge> <iface>\n");
+            write_str(1, "       brctl show\n");
+            return 0;
+        }
+        int sock = sys_call3(41, 2, 2, 0);
+        if (sock < 0) { write_str(2, "brctl: socket failed\n"); return 1; }
+        if (strcmp_simple(argv[1], "addbr") == 0 && argc >= 3) {
+            char name[16] = {0};
+            for (int k = 0; argv[2][k] && k < 15; k++) name[k] = argv[2][k];
+            long rc = sys_call3(16, sock, 0x89a0/*SIOCBRADDBR*/, (long)name);
+            if (rc >= 0) { write_str(1, "Bridge created\n"); }
+            else { write_str(2, "brctl addbr: failed\n"); }
+        } else if (strcmp_simple(argv[1], "addif") == 0 && argc >= 4) {
+            struct { char br[16]; char port[16]; } req = {{0},{0}};
+            for (int k = 0; argv[2][k] && k < 15; k++) req.br[k] = argv[2][k];
+            for (int k = 0; argv[3][k] && k < 15; k++) req.port[k] = argv[3][k];
+            long rc = sys_call3(16, sock, 0x89a2/*SIOCBRADDIF*/, (long)&req);
+            if (rc == 0) { write_str(1, "Port added\n"); }
+            else { write_str(2, "brctl addif: failed\n"); }
+        } else if (strcmp_simple(argv[1], "delif") == 0 && argc >= 4) {
+            struct { char br[16]; char port[16]; } req = {{0},{0}};
+            for (int k = 0; argv[2][k] && k < 15; k++) req.br[k] = argv[2][k];
+            for (int k = 0; argv[3][k] && k < 15; k++) req.port[k] = argv[3][k];
+            long rc = sys_call3(16, sock, 0x89a3/*SIOCBRDELIF*/, (long)&req);
+            if (rc == 0) { write_str(1, "Port removed\n"); }
+            else { write_str(2, "brctl delif: failed\n"); }
+        } else if (strcmp_simple(argv[1], "show") == 0) {
+            write_str(1, "bridge name\tSTP\tinterfaces\n");
+            /* Read from /proc/net/bridge if available */
+            int fd = sys_open("/proc/net/bridge", O_RDONLY, 0);
+            if (fd >= 0) {
+                char buf[512]; ssize_t n = sys_read(fd, buf, sizeof(buf)-1);
+                sys_close(fd); if (n > 0) { buf[n] = '\0'; write_str(1, buf); }
+            }
+        }
+        sys_close(sock);
+        return 0;
     } else if (strcmp_simple(argv[0], "iostat") == 0) {
         /* iostat — I/O statistics from /proc/diskstats */
         write_str(1, "Device             tps    kB_read/s    kB_wrtn/s    kB_read    kB_wrtn\n");
@@ -8548,7 +8590,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   108 built-in commands — type 'help'    |\n");
+    write_str(1, "|   109 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");

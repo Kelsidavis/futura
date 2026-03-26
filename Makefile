@@ -472,6 +472,7 @@ KERNEL_SOURCES := \
     kernel/net/tcpip.c \
     kernel/net/dns.c \
     kernel/net/netif.c \
+    kernel/net/bridge.c \
     kernel/net/nat.c \
     kernel/net/filter.c \
     kernel/net/tun.c \

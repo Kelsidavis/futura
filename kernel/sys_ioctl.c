@@ -63,6 +63,12 @@
 /* VLAN ioctl (Linux compatible) */
 #define SIOCSIFVLAN    0x8983  /* Create/configure VLAN sub-interface */
 
+/* Bridge ioctls (Linux compatible) */
+#define SIOCBRADDBR    0x89a0  /* Create bridge */
+#define SIOCBRDELBR    0x89a1  /* Delete bridge */
+#define SIOCBRADDIF    0x89a2  /* Add port to bridge */
+#define SIOCBRDELIF    0x89a3  /* Remove port from bridge */
+
 /* Futura firewall ioctls (custom range 0x89F0-0x89FF) */
 #define SIOCFWADDRULE  0x89F0  /* Add firewall rule */
 #define SIOCFWPOLICY   0x89F1  /* Set chain default policy */
@@ -610,6 +616,8 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
                                    request == SIOCFWADDRULE || request == SIOCFWPOLICY ||
                                    request == SIOCFWFLUSH ||
                                    request == SIOCSIFVLAN ||
+                                   request == SIOCBRADDBR || request == SIOCBRDELBR ||
+                                   request == SIOCBRADDIF || request == SIOCBRDELIF ||
                                    request == 0x400454CA /* TUNSETIFF */);
                 if (argp_val >= KERNEL_VIRTUAL_BASE && !is_builtin) {
                     return -EFAULT;
@@ -1664,6 +1672,56 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
                 return -EFAULT;
             extern int firewall_flush(int);
             return firewall_flush(chain);
+        }
+
+        case SIOCBRADDBR: {
+            /* Create bridge: argp → char name[16] */
+            if (!argp) return -EFAULT;
+            char br_name[16];
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
+                __builtin_memcpy(br_name, argp, 16);
+            else
+#endif
+            if (fut_copy_from_user(br_name, argp, 16) != 0)
+                return -EFAULT;
+            br_name[15] = '\0';
+            extern int bridge_create(const char *);
+            return bridge_create(br_name);
+        }
+
+        case SIOCBRADDIF: {
+            /* Add port to bridge: argp → struct { char br[16]; char port[16]; } */
+            if (!argp) return -EFAULT;
+            struct { char br[16]; char port[16]; } breq;
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
+                __builtin_memcpy(&breq, argp, sizeof(breq));
+            else
+#endif
+            if (fut_copy_from_user(&breq, argp, sizeof(breq)) != 0)
+                return -EFAULT;
+            breq.br[15] = '\0';
+            breq.port[15] = '\0';
+            extern int bridge_add_port(const char *, const char *);
+            return bridge_add_port(breq.br, breq.port);
+        }
+
+        case SIOCBRDELIF: {
+            /* Remove port from bridge: argp → struct { char br[16]; char port[16]; } */
+            if (!argp) return -EFAULT;
+            struct { char br[16]; char port[16]; } breq;
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
+                __builtin_memcpy(&breq, argp, sizeof(breq));
+            else
+#endif
+            if (fut_copy_from_user(&breq, argp, sizeof(breq)) != 0)
+                return -EFAULT;
+            breq.br[15] = '\0';
+            breq.port[15] = '\0';
+            extern int bridge_del_port(const char *, const char *);
+            return bridge_del_port(breq.br, breq.port);
         }
 
         case SIOCSIFVLAN: {

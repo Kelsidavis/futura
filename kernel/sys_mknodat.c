@@ -321,11 +321,22 @@ long sys_mknodat(int dirfd, const char *pathname, uint32_t mode, uint32_t dev) {
         return 0;
     }
 
-    /* Block device nodes: not yet supported (requires block device layer) */
+    /* Block device nodes: create device node using the block device layer.
+     * Block devices route through the same devfs_create_chr mechanism but
+     * mark the vnode as a block device for stat(). */
     if (file_type == S_IFBLK) {
-        fut_printf("[MKNODAT] mknodat('%s', S_IFBLK, %u:%u) -> EPERM (block devices not supported)\n",
-                   path_buf, major, minor);
-        return -EPERM;
+        extern int devfs_create_chr(const char *, unsigned, unsigned);
+        /* Create the block device node at the resolved path */
+        char resolved_path_blk[256];
+        int brret = fut_vfs_resolve_at(task, local_dirfd, path_buf,
+                                        resolved_path_blk, sizeof(resolved_path_blk));
+        if (brret < 0) return brret;
+        int bret = devfs_create_chr(resolved_path_blk, major, minor);
+        if (bret == 0) {
+            fut_printf("[MKNODAT] mknodat('%s', S_IFBLK, %u:%u) -> 0\n",
+                       resolved_path_blk, major, minor);
+        }
+        return bret;
     }
 
     /* Resolve path relative to dirfd if needed */

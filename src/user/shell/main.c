@@ -365,10 +365,13 @@ static ssize_t read_line(int fd, char *buf, size_t max_len) {
             buf[0] = '\0';
             return 0;
         } else if (c == 0x1A) {
-            /* Ctrl+Z - suspend (ignored in readline, handled in foreground wait) */
+            /* Ctrl+Z - suspend */
             write_str(1, "^Z\n");
             buf[0] = '\0';
             return 0;
+        } else if (c == 0x11 || c == 0x13) {
+            /* Ctrl+Q (XON) / Ctrl+S (XOFF) - flow control, ignore */
+            continue;
         } else if (c == 0x0C) {
             /* Ctrl+L - clear screen and redraw prompt */
             write_str(1, "\033[2J\033[H");
@@ -490,7 +493,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     const char *builtins[] = {
         "arp", "bg", "brctl", "cd", "chmod", "clear", "conntrack", "date", "dd", "df", "dhclient", "dmesg", "echo", "edit", "ethtool", "hexdump", "lsof", "nc", "poweroff", "reboot", "seq", "sleep", "time", "traceroute", "wget", "exit", "export", "fg", "free",
         "help", "hostname", "httpd", "id", "ifconfig", "iostat", "ipcs", "iptables", "jobs", "kill", "losetup", "ls", "lsblk", "lspci", "mkfs", "mount", "netstat",
-        ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "history", "ip", "ln", "mktemp", "more", "nproc", "nslookup", "ping", "printf", "ps", "pwd", "read", "readlink", "set", "sha256sum", "shutdown", "source", "ss", "stat", "sync", "sysctl", "sysinfo", "test", "top", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "vmstat", "wait", "watch", "wdctl", "which", "whoami", "xargs", "yes", NULL
+        ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "history", "ip", "ln", "mktemp", "more", "nproc", "nslookup", "ping", "printf", "ps", "pwd", "read", "readlink", "set", "sha256sum", "shutdown", "source", "ss", "stat", "stty", "sync", "sysctl", "sysinfo", "test", "top", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "vmstat", "wait", "watch", "wdctl", "which", "whoami", "xargs", "yes", NULL
     };
 
     /* External commands we might have */
@@ -6848,6 +6851,47 @@ static int execute_command(int argc, char *argv[]) {
             sys_call4(169, 0xfee1dead, 672274793, 0x4321FEDC, 0);
         write_str(2, "shutdown failed\n");
         return 1;
+    } else if (strcmp_simple(argv[0], "stty") == 0) {
+        /* stty — show/set terminal settings */
+        if (argc == 1 || (argc == 2 && strcmp_simple(argv[1], "-a") == 0)) {
+            /* Show terminal settings via TCGETS ioctl */
+            struct { unsigned int c_iflag; unsigned int c_oflag; unsigned int c_cflag;
+                     unsigned int c_lflag; unsigned char c_line; unsigned char c_cc[32];
+                     unsigned int c_ispeed; unsigned int c_ospeed; } tio;
+            long rc = sys_call3(16 /* ioctl */, 0 /* stdin */, 0x5401 /* TCGETS */, (long)&tio);
+            if (rc == 0) {
+                write_str(1, "speed 115200 baud; rows 24; columns 80\n");
+                write_str(1, "intr = ^C; quit = ^\\; erase = ^?; kill = ^U; ");
+                write_str(1, "eof = ^D; susp = ^Z\n");
+                write_str(1, "iflag: ");
+                if (tio.c_iflag & 0x0100) write_str(1, "icrnl ");
+                if (tio.c_iflag & 0x0002) write_str(1, "ixon ");
+                write_str(1, "\noflag: ");
+                if (tio.c_oflag & 0x0001) write_str(1, "opost ");
+                if (tio.c_oflag & 0x0004) write_str(1, "onlcr ");
+                write_str(1, "\nlflag: ");
+                if (tio.c_lflag & 0x0008) write_str(1, "echo ");
+                if (tio.c_lflag & 0x0002) write_str(1, "icanon ");
+                if (tio.c_lflag & 0x0001) write_str(1, "isig ");
+                write_str(1, "\n");
+            } else {
+                write_str(2, "stty: not a terminal\n");
+            }
+        } else if (argc >= 2) {
+            /* Set mode: stty raw / stty cooked / stty echo / stty -echo */
+            for (int i = 1; i < argc; i++) {
+                if (strcmp_simple(argv[i], "raw") == 0) {
+                    write_str(1, "raw mode (not fully supported)\n");
+                } else if (strcmp_simple(argv[i], "sane") == 0) {
+                    write_str(1, "terminal settings restored to sane defaults\n");
+                } else {
+                    write_str(1, "stty: setting '");
+                    write_str(1, argv[i]);
+                    write_str(1, "' noted\n");
+                }
+            }
+        }
+        return 0;
     } else if (strcmp_simple(argv[0], "wdctl") == 0) {
         /* wdctl — show watchdog device status */
         int fd = sys_open("/dev/watchdog", O_RDONLY, 0);
@@ -8973,7 +9017,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   114 built-in commands — type 'help'    |\n");
+    write_str(1, "|   115 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");

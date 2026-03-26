@@ -53668,6 +53668,69 @@ __attribute__((noinline)) static void test_procnet_files(void) {
             else { fut_test_fail(1843); }
         } else { fut_test_fail(1843); }
     }
+
+    /* Test 1844: Full router config via ioctls (addr + route + forward) */
+    fut_printf("[MISC-TEST] Test 1844: router config via ioctls\n");
+    {
+        extern long sys_ioctl(int fd, unsigned long request, void *argp);
+        long nfd = sys_open("/dev/null", 0x0002, 0);
+        if (nfd >= 0) {
+            /* Set eth0 IP to 10.10.10.1 via SIOCSIFADDR */
+            static char ifr[40];
+            __builtin_memset(ifr, 0, 40);
+            __builtin_memcpy(ifr, "eth0", 4);
+            ifr[16] = 2; ifr[20] = 10; ifr[21] = 10; ifr[22] = 10; ifr[23] = 1;
+            long rc = sys_ioctl((int)nfd, 0x8916, ifr);
+            /* Set netmask to 255.255.255.0 */
+            __builtin_memset(ifr, 0, 40);
+            __builtin_memcpy(ifr, "eth0", 4);
+            ifr[16] = 2; ifr[20] = (char)255; ifr[21] = (char)255; ifr[22] = (char)255; ifr[23] = 0;
+            long rc2 = sys_ioctl((int)nfd, 0x891C, ifr);
+            /* Add route to 10.10.10.0/24 via eth0 */
+            static char rt[68];
+            __builtin_memset(rt, 0, 68);
+            rt[0] = 2; rt[4] = 10; rt[5] = 10; rt[6] = 10; rt[7] = 0;
+            rt[16] = 2; rt[32] = 2;
+            rt[36] = (char)255; rt[37] = (char)255; rt[38] = (char)255; rt[39] = 0;
+            __builtin_memcpy(rt + 52, "eth0", 4);
+            long rc3 = sys_ioctl((int)nfd, 0x890B, rt);
+            /* Verify route lookup finds 10.10.10.5 */
+            const struct net_route *rte = route_lookup(0x0A0A0A05);
+            if (rc == 0 && rc2 == 0 && rc3 == 0 && rte) {
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1844: rc=%ld rc2=%ld rc3=%ld rte=%p\n",
+                           rc, rc2, rc3, (void*)rte);
+                fut_test_fail(1844);
+            }
+            /* Cleanup: delete the route */
+            __builtin_memset(rt, 0, 68);
+            rt[0] = 2; rt[4] = 10; rt[5] = 10; rt[6] = 10; rt[7] = 0;
+            rt[32] = 2; rt[36] = (char)255; rt[37] = (char)255; rt[38] = (char)255; rt[39] = 0;
+            sys_ioctl((int)nfd, 0x890C, rt);
+            sys_close((int)nfd);
+        } else { fut_test_fail(1844); }
+    }
+
+    /* Test 1845: /proc/sys/net/ipv4/ip_forward write enables forwarding */
+    fut_printf("[MISC-TEST] Test 1845: ip_forward sysctl roundtrip\n");
+    {
+        extern long sys_write(int, const void *, size_t);
+        extern bool g_ip_forward_enabled;
+        bool old = g_ip_forward_enabled;
+        /* Enable */
+        long wfd = sys_open("/proc/sys/net/ipv4/ip_forward", 0x0001, 0);
+        if (wfd >= 0) { sys_write((int)wfd, "1", 1); sys_close((int)wfd); }
+        bool after_enable = g_ip_forward_enabled;
+        /* Disable */
+        wfd = sys_open("/proc/sys/net/ipv4/ip_forward", 0x0001, 0);
+        if (wfd >= 0) { sys_write((int)wfd, "0", 1); sys_close((int)wfd); }
+        bool after_disable = g_ip_forward_enabled;
+        /* Restore */
+        g_ip_forward_enabled = old;
+        if (after_enable && !after_disable) { fut_test_pass(); }
+        else { fut_test_fail(1845); }
+    }
 }
 
 /* Test 1841: /dev/kmsg kernel log device */

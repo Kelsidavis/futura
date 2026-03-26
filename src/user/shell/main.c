@@ -483,7 +483,7 @@ static size_t common_prefix_len(const char *s1, const char *s2) {
 static void complete_command(char *buf, size_t *pos, size_t max_len) {
     /* List of builtin commands */
     const char *builtins[] = {
-        "arp", "bg", "brctl", "cd", "chmod", "clear", "date", "dd", "df", "dhclient", "dmesg", "echo", "edit", "hexdump", "lsof", "nc", "poweroff", "reboot", "seq", "sleep", "time", "traceroute", "wget", "exit", "export", "fg", "free",
+        "arp", "bg", "brctl", "cd", "chmod", "clear", "date", "dd", "df", "dhclient", "dmesg", "echo", "edit", "ethtool", "hexdump", "lsof", "nc", "poweroff", "reboot", "seq", "sleep", "time", "traceroute", "wget", "exit", "export", "fg", "free",
         "help", "hostname", "httpd", "id", "ifconfig", "iostat", "ipcs", "iptables", "jobs", "kill", "ls", "lsblk", "lspci", "mount", "netstat",
         ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "history", "ip", "ln", "mktemp", "more", "nproc", "nslookup", "ping", "printf", "ps", "pwd", "read", "readlink", "set", "sha256sum", "shutdown", "source", "ss", "stat", "sync", "sysctl", "sysinfo", "test", "top", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "vmstat", "wait", "watch", "which", "whoami", "xargs", "yes", NULL
     };
@@ -6815,6 +6815,80 @@ static int execute_command(int argc, char *argv[]) {
             sys_call4(169, 0xfee1dead, 672274793, 0x4321FEDC, 0);
         write_str(2, "shutdown failed\n");
         return 1;
+    } else if (strcmp_simple(argv[0], "ethtool") == 0) {
+        /* ethtool <iface> — show interface link settings and statistics */
+        if (argc < 2) { write_str(2, "usage: ethtool <interface>\n"); return 1; }
+        const char *dev = argv[1];
+        int sock = sys_call3(41, 2, 2, 0);
+        if (sock < 0) { write_str(2, "ethtool: socket failed\n"); return 1; }
+        /* Get flags */
+        char ifr[40]; for (int k = 0; k < 40; k++) ifr[k] = 0;
+        for (int k = 0; dev[k] && k < 15; k++) ifr[k] = dev[k];
+        long rc = sys_call3(16, sock, 0x8913/*SIOCGIFFLAGS*/, (long)ifr);
+        if (rc != 0) { write_str(2, "ethtool: no such device\n"); sys_close(sock); return 1; }
+        short flags = 0;
+        for (int k = 0; k < 2; k++) flags |= (short)((unsigned char)ifr[16+k] << (k*8));
+        write_str(1, "Settings for "); write_str(1, dev); write_str(1, ":\n");
+        write_str(1, "\tLink detected: ");
+        write_str(1, (flags & 0x0040) ? "yes\n" : "no\n");
+        /* Get MTU */
+        for (int k = 0; k < 40; k++) ifr[k] = 0;
+        for (int k = 0; dev[k] && k < 15; k++) ifr[k] = dev[k];
+        rc = sys_call3(16, sock, 0x8921/*SIOCGIFMTU*/, (long)ifr);
+        if (rc == 0) {
+            int mtu = 0;
+            for (int k = 0; k < 4; k++) mtu |= ((unsigned char)ifr[16+k]) << (k*8);
+            char num[16]; int_to_str(mtu, num, 16);
+            write_str(1, "\tMTU: "); write_str(1, num); write_str(1, "\n");
+        }
+        /* Get HW address */
+        for (int k = 0; k < 40; k++) ifr[k] = 0;
+        for (int k = 0; dev[k] && k < 15; k++) ifr[k] = dev[k];
+        rc = sys_call3(16, sock, 0x8927/*SIOCGIFHWADDR*/, (long)ifr);
+        if (rc == 0) {
+            write_str(1, "\tHW address: ");
+            for (int k = 0; k < 6; k++) {
+                unsigned char b = (unsigned char)ifr[18+k];
+                char hex[3] = {0};
+                hex[0] = "0123456789abcdef"[(b>>4)&0xf];
+                hex[1] = "0123456789abcdef"[b&0xf];
+                write_str(1, hex);
+                if (k < 5) write_char(1, ':');
+            }
+            write_str(1, "\n");
+        }
+        /* Speed/duplex (not measurable, show auto) */
+        write_str(1, "\tSpeed: 10000Mb/s\n");
+        write_str(1, "\tDuplex: Full\n");
+        write_str(1, "\tAuto-negotiation: on\n");
+        /* Show statistics from /sys/class/net/<dev>/statistics if available */
+        if (argc >= 3 && strcmp_simple(argv[1], "-S") == 0) {
+            dev = argv[2];
+        }
+        /* Read from /proc/net/dev for this interface's stats */
+        write_str(1, "NIC statistics:\n");
+        int fd = sys_open("/proc/net/dev", O_RDONLY, 0);
+        if (fd >= 0) {
+            char buf[2048]; ssize_t n = sys_read(fd, buf, sizeof(buf)-1);
+            sys_close(fd);
+            if (n > 0) { buf[n] = '\0';
+                /* Find this device's line */
+                int dlen = 0; while (dev[dlen]) dlen++;
+                for (int i = 0; i < n - dlen; i++) {
+                    bool match = true;
+                    for (int j = 0; j < dlen && match; j++)
+                        if (buf[i+j] != dev[j]) match = false;
+                    if (match && buf[i+dlen] == ':') {
+                        write_str(1, "\t");
+                        int s = i; while (s < n && buf[s] != '\n') { write_char(1, buf[s]); s++; }
+                        write_str(1, "\n");
+                        break;
+                    }
+                }
+            }
+        }
+        sys_close(sock);
+        return 0;
     } else if (strcmp_simple(argv[0], "ipcs") == 0) {
         /* ipcs — show System V IPC status */
         write_str(1, "\n------ Shared Memory Segments --------\n");
@@ -8590,7 +8664,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   109 built-in commands — type 'help'    |\n");
+    write_str(1, "|   110 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");

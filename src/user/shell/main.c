@@ -2518,7 +2518,22 @@ static void cmd_ps(int argc, char *argv[]) {
 
 /* Built-in: hostname - Show system hostname */
 static void cmd_hostname(int argc, char *argv[]) {
-    (void)argc; (void)argv;
+    if (argc >= 2) {
+        /* Set hostname: write to /proc/sys/kernel/hostname and /etc/hostname */
+        const char *newname = argv[1];
+        int len = 0; while (newname[len]) len++;
+        /* Use sethostname syscall (170) */
+        sys_call2(170 /* sethostname */, (long)newname, len);
+        /* Also update /etc/hostname for persistence */
+        int fd = sys_open("/etc/hostname", O_WRONLY | O_TRUNC, 0644);
+        if (fd >= 0) {
+            sys_write(fd, newname, len);
+            sys_write(fd, "\n", 1);
+            sys_close(fd);
+        }
+        return;
+    }
+    /* Read hostname from /etc/hostname */
     int fd = sys_open("/etc/hostname", O_RDONLY, 0);
     if (fd >= 0) {
         char buf[64];

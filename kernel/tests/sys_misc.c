@@ -7645,14 +7645,14 @@ static void test_unlink_rmdir_basic(void) {
     /* Create a file and unlink it */
     int fd = (int)fut_vfs_open("/test_unlink.txt", O_CREAT | O_RDWR, 0644);
     if (fd >= 0) fut_vfs_close(fd);
-    long ret = sys_unlink("/test_unlink.txt");
+    long ret = fut_vfs_unlink("/test_unlink.txt");
     if (ret != 0) {
         fut_printf("[MISC-TEST] ✗ unlink: %ld\n", ret);
         fut_test_fail(161);
         return;
     }
     /* Unlink already-removed file → ENOENT */
-    ret = sys_unlink("/test_unlink.txt");
+    ret = fut_vfs_unlink("/test_unlink.txt");
     if (ret != -ENOENT) {
         fut_printf("[MISC-TEST] ✗ unlink(removed): expected ENOENT, got %ld\n", ret);
         fut_test_fail(161);
@@ -7698,14 +7698,14 @@ static void test_rename_basic(void) {
         return;
     }
     /* Source should be gone */
-    ret = sys_unlink("/test_rename_src.txt");
+    ret = fut_vfs_unlink("/test_rename_src.txt");
     if (ret != -ENOENT) {
         fut_printf("[MISC-TEST] ✗ rename: source still exists: %ld\n", ret);
         fut_test_fail(162);
         return;
     }
     /* Destination should exist (unlink it to clean up) */
-    ret = sys_unlink("/test_rename_dst.txt");
+    ret = fut_vfs_unlink("/test_rename_dst.txt");
     if (ret != 0) {
         fut_printf("[MISC-TEST] ✗ rename: dst not found: %ld\n", ret);
         fut_test_fail(162);
@@ -7757,9 +7757,9 @@ static void test_link_symlink_basic(void) {
         return;
     }
     /* Cleanup */
-    sys_unlink("/test_link_src.txt");
-    sys_unlink("/test_link_hard.txt");
-    sys_unlink("/test_link_sym");
+    fut_vfs_unlink("/test_link_src.txt");
+    fut_vfs_unlink("/test_link_hard.txt");
+    fut_vfs_unlink("/test_link_sym");
     fut_printf("[MISC-TEST] ✓ link: hard link created; symlink created; missing→ENOENT\n");
     fut_test_pass();
 }
@@ -7778,14 +7778,14 @@ static void test_readlink_basic(void) {
     long ret = sys_readlink("/test_readlink_sym", buf, sizeof(buf));
     if (ret < 0) {
         fut_printf("[MISC-TEST] ✗ readlink: %ld\n", ret);
-        sys_unlink("/test_readlink_sym");
+        fut_vfs_unlink("/test_readlink_sym");
         fut_test_fail(164);
         return;
     }
     /* Verify target starts with '/' */
     if (buf[0] != '/') {
         fut_printf("[MISC-TEST] ✗ readlink: result='%s' doesn't start with /\n", buf);
-        sys_unlink("/test_readlink_sym");
+        fut_vfs_unlink("/test_readlink_sym");
         fut_test_fail(164);
         return;
     }
@@ -7795,13 +7795,13 @@ static void test_readlink_basic(void) {
     ret = sys_readlink("/test_readlink_reg.txt", buf, sizeof(buf));
     if (ret != -EINVAL) {
         fut_printf("[MISC-TEST] ✗ readlink(non-symlink): expected EINVAL, got %ld\n", ret);
-        sys_unlink("/test_readlink_sym");
-        sys_unlink("/test_readlink_reg.txt");
+        fut_vfs_unlink("/test_readlink_sym");
+        fut_vfs_unlink("/test_readlink_reg.txt");
         fut_test_fail(164);
         return;
     }
-    sys_unlink("/test_readlink_sym");
-    sys_unlink("/test_readlink_reg.txt");
+    fut_vfs_unlink("/test_readlink_sym");
+    fut_vfs_unlink("/test_readlink_reg.txt");
     fut_printf("[MISC-TEST] ✓ readlink: target starts with '/', regular file→EINVAL\n");
     fut_test_pass();
 }
@@ -7836,7 +7836,7 @@ static void test_read_write_basic(void) {
     char rbuf[16] = {0};
     ssize_t nr = sys_read(fd, rbuf, 9);
     fut_vfs_close(fd);
-    sys_unlink("/test_read_write.txt");
+    fut_vfs_unlink("/test_read_write.txt");
 
     if (nr != 9) {
         fut_printf("[MISC-TEST] ✗ sys_read: returned %zd\n", nr);
@@ -7886,7 +7886,7 @@ static void test_pread_pwrite_basic(void) {
     char rbuf[8] = {0};
     ssize_t nr = sys_pread64(fd, rbuf, 5, 4);
     fut_vfs_close(fd);
-    sys_unlink("/test_pread_pwrite.txt");
+    fut_vfs_unlink("/test_pread_pwrite.txt");
 
     if (nr != 5) {
         fut_printf("[MISC-TEST] ✗ pread64: returned %zd\n", nr);
@@ -7921,7 +7921,7 @@ static void test_chown_basic(void) {
     long ret = sys_chown("/test_chown.txt", 1000, 1000);
     if (ret != 0) {
         fut_printf("[MISC-TEST] ✗ chown: expected 0, got %ld\n", ret);
-        sys_unlink("/test_chown.txt");
+        fut_vfs_unlink("/test_chown.txt");
         fut_test_fail(167);
         return;
     }
@@ -7932,14 +7932,14 @@ static void test_chown_basic(void) {
     if (sr != 0 || st.st_uid != 1000 || st.st_gid != 1000) {
         fut_printf("[MISC-TEST] ✗ chown: stat uid=%u gid=%u (expected 1000:1000), sr=%d\n",
                    st.st_uid, st.st_gid, sr);
-        sys_unlink("/test_chown.txt");
+        fut_vfs_unlink("/test_chown.txt");
         fut_test_fail(167);
         return;
     }
 
     /* ENOENT on missing file */
     long en = sys_chown("/no_such_chown_file", 0, 0);
-    sys_unlink("/test_chown.txt");
+    fut_vfs_unlink("/test_chown.txt");
     if (en != -ENOENT) {
         fut_printf("[MISC-TEST] ✗ chown missing: expected ENOENT, got %ld\n", en);
         fut_test_fail(167);
@@ -7967,7 +7967,7 @@ static void test_fchownat_basic(void) {
     long ret = sys_fchownat(-100, "/test_fchownat.txt", 500, 500, 0);
     if (ret != 0) {
         fut_printf("[MISC-TEST] ✗ fchownat: expected 0, got %ld\n", ret);
-        sys_unlink("/test_fchownat.txt");
+        fut_vfs_unlink("/test_fchownat.txt");
         fut_test_fail(168);
         return;
     }
@@ -7978,14 +7978,14 @@ static void test_fchownat_basic(void) {
     if (sr != 0 || st.st_uid != 500 || st.st_gid != 500) {
         fut_printf("[MISC-TEST] ✗ fchownat: stat uid=%u gid=%u (expected 500:500), sr=%d\n",
                    st.st_uid, st.st_gid, sr);
-        sys_unlink("/test_fchownat.txt");
+        fut_vfs_unlink("/test_fchownat.txt");
         fut_test_fail(168);
         return;
     }
 
     /* ENOENT on missing file */
     long en = sys_fchownat(-100, "/no_such_fchownat_file", 0, 0, 0);
-    sys_unlink("/test_fchownat.txt");
+    fut_vfs_unlink("/test_fchownat.txt");
     if (en != -ENOENT) {
         fut_printf("[MISC-TEST] ✗ fchownat missing: expected ENOENT, got %ld\n", en);
         fut_test_fail(168);
@@ -8290,7 +8290,7 @@ static void test_linkat_basic(void) {
     long ret = sys_linkat(-100, "/test_linkat_src.txt", -100, "/test_linkat_dst.txt", 0);
     if (ret != 0) {
         fut_printf("[MISC-TEST] ✗ linkat: expected 0, got %ld\n", ret);
-        sys_unlink("/test_linkat_src.txt");
+        fut_vfs_unlink("/test_linkat_src.txt");
         fut_test_fail(176);
         return;
     }
@@ -8299,8 +8299,8 @@ static void test_linkat_basic(void) {
     struct fut_stat st;
     int sr1 = fut_vfs_stat("/test_linkat_src.txt", &st);
     int sr2 = fut_vfs_stat("/test_linkat_dst.txt", &st);
-    sys_unlink("/test_linkat_src.txt");
-    sys_unlink("/test_linkat_dst.txt");
+    fut_vfs_unlink("/test_linkat_src.txt");
+    fut_vfs_unlink("/test_linkat_dst.txt");
 
     if (sr1 != 0 || sr2 != 0) {
         fut_printf("[MISC-TEST] ✗ linkat: src=%d dst=%d (expected 0:0)\n", sr1, sr2);
@@ -10889,7 +10889,7 @@ static void test_kcmp_file_same(void) {
     long pid = sys_getpid();
     long r = sys_kcmp((int)pid, (int)pid, TEST_KCMP_FILE, (unsigned long)fd, (unsigned long)fd2);
     fut_vfs_close(fd); fut_vfs_close(fd2);
-    sys_unlink("/kcmp_test.txt");
+    fut_vfs_unlink("/kcmp_test.txt");
 
     /* dup'd FDs reference the same file object */
     if (r != 0) {
@@ -10921,7 +10921,7 @@ static void test_kcmp_file_different(void) {
     long pid = sys_getpid();
     long r = sys_kcmp((int)pid, (int)pid, TEST_KCMP_FILE, (unsigned long)fa, (unsigned long)fb);
     fut_vfs_close(fa); fut_vfs_close(fb);
-    sys_unlink("/kcmp_a.txt"); sys_unlink("/kcmp_b.txt");
+    fut_vfs_unlink("/kcmp_a.txt"); fut_vfs_unlink("/kcmp_b.txt");
 
     if (r == 0) {
         fut_printf("[MISC-TEST] ✗ kcmp(different files) returned 0 (should be nonzero)\n");
@@ -10991,13 +10991,13 @@ static void test_faccessat2_basic(void) {
     long r = sys_faccessat(TEST_AT_FDCWD_FA2, "/fa2_test.txt", TEST_F_OK, 0);
     if (r != 0) {
         fut_printf("[MISC-TEST] ✗ faccessat2/faccessat F_OK expected 0, got %ld\n", r);
-        sys_unlink("/fa2_test.txt");
+        fut_vfs_unlink("/fa2_test.txt");
         fut_test_fail(232); return;
     }
 
     /* R_OK: readable */
     r = sys_faccessat(TEST_AT_FDCWD_FA2, "/fa2_test.txt", TEST_R_OK, 0);
-    sys_unlink("/fa2_test.txt");
+    fut_vfs_unlink("/fa2_test.txt");
     if (r != 0) {
         fut_printf("[MISC-TEST] ✗ faccessat2/faccessat R_OK expected 0, got %ld\n", r);
         fut_test_fail(232); return;
@@ -11043,7 +11043,7 @@ static void test_preadv2_current_pos(void) {
     ssize_t n = sys_preadv2(fd, &iov, 1, (int64_t)-1LL, 0);
     fut_vfs_close(fd);
     extern long sys_unlink(const char *path);
-    sys_unlink("/preadv2_test.txt");
+    fut_vfs_unlink("/preadv2_test.txt");
 
     if (n != 5 || buf[0] != 'A' || buf[4] != 'E') {
         fut_printf("[MISC-TEST] ✗ preadv2 offset=-1: n=%ld buf='%.5s'\n", (long)n, buf);
@@ -11071,7 +11071,7 @@ static void test_preadv2_explicit_offset(void) {
     int64_t pos = fut_vfs_lseek(fd, 0, 1 /* SEEK_CUR */);
     fut_vfs_close(fd);
     extern long sys_unlink(const char *path);
-    sys_unlink("/preadv2_off.txt");
+    fut_vfs_unlink("/preadv2_off.txt");
 
     if (n != 3 || buf[0] != 'A') {
         fut_printf("[MISC-TEST] ✗ preadv2 offset=3: n=%ld buf='%.3s'\n", (long)n, buf);
@@ -11112,7 +11112,7 @@ static void test_pwritev2_explicit_offset(void) {
     sys_preadv2(fd, &iov_verify, 1, 3, 0);
     fut_vfs_close(fd);
     extern long sys_unlink(const char *path);
-    sys_unlink("/pwritev2_off.txt");
+    fut_vfs_unlink("/pwritev2_off.txt");
 
     if (n != 3 || verify[0] != 'A' || verify[1] != 'B' || verify[2] != 'C') {
         fut_printf("[MISC-TEST] ✗ pwritev2 offset=3: n=%ld verify='%.3s'\n", (long)n, verify);
@@ -11247,7 +11247,7 @@ static void test_openat2_basic(void) {
     int fd = (int)sys_openat2(-100 /* AT_FDCWD */, "/openat2_test.txt", &how,
                               TEST_OPEN_HOW_SIZE);
     extern long sys_unlink(const char *path);
-    sys_unlink("/openat2_test.txt");
+    fut_vfs_unlink("/openat2_test.txt");
 
     if (fd < 0) {
         fut_printf("[MISC-TEST] ✗ openat2 basic: %d\n", fd);
@@ -11275,7 +11275,7 @@ static void test_openat2_resolve_flags(void) {
     };
     int fd = (int)sys_openat2(-100, "/openat2_resolve.txt", &how, TEST_OPEN_HOW_SIZE);
     extern long sys_unlink(const char *path);
-    sys_unlink("/openat2_resolve.txt");
+    fut_vfs_unlink("/openat2_resolve.txt");
 
     if (fd < 0) {
         fut_printf("[MISC-TEST] ✗ openat2 resolve flags: %d\n", fd);
@@ -11342,7 +11342,7 @@ static void test_openat2_resolve_beneath(void) {
     if (dirfd < 0) {
         fut_printf("[MISC-TEST] ✗ Tests 1270-1272: open dirfd failed: %d\n", dirfd);
         fut_test_fail(1270); fut_test_fail(1271); fut_test_fail(1272);
-        sys_unlink("/rb_testdir/inner.txt");
+        fut_vfs_unlink("/rb_testdir/inner.txt");
         sys_rmdir("/rb_testdir");
         return;
     }
@@ -11390,7 +11390,7 @@ static void test_openat2_resolve_beneath(void) {
     if (fd3 >= 0) fut_vfs_close((int)fd3);
 
     fut_vfs_close(dirfd);
-    sys_unlink("/rb_testdir/inner.txt");
+    fut_vfs_unlink("/rb_testdir/inner.txt");
     sys_rmdir("/rb_testdir");
 }
 
@@ -16183,7 +16183,7 @@ static void test_sticky_bit_enforcement(void) {
         int tf = (int)fut_vfs_open("/test_sticky/rootdel.txt", O_CREAT | O_RDWR, 0644);
         if (tf >= 0) { sys_write(tf, "d", 1); fut_vfs_close(tf); }
 
-        long ret = sys_unlink("/test_sticky/rootdel.txt");
+        long ret = fut_vfs_unlink("/test_sticky/rootdel.txt");
         if (ret == 0) {
             fut_printf("[MISC-TEST] ✓ Test 1455: root unlink in sticky dir succeeded\n");
             fut_test_pass();
@@ -16200,7 +16200,7 @@ static void test_sticky_bit_enforcement(void) {
         task->uid = 100;
         task->cap_effective &= ~(1ULL << 3 /* CAP_FOWNER */);
 
-        long ret = sys_unlink("/test_sticky/user200.txt");
+        long ret = fut_vfs_unlink("/test_sticky/user200.txt");
         if (ret == -EACCES) {
             fut_printf("[MISC-TEST] ✓ Test 1456: non-owner got EACCES in sticky dir\n");
             fut_test_pass();
@@ -16220,7 +16220,7 @@ static void test_sticky_bit_enforcement(void) {
         task->uid = 100;
         task->cap_effective &= ~(1ULL << 3);
 
-        long ret = sys_unlink("/test_sticky/user100.txt");
+        long ret = fut_vfs_unlink("/test_sticky/user100.txt");
         if (ret == 0) {
             fut_printf("[MISC-TEST] ✓ Test 1457: file owner unlink succeeded\n");
             fut_test_pass();
@@ -17544,13 +17544,13 @@ static void test_pidfd_getfd_self(void) {
     if (newfd < 0) {
         fut_printf("[MISC-TEST] ✗ pidfd_getfd self: got %d\n", newfd);
         fut_vfs_close(fd);
-        sys_unlink("/pidfd_getfd_test.txt");
+        fut_vfs_unlink("/pidfd_getfd_test.txt");
         fut_test_fail(258); return;
     }
     /* Both FDs should refer to the same file — write via fd, close newfd */
     fut_vfs_close(newfd);
     fut_vfs_close(fd);
-    sys_unlink("/pidfd_getfd_test.txt");
+    fut_vfs_unlink("/pidfd_getfd_test.txt");
     fut_printf("[MISC-TEST] ✓ pidfd_getfd self: fd=%d dup'd to newfd=%d\n", fd, newfd);
     fut_test_pass();
 }
@@ -21621,7 +21621,7 @@ static void test_sendfile_socket(void) {
     if (r != 0) {
         fut_printf("[MISC-TEST] ✗ sendfile-socket: socketpair failed: %ld\n", r);
         fut_vfs_close(src);
-        sys_unlink("/test_sf_sock_src.txt");
+        fut_vfs_unlink("/test_sf_sock_src.txt");
         fut_test_fail(330); return;
     }
 
@@ -21630,7 +21630,7 @@ static void test_sendfile_socket(void) {
     if (n != 15) {
         fut_printf("[MISC-TEST] ✗ sendfile-socket: sent %ld, expected 15\n", n);
         fut_vfs_close(src); fut_vfs_close(sv[0]); fut_vfs_close(sv[1]);
-        sys_unlink("/test_sf_sock_src.txt");
+        fut_vfs_unlink("/test_sf_sock_src.txt");
         fut_test_fail(330); return;
     }
 
@@ -21640,14 +21640,14 @@ static void test_sendfile_socket(void) {
     if (nr != 15 || __builtin_memcmp(rbuf, data, 15) != 0) {
         fut_printf("[MISC-TEST] ✗ sendfile-socket: recv %zd, data='%s'\n", nr, rbuf);
         fut_vfs_close(src); fut_vfs_close(sv[0]); fut_vfs_close(sv[1]);
-        sys_unlink("/test_sf_sock_src.txt");
+        fut_vfs_unlink("/test_sf_sock_src.txt");
         fut_test_fail(330); return;
     }
 
     fut_vfs_close(src);
     fut_vfs_close(sv[0]);
     fut_vfs_close(sv[1]);
-    sys_unlink("/test_sf_sock_src.txt");
+    fut_vfs_unlink("/test_sf_sock_src.txt");
     fut_printf("[MISC-TEST] ✓ sendfile file→socket: 15 bytes delivered correctly\n");
     fut_test_pass();
 }
@@ -35364,7 +35364,7 @@ t815_close:
     /* Test 818: unlink the shared memory file */
     fut_printf("[MISC-TEST] Test 818: unlink(\"/dev/shm/fut_shm_test\") → 0\n");
     {
-        long r = sys_unlink("/dev/shm/fut_shm_test");
+        long r = fut_vfs_unlink("/dev/shm/fut_shm_test");
         if (r != 0) {
             fut_printf("[MISC-TEST] ✗ Test 818: unlink returned %ld\n", r);
             fut_test_fail(818);
@@ -39264,7 +39264,7 @@ static void test_rename_link_type_errors(void) {
     /* ---- Test 1003: unlink(directory) → EISDIR ---- */
     fut_printf("[MISC-TEST] Test 1003: unlink(directory) → EISDIR\n");
     {
-        long r = sys_unlink("/rlt_dir1");
+        long r = fut_vfs_unlink("/rlt_dir1");
         if (r != -EISDIR) {
             fut_printf("[MISC-TEST] ✗ Test 1003: unlink(dir) = %ld (expected -EISDIR=%d)\n",
                        r, -EISDIR);
@@ -39284,7 +39284,7 @@ static void test_rename_link_type_errors(void) {
                        r, -EPERM);
             fut_test_fail(1004);
             /* clean up if link accidentally succeeded */
-            if (r == 0) sys_unlink("/rlt_dir1_link");
+            if (r == 0) fut_vfs_unlink("/rlt_dir1_link");
         } else {
             fut_printf("[MISC-TEST] ✓ Test 1004: link(dir) → EPERM\n");
             fut_test_pass();
@@ -47390,8 +47390,8 @@ static void test_openat2_resolve_no_symlinks(void) {
         fut_test_fail(1477);
     }
 
-    sys_unlink("/rns_link.txt");
-    sys_unlink("/rns_target.txt");
+    fut_vfs_unlink("/rns_link.txt");
+    fut_vfs_unlink("/rns_target.txt");
 }
 
 /* ============================================================
@@ -47423,7 +47423,7 @@ static void test_sendfile_rejects_socket_source(void) {
     fut_vfs_close(outfd);
     fut_vfs_close(sv[0]);
     fut_vfs_close(sv[1]);
-    sys_unlink("/sf_reject_test.txt");
+    fut_vfs_unlink("/sf_reject_test.txt");
 
     if (ret == -22 /* -EINVAL */) {
         fut_printf("[MISC-TEST] ✓ Test 1482: sendfile from socket → EINVAL\n");
@@ -47462,7 +47462,7 @@ static void test_copy_file_range_rejects_pipe(void) {
     fut_vfs_close(outfd);
     fut_vfs_close(pipefd[0]);
     fut_vfs_close(pipefd[1]);
-    sys_unlink("/cfr_reject_test.txt");
+    fut_vfs_unlink("/cfr_reject_test.txt");
 
     if (ret == -22 /* -EINVAL */) {
         fut_printf("[MISC-TEST] ✓ Test 1483: copy_file_range from pipe → EINVAL\n");
@@ -47663,7 +47663,7 @@ static void test_open_creat_directory_einval(void) {
             fut_test_pass();
         } else {
             fut_printf("[MISC-TEST] ✗ Test 1490: expected -22, got %ld\n", fd);
-            if (fd >= 0) { fut_vfs_close((int)fd); sys_unlink("/ocd_test_1490.txt"); }
+            if (fd >= 0) { fut_vfs_close((int)fd); fut_vfs_unlink("/ocd_test_1490.txt"); }
             fut_test_fail(1490);
         }
     }
@@ -47679,7 +47679,7 @@ static void test_open_creat_directory_einval(void) {
             fut_test_pass();
         } else {
             fut_printf("[MISC-TEST] ✗ Test 1491: expected -22, got %ld\n", fd);
-            if (fd >= 0) { fut_vfs_close((int)fd); sys_unlink("/ocd_test_1491.txt"); }
+            if (fd >= 0) { fut_vfs_close((int)fd); fut_vfs_unlink("/ocd_test_1491.txt"); }
             fut_test_fail(1491);
         }
     }
@@ -47695,7 +47695,7 @@ static void test_open_creat_directory_einval(void) {
         } else {
             fut_vfs_close(wfd);
             long fd = sys_open("/ocd_regfile.txt", 0200000 /* O_DIRECTORY */, 0);
-            sys_unlink("/ocd_regfile.txt");
+            fut_vfs_unlink("/ocd_regfile.txt");
             if (fd == -20 /* -ENOTDIR */) {
                 fut_printf("[MISC-TEST] ✓ Test 1492: open(O_DIRECTORY) on regular file → ENOTDIR\n");
                 fut_test_pass();
@@ -47997,7 +47997,7 @@ static void test_readlink_bufsiz_zero(void) {
     extern long sys_unlink(const char *path);
 
     /* Create a symlink to test with */
-    sys_unlink("/rl0_link");
+    fut_vfs_unlink("/rl0_link");
     long sret = sys_symlink("/tmp", "/rl0_link");
     if (sret < 0) {
         fut_printf("[MISC-TEST] ✗ Test 1502: symlink create failed: %ld\n", sret);
@@ -48010,7 +48010,7 @@ static void test_readlink_bufsiz_zero(void) {
     {
         char buf[1];
         long ret = sys_readlink("/rl0_link", buf, 0);
-        sys_unlink("/rl0_link");
+        fut_vfs_unlink("/rl0_link");
         if (ret == 0) {
             fut_printf("[MISC-TEST] ✓ Test 1502: readlink(bufsiz=0) → 0\n");
             fut_test_pass();
@@ -48031,7 +48031,7 @@ static void test_fchown_group_perms(void) {
     extern long sys_unlink(const char *path);
 
     /* Create a test file owned by current user (uid=0, gid=0 in kernel tests) */
-    sys_unlink("/fchown_test.txt");
+    fut_vfs_unlink("/fchown_test.txt");
     long fd = sys_open("/fchown_test.txt", 0x42 /* O_RDWR|O_CREAT */, 0644);
     if (fd < 0) {
         fut_printf("[MISC-TEST] ✗ Test 1503-1504: setup failed: %ld\n", fd);
@@ -48068,7 +48068,7 @@ static void test_fchown_group_perms(void) {
     }
 
     fut_vfs_close((int)fd);
-    sys_unlink("/fchown_test.txt");
+    fut_vfs_unlink("/fchown_test.txt");
 }
 
 /* ============================================================
@@ -48124,7 +48124,7 @@ static void test_openat2_resolve_in_root(void) {
     if (dirfd < 0) {
         fut_printf("[MISC-TEST] ✗ Tests 1479-1481: open dirfd failed: %d\n", dirfd);
         fut_test_fail(1479); fut_test_fail(1480); fut_test_fail(1481);
-        sys_unlink("/rir_root/inner.txt"); sys_rmdir("/rir_root");
+        fut_vfs_unlink("/rir_root/inner.txt"); sys_rmdir("/rir_root");
         return;
     }
 
@@ -48167,7 +48167,7 @@ static void test_openat2_resolve_in_root(void) {
     if (fd3 >= 0) fut_vfs_close((int)fd3);
 
     fut_vfs_close(dirfd);
-    sys_unlink("/rir_root/inner.txt");
+    fut_vfs_unlink("/rir_root/inner.txt");
     sys_rmdir("/rir_root");
 }
 
@@ -48185,20 +48185,20 @@ static void test_fcntl_setfl_o_direct(void) {
 
     /* Initially O_DIRECT should not be set */
     long fl = sys_fcntl(fd, F_GETFL, 0);
-    if (fl < 0) { fut_vfs_close(fd); sys_unlink("/setfl_direct.txt"); fut_test_fail(1478); return; }
+    if (fl < 0) { fut_vfs_close(fd); fut_vfs_unlink("/setfl_direct.txt"); fut_test_fail(1478); return; }
 
     /* Set O_DIRECT via F_SETFL */
     long r = sys_fcntl(fd, F_SETFL, (unsigned long)(fl | TEST_O_DIRECT));
     if (r != 0) {
         fut_printf("[MISC-TEST] ✗ Test 1478: F_SETFL(O_DIRECT) failed: %ld\n", r);
-        fut_vfs_close(fd); sys_unlink("/setfl_direct.txt"); fut_test_fail(1478); return;
+        fut_vfs_close(fd); fut_vfs_unlink("/setfl_direct.txt"); fut_test_fail(1478); return;
     }
 
     /* Verify O_DIRECT is now set */
     long fl2 = sys_fcntl(fd, F_GETFL, 0);
     if (!(fl2 & TEST_O_DIRECT)) {
         fut_printf("[MISC-TEST] ✗ Test 1478: O_DIRECT not set after F_SETFL: 0x%lx\n", fl2);
-        fut_vfs_close(fd); sys_unlink("/setfl_direct.txt"); fut_test_fail(1478); return;
+        fut_vfs_close(fd); fut_vfs_unlink("/setfl_direct.txt"); fut_test_fail(1478); return;
     }
 
     /* Clear O_DIRECT */
@@ -48206,11 +48206,11 @@ static void test_fcntl_setfl_o_direct(void) {
     long fl3 = sys_fcntl(fd, F_GETFL, 0);
     if (fl3 & TEST_O_DIRECT) {
         fut_printf("[MISC-TEST] ✗ Test 1478: O_DIRECT still set after clear: 0x%lx\n", fl3);
-        fut_vfs_close(fd); sys_unlink("/setfl_direct.txt"); fut_test_fail(1478); return;
+        fut_vfs_close(fd); fut_vfs_unlink("/setfl_direct.txt"); fut_test_fail(1478); return;
     }
 
     fut_vfs_close(fd);
-    sys_unlink("/setfl_direct.txt");
+    fut_vfs_unlink("/setfl_direct.txt");
     fut_printf("[MISC-TEST] ✓ Test 1478: F_SETFL O_DIRECT set/clear works\n");
     fut_test_pass();
 }
@@ -51243,6 +51243,139 @@ static void test_openat_o_directory(void) {
 }
 
 /* Tests 1729-1732: umask enforcement on file/directory creation (POSIX) */
+/* Tests 1757-1760: task exit properly releases file descriptors */
+__attribute__((noinline)) static void test_task_exit_fd_release(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_close(int);
+    extern long sys_ioctl(int fd, unsigned long request, void *argp);
+    extern long sys_getdents64(unsigned int fd, void *dirp, unsigned int count);
+
+    /* Test 1757: open PTY slave, create synthetic child with inherited fd,
+     *            destroy child → PTY slave refcount properly decremented */
+    fut_printf("[MISC-TEST] Test 1757: task_destroy releases chr_ops files\n");
+    {
+        long mfd = sys_open("/dev/ptmx", 0x0002, 0);
+        int pn = -1, zv = 0;
+        if (mfd >= 0) sys_ioctl((int)mfd, 0x80045430, &pn);
+        if (mfd >= 0) sys_ioctl((int)mfd, 0x40045431, &zv);
+        static char pp[24];
+        { const char *pfx = "/dev/pts/"; int i = 0; while (pfx[i]) { pp[i] = pfx[i]; i++; }
+          if (pn >= 10) { pp[i++] = (char)('0'+pn/10); } pp[i++] = (char)('0'+pn%10); pp[i] = '\0'; }
+        long sfd = (pn >= 0) ? sys_open(pp, 0x0002, 0) : -1;
+
+        if (sfd >= 0) {
+            /* Create synthetic child and give it the slave fd */
+            fut_task_t *child = fut_task_create();
+            if (child && child->fd_table) {
+                fut_task_t *parent = fut_task_current();
+                /* Copy the slave fd to child (incrementing refcount) */
+                struct fut_file *slave_file = parent->fd_table[(int)sfd];
+                if (slave_file) {
+                    __atomic_add_fetch(&slave_file->refcount, 1, __ATOMIC_ACQ_REL);
+                    child->fd_table[(int)sfd] = slave_file;
+                }
+                /* Destroy child — should decrement refcount and release if last */
+                fut_task_destroy(child);
+                /* The parent still has the slave fd open, so the PTY should be alive */
+                static char wbuf[] = "alive";
+                extern long sys_write(int, const void *, size_t);
+                long wr = sys_write((int)mfd, wbuf, 5);
+                static char rbuf[8];
+                extern long sys_read(int, void *, size_t);
+                long rd = sys_read((int)sfd, rbuf, 8);
+                if (wr == 5 && rd == 5) {
+                    fut_printf("[MISC-TEST] ✓ Test 1757: PTY still alive after child destroy\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1757: wr=%ld rd=%ld\n", wr, rd);
+                    fut_test_fail(1757);
+                }
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1757: task_create failed\n");
+                fut_test_fail(1757);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1757: PTY open failed\n");
+            fut_test_fail(1757);
+        }
+        if (sfd >= 0) sys_close((int)sfd);
+        if (mfd >= 0) sys_close((int)mfd);
+    }
+
+    /* Test 1758: after all references closed, /dev/pts/<n> entry removed */
+    fut_printf("[MISC-TEST] Test 1758: all refs closed → pts entry removed\n");
+    {
+        int dfd = (int)sys_open("/dev/pts", 0x10000, 0);
+        if (dfd >= 0) {
+            static char dbuf[256];
+            long nr = sys_getdents64(dfd, dbuf, 256);
+            sys_close(dfd);
+            int real = 0; long off = 0;
+            while (off < nr) {
+                struct { uint64_t d_ino; int64_t d_off; uint16_t d_reclen; uint8_t d_type; char d_name[1]; }
+                    *de = (void*)(dbuf + off);
+                if (de->d_name[0] != '.') real++;
+                off += de->d_reclen;
+            }
+            if (real == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1758: /dev/pts empty after cleanup\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1758: %d entries remain\n", real);
+                fut_test_fail(1758);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1758: open /dev/pts failed\n");
+            fut_test_fail(1758);
+        }
+    }
+
+    /* Test 1759: regular file fd properly released on task destroy */
+    fut_printf("[MISC-TEST] Test 1759: task_destroy releases regular files\n");
+    {
+        long fd = sys_open("/tmp/td_release_1759", 0x42, 0644);
+        if (fd >= 0) {
+            fut_task_t *child = fut_task_create();
+            if (child && child->fd_table) {
+                fut_task_t *parent = fut_task_current();
+                struct fut_file *file = parent->fd_table[(int)fd];
+                if (file) {
+                    uint32_t before = file->refcount;
+                    __atomic_add_fetch(&file->refcount, 1, __ATOMIC_ACQ_REL);
+                    child->fd_table[(int)fd] = file;
+                    fut_task_destroy(child);
+                    uint32_t after = file->refcount;
+                    if (after == before) {
+                        fut_printf("[MISC-TEST] ✓ Test 1759: refcount %u→%u→%u\n",
+                                   before, before+1, after);
+                        fut_test_pass();
+                    } else {
+                        fut_printf("[MISC-TEST] ✗ Test 1759: refcount %u→%u\n", before, after);
+                        fut_test_fail(1759);
+                    }
+                } else { fut_test_fail(1759); }
+            } else { fut_test_fail(1759); }
+            sys_close((int)fd);
+            fut_vfs_unlink("/tmp/td_release_1759");
+        } else { fut_test_fail(1759); }
+    }
+
+    /* Test 1760: destroy task with no open fds doesn't crash */
+    fut_printf("[MISC-TEST] Test 1760: task_destroy with empty fd table\n");
+    {
+        fut_task_t *child = fut_task_create();
+        if (child) {
+            /* fd_table is allocated but all entries are NULL */
+            fut_task_destroy(child);
+            fut_printf("[MISC-TEST] ✓ Test 1760: destroy empty-fd task OK\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1760: task_create failed\n");
+            fut_test_fail(1760);
+        }
+    }
+}
+
 /* Tests 1753-1756: setsid() detaches controlling terminal + session semantics */
 __attribute__((noinline)) static void test_setsid_ctty(void) {
     extern long sys_setsid(void);
@@ -51562,7 +51695,7 @@ __attribute__((noinline)) static void test_rename_unlink_while_open(void) {
                 fut_printf("[MISC-TEST] ✗ Test 1741: reopen failed\n");
                 fut_test_fail(1741);
             }
-            sys_unlink("/tmp/rwho_dst_1741");
+            fut_vfs_unlink("/tmp/rwho_dst_1741");
         } else {
             fut_printf("[MISC-TEST] ✗ Test 1741: open failed\n");
             fut_test_fail(1741);
@@ -51578,7 +51711,7 @@ __attribute__((noinline)) static void test_rename_unlink_while_open(void) {
             sys_rename("/tmp/rwho_old_1742", "/tmp/rwho_new_1742");
             static struct fut_stat stbuf;
             long r = sys_stat("/tmp/rwho_old_1742", &stbuf);
-            sys_unlink("/tmp/rwho_new_1742");
+            fut_vfs_unlink("/tmp/rwho_new_1742");
             if (r == -2 /* ENOENT */) {
                 fut_printf("[MISC-TEST] ✓ Test 1742: old path → ENOENT\n");
                 fut_test_pass();
@@ -51598,7 +51731,7 @@ __attribute__((noinline)) static void test_rename_unlink_while_open(void) {
         long fd = sys_open("/tmp/ulwo_1743", 0x42, 0644);
         if (fd >= 0) {
             sys_write((int)fd, "hello", 5);
-            sys_unlink("/tmp/ulwo_1743");
+            fut_vfs_unlink("/tmp/ulwo_1743");
             /* Seek to start and read back via same fd */
             extern long fut_vfs_lseek(int, long, int);
             fut_vfs_lseek((int)fd, 0, 0 /* SEEK_SET */);
@@ -51623,7 +51756,7 @@ __attribute__((noinline)) static void test_rename_unlink_while_open(void) {
     {
         long fd = sys_open("/tmp/ulst_1744", 0x42, 0644);
         if (fd >= 0) {
-            sys_unlink("/tmp/ulst_1744");
+            fut_vfs_unlink("/tmp/ulst_1744");
             static struct fut_stat stbuf;
             long r = sys_stat("/tmp/ulst_1744", &stbuf);
             sys_close((int)fd);
@@ -51764,7 +51897,7 @@ __attribute__((noinline)) static void test_umask_posix_create(void) {
                 fut_printf("[MISC-TEST] ✗ Test 1729: stat failed %ld\n", r);
                 fut_test_fail(1729);
             }
-            sys_unlink("/tmp/umask_1729.txt");
+            fut_vfs_unlink("/tmp/umask_1729.txt");
         } else {
             fut_printf("[MISC-TEST] ✗ Test 1729: open failed %ld\n", fd);
             fut_test_fail(1729);
@@ -51796,7 +51929,7 @@ __attribute__((noinline)) static void test_umask_posix_create(void) {
                 fut_printf("[MISC-TEST] ✗ Test 1730: stat failed %ld\n", r);
                 fut_test_fail(1730);
             }
-            sys_unlink("/tmp/umask_1730.txt");
+            fut_vfs_unlink("/tmp/umask_1730.txt");
         } else {
             fut_printf("[MISC-TEST] ✗ Test 1730: open failed %ld\n", fd);
             fut_test_fail(1730);
@@ -51828,7 +51961,7 @@ __attribute__((noinline)) static void test_umask_posix_create(void) {
                 fut_printf("[MISC-TEST] ✗ Test 1731: stat failed %ld\n", r);
                 fut_test_fail(1731);
             }
-            sys_unlink("/tmp/umask_1731.txt");
+            fut_vfs_unlink("/tmp/umask_1731.txt");
         } else {
             fut_printf("[MISC-TEST] ✗ Test 1731: open failed %ld\n", fd);
             fut_test_fail(1731);
@@ -51884,7 +52017,7 @@ __attribute__((noinline)) static void test_umask_posix_create(void) {
                     fut_test_fail(1733);
                 }
             } else { fut_printf("[MISC-TEST] ✗ Test 1733: stat failed\n"); fut_test_fail(1733); }
-            sys_unlink("/tmp/umask_cf_1733");
+            fut_vfs_unlink("/tmp/umask_cf_1733");
         } else {
             fut_printf("[MISC-TEST] ✗ Test 1733: create_file failed %d\n", r);
             fut_test_fail(1733);
@@ -51910,7 +52043,7 @@ __attribute__((noinline)) static void test_umask_posix_create(void) {
                     fut_test_fail(1734);
                 }
             } else { fut_printf("[MISC-TEST] ✗ Test 1734: stat failed\n"); fut_test_fail(1734); }
-            sys_unlink("/tmp/umask_oat_1734");
+            fut_vfs_unlink("/tmp/umask_oat_1734");
         } else {
             fut_printf("[MISC-TEST] ✗ Test 1734: openat failed %ld\n", fd);
             fut_test_fail(1734);
@@ -51935,7 +52068,7 @@ __attribute__((noinline)) static void test_umask_posix_create(void) {
                     fut_test_fail(1735);
                 }
             } else { fut_printf("[MISC-TEST] ✗ Test 1735: stat failed\n"); fut_test_fail(1735); }
-            sys_unlink("/tmp/umask_mp_1735");
+            fut_vfs_unlink("/tmp/umask_mp_1735");
         } else {
             fut_printf("[MISC-TEST] ✗ Test 1735: open failed %ld\n", fd);
             fut_test_fail(1735);
@@ -56381,6 +56514,7 @@ void fut_misc_test_thread(void *arg) {
     test_timer_abstime();          /* Tests 1721-1724 */
     test_execve_prevalidation();   /* Tests 1725-1728 */
     test_fd_lifecycle_edges();     /* Tests 1737-1740 */
+    test_task_exit_fd_release();     /* Tests 1757-1760 */
     test_setsid_ctty();              /* Tests 1753-1756 */
     test_ctty_management();          /* Tests 1749-1752 */
     test_fork_field_inheritance();   /* Tests 1745-1748 */

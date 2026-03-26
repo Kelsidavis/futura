@@ -13,6 +13,7 @@
 #include "../../include/kernel/fut_sched.h"
 #include "../../include/kernel/fut_mm.h"
 #include "../../include/kernel/fut_memory.h"
+#include "../../include/kernel/chrdev.h"  /* for struct fut_file_ops in fd cleanup */
 #include "../../include/kernel/fut_vfs.h"
 #include "../../include/kernel/errno.h"
 #include <kernel/signal.h>
@@ -355,16 +356,26 @@ void fut_task_destroy(fut_task_t *task) {
         thread = next;
     }
 
-    /* Close all open file descriptors */
+    /* Close all open file descriptors.
+     * Decrement refcount; if this was the last reference, call the
+     * file's release handler and free the struct. Without this, PTY
+     * pairs, pipe buffers, and file structs leak when processes exit. */
     if (task->fd_table) {
         for (int i = 0; i < task->max_fds; i++) {
             if (task->fd_table[i] != NULL) {
                 struct fut_file *file = task->fd_table[i];
-                /* Atomically decrement refcount - VFS layer manages actual cleanup */
-                if (file->refcount > 0) {
-                    __atomic_sub_fetch(&file->refcount, 1, __ATOMIC_ACQ_REL);
-                }
                 task->fd_table[i] = NULL;
+                if (file->refcount > 0) {
+                    uint32_t old = __atomic_sub_fetch(&file->refcount, 1, __ATOMIC_ACQ_REL);
+                    if (old == 0) {
+                        /* Last reference — release resources */
+                        if (file->chr_ops && file->chr_ops->release)
+                            file->chr_ops->release(file->chr_inode, file->chr_private);
+                        if (file->path) fut_free(file->path);
+                        if (file->vnode) fut_vnode_unref(file->vnode);
+                        fut_free(file);
+                    }
+                }
             }
         }
         fut_free(task->fd_table);

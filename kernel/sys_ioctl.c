@@ -1191,9 +1191,7 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
         }
         /* ----------------------------------------------------------------
          * Network interface ioctls
-         * We advertise a single loopback interface "lo":
-         *   index=1, flags=IFF_UP|IFF_LOOPBACK|IFF_RUNNING,
-         *   addr=127.0.0.1, netmask=255.0.0.0, mtu=65536
+         * Enumerates all registered interfaces from the netif registry.
          * SIOCGIFCONF returns ifreq list; all others read/write ifreq by name.
          * ---------------------------------------------------------------- */
         case SIOCGIFCONF: {
@@ -1209,12 +1207,25 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
             if (fut_copy_from_user(&ifc, argp, sizeof(ifc)) != 0)
                 return -EFAULT;
 
-            /* Size of one entry: sizeof(struct fut_ifreq) = 16 + 24 = 40 */
             const int entry_size = (int)sizeof(struct fut_ifreq);
 
+            /* Count active interfaces */
+            int iface_count = 0;
+            {
+                struct ifconf_count_ctx { int count; };
+                struct ifconf_count_ctx cctx = { 0 };
+                /* Can't use netif_foreach with nested fn, count manually */
+                for (int i = 1; i <= 16; i++) {
+                    struct net_iface *ifc_iface = netif_by_index(i);
+                    if (ifc_iface && ifc_iface->active)
+                        cctx.count++;
+                }
+                iface_count = cctx.count;
+            }
+
             if (ifc.ifc_ifcu.ifc_buf == NULL || ifc.ifc_len == 0) {
-                /* Caller querying size: return space needed for 1 interface */
-                ifc.ifc_len = entry_size;
+                /* Caller querying size: return space needed for all interfaces */
+                ifc.ifc_len = iface_count * entry_size;
 #ifdef KERNEL_VIRTUAL_BASE
                 if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
                     __builtin_memcpy(argp, &ifc, sizeof(ifc));
@@ -1225,17 +1236,26 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
                 return 0;
             }
 
-            /* Fill in loopback entry if there's room */
-            if (ifc.ifc_len >= entry_size) {
+            /* Fill in entries for each active interface */
+            int max_entries = ifc.ifc_len / entry_size;
+            int filled = 0;
+            for (int i = 1; i <= 16 && filled < max_entries; i++) {
+                struct net_iface *niface = netif_by_index(i);
+                if (!niface || !niface->active) continue;
+
                 struct fut_ifreq ifr;
                 __builtin_memset(&ifr, 0, sizeof(ifr));
-                __builtin_memcpy(ifr.ifr_name, "lo", 3);
+                /* Copy interface name */
+                for (int j = 0; j < IFNAMSIZ - 1 && niface->name[j]; j++)
+                    ifr.ifr_name[j] = niface->name[j];
+                /* Set sockaddr with IP */
                 ifr.ifr_ifru.ifru_addr.sa_family = AF_INET;
-                /* 127.0.0.1 in network byte order (big-endian in sa_data) */
-                ifr.ifr_ifru.ifru_addr.sa_data[2] = 127;
-                ifr.ifr_ifru.ifru_addr.sa_data[5] = 1;
+                ifr.ifr_ifru.ifru_addr.sa_data[2] = (char)(niface->ip_addr >> 24);
+                ifr.ifr_ifru.ifru_addr.sa_data[3] = (char)(niface->ip_addr >> 16);
+                ifr.ifr_ifru.ifru_addr.sa_data[4] = (char)(niface->ip_addr >> 8);
+                ifr.ifr_ifru.ifru_addr.sa_data[5] = (char)(niface->ip_addr);
 
-                void *dst = ifc.ifc_ifcu.ifc_buf;
+                void *dst = (char *)ifc.ifc_ifcu.ifc_buf + filled * entry_size;
 #ifdef KERNEL_VIRTUAL_BASE
                 if ((uintptr_t)dst >= KERNEL_VIRTUAL_BASE)
                     __builtin_memcpy(dst, &ifr, sizeof(ifr));
@@ -1243,12 +1263,10 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
 #endif
                 if (fut_copy_to_user(dst, &ifr, sizeof(ifr)) != 0)
                     return -EFAULT;
-
-                ifc.ifc_len = entry_size;
-            } else {
-                ifc.ifc_len = 0;
+                filled++;
             }
 
+            ifc.ifc_len = filled * entry_size;
 #ifdef KERNEL_VIRTUAL_BASE
             if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
                 __builtin_memcpy(argp, &ifc, sizeof(ifc));

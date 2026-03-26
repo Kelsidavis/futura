@@ -815,8 +815,19 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
                 return 0;
             }
 
+            case 25: { /* SO_BINDTODEVICE — return bound device name */
+                const char *name = socket->bound_device_name;
+                size_t nlen = 0;
+                while (nlen < 15 && name[nlen]) nlen++;
+                nlen++; /* include NUL terminator */
+                socklen_t out_len = (socklen_t)nlen;
+                size_t cp = (len < out_len) ? len : out_len;
+                if (gso_copy_to_user(optval, name, cp) != 0) return -EFAULT;
+                if (gso_copy_to_user(optlen, &out_len, sizeof(socklen_t)) != 0) return -EFAULT;
+                return 0;
+            }
+
             case 12: /* SO_PRIORITY */
-            case 25: /* SO_BINDTODEVICE — return empty string */
             case 26: /* SO_ATTACH_FILTER */
             case 27: /* SO_DETACH_FILTER */
             case 32: /* SO_SNDBUFFORCE */

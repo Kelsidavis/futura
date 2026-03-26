@@ -429,6 +429,10 @@ typedef struct fut_socket {
     uint8_t  ipv6_tclass;      /* IPV6_TCLASS (67) */
     uint8_t  ipv6_recvtclass;  /* IPV6_RECVTCLASS (66) */
 
+    /* SO_BINDTODEVICE: bound device index (0 = any interface) */
+    uint16_t bound_device_idx;
+    char     bound_device_name[16]; /* Interface name for getsockopt readback */
+
     /* AF_INET/AF_INET6 bound address (stored by bind(), returned by getsockname()) */
     uint32_t inet_addr;        /* IPv4 address (network byte order); 0 = unbound/any */
     uint16_t inet_port;        /* IPv4/IPv6 port (network byte order); 0 = unbound */

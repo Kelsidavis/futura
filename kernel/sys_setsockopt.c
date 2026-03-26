@@ -16,6 +16,7 @@
 #include <kernel/fut_socket.h>
 #include <kernel/errno.h>
 #include <kernel/uaccess.h>
+#include <futura/netif.h>
 #include <stdint.h>
 
 #include <kernel/kprintf.h>
@@ -585,8 +586,40 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                 return 0;
             }
 
+            case 25: { /* SO_BINDTODEVICE — bind to specific NIC */
+                if (!optval || optlen == 0) {
+                    /* Unbind from device */
+                    socket->bound_device_idx = 0;
+                    socket->bound_device_name[0] = '\0';
+                    return 0;
+                }
+                char devname[16];
+                __builtin_memset(devname, 0, sizeof(devname));
+                size_t copy = optlen < 15 ? optlen : 15;
+#ifdef KERNEL_VIRTUAL_BASE
+                if ((uintptr_t)optval >= KERNEL_VIRTUAL_BASE)
+                    __builtin_memcpy(devname, optval, copy);
+                else
+#endif
+                if (fut_copy_from_user(devname, optval, copy) != 0)
+                    return -EFAULT;
+                devname[15] = '\0';
+                /* Empty string or single NUL = unbind */
+                if (devname[0] == '\0') {
+                    socket->bound_device_idx = 0;
+                    socket->bound_device_name[0] = '\0';
+                    return 0;
+                }
+                /* Look up interface by name */
+                struct net_iface *iface = netif_by_name(devname);
+                if (!iface)
+                    return -ENODEV;
+                socket->bound_device_idx = (uint16_t)iface->index;
+                __builtin_memcpy(socket->bound_device_name, devname, 16);
+                return 0;
+            }
+
             case 12: /* SO_PRIORITY — socket priority for QoS */
-            case 25: /* SO_BINDTODEVICE — bind to specific NIC */
             case 26: /* SO_ATTACH_FILTER — BPF filter (no-op: no packet filter engine) */
             case 27: /* SO_DETACH_FILTER — detach BPF filter */
             case 32: /* SO_SNDBUFFORCE — forced send buffer (privileged) */

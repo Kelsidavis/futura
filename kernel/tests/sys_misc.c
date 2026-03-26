@@ -51581,6 +51581,127 @@ __attribute__((noinline)) static void test_arp_icmp_router(void) {
     }
 }
 
+/* Tests 1813-1816: SO_BINDTODEVICE and multi-interface SIOCGIFCONF */
+__attribute__((noinline)) static void test_bindtodevice_ifconf(void) {
+    extern long sys_socket(int, int, int);
+    extern long sys_setsockopt(int, int, int, const void *, unsigned int);
+    extern long sys_getsockopt(int, int, int, void *, unsigned int *);
+    extern long sys_ioctl(int fd, unsigned long request, void *argp);
+    extern long sys_close(int);
+
+    /* Test 1813: SO_BINDTODEVICE to "lo" */
+    fut_printf("[MISC-TEST] Test 1813: SO_BINDTODEVICE to lo\n");
+    {
+        long fd = sys_socket(2 /* AF_INET */, 2 /* SOCK_DGRAM */, 0);
+        if (fd >= 0) {
+            static const char dev[] = "lo";
+            long rc = sys_setsockopt((int)fd, 1 /* SOL_SOCKET */, 25 /* SO_BINDTODEVICE */,
+                                     dev, sizeof(dev));
+            if (rc == 0) {
+                /* Read back the device name */
+                static char got[16];
+                unsigned int got_len = sizeof(got);
+                __builtin_memset(got, 0, sizeof(got));
+                long rc2 = sys_getsockopt((int)fd, 1, 25, got, &got_len);
+                if (rc2 == 0 && got[0] == 'l' && got[1] == 'o') {
+                    fut_printf("[MISC-TEST] ✓ Test 1813: BINDTODEVICE='%s'\n", got);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1813: readback='%s' rc=%ld\n", got, rc2);
+                    fut_test_fail(1813);
+                }
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1813: set rc=%ld\n", rc);
+                fut_test_fail(1813);
+            }
+            sys_close((int)fd);
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1813: socket=%ld\n", fd);
+            fut_test_fail(1813);
+        }
+    }
+
+    /* Test 1814: SO_BINDTODEVICE to nonexistent device → ENODEV */
+    fut_printf("[MISC-TEST] Test 1814: BINDTODEVICE invalid → ENODEV\n");
+    {
+        long fd = sys_socket(2, 2, 0);
+        if (fd >= 0) {
+            static const char bad[] = "nosuchdev";
+            long rc = sys_setsockopt((int)fd, 1, 25, bad, sizeof(bad));
+            sys_close((int)fd);
+            if (rc == -19 /* ENODEV */) {
+                fut_printf("[MISC-TEST] ✓ Test 1814: ENODEV\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1814: rc=%ld\n", rc);
+                fut_test_fail(1814);
+            }
+        } else { fut_test_fail(1814); }
+    }
+
+    /* Test 1815: SO_BINDTODEVICE unbind with empty string */
+    fut_printf("[MISC-TEST] Test 1815: BINDTODEVICE unbind\n");
+    {
+        long fd = sys_socket(2, 2, 0);
+        if (fd >= 0) {
+            static const char lo[] = "lo";
+            sys_setsockopt((int)fd, 1, 25, lo, sizeof(lo));
+            /* Unbind */
+            static const char empty[] = "";
+            long rc = sys_setsockopt((int)fd, 1, 25, empty, 1);
+            if (rc == 0) {
+                static char got[16];
+                unsigned int got_len = sizeof(got);
+                __builtin_memset(got, 0, sizeof(got));
+                sys_getsockopt((int)fd, 1, 25, got, &got_len);
+                if (got[0] == '\0') {
+                    fut_printf("[MISC-TEST] ✓ Test 1815: unbound\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1815: still='%s'\n", got);
+                    fut_test_fail(1815);
+                }
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1815: unbind rc=%ld\n", rc);
+                fut_test_fail(1815);
+            }
+            sys_close((int)fd);
+        } else { fut_test_fail(1815); }
+    }
+
+    /* Test 1816: SIOCGIFCONF returns multiple interfaces */
+    fut_printf("[MISC-TEST] Test 1816: SIOCGIFCONF multi-interface\n");
+    {
+        long nfd = sys_socket(2, 2, 0);
+        if (nfd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1816: socket=%ld\n", nfd);
+            fut_test_fail(1816);
+        } else {
+            /* Query: NULL buf to get needed size */
+            static char conf[16]; /* struct ifconf: int len + int pad + ptr */
+            __builtin_memset(conf, 0, 16);
+            /* ifc_len=0, ifc_buf=NULL */
+            long rc = sys_ioctl((int)nfd, 0x8912 /* SIOCGIFCONF */, conf);
+            if (rc == 0) {
+                int needed = 0;
+                __builtin_memcpy(&needed, conf, 4);
+                /* Should need space for at least 2 interfaces (lo + eth0) */
+                if (needed >= 80 /* 2 * 40 */) {
+                    fut_printf("[MISC-TEST] ✓ Test 1816: SIOCGIFCONF needs %d bytes (≥2 ifaces)\n", needed);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1816: only %d bytes needed\n", needed);
+                    fut_test_fail(1816);
+                }
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1816: ioctl rc=%ld\n", rc);
+                fut_test_fail(1816);
+            }
+            sys_close((int)nfd);
+        }
+    }
+}
+
 /* Tests 1805-1808: ioctl-based interface/route configuration (SIOCSIFADDR etc.) */
 __attribute__((noinline)) static void test_netif_ioctl_config(void) {
     extern long sys_ioctl(int fd, unsigned long request, void *argp);
@@ -57960,6 +58081,7 @@ void fut_misc_test_thread(void *arg) {
     test_firewall_rules();           /* Tests 1801-1804 */
     test_netif_ioctl_config();       /* Tests 1805-1808 */
     test_arp_icmp_router();          /* Tests 1809-1812 */
+    test_bindtodevice_ifconf();      /* Tests 1813-1816 */
     test_pty_slave_cloexec();        /* Tests 1793-1796 */
     test_chrdev_cloexec();           /* Tests 1789-1792 */
     test_pty_fcntl_flags();          /* Tests 1785-1788 */

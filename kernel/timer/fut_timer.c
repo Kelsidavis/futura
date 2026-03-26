@@ -274,6 +274,12 @@ void fut_timer_tick(void) {
     // Process timer events
     process_timer_events();
 
+    // Check software watchdog timer
+    {
+        extern void watchdog_check(void);
+        watchdog_check();
+    }
+
     // Check for expired alarms and deliver SIGALRM
     extern fut_task_t *fut_task_list;
 

@@ -55718,6 +55718,60 @@ __attribute__((noinline)) static void test_gre_tunnel(void) {
     }
 }
 
+__attribute__((noinline)) static void test_watchdog_device(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_write(int, const void *, size_t);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_close(int);
+
+    /* Test 1888: /dev/watchdog exists and is openable */
+    fut_printf("[MISC-TEST] Test 1888: /dev/watchdog is openable\n");
+    {
+        long fd = sys_open("/dev/watchdog", 0x0002 /* O_RDWR */, 0);
+        if (fd >= 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1888: /dev/watchdog opened (fd=%ld)\n", fd);
+            fut_test_pass();
+
+            /* Test 1889: Writing to watchdog feeds the timer */
+            fut_printf("[MISC-TEST] Test 1889: write to watchdog feeds timer\n");
+            {
+                long n = sys_write((int)fd, "ping", 4);
+                if (n == 4) {
+                    fut_printf("[MISC-TEST] ✓ Test 1889: watchdog fed\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1889: write=%ld\n", n);
+                    fut_test_fail(1889);
+                }
+            }
+
+            /* Test 1890: Reading watchdog returns time left */
+            fut_printf("[MISC-TEST] Test 1890: read watchdog returns time left\n");
+            {
+                static uint32_t timeleft;
+                timeleft = 0;
+                long n = sys_read((int)fd, &timeleft, sizeof(timeleft));
+                if (n == (long)sizeof(timeleft) && timeleft > 0 && timeleft <= 60) {
+                    fut_printf("[MISC-TEST] ✓ Test 1890: time left=%u sec\n", timeleft);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1890: read=%ld left=%u\n", n, timeleft);
+                    fut_test_fail(1890);
+                }
+            }
+
+            /* Write magic close 'V' to allow safe close */
+            sys_write((int)fd, "V", 1);
+            sys_close((int)fd);
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1888: open=%ld\n", fd);
+            fut_test_fail(1888);
+            fut_test_pass(); /* skip 1889 */
+            fut_test_pass(); /* skip 1890 */
+        }
+    }
+}
+
 __attribute__((noinline)) static void test_loop_device(void) {
     extern long sys_open(const char *, int, int);
     extern long sys_write(int, const void *, size_t);
@@ -59927,6 +59981,7 @@ void fut_misc_test_thread(void *arg) {
     test_timer_abstime_underflow(); /* Tests 1882-1883 */
     test_policy_routing(); /* Tests 1878-1881, 1884 */
     test_gre_tunnel(); /* Tests 1872-1874 */
+    test_watchdog_device(); /* Tests 1888-1890 */
     test_loop_device(); /* Tests 1885-1887 */
     test_per_iface_conf(); /* Tests 1869-1871 */
 

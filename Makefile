@@ -580,6 +580,7 @@ KERNEL_SOURCES := \
     kernel/dev_null.c \
     kernel/pci.c \
     kernel/dev_loop.c \
+    kernel/dev_watchdog.c \
     kernel/pty.c \
     kernel/sys_statx.c \
     kernel/sys_tgkill.c \

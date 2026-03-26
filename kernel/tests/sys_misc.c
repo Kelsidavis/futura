@@ -53731,6 +53731,31 @@ __attribute__((noinline)) static void test_procnet_files(void) {
         if (after_enable && !after_disable) { fut_test_pass(); }
         else { fut_test_fail(1845); }
     }
+
+}
+
+/* Test 1846: /proc/uptime idle time format */
+__attribute__((noinline)) static void test_uptime_idle(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_close(int);
+    fut_printf("[MISC-TEST] Test 1846: /proc/uptime format\n");
+    long fd = sys_open("/proc/uptime", 0, 0);
+    if (fd >= 0) {
+        static char ub[64];
+        long n = sys_read((int)fd, ub, sizeof(ub) - 1);
+        sys_close((int)fd);
+        if (n > 0) {
+            ub[n] = '\0';
+            bool has_space = false, has_dot = false;
+            for (long i = 0; i < n; i++) {
+                if (ub[i] == ' ') has_space = true;
+                if (ub[i] == '.') has_dot = true;
+            }
+            if (has_space && has_dot) { fut_test_pass(); }
+            else { fut_test_fail(1846); }
+        } else { fut_test_fail(1846); }
+    } else { fut_test_fail(1846); }
 }
 
 /* Test 1841: /dev/kmsg kernel log device */
@@ -58774,6 +58799,7 @@ void fut_misc_test_thread(void *arg) {
     }
 
     test_dev_kmsg();  /* Test 1841 */
+    test_uptime_idle();  /* Test 1846 */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

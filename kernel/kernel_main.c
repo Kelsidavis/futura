@@ -1268,10 +1268,10 @@ void fut_kernel_main(void) {
                   "nobody:x:65534:\n");
         ETC_WRITE("/etc/os-release",
                   "NAME=\"Futura OS\"\n"
-                  "VERSION=\"0.4.0\"\n"
+                  "VERSION=\"0.5.0\"\n"
                   "ID=futura\n"
-                  "VERSION_ID=0.4.0\n"
-                  "PRETTY_NAME=\"Futura OS 0.4.0\"\n"
+                  "VERSION_ID=0.5.0\n"
+                  "PRETTY_NAME=\"Futura OS 0.5.0\"\n"
                   "HOME_URL=\"https://github.com/netrunner-labs/futura\"\n");
         ETC_WRITE("/etc/profile",
                   "# Futura OS system profile\n"

@@ -53810,6 +53810,35 @@ __attribute__((noinline)) static void test_dns_cache(void) {
     dns_cache_clear();
 }
 
+/* Test 1849: TUN device TUNSETIFF */
+__attribute__((noinline)) static void test_tun_create(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_ioctl(int fd, unsigned long request, void *argp);
+    extern long sys_close(int);
+    fut_printf("[MISC-TEST] Test 1849: TUNSETIFF creates tun\n");
+    long tfd = sys_open("/dev/net/tun", 0x0002, 0);
+    if (tfd >= 0) {
+        static char ifr[40];
+        __builtin_memset(ifr, 0, 40);
+        /* IFF_TUN = 0x0001, IFF_NO_PI = 0x1000 → stored as little-endian short at offset 16 */
+        uint16_t tun_flags = 0x0001 | 0x1000;
+        __builtin_memcpy(ifr + 16, &tun_flags, 2);
+        long rc = sys_ioctl((int)tfd, 0x400454CA, ifr);
+        fut_printf("[MISC-TEST] TUNSETIFF returned %ld\n", rc);
+        if (rc >= 0) {
+            struct net_iface *tun_if = netif_by_name("tun0");
+            if (tun_if && tun_if->active) { fut_test_pass(); }
+            else {
+                /* Try tun1 in case tun0 was already created by a previous test */
+                tun_if = netif_by_name("tun1");
+                if (tun_if && tun_if->active) { fut_test_pass(); }
+                else { fut_printf("[MISC-TEST] ✗ tun not found\n"); fut_test_fail(1849); }
+            }
+        } else { fut_printf("[MISC-TEST] ✗ TUNSETIFF=%ld\n", rc); fut_test_fail(1849); }
+        sys_close((int)tfd);
+    } else { fut_printf("[MISC-TEST] ✗ open=%ld\n", tfd); fut_test_fail(1849); }
+}
+
 /* Tests 1831-1834: firewall ioctl management */
 __attribute__((noinline)) static void test_firewall_ioctls(void) {
     extern long sys_ioctl(int fd, unsigned long request, void *argp);
@@ -58831,6 +58860,7 @@ void fut_misc_test_thread(void *arg) {
     test_dev_kmsg();  /* Test 1841 */
     test_uptime_idle();  /* Test 1846 */
     test_dns_cache();    /* Tests 1847-1848 */
+    test_tun_create();   /* Test 1849 */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

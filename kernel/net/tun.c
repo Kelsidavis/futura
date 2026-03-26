@@ -22,6 +22,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/kprintf.h>
 #include <futura/netif.h>
+#include <platform/platform.h>
 #include <string.h>
 #include <stdbool.h>
 
@@ -321,6 +322,12 @@ static int tun_ioctl(void *inode, void *private, unsigned long request, unsigned
     }
 
     return -EINVAL;
+}
+
+/* Get TUN device pointer by slot (used by ioctl to set chr_private) */
+struct tun_device *tun_get_device(int slot) {
+    if (slot < 0 || slot >= TUN_MAX_DEVICES) return NULL;
+    return g_tun_devices[slot].active ? &g_tun_devices[slot] : NULL;
 }
 
 static int tun_release(void *inode, void *private) {

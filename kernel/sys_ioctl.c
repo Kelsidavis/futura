@@ -605,7 +605,8 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
                                    request == 0x8924 /* SIOCSIFHWADDR */ ||
                                    request == SIOCADDRT || request == SIOCDELRT ||
                                    request == SIOCFWADDRULE || request == SIOCFWPOLICY ||
-                                   request == SIOCFWFLUSH);
+                                   request == SIOCFWFLUSH ||
+                                   request == 0x400454CA /* TUNSETIFF */);
                 if (argp_val >= KERNEL_VIRTUAL_BASE && !is_builtin) {
                     return -EFAULT;
                 }
@@ -806,7 +807,15 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
             request != SIOCADDRT && request != SIOCDELRT &&
             request != SIOCFWADDRULE && request != SIOCFWPOLICY &&
             request != SIOCFWFLUSH) {
-            return file->chr_ops->ioctl(file->chr_inode, file->chr_private, request, (unsigned long)argp);
+            int rc = file->chr_ops->ioctl(file->chr_inode, file->chr_private, request, (unsigned long)argp);
+            /* TUNSETIFF returns a TUN slot number; update chr_private so
+             * subsequent read/write can find the TUN device. */
+            if (request == 0x400454CA /* TUNSETIFF */ && rc >= 0) {
+                extern struct { int active; /* ... */ } *tun_get_device(int slot);
+                void *tdev = (void *)tun_get_device(rc);
+                if (tdev) file->chr_private = tdev;
+            }
+            return rc;
         }
     }
 

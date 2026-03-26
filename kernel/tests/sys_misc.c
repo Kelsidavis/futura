@@ -51227,6 +51227,93 @@ static void test_openat_o_directory(void) {
 }
 
 /* Tests 1729-1732: umask enforcement on file/directory creation (POSIX) */
+/* Tests 1737-1740: fd lifecycle edge cases */
+__attribute__((noinline)) static void test_fd_lifecycle_edges(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_close(int);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_write(int, const void *, size_t);
+    extern long sys_dup(int);
+
+    /* Test 1737: close(-1) → EBADF */
+    fut_printf("[MISC-TEST] Test 1737: close(-1) → EBADF\n");
+    {
+        long r = sys_close(-1);
+        if (r == -9 /* EBADF */) {
+            fut_printf("[MISC-TEST] ✓ Test 1737: close(-1) → EBADF\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1737: close(-1) → %ld\n", r);
+            fut_test_fail(1737);
+        }
+    }
+
+    /* Test 1738: double-close → EBADF on second close */
+    fut_printf("[MISC-TEST] Test 1738: double close → EBADF\n");
+    {
+        long fd = sys_open("/tmp/dblclose_1738", 0x42 /* O_RDWR|O_CREAT */, 0644);
+        if (fd >= 0) {
+            long r1 = sys_close((int)fd);
+            long r2 = sys_close((int)fd);  /* second close on same fd */
+            fut_vfs_unlink("/tmp/dblclose_1738");
+            if (r1 == 0 && r2 == -9 /* EBADF */) {
+                fut_printf("[MISC-TEST] ✓ Test 1738: first=0 second=EBADF\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1738: r1=%ld r2=%ld\n", r1, r2);
+                fut_test_fail(1738);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1738: open failed %ld\n", fd);
+            fut_test_fail(1738);
+        }
+    }
+
+    /* Test 1739: read on closed fd → EBADF */
+    fut_printf("[MISC-TEST] Test 1739: read closed fd → EBADF\n");
+    {
+        long fd = sys_open("/tmp/rdclosed_1739", 0x42, 0644);
+        if (fd >= 0) {
+            sys_close((int)fd);
+            static char buf[4];
+            long r = sys_read((int)fd, buf, 4);
+            fut_vfs_unlink("/tmp/rdclosed_1739");
+            if (r == -9 /* EBADF */) {
+                fut_printf("[MISC-TEST] ✓ Test 1739: read closed → EBADF\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1739: read → %ld\n", r);
+                fut_test_fail(1739);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1739: open failed\n");
+            fut_test_fail(1739);
+        }
+    }
+
+    /* Test 1740: dup of closed fd → EBADF */
+    fut_printf("[MISC-TEST] Test 1740: dup closed fd → EBADF\n");
+    {
+        long fd = sys_open("/tmp/dupclosed_1740", 0x42, 0644);
+        if (fd >= 0) {
+            sys_close((int)fd);
+            long r = sys_dup((int)fd);
+            fut_vfs_unlink("/tmp/dupclosed_1740");
+            if (r == -9 /* EBADF */) {
+                fut_printf("[MISC-TEST] ✓ Test 1740: dup closed → EBADF\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1740: dup → %ld\n", r);
+                if (r >= 0) sys_close((int)r);
+                fut_test_fail(1740);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1740: open failed\n");
+            fut_test_fail(1740);
+        }
+    }
+}
+
 __attribute__((noinline)) static void test_umask_posix_create(void) {
     extern long sys_open(const char *, int, int);
     extern long sys_close(int);
@@ -55879,6 +55966,7 @@ void fut_misc_test_thread(void *arg) {
     test_chdir_getcwd_roundtrip(); /* Tests 1717-1720 */
     test_timer_abstime();          /* Tests 1721-1724 */
     test_execve_prevalidation();   /* Tests 1725-1728 */
+    test_fd_lifecycle_edges();     /* Tests 1737-1740 */
     test_umask_posix_create();     /* Tests 1729-1732 */
 
     fut_printf("[MISC-TEST] ========================================\n");

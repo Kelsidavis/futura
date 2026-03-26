@@ -1484,6 +1484,14 @@ void fut_kernel_main(void) {
         overlayfs_init();  /* Overlay filesystem */
     }
     {
+        extern void iocg_init(void);
+        extern void pidcg_init(void);
+        extern void freezer_init(void);
+        iocg_init();     /* Cgroup v2 I/O controller */
+        pidcg_init();    /* Cgroup v2 PID controller */
+        freezer_init();  /* Cgroup v2 freezer controller */
+    }
+    {
         extern void ipsec_init(void);
         ipsec_init();  /* IPsec SA/SP database */
     }

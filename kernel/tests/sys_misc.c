@@ -55718,6 +55718,33 @@ __attribute__((noinline)) static void test_gre_tunnel(void) {
     }
 }
 
+__attribute__((noinline)) static void test_netfilter_procfs(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_close(int);
+
+    /* Test 1891: /proc/sys/net/netfilter/nf_conntrack_max readable */
+    fut_printf("[MISC-TEST] Test 1891: nf_conntrack_max readable\n");
+    {
+        long fd = sys_open("/proc/sys/net/netfilter/nf_conntrack_max", 0, 0);
+        if (fd >= 0) {
+            static char buf[16];
+            long n = sys_read((int)fd, buf, sizeof(buf) - 1);
+            sys_close((int)fd);
+            if (n > 0 && buf[0] == '1' && buf[1] == '0' && buf[2] == '2' && buf[3] == '4') {
+                fut_printf("[MISC-TEST] ✓ Test 1891: nf_conntrack_max=1024\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1891: read=%ld\n", n);
+                fut_test_fail(1891);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1891: open=%ld\n", fd);
+            fut_test_fail(1891);
+        }
+    }
+}
+
 __attribute__((noinline)) static void test_watchdog_device(void) {
     extern long sys_open(const char *, int, int);
     extern long sys_write(int, const void *, size_t);
@@ -59981,6 +60008,7 @@ void fut_misc_test_thread(void *arg) {
     test_timer_abstime_underflow(); /* Tests 1882-1883 */
     test_policy_routing(); /* Tests 1878-1881, 1884 */
     test_gre_tunnel(); /* Tests 1872-1874 */
+    test_netfilter_procfs(); /* Test 1891 */
     test_watchdog_device(); /* Tests 1888-1890 */
     test_loop_device(); /* Tests 1885-1887 */
     test_per_iface_conf(); /* Tests 1869-1871 */

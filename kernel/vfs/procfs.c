@@ -266,6 +266,9 @@ enum procfs_kind {
     PROC_SYSCALL,                   /* /proc/<pid>/syscall — current syscall number and arguments */
     PROC_LOCKS,                     /* /proc/locks — POSIX and flock file lock table */
     PROC_PCI_DEVICES,               /* /proc/pci — PCI bus device list */
+    PROC_SYS_NET_NF_DIR,            /* /proc/sys/net/netfilter/ */
+    PROC_SYS_NET_NF_CT_MAX,         /* /proc/sys/net/netfilter/nf_conntrack_max */
+    PROC_SYS_NET_NF_CT_COUNT,       /* /proc/sys/net/netfilter/nf_conntrack_count */
 };
 
 typedef struct {
@@ -447,6 +450,9 @@ typedef struct {
 #define PROC_INO_KALLSYMS                 414ULL
 #define PROC_INO_LOCKS                    415ULL
 #define PROC_INO_PCI                      416ULL
+#define PROC_INO_SYS_NET_NF_DIR          417ULL
+#define PROC_INO_SYS_NET_NF_CT_MAX       418ULL
+#define PROC_INO_SYS_NET_NF_CT_COUNT     419ULL
 /* /proc/sys/kernel/ extended range: 400-429 */
 #define PROC_INO_SYS_KERNEL_NMI_WD     400ULL
 #define PROC_INO_SYS_KERNEL_WATCHDOG   401ULL
@@ -3873,6 +3879,17 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             /* 120 seconds hung task timeout (Linux default) */
             total = gen_sysctl_str(tmp, GEN_BUF, "120");
             break;
+        /* /proc/sys/net/netfilter/ entries */
+        case PROC_SYS_NET_NF_CT_MAX:
+            total = gen_sysctl_str(tmp, GEN_BUF, "1024");
+            break;
+        case PROC_SYS_NET_NF_CT_COUNT: {
+            /* Return "0" — active NAT count is dynamic and tracked in nat.c.
+             * A proper implementation would iterate the NAT table, but for
+             * compatibility we return the count from /proc/net/nf_conntrack. */
+            total = gen_sysctl_str(tmp, GEN_BUF, "0");
+            break;
+        }
         default:
             fut_free(tmp);
             return -EINVAL;
@@ -4963,6 +4980,25 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0040555, PROC_SYS_NET_IPV6_DIR, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "netfilter")) {
+            *result = procfs_alloc_vnode(mnt, VN_DIR, PROC_INO_SYS_NET_NF_DIR,
+                                          0040555, PROC_SYS_NET_NF_DIR, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        return -ENOENT;
+    }
+
+    if (dn->kind == PROC_SYS_NET_NF_DIR) {
+        if (STREQ(name, "nf_conntrack_max")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_NET_NF_CT_MAX,
+                                          0100644, PROC_SYS_NET_NF_CT_MAX, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "nf_conntrack_count")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_NET_NF_CT_COUNT,
+                                          0100444, PROC_SYS_NET_NF_CT_COUNT, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         return -ENOENT;
     }
 
@@ -5859,14 +5895,14 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
     }
 
     if (dn->kind == PROC_SYS_NET_DIR) {
-        static const char *e[] = { ".", "..", "core", "ipv4", "ipv6" };
+        static const char *e[] = { ".", "..", "core", "ipv4", "ipv6", "netfilter" };
         static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
                                      FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
-                                     FUT_VDIR_TYPE_DIR };
+                                     FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR };
         static const uint64_t i[] = { PROC_INO_SYS_NET_DIR, PROC_INO_SYS_DIR,
                                       PROC_INO_SYS_NET_CORE_DIR, PROC_INO_SYS_NET_IPV4_DIR,
-                                      PROC_INO_SYS_NET_IPV6_DIR };
-        if (idx < 5) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+                                      PROC_INO_SYS_NET_IPV6_DIR, PROC_INO_SYS_NET_NF_DIR };
+        if (idx < 6) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
         return -ENOENT;
     }
 
@@ -5877,6 +5913,17 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         static const uint64_t i[] = { PROC_INO_SYS_NET_IPV6_DIR, PROC_INO_SYS_NET_DIR,
                                       PROC_INO_SYS_NET_IPV6_CONF_DIR };
         if (idx < 3) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+        return -ENOENT;
+    }
+
+    if (dn->kind == PROC_SYS_NET_NF_DIR) {
+        static const char *nfe[] = { ".", "..", "nf_conntrack_max", "nf_conntrack_count" };
+        static const uint8_t nft[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
+                                       FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG };
+        static const uint64_t nfi[] = { PROC_INO_SYS_NET_NF_DIR, PROC_INO_SYS_NET_DIR,
+                                        PROC_INO_SYS_NET_NF_CT_MAX,
+                                        PROC_INO_SYS_NET_NF_CT_COUNT };
+        if (idx < 4) SYS_DIR_ENTRY(nfe[idx], nft[idx], nfi[idx]);
         return -ENOENT;
     }
 

@@ -243,6 +243,7 @@ enum procfs_kind {
     PROC_NET_NETSTAT,               /* /proc/net/netstat */
     PROC_NET_PACKET,                /* /proc/net/packet */
     PROC_NET_NF_CONNTRACK,          /* /proc/net/nf_conntrack */
+    PROC_NET_PROTOCOLS,             /* /proc/net/protocols */
     PROC_AUXV,                      /* /proc/<pid>/auxv — ELF auxiliary vector (binary) */
     PROC_PID_MEM,                   /* /proc/<pid>/mem  — raw process address space (r/w) */
     PROC_UID_MAP,                   /* /proc/<pid>/uid_map — user namespace UID mapping */
@@ -360,6 +361,7 @@ typedef struct {
 #define PROC_INO_NET_NETSTAT         27ULL
 #define PROC_INO_NET_PACKET          28ULL
 #define PROC_INO_NET_NF_CONNTRACK   29ULL
+#define PROC_INO_NET_PROTOCOLS      30ULL
 #define PROC_INO_SYS_NET_IPV6_DIR      286ULL
 #define PROC_INO_SYS_NET_IPV6_CONF_DIR 287ULL
 #define PROC_INO_SYS_NET_IPV6_ALL_DIR  288ULL
@@ -2610,6 +2612,17 @@ static size_t gen_net_nf_conntrack(char *buf, size_t cap) {
     return b.pos;
 }
 
+/* /proc/net/protocols — list available network protocols */
+static size_t gen_net_protocols(char *buf, size_t cap) {
+    struct pbuf b = { buf, 0, cap };
+    pb_str(&b, "protocol  size sockets  memory press maxhdr  slab module     cl co di ac io in de sh ss gs se re sp bi br ha uh gp em\n");
+    pb_str(&b, "UNIX      1024 -1  -1    NI       0   no   kernel  y  y  y  y  y  y  y  y  y  y  y  y  y  y  y  y  y  n  n\n");
+    pb_str(&b, "UDP       1024 -1  -1    NI       0   no   kernel  y  y  y  n  y  y  y  n  y  y  y  y  y  n  n  y  y  n  n\n");
+    pb_str(&b, "TCP       2048 -1  -1    no       0   no   kernel  y  y  y  y  y  y  y  y  y  y  y  y  y  y  y  y  y  n  n\n");
+    pb_str(&b, "RAW        912 -1  -1    NI       0   no   kernel  y  y  y  n  y  y  y  n  y  y  y  y  y  n  n  y  y  n  n\n");
+    return b.pos;
+}
+
 /* Helper struct passed as arg to net_unix_emit_one() callback. */
 struct net_unix_ctx { struct pbuf *b; };
 
@@ -3107,6 +3120,9 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             break;
         case PROC_NET_NF_CONNTRACK:
             total = gen_net_nf_conntrack(tmp, GEN_BUF);
+            break;
+        case PROC_NET_PROTOCOLS:
+            total = gen_net_protocols(tmp, GEN_BUF);
             break;
         case PROC_NET_FIB_TRIE:
             total = gen_net_fib_trie(tmp, GEN_BUF);
@@ -4707,6 +4723,10 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
             *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_NET_NF_CONNTRACK, 0100444, PROC_NET_NF_CONNTRACK, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "protocols")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_NET_PROTOCOLS, 0100444, PROC_NET_PROTOCOLS, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         return -ENOENT;
     }
 
@@ -5579,7 +5599,8 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         static const char *e[] = { ".", "..", "dev", "route", "tcp", "udp",
                                    "if_inet6", "unix", "sockstat", "arp",
                                    "tcp6", "udp6", "raw", "fib_trie",
-                                   "snmp", "netstat", "packet", "nf_conntrack" };
+                                   "snmp", "netstat", "packet", "nf_conntrack",
+                                   "protocols" };
         static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
@@ -5588,7 +5609,8 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
-                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG };
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_REG };
         static const uint64_t i[] = { PROC_INO_NET_DIR, PROC_INO_ROOT,
                                       PROC_INO_NET_DEV, PROC_INO_NET_ROUTE,
                                       PROC_INO_NET_TCP, PROC_INO_NET_UDP,
@@ -5597,8 +5619,9 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                       PROC_INO_NET_TCP6, PROC_INO_NET_UDP6,
                                       PROC_INO_NET_RAW, PROC_INO_NET_FIB_TRIE,
                                       PROC_INO_NET_SNMP, PROC_INO_NET_NETSTAT,
-                                      PROC_INO_NET_PACKET, PROC_INO_NET_NF_CONNTRACK };
-        if (idx < 18) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+                                      PROC_INO_NET_PACKET, PROC_INO_NET_NF_CONNTRACK,
+                                      PROC_INO_NET_PROTOCOLS };
+        if (idx < 19) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
         return -ENOENT;
     }
 

@@ -53604,6 +53604,40 @@ __attribute__((noinline)) static void test_procnet_files(void) {
             else { fut_test_fail(1839); }
         } else { fut_test_fail(1839); }
     }
+
+    /* Test 1840: /proc/net/tcp shows LISTEN state for bound+listening socket */
+    fut_printf("[MISC-TEST] Test 1840: /proc/net/tcp LISTEN state\n");
+    {
+        extern long sys_socket(int, int, int);
+        extern long sys_bind(int, const void *, unsigned int);
+        extern long sys_listen(int, int);
+        /* Create listening socket on port 19840 */
+        long sfd = sys_socket(2 /* AF_INET */, 1 /* SOCK_STREAM */, 0);
+        if (sfd >= 0) {
+            static struct { uint16_t family; uint16_t port; uint32_t addr; uint8_t pad[8]; } sa;
+            __builtin_memset(&sa, 0, sizeof(sa));
+            sa.family = 2;
+            sa.port = (uint16_t)((19840 >> 8) | ((19840 & 0xFF) << 8)); /* host→net */
+            long brc = sys_bind((int)sfd, &sa, 16);
+            if (brc == 0) sys_listen((int)sfd, 5);
+            /* Read /proc/net/tcp and look for "0A" (LISTEN state) */
+            long tfd = sys_open("/proc/net/tcp", 0, 0);
+            if (tfd >= 0) {
+                static char tb[2048];
+                long n = sys_read((int)tfd, tb, sizeof(tb) - 1);
+                sys_close((int)tfd);
+                if (n > 0) {
+                    tb[n] = '\0';
+                    bool found_listen = false;
+                    for (long i = 0; i < n - 2; i++)
+                        if (tb[i] == '0' && tb[i+1] == 'A') { found_listen = true; break; }
+                    if (found_listen) { fut_test_pass(); }
+                    else { fut_test_fail(1840); }
+                } else { fut_test_fail(1840); }
+            } else { fut_test_fail(1840); }
+            sys_close((int)sfd);
+        } else { fut_test_fail(1840); }
+    }
 }
 
 /* Tests 1831-1834: firewall ioctl management */

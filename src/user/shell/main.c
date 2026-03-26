@@ -6220,6 +6220,59 @@ static int execute_command(int argc, char *argv[]) {
                 if (*eol) p = eol + 1; else break;
                 line++;
             }
+        } else if (argc >= 5 && strcmp_simple(argv[1], "addr") == 0 &&
+                   strcmp_simple(argv[2], "add") == 0) {
+            /* ip addr add <ip>/<prefix> dev <iface> */
+            /* Parse IP/prefix from argv[3] */
+            const char *ipstr = argv[3];
+            uint32_t ip4 = 0;
+            int octet = 0, shift = 24, prefix = 24;
+            const char *cp = ipstr;
+            while (*cp && *cp != '/') {
+                if (*cp == '.') { ip4 |= ((uint32_t)octet & 0xFF) << shift; shift -= 8; octet = 0; }
+                else if (*cp >= '0' && *cp <= '9') octet = octet * 10 + (*cp - '0');
+                cp++;
+            }
+            ip4 |= ((uint32_t)octet & 0xFF) << shift;
+            if (*cp == '/') { prefix = 0; cp++; while (*cp >= '0' && *cp <= '9') { prefix = prefix * 10 + (*cp - '0'); cp++; } }
+
+            /* Find dev name: "dev <name>" */
+            const char *devname = NULL;
+            for (int i = 4; i < argc - 1; i++)
+                if (strcmp_simple(argv[i], "dev") == 0) { devname = argv[i+1]; break; }
+            if (!devname) { write_str(2, "ip addr add: missing 'dev <name>'\n"); return 1; }
+
+            /* Set IP via SIOCSIFADDR ioctl */
+            int sock = sys_call3(41, 2, 2, 0);
+            if (sock < 0) { write_str(2, "ip: socket failed\n"); return 1; }
+
+            char ifr[40];
+            for (int k = 0; k < 40; k++) ifr[k] = 0;
+            for (int k = 0; devname[k] && k < 15; k++) ifr[k] = devname[k];
+            /* sockaddr at offset 16: family=AF_INET(2), ip at offset 20 (sa_data[2..5]) */
+            ifr[16] = 2; ifr[17] = 0;
+            ifr[20] = (char)((ip4 >> 24) & 0xFF);
+            ifr[21] = (char)((ip4 >> 16) & 0xFF);
+            ifr[22] = (char)((ip4 >> 8) & 0xFF);
+            ifr[23] = (char)(ip4 & 0xFF);
+            long rc = sys_call3(16, sock, 0x8916/*SIOCSIFADDR*/, (long)ifr);
+            if (rc != 0) { write_str(2, "ip addr add: SIOCSIFADDR failed\n"); sys_close(sock); return 1; }
+
+            /* Set netmask via SIOCSIFNETMASK */
+            for (int k = 0; k < 40; k++) ifr[k] = 0;
+            for (int k = 0; devname[k] && k < 15; k++) ifr[k] = devname[k];
+            uint32_t mask = (prefix > 0 && prefix <= 32) ? ~((1u << (32 - prefix)) - 1) : 0;
+            ifr[16] = 2; ifr[17] = 0;
+            ifr[20] = (char)((mask >> 24) & 0xFF);
+            ifr[21] = (char)((mask >> 16) & 0xFF);
+            ifr[22] = (char)((mask >> 8) & 0xFF);
+            ifr[23] = (char)(mask & 0xFF);
+            sys_call3(16, sock, 0x891C/*SIOCSIFNETMASK*/, (long)ifr);
+
+            sys_close(sock);
+            write_str(1, "Address configured on ");
+            write_str(1, devname);
+            write_str(1, "\n");
         } else if (argc > 1 && strcmp_simple(argv[1], "forward") == 0) {
             /* ip forward — toggle IP forwarding */
             if (argc > 2 && strcmp_simple(argv[2], "on") == 0) {

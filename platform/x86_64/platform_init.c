@@ -235,6 +235,10 @@ void fut_serial_putc(char c) {
     /* Also write to framebuffer console if available */
     extern void fb_console_putc(char c);
     fb_console_putc(c);
+
+    /* Also log to kernel ring buffer for /dev/kmsg and dmesg */
+    extern void klog_write(const char *data, size_t len);
+    klog_write(&c, 1);
 }
 
 int fut_serial_getc(void) {

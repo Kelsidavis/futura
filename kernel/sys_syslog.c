@@ -37,12 +37,12 @@ static inline int syslog_copy_to_user(void *dst, const void *src, size_t n) {
 #define SYSLOG_ACTION_SIZE_UNREAD    9  /* Return unread count */
 #define SYSLOG_ACTION_SIZE_BUFFER   10  /* Return total buffer size */
 
-/* Kernel log ring buffer */
+/* Kernel log ring buffer — non-static so /dev/kmsg can access */
 #define KLOG_BUF_SIZE  (64 * 1024)  /* 64KB ring buffer */
-static char klog_buf[KLOG_BUF_SIZE];
-static size_t klog_write_pos = 0;   /* Next write position */
+char klog_buf[KLOG_BUF_SIZE];
+size_t klog_write_pos = 0;   /* Next write position */
 static size_t klog_read_pos = 0;    /* Next read position for ACTION_READ */
-static size_t klog_count = 0;       /* Total bytes in buffer */
+size_t klog_count = 0;       /* Total bytes in buffer */
 static int klog_console_level = 7;  /* Default: show all but debug */
 
 /* Track whether we're at the start of a new line for timestamp injection */

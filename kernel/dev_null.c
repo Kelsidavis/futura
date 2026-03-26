@@ -84,6 +84,59 @@ static struct fut_file_ops full_fops;
  * Initialize /dev/null, /dev/zero, /dev/full, and /dev/urandom devices.
  * Call from kernel_main during boot.
  */
+/* ============================================================
+ *   /dev/kmsg — Kernel Log Buffer Access
+ * ============================================================ */
+
+/* External kernel log buffer (defined in sys_syslog.c) */
+extern char klog_buf[];
+extern size_t klog_write_pos;
+extern size_t klog_count;
+
+#define KLOG_BUF_SIZE (64 * 1024)
+
+/* Read from kernel log buffer (like `dmesg`).
+ * Uses file offset (via pos) to track how much has been consumed.
+ * On first read (pos=0), reads from the oldest data in the ring. */
+static ssize_t kmsg_read(void *inode, void *priv, void *buf, size_t n, off_t *pos) {
+    (void)inode; (void)priv;
+    if (!buf || n == 0 || klog_count == 0) return 0;
+
+    /* How many bytes have already been consumed */
+    size_t consumed = pos ? (size_t)*pos : 0;
+    if (consumed >= klog_count) return 0;  /* All data read */
+
+    /* Data available = total - consumed */
+    size_t available = klog_count - consumed;
+
+    /* Calculate read position: oldest data + consumed */
+    size_t ring_start;
+    if (klog_count < KLOG_BUF_SIZE)
+        ring_start = 0;  /* Ring not full, data starts at 0 */
+    else
+        ring_start = klog_write_pos;  /* Ring full, oldest at write_pos */
+    size_t read_from = (ring_start + consumed) % KLOG_BUF_SIZE;
+
+    size_t to_read = (n < available) ? n : available;
+    char *dst = (char *)buf;
+    for (size_t i = 0; i < to_read; i++)
+        dst[i] = klog_buf[(read_from + i) % KLOG_BUF_SIZE];
+
+    if (pos) *pos += (off_t)to_read;
+    return (ssize_t)to_read;
+}
+
+/* Write to kernel log (inject message into ring buffer) */
+static ssize_t kmsg_write(void *inode, void *priv, const void *buf, size_t n, off_t *pos) {
+    (void)inode; (void)priv; (void)pos;
+    if (!buf || n == 0) return 0;
+
+    /* Write the message to the kernel log via klog_write */
+    extern void klog_write(const char *data, size_t len);
+    klog_write((const char *)buf, n);
+    return (ssize_t)n;
+}
+
 void dev_null_init(void) {
     /* Initialize file ops at runtime (ARM64 relocation safety) */
     null_fops.read = null_read;
@@ -114,5 +167,13 @@ void dev_null_init(void) {
     chrdev_register(1, 8, &urandom_fops, "random", NULL);
     devfs_create_chr("/dev/random", 1, 8);
 
-    fut_printf("[DEV] /dev/null, /dev/zero, /dev/full, /dev/urandom, /dev/random registered\n");
+    /* /dev/kmsg = (1,11) — kernel log ring buffer access (systemd-journald, dmesg)
+     * Reading returns log messages; writing injects messages into the log. */
+    static struct fut_file_ops kmsg_fops;
+    kmsg_fops.read = kmsg_read;
+    kmsg_fops.write = kmsg_write;
+    chrdev_register(1, 11, &kmsg_fops, "kmsg", NULL);
+    devfs_create_chr("/dev/kmsg", 1, 11);
+
+    fut_printf("[DEV] /dev/null, /dev/zero, /dev/full, /dev/urandom, /dev/random, /dev/kmsg registered\n");
 }

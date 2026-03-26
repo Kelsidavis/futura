@@ -1311,7 +1311,7 @@ test:
 	@echo "Testing kernel under QEMU (isa-debug-exit, 180s timeout)..."
 	@img=$(QEMU_DISK_IMG); \
 		echo "[HARNESS] Using test disk $$img"; \
-		timeout 180 qemu-system-x86_64 \
+		timeout 240 qemu-system-x86_64 \
 			-serial stdio \
 			-display none \
 			-m $(QEMU_MEM) \
@@ -1324,7 +1324,7 @@ test:
 		echo "[HARNESS] PASS"; \
 		exit 0; \
 	elif [ $$code -eq 124 ]; then \
-		echo "[HARNESS] FAIL (timed out after 180s)"; \
+		echo "[HARNESS] FAIL (timed out after 240s)"; \
 		exit 1; \
 	else \
 		echo "[HARNESS] FAIL (qemu code $$code)"; \

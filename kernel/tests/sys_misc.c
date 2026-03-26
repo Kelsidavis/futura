@@ -58562,6 +58562,25 @@ void fut_misc_test_thread(void *arg) {
     test_firewall_ioctls();  /* Tests 1831-1834 */
     test_procnet_files();    /* Tests 1835-1836 */
 
+    /* Test 1838: ip_masquerade_dev sysctl write/read */
+    fut_printf("[MISC-TEST] Test 1838: ip_masquerade_dev sysctl\n");
+    {
+        extern long sys_open(const char *, int, int);
+        extern long sys_read(int, void *, size_t);
+        extern long sys_write(int, const void *, size_t);
+        extern long sys_close(int);
+        /* Default should be "none" */
+        long fd = sys_open("/proc/sys/net/ipv4/ip_masquerade_dev", 0, 0);
+        if (fd >= 0) {
+            static char rb[32];
+            long n = sys_read((int)fd, rb, sizeof(rb) - 1);
+            sys_close((int)fd);
+            if (n > 0 && rb[0] == 'n' && rb[1] == 'o' && rb[2] == 'n' && rb[3] == 'e') {
+                fut_test_pass();
+            } else { fut_test_fail(1838); }
+        } else { fut_test_fail(1838); }
+    }
+
     /* Test 1837: SIOCSIFHWADDR changes MAC address */
     fut_printf("[MISC-TEST] Test 1837: SIOCSIFHWADDR\n");
     {

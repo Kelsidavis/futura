@@ -541,10 +541,14 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
                     fut_free(kbuf);
                     return -EFAULT;
                 }
-                /* Set TTL override from socket's IP_TTL option for this send */
+                /* Set TTL/TOS overrides from socket options for this send */
                 if (src_sock->ip_ttl > 0 && src_sock->ip_ttl != 64) {
                     extern uint8_t g_send_ttl_override;
                     g_send_ttl_override = src_sock->ip_ttl;
+                }
+                if (src_sock->ip_tos > 0) {
+                    extern uint8_t g_send_tos_override;
+                    g_send_tos_override = src_sock->ip_tos;
                 }
                 ssize_t ret = fut_socket_sendto_inet_dgram(
                     sin.sin_addr, sin.sin_port,
@@ -619,6 +623,10 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
                     if (dgsock->ip_ttl > 0 && dgsock->ip_ttl != 64) {
                         extern uint8_t g_send_ttl_override;
                         g_send_ttl_override = dgsock->ip_ttl;
+                    }
+                    if (dgsock->ip_tos > 0) {
+                        extern uint8_t g_send_tos_override;
+                        g_send_tos_override = dgsock->ip_tos;
                     }
                     ssize_t ret = fut_socket_sendto_inet_dgram(
                         peer_addr, peer_port,

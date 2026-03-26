@@ -51257,6 +51257,88 @@ static void test_openat_o_directory(void) {
 /* Tests 1729-1732: umask enforcement on file/directory creation (POSIX) */
 /* Tests 1761-1764: SIGHUP delivery when session leader exits */
 /* Tests 1765-1768: daemon lifecycle integration (setsid+chdir+devnull) */
+/* Tests 1797-1800: network interface and routing table (router OS foundation) */
+#include <futura/netif.h>
+__attribute__((noinline)) static void test_netif_routing(void) {
+    /* Test 1797: loopback interface exists after netif_init */
+    fut_printf("[MISC-TEST] Test 1797: lo interface exists\n");
+    {
+        struct net_iface *lo = netif_by_name("lo");
+        if (lo && lo->active && (lo->flags & 0x0008 /* IFF_LOOPBACK */)) {
+            fut_printf("[MISC-TEST] ✓ Test 1797: lo idx=%d ip=0x%x\n",
+                       lo->index, lo->ip_addr);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1797: lo not found\n");
+            fut_test_fail(1797);
+        }
+    }
+
+    /* Test 1798: route_lookup(127.0.0.1) finds loopback route */
+    fut_printf("[MISC-TEST] Test 1798: route_lookup(127.0.0.1) → lo\n");
+    {
+        const struct net_route *rt = route_lookup(0x7F000001);
+        if (rt && rt->active) {
+            struct net_iface *iface = netif_by_index(rt->iface_idx);
+            if (iface && iface->name[0] == 'l' && iface->name[1] == 'o') {
+                fut_printf("[MISC-TEST] ✓ Test 1798: 127.0.0.1 → lo (mask=0x%x)\n",
+                           rt->netmask);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1798: wrong iface\n");
+                fut_test_fail(1798);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1798: no route\n");
+            fut_test_fail(1798);
+        }
+    }
+
+    /* Test 1799: register eth0 interface + add default route */
+    fut_printf("[MISC-TEST] Test 1799: register eth0 + default route\n");
+    {
+        unsigned char mac[6] = {0x52, 0x54, 0x00, 0xAA, 0xBB, 0xCC};
+        int idx = netif_register("eth0", mac, 1500, NULL);
+        if (idx > 0) {
+            netif_set_addr(idx, 0x0A000002 /* 10.0.0.2 */,
+                          0xFFFFFF00 /* 255.255.255.0 */,
+                          0x0A0000FF /* 10.0.0.255 */);
+            netif_set_flags(idx, 0x0001 | 0x0040 /* IFF_UP|IFF_RUNNING */);
+            /* Add default route via gateway */
+            route_add(0, 0, 0x0A000001 /* 10.0.0.1 gw */, idx, 100);
+            /* Add connected route for 10.0.0.0/24 */
+            route_add(0x0A000000, 0xFFFFFF00, 0, idx, 0);
+
+            /* Verify route_lookup for external IP goes via eth0 */
+            const struct net_route *rt = route_lookup(0x08080808 /* 8.8.8.8 */);
+            if (rt && rt->gateway == 0x0A000001) {
+                fut_printf("[MISC-TEST] ✓ Test 1799: 8.8.8.8 → gw 10.0.0.1\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1799: no default route\n");
+                fut_test_fail(1799);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1799: register failed %d\n", idx);
+            fut_test_fail(1799);
+        }
+    }
+
+    /* Test 1800: longest prefix match — more specific route wins */
+    fut_printf("[MISC-TEST] Test 1800: longest prefix match\n");
+    {
+        /* 10.0.0.0/24 is more specific than default route 0.0.0.0/0 */
+        const struct net_route *rt = route_lookup(0x0A000005 /* 10.0.0.5 */);
+        if (rt && rt->dest == 0x0A000000 && rt->gateway == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1800: 10.0.0.5 → directly connected\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1800: wrong route\n");
+            fut_test_fail(1800);
+        }
+    }
+}
+
 /* Tests 1793-1796: O_CLOEXEC on PTY slave and /dev/tty dynamic paths */
 __attribute__((noinline)) static void test_pty_slave_cloexec(void) {
     extern long sys_open(const char *, int, int);
@@ -57489,6 +57571,7 @@ void fut_misc_test_thread(void *arg) {
     test_timer_abstime();          /* Tests 1721-1724 */
     test_execve_prevalidation();   /* Tests 1725-1728 */
     test_fd_lifecycle_edges();     /* Tests 1737-1740 */
+    test_netif_routing();            /* Tests 1797-1800 */
     test_pty_slave_cloexec();        /* Tests 1793-1796 */
     test_chrdev_cloexec();           /* Tests 1789-1792 */
     test_pty_fcntl_flags();          /* Tests 1785-1788 */

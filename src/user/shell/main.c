@@ -483,7 +483,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     /* List of builtin commands */
     const char *builtins[] = {
         "bg", "cd", "chmod", "clear", "date", "dd", "df", "dmesg", "echo", "edit", "hexdump", "lsof", "nc", "poweroff", "reboot", "seq", "sleep", "time", "wget", "exit", "export", "fg", "free",
-        "help", "hostname", "id", "ifconfig", "iptables", "jobs", "kill", "ls", "mount",
+        "help", "hostname", "id", "ifconfig", "iptables", "jobs", "kill", "ls", "mount", "netstat",
         ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "history", "ip", "ln", "mktemp", "more", "nproc", "nslookup", "ping", "printf", "ps", "pwd", "read", "readlink", "set", "sha256sum", "source", "ss", "stat", "sync", "sysinfo", "test", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "wait", "which", "whoami", "xargs", "yes", NULL
     };
 
@@ -6065,6 +6065,49 @@ static int execute_command(int argc, char *argv[]) {
             ssize_t n = sys_read(fd, buf, sizeof(buf) - 1);
             sys_close(fd);
             if (n > 0) { buf[n] = '\0'; write_str(1, buf); }
+        }
+        return 0;
+    } else if (strcmp_simple(argv[0], "netstat") == 0) {
+        /* netstat — show network connections, routing table, interface stats */
+        int show_route = 0, show_ifaces = 0, show_listen = 0, show_all = 0;
+        for (int i = 1; i < argc; i++) {
+            if (argv[i][0] == '-') {
+                for (int j = 1; argv[i][j]; j++) {
+                    if (argv[i][j] == 'r') show_route = 1;
+                    if (argv[i][j] == 'i') show_ifaces = 1;
+                    if (argv[i][j] == 'l') show_listen = 1;
+                    if (argv[i][j] == 'a') show_all = 1;
+                }
+            }
+        }
+        if (show_route) {
+            write_str(1, "Kernel IP routing table\n");
+            int fd = sys_open("/proc/net/route", O_RDONLY, 0);
+            if (fd >= 0) { char buf[2048]; ssize_t n = sys_read(fd, buf, sizeof(buf)-1);
+                sys_close(fd); if (n > 0) { buf[n] = '\0'; write_str(1, buf); } }
+        } else if (show_ifaces) {
+            write_str(1, "Kernel Interface table\n");
+            int fd = sys_open("/proc/net/dev", O_RDONLY, 0);
+            if (fd >= 0) { char buf[2048]; ssize_t n = sys_read(fd, buf, sizeof(buf)-1);
+                sys_close(fd); if (n > 0) { buf[n] = '\0'; write_str(1, buf); } }
+        } else {
+            /* Show connections */
+            write_str(1, "Active Internet connections");
+            if (show_all) write_str(1, " (servers and established)");
+            else if (show_listen) write_str(1, " (only servers)");
+            write_str(1, "\n");
+            write_str(1, "Proto Recv-Q Send-Q Local Address           Foreign Address         State\n");
+            int fd = sys_open("/proc/net/tcp", O_RDONLY, 0);
+            if (fd >= 0) { char buf[2048]; ssize_t n = sys_read(fd, buf, sizeof(buf)-1);
+                sys_close(fd); if (n > 0) { buf[n] = '\0'; write_str(1, buf); } }
+            fd = sys_open("/proc/net/udp", O_RDONLY, 0);
+            if (fd >= 0) { char buf[2048]; ssize_t n = sys_read(fd, buf, sizeof(buf)-1);
+                sys_close(fd); if (n > 0) { buf[n] = '\0'; write_str(1, buf); } }
+            /* Show Unix sockets */
+            write_str(1, "\nActive UNIX domain sockets\n");
+            fd = sys_open("/proc/net/unix", O_RDONLY, 0);
+            if (fd >= 0) { char buf[2048]; ssize_t n = sys_read(fd, buf, sizeof(buf)-1);
+                sys_close(fd); if (n > 0) { buf[n] = '\0'; write_str(1, buf); } }
         }
         return 0;
     } else if (strcmp_simple(argv[0], "iptables") == 0) {

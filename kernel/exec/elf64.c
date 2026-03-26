@@ -1981,6 +1981,8 @@ static uint64_t g_exec_entry = 0;
 static uint64_t g_exec_phdr = 0;
 static uint16_t g_exec_phent = 0;
 static uint16_t g_exec_phnum = 0;
+static uint64_t g_exec_interp_base = 0;
+static uint64_t g_exec_interp_entry = 0;
 
 /* FD_CLOEXEC - close-on-exec flag for file descriptors. */
 #ifndef FD_CLOEXEC
@@ -2219,6 +2221,67 @@ static int map_segment(fut_mm_t *mm, int fd, const elf64_phdr_t *phdr) {
     return 0;
 }
 
+/* Default base address for loading the ELF interpreter on ARM64 */
+#define INTERP_LOAD_BASE  0x7f0000000ULL
+
+/* Load ELF interpreter — ARM64 version (mirrors x86_64 implementation) */
+static int load_elf_interpreter(fut_mm_t *mm, const char *interp_path) {
+    extern int fut_vfs_open(const char *, int, int);
+    extern long fut_vfs_read(int, void *, size_t);
+    extern long fut_vfs_lseek(int, long, int);
+    extern int fut_vfs_close(int);
+
+    g_exec_interp_base = 0;
+    g_exec_interp_entry = 0;
+
+    int ifd = fut_vfs_open(interp_path, 0, 0);
+    if (ifd < 0) return 0;  /* Not fatal */
+
+    elf64_ehdr_t ihdr;
+    long nr = fut_vfs_read(ifd, &ihdr, sizeof(ihdr));
+    if (nr < (long)sizeof(ihdr)) { fut_vfs_close(ifd); return 0; }
+
+    uint32_t magic = 0;
+    __builtin_memcpy(&magic, ihdr.e_ident, 4);
+    if (magic != 0x464C457FU || ihdr.e_ident[4] != 2 /* ELFCLASS64 */) {
+        fut_vfs_close(ifd); return 0;
+    }
+    if (ihdr.e_phnum == 0 || ihdr.e_phnum > 64) { fut_vfs_close(ifd); return 0; }
+
+    size_t phsz = (size_t)ihdr.e_phnum * ihdr.e_phentsize;
+    elf64_phdr_t *iphdrs = fut_malloc(phsz);
+    if (!iphdrs) { fut_vfs_close(ifd); return -ENOMEM; }
+
+    fut_vfs_lseek(ifd, (long)ihdr.e_phoff, 0);
+    nr = fut_vfs_read(ifd, iphdrs, phsz);
+    if (nr < (long)phsz) { fut_free(iphdrs); fut_vfs_close(ifd); return 0; }
+
+    uint64_t interp_bias = INTERP_LOAD_BASE;
+    uint64_t lowest_vaddr = UINT64_MAX;
+    for (uint16_t i = 0; i < ihdr.e_phnum; i++)
+        if (iphdrs[i].p_type == PT_LOAD && iphdrs[i].p_vaddr < lowest_vaddr)
+            lowest_vaddr = iphdrs[i].p_vaddr;
+
+    if (lowest_vaddr != UINT64_MAX && ihdr.e_type == 3 /* ET_DYN */)
+        interp_bias = INTERP_LOAD_BASE - (lowest_vaddr & ~(PAGE_SIZE - 1ULL));
+    else if (ihdr.e_type == 2 /* ET_EXEC */)
+        interp_bias = 0;
+
+    for (uint16_t i = 0; i < ihdr.e_phnum; i++) {
+        if (iphdrs[i].p_type != PT_LOAD) continue;
+        iphdrs[i].p_vaddr += interp_bias;
+        int rc = map_segment(mm, ifd, &iphdrs[i]);
+        if (rc != 0) { fut_free(iphdrs); fut_vfs_close(ifd); return rc; }
+    }
+
+    g_exec_interp_base = interp_bias + (lowest_vaddr != UINT64_MAX ? lowest_vaddr : 0);
+    g_exec_interp_entry = ihdr.e_entry + interp_bias;
+
+    fut_free(iphdrs);
+    fut_vfs_close(ifd);
+    return 0;
+}
+
 /* Stage stack pages for user mode */
 static int stage_stack_pages(fut_mm_t *mm, uint64_t *out_stack_top) {
     if (!out_stack_top) return -EINVAL;
@@ -2420,7 +2483,7 @@ static int build_user_stack(fut_mm_t *mm,
         { AT_EGID,   0 },
         { AT_SECURE, 0 },
         { AT_HWCAP,  arm64_hwcap },
-        { 7 /* AT_BASE */,  0 },  /* interpreter base (0 = static) */
+        { 7 /* AT_BASE */,  g_exec_interp_base },  /* interpreter load address */
         { 8 /* AT_FLAGS */, 0 },
         { AT_NULL,   0 },  /* Terminator */
     };
@@ -3039,7 +3102,11 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     (void)stack_exec; /* ARM64 stack setup is in a different function */
     (void)relro_start; (void)relro_end; /* RELRO applied after segment loading */
 
-    /* PT_INTERP: parse dynamic linker path (log only, not yet loaded) */
+    /* Reset interpreter state */
+    g_exec_interp_base = 0;
+    g_exec_interp_entry = 0;
+
+    /* PT_INTERP: dynamic linker path — load interpreter if present */
     for (uint16_t i = 0; i < ehdr.e_phnum; i++) {
         if (phdrs[i].p_type == 3 /* PT_INTERP */ && phdrs[i].p_filesz > 0 &&
             phdrs[i].p_filesz < 256) {
@@ -3049,10 +3116,16 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
             fut_vfs_lseek(fd, (long)phdrs[i].p_offset, 0);
             long nr = fut_vfs_read(fd, interp, (size_t)phdrs[i].p_filesz);
             if (nr > 0) interp[nr < 255 ? nr : 255] = '\0';
+            /* Strip trailing whitespace */
+            for (int k = (int)nr - 1; k >= 0; k--) {
+                if (interp[k] == '\n' || interp[k] == '\r' ||
+                    interp[k] == ' ' || interp[k] == '\0')
+                    interp[k] = '\0';
+                else break;
+            }
             fut_vfs_lseek(fd, saved, 0);
-#ifdef DEBUG_ELF
-            ELF_LOG("[EXEC-ELF] PT_INTERP: '%s'\n", interp);
-#endif
+            if (interp[0])
+                load_elf_interpreter(mm, interp);
             break;
         }
     }
@@ -3170,7 +3243,12 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
         return -ENOMEM;
     }
 
-    entry->entry = ehdr.e_entry;
+    /* If interpreter was loaded, start at its entry point */
+    if (g_exec_interp_entry != 0) {
+        entry->entry = g_exec_interp_entry;
+    } else {
+        entry->entry = ehdr.e_entry + load_bias;
+    }
     entry->stack = user_sp;
     entry->argc = argc;
     entry->argv_ptr = user_sp;

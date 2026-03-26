@@ -1503,11 +1503,50 @@ static size_t gen_cpuinfo(char *buf, size_t cap) {
     struct pbuf b = { buf, 0, cap };
     pb_str(&b, "processor\t: 0\n");
 #ifdef __x86_64__
-    pb_str(&b, "vendor_id\t: GenuineIntel\n");
-    pb_str(&b, "cpu family\t: 6\n");
-    pb_str(&b, "model\t\t: 142\n");
-    pb_str(&b, "model name\t: Futura Virtual Processor (x86_64)\n");
-    pb_str(&b, "stepping\t: 10\n");
+    {
+        /* Read vendor ID and model from CPUID */
+        uint32_t eax, ebx, ecx, edx;
+        __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(0));
+        char vendor[13];
+        __builtin_memcpy(vendor + 0, &ebx, 4);
+        __builtin_memcpy(vendor + 4, &edx, 4);
+        __builtin_memcpy(vendor + 8, &ecx, 4);
+        vendor[12] = '\0';
+        pb_str(&b, "vendor_id\t: "); pb_str(&b, vendor); pb_char(&b, '\n');
+
+        /* CPU family, model, stepping from CPUID leaf 1 */
+        __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(1));
+        uint32_t family = (eax >> 8) & 0xF;
+        uint32_t model = (eax >> 4) & 0xF;
+        uint32_t stepping = eax & 0xF;
+        uint32_t ext_model = (eax >> 16) & 0xF;
+        uint32_t ext_family = (eax >> 20) & 0xFF;
+        if (family == 0xF) family += ext_family;
+        if (family == 6 || family == 0xF) model |= (ext_model << 4);
+        pb_str(&b, "cpu family\t: "); pb_u64(&b, family); pb_char(&b, '\n');
+        pb_str(&b, "model\t\t: "); pb_u64(&b, model); pb_char(&b, '\n');
+
+        /* Try to read brand string from CPUID leaf 0x80000002-0x80000004 */
+        __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(0x80000000));
+        if (eax >= 0x80000004) {
+            char brand[49] = {0};
+            for (uint32_t leaf = 0x80000002; leaf <= 0x80000004; leaf++) {
+                __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(leaf));
+                int off = (int)(leaf - 0x80000002) * 16;
+                __builtin_memcpy(brand + off + 0, &eax, 4);
+                __builtin_memcpy(brand + off + 4, &ebx, 4);
+                __builtin_memcpy(brand + off + 8, &ecx, 4);
+                __builtin_memcpy(brand + off + 12, &edx, 4);
+            }
+            brand[48] = '\0';
+            /* Skip leading spaces */
+            char *bp = brand; while (*bp == ' ') bp++;
+            pb_str(&b, "model name\t: "); pb_str(&b, bp); pb_char(&b, '\n');
+        } else {
+            pb_str(&b, "model name\t: Futura Virtual Processor (x86_64)\n");
+        }
+        pb_str(&b, "stepping\t: "); pb_u64(&b, stepping); pb_char(&b, '\n');
+    }
     pb_str(&b, "microcode\t: 0x0\n");
     pb_str(&b, "cpu MHz\t\t: 2400.000\n");
     pb_str(&b, "cache size\t: 4096 KB\n");

@@ -211,6 +211,14 @@ long sys_unshare(unsigned long flags) {
         task->uts_ns = new_utsns;
     }
 
-    /* Remaining flags (IPC/NET/USER/CGROUP, non-namespace flags) accepted as no-ops */
+    /* CLONE_NEWNET: per-container network stack */
+    if (flags & CLONE_NEWNET) {
+        extern struct net_namespace *netns_create(struct net_namespace *);
+        struct net_namespace *new_netns = netns_create(task->net_ns);
+        if (!new_netns) return -ENOMEM;
+        task->net_ns = new_netns;
+    }
+
+    /* Remaining flags (IPC/USER/CGROUP) accepted as no-ops */
     return 0;
 }

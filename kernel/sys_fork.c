@@ -963,6 +963,7 @@ long sys_fork(void) {
     child_task->ns_pid = child_task->pid;
     child_task->mnt_ns = parent_task->mnt_ns;
     child_task->uts_ns = parent_task->uts_ns;
+    child_task->net_ns = parent_task->net_ns;
 
     /* Inherit parent's credentials (POSIX: child inherits all UID/GID values) */
     child_task->uid  = parent_task->uid;

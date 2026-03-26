@@ -254,8 +254,15 @@ struct fut_task {
     uint64_t ns_pid;                   // PID within the namespace (== pid for init ns)
     struct mount_namespace *mnt_ns;    // Mount namespace (NULL = init namespace)
     struct uts_namespace *uts_ns;      // UTS namespace (hostname/domainname)
+    struct net_namespace *net_ns;      // Network namespace
 
     fut_task_t *next;                  // Next task in system list
+};
+
+/* Network namespace structure */
+struct net_namespace {
+    uint64_t id;
+    int refcount;
 };
 
 /* UTS namespace structure */

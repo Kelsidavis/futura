@@ -484,8 +484,8 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     /* List of builtin commands */
     const char *builtins[] = {
         "arp", "bg", "cd", "chmod", "clear", "date", "dd", "df", "dhclient", "dmesg", "echo", "edit", "hexdump", "lsof", "nc", "poweroff", "reboot", "seq", "sleep", "time", "traceroute", "wget", "exit", "export", "fg", "free",
-        "help", "hostname", "httpd", "id", "ifconfig", "ipcs", "iptables", "jobs", "kill", "ls", "lsblk", "lspci", "mount", "netstat",
-        ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "history", "ip", "ln", "mktemp", "more", "nproc", "nslookup", "ping", "printf", "ps", "pwd", "read", "readlink", "set", "sha256sum", "source", "ss", "stat", "sync", "sysctl", "sysinfo", "test", "top", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "wait", "watch", "which", "whoami", "xargs", "yes", NULL
+        "help", "hostname", "httpd", "id", "ifconfig", "iostat", "ipcs", "iptables", "jobs", "kill", "ls", "lsblk", "lspci", "mount", "netstat",
+        ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "history", "ip", "ln", "mktemp", "more", "nproc", "nslookup", "ping", "printf", "ps", "pwd", "read", "readlink", "set", "sha256sum", "shutdown", "source", "ss", "stat", "sync", "sysctl", "sysinfo", "test", "top", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "vmstat", "wait", "watch", "which", "whoami", "xargs", "yes", NULL
     };
 
     /* External commands we might have */
@@ -6713,6 +6713,65 @@ static int execute_command(int argc, char *argv[]) {
             write_str(2, "lspci: cannot read /proc/pci\n");
         }
         return 0;
+    } else if (strcmp_simple(argv[0], "iostat") == 0) {
+        /* iostat — I/O statistics from /proc/diskstats */
+        write_str(1, "Device             tps    kB_read/s    kB_wrtn/s    kB_read    kB_wrtn\n");
+        int fd = sys_open("/proc/diskstats", O_RDONLY, 0);
+        if (fd >= 0) {
+            char buf[2048]; ssize_t n = sys_read(fd, buf, sizeof(buf)-1);
+            sys_close(fd);
+            if (n > 0) { buf[n] = '\0'; write_str(1, buf); }
+        }
+        return 0;
+    } else if (strcmp_simple(argv[0], "vmstat") == 0) {
+        /* vmstat — virtual memory statistics from /proc/vmstat + /proc/meminfo */
+        write_str(1, "procs -----------memory---------- ---swap-- -----io---- -system--\n");
+        write_str(1, " r  b   swpd   free   buff  cache   si   so    bi    bo   in   cs\n");
+        /* Read meminfo for free memory */
+        int fd = sys_open("/proc/meminfo", O_RDONLY, 0);
+        if (fd >= 0) {
+            char buf[2048]; ssize_t n = sys_read(fd, buf, sizeof(buf)-1);
+            sys_close(fd);
+            if (n > 0) { buf[n] = '\0';
+                /* Parse MemFree line */
+                long free_kb = 0;
+                for (int i = 0; i < n - 8; i++) {
+                    if (buf[i]=='M' && buf[i+1]=='e' && buf[i+2]=='m' &&
+                        buf[i+3]=='F' && buf[i+4]=='r' && buf[i+5]=='e' && buf[i+6]=='e') {
+                        int j = i+7; while (j < n && (buf[j] < '0' || buf[j] > '9')) j++;
+                        while (j < n && buf[j] >= '0' && buf[j] <= '9')
+                            { free_kb = free_kb * 10 + (buf[j] - '0'); j++; }
+                        break;
+                    }
+                }
+                char num[16];
+                write_str(1, " 1  0      0 ");
+                int_to_str((int)(free_kb), num, 16);
+                int pad = 6 - (int)strlen_simple(num); while (pad-- > 0) write_char(1, ' ');
+                write_str(1, num);
+                write_str(1, "      0      0    0    0     0     0    0    0\n");
+            }
+        }
+        return 0;
+    } else if (strcmp_simple(argv[0], "shutdown") == 0) {
+        /* shutdown - shut down the system */
+        int do_halt = 0, do_reboot = 0;
+        for (int i = 1; i < argc; i++) {
+            if (strcmp_simple(argv[i], "-h") == 0 || strcmp_simple(argv[i], "--halt") == 0 ||
+                strcmp_simple(argv[i], "now") == 0)
+                do_halt = 1;
+            if (strcmp_simple(argv[i], "-r") == 0 || strcmp_simple(argv[i], "--reboot") == 0)
+                do_reboot = 1;
+        }
+        if (!do_halt && !do_reboot) do_halt = 1; /* default: halt */
+        write_str(1, "System going down...\n");
+        sys_call0(162 /* sync */);
+        if (do_reboot)
+            sys_call4(169, 0xfee1dead, 672274793, 0x01234567, 0);
+        else
+            sys_call4(169, 0xfee1dead, 672274793, 0x4321FEDC, 0);
+        write_str(2, "shutdown failed\n");
+        return 1;
     } else if (strcmp_simple(argv[0], "ipcs") == 0) {
         /* ipcs — show System V IPC status */
         write_str(1, "\n------ Shared Memory Segments --------\n");
@@ -8451,7 +8510,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   105 built-in commands — type 'help'    |\n");
+    write_str(1, "|   108 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");

@@ -1292,7 +1292,7 @@ void fut_kernel_main(void) {
                   "\n"
                   "  Welcome to Futura OS 0.5.0\n"
                   "\n"
-                  "  * 105 built-in commands — type 'help'\n"
+                  "  * 108 built-in commands — type 'help'\n"
                   "  * Networking: ip, ifconfig, iptables, ping, traceroute,\n"
                   "    netstat, ss, arp, wget, nc, nslookup, httpd\n"
                   "  * Router: ip forward on, ip route add, iptables -t nat\n"

@@ -51442,6 +51442,288 @@ __attribute__((noinline)) static void test_netif_routing(void) {
     }
 }
 
+/* Tests 1809-1812: ARP cache in /proc/net/arp and ICMP error generation */
+__attribute__((noinline)) static void test_arp_icmp_router(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_close(int);
+    extern long sys_read(int, void *, size_t);
+    extern int arp_add_static(uint32_t ip, const uint8_t mac[6]);
+    extern int ip_forward(const void *, size_t, struct net_iface *);
+
+    /* Test 1809: arp_add_static populates /proc/net/arp */
+    fut_printf("[MISC-TEST] Test 1809: /proc/net/arp has real entries\n");
+    {
+        uint8_t mac[6] = {0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x01};
+        arp_add_static(0xC0A80101 /* 192.168.1.1 */, mac);
+    }
+    {
+        long fd = sys_open("/proc/net/arp", 0, 0);
+        if (fd >= 0) {
+            static char abuf[1024];
+            long n = sys_read((int)fd, abuf, sizeof(abuf) - 1);
+            sys_close((int)fd);
+            if (n > 0) {
+                abuf[n] = '\0';
+                /* Check that the header exists and at least one entry (the static one we added) */
+                bool has_header = false, has_entry = false;
+                for (int i = 0; i < n - 2; i++) {
+                    if (abuf[i] == 'I' && abuf[i+1] == 'P') has_header = true;
+                    /* Look for "de:ad:be:ef:00:01" from our static entry */
+                    if (abuf[i] == 'd' && abuf[i+1] == 'e' && abuf[i+2] == ':') has_entry = true;
+                }
+                if (has_header && has_entry) {
+                    fut_printf("[MISC-TEST] ✓ Test 1809: /proc/net/arp has ARP entry\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1809: header=%d entry=%d\n", has_header, has_entry);
+                    fut_test_fail(1809);
+                }
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1809: read=%ld\n", n);
+                fut_test_fail(1809);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1809: open failed\n");
+            fut_test_fail(1809);
+        }
+    }
+
+    /* Test 1810: ip_forward with TTL=1 returns -ETIMEDOUT */
+    fut_printf("[MISC-TEST] Test 1810: ip_forward TTL=1 → ETIMEDOUT\n");
+    {
+        extern bool g_ip_forward_enabled;
+        bool old_fwd = g_ip_forward_enabled;
+        g_ip_forward_enabled = true;
+
+        /* Build minimal IP packet: TTL=1, dest=8.8.8.8 */
+        static uint8_t ip_pkt[40];
+        memset(ip_pkt, 0, sizeof(ip_pkt));
+        ip_pkt[0] = 0x45;  /* IPv4, IHL=5 */
+        ip_pkt[2] = 0; ip_pkt[3] = 40; /* total length = 40 */
+        ip_pkt[8] = 1;   /* TTL = 1 */
+        ip_pkt[9] = 6;   /* Protocol = TCP */
+        /* src = 10.0.0.5, dest = 8.8.8.8 */
+        ip_pkt[12] = 10; ip_pkt[13] = 0; ip_pkt[14] = 0; ip_pkt[15] = 5;
+        ip_pkt[16] = 8;  ip_pkt[17] = 8; ip_pkt[18] = 8; ip_pkt[19] = 8;
+
+        int rc = ip_forward(ip_pkt, 40, NULL);
+        g_ip_forward_enabled = old_fwd;
+
+        if (rc == -110 /* ETIMEDOUT */) {
+            fut_printf("[MISC-TEST] ✓ Test 1810: TTL=1 → ETIMEDOUT\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1810: rc=%d expected -110\n", rc);
+            fut_test_fail(1810);
+        }
+    }
+
+    /* Test 1811: ip_forward with no route returns -ENETUNREACH */
+    fut_printf("[MISC-TEST] Test 1811: ip_forward no route → ENETUNREACH\n");
+    {
+        extern bool g_ip_forward_enabled;
+        bool old_fwd = g_ip_forward_enabled;
+        g_ip_forward_enabled = true;
+
+        /* Delete default route first so 203.0.113.1 has no route */
+        route_del(0, 0);
+
+        static uint8_t ip_pkt[40];
+        memset(ip_pkt, 0, sizeof(ip_pkt));
+        ip_pkt[0] = 0x45;
+        ip_pkt[2] = 0; ip_pkt[3] = 40;
+        ip_pkt[8] = 64;  /* TTL = 64 */
+        ip_pkt[9] = 17;  /* Protocol = UDP */
+        ip_pkt[12] = 10; ip_pkt[13] = 0; ip_pkt[14] = 0; ip_pkt[15] = 5;
+        /* dest = 203.0.113.1 — TEST-NET-3 (should have no route) */
+        ip_pkt[16] = 203; ip_pkt[17] = 0; ip_pkt[18] = 113; ip_pkt[19] = 1;
+
+        int rc = ip_forward(ip_pkt, 40, NULL);
+        /* Re-add default route for other tests */
+        struct net_iface *eth = netif_by_name("eth0");
+        if (eth) route_add(0, 0, 0x0A000001, eth->index, 100);
+        g_ip_forward_enabled = old_fwd;
+
+        if (rc == -101 /* ENETUNREACH */) {
+            fut_printf("[MISC-TEST] ✓ Test 1811: no route → ENETUNREACH\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1811: rc=%d expected -101\n", rc);
+            fut_test_fail(1811);
+        }
+    }
+
+    /* Test 1812: ip_forward disabled returns -EPERM */
+    fut_printf("[MISC-TEST] Test 1812: ip_forward disabled → EPERM\n");
+    {
+        extern bool g_ip_forward_enabled;
+        bool old_fwd = g_ip_forward_enabled;
+        g_ip_forward_enabled = false;
+
+        static uint8_t ip_pkt[40];
+        memset(ip_pkt, 0, sizeof(ip_pkt));
+        ip_pkt[0] = 0x45;
+        ip_pkt[2] = 0; ip_pkt[3] = 40;
+        ip_pkt[8] = 64;
+        ip_pkt[12] = 10; ip_pkt[13] = 0; ip_pkt[14] = 0; ip_pkt[15] = 5;
+        ip_pkt[16] = 8;  ip_pkt[17] = 8; ip_pkt[18] = 8; ip_pkt[19] = 8;
+
+        int rc = ip_forward(ip_pkt, 40, NULL);
+        g_ip_forward_enabled = old_fwd;
+
+        if (rc == -1 /* EPERM */) {
+            fut_printf("[MISC-TEST] ✓ Test 1812: disabled → EPERM\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1812: rc=%d expected -1\n", rc);
+            fut_test_fail(1812);
+        }
+    }
+}
+
+/* Tests 1805-1808: ioctl-based interface/route configuration (SIOCSIFADDR etc.) */
+__attribute__((noinline)) static void test_netif_ioctl_config(void) {
+    extern long sys_ioctl(int fd, unsigned long request, void *argp);
+    extern long sys_open(const char *, int, int);
+    extern long sys_close(int);
+
+    /* We need a socket fd for network ioctls. Use any fd for kernel-internal dispatch. */
+    /* Futura routes SIOC* ioctls to built-in handlers regardless of fd type, */
+    /* so we can use /dev/null as placeholder fd for kernel selftests. */
+    long sfd = sys_open("/dev/null", 0x0002, 0);
+    if (sfd < 0) {
+        fut_printf("[MISC-TEST] ✗ Tests 1805-1808: can't open /dev/null\n");
+        fut_test_fail(1805); fut_test_fail(1806); fut_test_fail(1807); fut_test_fail(1808);
+        return;
+    }
+
+    /* ifreq struct layout: char ifr_name[16]; union { sockaddr(16), short flags, int val, pad[24] } */
+    /* sockaddr layout: uint16_t sa_family; char sa_data[14]; IP at sa_data[2..5] (big-endian) */
+
+    /* Test 1805: SIOCSIFADDR — set eth0 IP via ioctl */
+    fut_printf("[MISC-TEST] Test 1805: SIOCSIFADDR on eth0\n");
+    {
+        /* eth0 was registered by test_netif_routing (index >0) */
+        static char ifr[40];
+        __builtin_memset(ifr, 0, 40);
+        __builtin_memcpy(ifr, "eth0", 4); /* ifr_name */
+        /* sockaddr at offset 16: sa_family=AF_INET(2), sa_data[2..5]=192.168.1.100 */
+        ifr[16] = 2; ifr[17] = 0; /* sa_family = AF_INET */
+        ifr[20] = (char)192; ifr[21] = (char)168; ifr[22] = 1; ifr[23] = 100;
+        long rc = sys_ioctl((int)sfd, 0x8916 /* SIOCSIFADDR */, ifr);
+        if (rc == 0) {
+            struct net_iface *eth = netif_by_name("eth0");
+            /* 192.168.1.100 = 0xC0A80164 */
+            if (eth && eth->ip_addr == 0xC0A80164) {
+                fut_printf("[MISC-TEST] ✓ Test 1805: eth0 ip=0x%x\n", eth->ip_addr);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1805: ip=0x%x expected 0xC0A80164\n",
+                           eth ? eth->ip_addr : 0);
+                fut_test_fail(1805);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1805: SIOCSIFADDR ret=%ld\n", rc);
+            fut_test_fail(1805);
+        }
+    }
+
+    /* Test 1806: SIOCSIFNETMASK — set eth0 netmask via ioctl */
+    fut_printf("[MISC-TEST] Test 1806: SIOCSIFNETMASK on eth0\n");
+    {
+        static char ifr[40];
+        __builtin_memset(ifr, 0, 40);
+        __builtin_memcpy(ifr, "eth0", 4);
+        ifr[16] = 2; ifr[17] = 0; /* AF_INET */
+        ifr[20] = (char)255; ifr[21] = (char)255; ifr[22] = (char)255; ifr[23] = 0;
+        long rc = sys_ioctl((int)sfd, 0x891C /* SIOCSIFNETMASK */, ifr);
+        if (rc == 0) {
+            struct net_iface *eth = netif_by_name("eth0");
+            /* 255.255.255.0 = 0xFFFFFF00 */
+            if (eth && eth->netmask == 0xFFFFFF00) {
+                fut_printf("[MISC-TEST] ✓ Test 1806: eth0 netmask=0x%x\n", eth->netmask);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1806: mask=0x%x\n", eth ? eth->netmask : 0);
+                fut_test_fail(1806);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1806: SIOCSIFNETMASK ret=%ld\n", rc);
+            fut_test_fail(1806);
+        }
+    }
+
+    /* Test 1807: SIOCADDRT — add route via ioctl */
+    fut_printf("[MISC-TEST] Test 1807: SIOCADDRT via ioctl\n");
+    {
+        /* rtentry layout: 3x sockaddr (rt_dst, rt_gateway, rt_genmask) + short flags + short pad + char dev[16] */
+        /* sockaddr = 16 bytes each → 48 bytes + 4 bytes (flags+pad) + 16 bytes (dev) = 68 bytes */
+        static char rt[68];
+        __builtin_memset(rt, 0, 68);
+        /* rt_dst: 172.16.0.0 */
+        rt[0] = 2; rt[1] = 0; /* AF_INET */
+        rt[4] = (char)172; rt[5] = 16; rt[6] = 0; rt[7] = 0;
+        /* rt_gateway: 192.168.1.1 */
+        rt[16] = 2; rt[17] = 0;
+        rt[20] = (char)192; rt[21] = (char)168; rt[22] = 1; rt[23] = 1;
+        /* rt_genmask: 255.255.0.0 */
+        rt[32] = 2; rt[33] = 0;
+        rt[36] = (char)255; rt[37] = (char)255; rt[38] = 0; rt[39] = 0;
+        /* rt_flags + rt_pad (4 bytes at offset 48) - leave 0 */
+        /* rt_dev: "eth0" at offset 52 */
+        __builtin_memcpy(rt + 52, "eth0", 4);
+
+        long rc = sys_ioctl((int)sfd, 0x890B /* SIOCADDRT */, rt);
+        if (rc == 0) {
+            /* Verify: route_lookup(172.16.5.5) should find this route */
+            const struct net_route *rte = route_lookup(0xAC100505 /* 172.16.5.5 */);
+            if (rte && rte->dest == 0xAC100000 && rte->gateway == 0xC0A80101) {
+                fut_printf("[MISC-TEST] ✓ Test 1807: 172.16.0.0/16 → gw 192.168.1.1\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1807: route not found\n");
+                fut_test_fail(1807);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1807: SIOCADDRT ret=%ld\n", rc);
+            fut_test_fail(1807);
+        }
+    }
+
+    /* Test 1808: SIOCDELRT — delete route via ioctl */
+    fut_printf("[MISC-TEST] Test 1808: SIOCDELRT via ioctl\n");
+    {
+        static char rt[68];
+        __builtin_memset(rt, 0, 68);
+        /* rt_dst: 172.16.0.0 */
+        rt[0] = 2; rt[1] = 0;
+        rt[4] = (char)172; rt[5] = 16; rt[6] = 0; rt[7] = 0;
+        /* rt_gateway: 0.0.0.0 (not used for delete) */
+        rt[16] = 2; rt[17] = 0;
+        /* rt_genmask: 255.255.0.0 */
+        rt[32] = 2; rt[33] = 0;
+        rt[36] = (char)255; rt[37] = (char)255; rt[38] = 0; rt[39] = 0;
+
+        long rc = sys_ioctl((int)sfd, 0x890C /* SIOCDELRT */, rt);
+        if (rc == 0) {
+            /* Verify: 172.16.5.5 should now fall through to default route (not 172.16.0.0/16) */
+            const struct net_route *rte = route_lookup(0xAC100505);
+            if (!rte || rte->dest != 0xAC100000) {
+                fut_printf("[MISC-TEST] ✓ Test 1808: route deleted, lookup=%p\n", (void*)rte);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1808: route still exists\n");
+                fut_test_fail(1808);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1808: SIOCDELRT ret=%ld\n", rc);
+            fut_test_fail(1808);
+        }
+    }
+
+    sys_close((int)sfd);
+}
+
 /* Tests 1793-1796: O_CLOEXEC on PTY slave and /dev/tty dynamic paths */
 __attribute__((noinline)) static void test_pty_slave_cloexec(void) {
     extern long sys_open(const char *, int, int);
@@ -57674,8 +57956,10 @@ void fut_misc_test_thread(void *arg) {
     test_timer_abstime();          /* Tests 1721-1724 */
     test_execve_prevalidation();   /* Tests 1725-1728 */
     test_fd_lifecycle_edges();     /* Tests 1737-1740 */
-    test_firewall_rules();           /* Tests 1801-1804 */
     test_netif_routing();            /* Tests 1797-1800 */
+    test_firewall_rules();           /* Tests 1801-1804 */
+    test_netif_ioctl_config();       /* Tests 1805-1808 */
+    test_arp_icmp_router();          /* Tests 1809-1812 */
     test_pty_slave_cloexec();        /* Tests 1793-1796 */
     test_chrdev_cloexec();           /* Tests 1789-1792 */
     test_pty_fcntl_flags();          /* Tests 1785-1788 */

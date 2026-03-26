@@ -48,9 +48,13 @@
 #define SIOCGIFFLAGS   0x8913  /* Get interface flags */
 #define SIOCSIFFLAGS   0x8914  /* Set interface flags */
 #define SIOCGIFADDR    0x8915  /* Get interface address */
+#define SIOCSIFADDR_   0x8916  /* Set interface address */
 #define SIOCGIFDSTADDR 0x8917  /* Get point-to-point address */
 #define SIOCGIFBRDADDR 0x8919  /* Get broadcast address */
 #define SIOCGIFNETMASK 0x891B  /* Get network mask */
+#define SIOCSIFNETMASK_ 0x891C /* Set network mask */
+#define SIOCADDRT      0x890B  /* Add routing table entry */
+#define SIOCDELRT      0x890C  /* Delete routing table entry */
 #define SIOCGIFMTU     0x8921  /* Get MTU */
 #define SIOCGIFHWADDR  0x8927  /* Get hardware address */
 #define SIOCGIFINDEX   0x8933  /* Get interface index */
@@ -583,7 +587,16 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
                                    request == TIOCGPGRP || request == TIOCGSID ||
                                    request == TIOCOUTQ ||
                                    request == 0x80045430 /* TIOCGPTN */ ||
-                                   request == 0x40045431 /* TIOCSPTLCK */);
+                                   request == 0x40045431 /* TIOCSPTLCK */ ||
+                                   request == SIOCGIFCONF || request == SIOCGIFFLAGS ||
+                                   request == SIOCSIFFLAGS || request == SIOCGIFADDR ||
+                                   request == SIOCGIFDSTADDR || request == SIOCGIFBRDADDR ||
+                                   request == SIOCGIFNETMASK || request == SIOCGIFMTU ||
+                                   request == SIOCGIFHWADDR || request == SIOCGIFINDEX ||
+                                   request == SIOCGIFNAME ||
+                                   request == 0x8916 /* SIOCSIFADDR */ ||
+                                   request == 0x891C /* SIOCSIFNETMASK */ ||
+                                   request == SIOCADDRT || request == SIOCDELRT);
                 if (argp_val >= KERNEL_VIRTUAL_BASE && !is_builtin) {
                     return -EFAULT;
                 }
@@ -776,7 +789,10 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
             request != SIOCGIFDSTADDR && request != SIOCGIFBRDADDR &&
             request != SIOCGIFNETMASK && request != SIOCGIFMTU &&
             request != SIOCGIFHWADDR && request != SIOCGIFINDEX &&
-            request != SIOCGIFNAME) {
+            request != SIOCGIFNAME &&
+            request != 0x8916 /* SIOCSIFADDR */ &&
+            request != 0x891C /* SIOCSIFNETMASK */ &&
+            request != SIOCADDRT && request != SIOCDELRT) {
             return file->chr_ops->ioctl(file->chr_inode, file->chr_private, request, (unsigned long)argp);
         }
     }
@@ -1272,9 +1288,98 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
             return 0;
         }
 
-        case SIOCSIFFLAGS:
-            /* Accept silently — we don't change loopback state */
+        case SIOCSIFFLAGS: {
+            /* Set interface flags (IFF_UP, IFF_PROMISC, etc.) */
+            if (!argp) return -EFAULT;
+            struct fut_ifreq sifr;
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
+                __builtin_memcpy(&sifr, argp, sizeof(sifr));
+            else
+#endif
+            if (fut_copy_from_user(&sifr, argp, sizeof(sifr)) != 0)
+                return -EFAULT;
+            struct net_iface *siface = netif_by_name(sifr.ifr_name);
+            if (!siface) return -ENODEV;
+            netif_set_flags(siface->index, (uint32_t)(unsigned short)sifr.ifr_ifru.ifru_flags);
             return 0;
+        }
+
+        case 0x8916 /* SIOCSIFADDR */: {
+            /* Set interface IP address */
+            if (!argp) return -EFAULT;
+            struct fut_ifreq sifr;
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
+                __builtin_memcpy(&sifr, argp, sizeof(sifr));
+            else
+#endif
+            if (fut_copy_from_user(&sifr, argp, sizeof(sifr)) != 0)
+                return -EFAULT;
+            struct net_iface *siface = netif_by_name(sifr.ifr_name);
+            if (!siface) return -ENODEV;
+            /* Extract IP from sockaddr (sa_data[2..5] = network byte order) */
+            uint32_t new_ip = ((uint32_t)(uint8_t)sifr.ifr_ifru.ifru_addr.sa_data[2] << 24) |
+                              ((uint32_t)(uint8_t)sifr.ifr_ifru.ifru_addr.sa_data[3] << 16) |
+                              ((uint32_t)(uint8_t)sifr.ifr_ifru.ifru_addr.sa_data[4] << 8) |
+                              (uint32_t)(uint8_t)sifr.ifr_ifru.ifru_addr.sa_data[5];
+            siface->ip_addr = new_ip;
+            return 0;
+        }
+
+        case 0x891C /* SIOCSIFNETMASK */: {
+            /* Set interface netmask */
+            if (!argp) return -EFAULT;
+            struct fut_ifreq sifr;
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
+                __builtin_memcpy(&sifr, argp, sizeof(sifr));
+            else
+#endif
+            if (fut_copy_from_user(&sifr, argp, sizeof(sifr)) != 0)
+                return -EFAULT;
+            struct net_iface *siface = netif_by_name(sifr.ifr_name);
+            if (!siface) return -ENODEV;
+            uint32_t new_mask = ((uint32_t)(uint8_t)sifr.ifr_ifru.ifru_addr.sa_data[2] << 24) |
+                                ((uint32_t)(uint8_t)sifr.ifr_ifru.ifru_addr.sa_data[3] << 16) |
+                                ((uint32_t)(uint8_t)sifr.ifr_ifru.ifru_addr.sa_data[4] << 8) |
+                                (uint32_t)(uint8_t)sifr.ifr_ifru.ifru_addr.sa_data[5];
+            siface->netmask = new_mask;
+            return 0;
+        }
+
+        case SIOCADDRT:
+        case SIOCDELRT: {
+            /* Add/delete routing table entry from userspace (route add/del) */
+            if (!argp) return -EFAULT;
+            struct { struct { uint16_t family; char data[14]; } rt_dst, rt_gateway, rt_genmask;
+                     short rt_flags; short rt_pad; char rt_dev[16]; } rt;
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
+                __builtin_memcpy(&rt, argp, sizeof(rt));
+            else
+#endif
+            if (fut_copy_from_user(&rt, argp, sizeof(rt)) != 0)
+                return -EFAULT;
+            uint32_t dst = ((uint32_t)(uint8_t)rt.rt_dst.data[2] << 24) |
+                           ((uint32_t)(uint8_t)rt.rt_dst.data[3] << 16) |
+                           ((uint32_t)(uint8_t)rt.rt_dst.data[4] << 8) |
+                           (uint32_t)(uint8_t)rt.rt_dst.data[5];
+            uint32_t gw = ((uint32_t)(uint8_t)rt.rt_gateway.data[2] << 24) |
+                          ((uint32_t)(uint8_t)rt.rt_gateway.data[3] << 16) |
+                          ((uint32_t)(uint8_t)rt.rt_gateway.data[4] << 8) |
+                          (uint32_t)(uint8_t)rt.rt_gateway.data[5];
+            uint32_t mask = ((uint32_t)(uint8_t)rt.rt_genmask.data[2] << 24) |
+                            ((uint32_t)(uint8_t)rt.rt_genmask.data[3] << 16) |
+                            ((uint32_t)(uint8_t)rt.rt_genmask.data[4] << 8) |
+                            (uint32_t)(uint8_t)rt.rt_genmask.data[5];
+            if (request == SIOCADDRT) {
+                struct net_iface *riface = rt.rt_dev[0] ? netif_by_name(rt.rt_dev) : NULL;
+                return route_add(dst, mask, gw, riface ? riface->index : 0, 100);
+            } else {
+                return route_del(dst, mask);
+            }
+        }
 
         case SIOCGIFADDR:
         case SIOCGIFDSTADDR:
@@ -1291,7 +1396,6 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
             if (fut_copy_from_user(&ifr, argp, sizeof(ifr)) != 0)
                 return -EFAULT;
             {
-                extern struct net_iface *netif_by_name(const char *);
                 struct net_iface *iface = netif_by_name(ifr.ifr_name);
                 if (!iface) return -ENODEV;
                 __builtin_memset(&ifr.ifr_ifru, 0, sizeof(ifr.ifr_ifru));

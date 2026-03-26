@@ -240,6 +240,87 @@ void route_foreach(route_iter_fn fn, void *ctx) {
  *   IP Forwarding
  * ============================================================ */
 
+/* Send ICMP error message (Time Exceeded or Dest Unreachable).
+ * Per RFC 792: ICMP error contains IP header + first 8 bytes of original datagram. */
+static void send_icmp_error(uint8_t icmp_type, uint8_t icmp_code,
+                            const uint8_t *orig_pkt, size_t orig_len,
+                            struct net_iface *out_iface) {
+    if (!out_iface || out_iface->ip_addr == 0) return;
+    /* Don't send ICMP errors for ICMP errors (avoid loops) */
+    if (orig_len >= 20 && orig_pkt[9] == 1 /* ICMP */) {
+        /* Check if original is already an ICMP error (type != 0 and type != 8) */
+        size_t ihl = (orig_pkt[0] & 0x0F) * 4;
+        if (orig_len > ihl) {
+            uint8_t orig_icmp_type = orig_pkt[ihl];
+            if (orig_icmp_type != 0 && orig_icmp_type != 8) return;
+        }
+    }
+
+    /* Extract source IP from original packet (who we're replying to) */
+    uint32_t src_ip = ((uint32_t)orig_pkt[12] << 24) | ((uint32_t)orig_pkt[13] << 16) |
+                      ((uint32_t)orig_pkt[14] << 8) | (uint32_t)orig_pkt[15];
+
+    /* Build ICMP error: IP header (20) + ICMP header (8) + orig IP header + 8 bytes */
+    size_t orig_ihl = (orig_pkt[0] & 0x0F) * 4;
+    size_t copy_len = orig_ihl + 8;
+    if (copy_len > orig_len) copy_len = orig_len;
+    size_t total = 20 + 8 + copy_len; /* IP + ICMP + payload */
+
+    uint8_t buf[128];
+    if (total > sizeof(buf)) return;
+    memset(buf, 0, total);
+
+    /* IP header */
+    buf[0] = 0x45;  /* IPv4, IHL=5 */
+    buf[1] = 0xC0;  /* TOS: CS6 (network control) */
+    buf[2] = (uint8_t)(total >> 8); buf[3] = (uint8_t)(total & 0xFF);
+    buf[6] = 0x40;  /* Don't Fragment */
+    buf[8] = 64;    /* TTL */
+    buf[9] = 1;     /* Protocol: ICMP */
+    /* Source: our interface IP */
+    buf[12] = (uint8_t)(out_iface->ip_addr >> 24);
+    buf[13] = (uint8_t)(out_iface->ip_addr >> 16);
+    buf[14] = (uint8_t)(out_iface->ip_addr >> 8);
+    buf[15] = (uint8_t)(out_iface->ip_addr);
+    /* Dest: original packet's source */
+    buf[16] = (uint8_t)(src_ip >> 24);
+    buf[17] = (uint8_t)(src_ip >> 16);
+    buf[18] = (uint8_t)(src_ip >> 8);
+    buf[19] = (uint8_t)(src_ip);
+    /* IP checksum */
+    uint32_t sum = 0;
+    for (int i = 0; i < 20; i += 2)
+        sum += ((uint32_t)buf[i] << 8) | buf[i + 1];
+    while (sum >> 16) sum = (sum & 0xFFFF) + (sum >> 16);
+    uint16_t ck = ~(uint16_t)sum;
+    buf[10] = (uint8_t)(ck >> 8); buf[11] = (uint8_t)(ck & 0xFF);
+
+    /* ICMP header at offset 20 */
+    buf[20] = icmp_type;
+    buf[21] = icmp_code;
+    /* buf[22..23] = checksum (computed below) */
+    /* buf[24..27] = unused (zero for Time Exceeded/Dest Unreachable) */
+
+    /* Copy original IP header + 8 bytes of payload */
+    memcpy(buf + 28, orig_pkt, copy_len);
+
+    /* ICMP checksum (over ICMP header + data) */
+    size_t icmp_len = 8 + copy_len;
+    sum = 0;
+    for (size_t i = 0; i < icmp_len; i += 2) {
+        uint16_t word = (uint16_t)buf[20 + i] << 8;
+        if (i + 1 < icmp_len) word |= buf[20 + i + 1];
+        sum += word;
+    }
+    while (sum >> 16) sum = (sum & 0xFFFF) + (sum >> 16);
+    ck = ~(uint16_t)sum;
+    buf[22] = (uint8_t)(ck >> 8); buf[23] = (uint8_t)(ck & 0xFF);
+
+    /* Transmit via the interface (if it has a transmit callback) */
+    if (out_iface->transmit)
+        out_iface->transmit(out_iface, buf, total);
+}
+
 int ip_forward(const void *ip_packet, size_t len, struct net_iface *in_iface) {
     if (!g_ip_forward_enabled)
         return -EPERM;
@@ -256,7 +337,9 @@ int ip_forward(const void *ip_packet, size_t len, struct net_iface *in_iface) {
     /* Decrement TTL */
     uint8_t ttl = pkt[8];
     if (ttl <= 1) {
-        /* TTL expired — should send ICMP Time Exceeded, for now drop */
+        /* TTL expired — send ICMP Time Exceeded (type 11, code 0) */
+        if (in_iface)
+            send_icmp_error(11 /* TIME_EXCEEDED */, 0, pkt, len, in_iface);
         if (in_iface) in_iface->rx_dropped++;
         return -ETIMEDOUT;
     }
@@ -264,7 +347,9 @@ int ip_forward(const void *ip_packet, size_t len, struct net_iface *in_iface) {
     /* Look up route */
     const struct net_route *route = route_lookup(dest_ip);
     if (!route) {
-        /* No route to host */
+        /* No route to host — send ICMP Destination Unreachable (type 3, code 0) */
+        if (in_iface)
+            send_icmp_error(3 /* DEST_UNREACHABLE */, 0 /* net unreachable */, pkt, len, in_iface);
         if (in_iface) in_iface->rx_dropped++;
         return -ENETUNREACH;
     }

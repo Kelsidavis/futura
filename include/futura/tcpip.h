@@ -241,6 +241,11 @@ int arp_resolve(uint32_t ip, eth_addr_t *mac);
 int arp_add_static(uint32_t ip, const eth_addr_t mac);
 void arp_clear_cache(void);
 
+/* ARP cache iteration — callback receives ip, mac, is_static for each valid entry.
+ * Returns the number of entries visited. */
+typedef void (*arp_foreach_fn)(uint32_t ip, const uint8_t mac[6], bool is_static, void *ctx);
+int arp_foreach(arp_foreach_fn cb, void *ctx);
+
 /* Socket API */
 tcpip_socket_t *tcpip_socket(socket_type_t type);
 int tcpip_bind(tcpip_socket_t *sock, uint16_t port);

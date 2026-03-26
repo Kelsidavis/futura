@@ -33,6 +33,7 @@
 #include <kernel/vfs_credentials.h>
 #include <kernel/fut_socket.h>
 #include <futura/netif.h>
+#include <futura/tcpip.h>
 #include <kernel/eventfd.h>
 #include <kernel/errno.h>
 #include <kernel/kprintf.h>
@@ -2444,12 +2445,48 @@ static size_t gen_net_unix(char *buf, size_t cap) {
     return b.pos;
 }
 
+/* Callback context for /proc/net/arp emission */
+struct arp_emit_ctx {
+    struct pbuf *b;
+};
+
+static void arp_emit_one(uint32_t ip, const uint8_t mac[6], bool is_static, void *ctx) {
+    struct arp_emit_ctx *c = (struct arp_emit_ctx *)ctx;
+    /* Format: IP address  HW type  Flags  HW address  Mask  Device */
+    /* IP in dotted-quad */
+    pb_u64(c->b, (ip >> 24) & 0xFF);
+    pb_char(c->b, '.');
+    pb_u64(c->b, (ip >> 16) & 0xFF);
+    pb_char(c->b, '.');
+    pb_u64(c->b, (ip >> 8) & 0xFF);
+    pb_char(c->b, '.');
+    pb_u64(c->b, ip & 0xFF);
+    pb_str(c->b, "     ");
+    /* HW type = 0x1 (Ethernet) */
+    pb_str(c->b, "0x1         ");
+    /* Flags: 0x2 = complete, 0x6 = complete+permanent (static) */
+    if (is_static)
+        pb_str(c->b, "0x6         ");
+    else
+        pb_str(c->b, "0x2         ");
+    /* HW address: XX:XX:XX:XX:XX:XX */
+    static const char hex[] = "0123456789abcdef";
+    for (int i = 0; i < 6; i++) {
+        if (i > 0) pb_char(c->b, ':');
+        pb_char(c->b, hex[(mac[i] >> 4) & 0xF]);
+        pb_char(c->b, hex[mac[i] & 0xF]);
+    }
+    pb_str(c->b, "     *        *\n");
+}
+
 static size_t gen_net_arp(char *buf, size_t cap) {
-    /* /proc/net/arp — ARP table.
+    /* /proc/net/arp — ARP table with real entries from ARP cache.
      * Used by arp(8), ip neigh, network diagnostic tools.
-     * Header matches Linux kernel format. Empty table is valid. */
+     * Header matches Linux kernel format. */
     struct pbuf b = { buf, 0, cap };
     pb_str(&b, "IP address       HW type     Flags       HW address            Mask     Device\n");
+    struct arp_emit_ctx ctx = { &b };
+    arp_foreach(arp_emit_one, &ctx);
     return b.pos;
 }
 

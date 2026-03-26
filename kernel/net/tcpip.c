@@ -277,6 +277,20 @@ int arp_add_static(uint32_t ip, const eth_addr_t mac) {
     return 0;
 }
 
+int arp_foreach(arp_foreach_fn cb, void *ctx) {
+    int count = 0;
+    fut_spinlock_acquire(&arp_lock);
+    for (int i = 0; i < ARP_CACHE_SIZE; i++) {
+        if (arp_cache[i].valid) {
+            bool is_static = (arp_cache[i].timestamp == 0);
+            cb(arp_cache[i].ip, arp_cache[i].mac, is_static, ctx);
+            count++;
+        }
+    }
+    fut_spinlock_release(&arp_lock);
+    return count;
+}
+
 static int arp_lookup_cache(uint32_t ip, eth_addr_t *mac) {
     fut_spinlock_acquire(&arp_lock);
 

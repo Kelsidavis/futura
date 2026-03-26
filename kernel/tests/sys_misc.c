@@ -54090,6 +54090,94 @@ __attribute__((noinline)) static void test_futurafs_advanced(void) {
     }
 }
 
+__attribute__((noinline)) static void test_io_accounting(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_write(int, const void *, size_t);
+    extern long sys_close(int);
+
+    /* Test 1914: /proc/self/io shows non-zero rchar after reads */
+    fut_printf("[MISC-TEST] Test 1914: I/O accounting rchar increments\n");
+    {
+        /* Do a read to increment rchar */
+        long fd = sys_open("/etc/hostname", 0, 0);
+        if (fd >= 0) {
+            static char buf[32];
+            sys_read((int)fd, buf, sizeof(buf));
+            sys_close((int)fd);
+        }
+        /* Now check /proc/self/io */
+        fd = sys_open("/proc/self/io", 0, 0);
+        if (fd >= 0) {
+            static char iobuf[256];
+            long n = sys_read((int)fd, iobuf, sizeof(iobuf) - 1);
+            sys_close((int)fd);
+            if (n > 0) {
+                iobuf[n] = '\0';
+                /* Find "rchar: " and check it's > 0 */
+                bool has_rchar = false;
+                for (int i = 0; i < n - 8; i++) {
+                    if (iobuf[i] == 'r' && iobuf[i+1] == 'c' && iobuf[i+2] == 'h' &&
+                        iobuf[i+3] == 'a' && iobuf[i+4] == 'r') {
+                        /* Skip to the number */
+                        int j = i + 7;
+                        while (j < n && iobuf[j] == ' ') j++;
+                        if (j < n && iobuf[j] > '0') has_rchar = true;
+                        break;
+                    }
+                }
+                if (has_rchar) {
+                    fut_printf("[MISC-TEST] ✓ Test 1914: rchar > 0\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1914: rchar still 0\n");
+                    fut_test_fail(1914);
+                }
+            } else { fut_test_fail(1914); }
+        } else { fut_test_fail(1914); }
+    }
+
+    /* Test 1915: /proc/self/io shows non-zero wchar after writes */
+    fut_printf("[MISC-TEST] Test 1915: I/O accounting wchar increments\n");
+    {
+        /* Do a write */
+        long fd = sys_open("/tmp/io_test", 0x0042, 0644);
+        if (fd >= 0) {
+            sys_write((int)fd, "test", 4);
+            sys_close((int)fd);
+        }
+        extern long sys_unlink(const char *);
+        sys_unlink("/tmp/io_test");
+        /* Check /proc/self/io for wchar */
+        fd = sys_open("/proc/self/io", 0, 0);
+        if (fd >= 0) {
+            static char iobuf[256];
+            long n = sys_read((int)fd, iobuf, sizeof(iobuf) - 1);
+            sys_close((int)fd);
+            if (n > 0) {
+                iobuf[n] = '\0';
+                bool has_wchar = false;
+                for (int i = 0; i < n - 8; i++) {
+                    if (iobuf[i] == 'w' && iobuf[i+1] == 'c' && iobuf[i+2] == 'h' &&
+                        iobuf[i+3] == 'a' && iobuf[i+4] == 'r') {
+                        int j = i + 7;
+                        while (j < n && iobuf[j] == ' ') j++;
+                        if (j < n && iobuf[j] > '0') has_wchar = true;
+                        break;
+                    }
+                }
+                if (has_wchar) {
+                    fut_printf("[MISC-TEST] ✓ Test 1915: wchar > 0\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1915: wchar still 0\n");
+                    fut_test_fail(1915);
+                }
+            } else { fut_test_fail(1915); }
+        } else { fut_test_fail(1915); }
+    }
+}
+
 __attribute__((noinline)) static void test_file_nr_sysctl(void) {
     extern long sys_open(const char *, int, int);
     extern long sys_read(int, void *, size_t);
@@ -60507,6 +60595,7 @@ void fut_misc_test_thread(void *arg) {
     test_ip_ttl_tos_sockopt(); /* Tests 1853-1854 */
     test_futurafs(); /* Tests 1855-1857 */
     test_futurafs_advanced(); /* Tests 1910-1912 */
+    test_io_accounting(); /* Tests 1914-1915 */
     test_file_nr_sysctl(); /* Test 1913 */
     test_etc_config_files(); /* Tests 1907-1909 */
     test_futurafs_extended(); /* Tests 1901-1906 */

@@ -2528,6 +2528,12 @@ ssize_t fut_vfs_read(int fd, void *buf, size_t size) {
         }
     }
 
+    /* Update I/O accounting counters for /proc/<pid>/io */
+    if (ret > 0 && task) {
+        task->io_rchar += (uint64_t)ret;
+        task->io_syscr++;
+    }
+
     return ret;
 }
 
@@ -2694,6 +2700,15 @@ ssize_t fut_vfs_write(int fd, const void *buf, size_t size) {
 
     if (is_append)
         fut_spinlock_release(&file->vnode->write_lock);
+
+    /* Update I/O accounting counters for /proc/<pid>/io */
+    if (ret > 0) {
+        fut_task_t *io_task = fut_task_current();
+        if (io_task) {
+            io_task->io_wchar += (uint64_t)ret;
+            io_task->io_syscw++;
+        }
+    }
 
     VFSDBG("[vfs-write] returning %lld\n", (long long)ret);
     return ret;

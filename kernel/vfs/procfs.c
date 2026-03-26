@@ -706,7 +706,16 @@ static size_t gen_uptime(char *buf, size_t cap) {
     pb_u64(&b, secs); pb_char(&b, '.');
     if (frac < 10) pb_char(&b, '0');
     pb_u64(&b, frac);
-    pb_str(&b, " 0.00\n");  /* idle time (not tracked) */
+    /* Idle time from scheduler tick counter */
+    extern uint64_t fut_get_idle_ticks(void);
+    uint64_t idle = fut_get_idle_ticks();
+    uint64_t idle_secs = idle / FUT_TIMER_HZ;
+    uint64_t idle_frac = (idle % FUT_TIMER_HZ) * 100 / FUT_TIMER_HZ;
+    pb_char(&b, ' ');
+    pb_u64(&b, idle_secs); pb_char(&b, '.');
+    if (idle_frac < 10) pb_char(&b, '0');
+    pb_u64(&b, idle_frac);
+    pb_char(&b, '\n');
     return b.pos;
 }
 
@@ -2746,13 +2755,18 @@ static size_t gen_proc_stat(char *buf, size_t cap) {
     uint64_t total_ticks = fut_get_ticks();  /* real-time ticks since boot */
     uint64_t ctxt        = fut_stats_get_context_switches();
 
-    /* Approximate: report all time as system (we don't split user vs kernel yet) */
+    /* Report system time and idle time from real counters */
     /* Format: cpu user nice system idle iowait irq softirq steal guest guest_nice */
-    pb_str(&b, "cpu  0 0 ");  pb_u64(&b, total_ticks);
-    pb_str(&b, " 0 0 0 0 0 0 0\n");
+    extern uint64_t fut_get_idle_ticks(void);
+    uint64_t idle = fut_get_idle_ticks();
+    uint64_t sys_time = (total_ticks > idle) ? (total_ticks - idle) : 0;
+    pb_str(&b, "cpu  0 0 "); pb_u64(&b, sys_time);
+    pb_char(&b, ' '); pb_u64(&b, idle);
+    pb_str(&b, " 0 0 0 0 0 0\n");
 
-    pb_str(&b, "cpu0 0 0 "); pb_u64(&b, total_ticks);
-    pb_str(&b, " 0 0 0 0 0 0 0\n");
+    pb_str(&b, "cpu0 0 0 "); pb_u64(&b, sys_time);
+    pb_char(&b, ' '); pb_u64(&b, idle);
+    pb_str(&b, " 0 0 0 0 0 0\n");
 
     /* ctxt: context switches since boot */
     pb_str(&b, "ctxt ");     pb_u64(&b, ctxt);     pb_char(&b, '\n');

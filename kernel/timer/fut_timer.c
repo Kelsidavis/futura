@@ -42,6 +42,7 @@ struct fut_task;
 
 /* Global tick counter (milliseconds) */
 static _Atomic uint64_t system_ticks = 0;
+static _Atomic uint64_t idle_ticks = 0;  /* Ticks where no user work was happening */
 
 /* Public getter for system tick count.
  * Only compiled for x86_64 — ARM64 provides its own in platform_init.c. */
@@ -258,6 +259,14 @@ void fut_timer_tick(void) {
      * here — fut_serial_putc busy-waits for THRE with interrupts disabled,
      * which can hang the kernel on CI when the QEMU serial FIFO is full. */
     uint64_t current_ms = atomic_fetch_add_explicit(&system_ticks, 1, memory_order_relaxed);
+
+    /* Track idle ticks: if no thread is running or current thread is blocked/sleeping */
+    {
+        extern fut_thread_t *fut_thread_current(void);
+        fut_thread_t *ct = fut_thread_current();
+        if (!ct || !ct->task || ct->state != 0 /* FUT_THREAD_RUNNING */)
+            atomic_fetch_add_explicit(&idle_ticks, 1, memory_order_relaxed);
+    }
 
     // Wake any threads whose sleep time has expired
     wake_sleeping_threads();
@@ -476,6 +485,13 @@ int fut_timer_cancel(void (*cb)(void *), void *arg) {
  */
 uint64_t fut_get_ticks(void) {
     return atomic_load_explicit(&system_ticks, memory_order_relaxed);
+}
+
+/**
+ * Get idle ticks since boot (ticks where no user thread was running).
+ */
+uint64_t fut_get_idle_ticks(void) {
+    return atomic_load_explicit(&idle_ticks, memory_order_relaxed);
 }
 
 /**

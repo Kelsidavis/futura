@@ -493,7 +493,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     const char *builtins[] = {
         "arp", "bg", "brctl", "cd", "chmod", "clear", "conntrack", "date", "dd", "df", "dhclient", "dmesg", "echo", "edit", "ethtool", "hexdump", "lsof", "nc", "poweroff", "reboot", "seq", "sleep", "time", "traceroute", "wget", "exit", "export", "fg", "free",
         "help", "hostname", "httpd", "id", "ifconfig", "iostat", "ipcs", "iptables", "jobs", "kill", "logger", "losetup", "ls", "lsblk", "lspci", "mkfs", "mount", "netstat",
-        ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "getconf", "history", "ip", "ln", "mktemp", "more", "nproc", "nslookup", "ping", "printf", "ps", "pwd", "read", "readlink", "set", "sha256sum", "shutdown", "source", "ss", "stat", "stty", "sync", "sysctl", "sysinfo", "test", "top", "trap", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "vmstat", "wait", "watch", "wdctl", "which", "whoami", "xargs", "yes", NULL
+        ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "getconf", "history", "ip", "ln", "mktemp", "more", "nproc", "nslookup", "ping", "printf", "ps", "pwd", "read", "readlink", "set", "sha256sum", "shutdown", "source", "ss", "stat", "stty", "sync", "sysctl", "sysinfo", "tc", "test", "top", "trap", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "vmstat", "wait", "watch", "wdctl", "which", "whoami", "xargs", "yes", NULL
     };
 
     /* External commands we might have */
@@ -6907,6 +6907,59 @@ static int execute_command(int argc, char *argv[]) {
             }
         }
         return 0;
+    } else if (strcmp_simple(argv[0], "tc") == 0) {
+        /* tc — traffic control (QoS) */
+        if (argc < 2) {
+            write_str(1, "usage: tc qdisc add dev <if> root tbf rate <rate>Kbit burst <burst>\n");
+            write_str(1, "       tc qdisc show\n");
+            write_str(1, "       tc class add dev <if> classid 1:<n> rate <rate>Kbit\n");
+            return 0;
+        }
+        if (strcmp_simple(argv[1], "qdisc") == 0) {
+            if (argc >= 3 && strcmp_simple(argv[2], "show") == 0) {
+                /* Show qdiscs — use custom ioctl */
+                int sock = sys_call3(41, 2, 2, 0);
+                if (sock < 0) return 1;
+                char buf[512] = {0};
+                /* SIOCTCSHOW = 0x89E4 */
+                sys_call3(16, sock, 0x89E4, (long)buf);
+                sys_close(sock);
+                if (buf[0]) write_str(1, buf);
+                else write_str(1, "(no qdiscs configured)\n");
+            } else if (argc >= 5 && strcmp_simple(argv[2], "add") == 0) {
+                /* tc qdisc add dev <if> root tbf rate <N>Kbit */
+                const char *dev = NULL;
+                unsigned int rate = 0;
+                unsigned int burst = 10240;
+                int qtype = 0; /* pfifo_fast */
+                for (int i = 3; i < argc; i++) {
+                    if (strcmp_simple(argv[i], "dev") == 0 && i+1 < argc) dev = argv[++i];
+                    else if (strcmp_simple(argv[i], "tbf") == 0) qtype = 1;
+                    else if (strcmp_simple(argv[i], "htb") == 0) qtype = 2;
+                    else if (strcmp_simple(argv[i], "rate") == 0 && i+1 < argc) {
+                        i++; rate = 0;
+                        for (int k = 0; argv[i][k] >= '0' && argv[i][k] <= '9'; k++)
+                            rate = rate * 10 + (unsigned)(argv[i][k] - '0');
+                        rate *= 1000; /* Kbit → bit */
+                    }
+                    else if (strcmp_simple(argv[i], "burst") == 0 && i+1 < argc) {
+                        i++; burst = 0;
+                        for (int k = 0; argv[i][k] >= '0' && argv[i][k] <= '9'; k++)
+                            burst = burst * 10 + (unsigned)(argv[i][k] - '0');
+                    }
+                }
+                if (!dev) { write_str(2, "tc: missing dev\n"); return 1; }
+                int sock = sys_call3(41, 2, 2, 0);
+                if (sock < 0) return 1;
+                struct { char name[16]; unsigned char type; unsigned int rate; unsigned int burst; } req = {{0}, (unsigned char)qtype, rate, burst};
+                for (int k = 0; dev[k] && k < 15; k++) req.name[k] = dev[k];
+                long rc = sys_call3(16, sock, 0x89E5 /* SIOCTCADD */, (long)&req);
+                sys_close(sock);
+                if (rc == 0) write_str(1, "qdisc added\n");
+                else write_str(2, "tc qdisc add: failed\n");
+            }
+        }
+        return 0;
     } else if (strcmp_simple(argv[0], "getconf") == 0) {
         /* getconf — get system configuration values */
         if (argc < 2) {
@@ -8062,8 +8115,54 @@ static int execute_command(int argc, char *argv[]) {
                 write_str(1, "usage: ip tunnel add <name> mode gre local <ip> remote <ip>\n");
                 write_str(1, "       ip tunnel show\n");
             }
+        } else if (argc > 1 && strcmp_simple(argv[1], "xfrm") == 0) {
+            /* ip xfrm state/policy — IPsec management */
+            if (argc >= 3 && strcmp_simple(argv[2], "state") == 0) {
+                if (argc >= 4 && strcmp_simple(argv[3], "add") == 0) {
+                    /* ip xfrm state add src <ip> dst <ip> proto esp spi <N> */
+                    unsigned int src = 0, dst = 0, spi = 0;
+                    int proto = 50; /* ESP default */
+                    for (int i = 4; i < argc; i++) {
+                        if (strcmp_simple(argv[i], "src") == 0 && i+1 < argc)
+                            src = parse_ipv4(argv[++i]);
+                        else if (strcmp_simple(argv[i], "dst") == 0 && i+1 < argc)
+                            dst = parse_ipv4(argv[++i]);
+                        else if (strcmp_simple(argv[i], "spi") == 0 && i+1 < argc) {
+                            i++; spi = 0;
+                            if (argv[i][0] == '0' && argv[i][1] == 'x') {
+                                for (int k = 2; argv[i][k]; k++) {
+                                    spi <<= 4;
+                                    if (argv[i][k] >= '0' && argv[i][k] <= '9') spi |= argv[i][k] - '0';
+                                    else if (argv[i][k] >= 'a' && argv[i][k] <= 'f') spi |= argv[i][k] - 'a' + 10;
+                                }
+                            } else {
+                                for (int k = 0; argv[i][k] >= '0' && argv[i][k] <= '9'; k++)
+                                    spi = spi * 10 + (unsigned)(argv[i][k] - '0');
+                            }
+                        }
+                        else if (strcmp_simple(argv[i], "ah") == 0) proto = 51;
+                    }
+                    int sock = sys_call3(41, 2, 2, 0);
+                    if (sock < 0) { write_str(2, "ip xfrm: socket failed\n"); return 1; }
+                    struct { unsigned int spi; unsigned int src; unsigned int dst;
+                             unsigned char proto; unsigned char mode; unsigned char auth; unsigned char enc; } req;
+                    req.spi = spi; req.src = src; req.dst = dst;
+                    req.proto = (unsigned char)proto; req.mode = 1; req.auth = 1; req.enc = 1;
+                    long rc = sys_call3(16, sock, 0x89E6 /* SIOCIPSECSA_ADD */, (long)&req);
+                    sys_close(sock);
+                    if (rc == 0) write_str(1, "SA added\n");
+                    else write_str(2, "ip xfrm state add: failed\n");
+                } else {
+                    write_str(1, "ip xfrm state: (use 'add' to create SA)\n");
+                }
+            } else if (argc >= 3 && strcmp_simple(argv[2], "policy") == 0) {
+                write_str(1, "ip xfrm policy: (use ip xfrm state add to configure)\n");
+            } else {
+                write_str(1, "usage: ip xfrm state [add src <ip> dst <ip> proto esp spi <N>]\n");
+                write_str(1, "       ip xfrm policy\n");
+            }
         } else {
-            write_str(1, "usage: ip addr|link|route|neigh|tunnel|forward [on|off]\n");
+            write_str(1, "usage: ip addr|link|route|neigh|tunnel|rule|xfrm|forward\n");
         }
         return 0;
     } else if (strcmp_simple(argv[0], "ping") == 0) {
@@ -9116,7 +9215,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   118 built-in commands — type 'help'    |\n");
+    write_str(1, "|   119 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");

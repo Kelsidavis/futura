@@ -72,6 +72,9 @@
 #define SIOCADDRULE    0x89E1  /* Add policy routing rule */
 #define SIOCDELRULE    0x89E2  /* Delete policy routing rule */
 #define SIOCADDRT_TBL  0x89E3  /* Add route to specific table */
+#define SIOCTCSHOW     0x89E4  /* Show TC qdiscs */
+#define SIOCTCADD      0x89E5  /* Add TC qdisc */
+#define SIOCIPSECSA    0x89E6  /* Add IPsec SA */
 
 /* Bridge ioctls (Linux compatible) */
 #define SIOCBRADDBR    0x89a0  /* Create bridge */
@@ -630,6 +633,8 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
                                    request == SIOCADDGRETUN ||
                                    request == SIOCADDRULE || request == SIOCDELRULE ||
                                    request == SIOCADDRT_TBL ||
+                                   request == SIOCTCSHOW || request == SIOCTCADD ||
+                                   request == SIOCIPSECSA ||
                                    request == SIOCBRADDBR || request == SIOCBRDELBR ||
                                    request == SIOCBRADDIF || request == SIOCBRDELIF ||
                                    request == 0x400454CA /* TUNSETIFF */);
@@ -1769,6 +1774,47 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
             return route_add_table(rq.dst, rq.mask, rq.gw,
                                    rq.iface >= 0 ? rq.iface : 0,
                                    rq.metric, rq.table);
+        }
+
+        case SIOCTCSHOW: {
+            if (!argp) return -EFAULT;
+            extern int tc_qdisc_show(char *, int);
+            tc_qdisc_show((char *)argp, 512);
+            return 0;
+        }
+
+        case SIOCTCADD: {
+            if (!argp) return -EFAULT;
+            struct { char name[16]; uint8_t type; uint32_t rate; uint32_t burst; } treq;
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
+                __builtin_memcpy(&treq, argp, sizeof(treq));
+            else
+#endif
+            if (fut_copy_from_user(&treq, argp, sizeof(treq)) != 0)
+                return -EFAULT;
+            treq.name[15] = '\0';
+            extern struct net_iface *netif_by_name(const char *);
+            struct net_iface *iface = netif_by_name(treq.name);
+            if (!iface) return -ENODEV;
+            extern int tc_qdisc_add(int, uint8_t, uint64_t, uint64_t);
+            return tc_qdisc_add(iface->index, treq.type, treq.rate, treq.burst);
+        }
+
+        case SIOCIPSECSA: {
+            if (!argp) return -EFAULT;
+            struct { uint32_t spi; uint32_t src; uint32_t dst;
+                     uint8_t proto; uint8_t mode; uint8_t auth; uint8_t enc; } ireq;
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
+                __builtin_memcpy(&ireq, argp, sizeof(ireq));
+            else
+#endif
+            if (fut_copy_from_user(&ireq, argp, sizeof(ireq)) != 0)
+                return -EFAULT;
+            extern int ipsec_sa_add(uint32_t, uint32_t, uint32_t, uint8_t, uint8_t, uint8_t, uint8_t);
+            return ipsec_sa_add(ireq.spi, ireq.src, ireq.dst,
+                                ireq.proto, ireq.mode, ireq.auth, ireq.enc);
         }
 
         case SIOCADDRULE: {

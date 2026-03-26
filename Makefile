@@ -474,6 +474,8 @@ KERNEL_SOURCES := \
     kernel/net/netif.c \
     kernel/net/bridge.c \
     kernel/net/gre.c \
+    kernel/net/tc.c \
+    kernel/net/ipsec.c \
     kernel/net/nat.c \
     kernel/net/filter.c \
     kernel/net/tun.c \

@@ -54105,6 +54105,82 @@ __attribute__((noinline)) static void test_futurafs_flags(void) {
     }
 }
 
+__attribute__((noinline)) static void test_tc_ipsec(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_close(int);
+    extern long sys_ioctl(int, unsigned long, void *);
+
+    /* Test 1935: tc_qdisc_add creates qdisc on eth0 */
+    fut_printf("[MISC-TEST] Test 1935: tc qdisc add\n");
+    {
+        long sfd = sys_open("/dev/null", 0x0002, 0);
+        if (sfd >= 0) {
+            static struct { char name[16]; uint8_t type; uint32_t rate; uint32_t burst; } req;
+            __builtin_memset(&req, 0, sizeof(req));
+            __builtin_memcpy(req.name, "eth0", 4);
+            req.type = 1; /* TBF */
+            req.rate = 1000000; /* 1Mbit */
+            req.burst = 10240;
+            long rc = sys_ioctl((int)sfd, 0x89E5, &req);
+            if (rc == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1935: tc qdisc tbf added\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1935: rc=%ld\n", rc);
+                fut_test_fail(1935);
+            }
+            sys_close((int)sfd);
+        } else { fut_test_fail(1935); }
+    }
+
+    /* Test 1936: ipsec_sa_add creates SA */
+    fut_printf("[MISC-TEST] Test 1936: IPsec SA add\n");
+    {
+        long sfd = sys_open("/dev/null", 0x0002, 0);
+        if (sfd >= 0) {
+            static struct { uint32_t spi; uint32_t src; uint32_t dst;
+                            uint8_t proto; uint8_t mode; uint8_t auth; uint8_t enc; } req;
+            req.spi = 0x100;
+            req.src = 0x0A000201; /* 10.0.2.1 */
+            req.dst = 0x0A000301; /* 10.0.3.1 */
+            req.proto = 50; /* ESP */
+            req.mode = 1;   /* Tunnel */
+            req.auth = 1;   /* HMAC-SHA256 */
+            req.enc = 1;    /* AES-CBC-128 */
+            long rc = sys_ioctl((int)sfd, 0x89E6, &req);
+            if (rc == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1936: IPsec SA added (spi=0x100)\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1936: rc=%ld\n", rc);
+                fut_test_fail(1936);
+            }
+            sys_close((int)sfd);
+        } else { fut_test_fail(1936); }
+    }
+
+    /* Test 1937: duplicate IPsec SA returns EEXIST */
+    fut_printf("[MISC-TEST] Test 1937: IPsec SA duplicate → EEXIST\n");
+    {
+        long sfd = sys_open("/dev/null", 0x0002, 0);
+        if (sfd >= 0) {
+            static struct { uint32_t spi; uint32_t src; uint32_t dst;
+                            uint8_t proto; uint8_t mode; uint8_t auth; uint8_t enc; } req;
+            req.spi = 0x100; req.src = 0x0A000201; req.dst = 0x0A000301;
+            req.proto = 50; req.mode = 1; req.auth = 1; req.enc = 1;
+            long rc = sys_ioctl((int)sfd, 0x89E6, &req);
+            if (rc == -17 /* EEXIST */) {
+                fut_printf("[MISC-TEST] ✓ Test 1937: duplicate SA → EEXIST\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1937: expected EEXIST, got %ld\n", rc);
+                fut_test_fail(1937);
+            }
+            sys_close((int)sfd);
+        } else { fut_test_fail(1937); }
+    }
+}
+
 __attribute__((noinline)) static void test_sysfs_pci_block(void) {
     extern long sys_open(const char *, int, int);
     extern long sys_close(int);
@@ -61123,6 +61199,7 @@ void fut_misc_test_thread(void *arg) {
     test_router_integration(); /* Test 1852 */
     test_ip_ttl_tos_sockopt(); /* Tests 1853-1854 */
     test_futurafs(); /* Tests 1855-1857 */
+    test_tc_ipsec(); /* Tests 1935-1937 */
     test_sysfs_pci_block(); /* Test 1934 */
     test_sys_class_block(); /* Test 1933 */
     test_futurafs_statfs(); /* Tests 1931-1932 */

@@ -4358,6 +4358,26 @@ int64_t posix_syscall_dispatch(uint64_t syscall_num,
         return -38;  /* -ENOSYS: Function not implemented */
     }
 
+    /* Seccomp strict mode enforcement: only allow read(0), write(1),
+     * exit(60), exit_group(231), and sigreturn(15). All other syscalls
+     * are killed with SIGKILL (Linux behavior). */
+    {
+        extern fut_task_t *fut_task_current(void);
+        fut_task_t *sec_task = fut_task_current();
+        if (sec_task && sec_task->seccomp_mode == 1) {
+            if (syscall_num != 0  /* read */ &&
+                syscall_num != 1  /* write */ &&
+                syscall_num != 60 /* exit */ &&
+                syscall_num != 231 /* exit_group */ &&
+                syscall_num != 15 /* rt_sigreturn */) {
+                /* Seccomp violation — send SIGKILL */
+                extern int fut_signal_send(struct fut_task *t, int sig);
+                fut_signal_send(sec_task, 9 /* SIGKILL */);
+                return -1;  /* EPERM */
+            }
+        }
+    }
+
     /* Get handler from table */
     syscall_handler_t handler = syscall_table[syscall_num];
     if (handler == NULL) {

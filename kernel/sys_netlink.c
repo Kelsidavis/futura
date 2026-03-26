@@ -69,9 +69,16 @@
 #define IFA_F_PERMANENT 0x80
 
 /* IFLA interface attributes */
+#define IFLA_ADDRESS    1   /* Hardware (MAC) address */
+#define IFLA_BROADCAST  2   /* Broadcast address */
 #define IFLA_IFNAME     3
 #define IFLA_MTU        4
+#define IFLA_LINK       5   /* Link type */
+#define IFLA_QDISC      6   /* Queueing discipline */
+#define IFLA_STATS      7   /* Interface statistics */
 #define IFLA_TXQLEN     13
+#define IFLA_OPERSTATE  16  /* RFC2863 operational state */
+#define IFLA_GROUP      27  /* Interface group */
 
 /* Alignment (nlmsghdr and rtattr are 4-byte aligned) */
 #define NL_ALIGN(n)  (((n) + 3u) & ~3u)
@@ -153,6 +160,20 @@ static void nl_rta32(uint8_t *buf, uint32_t *pos, uint16_t type, uint32_t val) {
     nl_append(buf, pos, &val, sizeof(val));
 }
 
+/* Write a binary-data rtattr (e.g., MAC address) */
+static void nl_rta_data(uint8_t *buf, uint32_t *pos, uint16_t type,
+                        const void *data, uint16_t data_len) {
+    uint16_t rta_len = (uint16_t)(sizeof(nl_rta_t) + data_len);
+    nl_rta_t rta = { .rta_len = rta_len, .rta_type = type };
+    uint32_t start = *pos;
+    nl_append(buf, pos, &rta, sizeof(rta));
+    __builtin_memcpy(buf + start + sizeof(rta), data, data_len);
+    uint32_t total = (uint32_t)(sizeof(rta) + data_len);
+    uint32_t pad   = NL_ALIGN(total) - total;
+    if (pad) __builtin_memset(buf + start + total, 0, pad);
+    *pos = start + NL_ALIGN(total);
+}
+
 /* Write a variable-length rtattr (data already NL_ALIGN'd by caller) */
 static void nl_rta_str(uint8_t *buf, uint32_t *pos, uint16_t type,
                        const char *str, uint16_t str_len) {
@@ -218,11 +239,34 @@ static void nl_emit_one_link(uint8_t *buf, uint32_t *pos, uint32_t seq,
     while (nlen < 15 && iface->name[nlen]) nlen++;
     nl_rta_str(buf, pos, IFLA_IFNAME, iface->name, (uint16_t)(nlen + 1));
 
+    /* IFLA_ADDRESS: MAC address (6 bytes) */
+    nl_rta_data(buf, pos, IFLA_ADDRESS, iface->mac, 6);
+
+    /* IFLA_BROADCAST: broadcast MAC (FF:FF:FF:FF:FF:FF for Ethernet) */
+    if (!(iface->flags & 0x0008 /* IFF_LOOPBACK */)) {
+        uint8_t bcast_mac[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+        nl_rta_data(buf, pos, IFLA_BROADCAST, bcast_mac, 6);
+    }
+
     /* IFLA_MTU */
     nl_rta32(buf, pos, IFLA_MTU, iface->mtu);
 
     /* IFLA_TXQLEN */
     nl_rta32(buf, pos, IFLA_TXQLEN, 1000);
+
+    /* IFLA_QDISC: "noqueue" for virtual devices, "pfifo_fast" for real ones */
+    {
+        const char *qdisc = (iface->flags & 0x0008) ? "noqueue" : "pfifo_fast";
+        size_t qlen = 0;
+        while (qdisc[qlen]) qlen++;
+        nl_rta_str(buf, pos, IFLA_QDISC, qdisc, (uint16_t)(qlen + 1));
+    }
+
+    /* IFLA_OPERSTATE: 6 = IF_OPER_UP when running, 2 = IF_OPER_DOWN otherwise */
+    {
+        uint8_t opstate = (iface->flags & 0x0040 /* IFF_RUNNING */) ? 6 : 2;
+        nl_rta_data(buf, pos, IFLA_OPERSTATE, &opstate, 1);
+    }
 
     /* Patch length */
     uint32_t msg_len = *pos - msg_start;

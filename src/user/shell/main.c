@@ -7253,18 +7253,40 @@ static int execute_command(int argc, char *argv[]) {
                     for (int skip = 0; skip < 4; skip++) { while (*q && *q != '\t') q++; if (*q) q++; }
                     /* mask */
                     fi = 0; while (*q && *q != '\t') { if (fi < 8) mask_hex[fi++] = *q; q++; }
-                    /* Parse hex to IP (little-endian as printed by kernel) */
-                    /* For now, just show the raw data in readable format */
+                    /* Parse hex IP (little-endian as printed by /proc/net/route) to dotted-quad */
+                    /* hex_to_ip: parse 8-char hex string (LE) → print as dotted quad */
+                    #define HEX_DIGIT(c) (((c)>='0'&&(c)<='9')?(c)-'0':((c)>='a'&&(c)<='f')?(c)-'a'+10:((c)>='A'&&(c)<='F')?(c)-'A'+10:0)
+                    #define HEX_BYTE(s,i) ((HEX_DIGIT((s)[(i)])*16)+HEX_DIGIT((s)[(i)+1]))
                     if (dest_hex[0] == '0' && dest_hex[1] == '0' && dest_hex[2] == '0' && dest_hex[3] == '0' &&
                         dest_hex[4] == '0' && dest_hex[5] == '0' && dest_hex[6] == '0' && dest_hex[7] == '0') {
                         write_str(1, "default");
                     } else {
-                        write_str(1, dest_hex);
+                        /* /proc/net/route stores IPs in host byte order hex (LE on x86) */
+                        /* So bytes [6:7][4:5][2:3][0:1] are IP octets 1.2.3.4 */
+                        for (int oc = 3; oc >= 0; oc--) {
+                            uint8_t bv = HEX_BYTE(dest_hex, oc*2);
+                            char ob[4]; int oi = 0;
+                            if (bv >= 100) ob[oi++] = '0' + bv/100;
+                            if (bv >= 10) ob[oi++] = '0' + (bv/10)%10;
+                            ob[oi++] = '0' + bv%10; ob[oi] = '\0';
+                            write_str(1, ob);
+                            if (oc > 0) write_str(1, ".");
+                        }
                     }
                     if (gw_hex[0] != '0' || gw_hex[1] != '0' || gw_hex[2] != '0' || gw_hex[3] != '0') {
                         write_str(1, " via ");
-                        write_str(1, gw_hex);
+                        for (int oc = 3; oc >= 0; oc--) {
+                            uint8_t bv = HEX_BYTE(gw_hex, oc*2);
+                            char ob[4]; int oi = 0;
+                            if (bv >= 100) ob[oi++] = '0' + bv/100;
+                            if (bv >= 10) ob[oi++] = '0' + (bv/10)%10;
+                            ob[oi++] = '0' + bv%10; ob[oi] = '\0';
+                            write_str(1, ob);
+                            if (oc > 0) write_str(1, ".");
+                        }
                     }
+                    #undef HEX_DIGIT
+                    #undef HEX_BYTE
                     write_str(1, " dev ");
                     write_str(1, iface);
                     write_str(1, "\n");

@@ -54078,6 +54078,56 @@ __attribute__((noinline)) static void test_futurafs_flags(void) {
     }
 }
 
+__attribute__((noinline)) static void test_futurafs_readdir(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_write(int, const void *, size_t);
+    extern long sys_close(int);
+    extern long sys_unlink(const char *);
+    extern long sys_getdents64(unsigned int fd, void *dirp, unsigned int count);
+
+    /* Test 1929: readdir on FuturaFS root lists files */
+    fut_printf("[MISC-TEST] Test 1929: FuturaFS readdir\n");
+    {
+        /* Create two files in /mnt */
+        long fd1 = sys_open("/mnt/dir_a.txt", 0x0042, 0644);
+        if (fd1 >= 0) { sys_write((int)fd1, "a", 1); sys_close((int)fd1); }
+        long fd2 = sys_open("/mnt/dir_b.txt", 0x0042, 0644);
+        if (fd2 >= 0) { sys_write((int)fd2, "b", 1); sys_close((int)fd2); }
+
+        /* Open /mnt directory and read entries */
+        long dfd = sys_open("/mnt", 0x10000 /* O_DIRECTORY */, 0);
+        if (dfd >= 0) {
+            static char dbuf[1024];
+            long nr = sys_getdents64((int)dfd, dbuf, sizeof(dbuf));
+            sys_close((int)dfd);
+            if (nr > 0) {
+                /* Count entries (skip . and ..) */
+                int count = 0;
+                long off = 0;
+                while (off < nr) {
+                    struct { uint64_t d_ino; int64_t d_off; uint16_t d_reclen;
+                             uint8_t d_type; char d_name[1]; } *de = (void *)(dbuf + off);
+                    if (de->d_name[0] != '.') count++;
+                    off += de->d_reclen;
+                }
+                if (count >= 2) {
+                    fut_printf("[MISC-TEST] ✓ Test 1929: readdir found %d entries\n", count);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1929: only %d entries\n", count);
+                    fut_test_fail(1929);
+                }
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1929: getdents=%ld\n", nr);
+                fut_test_fail(1929);
+            }
+        } else { fut_test_fail(1929); }
+
+        sys_unlink("/mnt/dir_a.txt");
+        sys_unlink("/mnt/dir_b.txt");
+    }
+}
+
 __attribute__((noinline)) static void test_futurafs_links(void) {
     extern long sys_open(const char *, int, int);
     extern long sys_write(int, const void *, size_t);
@@ -60919,6 +60969,7 @@ void fut_misc_test_thread(void *arg) {
     test_router_integration(); /* Test 1852 */
     test_ip_ttl_tos_sockopt(); /* Tests 1853-1854 */
     test_futurafs(); /* Tests 1855-1857 */
+    test_futurafs_readdir(); /* Test 1929 */
     test_futurafs_flags(); /* Tests 1926-1928 */
     test_futurafs_links(); /* Tests 1923-1925 */
     test_futurafs_advanced(); /* Tests 1910-1912 */

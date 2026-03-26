@@ -2089,8 +2089,26 @@ static void ramfs_init_vnode_ops(void) {
 
 static int ramfs_mount(const char *device, int flags, void *data, fut_handle_t block_device_handle, struct fut_mount **mount_out) {
     (void)device;
-    (void)data;
     (void)block_device_handle;  /* ramfs doesn't use block devices */
+
+    /* Parse tmpfs size option: "size=NNN" or "size=NNNm" or "size=NNNk" */
+    uint64_t size_limit = 0;  /* 0 = unlimited */
+    if (data) {
+        const char *opts = (const char *)data;
+        const char *p = opts;
+        while (*p) {
+            if (p[0] == 's' && p[1] == 'i' && p[2] == 'z' && p[3] == 'e' && p[4] == '=') {
+                p += 5;
+                while (*p >= '0' && *p <= '9') { size_limit = size_limit * 10 + (*p - '0'); p++; }
+                if (*p == 'k' || *p == 'K') size_limit *= 1024;
+                else if (*p == 'm' || *p == 'M') size_limit *= 1024 * 1024;
+                else if (*p == 'g' || *p == 'G') size_limit *= 1024ULL * 1024 * 1024;
+                break;
+            }
+            while (*p && *p != ',') p++;
+            if (*p == ',') p++;
+        }
+    }
 
     /* Create mount structure */
     struct fut_mount *mount = fut_malloc(sizeof(struct fut_mount));
@@ -2155,8 +2173,13 @@ static int ramfs_mount(const char *device, int flags, void *data, fut_handle_t b
     mount->fs = NULL;  /* Set by VFS */
     mount->root = root;
     mount->flags = flags;
-    mount->fs_data = NULL;
+    mount->fs_data = (void *)(uintptr_t)size_limit;  /* tmpfs size limit (0=unlimited) */
     mount->next = NULL;
+
+    if (size_limit > 0) {
+        fut_printf("[RAMFS] tmpfs mounted with size limit: %llu bytes\n",
+                   (unsigned long long)size_limit);
+    }
 
     *mount_out = mount;
     return 0;

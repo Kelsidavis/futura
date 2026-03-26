@@ -12382,12 +12382,12 @@ static void test_linux68_stubs(void) {
                                       uint32_t flags);
     extern long sys_lsm_list_modules(uint64_t *ids, uint32_t *size, uint32_t flags);
 
-    /* Test 1317: statmount → ENOSYS */
-    fut_printf("[MISC-TEST] Test 1317: statmount → ENOSYS\n");
+    /* Test 1317: statmount(NULL) → EINVAL */
+    fut_printf("[MISC-TEST] Test 1317: statmount(NULL) → EINVAL\n");
     {
         long ret = sys_statmount(NULL, NULL, 0, 0);
-        if (ret == -ENOSYS) {
-            fut_printf("[MISC-TEST] ✓ Test 1317: statmount → ENOSYS\n");
+        if (ret == -EINVAL) {
+            fut_printf("[MISC-TEST] ✓ Test 1317: statmount → EINVAL\n");
             fut_test_pass();
         } else {
             fut_printf("[MISC-TEST] ✗ Test 1317: statmount returned %ld\n", ret);
@@ -12395,12 +12395,12 @@ static void test_linux68_stubs(void) {
         }
     }
 
-    /* Test 1318: listmount → ENOSYS */
-    fut_printf("[MISC-TEST] Test 1318: listmount → ENOSYS\n");
+    /* Test 1318: listmount(NULL) → EINVAL */
+    fut_printf("[MISC-TEST] Test 1318: listmount(NULL) → EINVAL\n");
     {
         long ret = sys_listmount(NULL, NULL, 0, 0);
-        if (ret == -ENOSYS) {
-            fut_printf("[MISC-TEST] ✓ Test 1318: listmount → ENOSYS\n");
+        if (ret == -EINVAL) {
+            fut_printf("[MISC-TEST] ✓ Test 1318: listmount → EINVAL\n");
             fut_test_pass();
         } else {
             fut_printf("[MISC-TEST] ✗ Test 1318: listmount returned %ld\n", ret);
@@ -12408,12 +12408,12 @@ static void test_linux68_stubs(void) {
         }
     }
 
-    /* Test 1319: lsm_get_self_attr → ENOSYS */
-    fut_printf("[MISC-TEST] Test 1319: lsm_get_self_attr → ENOSYS\n");
+    /* Test 1319: lsm_get_self_attr → EOPNOTSUPP */
+    fut_printf("[MISC-TEST] Test 1319: lsm_get_self_attr → EOPNOTSUPP\n");
     {
         long ret = sys_lsm_get_self_attr(0, NULL, NULL, 0);
-        if (ret == -ENOSYS) {
-            fut_printf("[MISC-TEST] ✓ Test 1319: lsm_get_self_attr → ENOSYS\n");
+        if (ret == -EOPNOTSUPP) {
+            fut_printf("[MISC-TEST] ✓ Test 1319: lsm_get_self_attr → EOPNOTSUPP\n");
             fut_test_pass();
         } else {
             fut_printf("[MISC-TEST] ✗ Test 1319: lsm_get_self_attr returned %ld\n", ret);
@@ -12421,12 +12421,12 @@ static void test_linux68_stubs(void) {
         }
     }
 
-    /* Test 1320: lsm_set_self_attr → ENOSYS */
-    fut_printf("[MISC-TEST] Test 1320: lsm_set_self_attr → ENOSYS\n");
+    /* Test 1320: lsm_set_self_attr → EOPNOTSUPP */
+    fut_printf("[MISC-TEST] Test 1320: lsm_set_self_attr → EOPNOTSUPP\n");
     {
         long ret = sys_lsm_set_self_attr(0, NULL, 0, 0);
-        if (ret == -ENOSYS) {
-            fut_printf("[MISC-TEST] ✓ Test 1320: lsm_set_self_attr → ENOSYS\n");
+        if (ret == -EOPNOTSUPP) {
+            fut_printf("[MISC-TEST] ✓ Test 1320: lsm_set_self_attr → EOPNOTSUPP\n");
             fut_test_pass();
         } else {
             fut_printf("[MISC-TEST] ✗ Test 1320: lsm_set_self_attr returned %ld\n", ret);
@@ -26082,15 +26082,17 @@ static void test_linux_5_16_enosys_stubs(void) {
         fut_test_pass();
     }
 
-    /* Test 471: memfd_secret returns ENOSYS */
-    fut_printf("[MISC-TEST] Test 471: memfd_secret -> ENOSYS\n");
+    /* Test 471: memfd_secret returns fd */
+    fut_printf("[MISC-TEST] Test 471: memfd_secret -> fd\n");
     r = sys_memfd_secret(0);
-    if (r != -38 /*-ENOSYS*/) {
-        fut_printf("[MISC-TEST] ✗ Test 471: memfd_secret returned %ld, expected -ENOSYS\n", r);
-        fut_test_fail(471);
-    } else {
-        fut_printf("[MISC-TEST] ✓ Test 471: memfd_secret -> -ENOSYS\n");
+    if (r >= 0) {
+        fut_printf("[MISC-TEST] ✓ Test 471: memfd_secret -> fd=%ld\n", r);
+        extern long sys_close(int);
+        sys_close((int)r);
         fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 471: memfd_secret returned %ld\n", r);
+        fut_test_fail(471);
     }
 
     /* Test 472: futex_waitv with nr_futexes=0 returns EINVAL (now implemented) */
@@ -44804,11 +44806,13 @@ static void test_enosys_stubs(void) {
         fut_test_fail(1186);
     }
 
-    /* Test 1187: userfaultfd → -ENOSYS */
-    fut_printf("[MISC-TEST] Test 1187: userfaultfd → -ENOSYS\n");
+    /* Test 1187: userfaultfd → returns fd */
+    fut_printf("[MISC-TEST] Test 1187: userfaultfd → fd\n");
     r = sys_userfaultfd(0);
-    if (r == -38) {
-        fut_printf("[MISC-TEST] ✓ Test 1187: userfaultfd → ENOSYS\n");
+    if (r >= 0) {
+        fut_printf("[MISC-TEST] ✓ Test 1187: userfaultfd → fd=%ld\n", r);
+        extern long sys_close(int);
+        sys_close((int)r);
         fut_test_pass();
     } else {
         fut_printf("[MISC-TEST] ✗ Test 1187: userfaultfd returned %ld\n", r);
@@ -57947,6 +57951,277 @@ __attribute__((noinline)) static void test_net_procfs_devnodes(void) {
 }
 
 /* ============================================================
+ * Tests 1982-1993: userfaultfd, statmount, listmount, memfd_secret
+ * ============================================================ */
+__attribute__((noinline)) static void test_userfaultfd_statmount(void) {
+    extern long sys_userfaultfd(int flags);
+    extern long sys_statmount(const void *req, void *buf, size_t bufsize, unsigned int flags);
+    extern long sys_listmount(const void *req, uint64_t *mnt_ids, size_t nr_mnt_ids,
+                               unsigned int flags);
+    extern long sys_memfd_secret(unsigned int flags);
+    extern long sys_close(int);
+    extern long sys_ioctl(int fd, unsigned long request, void *argp);
+
+    /* ── Test 1982: userfaultfd creates fd ── */
+    fut_printf("[MISC-TEST] Test 1982: userfaultfd creates fd\n");
+    long ufd = sys_userfaultfd(0);
+    if (ufd >= 0) {
+        fut_printf("[MISC-TEST] ✓ Test 1982: uffd fd=%ld\n", ufd);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1982: userfaultfd=%ld\n", ufd);
+        fut_test_fail(1982);
+        /* Can't continue without fd */
+        for (int t = 1983; t <= 1987; t++) fut_test_fail((uint16_t)t);
+        goto statmount_tests;
+    }
+
+    /* ── Test 1983: UFFDIO_API handshake ── */
+    fut_printf("[MISC-TEST] Test 1983: UFFDIO_API handshake\n");
+    {
+        struct { uint64_t api; uint64_t features; uint64_t ioctls; } api_arg;
+        api_arg.api = 0xAA;
+        api_arg.features = 0;
+        api_arg.ioctls = 0;
+        long r = sys_ioctl((int)ufd, 0xAA3F /*UFFDIO_API*/, &api_arg);
+        if (r == 0 && api_arg.ioctls != 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1983: API handshake ok, ioctls=0x%llx\n",
+                       (unsigned long long)api_arg.ioctls);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1983: ioctl=%ld ioctls=0x%llx\n",
+                       r, (unsigned long long)api_arg.ioctls);
+            fut_test_fail(1983);
+        }
+    }
+
+    /* ── Test 1984: UFFDIO_REGISTER a memory region ── */
+    fut_printf("[MISC-TEST] Test 1984: UFFDIO_REGISTER\n");
+    {
+        static uint8_t test_page[4096] __attribute__((aligned(4096)));
+        struct {
+            struct { uint64_t start; uint64_t len; } range;
+            uint64_t mode;
+            uint64_t ioctls;
+        } reg_arg;
+        reg_arg.range.start = (uint64_t)(uintptr_t)test_page;
+        reg_arg.range.len = 4096;
+        reg_arg.mode = 1; /* UFFDIO_REGISTER_MODE_MISSING */
+        reg_arg.ioctls = 0;
+        long r = sys_ioctl((int)ufd, 0xAA00 /*UFFDIO_REGISTER*/, &reg_arg);
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1984: REGISTER ok, ioctls=0x%llx\n",
+                       (unsigned long long)reg_arg.ioctls);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1984: REGISTER=%ld\n", r);
+            fut_test_fail(1984);
+        }
+    }
+
+    /* ── Test 1985: UFFDIO_ZEROPAGE zeroes a page ── */
+    fut_printf("[MISC-TEST] Test 1985: UFFDIO_ZEROPAGE\n");
+    {
+        static uint8_t zero_page[4096] __attribute__((aligned(4096)));
+        memset(zero_page, 0xAA, 4096); /* Fill with pattern */
+        struct {
+            struct { uint64_t start; uint64_t len; } range;
+            uint64_t mode;
+            int64_t  zeropage;
+        } zp_arg;
+        zp_arg.range.start = (uint64_t)(uintptr_t)zero_page;
+        zp_arg.range.len = 4096;
+        zp_arg.mode = 0;
+        zp_arg.zeropage = 0;
+        long r = sys_ioctl((int)ufd, 0xAA04 /*UFFDIO_ZEROPAGE*/, &zp_arg);
+        if (r == 0 && zp_arg.zeropage == 4096 && zero_page[0] == 0 && zero_page[4095] == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1985: ZEROPAGE zeroed %lld bytes\n",
+                       (long long)zp_arg.zeropage);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1985: r=%ld zp=%lld byte0=%d\n",
+                       r, (long long)zp_arg.zeropage, zero_page[0]);
+            fut_test_fail(1985);
+        }
+    }
+
+    /* ── Test 1986: UFFDIO_COPY copies data ── */
+    fut_printf("[MISC-TEST] Test 1986: UFFDIO_COPY\n");
+    {
+        static uint8_t src_page[4096] __attribute__((aligned(4096)));
+        static uint8_t dst_page[4096] __attribute__((aligned(4096)));
+        memset(src_page, 0x42, 4096);
+        memset(dst_page, 0, 4096);
+        struct {
+            uint64_t dst; uint64_t src; uint64_t len;
+            uint64_t mode; int64_t copy;
+        } cp_arg;
+        cp_arg.dst = (uint64_t)(uintptr_t)dst_page;
+        cp_arg.src = (uint64_t)(uintptr_t)src_page;
+        cp_arg.len = 4096;
+        cp_arg.mode = 0;
+        cp_arg.copy = 0;
+        long r = sys_ioctl((int)ufd, 0xAA03 /*UFFDIO_COPY*/, &cp_arg);
+        if (r == 0 && cp_arg.copy == 4096 && dst_page[0] == 0x42 && dst_page[4095] == 0x42) {
+            fut_printf("[MISC-TEST] ✓ Test 1986: COPY %lld bytes verified\n",
+                       (long long)cp_arg.copy);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1986: r=%ld copy=%lld dst[0]=%d\n",
+                       r, (long long)cp_arg.copy, dst_page[0]);
+            fut_test_fail(1986);
+        }
+    }
+
+    /* ── Test 1987: UFFDIO_UNREGISTER ── */
+    fut_printf("[MISC-TEST] Test 1987: UFFDIO_UNREGISTER\n");
+    {
+        static uint8_t unreg_page[4096] __attribute__((aligned(4096)));
+        struct { uint64_t start; uint64_t len; } range;
+        /* Register first */
+        struct {
+            struct { uint64_t start; uint64_t len; } range;
+            uint64_t mode; uint64_t ioctls;
+        } reg;
+        reg.range.start = (uint64_t)(uintptr_t)unreg_page;
+        reg.range.len = 4096;
+        reg.mode = 1;
+        reg.ioctls = 0;
+        sys_ioctl((int)ufd, 0xAA00, &reg);
+
+        range.start = (uint64_t)(uintptr_t)unreg_page;
+        range.len = 4096;
+        long r = sys_ioctl((int)ufd, 0xAA01 /*UFFDIO_UNREGISTER*/, &range);
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1987: UNREGISTER ok\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1987: UNREGISTER=%ld\n", r);
+            fut_test_fail(1987);
+        }
+    }
+
+    sys_close((int)ufd);
+
+statmount_tests:
+    /* ── Test 1988: listmount returns mount IDs ── */
+    fut_printf("[MISC-TEST] Test 1988: listmount returns mounts\n");
+    {
+        static uint64_t ids[16];
+        memset(ids, 0, sizeof(ids));
+        long n = sys_listmount(NULL, ids, 16, 0);
+        if (n > 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1988: listmount found %ld mounts\n", n);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1988: listmount=%ld\n", n);
+            fut_test_fail(1988);
+        }
+    }
+
+    /* ── Test 1989: statmount returns mount info ── */
+    fut_printf("[MISC-TEST] Test 1989: statmount mount info\n");
+    {
+        static uint64_t ids[4];
+        long n = sys_listmount(NULL, ids, 4, 0);
+        if (n > 0) {
+            struct { uint32_t size; uint32_t __spare; uint64_t mnt_id; uint64_t mask; } req;
+            req.size = sizeof(req);
+            req.mnt_id = ids[0];
+            req.mask = 0x00000020U | 0x00000100U; /* MNT_POINT | FS_TYPE */
+            static uint8_t buf[512];
+            memset(buf, 0, sizeof(buf));
+            long r = sys_statmount(&req, buf, 512, 0);
+            if (r == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1989: statmount ok for mount id=%llu\n",
+                           (unsigned long long)ids[0]);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1989: statmount=%ld\n", r);
+                fut_test_fail(1989);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1989: no mounts to query\n");
+            fut_test_fail(1989);
+        }
+    }
+
+    /* ── Test 1990: memfd_secret creates fd ── */
+    fut_printf("[MISC-TEST] Test 1990: memfd_secret creates fd\n");
+    {
+        long r = sys_memfd_secret(0);
+        if (r >= 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1990: memfd_secret fd=%ld\n", r);
+            sys_close((int)r);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1990: memfd_secret=%ld\n", r);
+            fut_test_fail(1990);
+        }
+    }
+
+    /* ── Test 1991: memfd_secret(bad_flags) → EINVAL ── */
+    fut_printf("[MISC-TEST] Test 1991: memfd_secret bad flags\n");
+    {
+        long r = sys_memfd_secret(0xFFFF);
+        if (r == -EINVAL) {
+            fut_printf("[MISC-TEST] ✓ Test 1991: bad flags → EINVAL\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1991: memfd_secret(0xFFFF)=%ld\n", r);
+            if (r >= 0) sys_close((int)r);
+            fut_test_fail(1991);
+        }
+    }
+
+    /* ── Test 1992: userfaultfd with O_CLOEXEC ── */
+    fut_printf("[MISC-TEST] Test 1992: userfaultfd O_CLOEXEC\n");
+    {
+        long fd2 = sys_userfaultfd(02000000 /*O_CLOEXEC*/);
+        if (fd2 >= 0) {
+            extern long sys_fcntl(int fd, int cmd, uint64_t arg);
+            long fl = sys_fcntl((int)fd2, 1 /*F_GETFD*/, 0);
+            if (fl & 1 /*FD_CLOEXEC*/) {
+                fut_printf("[MISC-TEST] ✓ Test 1992: O_CLOEXEC set\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1992: CLOEXEC not set fl=%ld\n", fl);
+                fut_test_fail(1992);
+            }
+            sys_close((int)fd2);
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1992: userfaultfd=%ld\n", fd2);
+            fut_test_fail(1992);
+        }
+    }
+
+    /* ── Test 1993: UFFDIO_API rejects double handshake ── */
+    fut_printf("[MISC-TEST] Test 1993: UFFDIO_API double handshake rejected\n");
+    {
+        long fd2 = sys_userfaultfd(0);
+        if (fd2 >= 0) {
+            struct { uint64_t api; uint64_t features; uint64_t ioctls; } api;
+            api.api = 0xAA; api.features = 0; api.ioctls = 0;
+            sys_ioctl((int)fd2, 0xAA3F, &api);
+            /* Second handshake should fail */
+            api.api = 0xAA; api.features = 0; api.ioctls = 0;
+            long r = sys_ioctl((int)fd2, 0xAA3F, &api);
+            if (r == -EINVAL) {
+                fut_printf("[MISC-TEST] ✓ Test 1993: double handshake → EINVAL\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1993: second handshake=%ld\n", r);
+                fut_test_fail(1993);
+            }
+            sys_close((int)fd2);
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1993: userfaultfd=%ld\n", fd2);
+            fut_test_fail(1993);
+        }
+    }
+}
+
+/* ============================================================
  * Tests 1976-1981: fanotify filesystem notification
  * ============================================================ */
 __attribute__((noinline)) static void test_fanotify(void) {
@@ -62396,6 +62671,7 @@ void fut_misc_test_thread(void *arg) {
     test_loop_device(); /* Tests 1885-1887 */
     test_per_iface_conf(); /* Tests 1869-1871 */
 
+    test_userfaultfd_statmount(); /* Tests 1982-1993 */
     test_fanotify();  /* Tests 1976-1981 */
     test_modern_mount_api(); /* Tests 1970-1975 */
     test_keyring();   /* Tests 1958-1969 */

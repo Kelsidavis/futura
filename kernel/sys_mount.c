@@ -1172,43 +1172,170 @@ long sys_open_by_handle_at(int mount_fd, void *handle, int flags) {
  *   Linux 6.8+ mount/LSM stubs
  * ============================================================ */
 
+/* ── statmount request/response (Linux 6.8+) ── */
+
+#define STATMOUNT_SB_BASIC       0x00000001U
+#define STATMOUNT_MNT_BASIC      0x00000002U
+#define STATMOUNT_PROPAGATE_FROM 0x00000004U
+#define STATMOUNT_MNT_ROOT       0x00000010U
+#define STATMOUNT_MNT_POINT      0x00000020U
+#define STATMOUNT_FS_TYPE        0x00000100U
+
+struct statmount_req {
+    uint32_t size;
+    uint32_t __spare;
+    uint64_t mnt_id;
+    uint64_t mask;
+};
+
+struct statmount_result {
+    uint32_t size;
+    uint32_t __spare;
+    uint64_t mask;
+    uint32_t sb_dev_major;
+    uint32_t sb_dev_minor;
+    uint64_t sb_magic;
+    uint32_t sb_flags;
+    uint32_t __spare2;
+    uint64_t mnt_id;
+    uint64_t mnt_parent_id;
+    uint32_t mnt_id_old;
+    uint32_t mnt_parent_id_old;
+    uint64_t mnt_attr;
+    uint64_t mnt_propagation;
+    uint64_t mnt_peer_group;
+    uint64_t mnt_master;
+    uint64_t propagate_from;
+    uint32_t mnt_root;    /* offset into str[] */
+    uint32_t mnt_point;   /* offset into str[] */
+    uint32_t fs_type;     /* offset into str[] */
+    uint32_t __spare3;
+    char     str[];       /* NUL-terminated strings */
+};
+
 /**
  * sys_statmount() - Query mount attributes by mount ID (Linux 6.8+).
- * Returns -ENOSYS; callers (util-linux 2.40+) fall back to /proc/self/mountinfo.
+ * Iterates mounts to find the one matching the requested mnt_id.
  */
 long sys_statmount(const void *req, void *buf, size_t bufsize, unsigned int flags) {
-    (void)req; (void)buf; (void)bufsize; (void)flags;
-    return -ENOSYS;
+    (void)flags;
+    if (!req || !buf || bufsize < sizeof(struct statmount_result)) return -EINVAL;
+
+    const struct statmount_req *r = (const struct statmount_req *)req;
+    uint64_t target_id = r->mnt_id;
+
+    /* Find mount by ID (st_dev) */
+    struct fut_mount *m = fut_vfs_first_mount();
+    struct fut_mount *found = NULL;
+    uint64_t idx = 0;
+    while (m) {
+        if (m->st_dev == target_id || idx == target_id) {
+            found = m;
+            break;
+        }
+        idx++;
+        m = m->next;
+    }
+    if (!found) return -ENOENT;
+
+    struct statmount_result *res = (struct statmount_result *)buf;
+    memset(res, 0, bufsize);
+
+    /* Populate fields based on requested mask */
+    res->mask = r->mask;
+    res->mnt_id = found->st_dev;
+    res->mnt_id_old = (uint32_t)found->st_dev;
+
+    /* String section starts after the fixed struct */
+    uint32_t str_off = 0;
+    size_t str_space = bufsize - sizeof(struct statmount_result);
+    char *str_base = (char *)buf + sizeof(struct statmount_result);
+
+    if (r->mask & STATMOUNT_MNT_ROOT) {
+        res->mnt_root = str_off;
+        const char *root = "/";
+        size_t rlen = 2;
+        if (str_off + rlen <= str_space) {
+            memcpy(str_base + str_off, root, rlen);
+            str_off += (uint32_t)rlen;
+        }
+    }
+
+    if (r->mask & STATMOUNT_MNT_POINT) {
+        res->mnt_point = str_off;
+        const char *mp = found->mountpoint ? found->mountpoint : "/";
+        size_t mplen = 0;
+        while (mp[mplen]) mplen++;
+        mplen++; /* NUL */
+        if (str_off + mplen <= str_space) {
+            memcpy(str_base + str_off, mp, mplen);
+            str_off += (uint32_t)mplen;
+        }
+    }
+
+    if (r->mask & STATMOUNT_FS_TYPE) {
+        res->fs_type = str_off;
+        const char *fs = found->fstype_display ? found->fstype_display :
+                         (found->fs ? found->fs->name : "unknown");
+        size_t flen = 0;
+        while (fs[flen]) flen++;
+        flen++;
+        if (str_off + flen <= str_space) {
+            memcpy(str_base + str_off, fs, flen);
+            str_off += (uint32_t)flen;
+        }
+    }
+
+    if (r->mask & STATMOUNT_SB_BASIC) {
+        res->sb_dev_major = (uint32_t)(found->st_dev >> 8);
+        res->sb_dev_minor = (uint32_t)(found->st_dev & 0xFF);
+        res->sb_flags = (uint32_t)found->flags;
+    }
+
+    res->size = (uint32_t)(sizeof(struct statmount_result) + str_off);
+    return 0;
 }
 
 /**
  * sys_listmount() - List mount IDs under a parent mount (Linux 6.8+).
- * Returns -ENOSYS; callers fall back to parsing /proc/self/mountinfo.
+ * Returns the number of mounts listed.
  */
 long sys_listmount(const void *req, uint64_t *mnt_ids, size_t nr_mnt_ids,
                    unsigned int flags) {
-    (void)req; (void)mnt_ids; (void)nr_mnt_ids; (void)flags;
-    return -ENOSYS;
+    (void)req; (void)flags;
+    if (!mnt_ids || nr_mnt_ids == 0) return -EINVAL;
+
+    struct fut_mount *m = fut_vfs_first_mount();
+    size_t count = 0;
+    while (m && count < nr_mnt_ids) {
+        mnt_ids[count] = m->st_dev;
+        count++;
+        m = m->next;
+    }
+    return (long)count;
 }
 
 /**
- * sys_lsm_get_self_attr() - Get LSM attributes of the calling process (Linux 6.8+).
- * Returns -ENOSYS; no LSM framework in Futura. systemd 256+ probes this.
+ * sys_lsm_get_self_attr() - Get LSM attributes of the calling process.
+ * Futura has Landlock but no full LSM framework. Return EOPNOTSUPP
+ * so callers know LSM is available but the specific attr isn't.
  */
 long sys_lsm_get_self_attr(unsigned int attr, void *ctx, uint32_t *size,
                            uint32_t flags) {
-    (void)attr; (void)ctx; (void)size; (void)flags;
-    return -ENOSYS;
+    (void)attr; (void)ctx; (void)flags;
+    /* Report that no LSM attributes are available */
+    if (size) *size = 0;
+    return -EOPNOTSUPP;
 }
 
 /**
- * sys_lsm_set_self_attr() - Set LSM attributes (Linux 6.8+).
- * Returns -ENOSYS; no LSM framework.
+ * sys_lsm_set_self_attr() - Set LSM attributes.
+ * No LSM framework — return EOPNOTSUPP.
  */
 long sys_lsm_set_self_attr(unsigned int attr, void *ctx, uint32_t size,
                            uint32_t flags) {
     (void)attr; (void)ctx; (void)size; (void)flags;
-    return -ENOSYS;
+    return -EOPNOTSUPP;
 }
 
 /**

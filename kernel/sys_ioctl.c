@@ -637,7 +637,8 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
                                    request == SIOCIPSECSA ||
                                    request == SIOCBRADDBR || request == SIOCBRDELBR ||
                                    request == SIOCBRADDIF || request == SIOCBRDELIF ||
-                                   request == 0x400454CA /* TUNSETIFF */);
+                                   request == 0x400454CA /* TUNSETIFF */ ||
+                                   (request & 0xFF00) == 0xAA00 /* UFFDIO_* */);
                 if (argp_val >= KERNEL_VIRTUAL_BASE && !is_builtin) {
                     return -EFAULT;
                 }

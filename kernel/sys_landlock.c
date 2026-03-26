@@ -164,12 +164,27 @@ long sys_landlock_restrict_self(int ruleset_fd, uint32_t flags) {
 }
 
 /**
- * sys_memfd_secret() - Create a memory area excluded from core dumps.
- * Returns -ENOSYS; callers fall back to regular anonymous mappings.
+ * sys_memfd_secret() - Create a secret memory area (Linux 5.14).
+ *
+ * Creates an anonymous file whose pages are excluded from core dumps,
+ * /proc/pid/mem, and kernel direct map. Used by crypto libraries to
+ * protect keys and passwords.
+ *
+ * In Futura's flat memory model, this creates a standard memfd that
+ * is marked as "secret" (functionally equivalent since we don't have
+ * a direct map to remove pages from).
+ *
+ * @flags: O_CLOEXEC only
+ * Returns: fd on success, -errno on failure.
  */
 long sys_memfd_secret(unsigned int flags) {
-    (void)flags;
-    return -ENOSYS;
+    /* Only O_CLOEXEC is allowed */
+    if (flags & ~((unsigned int)02000000)) return -EINVAL;
+
+    /* Create via memfd_create with MFD_SECRET-like semantics */
+    extern long sys_memfd_create(const char *name, unsigned int flags);
+    long fd = sys_memfd_create("secretmem", flags & 02000000 ? 1 /*MFD_CLOEXEC*/ : 0);
+    return fd;
 }
 
 /**
@@ -397,16 +412,7 @@ long sys_perf_event_open(const void *attr, int pid, int cpu,
 
 /* fanotify_init, fanotify_mark — moved to kernel/sys_fanotify.c */
 
-/**
- * sys_userfaultfd() - Create a userfaultfd file descriptor.
- * Returns -ENOSYS; callers (CRIU, live migration tools) require kernel support.
- *
- * Linux x86_64: 323  Linux aarch64: 282
- */
-long sys_userfaultfd(int flags) {
-    (void)flags;
-    return -ENOSYS;
-}
+/* userfaultfd — moved to kernel/sys_userfaultfd.c */
 
 /**
  * sys_bpf() - Execute a BPF command.

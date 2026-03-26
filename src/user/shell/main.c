@@ -482,7 +482,7 @@ static size_t common_prefix_len(const char *s1, const char *s2) {
 static void complete_command(char *buf, size_t *pos, size_t max_len) {
     /* List of builtin commands */
     const char *builtins[] = {
-        "bg", "cd", "chmod", "clear", "date", "dd", "df", "dmesg", "echo", "edit", "hexdump", "lsof", "nc", "poweroff", "reboot", "seq", "sleep", "time", "wget", "exit", "export", "fg", "free",
+        "arp", "bg", "cd", "chmod", "clear", "date", "dd", "df", "dmesg", "echo", "edit", "hexdump", "lsof", "nc", "poweroff", "reboot", "seq", "sleep", "time", "traceroute", "wget", "exit", "export", "fg", "free",
         "help", "hostname", "id", "ifconfig", "iptables", "jobs", "kill", "ls", "mount", "netstat",
         ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "history", "ip", "ln", "mktemp", "more", "nproc", "nslookup", "ping", "printf", "ps", "pwd", "read", "readlink", "set", "sha256sum", "source", "ss", "stat", "sync", "sysinfo", "test", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "wait", "which", "whoami", "xargs", "yes", NULL
     };
@@ -6110,6 +6110,110 @@ static int execute_command(int argc, char *argv[]) {
                 sys_close(fd); if (n > 0) { buf[n] = '\0'; write_str(1, buf); } }
         }
         return 0;
+    } else if (strcmp_simple(argv[0], "arp") == 0) {
+        /* arp — show ARP cache from /proc/net/arp */
+        int fd = sys_open("/proc/net/arp", O_RDONLY, 0);
+        if (fd >= 0) {
+            char buf[2048];
+            ssize_t n = sys_read(fd, buf, sizeof(buf) - 1);
+            sys_close(fd);
+            if (n > 0) { buf[n] = '\0'; write_str(1, buf); }
+        } else {
+            write_str(2, "arp: cannot read /proc/net/arp\n");
+        }
+        return 0;
+    } else if (strcmp_simple(argv[0], "traceroute") == 0) {
+        /* traceroute — trace route to host using ICMP with increasing TTL */
+        if (argc < 2) { write_str(1, "usage: traceroute <host>\n"); return 1; }
+        const char *host = argv[1];
+        uint32_t dest_ip = 0;
+        int octet = 0, shift = 24;
+        for (int i = 0; host[i]; i++) {
+            if (host[i] == '.') { dest_ip |= ((uint32_t)octet & 0xFF) << shift; shift -= 8; octet = 0; }
+            else if (host[i] >= '0' && host[i] <= '9') octet = octet * 10 + (host[i] - '0');
+        }
+        dest_ip |= ((uint32_t)octet & 0xFF) << shift;
+        uint32_t dest_be = ((dest_ip >> 24) & 0xFF) | ((dest_ip >> 8) & 0xFF00) |
+                           ((dest_ip << 8) & 0xFF0000) | ((dest_ip << 24) & 0xFF000000u);
+
+        write_str(1, "traceroute to ");
+        write_str(1, host);
+        write_str(1, ", 30 hops max\n");
+
+        long sock = sys_call3(41 /* socket */, 2 /* AF_INET */, 3 /* SOCK_RAW */, 1 /* IPPROTO_ICMP */);
+        if (sock < 0) { write_str(2, "traceroute: raw socket failed\n"); return 1; }
+
+        /* Set receive timeout 2s */
+        struct { long tv_sec; long tv_usec; } tv = {2, 0};
+        sys_call6(54 /* setsockopt */, sock, 1 /* SOL_SOCKET */, 20 /* SO_RCVTIMEO */, (long)&tv, sizeof(tv), 0);
+
+        for (int ttl = 1; ttl <= 30; ttl++) {
+            /* Set IP_TTL */
+            sys_call6(54, sock, 0 /* IPPROTO_IP */, 2 /* IP_TTL */, (long)&ttl, sizeof(ttl), 0);
+
+            /* Build ICMP echo request */
+            uint8_t pkt[64];
+            for (int i = 0; i < 64; i++) pkt[i] = 0;
+            pkt[0] = 8;  /* ICMP_ECHO_REQUEST */
+            pkt[1] = 0;  /* code */
+            pkt[4] = 0x12; pkt[5] = 0x34; /* ID */
+            pkt[6] = (uint8_t)(ttl >> 8); pkt[7] = (uint8_t)(ttl & 0xFF); /* seq */
+            /* Checksum */
+            uint32_t sum = 0;
+            for (int i = 0; i < 64; i += 2)
+                sum += ((uint32_t)pkt[i] << 8) | pkt[i+1];
+            while (sum >> 16) sum = (sum & 0xFFFF) + (sum >> 16);
+            uint16_t cksum = ~(uint16_t)sum;
+            pkt[2] = (uint8_t)(cksum >> 8);
+            pkt[3] = (uint8_t)(cksum & 0xFF);
+
+            /* Send to destination */
+            struct { uint16_t family; uint16_t port; uint32_t addr; uint8_t pad[8]; } sa;
+            sa.family = 2; sa.port = 0; sa.addr = dest_be;
+            for (int i = 0; i < 8; i++) sa.pad[i] = 0;
+            sys_call6(44 /* sendto */, sock, (long)pkt, 64, 0, (long)&sa, 16);
+
+            /* Receive reply (ICMP Time Exceeded or Echo Reply) */
+            uint8_t reply[256];
+            struct { uint16_t family; uint16_t port; uint32_t addr; uint8_t pad[8]; } from;
+            unsigned int fromlen = 16;
+            ssize_t n = sys_call6(45 /* recvfrom */, sock, (long)reply, 256, 0, (long)&from, (long)&fromlen);
+
+            /* Print hop */
+            char num[4]; int ni = 0;
+            if (ttl >= 10) num[ni++] = '0' + ttl / 10;
+            num[ni++] = '0' + ttl % 10;
+            num[ni] = '\0';
+            write_str(1, " ");
+            write_str(1, num);
+            write_str(1, "  ");
+
+            if (n > 0) {
+                /* Extract source IP from reply (from.addr is in network byte order) */
+                uint32_t src = from.addr;
+                char ob[4]; int oi;
+                for (int b = 0; b < 4; b++) {
+                    uint8_t v = (uint8_t)(src >> (b * 8));
+                    oi = 0;
+                    if (v >= 100) ob[oi++] = '0' + v/100;
+                    if (v >= 10) ob[oi++] = '0' + (v/10)%10;
+                    ob[oi++] = '0' + v%10;
+                    ob[oi] = '\0';
+                    write_str(1, ob);
+                    if (b < 3) write_str(1, ".");
+                }
+                write_str(1, "\n");
+
+                /* Check if we reached the destination (Echo Reply type=0) */
+                if (n >= 20 && reply[20] == 0 /* ICMP_ECHO_REPLY */) {
+                    break;
+                }
+            } else {
+                write_str(1, "* * *\n");
+            }
+        }
+        sys_close(sock);
+        return 0;
     } else if (strcmp_simple(argv[0], "iptables") == 0) {
         /* iptables -t nat -A POSTROUTING -o <iface> -j MASQUERADE */
         if (argc >= 3 && strcmp_simple(argv[1], "-t") == 0 &&
@@ -6609,8 +6713,18 @@ static int execute_command(int argc, char *argv[]) {
                 write_str(1, v[0] == '1' ? "enabled" : "disabled");
                 write_str(1, "\n");
             }
+        } else if (argc > 1 && (strcmp_simple(argv[1], "neigh") == 0 ||
+                                strcmp_simple(argv[1], "n") == 0)) {
+            /* ip neigh — show ARP/neighbor table */
+            int fd = sys_open("/proc/net/arp", O_RDONLY, 0);
+            if (fd >= 0) {
+                char buf[2048];
+                ssize_t n = sys_read(fd, buf, sizeof(buf) - 1);
+                sys_close(fd);
+                if (n > 0) { buf[n] = '\0'; write_str(1, buf); }
+            }
         } else {
-            write_str(1, "usage: ip addr|link|route|forward [on|off]\n");
+            write_str(1, "usage: ip addr|link|route|neigh|forward [on|off]\n");
         }
         return 0;
     } else if (strcmp_simple(argv[0], "ping") == 0) {

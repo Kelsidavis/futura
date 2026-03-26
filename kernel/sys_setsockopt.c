@@ -719,6 +719,11 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
             case 10: socket->ip_mtu_discover= (uint32_t)val; return 0; /* IP_MTU_DISCOVER */
             case 12: socket->ip_recvttl     = (uint8_t)(val != 0); return 0; /* IP_RECVTTL */
             case 13: socket->ip_recvtos     = (uint8_t)(val != 0); return 0; /* IP_RECVTOS */
+            case 32: return 0; /* IP_MULTICAST_IF — accept silently (no multicast routing) */
+            case 33: return 0; /* IP_MULTICAST_TTL — accept silently */
+            case 34: return 0; /* IP_MULTICAST_LOOP — accept silently */
+            case 35: return 0; /* IP_ADD_MEMBERSHIP — accept silently */
+            case 36: return 0; /* IP_DROP_MEMBERSHIP — accept silently */
             default:
                 /* multicast, IP_PKTINFO, etc. — accept without storage */
                 if (optname >= 4 && optname <= 64) return 0;

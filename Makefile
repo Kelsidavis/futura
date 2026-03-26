@@ -479,6 +479,7 @@ KERNEL_SOURCES := \
     kernel/ns/utsns.c \
     kernel/ns/netns.c \
     kernel/ns/userns.c \
+    kernel/ns/ipcns.c \
     kernel/cgroup/memcg.c \
     kernel/cgroup/cpucg.c \
     kernel/fs/ext2.c \

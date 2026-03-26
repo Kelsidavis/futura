@@ -526,6 +526,34 @@ long sys_mount(const char *source, const char *target, const char *filesystemtyp
          * so the mount succeeds and the mountpoint exists, even though the
          * filesystem is not fully implemented. */
         kernel_fstype = "ramfs";
+    } else if (strcmp(fstype_buf, "futurafs") == 0) {
+        /* FuturaFS: requires a block device as source. */
+        char src_dev[64];
+        if (!source || mount_copy_from_user(src_dev, source, sizeof(src_dev)) != 0) {
+            return -EINVAL;
+        }
+        src_dev[63] = '\0';
+        /* Strip /dev/ prefix if present */
+        const char *devname = src_dev;
+        if (devname[0] == '/' && devname[1] == 'd' && devname[2] == 'e' &&
+            devname[3] == 'v' && devname[4] == '/')
+            devname = src_dev + 5;
+        extern struct fut_blockdev *fut_blockdev_find(const char *);
+        struct fut_blockdev *blkdev = fut_blockdev_find(devname);
+        if (!blkdev) {
+            fut_printf("[MOUNT] mount(source='%s', target='%s', fstype=futurafs) -> ENODEV\n",
+                       src_dev, target_buf);
+            return -ENODEV;
+        }
+        /* Ensure mountpoint directory exists */
+        extern int fut_vfs_mkdir(const char *, uint32_t);
+        fut_vfs_mkdir(target_buf, 0755);
+        int ret = fut_vfs_mount(devname, target_buf, "futurafs",
+                                (int)(mountflags & 0x7fffffff), NULL, FUT_INVALID_HANDLE);
+        if (ret >= 0)
+            fut_printf("[MOUNT] ✓ mount(source='%s', target='%s', fstype=futurafs) -> 0\n",
+                       src_dev, target_buf);
+        return ret;
     } else {
         fut_printf("[MOUNT] mount(target='%s', fstype='%s', pid=%d) -> ENODEV "
                    "(unsupported filesystem type)\n",

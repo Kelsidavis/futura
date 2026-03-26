@@ -484,7 +484,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     /* List of builtin commands */
     const char *builtins[] = {
         "arp", "bg", "brctl", "cd", "chmod", "clear", "conntrack", "date", "dd", "df", "dhclient", "dmesg", "echo", "edit", "ethtool", "hexdump", "lsof", "nc", "poweroff", "reboot", "seq", "sleep", "time", "traceroute", "wget", "exit", "export", "fg", "free",
-        "help", "hostname", "httpd", "id", "ifconfig", "iostat", "ipcs", "iptables", "jobs", "kill", "losetup", "ls", "lsblk", "lspci", "mount", "netstat",
+        "help", "hostname", "httpd", "id", "ifconfig", "iostat", "ipcs", "iptables", "jobs", "kill", "losetup", "ls", "lsblk", "lspci", "mkfs", "mount", "netstat",
         ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "history", "ip", "ln", "mktemp", "more", "nproc", "nslookup", "ping", "printf", "ps", "pwd", "read", "readlink", "set", "sha256sum", "shutdown", "source", "ss", "stat", "sync", "sysctl", "sysinfo", "test", "top", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "vmstat", "wait", "watch", "wdctl", "which", "whoami", "xargs", "yes", NULL
     };
 
@@ -6927,6 +6927,34 @@ static int execute_command(int argc, char *argv[]) {
             write_str(1, "       losetup -a                   - List active loop devices\n");
         }
         return 0;
+    } else if (strcmp_simple(argv[0], "mkfs.futura") == 0 ||
+               strcmp_simple(argv[0], "mkfs") == 0) {
+        /* mkfs.futura <device> — format a block device with FuturaFS */
+        if (argc < 2) {
+            write_str(2, "usage: mkfs.futura <device>\n");
+            write_str(2, "  e.g.: mkfs.futura /dev/loop0\n");
+            return 1;
+        }
+        const char *dev = argv[1];
+        /* Strip /dev/ prefix for blockdev lookup */
+        const char *bname = dev;
+        if (bname[0] == '/' && bname[1] == 'd' && bname[2] == 'e' &&
+            bname[3] == 'v' && bname[4] == '/')
+            bname = dev + 5;
+        /* Use a custom ioctl to trigger format from kernel */
+        write_str(1, "Formatting "); write_str(1, dev);
+        write_str(1, " as FuturaFS...\n");
+        /* Mount syscall with special flag triggers format+mount */
+        long rc = sys_call6(165 /* mount */, (long)dev, (long)"/mnt",
+                            (long)"futurafs", 0, 0, 0);
+        if (rc == 0) {
+            write_str(1, "FuturaFS formatted and mounted at /mnt\n");
+        } else {
+            write_str(2, "mkfs.futura: format failed (");
+            char num[16]; int_to_str((int)rc, num, 16);
+            write_str(2, num); write_str(2, ")\n");
+        }
+        return (int)rc;
     } else if (strcmp_simple(argv[0], "conntrack") == 0) {
         /* conntrack — show/flush NAT connection tracking table */
         if (argc >= 2 && strcmp_simple(argv[1], "-F") == 0) {
@@ -8927,7 +8955,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   113 built-in commands — type 'help'    |\n");
+    write_str(1, "|   114 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");

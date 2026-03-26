@@ -608,6 +608,7 @@ KERNEL_SOURCES := \
     kernel/sys_futimesat.c \
     kernel/sys_aio.c \
     kernel/sys_landlock.c \
+    kernel/sys_keyring.c \
     kernel/sys_mempolicy.c \
     kernel/sys_clone3.c \
     kernel/sys_socketpair.c \

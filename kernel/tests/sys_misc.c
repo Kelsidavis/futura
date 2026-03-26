@@ -37644,36 +37644,36 @@ static void test_keyring_and_legacy_events(void) {
     extern long sys_eventfd2(unsigned int initval, int flags);
     extern long sys_close(int fd);
 
-    /* --- Test 947: add_key → ENOSYS --- */
-    fut_printf("[MISC-TEST] Test 947: add_key → ENOSYS\n");
+    /* --- Test 947: add_key(NULL) → EINVAL --- */
+    fut_printf("[MISC-TEST] Test 947: add_key(NULL) → EINVAL\n");
     long r947 = sys_add_key(NULL, NULL, NULL, 0, 0);
-    if (r947 == -38) {
-        fut_printf("[MISC-TEST] ✓ Test 947: add_key → ENOSYS\n");
+    if (r947 == -EINVAL) {
+        fut_printf("[MISC-TEST] ✓ Test 947: add_key(NULL) → EINVAL\n");
         fut_test_pass();
     } else {
-        fut_printf("[MISC-TEST] ✗ Test 947: add_key = %ld (want -38)\n", r947);
+        fut_printf("[MISC-TEST] ✗ Test 947: add_key = %ld (want -EINVAL)\n", r947);
         fut_test_fail(947);
     }
 
-    /* --- Test 948: request_key → ENOSYS --- */
-    fut_printf("[MISC-TEST] Test 948: request_key → ENOSYS\n");
+    /* --- Test 948: request_key(NULL) → EINVAL --- */
+    fut_printf("[MISC-TEST] Test 948: request_key(NULL) → EINVAL\n");
     long r948 = sys_request_key(NULL, NULL, NULL, 0);
-    if (r948 == -38) {
-        fut_printf("[MISC-TEST] ✓ Test 948: request_key → ENOSYS\n");
+    if (r948 == -EINVAL) {
+        fut_printf("[MISC-TEST] ✓ Test 948: request_key(NULL) → EINVAL\n");
         fut_test_pass();
     } else {
-        fut_printf("[MISC-TEST] ✗ Test 948: request_key = %ld (want -38)\n", r948);
+        fut_printf("[MISC-TEST] ✗ Test 948: request_key = %ld (want -EINVAL)\n", r948);
         fut_test_fail(948);
     }
 
-    /* --- Test 949: keyctl → ENOSYS --- */
-    fut_printf("[MISC-TEST] Test 949: keyctl → ENOSYS\n");
-    long r949 = sys_keyctl(0, 0, 0, 0, 0);
-    if (r949 == -38) {
-        fut_printf("[MISC-TEST] ✓ Test 949: keyctl → ENOSYS\n");
+    /* --- Test 949: keyctl(GET_KEYRING_ID, session) → serial > 0 --- */
+    fut_printf("[MISC-TEST] Test 949: keyctl(GET_KEYRING_ID) → serial\n");
+    long r949 = sys_keyctl(0 /*GET_KEYRING_ID*/, (unsigned long)-3 /*SESSION*/, 1 /*create*/, 0, 0);
+    if (r949 > 0) {
+        fut_printf("[MISC-TEST] ✓ Test 949: keyctl session keyring serial=%ld\n", r949);
         fut_test_pass();
     } else {
-        fut_printf("[MISC-TEST] ✗ Test 949: keyctl = %ld (want -38)\n", r949);
+        fut_printf("[MISC-TEST] ✗ Test 949: keyctl = %ld (want >0)\n", r949);
         fut_test_fail(949);
     }
 
@@ -57939,6 +57939,235 @@ __attribute__((noinline)) static void test_net_procfs_devnodes(void) {
 }
 
 /* ============================================================
+ * Tests 1958-1969: Linux keyring management
+ * ============================================================ */
+__attribute__((noinline)) static void test_keyring(void) {
+    extern long sys_add_key(const char *type, const char *description,
+                            const void *payload, size_t plen, int keyring);
+    extern long sys_request_key(const char *type, const char *description,
+                                const char *callout_info, int dest_keyring);
+    extern long sys_keyctl(int operation, unsigned long arg2, unsigned long arg3,
+                           unsigned long arg4, unsigned long arg5);
+
+    #define KR_GET_KEYRING_ID  0
+    #define KR_DESCRIBE        6
+    #define KR_READ           11
+    #define KR_UPDATE          2
+    #define KR_REVOKE          3
+    #define KR_LINK            8
+    #define KR_UNLINK          9
+    #define KR_CLEAR           7
+    #define KR_SEARCH         10
+    #define KR_SETPERM         5
+    #define KR_INVALIDATE     21
+    #define KR_SET_TIMEOUT    15
+
+    /* ── Test 1958: add_key creates a "user" key in session keyring ── */
+    fut_printf("[MISC-TEST] Test 1958: add_key user key\n");
+    long serial = sys_add_key("user", "test:mykey", "secret123", 9,
+                               -3 /* KEY_SPEC_SESSION_KEYRING */);
+    if (serial > 0) {
+        fut_printf("[MISC-TEST] ✓ Test 1958: add_key serial=%ld\n", serial);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1958: add_key=%ld\n", serial);
+        fut_test_fail(1958);
+    }
+
+    /* ── Test 1959: keyctl(READ) retrieves key payload ── */
+    fut_printf("[MISC-TEST] Test 1959: keyctl READ payload\n");
+    {
+        static char buf[64];
+        memset(buf, 0, sizeof(buf));
+        long rr = sys_keyctl(KR_READ, (unsigned long)serial,
+                              (unsigned long)(uintptr_t)buf, 64, 0);
+        if (rr == 9 && memcmp(buf, "secret123", 9) == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1959: READ len=%ld payload ok\n", rr);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1959: READ len=%ld\n", rr);
+            fut_test_fail(1959);
+        }
+    }
+
+    /* ── Test 1960: keyctl(DESCRIBE) returns type;uid;gid;perm;desc ── */
+    fut_printf("[MISC-TEST] Test 1960: keyctl DESCRIBE\n");
+    {
+        static char desc[256];
+        memset(desc, 0, sizeof(desc));
+        long rr = sys_keyctl(KR_DESCRIBE, (unsigned long)serial,
+                              (unsigned long)(uintptr_t)desc, 256, 0);
+        /* Should contain "user;" prefix and "test:mykey" suffix */
+        if (rr > 0 && memcmp(desc, "user;", 5) == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1960: DESCRIBE=\"%s\"\n", desc);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1960: DESCRIBE len=%ld\n", rr);
+            fut_test_fail(1960);
+        }
+    }
+
+    /* ── Test 1961: keyctl(UPDATE) changes payload ── */
+    fut_printf("[MISC-TEST] Test 1961: keyctl UPDATE\n");
+    {
+        long rr = sys_keyctl(KR_UPDATE, (unsigned long)serial,
+                              (unsigned long)(uintptr_t)"newdata", 7, 0);
+        static char buf[64];
+        memset(buf, 0, sizeof(buf));
+        long r2 = sys_keyctl(KR_READ, (unsigned long)serial,
+                              (unsigned long)(uintptr_t)buf, 64, 0);
+        if (rr == 0 && r2 == 7 && memcmp(buf, "newdata", 7) == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1961: UPDATE+READ verified\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1961: update=%ld read=%ld\n", rr, r2);
+            fut_test_fail(1961);
+        }
+    }
+
+    /* ── Test 1962: request_key finds existing key ── */
+    fut_printf("[MISC-TEST] Test 1962: request_key finds key\n");
+    {
+        long found = sys_request_key("user", "test:mykey", NULL, 0);
+        if (found == serial) {
+            fut_printf("[MISC-TEST] ✓ Test 1962: request_key found serial=%ld\n", found);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1962: found=%ld expected=%ld\n", found, serial);
+            fut_test_fail(1962);
+        }
+    }
+
+    /* ── Test 1963: request_key returns ENOKEY for missing key ── */
+    fut_printf("[MISC-TEST] Test 1963: request_key ENOKEY\n");
+    {
+        long rr = sys_request_key("user", "nonexistent:key", NULL, 0);
+        if (rr == -126 /* -ENOKEY */) {
+            fut_printf("[MISC-TEST] ✓ Test 1963: request_key → ENOKEY\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1963: request_key=%ld\n", rr);
+            fut_test_fail(1963);
+        }
+    }
+
+    /* ── Test 1964: keyctl(REVOKE) marks key revoked ── */
+    fut_printf("[MISC-TEST] Test 1964: keyctl REVOKE\n");
+    {
+        /* Create a key to revoke */
+        long ks = sys_add_key("user", "test:revokeme", "tmp", 3,
+                               -3 /* SESSION */);
+        if (ks > 0) {
+            long rv = sys_keyctl(KR_REVOKE, (unsigned long)ks, 0, 0, 0);
+            /* Reading revoked key should return EKEYREVOKED (-128) */
+            static char buf[16];
+            long r2 = sys_keyctl(KR_READ, (unsigned long)ks,
+                                  (unsigned long)(uintptr_t)buf, 16, 0);
+            if (rv == 0 && r2 == -128 /* -EKEYREVOKED */) {
+                fut_printf("[MISC-TEST] ✓ Test 1964: REVOKE ok, READ → EKEYREVOKED\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1964: revoke=%ld read=%ld\n", rv, r2);
+                fut_test_fail(1964);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1964: add_key=%ld\n", ks);
+            fut_test_fail(1964);
+        }
+    }
+
+    /* ── Test 1965: add_key with invalid type returns EINVAL ── */
+    fut_printf("[MISC-TEST] Test 1965: add_key invalid type\n");
+    {
+        long rr = sys_add_key("bogus_type", "desc", "data", 4, -3);
+        if (rr == -EINVAL) {
+            fut_printf("[MISC-TEST] ✓ Test 1965: invalid type → EINVAL\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1965: add_key=%ld\n", rr);
+            fut_test_fail(1965);
+        }
+    }
+
+    /* ── Test 1966: add_key "keyring" creates sub-keyring ── */
+    fut_printf("[MISC-TEST] Test 1966: add_key keyring type\n");
+    {
+        long ks = sys_add_key("keyring", "test:subring", NULL, 0, -3);
+        if (ks > 0) {
+            /* Reading an empty keyring should return 0 bytes */
+            static char buf[32];
+            long rr = sys_keyctl(KR_READ, (unsigned long)ks,
+                                  (unsigned long)(uintptr_t)buf, 32, 0);
+            if (rr == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1966: keyring serial=%ld, empty\n", ks);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1966: read=%ld\n", rr);
+                fut_test_fail(1966);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1966: add_key=%ld\n", ks);
+            fut_test_fail(1966);
+        }
+    }
+
+    /* ── Test 1967: keyctl(SEARCH) finds key in keyring ── */
+    fut_printf("[MISC-TEST] Test 1967: keyctl SEARCH\n");
+    {
+        long rr = sys_keyctl(KR_SEARCH,
+                              (unsigned long)(-3) /* SESSION */,
+                              (unsigned long)(uintptr_t)"user",
+                              (unsigned long)(uintptr_t)"test:mykey",
+                              0);
+        if (rr == serial) {
+            fut_printf("[MISC-TEST] ✓ Test 1967: SEARCH found serial=%ld\n", rr);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1967: SEARCH=%ld\n", rr);
+            fut_test_fail(1967);
+        }
+    }
+
+    /* ── Test 1968: keyctl(SETPERM) changes permissions ── */
+    fut_printf("[MISC-TEST] Test 1968: keyctl SETPERM\n");
+    {
+        /* Set read-only for possessor */
+        long rr = sys_keyctl(KR_SETPERM, (unsigned long)serial,
+                              0x02000000 /* KEY_POS_READ */, 0, 0);
+        if (rr == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1968: SETPERM ok\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1968: SETPERM=%ld\n", rr);
+            fut_test_fail(1968);
+        }
+    }
+
+    /* ── Test 1969: keyctl(INVALIDATE) removes key ── */
+    fut_printf("[MISC-TEST] Test 1969: keyctl INVALIDATE\n");
+    {
+        long ks = sys_add_key("user", "test:todelete", "rm", 2, -3);
+        if (ks > 0) {
+            long rv = sys_keyctl(KR_INVALIDATE, (unsigned long)ks, 0, 0, 0);
+            /* Attempting to read invalidated key should return ENOKEY */
+            static char buf[16];
+            long r2 = sys_keyctl(KR_READ, (unsigned long)ks,
+                                  (unsigned long)(uintptr_t)buf, 16, 0);
+            if (rv == 0 && r2 == -126 /* -ENOKEY */) {
+                fut_printf("[MISC-TEST] ✓ Test 1969: INVALIDATE ok\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1969: inv=%ld read=%ld\n", rv, r2);
+                fut_test_fail(1969);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1969: add_key=%ld\n", ks);
+            fut_test_fail(1969);
+        }
+    }
+}
+
+/* ============================================================
  * Tests 1946-1957: io_uring async I/O subsystem
  * ============================================================ */
 __attribute__((noinline)) static void test_io_uring(void) {
@@ -61923,6 +62152,7 @@ void fut_misc_test_thread(void *arg) {
     test_loop_device(); /* Tests 1885-1887 */
     test_per_iface_conf(); /* Tests 1869-1871 */
 
+    test_keyring();   /* Tests 1958-1969 */
     test_io_uring();  /* Tests 1946-1957 */
 
     fut_printf("[MISC-TEST] ========================================\n");

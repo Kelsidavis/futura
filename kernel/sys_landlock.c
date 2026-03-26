@@ -381,35 +381,7 @@ long sys_mseal(void *addr, size_t len, unsigned long flags) {
     return 0;
 }
 
-/**
- * sys_add_key() - Add a key to the Linux keyring.
- * Returns -ENOSYS; programs (ssh, PAM, OpenSSL) fall back to file-based creds.
- */
-long sys_add_key(const char *type, const char *description,
-                 const void *payload, size_t plen, int keyring) {
-    (void)type; (void)description; (void)payload; (void)plen; (void)keyring;
-    return -ENOSYS;
-}
-
-/**
- * sys_request_key() - Request a key from the kernel keyring.
- * Returns -ENOSYS.
- */
-long sys_request_key(const char *type, const char *description,
-                     const char *callout_info, int dest_keyring) {
-    (void)type; (void)description; (void)callout_info; (void)dest_keyring;
-    return -ENOSYS;
-}
-
-/**
- * sys_keyctl() - Operate on the Linux keyring.
- * Returns -ENOSYS; callers must handle absence of kernel keyring.
- */
-long sys_keyctl(int operation, unsigned long arg2, unsigned long arg3,
-                unsigned long arg4, unsigned long arg5) {
-    (void)operation; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
-    return -ENOSYS;
-}
+/* add_key, request_key, keyctl — moved to kernel/sys_keyring.c */
 
 /**
  * sys_perf_event_open() - Open a performance monitoring file descriptor.

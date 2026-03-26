@@ -276,6 +276,27 @@
 #define EWOULDBLOCK EAGAIN
 #endif
 
+/* Key management error codes */
+#ifndef ENOKEY
+#define ENOKEY      126  /* Required key not available */
+#endif
+
+#ifndef EKEYEXPIRED
+#define EKEYEXPIRED 127  /* Key has expired */
+#endif
+
+#ifndef EKEYREVOKED
+#define EKEYREVOKED 128  /* Key has been revoked */
+#endif
+
+#ifndef EKEYREJECTED
+#define EKEYREJECTED 129 /* Key was rejected by service */
+#endif
+
+#ifndef EDQUOT
+#define EDQUOT      122  /* Disk quota exceeded */
+#endif
+
 #ifndef phys_addr_t
 #include <stdint.h>
 typedef uint64_t phys_addr_t;

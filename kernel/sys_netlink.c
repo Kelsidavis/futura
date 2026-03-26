@@ -333,9 +333,19 @@ static void nl_emit_one_addr(uint8_t *buf, uint32_t *pos, uint32_t seq,
     nl_rta32(buf, pos, IFA_LOCAL, ip_nbo);
     nl_rta32(buf, pos, IFA_ADDRESS, ip_nbo);
 
+    /* IFA_BROADCAST: computed from IP + netmask if not loopback */
+    if (!(iface->flags & 0x0008) && iface->broadcast) {
+        uint32_t bcast_nbo = ip_to_nbo(iface->broadcast);
+        nl_rta32(buf, pos, 4 /* IFA_BROADCAST */, bcast_nbo);
+    }
+
+    /* IFA_LABEL: interface name */
     size_t nlen = 0;
     while (nlen < 15 && iface->name[nlen]) nlen++;
     nl_rta_str(buf, pos, IFA_LABEL, iface->name, (uint16_t)(nlen + 1));
+
+    /* IFA_FLAGS: extended flags (32-bit, replaces ifa_flags 8-bit field) */
+    nl_rta32(buf, pos, IFA_FLAGS, IFA_F_PERMANENT);
 
     uint32_t msg_len = *pos - msg_start;
     __builtin_memcpy(buf + msg_start, &msg_len, sizeof(msg_len));

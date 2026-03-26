@@ -26,6 +26,7 @@
 #include <kernel/fut_lock.h>
 #include <kernel/errno.h>
 #include <futura/netif.h>
+#include <kernel/fut_blockdev.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -558,6 +559,44 @@ static int sysfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                     }
                     seen++;
                 }
+            }
+            return -ENOENT;
+        }
+        case SYSFS_CLASS_BLOCK_DIR: {
+            /* Dynamic entries: enumerate registered block devices */
+            uint64_t idx = *cookie;
+            if (idx == 0) {
+                de->d_ino = SYSFS_INO_CLASS_BLOCK;
+                de->d_off = 1; de->d_type = FUT_VDIR_TYPE_DIR;
+                de->d_reclen = sizeof(*de);
+                de->d_name[0] = '.'; de->d_name[1] = '\0';
+                *cookie = 1; return 1;
+            }
+            if (idx == 1) {
+                de->d_ino = SYSFS_INO_CLASS;
+                de->d_off = 2; de->d_type = FUT_VDIR_TYPE_DIR;
+                de->d_reclen = sizeof(*de);
+                de->d_name[0] = '.'; de->d_name[1] = '.'; de->d_name[2] = '\0';
+                *cookie = 2; return 1;
+            }
+            /* Walk block device list */
+            extern struct fut_blockdev *fut_blockdev_first(void);
+            int target = (int)(idx - 2);
+            int seen = 0;
+            for (struct fut_blockdev *bd = fut_blockdev_first(); bd; bd = bd->next) {
+                if (seen == target) {
+                    de->d_ino = SYSFS_INO_CLASS_BLOCK + 100 + (uint64_t)seen;
+                    de->d_off = (int64_t)(idx + 1);
+                    de->d_type = FUT_VDIR_TYPE_DIR;
+                    de->d_reclen = sizeof(*de);
+                    size_t nlen = 0;
+                    while (nlen < 31 && bd->name[nlen]) nlen++;
+                    __builtin_memcpy(de->d_name, bd->name, nlen);
+                    de->d_name[nlen] = '\0';
+                    *cookie = idx + 1;
+                    return 1;
+                }
+                seen++;
             }
             return -ENOENT;
         }

@@ -493,7 +493,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     const char *builtins[] = {
         "arp", "bg", "brctl", "cd", "chmod", "clear", "conntrack", "date", "dd", "df", "dhclient", "dmesg", "echo", "edit", "ethtool", "hexdump", "lsof", "nc", "poweroff", "reboot", "seq", "sleep", "time", "traceroute", "wget", "exit", "export", "fg", "free",
         "help", "hostname", "httpd", "id", "ifconfig", "iostat", "ipcs", "iptables", "jobs", "kill", "logger", "losetup", "ls", "lsblk", "lspci", "mkfs", "mount", "netstat",
-        ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "history", "ip", "ln", "mktemp", "more", "nproc", "nslookup", "ping", "printf", "ps", "pwd", "read", "readlink", "set", "sha256sum", "shutdown", "source", "ss", "stat", "stty", "sync", "sysctl", "sysinfo", "test", "top", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "vmstat", "wait", "watch", "wdctl", "which", "whoami", "xargs", "yes", NULL
+        ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "getconf", "history", "ip", "ln", "mktemp", "more", "nproc", "nslookup", "ping", "printf", "ps", "pwd", "read", "readlink", "set", "sha256sum", "shutdown", "source", "ss", "stat", "stty", "sync", "sysctl", "sysinfo", "test", "top", "trap", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "vmstat", "wait", "watch", "wdctl", "which", "whoami", "xargs", "yes", NULL
     };
 
     /* External commands we might have */
@@ -6907,6 +6907,70 @@ static int execute_command(int argc, char *argv[]) {
             }
         }
         return 0;
+    } else if (strcmp_simple(argv[0], "getconf") == 0) {
+        /* getconf — get system configuration values */
+        if (argc < 2) {
+            write_str(2, "usage: getconf <name>\n");
+            write_str(2, "  PAGE_SIZE, NPROCESSORS_ONLN, LONG_BIT, _POSIX_VERSION, etc.\n");
+            return 1;
+        }
+        const char *key = argv[1];
+        if (strcmp_simple(key, "PAGE_SIZE") == 0 || strcmp_simple(key, "PAGESIZE") == 0) {
+            write_str(1, "4096\n");
+        } else if (strcmp_simple(key, "NPROCESSORS_ONLN") == 0 ||
+                   strcmp_simple(key, "NPROCESSORS_CONF") == 0 ||
+                   strcmp_simple(key, "_NPROCESSORS_ONLN") == 0) {
+            write_str(1, "1\n");
+        } else if (strcmp_simple(key, "LONG_BIT") == 0) {
+            write_str(1, "64\n");
+        } else if (strcmp_simple(key, "_POSIX_VERSION") == 0) {
+            write_str(1, "200809\n");
+        } else if (strcmp_simple(key, "PATH_MAX") == 0) {
+            write_str(1, "4096\n");
+        } else if (strcmp_simple(key, "NAME_MAX") == 0) {
+            write_str(1, "255\n");
+        } else if (strcmp_simple(key, "ARG_MAX") == 0) {
+            write_str(1, "2097152\n");
+        } else if (strcmp_simple(key, "CLK_TCK") == 0 || strcmp_simple(key, "_SC_CLK_TCK") == 0) {
+            write_str(1, "100\n");
+        } else if (strcmp_simple(key, "OPEN_MAX") == 0) {
+            write_str(1, "1024\n");
+        } else {
+            write_str(2, "getconf: undefined variable: ");
+            write_str(2, key); write_char(2, '\n');
+            return 1;
+        }
+        return 0;
+    } else if (strcmp_simple(argv[0], "trap") == 0) {
+        /* trap — set signal handlers for shell scripts */
+        if (argc == 1) {
+            /* Show current traps */
+            write_str(1, "trap -- '' SIGTSTP\n");
+            write_str(1, "trap -- '' SIGTTIN\n");
+            write_str(1, "trap -- '' SIGTTOU\n");
+        } else if (argc >= 3) {
+            /* trap 'command' SIGNAL — register handler */
+            const char *cmd = argv[1];
+            const char *sig = argv[2];
+            write_str(1, "trap '"); write_str(1, cmd);
+            write_str(1, "' "); write_str(1, sig); write_str(1, "\n");
+            /* For now, just acknowledge — real signal dispatch would need
+             * the shell to install sigaction handlers and execute the
+             * trap command string on signal delivery. */
+        } else if (argc == 2 && strcmp_simple(argv[1], "-l") == 0) {
+            /* List signal names */
+            write_str(1, " 1) SIGHUP\t 2) SIGINT\t 3) SIGQUIT\t 4) SIGILL\n");
+            write_str(1, " 5) SIGTRAP\t 6) SIGABRT\t 7) SIGBUS\t 8) SIGFPE\n");
+            write_str(1, " 9) SIGKILL\t10) SIGUSR1\t11) SIGSEGV\t12) SIGUSR2\n");
+            write_str(1, "13) SIGPIPE\t14) SIGALRM\t15) SIGTERM\t16) SIGSTKFLT\n");
+            write_str(1, "17) SIGCHLD\t18) SIGCONT\t19) SIGSTOP\t20) SIGTSTP\n");
+            write_str(1, "21) SIGTTIN\t22) SIGTTOU\t23) SIGURG\t24) SIGXCPU\n");
+            write_str(1, "25) SIGXFSZ\t26) SIGVTALRM\t27) SIGPROF\t28) SIGWINCH\n");
+            write_str(1, "29) SIGIO\t30) SIGPWR\t31) SIGSYS\n");
+        } else {
+            write_str(2, "usage: trap [-l] | trap 'command' SIGNAL\n");
+        }
+        return 0;
     } else if (strcmp_simple(argv[0], "logger") == 0) {
         /* logger — write message to kernel log (/dev/kmsg) */
         if (argc < 2) {
@@ -9052,7 +9116,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   116 built-in commands — type 'help'    |\n");
+    write_str(1, "|   118 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");

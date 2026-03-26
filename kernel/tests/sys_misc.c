@@ -57954,6 +57954,220 @@ __attribute__((noinline)) static void test_net_procfs_devnodes(void) {
 /* ============================================================
  * Tests 2061-2063: binfmt_misc
  * ============================================================ */
+/* ============================================================
+ * Tests 2064-2073: extended subsystem coverage
+ * ============================================================ */
+__attribute__((noinline)) static void test_subsystem_coverage(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_write(int, const void *, size_t);
+    extern long sys_close(int);
+    extern long sys_ioctl(int fd, unsigned long request, void *argp);
+
+    /* ── Test 2064: perf SW context-switches counter ── */
+    fut_printf("[MISC-TEST] Test 2064: perf SW ctx-switches\n");
+    {
+        extern long sys_perf_event_open(const void *attr, int pid, int cpu,
+                                         int group_fd, unsigned long flags);
+        struct { uint32_t type; uint32_t size; uint64_t config;
+                 uint64_t sp; uint64_t st; uint64_t rf; uint64_t fl;
+                 uint32_t we; uint32_t bt; uint64_t c1; uint64_t c2; } attr;
+        memset(&attr, 0, sizeof(attr));
+        attr.type = 1; /* SOFTWARE */
+        attr.config = 3; /* PERF_COUNT_SW_CONTEXT_SWITCHES */
+        long fd = sys_perf_event_open(&attr, -1, -1, -1, 0);
+        if (fd >= 0) {
+            static uint64_t val;
+            sys_read((int)fd, &val, sizeof(val));
+            sys_close((int)fd);
+            fut_printf("[MISC-TEST] ✓ Test 2064: ctx-switches=%llu\n",
+                       (unsigned long long)val);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2064: open=%ld\n", fd);
+            fut_test_fail(2064);
+        }
+    }
+
+    /* ── Test 2065: perf HW cache-misses counter ── */
+    fut_printf("[MISC-TEST] Test 2065: perf HW cache-misses\n");
+    {
+        extern long sys_perf_event_open(const void *attr, int pid, int cpu,
+                                         int group_fd, unsigned long flags);
+        struct { uint32_t type; uint32_t size; uint64_t config;
+                 uint64_t sp; uint64_t st; uint64_t rf; uint64_t fl;
+                 uint32_t we; uint32_t bt; uint64_t c1; uint64_t c2; } attr;
+        memset(&attr, 0, sizeof(attr));
+        attr.type = 0; /* HARDWARE */
+        attr.config = 3; /* CACHE_MISSES */
+        long fd = sys_perf_event_open(&attr, -1, -1, -1, 0);
+        if (fd >= 0) {
+            static uint64_t val;
+            sys_read((int)fd, &val, sizeof(val));
+            sys_close((int)fd);
+            fut_printf("[MISC-TEST] ✓ Test 2065: cache-misses=%llu\n",
+                       (unsigned long long)val);
+            fut_test_pass();
+        } else { fut_test_fail(2065); }
+    }
+
+    /* ── Test 2066: cgroup subtree_control readable from root ── */
+    fut_printf("[MISC-TEST] Test 2066: cgroup subtree_control\n");
+    {
+        long fd = sys_open("/cgroup/cgroup.subtree_control", 0, 0);
+        if (fd >= 0) {
+            static char buf[64];
+            long n = sys_read((int)fd, buf, 63);
+            sys_close((int)fd);
+            if (n > 0) {
+                fut_printf("[MISC-TEST] ✓ Test 2066: subtree_control ok\n");
+                fut_test_pass();
+            } else { fut_test_fail(2066); }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2066: open=%ld\n", fd);
+            fut_test_fail(2066);
+        }
+    }
+
+    /* ── Test 2067: cgroup cpu.stat readable ── */
+    fut_printf("[MISC-TEST] Test 2067: cgroup cpu.stat\n");
+    {
+        long fd = sys_open("/cgroup/cpu.stat", 0, 0);
+        if (fd >= 0) {
+            static char buf[256];
+            long n = sys_read((int)fd, buf, 255);
+            sys_close((int)fd);
+            if (n > 10) {
+                fut_printf("[MISC-TEST] ✓ Test 2067: cpu.stat %ld bytes\n", n);
+                fut_test_pass();
+            } else { fut_test_fail(2067); }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2067: open=%ld\n", fd);
+            fut_test_fail(2067);
+        }
+    }
+
+    /* ── Test 2068: keyring GET_KEYRING_ID + CLEAR ── */
+    fut_printf("[MISC-TEST] Test 2068: keyctl GET_KEYRING_ID\n");
+    {
+        extern long sys_add_key(const char *type, const char *description,
+                                const void *payload, size_t plen, int keyring);
+        extern long sys_keyctl(int operation, unsigned long arg2, unsigned long arg3,
+                               unsigned long arg4, unsigned long arg5);
+        /* Get session keyring serial, then clear it */
+        long serial = sys_keyctl(0 /*GET_KEYRING_ID*/, (unsigned long)-3, 1, 0, 0);
+        if (serial > 0) {
+            sys_add_key("user", "test:clearme", "data", 4, -3);
+            long r = sys_keyctl(7 /*CLEAR*/, (unsigned long)serial, 0, 0, 0);
+            if (r == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 2068: GET_KEYRING_ID=%ld, CLEAR ok\n", serial);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2068: CLEAR=%ld\n", r);
+                fut_test_fail(2068);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2068: GET_KEYRING_ID=%ld\n", serial);
+            fut_test_fail(2068);
+        }
+    }
+
+    /* ── Test 2069: /proc/sys/kernel/version readable ── */
+    fut_printf("[MISC-TEST] Test 2069: /proc/sys/kernel/version\n");
+    {
+        long fd = sys_open("/proc/sys/kernel/version", 0, 0);
+        if (fd >= 0) {
+            static char buf[128];
+            long n = sys_read((int)fd, buf, 127);
+            sys_close((int)fd);
+            if (n > 0) {
+                fut_printf("[MISC-TEST] ✓ Test 2069: version ok\n");
+                fut_test_pass();
+            } else { fut_test_fail(2069); }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2069: open=%ld\n", fd);
+            fut_test_fail(2069);
+        }
+    }
+
+    /* ── Test 2070: /proc/sys/kernel/domainname readable ── */
+    fut_printf("[MISC-TEST] Test 2070: /proc/sys/kernel/domainname\n");
+    {
+        long fd = sys_open("/proc/sys/kernel/domainname", 0, 0);
+        if (fd >= 0) {
+            static char buf[64];
+            long n = sys_read((int)fd, buf, 63);
+            sys_close((int)fd);
+            if (n > 0) {
+                fut_printf("[MISC-TEST] ✓ Test 2070: domainname ok\n");
+                fut_test_pass();
+            } else { fut_test_fail(2070); }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2070: open=%ld\n", fd);
+            fut_test_fail(2070);
+        }
+    }
+
+    /* ── Test 2071: /proc/config.gz has CONFIG_NAMESPACES ── */
+    fut_printf("[MISC-TEST] Test 2071: config has NAMESPACES\n");
+    {
+        long fd = sys_open("/proc/config.gz", 0, 0);
+        if (fd >= 0) {
+            static char buf[2048];
+            long n = sys_read((int)fd, buf, sizeof(buf) - 1);
+            sys_close((int)fd);
+            bool found = false;
+            if (n > 0) {
+                buf[n] = '\0';
+                for (long i = 0; i < n - 10; i++) {
+                    if (buf[i] == 'N' && buf[i+1] == 'A' && buf[i+2] == 'M' &&
+                        buf[i+3] == 'E' && buf[i+4] == 'S') { found = true; break; }
+                }
+            }
+            if (found) {
+                fut_printf("[MISC-TEST] ✓ Test 2071: NAMESPACES found\n");
+                fut_test_pass();
+            } else { fut_test_fail(2071); }
+        } else { fut_test_fail(2071); }
+    }
+
+    /* ── Test 2072: /sys/firmware/dmi/id/board_name readable ── */
+    fut_printf("[MISC-TEST] Test 2072: dmi board_name\n");
+    {
+        long fd = sys_open("/sys/firmware/dmi/id/board_name", 0, 0);
+        if (fd >= 0) {
+            static char buf[64];
+            long n = sys_read((int)fd, buf, 63);
+            sys_close((int)fd);
+            if (n > 0) {
+                fut_printf("[MISC-TEST] ✓ Test 2072: board_name ok\n");
+                fut_test_pass();
+            } else { fut_test_fail(2072); }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2072: open=%ld\n", fd);
+            fut_test_fail(2072);
+        }
+    }
+
+    /* ── Test 2073: /sys/class/rtc/rtc0/time readable ── */
+    fut_printf("[MISC-TEST] Test 2073: rtc0 time\n");
+    {
+        long fd = sys_open("/sys/class/rtc/rtc0/time", 0, 0);
+        if (fd >= 0) {
+            static char buf[16];
+            long n = sys_read((int)fd, buf, 15);
+            sys_close((int)fd);
+            if (n > 4 && buf[2] == ':') { /* HH:MM:SS */
+                fut_printf("[MISC-TEST] ✓ Test 2073: rtc time ok\n");
+                fut_test_pass();
+            } else { fut_test_fail(2073); }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2073: open=%ld\n", fd);
+            fut_test_fail(2073);
+        }
+    }
+}
+
 __attribute__((noinline)) static void test_binfmt_misc(void) {
     extern long sys_open(const char *, int, int);
     extern long sys_read(int, void *, size_t);
@@ -64078,6 +64292,7 @@ void fut_misc_test_thread(void *arg) {
     test_loop_device(); /* Tests 1885-1887 */
     test_per_iface_conf(); /* Tests 1869-1871 */
 
+    test_subsystem_coverage(); /* Tests 2064-2073 */
     test_binfmt_misc(); /* Tests 2061-2063 */
     test_sched_sysctls(); /* Tests 2057-2060 */
     test_debugfs(); /* Tests 2051-2056 */

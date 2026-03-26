@@ -5726,9 +5726,13 @@ static void cmd_fg(int argc, char *argv[]) {
         return;
     }
 
-    /* Wait for the job to complete */
+    /* Resume if stopped, then wait for completion */
     write_str(1, j->command);
     write_str(1, "\n");
+    if (j->status == JOB_STOPPED) {
+        sys_call2(62 /* kill */, j->pid, 18 /* SIGCONT */);
+        j->status = JOB_RUNNING;
+    }
 
     int status = 0;
     sys_waitpid(j->pid, &status, 0);
@@ -5737,13 +5741,39 @@ static void cmd_fg(int argc, char *argv[]) {
     remove_job(j->job_id);
 }
 
-/* Built-in: bg - resume job in background */
+/* Built-in: bg - resume stopped job in background */
 static void cmd_bg(int argc, char *argv[]) {
-    (void)argc;
-    (void)argv;
+    update_jobs();
 
-    /* Without proper signal support (SIGCONT), we can't resume stopped jobs */
-    write_str(2, "bg: not supported (no SIGCONT support)\n");
+    struct job *j = NULL;
+    if (argc < 2) {
+        int max_id = 0;
+        for (int i = 0; i < MAX_JOBS; i++) {
+            if (jobs[i].used && jobs[i].status == JOB_STOPPED && jobs[i].job_id > max_id) {
+                max_id = jobs[i].job_id;
+                j = &jobs[i];
+            }
+        }
+        if (!j) { write_str(2, "bg: no stopped job\n"); return; }
+    } else {
+        int job_id = simple_atoi(argv[1]);
+        j = find_job(job_id);
+        if (!j) { write_str(2, "bg: job not found\n"); return; }
+    }
+
+    /* Send SIGCONT to resume the stopped process */
+    sys_call2(62 /* kill */, j->pid, 18 /* SIGCONT */);
+    j->status = JOB_RUNNING;
+    write_str(1, "[");
+    char num[8]; int ni = 0;
+    int jid = j->job_id;
+    if (jid >= 10) num[ni++] = '0' + jid / 10;
+    num[ni++] = '0' + jid % 10;
+    num[ni] = '\0';
+    write_str(1, num);
+    write_str(1, "] ");
+    write_str(1, j->command);
+    write_str(1, " &\n");
 }
 
 /* Execute a command */

@@ -2338,12 +2338,47 @@ static size_t gen_net_raw(char *buf, size_t cap) {
     return b.pos;
 }
 
+/* Emit a dotted-quad IP into a pbuf */
+static void pb_ip4(struct pbuf *b, uint32_t ip) {
+    pb_u64(b, (ip >> 24) & 0xFF); pb_char(b, '.');
+    pb_u64(b, (ip >> 16) & 0xFF); pb_char(b, '.');
+    pb_u64(b, (ip >> 8) & 0xFF); pb_char(b, '.');
+    pb_u64(b, ip & 0xFF);
+}
+
+/* Context for fib_trie route emission */
+struct fib_trie_ctx { struct pbuf *b; };
+
+static void fib_trie_emit_route(const struct net_route *route, void *ctx) {
+    struct fib_trie_ctx *c = (struct fib_trie_ctx *)ctx;
+    struct pbuf *b = c->b;
+    /* Count prefix length from netmask */
+    uint32_t mask = route->netmask;
+    int prefix = 0;
+    while (mask & 0x80000000u) { prefix++; mask <<= 1; }
+    pb_str(b, "  +-- ");
+    pb_ip4(b, route->dest);
+    pb_char(b, '/');
+    pb_u64(b, (uint64_t)prefix);
+    pb_str(b, " 1 0 0\n");
+    /* Show gateway as a host route if present */
+    if (route->gateway) {
+        pb_str(b, "       ");
+        pb_ip4(b, route->gateway);
+        pb_str(b, " via gateway\n");
+    }
+}
+
 static size_t gen_net_fib_trie(char *buf, size_t cap) {
     struct pbuf b = { buf, 0, cap };
-    pb_str(&b, "Local:\n"
-               "  +-- 0.0.0.0/0 1 0 0\n"
-               "Main:\n"
-               "  +-- 0.0.0.0/0 1 0 0\n");
+    /* Local table: loopback addresses */
+    pb_str(&b, "Local:\n");
+    pb_str(&b, "  +-- 127.0.0.0/8 1 0 0\n");
+    pb_str(&b, "     /32 host LOCAL\n");
+    /* Main table: real routes */
+    pb_str(&b, "Main:\n");
+    struct fib_trie_ctx ctx = { &b };
+    route_foreach(fib_trie_emit_route, &ctx);
     return b.pos;
 }
 

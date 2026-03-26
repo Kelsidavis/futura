@@ -55357,6 +55357,68 @@ __attribute__((noinline)) static void test_pts_dir_readdir(void) {
     }
 }
 
+__attribute__((noinline)) static void test_per_iface_conf(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_close(int);
+
+    /* Test 1869: /proc/sys/net/ipv4/conf/lo/forwarding is readable */
+    fut_printf("[MISC-TEST] Test 1869: per-interface conf/lo/forwarding\n");
+    {
+        long fd = sys_open("/proc/sys/net/ipv4/conf/lo/forwarding", 0, 0);
+        if (fd >= 0) {
+            static char buf[16];
+            long n = sys_read((int)fd, buf, sizeof(buf) - 1);
+            sys_close((int)fd);
+            if (n > 0 && (buf[0] == '0' || buf[0] == '1')) {
+                fut_printf("[MISC-TEST] ✓ Test 1869: conf/lo/forwarding=%c\n", buf[0]);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1869: read=%ld\n", n);
+                fut_test_fail(1869);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1869: open=%ld\n", fd);
+            fut_test_fail(1869);
+        }
+    }
+
+    /* Test 1870: /proc/sys/net/ipv4/conf/eth0/rp_filter is readable */
+    fut_printf("[MISC-TEST] Test 1870: per-interface conf/eth0/rp_filter\n");
+    {
+        long fd = sys_open("/proc/sys/net/ipv4/conf/eth0/rp_filter", 0, 0);
+        if (fd >= 0) {
+            static char buf[16];
+            long n = sys_read((int)fd, buf, sizeof(buf) - 1);
+            sys_close((int)fd);
+            if (n > 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1870: conf/eth0/rp_filter=%c\n", buf[0]);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1870: read=%ld\n", n);
+                fut_test_fail(1870);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1870: open=%ld\n", fd);
+            fut_test_fail(1870);
+        }
+    }
+
+    /* Test 1871: /proc/sys/net/ipv4/conf/nonexistent returns ENOENT */
+    fut_printf("[MISC-TEST] Test 1871: conf/nonexistent → ENOENT\n");
+    {
+        long fd = sys_open("/proc/sys/net/ipv4/conf/nonexistent/forwarding", 0, 0);
+        if (fd == -2 /* ENOENT */) {
+            fut_printf("[MISC-TEST] ✓ Test 1871: nonexistent → ENOENT\n");
+            fut_test_pass();
+        } else {
+            if (fd >= 0) sys_close((int)fd);
+            fut_printf("[MISC-TEST] ✗ Test 1871: expected ENOENT, got %ld\n", fd);
+            fut_test_fail(1871);
+        }
+    }
+}
+
 __attribute__((noinline)) static void test_bridge_interfaces(void) {
     extern long sys_open(const char *, int, int);
     extern long sys_close(int);
@@ -59412,6 +59474,7 @@ void fut_misc_test_thread(void *arg) {
     test_blockdev_procfs(); /* Tests 1858-1860 */
     test_vlan_interfaces(); /* Tests 1861-1864 */
     test_bridge_interfaces(); /* Tests 1865-1868 */
+    test_per_iface_conf(); /* Tests 1869-1871 */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -5085,6 +5085,20 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0040555, PROC_SYS_NET_IPV4_CONF_DEFAULT_DIR, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
+        /* Per-interface conf directories: conf/lo, conf/eth0, conf/br0, etc.
+         * Reuse the CONF_ALL_DIR kind (same sysctl entries) with interface-
+         * specific inode numbers to distinguish. */
+        {
+            extern struct net_iface *netif_by_name(const char *);
+            struct net_iface *iface = netif_by_name(name);
+            if (iface) {
+                /* Use inode = base + 100 + iface->index to make unique */
+                uint64_t ino = PROC_INO_SYS_NET_IPV4_CONF_ALL + 100 + (uint64_t)iface->index;
+                *result = procfs_alloc_vnode(mnt, VN_DIR, ino,
+                                              0040555, PROC_SYS_NET_IPV4_CONF_ALL_DIR, 0, 0);
+                return *result ? 0 : -ENOMEM;
+            }
+        }
         return -ENOENT;
     }
 
@@ -5923,7 +5937,43 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                       PROC_INO_SYS_NET_IPV4_DIR,
                                       PROC_INO_SYS_NET_IPV4_CONF_ALL,
                                       PROC_INO_SYS_NET_IPV4_CONF_DEF };
-        if (idx < 4) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+        if (idx < 4) { SYS_DIR_ENTRY(e[idx], t[idx], i[idx]); }
+        else {
+            /* Dynamic per-interface entries after the 4 fixed ones */
+            extern int netif_count(void);
+            extern void netif_foreach(void (*)(const struct net_iface *, void *), void *);
+            struct { int target_idx; int current; const char *name; int ifindex; } ctx2 =
+                { (int)(idx - 4), 0, NULL, 0 };
+            extern struct net_iface *netif_by_index(int);
+            /* Walk interfaces to find the Nth one */
+            for (int ii = 0; ii < NET_IFACE_MAX; ii++) {
+                struct net_iface *nif = netif_by_index(ii);
+                if (!nif) continue;
+                /* Try next index */
+                nif = NULL;
+            }
+            /* Simple iteration: find Nth active interface */
+            {
+                int count = 0;
+                for (int ii = 1; ii < 256; ii++) {
+                    struct net_iface *nif = netif_by_index(ii);
+                    if (!nif) continue;
+                    if (count == ctx2.target_idx) {
+                        de->d_ino = PROC_INO_SYS_NET_IPV4_CONF_ALL + 100 + (uint64_t)ii;
+                        de->d_off = idx + 1;
+                        de->d_type = FUT_VDIR_TYPE_DIR;
+                        de->d_reclen = sizeof(*de);
+                        size_t nl = 0;
+                        while (nif->name[nl] && nl < FUT_VFS_NAME_MAX) nl++;
+                        __builtin_memcpy(de->d_name, nif->name, nl);
+                        de->d_name[nl] = '\0';
+                        *cookie = idx + 1;
+                        return 0;
+                    }
+                    count++;
+                }
+            }
+        }
         return -ENOENT;
     }
 

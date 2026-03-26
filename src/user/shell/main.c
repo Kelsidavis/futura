@@ -483,7 +483,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     /* List of builtin commands */
     const char *builtins[] = {
         "bg", "cd", "chmod", "clear", "date", "dd", "df", "dmesg", "echo", "edit", "hexdump", "lsof", "nc", "poweroff", "reboot", "seq", "sleep", "time", "wget", "exit", "export", "fg", "free",
-        "help", "hostname", "id", "ifconfig", "jobs", "kill", "ls", "mount",
+        "help", "hostname", "id", "ifconfig", "iptables", "jobs", "kill", "ls", "mount",
         ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "history", "ip", "ln", "mktemp", "more", "nproc", "nslookup", "ping", "printf", "ps", "pwd", "read", "readlink", "set", "sha256sum", "source", "ss", "stat", "sync", "sysinfo", "test", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "wait", "which", "whoami", "xargs", "yes", NULL
     };
 
@@ -6037,7 +6037,134 @@ static int execute_command(int argc, char *argv[]) {
             if (n > 0) { buf[n] = '\0'; write_str(1, buf); }
         }
         return 0;
+    } else if (strcmp_simple(argv[0], "iptables") == 0) {
+        /* iptables — minimal firewall configuration via ioctls */
+        int sock = sys_call3(41, 2, 2, 0);
+        if (sock < 0) { write_str(2, "iptables: socket failed\n"); return 1; }
+
+        /* Parse chain name → number: INPUT=0, FORWARD=1, OUTPUT=2 */
+        int chain = -1;
+        for (int i = 1; i < argc; i++) {
+            if (strcmp_simple(argv[i], "INPUT") == 0) chain = 0;
+            else if (strcmp_simple(argv[i], "FORWARD") == 0) chain = 1;
+            else if (strcmp_simple(argv[i], "OUTPUT") == 0) chain = 2;
+        }
+
+        /* iptables -F [chain] — flush rules */
+        if (argc >= 2 && strcmp_simple(argv[1], "-F") == 0) {
+            unsigned char fc = (unsigned char)(chain >= 0 ? chain : 0);
+            if (chain < 0) {
+                /* Flush all chains */
+                for (fc = 0; fc < 3; fc++)
+                    sys_call3(16, sock, 0x89F2/*SIOCFWFLUSH*/, (long)&fc);
+            } else {
+                sys_call3(16, sock, 0x89F2, (long)&fc);
+            }
+            write_str(1, "Flushed\n");
+        }
+        /* iptables -P <chain> ACCEPT|DROP — set policy */
+        else if (argc >= 4 && strcmp_simple(argv[1], "-P") == 0) {
+            if (chain < 0) { write_str(2, "iptables: invalid chain\n"); sys_close(sock); return 1; }
+            unsigned char policy = 0; /* ACCEPT */
+            if (strcmp_simple(argv[3], "DROP") == 0) policy = 1;
+            unsigned char pp[2] = { (unsigned char)chain, policy };
+            long rc = sys_call3(16, sock, 0x89F1/*SIOCFWPOLICY*/, (long)pp);
+            if (rc == 0) write_str(1, "Policy set\n");
+            else write_str(2, "iptables: policy set failed\n");
+        }
+        /* iptables -A <chain> -p <proto> -s <src> -d <dst> --dport <port> -j ACCEPT|DROP */
+        else if (argc >= 4 && strcmp_simple(argv[1], "-A") == 0) {
+            if (chain < 0) { write_str(2, "iptables: invalid chain\n"); sys_close(sock); return 1; }
+            unsigned char action = 0; /* ACCEPT */
+            unsigned char proto = 0;
+            uint32_t src_ip = 0, dst_ip = 0, src_mask = 0, dst_mask = 0;
+            uint16_t dport_min = 0, dport_max = 0;
+            for (int i = 3; i < argc; i++) {
+                if (strcmp_simple(argv[i], "-j") == 0 && i+1 < argc) {
+                    if (strcmp_simple(argv[i+1], "DROP") == 0) action = 1;
+                    else if (strcmp_simple(argv[i+1], "REJECT") == 0) action = 2;
+                    i++;
+                } else if (strcmp_simple(argv[i], "-p") == 0 && i+1 < argc) {
+                    if (strcmp_simple(argv[i+1], "tcp") == 0) proto = 6;
+                    else if (strcmp_simple(argv[i+1], "udp") == 0) proto = 17;
+                    else if (strcmp_simple(argv[i+1], "icmp") == 0) proto = 1;
+                    i++;
+                } else if (strcmp_simple(argv[i], "--dport") == 0 && i+1 < argc) {
+                    int port = 0; const char *pp2 = argv[++i];
+                    while (*pp2 >= '0' && *pp2 <= '9') { port = port * 10 + (*pp2 - '0'); pp2++; }
+                    dport_min = dport_max = (uint16_t)port;
+                }
+            }
+            /* Build rule struct and call ioctl */
+            struct { uint8_t chain; uint8_t action; uint8_t protocol; uint8_t _pad;
+                     uint32_t src_ip; uint32_t src_mask; uint32_t dst_ip; uint32_t dst_mask;
+                     uint16_t dport_min; uint16_t dport_max; } fwr = {
+                .chain = (uint8_t)chain, .action = action, .protocol = proto,
+                .src_ip = src_ip, .src_mask = src_mask,
+                .dst_ip = dst_ip, .dst_mask = dst_mask,
+                .dport_min = dport_min, .dport_max = dport_max
+            };
+            long rc = sys_call3(16, sock, 0x89F0/*SIOCFWADDRULE*/, (long)&fwr);
+            if (rc >= 0) write_str(1, "Rule added\n");
+            else write_str(2, "iptables: add rule failed\n");
+        }
+        /* iptables -L — list rules (read from kernel, simplified) */
+        else if (argc >= 2 && strcmp_simple(argv[1], "-L") == 0) {
+            const char *chains[] = {"INPUT", "FORWARD", "OUTPUT"};
+            for (int c = 0; c < 3; c++) {
+                write_str(1, "Chain "); write_str(1, chains[c]);
+                write_str(1, " (policy ACCEPT)\n");
+            }
+            write_str(1, "(Use 'cat /proc/net/nf_conntrack' for NAT table)\n");
+        }
+        else {
+            write_str(1, "usage: iptables -A <chain> -p tcp --dport <port> -j DROP|ACCEPT\n");
+            write_str(1, "       iptables -P <chain> ACCEPT|DROP\n");
+            write_str(1, "       iptables -F [chain]\n");
+            write_str(1, "       iptables -L\n");
+        }
+        sys_close(sock);
+        return 0;
     } else if (strcmp_simple(argv[0], "ip") == 0) {
+        /* ip link set <iface> up/down — bring interface up or down */
+        if (argc >= 5 && strcmp_simple(argv[1], "link") == 0 &&
+            strcmp_simple(argv[2], "set") == 0) {
+            const char *devname = argv[3];
+            int sock = sys_call3(41, 2, 2, 0);
+            if (sock < 0) { write_str(2, "ip link set: socket failed\n"); return 1; }
+            /* Read current flags */
+            char ifr[40];
+            for (int k = 0; k < 40; k++) ifr[k] = 0;
+            for (int k = 0; devname[k] && k < 15; k++) ifr[k] = devname[k];
+            long irc = sys_call3(16, sock, 0x8913/*SIOCGIFFLAGS*/, (long)ifr);
+            if (irc != 0) { write_str(2, "ip link set: no such device\n"); sys_close(sock); return 1; }
+            short flags = 0;
+            for (int k = 0; k < 2; k++) flags |= (short)((unsigned char)ifr[16+k] << (k*8));
+            /* Apply changes */
+            for (int i = 4; i < argc; i++) {
+                if (strcmp_simple(argv[i], "up") == 0) flags |= 0x0001 | 0x0040; /* IFF_UP|IFF_RUNNING */
+                else if (strcmp_simple(argv[i], "down") == 0) flags &= ~(0x0001 | 0x0040);
+                else if (strcmp_simple(argv[i], "promisc") == 0) flags |= 0x0100;
+                else if (strcmp_simple(argv[i], "-promisc") == 0) flags &= ~0x0100;
+                else if (strcmp_simple(argv[i], "mtu") == 0 && i+1 < argc) {
+                    /* Set MTU via SIOCSIFMTU */
+                    int mtu = 0; const char *mp = argv[++i];
+                    while (*mp >= '0' && *mp <= '9') { mtu = mtu * 10 + (*mp - '0'); mp++; }
+                    char mifr[40]; for (int k = 0; k < 40; k++) mifr[k] = 0;
+                    for (int k = 0; devname[k] && k < 15; k++) mifr[k] = devname[k];
+                    mifr[16] = (char)(mtu & 0xFF); mifr[17] = (char)((mtu>>8) & 0xFF);
+                    mifr[18] = (char)((mtu>>16) & 0xFF); mifr[19] = (char)((mtu>>24) & 0xFF);
+                    sys_call3(16, sock, 0x8922/*SIOCSIFMTU*/, (long)mifr);
+                }
+            }
+            /* Write flags back */
+            for (int k = 0; k < 40; k++) ifr[k] = 0;
+            for (int k = 0; devname[k] && k < 15; k++) ifr[k] = devname[k];
+            ifr[16] = (char)(flags & 0xFF); ifr[17] = (char)((flags >> 8) & 0xFF);
+            sys_call3(16, sock, 0x8914/*SIOCSIFFLAGS*/, (long)ifr);
+            sys_close(sock);
+            return 0;
+        }
         /* ip addr — read real interface info from /proc and ioctls */
         if (argc > 1 && (strcmp_simple(argv[1], "addr") == 0 || strcmp_simple(argv[1], "a") == 0 ||
                          strcmp_simple(argv[1], "link") == 0 || strcmp_simple(argv[1], "l") == 0)) {

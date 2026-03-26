@@ -60,6 +60,11 @@
 #define SIOCGIFINDEX   0x8933  /* Get interface index */
 #define SIOCGIFNAME    0x8910  /* Get interface name from index */
 
+/* Futura firewall ioctls (custom range 0x89F0-0x89FF) */
+#define SIOCFWADDRULE  0x89F0  /* Add firewall rule */
+#define SIOCFWPOLICY   0x89F1  /* Set chain default policy */
+#define SIOCFWFLUSH    0x89F2  /* Flush chain rules */
+
 /* Interface flags (IFF_*) */
 #define IFF_UP         0x0001  /* Interface is up */
 #define IFF_BROADCAST  0x0002  /* Broadcast address valid */
@@ -597,7 +602,9 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
                                    request == 0x8916 /* SIOCSIFADDR */ ||
                                    request == 0x891C /* SIOCSIFNETMASK */ ||
                                    request == 0x8922 /* SIOCSIFMTU */ ||
-                                   request == SIOCADDRT || request == SIOCDELRT);
+                                   request == SIOCADDRT || request == SIOCDELRT ||
+                                   request == SIOCFWADDRULE || request == SIOCFWPOLICY ||
+                                   request == SIOCFWFLUSH);
                 if (argp_val >= KERNEL_VIRTUAL_BASE && !is_builtin) {
                     return -EFAULT;
                 }
@@ -794,7 +801,9 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
             request != 0x8916 /* SIOCSIFADDR */ &&
             request != 0x891C /* SIOCSIFNETMASK */ &&
             request != 0x8922 /* SIOCSIFMTU */ &&
-            request != SIOCADDRT && request != SIOCDELRT) {
+            request != SIOCADDRT && request != SIOCDELRT &&
+            request != SIOCFWADDRULE && request != SIOCFWPOLICY &&
+            request != SIOCFWFLUSH) {
             return file->chr_ops->ioctl(file->chr_inode, file->chr_private, request, (unsigned long)argp);
         }
     }
@@ -1571,6 +1580,57 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
             if (fut_copy_to_user(argp, &ifr, sizeof(ifr)) != 0)
                 return -EFAULT;
             return 0;
+        }
+
+        case SIOCFWADDRULE: {
+            /* Add firewall rule: argp → struct { uint8_t chain, action, proto; uint32_t src,smask,dst,dmask; uint16_t dport_min,dport_max; } */
+            if (!argp) return -EFAULT;
+            struct { uint8_t chain; uint8_t action; uint8_t protocol; uint8_t _pad;
+                     uint32_t src_ip; uint32_t src_mask; uint32_t dst_ip; uint32_t dst_mask;
+                     uint16_t dst_port_min; uint16_t dst_port_max; } fwr;
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
+                __builtin_memcpy(&fwr, argp, sizeof(fwr));
+            else
+#endif
+            if (fut_copy_from_user(&fwr, argp, sizeof(fwr)) != 0)
+                return -EFAULT;
+            extern int firewall_add_rule(int, uint8_t, uint8_t, uint32_t, uint32_t,
+                                         uint32_t, uint32_t, uint16_t, uint16_t);
+            return firewall_add_rule(fwr.chain, fwr.action, fwr.protocol,
+                                     fwr.src_ip, fwr.src_mask,
+                                     fwr.dst_ip, fwr.dst_mask,
+                                     fwr.dst_port_min, fwr.dst_port_max);
+        }
+
+        case SIOCFWPOLICY: {
+            /* Set chain default policy: argp → struct { uint8_t chain, policy; } */
+            if (!argp) return -EFAULT;
+            struct { uint8_t chain; uint8_t policy; } fwp;
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
+                __builtin_memcpy(&fwp, argp, sizeof(fwp));
+            else
+#endif
+            if (fut_copy_from_user(&fwp, argp, sizeof(fwp)) != 0)
+                return -EFAULT;
+            extern int firewall_set_policy(int, uint8_t);
+            return firewall_set_policy(fwp.chain, fwp.policy);
+        }
+
+        case SIOCFWFLUSH: {
+            /* Flush chain rules: argp → uint8_t chain */
+            if (!argp) return -EFAULT;
+            uint8_t chain;
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
+                __builtin_memcpy(&chain, argp, 1);
+            else
+#endif
+            if (fut_copy_from_user(&chain, argp, 1) != 0)
+                return -EFAULT;
+            extern int firewall_flush(int);
+            return firewall_flush(chain);
         }
 
         default:

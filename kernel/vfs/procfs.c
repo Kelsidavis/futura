@@ -1548,7 +1548,18 @@ static size_t gen_cpuinfo(char *buf, size_t cap) {
         pb_str(&b, "stepping\t: "); pb_u64(&b, stepping); pb_char(&b, '\n');
     }
     pb_str(&b, "microcode\t: 0x0\n");
-    pb_str(&b, "cpu MHz\t\t: 2400.000\n");
+    /* Read CPU frequency from CPUID leaf 0x16 if available */
+    {
+        uint32_t max_leaf = 0;
+        uint32_t eax16, ebx16, ecx16, edx16;
+        __asm__ volatile("cpuid" : "=a"(max_leaf), "=b"(ebx16), "=c"(ecx16), "=d"(edx16) : "a"(0));
+        uint32_t mhz = 2400; /* default fallback */
+        if (max_leaf >= 0x16) {
+            __asm__ volatile("cpuid" : "=a"(eax16), "=b"(ebx16), "=c"(ecx16), "=d"(edx16) : "a"(0x16));
+            if (eax16 > 0) mhz = eax16; /* Base frequency in MHz */
+        }
+        pb_str(&b, "cpu MHz\t\t: "); pb_u64(&b, mhz); pb_str(&b, ".000\n");
+    }
     pb_str(&b, "cache size\t: 4096 KB\n");
     pb_str(&b, "physical id\t: 0\n");
     pb_str(&b, "siblings\t: 1\n");
@@ -1558,7 +1569,11 @@ static size_t gen_cpuinfo(char *buf, size_t cap) {
     pb_str(&b, "initial apicid\t: 0\n");
     pb_str(&b, "fpu\t\t: yes\n");
     pb_str(&b, "fpu_exception\t: yes\n");
-    pb_str(&b, "cpuid level\t: 22\n");
+    {
+        uint32_t cl_eax, cl_ebx, cl_ecx, cl_edx;
+        __asm__ volatile("cpuid" : "=a"(cl_eax), "=b"(cl_ebx), "=c"(cl_ecx), "=d"(cl_edx) : "a"(0));
+        pb_str(&b, "cpuid level\t: "); pb_u64(&b, cl_eax); pb_char(&b, '\n');
+    }
     pb_str(&b, "wp\t\t: yes\n");
     pb_str(&b, "flags\t\t: fpu vme de pse tsc msr pae mce cx8 apic sep mtrr "
                "pge mca cmov pat pse36 clflush mmx fxsr sse sse2 syscall nx "
@@ -1566,7 +1581,17 @@ static size_t gen_cpuinfo(char *buf, size_t cap) {
                "pcid sse4_1 sse4_2 x2apic movbe popcnt tsc_deadline_timer "
                "aes xsave avx f16c rdrand hypervisor lahf_lm abm 3dnowprefetch\n");
     pb_str(&b, "bugs\t\t:\n");
-    pb_str(&b, "bogomips\t: 4800.00\n");
+    /* bogomips: Linux typically reports ~2x CPU MHz for modern CPUs */
+    {
+        uint32_t max_leaf = 0, b_eax, b_ebx, b_ecx, b_edx;
+        __asm__ volatile("cpuid" : "=a"(max_leaf), "=b"(b_ebx), "=c"(b_ecx), "=d"(b_edx) : "a"(0));
+        uint32_t bogo = 4800;
+        if (max_leaf >= 0x16) {
+            __asm__ volatile("cpuid" : "=a"(b_eax), "=b"(b_ebx), "=c"(b_ecx), "=d"(b_edx) : "a"(0x16));
+            if (b_eax > 0) bogo = b_eax * 2;
+        }
+        pb_str(&b, "bogomips\t: "); pb_u64(&b, bogo); pb_str(&b, ".00\n");
+    }
     pb_str(&b, "clflush size\t: 64\n");
     pb_str(&b, "cache_alignment\t: 64\n");
     pb_str(&b, "address sizes\t: 39 bits physical, 48 bits virtual\n");

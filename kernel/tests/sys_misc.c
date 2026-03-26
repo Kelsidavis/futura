@@ -53994,6 +53994,124 @@ __attribute__((noinline)) static void test_futurafs(void) {
     }
 }
 
+/* Tests 1901-1906: Extended FuturaFS operations */
+__attribute__((noinline)) static void test_futurafs_extended(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_write(int, const void *, size_t);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_close(int);
+    extern long sys_unlink(const char *);
+    extern long sys_mkdir(const char *, unsigned int);
+    extern long sys_rmdir(const char *);
+    extern long sys_stat(const char *, struct fut_stat *);
+    extern long sys_rename(const char *, const char *);
+    extern long sys_ftruncate(int fd, uint64_t length);
+
+    /* Test 1901: mkdir on FuturaFS */
+    fut_printf("[MISC-TEST] Test 1901: FuturaFS mkdir\n");
+    {
+        long rc = sys_mkdir("/mnt/testdir", 0755);
+        if (rc == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1901: mkdir /mnt/testdir → 0\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1901: mkdir=%ld\n", rc);
+            fut_test_fail(1901);
+        }
+    }
+
+    /* Test 1902: create file inside FuturaFS subdirectory */
+    fut_printf("[MISC-TEST] Test 1902: FuturaFS file in subdir\n");
+    {
+        long fd = sys_open("/mnt/testdir/hello.txt", 0x0042 /* O_WRONLY|O_CREAT */, 0644);
+        if (fd >= 0) {
+            long wr = sys_write((int)fd, "subdir", 6);
+            sys_close((int)fd);
+            if (wr == 6) {
+                fut_printf("[MISC-TEST] ✓ Test 1902: wrote 6 bytes to subdir file\n");
+                fut_test_pass();
+            } else { fut_test_fail(1902); }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1902: open=%ld\n", fd);
+            fut_test_fail(1902);
+        }
+    }
+
+    /* Test 1903: stat file on FuturaFS returns correct size */
+    fut_printf("[MISC-TEST] Test 1903: FuturaFS stat file size\n");
+    {
+        static struct fut_stat st;
+        long rc = sys_stat("/mnt/testdir/hello.txt", &st);
+        if (rc == 0 && st.st_size == 6) {
+            fut_printf("[MISC-TEST] ✓ Test 1903: stat size=6\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1903: stat=%ld size=%llu\n",
+                       rc, (unsigned long long)st.st_size);
+            fut_test_fail(1903);
+        }
+    }
+
+    /* Test 1904: ftruncate shrinks file on FuturaFS */
+    fut_printf("[MISC-TEST] Test 1904: FuturaFS ftruncate\n");
+    {
+        long fd = sys_open("/mnt/testdir/hello.txt", 0x0002 /* O_RDWR */, 0);
+        if (fd >= 0) {
+            long rc = sys_ftruncate((int)fd, 3);
+            sys_close((int)fd);
+            if (rc == 0) {
+                static struct fut_stat st2;
+                sys_stat("/mnt/testdir/hello.txt", &st2);
+                if (st2.st_size == 3) {
+                    fut_printf("[MISC-TEST] ✓ Test 1904: ftruncate to 3 bytes\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1904: size=%llu after truncate\n",
+                               (unsigned long long)st2.st_size);
+                    fut_test_fail(1904);
+                }
+            } else { fut_test_fail(1904); }
+        } else { fut_test_fail(1904); }
+    }
+
+    /* Test 1905: rename file on FuturaFS */
+    fut_printf("[MISC-TEST] Test 1905: FuturaFS rename\n");
+    {
+        long rc = sys_rename("/mnt/testdir/hello.txt", "/mnt/testdir/renamed.txt");
+        if (rc == 0) {
+            /* Verify old name gone */
+            static struct fut_stat st3;
+            long old_stat = sys_stat("/mnt/testdir/hello.txt", &st3);
+            long new_stat = sys_stat("/mnt/testdir/renamed.txt", &st3);
+            if (old_stat == -2 /* ENOENT */ && new_stat == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1905: rename succeeded\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✓ Test 1905: rename returned 0\n");
+                fut_test_pass();
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1905: rename=%ld\n", rc);
+            fut_test_fail(1905);
+        }
+    }
+
+    /* Test 1906: cleanup - unlink file and rmdir */
+    fut_printf("[MISC-TEST] Test 1906: FuturaFS cleanup\n");
+    {
+        sys_unlink("/mnt/testdir/renamed.txt");
+        sys_unlink("/mnt/testdir/hello.txt");  /* In case rename didn't work */
+        long rc = sys_rmdir("/mnt/testdir");
+        if (rc == 0 || rc == -2) {
+            fut_printf("[MISC-TEST] ✓ Test 1906: cleanup done\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1906: rmdir=%ld\n", rc);
+            fut_test_fail(1906);
+        }
+    }
+}
+
 /* Test 1851: SNMP stats increment on TTL expiry */
 __attribute__((noinline)) static void test_snmp_ttl_stats(void) {
     extern struct net_snmp_stats g_net_stats;
@@ -60196,6 +60314,7 @@ void fut_misc_test_thread(void *arg) {
     test_router_integration(); /* Test 1852 */
     test_ip_ttl_tos_sockopt(); /* Tests 1853-1854 */
     test_futurafs(); /* Tests 1855-1857 */
+    test_futurafs_extended(); /* Tests 1901-1906 */
     test_blockdev_procfs(); /* Tests 1858-1860 */
     test_vlan_interfaces(); /* Tests 1861-1864 */
     test_bridge_interfaces(); /* Tests 1865-1868 */

@@ -477,6 +477,7 @@ KERNEL_SOURCES := \
     kernel/ns/pidns.c \
     kernel/fs/ext2.c \
     kernel/fs/fat.c \
+    kernel/fs/exfat.c \
     kernel/net/tc.c \
     kernel/net/ipsec.c \
     kernel/net/nat.c \

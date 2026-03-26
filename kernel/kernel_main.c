@@ -1468,6 +1468,10 @@ void fut_kernel_main(void) {
         fat_init();  /* FAT12/16/32 filesystem driver */
     }
     {
+        extern void exfat_init(void);
+        exfat_init();  /* exFAT filesystem driver */
+    }
+    {
         extern void ipsec_init(void);
         ipsec_init();  /* IPsec SA/SP database */
     }

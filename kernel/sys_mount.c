@@ -586,6 +586,28 @@ long sys_mount(const char *source, const char *target, const char *filesystemtyp
         fut_printf("[MOUNT] ✓ mount(source='%s', target='%s', fstype=%s) -> 0\n",
                    src_dev, target_buf, fstype_buf);
         return 0;
+    } else if (strcmp(fstype_buf, "exfat") == 0) {
+        /* exFAT: mount via the exFAT read-only driver */
+        char src_dev[64];
+        if (!source || mount_copy_from_user(src_dev, source, sizeof(src_dev)) != 0)
+            return -EINVAL;
+        src_dev[63] = '\0';
+        const char *devname = src_dev;
+        if (devname[0] == '/' && devname[1] == 'd' && devname[2] == 'e' &&
+            devname[3] == 'v' && devname[4] == '/')
+            devname = src_dev + 5;
+        extern int fut_vfs_mkdir(const char *, uint32_t);
+        fut_vfs_mkdir(target_buf, 0755);
+        size_t target_len = strlen(target_buf) + 1;
+        char *mountpoint = fut_malloc(target_len);
+        if (!mountpoint) return -ENOMEM;
+        memcpy(mountpoint, target_buf, target_len);
+        int ret = fut_vfs_mount(devname, mountpoint, "exfat",
+                                (int)(mountflags & 0x7fffffff), NULL, FUT_INVALID_HANDLE);
+        if (ret < 0) { fut_free(mountpoint); return ret; }
+        fut_printf("[MOUNT] ✓ mount(source='%s', target='%s', fstype=exfat) -> 0\n",
+                   src_dev, target_buf);
+        return 0;
     } else if (strcmp(fstype_buf, "vfat") == 0 || strcmp(fstype_buf, "fat") == 0 ||
                strcmp(fstype_buf, "fat32") == 0 || strcmp(fstype_buf, "msdos") == 0) {
         /* FAT: mount via the FAT read-only driver */

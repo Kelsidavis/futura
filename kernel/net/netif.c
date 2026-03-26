@@ -274,6 +274,18 @@ int ip_forward(const void *ip_packet, size_t len, struct net_iface *in_iface) {
         return -ENETUNREACH;
     }
 
+    /* FORWARD chain: filter the packet before forwarding */
+    {
+        extern int firewall_eval(int chain, const uint8_t *pkt, size_t len, int in_idx, int out_idx);
+        int verdict = firewall_eval(1 /* FW_CHAIN_FORWARD */, pkt, len,
+                                     in_iface ? in_iface->index : 0,
+                                     out_iface->index);
+        if (verdict != 0 /* FW_ACCEPT */) {
+            if (in_iface) in_iface->rx_dropped++;
+            return -EPERM;  /* Packet dropped by firewall */
+        }
+    }
+
     /* Check packet size vs MTU */
     if (len > out_iface->mtu) {
         /* Would need fragmentation — not implemented yet */

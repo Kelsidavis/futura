@@ -51257,6 +51257,109 @@ static void test_openat_o_directory(void) {
 /* Tests 1729-1732: umask enforcement on file/directory creation (POSIX) */
 /* Tests 1761-1764: SIGHUP delivery when session leader exits */
 /* Tests 1765-1768: daemon lifecycle integration (setsid+chdir+devnull) */
+/* Tests 1801-1804: packet filter (firewall) rules and evaluation */
+__attribute__((noinline)) static void test_firewall_rules(void) {
+    extern void firewall_init(void);
+    extern int firewall_add_rule(int, uint8_t, uint8_t, uint32_t, uint32_t,
+                                  uint32_t, uint32_t, uint16_t, uint16_t);
+    extern int firewall_set_policy(int, uint8_t);
+    extern int firewall_eval(int, const uint8_t *, size_t, int, int);
+    extern int firewall_flush(int);
+
+    /* Re-init to clean state */
+    firewall_init();
+
+    /* Test 1801: default policy ACCEPT allows packet */
+    fut_printf("[MISC-TEST] Test 1801: default ACCEPT allows packet\n");
+    {
+        /* Build a minimal IP packet: proto=TCP(6), src=10.0.0.2, dst=8.8.8.8 */
+        static uint8_t pkt[40];
+        __builtin_memset(pkt, 0, sizeof(pkt));
+        pkt[0] = 0x45;  /* IPv4, IHL=5 (20 bytes) */
+        pkt[9] = 6;     /* TCP */
+        pkt[12]=10; pkt[13]=0; pkt[14]=0; pkt[15]=2;   /* src 10.0.0.2 */
+        pkt[16]=8; pkt[17]=8; pkt[18]=8; pkt[19]=8;     /* dst 8.8.8.8 */
+        pkt[20]=0x1F; pkt[21]=0x90;  /* src port 8080 */
+        pkt[22]=0x00; pkt[23]=0x50;  /* dst port 80 */
+
+        int verdict = firewall_eval(1 /* FORWARD */, pkt, 40, 0, 0);
+        if (verdict == 0 /* FW_ACCEPT */) {
+            fut_printf("[MISC-TEST] ✓ Test 1801: default ACCEPT\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1801: verdict=%d\n", verdict);
+            fut_test_fail(1801);
+        }
+    }
+
+    /* Test 1802: DROP rule blocks matching packet */
+    fut_printf("[MISC-TEST] Test 1802: DROP rule blocks packet\n");
+    {
+        /* Add rule: DROP TCP to 8.8.8.8 port 80 */
+        firewall_add_rule(1 /* FORWARD */, 1 /* DROP */, 6 /* TCP */,
+                         0, 0,                       /* any source */
+                         0x08080808, 0xFFFFFFFF,     /* dst 8.8.8.8/32 */
+                         80, 80);                    /* dst port 80 */
+
+        static uint8_t pkt[40];
+        __builtin_memset(pkt, 0, sizeof(pkt));
+        pkt[0] = 0x45; pkt[9] = 6;
+        pkt[12]=10; pkt[13]=0; pkt[14]=0; pkt[15]=2;
+        pkt[16]=8; pkt[17]=8; pkt[18]=8; pkt[19]=8;
+        pkt[22]=0x00; pkt[23]=0x50;  /* dst port 80 */
+
+        int verdict = firewall_eval(1, pkt, 40, 0, 0);
+        if (verdict == 1 /* FW_DROP */) {
+            fut_printf("[MISC-TEST] ✓ Test 1802: DROP matched\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1802: verdict=%d\n", verdict);
+            fut_test_fail(1802);
+        }
+    }
+
+    /* Test 1803: non-matching packet passes DROP rule */
+    fut_printf("[MISC-TEST] Test 1803: non-matching passes rule\n");
+    {
+        /* Same rule blocks 8.8.8.8:80, but packet goes to 1.1.1.1:443 */
+        static uint8_t pkt[40];
+        __builtin_memset(pkt, 0, sizeof(pkt));
+        pkt[0] = 0x45; pkt[9] = 6;
+        pkt[12]=10; pkt[13]=0; pkt[14]=0; pkt[15]=2;
+        pkt[16]=1; pkt[17]=1; pkt[18]=1; pkt[19]=1;  /* dst 1.1.1.1 */
+        pkt[22]=0x01; pkt[23]=0xBB;  /* dst port 443 */
+
+        int verdict = firewall_eval(1, pkt, 40, 0, 0);
+        if (verdict == 0 /* FW_ACCEPT */) {
+            fut_printf("[MISC-TEST] ✓ Test 1803: non-match passes\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1803: verdict=%d\n", verdict);
+            fut_test_fail(1803);
+        }
+    }
+
+    /* Test 1804: flush clears rules, packet passes again */
+    fut_printf("[MISC-TEST] Test 1804: flush restores ACCEPT\n");
+    {
+        firewall_flush(1 /* FORWARD */);
+        static uint8_t pkt[40];
+        __builtin_memset(pkt, 0, sizeof(pkt));
+        pkt[0] = 0x45; pkt[9] = 6;
+        pkt[16]=8; pkt[17]=8; pkt[18]=8; pkt[19]=8;
+        pkt[22]=0x00; pkt[23]=0x50;
+
+        int verdict = firewall_eval(1, pkt, 40, 0, 0);
+        if (verdict == 0 /* FW_ACCEPT */) {
+            fut_printf("[MISC-TEST] ✓ Test 1804: flush → ACCEPT\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1804: verdict=%d\n", verdict);
+            fut_test_fail(1804);
+        }
+    }
+}
+
 /* Tests 1797-1800: network interface and routing table (router OS foundation) */
 #include <futura/netif.h>
 __attribute__((noinline)) static void test_netif_routing(void) {
@@ -57571,6 +57674,7 @@ void fut_misc_test_thread(void *arg) {
     test_timer_abstime();          /* Tests 1721-1724 */
     test_execve_prevalidation();   /* Tests 1725-1728 */
     test_fd_lifecycle_edges();     /* Tests 1737-1740 */
+    test_firewall_rules();           /* Tests 1801-1804 */
     test_netif_routing();            /* Tests 1797-1800 */
     test_pty_slave_cloexec();        /* Tests 1793-1796 */
     test_chrdev_cloexec();           /* Tests 1789-1792 */

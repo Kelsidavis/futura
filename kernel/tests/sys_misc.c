@@ -54090,6 +54090,66 @@ __attribute__((noinline)) static void test_futurafs_advanced(void) {
     }
 }
 
+__attribute__((noinline)) static void test_directory_hierarchy(void) {
+    extern long sys_stat(const char *path, struct fut_stat *statbuf);
+
+    /* Test 1916: /bin directory exists */
+    fut_printf("[MISC-TEST] Test 1916: /bin exists\n");
+    {
+        static struct fut_stat st;
+        long rc = sys_stat("/bin", &st);
+        if (rc == 0 && (st.st_mode & 0170000) == 0040000 /* S_IFDIR */) {
+            fut_printf("[MISC-TEST] ✓ Test 1916: /bin is a directory\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1916: stat=%ld mode=0%o\n", rc, st.st_mode);
+            fut_test_fail(1916);
+        }
+    }
+
+    /* Test 1917: /usr/bin directory exists */
+    fut_printf("[MISC-TEST] Test 1917: /usr/bin exists\n");
+    {
+        static struct fut_stat st;
+        long rc = sys_stat("/usr/bin", &st);
+        if (rc == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1917: /usr/bin exists\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1917: stat=%ld\n", rc);
+            fut_test_fail(1917);
+        }
+    }
+
+    /* Test 1918: /root home directory exists */
+    fut_printf("[MISC-TEST] Test 1918: /root exists\n");
+    {
+        static struct fut_stat st;
+        long rc = sys_stat("/root", &st);
+        if (rc == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1918: /root exists\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1918: stat=%ld\n", rc);
+            fut_test_fail(1918);
+        }
+    }
+
+    /* Test 1919: /var/log directory exists */
+    fut_printf("[MISC-TEST] Test 1919: /var/log exists\n");
+    {
+        static struct fut_stat st;
+        long rc = sys_stat("/var/log", &st);
+        if (rc == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1919: /var/log exists\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1919: stat=%ld\n", rc);
+            fut_test_fail(1919);
+        }
+    }
+}
+
 __attribute__((noinline)) static void test_io_accounting(void) {
     extern long sys_open(const char *, int, int);
     extern long sys_read(int, void *, size_t);
@@ -60595,6 +60655,7 @@ void fut_misc_test_thread(void *arg) {
     test_ip_ttl_tos_sockopt(); /* Tests 1853-1854 */
     test_futurafs(); /* Tests 1855-1857 */
     test_futurafs_advanced(); /* Tests 1910-1912 */
+    test_directory_hierarchy(); /* Tests 1916-1919 */
     test_io_accounting(); /* Tests 1914-1915 */
     test_file_nr_sysctl(); /* Test 1913 */
     test_etc_config_files(); /* Tests 1907-1909 */

@@ -6589,6 +6589,36 @@ static int execute_command(int argc, char *argv[]) {
             sys_close(sock);
             if (rc == 0) { write_str(1, "Route added\n"); }
             else { write_str(2, "ip route add: failed\n"); return 1; }
+        } else if (argc >= 4 && strcmp_simple(argv[1], "route") == 0 &&
+                   strcmp_simple(argv[2], "del") == 0) {
+            /* ip route del <dest>/<prefix> OR ip route del default */
+            uint32_t dst = 0, mask = 0;
+            if (strcmp_simple(argv[3], "default") == 0) {
+                dst = 0; mask = 0;
+            } else {
+                const char *dp = argv[3]; int oc = 0, sh = 24;
+                while (*dp && *dp != '/') {
+                    if (*dp == '.') { dst |= ((uint32_t)oc & 0xFF) << sh; sh -= 8; oc = 0; }
+                    else if (*dp >= '0' && *dp <= '9') oc = oc * 10 + (*dp - '0');
+                    dp++;
+                }
+                dst |= ((uint32_t)oc & 0xFF) << sh;
+                int prefix = 0;
+                if (*dp == '/') { dp++; while (*dp >= '0' && *dp <= '9') { prefix = prefix * 10 + (*dp - '0'); dp++; } }
+                mask = (prefix > 0 && prefix <= 32) ? ~((1u << (32 - prefix)) - 1) : 0;
+            }
+            int sock = sys_call3(41, 2, 2, 0);
+            if (sock < 0) { write_str(2, "ip route del: socket failed\n"); return 1; }
+            char rt[68]; for (int k = 0; k < 68; k++) rt[k] = 0;
+            rt[0] = 2; rt[4] = (char)((dst>>24)&0xFF); rt[5] = (char)((dst>>16)&0xFF);
+            rt[6] = (char)((dst>>8)&0xFF); rt[7] = (char)(dst&0xFF);
+            rt[16] = 2; /* rt_gateway */
+            rt[32] = 2; rt[36] = (char)((mask>>24)&0xFF); rt[37] = (char)((mask>>16)&0xFF);
+            rt[38] = (char)((mask>>8)&0xFF); rt[39] = (char)(mask&0xFF);
+            long rc = sys_call3(16, sock, 0x890C/*SIOCDELRT*/, (long)rt);
+            sys_close(sock);
+            if (rc == 0) write_str(1, "Route deleted\n");
+            else write_str(2, "ip route del: not found\n");
         } else if (argc > 1 && (strcmp_simple(argv[1], "route") == 0 || strcmp_simple(argv[1], "r") == 0)) {
             /* Read real routing table from /proc/net/route */
             int fd = sys_open("/proc/net/route", O_RDONLY, 0);
@@ -6696,6 +6726,23 @@ static int execute_command(int argc, char *argv[]) {
             sys_close(sock);
             write_str(1, "Address configured on ");
             write_str(1, devname);
+            write_str(1, "\n");
+        } else if (argc >= 5 && strcmp_simple(argv[1], "addr") == 0 &&
+                   strcmp_simple(argv[2], "del") == 0) {
+            /* ip addr del <ip>/<prefix> dev <iface> — remove address (set to 0.0.0.0) */
+            const char *devname2 = NULL;
+            for (int i = 4; i < argc - 1; i++)
+                if (strcmp_simple(argv[i], "dev") == 0) { devname2 = argv[i+1]; break; }
+            if (!devname2) { write_str(2, "ip addr del: missing 'dev <name>'\n"); return 1; }
+            int sock = sys_call3(41, 2, 2, 0);
+            if (sock < 0) { write_str(2, "ip addr del: socket failed\n"); return 1; }
+            char ifr[40]; for (int k = 0; k < 40; k++) ifr[k] = 0;
+            for (int k = 0; devname2[k] && k < 15; k++) ifr[k] = devname2[k];
+            ifr[16] = 2; /* AF_INET, all zeros = 0.0.0.0 */
+            sys_call3(16, sock, 0x8916/*SIOCSIFADDR*/, (long)ifr);
+            sys_close(sock);
+            write_str(1, "Address removed from ");
+            write_str(1, devname2);
             write_str(1, "\n");
         } else if (argc > 1 && strcmp_simple(argv[1], "forward") == 0) {
             /* ip forward — toggle IP forwarding */

@@ -267,10 +267,14 @@ long sys_timer_settime(timer_t timerid, int flags,
         if (pt->clockid == 0 /* CLOCK_REALTIME */) {
             extern volatile int64_t g_realtime_offset_sec;
             int64_t offset_ticks = g_realtime_offset_sec * 100;
-            if (offset_ticks >= 0 && value_ticks >= (uint64_t)offset_ticks)
-                value_ticks -= (uint64_t)offset_ticks;
-            else if (offset_ticks < 0)
+            if (offset_ticks >= 0) {
+                if (value_ticks >= (uint64_t)offset_ticks)
+                    value_ticks -= (uint64_t)offset_ticks;
+                else
+                    value_ticks = 0; /* Wall-clock time before boot → already expired */
+            } else {
                 value_ticks += (uint64_t)(-offset_ticks);
+            }
         }
         pt->expiry_ms = value_ticks;  /* absolute monotonic ticks */
     } else {

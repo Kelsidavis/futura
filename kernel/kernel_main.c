@@ -1476,6 +1476,10 @@ void fut_kernel_main(void) {
         memcg_init();  /* Cgroup v2 memory controller */
     }
     {
+        extern void cpucg_init(void);
+        cpucg_init();  /* Cgroup v2 CPU controller */
+    }
+    {
         extern void ipsec_init(void);
         ipsec_init();  /* IPsec SA/SP database */
     }

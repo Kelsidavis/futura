@@ -476,6 +476,7 @@ KERNEL_SOURCES := \
     kernel/net/gre.c \
     kernel/ns/pidns.c \
     kernel/cgroup/memcg.c \
+    kernel/cgroup/cpucg.c \
     kernel/fs/ext2.c \
     kernel/fs/fat.c \
     kernel/fs/exfat.c \

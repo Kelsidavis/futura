@@ -299,6 +299,12 @@ int ip_forward(const void *ip_packet, size_t len, struct net_iface *in_iface) {
     fwd_pkt[10] = (uint8_t)(cksum >> 8);
     fwd_pkt[11] = (uint8_t)(cksum & 0xFF);
 
+    /* Apply NAT/masquerade if enabled for the output interface */
+    {
+        extern int nat_masquerade_out(uint8_t *pkt, size_t len, struct net_iface *out);
+        nat_masquerade_out(fwd_pkt, len, out_iface);
+    }
+
     /* Transmit on output interface */
     if (out_iface->transmit) {
         int ret = out_iface->transmit(out_iface, fwd_pkt, len);

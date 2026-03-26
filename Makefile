@@ -472,6 +472,7 @@ KERNEL_SOURCES := \
     kernel/net/tcpip.c \
     kernel/net/dns.c \
     kernel/net/netif.c \
+    kernel/net/nat.c \
     kernel/crypto/fut_hmac.c \
     kernel/vfs/fut_vfs.c \
     kernel/vfs/fut_vfs_cap.c \

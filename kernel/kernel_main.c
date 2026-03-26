@@ -1576,6 +1576,10 @@ void fut_kernel_main(void) {
     extern void netif_init(void);
     netif_init();
 
+    /* Initialize NAT/masquerade subsystem */
+    extern void nat_init(void);
+    nat_init();
+
     fut_printf("[INIT] Initializing TCP/IP stack...\n");
     int tcpip_rc = tcpip_init();
     if (tcpip_rc != 0) {

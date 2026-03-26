@@ -1472,6 +1472,10 @@ void fut_kernel_main(void) {
         exfat_init();  /* exFAT filesystem driver */
     }
     {
+        extern void memcg_init(void);
+        memcg_init();  /* Cgroup v2 memory controller */
+    }
+    {
         extern void ipsec_init(void);
         ipsec_init();  /* IPsec SA/SP database */
     }

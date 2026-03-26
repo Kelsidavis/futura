@@ -21171,6 +21171,9 @@ static void test_msg_waitall(void) {
  * Also verify getsockopt(SO_RCVTIMEO) returns the stored value.
  */
 static void test_so_rcvtimeo(void) {
+    /* Clear any pending signals that could cause EINTR instead of EAGAIN.
+     * Stale SIGALRM from timer tests can interfere with blocking recv. */
+    { fut_task_t *t = fut_task_current(); if (t) __atomic_store_n(&t->pending_signals, 0, __ATOMIC_RELEASE); }
     fut_printf("[MISC-TEST] Test 315: SO_RCVTIMEO enforcement\n");
     extern long sys_socketpair(int domain, int type, int protocol, int *sv);
     extern long sys_setsockopt(int sockfd, int level, int optname,
@@ -45789,6 +45792,7 @@ static void test_sock_timeout_blocking(void) {
 #define TSTB_EAGAIN      11
 
     /* ---- Test 1227: SO_SNDTIMEO enforced when send buffer is full ---- */
+    { fut_task_t *t = fut_task_current(); if (t) __atomic_store_n(&t->pending_signals, 0, __ATOMIC_RELEASE); }
     fut_printf("[MISC-TEST] Test 1227: SO_SNDTIMEO on full send buffer → EAGAIN\n");
     {
         int sv[2] = {-1, -1};
@@ -51222,6 +51226,77 @@ static void test_openat_o_directory(void) {
     }
 }
 
+/* Tests 1725-1728: execve pre-validation prevents state corruption */
+__attribute__((noinline)) static void test_execve_prevalidation(void) {
+    extern long sys_execve(const char *, char *const *, char *const *);
+
+    /* Test 1725: execve empty file → ENOEXEC (pre-validated, no crash) */
+    fut_printf("[MISC-TEST] Test 1725: execve empty file → ENOEXEC\n");
+    {
+        int fd = fut_vfs_open("/tmp/empty_1725", 0x42, 0755);
+        if (fd >= 0) fut_vfs_close(fd);
+        long r = sys_execve("/tmp/empty_1725", NULL, NULL);
+        fut_vfs_unlink("/tmp/empty_1725");
+        if (r == -8 /* ENOEXEC */) {
+            fut_printf("[MISC-TEST] ✓ Test 1725: ENOEXEC\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1725: %ld\n", r);
+            fut_test_fail(1725);
+        }
+    }
+
+    /* Test 1726: execve bad magic → ENOEXEC (pre-validated, no crash) */
+    fut_printf("[MISC-TEST] Test 1726: execve bad magic → ENOEXEC\n");
+    {
+        int fd = fut_vfs_open("/tmp/badelf_1726", 0x42, 0755);
+        if (fd >= 0) { fut_vfs_write(fd, "NOT_ELF!", 8); fut_vfs_close(fd); }
+        long r = sys_execve("/tmp/badelf_1726", NULL, NULL);
+        fut_vfs_unlink("/tmp/badelf_1726");
+        if (r == -8 /* ENOEXEC */) {
+            fut_printf("[MISC-TEST] ✓ Test 1726: ENOEXEC\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1726: %ld\n", r);
+            fut_test_fail(1726);
+        }
+    }
+
+    /* Test 1727: signal handlers preserved after failed exec (ENOEXEC) */
+    fut_printf("[MISC-TEST] Test 1727: handlers preserved after ENOEXEC\n");
+    {
+        fut_task_t *task = fut_task_current();
+        sighandler_t old = task->signal_handlers[10 - 1];
+        task->signal_handlers[10 - 1] = (sighandler_t)0xDEADBEEF;
+        int fd = fut_vfs_open("/tmp/badelf_1727", 0x42, 0755);
+        if (fd >= 0) { fut_vfs_write(fd, "XXXX", 4); fut_vfs_close(fd); }
+        sys_execve("/tmp/badelf_1727", NULL, NULL);
+        fut_vfs_unlink("/tmp/badelf_1727");
+        sighandler_t after = task->signal_handlers[10 - 1];
+        task->signal_handlers[10 - 1] = old;
+        if (after == (sighandler_t)0xDEADBEEF) {
+            fut_printf("[MISC-TEST] ✓ Test 1727: handler preserved\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1727: handler changed\n");
+            fut_test_fail(1727);
+        }
+    }
+
+    /* Test 1728: exec directory → ENOEXEC (pre-validated, no crash) */
+    fut_printf("[MISC-TEST] Test 1728: execve directory → error\n");
+    {
+        long r = sys_execve("/tmp", NULL, NULL);
+        if (r == -8 /* ENOEXEC */ || r == -21 /* EISDIR */ || r == -13 /* EACCES */) {
+            fut_printf("[MISC-TEST] ✓ Test 1728: exec dir → %ld\n", r);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1728: %ld\n", r);
+            fut_test_fail(1728);
+        }
+    }
+}
+
 /* Tests 1705-1708: AT_BASE/AT_FLAGS in auxv + Ngid in /proc/self/status */
 __attribute__((noinline)) static void test_auxv_and_status_fields(void) {
     static struct { uint64_t key; uint64_t val; } entries[24];
@@ -55569,6 +55644,7 @@ void fut_misc_test_thread(void *arg) {
     test_pt_interp_and_exec();    /* Tests 1713-1716 */
     test_chdir_getcwd_roundtrip(); /* Tests 1717-1720 */
     test_timer_abstime();          /* Tests 1721-1724 */
+    test_execve_prevalidation();   /* Tests 1725-1728 */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

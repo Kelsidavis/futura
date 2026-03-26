@@ -759,6 +759,30 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
         argc_category = "many (>20)";
     }
 
+    /* PRE-VALIDATION: Verify the file is a valid executable BEFORE any
+     * destructive operations (closing CLOEXEC fds, resetting signal handlers).
+     * Without this, exec on invalid files (empty, bad magic, directory)
+     * corrupts the task state irreversibly, crashing the kernel. */
+    {
+        int pre_fd = fut_vfs_open(kernel_pathname, 0 /* O_RDONLY */, 0);
+        if (pre_fd < 0) {
+            if (kernel_argv) { for (int i = 0; kernel_argv[i]; i++) fut_free(kernel_argv[i]); fut_free(kernel_argv); }
+            if (kernel_envp) { for (int i = 0; kernel_envp[i]; i++) fut_free(kernel_envp[i]); fut_free(kernel_envp); }
+            return pre_fd;
+        }
+        char magic[4] = {0};
+        extern long fut_vfs_read(int, void *, size_t);
+        long nr = fut_vfs_read(pre_fd, magic, 4);
+        fut_vfs_close(pre_fd);
+        int valid = (nr >= 4 && magic[0] == 0x7f && magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F');
+        if (!valid && nr >= 2 && magic[0] == '#' && magic[1] == '!') valid = 1;
+        if (!valid) {
+            if (kernel_argv) { for (int i = 0; kernel_argv[i]; i++) fut_free(kernel_argv[i]); fut_free(kernel_argv); }
+            if (kernel_envp) { for (int i = 0; kernel_envp[i]; i++) fut_free(kernel_envp[i]); fut_free(kernel_envp); }
+            return -ENOEXEC;
+        }
+    }
+
     /* Phase 2: Count FDs to close (per-FD flags in task->fd_flags[]) */
     int cloexec_count = 0;
     if (task->fd_table && task->fd_flags) {

@@ -1124,13 +1124,38 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
             /* Accept but don't enforce — basic stub for shell compatibility */
             return 0;
         }
-        case TIOCSCTTY:
+        case TIOCSCTTY: {
             /* TIOCSCTTY - Make this terminal the controlling terminal.
-             * argp is the "steal" flag (0 or 1). Accept silently. */
+             * Sets tty_nr from the device number of the terminal fd.
+             * argp is the "steal" flag (0 or 1). */
+            fut_task_t *ctty_task = fut_task_current();
+            if (ctty_task) {
+                /* Use the file's chr_ops to identify PTY devices */
+                if (file->chr_private) {
+                    /* Check if this is a PTY by looking at chr_private tag */
+                    uint32_t tag = *(uint32_t *)file->chr_private;
+                    if (tag == 0x50545300 /* PTY_SLAVE_TAG */) {
+                        /* Extract PTY index from the pty_priv structure */
+                        struct { uint32_t tag; void *pair; } *pp = file->chr_private;
+                        struct { int active; uint32_t m_rc; uint32_t s_rc; int locked; int index; } *pair = pp->pair;
+                        if (pair)
+                            ctty_task->tty_nr = (136u << 8) | (uint32_t)pair->index;
+                    }
+                }
+                /* Also set session ID if task is a session leader */
+                if (ctty_task->sid == ctty_task->pid)
+                    ctty_task->sid = ctty_task->pid;
+            }
             return 0;
-        case TIOCNOTTY:
-            /* TIOCNOTTY - Detach from controlling terminal. Accept silently. */
+        }
+        case TIOCNOTTY: {
+            /* TIOCNOTTY - Detach from controlling terminal.
+             * Clears tty_nr so /proc/self/stat shows no controlling terminal. */
+            fut_task_t *notty_task = fut_task_current();
+            if (notty_task)
+                notty_task->tty_nr = 0;
             return 0;
+        }
         case TIOCGSID: {
             /* TIOCGSID - Get session ID of the controlling terminal.
              * Returns the session leader's PID. */

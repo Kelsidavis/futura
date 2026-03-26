@@ -51243,6 +51243,109 @@ static void test_openat_o_directory(void) {
 }
 
 /* Tests 1729-1732: umask enforcement on file/directory creation (POSIX) */
+/* Tests 1749-1752: TIOCSCTTY / TIOCNOTTY controlling terminal management */
+__attribute__((noinline)) static void test_ctty_management(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_close(int);
+    extern long sys_ioctl(int fd, unsigned long request, void *argp);
+
+    /* Open a PTY slave for controlling terminal tests */
+    long mfd = sys_open("/dev/ptmx", 0x0002, 0);
+    int pn = -1, zv = 0;
+    if (mfd >= 0) sys_ioctl((int)mfd, 0x80045430, &pn);
+    if (mfd >= 0) sys_ioctl((int)mfd, 0x40045431, &zv);
+    static char pp[24];
+    { const char *pfx = "/dev/pts/"; int i = 0; while (pfx[i]) { pp[i] = pfx[i]; i++; }
+      if (pn >= 10) { pp[i++] = (char)('0'+pn/10); } pp[i++] = (char)('0'+pn%10); pp[i] = '\0'; }
+    long sfd = (pn >= 0) ? sys_open(pp, 0x0002, 0) : -1;
+
+    /* Test 1749: TIOCNOTTY clears tty_nr */
+    fut_printf("[MISC-TEST] Test 1749: TIOCNOTTY clears tty_nr\n");
+    if (sfd >= 0) {
+        fut_task_t *task = fut_task_current();
+        /* Ensure tty_nr is set (from earlier PTY tests) */
+        uint32_t saved_tty = task->tty_nr;
+        if (task->tty_nr == 0) task->tty_nr = (136u << 8);  /* force a value */
+        sys_ioctl((int)sfd, 0x5422 /* TIOCNOTTY */, NULL);
+        if (task->tty_nr == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1749: tty_nr cleared to 0\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1749: tty_nr=%u (expected 0)\n", task->tty_nr);
+            fut_test_fail(1749);
+        }
+        task->tty_nr = saved_tty;  /* restore for subsequent tests */
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1749: PTY open failed\n");
+        fut_test_fail(1749);
+    }
+
+    /* Test 1750: TIOCSCTTY sets tty_nr from PTY slave */
+    fut_printf("[MISC-TEST] Test 1750: TIOCSCTTY sets tty_nr\n");
+    if (sfd >= 0) {
+        fut_task_t *task = fut_task_current();
+        task->tty_nr = 0;  /* clear first */
+        sys_ioctl((int)sfd, 0x540E /* TIOCSCTTY */, NULL);
+        uint32_t expected = (136u << 8) | (uint32_t)pn;
+        if (task->tty_nr == expected) {
+            fut_printf("[MISC-TEST] ✓ Test 1750: tty_nr=0x%x (pts/%d)\n", task->tty_nr, pn);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1750: tty_nr=0x%x (expected 0x%x)\n",
+                       task->tty_nr, expected);
+            fut_test_fail(1750);
+        }
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1750: PTY open failed\n");
+        fut_test_fail(1750);
+    }
+
+    /* Test 1751: TIOCNOTTY + TIOCSCTTY round-trip */
+    fut_printf("[MISC-TEST] Test 1751: detach + reattach\n");
+    if (sfd >= 0) {
+        sys_ioctl((int)sfd, 0x5422 /* TIOCNOTTY */, NULL);
+        fut_task_t *task = fut_task_current();
+        if (task->tty_nr != 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1751: detach failed tty_nr=%u\n", task->tty_nr);
+            fut_test_fail(1751);
+        } else {
+            sys_ioctl((int)sfd, 0x540E /* TIOCSCTTY */, NULL);
+            if (task->tty_nr == ((136u << 8) | (uint32_t)pn)) {
+                fut_printf("[MISC-TEST] ✓ Test 1751: round-trip OK\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1751: reattach tty_nr=%u\n", task->tty_nr);
+                fut_test_fail(1751);
+            }
+        }
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1751: skipped\n");
+        fut_test_fail(1751);
+    }
+
+    /* Test 1752: TIOCGSID returns session ID */
+    fut_printf("[MISC-TEST] Test 1752: TIOCGSID returns sid\n");
+    if (sfd >= 0) {
+        int sid = -1;
+        long r = sys_ioctl((int)sfd, 0x5429 /* TIOCGSID */, &sid);
+        fut_task_t *task = fut_task_current();
+        if (r == 0 && sid == (int)task->sid) {
+            fut_printf("[MISC-TEST] ✓ Test 1752: TIOCGSID=%d\n", sid);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1752: r=%ld sid=%d task->sid=%llu\n",
+                       r, sid, (unsigned long long)task->sid);
+            fut_test_fail(1752);
+        }
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1752: skipped\n");
+        fut_test_fail(1752);
+    }
+
+    if (sfd >= 0) sys_close((int)sfd);
+    if (mfd >= 0) sys_close((int)mfd);
+}
+
 /* Tests 1745-1748: fork inheritance of tty_nr, sid, pgid, seccomp */
 __attribute__((noinline)) static void test_fork_field_inheritance(void) {
     /* Test 1745: synthetic child inherits parent's tty_nr */
@@ -56201,6 +56304,7 @@ void fut_misc_test_thread(void *arg) {
     test_timer_abstime();          /* Tests 1721-1724 */
     test_execve_prevalidation();   /* Tests 1725-1728 */
     test_fd_lifecycle_edges();     /* Tests 1737-1740 */
+    test_ctty_management();          /* Tests 1749-1752 */
     test_fork_field_inheritance();   /* Tests 1745-1748 */
     test_rename_unlink_while_open(); /* Tests 1741-1744 */
     test_umask_posix_create();     /* Tests 1729-1732 */

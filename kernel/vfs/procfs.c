@@ -2166,12 +2166,11 @@ static void net_tcp_emit_one(const fut_socket_t *s, void *arg) {
     pb_hex8U(b, s->inet_addr);
     pb_char(b, ':');
     pb_hex4U(b, lport);
-    /* remote address: extract from connected peer if available */
+    /* remote address: use inet_peer_addr/port fields */
     pb_char(b, ' ');
-    if (s->state == FUT_SOCK_CONNECTED && s->pair && s->pair->peer) {
-        const fut_socket_t *peer = s->pair->peer;
-        uint16_t rport = (uint16_t)((peer->inet_port >> 8) | ((peer->inet_port & 0xFF) << 8));
-        pb_hex8U(b, peer->inet_addr);
+    if (s->inet_peer_addr || s->inet_peer_port) {
+        uint16_t rport = (uint16_t)((s->inet_peer_port >> 8) | ((s->inet_peer_port & 0xFF) << 8));
+        pb_hex8U(b, s->inet_peer_addr);
         pb_char(b, ':');
         pb_hex4U(b, rport);
     } else {
@@ -2203,10 +2202,9 @@ static void net_udp_emit_one(const fut_socket_t *s, void *arg) {
     pb_hex4U(b, lport);
     /* For DGRAM: show connected peer if available */
     pb_char(b, ' ');
-    if (s->dgram_peer_path_len > 0 && s->pair && s->pair->peer) {
-        const fut_socket_t *peer = s->pair->peer;
-        uint16_t rport = (uint16_t)((peer->inet_port >> 8) | ((peer->inet_port & 0xFF) << 8));
-        pb_hex8U(b, peer->inet_addr);
+    if (s->inet_peer_addr || s->inet_peer_port) {
+        uint16_t rport = (uint16_t)((s->inet_peer_port >> 8) | ((s->inet_peer_port & 0xFF) << 8));
+        pb_hex8U(b, s->inet_peer_addr);
         pb_char(b, ':');
         pb_hex4U(b, rport);
     } else {

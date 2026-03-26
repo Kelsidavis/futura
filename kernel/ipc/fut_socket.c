@@ -2259,6 +2259,8 @@ int fut_socket_connect_inet(fut_socket_t *socket, uint32_t addr, uint16_t port) 
         __builtin_memcpy(&socket->dgram_peer_path[0], &addr, 4);
         __builtin_memcpy(&socket->dgram_peer_path[4], &port, 2);
         socket->dgram_peer_path_len = 6;  /* sentinel: 6 bytes = AF_INET peer */
+        socket->inet_peer_addr = addr;
+        socket->inet_peer_port = port;
         socket->state = FUT_SOCK_CONNECTED;
         return 0;
     }
@@ -2308,6 +2310,9 @@ int fut_socket_connect_inet(fut_socket_t *socket, uint32_t addr, uint16_t port) 
     queue->queue_count++;
 
     socket->state = FUT_SOCK_CONNECTING;
+    /* Store peer address for getpeername/netstat */
+    socket->inet_peer_addr = addr;
+    socket->inet_peer_port = port;
 
     /* Wake listener's accept queue */
     fut_waitq_wake_one(queue->accept_waitq);

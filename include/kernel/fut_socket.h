@@ -438,6 +438,10 @@ typedef struct fut_socket {
     uint16_t inet_port;        /* IPv4/IPv6 port (network byte order); 0 = unbound */
     uint8_t  inet6_addr[16];   /* IPv6 address (network byte order); all-zero = unbound */
 
+    /* AF_INET peer address (set by connect/accept, returned by getpeername) */
+    uint32_t inet_peer_addr;   /* Peer IPv4 address (network byte order); 0 = not connected */
+    uint16_t inet_peer_port;   /* Peer port (network byte order); 0 = not connected */
+
     /* SO_PEERCRED: credentials of the connected peer (set at connect/accept time) */
     uint32_t peer_pid;
     uint32_t peer_uid;

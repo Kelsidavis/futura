@@ -328,7 +328,11 @@ long sys_getpeername(int sockfd, void *addr, socklen_t *addrlen) {
         }
         gpn_sockaddr_in_t sin = {0};
         sin.sin_family = AF_INET;
-        if (peer) {
+        /* Use inet_peer_addr/port fields (set by connect/accept) */
+        if (socket->inet_peer_addr || socket->inet_peer_port) {
+            sin.sin_port = socket->inet_peer_port;
+            sin.sin_addr = socket->inet_peer_addr;
+        } else if (peer) {
             sin.sin_port = peer->inet_port;
             sin.sin_addr = peer->inet_addr;
         }

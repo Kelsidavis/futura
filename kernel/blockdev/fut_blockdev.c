@@ -203,6 +203,10 @@ struct fut_blockdev *fut_blockdev_find(const char *name) {
     return NULL;
 }
 
+struct fut_blockdev *fut_blockdev_first(void) {
+    return device_list;
+}
+
 /* ============================================================
  *   Block I/O Operations
  * ============================================================ */

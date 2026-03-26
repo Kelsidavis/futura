@@ -55357,6 +55357,247 @@ __attribute__((noinline)) static void test_pts_dir_readdir(void) {
     }
 }
 
+__attribute__((noinline)) static void test_blockdev_procfs(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_close(int);
+
+    /* Test 1858: /proc/diskstats shows ramdisk with I/O stats */
+    fut_printf("[MISC-TEST] Test 1858: /proc/diskstats has block device entries\n");
+    {
+        long fd = sys_open("/proc/diskstats", 0, 0);
+        if (fd >= 0) {
+            static char dbuf[1024];
+            long n = sys_read((int)fd, dbuf, sizeof(dbuf) - 1);
+            sys_close((int)fd);
+            if (n > 0) {
+                dbuf[n] = '\0';
+                /* Should contain "ramdisk" or at least "253" (major) */
+                bool found = false;
+                for (int i = 0; i < n - 3; i++) {
+                    if (dbuf[i] == 'r' && dbuf[i+1] == 'a' && dbuf[i+2] == 'm') {
+                        found = true;
+                        break;
+                    }
+                }
+                if (found) {
+                    fut_printf("[MISC-TEST] ✓ Test 1858: diskstats has ramdisk entry\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1858: no ramdisk in diskstats\n");
+                    fut_test_fail(1858);
+                }
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1858: diskstats empty (%ld)\n", n);
+                fut_test_fail(1858);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1858: open=%ld\n", fd);
+            fut_test_fail(1858);
+        }
+    }
+
+    /* Test 1859: /proc/partitions shows ramdisk with capacity */
+    fut_printf("[MISC-TEST] Test 1859: /proc/partitions has block device entries\n");
+    {
+        long fd = sys_open("/proc/partitions", 0, 0);
+        if (fd >= 0) {
+            static char pbuf[1024];
+            long n = sys_read((int)fd, pbuf, sizeof(pbuf) - 1);
+            sys_close((int)fd);
+            if (n > 0) {
+                pbuf[n] = '\0';
+                /* Should contain header AND ramdisk entry */
+                bool has_header = false;
+                bool has_device = false;
+                for (int i = 0; i < n - 5; i++) {
+                    if (pbuf[i] == 'm' && pbuf[i+1] == 'a' && pbuf[i+2] == 'j' &&
+                        pbuf[i+3] == 'o' && pbuf[i+4] == 'r')
+                        has_header = true;
+                    if (pbuf[i] == 'r' && pbuf[i+1] == 'a' && pbuf[i+2] == 'm')
+                        has_device = true;
+                }
+                if (has_header && has_device) {
+                    fut_printf("[MISC-TEST] ✓ Test 1859: partitions has header + ramdisk\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1859: header=%d device=%d\n",
+                               has_header, has_device);
+                    fut_test_fail(1859);
+                }
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1859: empty (%ld)\n", n);
+                fut_test_fail(1859);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1859: open=%ld\n", fd);
+            fut_test_fail(1859);
+        }
+    }
+}
+
+__attribute__((noinline)) static void test_net_procfs_devnodes(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_write(int, const void *, size_t);
+    extern long sys_close(int);
+    extern long sys_ioctl(int fd, unsigned long request, void *argp);
+    extern long sys_mknodat(int dirfd, const char *pathname, unsigned int mode, unsigned int dev);
+
+    /* Test 1821: /proc/net/nf_conntrack is readable (empty when no NAT) */
+    fut_printf("[MISC-TEST] Test 1821: /proc/net/nf_conntrack readable\n");
+    {
+        long fd = sys_open("/proc/net/nf_conntrack", 0, 0);
+        if (fd >= 0) {
+            static char cbuf[256];
+            long n = sys_read((int)fd, cbuf, sizeof(cbuf) - 1);
+            sys_close((int)fd);
+            if (n >= 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1821: nf_conntrack readable (%ld bytes)\n", n);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1821: read=%ld\n", n);
+                fut_test_fail(1821);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1821: open=%ld\n", fd);
+            fut_test_fail(1821);
+        }
+    }
+
+    /* Test 1822: /proc/net/snmp has non-zero IP stats */
+    fut_printf("[MISC-TEST] Test 1822: /proc/net/snmp has real stats\n");
+    {
+        long fd = sys_open("/proc/net/snmp", 0, 0);
+        if (fd >= 0) {
+            static char sbuf[2048];
+            long n = sys_read((int)fd, sbuf, sizeof(sbuf) - 1);
+            sys_close((int)fd);
+            if (n > 0) {
+                sbuf[n] = '\0';
+                bool found_ip_stats = false;
+                for (int i = 0; i < n - 5; i++) {
+                    if (sbuf[i] == 'I' && sbuf[i+1] == 'p' && sbuf[i+2] == ':' && sbuf[i+3] == ' '
+                        && sbuf[i+4] >= '0' && sbuf[i+4] <= '9') {
+                        found_ip_stats = true;
+                        break;
+                    }
+                }
+                if (found_ip_stats) {
+                    fut_printf("[MISC-TEST] ✓ Test 1822: /proc/net/snmp has IP stats\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1822: no IP stats found\n");
+                    fut_test_fail(1822);
+                }
+            } else { fut_test_fail(1822); }
+        } else { fut_test_fail(1822); }
+    }
+
+    /* Test 1827: ip_default_ttl sysctl readable */
+    fut_printf("[MISC-TEST] Test 1827: /proc/sys/net/ipv4/ip_default_ttl\n");
+    {
+        long fd = sys_open("/proc/sys/net/ipv4/ip_default_ttl", 0, 0);
+        if (fd >= 0) {
+            static char rb[16];
+            long n = sys_read((int)fd, rb, sizeof(rb) - 1);
+            sys_close((int)fd);
+            if (n > 0) { rb[n] = '\0';
+                if (rb[0] == '6' && rb[1] == '4') {
+                    fut_printf("[MISC-TEST] ✓ Test 1827: ttl=%s", rb);
+                    fut_test_pass();
+                } else { fut_printf("[MISC-TEST] ✗ Test 1827: got=%s", rb); fut_test_fail(1827); }
+            } else { fut_test_fail(1827); }
+        } else { fut_printf("[MISC-TEST] ✗ Test 1827: open=%ld\n", fd); fut_test_fail(1827); }
+    }
+
+    /* Test 1828: /dev/net/tun device is openable */
+    fut_printf("[MISC-TEST] Test 1828: /dev/net/tun exists and opens\n");
+    {
+        long fd = sys_open("/dev/net/tun", 0x0002, 0);
+        if (fd >= 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1828: /dev/net/tun fd=%ld\n", fd);
+            fut_test_pass();
+            sys_close((int)fd);
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1828: open=%ld\n", fd);
+            fut_test_fail(1828);
+        }
+    }
+
+    /* Test 1829: mknod creates a character device node */
+    fut_printf("[MISC-TEST] Test 1829: mknod S_IFCHR creates device node\n");
+    {
+        unsigned int dev = (1 << 8) | 3;
+        long rc = sys_mknodat(-100, "/tmp/test_chrdev", 0020666, dev);
+        if (rc == 0) {
+            long fd = sys_open("/tmp/test_chrdev", 0x0002, 0);
+            if (fd >= 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1829: mknod S_IFCHR + open succeeded fd=%ld\n", fd);
+                fut_test_pass();
+                sys_close((int)fd);
+            } else {
+                fut_printf("[MISC-TEST] ✓ Test 1829: mknod S_IFCHR created (open=%ld)\n", fd);
+                fut_test_pass();
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1829: mknod failed: %ld\n", rc);
+            fut_test_fail(1829);
+        }
+    }
+
+    /* Test 1830: mknod S_IFBLK returns EPERM */
+    fut_printf("[MISC-TEST] Test 1830: mknod S_IFBLK → EPERM\n");
+    {
+        long rc = sys_mknodat(-100, "/tmp/test_blkdev", 0060666, (8 << 8) | 0);
+        if (rc == -1) {
+            fut_printf("[MISC-TEST] ✓ Test 1830: S_IFBLK → EPERM\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1830: S_IFBLK = %ld\n", rc);
+            fut_test_fail(1830);
+        }
+    }
+
+    /* Test 1837: SIOCSIFHWADDR changes MAC address */
+    fut_printf("[MISC-TEST] Test 1837: SIOCSIFHWADDR\n");
+    {
+        long sfd = sys_open("/dev/null", 0x0002, 0);
+        if (sfd >= 0) {
+            static char ifr[40];
+            __builtin_memset(ifr, 0, 40);
+            __builtin_memcpy(ifr, "eth0", 4);
+            ifr[16] = 1; /* ARPHRD_ETHER */
+            ifr[18] = (char)0xAA; ifr[19] = (char)0xBB; ifr[20] = (char)0xCC;
+            ifr[21] = (char)0xDD; ifr[22] = (char)0xEE; ifr[23] = (char)0xFF;
+            long rc = sys_ioctl((int)sfd, 0x8924 /* SIOCSIFHWADDR */, ifr);
+            if (rc == 0) {
+                __builtin_memset(ifr, 0, 40);
+                __builtin_memcpy(ifr, "eth0", 4);
+                rc = sys_ioctl((int)sfd, 0x8927 /* SIOCGIFHWADDR */, ifr);
+                if (rc == 0 && (uint8_t)ifr[18] == 0xAA && (uint8_t)ifr[19] == 0xBB) {
+                    fut_test_pass();
+                } else { fut_test_fail(1837); }
+            } else { fut_test_fail(1837); }
+            sys_close((int)sfd);
+        } else { fut_test_fail(1837); }
+    }
+
+    /* Test 1838: ip_masquerade_dev sysctl write/read */
+    fut_printf("[MISC-TEST] Test 1838: ip_masquerade_dev sysctl\n");
+    {
+        long fd = sys_open("/proc/sys/net/ipv4/ip_masquerade_dev", 0, 0);
+        if (fd >= 0) {
+            static char rb[32];
+            long n = sys_read((int)fd, rb, sizeof(rb) - 1);
+            sys_close((int)fd);
+            if (n > 0 && rb[0] == 'n' && rb[1] == 'o' && rb[2] == 'n' && rb[3] == 'e') {
+                fut_test_pass();
+            } else { fut_test_fail(1838); }
+        } else { fut_test_fail(1838); }
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -58906,65 +59147,7 @@ void fut_misc_test_thread(void *arg) {
     test_arp_icmp_router();          /* Tests 1809-1812 */
     test_bindtodevice_ifconf();      /* Tests 1813-1816 */
     test_netif_ioctl_extended();     /* Tests 1817-1820 */
-    /* Test 1821: /proc/net/nf_conntrack is readable (empty when no NAT) */
-    fut_printf("[MISC-TEST] Test 1821: /proc/net/nf_conntrack readable\n");
-    {
-        extern long sys_open(const char *, int, int);
-        extern long sys_read(int, void *, size_t);
-        extern long sys_close(int);
-        long fd = sys_open("/proc/net/nf_conntrack", 0, 0);
-        if (fd >= 0) {
-            static char cbuf[256];
-            long n = sys_read((int)fd, cbuf, sizeof(cbuf) - 1);
-            sys_close((int)fd);
-            /* Empty is valid (no active NAT entries) */
-            if (n >= 0) {
-                fut_printf("[MISC-TEST] ✓ Test 1821: nf_conntrack readable (%ld bytes)\n", n);
-                fut_test_pass();
-            } else {
-                fut_printf("[MISC-TEST] ✗ Test 1821: read=%ld\n", n);
-                fut_test_fail(1821);
-            }
-        } else {
-            fut_printf("[MISC-TEST] ✗ Test 1821: open=%ld\n", fd);
-            fut_test_fail(1821);
-        }
-    }
-
-    /* Test 1822: /proc/net/snmp has non-zero IP stats after ip_forward calls */
-    fut_printf("[MISC-TEST] Test 1822: /proc/net/snmp has real stats\n");
-    {
-        extern long sys_open(const char *, int, int);
-        extern long sys_read(int, void *, size_t);
-        extern long sys_close(int);
-        long fd = sys_open("/proc/net/snmp", 0, 0);
-        if (fd >= 0) {
-            static char sbuf[2048];
-            long n = sys_read((int)fd, sbuf, sizeof(sbuf) - 1);
-            sys_close((int)fd);
-            if (n > 0) {
-                sbuf[n] = '\0';
-                /* Check IP Forwarding field is "1" (since we enabled it in earlier tests) */
-                /* Look for "Ip: 1 64" or "Ip: 2 64" — the second Ip: line has values */
-                bool found_ip_stats = false;
-                for (int i = 0; i < n - 5; i++) {
-                    /* Find the second "Ip: " (values line) by checking for digit after "Ip: " */
-                    if (sbuf[i] == 'I' && sbuf[i+1] == 'p' && sbuf[i+2] == ':' && sbuf[i+3] == ' '
-                        && sbuf[i+4] >= '0' && sbuf[i+4] <= '9') {
-                        found_ip_stats = true;
-                        break;
-                    }
-                }
-                if (found_ip_stats) {
-                    fut_printf("[MISC-TEST] ✓ Test 1822: /proc/net/snmp has IP stats\n");
-                    fut_test_pass();
-                } else {
-                    fut_printf("[MISC-TEST] ✗ Test 1822: no IP stats found\n");
-                    fut_test_fail(1822);
-                }
-            } else { fut_test_fail(1822); }
-        } else { fut_test_fail(1822); }
-    }
+    test_net_procfs_devnodes(); /* Tests 1821-1822, 1827-1830, 1837-1838 */
     test_pty_slave_cloexec();        /* Tests 1793-1796 */
     test_chrdev_cloexec();           /* Tests 1789-1792 */
     test_pty_fcntl_flags();          /* Tests 1785-1788 */
@@ -58982,134 +59165,8 @@ void fut_misc_test_thread(void *arg) {
     test_umask_posix_create();     /* Tests 1729-1732 */
     test_writable_net_sysctls();   /* Tests 1823-1826 */
 
-    /* Test 1827: ip_default_ttl sysctl readable */
-    fut_printf("[MISC-TEST] Test 1827: /proc/sys/net/ipv4/ip_default_ttl\n");
-    {
-        extern long sys_open(const char *, int, int);
-        extern long sys_read(int, void *, size_t);
-        extern long sys_close(int);
-        long fd = sys_open("/proc/sys/net/ipv4/ip_default_ttl", 0, 0);
-        if (fd >= 0) {
-            static char rb[16];
-            long n = sys_read((int)fd, rb, sizeof(rb) - 1);
-            sys_close((int)fd);
-            if (n > 0) { rb[n] = '\0';
-                if (rb[0] == '6' && rb[1] == '4') { /* default 64 */
-                    fut_printf("[MISC-TEST] ✓ Test 1827: ttl=%s", rb);
-                    fut_test_pass();
-                } else { fut_printf("[MISC-TEST] ✗ Test 1827: got=%s", rb); fut_test_fail(1827); }
-            } else { fut_test_fail(1827); }
-        } else { fut_printf("[MISC-TEST] ✗ Test 1827: open=%ld\n", fd); fut_test_fail(1827); }
-    }
-
-    /* Test 1828: /dev/net/tun device is openable */
-    fut_printf("[MISC-TEST] Test 1828: /dev/net/tun exists and opens\n");
-    {
-        extern long sys_open(const char *, int, int);
-        extern long sys_close(int);
-        long fd = sys_open("/dev/net/tun", 0x0002 /* O_RDWR */, 0);
-        if (fd >= 0) {
-            fut_printf("[MISC-TEST] ✓ Test 1828: /dev/net/tun fd=%ld\n", fd);
-            fut_test_pass();
-            sys_close((int)fd);
-        } else {
-            fut_printf("[MISC-TEST] ✗ Test 1828: open=%ld\n", fd);
-            fut_test_fail(1828);
-        }
-    }
-
-    /* Test 1829: mknod creates a character device node */
-    fut_printf("[MISC-TEST] Test 1829: mknod S_IFCHR creates device node\n");
-    {
-        extern long sys_mknodat(int dirfd, const char *pathname, unsigned int mode, unsigned int dev);
-        extern long sys_open(const char *, int, int);
-        extern long sys_close(int);
-        /* Create /tmp/test_chrdev with major=1 minor=3 (same as /dev/null) */
-        /* S_IFCHR = 0020000, mode 0666 */
-        unsigned int dev = (1 << 8) | 3;  /* makedev(1, 3) */
-        long rc = sys_mknodat(-100 /* AT_FDCWD */, "/tmp/test_chrdev", 0020666, dev);
-        if (rc == 0) {
-            /* Verify it can be opened (devfs routes major 1 minor 3 to /dev/null fops) */
-            long fd = sys_open("/tmp/test_chrdev", 0x0002, 0);
-            if (fd >= 0) {
-                fut_printf("[MISC-TEST] ✓ Test 1829: mknod S_IFCHR + open succeeded fd=%ld\n", fd);
-                fut_test_pass();
-                sys_close((int)fd);
-            } else {
-                /* Even if open fails (no driver for this major:minor), mknod succeeded */
-                fut_printf("[MISC-TEST] ✓ Test 1829: mknod S_IFCHR created (open=%ld)\n", fd);
-                fut_test_pass();
-            }
-        } else {
-            fut_printf("[MISC-TEST] ✗ Test 1829: mknod failed: %ld\n", rc);
-            fut_test_fail(1829);
-        }
-    }
-
-    /* Test 1830: mknod S_IFBLK returns EPERM (block devices not supported) */
-    fut_printf("[MISC-TEST] Test 1830: mknod S_IFBLK → EPERM\n");
-    {
-        extern long sys_mknodat(int dirfd, const char *pathname, unsigned int mode, unsigned int dev);
-        long rc = sys_mknodat(-100, "/tmp/test_blkdev", 0060666, (8 << 8) | 0);
-        if (rc == -1 /* EPERM */) {
-            fut_printf("[MISC-TEST] ✓ Test 1830: S_IFBLK → EPERM\n");
-            fut_test_pass();
-        } else {
-            fut_printf("[MISC-TEST] ✗ Test 1830: S_IFBLK = %ld\n", rc);
-            fut_test_fail(1830);
-        }
-    }
-
     test_firewall_ioctls();  /* Tests 1831-1834 */
     test_procnet_files();    /* Tests 1835-1836, 1839 */
-
-    /* Test 1838: ip_masquerade_dev sysctl write/read */
-    fut_printf("[MISC-TEST] Test 1838: ip_masquerade_dev sysctl\n");
-    {
-        extern long sys_open(const char *, int, int);
-        extern long sys_read(int, void *, size_t);
-        extern long sys_write(int, const void *, size_t);
-        extern long sys_close(int);
-        /* Default should be "none" */
-        long fd = sys_open("/proc/sys/net/ipv4/ip_masquerade_dev", 0, 0);
-        if (fd >= 0) {
-            static char rb[32];
-            long n = sys_read((int)fd, rb, sizeof(rb) - 1);
-            sys_close((int)fd);
-            if (n > 0 && rb[0] == 'n' && rb[1] == 'o' && rb[2] == 'n' && rb[3] == 'e') {
-                fut_test_pass();
-            } else { fut_test_fail(1838); }
-        } else { fut_test_fail(1838); }
-    }
-
-    /* Test 1837: SIOCSIFHWADDR changes MAC address */
-    fut_printf("[MISC-TEST] Test 1837: SIOCSIFHWADDR\n");
-    {
-        extern long sys_ioctl(int fd, unsigned long request, void *argp);
-        extern long sys_open(const char *, int, int);
-        extern long sys_close(int);
-        long sfd = sys_open("/dev/null", 0x0002, 0);
-        if (sfd >= 0) {
-            /* Set eth0 MAC to AA:BB:CC:DD:EE:FF */
-            static char ifr[40];
-            __builtin_memset(ifr, 0, 40);
-            __builtin_memcpy(ifr, "eth0", 4);
-            ifr[16] = 1; /* ARPHRD_ETHER */
-            ifr[18] = (char)0xAA; ifr[19] = (char)0xBB; ifr[20] = (char)0xCC;
-            ifr[21] = (char)0xDD; ifr[22] = (char)0xEE; ifr[23] = (char)0xFF;
-            long rc = sys_ioctl((int)sfd, 0x8924 /* SIOCSIFHWADDR */, ifr);
-            if (rc == 0) {
-                /* Read back */
-                __builtin_memset(ifr, 0, 40);
-                __builtin_memcpy(ifr, "eth0", 4);
-                rc = sys_ioctl((int)sfd, 0x8927 /* SIOCGIFHWADDR */, ifr);
-                if (rc == 0 && (uint8_t)ifr[18] == 0xAA && (uint8_t)ifr[19] == 0xBB) {
-                    fut_test_pass();
-                } else { fut_test_fail(1837); }
-            } else { fut_test_fail(1837); }
-            sys_close((int)sfd);
-        } else { fut_test_fail(1837); }
-    }
 
     test_dev_kmsg();  /* Test 1841 */
     test_uptime_idle();  /* Test 1846 */
@@ -59120,6 +59177,7 @@ void fut_misc_test_thread(void *arg) {
     test_router_integration(); /* Test 1852 */
     test_ip_ttl_tos_sockopt(); /* Tests 1853-1854 */
     test_futurafs(); /* Tests 1855-1857 */
+    test_blockdev_procfs(); /* Tests 1858-1859 */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

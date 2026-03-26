@@ -35,6 +35,7 @@
 #include <futura/netif.h>
 #include <futura/tcpip.h>
 #include <kernel/eventfd.h>
+#include <kernel/fut_blockdev.h>
 #include <kernel/errno.h>
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
@@ -1995,8 +1996,36 @@ static size_t gen_zoneinfo(char *buf, size_t cap) {
  * file so iostat/iotop don't fail with ENOENT.
  */
 static size_t gen_diskstats(char *buf, size_t cap) {
-    (void)buf; (void)cap;
-    return 0;
+    struct pbuf b = { buf, 0, cap };
+    /*
+     * Linux /proc/diskstats format (11 fields per device):
+     *  major minor name
+     *  reads_completed reads_merged sectors_read ms_reading
+     *  writes_completed writes_merged sectors_written ms_writing
+     *  ios_in_progress ms_io weighted_ms_io
+     */
+    int minor = 0;
+    for (struct fut_blockdev *dev = fut_blockdev_first(); dev; dev = dev->next) {
+        uint64_t sectors_read = dev->reads * (dev->block_size / 512);
+        uint64_t sectors_written = dev->writes * (dev->block_size / 512);
+        pb_str(&b, "   ");
+        pb_u64(&b, 253);  /* major: 253 = virtblk/ramdisk */
+        pb_str(&b, "       ");
+        pb_u64(&b, (uint64_t)minor);
+        pb_str(&b, " ");
+        pb_str(&b, dev->name);
+        pb_str(&b, " ");
+        pb_u64(&b, dev->reads);          /* reads completed */
+        pb_str(&b, " 0 ");               /* reads merged */
+        pb_u64(&b, sectors_read);         /* sectors read */
+        pb_str(&b, " 0 ");               /* ms reading */
+        pb_u64(&b, dev->writes);          /* writes completed */
+        pb_str(&b, " 0 ");               /* writes merged */
+        pb_u64(&b, sectors_written);      /* sectors written */
+        pb_str(&b, " 0 0 0 0\n");        /* ms writing, ios_in_progress, ms_io, weighted */
+        minor++;
+    }
+    return b.pos;
 }
 
 /*
@@ -2008,6 +2037,20 @@ static size_t gen_diskstats(char *buf, size_t cap) {
 static size_t gen_partitions(char *buf, size_t cap) {
     struct pbuf b = { buf, 0, cap };
     pb_str(&b, "major minor  #blocks  name\n\n");
+    int minor = 0;
+    for (struct fut_blockdev *dev = fut_blockdev_first(); dev; dev = dev->next) {
+        uint64_t blocks_kb = dev->capacity / 1024;
+        pb_str(&b, " ");
+        pb_u64(&b, 253);
+        pb_str(&b, "        ");
+        pb_u64(&b, (uint64_t)minor);
+        pb_str(&b, "  ");
+        pb_u64(&b, blocks_kb);
+        pb_str(&b, " ");
+        pb_str(&b, dev->name);
+        pb_str(&b, "\n");
+        minor++;
+    }
     return b.pos;
 }
 

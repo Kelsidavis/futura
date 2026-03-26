@@ -162,6 +162,12 @@ void fut_blockdev_unregister(struct fut_blockdev *dev);
 struct fut_blockdev *fut_blockdev_find(const char *name);
 
 /**
+ * Get the first registered block device (for iteration).
+ * Walk the list with dev->next until NULL.
+ */
+struct fut_blockdev *fut_blockdev_first(void);
+
+/**
  * Read blocks from device.
  *
  * @param dev        Block device

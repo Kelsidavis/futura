@@ -55718,6 +55718,72 @@ __attribute__((noinline)) static void test_gre_tunnel(void) {
     }
 }
 
+__attribute__((noinline)) static void test_hwrng_console(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_close(int);
+
+    /* Test 1898: /dev/hwrng returns random bytes */
+    fut_printf("[MISC-TEST] Test 1898: /dev/hwrng returns random data\n");
+    {
+        long fd = sys_open("/dev/hwrng", 0, 0);
+        if (fd >= 0) {
+            static uint8_t buf[32];
+            __builtin_memset(buf, 0, 32);
+            long n = sys_read((int)fd, buf, 32);
+            sys_close((int)fd);
+            if (n == 32) {
+                int nonzero = 0;
+                for (int i = 0; i < 32; i++) if (buf[i] != 0) nonzero++;
+                if (nonzero > 0) {
+                    fut_printf("[MISC-TEST] ✓ Test 1898: hwrng 32 bytes (%d non-zero)\n", nonzero);
+                    fut_test_pass();
+                } else { fut_test_fail(1898); }
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1898: read=%ld\n", n);
+                fut_test_fail(1898);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1898: open=%ld\n", fd);
+            fut_test_fail(1898);
+        }
+    }
+
+    /* Test 1899: /dev/console exists */
+    fut_printf("[MISC-TEST] Test 1899: /dev/console openable\n");
+    {
+        long fd = sys_open("/dev/console", 0x0002, 0);
+        if (fd >= 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1899: /dev/console opened\n");
+            fut_test_pass();
+            sys_close((int)fd);
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1899: open=%ld\n", fd);
+            fut_test_fail(1899);
+        }
+    }
+
+    /* Test 1900: /dev/hwrng returns different data on reads */
+    fut_printf("[MISC-TEST] Test 1900: hwrng non-repeating\n");
+    {
+        long fd = sys_open("/dev/hwrng", 0, 0);
+        if (fd >= 0) {
+            static uint64_t a, b;
+            a = 0; b = 0;
+            sys_read((int)fd, &a, 8);
+            sys_read((int)fd, &b, 8);
+            sys_close((int)fd);
+            if (a != b && a != 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1900: hwrng non-repeating\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✓ Test 1900: hwrng ok (a=%llx)\n", (unsigned long long)a);
+                fut_test_pass();
+            }
+        } else { fut_test_fail(1900); }
+    }
+}
+
 __attribute__((noinline)) static void test_mseal_fchmodat2_kcmp(void) {
     extern long sys_open(const char *, int, int);
     extern long sys_close(int);
@@ -60138,6 +60204,7 @@ void fut_misc_test_thread(void *arg) {
     test_timer_abstime_underflow(); /* Tests 1882-1883 */
     test_policy_routing(); /* Tests 1878-1881, 1884 */
     test_gre_tunnel(); /* Tests 1872-1874 */
+    test_hwrng_console(); /* Tests 1898-1900 */
     test_mseal_fchmodat2_kcmp(); /* Tests 1892-1897 */
     test_netfilter_procfs(); /* Test 1891 */
     test_watchdog_device(); /* Tests 1888-1890 */

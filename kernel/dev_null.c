@@ -80,6 +80,54 @@ static ssize_t full_write(void *inode, void *priv, const void *buf, size_t n, of
 
 static struct fut_file_ops full_fops;
 
+/* /dev/hwrng: hardware random number generator backed by RDRAND (x86_64) */
+static ssize_t hwrng_read(void *inode, void *priv, void *buf, size_t n, off_t *pos) {
+    (void)inode; (void)priv; (void)pos;
+    uint8_t *out = (uint8_t *)buf;
+    size_t filled = 0;
+#ifdef __x86_64__
+    /* Use RDRAND instruction for true hardware entropy */
+    while (filled + 8 <= n) {
+        uint64_t val;
+        unsigned char ok;
+        __asm__ volatile("rdrand %0; setc %1" : "=r"(val), "=qm"(ok));
+        if (ok) {
+            __builtin_memcpy(out + filled, &val, 8);
+            filled += 8;
+        } else {
+            break;  /* RDRAND failed — return what we have */
+        }
+    }
+    /* Handle remaining bytes */
+    if (filled < n) {
+        uint64_t val;
+        unsigned char ok;
+        __asm__ volatile("rdrand %0; setc %1" : "=r"(val), "=qm"(ok));
+        if (ok) {
+            size_t remain = n - filled;
+            if (remain > 8) remain = 8;
+            __builtin_memcpy(out + filled, &val, remain);
+            filled += remain;
+        }
+    }
+#else
+    /* ARM64 fallback: use timer counter as entropy source */
+    uint64_t cnt;
+    __asm__ volatile("mrs %0, cntvct_el0" : "=r"(cnt));
+    uint64_t state = cnt ^ 0x6A09E667F3BCC908ULL;
+    while (filled < n) {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        size_t chunk = n - filled;
+        if (chunk > 8) chunk = 8;
+        __builtin_memcpy(out + filled, &state, chunk);
+        filled += chunk;
+    }
+#endif
+    return (ssize_t)filled;
+}
+
 /**
  * Initialize /dev/null, /dev/zero, /dev/full, and /dev/urandom devices.
  * Call from kernel_main during boot.
@@ -175,5 +223,14 @@ void dev_null_init(void) {
     chrdev_register(1, 11, &kmsg_fops, "kmsg", NULL);
     devfs_create_chr("/dev/kmsg", 1, 11);
 
-    fut_printf("[DEV] /dev/null, /dev/zero, /dev/full, /dev/urandom, /dev/random, /dev/kmsg registered\n");
+    /* /dev/hwrng = (10,183) — hardware random number generator.
+     * On x86_64, backed by RDRAND instruction for true hardware entropy.
+     * On ARM64, falls back to CNTVCT-seeded PRNG. */
+    static struct fut_file_ops hwrng_fops;
+    hwrng_fops.read = hwrng_read;
+    hwrng_fops.write = null_write;
+    chrdev_register(10, 183, &hwrng_fops, "hwrng", NULL);
+    devfs_create_chr("/dev/hwrng", 10, 183);
+
+    fut_printf("[DEV] /dev/null, /dev/zero, /dev/full, /dev/urandom, /dev/random, /dev/kmsg, /dev/hwrng registered\n");
 }

@@ -503,6 +503,7 @@ KERNEL_SOURCES := \
     kernel/vfs/ramfs.c \
     kernel/vfs/procfs.c \
     kernel/vfs/sysfs.c \
+    kernel/vfs/debugfs.c \
     kernel/vfs/vfs_credentials.c \
     kernel/vfs/fut_lock.c \
     kernel/exec/elf64.c \

@@ -57952,6 +57952,123 @@ __attribute__((noinline)) static void test_net_procfs_devnodes(void) {
 }
 
 /* ============================================================
+ * Tests 2051-2056: debugfs filesystem
+ * ============================================================ */
+__attribute__((noinline)) static void test_debugfs(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_close(int);
+    extern long sys_mkdir(const char *, unsigned int);
+
+    /* Mount debugfs at /debug for testing */
+    extern int fut_vfs_mount(const char *, const char *, const char *, int, void *, uint64_t);
+    sys_mkdir("/debug", 0755);
+    int mret = fut_vfs_mount(NULL, "/debug", "debugfs", 0, NULL, 0);
+
+    /* ── Test 2051: debugfs mountable ── */
+    fut_printf("[MISC-TEST] Test 2051: debugfs mount\n");
+    if (mret == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 2051: debugfs mounted at /debug\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 2051: mount=%d\n", mret);
+        fut_test_fail(2051);
+        for (int t = 2052; t <= 2056; t++) fut_test_fail((uint16_t)t);
+        return;
+    }
+
+    /* ── Test 2052: sched_features readable ── */
+    fut_printf("[MISC-TEST] Test 2052: sched_features\n");
+    {
+        long fd = sys_open("/debug/sched_features", 0, 0);
+        if (fd >= 0) {
+            static char buf[256];
+            long n = sys_read((int)fd, buf, 255);
+            sys_close((int)fd);
+            if (n > 10) {
+                fut_printf("[MISC-TEST] ✓ Test 2052: sched_features %ld bytes\n", n);
+                fut_test_pass();
+            } else { fut_test_fail(2052); }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2052: open=%ld\n", fd);
+            fut_test_fail(2052);
+        }
+    }
+
+    /* ── Test 2053: sched_debug readable ── */
+    fut_printf("[MISC-TEST] Test 2053: sched_debug\n");
+    {
+        long fd = sys_open("/debug/sched_debug", 0, 0);
+        if (fd >= 0) {
+            static char buf[512];
+            long n = sys_read((int)fd, buf, 511);
+            sys_close((int)fd);
+            if (n > 20) {
+                fut_printf("[MISC-TEST] ✓ Test 2053: sched_debug %ld bytes\n", n);
+                fut_test_pass();
+            } else { fut_test_fail(2053); }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2053: open=%ld\n", fd);
+            fut_test_fail(2053);
+        }
+    }
+
+    /* ── Test 2054: tracing/available_tracers ── */
+    fut_printf("[MISC-TEST] Test 2054: tracing/available_tracers\n");
+    {
+        long fd = sys_open("/debug/tracing/available_tracers", 0, 0);
+        if (fd >= 0) {
+            static char buf[32];
+            long n = sys_read((int)fd, buf, 31);
+            sys_close((int)fd);
+            if (n > 0 && buf[0] == 'n') { /* "nop\n" */
+                fut_printf("[MISC-TEST] ✓ Test 2054: available_tracers=nop\n");
+                fut_test_pass();
+            } else { fut_test_fail(2054); }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2054: open=%ld\n", fd);
+            fut_test_fail(2054);
+        }
+    }
+
+    /* ── Test 2055: tracing/tracing_on ── */
+    fut_printf("[MISC-TEST] Test 2055: tracing/tracing_on\n");
+    {
+        long fd = sys_open("/debug/tracing/tracing_on", 0, 0);
+        if (fd >= 0) {
+            static char buf[8];
+            long n = sys_read((int)fd, buf, 7);
+            sys_close((int)fd);
+            if (n > 0 && buf[0] == '0') {
+                fut_printf("[MISC-TEST] ✓ Test 2055: tracing_on=0\n");
+                fut_test_pass();
+            } else { fut_test_fail(2055); }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2055: open=%ld\n", fd);
+            fut_test_fail(2055);
+        }
+    }
+
+    /* ── Test 2056: suspend_stats readable ── */
+    fut_printf("[MISC-TEST] Test 2056: suspend_stats\n");
+    {
+        long fd = sys_open("/debug/suspend_stats", 0, 0);
+        if (fd >= 0) {
+            static char buf[512];
+            long n = sys_read((int)fd, buf, 511);
+            sys_close((int)fd);
+            if (n > 10) {
+                fut_printf("[MISC-TEST] ✓ Test 2056: suspend_stats %ld bytes\n", n);
+                fut_test_pass();
+            } else { fut_test_fail(2056); }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2056: open=%ld\n", fd);
+            fut_test_fail(2056);
+        }
+    }
+}
+
+/* ============================================================
  * Tests 2048-2050: /proc/config.gz kernel configuration
  * ============================================================ */
 __attribute__((noinline)) static void test_proc_config_gz(void) {
@@ -63872,6 +63989,7 @@ void fut_misc_test_thread(void *arg) {
     test_loop_device(); /* Tests 1885-1887 */
     test_per_iface_conf(); /* Tests 1869-1871 */
 
+    test_debugfs(); /* Tests 2051-2056 */
     test_proc_config_gz(); /* Tests 2048-2050 */
     test_script_file_io(); /* Tests 2042-2047 */
     test_seccomp_bpf(); /* Tests 2036-2041 */

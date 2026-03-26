@@ -27,6 +27,7 @@
 #include <kernel/errno.h>
 #include <futura/netif.h>
 #include <kernel/fut_blockdev.h>
+#include <kernel/pci.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -597,6 +598,46 @@ static int sysfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                     return 1;
                 }
                 seen++;
+            }
+            return -ENOENT;
+        }
+        case SYSFS_BUS_PCI_DEV_DIR: {
+            /* Dynamic: enumerate real PCI devices from pci.c */
+            uint64_t idx = *cookie;
+            if (idx == 0) {
+                de->d_ino = SYSFS_INO_BUS_PCI_DEV;
+                de->d_off = 1; de->d_type = FUT_VDIR_TYPE_DIR;
+                de->d_reclen = sizeof(*de);
+                de->d_name[0] = '.'; de->d_name[1] = '\0';
+                *cookie = 1; return 1;
+            }
+            if (idx == 1) {
+                de->d_ino = SYSFS_INO_BUS_PCI;
+                de->d_off = 2; de->d_type = FUT_VDIR_TYPE_DIR;
+                de->d_reclen = sizeof(*de);
+                de->d_name[0] = '.'; de->d_name[1] = '.'; de->d_name[2] = '\0';
+                *cookie = 2; return 1;
+            }
+            extern int pci_device_count(void);
+            extern const struct pci_device *pci_get_device(int index);
+            int target = (int)(idx - 2);
+            if (target < pci_device_count()) {
+                const struct pci_device *pd = pci_get_device(target);
+                if (pd) {
+                    de->d_ino = SYSFS_INO_BUS_PCI_DEV + 10 + (uint64_t)target;
+                    de->d_off = (int64_t)(idx + 1);
+                    de->d_type = FUT_VDIR_TYPE_DIR;
+                    de->d_reclen = sizeof(*de);
+                    /* Format: DDDD:BB:DD.F (domain:bus:dev.func) */
+                    static const char hex[] = "0123456789abcdef";
+                    char *n = de->d_name;
+                    n[0] = '0'; n[1] = '0'; n[2] = '0'; n[3] = '0'; n[4] = ':';
+                    n[5] = hex[(pd->bus >> 4) & 0xF]; n[6] = hex[pd->bus & 0xF]; n[7] = ':';
+                    n[8] = hex[(pd->dev >> 4) & 0xF]; n[9] = hex[pd->dev & 0xF]; n[10] = '.';
+                    n[11] = (char)('0' + pd->func); n[12] = '\0';
+                    *cookie = idx + 1;
+                    return 1;
+                }
             }
             return -ENOENT;
         }

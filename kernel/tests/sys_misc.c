@@ -54105,6 +54105,48 @@ __attribute__((noinline)) static void test_futurafs_flags(void) {
     }
 }
 
+__attribute__((noinline)) static void test_sysfs_pci_block(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_close(int);
+    extern long sys_getdents64(unsigned int fd, void *dirp, unsigned int count);
+
+    /* Test 1934: /sys/bus/pci/devices/ lists PCI devices */
+    fut_printf("[MISC-TEST] Test 1934: /sys/bus/pci/devices/ readdir\n");
+    {
+        long fd = sys_open("/sys/bus/pci/devices", 0x10000, 0);
+        if (fd >= 0) {
+            static char dbuf[1024];
+            long nr = sys_getdents64((unsigned int)fd, dbuf, sizeof(dbuf));
+            sys_close((int)fd);
+            if (nr > 0) {
+                int count = 0;
+                bool has_bdf = false;
+                long off = 0;
+                while (off < nr) {
+                    struct { uint64_t d_ino; int64_t d_off; uint16_t d_reclen;
+                             uint8_t d_type; char d_name[1]; } *de = (void *)(dbuf + off);
+                    if (de->d_name[0] != '.') {
+                        count++;
+                        /* Check for BDF format: 0000:XX:XX.X */
+                        if (de->d_name[4] == ':') has_bdf = true;
+                    }
+                    off += de->d_reclen;
+                }
+                if (count > 0 && has_bdf) {
+                    fut_printf("[MISC-TEST] ✓ Test 1934: %d PCI devices with BDF format\n", count);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1934: count=%d bdf=%d\n", count, has_bdf);
+                    fut_test_fail(1934);
+                }
+            } else { fut_test_fail(1934); }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1934: open=%ld\n", fd);
+            fut_test_fail(1934);
+        }
+    }
+}
+
 __attribute__((noinline)) static void test_sys_class_block(void) {
     extern long sys_open(const char *, int, int);
     extern long sys_close(int);
@@ -61081,6 +61123,7 @@ void fut_misc_test_thread(void *arg) {
     test_router_integration(); /* Test 1852 */
     test_ip_ttl_tos_sockopt(); /* Tests 1853-1854 */
     test_futurafs(); /* Tests 1855-1857 */
+    test_sysfs_pci_block(); /* Test 1934 */
     test_sys_class_block(); /* Test 1933 */
     test_futurafs_statfs(); /* Tests 1931-1932 */
     test_futurafs_readdir(); /* Test 1929 */

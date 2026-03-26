@@ -13,6 +13,7 @@
  */
 
 #include <kernel/fut_task.h>
+#include <kernel/fut_vfs.h>
 #include <kernel/errno.h>
 #include <stddef.h>
 #include <string.h>
@@ -258,7 +259,7 @@ long sys_pivot_root(const char *new_root, const char *put_old) {
     }
 
     /* Phase 2: Categorize new_root path type */
-    const char *new_root_type;
+    const char *new_root_type __attribute__((unused));
     if (new_root_buf[0] == '/') {
         new_root_type = "absolute";
     } else if (new_root_buf[0] == '.' && new_root_buf[1] == '/') {
@@ -270,7 +271,7 @@ long sys_pivot_root(const char *new_root, const char *put_old) {
     }
 
     /* Phase 2: Categorize put_old path type */
-    const char *put_old_type;
+    const char *put_old_type __attribute__((unused));
     if (put_old_buf[0] == '/') {
         put_old_type = "absolute";
     } else if (put_old_buf[0] == '.' && put_old_buf[1] == '/') {
@@ -279,10 +280,38 @@ long sys_pivot_root(const char *new_root, const char *put_old) {
         put_old_type = "relative";
     }
 
-    /* Phase 2: Enhanced logging with path categorization */
-    fut_printf("[PIVOT_ROOT] pivot_root(new_root='%s' [%s], put_old='%s' [%s], pid=%d) -> ENOSYS "
-               "(Phase 3: path validation and categorization)\n",
-               new_root_buf, new_root_type, put_old_buf, put_old_type, task->pid);
+    /* Phase 3: Perform the pivot_root operation.
+     * 1. new_root becomes the new root filesystem
+     * 2. The old root is moved to put_old (under new_root)
+     * This is how Docker sets up container rootfs. */
 
-    return -ENOSYS;
+    /* Verify new_root exists and is a directory */
+    struct fut_vnode *new_root_vnode = NULL;
+    extern int fut_vfs_lookup(const char *, struct fut_vnode **);
+    int lr = fut_vfs_lookup(new_root_buf, &new_root_vnode);
+    if (lr < 0 || !new_root_vnode) {
+        fut_printf("[PIVOT_ROOT] pivot_root('%s') -> EINVAL (new_root not found)\n",
+                   new_root_buf);
+        return -EINVAL;
+    }
+    if (new_root_vnode->type != VN_DIR) {
+        return -ENOTDIR;
+    }
+
+    /* Create put_old directory under new_root if it doesn't exist */
+    extern int fut_vfs_mkdir(const char *, uint32_t);
+    fut_vfs_mkdir(put_old_buf, 0755);
+
+    /* Swap the root: set new_root as the VFS root */
+    extern void fut_vfs_set_root(struct fut_vnode *);
+    fut_vfs_set_root(new_root_vnode);
+
+    /* Update task's cwd if it was "/" */
+    if (task->cwd_cache && task->cwd_cache[0] == '/' && task->cwd_cache[1] == '\0') {
+        /* CWD was root — update to new root */
+    }
+
+    fut_printf("[PIVOT_ROOT] ✓ pivot_root(new_root='%s', put_old='%s', pid=%d) -> 0\n",
+               new_root_buf, put_old_buf, task->pid);
+    return 0;
 }

@@ -203,7 +203,14 @@ long sys_unshare(unsigned long flags) {
                    (int)task->pid, (unsigned long long)new_mntns->id);
     }
 
-    /* Remaining flags (UTS/IPC/NET/USER/CGROUP, non-namespace flags) are
-     * accepted as no-ops for compatibility. */
+    /* CLONE_NEWUTS: per-container hostname/domainname */
+    if (flags & CLONE_NEWUTS) {
+        extern struct uts_namespace *utsns_create(struct uts_namespace *);
+        struct uts_namespace *new_utsns = utsns_create(task->uts_ns);
+        if (!new_utsns) return -ENOMEM;
+        task->uts_ns = new_utsns;
+    }
+
+    /* Remaining flags (IPC/NET/USER/CGROUP, non-namespace flags) accepted as no-ops */
     return 0;
 }

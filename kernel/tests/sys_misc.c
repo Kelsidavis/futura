@@ -58196,8 +58196,33 @@ void fut_misc_test_thread(void *arg) {
     test_arp_icmp_router();          /* Tests 1809-1812 */
     test_bindtodevice_ifconf();      /* Tests 1813-1816 */
     test_netif_ioctl_extended();     /* Tests 1817-1820 */
-    /* Test 1821: /proc/net/snmp has non-zero IP stats after ip_forward calls */
-    fut_printf("[MISC-TEST] Test 1821: /proc/net/snmp has real stats\n");
+    /* Test 1821: /proc/net/nf_conntrack is readable (empty when no NAT) */
+    fut_printf("[MISC-TEST] Test 1821: /proc/net/nf_conntrack readable\n");
+    {
+        extern long sys_open(const char *, int, int);
+        extern long sys_read(int, void *, size_t);
+        extern long sys_close(int);
+        long fd = sys_open("/proc/net/nf_conntrack", 0, 0);
+        if (fd >= 0) {
+            static char cbuf[256];
+            long n = sys_read((int)fd, cbuf, sizeof(cbuf) - 1);
+            sys_close((int)fd);
+            /* Empty is valid (no active NAT entries) */
+            if (n >= 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1821: nf_conntrack readable (%ld bytes)\n", n);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1821: read=%ld\n", n);
+                fut_test_fail(1821);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1821: open=%ld\n", fd);
+            fut_test_fail(1821);
+        }
+    }
+
+    /* Test 1822: /proc/net/snmp has non-zero IP stats after ip_forward calls */
+    fut_printf("[MISC-TEST] Test 1822: /proc/net/snmp has real stats\n");
     {
         extern long sys_open(const char *, int, int);
         extern long sys_read(int, void *, size_t);
@@ -58221,14 +58246,14 @@ void fut_misc_test_thread(void *arg) {
                     }
                 }
                 if (found_ip_stats) {
-                    fut_printf("[MISC-TEST] ✓ Test 1821: /proc/net/snmp has IP stats\n");
+                    fut_printf("[MISC-TEST] ✓ Test 1822: /proc/net/snmp has IP stats\n");
                     fut_test_pass();
                 } else {
-                    fut_printf("[MISC-TEST] ✗ Test 1821: no IP stats found\n");
-                    fut_test_fail(1821);
+                    fut_printf("[MISC-TEST] ✗ Test 1822: no IP stats found\n");
+                    fut_test_fail(1822);
                 }
-            } else { fut_test_fail(1821); }
-        } else { fut_test_fail(1821); }
+            } else { fut_test_fail(1822); }
+        } else { fut_test_fail(1822); }
     }
     test_pty_slave_cloexec();        /* Tests 1793-1796 */
     test_chrdev_cloexec();           /* Tests 1789-1792 */

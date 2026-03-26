@@ -176,6 +176,29 @@ static void checksum_update_ip(uint8_t *cksum_ptr, uint32_t old_val, uint32_t ne
     cksum_ptr[1] = (uint8_t)(sum & 0xFF);
 }
 
+/* Iterate active NAT entries for /proc/net/nf_conntrack */
+typedef void (*nat_foreach_fn)(uint8_t proto, uint32_t orig_src, uint16_t orig_sport,
+                               uint32_t orig_dst, uint16_t orig_dport,
+                               uint32_t nat_ip, uint16_t nat_port,
+                               uint64_t packets, uint64_t bytes, void *ctx);
+
+int nat_foreach(nat_foreach_fn cb, void *ctx) {
+    int count = 0;
+    fut_spinlock_acquire(&g_nat_lock);
+    for (int i = 0; i < NAT_TABLE_SIZE; i++) {
+        if (g_nat_table[i].active) {
+            cb(g_nat_table[i].protocol,
+               g_nat_table[i].orig_src_ip, g_nat_table[i].orig_src_port,
+               g_nat_table[i].orig_dst_ip, g_nat_table[i].orig_dst_port,
+               g_nat_table[i].nat_ip, g_nat_table[i].nat_port,
+               g_nat_table[i].packets, g_nat_table[i].bytes, ctx);
+            count++;
+        }
+    }
+    fut_spinlock_release(&g_nat_lock);
+    return count;
+}
+
 /* ============================================================
  *   NAT Packet Rewriting
  * ============================================================ */

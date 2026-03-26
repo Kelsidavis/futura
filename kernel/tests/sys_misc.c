@@ -53995,6 +53995,72 @@ __attribute__((noinline)) static void test_futurafs(void) {
 }
 
 /* Tests 1901-1906: Extended FuturaFS operations */
+__attribute__((noinline)) static void test_etc_config_files(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_close(int);
+
+    /* Test 1907: /etc/services contains common ports */
+    fut_printf("[MISC-TEST] Test 1907: /etc/services has port mappings\n");
+    {
+        long fd = sys_open("/etc/services", 0, 0);
+        if (fd >= 0) {
+            static char buf[512];
+            long n = sys_read((int)fd, buf, sizeof(buf) - 1);
+            sys_close((int)fd);
+            if (n > 0) {
+                buf[n] = '\0';
+                /* Check for "http" and "443" */
+                bool has_http = false, has_443 = false;
+                for (int i = 0; i < n - 4; i++) {
+                    if (buf[i]=='h' && buf[i+1]=='t' && buf[i+2]=='t' && buf[i+3]=='p') has_http = true;
+                    if (buf[i]=='4' && buf[i+1]=='4' && buf[i+2]=='3') has_443 = true;
+                }
+                if (has_http && has_443) {
+                    fut_printf("[MISC-TEST] ✓ Test 1907: /etc/services has http + 443\n");
+                    fut_test_pass();
+                } else { fut_test_fail(1907); }
+            } else { fut_test_fail(1907); }
+        } else { fut_test_fail(1907); }
+    }
+
+    /* Test 1908: /etc/protocols contains TCP/UDP */
+    fut_printf("[MISC-TEST] Test 1908: /etc/protocols has protocol mappings\n");
+    {
+        long fd = sys_open("/etc/protocols", 0, 0);
+        if (fd >= 0) {
+            static char buf[256];
+            long n = sys_read((int)fd, buf, sizeof(buf) - 1);
+            sys_close((int)fd);
+            if (n > 0) {
+                buf[n] = '\0';
+                bool has_tcp = false;
+                for (int i = 0; i < n - 3; i++)
+                    if (buf[i]=='t' && buf[i+1]=='c' && buf[i+2]=='p') { has_tcp = true; break; }
+                if (has_tcp) {
+                    fut_printf("[MISC-TEST] ✓ Test 1908: /etc/protocols has tcp\n");
+                    fut_test_pass();
+                } else { fut_test_fail(1908); }
+            } else { fut_test_fail(1908); }
+        } else { fut_test_fail(1908); }
+    }
+
+    /* Test 1909: /etc/shadow exists (security) */
+    fut_printf("[MISC-TEST] Test 1909: /etc/shadow exists\n");
+    {
+        long fd = sys_open("/etc/shadow", 0, 0);
+        if (fd >= 0) {
+            static char buf[64];
+            long n = sys_read((int)fd, buf, sizeof(buf) - 1);
+            sys_close((int)fd);
+            if (n > 0 && buf[0] == 'r' && buf[1] == 'o' && buf[2] == 'o' && buf[3] == 't') {
+                fut_printf("[MISC-TEST] ✓ Test 1909: /etc/shadow has root entry\n");
+                fut_test_pass();
+            } else { fut_test_fail(1909); }
+        } else { fut_test_fail(1909); }
+    }
+}
+
 __attribute__((noinline)) static void test_futurafs_extended(void) {
     extern long sys_open(const char *, int, int);
     extern long sys_write(int, const void *, size_t);
@@ -60314,6 +60380,7 @@ void fut_misc_test_thread(void *arg) {
     test_router_integration(); /* Test 1852 */
     test_ip_ttl_tos_sockopt(); /* Tests 1853-1854 */
     test_futurafs(); /* Tests 1855-1857 */
+    test_etc_config_files(); /* Tests 1907-1909 */
     test_futurafs_extended(); /* Tests 1901-1906 */
     test_blockdev_procfs(); /* Tests 1858-1860 */
     test_vlan_interfaces(); /* Tests 1861-1864 */

@@ -24,6 +24,7 @@
 #include <kernel/fut_memory.h>
 #include <kernel/errno.h>
 #include <kernel/kprintf.h>
+#include <futura/netif.h>
 #include <stdint.h>
 #include <stddef.h>
 #include <string.h>
@@ -50,11 +51,10 @@
 #define ARPHRD_ETHER    1
 #define ARPHRD_LOOPBACK 772
 
-/* Interface flags */
-#define IFF_UP          0x1
-#define IFF_LOOPBACK    0x8
-#define IFF_RUNNING     0x40
+/* Interface flags — IFF_UP, IFF_LOOPBACK, IFF_RUNNING are in netif.h */
+#ifndef IFF_LOWER_UP
 #define IFF_LOWER_UP    0x10000
+#endif
 
 /* IFA address attributes */
 #define IFA_ADDRESS     1
@@ -177,45 +177,61 @@ static void nl_done(uint8_t *buf, uint32_t *pos, uint32_t seq) {
     nl_append(buf, pos, &done_errno, sizeof(done_errno));
 }
 
-/* ── RTM_GETLINK response ───────────────────────────────────────────────── */
+/* ── RTM_GETLINK response — emit RTM_NEWLINK for ALL registered interfaces ── */
 
-static uint32_t nl_build_newlink(uint8_t *buf, uint32_t seq) {
-    uint32_t pos = 0;
-
-    /* Reserve space for the outer nlmsghdr; fill length at end */
-    uint32_t msg_start = pos;
+static void nl_emit_one_link(uint8_t *buf, uint32_t *pos, uint32_t seq,
+                              const struct net_iface *iface) {
+    uint32_t msg_start = *pos;
     nl_hdr_t hdr = {
-        .nlmsg_len   = 0,   /* filled below */
+        .nlmsg_len   = 0,
         .nlmsg_type  = RTM_NEWLINK,
         .nlmsg_flags = NLM_F_MULTI,
         .nlmsg_seq   = seq,
         .nlmsg_pid   = 0,
     };
-    nl_append(buf, &pos, &hdr, sizeof(hdr));
+    nl_append(buf, pos, &hdr, sizeof(hdr));
 
-    /* ifinfomsg for lo */
+    uint32_t flags = 0;
+    if (iface->flags & 0x0001) flags |= IFF_UP;
+    if (iface->flags & 0x0008) flags |= IFF_LOOPBACK;
+    if (iface->flags & 0x0040) flags |= IFF_RUNNING;
+    flags |= IFF_LOWER_UP;
+
     nl_ifinfomsg_t ifi = {
-        .ifi_family = 0 /* AF_UNSPEC */,
+        .ifi_family = 0,
         .__pad      = 0,
-        .ifi_type   = ARPHRD_LOOPBACK,
-        .ifi_index  = 1,
-        .ifi_flags  = IFF_UP | IFF_LOOPBACK | IFF_RUNNING | IFF_LOWER_UP,
+        .ifi_type   = (iface->flags & 0x0008) ? ARPHRD_LOOPBACK : ARPHRD_ETHER,
+        .ifi_index  = iface->index,
+        .ifi_flags  = flags,
         .ifi_change = 0xFFFFFFFFu,
     };
-    nl_append(buf, &pos, &ifi, sizeof(ifi));
+    nl_append(buf, pos, &ifi, sizeof(ifi));
 
-    /* IFLA_IFNAME = "lo" */
-    nl_rta_str(buf, &pos, IFLA_IFNAME, "lo", 3 /* "lo\0" */);
+    /* IFLA_IFNAME */
+    size_t nlen = 0;
+    while (nlen < 15 && iface->name[nlen]) nlen++;
+    nl_rta_str(buf, pos, IFLA_IFNAME, iface->name, (uint16_t)(nlen + 1));
 
-    /* IFLA_MTU = 65536 */
-    nl_rta32(buf, &pos, IFLA_MTU, 65536);
+    /* IFLA_MTU */
+    nl_rta32(buf, pos, IFLA_MTU, iface->mtu);
 
-    /* IFLA_TXQLEN = 1000 */
-    nl_rta32(buf, &pos, IFLA_TXQLEN, 1000);
+    /* IFLA_TXQLEN */
+    nl_rta32(buf, pos, IFLA_TXQLEN, 1000);
 
-    /* Patch length in the header */
-    uint32_t msg_len = pos - msg_start;
+    /* Patch length */
+    uint32_t msg_len = *pos - msg_start;
     __builtin_memcpy(buf + msg_start, &msg_len, sizeof(msg_len));
+}
+
+static uint32_t nl_build_newlink(uint8_t *buf, uint32_t seq) {
+    uint32_t pos = 0;
+
+    /* Enumerate all active interfaces from the netif registry */
+    for (int i = 1; i <= 16; i++) {
+        struct net_iface *iface = netif_by_index(i);
+        if (iface && iface->active && pos + 256 < 4096)
+            nl_emit_one_link(buf, &pos, seq, iface);
+    }
 
     /* NLMSG_DONE */
     nl_done(buf, &pos, seq);
@@ -225,11 +241,23 @@ static uint32_t nl_build_newlink(uint8_t *buf, uint32_t seq) {
 
 /* ── RTM_GETADDR response ───────────────────────────────────────────────── */
 
-static uint32_t nl_build_newaddr(uint8_t *buf, uint32_t seq) {
-    uint32_t pos = 0;
+/* Count leading 1-bits in a netmask to get prefix length */
+static uint8_t netmask_to_prefixlen(uint32_t mask) {
+    uint8_t len = 0;
+    while (mask & 0x80000000u) { len++; mask <<= 1; }
+    return len;
+}
 
-    /* Outer nlmsghdr */
-    uint32_t msg_start = pos;
+/* Convert host-order IP to network byte order (little-endian on x86) */
+static uint32_t ip_to_nbo(uint32_t ip) {
+    return ((ip & 0xFF) << 24) | ((ip & 0xFF00) << 8) |
+           ((ip >> 8) & 0xFF00) | ((ip >> 24) & 0xFF);
+}
+
+static void nl_emit_one_addr(uint8_t *buf, uint32_t *pos, uint32_t seq,
+                              const struct net_iface *iface) {
+    if (iface->ip_addr == 0) return;  /* No IP configured */
+    uint32_t msg_start = *pos;
     nl_hdr_t hdr = {
         .nlmsg_len   = 0,
         .nlmsg_type  = RTM_NEWADDR,
@@ -237,33 +265,43 @@ static uint32_t nl_build_newaddr(uint8_t *buf, uint32_t seq) {
         .nlmsg_seq   = seq,
         .nlmsg_pid   = 0,
     };
-    nl_append(buf, &pos, &hdr, sizeof(hdr));
+    nl_append(buf, pos, &hdr, sizeof(hdr));
 
-    /* ifaddrmsg: AF_INET, /8, permanent, scope=host, index=1 */
+    uint8_t prefixlen = netmask_to_prefixlen(iface->netmask);
+    uint8_t scope = (iface->flags & 0x0008) ? RT_SCOPE_HOST : 0; /* RT_SCOPE_UNIVERSE=0 */
+
     nl_ifaddrmsg_t ifa = {
         .ifa_family    = 2 /* AF_INET */,
-        .ifa_prefixlen = 8,
+        .ifa_prefixlen = prefixlen,
         .ifa_flags     = IFA_F_PERMANENT,
-        .ifa_scope     = RT_SCOPE_HOST,
-        .ifa_index     = 1,
+        .ifa_scope     = scope,
+        .ifa_index     = (uint32_t)iface->index,
     };
-    nl_append(buf, &pos, &ifa, sizeof(ifa));
+    nl_append(buf, pos, &ifa, sizeof(ifa));
 
-    /* IFA_LOCAL = 127.0.0.1 */
-    uint32_t lo4 = 0x0100007fU; /* 127.0.0.1 in network byte order */
-    nl_rta32(buf, &pos, IFA_LOCAL, lo4);
+    uint32_t ip_nbo = ip_to_nbo(iface->ip_addr);
+    nl_rta32(buf, pos, IFA_LOCAL, ip_nbo);
+    nl_rta32(buf, pos, IFA_ADDRESS, ip_nbo);
 
-    /* IFA_ADDRESS = 127.0.0.1 */
-    nl_rta32(buf, &pos, IFA_ADDRESS, lo4);
+    size_t nlen = 0;
+    while (nlen < 15 && iface->name[nlen]) nlen++;
+    nl_rta_str(buf, pos, IFA_LABEL, iface->name, (uint16_t)(nlen + 1));
 
-    /* IFA_LABEL = "lo" */
-    nl_rta_str(buf, &pos, IFA_LABEL, "lo", 3);
-
-    uint32_t msg_len = pos - msg_start;
+    uint32_t msg_len = *pos - msg_start;
     __builtin_memcpy(buf + msg_start, &msg_len, sizeof(msg_len));
+}
+
+static uint32_t nl_build_newaddr(uint8_t *buf, uint32_t seq) {
+    uint32_t pos = 0;
+
+    /* Enumerate all active interfaces with an IP address */
+    for (int i = 1; i <= 16; i++) {
+        struct net_iface *iface = netif_by_index(i);
+        if (iface && iface->active && pos + 256 < 4096)
+            nl_emit_one_addr(buf, &pos, seq, iface);
+    }
 
     nl_done(buf, &pos, seq);
-
     return pos;
 }
 

@@ -2095,7 +2095,7 @@ try_ramdisk: (void)0;
             test_task,
             selftest_sequential_runner,
             NULL,
-            16 * 1024,  /* 16 KB stack (enough for all test suites) */
+            32 * 1024,  /* 32 KB stack (test suite has grown to 2000+ tests) */
             180         /* Priority */
         );
         if (test_thread) {

@@ -54105,6 +54105,51 @@ __attribute__((noinline)) static void test_futurafs_flags(void) {
     }
 }
 
+__attribute__((noinline)) static void test_bin_shell_elf(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_close(int);
+    extern long sys_stat(const char *, struct fut_stat *);
+
+    /* Test 1941: /bin/shell exists as a real file */
+    fut_printf("[MISC-TEST] Test 1941: /bin/shell exists\n");
+    {
+        static struct fut_stat st;
+        long rc = sys_stat("/bin/shell", &st);
+        if (rc == 0 && st.st_size > 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1941: /bin/shell size=%llu\n",
+                       (unsigned long long)st.st_size);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1941: stat=%ld\n", rc);
+            fut_test_fail(1941);
+        }
+    }
+
+    /* Test 1942: /bin/shell has ELF magic header */
+    fut_printf("[MISC-TEST] Test 1942: /bin/shell is valid ELF\n");
+    {
+        long fd = sys_open("/bin/shell", 0, 0);
+        if (fd >= 0) {
+            static unsigned char hdr[4];
+            long n = sys_read((int)fd, hdr, 4);
+            sys_close((int)fd);
+            if (n == 4 && hdr[0] == 0x7F && hdr[1] == 'E' &&
+                hdr[2] == 'L' && hdr[3] == 'F') {
+                fut_printf("[MISC-TEST] ✓ Test 1942: valid ELF magic\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1942: not ELF (0x%02x%02x%02x%02x)\n",
+                           hdr[0], hdr[1], hdr[2], hdr[3]);
+                fut_test_fail(1942);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1942: open=%ld\n", fd);
+            fut_test_fail(1942);
+        }
+    }
+}
+
 __attribute__((noinline)) static void test_xfrm_stat(void) {
     extern long sys_open(const char *, int, int);
     extern long sys_read(int, void *, size_t);
@@ -61260,6 +61305,7 @@ void fut_misc_test_thread(void *arg) {
     test_router_integration(); /* Test 1852 */
     test_ip_ttl_tos_sockopt(); /* Tests 1853-1854 */
     test_futurafs(); /* Tests 1855-1857 */
+    test_bin_shell_elf(); /* Tests 1941-1942 */
     test_xfrm_stat(); /* Test 1940 */
     test_ipv6_socket(); /* Tests 1938-1939 */
     test_tc_ipsec(); /* Tests 1935-1937 */

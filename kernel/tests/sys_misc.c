@@ -55357,6 +55357,85 @@ __attribute__((noinline)) static void test_pts_dir_readdir(void) {
     }
 }
 
+__attribute__((noinline)) static void test_gre_tunnel(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_close(int);
+    extern long sys_ioctl(int fd, unsigned long request, void *argp);
+
+    /* Test 1872: Create GRE tunnel via SIOCADDGRETUN */
+    fut_printf("[MISC-TEST] Test 1872: SIOCADDGRETUN creates GRE tunnel\n");
+    {
+        long sfd = sys_open("/dev/null", 0x0002, 0);
+        if (sfd >= 0) {
+            static struct { char name[16]; uint32_t local; uint32_t remote; uint32_t key; } greq;
+            __builtin_memset(&greq, 0, sizeof(greq));
+            __builtin_memcpy(greq.name, "gre0", 4);
+            greq.local = 0x0A000201;   /* 10.0.2.1 */
+            greq.remote = 0x0A000301;  /* 10.0.3.1 */
+            greq.key = 0;
+            long rc = sys_ioctl((int)sfd, 0x89E0 /* SIOCADDGRETUN */, &greq);
+            if (rc >= 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1872: GRE tunnel created (idx=%ld)\n", rc);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1872: SIOCADDGRETUN=%ld\n", rc);
+                fut_test_fail(1872);
+            }
+            sys_close((int)sfd);
+        } else { fut_test_fail(1872); }
+    }
+
+    /* Test 1873: GRE tunnel visible in /proc/net/dev */
+    fut_printf("[MISC-TEST] Test 1873: GRE tunnel in /proc/net/dev\n");
+    {
+        extern long sys_read(int, void *, size_t);
+        long fd = sys_open("/proc/net/dev", 0, 0);
+        if (fd >= 0) {
+            static char buf[2048];
+            long n = sys_read((int)fd, buf, sizeof(buf) - 1);
+            sys_close((int)fd);
+            if (n > 0) {
+                buf[n] = '\0';
+                bool found = false;
+                for (int i = 0; i < n - 4; i++) {
+                    if (buf[i] == 'g' && buf[i+1] == 'r' && buf[i+2] == 'e' && buf[i+3] == '0') {
+                        found = true; break;
+                    }
+                }
+                if (found) {
+                    fut_printf("[MISC-TEST] ✓ Test 1873: gre0 in /proc/net/dev\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1873: gre0 not found\n");
+                    fut_test_fail(1873);
+                }
+            } else { fut_test_fail(1873); }
+        } else { fut_test_fail(1873); }
+    }
+
+    /* Test 1874: Duplicate GRE tunnel returns EEXIST */
+    fut_printf("[MISC-TEST] Test 1874: Duplicate GRE tunnel → EEXIST\n");
+    {
+        long sfd = sys_open("/dev/null", 0x0002, 0);
+        if (sfd >= 0) {
+            static struct { char name[16]; uint32_t local; uint32_t remote; uint32_t key; } greq;
+            __builtin_memset(&greq, 0, sizeof(greq));
+            __builtin_memcpy(greq.name, "gre0", 4);
+            greq.local = 0x0A000201;
+            greq.remote = 0x0A000301;
+            long rc = sys_ioctl((int)sfd, 0x89E0, &greq);
+            if (rc == -17 /* EEXIST */) {
+                fut_printf("[MISC-TEST] ✓ Test 1874: duplicate GRE → EEXIST\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1874: expected EEXIST, got %ld\n", rc);
+                fut_test_fail(1874);
+            }
+            sys_close((int)sfd);
+        } else { fut_test_fail(1874); }
+    }
+}
+
 __attribute__((noinline)) static void test_per_iface_conf(void) {
     extern long sys_open(const char *, int, int);
     extern long sys_read(int, void *, size_t);
@@ -59474,6 +59553,7 @@ void fut_misc_test_thread(void *arg) {
     test_blockdev_procfs(); /* Tests 1858-1860 */
     test_vlan_interfaces(); /* Tests 1861-1864 */
     test_bridge_interfaces(); /* Tests 1865-1868 */
+    test_gre_tunnel(); /* Tests 1872-1874 */
     test_per_iface_conf(); /* Tests 1869-1871 */
 
     fut_printf("[MISC-TEST] ========================================\n");

@@ -1365,6 +1365,17 @@ static void cmd_uname(int argc, char *argv[]) {
 /* Forward declaration */
 static void int_to_str(long n, char *buf, int size);
 
+/* Parse dotted-decimal IPv4 to host-byte-order uint32_t */
+static unsigned int parse_ipv4(const char *s) {
+    unsigned int ip = 0, octet = 0;
+    int shift = 24;
+    for (int i = 0; s[i]; i++) {
+        if (s[i] == '.') { ip |= (octet & 0xFF) << shift; shift -= 8; octet = 0; }
+        else if (s[i] >= '0' && s[i] <= '9') octet = octet * 10 + (unsigned)(s[i] - '0');
+    }
+    return ip | ((octet & 0xFF) << shift);
+}
+
 /* Built-in: date - Show uptime (no RTC) */
 static void cmd_date(int argc, char *argv[]) {
     (void)argc; (void)argv;
@@ -7623,8 +7634,62 @@ static int execute_command(int argc, char *argv[]) {
                 sys_close(fd);
                 if (n > 0) { buf[n] = '\0'; write_str(1, buf); }
             }
+        } else if (argc > 1 && (strcmp_simple(argv[1], "tunnel") == 0 ||
+                                strcmp_simple(argv[1], "tun") == 0)) {
+            /* ip tunnel add <name> mode gre local <ip> remote <ip> */
+            if (argc >= 3 && strcmp_simple(argv[2], "add") == 0) {
+                const char *tname = NULL;
+                uint32_t local_ip = 0, remote_ip = 0;
+                for (int i = 3; i < argc; i++) {
+                    if (i == 3 && argv[i][0] != '-') { tname = argv[i]; continue; }
+                    if (strcmp_simple(argv[i], "local") == 0 && i+1 < argc)
+                        { local_ip = parse_ipv4(argv[++i]); }
+                    else if (strcmp_simple(argv[i], "remote") == 0 && i+1 < argc)
+                        { remote_ip = parse_ipv4(argv[++i]); }
+                }
+                if (!tname) tname = "gre0";
+                int sock = sys_call3(41, 2, 2, 0);
+                if (sock < 0) { write_str(2, "ip tunnel: socket failed\n"); return 1; }
+                struct { char name[16]; unsigned int local; unsigned int remote; unsigned int key; } greq;
+                for (int k = 0; k < 16; k++) greq.name[k] = 0;
+                for (int k = 0; tname[k] && k < 15; k++) greq.name[k] = tname[k];
+                greq.local = local_ip;
+                greq.remote = remote_ip;
+                greq.key = 0;
+                long rc = sys_call3(16, sock, 0x89E0/*SIOCADDGRETUN*/, (long)&greq);
+                sys_close(sock);
+                if (rc >= 0) {
+                    write_str(1, "GRE tunnel "); write_str(1, tname);
+                    write_str(1, " created\n");
+                } else {
+                    write_str(2, "ip tunnel add: failed\n");
+                }
+            } else if (argc >= 3 && strcmp_simple(argv[2], "show") == 0) {
+                /* Show tunnel interfaces from /proc/net/dev */
+                write_str(1, "GRE tunnels:\n");
+                int fd = sys_open("/proc/net/dev", O_RDONLY, 0);
+                if (fd >= 0) {
+                    char buf[2048]; ssize_t n = sys_read(fd, buf, sizeof(buf)-1);
+                    sys_close(fd);
+                    if (n > 0) { buf[n] = '\0';
+                        /* Find lines with "gre" */
+                        int start = 0;
+                        for (int i = 0; i < n; i++) {
+                            if (buf[i] == '\n') {
+                                buf[i] = '\0';
+                                if (buf[start] == 'g' || (start+1 < n && buf[start+1] == 'g'))
+                                    { write_str(1, "  "); write_str(1, &buf[start]); write_str(1, "\n"); }
+                                start = i + 1;
+                            }
+                        }
+                    }
+                }
+            } else {
+                write_str(1, "usage: ip tunnel add <name> mode gre local <ip> remote <ip>\n");
+                write_str(1, "       ip tunnel show\n");
+            }
         } else {
-            write_str(1, "usage: ip addr|link|route|neigh|forward [on|off]\n");
+            write_str(1, "usage: ip addr|link|route|neigh|tunnel|forward [on|off]\n");
         }
         return 0;
     } else if (strcmp_simple(argv[0], "ping") == 0) {

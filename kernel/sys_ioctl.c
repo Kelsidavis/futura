@@ -63,6 +63,9 @@
 /* VLAN ioctl (Linux compatible) */
 #define SIOCSIFVLAN    0x8983  /* Create/configure VLAN sub-interface */
 
+/* GRE tunnel ioctl (Futura custom) */
+#define SIOCADDGRETUN  0x89E0  /* Create GRE tunnel */
+
 /* Bridge ioctls (Linux compatible) */
 #define SIOCBRADDBR    0x89a0  /* Create bridge */
 #define SIOCBRDELBR    0x89a1  /* Delete bridge */
@@ -616,6 +619,7 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
                                    request == SIOCFWADDRULE || request == SIOCFWPOLICY ||
                                    request == SIOCFWFLUSH ||
                                    request == SIOCSIFVLAN ||
+                                   request == SIOCADDGRETUN ||
                                    request == SIOCBRADDBR || request == SIOCBRDELBR ||
                                    request == SIOCBRADDIF || request == SIOCBRDELIF ||
                                    request == 0x400454CA /* TUNSETIFF */);
@@ -1672,6 +1676,22 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
                 return -EFAULT;
             extern int firewall_flush(int);
             return firewall_flush(chain);
+        }
+
+        case SIOCADDGRETUN: {
+            /* Create GRE tunnel: argp → struct { char name[16]; uint32_t local; uint32_t remote; uint32_t key; } */
+            if (!argp) return -EFAULT;
+            struct { char name[16]; uint32_t local_ip; uint32_t remote_ip; uint32_t key; } greq;
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
+                __builtin_memcpy(&greq, argp, sizeof(greq));
+            else
+#endif
+            if (fut_copy_from_user(&greq, argp, sizeof(greq)) != 0)
+                return -EFAULT;
+            greq.name[15] = '\0';
+            extern int gre_tunnel_create(const char *, uint32_t, uint32_t, uint32_t);
+            return gre_tunnel_create(greq.name, greq.local_ip, greq.remote_ip, greq.key);
         }
 
         case SIOCBRADDBR: {

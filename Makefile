@@ -473,6 +473,7 @@ KERNEL_SOURCES := \
     kernel/net/dns.c \
     kernel/net/netif.c \
     kernel/net/bridge.c \
+    kernel/net/gre.c \
     kernel/net/nat.c \
     kernel/net/filter.c \
     kernel/net/tun.c \

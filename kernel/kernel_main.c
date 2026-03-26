@@ -1487,6 +1487,8 @@ void fut_kernel_main(void) {
         extern void iocg_init(void);
         extern void pidcg_init(void);
         extern void freezer_init(void);
+        extern void fuse_init(void);
+        fuse_init();     /* FUSE filesystem driver */
         iocg_init();     /* Cgroup v2 I/O controller */
         pidcg_init();    /* Cgroup v2 PID controller */
         freezer_init();  /* Cgroup v2 freezer controller */

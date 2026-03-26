@@ -586,6 +586,23 @@ long sys_mount(const char *source, const char *target, const char *filesystemtyp
         fut_printf("[MOUNT] ✓ mount(source='%s', target='%s', fstype=%s) -> 0\n",
                    src_dev, target_buf, fstype_buf);
         return 0;
+    } else if (strcmp(fstype_buf, "fuse") == 0 || strcmp(fstype_buf, "fusectl") == 0 ||
+               (fstype_buf[0] == 'f' && fstype_buf[1] == 'u' && fstype_buf[2] == 's' &&
+                fstype_buf[3] == 'e' && fstype_buf[4] == '.')) {
+        /* FUSE: userspace filesystem */
+        extern int fut_vfs_mkdir(const char *, uint32_t);
+        fut_vfs_mkdir(target_buf, 0755);
+        size_t target_len = strlen(target_buf) + 1;
+        char *mountpoint = fut_malloc(target_len);
+        if (!mountpoint) return -ENOMEM;
+        memcpy(mountpoint, target_buf, target_len);
+        int ret = fut_vfs_mount("fuse", mountpoint, "fuse",
+                                (int)(mountflags & 0x7fffffff), NULL, FUT_INVALID_HANDLE);
+        if (ret < 0) { fut_free(mountpoint); return ret; }
+        extern struct fut_mount *fut_vfs_find_mount(const char *);
+        struct fut_mount *mnt = fut_vfs_find_mount(mountpoint);
+        if (mnt) mnt->fstype_display = "fuse";
+        return 0;
     } else if (strcmp(fstype_buf, "overlay") == 0) {
         /* Overlay filesystem: needs lowerdir= and upperdir= in mount data */
         extern int fut_vfs_mkdir(const char *, uint32_t);

@@ -1499,8 +1499,15 @@ int fut_vfs_create_file(const char *path, uint32_t mode) {
         return -ENOSYS;
     }
 
+    /* POSIX: Apply umask to creation mode */
+    uint32_t eff_mode = mode;
+    {
+        fut_task_t *cf_task = fut_task_current();
+        if (cf_task)
+            eff_mode &= ~(uint32_t)(cf_task->umask & 0777);
+    }
     struct fut_vnode *new_node = NULL;
-    int create_ret = parent->ops->create(parent, leaf, mode, &new_node);
+    int create_ret = parent->ops->create(parent, leaf, eff_mode, &new_node);
     release_lookup_ref(parent);
     fut_free(leaf);
 
@@ -1546,8 +1553,15 @@ int fut_vfs_mknod(const char *path, uint32_t mode) {
         return -ENOSYS;
     }
 
+    /* POSIX: Apply umask to permission bits (preserve S_IFMT type bits) */
+    uint32_t mknod_mode = mode & 0777;
+    {
+        fut_task_t *mn_task = fut_task_current();
+        if (mn_task)
+            mknod_mode &= ~(uint32_t)(mn_task->umask & 0777);
+    }
     struct fut_vnode *new_node = NULL;
-    int create_ret = parent->ops->create(parent, leaf, mode & 0777, &new_node);
+    int create_ret = parent->ops->create(parent, leaf, mknod_mode, &new_node);
     release_lookup_ref(parent);
     fut_free(leaf);
 

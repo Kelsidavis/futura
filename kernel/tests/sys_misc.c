@@ -51365,6 +51365,97 @@ __attribute__((noinline)) static void test_umask_posix_create(void) {
         }
     }
 
+    /* Test 1733: mknodat (via fut_vfs_create_file) respects umask */
+    fut_printf("[MISC-TEST] Test 1733: create_file + umask 027 → mode 0640\n");
+    {
+        utask->umask = 027;
+        extern int fut_vfs_create_file(const char *, uint32_t);
+        int r = fut_vfs_create_file("/tmp/umask_cf_1733", 0666);
+        if (r == 0) {
+            static struct fut_stat stbuf;
+            if (sys_stat("/tmp/umask_cf_1733", &stbuf) == 0) {
+                uint32_t perms = stbuf.st_mode & 0777;
+                if (perms == 0640) {
+                    fut_printf("[MISC-TEST] ✓ Test 1733: mode=0%o\n", perms);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1733: mode=0%o (expected 0640)\n", perms);
+                    fut_test_fail(1733);
+                }
+            } else { fut_printf("[MISC-TEST] ✗ Test 1733: stat failed\n"); fut_test_fail(1733); }
+            sys_unlink("/tmp/umask_cf_1733");
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1733: create_file failed %d\n", r);
+            fut_test_fail(1733);
+        }
+    }
+
+    /* Test 1734: openat(O_CREAT) also applies umask */
+    fut_printf("[MISC-TEST] Test 1734: openat(O_CREAT) + umask 037 → 0640\n");
+    {
+        utask->umask = 037;
+        extern long sys_openat(int, const char *, int, int);
+        long fd = sys_openat(-100 /* AT_FDCWD */, "/tmp/umask_oat_1734", 0x42 /* O_RDWR|O_CREAT */, 0677);
+        if (fd >= 0) {
+            sys_close((int)fd);
+            static struct fut_stat stbuf;
+            if (sys_stat("/tmp/umask_oat_1734", &stbuf) == 0) {
+                uint32_t perms = stbuf.st_mode & 0777;
+                if (perms == 0640) {
+                    fut_printf("[MISC-TEST] ✓ Test 1734: mode=0%o\n", perms);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1734: mode=0%o (expected 0640)\n", perms);
+                    fut_test_fail(1734);
+                }
+            } else { fut_printf("[MISC-TEST] ✗ Test 1734: stat failed\n"); fut_test_fail(1734); }
+            sys_unlink("/tmp/umask_oat_1734");
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1734: openat failed %ld\n", fd);
+            fut_test_fail(1734);
+        }
+    }
+
+    /* Test 1735: umask 077 + open(0777) → 0700 on mounted /tmp (mount point) */
+    fut_printf("[MISC-TEST] Test 1735: umask on mount point /tmp\n");
+    {
+        utask->umask = 077;
+        long fd = sys_open("/tmp/umask_mp_1735", 0x42, 0777);
+        if (fd >= 0) {
+            sys_close((int)fd);
+            static struct fut_stat stbuf;
+            if (sys_stat("/tmp/umask_mp_1735", &stbuf) == 0) {
+                uint32_t perms = stbuf.st_mode & 0777;
+                if (perms == 0700) {
+                    fut_printf("[MISC-TEST] ✓ Test 1735: mount point umask=0%o\n", perms);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1735: mode=0%o\n", perms);
+                    fut_test_fail(1735);
+                }
+            } else { fut_printf("[MISC-TEST] ✗ Test 1735: stat failed\n"); fut_test_fail(1735); }
+            sys_unlink("/tmp/umask_mp_1735");
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1735: open failed %ld\n", fd);
+            fut_test_fail(1735);
+        }
+    }
+
+    /* Test 1736: sys_umask() returns previous value */
+    fut_printf("[MISC-TEST] Test 1736: sys_umask returns old value\n");
+    {
+        extern long sys_umask(uint32_t mask);
+        utask->umask = 0123;
+        long prev = sys_umask(0456);
+        if (prev == 0123 && utask->umask == 0456) {
+            fut_printf("[MISC-TEST] ✓ Test 1736: old=0%lo new=0%o\n", prev, utask->umask);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1736: prev=%ld umask=0%o\n", prev, utask->umask);
+            fut_test_fail(1736);
+        }
+    }
+
     /* Restore original umask */
     utask->umask = old_umask;
 }

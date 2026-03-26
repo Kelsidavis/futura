@@ -476,6 +476,10 @@ int arp_resolve(uint32_t ip, eth_addr_t *mac) {
  * IP Layer
  * ========================================================================= */
 
+/* Per-send TTL override: if > 0, used instead of IP_DEFAULT_TTL.
+ * Set by sendto/sendmsg from socket->ip_ttl, reset to 0 after each send. */
+uint8_t g_send_ttl_override = 0;
+
 static void ip_send_packet(uint32_t dest_ip, uint8_t protocol,
                            const void *payload, size_t payload_len) {
     /* Validate payload_len fits in IP total_length (uint16_t) and
@@ -529,7 +533,8 @@ static void ip_send_packet(uint32_t dest_ip, uint8_t protocol,
     ip->total_length = htons(IP_HEADER_MIN_LEN + payload_len);
     ip->identification = htons(g_tcpip.ip_id_counter++);
     ip->flags_fragment = htons(IP_FLAG_DF);  /* Don't fragment */
-    ip->ttl = IP_DEFAULT_TTL;
+    ip->ttl = (g_send_ttl_override > 0) ? g_send_ttl_override : IP_DEFAULT_TTL;
+    g_send_ttl_override = 0;  /* Reset after use */
     ip->protocol = protocol;
     ip->src_addr = htonl(g_tcpip.ip_address);
     ip->dest_addr = htonl(dest_ip);

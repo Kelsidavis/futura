@@ -482,7 +482,7 @@ static size_t common_prefix_len(const char *s1, const char *s2) {
 static void complete_command(char *buf, size_t *pos, size_t max_len) {
     /* List of builtin commands */
     const char *builtins[] = {
-        "arp", "bg", "cd", "chmod", "clear", "date", "dd", "df", "dmesg", "echo", "edit", "hexdump", "lsof", "nc", "poweroff", "reboot", "seq", "sleep", "time", "traceroute", "wget", "exit", "export", "fg", "free",
+        "arp", "bg", "cd", "chmod", "clear", "date", "dd", "df", "dhclient", "dmesg", "echo", "edit", "hexdump", "lsof", "nc", "poweroff", "reboot", "seq", "sleep", "time", "traceroute", "wget", "exit", "export", "fg", "free",
         "help", "hostname", "httpd", "id", "ifconfig", "iptables", "jobs", "kill", "ls", "mount", "netstat",
         ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "history", "ip", "ln", "mktemp", "more", "nproc", "nslookup", "ping", "printf", "ps", "pwd", "read", "readlink", "set", "sha256sum", "source", "ss", "stat", "sync", "sysctl", "sysinfo", "test", "top", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "wait", "which", "whoami", "xargs", "yes", NULL
     };
@@ -6377,6 +6377,138 @@ static int execute_command(int argc, char *argv[]) {
                 write_str(2, "sysctl: unknown key: "); write_str(2, key); write_str(2, "\n");
                 return 1;
             }
+        }
+        return 0;
+    } else if (strcmp_simple(argv[0], "dhclient") == 0) {
+        /* dhclient — minimal DHCP client (sends DISCOVER, displays OFFER) */
+        const char *iface = argc > 1 ? argv[1] : "eth0";
+        write_str(1, "DHCP DISCOVER on ");
+        write_str(1, iface);
+        write_str(1, "...\n");
+
+        /* Create UDP socket */
+        long sock = sys_call3(41, 2 /* AF_INET */, 2 /* SOCK_DGRAM */, 17 /* IPPROTO_UDP */);
+        if (sock < 0) { write_str(2, "dhclient: socket failed\n"); return 1; }
+
+        /* SO_BROADCAST */
+        int one = 1;
+        sys_call6(54 /* setsockopt */, sock, 1, 6 /* SO_BROADCAST */, (long)&one, sizeof(one), 0);
+
+        /* Bind to 0.0.0.0:68 (DHCP client port) */
+        struct { uint16_t family; uint16_t port; uint32_t addr; uint8_t pad[8]; } sa;
+        sa.family = 2; sa.addr = 0;
+        sa.port = (uint16_t)((68 >> 8) | ((68 & 0xFF) << 8)); /* 68 in network order */
+        for (int i = 0; i < 8; i++) sa.pad[i] = 0;
+        sys_call3(49 /* bind */, sock, (long)&sa, 16);
+
+        /* Build DHCP DISCOVER packet (simplified) */
+        uint8_t pkt[300];
+        for (int i = 0; i < 300; i++) pkt[i] = 0;
+        pkt[0] = 1;     /* op: BOOTREQUEST */
+        pkt[1] = 1;     /* htype: Ethernet */
+        pkt[2] = 6;     /* hlen: 6 */
+        pkt[3] = 0;     /* hops */
+        pkt[4] = 0x39; pkt[5] = 0x03; pkt[6] = 0xF3; pkt[7] = 0x26; /* xid */
+        /* flags: broadcast */
+        pkt[10] = 0x80; pkt[11] = 0x00;
+        /* chaddr: get MAC from interface */
+        {
+            int isock = sys_call3(41, 2, 2, 0);
+            if (isock >= 0) {
+                char ifr[40]; for (int k = 0; k < 40; k++) ifr[k] = 0;
+                for (int k = 0; iface[k] && k < 15; k++) ifr[k] = iface[k];
+                if (sys_call3(16, isock, 0x8927/*SIOCGIFHWADDR*/, (long)ifr) == 0) {
+                    for (int k = 0; k < 6; k++) pkt[28+k] = (uint8_t)ifr[18+k];
+                }
+                sys_close(isock);
+            }
+        }
+        /* DHCP magic cookie at offset 236 */
+        pkt[236] = 99; pkt[237] = 130; pkt[238] = 83; pkt[239] = 99;
+        /* Option 53: DHCP Message Type = DISCOVER (1) */
+        pkt[240] = 53; pkt[241] = 1; pkt[242] = 1;
+        /* Option 55: Parameter Request List */
+        pkt[243] = 55; pkt[244] = 4; pkt[245] = 1; pkt[246] = 3; pkt[247] = 6; pkt[248] = 28;
+        /* Option 255: End */
+        pkt[249] = 255;
+
+        /* Send to 255.255.255.255:67 (DHCP server port) */
+        struct { uint16_t family; uint16_t port; uint32_t addr; uint8_t pad[8]; } dest;
+        dest.family = 2;
+        dest.port = (uint16_t)((67 >> 8) | ((67 & 0xFF) << 8));
+        dest.addr = 0xFFFFFFFF; /* broadcast */
+        for (int i = 0; i < 8; i++) dest.pad[i] = 0;
+        long sent = sys_call6(44 /* sendto */, sock, (long)pkt, 250, 0, (long)&dest, 16);
+        if (sent <= 0) {
+            write_str(2, "dhclient: sendto failed\n");
+            sys_close(sock); return 1;
+        }
+        write_str(1, "DISCOVER sent, waiting for OFFER...\n");
+
+        /* Set timeout 5s */
+        struct { long tv_sec; long tv_usec; } tv = {5, 0};
+        sys_call6(54, sock, 1, 20 /* SO_RCVTIMEO */, (long)&tv, sizeof(tv), 0);
+
+        /* Wait for DHCP OFFER */
+        uint8_t reply[512];
+        ssize_t rn = sys_read(sock, reply, sizeof(reply));
+        sys_close(sock);
+
+        if (rn > 240) {
+            /* Parse OFFER: yiaddr at offset 16 */
+            write_str(1, "DHCP OFFER: ");
+            for (int o = 0; o < 4; o++) {
+                char ob[4]; int oi = 0;
+                uint8_t v = reply[16+o];
+                if (v >= 100) ob[oi++] = '0' + v/100;
+                if (v >= 10) ob[oi++] = '0' + (v/10)%10;
+                ob[oi++] = '0' + v%10; ob[oi] = '\0';
+                write_str(1, ob);
+                if (o < 3) write_str(1, ".");
+            }
+            write_str(1, "\n");
+
+            /* Parse options for subnet, gateway, DNS */
+            int oi = 240;
+            while (oi < rn && reply[oi] != 255) {
+                uint8_t opt = reply[oi++];
+                if (opt == 0) continue; /* pad */
+                uint8_t len = reply[oi++];
+                if (opt == 1 && len == 4) { /* Subnet Mask */
+                    write_str(1, "  Subnet: ");
+                    for (int o = 0; o < 4; o++) {
+                        char ob[4]; int oj = 0; uint8_t v = reply[oi+o];
+                        if (v >= 100) ob[oj++] = '0' + v/100;
+                        if (v >= 10) ob[oj++] = '0' + (v/10)%10;
+                        ob[oj++] = '0' + v%10; ob[oj] = '\0';
+                        write_str(1, ob); if (o < 3) write_str(1, ".");
+                    }
+                    write_str(1, "\n");
+                } else if (opt == 3 && len >= 4) { /* Router/Gateway */
+                    write_str(1, "  Gateway: ");
+                    for (int o = 0; o < 4; o++) {
+                        char ob[4]; int oj = 0; uint8_t v = reply[oi+o];
+                        if (v >= 100) ob[oj++] = '0' + v/100;
+                        if (v >= 10) ob[oj++] = '0' + (v/10)%10;
+                        ob[oj++] = '0' + v%10; ob[oj] = '\0';
+                        write_str(1, ob); if (o < 3) write_str(1, ".");
+                    }
+                    write_str(1, "\n");
+                } else if (opt == 6 && len >= 4) { /* DNS Server */
+                    write_str(1, "  DNS: ");
+                    for (int o = 0; o < 4; o++) {
+                        char ob[4]; int oj = 0; uint8_t v = reply[oi+o];
+                        if (v >= 100) ob[oj++] = '0' + v/100;
+                        if (v >= 10) ob[oj++] = '0' + (v/10)%10;
+                        ob[oj++] = '0' + v%10; ob[oj] = '\0';
+                        write_str(1, ob); if (o < 3) write_str(1, ".");
+                    }
+                    write_str(1, "\n");
+                }
+                oi += len;
+            }
+        } else {
+            write_str(1, "No DHCP response received (timeout)\n");
         }
         return 0;
     } else if (strcmp_simple(argv[0], "arp") == 0) {

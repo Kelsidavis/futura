@@ -1679,6 +1679,10 @@ try_ramdisk: (void)0;
             struct fut_blockdev *ramdisk = fut_ramdisk_create_bytes("ramdisk0", 1024 * 1024, 4096);
             if (ramdisk) {
                 fut_blockdev_register(ramdisk);
+                /* Create /dev/ram0 block device node for raw access */
+                extern int devfs_create_chr(const char *, unsigned, unsigned);
+                devfs_create_chr("/dev/ram0", 1, 0);  /* major 1, minor 0 */
+                fut_printf("[INIT] ✓ Created /dev/ram0 (1MB ramdisk)\n");
                 int fmt_rc = fut_futurafs_format(ramdisk, "FuturaOS", 4096);
                 if (fmt_rc == 0) {
                     extern struct fut_vnode *fut_vfs_get_root(void);

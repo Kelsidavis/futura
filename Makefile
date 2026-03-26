@@ -483,6 +483,7 @@ KERNEL_SOURCES := \
     kernel/fs/ext2.c \
     kernel/fs/fat.c \
     kernel/fs/exfat.c \
+    kernel/fs/overlayfs.c \
     kernel/net/tc.c \
     kernel/net/ipsec.c \
     kernel/net/nat.c \

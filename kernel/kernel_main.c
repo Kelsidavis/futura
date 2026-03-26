@@ -1480,6 +1480,10 @@ void fut_kernel_main(void) {
         cpucg_init();  /* Cgroup v2 CPU controller */
     }
     {
+        extern void overlayfs_init(void);
+        overlayfs_init();  /* Overlay filesystem */
+    }
+    {
         extern void ipsec_init(void);
         ipsec_init();  /* IPsec SA/SP database */
     }

@@ -360,6 +360,15 @@ fut_thread_t *fut_thread_create(
  * Voluntarily yield CPU to another thread.
  */
 void fut_thread_yield(void) {
+    /* Quick stack canary check on yield — catches overflow during execution */
+    fut_thread_t *yt = fut_thread_current();
+    if (yt && yt->stack_base) {
+        uint64_t canary = *(volatile uint64_t *)yt->stack_base;
+        if (canary != FUT_STACK_CANARY) {
+            fut_printf("[THREAD] *** STACK OVERFLOW *** tid=%llu at yield\n",
+                       (unsigned long long)yt->tid);
+        }
+    }
     fut_schedule();
 }
 
@@ -381,6 +390,20 @@ extern void exit_robust_list(fut_thread_t *thread);
             __asm__ volatile("pause");
 #endif
         }  // Should never happen
+    }
+
+    /* Check stack canary — detect overflow before it causes mysterious crashes.
+     * The canary was placed at the bottom of the stack during thread creation. */
+    if (self->stack_base) {
+        uint64_t canary = *(volatile uint64_t *)self->stack_base;
+        if (canary != FUT_STACK_CANARY) {
+            fut_printf("[THREAD] *** STACK OVERFLOW DETECTED *** tid=%llu canary=0x%llx "
+                       "(expected 0x%llx) stack_base=%p\n",
+                       (unsigned long long)self->tid,
+                       (unsigned long long)canary,
+                       (unsigned long long)FUT_STACK_CANARY,
+                       self->stack_base);
+        }
     }
 
     /* Phase 3: Release any held robust futexes before the thread disappears.

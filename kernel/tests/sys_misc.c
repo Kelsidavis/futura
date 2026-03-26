@@ -55357,6 +55357,65 @@ __attribute__((noinline)) static void test_pts_dir_readdir(void) {
     }
 }
 
+__attribute__((noinline)) static void test_fork_rlimit_as(void) {
+    extern long sys_prlimit64(int pid, int resource, const void *new_limit, void *old_limit);
+
+    /* Test 1876: RLIMIT_AS can be set and read back correctly */
+    fut_printf("[MISC-TEST] Test 1876: prlimit64 RLIMIT_AS set/get roundtrip\n");
+    {
+        static struct { uint64_t cur; uint64_t max; } old_as, new_as, verify;
+        /* Save current RLIMIT_AS */
+        long r0 = sys_prlimit64(0, 9 /* RLIMIT_AS */, (void *)0, &old_as);
+        /* Set to a specific value */
+        new_as.cur = 256 * 1024 * 1024ULL;  /* 256 MB */
+        new_as.max = old_as.max;
+        long r1 = sys_prlimit64(0, 9, &new_as, (void *)0);
+        /* Read it back */
+        long r2 = sys_prlimit64(0, 9, (void *)0, &verify);
+        /* Restore original */
+        sys_prlimit64(0, 9, &old_as, (void *)0);
+
+        if (r0 == 0 && r1 == 0 && r2 == 0 && verify.cur == 256 * 1024 * 1024ULL) {
+            fut_printf("[MISC-TEST] ✓ Test 1876: RLIMIT_AS roundtrip ok (256MB)\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1876: r=%ld/%ld/%ld cur=%llu\n",
+                       r0, r1, r2, (unsigned long long)verify.cur);
+            fut_test_fail(1876);
+        }
+    }
+
+    /* Test 1877: mmap fails when RLIMIT_AS is set very small */
+    fut_printf("[MISC-TEST] Test 1877: mmap with tiny RLIMIT_AS → ENOMEM\n");
+    {
+        static struct { uint64_t cur; uint64_t max; } old_as, tiny_as;
+        sys_prlimit64(0, 9, (void *)0, &old_as);
+        /* Set RLIMIT_AS to 1 byte */
+        tiny_as.cur = 1;
+        tiny_as.max = old_as.max;
+        sys_prlimit64(0, 9, &tiny_as, (void *)0);
+
+        /* Try to mmap — should fail with ENOMEM */
+        extern long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long off);
+        long m = sys_mmap((void *)0, 4096, 3/*PROT_READ|WRITE*/, 0x22/*MAP_ANON|PRIVATE*/, -1, 0);
+
+        /* Restore */
+        sys_prlimit64(0, 9, &old_as, (void *)0);
+
+        if (m == -12 /* ENOMEM */) {
+            fut_printf("[MISC-TEST] ✓ Test 1877: mmap with RLIMIT_AS=1 → ENOMEM\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1877: mmap returned %ld\n", m);
+            if (m > 0) {
+                extern long sys_munmap(void *, size_t);
+                sys_munmap((void *)m, 4096);
+            }
+            fut_test_fail(1877);
+        }
+    }
+}
+
 __attribute__((noinline)) static void test_ipv6_procfs(void) {
     extern long sys_open(const char *, int, int);
     extern long sys_read(int, void *, size_t);
@@ -59601,6 +59660,7 @@ void fut_misc_test_thread(void *arg) {
     test_vlan_interfaces(); /* Tests 1861-1864 */
     test_bridge_interfaces(); /* Tests 1865-1868 */
     test_ipv6_procfs(); /* Test 1875 */
+    test_fork_rlimit_as(); /* Tests 1876-1877 */
     test_gre_tunnel(); /* Tests 1872-1874 */
     test_per_iface_conf(); /* Tests 1869-1871 */
 

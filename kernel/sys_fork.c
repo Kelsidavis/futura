@@ -1096,11 +1096,31 @@ long sys_fork(void) {
     int vma_count = 0;
 
     if (parent_mm && parent_mm != fut_mm_kernel()) {
-        /* Phase 2: Count VMAs for logging */
+        /* Phase 2: Count VMAs and compute total virtual address space size */
+        uint64_t total_vm_bytes = 0;
         struct fut_vma *vma = parent_mm->vma_list;
         while (vma) {
             vma_count++;
+            if (vma->end > vma->start)
+                total_vm_bytes += (vma->end - vma->start);
             vma = vma->next;
+        }
+
+        /* Enforce RLIMIT_AS: reject fork if child would exceed the address
+         * space limit. The child inherits the parent's entire address space,
+         * so check that the parent's current VM size doesn't already exceed
+         * the limit (which would make the child exceed it too). */
+        {
+            uint64_t rlim_as = parent_task->rlimits[RLIMIT_AS].rlim_cur;
+            if (rlim_as != (uint64_t)-1 && total_vm_bytes > rlim_as) {
+                FORK_LOG("[FORK] fork(parent_pid=%u) -> ENOMEM "
+                           "(RLIMIT_AS: VM size %llu > limit %llu)\n",
+                           parent_task->pid,
+                           (unsigned long long)total_vm_bytes,
+                           (unsigned long long)rlim_as);
+                fut_task_destroy(child_task);
+                return -ENOMEM;
+            }
         }
 
         child_mm = clone_mm(parent_mm);

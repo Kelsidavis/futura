@@ -1714,15 +1714,30 @@ try_ramdisk: (void)0;
             }
         }
     } else {
-        fut_printf("[INIT] Skipping FuturaFS mount (test mode)\n");
-        /* Still register a small ramdisk so /proc/diskstats + /proc/partitions work */
+        /* Test mode: create a small ramdisk, format as FuturaFS, and mount at /mnt
+         * so that FuturaFS tests (1855-1857) can exercise real file operations. */
         {
             extern struct fut_blockdev *fut_ramdisk_create_bytes(const char *, size_t, uint32_t);
             extern int fut_blockdev_register(struct fut_blockdev *);
-            struct fut_blockdev *ramdisk = fut_ramdisk_create_bytes("ramdisk0", 64 * 1024, 512);
+            struct fut_blockdev *ramdisk = fut_ramdisk_create_bytes("ramdisk0", 128 * 1024, 4096);
             if (ramdisk) {
                 fut_blockdev_register(ramdisk);
-                fut_printf("[INIT] ✓ Registered ramdisk0 (64KB, test mode)\n");
+                fut_printf("[INIT] ✓ Registered ramdisk0 (128KB, test mode)\n");
+                /* Format as FuturaFS */
+                extern int fut_futurafs_format(struct fut_blockdev *, const char *, uint32_t);
+                int fmt = fut_futurafs_format(ramdisk, "TestFS", 4096);
+                if (fmt == 0) {
+                    /* Create /mnt and mount */
+                    extern struct fut_vnode *fut_vfs_get_root(void);
+                    struct fut_vnode *root = fut_vfs_get_root();
+                    if (root && root->ops && root->ops->mkdir)
+                        root->ops->mkdir(root, "mnt", 0755);
+                    int mnt = fut_vfs_mount("ramdisk0", "/mnt", "futurafs", 0, NULL, FUT_INVALID_HANDLE);
+                    if (mnt == 0)
+                        fut_printf("[INIT] ✓ FuturaFS mounted at /mnt (test mode)\n");
+                    else
+                        fut_printf("[INIT] FuturaFS mount failed: %d (test mode)\n", mnt);
+                }
             }
         }
     }

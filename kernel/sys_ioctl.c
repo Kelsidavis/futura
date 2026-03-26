@@ -602,6 +602,7 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
                                    request == 0x8916 /* SIOCSIFADDR */ ||
                                    request == 0x891C /* SIOCSIFNETMASK */ ||
                                    request == 0x8922 /* SIOCSIFMTU */ ||
+                                   request == 0x8924 /* SIOCSIFHWADDR */ ||
                                    request == SIOCADDRT || request == SIOCDELRT ||
                                    request == SIOCFWADDRULE || request == SIOCFWPOLICY ||
                                    request == SIOCFWFLUSH);
@@ -801,6 +802,7 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
             request != 0x8916 /* SIOCSIFADDR */ &&
             request != 0x891C /* SIOCSIFNETMASK */ &&
             request != 0x8922 /* SIOCSIFMTU */ &&
+            request != 0x8924 /* SIOCSIFHWADDR */ &&
             request != SIOCADDRT && request != SIOCDELRT &&
             request != SIOCFWADDRULE && request != SIOCFWPOLICY &&
             request != SIOCFWFLUSH) {
@@ -1523,6 +1525,24 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
 #endif
             if (fut_copy_to_user(argp, &ifr, sizeof(ifr)) != 0)
                 return -EFAULT;
+            return 0;
+        }
+
+        case 0x8924 /* SIOCSIFHWADDR */: {
+            /* Set interface hardware (MAC) address */
+            if (!argp) return -EFAULT;
+            struct fut_ifreq sifr;
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
+                __builtin_memcpy(&sifr, argp, sizeof(sifr));
+            else
+#endif
+            if (fut_copy_from_user(&sifr, argp, sizeof(sifr)) != 0)
+                return -EFAULT;
+            struct net_iface *hiface = netif_by_name(sifr.ifr_name);
+            if (!hiface) return -ENODEV;
+            /* MAC address is in sa_data[0..5] */
+            __builtin_memcpy(hiface->mac, sifr.ifr_ifru.ifru_hwaddr.sa_data, 6);
             return 0;
         }
 

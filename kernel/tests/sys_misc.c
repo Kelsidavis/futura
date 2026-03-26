@@ -58562,6 +58562,35 @@ void fut_misc_test_thread(void *arg) {
     test_firewall_ioctls();  /* Tests 1831-1834 */
     test_procnet_files();    /* Tests 1835-1836 */
 
+    /* Test 1837: SIOCSIFHWADDR changes MAC address */
+    fut_printf("[MISC-TEST] Test 1837: SIOCSIFHWADDR\n");
+    {
+        extern long sys_ioctl(int fd, unsigned long request, void *argp);
+        extern long sys_open(const char *, int, int);
+        extern long sys_close(int);
+        long sfd = sys_open("/dev/null", 0x0002, 0);
+        if (sfd >= 0) {
+            /* Set eth0 MAC to AA:BB:CC:DD:EE:FF */
+            static char ifr[40];
+            __builtin_memset(ifr, 0, 40);
+            __builtin_memcpy(ifr, "eth0", 4);
+            ifr[16] = 1; /* ARPHRD_ETHER */
+            ifr[18] = (char)0xAA; ifr[19] = (char)0xBB; ifr[20] = (char)0xCC;
+            ifr[21] = (char)0xDD; ifr[22] = (char)0xEE; ifr[23] = (char)0xFF;
+            long rc = sys_ioctl((int)sfd, 0x8924 /* SIOCSIFHWADDR */, ifr);
+            if (rc == 0) {
+                /* Read back */
+                __builtin_memset(ifr, 0, 40);
+                __builtin_memcpy(ifr, "eth0", 4);
+                rc = sys_ioctl((int)sfd, 0x8927 /* SIOCGIFHWADDR */, ifr);
+                if (rc == 0 && (uint8_t)ifr[18] == 0xAA && (uint8_t)ifr[19] == 0xBB) {
+                    fut_test_pass();
+                } else { fut_test_fail(1837); }
+            } else { fut_test_fail(1837); }
+            sys_close((int)sfd);
+        } else { fut_test_fail(1837); }
+    }
+
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");
     fut_printf("[MISC-TEST] ========================================\n");

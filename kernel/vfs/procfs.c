@@ -271,6 +271,7 @@ enum procfs_kind {
     PROC_SYS_NET_NF_CT_COUNT,       /* /proc/sys/net/netfilter/nf_conntrack_count */
     PROC_SYS_KERNEL_PANIC,          /* /proc/sys/kernel/panic */
     PROC_SYS_KERNEL_PANIC_ON_OOPS,  /* /proc/sys/kernel/panic_on_oops */
+    PROC_NET_XFRM_STAT,             /* /proc/net/xfrm_stat */
     PROC_SYS_SCHED_CHILD_FIRST,     /* /proc/sys/kernel/sched_child_runs_first */
     PROC_PRESSURE_DIR,              /* /proc/pressure/ directory */
     PROC_PRESSURE_CPU,              /* /proc/pressure/cpu */
@@ -3248,6 +3249,21 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
         case PROC_NET_PACKET:
             total = gen_net_packet(tmp, GEN_BUF);
             break;
+        case PROC_NET_XFRM_STAT: {
+            struct pbuf bb = { tmp, 0, GEN_BUF };
+            pb_str(&bb, "XfrmInError                0\n");
+            pb_str(&bb, "XfrmInBufferError          0\n");
+            pb_str(&bb, "XfrmInHdrError             0\n");
+            pb_str(&bb, "XfrmInNoStates             0\n");
+            pb_str(&bb, "XfrmInStateProtoError      0\n");
+            pb_str(&bb, "XfrmInStateModeError       0\n");
+            pb_str(&bb, "XfrmOutError               0\n");
+            pb_str(&bb, "XfrmOutBundleGenError      0\n");
+            pb_str(&bb, "XfrmOutNoStates            0\n");
+            pb_str(&bb, "XfrmFwdHdrError            0\n");
+            total = bb.pos;
+            break;
+        }
         case PROC_NET_NF_CONNTRACK:
             total = gen_net_nf_conntrack(tmp, GEN_BUF);
             break;
@@ -4975,6 +4991,10 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
         }
         if (STREQ(name, "packet")) {
             *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_NET_PACKET, 0100444, PROC_NET_PACKET,   0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "xfrm_stat")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_NET_PACKET + 1, 0100444, PROC_NET_XFRM_STAT, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
         if (STREQ(name, "nf_conntrack")) {

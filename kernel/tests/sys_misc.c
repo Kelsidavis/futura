@@ -54105,6 +54105,34 @@ __attribute__((noinline)) static void test_futurafs_flags(void) {
     }
 }
 
+__attribute__((noinline)) static void test_xfrm_stat(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_close(int);
+
+    /* Test 1940: /proc/net/xfrm_stat readable with IPsec counters */
+    fut_printf("[MISC-TEST] Test 1940: /proc/net/xfrm_stat\n");
+    {
+        long fd = sys_open("/proc/net/xfrm_stat", 0, 0);
+        if (fd >= 0) {
+            static char buf[256];
+            long n = sys_read((int)fd, buf, sizeof(buf) - 1);
+            sys_close((int)fd);
+            if (n > 0) {
+                buf[n] = '\0';
+                bool has_xfrm = false;
+                for (int i = 0; i < n - 4; i++)
+                    if (buf[i] == 'X' && buf[i+1] == 'f' && buf[i+2] == 'r' && buf[i+3] == 'm')
+                        { has_xfrm = true; break; }
+                if (has_xfrm) {
+                    fut_printf("[MISC-TEST] ✓ Test 1940: xfrm_stat has Xfrm counters\n");
+                    fut_test_pass();
+                } else { fut_test_fail(1940); }
+            } else { fut_test_fail(1940); }
+        } else { fut_test_fail(1940); }
+    }
+}
+
 __attribute__((noinline)) static void test_ipv6_socket(void) {
     extern long sys_socket(int, int, int);
     extern long sys_close(int);
@@ -61232,6 +61260,7 @@ void fut_misc_test_thread(void *arg) {
     test_router_integration(); /* Test 1852 */
     test_ip_ttl_tos_sockopt(); /* Tests 1853-1854 */
     test_futurafs(); /* Tests 1855-1857 */
+    test_xfrm_stat(); /* Test 1940 */
     test_ipv6_socket(); /* Tests 1938-1939 */
     test_tc_ipsec(); /* Tests 1935-1937 */
     test_sysfs_pci_block(); /* Test 1934 */

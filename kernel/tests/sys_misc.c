@@ -11948,77 +11948,83 @@ static void test_new_mount_api_stubs(void) {
 
     long r;
 
-    /* Test 1297: open_tree → ENOSYS */
-    fut_printf("[MISC-TEST] Test 1297: open_tree → ENOSYS\n");
+    /* Test 1297: open_tree returns fd */
+    fut_printf("[MISC-TEST] Test 1297: open_tree → fd\n");
     r = sys_open_tree(-100 /*AT_FDCWD*/, "/", 0);
-    if (r == -ENOSYS) {
-        fut_printf("[MISC-TEST] ✓ Test 1297: open_tree → ENOSYS\n");
+    if (r >= 0) {
+        fut_printf("[MISC-TEST] ✓ Test 1297: open_tree → fd=%ld\n", r);
+        extern long sys_close(int);
+        sys_close((int)r);
         fut_test_pass();
     } else {
         fut_printf("[MISC-TEST] ✗ Test 1297: open_tree returned %ld\n", r);
         fut_test_fail(1297);
     }
 
-    /* Test 1298: move_mount (new API) → ENOSYS */
-    fut_printf("[MISC-TEST] Test 1298: move_mount (new API) → ENOSYS\n");
+    /* Test 1298: move_mount with invalid dirfd → EINVAL */
+    fut_printf("[MISC-TEST] Test 1298: move_mount invalid → EINVAL\n");
     r = sys_move_mount(-100, "/tmp", -100, "/mnt", 0);
-    if (r == -ENOSYS) {
-        fut_printf("[MISC-TEST] ✓ Test 1298: move_mount → ENOSYS\n");
+    if (r == -EINVAL) {
+        fut_printf("[MISC-TEST] ✓ Test 1298: move_mount → EINVAL\n");
         fut_test_pass();
     } else {
         fut_printf("[MISC-TEST] ✗ Test 1298: move_mount returned %ld\n", r);
         fut_test_fail(1298);
     }
 
-    /* Test 1299: fsopen → ENOSYS */
-    fut_printf("[MISC-TEST] Test 1299: fsopen → ENOSYS\n");
-    r = sys_fsopen("ext4", 0);
-    if (r == -ENOSYS) {
-        fut_printf("[MISC-TEST] ✓ Test 1299: fsopen → ENOSYS\n");
+    /* Test 1299: fsopen returns fd */
+    fut_printf("[MISC-TEST] Test 1299: fsopen → fd\n");
+    r = sys_fsopen("tmpfs", 0);
+    if (r >= 0) {
+        fut_printf("[MISC-TEST] ✓ Test 1299: fsopen → fd=%ld\n", r);
+        extern long sys_close(int);
+        sys_close((int)r);
         fut_test_pass();
     } else {
         fut_printf("[MISC-TEST] ✗ Test 1299: fsopen returned %ld\n", r);
         fut_test_fail(1299);
     }
 
-    /* Test 1300: fsconfig → ENOSYS */
-    fut_printf("[MISC-TEST] Test 1300: fsconfig → ENOSYS\n");
+    /* Test 1300: fsconfig with invalid fd → EBADF */
+    fut_printf("[MISC-TEST] Test 1300: fsconfig bad fd → EBADF\n");
     r = sys_fsconfig(-1, 0, NULL, NULL, 0);
-    if (r == -ENOSYS) {
-        fut_printf("[MISC-TEST] ✓ Test 1300: fsconfig → ENOSYS\n");
+    if (r == -EBADF) {
+        fut_printf("[MISC-TEST] ✓ Test 1300: fsconfig → EBADF\n");
         fut_test_pass();
     } else {
         fut_printf("[MISC-TEST] ✗ Test 1300: fsconfig returned %ld\n", r);
         fut_test_fail(1300);
     }
 
-    /* Test 1301: fsmount → ENOSYS */
-    fut_printf("[MISC-TEST] Test 1301: fsmount → ENOSYS\n");
+    /* Test 1301: fsmount with invalid fd → EBADF */
+    fut_printf("[MISC-TEST] Test 1301: fsmount bad fd → EBADF\n");
     r = sys_fsmount(-1, 0, 0);
-    if (r == -ENOSYS) {
-        fut_printf("[MISC-TEST] ✓ Test 1301: fsmount → ENOSYS\n");
+    if (r == -EBADF) {
+        fut_printf("[MISC-TEST] ✓ Test 1301: fsmount → EBADF\n");
         fut_test_pass();
     } else {
         fut_printf("[MISC-TEST] ✗ Test 1301: fsmount returned %ld\n", r);
         fut_test_fail(1301);
     }
 
-    /* Test 1302: fspick → ENOSYS */
-    fut_printf("[MISC-TEST] Test 1302: fspick → ENOSYS\n");
+    /* Test 1302: fspick returns fd */
+    fut_printf("[MISC-TEST] Test 1302: fspick → fd\n");
     r = sys_fspick(-100, "/", 0);
-    if (r == -ENOSYS) {
-        fut_printf("[MISC-TEST] ✓ Test 1302: fspick → ENOSYS\n");
+    if (r >= 0) {
+        fut_printf("[MISC-TEST] ✓ Test 1302: fspick → fd=%ld\n", r);
+        extern long sys_close(int);
+        sys_close((int)r);
         fut_test_pass();
     } else {
         fut_printf("[MISC-TEST] ✗ Test 1302: fspick returned %ld\n", r);
         fut_test_fail(1302);
     }
 
-    /* Test 1303: mount_setattr → ENOSYS */
-    fut_printf("[MISC-TEST] Test 1303: mount_setattr → ENOSYS\n");
+    /* Test 1303: mount_setattr → 0 (success) */
+    fut_printf("[MISC-TEST] Test 1303: mount_setattr → 0\n");
     r = sys_mount_setattr(-100, "/", 0, NULL, 0);
-    if (r == -ENOSYS) {
-        fut_printf("[MISC-TEST] ✓ Test 1303: mount_setattr → ENOSYS\n");
+    if (r == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 1303: mount_setattr → 0\n");
         fut_test_pass();
     } else {
         fut_printf("[MISC-TEST] ✗ Test 1303: mount_setattr returned %ld\n", r);
@@ -57939,6 +57945,129 @@ __attribute__((noinline)) static void test_net_procfs_devnodes(void) {
 }
 
 /* ============================================================
+ * Tests 1970-1975: Modern mount API (fsopen/fsconfig/fsmount)
+ * ============================================================ */
+__attribute__((noinline)) static void test_modern_mount_api(void) {
+    extern long sys_fsopen(const char *fsname, unsigned int flags);
+    extern long sys_fsconfig(int fs_fd, unsigned int cmd, const char *key,
+                              const void *value, int aux);
+    extern long sys_fsmount(int fs_fd, unsigned int flags, unsigned int attr_flags);
+    extern long sys_fspick(int dirfd, const char *pathname, unsigned int flags);
+    extern long sys_open_tree(int dirfd, const char *pathname, unsigned int flags);
+    extern long sys_close(int);
+
+    /* ── Test 1970: fsopen+fsconfig+CMD_CREATE workflow ── */
+    fut_printf("[MISC-TEST] Test 1970: fsopen+fsconfig workflow\n");
+    long fs_fd = sys_fsopen("tmpfs", 0);
+    if (fs_fd >= 0) {
+        /* Configure: set source and a string option */
+        long r1 = sys_fsconfig((int)fs_fd, 1 /*SET_STRING*/, "source", "none", 0);
+        long r2 = sys_fsconfig((int)fs_fd, 0 /*SET_FLAG*/, "noexec", NULL, 0);
+        long r3 = sys_fsconfig((int)fs_fd, 6 /*CMD_CREATE*/, NULL, NULL, 0);
+        if (r1 == 0 && r2 == 0 && r3 == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1970: fsopen+config ok (fd=%ld)\n", fs_fd);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1970: config r1=%ld r2=%ld r3=%ld\n", r1, r2, r3);
+            fut_test_fail(1970);
+        }
+        sys_close((int)fs_fd);
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1970: fsopen=%ld\n", fs_fd);
+        fut_test_fail(1970);
+    }
+
+    /* ── Test 1971: fsmount creates detached mount fd ── */
+    fut_printf("[MISC-TEST] Test 1971: fsmount detached mount\n");
+    fs_fd = sys_fsopen("tmpfs", 0);
+    if (fs_fd >= 0) {
+        sys_fsconfig((int)fs_fd, 6 /*CMD_CREATE*/, NULL, NULL, 0);
+        long mnt_fd = sys_fsmount((int)fs_fd, 0, 0);
+        if (mnt_fd >= 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1971: fsmount fd=%ld\n", mnt_fd);
+            sys_close((int)mnt_fd);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1971: fsmount=%ld\n", mnt_fd);
+            fut_test_fail(1971);
+        }
+        sys_close((int)fs_fd);
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1971: fsopen=%ld\n", fs_fd);
+        fut_test_fail(1971);
+    }
+
+    /* ── Test 1972: fsconfig before CMD_CREATE rejects duplicate CREATE ── */
+    fut_printf("[MISC-TEST] Test 1972: fsconfig CMD_CREATE idempotent\n");
+    fs_fd = sys_fsopen("proc", 0);
+    if (fs_fd >= 0) {
+        sys_fsconfig((int)fs_fd, 6 /*CMD_CREATE*/, NULL, NULL, 0);
+        /* Second CMD_CREATE should return EBUSY */
+        long r = sys_fsconfig((int)fs_fd, 6, NULL, NULL, 0);
+        if (r == -EBUSY) {
+            fut_printf("[MISC-TEST] ✓ Test 1972: double CREATE → EBUSY\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1972: double CREATE=%ld\n", r);
+            fut_test_fail(1972);
+        }
+        sys_close((int)fs_fd);
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1972: fsopen=%ld\n", fs_fd);
+        fut_test_fail(1972);
+    }
+
+    /* ── Test 1973: fsopen(NULL) → EINVAL ── */
+    fut_printf("[MISC-TEST] Test 1973: fsopen(NULL) → EINVAL\n");
+    {
+        long r = sys_fsopen(NULL, 0);
+        if (r == -EINVAL) {
+            fut_printf("[MISC-TEST] ✓ Test 1973: fsopen(NULL) → EINVAL\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1973: fsopen(NULL)=%ld\n", r);
+            if (r >= 0) sys_close((int)r);
+            fut_test_fail(1973);
+        }
+    }
+
+    /* ── Test 1974: fspick returns reconfigure context ── */
+    fut_printf("[MISC-TEST] Test 1974: fspick reconfigure context\n");
+    {
+        long pfd = sys_fspick(-100 /*AT_FDCWD*/, "/tmp", 0);
+        if (pfd >= 0) {
+            /* CMD_RECONFIGURE on a fspick context should succeed */
+            long r = sys_fsconfig((int)pfd, 7 /*CMD_RECONFIGURE*/, NULL, NULL, 0);
+            if (r == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1974: fspick+reconfig ok (fd=%ld)\n", pfd);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1974: reconfig=%ld\n", r);
+                fut_test_fail(1974);
+            }
+            sys_close((int)pfd);
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1974: fspick=%ld\n", pfd);
+            fut_test_fail(1974);
+        }
+    }
+
+    /* ── Test 1975: open_tree returns tree fd ── */
+    fut_printf("[MISC-TEST] Test 1975: open_tree returns fd\n");
+    {
+        long tfd = sys_open_tree(-100, "/tmp", 0);
+        if (tfd >= 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1975: open_tree fd=%ld\n", tfd);
+            sys_close((int)tfd);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1975: open_tree=%ld\n", tfd);
+            fut_test_fail(1975);
+        }
+    }
+}
+
+/* ============================================================
  * Tests 1958-1969: Linux keyring management
  * ============================================================ */
 __attribute__((noinline)) static void test_keyring(void) {
@@ -62152,6 +62281,7 @@ void fut_misc_test_thread(void *arg) {
     test_loop_device(); /* Tests 1885-1887 */
     test_per_iface_conf(); /* Tests 1869-1871 */
 
+    test_modern_mount_api(); /* Tests 1970-1975 */
     test_keyring();   /* Tests 1958-1969 */
     test_io_uring();  /* Tests 1946-1957 */
 

@@ -156,7 +156,9 @@ struct fut_task {
     int pdeathsig;                     // Signal to send on parent death (PR_SET_PDEATHSIG, 0=none)
     unsigned long no_new_privs;        // PR_SET_NO_NEW_PRIVS flag (sticky, prevents execve setuid)
     int dumpable;                      // PR_SET_DUMPABLE (1=dumpable, 0=not, default 1)
-    int seccomp_mode;                  // 0=disabled, 1=strict (read/write/exit/sigreturn only)
+    int seccomp_mode;                  // 0=disabled, 1=strict, 2=filter (BPF)
+    void *seccomp_filter;              // Pointer to seccomp_filter chain (struct seccomp_filter_prog *)
+    int seccomp_filter_count;          // Number of installed BPF filters
     int did_exec;                      // Set after first execve (blocks setpgid from parent)
     int keepcaps;                      // PR_SET_KEEPCAPS: retain caps across setuid 0→non-0
     int auto_reap;                     // 1 = parent had SIGCHLD=SIG_IGN or SA_NOCLDWAIT; reap on thread exit

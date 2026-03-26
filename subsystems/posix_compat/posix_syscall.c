@@ -4358,23 +4358,49 @@ int64_t posix_syscall_dispatch(uint64_t syscall_num,
         return -38;  /* -ENOSYS: Function not implemented */
     }
 
-    /* Seccomp strict mode enforcement: only allow read(0), write(1),
-     * exit(60), exit_group(231), and sigreturn(15). All other syscalls
-     * are killed with SIGKILL (Linux behavior). */
+    /* Seccomp enforcement: strict mode and BPF filter mode */
     {
         extern fut_task_t *fut_task_current(void);
         fut_task_t *sec_task = fut_task_current();
+
+        /* Mode 1 (strict): only read/write/exit/exit_group/sigreturn */
         if (sec_task && sec_task->seccomp_mode == 1) {
             if (syscall_num != 0  /* read */ &&
                 syscall_num != 1  /* write */ &&
                 syscall_num != 60 /* exit */ &&
                 syscall_num != 231 /* exit_group */ &&
                 syscall_num != 15 /* rt_sigreturn */) {
-                /* Seccomp violation — send SIGKILL */
                 extern int fut_signal_send(struct fut_task *t, int sig);
                 fut_signal_send(sec_task, 9 /* SIGKILL */);
-                return -1;  /* EPERM */
+                return -1;
             }
+        }
+
+        /* Mode 2 (filter): run BPF programs on seccomp_data */
+        if (sec_task && sec_task->seccomp_mode == 2 && sec_task->seccomp_filter) {
+            uint64_t sc_args[6] = { arg1, arg2, arg3, arg4, arg5, arg6 };
+            extern uint32_t seccomp_check_syscall(fut_task_t *, int, uint64_t *);
+            uint32_t action = seccomp_check_syscall(sec_task, (int)syscall_num, sc_args);
+            uint32_t act = action & 0xFFFF0000U;
+            if (act == 0x7fff0000U) {
+                /* SECCOMP_RET_ALLOW — proceed */
+            } else if (act == 0x7ffc0000U) {
+                /* SECCOMP_RET_LOG — allow but log */
+            } else if (act == 0x00050000U) {
+                /* SECCOMP_RET_ERRNO — return -errno from data field */
+                return -(int64_t)(action & 0xFFFFU);
+            } else if (act == 0x80000000U || act == 0x00000000U) {
+                /* SECCOMP_RET_KILL_PROCESS/THREAD */
+                extern int fut_signal_send(struct fut_task *t, int sig);
+                fut_signal_send(sec_task, 9 /* SIGKILL */);
+                return -1;
+            } else if (act == 0x00030000U) {
+                /* SECCOMP_RET_TRAP — send SIGSYS */
+                extern int fut_signal_send(struct fut_task *t, int sig);
+                fut_signal_send(sec_task, 31 /* SIGSYS */);
+                return -(int64_t)(action & 0xFFFFU);
+            }
+            /* SECCOMP_RET_TRACE: fall through (no ptrace support) */
         }
     }
 

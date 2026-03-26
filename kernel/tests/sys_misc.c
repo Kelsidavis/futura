@@ -57952,6 +57952,146 @@ __attribute__((noinline)) static void test_net_procfs_devnodes(void) {
 }
 
 /* ============================================================
+ * Tests 2036-2041: seccomp BPF filter enforcement
+ * ============================================================ */
+__attribute__((noinline)) static void test_seccomp_bpf(void) {
+    extern long sys_seccomp(unsigned int operation, unsigned int flags,
+                             const void *uargs);
+    extern long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
+                           unsigned long arg4, unsigned long arg5);
+
+    /* BPF instruction macros */
+    #define BPF_LD_W_ABS(off)  { 0x20, 0, 0, (off) }  /* A = data[off:off+4] */
+    #define BPF_JEQ_K(val,jt,jf) { 0x15, (jt), (jf), (val) }
+    #define BPF_RET_K(val)     { 0x06, 0, 0, (val) }
+
+    /* ── Test 2036: install BPF filter (allow-all program) ── */
+    fut_printf("[MISC-TEST] Test 2036: seccomp BPF allow-all filter\n");
+    {
+        /* Enable no_new_privs (required for unprivileged seccomp) */
+        sys_prctl(38 /*PR_SET_NO_NEW_PRIVS*/, 1, 0, 0, 0);
+
+        /* BPF program: return SECCOMP_RET_ALLOW for everything */
+        struct { uint16_t code; uint8_t jt; uint8_t jf; uint32_t k; } allow_prog[] = {
+            BPF_RET_K(0x7fff0000) /* SECCOMP_RET_ALLOW */
+        };
+        struct { uint16_t len; uint16_t _p; uint32_t _p2; void *filter; } fprog;
+        fprog.len = 1;
+        fprog._p = 0; fprog._p2 = 0;
+        fprog.filter = allow_prog;
+
+        long r = sys_seccomp(1 /*SET_MODE_FILTER*/, 0, &fprog);
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 2036: allow-all filter installed\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2036: seccomp=%ld\n", r);
+            fut_test_fail(2036);
+        }
+    }
+
+    /* ── Test 2037: syscalls still work after allow-all filter ── */
+    fut_printf("[MISC-TEST] Test 2037: syscalls work after filter\n");
+    {
+        extern long sys_getpid(void);
+        long pid = sys_getpid();
+        if (pid > 0) {
+            fut_printf("[MISC-TEST] ✓ Test 2037: getpid=%ld after filter\n", pid);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2037: getpid=%ld\n", pid);
+            fut_test_fail(2037);
+        }
+    }
+
+    /* ── Test 2038: install second filter (checks arch, allows all) ── */
+    fut_printf("[MISC-TEST] Test 2038: second filter stacks\n");
+    {
+        /* Program: check arch == x86_64, allow if match, kill otherwise */
+        struct { uint16_t code; uint8_t jt; uint8_t jf; uint32_t k; } arch_prog[] = {
+            BPF_LD_W_ABS(4),                     /* A = arch */
+            BPF_JEQ_K(0xC000003E, 0, 1),         /* if A == AUDIT_ARCH_X86_64 goto allow */
+            BPF_RET_K(0x7fff0000),                /* ALLOW */
+            BPF_RET_K(0x7fff0000),                /* ALLOW (fallthrough for non-x86) */
+        };
+        struct { uint16_t len; uint16_t _p; uint32_t _p2; void *filter; } fprog;
+        fprog.len = 4;
+        fprog._p = 0; fprog._p2 = 0;
+        fprog.filter = arch_prog;
+
+        long r = sys_seccomp(1, 0, &fprog);
+        if (r == 0) {
+            extern long sys_getpid(void);
+            long pid = sys_getpid();
+            if (pid > 0) {
+                fut_printf("[MISC-TEST] ✓ Test 2038: stacked filter ok, pid=%ld\n", pid);
+                fut_test_pass();
+            } else { fut_test_fail(2038); }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2038: seccomp=%ld\n", r);
+            fut_test_fail(2038);
+        }
+    }
+
+    /* ── Test 2039: seccomp_check returns correct action for filter ── */
+    fut_printf("[MISC-TEST] Test 2039: filter chain evaluation\n");
+    {
+        extern uint32_t seccomp_check_syscall(void *, int, uint64_t *);
+        fut_task_t *task = fut_task_current();
+        uint64_t args[6] = {0};
+        uint32_t action = seccomp_check_syscall(task, 39 /* getpid */, args);
+        if ((action & 0xFFFF0000U) == 0x7fff0000U) {
+            fut_printf("[MISC-TEST] ✓ Test 2039: filter allows getpid\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2039: action=0x%x\n", action);
+            fut_test_fail(2039);
+        }
+    }
+
+    /* ── Test 2040: GET_ACTION_AVAIL for RET_ALLOW ── */
+    fut_printf("[MISC-TEST] Test 2040: GET_ACTION_AVAIL\n");
+    {
+        uint32_t action = 0x7fff0000U; /* SECCOMP_RET_ALLOW */
+        long r = sys_seccomp(2 /*GET_ACTION_AVAIL*/, 0, &action);
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 2040: RET_ALLOW is available\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2040: r=%ld\n", r);
+            fut_test_fail(2040);
+        }
+    }
+
+    /* ── Test 2041: filter without NO_NEW_PRIVS returns EACCES ── */
+    fut_printf("[MISC-TEST] Test 2041: filter needs NO_NEW_PRIVS\n");
+    {
+        /* We already set no_new_privs, so this test checks that the flag
+         * is sticky and the filter installs successfully (can't test EACCES
+         * since we can't un-set no_new_privs). Test that invalid flags fail. */
+        struct { uint16_t code; uint8_t jt; uint8_t jf; uint32_t k; } prog[] = {
+            BPF_RET_K(0x7fff0000)
+        };
+        struct { uint16_t len; uint16_t _p; uint32_t _p2; void *filter; } fprog;
+        fprog.len = 1; fprog._p = 0; fprog._p2 = 0;
+        fprog.filter = prog;
+
+        long r = sys_seccomp(1, 0xFFFF0000 /* invalid flags */, &fprog);
+        if (r == -EINVAL) {
+            fut_printf("[MISC-TEST] ✓ Test 2041: invalid flags → EINVAL\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2041: r=%ld\n", r);
+            fut_test_fail(2041);
+        }
+    }
+
+    #undef BPF_LD_W_ABS
+    #undef BPF_JEQ_K
+    #undef BPF_RET_K
+}
+
+/* ============================================================
  * Tests 2026-2035: cgroup v2 filesystem
  * ============================================================ */
 __attribute__((noinline)) static void test_cgroupfs(void) {
@@ -63505,6 +63645,7 @@ void fut_misc_test_thread(void *arg) {
     test_loop_device(); /* Tests 1885-1887 */
     test_per_iface_conf(); /* Tests 1869-1871 */
 
+    test_seccomp_bpf(); /* Tests 2036-2041 */
     test_cgroupfs(); /* Tests 2026-2035 */
     test_procfs_fs_entries(); /* Tests 2020-2025 */
     test_dev_rtc_mem(); /* Tests 2014-2019 */

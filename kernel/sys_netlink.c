@@ -121,13 +121,19 @@ typedef struct __attribute__((packed)) {
 } nl_rtmsg_t;  /* 12 bytes */
 
 /* rtmsg table / protocol / scope / type constants */
+#define RT_TABLE_MAIN    254
 #define RT_TABLE_LOCAL   255
 #define RTPROT_KERNEL    2
+#define RTPROT_BOOT      3
+#define RTPROT_STATIC    4
+#define RT_SCOPE_UNIVERSE 0
 #define RT_SCOPE_LINK    253
+#define RTN_UNICAST      1
 #define RTN_LOCAL        2
 
 /* Route rtattrs */
 #define RTA_DST          1
+#define RTA_GATEWAY      5
 #define RTA_OIF          4
 
 /* ── Builder helpers ────────────────────────────────────────────────────── */
@@ -307,48 +313,64 @@ static uint32_t nl_build_newaddr(uint8_t *buf, uint32_t seq) {
 
 /* ── RTM_GETROUTE response ──────────────────────────────────────────────── */
 
-/* Returns the loopback route: 127.0.0.0/8 via lo (scope link, type local) */
-static uint32_t nl_build_newroute(uint8_t *buf, uint32_t seq) {
-    uint32_t pos = 0;
+/* Emit one RTM_NEWROUTE message for a routing table entry */
+static void nl_emit_one_route(const struct net_route *route, void *ctx_) {
+    struct { uint8_t *buf; uint32_t *pos; uint32_t seq; } *ctx = ctx_;
+    if (*ctx->pos + 128 >= 4096) return; /* buffer limit */
 
-    /* Outer nlmsghdr */
-    uint32_t msg_start = pos;
+    uint32_t msg_start = *ctx->pos;
     nl_hdr_t hdr = {
         .nlmsg_len   = 0,
         .nlmsg_type  = RTM_NEWROUTE,
         .nlmsg_flags = NLM_F_MULTI,
-        .nlmsg_seq   = seq,
+        .nlmsg_seq   = ctx->seq,
         .nlmsg_pid   = 0,
     };
-    nl_append(buf, &pos, &hdr, sizeof(hdr));
+    nl_append(ctx->buf, ctx->pos, &hdr, sizeof(hdr));
 
-    /* rtmsg: AF_INET, 127.0.0.0/8, table=LOCAL, proto=KERNEL, scope=LINK */
+    uint8_t prefixlen = netmask_to_prefixlen(route->netmask);
+    uint8_t scope = route->gateway ? RT_SCOPE_UNIVERSE : RT_SCOPE_LINK;
+
     nl_rtmsg_t rtm = {
-        .rtm_family   = 2 /* AF_INET */,
-        .rtm_dst_len  = 8,
+        .rtm_family   = 2,
+        .rtm_dst_len  = prefixlen,
         .rtm_src_len  = 0,
         .rtm_tos      = 0,
-        .rtm_table    = RT_TABLE_LOCAL,
-        .rtm_protocol = RTPROT_KERNEL,
-        .rtm_scope    = RT_SCOPE_LINK,
-        .rtm_type     = RTN_LOCAL,
+        .rtm_table    = RT_TABLE_MAIN,
+        .rtm_protocol = RTPROT_BOOT,
+        .rtm_scope    = scope,
+        .rtm_type     = RTN_UNICAST,
         .rtm_flags    = 0,
     };
-    nl_append(buf, &pos, &rtm, sizeof(rtm));
+    nl_append(ctx->buf, ctx->pos, &rtm, sizeof(rtm));
 
-    /* RTA_DST = 127.0.0.0 */
-    uint32_t dst = 0x0000007fU; /* 127.0.0.0 in network byte order */
-    nl_rta32(buf, &pos, RTA_DST, dst);
+    /* RTA_DST (omitted for default route where dst_len=0) */
+    if (prefixlen > 0) {
+        uint32_t dst_nbo = ip_to_nbo(route->dest);
+        nl_rta32(ctx->buf, ctx->pos, RTA_DST, dst_nbo);
+    }
 
-    /* RTA_OIF = 1 (lo) */
-    nl_rta32(buf, &pos, RTA_OIF, 1);
+    /* RTA_GATEWAY (if there's a gateway) */
+    if (route->gateway) {
+        uint32_t gw_nbo = ip_to_nbo(route->gateway);
+        nl_rta32(ctx->buf, ctx->pos, RTA_GATEWAY, gw_nbo);
+    }
 
-    /* Patch length in the header */
-    uint32_t msg_len = pos - msg_start;
-    __builtin_memcpy(buf + msg_start, &msg_len, sizeof(msg_len));
+    /* RTA_OIF */
+    nl_rta32(ctx->buf, ctx->pos, RTA_OIF, (uint32_t)route->iface_idx);
+
+    uint32_t msg_len = *ctx->pos - msg_start;
+    __builtin_memcpy(ctx->buf + msg_start, &msg_len, sizeof(msg_len));
+}
+
+static uint32_t nl_build_newroute(uint8_t *buf, uint32_t seq) {
+    uint32_t pos = 0;
+
+    /* Iterate all routes from the routing table */
+    struct { uint8_t *buf; uint32_t *pos; uint32_t seq; } ctx = { buf, &pos, seq };
+    route_foreach((route_iter_fn)nl_emit_one_route, &ctx);
 
     nl_done(buf, &pos, seq);
-
     return pos;
 }
 

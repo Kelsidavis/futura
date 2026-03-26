@@ -51245,6 +51245,89 @@ static void test_openat_o_directory(void) {
 /* Tests 1729-1732: umask enforcement on file/directory creation (POSIX) */
 /* Tests 1761-1764: SIGHUP delivery when session leader exits */
 /* Tests 1765-1768: daemon lifecycle integration (setsid+chdir+devnull) */
+/* Tests 1773-1776: PTY termios c_cc[] special character initialization */
+__attribute__((noinline)) static void test_pty_termios_cc(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_close(int);
+    extern long sys_ioctl(int fd, unsigned long request, void *argp);
+
+    long mfd = sys_open("/dev/ptmx", 0x0002, 0);
+    int pn = -1, zv = 0;
+    if (mfd >= 0) sys_ioctl((int)mfd, 0x80045430, &pn);
+    if (mfd >= 0) sys_ioctl((int)mfd, 0x40045431, &zv);
+    static char pp[24];
+    { const char *pfx = "/dev/pts/"; int i = 0; while (pfx[i]) { pp[i] = pfx[i]; i++; }
+      if (pn >= 10) { pp[i++] = (char)('0'+pn/10); } pp[i++] = (char)('0'+pn%10); pp[i] = '\0'; }
+    long sfd = (pn >= 0) ? sys_open(pp, 0x0002, 0) : -1;
+
+    /* Test 1773: VINTR (Ctrl-C) = 3 in PTY termios */
+    fut_printf("[MISC-TEST] Test 1773: PTY VINTR = 3 (Ctrl-C)\n");
+    if (sfd >= 0) {
+        static char termios[60];
+        sys_ioctl((int)sfd, 0x5401 /* TCGETS */, termios);
+        /* c_cc[0] = VINTR at offset 17 */
+        unsigned char vintr = (unsigned char)termios[17];
+        if (vintr == 3) {
+            fut_printf("[MISC-TEST] ✓ Test 1773: VINTR=%u (Ctrl-C)\n", vintr);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1773: VINTR=%u (expected 3)\n", vintr);
+            fut_test_fail(1773);
+        }
+    } else { fut_test_fail(1773); }
+
+    /* Test 1774: VEOF (Ctrl-D) = 4 */
+    fut_printf("[MISC-TEST] Test 1774: PTY VEOF = 4 (Ctrl-D)\n");
+    if (sfd >= 0) {
+        static char termios[60];
+        sys_ioctl((int)sfd, 0x5401, termios);
+        /* c_cc[4] = VEOF at offset 21 */
+        unsigned char veof = (unsigned char)termios[21];
+        if (veof == 4) {
+            fut_printf("[MISC-TEST] ✓ Test 1774: VEOF=%u (Ctrl-D)\n", veof);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1774: VEOF=%u (expected 4)\n", veof);
+            fut_test_fail(1774);
+        }
+    } else { fut_test_fail(1774); }
+
+    /* Test 1775: VERASE (backspace) = 127 */
+    fut_printf("[MISC-TEST] Test 1775: PTY VERASE = 127\n");
+    if (sfd >= 0) {
+        static char termios[60];
+        sys_ioctl((int)sfd, 0x5401, termios);
+        /* c_cc[2] = VERASE at offset 19 */
+        unsigned char verase = (unsigned char)termios[19];
+        if (verase == 127) {
+            fut_printf("[MISC-TEST] ✓ Test 1775: VERASE=%u (DEL)\n", verase);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1775: VERASE=%u (expected 127)\n", verase);
+            fut_test_fail(1775);
+        }
+    } else { fut_test_fail(1775); }
+
+    /* Test 1776: VSUSP (Ctrl-Z) = 26 */
+    fut_printf("[MISC-TEST] Test 1776: PTY VSUSP = 26 (Ctrl-Z)\n");
+    if (sfd >= 0) {
+        static char termios[60];
+        sys_ioctl((int)sfd, 0x5401, termios);
+        /* c_cc[10] = VSUSP at offset 27 */
+        unsigned char vsusp = (unsigned char)termios[27];
+        if (vsusp == 26) {
+            fut_printf("[MISC-TEST] ✓ Test 1776: VSUSP=%u (Ctrl-Z)\n", vsusp);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1776: VSUSP=%u (expected 26)\n", vsusp);
+            fut_test_fail(1776);
+        }
+    } else { fut_test_fail(1776); }
+
+    if (sfd >= 0) sys_close((int)sfd);
+    if (mfd >= 0) sys_close((int)mfd);
+}
+
 /* Tests 1769-1772: /proc/self/fdinfo/<n> for various fd types */
 __attribute__((noinline)) static void test_fdinfo_various_types(void) {
     extern long sys_open(const char *, int, int);
@@ -56927,6 +57010,7 @@ void fut_misc_test_thread(void *arg) {
     test_timer_abstime();          /* Tests 1721-1724 */
     test_execve_prevalidation();   /* Tests 1725-1728 */
     test_fd_lifecycle_edges();     /* Tests 1737-1740 */
+    test_pty_termios_cc();           /* Tests 1773-1776 */
     test_fdinfo_various_types();     /* Tests 1769-1772 */
     test_daemon_lifecycle();          /* Tests 1765-1768 */
     test_sighup_session_leader();    /* Tests 1761-1764 */

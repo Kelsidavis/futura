@@ -130,7 +130,8 @@ static struct pty_pair *pty_alloc(void) {
             /* Default window size */
             p->winsize.ws_row = 24;
             p->winsize.ws_col = 80;
-            /* Default termios: cooked mode basics */
+            /* Default termios: cooked mode with standard special characters.
+             * Layout: c_iflag(4) c_oflag(4) c_cflag(4) c_lflag(4) c_line(1) c_cc[19] */
             memset(p->termios, 0, sizeof(p->termios));
             uint32_t iflag = 0x0500;  /* ICRNL | IXON */
             uint32_t oflag = 0x0005;  /* OPOST | ONLCR */
@@ -140,6 +141,29 @@ static struct pty_pair *pty_alloc(void) {
             memcpy(p->termios +  4, &oflag, 4);
             memcpy(p->termios +  8, &cflag, 4);
             memcpy(p->termios + 12, &lflag, 4);
+            /* c_line = 0 (N_TTY line discipline) at offset 16 — already 0 */
+            /* c_cc[19] at offset 17: standard Linux special characters */
+            static const unsigned char default_cc[19] = {
+                3,   /* VINTR    = Ctrl-C */
+                28,  /* VQUIT    = Ctrl-\ */
+                127, /* VERASE   = DEL */
+                21,  /* VKILL    = Ctrl-U */
+                4,   /* VEOF     = Ctrl-D */
+                0,   /* VTIME    = 0 */
+                1,   /* VMIN     = 1 */
+                0,   /* VSWTC    = 0 */
+                17,  /* VSTART   = Ctrl-Q (XON) */
+                19,  /* VSTOP    = Ctrl-S (XOFF) */
+                26,  /* VSUSP    = Ctrl-Z */
+                0,   /* VEOL     = 0 */
+                18,  /* VREPRINT = Ctrl-R */
+                15,  /* VDISCARD = Ctrl-O */
+                23,  /* VWERASE  = Ctrl-W */
+                22,  /* VLNEXT   = Ctrl-V */
+                0,   /* VEOL2    = 0 */
+                0, 0
+            };
+            memcpy(p->termios + 17, default_cc, 19);
             fut_spinlock_release(&g_pty_alloc_lock);
             return p;
         }

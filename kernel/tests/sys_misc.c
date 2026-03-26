@@ -53543,6 +53543,55 @@ __attribute__((noinline)) static void test_fd_lifecycle_edges(void) {
     }
 }
 
+/* Tests 1835-1836: /proc/net file content verification */
+__attribute__((noinline)) static void test_procnet_files(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_close(int);
+
+    /* Test 1835: /proc/net/fib_trie has real routing data */
+    fut_printf("[MISC-TEST] Test 1835: /proc/net/fib_trie\n");
+    {
+        long fd = sys_open("/proc/net/fib_trie", 0, 0);
+        if (fd >= 0) {
+            static char tb[1024];
+            long n = sys_read((int)fd, tb, sizeof(tb) - 1);
+            sys_close((int)fd);
+            if (n > 0) {
+                tb[n] = '\0';
+                bool has_main = false, has_lo = false;
+                for (long i = 0; i < n - 4; i++) {
+                    if (tb[i]=='M' && tb[i+1]=='a' && tb[i+2]=='i' && tb[i+3]=='n') has_main = true;
+                    if (tb[i]=='1' && tb[i+1]=='2' && tb[i+2]=='7' && tb[i+3]=='.') has_lo = true;
+                }
+                if (has_main && has_lo) { fut_test_pass(); }
+                else { fut_test_fail(1835); }
+            } else { fut_test_fail(1835); }
+        } else { fut_test_fail(1835); }
+    }
+
+    /* Test 1836: /proc/net/sockstat has socket counts */
+    fut_printf("[MISC-TEST] Test 1836: /proc/net/sockstat\n");
+    {
+        long fd = sys_open("/proc/net/sockstat", 0, 0);
+        if (fd >= 0) {
+            static char sb[512];
+            long n = sys_read((int)fd, sb, sizeof(sb) - 1);
+            sys_close((int)fd);
+            if (n > 0) {
+                sb[n] = '\0';
+                bool has_sockets = false, has_tcp = false;
+                for (long i = 0; i < n - 4; i++) {
+                    if (sb[i]=='s' && sb[i+1]=='o' && sb[i+2]=='c' && sb[i+3]=='k') has_sockets = true;
+                    if (sb[i]=='T' && sb[i+1]=='C' && sb[i+2]=='P') has_tcp = true;
+                }
+                if (has_sockets && has_tcp) { fut_test_pass(); }
+                else { fut_test_fail(1836); }
+            } else { fut_test_fail(1836); }
+        } else { fut_test_fail(1836); }
+    }
+}
+
 /* Tests 1831-1834: firewall ioctl management */
 __attribute__((noinline)) static void test_firewall_ioctls(void) {
     extern long sys_ioctl(int fd, unsigned long request, void *argp);
@@ -58511,6 +58560,7 @@ void fut_misc_test_thread(void *arg) {
     }
 
     test_firewall_ioctls();  /* Tests 1831-1834 */
+    test_procnet_files();    /* Tests 1835-1836 */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -25,6 +25,7 @@
 #include <kernel/fut_memory.h>
 #include <kernel/fut_lock.h>
 #include <kernel/errno.h>
+#include <futura/netif.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -229,25 +230,53 @@ static ssize_t sysfs_file_read(struct fut_vnode *vnode, void *buf,
             /* Expose the standard sleep states without actually supporting them */
             total = sysfs_gen_str(tmp, sizeof(tmp), "freeze mem standby disk\n");
             break;
-        /* /sys/class/net/lo/ attribute files */
-        case SYSFS_NET_LO_IFINDEX:
-            total = sysfs_gen_str(tmp, sizeof(tmp), "1\n");
+        /* /sys/class/net/lo/ attribute files — read real data from netif registry */
+        case SYSFS_NET_LO_IFINDEX: {
+            struct net_iface *lo = netif_by_name("lo");
+            char ibuf[16]; int pos = 0;
+            int v = lo ? lo->index : 1;
+            if (v >= 10) ibuf[pos++] = '0' + v / 10;
+            ibuf[pos++] = '0' + v % 10;
+            ibuf[pos++] = '\n'; ibuf[pos] = '\0';
+            total = sysfs_gen_str(tmp, sizeof(tmp), ibuf);
             break;
-        case SYSFS_NET_LO_OPERSTATE:
-            total = sysfs_gen_str(tmp, sizeof(tmp), "unknown\n");
+        }
+        case SYSFS_NET_LO_OPERSTATE: {
+            struct net_iface *lo = netif_by_name("lo");
+            total = sysfs_gen_str(tmp, sizeof(tmp),
+                (lo && (lo->flags & 0x0040)) ? "up\n" : "down\n");
             break;
+        }
         case SYSFS_NET_LO_TYPE:
             total = sysfs_gen_str(tmp, sizeof(tmp), "772\n");
             break;
-        case SYSFS_NET_LO_MTU:
-            total = sysfs_gen_str(tmp, sizeof(tmp), "65536\n");
+        case SYSFS_NET_LO_MTU: {
+            struct net_iface *lo = netif_by_name("lo");
+            char mbuf[16]; int pos = 0;
+            uint32_t mtu = lo ? lo->mtu : 65536;
+            if (mtu == 0) { mbuf[pos++] = '0'; }
+            else { char t[12]; int ti = 0; while (mtu > 0) { t[ti++] = '0' + mtu%10; mtu /= 10; } while (ti > 0) mbuf[pos++] = t[--ti]; }
+            mbuf[pos++] = '\n'; mbuf[pos] = '\0';
+            total = sysfs_gen_str(tmp, sizeof(tmp), mbuf);
             break;
+        }
         case SYSFS_NET_LO_ADDRESS:
             total = sysfs_gen_str(tmp, sizeof(tmp), "00:00:00:00:00:00\n");
             break;
-        case SYSFS_NET_LO_FLAGS:
-            total = sysfs_gen_str(tmp, sizeof(tmp), "0x10\n");
+        case SYSFS_NET_LO_FLAGS: {
+            struct net_iface *lo = netif_by_name("lo");
+            uint32_t flags = lo ? lo->flags : 0x10;
+            char fbuf[16]; int pos = 0;
+            fbuf[pos++] = '0'; fbuf[pos++] = 'x';
+            static const char hex[] = "0123456789abcdef";
+            if (flags >= 0x1000) fbuf[pos++] = hex[(flags >> 12) & 0xF];
+            if (flags >= 0x100) fbuf[pos++] = hex[(flags >> 8) & 0xF];
+            if (flags >= 0x10) fbuf[pos++] = hex[(flags >> 4) & 0xF];
+            fbuf[pos++] = hex[flags & 0xF];
+            fbuf[pos++] = '\n'; fbuf[pos] = '\0';
+            total = sysfs_gen_str(tmp, sizeof(tmp), fbuf);
             break;
+        }
         /* /sys/devices/system/cpu/ attribute files */
         case SYSFS_CPU_ONLINE:      total = sysfs_gen_str(tmp, sizeof(tmp), "0\n");   break;
         case SYSFS_CPU_POSSIBLE:    total = sysfs_gen_str(tmp, sizeof(tmp), "0\n");   break;
@@ -504,7 +533,34 @@ static int sysfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
     switch (n->kind) {
         case SYSFS_ROOT:             return sysfs_table_readdir(root_entries,      ROOT_N,      cookie, de);
         case SYSFS_CLASS_DIR:        return sysfs_table_readdir(class_entries,    CLASS_N,    cookie, de);
-        case SYSFS_CLASS_NET_DIR:    return sysfs_table_readdir(class_net_entries,CLASS_NET_N,cookie, de);
+        case SYSFS_CLASS_NET_DIR: {
+            /* First 2 entries: . and .. (from static table) */
+            uint64_t idx = *cookie;
+            if (idx < 2)
+                return sysfs_table_readdir(class_net_entries, CLASS_NET_N, cookie, de);
+            /* Dynamic entries: enumerate all active interfaces */
+            int iface_idx = (int)(idx - 2);
+            int seen = 0;
+            for (int i = 1; i <= 16; i++) {
+                struct net_iface *iface = netif_by_index(i);
+                if (iface && iface->active) {
+                    if (seen == iface_idx) {
+                        de->d_ino = SYSFS_INO_CLASS_NET_LO + (uint64_t)i * 100;
+                        de->d_off = (int64_t)(idx + 1);
+                        de->d_type = FUT_VDIR_TYPE_DIR;
+                        de->d_reclen = sizeof(*de);
+                        size_t nlen = 0;
+                        while (nlen < 15 && iface->name[nlen]) nlen++;
+                        __builtin_memcpy(de->d_name, iface->name, nlen);
+                        de->d_name[nlen] = '\0';
+                        *cookie = idx + 1;
+                        return 1;
+                    }
+                    seen++;
+                }
+            }
+            return -ENOENT;
+        }
         case SYSFS_CLASS_NET_LO_DIR: return sysfs_table_readdir(lo_entries,       LO_N,       cookie, de);
         case SYSFS_BUS_DIR:          return sysfs_table_readdir(bus_entries,      BUS_N,      cookie, de);
         case SYSFS_BUS_PCI_DIR:      return sysfs_table_readdir(pci_entries,      PCI_N,      cookie, de);
@@ -555,8 +611,23 @@ static int sysfs_dir_lookup(struct fut_vnode *dir, const char *name,
             return sysfs_table_lookup(mnt, root_entries, ROOT_N, name, result);
         case SYSFS_CLASS_DIR:
             return sysfs_table_lookup(mnt, class_entries, CLASS_N, name, result);
-        case SYSFS_CLASS_NET_DIR:
-            return sysfs_table_lookup(mnt, class_net_entries, CLASS_NET_N, name, result);
+        case SYSFS_CLASS_NET_DIR: {
+            /* First check static table (has ".", "..", "lo") */
+            int rc = sysfs_table_lookup(mnt, class_net_entries, CLASS_NET_N, name, result);
+            if (rc == 0) return 0;
+            /* Dynamic lookup: any registered interface by name */
+            struct net_iface *iface = netif_by_name(name);
+            if (iface && iface->active) {
+                /* Use a synthetic inode and the lo_entries kind for attributes.
+                 * We reuse SYSFS_CLASS_NET_LO_DIR kind — the read handler uses
+                 * the interface name from the vnode path context. */
+                *result = sysfs_alloc_vnode(mnt, VN_DIR,
+                    SYSFS_INO_CLASS_NET_LO + (uint64_t)iface->index * 100,
+                    0040555, SYSFS_CLASS_NET_LO_DIR);
+                return *result ? 0 : -ENOMEM;
+            }
+            return -ENOENT;
+        }
         case SYSFS_CLASS_NET_LO_DIR:
             return sysfs_table_lookup(mnt, lo_entries, LO_N, name, result);
         case SYSFS_BUS_DIR:

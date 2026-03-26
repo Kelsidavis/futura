@@ -35619,10 +35619,11 @@ static void test_sysfs_net_lo(void) {
         __builtin_memset(buf, 0, sizeof(buf));
         n = sys_read((int)fd, buf, sizeof(buf) - 1);
         sys_close((int)fd);
-        if (n > 0 && __builtin_memcmp(buf, "unknown\n", 8) == 0) {
+        if (n > 0 && (__builtin_memcmp(buf, "unknown\n", 8) == 0 ||
+                      __builtin_memcmp(buf, "up\n", 3) == 0)) {
             fut_test_pass(); /* 830 */
         } else {
-            fut_printf("[MISC-TEST] x operstate content wrong\n");
+            fut_printf("[MISC-TEST] x operstate content wrong: '%s'\n", buf);
             fut_test_fail(830);
         }
     } else {
@@ -53590,6 +53591,19 @@ __attribute__((noinline)) static void test_procnet_files(void) {
             } else { fut_test_fail(1836); }
         } else { fut_test_fail(1836); }
     }
+
+    /* Test 1839: /sys/class/net/lo/mtu returns real value */
+    fut_printf("[MISC-TEST] Test 1839: sysfs net/lo/mtu real data\n");
+    {
+        long fd = sys_open("/sys/class/net/lo/mtu", 0, 0);
+        if (fd >= 0) {
+            static char mb[32];
+            long n = sys_read((int)fd, mb, sizeof(mb) - 1);
+            sys_close((int)fd);
+            if (n > 0 && mb[0] >= '1' && mb[0] <= '9') { fut_test_pass(); }
+            else { fut_test_fail(1839); }
+        } else { fut_test_fail(1839); }
+    }
 }
 
 /* Tests 1831-1834: firewall ioctl management */
@@ -58560,7 +58574,7 @@ void fut_misc_test_thread(void *arg) {
     }
 
     test_firewall_ioctls();  /* Tests 1831-1834 */
-    test_procnet_files();    /* Tests 1835-1836 */
+    test_procnet_files();    /* Tests 1835-1836, 1839 */
 
     /* Test 1838: ip_masquerade_dev sysctl write/read */
     fut_printf("[MISC-TEST] Test 1838: ip_masquerade_dev sysctl\n");

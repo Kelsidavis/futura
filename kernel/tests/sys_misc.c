@@ -57952,6 +57952,124 @@ __attribute__((noinline)) static void test_net_procfs_devnodes(void) {
 }
 
 /* ============================================================
+ * Tests 2014-2019: /dev/rtc0 and /dev/mem devices
+ * ============================================================ */
+__attribute__((noinline)) static void test_dev_rtc_mem(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_ioctl(int fd, unsigned long request, void *argp);
+    extern long sys_close(int);
+
+    /* ── Test 2014: /dev/rtc0 is openable ── */
+    fut_printf("[MISC-TEST] Test 2014: /dev/rtc0 openable\n");
+    {
+        long fd = sys_open("/dev/rtc0", 0, 0);
+        if (fd >= 0) {
+            fut_printf("[MISC-TEST] ✓ Test 2014: /dev/rtc0 fd=%ld\n", fd);
+            sys_close((int)fd);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2014: open=%ld\n", fd);
+            fut_test_fail(2014);
+        }
+    }
+
+    /* ── Test 2015: RTC_RD_TIME ioctl returns valid time ── */
+    fut_printf("[MISC-TEST] Test 2015: RTC_RD_TIME\n");
+    {
+        long fd = sys_open("/dev/rtc0", 0, 0);
+        if (fd >= 0) {
+            struct { int sec, min, hour, mday, mon, year, wday, yday, isdst; } tm;
+            memset(&tm, 0xFF, sizeof(tm));
+            long r = sys_ioctl((int)fd, 0x80247009 /*RTC_RD_TIME*/, &tm);
+            sys_close((int)fd);
+            if (r == 0 && tm.hour >= 0 && tm.hour < 24 && tm.year >= 50) {
+                fut_printf("[MISC-TEST] ✓ Test 2015: RTC %d-%02d-%02d %02d:%02d:%02d\n",
+                           tm.year+1900, tm.mon+1, tm.mday, tm.hour, tm.min, tm.sec);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2015: r=%ld y=%d h=%d\n", r, tm.year, tm.hour);
+                fut_test_fail(2015);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2015: open=%ld\n", fd);
+            fut_test_fail(2015);
+        }
+    }
+
+    /* ── Test 2016: read() from /dev/rtc0 returns struct rtc_time ── */
+    fut_printf("[MISC-TEST] Test 2016: read /dev/rtc0\n");
+    {
+        long fd = sys_open("/dev/rtc0", 0, 0);
+        if (fd >= 0) {
+            struct { int sec, min, hour, mday, mon, year, wday, yday, isdst; } tm;
+            long n = sys_read((int)fd, &tm, sizeof(tm));
+            sys_close((int)fd);
+            if (n == (long)sizeof(tm) && tm.year >= 50) {
+                fut_printf("[MISC-TEST] ✓ Test 2016: read %ld bytes, year=%d\n", n, tm.year+1900);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2016: n=%ld year=%d\n", n, tm.year);
+                fut_test_fail(2016);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2016: open=%ld\n", fd);
+            fut_test_fail(2016);
+        }
+    }
+
+    /* ── Test 2017: /dev/mem is openable ── */
+    fut_printf("[MISC-TEST] Test 2017: /dev/mem openable\n");
+    {
+        long fd = sys_open("/dev/mem", 0, 0);
+        if (fd >= 0) {
+            fut_printf("[MISC-TEST] ✓ Test 2017: /dev/mem fd=%ld\n", fd);
+            sys_close((int)fd);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2017: open=%ld\n", fd);
+            fut_test_fail(2017);
+        }
+    }
+
+    /* ── Test 2018: /dev/mem read returns zeroes ── */
+    fut_printf("[MISC-TEST] Test 2018: /dev/mem read zeroes\n");
+    {
+        long fd = sys_open("/dev/mem", 0, 0);
+        if (fd >= 0) {
+            static uint8_t buf[16];
+            memset(buf, 0xFF, 16);
+            long n = sys_read((int)fd, buf, 16);
+            sys_close((int)fd);
+            if (n == 16 && buf[0] == 0 && buf[15] == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 2018: /dev/mem returns zeroes\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2018: n=%ld buf[0]=%d\n", n, buf[0]);
+                fut_test_fail(2018);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2018: open=%ld\n", fd);
+            fut_test_fail(2018);
+        }
+    }
+
+    /* ── Test 2019: /dev/rtc alias works ── */
+    fut_printf("[MISC-TEST] Test 2019: /dev/rtc alias\n");
+    {
+        long fd = sys_open("/dev/rtc", 0, 0);
+        if (fd >= 0) {
+            fut_printf("[MISC-TEST] ✓ Test 2019: /dev/rtc fd=%ld\n", fd);
+            sys_close((int)fd);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2019: open=%ld\n", fd);
+            fut_test_fail(2019);
+        }
+    }
+}
+
+/* ============================================================
  * Tests 2002-2013: sysfs DMI, RTC, block device ioctls
  * ============================================================ */
 __attribute__((noinline)) static void test_sysfs_dmi_blkdev(void) {
@@ -63135,6 +63253,7 @@ void fut_misc_test_thread(void *arg) {
     test_loop_device(); /* Tests 1885-1887 */
     test_per_iface_conf(); /* Tests 1869-1871 */
 
+    test_dev_rtc_mem(); /* Tests 2014-2019 */
     test_sysfs_dmi_blkdev(); /* Tests 2002-2013 */
     test_perf_events(); /* Tests 1994-2001 */
     test_userfaultfd_statmount(); /* Tests 1982-1993 */

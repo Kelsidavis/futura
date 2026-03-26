@@ -93,6 +93,11 @@
 #define BLKBSZSET   0x40081271  /* Set block size */
 #define BLKGETSIZE64 0x80081272 /* Get device size (bytes, 64-bit) */
 
+/* Performance monitoring ioctls */
+#define PERF_EVENT_IOC_ENABLE    0x2400
+#define PERF_EVENT_IOC_DISABLE   0x2401
+#define PERF_EVENT_IOC_RESET     0x2403
+
 /* Futura firewall ioctls (custom range 0x89F0-0x89FF) */
 #define SIOCFWADDRULE  0x89F0  /* Add firewall rule */
 #define SIOCFWPOLICY   0x89F1  /* Set chain default policy */
@@ -649,7 +654,15 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
                                    request == SIOCBRADDBR || request == SIOCBRDELBR ||
                                    request == SIOCBRADDIF || request == SIOCBRDELIF ||
                                    request == 0x400454CA /* TUNSETIFF */ ||
-                                   (request & 0xFF00) == 0xAA00 /* UFFDIO_* */);
+                                   (request & 0xFF00) == 0xAA00 /* UFFDIO_* */ ||
+                                   request == BLKGETSIZE64 || request == BLKGETSIZE ||
+                                   request == BLKSSZGET || request == BLKBSZGET ||
+                                   request == BLKROGET || request == BLKFLSBUF ||
+                                   (request & 0xFFFF0000) == 0x80240000 /* RTC_* */ ||
+                                   (request & 0xFFFF0000) == 0x40240000 /* RTC_* */ ||
+                                   request == PERF_EVENT_IOC_ENABLE ||
+                                   request == PERF_EVENT_IOC_DISABLE ||
+                                   request == PERF_EVENT_IOC_RESET);
                 if (argp_val >= KERNEL_VIRTUAL_BASE && !is_builtin) {
                     return -EFAULT;
                 }

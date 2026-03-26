@@ -185,6 +185,108 @@ static ssize_t kmsg_write(void *inode, void *priv, const void *buf, size_t n, of
     return (ssize_t)n;
 }
 
+/* ── /dev/rtc0 — Real-time clock ── */
+
+/* RTC ioctl numbers (Linux ABI) */
+#define RTC_RD_TIME     0x80247009  /* Read RTC time */
+#define RTC_SET_TIME    0x4024700A  /* Set RTC time */
+#define RTC_ALM_READ    0x80247008  /* Read alarm time */
+#define RTC_ALM_SET     0x40247007  /* Set alarm time */
+#define RTC_IRQP_READ   0x8008700B  /* Read IRQ rate */
+#define RTC_IRQP_SET    0x4008700C  /* Set IRQ rate */
+
+struct rtc_time {
+    int tm_sec;
+    int tm_min;
+    int tm_hour;
+    int tm_mday;
+    int tm_mon;
+    int tm_year;
+    int tm_wday;
+    int tm_yday;
+    int tm_isdst;
+};
+
+static void epoch_to_rtc_time(uint64_t epoch_sec, struct rtc_time *tm) {
+    /* Convert epoch seconds to broken-down time (simplified, no leap seconds) */
+    uint64_t days = epoch_sec / 86400;
+    uint32_t tod = (uint32_t)(epoch_sec % 86400);
+    tm->tm_sec = (int)(tod % 60);
+    tm->tm_min = (int)((tod / 60) % 60);
+    tm->tm_hour = (int)(tod / 3600);
+    tm->tm_wday = (int)((days + 4) % 7); /* Jan 1 1970 was Thursday */
+
+    /* Year calculation */
+    int y = 1970;
+    while (1) {
+        int leap = ((y % 4 == 0) && (y % 100 != 0 || y % 400 == 0)) ? 1 : 0;
+        uint32_t ydays = 365 + (uint32_t)leap;
+        if (days < ydays) break;
+        days -= ydays;
+        y++;
+    }
+    tm->tm_year = y - 1900;
+    tm->tm_yday = (int)days;
+
+    /* Month calculation */
+    static const int mdays[] = {31,28,31,30,31,30,31,31,30,31,30,31};
+    int leap = ((y % 4 == 0) && (y % 100 != 0 || y % 400 == 0)) ? 1 : 0;
+    int m;
+    for (m = 0; m < 12; m++) {
+        int md = mdays[m] + (m == 1 ? leap : 0);
+        if ((int)days < md) break;
+        days -= (uint64_t)md;
+    }
+    tm->tm_mon = m;
+    tm->tm_mday = (int)days + 1;
+    tm->tm_isdst = 0;
+}
+
+static ssize_t rtc_read(void *inode, void *priv, void *buf, size_t n, off_t *pos) {
+    (void)inode; (void)priv; (void)pos;
+    if (n < sizeof(struct rtc_time)) return -EINVAL;
+
+    extern int64_t g_realtime_offset_sec;
+    extern uint64_t fut_get_ticks(void);
+    uint64_t now = fut_get_ticks() / 100 + (uint64_t)g_realtime_offset_sec;
+
+    struct rtc_time tm;
+    epoch_to_rtc_time(now, &tm);
+    memcpy(buf, &tm, sizeof(tm));
+    return sizeof(struct rtc_time);
+}
+
+static int rtc_ioctl(void *inode, void *priv, unsigned long req, unsigned long arg) {
+    (void)inode; (void)priv;
+
+    extern int64_t g_realtime_offset_sec;
+    extern uint64_t fut_get_ticks(void);
+
+    switch (req) {
+    case RTC_RD_TIME: {
+        struct rtc_time *tm = (struct rtc_time *)(uintptr_t)arg;
+        if (!tm) return -EFAULT;
+        uint64_t now = fut_get_ticks() / 100 + (uint64_t)g_realtime_offset_sec;
+        epoch_to_rtc_time(now, tm);
+        return 0;
+    }
+    case RTC_SET_TIME: {
+        /* Accept but don't change system time from RTC ioctl */
+        return 0;
+    }
+    case RTC_ALM_READ:
+    case RTC_ALM_SET:
+        return 0; /* Alarm: accept silently */
+    case RTC_IRQP_READ: {
+        unsigned long *rate = (unsigned long *)(uintptr_t)arg;
+        if (rate) *rate = 1024;
+        return 0;
+    }
+    default:
+        return -EINVAL;
+    }
+}
+
 void dev_null_init(void) {
     /* Initialize file ops at runtime (ARM64 relocation safety) */
     null_fops.read = null_read;
@@ -232,5 +334,25 @@ void dev_null_init(void) {
     chrdev_register(10, 183, &hwrng_fops, "hwrng", NULL);
     devfs_create_chr("/dev/hwrng", 10, 183);
 
-    fut_printf("[DEV] /dev/null, /dev/zero, /dev/full, /dev/urandom, /dev/random, /dev/kmsg, /dev/hwrng registered\n");
+    /* /dev/rtc0 = (252,0) — Real-time clock device.
+     * Supports read() for time and RTC_RD_TIME/RTC_SET_TIME ioctls.
+     * Used by hwclock, systemd-timesyncd, and ntpd. */
+    static struct fut_file_ops rtc_fops;
+    rtc_fops.read = rtc_read;
+    rtc_fops.ioctl = rtc_ioctl;
+    chrdev_register(252, 0, &rtc_fops, "rtc0", NULL);
+    devfs_create_chr("/dev/rtc0", 252, 0);
+    devfs_create_chr("/dev/rtc", 252, 0); /* symlink-like alias */
+
+    /* /dev/mem = (1,1) — Physical memory access (read-only stub).
+     * Returns zeroes for all reads. Programs like dmidecode and
+     * firmware scanners check for this device's existence. */
+    static struct fut_file_ops mem_fops;
+    mem_fops.read = zero_read;   /* Read returns zeroes */
+    mem_fops.write = null_write; /* Write discards */
+    chrdev_register(1, 1, &mem_fops, "mem", NULL);
+    devfs_create_chr("/dev/mem", 1, 1);
+
+    fut_printf("[DEV] /dev/null, /dev/zero, /dev/full, /dev/urandom, /dev/random, "
+               "/dev/kmsg, /dev/hwrng, /dev/rtc0, /dev/mem registered\n");
 }

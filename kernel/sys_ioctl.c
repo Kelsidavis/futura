@@ -596,6 +596,7 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
                                    request == SIOCGIFNAME ||
                                    request == 0x8916 /* SIOCSIFADDR */ ||
                                    request == 0x891C /* SIOCSIFNETMASK */ ||
+                                   request == 0x8922 /* SIOCSIFMTU */ ||
                                    request == SIOCADDRT || request == SIOCDELRT);
                 if (argp_val >= KERNEL_VIRTUAL_BASE && !is_builtin) {
                     return -EFAULT;
@@ -792,6 +793,7 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
             request != SIOCGIFNAME &&
             request != 0x8916 /* SIOCSIFADDR */ &&
             request != 0x891C /* SIOCSIFNETMASK */ &&
+            request != 0x8922 /* SIOCSIFMTU */ &&
             request != SIOCADDRT && request != SIOCDELRT) {
             return file->chr_ops->ioctl(file->chr_inode, file->chr_private, request, (unsigned long)argp);
         }
@@ -1449,9 +1451,11 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
 #endif
             if (fut_copy_from_user(&ifr, argp, sizeof(ifr)) != 0)
                 return -EFAULT;
-            if (__builtin_strncmp(ifr.ifr_name, "lo", IFNAMSIZ) != 0)
-                return -ENODEV;
-            ifr.ifr_ifru.ifru_ivalue = 65536;
+            {
+                struct net_iface *miface = netif_by_name(ifr.ifr_name);
+                if (!miface) return -ENODEV;
+                ifr.ifr_ifru.ifru_ivalue = (int)miface->mtu;
+            }
 #ifdef KERNEL_VIRTUAL_BASE
             if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
                 __builtin_memcpy(argp, &ifr, sizeof(ifr));
@@ -1459,6 +1463,26 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
 #endif
             if (fut_copy_to_user(argp, &ifr, sizeof(ifr)) != 0)
                 return -EFAULT;
+            return 0;
+        }
+
+        case 0x8922 /* SIOCSIFMTU */: {
+            if (!argp)
+                return -EFAULT;
+            struct fut_ifreq sifr;
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
+                __builtin_memcpy(&sifr, argp, sizeof(sifr));
+            else
+#endif
+            if (fut_copy_from_user(&sifr, argp, sizeof(sifr)) != 0)
+                return -EFAULT;
+            struct net_iface *miface = netif_by_name(sifr.ifr_name);
+            if (!miface) return -ENODEV;
+            int new_mtu = sifr.ifr_ifru.ifru_ivalue;
+            if (new_mtu < 68 || new_mtu > 65535)
+                return -EINVAL;
+            miface->mtu = (uint32_t)new_mtu;
             return 0;
         }
 
@@ -1473,11 +1497,16 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
 #endif
             if (fut_copy_from_user(&ifr, argp, sizeof(ifr)) != 0)
                 return -EFAULT;
-            if (__builtin_strncmp(ifr.ifr_name, "lo", IFNAMSIZ) != 0)
-                return -ENODEV;
-            /* Loopback has ARPHRD_LOOPBACK (772) hw family, zero MAC */
-            __builtin_memset(&ifr.ifr_ifru, 0, sizeof(ifr.ifr_ifru));
-            ifr.ifr_ifru.ifru_hwaddr.sa_family = 772; /* ARPHRD_LOOPBACK */
+            {
+                struct net_iface *hiface = netif_by_name(ifr.ifr_name);
+                if (!hiface) return -ENODEV;
+                __builtin_memset(&ifr.ifr_ifru, 0, sizeof(ifr.ifr_ifru));
+                if (hiface->flags & IFF_LOOPBACK)
+                    ifr.ifr_ifru.ifru_hwaddr.sa_family = 772; /* ARPHRD_LOOPBACK */
+                else
+                    ifr.ifr_ifru.ifru_hwaddr.sa_family = 1; /* ARPHRD_ETHER */
+                __builtin_memcpy(ifr.ifr_ifru.ifru_hwaddr.sa_data, hiface->mac, 6);
+            }
 #ifdef KERNEL_VIRTUAL_BASE
             if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
                 __builtin_memcpy(argp, &ifr, sizeof(ifr));
@@ -1499,9 +1528,11 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
 #endif
             if (fut_copy_from_user(&ifr, argp, sizeof(ifr)) != 0)
                 return -EFAULT;
-            if (__builtin_strncmp(ifr.ifr_name, "lo", IFNAMSIZ) != 0)
-                return -ENODEV;
-            ifr.ifr_ifru.ifru_ivalue = 1; /* lo is always index 1 */
+            {
+                struct net_iface *iiface = netif_by_name(ifr.ifr_name);
+                if (!iiface) return -ENODEV;
+                ifr.ifr_ifru.ifru_ivalue = iiface->index;
+            }
 #ifdef KERNEL_VIRTUAL_BASE
             if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
                 __builtin_memcpy(argp, &ifr, sizeof(ifr));
@@ -1525,10 +1556,13 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
 #endif
             if (fut_copy_from_user(&ifr, argp, sizeof(ifr)) != 0)
                 return -EFAULT;
-            if (ifr.ifr_ifru.ifru_ivalue != 1)
-                return -ENODEV;
-            __builtin_memset(ifr.ifr_name, 0, IFNAMSIZ);
-            __builtin_memcpy(ifr.ifr_name, "lo", 2);
+            {
+                struct net_iface *niface = netif_by_index(ifr.ifr_ifru.ifru_ivalue);
+                if (!niface) return -ENODEV;
+                __builtin_memset(ifr.ifr_name, 0, IFNAMSIZ);
+                for (int j = 0; j < IFNAMSIZ - 1 && niface->name[j]; j++)
+                    ifr.ifr_name[j] = niface->name[j];
+            }
 #ifdef KERNEL_VIRTUAL_BASE
             if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
                 __builtin_memcpy(argp, &ifr, sizeof(ifr));

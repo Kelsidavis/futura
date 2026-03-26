@@ -51702,6 +51702,119 @@ __attribute__((noinline)) static void test_bindtodevice_ifconf(void) {
     }
 }
 
+/* Tests 1817-1820: SIOCGIFHWADDR, SIOCGIFINDEX, SIOCGIFNAME, SIOCSIFMTU (real netif) */
+__attribute__((noinline)) static void test_netif_ioctl_extended(void) {
+    extern long sys_ioctl(int fd, unsigned long request, void *argp);
+    extern long sys_open(const char *, int, int);
+    extern long sys_close(int);
+
+    long nfd = sys_open("/dev/null", 0x0002, 0);
+    if (nfd < 0) {
+        fut_test_fail(1817); fut_test_fail(1818); fut_test_fail(1819); fut_test_fail(1820);
+        return;
+    }
+
+    /* Test 1817: SIOCGIFHWADDR on eth0 returns real MAC */
+    fut_printf("[MISC-TEST] Test 1817: SIOCGIFHWADDR eth0\n");
+    {
+        static char ifr[40];
+        __builtin_memset(ifr, 0, 40);
+        __builtin_memcpy(ifr, "eth0", 4);
+        long rc = sys_ioctl((int)nfd, 0x8927 /* SIOCGIFHWADDR */, ifr);
+        if (rc == 0) {
+            /* sa_family at offset 16 should be 1 (ARPHRD_ETHER) */
+            uint16_t family = 0;
+            __builtin_memcpy(&family, ifr + 16, 2);
+            /* MAC at sa_data = offset 18, first byte should be 0x52 (from test registration) */
+            uint8_t mac0 = (uint8_t)ifr[18];
+            if (family == 1 && mac0 == 0x52) {
+                fut_printf("[MISC-TEST] ✓ Test 1817: eth0 ARPHRD_ETHER mac[0]=0x52\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1817: family=%u mac0=0x%02x\n", family, mac0);
+                fut_test_fail(1817);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1817: rc=%ld\n", rc);
+            fut_test_fail(1817);
+        }
+    }
+
+    /* Test 1818: SIOCGIFINDEX on eth0 returns real index */
+    fut_printf("[MISC-TEST] Test 1818: SIOCGIFINDEX eth0\n");
+    {
+        static char ifr[40];
+        __builtin_memset(ifr, 0, 40);
+        __builtin_memcpy(ifr, "eth0", 4);
+        long rc = sys_ioctl((int)nfd, 0x8933 /* SIOCGIFINDEX */, ifr);
+        if (rc == 0) {
+            int idx = 0;
+            __builtin_memcpy(&idx, ifr + 16, 4);
+            struct net_iface *eth = netif_by_name("eth0");
+            if (eth && idx == eth->index) {
+                fut_printf("[MISC-TEST] ✓ Test 1818: eth0 index=%d\n", idx);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1818: idx=%d expected=%d\n",
+                           idx, eth ? eth->index : -1);
+                fut_test_fail(1818);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1818: rc=%ld\n", rc);
+            fut_test_fail(1818);
+        }
+    }
+
+    /* Test 1819: SIOCGIFNAME by index returns correct name */
+    fut_printf("[MISC-TEST] Test 1819: SIOCGIFNAME for lo index\n");
+    {
+        static char ifr[40];
+        __builtin_memset(ifr, 0, 40);
+        /* Set ifru_ivalue = 1 (lo index) at offset 16 */
+        int lo_idx = 1;
+        __builtin_memcpy(ifr + 16, &lo_idx, 4);
+        long rc = sys_ioctl((int)nfd, 0x8910 /* SIOCGIFNAME */, ifr);
+        if (rc == 0 && ifr[0] == 'l' && ifr[1] == 'o') {
+            fut_printf("[MISC-TEST] ✓ Test 1819: idx=1 → '%s'\n", ifr);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1819: rc=%ld name='%s'\n", rc, ifr);
+            fut_test_fail(1819);
+        }
+    }
+
+    /* Test 1820: SIOCSIFMTU set + SIOCGIFMTU read back */
+    fut_printf("[MISC-TEST] Test 1820: SIOCSIFMTU set and readback\n");
+    {
+        static char ifr[40];
+        __builtin_memset(ifr, 0, 40);
+        __builtin_memcpy(ifr, "eth0", 4);
+        int new_mtu = 9000; /* jumbo frames */
+        __builtin_memcpy(ifr + 16, &new_mtu, 4);
+        long rc = sys_ioctl((int)nfd, 0x8922 /* SIOCSIFMTU */, ifr);
+        if (rc == 0) {
+            /* Read back */
+            __builtin_memset(ifr, 0, 40);
+            __builtin_memcpy(ifr, "eth0", 4);
+            long rc2 = sys_ioctl((int)nfd, 0x8921 /* SIOCGIFMTU */, ifr);
+            int got_mtu = 0;
+            __builtin_memcpy(&got_mtu, ifr + 16, 4);
+            if (rc2 == 0 && got_mtu == 9000) {
+                fut_printf("[MISC-TEST] ✓ Test 1820: eth0 MTU=9000\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1820: got_mtu=%d rc2=%ld\n", got_mtu, rc2);
+                fut_test_fail(1820);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1820: set rc=%ld\n", rc);
+            fut_test_fail(1820);
+        }
+    }
+
+    sys_close((int)nfd);
+}
+
 /* Tests 1805-1808: ioctl-based interface/route configuration (SIOCSIFADDR etc.) */
 __attribute__((noinline)) static void test_netif_ioctl_config(void) {
     extern long sys_ioctl(int fd, unsigned long request, void *argp);
@@ -58082,6 +58195,7 @@ void fut_misc_test_thread(void *arg) {
     test_netif_ioctl_config();       /* Tests 1805-1808 */
     test_arp_icmp_router();          /* Tests 1809-1812 */
     test_bindtodevice_ifconf();      /* Tests 1813-1816 */
+    test_netif_ioctl_extended();     /* Tests 1817-1820 */
     test_pty_slave_cloexec();        /* Tests 1793-1796 */
     test_chrdev_cloexec();           /* Tests 1789-1792 */
     test_pty_fcntl_flags();          /* Tests 1785-1788 */

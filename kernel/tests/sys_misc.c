@@ -53537,6 +53537,98 @@ __attribute__((noinline)) static void test_fd_lifecycle_edges(void) {
     }
 }
 
+/* Tests 1823-1826: writable network sysctls via /proc/sys/net/ */
+__attribute__((noinline)) static void test_writable_net_sysctls(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_write(int, const void *, size_t);
+    extern long sys_close(int);
+
+    /* Helper: write string to path, then read back and compare prefix */
+    /* Test 1823: write somaxconn then read back */
+    fut_printf("[MISC-TEST] Test 1823: write /proc/sys/net/core/somaxconn\n");
+    {
+        long fd = sys_open("/proc/sys/net/core/somaxconn", 0x0001, 0);
+        if (fd >= 0) { static const char v[] = "128"; sys_write((int)fd, v, 3); sys_close((int)fd); }
+        long fd2 = sys_open("/proc/sys/net/core/somaxconn", 0, 0);
+        if (fd2 >= 0) {
+            static char rb[32];
+            long n = sys_read((int)fd2, rb, sizeof(rb) - 1);
+            sys_close((int)fd2);
+            if (n > 0) { rb[n] = '\0';
+                if (rb[0] == '1' && rb[1] == '2' && rb[2] == '8') {
+                    fut_printf("[MISC-TEST] ✓ Test 1823: somaxconn=%s", rb);
+                    fut_test_pass();
+                } else { fut_printf("[MISC-TEST] ✗ Test 1823: got=%s", rb); fut_test_fail(1823); }
+            } else { fut_test_fail(1823); }
+        } else { fut_test_fail(1823); }
+        long fd3 = sys_open("/proc/sys/net/core/somaxconn", 0x0001, 0);
+        if (fd3 >= 0) { static const char d[] = "4096"; sys_write((int)fd3, d, 4); sys_close((int)fd3); }
+    }
+
+    /* Test 1824: write tcp_fin_timeout then read back */
+    fut_printf("[MISC-TEST] Test 1824: write tcp_fin_timeout\n");
+    {
+        long fd = sys_open("/proc/sys/net/ipv4/tcp_fin_timeout", 0x0001, 0);
+        if (fd >= 0) { static const char v[] = "30"; sys_write((int)fd, v, 2); sys_close((int)fd); }
+        long fd2 = sys_open("/proc/sys/net/ipv4/tcp_fin_timeout", 0, 0);
+        if (fd2 >= 0) {
+            static char rb[32];
+            long n = sys_read((int)fd2, rb, sizeof(rb) - 1);
+            sys_close((int)fd2);
+            if (n > 0) { rb[n] = '\0';
+                if (rb[0] == '3' && rb[1] == '0') { fut_test_pass(); }
+                else { fut_printf("[MISC-TEST] ✗ Test 1824: got=%s", rb); fut_test_fail(1824); }
+            } else { fut_test_fail(1824); }
+        } else { fut_test_fail(1824); }
+        long fd3 = sys_open("/proc/sys/net/ipv4/tcp_fin_timeout", 0x0001, 0);
+        if (fd3 >= 0) { static const char d[] = "60"; sys_write((int)fd3, d, 2); sys_close((int)fd3); }
+    }
+
+    /* Test 1825: ip_forward write/read roundtrip */
+    fut_printf("[MISC-TEST] Test 1825: ip_forward roundtrip\n");
+    {
+        long fd = sys_open("/proc/sys/net/ipv4/ip_forward", 0x0001, 0);
+        if (fd >= 0) { static const char v[] = "1"; sys_write((int)fd, v, 1); sys_close((int)fd); }
+        long fd2 = sys_open("/proc/sys/net/ipv4/ip_forward", 0, 0);
+        static char rb[8];
+        if (fd2 >= 0) {
+            long n = sys_read((int)fd2, rb, sizeof(rb) - 1);
+            sys_close((int)fd2);
+            if (n > 0 && rb[0] == '1') {
+                long fd3 = sys_open("/proc/sys/net/ipv4/ip_forward", 0x0001, 0);
+                if (fd3 >= 0) { static const char z[] = "0"; sys_write((int)fd3, z, 1); sys_close((int)fd3); }
+                long fd4 = sys_open("/proc/sys/net/ipv4/ip_forward", 0, 0);
+                if (fd4 >= 0) {
+                    static char rb2[8];
+                    long n2 = sys_read((int)fd4, rb2, sizeof(rb2) - 1);
+                    sys_close((int)fd4);
+                    if (n2 > 0 && rb2[0] == '0') { fut_test_pass(); } else { fut_test_fail(1825); }
+                } else { fut_test_fail(1825); }
+            } else { fut_test_fail(1825); }
+        } else { fut_test_fail(1825); }
+    }
+
+    /* Test 1826: write ip_unprivileged_port_start and read back */
+    fut_printf("[MISC-TEST] Test 1826: write ip_unprivileged_port_start\n");
+    {
+        long fd = sys_open("/proc/sys/net/ipv4/ip_unprivileged_port_start", 0x0001, 0);
+        if (fd >= 0) { static const char v[] = "512"; sys_write((int)fd, v, 3); sys_close((int)fd); }
+        long fd2 = sys_open("/proc/sys/net/ipv4/ip_unprivileged_port_start", 0, 0);
+        if (fd2 >= 0) {
+            static char rb[32];
+            long n = sys_read((int)fd2, rb, sizeof(rb) - 1);
+            sys_close((int)fd2);
+            if (n > 0) { rb[n] = '\0';
+                if (rb[0] == '5' && rb[1] == '1' && rb[2] == '2') { fut_test_pass(); }
+                else { fut_printf("[MISC-TEST] ✗ Test 1826: got=%s", rb); fut_test_fail(1826); }
+            } else { fut_test_fail(1826); }
+        } else { fut_test_fail(1826); }
+        long fd3 = sys_open("/proc/sys/net/ipv4/ip_unprivileged_port_start", 0x0001, 0);
+        if (fd3 >= 0) { static const char d[] = "1024"; sys_write((int)fd3, d, 4); sys_close((int)fd3); }
+    }
+}
+
 __attribute__((noinline)) static void test_umask_posix_create(void) {
     extern long sys_open(const char *, int, int);
     extern long sys_close(int);
@@ -58270,6 +58362,7 @@ void fut_misc_test_thread(void *arg) {
     test_fork_field_inheritance();   /* Tests 1745-1748 */
     test_rename_unlink_while_open(); /* Tests 1741-1744 */
     test_umask_posix_create();     /* Tests 1729-1732 */
+    test_writable_net_sysctls();   /* Tests 1823-1826 */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

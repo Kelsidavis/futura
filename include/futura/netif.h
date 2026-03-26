@@ -163,6 +163,26 @@ struct net_snmp_stats {
 
 extern struct net_snmp_stats g_net_stats;
 
+/* ---- Network sysctls (tunable via /proc/sys/net/) ---- */
+
+struct net_sysctl {
+    uint32_t somaxconn;           /* /proc/sys/net/core/somaxconn (default 4096) */
+    uint32_t rmem_max;            /* /proc/sys/net/core/rmem_max (default 16MB) */
+    uint32_t wmem_max;            /* /proc/sys/net/core/wmem_max (default 16MB) */
+    uint32_t rmem_default;        /* /proc/sys/net/core/rmem_default (default 212992) */
+    uint32_t wmem_default;        /* /proc/sys/net/core/wmem_default (default 212992) */
+    uint16_t port_range_min;      /* /proc/sys/net/ipv4/ip_local_port_range (min) */
+    uint16_t port_range_max;      /* /proc/sys/net/ipv4/ip_local_port_range (max) */
+    uint32_t tcp_fin_timeout;     /* /proc/sys/net/ipv4/tcp_fin_timeout (seconds) */
+    uint32_t tcp_syncookies;      /* /proc/sys/net/ipv4/tcp_syncookies (0/1/2) */
+    uint32_t tcp_keepalive_time;  /* /proc/sys/net/ipv4/tcp_keepalive_time (seconds) */
+    uint32_t tcp_keepalive_intvl; /* /proc/sys/net/ipv4/tcp_keepalive_intvl (seconds) */
+    uint32_t tcp_keepalive_probes;/* /proc/sys/net/ipv4/tcp_keepalive_probes */
+    uint32_t ip_default_ttl;      /* /proc/sys/net/ipv4/ip_default_ttl */
+};
+
+extern struct net_sysctl g_net_sysctl;
+
 #ifdef __cplusplus
 }
 #endif

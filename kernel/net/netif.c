@@ -56,6 +56,23 @@ struct net_snmp_stats {
 
 struct net_snmp_stats g_net_stats;
 
+/* Writable network sysctls with Linux-compatible defaults */
+struct net_sysctl g_net_sysctl = {
+    .somaxconn          = 4096,
+    .rmem_max           = 16777216,
+    .wmem_max           = 16777216,
+    .rmem_default       = 212992,
+    .wmem_default       = 212992,
+    .port_range_min     = 1024,
+    .port_range_max     = 65535,
+    .tcp_fin_timeout    = 60,
+    .tcp_syncookies     = 1,
+    .tcp_keepalive_time = 7200,
+    .tcp_keepalive_intvl= 75,
+    .tcp_keepalive_probes=9,
+    .ip_default_ttl     = 64,
+};
+
 /* ============================================================
  *   Loopback transmit (delivers to self)
  * ============================================================ */

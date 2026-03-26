@@ -2666,6 +2666,13 @@ static size_t gen_sysctl_str(char *buf, size_t cap, const char *value) {
     return b.pos;
 }
 
+static size_t gen_sysctl_u32(char *buf, size_t cap, uint32_t value) {
+    struct pbuf b = { buf, 0, cap };
+    pb_u64(&b, value);
+    pb_char(&b, '\n');
+    return b.pos;
+}
+
 /* ============================================================
  *   File Operations
  * ============================================================ */
@@ -3303,28 +3310,34 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             break;
         /* Network sysctls */
         case PROC_SYS_NET_SOMAXCONN:
-            total = gen_sysctl_str(tmp, GEN_BUF, "4096");
+            total = gen_sysctl_u32(tmp, GEN_BUF, g_net_sysctl.somaxconn);
             break;
         case PROC_SYS_NET_RMEM_MAX:
-            total = gen_sysctl_str(tmp, GEN_BUF, "16777216");
+            total = gen_sysctl_u32(tmp, GEN_BUF, g_net_sysctl.rmem_max);
             break;
         case PROC_SYS_NET_WMEM_MAX:
-            total = gen_sysctl_str(tmp, GEN_BUF, "16777216");
+            total = gen_sysctl_u32(tmp, GEN_BUF, g_net_sysctl.wmem_max);
             break;
         case PROC_SYS_NET_RMEM_DEFAULT:
-            total = gen_sysctl_str(tmp, GEN_BUF, "212992");
+            total = gen_sysctl_u32(tmp, GEN_BUF, g_net_sysctl.rmem_default);
             break;
         case PROC_SYS_NET_WMEM_DEFAULT:
-            total = gen_sysctl_str(tmp, GEN_BUF, "212992");
+            total = gen_sysctl_u32(tmp, GEN_BUF, g_net_sysctl.wmem_default);
             break;
-        case PROC_SYS_NET_PORT_RANGE:
-            total = gen_sysctl_str(tmp, GEN_BUF, "1024\t65535");
+        case PROC_SYS_NET_PORT_RANGE: {
+            struct pbuf pb = { tmp, 0, GEN_BUF };
+            pb_u64(&pb, g_net_sysctl.port_range_min);
+            pb_char(&pb, '\t');
+            pb_u64(&pb, g_net_sysctl.port_range_max);
+            pb_char(&pb, '\n');
+            total = pb.pos;
             break;
+        }
         case PROC_SYS_NET_FIN_TIMEOUT:
-            total = gen_sysctl_str(tmp, GEN_BUF, "60");
+            total = gen_sysctl_u32(tmp, GEN_BUF, g_net_sysctl.tcp_fin_timeout);
             break;
         case PROC_SYS_NET_SYNCOOKIES:
-            total = gen_sysctl_str(tmp, GEN_BUF, "1");
+            total = gen_sysctl_u32(tmp, GEN_BUF, g_net_sysctl.tcp_syncookies);
             break;
         case PROC_SYS_NGROUPS_MAX:
             total = gen_sysctl_str(tmp, GEN_BUF, "65536");
@@ -3400,17 +3413,16 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             break;
         }
         case PROC_SYS_NET_TCP_KEEPALIVE_TIME:
-            total = gen_sysctl_str(tmp, GEN_BUF, "7200");
+            total = gen_sysctl_u32(tmp, GEN_BUF, g_net_sysctl.tcp_keepalive_time);
             break;
         case PROC_SYS_NET_TCP_KEEPALIVE_INTVL:
-            total = gen_sysctl_str(tmp, GEN_BUF, "75");
+            total = gen_sysctl_u32(tmp, GEN_BUF, g_net_sysctl.tcp_keepalive_intvl);
             break;
         case PROC_SYS_NET_TCP_KEEPALIVE_PROBES:
-            total = gen_sysctl_str(tmp, GEN_BUF, "9");
+            total = gen_sysctl_u32(tmp, GEN_BUF, g_net_sysctl.tcp_keepalive_probes);
             break;
         case PROC_SYS_NET_IP_UNPRIV_PORT_START:
-            /* 1024 = unprivileged programs can bind ports >= 1024 */
-            total = gen_sysctl_str(tmp, GEN_BUF, "1024");
+            total = gen_sysctl_u32(tmp, GEN_BUF, g_net_sysctl.port_range_min);
             break;
         case PROC_SYS_NET_IPV4_CONF_RP_FILTER:
             /* 0 = disabled (loose mode would be 2, strict 1) */
@@ -3665,6 +3677,53 @@ static ssize_t procfs_file_write(struct fut_vnode *vnode, const void *buf,
             /* Write "1" to enable IP forwarding, "0" to disable */
             extern bool g_ip_forward_enabled;
             g_ip_forward_enabled = (copy_len > 0 && kbuf[0] != '0');
+            return (ssize_t)size;
+        }
+
+        /* Writable network sysctls — parse unsigned decimal from kbuf */
+        case PROC_SYS_NET_SOMAXCONN:
+        case PROC_SYS_NET_RMEM_MAX:
+        case PROC_SYS_NET_WMEM_MAX:
+        case PROC_SYS_NET_RMEM_DEFAULT:
+        case PROC_SYS_NET_WMEM_DEFAULT:
+        case PROC_SYS_NET_FIN_TIMEOUT:
+        case PROC_SYS_NET_SYNCOOKIES:
+        case PROC_SYS_NET_TCP_KEEPALIVE_TIME:
+        case PROC_SYS_NET_TCP_KEEPALIVE_INTVL:
+        case PROC_SYS_NET_TCP_KEEPALIVE_PROBES:
+        case PROC_SYS_NET_IP_UNPRIV_PORT_START: {
+            uint32_t val = 0;
+            for (size_t i = 0; i < copy_len && kbuf[i] >= '0' && kbuf[i] <= '9'; i++)
+                val = val * 10 + (uint32_t)(kbuf[i] - '0');
+            switch (n->kind) {
+            case PROC_SYS_NET_SOMAXCONN:           g_net_sysctl.somaxconn = val; break;
+            case PROC_SYS_NET_RMEM_MAX:            g_net_sysctl.rmem_max = val; break;
+            case PROC_SYS_NET_WMEM_MAX:            g_net_sysctl.wmem_max = val; break;
+            case PROC_SYS_NET_RMEM_DEFAULT:        g_net_sysctl.rmem_default = val; break;
+            case PROC_SYS_NET_WMEM_DEFAULT:        g_net_sysctl.wmem_default = val; break;
+            case PROC_SYS_NET_FIN_TIMEOUT:         g_net_sysctl.tcp_fin_timeout = val; break;
+            case PROC_SYS_NET_SYNCOOKIES:          g_net_sysctl.tcp_syncookies = val; break;
+            case PROC_SYS_NET_TCP_KEEPALIVE_TIME:  g_net_sysctl.tcp_keepalive_time = val; break;
+            case PROC_SYS_NET_TCP_KEEPALIVE_INTVL: g_net_sysctl.tcp_keepalive_intvl = val; break;
+            case PROC_SYS_NET_TCP_KEEPALIVE_PROBES:g_net_sysctl.tcp_keepalive_probes = val; break;
+            case PROC_SYS_NET_IP_UNPRIV_PORT_START:g_net_sysctl.port_range_min = (uint16_t)val; break;
+            default: break;
+            }
+            return (ssize_t)size;
+        }
+
+        case PROC_SYS_NET_PORT_RANGE: {
+            /* Format: "min\tmax" or "min max" */
+            uint32_t v1 = 0, v2 = 0;
+            size_t i = 0;
+            for (; i < copy_len && kbuf[i] >= '0' && kbuf[i] <= '9'; i++)
+                v1 = v1 * 10 + (uint32_t)(kbuf[i] - '0');
+            /* Skip separator (tab or space) */
+            while (i < copy_len && (kbuf[i] == '\t' || kbuf[i] == ' ')) i++;
+            for (; i < copy_len && kbuf[i] >= '0' && kbuf[i] <= '9'; i++)
+                v2 = v2 * 10 + (uint32_t)(kbuf[i] - '0');
+            if (v1 > 0 && v1 <= 65535) g_net_sysctl.port_range_min = (uint16_t)v1;
+            if (v2 > 0 && v2 <= 65535) g_net_sysctl.port_range_max = (uint16_t)v2;
             return (ssize_t)size;
         }
 

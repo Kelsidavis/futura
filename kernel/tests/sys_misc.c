@@ -21189,9 +21189,9 @@ static void test_so_rcvtimeo(void) {
         fut_test_fail(315); return;
     }
 
-    /* Set SO_RCVTIMEO = 200ms on sv[1] (use 200ms, not 50ms, to avoid
-     * flaky CI timeouts under heavy QEMU emulation load) */
-    struct { long tv_sec; long tv_usec; } tv = { .tv_sec = 0, .tv_usec = 200000 };
+    /* Set SO_RCVTIMEO = 500ms on sv[1] (use 500ms for robust CI under
+     * heavy QEMU emulation load on GitHub Actions runners) */
+    struct { long tv_sec; long tv_usec; } tv = { .tv_sec = 0, .tv_usec = 500000 };
     r = sys_setsockopt(sv[1], 1 /*SOL_SOCKET*/, 20 /*SO_RCVTIMEO*/, &tv, sizeof(tv));
     if (r != 0) {
         fut_printf("[MISC-TEST] ✗ setsockopt(SO_RCVTIMEO) failed: %ld\n", r);
@@ -21207,8 +21207,8 @@ static void test_so_rcvtimeo(void) {
         fut_printf("[MISC-TEST] ✗ getsockopt(SO_RCVTIMEO) failed: %ld\n", r);
         sys_close(sv[0]); sys_close(sv[1]); fut_test_fail(315); return;
     }
-    if (tv_out.tv_sec != 0 || tv_out.tv_usec != 200000) {
-        fut_printf("[MISC-TEST] ✗ getsockopt returned {%ld, %ld}, want {0, 200000}\n",
+    if (tv_out.tv_sec != 0 || tv_out.tv_usec != 500000) {
+        fut_printf("[MISC-TEST] ✗ getsockopt returned {%ld, %ld}, want {0, 500000}\n",
                    tv_out.tv_sec, tv_out.tv_usec);
         sys_close(sv[0]); sys_close(sv[1]); fut_test_fail(315); return;
     }
@@ -45826,8 +45826,8 @@ static void test_sock_timeout_blocking(void) {
             fut_test_fail(1227);
             goto t1228;
         }
-        /* Set SO_SNDTIMEO = 200ms on sv[0] (20 ticks at 100Hz, robust under CI load) */
-        struct { long tv_sec; long tv_usec; } tv = { .tv_sec = 0, .tv_usec = 200000 };
+        /* Set SO_SNDTIMEO = 500ms on sv[0] (50 ticks at 100Hz, robust under slow CI) */
+        struct { long tv_sec; long tv_usec; } tv = { .tv_sec = 0, .tv_usec = 500000 };
         r = sys_setsockopt(sv[0], TSTB_SOL_SOCKET, TSTB_SO_SNDTIMEO, &tv, sizeof(tv));
         if (r != 0) {
             fut_printf("[MISC-TEST] ✗ Test 1227: setsockopt(SO_SNDTIMEO) = %ld\n", r);

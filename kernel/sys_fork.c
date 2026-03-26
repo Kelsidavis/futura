@@ -1161,6 +1161,16 @@ long sys_fork(void) {
     /* Add child thread to scheduler runqueue so it can execute */
     fut_sched_add_thread(child_thread);
 
+    /* sched_child_runs_first: if enabled, yield so the child runs before
+     * the parent continues. This reduces COW page faults when the child
+     * immediately calls exec(), because the parent hasn't had time to
+     * dirty shared pages. Default: disabled (0). */
+    extern int g_sched_child_runs_first;
+    if (g_sched_child_runs_first) {
+        extern void fut_schedule(void);
+        fut_schedule();
+    }
+
     /* Phase 2: Categorize PIDs */
     const char *parent_pid_category;
     if (parent_task->pid == 1) {

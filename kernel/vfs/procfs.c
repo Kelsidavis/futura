@@ -271,6 +271,7 @@ enum procfs_kind {
     PROC_SYS_NET_NF_CT_COUNT,       /* /proc/sys/net/netfilter/nf_conntrack_count */
     PROC_SYS_KERNEL_PANIC,          /* /proc/sys/kernel/panic */
     PROC_SYS_KERNEL_PANIC_ON_OOPS,  /* /proc/sys/kernel/panic_on_oops */
+    PROC_SYS_SCHED_CHILD_FIRST,     /* /proc/sys/kernel/sched_child_runs_first */
     PROC_PRESSURE_DIR,              /* /proc/pressure/ directory */
     PROC_PRESSURE_CPU,              /* /proc/pressure/cpu */
     PROC_PRESSURE_MEMORY,           /* /proc/pressure/memory */
@@ -3916,6 +3917,12 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             /* 0 = continue on oops, 1 = panic on oops */
             total = gen_sysctl_str(tmp, GEN_BUF, "0");
             break;
+        case PROC_SYS_SCHED_CHILD_FIRST: {
+            extern int g_sched_child_runs_first;
+            total = gen_sysctl_str(tmp, GEN_BUF,
+                g_sched_child_runs_first ? "1" : "0");
+            break;
+        }
         /* /proc/pressure/ files — PSI (Pressure Stall Information) */
         case PROC_PRESSURE_CPU: {
             struct pbuf bb = { tmp, 0, GEN_BUF };
@@ -5426,6 +5433,11 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
         if (STREQ(name, "panic_on_oops")) {
             *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_KERNEL_PANIC_OOPS,
                                           0100644, PROC_SYS_KERNEL_PANIC_ON_OOPS, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "sched_child_runs_first")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_KERNEL_PANIC_OOPS + 1,
+                                          0100644, PROC_SYS_SCHED_CHILD_FIRST, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
         return -ENOENT;

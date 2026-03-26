@@ -32,6 +32,10 @@ extern void fut_switch_context_irq(fut_thread_t *prev, fut_thread_t *next, fut_i
 /* External printf for debugging */
 #include <kernel/kprintf.h>
 
+/* sched_child_runs_first: if non-zero, parent yields after fork so child runs first.
+ * Writable via /proc/sys/kernel/sched_child_runs_first. Default: 0. */
+int g_sched_child_runs_first = 0;
+
 /* Per-CPU data access */
 #include "../../include/kernel/fut_percpu.h"
 

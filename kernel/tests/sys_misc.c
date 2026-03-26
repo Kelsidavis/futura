@@ -53995,6 +53995,33 @@ __attribute__((noinline)) static void test_futurafs(void) {
 }
 
 /* Tests 1901-1906: Extended FuturaFS operations */
+__attribute__((noinline)) static void test_sched_child_first(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_close(int);
+
+    /* Test 1930: sched_child_runs_first sysctl readable */
+    fut_printf("[MISC-TEST] Test 1930: sched_child_runs_first sysctl\n");
+    {
+        long fd = sys_open("/proc/sys/kernel/sched_child_runs_first", 0, 0);
+        if (fd >= 0) {
+            static char buf[8];
+            long n = sys_read((int)fd, buf, sizeof(buf) - 1);
+            sys_close((int)fd);
+            if (n > 0 && buf[0] == '0') {
+                fut_printf("[MISC-TEST] ✓ Test 1930: sched_child_runs_first=0\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1930: read=%ld val=%c\n", n, n > 0 ? buf[0] : '?');
+                fut_test_fail(1930);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1930: open=%ld\n", fd);
+            fut_test_fail(1930);
+        }
+    }
+}
+
 __attribute__((noinline)) static void test_futurafs_flags(void) {
     extern long sys_open(const char *, int, int);
     extern long sys_write(int, const void *, size_t);
@@ -60970,6 +60997,7 @@ void fut_misc_test_thread(void *arg) {
     test_ip_ttl_tos_sockopt(); /* Tests 1853-1854 */
     test_futurafs(); /* Tests 1855-1857 */
     test_futurafs_readdir(); /* Test 1929 */
+    test_sched_child_first(); /* Test 1930 */
     test_futurafs_flags(); /* Tests 1926-1928 */
     test_futurafs_links(); /* Tests 1923-1925 */
     test_futurafs_advanced(); /* Tests 1910-1912 */

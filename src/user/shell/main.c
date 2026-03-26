@@ -2484,28 +2484,98 @@ static void cmd_uptime(int argc, char *argv[]) {
 }
 
 /* Built-in: ifconfig - Show network interface info */
+static void ifconfig_print_ip(int fd_out, unsigned char *ip) {
+    for (int o = 0; o < 4; o++) {
+        char ob[4]; int oi = 0;
+        unsigned char v = ip[o];
+        if (v >= 100) ob[oi++] = '0' + v/100;
+        if (v >= 10) ob[oi++] = '0' + (v/10)%10;
+        ob[oi++] = '0' + v%10;
+        ob[oi] = '\0';
+        write_str(fd_out, ob);
+        if (o < 3) write_str(fd_out, ".");
+    }
+}
 static void cmd_ifconfig(int argc, char *argv[]) {
     (void)argc; (void)argv;
-    /* Try reading /proc/net/dev for real interface stats */
+    /* Read real interface data via /proc/net/dev + ioctls */
     int fd = sys_open("/proc/net/dev", O_RDONLY, 0);
-    if (fd >= 0) {
-        char buf[1024];
-        ssize_t n = sys_read(fd, buf, sizeof(buf) - 1);
-        sys_close(fd);
-        if (n > 0) {
-            buf[n] = '\0';
-            write_str(1, buf);
-            write_str(1, "\n");
+    if (fd < 0) { write_str(2, "ifconfig: cannot read /proc/net/dev\n"); return; }
+    char buf[2048];
+    ssize_t n = sys_read(fd, buf, sizeof(buf) - 1);
+    sys_close(fd);
+    if (n <= 0) return;
+    buf[n] = '\0';
+
+    int line = 0;
+    char *p = buf;
+    int sock = sys_call3(41/*socket*/, 2, 2, 0);
+    while (*p) {
+        char *eol = p; while (*eol && *eol != '\n') eol++;
+        if (line >= 2) {
+            char *colon = p; while (colon < eol && *colon != ':') colon++;
+            char ifname[16] = {0}; int j = 0;
+            char *s = p; while (s < colon && *s == ' ') s++;
+            while (s < colon && j < 15) ifname[j++] = *s++;
+            if (j > 0 && sock >= 0) {
+                char ifr[40];
+                write_str(1, ifname);
+                /* Pad to 10 chars */
+                for (int k = j; k < 10; k++) write_str(1, " ");
+                /* Get link type */
+                for (int k = 0; k < 40; k++) ifr[k] = 0;
+                for (int k = 0; ifname[k] && k < 15; k++) ifr[k] = ifname[k];
+                long irc = sys_call3(16, sock, 0x8913/*SIOCGIFFLAGS*/, (long)ifr);
+                short flags = 0;
+                if (irc == 0) for (int k = 0; k < 2; k++) flags |= (short)((unsigned char)ifr[16+k] << (k*8));
+                write_str(1, (flags & 0x0008) ? "Link encap:Local Loopback\n" : "Link encap:Ethernet\n");
+
+                /* inet addr + netmask */
+                for (int k = 0; k < 40; k++) ifr[k] = 0;
+                for (int k = 0; ifname[k] && k < 15; k++) ifr[k] = ifname[k];
+                irc = sys_call3(16, sock, 0x8915/*SIOCGIFADDR*/, (long)ifr);
+                if (irc == 0) {
+                    write_str(1, "          inet addr:");
+                    ifconfig_print_ip(1, (unsigned char *)&ifr[20]);
+                    /* Get netmask */
+                    for (int k = 0; k < 40; k++) ifr[k] = 0;
+                    for (int k = 0; ifname[k] && k < 15; k++) ifr[k] = ifname[k];
+                    irc = sys_call3(16, sock, 0x891B, (long)ifr);
+                    if (irc == 0) {
+                        write_str(1, "  Mask:");
+                        ifconfig_print_ip(1, (unsigned char *)&ifr[20]);
+                    }
+                    write_str(1, "\n");
+                }
+
+                /* Flags line */
+                write_str(1, "          ");
+                if (flags & 0x0001) write_str(1, "UP ");
+                if (flags & 0x0002) write_str(1, "BROADCAST ");
+                if (flags & 0x0008) write_str(1, "LOOPBACK ");
+                if (flags & 0x0040) write_str(1, "RUNNING ");
+                if (flags & 0x1000) write_str(1, "MULTICAST ");
+                /* MTU */
+                for (int k = 0; k < 40; k++) ifr[k] = 0;
+                for (int k = 0; ifname[k] && k < 15; k++) ifr[k] = ifname[k];
+                irc = sys_call3(16, sock, 0x8921/*SIOCGIFMTU*/, (long)ifr);
+                if (irc == 0) {
+                    int mtu = 0;
+                    for (int k = 0; k < 4; k++) mtu |= ((unsigned char)ifr[16+k]) << (k*8);
+                    write_str(1, " MTU:");
+                    char mb[12]; int mi = 0;
+                    if (mtu == 0) { mb[mi++] = '0'; }
+                    else { char t2[12]; int ti = 0; while (mtu > 0) { t2[ti++] = '0' + mtu%10; mtu /= 10; } while (ti > 0) mb[mi++] = t2[--ti]; }
+                    mb[mi] = '\0';
+                    write_str(1, mb);
+                }
+                write_str(1, "\n\n");
+            }
         }
+        if (*eol) p = eol + 1; else break;
+        line++;
     }
-    /* Show interface configuration */
-    write_str(1, "eth0      Link encap:Ethernet\n");
-    write_str(1, "          inet addr:10.0.2.15  Mask:255.255.255.0\n");
-    write_str(1, "          UP BROADCAST RUNNING MULTICAST  MTU:1500\n");
-    write_str(1, "\n");
-    write_str(1, "lo        Link encap:Local Loopback\n");
-    write_str(1, "          inet addr:127.0.0.1  Mask:255.0.0.0\n");
-    write_str(1, "          UP LOOPBACK RUNNING  MTU:65536\n");
+    if (sock >= 0) sys_close(sock);
 }
 
 /* Built-in: whoami */

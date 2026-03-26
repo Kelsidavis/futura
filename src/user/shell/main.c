@@ -2982,7 +2982,7 @@ static void cmd_sysinfo(int argc, char *argv[]) {
         }
     }
     /* Shell */
-    write_str(1, "  Shell:   Futura Shell v0.5 (100+ builtins)\n");
+    write_str(1, "  Shell:   Futura Shell v0.5 (105 builtins)\n");
     write_str(1, "  Tests:   1955 kernel self-tests\n");
 }
 
@@ -8443,7 +8443,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   100 built-in commands — type 'help'    |\n");
+    write_str(1, "|   105 built-in commands — type 'help'    |\n");
     write_str(1, "|   nano editor available at /bin/nano      |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");

@@ -2891,17 +2891,18 @@ static void cmd_sysinfo(int argc, char *argv[]) {
         char buf[256]; ssize_t n = sys_read(fd, buf, 255);
         sys_close(fd); if (n > 0) { buf[n] = '\0'; write_str(1, "  Kernel:  "); write_str(1, buf); }
     }
-    /* CPU */
+    /* CPU — show model name */
     fd = sys_open("/proc/cpuinfo", O_RDONLY, 0);
     if (fd >= 0) {
-        char buf[512]; ssize_t n = sys_read(fd, buf, 511);
+        char buf[1024]; ssize_t n = sys_read(fd, buf, sizeof(buf)-1);
         sys_close(fd);
         if (n > 0) {
             buf[n] = '\0';
-            /* Extract CPU part line */
             char *p = buf;
             while (*p) {
-                if (p[0] == 'C' && p[1] == 'P' && p[2] == 'U' && p[3] == ' ' && p[4] == 'p') {
+                /* Match "model name" or "CPU part" */
+                if ((p[0] == 'm' && p[1] == 'o' && p[2] == 'd' && p[3] == 'e' && p[4] == 'l' && p[5] == ' ' && p[6] == 'n') ||
+                    (p[0] == 'C' && p[1] == 'P' && p[2] == 'U' && p[3] == ' ' && p[4] == 'p')) {
                     write_str(1, "  ");
                     while (*p && *p != '\n') { write_char(1, *p++); }
                     write_char(1, '\n');
@@ -2948,8 +2949,41 @@ static void cmd_sysinfo(int argc, char *argv[]) {
     write_str(1, "  Tasks:   ");
     char nbuf[8]; int_to_str(pcount, nbuf, 8);
     write_str(1, nbuf); write_str(1, " running\n");
+    /* Network interfaces */
+    {
+        int nfd = sys_open("/proc/net/dev", O_RDONLY, 0);
+        if (nfd >= 0) {
+            char nb[1024]; ssize_t nn = sys_read(nfd, nb, sizeof(nb)-1);
+            sys_close(nfd);
+            if (nn > 0) {
+                nb[nn] = '\0';
+                int iface_count = 0;
+                for (int i = 0; i < nn; i++) if (nb[i] == ':') iface_count++;
+                write_str(1, "  Network: ");
+                char ic[4]; int ip2 = 0;
+                if (iface_count >= 10) ic[ip2++] = '0' + iface_count / 10;
+                ic[ip2++] = '0' + iface_count % 10; ic[ip2] = '\0';
+                write_str(1, ic);
+                write_str(1, " interfaces\n");
+            }
+        }
+    }
+    /* IP forwarding status */
+    {
+        int ffd = sys_open("/proc/sys/net/ipv4/ip_forward", O_RDONLY, 0);
+        if (ffd >= 0) {
+            char fb[4]; ssize_t fn = sys_read(ffd, fb, 1);
+            sys_close(ffd);
+            if (fn > 0) {
+                write_str(1, "  Forward: ");
+                write_str(1, fb[0] == '1' ? "enabled" : "disabled");
+                write_str(1, "\n");
+            }
+        }
+    }
     /* Shell */
-    write_str(1, "  Shell:   Futura Shell v0.5 (100 builtins)\n");
+    write_str(1, "  Shell:   Futura Shell v0.5 (100+ builtins)\n");
+    write_str(1, "  Tests:   1955 kernel self-tests\n");
 }
 
 /* Helper: count lines, words, and bytes in a file descriptor */

@@ -63,14 +63,15 @@ struct net_sysctl g_net_sysctl = {
     .wmem_max           = 16777216,
     .rmem_default       = 212992,
     .wmem_default       = 212992,
-    .port_range_min     = 1024,
-    .port_range_max     = 65535,
+    .port_range_min     = 32768,  /* ip_local_port_range min (ephemeral) */
+    .port_range_max     = 60999,  /* ip_local_port_range max */
     .tcp_fin_timeout    = 60,
     .tcp_syncookies     = 1,
     .tcp_keepalive_time = 7200,
     .tcp_keepalive_intvl= 75,
     .tcp_keepalive_probes=9,
     .ip_default_ttl     = 64,
+    .ip_unpriv_port_start = 1024,
 };
 
 /* ============================================================

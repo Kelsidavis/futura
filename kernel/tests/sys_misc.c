@@ -48559,7 +48559,8 @@ static void test_af_inet_tcp_extended(void) {
     addrlen = 16;
     long ret = sys_getsockname((int)client_fd, &addr, &addrlen);
     uint16_t client_port = test_htons(addr.sin_port);
-    if (ret != 0 || addr.sin_family != 2 || client_port < 49152) {
+    /* Client gets an ephemeral port from ip_local_port_range (sysctl, default 32768-60999) */
+    if (ret != 0 || addr.sin_family != 2 || client_port < g_net_sysctl.port_range_min) {
         fut_printf("[MISC-TEST] ✗ Test 1517: getsockname(client) → ret=%ld family=%u port=%u\n",
                    ret, addr.sin_family, client_port);
         sys_close((int)accepted_fd); sys_close((int)client_fd); sys_close((int)server_fd);
@@ -48714,7 +48715,7 @@ t1524:
         addrlen = 16;
         long ret = sys_getsockname((int)fd, &addr, &addrlen);
         uint16_t assigned = test_htons(addr.sin_port);
-        if (ret == 0 && assigned >= 49152) {
+        if (ret == 0 && assigned >= g_net_sysctl.port_range_min) {
             fut_printf("[MISC-TEST] ✓ Test 1524: bind(port=0) → auto port=%u\n", assigned);
             fut_test_pass();
         } else {

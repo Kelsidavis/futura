@@ -3446,7 +3446,7 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             total = gen_sysctl_u32(tmp, GEN_BUF, g_net_sysctl.ip_default_ttl);
             break;
         case PROC_SYS_NET_IP_UNPRIV_PORT_START:
-            total = gen_sysctl_u32(tmp, GEN_BUF, g_net_sysctl.port_range_min);
+            total = gen_sysctl_u32(tmp, GEN_BUF, g_net_sysctl.ip_unpriv_port_start);
             break;
         case PROC_SYS_NET_IPV4_CONF_RP_FILTER:
             /* 0 = disabled (loose mode would be 2, strict 1) */
@@ -3732,7 +3732,7 @@ static ssize_t procfs_file_write(struct fut_vnode *vnode, const void *buf,
             case PROC_SYS_NET_TCP_KEEPALIVE_INTVL: g_net_sysctl.tcp_keepalive_intvl = val; break;
             case PROC_SYS_NET_TCP_KEEPALIVE_PROBES:g_net_sysctl.tcp_keepalive_probes = val; break;
             case PROC_SYS_NET_IP_DEFAULT_TTL:      if (val >= 1 && val <= 255) g_net_sysctl.ip_default_ttl = val; break;
-            case PROC_SYS_NET_IP_UNPRIV_PORT_START:g_net_sysctl.port_range_min = (uint16_t)val; break;
+            case PROC_SYS_NET_IP_UNPRIV_PORT_START:g_net_sysctl.ip_unpriv_port_start = val; break;
             default: break;
             }
             return (ssize_t)size;

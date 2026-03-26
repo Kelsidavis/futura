@@ -2186,14 +2186,18 @@ int fut_socket_bind_inet(fut_socket_t *socket, uint32_t addr, uint16_t port) {
     if (socket->address_family != AF_INET)
         return -EINVAL;
 
-    /* Auto-assign ephemeral port if port == 0 */
+    /* Auto-assign ephemeral port if port == 0 — use sysctl port range */
     if (port == 0) {
-        static uint16_t next_ephemeral = 49152;
+        static uint16_t next_ephemeral = 0;
+        uint16_t port_min = g_net_sysctl.port_range_min ? g_net_sysctl.port_range_min : 49152;
+        uint16_t port_max = g_net_sysctl.port_range_max ? g_net_sysctl.port_range_max : 60999;
+        if (next_ephemeral < port_min || next_ephemeral > port_max)
+            next_ephemeral = port_min;
         for (int attempt = 0; attempt < 1000; attempt++) {
             uint16_t try_port_host = __atomic_fetch_add(&next_ephemeral, 1, __ATOMIC_RELAXED);
-            if (try_port_host > 60999) {
-                __atomic_store_n(&next_ephemeral, 49152, __ATOMIC_RELAXED);
-                try_port_host = 49152;
+            if (try_port_host > port_max) {
+                __atomic_store_n(&next_ephemeral, port_min, __ATOMIC_RELAXED);
+                try_port_host = port_min;
             }
             /* Convert to network byte order for storage */
             uint16_t try_port_net = (uint16_t)((try_port_host >> 8) | (try_port_host << 8));

@@ -179,6 +179,7 @@ struct net_sysctl {
     uint32_t tcp_keepalive_intvl; /* /proc/sys/net/ipv4/tcp_keepalive_intvl (seconds) */
     uint32_t tcp_keepalive_probes;/* /proc/sys/net/ipv4/tcp_keepalive_probes */
     uint32_t ip_default_ttl;      /* /proc/sys/net/ipv4/ip_default_ttl */
+    uint32_t ip_unpriv_port_start;/* /proc/sys/net/ipv4/ip_unprivileged_port_start (default 1024) */
 };
 
 extern struct net_sysctl g_net_sysctl;

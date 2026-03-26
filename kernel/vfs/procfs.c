@@ -32,6 +32,7 @@
 #include <kernel/fut_lock.h>
 #include <kernel/vfs_credentials.h>
 #include <kernel/fut_socket.h>
+#include <futura/netif.h>
 #include <kernel/eventfd.h>
 #include <kernel/errno.h>
 #include <kernel/kprintf.h>
@@ -2215,15 +2216,43 @@ static size_t gen_net_dev(char *buf, size_t cap) {
     return b.pos;
 }
 
+/* Helper: emit one route entry in /proc/net/route format */
+struct route_emit_ctx { struct pbuf *b; };
+static void route_emit_one(const struct net_route *rt, void *ctx_ptr) {
+    struct route_emit_ctx *ctx = (struct route_emit_ctx *)ctx_ptr;
+    struct pbuf *b = ctx->b;
+    /* Look up interface name */
+    extern struct net_iface *netif_by_index(int);
+    struct net_iface *iface = netif_by_index(rt->iface_idx);
+    const char *ifname = iface ? iface->name : "?";
+    pb_str(b, ifname); pb_char(b, '\t');
+    /* Destination in little-endian hex (Linux format) */
+    uint32_t dest_le = __builtin_bswap32(rt->dest);
+    for (int i = 7; i >= 0; i--) pb_char(b, "0123456789ABCDEF"[(dest_le >> (i*4)) & 0xF]);
+    pb_char(b, '\t');
+    uint32_t gw_le = __builtin_bswap32(rt->gateway);
+    for (int i = 7; i >= 0; i--) pb_char(b, "0123456789ABCDEF"[(gw_le >> (i*4)) & 0xF]);
+    pb_char(b, '\t');
+    /* Flags (4 hex digits) */
+    pb_char(b, '0'); pb_char(b, '0');
+    pb_char(b, "0123456789ABCDEF"[(rt->flags >> 4) & 0xF]);
+    pb_char(b, "0123456789ABCDEF"[rt->flags & 0xF]);
+    pb_char(b, '\t');
+    pb_str(b, "0\t0\t");  /* RefCnt, Use */
+    pb_u64(b, rt->metric); pb_char(b, '\t');
+    uint32_t mask_le = __builtin_bswap32(rt->netmask);
+    for (int i = 7; i >= 0; i--) pb_char(b, "0123456789ABCDEF"[(mask_le >> (i*4)) & 0xF]);
+    pb_char(b, '\t');
+    uint32_t mtu = iface ? iface->mtu : 0;
+    pb_u64(b, mtu); pb_str(b, "\t0\t0\n");
+}
+
 static size_t gen_net_route(char *buf, size_t cap) {
     struct pbuf b = { buf, 0, cap };
     pb_str(&b, "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n");
-    /* Loopback route: 127.0.0.0/8 → lo */
-    pb_str(&b, "lo\t0000007F\t00000000\t0001\t0\t0\t0\t000000FF\t0\t0\t0\n");
-    /* Default route: 0.0.0.0/0 → gateway 10.0.2.2 via eth0 */
-    pb_str(&b, "eth0\t00000000\t0202000A\t0003\t0\t0\t100\t00000000\t1500\t0\t0\n");
-    /* Local subnet: 10.0.2.0/24 → eth0 */
-    pb_str(&b, "eth0\t0002000A\t00000000\t0001\t0\t0\t100\t00FFFFFF\t1500\t0\t0\n");
+    extern void route_foreach(void (*)(const struct net_route *, void *), void *);
+    struct route_emit_ctx ctx = { &b };
+    route_foreach((void (*)(const struct net_route *, void *))route_emit_one, &ctx);
     return b.pos;
 }
 
@@ -3210,10 +3239,12 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             /* 0 = unrestricted dmesg access */
             total = gen_sysctl_str(tmp, GEN_BUF, "0");
             break;
-        case PROC_SYS_NET_IP_FORWARD:
-            /* 0 = IP forwarding disabled */
-            total = gen_sysctl_str(tmp, GEN_BUF, "0");
+        case PROC_SYS_NET_IP_FORWARD: {
+            /* Read actual ip_forward state from netif subsystem */
+            extern bool g_ip_forward_enabled;
+            total = gen_sysctl_str(tmp, GEN_BUF, g_ip_forward_enabled ? "1" : "0");
             break;
+        }
         case PROC_SYS_NET_TCP_KEEPALIVE_TIME:
             total = gen_sysctl_str(tmp, GEN_BUF, "7200");
             break;
@@ -3473,6 +3504,13 @@ static ssize_t procfs_file_write(struct fut_vnode *vnode, const void *buf,
             size_t nlen = copy_len < 15 ? copy_len : 15;
             __builtin_memcpy(task->comm, kbuf, nlen);
             task->comm[nlen] = '\0';
+            return (ssize_t)size;
+        }
+
+        case PROC_SYS_NET_IP_FORWARD: {
+            /* Write "1" to enable IP forwarding, "0" to disable */
+            extern bool g_ip_forward_enabled;
+            g_ip_forward_enabled = (copy_len > 0 && kbuf[0] != '0');
             return (ssize_t)size;
         }
 

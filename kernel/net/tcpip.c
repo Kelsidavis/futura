@@ -902,7 +902,12 @@ static void ip_handle_packet(const uint8_t *frame, size_t len) {
 
     /* Check if packet is for us (or broadcast) */
     if (dest_ip != g_tcpip.ip_address && dest_ip != IP_BROADCAST_ADDR) {
-        fut_printf("[IP-HANDLE] Packet not for us, ignoring\n");
+        /* Not for us — try IP forwarding if enabled */
+        extern bool g_ip_forward_enabled;
+        extern int ip_forward(const void *ip_packet, size_t len, struct net_iface *in_iface);
+        if (g_ip_forward_enabled) {
+            ip_forward(ip, total_len, NULL /* in_iface */);
+        }
         return;
     }
 

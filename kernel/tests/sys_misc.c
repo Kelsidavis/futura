@@ -51257,6 +51257,97 @@ static void test_openat_o_directory(void) {
 /* Tests 1729-1732: umask enforcement on file/directory creation (POSIX) */
 /* Tests 1761-1764: SIGHUP delivery when session leader exits */
 /* Tests 1765-1768: daemon lifecycle integration (setsid+chdir+devnull) */
+/* Tests 1781-1784: isatty detection for PTY, /dev/tty, pipe, /dev/null */
+__attribute__((noinline)) static void test_isatty_pty(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_close(int);
+    extern long sys_ioctl(int fd, unsigned long request, void *argp);
+
+    /* Test 1781: TCGETS on PTY slave succeeds (is a terminal) */
+    fut_printf("[MISC-TEST] Test 1781: isatty(PTY slave) = true\n");
+    {
+        long mfd = sys_open("/dev/ptmx", 0x0002, 0);
+        int pn = -1, zv = 0;
+        if (mfd >= 0) sys_ioctl((int)mfd, 0x80045430, &pn);
+        if (mfd >= 0) sys_ioctl((int)mfd, 0x40045431, &zv);
+        static char pp[24];
+        { const char *pfx = "/dev/pts/"; int i = 0; while (pfx[i]) { pp[i] = pfx[i]; i++; }
+          if (pn >= 10) { pp[i++] = (char)('0'+pn/10); } pp[i++] = (char)('0'+pn%10); pp[i] = '\0'; }
+        long sfd = (pn >= 0) ? sys_open(pp, 0x0002, 0) : -1;
+        if (sfd >= 0) {
+            static char tbuf[60];
+            long r = sys_ioctl((int)sfd, 0x5401 /* TCGETS */, tbuf);
+            if (r == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1781: TCGETS on PTY slave → 0 (is terminal)\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1781: TCGETS → %ld\n", r);
+                fut_test_fail(1781);
+            }
+            sys_close((int)sfd);
+        } else { fut_test_fail(1781); }
+        if (mfd >= 0) sys_close((int)mfd);
+    }
+
+    /* Test 1782: TCGETS on PTY master also succeeds */
+    fut_printf("[MISC-TEST] Test 1782: isatty(PTY master) = true\n");
+    {
+        long mfd = sys_open("/dev/ptmx", 0x0002, 0);
+        if (mfd >= 0) {
+            static char tbuf[60];
+            long r = sys_ioctl((int)mfd, 0x5401, tbuf);
+            if (r == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1782: TCGETS on PTY master → 0\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1782: TCGETS → %ld\n", r);
+                fut_test_fail(1782);
+            }
+            sys_close((int)mfd);
+        } else { fut_test_fail(1782); }
+    }
+
+    /* Test 1783: TCGETS on /dev/null fails (not a terminal).
+     * May return ENOTTY or EFAULT (kernel-pointer argp on non-PTY chrdev). */
+    fut_printf("[MISC-TEST] Test 1783: isatty(/dev/null) = false\n");
+    {
+        long fd = sys_open("/dev/null", 0x0002, 0);
+        if (fd >= 0) {
+            static char tbuf[60];
+            long r = sys_ioctl((int)fd, 0x5401, tbuf);
+            sys_close((int)fd);
+            if (r < 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1783: /dev/null TCGETS → %ld (not terminal)\n", r);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1783: /dev/null TCGETS → %ld (expected error)\n", r);
+                fut_test_fail(1783);
+            }
+        } else { fut_test_fail(1783); }
+    }
+
+    /* Test 1784: TCGETS on pipe read fd fails (not a terminal) */
+    fut_printf("[MISC-TEST] Test 1784: isatty(pipe) = false\n");
+    {
+        extern long sys_pipe(int pipefd[2]);
+        int pipefd[2] = {-1, -1};
+        long r = sys_pipe(pipefd);
+        if (r == 0) {
+            static char tbuf[60];
+            r = sys_ioctl(pipefd[0], 0x5401, tbuf);
+            sys_close(pipefd[0]);
+            sys_close(pipefd[1]);
+            if (r == -25 /* ENOTTY */) {
+                fut_printf("[MISC-TEST] ✓ Test 1784: pipe TCGETS → ENOTTY\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1784: pipe TCGETS → %ld\n", r);
+                fut_test_fail(1784);
+            }
+        } else { fut_test_fail(1784); }
+    }
+}
+
 /* Tests 1777-1780: /dev/tty opens process's controlling terminal */
 __attribute__((noinline)) static void test_dev_tty_ctty(void) {
     extern long sys_open(const char *, int, int);
@@ -57142,6 +57233,7 @@ void fut_misc_test_thread(void *arg) {
     test_timer_abstime();          /* Tests 1721-1724 */
     test_execve_prevalidation();   /* Tests 1725-1728 */
     test_fd_lifecycle_edges();     /* Tests 1737-1740 */
+    test_isatty_pty();               /* Tests 1781-1784 */
     test_dev_tty_ctty();             /* Tests 1777-1780 */
     test_pty_termios_cc();           /* Tests 1773-1776 */
     test_fdinfo_various_types();     /* Tests 1769-1772 */

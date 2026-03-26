@@ -398,17 +398,7 @@ long sys_mseal(void *addr, size_t len, unsigned long flags) {
 
 /* add_key, request_key, keyctl — moved to kernel/sys_keyring.c */
 
-/**
- * sys_perf_event_open() - Open a performance monitoring file descriptor.
- * Returns -ENOSYS; callers (perf, BPF programs) fall back to /proc/stat.
- *
- * Linux x86_64: 298  Linux aarch64: 241
- */
-long sys_perf_event_open(const void *attr, int pid, int cpu,
-                         int group_fd, unsigned long flags) {
-    (void)attr; (void)pid; (void)cpu; (void)group_fd; (void)flags;
-    return -ENOSYS;
-}
+/* perf_event_open — moved to kernel/sys_perf.c */
 
 /* fanotify_init, fanotify_mark — moved to kernel/sys_fanotify.c */
 

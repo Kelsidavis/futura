@@ -611,6 +611,7 @@ KERNEL_SOURCES := \
     kernel/sys_keyring.c \
     kernel/sys_fanotify.c \
     kernel/sys_userfaultfd.c \
+    kernel/sys_perf.c \
     kernel/sys_mempolicy.c \
     kernel/sys_clone3.c \
     kernel/sys_socketpair.c \

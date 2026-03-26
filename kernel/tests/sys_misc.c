@@ -44771,14 +44771,15 @@ static void test_enosys_stubs(void) {
     extern long sys_bpf(int cmd, const void *attr, unsigned int size);
     long r;
 
-    /* Test 1184: perf_event_open → -ENOSYS */
-    fut_printf("[MISC-TEST] Test 1184: perf_event_open → -ENOSYS\n");
+    /* Test 1184: perf_event_open(NULL) → EINVAL */
+    fut_printf("[MISC-TEST] Test 1184: perf_event_open(NULL) → EINVAL\n");
     r = sys_perf_event_open(NULL, 0, -1, -1, 0);
-    if (r == -38 /* -ENOSYS */) {
-        fut_printf("[MISC-TEST] ✓ Test 1184: perf_event_open → ENOSYS\n");
+    if (r == -EINVAL) {
+        fut_printf("[MISC-TEST] ✓ Test 1184: perf_event_open(NULL) → EINVAL\n");
         fut_test_pass();
     } else {
         fut_printf("[MISC-TEST] ✗ Test 1184: perf_event_open returned %ld\n", r);
+        if (r >= 0) { extern long sys_close(int); sys_close((int)r); }
         fut_test_fail(1184);
     }
 
@@ -57951,6 +57952,217 @@ __attribute__((noinline)) static void test_net_procfs_devnodes(void) {
 }
 
 /* ============================================================
+ * Tests 1994-2001: perf_event_open performance counters
+ * ============================================================ */
+__attribute__((noinline)) static void test_perf_events(void) {
+    extern long sys_perf_event_open(const void *attr, int pid, int cpu,
+                                     int group_fd, unsigned long flags);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_ioctl(int fd, unsigned long request, void *argp);
+    extern long sys_close(int);
+
+    /* Minimal perf_event_attr for tests */
+    struct test_perf_attr {
+        uint32_t type;
+        uint32_t size;
+        uint64_t config;
+        uint64_t sample_period;
+        uint64_t sample_type;
+        uint64_t read_format;
+        uint64_t flags;
+        uint32_t wakeup_events;
+        uint32_t bp_type;
+        uint64_t config1;
+        uint64_t config2;
+    };
+
+    /* ── Test 1994: perf_event_open SW task-clock ── */
+    fut_printf("[MISC-TEST] Test 1994: perf SW task-clock\n");
+    {
+        static struct test_perf_attr attr;
+        memset(&attr, 0, sizeof(attr));
+        attr.type = 1; /* PERF_TYPE_SOFTWARE */
+        attr.size = sizeof(attr);
+        attr.config = 1; /* PERF_COUNT_SW_TASK_CLOCK */
+        long fd = sys_perf_event_open(&attr, -1, -1, -1, 0);
+        if (fd >= 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1994: perf fd=%ld\n", fd);
+            sys_close((int)fd);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1994: perf=%ld\n", fd);
+            fut_test_fail(1994);
+        }
+    }
+
+    /* ── Test 1995: read perf counter returns 8 bytes ── */
+    fut_printf("[MISC-TEST] Test 1995: read perf counter\n");
+    {
+        static struct test_perf_attr attr;
+        memset(&attr, 0, sizeof(attr));
+        attr.type = 1; /* SOFTWARE */
+        attr.config = 1; /* TASK_CLOCK */
+        long fd = sys_perf_event_open(&attr, -1, -1, -1, 0);
+        if (fd >= 0) {
+            static uint64_t val;
+            val = 0;
+            long n = sys_read((int)fd, &val, sizeof(val));
+            if (n == 8 && val > 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1995: read %ld bytes, val=%llu\n",
+                           n, (unsigned long long)val);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1995: read=%ld val=%llu\n",
+                           n, (unsigned long long)val);
+                fut_test_fail(1995);
+            }
+            sys_close((int)fd);
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1995: open=%ld\n", fd);
+            fut_test_fail(1995);
+        }
+    }
+
+    /* ── Test 1996: perf HW cpu-cycles counter ── */
+    fut_printf("[MISC-TEST] Test 1996: perf HW cpu-cycles\n");
+    {
+        static struct test_perf_attr attr;
+        memset(&attr, 0, sizeof(attr));
+        attr.type = 0; /* PERF_TYPE_HARDWARE */
+        attr.config = 0; /* CPU_CYCLES */
+        long fd = sys_perf_event_open(&attr, -1, -1, -1, 0);
+        if (fd >= 0) {
+            static uint64_t val;
+            long n = sys_read((int)fd, &val, sizeof(val));
+            if (n == 8 && val > 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1996: cpu-cycles=%llu\n",
+                           (unsigned long long)val);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1996: read=%ld val=%llu\n",
+                           n, (unsigned long long)val);
+                fut_test_fail(1996);
+            }
+            sys_close((int)fd);
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1996: open=%ld\n", fd);
+            fut_test_fail(1996);
+        }
+    }
+
+    /* ── Test 1997: perf HW instructions counter ── */
+    fut_printf("[MISC-TEST] Test 1997: perf HW instructions\n");
+    {
+        static struct test_perf_attr attr;
+        memset(&attr, 0, sizeof(attr));
+        attr.type = 0; attr.config = 1; /* INSTRUCTIONS */
+        long fd = sys_perf_event_open(&attr, -1, -1, -1, 0);
+        if (fd >= 0) {
+            static uint64_t val;
+            sys_read((int)fd, &val, sizeof(val));
+            if (val > 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1997: instructions=%llu\n",
+                           (unsigned long long)val);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1997: val=%llu\n", (unsigned long long)val);
+                fut_test_fail(1997);
+            }
+            sys_close((int)fd);
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1997: open=%ld\n", fd);
+            fut_test_fail(1997);
+        }
+    }
+
+    /* ── Test 1998: perf SW page-faults counter ── */
+    fut_printf("[MISC-TEST] Test 1998: perf SW page-faults\n");
+    {
+        static struct test_perf_attr attr;
+        memset(&attr, 0, sizeof(attr));
+        attr.type = 1; attr.config = 2; /* PAGE_FAULTS */
+        long fd = sys_perf_event_open(&attr, -1, -1, -1, 0);
+        if (fd >= 0) {
+            static uint64_t val;
+            sys_read((int)fd, &val, sizeof(val));
+            /* Page faults can be 0 on a ramfs kernel */
+            fut_printf("[MISC-TEST] ✓ Test 1998: page-faults=%llu\n",
+                       (unsigned long long)val);
+            sys_close((int)fd);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1998: open=%ld\n", fd);
+            fut_test_fail(1998);
+        }
+    }
+
+    /* ── Test 1999: PERF_EVENT_IOC_RESET resets counter ── */
+    fut_printf("[MISC-TEST] Test 1999: ioctl RESET\n");
+    {
+        static struct test_perf_attr attr;
+        memset(&attr, 0, sizeof(attr));
+        attr.type = 1; attr.config = 1; /* TASK_CLOCK */
+        long fd = sys_perf_event_open(&attr, -1, -1, -1, 0);
+        if (fd >= 0) {
+            long r = sys_ioctl((int)fd, 0x2403 /*RESET*/, NULL);
+            if (r == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1999: RESET ok\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1999: RESET=%ld\n", r);
+                fut_test_fail(1999);
+            }
+            sys_close((int)fd);
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1999: open=%ld\n", fd);
+            fut_test_fail(1999);
+        }
+    }
+
+    /* ── Test 2000: PERF_EVENT_IOC_ENABLE/DISABLE ── */
+    fut_printf("[MISC-TEST] Test 2000: ioctl ENABLE/DISABLE\n");
+    {
+        static struct test_perf_attr attr;
+        memset(&attr, 0, sizeof(attr));
+        attr.type = 1; attr.config = 0; /* CPU_CLOCK */
+        attr.flags = 1; /* disabled */
+        long fd = sys_perf_event_open(&attr, -1, -1, -1, 0);
+        if (fd >= 0) {
+            long r1 = sys_ioctl((int)fd, 0x2400 /*ENABLE*/, NULL);
+            long r2 = sys_ioctl((int)fd, 0x2401 /*DISABLE*/, NULL);
+            if (r1 == 0 && r2 == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 2000: ENABLE/DISABLE ok\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2000: enable=%ld disable=%ld\n", r1, r2);
+                fut_test_fail(2000);
+            }
+            sys_close((int)fd);
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2000: open=%ld\n", fd);
+            fut_test_fail(2000);
+        }
+    }
+
+    /* ── Test 2001: invalid type returns EINVAL ── */
+    fut_printf("[MISC-TEST] Test 2001: perf invalid type → EINVAL\n");
+    {
+        static struct test_perf_attr attr;
+        memset(&attr, 0, sizeof(attr));
+        attr.type = 99; /* invalid */
+        long r = sys_perf_event_open(&attr, -1, -1, -1, 0);
+        if (r == -EINVAL) {
+            fut_printf("[MISC-TEST] ✓ Test 2001: invalid type → EINVAL\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2001: r=%ld\n", r);
+            if (r >= 0) sys_close((int)r);
+            fut_test_fail(2001);
+        }
+    }
+}
+
+/* ============================================================
  * Tests 1982-1993: userfaultfd, statmount, listmount, memfd_secret
  * ============================================================ */
 __attribute__((noinline)) static void test_userfaultfd_statmount(void) {
@@ -62671,6 +62883,7 @@ void fut_misc_test_thread(void *arg) {
     test_loop_device(); /* Tests 1885-1887 */
     test_per_iface_conf(); /* Tests 1869-1871 */
 
+    test_perf_events(); /* Tests 1994-2001 */
     test_userfaultfd_statmount(); /* Tests 1982-1993 */
     test_fanotify();  /* Tests 1976-1981 */
     test_modern_mount_api(); /* Tests 1970-1975 */

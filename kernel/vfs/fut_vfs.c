@@ -3521,3 +3521,15 @@ int fut_vfs_rename(const char *oldpath, const char *newpath) {
 
 /* Iterate the mount list — used by procfs to generate /proc/mounts */
 struct fut_mount *fut_vfs_first_mount(void) { return mount_list; }
+
+struct fut_mount *fut_vfs_find_mount(const char *mountpoint) {
+    if (!mountpoint) return NULL;
+    for (struct fut_mount *m = mount_list; m; m = m->next) {
+        if (m->mountpoint) {
+            const char *a = m->mountpoint, *b = mountpoint;
+            while (*a && *b && *a == *b) { a++; b++; }
+            if (*a == '\0' && *b == '\0') return m;
+        }
+    }
+    return NULL;
+}

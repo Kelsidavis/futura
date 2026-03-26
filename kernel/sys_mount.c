@@ -581,6 +581,23 @@ long sys_mount(const char *source, const char *target, const char *filesystemtyp
         return ret;
     }
 
+    /* Set the display filesystem type for /proc/mounts if it differs from
+     * the kernel-internal name (e.g., "tmpfs" maps to "ramfs" internally
+     * but should show as "tmpfs" in /proc/mounts for Linux compat). */
+    if (strcmp(fstype_buf, kernel_fstype) != 0) {
+        extern struct fut_mount *fut_vfs_find_mount(const char *);
+        struct fut_mount *mnt = fut_vfs_find_mount(mountpoint);
+        if (mnt) {
+            /* Allocate persistent copy of the display name */
+            size_t flen = strlen(fstype_buf) + 1;
+            char *display = fut_malloc(flen);
+            if (display) {
+                memcpy(display, fstype_buf, flen);
+                mnt->fstype_display = display;
+            }
+        }
+    }
+
     fut_printf("[MOUNT] mount(target='%s', fstype='%s' -> '%s', flags=0x%lx, pid=%d) -> 0\n",
                mountpoint, fstype_buf, kernel_fstype, mountflags, task->pid);
     return 0;

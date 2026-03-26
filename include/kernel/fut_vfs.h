@@ -508,6 +508,7 @@ struct fut_mount {
     const char *device;             /* Device path */
     const char *mountpoint;         /* Mount point path */
     const struct fut_fs_type *fs;   /* Filesystem type */
+    const char *fstype_display;     /* Requested type name for /proc/mounts (may differ from fs->name) */
     struct fut_vnode *root;         /* Root vnode of mounted filesystem */
     int flags;                      /* Mount flags */
     bool expire_marked;             /* MNT_EXPIRE first-pass marker */

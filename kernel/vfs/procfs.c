@@ -1750,7 +1750,8 @@ static size_t gen_mounts(char *buf, size_t cap) {
     while (m) {
         const char *dev = (m->device && m->device[0]) ? m->device : "none";
         const char *mp  = (m->mountpoint && m->mountpoint[0]) ? m->mountpoint : "/";
-        const char *fs  = (m->fs && m->fs->name) ? m->fs->name : "unknown";
+        const char *fs  = m->fstype_display ? m->fstype_display
+                        : (m->fs && m->fs->name) ? m->fs->name : "unknown";
         pb_str(&b, dev); pb_char(&b, ' ');
         pb_str(&b, mp);  pb_char(&b, ' ');
         pb_str(&b, fs);  pb_str(&b, " rw,relatime 0 0\n");
@@ -1804,7 +1805,8 @@ static size_t gen_mountinfo(char *buf, size_t cap) {
     int mid = 1;
     while (m) {
         const char *mp  = (m->mountpoint && m->mountpoint[0]) ? m->mountpoint : "/";
-        const char *fs  = (m->fs && m->fs->name) ? m->fs->name : "unknown";
+        const char *fs  = m->fstype_display ? m->fstype_display
+                        : (m->fs && m->fs->name) ? m->fs->name : "unknown";
         const char *dev = (m->device && m->device[0]) ? m->device : "none";
         /* id parent major:minor fs_root mountpoint options */
         pb_u64(&b, (uint64_t)mid); pb_char(&b, ' ');

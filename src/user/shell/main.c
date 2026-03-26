@@ -8466,9 +8466,9 @@ int main(int argc, char **argv, char **envp) {
 
         if (nread <= 0) {
             if (nread < 0) break;  /* Error — exit shell */
-            /* EOF (nread=0): cmdline is unmodified (may have stale data).
-             * Treat as empty line. */
-            continue;
+            /* EOF (nread=0, Ctrl+D on empty line): exit shell gracefully */
+            write_str(1, "\nexit\n");
+            break;
         }
 
         /* Skip empty lines */

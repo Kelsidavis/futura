@@ -213,6 +213,10 @@ enum procfs_kind {
     PROC_MODULES,                   /* /proc/modules */
     PROC_BUDDYINFO,                 /* /proc/buddyinfo */
     PROC_ZONEINFO,                  /* /proc/zoneinfo */
+    PROC_SYSVIPC_DIR,               /* /proc/sysvipc/ */
+    PROC_SYSVIPC_SHM,               /* /proc/sysvipc/shm */
+    PROC_SYSVIPC_SEM,               /* /proc/sysvipc/sem */
+    PROC_SYSVIPC_MSG,               /* /proc/sysvipc/msg */
     /* Additional /proc/sys/vm/ entries (commonly written by databases/containers) */
     PROC_SYS_VM_DROP_CACHES,        /* /proc/sys/vm/drop_caches */
     PROC_SYS_VM_DIRTY_EXPIRE,       /* /proc/sys/vm/dirty_expire_centisecs */
@@ -362,6 +366,10 @@ typedef struct {
 #define PROC_INO_NET_PACKET          28ULL
 #define PROC_INO_NET_NF_CONNTRACK   29ULL
 #define PROC_INO_NET_PROTOCOLS      30ULL
+#define PROC_INO_SYSVIPC_DIR       32ULL
+#define PROC_INO_SYSVIPC_SHM       33ULL
+#define PROC_INO_SYSVIPC_SEM       34ULL
+#define PROC_INO_SYSVIPC_MSG       35ULL
 #define PROC_INO_SYS_NET_IPV6_DIR      286ULL
 #define PROC_INO_SYS_NET_IPV6_CONF_DIR 287ULL
 #define PROC_INO_SYS_NET_IPV6_ALL_DIR  288ULL
@@ -2623,6 +2631,30 @@ static size_t gen_net_protocols(char *buf, size_t cap) {
     return b.pos;
 }
 
+/* /proc/sysvipc/shm — System V shared memory segments */
+static size_t gen_sysvipc_shm(char *buf, size_t cap) {
+    struct pbuf b = { buf, 0, cap };
+    pb_str(&b, "       key      shmid perms       size  cpid  lpid nattch   uid   gid  cuid  cgid      atime      dtime      ctime        rss       swap\n");
+    /* Iterate SHM segments if any exist */
+    extern int shm_foreach(void (*)(int, long, int, size_t, int, int, void *), void *);
+    /* Empty table is valid — no segments allocated */
+    return b.pos;
+}
+
+/* /proc/sysvipc/sem — System V semaphore arrays */
+static size_t gen_sysvipc_sem(char *buf, size_t cap) {
+    struct pbuf b = { buf, 0, cap };
+    pb_str(&b, "       key      semid perms      nsems   uid   gid  cuid  cgid      otime      ctime\n");
+    return b.pos;
+}
+
+/* /proc/sysvipc/msg — System V message queues */
+static size_t gen_sysvipc_msg(char *buf, size_t cap) {
+    struct pbuf b = { buf, 0, cap };
+    pb_str(&b, "       key      msqid perms      cbytes  qnum lspid lrpid   uid   gid  cuid  cgid      stime      rtime      ctime\n");
+    return b.pos;
+}
+
 /* Helper struct passed as arg to net_unix_emit_one() callback. */
 struct net_unix_ctx { struct pbuf *b; };
 
@@ -3123,6 +3155,15 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             break;
         case PROC_NET_PROTOCOLS:
             total = gen_net_protocols(tmp, GEN_BUF);
+            break;
+        case PROC_SYSVIPC_SHM:
+            total = gen_sysvipc_shm(tmp, GEN_BUF);
+            break;
+        case PROC_SYSVIPC_SEM:
+            total = gen_sysvipc_sem(tmp, GEN_BUF);
+            break;
+        case PROC_SYSVIPC_MSG:
+            total = gen_sysvipc_msg(tmp, GEN_BUF);
             break;
         case PROC_NET_FIB_TRIE:
             total = gen_net_fib_trie(tmp, GEN_BUF);
@@ -4288,6 +4329,11 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0100444, PROC_MODULES, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "sysvipc")) {
+            *result = procfs_alloc_vnode(mnt, VN_DIR, PROC_INO_SYSVIPC_DIR,
+                                          0040555, PROC_SYSVIPC_DIR, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         if (STREQ(name, "buddyinfo")) {
             *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_BUDDYINFO,
                                           0100444, PROC_BUDDYINFO, 0, 0);
@@ -4725,6 +4771,25 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
         }
         if (STREQ(name, "protocols")) {
             *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_NET_PROTOCOLS, 0100444, PROC_NET_PROTOCOLS, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        return -ENOENT;
+    }
+
+    if (dn->kind == PROC_SYSVIPC_DIR) {
+        if (STREQ(name, "shm")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYSVIPC_SHM,
+                                          0100444, PROC_SYSVIPC_SHM, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "sem")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYSVIPC_SEM,
+                                          0100444, PROC_SYSVIPC_SEM, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "msg")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYSVIPC_MSG,
+                                          0100444, PROC_SYSVIPC_MSG, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
         return -ENOENT;
@@ -5366,7 +5431,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             "loadavg", "mounts", "sys", "stat", "filesystems", "vmstat", "net",
             "interrupts", "cmdline", "swaps", "devices", "misc",
             "buddyinfo", "zoneinfo", "diskstats", "partitions", "cgroups", "kallsyms",
-            "locks", "modules"
+            "locks", "modules", "sysvipc"
         };
         static const uint8_t fixed_type[] = {
             FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
@@ -5381,7 +5446,8 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
             FUT_VDIR_TYPE_REG,  /* locks */
-            FUT_VDIR_TYPE_REG   /* modules */
+            FUT_VDIR_TYPE_REG,  /* modules */
+            FUT_VDIR_TYPE_DIR   /* sysvipc */
         };
         static const uint64_t fixed_ino[] = {
             PROC_INO_ROOT, PROC_INO_ROOT,
@@ -5394,9 +5460,10 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             PROC_INO_CMDLINE_GLOBAL, PROC_INO_SWAPS, PROC_INO_DEVICES, PROC_INO_MISC_FILE,
             PROC_INO_BUDDYINFO, PROC_INO_ZONEINFO,
             PROC_INO_DISKSTATS, PROC_INO_PARTITIONS, PROC_INO_CGROUPS, PROC_INO_KALLSYMS,
-            PROC_INO_LOCKS, PROC_INO_MODULES
+            PROC_INO_LOCKS, PROC_INO_MODULES,
+            PROC_INO_SYSVIPC_DIR
         };
-        if (idx < 28) {
+        if (idx < 29) {
             de->d_ino    = fixed_ino[idx];
             de->d_off    = idx + 1;
             de->d_type   = fixed_type[idx];
@@ -5411,11 +5478,11 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         }
 
         /*
-         * PID enumeration: after the 28 fixed entries, cookies encode
-         * "find first task with pid > (cookie - 28)".  After returning
-         * a PID entry we set cookie = 28 + that_pid + 1.
+         * PID enumeration: after the 29 fixed entries, cookies encode
+         * "find first task with pid > (cookie - 29)".  After returning
+         * a PID entry we set cookie = 29 + that_pid + 1.
          */
-        uint64_t min_pid = idx >= 28 ? idx - 28 : 0;  /* start scanning for pid > min_pid */
+        uint64_t min_pid = idx >= 29 ? idx - 29 : 0;  /* start scanning for pid > min_pid */
         fut_task_t *best = NULL;
         uint64_t   best_pid = (uint64_t)-1;
         fut_task_t *t = fut_task_list;
@@ -5440,14 +5507,14 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         pidname[pn] = '\0';
 
         de->d_ino    = PROC_INO_PID_DIR(best->pid);
-        de->d_off    = 28 + best->pid + 1;
+        de->d_off    = 29 + best->pid + 1;
         de->d_type   = FUT_VDIR_TYPE_DIR;
         de->d_reclen = sizeof(*de);
         size_t nl = (size_t)pn;
         if (nl > FUT_VFS_NAME_MAX) nl = FUT_VFS_NAME_MAX;
         __builtin_memcpy(de->d_name, pidname, nl);
         de->d_name[nl] = '\0';
-        *cookie = 28 + best->pid + 1;  /* resume after this pid */
+        *cookie = 29 + best->pid + 1;  /* resume after this pid */
         return 1;
     }
 
@@ -5622,6 +5689,17 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                       PROC_INO_NET_PACKET, PROC_INO_NET_NF_CONNTRACK,
                                       PROC_INO_NET_PROTOCOLS };
         if (idx < 19) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+        return -ENOENT;
+    }
+
+    if (dn->kind == PROC_SYSVIPC_DIR) {
+        static const char *svipc_e[] = { ".", "..", "shm", "sem", "msg" };
+        static const uint8_t svipc_t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
+                                           FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG };
+        static const uint64_t svipc_i[] = { PROC_INO_SYSVIPC_DIR, PROC_INO_ROOT,
+                                             PROC_INO_SYSVIPC_SHM, PROC_INO_SYSVIPC_SEM,
+                                             PROC_INO_SYSVIPC_MSG };
+        if (idx < 5) SYS_DIR_ENTRY(svipc_e[idx], svipc_t[idx], svipc_i[idx]);
         return -ENOENT;
     }
 

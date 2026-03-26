@@ -15,7 +15,7 @@
  * Supports up to 8 loop devices (/dev/loop0 through /dev/loop7).
  */
 
-#include <kernel/fut_vfs.h>
+#include <kernel/fut_vfs.h>  /* for struct fut_stat */
 #include <kernel/fut_blockdev.h>
 #include <kernel/chrdev.h>
 #include <kernel/fut_memory.h>
@@ -108,18 +108,13 @@ int loop_set_fd(int loop_idx, int fd) {
     if (loop->active)
         return -EBUSY;
 
-    /* Get the file size via fstat */
+    /* Get the file size via fstat using the proper struct */
     extern long sys_fstat(int fd, void *statbuf);
-    struct { uint64_t dev; uint64_t ino; uint32_t mode; uint32_t nlink;
-             uint32_t uid; uint32_t gid; uint64_t rdev; uint64_t size;
-             uint64_t blksize; uint64_t blocks;
-             uint64_t atime; uint64_t atime_nsec;
-             uint64_t mtime; uint64_t mtime_nsec;
-             uint64_t ctime; uint64_t ctime_nsec; } st;
+    struct fut_stat st;
     memset(&st, 0, sizeof(st));
     long sr = sys_fstat(fd, &st);
     if (sr < 0) return (int)sr;
-    if (st.size == 0) return -EINVAL;
+    if (st.st_size == 0) return -EINVAL;
 
     /* Allocate block device structure */
     struct fut_blockdev *blkdev = fut_malloc(sizeof(struct fut_blockdev));
@@ -135,7 +130,7 @@ int loop_set_fd(int loop_idx, int fd) {
 
     loop->active = true;
     loop->backing_fd = fd;
-    loop->file_size = st.size;
+    loop->file_size = st.st_size;
     loop->offset = 0;
     loop->blkdev = blkdev;
 

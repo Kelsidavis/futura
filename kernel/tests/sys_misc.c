@@ -53995,6 +53995,89 @@ __attribute__((noinline)) static void test_futurafs(void) {
 }
 
 /* Tests 1901-1906: Extended FuturaFS operations */
+__attribute__((noinline)) static void test_futurafs_flags(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_write(int, const void *, size_t);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_close(int);
+    extern long sys_unlink(const char *);
+    extern long sys_stat(const char *, struct fut_stat *);
+
+    /* Test 1926: O_TRUNC truncates existing file on FuturaFS */
+    fut_printf("[MISC-TEST] Test 1926: FuturaFS O_TRUNC\n");
+    {
+        /* Create file with content */
+        long fd = sys_open("/mnt/trunc_test.txt", 0x0042 /* O_WRONLY|O_CREAT */, 0644);
+        if (fd >= 0) {
+            sys_write((int)fd, "longcontent", 11);
+            sys_close((int)fd);
+            /* Reopen with O_TRUNC */
+            fd = sys_open("/mnt/trunc_test.txt", 0x0242 /* O_WRONLY|O_CREAT|O_TRUNC */, 0644);
+            if (fd >= 0) {
+                sys_write((int)fd, "hi", 2);
+                sys_close((int)fd);
+                /* Check size is 2, not 11 */
+                static struct fut_stat st;
+                long sr = sys_stat("/mnt/trunc_test.txt", &st);
+                if (sr == 0 && st.st_size == 2) {
+                    fut_printf("[MISC-TEST] ✓ Test 1926: O_TRUNC shrunk to 2\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1926: size=%llu\n", (unsigned long long)st.st_size);
+                    fut_test_fail(1926);
+                }
+            } else { fut_test_fail(1926); }
+            sys_unlink("/mnt/trunc_test.txt");
+        } else { fut_test_fail(1926); }
+    }
+
+    /* Test 1927: O_EXCL fails when file exists on FuturaFS */
+    fut_printf("[MISC-TEST] Test 1927: FuturaFS O_EXCL EEXIST\n");
+    {
+        long fd = sys_open("/mnt/excl_test.txt", 0x0042, 0644);
+        if (fd >= 0) {
+            sys_write((int)fd, "x", 1);
+            sys_close((int)fd);
+            /* Try O_CREAT|O_EXCL on existing file */
+            fd = sys_open("/mnt/excl_test.txt", 0x00C2 /* O_WRONLY|O_CREAT|O_EXCL */, 0644);
+            if (fd == -17 /* EEXIST */) {
+                fut_printf("[MISC-TEST] ✓ Test 1927: O_EXCL → EEXIST\n");
+                fut_test_pass();
+            } else {
+                if (fd >= 0) sys_close((int)fd);
+                fut_printf("[MISC-TEST] ✗ Test 1927: expected EEXIST, got %ld\n", fd);
+                fut_test_fail(1927);
+            }
+            sys_unlink("/mnt/excl_test.txt");
+        } else { fut_test_fail(1927); }
+    }
+
+    /* Test 1928: multiple open FDs to same FuturaFS file */
+    fut_printf("[MISC-TEST] Test 1928: FuturaFS concurrent open\n");
+    {
+        long fd1 = sys_open("/mnt/multi_test.txt", 0x0042, 0644);
+        if (fd1 >= 0) {
+            sys_write((int)fd1, "AAAA", 4);
+            /* Open same file for reading while first fd is still open */
+            long fd2 = sys_open("/mnt/multi_test.txt", 0 /* O_RDONLY */, 0);
+            if (fd2 >= 0) {
+                static char buf[8];
+                long n = sys_read((int)fd2, buf, 8);
+                sys_close((int)fd2);
+                if (n == 4 && buf[0] == 'A') {
+                    fut_printf("[MISC-TEST] ✓ Test 1928: concurrent read → 4 bytes\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1928: read=%ld\n", n);
+                    fut_test_fail(1928);
+                }
+            } else { fut_test_fail(1928); }
+            sys_close((int)fd1);
+            sys_unlink("/mnt/multi_test.txt");
+        } else { fut_test_fail(1928); }
+    }
+}
+
 __attribute__((noinline)) static void test_futurafs_links(void) {
     extern long sys_open(const char *, int, int);
     extern long sys_write(int, const void *, size_t);
@@ -60836,6 +60919,7 @@ void fut_misc_test_thread(void *arg) {
     test_router_integration(); /* Test 1852 */
     test_ip_ttl_tos_sockopt(); /* Tests 1853-1854 */
     test_futurafs(); /* Tests 1855-1857 */
+    test_futurafs_flags(); /* Tests 1926-1928 */
     test_futurafs_links(); /* Tests 1923-1925 */
     test_futurafs_advanced(); /* Tests 1910-1912 */
     test_pressure_psi(); /* Tests 1921-1922 */

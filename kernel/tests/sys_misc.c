@@ -53810,6 +53810,48 @@ __attribute__((noinline)) static void test_dns_cache(void) {
     dns_cache_clear();
 }
 
+/* Tests 1853-1854: IP_TTL and IP_TOS setsockopt roundtrip */
+__attribute__((noinline)) static void test_ip_ttl_tos_sockopt(void) {
+    extern long sys_socket(int, int, int);
+    extern long sys_setsockopt(int, int, int, const void *, unsigned int);
+    extern long sys_getsockopt(int, int, int, void *, unsigned int *);
+    extern long sys_close(int);
+
+    /* Test 1853: IP_TTL set + get roundtrip */
+    fut_printf("[MISC-TEST] Test 1853: IP_TTL setsockopt\n");
+    {
+        long fd = sys_socket(2, 2, 0); /* AF_INET, SOCK_DGRAM */
+        if (fd >= 0) {
+            int ttl = 42;
+            long rc = sys_setsockopt((int)fd, 0 /* IPPROTO_IP */, 2 /* IP_TTL */, &ttl, sizeof(ttl));
+            if (rc == 0) {
+                int got = 0; unsigned int glen = sizeof(got);
+                sys_getsockopt((int)fd, 0, 2, &got, &glen);
+                if (got == 42) { fut_test_pass(); }
+                else { fut_test_fail(1853); }
+            } else { fut_test_fail(1853); }
+            sys_close((int)fd);
+        } else { fut_test_fail(1853); }
+    }
+
+    /* Test 1854: IP_TOS set + get roundtrip */
+    fut_printf("[MISC-TEST] Test 1854: IP_TOS setsockopt\n");
+    {
+        long fd = sys_socket(2, 2, 0);
+        if (fd >= 0) {
+            int tos = 0x10; /* IPTOS_LOWDELAY */
+            long rc = sys_setsockopt((int)fd, 0, 1 /* IP_TOS */, &tos, sizeof(tos));
+            if (rc == 0) {
+                int got = 0; unsigned int glen = sizeof(got);
+                sys_getsockopt((int)fd, 0, 1, &got, &glen);
+                if (got == 0x10) { fut_test_pass(); }
+                else { fut_test_fail(1854); }
+            } else { fut_test_fail(1854); }
+            sys_close((int)fd);
+        } else { fut_test_fail(1854); }
+    }
+}
+
 /* Test 1852: Complete router stack integration test */
 __attribute__((noinline)) static void test_router_integration(void) {
     extern long sys_ioctl(int fd, unsigned long request, void *argp);
@@ -59025,6 +59067,7 @@ void fut_misc_test_thread(void *arg) {
     test_nat_masquerade(); /* Test 1850 */
     test_snmp_ttl_stats(); /* Test 1851 */
     test_router_integration(); /* Test 1852 */
+    test_ip_ttl_tos_sockopt(); /* Tests 1853-1854 */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

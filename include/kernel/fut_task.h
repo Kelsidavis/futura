@@ -249,11 +249,19 @@ struct fut_task {
     fut_spinlock_t cap_recv_lock;
     fut_waitq_t cap_recv_waitq;
 
-    /* PID namespace (container isolation) */
+    /* Namespace support (container isolation) */
     struct pid_namespace *pid_ns;      // PID namespace (NULL = init namespace)
     uint64_t ns_pid;                   // PID within the namespace (== pid for init ns)
+    struct mount_namespace *mnt_ns;    // Mount namespace (NULL = init namespace)
 
     fut_task_t *next;                  // Next task in system list
+};
+
+/* Mount namespace structure */
+struct mount_namespace {
+    uint64_t id;                       // Namespace ID
+    int refcount;
+    struct fut_mount *mount_list;      // Per-namespace mount list
 };
 
 /* PID namespace structure */

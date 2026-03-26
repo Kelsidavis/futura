@@ -146,7 +146,7 @@ long sys_unshare(unsigned long flags) {
     }
 
     /* Categorize unshare operation */
-    const char *operation_desc;
+    const char *operation_desc __attribute__((unused));
     if (flags == 0) {
         operation_desc = "none (no-op)";
     } else if (flags == CLONE_FILES) {
@@ -191,13 +191,19 @@ long sys_unshare(unsigned long flags) {
                    (int)task->pid, new_ns->level);
     }
 
-    /* All other flags — including non-namespace (CLONE_FILES/FS/SYSVSEM) and
-     * namespace (CLONE_NEWNS/UTS/IPC/NET/USER/CGROUP) — are accepted as no-ops.
-     * Futura does not enforce per-task namespace isolation; every task already
-     * has an independent view of these resources (single shared mount table,
-     * single hostname, etc.).  Returning 0 lets container-aware programs
-     * proceed without hard ENOSYS failures. */
-    fut_printf("[UNSHARE] unshare(flags=%s (0x%lx), pid=%d) -> 0 (no-op)\n",
-               operation_desc, flags, task->pid);
+    /* CLONE_NEWNS: create a new mount namespace. The task gets its own
+     * mount list, so future mount/umount operations are invisible to
+     * other tasks in the parent namespace. */
+    if (flags & CLONE_NEWNS) {
+        extern struct mount_namespace *mntns_create(struct mount_namespace *);
+        struct mount_namespace *new_mntns = mntns_create(task->mnt_ns);
+        if (!new_mntns) return -ENOMEM;
+        task->mnt_ns = new_mntns;
+        fut_printf("[UNSHARE] unshare(CLONE_NEWNS, pid=%d) -> new mntns id=%llu\n",
+                   (int)task->pid, (unsigned long long)new_mntns->id);
+    }
+
+    /* Remaining flags (UTS/IPC/NET/USER/CGROUP, non-namespace flags) are
+     * accepted as no-ops for compatibility. */
     return 0;
 }

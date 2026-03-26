@@ -75,6 +75,12 @@ struct net_iface {
     int (*transmit)(struct net_iface *iface, const void *pkt, size_t len);
 };
 
+/* Routing table IDs (Linux compatible) */
+#define RT_TABLE_UNSPEC     0
+#define RT_TABLE_DEFAULT    253
+#define RT_TABLE_MAIN       254
+#define RT_TABLE_LOCAL      255
+
 /* Routing table entry */
 struct net_route {
     bool        active;
@@ -84,6 +90,18 @@ struct net_route {
     int         iface_idx;      /* Output interface index */
     uint32_t    metric;         /* Route metric (lower = preferred) */
     uint32_t    flags;          /* RTF_* flags */
+    uint8_t     table_id;       /* Routing table (RT_TABLE_MAIN default) */
+};
+
+/* Policy routing rule */
+#define NET_RULE_MAX        32
+struct net_rule {
+    bool        active;
+    uint32_t    priority;       /* Rule priority (lower = checked first) */
+    uint32_t    src;            /* Source IP to match (0 = any) */
+    uint32_t    src_mask;       /* Source netmask */
+    uint8_t     table_id;       /* Routing table to use */
+    int         iface_idx;      /* Input interface (-1 = any) */
 };
 
 /* ---- Interface management ---- */
@@ -136,6 +154,32 @@ int route_count(void);
 /* Iterate all routes (for /proc/net/route) */
 typedef void (*route_iter_fn)(const struct net_route *route, void *ctx);
 void route_foreach(route_iter_fn fn, void *ctx);
+
+/* Add route to a specific table. Returns 0 on success. */
+int route_add_table(uint32_t dest, uint32_t mask, uint32_t gateway,
+                    int iface_idx, uint32_t metric, uint8_t table_id);
+
+/* Look up route in a specific table */
+const struct net_route *route_lookup_table(uint32_t dest_ip, uint8_t table_id);
+
+/* ---- Policy routing rules ---- */
+
+/* Add a policy routing rule. */
+int rule_add(uint32_t priority, uint32_t src, uint32_t src_mask,
+             uint8_t table_id, int iface_idx);
+
+/* Delete a policy routing rule by priority. */
+int rule_del(uint32_t priority);
+
+/* Look up which routing table to use for a given source IP. */
+uint8_t rule_lookup(uint32_t src_ip);
+
+/* Get rule count */
+int rule_count(void);
+
+/* Iterate rules */
+typedef void (*rule_iter_fn)(const struct net_rule *rule, void *ctx);
+void rule_foreach(rule_iter_fn fn, void *ctx);
 
 /* ---- IP forwarding ---- */
 

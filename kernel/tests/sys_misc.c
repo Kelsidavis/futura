@@ -55416,6 +55416,92 @@ __attribute__((noinline)) static void test_fork_rlimit_as(void) {
     }
 }
 
+__attribute__((noinline)) static void test_policy_routing(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_close(int);
+    extern long sys_ioctl(int fd, unsigned long request, void *argp);
+
+    /* Test 1878: Add policy routing rule via SIOCADDRULE */
+    fut_printf("[MISC-TEST] Test 1878: SIOCADDRULE creates policy rule\n");
+    {
+        long sfd = sys_open("/dev/null", 0x0002, 0);
+        if (sfd >= 0) {
+            static struct { uint32_t prio; uint32_t src; uint32_t src_mask; uint8_t table; int iface; } rreq;
+            rreq.prio = 100;
+            rreq.src = 0xC0A80100;       /* 192.168.1.0 */
+            rreq.src_mask = 0xFFFFFF00;   /* /24 */
+            rreq.table = 10;              /* Custom table 10 */
+            rreq.iface = -1;
+            long rc = sys_ioctl((int)sfd, 0x89E1 /* SIOCADDRULE */, &rreq);
+            if (rc == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1878: policy rule added (prio=100)\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1878: SIOCADDRULE=%ld\n", rc);
+                fut_test_fail(1878);
+            }
+            sys_close((int)sfd);
+        } else { fut_test_fail(1878); }
+    }
+
+    /* Test 1879: Duplicate rule priority returns EEXIST */
+    fut_printf("[MISC-TEST] Test 1879: Duplicate rule → EEXIST\n");
+    {
+        long sfd = sys_open("/dev/null", 0x0002, 0);
+        if (sfd >= 0) {
+            static struct { uint32_t prio; uint32_t src; uint32_t src_mask; uint8_t table; int iface; } rreq;
+            rreq.prio = 100;
+            rreq.src = 0x0A000000;
+            rreq.src_mask = 0xFF000000;
+            rreq.table = 20;
+            rreq.iface = -1;
+            long rc = sys_ioctl((int)sfd, 0x89E1, &rreq);
+            if (rc == -17 /* EEXIST */) {
+                fut_printf("[MISC-TEST] ✓ Test 1879: duplicate rule prio → EEXIST\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1879: expected EEXIST, got %ld\n", rc);
+                fut_test_fail(1879);
+            }
+            sys_close((int)sfd);
+        } else { fut_test_fail(1879); }
+    }
+
+    /* Test 1880: Delete rule by priority */
+    fut_printf("[MISC-TEST] Test 1880: SIOCDELRULE removes rule\n");
+    {
+        long sfd = sys_open("/dev/null", 0x0002, 0);
+        if (sfd >= 0) {
+            static uint32_t prio;
+            prio = 100;
+            long rc = sys_ioctl((int)sfd, 0x89E2 /* SIOCDELRULE */, &prio);
+            if (rc == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1880: rule prio=100 deleted\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1880: SIOCDELRULE=%ld\n", rc);
+                fut_test_fail(1880);
+            }
+            sys_close((int)sfd);
+        } else { fut_test_fail(1880); }
+    }
+
+    /* Test 1881: rule_lookup returns correct table for source IP */
+    fut_printf("[MISC-TEST] Test 1881: rule_lookup matches source IP\n");
+    {
+        extern uint8_t rule_lookup(uint32_t);
+        /* No rules active now (we deleted it) — should return MAIN table */
+        uint8_t table = rule_lookup(0xC0A80164); /* 192.168.1.100 */
+        if (table == 254 /* RT_TABLE_MAIN */) {
+            fut_printf("[MISC-TEST] ✓ Test 1881: no rules → main table (%u)\n", table);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1881: expected 254, got %u\n", table);
+            fut_test_fail(1881);
+        }
+    }
+}
+
 __attribute__((noinline)) static void test_ipv6_procfs(void) {
     extern long sys_open(const char *, int, int);
     extern long sys_read(int, void *, size_t);
@@ -59661,6 +59747,7 @@ void fut_misc_test_thread(void *arg) {
     test_bridge_interfaces(); /* Tests 1865-1868 */
     test_ipv6_procfs(); /* Test 1875 */
     test_fork_rlimit_as(); /* Tests 1876-1877 */
+    test_policy_routing(); /* Tests 1878-1881 */
     test_gre_tunnel(); /* Tests 1872-1874 */
     test_per_iface_conf(); /* Tests 1869-1871 */
 

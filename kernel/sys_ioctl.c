@@ -63,8 +63,10 @@
 /* VLAN ioctl (Linux compatible) */
 #define SIOCSIFVLAN    0x8983  /* Create/configure VLAN sub-interface */
 
-/* GRE tunnel ioctl (Futura custom) */
+/* GRE tunnel and policy routing ioctls (Futura custom) */
 #define SIOCADDGRETUN  0x89E0  /* Create GRE tunnel */
+#define SIOCADDRULE    0x89E1  /* Add policy routing rule */
+#define SIOCDELRULE    0x89E2  /* Delete policy routing rule */
 
 /* Bridge ioctls (Linux compatible) */
 #define SIOCBRADDBR    0x89a0  /* Create bridge */
@@ -620,6 +622,7 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
                                    request == SIOCFWFLUSH ||
                                    request == SIOCSIFVLAN ||
                                    request == SIOCADDGRETUN ||
+                                   request == SIOCADDRULE || request == SIOCDELRULE ||
                                    request == SIOCBRADDBR || request == SIOCBRDELBR ||
                                    request == SIOCBRADDIF || request == SIOCBRDELIF ||
                                    request == 0x400454CA /* TUNSETIFF */);
@@ -1692,6 +1695,36 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
             greq.name[15] = '\0';
             extern int gre_tunnel_create(const char *, uint32_t, uint32_t, uint32_t);
             return gre_tunnel_create(greq.name, greq.local_ip, greq.remote_ip, greq.key);
+        }
+
+        case SIOCADDRULE: {
+            /* Add policy routing rule */
+            if (!argp) return -EFAULT;
+            struct { uint32_t prio; uint32_t src; uint32_t src_mask; uint8_t table; int iface; } rreq;
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
+                __builtin_memcpy(&rreq, argp, sizeof(rreq));
+            else
+#endif
+            if (fut_copy_from_user(&rreq, argp, sizeof(rreq)) != 0)
+                return -EFAULT;
+            extern int rule_add(uint32_t, uint32_t, uint32_t, uint8_t, int);
+            return rule_add(rreq.prio, rreq.src, rreq.src_mask, rreq.table, rreq.iface);
+        }
+
+        case SIOCDELRULE: {
+            /* Delete policy routing rule by priority */
+            if (!argp) return -EFAULT;
+            uint32_t prio;
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
+                __builtin_memcpy(&prio, argp, sizeof(prio));
+            else
+#endif
+            if (fut_copy_from_user(&prio, argp, sizeof(prio)) != 0)
+                return -EFAULT;
+            extern int rule_del(uint32_t);
+            return rule_del(prio);
         }
 
         case SIOCBRADDBR: {

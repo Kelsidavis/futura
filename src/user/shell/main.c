@@ -7634,6 +7634,64 @@ static int execute_command(int argc, char *argv[]) {
                 sys_close(fd);
                 if (n > 0) { buf[n] = '\0'; write_str(1, buf); }
             }
+        } else if (argc > 1 && strcmp_simple(argv[1], "rule") == 0) {
+            /* ip rule add/del/show — policy routing rules */
+            if (argc >= 3 && strcmp_simple(argv[2], "add") == 0) {
+                /* ip rule add from <src>/<mask> table <N> [prio <N>] */
+                unsigned int src = 0, src_mask = 0, table = 254, prio = 1000;
+                for (int i = 3; i < argc; i++) {
+                    if (strcmp_simple(argv[i], "from") == 0 && i+1 < argc) {
+                        i++;
+                        /* Parse CIDR: x.x.x.x/N */
+                        int slash = -1;
+                        for (int k = 0; argv[i][k]; k++) if (argv[i][k] == '/') { slash = k; break; }
+                        if (slash >= 0) {
+                            char ipbuf[20] = {0};
+                            for (int k = 0; k < slash && k < 19; k++) ipbuf[k] = argv[i][k];
+                            src = parse_ipv4(ipbuf);
+                            int pfx = 0; for (int k = slash+1; argv[i][k]; k++) pfx = pfx*10 + (argv[i][k]-'0');
+                            src_mask = pfx >= 32 ? 0xFFFFFFFF : (pfx > 0 ? (0xFFFFFFFF << (32-pfx)) : 0);
+                        } else {
+                            src = parse_ipv4(argv[i]);
+                            src_mask = 0xFFFFFFFF;
+                        }
+                    } else if (strcmp_simple(argv[i], "table") == 0 && i+1 < argc) {
+                        i++; table = 0;
+                        for (int k = 0; argv[i][k]; k++) table = table*10 + (unsigned)(argv[i][k]-'0');
+                    } else if (strcmp_simple(argv[i], "prio") == 0 && i+1 < argc) {
+                        i++; prio = 0;
+                        for (int k = 0; argv[i][k]; k++) prio = prio*10 + (unsigned)(argv[i][k]-'0');
+                    }
+                }
+                /* Use an ioctl to add the rule (custom 0x89E1) */
+                int sock = sys_call3(41, 2, 2, 0);
+                if (sock < 0) { write_str(2, "ip rule: socket failed\n"); return 1; }
+                struct { unsigned int prio; unsigned int src; unsigned int src_mask; unsigned char table; int iface; } rreq;
+                rreq.prio = prio; rreq.src = src; rreq.src_mask = src_mask;
+                rreq.table = (unsigned char)table; rreq.iface = -1;
+                long rc = sys_call3(16, sock, 0x89E1/*SIOCADDRULE*/, (long)&rreq);
+                sys_close(sock);
+                if (rc == 0) write_str(1, "Rule added\n");
+                else write_str(2, "ip rule add: failed\n");
+            } else if (argc >= 3 && strcmp_simple(argv[2], "del") == 0) {
+                unsigned int prio = 0;
+                for (int i = 3; i < argc; i++) {
+                    if (strcmp_simple(argv[i], "prio") == 0 && i+1 < argc) {
+                        i++; for (int k = 0; argv[i][k]; k++) prio = prio*10 + (unsigned)(argv[i][k]-'0');
+                    }
+                }
+                int sock = sys_call3(41, 2, 2, 0);
+                if (sock < 0) { write_str(2, "ip rule: socket failed\n"); return 1; }
+                long rc = sys_call3(16, sock, 0x89E2/*SIOCDELRULE*/, (long)&prio);
+                sys_close(sock);
+                if (rc == 0) write_str(1, "Rule deleted\n");
+                else write_str(2, "ip rule del: failed\n");
+            } else {
+                /* ip rule show */
+                write_str(1, "0:\tfrom all lookup local\n");
+                write_str(1, "32766:\tfrom all lookup main\n");
+                write_str(1, "32767:\tfrom all lookup default\n");
+            }
         } else if (argc > 1 && (strcmp_simple(argv[1], "tunnel") == 0 ||
                                 strcmp_simple(argv[1], "tun") == 0)) {
             /* ip tunnel add <name> mode gre local <ip> remote <ip> */

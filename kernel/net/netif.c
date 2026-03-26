@@ -262,6 +262,7 @@ int route_add(uint32_t dest, uint32_t mask, uint32_t gateway,
     rt->flags = RTF_UP;
     if (gateway) rt->flags |= RTF_GATEWAY;
     if (mask == 0xFFFFFFFF) rt->flags |= RTF_HOST;
+    rt->table_id = RT_TABLE_MAIN;
 
     fut_spinlock_release(&g_route_lock);
     return 0;
@@ -315,6 +316,137 @@ void route_foreach(route_iter_fn fn, void *ctx) {
     if (!fn) return;
     for (int i = 0; i < NET_ROUTE_MAX; i++)
         if (g_routes[i].active) fn(&g_routes[i], ctx);
+}
+
+int route_add_table(uint32_t dest, uint32_t mask, uint32_t gateway,
+                    int iface_idx, uint32_t metric, uint8_t table_id) {
+    fut_spinlock_acquire(&g_route_lock);
+    int slot = -1;
+    for (int i = 0; i < NET_ROUTE_MAX; i++) {
+        if (!g_routes[i].active) { slot = i; break; }
+    }
+    if (slot < 0) {
+        fut_spinlock_release(&g_route_lock);
+        return -ENOSPC;
+    }
+    struct net_route *rt = &g_routes[slot];
+    rt->active = true;
+    rt->dest = dest;
+    rt->netmask = mask;
+    rt->gateway = gateway;
+    rt->iface_idx = iface_idx;
+    rt->metric = metric;
+    rt->flags = RTF_UP;
+    if (gateway) rt->flags |= RTF_GATEWAY;
+    if (mask == 0xFFFFFFFF) rt->flags |= RTF_HOST;
+    rt->table_id = table_id;
+    fut_spinlock_release(&g_route_lock);
+    return 0;
+}
+
+const struct net_route *route_lookup_table(uint32_t dest_ip, uint8_t table_id) {
+    const struct net_route *best = NULL;
+    uint32_t best_mask = 0;
+    uint32_t best_metric = UINT32_MAX;
+    for (int i = 0; i < NET_ROUTE_MAX; i++) {
+        if (!g_routes[i].active) continue;
+        if (g_routes[i].table_id != table_id) continue;
+        if ((dest_ip & g_routes[i].netmask) == g_routes[i].dest) {
+            uint32_t mask = g_routes[i].netmask;
+            if (mask > best_mask ||
+                (mask == best_mask && g_routes[i].metric < best_metric)) {
+                best = &g_routes[i];
+                best_mask = mask;
+                best_metric = g_routes[i].metric;
+            }
+        }
+    }
+    return best;
+}
+
+/* ============================================================
+ *   Policy Routing Rules
+ * ============================================================ */
+
+static struct net_rule g_rules[NET_RULE_MAX];
+static fut_spinlock_t g_rule_lock;
+
+int rule_add(uint32_t priority, uint32_t src, uint32_t src_mask,
+             uint8_t table_id, int iface_idx) {
+    fut_spinlock_acquire(&g_rule_lock);
+    /* Check for duplicate priority */
+    for (int i = 0; i < NET_RULE_MAX; i++) {
+        if (g_rules[i].active && g_rules[i].priority == priority) {
+            fut_spinlock_release(&g_rule_lock);
+            return -EEXIST;
+        }
+    }
+    int slot = -1;
+    for (int i = 0; i < NET_RULE_MAX; i++) {
+        if (!g_rules[i].active) { slot = i; break; }
+    }
+    if (slot < 0) {
+        fut_spinlock_release(&g_rule_lock);
+        return -ENOSPC;
+    }
+    struct net_rule *r = &g_rules[slot];
+    r->active = true;
+    r->priority = priority;
+    r->src = src;
+    r->src_mask = src_mask;
+    r->table_id = table_id;
+    r->iface_idx = iface_idx;
+    fut_spinlock_release(&g_rule_lock);
+    fut_printf("[RULE] Added rule prio=%u src=%u.%u.%u.%u/%u table=%u\n",
+               priority,
+               (src >> 24) & 0xFF, (src >> 16) & 0xFF,
+               (src >> 8) & 0xFF, src & 0xFF,
+               src_mask ? __builtin_popcount(src_mask) : 0,
+               table_id);
+    return 0;
+}
+
+int rule_del(uint32_t priority) {
+    fut_spinlock_acquire(&g_rule_lock);
+    for (int i = 0; i < NET_RULE_MAX; i++) {
+        if (g_rules[i].active && g_rules[i].priority == priority) {
+            g_rules[i].active = false;
+            fut_spinlock_release(&g_rule_lock);
+            return 0;
+        }
+    }
+    fut_spinlock_release(&g_rule_lock);
+    return -ESRCH;
+}
+
+uint8_t rule_lookup(uint32_t src_ip) {
+    /* Walk rules in priority order (lowest priority value first) */
+    uint32_t best_prio = UINT32_MAX;
+    uint8_t best_table = RT_TABLE_MAIN;
+    for (int i = 0; i < NET_RULE_MAX; i++) {
+        if (!g_rules[i].active) continue;
+        if (g_rules[i].priority >= best_prio) continue;
+        /* Match source IP */
+        if (g_rules[i].src_mask == 0 ||
+            (src_ip & g_rules[i].src_mask) == g_rules[i].src) {
+            best_prio = g_rules[i].priority;
+            best_table = g_rules[i].table_id;
+        }
+    }
+    return best_table;
+}
+
+int rule_count(void) {
+    int count = 0;
+    for (int i = 0; i < NET_RULE_MAX; i++)
+        if (g_rules[i].active) count++;
+    return count;
+}
+
+void rule_foreach(rule_iter_fn fn, void *ctx) {
+    if (!fn) return;
+    for (int i = 0; i < NET_RULE_MAX; i++)
+        if (g_rules[i].active) fn(&g_rules[i], ctx);
 }
 
 /* ============================================================

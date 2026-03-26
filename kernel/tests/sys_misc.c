@@ -51244,6 +51244,129 @@ static void test_openat_o_directory(void) {
 
 /* Tests 1729-1732: umask enforcement on file/directory creation (POSIX) */
 /* Tests 1761-1764: SIGHUP delivery when session leader exits */
+/* Tests 1765-1768: daemon lifecycle integration (setsid+chdir+devnull) */
+__attribute__((noinline)) static void test_daemon_lifecycle(void) {
+    extern long sys_setsid(void);
+    extern long sys_chdir(const char *);
+    extern long sys_getcwd(char *, size_t);
+    extern long sys_open(const char *, int, int);
+    extern long sys_close(int);
+    extern long sys_dup2(int, int);
+    extern long sys_read(int, void *, size_t);
+
+    fut_task_t *task = fut_task_current();
+    if (!task) { fut_test_fail(1765); fut_test_fail(1766); fut_test_fail(1767); fut_test_fail(1768); return; }
+
+    /* Save state for restoration */
+    uint64_t saved_sid = task->sid;
+    uint64_t saved_pgid = task->pgid;
+    uint32_t saved_tty = task->tty_nr;
+    uint64_t saved_cwd_ino = task->current_dir_ino;
+    static char saved_cwd_buf[256];
+    __builtin_memcpy(saved_cwd_buf, task->cwd_cache_buf, sizeof(saved_cwd_buf));
+    char *saved_cwd_cache = task->cwd_cache;
+
+    /* Test 1765: setsid() + chdir("/") pattern */
+    fut_printf("[MISC-TEST] Test 1765: daemon setsid+chdir pattern\n");
+    {
+        task->pgid = 99;  /* not group leader → setsid allowed */
+        task->tty_nr = 0x8800;  /* has ctty */
+        long sid = sys_setsid();
+        sys_chdir("/");
+        static char cwdbuf[64];
+        sys_getcwd(cwdbuf, 64);
+        if (sid > 0 && task->tty_nr == 0 && cwdbuf[0] == '/' && cwdbuf[1] == '\0') {
+            fut_printf("[MISC-TEST] ✓ Test 1765: sid=%ld tty=0 cwd=/\n", sid);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1765: sid=%ld tty=%u cwd=%s\n", sid, task->tty_nr, cwdbuf);
+            fut_test_fail(1765);
+        }
+    }
+
+    /* Test 1766: redirect stdin/stdout/stderr to /dev/null */
+    fut_printf("[MISC-TEST] Test 1766: redirect stdio to /dev/null\n");
+    {
+        /* Save current fd 0 */
+        extern long sys_dup(int);
+        long saved_fd0 = sys_dup(0);
+        long devnull = sys_open("/dev/null", 0x0002 /* O_RDWR */, 0);
+        if (devnull >= 0) {
+            sys_dup2((int)devnull, 0);
+            /* Read from new stdin (should be /dev/null → EOF = 0) */
+            static char buf[4];
+            long nr = sys_read(0, buf, 4);
+            /* Restore original fd 0 */
+            if (saved_fd0 >= 0) { sys_dup2((int)saved_fd0, 0); sys_close((int)saved_fd0); }
+            if (devnull > 2) sys_close((int)devnull);
+            if (nr == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1766: stdin=/dev/null (read=0 EOF)\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1766: read=%ld (expected 0)\n", nr);
+                fut_test_fail(1766);
+            }
+        } else {
+            if (saved_fd0 >= 0) sys_close((int)saved_fd0);
+            fut_printf("[MISC-TEST] ✗ Test 1766: open /dev/null failed\n");
+            fut_test_fail(1766);
+        }
+    }
+
+    /* Test 1767: write to /dev/null succeeds (discard) */
+    fut_printf("[MISC-TEST] Test 1767: write to /dev/null succeeds\n");
+    {
+        extern long sys_write(int, const void *, size_t);
+        long devnull = sys_open("/dev/null", 0x0001 /* O_WRONLY */, 0);
+        if (devnull >= 0) {
+            long wr = sys_write((int)devnull, "discard me", 10);
+            sys_close((int)devnull);
+            if (wr == 10) {
+                fut_printf("[MISC-TEST] ✓ Test 1767: write /dev/null = 10\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1767: write = %ld\n", wr);
+                fut_test_fail(1767);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1767: open failed\n");
+            fut_test_fail(1767);
+        }
+    }
+
+    /* Test 1768: read from /dev/zero returns zero bytes */
+    fut_printf("[MISC-TEST] Test 1768: read /dev/zero returns zeros\n");
+    {
+        long devzero = sys_open("/dev/zero", 0x0000 /* O_RDONLY */, 0);
+        if (devzero >= 0) {
+            static char buf[8];
+            buf[0] = (char)(-1); buf[1] = (char)(-1);
+            long nr = sys_read((int)devzero, buf, 4);
+            sys_close((int)devzero);
+            if (nr == 4 && buf[0] == 0 && buf[1] == 0 && buf[2] == 0 && buf[3] == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1768: /dev/zero returned 4 zero bytes\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1768: nr=%ld bytes=%02x%02x%02x%02x\n",
+                           nr, (unsigned char)buf[0], (unsigned char)buf[1],
+                           (unsigned char)buf[2], (unsigned char)buf[3]);
+                fut_test_fail(1768);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1768: open /dev/zero failed\n");
+            fut_test_fail(1768);
+        }
+    }
+
+    /* Restore state */
+    task->sid = saved_sid;
+    task->pgid = saved_pgid;
+    task->tty_nr = saved_tty;
+    task->current_dir_ino = saved_cwd_ino;
+    __builtin_memcpy(task->cwd_cache_buf, saved_cwd_buf, sizeof(task->cwd_cache_buf));
+    task->cwd_cache = saved_cwd_cache;
+}
+
 __attribute__((noinline)) static void test_sighup_session_leader(void) {
     /* Test 1761: session leader exit sends SIGHUP to session members */
     fut_printf("[MISC-TEST] Test 1761: session leader exit → SIGHUP to members\n");
@@ -56661,6 +56784,7 @@ void fut_misc_test_thread(void *arg) {
     test_timer_abstime();          /* Tests 1721-1724 */
     test_execve_prevalidation();   /* Tests 1725-1728 */
     test_fd_lifecycle_edges();     /* Tests 1737-1740 */
+    test_daemon_lifecycle();          /* Tests 1765-1768 */
     test_sighup_session_leader();    /* Tests 1761-1764 */
     test_task_exit_fd_release();     /* Tests 1757-1760 */
     test_setsid_ctty();              /* Tests 1753-1756 */

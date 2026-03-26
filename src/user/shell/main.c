@@ -483,7 +483,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     /* List of builtin commands */
     const char *builtins[] = {
         "arp", "bg", "cd", "chmod", "clear", "date", "dd", "df", "dmesg", "echo", "edit", "hexdump", "lsof", "nc", "poweroff", "reboot", "seq", "sleep", "time", "traceroute", "wget", "exit", "export", "fg", "free",
-        "help", "hostname", "id", "ifconfig", "iptables", "jobs", "kill", "ls", "mount", "netstat",
+        "help", "hostname", "httpd", "id", "ifconfig", "iptables", "jobs", "kill", "ls", "mount", "netstat",
         ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "history", "ip", "ln", "mktemp", "more", "nproc", "nslookup", "ping", "printf", "ps", "pwd", "read", "readlink", "set", "sha256sum", "source", "ss", "stat", "sync", "sysctl", "sysinfo", "test", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "wait", "which", "whoami", "xargs", "yes", NULL
     };
 
@@ -6109,6 +6109,103 @@ static int execute_command(int argc, char *argv[]) {
             if (fd >= 0) { char buf[2048]; ssize_t n = sys_read(fd, buf, sizeof(buf)-1);
                 sys_close(fd); if (n > 0) { buf[n] = '\0'; write_str(1, buf); } }
         }
+        return 0;
+    } else if (strcmp_simple(argv[0], "httpd") == 0) {
+        /* httpd — minimal HTTP server for testing the networking stack */
+        int port = 8080;
+        const char *docroot = "/";
+        for (int i = 1; i < argc; i++) {
+            if (strcmp_simple(argv[i], "-p") == 0 && i+1 < argc) {
+                port = 0; const char *pp = argv[++i];
+                while (*pp >= '0' && *pp <= '9') port = port * 10 + (*pp++ - '0');
+            } else if (strcmp_simple(argv[i], "-d") == 0 && i+1 < argc) {
+                docroot = argv[++i];
+            }
+        }
+
+        long sfd = sys_call3(41 /* socket */, 2, 1, 0);
+        if (sfd < 0) { write_str(2, "httpd: socket failed\n"); return 1; }
+
+        /* SO_REUSEADDR */
+        int one = 1;
+        sys_call6(54, sfd, 1, 2 /* SO_REUSEADDR */, (long)&one, sizeof(one), 0);
+
+        struct { uint16_t family; uint16_t port; uint32_t addr; uint8_t pad[8]; } sa;
+        sa.family = 2; sa.addr = 0;
+        sa.port = (uint16_t)(((port >> 8) & 0xFF) | ((port & 0xFF) << 8));
+        for (int i = 0; i < 8; i++) sa.pad[i] = 0;
+
+        if (sys_call3(49, sfd, (long)&sa, 16) < 0) {
+            write_str(2, "httpd: bind failed\n"); sys_close(sfd); return 1;
+        }
+        if (sys_call2(50 /* listen */, sfd, 5) < 0) {
+            write_str(2, "httpd: listen failed\n"); sys_close(sfd); return 1;
+        }
+
+        write_str(1, "httpd: serving on port ");
+        { char pb[8]; int pi = 0;
+          if (port >= 10000) pb[pi++] = '0' + port/10000;
+          if (port >= 1000) pb[pi++] = '0' + (port/1000)%10;
+          if (port >= 100) pb[pi++] = '0' + (port/100)%10;
+          if (port >= 10) pb[pi++] = '0' + (port/10)%10;
+          pb[pi++] = '0' + port%10; pb[pi] = '\0';
+          write_str(1, pb); }
+        write_str(1, " (docroot: ");
+        write_str(1, docroot);
+        write_str(1, ")\n");
+        write_str(1, "Press Ctrl+C to stop\n");
+
+        /* Accept loop — handle one connection at a time */
+        for (int conn = 0; conn < 100; conn++) {
+            long cfd = sys_call3(43 /* accept */, sfd, 0, 0);
+            if (cfd < 0) continue;
+
+            /* Read HTTP request */
+            char req[1024];
+            ssize_t rn = sys_read(cfd, req, sizeof(req) - 1);
+            if (rn <= 0) { sys_close(cfd); continue; }
+            req[rn] = '\0';
+
+            /* Parse GET /path */
+            char path[256];
+            int pi = 0;
+            if (req[0] == 'G' && req[1] == 'E' && req[2] == 'T' && req[3] == ' ') {
+                int ri = 4;
+                /* Prepend docroot */
+                for (int j = 0; docroot[j] && pi < 200; j++) path[pi++] = docroot[j];
+                if (pi > 0 && path[pi-1] == '/' && req[ri] == '/') ri++; /* avoid double / */
+                while (req[ri] && req[ri] != ' ' && req[ri] != '?' && pi < 254)
+                    path[pi++] = req[ri++];
+            }
+            path[pi] = '\0';
+            if (pi == 0 || path[pi-1] == '/') {
+                /* Append index.html for directory requests */
+                const char *idx = "index.html";
+                for (int j = 0; idx[j] && pi < 254; j++) path[pi++] = idx[j];
+                path[pi] = '\0';
+            }
+
+            /* Try to serve the file */
+            int ffd = sys_open(path, O_RDONLY, 0);
+            if (ffd >= 0) {
+                /* 200 OK */
+                static const char ok[] = "HTTP/1.0 200 OK\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n";
+                sys_write(cfd, ok, sizeof(ok) - 1);
+                char fbuf[512];
+                ssize_t fn;
+                while ((fn = sys_read(ffd, fbuf, sizeof(fbuf))) > 0)
+                    sys_write(cfd, fbuf, fn);
+                sys_close(ffd);
+            } else {
+                /* 404 Not Found */
+                static const char nf[] = "HTTP/1.0 404 Not Found\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n"
+                    "<html><body><h1>404 Not Found</h1><p>File not found on Futura OS</p></body></html>\n";
+                sys_write(cfd, nf, sizeof(nf) - 1);
+            }
+            sys_close(cfd);
+        }
+        sys_close(sfd);
+        write_str(1, "httpd: stopped\n");
         return 0;
     } else if (strcmp_simple(argv[0], "sysctl") == 0) {
         /* sysctl — read/write kernel parameters via /proc/sys/ */

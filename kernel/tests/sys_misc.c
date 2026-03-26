@@ -53640,6 +53640,34 @@ __attribute__((noinline)) static void test_procnet_files(void) {
             sys_close((int)sfd);
         } else { fut_test_fail(1840); }
     }
+
+    /* Test 1842: /proc/modules exists and is empty (no loadable modules) */
+    fut_printf("[MISC-TEST] Test 1842: /proc/modules\n");
+    {
+        long fd = sys_open("/proc/modules", 0, 0);
+        if (fd >= 0) {
+            static char mb[64];
+            long n = sys_read((int)fd, mb, sizeof(mb) - 1);
+            sys_close((int)fd);
+            /* Empty file (0 bytes) is correct for monolithic kernel */
+            if (n == 0) { fut_test_pass(); }
+            else { fut_test_fail(1842); }
+        } else { fut_test_fail(1842); }
+    }
+
+    /* Test 1843: /dev/kmsg write injects into kernel log */
+    fut_printf("[MISC-TEST] Test 1843: /dev/kmsg write\n");
+    {
+        long wfd = sys_open("/dev/kmsg", 0x0001 /* O_WRONLY */, 0);
+        if (wfd >= 0) {
+            extern long sys_write(int, const void *, size_t);
+            static const char msg[] = "test_kmsg_injection\n";
+            long wr = sys_write((int)wfd, msg, sizeof(msg) - 1);
+            sys_close((int)wfd);
+            if (wr > 0) { fut_test_pass(); }
+            else { fut_test_fail(1843); }
+        } else { fut_test_fail(1843); }
+    }
 }
 
 /* Test 1841: /dev/kmsg kernel log device */

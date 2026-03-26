@@ -14,6 +14,8 @@
 
 #if defined(__x86_64__)
 #include <platform/x86_64/qemu_exit.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/qemu_exit.h>
 #else
 #error "qemu_exit not implemented for this architecture"
 #endif

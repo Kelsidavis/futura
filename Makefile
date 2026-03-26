@@ -1549,6 +1549,25 @@ qemu-arm64: platform-arm64
 	@echo "Running ARM64 kernel in QEMU (virt 10.0 with VirtIO GPU)..."
 	@qemu-system-aarch64 -M virt-10.0 -cpu cortex-a53 -m 512M -kernel $(BIN_DIR)/futura_kernel.bin -device virtio-gpu-pci -display cocoa -serial stdio -no-reboot
 
+# ARM64 test target (headless, semihosting for exit codes)
+test-arm64:
+	@$(MAKE) PLATFORM=arm64 ENABLE_WAYLAND=0 kernel
+	@echo "Testing ARM64 kernel under QEMU (semihosting exit, 180s timeout)..."
+	@timeout 180 qemu-system-aarch64 \
+		-M virt -cpu cortex-a53 -m 512M \
+		-kernel $(BIN_DIR)/futura_kernel.bin \
+		-semihosting-config enable=on,target=native \
+		-display none -serial stdio -no-reboot \
+	; \
+	rc=$$?; \
+	if [ $$rc -eq 0 ] || [ $$rc -eq 1 ]; then \
+		echo "[HARNESS] PASS"; \
+	elif [ $$rc -eq 124 ]; then \
+		echo "[HARNESS] FAIL (timed out after 180s)"; exit 1; \
+	else \
+		echo "[HARNESS] FAIL (qemu code $$rc)"; exit $$rc; \
+	fi
+
 # ============================================================
 #   Apple Silicon / m1n1 Payload
 # ============================================================

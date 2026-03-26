@@ -32,15 +32,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install ARM64 cross-compiler
+      - name: Install ARM64 cross-compiler and QEMU
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            gcc-14-aarch64-linux-gnu binutils-aarch64-linux-gnu
+            gcc-14-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            qemu-system-arm
           rustup target add aarch64-unknown-linux-gnu
 
       - name: Build kernel (ARM64)
         run: make kernel PLATFORM=arm64 ENABLE_WAYLAND=0
+
+      - name: Run kernel tests (ARM64)
+        run: make test-arm64 ENABLE_WAYLAND=0
+        continue-on-error: true
 
   security-checks:
     runs-on: ubuntu-24.04

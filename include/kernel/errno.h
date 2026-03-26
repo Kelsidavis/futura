@@ -190,6 +190,10 @@
 #define ETIMEDOUT   110
 #endif
 
+#ifndef ETIME
+#define ETIME       62  /* Timer expired */
+#endif
+
 #ifndef EHOSTUNREACH
 #define EHOSTUNREACH 113
 #endif

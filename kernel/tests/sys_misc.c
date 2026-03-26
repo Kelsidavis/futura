@@ -23871,22 +23871,24 @@ static void test_utime_syscall(void) {
  * Test 383: io_setup()/io_uring_setup() return ENOSYS
  * ============================================================ */
 static void test_aio_uring_enosys(void) {
-    fut_printf("[MISC-TEST] Test 383: io_setup / io_uring_setup return ENOSYS\n");
+    fut_printf("[MISC-TEST] Test 383: io_setup returns ENOSYS, io_uring_setup returns fd\n");
     extern long sys_io_setup(unsigned int nr_events, void *ctxp);
     extern long sys_io_uring_setup(unsigned int entries, void *params);
 
+    /* Linux AIO still returns ENOSYS */
     void *ctx = (void *)0;
     long r1 = sys_io_setup(16, &ctx);
     if (r1 != -38 /*-ENOSYS*/) {
         fut_printf("[MISC-TEST] ✗ Test 383: io_setup returned %ld, expected -ENOSYS\n", r1);
         fut_test_fail(383); return;
     }
+    /* io_uring_setup with NULL params should return EFAULT */
     long r2 = sys_io_uring_setup(8, (void *)0);
-    if (r2 != -38 /*-ENOSYS*/) {
-        fut_printf("[MISC-TEST] ✗ Test 383: io_uring_setup returned %ld, expected -ENOSYS\n", r2);
+    if (r2 != -EFAULT) {
+        fut_printf("[MISC-TEST] ✗ Test 383: io_uring_setup(NULL) returned %ld, expected -EFAULT\n", r2);
         fut_test_fail(383); return;
     }
-    fut_printf("[MISC-TEST] ✓ Test 383: io_setup and io_uring_setup correctly return -ENOSYS\n");
+    fut_printf("[MISC-TEST] ✓ Test 383: io_setup → ENOSYS, io_uring_setup(NULL) → EFAULT\n");
     fut_test_pass();
 }
 
@@ -24804,16 +24806,16 @@ test434:
     }
 
 test435:
-    /* Test 435: io_uring_enter and io_uring_register return ENOSYS */
-    fut_printf("[MISC-TEST] Test 435: io_uring_enter/register return ENOSYS\n");
-    long r_enter = sys_io_uring_enter(0, 0, 0, 0, NULL, 0);
-    long r_reg   = sys_io_uring_register(0, 0, NULL, 0);
-    if (r_enter == -ENOSYS && r_reg == -ENOSYS) {
-        fut_printf("[MISC-TEST] ✓ Test 435: io_uring_enter=%ld io_uring_register=%ld\n",
+    /* Test 435: io_uring_enter/register return EBADF for invalid fd */
+    fut_printf("[MISC-TEST] Test 435: io_uring_enter/register return EBADF for bad fd\n");
+    long r_enter = sys_io_uring_enter(9999, 0, 0, 0, NULL, 0);
+    long r_reg   = sys_io_uring_register(9999, 0, NULL, 0);
+    if (r_enter == -EBADF && r_reg == -EBADF) {
+        fut_printf("[MISC-TEST] ✓ Test 435: io_uring_enter=%ld io_uring_register=%ld (EBADF)\n",
                    r_enter, r_reg);
         fut_test_pass();
     } else {
-        fut_printf("[MISC-TEST] ✗ Test 435: enter=%ld reg=%ld (expected ENOSYS)\n",
+        fut_printf("[MISC-TEST] ✗ Test 435: enter=%ld reg=%ld (expected EBADF)\n",
                    r_enter, r_reg);
         fut_test_fail(435);
     }
@@ -57936,6 +57938,375 @@ __attribute__((noinline)) static void test_net_procfs_devnodes(void) {
     }
 }
 
+/* ============================================================
+ * Tests 1946-1957: io_uring async I/O subsystem
+ * ============================================================ */
+__attribute__((noinline)) static void test_io_uring(void) {
+    extern long sys_io_uring_setup(unsigned int entries, void *params);
+    extern long sys_io_uring_enter(unsigned int fd, unsigned int to_submit,
+                                    unsigned int min_complete, unsigned int flags,
+                                    const void *sig, size_t sigsz);
+    extern long sys_io_uring_register(unsigned int fd, unsigned int opcode,
+                                       void *arg, unsigned int nr_args);
+    extern long sys_open(const char *, int, int);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_write(int, const void *, size_t);
+    extern long sys_pread64(unsigned int, void *, size_t, int64_t);
+    extern long sys_close(int);
+    extern long sys_unlink(const char *);
+
+    /* io_uring_params, SQE, CQE — must match kernel structures */
+    struct test_sq_off {
+        uint32_t head, tail, ring_mask, ring_entries, flags, dropped, array;
+        uint32_t resv1; uint64_t resv2;
+    };
+    struct test_cq_off {
+        uint32_t head, tail, ring_mask, ring_entries, overflow, cqes, flags;
+        uint32_t resv1; uint64_t resv2;
+    };
+    struct test_uring_params {
+        uint32_t sq_entries, cq_entries, flags, sq_thread_cpu, sq_thread_idle;
+        uint32_t features, wq_fd, resv[3];
+        struct test_sq_off sq_off;
+        struct test_cq_off cq_off;
+    };
+    struct test_sqe {
+        uint8_t opcode; uint8_t flags; uint16_t ioprio; int32_t fd;
+        uint64_t off; uint64_t addr; uint32_t len;
+        uint32_t op_flags;
+        uint64_t user_data;
+        uint16_t buf_index; uint16_t personality;
+        int32_t splice_fd_in;
+        uint64_t __pad2[2];
+    };
+    struct test_cqe {
+        uint64_t user_data; int32_t res; uint32_t flags;
+    };
+
+    /* External context access helpers */
+    extern void uring_submit_sqe(void *ctx, const void *sqe);
+    extern void *uring_peek_cqe(void *ctx);
+    extern void uring_consume_cqe(void *ctx);
+
+    /* Find the io_uring_ctx by fd — we access it via the chr_private pointer */
+    extern struct fut_file **fut_fd_table_get(void);
+
+    static struct test_uring_params params;
+    static struct test_sqe sqe;
+    static struct test_cqe *cqe_ptr;
+
+    /* ── Test 1946: io_uring_setup creates ring with valid fd ── */
+    fut_printf("[MISC-TEST] Test 1946: io_uring_setup creates ring\n");
+    memset(&params, 0, sizeof(params));
+    long ring_fd = sys_io_uring_setup(8, &params);
+    if (ring_fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 1946: io_uring_setup returned %ld\n", ring_fd);
+        fut_test_fail(1946);
+        return; /* Can't continue without a ring */
+    }
+    fut_printf("[MISC-TEST] ✓ Test 1946: ring fd=%ld sq=%u cq=%u\n",
+               ring_fd, params.sq_entries, params.cq_entries);
+    fut_test_pass();
+
+    /* ── Test 1947: params filled with correct entries (power-of-2) ── */
+    fut_printf("[MISC-TEST] Test 1947: params sq_entries is power-of-2\n");
+    if (params.sq_entries >= 8 && (params.sq_entries & (params.sq_entries - 1)) == 0 &&
+        params.cq_entries >= params.sq_entries) {
+        fut_printf("[MISC-TEST] ✓ Test 1947: sq=%u cq=%u features=0x%x\n",
+                   params.sq_entries, params.cq_entries, params.features);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1947: sq=%u cq=%u\n",
+                   params.sq_entries, params.cq_entries);
+        fut_test_fail(1947);
+    }
+
+    /* Get the ctx pointer from the fd's chr_private field */
+    fut_task_t *task = fut_task_current();
+    void *ctx = NULL;
+    if (task && ring_fd >= 0 && ring_fd < task->max_fds && task->fd_table[ring_fd]) {
+        ctx = task->fd_table[ring_fd]->chr_private;
+    }
+    if (!ctx) {
+        fut_printf("[MISC-TEST] ✗ Could not get io_uring ctx from fd\n");
+        sys_close((int)ring_fd);
+        /* Fail remaining tests */
+        for (int t = 1948; t <= 1957; t++) fut_test_fail((uint16_t)t);
+        return;
+    }
+
+    /* ── Test 1948: NOP operation completes with res=0 ── */
+    fut_printf("[MISC-TEST] Test 1948: io_uring NOP\n");
+    memset(&sqe, 0, sizeof(sqe));
+    sqe.opcode = 0; /* IORING_OP_NOP */
+    sqe.user_data = 0xDEAD0001;
+    uring_submit_sqe(ctx, &sqe);
+    long nr = sys_io_uring_enter((unsigned int)ring_fd, 1, 0, 0, NULL, 0);
+    cqe_ptr = (struct test_cqe *)uring_peek_cqe(ctx);
+    if (nr == 1 && cqe_ptr && cqe_ptr->res == 0 && cqe_ptr->user_data == 0xDEAD0001) {
+        fut_printf("[MISC-TEST] ✓ Test 1948: NOP res=%d ud=0x%llx\n",
+                   cqe_ptr->res, (unsigned long long)cqe_ptr->user_data);
+        uring_consume_cqe(ctx);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1948: nr=%ld cqe=%p\n", nr, (void *)cqe_ptr);
+        if (cqe_ptr) uring_consume_cqe(ctx);
+        fut_test_fail(1948);
+    }
+
+    /* ── Test 1949: READ operation reads from a file ── */
+    fut_printf("[MISC-TEST] Test 1949: io_uring READ\n");
+    {
+        long tfd = sys_open("/tmp/uring_test", O_CREAT | O_RDWR, 0644);
+        if (tfd >= 0) {
+            sys_write((int)tfd, "io_uring_data", 13);
+            static char rbuf[32];
+            memset(rbuf, 0, sizeof(rbuf));
+            memset(&sqe, 0, sizeof(sqe));
+            sqe.opcode = 22; /* IORING_OP_READ */
+            sqe.fd = (int32_t)tfd;
+            sqe.addr = (uint64_t)(uintptr_t)rbuf;
+            sqe.len = 13;
+            sqe.off = 0;
+            sqe.user_data = 0xDEAD0002;
+            uring_submit_sqe(ctx, &sqe);
+            nr = sys_io_uring_enter((unsigned int)ring_fd, 1, 0, 0, NULL, 0);
+            cqe_ptr = (struct test_cqe *)uring_peek_cqe(ctx);
+            if (nr == 1 && cqe_ptr && cqe_ptr->res == 13 &&
+                memcmp(rbuf, "io_uring_data", 13) == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1949: READ res=%d data ok\n",
+                           cqe_ptr->res);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1949: nr=%ld res=%d\n",
+                           nr, cqe_ptr ? cqe_ptr->res : -999);
+                fut_test_fail(1949);
+            }
+            if (cqe_ptr) uring_consume_cqe(ctx);
+            sys_close((int)tfd);
+            sys_unlink("/tmp/uring_test");
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1949: open failed %ld\n", tfd);
+            fut_test_fail(1949);
+        }
+    }
+
+    /* ── Test 1950: WRITE operation writes to a file ── */
+    fut_printf("[MISC-TEST] Test 1950: io_uring WRITE\n");
+    {
+        long tfd = sys_open("/tmp/uring_wtest", O_CREAT | O_RDWR, 0644);
+        if (tfd >= 0) {
+            static const char wdata[] = "uring_write_ok";
+            memset(&sqe, 0, sizeof(sqe));
+            sqe.opcode = 23; /* IORING_OP_WRITE */
+            sqe.fd = (int32_t)tfd;
+            sqe.addr = (uint64_t)(uintptr_t)wdata;
+            sqe.len = 14;
+            sqe.off = 0;
+            sqe.user_data = 0xDEAD0003;
+            uring_submit_sqe(ctx, &sqe);
+            nr = sys_io_uring_enter((unsigned int)ring_fd, 1, 0, 0, NULL, 0);
+            cqe_ptr = (struct test_cqe *)uring_peek_cqe(ctx);
+            if (nr == 1 && cqe_ptr && cqe_ptr->res == 14) {
+                /* Verify by reading back */
+                static char vbuf[32];
+                memset(vbuf, 0, sizeof(vbuf));
+                sys_pread64((unsigned int)tfd, vbuf, 14, 0);
+                if (memcmp(vbuf, "uring_write_ok", 14) == 0) {
+                    fut_printf("[MISC-TEST] ✓ Test 1950: WRITE res=%d verified\n", cqe_ptr->res);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1950: readback mismatch\n");
+                    fut_test_fail(1950);
+                }
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1950: nr=%ld res=%d\n",
+                           nr, cqe_ptr ? cqe_ptr->res : -999);
+                fut_test_fail(1950);
+            }
+            if (cqe_ptr) uring_consume_cqe(ctx);
+            sys_close((int)tfd);
+            sys_unlink("/tmp/uring_wtest");
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1950: open failed %ld\n", tfd);
+            fut_test_fail(1950);
+        }
+    }
+
+    /* ── Test 1951: CLOSE operation closes a file ── */
+    fut_printf("[MISC-TEST] Test 1951: io_uring CLOSE\n");
+    {
+        long tfd = sys_open("/tmp/uring_close", O_CREAT | O_RDWR, 0644);
+        if (tfd >= 0) {
+            memset(&sqe, 0, sizeof(sqe));
+            sqe.opcode = 19; /* IORING_OP_CLOSE */
+            sqe.fd = (int32_t)tfd;
+            sqe.user_data = 0xDEAD0004;
+            uring_submit_sqe(ctx, &sqe);
+            nr = sys_io_uring_enter((unsigned int)ring_fd, 1, 0, 0, NULL, 0);
+            cqe_ptr = (struct test_cqe *)uring_peek_cqe(ctx);
+            if (nr == 1 && cqe_ptr && cqe_ptr->res == 0) {
+                /* Verify fd is closed — read should fail */
+                static char dummy[4];
+                long rr = sys_read((int)tfd, dummy, 1);
+                if (rr < 0) {
+                    fut_printf("[MISC-TEST] ✓ Test 1951: CLOSE res=0, fd now invalid\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1951: fd still readable after close\n");
+                    fut_test_fail(1951);
+                }
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1951: nr=%ld res=%d\n",
+                           nr, cqe_ptr ? cqe_ptr->res : -999);
+                fut_test_fail(1951);
+            }
+            if (cqe_ptr) uring_consume_cqe(ctx);
+            sys_unlink("/tmp/uring_close");
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1951: open failed %ld\n", tfd);
+            fut_test_fail(1951);
+        }
+    }
+
+    /* ── Test 1952: FSYNC operation ── */
+    fut_printf("[MISC-TEST] Test 1952: io_uring FSYNC\n");
+    {
+        long tfd = sys_open("/tmp/uring_fsync", O_CREAT | O_RDWR, 0644);
+        if (tfd >= 0) {
+            sys_write((int)tfd, "sync", 4);
+            memset(&sqe, 0, sizeof(sqe));
+            sqe.opcode = 3; /* IORING_OP_FSYNC */
+            sqe.fd = (int32_t)tfd;
+            sqe.user_data = 0xDEAD0005;
+            uring_submit_sqe(ctx, &sqe);
+            nr = sys_io_uring_enter((unsigned int)ring_fd, 1, 0, 0, NULL, 0);
+            cqe_ptr = (struct test_cqe *)uring_peek_cqe(ctx);
+            if (nr == 1 && cqe_ptr && cqe_ptr->res >= 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1952: FSYNC res=%d\n", cqe_ptr->res);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1952: nr=%ld res=%d\n",
+                           nr, cqe_ptr ? cqe_ptr->res : -999);
+                fut_test_fail(1952);
+            }
+            if (cqe_ptr) uring_consume_cqe(ctx);
+            sys_close((int)tfd);
+            sys_unlink("/tmp/uring_fsync");
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1952: open failed %ld\n", tfd);
+            fut_test_fail(1952);
+        }
+    }
+
+    /* ── Test 1953: invalid opcode returns EINVAL ── */
+    fut_printf("[MISC-TEST] Test 1953: io_uring invalid opcode → EINVAL\n");
+    memset(&sqe, 0, sizeof(sqe));
+    sqe.opcode = 200; /* invalid */
+    sqe.user_data = 0xDEAD0006;
+    uring_submit_sqe(ctx, &sqe);
+    nr = sys_io_uring_enter((unsigned int)ring_fd, 1, 0, 0, NULL, 0);
+    cqe_ptr = (struct test_cqe *)uring_peek_cqe(ctx);
+    if (nr == 1 && cqe_ptr && cqe_ptr->res == -EINVAL) {
+        fut_printf("[MISC-TEST] ✓ Test 1953: invalid opcode → res=%d\n", cqe_ptr->res);
+        uring_consume_cqe(ctx);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1953: nr=%ld res=%d\n",
+                   nr, cqe_ptr ? cqe_ptr->res : -999);
+        if (cqe_ptr) uring_consume_cqe(ctx);
+        fut_test_fail(1953);
+    }
+
+    /* ── Test 1954: user_data propagates correctly through multiple SQEs ── */
+    fut_printf("[MISC-TEST] Test 1954: user_data propagation\n");
+    {
+        /* Submit two NOPs with different user_data */
+        memset(&sqe, 0, sizeof(sqe));
+        sqe.opcode = 0; sqe.user_data = 0xAAAA;
+        uring_submit_sqe(ctx, &sqe);
+        sqe.user_data = 0xBBBB;
+        uring_submit_sqe(ctx, &sqe);
+        nr = sys_io_uring_enter((unsigned int)ring_fd, 2, 0, 0, NULL, 0);
+        struct test_cqe *c1 = (struct test_cqe *)uring_peek_cqe(ctx);
+        uint64_t ud1 = c1 ? c1->user_data : 0;
+        if (c1) uring_consume_cqe(ctx);
+        struct test_cqe *c2 = (struct test_cqe *)uring_peek_cqe(ctx);
+        uint64_t ud2 = c2 ? c2->user_data : 0;
+        if (c2) uring_consume_cqe(ctx);
+        if (nr == 2 && ud1 == 0xAAAA && ud2 == 0xBBBB) {
+            fut_printf("[MISC-TEST] ✓ Test 1954: ud1=0x%llx ud2=0x%llx\n",
+                       (unsigned long long)ud1, (unsigned long long)ud2);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1954: nr=%ld ud1=0x%llx ud2=0x%llx\n",
+                       nr, (unsigned long long)ud1, (unsigned long long)ud2);
+            fut_test_fail(1954);
+        }
+    }
+
+    /* ── Test 1955: io_uring_register PROBE enumerates supported ops ── */
+    fut_printf("[MISC-TEST] Test 1955: io_uring_register PROBE\n");
+    {
+        #define PROBE_OPS_LEN 25
+        static uint8_t probe_buf[sizeof(uint32_t)*4 + PROBE_OPS_LEN * 8];
+        memset(probe_buf, 0, sizeof(probe_buf));
+        /* Set ops_len at byte offset 1 */
+        probe_buf[1] = PROBE_OPS_LEN;
+        long rr = sys_io_uring_register((unsigned int)ring_fd, 6 /* REGISTER_PROBE */,
+                                         probe_buf, 0);
+        /* Check last_op (byte 0) is nonzero and NOP (op 0) is supported */
+        uint8_t last_op = probe_buf[0];
+        /* ops[0].flags at offset 16+2 = byte 18 */
+        uint16_t nop_flags;
+        memcpy(&nop_flags, &probe_buf[16 + 2], 2);
+        if (rr == 0 && last_op > 0 && (nop_flags & 1)) {
+            fut_printf("[MISC-TEST] ✓ Test 1955: probe last_op=%u NOP supported\n", last_op);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1955: rr=%ld last_op=%u nop_flags=0x%x\n",
+                       rr, last_op, nop_flags);
+            fut_test_fail(1955);
+        }
+    }
+
+    /* ── Test 1956: io_uring_register/unregister files ── */
+    fut_printf("[MISC-TEST] Test 1956: io_uring register/unregister files\n");
+    {
+        static int fds[2] = {0, 1}; /* stdin, stdout */
+        long rr = sys_io_uring_register((unsigned int)ring_fd,
+                                         2 /* REGISTER_FILES */, fds, 2);
+        long ru = sys_io_uring_register((unsigned int)ring_fd,
+                                         3 /* UNREGISTER_FILES */, NULL, 0);
+        if (rr == 0 && ru == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1956: register=%ld unregister=%ld\n", rr, ru);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1956: register=%ld unregister=%ld\n", rr, ru);
+            fut_test_fail(1956);
+        }
+    }
+
+    /* ── Test 1957: io_uring_setup with entries=0 returns EINVAL ── */
+    fut_printf("[MISC-TEST] Test 1957: io_uring_setup(0) → EINVAL\n");
+    {
+        static struct test_uring_params p2;
+        memset(&p2, 0, sizeof(p2));
+        long rr = sys_io_uring_setup(0, &p2);
+        if (rr == -EINVAL) {
+            fut_printf("[MISC-TEST] ✓ Test 1957: setup(0) → EINVAL\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1957: setup(0) returned %ld\n", rr);
+            if (rr >= 0) sys_close((int)rr);
+            fut_test_fail(1957);
+        }
+    }
+
+    /* Cleanup: close the ring fd */
+    sys_close((int)ring_fd);
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -61551,6 +61922,8 @@ void fut_misc_test_thread(void *arg) {
     test_watchdog_device(); /* Tests 1888-1890 */
     test_loop_device(); /* Tests 1885-1887 */
     test_per_iface_conf(); /* Tests 1869-1871 */
+
+    test_io_uring();  /* Tests 1946-1957 */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

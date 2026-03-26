@@ -107,6 +107,7 @@ static void cmd_source(int argc, char *argv[]);
 
 /* Forward declaration for full line execution (defined after main) */
 static int execute_full_line(char *line);
+static int execute_command_chain(char *cmdline);
 
 /* Forward declaration for exec builtin */
 static void exec_external_command(int argc, char *argv[]);
@@ -484,7 +485,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     const char *builtins[] = {
         "arp", "bg", "cd", "chmod", "clear", "date", "dd", "df", "dhclient", "dmesg", "echo", "edit", "hexdump", "lsof", "nc", "poweroff", "reboot", "seq", "sleep", "time", "traceroute", "wget", "exit", "export", "fg", "free",
         "help", "hostname", "httpd", "id", "ifconfig", "iptables", "jobs", "kill", "ls", "mount", "netstat",
-        ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "history", "ip", "ln", "mktemp", "more", "nproc", "nslookup", "ping", "printf", "ps", "pwd", "read", "readlink", "set", "sha256sum", "source", "ss", "stat", "sync", "sysctl", "sysinfo", "test", "top", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "wait", "which", "whoami", "xargs", "yes", NULL
+        ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "history", "ip", "ln", "mktemp", "more", "nproc", "nslookup", "ping", "printf", "ps", "pwd", "read", "readlink", "set", "sha256sum", "source", "ss", "stat", "sync", "sysctl", "sysinfo", "test", "top", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "wait", "watch", "which", "whoami", "xargs", "yes", NULL
     };
 
     /* External commands we might have */
@@ -6404,6 +6405,49 @@ static int execute_command(int argc, char *argv[]) {
                 }
             }
             sys_close(proc_fd);
+        }
+        return 0;
+    } else if (strcmp_simple(argv[0], "watch") == 0) {
+        /* watch — execute a command repeatedly, showing output each time */
+        int interval = 2; /* default 2 seconds */
+        int cmd_start = 1;
+        if (argc > 2 && strcmp_simple(argv[1], "-n") == 0) {
+            interval = 0;
+            for (int i = 0; argv[2][i]; i++) interval = interval * 10 + (argv[2][i] - '0');
+            cmd_start = 3;
+        }
+        if (cmd_start >= argc) {
+            write_str(1, "usage: watch [-n secs] <command...>\n");
+            return 1;
+        }
+        /* Build command string */
+        char cmd[256]; int ci = 0;
+        for (int i = cmd_start; i < argc && ci < 250; i++) {
+            if (i > cmd_start) cmd[ci++] = ' ';
+            for (int j = 0; argv[i][j] && ci < 250; j++) cmd[ci++] = argv[i][j];
+        }
+        cmd[ci] = '\0';
+        /* Run command 10 times (limited in kernel self-test env) */
+        for (int iter = 0; iter < 10; iter++) {
+            /* Clear screen and show header */
+            write_str(1, "\033[2J\033[H");
+            write_str(1, "Every ");
+            char ib[4]; int ip = 0;
+            if (interval >= 10) ib[ip++] = '0' + interval / 10;
+            ib[ip++] = '0' + interval % 10;
+            ib[ip] = '\0';
+            write_str(1, ib);
+            write_str(1, "s: ");
+            write_str(1, cmd);
+            write_str(1, "\n\n");
+            /* Execute the command via the shell's command chain executor */
+            char cmd_copy[256];
+            for (int j = 0; cmd[j] && j < 255; j++) cmd_copy[j] = cmd[j];
+            cmd_copy[ci < 255 ? ci : 255] = '\0';
+            execute_command_chain(cmd_copy);
+            /* Sleep */
+            struct { long tv_sec; long tv_nsec; } ts = { interval, 0 };
+            sys_call2(35 /* nanosleep */, (long)&ts, 0);
         }
         return 0;
     } else if (strcmp_simple(argv[0], "sysctl") == 0) {

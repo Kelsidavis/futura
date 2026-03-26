@@ -1829,6 +1829,11 @@ static int try_open_chrdev(const char *path, int flags) {
         fd = alloc_fd(file);
     }
 
+    /* O_CLOEXEC: set FD_CLOEXEC on the per-fd flags for chrdev fds */
+    if (fd >= 0 && (flags & 02000000 /* O_CLOEXEC */) && task && task->fd_flags) {
+        task->fd_flags[fd] |= 1;  /* FD_CLOEXEC */
+    }
+
     if (fd < 0) {
         if (ops->release) {
             ops->release(inode, file->chr_private);

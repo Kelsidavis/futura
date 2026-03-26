@@ -395,28 +395,7 @@ long sys_perf_event_open(const void *attr, int pid, int cpu,
     return -ENOSYS;
 }
 
-/**
- * sys_fanotify_init() - Create a fanotify group.
- * Returns -ENOSYS; callers (systemd, antivirus) fall back to inotify.
- *
- * Linux x86_64: 300  Linux aarch64: 262
- */
-long sys_fanotify_init(unsigned int flags, unsigned int event_f_flags) {
-    (void)flags; (void)event_f_flags;
-    return -ENOSYS;
-}
-
-/**
- * sys_fanotify_mark() - Add/remove/modify a fanotify mark.
- * Returns -ENOSYS.
- *
- * Linux x86_64: 301  Linux aarch64: 263
- */
-long sys_fanotify_mark(int fanotify_fd, unsigned int flags,
-                       unsigned long mask, int dirfd, const char *pathname) {
-    (void)fanotify_fd; (void)flags; (void)mask; (void)dirfd; (void)pathname;
-    return -ENOSYS;
-}
+/* fanotify_init, fanotify_mark — moved to kernel/sys_fanotify.c */
 
 /**
  * sys_userfaultfd() - Create a userfaultfd file descriptor.

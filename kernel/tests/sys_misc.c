@@ -44780,22 +44780,24 @@ static void test_enosys_stubs(void) {
         fut_test_fail(1184);
     }
 
-    /* Test 1185: fanotify_init → -ENOSYS */
-    fut_printf("[MISC-TEST] Test 1185: fanotify_init → -ENOSYS\n");
+    /* Test 1185: fanotify_init → returns fd */
+    fut_printf("[MISC-TEST] Test 1185: fanotify_init → fd\n");
     r = sys_fanotify_init(0, 0);
-    if (r == -38) {
-        fut_printf("[MISC-TEST] ✓ Test 1185: fanotify_init → ENOSYS\n");
+    if (r >= 0) {
+        fut_printf("[MISC-TEST] ✓ Test 1185: fanotify_init → fd=%ld\n", r);
+        extern long sys_close(int);
+        sys_close((int)r);
         fut_test_pass();
     } else {
         fut_printf("[MISC-TEST] ✗ Test 1185: fanotify_init returned %ld\n", r);
         fut_test_fail(1185);
     }
 
-    /* Test 1186: fanotify_mark → -ENOSYS */
-    fut_printf("[MISC-TEST] Test 1186: fanotify_mark → -ENOSYS\n");
+    /* Test 1186: fanotify_mark with bad fd → EBADF */
+    fut_printf("[MISC-TEST] Test 1186: fanotify_mark(bad fd) → EBADF\n");
     r = sys_fanotify_mark(-1, 0, 0, 0 /*AT_FDCWD*/, NULL);
-    if (r == -38) {
-        fut_printf("[MISC-TEST] ✓ Test 1186: fanotify_mark → ENOSYS\n");
+    if (r == -EBADF) {
+        fut_printf("[MISC-TEST] ✓ Test 1186: fanotify_mark → EBADF\n");
         fut_test_pass();
     } else {
         fut_printf("[MISC-TEST] ✗ Test 1186: fanotify_mark returned %ld\n", r);
@@ -57945,6 +57947,119 @@ __attribute__((noinline)) static void test_net_procfs_devnodes(void) {
 }
 
 /* ============================================================
+ * Tests 1976-1981: fanotify filesystem notification
+ * ============================================================ */
+__attribute__((noinline)) static void test_fanotify(void) {
+    extern long sys_fanotify_init(unsigned int flags, unsigned int event_f_flags);
+    extern long sys_fanotify_mark(int fanotify_fd, unsigned int flags,
+                                   unsigned long mask, int dirfd, const char *pathname);
+    extern long sys_close(int);
+
+    #define FAN_MARK_ADD_V     0x00000001
+    #define FAN_MARK_REMOVE_V  0x00000002
+    #define FAN_MARK_FLUSH_V   0x00000080
+    #define FAN_CLOEXEC_V      0x00000001
+    #define FAN_ACCESS_V       0x00000001
+    #define FAN_MODIFY_V       0x00000002
+    #define FAN_OPEN_V         0x00000020
+    #define FAN_CLOSE_WRITE_V  0x00000008
+
+    /* ── Test 1976: fanotify_init creates group fd ── */
+    fut_printf("[MISC-TEST] Test 1976: fanotify_init creates group\n");
+    long fan_fd = sys_fanotify_init(FAN_CLOEXEC_V, 0 /*O_RDONLY*/);
+    if (fan_fd >= 0) {
+        fut_printf("[MISC-TEST] ✓ Test 1976: fanotify fd=%ld\n", fan_fd);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1976: fanotify_init=%ld\n", fan_fd);
+        fut_test_fail(1976);
+        return;
+    }
+
+    /* ── Test 1977: fanotify_mark ADD creates mark ── */
+    fut_printf("[MISC-TEST] Test 1977: fanotify_mark ADD\n");
+    {
+        long r = sys_fanotify_mark((int)fan_fd, FAN_MARK_ADD_V,
+                                    FAN_OPEN_V | FAN_CLOSE_WRITE_V,
+                                    -100 /*AT_FDCWD*/, "/tmp");
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1977: mark ADD ok\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1977: mark ADD=%ld\n", r);
+            fut_test_fail(1977);
+        }
+    }
+
+    /* ── Test 1978: fanotify_mark ADD merges mask on same path ── */
+    fut_printf("[MISC-TEST] Test 1978: mark ADD merges mask\n");
+    {
+        long r = sys_fanotify_mark((int)fan_fd, FAN_MARK_ADD_V,
+                                    FAN_MODIFY_V, -100, "/tmp");
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1978: mark ADD merge ok\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1978: mark ADD=%ld\n", r);
+            fut_test_fail(1978);
+        }
+    }
+
+    /* ── Test 1979: fanotify_mark REMOVE removes event bits ── */
+    fut_printf("[MISC-TEST] Test 1979: mark REMOVE\n");
+    {
+        long r = sys_fanotify_mark((int)fan_fd, FAN_MARK_REMOVE_V,
+                                    FAN_MODIFY_V, -100, "/tmp");
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1979: mark REMOVE ok\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1979: mark REMOVE=%ld\n", r);
+            fut_test_fail(1979);
+        }
+    }
+
+    /* ── Test 1980: fanotify_mark FLUSH clears all marks ── */
+    fut_printf("[MISC-TEST] Test 1980: mark FLUSH\n");
+    {
+        /* Add another mark first */
+        sys_fanotify_mark((int)fan_fd, FAN_MARK_ADD_V,
+                           FAN_ACCESS_V, -100, "/var");
+        long r = sys_fanotify_mark((int)fan_fd, FAN_MARK_FLUSH_V, 0, 0, NULL);
+        if (r == 0) {
+            /* Verify flush by trying to remove — should fail */
+            long r2 = sys_fanotify_mark((int)fan_fd, FAN_MARK_REMOVE_V,
+                                         FAN_OPEN_V, -100, "/tmp");
+            if (r2 == -ENOENT) {
+                fut_printf("[MISC-TEST] ✓ Test 1980: FLUSH cleared all marks\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1980: post-flush remove=%ld\n", r2);
+                fut_test_fail(1980);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1980: FLUSH=%ld\n", r);
+            fut_test_fail(1980);
+        }
+    }
+
+    /* ── Test 1981: fanotify_mark with bad fd → EBADF ── */
+    fut_printf("[MISC-TEST] Test 1981: mark bad fd → EBADF\n");
+    {
+        long r = sys_fanotify_mark(9999, FAN_MARK_ADD_V, FAN_OPEN_V, -100, "/tmp");
+        if (r == -EBADF) {
+            fut_printf("[MISC-TEST] ✓ Test 1981: bad fd → EBADF\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1981: bad fd=%ld\n", r);
+            fut_test_fail(1981);
+        }
+    }
+
+    sys_close((int)fan_fd);
+}
+
+/* ============================================================
  * Tests 1970-1975: Modern mount API (fsopen/fsconfig/fsmount)
  * ============================================================ */
 __attribute__((noinline)) static void test_modern_mount_api(void) {
@@ -62281,6 +62396,7 @@ void fut_misc_test_thread(void *arg) {
     test_loop_device(); /* Tests 1885-1887 */
     test_per_iface_conf(); /* Tests 1869-1871 */
 
+    test_fanotify();  /* Tests 1976-1981 */
     test_modern_mount_api(); /* Tests 1970-1975 */
     test_keyring();   /* Tests 1958-1969 */
     test_io_uring();  /* Tests 1946-1957 */

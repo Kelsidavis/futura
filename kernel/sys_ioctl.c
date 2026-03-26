@@ -16,6 +16,7 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
+#include <futura/netif.h>
 
 #if defined(__x86_64__)
 #include <platform/x86_64/memory/paging.h>
@@ -1253,10 +1254,14 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
 #endif
             if (fut_copy_from_user(&ifr, argp, sizeof(ifr)) != 0)
                 return -EFAULT;
-            /* Only support "lo" */
-            if (__builtin_strncmp(ifr.ifr_name, "lo", IFNAMSIZ) != 0)
-                return -ENODEV;
-            ifr.ifr_ifru.ifru_flags = IFF_UP | IFF_LOOPBACK | IFF_RUNNING;
+            /* Look up interface by name in the real netif registry */
+            {
+                extern struct net_iface *netif_by_name(const char *);
+                struct net_iface *iface = netif_by_name(ifr.ifr_name);
+                if (!iface)
+                    return -ENODEV;
+                ifr.ifr_ifru.ifru_flags = (short)iface->flags;
+            }
 #ifdef KERNEL_VIRTUAL_BASE
             if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
                 __builtin_memcpy(argp, &ifr, sizeof(ifr));
@@ -1285,17 +1290,21 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
 #endif
             if (fut_copy_from_user(&ifr, argp, sizeof(ifr)) != 0)
                 return -EFAULT;
-            if (__builtin_strncmp(ifr.ifr_name, "lo", IFNAMSIZ) != 0)
-                return -ENODEV;
-            __builtin_memset(&ifr.ifr_ifru, 0, sizeof(ifr.ifr_ifru));
-            ifr.ifr_ifru.ifru_addr.sa_family = AF_INET;
-            if (request == SIOCGIFNETMASK) {
-                /* 255.0.0.0 — class A loopback mask */
-                ifr.ifr_ifru.ifru_addr.sa_data[2] = (char)255;
-            } else {
-                /* 127.0.0.1 for addr/dst/brd */
-                ifr.ifr_ifru.ifru_addr.sa_data[2] = 127;
-                ifr.ifr_ifru.ifru_addr.sa_data[5] = 1;
+            {
+                extern struct net_iface *netif_by_name(const char *);
+                struct net_iface *iface = netif_by_name(ifr.ifr_name);
+                if (!iface) return -ENODEV;
+                __builtin_memset(&ifr.ifr_ifru, 0, sizeof(ifr.ifr_ifru));
+                ifr.ifr_ifru.ifru_addr.sa_family = AF_INET;
+                uint32_t addr = 0;
+                if (request == SIOCGIFNETMASK)      addr = iface->netmask;
+                else if (request == SIOCGIFBRDADDR) addr = iface->broadcast;
+                else                                addr = iface->ip_addr;
+                /* Store in network byte order (big-endian) in sa_data[2..5] */
+                ifr.ifr_ifru.ifru_addr.sa_data[2] = (char)((addr >> 24) & 0xFF);
+                ifr.ifr_ifru.ifru_addr.sa_data[3] = (char)((addr >> 16) & 0xFF);
+                ifr.ifr_ifru.ifru_addr.sa_data[4] = (char)((addr >> 8)  & 0xFF);
+                ifr.ifr_ifru.ifru_addr.sa_data[5] = (char)(addr & 0xFF);
             }
 #ifdef KERNEL_VIRTUAL_BASE
             if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)

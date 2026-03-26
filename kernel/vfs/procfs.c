@@ -2203,16 +2203,35 @@ static void sockstat_count_one(const fut_socket_t *s, void *arg) {
 /* ============================================================
  *   /proc/net/ file generators
  * ============================================================ */
+/* Helper: emit one interface's stats in /proc/net/dev format */
+static void net_dev_emit_one(const struct net_iface *iface, void *ctx_ptr) {
+    struct pbuf *b = (struct pbuf *)ctx_ptr;
+    /* Right-pad interface name to 6 chars */
+    size_t nlen = 0;
+    while (iface->name[nlen]) nlen++;
+    for (size_t i = nlen; i < 6; i++) pb_char(b, ' ');
+    pb_str(b, iface->name);
+    pb_char(b, ':');
+    /* RX: bytes packets errs drop fifo frame compressed multicast */
+    pb_u64(b, iface->rx_bytes); pb_char(b, ' ');
+    pb_u64(b, iface->rx_packets); pb_char(b, ' ');
+    pb_u64(b, iface->rx_errors); pb_char(b, ' ');
+    pb_u64(b, iface->rx_dropped);
+    pb_str(b, "    0     0          0         0 ");
+    /* TX: bytes packets errs drop fifo colls carrier compressed */
+    pb_u64(b, iface->tx_bytes); pb_char(b, ' ');
+    pb_u64(b, iface->tx_packets); pb_char(b, ' ');
+    pb_u64(b, iface->tx_errors); pb_char(b, ' ');
+    pb_u64(b, iface->tx_dropped);
+    pb_str(b, "    0     0       0          0\n");
+}
+
 static size_t gen_net_dev(char *buf, size_t cap) {
     struct pbuf b = { buf, 0, cap };
     pb_str(&b, "Inter-|   Receive                                                |  Transmit\n");
     pb_str(&b, " face |bytes    packets errs drop fifo frame compressed multicast|"
                "bytes    packets errs drop fifo colls carrier compressed\n");
-    pb_str(&b, "    lo:       0       0    0    0    0     0          0         0"
-               "        0       0    0    0    0     0       0          0\n");
-    /* eth0: virtio-net interface (packet counters not tracked yet) */
-    pb_str(&b, "  eth0:       0       0    0    0    0     0          0         0"
-               "        0       0    0    0    0     0       0          0\n");
+    netif_foreach((netif_iter_fn)net_dev_emit_one, &b);
     return b.pos;
 }
 

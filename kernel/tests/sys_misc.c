@@ -53995,6 +53995,101 @@ __attribute__((noinline)) static void test_futurafs(void) {
 }
 
 /* Tests 1901-1906: Extended FuturaFS operations */
+__attribute__((noinline)) static void test_futurafs_advanced(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_write(int, const void *, size_t);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_close(int);
+    extern long sys_flock(int, int);
+    extern long sys_lseek(int, long, int);
+    extern long sys_ftruncate(int fd, uint64_t length);
+
+    /* Test 1910: O_APPEND writes to end on FuturaFS */
+    fut_printf("[MISC-TEST] Test 1910: FuturaFS O_APPEND\n");
+    {
+        /* Create file with some content */
+        long fd = sys_open("/mnt/append_test.txt", 0x0042 /* O_WRONLY|O_CREAT */, 0644);
+        if (fd >= 0) {
+            sys_write((int)fd, "AAA", 3);
+            sys_close((int)fd);
+            /* Reopen with O_APPEND */
+            fd = sys_open("/mnt/append_test.txt", 0x0401 /* O_WRONLY|O_APPEND */, 0);
+            if (fd >= 0) {
+                sys_write((int)fd, "BBB", 3);
+                sys_close((int)fd);
+                /* Read and verify: should be "AAABBB" */
+                fd = sys_open("/mnt/append_test.txt", 0 /* O_RDONLY */, 0);
+                if (fd >= 0) {
+                    static char buf[16];
+                    long n = sys_read((int)fd, buf, 16);
+                    sys_close((int)fd);
+                    if (n == 6 && buf[0] == 'A' && buf[3] == 'B') {
+                        fut_printf("[MISC-TEST] ✓ Test 1910: O_APPEND → AAABBB\n");
+                        fut_test_pass();
+                    } else {
+                        fut_printf("[MISC-TEST] ✗ Test 1910: n=%ld buf=%c%c%c\n", n, buf[0], buf[1], buf[2]);
+                        fut_test_fail(1910);
+                    }
+                } else { fut_test_fail(1910); }
+            } else { fut_test_fail(1910); }
+            sys_open("/mnt/append_test.txt", 0, 0); /* cleanup below */
+        } else { fut_test_fail(1910); }
+        extern long sys_unlink(const char *);
+        sys_unlink("/mnt/append_test.txt");
+    }
+
+    /* Test 1911: flock LOCK_EX on FuturaFS file */
+    fut_printf("[MISC-TEST] Test 1911: FuturaFS flock\n");
+    {
+        long fd = sys_open("/mnt/lock_test.txt", 0x0042, 0644);
+        if (fd >= 0) {
+            sys_write((int)fd, "locked", 6);
+            long rc = sys_flock((int)fd, 2 /* LOCK_EX */);
+            if (rc == 0) {
+                /* Unlock */
+                sys_flock((int)fd, 8 /* LOCK_UN */);
+                fut_printf("[MISC-TEST] ✓ Test 1911: flock EX+UN on FuturaFS\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1911: flock=%ld\n", rc);
+                fut_test_fail(1911);
+            }
+            sys_close((int)fd);
+            extern long sys_unlink(const char *);
+            sys_unlink("/mnt/lock_test.txt");
+        } else { fut_test_fail(1911); }
+    }
+
+    /* Test 1912: lseek + read on FuturaFS file */
+    fut_printf("[MISC-TEST] Test 1912: FuturaFS lseek + read\n");
+    {
+        long fd = sys_open("/mnt/seek_test.txt", 0x0042, 0644);
+        if (fd >= 0) {
+            sys_write((int)fd, "0123456789", 10);
+            sys_close((int)fd);
+            /* Reopen and seek to position 5 */
+            fd = sys_open("/mnt/seek_test.txt", 0 /* O_RDONLY */, 0);
+            if (fd >= 0) {
+                long pos = sys_lseek((int)fd, 5, 0 /* SEEK_SET */);
+                if (pos == 5) {
+                    static char buf[8];
+                    long n = sys_read((int)fd, buf, 5);
+                    sys_close((int)fd);
+                    if (n == 5 && buf[0] == '5' && buf[4] == '9') {
+                        fut_printf("[MISC-TEST] ✓ Test 1912: lseek(5) read → 56789\n");
+                        fut_test_pass();
+                    } else {
+                        fut_printf("[MISC-TEST] ✗ Test 1912: n=%ld buf[0]=%c\n", n, buf[0]);
+                        fut_test_fail(1912);
+                    }
+                } else { sys_close((int)fd); fut_test_fail(1912); }
+            } else { fut_test_fail(1912); }
+            extern long sys_unlink(const char *);
+            sys_unlink("/mnt/seek_test.txt");
+        } else { fut_test_fail(1912); }
+    }
+}
+
 __attribute__((noinline)) static void test_etc_config_files(void) {
     extern long sys_open(const char *, int, int);
     extern long sys_read(int, void *, size_t);
@@ -60380,6 +60475,7 @@ void fut_misc_test_thread(void *arg) {
     test_router_integration(); /* Test 1852 */
     test_ip_ttl_tos_sockopt(); /* Tests 1853-1854 */
     test_futurafs(); /* Tests 1855-1857 */
+    test_futurafs_advanced(); /* Tests 1910-1912 */
     test_etc_config_files(); /* Tests 1907-1909 */
     test_futurafs_extended(); /* Tests 1901-1906 */
     test_blockdev_procfs(); /* Tests 1858-1860 */

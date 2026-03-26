@@ -13,6 +13,7 @@
 
 #include <futura/tcpip.h>
 #include <futura/net.h>
+#include <futura/netif.h>
 #include <kernel/errno.h>
 #include <kernel/fut_memory.h>
 #include <kernel/fut_sched.h>
@@ -556,10 +557,15 @@ static void icmp_handle_packet(const uint8_t *ip_payload, size_t len,
         return;
     }
 
+    /* Track ICMP stats in g_net_stats */
+    extern struct net_snmp_stats g_net_stats;
+    g_net_stats.icmp_in_msgs++;
+
     const icmp_header_t *icmp = (const icmp_header_t *)ip_payload;
 
     if (icmp->type == ICMP_ECHO_REQUEST) {
         TCPIP_DEBUG("[ICMP] Echo request received\n");
+        g_net_stats.icmp_in_echo++;
 
         /* Build echo reply */
         size_t reply_len = len;
@@ -577,6 +583,10 @@ static void icmp_handle_packet(const uint8_t *ip_payload, size_t len,
 
         ip_send_packet(src_ip, IP_PROTO_ICMP, reply, reply_len);
         fut_free(reply);
+        g_net_stats.icmp_out_echo_reply++;
+        g_net_stats.icmp_out_msgs++;
+    } else if (icmp->type == ICMP_ECHO_REPLY) {
+        g_net_stats.icmp_in_echo_reply++;
     }
 }
 
@@ -928,11 +938,15 @@ static void ip_handle_packet(const uint8_t *frame, size_t len) {
     size_t payload_len = total_len - ihl;
     const uint8_t *payload = (const uint8_t *)ip + ihl;
 
+    /* Track IP receive stats */
+    g_net_stats.ip_in_receives++;
+    g_net_stats.ip_in_delivers++;
+
     /* Dispatch to protocol handlers */
-    fut_printf("[IP-DEBUG] Received packet from %d.%d.%d.%d, protocol=%u, len=%u\n",
-        (src_ip >> 24) & 0xFF, (src_ip >> 16) & 0xFF,
-        (src_ip >> 8) & 0xFF, src_ip & 0xFF,
-        protocol, payload_len);
+    TCPIP_DEBUG("[IP-DEBUG] Received packet from %d.%d.%d.%d, protocol=%u, len=%u\n",
+        (int)((src_ip >> 24) & 0xFF), (int)((src_ip >> 16) & 0xFF),
+        (int)((src_ip >> 8) & 0xFF), (int)(src_ip & 0xFF),
+        (unsigned)protocol, (unsigned)payload_len);
 
     switch (protocol) {
         case IP_PROTO_ICMP:

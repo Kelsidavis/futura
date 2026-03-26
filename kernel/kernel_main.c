@@ -1392,7 +1392,7 @@ void fut_kernel_main(void) {
         fut_printf("[virtio-blk] init: %d\n", vblk_rc);
     }
 #ifdef __x86_64__
-    /* ahci_init(); */  /* AHCI not yet implemented */
+    ahci_init();  /* AHCI SATA controller — scans PCI for disk devices */
 #endif
     fut_printf("[INIT] Block device subsystem initialized\n");
 

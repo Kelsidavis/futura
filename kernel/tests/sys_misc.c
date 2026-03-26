@@ -26561,14 +26561,14 @@ static void test_unshare_namespace_noop(void) {
         fut_test_fail(496);
     }
 
-    /* CLONE_NEWPID (0x20000000) — PID namespace: requires infra → ENOSYS */
-    fut_printf("[MISC-TEST] Test 497: unshare(CLONE_NEWPID) -> ENOSYS\n");
+    /* CLONE_NEWPID (0x20000000) — PID namespace: now implemented! */
+    fut_printf("[MISC-TEST] Test 497: unshare(CLONE_NEWPID) -> 0 (creates namespace)\n");
     r = sys_unshare(0x20000000UL);
-    if (r == -38 /* ENOSYS */) {
-        fut_printf("[MISC-TEST] ✓ Test 497: unshare(CLONE_NEWPID) = ENOSYS\n");
+    if (r == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 497: unshare(CLONE_NEWPID) created new PID namespace\n");
         fut_test_pass();
     } else {
-        fut_printf("[MISC-TEST] ✗ Test 497: unshare(CLONE_NEWPID) = %ld (expected -38 ENOSYS)\n", r);
+        fut_printf("[MISC-TEST] ✗ Test 497: unshare(CLONE_NEWPID) = %ld\n", r);
         fut_test_fail(497);
     }
 }

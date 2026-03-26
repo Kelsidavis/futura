@@ -63,7 +63,8 @@ long sys_getpid(void) {
         return 1;  /* Default to init PID for kernel threads */
     }
 
-    return task->pid;
+    /* Return namespace-local PID if in a PID namespace */
+    return task->ns_pid ? task->ns_pid : task->pid;
 }
 
 /**

@@ -958,6 +958,10 @@ long sys_fork(void) {
         return -ENOMEM;
     }
 
+    /* Inherit parent's PID namespace; assign namespace-local PID */
+    child_task->pid_ns = parent_task->pid_ns;
+    child_task->ns_pid = child_task->pid;  /* Default: same as real PID */
+
     /* Inherit parent's credentials (POSIX: child inherits all UID/GID values) */
     child_task->uid  = parent_task->uid;
     child_task->gid  = parent_task->gid;

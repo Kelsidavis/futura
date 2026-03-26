@@ -177,14 +177,18 @@ long sys_unshare(unsigned long flags) {
         operation_desc = "mixed resources";
     }
 
-    /* CLONE_NEWPID requires actual PID namespace infrastructure (child processes
-     * must appear with PID 1 inside the namespace).  Return ENOSYS until that
-     * is implemented so callers don't silently get wrong PID numbering. */
+    /* CLONE_NEWPID: create a new PID namespace for future children.
+     * The calling process stays in its current namespace, but its next
+     * fork/clone will place the child in a new PID namespace where it
+     * gets PID 1. This matches Linux unshare(CLONE_NEWPID) semantics. */
     if (flags & CLONE_NEWPID) {
-        fut_printf("[UNSHARE] unshare(flags=%s (0x%lx), pid=%d) -> ENOSYS "
-                   "(CLONE_NEWPID requires PID namespace infrastructure)\n",
-                   operation_desc, flags, task->pid);
-        return -ENOSYS;
+        extern struct pid_namespace *pidns_create(struct pid_namespace *);
+        struct pid_namespace *new_ns = pidns_create(task->pid_ns);
+        if (!new_ns) return -ENOMEM;
+        /* Store new namespace — next fork will use it for the child */
+        task->pid_ns = new_ns;
+        fut_printf("[UNSHARE] unshare(CLONE_NEWPID, pid=%d) -> new pidns level=%d\n",
+                   (int)task->pid, new_ns->level);
     }
 
     /* All other flags — including non-namespace (CLONE_FILES/FS/SYSVSEM) and

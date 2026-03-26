@@ -249,7 +249,21 @@ struct fut_task {
     fut_spinlock_t cap_recv_lock;
     fut_waitq_t cap_recv_waitq;
 
+    /* PID namespace (container isolation) */
+    struct pid_namespace *pid_ns;      // PID namespace (NULL = init namespace)
+    uint64_t ns_pid;                   // PID within the namespace (== pid for init ns)
+
     fut_task_t *next;                  // Next task in system list
+};
+
+/* PID namespace structure */
+struct pid_namespace {
+    uint64_t id;                       // Namespace ID (for /proc/<pid>/ns/pid)
+    uint64_t next_pid;                 // Next PID to allocate in this namespace
+    struct fut_task *init_task;        // PID 1 in this namespace (child subreaper)
+    struct pid_namespace *parent;      // Parent namespace (NULL for init)
+    int level;                         // Nesting depth (0 = init)
+    int refcount;                      // Reference count
 };
 
 /* ============================================================

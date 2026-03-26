@@ -53780,6 +53780,36 @@ __attribute__((noinline)) static void test_dev_kmsg(void) {
     }
 }
 
+/* Test 1847: DNS cache add + lookup */
+__attribute__((noinline)) static void test_dns_cache(void) {
+    extern void dns_cache_add(const char *domain, uint32_t ip, uint32_t ttl);
+    extern int dns_cache_lookup(const char *domain, uint32_t *ip);
+    extern void dns_cache_clear(void);
+
+    fut_printf("[MISC-TEST] Test 1847: DNS cache add+lookup\n");
+    dns_cache_clear();
+    dns_cache_add("test.futura.local", 0xC0A80101 /* 192.168.1.1 */, 300);
+    uint32_t resolved_ip = 0;
+    int rc = dns_cache_lookup("test.futura.local", &resolved_ip);
+    if (rc == 0 && resolved_ip == 0xC0A80101) {
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 1847: lookup=%d ip=0x%x\n", rc, resolved_ip);
+        fut_test_fail(1847);
+    }
+
+    /* Test 1848: DNS cache miss returns error */
+    fut_printf("[MISC-TEST] Test 1848: DNS cache miss\n");
+    uint32_t miss_ip = 0;
+    rc = dns_cache_lookup("nonexistent.test", &miss_ip);
+    if (rc != 0) {
+        fut_test_pass();
+    } else {
+        fut_test_fail(1848);
+    }
+    dns_cache_clear();
+}
+
 /* Tests 1831-1834: firewall ioctl management */
 __attribute__((noinline)) static void test_firewall_ioctls(void) {
     extern long sys_ioctl(int fd, unsigned long request, void *argp);
@@ -58800,6 +58830,7 @@ void fut_misc_test_thread(void *arg) {
 
     test_dev_kmsg();  /* Test 1841 */
     test_uptime_idle();  /* Test 1846 */
+    test_dns_cache();    /* Tests 1847-1848 */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

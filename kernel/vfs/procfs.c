@@ -3452,9 +3452,11 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             /* 0 = disabled (loose mode would be 2, strict 1) */
             total = gen_sysctl_str(tmp, GEN_BUF, "0");
             break;
-        case PROC_SYS_NET_IPV4_CONF_FORWARDING:
-            total = gen_sysctl_str(tmp, GEN_BUF, "0");
+        case PROC_SYS_NET_IPV4_CONF_FORWARDING: {
+            extern bool g_ip_forward_enabled;
+            total = gen_sysctl_str(tmp, GEN_BUF, g_ip_forward_enabled ? "1" : "0");
             break;
+        }
         case PROC_SYS_NET_IPV4_CONF_ACCEPT_RA:
             total = gen_sysctl_str(tmp, GEN_BUF, "1");
             break;
@@ -3697,7 +3699,8 @@ static ssize_t procfs_file_write(struct fut_vnode *vnode, const void *buf,
             return (ssize_t)size;
         }
 
-        case PROC_SYS_NET_IP_FORWARD: {
+        case PROC_SYS_NET_IP_FORWARD:
+        case PROC_SYS_NET_IPV4_CONF_FORWARDING: {
             /* Write "1" to enable IP forwarding, "0" to disable */
             extern bool g_ip_forward_enabled;
             g_ip_forward_enabled = (copy_len > 0 && kbuf[0] != '0');

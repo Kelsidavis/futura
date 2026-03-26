@@ -624,13 +624,11 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
                            peer_path, actual_len, copy_len);
             }
         } else if (accepted_socket->address_family == AF_INET) {
-            /* AF_INET: return peer's sockaddr_in */
+            /* AF_INET: return peer's sockaddr_in from inet_peer_* fields */
             accept_sockaddr_in_t sin = {0};
             sin.sin_family = AF_INET;
-            if (accepted_socket->pair && accepted_socket->pair->peer) {
-                sin.sin_port = accepted_socket->pair->peer->inet_port;
-                sin.sin_addr = accepted_socket->pair->peer->inet_addr;
-            }
+            sin.sin_port = accepted_socket->inet_peer_port;
+            sin.sin_addr = accepted_socket->inet_peer_addr;
             actual_len = (socklen_t)sizeof(accept_sockaddr_in_t);
             socklen_t copy_len = (actual_len < len) ? actual_len : len;
             if (accept_copy_to_user(local_addr, &sin, copy_len) != 0)

@@ -21214,18 +21214,23 @@ static void test_so_rcvtimeo(void) {
 
     /* Block all signals during the timed recv to prevent EINTR from
      * stale timer signals (SIGALRM etc.) fired by prior tests.
-     * This ensures we get EAGAIN (timeout) not EINTR (signal). */
+     * Must block on BOTH task->signal_mask AND thread->signal_mask
+     * because the socket EINTR check uses the per-thread mask. */
     {
         fut_task_t *t315 = fut_task_current();
-        uint64_t saved_mask = t315 ? t315->signal_mask : 0;
-        if (t315) t315->signal_mask = ~0ULL;  /* block all */
-        __atomic_store_n(&t315->pending_signals, 0, __ATOMIC_RELEASE);
+        fut_thread_t *thr315 = fut_thread_current();
+        uint64_t saved_task_mask = t315 ? t315->signal_mask : 0;
+        uint64_t saved_thr_mask = thr315 ? thr315->signal_mask : 0;
+        if (t315) t315->signal_mask = ~0ULL;
+        if (thr315) thr315->signal_mask = ~0ULL;
+        if (t315) __atomic_store_n(&t315->pending_signals, 0, __ATOMIC_RELEASE);
 
         char buf[16];
         extern long sys_read(int fd, void *buf, size_t count);
         long n = sys_read(sv[1], buf, sizeof(buf));
 
-        if (t315) t315->signal_mask = saved_mask;  /* restore */
+        if (t315) t315->signal_mask = saved_task_mask;
+        if (thr315) thr315->signal_mask = saved_thr_mask;
 
         if (n != -11 /*-EAGAIN*/) {
             fut_printf("[MISC-TEST] ✗ read after SO_RCVTIMEO returned %ld, want -EAGAIN(-11)\n", n);
@@ -45804,8 +45809,10 @@ static void test_sock_timeout_blocking(void) {
 #define TSTB_EAGAIN      11
 
     /* ---- Test 1227: SO_SNDTIMEO enforced when send buffer is full ---- */
-    /* Block signals to prevent EINTR from async timer signals */
-    { fut_task_t *t = fut_task_current(); if (t) { __atomic_store_n(&t->pending_signals, 0, __ATOMIC_RELEASE); t->signal_mask = ~0ULL; } }
+    /* Block signals on both task and thread masks to prevent EINTR */
+    { fut_task_t *t = fut_task_current(); fut_thread_t *th = fut_thread_current();
+      if (t) { __atomic_store_n(&t->pending_signals, 0, __ATOMIC_RELEASE); t->signal_mask = ~0ULL; }
+      if (th) th->signal_mask = ~0ULL; }
     fut_printf("[MISC-TEST] Test 1227: SO_SNDTIMEO on full send buffer → EAGAIN\n");
     {
         int sv[2] = {-1, -1};
@@ -45850,7 +45857,12 @@ static void test_sock_timeout_blocking(void) {
     }
 
     /* Restore signal mask */
-    { fut_task_t *t = fut_task_current(); if (t) t->signal_mask = 0; }
+    {
+        fut_task_t *t = fut_task_current();
+        fut_thread_t *th = fut_thread_current();
+        if (t) t->signal_mask = 0;
+        if (th) th->signal_mask = 0;
+    }
 
 t1228:
     /* ---- Test 1228: SOCK_DGRAM SO_RCVTIMEO via socketpair → EAGAIN ---- */

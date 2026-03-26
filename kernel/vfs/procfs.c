@@ -3601,10 +3601,21 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
         case PROC_SYS_FILE_MAX:
             total = gen_sysctl_str(tmp, GEN_BUF, "1048576");
             break;
-        case PROC_SYS_FILE_NR:
-            /* "allocated free max" — for our simple model, all 3 same */
-            total = gen_sysctl_str(tmp, GEN_BUF, "0\t0\t1048576");
+        case PROC_SYS_FILE_NR: {
+            /* "allocated free max" — count real open FDs across all tasks */
+            int alloc = 0;
+            for (fut_task_t *t = fut_task_list; t; t = t->next) {
+                if (t->fd_table) {
+                    for (int fdi = 0; fdi < t->max_fds; fdi++)
+                        if (t->fd_table[fdi]) alloc++;
+                }
+            }
+            struct pbuf bb = { tmp, 0, GEN_BUF };
+            pb_u64(&bb, (uint64_t)alloc);
+            pb_str(&bb, "\t0\t1048576\n");
+            total = bb.pos;
             break;
+        }
         case PROC_SYS_INOTIFY_MAX_WATCHES:
             total = gen_sysctl_str(tmp, GEN_BUF, "524288");
             break;

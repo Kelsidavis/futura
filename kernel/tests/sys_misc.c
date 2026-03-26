@@ -54090,6 +54090,37 @@ __attribute__((noinline)) static void test_futurafs_advanced(void) {
     }
 }
 
+__attribute__((noinline)) static void test_file_nr_sysctl(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_close(int);
+
+    /* Test 1913: /proc/sys/fs/file-nr returns non-zero allocation count */
+    fut_printf("[MISC-TEST] Test 1913: file-nr has real FD count\n");
+    {
+        long fd = sys_open("/proc/sys/fs/file-nr", 0, 0);
+        if (fd >= 0) {
+            static char buf[64];
+            long n = sys_read((int)fd, buf, sizeof(buf) - 1);
+            sys_close((int)fd);
+            if (n > 0) {
+                buf[n] = '\0';
+                /* First number should be > 0 (we have at least stdin/stdout/stderr open) */
+                int alloc = 0;
+                for (int i = 0; buf[i] >= '0' && buf[i] <= '9'; i++)
+                    alloc = alloc * 10 + (buf[i] - '0');
+                if (alloc > 0) {
+                    fut_printf("[MISC-TEST] ✓ Test 1913: file-nr alloc=%d\n", alloc);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1913: alloc=0\n");
+                    fut_test_fail(1913);
+                }
+            } else { fut_test_fail(1913); }
+        } else { fut_test_fail(1913); }
+    }
+}
+
 __attribute__((noinline)) static void test_etc_config_files(void) {
     extern long sys_open(const char *, int, int);
     extern long sys_read(int, void *, size_t);
@@ -60476,6 +60507,7 @@ void fut_misc_test_thread(void *arg) {
     test_ip_ttl_tos_sockopt(); /* Tests 1853-1854 */
     test_futurafs(); /* Tests 1855-1857 */
     test_futurafs_advanced(); /* Tests 1910-1912 */
+    test_file_nr_sysctl(); /* Test 1913 */
     test_etc_config_files(); /* Tests 1907-1909 */
     test_futurafs_extended(); /* Tests 1901-1906 */
     test_blockdev_procfs(); /* Tests 1858-1860 */

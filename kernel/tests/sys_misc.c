@@ -58384,6 +58384,22 @@ void fut_misc_test_thread(void *arg) {
         } else { fut_printf("[MISC-TEST] ✗ Test 1827: open=%ld\n", fd); fut_test_fail(1827); }
     }
 
+    /* Test 1828: /dev/net/tun device is openable */
+    fut_printf("[MISC-TEST] Test 1828: /dev/net/tun exists and opens\n");
+    {
+        extern long sys_open(const char *, int, int);
+        extern long sys_close(int);
+        long fd = sys_open("/dev/net/tun", 0x0002 /* O_RDWR */, 0);
+        if (fd >= 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1828: /dev/net/tun fd=%ld\n", fd);
+            fut_test_pass();
+            sys_close((int)fd);
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1828: open=%ld\n", fd);
+            fut_test_fail(1828);
+        }
+    }
+
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");
     fut_printf("[MISC-TEST] ========================================\n");

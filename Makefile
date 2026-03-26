@@ -474,6 +474,7 @@ KERNEL_SOURCES := \
     kernel/net/netif.c \
     kernel/net/nat.c \
     kernel/net/filter.c \
+    kernel/net/tun.c \
     kernel/crypto/fut_hmac.c \
     kernel/vfs/fut_vfs.c \
     kernel/vfs/fut_vfs_cap.c \

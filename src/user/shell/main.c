@@ -484,7 +484,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     const char *builtins[] = {
         "arp", "bg", "cd", "chmod", "clear", "date", "dd", "df", "dmesg", "echo", "edit", "hexdump", "lsof", "nc", "poweroff", "reboot", "seq", "sleep", "time", "traceroute", "wget", "exit", "export", "fg", "free",
         "help", "hostname", "httpd", "id", "ifconfig", "iptables", "jobs", "kill", "ls", "mount", "netstat",
-        ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "history", "ip", "ln", "mktemp", "more", "nproc", "nslookup", "ping", "printf", "ps", "pwd", "read", "readlink", "set", "sha256sum", "source", "ss", "stat", "sync", "sysctl", "sysinfo", "test", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "wait", "which", "whoami", "xargs", "yes", NULL
+        ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "history", "ip", "ln", "mktemp", "more", "nproc", "nslookup", "ping", "printf", "ps", "pwd", "read", "readlink", "set", "sha256sum", "source", "ss", "stat", "sync", "sysctl", "sysinfo", "test", "top", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "wait", "which", "whoami", "xargs", "yes", NULL
     };
 
     /* External commands we might have */
@@ -6206,6 +6206,115 @@ static int execute_command(int argc, char *argv[]) {
         }
         sys_close(sfd);
         write_str(1, "httpd: stopped\n");
+        return 0;
+    } else if (strcmp_simple(argv[0], "top") == 0) {
+        /* top — show process information and system stats (one-shot) */
+        /* System info header */
+        {
+            int fd = sys_open("/proc/uptime", O_RDONLY, 0);
+            if (fd >= 0) {
+                char ub[64]; ssize_t n = sys_read(fd, ub, sizeof(ub)-1);
+                sys_close(fd); if (n > 0) { ub[n] = '\0'; write_str(1, "up "); write_str(1, ub); }
+            }
+        }
+        {
+            int fd = sys_open("/proc/loadavg", O_RDONLY, 0);
+            if (fd >= 0) {
+                char lb[64]; ssize_t n = sys_read(fd, lb, sizeof(lb)-1);
+                sys_close(fd); if (n > 0) { lb[n] = '\0'; write_str(1, "load: "); write_str(1, lb); }
+            }
+        }
+        /* Memory info */
+        {
+            int fd = sys_open("/proc/meminfo", O_RDONLY, 0);
+            if (fd >= 0) {
+                char mb[512]; ssize_t n = sys_read(fd, mb, sizeof(mb)-1);
+                sys_close(fd);
+                if (n > 0) {
+                    mb[n] = '\0';
+                    /* Extract MemTotal and MemFree lines */
+                    for (char *p = mb; *p; ) {
+                        if (p[0]=='M' && p[1]=='e' && p[2]=='m' && (p[3]=='T' || p[3]=='F' || p[3]=='A')) {
+                            char *eol = p; while (*eol && *eol != '\n') eol++;
+                            char save = *eol; *eol = '\0';
+                            write_str(1, p); write_str(1, "\n");
+                            *eol = save;
+                        }
+                        while (*p && *p != '\n') p++;
+                        if (*p) p++;
+                    }
+                }
+            }
+        }
+        write_str(1, "\n  PID STATE     RSS COMMAND\n");
+        /* Process list */
+        int proc_fd = sys_open("/proc", O_RDONLY, 0);
+        if (proc_fd >= 0) {
+            char dirbuf[2048];
+            ssize_t dn;
+            while ((dn = sys_getdents64(proc_fd, dirbuf, sizeof(dirbuf))) > 0) {
+                ssize_t pos = 0;
+                while (pos < dn) {
+                    uint16_t reclen = *(uint16_t *)(dirbuf + pos + 16);
+                    char *name = dirbuf + pos + 19;
+                    if (name[0] >= '1' && name[0] <= '9') {
+                        /* Read /proc/<pid>/stat for one-line summary */
+                        char spath[64]; int spi = 0;
+                        const char *pfx = "/proc/"; while (pfx[spi]) { spath[spi] = pfx[spi]; spi++; }
+                        int ni = 0; while (name[ni]) { spath[spi++] = name[ni++]; }
+                        const char *sfx = "/stat"; ni = 0;
+                        while (sfx[ni]) { spath[spi++] = sfx[ni++]; }
+                        spath[spi] = '\0';
+                        int sfd = sys_open(spath, O_RDONLY, 0);
+                        if (sfd >= 0) {
+                            char sb[256]; ssize_t sn = sys_read(sfd, sb, sizeof(sb)-1);
+                            sys_close(sfd);
+                            if (sn > 0) {
+                                sb[sn] = '\0';
+                                /* Parse: pid (name) state ... field23=rss */
+                                /* Just print PID, pad, then extract comm and state */
+                                write_str(1, " ");
+                                /* PID: right-pad to 4 chars */
+                                int plen = 0; while (name[plen]) plen++;
+                                for (int k = plen; k < 4; k++) write_str(1, " ");
+                                write_str(1, name);
+                                /* Find comm (between parens) and state (after close paren) */
+                                char *lp = sb; while (*lp && *lp != '(') lp++;
+                                char *rp = lp; while (*rp && *rp != ')') rp++;
+                                if (*lp == '(' && *rp == ')') {
+                                    write_str(1, " ");
+                                    /* State is at rp+2 */
+                                    char state = rp[2];
+                                    char ss[2] = {state, '\0'};
+                                    write_str(1, ss);
+                                    write_str(1, "       ");
+                                    /* Skip to field 24 (RSS) — count spaces after ')' */
+                                    char *fp = rp + 2;
+                                    int field = 3;
+                                    while (*fp && field < 24) {
+                                        if (*fp == ' ') field++;
+                                        fp++;
+                                    }
+                                    /* Print RSS (in pages) */
+                                    char *rss_start = fp;
+                                    while (*fp && *fp != ' ') fp++;
+                                    char save2 = *fp; *fp = '\0';
+                                    write_str(1, rss_start);
+                                    *fp = save2;
+                                    /* Print command name */
+                                    write_str(1, " ");
+                                    lp++; *rp = '\0';
+                                    write_str(1, lp);
+                                }
+                                write_str(1, "\n");
+                            }
+                        }
+                    }
+                    pos += reclen;
+                }
+            }
+            sys_close(proc_fd);
+        }
         return 0;
     } else if (strcmp_simple(argv[0], "sysctl") == 0) {
         /* sysctl — read/write kernel parameters via /proc/sys/ */

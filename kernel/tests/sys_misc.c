@@ -57952,6 +57952,152 @@ __attribute__((noinline)) static void test_net_procfs_devnodes(void) {
 }
 
 /* ============================================================
+ * Tests 2042-2047: shell script I/O and /etc/profile support
+ * ============================================================ */
+__attribute__((noinline)) static void test_script_file_io(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_write(int, const void *, size_t);
+    extern long sys_close(int);
+    extern long sys_unlink(const char *);
+
+    /* ── Test 2042: write multi-line shell script to file ── */
+    fut_printf("[MISC-TEST] Test 2042: write shell script\n");
+    {
+        long fd = sys_open("/tmp/test_script.sh", O_CREAT | O_RDWR, 0755);
+        if (fd >= 0) {
+            static const char script[] =
+                "#!/bin/shell\n"
+                "# Multi-line if block\n"
+                "if test -f /proc/version\n"
+                "then\n"
+                "  echo version exists\n"
+                "fi\n"
+                "\n"
+                "# For loop\n"
+                "for i in a b c\n"
+                "do\n"
+                "  echo $i\n"
+                "done\n"
+                "\n"
+                "# While loop\n"
+                "x=0\n"
+                "while test $x -lt 3\n"
+                "do\n"
+                "  x=$(($x+1))\n"
+                "done\n";
+            long n = sys_write((int)fd, script, sizeof(script) - 1);
+            sys_close((int)fd);
+            if (n == (long)(sizeof(script) - 1)) {
+                fut_printf("[MISC-TEST] ✓ Test 2042: script written (%ld bytes)\n", n);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2042: write=%ld\n", n);
+                fut_test_fail(2042);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2042: open=%ld\n", fd);
+            fut_test_fail(2042);
+        }
+    }
+
+    /* ── Test 2043: read back shell script ── */
+    fut_printf("[MISC-TEST] Test 2043: read back script\n");
+    {
+        long fd = sys_open("/tmp/test_script.sh", O_RDONLY, 0);
+        if (fd >= 0) {
+            static char buf[512];
+            long n = sys_read((int)fd, buf, 511);
+            sys_close((int)fd);
+            if (n > 50 && buf[0] == '#' && buf[1] == '!') {
+                fut_printf("[MISC-TEST] ✓ Test 2043: read %ld bytes, shebang ok\n", n);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2043: n=%ld\n", n);
+                fut_test_fail(2043);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2043: open=%ld\n", fd);
+            fut_test_fail(2043);
+        }
+    }
+
+    /* ── Test 2044: /etc/profile is writable ── */
+    fut_printf("[MISC-TEST] Test 2044: /etc/profile writable\n");
+    {
+        long fd = sys_open("/etc/profile", O_CREAT | O_RDWR, 0644);
+        if (fd >= 0) {
+            static const char prof[] = "# Futura profile\nexport LANG=C\n";
+            sys_write((int)fd, prof, sizeof(prof) - 1);
+            sys_close((int)fd);
+            /* Read back */
+            fd = sys_open("/etc/profile", O_RDONLY, 0);
+            if (fd >= 0) {
+                static char buf[64];
+                long n = sys_read((int)fd, buf, 63);
+                sys_close((int)fd);
+                if (n > 5) {
+                    fut_printf("[MISC-TEST] ✓ Test 2044: /etc/profile ok\n");
+                    fut_test_pass();
+                } else { fut_test_fail(2044); }
+            } else { fut_test_fail(2044); }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2044: open=%ld\n", fd);
+            fut_test_fail(2044);
+        }
+    }
+
+    /* ── Test 2045: write /etc/shells (standard shell list) ── */
+    fut_printf("[MISC-TEST] Test 2045: /etc/shells\n");
+    {
+        long fd = sys_open("/etc/shells", O_CREAT | O_RDWR, 0644);
+        if (fd >= 0) {
+            static const char shells[] = "/bin/shell\n/bin/sh\n";
+            sys_write((int)fd, shells, sizeof(shells) - 1);
+            sys_close((int)fd);
+            fut_printf("[MISC-TEST] ✓ Test 2045: /etc/shells created\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2045: open=%ld\n", fd);
+            fut_test_fail(2045);
+        }
+    }
+
+    /* ── Test 2046: write /etc/hostname ── */
+    fut_printf("[MISC-TEST] Test 2046: /etc/hostname\n");
+    {
+        long fd = sys_open("/etc/hostname", O_CREAT | O_RDWR, 0644);
+        if (fd >= 0) {
+            sys_write((int)fd, "futura\n", 7);
+            sys_close((int)fd);
+            fut_printf("[MISC-TEST] ✓ Test 2046: /etc/hostname created\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2046: open=%ld\n", fd);
+            fut_test_fail(2046);
+        }
+    }
+
+    /* ── Test 2047: write /etc/resolv.conf ── */
+    fut_printf("[MISC-TEST] Test 2047: /etc/resolv.conf\n");
+    {
+        long fd = sys_open("/etc/resolv.conf", O_CREAT | O_RDWR, 0644);
+        if (fd >= 0) {
+            static const char resolv[] = "nameserver 8.8.8.8\nnameserver 1.1.1.1\n";
+            sys_write((int)fd, resolv, sizeof(resolv) - 1);
+            sys_close((int)fd);
+            fut_printf("[MISC-TEST] ✓ Test 2047: /etc/resolv.conf created\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2047: open=%ld\n", fd);
+            fut_test_fail(2047);
+        }
+    }
+
+    sys_unlink("/tmp/test_script.sh");
+}
+
+/* ============================================================
  * Tests 2036-2041: seccomp BPF filter enforcement
  * ============================================================ */
 __attribute__((noinline)) static void test_seccomp_bpf(void) {
@@ -63645,6 +63791,7 @@ void fut_misc_test_thread(void *arg) {
     test_loop_device(); /* Tests 1885-1887 */
     test_per_iface_conf(); /* Tests 1869-1871 */
 
+    test_script_file_io(); /* Tests 2042-2047 */
     test_seccomp_bpf(); /* Tests 2036-2041 */
     test_cgroupfs(); /* Tests 2026-2035 */
     test_procfs_fs_entries(); /* Tests 2020-2025 */

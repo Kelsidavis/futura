@@ -9036,6 +9036,130 @@ static int execute_command_chain(char *cmdline) {
 }
 
 /* Built-in: source / . — execute script in current shell context */
+/* Check if a line starts a multi-line block (if/for/while/case/until) */
+static int is_block_start(const char *line) {
+    while (*line == ' ' || *line == '\t') line++;
+    if (line[0] == 'i' && line[1] == 'f' && line[2] == ' ') return 1;
+    if (line[0] == 'f' && line[1] == 'o' && line[2] == 'r' && line[3] == ' ') return 2;
+    if (line[0] == 'w' && line[1] == 'h' && line[2] == 'i' &&
+        line[3] == 'l' && line[4] == 'e' && line[5] == ' ') return 3;
+    if (line[0] == 'u' && line[1] == 'n' && line[2] == 't' &&
+        line[3] == 'i' && line[4] == 'l' && line[5] == ' ') return 3;
+    if (line[0] == 'c' && line[1] == 'a' && line[2] == 's' &&
+        line[3] == 'e' && line[4] == ' ') return 4;
+    return 0;
+}
+
+/* Check if a line is a block-end keyword */
+static int is_block_end(const char *line, int block_type) {
+    while (*line == ' ' || *line == '\t') line++;
+    switch (block_type) {
+        case 1: /* if → fi */
+            return (line[0] == 'f' && line[1] == 'i' &&
+                    (line[2] == '\0' || line[2] == ' ' || line[2] == ';'));
+        case 2: /* for → done */
+        case 3: /* while/until → done */
+            return (line[0] == 'd' && line[1] == 'o' && line[2] == 'n' && line[3] == 'e' &&
+                    (line[4] == '\0' || line[4] == ' ' || line[4] == ';'));
+        case 4: /* case → esac */
+            return (line[0] == 'e' && line[1] == 's' && line[2] == 'a' && line[3] == 'c' &&
+                    (line[4] == '\0' || line[4] == ' ' || line[4] == ';'));
+    }
+    return 0;
+}
+
+/**
+ * Execute a script buffer (from source/. command or -c mode).
+ * Supports multi-line blocks by joining lines between block-start
+ * and block-end keywords with "; " separators, so the existing
+ * single-line handlers in the main loop can process them.
+ */
+static void execute_script_buffer(char *buf) {
+    char *line = buf;
+    char block_buf[2048];
+    int block_type = 0;
+    int block_depth = 0;
+    int block_pos = 0;
+
+    while (*line) {
+        char *end = line;
+        while (*end && *end != '\n') end++;
+        char saved = *end;
+        *end = '\0';
+
+        /* Skip empty lines and comments */
+        char *trimmed = line;
+        while (*trimmed == ' ' || *trimmed == '\t') trimmed++;
+
+        if (*trimmed && *trimmed != '#') {
+            if (block_depth > 0) {
+                /* Inside a multi-line block — check for nested blocks and end */
+                int nested = is_block_start(trimmed);
+                if (nested) block_depth++;
+                if (is_block_end(trimmed, block_type) && block_depth == 1) {
+                    /* End of outermost block — append closing keyword */
+                    if (block_pos > 0) { block_buf[block_pos++] = ';'; block_buf[block_pos++] = ' '; }
+                    for (const char *c = trimmed; *c && block_pos < 2040; c++)
+                        block_buf[block_pos++] = *c;
+                    block_buf[block_pos] = '\0';
+                    /* Execute the joined block as a single line */
+                    execute_full_line(block_buf);
+                    block_depth = 0;
+                    block_pos = 0;
+                } else {
+                    if (is_block_end(trimmed, block_type)) block_depth--;
+                    /* Accumulate line into block buffer */
+                    if (block_pos > 0) { block_buf[block_pos++] = ';'; block_buf[block_pos++] = ' '; }
+                    for (const char *c = trimmed; *c && block_pos < 2040; c++)
+                        block_buf[block_pos++] = *c;
+                    block_buf[block_pos] = '\0';
+                }
+            } else {
+                /* Check if this line starts a multi-line block */
+                int bt = is_block_start(trimmed);
+                /* Only start accumulating if the line doesn't already contain
+                 * the closing keyword (single-line form) */
+                int has_end = 0;
+                if (bt == 1) {
+                    /* Check for "fi" in the line */
+                    for (const char *s = trimmed; *s; s++) {
+                        if (s[0] == ';' && s[1] == ' ' && s[2] == 'f' && s[3] == 'i' &&
+                            (s[4] == '\0' || s[4] == ';' || s[4] == ' '))
+                            has_end = 1;
+                    }
+                } else if (bt == 2 || bt == 3) {
+                    for (const char *s = trimmed; s[0]; s++) {
+                        if (s[0] == ';' && s[1] == ' ' && s[2] == 'd' && s[3] == 'o' &&
+                            s[4] == 'n' && s[5] == 'e')
+                            has_end = 1;
+                    }
+                } else if (bt == 4) {
+                    for (const char *s = trimmed; *s; s++) {
+                        if (s[0] == 'e' && s[1] == 's' && s[2] == 'a' && s[3] == 'c')
+                            has_end = 1;
+                    }
+                }
+
+                if (bt && !has_end) {
+                    /* Start accumulating multi-line block */
+                    block_type = bt;
+                    block_depth = 1;
+                    block_pos = 0;
+                    for (const char *c = trimmed; *c && block_pos < 2040; c++)
+                        block_buf[block_pos++] = *c;
+                    block_buf[block_pos] = '\0';
+                } else {
+                    /* Normal line — execute immediately */
+                    execute_full_line((char *)trimmed);
+                }
+            }
+        }
+
+        if (saved == '\0') break;
+        line = end + 1;
+    }
+}
+
 static void cmd_source(int argc, char *argv[]) {
     if (argc < 2) {
         write_str(2, "usage: source <file>\n");
@@ -9048,24 +9172,13 @@ static void cmd_source(int argc, char *argv[]) {
         write_str(2, ": not found\n");
         return;
     }
-    char buf[2048];
+    char buf[4096];
     ssize_t n = sys_read(fd, buf, sizeof(buf) - 1);
     sys_close(fd);
     if (n <= 0) return;
     buf[n] = '\0';
 
-    char *line = buf;
-    while (*line) {
-        char *end = line;
-        while (*end && *end != '\n') end++;
-        char saved = *end;
-        *end = '\0';
-        if (line[0] && line[0] != '#') {
-            execute_full_line(line);
-        }
-        if (saved == '\0') break;
-        line = end + 1;
-    }
+    execute_script_buffer(buf);
 }
 
 int main(int argc, char **argv, char **envp) {
@@ -9173,28 +9286,16 @@ int main(int argc, char **argv, char **envp) {
         }
     }
 
-    /* Source /etc/profile if it exists */
+    /* Source /etc/profile if it exists (supports multi-line blocks) */
     {
         int pfd = sys_open("/etc/profile", O_RDONLY, 0);
         if (pfd >= 0) {
-            char pbuf[1024];
+            char pbuf[2048];
             ssize_t pn = sys_read(pfd, pbuf, sizeof(pbuf) - 1);
             sys_close(pfd);
             if (pn > 0) {
                 pbuf[pn] = '\0';
-                /* Execute each line */
-                char *line = pbuf;
-                while (*line) {
-                    char *end = line;
-                    while (*end && *end != '\n') end++;
-                    char saved = *end;
-                    *end = '\0';
-                    if (line[0] && line[0] != '#') {
-                        execute_full_line(line);
-                    }
-                    if (saved == '\0') break;
-                    line = end + 1;
-                }
+                execute_script_buffer(pbuf);
             }
         }
     }

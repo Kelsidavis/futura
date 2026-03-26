@@ -54105,6 +54105,39 @@ __attribute__((noinline)) static void test_futurafs_flags(void) {
     }
 }
 
+__attribute__((noinline)) static void test_ipv6_socket(void) {
+    extern long sys_socket(int, int, int);
+    extern long sys_close(int);
+
+    /* Test 1938: AF_INET6 SOCK_STREAM socket creation succeeds */
+    fut_printf("[MISC-TEST] Test 1938: AF_INET6 socket\n");
+    {
+        long fd = sys_socket(10 /* AF_INET6 */, 1 /* SOCK_STREAM */, 0);
+        if (fd >= 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1938: AF_INET6 socket fd=%ld\n", fd);
+            fut_test_pass();
+            sys_close((int)fd);
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1938: socket=%ld\n", fd);
+            fut_test_fail(1938);
+        }
+    }
+
+    /* Test 1939: AF_INET6 SOCK_DGRAM socket creation succeeds */
+    fut_printf("[MISC-TEST] Test 1939: AF_INET6 SOCK_DGRAM\n");
+    {
+        long fd = sys_socket(10, 2 /* SOCK_DGRAM */, 0);
+        if (fd >= 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1939: AF_INET6 UDP fd=%ld\n", fd);
+            fut_test_pass();
+            sys_close((int)fd);
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1939: socket=%ld\n", fd);
+            fut_test_fail(1939);
+        }
+    }
+}
+
 __attribute__((noinline)) static void test_tc_ipsec(void) {
     extern long sys_open(const char *, int, int);
     extern long sys_close(int);
@@ -61199,6 +61232,7 @@ void fut_misc_test_thread(void *arg) {
     test_router_integration(); /* Test 1852 */
     test_ip_ttl_tos_sockopt(); /* Tests 1853-1854 */
     test_futurafs(); /* Tests 1855-1857 */
+    test_ipv6_socket(); /* Tests 1938-1939 */
     test_tc_ipsec(); /* Tests 1935-1937 */
     test_sysfs_pci_block(); /* Test 1934 */
     test_sys_class_block(); /* Test 1933 */

@@ -51243,6 +51243,83 @@ static void test_openat_o_directory(void) {
 }
 
 /* Tests 1729-1732: umask enforcement on file/directory creation (POSIX) */
+/* Tests 1753-1756: setsid() detaches controlling terminal + session semantics */
+__attribute__((noinline)) static void test_setsid_ctty(void) {
+    extern long sys_setsid(void);
+    extern long sys_getpid(void);
+
+    fut_task_t *task = fut_task_current();
+    if (!task) { fut_test_fail(1753); fut_test_fail(1754); fut_test_fail(1755); fut_test_fail(1756); return; }
+
+    /* Save state */
+    uint64_t saved_sid = task->sid;
+    uint64_t saved_pgid = task->pgid;
+    uint32_t saved_tty = task->tty_nr;
+
+    /* Test 1753: setsid() clears tty_nr */
+    fut_printf("[MISC-TEST] Test 1753: setsid clears tty_nr\n");
+    {
+        task->tty_nr = 0x8800;  /* fake controlling terminal */
+        task->pgid = 99;        /* not group leader → setsid allowed */
+        long sid = sys_setsid();
+        if (sid > 0 && task->tty_nr == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1753: setsid=%ld tty_nr=0\n", sid);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1753: sid=%ld tty_nr=%u\n", sid, task->tty_nr);
+            fut_test_fail(1753);
+        }
+    }
+
+    /* Test 1754: setsid() sets sid = pid */
+    fut_printf("[MISC-TEST] Test 1754: setsid sets sid=pid\n");
+    {
+        task->pgid = 99;  /* reset so we can call setsid again */
+        long sid = sys_setsid();
+        long pid = sys_getpid();
+        if (sid == pid) {
+            fut_printf("[MISC-TEST] ✓ Test 1754: sid=%ld == pid=%ld\n", sid, pid);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1754: sid=%ld pid=%ld\n", sid, pid);
+            fut_test_fail(1754);
+        }
+    }
+
+    /* Test 1755: setsid() sets pgid = pid */
+    fut_printf("[MISC-TEST] Test 1755: setsid sets pgid=pid\n");
+    {
+        long pid = sys_getpid();
+        if (task->pgid == (uint64_t)pid) {
+            fut_printf("[MISC-TEST] ✓ Test 1755: pgid=%llu == pid=%ld\n",
+                       (unsigned long long)task->pgid, pid);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1755: pgid=%llu\n", (unsigned long long)task->pgid);
+            fut_test_fail(1755);
+        }
+    }
+
+    /* Test 1756: setsid() when already group leader → EPERM */
+    fut_printf("[MISC-TEST] Test 1756: setsid when group leader → EPERM\n");
+    {
+        /* task->pgid == task->pid after setsid, so calling again should fail */
+        long r = sys_setsid();
+        if (r == -1 /* EPERM */) {
+            fut_printf("[MISC-TEST] ✓ Test 1756: setsid EPERM (already leader)\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1756: setsid=%ld (expected EPERM)\n", r);
+            fut_test_fail(1756);
+        }
+    }
+
+    /* Restore state */
+    task->sid = saved_sid;
+    task->pgid = saved_pgid;
+    task->tty_nr = saved_tty;
+}
+
 /* Tests 1749-1752: TIOCSCTTY / TIOCNOTTY controlling terminal management */
 __attribute__((noinline)) static void test_ctty_management(void) {
     extern long sys_open(const char *, int, int);
@@ -56304,6 +56381,7 @@ void fut_misc_test_thread(void *arg) {
     test_timer_abstime();          /* Tests 1721-1724 */
     test_execve_prevalidation();   /* Tests 1725-1728 */
     test_fd_lifecycle_edges();     /* Tests 1737-1740 */
+    test_setsid_ctty();              /* Tests 1753-1756 */
     test_ctty_management();          /* Tests 1749-1752 */
     test_fork_field_inheritance();   /* Tests 1745-1748 */
     test_rename_unlink_while_open(); /* Tests 1741-1744 */

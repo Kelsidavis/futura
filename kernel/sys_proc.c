@@ -342,9 +342,11 @@ long sys_setsid(void) {
     uint64_t old_sid = task->sid;
     uint64_t old_pgid = task->pgid;
 
-    /* Become session leader and process group leader */
+    /* Become session leader and process group leader.
+     * POSIX: setsid() also detaches from the controlling terminal. */
     task->sid = task->pid;
     task->pgid = task->pid;
+    task->tty_nr = 0;  /* Detach from controlling terminal */
 
     (void)old_sid;
     (void)old_pgid;

@@ -956,6 +956,8 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
                 case 10: proto_val = (int)socket->ip_mtu_discover; break;
                 case 12: proto_val = socket->ip_recvttl;       break; /* IP_RECVTTL */
                 case 13: proto_val = socket->ip_recvtos;       break; /* IP_RECVTOS */
+                case 33: proto_val = 1;  break; /* IP_MULTICAST_TTL: default 1 */
+                case 34: proto_val = 1;  break; /* IP_MULTICAST_LOOP: default enabled */
                 default:
                     if (optname >= 4 && optname <= 64) { proto_val = 0; break; }
                     return -ENOPROTOOPT;

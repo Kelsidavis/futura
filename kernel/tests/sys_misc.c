@@ -51257,6 +51257,91 @@ static void test_openat_o_directory(void) {
 /* Tests 1729-1732: umask enforcement on file/directory creation (POSIX) */
 /* Tests 1761-1764: SIGHUP delivery when session leader exits */
 /* Tests 1765-1768: daemon lifecycle integration (setsid+chdir+devnull) */
+/* Tests 1785-1788: F_GETFL/F_SETFL on PTY fds + O_NONBLOCK propagation */
+__attribute__((noinline)) static void test_pty_fcntl_flags(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_close(int);
+    extern long sys_fcntl(int fd, int cmd, uint64_t arg);
+    extern long sys_ioctl(int fd, unsigned long request, void *argp);
+    extern long sys_read(int, void *, size_t);
+
+    long mfd = sys_open("/dev/ptmx", 0x0002, 0);
+    int pn = -1, zv = 0;
+    if (mfd >= 0) sys_ioctl((int)mfd, 0x80045430, &pn);
+    if (mfd >= 0) sys_ioctl((int)mfd, 0x40045431, &zv);
+    static char pp[24];
+    { const char *pfx = "/dev/pts/"; int i = 0; while (pfx[i]) { pp[i] = pfx[i]; i++; }
+      if (pn >= 10) { pp[i++] = (char)('0'+pn/10); } pp[i++] = (char)('0'+pn%10); pp[i] = '\0'; }
+    long sfd = (pn >= 0) ? sys_open(pp, 0x0002, 0) : -1;
+
+    /* Test 1785: F_GETFL on PTY master returns O_RDWR */
+    fut_printf("[MISC-TEST] Test 1785: F_GETFL on PTY master\n");
+    if (mfd >= 0) {
+        long flags = sys_fcntl((int)mfd, 3 /* F_GETFL */, 0);
+        if (flags >= 0 && (flags & 3) == 2 /* O_RDWR */) {
+            fut_printf("[MISC-TEST] ✓ Test 1785: F_GETFL=0x%lx (O_RDWR)\n", flags);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1785: F_GETFL=%ld\n", flags);
+            fut_test_fail(1785);
+        }
+    } else { fut_test_fail(1785); }
+
+    /* Test 1786: F_SETFL O_NONBLOCK on PTY slave */
+    fut_printf("[MISC-TEST] Test 1786: F_SETFL O_NONBLOCK on PTY slave\n");
+    if (sfd >= 0) {
+        long r = sys_fcntl((int)sfd, 4 /* F_SETFL */, 0x800 /* O_NONBLOCK */);
+        if (r == 0) {
+            long flags = sys_fcntl((int)sfd, 3 /* F_GETFL */, 0);
+            if (flags >= 0 && (flags & 0x800)) {
+                fut_printf("[MISC-TEST] ✓ Test 1786: O_NONBLOCK set (flags=0x%lx)\n", flags);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1786: flags=0x%lx (no O_NONBLOCK)\n", flags);
+                fut_test_fail(1786);
+            }
+            /* Clear O_NONBLOCK */
+            sys_fcntl((int)sfd, 4, 0);
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1786: F_SETFL → %ld\n", r);
+            fut_test_fail(1786);
+        }
+    } else { fut_test_fail(1786); }
+
+    /* Test 1787: PTY slave read with O_NONBLOCK returns EAGAIN on empty */
+    fut_printf("[MISC-TEST] Test 1787: PTY O_NONBLOCK read → EAGAIN\n");
+    if (sfd >= 0) {
+        sys_fcntl((int)sfd, 4, 0x800);  /* set O_NONBLOCK */
+        static char buf[4];
+        long r = sys_read((int)sfd, buf, 4);
+        sys_fcntl((int)sfd, 4, 0);  /* clear */
+        if (r == -11 /* EAGAIN */) {
+            fut_printf("[MISC-TEST] ✓ Test 1787: EAGAIN on empty PTY\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1787: read=%ld\n", r);
+            fut_test_fail(1787);
+        }
+    } else { fut_test_fail(1787); }
+
+    /* Test 1788: F_DUPFD on PTY fd returns valid new fd */
+    fut_printf("[MISC-TEST] Test 1788: F_DUPFD on PTY master\n");
+    if (mfd >= 0) {
+        long newfd = sys_fcntl((int)mfd, 0 /* F_DUPFD */, 10);
+        if (newfd >= 10) {
+            fut_printf("[MISC-TEST] ✓ Test 1788: F_DUPFD → %ld (≥10)\n", newfd);
+            sys_close((int)newfd);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1788: F_DUPFD → %ld\n", newfd);
+            fut_test_fail(1788);
+        }
+    } else { fut_test_fail(1788); }
+
+    if (sfd >= 0) sys_close((int)sfd);
+    if (mfd >= 0) sys_close((int)mfd);
+}
+
 /* Tests 1781-1784: isatty detection for PTY, /dev/tty, pipe, /dev/null */
 __attribute__((noinline)) static void test_isatty_pty(void) {
     extern long sys_open(const char *, int, int);
@@ -57233,6 +57318,7 @@ void fut_misc_test_thread(void *arg) {
     test_timer_abstime();          /* Tests 1721-1724 */
     test_execve_prevalidation();   /* Tests 1725-1728 */
     test_fd_lifecycle_edges();     /* Tests 1737-1740 */
+    test_pty_fcntl_flags();          /* Tests 1785-1788 */
     test_isatty_pty();               /* Tests 1781-1784 */
     test_dev_tty_ctty();             /* Tests 1777-1780 */
     test_pty_termios_cc();           /* Tests 1773-1776 */

@@ -271,6 +271,10 @@ enum procfs_kind {
     PROC_SYS_NET_NF_CT_COUNT,       /* /proc/sys/net/netfilter/nf_conntrack_count */
     PROC_SYS_KERNEL_PANIC,          /* /proc/sys/kernel/panic */
     PROC_SYS_KERNEL_PANIC_ON_OOPS,  /* /proc/sys/kernel/panic_on_oops */
+    PROC_PRESSURE_DIR,              /* /proc/pressure/ directory */
+    PROC_PRESSURE_CPU,              /* /proc/pressure/cpu */
+    PROC_PRESSURE_MEMORY,           /* /proc/pressure/memory */
+    PROC_PRESSURE_IO,               /* /proc/pressure/io */
 };
 
 typedef struct {
@@ -457,6 +461,10 @@ typedef struct {
 #define PROC_INO_SYS_NET_NF_CT_COUNT     419ULL
 #define PROC_INO_SYS_KERNEL_PANIC        420ULL
 #define PROC_INO_SYS_KERNEL_PANIC_OOPS   421ULL
+#define PROC_INO_PRESSURE_DIR            422ULL
+#define PROC_INO_PRESSURE_CPU            423ULL
+#define PROC_INO_PRESSURE_MEM            424ULL
+#define PROC_INO_PRESSURE_IO             425ULL
 /* /proc/sys/kernel/ extended range: 400-429 */
 #define PROC_INO_SYS_KERNEL_NMI_WD     400ULL
 #define PROC_INO_SYS_KERNEL_WATCHDOG   401ULL
@@ -3908,6 +3916,28 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             /* 0 = continue on oops, 1 = panic on oops */
             total = gen_sysctl_str(tmp, GEN_BUF, "0");
             break;
+        /* /proc/pressure/ files — PSI (Pressure Stall Information) */
+        case PROC_PRESSURE_CPU: {
+            struct pbuf bb = { tmp, 0, GEN_BUF };
+            pb_str(&bb, "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\n");
+            pb_str(&bb, "full avg10=0.00 avg60=0.00 avg300=0.00 total=0\n");
+            total = bb.pos;
+            break;
+        }
+        case PROC_PRESSURE_MEMORY: {
+            struct pbuf bb = { tmp, 0, GEN_BUF };
+            pb_str(&bb, "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\n");
+            pb_str(&bb, "full avg10=0.00 avg60=0.00 avg300=0.00 total=0\n");
+            total = bb.pos;
+            break;
+        }
+        case PROC_PRESSURE_IO: {
+            struct pbuf bb = { tmp, 0, GEN_BUF };
+            pb_str(&bb, "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\n");
+            pb_str(&bb, "full avg10=0.00 avg60=0.00 avg300=0.00 total=0\n");
+            total = bb.pos;
+            break;
+        }
         case PROC_SYS_NET_NF_CT_COUNT: {
             /* Return "0" — active NAT count is dynamic and tracked in nat.c.
              * A proper implementation would iterate the NAT table, but for
@@ -4539,6 +4569,11 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0100444, PROC_PCI_DEVICES, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "pressure")) {
+            *result = procfs_alloc_vnode(mnt, VN_DIR, PROC_INO_PRESSURE_DIR,
+                                          0040555, PROC_PRESSURE_DIR, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         /* Try numeric PID */
         uint64_t pid = parse_dec(name);
         if (pid != (uint64_t)-1 && pid > 0) {
@@ -5022,6 +5057,25 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
         if (STREQ(name, "nf_conntrack_count")) {
             *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_NET_NF_CT_COUNT,
                                           0100444, PROC_SYS_NET_NF_CT_COUNT, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        return -ENOENT;
+    }
+
+    if (dn->kind == PROC_PRESSURE_DIR) {
+        if (STREQ(name, "cpu")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PRESSURE_CPU,
+                                          0100444, PROC_PRESSURE_CPU, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "memory")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PRESSURE_MEM,
+                                          0100444, PROC_PRESSURE_MEMORY, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "io")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PRESSURE_IO,
+                                          0100444, PROC_PRESSURE_IO, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
         return -ENOENT;
@@ -5644,7 +5698,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             "loadavg", "mounts", "sys", "stat", "filesystems", "vmstat", "net",
             "interrupts", "cmdline", "swaps", "devices", "misc",
             "buddyinfo", "zoneinfo", "diskstats", "partitions", "cgroups", "kallsyms",
-            "locks", "modules", "sysvipc", "pci"
+            "locks", "modules", "sysvipc", "pci", "pressure"
         };
         static const uint8_t fixed_type[] = {
             FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
@@ -5661,7 +5715,8 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             FUT_VDIR_TYPE_REG,  /* locks */
             FUT_VDIR_TYPE_REG,  /* modules */
             FUT_VDIR_TYPE_DIR,  /* sysvipc */
-            FUT_VDIR_TYPE_REG   /* pci */
+            FUT_VDIR_TYPE_REG,  /* pci */
+            FUT_VDIR_TYPE_DIR   /* pressure */
         };
         static const uint64_t fixed_ino[] = {
             PROC_INO_ROOT, PROC_INO_ROOT,
@@ -5675,9 +5730,10 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             PROC_INO_BUDDYINFO, PROC_INO_ZONEINFO,
             PROC_INO_DISKSTATS, PROC_INO_PARTITIONS, PROC_INO_CGROUPS, PROC_INO_KALLSYMS,
             PROC_INO_LOCKS, PROC_INO_MODULES,
-            PROC_INO_SYSVIPC_DIR, PROC_INO_PCI
+            PROC_INO_SYSVIPC_DIR, PROC_INO_PCI,
+            PROC_INO_PRESSURE_DIR
         };
-        if (idx < 30) {
+        if (idx < 31) {
             de->d_ino    = fixed_ino[idx];
             de->d_off    = idx + 1;
             de->d_type   = fixed_type[idx];
@@ -5694,9 +5750,9 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         /*
          * PID enumeration: after the 29 fixed entries, cookies encode
          * "find first task with pid > (cookie - 30)".  After returning
-         * a PID entry we set cookie = 30 + that_pid + 1.
+         * a PID entry we set cookie = 31 + that_pid + 1.
          */
-        uint64_t min_pid = idx >= 30 ? idx - 30 : 0;  /* start scanning for pid > min_pid */
+        uint64_t min_pid = idx >= 31 ? idx - 31 : 0;  /* start scanning for pid > min_pid */
         fut_task_t *best = NULL;
         uint64_t   best_pid = (uint64_t)-1;
         fut_task_t *t = fut_task_list;
@@ -5721,14 +5777,14 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         pidname[pn] = '\0';
 
         de->d_ino    = PROC_INO_PID_DIR(best->pid);
-        de->d_off    = 30 + best->pid + 1;
+        de->d_off    = 31 + best->pid + 1;
         de->d_type   = FUT_VDIR_TYPE_DIR;
         de->d_reclen = sizeof(*de);
         size_t nl = (size_t)pn;
         if (nl > FUT_VFS_NAME_MAX) nl = FUT_VFS_NAME_MAX;
         __builtin_memcpy(de->d_name, pidname, nl);
         de->d_name[nl] = '\0';
-        *cookie = 30 + best->pid + 1;  /* resume after this pid */
+        *cookie = 31 + best->pid + 1;  /* resume after this pid */
         return 1;
     }
 
@@ -5948,6 +6004,17 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         static const uint64_t i[] = { PROC_INO_SYS_NET_IPV6_DIR, PROC_INO_SYS_NET_DIR,
                                       PROC_INO_SYS_NET_IPV6_CONF_DIR };
         if (idx < 3) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+        return -ENOENT;
+    }
+
+    if (dn->kind == PROC_PRESSURE_DIR) {
+        static const char *pe[] = { ".", "..", "cpu", "memory", "io" };
+        static const uint8_t pt[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
+                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG };
+        static const uint64_t pi[] = { PROC_INO_PRESSURE_DIR, PROC_INO_ROOT,
+                                       PROC_INO_PRESSURE_CPU, PROC_INO_PRESSURE_MEM,
+                                       PROC_INO_PRESSURE_IO };
+        if (idx < 5) SYS_DIR_ENTRY(pe[idx], pt[idx], pi[idx]);
         return -ENOENT;
     }
 

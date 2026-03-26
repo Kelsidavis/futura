@@ -54090,6 +54090,53 @@ __attribute__((noinline)) static void test_futurafs_advanced(void) {
     }
 }
 
+__attribute__((noinline)) static void test_pressure_psi(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_close(int);
+
+    /* Test 1921: /proc/pressure/cpu has PSI data */
+    fut_printf("[MISC-TEST] Test 1921: /proc/pressure/cpu readable\n");
+    {
+        long fd = sys_open("/proc/pressure/cpu", 0, 0);
+        if (fd >= 0) {
+            static char buf[128];
+            long n = sys_read((int)fd, buf, sizeof(buf) - 1);
+            sys_close((int)fd);
+            if (n > 0) {
+                buf[n] = '\0';
+                /* Should contain "some avg10=" */
+                bool has_some = false;
+                for (int i = 0; i < n - 5; i++)
+                    if (buf[i] == 's' && buf[i+1] == 'o' && buf[i+2] == 'm' && buf[i+3] == 'e')
+                        { has_some = true; break; }
+                if (has_some) {
+                    fut_printf("[MISC-TEST] ✓ Test 1921: PSI cpu has 'some' line\n");
+                    fut_test_pass();
+                } else { fut_test_fail(1921); }
+            } else { fut_test_fail(1921); }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1921: open=%ld\n", fd);
+            fut_test_fail(1921);
+        }
+    }
+
+    /* Test 1922: /proc/pressure/memory has PSI data */
+    fut_printf("[MISC-TEST] Test 1922: /proc/pressure/memory readable\n");
+    {
+        long fd = sys_open("/proc/pressure/memory", 0, 0);
+        if (fd >= 0) {
+            static char buf[128];
+            long n = sys_read((int)fd, buf, sizeof(buf) - 1);
+            sys_close((int)fd);
+            if (n > 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1922: PSI memory readable (%ld bytes)\n", n);
+                fut_test_pass();
+            } else { fut_test_fail(1922); }
+        } else { fut_test_fail(1922); }
+    }
+}
+
 __attribute__((noinline)) static void test_mounts_fstype(void) {
     extern long sys_open(const char *, int, int);
     extern long sys_read(int, void *, size_t);
@@ -60696,6 +60743,7 @@ void fut_misc_test_thread(void *arg) {
     test_ip_ttl_tos_sockopt(); /* Tests 1853-1854 */
     test_futurafs(); /* Tests 1855-1857 */
     test_futurafs_advanced(); /* Tests 1910-1912 */
+    test_pressure_psi(); /* Tests 1921-1922 */
     test_mounts_fstype(); /* Test 1920 */
     test_directory_hierarchy(); /* Tests 1916-1919 */
     test_io_accounting(); /* Tests 1914-1915 */

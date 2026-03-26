@@ -485,7 +485,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     const char *builtins[] = {
         "arp", "bg", "brctl", "cd", "chmod", "clear", "conntrack", "date", "dd", "df", "dhclient", "dmesg", "echo", "edit", "ethtool", "hexdump", "lsof", "nc", "poweroff", "reboot", "seq", "sleep", "time", "traceroute", "wget", "exit", "export", "fg", "free",
         "help", "hostname", "httpd", "id", "ifconfig", "iostat", "ipcs", "iptables", "jobs", "kill", "losetup", "ls", "lsblk", "lspci", "mount", "netstat",
-        ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "history", "ip", "ln", "mktemp", "more", "nproc", "nslookup", "ping", "printf", "ps", "pwd", "read", "readlink", "set", "sha256sum", "shutdown", "source", "ss", "stat", "sync", "sysctl", "sysinfo", "test", "top", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "vmstat", "wait", "watch", "which", "whoami", "xargs", "yes", NULL
+        ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "history", "ip", "ln", "mktemp", "more", "nproc", "nslookup", "ping", "printf", "ps", "pwd", "read", "readlink", "set", "sha256sum", "shutdown", "source", "ss", "stat", "sync", "sysctl", "sysinfo", "test", "top", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "vmstat", "wait", "watch", "wdctl", "which", "whoami", "xargs", "yes", NULL
     };
 
     /* External commands we might have */
@@ -6843,6 +6843,25 @@ static int execute_command(int argc, char *argv[]) {
             sys_call4(169, 0xfee1dead, 672274793, 0x4321FEDC, 0);
         write_str(2, "shutdown failed\n");
         return 1;
+    } else if (strcmp_simple(argv[0], "wdctl") == 0) {
+        /* wdctl — show watchdog device status */
+        int fd = sys_open("/dev/watchdog", O_RDONLY, 0);
+        if (fd >= 0) {
+            unsigned int timeleft = 0;
+            sys_read(fd, &timeleft, sizeof(timeleft));
+            write_str(1, "Device:         /dev/watchdog\n");
+            write_str(1, "Status:         active\n");
+            write_str(1, "Time left:      ");
+            char num[16]; int_to_str((int)timeleft, num, 16);
+            write_str(1, num); write_str(1, "s\n");
+            /* Write 'V' for magic close so we don't keep it running */
+            sys_write(fd, "V", 1);
+            sys_close(fd);
+        } else {
+            write_str(1, "Device:         /dev/watchdog\n");
+            write_str(1, "Status:         inactive\n");
+        }
+        return 0;
     } else if (strcmp_simple(argv[0], "losetup") == 0) {
         /* losetup — configure loop devices */
         if (argc >= 3) {
@@ -8908,7 +8927,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   112 built-in commands — type 'help'    |\n");
+    write_str(1, "|   113 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");

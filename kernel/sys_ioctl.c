@@ -67,6 +67,7 @@
 #define SIOCADDGRETUN  0x89E0  /* Create GRE tunnel */
 #define SIOCADDRULE    0x89E1  /* Add policy routing rule */
 #define SIOCDELRULE    0x89E2  /* Delete policy routing rule */
+#define SIOCADDRT_TBL  0x89E3  /* Add route to specific table */
 
 /* Bridge ioctls (Linux compatible) */
 #define SIOCBRADDBR    0x89a0  /* Create bridge */
@@ -623,6 +624,7 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
                                    request == SIOCSIFVLAN ||
                                    request == SIOCADDGRETUN ||
                                    request == SIOCADDRULE || request == SIOCDELRULE ||
+                                   request == SIOCADDRT_TBL ||
                                    request == SIOCBRADDBR || request == SIOCBRDELBR ||
                                    request == SIOCBRADDIF || request == SIOCBRDELIF ||
                                    request == 0x400454CA /* TUNSETIFF */);
@@ -1695,6 +1697,24 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
             greq.name[15] = '\0';
             extern int gre_tunnel_create(const char *, uint32_t, uint32_t, uint32_t);
             return gre_tunnel_create(greq.name, greq.local_ip, greq.remote_ip, greq.key);
+        }
+
+        case SIOCADDRT_TBL: {
+            /* Add route to specific routing table */
+            if (!argp) return -EFAULT;
+            struct { uint32_t dst; uint32_t mask; uint32_t gw;
+                     int iface; uint32_t metric; uint8_t table; } rq;
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
+                __builtin_memcpy(&rq, argp, sizeof(rq));
+            else
+#endif
+            if (fut_copy_from_user(&rq, argp, sizeof(rq)) != 0)
+                return -EFAULT;
+            extern int route_add_table(uint32_t, uint32_t, uint32_t, int, uint32_t, uint8_t);
+            return route_add_table(rq.dst, rq.mask, rq.gw,
+                                   rq.iface >= 0 ? rq.iface : 0,
+                                   rq.metric, rq.table);
         }
 
         case SIOCADDRULE: {

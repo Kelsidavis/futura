@@ -55568,6 +55568,28 @@ __attribute__((noinline)) static void test_policy_routing(void) {
             fut_test_fail(1881);
         }
     }
+
+    /* Test 1884: route_add_table adds route to custom table and lookup works */
+    fut_printf("[MISC-TEST] Test 1884: route_add_table to custom table\n");
+    {
+        extern int route_add_table(uint32_t, uint32_t, uint32_t, int, uint32_t, uint8_t);
+        extern const struct net_route *route_lookup_table(uint32_t, uint8_t);
+        /* Add 172.16.0.0/16 via 10.0.2.1 to table 10 */
+        int rc = route_add_table(0xAC100000, 0xFFFF0000, 0x0A000201, 0, 0, 10);
+        if (rc == 0) {
+            const struct net_route *rt = route_lookup_table(0xAC100164 /* 172.16.1.100 */, 10);
+            if (rt && rt->gateway == 0x0A000201) {
+                fut_printf("[MISC-TEST] ✓ Test 1884: route in table 10 found\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1884: route not found in table 10\n");
+                fut_test_fail(1884);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1884: route_add_table=%d\n", rc);
+            fut_test_fail(1884);
+        }
+    }
 }
 
 __attribute__((noinline)) static void test_ipv6_procfs(void) {
@@ -59816,7 +59838,7 @@ void fut_misc_test_thread(void *arg) {
     test_ipv6_procfs(); /* Test 1875 */
     test_fork_rlimit_as(); /* Tests 1876-1877 */
     test_timer_abstime_underflow(); /* Tests 1882-1883 */
-    test_policy_routing(); /* Tests 1878-1881 */
+    test_policy_routing(); /* Tests 1878-1881, 1884 */
     test_gre_tunnel(); /* Tests 1872-1874 */
     test_per_iface_conf(); /* Tests 1869-1871 */
 

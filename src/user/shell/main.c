@@ -7393,18 +7393,18 @@ static int execute_command(int argc, char *argv[]) {
                 if (*dp == '/') { dp++; prefix = 0; while (*dp >= '0' && *dp <= '9') { prefix = prefix * 10 + (*dp - '0'); dp++; } }
                 mask = (prefix > 0 && prefix <= 32) ? ~((1u << (32 - prefix)) - 1) : 0;
             }
-            /* Find "via <gw>" and "dev <name>" */
+            /* Find "via <gw>", "dev <name>", "table <N>" */
+            unsigned int table_id = 254; /* RT_TABLE_MAIN */
             for (int i = 3; i < argc - 1; i++) {
                 if (strcmp_simple(argv[i], "via") == 0) {
-                    const char *gp = argv[i+1]; int oc = 0, sh = 24;
-                    while (*gp) {
-                        if (*gp == '.') { gw |= ((uint32_t)oc & 0xFF) << sh; sh -= 8; oc = 0; }
-                        else if (*gp >= '0' && *gp <= '9') oc = oc * 10 + (*gp - '0');
-                        gp++;
-                    }
-                    gw |= ((uint32_t)oc & 0xFF) << sh;
+                    gw = parse_ipv4(argv[i+1]);
                 }
                 if (strcmp_simple(argv[i], "dev") == 0) devname = argv[i+1];
+                if (strcmp_simple(argv[i], "table") == 0) {
+                    i++; table_id = 0;
+                    for (int k = 0; argv[i][k] >= '0' && argv[i][k] <= '9'; k++)
+                        table_id = table_id * 10 + (unsigned)(argv[i][k] - '0');
+                }
             }
             /* Use SIOCADDRT ioctl */
             int sock = sys_call3(41, 2, 2, 0);
@@ -7427,7 +7427,17 @@ static int execute_command(int argc, char *argv[]) {
             /* rt_dev at offset 52 */
             if (devname) for (int k = 0; devname[k] && k < 15; k++) rt[52+k] = devname[k];
 
-            long rc = sys_call3(16, sock, 0x890B/*SIOCADDRT*/, (long)rt);
+            long rc;
+            if (table_id != 254) {
+                /* Use table-aware route ioctl for non-main tables */
+                struct { unsigned int dst; unsigned int mask; unsigned int gw;
+                         int iface; unsigned int metric; unsigned char table; } trt;
+                trt.dst = dst; trt.mask = mask; trt.gw = gw;
+                trt.iface = -1; trt.metric = 0; trt.table = (unsigned char)table_id;
+                rc = sys_call3(16, sock, 0x89E3/*SIOCADDRT_TABLE*/, (long)&trt);
+            } else {
+                rc = sys_call3(16, sock, 0x890B/*SIOCADDRT*/, (long)rt);
+            }
             sys_close(sock);
             if (rc == 0) { write_str(1, "Route added\n"); }
             else { write_str(2, "ip route add: failed\n"); return 1; }

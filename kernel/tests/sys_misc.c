@@ -54105,6 +54105,54 @@ __attribute__((noinline)) static void test_futurafs_flags(void) {
     }
 }
 
+__attribute__((noinline)) static void test_futurafs_statfs(void) {
+    extern long sys_statfs(const char *, void *);
+
+    /* Test 1931: statfs on /mnt (FuturaFS) returns valid block counts */
+    fut_printf("[MISC-TEST] Test 1931: FuturaFS statfs\n");
+    {
+        /* Linux struct statfs layout: f_type, f_bsize, f_blocks, f_bfree, f_bavail,
+         * f_files, f_ffree, f_fsid, f_namelen, f_frsize, f_flags, f_spare */
+        static struct { long f_type; long f_bsize; long f_blocks; long f_bfree;
+                         long f_bavail; long f_files; long f_ffree;
+                         long f_fsid[2]; long f_namelen; long f_frsize;
+                         long f_flags; long f_spare[4]; } sfs;
+        long rc = sys_statfs("/mnt", &sfs);
+        if (rc == 0) {
+            if (sfs.f_bsize > 0 && sfs.f_blocks > 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1931: statfs bsize=%ld blocks=%ld free=%ld\n",
+                           sfs.f_bsize, sfs.f_blocks, sfs.f_bfree);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1931: bsize=%ld blocks=%ld\n",
+                           sfs.f_bsize, sfs.f_blocks);
+                fut_test_fail(1931);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1931: statfs=%ld\n", rc);
+            fut_test_fail(1931);
+        }
+    }
+
+    /* Test 1932: statfs f_namelen is reasonable (≥ 255) */
+    fut_printf("[MISC-TEST] Test 1932: FuturaFS f_namelen\n");
+    {
+        static struct { long f_type; long f_bsize; long f_blocks; long f_bfree;
+                         long f_bavail; long f_files; long f_ffree;
+                         long f_fsid[2]; long f_namelen; long f_frsize;
+                         long f_flags; long f_spare[4]; } sfs;
+        long rc = sys_statfs("/mnt", &sfs);
+        if (rc == 0 && sfs.f_namelen >= 255) {
+            fut_printf("[MISC-TEST] ✓ Test 1932: f_namelen=%ld\n", sfs.f_namelen);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1932: rc=%ld namelen=%ld\n", rc,
+                       rc == 0 ? sfs.f_namelen : -1);
+            fut_test_fail(1932);
+        }
+    }
+}
+
 __attribute__((noinline)) static void test_futurafs_readdir(void) {
     extern long sys_open(const char *, int, int);
     extern long sys_write(int, const void *, size_t);
@@ -60996,6 +61044,7 @@ void fut_misc_test_thread(void *arg) {
     test_router_integration(); /* Test 1852 */
     test_ip_ttl_tos_sockopt(); /* Tests 1853-1854 */
     test_futurafs(); /* Tests 1855-1857 */
+    test_futurafs_statfs(); /* Tests 1931-1932 */
     test_futurafs_readdir(); /* Test 1929 */
     test_sched_child_first(); /* Test 1930 */
     test_futurafs_flags(); /* Tests 1926-1928 */

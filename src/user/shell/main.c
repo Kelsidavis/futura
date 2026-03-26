@@ -5968,17 +5968,206 @@ static int execute_command(int argc, char *argv[]) {
         }
         return 0;
     } else if (strcmp_simple(argv[0], "ip") == 0) {
-        /* ip addr — show IP configuration */
-        if (argc > 1 && (strcmp_simple(argv[1], "addr") == 0 || strcmp_simple(argv[1], "a") == 0)) {
-            write_str(1, "1: lo: <LOOPBACK,UP> mtu 65536\n");
-            write_str(1, "    inet 127.0.0.1/8 scope host lo\n");
-            write_str(1, "2: eth0: <BROADCAST,MULTICAST,UP> mtu 1500\n");
-            write_str(1, "    inet 10.0.2.15/24 brd 10.0.2.255 scope global eth0\n");
+        /* ip addr — read real interface info from /proc and ioctls */
+        if (argc > 1 && (strcmp_simple(argv[1], "addr") == 0 || strcmp_simple(argv[1], "a") == 0 ||
+                         strcmp_simple(argv[1], "link") == 0 || strcmp_simple(argv[1], "l") == 0)) {
+            /* Read /proc/net/dev to discover interfaces */
+            int fd = sys_open("/proc/net/dev", O_RDONLY, 0);
+            if (fd < 0) { write_str(2, "ip: cannot read /proc/net/dev\n"); return 1; }
+            char buf[2048];
+            long n = sys_read(fd, buf, sizeof(buf) - 1);
+            sys_close(fd);
+            if (n <= 0) return 1;
+            buf[n] = '\0';
+            /* Parse each interface line (skip 2 header lines) */
+            int line = 0, idx = 1;
+            char *p = buf;
+            while (*p) {
+                /* Find start of line */
+                char *eol = p;
+                while (*eol && *eol != '\n') eol++;
+                if (line >= 2) {
+                    /* Extract interface name (before ':') */
+                    char *colon = p;
+                    while (colon < eol && *colon != ':') colon++;
+                    char ifname[16] = {0};
+                    int j = 0;
+                    char *s = p;
+                    while (s < colon && *s == ' ') s++; /* skip leading spaces */
+                    while (s < colon && j < 15) ifname[j++] = *s++;
+                    ifname[j] = '\0';
+                    if (j > 0) {
+                        /* Query interface info via ioctl */
+                        int sock = sys_call3(41/*socket*/, 2/*AF_INET*/, 2/*SOCK_DGRAM*/, 0);
+                        if (sock >= 0) {
+                            char ifr[40];
+                            /* Print index and name with flags */
+                            char num[8];
+                            int ni = 0;
+                            if (idx >= 10) num[ni++] = '0' + idx / 10;
+                            num[ni++] = '0' + idx % 10;
+                            num[ni] = '\0';
+                            write_str(1, num);
+                            write_str(1, ": ");
+                            write_str(1, ifname);
+                            write_str(1, ": ");
+                            /* SIOCGIFFLAGS (0x8913) */
+                            for (int k = 0; k < 40; k++) ifr[k] = 0;
+                            for (int k = 0; ifname[k] && k < 15; k++) ifr[k] = ifname[k];
+                            long irc = sys_call3(16/*ioctl*/, sock, 0x8913, (long)ifr);
+                            if (irc == 0) {
+                                short flags = 0;
+                                for (int k = 0; k < 2; k++) flags |= (short)((unsigned char)ifr[16+k] << (k*8));
+                                write_str(1, "<");
+                                int first = 1;
+                                if (flags & 0x0008) { write_str(1, "LOOPBACK"); first = 0; }
+                                if (flags & 0x0001) { if (!first) write_str(1, ","); write_str(1, "UP"); first = 0; }
+                                if (flags & 0x0040) { if (!first) write_str(1, ","); write_str(1, "RUNNING"); first = 0; }
+                                if (flags & 0x0002) { if (!first) write_str(1, ","); write_str(1, "BROADCAST"); first = 0; }
+                                if (flags & 0x1000) { if (!first) write_str(1, ","); write_str(1, "MULTICAST"); }
+                                write_str(1, ">");
+                            }
+                            /* SIOCGIFMTU (0x8921) */
+                            for (int k = 0; k < 40; k++) ifr[k] = 0;
+                            for (int k = 0; ifname[k] && k < 15; k++) ifr[k] = ifname[k];
+                            irc = sys_call3(16, sock, 0x8921, (long)ifr);
+                            if (irc == 0) {
+                                int mtu = 0;
+                                for (int k = 0; k < 4; k++) mtu |= ((unsigned char)ifr[16+k]) << (k*8);
+                                write_str(1, " mtu ");
+                                char mtubuf[12];
+                                int mi = 0;
+                                if (mtu == 0) { mtubuf[mi++] = '0'; }
+                                else { char tmp2[12]; int ti = 0; while (mtu > 0) { tmp2[ti++] = '0' + mtu%10; mtu /= 10; } while (ti > 0) mtubuf[mi++] = tmp2[--ti]; }
+                                mtubuf[mi] = '\0';
+                                write_str(1, mtubuf);
+                            }
+                            write_str(1, "\n");
+                            /* Only show inet for 'ip addr', not 'ip link' */
+                            if (strcmp_simple(argv[1], "addr") == 0 || strcmp_simple(argv[1], "a") == 0) {
+                                /* SIOCGIFADDR (0x8915) */
+                                for (int k = 0; k < 40; k++) ifr[k] = 0;
+                                for (int k = 0; ifname[k] && k < 15; k++) ifr[k] = ifname[k];
+                                irc = sys_call3(16, sock, 0x8915, (long)ifr);
+                                if (irc == 0) {
+                                    unsigned char *ip = (unsigned char *)&ifr[20];
+                                    write_str(1, "    inet ");
+                                    for (int o = 0; o < 4; o++) {
+                                        char ob[4]; int oi = 0;
+                                        unsigned char v = ip[o];
+                                        if (v >= 100) ob[oi++] = '0' + v/100;
+                                        if (v >= 10) ob[oi++] = '0' + (v/10)%10;
+                                        ob[oi++] = '0' + v%10;
+                                        ob[oi] = '\0';
+                                        write_str(1, ob);
+                                        if (o < 3) write_str(1, ".");
+                                    }
+                                    /* Get netmask for prefix length */
+                                    for (int k = 0; k < 40; k++) ifr[k] = 0;
+                                    for (int k = 0; ifname[k] && k < 15; k++) ifr[k] = ifname[k];
+                                    irc = sys_call3(16, sock, 0x891B/*SIOCGIFNETMASK*/, (long)ifr);
+                                    if (irc == 0) {
+                                        unsigned char *m = (unsigned char *)&ifr[20];
+                                        unsigned int mask = ((unsigned)m[0]<<24)|((unsigned)m[1]<<16)|((unsigned)m[2]<<8)|m[3];
+                                        int bits = 0;
+                                        while (mask & 0x80000000u) { bits++; mask <<= 1; }
+                                        write_str(1, "/");
+                                        char pb[4]; int pi2 = 0;
+                                        if (bits >= 10) pb[pi2++] = '0' + bits/10;
+                                        pb[pi2++] = '0' + bits%10;
+                                        pb[pi2] = '\0';
+                                        write_str(1, pb);
+                                    }
+                                    write_str(1, " scope ");
+                                    if (ifr[0] == 'l' && ifr[1] == 'o')
+                                        write_str(1, "host ");
+                                    else
+                                        write_str(1, "global ");
+                                    write_str(1, ifname);
+                                    write_str(1, "\n");
+                                }
+                            }
+                            sys_close(sock);
+                        }
+                        idx++;
+                    }
+                }
+                if (*eol) p = eol + 1; else break;
+                line++;
+            }
         } else if (argc > 1 && (strcmp_simple(argv[1], "route") == 0 || strcmp_simple(argv[1], "r") == 0)) {
-            write_str(1, "default via 10.0.2.2 dev eth0\n");
-            write_str(1, "10.0.2.0/24 dev eth0 proto kernel scope link\n");
+            /* Read real routing table from /proc/net/route */
+            int fd = sys_open("/proc/net/route", O_RDONLY, 0);
+            if (fd < 0) { write_str(2, "ip: cannot read /proc/net/route\n"); return 1; }
+            char buf[2048];
+            long n = sys_read(fd, buf, sizeof(buf) - 1);
+            sys_close(fd);
+            if (n <= 0) return 1;
+            buf[n] = '\0';
+            /* Parse route table (skip header line) */
+            int line = 0;
+            char *p = buf;
+            while (*p) {
+                char *eol = p;
+                while (*eol && *eol != '\n') eol++;
+                char save = *eol; *eol = '\0';
+                if (line >= 1 && *p) {
+                    /* Parse: Iface Destination Gateway Flags RefCnt Use Metric Mask ... */
+                    char iface[16] = {0}, dest_hex[9] = {0}, gw_hex[9] = {0}, mask_hex[9] = {0};
+                    (void)mask_hex;  /* used for future prefix-length display */
+                    int fi = 0;
+                    char *q = p;
+                    /* iface */
+                    while (*q && *q != '\t') { if (fi < 15) iface[fi++] = *q; q++; }
+                    if (*q) q++; /* skip tab */
+                    /* destination */
+                    fi = 0; while (*q && *q != '\t') { if (fi < 8) dest_hex[fi++] = *q; q++; }
+                    if (*q) q++;
+                    /* gateway */
+                    fi = 0; while (*q && *q != '\t') { if (fi < 8) gw_hex[fi++] = *q; q++; }
+                    if (*q) q++;
+                    /* skip Flags RefCnt Use Metric */
+                    for (int skip = 0; skip < 4; skip++) { while (*q && *q != '\t') q++; if (*q) q++; }
+                    /* mask */
+                    fi = 0; while (*q && *q != '\t') { if (fi < 8) mask_hex[fi++] = *q; q++; }
+                    /* Parse hex to IP (little-endian as printed by kernel) */
+                    /* For now, just show the raw data in readable format */
+                    if (dest_hex[0] == '0' && dest_hex[1] == '0' && dest_hex[2] == '0' && dest_hex[3] == '0' &&
+                        dest_hex[4] == '0' && dest_hex[5] == '0' && dest_hex[6] == '0' && dest_hex[7] == '0') {
+                        write_str(1, "default");
+                    } else {
+                        write_str(1, dest_hex);
+                    }
+                    if (gw_hex[0] != '0' || gw_hex[1] != '0' || gw_hex[2] != '0' || gw_hex[3] != '0') {
+                        write_str(1, " via ");
+                        write_str(1, gw_hex);
+                    }
+                    write_str(1, " dev ");
+                    write_str(1, iface);
+                    write_str(1, "\n");
+                }
+                *eol = save;
+                if (*eol) p = eol + 1; else break;
+                line++;
+            }
+        } else if (argc > 1 && strcmp_simple(argv[1], "forward") == 0) {
+            /* ip forward — toggle IP forwarding */
+            if (argc > 2 && strcmp_simple(argv[2], "on") == 0) {
+                int fd = sys_open("/proc/sys/net/ipv4/ip_forward", O_WRONLY, 0);
+                if (fd >= 0) { sys_write(fd, "1", 1); sys_close(fd); write_str(1, "IP forwarding enabled\n"); }
+            } else if (argc > 2 && strcmp_simple(argv[2], "off") == 0) {
+                int fd = sys_open("/proc/sys/net/ipv4/ip_forward", O_WRONLY, 0);
+                if (fd >= 0) { sys_write(fd, "0", 1); sys_close(fd); write_str(1, "IP forwarding disabled\n"); }
+            } else {
+                int fd = sys_open("/proc/sys/net/ipv4/ip_forward", O_RDONLY, 0);
+                char v[4] = {0};
+                if (fd >= 0) { sys_read(fd, v, 1); sys_close(fd); }
+                write_str(1, "IP forwarding: ");
+                write_str(1, v[0] == '1' ? "enabled" : "disabled");
+                write_str(1, "\n");
+            }
         } else {
-            write_str(1, "usage: ip addr|route\n");
+            write_str(1, "usage: ip addr|link|route|forward [on|off]\n");
         }
         return 0;
     } else if (strcmp_simple(argv[0], "ping") == 0) {

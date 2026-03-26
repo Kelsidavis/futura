@@ -57952,6 +57952,37 @@ __attribute__((noinline)) static void test_net_procfs_devnodes(void) {
 }
 
 /* ============================================================
+ * Tests 2057-2060: scheduler sysctls
+ * ============================================================ */
+__attribute__((noinline)) static void test_sched_sysctls(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_close(int);
+
+    #define TEST_SCHED(num, path, expect_ch) \
+    fut_printf("[MISC-TEST] Test " #num ": " path "\n"); \
+    { \
+        long fd = sys_open(path, 0, 0); \
+        if (fd >= 0) { \
+            static char buf[32]; \
+            long n = sys_read((int)fd, buf, 31); \
+            sys_close((int)fd); \
+            if (n > 0 && buf[0] == expect_ch) { \
+                fut_printf("[MISC-TEST] ✓ Test " #num ": ok\n"); \
+                fut_test_pass(); \
+            } else { fut_test_fail(num); } \
+        } else { fut_printf("[MISC-TEST] ✗ Test " #num ": open=%ld\n", fd); fut_test_fail(num); } \
+    }
+
+    TEST_SCHED(2057, "/proc/sys/kernel/sched_latency_ns", '6')
+    TEST_SCHED(2058, "/proc/sys/kernel/sched_min_granularity_ns", '7')
+    TEST_SCHED(2059, "/proc/sys/kernel/sched_wakeup_granularity_ns", '1')
+    TEST_SCHED(2060, "/proc/sys/kernel/sched_migration_cost_ns", '5')
+
+    #undef TEST_SCHED
+}
+
+/* ============================================================
  * Tests 2051-2056: debugfs filesystem
  * ============================================================ */
 __attribute__((noinline)) static void test_debugfs(void) {
@@ -63989,6 +64020,7 @@ void fut_misc_test_thread(void *arg) {
     test_loop_device(); /* Tests 1885-1887 */
     test_per_iface_conf(); /* Tests 1869-1871 */
 
+    test_sched_sysctls(); /* Tests 2057-2060 */
     test_debugfs(); /* Tests 2051-2056 */
     test_proc_config_gz(); /* Tests 2048-2050 */
     test_script_file_io(); /* Tests 2042-2047 */

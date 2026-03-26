@@ -281,6 +281,10 @@ enum procfs_kind {
     PROC_NET_XFRM_STAT,             /* /proc/net/xfrm_stat */
     PROC_NET_IPV6_ROUTE,            /* /proc/net/ipv6_route */
     PROC_SYS_SCHED_CHILD_FIRST,     /* /proc/sys/kernel/sched_child_runs_first */
+    PROC_SYS_SCHED_LATENCY_NS,     /* /proc/sys/kernel/sched_latency_ns */
+    PROC_SYS_SCHED_MIN_GRAN_NS,    /* /proc/sys/kernel/sched_min_granularity_ns */
+    PROC_SYS_SCHED_WAKEUP_NS,      /* /proc/sys/kernel/sched_wakeup_granularity_ns */
+    PROC_SYS_SCHED_MIGCOST_NS,     /* /proc/sys/kernel/sched_migration_cost_ns */
     PROC_PRESSURE_DIR,              /* /proc/pressure/ directory */
     PROC_PRESSURE_CPU,              /* /proc/pressure/cpu */
     PROC_PRESSURE_MEMORY,           /* /proc/pressure/memory */
@@ -477,6 +481,11 @@ typedef struct {
 #define PROC_INO_SYS_NET_NF_CT_COUNT     419ULL
 #define PROC_INO_SYS_KERNEL_PANIC        420ULL
 #define PROC_INO_SYS_KERNEL_PANIC_OOPS   421ULL
+#define PROC_INO_SYS_SCHED_LAT          427ULL
+#define PROC_INO_SYS_SCHED_MINGRAN      428ULL
+#define PROC_INO_SYS_SCHED_WAKEUP       429ULL
+#define PROC_INO_SYS_SCHED_MIGCOST      430ULL
+#define PROC_INO_SYS_SCHED_CHILD        431ULL
 #define PROC_INO_PRESSURE_DIR            422ULL
 #define PROC_INO_PRESSURE_CPU            423ULL
 #define PROC_INO_PRESSURE_MEM            424ULL
@@ -4071,6 +4080,18 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
                 g_sched_child_runs_first ? "1" : "0");
             break;
         }
+        case PROC_SYS_SCHED_LATENCY_NS:
+            total = gen_sysctl_str(tmp, GEN_BUF, "6000000");  /* 6ms */
+            break;
+        case PROC_SYS_SCHED_MIN_GRAN_NS:
+            total = gen_sysctl_str(tmp, GEN_BUF, "750000");   /* 0.75ms */
+            break;
+        case PROC_SYS_SCHED_WAKEUP_NS:
+            total = gen_sysctl_str(tmp, GEN_BUF, "1000000");  /* 1ms */
+            break;
+        case PROC_SYS_SCHED_MIGCOST_NS:
+            total = gen_sysctl_str(tmp, GEN_BUF, "500000");   /* 0.5ms */
+            break;
         /* /proc/pressure/ files — PSI (Pressure Stall Information) */
         case PROC_PRESSURE_CPU: {
             struct pbuf bb = { tmp, 0, GEN_BUF };
@@ -5597,8 +5618,28 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
             return *result ? 0 : -ENOMEM;
         }
         if (STREQ(name, "sched_child_runs_first")) {
-            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_KERNEL_PANIC_OOPS + 1,
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_SCHED_CHILD,
                                           0100644, PROC_SYS_SCHED_CHILD_FIRST, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "sched_latency_ns")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_SCHED_LAT,
+                                          0100644, PROC_SYS_SCHED_LATENCY_NS, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "sched_min_granularity_ns")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_SCHED_MINGRAN,
+                                          0100644, PROC_SYS_SCHED_MIN_GRAN_NS, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "sched_wakeup_granularity_ns")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_SCHED_WAKEUP,
+                                          0100644, PROC_SYS_SCHED_WAKEUP_NS, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "sched_migration_cost_ns")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_SCHED_MIGCOST,
+                                          0100644, PROC_SYS_SCHED_MIGCOST_NS, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
         return -ENOENT;
@@ -6384,7 +6425,11 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                    "suid_dumpable", "tainted", "version",
                                    "nmi_watchdog", "watchdog",
                                    "watchdog_thresh", "hung_task_timeout_secs",
-                                   "panic", "panic_on_oops" };
+                                   "panic", "panic_on_oops",
+                                   "sched_latency_ns", "sched_min_granularity_ns",
+                                   "sched_wakeup_granularity_ns",
+                                   "sched_migration_cost_ns",
+                                   "sched_child_runs_first" };
         static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
@@ -6403,7 +6448,10 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
-                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG };
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_REG };
         static const uint64_t i[] = { PROC_INO_SYS_KERNEL_DIR, PROC_INO_SYS_DIR,
                                       PROC_INO_SYS_OSTYPE, PROC_INO_SYS_OSRELEASE,
                                       PROC_INO_SYS_HOSTNAME, PROC_INO_SYS_PID_MAX,
@@ -6426,8 +6474,13 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                       PROC_INO_SYS_KERNEL_WD_THRESH,
                                       PROC_INO_SYS_KERNEL_HUNG_TASK,
                                       PROC_INO_SYS_KERNEL_PANIC,
-                                      PROC_INO_SYS_KERNEL_PANIC_OOPS };
-        if (idx < 35) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+                                      PROC_INO_SYS_KERNEL_PANIC_OOPS,
+                                      PROC_INO_SYS_SCHED_LAT,
+                                      PROC_INO_SYS_SCHED_MINGRAN,
+                                      PROC_INO_SYS_SCHED_WAKEUP,
+                                      PROC_INO_SYS_SCHED_MIGCOST,
+                                      PROC_INO_SYS_SCHED_CHILD };
+        if (idx < 40) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
         return -ENOENT;
     }
 

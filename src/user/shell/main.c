@@ -1592,21 +1592,98 @@ static void cmd_dmesg(int argc, char *argv[]) {
     }
 }
 
+/* Resolve hostname or IP string to uint32_t (host byte order).
+ * Returns 0 on failure. If str is numeric (e.g., "10.0.2.2"), parses directly.
+ * If str is a hostname, sends DNS query to 10.0.2.3 (QEMU DNS) via UDP. */
+static uint32_t resolve_host(const char *str) {
+    if (!str || !str[0]) return 0;
+    /* Check if it's a numeric IP (all digits and dots) */
+    int is_numeric = 1;
+    for (int i = 0; str[i]; i++)
+        if (!((str[i] >= '0' && str[i] <= '9') || str[i] == '.')) { is_numeric = 0; break; }
+    if (is_numeric) {
+        uint32_t ip = 0; int octet = 0, shift = 24;
+        for (int i = 0; str[i]; i++) {
+            if (str[i] == '.') { ip |= ((uint32_t)octet & 0xFF) << shift; shift -= 8; octet = 0; }
+            else octet = octet * 10 + (str[i] - '0');
+        }
+        return ip | (((uint32_t)octet & 0xFF) << shift);
+    }
+    /* DNS resolution via UDP to 10.0.2.3:53 (QEMU default DNS) */
+    long sock = sys_call3(41, 2, 2, 17);
+    if (sock < 0) return 0;
+    /* Build DNS query */
+    static uint8_t pkt[512]; int pos = 0;
+    pkt[pos++] = 0xAB; pkt[pos++] = 0xCD; /* ID */
+    pkt[pos++] = 0x01; pkt[pos++] = 0x00; /* RD=1 */
+    pkt[pos++] = 0; pkt[pos++] = 1; /* QDCOUNT=1 */
+    pkt[pos++] = 0; pkt[pos++] = 0; pkt[pos++] = 0; pkt[pos++] = 0; pkt[pos++] = 0; pkt[pos++] = 0;
+    /* Encode domain */
+    const char *d = str;
+    while (*d) {
+        const char *dot = d; while (*dot && *dot != '.') dot++;
+        int len = (int)(dot - d);
+        pkt[pos++] = (uint8_t)len;
+        for (int i = 0; i < len; i++) pkt[pos++] = (uint8_t)d[i];
+        d = dot; if (*d == '.') d++;
+    }
+    pkt[pos++] = 0; /* root */
+    pkt[pos++] = 0; pkt[pos++] = 1; /* QTYPE=A */
+    pkt[pos++] = 0; pkt[pos++] = 1; /* QCLASS=IN */
+    /* Send to 10.0.2.3:53 */
+    struct { uint16_t family; uint16_t port; uint32_t addr; uint8_t pad[8]; } sa;
+    sa.family = 2; sa.port = (53 >> 8) | ((53 & 0xFF) << 8);
+    sa.addr = 0x0302000A; /* 10.0.2.3 in network order */
+    for (int i = 0; i < 8; i++) sa.pad[i] = 0;
+    sys_call6(44, sock, (long)pkt, pos, 0, (long)&sa, 16);
+    /* Recv with 3s timeout */
+    struct { long tv_sec; long tv_usec; } tv = {3, 0};
+    sys_call6(54, sock, 1, 20, (long)&tv, sizeof(tv), 0);
+    static uint8_t reply[512];
+    ssize_t rn = sys_read(sock, reply, sizeof(reply));
+    sys_close(sock);
+    if (rn < 12) return 0;
+    /* Parse answer: skip header (12) + question section */
+    int rpos = 12;
+    /* Skip question */
+    uint16_t qdcount = ((uint16_t)reply[4] << 8) | reply[5];
+    for (int q = 0; q < qdcount && rpos < rn; q++) {
+        while (rpos < rn && reply[rpos] != 0) {
+            if ((reply[rpos] & 0xC0) == 0xC0) { rpos += 2; break; }
+            rpos += reply[rpos] + 1;
+        }
+        if (rpos < rn && reply[rpos] == 0) rpos++;
+        rpos += 4; /* QTYPE + QCLASS */
+    }
+    /* Parse first answer */
+    uint16_t ancount = ((uint16_t)reply[6] << 8) | reply[7];
+    for (int a = 0; a < ancount && rpos + 12 <= rn; a++) {
+        /* Skip name (may be compressed) */
+        if ((reply[rpos] & 0xC0) == 0xC0) rpos += 2;
+        else { while (rpos < rn && reply[rpos] != 0) rpos += reply[rpos] + 1; rpos++; }
+        uint16_t rtype = ((uint16_t)reply[rpos] << 8) | reply[rpos+1]; rpos += 2;
+        rpos += 2; /* class */ rpos += 4; /* TTL */
+        uint16_t rdlen = ((uint16_t)reply[rpos] << 8) | reply[rpos+1]; rpos += 2;
+        if (rtype == 1 && rdlen == 4 && rpos + 4 <= rn) {
+            /* A record: 4-byte IPv4 address (network byte order → host order) */
+            return ((uint32_t)reply[rpos] << 24) | ((uint32_t)reply[rpos+1] << 16) |
+                   ((uint32_t)reply[rpos+2] << 8) | reply[rpos+3];
+        }
+        rpos += rdlen;
+    }
+    return 0;
+}
+
 /* Built-in: ping - Send ICMP echo requests */
 static void cmd_ping(int argc, char *argv[]) {
     if (argc < 2) {
-        write_str(1, "usage: ping <host>\n");
+        write_str(1, "usage: ping <host|ip>\n");
         return;
     }
-    /* Parse IP */
+    /* Resolve hostname or parse IP */
     const char *host = argv[1];
-    uint32_t ip = 0;
-    int octet = 0, shift = 24;
-    for (int i = 0; host[i]; i++) {
-        if (host[i] == '.') { ip |= (octet & 0xFF) << shift; shift -= 8; octet = 0; }
-        else octet = octet * 10 + (host[i] - '0');
-    }
-    ip |= (octet & 0xFF) << shift;
+    uint32_t ip = resolve_host(host);
+    if (ip == 0) { write_str(2, "ping: cannot resolve "); write_str(2, host); write_str(2, "\n"); return; }
     uint32_t ip_be = ((ip >> 24) & 0xFF) | ((ip >> 8) & 0xFF00) |
                      ((ip << 8) & 0xFF0000) | ((ip << 24) & 0xFF000000);
 
@@ -1837,18 +1914,9 @@ static void cmd_wget(int argc, char *argv[]) {
         path[pi] = '\0';
     }
 
-    /* Parse IP */
-    uint32_t ip = 0;
-    int octet = 0, shift = 24;
-    for (int i = 0; host[i]; i++) {
-        if (host[i] == '.') {
-            ip |= (octet & 0xFF) << shift;
-            shift -= 8; octet = 0;
-        } else {
-            octet = octet * 10 + (host[i] - '0');
-        }
-    }
-    ip |= (octet & 0xFF) << shift;
+    /* Resolve hostname or parse IP */
+    uint32_t ip = resolve_host(host);
+    if (ip == 0) { write_str(2, "wget: cannot resolve "); write_str(2, host); write_str(2, "\n"); return; }
     uint32_t ip_be = ((ip >> 24) & 0xFF) | ((ip >> 8) & 0xFF00) |
                      ((ip << 8) & 0xFF0000) | ((ip << 24) & 0xFF000000);
 

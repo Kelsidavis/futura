@@ -484,7 +484,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     const char *builtins[] = {
         "arp", "bg", "cd", "chmod", "clear", "date", "dd", "df", "dmesg", "echo", "edit", "hexdump", "lsof", "nc", "poweroff", "reboot", "seq", "sleep", "time", "traceroute", "wget", "exit", "export", "fg", "free",
         "help", "hostname", "id", "ifconfig", "iptables", "jobs", "kill", "ls", "mount", "netstat",
-        ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "history", "ip", "ln", "mktemp", "more", "nproc", "nslookup", "ping", "printf", "ps", "pwd", "read", "readlink", "set", "sha256sum", "source", "ss", "stat", "sync", "sysinfo", "test", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "wait", "which", "whoami", "xargs", "yes", NULL
+        ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "history", "ip", "ln", "mktemp", "more", "nproc", "nslookup", "ping", "printf", "ps", "pwd", "read", "readlink", "set", "sha256sum", "source", "ss", "stat", "sync", "sysctl", "sysinfo", "test", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "wait", "which", "whoami", "xargs", "yes", NULL
     };
 
     /* External commands we might have */
@@ -6108,6 +6108,69 @@ static int execute_command(int argc, char *argv[]) {
             fd = sys_open("/proc/net/unix", O_RDONLY, 0);
             if (fd >= 0) { char buf[2048]; ssize_t n = sys_read(fd, buf, sizeof(buf)-1);
                 sys_close(fd); if (n > 0) { buf[n] = '\0'; write_str(1, buf); } }
+        }
+        return 0;
+    } else if (strcmp_simple(argv[0], "sysctl") == 0) {
+        /* sysctl — read/write kernel parameters via /proc/sys/ */
+        if (argc < 2) {
+            write_str(1, "usage: sysctl [-w] <key>[=<value>]\n");
+            write_str(1, "  sysctl net.ipv4.ip_forward        # read\n");
+            write_str(1, "  sysctl -w net.ipv4.ip_forward=1   # write\n");
+            return 0;
+        }
+        int write_mode = 0;
+        int key_idx = 1;
+        if (strcmp_simple(argv[1], "-w") == 0) { write_mode = 1; key_idx = 2; }
+        if (key_idx >= argc) { write_str(2, "sysctl: missing key\n"); return 1; }
+
+        /* Convert dotted key to /proc/sys/ path (dots → slashes) */
+        const char *key = argv[key_idx];
+        char path[128] = "/proc/sys/";
+        int pi = 10;
+        const char *eq = NULL;
+        for (int i = 0; key[i] && pi < 126; i++) {
+            if (key[i] == '=') { eq = &key[i + 1]; break; }
+            path[pi++] = (key[i] == '.') ? '/' : key[i];
+        }
+        path[pi] = '\0';
+
+        if (write_mode || eq) {
+            /* Write mode */
+            const char *val = eq ? eq : (key_idx + 1 < argc ? argv[key_idx + 1] : NULL);
+            if (!val) { write_str(2, "sysctl: missing value\n"); return 1; }
+            int fd = sys_open(path, O_WRONLY, 0);
+            if (fd >= 0) {
+                int vlen = 0; while (val[vlen]) vlen++;
+                sys_write(fd, val, vlen);
+                sys_close(fd);
+                /* Print confirmation */
+                for (int i = 0; key[i] && key[i] != '='; i++) write_char(1, key[i]);
+                write_str(1, " = ");
+                write_str(1, val);
+                write_str(1, "\n");
+            } else {
+                write_str(2, "sysctl: cannot write "); write_str(2, path); write_str(2, "\n");
+                return 1;
+            }
+        } else {
+            /* Read mode */
+            int fd = sys_open(path, O_RDONLY, 0);
+            if (fd >= 0) {
+                char buf[256];
+                ssize_t n = sys_read(fd, buf, sizeof(buf) - 1);
+                sys_close(fd);
+                if (n > 0) {
+                    buf[n] = '\0';
+                    write_str(1, key);
+                    write_str(1, " = ");
+                    write_str(1, buf);
+                    /* Add newline if not present */
+                    if (n > 0 && buf[n-1] != '\n') write_str(1, "\n");
+                }
+            } else {
+                write_str(2, "sysctl: unknown key: "); write_str(2, key); write_str(2, "\n");
+                return 1;
+            }
         }
         return 0;
     } else if (strcmp_simple(argv[0], "arp") == 0) {

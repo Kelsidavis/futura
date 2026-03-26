@@ -210,6 +210,7 @@ enum procfs_kind {
     PROC_MISC_FILE,                 /* /proc/misc */
     PROC_ATTR_DIR,                  /* /proc/<pid>/attr/ */
     PROC_ATTR_CURRENT,              /* /proc/<pid>/attr/current */
+    PROC_MODULES,                   /* /proc/modules */
     PROC_BUDDYINFO,                 /* /proc/buddyinfo */
     PROC_ZONEINFO,                  /* /proc/zoneinfo */
     /* Additional /proc/sys/vm/ entries (commonly written by databases/containers) */
@@ -394,6 +395,7 @@ typedef struct {
 #define PROC_INO_PID_SESSIONID(p)      (1000ULL + (uint64_t)(p) * 100 + 33)
 #define PROC_INO_PID_PERSONALITY(p)    (1000ULL + (uint64_t)(p) * 100 + 34)
 #define PROC_INO_BUDDYINFO             26ULL
+#define PROC_INO_MODULES               31ULL
 #define PROC_INO_ZONEINFO              27ULL
 #define PROC_INO_THREAD_SELF           28ULL
 #define PROC_INO_DISKSTATS             29ULL
@@ -3282,6 +3284,10 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             total = b.pos;
             break;
         }
+        case PROC_MODULES:
+            /* /proc/modules: empty — Futura has no loadable kernel modules */
+            total = 0;
+            break;
         case PROC_BUDDYINFO:
             total = gen_buddyinfo(tmp, GEN_BUF);
             break;
@@ -4245,6 +4251,11 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
         if (STREQ(name, "misc")) {
             *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_MISC_FILE,
                                           0100444, PROC_MISC_FILE, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "modules")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_MODULES,
+                                          0100444, PROC_MODULES, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
         if (STREQ(name, "buddyinfo")) {
@@ -5321,7 +5332,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             "loadavg", "mounts", "sys", "stat", "filesystems", "vmstat", "net",
             "interrupts", "cmdline", "swaps", "devices", "misc",
             "buddyinfo", "zoneinfo", "diskstats", "partitions", "cgroups", "kallsyms",
-            "locks"
+            "locks", "modules"
         };
         static const uint8_t fixed_type[] = {
             FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
@@ -5335,7 +5346,8 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
-            FUT_VDIR_TYPE_REG   /* locks */
+            FUT_VDIR_TYPE_REG,  /* locks */
+            FUT_VDIR_TYPE_REG   /* modules */
         };
         static const uint64_t fixed_ino[] = {
             PROC_INO_ROOT, PROC_INO_ROOT,
@@ -5348,9 +5360,9 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             PROC_INO_CMDLINE_GLOBAL, PROC_INO_SWAPS, PROC_INO_DEVICES, PROC_INO_MISC_FILE,
             PROC_INO_BUDDYINFO, PROC_INO_ZONEINFO,
             PROC_INO_DISKSTATS, PROC_INO_PARTITIONS, PROC_INO_CGROUPS, PROC_INO_KALLSYMS,
-            PROC_INO_LOCKS
+            PROC_INO_LOCKS, PROC_INO_MODULES
         };
-        if (idx < 27) {
+        if (idx < 28) {
             de->d_ino    = fixed_ino[idx];
             de->d_off    = idx + 1;
             de->d_type   = fixed_type[idx];
@@ -5365,15 +5377,11 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         }
 
         /*
-         * PID enumeration: after the 27 fixed entries, cookies encode
-         * "find first task with pid > (cookie - 27)".  After returning
-         * a PID entry we set cookie = 27 + that_pid + 1.
-         *
-         * This is stable as long as PIDs are unique and monotonically
-         * increasing; newly-forked tasks will appear if their PID is
-         * greater than the last-seen PID.
+         * PID enumeration: after the 28 fixed entries, cookies encode
+         * "find first task with pid > (cookie - 28)".  After returning
+         * a PID entry we set cookie = 28 + that_pid + 1.
          */
-        uint64_t min_pid = idx >= 27 ? idx - 27 : 0;  /* start scanning for pid > min_pid */
+        uint64_t min_pid = idx >= 28 ? idx - 28 : 0;  /* start scanning for pid > min_pid */
         fut_task_t *best = NULL;
         uint64_t   best_pid = (uint64_t)-1;
         fut_task_t *t = fut_task_list;
@@ -5398,14 +5406,14 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         pidname[pn] = '\0';
 
         de->d_ino    = PROC_INO_PID_DIR(best->pid);
-        de->d_off    = 27 + best->pid + 1;
+        de->d_off    = 28 + best->pid + 1;
         de->d_type   = FUT_VDIR_TYPE_DIR;
         de->d_reclen = sizeof(*de);
         size_t nl = (size_t)pn;
         if (nl > FUT_VFS_NAME_MAX) nl = FUT_VFS_NAME_MAX;
         __builtin_memcpy(de->d_name, pidname, nl);
         de->d_name[nl] = '\0';
-        *cookie = 27 + best->pid + 1;  /* resume after this pid */
+        *cookie = 28 + best->pid + 1;  /* resume after this pid */
         return 1;
     }
 

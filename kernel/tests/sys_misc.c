@@ -51226,6 +51226,149 @@ static void test_openat_o_directory(void) {
     }
 }
 
+/* Tests 1729-1732: umask enforcement on file/directory creation (POSIX) */
+__attribute__((noinline)) static void test_umask_posix_create(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_close(int);
+    extern long sys_unlink(const char *);
+
+    /* Save and set umask directly via task struct (avoids extern signature conflicts) */
+    fut_task_t *utask = fut_task_current();
+    uint32_t old_umask = utask->umask;
+    utask->umask = 022;
+
+    /* Test 1729: file created with mode 0666 + umask 022 → effective 0644 */
+    fut_printf("[MISC-TEST] Test 1729: umask 022 + open(0666) → 0644\n");
+    {
+        long fd = sys_open("/tmp/umask_1729.txt", 0x42 /* O_RDWR|O_CREAT */, 0666);
+        if (fd >= 0) {
+            sys_close((int)fd);
+            /* Read back permissions via stat */
+            
+            static struct fut_stat statbuf;
+            long r = sys_stat("/tmp/umask_1729.txt", &statbuf);
+            if (r == 0) {
+                /* st_mode is at offset 24 in struct stat (uint32_t) */
+                uint32_t st_mode = 0;
+                st_mode = statbuf.st_mode;
+                uint32_t perms = st_mode & 0777;
+                if (perms == 0644) {
+                    fut_printf("[MISC-TEST] ✓ Test 1729: mode=0%o\n", perms);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1729: mode=0%o (expected 0644)\n", perms);
+                    fut_test_fail(1729);
+                }
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1729: stat failed %ld\n", r);
+                fut_test_fail(1729);
+            }
+            sys_unlink("/tmp/umask_1729.txt");
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1729: open failed %ld\n", fd);
+            fut_test_fail(1729);
+        }
+    }
+
+    /* Test 1730: file created with mode 0777 + umask 077 → effective 0700 */
+    fut_printf("[MISC-TEST] Test 1730: umask 077 + open(0777) → 0700\n");
+    {
+        utask->umask = 077;
+        long fd = sys_open("/tmp/umask_1730.txt", 0x42, 0777);
+        if (fd >= 0) {
+            sys_close((int)fd);
+            
+            static struct fut_stat statbuf;
+            long r = sys_stat("/tmp/umask_1730.txt", &statbuf);
+            if (r == 0) {
+                uint32_t st_mode = 0;
+                st_mode = statbuf.st_mode;
+                uint32_t perms = st_mode & 0777;
+                if (perms == 0700) {
+                    fut_printf("[MISC-TEST] ✓ Test 1730: mode=0%o\n", perms);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1730: mode=0%o (expected 0700)\n", perms);
+                    fut_test_fail(1730);
+                }
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1730: stat failed %ld\n", r);
+                fut_test_fail(1730);
+            }
+            sys_unlink("/tmp/umask_1730.txt");
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1730: open failed %ld\n", fd);
+            fut_test_fail(1730);
+        }
+    }
+
+    /* Test 1731: umask 000 → mode preserved exactly */
+    fut_printf("[MISC-TEST] Test 1731: umask 000 + open(0666) → 0666\n");
+    {
+        utask->umask = 000;
+        long fd = sys_open("/tmp/umask_1731.txt", 0x42, 0666);
+        if (fd >= 0) {
+            sys_close((int)fd);
+            
+            static struct fut_stat statbuf;
+            long r = sys_stat("/tmp/umask_1731.txt", &statbuf);
+            if (r == 0) {
+                uint32_t st_mode = 0;
+                st_mode = statbuf.st_mode;
+                uint32_t perms = st_mode & 0777;
+                if (perms == 0666) {
+                    fut_printf("[MISC-TEST] ✓ Test 1731: mode=0%o\n", perms);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1731: mode=0%o (expected 0666)\n", perms);
+                    fut_test_fail(1731);
+                }
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1731: stat failed %ld\n", r);
+                fut_test_fail(1731);
+            }
+            sys_unlink("/tmp/umask_1731.txt");
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1731: open failed %ld\n", fd);
+            fut_test_fail(1731);
+        }
+    }
+
+    /* Test 1732: mkdir with umask 022 + mode 0777 → effective 0755 */
+    fut_printf("[MISC-TEST] Test 1732: umask 022 + mkdir(0777) → 0755\n");
+    {
+        utask->umask = 022;
+        long r = (long)fut_vfs_mkdir("/tmp/umask_dir_1732", 0777);
+        if (r == 0) {
+            
+            static struct fut_stat statbuf;
+            r = sys_stat("/tmp/umask_dir_1732", &statbuf);
+            if (r == 0) {
+                uint32_t st_mode = 0;
+                st_mode = statbuf.st_mode;
+                uint32_t perms = st_mode & 0777;
+                if (perms == 0755) {
+                    fut_printf("[MISC-TEST] ✓ Test 1732: dir mode=0%o\n", perms);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1732: dir mode=0%o (expected 0755)\n", perms);
+                    fut_test_fail(1732);
+                }
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1732: stat failed %ld\n", r);
+                fut_test_fail(1732);
+            }
+            fut_vfs_rmdir("/tmp/umask_dir_1732");
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1732: mkdir failed %ld\n", r);
+            fut_test_fail(1732);
+        }
+    }
+
+    /* Restore original umask */
+    utask->umask = old_umask;
+}
+
 /* Tests 1725-1728: execve pre-validation prevents state corruption */
 __attribute__((noinline)) static void test_execve_prevalidation(void) {
     extern long sys_execve(const char *, char *const *, char *const *);
@@ -55645,6 +55788,7 @@ void fut_misc_test_thread(void *arg) {
     test_chdir_getcwd_roundtrip(); /* Tests 1717-1720 */
     test_timer_abstime();          /* Tests 1721-1724 */
     test_execve_prevalidation();   /* Tests 1725-1728 */
+    test_umask_posix_create();     /* Tests 1729-1732 */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

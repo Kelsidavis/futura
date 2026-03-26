@@ -1458,7 +1458,14 @@ int fut_vfs_mkdir(const char *path, uint32_t mode) {
         return -ENOSYS;
     }
 
-    ret = parent->ops->mkdir(parent, leaf, mode);
+    /* POSIX: Apply umask to directory creation mode */
+    uint32_t dir_mode = mode;
+    {
+        fut_task_t *mk_task = fut_task_current();
+        if (mk_task)
+            dir_mode &= ~(uint32_t)(mk_task->umask & 0777);
+    }
+    ret = parent->ops->mkdir(parent, leaf, dir_mode);
     release_lookup_ref(parent);
     return ret;
 }
@@ -2015,7 +2022,15 @@ int fut_vfs_open(const char *path, int flags, int mode) {
 
             VFSDBG("[vfs-open] parent=%p leaf='%s'\n", (void*)parent, leaf);
             struct fut_vnode *new_node = NULL;
-            int create_ret = parent->ops->create(parent, leaf, (uint32_t)mode, &new_node);
+            /* POSIX: Apply umask to creation mode.
+             * mode 0666 with umask 022 → effective 0644. */
+            uint32_t effective_mode = (uint32_t)mode;
+            {
+                fut_task_t *cr_task = fut_task_current();
+                if (cr_task)
+                    effective_mode &= ~(uint32_t)(cr_task->umask & 0777);
+            }
+            int create_ret = parent->ops->create(parent, leaf, effective_mode, &new_node);
             VFSDBG("[vfs-open] create returned %d new_node=%p\n", create_ret, (void*)new_node);
             VFSDBG("[vfs-open] about to release_lookup_ref(parent=%p)\n", (void*)parent);
             release_lookup_ref(parent);

@@ -600,5 +600,9 @@ long sys_quotactl(unsigned int cmd, const char *special, int id, void *addr) {
                    dqb.dqb_ihardlimit, dqb.dqb_isoftlimit);
     }
 
-    return -ENOSYS;
+    /* Phase 4: Accept the operation. Since Futura uses ramfs (all files
+     * in memory), we accept quota commands without enforcement. This
+     * prevents programs from failing due to ENOSYS while maintaining
+     * the correct validation behavior above. */
+    return 0;
 }

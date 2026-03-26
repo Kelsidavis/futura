@@ -6111,6 +6111,65 @@ static int execute_command(int argc, char *argv[]) {
         }
         return 0;
     } else if (strcmp_simple(argv[0], "iptables") == 0) {
+        /* iptables -t nat -A POSTROUTING -o <iface> -j MASQUERADE */
+        if (argc >= 3 && strcmp_simple(argv[1], "-t") == 0 &&
+            strcmp_simple(argv[2], "nat") == 0) {
+            /* NAT table: masquerade configuration via sysctl */
+            if (argc >= 7 && strcmp_simple(argv[3], "-A") == 0 &&
+                strcmp_simple(argv[4], "POSTROUTING") == 0) {
+                /* Find -o <iface> and -j MASQUERADE */
+                const char *out_iface = NULL;
+                int do_masq = 0;
+                for (int i = 5; i < argc; i++) {
+                    if (strcmp_simple(argv[i], "-o") == 0 && i+1 < argc)
+                        out_iface = argv[++i];
+                    if (strcmp_simple(argv[i], "-j") == 0 && i+1 < argc &&
+                        strcmp_simple(argv[i+1], "MASQUERADE") == 0)
+                        { do_masq = 1; i++; }
+                }
+                if (do_masq && out_iface) {
+                    int fd = sys_open("/proc/sys/net/ipv4/ip_masquerade_dev", O_WRONLY, 0);
+                    if (fd >= 0) {
+                        int len = 0; while (out_iface[len]) len++;
+                        sys_write(fd, out_iface, len);
+                        sys_close(fd);
+                        write_str(1, "MASQUERADE enabled on ");
+                        write_str(1, out_iface);
+                        write_str(1, "\n");
+                    } else {
+                        write_str(2, "iptables: cannot write masquerade sysctl\n");
+                    }
+                } else {
+                    write_str(2, "iptables -t nat: usage: -A POSTROUTING -o <iface> -j MASQUERADE\n");
+                }
+            } else if (argc >= 4 && strcmp_simple(argv[3], "-F") == 0) {
+                /* Flush NAT: disable masquerade */
+                int fd = sys_open("/proc/sys/net/ipv4/ip_masquerade_dev", O_WRONLY, 0);
+                if (fd >= 0) { sys_write(fd, "none", 4); sys_close(fd); }
+                write_str(1, "NAT table flushed\n");
+            } else if (argc >= 4 && strcmp_simple(argv[3], "-L") == 0) {
+                /* List NAT rules */
+                write_str(1, "Chain POSTROUTING\n");
+                int fd = sys_open("/proc/sys/net/ipv4/ip_masquerade_dev", O_RDONLY, 0);
+                if (fd >= 0) {
+                    char buf[32] = {0};
+                    ssize_t n = sys_read(fd, buf, sizeof(buf)-1);
+                    sys_close(fd);
+                    if (n > 0) { buf[n] = '\0';
+                        if (buf[0] != 'n') {
+                            write_str(1, "MASQUERADE all -- * ");
+                            write_str(1, buf);
+                        }
+                    }
+                }
+            } else {
+                write_str(1, "usage: iptables -t nat -A POSTROUTING -o <iface> -j MASQUERADE\n");
+                write_str(1, "       iptables -t nat -F\n");
+                write_str(1, "       iptables -t nat -L\n");
+            }
+            return 0;
+        }
+
         /* iptables — minimal firewall configuration via ioctls */
         int sock = sys_call3(41, 2, 2, 0);
         if (sock < 0) { write_str(2, "iptables: socket failed\n"); return 1; }

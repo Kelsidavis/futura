@@ -507,10 +507,13 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                 int req = 0;
                 if (sso_copy_from_user(&req, optval, sizeof(int)) != 0) return -EFAULT;
                 if (req < 0) return -EINVAL;
-                /* Double the requested value, enforce min 2048, cap at 212992 */
+                /* Double the requested value (Linux convention), enforce min 2048,
+                 * cap at sysctl rmem_max/wmem_max */
                 uint32_t effective = (uint32_t)(req * 2);
                 if (effective < 2048) effective = 2048;
-                if (effective > 212992) effective = 212992;
+                uint32_t max_buf = (optname == SO_SNDBUF)
+                    ? g_net_sysctl.wmem_max : g_net_sysctl.rmem_max;
+                if (effective > max_buf) effective = max_buf;
                 if (optname == SO_SNDBUF)
                     socket->sndbuf = effective;
                 else

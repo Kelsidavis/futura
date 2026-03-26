@@ -190,10 +190,18 @@
 #define F_OFD_SETLKW    38  /* Set open file description lock (blocking) */
 #endif
 #ifndef F_ADD_SEALS
-#define F_ADD_SEALS     1033 /* Add sealing flags to file */
+#define F_ADD_SEALS     1033 /* Add sealing flags / set pipe buffer size */
 #endif
 #ifndef F_GET_SEALS
 #define F_GET_SEALS     1034 /* Get sealing flags from file */
+#endif
+/* F_SETPIPE_SZ = F_ADD_SEALS = 1033 (same value, disambiguated by fd type) */
+/* F_GETPIPE_SZ = 1032 */
+#ifndef F_SETPIPE_SZ
+#define F_SETPIPE_SZ    1033 /* Set pipe buffer size (same as F_ADD_SEALS) */
+#endif
+#ifndef F_GETPIPE_SZ
+#define F_GETPIPE_SZ    1032 /* Get pipe buffer size */
 #endif
 
 /* ============================================================

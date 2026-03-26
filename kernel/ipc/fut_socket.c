@@ -17,6 +17,7 @@
 #include "../../include/kernel/fut_timer.h"
 #include <kernel/errno.h>
 #include <kernel/signal.h>
+#include <futura/netif.h>
 #include <fcntl.h>
 
 #include <kernel/kprintf.h>
@@ -361,9 +362,9 @@ fut_socket_t *fut_socket_create(int family, int type) {
     socket->socket_id = __atomic_fetch_add(&socket_next_id, 1, __ATOMIC_RELAXED);
     socket->shutdown_rd = false;
     socket->shutdown_wr = false;
-    /* SO_SNDBUF / SO_RCVBUF: Linux doubles the requested value; default = 2×BUFSIZE */
-    socket->sndbuf = 2 * FUT_SOCKET_BUFSIZE;
-    socket->rcvbuf = 2 * FUT_SOCKET_BUFSIZE;
+    /* SO_SNDBUF / SO_RCVBUF: use sysctl defaults (wmem_default / rmem_default) */
+    socket->sndbuf = g_net_sysctl.wmem_default;
+    socket->rcvbuf = g_net_sysctl.rmem_default;
     socket->rcvlowat = 1;  /* POSIX default SO_RCVLOWAT */
 
     /* Allocate wait queue for close operations */
@@ -638,9 +639,13 @@ int fut_socket_listen(fut_socket_t *socket, int backlog) {
     }
 
     memset(listener, 0, sizeof(*listener));
+    /* Clamp backlog: min 1, max min(somaxconn, queue capacity) */
     listener->backlog = (backlog > 0) ? backlog : 1;
-    if (listener->backlog > FUT_SOCKET_QUEUE_MAX) {
-        listener->backlog = FUT_SOCKET_QUEUE_MAX;
+    {
+        extern struct net_sysctl g_net_sysctl;
+        int max_backlog = (int)g_net_sysctl.somaxconn;
+        if (max_backlog > FUT_SOCKET_QUEUE_MAX) max_backlog = FUT_SOCKET_QUEUE_MAX;
+        if (listener->backlog > max_backlog) listener->backlog = max_backlog;
     }
 
     listener->accept_waitq = fut_malloc(sizeof(fut_waitq_t));
@@ -773,8 +778,8 @@ int fut_socket_accept(fut_socket_t *listener, fut_socket_t **out_socket) {
     accepted->shutdown_rd = false;
     accepted->shutdown_wr = false;
     /* Inherit buffer size defaults (memset zeroed these) */
-    accepted->sndbuf = 2 * FUT_SOCKET_BUFSIZE;
-    accepted->rcvbuf = 2 * FUT_SOCKET_BUFSIZE;
+    accepted->sndbuf = g_net_sysctl.wmem_default;
+    accepted->rcvbuf = g_net_sysctl.rmem_default;
     accepted->rcvlowat = 1;
     /* Default IP TTL for accepted sockets */
     accepted->ip_ttl = 64;

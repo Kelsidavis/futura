@@ -33,6 +33,7 @@
 #include <sched.h>
 #include <sys/time.h>
 #include <sys/times.h>
+#include <futura/netif.h>
 
 /* Architecture-specific paging headers for KERNEL_VIRTUAL_BASE */
 #ifdef __x86_64__
@@ -47861,7 +47862,7 @@ static void test_so_rcvbuf_cap(void) {
         return;
     }
 
-    /* Test 1497: SO_RCVBUF with huge value is capped at 212992 */
+    /* Test 1497: SO_RCVBUF with huge value is capped at sysctl rmem_max */
     fut_printf("[MISC-TEST] Test 1497: setsockopt(SO_RCVBUF, 1000000) capped\n");
     {
         int req = 1000000;
@@ -47875,18 +47876,20 @@ static void test_so_rcvbuf_cap(void) {
             unsigned int glen = sizeof(got);
             sys_getsockopt((int)sockfd, 1 /* SOL_SOCKET */, 8 /* SO_RCVBUF */,
                            &got, &glen);
-            /* Linux caps at sysctl_rmem_max (default 212992) */
-            if (got <= 212992) {
-                fut_printf("[MISC-TEST] ✓ Test 1497: SO_RCVBUF capped at %d (≤ 212992)\n", got);
+            /* Linux caps at sysctl_rmem_max (g_net_sysctl.rmem_max, default 16777216) */
+            extern struct net_sysctl g_net_sysctl;
+            uint32_t rmem_max = g_net_sysctl.rmem_max;
+            if ((uint32_t)got <= rmem_max) {
+                fut_printf("[MISC-TEST] ✓ Test 1497: SO_RCVBUF capped at %d (≤ %u)\n", got, rmem_max);
                 fut_test_pass();
             } else {
-                fut_printf("[MISC-TEST] ✗ Test 1497: SO_RCVBUF = %d, expected ≤ 212992\n", got);
+                fut_printf("[MISC-TEST] ✗ Test 1497: SO_RCVBUF = %d, expected ≤ %u\n", got, rmem_max);
                 fut_test_fail(1497);
             }
         }
     }
 
-    /* Test 1498: SO_SNDBUF with huge value is capped at 212992 */
+    /* Test 1498: SO_SNDBUF with huge value is capped at sysctl wmem_max */
     fut_printf("[MISC-TEST] Test 1498: setsockopt(SO_SNDBUF, 1000000) capped\n");
     {
         int req = 1000000;
@@ -47900,11 +47903,13 @@ static void test_so_rcvbuf_cap(void) {
             unsigned int glen = sizeof(got);
             sys_getsockopt((int)sockfd, 1 /* SOL_SOCKET */, 7 /* SO_SNDBUF */,
                            &got, &glen);
-            if (got <= 212992) {
-                fut_printf("[MISC-TEST] ✓ Test 1498: SO_SNDBUF capped at %d (≤ 212992)\n", got);
+            extern struct net_sysctl g_net_sysctl;
+            uint32_t wmem_max = g_net_sysctl.wmem_max;
+            if ((uint32_t)got <= wmem_max) {
+                fut_printf("[MISC-TEST] ✓ Test 1498: SO_SNDBUF capped at %d (≤ %u)\n", got, wmem_max);
                 fut_test_pass();
             } else {
-                fut_printf("[MISC-TEST] ✗ Test 1498: SO_SNDBUF = %d, expected ≤ 212992\n", got);
+                fut_printf("[MISC-TEST] ✗ Test 1498: SO_SNDBUF = %d, expected ≤ %u\n", got, wmem_max);
                 fut_test_fail(1498);
             }
         }

@@ -447,6 +447,11 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
             cmd_name = "F_GETOWN_EX";
             cmd_category = "get extended owner";
             break;
+        case F_GETPIPE_SZ:
+            cmd_name = "F_GETPIPE_SZ";
+            cmd_category = "get pipe buffer size";
+            break;
+        /* F_SETPIPE_SZ = F_ADD_SEALS (same value 1033) — handled above */
         default:
             cmd_name = "unknown";
             cmd_category = "invalid command";
@@ -787,13 +792,24 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
             return -EPERM;
         return (long)file->seals;
 
-    case F_ADD_SEALS: { /* Also F_SETPIPE_SZ (same value: 1033) */
-        /* For sealing-capable fds (memfd MFD_ALLOW_SEALING), go straight to seal logic.
-         * For pipe fds: F_SETPIPE_SZ — resize the pipe buffer.
-         * (F_ADD_SEALS and F_SETPIPE_SZ share value 1033, disambiguated by fd type.) */
-        if (file->flags & FUT_F_SEALING) goto do_seal;
+    case F_ADD_SEALS: { /* 1033: Add sealing flags / F_SETPIPE_SZ (same value) */
+        /* F_ADD_SEALS: only for sealing-capable fds */
+        if (local_cmd == F_ADD_SEALS && (file->flags & FUT_F_SEALING)) {
+            uint32_t new_seals = (uint32_t)local_arg;
+            uint32_t valid_mask = F_SEAL_SEAL | F_SEAL_SHRINK | F_SEAL_GROW |
+                                  F_SEAL_WRITE | F_SEAL_FUTURE_WRITE;
+            if (new_seals & ~valid_mask) return -EINVAL;
+            if (file->seals & F_SEAL_SEAL) return -EPERM;
+            file->seals |= new_seals;
+            return 0;
+        }
+        if (local_cmd == F_ADD_SEALS && !(file->flags & FUT_F_SEALING)) {
+            /* F_ADD_SEALS on non-sealing fd: try as pipe resize for compat */
+            if (!(file->chr_ops && !file->vnode))
+                return -EPERM;
+        }
+        /* F_SETPIPE_SZ (or F_ADD_SEALS on pipe fd): resize pipe buffer */
         if (file->chr_ops && !file->vnode) {
-            /* Get pipe_buffer from private data — struct must match sys_pipe.c layout */
             struct pipe_buffer_full {
                 uint8_t *data; size_t size; size_t read_pos;
                 size_t write_pos; size_t count;
@@ -806,38 +822,26 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
             struct pipe_buffer_full *pipe = (struct pipe_buffer_full *)file->chr_private;
             if (!pipe) return -EBADF;
 
-            /* Round requested size to power of 2, minimum 4096 (PIPE_BUF) */
             size_t req = (size_t)local_arg;
             if (req < 4096) req = 4096;
-            if (req > 1048576) req = 1048576;  /* Cap at 1MB */
+            if (req > 1048576) req = 1048576;
             size_t new_size = 4096;
             while (new_size < req) new_size <<= 1;
 
-            if (new_size == pipe->size)
-                return (long)pipe->size;
+            if (new_size == pipe->size) return (long)pipe->size;
+            if (new_size < pipe->count) return -EBUSY;
 
-            /* Cannot shrink below current data count */
-            if (new_size < pipe->count)
-                return -EBUSY;
-
-            /* Allocate new buffer outside the lock (fut_malloc may block) */
             uint8_t *new_data = fut_malloc(new_size);
             if (!new_data) return -ENOMEM;
 
-            /* Hold pipe lock while swapping buffers to prevent concurrent
-             * read/write from accessing freed memory (use-after-free). */
             fut_spinlock_acquire(&pipe->lock);
-
-            /* Re-check under lock — count may have changed */
             if (new_size < pipe->count) {
                 fut_spinlock_release(&pipe->lock);
                 fut_free(new_data);
                 return -EBUSY;
             }
-
             uint8_t *old_data = pipe->data;
             if (pipe->count > 0) {
-                /* Copy from read_pos, wrapping around if needed */
                 size_t first = pipe->size - pipe->read_pos;
                 if (first > pipe->count) first = pipe->count;
                 for (size_t i = 0; i < first; i++)
@@ -846,45 +850,18 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
                 for (size_t i = 0; i < second; i++)
                     new_data[first + i] = old_data[i];
             }
-
             pipe->data = new_data;
             pipe->size = new_size;
             pipe->read_pos = 0;
             pipe->write_pos = pipe->count;
-
             fut_spinlock_release(&pipe->lock);
             fut_free(old_data);
-
             return (long)new_size;
         }
-        /* Remaining fds are not pipe and not sealing-capable */
-        fut_printf("[FCNTL] fcntl(fd=%d, F_ADD_SEALS) -> EPERM (not a sealing fd)\n",
-                   local_fd);
-        return -EPERM;
-
-        do_seal:;
-        uint32_t new_seals = (uint32_t)local_arg;
-        uint32_t valid_mask = F_SEAL_SEAL | F_SEAL_SHRINK | F_SEAL_GROW |
-                              F_SEAL_WRITE | F_SEAL_FUTURE_WRITE;
-
-        /* Reject unknown seal bits */
-        if (new_seals & ~valid_mask) {
-            fut_printf("[FCNTL] fcntl(fd=%d, F_ADD_SEALS, 0x%x) -> EINVAL (unknown bits)\n",
-                       local_fd, new_seals);
-            return -EINVAL;
-        }
-
-        /* Cannot add seals if F_SEAL_SEAL is already set */
-        if (file->seals & F_SEAL_SEAL) {
-            fut_printf("[FCNTL] fcntl(fd=%d, F_ADD_SEALS, 0x%x) -> EPERM (sealed)\n",
-                       local_fd, new_seals);
-            return -EPERM;
-        }
-
-        /* Add new seals (seals can only be added, never removed) */
-        file->seals |= new_seals;
-        return 0;
+        return -EBADF;
     }
+
+    /* F_GETPIPE_SZ (1032) is handled above at case 1032 */
 
     case F_OFD_SETLK:   /* Open file description lock: same semantics as F_SETLK in Futura */
     case F_OFD_SETLKW:  /* Open file description lock: same semantics as F_SETLKW in Futura */

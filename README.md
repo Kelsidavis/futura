@@ -16,15 +16,17 @@ Licensed under Mozilla Public License 2.0 — see [LICENSE](LICENSE)
 
 Futura OS is a capability-based nanokernel that keeps the core minimal (time, scheduling, IPC, and hardware mediation) and pushes policy into userland services connected via FIPC (Futura Inter-Process Communication). The repository includes the kernel, userland services, host tooling, and test harnesses used to validate the end-to-end stack.
 
-### Status Snapshot — Updated Mar 17 2026
+### Status Snapshot — Updated Mar 26 2026
 
-- **Kernel core**: Capability-backed object model, priority-aware scheduler (nice + RT), per-task MMU contexts, COW fork, file-backed mmap, VMA_LOCKED tracking, and 147 syscall implementation files in `kernel/`.
-- **Linux compat**: 173 automated kernel self-tests across 11 test groups. Broad POSIX coverage: signals (SA_NODEFER, SA_RESETHAND, sigpending, signalfd, sigsuspend, sigtimedwait), epoll (EPOLLET, EPOLLONESHOT, EPOLLRDHUP), pipes (F_SETPIPE_SZ resize, poll POLLHUP, short writes), sockets (MSG_PEEK, SO_PEERCRED, SCM_RIGHTS, SOCK_CLOEXEC), timers (timerfd, POSIX timers, alarm, itimer), file I/O (O_APPEND, O_CLOEXEC per-fd, ftruncate, readv/writev, splice/tee, sendfile), process lifecycle (fork, waitpid, execve with ELF loading, clone).
-- **Storage + VFS**: RamFS (full POSIX: chmod/chown/utimensat, symlinks, hardlinks, xattrs, inotify) + devfs (/dev/null, /dev/zero, /dev/full, /dev/urandom, /dev/console, /dev/tty, /dev/stdin/stdout/stderr); FuturaFS tooling in `tools/`.
-- **Userland**: `init`, `fsd`, `posixd`, `netd`, `svc_registryd`, and `libfutura` under `src/user/`, plus a Unix-like shell with pipes, redirection, and job control.
+- **Kernel core**: 352+ Linux-compatible syscalls across 147 implementation files. Priority-aware scheduler (nice + RT), per-task MMU contexts, COW fork, file-backed mmap, ELF loader with PT_INTERP interpreter support.
+- **Testing**: **1957 automated kernel self-tests** across 11 test groups, all passing. CI: GitHub Actions with x86_64 + ARM64 QEMU test runners, consistently green.
+- **Linux compat**: Comprehensive POSIX coverage: signals (SA_SIGINFO, SA_RESTART, SA_NOCLDWAIT, sigpending, signalfd, sigsuspend, sigtimedwait, SIGSTOP/SIGCONT), epoll (EPOLLET, EPOLLONESHOT, EPOLLRDHUP, EPOLLEXCLUSIVE), pipes (F_SETPIPE_SZ, poll POLLHUP), sockets (MSG_PEEK, SO_PEERCRED, SCM_RIGHTS, SOCK_CLOEXEC, SO_BINDTODEVICE, SO_REUSEADDR/PORT), timers (timerfd, POSIX timers, alarm, itimer), file I/O (O_APPEND, O_CLOEXEC, ftruncate, readv/writev/preadv/pwritev, splice/tee, sendfile, copy_file_range), process lifecycle (fork, clone, clone3 with CLONE_PIDFD, waitpid/wait4/waitid, execve with shebang + ELF + PIE).
+- **Networking (Router OS)**: Full TCP/IP stack with multi-interface routing, longest-prefix-match, IP forwarding with TTL/checksum, NAT/masquerade (1024-entry conntrack), 3-chain firewall (INPUT/FORWARD/OUTPUT), TUN/TAP virtual devices, DNS resolver with caching, ARP cache, ICMP echo/time-exceeded/dest-unreachable, real SNMP statistics (/proc/net/snmp). All configurable via ioctls and /proc/sys/net/ sysctls.
+- **Storage + VFS**: RamFS, procfs (29+ root entries, per-pid with 30+ files), sysfs (dynamic /sys/class/net/), devfs (/dev/null, /dev/zero, /dev/full, /dev/urandom, /dev/random, /dev/kmsg, /dev/ptmx, /dev/pts/\*, /dev/tty, /dev/net/tun), FuturaFS; full xattr, inotify, hardlink, symlink support.
+- **Shell**: 100+ built-in commands including ip/ifconfig/iptables/ping/traceroute/netstat/ss/arp/wget/nc/httpd/nslookup/dhclient for networking; top/ps/free/df/sysctl/dmesg/lsof for system admin; full scripting with for/while/if, pipes, redirects, globs, command substitution, job control.
+- **IPC**: Unix domain sockets (stream, datagram, seqpacket), AF_INET TCP/UDP with loopback, System V IPC (shm, sem, msg), POSIX message queues, pipes, eventfd, signalfd, timerfd.
 - **Graphics**: Legacy window server (`services/winsrv` + `apps/winstub`) and a Wayland compositor (`src/user/compositor/futura-wayland`) with demo clients in `src/user/clients/`.
-- **Platforms**: x86-64 is the reference build; ARM64 port passes all 173 tests. Apple Silicon bring-up under `platform/arm64/`.
-- **CI**: GitHub Actions with x86_64 + ARM64 QEMU test runners, both green.
+- **Platforms**: x86-64 is the reference build; ARM64 port with Apple Silicon driver support. 16 Rust drivers for Apple Silicon (AIC, UART, RTKit, ANS2, GPIO, I2C, PCIe, SPI, DART, SMC, MCA) and VirtIO (blk, gpu, input, net).
 
 For deeper status notes see `docs/CURRENT_STATUS.md` and `docs/ARM64_STATUS.md`.
 

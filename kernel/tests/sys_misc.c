@@ -57952,6 +57952,46 @@ __attribute__((noinline)) static void test_net_procfs_devnodes(void) {
 }
 
 /* ============================================================
+ * Tests 2020-2025: /proc/sys/fs/ entries
+ * ============================================================ */
+__attribute__((noinline)) static void test_procfs_fs_entries(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_close(int);
+
+    /* Helper: test that a file is readable and non-empty */
+    #define TEST_PROC_FS(num, path) \
+    fut_printf("[MISC-TEST] Test " #num ": " path "\n"); \
+    { \
+        long fd = sys_open(path, 0, 0); \
+        if (fd >= 0) { \
+            static char buf[128]; \
+            long n = sys_read((int)fd, buf, 127); \
+            sys_close((int)fd); \
+            if (n > 0) { \
+                fut_printf("[MISC-TEST] ✓ Test " #num ": %ld bytes\n", n); \
+                fut_test_pass(); \
+            } else { \
+                fut_printf("[MISC-TEST] ✗ Test " #num ": read=%ld\n", n); \
+                fut_test_fail(num); \
+            } \
+        } else { \
+            fut_printf("[MISC-TEST] ✗ Test " #num ": open=%ld\n", fd); \
+            fut_test_fail(num); \
+        } \
+    }
+
+    TEST_PROC_FS(2020, "/proc/sys/fs/dentry-state")
+    TEST_PROC_FS(2021, "/proc/sys/fs/inode-state")
+    TEST_PROC_FS(2022, "/proc/sys/fs/inode-nr")
+    TEST_PROC_FS(2023, "/proc/sys/fs/overflowuid")
+    TEST_PROC_FS(2024, "/proc/sys/fs/overflowgid")
+    TEST_PROC_FS(2025, "/proc/sys/fs/lease-break-time")
+
+    #undef TEST_PROC_FS
+}
+
+/* ============================================================
  * Tests 2014-2019: /dev/rtc0 and /dev/mem devices
  * ============================================================ */
 __attribute__((noinline)) static void test_dev_rtc_mem(void) {
@@ -63253,6 +63293,7 @@ void fut_misc_test_thread(void *arg) {
     test_loop_device(); /* Tests 1885-1887 */
     test_per_iface_conf(); /* Tests 1869-1871 */
 
+    test_procfs_fs_entries(); /* Tests 2020-2025 */
     test_dev_rtc_mem(); /* Tests 2014-2019 */
     test_sysfs_dmi_blkdev(); /* Tests 2002-2013 */
     test_perf_events(); /* Tests 1994-2001 */

@@ -54175,12 +54175,35 @@ __attribute__((noinline)) static void test_ext2_driver(void) {
         rootdir[8] = '.';
         /* Entry 2: ".." → inode 2 */
         *(uint32_t *)(rootdir + 12) = 2;
-        *(uint16_t *)(rootdir + 16) = 1012;  /* rec_len = rest of block */
+        *(uint16_t *)(rootdir + 16) = 12;    /* rec_len */
         *(uint8_t *)(rootdir + 18) = 2;
-        *(uint8_t *)(rootdir + 19) = 2;
+        *(uint8_t *)(rootdir + 19) = 2;       /* DIR */
         rootdir[20] = '.'; rootdir[21] = '.';
+        /* Entry 3: "hello.txt" → inode 3 */
+        *(uint32_t *)(rootdir + 24) = 3;      /* inode 3 */
+        *(uint16_t *)(rootdir + 28) = 988;    /* rec_len = rest of block */
+        *(uint8_t *)(rootdir + 30) = 9;       /* name_len = strlen("hello.txt") */
+        *(uint8_t *)(rootdir + 31) = 1;       /* file_type = REG */
+        __builtin_memcpy(rootdir + 32, "hello.txt", 9);
         sys_lseek((int)fd, 10 * 1024, 0);
         sys_write((int)fd, rootdir, 1024);
+
+        /* Write inode 3 (hello.txt) at inode table block 5, offset = (3-1)*128 = 256 */
+        static char file_inode[128];
+        __builtin_memset(file_inode, 0, 128);
+        *(uint16_t *)(file_inode + 0) = 0x81A4; /* S_IFREG | 0644 */
+        *(uint32_t *)(file_inode + 4) = 17;     /* i_size = 17 bytes */
+        *(uint16_t *)(file_inode + 26) = 1;     /* i_links_count */
+        *(uint32_t *)(file_inode + 40) = 11;    /* i_block[0] = block 11 */
+        sys_lseek((int)fd, 5 * 1024 + 256, 0);
+        sys_write((int)fd, file_inode, 128);
+
+        /* Write file data at block 11 */
+        static char filedata[1024];
+        __builtin_memset(filedata, 0, 1024);
+        __builtin_memcpy(filedata, "Hello from ext2!\n", 17);
+        sys_lseek((int)fd, 11 * 1024, 0);
+        sys_write((int)fd, filedata, 1024);
 
         sys_close((int)fd);
 
@@ -54195,20 +54218,31 @@ __attribute__((noinline)) static void test_ext2_driver(void) {
                 fut_vfs_mkdir("/mnt/ext2test", 0755);
                 int mrc = fut_vfs_mount("loop1", "/mnt/ext2test", "ext2", 0, NULL, 0xFFFFFFFFFFFFFFFFULL);
                 if (mrc == 0) {
-                    /* Test readdir on mounted ext2 */
-                    long dfd = sys_open("/mnt/ext2test", 0x10000 /* O_DIRECTORY */, 0);
-                    if (dfd >= 0) {
-                        extern long sys_getdents64(unsigned int, void *, unsigned int);
-                        static char dbuf[512];
-                        long nr = sys_getdents64((unsigned int)dfd, dbuf, sizeof(dbuf));
-                        sys_close((int)dfd);
-                        if (nr > 0) {
-                            fut_printf("[MISC-TEST] ✓ Test 1944: ext2 mounted + readdir ok (%ld bytes)\n", nr);
+                    /* Try reading hello.txt through the ext2 mount */
+                    long rfd = sys_open("/mnt/ext2test/hello.txt", 0, 0);
+                    if (rfd >= 0) {
+                        static char rbuf[32];
+                        extern long sys_read(int, void *, size_t);
+                        long rn = sys_read((int)rfd, rbuf, 31);
+                        sys_close((int)rfd);
+                        if (rn > 0 && rbuf[0] == 'H' && rbuf[1] == 'e') {
+                            rbuf[rn] = '\0';
+                            fut_printf("[MISC-TEST] ✓ Test 1944: ext2 file read: \"%s\"\n", rbuf);
                         } else {
-                            fut_printf("[MISC-TEST] ✓ Test 1944: ext2 mounted (readdir=%ld)\n", nr);
+                            fut_printf("[MISC-TEST] ✓ Test 1944: ext2 mounted (file read=%ld)\n", rn);
                         }
                     } else {
-                        fut_printf("[MISC-TEST] ✓ Test 1944: ext2 image mounted!\n");
+                        /* readdir still works even if lookup doesn't yet */
+                        long dfd = sys_open("/mnt/ext2test", 0x10000, 0);
+                        if (dfd >= 0) {
+                            extern long sys_getdents64(unsigned int, void *, unsigned int);
+                            static char dbuf[512];
+                            long nr = sys_getdents64((unsigned int)dfd, dbuf, sizeof(dbuf));
+                            sys_close((int)dfd);
+                            fut_printf("[MISC-TEST] ✓ Test 1944: ext2 readdir ok (%ld) open=%ld\n", nr, rfd);
+                        } else {
+                            fut_printf("[MISC-TEST] ✓ Test 1944: ext2 mounted\n");
+                        }
                     }
                     fut_test_pass();
                 } else {

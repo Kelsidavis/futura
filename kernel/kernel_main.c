@@ -1290,12 +1290,14 @@ void fut_kernel_main(void) {
                   "cat /etc/motd\n");
         ETC_WRITE("/etc/motd",
                   "\n"
-                  "  Welcome to Futura OS 0.4.0 (aarch64)\n"
+                  "  Welcome to Futura OS 0.5.0\n"
                   "\n"
-                  "  * 72 built-in commands — type 'help'\n"
-                  "  * Glob expansion: ls *.txt, cat /etc/*\n"
-                  "  * Command substitution: VAR=$(cmd), echo $(date)\n"
-                  "  * Scripting: for/while/if, source, pipes, redirects\n"
+                  "  * 100 built-in commands — type 'help'\n"
+                  "  * Networking: ip, ifconfig, iptables, ping, traceroute,\n"
+                  "    netstat, ss, arp, wget, nc, nslookup, httpd\n"
+                  "  * Router: ip forward on, ip route add, iptables -t nat\n"
+                  "  * System: top, ps, free, df, sysctl, dmesg, lsof\n"
+                  "  * Scripting: for/while/if, pipes, redirects, globs\n"
                   "  * FuturaFS at /mnt — try: echo hello > /mnt/file\n"
                   "\n");
 #undef ETC_WRITE

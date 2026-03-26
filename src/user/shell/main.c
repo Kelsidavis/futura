@@ -1061,7 +1061,7 @@ static void cmd_help(int argc, char *argv[]) {
     (void)argc;
     (void)argv;
 
-    write_str(1, "Futura OS Shell v0.4 - Available Commands:\n");
+    write_str(1, "Futura OS Shell v0.5 - Available Commands:\n");
     write_str(1, "\n");
     write_str(1, "Navigation:\n");
     write_str(1, "  cd [dir]        - Change directory\n");
@@ -2858,7 +2858,7 @@ static void cmd_sysinfo(int argc, char *argv[]) {
     char nbuf[8]; int_to_str(pcount, nbuf, 8);
     write_str(1, nbuf); write_str(1, " running\n");
     /* Shell */
-    write_str(1, "  Shell:   Futura Shell v0.4 (60 builtins)\n");
+    write_str(1, "  Shell:   Futura Shell v0.5 (100 builtins)\n");
 }
 
 /* Helper: count lines, words, and bytes in a file descriptor */
@@ -8079,8 +8079,8 @@ int main(int argc, char **argv, char **envp) {
 
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
-    write_str(1, "|   Futura OS Shell v0.4                   |\n");
-    write_str(1, "|   72 built-in commands — type 'help'     |\n");
+    write_str(1, "|   Futura OS Shell v0.5                   |\n");
+    write_str(1, "|   100 built-in commands — type 'help'    |\n");
     write_str(1, "|   nano editor available at /bin/nano      |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");

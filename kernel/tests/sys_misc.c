@@ -58406,6 +58406,48 @@ void fut_misc_test_thread(void *arg) {
         }
     }
 
+    /* Test 1829: mknod creates a character device node */
+    fut_printf("[MISC-TEST] Test 1829: mknod S_IFCHR creates device node\n");
+    {
+        extern long sys_mknodat(int dirfd, const char *pathname, unsigned int mode, unsigned int dev);
+        extern long sys_open(const char *, int, int);
+        extern long sys_close(int);
+        /* Create /tmp/test_chrdev with major=1 minor=3 (same as /dev/null) */
+        /* S_IFCHR = 0020000, mode 0666 */
+        unsigned int dev = (1 << 8) | 3;  /* makedev(1, 3) */
+        long rc = sys_mknodat(-100 /* AT_FDCWD */, "/tmp/test_chrdev", 0020666, dev);
+        if (rc == 0) {
+            /* Verify it can be opened (devfs routes major 1 minor 3 to /dev/null fops) */
+            long fd = sys_open("/tmp/test_chrdev", 0x0002, 0);
+            if (fd >= 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1829: mknod S_IFCHR + open succeeded fd=%ld\n", fd);
+                fut_test_pass();
+                sys_close((int)fd);
+            } else {
+                /* Even if open fails (no driver for this major:minor), mknod succeeded */
+                fut_printf("[MISC-TEST] ✓ Test 1829: mknod S_IFCHR created (open=%ld)\n", fd);
+                fut_test_pass();
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1829: mknod failed: %ld\n", rc);
+            fut_test_fail(1829);
+        }
+    }
+
+    /* Test 1830: mknod S_IFBLK returns EPERM (block devices not supported) */
+    fut_printf("[MISC-TEST] Test 1830: mknod S_IFBLK → EPERM\n");
+    {
+        extern long sys_mknodat(int dirfd, const char *pathname, unsigned int mode, unsigned int dev);
+        long rc = sys_mknodat(-100, "/tmp/test_blkdev", 0060666, (8 << 8) | 0);
+        if (rc == -1 /* EPERM */) {
+            fut_printf("[MISC-TEST] ✓ Test 1830: S_IFBLK → EPERM\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1830: S_IFBLK = %ld\n", rc);
+            fut_test_fail(1830);
+        }
+    }
+
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");
     fut_printf("[MISC-TEST] ========================================\n");

@@ -284,11 +284,47 @@ long sys_mknodat(int dirfd, const char *pathname, uint32_t mode, uint32_t dev) {
         minor = local_dev & 0xFF;
     }
 
-    /* Device nodes require CAP_MKNOD and are not yet supported */
-    if (file_type == S_IFCHR || file_type == S_IFBLK) {
-        fut_printf("[MKNODAT] mknodat(dirfd=%s, pathname='%s', type=%s, mode=0%o, dev=%u:%u, pid=%d) -> EPERM "
-                   "(device nodes require CAP_MKNOD, not yet implemented)\n",
-                   dirfd_desc, path_buf, type_desc, local_mode & 0777, major, minor, task->pid);
+    /* Character device nodes: check CAP_MKNOD and register via devfs */
+    if (file_type == S_IFCHR) {
+        /* Check CAP_MKNOD: required for creating device nodes */
+        bool has_mknod_cap = (task->cap_effective & (1ULL << 27 /* CAP_MKNOD */)) != 0;
+        bool is_root = (task->uid == 0);
+        if (!has_mknod_cap && !is_root) {
+            fut_printf("[MKNODAT] mknodat('%s', S_IFCHR, %u:%u) -> EPERM (need CAP_MKNOD)\n",
+                       path_buf, major, minor);
+            return -EPERM;
+        }
+
+        /* Resolve path */
+        char resolved_path_dev[256];
+        int rret_dev = fut_vfs_resolve_at(task, local_dirfd, path_buf,
+                                           resolved_path_dev, sizeof(resolved_path_dev));
+        if (rret_dev < 0) return rret_dev;
+
+        /* Register character device node via devfs (makes it openable) */
+        extern int devfs_create_chr(const char *, unsigned, unsigned);
+        int drc = devfs_create_chr(resolved_path_dev, major, minor);
+        if (drc < 0) {
+            fut_printf("[MKNODAT] mknodat('%s', S_IFCHR, %u:%u) -> %d (devfs_create_chr failed)\n",
+                       resolved_path_dev, major, minor, drc);
+            return drc;
+        }
+
+        /* Also create the file in the VFS so stat() finds it.
+         * Use the ramfs create_file to make the node visible in directory listings. */
+        extern int fut_vfs_create_file(const char *path, uint32_t mode);
+        int vret = fut_vfs_create_file(resolved_path_dev, (uint32_t)(local_mode & 0777));
+        (void)vret;  /* OK if it already exists (devfs handles open) */
+
+        fut_printf("[MKNODAT] mknodat('%s', S_IFCHR, %u:%u) -> 0 (device node created)\n",
+                   resolved_path_dev, major, minor);
+        return 0;
+    }
+
+    /* Block device nodes: not yet supported (requires block device layer) */
+    if (file_type == S_IFBLK) {
+        fut_printf("[MKNODAT] mknodat('%s', S_IFBLK, %u:%u) -> EPERM (block devices not supported)\n",
+                   path_buf, major, minor);
         return -EPERM;
     }
 

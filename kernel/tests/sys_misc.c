@@ -58364,6 +58364,26 @@ void fut_misc_test_thread(void *arg) {
     test_umask_posix_create();     /* Tests 1729-1732 */
     test_writable_net_sysctls();   /* Tests 1823-1826 */
 
+    /* Test 1827: ip_default_ttl sysctl readable */
+    fut_printf("[MISC-TEST] Test 1827: /proc/sys/net/ipv4/ip_default_ttl\n");
+    {
+        extern long sys_open(const char *, int, int);
+        extern long sys_read(int, void *, size_t);
+        extern long sys_close(int);
+        long fd = sys_open("/proc/sys/net/ipv4/ip_default_ttl", 0, 0);
+        if (fd >= 0) {
+            static char rb[16];
+            long n = sys_read((int)fd, rb, sizeof(rb) - 1);
+            sys_close((int)fd);
+            if (n > 0) { rb[n] = '\0';
+                if (rb[0] == '6' && rb[1] == '4') { /* default 64 */
+                    fut_printf("[MISC-TEST] ✓ Test 1827: ttl=%s", rb);
+                    fut_test_pass();
+                } else { fut_printf("[MISC-TEST] ✗ Test 1827: got=%s", rb); fut_test_fail(1827); }
+            } else { fut_test_fail(1827); }
+        } else { fut_printf("[MISC-TEST] ✗ Test 1827: open=%ld\n", fd); fut_test_fail(1827); }
+    }
+
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");
     fut_printf("[MISC-TEST] ========================================\n");

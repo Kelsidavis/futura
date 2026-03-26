@@ -317,7 +317,7 @@ static void send_icmp_error(uint8_t icmp_type, uint8_t icmp_code,
     buf[1] = 0xC0;  /* TOS: CS6 (network control) */
     buf[2] = (uint8_t)(total >> 8); buf[3] = (uint8_t)(total & 0xFF);
     buf[6] = 0x40;  /* Don't Fragment */
-    buf[8] = 64;    /* TTL */
+    buf[8] = (uint8_t)g_net_sysctl.ip_default_ttl;  /* TTL from sysctl */
     buf[9] = 1;     /* Protocol: ICMP */
     /* Source: our interface IP */
     buf[12] = (uint8_t)(out_iface->ip_addr >> 24);

@@ -131,6 +131,7 @@ enum procfs_kind {
     PROC_SYS_NET_TCP_KEEPALIVE_INTVL, /* /proc/sys/net/ipv4/tcp_keepalive_intvl */
     PROC_SYS_NET_TCP_KEEPALIVE_PROBES,/* /proc/sys/net/ipv4/tcp_keepalive_probes */
     PROC_SYS_NET_IP_UNPRIV_PORT_START,/* /proc/sys/net/ipv4/ip_unprivileged_port_start */
+    PROC_SYS_NET_IP_DEFAULT_TTL,      /* /proc/sys/net/ipv4/ip_default_ttl */
     /* /proc/sys/net/ipv4/conf/ subtree */
     PROC_SYS_NET_IPV4_CONF_DIR,       /* /proc/sys/net/ipv4/conf/ */
     PROC_SYS_NET_IPV4_CONF_ALL_DIR,   /* /proc/sys/net/ipv4/conf/all/ */
@@ -418,6 +419,7 @@ typedef struct {
 #define PROC_INO_SYS_NET_KEEPALIVE_INTVL 405ULL
 #define PROC_INO_SYS_NET_KEEPALIVE_PROBES 406ULL
 #define PROC_INO_SYS_NET_UNPRIV_PORT     407ULL
+#define PROC_INO_SYS_NET_IP_DEFAULT_TTL  415ULL
 /* /proc/sys/net/ipv4/conf/ range: 408-414 */
 #define PROC_INO_SYS_NET_IPV4_CONF_DIR   408ULL
 #define PROC_INO_SYS_NET_IPV4_CONF_ALL   409ULL
@@ -2336,7 +2338,7 @@ static size_t gen_net_snmp(char *buf, size_t cap) {
     /* IP values — use real stats from g_net_stats */
     pb_str(&b, "Ip: ");
     pb_u64(&b, g_ip_forward_enabled ? 1 : 2);  /* Forwarding: 1=enabled, 2=disabled */
-    pb_char(&b, ' '); pb_u64(&b, 64);  /* DefaultTTL */
+    pb_char(&b, ' '); pb_u64(&b, g_net_sysctl.ip_default_ttl);  /* DefaultTTL */
     pb_char(&b, ' '); pb_u64(&b, g_net_stats.ip_in_receives);
     pb_str(&b, " 0 0 ");  /* InHdrErrors, InAddrErrors */
     pb_u64(&b, g_net_stats.ip_forwarded);
@@ -3421,6 +3423,9 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
         case PROC_SYS_NET_TCP_KEEPALIVE_PROBES:
             total = gen_sysctl_u32(tmp, GEN_BUF, g_net_sysctl.tcp_keepalive_probes);
             break;
+        case PROC_SYS_NET_IP_DEFAULT_TTL:
+            total = gen_sysctl_u32(tmp, GEN_BUF, g_net_sysctl.ip_default_ttl);
+            break;
         case PROC_SYS_NET_IP_UNPRIV_PORT_START:
             total = gen_sysctl_u32(tmp, GEN_BUF, g_net_sysctl.port_range_min);
             break;
@@ -3691,6 +3696,7 @@ static ssize_t procfs_file_write(struct fut_vnode *vnode, const void *buf,
         case PROC_SYS_NET_TCP_KEEPALIVE_TIME:
         case PROC_SYS_NET_TCP_KEEPALIVE_INTVL:
         case PROC_SYS_NET_TCP_KEEPALIVE_PROBES:
+        case PROC_SYS_NET_IP_DEFAULT_TTL:
         case PROC_SYS_NET_IP_UNPRIV_PORT_START: {
             uint32_t val = 0;
             for (size_t i = 0; i < copy_len && kbuf[i] >= '0' && kbuf[i] <= '9'; i++)
@@ -3706,6 +3712,7 @@ static ssize_t procfs_file_write(struct fut_vnode *vnode, const void *buf,
             case PROC_SYS_NET_TCP_KEEPALIVE_TIME:  g_net_sysctl.tcp_keepalive_time = val; break;
             case PROC_SYS_NET_TCP_KEEPALIVE_INTVL: g_net_sysctl.tcp_keepalive_intvl = val; break;
             case PROC_SYS_NET_TCP_KEEPALIVE_PROBES:g_net_sysctl.tcp_keepalive_probes = val; break;
+            case PROC_SYS_NET_IP_DEFAULT_TTL:      if (val >= 1 && val <= 255) g_net_sysctl.ip_default_ttl = val; break;
             case PROC_SYS_NET_IP_UNPRIV_PORT_START:g_net_sysctl.port_range_min = (uint16_t)val; break;
             default: break;
             }
@@ -4658,6 +4665,11 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0100644, PROC_SYS_NET_TCP_KEEPALIVE_PROBES, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "ip_default_ttl")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_NET_IP_DEFAULT_TTL,
+                                          0100644, PROC_SYS_NET_IP_DEFAULT_TTL, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         if (STREQ(name, "ip_unprivileged_port_start")) {
             *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_NET_UNPRIV_PORT,
                                           0100644, PROC_SYS_NET_IP_UNPRIV_PORT_START, 0, 0);
@@ -5471,7 +5483,8 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                    "tcp_rmem", "tcp_wmem", "ip_forward",
                                    "tcp_keepalive_time", "tcp_keepalive_intvl",
                                    "tcp_keepalive_probes",
-                                   "ip_unprivileged_port_start", "conf" };
+                                   "ip_unprivileged_port_start", "ip_default_ttl",
+                                   "conf" };
         static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG,
@@ -5479,7 +5492,8 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                      FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG,
-                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_DIR };
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_DIR };
         static const uint64_t i[] = { PROC_INO_SYS_NET_IPV4_DIR, PROC_INO_SYS_NET_DIR,
                                       PROC_INO_SYS_NET_PORT_RANGE, PROC_INO_SYS_NET_FIN_TIMEOUT,
                                       PROC_INO_SYS_NET_SYNCOOKIES,
@@ -5489,8 +5503,9 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                       PROC_INO_SYS_NET_KEEPALIVE_INTVL,
                                       PROC_INO_SYS_NET_KEEPALIVE_PROBES,
                                       PROC_INO_SYS_NET_UNPRIV_PORT,
+                                      PROC_INO_SYS_NET_IP_DEFAULT_TTL,
                                       PROC_INO_SYS_NET_IPV4_CONF_DIR };
-        if (idx < 13) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+        if (idx < 14) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
         return -ENOENT;
     }
 

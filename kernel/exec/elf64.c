@@ -379,6 +379,112 @@ static uint64_t g_exec_entry = 0;
 static uint64_t g_exec_phdr = 0;
 static uint16_t g_exec_phent = 0;
 static uint16_t g_exec_phnum = 0;
+static uint64_t g_exec_interp_base = 0;   /* AT_BASE: interpreter load address */
+static uint64_t g_exec_interp_entry = 0;  /* Interpreter entry point (replaces main entry) */
+
+/* Default base address for loading the ELF interpreter (ld-linux.so).
+ * Placed high in the lower-half address space to avoid overlap with main binary. */
+#define INTERP_LOAD_BASE  0x7f0000000ULL
+
+/*
+ * load_elf_interpreter — Load the ELF interpreter (PT_INTERP target) into
+ * the process address space at INTERP_LOAD_BASE.
+ *
+ * On success, sets g_exec_interp_base and g_exec_interp_entry.
+ * Returns 0 on success, negative errno on failure.
+ */
+static int load_elf_interpreter(fut_mm_t *mm, const char *interp_path) {
+    extern int fut_vfs_open(const char *, int, int);
+    extern long fut_vfs_read(int, void *, size_t);
+    extern long fut_vfs_lseek(int, long, int);
+    extern int fut_vfs_close(int);
+
+    g_exec_interp_base = 0;
+    g_exec_interp_entry = 0;
+
+    int ifd = fut_vfs_open(interp_path, 0 /* O_RDONLY */, 0);
+    if (ifd < 0) {
+        ELF_LOG("[EXEC-INTERP] Cannot open interpreter '%s': %d\n", interp_path, ifd);
+        return 0;  /* Not fatal — fall back to direct execution (static PIE) */
+    }
+
+    /* Read ELF header */
+    elf64_ehdr_t ihdr;
+    long nr = fut_vfs_read(ifd, &ihdr, sizeof(ihdr));
+    if (nr < (long)sizeof(ihdr)) {
+        fut_vfs_close(ifd);
+        return 0;
+    }
+
+    /* Validate ELF magic */
+    uint32_t magic = 0;
+    __builtin_memcpy(&magic, ihdr.e_ident, 4);
+    if (magic != ELF_MAGIC || ihdr.e_ident[4] != ELF_CLASS_64) {
+        fut_vfs_close(ifd);
+        return 0;
+    }
+
+    /* Read program headers */
+    if (ihdr.e_phnum == 0 || ihdr.e_phnum > 64) {
+        fut_vfs_close(ifd);
+        return 0;
+    }
+
+    size_t phsz = (size_t)ihdr.e_phnum * ihdr.e_phentsize;
+    elf64_phdr_t *iphdrs = fut_malloc(phsz);
+    if (!iphdrs) { fut_vfs_close(ifd); return -ENOMEM; }
+
+    fut_vfs_lseek(ifd, (long)ihdr.e_phoff, 0 /* SEEK_SET */);
+    nr = fut_vfs_read(ifd, iphdrs, phsz);
+    if (nr < (long)phsz) {
+        fut_free(iphdrs);
+        fut_vfs_close(ifd);
+        return 0;
+    }
+
+    /* The interpreter is typically ET_DYN (shared object). Apply a load bias
+     * so its segments don't overlap with the main binary. */
+    uint64_t interp_bias = INTERP_LOAD_BASE;
+
+    /* Find the lowest vaddr in PT_LOAD segments to compute bias correctly */
+    uint64_t lowest_vaddr = UINT64_MAX;
+    for (uint16_t i = 0; i < ihdr.e_phnum; i++) {
+        if (iphdrs[i].p_type == PT_LOAD && iphdrs[i].p_vaddr < lowest_vaddr)
+            lowest_vaddr = iphdrs[i].p_vaddr;
+    }
+    if (lowest_vaddr != UINT64_MAX && ihdr.e_type == 3 /* ET_DYN */) {
+        /* ET_DYN: bias = desired_base - lowest_segment_vaddr */
+        interp_bias = INTERP_LOAD_BASE - (lowest_vaddr & ~(PAGE_SIZE - 1ULL));
+    } else if (ihdr.e_type == 2 /* ET_EXEC */) {
+        interp_bias = 0;  /* Static interpreter — load at its own addresses */
+    }
+
+    /* Apply bias to all PT_LOAD segments and map them */
+    for (uint16_t i = 0; i < ihdr.e_phnum; i++) {
+        if (iphdrs[i].p_type != PT_LOAD) continue;
+        iphdrs[i].p_vaddr += interp_bias;
+
+        int rc = map_segment(mm, ifd, &iphdrs[i]);
+        if (rc != 0) {
+            ELF_LOG("[EXEC-INTERP] Failed to map segment %u: %d\n", i, rc);
+            fut_free(iphdrs);
+            fut_vfs_close(ifd);
+            return rc;
+        }
+    }
+
+    g_exec_interp_base = interp_bias + (lowest_vaddr != UINT64_MAX ? lowest_vaddr : 0);
+    g_exec_interp_entry = ihdr.e_entry + interp_bias;
+
+    ELF_LOG("[EXEC-INTERP] Loaded '%s' at base=0x%llx entry=0x%llx\n",
+            interp_path,
+            (unsigned long long)g_exec_interp_base,
+            (unsigned long long)g_exec_interp_entry);
+
+    fut_free(iphdrs);
+    fut_vfs_close(ifd);
+    return 0;
+}
 
 static int build_user_stack(fut_mm_t *mm,
                             const char *const argv_in[],
@@ -533,7 +639,7 @@ static int build_user_stack(fut_mm_t *mm,
             { 14 /* AT_EGID */,  egid },
             { 23 /* AT_SECURE */, secure },
             { 16 /* AT_HWCAP */,  hwcap_val },
-            { 7 /* AT_BASE */,   0 },  /* interpreter base (0 = no interp / static) */
+            { 7 /* AT_BASE */,   g_exec_interp_base },  /* interpreter load address */
             { 8 /* AT_FLAGS */,  0 },  /* ELF flags (always 0) */
             { 0 /* AT_NULL */,   0 },
         };
@@ -1538,35 +1644,43 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
         }
     }
 
+    /* Reset interpreter state for this exec */
+    g_exec_interp_base = 0;
+    g_exec_interp_entry = 0;
+
     /* PT_INTERP: dynamic linker path. If present, the binary requires a
-     * dynamic linker (e.g., /lib/ld-linux-x86-64.so.2). We parse the path
-     * and store it in the task struct. Full interpreter loading is not yet
-     * implemented — for now, log the path and fall back to direct execution
-     * (works for static PIE binaries that have PT_INTERP but don't need it). */
+     * dynamic linker (e.g., /lib/ld-linux-x86-64.so.2). Load the
+     * interpreter ELF into the process address space so it can perform
+     * dynamic linking before jumping to the main binary. */
     {
         char interp_path[256] = {0};
         for (uint16_t i = 0; i < ehdr.e_phnum; i++) {
             if (phdrs[i].p_type == 3 /* PT_INTERP */ && phdrs[i].p_filesz > 0 &&
                 phdrs[i].p_filesz < sizeof(interp_path)) {
-                /* Read interpreter path from file */
                 off_t saved = 0;
                 extern long fut_vfs_lseek(int fd, long offset, int whence);
                 saved = fut_vfs_lseek(fd, 0, 1 /* SEEK_CUR */);
                 fut_vfs_lseek(fd, (long)phdrs[i].p_offset, 0 /* SEEK_SET */);
                 long nr = fut_vfs_read(fd, interp_path, (size_t)phdrs[i].p_filesz);
                 if (nr > 0) interp_path[nr < 255 ? nr : 255] = '\0';
+                /* Strip trailing newline/whitespace */
+                for (int k = (int)nr - 1; k >= 0; k--) {
+                    if (interp_path[k] == '\n' || interp_path[k] == '\r' ||
+                        interp_path[k] == ' ' || interp_path[k] == '\0')
+                        interp_path[k] = '\0';
+                    else break;
+                }
                 fut_vfs_lseek(fd, saved, 0 /* SEEK_SET */);
                 ELF_LOG("[EXEC-ELF] PT_INTERP: '%s'\n", interp_path);
                 break;
             }
         }
-        /* Store interpreter path if found (for /proc/<pid>/interp introspection) */
-        if (interp_path[0] && task) {
-            size_t ilen = 0;
-            while (interp_path[ilen] && ilen < sizeof(task->exe_path) - 1) ilen++;
-            /* Note: we don't fail if interpreter doesn't exist — static PIE
-             * binaries may have PT_INTERP but run fine without the interpreter
-             * since all relocations are resolved at link time. */
+        /* Load interpreter if found — sets g_exec_interp_base/entry */
+        if (interp_path[0]) {
+            int irc = load_elf_interpreter(mm, interp_path);
+            if (irc < 0) {
+                ELF_LOG("[EXEC-ELF] Interpreter load failed: %d (continuing anyway)\n", irc);
+            }
         }
     }
 
@@ -1759,7 +1873,17 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
         return -ENOMEM;
     }
 
-    entry->entry = ehdr.e_entry;
+    /* If interpreter was loaded, start at its entry point instead of main binary's.
+     * The interpreter (ld-linux.so) will use AT_ENTRY and AT_PHDR from auxv
+     * to find and jump to the main binary after dynamic linking. */
+    if (g_exec_interp_entry != 0) {
+        entry->entry = g_exec_interp_entry;
+        ELF_LOG("[EXEC-ELF] Using interpreter entry 0x%llx (main entry 0x%llx)\n",
+                (unsigned long long)g_exec_interp_entry,
+                (unsigned long long)(ehdr.e_entry + load_bias));
+    } else {
+        entry->entry = ehdr.e_entry + load_bias;
+    }
     entry->stack = user_rsp;
     entry->argc = user_argc;
     entry->argv_ptr = user_argv;

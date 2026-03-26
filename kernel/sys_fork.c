@@ -1020,6 +1020,10 @@ long sys_fork(void) {
     /* Inherit OOM score adjustment (visible via /proc/pid/oom_score_adj) */
     child_task->oom_score_adj = parent_task->oom_score_adj;
 
+    /* Inherit controlling terminal (visible via /proc/pid/stat tty_nr field).
+     * POSIX: child inherits parent's controlling terminal on fork. */
+    child_task->tty_nr = parent_task->tty_nr;
+
     /* Inherit keepcaps (PR_SET_KEEPCAPS is sticky across fork) */
     child_task->keepcaps = parent_task->keepcaps;
 

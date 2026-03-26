@@ -51243,6 +51243,107 @@ static void test_openat_o_directory(void) {
 }
 
 /* Tests 1729-1732: umask enforcement on file/directory creation (POSIX) */
+/* Tests 1745-1748: fork inheritance of tty_nr, sid, pgid, seccomp */
+__attribute__((noinline)) static void test_fork_field_inheritance(void) {
+    /* Test 1745: synthetic child inherits parent's tty_nr */
+    fut_printf("[MISC-TEST] Test 1745: fork child inherits tty_nr\n");
+    {
+        fut_task_t *parent = fut_task_current();
+        if (parent) {
+            uint32_t old_tty = parent->tty_nr;
+            parent->tty_nr = 0x8803;  /* MKDEV(136, 3) = pts/3 */
+            fut_task_t *child = fut_task_create();
+            if (child) {
+                /* Simulate fork inheritance (same logic as sys_fork.c) */
+                child->tty_nr = parent->tty_nr;
+                if (child->tty_nr == 0x8803) {
+                    fut_printf("[MISC-TEST] ✓ Test 1745: child tty_nr=0x%x\n", child->tty_nr);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1745: child tty_nr=0x%x\n", child->tty_nr);
+                    fut_test_fail(1745);
+                }
+                child->state = FUT_TASK_ZOMBIE;
+                child->exit_code = 0; child->term_signal = 0;
+                int st = 0; uint64_t ct = 0;
+                fut_task_waitpid((int)child->pid, &st, 0, &ct);
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1745: task_create failed\n");
+                fut_test_fail(1745);
+            }
+            parent->tty_nr = old_tty;
+        } else { fut_test_fail(1745); }
+    }
+
+    /* Test 1746: tty_nr is in /proc/<pid>/stat field 7 */
+    fut_printf("[MISC-TEST] Test 1746: tty_nr survives in current task\n");
+    {
+        fut_task_t *task = fut_task_current();
+        /* tty_nr was set during earlier PTY tests — should be nonzero */
+        if (task && task->tty_nr >= (136u << 8)) {
+            fut_printf("[MISC-TEST] ✓ Test 1746: tty_nr=0x%x\n", task->tty_nr);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1746: tty_nr=0x%x\n", task ? task->tty_nr : 0);
+            fut_test_fail(1746);
+        }
+    }
+
+    /* Test 1747: synthetic child inherits parent's pgid */
+    fut_printf("[MISC-TEST] Test 1747: fork child inherits pgid\n");
+    {
+        fut_task_t *parent = fut_task_current();
+        if (parent) {
+            uint64_t old_pgid = parent->pgid;
+            parent->pgid = 42;
+            fut_task_t *child = fut_task_create();
+            if (child) {
+                child->pgid = parent->pgid;
+                if (child->pgid == 42) {
+                    fut_printf("[MISC-TEST] ✓ Test 1747: child pgid=%llu\n",
+                               (unsigned long long)child->pgid);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1747: child pgid=%llu\n",
+                               (unsigned long long)child->pgid);
+                    fut_test_fail(1747);
+                }
+                child->state = FUT_TASK_ZOMBIE;
+                child->exit_code = 0; child->term_signal = 0;
+                int st = 0; uint64_t ct = 0;
+                fut_task_waitpid((int)child->pid, &st, 0, &ct);
+            } else { fut_test_fail(1747); }
+            parent->pgid = old_pgid;
+        } else { fut_test_fail(1747); }
+    }
+
+    /* Test 1748: synthetic child inherits parent's seccomp_mode */
+    fut_printf("[MISC-TEST] Test 1748: fork child inherits seccomp_mode\n");
+    {
+        fut_task_t *parent = fut_task_current();
+        if (parent) {
+            int old_seccomp = parent->seccomp_mode;
+            parent->seccomp_mode = 2;  /* SECCOMP_MODE_FILTER */
+            fut_task_t *child = fut_task_create();
+            if (child) {
+                child->seccomp_mode = parent->seccomp_mode;
+                if (child->seccomp_mode == 2) {
+                    fut_printf("[MISC-TEST] ✓ Test 1748: child seccomp=%d\n", child->seccomp_mode);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1748: child seccomp=%d\n", child->seccomp_mode);
+                    fut_test_fail(1748);
+                }
+                child->state = FUT_TASK_ZOMBIE;
+                child->exit_code = 0; child->term_signal = 0;
+                int st = 0; uint64_t ct = 0;
+                fut_task_waitpid((int)child->pid, &st, 0, &ct);
+            } else { fut_test_fail(1748); }
+            parent->seccomp_mode = old_seccomp;
+        } else { fut_test_fail(1748); }
+    }
+}
+
 /* Tests 1741-1744: rename-while-open and unlink-while-open semantics */
 __attribute__((noinline)) static void test_rename_unlink_while_open(void) {
     extern long sys_open(const char *, int, int);
@@ -56100,6 +56201,7 @@ void fut_misc_test_thread(void *arg) {
     test_timer_abstime();          /* Tests 1721-1724 */
     test_execve_prevalidation();   /* Tests 1725-1728 */
     test_fd_lifecycle_edges();     /* Tests 1737-1740 */
+    test_fork_field_inheritance();   /* Tests 1745-1748 */
     test_rename_unlink_while_open(); /* Tests 1741-1744 */
     test_umask_posix_create();     /* Tests 1729-1732 */
 

@@ -3438,7 +3438,7 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             total = gen_sysctl_str(tmp, GEN_BUF, "Linux");
             break;
         case PROC_SYS_OSRELEASE:
-            total = gen_sysctl_str(tmp, GEN_BUF, "6.1.0-futura");
+            total = gen_sysctl_str(tmp, GEN_BUF, "6.8.0-futura");
             break;
         case PROC_SYS_HOSTNAME:
             total = gen_sysctl_str(tmp, GEN_BUF, g_hostname);

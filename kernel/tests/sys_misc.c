@@ -57952,6 +57952,87 @@ __attribute__((noinline)) static void test_net_procfs_devnodes(void) {
 }
 
 /* ============================================================
+ * Tests 2048-2050: /proc/config.gz kernel configuration
+ * ============================================================ */
+__attribute__((noinline)) static void test_proc_config_gz(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_close(int);
+
+    /* ── Test 2048: /proc/config.gz is openable ── */
+    fut_printf("[MISC-TEST] Test 2048: /proc/config.gz openable\n");
+    long fd = sys_open("/proc/config.gz", 0, 0);
+    if (fd >= 0) {
+        fut_printf("[MISC-TEST] ✓ Test 2048: fd=%ld\n", fd);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 2048: open=%ld\n", fd);
+        fut_test_fail(2048);
+        fut_test_fail(2049);
+        fut_test_fail(2050);
+        return;
+    }
+
+    /* ── Test 2049: contains CONFIG_CGROUPS=y ── */
+    fut_printf("[MISC-TEST] Test 2049: config has CONFIG_CGROUPS=y\n");
+    {
+        static char buf[2048];
+        long n = sys_read((int)fd, buf, sizeof(buf) - 1);
+        if (n > 100) {
+            buf[n] = '\0';
+            bool found = false;
+            for (long i = 0; i < n - 15; i++) {
+                if (buf[i] == 'C' && buf[i+1] == 'O' && buf[i+2] == 'N' &&
+                    buf[i+3] == 'F' && buf[i+4] == 'I' && buf[i+5] == 'G' &&
+                    buf[i+6] == '_' && buf[i+7] == 'C' && buf[i+8] == 'G') {
+                    found = true;
+                    break;
+                }
+            }
+            if (found) {
+                fut_printf("[MISC-TEST] ✓ Test 2049: CONFIG_CG* found\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2049: CONFIG_CG not found\n");
+                fut_test_fail(2049);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2049: read=%ld\n", n);
+            fut_test_fail(2049);
+        }
+    }
+
+    /* ── Test 2050: contains CONFIG_SECCOMP_FILTER=y ── */
+    fut_printf("[MISC-TEST] Test 2050: config has SECCOMP_FILTER\n");
+    {
+        /* Re-read from offset 0 */
+        sys_close((int)fd);
+        fd = sys_open("/proc/config.gz", 0, 0);
+        if (fd >= 0) {
+            static char buf[2048];
+            long n = sys_read((int)fd, buf, sizeof(buf) - 1);
+            if (n > 0) {
+                buf[n] = '\0';
+                bool found = false;
+                for (long i = 0; i < n - 20; i++) {
+                    if (buf[i] == 'S' && buf[i+1] == 'E' && buf[i+2] == 'C' &&
+                        buf[i+3] == 'C' && buf[i+4] == 'O' && buf[i+5] == 'M' &&
+                        buf[i+6] == 'P') {
+                        found = true;
+                        break;
+                    }
+                }
+                if (found) {
+                    fut_printf("[MISC-TEST] ✓ Test 2050: SECCOMP found\n");
+                    fut_test_pass();
+                } else { fut_test_fail(2050); }
+            } else { fut_test_fail(2050); }
+        } else { fut_test_fail(2050); }
+    }
+    if (fd >= 0) sys_close((int)fd);
+}
+
+/* ============================================================
  * Tests 2042-2047: shell script I/O and /etc/profile support
  * ============================================================ */
 __attribute__((noinline)) static void test_script_file_io(void) {
@@ -63791,6 +63872,7 @@ void fut_misc_test_thread(void *arg) {
     test_loop_device(); /* Tests 1885-1887 */
     test_per_iface_conf(); /* Tests 1869-1871 */
 
+    test_proc_config_gz(); /* Tests 2048-2050 */
     test_script_file_io(); /* Tests 2042-2047 */
     test_seccomp_bpf(); /* Tests 2036-2041 */
     test_cgroupfs(); /* Tests 2026-2035 */

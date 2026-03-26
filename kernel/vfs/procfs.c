@@ -268,6 +268,7 @@ enum procfs_kind {
     PROC_CGROUPS,                   /* /proc/cgroups — cgroup subsystem list */
     PROC_PAGEMAP,                   /* /proc/<pid>/pagemap — physical page info (binary, 8 bytes/page) */
     PROC_KALLSYMS,                  /* /proc/kallsyms — kernel symbol table (addresses zeroed per kptr_restrict) */
+    PROC_KCONFIG,                   /* /proc/config.gz — kernel configuration (text, not actually gzipped) */
     PROC_TIMERSLACK_NS,             /* /proc/<pid>/timerslack_ns — timer expiry slack in nanoseconds */
     PROC_SYSCALL,                   /* /proc/<pid>/syscall — current syscall number and arguments */
     PROC_LOCKS,                     /* /proc/locks — POSIX and flock file lock table */
@@ -480,6 +481,7 @@ typedef struct {
 #define PROC_INO_PRESSURE_CPU            423ULL
 #define PROC_INO_PRESSURE_MEM            424ULL
 #define PROC_INO_PRESSURE_IO             425ULL
+#define PROC_INO_KCONFIG                 426ULL
 /* /proc/sys/kernel/ extended range: 400-429 */
 #define PROC_INO_SYS_KERNEL_NMI_WD     400ULL
 #define PROC_INO_SYS_KERNEL_WATCHDOG   401ULL
@@ -3522,6 +3524,84 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
         case PROC_KALLSYMS:
             total = gen_kallsyms(tmp, GEN_BUF);
             break;
+        case PROC_KCONFIG: {
+            /* /proc/config.gz — kernel configuration (plain text, not gzipped).
+             * Docker's check-config.sh, systemd-analyze, and container tools
+             * read this to verify kernel features. Report key configs as enabled. */
+            static const char kconfig[] =
+                "#\n"
+                "# Futura OS Kernel Configuration\n"
+                "#\n"
+                "CONFIG_IKCONFIG=y\n"
+                "CONFIG_IKCONFIG_PROC=y\n"
+                "CONFIG_CGROUPS=y\n"
+                "CONFIG_CGROUP_CPUACCT=y\n"
+                "CONFIG_CGROUP_DEVICE=y\n"
+                "CONFIG_CGROUP_FREEZER=y\n"
+                "CONFIG_CGROUP_SCHED=y\n"
+                "CONFIG_CGROUP_PIDS=y\n"
+                "CONFIG_MEMCG=y\n"
+                "CONFIG_BLK_CGROUP=y\n"
+                "CONFIG_CGROUP_BPF=y\n"
+                "CONFIG_NAMESPACES=y\n"
+                "CONFIG_UTS_NS=y\n"
+                "CONFIG_IPC_NS=y\n"
+                "CONFIG_PID_NS=y\n"
+                "CONFIG_NET_NS=y\n"
+                "CONFIG_USER_NS=y\n"
+                "CONFIG_SECCOMP=y\n"
+                "CONFIG_SECCOMP_FILTER=y\n"
+                "CONFIG_SECURITY=y\n"
+                "CONFIG_SECURITY_LANDLOCK=y\n"
+                "CONFIG_KEYS=y\n"
+                "CONFIG_OVERLAY_FS=y\n"
+                "CONFIG_FUSE_FS=y\n"
+                "CONFIG_EXT4_FS=y\n"
+                "CONFIG_VFAT_FS=y\n"
+                "CONFIG_EXFAT_FS=y\n"
+                "CONFIG_TMPFS=y\n"
+                "CONFIG_PROC_FS=y\n"
+                "CONFIG_SYSFS=y\n"
+                "CONFIG_DEVTMPFS=y\n"
+                "CONFIG_INOTIFY_USER=y\n"
+                "CONFIG_FANOTIFY=y\n"
+                "CONFIG_EPOLL=y\n"
+                "CONFIG_SIGNALFD=y\n"
+                "CONFIG_TIMERFD=y\n"
+                "CONFIG_EVENTFD=y\n"
+                "CONFIG_NET=y\n"
+                "CONFIG_INET=y\n"
+                "CONFIG_IPV6=y\n"
+                "CONFIG_NETFILTER=y\n"
+                "CONFIG_BRIDGE=y\n"
+                "CONFIG_VLAN_8021Q=y\n"
+                "CONFIG_TUN=y\n"
+                "CONFIG_VETH=y\n"
+                "CONFIG_UNIX=y\n"
+                "CONFIG_XFRM=y\n"
+                "CONFIG_PERF_EVENTS=y\n"
+                "CONFIG_BPF=y\n"
+                "CONFIG_IO_URING=y\n"
+                "CONFIG_POSIX_MQUEUE=y\n"
+                "CONFIG_SYSVIPC=y\n"
+                "CONFIG_AIO=y\n"
+                "CONFIG_USERFAULTFD=y\n"
+                "CONFIG_CHECKPOINT_RESTORE=y\n"
+                "CONFIG_AUDIT=y\n"
+                "CONFIG_PSI=y\n"
+                "CONFIG_PRINTK=y\n"
+                "CONFIG_SMP=y\n"
+                "CONFIG_MODULES=y\n"
+                "CONFIG_FUTEX=y\n"
+                "CONFIG_PREEMPT=y\n"
+                "CONFIG_HIGH_RES_TIMERS=y\n"
+                "CONFIG_X86_64=y\n"
+                "CONFIG_64BIT=y\n";
+            total = sizeof(kconfig) - 1;
+            if (total > GEN_BUF) total = GEN_BUF;
+            __builtin_memcpy(tmp, kconfig, total);
+            break;
+        }
         case PROC_LOCKS:
             /* /proc/locks — file lock table.
              * Futura's file locking is per-vnode (not globally enumerable).
@@ -4632,6 +4712,11 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
         if (STREQ(name, "kallsyms")) {
             *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_KALLSYMS,
                                           0100444, PROC_KALLSYMS, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "config.gz")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_KCONFIG,
+                                          0100444, PROC_KCONFIG, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
         if (STREQ(name, "locks")) {
@@ -5816,7 +5901,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             "loadavg", "mounts", "sys", "stat", "filesystems", "vmstat", "net",
             "interrupts", "cmdline", "swaps", "devices", "misc",
             "buddyinfo", "zoneinfo", "diskstats", "partitions", "cgroups", "kallsyms",
-            "locks", "modules", "sysvipc", "pci", "pressure"
+            "locks", "modules", "sysvipc", "pci", "pressure", "config.gz"
         };
         static const uint8_t fixed_type[] = {
             FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
@@ -5834,7 +5919,8 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             FUT_VDIR_TYPE_REG,  /* modules */
             FUT_VDIR_TYPE_DIR,  /* sysvipc */
             FUT_VDIR_TYPE_REG,  /* pci */
-            FUT_VDIR_TYPE_DIR   /* pressure */
+            FUT_VDIR_TYPE_DIR,  /* pressure */
+            FUT_VDIR_TYPE_REG   /* config.gz */
         };
         static const uint64_t fixed_ino[] = {
             PROC_INO_ROOT, PROC_INO_ROOT,
@@ -5849,9 +5935,9 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             PROC_INO_DISKSTATS, PROC_INO_PARTITIONS, PROC_INO_CGROUPS, PROC_INO_KALLSYMS,
             PROC_INO_LOCKS, PROC_INO_MODULES,
             PROC_INO_SYSVIPC_DIR, PROC_INO_PCI,
-            PROC_INO_PRESSURE_DIR
+            PROC_INO_PRESSURE_DIR, PROC_INO_KCONFIG
         };
-        if (idx < 31) {
+        if (idx < 32) {
             de->d_ino    = fixed_ino[idx];
             de->d_off    = idx + 1;
             de->d_type   = fixed_type[idx];
@@ -5868,9 +5954,9 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         /*
          * PID enumeration: after the 29 fixed entries, cookies encode
          * "find first task with pid > (cookie - 30)".  After returning
-         * a PID entry we set cookie = 31 + that_pid + 1.
+         * a PID entry we set cookie = 32 + that_pid + 1.
          */
-        uint64_t min_pid = idx >= 31 ? idx - 31 : 0;  /* start scanning for pid > min_pid */
+        uint64_t min_pid = idx >= 32 ? idx - 32 : 0;  /* start scanning for pid > min_pid */
         fut_task_t *best = NULL;
         uint64_t   best_pid = (uint64_t)-1;
         fut_task_t *t = fut_task_list;
@@ -5895,14 +5981,14 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         pidname[pn] = '\0';
 
         de->d_ino    = PROC_INO_PID_DIR(best->pid);
-        de->d_off    = 31 + best->pid + 1;
+        de->d_off    = 32 + best->pid + 1;
         de->d_type   = FUT_VDIR_TYPE_DIR;
         de->d_reclen = sizeof(*de);
         size_t nl = (size_t)pn;
         if (nl > FUT_VFS_NAME_MAX) nl = FUT_VFS_NAME_MAX;
         __builtin_memcpy(de->d_name, pidname, nl);
         de->d_name[nl] = '\0';
-        *cookie = 31 + best->pid + 1;  /* resume after this pid */
+        *cookie = 32 + best->pid + 1;  /* resume after this pid */
         return 1;
     }
 

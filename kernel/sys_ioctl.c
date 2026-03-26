@@ -60,6 +60,9 @@
 #define SIOCGIFINDEX   0x8933  /* Get interface index */
 #define SIOCGIFNAME    0x8910  /* Get interface name from index */
 
+/* VLAN ioctl (Linux compatible) */
+#define SIOCSIFVLAN    0x8983  /* Create/configure VLAN sub-interface */
+
 /* Futura firewall ioctls (custom range 0x89F0-0x89FF) */
 #define SIOCFWADDRULE  0x89F0  /* Add firewall rule */
 #define SIOCFWPOLICY   0x89F1  /* Set chain default policy */
@@ -606,6 +609,7 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
                                    request == SIOCADDRT || request == SIOCDELRT ||
                                    request == SIOCFWADDRULE || request == SIOCFWPOLICY ||
                                    request == SIOCFWFLUSH ||
+                                   request == SIOCSIFVLAN ||
                                    request == 0x400454CA /* TUNSETIFF */);
                 if (argp_val >= KERNEL_VIRTUAL_BASE && !is_builtin) {
                     return -EFAULT;
@@ -1660,6 +1664,25 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
                 return -EFAULT;
             extern int firewall_flush(int);
             return firewall_flush(chain);
+        }
+
+        case SIOCSIFVLAN: {
+            /* Create VLAN sub-interface: argp → struct { char ifname[16]; uint16_t vlan_id; } */
+            if (!argp) return -EFAULT;
+            struct { char ifname[16]; uint16_t vlan_id; } vreq;
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
+                __builtin_memcpy(&vreq, argp, sizeof(vreq));
+            else
+#endif
+            if (fut_copy_from_user(&vreq, argp, sizeof(vreq)) != 0)
+                return -EFAULT;
+            vreq.ifname[15] = '\0';
+            extern struct net_iface *netif_by_name(const char *);
+            struct net_iface *parent = netif_by_name(vreq.ifname);
+            if (!parent) return -ENODEV;
+            extern int netif_create_vlan(int, uint16_t);
+            return netif_create_vlan(parent->index, vreq.vlan_id);
         }
 
         default:

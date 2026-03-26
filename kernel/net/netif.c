@@ -185,6 +185,44 @@ int netif_set_flags(int index, uint32_t flags) {
     return 0;
 }
 
+int netif_create_vlan(int parent_idx, uint16_t vlan_id) {
+    if (vlan_id == 0 || vlan_id > 4094) return -EINVAL;
+
+    struct net_iface *parent = netif_by_index(parent_idx);
+    if (!parent) return -ENODEV;
+
+    /* Build name: "eth0.100" */
+    char vname[NET_IFNAME_MAX];
+    int pos = 0;
+    const char *p = parent->name;
+    while (*p && pos < NET_IFNAME_MAX - 6) vname[pos++] = *p++;
+    vname[pos++] = '.';
+    if (vlan_id >= 1000) vname[pos++] = (char)('0' + vlan_id / 1000);
+    if (vlan_id >= 100)  vname[pos++] = (char)('0' + (vlan_id / 100) % 10);
+    if (vlan_id >= 10)   vname[pos++] = (char)('0' + (vlan_id / 10) % 10);
+    vname[pos++] = (char)('0' + vlan_id % 10);
+    vname[pos] = '\0';
+
+    /* Check for duplicate */
+    if (netif_by_name(vname)) return -EEXIST;
+
+    /* Register with parent's MAC, parent's MTU minus 4 (VLAN tag overhead) */
+    uint32_t vlan_mtu = parent->mtu > 4 ? parent->mtu - 4 : parent->mtu;
+    int idx = netif_register(vname, parent->mac, vlan_mtu, parent->transmit);
+    if (idx < 0) return idx;
+
+    struct net_iface *viface = netif_by_index(idx);
+    if (viface) {
+        viface->vlan_id = vlan_id;
+        viface->parent_idx = parent_idx;
+        viface->flags = IFF_UP | IFF_BROADCAST | IFF_RUNNING;
+    }
+
+    fut_printf("[NETIF] Created VLAN interface '%s' (vid=%u, parent=%s)\n",
+               vname, vlan_id, parent->name);
+    return idx;
+}
+
 int netif_count(void) {
     int count = 0;
     for (int i = 0; i < NET_IFACE_MAX; i++)

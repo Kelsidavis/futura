@@ -1135,6 +1135,7 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  ip addr add <ip>/<pfx> dev <if>  - Set interface address\n");
     write_str(1, "  ip route add <dst> via <gw>      - Add route\n");
     write_str(1, "  ip link set <if> up|down|mtu N   - Interface control\n");
+    write_str(1, "  ip link add link <if> type vlan id <N> - Create VLAN\n");
     write_str(1, "  ip forward on|off                - Toggle IP forwarding\n");
     write_str(1, "  ifconfig        - Show interface configuration\n");
     write_str(1, "  iptables -A|-P|-F|-L             - Firewall rules\n");
@@ -7039,6 +7040,43 @@ static int execute_command(int argc, char *argv[]) {
         sys_close(sock);
         return 0;
     } else if (strcmp_simple(argv[0], "ip") == 0) {
+        /* ip link add link <parent> name <name> type vlan id <vid> */
+        if (argc >= 5 && strcmp_simple(argv[1], "link") == 0 &&
+            strcmp_simple(argv[2], "add") == 0) {
+            /* Parse: ip link add link <parent> type vlan id <vid> */
+            const char *parent = NULL;
+            int vid = 0;
+            for (int i = 3; i < argc; i++) {
+                if (strcmp_simple(argv[i], "link") == 0 && i+1 < argc) parent = argv[++i];
+                else if (strcmp_simple(argv[i], "id") == 0 && i+1 < argc) {
+                    const char *p = argv[++i];
+                    while (*p >= '0' && *p <= '9') { vid = vid * 10 + (*p - '0'); p++; }
+                }
+            }
+            if (!parent || vid == 0) {
+                write_str(2, "usage: ip link add link <parent> type vlan id <vid>\n");
+                return 1;
+            }
+            int sock = sys_call3(41, 2, 2, 0);
+            if (sock < 0) { write_str(2, "ip link add: socket failed\n"); return 1; }
+            struct { char ifname[16]; unsigned short vlan_id; } vreq;
+            for (int k = 0; k < 16; k++) vreq.ifname[k] = 0;
+            for (int k = 0; parent[k] && k < 15; k++) vreq.ifname[k] = parent[k];
+            vreq.vlan_id = (unsigned short)vid;
+            long rc = sys_call3(16, sock, 0x8983/*SIOCSIFVLAN*/, (long)&vreq);
+            sys_close(sock);
+            if (rc >= 0) {
+                write_str(1, "VLAN ");
+                char num[8]; int_to_str(vid, num, 8);
+                write_str(1, num);
+                write_str(1, " created on ");
+                write_str(1, parent);
+                write_str(1, "\n");
+            } else {
+                write_str(2, "ip link add: failed\n");
+            }
+            return 0;
+        }
         /* ip link set <iface> up/down — bring interface up or down */
         if (argc >= 5 && strcmp_simple(argv[1], "link") == 0 &&
             strcmp_simple(argv[2], "set") == 0) {

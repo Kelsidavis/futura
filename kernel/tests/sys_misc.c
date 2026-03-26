@@ -55357,6 +55357,107 @@ __attribute__((noinline)) static void test_pts_dir_readdir(void) {
     }
 }
 
+__attribute__((noinline)) static void test_vlan_interfaces(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_close(int);
+    extern long sys_ioctl(int fd, unsigned long request, void *argp);
+
+    /* Test 1861: Create VLAN interface via SIOCSIFVLAN */
+    fut_printf("[MISC-TEST] Test 1861: SIOCSIFVLAN creates VLAN sub-interface\n");
+    {
+        long sfd = sys_open("/dev/null", 0x0002, 0);
+        if (sfd >= 0) {
+            static struct { char ifname[16]; uint16_t vlan_id; } vreq;
+            __builtin_memset(&vreq, 0, sizeof(vreq));
+            __builtin_memcpy(vreq.ifname, "eth0", 4);
+            vreq.vlan_id = 100;
+            long rc = sys_ioctl((int)sfd, 0x8983 /* SIOCSIFVLAN */, &vreq);
+            if (rc >= 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1861: VLAN 100 created (idx=%ld)\n", rc);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1861: SIOCSIFVLAN=%ld\n", rc);
+                fut_test_fail(1861);
+            }
+            sys_close((int)sfd);
+        } else {
+            fut_test_fail(1861);
+        }
+    }
+
+    /* Test 1862: VLAN interface appears in /proc/net/dev */
+    fut_printf("[MISC-TEST] Test 1862: VLAN interface visible in /proc/net/dev\n");
+    {
+        extern long sys_read(int, void *, size_t);
+        long fd = sys_open("/proc/net/dev", 0, 0);
+        if (fd >= 0) {
+            static char buf[2048];
+            long n = sys_read((int)fd, buf, sizeof(buf) - 1);
+            sys_close((int)fd);
+            if (n > 0) {
+                buf[n] = '\0';
+                bool found = false;
+                for (int i = 0; i < n - 8; i++) {
+                    if (buf[i] == 'e' && buf[i+1] == 't' && buf[i+2] == 'h' &&
+                        buf[i+3] == '0' && buf[i+4] == '.' && buf[i+5] == '1' &&
+                        buf[i+6] == '0' && buf[i+7] == '0') {
+                        found = true; break;
+                    }
+                }
+                if (found) {
+                    fut_printf("[MISC-TEST] ✓ Test 1862: eth0.100 in /proc/net/dev\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1862: eth0.100 not found\n");
+                    fut_test_fail(1862);
+                }
+            } else { fut_test_fail(1862); }
+        } else { fut_test_fail(1862); }
+    }
+
+    /* Test 1863: Duplicate VLAN returns EEXIST */
+    fut_printf("[MISC-TEST] Test 1863: Duplicate VLAN → EEXIST\n");
+    {
+        long sfd = sys_open("/dev/null", 0x0002, 0);
+        if (sfd >= 0) {
+            static struct { char ifname[16]; uint16_t vlan_id; } vreq;
+            __builtin_memset(&vreq, 0, sizeof(vreq));
+            __builtin_memcpy(vreq.ifname, "eth0", 4);
+            vreq.vlan_id = 100;
+            long rc = sys_ioctl((int)sfd, 0x8983, &vreq);
+            if (rc == -17 /* EEXIST */) {
+                fut_printf("[MISC-TEST] ✓ Test 1863: duplicate VLAN → EEXIST\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1863: expected EEXIST, got %ld\n", rc);
+                fut_test_fail(1863);
+            }
+            sys_close((int)sfd);
+        } else { fut_test_fail(1863); }
+    }
+
+    /* Test 1864: Invalid VLAN ID (0) returns EINVAL */
+    fut_printf("[MISC-TEST] Test 1864: VLAN id=0 → EINVAL\n");
+    {
+        long sfd = sys_open("/dev/null", 0x0002, 0);
+        if (sfd >= 0) {
+            static struct { char ifname[16]; uint16_t vlan_id; } vreq;
+            __builtin_memset(&vreq, 0, sizeof(vreq));
+            __builtin_memcpy(vreq.ifname, "eth0", 4);
+            vreq.vlan_id = 0;
+            long rc = sys_ioctl((int)sfd, 0x8983, &vreq);
+            if (rc == -22 /* EINVAL */) {
+                fut_printf("[MISC-TEST] ✓ Test 1864: VLAN 0 → EINVAL\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1864: expected EINVAL, got %ld\n", rc);
+                fut_test_fail(1864);
+            }
+            sys_close((int)sfd);
+        } else { fut_test_fail(1864); }
+    }
+}
+
 __attribute__((noinline)) static void test_blockdev_procfs(void) {
     extern long sys_open(const char *, int, int);
     extern long sys_read(int, void *, size_t);
@@ -59214,6 +59315,7 @@ void fut_misc_test_thread(void *arg) {
     test_ip_ttl_tos_sockopt(); /* Tests 1853-1854 */
     test_futurafs(); /* Tests 1855-1857 */
     test_blockdev_procfs(); /* Tests 1858-1860 */
+    test_vlan_interfaces(); /* Tests 1861-1864 */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

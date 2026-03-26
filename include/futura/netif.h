@@ -67,6 +67,10 @@ struct net_iface {
     uint64_t    rx_dropped;
     uint64_t    tx_dropped;
 
+    /* VLAN (802.1Q) */
+    uint16_t    vlan_id;                /* 0 = not a VLAN interface */
+    int         parent_idx;             /* Parent interface index (for VLAN sub-ifs) */
+
     /* Driver callback: transmit a packet on this interface */
     int (*transmit)(struct net_iface *iface, const void *pkt, size_t len);
 };
@@ -107,6 +111,11 @@ int netif_count(void);
 /* Iterate all interfaces (for /proc/net/dev) */
 typedef void (*netif_iter_fn)(const struct net_iface *iface, void *ctx);
 void netif_foreach(netif_iter_fn fn, void *ctx);
+
+/* Create a VLAN sub-interface on parent.
+ * Creates "parent.vlan_id" interface that inherits parent MAC.
+ * Returns interface index or negative error. */
+int netif_create_vlan(int parent_idx, uint16_t vlan_id);
 
 /* ---- Routing table ---- */
 

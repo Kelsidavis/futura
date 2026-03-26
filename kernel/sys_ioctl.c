@@ -60,6 +60,10 @@
 #define SIOCGIFINDEX   0x8933  /* Get interface index */
 #define SIOCGIFNAME    0x8910  /* Get interface name from index */
 
+/* Loop device ioctls (Linux compatible) */
+#define LOOP_SET_FD    0x4C00  /* Associate file with loop device */
+#define LOOP_CLR_FD    0x4C01  /* Detach file from loop device */
+
 /* VLAN ioctl (Linux compatible) */
 #define SIOCSIFVLAN    0x8983  /* Create/configure VLAN sub-interface */
 
@@ -622,6 +626,7 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
                                    request == SIOCFWADDRULE || request == SIOCFWPOLICY ||
                                    request == SIOCFWFLUSH ||
                                    request == SIOCSIFVLAN ||
+                                   request == LOOP_SET_FD || request == LOOP_CLR_FD ||
                                    request == SIOCADDGRETUN ||
                                    request == SIOCADDRULE || request == SIOCDELRULE ||
                                    request == SIOCADDRT_TBL ||
@@ -1697,6 +1702,55 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
             greq.name[15] = '\0';
             extern int gre_tunnel_create(const char *, uint32_t, uint32_t, uint32_t);
             return gre_tunnel_create(greq.name, greq.local_ip, greq.remote_ip, greq.key);
+        }
+
+        case LOOP_SET_FD: {
+            /* Associate a file descriptor with a loop device.
+             * argp = the backing file descriptor (as int). */
+            int backing_fd = (int)(uintptr_t)argp;
+            extern int loop_set_fd(int loop_idx, int fd);
+            /* Extract loop index from the file's path name (/dev/loopN → N) */
+            fut_task_t *ltask = fut_task_current();
+            int loop_idx = -1;
+            if (ltask && ltask->fd_table && fd >= 0 && fd < ltask->max_fds) {
+                struct fut_file *lf = ltask->fd_table[fd];
+                if (lf && lf->path) {
+                    /* Find "loop" in path, extract digit after it */
+                    const char *p = lf->path;
+                    while (*p) {
+                        if (p[0]=='l' && p[1]=='o' && p[2]=='o' && p[3]=='p' &&
+                            p[4] >= '0' && p[4] <= '7') {
+                            loop_idx = p[4] - '0';
+                            break;
+                        }
+                        p++;
+                    }
+                }
+            }
+            if (loop_idx < 0 || loop_idx >= 8) return -ENXIO;
+            return loop_set_fd(loop_idx, backing_fd);
+        }
+
+        case LOOP_CLR_FD: {
+            fut_task_t *ltask = fut_task_current();
+            int loop_idx = -1;
+            if (ltask && ltask->fd_table && fd >= 0 && fd < ltask->max_fds) {
+                struct fut_file *lf = ltask->fd_table[fd];
+                if (lf && lf->path) {
+                    const char *p = lf->path;
+                    while (*p) {
+                        if (p[0]=='l' && p[1]=='o' && p[2]=='o' && p[3]=='p' &&
+                            p[4] >= '0' && p[4] <= '7') {
+                            loop_idx = p[4] - '0';
+                            break;
+                        }
+                        p++;
+                    }
+                }
+            }
+            if (loop_idx < 0 || loop_idx >= 8) return -ENXIO;
+            extern int loop_clr_fd(int loop_idx);
+            return loop_clr_fd(loop_idx);
         }
 
         case SIOCADDRT_TBL: {

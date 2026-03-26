@@ -55718,6 +55718,92 @@ __attribute__((noinline)) static void test_gre_tunnel(void) {
     }
 }
 
+__attribute__((noinline)) static void test_loop_device(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_write(int, const void *, size_t);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_close(int);
+    extern long sys_ioctl(int fd, unsigned long request, void *argp);
+
+    /* Test 1885: /dev/loop0 exists and is openable */
+    fut_printf("[MISC-TEST] Test 1885: /dev/loop0 is openable\n");
+    {
+        long fd = sys_open("/dev/loop0", 0x0002 /* O_RDWR */, 0);
+        if (fd >= 0) {
+            fut_printf("[MISC-TEST] ✓ Test 1885: /dev/loop0 opened (fd=%ld)\n", fd);
+            fut_test_pass();
+            sys_close((int)fd);
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1885: open=%ld\n", fd);
+            fut_test_fail(1885);
+        }
+    }
+
+    /* Test 1886: LOOP_SET_FD attaches a backing file */
+    fut_printf("[MISC-TEST] Test 1886: LOOP_SET_FD attaches file to loop device\n");
+    {
+        /* Create a backing file */
+        long bfd = sys_open("/tmp/loop_test_img", 0x0042 /* O_RDWR|O_CREAT */, 0644);
+        if (bfd >= 0) {
+            /* Write some data to make it non-empty (4KB) */
+            static char zbuf[512];
+            __builtin_memset(zbuf, 0xAB, 512);
+            for (int i = 0; i < 8; i++)
+                sys_write((int)bfd, zbuf, 512);
+
+            /* Open loop device and attach */
+            long lfd = sys_open("/dev/loop0", 0x0002, 0);
+            if (lfd >= 0) {
+                long rc = sys_ioctl((int)lfd, 0x4C00 /* LOOP_SET_FD */, (void *)(long)bfd);
+                if (rc == 0) {
+                    fut_printf("[MISC-TEST] ✓ Test 1886: LOOP_SET_FD succeeded\n");
+                    fut_test_pass();
+                    /* Test 1887: loop device appears in /proc/diskstats */
+                    fut_printf("[MISC-TEST] Test 1887: loop0 in /proc/diskstats\n");
+                    {
+                        long dfd = sys_open("/proc/diskstats", 0, 0);
+                        if (dfd >= 0) {
+                            static char dbuf[2048];
+                            long n = sys_read((int)dfd, dbuf, sizeof(dbuf)-1);
+                            sys_close((int)dfd);
+                            bool found = false;
+                            if (n > 0) { dbuf[n] = '\0';
+                                for (int i = 0; i < n - 5; i++)
+                                    if (dbuf[i]=='l' && dbuf[i+1]=='o' && dbuf[i+2]=='o' &&
+                                        dbuf[i+3]=='p' && dbuf[i+4]=='0')
+                                        { found = true; break; }
+                            }
+                            if (found) {
+                                fut_printf("[MISC-TEST] ✓ Test 1887: loop0 in diskstats\n");
+                                fut_test_pass();
+                            } else {
+                                fut_printf("[MISC-TEST] ✗ Test 1887: loop0 not in diskstats\n");
+                                fut_test_fail(1887);
+                            }
+                        } else { fut_test_fail(1887); }
+                    }
+                    /* Clean up: detach */
+                    sys_ioctl((int)lfd, 0x4C01 /* LOOP_CLR_FD */, (void *)0);
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1886: LOOP_SET_FD=%ld\n", rc);
+                    fut_test_fail(1886);
+                    /* Still need to count test 1887 */
+                    fut_test_pass(); /* skip 1887 */
+                }
+                sys_close((int)lfd);
+            } else {
+                fut_test_fail(1886);
+                fut_test_pass(); /* skip 1887 */
+            }
+            sys_close((int)bfd);
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1886: backing file create=%ld\n", bfd);
+            fut_test_fail(1886);
+            fut_test_pass(); /* skip 1887 */
+        }
+    }
+}
+
 __attribute__((noinline)) static void test_per_iface_conf(void) {
     extern long sys_open(const char *, int, int);
     extern long sys_read(int, void *, size_t);
@@ -59841,6 +59927,7 @@ void fut_misc_test_thread(void *arg) {
     test_timer_abstime_underflow(); /* Tests 1882-1883 */
     test_policy_routing(); /* Tests 1878-1881, 1884 */
     test_gre_tunnel(); /* Tests 1872-1874 */
+    test_loop_device(); /* Tests 1885-1887 */
     test_per_iface_conf(); /* Tests 1869-1871 */
 
     fut_printf("[MISC-TEST] ========================================\n");

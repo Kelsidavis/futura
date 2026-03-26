@@ -484,7 +484,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     /* List of builtin commands */
     const char *builtins[] = {
         "arp", "bg", "brctl", "cd", "chmod", "clear", "conntrack", "date", "dd", "df", "dhclient", "dmesg", "echo", "edit", "ethtool", "hexdump", "lsof", "nc", "poweroff", "reboot", "seq", "sleep", "time", "traceroute", "wget", "exit", "export", "fg", "free",
-        "help", "hostname", "httpd", "id", "ifconfig", "iostat", "ipcs", "iptables", "jobs", "kill", "ls", "lsblk", "lspci", "mount", "netstat",
+        "help", "hostname", "httpd", "id", "ifconfig", "iostat", "ipcs", "iptables", "jobs", "kill", "losetup", "ls", "lsblk", "lspci", "mount", "netstat",
         ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "history", "ip", "ln", "mktemp", "more", "nproc", "nslookup", "ping", "printf", "ps", "pwd", "read", "readlink", "set", "sha256sum", "shutdown", "source", "ss", "stat", "sync", "sysctl", "sysinfo", "test", "top", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "vmstat", "wait", "watch", "which", "whoami", "xargs", "yes", NULL
     };
 
@@ -6843,6 +6843,71 @@ static int execute_command(int argc, char *argv[]) {
             sys_call4(169, 0xfee1dead, 672274793, 0x4321FEDC, 0);
         write_str(2, "shutdown failed\n");
         return 1;
+    } else if (strcmp_simple(argv[0], "losetup") == 0) {
+        /* losetup — configure loop devices */
+        if (argc >= 3) {
+            /* losetup /dev/loopN <file> — attach file to loop device */
+            const char *loopdev = argv[1];
+            const char *backing = argv[2];
+            int loop_fd = sys_open(loopdev, O_RDWR, 0);
+            if (loop_fd < 0) {
+                write_str(2, "losetup: cannot open "); write_str(2, loopdev);
+                write_char(2, '\n'); return 1;
+            }
+            int back_fd = sys_open(backing, O_RDWR, 0);
+            if (back_fd < 0) {
+                sys_close(loop_fd);
+                write_str(2, "losetup: cannot open "); write_str(2, backing);
+                write_char(2, '\n'); return 1;
+            }
+            long rc = sys_call3(16 /* ioctl */, loop_fd, 0x4C00 /* LOOP_SET_FD */, back_fd);
+            sys_close(loop_fd);
+            if (rc == 0) {
+                write_str(1, loopdev); write_str(1, ": attached to ");
+                write_str(1, backing); write_str(1, "\n");
+            } else {
+                sys_close(back_fd);
+                write_str(2, "losetup: LOOP_SET_FD failed\n");
+            }
+            return (int)rc;
+        } else if (argc >= 2 && strcmp_simple(argv[1], "-d") == 0 && argc >= 3) {
+            /* losetup -d /dev/loopN — detach */
+            int loop_fd = sys_open(argv[2], O_RDWR, 0);
+            if (loop_fd < 0) { write_str(2, "losetup: cannot open device\n"); return 1; }
+            long rc = sys_call3(16, loop_fd, 0x4C01 /* LOOP_CLR_FD */, 0);
+            sys_close(loop_fd);
+            if (rc == 0) write_str(1, "Detached\n");
+            else write_str(2, "losetup: detach failed\n");
+            return (int)rc;
+        } else if (argc >= 2 && strcmp_simple(argv[1], "-a") == 0) {
+            /* losetup -a — list active loop devices */
+            for (int i = 0; i < 8; i++) {
+                char path[16] = "/dev/loop0";
+                path[9] = (char)('0' + i);
+                /* Check if active by reading from /proc/diskstats */
+                int fd = sys_open("/proc/diskstats", O_RDONLY, 0);
+                if (fd >= 0) {
+                    char buf[2048]; ssize_t n = sys_read(fd, buf, sizeof(buf)-1);
+                    sys_close(fd);
+                    if (n > 0) { buf[n] = '\0';
+                        char target[8] = "loop0"; target[4] = (char)('0' + i);
+                        for (ssize_t j = 0; j < n - 5; j++) {
+                            if (buf[j] == target[0] && buf[j+1] == target[1] &&
+                                buf[j+2] == target[2] && buf[j+3] == target[3] &&
+                                buf[j+4] == target[4]) {
+                                write_str(1, path); write_str(1, ": [active]\n");
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            write_str(1, "usage: losetup /dev/loopN <file>    - Attach file to loop device\n");
+            write_str(1, "       losetup -d /dev/loopN        - Detach loop device\n");
+            write_str(1, "       losetup -a                   - List active loop devices\n");
+        }
+        return 0;
     } else if (strcmp_simple(argv[0], "conntrack") == 0) {
         /* conntrack — show/flush NAT connection tracking table */
         if (argc >= 2 && strcmp_simple(argv[1], "-F") == 0) {
@@ -8843,7 +8908,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   111 built-in commands — type 'help'    |\n");
+    write_str(1, "|   112 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");

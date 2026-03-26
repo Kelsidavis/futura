@@ -460,6 +460,21 @@ static void task_mark_exit(fut_task_t *task, int status, int signal) {
     task->state = FUT_TASK_ZOMBIE;
     task->exit_code = status & EXIT_CODE_MASK;
     task->term_signal = signal & SIGNAL_MASK;
+
+    /* POSIX: When a session leader with a controlling terminal exits,
+     * send SIGHUP+SIGCONT to the foreground process group. This is how
+     * terminal disconnect causes shell children to be notified. */
+    if (task->sid == task->pid && task->tty_nr != 0) {
+        fut_task_t *t = fut_task_list;
+        while (t) {
+            if (t != task && t->sid == task->sid && t->state != FUT_TASK_ZOMBIE) {
+                fut_signal_send(t, 1 /* SIGHUP */);
+                fut_signal_send(t, 18 /* SIGCONT */);
+            }
+            t = t->next;
+        }
+    }
+
     fut_spinlock_release(&task_list_lock);
 
     /* Wake any epoll/poll/select waitqs registered via pidfds for this task */

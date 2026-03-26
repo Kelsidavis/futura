@@ -2166,8 +2166,18 @@ static void net_tcp_emit_one(const fut_socket_t *s, void *arg) {
     pb_hex8U(b, s->inet_addr);
     pb_char(b, ':');
     pb_hex4U(b, lport);
-    /* remote address: unconnected → 00000000:0000 */
-    pb_str(b, " 00000000:0000 ");
+    /* remote address: extract from connected peer if available */
+    pb_char(b, ' ');
+    if (s->state == FUT_SOCK_CONNECTED && s->pair && s->pair->peer) {
+        const fut_socket_t *peer = s->pair->peer;
+        uint16_t rport = (uint16_t)((peer->inet_port >> 8) | ((peer->inet_port & 0xFF) << 8));
+        pb_hex8U(b, peer->inet_addr);
+        pb_char(b, ':');
+        pb_hex4U(b, rport);
+    } else {
+        pb_str(b, "00000000:0000");
+    }
+    pb_char(b, ' ');
     pb_hex2U(b, tcp_state);
     /* tx_queue:rx_queue, timer, uid, timeout, inode */
     pb_str(b, " 00000000:00000000 00:00000000 00000000     0        0 ");
@@ -2191,7 +2201,18 @@ static void net_udp_emit_one(const fut_socket_t *s, void *arg) {
     pb_hex8U(b, s->inet_addr);
     pb_char(b, ':');
     pb_hex4U(b, lport);
-    pb_str(b, " 00000000:0000 07 00000000:00000000 00:00000000 00000000     0        0 ");
+    /* For DGRAM: show connected peer if available */
+    pb_char(b, ' ');
+    if (s->dgram_peer_path_len > 0 && s->pair && s->pair->peer) {
+        const fut_socket_t *peer = s->pair->peer;
+        uint16_t rport = (uint16_t)((peer->inet_port >> 8) | ((peer->inet_port & 0xFF) << 8));
+        pb_hex8U(b, peer->inet_addr);
+        pb_char(b, ':');
+        pb_hex4U(b, rport);
+    } else {
+        pb_str(b, "00000000:0000");
+    }
+    pb_str(b, " 07 00000000:00000000 00:00000000 00000000     0        0 ");
     pb_u64(b, (uint64_t)s->socket_id);
     pb_str(b, " 1 0000000000000000 100 0 0 10 0\n");
 }

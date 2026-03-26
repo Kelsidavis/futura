@@ -2150,12 +2150,22 @@ static void net_tcp_emit_one(const fut_socket_t *s, void *arg) {
     struct pbuf *b = ctx->b;
     int sl = ctx->slot++;
 
-    /* TCP state mapping */
+    /* TCP state mapping — refine with shutdown half-close tracking */
     uint8_t tcp_state;
     switch (s->state) {
-    case FUT_SOCK_CONNECTED:  tcp_state = 0x01; break;  /* ESTABLISHED */
+    case FUT_SOCK_CONNECTED:
+        if (s->shutdown_wr && s->shutdown_rd)
+            tcp_state = 0x07;  /* CLOSE (both halves shut) */
+        else if (s->shutdown_wr)
+            tcp_state = 0x05;  /* FIN_WAIT2 (local close) */
+        else if (s->shutdown_rd)
+            tcp_state = 0x08;  /* CLOSE_WAIT (peer closed) */
+        else
+            tcp_state = 0x01;  /* ESTABLISHED */
+        break;
     case FUT_SOCK_LISTENING:  tcp_state = 0x0A; break;  /* LISTEN */
     case FUT_SOCK_CONNECTING: tcp_state = 0x02; break;  /* SYN_SENT */
+    case FUT_SOCK_BOUND:      tcp_state = 0x07; break;  /* CLOSE */
     default:                  tcp_state = 0x07; break;  /* CLOSE */
     }
 

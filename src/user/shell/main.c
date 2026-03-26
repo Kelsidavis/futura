@@ -6702,8 +6702,16 @@ static int execute_command(int argc, char *argv[]) {
         }
         return 0;
     } else if (strcmp_simple(argv[0], "lspci") == 0) {
-        /* lspci — list PCI devices (from sysfs) */
-        write_str(1, "00:00.0 Host bridge: Futura Virtual Platform\n");
+        /* lspci — list PCI devices from /proc/pci */
+        int fd = sys_open("/proc/pci", O_RDONLY, 0);
+        if (fd >= 0) {
+            char buf[4096]; ssize_t n = sys_read(fd, buf, sizeof(buf)-1);
+            sys_close(fd);
+            if (n > 0) { buf[n] = '\0'; write_str(1, buf); }
+            else write_str(1, "No PCI devices found\n");
+        } else {
+            write_str(2, "lspci: cannot read /proc/pci\n");
+        }
         return 0;
     } else if (strcmp_simple(argv[0], "ipcs") == 0) {
         /* ipcs — show System V IPC status */

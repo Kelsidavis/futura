@@ -55434,6 +55434,42 @@ __attribute__((noinline)) static void test_blockdev_procfs(void) {
             fut_test_fail(1859);
         }
     }
+
+    /* Test 1860: /proc/pci lists PCI devices with BB:DD.F format */
+    fut_printf("[MISC-TEST] Test 1860: /proc/pci has PCI device entries\n");
+    {
+        long fd = sys_open("/proc/pci", 0, 0);
+        if (fd >= 0) {
+            static char pbuf[2048];
+            long n = sys_read((int)fd, pbuf, sizeof(pbuf) - 1);
+            sys_close((int)fd);
+            if (n > 0) {
+                pbuf[n] = '\0';
+                /* Should contain "00:" (bus 00) and a class name */
+                bool has_bus = false;
+                bool has_class = false;
+                for (int i = 0; i < n - 3; i++) {
+                    if (pbuf[i] == '0' && pbuf[i+1] == '0' && pbuf[i+2] == ':')
+                        has_bus = true;
+                    if (pbuf[i] == 'B' && pbuf[i+1] == 'r' && pbuf[i+2] == 'i')
+                        has_class = true;  /* "Bridge" */
+                }
+                if (has_bus && has_class) {
+                    fut_printf("[MISC-TEST] ✓ Test 1860: /proc/pci has device entries\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1860: bus=%d class=%d\n", has_bus, has_class);
+                    fut_test_fail(1860);
+                }
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1860: empty (%ld)\n", n);
+                fut_test_fail(1860);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1860: open=%ld\n", fd);
+            fut_test_fail(1860);
+        }
+    }
 }
 
 __attribute__((noinline)) static void test_net_procfs_devnodes(void) {
@@ -59177,7 +59213,7 @@ void fut_misc_test_thread(void *arg) {
     test_router_integration(); /* Test 1852 */
     test_ip_ttl_tos_sockopt(); /* Tests 1853-1854 */
     test_futurafs(); /* Tests 1855-1857 */
-    test_blockdev_procfs(); /* Tests 1858-1859 */
+    test_blockdev_procfs(); /* Tests 1858-1860 */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

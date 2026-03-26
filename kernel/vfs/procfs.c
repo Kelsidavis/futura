@@ -36,6 +36,7 @@
 #include <futura/tcpip.h>
 #include <kernel/eventfd.h>
 #include <kernel/fut_blockdev.h>
+#include <kernel/pci.h>
 #include <kernel/errno.h>
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
@@ -264,6 +265,7 @@ enum procfs_kind {
     PROC_TIMERSLACK_NS,             /* /proc/<pid>/timerslack_ns — timer expiry slack in nanoseconds */
     PROC_SYSCALL,                   /* /proc/<pid>/syscall — current syscall number and arguments */
     PROC_LOCKS,                     /* /proc/locks — POSIX and flock file lock table */
+    PROC_PCI_DEVICES,               /* /proc/pci — PCI bus device list */
 };
 
 typedef struct {
@@ -444,6 +446,7 @@ typedef struct {
 #define PROC_INO_SYS_NET_IPV4_ACCEPT_RA  413ULL
 #define PROC_INO_KALLSYMS                 414ULL
 #define PROC_INO_LOCKS                    415ULL
+#define PROC_INO_PCI                      416ULL
 /* /proc/sys/kernel/ extended range: 400-429 */
 #define PROC_INO_SYS_KERNEL_NMI_WD     400ULL
 #define PROC_INO_SYS_KERNEL_WATCHDOG   401ULL
@@ -538,6 +541,15 @@ static void pb_oct(struct pbuf *b, uint32_t v) {
 static void pb_hex2(struct pbuf *b, uint8_t v) {
     /* Print exactly 2 hex digits (for dev major:minor) */
     static const char hex[] = "0123456789abcdef";
+    pb_char(b, hex[(v >> 4) & 0xf]);
+    pb_char(b, hex[v & 0xf]);
+}
+
+static void pb_hex4(struct pbuf *b, uint16_t v) {
+    /* Print exactly 4 lowercase hex digits */
+    static const char hex[] = "0123456789abcdef";
+    pb_char(b, hex[(v >> 12) & 0xf]);
+    pb_char(b, hex[(v >> 8) & 0xf]);
     pb_char(b, hex[(v >> 4) & 0xf]);
     pb_char(b, hex[v & 0xf]);
 }
@@ -3428,6 +3440,52 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
              * Empty file is valid and accepted by all callers (lsof, procps, etc.). */
             total = 0;
             break;
+        case PROC_PCI_DEVICES: {
+            /* /proc/pci — enumerate PCI devices in lspci-friendly format.
+             * Format: BB:DD.F CLASS: vendor:device description */
+            struct pbuf b = { tmp, 0, GEN_BUF };
+            extern int pci_device_count(void);
+            extern const struct pci_device *pci_get_device(int index);
+            int count = pci_device_count();
+            for (int i = 0; i < count; i++) {
+                const struct pci_device *d = pci_get_device(i);
+                if (!d) continue;
+                /* BB:DD.F */
+                pb_hex2(&b, d->bus);
+                pb_str(&b, ":");
+                pb_hex2(&b, d->dev);
+                pb_str(&b, ".");
+                pb_u64(&b, d->func);
+                pb_str(&b, " ");
+                /* Class name */
+                const char *cn = "Unknown";
+                switch (d->class_code) {
+                    case 0x00: cn = "Unclassified"; break;
+                    case 0x01: cn = "Mass storage controller"; break;
+                    case 0x02: cn = "Network controller"; break;
+                    case 0x03: cn = "Display controller"; break;
+                    case 0x04: cn = "Multimedia controller"; break;
+                    case 0x05: cn = "Memory controller"; break;
+                    case 0x06: cn = "Bridge"; break;
+                    case 0x07: cn = "Communication controller"; break;
+                    case 0x08: cn = "System peripheral"; break;
+                    case 0x09: cn = "Input device controller"; break;
+                    case 0x0C: cn = "Serial bus controller"; break;
+                    case 0x0D: cn = "Wireless controller"; break;
+                    case 0xFF: cn = "Unassigned"; break;
+                }
+                pb_str(&b, cn);
+                pb_str(&b, ": ");
+                pb_hex4(&b, d->vendor_id);
+                pb_str(&b, ":");
+                pb_hex4(&b, d->device_id);
+                pb_str(&b, " (rev ");
+                pb_hex2(&b, d->revision);
+                pb_str(&b, ")\n");
+            }
+            total = b.pos;
+            break;
+        }
         case PROC_FDINFO_ENTRY: {
             /* /proc/<pid>/fdinfo/<n>: pos, flags, mnt_id, type-specific fields */
             fut_task_t *ftask = fut_task_by_pid(n->pid);
@@ -4410,6 +4468,11 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
         if (STREQ(name, "locks")) {
             *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_LOCKS,
                                           0100444, PROC_LOCKS, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "pci")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PCI,
+                                          0100444, PROC_PCI_DEVICES, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
         /* Try numeric PID */
@@ -5474,7 +5537,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             "loadavg", "mounts", "sys", "stat", "filesystems", "vmstat", "net",
             "interrupts", "cmdline", "swaps", "devices", "misc",
             "buddyinfo", "zoneinfo", "diskstats", "partitions", "cgroups", "kallsyms",
-            "locks", "modules", "sysvipc"
+            "locks", "modules", "sysvipc", "pci"
         };
         static const uint8_t fixed_type[] = {
             FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
@@ -5490,7 +5553,8 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
             FUT_VDIR_TYPE_REG,  /* locks */
             FUT_VDIR_TYPE_REG,  /* modules */
-            FUT_VDIR_TYPE_DIR   /* sysvipc */
+            FUT_VDIR_TYPE_DIR,  /* sysvipc */
+            FUT_VDIR_TYPE_REG   /* pci */
         };
         static const uint64_t fixed_ino[] = {
             PROC_INO_ROOT, PROC_INO_ROOT,
@@ -5504,9 +5568,9 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             PROC_INO_BUDDYINFO, PROC_INO_ZONEINFO,
             PROC_INO_DISKSTATS, PROC_INO_PARTITIONS, PROC_INO_CGROUPS, PROC_INO_KALLSYMS,
             PROC_INO_LOCKS, PROC_INO_MODULES,
-            PROC_INO_SYSVIPC_DIR
+            PROC_INO_SYSVIPC_DIR, PROC_INO_PCI
         };
-        if (idx < 29) {
+        if (idx < 30) {
             de->d_ino    = fixed_ino[idx];
             de->d_off    = idx + 1;
             de->d_type   = fixed_type[idx];
@@ -5522,10 +5586,10 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
 
         /*
          * PID enumeration: after the 29 fixed entries, cookies encode
-         * "find first task with pid > (cookie - 29)".  After returning
-         * a PID entry we set cookie = 29 + that_pid + 1.
+         * "find first task with pid > (cookie - 30)".  After returning
+         * a PID entry we set cookie = 30 + that_pid + 1.
          */
-        uint64_t min_pid = idx >= 29 ? idx - 29 : 0;  /* start scanning for pid > min_pid */
+        uint64_t min_pid = idx >= 30 ? idx - 30 : 0;  /* start scanning for pid > min_pid */
         fut_task_t *best = NULL;
         uint64_t   best_pid = (uint64_t)-1;
         fut_task_t *t = fut_task_list;
@@ -5550,14 +5614,14 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         pidname[pn] = '\0';
 
         de->d_ino    = PROC_INO_PID_DIR(best->pid);
-        de->d_off    = 29 + best->pid + 1;
+        de->d_off    = 30 + best->pid + 1;
         de->d_type   = FUT_VDIR_TYPE_DIR;
         de->d_reclen = sizeof(*de);
         size_t nl = (size_t)pn;
         if (nl > FUT_VFS_NAME_MAX) nl = FUT_VFS_NAME_MAX;
         __builtin_memcpy(de->d_name, pidname, nl);
         de->d_name[nl] = '\0';
-        *cookie = 29 + best->pid + 1;  /* resume after this pid */
+        *cookie = 30 + best->pid + 1;  /* resume after this pid */
         return 1;
     }
 

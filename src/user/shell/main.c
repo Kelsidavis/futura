@@ -364,6 +364,11 @@ static ssize_t read_line(int fd, char *buf, size_t max_len) {
             write_str(1, "^C\n");
             buf[0] = '\0';
             return 0;
+        } else if (c == 0x1A) {
+            /* Ctrl+Z - suspend (ignored in readline, handled in foreground wait) */
+            write_str(1, "^Z\n");
+            buf[0] = '\0';
+            return 0;
         } else if (c == 0x0C) {
             /* Ctrl+L - clear screen and redraw prompt */
             write_str(1, "\033[2J\033[H");
@@ -8558,7 +8563,20 @@ static int execute_pipeline(int num_stages, char *stages[], int background, cons
                     return 0;
                 } else {
                     int status = 0;
-                    sys_waitpid(pid, &status, 0);
+                    /* Wait with WUNTRACED to detect Ctrl+Z (SIGTSTP) */
+                    sys_waitpid(pid, &status, 2 /* WUNTRACED */);
+                    /* Check if child was stopped (not exited) */
+                    if ((status & 0xFF) == 0x7F) {
+                        /* Child was stopped — add to job list */
+                        int stopsig = (status >> 8) & 0xFF;
+                        int job_id = add_job(pid, cmdtext);
+                        write_str(1, "\n[");
+                        write_num(job_id);
+                        write_str(1, "]+  Stopped                 ");
+                        write_str(1, cmdtext ? cmdtext : "(unknown)");
+                        write_str(1, "\n");
+                        (void)stopsig;
+                    }
                     return 0;
                 }
             }
@@ -8676,7 +8694,7 @@ static int execute_pipeline(int num_stages, char *stages[], int background, cons
     } else {
         for (int i = 0; i < num_stages; i++) {
             int status = 0;
-            sys_waitpid(pids[i], &status, 0);
+            sys_waitpid(pids[i], &status, 2 /* WUNTRACED */);
         }
     }
 

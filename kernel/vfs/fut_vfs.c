@@ -1746,8 +1746,14 @@ static int try_open_chrdev(const char *path, int flags) {
         for (const char *p = path + 9; *p >= '0' && *p <= '9'; p++)
             idx = idx * 10 + (*p - '0');
         extern int pty_open_slave(int index);
-        (void)flags;
-        return pty_open_slave(idx);
+        int slave_fd = pty_open_slave(idx);
+        /* Propagate O_CLOEXEC to the allocated fd */
+        if (slave_fd >= 0 && (flags & 02000000 /* O_CLOEXEC */)) {
+            fut_task_t *pts_task = fut_task_current();
+            if (pts_task && pts_task->fd_flags)
+                pts_task->fd_flags[slave_fd] |= 1; /* FD_CLOEXEC */
+        }
+        return slave_fd;
     }
 
     /* /dev/tty: open the calling process's controlling terminal.
@@ -1762,9 +1768,13 @@ static int try_open_chrdev(const char *path, int flags) {
             uint32_t tty_major = (tty_task->tty_nr >> 8) & 0xFF;
             uint32_t tty_minor = tty_task->tty_nr & 0xFF;
             if (tty_major == 136) {
-                /* PTY controlling terminal — open the slave */
                 extern int pty_open_slave(int index);
-                return pty_open_slave((int)tty_minor);
+                int tty_fd = pty_open_slave((int)tty_minor);
+                if (tty_fd >= 0 && (flags & 02000000)) {
+                    if (tty_task->fd_flags)
+                        tty_task->fd_flags[tty_fd] |= 1;
+                }
+                return tty_fd;
             }
         }
         /* Fall through: no PTY ctty, use console device */

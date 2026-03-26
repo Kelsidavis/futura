@@ -51257,6 +51257,102 @@ static void test_openat_o_directory(void) {
 /* Tests 1729-1732: umask enforcement on file/directory creation (POSIX) */
 /* Tests 1761-1764: SIGHUP delivery when session leader exits */
 /* Tests 1765-1768: daemon lifecycle integration (setsid+chdir+devnull) */
+/* Tests 1793-1796: O_CLOEXEC on PTY slave and /dev/tty dynamic paths */
+__attribute__((noinline)) static void test_pty_slave_cloexec(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_close(int);
+    extern long sys_fcntl(int fd, int cmd, uint64_t arg);
+    extern long sys_ioctl(int fd, unsigned long request, void *argp);
+
+    long mfd = sys_open("/dev/ptmx", 0x0002, 0);
+    int pn = -1, zv = 0;
+    if (mfd >= 0) sys_ioctl((int)mfd, 0x80045430, &pn);
+    if (mfd >= 0) sys_ioctl((int)mfd, 0x40045431, &zv);
+    static char pp[24];
+    { const char *pfx = "/dev/pts/"; int i = 0; while (pfx[i]) { pp[i] = pfx[i]; i++; }
+      if (pn >= 10) { pp[i++] = (char)('0'+pn/10); } pp[i++] = (char)('0'+pn%10); pp[i] = '\0'; }
+
+    /* Test 1793: /dev/pts/<n> with O_CLOEXEC → FD_CLOEXEC set */
+    fut_printf("[MISC-TEST] Test 1793: PTY slave O_CLOEXEC\n");
+    {
+        long sfd = sys_open(pp, 0x0002 | 0x80000 /* O_CLOEXEC */, 0);
+        if (sfd >= 0) {
+            long fl = sys_fcntl((int)sfd, 1 /* F_GETFD */, 0);
+            sys_close((int)sfd);
+            if (fl >= 0 && (fl & 1)) {
+                fut_printf("[MISC-TEST] ✓ Test 1793: PTY slave FD_CLOEXEC set\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1793: F_GETFD=%ld\n", fl);
+                fut_test_fail(1793);
+            }
+        } else { fut_test_fail(1793); }
+    }
+
+    /* Test 1794: /dev/pts/<n> without O_CLOEXEC → no FD_CLOEXEC */
+    fut_printf("[MISC-TEST] Test 1794: PTY slave no O_CLOEXEC\n");
+    {
+        long sfd = sys_open(pp, 0x0002, 0);
+        if (sfd >= 0) {
+            long fl = sys_fcntl((int)sfd, 1, 0);
+            sys_close((int)sfd);
+            if (fl >= 0 && !(fl & 1)) {
+                fut_printf("[MISC-TEST] ✓ Test 1794: no FD_CLOEXEC\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1794: F_GETFD=%ld\n", fl);
+                fut_test_fail(1794);
+            }
+        } else { fut_test_fail(1794); }
+    }
+
+    /* Test 1795: /dev/tty with O_CLOEXEC → FD_CLOEXEC set */
+    fut_printf("[MISC-TEST] Test 1795: /dev/tty O_CLOEXEC\n");
+    {
+        /* Set up controlling terminal first */
+        long sfd = sys_open(pp, 0x0002, 0);
+        if (sfd >= 0) sys_ioctl((int)sfd, 0x540E /* TIOCSCTTY */, NULL);
+        fut_task_t *task = fut_task_current();
+        if (task && task->tty_nr != 0) {
+            long tfd = sys_open("/dev/tty", 0x0002 | 0x80000, 0);
+            if (tfd >= 0) {
+                long fl = sys_fcntl((int)tfd, 1, 0);
+                sys_close((int)tfd);
+                if (fl >= 0 && (fl & 1)) {
+                    fut_printf("[MISC-TEST] ✓ Test 1795: /dev/tty FD_CLOEXEC\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1795: F_GETFD=%ld\n", fl);
+                    fut_test_fail(1795);
+                }
+            } else { fut_test_fail(1795); }
+        } else { fut_test_fail(1795); }
+        if (sfd >= 0) sys_close((int)sfd);
+    }
+
+    /* Test 1796: /dev/tty without O_CLOEXEC → no FD_CLOEXEC */
+    fut_printf("[MISC-TEST] Test 1796: /dev/tty no O_CLOEXEC\n");
+    {
+        fut_task_t *task = fut_task_current();
+        if (task && task->tty_nr != 0) {
+            long tfd = sys_open("/dev/tty", 0x0002, 0);
+            if (tfd >= 0) {
+                long fl = sys_fcntl((int)tfd, 1, 0);
+                sys_close((int)tfd);
+                if (fl >= 0 && !(fl & 1)) {
+                    fut_printf("[MISC-TEST] ✓ Test 1796: no FD_CLOEXEC\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1796: F_GETFD=%ld\n", fl);
+                    fut_test_fail(1796);
+                }
+            } else { fut_test_fail(1796); }
+        } else { fut_test_fail(1796); }
+    }
+
+    if (mfd >= 0) sys_close((int)mfd);
+}
+
 /* Tests 1789-1792: O_CLOEXEC propagation on chrdev fds (PTY, /dev/null) */
 __attribute__((noinline)) static void test_chrdev_cloexec(void) {
     extern long sys_open(const char *, int, int);
@@ -57393,6 +57489,7 @@ void fut_misc_test_thread(void *arg) {
     test_timer_abstime();          /* Tests 1721-1724 */
     test_execve_prevalidation();   /* Tests 1725-1728 */
     test_fd_lifecycle_edges();     /* Tests 1737-1740 */
+    test_pty_slave_cloexec();        /* Tests 1793-1796 */
     test_chrdev_cloexec();           /* Tests 1789-1792 */
     test_pty_fcntl_flags();          /* Tests 1785-1788 */
     test_isatty_pty();               /* Tests 1781-1784 */

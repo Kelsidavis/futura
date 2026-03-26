@@ -51227,6 +51227,123 @@ static void test_openat_o_directory(void) {
 }
 
 /* Tests 1729-1732: umask enforcement on file/directory creation (POSIX) */
+/* Tests 1741-1744: rename-while-open and unlink-while-open semantics */
+__attribute__((noinline)) static void test_rename_unlink_while_open(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_close(int);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_write(int, const void *, size_t);
+    extern long sys_rename(const char *, const char *);
+    extern long sys_unlink(const char *);
+    extern long sys_stat(const char *, struct fut_stat *);
+
+    /* Test 1741: write to fd after rename — data persists at new path */
+    fut_printf("[MISC-TEST] Test 1741: write after rename persists\n");
+    {
+        long fd = sys_open("/tmp/rwho_src_1741", 0x42 /* O_RDWR|O_CREAT */, 0644);
+        if (fd >= 0) {
+            sys_write((int)fd, "before", 6);
+            sys_rename("/tmp/rwho_src_1741", "/tmp/rwho_dst_1741");
+            /* Write more data via original fd */
+            sys_write((int)fd, "_after", 6);
+            sys_close((int)fd);
+            /* Read back via new path */
+            long fd2 = sys_open("/tmp/rwho_dst_1741", 0, 0);
+            if (fd2 >= 0) {
+                static char rbuf[16];
+                long nr = sys_read((int)fd2, rbuf, 15);
+                sys_close((int)fd2);
+                rbuf[nr > 0 ? nr : 0] = '\0';
+                if (nr == 12 && __builtin_memcmp(rbuf, "before_after", 12) == 0) {
+                    fut_printf("[MISC-TEST] ✓ Test 1741: data='%s'\n", rbuf);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1741: nr=%ld data='%s'\n", nr, rbuf);
+                    fut_test_fail(1741);
+                }
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1741: reopen failed\n");
+                fut_test_fail(1741);
+            }
+            sys_unlink("/tmp/rwho_dst_1741");
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1741: open failed\n");
+            fut_test_fail(1741);
+        }
+    }
+
+    /* Test 1742: old path gone after rename */
+    fut_printf("[MISC-TEST] Test 1742: old path ENOENT after rename\n");
+    {
+        long fd = sys_open("/tmp/rwho_old_1742", 0x42, 0644);
+        if (fd >= 0) {
+            sys_close((int)fd);
+            sys_rename("/tmp/rwho_old_1742", "/tmp/rwho_new_1742");
+            static struct fut_stat stbuf;
+            long r = sys_stat("/tmp/rwho_old_1742", &stbuf);
+            sys_unlink("/tmp/rwho_new_1742");
+            if (r == -2 /* ENOENT */) {
+                fut_printf("[MISC-TEST] ✓ Test 1742: old path → ENOENT\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1742: stat old = %ld\n", r);
+                fut_test_fail(1742);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1742: open failed\n");
+            fut_test_fail(1742);
+        }
+    }
+
+    /* Test 1743: unlink while open — fd still works for read/write */
+    fut_printf("[MISC-TEST] Test 1743: unlink while open — fd still works\n");
+    {
+        long fd = sys_open("/tmp/ulwo_1743", 0x42, 0644);
+        if (fd >= 0) {
+            sys_write((int)fd, "hello", 5);
+            sys_unlink("/tmp/ulwo_1743");
+            /* Seek to start and read back via same fd */
+            extern long fut_vfs_lseek(int, long, int);
+            fut_vfs_lseek((int)fd, 0, 0 /* SEEK_SET */);
+            static char rbuf[8];
+            long nr = sys_read((int)fd, rbuf, 8);
+            sys_close((int)fd);
+            if (nr == 5 && __builtin_memcmp(rbuf, "hello", 5) == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 1743: read after unlink OK\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1743: nr=%ld\n", nr);
+                fut_test_fail(1743);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1743: open failed\n");
+            fut_test_fail(1743);
+        }
+    }
+
+    /* Test 1744: unlinked file not visible via stat */
+    fut_printf("[MISC-TEST] Test 1744: unlinked file → stat ENOENT\n");
+    {
+        long fd = sys_open("/tmp/ulst_1744", 0x42, 0644);
+        if (fd >= 0) {
+            sys_unlink("/tmp/ulst_1744");
+            static struct fut_stat stbuf;
+            long r = sys_stat("/tmp/ulst_1744", &stbuf);
+            sys_close((int)fd);
+            if (r == -2 /* ENOENT */) {
+                fut_printf("[MISC-TEST] ✓ Test 1744: unlinked → ENOENT\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1744: stat = %ld\n", r);
+                fut_test_fail(1744);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1744: open failed\n");
+            fut_test_fail(1744);
+        }
+    }
+}
+
 /* Tests 1737-1740: fd lifecycle edge cases */
 __attribute__((noinline)) static void test_fd_lifecycle_edges(void) {
     extern long sys_open(const char *, int, int);
@@ -55967,6 +56084,7 @@ void fut_misc_test_thread(void *arg) {
     test_timer_abstime();          /* Tests 1721-1724 */
     test_execve_prevalidation();   /* Tests 1725-1728 */
     test_fd_lifecycle_edges();     /* Tests 1737-1740 */
+    test_rename_unlink_while_open(); /* Tests 1741-1744 */
     test_umask_posix_create();     /* Tests 1729-1732 */
 
     fut_printf("[MISC-TEST] ========================================\n");

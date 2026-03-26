@@ -255,8 +255,26 @@ struct fut_task {
     struct mount_namespace *mnt_ns;    // Mount namespace (NULL = init namespace)
     struct uts_namespace *uts_ns;      // UTS namespace (hostname/domainname)
     struct net_namespace *net_ns;      // Network namespace
+    struct user_namespace *user_ns;    // User namespace (UID/GID mapping)
 
     fut_task_t *next;                  // Next task in system list
+};
+
+/* User namespace structure (UID/GID mapping for unprivileged containers) */
+#define USERNS_MAP_MAX 5
+struct id_map_entry {
+    uint32_t ns_id;      /* First ID in namespace */
+    uint32_t host_id;    /* First ID on host */
+    uint32_t count;      /* Number of IDs mapped */
+};
+struct user_namespace {
+    uint64_t id;
+    int refcount;
+    struct user_namespace *parent;
+    int uid_map_count;
+    int gid_map_count;
+    struct id_map_entry uid_map[USERNS_MAP_MAX];
+    struct id_map_entry gid_map[USERNS_MAP_MAX];
 };
 
 /* Network namespace structure */

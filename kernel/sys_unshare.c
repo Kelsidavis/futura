@@ -219,6 +219,14 @@ long sys_unshare(unsigned long flags) {
         task->net_ns = new_netns;
     }
 
-    /* Remaining flags (IPC/USER/CGROUP) accepted as no-ops */
+    /* CLONE_NEWUSER: per-container UID/GID mapping */
+    if (flags & CLONE_NEWUSER) {
+        extern struct user_namespace *userns_create(struct user_namespace *);
+        struct user_namespace *new_userns = userns_create(task->user_ns);
+        if (!new_userns) return -ENOMEM;
+        task->user_ns = new_userns;
+    }
+
+    /* Remaining flags (IPC/CGROUP) accepted as no-ops */
     return 0;
 }

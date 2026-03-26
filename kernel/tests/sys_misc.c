@@ -53810,6 +53810,97 @@ __attribute__((noinline)) static void test_dns_cache(void) {
     dns_cache_clear();
 }
 
+/* Test 1852: Complete router stack integration test */
+__attribute__((noinline)) static void test_router_integration(void) {
+    extern long sys_ioctl(int fd, unsigned long request, void *argp);
+    extern long sys_open(const char *, int, int);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_write(int, const void *, size_t);
+    extern long sys_close(int);
+    extern bool g_ip_forward_enabled;
+    extern int g_masquerade_iface;
+
+    fut_printf("[MISC-TEST] Test 1852: full router stack integration\n");
+    long nfd = sys_open("/dev/null", 0x0002, 0);
+    if (nfd < 0) { fut_test_fail(1852); return; }
+
+    /* 1. Configure interface IP via SIOCSIFADDR */
+    static char ifr[40];
+    __builtin_memset(ifr, 0, 40);
+    __builtin_memcpy(ifr, "eth0", 4);
+    ifr[16] = 2; ifr[20] = (char)172; ifr[21] = 16; ifr[22] = 0; ifr[23] = 1;
+    long r1 = sys_ioctl((int)nfd, 0x8916, ifr);
+
+    /* 2. Set netmask */
+    __builtin_memset(ifr, 0, 40);
+    __builtin_memcpy(ifr, "eth0", 4);
+    ifr[16] = 2; ifr[20] = (char)255; ifr[21] = (char)255; ifr[22] = 0; ifr[23] = 0;
+    long r2 = sys_ioctl((int)nfd, 0x891C, ifr);
+
+    /* 3. Add route */
+    static char rt[68];
+    __builtin_memset(rt, 0, 68);
+    rt[0] = 2; rt[4] = (char)172; rt[5] = 16; /* 172.16.0.0 */
+    rt[16] = 2; /* gateway: 0.0.0.0 */
+    rt[32] = 2; rt[36] = (char)255; rt[37] = (char)255; /* /16 */
+    __builtin_memcpy(rt + 52, "eth0", 4);
+    long r3 = sys_ioctl((int)nfd, 0x890B, rt);
+
+    /* 4. Enable forwarding via sysctl */
+    long wfd = sys_open("/proc/sys/net/ipv4/ip_forward", 0x0001, 0);
+    if (wfd >= 0) { sys_write((int)wfd, "1", 1); sys_close((int)wfd); }
+
+    /* 5. Enable masquerade */
+    wfd = sys_open("/proc/sys/net/ipv4/ip_masquerade_dev", 0x0001, 0);
+    if (wfd >= 0) { sys_write((int)wfd, "eth0", 4); sys_close((int)wfd); }
+
+    /* 6. Add firewall rule via ioctl */
+    static struct { uint8_t chain; uint8_t action; uint8_t protocol; uint8_t _pad;
+             uint32_t src_ip; uint32_t src_mask; uint32_t dst_ip; uint32_t dst_mask;
+             uint16_t dport_min; uint16_t dport_max; } fwr;
+    __builtin_memset(&fwr, 0, sizeof(fwr));
+    fwr.chain = 0; fwr.action = 0; fwr.protocol = 6; /* INPUT, ACCEPT, TCP */
+    fwr.dport_min = 80; fwr.dport_max = 80;
+    long r6 = sys_ioctl((int)nfd, 0x89F0, &fwr);
+
+    /* 7. Verify: route lookup, forwarding enabled, masquerade set */
+    const struct net_route *rte = route_lookup(0xAC100505); /* 172.16.5.5 */
+    bool fwd = g_ip_forward_enabled;
+    bool masq = (g_masquerade_iface > 0);
+
+    /* 8. Read /proc/net/snmp to verify it's populated */
+    long sfd = sys_open("/proc/net/snmp", 0, 0);
+    bool snmp_ok = false;
+    if (sfd >= 0) {
+        static char sb[128];
+        long n = sys_read((int)sfd, sb, sizeof(sb) - 1);
+        sys_close((int)sfd);
+        snmp_ok = (n > 0);
+    }
+
+    /* Cleanup */
+    g_ip_forward_enabled = false;
+    g_masquerade_iface = 0;
+    /* Flush firewall */
+    static uint8_t fc; fc = 0;
+    sys_ioctl((int)nfd, 0x89F2, &fc);
+    /* Delete route */
+    __builtin_memset(rt, 0, 68);
+    rt[0] = 2; rt[4] = (char)172; rt[5] = 16;
+    rt[32] = 2; rt[36] = (char)255; rt[37] = (char)255;
+    sys_ioctl((int)nfd, 0x890C, rt);
+    sys_close((int)nfd);
+
+    /* Verify all steps succeeded */
+    if (r1 == 0 && r2 == 0 && r3 == 0 && r6 >= 0 && rte && fwd && masq && snmp_ok) {
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ r1=%ld r2=%ld r3=%ld r6=%ld rte=%p fwd=%d masq=%d snmp=%d\n",
+                   r1, r2, r3, r6, (void*)rte, fwd, masq, snmp_ok);
+        fut_test_fail(1852);
+    }
+}
+
 /* Test 1851: SNMP stats increment on TTL expiry */
 __attribute__((noinline)) static void test_snmp_ttl_stats(void) {
     extern struct net_snmp_stats g_net_stats;
@@ -58933,6 +59024,7 @@ void fut_misc_test_thread(void *arg) {
     test_tun_create();   /* Test 1849 */
     test_nat_masquerade(); /* Test 1850 */
     test_snmp_ttl_stats(); /* Test 1851 */
+    test_router_integration(); /* Test 1852 */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

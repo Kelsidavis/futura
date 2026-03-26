@@ -31,6 +31,31 @@ static fut_spinlock_t g_route_lock;
 
 bool g_ip_forward_enabled = false;
 
+/* Global IP/ICMP/TCP/UDP statistics for /proc/net/snmp */
+struct net_snmp_stats {
+    /* IP */
+    uint64_t ip_in_receives;
+    uint64_t ip_in_delivers;
+    uint64_t ip_out_requests;
+    uint64_t ip_forwarded;
+    uint64_t ip_in_discards;
+    uint64_t ip_out_discards;
+    uint64_t ip_in_no_routes;
+    /* ICMP */
+    uint64_t icmp_in_msgs;
+    uint64_t icmp_in_errors;
+    uint64_t icmp_out_msgs;
+    uint64_t icmp_out_errors;
+    uint64_t icmp_in_echo;
+    uint64_t icmp_in_echo_reply;
+    uint64_t icmp_out_echo;
+    uint64_t icmp_out_echo_reply;
+    uint64_t icmp_out_time_exceeded;
+    uint64_t icmp_out_dest_unreachable;
+};
+
+struct net_snmp_stats g_net_stats;
+
 /* ============================================================
  *   Loopback transmit (delivers to self)
  * ============================================================ */
@@ -334,12 +359,17 @@ int ip_forward(const void *ip_packet, size_t len, struct net_iface *in_iface) {
     uint32_t dest_ip = ((uint32_t)pkt[16] << 24) | ((uint32_t)pkt[17] << 16) |
                        ((uint32_t)pkt[18] << 8)  | (uint32_t)pkt[19];
 
+    g_net_stats.ip_in_receives++;
+
     /* Decrement TTL */
     uint8_t ttl = pkt[8];
     if (ttl <= 1) {
         /* TTL expired — send ICMP Time Exceeded (type 11, code 0) */
         if (in_iface)
             send_icmp_error(11 /* TIME_EXCEEDED */, 0, pkt, len, in_iface);
+        g_net_stats.icmp_out_time_exceeded++;
+        g_net_stats.icmp_out_msgs++;
+        g_net_stats.ip_in_discards++;
         if (in_iface) in_iface->rx_dropped++;
         return -ETIMEDOUT;
     }
@@ -350,6 +380,9 @@ int ip_forward(const void *ip_packet, size_t len, struct net_iface *in_iface) {
         /* No route to host — send ICMP Destination Unreachable (type 3, code 0) */
         if (in_iface)
             send_icmp_error(3 /* DEST_UNREACHABLE */, 0 /* net unreachable */, pkt, len, in_iface);
+        g_net_stats.icmp_out_dest_unreachable++;
+        g_net_stats.icmp_out_msgs++;
+        g_net_stats.ip_in_no_routes++;
         if (in_iface) in_iface->rx_dropped++;
         return -ENETUNREACH;
     }
@@ -406,12 +439,16 @@ int ip_forward(const void *ip_packet, size_t len, struct net_iface *in_iface) {
     if (out_iface->transmit) {
         int ret = out_iface->transmit(out_iface, fwd_pkt, len);
         if (ret == 0) {
+            g_net_stats.ip_forwarded++;
+            g_net_stats.ip_out_requests++;
             out_iface->tx_packets++;
             out_iface->tx_bytes += len;
             if (in_iface) {
                 in_iface->rx_packets++;
                 in_iface->rx_bytes += len;
             }
+        } else {
+            g_net_stats.ip_out_discards++;
         }
         return ret;
     }

@@ -138,6 +138,31 @@ extern bool g_ip_forward_enabled;
  * Returns 0 on success, negative error on failure. */
 int ip_forward(const void *ip_packet, size_t len, struct net_iface *in_iface);
 
+/* ---- SNMP statistics ---- */
+
+/* Global IP/ICMP/TCP/UDP statistics for /proc/net/snmp */
+struct net_snmp_stats {
+    uint64_t ip_in_receives;
+    uint64_t ip_in_delivers;
+    uint64_t ip_out_requests;
+    uint64_t ip_forwarded;
+    uint64_t ip_in_discards;
+    uint64_t ip_out_discards;
+    uint64_t ip_in_no_routes;
+    uint64_t icmp_in_msgs;
+    uint64_t icmp_in_errors;
+    uint64_t icmp_out_msgs;
+    uint64_t icmp_out_errors;
+    uint64_t icmp_in_echo;
+    uint64_t icmp_in_echo_reply;
+    uint64_t icmp_out_echo;
+    uint64_t icmp_out_echo_reply;
+    uint64_t icmp_out_time_exceeded;
+    uint64_t icmp_out_dest_unreachable;
+};
+
+extern struct net_snmp_stats g_net_stats;
+
 #ifdef __cplusplus
 }
 #endif

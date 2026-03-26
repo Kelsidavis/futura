@@ -2326,16 +2326,45 @@ static size_t gen_net_fib_trie(char *buf, size_t cap) {
 
 static size_t gen_net_snmp(char *buf, size_t cap) {
     struct pbuf b = { buf, 0, cap };
+    /* IP header */
     pb_str(&b, "Ip: Forwarding DefaultTTL InReceives InHdrErrors InAddrErrors"
                " ForwDatagrams InUnknownProtos InDiscards InDelivers OutRequests"
                " OutDiscards OutNoRoutes ReasmTimeout ReasmReqds ReasmOKs ReasmFails"
-               " FragOKs FragFails FragCreates\n"
-               "Ip: 2 64 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n"
-               "Icmp: InMsgs InErrors InCsumErrors InDestUnreachs InTimeExcds"
+               " FragOKs FragFails FragCreates\n");
+    /* IP values — use real stats from g_net_stats */
+    pb_str(&b, "Ip: ");
+    pb_u64(&b, g_ip_forward_enabled ? 1 : 2);  /* Forwarding: 1=enabled, 2=disabled */
+    pb_char(&b, ' '); pb_u64(&b, 64);  /* DefaultTTL */
+    pb_char(&b, ' '); pb_u64(&b, g_net_stats.ip_in_receives);
+    pb_str(&b, " 0 0 ");  /* InHdrErrors, InAddrErrors */
+    pb_u64(&b, g_net_stats.ip_forwarded);
+    pb_str(&b, " 0 ");  /* InUnknownProtos */
+    pb_u64(&b, g_net_stats.ip_in_discards);
+    pb_char(&b, ' '); pb_u64(&b, g_net_stats.ip_in_delivers);
+    pb_char(&b, ' '); pb_u64(&b, g_net_stats.ip_out_requests);
+    pb_char(&b, ' '); pb_u64(&b, g_net_stats.ip_out_discards);
+    pb_char(&b, ' '); pb_u64(&b, g_net_stats.ip_in_no_routes);
+    pb_str(&b, " 0 0 0 0 0 0 0\n");
+
+    /* ICMP header */
+    pb_str(&b, "Icmp: InMsgs InErrors InCsumErrors InDestUnreachs InTimeExcds"
                " InParmProbs InSrcQuenchs InRedirects InEchos InEchoReps"
-               " OutMsgs OutErrors OutDestUnreachs OutTimeExcds OutParmProbs\n"
-               "Icmp: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n"
-               "Tcp: RtoAlgorithm RtoMin RtoMax MaxConn ActiveOpens PassiveOpens"
+               " OutMsgs OutErrors OutDestUnreachs OutTimeExcds OutParmProbs\n");
+    /* ICMP values */
+    pb_str(&b, "Icmp: ");
+    pb_u64(&b, g_net_stats.icmp_in_msgs);
+    pb_char(&b, ' '); pb_u64(&b, g_net_stats.icmp_in_errors);
+    pb_str(&b, " 0 0 0 0 0 0 ");  /* InCsumErrors..InRedirects */
+    pb_u64(&b, g_net_stats.icmp_in_echo);
+    pb_char(&b, ' '); pb_u64(&b, g_net_stats.icmp_in_echo_reply);
+    pb_char(&b, ' '); pb_u64(&b, g_net_stats.icmp_out_msgs);
+    pb_char(&b, ' '); pb_u64(&b, g_net_stats.icmp_out_errors);
+    pb_char(&b, ' '); pb_u64(&b, g_net_stats.icmp_out_dest_unreachable);
+    pb_char(&b, ' '); pb_u64(&b, g_net_stats.icmp_out_time_exceeded);
+    pb_str(&b, " 0\n");
+
+    /* TCP/UDP — static for now (per-socket tracking not yet integrated) */
+    pb_str(&b, "Tcp: RtoAlgorithm RtoMin RtoMax MaxConn ActiveOpens PassiveOpens"
                " AttemptFails EstabResets CurrEstab InSegs OutSegs RetransSegs"
                " InErrs OutRsts InCsumErrors\n"
                "Tcp: 1 200 120000 -1 0 0 0 0 0 0 0 0 0 0 0\n"

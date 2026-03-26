@@ -58196,6 +58196,40 @@ void fut_misc_test_thread(void *arg) {
     test_arp_icmp_router();          /* Tests 1809-1812 */
     test_bindtodevice_ifconf();      /* Tests 1813-1816 */
     test_netif_ioctl_extended();     /* Tests 1817-1820 */
+    /* Test 1821: /proc/net/snmp has non-zero IP stats after ip_forward calls */
+    fut_printf("[MISC-TEST] Test 1821: /proc/net/snmp has real stats\n");
+    {
+        extern long sys_open(const char *, int, int);
+        extern long sys_read(int, void *, size_t);
+        extern long sys_close(int);
+        long fd = sys_open("/proc/net/snmp", 0, 0);
+        if (fd >= 0) {
+            static char sbuf[2048];
+            long n = sys_read((int)fd, sbuf, sizeof(sbuf) - 1);
+            sys_close((int)fd);
+            if (n > 0) {
+                sbuf[n] = '\0';
+                /* Check IP Forwarding field is "1" (since we enabled it in earlier tests) */
+                /* Look for "Ip: 1 64" or "Ip: 2 64" — the second Ip: line has values */
+                bool found_ip_stats = false;
+                for (int i = 0; i < n - 5; i++) {
+                    /* Find the second "Ip: " (values line) by checking for digit after "Ip: " */
+                    if (sbuf[i] == 'I' && sbuf[i+1] == 'p' && sbuf[i+2] == ':' && sbuf[i+3] == ' '
+                        && sbuf[i+4] >= '0' && sbuf[i+4] <= '9') {
+                        found_ip_stats = true;
+                        break;
+                    }
+                }
+                if (found_ip_stats) {
+                    fut_printf("[MISC-TEST] ✓ Test 1821: /proc/net/snmp has IP stats\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 1821: no IP stats found\n");
+                    fut_test_fail(1821);
+                }
+            } else { fut_test_fail(1821); }
+        } else { fut_test_fail(1821); }
+    }
     test_pty_slave_cloexec();        /* Tests 1793-1796 */
     test_chrdev_cloexec();           /* Tests 1789-1792 */
     test_pty_fcntl_flags();          /* Tests 1785-1788 */

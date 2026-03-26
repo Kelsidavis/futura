@@ -54105,6 +54105,33 @@ __attribute__((noinline)) static void test_futurafs_flags(void) {
     }
 }
 
+__attribute__((noinline)) static void test_ipv6_route(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_close(int);
+
+    /* Test 1943: /proc/net/ipv6_route has loopback entry */
+    fut_printf("[MISC-TEST] Test 1943: /proc/net/ipv6_route\n");
+    {
+        long fd = sys_open("/proc/net/ipv6_route", 0, 0);
+        if (fd >= 0) {
+            static char buf[512];
+            long n = sys_read((int)fd, buf, sizeof(buf) - 1);
+            sys_close((int)fd);
+            if (n > 0) {
+                buf[n] = '\0';
+                bool has_lo = false;
+                for (int i = 0; i < n - 2; i++)
+                    if (buf[i] == 'l' && buf[i+1] == 'o') { has_lo = true; break; }
+                if (has_lo) {
+                    fut_printf("[MISC-TEST] ✓ Test 1943: ipv6_route has lo entry\n");
+                    fut_test_pass();
+                } else { fut_test_fail(1943); }
+            } else { fut_test_fail(1943); }
+        } else { fut_test_fail(1943); }
+    }
+}
+
 __attribute__((noinline)) static void test_bin_shell_elf(void) {
     extern long sys_open(const char *, int, int);
     extern long sys_read(int, void *, size_t);
@@ -61305,6 +61332,7 @@ void fut_misc_test_thread(void *arg) {
     test_router_integration(); /* Test 1852 */
     test_ip_ttl_tos_sockopt(); /* Tests 1853-1854 */
     test_futurafs(); /* Tests 1855-1857 */
+    test_ipv6_route(); /* Test 1943 */
     test_bin_shell_elf(); /* Tests 1941-1942 */
     test_xfrm_stat(); /* Test 1940 */
     test_ipv6_socket(); /* Tests 1938-1939 */

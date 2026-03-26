@@ -272,6 +272,7 @@ enum procfs_kind {
     PROC_SYS_KERNEL_PANIC,          /* /proc/sys/kernel/panic */
     PROC_SYS_KERNEL_PANIC_ON_OOPS,  /* /proc/sys/kernel/panic_on_oops */
     PROC_NET_XFRM_STAT,             /* /proc/net/xfrm_stat */
+    PROC_NET_IPV6_ROUTE,            /* /proc/net/ipv6_route */
     PROC_SYS_SCHED_CHILD_FIRST,     /* /proc/sys/kernel/sched_child_runs_first */
     PROC_PRESSURE_DIR,              /* /proc/pressure/ directory */
     PROC_PRESSURE_CPU,              /* /proc/pressure/cpu */
@@ -2534,6 +2535,21 @@ static size_t gen_net_raw(char *buf, size_t cap) {
     return b.pos;
 }
 
+static size_t gen_net_ipv6_route(char *buf, size_t cap) {
+    /* /proc/net/ipv6_route — IPv6 routing table.
+     * Shows the loopback route (::1/128 via lo) and a link-local default. */
+    struct pbuf b = { buf, 0, cap };
+    /* ::1/128 via lo (loopback) — dst prefix nexthop metric refcnt use iface */
+    pb_str(&b, "00000000000000000000000000000001 80 ");
+    pb_str(&b, "00000000000000000000000000000000 00 ");
+    pb_str(&b, "00000000000000000000000000000000 00000100 00000001 00000000 00000001 lo\n");
+    /* fe80::/10 link-local scope — connected route */
+    pb_str(&b, "fe800000000000000000000000000000 0a ");
+    pb_str(&b, "00000000000000000000000000000000 00 ");
+    pb_str(&b, "00000000000000000000000000000000 00000100 00000000 00000000 00000001 lo\n");
+    return b.pos;
+}
+
 /* Emit a dotted-quad IP into a pbuf */
 static void pb_ip4(struct pbuf *b, uint32_t ip) {
     pb_u64(b, (ip >> 24) & 0xFF); pb_char(b, '.');
@@ -3264,6 +3280,9 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             total = bb.pos;
             break;
         }
+        case PROC_NET_IPV6_ROUTE:
+            total = gen_net_ipv6_route(tmp, GEN_BUF);
+            break;
         case PROC_NET_NF_CONNTRACK:
             total = gen_net_nf_conntrack(tmp, GEN_BUF);
             break;
@@ -4991,6 +5010,10 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
         }
         if (STREQ(name, "packet")) {
             *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_NET_PACKET, 0100444, PROC_NET_PACKET,   0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "ipv6_route")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_NET_PACKET + 2, 0100444, PROC_NET_IPV6_ROUTE, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
         if (STREQ(name, "xfrm_stat")) {

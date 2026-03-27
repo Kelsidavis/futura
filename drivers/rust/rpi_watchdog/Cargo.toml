@@ -1,0 +1,12 @@
+[package]
+name = "rpi_watchdog"
+version = "0.1.0"
+edition = "2024"
+license = "MPL-2.0"
+description = "Raspberry Pi hardware watchdog timer and power management"
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+common = { path = "../common" }

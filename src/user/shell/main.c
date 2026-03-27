@@ -4563,6 +4563,282 @@ static void cmd_od(int argc, char *argv[]) {
 /* Built-in: awk - Pattern scanning and processing (basic subset)
  * Supports: awk '{print $N}', awk -F: '{print $1}', awk '/pattern/ {print}',
  *           awk '{print NR, $0}', awk 'BEGIN{...} {...} END{...}' */
+/* awk helpers: write integer and string to fd */
+static void awk_write_int(int fd, long val) {
+    char buf[24]; int bp = 0;
+    if (val < 0) { sys_write(fd, "-", 1); val = -val; }
+    if (val == 0) { sys_write(fd, "0", 1); return; }
+    char rev[24]; int rp = 0;
+    while (val > 0) { rev[rp++] = '0' + (char)(val % 10); val /= 10; }
+    while (rp > 0) buf[bp++] = rev[--rp];
+    sys_write(fd, buf, bp);
+}
+
+static int awk_str_to_long(const char *s, long *out) {
+    long v = 0; int neg = 0;
+    if (*s == '-') { neg = 1; s++; }
+    if (*s < '0' || *s > '9') return -1;
+    while (*s >= '0' && *s <= '9') v = v * 10 + (*s++ - '0');
+    *out = neg ? -v : v;
+    return 0;
+}
+
+/* awk: extract a block between { } from *pp, advancing past the closing } */
+static int awk_extract_block(const char **pp, char *out, int outsz) {
+    const char *p = *pp;
+    while (*p == ' ') p++;
+    if (*p != '{') return -1;
+    p++; /* skip { */
+    int depth = 1, oi = 0;
+    while (*p && depth > 0 && oi < outsz - 1) {
+        if (*p == '{') depth++;
+        else if (*p == '}') { depth--; if (depth == 0) break; }
+        out[oi++] = *p++;
+    }
+    out[oi] = '\0';
+    if (*p == '}') p++;
+    *pp = p;
+    return 0;
+}
+
+/* awk: evaluate a condition string against current line/fields/NR/NF.
+ * Supports: /pattern/, NR==N, NR>N, NR<N, NR!=N, NR>=N, NR<=N,
+ *           $N=="str", $N!="str", $N>N, $N<N, $N>=N, $N<=N, NF>N, NF<N */
+static int awk_eval_cond(const char *cond, const char *line, int linelen,
+                          char **fields, int nf, int lineno) {
+    while (*cond == ' ') cond++;
+    if (*cond == '\0') return 1; /* empty = always true */
+
+    /* /pattern/ — substring match */
+    if (*cond == '/') {
+        cond++;
+        char pat[128]; int pi = 0;
+        while (*cond && *cond != '/' && pi < 126) pat[pi++] = *cond++;
+        pat[pi] = '\0';
+        for (int i = 0; i <= linelen - pi; i++) {
+            int j;
+            for (j = 0; j < pi; j++) { if (line[i+j] != pat[j]) break; }
+            if (j == pi) return 1;
+        }
+        return 0;
+    }
+
+    /* Get LHS value: NR, NF, or $N */
+    long lhs_val = 0;
+    const char *lhs_str = NULL;
+    int lhs_is_str = 0;
+    const char *cp = cond;
+
+    if (*cp == 'N' && cp[1] == 'R') {
+        lhs_val = lineno; cp += 2;
+    } else if (*cp == 'N' && cp[1] == 'F') {
+        lhs_val = nf; cp += 2;
+    } else if (*cp == '$') {
+        cp++;
+        int fn = 0;
+        while (*cp >= '0' && *cp <= '9') fn = fn * 10 + (*cp++ - '0');
+        if (fn == 0) { lhs_str = line; lhs_is_str = 1; }
+        else if (fn <= nf) { lhs_str = fields[fn-1]; lhs_is_str = 1; }
+        else { lhs_str = ""; lhs_is_str = 1; }
+        /* Try numeric conversion */
+        if (lhs_str && awk_str_to_long(lhs_str, &lhs_val) == 0) lhs_is_str = 0;
+    } else {
+        return 0; /* Unknown condition */
+    }
+
+    while (*cp == ' ') cp++;
+
+    /* Parse operator */
+    int op = 0; /* 1=eq, 2=ne, 3=gt, 4=lt, 5=ge, 6=le */
+    if (cp[0] == '=' && cp[1] == '=') { op = 1; cp += 2; }
+    else if (cp[0] == '!' && cp[1] == '=') { op = 2; cp += 2; }
+    else if (cp[0] == '>' && cp[1] == '=') { op = 5; cp += 2; }
+    else if (cp[0] == '<' && cp[1] == '=') { op = 6; cp += 2; }
+    else if (cp[0] == '>') { op = 3; cp += 1; }
+    else if (cp[0] == '<') { op = 4; cp += 1; }
+    else if (cp[0] == '~') { op = 7; cp += 1; } /* regex match (substring) */
+    else return 0;
+
+    while (*cp == ' ') cp++;
+
+    /* RHS: quoted string or number */
+    if (*cp == '"') {
+        cp++;
+        char rhs[128]; int ri = 0;
+        while (*cp && *cp != '"' && ri < 126) rhs[ri++] = *cp++;
+        rhs[ri] = '\0';
+        const char *ls = lhs_is_str ? lhs_str : "";
+        /* String comparison */
+        int cmp = strcmp_simple(ls, rhs);
+        switch (op) {
+            case 1: return cmp == 0;
+            case 2: return cmp != 0;
+            case 7: { /* substring match */
+                for (int i = 0; ls[i]; i++) {
+                    int j;
+                    for (j = 0; j < ri && ls[i+j]; j++) if (ls[i+j] != rhs[j]) break;
+                    if (j == ri) return 1;
+                }
+                return 0;
+            }
+            default: return 0;
+        }
+    } else {
+        /* Numeric RHS */
+        long rhs = 0;
+        awk_str_to_long(cp, &rhs);
+        switch (op) {
+            case 1: return lhs_val == rhs;
+            case 2: return lhs_val != rhs;
+            case 3: return lhs_val > rhs;
+            case 4: return lhs_val < rhs;
+            case 5: return lhs_val >= rhs;
+            case 6: return lhs_val <= rhs;
+            default: return 0;
+        }
+    }
+}
+
+/* awk: execute an action string (may contain ; separated statements) */
+static void awk_exec_action(const char *action, const char *line, int linelen,
+                             char **fields, int nf, int lineno, const char *ofs) {
+    if (!action || !action[0]) {
+        sys_write(1, line, linelen);
+        sys_write(1, "\n", 1);
+        return;
+    }
+
+    /* Split on ; and execute each statement */
+    const char *sp = action;
+    while (*sp) {
+        while (*sp == ' ' || *sp == ';') sp++;
+        if (!*sp) break;
+
+        /* Detect statement type */
+        if (sp[0] == 'p' && sp[1] == 'r' && sp[2] == 'i' && sp[3] == 'n' && sp[4] == 't') {
+            if (sp[5] == 'f' && sp[6] == ' ') {
+                /* printf "fmt", args... — basic format support */
+                sp += 7;
+                while (*sp == ' ') sp++;
+                if (*sp == '"') {
+                    sp++;
+                    int arg_idx = 0; /* which $N arg we're on */
+                    /* Scan for format arguments after the closing quote */
+                    const char *fmt_start = sp;
+                    while (*sp && *sp != '"') sp++;
+                    int fmt_len = (int)(sp - fmt_start);
+                    if (*sp == '"') sp++;
+                    /* Collect args from after the comma */
+                    int print_args[16]; int nargs = 0;
+                    while (*sp == ' ' || *sp == ',') {
+                        if (*sp == ',') {
+                            sp++;
+                            while (*sp == ' ') sp++;
+                            if (*sp == '$') {
+                                sp++;
+                                int fn = 0;
+                                while (*sp >= '0' && *sp <= '9') fn = fn * 10 + (*sp++ - '0');
+                                if (nargs < 16) print_args[nargs++] = fn;
+                            } else if (*sp == 'N' && sp[1] == 'R') { if (nargs < 16) print_args[nargs++] = -1; sp += 2; }
+                            else if (*sp == 'N' && sp[1] == 'F') { if (nargs < 16) print_args[nargs++] = -2; sp += 2; }
+                            else break;
+                        } else sp++;
+                    }
+                    /* Process format string */
+                    const char *f = fmt_start;
+                    for (int i = 0; i < fmt_len; i++) {
+                        if (f[i] == '\\' && i + 1 < fmt_len) {
+                            if (f[i+1] == 'n') { sys_write(1, "\n", 1); i++; }
+                            else if (f[i+1] == 't') { sys_write(1, "\t", 1); i++; }
+                            else { sys_write(1, &f[i+1], 1); i++; }
+                        } else if (f[i] == '%' && i + 1 < fmt_len) {
+                            i++;
+                            /* Skip width/precision */
+                            while (i < fmt_len && ((f[i] >= '0' && f[i] <= '9') || f[i] == '-' || f[i] == '.')) i++;
+                            if (i < fmt_len && (f[i] == 's' || f[i] == 'd' || f[i] == 'i')) {
+                                int fn = (arg_idx < nargs) ? print_args[arg_idx++] : 0;
+                                if (fn == -1) { awk_write_int(1, lineno); }
+                                else if (fn == -2) { awk_write_int(1, nf); }
+                                else if (fn == 0) { sys_write(1, line, linelen); }
+                                else if (fn <= nf) {
+                                    if (f[i] == 's') {
+                                        int fl = 0; while (fields[fn-1][fl]) fl++;
+                                        sys_write(1, fields[fn-1], fl);
+                                    } else {
+                                        long v = 0; awk_str_to_long(fields[fn-1], &v);
+                                        awk_write_int(1, v);
+                                    }
+                                }
+                            }
+                        } else {
+                            sys_write(1, &f[i], 1);
+                        }
+                    }
+                }
+                continue;
+            }
+            /* print [args] */
+            sp += 5;
+            if (*sp == '\0' || *sp == ';') {
+                /* bare print — print $0 */
+                sys_write(1, line, linelen);
+                sys_write(1, "\n", 1);
+                continue;
+            }
+            if (*sp != ' ') { while (*sp && *sp != ';') sp++; continue; }
+            sp++;
+            int first = 1;
+            while (*sp && *sp != ';') {
+                while (*sp == ' ') sp++;
+                if (!*sp || *sp == ';') break;
+                int use_ofs = 0;
+                if (*sp == ',') { use_ofs = 1; sp++; while (*sp == ' ') sp++; }
+                if (!first && use_ofs) {
+                    int ol = 0; while (ofs[ol]) ol++;
+                    sys_write(1, ofs, ol);
+                } else if (!first) {
+                    sys_write(1, " ", 1);
+                }
+                first = 0;
+                if (*sp == '$') {
+                    sp++;
+                    int fn = 0;
+                    while (*sp >= '0' && *sp <= '9') fn = fn * 10 + (*sp++ - '0');
+                    if (fn == 0) { sys_write(1, line, linelen); }
+                    else if (fn <= nf) { int fl = 0; while (fields[fn-1][fl]) fl++; sys_write(1, fields[fn-1], fl); }
+                } else if (*sp == 'N' && sp[1] == 'R') {
+                    awk_write_int(1, lineno); sp += 2;
+                } else if (*sp == 'N' && sp[1] == 'F') {
+                    awk_write_int(1, nf); sp += 2;
+                } else if (*sp == '"') {
+                    sp++;
+                    while (*sp && *sp != '"') {
+                        if (*sp == '\\' && sp[1] == 't') { sys_write(1, "\t", 1); sp += 2; }
+                        else if (*sp == '\\' && sp[1] == 'n') { sys_write(1, "\n", 1); sp += 2; }
+                        else { sys_write(1, sp, 1); sp++; }
+                    }
+                    if (*sp == '"') sp++;
+                } else if (*sp == '$' || (*sp >= '0' && *sp <= '9') || *sp == '-') {
+                    /* Numeric literal */
+                    long v = 0; awk_str_to_long(sp, &v);
+                    awk_write_int(1, v);
+                    if (*sp == '-') sp++;
+                    while (*sp >= '0' && *sp <= '9') sp++;
+                } else {
+                    while (*sp && *sp != ' ' && *sp != ',' && *sp != ';') sp++;
+                }
+            }
+            sys_write(1, "\n", 1);
+        } else if (sp[0] == 'n' && sp[1] == 'e' && sp[2] == 'x' && sp[3] == 't') {
+            /* next — skip to next line */
+            return;
+        } else {
+            /* Skip unknown statement */
+            while (*sp && *sp != ';') sp++;
+        }
+    }
+}
+
 static void cmd_awk(int argc, char *argv[]) {
     if (argc < 2) {
         write_str(2, "usage: awk [-F sep] 'program' [file...]\n");
@@ -4570,6 +4846,7 @@ static void cmd_awk(int argc, char *argv[]) {
     }
 
     char fs = ' ';  /* Field separator */
+    char ofs[8] = " ";  /* Output field separator */
     int prog_arg = 1;
     if (argc >= 3 && strcmp_simple(argv[1], "-F") == 0) {
         if (argv[2][0]) fs = argv[2][0];
@@ -4587,44 +4864,114 @@ static void cmd_awk(int argc, char *argv[]) {
     const char *prog = argv[prog_arg];
     int file_arg = prog_arg + 1;
 
-    /* Parse simple awk program patterns:
-     *   '{print}' or '{print $0}' — print whole line
-     *   '{print $N}' — print Nth field
-     *   '{print $N, $M}' — print multiple fields
-     *   '/regex/ {action}' — pattern match
-     *   'NR==N' — line number match
-     */
+    /* Parse program into rules: BEGIN{...}, condition{action}, END{...} */
+    char begin_action[256] = {0};
+    char end_action[256] = {0};
 
-    /* Extract pattern and action */
-    char pattern[128] = {0};
-    char action[256] = {0};
-    int has_pattern = 0;
+    /* Support up to 4 rules */
+    #define AWK_MAX_RULES 4
+    char rule_cond[AWK_MAX_RULES][128];
+    char rule_action[AWK_MAX_RULES][512];
+    int nrules = 0;
 
-    const char *p = prog;
-    while (*p == ' ') p++;
+    const char *pp = prog;
+    while (*pp) {
+        while (*pp == ' ' || *pp == ';' || *pp == '\n') pp++;
+        if (!*pp) break;
 
-    if (*p == '/') {
-        /* /pattern/ { action } */
-        p++;
-        int pi = 0;
-        while (*p && *p != '/' && pi < 126) pattern[pi++] = *p++;
-        pattern[pi] = '\0';
-        has_pattern = 1;
-        if (*p == '/') p++;
-        while (*p == ' ') p++;
+        /* BEGIN { ... } */
+        if (pp[0]=='B' && pp[1]=='E' && pp[2]=='G' && pp[3]=='I' && pp[4]=='N') {
+            pp += 5;
+            while (*pp == ' ') pp++;
+            awk_extract_block(&pp, begin_action, sizeof(begin_action));
+            continue;
+        }
+
+        /* END { ... } */
+        if (pp[0]=='E' && pp[1]=='N' && pp[2]=='D') {
+            pp += 3;
+            while (*pp == ' ') pp++;
+            awk_extract_block(&pp, end_action, sizeof(end_action));
+            continue;
+        }
+
+        if (nrules >= AWK_MAX_RULES) break;
+
+        /* condition { action } or just { action } */
+        rule_cond[nrules][0] = '\0';
+        rule_action[nrules][0] = '\0';
+
+        if (*pp == '{') {
+            /* No condition — matches all lines */
+            awk_extract_block(&pp, rule_action[nrules], sizeof(rule_action[0]));
+            nrules++;
+        } else if (*pp == '/') {
+            /* /pattern/ { action } */
+            int ci = 0;
+            rule_cond[nrules][ci++] = *pp++; /* / */
+            while (*pp && *pp != '/' && ci < 126) rule_cond[nrules][ci++] = *pp++;
+            if (*pp == '/') rule_cond[nrules][ci++] = *pp++;
+            rule_cond[nrules][ci] = '\0';
+            while (*pp == ' ') pp++;
+            if (*pp == '{') {
+                awk_extract_block(&pp, rule_action[nrules], sizeof(rule_action[0]));
+            } else {
+                /* Default action: print $0 */
+                rule_action[nrules][0] = '\0';
+            }
+            nrules++;
+        } else {
+            /* condition { action } — NR==1, $1>5, etc. */
+            int ci = 0;
+            while (*pp && *pp != '{' && *pp != ';' && ci < 126) rule_cond[nrules][ci++] = *pp++;
+            /* Trim trailing spaces */
+            while (ci > 0 && rule_cond[nrules][ci-1] == ' ') ci--;
+            rule_cond[nrules][ci] = '\0';
+            while (*pp == ' ') pp++;
+            if (*pp == '{') {
+                awk_extract_block(&pp, rule_action[nrules], sizeof(rule_action[0]));
+            } else {
+                rule_action[nrules][0] = '\0';
+            }
+            nrules++;
+        }
     }
 
-    if (*p == '{') {
-        p++;
-        while (*p == ' ') p++;
+    /* If no rules parsed, treat entire program as a single action */
+    if (nrules == 0 && begin_action[0] == '\0' && end_action[0] == '\0') {
+        rule_cond[0][0] = '\0';
         int ai = 0;
-        while (*p && *p != '}' && ai < 254) action[ai++] = *p++;
-        action[ai] = '\0';
-    } else if (!has_pattern) {
-        /* Might be a bare action like "print $1" */
-        int ai = 0;
-        while (*p && ai < 254) action[ai++] = *p++;
-        action[ai] = '\0';
+        const char *s = prog;
+        while (*s && ai < 510) rule_action[0][ai++] = *s++;
+        rule_action[0][ai] = '\0';
+        nrules = 1;
+    }
+
+    /* Execute BEGIN block (with dummy empty line context) */
+    if (begin_action[0]) {
+        char *no_fields[1] = { (char*)"" };
+        /* Check for OFS assignment: OFS="..." */
+        const char *bp = begin_action;
+        while (*bp) {
+            while (*bp == ' ' || *bp == ';') bp++;
+            if (bp[0]=='O' && bp[1]=='F' && bp[2]=='S' && bp[3]=='=') {
+                bp += 4;
+                if (*bp == '"') {
+                    bp++;
+                    int oi = 0;
+                    while (*bp && *bp != '"' && oi < 6) {
+                        if (*bp == '\\' && bp[1] == 't') { ofs[oi++] = '\t'; bp += 2; }
+                        else if (*bp == '\\' && bp[1] == 'n') { ofs[oi++] = '\n'; bp += 2; }
+                        else { ofs[oi++] = *bp++; }
+                    }
+                    ofs[oi] = '\0';
+                    if (*bp == '"') bp++;
+                }
+            } else {
+                awk_exec_action(bp, "", 0, no_fields, 0, 0, ofs);
+                break;
+            }
+        }
     }
 
     /* Open input */
@@ -4657,10 +5004,8 @@ static void cmd_awk(int argc, char *argv[]) {
             for (int i = 0; line[i] && fi < 1022; i++) fcopy[fi++] = line[i];
             fcopy[fi] = '\0';
 
-            /* Tokenize by field separator */
             char *fp = fcopy;
             while (*fp && nf < 63) {
-                /* Skip leading separators (for whitespace FS) */
                 if (fs == ' ') {
                     while (*fp == ' ' || *fp == '\t') fp++;
                     if (!*fp) break;
@@ -4674,89 +5019,24 @@ static void cmd_awk(int argc, char *argv[]) {
                 if (*fp) *fp++ = '\0';
             }
 
-            /* Check pattern match */
-            if (has_pattern) {
-                /* Simple substring match */
-                int found = 0;
-                int plen = 0;
-                while (pattern[plen]) plen++;
-                for (int i = 0; line[i] && !found; i++) {
-                    int j;
-                    for (j = 0; j < plen; j++) {
-                        if (line[i + j] != pattern[j]) break;
-                    }
-                    if (j == plen) found = 1;
+            /* Execute matching rules */
+            for (int r = 0; r < nrules; r++) {
+                if (awk_eval_cond(rule_cond[r], line, lp, fields, nf, lineno)) {
+                    awk_exec_action(rule_action[r], line, lp, fields, nf, lineno, ofs);
                 }
-                if (!found) { lp = 0; continue; }
-            }
-
-            /* Execute action */
-            if (action[0] == '\0' || strcmp_simple(action, "print") == 0 ||
-                strcmp_simple(action, "print $0") == 0) {
-                /* Default: print whole line */
-                sys_write(1, line, lp);
-                sys_write(1, "\n", 1);
-            } else if (action[0] == 'p' && action[1] == 'r' && action[2] == 'i' &&
-                       action[3] == 'n' && action[4] == 't' && action[5] == ' ') {
-                /* print EXPR [, EXPR ...] */
-                const char *ap = action + 6;
-                int first = 1;
-                while (*ap) {
-                    while (*ap == ' ' || *ap == ',') { if (*ap == ',') first = 0; ap++; }
-                    if (!*ap) break;
-
-                    if (!first) sys_write(1, " ", 1);
-                    first = 0;
-
-                    if (*ap == '$') {
-                        ap++;
-                        int fn = 0;
-                        while (*ap >= '0' && *ap <= '9') { fn = fn * 10 + (*ap - '0'); ap++; }
-                        if (fn == 0) {
-                            sys_write(1, line, lp);
-                        } else if (fn <= nf) {
-                            int fl = 0;
-                            while (fields[fn-1][fl]) fl++;
-                            sys_write(1, fields[fn-1], fl);
-                        }
-                    } else if (*ap == 'N' && ap[1] == 'R') {
-                        char num[16]; int np = 0;
-                        int n = lineno;
-                        char rev[16]; int rp = 0;
-                        if (n == 0) rev[rp++] = '0';
-                        else while (n > 0) { rev[rp++] = '0' + (n % 10); n /= 10; }
-                        while (rp > 0) num[np++] = rev[--rp];
-                        sys_write(1, num, np);
-                        ap += 2;
-                    } else if (*ap == 'N' && ap[1] == 'F') {
-                        char num[16]; int np = 0;
-                        int n = nf;
-                        char rev[16]; int rp = 0;
-                        if (n == 0) rev[rp++] = '0';
-                        else while (n > 0) { rev[rp++] = '0' + (n % 10); n /= 10; }
-                        while (rp > 0) num[np++] = rev[--rp];
-                        sys_write(1, num, np);
-                        ap += 2;
-                    } else if (*ap == '"') {
-                        ap++;
-                        while (*ap && *ap != '"') {
-                            if (*ap == '\\' && ap[1] == 't') { sys_write(1, "\t", 1); ap += 2; }
-                            else if (*ap == '\\' && ap[1] == 'n') { sys_write(1, "\n", 1); ap += 2; }
-                            else { sys_write(1, ap, 1); ap++; }
-                        }
-                        if (*ap == '"') ap++;
-                    } else {
-                        /* Unknown token — skip */
-                        while (*ap && *ap != ' ' && *ap != ',') ap++;
-                    }
-                }
-                sys_write(1, "\n", 1);
             }
             lp = 0;
         } else {
             line[lp++] = ch;
         }
     }
+
+    /* Execute END block */
+    if (end_action[0]) {
+        char *no_fields[1] = { (char*)"" };
+        awk_exec_action(end_action, "", 0, no_fields, 0, lineno, ofs);
+    }
+
     if (fd_in > 0) sys_close(fd_in);
 }
 

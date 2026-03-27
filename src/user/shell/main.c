@@ -145,6 +145,8 @@ static void cmd_pidof(int argc, char *argv[]);
 static void cmd_nice(int argc, char *argv[]);
 static void cmd_renice(int argc, char *argv[]);
 static void cmd_xxd(int argc, char *argv[]);
+static void cmd_patch(int argc, char *argv[]);
+static void cmd_sha1sum(int argc, char *argv[]);
 
 /* Forward declaration for prompt */
 static void print_prompt(void);
@@ -543,9 +545,9 @@ static size_t common_prefix_len(const char *s1, const char *s2) {
 static void complete_command(char *buf, size_t *pos, size_t max_len) {
     /* List of builtin commands */
     const char *builtins[] = {
-        "arp", "bg", "brctl", "cal", "cd", "chgrp", "chmod", "chroot", "clear", "cmp", "comm", "conntrack", "date", "dd", "df", "dhclient", "dmesg", "echo", "edit", "ethtool", "expand", "expr", "factor", "file", "fold", "hexdump", "install", "locale", "lsof", "md5sum", "mkfifo", "nc", "nice", "nohup", "pgrep", "pidof", "pkill", "poweroff", "reboot", "renice", "reset", "seq", "sleep", "strings", "tac", "time", "timeout", "tput", "traceroute", "tty", "unexpand", "wget", "xxd", "exit", "export", "fg", "free",
+        "arp", "bg", "brctl", "cal", "cd", "chgrp", "chmod", "chroot", "clear", "cmp", "comm", "conntrack", "date", "dd", "df", "dhclient", "dmesg", "echo", "edit", "ethtool", "expand", "expr", "factor", "file", "fold", "hexdump", "install", "locale", "lsof", "md5sum", "mkfifo", "nc", "nice", "nohup", "patch", "pgrep", "pidof", "pkill", "poweroff", "reboot", "renice", "reset", "seq", "sha1sum", "sleep", "strings", "tac", "time", "timeout", "tput", "traceroute", "tty", "unexpand", "wget", "xxd", "exit", "export", "fg", "free",
         "help", "hostname", "httpd", "id", "ifconfig", "iostat", "ipcs", "iptables", "jobs", "kill", "logger", "losetup", "ls", "lsblk", "lspci", "mkfs", "mount", "netstat",
-        ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "getconf", "history", "ip", "ln", "mktemp", "more", "nproc", "nslookup", "ping", "printf", "ps", "pwd", "read", "readlink", "set", "sha256sum", "shutdown", "source", "ss", "stat", "stty", "sync", "sysctl", "sysinfo", "tc", "test", "top", "trap", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "vmstat", "wait", "watch", "wdctl", "which", "whoami", "xargs", "yes", NULL
+        ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "getconf", "history", "ip", "ln", "mktemp", "more", "nproc", "nslookup", "ping", "printf", "ps", "pwd", "read", "readlink", "set", "sha1sum", "sha256sum", "shutdown", "source", "ss", "stat", "stty", "sync", "sysctl", "sysinfo", "tc", "test", "top", "trap", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "vmstat", "wait", "watch", "wdctl", "which", "whoami", "xargs", "yes", NULL
     };
 
     /* External commands we might have */
@@ -4836,7 +4838,36 @@ static void cmd_base64(int argc, char *argv[]) {
         if (col > 0) sys_write(1, "\n", 1);
     } else {
         /* Decode */
-        write_str(2, "base64: decode not implemented\n");
+        static unsigned char dbuf[4096];
+        static unsigned char outb[3072]; /* 4096 * 3/4 */
+        ssize_t nr;
+        while ((nr = sys_read(fd_in, dbuf, sizeof(dbuf))) > 0) {
+            int op = 0;
+            int acc = 0, bits = 0;
+            for (ssize_t i = 0; i < nr; i++) {
+                unsigned char c = dbuf[i];
+                int val = -1;
+                if (c >= 'A' && c <= 'Z') val = c - 'A';
+                else if (c >= 'a' && c <= 'z') val = c - 'a' + 26;
+                else if (c >= '0' && c <= '9') val = c - '0' + 52;
+                else if (c == '+') val = 62;
+                else if (c == '/') val = 63;
+                else if (c == '=') val = 0; /* padding */
+                else continue; /* skip whitespace/newlines */
+                if (c == '=') { bits += 6; if (bits >= 8) { bits -= 8; } continue; }
+                acc = (acc << 6) | val;
+                bits += 6;
+                if (bits >= 8) {
+                    bits -= 8;
+                    outb[op++] = (unsigned char)((acc >> bits) & 0xFF);
+                    if (op >= (int)sizeof(outb)) {
+                        sys_write(1, outb, op);
+                        op = 0;
+                    }
+                }
+            }
+            if (op > 0) sys_write(1, outb, op);
+        }
     }
     if (fd_in > 0) sys_close(fd_in);
 }
@@ -10314,6 +10345,12 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "xxd") == 0) {
         cmd_xxd(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "patch") == 0) {
+        cmd_patch(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "sha1sum") == 0) {
+        cmd_sha1sum(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "file") == 0) {
         cmd_file(argc, argv);
         return 0;
@@ -11011,6 +11048,8 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "nice") == 0 ||
             strcmp_simple(cmd, "renice") == 0 ||
             strcmp_simple(cmd, "xxd") == 0 ||
+            strcmp_simple(cmd, "patch") == 0 ||
+            strcmp_simple(cmd, "sha1sum") == 0 ||
             strcmp_simple(cmd, "file") == 0 ||
             strcmp_simple(cmd, "mkfifo") == 0 ||
             strcmp_simple(cmd, "cmp") == 0 ||
@@ -12485,6 +12524,264 @@ static void cmd_xxd(int argc, char *argv[]) {
             total_offset += n;
         }
         sys_close(fd);
+    }
+}
+
+/* ── patch: apply unified diff patches ── */
+static void cmd_patch(int argc, char *argv[]) {
+    int strip = 0; /* -p N: strip N leading path components */
+    int file_arg = -1;
+    for (int i = 1; i < argc; i++) {
+        if (argv[i][0] == '-' && argv[i][1] == 'p') {
+            const char *num = argv[i] + 2;
+            if (*num == '\0' && i + 1 < argc) num = argv[++i];
+            strip = 0;
+            while (*num >= '0' && *num <= '9') { strip = strip * 10 + (*num - '0'); num++; }
+        } else {
+            file_arg = i;
+        }
+    }
+
+    /* Read the entire patch from stdin or file argument */
+    static char patch_buf[32768];
+    int patch_len = 0;
+    int pfd = 0; /* stdin by default */
+    if (file_arg >= 0) {
+        pfd = sys_open(argv[file_arg], O_RDONLY, 0);
+        if (pfd < 0) { write_str(2, "patch: cannot open patch file\n"); return; }
+    }
+    ssize_t nr;
+    while (patch_len < (int)sizeof(patch_buf) - 1 && (nr = sys_read(pfd, patch_buf + patch_len, sizeof(patch_buf) - 1 - patch_len)) > 0)
+        patch_len += (int)nr;
+    if (pfd > 0) sys_close(pfd);
+    patch_buf[patch_len] = '\0';
+
+    /* Parse lines */
+    static char *lines[4096];
+    int nlines = 0;
+    lines[0] = patch_buf;
+    for (int i = 0; i < patch_len && nlines < 4095; i++) {
+        if (patch_buf[i] == '\n') {
+            patch_buf[i] = '\0';
+            if (i + 1 < patch_len) lines[++nlines] = &patch_buf[i + 1];
+        }
+    }
+    if (patch_len > 0) nlines++;
+
+    /* Strip path components helper */
+    static char stripped_path[512];
+    int li = 0;
+    while (li < nlines) {
+        /* Find +++ line to determine target file */
+        if (lines[li][0] == '+' && lines[li][1] == '+' && lines[li][2] == '+' && lines[li][3] == ' ') {
+            const char *path = lines[li] + 4;
+            /* Skip "b/" or strip components */
+            int s = strip;
+            while (s > 0 && *path) {
+                if (*path == '/') { path++; s--; }
+                else path++;
+            }
+            /* Copy path, stop at tab or space (timestamps) */
+            int pi = 0;
+            while (*path && *path != '\t' && *path != '\n' && pi < 510) stripped_path[pi++] = *path++;
+            stripped_path[pi] = '\0';
+
+            /* Read target file */
+            static char file_buf[32768];
+            int file_len = 0;
+            int tfd = sys_open(stripped_path, O_RDONLY, 0);
+            if (tfd >= 0) {
+                ssize_t r;
+                while (file_len < (int)sizeof(file_buf) - 1 && (r = sys_read(tfd, file_buf + file_len, sizeof(file_buf) - 1 - file_len)) > 0)
+                    file_len += (int)r;
+                sys_close(tfd);
+            }
+            file_buf[file_len] = '\0';
+
+            /* Split target file into lines */
+            static char *flines[4096];
+            int fnlines = 0;
+            if (file_len > 0) {
+                flines[0] = file_buf;
+                for (int i = 0; i < file_len && fnlines < 4095; i++) {
+                    if (file_buf[i] == '\n') {
+                        file_buf[i] = '\0';
+                        if (i + 1 < file_len) flines[++fnlines] = &file_buf[i + 1];
+                    }
+                }
+                fnlines++;
+            }
+
+            /* Apply hunks */
+            li++;
+            static char out_buf[32768];
+            int out_len = 0;
+            int fpos = 0; /* current position in original file lines */
+
+            while (li < nlines) {
+                /* Check for @@ hunk header or next file */
+                if (lines[li][0] == '-' && lines[li][1] == '-' && lines[li][2] == '-') break;
+                if (lines[li][0] != '@' || lines[li][1] != '@') { li++; continue; }
+
+                /* Parse @@ -OLD_START,OLD_COUNT +NEW_START,NEW_COUNT @@ */
+                const char *h = lines[li] + 3;
+                int old_start = 0;
+                while (*h == ' ') h++;
+                if (*h == '-') h++;
+                while (*h >= '0' && *h <= '9') { old_start = old_start * 10 + (*h - '0'); h++; }
+                int old_count = 1;
+                if (*h == ',') { h++; old_count = 0; while (*h >= '0' && *h <= '9') { old_count = old_count * 10 + (*h - '0'); h++; } }
+                li++;
+
+                /* Copy unchanged lines before this hunk */
+                int hunk_start = old_start > 0 ? old_start - 1 : 0;
+                while (fpos < hunk_start && fpos < fnlines) {
+                    const char *fl = flines[fpos];
+                    while (*fl && out_len < (int)sizeof(out_buf) - 2) out_buf[out_len++] = *fl++;
+                    out_buf[out_len++] = '\n';
+                    fpos++;
+                }
+
+                /* Process hunk lines */
+                int consumed = 0;
+                while (li < nlines && (lines[li][0] == ' ' || lines[li][0] == '+' || lines[li][0] == '-' || lines[li][0] == '\\')) {
+                    if (lines[li][0] == '\\') { li++; continue; } /* "\ No newline at end of file" */
+                    if (lines[li][0] == '-') {
+                        /* Remove line from original (skip it) */
+                        consumed++;
+                        fpos++;
+                        li++;
+                    } else if (lines[li][0] == '+') {
+                        /* Add line */
+                        const char *add = lines[li] + 1;
+                        while (*add && out_len < (int)sizeof(out_buf) - 2) out_buf[out_len++] = *add++;
+                        out_buf[out_len++] = '\n';
+                        li++;
+                    } else {
+                        /* Context line */
+                        const char *ctx = lines[li] + 1;
+                        while (*ctx && out_len < (int)sizeof(out_buf) - 2) out_buf[out_len++] = *ctx++;
+                        out_buf[out_len++] = '\n';
+                        consumed++;
+                        fpos++;
+                        li++;
+                    }
+                }
+                (void)consumed;
+                (void)old_count;
+            }
+
+            /* Copy remaining lines */
+            while (fpos < fnlines) {
+                const char *fl = flines[fpos];
+                while (*fl && out_len < (int)sizeof(out_buf) - 2) out_buf[out_len++] = *fl++;
+                out_buf[out_len++] = '\n';
+                fpos++;
+            }
+
+            /* Write patched file */
+            int wfd = sys_open(stripped_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            if (wfd < 0) {
+                write_str(2, "patch: cannot write ");
+                write_str(2, stripped_path);
+                write_str(2, "\n");
+            } else {
+                sys_write(wfd, out_buf, out_len);
+                sys_close(wfd);
+                write_str(1, "patching file ");
+                write_str(1, stripped_path);
+                write_str(1, "\n");
+            }
+        } else {
+            li++;
+        }
+    }
+}
+
+/* ── sha1sum: compute SHA-1 hash ── */
+static void cmd_sha1sum(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: sha1sum FILE...\n");
+        return;
+    }
+    for (int f = 1; f < argc; f++) {
+        int fd = sys_open(argv[f], O_RDONLY, 0);
+        if (fd < 0) {
+            write_str(2, "sha1sum: ");
+            write_str(2, argv[f]);
+            write_str(2, ": not found\n");
+            continue;
+        }
+
+        /* SHA-1 state */
+        uint32_t h0 = 0x67452301, h1 = 0xEFCDAB89, h2 = 0x98BADCFE;
+        uint32_t h3 = 0x10325476, h4 = 0xC3D2E1F0;
+        uint64_t total_bits = 0;
+        static unsigned char blk[64];
+        int blk_len = 0;
+        static unsigned char rbuf[4096];
+        ssize_t nr;
+
+        /* Process a single 64-byte block */
+        #define SHA1_ROTL(v,n) (((v)<<(n))|((v)>>(32-(n))))
+        #define SHA1_BLOCK() do { \
+            uint32_t w[80]; \
+            for (int i = 0; i < 16; i++) \
+                w[i] = ((uint32_t)blk[i*4]<<24)|((uint32_t)blk[i*4+1]<<16)| \
+                        ((uint32_t)blk[i*4+2]<<8)|((uint32_t)blk[i*4+3]); \
+            for (int i = 16; i < 80; i++) \
+                w[i] = SHA1_ROTL(w[i-3]^w[i-8]^w[i-14]^w[i-16], 1); \
+            uint32_t a=h0, b=h1, c=h2, d=h3, e=h4; \
+            for (int i = 0; i < 80; i++) { \
+                uint32_t fv, k; \
+                if (i < 20) { fv=(b&c)|((~b)&d); k=0x5A827999; } \
+                else if (i < 40) { fv=b^c^d; k=0x6ED9EBA1; } \
+                else if (i < 60) { fv=(b&c)|(b&d)|(c&d); k=0x8F1BBCDC; } \
+                else { fv=b^c^d; k=0xCA62C1D6; } \
+                uint32_t tmp = SHA1_ROTL(a,5)+fv+e+k+w[i]; \
+                e=d; d=c; c=SHA1_ROTL(b,30); b=a; a=tmp; \
+            } \
+            h0+=a; h1+=b; h2+=c; h3+=d; h4+=e; \
+        } while(0)
+
+        while ((nr = sys_read(fd, rbuf, sizeof(rbuf))) > 0) {
+            for (ssize_t i = 0; i < nr; i++) {
+                blk[blk_len++] = rbuf[i];
+                if (blk_len == 64) { SHA1_BLOCK(); blk_len = 0; }
+            }
+            total_bits += (uint64_t)nr * 8;
+        }
+        sys_close(fd);
+
+        /* Padding */
+        blk[blk_len++] = 0x80;
+        if (blk_len > 56) {
+            while (blk_len < 64) blk[blk_len++] = 0;
+            SHA1_BLOCK(); blk_len = 0;
+        }
+        while (blk_len < 56) blk[blk_len++] = 0;
+        /* Append length in bits (big-endian 64-bit) */
+        for (int i = 7; i >= 0; i--)
+            blk[blk_len++] = (unsigned char)(total_bits >> (i * 8));
+        SHA1_BLOCK();
+        #undef SHA1_ROTL
+        #undef SHA1_BLOCK
+
+        /* Output 40-character hex digest */
+        static const char hex[] = "0123456789abcdef";
+        char out[41];
+        uint32_t hv[5] = {h0, h1, h2, h3, h4};
+        for (int i = 0; i < 5; i++) {
+            out[i*8+0] = hex[(hv[i]>>28)&0xF]; out[i*8+1] = hex[(hv[i]>>24)&0xF];
+            out[i*8+2] = hex[(hv[i]>>20)&0xF]; out[i*8+3] = hex[(hv[i]>>16)&0xF];
+            out[i*8+4] = hex[(hv[i]>>12)&0xF]; out[i*8+5] = hex[(hv[i]>> 8)&0xF];
+            out[i*8+6] = hex[(hv[i]>> 4)&0xF]; out[i*8+7] = hex[(hv[i]>> 0)&0xF];
+        }
+        out[40] = '\0';
+        write_str(1, out);
+        write_str(1, "  ");
+        write_str(1, argv[f]);
+        write_str(1, "\n");
     }
 }
 

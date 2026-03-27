@@ -57955,6 +57955,240 @@ __attribute__((noinline)) static void test_net_procfs_devnodes(void) {
  * Tests 2061-2063: binfmt_misc
  * ============================================================ */
 /* ============================================================
+ * Tests 2082-2091: edge case tests for new subsystems
+ * ============================================================ */
+__attribute__((noinline)) static void test_edge_cases(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_write(int, const void *, size_t);
+    extern long sys_close(int);
+    extern long sys_ioctl(int fd, unsigned long request, void *argp);
+
+    /* ── Test 2082: cgroup memory.max is writable ── */
+    fut_printf("[MISC-TEST] Test 2082: write cgroup memory.max\n");
+    {
+        long fd = sys_open("/cgroup/memory.max", 02 /*O_RDWR*/, 0);
+        if (fd >= 0) {
+            long n = sys_write((int)fd, "max\n", 4);
+            sys_close((int)fd);
+            if (n == 4) {
+                fut_printf("[MISC-TEST] ✓ Test 2082: memory.max writable\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2082: write=%ld\n", n);
+                fut_test_fail(2082);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2082: open=%ld\n", fd);
+            fut_test_fail(2082);
+        }
+    }
+
+    /* ── Test 2083: cgroup cgroup.freeze readable ── */
+    fut_printf("[MISC-TEST] Test 2083: cgroup.freeze\n");
+    {
+        long fd = sys_open("/cgroup/cgroup.freeze", 0, 0);
+        if (fd >= 0) {
+            static char buf[8];
+            long n = sys_read((int)fd, buf, 7);
+            sys_close((int)fd);
+            if (n > 0 && buf[0] == '0') {
+                fut_printf("[MISC-TEST] ✓ Test 2083: freeze=0\n");
+                fut_test_pass();
+            } else { fut_test_fail(2083); }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2083: open=%ld\n", fd);
+            fut_test_fail(2083);
+        }
+    }
+
+    /* ── Test 2084: /proc/sys/net/unix/max_dgram_qlen value ── */
+    fut_printf("[MISC-TEST] Test 2084: unix dgram_qlen=512\n");
+    {
+        long fd = sys_open("/proc/sys/net/unix/max_dgram_qlen", 0, 0);
+        if (fd >= 0) {
+            static char buf[16];
+            long n = sys_read((int)fd, buf, 15);
+            sys_close((int)fd);
+            if (n > 0 && buf[0] == '5' && buf[1] == '1' && buf[2] == '2') {
+                fut_printf("[MISC-TEST] ✓ Test 2084: dgram_qlen=512\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2084: n=%ld\n", n);
+                fut_test_fail(2084);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2084: open=%ld\n", fd);
+            fut_test_fail(2084);
+        }
+    }
+
+    /* ── Test 2085: /proc/sys/kernel/sched_child_runs_first writable ── */
+    fut_printf("[MISC-TEST] Test 2085: write sched_child_runs_first\n");
+    {
+        long fd = sys_open("/proc/sys/kernel/sched_child_runs_first", 02, 0);
+        if (fd >= 0) {
+            long n = sys_write((int)fd, "0\n", 2);
+            sys_close((int)fd);
+            if (n == 2) {
+                /* Verify the value took effect */
+                fd = sys_open("/proc/sys/kernel/sched_child_runs_first", 0, 0);
+                if (fd >= 0) {
+                    static char buf[8];
+                    long r = sys_read((int)fd, buf, 7);
+                    sys_close((int)fd);
+                    if (r > 0 && buf[0] == '0') {
+                        fut_printf("[MISC-TEST] ✓ Test 2085: write+readback ok\n");
+                        fut_test_pass();
+                    } else { fut_test_fail(2085); }
+                } else { fut_test_fail(2085); }
+            } else { fut_test_fail(2085); }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2085: open=%ld\n", fd);
+            fut_test_fail(2085);
+        }
+    }
+
+    /* ── Test 2086: perf FD_CLOEXEC flag ── */
+    fut_printf("[MISC-TEST] Test 2086: perf FD_CLOEXEC\n");
+    {
+        extern long sys_perf_event_open(const void *attr, int pid, int cpu,
+                                         int group_fd, unsigned long flags);
+        struct { uint32_t type; uint32_t size; uint64_t config;
+                 uint64_t sp; uint64_t st; uint64_t rf; uint64_t fl;
+                 uint32_t we; uint32_t bt; uint64_t c1; uint64_t c2; } attr;
+        memset(&attr, 0, sizeof(attr));
+        attr.type = 1; attr.config = 0;
+        long fd = sys_perf_event_open(&attr, -1, -1, -1, 8 /*PERF_FLAG_FD_CLOEXEC*/);
+        if (fd >= 0) {
+            extern long sys_fcntl(int fd, int cmd, uint64_t arg);
+            long fl = sys_fcntl((int)fd, 1 /*F_GETFD*/, 0);
+            sys_close((int)fd);
+            if (fl & 1 /*FD_CLOEXEC*/) {
+                fut_printf("[MISC-TEST] ✓ Test 2086: perf FD_CLOEXEC set\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2086: fl=%ld\n", fl);
+                fut_test_fail(2086);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2086: open=%ld\n", fd);
+            fut_test_fail(2086);
+        }
+    }
+
+    /* ── Test 2087: io_uring with IORING_SETUP_CQSIZE ── */
+    fut_printf("[MISC-TEST] Test 2087: io_uring CQSIZE\n");
+    {
+        extern long sys_io_uring_setup(unsigned int entries, void *params);
+        struct { uint32_t sq_entries; uint32_t cq_entries; uint32_t flags;
+                 uint32_t sq_thread_cpu; uint32_t sq_thread_idle;
+                 uint32_t features; uint32_t wq_fd; uint32_t resv[3]; } params;
+        memset(&params, 0, sizeof(params));
+        params.flags = 8; /* IORING_SETUP_CQSIZE */
+        params.cq_entries = 32;
+        long fd = sys_io_uring_setup(4, &params);
+        if (fd >= 0) {
+            if (params.cq_entries >= 32) {
+                fut_printf("[MISC-TEST] ✓ Test 2087: CQSIZE cq=%u\n", params.cq_entries);
+                fut_test_pass();
+            } else { fut_test_fail(2087); }
+            sys_close((int)fd);
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2087: setup=%ld\n", fd);
+            fut_test_fail(2087);
+        }
+    }
+
+    /* ── Test 2088: fanotify_init with FAN_CLOEXEC ── */
+    fut_printf("[MISC-TEST] Test 2088: fanotify FAN_CLOEXEC\n");
+    {
+        extern long sys_fanotify_init(unsigned int flags, unsigned int event_f_flags);
+        long fd = sys_fanotify_init(1 /*FAN_CLOEXEC*/, 0);
+        if (fd >= 0) {
+            extern long sys_fcntl(int fd, int cmd, uint64_t arg);
+            long fl = sys_fcntl((int)fd, 1 /*F_GETFD*/, 0);
+            sys_close((int)fd);
+            if (fl & 1) {
+                fut_printf("[MISC-TEST] ✓ Test 2088: FAN_CLOEXEC set\n");
+                fut_test_pass();
+            } else { fut_test_fail(2088); }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2088: init=%ld\n", fd);
+            fut_test_fail(2088);
+        }
+    }
+
+    /* ── Test 2089: /proc/config.gz contains CONFIG_IO_URING=y ── */
+    fut_printf("[MISC-TEST] Test 2089: config has IO_URING\n");
+    {
+        long fd = sys_open("/proc/config.gz", 0, 0);
+        if (fd >= 0) {
+            static char buf[2048];
+            long n = sys_read((int)fd, buf, sizeof(buf) - 1);
+            sys_close((int)fd);
+            bool found = false;
+            if (n > 0) {
+                buf[n] = '\0';
+                for (long i = 0; i < n - 10; i++) {
+                    if (buf[i] == 'I' && buf[i+1] == 'O' && buf[i+2] == '_' &&
+                        buf[i+3] == 'U' && buf[i+4] == 'R') { found = true; break; }
+                }
+            }
+            if (found) {
+                fut_printf("[MISC-TEST] ✓ Test 2089: IO_URING found\n");
+                fut_test_pass();
+            } else { fut_test_fail(2089); }
+        } else { fut_test_fail(2089); }
+    }
+
+    /* ── Test 2090: BLKGETSIZE on /dev/loop0 ── */
+    fut_printf("[MISC-TEST] Test 2090: BLKGETSIZE on loop0\n");
+    {
+        long fd = sys_open("/dev/loop0", 0, 0);
+        if (fd >= 0) {
+            static uint32_t sectors;
+            sectors = 0;
+            long r = sys_ioctl((int)fd, 0x1260 /*BLKGETSIZE*/, &sectors);
+            sys_close((int)fd);
+            if (r == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 2090: BLKGETSIZE sectors=%u\n", sectors);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2090: ioctl=%ld\n", r);
+                fut_test_fail(2090);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2090: open=%ld\n", fd);
+            fut_test_fail(2090);
+        }
+    }
+
+    /* ── Test 2091: keyctl SET_TIMEOUT accepts timeout ── */
+    fut_printf("[MISC-TEST] Test 2091: keyctl SET_TIMEOUT\n");
+    {
+        extern long sys_add_key(const char *type, const char *description,
+                                const void *payload, size_t plen, int keyring);
+        extern long sys_keyctl(int operation, unsigned long arg2, unsigned long arg3,
+                               unsigned long arg4, unsigned long arg5);
+        long ks = sys_add_key("user", "test:timeout", "data", 4, -3);
+        if (ks > 0) {
+            long r = sys_keyctl(15 /*SET_TIMEOUT*/, (unsigned long)ks, 3600, 0, 0);
+            if (r == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 2091: SET_TIMEOUT ok\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2091: r=%ld\n", r);
+                fut_test_fail(2091);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2091: add_key=%ld\n", ks);
+            fut_test_fail(2091);
+        }
+    }
+}
+
+/* ============================================================
  * Tests 2078-2081: random and vm sysctl entries
  * ============================================================ */
 __attribute__((noinline)) static void test_random_vm_entries(void) {
@@ -64394,6 +64628,7 @@ void fut_misc_test_thread(void *arg) {
     test_loop_device(); /* Tests 1885-1887 */
     test_per_iface_conf(); /* Tests 1869-1871 */
 
+    test_edge_cases(); /* Tests 2082-2091 */
     test_random_vm_entries(); /* Tests 2078-2081 */
     test_net_unix_bridge(); /* Tests 2074-2077 */
     test_subsystem_coverage(); /* Tests 2064-2073 */

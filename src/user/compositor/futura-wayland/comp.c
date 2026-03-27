@@ -1356,8 +1356,25 @@ void comp_render_frame(struct compositor_state *comp) {
         surface->composed_this_tick = false;
     }
 
+    /* Desktop background: vertical gradient from dark top to slightly lighter bottom */
     for (int i = 0; i < damage->count; ++i) {
-        bb_fill_rect(dst, damage->rects[i], COLOR_CLEAR);
+        fut_rect_t r = damage->rects[i];
+        if (r.w <= 0 || r.h <= 0) continue;
+        int32_t fb_height = (int32_t)comp->fb_info.height;
+        char *base = (char *)dst->px;
+        for (int32_t y = 0; y < r.h; ++y) {
+            int32_t gy = r.y + y;
+            /* Interpolate: top=#1A1A2E, bottom=#2D2D44 */
+            int t = (fb_height > 0) ? (gy * 255 / fb_height) : 0;
+            uint8_t rb = (uint8_t)(0x1A + (0x2D - 0x1A) * t / 255);
+            uint8_t gb = (uint8_t)(0x1A + (0x2D - 0x1A) * t / 255);
+            uint8_t bb_c = (uint8_t)(0x2E + (0x44 - 0x2E) * t / 255);
+            uint32_t color = 0xFF000000u | ((uint32_t)rb << 16) | ((uint32_t)gb << 8) | bb_c;
+            uint32_t *row = (uint32_t *)(base + (size_t)gy * dst->pitch);
+            for (int32_t x = 0; x < r.w; ++x) {
+                row[r.x + x] = color;
+            }
+        }
     }
 
     /* ── Bottom dock panel ── */

@@ -20,6 +20,7 @@
  *   pids.max               — PID limit
  *   pids.current           — current PID count
  *   io.max                 — I/O bandwidth limit
+ *   io.stat                — per-device I/O statistics
  *   cgroup.freeze          — freeze state (0/1)
  *   cpuset.cpus            — allowed CPU set (e.g., "0-3")
  *   cpuset.cpus.effective  — effective CPU set
@@ -62,6 +63,7 @@ enum cgroupfs_file {
     CGFS_PIDS_MAX,
     CGFS_PIDS_CURRENT,
     CGFS_IO_MAX,
+    CGFS_IO_STAT,
     CGFS_FREEZE,
     CGFS_CPUSET_CPUS,
     CGFS_CPUSET_CPUS_EFF,
@@ -200,6 +202,7 @@ static const struct {
     { "pids.max",               CGFS_PIDS_MAX,        0100644 },
     { "pids.current",           CGFS_PIDS_CURRENT,    0100444 },
     { "io.max",                 CGFS_IO_MAX,          0100644 },
+    { "io.stat",                CGFS_IO_STAT,         0100444 },
     { "cpuset.cpus",            CGFS_CPUSET_CPUS,     0100644 },
     { "cpuset.cpus.effective",  CGFS_CPUSET_CPUS_EFF, 0100444 },
     { "cpuset.mems",            CGFS_CPUSET_MEMS,     0100644 },
@@ -207,6 +210,74 @@ static const struct {
     { "cpuset.cpus.partition",  CGFS_CPUSET_PARTITION,0100644 },
 };
 #define CG_NUM_FILES (sizeof(cg_files) / sizeof(cg_files[0]))
+
+static bool cgfs_tok_eq(const char *tok, size_t tok_len, const char *lit) {
+    size_t i = 0;
+    while (i < tok_len && lit[i] && tok[i] == lit[i]) i++;
+    return i == tok_len && lit[i] == '\0';
+}
+
+static int cgfs_parse_u64_token(const char *tok, size_t tok_len, uint64_t *out) {
+    if (cgfs_tok_eq(tok, tok_len, "max")) {
+        *out = 0;
+        return 0;
+    }
+
+    if (tok_len == 0) return -EINVAL;
+    uint64_t v = 0;
+    for (size_t i = 0; i < tok_len; i++) {
+        if (tok[i] < '0' || tok[i] > '9') return -EINVAL;
+        v = v * 10 + (uint64_t)(tok[i] - '0');
+    }
+    *out = v;
+    return 0;
+}
+
+static int cgfs_parse_iomax_line(const char *buf, size_t size, uint64_t *rbps,
+                                 uint64_t *wbps, uint64_t *riops, uint64_t *wiops) {
+    uint64_t new_rbps = 0, new_wbps = 0, new_riops = 0, new_wiops = 0;
+    size_t i = 0;
+
+    while (i < size) {
+        while (i < size && (buf[i] == ' ' || buf[i] == '\t' || buf[i] == '\n' || buf[i] == '\r')) i++;
+        if (i >= size) break;
+
+        size_t start = i;
+        while (i < size && buf[i] != ' ' && buf[i] != '\t' && buf[i] != '\n' && buf[i] != '\r') i++;
+        size_t len = i - start;
+        if (len == 0) continue;
+
+        size_t eq = 0;
+        while (eq < len && buf[start + eq] != '=') eq++;
+        if (eq == len || eq == 0 || eq + 1 >= len) continue; /* Device token or malformed token */
+
+        const char *key = buf + start;
+        const char *val = buf + start + eq + 1;
+        size_t key_len = eq;
+        size_t val_len = len - eq - 1;
+        uint64_t parsed = 0;
+
+        if (cgfs_tok_eq(key, key_len, "rbps")) {
+            if (cgfs_parse_u64_token(val, val_len, &parsed) < 0) return -EINVAL;
+            new_rbps = parsed;
+        } else if (cgfs_tok_eq(key, key_len, "wbps")) {
+            if (cgfs_parse_u64_token(val, val_len, &parsed) < 0) return -EINVAL;
+            new_wbps = parsed;
+        } else if (cgfs_tok_eq(key, key_len, "riops")) {
+            if (cgfs_parse_u64_token(val, val_len, &parsed) < 0) return -EINVAL;
+            new_riops = parsed;
+        } else if (cgfs_tok_eq(key, key_len, "wiops")) {
+            if (cgfs_parse_u64_token(val, val_len, &parsed) < 0) return -EINVAL;
+            new_wiops = parsed;
+        }
+    }
+
+    *rbps = new_rbps;
+    *wbps = new_wbps;
+    *riops = new_riops;
+    *wiops = new_wiops;
+    return 0;
+}
 
 int cgfs_readdir(struct fut_vnode *dir, uint64_t *cookie, struct fut_vdirent *de) {
     cgroupfs_node_t *nd = (cgroupfs_node_t *)dir->fs_data;
@@ -350,7 +421,9 @@ int cgfs_mkdir(struct fut_vnode *dir, const char *name, uint32_t mode) {
 
     /* Notify controllers */
     extern int memcg_create(const char *);
+    extern int iocg_create(const char *);
     memcg_create(g_cgroups[slot].name);
+    iocg_create(g_cgroups[slot].name);
 
     fut_printf("[CGROUPFS] Created cgroup '%s' (slot %d, parent %d)\n",
                g_cgroups[slot].name, slot, parent);
@@ -502,7 +575,17 @@ ssize_t cgfs_file_read(struct fut_vnode *vnode, void *buf, size_t size, uint64_t
         break;
     }
     case CGFS_IO_MAX: {
-        tmp[0] = '\n'; tmp[1] = '\0'; total = 1;
+        extern int iocg_get_max(const char *, char *, size_t);
+        int len = iocg_get_max(cg_name, tmp, sizeof(tmp));
+        if (len < 0) return len;
+        total = (size_t)len;
+        break;
+    }
+    case CGFS_IO_STAT: {
+        extern int iocg_get_stat(const char *, char *, size_t);
+        int len = iocg_get_stat(cg_name, tmp, sizeof(tmp));
+        if (len < 0) return len;
+        total = (size_t)len;
         break;
     }
     case CGFS_FREEZE: {
@@ -590,10 +673,18 @@ ssize_t cgfs_file_write(struct fut_vnode *vnode, const void *buf, size_t size, u
         if (max_pids > 0) pidcg_set_max(cg_name, max_pids);
         return (ssize_t)size;
     }
-    case CGFS_IO_MAX:
     case CGFS_TYPE:
         /* Accept the write silently */
         return (ssize_t)size;
+    case CGFS_IO_MAX: {
+        extern int iocg_set_max(const char *, uint64_t, uint64_t, uint64_t, uint64_t);
+        uint64_t rbps = 0, wbps = 0, riops = 0, wiops = 0;
+        int prc = cgfs_parse_iomax_line((const char *)buf, size, &rbps, &wbps, &riops, &wiops);
+        if (prc < 0) return prc;
+        int rc = iocg_set_max(cg_name, rbps, wbps, riops, wiops);
+        if (rc < 0) return rc;
+        return (ssize_t)size;
+    }
     case CGFS_FREEZE: {
         /* Freeze (1) or thaw (0) the cgroup */
         extern int freezer_set(const char *, int);

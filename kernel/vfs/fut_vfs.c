@@ -2539,6 +2539,8 @@ ssize_t fut_vfs_read(int fd, void *buf, size_t size) {
 #endif
         if (ret > 0) {
             file->offset = (uint64_t)pos;
+            extern void iocg_account_read(uint64_t);
+            iocg_account_read((uint64_t)ret);
         }
         return ret;
     }
@@ -2563,6 +2565,8 @@ ssize_t fut_vfs_read(int fd, void *buf, size_t size) {
     ssize_t ret = file->vnode->ops->read(file->vnode, buf, size, file->offset);
     if (ret > 0) {
         file->offset += ret;
+        extern void iocg_account_read(uint64_t);
+        iocg_account_read((uint64_t)ret);
 
         /* Update access time unless O_NOATIME is set.
          * O_NOATIME suppresses atime updates on read, commonly used by
@@ -2651,6 +2655,8 @@ ssize_t fut_vfs_write(int fd, const void *buf, size_t size) {
         ssize_t ret = file->chr_ops->write(file->chr_inode, file->chr_private, buf, size, &pos);
         if (ret > 0) {
             file->offset = (uint64_t)pos;
+            extern void iocg_account_write(uint64_t);
+            iocg_account_write((uint64_t)ret);
         }
         /* POSIX: deliver SIGPIPE on broken pipe/socket write.
          * MSG_NOSIGNAL sets suppress_sigpipe to skip SIGPIPE delivery. */
@@ -2725,6 +2731,8 @@ ssize_t fut_vfs_write(int fd, const void *buf, size_t size) {
     VFSDBG("[vfs-write] vnode->ops->write returned %lld\n", (long long)ret);
     if (ret > 0) {
         file->offset += ret;
+        extern void iocg_account_write(uint64_t);
+        iocg_account_write((uint64_t)ret);
 
         /* POSIX/Linux: clear set-user-ID and set-group-ID bits on write.
          * After a successful write to a regular file, the kernel must:

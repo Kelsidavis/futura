@@ -448,18 +448,7 @@ void fut_net_provider_rx(fut_netdev_t *dev, const void *frame, size_t len) {
     fut_net_dispatch_frame(dev, frame, len);
 }
 
-/**
- * fut_net_rx_packet — C FFI entry point for Rust network drivers.
- *
- * Rust drivers call this to deliver received frames to the network stack.
- * The iface pointer was given to the driver during registration and is
- * an opaque fut_netdev_t*. data/len describe the raw Ethernet frame.
- */
-void fut_net_rx_packet(void *iface, const uint8_t *data, uint32_t len) {
-    fut_netdev_t *dev = (fut_netdev_t *)iface;
-    if (dev && data && len > 0)
-        fut_net_provider_rx(dev, data, (size_t)len);
-}
+/* fut_net_rx_packet is provided by kernel/rust/rustffi.c for Rust driver FFI */
 
 void fut_net_provider_irq(fut_netdev_t *dev) {
     (void)dev;

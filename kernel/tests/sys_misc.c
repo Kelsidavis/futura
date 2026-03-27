@@ -41524,9 +41524,11 @@ t1078:
             for (int i = rn - 1; i >= 0; i--) pid_str[pn++] = rev[i]; } }
         pid_str[pn] = '\0';
 
-        int dfd = fut_vfs_open("/proc", 00200000 /*O_DIRECTORY*/, 0);
+        extern long sys_open(const char *, int, int);
+        extern long sys_close(int);
+        long dfd = sys_open("/proc", 00200000 /*O_DIRECTORY*/, 0);
         if (dfd < 0) {
-            fut_printf("[MISC-TEST] ✗ Test 1078: open /proc failed: %d\n", dfd);
+            fut_printf("[MISC-TEST] ✗ Test 1078: open /proc failed: %ld\n", dfd);
             fut_test_fail(1078);
             goto t1079;
         }
@@ -41545,7 +41547,7 @@ t1078:
             }
             if (found) break;
         }
-        fut_vfs_close(dfd);
+        sys_close((int)dfd);
         if (!found) {
             fut_printf("[MISC-TEST] ✗ Test 1078: PID %s not found in /proc (n=%ld)\n", pid_str, n);
             fut_test_fail(1078);

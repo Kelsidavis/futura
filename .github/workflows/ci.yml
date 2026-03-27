@@ -20,11 +20,11 @@ jobs:
             gcc-14 binutils nasm grub-pc-bin xorriso mtools \
             qemu-system-x86 qemu-utils
 
-      - name: Build kernel (x86_64)
-        run: make all ENABLE_WAYLAND=0
+      - name: Build kernel (x86_64, QEMU drivers only for testing)
+        run: make all ENABLE_WAYLAND=0 DRIVERS=qemu
 
       - name: Run kernel tests
-        run: make test ENABLE_WAYLAND=0
+        run: make test ENABLE_WAYLAND=0 DRIVERS=qemu
 
   build-arm64:
     runs-on: ubuntu-24.04

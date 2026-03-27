@@ -66055,6 +66055,100 @@ void fut_misc_test_thread(void *arg) {
         }
     }
 
+    /* ── Tests 2156-2160: additional system verification ── */
+    {
+        extern long sys_open(const char *, int, int);
+        extern long sys_read(int, void *, size_t);
+        extern long sys_close(int);
+        extern long sys_readlink(const char *, char *, size_t);
+
+        /* Test 2156: /etc/ld.so.conf readable with /lib path */
+        fut_printf("[MISC-TEST] Test 2156: /etc/ld.so.conf\n");
+        {
+            static char buf[128];
+            long fd = sys_open("/etc/ld.so.conf", 0, 0);
+            if (fd >= 0) {
+                long n = sys_read((int)fd, buf, sizeof(buf) - 1);
+                sys_close((int)fd);
+                buf[n > 0 ? n : 0] = '\0';
+                int found = 0;
+                for (long i = 0; i < n - 3; i++) {
+                    if (buf[i] == '/' && buf[i+1] == 'l' && buf[i+2] == 'i' && buf[i+3] == 'b')
+                        { found = 1; break; }
+                }
+                if (found) { fut_printf("[MISC-TEST] ✓ Test 2156: ld.so.conf has /lib\n"); fut_test_pass(); }
+                else { fut_printf("[MISC-TEST] ✗ Test 2156: no /lib\n"); fut_test_fail(2156); }
+            } else { fut_printf("[MISC-TEST] ✗ Test 2156: open=%ld\n", fd); fut_test_fail(2156); }
+        }
+
+        /* Test 2157: /proc/stat has 'processes' field > 0 */
+        fut_printf("[MISC-TEST] Test 2157: /proc/stat processes > 0\n");
+        {
+            static char buf[1024];
+            long fd = sys_open("/proc/stat", 0, 0);
+            if (fd >= 0) {
+                long n = sys_read((int)fd, buf, sizeof(buf) - 1);
+                sys_close((int)fd);
+                buf[n > 0 ? n : 0] = '\0';
+                int found = 0;
+                for (long i = 0; i < n - 10; i++) {
+                    if (buf[i] == 'p' && buf[i+1] == 'r' && buf[i+2] == 'o' &&
+                        buf[i+3] == 'c' && buf[i+4] == 'e' && buf[i+5] == 's' &&
+                        buf[i+6] == 's' && buf[i+7] == 'e' && buf[i+8] == 's') {
+                        long j = i + 10;
+                        long val = 0;
+                        while (j < n && buf[j] >= '0' && buf[j] <= '9')
+                            val = val * 10 + (buf[j++] - '0');
+                        if (val > 0) found = 1;
+                        break;
+                    }
+                }
+                if (found) { fut_printf("[MISC-TEST] ✓ Test 2157: processes > 0\n"); fut_test_pass(); }
+                else { fut_printf("[MISC-TEST] ✗ Test 2157: processes=0\n"); fut_test_fail(2157); }
+            } else { fut_printf("[MISC-TEST] ✗ Test 2157: open=%ld\n", fd); fut_test_fail(2157); }
+        }
+
+        /* Test 2158: /sys/class/thermal/ directory listable */
+        fut_printf("[MISC-TEST] Test 2158: /sys/class/thermal/ dir\n");
+        {
+            long fd = sys_open("/sys/class/thermal", 0, 0);
+            if (fd >= 0) {
+                static char dirbuf[512];
+                extern long sys_getdents64(unsigned int, void *, unsigned int);
+                long dn = sys_getdents64((unsigned int)fd, dirbuf, (unsigned int)sizeof(dirbuf));
+                sys_close((int)fd);
+                if (dn > 0) { fut_printf("[MISC-TEST] ✓ Test 2158: thermal dir ok\n"); fut_test_pass(); }
+                else { fut_printf("[MISC-TEST] ✗ Test 2158: empty\n"); fut_test_fail(2158); }
+            } else { fut_printf("[MISC-TEST] ✗ Test 2158: open=%ld\n", fd); fut_test_fail(2158); }
+        }
+
+        /* Test 2159: /sys/kernel/security/ directory listable */
+        fut_printf("[MISC-TEST] Test 2159: /sys/kernel/security/ dir\n");
+        {
+            long fd = sys_open("/sys/kernel/security", 0, 0);
+            if (fd >= 0) {
+                static char dirbuf[512];
+                extern long sys_getdents64(unsigned int, void *, unsigned int);
+                long dn = sys_getdents64((unsigned int)fd, dirbuf, (unsigned int)sizeof(dirbuf));
+                sys_close((int)fd);
+                if (dn > 0) { fut_printf("[MISC-TEST] ✓ Test 2159: security dir ok\n"); fut_test_pass(); }
+                else { fut_printf("[MISC-TEST] ✗ Test 2159: empty\n"); fut_test_fail(2159); }
+            } else { fut_printf("[MISC-TEST] ✗ Test 2159: open=%ld\n", fd); fut_test_fail(2159); }
+        }
+
+        /* Test 2160: /proc/self/exe readlink returns non-empty path */
+        fut_printf("[MISC-TEST] Test 2160: /proc/self/exe readlink\n");
+        {
+            static char lbuf[256];
+            long n = sys_readlink("/proc/self/exe", lbuf, sizeof(lbuf) - 1);
+            if (n > 0) {
+                lbuf[n] = '\0';
+                fut_printf("[MISC-TEST] ✓ Test 2160: exe → %s\n", lbuf);
+                fut_test_pass();
+            } else { fut_printf("[MISC-TEST] ✗ Test 2160: readlink=%ld\n", n); fut_test_fail(2160); }
+        }
+    }
+
     /* ── Test 2155: /sys/kernel/security/lsm readable ── */
     {
         extern long sys_open(const char *, int, int);

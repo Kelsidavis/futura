@@ -276,6 +276,10 @@ enum procfs_kind {
     PROC_SYSCALL,                   /* /proc/<pid>/syscall — current syscall number and arguments */
     PROC_LOCKS,                     /* /proc/locks — POSIX and flock file lock table */
     PROC_PCI_DEVICES,               /* /proc/pci — PCI bus device list */
+    PROC_SYS_NET_UNIX_DIR,          /* /proc/sys/net/unix/ */
+    PROC_SYS_NET_UNIX_DGRAM_QLEN,  /* /proc/sys/net/unix/max_dgram_qlen */
+    PROC_SYS_NET_BRIDGE_DIR,       /* /proc/sys/net/bridge/ */
+    PROC_SYS_NET_BRIDGE_NF_CALL,   /* /proc/sys/net/bridge/bridge-nf-call-iptables */
     PROC_SYS_NET_NF_DIR,            /* /proc/sys/net/netfilter/ */
     PROC_SYS_NET_NF_CT_MAX,         /* /proc/sys/net/netfilter/nf_conntrack_max */
     PROC_SYS_NET_NF_CT_COUNT,       /* /proc/sys/net/netfilter/nf_conntrack_count */
@@ -482,6 +486,10 @@ typedef struct {
 #define PROC_INO_KALLSYMS                 414ULL
 #define PROC_INO_LOCKS                    415ULL
 #define PROC_INO_PCI                      416ULL
+#define PROC_INO_SYS_NET_UNIX_DIR        415ULL
+#define PROC_INO_SYS_NET_UNIX_DGRAM     416ULL
+#define PROC_INO_SYS_NET_BRIDGE_DIR     432ULL
+#define PROC_INO_SYS_NET_BRIDGE_NFCALL  433ULL
 #define PROC_INO_SYS_NET_NF_DIR          417ULL
 #define PROC_INO_SYS_NET_NF_CT_MAX       418ULL
 #define PROC_INO_SYS_NET_NF_CT_COUNT     419ULL
@@ -4079,6 +4087,12 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
         case PROC_SYS_NET_NF_CT_MAX:
             total = gen_sysctl_str(tmp, GEN_BUF, "1024");
             break;
+        case PROC_SYS_NET_UNIX_DGRAM_QLEN:
+            total = gen_sysctl_str(tmp, GEN_BUF, "512");
+            break;
+        case PROC_SYS_NET_BRIDGE_NF_CALL:
+            total = gen_sysctl_str(tmp, GEN_BUF, "1");
+            break;
         case PROC_SYS_KERNEL_PANIC:
             /* panic timeout in seconds (0 = don't reboot on panic) */
             total = gen_sysctl_str(tmp, GEN_BUF, "0");
@@ -5247,6 +5261,34 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0040555, PROC_SYS_NET_NF_DIR, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "unix")) {
+            *result = procfs_alloc_vnode(mnt, VN_DIR, PROC_INO_SYS_NET_UNIX_DIR,
+                                          0040555, PROC_SYS_NET_UNIX_DIR, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "bridge")) {
+            *result = procfs_alloc_vnode(mnt, VN_DIR, PROC_INO_SYS_NET_BRIDGE_DIR,
+                                          0040555, PROC_SYS_NET_BRIDGE_DIR, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        return -ENOENT;
+    }
+
+    if (dn->kind == PROC_SYS_NET_UNIX_DIR) {
+        if (STREQ(name, "max_dgram_qlen")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_NET_UNIX_DGRAM,
+                                          0100644, PROC_SYS_NET_UNIX_DGRAM_QLEN, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        return -ENOENT;
+    }
+
+    if (dn->kind == PROC_SYS_NET_BRIDGE_DIR) {
+        if (STREQ(name, "bridge-nf-call-iptables")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_NET_BRIDGE_NFCALL,
+                                          0100644, PROC_SYS_NET_BRIDGE_NF_CALL, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         return -ENOENT;
     }
 
@@ -6263,14 +6305,16 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
     }
 
     if (dn->kind == PROC_SYS_NET_DIR) {
-        static const char *e[] = { ".", "..", "core", "ipv4", "ipv6", "netfilter" };
+        static const char *e[] = { ".", "..", "core", "ipv4", "ipv6", "netfilter", "unix", "bridge" };
         static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
+                                     FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
                                      FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
                                      FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR };
         static const uint64_t i[] = { PROC_INO_SYS_NET_DIR, PROC_INO_SYS_DIR,
                                       PROC_INO_SYS_NET_CORE_DIR, PROC_INO_SYS_NET_IPV4_DIR,
-                                      PROC_INO_SYS_NET_IPV6_DIR, PROC_INO_SYS_NET_NF_DIR };
-        if (idx < 6) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+                                      PROC_INO_SYS_NET_IPV6_DIR, PROC_INO_SYS_NET_NF_DIR,
+                                      PROC_INO_SYS_NET_UNIX_DIR, PROC_INO_SYS_NET_BRIDGE_DIR };
+        if (idx < 8) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
         return -ENOENT;
     }
 
@@ -6292,6 +6336,24 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                        PROC_INO_PRESSURE_CPU, PROC_INO_PRESSURE_MEM,
                                        PROC_INO_PRESSURE_IO };
         if (idx < 5) SYS_DIR_ENTRY(pe[idx], pt[idx], pi[idx]);
+        return -ENOENT;
+    }
+
+    if (dn->kind == PROC_SYS_NET_UNIX_DIR) {
+        static const char *ue[] = { ".", "..", "max_dgram_qlen" };
+        static const uint8_t ut[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_REG };
+        static const uint64_t ui[] = { PROC_INO_SYS_NET_UNIX_DIR, PROC_INO_SYS_NET_DIR,
+                                       PROC_INO_SYS_NET_UNIX_DGRAM };
+        if (idx < 3) SYS_DIR_ENTRY(ue[idx], ut[idx], ui[idx]);
+        return -ENOENT;
+    }
+
+    if (dn->kind == PROC_SYS_NET_BRIDGE_DIR) {
+        static const char *be[] = { ".", "..", "bridge-nf-call-iptables" };
+        static const uint8_t bt[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_REG };
+        static const uint64_t bi[] = { PROC_INO_SYS_NET_BRIDGE_DIR, PROC_INO_SYS_NET_DIR,
+                                       PROC_INO_SYS_NET_BRIDGE_NFCALL };
+        if (idx < 3) SYS_DIR_ENTRY(be[idx], bt[idx], bi[idx]);
         return -ENOENT;
     }
 

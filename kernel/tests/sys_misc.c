@@ -57955,6 +57955,79 @@ __attribute__((noinline)) static void test_net_procfs_devnodes(void) {
  * Tests 2061-2063: binfmt_misc
  * ============================================================ */
 /* ============================================================
+ * Tests 2074-2077: /proc/sys/net/unix/ and bridge/
+ * ============================================================ */
+__attribute__((noinline)) static void test_net_unix_bridge(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_close(int);
+
+    /* ── Test 2074: /proc/sys/net/unix/max_dgram_qlen ── */
+    fut_printf("[MISC-TEST] Test 2074: net/unix/max_dgram_qlen\n");
+    {
+        long fd = sys_open("/proc/sys/net/unix/max_dgram_qlen", 0, 0);
+        if (fd >= 0) {
+            static char buf[16];
+            long n = sys_read((int)fd, buf, 15);
+            sys_close((int)fd);
+            if (n > 0 && buf[0] >= '0') {
+                fut_printf("[MISC-TEST] ✓ Test 2074: max_dgram_qlen ok\n");
+                fut_test_pass();
+            } else { fut_test_fail(2074); }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2074: open=%ld\n", fd);
+            fut_test_fail(2074);
+        }
+    }
+
+    /* ── Test 2075: /proc/sys/net/bridge/bridge-nf-call-iptables ── */
+    fut_printf("[MISC-TEST] Test 2075: bridge-nf-call-iptables\n");
+    {
+        long fd = sys_open("/proc/sys/net/bridge/bridge-nf-call-iptables", 0, 0);
+        if (fd >= 0) {
+            static char buf[8];
+            long n = sys_read((int)fd, buf, 7);
+            sys_close((int)fd);
+            if (n > 0 && (buf[0] == '0' || buf[0] == '1')) {
+                fut_printf("[MISC-TEST] ✓ Test 2075: bridge-nf ok\n");
+                fut_test_pass();
+            } else { fut_test_fail(2075); }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2075: open=%ld\n", fd);
+            fut_test_fail(2075);
+        }
+    }
+
+    /* ── Test 2076: /proc/sys/net/unix/ directory openable ── */
+    fut_printf("[MISC-TEST] Test 2076: /proc/sys/net/unix/ dir\n");
+    {
+        long fd = sys_open("/proc/sys/net/unix", 0, 0);
+        if (fd >= 0) {
+            fut_printf("[MISC-TEST] ✓ Test 2076: unix dir openable\n");
+            sys_close((int)fd);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2076: open=%ld\n", fd);
+            fut_test_fail(2076);
+        }
+    }
+
+    /* ── Test 2077: /proc/sys/net/bridge/ directory openable ── */
+    fut_printf("[MISC-TEST] Test 2077: /proc/sys/net/bridge/ dir\n");
+    {
+        long fd = sys_open("/proc/sys/net/bridge", 0, 0);
+        if (fd >= 0) {
+            fut_printf("[MISC-TEST] ✓ Test 2077: bridge dir openable\n");
+            sys_close((int)fd);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2077: open=%ld\n", fd);
+            fut_test_fail(2077);
+        }
+    }
+}
+
+/* ============================================================
  * Tests 2064-2073: extended subsystem coverage
  * ============================================================ */
 __attribute__((noinline)) static void test_subsystem_coverage(void) {
@@ -64292,6 +64365,7 @@ void fut_misc_test_thread(void *arg) {
     test_loop_device(); /* Tests 1885-1887 */
     test_per_iface_conf(); /* Tests 1869-1871 */
 
+    test_net_unix_bridge(); /* Tests 2074-2077 */
     test_subsystem_coverage(); /* Tests 2064-2073 */
     test_binfmt_misc(); /* Tests 2061-2063 */
     test_sched_sysctls(); /* Tests 2057-2060 */

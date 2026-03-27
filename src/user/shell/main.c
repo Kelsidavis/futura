@@ -118,6 +118,7 @@ static void cmd_timeout(int argc, char *argv[]);
 static void cmd_tty(int argc, char *argv[]);
 static void cmd_nohup(int argc, char *argv[]);
 static void cmd_chroot(int argc, char *argv[]);
+static void cmd_unshare(int argc, char *argv[]);
 static void cmd_tac(int argc, char *argv[]);
 static void cmd_chgrp(int argc, char *argv[]);
 static void cmd_md5sum(int argc, char *argv[]);
@@ -10276,6 +10277,9 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "chroot") == 0) {
         cmd_chroot(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "unshare") == 0) {
+        cmd_unshare(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "tac") == 0) {
         cmd_tac(argc, argv);
         return 0;
@@ -10991,6 +10995,7 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "tty") == 0 ||
             strcmp_simple(cmd, "nohup") == 0 ||
             strcmp_simple(cmd, "chroot") == 0 ||
+            strcmp_simple(cmd, "unshare") == 0 ||
             strcmp_simple(cmd, "tac") == 0 ||
             strcmp_simple(cmd, "chgrp") == 0 ||
             strcmp_simple(cmd, "md5sum") == 0 ||
@@ -11835,6 +11840,69 @@ static void cmd_nohup(int argc, char *argv[]) {
 }
 
 /* ── chroot: change root directory ── */
+/* unshare: create new namespaces (container isolation primitive) */
+static void cmd_unshare(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: unshare [flags] <command> [args...]\n");
+        write_str(2, "flags: --mount --uts --ipc --net --pid --user --cgroup\n");
+        return;
+    }
+
+    unsigned long flags = 0;
+    int cmd_start = 1;
+
+    while (cmd_start < argc && argv[cmd_start][0] == '-') {
+        const char *f = argv[cmd_start];
+        if (strcmp_simple(f, "--mount") == 0 || strcmp_simple(f, "-m") == 0)
+            flags |= 0x00020000;  /* CLONE_NEWNS */
+        else if (strcmp_simple(f, "--uts") == 0 || strcmp_simple(f, "-u") == 0)
+            flags |= 0x04000000;  /* CLONE_NEWUTS */
+        else if (strcmp_simple(f, "--ipc") == 0 || strcmp_simple(f, "-i") == 0)
+            flags |= 0x08000000;  /* CLONE_NEWIPC */
+        else if (strcmp_simple(f, "--net") == 0 || strcmp_simple(f, "-n") == 0)
+            flags |= 0x40000000;  /* CLONE_NEWNET */
+        else if (strcmp_simple(f, "--pid") == 0 || strcmp_simple(f, "-p") == 0)
+            flags |= 0x20000000;  /* CLONE_NEWPID */
+        else if (strcmp_simple(f, "--user") == 0 || strcmp_simple(f, "-U") == 0)
+            flags |= 0x10000000;  /* CLONE_NEWUSER */
+        else if (strcmp_simple(f, "--cgroup") == 0 || strcmp_simple(f, "-C") == 0)
+            flags |= 0x02000000;  /* CLONE_NEWCGROUP */
+        else {
+            write_str(2, "unshare: unknown flag: ");
+            write_str(2, f);
+            write_str(2, "\n");
+            return;
+        }
+        cmd_start++;
+    }
+
+    if (cmd_start >= argc) {
+        write_str(2, "unshare: no command specified\n");
+        return;
+    }
+
+    if (flags == 0) flags = 0x00020000;  /* Default: CLONE_NEWNS */
+
+    /* Call unshare(2) */
+    long r = sys_call1(272 /* __NR_unshare */, (long)flags);
+    if (r < 0) {
+        write_str(2, "unshare: failed (");
+        char num[12]; int_to_str(-(int)r, num, 12);
+        write_str(2, num);
+        write_str(2, ")\n");
+        last_exit_status = 1;
+        return;
+    }
+
+    /* Execute the command in the new namespace */
+    int sub_argc = argc - cmd_start;
+    char *sub_argv[64];
+    for (int i = 0; i < sub_argc && i < 63; i++)
+        sub_argv[i] = argv[cmd_start + i];
+    sub_argv[sub_argc] = NULL;
+    execute_command(sub_argc, sub_argv);
+}
+
 static void cmd_chroot(int argc, char *argv[]) {
     if (argc < 2) {
         write_str(2, "usage: chroot NEWROOT [COMMAND...]\n");

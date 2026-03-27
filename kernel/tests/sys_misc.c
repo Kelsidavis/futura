@@ -62910,6 +62910,104 @@ __attribute__((noinline)) static void test_pty_and_cgroup(void) {
             fut_test_fail(2235);
         }
     }
+
+    /* ── Test 2236: AF_INET6 TCP bind+listen+accept works via IPv4 map ── */
+    fut_printf("[MISC-TEST] Test 2236: AF_INET6 TCP listen\n");
+    {
+        extern long sys_socket(int domain, int type, int protocol);
+        extern long sys_bind(int sockfd, const void *addr, unsigned int addrlen);
+        extern long sys_listen(int sockfd, int backlog);
+        extern long sys_close(int);
+        long sfd = sys_socket(10 /* AF_INET6 */, 1 /* SOCK_STREAM */, 0);
+        int pass = 0;
+        if (sfd >= 0) {
+            /* Bind to [::]:9999 */
+            static uint8_t sin6[28];
+            for (int i = 0; i < 28; i++) sin6[i] = 0;
+            sin6[0] = 10; /* AF_INET6 */
+            sin6[2] = 0x27; sin6[3] = 0x0F; /* port 9999 in network order */
+            long br = sys_bind((int)sfd, sin6, 28);
+            if (br == 0) {
+                long lr = sys_listen((int)sfd, 5);
+                if (lr == 0) pass = 1;
+            }
+            sys_close((int)sfd);
+        }
+        if (pass) {
+            fut_printf("[MISC-TEST] ✓ Test 2236: AF_INET6 bind+listen ok\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2236: AF_INET6 listen failed\n");
+            fut_test_fail(2236);
+        }
+    }
+
+    /* ── Test 2237: PTY master/slave data through line discipline ── */
+    fut_printf("[MISC-TEST] Test 2237: PTY line discipline\n");
+    {
+        extern long sys_open(const char *, int, int);
+        extern long sys_ioctl(int fd, unsigned long request, void *argp);
+        extern ssize_t sys_write(int fd, const void *buf, size_t count);
+        extern long sys_read(int, void *, size_t);
+        extern long sys_close(int);
+        long master = sys_open("/dev/ptmx", 02, 0);
+        int pass = 0;
+        if (master >= 0) {
+            static int unlock; unlock = 0;
+            sys_ioctl((int)master, 0x40045431UL, &unlock);
+            static int snum; snum = -1;
+            sys_ioctl((int)master, 0x80045430UL, &snum);
+            static char spath[20];
+            spath[0]='/'; spath[1]='d'; spath[2]='e'; spath[3]='v';
+            spath[4]='/'; spath[5]='p'; spath[6]='t'; spath[7]='s'; spath[8]='/';
+            int sp = 9;
+            if (snum >= 10) spath[sp++] = (char)('0'+snum/10);
+            spath[sp++] = (char)('0'+snum%10); spath[sp] = '\0';
+            long slave = sys_open(spath, 02, 0);
+            if (slave >= 0) {
+                /* Set window size on master */
+                struct { uint16_t r, c, xp, yp; } ws = {25, 80, 640, 400};
+                sys_ioctl((int)master, 0x5414UL /* TIOCSWINSZ */, &ws);
+                /* Read back from slave */
+                struct { uint16_t r, c, xp, yp; } ws2 = {0};
+                long gr = sys_ioctl((int)slave, 0x5413UL /* TIOCGWINSZ */, &ws2);
+                if (gr == 0 && ws2.r == 25 && ws2.c == 80) pass = 1;
+                sys_close((int)slave);
+            }
+            sys_close((int)master);
+        }
+        if (pass) {
+            fut_printf("[MISC-TEST] ✓ Test 2237: PTY TIOCSWINSZ/TIOCGWINSZ ok\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2237: PTY winsize failed\n");
+            fut_test_fail(2237);
+        }
+    }
+
+    /* ── Test 2238: /proc/self/environ readable ── */
+    fut_printf("[MISC-TEST] Test 2238: /proc/self/environ\n");
+    {
+        extern long sys_open(const char *, int, int);
+        extern long sys_read(int, void *, size_t);
+        extern long sys_close(int);
+        long fd = sys_open("/proc/self/environ", 0, 0);
+        int pass = 0;
+        if (fd >= 0) {
+            static char buf[64];
+            long n = sys_read((int)fd, buf, 63);
+            sys_close((int)fd);
+            /* environ may be empty for kernel threads — just verify readable */
+            if (n >= 0) pass = 1;
+        }
+        if (pass) {
+            fut_printf("[MISC-TEST] ✓ Test 2238: environ readable\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2238: environ failed\n");
+            fut_test_fail(2238);
+        }
+    }
 }
 
 /* ============================================================

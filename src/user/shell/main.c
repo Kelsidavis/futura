@@ -5141,9 +5141,51 @@ static int grep_file(int fd, const char *filename, int show_filename, const char
 }
 
 /* Built-in: grep - Search for patterns in files */
+/* grep -r helper: recursively search directory */
+static int g_grep_recursive;
+static int g_grep_case_insensitive, g_grep_show_line_numbers, g_grep_invert_match;
+static int g_grep_count_only, g_grep_files_only, g_grep_word_match;
+static const char *g_grep_pattern;
+
+/* Forward declaration for grep recursive helper */
+static void grep_file_by_path(const char *path, const char *pattern, int multi_file);
+
+static void grep_recursive(const char *dir_path, const char *pattern) {
+    int dfd = sys_open(dir_path, O_RDONLY, 0);
+    if (dfd < 0) return;
+    static char dirbuf[2048];
+    ssize_t dn;
+    while ((dn = sys_getdents64((unsigned int)dfd, dirbuf, (unsigned int)sizeof(dirbuf))) > 0) {
+        ssize_t pos = 0;
+        while (pos < dn) {
+            uint16_t reclen = *(uint16_t *)(dirbuf + pos + 16);
+            uint8_t dtype = *(uint8_t *)(dirbuf + pos + 18);
+            char *name = dirbuf + pos + 19;
+            pos += reclen;
+            if (name[0] == '.' && (name[1] == '\0' || (name[1] == '.' && name[2] == '\0')))
+                continue;
+            /* Build full path */
+            static char full_path[512];
+            int fp = 0;
+            for (int i = 0; dir_path[i] && fp < 500; i++) full_path[fp++] = dir_path[i];
+            if (fp > 0 && full_path[fp-1] != '/') full_path[fp++] = '/';
+            for (int i = 0; name[i] && fp < 510; i++) full_path[fp++] = name[i];
+            full_path[fp] = '\0';
+
+            if (dtype == 4 /* DT_DIR */) {
+                grep_recursive(full_path, pattern);
+            } else if (dtype == 8 /* DT_REG */ || dtype == 0 /* DT_UNKNOWN */) {
+                grep_file_by_path(full_path, pattern, 1);
+            }
+        }
+    }
+    sys_close(dfd);
+}
+
 static void cmd_grep(int argc, char *argv[]) {
     int case_insensitive = 0, show_line_numbers = 0, invert_match = 0;
     int count_only = 0, files_only = 0, word_match = 0;
+    int recursive = 0;
     int arg_start = 1;
 
     /* Parse options (supports combined flags like -inv) */
@@ -5159,6 +5201,7 @@ static void cmd_grep(int argc, char *argv[]) {
                 case 'c': count_only = 1; break;
                 case 'l': files_only = 1; break;
                 case 'w': word_match = 1; break;
+                case 'r': case 'R': recursive = 1; break;
                 default:
                     write_str(2, "grep: invalid option: -");
                     write_char(2, opt[k]); write_char(2, '\n');
@@ -5180,9 +5223,28 @@ static void cmd_grep(int argc, char *argv[]) {
 
     int num_files = argc - arg_start - 1;
 
-    if (num_files == 0) {
+    /* Store globals for recursive helper */
+    g_grep_recursive = recursive;
+    g_grep_case_insensitive = case_insensitive;
+    g_grep_show_line_numbers = show_line_numbers;
+    g_grep_invert_match = invert_match;
+    g_grep_count_only = count_only;
+    g_grep_files_only = files_only;
+    g_grep_word_match = word_match;
+    g_grep_pattern = pattern;
+
+    if (num_files == 0 && !recursive) {
         grep_file(0, "(standard input)", 0, pattern, pattern_len, case_insensitive,
                  show_line_numbers, invert_match, count_only, files_only, word_match);
+    } else if (recursive) {
+        /* -r mode: search directories recursively */
+        if (num_files == 0) {
+            /* Default: search current directory */
+            grep_recursive(".", pattern);
+        } else {
+            for (int i = 0; i < num_files; i++)
+                grep_recursive(argv[arg_start + 1 + i], pattern);
+        }
     } else {
         for (int i = 0; i < num_files; i++) {
             const char *filename = argv[arg_start + 1 + i];
@@ -5197,6 +5259,17 @@ static void cmd_grep(int argc, char *argv[]) {
             sys_close(fd);
         }
     }
+}
+
+/* grep_file wrapper for recursive mode (opens file by path) */
+static void grep_file_by_path(const char *path, const char *pattern, int multi_file) {
+    int fd = sys_open(path, O_RDONLY, 0);
+    if (fd < 0) return;
+    int pl = 0; while (pattern[pl]) pl++;
+    grep_file(fd, path, multi_file, pattern, pl, g_grep_case_insensitive,
+              g_grep_show_line_numbers, g_grep_invert_match, g_grep_count_only,
+              g_grep_files_only, g_grep_word_match);
+    sys_close(fd);
 }
 
 /* Helper function to read lines from a file descriptor for sort command */

@@ -61081,6 +61081,313 @@ __attribute__((noinline)) static void test_keyring(void) {
 }
 
 /* ============================================================
+ * Tests 2176-2188: PTY subsystem and cgroup enforcement
+ * ============================================================ */
+__attribute__((noinline)) static void test_pty_and_cgroup(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_read(int, void *, size_t);
+    extern ssize_t sys_write(int fd, const void *buf, size_t count);
+    extern long sys_close(int);
+    extern long sys_ioctl(int fd, unsigned long request, void *argp);
+
+    /* ── Test 2176: Open /dev/ptmx returns valid fd ── */
+    fut_printf("[MISC-TEST] Test 2176: open /dev/ptmx\n");
+    long master_fd = sys_open("/dev/ptmx", 02 /* O_RDWR */, 0);
+    if (master_fd >= 0) {
+        fut_printf("[MISC-TEST] ✓ Test 2176: ptmx fd=%ld\n", master_fd);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 2176: open=%ld\n", master_fd);
+        fut_test_fail(2176);
+    }
+
+    /* ── Test 2177: TIOCGPTN ioctl returns slave number >= 0 ── */
+    fut_printf("[MISC-TEST] Test 2177: TIOCGPTN ioctl\n");
+    static int slave_num;
+    slave_num = -1;
+    long ioctl_ret = -1;
+    if (master_fd >= 0) {
+        ioctl_ret = sys_ioctl((int)master_fd, 0x80045430UL /* TIOCGPTN */, &slave_num);
+    }
+    if (ioctl_ret == 0 && slave_num >= 0) {
+        fut_printf("[MISC-TEST] ✓ Test 2177: slave_num=%d\n", slave_num);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 2177: ioctl=%ld num=%d\n", ioctl_ret, slave_num);
+        fut_test_fail(2177);
+    }
+
+    /* ── Test 2178: TIOCSPTLCK ioctl unlocks slave ── */
+    fut_printf("[MISC-TEST] Test 2178: TIOCSPTLCK unlock\n");
+    static int unlock_val;
+    unlock_val = 0;  /* 0 = unlock */
+    long unlock_ret = -1;
+    if (master_fd >= 0) {
+        unlock_ret = sys_ioctl((int)master_fd, 0x40045431UL /* TIOCSPTLCK */, &unlock_val);
+    }
+    if (unlock_ret == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 2178: unlock ok\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 2178: unlock=%ld\n", unlock_ret);
+        fut_test_fail(2178);
+    }
+
+    /* ── Test 2179: Open /dev/pts/<n> returns valid fd ── */
+    fut_printf("[MISC-TEST] Test 2179: open /dev/pts/<n>\n");
+    static char slave_path[32];
+    slave_path[0] = '/'; slave_path[1] = 'd'; slave_path[2] = 'e';
+    slave_path[3] = 'v'; slave_path[4] = '/'; slave_path[5] = 'p';
+    slave_path[6] = 't'; slave_path[7] = 's'; slave_path[8] = '/';
+    /* Convert slave_num to string */
+    if (slave_num >= 0 && slave_num < 100) {
+        int pos = 9;
+        if (slave_num >= 10) slave_path[pos++] = (char)('0' + slave_num / 10);
+        slave_path[pos++] = (char)('0' + slave_num % 10);
+        slave_path[pos] = '\0';
+    } else {
+        slave_path[9] = '0'; slave_path[10] = '\0';
+    }
+    long slave_fd = -1;
+    if (master_fd >= 0 && slave_num >= 0) {
+        slave_fd = sys_open(slave_path, 02 /* O_RDWR */, 0);
+    }
+    if (slave_fd >= 0) {
+        fut_printf("[MISC-TEST] ✓ Test 2179: slave fd=%ld (%s)\n", slave_fd, slave_path);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 2179: open(%s)=%ld\n", slave_path, slave_fd);
+        fut_test_fail(2179);
+    }
+
+    /* ── Test 2180: Write to master, read from slave ── */
+    fut_printf("[MISC-TEST] Test 2180: master→slave data transfer\n");
+    {
+        static char wbuf[8];
+        static char rbuf[8];
+        wbuf[0] = 'H'; wbuf[1] = 'i'; wbuf[2] = '\0';
+        int pass = 0;
+        if (master_fd >= 0 && slave_fd >= 0) {
+            ssize_t nw = sys_write((int)master_fd, wbuf, 2);
+            if (nw == 2) {
+                long nr = sys_read((int)slave_fd, rbuf, 7);
+                if (nr >= 2 && rbuf[0] == 'H' && rbuf[1] == 'i') {
+                    pass = 1;
+                } else {
+                    fut_printf("[MISC-TEST]   read=%ld rbuf[0]=%c\n", nr, rbuf[0]);
+                }
+            } else {
+                fut_printf("[MISC-TEST]   write=%ld\n", (long)nw);
+            }
+        }
+        if (pass) {
+            fut_printf("[MISC-TEST] ✓ Test 2180: master→slave ok\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2180: transfer failed\n");
+            fut_test_fail(2180);
+        }
+    }
+
+    /* ── Test 2181: Write to slave, read from master ── */
+    fut_printf("[MISC-TEST] Test 2181: slave→master data transfer\n");
+    {
+        static char wbuf2[8];
+        static char rbuf2[8];
+        wbuf2[0] = 'O'; wbuf2[1] = 'K'; wbuf2[2] = '\0';
+        int pass = 0;
+        if (master_fd >= 0 && slave_fd >= 0) {
+            ssize_t nw = sys_write((int)slave_fd, wbuf2, 2);
+            if (nw == 2) {
+                long nr = sys_read((int)master_fd, rbuf2, 7);
+                if (nr >= 2 && rbuf2[0] == 'O' && rbuf2[1] == 'K') {
+                    pass = 1;
+                } else {
+                    fut_printf("[MISC-TEST]   read=%ld rbuf2[0]=%c\n", nr, rbuf2[0]);
+                }
+            } else {
+                fut_printf("[MISC-TEST]   write=%ld\n", (long)nw);
+            }
+        }
+        if (pass) {
+            fut_printf("[MISC-TEST] ✓ Test 2181: slave→master ok\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2181: transfer failed\n");
+            fut_test_fail(2181);
+        }
+    }
+
+    /* ── Test 2182: TIOCGWINSZ ioctl on PTY returns valid window size ── */
+    fut_printf("[MISC-TEST] Test 2182: TIOCGWINSZ on PTY\n");
+    {
+        static struct { uint16_t ws_row; uint16_t ws_col; uint16_t ws_xpixel; uint16_t ws_ypixel; } wsz;
+        int pass = 0;
+        if (master_fd >= 0) {
+            long r = sys_ioctl((int)master_fd, 0x5413UL /* TIOCGWINSZ */, &wsz);
+            if (r == 0) pass = 1;
+            else fut_printf("[MISC-TEST]   ioctl=%ld\n", r);
+        }
+        if (pass) {
+            fut_printf("[MISC-TEST] ✓ Test 2182: winsize %ux%u\n", wsz.ws_row, wsz.ws_col);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2182: TIOCGWINSZ failed\n");
+            fut_test_fail(2182);
+        }
+    }
+
+    /* ── Test 2183: Second PTY allocation gets different index ── */
+    fut_printf("[MISC-TEST] Test 2183: multiple PTY allocation\n");
+    {
+        int pass = 0;
+        long m2 = sys_open("/dev/ptmx", 02, 0);
+        if (m2 >= 0) {
+            static int num2;
+            num2 = -1;
+            long r = sys_ioctl((int)m2, 0x80045430UL /* TIOCGPTN */, &num2);
+            if (r == 0 && num2 >= 0 && num2 != slave_num) {
+                pass = 1;
+                fut_printf("[MISC-TEST]   second pty index=%d (first=%d)\n", num2, slave_num);
+            }
+            sys_close((int)m2);
+        }
+        if (pass) {
+            fut_printf("[MISC-TEST] ✓ Test 2183: different PTY indices\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2183: allocation failed\n");
+            fut_test_fail(2183);
+        }
+    }
+
+    /* Clean up PTY fds */
+    if (slave_fd >= 0) sys_close((int)slave_fd);
+    if (master_fd >= 0) sys_close((int)master_fd);
+
+    /* ── Test 2184: Read pids.max from cgroupfs ── */
+    fut_printf("[MISC-TEST] Test 2184: cgroup pids.max readable\n");
+    {
+        long fd = sys_open("/cgroup/pids.max", 0, 0);
+        if (fd >= 0) {
+            static char buf[16];
+            long n = sys_read((int)fd, buf, 15);
+            sys_close((int)fd);
+            if (n > 0) {
+                buf[n < 15 ? n : 14] = '\0';
+                fut_printf("[MISC-TEST] ✓ Test 2184: pids.max='%s'\n", buf);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2184: read=%ld\n", n);
+                fut_test_fail(2184);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2184: open=%ld\n", fd);
+            fut_test_fail(2184);
+        }
+    }
+
+    /* ── Test 2185: Read pids.current from cgroupfs ── */
+    fut_printf("[MISC-TEST] Test 2185: cgroup pids.current readable\n");
+    {
+        long fd = sys_open("/cgroup/pids.current", 0, 0);
+        if (fd >= 0) {
+            static char buf[16];
+            long n = sys_read((int)fd, buf, 15);
+            sys_close((int)fd);
+            if (n > 0) {
+                buf[n < 15 ? n : 14] = '\0';
+                fut_printf("[MISC-TEST] ✓ Test 2185: pids.current='%s'\n", buf);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2185: read=%ld\n", n);
+                fut_test_fail(2185);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2185: open=%ld\n", fd);
+            fut_test_fail(2185);
+        }
+    }
+
+    /* ── Test 2186: Write to cgroup.freeze with "0" succeeds ── */
+    fut_printf("[MISC-TEST] Test 2186: cgroup.freeze writable\n");
+    {
+        long fd = sys_open("/cgroup/cgroup.freeze", 02 /* O_RDWR */, 0);
+        if (fd >= 0) {
+            /* Write "0" (thaw) — safe, doesn't freeze anything */
+            ssize_t nw = sys_write((int)fd, "0", 1);
+            sys_close((int)fd);
+            if (nw == 1) {
+                fut_printf("[MISC-TEST] ✓ Test 2186: freeze write ok\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2186: write=%ld\n", (long)nw);
+                fut_test_fail(2186);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2186: open=%ld\n", fd);
+            fut_test_fail(2186);
+        }
+    }
+
+    /* ── Test 2187: cgroup.events readable with "frozen 0" ── */
+    fut_printf("[MISC-TEST] Test 2187: cgroup.events readable\n");
+    {
+        long fd = sys_open("/cgroup/cgroup.events", 0, 0);
+        if (fd >= 0) {
+            static char buf[64];
+            long n = sys_read((int)fd, buf, 63);
+            sys_close((int)fd);
+            if (n > 0) {
+                buf[n < 63 ? n : 62] = '\0';
+                /* Check for "frozen" keyword */
+                int found = 0;
+                for (long i = 0; i < n - 5; i++) {
+                    if (buf[i]=='f' && buf[i+1]=='r' && buf[i+2]=='o' &&
+                        buf[i+3]=='z' && buf[i+4]=='e' && buf[i+5]=='n') {
+                        found = 1; break;
+                    }
+                }
+                if (found) {
+                    fut_printf("[MISC-TEST] ✓ Test 2187: events has 'frozen'\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 2187: no 'frozen' in '%s'\n", buf);
+                    fut_test_fail(2187);
+                }
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2187: read=%ld\n", n);
+                fut_test_fail(2187);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2187: open=%ld\n", fd);
+            fut_test_fail(2187);
+        }
+    }
+
+    /* ── Test 2188: Write to pids.max with a value succeeds ── */
+    fut_printf("[MISC-TEST] Test 2188: write pids.max\n");
+    {
+        long fd = sys_open("/cgroup/pids.max", 02 /* O_RDWR */, 0);
+        if (fd >= 0) {
+            /* Write "max" (unlimited) — safe, doesn't restrict anything */
+            ssize_t nw = sys_write((int)fd, "max", 3);
+            sys_close((int)fd);
+            if (nw == 3) {
+                fut_printf("[MISC-TEST] ✓ Test 2188: pids.max write ok\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2188: write=%ld\n", (long)nw);
+                fut_test_fail(2188);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2188: open=%ld\n", fd);
+            fut_test_fail(2188);
+        }
+    }
+}
+
+/* ============================================================
  * Tests 1946-1957: io_uring async I/O subsystem
  * ============================================================ */
 __attribute__((noinline)) static void test_io_uring(void) {
@@ -66629,6 +66936,7 @@ void fut_misc_test_thread(void *arg) {
     test_modern_mount_api(); /* Tests 1970-1975 */
     test_keyring();   /* Tests 1958-1969 */
     test_io_uring();  /* Tests 1946-1957 */
+    test_pty_and_cgroup(); /* Tests 2176-2188 */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

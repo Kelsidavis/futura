@@ -1,0 +1,12 @@
+[package]
+name = "rpi_display"
+version = "0.1.0"
+edition = "2024"
+license = "MPL-2.0"
+description = "Raspberry Pi 4/5 HDMI display driver via VideoCore mailbox framebuffer"
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+common = { path = "../common" }

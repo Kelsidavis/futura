@@ -6307,17 +6307,30 @@ static void du_recurse(const char *path, long *total_blocks) {
 }
 
 static void cmd_du(int argc, char *argv[]) {
-    const char *path = argc > 1 ? argv[1] : ".";
+    int human = 0, summary = 0;
+    int arg_start = 1;
+    while (arg_start < argc && argv[arg_start][0] == '-') {
+        for (int j = 1; argv[arg_start][j]; j++) {
+            if (argv[arg_start][j] == 'h') human = 1;
+            else if (argv[arg_start][j] == 's') summary = 1;
+        }
+        arg_start++;
+    }
+    const char *path = arg_start < argc ? argv[arg_start] : ".";
     long blocks = 0;
     du_recurse(path, &blocks);
-    /* blocks are in 512-byte units, show in KB */
     long kb = blocks / 2;
     char nbuf[20];
-    int_to_str(kb, nbuf, 20);
+    if (human) {
+        ls_format_human_size(kb * 1024, nbuf, 20);
+    } else {
+        int_to_str(kb, nbuf, 20);
+    }
     write_str(1, nbuf);
     write_str(1, "\t");
     write_str(1, path);
     write_str(1, "\n");
+    (void)summary; /* -s is default behavior (only show total) */
 }
 
 static void cmd_chmod(int argc, char *argv[]) {

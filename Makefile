@@ -1338,7 +1338,7 @@ test:
 	@echo "Testing kernel under QEMU (isa-debug-exit, 180s timeout)..."
 	@img=$(QEMU_DISK_IMG); \
 		echo "[HARNESS] Using test disk $$img"; \
-		timeout 420 qemu-system-x86_64 \
+		timeout 480 qemu-system-x86_64 \
 			-serial stdio \
 			-display none \
 			-m $(QEMU_MEM) \

@@ -4057,9 +4057,18 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
         case PROC_SYS_UUID:
             total = gen_uuid_into(tmp, GEN_BUF);
             break;
-        case PROC_SYS_ENTROPY_AVAIL:
-            total = gen_sysctl_str(tmp, GEN_BUF, "256");
+        case PROC_SYS_ENTROPY_AVAIL: {
+            extern uint32_t getrandom_get_entropy_avail(void);
+            uint32_t ent = getrandom_get_entropy_avail();
+            char ebuf[16]; int ep = 0;
+            if (ent == 0) ebuf[ep++] = '0';
+            else { char rev[16]; int rp = 0;
+                while (ent > 0) { rev[rp++] = '0' + (char)(ent % 10); ent /= 10; }
+                while (rp > 0) ebuf[ep++] = rev[--rp]; }
+            ebuf[ep++] = '\n'; ebuf[ep] = '\0';
+            total = gen_sysctl_str(tmp, GEN_BUF, ebuf);
             break;
+        }
         case PROC_SYS_POOLSIZE:
             total = gen_sysctl_str(tmp, GEN_BUF, "4096");
             break;

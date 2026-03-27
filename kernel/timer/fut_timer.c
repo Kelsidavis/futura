@@ -297,6 +297,12 @@ void fut_timer_tick(void) {
         watchdog_check();
     }
 
+    /* Replenish entropy pool from timer jitter (every tick adds ~8 bits) */
+    {
+        extern void getrandom_add_entropy(void);
+        getrandom_add_entropy();
+    }
+
     // Check for expired alarms and deliver SIGALRM
     extern fut_task_t *fut_task_list;
 

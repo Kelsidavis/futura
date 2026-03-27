@@ -32,6 +32,16 @@
 static uint64_t rng_state[2] = {0, 0};
 static bool rng_seeded = false;
 
+/* Entropy accounting: track estimated bits of entropy available.
+ * Starts at pool capacity (4096 bits) after seeding, consumed by reads,
+ * replenished slowly by timer interrupts. Clamped to [0, 4096]. */
+static uint32_t g_entropy_avail = 0;  /* bits */
+#define ENTROPY_POOL_BITS  4096
+
+uint32_t getrandom_get_entropy_avail(void) {
+    return g_entropy_avail;
+}
+
 /**
  * Seed the RNG from available entropy sources.
  * Uses TSC (if available), timer ticks, and task PID as entropy.
@@ -59,6 +69,7 @@ static void rng_seed(void) {
     rng_state[0] = seed0;
     rng_state[1] = seed1;
     rng_seeded = true;
+    g_entropy_avail = ENTROPY_POOL_BITS;  /* Pool is fully seeded */
 }
 
 /**
@@ -149,5 +160,27 @@ long sys_getrandom(void *buf, size_t buflen, unsigned int flags) {
         remaining -= chunk;
     }
 
+    /* Track entropy consumption: each byte consumed costs 8 bits.
+     * Re-seed replenishment happens in timer tick context. */
+    uint32_t bits_consumed = (uint32_t)(buflen * 8);
+    if (bits_consumed > g_entropy_avail)
+        g_entropy_avail = 0;
+    else
+        g_entropy_avail -= bits_consumed;
+    /* Partial replenishment: TSC/timer provides ~1 bit per call */
+    if (g_entropy_avail < ENTROPY_POOL_BITS)
+        g_entropy_avail += 1;
+
     return (long)buflen;
+}
+
+/**
+ * getrandom_add_entropy — Called from timer interrupt to slowly replenish entropy.
+ * Each timer tick adds a small amount of entropy from timing jitter.
+ */
+void getrandom_add_entropy(void) {
+    if (g_entropy_avail < ENTROPY_POOL_BITS)
+        g_entropy_avail += 8;  /* ~8 bits per timer tick from jitter */
+    if (g_entropy_avail > ENTROPY_POOL_BITS)
+        g_entropy_avail = ENTROPY_POOL_BITS;
 }

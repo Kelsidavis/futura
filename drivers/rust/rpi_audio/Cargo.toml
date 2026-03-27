@@ -1,0 +1,12 @@
+[package]
+name = "rpi_audio"
+version = "0.1.0"
+edition = "2024"
+license = "MPL-2.0"
+description = "Raspberry Pi audio output driver (PWM headphone + HDMI)"
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+common = { path = "../common" }

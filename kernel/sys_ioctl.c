@@ -1190,11 +1190,15 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
             return 0;
         case TIOCGPGRP: {
             /* TIOCGPGRP - Get foreground process group of terminal.
-             * Returns the process group ID of the foreground process group. */
+             * Returns the fg pgid stored on the PTY, or current task's pgid as fallback. */
             if (!argp)
                 return -EFAULT;
-            fut_task_t *task = fut_task_current();
-            int pgid = task ? (int)task->pgid : 0;
+            extern int fut_pty_get_fg_pgid(int fd);
+            int pgid = fut_pty_get_fg_pgid(fd);
+            if (pgid == 0) {
+                fut_task_t *task = fut_task_current();
+                pgid = task ? (int)task->pgid : 0;
+            }
 #ifdef KERNEL_VIRTUAL_BASE
             if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
                 __builtin_memcpy(argp, &pgid, sizeof(int));
@@ -1206,7 +1210,7 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
         }
         case TIOCSPGRP: {
             /* TIOCSPGRP - Set foreground process group of terminal.
-             * Reads the new pgrp from argp. */
+             * Reads the new pgrp from argp and stores it on the PTY pair. */
             if (!argp)
                 return -EFAULT;
             int new_pgid = 0;
@@ -1217,7 +1221,8 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
 #endif
             if (fut_copy_from_user(&new_pgid, argp, sizeof(int)) != 0)
                 return -EFAULT;
-            /* Accept but don't enforce — basic stub for shell compatibility */
+            extern int fut_pty_set_fg_pgid(int fd, int pgid);
+            fut_pty_set_fg_pgid(fd, new_pgid);
             return 0;
         }
         case TIOCSCTTY: {

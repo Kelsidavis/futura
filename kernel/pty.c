@@ -103,6 +103,10 @@ struct pty_pair {
     fut_waitq_t     master_wq;       /* wake master on s2m data / slave close */
     fut_waitq_t     slave_wq;        /* wake slave on m2s data / master close */
 
+    /* Job control: foreground process group for this terminal */
+    int             fg_pgid;         /* Foreground process group ID (TIOCSPGRP/TIOCGPGRP) */
+    uint64_t        session_id;      /* Session leader PID */
+
     /* Epoll notification targets */
     fut_waitq_t    *master_epoll_wq;
     fut_waitq_t    *slave_epoll_wq;
@@ -715,5 +719,35 @@ int fut_pty_inject_input(int fd, uint8_t byte) {
     if (pp->tag == PTY_SLAVE_TAG && p->slave_epoll_wq)
         fut_waitq_wake_one(p->slave_epoll_wq);
 
+    return 0;
+}
+
+/**
+ * fut_pty_get_fg_pgid — Get the foreground process group of this terminal.
+ * Returns the pgid, or 0 if fd is not a PTY.
+ */
+int fut_pty_get_fg_pgid(int fd) {
+    extern struct fut_file *fut_vfs_get_file(int fd);
+    struct fut_file *file = fut_vfs_get_file(fd);
+    if (!file || !file->chr_private) return 0;
+    struct pty_priv *pp = (struct pty_priv *)file->chr_private;
+    if (pp->tag != PTY_MASTER_TAG && pp->tag != PTY_SLAVE_TAG) return 0;
+    struct pty_pair *p = pp->pair;
+    return p ? p->fg_pgid : 0;
+}
+
+/**
+ * fut_pty_set_fg_pgid — Set the foreground process group of this terminal.
+ * Returns 0 on success, -1 if fd is not a PTY.
+ */
+int fut_pty_set_fg_pgid(int fd, int pgid) {
+    extern struct fut_file *fut_vfs_get_file(int fd);
+    struct fut_file *file = fut_vfs_get_file(fd);
+    if (!file || !file->chr_private) return -1;
+    struct pty_priv *pp = (struct pty_priv *)file->chr_private;
+    if (pp->tag != PTY_MASTER_TAG && pp->tag != PTY_SLAVE_TAG) return -1;
+    struct pty_pair *p = pp->pair;
+    if (!p) return -1;
+    p->fg_pgid = pgid;
     return 0;
 }

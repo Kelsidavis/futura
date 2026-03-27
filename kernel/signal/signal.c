@@ -977,15 +977,46 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
 /**
  * Send signal to the foreground process group.
  * Used by the console driver for Ctrl+C (SIGINT), Ctrl+Z (SIGTSTP), etc.
- * Sends to all user processes (PID > 1) that are running or blocked.
+ *
+ * If a foreground process group is set on the console/PTY, sends the signal
+ * only to processes in that group. Otherwise falls back to all user processes.
  */
 void fut_signal_send_group(int sig) {
     extern fut_task_t *fut_task_list;
+
+    /* Try to find the foreground pgid from the console PTY (fd 0 of the shell) */
+    extern int fut_pty_get_fg_pgid(int fd);
+    int fg_pgid = 0;
+
+    /* Scan user tasks for one with a controlling terminal that has a fg pgid */
+    fut_task_t *scan = fut_task_list;
+    while (scan) {
+        if (scan->pid > 1 && scan->tty_nr != 0) {
+            /* Try to get fg_pgid from any fd that's a PTY */
+            if (scan->fd_table) {
+                for (int fdi = 0; fdi < scan->max_fds && fdi < 3; fdi++) {
+                    if (scan->fd_table[fdi]) {
+                        int pg = fut_pty_get_fg_pgid(fdi);
+                        if (pg > 0) { fg_pgid = pg; break; }
+                    }
+                }
+            }
+            if (fg_pgid > 0) break;
+        }
+        scan = scan->next;
+    }
+
     fut_task_t *task = fut_task_list;
     while (task) {
-        /* Send to user processes only (skip kernel tasks like PID 1) */
         if (task->pid > 1 && task->state != FUT_TASK_ZOMBIE) {
-            fut_signal_send(task, sig);
+            if (fg_pgid > 0) {
+                /* Send only to processes in the foreground group */
+                if ((int)task->pgid == fg_pgid)
+                    fut_signal_send(task, sig);
+            } else {
+                /* No fg pgid known: fall back to all user processes */
+                fut_signal_send(task, sig);
+            }
         }
         task = task->next;
     }

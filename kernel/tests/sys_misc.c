@@ -57960,6 +57960,69 @@ __attribute__((noinline)) static void test_net_procfs_devnodes(void) {
  * Tests 2092-2097: final coverage (scripts, devices, sysctls)
  * ============================================================ */
 /* ============================================================
+ * Tests 2108-2110: per-pid extra entries
+ * ============================================================ */
+__attribute__((noinline)) static void test_pid_extra_entries(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_close(int);
+
+    /* ── Test 2108: /proc/self/oom_adj readable ── */
+    fut_printf("[MISC-TEST] Test 2108: /proc/self/oom_adj\n");
+    {
+        long fd = sys_open("/proc/self/oom_adj", 0, 0);
+        if (fd >= 0) {
+            static char buf[16];
+            long n = sys_read((int)fd, buf, 15);
+            sys_close((int)fd);
+            if (n > 0) {
+                fut_printf("[MISC-TEST] ✓ Test 2108: oom_adj readable\n");
+                fut_test_pass();
+            } else { fut_test_fail(2108); }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2108: open=%ld\n", fd);
+            fut_test_fail(2108);
+        }
+    }
+
+    /* ── Test 2109: /proc/self/cpuset readable ── */
+    fut_printf("[MISC-TEST] Test 2109: /proc/self/cpuset\n");
+    {
+        long fd = sys_open("/proc/self/cpuset", 0, 0);
+        if (fd >= 0) {
+            static char buf[32];
+            long n = sys_read((int)fd, buf, 31);
+            sys_close((int)fd);
+            if (n > 0) {
+                fut_printf("[MISC-TEST] ✓ Test 2109: cpuset readable\n");
+                fut_test_pass();
+            } else { fut_test_fail(2109); }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2109: open=%ld\n", fd);
+            fut_test_fail(2109);
+        }
+    }
+
+    /* ── Test 2110: /proc/self/autogroup readable ── */
+    fut_printf("[MISC-TEST] Test 2110: /proc/self/autogroup\n");
+    {
+        long fd = sys_open("/proc/self/autogroup", 0, 0);
+        if (fd >= 0) {
+            static char buf[32];
+            long n = sys_read((int)fd, buf, 31);
+            sys_close((int)fd);
+            if (n > 0) {
+                fut_printf("[MISC-TEST] ✓ Test 2110: autogroup readable\n");
+                fut_test_pass();
+            } else { fut_test_fail(2110); }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2110: open=%ld\n", fd);
+            fut_test_fail(2110);
+        }
+    }
+}
+
+/* ============================================================
  * Tests 2103-2107: swap management and misc proc entries
  * ============================================================ */
 __attribute__((noinline)) static void test_swap_and_proc(void) {
@@ -64882,6 +64945,7 @@ void fut_misc_test_thread(void *arg) {
     test_loop_device(); /* Tests 1885-1887 */
     test_per_iface_conf(); /* Tests 1869-1871 */
 
+    test_pid_extra_entries(); /* Tests 2108-2110 */
     test_swap_and_proc(); /* Tests 2103-2107 */
     test_proc_hw_entries(); /* Tests 2098-2102 */
     test_final_coverage(); /* Tests 2092-2097 */

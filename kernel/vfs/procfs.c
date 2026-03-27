@@ -5374,6 +5374,16 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0100644, PROC_SYS_NET_BRIDGE_NF_CALL, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "bridge-nf-call-ip6tables")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_NET_BRIDGE_NFCALL + 1,
+                                          0100644, PROC_SYS_NET_BRIDGE_NF_CALL, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "bridge-nf-call-arptables")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_NET_BRIDGE_NFCALL + 2,
+                                          0100644, PROC_SYS_NET_BRIDGE_NF_CALL, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         return -ENOENT;
     }
 
@@ -6482,11 +6492,15 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
     }
 
     if (dn->kind == PROC_SYS_NET_BRIDGE_DIR) {
-        static const char *be[] = { ".", "..", "bridge-nf-call-iptables" };
-        static const uint8_t bt[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_REG };
+        static const char *be[] = { ".", "..", "bridge-nf-call-iptables",
+                                    "bridge-nf-call-ip6tables", "bridge-nf-call-arptables" };
+        static const uint8_t bt[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
+                                       FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG };
         static const uint64_t bi[] = { PROC_INO_SYS_NET_BRIDGE_DIR, PROC_INO_SYS_NET_DIR,
-                                       PROC_INO_SYS_NET_BRIDGE_NFCALL };
-        if (idx < 3) SYS_DIR_ENTRY(be[idx], bt[idx], bi[idx]);
+                                       PROC_INO_SYS_NET_BRIDGE_NFCALL,
+                                       PROC_INO_SYS_NET_BRIDGE_NFCALL + 1,
+                                       PROC_INO_SYS_NET_BRIDGE_NFCALL + 2 };
+        if (idx < 5) SYS_DIR_ENTRY(be[idx], bt[idx], bi[idx]);
         return -ENOENT;
     }
 

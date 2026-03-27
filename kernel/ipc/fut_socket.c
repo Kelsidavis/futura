@@ -339,12 +339,12 @@ fut_socket_t *fut_socket_create(int family, int type) {
         return NULL;
     }
     /* SOCK_STREAM, SOCK_DGRAM, SOCK_SEQPACKET for AF_UNIX;
-     * SOCK_STREAM/SOCK_DGRAM for AF_INET/AF_INET6;
+     * SOCK_STREAM/SOCK_DGRAM/SOCK_RAW for AF_INET/AF_INET6;
      * SOCK_RAW/SOCK_DGRAM for AF_NETLINK. */
     if (family == AF_NETLINK) {
         if (type != SOCK_RAW && type != SOCK_DGRAM)
             return NULL;
-    } else if (type != SOCK_STREAM && type != SOCK_DGRAM && type != SOCK_SEQPACKET) {
+    } else if (type != SOCK_STREAM && type != SOCK_DGRAM && type != SOCK_SEQPACKET && type != SOCK_RAW) {
         return NULL;
     }
 
@@ -2383,5 +2383,100 @@ ssize_t fut_socket_sendto_inet_dgram(uint32_t dest_addr, uint16_t dest_port,
     fut_spinlock_release(&dq->lock);
     fut_socket_unref(dest);
 
+    return (ssize_t)data_len;
+}
+
+/**
+ * Send a raw IP packet to a destination address.
+ * For ICMP echo requests, generates an echo reply and queues it on all
+ * raw sockets matching the protocol. For non-loopback, accepts the data.
+ */
+ssize_t fut_socket_sendto_inet_raw(uint32_t dest_addr, int protocol,
+                                    const void *data, size_t data_len) {
+    if (!data || data_len == 0) return -EINVAL;
+    if (data_len > 65535) return -EMSGSIZE;
+
+    /* For ICMP echo requests, generate a reply and deliver to raw sockets */
+    if (protocol == 1 /* IPPROTO_ICMP */ && data_len >= 8) {
+        const uint8_t *icmp = (const uint8_t *)data;
+        uint8_t type = icmp[0];
+
+        if (type == 8 /* ICMP_ECHO */) {
+            /* Build echo reply: type=0, same id/seq/payload */
+            static uint8_t reply[4096];
+            size_t copy_len = data_len > sizeof(reply) ? sizeof(reply) : data_len;
+            __builtin_memcpy(reply, data, copy_len);
+            reply[0] = 0;  /* ICMP_ECHOREPLY */
+            reply[1] = 0;
+            /* Recalculate ICMP checksum */
+            reply[2] = 0;
+            reply[3] = 0;
+            uint32_t cksum = 0;
+            for (size_t i = 0; i + 1 < copy_len; i += 2)
+                cksum += ((uint32_t)reply[i] << 8) | reply[i + 1];
+            if (copy_len & 1)
+                cksum += (uint32_t)reply[copy_len - 1] << 8;
+            while (cksum >> 16)
+                cksum = (cksum & 0xFFFF) + (cksum >> 16);
+            uint16_t cs = ~(uint16_t)cksum;
+            reply[2] = (uint8_t)(cs >> 8);
+            reply[3] = (uint8_t)(cs & 0xFF);
+
+            /* Prepend minimal IP header (20 bytes) for raw socket recv */
+            static uint8_t ip_pkt[4120];
+            uint16_t total_len = (uint16_t)(20 + copy_len);
+            ip_pkt[0] = 0x45; ip_pkt[1] = 0;
+            ip_pkt[2] = (uint8_t)(total_len >> 8);
+            ip_pkt[3] = (uint8_t)(total_len & 0xFF);
+            ip_pkt[4] = 0; ip_pkt[5] = 0;
+            ip_pkt[6] = 0; ip_pkt[7] = 0;
+            ip_pkt[8] = 64; ip_pkt[9] = 1;
+            ip_pkt[10] = 0; ip_pkt[11] = 0;
+            __builtin_memcpy(&ip_pkt[12], &dest_addr, 4);
+            uint32_t src_lo = 0x0100007F;
+            __builtin_memcpy(&ip_pkt[16], &src_lo, 4);
+            /* IP header checksum */
+            uint32_t ip_ck = 0;
+            for (int i = 0; i < 20; i += 2)
+                ip_ck += ((uint32_t)ip_pkt[i] << 8) | ip_pkt[i + 1];
+            while (ip_ck >> 16)
+                ip_ck = (ip_ck & 0xFFFF) + (ip_ck >> 16);
+            uint16_t ip_cs = ~(uint16_t)ip_ck;
+            ip_pkt[10] = (uint8_t)(ip_cs >> 8);
+            ip_pkt[11] = (uint8_t)(ip_cs & 0xFF);
+            __builtin_memcpy(&ip_pkt[20], reply, copy_len);
+
+            /* Deliver to all matching raw ICMP sockets */
+            for (int i = 0; i < FUT_SOCKET_MAX; i++) {
+                fut_socket_t *s = socket_registry[i];
+                if (!s) continue;
+                if (s->magic != FUT_SOCKET_MAGIC) continue;
+                if (s->address_family != 2 || s->socket_type != 3) continue;
+                if (s->protocol != 1) continue;
+                if (!s->dgram_queue) continue;
+
+                fut_dgram_queue_t *dq = s->dgram_queue;
+                fut_spinlock_acquire(&dq->lock);
+                if (dq->count < FUT_DGRAM_QUEUE_MAX) {
+                    uint32_t idx = (dq->head + dq->count) % FUT_DGRAM_QUEUE_MAX;
+                    fut_dgram_entry_t *entry = &dq->msgs[idx];
+                    entry->sender_path[0] = '\0';
+                    entry->sender_path_len = 0;
+                    entry->sender_inet_addr = dest_addr;
+                    entry->sender_inet_port = 0;
+                    size_t pkt_len = 20 + copy_len;
+                    if (pkt_len > FUT_DGRAM_DATA_MAX) pkt_len = FUT_DGRAM_DATA_MAX;
+                    entry->data_len = (uint16_t)pkt_len;
+                    __builtin_memcpy(entry->data, ip_pkt, pkt_len);
+                    dq->count++;
+                    fut_waitq_wake_one(dq->recv_waitq);
+                }
+                fut_spinlock_release(&dq->lock);
+            }
+            return (ssize_t)data_len;
+        }
+    }
+
+    /* Non-ICMP or non-echo: accept the data (future: route through TCP/IP stack) */
     return (ssize_t)data_len;
 }

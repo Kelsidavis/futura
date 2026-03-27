@@ -98,8 +98,14 @@ typedef uint32_t socklen_t;
 #ifndef IPPROTO_UDP
 #define IPPROTO_UDP     17  /* UDP protocol options */
 #endif
+#ifndef IPPROTO_ICMP
+#define IPPROTO_ICMP    1   /* ICMP protocol */
+#endif
 #ifndef IPPROTO_IPV6
 #define IPPROTO_IPV6    41  /* IPv6 protocol options */
+#endif
+#ifndef IPPROTO_RAW
+#define IPPROTO_RAW     255 /* Raw IP packets */
 #endif
 
 /* ============================================================
@@ -451,6 +457,9 @@ typedef struct fut_socket {
     uint8_t *nl_resp_buf;    /* heap-allocated response; NULL = nothing pending */
     uint32_t nl_resp_len;    /* total bytes in nl_resp_buf */
     uint32_t nl_resp_pos;    /* bytes already consumed by recvmsg */
+
+    /* Raw socket protocol number (SOCK_RAW only: IPPROTO_ICMP, IPPROTO_UDP, etc.) */
+    int protocol;
 
     /* Pending error (SO_ERROR): set by async failures, read-and-cleared by getsockopt */
     int pending_error;

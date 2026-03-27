@@ -509,6 +509,36 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
         }
     }
 
+    /* SOCK_RAW with explicit destination: send raw IP packet */
+    if (local_dest_addr && local_addrlen >= 8) {
+        extern fut_socket_t *get_socket_from_fd(int fd);
+        fut_socket_t *raw_sock = get_socket_from_fd(local_sockfd);
+        if (raw_sock && raw_sock->socket_type == 3 /* SOCK_RAW */ &&
+            (raw_sock->address_family == AF_INET || raw_sock->address_family == AF_INET6)) {
+            struct { uint16_t sin_family; uint16_t sin_port; uint32_t sin_addr; } sin;
+            if (sendto_copy_from_user(&sin, local_dest_addr, 8) != 0) {
+                fut_free(kbuf);
+                return -EFAULT;
+            }
+
+            if (sin.sin_family == 2 /* AF_INET */) {
+                /* For IPPROTO_ICMP raw sockets: the user provides the ICMP header+payload.
+                 * For IPPROTO_RAW or with IP_HDRINCL: user provides full IP header.
+                 * We handle the ICMP case by delivering to the loopback echo responder
+                 * or to the raw socket receive queue of matching sockets. */
+                extern ssize_t fut_socket_sendto_inet_raw(
+                    uint32_t dest_addr, int protocol,
+                    const void *data, size_t data_len);
+                ssize_t ret = fut_socket_sendto_inet_raw(
+                    sin.sin_addr, raw_sock->protocol, kbuf, local_len);
+                fut_free(kbuf);
+                return ret;
+            }
+            fut_free(kbuf);
+            return -ENETUNREACH;
+        }
+    }
+
     /* SOCK_DGRAM with explicit destination: route directly to bound socket */
     if (local_dest_addr && local_addrlen >= 3) {
         extern fut_socket_t *get_socket_from_fd(int fd);

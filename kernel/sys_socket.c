@@ -16,9 +16,11 @@
 #include <kernel/fut_task.h>
 #include <kernel/fut_socket.h>
 #include <kernel/fut_vfs.h>
+#include <kernel/fut_memory.h>
 #include <kernel/syscalls.h>
 #include <kernel/errno.h>
 #include <fcntl.h>
+#include <string.h>
 
 #include <kernel/kprintf.h>
 #include <kernel/debug_config.h>
@@ -233,8 +235,8 @@ long sys_socket(int domain, int type, int protocol) {
             return -ENOTSUP;
         }
     } else {
-        /* AF_INET/AF_INET6 support SOCK_STREAM and SOCK_DGRAM */
-        if (base_type != SOCK_STREAM && base_type != SOCK_DGRAM) {
+        /* AF_INET/AF_INET6 support SOCK_STREAM, SOCK_DGRAM, and SOCK_RAW */
+        if (base_type != SOCK_STREAM && base_type != SOCK_DGRAM && base_type != SOCK_RAW) {
             return -ENOTSUP;
         }
     }
@@ -260,6 +262,24 @@ long sys_socket(int domain, int type, int protocol) {
         socket_printf("[SOCKET] socket(domain=%s, type=%s, flags=%s, protocol=%d) -> ENOMEM (fut_socket_create failed)\n",
                    domain_name, type_name, flags_desc, local_protocol);
         return -ENOMEM;
+    }
+
+    /* Store protocol number (used by SOCK_RAW to identify packet type) */
+    socket->protocol = local_protocol;
+
+    /* SOCK_RAW sockets need a dgram queue for receiving packets */
+    if (base_type == SOCK_RAW && (local_domain == AF_INET || local_domain == AF_INET6)) {
+        fut_dgram_queue_t *dq = (fut_dgram_queue_t *)fut_malloc(sizeof(fut_dgram_queue_t));
+        if (dq) {
+            memset(dq, 0, sizeof(*dq));
+            dq->recv_waitq = (fut_waitq_t *)fut_malloc(sizeof(fut_waitq_t));
+            if (dq->recv_waitq) {
+                extern void fut_waitq_init(fut_waitq_t *);
+                fut_waitq_init(dq->recv_waitq);
+            }
+            fut_spinlock_init(&dq->lock);
+            socket->dgram_queue = dq;
+        }
     }
 
     /* Allocate file descriptor for socket */

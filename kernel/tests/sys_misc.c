@@ -36489,7 +36489,7 @@ static void test_statfs_magic_values(void) {
  * Test 878: socket(AF_INET, SOCK_DGRAM, 0) → >= 0
  * Test 879: socket(AF_INET6, SOCK_STREAM, 0) → >= 0
  * Test 880: getsockopt(inet6_fd, SOL_SOCKET, SO_DOMAIN) → AF_INET6 (10)
- * Test 881: socket(AF_INET, SOCK_RAW, 0) → ENOTSUP/EAFNOSUPPORT (raw not supported)
+ * Test 881: socket(AF_INET, SOCK_RAW, 0) → success (raw sockets supported)
  */
 static void test_af_inet_socket_stub(void) {
     extern long sys_socket(int domain, int type, int protocol);
@@ -36602,15 +36602,15 @@ test878:;
     }
 
 test881:;
-    /* Test 881: socket(AF_INET, SOCK_RAW, 0) → error (raw not supported) */
+    /* Test 881: socket(AF_INET, SOCK_RAW, 0) → success (raw sockets supported) */
     long fd_raw = sys_socket(AF_INET_NUM, SOCK_RAW_NUM, 0);
-    if (fd_raw < 0) {
-        fut_printf("[MISC-TEST] ✓ Test 881: socket(AF_INET, SOCK_RAW) → %ld (rejected)\n", fd_raw);
+    if (fd_raw >= 0) {
+        fut_printf("[MISC-TEST] ✓ Test 881: socket(AF_INET, SOCK_RAW) → fd=%ld\n", fd_raw);
         fut_test_pass();
-    } else {
-        fut_printf("[MISC-TEST] ✗ Test 881: socket(AF_INET, SOCK_RAW) → %ld (expected error)\n", fd_raw);
-        fut_test_fail(881);
         sys_close((int)fd_raw);
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 881: socket(AF_INET, SOCK_RAW) → %ld (expected success)\n", fd_raw);
+        fut_test_fail(881);
     }
 
 #undef AF_INET_NUM
@@ -61447,6 +61447,126 @@ __attribute__((noinline)) static void test_io_uring(void) {
 }
 
 /* ============================================================
+ * Tests 2132-2136: AF_INET SOCK_RAW (raw sockets for ping/ICMP)
+ * ============================================================ */
+__attribute__((noinline)) static void test_sock_raw(void) {
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_close(int fd);
+    extern long sys_sendto(int fd, const void *buf, size_t len, int flags,
+                            const void *dest_addr, unsigned int addrlen);
+    extern long sys_recvfrom(int fd, void *buf, size_t len, int flags,
+                              void *src_addr, unsigned int *addrlen);
+
+    /* ── Test 2132: create AF_INET SOCK_RAW IPPROTO_ICMP socket ── */
+    fut_printf("[MISC-TEST] Test 2132: socket(AF_INET, SOCK_RAW, IPPROTO_ICMP)\n");
+    long raw_fd = sys_socket(2 /* AF_INET */, 3 /* SOCK_RAW */, 1 /* IPPROTO_ICMP */);
+    if (raw_fd >= 0) {
+        fut_printf("[MISC-TEST] ✓ Test 2132: raw ICMP socket fd=%ld\n", raw_fd);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 2132: socket=%ld\n", raw_fd);
+        fut_test_fail(2132);
+        return;
+    }
+
+    /* ── Test 2133: sendto ICMP echo request to loopback ── */
+    fut_printf("[MISC-TEST] Test 2133: sendto ICMP echo to 127.0.0.1\n");
+    {
+        /* Build ICMP echo request: type=8, code=0, cksum, id, seq, data */
+        static uint8_t icmp_req[16];
+        icmp_req[0] = 8;  /* type: echo request */
+        icmp_req[1] = 0;  /* code */
+        icmp_req[2] = 0;  /* checksum (computed below) */
+        icmp_req[3] = 0;
+        icmp_req[4] = 0x12; icmp_req[5] = 0x34; /* identifier */
+        icmp_req[6] = 0x00; icmp_req[7] = 0x01; /* sequence */
+        icmp_req[8] = 'p'; icmp_req[9] = 'i';
+        icmp_req[10] = 'n'; icmp_req[11] = 'g';
+        icmp_req[12] = 't'; icmp_req[13] = 'e';
+        icmp_req[14] = 's'; icmp_req[15] = 't';
+
+        /* Compute ICMP checksum */
+        uint32_t ck = 0;
+        for (int i = 0; i < 16; i += 2)
+            ck += ((uint32_t)icmp_req[i] << 8) | icmp_req[i + 1];
+        while (ck >> 16) ck = (ck & 0xFFFF) + (ck >> 16);
+        uint16_t cs = ~(uint16_t)ck;
+        icmp_req[2] = (uint8_t)(cs >> 8);
+        icmp_req[3] = (uint8_t)(cs & 0xFF);
+
+        /* sockaddr_in for 127.0.0.1 */
+        struct { uint16_t sin_family; uint16_t sin_port; uint32_t sin_addr; uint8_t pad[8]; } dest;
+        dest.sin_family = 2; /* AF_INET */
+        dest.sin_port = 0;
+        dest.sin_addr = 0x0100007F; /* 127.0.0.1 in network byte order */
+        memset(dest.pad, 0, 8);
+
+        long sent = sys_sendto((int)raw_fd, icmp_req, 16, 0, &dest, 16);
+        if (sent == 16) {
+            fut_printf("[MISC-TEST] ✓ Test 2133: sendto ICMP echo sent %ld bytes\n", sent);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2133: sendto=%ld\n", sent);
+            fut_test_fail(2133);
+        }
+    }
+
+    /* ── Test 2134: recvfrom gets ICMP echo reply ── */
+    fut_printf("[MISC-TEST] Test 2134: recvfrom ICMP echo reply\n");
+    {
+        static uint8_t recv_buf[128];
+        memset(recv_buf, 0, sizeof(recv_buf));
+        long got = sys_recvfrom((int)raw_fd, recv_buf, sizeof(recv_buf),
+                                 0x40 /* MSG_DONTWAIT */, NULL, NULL);
+        if (got > 20) {
+            /* Skip IP header (20 bytes), check ICMP type = 0 (echo reply) */
+            uint8_t icmp_type = recv_buf[20];
+            uint8_t icmp_code = recv_buf[21];
+            uint16_t icmp_id = ((uint16_t)recv_buf[24] << 8) | recv_buf[25];
+            if (icmp_type == 0 && icmp_code == 0 && icmp_id == 0x1234) {
+                fut_printf("[MISC-TEST] ✓ Test 2134: reply type=%d id=0x%04x len=%ld\n",
+                           icmp_type, icmp_id, got);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2134: type=%d code=%d id=0x%04x\n",
+                           icmp_type, icmp_code, icmp_id);
+                fut_test_fail(2134);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2134: recvfrom=%ld\n", got);
+            fut_test_fail(2134);
+        }
+    }
+
+    /* ── Test 2135: SOCK_RAW with invalid protocol → still creates socket ── */
+    fut_printf("[MISC-TEST] Test 2135: socket(AF_INET, SOCK_RAW, 253)\n");
+    {
+        long fd2 = sys_socket(2, 3, 253 /* unused protocol */);
+        if (fd2 >= 0) {
+            fut_printf("[MISC-TEST] ✓ Test 2135: raw socket proto=253 fd=%ld\n", fd2);
+            fut_test_pass();
+            sys_close((int)fd2);
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2135: socket=%ld\n", fd2);
+            fut_test_fail(2135);
+        }
+    }
+
+    /* ── Test 2136: close raw socket ── */
+    fut_printf("[MISC-TEST] Test 2136: close raw socket\n");
+    {
+        long r = sys_close((int)raw_fd);
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 2136: close ok\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2136: close=%ld\n", r);
+            fut_test_fail(2136);
+        }
+    }
+}
+
+/* ============================================================
  * Tests 2124-2131: Linux AIO (io_setup/io_submit/io_getevents/io_destroy)
  * ============================================================ */
 __attribute__((noinline)) static void test_linux_aio(void) {
@@ -65519,6 +65639,7 @@ void fut_misc_test_thread(void *arg) {
     test_loop_device(); /* Tests 1885-1887 */
     test_per_iface_conf(); /* Tests 1869-1871 */
 
+    test_sock_raw(); /* Tests 2132-2136 */
     test_linux_aio(); /* Tests 2124-2131 */
     test_ptrace(); /* Tests 2119-2123 */
     test_fork_vma_consistency(); /* Tests 2116-2118 */

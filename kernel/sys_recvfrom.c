@@ -505,7 +505,8 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
     {
         extern fut_socket_t *get_socket_from_fd(int fd);
         fut_socket_t *dgsock = get_socket_from_fd(local_sockfd);
-        if (dgsock && dgsock->socket_type == 2 /* SOCK_DGRAM */ &&
+        if (dgsock && (dgsock->socket_type == 2 /* SOCK_DGRAM */ ||
+                       dgsock->socket_type == 3 /* SOCK_RAW */) &&
             !dgsock->pair && dgsock->dgram_queue) {
             char sender_path[108];
             uint16_t sender_path_len = 0;
@@ -607,6 +608,7 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
         fut_socket_t *wtsock = get_socket_from_fd(local_sockfd);
         bool is_msg_oriented = wtsock &&
             (wtsock->socket_type == 2 /* SOCK_DGRAM */ ||
+             wtsock->socket_type == 3 /* SOCK_RAW */ ||
              wtsock->socket_type == 5 /* SOCK_SEQPACKET */);
 
         if (is_msg_oriented) {

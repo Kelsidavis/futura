@@ -6234,12 +6234,49 @@ static int cmd_test(int argc, char *argv[]) {
             }
             return 1;
         } else if (strcmp_simple(op, "-d") == 0) {
-            /* Directory exists (simplified - just check if we can open) */
-            int fd = sys_open(arg, 0, 0);
-            if (fd >= 0) {
-                sys_close(fd);
+            /* Directory exists */
+            struct { uint64_t dev; uint64_t ino; uint64_t nlink; uint32_t mode; uint32_t uid;
+                     uint32_t gid; uint32_t _pad; uint64_t rdev; int64_t size; int64_t blksize;
+                     int64_t blocks; uint64_t atime_sec; uint64_t atime_nsec;
+                     uint64_t mtime_sec; uint64_t mtime_nsec;
+                     uint64_t ctime_sec; uint64_t ctime_nsec; } st;
+            if (sys_call2(4 /* stat */, (long)arg, (long)&st) == 0 && (st.mode & 0170000) == 0040000)
                 return 0;
-            }
+            return 1;
+        } else if (strcmp_simple(op, "-r") == 0) {
+            /* File is readable */
+            int fd = sys_open(arg, 0 /*O_RDONLY*/, 0);
+            if (fd >= 0) { sys_close(fd); return 0; }
+            return 1;
+        } else if (strcmp_simple(op, "-w") == 0) {
+            /* File is writable */
+            int fd = sys_open(arg, 1 /*O_WRONLY*/, 0);
+            if (fd >= 0) { sys_close(fd); return 0; }
+            return 1;
+        } else if (strcmp_simple(op, "-x") == 0) {
+            /* File is executable (simplified: check if exists and openable) */
+            int fd = sys_open(arg, 0, 0);
+            if (fd >= 0) { sys_close(fd); return 0; }
+            return 1;
+        } else if (strcmp_simple(op, "-s") == 0) {
+            /* File has nonzero size */
+            struct { uint64_t dev; uint64_t ino; uint64_t nlink; uint32_t mode; uint32_t uid;
+                     uint32_t gid; uint32_t _pad; uint64_t rdev; int64_t size; int64_t blksize;
+                     int64_t blocks; uint64_t atime_sec; uint64_t atime_nsec;
+                     uint64_t mtime_sec; uint64_t mtime_nsec;
+                     uint64_t ctime_sec; uint64_t ctime_nsec; } st;
+            if (sys_call2(4 /* stat */, (long)arg, (long)&st) == 0 && st.size > 0)
+                return 0;
+            return 1;
+        } else if (strcmp_simple(op, "-L") == 0 || strcmp_simple(op, "-h") == 0) {
+            /* File is a symbolic link (check readlink) */
+            char lbuf[64];
+            long lr = sys_call3(89 /* readlink */, (long)arg, (long)lbuf, 63);
+            return (lr > 0) ? 0 : 1;
+        } else if (strcmp_simple(op, "-p") == 0) {
+            /* File is a named pipe (FIFO) */
+            int fd = sys_open(arg, 0, 0);
+            if (fd >= 0) { sys_close(fd); return 0; } /* simplified */
             return 1;
         } else if (strcmp_simple(op, "!") == 0) {
             /* Logical NOT */

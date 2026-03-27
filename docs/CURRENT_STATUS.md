@@ -668,7 +668,7 @@ See `docs/ARM64_STATUS.md` for the historical snapshot and `docs/ARM64_REFACTORI
 **Build System**
 - Reproducible builds with `REPRO=1` flag.
 - Cross-platform Makefile supporting x86-64 and ARM64.
-- Rust driver integration (staticlib compilation).
+- Rust driver integration (staticlib compilation) — **36 crates** across x86-64 (NVMe, xHCI, RTL8111, HDA, AMD SMBus, AMD IOMMU), ARM64, and VirtIO.
 - Performance CI with baseline comparison and ±5% drift detection.
 
 **Testing**
@@ -689,7 +689,7 @@ See `docs/ARM64_STATUS.md` for the historical snapshot and `docs/ARM64_REFACTORI
 - ARM64 platform parity with x86-64.
 - Full TTY input stack with canonical mode.
 - Signal handling implementation.
-- Additional drivers (AHCI, Ethernet, USB).
+- ✅ AMD Ryzen AM4/AM5 platform drivers (NVMe, xHCI USB, RTL8111 GbE, HDA audio, SMBus, IOMMU).
 
 ## Performance Metrics
 
@@ -717,7 +717,7 @@ Futura OS welcomes contributions! Priority areas:
 - Memory management test coverage.
 - Demand paging implementation.
 - TTY input stack and line discipline.
-- Additional Rust drivers (storage, networking).
+- Additional Rust drivers (GPU, advanced USB device classes).
 
 See `CONTRIBUTING.md` for guidelines and `README.md` for build instructions.
 

@@ -421,12 +421,15 @@
 /* Legacy utime (Linux x86_64: 132) */
 #define SYS_utime            132
 
-/* Legacy getdents / swap / ioport (Linux x86_64) */
+/* Legacy getdents / swap / ioport / modules (Linux x86_64) */
 #define SYS_getdents         78
+#define SYS_init_module      175
+#define SYS_delete_module    176
 #define SYS_swapon           167
 #define SYS_swapoff          168
 #define SYS_iopl             172
 #define SYS_ioperm           173
+#define SYS_finit_module     464  /* Linux: 313 — Futura: 464 (313 used by capset) */
 
 /* Linux AIO (Linux x86_64: 206-210) */
 #define SYS_io_setup         206
@@ -2154,6 +2157,25 @@ static int64_t sys_swapoff_handler(uint64_t path, uint64_t a2, uint64_t a3,
     (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
     extern long sys_swapoff(const char *path);
     return sys_swapoff((const char *)path);
+}
+/* Module loading — Futura has no loadable module support.
+ * Return ENOEXEC (not a valid module format) instead of ENOSYS,
+ * which tells modprobe/insmod "kernel doesn't support this module"
+ * rather than "syscall doesn't exist". */
+static int64_t sys_init_module_handler(uint64_t umod, uint64_t len, uint64_t uargs,
+                                        uint64_t a4, uint64_t a5, uint64_t a6) {
+    (void)umod; (void)len; (void)uargs; (void)a4; (void)a5; (void)a6;
+    return -ENOEXEC;  /* Not a valid module format */
+}
+static int64_t sys_delete_module_handler(uint64_t name, uint64_t flags, uint64_t a3,
+                                          uint64_t a4, uint64_t a5, uint64_t a6) {
+    (void)name; (void)flags; (void)a3; (void)a4; (void)a5; (void)a6;
+    return -ENOENT;   /* Module not loaded */
+}
+static int64_t sys_finit_module_handler(uint64_t fd, uint64_t uargs, uint64_t flags,
+                                         uint64_t a4, uint64_t a5, uint64_t a6) {
+    (void)fd; (void)uargs; (void)flags; (void)a4; (void)a5; (void)a6;
+    return -ENOEXEC;  /* Not a valid module format */
 }
 static int64_t sys_iopl_handler(uint64_t level, uint64_t a2, uint64_t a3,
                                  uint64_t a4, uint64_t a5, uint64_t a6) {
@@ -4214,6 +4236,9 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_getdents]          = sys_getdents_handler,
     [SYS_swapon]            = sys_swapon_handler,
     [SYS_swapoff]           = sys_swapoff_handler,
+    [SYS_init_module]       = sys_init_module_handler,
+    [SYS_delete_module]     = sys_delete_module_handler,
+    [SYS_finit_module]      = sys_finit_module_handler,
     [SYS_iopl]              = sys_iopl_handler,
     [SYS_ioperm]            = sys_ioperm_handler,
     /* Linux AIO stubs (206-210) — return ENOSYS so libaio falls back to sync I/O */

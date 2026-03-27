@@ -491,7 +491,9 @@ ssize_t cgfs_file_read(struct fut_vnode *vnode, void *buf, size_t size, uint64_t
         break;
     }
     case CGFS_FREEZE: {
-        tmp[0] = '0'; tmp[1] = '\n'; tmp[2] = '\0'; total = 2;
+        extern int freezer_get(const char *);
+        int frozen = freezer_get(cg_name);
+        tmp[0] = frozen ? '1' : '0'; tmp[1] = '\n'; tmp[2] = '\0'; total = 2;
         break;
     }
     default:
@@ -506,9 +508,13 @@ ssize_t cgfs_file_read(struct fut_vnode *vnode, void *buf, size_t size, uint64_t
 }
 
 ssize_t cgfs_file_write(struct fut_vnode *vnode, const void *buf, size_t size, uint64_t offset) {
-    (void)offset; (void)buf;
+    (void)offset;
     cgroupfs_node_t *nd = (cgroupfs_node_t *)vnode->fs_data;
     if (!nd) return -EINVAL;
+
+    /* Get cgroup name for controller operations */
+    const char *cg_name = (nd->cgroup_idx < MAX_CGROUPS && g_cgroups[nd->cgroup_idx].active)
+                          ? g_cgroups[nd->cgroup_idx].name : "/";
 
     /* Accept writes to writable files — parse and apply */
     switch (nd->ftype) {
@@ -520,12 +526,26 @@ ssize_t cgfs_file_write(struct fut_vnode *vnode, const void *buf, size_t size, u
     case CGFS_MEM_SWAP_MAX:
     case CGFS_CPU_MAX:
     case CGFS_CPU_WEIGHT:
-    case CGFS_PIDS_MAX:
+    case CGFS_PIDS_MAX: {
+        /* Parse and enforce PID limit */
+        extern int pidcg_set_max(const char *, uint32_t);
+        uint32_t max_pids = 0;
+        for (size_t i = 0; i < size && ((const char *)buf)[i] >= '0' && ((const char *)buf)[i] <= '9'; i++)
+            max_pids = max_pids * 10 + (uint32_t)(((const char *)buf)[i] - '0');
+        if (max_pids > 0) pidcg_set_max(cg_name, max_pids);
+        return (ssize_t)size;
+    }
     case CGFS_IO_MAX:
-    case CGFS_FREEZE:
     case CGFS_TYPE:
         /* Accept the write silently */
         return (ssize_t)size;
+    case CGFS_FREEZE: {
+        /* Freeze (1) or thaw (0) the cgroup */
+        extern int freezer_set(const char *, int);
+        int freeze = (size > 0 && ((const char *)buf)[0] == '1') ? 1 : 0;
+        freezer_set(cg_name, freeze);
+        return (ssize_t)size;
+    }
     default:
         return -EPERM;
     }

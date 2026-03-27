@@ -309,83 +309,115 @@ static const struct wl_callback_listener frame_listener = {
     .done = frame_done,
 };
 
-/* Spawn shell process connected to terminal via pipes */
+/* Spawn shell process connected to terminal via PTY.
+ * Uses /dev/ptmx (Unix98 PTY) so the shell sees a real terminal:
+ * - isatty() returns true
+ * - Terminal line discipline (Ctrl+C → SIGINT, Ctrl+Z → SIGTSTP)
+ * - TIOCGWINSZ reports terminal dimensions
+ * - Job control works (fg, bg, jobs)
+ */
 static int spawn_shell(struct terminal *term) {
     term->shell_stdin_fd = -1;
     term->shell_stdout_fd = -1;
     term->shell_pid = -1;
 
-    /* Create pipes: stdin_pipe[0]=shell reads, stdin_pipe[1]=term writes
-     *               stdout_pipe[0]=term reads, stdout_pipe[1]=shell writes */
-    int stdin_pipe[2];
-    int stdout_pipe[2];
-
-    if (sys_pipe_call(stdin_pipe) < 0 || sys_pipe_call(stdout_pipe) < 0) {
+    /* Open PTY master */
+    int master_fd = sys_open("/dev/ptmx", 2 /* O_RDWR */, 0);
+    if (master_fd < 0) {
+        /* Fallback: try pipes if PTY not available */
         const char *msg = "Welcome to Futura OS Terminal\n"
-                          "Failed to create pipes for shell.\n";
+                          "[PTY unavailable, using pipes]\n";
         while (*msg) { term_putchar(term, (unsigned char)*msg); msg++; }
-        const char spawn_msg[] = "[WL-TERM] Terminal ready (no shell - pipe failed)\n";
-        sys_write(1, spawn_msg, sizeof(spawn_msg) - 1);
-        return -1;
+
+        int stdin_pipe[2], stdout_pipe[2];
+        if (sys_pipe_call(stdin_pipe) < 0 || sys_pipe_call(stdout_pipe) < 0) return -1;
+        long pid = sys_fork_call();
+        if (pid < 0) return -1;
+        if (pid == 0) {
+            sys_close(stdin_pipe[1]); sys_close(stdout_pipe[0]);
+            sys_close(0); sys_close(1); sys_close(2);
+            sys_dup2_call(stdin_pipe[0], 0);
+            sys_dup2_call(stdout_pipe[1], 1);
+            sys_dup2_call(stdout_pipe[1], 2);
+            sys_close(stdin_pipe[0]); sys_close(stdout_pipe[1]);
+            char *argv[] = { "/bin/shell", (void*)0 };
+            sys_execve_call("/bin/shell", argv, (void*)0);
+            sys_exit(127);
+        }
+        sys_close(stdin_pipe[0]); sys_close(stdout_pipe[1]);
+        term->shell_stdin_fd = stdin_pipe[1];
+        term->shell_stdout_fd = stdout_pipe[0];
+        sys_fcntl_call(stdout_pipe[0], 4, 0x0800);
+        term->shell_pid = (int)pid;
+        return 0;
     }
+
+    /* Unlock slave PTY */
+    int unlock_val = 0;
+    sys_ioctl(master_fd, 0x40045431 /* TIOCSPTLCK */, (long)&unlock_val);
+
+    /* Get slave PTY number */
+    int slave_num = -1;
+    sys_ioctl(master_fd, 0x80045430 /* TIOCGPTN */, (long)&slave_num);
+
+    /* Build slave path: /dev/pts/<n> */
+    char slave_path[32];
+    slave_path[0]='/'; slave_path[1]='d'; slave_path[2]='e'; slave_path[3]='v';
+    slave_path[4]='/'; slave_path[5]='p'; slave_path[6]='t'; slave_path[7]='s';
+    slave_path[8]='/';
+    int sp = 9;
+    if (slave_num >= 100) slave_path[sp++] = '0' + (char)(slave_num / 100 % 10);
+    if (slave_num >= 10) slave_path[sp++] = '0' + (char)(slave_num / 10 % 10);
+    slave_path[sp++] = '0' + (char)(slave_num % 10);
+    slave_path[sp] = '\0';
+
+    /* Set terminal size on PTY */
+    struct { unsigned short ws_row, ws_col, ws_xpixel, ws_ypixel; } wsz;
+    wsz.ws_row = TERM_ROWS;
+    wsz.ws_col = TERM_COLS;
+    wsz.ws_xpixel = TERM_COLS * 8;
+    wsz.ws_ypixel = TERM_ROWS * 16;
+    sys_ioctl(master_fd, 0x5414 /* TIOCSWINSZ */, (long)&wsz);
 
     long pid = sys_fork_call();
     if (pid < 0) {
-        sys_close(stdin_pipe[0]); sys_close(stdin_pipe[1]);
-        sys_close(stdout_pipe[0]); sys_close(stdout_pipe[1]);
-        const char *msg = "Welcome to Futura OS Terminal\n"
-                          "Failed to fork shell process.\n";
-        while (*msg) { term_putchar(term, (unsigned char)*msg); msg++; }
-        char spawn_msg[80];
-        int len = 0;
-        const char prefix[] = "[WL-TERM] fork failed (rc=";
-        for (int i = 0; prefix[i]; i++) spawn_msg[len++] = prefix[i];
-        /* Convert pid to string */
-        long v = -pid;
-        spawn_msg[len++] = '-';
-        if (v >= 100) spawn_msg[len++] = '0' + (char)(v / 100 % 10);
-        if (v >= 10)  spawn_msg[len++] = '0' + (char)(v / 10 % 10);
-        spawn_msg[len++] = '0' + (char)(v % 10);
-        spawn_msg[len++] = ')'; spawn_msg[len++] = '\n';
-        sys_write(1, spawn_msg, len);
+        sys_close(master_fd);
         return -1;
     }
 
     if (pid == 0) {
-        /* Child: set up stdio and exec shell */
-        sys_close(stdin_pipe[1]);   /* Close write end of stdin pipe */
-        sys_close(stdout_pipe[0]);  /* Close read end of stdout pipe */
+        /* Child: open slave PTY as stdin/stdout/stderr */
+        sys_close(master_fd);
 
-        /* Redirect stdin/stdout/stderr */
-        sys_close(0);
-        sys_close(1);
-        sys_close(2);
-        sys_dup2_call(stdin_pipe[0], 0);    /* stdin from pipe */
-        sys_dup2_call(stdout_pipe[1], 1);   /* stdout to pipe */
-        sys_dup2_call(stdout_pipe[1], 2);   /* stderr to pipe */
-        sys_close(stdin_pipe[0]);
-        sys_close(stdout_pipe[1]);
+        /* Create new session so child becomes session leader */
+        sys_call1(112 /* setsid */, 0);
 
-        /* Exec the CLI shell */
-        char shell_name[] = "/bin/shell";
-        char *argv[] = { shell_name, NULL };
-        char *envp[] = { NULL };
+        int slave_fd = sys_open(slave_path, 2 /* O_RDWR */, 0);
+        if (slave_fd < 0) sys_exit(126);
+
+        /* Set controlling terminal */
+        sys_ioctl(slave_fd, 0x540E /* TIOCSCTTY */, 0);
+
+        /* Redirect stdio to slave PTY */
+        sys_close(0); sys_close(1); sys_close(2);
+        sys_dup2_call(slave_fd, 0);
+        sys_dup2_call(slave_fd, 1);
+        sys_dup2_call(slave_fd, 2);
+        if (slave_fd > 2) sys_close(slave_fd);
+
+        /* Set TERM environment variable */
+        char *argv[] = { "/bin/shell", (void*)0 };
+        char *envp[] = { "TERM=xterm-256color", "HOME=/", (void*)0 };
         sys_execve_call("/bin/shell", argv, envp);
-
-        /* If exec fails, exit child */
         sys_exit(127);
     }
 
-    /* Parent: save pipe fds for communication */
-    sys_close(stdin_pipe[0]);   /* Close read end (shell's side) */
-    sys_close(stdout_pipe[1]);  /* Close write end (shell's side) */
+    /* Parent: master fd is our I/O endpoint */
+    term->shell_stdin_fd = master_fd;    /* Write to master → appears on slave stdin */
+    term->shell_stdout_fd = master_fd;   /* Read from master ← slave stdout output */
 
-    term->shell_stdin_fd = stdin_pipe[1];   /* We write to shell's stdin */
-    term->shell_stdout_fd = stdout_pipe[0]; /* We read from shell's stdout */
-
-    /* Set stdout pipe to non-blocking so term_read_shell doesn't block
-     * the Wayland event loop */
-    sys_fcntl_call(stdout_pipe[0], 4 /*F_SETFL*/, 0x0800 /*O_NONBLOCK*/);
+    /* Set master to non-blocking */
+    sys_fcntl_call(master_fd, 4 /*F_SETFL*/, 0x0800 /*O_NONBLOCK*/);
     term->shell_pid = (int)pid;
 
     const char spawn_msg[] = "[WL-TERM] Shell spawned\n";

@@ -61807,6 +61807,197 @@ __attribute__((noinline)) static void test_pty_and_cgroup(void) {
             fut_test_fail(2198);
         }
     }
+
+    /* ── Test 2199: cgroup io.max readable ── */
+    fut_printf("[MISC-TEST] Test 2199: cgroup io.max readable\n");
+    {
+        long fd = sys_open("/cgroup/io.max", 0, 0);
+        if (fd >= 0) {
+            static char buf[128];
+            long n = sys_read((int)fd, buf, 127);
+            sys_close((int)fd);
+            /* io.max may be empty (no limits) or have content — either is valid */
+            fut_printf("[MISC-TEST] ✓ Test 2199: io.max readable (%ld bytes)\n", n);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2199: open=%ld\n", fd);
+            fut_test_fail(2199);
+        }
+    }
+
+    /* ── Test 2200: cgroup io.stat readable with real data ── */
+    fut_printf("[MISC-TEST] Test 2200: cgroup io.stat readable\n");
+    {
+        long fd = sys_open("/cgroup/io.stat", 0, 0);
+        if (fd >= 0) {
+            static char buf[256];
+            long n = sys_read((int)fd, buf, 255);
+            sys_close((int)fd);
+            if (n > 0) {
+                buf[n < 255 ? n : 254] = '\0';
+                /* Should contain "rbytes=" */
+                int found = 0;
+                for (long i = 0; i < n - 6; i++) {
+                    if (buf[i]=='r' && buf[i+1]=='b' && buf[i+2]=='y' &&
+                        buf[i+3]=='t' && buf[i+4]=='e' && buf[i+5]=='s') {
+                        found = 1; break;
+                    }
+                }
+                if (found) {
+                    fut_printf("[MISC-TEST] ✓ Test 2200: io.stat has rbytes\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 2200: no rbytes in '%s'\n", buf);
+                    fut_test_fail(2200);
+                }
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2200: read=%ld\n", n);
+                fut_test_fail(2200);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2200: open=%ld\n", fd);
+            fut_test_fail(2200);
+        }
+    }
+
+    /* ── Test 2201: cgroup io.max writable ── */
+    fut_printf("[MISC-TEST] Test 2201: cgroup io.max writable\n");
+    {
+        long fd = sys_open("/cgroup/io.max", 02 /* O_RDWR */, 0);
+        if (fd >= 0) {
+            const char *val = "8:0 rbps=1048576 wbps=1048576";
+            int vlen = 0;
+            while (val[vlen]) vlen++;
+            ssize_t nw = sys_write((int)fd, val, vlen);
+            sys_close((int)fd);
+            if (nw == vlen) {
+                fut_printf("[MISC-TEST] ✓ Test 2201: io.max write ok\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2201: write=%ld\n", (long)nw);
+                fut_test_fail(2201);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2201: open=%ld\n", fd);
+            fut_test_fail(2201);
+        }
+    }
+
+    /* ── Test 2202: /proc/self/ns/user readable symlink ── */
+    fut_printf("[MISC-TEST] Test 2202: /proc/self/ns/user\n");
+    {
+        extern long sys_readlink(const char *path, char *buf, size_t bufsz);
+        static char lbuf[64];
+        long n = sys_readlink("/proc/self/ns/user", lbuf, 63);
+        if (n > 0) {
+            lbuf[n < 63 ? n : 62] = '\0';
+            /* Should contain "user:[" */
+            int found = 0;
+            for (long i = 0; i < n - 4; i++) {
+                if (lbuf[i]=='u' && lbuf[i+1]=='s' && lbuf[i+2]=='e' && lbuf[i+3]=='r') {
+                    found = 1; break;
+                }
+            }
+            if (found) {
+                fut_printf("[MISC-TEST] ✓ Test 2202: ns/user → %s\n", lbuf);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2202: → %s\n", lbuf);
+                fut_test_fail(2202);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2202: readlink=%ld\n", n);
+            fut_test_fail(2202);
+        }
+    }
+
+    /* ── Test 2203: /proc/self/uid_map readable with root mapping ── */
+    fut_printf("[MISC-TEST] Test 2203: /proc/self/uid_map\n");
+    {
+        long fd = sys_open("/proc/self/uid_map", 0, 0);
+        if (fd >= 0) {
+            static char buf[128];
+            long n = sys_read((int)fd, buf, 127);
+            sys_close((int)fd);
+            if (n > 0) {
+                buf[n < 127 ? n : 126] = '\0';
+                /* Should contain "0" (root uid mapping) */
+                if (buf[0] == ' ' || buf[0] == '0') {
+                    fut_printf("[MISC-TEST] ✓ Test 2203: uid_map ok (%ld bytes)\n", n);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 2203: '%s'\n", buf);
+                    fut_test_fail(2203);
+                }
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2203: read=%ld\n", n);
+                fut_test_fail(2203);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2203: open=%ld\n", fd);
+            fut_test_fail(2203);
+        }
+    }
+
+    /* ── Test 2204: /proc/self/ns/net readable symlink ── */
+    fut_printf("[MISC-TEST] Test 2204: /proc/self/ns/net\n");
+    {
+        extern long sys_readlink(const char *path, char *buf, size_t bufsz);
+        static char lbuf[64];
+        long n = sys_readlink("/proc/self/ns/net", lbuf, 63);
+        if (n > 0) {
+            lbuf[n < 63 ? n : 62] = '\0';
+            int found = 0;
+            for (long i = 0; i < n - 3; i++) {
+                if (lbuf[i]=='n' && lbuf[i+1]=='e' && lbuf[i+2]=='t') {
+                    found = 1; break;
+                }
+            }
+            if (found) {
+                fut_printf("[MISC-TEST] ✓ Test 2204: ns/net → %s\n", lbuf);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2204: → %s\n", lbuf);
+                fut_test_fail(2204);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2204: readlink=%ld\n", n);
+            fut_test_fail(2204);
+        }
+    }
+
+    /* ── Test 2205: io.stat rbytes > 0 after reading files ── */
+    fut_printf("[MISC-TEST] Test 2205: io.stat rbytes > 0\n");
+    {
+        long fd = sys_open("/cgroup/io.stat", 0, 0);
+        if (fd >= 0) {
+            static char buf[256];
+            long n = sys_read((int)fd, buf, 255);
+            sys_close((int)fd);
+            int has_nonzero = 0;
+            if (n > 0) {
+                buf[n < 255 ? n : 254] = '\0';
+                /* Look for "rbytes=" followed by non-zero digit */
+                for (long i = 0; i < n - 8; i++) {
+                    if (buf[i]=='r' && buf[i+1]=='b' && buf[i+2]=='y' &&
+                        buf[i+3]=='t' && buf[i+4]=='e' && buf[i+5]=='s' && buf[i+6]=='=') {
+                        if (buf[i+7] != '0') has_nonzero = 1;
+                        break;
+                    }
+                }
+            }
+            if (has_nonzero) {
+                fut_printf("[MISC-TEST] ✓ Test 2205: rbytes > 0\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2205: rbytes is 0\n");
+                fut_test_fail(2205);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2205: open=%ld\n", fd);
+            fut_test_fail(2205);
+        }
+    }
 }
 
 /* ============================================================

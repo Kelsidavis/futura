@@ -19,7 +19,7 @@ Futura OS is a capability-based nanokernel that keeps the core minimal (time, sc
 ### Status Snapshot — Updated Mar 27 2026
 
 - **Kernel core**: 400 Linux-compatible syscalls (356 x86_64 + 398 ARM64) across 226 implementation files, 110K lines of kernel C. Priority-aware scheduler (nice + RT), per-task MMU contexts, COW fork with mm_lock VMA protection, file-backed mmap, ELF loader with PT_INTERP interpreter support.
-- **Testing**: **2276 automated kernel self-tests** across 11 test groups, all passing. CI: GitHub Actions with x86_64 + ARM64 QEMU test runners, consistently green.
+- **Testing**: **2277 automated kernel self-tests** across 11 test groups, all passing. CI: GitHub Actions with x86_64 + ARM64 QEMU test runners, consistently green.
 - **Containers**: All 6 Linux namespaces (PID, mount, UTS, network, user, IPC), **cgroup v2** with all 5 controllers (memory, CPU, I/O, PID, freezer) + mountable **cgroup2 filesystem**, **pivot_root()**, **overlayfs**. Full rootless Docker workflow: `unshare → uid_map → mount overlay → pivot_root → exec`.
 - **Security**: **seccomp-bpf** with real BPF filter enforcement in syscall dispatch, **Landlock LSM** file access sandboxing, **Linux keyring** (add_key/request_key/keyctl), classic BPF interpreter, capability system with ambient caps, **ptrace** (20+ operations: ATTACH/DETACH, PEEK/POKE, GETREGS/SETREGS, CONT/SYSCALL/SINGLESTEP, GETREGSET).
 - **Async I/O**: **io_uring** (NOP/READ/WRITE/FSYNC/CLOSE/POLL), **Linux AIO** (io_setup/io_submit/io_getevents with PREAD/PWRITE/FSYNC/PREADV/PWRITEV), **userfaultfd** for CRIU/QEMU, **fanotify** filesystem notifications, **perf_event_open** HW/SW counters.

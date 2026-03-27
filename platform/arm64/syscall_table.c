@@ -4462,6 +4462,32 @@ static void arm64_syscall_table_init(void) {
     syscall_table[__NR_bpf].handler = (syscall_fn_t)sys_bpf_wrapper;
     syscall_table[__NR_bpf].name = "bpf";
 
+    /* io_uring + io_pgetevents for ARM64
+     * Note: Classic AIO (io_setup/io_destroy/io_submit/io_cancel/io_getevents)
+     * do not have native ARM64 syscall numbers (they were never assigned).
+     * io_uring (425-427) and io_pgetevents_time64 (292) do exist on ARM64. */
+    {
+        extern long sys_io_pgetevents(unsigned long, long, long, void *, const void *, const void *);
+        extern long sys_io_uring_setup(unsigned int, void *);
+        extern long sys_io_uring_enter(unsigned int, unsigned int, unsigned int, unsigned int,
+                                        const void *, size_t);
+        extern long sys_io_uring_register(unsigned int, unsigned int, void *, unsigned int);
+
+        static int64_t aio_pgetevents_w(uint64_t a, uint64_t b, uint64_t c, uint64_t d, uint64_t e, uint64_t f) {
+            return sys_io_pgetevents(a, (long)b, (long)c, (void *)d, (const void *)e, (const void *)f); }
+        static int64_t uring_setup_w(uint64_t a, uint64_t b, uint64_t c, uint64_t d, uint64_t e, uint64_t f) {
+            (void)c;(void)d;(void)e;(void)f; return sys_io_uring_setup((unsigned int)a, (void *)b); }
+        static int64_t uring_enter_w(uint64_t a, uint64_t b, uint64_t c, uint64_t d, uint64_t e, uint64_t f) {
+            return sys_io_uring_enter((unsigned int)a, (unsigned int)b, (unsigned int)c, (unsigned int)d, (const void *)e, (size_t)f); }
+        static int64_t uring_register_w(uint64_t a, uint64_t b, uint64_t c, uint64_t d, uint64_t e, uint64_t f) {
+            (void)e;(void)f; return sys_io_uring_register((unsigned int)a, (unsigned int)b, (void *)c, (unsigned int)d); }
+
+        syscall_table[292].handler = (syscall_fn_t)aio_pgetevents_w; syscall_table[292].name = "io_pgetevents";
+        syscall_table[425].handler = (syscall_fn_t)uring_setup_w;    syscall_table[425].name = "io_uring_setup";
+        syscall_table[426].handler = (syscall_fn_t)uring_enter_w;    syscall_table[426].name = "io_uring_enter";
+        syscall_table[427].handler = (syscall_fn_t)uring_register_w; syscall_table[427].name = "io_uring_register";
+    }
+
     /* Module loading — return ENOEXEC/ENOENT (no loadable module support) */
     /* ARM64: init_module=105, delete_module=106, finit_module=273 */
     syscall_table[105].handler = (syscall_fn_t)sys_init_module_wrapper;

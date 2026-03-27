@@ -2962,29 +2962,52 @@ static size_t gen_net_sockstat(char *buf, size_t cap) {
 static size_t gen_proc_stat(char *buf, size_t cap) {
     struct pbuf b = { buf, 0, cap };
 
-    /* Total ticks = system ticks; we have no user/nice/idle split yet */
-    uint64_t total_ticks = fut_get_ticks();  /* real-time ticks since boot */
-    uint64_t ctxt        = fut_stats_get_context_switches();
+    uint64_t ctxt = fut_stats_get_context_switches();
 
-    /* Report system time and idle time from real counters */
-    /* Format: cpu user nice system idle iowait irq softirq steal guest guest_nice */
+    /* Get real CPU time breakdown from timer tick counters.
+     * Ticks are in milliseconds; Linux /proc/stat uses USER_HZ (centiseconds).
+     * Convert: centiseconds = milliseconds / 10 */
     extern uint64_t fut_get_idle_ticks(void);
-    uint64_t idle = fut_get_idle_ticks();
-    uint64_t sys_time = (total_ticks > idle) ? (total_ticks - idle) : 0;
-    pb_str(&b, "cpu  0 0 "); pb_u64(&b, sys_time);
-    pb_char(&b, ' '); pb_u64(&b, idle);
-    pb_str(&b, " 0 0 0 0 0 0\n");
+    extern uint64_t fut_get_user_ticks(void);
+    extern uint64_t fut_get_kern_ticks(void);
+    extern uint64_t fut_get_irq_ticks(void);
+    uint64_t user_cs   = fut_get_user_ticks() / 10;  /* user mode */
+    uint64_t nice_cs   = 0;                            /* nice (no tracking yet) */
+    uint64_t system_cs = fut_get_kern_ticks() / 10;   /* kernel mode */
+    uint64_t idle_cs   = fut_get_idle_ticks() / 10;   /* idle */
+    uint64_t iowait_cs = 0;                            /* iowait (no tracking yet) */
+    uint64_t irq_cs    = fut_get_irq_ticks() / 10;    /* hardirq */
+    uint64_t softirq_cs = 0;                           /* softirq */
 
-    pb_str(&b, "cpu0 0 0 "); pb_u64(&b, sys_time);
-    pb_char(&b, ' '); pb_u64(&b, idle);
-    pb_str(&b, " 0 0 0 0 0 0\n");
+    /* Format: cpu user nice system idle iowait irq softirq steal guest guest_nice */
+    pb_str(&b, "cpu  ");
+    pb_u64(&b, user_cs); pb_char(&b, ' ');
+    pb_u64(&b, nice_cs); pb_char(&b, ' ');
+    pb_u64(&b, system_cs); pb_char(&b, ' ');
+    pb_u64(&b, idle_cs); pb_char(&b, ' ');
+    pb_u64(&b, iowait_cs); pb_char(&b, ' ');
+    pb_u64(&b, irq_cs); pb_char(&b, ' ');
+    pb_u64(&b, softirq_cs);
+    pb_str(&b, " 0 0 0\n");  /* steal guest guest_nice = 0 */
+
+    /* Per-CPU line (single CPU system) */
+    pb_str(&b, "cpu0 ");
+    pb_u64(&b, user_cs); pb_char(&b, ' ');
+    pb_u64(&b, nice_cs); pb_char(&b, ' ');
+    pb_u64(&b, system_cs); pb_char(&b, ' ');
+    pb_u64(&b, idle_cs); pb_char(&b, ' ');
+    pb_u64(&b, iowait_cs); pb_char(&b, ' ');
+    pb_u64(&b, irq_cs); pb_char(&b, ' ');
+    pb_u64(&b, softirq_cs);
+    pb_str(&b, " 0 0 0\n");
 
     /* ctxt: context switches since boot */
     pb_str(&b, "ctxt ");     pb_u64(&b, ctxt);     pb_char(&b, '\n');
 
     /* btime: boot time as seconds since epoch (approx: realtime_offset covers wall time) */
     extern volatile int64_t g_realtime_offset_sec;
-    int64_t uptime_sec = (int64_t)(total_ticks / 100);
+    uint64_t total_ms = fut_get_ticks();
+    int64_t uptime_sec = (int64_t)(total_ms / 1000);
     int64_t btime = g_realtime_offset_sec > uptime_sec
                     ? g_realtime_offset_sec - uptime_sec : 0;
     pb_str(&b, "btime ");    pb_u64(&b, (uint64_t)btime); pb_char(&b, '\n');

@@ -43,6 +43,9 @@ struct fut_task;
 /* Global tick counter (milliseconds) */
 static _Atomic uint64_t system_ticks = 0;
 static _Atomic uint64_t idle_ticks = 0;  /* Ticks where no user work was happening */
+static _Atomic uint64_t user_ticks = 0;  /* Ticks in user-mode context (ring 3) */
+static _Atomic uint64_t kern_ticks = 0;  /* Ticks in kernel-mode on behalf of user process */
+static _Atomic uint64_t irq_ticks = 0;   /* Ticks in interrupt/softirq handling */
 
 /* Public getter for system tick count.
  * Only compiled for x86_64 — ARM64 provides its own in platform_init.c. */
@@ -260,12 +263,22 @@ void fut_timer_tick(void) {
      * which can hang the kernel on CI when the QEMU serial FIFO is full. */
     uint64_t current_ms = atomic_fetch_add_explicit(&system_ticks, 1, memory_order_relaxed);
 
-    /* Track idle ticks: if no thread is running or current thread is blocked/sleeping */
+    /* Track per-category CPU ticks for /proc/stat:
+     * idle:   no runnable thread
+     * user:   thread running in a user-space process (PID > 0, not init thread)
+     * system: kernel thread or kernel-mode work */
     {
         extern fut_thread_t *fut_thread_current(void);
         fut_thread_t *ct = fut_thread_current();
-        if (!ct || !ct->task || ct->state != 0 /* FUT_THREAD_RUNNING */)
+        if (!ct || !ct->task || ct->state != 0 /* FUT_THREAD_RUNNING */) {
             atomic_fetch_add_explicit(&idle_ticks, 1, memory_order_relaxed);
+        } else if (ct->task->pid > 1) {
+            /* User-space process (PID > 1 = not kernel init) */
+            atomic_fetch_add_explicit(&user_ticks, 1, memory_order_relaxed);
+        } else {
+            /* Kernel thread or init process */
+            atomic_fetch_add_explicit(&kern_ticks, 1, memory_order_relaxed);
+        }
     }
 
     // Wake any threads whose sleep time has expired
@@ -498,6 +511,27 @@ uint64_t fut_get_ticks(void) {
  */
 uint64_t fut_get_idle_ticks(void) {
     return atomic_load_explicit(&idle_ticks, memory_order_relaxed);
+}
+
+/**
+ * Get user-mode ticks since boot (time running user-space processes).
+ */
+uint64_t fut_get_user_ticks(void) {
+    return atomic_load_explicit(&user_ticks, memory_order_relaxed);
+}
+
+/**
+ * Get kernel-mode ticks since boot (time in kernel threads/syscall handling).
+ */
+uint64_t fut_get_kern_ticks(void) {
+    return atomic_load_explicit(&kern_ticks, memory_order_relaxed);
+}
+
+/**
+ * Get IRQ ticks since boot.
+ */
+uint64_t fut_get_irq_ticks(void) {
+    return atomic_load_explicit(&irq_ticks, memory_order_relaxed);
 }
 
 /**

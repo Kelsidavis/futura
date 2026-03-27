@@ -61447,6 +61447,134 @@ __attribute__((noinline)) static void test_io_uring(void) {
 }
 
 /* ============================================================
+ * Tests 2137-2140: /proc/stat CPU time breakdown
+ * ============================================================ */
+__attribute__((noinline)) static void test_proc_stat_cpu(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_close(int);
+
+    /* ── Test 2137: /proc/stat starts with "cpu " line ── */
+    fut_printf("[MISC-TEST] Test 2137: /proc/stat has cpu line\n");
+    {
+        static char buf[512];
+        long fd = sys_open("/proc/stat", 0, 0);
+        if (fd >= 0) {
+            long n = sys_read((int)fd, buf, sizeof(buf) - 1);
+            sys_close((int)fd);
+            if (n > 0) {
+                buf[n] = '\0';
+                /* Check starts with "cpu " */
+                if (buf[0] == 'c' && buf[1] == 'p' && buf[2] == 'u' && buf[3] == ' ') {
+                    fut_printf("[MISC-TEST] ✓ Test 2137: /proc/stat starts with 'cpu '\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 2137: bad start: %.10s\n", buf);
+                    fut_test_fail(2137);
+                }
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2137: read=%ld\n", n);
+                fut_test_fail(2137);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2137: open=%ld\n", fd);
+            fut_test_fail(2137);
+        }
+    }
+
+    /* ── Test 2138: /proc/stat has cpu0 per-CPU line ── */
+    fut_printf("[MISC-TEST] Test 2138: /proc/stat has cpu0 line\n");
+    {
+        static char buf[1024];
+        long fd = sys_open("/proc/stat", 0, 0);
+        if (fd >= 0) {
+            long n = sys_read((int)fd, buf, sizeof(buf) - 1);
+            sys_close((int)fd);
+            buf[n > 0 ? n : 0] = '\0';
+            /* Search for "cpu0 " */
+            int found = 0;
+            for (long i = 0; i < n - 4; i++) {
+                if (buf[i] == 'c' && buf[i+1] == 'p' && buf[i+2] == 'u' &&
+                    buf[i+3] == '0' && buf[i+4] == ' ') {
+                    found = 1; break;
+                }
+            }
+            if (found) {
+                fut_printf("[MISC-TEST] ✓ Test 2138: cpu0 line present\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2138: no cpu0 line\n");
+                fut_test_fail(2138);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2138: open=%ld\n", fd);
+            fut_test_fail(2138);
+        }
+    }
+
+    /* ── Test 2139: /proc/stat cpu line has 10 numeric fields ── */
+    fut_printf("[MISC-TEST] Test 2139: cpu line has 10 fields\n");
+    {
+        static char buf[512];
+        long fd = sys_open("/proc/stat", 0, 0);
+        if (fd >= 0) {
+            long n = sys_read((int)fd, buf, sizeof(buf) - 1);
+            sys_close((int)fd);
+            buf[n > 0 ? n : 0] = '\0';
+            /* Count space-separated fields after "cpu  " */
+            int fields = 0;
+            int in_num = 0;
+            for (int i = 5; i < n && buf[i] != '\n'; i++) {
+                if (buf[i] >= '0' && buf[i] <= '9') {
+                    if (!in_num) { fields++; in_num = 1; }
+                } else {
+                    in_num = 0;
+                }
+            }
+            if (fields == 10) {
+                fut_printf("[MISC-TEST] ✓ Test 2139: cpu line has %d fields\n", fields);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2139: fields=%d (expected 10)\n", fields);
+                fut_test_fail(2139);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2139: open=%ld\n", fd);
+            fut_test_fail(2139);
+        }
+    }
+
+    /* ── Test 2140: /proc/stat has ctxt and btime lines ── */
+    fut_printf("[MISC-TEST] Test 2140: /proc/stat has ctxt and btime\n");
+    {
+        static char buf[1024];
+        long fd = sys_open("/proc/stat", 0, 0);
+        if (fd >= 0) {
+            long n = sys_read((int)fd, buf, sizeof(buf) - 1);
+            sys_close((int)fd);
+            buf[n > 0 ? n : 0] = '\0';
+            int has_ctxt = 0, has_btime = 0;
+            for (long i = 0; i < n - 4; i++) {
+                if (buf[i] == 'c' && buf[i+1] == 't' && buf[i+2] == 'x' && buf[i+3] == 't')
+                    has_ctxt = 1;
+                if (buf[i] == 'b' && buf[i+1] == 't' && buf[i+2] == 'i' && buf[i+3] == 'm' && buf[i+4] == 'e')
+                    has_btime = 1;
+            }
+            if (has_ctxt && has_btime) {
+                fut_printf("[MISC-TEST] ✓ Test 2140: ctxt and btime present\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2140: ctxt=%d btime=%d\n", has_ctxt, has_btime);
+                fut_test_fail(2140);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2140: open=%ld\n", fd);
+            fut_test_fail(2140);
+        }
+    }
+}
+
+/* ============================================================
  * Tests 2132-2136: AF_INET SOCK_RAW (raw sockets for ping/ICMP)
  * ============================================================ */
 __attribute__((noinline)) static void test_sock_raw(void) {
@@ -65639,6 +65767,7 @@ void fut_misc_test_thread(void *arg) {
     test_loop_device(); /* Tests 1885-1887 */
     test_per_iface_conf(); /* Tests 1869-1871 */
 
+    test_proc_stat_cpu(); /* Tests 2137-2140 */
     test_sock_raw(); /* Tests 2132-2136 */
     test_linux_aio(); /* Tests 2124-2131 */
     test_ptrace(); /* Tests 2119-2123 */

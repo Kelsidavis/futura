@@ -65938,6 +65938,40 @@ void fut_misc_test_thread(void *arg) {
     test_loop_device(); /* Tests 1885-1887 */
     test_per_iface_conf(); /* Tests 1869-1871 */
 
+    /* ── Test 2148: /sys/class/thermal/thermal_zone0/temp readable ── */
+    {
+        extern long sys_open(const char *, int, int);
+        extern long sys_read(int, void *, size_t);
+        extern long sys_close(int);
+        fut_printf("[MISC-TEST] Test 2148: /sys/class/thermal/thermal_zone0/temp\n");
+        static char tbuf[32];
+        long fd = sys_open("/sys/class/thermal/thermal_zone0/temp", 0, 0);
+        if (fd >= 0) {
+            long n = sys_read((int)fd, tbuf, sizeof(tbuf) - 1);
+            sys_close((int)fd);
+            if (n > 0) {
+                tbuf[n] = '\0';
+                /* Parse temperature value */
+                long val = 0;
+                for (long i = 0; i < n && tbuf[i] >= '0' && tbuf[i] <= '9'; i++)
+                    val = val * 10 + (tbuf[i] - '0');
+                if (val > 0) {
+                    fut_printf("[MISC-TEST] ✓ Test 2148: temp=%ld millidegrees\n", val);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 2148: temp=0\n");
+                    fut_test_fail(2148);
+                }
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2148: read=%ld\n", n);
+                fut_test_fail(2148);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2148: open=%ld\n", fd);
+            fut_test_fail(2148);
+        }
+    }
+
     test_advanced_aio_ptrace(); /* Tests 2142-2147 */
     test_proc_stat_cpu(); /* Tests 2137-2140 */
 

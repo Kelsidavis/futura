@@ -116,6 +116,13 @@ enum sysfs_kind {
     SYSFS_RTC0_DATE,
     SYSFS_RTC0_TIME,
     SYSFS_RTC0_SINCE_EPOCH,
+    /* /sys/class/thermal/ */
+    SYSFS_CLASS_THERMAL_DIR,
+    SYSFS_CLASS_TZ0_DIR,
+    SYSFS_TZ0_TYPE,
+    SYSFS_TZ0_TEMP,
+    SYSFS_TZ0_POLICY,
+    SYSFS_TZ0_MODE,
 };
 
 typedef struct {
@@ -184,6 +191,12 @@ typedef struct {
 #define SYSFS_INO_RTC0_DATE         566ULL
 #define SYSFS_INO_RTC0_TIME         567ULL
 #define SYSFS_INO_RTC0_SINCE_EPOCH  568ULL
+#define SYSFS_INO_CLASS_THERMAL     570ULL
+#define SYSFS_INO_CLASS_TZ0         571ULL
+#define SYSFS_INO_TZ0_TYPE          572ULL
+#define SYSFS_INO_TZ0_TEMP          573ULL
+#define SYSFS_INO_TZ0_POLICY        574ULL
+#define SYSFS_INO_TZ0_MODE          575ULL
 #define SYSFS_INO_CLASS_NET_LO      526ULL
 #define SYSFS_INO_NET_LO_IFINDEX    527ULL
 #define SYSFS_INO_NET_LO_OPERSTATE  528ULL
@@ -416,6 +429,24 @@ static ssize_t sysfs_file_read(struct fut_vnode *vnode, void *buf,
             break;
         }
 
+        /* /sys/class/thermal/thermal_zone0/ files */
+        case SYSFS_TZ0_TYPE:
+            total = sysfs_gen_str(tmp, sizeof(tmp), "x86_pkg_temp\n");
+            break;
+        case SYSFS_TZ0_TEMP: {
+            /* Report CPU temperature in millidegrees Celsius.
+             * On real hardware this would read MSR/ACPI; in QEMU we
+             * report a fixed 45°C (45000 millidegrees). */
+            total = sysfs_gen_str(tmp, sizeof(tmp), "45000\n");
+            break;
+        }
+        case SYSFS_TZ0_POLICY:
+            total = sysfs_gen_str(tmp, sizeof(tmp), "step_wise\n");
+            break;
+        case SYSFS_TZ0_MODE:
+            total = sysfs_gen_str(tmp, sizeof(tmp), "enabled\n");
+            break;
+
         default:
             return -EINVAL;
     }
@@ -493,9 +524,29 @@ static const sysfs_de_t class_entries[] = {
     DE_DIR("net",    SYSFS_INO_CLASS_NET,   SYSFS_CLASS_NET_DIR),
     DE_DIR("block",  SYSFS_INO_CLASS_BLOCK, SYSFS_CLASS_BLOCK_DIR),
     DE_DIR("tty",    SYSFS_INO_CLASS_TTY,   SYSFS_CLASS_TTY_DIR),
-    DE_DIR("rtc",    SYSFS_INO_CLASS_RTC,   SYSFS_CLASS_RTC_DIR),
+    DE_DIR("rtc",     SYSFS_INO_CLASS_RTC,     SYSFS_CLASS_RTC_DIR),
+    DE_DIR("thermal", SYSFS_INO_CLASS_THERMAL, SYSFS_CLASS_THERMAL_DIR),
 };
 #define CLASS_N (sizeof(class_entries)/sizeof(class_entries[0]))
+
+/* /sys/class/thermal/ */
+static const sysfs_de_t class_thermal_entries[] = {
+    DE_DIR(".",              SYSFS_INO_CLASS_THERMAL, SYSFS_CLASS_THERMAL_DIR),
+    DE_DIR("..",             SYSFS_INO_CLASS,         SYSFS_CLASS_DIR),
+    DE_DIR("thermal_zone0", SYSFS_INO_CLASS_TZ0,     SYSFS_CLASS_TZ0_DIR),
+};
+#define CLASS_THERMAL_N (sizeof(class_thermal_entries)/sizeof(class_thermal_entries[0]))
+
+/* /sys/class/thermal/thermal_zone0/ */
+static const sysfs_de_t tz0_entries[] = {
+    DE_DIR(".",      SYSFS_INO_CLASS_TZ0,     SYSFS_CLASS_TZ0_DIR),
+    DE_DIR("..",     SYSFS_INO_CLASS_THERMAL, SYSFS_CLASS_THERMAL_DIR),
+    DE_REG("type",   SYSFS_INO_TZ0_TYPE,      SYSFS_TZ0_TYPE),
+    DE_REG("temp",   SYSFS_INO_TZ0_TEMP,      SYSFS_TZ0_TEMP),
+    DE_REG("policy", SYSFS_INO_TZ0_POLICY,    SYSFS_TZ0_POLICY),
+    DE_REG("mode",   SYSFS_INO_TZ0_MODE,      SYSFS_TZ0_MODE),
+};
+#define TZ0_N (sizeof(tz0_entries)/sizeof(tz0_entries[0]))
 
 /* /sys/class/rtc/ */
 static const sysfs_de_t class_rtc_entries[] = {
@@ -842,6 +893,8 @@ static int sysfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         case SYSFS_FIRMWARE_DMI_ID_DIR: return sysfs_table_readdir(dmi_id_entries, DMI_ID_N, cookie, de);
         case SYSFS_CLASS_RTC_DIR:    return sysfs_table_readdir(class_rtc_entries, CLASS_RTC_N, cookie, de);
         case SYSFS_CLASS_RTC0_DIR:   return sysfs_table_readdir(rtc0_entries, RTC0_N, cookie, de);
+        case SYSFS_CLASS_THERMAL_DIR: return sysfs_table_readdir(class_thermal_entries, CLASS_THERMAL_N, cookie, de);
+        case SYSFS_CLASS_TZ0_DIR:    return sysfs_table_readdir(tz0_entries, TZ0_N, cookie, de);
         default:
             return sysfs_empty_readdir(dir, cookie, de);
     }
@@ -934,6 +987,10 @@ static int sysfs_dir_lookup(struct fut_vnode *dir, const char *name,
             return sysfs_table_lookup(mnt, class_rtc_entries, CLASS_RTC_N, name, result);
         case SYSFS_CLASS_RTC0_DIR:
             return sysfs_table_lookup(mnt, rtc0_entries, RTC0_N, name, result);
+        case SYSFS_CLASS_THERMAL_DIR:
+            return sysfs_table_lookup(mnt, class_thermal_entries, CLASS_THERMAL_N, name, result);
+        case SYSFS_CLASS_TZ0_DIR:
+            return sysfs_table_lookup(mnt, tz0_entries, TZ0_N, name, result);
         default:
             /* Empty directories: no children beyond . and .. */
             return -ENOENT;

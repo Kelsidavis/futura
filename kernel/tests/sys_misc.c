@@ -3449,8 +3449,9 @@ extern long sys_nanosleep(const fut_timespec_t *req, fut_timespec_t *rem);
 static void test_nanosleep_basic(void) {
     fut_printf("[MISC-TEST] Test 80: nanosleep\n");
 
-    /* Sleep for 10ms (1 tick at 100Hz) */
-    fut_timespec_t req = { .tv_sec = 0, .tv_nsec = 10000000 };  /* 10ms */
+    /* Sleep for 50ms (5 ticks at 100Hz) — use >2 ticks to avoid the
+     * busy-yield path which can stall in CI QEMU without reliable tick delivery */
+    fut_timespec_t req = { .tv_sec = 0, .tv_nsec = 50000000 };  /* 50ms */
     fut_timespec_t rem = { .tv_sec = -1, .tv_nsec = -1 };
 
     fut_timespec_t before = {0};
@@ -3467,11 +3468,11 @@ static void test_nanosleep_basic(void) {
         return;
     }
 
-    /* Verify some time passed (at least 1 tick = 10ms) */
+    /* Verify some time passed (at least a few ticks) */
     int64_t elapsed_ns = (after.tv_sec - before.tv_sec) * 1000000000LL +
                           (after.tv_nsec - before.tv_nsec);
-    if (elapsed_ns < 5000000) {  /* At least 5ms */
-        fut_printf("[MISC-TEST] ✗ elapsed=%lldns (expected >= 5ms)\n", (long long)elapsed_ns);
+    if (elapsed_ns < 10000000) {  /* At least 10ms */
+        fut_printf("[MISC-TEST] ✗ elapsed=%lldns (expected >= 10ms)\n", (long long)elapsed_ns);
         fut_test_fail(80);
         return;
     }

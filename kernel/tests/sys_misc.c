@@ -66055,6 +66055,33 @@ void fut_misc_test_thread(void *arg) {
         }
     }
 
+    /* ── Test 2155: /sys/kernel/security/lsm readable ── */
+    {
+        extern long sys_open(const char *, int, int);
+        extern long sys_read(int, void *, size_t);
+        extern long sys_close(int);
+        fut_printf("[MISC-TEST] Test 2155: /sys/kernel/security/lsm\n");
+        static char lbuf[64];
+        long fd = sys_open("/sys/kernel/security/lsm", 0, 0);
+        if (fd >= 0) {
+            long n = sys_read((int)fd, lbuf, sizeof(lbuf) - 1);
+            sys_close((int)fd);
+            lbuf[n > 0 ? n : 0] = '\0';
+            /* Check it contains "landlock" */
+            int found = 0;
+            for (long i = 0; i < n - 7; i++) {
+                if (lbuf[i] == 'l' && lbuf[i+1] == 'a' && lbuf[i+2] == 'n' &&
+                    lbuf[i+3] == 'd' && lbuf[i+4] == 'l' && lbuf[i+5] == 'o') {
+                    found = 1; break;
+                }
+            }
+            if (found) {
+                fut_printf("[MISC-TEST] ✓ Test 2155: lsm has landlock\n");
+                fut_test_pass();
+            } else { fut_printf("[MISC-TEST] ✗ Test 2155: no landlock\n"); fut_test_fail(2155); }
+        } else { fut_printf("[MISC-TEST] ✗ Test 2155: open=%ld\n", fd); fut_test_fail(2155); }
+    }
+
     /* ── Test 2153: SECCOMP_GET_NOTIF_SIZES returns valid sizes ── */
     {
         extern long sys_seccomp(unsigned int operation, unsigned int flags,

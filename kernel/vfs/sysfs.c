@@ -123,6 +123,9 @@ enum sysfs_kind {
     SYSFS_TZ0_TEMP,
     SYSFS_TZ0_POLICY,
     SYSFS_TZ0_MODE,
+    /* /sys/kernel/security/ */
+    SYSFS_KERNEL_SECURITY_DIR,
+    SYSFS_KERNEL_SECURITY_LSM,
 };
 
 typedef struct {
@@ -197,6 +200,8 @@ typedef struct {
 #define SYSFS_INO_TZ0_TEMP          573ULL
 #define SYSFS_INO_TZ0_POLICY        574ULL
 #define SYSFS_INO_TZ0_MODE          575ULL
+#define SYSFS_INO_KERNEL_SECURITY   580ULL
+#define SYSFS_INO_KERNEL_SECURITY_LSM 581ULL
 #define SYSFS_INO_CLASS_NET_LO      526ULL
 #define SYSFS_INO_NET_LO_IFINDEX    527ULL
 #define SYSFS_INO_NET_LO_OPERSTATE  528ULL
@@ -429,6 +434,12 @@ static ssize_t sysfs_file_read(struct fut_vnode *vnode, void *buf,
             break;
         }
 
+        /* /sys/kernel/security/ files */
+        case SYSFS_KERNEL_SECURITY_LSM:
+            /* Report available LSMs — Futura has Landlock and capability */
+            total = sysfs_gen_str(tmp, sizeof(tmp), "landlock,capability,lockdown\n");
+            break;
+
         /* /sys/class/thermal/thermal_zone0/ files */
         case SYSFS_TZ0_TYPE:
             total = sysfs_gen_str(tmp, sizeof(tmp), "x86_pkg_temp\n");
@@ -652,9 +663,18 @@ static const sysfs_de_t kernel_entries[] = {
     DE_DIR(".",         SYSFS_INO_KERNEL,           SYSFS_KERNEL_DIR),
     DE_DIR("..",        SYSFS_INO_ROOT,             SYSFS_ROOT),
     DE_DIR("mm",        SYSFS_INO_KERNEL_MM,        SYSFS_KERNEL_MM_DIR),
+    DE_DIR("security",  SYSFS_INO_KERNEL_SECURITY,  SYSFS_KERNEL_SECURITY_DIR),
     DE_REG("profiling", SYSFS_INO_KERNEL_PROFILING, SYSFS_KERNEL_PROFILING),
 };
 #define KERNEL_N (sizeof(kernel_entries)/sizeof(kernel_entries[0]))
+
+/* /sys/kernel/security/ — LSM information */
+static const sysfs_de_t security_entries[] = {
+    DE_DIR(".",   SYSFS_INO_KERNEL_SECURITY,     SYSFS_KERNEL_SECURITY_DIR),
+    DE_DIR("..",  SYSFS_INO_KERNEL,              SYSFS_KERNEL_DIR),
+    DE_REG("lsm", SYSFS_INO_KERNEL_SECURITY_LSM, SYSFS_KERNEL_SECURITY_LSM),
+};
+#define SECURITY_N (sizeof(security_entries)/sizeof(security_entries[0]))
 
 static const sysfs_de_t mm_entries[] = {
     DE_DIR(".",                    SYSFS_INO_KERNEL_MM,     SYSFS_KERNEL_MM_DIR),
@@ -895,6 +915,7 @@ static int sysfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         case SYSFS_CLASS_RTC0_DIR:   return sysfs_table_readdir(rtc0_entries, RTC0_N, cookie, de);
         case SYSFS_CLASS_THERMAL_DIR: return sysfs_table_readdir(class_thermal_entries, CLASS_THERMAL_N, cookie, de);
         case SYSFS_CLASS_TZ0_DIR:    return sysfs_table_readdir(tz0_entries, TZ0_N, cookie, de);
+        case SYSFS_KERNEL_SECURITY_DIR: return sysfs_table_readdir(security_entries, SECURITY_N, cookie, de);
         default:
             return sysfs_empty_readdir(dir, cookie, de);
     }
@@ -991,6 +1012,8 @@ static int sysfs_dir_lookup(struct fut_vnode *dir, const char *name,
             return sysfs_table_lookup(mnt, class_thermal_entries, CLASS_THERMAL_N, name, result);
         case SYSFS_CLASS_TZ0_DIR:
             return sysfs_table_lookup(mnt, tz0_entries, TZ0_N, name, result);
+        case SYSFS_KERNEL_SECURITY_DIR:
+            return sysfs_table_lookup(mnt, security_entries, SECURITY_N, name, result);
         default:
             /* Empty directories: no children beyond . and .. */
             return -ENOENT;

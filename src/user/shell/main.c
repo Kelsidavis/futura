@@ -127,6 +127,9 @@ static void cmd_mkfifo(int argc, char *argv[]);
 static void cmd_expr(int argc, char *argv[]);
 static void cmd_factor(int argc, char *argv[]);
 static void cmd_cal(int argc, char *argv[]);
+static void cmd_locale(int argc, char *argv[]);
+static void cmd_reset(int argc, char *argv[]);
+static void cmd_tput(int argc, char *argv[]);
 static void cmd_expand(int argc, char *argv[]);
 static void cmd_unexpand(int argc, char *argv[]);
 static void cmd_install(int argc, char *argv[]);
@@ -537,7 +540,7 @@ static size_t common_prefix_len(const char *s1, const char *s2) {
 static void complete_command(char *buf, size_t *pos, size_t max_len) {
     /* List of builtin commands */
     const char *builtins[] = {
-        "arp", "bg", "brctl", "cal", "cd", "chgrp", "chmod", "chroot", "clear", "cmp", "comm", "conntrack", "date", "dd", "df", "dhclient", "dmesg", "echo", "edit", "ethtool", "expand", "expr", "factor", "file", "fold", "hexdump", "install", "lsof", "md5sum", "mkfifo", "nc", "nice", "nohup", "pgrep", "pidof", "pkill", "poweroff", "reboot", "renice", "seq", "sleep", "strings", "tac", "time", "timeout", "traceroute", "tty", "unexpand", "wget", "xxd", "exit", "export", "fg", "free",
+        "arp", "bg", "brctl", "cal", "cd", "chgrp", "chmod", "chroot", "clear", "cmp", "comm", "conntrack", "date", "dd", "df", "dhclient", "dmesg", "echo", "edit", "ethtool", "expand", "expr", "factor", "file", "fold", "hexdump", "install", "locale", "lsof", "md5sum", "mkfifo", "nc", "nice", "nohup", "pgrep", "pidof", "pkill", "poweroff", "reboot", "renice", "reset", "seq", "sleep", "strings", "tac", "time", "timeout", "tput", "traceroute", "tty", "unexpand", "wget", "xxd", "exit", "export", "fg", "free",
         "help", "hostname", "httpd", "id", "ifconfig", "iostat", "ipcs", "iptables", "jobs", "kill", "logger", "losetup", "ls", "lsblk", "lspci", "mkfs", "mount", "netstat",
         ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "getconf", "history", "ip", "ln", "mktemp", "more", "nproc", "nslookup", "ping", "printf", "ps", "pwd", "read", "readlink", "set", "sha256sum", "shutdown", "source", "ss", "stat", "stty", "sync", "sysctl", "sysinfo", "tc", "test", "top", "trap", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "vmstat", "wait", "watch", "wdctl", "which", "whoami", "xargs", "yes", NULL
     };
@@ -1206,6 +1209,9 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  expr EXPR       - Evaluate expression (+,-,*,/,%%,=,!=,<,>)\n");
     write_str(1, "  factor N        - Print prime factors\n");
     write_str(1, "  cal             - Display calendar\n");
+    write_str(1, "  locale          - Display locale settings\n");
+    write_str(1, "  reset           - Reset terminal\n");
+    write_str(1, "  tput cap        - Query terminal capabilities\n");
     write_str(1, "  lsof            - List open files\n");
     write_str(1, "  which <cmd>     - Find command in PATH\n");
     write_str(1, "  du [path]       - Show disk usage (KB)\n");
@@ -9079,6 +9085,15 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "cal") == 0) {
         cmd_cal(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "locale") == 0) {
+        cmd_locale(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "reset") == 0) {
+        cmd_reset(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "tput") == 0) {
+        cmd_tput(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "alias") == 0) {
         if (argc < 2) {
             /* List all aliases */
@@ -9715,7 +9730,10 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "install") == 0 ||
             strcmp_simple(cmd, "expr") == 0 ||
             strcmp_simple(cmd, "factor") == 0 ||
-            strcmp_simple(cmd, "cal") == 0);
+            strcmp_simple(cmd, "cal") == 0 ||
+            strcmp_simple(cmd, "locale") == 0 ||
+            strcmp_simple(cmd, "reset") == 0 ||
+            strcmp_simple(cmd, "tput") == 0);
 }
 
 /* Parse command line into pipeline stages separated by '|' */
@@ -11572,6 +11590,89 @@ static void cmd_cal(int argc, char *argv[]) {
     write_str(1, "15 16 17 18 19 20 21\n");
     write_str(1, "22 23 24 25 26 27 28\n");
     write_str(1, "29 30 31\n");
+}
+
+/* ── locale: display locale settings ── */
+static void cmd_locale(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    const char *lang = get_var("LANG");
+    const char *lc_all = get_var("LC_ALL");
+    if (!lang || !lang[0]) lang = "C";
+    if (!lc_all || !lc_all[0]) lc_all = "";
+
+    write_str(1, "LANG="); write_str(1, lang); write_str(1, "\n");
+    write_str(1, "LC_CTYPE=\""); write_str(1, lc_all[0] ? lc_all : lang); write_str(1, "\"\n");
+    write_str(1, "LC_NUMERIC=\""); write_str(1, lc_all[0] ? lc_all : lang); write_str(1, "\"\n");
+    write_str(1, "LC_TIME=\""); write_str(1, lc_all[0] ? lc_all : lang); write_str(1, "\"\n");
+    write_str(1, "LC_COLLATE=\""); write_str(1, lc_all[0] ? lc_all : lang); write_str(1, "\"\n");
+    write_str(1, "LC_MONETARY=\""); write_str(1, lc_all[0] ? lc_all : lang); write_str(1, "\"\n");
+    write_str(1, "LC_MESSAGES=\""); write_str(1, lc_all[0] ? lc_all : lang); write_str(1, "\"\n");
+    write_str(1, "LC_PAPER=\""); write_str(1, lc_all[0] ? lc_all : lang); write_str(1, "\"\n");
+    write_str(1, "LC_NAME=\""); write_str(1, lc_all[0] ? lc_all : lang); write_str(1, "\"\n");
+    write_str(1, "LC_ADDRESS=\""); write_str(1, lc_all[0] ? lc_all : lang); write_str(1, "\"\n");
+    write_str(1, "LC_TELEPHONE=\""); write_str(1, lc_all[0] ? lc_all : lang); write_str(1, "\"\n");
+    write_str(1, "LC_MEASUREMENT=\""); write_str(1, lc_all[0] ? lc_all : lang); write_str(1, "\"\n");
+    write_str(1, "LC_IDENTIFICATION=\""); write_str(1, lc_all[0] ? lc_all : lang); write_str(1, "\"\n");
+    write_str(1, "LC_ALL="); write_str(1, lc_all[0] ? lc_all : ""); write_str(1, "\n");
+}
+
+/* ── reset: reset terminal ── */
+static void cmd_reset(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    /* Send VT100 reset sequence */
+    write_str(1, "\033c");       /* Full reset */
+    write_str(1, "\033[?25h");   /* Show cursor */
+    write_str(1, "\033[0m");     /* Reset attributes */
+}
+
+/* ── tput: terminal capability queries ── */
+static void cmd_tput(int argc, char *argv[]) {
+    if (argc < 2) { write_str(2, "usage: tput CAPNAME\n"); return; }
+    const char *cap = argv[1];
+    if (strcmp_simple(cap, "cols") == 0) {
+        /* Query terminal columns via TIOCGWINSZ */
+        struct { unsigned short ws_row, ws_col, ws_xpixel, ws_ypixel; } ws = {0};
+        long r = sys_ioctl(1, 0x5413 /* TIOCGWINSZ */, (unsigned long)&ws);
+        if (r == 0 && ws.ws_col > 0) {
+            char num[8]; int ni = 0;
+            int v = ws.ws_col;
+            if (v == 0) num[ni++] = '0';
+            else { char rev[8]; int ri = 0;
+                while (v > 0) { rev[ri++] = '0' + (char)(v%10); v /= 10; }
+                while (ri > 0) num[ni++] = rev[--ri]; }
+            num[ni] = '\0'; write_str(1, num); write_str(1, "\n");
+        } else { write_str(1, "80\n"); }
+    } else if (strcmp_simple(cap, "lines") == 0) {
+        struct { unsigned short ws_row, ws_col, ws_xpixel, ws_ypixel; } ws = {0};
+        long r = sys_ioctl(1, 0x5413, (unsigned long)&ws);
+        if (r == 0 && ws.ws_row > 0) {
+            char num[8]; int ni = 0;
+            int v = ws.ws_row;
+            if (v == 0) num[ni++] = '0';
+            else { char rev[8]; int ri = 0;
+                while (v > 0) { rev[ri++] = '0' + (char)(v%10); v /= 10; }
+                while (ri > 0) num[ni++] = rev[--ri]; }
+            num[ni] = '\0'; write_str(1, num); write_str(1, "\n");
+        } else { write_str(1, "24\n"); }
+    } else if (strcmp_simple(cap, "clear") == 0) {
+        write_str(1, "\033[H\033[2J");
+    } else if (strcmp_simple(cap, "bold") == 0) {
+        write_str(1, "\033[1m");
+    } else if (strcmp_simple(cap, "sgr0") == 0 || strcmp_simple(cap, "reset") == 0) {
+        write_str(1, "\033[0m");
+    } else if (strcmp_simple(cap, "cup") == 0) {
+        /* tput cup ROW COL — move cursor */
+        if (argc >= 4) {
+            write_str(1, "\033["); write_str(1, argv[2]); write_str(1, ";");
+            write_str(1, argv[3]); write_str(1, "H");
+        }
+    } else if (strcmp_simple(cap, "sc") == 0) { write_str(1, "\033[s"); /* save cursor */
+    } else if (strcmp_simple(cap, "rc") == 0) { write_str(1, "\033[u"); /* restore cursor */
+    } else if (strcmp_simple(cap, "civis") == 0) { write_str(1, "\033[?25l"); /* hide cursor */
+    } else if (strcmp_simple(cap, "cnorm") == 0) { write_str(1, "\033[?25h"); /* show cursor */
+    } else {
+        write_str(2, "tput: unknown capability: "); write_str(2, cap); write_str(2, "\n");
+    }
 }
 
 int main(int argc, char **argv, char **envp) {

@@ -928,6 +928,20 @@ void fut_sched_stats(uint64_t *ready_cnt, uint64_t *running_cnt) {
 }
 
 /**
+ * fut_sched_get_runnable_count - Return total runnable threads across all CPUs.
+ * Used by PSI (Pressure Stall Information) tracking in the timer tick.
+ */
+uint64_t fut_sched_get_runnable_count(void) {
+    uint64_t total = 0;
+    for (uint32_t i = 0; i < FUT_MAX_CPUS; i++) {
+        fut_percpu_t *percpu = &fut_percpu_data[i];
+        if (percpu->self)
+            total += percpu->ready_count;
+    }
+    return total;
+}
+
+/**
  * fut_sched_check_rlimit_cpu - Enforce RLIMIT_CPU for a task.
  *
  * Sums cpu_ticks across all threads in the task, converts to seconds,

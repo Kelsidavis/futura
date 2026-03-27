@@ -4401,13 +4401,45 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             break;
         /* /proc/pressure/ files — PSI (Pressure Stall Information) */
         case PROC_PRESSURE_CPU: {
+            extern void fut_psi_get(uint64_t *, uint64_t *);
+            uint64_t cpu_some = 0, cpu_full = 0;
+            fut_psi_get(&cpu_some, &cpu_full);
+            /* Compute approximate averages from total.
+             * For simplicity, derive avg from total/uptime ratio.
+             * Real Linux uses exponential decay windows. */
+            uint64_t uptime_us = fut_get_ticks() * 10000ULL;
             struct pbuf bb = { tmp, 0, GEN_BUF };
-            pb_str(&bb, "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\n");
-            pb_str(&bb, "full avg10=0.00 avg60=0.00 avg300=0.00 total=0\n");
+            if (uptime_us > 0) {
+                /* avg as percentage (0.00-100.00) = (total_us / uptime_us) * 100 */
+                uint64_t pct100 = cpu_some * 10000 / uptime_us;  /* 2 decimal places */
+                uint64_t whole = pct100 / 100;
+                uint64_t frac = pct100 % 100;
+                pb_str(&bb, "some avg10=");
+                pb_u64(&bb, whole); pb_char(&bb, '.');
+                if (frac < 10) pb_char(&bb, '0');
+                pb_u64(&bb, frac);
+                pb_str(&bb, " avg60=");
+                pb_u64(&bb, whole); pb_char(&bb, '.');
+                if (frac < 10) pb_char(&bb, '0');
+                pb_u64(&bb, frac);
+                pb_str(&bb, " avg300=");
+                pb_u64(&bb, whole); pb_char(&bb, '.');
+                if (frac < 10) pb_char(&bb, '0');
+                pb_u64(&bb, frac);
+                pb_str(&bb, " total=");
+                pb_u64(&bb, cpu_some);
+                pb_char(&bb, '\n');
+            } else {
+                pb_str(&bb, "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\n");
+            }
+            pb_str(&bb, "full avg10=0.00 avg60=0.00 avg300=0.00 total=");
+            pb_u64(&bb, cpu_full);
+            pb_char(&bb, '\n');
             total = bb.pos;
             break;
         }
         case PROC_PRESSURE_MEMORY: {
+            /* Memory pressure: currently no swap, so no memory stalls */
             struct pbuf bb = { tmp, 0, GEN_BUF };
             pb_str(&bb, "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\n");
             pb_str(&bb, "full avg10=0.00 avg60=0.00 avg300=0.00 total=0\n");

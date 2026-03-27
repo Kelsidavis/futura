@@ -47,6 +47,18 @@ static _Atomic uint64_t user_ticks = 0;  /* Ticks in user-mode context (ring 3) 
 static _Atomic uint64_t kern_ticks = 0;  /* Ticks in kernel-mode on behalf of user process */
 static _Atomic uint64_t irq_ticks = 0;   /* Ticks in interrupt/softirq handling */
 
+/* PSI (Pressure Stall Information) counters.
+ * CPU "some": ticks where at least one runnable task was waiting (run queue > 1).
+ * Memory/IO: tracked when tasks are waiting for memory/IO (simplified). */
+static _Atomic uint64_t psi_cpu_some_us = 0;  /* Cumulative CPU stall microseconds */
+static _Atomic uint64_t psi_cpu_full_us = 0;  /* Cumulative full CPU stall microseconds */
+
+/* PSI getters for procfs */
+void fut_psi_get(uint64_t *cpu_some, uint64_t *cpu_full) {
+    *cpu_some = atomic_load_explicit(&psi_cpu_some_us, memory_order_relaxed);
+    *cpu_full = atomic_load_explicit(&psi_cpu_full_us, memory_order_relaxed);
+}
+
 /* Public getter for system tick count.
  * Only compiled for x86_64 — ARM64 provides its own in platform_init.c. */
 #if !defined(__aarch64__)
@@ -283,6 +295,20 @@ void fut_timer_tick(void) {
             ct->stats.cpu_ticks++;
             ct->stats.stime_ticks++;
         }
+    }
+
+    /* PSI tracking: count CPU stall ticks.
+     * "some" = at least one task was runnable but couldn't get CPU (run queue > 1).
+     * Each tick = 10ms = 10000µs. */
+    {
+        extern uint64_t fut_sched_get_runnable_count(void);
+        uint64_t runnable = fut_sched_get_runnable_count();
+        if (runnable > 1) {
+            /* More tasks than CPUs: some tasks are waiting */
+            atomic_fetch_add_explicit(&psi_cpu_some_us, 10000, memory_order_relaxed);
+        }
+        /* "full" = ALL tasks stalled (no useful work happening — idle despite runnable tasks).
+         * On single-CPU: this is when runnable > 0 but current tick was idle (shouldn't happen). */
     }
 
     // Wake any threads whose sleep time has expired

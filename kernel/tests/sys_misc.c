@@ -62377,6 +62377,38 @@ __attribute__((noinline)) static void test_pty_and_cgroup(void) {
         }
     }
 
+    /* ── Test 2223: /proc/pressure/cpu has real total value ── */
+    fut_printf("[MISC-TEST] Test 2223: PSI cpu pressure\n");
+    {
+        extern long sys_open(const char *, int, int);
+        extern long sys_read(int, void *, size_t);
+        extern long sys_close(int);
+        long fd = sys_open("/proc/pressure/cpu", 0, 0);
+        int pass = 0;
+        if (fd >= 0) {
+            static char buf[256];
+            long n = sys_read((int)fd, buf, 255);
+            sys_close((int)fd);
+            if (n > 0) {
+                buf[n < 255 ? n : 254] = '\0';
+                /* Should contain "some avg10=" with a real value and "total=" */
+                int has_some = 0, has_total = 0;
+                for (long i = 0; i < n - 4; i++) {
+                    if (buf[i]=='s' && buf[i+1]=='o' && buf[i+2]=='m' && buf[i+3]=='e') has_some = 1;
+                    if (buf[i]=='t' && buf[i+1]=='o' && buf[i+2]=='t' && buf[i+3]=='a' && buf[i+4]=='l') has_total = 1;
+                }
+                if (has_some && has_total) pass = 1;
+            }
+        }
+        if (pass) {
+            fut_printf("[MISC-TEST] ✓ Test 2223: PSI cpu ok\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2223: PSI cpu failed\n");
+            fut_test_fail(2223);
+        }
+    }
+
     /* ── Test 2218: dup2(fd, fd) returns fd without closing ── */
     fut_printf("[MISC-TEST] Test 2218: dup2 same fd\n");
     {

@@ -1404,10 +1404,21 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
         bool is_cow = (vma->flags & VMA_COW) != 0;
         bool is_shared = (vma->flags & MAP_SHARED) != 0;
         bool is_wipeonfork = (vma->flags & VMA_WIPEONFORK) != 0;
+        bool is_dontfork = (vma->flags & VMA_DONTFORK) != 0;
         const char *mode = is_shared ? "(SHARED)" : (is_cow ? "(COW)" : "(COPY)");
         (void)mode;  /* Used only in debug logging */
-        FORK_LOG("[FORK] Cloning VMA: 0x%llx-0x%llx %s%s\n",
-                   vma->start, vma->end, mode, is_wipeonfork ? " WIPEONFORK" : "");
+        FORK_LOG("[FORK] Cloning VMA: 0x%llx-0x%llx %s%s%s\n",
+                   vma->start, vma->end, mode,
+                   is_wipeonfork ? " WIPEONFORK" : "",
+                   is_dontfork ? " DONTFORK" : "");
+
+        /* MADV_DONTFORK: skip this VMA entirely — don't map any pages in child.
+         * Used by crypto libraries to prevent key material from leaking to children. */
+        if (is_dontfork) {
+            if (child_vma_iter && child_vma_iter->start == vma->start)
+                child_vma_iter = child_vma_iter->next;
+            continue;
+        }
 
         /* MADV_WIPEONFORK: child VMA should NOT inherit the wipe flag (it only fires once) */
         if (child_vma_iter && child_vma_iter->start == vma->start) {

@@ -170,8 +170,6 @@ long sys_madvise(void *addr, size_t length, int advice) {
     }
 
     case MADV_REMOVE:       /* 9: punch hole / remove pages */
-    case MADV_DONTFORK:     /* 10: don't inherit on fork */
-    case MADV_DOFORK:       /* 11: inherit on fork (default) */
     case MADV_MERGEABLE:    /* 12: KSM may merge identical pages */
     case MADV_UNMERGEABLE:  /* 13: KSM must not merge */
     case MADV_HUGEPAGE:     /* 14: back with transparent hugepages */
@@ -179,6 +177,43 @@ long sys_madvise(void *addr, size_t length, int advice) {
     case MADV_DONTDUMP:     /* 16: exclude from core dump */
     case MADV_DODUMP:       /* 17: include in core dump */
         return 0;
+
+    case MADV_DONTFORK: {   /* 10: don't copy VMA to child on fork */
+        /* Mark VMAs in [addr, addr+len) with VMA_DONTFORK so that clone_mm()
+         * will skip them. Used by crypto libraries to prevent key material
+         * from leaking to child processes. */
+        fut_task_t *df_task = fut_task_current();
+        fut_mm_t *df_mm = df_task ? fut_task_get_mm(df_task) : NULL;
+        if (!df_mm) df_mm = fut_mm_current();
+        if (df_mm) {
+            uintptr_t range_start = addr_aligned;
+            uintptr_t range_end   = addr_aligned + length_aligned;
+            struct fut_vma *vma = df_mm->vma_list;
+            while (vma) {
+                if (vma->start < range_end && vma->end > range_start)
+                    vma->flags |= VMA_DONTFORK;
+                vma = vma->next;
+            }
+        }
+        return 0;
+    }
+
+    case MADV_DOFORK: {     /* 11: re-enable fork inheritance (undo DONTFORK) */
+        fut_task_t *dof_task = fut_task_current();
+        fut_mm_t *dof_mm = dof_task ? fut_task_get_mm(dof_task) : NULL;
+        if (!dof_mm) dof_mm = fut_mm_current();
+        if (dof_mm) {
+            uintptr_t range_start = addr_aligned;
+            uintptr_t range_end   = addr_aligned + length_aligned;
+            struct fut_vma *vma = dof_mm->vma_list;
+            while (vma) {
+                if (vma->start < range_end && vma->end > range_start)
+                    vma->flags &= ~VMA_DONTFORK;
+                vma = vma->next;
+            }
+        }
+        return 0;
+    }
 
     case 18: {              /* MADV_WIPEONFORK: zero anon pages in child on fork */
         /* Set VMA_WIPEONFORK on all anonymous VMAs overlapping [addr, addr+len).

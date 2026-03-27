@@ -235,6 +235,7 @@ struct fut_task {
 
     /* Accumulated stats from reaped children (for RUSAGE_CHILDREN / tms_cutime) */
     uint64_t child_cpu_ticks;
+    uint64_t child_stime_ticks;     /* Child system-mode ticks (for cstime in /proc/pid/stat) */
     uint64_t child_context_switches;
     uint64_t child_maxrss_kb;
 

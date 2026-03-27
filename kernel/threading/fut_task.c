@@ -815,15 +815,18 @@ int fut_task_waitpid(int pid, int *status_out, int flags, uint64_t *child_ticks_
             uint64_t child_pid = match->pid;
 
             /* Accumulate child's stats into parent before reaping.
-             * Provides tms_cutime and RUSAGE_CHILDREN data. */
+             * Provides tms_cutime, cstime, and RUSAGE_CHILDREN data. */
             uint64_t child_ticks = 0;
+            uint64_t child_stime = 0;
             uint64_t child_switches = 0;
             for (fut_thread_t *t = match->threads; t; t = t->next) {
                 child_ticks += t->stats.cpu_ticks;
+                child_stime += t->stats.stime_ticks;
                 child_switches += t->stats.context_switches;
             }
             uint64_t total_child_ticks = child_ticks + match->child_cpu_ticks;
             parent->child_cpu_ticks += total_child_ticks;
+            parent->child_stime_ticks += child_stime + match->child_stime_ticks;
             parent->child_context_switches += child_switches + match->child_context_switches;
             /* Track peak RSS (max of all children, including grandchildren) */
             if (match->child_maxrss_kb > parent->child_maxrss_kb)

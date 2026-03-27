@@ -35,6 +35,7 @@ struct fut_vnode;
 #define VMA_LOCKED      0x4000  /* Pages locked in memory (mlock) */
 #define VMA_STACK       0x8000  /* Initial user stack region ([stack] in /proc/maps) */
 #define VMA_WIPEONFORK  0x10000 /* Zero child's pages on fork (MADV_WIPEONFORK) */
+#define VMA_DONTFORK    0x20000 /* Don't copy this VMA to child on fork (MADV_DONTFORK) */
 
 /* Virtual Memory Area - represents a contiguous mapped region */
 struct fut_vma {

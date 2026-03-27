@@ -1423,9 +1423,10 @@ static size_t gen_stat(char *buf, size_t cap, fut_task_t *task, uint64_t tid) {
     /* Convert from ms ticks to USER_HZ centiseconds */
     utime /= 10;
     stime /= 10;
-    /* Accumulated child times */
+    /* Accumulated child times (cutime = total child ticks minus stime; cstime = child stime) */
+    uint64_t cstime = task->child_stime_ticks / 10;
     uint64_t cutime = task->child_cpu_ticks / 10;
-    uint64_t cstime = 0;
+    if (cutime > cstime) cutime -= cstime;  /* cutime = child user ticks only */
 
     /* Priority in Linux terms: priority = 20 - nice (range 1..40 for SCHED_OTHER) */
     int nice = task->nice;

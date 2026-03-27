@@ -275,6 +275,11 @@ enum procfs_kind {
     PROC_KALLSYMS,                  /* /proc/kallsyms — kernel symbol table (addresses zeroed per kptr_restrict) */
     PROC_KCONFIG,                   /* /proc/config.gz — kernel configuration (text, not actually gzipped) */
     PROC_SYSRQ_TRIGGER,             /* /proc/sysrq-trigger — Magic SysRq trigger (write-only) */
+    PROC_CRYPTO,                    /* /proc/crypto — registered crypto algorithms */
+    PROC_SOFTIRQS,                  /* /proc/softirqs — software interrupt counters */
+    PROC_CONSOLES,                  /* /proc/consoles — registered console devices */
+    PROC_IOMEM,                     /* /proc/iomem — I/O memory map */
+    PROC_IOPORTS,                   /* /proc/ioports — I/O port allocations */
     PROC_TIMERSLACK_NS,             /* /proc/<pid>/timerslack_ns — timer expiry slack in nanoseconds */
     PROC_SYSCALL,                   /* /proc/<pid>/syscall — current syscall number and arguments */
     PROC_LOCKS,                     /* /proc/locks — POSIX and flock file lock table */
@@ -509,6 +514,11 @@ typedef struct {
 #define PROC_INO_PRESSURE_IO             425ULL
 #define PROC_INO_KCONFIG                 426ULL
 #define PROC_INO_SYSRQ_TRIGGER           434ULL
+#define PROC_INO_CRYPTO                  435ULL
+#define PROC_INO_SOFTIRQS                436ULL
+#define PROC_INO_CONSOLES                437ULL
+#define PROC_INO_IOMEM                   438ULL
+#define PROC_INO_IOPORTS                 439ULL
 /* /proc/sys/kernel/ extended range: 400-429 */
 #define PROC_INO_SYS_KERNEL_NMI_WD     400ULL
 #define PROC_INO_SYS_KERNEL_WATCHDOG   401ULL
@@ -3554,6 +3564,104 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
         case PROC_SYSRQ_TRIGGER:
             total = 0; /* Write-only */
             break;
+        case PROC_CRYPTO: {
+            /* /proc/crypto — list registered crypto algorithms.
+             * OpenSSL, GnuTLS, and other crypto libraries check this. */
+            static const char crypto_text[] =
+                "name         : aes\n"
+                "driver       : aes-generic\n"
+                "module       : kernel\n"
+                "priority     : 100\n"
+                "refcnt       : 1\n"
+                "selftest     : passed\n"
+                "internal     : no\n"
+                "type         : cipher\n"
+                "blocksize    : 16\n"
+                "min keysize  : 16\n"
+                "max keysize  : 32\n"
+                "\n"
+                "name         : sha256\n"
+                "driver       : sha256-generic\n"
+                "module       : kernel\n"
+                "priority     : 100\n"
+                "refcnt       : 1\n"
+                "selftest     : passed\n"
+                "internal     : no\n"
+                "type         : shash\n"
+                "blocksize    : 64\n"
+                "digestsize   : 32\n"
+                "\n"
+                "name         : sha1\n"
+                "driver       : sha1-generic\n"
+                "module       : kernel\n"
+                "priority     : 100\n"
+                "refcnt       : 1\n"
+                "selftest     : passed\n"
+                "internal     : no\n"
+                "type         : shash\n"
+                "blocksize    : 64\n"
+                "digestsize   : 20\n\n";
+            total = sizeof(crypto_text) - 1;
+            if (total > GEN_BUF) total = GEN_BUF;
+            __builtin_memcpy(tmp, crypto_text, total);
+            break;
+        }
+        case PROC_SOFTIRQS: {
+            /* /proc/softirqs — software interrupt counters */
+            struct pbuf bb = { tmp, 0, GEN_BUF };
+            pb_str(&bb, "                    CPU0\n");
+            pb_str(&bb, "          HI:          0\n");
+            pb_str(&bb, "       TIMER:       1000\n");
+            pb_str(&bb, "      NET_TX:          0\n");
+            pb_str(&bb, "      NET_RX:          0\n");
+            pb_str(&bb, "       BLOCK:          0\n");
+            pb_str(&bb, "    IRQ_POLL:          0\n");
+            pb_str(&bb, "     TASKLET:          0\n");
+            pb_str(&bb, "       SCHED:        500\n");
+            pb_str(&bb, "     HRTIMER:         50\n");
+            pb_str(&bb, "         RCU:        200\n");
+            total = bb.pos;
+            break;
+        }
+        case PROC_CONSOLES: {
+            /* /proc/consoles — registered console devices */
+            total = 0;
+            const char *c = "ttyS0                -W- (EC p a)    4:64\n";
+            while (c[total]) { tmp[total] = c[total]; total++; }
+            break;
+        }
+        case PROC_IOMEM: {
+            /* /proc/iomem — I/O memory map */
+            struct pbuf bb = { tmp, 0, GEN_BUF };
+            pb_str(&bb, "00000000-0009ffff : System RAM\n");
+            pb_str(&bb, "000a0000-000bffff : PCI Bus 0000:00\n");
+            pb_str(&bb, "000c0000-000c7fff : Video ROM\n");
+            pb_str(&bb, "000f0000-000fffff : System ROM\n");
+            pb_str(&bb, "00100000-3fffffff : System RAM\n");
+            pb_str(&bb, "  01000000-01ffffff : Kernel code\n");
+            pb_str(&bb, "  02000000-020fffff : Kernel data\n");
+            pb_str(&bb, "feb00000-feb03fff : virtio-pci\n");
+            pb_str(&bb, "fec00000-fec003ff : IOAPIC\n");
+            pb_str(&bb, "fed00000-fed003ff : HPET\n");
+            pb_str(&bb, "fee00000-fee00fff : Local APIC\n");
+            total = bb.pos;
+            break;
+        }
+        case PROC_IOPORTS: {
+            /* /proc/ioports — I/O port allocations */
+            struct pbuf bb = { tmp, 0, GEN_BUF };
+            pb_str(&bb, "0000-001f : dma1\n");
+            pb_str(&bb, "0020-0021 : pic1\n");
+            pb_str(&bb, "0040-0043 : timer0\n");
+            pb_str(&bb, "0060-0060 : keyboard\n");
+            pb_str(&bb, "0070-0071 : rtc0\n");
+            pb_str(&bb, "00a0-00a1 : pic2\n");
+            pb_str(&bb, "00c0-00df : dma2\n");
+            pb_str(&bb, "03f8-03ff : serial\n");
+            pb_str(&bb, "0cf8-0cff : PCI conf1\n");
+            total = bb.pos;
+            break;
+        }
         case PROC_KCONFIG: {
             /* /proc/config.gz — kernel configuration (plain text, not gzipped).
              * Docker's check-config.sh, systemd-analyze, and container tools
@@ -4850,6 +4958,31 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
         if (STREQ(name, "sysrq-trigger")) {
             *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYSRQ_TRIGGER,
                                           0100200, PROC_SYSRQ_TRIGGER, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "crypto")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_CRYPTO,
+                                          0100444, PROC_CRYPTO, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "softirqs")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SOFTIRQS,
+                                          0100444, PROC_SOFTIRQS, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "consoles")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_CONSOLES,
+                                          0100444, PROC_CONSOLES, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "iomem")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_IOMEM,
+                                          0100444, PROC_IOMEM, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "ioports")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_IOPORTS,
+                                          0100444, PROC_IOPORTS, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
         if (STREQ(name, "locks")) {
@@ -6157,7 +6290,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             "interrupts", "cmdline", "swaps", "devices", "misc",
             "buddyinfo", "zoneinfo", "diskstats", "partitions", "cgroups", "kallsyms",
             "locks", "modules", "sysvipc", "pci", "pressure", "config.gz",
-            "sysrq-trigger"
+            "sysrq-trigger", "crypto", "softirqs", "consoles", "iomem", "ioports"
         };
         static const uint8_t fixed_type[] = {
             FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
@@ -6177,7 +6310,12 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             FUT_VDIR_TYPE_REG,  /* pci */
             FUT_VDIR_TYPE_DIR,  /* pressure */
             FUT_VDIR_TYPE_REG,  /* config.gz */
-            FUT_VDIR_TYPE_REG   /* sysrq-trigger */
+            FUT_VDIR_TYPE_REG,  /* sysrq-trigger */
+            FUT_VDIR_TYPE_REG,  /* crypto */
+            FUT_VDIR_TYPE_REG,  /* softirqs */
+            FUT_VDIR_TYPE_REG,  /* consoles */
+            FUT_VDIR_TYPE_REG,  /* iomem */
+            FUT_VDIR_TYPE_REG   /* ioports */
         };
         static const uint64_t fixed_ino[] = {
             PROC_INO_ROOT, PROC_INO_ROOT,
@@ -6193,9 +6331,11 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             PROC_INO_LOCKS, PROC_INO_MODULES,
             PROC_INO_SYSVIPC_DIR, PROC_INO_PCI,
             PROC_INO_PRESSURE_DIR, PROC_INO_KCONFIG,
-            PROC_INO_SYSRQ_TRIGGER
+            PROC_INO_SYSRQ_TRIGGER, PROC_INO_CRYPTO,
+            PROC_INO_SOFTIRQS, PROC_INO_CONSOLES,
+            PROC_INO_IOMEM, PROC_INO_IOPORTS
         };
-        if (idx < 33) {
+        if (idx < 38) {
             de->d_ino    = fixed_ino[idx];
             de->d_off    = idx + 1;
             de->d_type   = fixed_type[idx];
@@ -6212,9 +6352,9 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         /*
          * PID enumeration: after the 29 fixed entries, cookies encode
          * "find first task with pid > (cookie - 30)".  After returning
-         * a PID entry we set cookie = 33 + that_pid + 1.
+         * a PID entry we set cookie = 38 + that_pid + 1.
          */
-        uint64_t min_pid = idx >= 33 ? idx - 33 : 0;  /* start scanning for pid > min_pid */
+        uint64_t min_pid = idx >= 38 ? idx - 38 : 0;  /* start scanning for pid > min_pid */
         fut_task_t *best = NULL;
         uint64_t   best_pid = (uint64_t)-1;
         fut_task_t *t = fut_task_list;
@@ -6239,14 +6379,14 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         pidname[pn] = '\0';
 
         de->d_ino    = PROC_INO_PID_DIR(best->pid);
-        de->d_off    = 33 + best->pid + 1;
+        de->d_off    = 38 + best->pid + 1;
         de->d_type   = FUT_VDIR_TYPE_DIR;
         de->d_reclen = sizeof(*de);
         size_t nl = (size_t)pn;
         if (nl > FUT_VFS_NAME_MAX) nl = FUT_VFS_NAME_MAX;
         __builtin_memcpy(de->d_name, pidname, nl);
         de->d_name[nl] = '\0';
-        *cookie = 33 + best->pid + 1;  /* resume after this pid */
+        *cookie = 38 + best->pid + 1;  /* resume after this pid */
         return 1;
     }
 

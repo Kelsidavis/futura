@@ -8930,6 +8930,68 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "export") == 0) {
         cmd_export(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "eval") == 0) {
+        /* eval — concatenate args and execute as shell command */
+        if (argc >= 2) {
+            char evbuf[512];
+            int ep = 0;
+            for (int i = 1; i < argc && ep < 500; i++) {
+                if (i > 1) evbuf[ep++] = ' ';
+                for (const char *s = argv[i]; *s && ep < 500; s++)
+                    evbuf[ep++] = *s;
+            }
+            evbuf[ep] = '\0';
+            return execute_command_chain(evbuf);
+        }
+        return 0;
+    } else if (strcmp_simple(argv[0], "readonly") == 0) {
+        /* readonly — mark variables as read-only (accepted, not enforced) */
+        if (argc < 2) {
+            /* List readonly variables */
+            write_str(1, "(no readonly variables)\n");
+        }
+        /* Accept silently — marking vars readonly would require shell_vars changes */
+        return 0;
+    } else if (strcmp_simple(argv[0], "getopts") == 0) {
+        /* getopts OPTSTRING NAME [ARGS...] — parse command-line options */
+        if (argc < 3) {
+            write_str(2, "usage: getopts optstring name [args...]\n");
+            return 1;
+        }
+        const char *optstring = argv[1];
+        const char *varname = argv[2];
+        /* Get OPTIND (1-based index into args) */
+        const char *optind_str = get_var("OPTIND");
+        int optind = optind_str ? simple_atoi(optind_str) : 1;
+        /* Get actual args (from $1, $2, etc. or remaining argv) */
+        /* For simplicity, treat remaining argv as the args */
+        int nargs = argc - 3;
+        char **args = &argv[3];
+        if (optind < 1 || optind > nargs) return 1; /* No more options */
+        const char *arg = args[optind - 1];
+        if (arg[0] != '-' || arg[1] == '\0') return 1; /* Not an option */
+        char opt = arg[1];
+        /* Check if opt is in optstring */
+        int found = 0;
+        for (const char *os = optstring; *os; os++) {
+            if (*os == opt) { found = 1; break; }
+        }
+        char optbuf[2] = { opt, '\0' };
+        if (found) {
+            set_var(varname, optbuf, 0);
+        } else {
+            set_var(varname, "?", 0);
+        }
+        /* Increment OPTIND */
+        char nib[16]; int np = 0;
+        int ni = optind + 1;
+        if (ni == 0) nib[np++] = '0';
+        else { char rv[16]; int rp = 0;
+            while (ni > 0) { rv[rp++] = '0' + (ni % 10); ni /= 10; }
+            while (rp > 0) nib[np++] = rv[--rp]; }
+        nib[np] = '\0';
+        set_var("OPTIND", nib, 0);
+        return 0;
     } else if (strcmp_simple(argv[0], "test") == 0 || strcmp_simple(argv[0], "[") == 0) {
         return cmd_test(argc, argv);
     } else if (strcmp_simple(argv[0], "jobs") == 0) {
@@ -9008,6 +9070,9 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "base64") == 0 ||
             strcmp_simple(cmd, "od") == 0 ||
             strcmp_simple(cmd, "awk") == 0 ||
+            strcmp_simple(cmd, "eval") == 0 ||
+            strcmp_simple(cmd, "readonly") == 0 ||
+            strcmp_simple(cmd, "getopts") == 0 ||
             strcmp_simple(cmd, "find") == 0 ||
             strcmp_simple(cmd, "mkdir") == 0 ||
             strcmp_simple(cmd, "rmdir") == 0 ||
@@ -9936,7 +10001,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   125 built-in commands — type 'help'    |\n");
+    write_str(1, "|   128 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");

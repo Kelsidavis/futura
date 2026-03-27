@@ -1,0 +1,12 @@
+[package]
+name = "rpi_pwm"
+version = "0.1.0"
+edition = "2024"
+license = "MPL-2.0"
+description = "Raspberry Pi BCM2711/BCM2712 PWM controller driver"
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+common = { path = "../common" }

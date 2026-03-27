@@ -896,6 +896,14 @@ long sys_fork(void) {
         }
     }
 
+    /* Enforce cgroup pids.max limit (container fork bomb prevention) */
+    {
+        extern int pidcg_check_fork(int parent_pid);
+        int pidcg_rc = pidcg_check_fork((int)parent_task->pid);
+        if (pidcg_rc < 0)
+            return pidcg_rc;
+    }
+
     /* Enforce RLIMIT_NOFILE: child inherits all parent FDs, so reject if parent's
      * open FD count already exceeds the soft file descriptor limit.  This prevents
      * a process from bypassing RLIMIT_NOFILE by opening files before forking. */
@@ -1230,6 +1238,12 @@ long sys_fork(void) {
 
     /* Track total forks for /proc/stat */
     g_total_forks++;
+
+    /* Notify cgroup PID controller of new process */
+    {
+        extern void pidcg_fork_notify(void);
+        pidcg_fork_notify();
+    }
 
     /* Return child PID to parent */
     return (long)child_task->pid;

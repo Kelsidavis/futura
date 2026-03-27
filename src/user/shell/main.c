@@ -1261,6 +1261,7 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "Scripting:\n");
     write_str(1, "  for VAR in LIST; do BODY; done\n");
     write_str(1, "  while CMD; do BODY; done\n");
+    write_str(1, "  until CMD; do BODY; done\n");
     write_str(1, "  if CMD; then BODY; [else BODY;] fi\n");
     write_str(1, "  case WORD in PAT) BODY;; ... esac\n");
     write_str(1, "  cat <<EOF ... EOF  (heredocs in scripts)\n");
@@ -12027,6 +12028,45 @@ int main(int argc, char **argv, char **envp) {
                 if (execute_command_chain(exp_c) != 0) break;
                 char exp_b[512];
                 expand_variables(exp_b, wbody, sizeof(exp_b));
+                execute_command_chain(exp_b);
+                iters++;
+            }
+            last_exit_status = 0;
+            continue;
+        }
+
+        /* Handle 'until CMD; do BODY; done' — inverse of while */
+        if (cmdline[0] == 'u' && cmdline[1] == 'n' && cmdline[2] == 't' &&
+            cmdline[3] == 'i' && cmdline[4] == 'l' && cmdline[5] == ' ') {
+            char ucopy[512];
+            size_t ul = strlen_simple(cmdline);
+            for (size_t i = 0; i <= ul; i++) ucopy[i] = cmdline[i];
+            char *up = ucopy + 6;
+            /* Find "; do" */
+            char *udo = up;
+            while (*udo) {
+                if (udo[0] == ';' && udo[1] == ' ' && udo[2] == 'd' && udo[3] == 'o') {
+                    *udo = '\0'; udo += 4; while (*udo == ' ') udo++; break;
+                }
+                udo++;
+            }
+            /* Find "; done" */
+            char *ubody = udo;
+            int ub = (int)strlen_simple(ubody);
+            if (ub >= 6 && ubody[ub-1] == 'e' && ubody[ub-2] == 'n' &&
+                ubody[ub-3] == 'o' && ubody[ub-4] == 'd') {
+                int trim = ub - 5;
+                while (trim > 0 && (ubody[trim-1] == ' ' || ubody[trim-1] == ';')) trim--;
+                ubody[trim] = '\0';
+            }
+            /* Loop: evaluate condition, execute body if NON-zero (inverse of while) */
+            int iters = 0;
+            while (iters < 1000) {
+                char exp_c[512];
+                expand_variables(exp_c, up, sizeof(exp_c));
+                if (execute_command_chain(exp_c) == 0) break;  /* until: stop when condition succeeds */
+                char exp_b[512];
+                expand_variables(exp_b, ubody, sizeof(exp_b));
                 execute_command_chain(exp_b);
                 iters++;
             }

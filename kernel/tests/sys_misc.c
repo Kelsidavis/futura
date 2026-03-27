@@ -66155,6 +66155,37 @@ void fut_misc_test_thread(void *arg) {
         extern long sys_read(int, void *, size_t);
         extern long sys_close(int);
 
+        /* Test 2168: /etc/localtime exists and starts with TZif */
+        fut_printf("[MISC-TEST] Test 2168: /etc/localtime TZif\n");
+        {
+            static char buf[16];
+            long fd = sys_open("/etc/localtime", 0, 0);
+            if (fd >= 0) {
+                long n = sys_read((int)fd, buf, 5);
+                sys_close((int)fd);
+                if (n >= 4 && buf[0] == 'T' && buf[1] == 'Z' && buf[2] == 'i' && buf[3] == 'f') {
+                    fut_printf("[MISC-TEST] ✓ Test 2168: TZif magic ok\n");
+                    fut_test_pass();
+                } else { fut_printf("[MISC-TEST] ✗ Test 2168: bad magic\n"); fut_test_fail(2168); }
+            } else { fut_printf("[MISC-TEST] ✗ Test 2168: open=%ld\n", fd); fut_test_fail(2168); }
+        }
+
+        /* Test 2169: /etc/timezone contains UTC */
+        fut_printf("[MISC-TEST] Test 2169: /etc/timezone=UTC\n");
+        {
+            static char buf[32];
+            long fd = sys_open("/etc/timezone", 0, 0);
+            if (fd >= 0) {
+                long n = sys_read((int)fd, buf, sizeof(buf) - 1);
+                sys_close((int)fd);
+                buf[n > 0 ? n : 0] = '\0';
+                if (buf[0] == 'U' && buf[1] == 'T' && buf[2] == 'C') {
+                    fut_printf("[MISC-TEST] ✓ Test 2169: timezone=UTC\n");
+                    fut_test_pass();
+                } else { fut_printf("[MISC-TEST] ✗ Test 2169: %s\n", buf); fut_test_fail(2169); }
+            } else { fut_printf("[MISC-TEST] ✗ Test 2169: open=%ld\n", fd); fut_test_fail(2169); }
+        }
+
         /* Test 2167: hpage_pmd_size readable and returns 2097152 */
         fut_printf("[MISC-TEST] Test 2167: hpage_pmd_size\n");
         {

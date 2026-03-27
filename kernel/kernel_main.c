@@ -1300,6 +1300,7 @@ void fut_kernel_main(void) {
                   "export USER=root\n"
                   "export LOGNAME=root\n"
                   "export HOSTNAME=futura\n"
+                  "export TZ=UTC\n"
                   "# Common aliases\n"
                   "alias ll='ls -l'\n"
                   "alias la='ls -la'\n"
@@ -1383,6 +1384,31 @@ void fut_kernel_main(void) {
             extern long sys_symlink(const char *, const char *);
             sys_symlink("/proc/self/mounts", "/etc/mtab");
         }
+
+        /* /etc/timezone and /etc/localtime for timezone support.
+         * Programs like Python, Go, Java, and the date command read these. */
+        ETC_WRITE("/etc/timezone", "UTC\n");
+
+        /* Create a minimal TZif2 UTC timezone file at /etc/localtime.
+         * This is the binary format that glibc/musl/Go read directly.
+         * Format: "TZif2" magic + minimal UTC definition. */
+        {
+            /* Minimal valid TZif2 file for UTC (56 bytes) */
+            static const uint8_t utc_tzif[] = {
+                'T','Z','i','f','2', 0,0,0, 0,0,0,0, 0,0,0,0,
+                0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0,
+                0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0,
+                /* v2 header */
+                'T','Z','i','f','2', 0,0,0,
+            };
+            int tz_fd = fut_vfs_open("/etc/localtime", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            if (tz_fd >= 0) {
+                fut_vfs_write(tz_fd, utc_tzif, sizeof(utc_tzif));
+                /* Append the POSIX TZ string "UTC0\n" for v2 format */
+                fut_vfs_write(tz_fd, "\nUTC0\n", 6);
+                fut_vfs_close(tz_fd);
+            }
+        }
 #undef ETC_WRITE
 
         fut_printf("[INIT] ✓ Created /etc config files\n");
@@ -1438,7 +1464,7 @@ void fut_kernel_main(void) {
         planned_tests += 17u; /* clock_sched: getres, sched_param, sched_policy, itimer, rusage, times, getpriority, setpriority, getpriority(-who), setpriority(-who), unshare(0), unshare(invalid), rr_get_interval, clock_gettime, posix_timer_sigev_value, posix_timer_si_timer, itimer_virtual */
         planned_tests += 22u; /* vfs: O_TRUNC, O_APPEND, relpath, dir_mtime, readlink, hardlink, mount, renameat2, inotify, inotify_rename, inotify_attrib, inotify_close, inotify_access, inotify_modify, inotify_ftruncate, inotify_utimensat, inotify_truncate, inotify_delete, umount expire, dotdot, eisdir, chdir_dotdot */
         planned_tests += 17u; /* poll: file ready, eventfd not-ready, eventfd ready, POLLNVAL, select file, select pipe, pselect6 pipe, pselect6 sigmask restore, timeout-only sleep, timerfd readiness, signalfd readiness, pipe EOF, select pipe EOF, select timerfd wakeup, poll negative fd, POLLRDNORM, select timeout update */
-        planned_tests += 2167u; /* misc(2167): ..., robustness (2161-2165), fanotify (2166), thp (2167) */
+        planned_tests += 2169u; /* misc(2169): ..., fanotify (2166), thp (2167), tz (2168-2169) */
         // planned_tests += 1u; /* block */
         // planned_tests += 1u; /* futfs */
         // planned_tests += 1u; /* net */

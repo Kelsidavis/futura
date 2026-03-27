@@ -225,6 +225,18 @@ static void close_fd_in_task(fut_task_t *task, int fd) {
             ? 0x00000008 /* IN_CLOSE_WRITE */
             : 0x00000010 /* IN_CLOSE_NOWRITE */;
         inotify_dispatch_event(close_dir, close_mask, vname, 0);
+
+        /* Dispatch fanotify FAN_CLOSE_WRITE on close of writable files */
+        if (close_mask == 0x00000008) {
+            extern void fanotify_notify(const char *, uint64_t, int32_t);
+            char fpath[512]; int fp = 0;
+            for (int i = 0; close_dir[i] && fp < 500; i++) fpath[fp++] = close_dir[i];
+            if (fp > 1) fpath[fp++] = '/';
+            for (int i = 0; vname[i] && fp < 510; i++) fpath[fp++] = vname[i];
+            fpath[fp] = '\0';
+            fut_task_t *ft = fut_task_current();
+            fanotify_notify(fpath, 0x00000008 /* FAN_CLOSE_WRITE */, ft ? (int32_t)ft->pid : 0);
+        }
     }
 
     task->fd_table[fd] = NULL;

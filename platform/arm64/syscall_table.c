@@ -3544,7 +3544,8 @@ struct syscall_entry {
 static struct syscall_entry syscall_table[MAX_SYSCALL];
 static bool syscall_table_initialized = false;
 
-/* Stub that returns -ENOSYS */
+/* Stub that returns -ENOSYS (kept for potential future use) */
+__attribute__((unused))
 static int64_t sys_enosys_stub(uint64_t a1, uint64_t a2, uint64_t a3,
                                 uint64_t a4, uint64_t a5, uint64_t a6) {
     (void)a1; (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;

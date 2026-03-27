@@ -5765,6 +5765,11 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0100644, PROC_SYS_KERNEL_NMI_WD, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "sysrq")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_SCHED_CHILD + 5,
+                                          0100644, PROC_SYS_KERNEL_WATCHDOG, 0, 0); /* returns "1\n" */
+            return *result ? 0 : -ENOMEM;
+        }
         return -ENOENT;
     }
 
@@ -6617,7 +6622,8 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                    "sched_child_runs_first",
                                    "modprobe", "modules_disabled",
                                    "kexec_load_disabled",
-                                   "unprivileged_userns_clone" };
+                                   "unprivileged_userns_clone",
+                                   "sysrq" };
         static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
@@ -6641,7 +6647,8 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
-                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG };
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_REG };  /* sysrq */
         static const uint64_t i[] = { PROC_INO_SYS_KERNEL_DIR, PROC_INO_SYS_DIR,
                                       PROC_INO_SYS_OSTYPE, PROC_INO_SYS_OSRELEASE,
                                       PROC_INO_SYS_HOSTNAME, PROC_INO_SYS_PID_MAX,
@@ -6673,8 +6680,9 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                       PROC_INO_SYS_SCHED_CHILD + 1,  /* modprobe */
                                       PROC_INO_SYS_SCHED_CHILD + 2,  /* modules_disabled */
                                       PROC_INO_SYS_SCHED_CHILD + 3,  /* kexec_load_disabled */
-                                      PROC_INO_SYS_SCHED_CHILD + 4 };/* unprivileged_userns_clone */
-        if (idx < 44) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+                                      PROC_INO_SYS_SCHED_CHILD + 4,  /* unprivileged_userns_clone */
+                                      PROC_INO_SYS_SCHED_CHILD + 5 };/* sysrq */
+        if (idx < 45) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
         return -ENOENT;
     }
 

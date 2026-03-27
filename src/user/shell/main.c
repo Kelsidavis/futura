@@ -9596,6 +9596,30 @@ static int is_block_end(const char *line, int block_type) {
  * and block-end keywords with "; " separators, so the existing
  * single-line handlers in the main loop can process them.
  */
+/* Check if a line contains a heredoc marker (<<WORD or <<-WORD) */
+static const char *find_heredoc_marker(const char *line, char *marker, int max) {
+    const char *p = line;
+    while (*p) {
+        if (p[0] == '<' && p[1] == '<' && p[2] != '<') {
+            p += 2;
+            int strip_tabs = 0;
+            if (*p == '-') { strip_tabs = 1; p++; (void)strip_tabs; }
+            /* Skip whitespace */
+            while (*p == ' ' || *p == '\t') p++;
+            /* Skip optional quotes */
+            char quote = 0;
+            if (*p == '\'' || *p == '"') { quote = *p++; }
+            int mi = 0;
+            while (*p && *p != quote && *p != ' ' && *p != '\t' && *p != '\n' && mi < max - 1)
+                marker[mi++] = *p++;
+            marker[mi] = '\0';
+            if (mi > 0) return p; /* Found valid heredoc marker */
+        }
+        p++;
+    }
+    return NULL;
+}
+
 static void execute_script_buffer(char *buf) {
     char *line = buf;
     char block_buf[2048];
@@ -9603,11 +9627,66 @@ static void execute_script_buffer(char *buf) {
     int block_depth = 0;
     int block_pos = 0;
 
+    /* Heredoc state */
+    char heredoc_marker[64] = {0};
+    char heredoc_cmd[512] = {0};
+    char heredoc_body[2048] = {0};
+    int heredoc_active = 0;
+    int heredoc_body_pos = 0;
+
     while (*line) {
         char *end = line;
         while (*end && *end != '\n') end++;
         char saved = *end;
         *end = '\0';
+
+        /* Handle heredoc accumulation */
+        if (heredoc_active) {
+            char *trimmed = line;
+            while (*trimmed == ' ' || *trimmed == '\t') trimmed++;
+            /* Check if this line is the heredoc terminator */
+            int is_end = 1;
+            for (int i = 0; heredoc_marker[i]; i++) {
+                if (trimmed[i] != heredoc_marker[i]) { is_end = 0; break; }
+            }
+            if (is_end && trimmed[strlen_simple(heredoc_marker)] == '\0') {
+                /* End of heredoc — execute command with body as stdin via pipe */
+                heredoc_body[heredoc_body_pos] = '\0';
+                int pfd[2];
+                if (sys_pipe(pfd) == 0) {
+                    pid_t pid = sys_fork();
+                    if (pid == 0) {
+                        /* Child: write heredoc body to pipe, then exit */
+                        sys_close(pfd[0]);
+                        sys_write(pfd[1], heredoc_body, heredoc_body_pos);
+                        sys_close(pfd[1]);
+                        syscall1(__NR_exit, 0);
+                    }
+                    sys_close(pfd[1]);
+                    /* Redirect stdin from pipe, execute command */
+                    int saved_stdin = sys_dup(0);
+                    sys_dup2(pfd[0], 0);
+                    sys_close(pfd[0]);
+                    execute_full_line(heredoc_cmd);
+                    sys_dup2(saved_stdin, 0);
+                    sys_close(saved_stdin);
+                    sys_waitpid(pid, NULL, 0);
+                }
+                heredoc_active = 0;
+                heredoc_body_pos = 0;
+            } else {
+                /* Accumulate line into heredoc body */
+                int ll = strlen_simple(line);
+                if (heredoc_body_pos + ll + 1 < 2046) {
+                    for (int i = 0; i < ll; i++)
+                        heredoc_body[heredoc_body_pos++] = line[i];
+                    heredoc_body[heredoc_body_pos++] = '\n';
+                }
+            }
+            if (saved == '\0') break;
+            line = end + 1;
+            continue;
+        }
 
         /* Skip empty lines and comments */
         char *trimmed = line;
@@ -9671,8 +9750,27 @@ static void execute_script_buffer(char *buf) {
                         block_buf[block_pos++] = *c;
                     block_buf[block_pos] = '\0';
                 } else {
-                    /* Normal line — execute immediately */
-                    execute_full_line((char *)trimmed);
+                    /* Check for heredoc (<<WORD) */
+                    char hm[64];
+                    if (find_heredoc_marker(trimmed, hm, 64)) {
+                        /* Extract command (everything before <<WORD) */
+                        int hcl = 0;
+                        const char *hp = trimmed;
+                        while (*hp) {
+                            if (hp[0] == '<' && hp[1] == '<') break;
+                            heredoc_cmd[hcl++] = *hp++;
+                        }
+                        heredoc_cmd[hcl] = '\0';
+                        /* Copy marker */
+                        int hml = 0;
+                        while (hm[hml] && hml < 63) { heredoc_marker[hml] = hm[hml]; hml++; }
+                        heredoc_marker[hml] = '\0';
+                        heredoc_active = 1;
+                        heredoc_body_pos = 0;
+                    } else {
+                        /* Normal line — execute immediately */
+                        execute_full_line((char *)trimmed);
+                    }
                 }
             }
         }

@@ -42,15 +42,22 @@ void *memset(void *dest, int c, size_t n);
 #endif
 
 /* Colors in ARGB format (0xAARRGGBB) - works with BGRA framebuffers on little-endian */
-#define COLOR_CLEAR          0xFF000000u  /* Opaque black */
-#define COLOR_BAR_FOCUSED    0xFF2F6DB5u
-#define COLOR_BAR_UNFOCUSED  0xFF303030u
-#define COLOR_BTN_BASE       0xFF444444u
-#define COLOR_BTN_HOVER      0xFF666666u
-#define COLOR_BTN_PRESSED    0xFF202020u
-#define COLOR_BTN_CROSS      0xFFEEEEEEu
-#define COLOR_TEXT_FOCUSED   0xFFE7F0FFu
-#define COLOR_TEXT_UNFOCUSED 0xFFB3B8C0u
+/* Futura desktop color palette — modern, clean aesthetic */
+#define COLOR_CLEAR          0xFF1E1E2Eu  /* Dark purple-gray desktop */
+#define COLOR_BAR_FOCUSED    0xFFE8E8E8u  /* Light gray title bar (focused) */
+#define COLOR_BAR_UNFOCUSED  0xFFF6F6F6u  /* Very light gray (unfocused) */
+#define COLOR_BTN_BASE       0xFFDDDDDDu  /* Button base */
+
+/* Traffic-light window control buttons */
+#define COLOR_BTN_CLOSE      0xFFFF5F57u  /* Red close */
+#define COLOR_BTN_MINIMIZE   0xFFFEBB2Cu  /* Yellow minimize */
+#define COLOR_BTN_MAXIMIZE   0xFF28C840u  /* Green maximize */
+#define COLOR_BTN_INACTIVE   0xFFCCCCCCu  /* Gray when unfocused */
+#define COLOR_BTN_HOVER      0xFFBBBBBBu  /* Light hover */
+#define COLOR_BTN_PRESSED    0xFF999999u  /* Pressed */
+#define COLOR_BTN_CROSS      0xFF4D4D4Du  /* Dark glyph on light button */
+#define COLOR_TEXT_FOCUSED   0xFF333333u  /* Dark text on light title bar */
+#define COLOR_TEXT_UNFOCUSED 0xFF999999u  /* Muted text for unfocused */
 #define RESIZE_MARGIN        6
 
 static inline uint32_t clamp_u32(uint32_t value, uint32_t max) {
@@ -477,32 +484,27 @@ static void draw_minimize_button(struct backbuffer *dst,
         return;
     }
 
-    uint32_t base = COLOR_BTN_BASE;
-    if (surface->min_btn_pressed) {
-        base = COLOR_BTN_PRESSED;
-    } else if (surface->min_btn_hover) {
-        base = COLOR_BTN_HOVER;
-    }
+    /* Traffic-light style: yellow circle for minimize */
+    bool focused = (surface->comp && surface == surface->comp->focused_surface);
+    uint32_t btn_color = focused ? COLOR_BTN_MINIMIZE : COLOR_BTN_INACTIVE;
+    if (surface->min_btn_pressed) btn_color = 0xFFE09B13u;
+    else if (surface->min_btn_hover) btn_color = 0xFFFDD44Bu;
+
+    int32_t cx = btn.x + btn.w / 2;
+    int32_t cy = btn.y + btn.h / 2;
+    int32_t r = (btn.w < btn.h ? btn.w : btn.h) / 2 - 1;
 
     char *base_ptr = (char *)dst->px;
     for (int32_t y = 0; y < clip.h; ++y) {
         int32_t gy = clip.y + y;
-        /* Use char* for row arithmetic, then cast to uint32_t* for pixel access */
         uint32_t *row = (uint32_t *)(base_ptr + (size_t)gy * dst->pitch);
         uint32_t *px = row + clip.x;
         for (int32_t x = 0; x < clip.w; ++x) {
             int32_t gx = clip.x + x;
-            int32_t lx = gx - btn.x;
-            int32_t ly = gy - btn.y;
-            uint32_t color = base;
-            if (lx >= 0 && ly >= 0 && lx < btn.w && ly < btn.h) {
-                /* Draw horizontal line (minus sign) in middle of button */
-                int32_t mid_y = btn.h / 2;
-                if (ly >= mid_y - 1 && ly <= mid_y + 1 && lx >= 2 && lx < btn.w - 2) {
-                    color = COLOR_BTN_CROSS;
-                }
+            int32_t dx = gx - cx, dy = gy - cy;
+            if (dx * dx + dy * dy <= r * r) {
+                px[x] = btn_color;
             }
-            px[x] = color;
         }
     }
 }
@@ -523,30 +525,34 @@ static void draw_close_button(struct backbuffer *dst,
         return;
     }
 
-    uint32_t base = COLOR_BTN_BASE;
-    if (surface->btn_pressed) {
-        base = COLOR_BTN_PRESSED;
-    } else if (surface->btn_hover) {
-        base = COLOR_BTN_HOVER;
-    }
+    /* Traffic-light style: red circle for close */
+    bool focused = (surface->comp && surface == surface->comp->focused_surface);
+    uint32_t btn_color = focused ? COLOR_BTN_CLOSE : COLOR_BTN_INACTIVE;
+    if (surface->btn_pressed) btn_color = 0xFFBF2519u;
+    else if (surface->btn_hover) btn_color = 0xFFFF6961u;
+
+    int32_t cx = btn.x + btn.w / 2;
+    int32_t cy = btn.y + btn.h / 2;
+    int32_t r = (btn.w < btn.h ? btn.w : btn.h) / 2 - 1;
 
     char *base_ptr = (char *)dst->px;
     for (int32_t y = 0; y < clip.h; ++y) {
         int32_t gy = clip.y + y;
-        /* Use char* for row arithmetic, then cast to uint32_t* for pixel access */
         uint32_t *row = (uint32_t *)(base_ptr + (size_t)gy * dst->pitch);
         uint32_t *px = row + clip.x;
         for (int32_t x = 0; x < clip.w; ++x) {
             int32_t gx = clip.x + x;
-            int32_t lx = gx - btn.x;
-            int32_t ly = gy - btn.y;
-            uint32_t color = base;
-            if (lx >= 0 && ly >= 0 && lx < btn.w && ly < btn.h) {
-                if (lx == ly || lx == (btn.w - 1 - ly)) {
-                    color = COLOR_BTN_CROSS;
+            int32_t dx = gx - cx, dy = gy - cy;
+            if (dx * dx + dy * dy <= r * r) {
+                /* Draw X glyph on hover */
+                int32_t lx = gx - btn.x, ly = gy - btn.y;
+                if (surface->btn_hover && (lx == ly || lx == (btn.w - 1 - ly)) &&
+                    lx >= 3 && lx < btn.w - 3) {
+                    px[x] = 0xFF4D0000u;  /* Dark red X */
+                } else {
+                    px[x] = btn_color;
                 }
             }
-            px[x] = color;
         }
     }
 }

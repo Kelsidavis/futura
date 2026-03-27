@@ -201,6 +201,32 @@ static void close_fd_in_task(fut_task_t *task, int fd) {
         return;
     }
 
+    /* Dispatch inotify IN_CLOSE_WRITE or IN_CLOSE_NOWRITE before releasing the file */
+    if (file->vnode && file->vnode->name[0]) {
+        extern void inotify_dispatch_event(const char *, uint32_t, const char *, uint32_t);
+        /* Determine parent directory path from vnode */
+        char close_dir[256];
+        const char *vname = file->vnode->name;
+        /* Use vnode parent path if available, otherwise "/" */
+        struct fut_vnode *pv = file->vnode->parent;
+        if (pv && pv->name[0]) {
+            int pi = 0;
+            if (pv->parent && pv->parent->name[0]) {
+                const char *pp = pv->name;
+                while (*pp && pi < 254) close_dir[pi++] = *pp++;
+            } else {
+                close_dir[pi++] = '/';
+            }
+            close_dir[pi] = '\0';
+        } else {
+            close_dir[0] = '/'; close_dir[1] = '\0';
+        }
+        uint32_t close_mask = (file->flags & O_WRONLY || file->flags & O_RDWR)
+            ? 0x00000008 /* IN_CLOSE_WRITE */
+            : 0x00000010 /* IN_CLOSE_NOWRITE */;
+        inotify_dispatch_event(close_dir, close_mask, vname, 0);
+    }
+
     task->fd_table[fd] = NULL;
     if (task->fd_flags) task->fd_flags[fd] = 0;
 

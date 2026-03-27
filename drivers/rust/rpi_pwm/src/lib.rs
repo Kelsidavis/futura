@@ -12,6 +12,7 @@
 #![no_std]
 #![forbid(unsafe_op_in_unsafe_fn)]
 #![allow(unexpected_cfgs)]
+extern crate common;
 
 use core::ptr::{read_volatile, write_volatile};
 
@@ -67,7 +68,7 @@ fn delay(n: u32) {
 /// Initialize PWM controller
 /// pwm_base: MMIO base of PWM (peripheral_base + 0x20C000)
 /// clk_base: MMIO base of clock manager (peripheral_base + 0x101000)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_pwm_init(pwm_base: u64, clk_base: u64) {
     unsafe {
         PWM_BASE = pwm_base as usize;
@@ -89,7 +90,7 @@ pub extern "C" fn rpi_pwm_init(pwm_base: u64, clk_base: u64) {
 
 /// Set PWM clock divider
 /// divider: integer divider (2-4095), higher = slower PWM frequency
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_pwm_set_clock(divider: u32) {
     let clk = unsafe { CLK_BASE };
     if clk == 0 { return; }
@@ -128,7 +129,7 @@ pub extern "C" fn rpi_pwm_set_clock(divider: u32) {
 /// channel: 0 or 1
 /// range: PWM period (in clock ticks)
 /// duty: duty cycle (0 to range)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_pwm_set_channel(channel: u8, range: u32, duty: u32) {
     let base = unsafe { PWM_BASE };
     if base == 0 { return; }
@@ -153,7 +154,7 @@ pub extern "C" fn rpi_pwm_set_channel(channel: u8, range: u32, duty: u32) {
 }
 
 /// Disable a PWM channel
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_pwm_disable_channel(channel: u8) {
     let base = unsafe { PWM_BASE };
     if base == 0 { return; }
@@ -169,7 +170,7 @@ pub extern "C" fn rpi_pwm_disable_channel(channel: u8) {
 
 /// Set fan speed (Pi4 uses PWM for case fan via GPIO18/ALT5)
 /// speed_percent: 0-100
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_pwm_set_fan_speed(speed_percent: u32) {
     let pct = speed_percent.min(100);
     let range = 1024u32;

@@ -34,7 +34,7 @@ unsafe extern "C" {
     fn fut_printf(fmt: *const u8, ...);
     fn pci_device_count() -> i32;
     fn pci_get_device(index: i32) -> *const PciDevice;
-    fn fut_virt_to_phys(vaddr: *const c_void) -> u64;
+    fn rust_virt_to_phys(vaddr: *const c_void) -> u64;
 }
 
 // ── PCI device structure (mirrors kernel/pci.h) ──
@@ -116,7 +116,7 @@ fn pci_write16(bus: u8, dev: u8, func: u8, offset: u8, val: u16) {
 // ── Physical address helper ──
 
 fn virt_to_phys(ptr: *const u8) -> u64 {
-    unsafe { fut_virt_to_phys(ptr as *const c_void) }
+    unsafe { rust_virt_to_phys(ptr as *const c_void) }
 }
 
 // ── MMIO helpers ──
@@ -1024,7 +1024,7 @@ static AHCI_BACKEND: FutBlkBackend = FutBlkBackend {
 /// identifies attached SATA drives, and registers the first drive as "sata0".
 /// Returns 0 on success, negative on error.
 #[unsafe(no_mangle)]
-pub extern "C" fn ahci_init() -> i32 {
+pub extern "C" fn rust_ahci_init() -> i32 {
     log("ahci: scanning PCI for AHCI controllers...");
 
     let (bus, dev, func) = match find_ahci_pci() {

@@ -14,6 +14,7 @@
 #![no_std]
 #![forbid(unsafe_op_in_unsafe_fn)]
 #![allow(unexpected_cfgs)]
+extern crate common;
 
 use core::ptr::{read_volatile, write_volatile};
 
@@ -176,7 +177,7 @@ fn send_cmd(base: usize, cmd: u32, arg: u32, resp_type: u8) -> (i32, [u32; 4]) {
 /// Initialize the eMMC2 SDHCI controller
 /// base_addr: physical MMIO base address of eMMC2
 /// Returns: 0 on success, negative on failure
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_emmc_init(base_addr: u64) -> i32 {
     let base = base_addr as usize;
 
@@ -272,7 +273,7 @@ pub extern "C" fn rpi_emmc_init(base_addr: u64) -> i32 {
 /// Read a single 512-byte block from the SD card
 /// lba: logical block address
 /// buffer: pointer to 512-byte output buffer
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_emmc_read_block(lba: u32, buffer: *mut u8) -> i32 {
     let base = unsafe { EMMC.base };
     if base == 0 || buffer.is_null() { return -1; }
@@ -318,7 +319,7 @@ pub extern "C" fn rpi_emmc_read_block(lba: u32, buffer: *mut u8) -> i32 {
 }
 
 /// Write a single 512-byte block to the SD card
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_emmc_write_block(lba: u32, buffer: *const u8) -> i32 {
     let base = unsafe { EMMC.base };
     if base == 0 || buffer.is_null() { return -1; }
@@ -364,7 +365,7 @@ pub extern "C" fn rpi_emmc_write_block(lba: u32, buffer: *const u8) -> i32 {
 }
 
 /// Check if eMMC driver is initialized
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_emmc_is_ready() -> bool {
     unsafe { EMMC.initialized }
 }

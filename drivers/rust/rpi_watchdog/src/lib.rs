@@ -18,6 +18,7 @@
 #![no_std]
 #![forbid(unsafe_op_in_unsafe_fn)]
 #![allow(unexpected_cfgs)]
+extern crate common;
 
 use core::ptr::{read_volatile, write_volatile};
 
@@ -55,7 +56,7 @@ fn mmio_write(addr: usize, val: u32) {
 
 /// Initialize the watchdog timer
 /// base_addr: MMIO base (peripheral_base + 0x100000)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_watchdog_init(base_addr: u64) {
     unsafe { WDOG_BASE = base_addr as usize; }
 }
@@ -63,7 +64,7 @@ pub extern "C" fn rpi_watchdog_init(base_addr: u64) {
 /// Start the watchdog with a timeout in seconds
 /// The system will reset if rpi_watchdog_feed() is not called within timeout.
 /// timeout_secs: 1-15 seconds (hardware maximum ~16s)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_watchdog_start(timeout_secs: u32) {
     let base = unsafe { WDOG_BASE };
     if base == 0 { return; }
@@ -82,7 +83,7 @@ pub extern "C" fn rpi_watchdog_start(timeout_secs: u32) {
 
 /// Feed (pet) the watchdog to prevent reset
 /// Must be called periodically within the timeout period
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_watchdog_feed(timeout_secs: u32) {
     let base = unsafe { WDOG_BASE };
     if base == 0 { return; }
@@ -93,7 +94,7 @@ pub extern "C" fn rpi_watchdog_feed(timeout_secs: u32) {
 }
 
 /// Stop the watchdog timer
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_watchdog_stop() {
     let base = unsafe { WDOG_BASE };
     if base == 0 { return; }
@@ -104,7 +105,7 @@ pub extern "C" fn rpi_watchdog_stop() {
 }
 
 /// Get remaining watchdog time in ticks (~15µs each)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_watchdog_remaining() -> u32 {
     let base = unsafe { WDOG_BASE };
     if base == 0 { return 0; }
@@ -113,7 +114,7 @@ pub extern "C" fn rpi_watchdog_remaining() -> u32 {
 
 /// Reboot the system immediately via watchdog
 /// This triggers a full system reset
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_system_reboot() {
     let base = unsafe { WDOG_BASE };
     if base == 0 { return; }
@@ -132,7 +133,7 @@ pub extern "C" fn rpi_system_reboot() {
 
 /// Power off the system (halt)
 /// Uses partition 63 in RSTS to signal power-off to firmware
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_system_poweroff() {
     let base = unsafe { WDOG_BASE };
     if base == 0 { return; }

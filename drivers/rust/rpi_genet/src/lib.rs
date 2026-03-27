@@ -15,6 +15,7 @@
 #![no_std]
 #![forbid(unsafe_op_in_unsafe_fn)]
 #![allow(unexpected_cfgs)]
+extern crate common;
 
 use core::ptr::{read_volatile, write_volatile};
 
@@ -42,7 +43,9 @@ const CMD_SPEED_1000: u32 = 2 << 2;
 const CMD_PROMISC: u32 = 1 << 4;
 const CMD_PAD_EN: u32 = 1 << 5;
 const CMD_CRC_FWD: u32 = 1 << 6;
+const CMD_HD_EN: u32 = 1 << 10;    // Half-duplex enable (clear = full-duplex)
 const CMD_SW_RESET: u32 = 1 << 13;
+const CMD_FULLDPLX: u32 = 0;       // Full-duplex is default (HD_EN cleared)
 
 // MDIO command bits
 const MDIO_START_BUSY: u32 = 1 << 29;
@@ -142,7 +145,7 @@ fn mdio_write(base: usize, phy: u32, reg: u32, val: u16) {
 /// Initialize the GENET Ethernet controller
 /// base_addr: MMIO base address (peripheral_base + 0x580000 for Pi4)
 /// Returns: 0 on success, negative on failure
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_genet_init(base_addr: u64) -> i32 {
     let base = base_addr as usize;
     unsafe {
@@ -166,7 +169,7 @@ pub extern "C" fn rpi_genet_init(base_addr: u64) -> i32 {
 
     // Set MAC address
     unsafe {
-        let mac = &GENET_MAC;
+        let mac = &*(&raw const GENET_MAC);
         mmio_write(base + UMAC_MAC0,
             ((mac[0] as u32) << 24) | ((mac[1] as u32) << 16) |
             ((mac[2] as u32) << 8) | (mac[3] as u32));
@@ -230,7 +233,7 @@ pub extern "C" fn rpi_genet_init(base_addr: u64) -> i32 {
 }
 
 /// Set MAC address
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_genet_set_mac(mac: *const u8) {
     if mac.is_null() { return; }
     unsafe {
@@ -241,7 +244,7 @@ pub extern "C" fn rpi_genet_set_mac(mac: *const u8) {
 }
 
 /// Check if Ethernet link is up
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_genet_link_up() -> bool {
     let base = unsafe { GENET_BASE };
     if base == 0 { return false; }
@@ -250,7 +253,7 @@ pub extern "C" fn rpi_genet_link_up() -> bool {
 }
 
 /// Get link speed in Mbps (10, 100, or 1000)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_genet_link_speed() -> u32 {
     let base = unsafe { GENET_BASE };
     if base == 0 { return 0; }
@@ -264,7 +267,7 @@ pub extern "C" fn rpi_genet_link_speed() -> u32 {
 }
 
 /// Check if GENET is initialized
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_genet_is_ready() -> bool {
     unsafe { GENET_INITIALIZED }
 }

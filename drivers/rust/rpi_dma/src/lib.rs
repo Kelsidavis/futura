@@ -14,6 +14,7 @@
 #![no_std]
 #![forbid(unsafe_op_in_unsafe_fn)]
 #![allow(unexpected_cfgs)]
+extern crate common;
 
 use core::ptr::{read_volatile, write_volatile};
 
@@ -84,7 +85,7 @@ fn channel_base(ch: u32) -> usize {
 
 /// Initialize DMA controller
 /// base_addr: MMIO base (peripheral_base + 0x007000)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_dma_init(base_addr: u64) {
     let base = base_addr as usize;
     unsafe {
@@ -104,7 +105,7 @@ pub extern "C" fn rpi_dma_init(base_addr: u64) {
 
 /// Allocate a free DMA channel
 /// Returns: channel number (0-15), or -1 if none available
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_dma_alloc_channel() -> i32 {
     unsafe {
         // Prefer channels 7-10 (full-featured), then lite channels
@@ -119,7 +120,7 @@ pub extern "C" fn rpi_dma_alloc_channel() -> i32 {
 }
 
 /// Free a DMA channel
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_dma_free_channel(ch: u32) {
     if (ch as usize) < MAX_DMA_CHANNELS {
         unsafe { DMA_CHANNEL_BUSY[ch as usize] = false; }
@@ -129,7 +130,7 @@ pub extern "C" fn rpi_dma_free_channel(ch: u32) {
 /// Start a memory-to-memory DMA transfer
 /// ch: DMA channel
 /// cb: pointer to DmaControlBlock (must be 32-byte aligned, bus address)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_dma_start(ch: u32, cb_bus_addr: u32) {
     if (ch as usize) >= MAX_DMA_CHANNELS { return; }
     let base = channel_base(ch);
@@ -146,7 +147,7 @@ pub extern "C" fn rpi_dma_start(ch: u32, cb_bus_addr: u32) {
 
 /// Check if a DMA transfer is complete
 /// Returns: true if done, false if still active
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_dma_is_done(ch: u32) -> bool {
     if (ch as usize) >= MAX_DMA_CHANNELS { return true; }
     let base = channel_base(ch);
@@ -156,7 +157,7 @@ pub extern "C" fn rpi_dma_is_done(ch: u32) -> bool {
 
 /// Wait for DMA transfer to complete (blocking)
 /// Returns: 0 on success, -1 on error, -2 on timeout
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_dma_wait(ch: u32) -> i32 {
     if (ch as usize) >= MAX_DMA_CHANNELS { return -1; }
     let base = channel_base(ch);
@@ -173,7 +174,7 @@ pub extern "C" fn rpi_dma_wait(ch: u32) -> i32 {
 }
 
 /// Abort an active DMA transfer
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_dma_abort(ch: u32) {
     if (ch as usize) >= MAX_DMA_CHANNELS { return; }
     let base = channel_base(ch);
@@ -187,7 +188,7 @@ pub extern "C" fn rpi_dma_abort(ch: u32) {
 /// Simple memory copy using DMA (for large transfers > 4KB)
 /// Allocates a channel, performs transfer, frees channel.
 /// src/dst must be bus addresses (physical).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_dma_memcpy(dst_bus: u32, src_bus: u32, len: u32) -> i32 {
     let ch = rpi_dma_alloc_channel();
     if ch < 0 { return -1; }

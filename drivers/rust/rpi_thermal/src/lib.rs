@@ -16,6 +16,7 @@
 #![no_std]
 #![forbid(unsafe_op_in_unsafe_fn)]
 #![allow(unexpected_cfgs)]
+extern crate common;
 
 // Clock IDs (mailbox protocol)
 const CLOCK_ARM: u32 = 3;
@@ -50,7 +51,7 @@ static mut GOVERNOR: ThermalGovernor = ThermalGovernor::OnDemand;
 static mut INITIALIZED: bool = false;
 
 // Mailbox FFI (calls into rpi_mbox Rust crate)
-extern "C" {
+unsafe extern "C" {
     fn rpi_mbox_get_temperature() -> u32;
     fn rpi_mbox_get_clock_rate(clock_id: u32) -> u32;
     fn rpi_mbox_set_clock_rate(clock_id: u32, rate: u32) -> u32;
@@ -60,7 +61,7 @@ extern "C" {
 
 /// Initialize thermal monitoring
 /// is_pi5: true for Pi5 (2.4 GHz max), false for Pi4 (1.8 GHz max)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_thermal_init(is_pi5: bool) -> i32 {
     unsafe {
         MAX_FREQ = if is_pi5 { FREQ_MAX_PI5 } else { FREQ_MAX_PI4 };
@@ -75,7 +76,7 @@ pub extern "C" fn rpi_thermal_init(is_pi5: bool) -> i32 {
 }
 
 /// Get current SoC temperature in millidegrees Celsius
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_thermal_get_temp() -> u32 {
     unsafe {
         if INITIALIZED {
@@ -86,13 +87,13 @@ pub extern "C" fn rpi_thermal_get_temp() -> u32 {
 }
 
 /// Get current SoC temperature in degrees Celsius (integer)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_thermal_get_temp_c() -> u32 {
     rpi_thermal_get_temp() / 1000
 }
 
 /// Get current ARM CPU frequency in Hz
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_thermal_get_freq() -> u32 {
     unsafe {
         if INITIALIZED {
@@ -103,14 +104,14 @@ pub extern "C" fn rpi_thermal_get_freq() -> u32 {
 }
 
 /// Get current ARM CPU frequency in MHz
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_thermal_get_freq_mhz() -> u32 {
     rpi_thermal_get_freq() / 1_000_000
 }
 
 /// Set ARM CPU frequency (Hz)
 /// Clamped to [FREQ_MIN, MAX_FREQ]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_thermal_set_freq(freq_hz: u32) -> u32 {
     let max = unsafe { MAX_FREQ };
     let target = freq_hz.clamp(FREQ_MIN, max);
@@ -122,7 +123,7 @@ pub extern "C" fn rpi_thermal_set_freq(freq_hz: u32) -> u32 {
 }
 
 /// Set thermal governor mode
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_thermal_set_governor(gov: u32) {
     unsafe {
         GOVERNOR = match gov {
@@ -138,7 +139,7 @@ pub extern "C" fn rpi_thermal_set_governor(gov: u32) {
 /// Run one thermal management tick (call periodically, e.g., every 1 second)
 /// Adjusts CPU frequency based on temperature and governor policy
 /// Returns: current temperature in millidegrees
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_thermal_tick() -> u32 {
     let temp = rpi_thermal_get_temp();
     let governor = unsafe { GOVERNOR };
@@ -176,19 +177,19 @@ pub extern "C" fn rpi_thermal_tick() -> u32 {
 }
 
 /// Check if thermal throttling is active
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_thermal_is_throttled() -> bool {
     unsafe { CURRENT_TEMP >= THROTTLE_TEMP }
 }
 
 /// Get maximum allowed frequency for this platform
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_thermal_get_max_freq() -> u32 {
     unsafe { MAX_FREQ }
 }
 
 /// Check if driver is initialized
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_thermal_is_ready() -> bool {
     unsafe { INITIALIZED }
 }

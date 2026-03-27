@@ -60,3 +60,24 @@ unsigned long getauxval(unsigned long type) {
     (void)type;
     return 0;  /* Disable CPU feature detection */
 }
+
+/*
+ * Simplified virt-to-phys wrapper for Rust drivers.
+ *
+ * Rust drivers call: fut_virt_to_phys(vaddr) -> phys_addr
+ * Kernel provides:   fut_virt_to_phys(ctx, vaddr, &paddr) -> status
+ *
+ * This wrapper bridges the two signatures.  For kernel-space addresses
+ * on x86_64, the mapping is a simple arithmetic offset (higher-half).
+ */
+#if defined(__x86_64__)
+#include <platform/x86_64/memory/pmap.h>
+uint64_t rust_virt_to_phys(const void *vaddr) {
+    return pmap_virt_to_phys((uintptr_t)vaddr);
+}
+#elif defined(__aarch64__)
+uint64_t rust_virt_to_phys(const void *vaddr) {
+    /* ARM64: identity-mapped kernel; adjust if using higher-half */
+    return (uint64_t)(uintptr_t)vaddr;
+}
+#endif

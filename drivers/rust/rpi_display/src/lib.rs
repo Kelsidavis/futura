@@ -18,6 +18,7 @@
 #![no_std]
 #![forbid(unsafe_op_in_unsafe_fn)]
 #![allow(unexpected_cfgs)]
+extern crate common;
 
 use core::ptr::write_volatile;
 
@@ -73,7 +74,7 @@ fn mmio_write(addr: usize, val: u32) {
 }
 
 fn mbox_call(base: usize, channel: u8) -> bool {
-    let buf_addr = unsafe { &MBOX.data as *const _ as u64 };
+    let buf_addr = unsafe { &raw const MBOX.data as *const _ as u64 };
     let phys = if buf_addr >= 0xFFFFFF8000000000 {
         buf_addr - 0xFFFFFF8040000000 + 0x40000000
     } else {
@@ -121,7 +122,7 @@ fn get_char_bitmap(ch: u8) -> &'static [u8] {
 /// mbox_base: mailbox MMIO base address
 /// width, height: requested resolution (0 = use EDID/default)
 /// Returns: 0 on success, negative on failure
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_display_init(mbox_base: u64, width: u32, height: u32) -> i32 {
     let base = mbox_base as usize;
     unsafe { MBOX_BASE_ADDR = base; }
@@ -132,7 +133,8 @@ pub extern "C" fn rpi_display_init(mbox_base: u64, width: u32, height: u32) -> i
 
     // Build multi-tag mailbox request
     unsafe {
-        let d = &mut MBOX.data;
+        let d = &raw mut MBOX.data;
+        let d = &mut *d;
         let mut i = 0;
         d[i] = 0; i += 1; // total size (filled later)
         d[i] = 0; i += 1; // request code
@@ -220,7 +222,7 @@ pub extern "C" fn rpi_display_init(mbox_base: u64, width: u32, height: u32) -> i
 }
 
 /// Write a pixel at (x, y) with 32-bit ARGB color
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_display_pixel(x: u32, y: u32, color: u32) {
     unsafe {
         if !DISPLAY_READY { return; }
@@ -231,7 +233,7 @@ pub extern "C" fn rpi_display_pixel(x: u32, y: u32, color: u32) {
 }
 
 /// Fill the entire screen with a solid color
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_display_clear(color: u32) {
     unsafe {
         if !DISPLAY_READY { return; }
@@ -246,7 +248,7 @@ pub extern "C" fn rpi_display_clear(color: u32) {
 }
 
 /// Fill a rectangle with a solid color
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_display_fill_rect(x: u32, y: u32, w: u32, h: u32, color: u32) {
     unsafe {
         if !DISPLAY_READY { return; }
@@ -262,7 +264,7 @@ pub extern "C" fn rpi_display_fill_rect(x: u32, y: u32, w: u32, h: u32, color: u
 }
 
 /// Draw a single character at pixel position (px, py)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_display_draw_char(px: u32, py: u32, ch: u8, fg: u32, bg: u32) {
     let bitmap = get_char_bitmap(ch);
     for row in 0..16u32 {
@@ -276,7 +278,7 @@ pub extern "C" fn rpi_display_draw_char(px: u32, py: u32, ch: u8, fg: u32, bg: u
 
 /// Write a string to the display at the current cursor position
 /// Handles \n (newline) and wrapping
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_display_puts(s: *const u8) {
     if s.is_null() { return; }
     unsafe {
@@ -315,35 +317,35 @@ pub extern "C" fn rpi_display_puts(s: *const u8) {
 }
 
 /// Get framebuffer physical address
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_display_get_fb_addr() -> u64 {
     unsafe { FB_ADDR as u64 }
 }
 
 /// Get framebuffer dimensions
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_display_get_width() -> u32 {
     unsafe { FB_WIDTH }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_display_get_height() -> u32 {
     unsafe { FB_HEIGHT }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_display_get_pitch() -> u32 {
     unsafe { FB_PITCH }
 }
 
 /// Check if display is initialized
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_display_is_ready() -> bool {
     unsafe { DISPLAY_READY }
 }
 
 /// Set cursor position (in character coordinates)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_display_set_cursor(col: u32, row: u32) {
     unsafe {
         CURSOR_X = col * CHAR_W;
@@ -352,7 +354,7 @@ pub extern "C" fn rpi_display_set_cursor(col: u32, row: u32) {
 }
 
 /// Set foreground and background colors for text output
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_display_set_colors(fg: u32, bg: u32) {
     // Would need mutable statics for FG_COLOR/BG_COLOR
     // For now these are compile-time constants

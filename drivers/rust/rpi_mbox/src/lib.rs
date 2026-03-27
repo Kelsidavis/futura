@@ -11,6 +11,7 @@
 #![no_std]
 #![forbid(unsafe_op_in_unsafe_fn)]
 #![allow(unexpected_cfgs)]
+extern crate common;
 
 use core::ptr::{read_volatile, write_volatile};
 
@@ -53,7 +54,7 @@ fn mbox_call(channel: u8) -> bool {
     let base = unsafe { MBOX_BASE };
     if base == 0 { return false; }
 
-    let buf_addr = unsafe { &MBOX_BUF.data as *const _ as u64 };
+    let buf_addr = unsafe { &raw const MBOX_BUF.data as *const _ as u64 };
     // Convert kernel VA to physical if needed
     let phys = if buf_addr >= 0xFFFFFF8000000000 {
         buf_addr - 0xFFFFFF8040000000 + 0x40000000
@@ -86,14 +87,14 @@ fn mbox_call(channel: u8) -> bool {
 
 // ── FFI exports ──
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_mbox_init(periph_base: u64) {
     // Pi4: +0xB880, Pi5: +0x13880
     // For simplicity, use the standard offset; caller can adjust
     unsafe { MBOX_BASE = (periph_base + 0xB880) as usize; }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_mbox_get_board_revision() -> u32 {
     unsafe {
         MBOX_BUF.data[0] = 7 * 4;
@@ -109,7 +110,7 @@ pub extern "C" fn rpi_mbox_get_board_revision() -> u32 {
     } else { 0 }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_mbox_get_board_serial() -> u64 {
     unsafe {
         MBOX_BUF.data[0] = 8 * 4;
@@ -126,7 +127,7 @@ pub extern "C" fn rpi_mbox_get_board_serial() -> u64 {
     } else { 0 }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_mbox_get_arm_memory(base: *mut u32, size: *mut u32) {
     unsafe {
         MBOX_BUF.data[0] = 8 * 4;
@@ -146,7 +147,7 @@ pub extern "C" fn rpi_mbox_get_arm_memory(base: *mut u32, size: *mut u32) {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_mbox_get_clock_rate(clock_id: u32) -> u32 {
     unsafe {
         MBOX_BUF.data[0] = 8 * 4;
@@ -163,7 +164,25 @@ pub extern "C" fn rpi_mbox_get_clock_rate(clock_id: u32) -> u32 {
     } else { 0 }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
+pub extern "C" fn rpi_mbox_set_clock_rate(clock_id: u32, rate: u32) -> u32 {
+    unsafe {
+        MBOX_BUF.data[0] = 9 * 4;
+        MBOX_BUF.data[1] = 0;
+        MBOX_BUF.data[2] = TAG_SET_CLOCK_RATE;
+        MBOX_BUF.data[3] = 12;
+        MBOX_BUF.data[4] = 0;
+        MBOX_BUF.data[5] = clock_id;
+        MBOX_BUF.data[6] = rate;
+        MBOX_BUF.data[7] = 0;  /* skip setting turbo */
+        MBOX_BUF.data[8] = 0;
+    }
+    if mbox_call(MBOX_CHANNEL_PROP) {
+        unsafe { MBOX_BUF.data[6] }
+    } else { 0 }
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_mbox_set_power_state(device_id: u32, on: bool) -> bool {
     unsafe {
         MBOX_BUF.data[0] = 8 * 4;
@@ -178,7 +197,7 @@ pub extern "C" fn rpi_mbox_set_power_state(device_id: u32, on: bool) -> bool {
     mbox_call(MBOX_CHANNEL_PROP)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_mbox_get_temperature() -> u32 {
     unsafe {
         MBOX_BUF.data[0] = 8 * 4;

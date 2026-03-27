@@ -18,6 +18,7 @@
 #![no_std]
 #![forbid(unsafe_op_in_unsafe_fn)]
 #![allow(unexpected_cfgs)]
+extern crate common;
 
 use core::ptr::{read_volatile, write_volatile};
 
@@ -75,7 +76,7 @@ fn mmio_write(addr: usize, val: u32) {
 
 /// Initialize GPIO controller
 /// base_addr: physical/virtual base of GPIO registers
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_gpio_init(base_addr: u64) {
     unsafe { GPIO_BASE = base_addr as usize; }
 }
@@ -83,7 +84,7 @@ pub extern "C" fn rpi_gpio_init(base_addr: u64) {
 /// Set the function of a GPIO pin
 /// pin: GPIO number (0-57)
 /// func: GpioFunc value (0=input, 1=output, 4=alt0, etc.)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_gpio_set_func(pin: u32, func: u32) {
     let base = unsafe { GPIO_BASE };
     if base == 0 || pin > GPIO_MAX_PIN { return; }
@@ -98,7 +99,7 @@ pub extern "C" fn rpi_gpio_set_func(pin: u32, func: u32) {
 }
 
 /// Set a GPIO pin high (output)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_gpio_set(pin: u32) {
     let base = unsafe { GPIO_BASE };
     if base == 0 || pin > GPIO_MAX_PIN { return; }
@@ -109,7 +110,7 @@ pub extern "C" fn rpi_gpio_set(pin: u32) {
 }
 
 /// Set a GPIO pin low (output)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_gpio_clear(pin: u32) {
     let base = unsafe { GPIO_BASE };
     if base == 0 || pin > GPIO_MAX_PIN { return; }
@@ -121,7 +122,7 @@ pub extern "C" fn rpi_gpio_clear(pin: u32) {
 
 /// Read the current level of a GPIO pin
 /// Returns: 1 if high, 0 if low
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_gpio_read(pin: u32) -> u32 {
     let base = unsafe { GPIO_BASE };
     if base == 0 || pin > GPIO_MAX_PIN { return 0; }
@@ -134,7 +135,7 @@ pub extern "C" fn rpi_gpio_read(pin: u32) -> u32 {
 /// Configure pull-up/pull-down for a GPIO pin (BCM2711 style)
 /// pin: GPIO number (0-57)
 /// pull: 0=none, 1=up, 2=down
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_gpio_set_pull(pin: u32, pull: u32) {
     let base = unsafe { GPIO_BASE };
     if base == 0 || pin > GPIO_MAX_PIN { return; }
@@ -150,7 +151,7 @@ pub extern "C" fn rpi_gpio_set_pull(pin: u32, pull: u32) {
 
 /// Configure GPIO14/15 for UART0 (ALT0 function)
 /// This is the standard serial console on Pi4/Pi5 header pins 8/10
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_gpio_setup_uart() {
     // GPIO14 = TXD0 (ALT0)
     rpi_gpio_set_func(14, GpioFunc::Alt0 as u32);
@@ -162,7 +163,7 @@ pub extern "C" fn rpi_gpio_setup_uart() {
 }
 
 /// Configure GPIO2/3 for I2C1 (ALT0 function)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_gpio_setup_i2c1() {
     rpi_gpio_set_func(2, GpioFunc::Alt0 as u32);  // SDA1
     rpi_gpio_set_func(3, GpioFunc::Alt0 as u32);  // SCL1
@@ -171,7 +172,7 @@ pub extern "C" fn rpi_gpio_setup_i2c1() {
 }
 
 /// Configure GPIO8-11 for SPI0 (ALT0 function)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_gpio_setup_spi0() {
     rpi_gpio_set_func(8, GpioFunc::Alt0 as u32);   // CE0
     rpi_gpio_set_func(9, GpioFunc::Alt0 as u32);   // MISO
@@ -180,7 +181,7 @@ pub extern "C" fn rpi_gpio_setup_spi0() {
 }
 
 /// Set activity LED state (Pi4: GPIO42)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_gpio_set_activity_led(on: bool) {
     rpi_gpio_set_func(42, GpioFunc::Output as u32);
     if on {

@@ -13,6 +13,7 @@
 #![no_std]
 #![forbid(unsafe_op_in_unsafe_fn)]
 #![allow(unexpected_cfgs)]
+extern crate common;
 
 use core::ptr::{read_volatile, write_volatile};
 
@@ -53,7 +54,7 @@ fn delay(n: u32) {
 
 /// Initialize the hardware RNG
 /// base_addr: MMIO base (peripheral_base + 0x104000)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_rng_init(base_addr: u64) -> i32 {
     let base = base_addr as usize;
     unsafe {
@@ -91,7 +92,7 @@ pub extern "C" fn rpi_rng_init(base_addr: u64) -> i32 {
 
 /// Get a random 32-bit value from the hardware RNG
 /// Returns: random u32, or 0 if RNG not ready
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_rng_read32() -> u32 {
     let base = unsafe { RNG_BASE };
     if base == 0 { return 0; }
@@ -113,7 +114,7 @@ pub extern "C" fn rpi_rng_read32() -> u32 {
 /// buf: output buffer
 /// len: number of bytes to fill
 /// Returns: number of bytes filled
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_rng_fill(buf: *mut u8, len: u32) -> u32 {
     if buf.is_null() || len == 0 { return 0; }
     let base = unsafe { RNG_BASE };
@@ -135,7 +136,7 @@ pub extern "C" fn rpi_rng_fill(buf: *mut u8, len: u32) -> u32 {
 }
 
 /// Get available entropy count (FIFO word count)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_rng_available() -> u32 {
     let base = unsafe { RNG_BASE };
     if base == 0 { return 0; }
@@ -143,7 +144,7 @@ pub extern "C" fn rpi_rng_available() -> u32 {
 }
 
 /// Check if RNG is initialized
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_rng_is_ready() -> bool {
     unsafe { RNG_INITIALIZED }
 }

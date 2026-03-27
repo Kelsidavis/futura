@@ -18,6 +18,7 @@
 #![no_std]
 #![forbid(unsafe_op_in_unsafe_fn)]
 #![allow(unexpected_cfgs)]
+extern crate common;
 
 use core::ptr::{read_volatile, write_volatile};
 
@@ -97,7 +98,7 @@ fn delay(n: u32) {
 /// Initialize the xHCI USB host controller
 /// base_addr: MMIO base of xHCI registers
 /// Returns: number of ports detected, or negative on failure
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_usb_init(base_addr: u64) -> i32 {
     let base = base_addr as usize;
     unsafe {
@@ -165,7 +166,7 @@ pub extern "C" fn rpi_usb_init(base_addr: u64) -> i32 {
 /// Get the connection status of a USB port
 /// port: port number (0-based)
 /// Returns: 1 if device connected, 0 if not, -1 if invalid
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_usb_port_connected(port: u32) -> i32 {
     unsafe {
         if !XHCI_INITIALIZED || port >= XHCI_NUM_PORTS { return -1; }
@@ -177,7 +178,7 @@ pub extern "C" fn rpi_usb_port_connected(port: u32) -> i32 {
 
 /// Get the speed of a connected USB device
 /// Returns: 1=Full(12M), 2=Low(1.5M), 3=High(480M), 4=Super(5G), 0=none
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_usb_port_speed(port: u32) -> u32 {
     unsafe {
         if !XHCI_INITIALIZED || port >= XHCI_NUM_PORTS { return 0; }
@@ -189,19 +190,19 @@ pub extern "C" fn rpi_usb_port_speed(port: u32) -> u32 {
 }
 
 /// Get the number of USB ports
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_usb_num_ports() -> u32 {
     unsafe { XHCI_NUM_PORTS }
 }
 
 /// Check if USB controller is initialized
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_usb_is_ready() -> bool {
     unsafe { XHCI_INITIALIZED }
 }
 
 /// Get speed name string for a speed value
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_usb_speed_name(speed: u32) -> *const u8 {
     match speed {
         1 => b"Full-Speed (12 Mbps)\0".as_ptr(),

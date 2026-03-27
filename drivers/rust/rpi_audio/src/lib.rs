@@ -20,6 +20,7 @@
 #![no_std]
 #![forbid(unsafe_op_in_unsafe_fn)]
 #![allow(unexpected_cfgs)]
+extern crate common;
 
 use core::ptr::{read_volatile, write_volatile};
 
@@ -71,7 +72,7 @@ fn mmio_write(addr: usize, val: u32) {
 /// Initialize PWM audio output
 /// pwm_base: PWM controller base (peripheral_base + 0x20C000)
 /// sample_rate: audio sample rate (44100 or 48000)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_audio_init(pwm_base: u64, sample_rate: u32) -> i32 {
     let base = pwm_base as usize;
     unsafe {
@@ -104,7 +105,7 @@ pub extern "C" fn rpi_audio_init(pwm_base: u64, sample_rate: u32) -> i32 {
 }
 
 /// Start audio playback (enables PWM channels in FIFO mode)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_audio_start() {
     let base = unsafe { AUDIO_PWM_BASE };
     if base == 0 { return; }
@@ -118,7 +119,7 @@ pub extern "C" fn rpi_audio_start() {
 }
 
 /// Stop audio playback
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_audio_stop() {
     let base = unsafe { AUDIO_PWM_BASE };
     if base == 0 { return; }
@@ -131,7 +132,7 @@ pub extern "C" fn rpi_audio_stop() {
 /// left: left channel sample (0 to range)
 /// right: right channel sample (0 to range)
 /// Returns: 0 if written, -1 if FIFO full
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_audio_write_sample(left: u32, right: u32) -> i32 {
     let base = unsafe { AUDIO_PWM_BASE };
     if base == 0 { return -1; }
@@ -149,7 +150,7 @@ pub extern "C" fn rpi_audio_write_sample(left: u32, right: u32) -> i32 {
 /// samples: pointer to int16_t pairs [L, R, L, R, ...]
 /// num_samples: number of sample PAIRS (not individual samples)
 /// Returns: number of sample pairs actually written
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_audio_write_pcm16(samples: *const i16, num_samples: u32) -> u32 {
     if samples.is_null() { return 0; }
     let base = unsafe { AUDIO_PWM_BASE };
@@ -181,7 +182,7 @@ pub extern "C" fn rpi_audio_write_pcm16(samples: *const i16, num_samples: u32) -
 /// Generate a simple beep tone (for system notifications)
 /// freq_hz: tone frequency (e.g., 440 for A4, 1000 for standard beep)
 /// duration_ms: duration in milliseconds
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_audio_beep(freq_hz: u32, duration_ms: u32) {
     let base = unsafe { AUDIO_PWM_BASE };
     if base == 0 { return; }
@@ -215,13 +216,13 @@ pub extern "C" fn rpi_audio_beep(freq_hz: u32, duration_ms: u32) {
 }
 
 /// Check if audio is initialized
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_audio_is_ready() -> bool {
     unsafe { AUDIO_INITIALIZED }
 }
 
 /// Check if audio is currently playing
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_audio_is_playing() -> bool {
     unsafe { AUDIO_PLAYING }
 }

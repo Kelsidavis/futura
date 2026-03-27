@@ -51,6 +51,7 @@
 #elif defined(__aarch64__)
 #include <platform/arm64/interrupt/irq.h>
 #include <platform/arm64/process.h>
+#include <platform/arm64/dtb.h>
 #endif
 
 /* Test and selftest function declarations provided by kernel/tests/test_main.h */
@@ -123,7 +124,6 @@ static int acquire_block_device_handle(const char *device_name, bool read_only, 
                read_only ? "READ" : "READ|WRITE");
     return 0;
 }
-extern void ahci_init(void);
 extern char boot_ptables_start[];
 extern char boot_ptables_end[];
 
@@ -1523,7 +1523,10 @@ void fut_kernel_main(void) {
         pci_enumerate();  /* Scan PCI bus for all devices */
     }
 #ifdef __x86_64__
-    ahci_init();  /* AHCI SATA controller — scans PCI for disk devices */
+    {
+        extern int rust_ahci_init(void);
+        rust_ahci_init();  /* AHCI SATA controller (Rust) — scans PCI for disk devices */
+    }
 #endif
 
     /* ── Rust hardware drivers ────────────────────────────────────── */
@@ -1715,6 +1718,126 @@ void fut_kernel_main(void) {
         virtio_input_rust_init();
     }
 #endif /* __x86_64__ */
+
+#ifdef __aarch64__
+    /* Apple Silicon + ARM64 Rust drivers */
+    {
+        extern uint64_t fut_platform_get_dtb(void);
+        uint64_t dtb = fut_platform_get_dtb();
+
+        extern fut_platform_info_t fut_dtb_parse(uint64_t dtb_ptr);
+        fut_platform_info_t info = fut_dtb_parse(dtb);
+
+        bool is_apple = info.type >= 5 && info.type <= 8;  /* M1-M4 */
+
+        if (is_apple) {
+            fut_printf("[INIT] Apple Silicon detected (%s), initializing drivers...\n",
+                       info.name ? info.name : "unknown");
+
+            /* Apple UART (Rust) — serial console */
+            if (info.uart_base) {
+                extern int rust_apple_uart_init(uint64_t base, uint32_t baudrate);
+                rust_apple_uart_init(info.uart_base, 115200);
+            }
+
+            /* Apple GPIO (Rust) */
+            if (info.gpio_base_apple) {
+                extern void *rust_gpio_init(uint64_t base, uint32_t npins);
+                rust_gpio_init(info.gpio_base_apple, 256);
+            }
+
+            /* Apple power management — calls rust_smc_init internally */
+            if (info.smc_base) {
+                extern int apple_power_platform_init(const fut_platform_info_t *info);
+                apple_power_platform_init(&info);
+            }
+
+            /* Apple PCIe + xHCI USB — calls rust_apple_pcie_init internally */
+            if (info.pcie_base) {
+                extern int apple_xhci_platform_init(const fut_platform_info_t *info);
+                apple_xhci_platform_init(&info);
+            }
+
+            /* Apple HID (keyboard/trackpad) — calls rust_spi_init/rust_i2c_init */
+            if (info.spi0_base || info.i2c0_base) {
+                extern int apple_hid_platform_init(const fut_platform_info_t *info);
+                apple_hid_platform_init(&info);
+            }
+
+            /* Apple DCP display — calls rust_dart_init internally */
+            if (info.has_dcp && info.dcp_base) {
+                extern int fut_apple_dcp_platform_init(const fut_platform_info_t *info);
+                fut_apple_dcp_platform_init(&info);
+            }
+
+            /* Apple audio (MCA codec) */
+            {
+                extern int apple_audio_init(const fut_platform_info_t *info);
+                apple_audio_init(&info);
+            }
+        }
+
+        if (info.type >= 1 && info.type <= 3) {
+            /* Raspberry Pi 3/4/5 drivers */
+            bool is_pi5 = (info.type == 3);
+            uint64_t periph_base = is_pi5 ? 0x1000000000ULL : 0xFE000000ULL;
+
+            fut_printf("[INIT] Raspberry Pi %s detected, initializing drivers...\n",
+                       info.name ? info.name : "unknown");
+
+            extern void rpi_mbox_init(uint64_t periph_base);
+            rpi_mbox_init(periph_base);
+
+            extern void rpi_gpio_init(uint64_t base_addr);
+            rpi_gpio_init(info.gpio_base);
+
+            extern void rpi_dma_init(uint64_t base_addr);
+            rpi_dma_init(periph_base + 0x7000);
+
+            extern int rpi_emmc_init(uint64_t base_addr);
+            rpi_emmc_init(periph_base + 0x340000);
+
+            extern int rpi_genet_init(uint64_t base_addr);
+            rpi_genet_init(periph_base + 0x580000);
+
+            extern int rpi_pcie_init(uint64_t base_addr);
+            rpi_pcie_init(periph_base + 0x500000);
+
+            extern int rpi_usb_init(uint64_t base_addr);
+            rpi_usb_init(periph_base + 0x980000);
+
+            extern int rpi_rng_init(uint64_t base_addr);
+            rpi_rng_init(periph_base + 0x104000);
+
+            extern void rpi_watchdog_init(uint64_t base_addr);
+            rpi_watchdog_init(periph_base + 0x100000);
+
+            extern int rpi_thermal_init(bool is_pi5);
+            rpi_thermal_init(is_pi5);
+
+            extern int rpi_i2c_init(uint32_t bus, uint64_t base_addr, uint32_t speed_hz);
+            rpi_i2c_init(1, periph_base + 0x804000, 100000);
+
+            extern int rpi_spi_init(uint64_t base_addr, uint32_t speed_hz, uint8_t mode);
+            rpi_spi_init(periph_base + 0x204000, 1000000, 0);
+
+            extern int rpi_display_init(uint64_t mbox_base, uint32_t width, uint32_t height);
+            rpi_display_init(periph_base + 0xB880, 1920, 1080);
+
+            extern int rpi_audio_init(uint64_t pwm_base, uint32_t sample_rate);
+            rpi_audio_init(periph_base + 0x20C000, 48000);
+
+            extern void rpi_pwm_init(uint64_t pwm_base, uint64_t clk_base);
+            rpi_pwm_init(periph_base + 0x20C000, periph_base + 0x101000);
+        }
+
+        /* VirtIO input — works on both QEMU virt and Apple Silicon */
+        {
+            extern int virtio_input_rust_init(void);
+            virtio_input_rust_init();
+        }
+    }
+#endif /* __aarch64__ */
 
     fut_printf("[INIT] Rust hardware drivers initialized\n");
     /* ── End Rust hardware drivers ────────────────────────────────── */

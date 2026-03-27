@@ -11,6 +11,7 @@
 #![no_std]
 #![forbid(unsafe_op_in_unsafe_fn)]
 #![allow(unexpected_cfgs)]
+extern crate common;
 
 use core::ptr::{read_volatile, write_volatile};
 
@@ -64,7 +65,7 @@ fn delay(n: u32) {
 /// base_addr: MMIO base (peripheral_base + 0x204000)
 /// speed_hz: SPI clock speed (e.g., 1000000 for 1 MHz)
 /// mode: SPI mode 0-3 (CPOL/CPHA combination)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_spi_init(base_addr: u64, speed_hz: u32, mode: u8) -> i32 {
     let base = base_addr as usize;
     unsafe { SPI_BASE = base; }
@@ -95,7 +96,7 @@ pub extern "C" fn rpi_spi_init(base_addr: u64, speed_hz: u32, mode: u8) -> i32 {
 /// rx: buffer for received data (NULL for write-only)
 /// len: number of bytes to transfer
 /// Returns: 0 on success, negative on error
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_spi_transfer(cs: u8, tx: *const u8, rx: *mut u8, len: u32) -> i32 {
     let base = unsafe { SPI_BASE };
     if base == 0 { return -1; }
@@ -155,19 +156,19 @@ pub extern "C" fn rpi_spi_transfer(cs: u8, tx: *const u8, rx: *mut u8, len: u32)
 }
 
 /// Write-only SPI transfer
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_spi_write(cs: u8, data: *const u8, len: u32) -> i32 {
     rpi_spi_transfer(cs, data, core::ptr::null_mut(), len)
 }
 
 /// Read-only SPI transfer (sends 0xFF while reading)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_spi_read(cs: u8, data: *mut u8, len: u32) -> i32 {
     rpi_spi_transfer(cs, core::ptr::null(), data, len)
 }
 
 /// Set SPI clock speed
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_spi_set_speed(speed_hz: u32) {
     let base = unsafe { SPI_BASE };
     if base == 0 { return; }
@@ -177,7 +178,7 @@ pub extern "C" fn rpi_spi_set_speed(speed_hz: u32) {
 }
 
 /// Check if SPI is initialized
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_spi_is_ready() -> bool {
     unsafe { SPI_BASE != 0 }
 }

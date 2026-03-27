@@ -16,6 +16,7 @@
 #![no_std]
 #![forbid(unsafe_op_in_unsafe_fn)]
 #![allow(unexpected_cfgs)]
+extern crate common;
 
 use core::ptr::{read_volatile, write_volatile};
 
@@ -87,7 +88,7 @@ fn delay(n: u32) {
 /// bus: bus number (0-3)
 /// base_addr: MMIO base of BSC controller
 /// speed_hz: clock speed (100000 for standard, 400000 for fast)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_i2c_init(bus: u32, base_addr: u64, speed_hz: u32) -> i32 {
     if bus as usize >= MAX_BUSES { return -1; }
     let base = base_addr as usize;
@@ -119,7 +120,7 @@ pub extern "C" fn rpi_i2c_init(bus: u32, base_addr: u64, speed_hz: u32) -> i32 {
 /// data: pointer to bytes to write
 /// len: number of bytes
 /// Returns: 0 on success, -1 on NACK, -2 on timeout
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_i2c_write(bus: u32, addr: u8, data: *const u8, len: u32) -> i32 {
     if bus as usize >= MAX_BUSES || data.is_null() { return -1; }
     let base = unsafe { BUSES[bus as usize].base };
@@ -174,7 +175,7 @@ pub extern "C" fn rpi_i2c_write(bus: u32, addr: u8, data: *const u8, len: u32) -
 /// data: pointer to buffer for received bytes
 /// len: number of bytes to read
 /// Returns: 0 on success, negative on error
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_i2c_read(bus: u32, addr: u8, data: *mut u8, len: u32) -> i32 {
     if bus as usize >= MAX_BUSES || data.is_null() { return -1; }
     let base = unsafe { BUSES[bus as usize].base };
@@ -223,7 +224,7 @@ pub extern "C" fn rpi_i2c_read(bus: u32, addr: u8, data: *mut u8, len: u32) -> i
 
 /// Write then read (combined transaction) — common for register reads
 /// Writes reg_addr byte(s), then reads len bytes back
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_i2c_write_read(bus: u32, addr: u8,
                                       write_data: *const u8, write_len: u32,
                                       read_data: *mut u8, read_len: u32) -> i32 {
@@ -235,7 +236,7 @@ pub extern "C" fn rpi_i2c_write_read(bus: u32, addr: u8,
 /// Scan for I2C devices on a bus (probe addresses 0x03-0x77)
 /// found: output array for detected addresses (max 112 entries)
 /// Returns: number of devices found
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_i2c_scan(bus: u32, found: *mut u8) -> i32 {
     if bus as usize >= MAX_BUSES { return -1; }
     let base = unsafe { BUSES[bus as usize].base };

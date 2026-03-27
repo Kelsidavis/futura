@@ -16,6 +16,7 @@
 #![no_std]
 #![forbid(unsafe_op_in_unsafe_fn)]
 #![allow(unexpected_cfgs)]
+extern crate common;
 
 use core::ptr::{read_volatile, write_volatile};
 
@@ -72,7 +73,7 @@ fn delay(n: u32) {
 /// Initialize the PCIe root complex controller
 /// base_addr: MMIO base (0xFD500000 for Pi4, 0x1000120000 for Pi5)
 /// Returns: 0 on success with link up, 1 if no link, negative on error
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_pcie_init(base_addr: u64) -> i32 {
     let base = base_addr as usize;
     unsafe {
@@ -131,7 +132,7 @@ pub extern "C" fn rpi_pcie_init(base_addr: u64) -> i32 {
 /// Read PCIe configuration space (Type 0/1)
 /// bdf: bus/device/function (bus<<8 | dev<<3 | func)
 /// offset: register offset (0-4095)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_pcie_cfg_read(bdf: u32, offset: u32) -> u32 {
     let base = unsafe { PCIE_BASE };
     if base == 0 || !unsafe { PCIE_LINK_UP } { return 0xFFFFFFFF; }
@@ -142,7 +143,7 @@ pub extern "C" fn rpi_pcie_cfg_read(bdf: u32, offset: u32) -> u32 {
 }
 
 /// Write PCIe configuration space
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_pcie_cfg_write(bdf: u32, offset: u32, val: u32) {
     let base = unsafe { PCIE_BASE };
     if base == 0 || !unsafe { PCIE_LINK_UP } { return; }
@@ -152,13 +153,13 @@ pub extern "C" fn rpi_pcie_cfg_write(bdf: u32, offset: u32, val: u32) {
 }
 
 /// Check if PCIe link is up
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_pcie_link_up() -> bool {
     unsafe { PCIE_LINK_UP }
 }
 
 /// Get link speed (1=Gen1, 2=Gen2, 3=Gen3)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_pcie_link_speed() -> u32 {
     let base = unsafe { PCIE_BASE };
     if base == 0 { return 0; }
@@ -168,7 +169,7 @@ pub extern "C" fn rpi_pcie_link_speed() -> u32 {
 
 /// Enumerate devices on bus 0 (root port only)
 /// Returns vendor/device ID of first device, or 0 if none
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_pcie_enumerate_bus0() -> u32 {
     if !unsafe { PCIE_LINK_UP } { return 0; }
 
@@ -179,7 +180,7 @@ pub extern "C" fn rpi_pcie_enumerate_bus0() -> u32 {
 }
 
 /// Check if controller is initialized
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rpi_pcie_is_ready() -> bool {
     unsafe { PCIE_INITIALIZED }
 }

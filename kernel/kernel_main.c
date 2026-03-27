@@ -1162,6 +1162,10 @@ void fut_kernel_main(void) {
         devfs_create_chr("/dev/stderr",  4, 0);
         devfs_create_chr("/dev/tty",     4, 0);   /* Controlling terminal */
         devfs_create_chr("/dev/console", 5, 1);   /* System console (Linux major 5, minor 1) */
+
+        /* /dev/fd → /proc/self/fd symlink (used by bash, shell scripts, process substitution) */
+        extern long sys_symlink(const char *, const char *);
+        sys_symlink("/proc/self/fd", "/dev/fd");
     }
 
     fut_printf("[INIT] Root filesystem mounted (ramfs at /)\n");
@@ -1478,7 +1482,7 @@ void fut_kernel_main(void) {
         planned_tests += 17u; /* clock_sched: getres, sched_param, sched_policy, itimer, rusage, times, getpriority, setpriority, getpriority(-who), setpriority(-who), unshare(0), unshare(invalid), rr_get_interval, clock_gettime, posix_timer_sigev_value, posix_timer_si_timer, itimer_virtual */
         planned_tests += 22u; /* vfs: O_TRUNC, O_APPEND, relpath, dir_mtime, readlink, hardlink, mount, renameat2, inotify, inotify_rename, inotify_attrib, inotify_close, inotify_access, inotify_modify, inotify_ftruncate, inotify_utimensat, inotify_truncate, inotify_delete, umount expire, dotdot, eisdir, chdir_dotdot */
         planned_tests += 17u; /* poll: file ready, eventfd not-ready, eventfd ready, POLLNVAL, select file, select pipe, pselect6 pipe, pselect6 sigmask restore, timeout-only sleep, timerfd readiness, signalfd readiness, pipe EOF, select pipe EOF, select timerfd wakeup, poll negative fd, POLLRDNORM, select timeout update */
-        planned_tests += 2173u; /* misc(2173): ..., uts_ns (2170), dirs (2171-2172), subuid (2173) */
+        planned_tests += 2174u; /* misc(2174): ..., dirs (2171-2172), subuid (2173), devfd (2174) */
         // planned_tests += 1u; /* block */
         // planned_tests += 1u; /* futfs */
         // planned_tests += 1u; /* net */

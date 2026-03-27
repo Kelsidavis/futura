@@ -66155,6 +66155,21 @@ void fut_misc_test_thread(void *arg) {
         extern long sys_read(int, void *, size_t);
         extern long sys_close(int);
 
+        /* Test 2174: /dev/fd symlink → /proc/self/fd */
+        fut_printf("[MISC-TEST] Test 2174: /dev/fd → /proc/self/fd\n");
+        {
+            extern long sys_readlink(const char *, char *, size_t);
+            static char lbuf[64];
+            long n = sys_readlink("/dev/fd", lbuf, sizeof(lbuf) - 1);
+            if (n > 0) {
+                lbuf[n] = '\0';
+                if (lbuf[0] == '/' && lbuf[1] == 'p' && lbuf[2] == 'r' && lbuf[3] == 'o') {
+                    fut_printf("[MISC-TEST] ✓ Test 2174: /dev/fd → %s\n", lbuf);
+                    fut_test_pass();
+                } else { fut_printf("[MISC-TEST] ✗ Test 2174: → %s\n", lbuf); fut_test_fail(2174); }
+            } else { fut_printf("[MISC-TEST] ✗ Test 2174: readlink=%ld\n", n); fut_test_fail(2174); }
+        }
+
         /* Test 2173: /etc/subuid contains root mapping */
         fut_printf("[MISC-TEST] Test 2173: /etc/subuid\n");
         {

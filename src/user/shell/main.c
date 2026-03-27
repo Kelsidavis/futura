@@ -124,6 +124,9 @@ static void cmd_md5sum(int argc, char *argv[]);
 static void cmd_strings(int argc, char *argv[]);
 static void cmd_file(int argc, char *argv[]);
 static void cmd_mkfifo(int argc, char *argv[]);
+static void cmd_expand(int argc, char *argv[]);
+static void cmd_unexpand(int argc, char *argv[]);
+static void cmd_install(int argc, char *argv[]);
 static void cmd_cmp(int argc, char *argv[]);
 static void cmd_fold(int argc, char *argv[]);
 static void cmd_comm(int argc, char *argv[]);
@@ -531,7 +534,7 @@ static size_t common_prefix_len(const char *s1, const char *s2) {
 static void complete_command(char *buf, size_t *pos, size_t max_len) {
     /* List of builtin commands */
     const char *builtins[] = {
-        "arp", "bg", "brctl", "cd", "chgrp", "chmod", "chroot", "clear", "cmp", "comm", "conntrack", "date", "dd", "df", "dhclient", "dmesg", "echo", "edit", "ethtool", "file", "fold", "hexdump", "lsof", "md5sum", "mkfifo", "nc", "nice", "nohup", "pgrep", "pidof", "pkill", "poweroff", "reboot", "renice", "seq", "sleep", "strings", "tac", "time", "timeout", "traceroute", "tty", "wget", "xxd", "exit", "export", "fg", "free",
+        "arp", "bg", "brctl", "cd", "chgrp", "chmod", "chroot", "clear", "cmp", "comm", "conntrack", "date", "dd", "df", "dhclient", "dmesg", "echo", "edit", "ethtool", "expand", "file", "fold", "hexdump", "install", "lsof", "md5sum", "mkfifo", "nc", "nice", "nohup", "pgrep", "pidof", "pkill", "poweroff", "reboot", "renice", "seq", "sleep", "strings", "tac", "time", "timeout", "traceroute", "tty", "unexpand", "wget", "xxd", "exit", "export", "fg", "free",
         "help", "hostname", "httpd", "id", "ifconfig", "iostat", "ipcs", "iptables", "jobs", "kill", "logger", "losetup", "ls", "lsblk", "lspci", "mkfs", "mount", "netstat",
         ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "getconf", "history", "ip", "ln", "mktemp", "more", "nproc", "nslookup", "ping", "printf", "ps", "pwd", "read", "readlink", "set", "sha256sum", "shutdown", "source", "ss", "stat", "stty", "sync", "sysctl", "sysinfo", "tc", "test", "top", "trap", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "vmstat", "wait", "watch", "wdctl", "which", "whoami", "xargs", "yes", NULL
     };
@@ -1194,6 +1197,9 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  cmp [-s] F1 F2  - Compare files byte by byte\n");
     write_str(1, "  fold [-w N] file- Wrap lines to N columns (default 80)\n");
     write_str(1, "  comm FILE1 FILE2- Compare sorted files line by line\n");
+    write_str(1, "  expand [-t N] f - Convert tabs to spaces\n");
+    write_str(1, "  unexpand [-t N] f- Convert spaces to tabs\n");
+    write_str(1, "  install [-m] s d- Copy file with mode\n");
     write_str(1, "  lsof            - List open files\n");
     write_str(1, "  which <cmd>     - Find command in PATH\n");
     write_str(1, "  du [path]       - Show disk usage (KB)\n");
@@ -8941,6 +8947,15 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "comm") == 0) {
         cmd_comm(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "expand") == 0) {
+        cmd_expand(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "unexpand") == 0) {
+        cmd_unexpand(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "install") == 0) {
+        cmd_install(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "alias") == 0) {
         if (argc < 2) {
             /* List all aliases */
@@ -9503,7 +9518,10 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "mkfifo") == 0 ||
             strcmp_simple(cmd, "cmp") == 0 ||
             strcmp_simple(cmd, "fold") == 0 ||
-            strcmp_simple(cmd, "comm") == 0);
+            strcmp_simple(cmd, "comm") == 0 ||
+            strcmp_simple(cmd, "expand") == 0 ||
+            strcmp_simple(cmd, "unexpand") == 0 ||
+            strcmp_simple(cmd, "install") == 0);
 }
 
 /* Parse command line into pipeline stages separated by '|' */
@@ -11105,6 +11123,107 @@ static void cmd_comm(int argc, char *argv[]) {
             if (l1[0]) { int j = 0; while (l1[j]) j++; p1 -= (j + 1); }  /* Rewind p1 */
         }
     }
+}
+
+/* ── expand/unexpand: tab/space conversion ── */
+static void cmd_expand(int argc, char *argv[]) {
+    int tabstop = 8;
+    int file_start = 1;
+    if (argc >= 3 && argv[1][0] == '-' && argv[1][1] == 't') {
+        tabstop = 0;
+        for (const char *p = argv[2]; *p >= '0' && *p <= '9'; p++)
+            tabstop = tabstop * 10 + (*p - '0');
+        if (tabstop <= 0) tabstop = 8;
+        file_start = 3;
+    }
+    int fd = 0;
+    if (file_start < argc) {
+        fd = sys_open(argv[file_start], O_RDONLY, 0);
+        if (fd < 0) { write_str(2, "expand: cannot open file\n"); return; }
+    }
+    static char buf[4096];
+    ssize_t n;
+    int col = 0;
+    while ((n = sys_read(fd, buf, sizeof(buf))) > 0) {
+        for (ssize_t i = 0; i < n; i++) {
+            if (buf[i] == '\t') {
+                int spaces = tabstop - (col % tabstop);
+                for (int j = 0; j < spaces; j++) { char sp = ' '; sys_write(1, &sp, 1); col++; }
+            } else if (buf[i] == '\n') {
+                sys_write(1, &buf[i], 1); col = 0;
+            } else {
+                sys_write(1, &buf[i], 1); col++;
+            }
+        }
+    }
+    if (fd > 0) sys_close(fd);
+}
+
+static void cmd_unexpand(int argc, char *argv[]) {
+    int tabstop = 8;
+    int file_start = 1;
+    if (argc >= 3 && argv[1][0] == '-' && argv[1][1] == 't') {
+        tabstop = 0;
+        for (const char *p = argv[2]; *p >= '0' && *p <= '9'; p++)
+            tabstop = tabstop * 10 + (*p - '0');
+        if (tabstop <= 0) tabstop = 8;
+        file_start = 3;
+    }
+    int fd = 0;
+    if (file_start < argc) {
+        fd = sys_open(argv[file_start], O_RDONLY, 0);
+        if (fd < 0) { write_str(2, "unexpand: cannot open file\n"); return; }
+    }
+    static char buf[4096];
+    ssize_t n;
+    int col = 0;
+    int leading = 1;  /* only convert leading spaces */
+    while ((n = sys_read(fd, buf, sizeof(buf))) > 0) {
+        for (ssize_t i = 0; i < n; i++) {
+            if (buf[i] == ' ' && leading) {
+                col++;
+                if (col % tabstop == 0) { char tab = '\t'; sys_write(1, &tab, 1); }
+                else if (i + 1 >= n || buf[i+1] != ' ') {
+                    /* Flush remaining spaces */
+                    int rem = col % tabstop;
+                    for (int j = 0; j < rem; j++) { char sp = ' '; sys_write(1, &sp, 1); }
+                }
+            } else if (buf[i] == '\n') {
+                sys_write(1, &buf[i], 1); col = 0; leading = 1;
+            } else {
+                leading = 0; sys_write(1, &buf[i], 1); col++;
+            }
+        }
+    }
+    if (fd > 0) sys_close(fd);
+}
+
+/* ── install: copy files with attributes ── */
+static void cmd_install(int argc, char *argv[]) {
+    /* Simplified install: copy file with optional -m mode */
+    int mode = 0755;
+    int file_start = 1;
+    if (argc >= 4 && argv[1][0] == '-' && argv[1][1] == 'm') {
+        mode = 0;
+        for (const char *p = argv[2]; *p >= '0' && *p <= '7'; p++)
+            mode = mode * 8 + (*p - '0');
+        file_start = 3;
+    }
+    if (file_start + 1 >= argc) {
+        write_str(2, "usage: install [-m MODE] SOURCE DEST\n"); return;
+    }
+    /* Copy file */
+    int src = sys_open(argv[file_start], O_RDONLY, 0);
+    if (src < 0) { write_str(2, "install: cannot open source\n"); return; }
+    int dst = sys_open(argv[file_start + 1], O_WRONLY | O_CREAT | O_TRUNC, mode);
+    if (dst < 0) { sys_close(src); write_str(2, "install: cannot create dest\n"); return; }
+    static char buf[4096];
+    ssize_t n;
+    while ((n = sys_read(src, buf, sizeof(buf))) > 0)
+        sys_write(dst, buf, n);
+    sys_close(src); sys_close(dst);
+    /* Set mode */
+    sys_chmod_call(argv[file_start + 1], (long)mode);
 }
 
 int main(int argc, char **argv, char **envp) {

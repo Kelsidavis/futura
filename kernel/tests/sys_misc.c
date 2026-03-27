@@ -57957,6 +57957,42 @@ __attribute__((noinline)) static void test_net_procfs_devnodes(void) {
 /* ============================================================
  * Tests 2092-2097: final coverage (scripts, devices, sysctls)
  * ============================================================ */
+/* ============================================================
+ * Tests 2098-2102: /proc hardware/system entries
+ * ============================================================ */
+__attribute__((noinline)) static void test_proc_hw_entries(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_close(int);
+
+    #define TEST_PROC_HW(num, path, expect) \
+    fut_printf("[MISC-TEST] Test " #num ": " path "\n"); \
+    { \
+        long fd = sys_open(path, 0, 0); \
+        if (fd >= 0) { \
+            static char buf[256]; \
+            long n = sys_read((int)fd, buf, 255); \
+            sys_close((int)fd); \
+            if (n > 5) { \
+                buf[n < 255 ? n : 254] = '\0'; \
+                bool ok = false; \
+                for (long i = 0; i < n - 2 && !ok; i++) \
+                    if (buf[i] == expect[0] && buf[i+1] == expect[1]) ok = true; \
+                if (ok) { fut_printf("[MISC-TEST] ✓ Test " #num ": ok (%ld bytes)\n", n); fut_test_pass(); } \
+                else { fut_printf("[MISC-TEST] ✗ Test " #num ": content mismatch\n"); fut_test_fail(num); } \
+            } else { fut_printf("[MISC-TEST] ✗ Test " #num ": n=%ld\n", n); fut_test_fail(num); } \
+        } else { fut_printf("[MISC-TEST] ✗ Test " #num ": open=%ld\n", fd); fut_test_fail(num); } \
+    }
+
+    TEST_PROC_HW(2098, "/proc/crypto", "ae")      /* "aes" */
+    TEST_PROC_HW(2099, "/proc/softirqs", "TI")     /* "TIMER" */
+    TEST_PROC_HW(2100, "/proc/consoles", "tt")      /* "tty" */
+    TEST_PROC_HW(2101, "/proc/iomem", "Sy")         /* "System" */
+    TEST_PROC_HW(2102, "/proc/ioports", "dm")        /* "dma" */
+
+    #undef TEST_PROC_HW
+}
+
 __attribute__((noinline)) static void test_final_coverage(void) {
     extern long sys_open(const char *, int, int);
     extern long sys_read(int, void *, size_t);
@@ -64757,6 +64793,7 @@ void fut_misc_test_thread(void *arg) {
     test_loop_device(); /* Tests 1885-1887 */
     test_per_iface_conf(); /* Tests 1869-1871 */
 
+    test_proc_hw_entries(); /* Tests 2098-2102 */
     test_final_coverage(); /* Tests 2092-2097 */
     test_edge_cases(); /* Tests 2082-2091 */
     test_random_vm_entries(); /* Tests 2078-2081 */

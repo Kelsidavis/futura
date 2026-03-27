@@ -1,0 +1,12 @@
+[package]
+name = "rpi_pcie"
+version = "0.1.0"
+edition = "2024"
+license = "MPL-2.0"
+description = "Raspberry Pi 4/5 PCIe root complex controller driver"
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+common = { path = "../common" }

@@ -1,0 +1,12 @@
+[package]
+name = "rpi_dma"
+version = "0.1.0"
+edition = "2024"
+license = "MPL-2.0"
+description = "Raspberry Pi BCM2711 DMA controller driver"
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+common = { path = "../common" }

@@ -212,6 +212,22 @@ struct net_snmp_stats {
     uint64_t icmp_out_echo_reply;
     uint64_t icmp_out_time_exceeded;
     uint64_t icmp_out_dest_unreachable;
+    /* TCP counters (RFC 4022 / /proc/net/snmp) */
+    uint64_t tcp_active_opens;
+    uint64_t tcp_passive_opens;
+    uint64_t tcp_attempt_fails;
+    uint64_t tcp_estab_resets;
+    uint64_t tcp_curr_estab;
+    uint64_t tcp_in_segs;
+    uint64_t tcp_out_segs;
+    uint64_t tcp_retrans_segs;
+    uint64_t tcp_in_errs;
+    uint64_t tcp_out_rsts;
+    /* UDP counters (RFC 4113 / /proc/net/snmp) */
+    uint64_t udp_in_datagrams;
+    uint64_t udp_no_ports;
+    uint64_t udp_in_errors;
+    uint64_t udp_out_datagrams;
 };
 
 extern struct net_snmp_stats g_net_stats;

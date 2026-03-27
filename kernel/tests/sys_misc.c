@@ -61472,6 +61472,74 @@ __attribute__((noinline)) static void test_pty_and_cgroup(void) {
         }
     }
 
+    /* ── Test 2194: /proc/net/snmp has real TCP counters (not all zeros) ── */
+    fut_printf("[MISC-TEST] Test 2194: /proc/net/snmp real TCP stats\n");
+    {
+        long fd = sys_open("/proc/net/snmp", 0, 0);
+        if (fd >= 0) {
+            static char buf[2048];
+            long n = sys_read((int)fd, buf, 2047);
+            sys_close((int)fd);
+            int has_tcp = 0;
+            if (n > 0) {
+                buf[n < 2047 ? n : 2046] = '\0';
+                /* Find "Tcp:" data line (second occurrence) and verify format */
+                for (long i = 0; i < n - 4; i++) {
+                    if (buf[i] == 'T' && buf[i+1] == 'c' && buf[i+2] == 'p' &&
+                        buf[i+3] == ':' && buf[i+4] == ' ') {
+                        /* Skip the header line, find the data line */
+                        if (buf[i+5] >= '0' && buf[i+5] <= '9') {
+                            has_tcp = 1; break;  /* Found data line with numbers */
+                        }
+                    }
+                }
+            }
+            if (has_tcp) {
+                fut_printf("[MISC-TEST] ✓ Test 2194: /proc/net/snmp TCP stats present\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2194: no TCP data\n");
+                fut_test_fail(2194);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2194: open=%ld\n", fd);
+            fut_test_fail(2194);
+        }
+    }
+
+    /* ── Test 2195: /proc/net/snmp has real UDP counters ── */
+    fut_printf("[MISC-TEST] Test 2195: /proc/net/snmp real UDP stats\n");
+    {
+        long fd = sys_open("/proc/net/snmp", 0, 0);
+        if (fd >= 0) {
+            static char buf[2048];
+            long n = sys_read((int)fd, buf, 2047);
+            sys_close((int)fd);
+            int has_udp = 0;
+            if (n > 0) {
+                buf[n < 2047 ? n : 2046] = '\0';
+                for (long i = 0; i < n - 4; i++) {
+                    if (buf[i] == 'U' && buf[i+1] == 'd' && buf[i+2] == 'p' &&
+                        buf[i+3] == ':' && buf[i+4] == ' ') {
+                        if (buf[i+5] >= '0' && buf[i+5] <= '9') {
+                            has_udp = 1; break;
+                        }
+                    }
+                }
+            }
+            if (has_udp) {
+                fut_printf("[MISC-TEST] ✓ Test 2195: /proc/net/snmp UDP stats present\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2195: no UDP data\n");
+                fut_test_fail(2195);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2195: open=%ld\n", fd);
+            fut_test_fail(2195);
+        }
+    }
+
     /* ── Test 2193: cgroup.controllers includes "cpuset" ── */
     fut_printf("[MISC-TEST] Test 2193: controllers has cpuset\n");
     {

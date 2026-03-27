@@ -631,10 +631,15 @@ static void udp_handle_packet(const uint8_t *ip_payload, size_t len,
                               uint32_t src_ip, uint32_t dest_ip) {
     (void)dest_ip;  /* Unused for now */
 
+    extern struct net_snmp_stats g_net_stats;
+
     if (len < UDP_HEADER_LEN) {
+        g_net_stats.udp_in_errors++;
         fut_printf("[UDP-DEBUG] Packet too short: %u bytes\n", len);
         return;
     }
+
+    g_net_stats.udp_in_datagrams++;
 
     const udp_header_t *udp = (const udp_header_t *)ip_payload;
     uint16_t src_port = ntohs(udp->src_port);
@@ -749,6 +754,14 @@ static void tcp_send_packet(tcp_connection_t *conn, uint8_t flags,
     ip_send_packet(conn->remote_ip, IP_PROTO_TCP, packet, total_len);
     fut_free(packet);
 
+    /* Track TCP output statistics */
+    {
+        extern struct net_snmp_stats g_net_stats;
+        g_net_stats.tcp_out_segs++;
+        if (flags & TCP_FLAG_RST)
+            g_net_stats.tcp_out_rsts++;
+    }
+
     /* Update sequence number if sending data */
     if (data_len > 0 || (flags & (TCP_FLAG_SYN | TCP_FLAG_FIN))) {
         conn->send_next += data_len + ((flags & (TCP_FLAG_SYN | TCP_FLAG_FIN)) ? 1 : 0);
@@ -759,7 +772,11 @@ static void tcp_handle_packet(const uint8_t *ip_payload, size_t len,
                               uint32_t src_ip, uint32_t dest_ip) {
     (void)dest_ip;  /* Unused for now */
 
+    extern struct net_snmp_stats g_net_stats;
+    g_net_stats.tcp_in_segs++;
+
     if (len < TCP_HEADER_MIN_LEN) {
+        g_net_stats.tcp_in_errs++;
         return;
     }
 
@@ -800,6 +817,7 @@ static void tcp_handle_packet(const uint8_t *ip_payload, size_t len,
             /* Send SYN-ACK */
             tcp_send_packet(conn, TCP_FLAG_SYN | TCP_FLAG_ACK, NULL, 0);
             conn->state = TCP_STATE_SYN_RECEIVED;
+            g_net_stats.tcp_passive_opens++;
             TCPIP_DEBUG("[TCP] SYN received, sending SYN-ACK\n");
         }
     }
@@ -814,12 +832,14 @@ static void tcp_handle_packet(const uint8_t *ip_payload, size_t len,
                 conn->recv_next = seq + 1;
                 conn->send_unack = ack;
                 conn->state = TCP_STATE_ESTABLISHED;
+                g_net_stats.tcp_curr_estab++;
                 tcp_send_packet(conn, TCP_FLAG_ACK, NULL, 0);
                 TCPIP_DEBUG("[TCP] Connection established\n");
             }
             else if (conn->state == TCP_STATE_SYN_RECEIVED) {
                 conn->send_unack = ack;
                 conn->state = TCP_STATE_ESTABLISHED;
+                g_net_stats.tcp_curr_estab++;
                 TCPIP_DEBUG("[TCP] Connection established\n");
             }
             else if (conn->state == TCP_STATE_ESTABLISHED) {
@@ -850,11 +870,18 @@ static void tcp_handle_packet(const uint8_t *ip_payload, size_t len,
         if (flags & TCP_FLAG_FIN) {
             conn->recv_next++;
             tcp_send_packet(conn, TCP_FLAG_ACK | TCP_FLAG_FIN, NULL, 0);
+            if (conn->state == TCP_STATE_ESTABLISHED && g_net_stats.tcp_curr_estab > 0)
+                g_net_stats.tcp_curr_estab--;
             conn->state = TCP_STATE_LAST_ACK;
         }
 
         /* Handle RST */
         if (flags & TCP_FLAG_RST) {
+            if (conn->state == TCP_STATE_ESTABLISHED) {
+                if (g_net_stats.tcp_curr_estab > 0)
+                    g_net_stats.tcp_curr_estab--;
+                g_net_stats.tcp_estab_resets++;
+            }
             conn->active = false;
             conn->state = TCP_STATE_CLOSED;
         }
@@ -1278,6 +1305,12 @@ int tcpip_connect(tcpip_socket_t *sock, uint32_t ip, uint16_t port) {
     conn->state = TCP_STATE_SYN_SENT;
     sock->tcp_conn = conn;
 
+    /* Track active TCP open */
+    {
+        extern struct net_snmp_stats g_net_stats;
+        g_net_stats.tcp_active_opens++;
+    }
+
     /* Send SYN */
     tcp_send_packet(conn, TCP_FLAG_SYN, NULL, 0);
     fut_spinlock_release(&tcp_lock);
@@ -1363,6 +1396,11 @@ int tcpip_sendto(tcpip_socket_t *sock, const void *data, size_t len,
 
     ip_send_packet(dest_ip, IP_PROTO_UDP, packet, total_len);
     fut_free(packet);
+
+    {
+        extern struct net_snmp_stats g_net_stats;
+        g_net_stats.udp_out_datagrams++;
+    }
 
     return len;
 }

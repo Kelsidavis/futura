@@ -2704,15 +2704,32 @@ static size_t gen_net_snmp(char *buf, size_t cap) {
     pb_char(&b, ' '); pb_u64(&b, g_net_stats.icmp_out_time_exceeded);
     pb_str(&b, " 0\n");
 
-    /* TCP/UDP — static for now (per-socket tracking not yet integrated) */
+    /* TCP — real counters from g_net_stats */
     pb_str(&b, "Tcp: RtoAlgorithm RtoMin RtoMax MaxConn ActiveOpens PassiveOpens"
                " AttemptFails EstabResets CurrEstab InSegs OutSegs RetransSegs"
                " InErrs OutRsts InCsumErrors\n"
-               "Tcp: 1 200 120000 -1 0 0 0 0 0 0 0 0 0 0 0\n"
-               "Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors"
+               "Tcp: 1 200 120000 -1 ");
+    pb_u64(&b, g_net_stats.tcp_active_opens);
+    pb_char(&b, ' '); pb_u64(&b, g_net_stats.tcp_passive_opens);
+    pb_char(&b, ' '); pb_u64(&b, g_net_stats.tcp_attempt_fails);
+    pb_char(&b, ' '); pb_u64(&b, g_net_stats.tcp_estab_resets);
+    pb_char(&b, ' '); pb_u64(&b, g_net_stats.tcp_curr_estab);
+    pb_char(&b, ' '); pb_u64(&b, g_net_stats.tcp_in_segs);
+    pb_char(&b, ' '); pb_u64(&b, g_net_stats.tcp_out_segs);
+    pb_char(&b, ' '); pb_u64(&b, g_net_stats.tcp_retrans_segs);
+    pb_char(&b, ' '); pb_u64(&b, g_net_stats.tcp_in_errs);
+    pb_char(&b, ' '); pb_u64(&b, g_net_stats.tcp_out_rsts);
+    pb_str(&b, " 0\n");  /* InCsumErrors */
+    /* UDP — real counters from g_net_stats */
+    pb_str(&b, "Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors"
                " SndbufErrors InCsumErrors IgnoredMulti\n"
-               "Udp: 0 0 0 0 0 0 0 0\n"
-               "UdpLite: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors"
+               "Udp: ");
+    pb_u64(&b, g_net_stats.udp_in_datagrams);
+    pb_char(&b, ' '); pb_u64(&b, g_net_stats.udp_no_ports);
+    pb_char(&b, ' '); pb_u64(&b, g_net_stats.udp_in_errors);
+    pb_char(&b, ' '); pb_u64(&b, g_net_stats.udp_out_datagrams);
+    pb_str(&b, " 0 0 0 0\n");  /* RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti */
+    pb_str(&b, "UdpLite: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors"
                " SndbufErrors InCsumErrors IgnoredMulti\n"
                "UdpLite: 0 0 0 0 0 0 0 0\n");
     return b.pos;

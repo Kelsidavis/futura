@@ -1470,7 +1470,7 @@ test:
 		echo "[HARNESS] PASS"; \
 		exit 0; \
 	elif [ $$code -eq 124 ]; then \
-		echo "[HARNESS] FAIL (timed out after 420s)"; \
+		echo "[HARNESS] FAIL (timed out after 480s)"; \
 		exit 1; \
 	else \
 		echo "[HARNESS] FAIL (qemu code $$code)"; \
@@ -1716,7 +1716,7 @@ test-arm64:
 	if [ $$rc -eq 0 ] || [ $$rc -eq 1 ]; then \
 		echo "[HARNESS] PASS"; \
 	elif [ $$rc -eq 124 ]; then \
-		echo "[HARNESS] FAIL (timed out after 300s)"; exit 1; \
+		echo "[HARNESS] FAIL (timed out after 600s)"; exit 1; \
 	else \
 		echo "[HARNESS] FAIL (qemu code $$rc)"; exit $$rc; \
 	fi

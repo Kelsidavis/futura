@@ -1,0 +1,11 @@
+[package]
+name = "i8042"
+version = "0.1.0"
+edition = "2024"
+license = "MPL-2.0"
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+common = { path = "../common" }

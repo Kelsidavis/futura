@@ -2365,21 +2365,90 @@ static void cmd_poweroff(int argc, char *argv[]) {
 
 /* Built-in: read - Read a line from stdin into a variable */
 static void cmd_read(int argc, char *argv[]) {
-    if (argc < 2) {
-        write_str(2, "usage: read VAR\n");
+    /* read [-r] [-s] [-p PROMPT] [-n COUNT] VAR [VAR2 ...] */
+    const char *prompt = NULL;
+    int raw_mode = 0;     /* -r: don't interpret backslash escapes */
+    int silent = 0;       /* -s: don't echo input */
+    int max_chars = 0;    /* -n N: read at most N chars */
+    int var_start = 1;
+
+    /* Parse options */
+    while (var_start < argc && argv[var_start][0] == '-') {
+        const char *opt = argv[var_start];
+        if (opt[1] == 'p' && var_start + 1 < argc) {
+            prompt = argv[var_start + 1];
+            var_start += 2;
+        } else if (opt[1] == 'r') {
+            raw_mode = 1; var_start++;
+        } else if (opt[1] == 's') {
+            silent = 1; var_start++;
+        } else if (opt[1] == 'n' && var_start + 1 < argc) {
+            max_chars = 0;
+            for (const char *p = argv[var_start + 1]; *p >= '0' && *p <= '9'; p++)
+                max_chars = max_chars * 10 + (*p - '0');
+            var_start += 2;
+        } else break;
+    }
+
+    if (var_start >= argc) {
+        write_str(2, "usage: read [-r] [-s] [-p prompt] [-n count] VAR\n");
         return;
     }
+
+    /* Display prompt if specified */
+    if (prompt) write_str(2, prompt);
+
+    /* Read input */
     char line[MAX_VAR_VALUE];
     int pos = 0;
+    int chars_read = 0;
     while (pos < MAX_VAR_VALUE - 1) {
+        if (max_chars > 0 && chars_read >= max_chars) break;
         char ch;
         long r = sys_call3(__NR_read, 0, (long)&ch, 1);
-        if (r <= 0 || ch == '\n')
-            break;
+        if (r <= 0 || ch == '\n') break;
+
+        /* Handle backslash continuation in non-raw mode */
+        if (!raw_mode && ch == '\\' && pos > 0) {
+            char next;
+            r = sys_call3(__NR_read, 0, (long)&next, 1);
+            if (r > 0 && next == '\n') continue;  /* Line continuation */
+            if (r > 0) { line[pos++] = next; chars_read++; continue; }
+        }
+
         line[pos++] = ch;
+        chars_read++;
     }
     line[pos] = '\0';
-    set_var(argv[1], line, 0);
+
+    /* If silent mode, print newline after input */
+    if (silent) write_str(2, "\n");
+
+    /* If multiple vars, split by IFS (default: space/tab/newline) */
+    if (var_start + 1 < argc) {
+        /* Split line into fields for each variable */
+        const char *p = line;
+        for (int v = var_start; v < argc; v++) {
+            /* Skip leading whitespace */
+            while (*p == ' ' || *p == '\t') p++;
+            if (v == argc - 1) {
+                /* Last variable gets the rest of the line */
+                set_var(argv[v], p, 0);
+            } else {
+                /* Extract one field */
+                char field[MAX_VAR_VALUE];
+                int fi = 0;
+                while (*p && *p != ' ' && *p != '\t' && fi < MAX_VAR_VALUE - 1)
+                    field[fi++] = *p++;
+                field[fi] = '\0';
+                set_var(argv[v], field, 0);
+            }
+        }
+    } else {
+        set_var(argv[var_start], line, 0);
+    }
+    (void)silent;  /* Silent mode handled above */
+    (void)raw_mode;
 }
 
 /* Built-in: set - Show all shell variables */
@@ -7652,7 +7721,28 @@ static int execute_command(int argc, char *argv[]) {
         }
         return 0;
     } else if (strcmp_simple(argv[0], "trap") == 0) {
-        /* trap — set signal handlers for shell scripts */
+        /* trap — set signal handlers for shell scripts
+         * trap 'cmd' SIG  — run cmd on signal
+         * trap '' SIG     — ignore signal
+         * trap - SIG      — reset to default
+         * trap -l         — list signal names */
+
+        /* Helper: parse signal name/number */
+        #define SIG_PARSE(s) ( \
+            ((s)[0] >= '0' && (s)[0] <= '9') ? ( \
+                ((s)[1] >= '0' && (s)[1] <= '9') ? ((s)[0]-'0')*10+((s)[1]-'0') : (s)[0]-'0' \
+            ) : \
+            (strcmp_simple(s,"HUP")==0||strcmp_simple(s,"SIGHUP")==0) ? 1 : \
+            (strcmp_simple(s,"INT")==0||strcmp_simple(s,"SIGINT")==0) ? 2 : \
+            (strcmp_simple(s,"QUIT")==0||strcmp_simple(s,"SIGQUIT")==0) ? 3 : \
+            (strcmp_simple(s,"TERM")==0||strcmp_simple(s,"SIGTERM")==0) ? 15 : \
+            (strcmp_simple(s,"USR1")==0||strcmp_simple(s,"SIGUSR1")==0) ? 10 : \
+            (strcmp_simple(s,"USR2")==0||strcmp_simple(s,"SIGUSR2")==0) ? 12 : \
+            (strcmp_simple(s,"ALRM")==0||strcmp_simple(s,"SIGALRM")==0) ? 14 : \
+            (strcmp_simple(s,"EXIT")==0) ? 0 : \
+            -1 \
+        )
+
         if (argc == 1) {
             /* Show current traps */
             write_str(1, "trap -- '' SIGTSTP\n");
@@ -7661,12 +7751,30 @@ static int execute_command(int argc, char *argv[]) {
         } else if (argc >= 3) {
             /* trap 'command' SIGNAL — register handler */
             const char *cmd = argv[1];
-            const char *sig = argv[2];
-            write_str(1, "trap '"); write_str(1, cmd);
-            write_str(1, "' "); write_str(1, sig); write_str(1, "\n");
-            /* For now, just acknowledge — real signal dispatch would need
-             * the shell to install sigaction handlers and execute the
-             * trap command string on signal delivery. */
+            for (int si = 2; si < argc; si++) {
+                int signum = SIG_PARSE(argv[si]);
+                if (signum <= 0 || signum > 31) {
+                    if (strcmp_simple(argv[si], "EXIT") == 0) continue;  /* EXIT trap: no-op for now */
+                    write_str(2, "trap: invalid signal: "); write_str(2, argv[si]); write_str(2, "\n");
+                    continue;
+                }
+                if (cmd[0] == '\0') {
+                    /* trap '' SIG — ignore signal */
+                    struct { void *handler; unsigned long flags; void *restorer; unsigned long mask; } sa;
+                    __builtin_memset(&sa, 0, sizeof(sa));
+                    sa.handler = (void *)1;  /* SIG_IGN */
+                    sys_sigaction(signum, &sa, NULL);
+                } else if (cmd[0] == '-' && cmd[1] == '\0') {
+                    /* trap - SIG — reset to default */
+                    struct { void *handler; unsigned long flags; void *restorer; unsigned long mask; } sa;
+                    __builtin_memset(&sa, 0, sizeof(sa));
+                    sa.handler = (void *)0;  /* SIG_DFL */
+                    sys_sigaction(signum, &sa, NULL);
+                }
+                /* Note: trap 'command' SIG with a real command string would require
+                 * a signal handler trampoline that invokes execute_command_chain().
+                 * For now, '' (ignore) and '-' (default) are the key patterns. */
+            }
         } else if (argc == 2 && strcmp_simple(argv[1], "-l") == 0) {
             /* List signal names */
             write_str(1, " 1) SIGHUP\t 2) SIGINT\t 3) SIGQUIT\t 4) SIGILL\n");

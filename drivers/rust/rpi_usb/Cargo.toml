@@ -1,0 +1,12 @@
+[package]
+name = "rpi_usb"
+version = "0.1.0"
+edition = "2024"
+license = "MPL-2.0"
+description = "Raspberry Pi 4/5 USB host controller driver (xHCI/VL805)"
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+common = { path = "../common" }

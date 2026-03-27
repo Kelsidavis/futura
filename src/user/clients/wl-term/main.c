@@ -226,6 +226,29 @@ static void keyboard_key(void *data, struct wl_keyboard *keyboard, uint32_t seri
     /* Any keypress resets scroll to bottom (live view) */
     term_scroll_to_bottom(&state->term);
 
+    bool ctrl = (kbd_mods_depressed & 4) != 0;  /* Ctrl modifier */
+
+    /* Ctrl+key: send control characters (Ctrl+C=0x03, Ctrl+D=0x04, etc.)
+     * The PTY line discipline converts these to signals (SIGINT, EOF, etc.) */
+    if (ctrl) {
+        char ch = keycode_to_ascii(key, false);
+        if (ch >= 'a' && ch <= 'z') {
+            term_send_key(&state->term, (char)(ch - 'a' + 1));
+            state->needs_redraw = true;
+            return;
+        }
+        /* Ctrl+[ = ESC (0x1B), Ctrl+\ = 0x1C (SIGQUIT) */
+        if (key == 26) { term_send_key(&state->term, 0x1B); state->needs_redraw = true; return; }  /* [ */
+        if (key == 43) { term_send_key(&state->term, 0x1C); state->needs_redraw = true; return; }  /* \ */
+    }
+
+    /* Tab key */
+    if (key == 15) { term_send_key(&state->term, '\t'); state->needs_redraw = true; return; }
+    /* Backspace */
+    if (key == 14) { term_send_key(&state->term, 0x7F); state->needs_redraw = true; return; }
+    /* Escape */
+    if (key == 1) { term_send_key(&state->term, 0x1B); state->needs_redraw = true; return; }
+
     /* Convert keycode to ASCII */
     char ch = keycode_to_ascii(key, shift);
     if (ch != 0) {

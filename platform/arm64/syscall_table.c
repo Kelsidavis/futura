@@ -1495,6 +1495,89 @@ static int64_t sys_bpf_wrapper(uint64_t cmd, uint64_t attr, uint64_t size,
     return sys_bpf((int)cmd, (const void *)attr, (unsigned int)size);
 }
 
+/* Modern mount API wrappers (Linux 5.2+) */
+extern long sys_open_tree(int dirfd, const char *pathname, unsigned int flags);
+static int64_t sys_open_tree_wrapper(uint64_t dirfd, uint64_t path, uint64_t flags,
+                                      uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a3; (void)a4; (void)a5;
+    return sys_open_tree((int)dirfd, (const char *)path, (unsigned int)flags);
+}
+extern long sys_move_mount(int from_dirfd, const char *from_path, int to_dirfd,
+                            const char *to_path, unsigned int flags);
+static int64_t sys_move_mount_wrapper(uint64_t from_dirfd, uint64_t from_path,
+                                       uint64_t to_dirfd, uint64_t to_path,
+                                       uint64_t flags, uint64_t a5) {
+    (void)a5;
+    return sys_move_mount((int)from_dirfd, (const char *)from_path,
+                           (int)to_dirfd, (const char *)to_path, (unsigned int)flags);
+}
+extern long sys_fsopen(const char *fsname, unsigned int flags);
+static int64_t sys_fsopen_wrapper(uint64_t fsname, uint64_t flags, uint64_t a2,
+                                   uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a2; (void)a3; (void)a4; (void)a5;
+    return sys_fsopen((const char *)fsname, (unsigned int)flags);
+}
+extern long sys_fsconfig(int fs_fd, unsigned int cmd, const char *key,
+                          const void *value, int aux);
+static int64_t sys_fsconfig_wrapper(uint64_t fs_fd, uint64_t cmd, uint64_t key,
+                                     uint64_t value, uint64_t aux, uint64_t a5) {
+    (void)a5;
+    return sys_fsconfig((int)fs_fd, (unsigned int)cmd, (const char *)key,
+                         (const void *)value, (int)aux);
+}
+extern long sys_fsmount(int fs_fd, unsigned int flags, unsigned int attr_flags);
+static int64_t sys_fsmount_wrapper(uint64_t fs_fd, uint64_t flags, uint64_t attr_flags,
+                                    uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a3; (void)a4; (void)a5;
+    return sys_fsmount((int)fs_fd, (unsigned int)flags, (unsigned int)attr_flags);
+}
+extern long sys_fspick(int dirfd, const char *pathname, unsigned int flags);
+static int64_t sys_fspick_wrapper(uint64_t dirfd, uint64_t path, uint64_t flags,
+                                   uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a3; (void)a4; (void)a5;
+    return sys_fspick((int)dirfd, (const char *)path, (unsigned int)flags);
+}
+extern long sys_mount_setattr(int dirfd, const char *pathname, unsigned int flags,
+                               const void *uattr, size_t usize);
+static int64_t sys_mount_setattr_wrapper(uint64_t dirfd, uint64_t path, uint64_t flags,
+                                          uint64_t uattr, uint64_t usize, uint64_t a5) {
+    (void)a5;
+    return sys_mount_setattr((int)dirfd, (const char *)path, (unsigned int)flags,
+                              (const void *)uattr, (size_t)usize);
+}
+
+/* Linux 6.8+ mount/LSM wrappers */
+extern long sys_statmount(const void *req, void *buf, size_t bufsize, unsigned int flags);
+static int64_t sys_statmount_wrapper(uint64_t req, uint64_t buf, uint64_t bufsz,
+                                      uint64_t flags, uint64_t a4, uint64_t a5) {
+    (void)a4; (void)a5;
+    return sys_statmount((const void *)req, (void *)buf, (size_t)bufsz, (unsigned int)flags);
+}
+extern long sys_listmount(const void *req, uint64_t *mnt_ids, size_t nr, unsigned int flags);
+static int64_t sys_listmount_wrapper(uint64_t req, uint64_t mnt_ids, uint64_t nr,
+                                      uint64_t flags, uint64_t a4, uint64_t a5) {
+    (void)a4; (void)a5;
+    return sys_listmount((const void *)req, (uint64_t *)mnt_ids, (size_t)nr, (unsigned int)flags);
+}
+extern long sys_lsm_get_self_attr(unsigned int attr, void *ctx, uint32_t *size, uint32_t flags);
+static int64_t sys_lsm_get_self_attr_wrapper(uint64_t attr, uint64_t ctx, uint64_t size,
+                                              uint64_t flags, uint64_t a4, uint64_t a5) {
+    (void)a4; (void)a5;
+    return sys_lsm_get_self_attr((unsigned int)attr, (void *)ctx, (uint32_t *)size, (uint32_t)flags);
+}
+extern long sys_lsm_set_self_attr(unsigned int attr, void *ctx, uint32_t size, uint32_t flags);
+static int64_t sys_lsm_set_self_attr_wrapper(uint64_t attr, uint64_t ctx, uint64_t size,
+                                              uint64_t flags, uint64_t a4, uint64_t a5) {
+    (void)a4; (void)a5;
+    return sys_lsm_set_self_attr((unsigned int)attr, (void *)ctx, (uint32_t)size, (uint32_t)flags);
+}
+extern long sys_lsm_list_modules(uint64_t *ids, uint32_t *size, uint32_t flags);
+static int64_t sys_lsm_list_modules_wrapper(uint64_t ids, uint64_t size, uint64_t flags,
+                                             uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a3; (void)a4; (void)a5;
+    return sys_lsm_list_modules((uint64_t *)ids, (uint32_t *)size, (uint32_t)flags);
+}
+
 /* sys_msync_wrapper - synchronize memory-mapped file
  * x0 = addr, x1 = len, x2 = flags
  */
@@ -3416,7 +3499,7 @@ struct syscall_entry {
 #define __NR_io_uring_register  427
 
 /* Maximum syscall number — must exceed highest registered number (epoll_pwait2=441) */
-#define MAX_SYSCALL         450
+#define MAX_SYSCALL         470
 
 /* Syscall table - sparse array indexed by syscall number */
 /* Syscall table - initialized at runtime to avoid ARM64 relocation issues */
@@ -4313,6 +4396,22 @@ static void arm64_syscall_table_init(void) {
 #define __NR_fanotify_mark    263  /* Linux aarch64: 263 */
 #define __NR_userfaultfd      282  /* Linux aarch64: 282 */
 #define __NR_bpf              280  /* Linux aarch64: 280 */
+
+/* Modern mount API (Linux 5.2+) */
+#define __NR_open_tree        428
+#define __NR_move_mount       429
+#define __NR_fsopen           430
+#define __NR_fsconfig         431
+#define __NR_fsmount          432
+#define __NR_fspick           433
+#define __NR_mount_setattr    442
+
+/* Linux 6.8+ mount/LSM syscalls */
+#define __NR_statmount        457
+#define __NR_listmount        458
+#define __NR_lsm_get_self_attr 459
+#define __NR_lsm_set_self_attr 460
+#define __NR_lsm_list_modules  461
     syscall_table[__NR_perf_event_open].handler = (syscall_fn_t)sys_perf_event_open_wrapper;
     syscall_table[__NR_perf_event_open].name = "perf_event_open";
     syscall_table[__NR_fanotify_init].handler = (syscall_fn_t)sys_fanotify_init_wrapper;
@@ -4497,6 +4596,34 @@ static void arm64_syscall_table_init(void) {
     /* getpgid (x86_64: 121, ARM64: 155) */
     syscall_table[121].handler = syscall_table[__NR_getpgid].handler;
     syscall_table[121].name = "getpgid";
+
+    /* Modern mount API (Linux 5.2+) */
+    syscall_table[__NR_open_tree].handler = (syscall_fn_t)sys_open_tree_wrapper;
+    syscall_table[__NR_open_tree].name = "open_tree";
+    syscall_table[__NR_move_mount].handler = (syscall_fn_t)sys_move_mount_wrapper;
+    syscall_table[__NR_move_mount].name = "move_mount";
+    syscall_table[__NR_fsopen].handler = (syscall_fn_t)sys_fsopen_wrapper;
+    syscall_table[__NR_fsopen].name = "fsopen";
+    syscall_table[__NR_fsconfig].handler = (syscall_fn_t)sys_fsconfig_wrapper;
+    syscall_table[__NR_fsconfig].name = "fsconfig";
+    syscall_table[__NR_fsmount].handler = (syscall_fn_t)sys_fsmount_wrapper;
+    syscall_table[__NR_fsmount].name = "fsmount";
+    syscall_table[__NR_fspick].handler = (syscall_fn_t)sys_fspick_wrapper;
+    syscall_table[__NR_fspick].name = "fspick";
+    syscall_table[__NR_mount_setattr].handler = (syscall_fn_t)sys_mount_setattr_wrapper;
+    syscall_table[__NR_mount_setattr].name = "mount_setattr";
+
+    /* Linux 6.8+ mount/LSM syscalls */
+    syscall_table[__NR_statmount].handler = (syscall_fn_t)sys_statmount_wrapper;
+    syscall_table[__NR_statmount].name = "statmount";
+    syscall_table[__NR_listmount].handler = (syscall_fn_t)sys_listmount_wrapper;
+    syscall_table[__NR_listmount].name = "listmount";
+    syscall_table[__NR_lsm_get_self_attr].handler = (syscall_fn_t)sys_lsm_get_self_attr_wrapper;
+    syscall_table[__NR_lsm_get_self_attr].name = "lsm_get_self_attr";
+    syscall_table[__NR_lsm_set_self_attr].handler = (syscall_fn_t)sys_lsm_set_self_attr_wrapper;
+    syscall_table[__NR_lsm_set_self_attr].name = "lsm_set_self_attr";
+    syscall_table[__NR_lsm_list_modules].handler = (syscall_fn_t)sys_lsm_list_modules_wrapper;
+    syscall_table[__NR_lsm_list_modules].name = "lsm_list_modules";
 
     syscall_table_initialized = true;
 }

@@ -3175,11 +3175,102 @@ static int64_t sys_clock_adjtime_handler(uint64_t clk_id, uint64_t txc, uint64_t
     return sys_adjtimex((void *)(uintptr_t)txc);
 }
 
-/* setns: enter a namespace via file descriptor; namespaces not implemented */
+/* setns: enter a namespace via file descriptor.
+ * fd is an open fd to /proc/<pid>/ns/<type>.
+ * nstype is 0 (auto-detect) or a CLONE_NEW* flag.
+ * The caller's namespace of the matching type is replaced. */
 static int64_t sys_setns_handler(uint64_t fd, uint64_t nstype, uint64_t arg3,
                                  uint64_t arg4, uint64_t arg5, uint64_t arg6) {
-    (void)fd; (void)nstype; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
-    return -38;  /* -ENOSYS: namespace support not implemented */
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+
+    extern fut_task_t *fut_task_current(void);
+    fut_task_t *task = fut_task_current();
+    if (!task) return -3; /* ESRCH */
+
+    /* Look up the file path for this fd to determine the namespace type.
+     * /proc/<pid>/ns/<type> where type = pid, mnt, net, user, uts, ipc, cgroup */
+    extern struct fut_file *fut_vfs_get_file(int fd);
+    struct fut_file *file = fut_vfs_get_file((int)fd);
+    if (!file) return -9; /* EBADF */
+
+    /* The ns symlink target is "type:[inode]". Check the readlink result
+     * from the file's vnode to identify the namespace type. */
+    const char *path = file->path;
+    if (!path) return -22; /* EINVAL */
+
+    /* Detect namespace type from path or readlink target */
+    int detected_type = 0;  /* CLONE_NEW* flag */
+    /* Check path for /proc/<pid>/ns/<type> pattern */
+    const char *ns_name = 0;
+    for (int i = 0; path[i]; i++) {
+        if (path[i]=='/' && path[i+1]=='n' && path[i+2]=='s' && path[i+3]=='/') {
+            ns_name = &path[i+4]; break;
+        }
+    }
+    if (!ns_name) {
+        /* Try matching on type:[inode] format */
+        ns_name = path;
+    }
+
+    if (ns_name[0]=='p' && ns_name[1]=='i' && ns_name[2]=='d')
+        detected_type = 0x20000000; /* CLONE_NEWPID */
+    else if (ns_name[0]=='m' && ns_name[1]=='n' && ns_name[2]=='t')
+        detected_type = 0x00020000; /* CLONE_NEWNS */
+    else if (ns_name[0]=='n' && ns_name[1]=='e' && ns_name[2]=='t')
+        detected_type = 0x40000000; /* CLONE_NEWNET */
+    else if (ns_name[0]=='u' && ns_name[1]=='s' && ns_name[2]=='e' && ns_name[3]=='r')
+        detected_type = 0x10000000; /* CLONE_NEWUSER */
+    else if (ns_name[0]=='u' && ns_name[1]=='t' && ns_name[2]=='s')
+        detected_type = 0x04000000; /* CLONE_NEWUTS */
+    else if (ns_name[0]=='i' && ns_name[1]=='p' && ns_name[2]=='c')
+        detected_type = 0x08000000; /* CLONE_NEWIPC */
+    else if (ns_name[0]=='c' && ns_name[1]=='g' && ns_name[2]=='r')
+        detected_type = 0x02000000; /* CLONE_NEWCGROUP */
+
+    if (detected_type == 0) return -22; /* EINVAL: unrecognized namespace */
+
+    /* If nstype specified, verify it matches */
+    if (nstype != 0 && (uint64_t)detected_type != nstype)
+        return -22; /* EINVAL: nstype doesn't match fd */
+
+    /* Extract target PID from the /proc/<pid>/ns/ path */
+    int target_pid = 0;
+    for (int i = 0; path[i]; i++) {
+        if (path[i]=='/' && path[i+1]>='0' && path[i+1]<='9') {
+            i++;
+            while (path[i] >= '0' && path[i] <= '9')
+                target_pid = target_pid * 10 + (path[i++] - '0');
+            break;
+        }
+    }
+
+    extern fut_task_t *fut_task_by_pid(uint64_t pid);
+    fut_task_t *target = fut_task_by_pid((uint64_t)target_pid);
+    if (!target) return -3; /* ESRCH: target process doesn't exist */
+
+    /* Copy the target's namespace to the caller */
+    switch (detected_type) {
+        case 0x20000000: /* CLONE_NEWPID */
+            if (target->pid_ns) task->pid_ns = target->pid_ns;
+            break;
+        case 0x00020000: /* CLONE_NEWNS */
+            if (target->mnt_ns) task->mnt_ns = target->mnt_ns;
+            break;
+        case 0x40000000: /* CLONE_NEWNET */
+            if (target->net_ns) task->net_ns = target->net_ns;
+            break;
+        case 0x10000000: /* CLONE_NEWUSER */
+            if (target->user_ns) task->user_ns = target->user_ns;
+            break;
+        case 0x04000000: /* CLONE_NEWUTS */
+            if (target->uts_ns) task->uts_ns = target->uts_ns;
+            break;
+        default:
+            /* For IPC/cgroup ns: accept silently (no separate struct yet) */
+            break;
+    }
+
+    return 0;
 }
 
 /* sched_setparam/getparam/setscheduler/getscheduler handlers */

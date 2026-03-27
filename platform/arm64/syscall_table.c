@@ -2893,11 +2893,61 @@ static int64_t sys_clock_adjtime_wrapper(uint64_t clk_id, uint64_t txc,
     return sys_adjtimex((struct timex *)txc);
 }
 
-/* sys_setns_wrapper: setns(fd, nstype) — ENOSYS (namespaces not yet implemented) */
+/* sys_setns_wrapper: setns(fd, nstype) — enter a namespace via fd */
 static int64_t sys_setns_wrapper(uint64_t fd, uint64_t nstype,
                                   uint64_t arg2, uint64_t arg3, uint64_t arg4, uint64_t arg5) {
-    (void)fd; (void)nstype; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
-    return -38;  /* -ENOSYS */
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+    /* Delegate to the shared x86_64 implementation via the same handler logic.
+     * For ARM64, call the kernel setns directly. */
+    extern fut_task_t *fut_task_current(void);
+    extern struct fut_file *fut_vfs_get_file(int fd);
+    extern fut_task_t *fut_task_by_pid(uint64_t pid);
+
+    fut_task_t *task = fut_task_current();
+    if (!task) return -3;
+    struct fut_file *file = fut_vfs_get_file((int)fd);
+    if (!file || !file->path) return -9;
+
+    const char *path = file->path;
+    const char *ns_name = 0;
+    for (int i = 0; path[i]; i++) {
+        if (path[i]=='/' && path[i+1]=='n' && path[i+2]=='s' && path[i+3]=='/') {
+            ns_name = &path[i+4]; break;
+        }
+    }
+    if (!ns_name) ns_name = path;
+
+    int detected = 0;
+    if (ns_name[0]=='p' && ns_name[1]=='i' && ns_name[2]=='d') detected = 0x20000000;
+    else if (ns_name[0]=='m' && ns_name[1]=='n' && ns_name[2]=='t') detected = 0x00020000;
+    else if (ns_name[0]=='n' && ns_name[1]=='e' && ns_name[2]=='t') detected = 0x40000000;
+    else if (ns_name[0]=='u' && ns_name[1]=='s' && ns_name[2]=='e') detected = 0x10000000;
+    else if (ns_name[0]=='u' && ns_name[1]=='t' && ns_name[2]=='s') detected = 0x04000000;
+    else if (ns_name[0]=='i' && ns_name[1]=='p' && ns_name[2]=='c') detected = 0x08000000;
+    else if (ns_name[0]=='c' && ns_name[1]=='g' && ns_name[2]=='r') detected = 0x02000000;
+    if (!detected) return -22;
+    if (nstype != 0 && (uint64_t)detected != nstype) return -22;
+
+    int target_pid = 0;
+    for (int i = 0; path[i]; i++) {
+        if (path[i]=='/' && path[i+1]>='0' && path[i+1]<='9') {
+            i++;
+            while (path[i] >= '0' && path[i] <= '9') target_pid = target_pid * 10 + (path[i++] - '0');
+            break;
+        }
+    }
+    fut_task_t *target = fut_task_by_pid((uint64_t)target_pid);
+    if (!target) return -3;
+
+    switch (detected) {
+        case 0x20000000: if (target->pid_ns) task->pid_ns = target->pid_ns; break;
+        case 0x00020000: if (target->mnt_ns) task->mnt_ns = target->mnt_ns; break;
+        case 0x40000000: if (target->net_ns) task->net_ns = target->net_ns; break;
+        case 0x10000000: if (target->user_ns) task->user_ns = target->user_ns; break;
+        case 0x04000000: if (target->uts_ns) task->uts_ns = target->uts_ns; break;
+        default: break;
+    }
+    return 0;
 }
 
 /* sys_sched_setattr_wrapper */

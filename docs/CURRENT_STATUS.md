@@ -6,24 +6,40 @@
 
 | Metric | Value |
 |--------|-------|
-| **Syscalls** | 400+ Linux-compatible (356 x86_64 + 401 ARM64) |
+| **Syscalls** | 400+ Linux-compatible (356 x86_64 + 405 ARM64) |
 | **Kernel C lines** | ~210K across 226 implementation files |
-| **Automated tests** | **2250** across 11 test groups, all passing |
-| **Shell commands** | **151** built-in (POSIX + networking + system admin) |
+| **Automated tests** | **2263** across 11 test groups, all passing |
+| **Shell commands** | **158** built-in (POSIX + networking + system admin) |
 | **Rust driver crates** | **55** (24 AMD x86_64, 15 RPi, 11 Apple Silicon, 4 VirtIO, 1 common) |
-| **CI** | GitHub Actions: x86_64 + ARM64 + RPi verification + security checks |
+| **CI** | GitHub Actions: x86_64 + ARM64 + RPi verification + security checks — all green |
 
 ## Recent Additions (Since January 2026)
 
-- **ptrace**: 20+ operations for debugger/strace support (ATTACH/DETACH, PEEK/POKE, GETREGS/SETREGS, CONT/SYSCALL, GETREGSET)
+### Kernel Features
+- **ptrace**: 20+ operations (ATTACH/DETACH, PEEK/POKE, GETREGS/SETREGS, CONT/SYSCALL, GETREGSET on x86_64 AND ARM64)
 - **Linux AIO**: io_setup/io_submit/io_getevents/io_destroy/io_pgetevents with PREAD/PWRITE/FSYNC/PREADV/PWRITEV
 - **AF_INET SOCK_RAW**: Raw sockets with ICMP echo/reply for userspace ping
-- **IP fragmentation**: Fragment forwarded packets exceeding MTU; reassemble incoming fragments
+- **IP fragmentation**: Fragment forwarded packets exceeding MTU; reassemble incoming fragments (8-slot reassembly buffer)
 - **mm_lock**: Per-mm spinlock protecting VMA list during concurrent fork/mmap/munmap/mprotect
-- **Real CPU time tracking**: /proc/stat user/system/idle, per-thread utime/stime in /proc/pid/stat
+- **clone3() namespaces**: CLONE_NEWPID/NEWNS/NEWUTS/NEWNET/NEWUSER now create proper namespaces (was returning ENOSYS)
+- **SECCOMP_GET_NOTIF_SIZES**: Returns notification structure sizes for container runtimes (runc, crun)
+
+### Monitoring & Observability
+- **Real /proc/stat CPU time**: user/system/idle per-CPU, per-thread utime/stime in /proc/pid/stat
 - **Real /proc/vmstat**: pgfault/pgmajfault from actual task counters, pgalloc/pgfree from PMM
+- **Accurate /proc/stat counters**: processes (total forks), procs_running (actually runnable), procs_blocked
+- **/sys/class/thermal/thermal_zone0**: Temperature monitoring (type, temp, policy, mode)
+- **/sys/kernel/security/lsm**: Reports active LSMs (landlock, capability, lockdown)
+
+### System Configuration
+- **Boot-time /etc files**: fstab, machine-id, mtab→/proc/self/mounts, shells, ld.so.conf
 - **io_uring + AIO on ARM64**: Wired io_uring_setup/enter/register and io_pgetevents into ARM64 syscall table
-- **Shell expansion**: timeout, tty, nohup, chroot, tac, chgrp, md5sum, strings, pgrep, pkill, pidof, nice, renice, xxd, file (151 total)
+
+### Shell (158 commands)
+- **Process management**: pgrep, pkill, pidof, nice, renice, timeout, nohup
+- **File utilities**: file (magic byte identification), xxd (hex dump), cmp, comm, fold, expand, unexpand, install
+- **System admin**: tty, chroot, chgrp, md5sum, strings, tac, mkfifo
+- **Text processing**: sort -k/-t (field-based sorting with custom delimiters)
 
 ---
 

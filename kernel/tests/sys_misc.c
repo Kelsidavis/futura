@@ -25904,16 +25904,15 @@ static void test_proc_auxv(void) {
 }
 
 /* ============================================================
- * Tests 459-460: ptrace() stub — PTRACE_TRACEME=0, others EPERM
+ * Tests 459-460: ptrace() — TRACEME and ATTACH validation
  * ============================================================ */
 static void test_ptrace_stub(void) {
-    fut_printf("[MISC-TEST] Tests 459-460: ptrace() stub\n");
+    fut_printf("[MISC-TEST] Tests 459-460: ptrace()\n");
 
     extern long sys_ptrace(int request, int pid, void *addr, void *data);
 
     /* PTRACE_TRACEME (0): a child calling this to opt-in to tracing should
-     * get 0 so it doesn't abort immediately.  The parent's PTRACE_ATTACH
-     * will fail, but we just need the child not to crash. */
+     * get 0 so it doesn't abort immediately. */
     long r0 = sys_ptrace(0 /* PTRACE_TRACEME */, 0, (void *)0, (void *)0);
     if (r0 != 0) {
         fut_printf("[MISC-TEST] ✗ Test 459: ptrace(PTRACE_TRACEME) = %ld (expected 0)\n", r0);
@@ -25922,15 +25921,23 @@ static void test_ptrace_stub(void) {
     fut_test_pass(); /* Test 459 */
     fut_printf("[MISC-TEST] ✓ Test 459: ptrace(PTRACE_TRACEME) = 0\n");
 
-    /* All other requests return -EPERM (not -ENOSYS). */
-    long r1 = sys_ptrace(16 /* PTRACE_ATTACH */, 1, (void *)0, (void *)0);
-    if (r1 != -EPERM) {
-        fut_printf("[MISC-TEST] ✗ Test 460: ptrace(PTRACE_ATTACH) = %ld (expected -EPERM=%d)\n",
-                   r1, -EPERM);
-        fut_test_fail(460); return;
+    /* Clear TRACEME state so next test can work */
+    {
+        extern fut_task_t *fut_task_current(void);
+        fut_task_t *me = fut_task_current();
+        if (me) { me->ptrace_tracer = 0; me->ptrace_flags = 0; }
     }
-    fut_test_pass(); /* Test 460 */
-    fut_printf("[MISC-TEST] ✓ Test 460: ptrace(PTRACE_ATTACH) = -EPERM\n");
+
+    /* PTRACE_ATTACH on nonexistent PID → -ESRCH */
+    long r1 = sys_ptrace(16 /* PTRACE_ATTACH */, 99999, (void *)0, (void *)0);
+    if (r1 == -ESRCH) {
+        fut_printf("[MISC-TEST] ✓ Test 460: ptrace(PTRACE_ATTACH, 99999) = -ESRCH\n");
+        fut_test_pass(); /* Test 460 */
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 460: ptrace(PTRACE_ATTACH, 99999) = %ld (expected -ESRCH=%d)\n",
+                   r1, -ESRCH);
+        fut_test_fail(460);
+    }
 }
 
 /* ============================================================
@@ -61434,6 +61441,96 @@ __attribute__((noinline)) static void test_io_uring(void) {
 }
 
 /* ============================================================
+ * Tests 2119-2123: ptrace() process tracing
+ * ============================================================ */
+__attribute__((noinline)) static void test_ptrace(void) {
+    extern long sys_ptrace(int request, int pid, void *addr, void *data);
+    extern long sys_getpid(void);
+
+    /* ── Test 2119: PTRACE_TRACEME succeeds ── */
+    fut_printf("[MISC-TEST] Test 2119: PTRACE_TRACEME\n");
+    {
+        /* TRACEME on a process that has no parent tracer should succeed.
+         * Note: in a kernel test thread the task has a parent (init),
+         * so TRACEME should work but leaves us marked as traced. */
+        long r = sys_ptrace(0 /* PTRACE_TRACEME */, 0, NULL, NULL);
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 2119: TRACEME ok\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2119: TRACEME=%ld\n", r);
+            fut_test_fail(2119);
+        }
+    }
+
+    /* ── Test 2120: PTRACE_TRACEME fails if already traced ── */
+    fut_printf("[MISC-TEST] Test 2120: PTRACE_TRACEME double-call → EPERM\n");
+    {
+        long r = sys_ptrace(0 /* PTRACE_TRACEME */, 0, NULL, NULL);
+        if (r == -1 /* EPERM */) {
+            fut_printf("[MISC-TEST] ✓ Test 2120: double TRACEME → EPERM\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2120: double TRACEME=%ld\n", r);
+            fut_test_fail(2120);
+        }
+    }
+
+    /* ── Test 2121: PTRACE_ATTACH on nonexistent PID → ESRCH ── */
+    fut_printf("[MISC-TEST] Test 2121: PTRACE_ATTACH bad PID → ESRCH\n");
+    {
+        long r = sys_ptrace(16 /* PTRACE_ATTACH */, 99999, NULL, NULL);
+        if (r == -3 /* ESRCH */) {
+            fut_printf("[MISC-TEST] ✓ Test 2121: ATTACH bad PID → ESRCH\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2121: ATTACH bad PID=%ld\n", r);
+            fut_test_fail(2121);
+        }
+    }
+
+    /* ── Test 2122: PTRACE_ATTACH on self → EPERM ── */
+    fut_printf("[MISC-TEST] Test 2122: PTRACE_ATTACH self → EPERM\n");
+    {
+        long my_pid = sys_getpid();
+        long r = sys_ptrace(16 /* PTRACE_ATTACH */, (int)my_pid, NULL, NULL);
+        if (r == -1 /* EPERM */) {
+            fut_printf("[MISC-TEST] ✓ Test 2122: ATTACH self → EPERM\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2122: ATTACH self=%ld\n", r);
+            fut_test_fail(2122);
+        }
+    }
+
+    /* ── Test 2123: PTRACE_SETOPTIONS with invalid opts → EINVAL ── */
+    fut_printf("[MISC-TEST] Test 2123: PTRACE_SETOPTIONS invalid → EINVAL\n");
+    {
+        /* SETOPTIONS on a PID we don't trace should fail with ESRCH */
+        long r = sys_ptrace(0x4200 /* PTRACE_SETOPTIONS */, 99999, NULL, (void *)(uintptr_t)0xFFFFFFFF);
+        if (r == -3 /* ESRCH */) {
+            fut_printf("[MISC-TEST] ✓ Test 2123: SETOPTIONS bad PID → ESRCH\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2123: SETOPTIONS=%ld\n", r);
+            fut_test_fail(2123);
+        }
+    }
+
+    /* Clean up: un-trace ourselves by clearing ptrace_tracer directly.
+     * In a real kernel this would be done by PTRACE_DETACH from the parent,
+     * but we're a test thread with no real parent tracer. */
+    {
+        extern fut_task_t *fut_task_current(void);
+        fut_task_t *me = fut_task_current();
+        if (me) {
+            me->ptrace_tracer = 0;
+            me->ptrace_flags = 0;
+        }
+    }
+}
+
+/* ============================================================
  * Tests 2116-2118: mm_lock VMA list consistency under mmap/munmap/mprotect
  * ============================================================ */
 __attribute__((noinline)) static void test_fork_vma_consistency(void) {
@@ -65138,6 +65235,7 @@ void fut_misc_test_thread(void *arg) {
     test_loop_device(); /* Tests 1885-1887 */
     test_per_iface_conf(); /* Tests 1869-1871 */
 
+    test_ptrace(); /* Tests 2119-2123 */
     test_fork_vma_consistency(); /* Tests 2116-2118 */
     test_edge_cases_2(); /* Tests 2111-2115 */
     test_pid_extra_entries(); /* Tests 2108-2110 */

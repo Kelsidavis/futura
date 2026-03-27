@@ -166,6 +166,12 @@ struct fut_task {
     int suppress_sigpipe;              // Transient: suppress SIGPIPE during MSG_NOSIGNAL send
     int msg_dontwait;                  // Transient: per-call MSG_DONTWAIT (avoids mutating sock->flags)
     int vfs_no_symlinks;               // Transient: openat2 RESOLVE_NO_SYMLINKS — reject symlink traversal
+
+    /* ptrace state (process tracing / debugging) */
+    uint64_t ptrace_tracer;            // PID of tracer process (0 = not being traced)
+    uint32_t ptrace_options;           // PTRACE_O_* option mask (set by PTRACE_SETOPTIONS)
+    uint32_t ptrace_flags;             // Internal flags (PTRACE_FL_TRACEME, _SEIZED, _SYSCALL)
+    uint64_t ptrace_eventmsg;          // Event message (read by PTRACE_GETEVENTMSG)
     uint64_t timerslack_ns;            // PR_SET/GET_TIMERSLACK: timer expiry slack (ns); default 50000
 
     /* I/O priority */

@@ -125,6 +125,7 @@ static void cmd_strings(int argc, char *argv[]);
 static void cmd_file(int argc, char *argv[]);
 static void cmd_mkfifo(int argc, char *argv[]);
 static void cmd_expr(int argc, char *argv[]);
+static void cmd_bc(int argc, char *argv[]);
 static void cmd_factor(int argc, char *argv[]);
 static void cmd_cal(int argc, char *argv[]);
 static void cmd_locale(int argc, char *argv[]);
@@ -9961,6 +9962,9 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "expr") == 0) {
         cmd_expr(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "bc") == 0) {
+        cmd_bc(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "factor") == 0) {
         cmd_factor(argc, argv);
         return 0;
@@ -10634,6 +10638,7 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "unexpand") == 0 ||
             strcmp_simple(cmd, "install") == 0 ||
             strcmp_simple(cmd, "expr") == 0 ||
+            strcmp_simple(cmd, "bc") == 0 ||
             strcmp_simple(cmd, "factor") == 0 ||
             strcmp_simple(cmd, "cal") == 0 ||
             strcmp_simple(cmd, "locale") == 0 ||
@@ -12446,6 +12451,267 @@ static void cmd_expr(int argc, char *argv[]) {
 }
 
 /* ── factor: print prime factors ── */
+/* bc: basic calculator — supports +, -, *, /, %, ^, parentheses, scale, variables,
+ * comparison operators, and multi-line input from stdin or arguments.
+ * Handles: echo "3+4" | bc, echo "scale=2; 10/3" | bc, bc -e "2^10" */
+
+static long bc_vars[26];  /* a-z variables */
+static int bc_scale;       /* decimal places for division */
+
+static long bc_pow(long base, long exp) {
+    if (exp < 0) return 0;
+    long result = 1;
+    for (long i = 0; i < exp; i++) result *= base;
+    return result;
+}
+
+/* Recursive descent parser for bc expressions */
+static const char *bc_p;  /* current parse position */
+
+static void bc_skip_ws(void) { while (*bc_p == ' ' || *bc_p == '\t') bc_p++; }
+
+static long bc_parse_expr(void);
+
+static long bc_parse_atom(void) {
+    bc_skip_ws();
+    long val = 0;
+    int neg = 0;
+    if (*bc_p == '-') { neg = 1; bc_p++; bc_skip_ws(); }
+    if (*bc_p == '(') {
+        bc_p++;
+        val = bc_parse_expr();
+        bc_skip_ws();
+        if (*bc_p == ')') bc_p++;
+    } else if (*bc_p >= '0' && *bc_p <= '9') {
+        while (*bc_p >= '0' && *bc_p <= '9') val = val * 10 + (*bc_p++ - '0');
+        /* Handle decimal point — multiply by scale factor */
+        if (*bc_p == '.') {
+            bc_p++;
+            long frac = 0, frac_digits = 0;
+            while (*bc_p >= '0' && *bc_p <= '9') {
+                frac = frac * 10 + (*bc_p++ - '0');
+                frac_digits++;
+            }
+            /* Scale: val = integer part * 10^scale + fractional digits */
+            if (bc_scale > 0) {
+                long scale_factor = bc_pow(10, bc_scale);
+                val = val * scale_factor;
+                long frac_scale = bc_pow(10, bc_scale - frac_digits);
+                if (frac_digits <= bc_scale) val += frac * frac_scale;
+                else val += frac / bc_pow(10, frac_digits - bc_scale);
+            }
+        }
+    } else if (*bc_p >= 'a' && *bc_p <= 'z') {
+        int vi = *bc_p - 'a';
+        bc_p++;
+        /* Check for assignment */
+        bc_skip_ws();
+        if (*bc_p == '=') {
+            bc_p++;
+            bc_skip_ws();
+            val = bc_parse_expr();
+            bc_vars[vi] = val;
+        } else {
+            val = bc_vars[vi];
+        }
+    } else if (*bc_p == 's' && bc_p[1] == 'c' && bc_p[2] == 'a' && bc_p[3] == 'l' && bc_p[4] == 'e') {
+        /* scale variable */
+        bc_p += 5;
+        bc_skip_ws();
+        if (*bc_p == '=') {
+            bc_p++;
+            bc_skip_ws();
+            val = bc_parse_expr();
+            bc_scale = (int)val;
+        } else {
+            val = bc_scale;
+        }
+    } else if (*bc_p == 's' && bc_p[1] == 'q' && bc_p[2] == 'r' && bc_p[3] == 't' && bc_p[4] == '(') {
+        /* sqrt(N) — integer square root */
+        bc_p += 5;
+        long inner = bc_parse_expr();
+        if (*bc_p == ')') bc_p++;
+        if (inner < 0) val = 0;
+        else {
+            val = 0;
+            while ((val + 1) * (val + 1) <= inner) val++;
+        }
+    }
+    return neg ? -val : val;
+}
+
+static long bc_parse_power(void) {
+    long val = bc_parse_atom();
+    bc_skip_ws();
+    if (*bc_p == '^') {
+        bc_p++;
+        long exp = bc_parse_power(); /* right-associative */
+        val = bc_pow(val, exp);
+    }
+    return val;
+}
+
+static long bc_parse_term(void) {
+    long val = bc_parse_power();
+    bc_skip_ws();
+    while (*bc_p == '*' || *bc_p == '/' || *bc_p == '%') {
+        char op = *bc_p++;
+        long rhs = bc_parse_power();
+        if (op == '*') val *= rhs;
+        else if (op == '/') { if (rhs != 0) val /= rhs; }
+        else if (op == '%') { if (rhs != 0) val %= rhs; }
+        bc_skip_ws();
+    }
+    return val;
+}
+
+static long bc_parse_sum(void) {
+    long val = bc_parse_term();
+    bc_skip_ws();
+    while (*bc_p == '+' || (*bc_p == '-' && bc_p[1] != '=')) {
+        char op = *bc_p++;
+        long rhs = bc_parse_term();
+        if (op == '+') val += rhs;
+        else val -= rhs;
+        bc_skip_ws();
+    }
+    return val;
+}
+
+static long bc_parse_expr(void) {
+    long val = bc_parse_sum();
+    bc_skip_ws();
+    /* Comparison operators */
+    if (*bc_p == '=' && bc_p[1] == '=') { bc_p += 2; val = (val == bc_parse_sum()) ? 1 : 0; }
+    else if (*bc_p == '!' && bc_p[1] == '=') { bc_p += 2; val = (val != bc_parse_sum()) ? 1 : 0; }
+    else if (*bc_p == '<' && bc_p[1] == '=') { bc_p += 2; val = (val <= bc_parse_sum()) ? 1 : 0; }
+    else if (*bc_p == '>' && bc_p[1] == '=') { bc_p += 2; val = (val >= bc_parse_sum()) ? 1 : 0; }
+    else if (*bc_p == '<') { bc_p++; val = (val < bc_parse_sum()) ? 1 : 0; }
+    else if (*bc_p == '>') { bc_p++; val = (val > bc_parse_sum()) ? 1 : 0; }
+    return val;
+}
+
+static void bc_print_result(long val) {
+    if (bc_scale > 0) {
+        long scale_factor = bc_pow(10, bc_scale);
+        long integer_part = val / scale_factor;
+        long frac_part = val % scale_factor;
+        if (frac_part < 0) frac_part = -frac_part;
+        if (val < 0 && integer_part == 0) sys_write(1, "-", 1);
+        char buf[24]; int bp = 0;
+        long v = integer_part < 0 ? -integer_part : integer_part;
+        if (integer_part < 0) sys_write(1, "-", 1);
+        if (v == 0) buf[bp++] = '0';
+        else { char rev[24]; int rp = 0;
+            while (v > 0) { rev[rp++] = '0' + (char)(v % 10); v /= 10; }
+            while (rp > 0) buf[bp++] = rev[--rp]; }
+        sys_write(1, buf, bp);
+        sys_write(1, ".", 1);
+        /* Print fractional part with leading zeros */
+        bp = 0;
+        for (int d = bc_scale - 1; d >= 0; d--) {
+            long place = bc_pow(10, d);
+            buf[bp++] = '0' + (char)((frac_part / place) % 10);
+        }
+        sys_write(1, buf, bp);
+    } else {
+        char buf[24]; int bp = 0;
+        long v = val < 0 ? -val : val;
+        if (val < 0) sys_write(1, "-", 1);
+        if (v == 0) buf[bp++] = '0';
+        else { char rev[24]; int rp = 0;
+            while (v > 0) { rev[rp++] = '0' + (char)(v % 10); v /= 10; }
+            while (rp > 0) buf[bp++] = rev[--rp]; }
+        sys_write(1, buf, bp);
+    }
+    sys_write(1, "\n", 1);
+}
+
+static void bc_eval_line(const char *line) {
+    bc_p = line;
+    bc_skip_ws();
+    if (*bc_p == '\0' || *bc_p == '#') return;  /* empty or comment */
+    /* Handle "quit" */
+    if (*bc_p == 'q') return;
+    /* Check for scale= assignment (don't print result) */
+    const char *save = bc_p;
+    if (*bc_p == 's' && bc_p[1] == 'c' && bc_p[2] == 'a' && bc_p[3] == 'l' && bc_p[4] == 'e') {
+        bc_parse_expr();
+        return;
+    }
+    /* Check for variable assignment (a=5) — don't print */
+    if (*bc_p >= 'a' && *bc_p <= 'z' && (bc_p[1] == '=' || (bc_p[1] == ' ' && bc_p[2] == '='))) {
+        bc_parse_expr();
+        return;
+    }
+    bc_p = save;
+    long val = bc_parse_expr();
+    bc_print_result(val);
+}
+
+static void cmd_bc(int argc, char *argv[]) {
+    /* Reset state */
+    bc_scale = 0;
+    for (int i = 0; i < 26; i++) bc_vars[i] = 0;
+
+    int quiet = 0;
+    int arg = 1;
+
+    /* Parse flags */
+    while (arg < argc) {
+        if (strcmp_simple(argv[arg], "-q") == 0 || strcmp_simple(argv[arg], "--quiet") == 0) {
+            quiet = 1; arg++;
+        } else if (strcmp_simple(argv[arg], "-l") == 0) {
+            bc_scale = 20; arg++;  /* -l = math library (set scale=20) */
+        } else if (strcmp_simple(argv[arg], "-e") == 0 && arg + 1 < argc) {
+            arg++;
+            /* Evaluate expression(s) separated by ; */
+            const char *ep = argv[arg];
+            static char stmt[256];
+            while (*ep) {
+                int si = 0;
+                while (*ep && *ep != ';' && *ep != '\n' && si < 254) stmt[si++] = *ep++;
+                stmt[si] = '\0';
+                if (si > 0) bc_eval_line(stmt);
+                if (*ep == ';' || *ep == '\n') ep++;
+            }
+            arg++;
+        } else {
+            arg++;  /* skip unknown args */
+        }
+    }
+
+    /* Interactive / pipe mode: read from stdin */
+    (void)quiet;
+    static char line[1024];
+    int lp = 0;
+    char ch;
+    while (sys_read(0, &ch, 1) == 1) {
+        if (ch == '\n' || lp >= 1022) {
+            line[lp] = '\0';
+            /* Split by ; for multiple statements per line */
+            char *sp = line;
+            while (*sp) {
+                while (*sp == ' ' || *sp == ';') sp++;
+                if (!*sp) break;
+                static char stmt[256];
+                int si = 0;
+                while (*sp && *sp != ';' && si < 254) stmt[si++] = *sp++;
+                stmt[si] = '\0';
+                if (si > 0) {
+                    /* Check for quit */
+                    if (stmt[0] == 'q' && stmt[1] == 'u' && stmt[2] == 'i' && stmt[3] == 't') return;
+                    bc_eval_line(stmt);
+                }
+                if (*sp == ';') sp++;
+            }
+            lp = 0;
+        } else {
+            line[lp++] = ch;
+        }
+    }
+}
+
 static void cmd_factor(int argc, char *argv[]) {
     if (argc < 2) { write_str(2, "usage: factor NUMBER\n"); return; }
     for (int a = 1; a < argc; a++) {

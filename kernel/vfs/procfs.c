@@ -1949,9 +1949,9 @@ static size_t gen_cmdline_global(char *buf, size_t cap) {
  * Swap table header with no swap entries (no swap space configured).
  */
 static size_t gen_swaps(char *buf, size_t cap) {
-    struct pbuf b = { buf, 0, cap };
-    pb_str(&b, "Filename\t\t\t\tType\t\tSize\t\tUsed\t\tPriority\n");
-    return b.pos;
+    /* Use the swap tracking from sys_swapon/swapoff */
+    extern int swap_gen_proc_swaps(char *buf, int cap);
+    return (size_t)swap_gen_proc_swaps(buf, (int)cap);
 }
 
 /*

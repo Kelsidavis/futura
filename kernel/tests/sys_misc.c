@@ -23986,23 +23986,25 @@ static void test_getdents_legacy(void) {
  * Test 386: swapon/swapoff return EPERM, iopl/ioperm return EPERM
  * ============================================================ */
 static void test_swapon_iopl_eperm(void) {
-    fut_printf("[MISC-TEST] Test 386: swapon/swapoff/iopl/ioperm return EPERM\n");
+    fut_printf("[MISC-TEST] Test 386: swapon succeeds, iopl/ioperm return EPERM\n");
     extern long sys_swapon(const char *path, int swapflags);
     extern long sys_swapoff(const char *path);
     extern long sys_iopl(unsigned int level);
     extern long sys_ioperm(unsigned long from, unsigned long num, int turn_on);
 
+    /* swapon/swapoff now work (root can enable swap) */
     long r1 = sys_swapon("/dev/null", 0);
     long r2 = sys_swapoff("/dev/null");
+    /* iopl/ioperm still return EPERM (privileged I/O) */
     long r3 = sys_iopl(3);
     long r4 = sys_ioperm(0, 1024, 1);
 
-    if (r1 != -1 && r1 != -EPERM) {
-        fut_printf("[MISC-TEST] ✗ Test 386: swapon returned %ld (expected -EPERM)\n", r1);
+    if (r1 != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 386: swapon returned %ld (expected 0)\n", r1);
         fut_test_fail(386); return;
     }
-    if (r2 != -1 && r2 != -EPERM) {
-        fut_printf("[MISC-TEST] ✗ Test 386: swapoff returned %ld (expected -EPERM)\n", r2);
+    if (r2 != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 386: swapoff returned %ld (expected 0)\n", r2);
         fut_test_fail(386); return;
     }
     if (r3 != -1 && r3 != -EPERM) {
@@ -24013,7 +24015,7 @@ static void test_swapon_iopl_eperm(void) {
         fut_printf("[MISC-TEST] ✗ Test 386: ioperm returned %ld (expected -EPERM)\n", r4);
         fut_test_fail(386); return;
     }
-    fut_printf("[MISC-TEST] ✓ Test 386: swapon=%ld swapoff=%ld iopl=%ld ioperm=%ld (all EPERM)\n",
+    fut_printf("[MISC-TEST] ✓ Test 386: swapon=%ld swapoff=%ld iopl=%ld ioperm=%ld\n",
                r1, r2, r3, r4);
     fut_test_pass();
 }

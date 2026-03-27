@@ -17,6 +17,8 @@
 
 #include <kernel/errno.h>
 #include <kernel/fut_memory.h>
+#include <kernel/fut_task.h>
+#include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
 #include <platform/platform.h>
 #include <stdint.h>
@@ -140,20 +142,111 @@ long sys_getdents(unsigned int fd, void *dirp, unsigned int count) {
 
 /**
  * sys_swapon() - Enable a swap device/file.
- * Returns -EPERM: no swap subsystem; privileged operation.
+ *
+ * Since Futura runs entirely in RAM, no actual swapping occurs.
+ * We track the swap entry so /proc/swaps and free(1) report correctly.
+ * Requires CAP_SYS_ADMIN (uid 0).
  */
+
+/* Simple swap tracking (max 4 swap areas) */
+#define MAX_SWAP_AREAS 4
+static struct {
+    int active;
+    char path[128];
+    int priority;
+} g_swap_areas[MAX_SWAP_AREAS];
+static int g_swap_count = 0;
+
 long sys_swapon(const char *path, int swapflags) {
-    (void)path; (void)swapflags;
-    return -EPERM;
+    if (!path) return -EINVAL;
+
+    /* Permission check */
+    extern fut_task_t *fut_task_current(void);
+    fut_task_t *task = fut_task_current();
+    if (task && task->uid != 0)
+        return -EPERM;
+
+    /* Check for duplicate */
+    for (int i = 0; i < g_swap_count; i++) {
+        if (g_swap_areas[i].active) {
+            int match = 1;
+            for (int j = 0; path[j] && g_swap_areas[i].path[j]; j++) {
+                if (path[j] != g_swap_areas[i].path[j]) { match = 0; break; }
+            }
+            if (match) return -EBUSY;
+        }
+    }
+
+    if (g_swap_count >= MAX_SWAP_AREAS) return -ENOMEM;
+
+    /* Register swap area */
+    int slot = g_swap_count++;
+    g_swap_areas[slot].active = 1;
+    g_swap_areas[slot].priority = swapflags & 0x7FFF; /* SWAP_FLAG_PRIO_MASK */
+    int pl = 0;
+    while (path[pl] && pl < 127) { g_swap_areas[slot].path[pl] = path[pl]; pl++; }
+    g_swap_areas[slot].path[pl] = '\0';
+
+    extern void fut_printf(const char *, ...);
+    fut_printf("[SWAP] swapon('%s', priority=%d) — accepted (no actual swapping)\n",
+               g_swap_areas[slot].path, g_swap_areas[slot].priority);
+    return 0;
 }
 
 /**
  * sys_swapoff() - Disable a swap device/file.
- * Returns -EPERM: no swap subsystem; privileged operation.
  */
 long sys_swapoff(const char *path) {
-    (void)path;
-    return -EPERM;
+    if (!path) return -EINVAL;
+
+    extern fut_task_t *fut_task_current(void);
+    fut_task_t *task = fut_task_current();
+    if (task && task->uid != 0)
+        return -EPERM;
+
+    for (int i = 0; i < g_swap_count; i++) {
+        if (!g_swap_areas[i].active) continue;
+        int match = 1;
+        for (int j = 0; path[j] && g_swap_areas[i].path[j]; j++) {
+            if (path[j] != g_swap_areas[i].path[j]) { match = 0; break; }
+        }
+        if (match) {
+            g_swap_areas[i].active = 0;
+            extern void fut_printf(const char *, ...);
+            fut_printf("[SWAP] swapoff('%s')\n", g_swap_areas[i].path);
+            return 0;
+        }
+    }
+    return -EINVAL; /* Not found */
+}
+
+/* Generate /proc/swaps content */
+int swap_gen_proc_swaps(char *buf, int cap) {
+    int pos = 0;
+    const char *hdr = "Filename\t\t\t\tType\t\tSize\t\tUsed\t\tPriority\n";
+    while (*hdr && pos < cap - 1) buf[pos++] = *hdr++;
+    for (int i = 0; i < g_swap_count && pos < cap - 80; i++) {
+        if (!g_swap_areas[i].active) continue;
+        /* path */
+        for (int j = 0; g_swap_areas[i].path[j] && pos < cap - 60; j++)
+            buf[pos++] = g_swap_areas[i].path[j];
+        /* pad to column */
+        while (pos % 32 != 0 && pos < cap - 40) buf[pos++] = ' ';
+        const char *tp = "file\t\t0\t\t0\t\t";
+        while (*tp && pos < cap - 20) buf[pos++] = *tp++;
+        /* priority */
+        int p = g_swap_areas[i].priority;
+        char nbuf[8]; int np = 0;
+        if (p < 0) { buf[pos++] = '-'; p = -p; }
+        if (p == 0) nbuf[np++] = '0';
+        else { char r[8]; int rp = 0;
+            while (p > 0) { r[rp++] = '0' + (p % 10); p /= 10; }
+            while (rp > 0) nbuf[np++] = r[--rp]; }
+        for (int j = 0; j < np; j++) buf[pos++] = nbuf[j];
+        buf[pos++] = '\n';
+    }
+    buf[pos] = '\0';
+    return pos;
 }
 
 /* ---- iopl(172) / ioperm(173) ------------------------------------------- */

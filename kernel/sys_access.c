@@ -15,6 +15,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
 #include <kernel/fut_vfs.h>
+#include <kernel/userns.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -332,8 +333,8 @@ long sys_access(const char *pathname, int mode) {
      * This differs from open/read/write which use effective credentials.
      * Critical for setuid programs to check invoking user's permissions. */
     fut_task_t *task = fut_task_current();
-    uint32_t check_uid = task ? task->ruid : 0;
-    uint32_t check_gid = task ? task->rgid : 0;
+    uint32_t check_uid = task ? userns_ns_to_host_uid(task->user_ns, task->ruid) : 0;
+    uint32_t check_gid = task ? userns_ns_to_host_gid(task->user_ns, task->rgid) : 0;
 
     /* Root (real uid=0) always has access */
     if (check_uid != 0) {
@@ -347,7 +348,7 @@ long sys_access(const char *pathname, int mode) {
             /* Check supplementary groups */
             int in_group = 0;
             for (int i = 0; i < task->ngroups; i++) {
-                if (task->groups[i] == vnode->gid) { in_group = 1; break; }
+                if (userns_ns_to_host_gid(task->user_ns, task->groups[i]) == vnode->gid) { in_group = 1; break; }
             }
             perm = in_group ? ((file_mode >> 3) & 7) : (file_mode & 7);
         }

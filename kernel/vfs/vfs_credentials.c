@@ -10,6 +10,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/fut_vfs.h>
 #include <kernel/errno.h>
+#include <kernel/userns.h>
 #include <stdint.h>
 
 #include <kernel/kprintf.h>
@@ -23,7 +24,7 @@ uint32_t vfs_get_current_uid(void) {
     if (!task) {
         return 0;  /* Default to root if no current task */
     }
-    return task->uid;
+    return userns_ns_to_host_uid(task->user_ns, task->uid);
 }
 
 /**
@@ -35,7 +36,7 @@ uint32_t vfs_get_current_gid(void) {
     if (!task) {
         return 0;  /* Default to root if no current task */
     }
-    return task->gid;
+    return userns_ns_to_host_gid(task->user_ns, task->gid);
 }
 
 /**

@@ -11,6 +11,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
 #include <kernel/fut_vfs.h>
+#include <kernel/userns.h>
 #include <kernel/fut_fd_util.h>
 #include <fcntl.h>
 #include <stdint.h>
@@ -92,35 +93,42 @@ long sys_fchown(int fd, uint32_t uid, uint32_t gid) {
                           (local_uid == 0) ? "root" : "user";
     const char *gid_desc = (local_gid == (uint32_t)-1) ? "unchanged" :
                           (local_gid == 0) ? "root" : "group";
+    struct user_namespace *ns = task ? task->user_ns : NULL;
+    uint32_t task_host_uid = userns_ns_to_host_uid(ns, task->uid);
+    uint32_t task_host_gid = userns_ns_to_host_gid(ns, task->gid);
+    uint32_t host_uid = local_uid;
+    uint32_t host_gid = local_gid;
+    if (local_uid != (uint32_t)-1) host_uid = userns_ns_to_host_uid(ns, local_uid);
+    if (local_gid != (uint32_t)-1) host_gid = userns_ns_to_host_gid(ns, local_gid);
 
     /* Capability checks for ownership transfer */
     const char *capability_status = "none required";
-    if (local_uid != (uint32_t)-1 && local_uid != vnode->uid) {
+    if (local_uid != (uint32_t)-1 && host_uid != vnode->uid) {
         /* Changing owner requires root, CAP_CHOWN, or being the current owner */
-        if (task->uid != 0 &&
+        if (task_host_uid != 0 &&
             !(task->cap_effective & (1ULL << 0 /* CAP_CHOWN */)) &&
-            task->uid != vnode->uid) {
+            task_host_uid != vnode->uid) {
             fut_printf("[FCHOWN] fchown(fd=%d [%s], vnode_ino=%lu, uid=%u [%s], gid=%u [%s]) "
                        "-> EPERM (user %u cannot change owner from %u to %u without CAP_CHOWN)\n",
                        local_fd, fd_category, vnode->ino, local_uid, uid_desc, local_gid, gid_desc,
-                       task->uid, vnode->uid, local_uid);
+                       task_host_uid, vnode->uid, host_uid);
             return -EPERM;
         }
         capability_status = "CAP_CHOWN (owner transfer)";
     }
 
-    if (local_gid != (uint32_t)-1 && local_gid != vnode->gid) {
+    if (local_gid != (uint32_t)-1 && host_gid != vnode->gid) {
         /* Changing group requires CAP_CHOWN, root, or:
          * file owner changing group to their own effective GID.
          * Linux allows supplementary groups too, but we check egid. */
-        if (task->uid != 0 &&
+        if (task_host_uid != 0 &&
             !(task->cap_effective & (1ULL << 0 /* CAP_CHOWN */))) {
             /* Non-privileged: must own the file AND target must be own egid */
-            if (task->uid != vnode->uid || local_gid != task->gid) {
+            if (task_host_uid != vnode->uid || host_gid != task_host_gid) {
                 fut_printf("[FCHOWN] fchown(fd=%d [%s], vnode_ino=%lu, uid=%u [%s], gid=%u [%s]) "
                            "-> EPERM (user %u cannot change group from %u to %u)\n",
                            local_fd, fd_category, vnode->ino, local_uid, uid_desc, local_gid, gid_desc,
-                           task->uid, vnode->gid, local_gid);
+                           task_host_uid, vnode->gid, host_gid);
                 return -EPERM;
             }
         }
@@ -141,8 +149,8 @@ long sys_fchown(int fd, uint32_t uid, uint32_t gid) {
      * Timestamps use (uint64_t)-1 sentinel to avoid resetting them. */
     struct fut_stat stat = {0};
     stat.st_mode = (uint32_t)-1;  /* Don't change mode */
-    stat.st_uid = local_uid;
-    stat.st_gid = local_gid;
+    stat.st_uid = host_uid;
+    stat.st_gid = host_gid;
     stat.st_atime = (uint64_t)-1;
     stat.st_mtime = (uint64_t)-1;
 
@@ -182,8 +190,8 @@ long sys_fchown(int fd, uint32_t uid, uint32_t gid) {
      * When only gid changes, S_ISGID is cleared if S_IXGRP is set.
      * This prevents privilege escalation via chowning setuid binaries. */
     if (vnode->type == VN_REG) {
-        int uid_changed = (local_uid != (uint32_t)-1 && local_uid != old_uid);
-        int gid_changed = (local_gid != (uint32_t)-1 && local_gid != old_gid);
+        int uid_changed = (local_uid != (uint32_t)-1 && host_uid != old_uid);
+        int gid_changed = (local_gid != (uint32_t)-1 && host_gid != old_gid);
         if (uid_changed || gid_changed) {
             if (uid_changed) {
                 vnode->mode &= ~(uint32_t)(04000 | 02000);

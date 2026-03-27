@@ -14,6 +14,7 @@
 #include <kernel/fut_memory.h>
 #include <kernel/kprintf.h>
 #include <kernel/errno.h>
+#include <kernel/userns.h>
 #include <string.h>
 
 #define USERNS_MAP_MAX 5  /* Max UID/GID map entries per namespace */
@@ -95,7 +96,7 @@ uint32_t userns_ns_to_host_uid(struct user_namespace *ns, uint32_t ns_uid) {
             return ns->uid_map[i].host_id + (ns_uid - ns->uid_map[i].ns_id);
         }
     }
-    return 65534;  /* nobody — unmapped */
+    return USERNS_OVERFLOW_ID;  /* nobody — unmapped */
 }
 
 uint32_t userns_ns_to_host_gid(struct user_namespace *ns, uint32_t ns_gid) {
@@ -106,5 +107,27 @@ uint32_t userns_ns_to_host_gid(struct user_namespace *ns, uint32_t ns_gid) {
             return ns->gid_map[i].host_id + (ns_gid - ns->gid_map[i].ns_id);
         }
     }
-    return 65534;
+    return USERNS_OVERFLOW_ID;
+}
+
+uint32_t userns_host_to_ns_uid(struct user_namespace *ns, uint32_t host_uid) {
+    if (!ns || ns == &g_init_userns) return host_uid;
+    for (int i = 0; i < ns->uid_map_count; i++) {
+        if (host_uid >= ns->uid_map[i].host_id &&
+            host_uid < ns->uid_map[i].host_id + ns->uid_map[i].count) {
+            return ns->uid_map[i].ns_id + (host_uid - ns->uid_map[i].host_id);
+        }
+    }
+    return USERNS_OVERFLOW_ID;
+}
+
+uint32_t userns_host_to_ns_gid(struct user_namespace *ns, uint32_t host_gid) {
+    if (!ns || ns == &g_init_userns) return host_gid;
+    for (int i = 0; i < ns->gid_map_count; i++) {
+        if (host_gid >= ns->gid_map[i].host_id &&
+            host_gid < ns->gid_map[i].host_id + ns->gid_map[i].count) {
+            return ns->gid_map[i].ns_id + (host_gid - ns->gid_map[i].host_id);
+        }
+    }
+    return USERNS_OVERFLOW_ID;
 }

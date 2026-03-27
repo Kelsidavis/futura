@@ -30,6 +30,7 @@
 #include <kernel/fut_timer.h>
 #include <kernel/fut_stats.h>
 #include <kernel/fut_lock.h>
+#include <kernel/userns.h>
 #include <kernel/vfs_credentials.h>
 #include <kernel/fut_socket.h>
 #include <futura/netif.h>
@@ -3293,18 +3294,42 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
         }
         case PROC_UID_MAP: {
             /* /proc/<pid>/uid_map — user namespace uid mapping.
-             * Format: "inside_start outside_start count\n"
-             * Futura has no user namespaces; report identity mapping for the
-             * full 32-bit UID space (same as Linux initial user namespace). */
+             * Format: "inside_start outside_start count\n" */
             struct pbuf b = { tmp, 0, GEN_BUF };
-            pb_str(&b, "         0          0 4294967295\n");
+            fut_task_t *t = fut_task_by_pid(n->pid);
+            struct user_namespace *ns = t ? t->user_ns : NULL;
+            if (!ns || ns->uid_map_count <= 0) {
+                pb_str(&b, "         0          0 4294967295\n");
+            } else {
+                for (int i = 0; i < ns->uid_map_count; i++) {
+                    pb_u64(&b, (uint64_t)ns->uid_map[i].ns_id);
+                    pb_char(&b, ' ');
+                    pb_u64(&b, (uint64_t)ns->uid_map[i].host_id);
+                    pb_char(&b, ' ');
+                    pb_u64(&b, (uint64_t)ns->uid_map[i].count);
+                    pb_char(&b, '\n');
+                }
+            }
             total = b.pos;
             break;
         }
         case PROC_GID_MAP: {
             /* /proc/<pid>/gid_map — same format as uid_map */
             struct pbuf b = { tmp, 0, GEN_BUF };
-            pb_str(&b, "         0          0 4294967295\n");
+            fut_task_t *t = fut_task_by_pid(n->pid);
+            struct user_namespace *ns = t ? t->user_ns : NULL;
+            if (!ns || ns->gid_map_count <= 0) {
+                pb_str(&b, "         0          0 4294967295\n");
+            } else {
+                for (int i = 0; i < ns->gid_map_count; i++) {
+                    pb_u64(&b, (uint64_t)ns->gid_map[i].ns_id);
+                    pb_char(&b, ' ');
+                    pb_u64(&b, (uint64_t)ns->gid_map[i].host_id);
+                    pb_char(&b, ' ');
+                    pb_u64(&b, (uint64_t)ns->gid_map[i].count);
+                    pb_char(&b, '\n');
+                }
+            }
             total = b.pos;
             break;
         }
@@ -4474,6 +4499,39 @@ static ssize_t procfs_file_write(struct fut_vnode *vnode, const void *buf,
             __builtin_memcpy(g_domainname, kbuf, copy_len);
             g_domainname[copy_len] = '\0';
             return (ssize_t)size;
+
+        case PROC_UID_MAP:
+        case PROC_GID_MAP: {
+            /* /proc/<pid>/{uid_map,gid_map}: accept one mapping line:
+             * "<inside> <outside> <count>" */
+            fut_task_t *mtask = fut_task_by_pid(n->pid);
+            fut_task_t *cur = fut_task_current();
+            if (!mtask || !cur) return -ESRCH;
+            if ((uint64_t)n->pid != cur->pid) return -EPERM;  /* self only */
+            if (!mtask->user_ns) return -EPERM;
+
+            uint32_t inside = 0, outside = 0, count = 0;
+            size_t i = 0;
+            while (i < copy_len && (kbuf[i] == ' ' || kbuf[i] == '\t')) i++;
+            for (; i < copy_len && kbuf[i] >= '0' && kbuf[i] <= '9'; i++)
+                inside = inside * 10 + (uint32_t)(kbuf[i] - '0');
+            while (i < copy_len && (kbuf[i] == ' ' || kbuf[i] == '\t')) i++;
+            for (; i < copy_len && kbuf[i] >= '0' && kbuf[i] <= '9'; i++)
+                outside = outside * 10 + (uint32_t)(kbuf[i] - '0');
+            while (i < copy_len && (kbuf[i] == ' ' || kbuf[i] == '\t')) i++;
+            for (; i < copy_len && kbuf[i] >= '0' && kbuf[i] <= '9'; i++)
+                count = count * 10 + (uint32_t)(kbuf[i] - '0');
+            if (count == 0) return -EINVAL;
+
+            int rc;
+            if (n->kind == PROC_UID_MAP) {
+                rc = userns_set_uid_map(mtask->user_ns, inside, outside, count);
+            } else {
+                rc = userns_set_gid_map(mtask->user_ns, inside, outside, count);
+            }
+            if (rc < 0) return rc;
+            return (ssize_t)size;
+        }
 
         case PROC_OOM_ADJ: {
             /* oom_score_adj: parse signed decimal [-1000..1000] and store in task */

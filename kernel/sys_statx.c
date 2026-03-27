@@ -17,6 +17,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
 #include <kernel/fut_vfs.h>
+#include <kernel/userns.h>
 #include <kernel/fut_fd_util.h>
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
@@ -150,6 +151,8 @@ static void fill_statx_from_vnode(struct fut_vnode *vnode, struct fut_statx *sx,
 
     /* We can provide all basic stats from vnode */
     uint32_t result_mask = 0;
+    fut_task_t *cur = fut_task_current();
+    struct user_namespace *ns = cur ? cur->user_ns : NULL;
 
     if (mask & STATX_TYPE) {
         sx->stx_mode = vnode_type_to_mode(vnode->type);
@@ -167,12 +170,12 @@ static void fill_statx_from_vnode(struct fut_vnode *vnode, struct fut_statx *sx,
     }
 
     if (mask & STATX_UID) {
-        sx->stx_uid = vnode->uid;
+        sx->stx_uid = userns_host_to_ns_uid(ns, vnode->uid);
         result_mask |= STATX_UID;
     }
 
     if (mask & STATX_GID) {
-        sx->stx_gid = vnode->gid;
+        sx->stx_gid = userns_host_to_ns_gid(ns, vnode->gid);
         result_mask |= STATX_GID;
     }
 

@@ -15,6 +15,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
 #include <kernel/fut_vfs.h>
+#include <kernel/userns.h>
 #include <kernel/fut_fd_util.h>
 #include <stdint.h>
 
@@ -256,6 +257,12 @@ long sys_fstat(int fd, struct fut_stat *statbuf) {
         kernel_stat.st_mtime_nsec = 0;
         kernel_stat.st_ctime = now_ns;
         kernel_stat.st_ctime_nsec = 0;
+    }
+
+    {
+        struct user_namespace *ns = task ? task->user_ns : NULL;
+        kernel_stat.st_uid = userns_host_to_ns_uid(ns, kernel_stat.st_uid);
+        kernel_stat.st_gid = userns_host_to_ns_gid(ns, kernel_stat.st_gid);
     }
 
     /* Copy stat buffer to userspace */

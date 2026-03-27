@@ -15,6 +15,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/fut_vfs.h>
 #include <kernel/errno.h>
+#include <kernel/userns.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
@@ -206,8 +207,10 @@ long sys_faccessat(int dirfd, const char *pathname, int mode, int flags) {
         if (local_mode == F_OK)
             return 0;
 
-        uint32_t check_uid = (local_flags & AT_EACCESS) ? task->uid  : task->ruid;
-        uint32_t check_gid = (local_flags & AT_EACCESS) ? task->gid  : task->rgid;
+        uint32_t check_uid_ns = (local_flags & AT_EACCESS) ? task->uid  : task->ruid;
+        uint32_t check_gid_ns = (local_flags & AT_EACCESS) ? task->gid  : task->rgid;
+        uint32_t check_uid = userns_ns_to_host_uid(task->user_ns, check_uid_ns);
+        uint32_t check_gid = userns_ns_to_host_gid(task->user_ns, check_gid_ns);
         uint32_t file_mode = vnode->mode & 0777;
         uint32_t perm_bits;
 
@@ -222,7 +225,7 @@ long sys_faccessat(int dirfd, const char *pathname, int mode, int flags) {
         } else {
             int in_group = 0;
             for (int gi = 0; gi < task->ngroups; gi++) {
-                if (task->groups[gi] == vnode->gid) { in_group = 1; break; }
+                if (userns_ns_to_host_gid(task->user_ns, task->groups[gi]) == vnode->gid) { in_group = 1; break; }
             }
             perm_bits = in_group ? ((file_mode >> 3) & 7) : (file_mode & 7);
         }

@@ -16,6 +16,7 @@
 #include <sys/capability.h>
 #include <kernel/errno.h>
 #include <kernel/fut_vfs.h>
+#include <kernel/userns.h>
 #include <stdint.h>
 
 #include <platform/platform.h>
@@ -288,20 +289,28 @@ long sys_chown(const char *pathname, uint32_t uid, uint32_t gid) {
      */
     uint32_t old_uid = vnode->uid;
     uint32_t old_gid = vnode->gid;
+    uint32_t host_uid = local_uid;
+    uint32_t host_gid = local_gid;
 
     /* Permission check: changing owner requires root or CAP_CHOWN.
      * Non-privileged users can only change group (to one of their groups). */
     fut_task_t *task = fut_task_current();
-    if (task && task->ruid != 0 && !(task->cap_effective & (1ULL << CAP_CHOWN))) {
+    struct user_namespace *ns = task ? task->user_ns : NULL;
+    if (local_uid != CHOWN_UNCHANGED) host_uid = userns_ns_to_host_uid(ns, local_uid);
+    if (local_gid != CHOWN_UNCHANGED) host_gid = userns_ns_to_host_gid(ns, local_gid);
+    uint32_t task_host_ruid = task ? userns_ns_to_host_uid(ns, task->ruid) : 0;
+    uint32_t task_host_gid = task ? userns_ns_to_host_gid(ns, task->gid) : 0;
+
+    if (task && task_host_ruid != 0 && !(task->cap_effective & (1ULL << CAP_CHOWN))) {
         /* Non-privileged: cannot change UID at all */
-        if (local_uid != CHOWN_UNCHANGED && local_uid != old_uid) {
+        if (local_uid != CHOWN_UNCHANGED && host_uid != old_uid) {
             fut_vnode_unref(vnode);
             return -EPERM;
         }
         /* Non-privileged: can only change GID if file owner AND target
          * is caller's effective GID (Linux also allows supplementary groups) */
-        if (local_gid != CHOWN_UNCHANGED && local_gid != old_gid) {
-            if (task->ruid != old_uid || local_gid != task->gid) {
+        if (local_gid != CHOWN_UNCHANGED && host_gid != old_gid) {
+            if (task_host_ruid != old_uid || host_gid != task_host_gid) {
                 fut_vnode_unref(vnode);
                 return -EPERM;
             }
@@ -403,8 +412,8 @@ long sys_chown(const char *pathname, uint32_t uid, uint32_t gid) {
      * Timestamps use (uint64_t)-1 sentinel to avoid resetting them. */
     struct fut_stat stat = {0};
     stat.st_mode = (uint32_t)-1;  /* Don't change mode */
-    stat.st_uid = local_uid;
-    stat.st_gid = local_gid;
+    stat.st_uid = host_uid;
+    stat.st_gid = host_gid;
     stat.st_atime = (uint64_t)-1;
     stat.st_mtime = (uint64_t)-1;
 
@@ -446,8 +455,8 @@ long sys_chown(const char *pathname, uint32_t uid, uint32_t gid) {
     /* POSIX/Linux: clear S_ISUID/S_ISGID on ownership change.
      * uid change clears both; gid-only change clears S_ISGID when S_IXGRP set. */
     if (vnode->type == VN_REG) {
-        int uid_changed = (local_uid != CHOWN_UNCHANGED && local_uid != old_uid);
-        int gid_changed = (local_gid != CHOWN_UNCHANGED && local_gid != old_gid);
+        int uid_changed = (local_uid != CHOWN_UNCHANGED && host_uid != old_uid);
+        int gid_changed = (local_gid != CHOWN_UNCHANGED && host_gid != old_gid);
         if (uid_changed || gid_changed) {
             if (uid_changed) {
                 vnode->mode &= ~(uint32_t)(04000 | 02000);

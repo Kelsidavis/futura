@@ -15,6 +15,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
 #include <kernel/fut_vfs.h>
+#include <kernel/userns.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -221,10 +222,15 @@ long sys_fchownat(int dirfd, const char *pathname, uint32_t uid, uint32_t gid, i
         struct fut_vnode *vnode = dirfile->vnode;
         uint32_t ep_old_uid = vnode->uid;
         uint32_t ep_old_gid = vnode->gid;
+        struct user_namespace *ns = task->user_ns;
+        uint32_t ep_host_uid = uid;
+        uint32_t ep_host_gid = gid;
+        if (uid != (uint32_t)-1) ep_host_uid = userns_ns_to_host_uid(ns, uid);
+        if (gid != (uint32_t)-1) ep_host_gid = userns_ns_to_host_gid(ns, gid);
         struct fut_stat stat = {0};
         stat.st_mode = (uint32_t)-1;  /* Don't change mode */
-        stat.st_uid = uid;
-        stat.st_gid = gid;
+        stat.st_uid = ep_host_uid;
+        stat.st_gid = ep_host_gid;
         stat.st_atime = (uint64_t)-1;
         stat.st_mtime = (uint64_t)-1;
 
@@ -239,8 +245,8 @@ long sys_fchownat(int dirfd, const char *pathname, uint32_t uid, uint32_t gid, i
 
         /* POSIX/Linux: clear S_ISUID/S_ISGID on ownership change */
         if (vnode->type == VN_REG) {
-            int ep_uid_changed = (uid != (uint32_t)-1 && uid != ep_old_uid);
-            int ep_gid_changed = (gid != (uint32_t)-1 && gid != ep_old_gid);
+            int ep_uid_changed = (uid != (uint32_t)-1 && ep_host_uid != ep_old_uid);
+            int ep_gid_changed = (gid != (uint32_t)-1 && ep_host_gid != ep_old_gid);
             if (ep_uid_changed || ep_gid_changed) {
                 if (ep_uid_changed) {
                     vnode->mode &= ~(uint32_t)(04000 | 02000);
@@ -366,16 +372,24 @@ long sys_fchownat(int dirfd, const char *pathname, uint32_t uid, uint32_t gid, i
         return -ENOENT;
     }
 
+    uint32_t host_uid = uid;
+    uint32_t host_gid = gid;
+
     /* Permission check: changing owner requires root or CAP_CHOWN.
      * Non-privileged users can only change group if they own the file. */
     fut_task_t *task = fut_task_current();
-    if (task && task->ruid != 0 && !(task->cap_effective & (1ULL << 0 /* CAP_CHOWN */))) {
-        if (uid != (uint32_t)-1 && uid != vnode->uid) {
+    struct user_namespace *ns = task ? task->user_ns : NULL;
+    if (uid != (uint32_t)-1) host_uid = userns_ns_to_host_uid(ns, uid);
+    if (gid != (uint32_t)-1) host_gid = userns_ns_to_host_gid(ns, gid);
+    uint32_t task_host_ruid = task ? userns_ns_to_host_uid(ns, task->ruid) : 0;
+    uint32_t task_host_gid = task ? userns_ns_to_host_gid(ns, task->gid) : 0;
+    if (task && task_host_ruid != 0 && !(task->cap_effective & (1ULL << 0 /* CAP_CHOWN */))) {
+        if (uid != (uint32_t)-1 && host_uid != vnode->uid) {
             fut_vnode_unref(vnode);
             return -EPERM;
         }
-        if (gid != (uint32_t)-1 && gid != vnode->gid) {
-            if (task->ruid != vnode->uid || gid != task->gid) {
+        if (gid != (uint32_t)-1 && host_gid != vnode->gid) {
+            if (task_host_ruid != vnode->uid || host_gid != task_host_gid) {
                 fut_vnode_unref(vnode);
                 return -EPERM;
             }
@@ -400,8 +414,8 @@ long sys_fchownat(int dirfd, const char *pathname, uint32_t uid, uint32_t gid, i
      * Timestamps use (uint64_t)-1 sentinel to avoid resetting them. */
     struct fut_stat stat = {0};
     stat.st_mode = (uint32_t)-1;  /* Don't change mode */
-    stat.st_uid = uid;
-    stat.st_gid = gid;
+    stat.st_uid = host_uid;
+    stat.st_gid = host_gid;
     stat.st_atime = (uint64_t)-1;
     stat.st_mtime = (uint64_t)-1;
 
@@ -436,8 +450,8 @@ long sys_fchownat(int dirfd, const char *pathname, uint32_t uid, uint32_t gid, i
 
     /* POSIX/Linux: clear S_ISUID/S_ISGID on ownership change */
     if (vnode->type == VN_REG) {
-        int uid_changed = (uid != (uint32_t)-1 && uid != old_uid);
-        int gid_changed = (gid != (uint32_t)-1 && gid != old_gid);
+        int uid_changed = (uid != (uint32_t)-1 && host_uid != old_uid);
+        int gid_changed = (gid != (uint32_t)-1 && host_gid != old_gid);
         if (uid_changed || gid_changed) {
             if (uid_changed) {
                 vnode->mode &= ~(uint32_t)(04000 | 02000);

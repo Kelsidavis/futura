@@ -11,6 +11,7 @@
 #include <kernel/fut_mm.h>
 #include <kernel/fut_task.h>
 #include <kernel/fut_timer.h>
+#include <kernel/userns.h>
 #include <kernel/chrdev.h>
 #include <kernel/devfs.h>
 #include <kernel/errno.h>
@@ -1975,8 +1976,8 @@ static int check_file_permission(struct fut_vnode *vnode, fut_task_t *task, bool
         task = fut_task_current();
     }
 
-    uint32_t task_uid = task ? task->uid : 0;
-    uint32_t task_gid = task ? task->gid : 0;
+    uint32_t task_uid = task ? userns_ns_to_host_uid(task->user_ns, task->uid) : 0;
+    uint32_t task_gid = task ? userns_ns_to_host_gid(task->user_ns, task->gid) : 0;
 
     /* Root or CAP_DAC_OVERRIDE bypasses all file permission checks */
     if (task_uid == 0 || (task && (task->cap_effective & (1ULL << 1 /* CAP_DAC_OVERRIDE */)))) {
@@ -2006,7 +2007,7 @@ static int check_file_permission(struct fut_vnode *vnode, fut_task_t *task, bool
         int in_group = 0;
         if (task) {
             for (int i = 0; i < task->ngroups; i++) {
-                if (task->groups[i] == file_gid) {
+                if (userns_ns_to_host_gid(task->user_ns, task->groups[i]) == file_gid) {
                     in_group = 1;
                     break;
                 }
@@ -2999,6 +3000,13 @@ int fut_vfs_stat(const char *path, struct fut_stat *stat) {
         ret = 0;
     }
 
+    if (ret == 0) {
+        fut_task_t *cur = fut_task_current();
+        struct user_namespace *ns = cur ? cur->user_ns : NULL;
+        stat->st_uid = userns_host_to_ns_uid(ns, stat->st_uid);
+        stat->st_gid = userns_host_to_ns_gid(ns, stat->st_gid);
+    }
+
     release_lookup_ref(vnode);
     return ret;
 }
@@ -3067,6 +3075,13 @@ int fut_vfs_lstat(const char *path, struct fut_stat *stat) {
         stat->st_ctime = now_ns / 1000000000;
         stat->st_ctime_nsec = now_ns % 1000000000;
         ret = 0;
+    }
+
+    if (ret == 0) {
+        fut_task_t *cur = fut_task_current();
+        struct user_namespace *ns = cur ? cur->user_ns : NULL;
+        stat->st_uid = userns_host_to_ns_uid(ns, stat->st_uid);
+        stat->st_gid = userns_host_to_ns_gid(ns, stat->st_gid);
     }
 
     release_lookup_ref(vnode);

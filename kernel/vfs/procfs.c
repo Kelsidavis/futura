@@ -6592,7 +6592,9 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
          * "find first task with pid > (cookie - 30)".  After returning
          * a PID entry we set cookie = 38 + that_pid + 1.
          */
-        uint64_t min_pid = idx >= 38 ? idx - 38 : 0;  /* start scanning for pid > min_pid */
+        /* Cookie encodes 38 + last_returned_pid + 1, so the PID to resume
+         * after is (idx - 38 - 1).  We scan for pid > that value, i.e., pid >= (idx - 38). */
+        uint64_t min_pid = idx > 38 ? idx - 38 - 1 : 0;  /* start scanning for pid > min_pid */
         fut_task_t *best = NULL;
         uint64_t   best_pid = (uint64_t)-1;
         fut_task_t *t = fut_task_list;

@@ -41524,32 +41524,23 @@ t1078:
             for (int i = rn - 1; i >= 0; i--) pid_str[pn++] = rev[i]; } }
         pid_str[pn] = '\0';
 
-        extern long sys_open(const char *, int, int);
-        extern long sys_close(int);
-        long dfd = sys_open("/proc", 00200000 /*O_DIRECTORY*/, 0);
+        int dfd = fut_vfs_open("/proc", 0 /*O_RDONLY*/, 0);
         if (dfd < 0) {
-            fut_printf("[MISC-TEST] ✗ Test 1078: open /proc failed: %ld\n", dfd);
+            fut_printf("[MISC-TEST] ✗ Test 1078: open /proc failed: %d\n", dfd);
             fut_test_fail(1078);
             goto t1079;
         }
 
-        static char buf[8192];
         bool found = false;
-        long n;
-        /* Loop to drain all directory entries (may need multiple reads with many PIDs) */
-        while ((n = sys_getdents64((unsigned int)dfd, buf, sizeof(buf))) > 0) {
-            long pos = 0;
-            while (pos < n) {
-                struct test_dirent64 *d = (struct test_dirent64 *)(buf + pos);
-                if (d->d_reclen == 0) { n = 0; break; }
-                if (__builtin_strcmp(d->d_name, pid_str) == 0) { found = true; break; }
-                pos += d->d_reclen;
-            }
-            if (found) break;
+        uint64_t cookie = 0;
+        struct fut_vdirent de;
+        /* Use VFS readdir (not sys_getdents64) since we have a VFS fd */
+        while (fut_vfs_readdir_fd(dfd, &cookie, &de) == 1) {
+            if (__builtin_strcmp(de.d_name, pid_str) == 0) { found = true; break; }
         }
-        sys_close((int)dfd);
+        fut_vfs_close(dfd);
         if (!found) {
-            fut_printf("[MISC-TEST] ✗ Test 1078: PID %s not found in /proc (n=%ld)\n", pid_str, n);
+            fut_printf("[MISC-TEST] ✗ Test 1078: PID %s not found in /proc\n", pid_str);
             fut_test_fail(1078);
         } else {
             fut_printf("[MISC-TEST] ✓ Test 1078: /proc lists PID %s\n", pid_str);

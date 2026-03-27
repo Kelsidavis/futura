@@ -4732,6 +4732,7 @@ static ssize_t procfs_file_write(struct fut_vnode *vnode, const void *buf,
 
 static int procfs_file_getattr(struct fut_vnode *vnode, struct fut_stat *st) {
     if (!vnode || !st) return -EINVAL;
+    procfs_node_t *n = (procfs_node_t *)vnode->fs_data;
     __builtin_memset(st, 0, sizeof(*st));
     st->st_ino   = vnode->ino;
     /* Use the vnode's own mode so writable files (e.g. hostname, oom_score_adj)
@@ -4740,6 +4741,15 @@ static int procfs_file_getattr(struct fut_vnode *vnode, struct fut_stat *st) {
     st->st_nlink = 1;
     st->st_uid   = 0;
     st->st_gid   = 0;
+    /* /proc/<pid> files should appear owned by the target task's effective IDs.
+     * This preserves Linux-like ownership semantics under user namespaces. */
+    if (n && n->pid) {
+        fut_task_t *owner = fut_task_by_pid(n->pid);
+        if (owner) {
+            st->st_uid = userns_ns_to_host_uid(owner->user_ns, owner->uid);
+            st->st_gid = userns_ns_to_host_gid(owner->user_ns, owner->gid);
+        }
+    }
     st->st_size  = 0;  /* unknown size — reads return actual content */
     st->st_blksize = 4096;
     return 0;

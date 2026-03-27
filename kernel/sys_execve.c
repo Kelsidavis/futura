@@ -924,10 +924,14 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
         if (!(task->no_new_privs)) {
             struct fut_stat exec_stat;
             if (fut_vfs_stat(kernel_pathname, &exec_stat) == 0) {
-                if (exec_stat.st_mode & 04000) {  /* S_ISUID */
+                /* SECURITY: Only honor SUID/SGID if the file is not
+                 * world-writable (prevents privilege escalation via
+                 * user-modified SUID binaries) */
+                int world_writable = (exec_stat.st_mode & 002) != 0;
+                if ((exec_stat.st_mode & 04000) && !world_writable) {  /* S_ISUID */
                     task->uid = exec_stat.st_uid;
                 }
-                if (exec_stat.st_mode & 02000) {  /* S_ISGID */
+                if ((exec_stat.st_mode & 02000) && !world_writable) {  /* S_ISGID */
                     task->gid = exec_stat.st_gid;
                 }
             }

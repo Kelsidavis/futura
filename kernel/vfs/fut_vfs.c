@@ -1983,6 +1983,12 @@ static int check_file_permission(struct fut_vnode *vnode, fut_task_t *task, bool
         return 0;
     }
 
+    /* SECURITY: Explicitly deny access to mode 000 files for non-root.
+     * While the bit checks below would also reject, this is defense-in-depth. */
+    if ((mode & 0777) == 0) {
+        return -EACCES;
+    }
+
     /* Get actual file ownership from vnode */
     uint32_t file_uid = vnode->uid;
     uint32_t file_gid = vnode->gid;

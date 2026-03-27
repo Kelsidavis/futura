@@ -1308,12 +1308,13 @@ void fut_kernel_main(void) {
                   "\n"
                   "  Welcome to Futura OS 0.5.0\n"
                   "\n"
-                  "  * 119 built-in commands — type 'help'\n"
+                  "  * 136 built-in commands — type 'help'\n"
                   "  * Networking: ip, ifconfig, iptables, ping, traceroute,\n"
                   "    netstat, ss, arp, wget, nc, nslookup, httpd\n"
                   "  * Router: ip forward on, ip route add, iptables -t nat\n"
                   "  * System: top, ps, free, df, sysctl, dmesg, lsof\n"
                   "  * Scripting: for/while/if, pipes, redirects, globs\n"
+                  "  * Text: awk, sed, grep, sort, cut, tr, wc, diff, base64\n"
                   "  * FuturaFS at /mnt — try: echo hello > /mnt/file\n"
                   "\n");
         ETC_WRITE("/etc/services",

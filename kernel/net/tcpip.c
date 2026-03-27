@@ -942,6 +942,139 @@ static void ip_handle_packet(const uint8_t *frame, size_t len) {
         return;
     }
 
+    /* ── IP Fragment Reassembly ──
+     * Check if this packet is a fragment. A non-fragment has offset=0 and MF=0.
+     * Fragments are reassembled in a simple buffer before protocol dispatch. */
+    {
+        uint16_t flags_frag = ntohs(ip->flags_fragment);
+        uint16_t frag_offset = (flags_frag & 0x1FFF) * 8;  /* offset in bytes */
+        int more_frags = (flags_frag & 0x2000) != 0;
+
+        if (frag_offset != 0 || more_frags) {
+            /* This is a fragment — reassemble it */
+            #define REASM_MAX_SLOTS 8
+            #define REASM_MAX_SIZE  65536
+            #define REASM_TIMEOUT_MS 30000
+
+            static struct ip_reasm_slot {
+                uint32_t src_ip;
+                uint32_t dst_ip;
+                uint16_t id;
+                uint8_t  protocol;
+                uint8_t  active;
+                uint8_t  data[REASM_MAX_SIZE];
+                uint16_t received[256];  /* bitmap: which 8-byte blocks received */
+                uint16_t total_len;      /* set when last fragment (MF=0) arrives */
+                uint16_t bytes_received;
+                uint64_t timestamp_ms;
+                uint8_t  ihl;            /* IP header length of first fragment */
+            } reasm_slots[REASM_MAX_SLOTS];
+
+            extern uint64_t fut_get_ticks(void);
+            uint64_t now_ms = fut_get_ticks();
+            uint16_t pkt_id = ntohs(ip->identification);
+            size_t frag_payload_len = total_len - ihl;
+
+            /* Find or create reassembly slot */
+            struct ip_reasm_slot *slot = NULL;
+            for (int i = 0; i < REASM_MAX_SLOTS; i++) {
+                if (reasm_slots[i].active &&
+                    reasm_slots[i].src_ip == src_ip &&
+                    reasm_slots[i].dst_ip == dest_ip &&
+                    reasm_slots[i].id == pkt_id &&
+                    reasm_slots[i].protocol == protocol) {
+                    slot = &reasm_slots[i];
+                    break;
+                }
+            }
+            if (!slot) {
+                /* Allocate new slot (evict oldest if full) */
+                for (int i = 0; i < REASM_MAX_SLOTS; i++) {
+                    if (!reasm_slots[i].active) {
+                        slot = &reasm_slots[i];
+                        break;
+                    }
+                }
+                if (!slot) {
+                    /* Evict oldest */
+                    uint64_t oldest = ~0ULL;
+                    for (int i = 0; i < REASM_MAX_SLOTS; i++) {
+                        if (reasm_slots[i].timestamp_ms < oldest) {
+                            oldest = reasm_slots[i].timestamp_ms;
+                            slot = &reasm_slots[i];
+                        }
+                    }
+                }
+                memset(slot, 0, sizeof(*slot));
+                slot->active = 1;
+                slot->src_ip = src_ip;
+                slot->dst_ip = dest_ip;
+                slot->id = pkt_id;
+                slot->protocol = protocol;
+                slot->timestamp_ms = now_ms;
+                slot->ihl = ihl;
+            }
+
+            /* Copy fragment payload into reassembly buffer */
+            if (frag_offset + frag_payload_len <= REASM_MAX_SIZE) {
+                memcpy(slot->data + frag_offset, (const uint8_t *)ip + ihl, frag_payload_len);
+                slot->bytes_received += (uint16_t)frag_payload_len;
+
+                /* Mark received blocks in bitmap */
+                uint16_t blk_start = (uint16_t)(frag_offset / 8);
+                uint16_t blk_end = (uint16_t)((frag_offset + frag_payload_len + 7) / 8);
+                for (uint16_t b = blk_start; b < blk_end && b < 256; b++)
+                    slot->received[b] = 1;
+
+                /* If this is the last fragment, record total length */
+                if (!more_frags) {
+                    slot->total_len = (uint16_t)(frag_offset + frag_payload_len);
+                }
+            }
+
+            /* Check if reassembly is complete */
+            if (slot->total_len > 0) {
+                uint16_t needed_blocks = (slot->total_len + 7) / 8;
+                int complete = 1;
+                for (uint16_t b = 0; b < needed_blocks && b < 256; b++) {
+                    if (!slot->received[b]) { complete = 0; break; }
+                }
+                if (complete) {
+                    /* Deliver reassembled packet to protocol handlers */
+                    g_net_stats.ip_in_receives++;
+                    g_net_stats.ip_in_delivers++;
+                    size_t rpay_len = slot->total_len;
+                    const uint8_t *rpayload = slot->data;
+                    switch (slot->protocol) {
+                        case IP_PROTO_ICMP:
+                            icmp_handle_packet(rpayload, rpay_len, slot->src_ip);
+                            break;
+                        case IP_PROTO_UDP:
+                            udp_handle_packet(rpayload, rpay_len, slot->src_ip, slot->dst_ip);
+                            break;
+                        case IP_PROTO_TCP:
+                            tcp_handle_packet(rpayload, rpay_len, slot->src_ip, slot->dst_ip);
+                            break;
+                    }
+                    slot->active = 0;  /* Free the slot */
+                }
+            }
+
+            /* Time out stale reassembly slots */
+            for (int i = 0; i < REASM_MAX_SLOTS; i++) {
+                if (reasm_slots[i].active &&
+                    (now_ms - reasm_slots[i].timestamp_ms) > REASM_TIMEOUT_MS) {
+                    reasm_slots[i].active = 0;
+                }
+            }
+
+            #undef REASM_MAX_SLOTS
+            #undef REASM_MAX_SIZE
+            #undef REASM_TIMEOUT_MS
+            return;  /* Fragment handled */
+        }
+    }
+
     size_t payload_len = total_len - ihl;
     const uint8_t *payload = (const uint8_t *)ip + ihl;
 

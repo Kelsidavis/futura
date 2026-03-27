@@ -123,6 +123,10 @@ static void cmd_chgrp(int argc, char *argv[]);
 static void cmd_md5sum(int argc, char *argv[]);
 static void cmd_strings(int argc, char *argv[]);
 static void cmd_file(int argc, char *argv[]);
+static void cmd_mkfifo(int argc, char *argv[]);
+static void cmd_cmp(int argc, char *argv[]);
+static void cmd_fold(int argc, char *argv[]);
+static void cmd_comm(int argc, char *argv[]);
 static void cmd_pgrep(int argc, char *argv[]);
 static void cmd_pkill(int argc, char *argv[]);
 static void cmd_pidof(int argc, char *argv[]);
@@ -527,7 +531,7 @@ static size_t common_prefix_len(const char *s1, const char *s2) {
 static void complete_command(char *buf, size_t *pos, size_t max_len) {
     /* List of builtin commands */
     const char *builtins[] = {
-        "arp", "bg", "brctl", "cd", "chgrp", "chmod", "chroot", "clear", "conntrack", "date", "dd", "df", "dhclient", "dmesg", "echo", "edit", "ethtool", "file", "hexdump", "lsof", "md5sum", "nc", "nice", "nohup", "pgrep", "pidof", "pkill", "poweroff", "reboot", "renice", "seq", "sleep", "strings", "tac", "time", "timeout", "traceroute", "tty", "wget", "xxd", "exit", "export", "fg", "free",
+        "arp", "bg", "brctl", "cd", "chgrp", "chmod", "chroot", "clear", "cmp", "comm", "conntrack", "date", "dd", "df", "dhclient", "dmesg", "echo", "edit", "ethtool", "file", "fold", "hexdump", "lsof", "md5sum", "mkfifo", "nc", "nice", "nohup", "pgrep", "pidof", "pkill", "poweroff", "reboot", "renice", "seq", "sleep", "strings", "tac", "time", "timeout", "traceroute", "tty", "wget", "xxd", "exit", "export", "fg", "free",
         "help", "hostname", "httpd", "id", "ifconfig", "iostat", "ipcs", "iptables", "jobs", "kill", "logger", "losetup", "ls", "lsblk", "lspci", "mkfs", "mount", "netstat",
         ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "getconf", "history", "ip", "ln", "mktemp", "more", "nproc", "nslookup", "ping", "printf", "ps", "pwd", "read", "readlink", "set", "sha256sum", "shutdown", "source", "ss", "stat", "stty", "sync", "sysctl", "sysinfo", "tc", "test", "top", "trap", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "vmstat", "wait", "watch", "wdctl", "which", "whoami", "xargs", "yes", NULL
     };
@@ -1186,6 +1190,10 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  renice prio pid - Change process priority\n");
     write_str(1, "  xxd [-r] file   - Hex dump (or reverse with -r)\n");
     write_str(1, "  file FILE...    - Identify file type by magic bytes\n");
+    write_str(1, "  mkfifo NAME...  - Create named pipe (FIFO)\n");
+    write_str(1, "  cmp [-s] F1 F2  - Compare files byte by byte\n");
+    write_str(1, "  fold [-w N] file- Wrap lines to N columns (default 80)\n");
+    write_str(1, "  comm FILE1 FILE2- Compare sorted files line by line\n");
     write_str(1, "  lsof            - List open files\n");
     write_str(1, "  which <cmd>     - Find command in PATH\n");
     write_str(1, "  du [path]       - Show disk usage (KB)\n");
@@ -8921,6 +8929,18 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "file") == 0) {
         cmd_file(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "mkfifo") == 0) {
+        cmd_mkfifo(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "cmp") == 0) {
+        cmd_cmp(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "fold") == 0) {
+        cmd_fold(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "comm") == 0) {
+        cmd_comm(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "alias") == 0) {
         if (argc < 2) {
             /* List all aliases */
@@ -9479,7 +9499,11 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "nice") == 0 ||
             strcmp_simple(cmd, "renice") == 0 ||
             strcmp_simple(cmd, "xxd") == 0 ||
-            strcmp_simple(cmd, "file") == 0);
+            strcmp_simple(cmd, "file") == 0 ||
+            strcmp_simple(cmd, "mkfifo") == 0 ||
+            strcmp_simple(cmd, "cmp") == 0 ||
+            strcmp_simple(cmd, "fold") == 0 ||
+            strcmp_simple(cmd, "comm") == 0);
 }
 
 /* Parse command line into pipeline stages separated by '|' */
@@ -10904,6 +10928,182 @@ static void cmd_file(int argc, char *argv[]) {
         }
         if (textlike) write_str(1, "ASCII text\n");
         else write_str(1, "data\n");
+    }
+}
+
+/* ── mkfifo: create named pipe ── */
+static void cmd_mkfifo(int argc, char *argv[]) {
+    if (argc < 2) { write_str(2, "usage: mkfifo NAME...\n"); return; }
+    for (int i = 1; i < argc; i++) {
+        /* mknod(path, S_IFIFO | 0666, 0) creates a named pipe */
+        long r = sys_call3(133 /* SYS_mknod */, (long)argv[i], 010666 /* S_IFIFO | 0666 */, 0);
+        if (r != 0) {
+            write_str(2, "mkfifo: ");
+            write_str(2, argv[i]);
+            write_str(2, ": failed\n");
+            last_exit_status = 1;
+        }
+    }
+}
+
+/* ── cmp: byte-by-byte file comparison ── */
+static void cmd_cmp(int argc, char *argv[]) {
+    int silent = 0;
+    int file_start = 1;
+    if (argc >= 2 && argv[1][0] == '-' && argv[1][1] == 's') {
+        silent = 1; file_start = 2;
+    }
+    if (file_start + 1 >= argc) {
+        write_str(2, "usage: cmp [-s] FILE1 FILE2\n");
+        return;
+    }
+    int fd1 = sys_open(argv[file_start], O_RDONLY, 0);
+    if (fd1 < 0) {
+        if (!silent) { write_str(2, "cmp: "); write_str(2, argv[file_start]); write_str(2, ": not found\n"); }
+        last_exit_status = 2; return;
+    }
+    int fd2 = sys_open(argv[file_start + 1], O_RDONLY, 0);
+    if (fd2 < 0) {
+        sys_close(fd1);
+        if (!silent) { write_str(2, "cmp: "); write_str(2, argv[file_start + 1]); write_str(2, ": not found\n"); }
+        last_exit_status = 2; return;
+    }
+    static char b1[4096], b2[4096];
+    long byte_pos = 1, line_num = 1;
+    int differ = 0;
+    while (1) {
+        ssize_t n1 = sys_read(fd1, b1, sizeof(b1));
+        ssize_t n2 = sys_read(fd2, b2, sizeof(b2));
+        ssize_t cmp_len = n1 < n2 ? n1 : n2;
+        for (ssize_t i = 0; i < cmp_len; i++) {
+            if (b1[i] != b2[i]) {
+                if (!silent) {
+                    write_str(1, argv[file_start]); write_str(1, " ");
+                    write_str(1, argv[file_start + 1]);
+                    write_str(1, " differ: byte ");
+                    char num[20]; int nl = 0;
+                    long v = byte_pos;
+                    char rev[20]; int rp = 0;
+                    while (v > 0) { rev[rp++] = '0' + (char)(v % 10); v /= 10; }
+                    if (rp == 0) num[nl++] = '0';
+                    while (rp > 0) num[nl++] = rev[--rp];
+                    num[nl] = '\0';
+                    write_str(1, num);
+                    write_str(1, ", line ");
+                    v = line_num; rp = 0;
+                    while (v > 0) { rev[rp++] = '0' + (char)(v % 10); v /= 10; }
+                    nl = 0;
+                    if (rp == 0) num[nl++] = '0';
+                    while (rp > 0) num[nl++] = rev[--rp];
+                    num[nl] = '\0';
+                    write_str(1, num);
+                    write_str(1, "\n");
+                }
+                differ = 1; break;
+            }
+            byte_pos++;
+            if (b1[i] == '\n') line_num++;
+        }
+        if (differ) break;
+        if (n1 != n2) {
+            if (!silent) {
+                write_str(1, "cmp: EOF on ");
+                write_str(1, n1 < n2 ? argv[file_start] : argv[file_start + 1]);
+                write_str(1, "\n");
+            }
+            differ = 1; break;
+        }
+        if (n1 <= 0) break;
+    }
+    sys_close(fd1); sys_close(fd2);
+    last_exit_status = differ ? 1 : 0;
+}
+
+/* ── fold: wrap input lines to specified width ── */
+static void cmd_fold(int argc, char *argv[]) {
+    int width = 80;
+    int file_start = 1;
+    if (argc >= 3 && argv[1][0] == '-' && argv[1][1] == 'w') {
+        width = 0;
+        for (const char *p = argv[2]; *p >= '0' && *p <= '9'; p++)
+            width = width * 10 + (*p - '0');
+        if (width <= 0) width = 80;
+        file_start = 3;
+    } else if (argc >= 2 && argv[1][0] == '-' && argv[1][1] == 'w' && argv[1][2] >= '0') {
+        width = 0;
+        for (const char *p = argv[1] + 2; *p >= '0' && *p <= '9'; p++)
+            width = width * 10 + (*p - '0');
+        if (width <= 0) width = 80;
+        file_start = 2;
+    }
+    int fd = 0;  /* default: stdin */
+    if (file_start < argc) {
+        fd = sys_open(argv[file_start], O_RDONLY, 0);
+        if (fd < 0) {
+            write_str(2, "fold: "); write_str(2, argv[file_start]); write_str(2, ": not found\n");
+            return;
+        }
+    }
+    static char buf[4096];
+    ssize_t n;
+    int col = 0;
+    while ((n = sys_read(fd, buf, sizeof(buf))) > 0) {
+        for (ssize_t i = 0; i < n; i++) {
+            if (buf[i] == '\n') {
+                sys_write(1, &buf[i], 1);
+                col = 0;
+            } else {
+                if (col >= width) {
+                    char nl = '\n';
+                    sys_write(1, &nl, 1);
+                    col = 0;
+                }
+                sys_write(1, &buf[i], 1);
+                col++;
+            }
+        }
+    }
+    if (fd > 0) sys_close(fd);
+}
+
+/* ── comm: compare sorted files line by line ── */
+static void cmd_comm(int argc, char *argv[]) {
+    if (argc < 3) { write_str(2, "usage: comm FILE1 FILE2\n"); return; }
+    int fd1 = sys_open(argv[1], O_RDONLY, 0);
+    int fd2 = sys_open(argv[2], O_RDONLY, 0);
+    if (fd1 < 0 || fd2 < 0) {
+        write_str(2, "comm: cannot open files\n");
+        if (fd1 >= 0) sys_close(fd1);
+        if (fd2 >= 0) sys_close(fd2);
+        return;
+    }
+    /* Read both files into memory */
+    static char f1[16384], f2[16384];
+    ssize_t n1 = sys_read(fd1, f1, sizeof(f1) - 1); sys_close(fd1);
+    ssize_t n2 = sys_read(fd2, f2, sizeof(f2) - 1); sys_close(fd2);
+    f1[n1 > 0 ? n1 : 0] = '\0';
+    f2[n2 > 0 ? n2 : 0] = '\0';
+    /* Compare line by line */
+    char *p1 = f1, *p2 = f2;
+    while (*p1 || *p2) {
+        /* Extract current lines */
+        char l1[256] = {0}, l2[256] = {0};
+        int i;
+        for (i = 0; *p1 && *p1 != '\n' && i < 255; i++) l1[i] = *p1++;
+        l1[i] = '\0'; if (*p1 == '\n') p1++;
+        for (i = 0; *p2 && *p2 != '\n' && i < 255; i++) l2[i] = *p2++;
+        l2[i] = '\0'; if (*p2 == '\n') p2++;
+        if (!l1[0] && !l2[0]) break;
+        int c = strcmp_simple(l1, l2);
+        if (c == 0 && l1[0]) {
+            write_str(1, "\t\t"); write_str(1, l1); write_str(1, "\n");
+        } else if (c < 0 && l1[0]) {
+            write_str(1, l1); write_str(1, "\n");
+            p2 -= (i + 1);  /* Rewind p2 */
+        } else if (l2[0]) {
+            write_str(1, "\t"); write_str(1, l2); write_str(1, "\n");
+            if (l1[0]) { int j = 0; while (l1[j]) j++; p1 -= (j + 1); }  /* Rewind p1 */
+        }
     }
 }
 

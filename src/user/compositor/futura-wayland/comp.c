@@ -1360,6 +1360,82 @@ void comp_render_frame(struct compositor_state *comp) {
         bb_fill_rect(dst, damage->rects[i], COLOR_CLEAR);
     }
 
+    /* ── Bottom dock panel ── */
+    {
+        #define DOCK_HEIGHT 32
+        #define DOCK_MARGIN 80     /* inset from screen edges */
+        #define DOCK_COLOR  0xCC2A2A3Au  /* Semi-transparent dark panel */
+        #define DOCK_ITEM_W 100
+        #define DOCK_ITEM_H 24
+        #define DOCK_ITEM_PAD 4
+        #define DOCK_ACTIVE 0xCC4A4A5Au  /* Active window highlight */
+        #define DOCK_TEXT   0xFFCCCCCCu  /* Light text on dark dock */
+
+        int32_t fb_w = (int32_t)comp->fb_info.width;
+        int32_t fb_h = (int32_t)comp->fb_info.height;
+
+        /* Count windows for dock sizing */
+        int n_windows = 0;
+        struct comp_surface *ds;
+        wl_list_for_each(ds, &comp->surfaces, link) {
+            if (ds->has_backing) n_windows++;
+        }
+
+        int dock_content_w = n_windows * (DOCK_ITEM_W + DOCK_ITEM_PAD);
+        if (dock_content_w < 200) dock_content_w = 200;  /* minimum width */
+        int dock_w = dock_content_w + 2 * DOCK_ITEM_PAD;
+        int dock_x = (fb_w - dock_w) / 2;
+        int dock_y = fb_h - DOCK_HEIGHT - 8;  /* 8px from bottom */
+
+        /* Draw dock background with rounded appearance (simple rectangle for now) */
+        fut_rect_t dock_rect = { dock_x, dock_y, dock_w, DOCK_HEIGHT };
+
+        /* Check if dock overlaps any damage region */
+        for (int i = 0; i < damage->count; ++i) {
+            fut_rect_t dock_clip;
+            if (rect_intersection(damage->rects[i], dock_rect, &dock_clip)) {
+                /* Draw dock background */
+                bb_fill_rect(dst, dock_clip, DOCK_COLOR);
+
+                /* Draw window items in the dock */
+                int item_x = dock_x + DOCK_ITEM_PAD;
+                int item_y = dock_y + (DOCK_HEIGHT - DOCK_ITEM_H) / 2;
+                struct comp_surface *ws;
+                wl_list_for_each(ws, &comp->surfaces, link) {
+                    if (!ws->has_backing) continue;
+                    fut_rect_t item_rect = { item_x, item_y, DOCK_ITEM_W, DOCK_ITEM_H };
+                    fut_rect_t item_clip;
+                    if (rect_intersection(dock_clip, item_rect, &item_clip)) {
+                        /* Highlight active/focused window */
+                        uint32_t item_bg = (ws == comp->focused_surface) ? DOCK_ACTIVE : DOCK_COLOR;
+                        bb_fill_rect(dst, item_clip, item_bg);
+
+                        /* Draw truncated title */
+                        if (ws->title && ws->title[0]) {
+                            int max_chars = (DOCK_ITEM_W - 8) / UI_FONT_WIDTH;
+                            if (max_chars > 0) {
+                                /* Build truncated string */
+                                char dock_title[16];
+                                int ti = 0;
+                                while (ti < max_chars && ti < 15 && ws->title[ti]) {
+                                    dock_title[ti] = ws->title[ti]; ti++;
+                                }
+                                dock_title[ti] = '\0';
+                                int tx = item_x + 4;
+                                int ty = item_y + (DOCK_ITEM_H - UI_FONT_HEIGHT) / 2;
+                                ui_draw_text(dst->px, dst->pitch, tx, ty,
+                                             DOCK_TEXT, dock_title,
+                                             item_clip.x, item_clip.y,
+                                             item_clip.w, item_clip.h);
+                            }
+                        }
+                    }
+                    item_x += DOCK_ITEM_W + DOCK_ITEM_PAD;
+                }
+            }
+        }
+    }
+
     int surface_count = 0;
     wl_list_for_each(surface, &comp->surfaces, link) {
         surface_count++;

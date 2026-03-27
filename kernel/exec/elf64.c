@@ -213,6 +213,18 @@ static int map_segment(fut_mm_t *mm, int fd, const elf64_phdr_t *phdr) {
     uint64_t seg_end = (phdr->p_vaddr + phdr->p_memsz + PAGE_SIZE - 1ULL) & ~(PAGE_SIZE - 1ULL);
     size_t page_count = (size_t)((seg_end - seg_start) / PAGE_SIZE);
 
+    /* SECURITY: Reject segments that overlap kernel address space.
+     * A crafted ELF could specify p_vaddr >= KERNEL_VIRTUAL_BASE to
+     * trick the loader into mapping user pages over kernel memory. */
+#ifdef KERNEL_VIRTUAL_BASE
+    if (seg_start >= KERNEL_VIRTUAL_BASE || seg_end >= KERNEL_VIRTUAL_BASE ||
+        seg_end < seg_start /* overflow */) {
+        fut_printf("[EXEC] SECURITY: PT_LOAD segment 0x%llx-0x%llx overlaps kernel space — REJECTED\n",
+                   (unsigned long long)seg_start, (unsigned long long)seg_end);
+        return -EINVAL;
+    }
+#endif
+
     EXEC_DEBUG("[EXEC][MAP-SEGMENT] vaddr=0x%llx memsz=0x%llx filesz=0x%llx page_count=%llu\n",
                (unsigned long long)phdr->p_vaddr,
                (unsigned long long)phdr->p_memsz,

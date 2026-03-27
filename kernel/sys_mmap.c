@@ -277,6 +277,13 @@ long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset) 
             return -EBADF;
     }
 
+    /* SECURITY: Validate offset + len doesn't overflow for file-backed mappings.
+     * Without this check, a crafted offset near SIZE_MAX could wrap around
+     * and map file pages into unexpected address ranges. */
+    if ((uint64_t)offset > UINT64_MAX - (uint64_t)len) {
+        return -EOVERFLOW;
+    }
+
     void *mapped = fut_vfs_mmap(fd, addr, len, prot, flags, (off_t)offset);
     return (long)(intptr_t)mapped;
 }

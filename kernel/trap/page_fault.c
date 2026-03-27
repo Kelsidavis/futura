@@ -292,8 +292,11 @@ static bool handle_demand_paging_fault(uint64_t fault_addr, fut_mm_t *mm) {
         return false;
     }
 
-    /* Find VMA containing fault address */
+    /* Find VMA containing fault address.
+     * Hold mm_lock during lookup to prevent concurrent munmap from
+     * freeing the VMA while we're using it (CVE-2018-17182 class). */
     uint64_t page_addr = PAGE_ALIGN_DOWN(fault_addr);
+    fut_spinlock_acquire(&mm->mm_lock);
     struct fut_vma *vma = mm->vma_list;
     while (vma) {
         if (page_addr >= vma->start && page_addr < vma->end) {
@@ -304,17 +307,21 @@ static bool handle_demand_paging_fault(uint64_t fault_addr, fut_mm_t *mm) {
 
     /* Not in any VMA or not file-backed */
     if (!vma || !vma->vnode) {
+        fut_spinlock_release(&mm->mm_lock);
         return false;
     }
 
     /* Get memory context for paging operations */
     fut_vmem_context_t *ctx = fut_mm_context(mm);
     if (!ctx) {
+        fut_spinlock_release(&mm->mm_lock);
         return false;
     }
 
-    /* Load the faulting page */
-    if (!load_demand_page(page_addr, vma, ctx)) {
+    /* Load the faulting page (VMA is stable under mm_lock) */
+    bool loaded = load_demand_page(page_addr, vma, ctx);
+    fut_spinlock_release(&mm->mm_lock);
+    if (!loaded) {
         return false;
     }
 

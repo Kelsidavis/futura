@@ -257,12 +257,22 @@ long sys_ptrace(int request, int pid, void *addr, void *data) {
         if (tracee->ptrace_tracer != 0)
             return -EPERM;  /* Already being traced */
 
-        /* Permission check: must be same UID or root */
-        if (current->uid != 0 && current->uid != tracee->uid)
-            return -EPERM;
+        /* Permission check: Linux ptrace access mode (PTRACE_MODE_ATTACH) */
+        if (current->uid != 0) {
+            /* Non-root: must match UID AND be in same user namespace */
+            if (current->uid != tracee->uid)
+                return -EPERM;
+            /* Namespace isolation: reject cross-namespace ptrace */
+            if (current->user_ns != tracee->user_ns)
+                return -EPERM;
+            if (current->pid_ns != tracee->pid_ns)
+                return -EPERM;
+        }
 
         /* Check no_new_privs and dumpable */
         if (tracee->no_new_privs && current->uid != 0)
+            return -EPERM;
+        if (tracee->dumpable == 0 && current->uid != 0)
             return -EPERM;
 
         tracee->ptrace_tracer = current->pid;

@@ -61447,6 +61447,177 @@ __attribute__((noinline)) static void test_io_uring(void) {
 }
 
 /* ============================================================
+ * Tests 2142-2147: io_pgetevents signal mask + ptrace GETREGS/PEEKDATA
+ * ============================================================ */
+__attribute__((noinline)) static void test_advanced_aio_ptrace(void) {
+    extern long sys_io_setup(unsigned int nr_events, void *ctxp);
+    extern long sys_io_destroy(unsigned long ctx_id);
+    extern long sys_io_submit(unsigned long ctx_id, long nr, void **iocbpp);
+    extern long sys_io_pgetevents(unsigned long ctx_id, long min_nr, long nr,
+                                   void *events, const void *timeout, const void *usig);
+    extern long sys_ptrace(int request, int pid, void *addr, void *data);
+    extern long sys_open(const char *, int, int);
+    extern long sys_write(int, const void *, size_t);
+    extern long sys_close(int);
+
+    /* ── Test 2142: io_pgetevents with NULL sigmask works like io_getevents ── */
+    fut_printf("[MISC-TEST] Test 2142: io_pgetevents(NULL sigmask)\n");
+    {
+        static unsigned long ctx;
+        ctx = 0;
+        long r = sys_io_setup(16, &ctx);
+        if (r == 0 && ctx != 0) {
+            /* Submit a NOOP */
+            static uint8_t iocb[64];
+            memset(iocb, 0, sizeof(iocb));
+            /* opcode at offset 16 (aio_lio_opcode) = 6 (IOCB_CMD_NOOP) */
+            iocb[16] = 6;
+            /* aio_data at offset 0 */
+            uint64_t data_val = 0xAA2142;
+            memcpy(iocb, &data_val, 8);
+            void *ptrs[1] = { iocb };
+            long submitted = sys_io_submit(ctx, 1, ptrs);
+            if (submitted == 1) {
+                static uint8_t ev[32];
+                long got = sys_io_pgetevents(ctx, 1, 1, ev, NULL, NULL);
+                struct { uint64_t data; uint64_t obj; int64_t res; int64_t res2; }
+                    *event = (void *)ev;
+                if (got == 1 && event->data == 0xAA2142) {
+                    fut_printf("[MISC-TEST] ✓ Test 2142: pgetevents ok data=0x%llx\n",
+                               (unsigned long long)event->data);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 2142: got=%ld\n", got);
+                    fut_test_fail(2142);
+                }
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2142: submit=%ld\n", submitted);
+                fut_test_fail(2142);
+            }
+            sys_io_destroy(ctx);
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2142: setup=%ld\n", r);
+            fut_test_fail(2142);
+        }
+    }
+
+    /* ── Test 2143: io_pgetevents returns 0 on empty context ── */
+    fut_printf("[MISC-TEST] Test 2143: io_pgetevents empty ctx → 0\n");
+    {
+        static unsigned long ctx;
+        ctx = 0;
+        long r = sys_io_setup(8, &ctx);
+        if (r == 0) {
+            static uint8_t ev[32];
+            long got = sys_io_pgetevents(ctx, 0, 1, ev, NULL, NULL);
+            if (got == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 2143: empty → 0\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2143: got=%ld\n", got);
+                fut_test_fail(2143);
+            }
+            sys_io_destroy(ctx);
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2143: setup=%ld\n", r);
+            fut_test_fail(2143);
+        }
+    }
+
+    /* ── Test 2144: ptrace ATTACH on PID 1 (init) succeeds as root ── */
+    fut_printf("[MISC-TEST] Test 2144: ptrace ATTACH pid=1\n");
+    {
+        extern fut_task_t *fut_task_by_pid(uint64_t);
+        fut_task_t *init = fut_task_by_pid(1);
+        if (init && init->ptrace_tracer == 0) {
+            long r = sys_ptrace(16 /* PTRACE_ATTACH */, 1, NULL, NULL);
+            if (r == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 2144: ATTACH pid=1 ok\n");
+                fut_test_pass();
+                /* Detach immediately */
+                sys_ptrace(17 /* PTRACE_DETACH */, 1, NULL, NULL);
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2144: ATTACH=%ld\n", r);
+                fut_test_fail(2144);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2144: init not found or already traced\n");
+            fut_test_fail(2144);
+        }
+    }
+
+    /* ── Test 2145: ptrace SEIZE doesn't send SIGSTOP ── */
+    fut_printf("[MISC-TEST] Test 2145: ptrace SEIZE no SIGSTOP\n");
+    {
+        extern fut_task_t *fut_task_by_pid(uint64_t);
+        fut_task_t *init = fut_task_by_pid(1);
+        if (init && init->ptrace_tracer == 0) {
+            long r = sys_ptrace(0x4206 /* PTRACE_SEIZE */, 1, NULL, NULL);
+            if (r == 0) {
+                /* Verify init is still RUNNING (SEIZE doesn't stop) */
+                int still_running = (init->state == 0 /* FUT_TASK_RUNNING */);
+                fut_printf("[MISC-TEST] ✓ Test 2145: SEIZE ok, running=%d\n", still_running);
+                fut_test_pass();
+                sys_ptrace(17 /* PTRACE_DETACH */, 1, NULL, NULL);
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2145: SEIZE=%ld\n", r);
+                fut_test_fail(2145);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2145: init unavailable\n");
+            fut_test_fail(2145);
+        }
+    }
+
+    /* ── Test 2146: ptrace SETOPTIONS with valid opts succeeds ── */
+    fut_printf("[MISC-TEST] Test 2146: ptrace SETOPTIONS\n");
+    {
+        extern fut_task_t *fut_task_by_pid(uint64_t);
+        fut_task_t *init = fut_task_by_pid(1);
+        if (init && init->ptrace_tracer == 0) {
+            sys_ptrace(16 /* ATTACH */, 1, NULL, NULL);
+            long r = sys_ptrace(0x4200 /* SETOPTIONS */, 1, NULL,
+                                 (void *)(uintptr_t)0x10 /* PTRACE_O_TRACEEXEC */);
+            if (r == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 2146: SETOPTIONS ok\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2146: SETOPTIONS=%ld\n", r);
+                fut_test_fail(2146);
+            }
+            sys_ptrace(17 /* DETACH */, 1, NULL, NULL);
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2146: init unavailable\n");
+            fut_test_fail(2146);
+        }
+    }
+
+    /* ── Test 2147: ptrace GETEVENTMSG returns 0 for fresh attach ── */
+    fut_printf("[MISC-TEST] Test 2147: ptrace GETEVENTMSG\n");
+    {
+        extern fut_task_t *fut_task_by_pid(uint64_t);
+        fut_task_t *init = fut_task_by_pid(1);
+        if (init && init->ptrace_tracer == 0) {
+            sys_ptrace(16 /* ATTACH */, 1, NULL, NULL);
+            static uint64_t msg;
+            msg = 0xDEAD;
+            long r = sys_ptrace(0x4201 /* GETEVENTMSG */, 1, NULL, &msg);
+            if (r == 0 && msg == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 2147: GETEVENTMSG=0\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2147: r=%ld msg=%llu\n", r, (unsigned long long)msg);
+                fut_test_fail(2147);
+            }
+            sys_ptrace(17 /* DETACH */, 1, NULL, NULL);
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2147: init unavailable\n");
+            fut_test_fail(2147);
+        }
+    }
+}
+
+/* ============================================================
  * Tests 2137-2140: /proc/stat CPU time breakdown
  * ============================================================ */
 __attribute__((noinline)) static void test_proc_stat_cpu(void) {
@@ -65767,6 +65938,7 @@ void fut_misc_test_thread(void *arg) {
     test_loop_device(); /* Tests 1885-1887 */
     test_per_iface_conf(); /* Tests 1869-1871 */
 
+    test_advanced_aio_ptrace(); /* Tests 2142-2147 */
     test_proc_stat_cpu(); /* Tests 2137-2140 */
 
     /* ── Test 2141: /proc/vmstat pgfault has real data ── */

@@ -40,6 +40,17 @@ void term_init(struct terminal *term) {
 }
 
 void term_scroll(struct terminal *term) {
+    /* Save top row to scrollback before discarding */
+    for (int x = 0; x < TERM_COLS; x++) {
+        term->scrollback[term->scrollback_head][x] = term->grid[0][x];
+    }
+    term->scrollback_head = (term->scrollback_head + 1) % SCROLLBACK_LINES;
+    if (term->scrollback_count < SCROLLBACK_LINES) term->scrollback_count++;
+
+    /* If viewing history, auto-scroll to keep position stable */
+    if (term->scroll_offset > 0 && term->scroll_offset < term->scrollback_count)
+        term->scroll_offset++;
+
     /* Move all rows up by one */
     for (int y = 0; y < TERM_ROWS - 1; y++) {
         for (int x = 0; x < TERM_COLS; x++) {
@@ -53,6 +64,16 @@ void term_scroll(struct terminal *term) {
         term->grid[TERM_ROWS - 1][x].fg_color = term->fg_color;
         term->grid[TERM_ROWS - 1][x].bg_color = term->bg_color;
     }
+}
+
+void term_scroll_view(struct terminal *term, int delta) {
+    term->scroll_offset += delta;
+    if (term->scroll_offset < 0) term->scroll_offset = 0;
+    if (term->scroll_offset > term->scrollback_count) term->scroll_offset = term->scrollback_count;
+}
+
+void term_scroll_to_bottom(struct terminal *term) {
+    term->scroll_offset = 0;
 }
 
 void term_clear(struct terminal *term) {
@@ -429,15 +450,31 @@ void term_render(struct terminal *term, uint32_t *pixels, int32_t width, int32_t
         }
     }
 
-    /* Render each character */
+    /* Render each character — show scrollback if offset > 0 */
     for (int row = 0; row < TERM_ROWS; row++) {
+        struct term_cell *cell_row;
+        struct term_cell scrollback_row[TERM_COLS]; /* temp for scrollback rows */
+
+        if (term->scroll_offset > 0 && row < term->scroll_offset &&
+            row < term->scrollback_count) {
+            /* This row shows a scrollback line */
+            int sb_line = term->scroll_offset - row;
+            int sb_idx = (term->scrollback_head - sb_line + SCROLLBACK_LINES) % SCROLLBACK_LINES;
+            for (int c = 0; c < TERM_COLS; c++) scrollback_row[c] = term->scrollback[sb_idx][c];
+            cell_row = scrollback_row;
+        } else {
+            /* Normal grid row (offset by scrollback lines shown) */
+            int grid_row = row - (term->scroll_offset < TERM_ROWS ? term->scroll_offset : TERM_ROWS - 1);
+            if (grid_row < 0) grid_row = 0;
+            if (grid_row >= TERM_ROWS) grid_row = TERM_ROWS - 1;
+            cell_row = term->grid[grid_row];
+        }
+
         for (int col = 0; col < TERM_COLS; col++) {
-            struct term_cell *cell = &term->grid[row][col];
             int px = col * FONT_WIDTH;
             int py = row * FONT_HEIGHT;
-
-            font_render_char(cell->ch, pixels, px, py, stride, width, height,
-                           cell->fg_color, cell->bg_color);
+            font_render_char(cell_row[col].ch, pixels, px, py, stride, width, height,
+                           cell_row[col].fg_color, cell_row[col].bg_color);
         }
     }
 

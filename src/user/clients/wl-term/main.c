@@ -187,6 +187,8 @@ static char keycode_to_ascii(uint32_t key, bool shift) {
     }
 }
 
+static uint32_t kbd_mods_depressed = 0;  /* Track modifier state */
+
 static void keyboard_key(void *data, struct wl_keyboard *keyboard, uint32_t serial,
                         uint32_t time, uint32_t key, uint32_t key_state) {
     (void)keyboard; (void)serial; (void)time;
@@ -196,8 +198,36 @@ static void keyboard_key(void *data, struct wl_keyboard *keyboard, uint32_t seri
         return;
     }
 
-    /* Convert keycode to ASCII (assuming no modifiers for simplicity) */
-    char ch = keycode_to_ascii(key, false);
+    bool shift = (kbd_mods_depressed & 1) != 0;
+
+    /* Shift+PageUp/PageDown: scroll through scrollback history */
+    if (shift && key == 104) {  /* PageUp (evdev keycode) */
+        term_scroll_view(&state->term, 5);
+        state->needs_redraw = true;
+        return;
+    }
+    if (shift && key == 109) {  /* PageDown */
+        term_scroll_view(&state->term, -5);
+        state->needs_redraw = true;
+        return;
+    }
+
+    /* Arrow keys: send VT100 escape sequences to shell */
+    if (key == 103) { term_send_key(&state->term, '\033'); term_send_key(&state->term, '['); term_send_key(&state->term, 'A'); state->needs_redraw = true; return; } /* Up */
+    if (key == 108) { term_send_key(&state->term, '\033'); term_send_key(&state->term, '['); term_send_key(&state->term, 'B'); state->needs_redraw = true; return; } /* Down */
+    if (key == 106) { term_send_key(&state->term, '\033'); term_send_key(&state->term, '['); term_send_key(&state->term, 'C'); state->needs_redraw = true; return; } /* Right */
+    if (key == 105) { term_send_key(&state->term, '\033'); term_send_key(&state->term, '['); term_send_key(&state->term, 'D'); state->needs_redraw = true; return; } /* Left */
+    /* Home/End */
+    if (key == 102) { term_send_key(&state->term, '\033'); term_send_key(&state->term, '['); term_send_key(&state->term, 'H'); state->needs_redraw = true; return; }
+    if (key == 107) { term_send_key(&state->term, '\033'); term_send_key(&state->term, '['); term_send_key(&state->term, 'F'); state->needs_redraw = true; return; }
+    /* Delete */
+    if (key == 111) { term_send_key(&state->term, '\033'); term_send_key(&state->term, '['); term_send_key(&state->term, '3'); term_send_key(&state->term, '~'); state->needs_redraw = true; return; }
+
+    /* Any keypress resets scroll to bottom (live view) */
+    term_scroll_to_bottom(&state->term);
+
+    /* Convert keycode to ASCII */
+    char ch = keycode_to_ascii(key, shift);
     if (ch != 0) {
         term_send_key(&state->term, ch);
         state->needs_redraw = true;
@@ -208,7 +238,8 @@ static void keyboard_modifiers(void *data, struct wl_keyboard *keyboard, uint32_
                               uint32_t mods_depressed, uint32_t mods_latched,
                               uint32_t mods_locked, uint32_t group) {
     (void)data; (void)keyboard; (void)serial;
-    (void)mods_depressed; (void)mods_latched; (void)mods_locked; (void)group;
+    (void)mods_latched; (void)mods_locked; (void)group;
+    kbd_mods_depressed = mods_depressed;
 }
 
 static void keyboard_repeat(void *data, struct wl_keyboard *keyboard,

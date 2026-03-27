@@ -14,6 +14,7 @@
 /* Terminal dimensions */
 #define TERM_COLS 80
 #define TERM_ROWS 25
+#define SCROLLBACK_LINES 200  /* Lines of scrollback history */
 
 /* Character cell structure */
 struct term_cell {
@@ -30,6 +31,12 @@ struct terminal {
     uint32_t fg_color;
     uint32_t bg_color;
     bool cursor_visible;
+
+    /* Scrollback buffer (circular) */
+    struct term_cell scrollback[SCROLLBACK_LINES][TERM_COLS];
+    int scrollback_count;   /* Number of lines stored (0..SCROLLBACK_LINES) */
+    int scrollback_head;    /* Next write position (circular) */
+    int scroll_offset;      /* Lines scrolled back (0 = at bottom, >0 = viewing history) */
 
     /* Shell process pipes */
     int shell_stdin_fd;     /* Write to shell */
@@ -68,7 +75,13 @@ void term_render(struct terminal *term, uint32_t *pixels, int32_t width, int32_t
 /* Clear terminal screen */
 void term_clear(struct terminal *term);
 
-/* Scroll terminal up by one line */
+/* Scroll terminal up by one line (pushes top line to scrollback) */
 void term_scroll(struct terminal *term);
+
+/* Scroll view into history (positive = back, negative = forward) */
+void term_scroll_view(struct terminal *term, int delta);
+
+/* Reset scroll to bottom (live view) */
+void term_scroll_to_bottom(struct terminal *term);
 
 #endif /* WL_TERM_TERMINAL_H */

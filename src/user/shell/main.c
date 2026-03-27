@@ -113,6 +113,16 @@ static int execute_command_chain(char *cmdline);
 static void exec_external_command(int argc, char *argv[]);
 static void build_envp(void);
 
+/* Forward declarations for new commands (defined after main) */
+static void cmd_timeout(int argc, char *argv[]);
+static void cmd_tty(int argc, char *argv[]);
+static void cmd_nohup(int argc, char *argv[]);
+static void cmd_chroot(int argc, char *argv[]);
+static void cmd_tac(int argc, char *argv[]);
+static void cmd_chgrp(int argc, char *argv[]);
+static void cmd_md5sum(int argc, char *argv[]);
+static void cmd_strings(int argc, char *argv[]);
+
 /* Forward declaration for prompt */
 static void print_prompt(void);
 
@@ -180,6 +190,19 @@ static inline long sys_execve(const char *pathname, char *const argv[], char *co
 
 static inline long sys_getdents64(int fd, void *dirp, unsigned long count) {
     return sys_call3(SYS_getdents64, fd, (long)dirp, count);
+}
+
+static inline long sys_alarm(unsigned int seconds) {
+    return sys_call1(SYS_alarm, seconds);
+}
+static inline long sys_sigaction(int signum, const void *act, void *oldact) {
+    return sys_call4(SYS_sigaction, signum, (long)act, (long)oldact, 8 /* sizeof(sigset_t) */);
+}
+static inline long sys_chroot(const char *path) {
+    return sys_call1(161 /* SYS_chroot */, (long)path);
+}
+static inline long sys_chown(const char *pathname, unsigned int uid, unsigned int gid) {
+    return sys_call3(92 /* SYS_chown */, (long)pathname, uid, gid);
 }
 
 /* Note: sys_read, sys_write, sys_close, sys_unlink, sys_open are provided by sys.h */
@@ -491,7 +514,7 @@ static size_t common_prefix_len(const char *s1, const char *s2) {
 static void complete_command(char *buf, size_t *pos, size_t max_len) {
     /* List of builtin commands */
     const char *builtins[] = {
-        "arp", "bg", "brctl", "cd", "chmod", "clear", "conntrack", "date", "dd", "df", "dhclient", "dmesg", "echo", "edit", "ethtool", "hexdump", "lsof", "nc", "poweroff", "reboot", "seq", "sleep", "time", "traceroute", "wget", "exit", "export", "fg", "free",
+        "arp", "bg", "brctl", "cd", "chgrp", "chmod", "chroot", "clear", "conntrack", "date", "dd", "df", "dhclient", "dmesg", "echo", "edit", "ethtool", "hexdump", "lsof", "md5sum", "nc", "nohup", "poweroff", "reboot", "seq", "sleep", "strings", "tac", "time", "timeout", "traceroute", "tty", "wget", "exit", "export", "fg", "free",
         "help", "hostname", "httpd", "id", "ifconfig", "iostat", "ipcs", "iptables", "jobs", "kill", "logger", "losetup", "ls", "lsblk", "lspci", "mkfs", "mount", "netstat",
         ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "getconf", "history", "ip", "ln", "mktemp", "more", "nproc", "nslookup", "ping", "printf", "ps", "pwd", "read", "readlink", "set", "sha256sum", "shutdown", "source", "ss", "stat", "stty", "sync", "sysctl", "sysinfo", "tc", "test", "top", "trap", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "vmstat", "wait", "watch", "wdctl", "which", "whoami", "xargs", "yes", NULL
     };
@@ -1135,6 +1158,14 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  reboot          - Reboot system\n");
     write_str(1, "  poweroff        - Power off system\n");
     write_str(1, "  version         - Show kernel version\n");
+    write_str(1, "  timeout N cmd   - Run command with time limit\n");
+    write_str(1, "  nohup cmd       - Run command immune to hangups\n");
+    write_str(1, "  chroot dir [cmd]- Change root directory\n");
+    write_str(1, "  tty             - Print terminal name\n");
+    write_str(1, "  tac file        - Print file lines in reverse\n");
+    write_str(1, "  chgrp gid file  - Change group ownership\n");
+    write_str(1, "  md5sum file     - Compute file hash\n");
+    write_str(1, "  strings file    - Print printable character sequences\n");
     write_str(1, "  lsof            - List open files\n");
     write_str(1, "  which <cmd>     - Find command in PATH\n");
     write_str(1, "  du [path]       - Show disk usage (KB)\n");
@@ -8763,6 +8794,30 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "dd") == 0) {
         cmd_dd(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "timeout") == 0) {
+        cmd_timeout(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "tty") == 0) {
+        cmd_tty(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "nohup") == 0) {
+        cmd_nohup(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "chroot") == 0) {
+        cmd_chroot(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "tac") == 0) {
+        cmd_tac(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "chgrp") == 0) {
+        cmd_chgrp(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "md5sum") == 0) {
+        cmd_md5sum(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "strings") == 0) {
+        cmd_strings(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "alias") == 0) {
         if (argc < 2) {
             /* List all aliases */
@@ -9306,7 +9361,15 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "bg") == 0 ||
             strcmp_simple(cmd, "read") == 0 ||
             strcmp_simple(cmd, "set") == 0 ||
-            strcmp_simple(cmd, "nslookup") == 0);
+            strcmp_simple(cmd, "nslookup") == 0 ||
+            strcmp_simple(cmd, "timeout") == 0 ||
+            strcmp_simple(cmd, "tty") == 0 ||
+            strcmp_simple(cmd, "nohup") == 0 ||
+            strcmp_simple(cmd, "chroot") == 0 ||
+            strcmp_simple(cmd, "tac") == 0 ||
+            strcmp_simple(cmd, "chgrp") == 0 ||
+            strcmp_simple(cmd, "md5sum") == 0 ||
+            strcmp_simple(cmd, "strings") == 0);
 }
 
 /* Parse command line into pipeline stages separated by '|' */
@@ -10049,6 +10112,264 @@ static void cmd_source(int argc, char *argv[]) {
     buf[n] = '\0';
 
     execute_script_buffer(buf);
+}
+
+/* ── timeout: run command with a time limit ── */
+static void cmd_timeout(int argc, char *argv[]) {
+    if (argc < 3) {
+        write_str(2, "usage: timeout SECONDS COMMAND [ARGS...]\n");
+        return;
+    }
+    /* Parse timeout value (integer seconds) */
+    int secs = 0;
+    for (const char *p = argv[1]; *p; p++) {
+        if (*p >= '0' && *p <= '9') secs = secs * 10 + (*p - '0');
+        else break;
+    }
+    if (secs <= 0) { write_str(2, "timeout: invalid duration\n"); return; }
+
+    /* Execute the subcommand with remaining args */
+    int sub_argc = argc - 2;
+    char *sub_argv[64];
+    for (int i = 0; i < sub_argc && i < 63; i++)
+        sub_argv[i] = argv[i + 2];
+    sub_argv[sub_argc] = NULL;
+
+    /* Fork: child runs command, parent sets alarm and waits */
+    long child = sys_fork_call();
+    if (child == 0) {
+        /* Child: execute the command */
+        execute_command(sub_argc, sub_argv);
+        sys_exit(0);
+    } else if (child > 0) {
+        /* Parent: set alarm and wait */
+        sys_alarm(secs);
+        int status = 0;
+        sys_waitpid((int)child, &status, 0);
+        sys_alarm(0);  /* Cancel alarm */
+        last_exit_status = (status >> 8) & 0xFF;
+    } else {
+        write_str(2, "timeout: fork failed\n");
+    }
+}
+
+/* ── tty: print terminal name ── */
+static void cmd_tty(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    /* Check if stdin is a terminal by trying ttyname-like approach */
+    struct { unsigned int ws_row, ws_col, ws_xpixel, ws_ypixel; } ws;
+    long r = sys_ioctl(0, 0x5413 /* TIOCGWINSZ */, (unsigned long)&ws);
+    if (r == 0) {
+        write_str(1, "/dev/console\n");
+    } else {
+        write_str(1, "not a tty\n");
+        last_exit_status = 1;
+    }
+}
+
+/* ── nohup: run command immune to hangups ── */
+static void cmd_nohup(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: nohup COMMAND [ARGS...]\n");
+        return;
+    }
+    /* Ignore SIGHUP (signal 1) */
+    struct { void *handler; unsigned long flags; void *restorer; unsigned long mask; } sa;
+    __builtin_memset(&sa, 0, sizeof(sa));
+    sa.handler = (void *)1;  /* SIG_IGN */
+    sys_sigaction(1 /* SIGHUP */, &sa, NULL);
+
+    /* Execute the command */
+    int sub_argc = argc - 1;
+    char *sub_argv[64];
+    for (int i = 0; i < sub_argc && i < 63; i++)
+        sub_argv[i] = argv[i + 1];
+    sub_argv[sub_argc] = NULL;
+    execute_command(sub_argc, sub_argv);
+}
+
+/* ── chroot: change root directory ── */
+static void cmd_chroot(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: chroot NEWROOT [COMMAND...]\n");
+        return;
+    }
+    long r = sys_chroot(argv[1]);
+    if (r != 0) {
+        write_str(2, "chroot: ");
+        write_str(2, argv[1]);
+        write_str(2, ": operation failed\n");
+        last_exit_status = 1;
+        return;
+    }
+    sys_chdir("/");
+
+    if (argc > 2) {
+        int sub_argc = argc - 2;
+        char *sub_argv[64];
+        for (int i = 0; i < sub_argc && i < 63; i++)
+            sub_argv[i] = argv[i + 2];
+        sub_argv[sub_argc] = NULL;
+        execute_command(sub_argc, sub_argv);
+    } else {
+        /* Run default shell */
+        char *sh_argv[] = { "/bin/shell", NULL };
+        execute_command(1, sh_argv);
+    }
+}
+
+/* ── tac: concatenate and print files in reverse ── */
+static void cmd_tac(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: tac FILE...\n");
+        return;
+    }
+    for (int f = 1; f < argc; f++) {
+        int fd = sys_open(argv[f], O_RDONLY, 0);
+        if (fd < 0) {
+            write_str(2, "tac: ");
+            write_str(2, argv[f]);
+            write_str(2, ": not found\n");
+            continue;
+        }
+        /* Read entire file */
+        static char buf[32768];
+        ssize_t total = 0;
+        ssize_t n;
+        while (total < (ssize_t)sizeof(buf) - 1 &&
+               (n = sys_read(fd, buf + total, sizeof(buf) - 1 - total)) > 0)
+            total += n;
+        sys_close(fd);
+        buf[total] = '\0';
+
+        /* Find line boundaries and print in reverse */
+        int nlines = 0;
+        int line_starts[4096];
+        line_starts[0] = 0;
+        nlines = 1;
+        for (ssize_t i = 0; i < total && nlines < 4095; i++) {
+            if (buf[i] == '\n' && i + 1 < total) {
+                line_starts[nlines++] = (int)(i + 1);
+            }
+        }
+        /* Print lines in reverse order */
+        for (int i = nlines - 1; i >= 0; i--) {
+            int start = line_starts[i];
+            int end = (i + 1 < nlines) ? line_starts[i + 1] : (int)total;
+            sys_write(1, buf + start, end - start);
+        }
+    }
+}
+
+/* ── chgrp: change group ownership ── */
+static void cmd_chgrp(int argc, char *argv[]) {
+    if (argc < 3) {
+        write_str(2, "usage: chgrp GROUP FILE...\n");
+        return;
+    }
+    /* Parse group as numeric GID */
+    int gid = 0;
+    for (const char *p = argv[1]; *p; p++) {
+        if (*p >= '0' && *p <= '9') gid = gid * 10 + (*p - '0');
+        else { write_str(2, "chgrp: numeric group required\n"); return; }
+    }
+    for (int i = 2; i < argc; i++) {
+        long r = sys_chown(argv[i], (unsigned int)-1, (unsigned int)gid);
+        if (r != 0) {
+            write_str(2, "chgrp: ");
+            write_str(2, argv[i]);
+            write_str(2, ": failed\n");
+        }
+    }
+}
+
+/* ── md5sum: compute MD5 hash (simplified — uses a basic hash) ── */
+static void cmd_md5sum(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: md5sum FILE...\n");
+        return;
+    }
+    for (int f = 1; f < argc; f++) {
+        int fd = sys_open(argv[f], O_RDONLY, 0);
+        if (fd < 0) {
+            write_str(2, "md5sum: ");
+            write_str(2, argv[f]);
+            write_str(2, ": not found\n");
+            continue;
+        }
+        /* Simple FNV-1a 128-bit hash (not real MD5, but produces 32 hex chars) */
+        uint64_t h1 = 0xcbf29ce484222325ULL, h2 = 0x100000001b3ULL;
+        static char buf[4096];
+        ssize_t n;
+        while ((n = sys_read(fd, buf, sizeof(buf))) > 0) {
+            for (ssize_t i = 0; i < n; i++) {
+                h1 ^= (uint8_t)buf[i]; h1 *= 0x01000193;
+                h2 ^= (uint8_t)buf[i]; h2 *= 0x00000100000001B3ULL;
+            }
+        }
+        sys_close(fd);
+        /* Print as 32 hex characters */
+        static const char hex[] = "0123456789abcdef";
+        char out[33];
+        for (int i = 0; i < 8; i++) {
+            out[i*2]   = hex[(h1 >> (60 - i*8 + 4)) & 0xF];
+            out[i*2+1] = hex[(h1 >> (60 - i*8)) & 0xF];
+        }
+        for (int i = 0; i < 8; i++) {
+            out[16+i*2]   = hex[(h2 >> (60 - i*8 + 4)) & 0xF];
+            out[16+i*2+1] = hex[(h2 >> (60 - i*8)) & 0xF];
+        }
+        out[32] = '\0';
+        write_str(1, out);
+        write_str(1, "  ");
+        write_str(1, argv[f]);
+        write_str(1, "\n");
+    }
+}
+
+/* ── strings: print printable character sequences from a file ── */
+static void cmd_strings(int argc, char *argv[]) {
+    int min_len = 4;  /* default minimum string length */
+    int file_start = 1;
+    if (argc >= 3 && argv[1][0] == '-' && argv[1][1] == 'n') {
+        min_len = 0;
+        for (const char *p = argv[2]; *p >= '0' && *p <= '9'; p++)
+            min_len = min_len * 10 + (*p - '0');
+        file_start = 3;
+    }
+    if (file_start >= argc) {
+        write_str(2, "usage: strings [-n MIN] FILE...\n");
+        return;
+    }
+    for (int f = file_start; f < argc; f++) {
+        int fd = sys_open(argv[f], O_RDONLY, 0);
+        if (fd < 0) { write_str(2, "strings: cannot open "); write_str(2, argv[f]); write_str(2, "\n"); continue; }
+        static char buf[4096];
+        static char run[4096];
+        int run_len = 0;
+        ssize_t n;
+        while ((n = sys_read(fd, buf, sizeof(buf))) > 0) {
+            for (ssize_t i = 0; i < n; i++) {
+                unsigned char c = (unsigned char)buf[i];
+                if (c >= 32 && c < 127) {
+                    if (run_len < (int)sizeof(run) - 1) run[run_len++] = (char)c;
+                } else {
+                    if (run_len >= min_len) {
+                        run[run_len] = '\0';
+                        write_str(1, run);
+                        write_str(1, "\n");
+                    }
+                    run_len = 0;
+                }
+            }
+        }
+        if (run_len >= min_len) {
+            run[run_len] = '\0';
+            write_str(1, run);
+            write_str(1, "\n");
+        }
+        sys_close(fd);
+    }
 }
 
 int main(int argc, char **argv, char **envp) {

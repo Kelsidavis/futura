@@ -5097,41 +5097,75 @@ static void sort_read_lines(int fd, char lines[][SORT_LINE_MAX], int *line_count
     }
 }
 
-/* Helper function to parse integer from string for sort command */
-static int sort_parse_int(const char *s) {
-    int result = 0;
-    int neg = 0;
-    if (*s == '-') {
-        neg = 1;
-        s++;
+/* Sort comparison with field extraction support */
+/* Extract field N (1-based) from a line using delimiter.
+ * Returns pointer to start of field within the line, sets *flen to field length. */
+static const char *sort_get_field(const char *line, int field_num, char delim, int *flen) {
+    const char *p = line;
+    int current_field = 1;
+    /* Skip to the requested field */
+    while (current_field < field_num && *p) {
+        if (delim) {
+            if (*p == delim) current_field++;
+        } else {
+            /* Default: whitespace-delimited, skip leading whitespace between fields */
+            if (*p == ' ' || *p == '\t') {
+                while (*p == ' ' || *p == '\t') p++;
+                current_field++;
+                continue;
+            }
+        }
+        p++;
     }
-    while (*s >= '0' && *s <= '9') {
-        result = result * 10 + (*s - '0');
-        s++;
+    /* p now points to start of field */
+    const char *start = p;
+    const char *end = p;
+    while (*end && *end != '\n') {
+        if (delim) { if (*end == delim) break; }
+        else { if (*end == ' ' || *end == '\t') break; }
+        end++;
     }
-    return neg ? -result : result;
+    *flen = (int)(end - start);
+    return start;
 }
 
-/* Helper function to compare two lines for sort command */
 static int sort_compare_lines(const char lines[][SORT_LINE_MAX], int i, int j,
-                              int numeric, int reverse) {
+                              int numeric, int reverse, int key_field, char delim) {
+    const char *s1, *s2;
+    int l1 = 0, l2 = 0;
+
+    if (key_field > 0) {
+        s1 = sort_get_field(lines[i], key_field, delim, &l1);
+        s2 = sort_get_field(lines[j], key_field, delim, &l2);
+    } else {
+        s1 = lines[i]; l1 = 0; while (s1[l1]) l1++;
+        s2 = lines[j]; l2 = 0; while (s2[l2]) l2++;
+    }
+
     if (numeric) {
-        int n1 = sort_parse_int(lines[i]);
-        int n2 = sort_parse_int(lines[j]);
+        /* Parse number from field */
+        int n1 = 0, n2 = 0, neg1 = 0, neg2 = 0;
+        const char *p = s1;
+        while (*p == ' ' || *p == '\t') p++;
+        if (*p == '-') { neg1 = 1; p++; }
+        while (*p >= '0' && *p <= '9') n1 = n1 * 10 + (*p++ - '0');
+        if (neg1) n1 = -n1;
+        p = s2;
+        while (*p == ' ' || *p == '\t') p++;
+        if (*p == '-') { neg2 = 1; p++; }
+        while (*p >= '0' && *p <= '9') n2 = n2 * 10 + (*p++ - '0');
+        if (neg2) n2 = -n2;
         if (n1 < n2) return reverse ? 1 : -1;
         if (n1 > n2) return reverse ? -1 : 1;
         return 0;
     } else {
-        const char *s1 = lines[i];
-        const char *s2 = lines[j];
-        while (*s1 && *s2) {
-            if (*s1 < *s2) return reverse ? 1 : -1;
-            if (*s1 > *s2) return reverse ? -1 : 1;
-            s1++;
-            s2++;
+        int len = l1 < l2 ? l1 : l2;
+        for (int k = 0; k < len; k++) {
+            if (s1[k] < s2[k]) return reverse ? 1 : -1;
+            if (s1[k] > s2[k]) return reverse ? -1 : 1;
         }
-        if (*s1) return reverse ? -1 : 1;
-        if (*s2) return reverse ? 1 : -1;
+        if (l1 < l2) return reverse ? 1 : -1;
+        if (l1 > l2) return reverse ? -1 : 1;
         return 0;
     }
 }
@@ -5141,6 +5175,8 @@ static void cmd_sort(int argc, char *argv[]) {
     int reverse = 0;
     int numeric = 0;
     int unique = 0;
+    int key_field = 0;  /* 0 = whole line, >0 = field number (1-based) */
+    char delim = 0;     /* 0 = whitespace, else specific char */
     int arg_start = 1;
 
     /* Parse options */
@@ -5154,6 +5190,32 @@ static void cmd_sort(int argc, char *argv[]) {
             arg_start++;
         } else if (strcmp_simple(opt, "-u") == 0) {
             unique = 1;
+            arg_start++;
+        } else if (strcmp_simple(opt, "-k") == 0) {
+            /* -k FIELD: sort by field number (1-based) */
+            if (arg_start + 1 < argc) {
+                arg_start++;
+                key_field = 0;
+                for (const char *p = argv[arg_start]; *p >= '0' && *p <= '9'; p++)
+                    key_field = key_field * 10 + (*p - '0');
+                arg_start++;
+            } else { arg_start++; }
+        } else if (opt[1] == 'k' && opt[2] >= '0' && opt[2] <= '9') {
+            /* -kN form (no space) */
+            key_field = 0;
+            for (const char *p = opt + 2; *p >= '0' && *p <= '9'; p++)
+                key_field = key_field * 10 + (*p - '0');
+            arg_start++;
+        } else if (strcmp_simple(opt, "-t") == 0) {
+            /* -t CHAR: field delimiter */
+            if (arg_start + 1 < argc) {
+                arg_start++;
+                delim = argv[arg_start][0];
+                arg_start++;
+            } else { arg_start++; }
+        } else if (opt[1] == 't' && opt[2] != '\0') {
+            /* -tCHAR form */
+            delim = opt[2];
             arg_start++;
         } else if (strcmp_simple(opt, "--") == 0) {
             arg_start++;
@@ -5190,7 +5252,7 @@ static void cmd_sort(int argc, char *argv[]) {
     /* Bubble sort (simple but works for our use case) */
     for (int i = 0; i < line_count - 1; i++) {
         for (int j = 0; j < line_count - i - 1; j++) {
-            if (sort_compare_lines(lines, j, j + 1, numeric, reverse) > 0) {
+            if (sort_compare_lines(lines, j, j + 1, numeric, reverse, key_field, delim) > 0) {
                 /* Swap lines[j] and lines[j+1] */
                 char temp[SORT_LINE_MAX];
                 for (int k = 0; k < SORT_LINE_MAX; k++) {

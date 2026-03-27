@@ -57955,6 +57955,35 @@ __attribute__((noinline)) static void test_net_procfs_devnodes(void) {
  * Tests 2061-2063: binfmt_misc
  * ============================================================ */
 /* ============================================================
+ * Tests 2078-2081: random and vm sysctl entries
+ * ============================================================ */
+__attribute__((noinline)) static void test_random_vm_entries(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_close(int);
+
+    #define TEST_SYSCTL_R(num, path) \
+    fut_printf("[MISC-TEST] Test " #num ": " path "\n"); \
+    { \
+        long fd = sys_open(path, 0, 0); \
+        if (fd >= 0) { \
+            static char buf[32]; \
+            long n = sys_read((int)fd, buf, 31); \
+            sys_close((int)fd); \
+            if (n > 0) { fut_printf("[MISC-TEST] ✓ Test " #num ": ok\n"); fut_test_pass(); } \
+            else { fut_test_fail(num); } \
+        } else { fut_printf("[MISC-TEST] ✗ Test " #num ": open=%ld\n", fd); fut_test_fail(num); } \
+    }
+
+    TEST_SYSCTL_R(2078, "/proc/sys/kernel/random/urandom_min_reseed_secs")
+    TEST_SYSCTL_R(2079, "/proc/sys/kernel/random/write_wakeup_threshold")
+    TEST_SYSCTL_R(2080, "/proc/sys/vm/mmap_rnd_bits")
+    TEST_SYSCTL_R(2081, "/proc/sys/vm/mmap_rnd_compat_bits")
+
+    #undef TEST_SYSCTL_R
+}
+
+/* ============================================================
  * Tests 2074-2077: /proc/sys/net/unix/ and bridge/
  * ============================================================ */
 __attribute__((noinline)) static void test_net_unix_bridge(void) {
@@ -64365,6 +64394,7 @@ void fut_misc_test_thread(void *arg) {
     test_loop_device(); /* Tests 1885-1887 */
     test_per_iface_conf(); /* Tests 1869-1871 */
 
+    test_random_vm_entries(); /* Tests 2078-2081 */
     test_net_unix_bridge(); /* Tests 2074-2077 */
     test_subsystem_coverage(); /* Tests 2064-2073 */
     test_binfmt_misc(); /* Tests 2061-2063 */

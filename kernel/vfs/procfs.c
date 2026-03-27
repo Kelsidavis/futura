@@ -230,6 +230,8 @@ enum procfs_kind {
     PROC_SYS_VM_WATERMARK_BOOST,    /* /proc/sys/vm/watermark_boost_factor */
     PROC_SYS_VM_WATERMARK_SCALE,    /* /proc/sys/vm/watermark_scale_factor */
     PROC_SYS_VM_PAGE_CLUSTER,       /* /proc/sys/vm/page-cluster */
+    PROC_SYS_VM_MMAP_RND_BITS,     /* /proc/sys/vm/mmap_rnd_bits */
+    PROC_SYS_VM_MMAP_RND_COMPAT,   /* /proc/sys/vm/mmap_rnd_compat_bits */
     /* Additional /proc/sys/fs/ entries */
     PROC_SYS_FS_AIO_MAX_NR,         /* /proc/sys/fs/aio-max-nr */
     PROC_SYS_FS_AIO_NR,             /* /proc/sys/fs/aio-nr */
@@ -4028,6 +4030,12 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
         case PROC_SYS_VM_PAGE_CLUSTER:
             total = gen_sysctl_str(tmp, GEN_BUF, "3");
             break;
+        case PROC_SYS_VM_MMAP_RND_BITS:
+            total = gen_sysctl_str(tmp, GEN_BUF, "28");  /* 28 bits ASLR entropy (default on x86_64) */
+            break;
+        case PROC_SYS_VM_MMAP_RND_COMPAT:
+            total = gen_sysctl_str(tmp, GEN_BUF, "8");   /* 8 bits for 32-bit compat */
+            break;
         /* /proc/sys/fs/ extended entries */
         case PROC_SYS_FS_AIO_MAX_NR:
             total = gen_sysctl_str(tmp, GEN_BUF, "65536");
@@ -5760,6 +5768,16 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0100444, PROC_SYS_POOLSIZE, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "urandom_min_reseed_secs")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_POOLSIZE + 1,
+                                          0100644, PROC_SYS_ENTROPY_AVAIL, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "write_wakeup_threshold")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_POOLSIZE + 2,
+                                          0100644, PROC_SYS_ENTROPY_AVAIL, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         return -ENOENT;
     }
 
@@ -5862,6 +5880,16 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
         if (STREQ(name, "page-cluster")) {
             *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_VM_PAGE_CLUSTER,
                                           0100644, PROC_SYS_VM_PAGE_CLUSTER, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "mmap_rnd_bits")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_VM_PAGE_CLUSTER + 1,
+                                          0100644, PROC_SYS_VM_MMAP_RND_BITS, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "mmap_rnd_compat_bits")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_VM_PAGE_CLUSTER + 2,
+                                          0100644, PROC_SYS_VM_MMAP_RND_COMPAT, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
         return -ENOENT;
@@ -6579,14 +6607,17 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
     }
 
     if (dn->kind == PROC_SYS_RANDOM_DIR) {
-        static const char *e[] = { ".", "..", "boot_id", "uuid", "entropy_avail", "poolsize" };
+        static const char *e[] = { ".", "..", "boot_id", "uuid", "entropy_avail", "poolsize",
+                                   "urandom_min_reseed_secs", "write_wakeup_threshold" };
         static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG };
         static const uint64_t i[] = { PROC_INO_SYS_RANDOM_DIR, PROC_INO_SYS_KERNEL_DIR,
                                       PROC_INO_SYS_BOOT_ID, PROC_INO_SYS_UUID,
-                                      PROC_INO_SYS_ENTROPY_AVAIL, PROC_INO_SYS_POOLSIZE };
-        if (idx < 6) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+                                      PROC_INO_SYS_ENTROPY_AVAIL, PROC_INO_SYS_POOLSIZE,
+                                      PROC_INO_SYS_POOLSIZE + 1, PROC_INO_SYS_POOLSIZE + 2 };
+        if (idx < 8) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
         return -ENOENT;
     }
 
@@ -6640,8 +6671,10 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                    "dirty_writeback_centisecs", "overcommit_kbytes",
                                    "oom_kill_allocating_task", "panic_on_oom",
                                    "zone_reclaim_mode", "watermark_boost_factor",
-                                   "watermark_scale_factor", "page-cluster" };
+                                   "watermark_scale_factor", "page-cluster",
+                                   "mmap_rnd_bits", "mmap_rnd_compat_bits" };
         static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
@@ -6668,8 +6701,10 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                       PROC_INO_SYS_VM_ZONE_RECLAIM,
                                       PROC_INO_SYS_VM_WATERMARK_BST,
                                       PROC_INO_SYS_VM_WATERMARK_SCL,
-                                      PROC_INO_SYS_VM_PAGE_CLUSTER };
-        if (idx < 22) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+                                      PROC_INO_SYS_VM_PAGE_CLUSTER,
+                                      PROC_INO_SYS_VM_PAGE_CLUSTER + 1,
+                                      PROC_INO_SYS_VM_PAGE_CLUSTER + 2 };
+        if (idx < 24) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
         return -ENOENT;
     }
 

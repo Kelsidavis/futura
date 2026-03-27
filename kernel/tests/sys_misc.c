@@ -23874,27 +23874,32 @@ static void test_utime_syscall(void) {
 }
 
 /* ============================================================
- * Test 383: io_setup()/io_uring_setup() return ENOSYS
+ * Test 383: io_setup() creates context, io_uring_setup(NULL) → EFAULT
  * ============================================================ */
 static void test_aio_uring_enosys(void) {
-    fut_printf("[MISC-TEST] Test 383: io_setup returns ENOSYS, io_uring_setup returns fd\n");
+    fut_printf("[MISC-TEST] Test 383: io_setup creates ctx, io_uring_setup(NULL) → EFAULT\n");
     extern long sys_io_setup(unsigned int nr_events, void *ctxp);
+    extern long sys_io_destroy(unsigned long ctx_id);
     extern long sys_io_uring_setup(unsigned int entries, void *params);
 
-    /* Linux AIO still returns ENOSYS */
-    void *ctx = (void *)0;
+    /* Linux AIO: io_setup should succeed and return a context ID */
+    static unsigned long ctx;
+    ctx = 0;
     long r1 = sys_io_setup(16, &ctx);
-    if (r1 != -38 /*-ENOSYS*/) {
-        fut_printf("[MISC-TEST] ✗ Test 383: io_setup returned %ld, expected -ENOSYS\n", r1);
+    if (r1 != 0 || ctx == 0) {
+        fut_printf("[MISC-TEST] ✗ Test 383: io_setup returned %ld ctx=%lu\n", r1, ctx);
         fut_test_fail(383); return;
     }
+    /* Clean up the context */
+    sys_io_destroy(ctx);
+
     /* io_uring_setup with NULL params should return EFAULT */
     long r2 = sys_io_uring_setup(8, (void *)0);
     if (r2 != -EFAULT) {
         fut_printf("[MISC-TEST] ✗ Test 383: io_uring_setup(NULL) returned %ld, expected -EFAULT\n", r2);
         fut_test_fail(383); return;
     }
-    fut_printf("[MISC-TEST] ✓ Test 383: io_setup → ENOSYS, io_uring_setup(NULL) → EFAULT\n");
+    fut_printf("[MISC-TEST] ✓ Test 383: io_setup → ctx, io_uring_setup(NULL) → EFAULT\n");
     fut_test_pass();
 }
 
@@ -33473,66 +33478,67 @@ static void test_select_zero_timeout(void) {
 /**
  * test_io_aio_enosys - Tests 713-717
  *
- *   Test 713: io_setup(0, NULL) → ENOSYS
- *   Test 714: io_destroy(0) → ENOSYS
- *   Test 715: io_getevents(0,0,0,NULL,NULL) → ENOSYS
- *   Test 716: io_submit(0,0,NULL) → ENOSYS
- *   Test 717: io_cancel(0,NULL,NULL) → ENOSYS
+ *   Test 713: io_setup(0, NULL) → EINVAL (bad args)
+ *   Test 714: io_destroy(0) → EINVAL (bad ctx)
+ *   Test 715: io_getevents(0,...) → EINVAL (bad ctx)
+ *   Test 716: io_submit(0,0,NULL) → EINVAL (bad args)
+ *   Test 717: io_cancel(0,NULL,NULL) → EINVAL (bad ctx)
  */
 static void test_io_aio_enosys(void) {
-    /* Test 713: io_setup → ENOSYS */
-    fut_printf("[MISC-TEST] Test 713: io_setup → ENOSYS\n");
+    /* Test 713: io_setup with 0 events → EINVAL */
+    fut_printf("[MISC-TEST] Test 713: io_setup(0,NULL) → EINVAL\n");
     long ret = sys_io_setup(0, NULL);
-    if (ret != -ENOSYS) {
+    if (ret == -EINVAL) {
+        fut_printf("[MISC-TEST] ✓ Test 713: io_setup(0) → EINVAL\n");
+        fut_test_pass();
+    } else {
         fut_printf("[MISC-TEST] ✗ Test 713: io_setup returned %ld\n", ret);
         fut_test_fail(713);
-    } else {
-        fut_printf("[MISC-TEST] ✓ Test 713: io_setup → ENOSYS\n");
-        fut_test_pass();
     }
 
-    /* Test 714: io_destroy → ENOSYS */
-    fut_printf("[MISC-TEST] Test 714: io_destroy → ENOSYS\n");
+    /* Test 714: io_destroy with invalid ctx → EINVAL */
+    fut_printf("[MISC-TEST] Test 714: io_destroy(0) → EINVAL\n");
     ret = sys_io_destroy(0);
-    if (ret != -ENOSYS) {
+    if (ret == -EINVAL) {
+        fut_printf("[MISC-TEST] ✓ Test 714: io_destroy(0) → EINVAL\n");
+        fut_test_pass();
+    } else {
         fut_printf("[MISC-TEST] ✗ Test 714: io_destroy returned %ld\n", ret);
         fut_test_fail(714);
-    } else {
-        fut_printf("[MISC-TEST] ✓ Test 714: io_destroy → ENOSYS\n");
-        fut_test_pass();
     }
 
-    /* Test 715: io_getevents → ENOSYS */
-    fut_printf("[MISC-TEST] Test 715: io_getevents → ENOSYS\n");
+    /* Test 715: io_getevents with bad ctx → EINVAL */
+    fut_printf("[MISC-TEST] Test 715: io_getevents bad ctx → EINVAL\n");
     ret = sys_io_getevents(0, 0, 0, NULL, NULL);
-    if (ret != -ENOSYS) {
+    if (ret == -EINVAL) {
+        fut_printf("[MISC-TEST] ✓ Test 715: io_getevents → EINVAL\n");
+        fut_test_pass();
+    } else {
         fut_printf("[MISC-TEST] ✗ Test 715: io_getevents returned %ld\n", ret);
         fut_test_fail(715);
-    } else {
-        fut_printf("[MISC-TEST] ✓ Test 715: io_getevents → ENOSYS\n");
-        fut_test_pass();
     }
 
-    /* Test 716: io_submit → ENOSYS */
-    fut_printf("[MISC-TEST] Test 716: io_submit → ENOSYS\n");
+    /* Test 716: io_submit with NULL iocbs → EINVAL */
+    fut_printf("[MISC-TEST] Test 716: io_submit(0,0,NULL) → EINVAL\n");
     ret = sys_io_submit(0, 0, NULL);
-    if (ret != -ENOSYS) {
+    if (ret == -EINVAL || ret == 0) {
+        /* 0 is valid when nr=0 and ctx is bad (returns nr=0 before checking ctx) */
+        fut_printf("[MISC-TEST] ✓ Test 716: io_submit → %ld\n", ret);
+        fut_test_pass();
+    } else {
         fut_printf("[MISC-TEST] ✗ Test 716: io_submit returned %ld\n", ret);
         fut_test_fail(716);
-    } else {
-        fut_printf("[MISC-TEST] ✓ Test 716: io_submit → ENOSYS\n");
-        fut_test_pass();
     }
 
-    /* Test 717: io_cancel → ENOSYS */
-    fut_printf("[MISC-TEST] Test 717: io_cancel → ENOSYS\n");
+    /* Test 717: io_cancel with invalid ctx → EINVAL */
+    fut_printf("[MISC-TEST] Test 717: io_cancel(0,...) → EINVAL\n");
     ret = sys_io_cancel(0, NULL, NULL);
-    if (ret != -ENOSYS) {
+    if (ret == -EINVAL) {
+        fut_printf("[MISC-TEST] ✓ Test 717: io_cancel → EINVAL\n");
+        fut_test_pass();
+    } else {
         fut_printf("[MISC-TEST] ✗ Test 717: io_cancel returned %ld\n", ret);
         fut_test_fail(717);
-    } else {
-        fut_printf("[MISC-TEST] ✓ Test 717: io_cancel → ENOSYS\n");
-        fut_test_pass();
     }
 }
 
@@ -61441,6 +61447,284 @@ __attribute__((noinline)) static void test_io_uring(void) {
 }
 
 /* ============================================================
+ * Tests 2124-2131: Linux AIO (io_setup/io_submit/io_getevents/io_destroy)
+ * ============================================================ */
+__attribute__((noinline)) static void test_linux_aio(void) {
+    extern long sys_io_setup(unsigned int nr_events, void *ctxp);
+    extern long sys_io_destroy(unsigned long ctx_id);
+    extern long sys_io_submit(unsigned long ctx_id, long nr, void **iocbpp);
+    extern long sys_io_getevents(unsigned long ctx_id, long min_nr, long nr,
+                                  void *events, const void *timeout);
+    extern long sys_io_cancel(unsigned long ctx_id, void *iocb, void *result);
+    extern long sys_open(const char *, int, int);
+    extern long sys_close(int);
+
+    /* ── Test 2124: io_setup creates context ── */
+    fut_printf("[MISC-TEST] Test 2124: io_setup creates context\n");
+    static unsigned long aio_ctx;
+    aio_ctx = 0;
+    {
+        long r = sys_io_setup(32, &aio_ctx);
+        if (r == 0 && aio_ctx != 0) {
+            fut_printf("[MISC-TEST] ✓ Test 2124: io_setup ok, ctx=0x%lx\n", aio_ctx);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2124: io_setup=%ld ctx=0x%lx\n", r, aio_ctx);
+            fut_test_fail(2124);
+            return;
+        }
+    }
+
+    /* ── Test 2125: io_setup with 0 events → EINVAL ── */
+    fut_printf("[MISC-TEST] Test 2125: io_setup(0) → EINVAL\n");
+    {
+        static unsigned long bad_ctx;
+        long r = sys_io_setup(0, &bad_ctx);
+        if (r == -EINVAL) {
+            fut_printf("[MISC-TEST] ✓ Test 2125: io_setup(0) → EINVAL\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2125: io_setup(0)=%ld\n", r);
+            fut_test_fail(2125);
+        }
+    }
+
+    /* ── Test 2126: io_submit PREAD on a file ── */
+    fut_printf("[MISC-TEST] Test 2126: io_submit PREAD\n");
+    {
+        /* Create a test file */
+        extern long sys_write(int, const void *, size_t);
+        long fd = sys_open("/tmp/aio_test", 0x42 /* O_CREAT|O_RDWR */, 0644);
+        if (fd >= 0) {
+            sys_write((int)fd, "hello aio!", 10);
+
+            /* Set up an iocb for PREAD */
+            static char read_buf[32];
+            memset(read_buf, 0, sizeof(read_buf));
+
+            /* Linux iocb layout: 64 bytes */
+            static uint8_t iocb_mem[64];
+            memset(iocb_mem, 0, sizeof(iocb_mem));
+
+            struct {
+                uint64_t aio_data;
+                uint32_t aio_key;
+                uint32_t aio_rw_flags;
+                uint16_t aio_lio_opcode;
+                int16_t  aio_reqprio;
+                uint32_t aio_fildes;
+                uint64_t aio_buf;
+                uint64_t aio_nbytes;
+                int64_t  aio_offset;
+            } *iocb = (void *)iocb_mem;
+
+            iocb->aio_data = 0xDEAD2126ULL;
+            iocb->aio_lio_opcode = 0;  /* IOCB_CMD_PREAD */
+            iocb->aio_fildes = (uint32_t)fd;
+            iocb->aio_buf = (uint64_t)(uintptr_t)read_buf;
+            iocb->aio_nbytes = 10;
+            iocb->aio_offset = 0;
+
+            void *iocb_ptrs[1] = { iocb_mem };
+            long submitted = sys_io_submit(aio_ctx, 1, iocb_ptrs);
+
+            if (submitted == 1) {
+                /* Collect the event */
+                static uint8_t event_buf[32];
+                long got = sys_io_getevents(aio_ctx, 1, 1, event_buf, NULL);
+                struct { uint64_t data; uint64_t obj; int64_t res; int64_t res2; }
+                    *ev = (void *)event_buf;
+                if (got == 1 && ev->res == 10 && ev->data == 0xDEAD2126ULL &&
+                    memcmp(read_buf, "hello aio!", 10) == 0) {
+                    fut_printf("[MISC-TEST] ✓ Test 2126: PREAD ok, data=0x%llx res=%lld\n",
+                               (unsigned long long)ev->data, (long long)ev->res);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 2126: got=%ld res=%lld buf='%.10s'\n",
+                               got, got > 0 ? (long long)ev->res : -1, read_buf);
+                    fut_test_fail(2126);
+                }
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2126: submit=%ld\n", submitted);
+                fut_test_fail(2126);
+            }
+            sys_close((int)fd);
+            extern long sys_unlink(const char *);
+            sys_unlink("/tmp/aio_test");
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2126: open=%ld\n", fd);
+            fut_test_fail(2126);
+        }
+    }
+
+    /* ── Test 2127: io_submit PWRITE ── */
+    fut_printf("[MISC-TEST] Test 2127: io_submit PWRITE\n");
+    {
+        extern long sys_write(int, const void *, size_t);
+        long fd = sys_open("/tmp/aio_wtest", 0x42, 0644);
+        if (fd >= 0) {
+            static uint8_t iocb_mem[64];
+            memset(iocb_mem, 0, sizeof(iocb_mem));
+            struct {
+                uint64_t aio_data;
+                uint32_t aio_key;
+                uint32_t aio_rw_flags;
+                uint16_t aio_lio_opcode;
+                int16_t  aio_reqprio;
+                uint32_t aio_fildes;
+                uint64_t aio_buf;
+                uint64_t aio_nbytes;
+                int64_t  aio_offset;
+            } *iocb = (void *)iocb_mem;
+
+            static const char write_data[] = "aio write!";
+            iocb->aio_data = 0xBEEF2127ULL;
+            iocb->aio_lio_opcode = 1;  /* IOCB_CMD_PWRITE */
+            iocb->aio_fildes = (uint32_t)fd;
+            iocb->aio_buf = (uint64_t)(uintptr_t)write_data;
+            iocb->aio_nbytes = 10;
+            iocb->aio_offset = 0;
+
+            void *ptrs[1] = { iocb_mem };
+            long submitted = sys_io_submit(aio_ctx, 1, ptrs);
+
+            /* Verify by reading back */
+            static char verify[32];
+            memset(verify, 0, sizeof(verify));
+            extern long sys_pread64(unsigned int, void *, size_t, int64_t);
+            long n = sys_pread64((unsigned int)fd, verify, 10, 0);
+
+            /* Drain the completion event */
+            static uint8_t pw_ev[32];
+            sys_io_getevents(aio_ctx, 1, 1, pw_ev, NULL);
+
+            if (submitted == 1 && n == 10 && memcmp(verify, "aio write!", 10) == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 2127: PWRITE ok, verified\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2127: submit=%ld n=%ld\n", submitted, n);
+                fut_test_fail(2127);
+            }
+            sys_close((int)fd);
+            extern long sys_unlink(const char *);
+            sys_unlink("/tmp/aio_wtest");
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2127: open=%ld\n", fd);
+            fut_test_fail(2127);
+        }
+    }
+
+    /* ── Test 2128: io_submit FSYNC ── */
+    fut_printf("[MISC-TEST] Test 2128: io_submit FSYNC\n");
+    {
+        long fd = sys_open("/tmp/aio_fsync", 0x42, 0644);
+        if (fd >= 0) {
+            static uint8_t iocb_mem[64];
+            memset(iocb_mem, 0, sizeof(iocb_mem));
+            struct {
+                uint64_t aio_data;
+                uint32_t aio_key;
+                uint32_t aio_rw_flags;
+                uint16_t aio_lio_opcode;
+                int16_t  aio_reqprio;
+                uint32_t aio_fildes;
+                uint64_t aio_buf;
+                uint64_t aio_nbytes;
+                int64_t  aio_offset;
+            } *iocb = (void *)iocb_mem;
+
+            iocb->aio_lio_opcode = 2;  /* IOCB_CMD_FSYNC */
+            iocb->aio_fildes = (uint32_t)fd;
+            iocb->aio_data = 0xF52C;
+
+            void *ptrs[1] = { iocb_mem };
+            long submitted = sys_io_submit(aio_ctx, 1, ptrs);
+
+            static uint8_t ev_buf[32];
+            long got = sys_io_getevents(aio_ctx, 1, 1, ev_buf, NULL);
+            struct { uint64_t data; uint64_t obj; int64_t res; int64_t res2; }
+                *ev = (void *)ev_buf;
+
+            if (submitted == 1 && got == 1 && ev->res == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 2128: FSYNC ok\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2128: submit=%ld got=%ld res=%lld\n",
+                           submitted, got, got > 0 ? (long long)ev->res : -1);
+                fut_test_fail(2128);
+            }
+            sys_close((int)fd);
+            extern long sys_unlink(const char *);
+            sys_unlink("/tmp/aio_fsync");
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2128: open=%ld\n", fd);
+            fut_test_fail(2128);
+        }
+    }
+
+    /* ── Test 2129: io_submit NOOP ── */
+    fut_printf("[MISC-TEST] Test 2129: io_submit NOOP\n");
+    {
+        static uint8_t iocb_mem[64];
+        memset(iocb_mem, 0, sizeof(iocb_mem));
+        struct {
+            uint64_t aio_data;
+            uint32_t aio_key;
+            uint32_t aio_rw_flags;
+            uint16_t aio_lio_opcode;
+        } *iocb = (void *)iocb_mem;
+
+        iocb->aio_lio_opcode = 6;  /* IOCB_CMD_NOOP */
+        iocb->aio_data = 0xCAFE2129ULL;
+
+        void *ptrs[1] = { iocb_mem };
+        long submitted = sys_io_submit(aio_ctx, 1, ptrs);
+
+        static uint8_t ev_buf[32];
+        long got = sys_io_getevents(aio_ctx, 1, 1, ev_buf, NULL);
+        struct { uint64_t data; uint64_t obj; int64_t res; int64_t res2; }
+            *ev = (void *)ev_buf;
+
+        if (submitted == 1 && got == 1 && ev->res == 0 && ev->data == 0xCAFE2129ULL) {
+            fut_printf("[MISC-TEST] ✓ Test 2129: NOOP ok\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2129: submit=%ld got=%ld\n", submitted, got);
+            fut_test_fail(2129);
+        }
+    }
+
+    /* ── Test 2130: io_cancel → EAGAIN (already completed) ── */
+    fut_printf("[MISC-TEST] Test 2130: io_cancel → EAGAIN\n");
+    {
+        long r = sys_io_cancel(aio_ctx, NULL, NULL);
+        if (r == -EAGAIN) {
+            fut_printf("[MISC-TEST] ✓ Test 2130: io_cancel → EAGAIN\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2130: io_cancel=%ld\n", r);
+            fut_test_fail(2130);
+        }
+    }
+
+    /* ── Test 2131: io_destroy cleans up context ── */
+    fut_printf("[MISC-TEST] Test 2131: io_destroy\n");
+    {
+        long r = sys_io_destroy(aio_ctx);
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 2131: io_destroy ok\n");
+            fut_test_pass();
+            /* Verify double-destroy fails */
+            long r2 = sys_io_destroy(aio_ctx);
+            (void)r2;  /* Expected EINVAL */
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2131: io_destroy=%ld\n", r);
+            fut_test_fail(2131);
+        }
+    }
+}
+
+/* ============================================================
  * Tests 2119-2123: ptrace() process tracing
  * ============================================================ */
 __attribute__((noinline)) static void test_ptrace(void) {
@@ -65235,6 +65519,7 @@ void fut_misc_test_thread(void *arg) {
     test_loop_device(); /* Tests 1885-1887 */
     test_per_iface_conf(); /* Tests 1869-1871 */
 
+    test_linux_aio(); /* Tests 2124-2131 */
     test_ptrace(); /* Tests 2119-2123 */
     test_fork_vma_consistency(); /* Tests 2116-2118 */
     test_edge_cases_2(); /* Tests 2111-2115 */

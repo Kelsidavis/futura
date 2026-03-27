@@ -30,32 +30,312 @@
 #include <stdbool.h>
 #include <string.h>
 
-/* ── Linux AIO stubs (syscalls 206-210) ── */
+/* ── Linux AIO implementation (syscalls 206-210) ──
+ *
+ * Implements the Linux AIO (Asynchronous I/O) interface used by libaio.
+ * Operations are completed synchronously in io_submit() and queued for
+ * retrieval by io_getevents(). This matches Linux behavior for regular
+ * files on most filesystems (where AIO completes immediately).
+ *
+ * Supports: IOCB_CMD_PREAD, IOCB_CMD_PWRITE, IOCB_CMD_FSYNC,
+ *           IOCB_CMD_FDSYNC, IOCB_CMD_NOOP
+ */
 
+/* Linux AIO iocb commands */
+#define IOCB_CMD_PREAD   0
+#define IOCB_CMD_PWRITE  1
+#define IOCB_CMD_FSYNC   2
+#define IOCB_CMD_FDSYNC  3
+#define IOCB_CMD_NOOP    6
+#define IOCB_CMD_PREADV  7
+#define IOCB_CMD_PWRITEV 8
+
+/* Linux AIO iocb structure (64-byte, matches Linux kernel ABI) */
+struct linux_iocb {
+    uint64_t aio_data;       /* user data returned in io_event */
+    uint32_t aio_key;        /* __pad1: was internal kernel field */
+    uint32_t aio_rw_flags;   /* RWF_* flags (Linux 4.13+) */
+    uint16_t aio_lio_opcode; /* IOCB_CMD_* */
+    int16_t  aio_reqprio;    /* request priority */
+    uint32_t aio_fildes;     /* file descriptor */
+    uint64_t aio_buf;        /* pointer to buffer */
+    uint64_t aio_nbytes;     /* number of bytes */
+    int64_t  aio_offset;     /* file offset */
+    uint64_t aio_reserved2;
+    uint32_t aio_flags;      /* IOCB_FLAG_RESFD etc. */
+    uint32_t aio_resfd;      /* eventfd for completion notification */
+};
+
+/* Linux AIO io_event structure (32-byte, matches Linux kernel ABI) */
+struct linux_io_event {
+    uint64_t data;   /* aio_data from the iocb */
+    uint64_t obj;    /* pointer to the original iocb (userspace addr) */
+    int64_t  res;    /* result of the operation */
+    int64_t  res2;   /* secondary result (0 on success) */
+};
+
+/* AIO context */
+#define MAX_AIO_CONTEXTS 16
+#define MAX_AIO_EVENTS   256
+
+struct aio_context {
+    bool     active;
+    uint64_t owner_pid;
+    uint32_t max_events;     /* max events this context can hold */
+
+    /* Completion ring: events produced by io_submit, consumed by io_getevents */
+    struct linux_io_event events[MAX_AIO_EVENTS];
+    uint32_t event_head;     /* consumer index (io_getevents reads from here) */
+    uint32_t event_tail;     /* producer index (io_submit writes here) */
+};
+
+static struct aio_context aio_contexts[MAX_AIO_CONTEXTS];
+
+/* Forward declarations for I/O operations */
+extern long sys_read(int fd, void *buf, size_t count);
+extern long sys_write(int fd, const void *buf, size_t count);
+extern long sys_pread64(unsigned int fd, void *buf, size_t count, int64_t offset);
+extern long sys_pwrite64(unsigned int fd, const void *buf, size_t count, int64_t offset);
+extern long sys_fsync(int fd);
+extern long sys_fdatasync(int fd);
+
+static void aio_post_event(struct aio_context *ctx, uint64_t data, uint64_t obj,
+                           int64_t res, int64_t res2) {
+    uint32_t tail = ctx->event_tail;
+    uint32_t next = (tail + 1) % MAX_AIO_EVENTS;
+    if (next == ctx->event_head) {
+        return;  /* Ring full — drop event (shouldn't happen with proper sizing) */
+    }
+    ctx->events[tail].data = data;
+    ctx->events[tail].obj = obj;
+    ctx->events[tail].res = res;
+    ctx->events[tail].res2 = 0;
+    (void)res2;
+    ctx->event_tail = next;
+}
+
+static uint32_t aio_pending_count(struct aio_context *ctx) __attribute__((unused));
+static uint32_t aio_pending_count(struct aio_context *ctx) {
+    if (ctx->event_tail >= ctx->event_head)
+        return ctx->event_tail - ctx->event_head;
+    return MAX_AIO_EVENTS - ctx->event_head + ctx->event_tail;
+}
+
+/**
+ * sys_io_setup - Create an AIO context
+ * @nr_events: Maximum number of concurrent events
+ * @ctxp:      Pointer to store context ID (written as unsigned long)
+ */
 long sys_io_setup(unsigned int nr_events, void *ctxp) {
-    (void)nr_events; (void)ctxp;
-    return -ENOSYS;
+    if (!ctxp || nr_events == 0 || nr_events > MAX_AIO_EVENTS)
+        return -EINVAL;
+
+    /* Find a free context slot */
+    struct aio_context *ctx = NULL;
+    unsigned long ctx_id = 0;
+    for (int i = 0; i < MAX_AIO_CONTEXTS; i++) {
+        if (!aio_contexts[i].active) {
+            ctx = &aio_contexts[i];
+            /* Context IDs start at 1 (0 = invalid) and are offset by 0x10000
+             * to avoid confusion with small integers or pointers */
+            ctx_id = (unsigned long)(0x10000 + i);
+            break;
+        }
+    }
+    if (!ctx)
+        return -EAGAIN;  /* Too many contexts */
+
+    memset(ctx, 0, sizeof(*ctx));
+    ctx->active = true;
+    ctx->owner_pid = fut_task_current() ? fut_task_current()->pid : 0;
+    ctx->max_events = nr_events < MAX_AIO_EVENTS ? nr_events : MAX_AIO_EVENTS;
+    ctx->event_head = 0;
+    ctx->event_tail = 0;
+
+    /* Write context ID to userspace.
+     * Linux stores context as unsigned long at the pointer location. */
+    *(unsigned long *)ctxp = ctx_id;
+
+    return 0;
 }
 
+/**
+ * sys_io_destroy - Destroy an AIO context
+ * @ctx_id: Context ID from io_setup
+ */
 long sys_io_destroy(unsigned long ctx_id) {
-    (void)ctx_id;
-    return -ENOSYS;
+    unsigned int idx = (unsigned int)(ctx_id - 0x10000);
+    if (idx >= MAX_AIO_CONTEXTS)
+        return -EINVAL;
+
+    struct aio_context *ctx = &aio_contexts[idx];
+    if (!ctx->active)
+        return -EINVAL;
+
+    ctx->active = false;
+    return 0;
 }
 
+/**
+ * sys_io_submit - Submit I/O requests for asynchronous processing
+ * @ctx_id:  Context ID
+ * @nr:      Number of iocbs to submit
+ * @iocbpp:  Array of pointers to iocb structures
+ *
+ * Returns: number of iocbs submitted, or negative error
+ */
+long sys_io_submit(unsigned long ctx_id, long nr, void **iocbpp) {
+    if (nr < 0 || !iocbpp)
+        return -EINVAL;
+    if (nr == 0)
+        return 0;
+
+    unsigned int idx = (unsigned int)(ctx_id - 0x10000);
+    if (idx >= MAX_AIO_CONTEXTS)
+        return -EINVAL;
+
+    struct aio_context *ctx = &aio_contexts[idx];
+    if (!ctx->active)
+        return -EINVAL;
+
+    long submitted = 0;
+    for (long i = 0; i < nr; i++) {
+        struct linux_iocb *iocb = (struct linux_iocb *)iocbpp[i];
+        if (!iocb)
+            break;
+
+        int64_t result = 0;
+
+        switch (iocb->aio_lio_opcode) {
+        case IOCB_CMD_PREAD:
+            result = sys_pread64(iocb->aio_fildes,
+                                 (void *)(uintptr_t)iocb->aio_buf,
+                                 (size_t)iocb->aio_nbytes,
+                                 iocb->aio_offset);
+            break;
+
+        case IOCB_CMD_PWRITE:
+            result = sys_pwrite64(iocb->aio_fildes,
+                                  (const void *)(uintptr_t)iocb->aio_buf,
+                                  (size_t)iocb->aio_nbytes,
+                                  iocb->aio_offset);
+            break;
+
+        case IOCB_CMD_FSYNC:
+            result = sys_fsync((int)iocb->aio_fildes);
+            break;
+
+        case IOCB_CMD_FDSYNC:
+            result = sys_fdatasync((int)iocb->aio_fildes);
+            break;
+
+        case IOCB_CMD_NOOP:
+            result = 0;
+            break;
+
+        case IOCB_CMD_PREADV:
+        case IOCB_CMD_PWRITEV: {
+            /* Vectored I/O: aio_buf = iovec array, aio_nbytes = iovec count */
+            struct { uint64_t iov_base; uint64_t iov_len; } *iovs =
+                (void *)(uintptr_t)iocb->aio_buf;
+            uint64_t nr_vecs = iocb->aio_nbytes;
+            if (!iovs || nr_vecs == 0) { result = -EINVAL; break; }
+
+            int64_t total = 0;
+            for (uint64_t v = 0; v < nr_vecs; v++) {
+                void *base = (void *)(uintptr_t)iovs[v].iov_base;
+                size_t ilen = (size_t)iovs[v].iov_len;
+                long r;
+                if (iocb->aio_lio_opcode == IOCB_CMD_PREADV)
+                    r = sys_pread64(iocb->aio_fildes, base, ilen,
+                                    iocb->aio_offset + total);
+                else
+                    r = sys_pwrite64(iocb->aio_fildes, (const void *)base, ilen,
+                                     iocb->aio_offset + total);
+                if (r < 0) { if (total == 0) total = r; break; }
+                total += r;
+                if ((size_t)r < ilen) break;
+            }
+            result = total;
+            break;
+        }
+
+        default:
+            result = -EINVAL;
+            break;
+        }
+
+        /* Post completion event */
+        aio_post_event(ctx, iocb->aio_data, (uint64_t)(uintptr_t)iocb,
+                       result, 0);
+        submitted++;
+    }
+
+    return submitted;
+}
+
+/**
+ * sys_io_getevents - Read completed AIO events
+ * @ctx_id:  Context ID
+ * @min_nr:  Minimum number of events to wait for
+ * @nr:      Maximum number of events to return
+ * @events:  Output array of io_event structures
+ * @timeout: Optional timeout (NULL = block forever, {0,0} = non-blocking)
+ *
+ * Returns: number of events read, or negative error
+ */
 long sys_io_getevents(unsigned long ctx_id, long min_nr, long nr,
                       void *events, const void *timeout) {
-    (void)ctx_id; (void)min_nr; (void)nr; (void)events; (void)timeout;
-    return -ENOSYS;
+    if (min_nr < 0 || nr < 0 || min_nr > nr || !events)
+        return -EINVAL;
+
+    unsigned int idx = (unsigned int)(ctx_id - 0x10000);
+    if (idx >= MAX_AIO_CONTEXTS)
+        return -EINVAL;
+
+    struct aio_context *ctx = &aio_contexts[idx];
+    if (!ctx->active)
+        return -EINVAL;
+
+    struct linux_io_event *ev_out = (struct linux_io_event *)events;
+    long collected = 0;
+
+    /* Collect available events (up to nr) */
+    while (collected < nr && ctx->event_head != ctx->event_tail) {
+        ev_out[collected] = ctx->events[ctx->event_head];
+        ctx->event_head = (ctx->event_head + 1) % MAX_AIO_EVENTS;
+        collected++;
+    }
+
+    /* If we collected fewer than min_nr and have a non-zero timeout, we'd
+     * normally block. Since our AIO completes synchronously in io_submit(),
+     * there are no pending operations that could complete asynchronously.
+     * Just return what we have. */
+    (void)timeout;
+
+    return collected;
 }
 
-long sys_io_submit(unsigned long ctx_id, long nr, void **iocbpp) {
-    (void)ctx_id; (void)nr; (void)iocbpp;
-    return -ENOSYS;
-}
-
+/**
+ * sys_io_cancel - Attempt to cancel an AIO operation
+ * @ctx_id: Context ID
+ * @iocb:   I/O control block to cancel
+ * @result: Output io_event for the cancelled operation
+ *
+ * Returns: 0 on success, -EAGAIN if not cancellable (already completed)
+ */
 long sys_io_cancel(unsigned long ctx_id, void *iocb, void *result) {
-    (void)ctx_id; (void)iocb; (void)result;
-    return -ENOSYS;
+    unsigned int idx = (unsigned int)(ctx_id - 0x10000);
+    if (idx >= MAX_AIO_CONTEXTS)
+        return -EINVAL;
+
+    struct aio_context *ctx = &aio_contexts[idx];
+    if (!ctx->active)
+        return -EINVAL;
+
+    /* Our AIO completes synchronously, so there's nothing to cancel */
+    (void)iocb; (void)result;
+    return -EAGAIN;
 }
 
 /* ── io_uring constants (Linux ABI) ── */

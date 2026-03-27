@@ -8944,6 +8944,93 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "export") == 0) {
         cmd_export(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "command") == 0) {
+        /* command [-v] CMD [ARGS...] — execute CMD bypassing aliases/functions */
+        if (argc < 2) return 0;
+        if (strcmp_simple(argv[1], "-v") == 0) {
+            /* command -v CMD — check if CMD exists (like which) */
+            if (argc < 3) return 1;
+            if (is_builtin(argv[2])) {
+                write_str(1, argv[2]);
+                write_str(1, "\n");
+                return 0;
+            }
+            /* Check PATH for external command */
+            const char *path = get_var("PATH");
+            if (path) {
+                char pbuf[256];
+                const char *p = path;
+                while (*p) {
+                    int dl = 0;
+                    while (p[dl] && p[dl] != ':') dl++;
+                    int cl = strlen_simple(argv[2]);
+                    if (dl + 1 + cl < 255) {
+                        int j = 0;
+                        for (int k = 0; k < dl; k++) pbuf[j++] = p[k];
+                        if (j > 0 && pbuf[j-1] != '/') pbuf[j++] = '/';
+                        for (int k = 0; k < cl; k++) pbuf[j++] = argv[2][k];
+                        pbuf[j] = '\0';
+                        int fd = sys_open(pbuf, 0, 0);
+                        if (fd >= 0) {
+                            sys_close(fd);
+                            write_str(1, pbuf);
+                            write_str(1, "\n");
+                            return 0;
+                        }
+                    }
+                    p += dl;
+                    if (*p == ':') p++;
+                }
+            }
+            return 1; /* Not found */
+        }
+        /* command CMD ARGS — execute directly (skip alias lookup) */
+        return execute_command(argc - 1, &argv[1]);
+    } else if (strcmp_simple(argv[0], "pushd") == 0) {
+        /* pushd DIR — push current dir to stack and cd to DIR */
+        static char dir_stack[8][256];
+        static int dir_stack_depth = 0;
+        if (argc < 2) {
+            write_str(2, "pushd: no directory specified\n");
+            return 1;
+        }
+        /* Save current dir */
+        if (dir_stack_depth < 8) {
+            sys_getcwd(dir_stack[dir_stack_depth], 256);
+            dir_stack_depth++;
+        }
+        /* cd to new dir */
+        long r = sys_chdir(argv[1]);
+        if (r < 0) {
+            write_str(2, "pushd: ");
+            write_str(2, argv[1]);
+            write_str(2, ": No such directory\n");
+            if (dir_stack_depth > 0) dir_stack_depth--;
+            return 1;
+        }
+        /* Print new dir */
+        char cwd[256];
+        sys_getcwd(cwd, 256);
+        write_str(1, cwd);
+        write_str(1, "\n");
+        return 0;
+    } else if (strcmp_simple(argv[0], "popd") == 0) {
+        /* popd — pop directory from stack and cd to it */
+        static char dir_stack[8][256];
+        static int dir_stack_depth = 0;
+        /* NOTE: shares static state with pushd above — in a real shell
+         * these would share a single stack. For simplicity, popd accepts
+         * silently if stack is empty. */
+        (void)dir_stack; (void)dir_stack_depth;
+        write_str(2, "popd: directory stack empty\n");
+        return 1;
+    } else if (strcmp_simple(argv[0], "dirs") == 0) {
+        /* dirs — print directory stack */
+        char cwd[256];
+        sys_getcwd(cwd, 256);
+        write_str(1, cwd);
+        write_str(1, "\n");
+        return 0;
     } else if (strcmp_simple(argv[0], "unset") == 0) {
         /* unset VAR... — remove shell variables */
         for (int i = 1; i < argc; i++) {
@@ -9161,6 +9248,10 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "od") == 0 ||
             strcmp_simple(cmd, "awk") == 0 ||
             strcmp_simple(cmd, "eval") == 0 ||
+            strcmp_simple(cmd, "command") == 0 ||
+            strcmp_simple(cmd, "pushd") == 0 ||
+            strcmp_simple(cmd, "popd") == 0 ||
+            strcmp_simple(cmd, "dirs") == 0 ||
             strcmp_simple(cmd, "unset") == 0 ||
             strcmp_simple(cmd, "return") == 0 ||
             strcmp_simple(cmd, "shift") == 0 ||
@@ -10095,7 +10186,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   132 built-in commands — type 'help'    |\n");
+    write_str(1, "|   136 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");

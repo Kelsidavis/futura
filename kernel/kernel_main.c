@@ -1525,6 +1525,200 @@ void fut_kernel_main(void) {
 #ifdef __x86_64__
     ahci_init();  /* AHCI SATA controller — scans PCI for disk devices */
 #endif
+
+    /* ── Rust hardware drivers ────────────────────────────────────── */
+    fut_printf("[INIT] Initializing Rust hardware drivers...\n");
+
+#ifdef __x86_64__
+    /* Early platform — CPU identification, timers, basic I/O */
+    {
+        extern int x86_cpuid_init(void);
+        extern int x86_tsc_init(void);
+        extern int hpet_init(void);
+        extern int cmos_rtc_init(void);
+        extern int uart16550_init(void);
+        extern int i8042_init(void);
+
+        x86_cpuid_init();
+        x86_tsc_init();
+        hpet_init();
+        cmos_rtc_init();
+        uart16550_init();
+        i8042_init();
+    }
+
+    /* PCI infrastructure */
+    {
+        extern int pcie_ecam_init(void);
+        extern int pci_msix_init(void);
+        extern int dma_pool_init(void);
+
+        pcie_ecam_init();
+        pci_msix_init();
+        dma_pool_init();
+    }
+
+    /* AMD chipset drivers */
+    {
+        extern int amd_smn_init(void);
+        extern int amd_df_init(void);
+        extern int amd_nbio_init(void);
+        extern int amd_smbus_init(void);
+        extern int amd_gpio_init(void);
+        extern int amd_spi_init(void);
+        extern int amd_i2c_init(void);
+        extern int amd_iommu_init(void);
+        extern int amd_ccp_init(void);
+        extern int amd_psp_init(void);
+        extern int amd_sev_init(void);
+        extern int amd_pstate_init(void);
+        extern int amd_sbtsi_init(void);
+        extern int amd_wdt_init(void);
+        extern int amd_mp2_init(void);
+        extern int amd_umc_init(void);
+        extern int amd_xgbe_init(void);
+
+        amd_smn_init();
+        amd_df_init();
+        amd_nbio_init();
+        amd_smbus_init();
+        amd_gpio_init();
+        amd_spi_init();
+        amd_i2c_init();
+        amd_iommu_init();
+        amd_ccp_init();
+        amd_psp_init();
+        amd_sev_init();
+        amd_pstate_init();
+        amd_sbtsi_init();
+        amd_wdt_init();
+        amd_mp2_init();
+        amd_umc_init();
+        amd_xgbe_init();
+    }
+
+    /* Intel chipset drivers */
+    {
+        extern int intel_vtd_init(void);
+        extern int intel_pmc_init(void);
+        extern int intel_gpio_init(void);
+        extern int intel_lpss_init(void);
+        extern int intel_smbus_init(void);
+        extern int intel_spi_init(void);
+        extern int intel_p2sb_init(void);
+        extern int intel_dma_init(void);
+        extern int intel_hwp_init(void);
+        extern int intel_thermal_init(void);
+        extern int intel_wdt_init(void);
+        extern int intel_mei_init(void);
+        extern int intel_tbt_init(void);
+        extern int intel_sst_init(void);
+        extern int intel_gna_init(void);
+        extern int intel_cnvi_init(void);
+        extern int intel_ipu_init(void);
+        extern int intel_hda_hdmi_init(void);
+
+        intel_vtd_init();
+        intel_pmc_init();
+        intel_gpio_init();
+        intel_lpss_init();
+        intel_smbus_init();
+        intel_spi_init();
+        intel_p2sb_init();
+        intel_dma_init();
+        intel_hwp_init();
+        intel_thermal_init();
+        intel_wdt_init();
+        intel_mei_init();
+        intel_tbt_init();
+        intel_sst_init();
+        intel_gna_init();
+        intel_cnvi_init();
+        intel_ipu_init();
+        intel_hda_hdmi_init();
+    }
+
+    /* Security — TPM, MCE */
+    {
+        extern int tpm_crb_init(void);
+        extern int x86_mce_init(void);
+
+        tpm_crb_init();
+        x86_mce_init();
+    }
+
+    /* Storage — NVMe (supplements AHCI above) */
+    {
+        extern int nvme_init(void);
+        nvme_init();
+    }
+
+    /* USB host + device class drivers */
+    {
+        extern int xhci_init(void);
+        extern int usb_hub_init(void);
+        extern int usb_hid_init(void);
+        extern int usb_storage_init(void);
+        extern int usb_net_init(void);
+        extern int usb_audio_init(void);
+
+        xhci_init();
+        usb_hub_init();
+        usb_hid_init();
+        usb_storage_init();
+        usb_net_init();
+        usb_audio_init();
+    }
+
+    /* Network — PCIe NICs */
+    {
+        extern int rtl8111_init(void);
+        extern int igc_init(void);
+        extern int i211_init(void);
+
+        rtl8111_init();
+        igc_init();
+        i211_init();
+    }
+
+    /* Audio */
+    {
+        extern int hda_init(void);
+        extern int hda_realtek_init(void);
+
+        hda_init();
+        hda_realtek_init();
+    }
+
+    /* ACPI subsystem drivers */
+    {
+        extern int acpi_pm_init(void);
+        extern int acpi_ec_init(void);
+        extern int acpi_thermal_init(void);
+        extern int acpi_button_init(void);
+
+        acpi_pm_init();
+        acpi_ec_init();
+        acpi_thermal_init();
+        acpi_button_init();
+    }
+
+    /* Display — VESA framebuffer, VirtIO console */
+    {
+        extern int vesa_fb_init(void);
+        extern int virtio_console_init(void);
+        extern int virtio_input_rust_init(void);
+        extern int edid_init(void);
+
+        vesa_fb_init();
+        virtio_console_init();
+        virtio_input_rust_init();
+    }
+#endif /* __x86_64__ */
+
+    fut_printf("[INIT] Rust hardware drivers initialized\n");
+    /* ── End Rust hardware drivers ────────────────────────────────── */
+
     {
         extern void loop_init(void);
         loop_init();  /* /dev/loop0-7 loop block devices */

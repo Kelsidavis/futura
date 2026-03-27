@@ -1495,6 +1495,18 @@ static int64_t sys_bpf_wrapper(uint64_t cmd, uint64_t attr, uint64_t size,
     return sys_bpf((int)cmd, (const void *)attr, (unsigned int)size);
 }
 
+/* Module loading stubs — return ENOEXEC/ENOENT */
+static int64_t sys_init_module_wrapper(uint64_t a, uint64_t b, uint64_t c,
+                                        uint64_t d, uint64_t e, uint64_t f) {
+    (void)a;(void)b;(void)c;(void)d;(void)e;(void)f;
+    return -8; /* ENOEXEC */
+}
+static int64_t sys_delete_module_wrapper(uint64_t a, uint64_t b, uint64_t c,
+                                          uint64_t d, uint64_t e, uint64_t f) {
+    (void)a;(void)b;(void)c;(void)d;(void)e;(void)f;
+    return -2; /* ENOENT */
+}
+
 /* Modern mount API wrappers (Linux 5.2+) */
 extern long sys_open_tree(int dirfd, const char *pathname, unsigned int flags);
 static int64_t sys_open_tree_wrapper(uint64_t dirfd, uint64_t path, uint64_t flags,
@@ -4422,6 +4434,15 @@ static void arm64_syscall_table_init(void) {
     syscall_table[__NR_userfaultfd].name = "userfaultfd";
     syscall_table[__NR_bpf].handler = (syscall_fn_t)sys_bpf_wrapper;
     syscall_table[__NR_bpf].name = "bpf";
+
+    /* Module loading — return ENOEXEC/ENOENT (no loadable module support) */
+    /* ARM64: init_module=105, delete_module=106, finit_module=273 */
+    syscall_table[105].handler = (syscall_fn_t)sys_init_module_wrapper;
+    syscall_table[105].name = "init_module";
+    syscall_table[106].handler = (syscall_fn_t)sys_delete_module_wrapper;
+    syscall_table[106].name = "delete_module";
+    syscall_table[273].handler = (syscall_fn_t)sys_init_module_wrapper;
+    syscall_table[273].name = "finit_module";
 
     /* x86_64 compatibility aliases — Futura userland uses x86_64 syscall numbers */
     /* dup (x86_64: 32, ARM64: 23) */

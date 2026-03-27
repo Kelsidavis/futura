@@ -4431,8 +4431,17 @@ static ssize_t procfs_file_write(struct fut_vnode *vnode, const void *buf,
             return (ssize_t)size;  /* accept silently */
 
         default:
-            /* Accept writes to all /proc/sys/ files silently (sysctl tuning) */
-            if (n->kind >= PROC_SYS_DIR && n->kind <= PROC_SYS_KERNEL_HUNG_TASK)
+            /* Accept writes to all /proc/sys/ files silently (sysctl tuning).
+             * This covers kernel, vm, net, and fs sysctls that programs write. */
+            if (n->kind >= PROC_SYS_DIR && n->kind <= PROC_SYS_SCHED_MIGCOST_NS)
+                return (ssize_t)size;
+            /* Also accept writes to newer sysctl entries */
+            if (n->kind == PROC_SYS_VM_MMAP_RND_BITS ||
+                n->kind == PROC_SYS_VM_MMAP_RND_COMPAT ||
+                n->kind == PROC_SYS_NET_UNIX_DGRAM_QLEN ||
+                n->kind == PROC_SYS_NET_BRIDGE_NF_CALL ||
+                n->kind == PROC_SYS_FS_BINFMT_STATUS ||
+                n->kind == PROC_SYS_FS_BINFMT_REGISTER)
                 return (ssize_t)size;
             return -EPERM;
     }

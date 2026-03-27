@@ -393,10 +393,12 @@ extern void exit_robust_list(fut_thread_t *thread);
     }
 
     /* Check stack canary — detect overflow before it causes mysterious crashes.
-     * The canary was placed at the bottom of the stack during thread creation. */
+     * The canary was placed at the bottom of the stack during thread creation.
+     * Skip check if canary is 0 (boot/idle thread whose stack was not set up
+     * by fut_thread_create — its stack is from the bootstrap allocator). */
     if (self->stack_base) {
         uint64_t canary = *(volatile uint64_t *)self->stack_base;
-        if (canary != FUT_STACK_CANARY) {
+        if (canary != FUT_STACK_CANARY && canary != 0) {
             fut_printf("[THREAD] *** STACK OVERFLOW DETECTED *** tid=%llu canary=0x%llx "
                        "(expected 0x%llx) stack_base=%p\n",
                        (unsigned long long)self->tid,

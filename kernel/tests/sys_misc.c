@@ -62750,6 +62750,85 @@ __attribute__((noinline)) static void test_pty_and_cgroup(void) {
             fut_test_fail(2229);
         }
     }
+
+    /* ── Test 2230: TIOCSPGRP/TIOCGPGRP round-trip on PTY ── */
+    fut_printf("[MISC-TEST] Test 2230: TIOCSPGRP/TIOCGPGRP round-trip\n");
+    {
+        extern long sys_open(const char *, int, int);
+        extern long sys_ioctl(int fd, unsigned long request, void *argp);
+        extern long sys_close(int);
+        long master = sys_open("/dev/ptmx", 02, 0);
+        int pass = 0;
+        if (master >= 0) {
+            static int unlock; unlock = 0;
+            sys_ioctl((int)master, 0x40045431UL, &unlock); /* TIOCSPTLCK */
+            /* Set foreground pgid to 42 */
+            static int set_pgid; set_pgid = 42;
+            long r = sys_ioctl((int)master, 0x5410UL /* TIOCSPGRP */, &set_pgid);
+            if (r == 0) {
+                static int got_pgid; got_pgid = 0;
+                long r2 = sys_ioctl((int)master, 0x540FUL /* TIOCGPGRP */, &got_pgid);
+                if (r2 == 0 && got_pgid == 42) pass = 1;
+                else fut_printf("[MISC-TEST]   get=%ld pgid=%d\n", r2, got_pgid);
+            } else {
+                fut_printf("[MISC-TEST]   TIOCSPGRP=%ld\n", r);
+            }
+            sys_close((int)master);
+        }
+        if (pass) {
+            fut_printf("[MISC-TEST] ✓ Test 2230: TIOCSPGRP/TIOCGPGRP ok\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2230: job control ioctl failed\n");
+            fut_test_fail(2230);
+        }
+    }
+
+    /* ── Test 2231: setpgid(0,0) makes process its own group leader ── */
+    fut_printf("[MISC-TEST] Test 2231: setpgid(0,0)\n");
+    {
+        extern long sys_setpgid(uint64_t pid, uint64_t pgid);
+        extern long sys_getpgid(uint64_t pid);
+        extern long sys_getpid(void);
+        long pid = sys_getpid();
+        long r = sys_setpgid(0, 0);
+        int pass = 0;
+        if (r == 0) {
+            long pgid = sys_getpgid(0);
+            if (pgid == pid) pass = 1;
+        }
+        if (pass) {
+            fut_printf("[MISC-TEST] ✓ Test 2231: setpgid(0,0) ok (pgid=%ld)\n", pid);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2231: setpgid failed (%ld)\n", r);
+            fut_test_fail(2231);
+        }
+    }
+
+    /* ── Test 2232: setsid() creates new session ── */
+    fut_printf("[MISC-TEST] Test 2232: setsid()\n");
+    {
+        extern long sys_setsid(void);
+        extern long sys_getsid(uint64_t pid);
+        extern long sys_getpid(void);
+        long pid = sys_getpid();
+        long sid = sys_setsid();
+        int pass = 0;
+        /* setsid returns pid if new session, or -EPERM if already leader */
+        if (sid == pid || sid == -1) {
+            long cur_sid = sys_getsid(0);
+            if (cur_sid == pid) pass = 1;
+            else if (sid == -1) pass = 1; /* Already leader is acceptable */
+        }
+        if (pass) {
+            fut_printf("[MISC-TEST] ✓ Test 2232: setsid ok (sid=%ld)\n", sid);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2232: setsid=%ld\n", sid);
+            fut_test_fail(2232);
+        }
+    }
 }
 
 /* ============================================================

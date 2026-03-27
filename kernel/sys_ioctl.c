@@ -628,7 +628,7 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
                                    request == TIOCGWINSZ || request == TIOCSWINSZ ||
                                    request == TCGETS || request == TCSETS ||
                                    request == TCSETSW || request == TCSETSF ||
-                                   request == TIOCGPGRP || request == TIOCGSID || request == TIOCSTI ||
+                                   request == TIOCGPGRP || request == TIOCSPGRP || request == TIOCGSID || request == TIOCSTI ||
                                    request == TIOCOUTQ ||
                                    request == 0x80045430 /* TIOCGPTN */ ||
                                    request == 0x40045431 /* TIOCSPTLCK */ ||

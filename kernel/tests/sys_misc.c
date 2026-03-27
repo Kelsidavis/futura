@@ -66155,6 +66155,32 @@ void fut_misc_test_thread(void *arg) {
         extern long sys_read(int, void *, size_t);
         extern long sys_close(int);
 
+        /* Test 2171: /run/systemd directory exists */
+        fut_printf("[MISC-TEST] Test 2171: /run/systemd exists\n");
+        {
+            long fd = sys_open("/run/systemd", 0, 0);
+            if (fd >= 0) {
+                sys_close((int)fd);
+                fut_printf("[MISC-TEST] ✓ Test 2171: /run/systemd ok\n");
+                fut_test_pass();
+            } else { fut_printf("[MISC-TEST] ✗ Test 2171: open=%ld\n", fd); fut_test_fail(2171); }
+        }
+
+        /* Test 2172: /var/run → /run symlink */
+        fut_printf("[MISC-TEST] Test 2172: /var/run → /run\n");
+        {
+            extern long sys_readlink(const char *, char *, size_t);
+            static char lbuf[64];
+            long n = sys_readlink("/var/run", lbuf, sizeof(lbuf) - 1);
+            if (n > 0) {
+                lbuf[n] = '\0';
+                if (lbuf[0] == '/' && lbuf[1] == 'r' && lbuf[2] == 'u' && lbuf[3] == 'n') {
+                    fut_printf("[MISC-TEST] ✓ Test 2172: /var/run → %s\n", lbuf);
+                    fut_test_pass();
+                } else { fut_printf("[MISC-TEST] ✗ Test 2172: → %s\n", lbuf); fut_test_fail(2172); }
+            } else { fut_printf("[MISC-TEST] ✗ Test 2172: readlink=%ld\n", n); fut_test_fail(2172); }
+        }
+
         /* Test 2170: UTS namespace — unshare + sethostname roundtrip */
         fut_printf("[MISC-TEST] Test 2170: UTS namespace sethostname\n");
         {

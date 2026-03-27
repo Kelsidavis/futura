@@ -1198,7 +1198,7 @@ void fut_kernel_main(void) {
     {
         const char *dirs[] = {
             "/bin", "/sbin", "/usr", "/usr/bin", "/usr/sbin", "/usr/lib",
-            "/var", "/var/log", "/var/run", "/var/tmp",
+            "/var", "/var/log", "/var/tmp",
             "/root", "/home", "/opt", "/srv",
             NULL
         };
@@ -1426,6 +1426,7 @@ void fut_kernel_main(void) {
             fut_vfs_mkdir("/run/lock",    01777);
             fut_vfs_mkdir("/run/user",    0755);
             fut_vfs_mkdir("/run/user/0",  0700);
+            fut_vfs_mkdir("/run/systemd", 0755);  /* systemd/Docker checks for this */
         } else {
             fut_printf("[WARN] ✗ Failed to mount ramfs at /run (error %d)\n", run_mount_ret);
         }
@@ -1437,7 +1438,15 @@ void fut_kernel_main(void) {
     fut_vfs_mkdir("/var", 0755);
     fut_vfs_mkdir("/var/log", 0755);
     fut_vfs_mkdir("/var/tmp", 01777);
+    fut_vfs_mkdir("/var/cache", 0755);
+    /* /var/run → /run symlink (legacy compat for old programs) */
+    {
+        extern long sys_symlink(const char *, const char *);
+        sys_symlink("/run", "/var/run");
+    }
     fut_vfs_mkdir("/opt", 0755);
+    fut_vfs_mkdir("/srv", 0755);
+    fut_vfs_mkdir("/media", 0755);
 
     bool run_async_selftests = boot_flag_enabled("async-tests", false);
 
@@ -1464,7 +1473,7 @@ void fut_kernel_main(void) {
         planned_tests += 17u; /* clock_sched: getres, sched_param, sched_policy, itimer, rusage, times, getpriority, setpriority, getpriority(-who), setpriority(-who), unshare(0), unshare(invalid), rr_get_interval, clock_gettime, posix_timer_sigev_value, posix_timer_si_timer, itimer_virtual */
         planned_tests += 22u; /* vfs: O_TRUNC, O_APPEND, relpath, dir_mtime, readlink, hardlink, mount, renameat2, inotify, inotify_rename, inotify_attrib, inotify_close, inotify_access, inotify_modify, inotify_ftruncate, inotify_utimensat, inotify_truncate, inotify_delete, umount expire, dotdot, eisdir, chdir_dotdot */
         planned_tests += 17u; /* poll: file ready, eventfd not-ready, eventfd ready, POLLNVAL, select file, select pipe, pselect6 pipe, pselect6 sigmask restore, timeout-only sleep, timerfd readiness, signalfd readiness, pipe EOF, select pipe EOF, select timerfd wakeup, poll negative fd, POLLRDNORM, select timeout update */
-        planned_tests += 2170u; /* misc(2170): ..., thp (2167), tz (2168-2169), uts_ns (2170) */
+        planned_tests += 2172u; /* misc(2172): ..., tz (2168-2169), uts_ns (2170), dirs (2171-2172) */
         // planned_tests += 1u; /* block */
         // planned_tests += 1u; /* futfs */
         // planned_tests += 1u; /* net */

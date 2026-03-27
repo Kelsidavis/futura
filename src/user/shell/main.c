@@ -3187,6 +3187,142 @@ static int expand_globs(int argc, char *argv[], int max_args) {
 
 /* Built-in: history */
 /* Built-in: more — simple pager (24 lines at a time) */
+/* less: scrollable pager with search, page up/down, line navigation */
+static void cmd_less(int argc, char *argv[]) {
+    int in_fd = 0;
+    if (argc > 1) {
+        in_fd = sys_open(argv[1], O_RDONLY, 0);
+        if (in_fd < 0) { write_str(2, "less: cannot open "); write_str(2, argv[1]); write_str(2, "\n"); return; }
+    }
+
+    /* Read entire file into buffer */
+    #define LESS_MAX (64 * 1024)
+    #define LESS_ROWS 24
+    static char fbuf[LESS_MAX];
+    int total = 0;
+    long n;
+    while (total < LESS_MAX - 1 && (n = sys_read(in_fd, fbuf + total, LESS_MAX - 1 - total)) > 0)
+        total += (int)n;
+    fbuf[total] = '\0';
+    if (argc > 1) sys_close(in_fd);
+
+    /* Build line index */
+    #define LESS_MAX_LINES 4096
+    static int line_offsets[LESS_MAX_LINES];
+    int nlines = 0;
+    line_offsets[0] = 0;
+    for (int i = 0; i < total && nlines < LESS_MAX_LINES - 1; i++) {
+        if (fbuf[i] == '\n') {
+            if (nlines + 1 < LESS_MAX_LINES)
+                line_offsets[++nlines] = i + 1;
+        }
+    }
+    if (nlines == 0 || line_offsets[nlines] < total) nlines++;
+
+    int top = 0;  /* First visible line */
+    static char search_pat[64];
+    search_pat[0] = '\0';
+
+    for (;;) {
+        /* Display LESS_ROWS lines from top */
+        write_str(1, "\033[2J\033[H");  /* Clear screen, cursor home */
+        for (int r = 0; r < LESS_ROWS && (top + r) < nlines; r++) {
+            int li = top + r;
+            int start = line_offsets[li];
+            int end = (li + 1 < nlines) ? line_offsets[li + 1] : total;
+            if (end > start && fbuf[end - 1] == '\n') end--;
+            int len = end - start;
+            if (len > 0) sys_write(1, fbuf + start, len < 80 ? len : 80);
+            write_str(1, "\n");
+        }
+
+        /* Status line */
+        write_str(1, "\033[7m");
+        if (argc > 1) { write_str(1, argv[1]); write_str(1, " "); }
+        /* Show position */
+        char pos[32]; int pp = 0;
+        const char *prefix = "line ";
+        while (*prefix) pos[pp++] = *prefix++;
+        { int v = top + 1; char rev[8]; int rp = 0;
+          if (v == 0) rev[rp++] = '0';
+          while (v > 0) { rev[rp++] = '0' + (v % 10); v /= 10; }
+          while (rp > 0) pos[pp++] = rev[--rp]; }
+        pos[pp++] = '/';
+        { int v = nlines; char rev[8]; int rp = 0;
+          if (v == 0) rev[rp++] = '0';
+          while (v > 0) { rev[rp++] = '0' + (v % 10); v /= 10; }
+          while (rp > 0) pos[pp++] = rev[--rp]; }
+        sys_write(1, pos, pp);
+        write_str(1, "\033[0m");
+
+        /* Read command */
+        char key;
+        if (sys_read(0, &key, 1) <= 0) break;
+
+        if (key == 'q' || key == 'Q') break;
+        else if (key == ' ' || key == 'f') { top += LESS_ROWS; if (top >= nlines) top = nlines - 1; }
+        else if (key == 'b') { top -= LESS_ROWS; if (top < 0) top = 0; }
+        else if (key == 'j' || key == '\n' || key == 'e') { if (top < nlines - 1) top++; }
+        else if (key == 'k' || key == 'y') { if (top > 0) top--; }
+        else if (key == 'g' || key == '<') { top = 0; }
+        else if (key == 'G' || key == '>') { top = nlines > LESS_ROWS ? nlines - LESS_ROWS : 0; }
+        else if (key == 'd') { top += LESS_ROWS / 2; if (top >= nlines) top = nlines - 1; }
+        else if (key == 'u') { top -= LESS_ROWS / 2; if (top < 0) top = 0; }
+        else if (key == '/') {
+            /* Search forward */
+            write_str(1, "\n/");
+            int si = 0;
+            while (si < 62) {
+                char sc; if (sys_read(0, &sc, 1) <= 0) break;
+                if (sc == '\n') break;
+                search_pat[si++] = sc;
+                sys_write(1, &sc, 1);
+            }
+            search_pat[si] = '\0';
+            /* Find next occurrence */
+            if (si > 0) {
+                for (int li = top + 1; li < nlines; li++) {
+                    int start = line_offsets[li];
+                    int end = (li + 1 < nlines) ? line_offsets[li + 1] : total;
+                    for (int j = start; j < end - si; j++) {
+                        int match = 1;
+                        for (int k = 0; k < si; k++) if (fbuf[j+k] != search_pat[k]) { match = 0; break; }
+                        if (match) { top = li; goto less_found; }
+                    }
+                }
+            }
+            less_found:;
+        }
+        else if (key == 'n' && search_pat[0]) {
+            /* Search next */
+            int si = 0; while (search_pat[si]) si++;
+            for (int li = top + 1; li < nlines; li++) {
+                int start = line_offsets[li];
+                int end = (li + 1 < nlines) ? line_offsets[li + 1] : total;
+                for (int j = start; j < end - si; j++) {
+                    int match = 1;
+                    for (int k = 0; k < si; k++) if (fbuf[j+k] != search_pat[k]) { match = 0; break; }
+                    if (match) { top = li; goto less_found2; }
+                }
+            }
+            less_found2:;
+        }
+        else if (key == '\033') {
+            /* Arrow keys: ESC [ A/B */
+            char seq[2];
+            if (sys_read(0, &seq[0], 1) > 0 && seq[0] == '[') {
+                if (sys_read(0, &seq[1], 1) > 0) {
+                    if (seq[1] == 'A') { if (top > 0) top--; }         /* Up */
+                    else if (seq[1] == 'B') { if (top < nlines-1) top++; } /* Down */
+                    else if (seq[1] == '5') { sys_read(0, &seq[0], 1); top -= LESS_ROWS; if (top < 0) top = 0; } /* PgUp */
+                    else if (seq[1] == '6') { sys_read(0, &seq[0], 1); top += LESS_ROWS; if (top >= nlines) top = nlines-1; } /* PgDn */
+                }
+            }
+        }
+    }
+    write_str(1, "\033[2J\033[H");  /* Clear on exit */
+}
+
 static void cmd_more(int argc, char *argv[]) {
     int in_fd = 0;  /* default stdin */
     if (argc > 1) {
@@ -10412,6 +10548,9 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "xargs") == 0) {
         cmd_xargs(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "less") == 0) {
+        cmd_less(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "more") == 0) {
         cmd_more(argc, argv);
         return 0;
@@ -11139,6 +11278,7 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "ping") == 0 ||
             strcmp_simple(cmd, "yes") == 0 ||
             strcmp_simple(cmd, "mktemp") == 0 ||
+            strcmp_simple(cmd, "less") == 0 ||
             strcmp_simple(cmd, "more") == 0 ||
             strcmp_simple(cmd, "history") == 0 ||
             strcmp_simple(cmd, "which") == 0 ||

@@ -251,19 +251,48 @@ long sys_nanosleep(const fut_timespec_t *u_req, fut_timespec_t *u_rem) {
      * environments (QEMU CI, bare metal).  fut_thread_sleep() uses the
      * sleep-queue mechanism which can stall indefinitely in QEMU.
      * Sleeping on task->signal_waitq means a delivered signal also wakes
-     * us early — the post-sleep signal check below handles EINTR. */
+     * us early — the post-sleep signal check below handles EINTR.
+     *
+     * Race mitigation: the timer can fire between fut_timer_start and
+     * fut_waitq_sleep_locked, causing a missed wake-up. After sleeping,
+     * we verify enough time elapsed; if not, retry with a short busy-wait. */
     {
         uint64_t sleep_ticks = millis / 10;
         if (millis % 10 != 0) sleep_ticks++;
         if (sleep_ticks == 0) sleep_ticks = 1;
-        if (fut_timer_start(sleep_ticks, ns_timer_wakeup, task) != 0) {
-            /* OOM: cannot start sleep timer — thread was not enqueued */
-            return -EAGAIN;
+
+        uint64_t deadline_ticks = start_ticks + sleep_ticks;
+
+        /* If very short sleep (1-2 ticks / 10-20ms), just busy-yield to avoid
+         * the timer/waitq race entirely. This is what Linux does for sub-tick. */
+        if (sleep_ticks <= 2) {
+            while (fut_get_ticks() < deadline_ticks) {
+                fut_thread_yield();
+            }
+        } else {
+            if (fut_timer_start(sleep_ticks, ns_timer_wakeup, task) != 0) {
+                return -EAGAIN;
+            }
+            fut_spinlock_acquire(&task->signal_waitq.lock);
+            fut_waitq_sleep_locked(&task->signal_waitq, &task->signal_waitq.lock,
+                                   FUT_THREAD_BLOCKED);
+            fut_timer_cancel(ns_timer_wakeup, task);
+
+            /* Missed-wakeup fallback: if we woke too early (timer race),
+             * yield until the deadline to avoid hanging indefinitely. */
+            int safety = 0;
+            while (fut_get_ticks() < deadline_ticks && safety < 500) {
+                /* Check for pending signals before each yield */
+                uint64_t sig = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
+                fut_thread_t *ns_thr2 = fut_thread_current();
+                uint64_t blk = ns_thr2 ?
+                    __atomic_load_n(&ns_thr2->signal_mask, __ATOMIC_ACQUIRE) :
+                    task->signal_mask;
+                if (sig & ~blk) break;  /* Signal pending — handle below */
+                fut_thread_yield();
+                safety++;
+            }
         }
-        fut_spinlock_acquire(&task->signal_waitq.lock);
-        fut_waitq_sleep_locked(&task->signal_waitq, &task->signal_waitq.lock,
-                               FUT_THREAD_BLOCKED);
-        fut_timer_cancel(ns_timer_wakeup, task);
     }
 
     /* Check if we were woken early by a signal (use thread mask) */

@@ -1,0 +1,12 @@
+[package]
+name = "rpi_thermal"
+version = "0.1.0"
+edition = "2024"
+license = "MPL-2.0"
+description = "Raspberry Pi thermal monitoring and CPU frequency management"
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+common = { path = "../common" }

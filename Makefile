@@ -1043,6 +1043,12 @@ $(eval $(call RUST_DRIVER_RULE,$(RUST_LIB_RTL8111),rtl8111,$(RUST_RTL8111_DIR)))
 $(eval $(call RUST_DRIVER_RULE,$(RUST_LIB_HDA),hda,$(RUST_HDA_DIR)))
 $(eval $(call RUST_DRIVER_RULE,$(RUST_LIB_AMD_SMBUS),amd_smbus,$(RUST_AMD_SMBUS_DIR)))
 $(eval $(call RUST_DRIVER_RULE,$(RUST_LIB_AMD_IOMMU),amd_iommu,$(RUST_AMD_IOMMU_DIR)))
+$(eval $(call RUST_DRIVER_RULE,$(RUST_LIB_AHCI),ahci,$(RUST_AHCI_DIR)))
+$(eval $(call RUST_DRIVER_RULE,$(RUST_LIB_HPET),hpet,$(RUST_HPET_DIR)))
+$(eval $(call RUST_DRIVER_RULE,$(RUST_LIB_IGC),igc,$(RUST_IGC_DIR)))
+$(eval $(call RUST_DRIVER_RULE,$(RUST_LIB_AMD_WDT),amd_wdt,$(RUST_AMD_WDT_DIR)))
+$(eval $(call RUST_DRIVER_RULE,$(RUST_LIB_AMD_GPIO),amd_gpio,$(RUST_AMD_GPIO_DIR)))
+$(eval $(call RUST_DRIVER_RULE,$(RUST_LIB_CMOS_RTC),cmos_rtc,$(RUST_CMOS_RTC_DIR)))
 
 $(RUST_LIB_APPLE_UART): $(RUST_SOURCES)
 	@$(RUSTC) --print target-list | grep -q $(RUST_TARGET) >/dev/null || { \

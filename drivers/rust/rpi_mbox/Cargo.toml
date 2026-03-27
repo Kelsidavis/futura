@@ -1,0 +1,12 @@
+[package]
+name = "rpi_mbox"
+version = "0.1.0"
+edition = "2024"
+license = "MPL-2.0"
+description = "Raspberry Pi VideoCore mailbox driver for firmware communication"
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+common = { path = "../common" }

@@ -1,0 +1,12 @@
+[package]
+name = "rpi_genet"
+version = "0.1.0"
+edition = "2024"
+license = "MPL-2.0"
+description = "Raspberry Pi 4 BCM54213PE GENET v5 Gigabit Ethernet driver"
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+common = { path = "../common" }

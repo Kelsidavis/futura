@@ -11,8 +11,8 @@
  *   - Fork: flags == SIGCHLD (or 0 exit-signal) with no CLONE_VM/THREAD
  *   - Thread: CLONE_VM | CLONE_THREAD | CLONE_SIGHAND set
  *
- * Returns ENOSYS for namespace flags (CLONE_NEWNS etc.) that require
- * unimplemented namespace infrastructure.
+ * Supports namespace flags (CLONE_NEWPID, CLONE_NEWNS, CLONE_NEWUTS,
+ * CLONE_NEWNET, CLONE_NEWUSER) by creating new namespaces for the child.
  *
  * Syscall number (Linux x86_64 / ARM64): 435
  */
@@ -116,12 +116,10 @@ long sys_clone3(const struct fut_clone_args *uargs, size_t size) {
 
     uint64_t flags = args.flags;
 
-    /* Namespace creation requires unimplemented infrastructure */
-    if (flags & CLONE_NAMESPACE_FLAGS) {
-        fut_printf("[CLONE3] clone3(flags=0x%llx) -> ENOSYS (namespace flags)\n",
-                   (unsigned long long)flags);
-        return -ENOSYS;
-    }
+    /* Namespace flags: apply namespace isolation to the child process.
+     * The child will be placed in new namespaces via unshare-style logic. */
+    uint64_t ns_flags = flags & CLONE_NAMESPACE_FLAGS;
+    flags &= ~CLONE_NAMESPACE_FLAGS;  /* Remove namespace flags before passing to fork */
 
     /* CLONE_CLEAR_SIGHAND and CLONE_SIGHAND are mutually exclusive (Linux 5.5) */
     if ((flags & CLONE_CLEAR_SIGHAND) && (flags & CLONE_SIGHAND))
@@ -182,6 +180,39 @@ long sys_clone3(const struct fut_clone_args *uargs, size_t size) {
             int tid_val = (int)child_pid;
             clone3_copy_to_user((void *)(uintptr_t)args.parent_tid,
                                 &tid_val, sizeof(tid_val));
+        }
+
+        /* Apply namespace flags to the child process */
+        if (ns_flags) {
+            fut_task_t *child = fut_task_by_pid((uint64_t)child_pid);
+            if (child) {
+                if (ns_flags & CLONE_NEWPID) {
+                    extern struct pid_namespace *pidns_create(struct pid_namespace *);
+                    struct pid_namespace *ns = pidns_create(child->pid_ns);
+                    if (ns) child->pid_ns = ns;
+                }
+                if (ns_flags & CLONE_NEWNS) {
+                    extern struct mount_namespace *mntns_create(struct mount_namespace *);
+                    struct mount_namespace *ns = mntns_create(child->mnt_ns);
+                    if (ns) child->mnt_ns = ns;
+                }
+                if (ns_flags & CLONE_NEWUTS) {
+                    extern struct uts_namespace *utsns_create(struct uts_namespace *);
+                    struct uts_namespace *ns = utsns_create(child->uts_ns);
+                    if (ns) child->uts_ns = ns;
+                }
+                if (ns_flags & CLONE_NEWNET) {
+                    extern struct net_namespace *netns_create(struct net_namespace *);
+                    struct net_namespace *ns = netns_create(child->net_ns);
+                    if (ns) child->net_ns = ns;
+                }
+                if (ns_flags & CLONE_NEWUSER) {
+                    extern struct user_namespace *userns_create(struct user_namespace *);
+                    struct user_namespace *ns = userns_create(child->user_ns);
+                    if (ns) child->user_ns = ns;
+                }
+                /* CLONE_NEWIPC, CLONE_NEWCGROUP, CLONE_NEWTIME: accept as no-ops */
+            }
         }
     } else if (child_pid == 0) {
         /* ── Child context ── */

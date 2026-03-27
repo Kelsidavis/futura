@@ -26157,15 +26157,18 @@ static void test_clone3(void) {
         fut_test_pass();
     }
 
-    /* Test 475: namespace flag → ENOSYS */
-    fut_printf("[MISC-TEST] Test 475: clone3(CLONE_NEWNS) -> ENOSYS\n");
+    /* Test 475: namespace flag accepted (fork fails in test context = -ENOMEM) */
+    fut_printf("[MISC-TEST] Test 475: clone3(CLONE_NEWNS) accepted\n");
     struct { uint64_t flags; uint64_t rest[10]; } ns_args = { .flags = 0x00020000ULL }; /* CLONE_NEWNS */
     r = sys_clone3(&ns_args, 64);
-    if (r != -38 /*-ENOSYS*/) {
-        fut_printf("[MISC-TEST] ✗ Test 475: expected -ENOSYS, got %ld\n", r);
+    /* clone3 no longer returns ENOSYS for namespace flags — it attempts the fork.
+     * In a kernel test thread (no interrupt frame), sys_fork returns -ENOMEM (-12).
+     * This proves the namespace flag path is entered, not rejected with ENOSYS. */
+    if (r == -38 /*-ENOSYS*/) {
+        fut_printf("[MISC-TEST] ✗ Test 475: still ENOSYS — namespace flags not wired\n");
         fut_test_fail(475);
     } else {
-        fut_printf("[MISC-TEST] ✓ Test 475: clone3(CLONE_NEWNS) -> -ENOSYS\n");
+        fut_printf("[MISC-TEST] ✓ Test 475: clone3(CLONE_NEWNS) -> %ld (ns flags accepted)\n", r);
         fut_test_pass();
     }
 

@@ -3363,15 +3363,39 @@ static void head_process_fd(int fd, int max_lines) {
 /* Built-in: head - Display first N lines of files */
 static void cmd_head(int argc, char *argv[]) {
     int num_lines = 10;  /* Default: 10 lines */
+    int num_bytes = 0;   /* -c N: output first N bytes */
     int file_start = 1;
 
-    /* Parse -n option */
+    /* Parse options */
     if (argc >= 3 && strcmp_simple(argv[1], "-n") == 0) {
         num_lines = simple_atoi(argv[2]);
-        if (num_lines <= 0) {
-            num_lines = 10;
-        }
+        if (num_lines <= 0) num_lines = 10;
         file_start = 3;
+    } else if (argc >= 3 && strcmp_simple(argv[1], "-c") == 0) {
+        num_bytes = simple_atoi(argv[2]);
+        file_start = 3;
+    } else if (argc >= 2 && argv[1][0] == '-' && argv[1][1] >= '0' && argv[1][1] <= '9') {
+        /* head -N shorthand */
+        num_lines = simple_atoi(argv[1] + 1);
+        if (num_lines <= 0) num_lines = 10;
+        file_start = 2;
+    }
+
+    /* -c N: output first N bytes */
+    if (num_bytes > 0) {
+        int fd = (file_start < argc) ? sys_open(argv[file_start], O_RDONLY, 0) : 0;
+        if (fd < 0) { write_str(2, "head: cannot open file\n"); return; }
+        static char buf[4096];
+        int remaining = num_bytes;
+        while (remaining > 0) {
+            int chunk = remaining < (int)sizeof(buf) ? remaining : (int)sizeof(buf);
+            ssize_t n = sys_read(fd, buf, chunk);
+            if (n <= 0) break;
+            sys_write(1, buf, n);
+            remaining -= (int)n;
+        }
+        if (fd > 0) sys_close(fd);
+        return;
     }
 
     /* Process files or stdin */

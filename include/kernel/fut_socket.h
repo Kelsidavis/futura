@@ -208,6 +208,7 @@ struct fut_socket;
 struct fut_socket_listener;
 struct fut_socket_connection;
 struct fut_vnode;
+struct net_namespace;
 
 /* ============================================================
  *   Connection Queue Entry
@@ -360,6 +361,7 @@ typedef struct fut_socket {
     int flags;                              /* O_NONBLOCK, etc */
     int socket_type;                        /* SOCK_STREAM, etc (AF_UNIX only) */
     int address_family;                     /* AF_UNIX only */
+    struct net_namespace *net_ns;           /* Owning network namespace */
     uint32_t so_flags;                      /* Boolean SO_* options bitmask */
 /* so_flags bits */
 #define FUT_SO_F_REUSEADDR  (1u << 0)

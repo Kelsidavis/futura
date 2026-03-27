@@ -82,6 +82,8 @@ static inline int socket_memcmp(const void *s1, const void *s2, size_t n) {
 #define memcpy(s1,s2,n)   socket_memcpy(s1, s2, n)
 #define memcmp(s1,s2,n)   socket_memcmp(s1, s2, n)
 
+extern struct net_namespace *netns_get_init(void);
+
 /* Check if a socket operation should be non-blocking.
  * Returns true if O_NONBLOCK is set on the socket OR the current task has
  * the transient msg_dontwait flag set (MSG_DONTWAIT per-call semantics).
@@ -357,6 +359,15 @@ fut_socket_t *fut_socket_create(int family, int type) {
     socket->magic = FUT_SOCKET_MAGIC;
     socket->state = FUT_SOCK_CREATED;
     socket->address_family = family;
+    socket->net_ns = NULL;
+    {
+        fut_task_t *task = fut_task_current();
+        if (task && task->net_ns) {
+            socket->net_ns = task->net_ns;
+        } else {
+            socket->net_ns = netns_get_init();
+        }
+    }
     socket->socket_type = type;
     socket->refcount = 1;
     socket->socket_id = __atomic_fetch_add(&socket_next_id, 1, __ATOMIC_RELAXED);
@@ -771,6 +782,7 @@ int fut_socket_accept(fut_socket_t *listener, fut_socket_t **out_socket) {
     accepted->magic = FUT_SOCKET_MAGIC;
     accepted->state = FUT_SOCK_CONNECTED;
     accepted->address_family = listener->address_family;
+    accepted->net_ns = listener->net_ns;
     accepted->socket_type = listener->socket_type;
     accepted->refcount = 1;
     accepted->socket_id = __atomic_fetch_add(&socket_next_id, 1, __ATOMIC_RELAXED);
@@ -2116,17 +2128,29 @@ static bool inet_addr_match(uint32_t a, uint32_t b) {
     return a == b;
 }
 
-/**
- * Find AF_INET listening socket by address:port.
- */
-fut_socket_t *fut_socket_find_inet_listener(uint32_t addr, uint16_t port) {
-    if (port == 0) return NULL;
+static struct net_namespace *socket_netns_or_init(const fut_socket_t *s) {
+    if (s && s->net_ns) return s->net_ns;
+    return netns_get_init();
+}
+
+static struct net_namespace *socket_current_netns(void) {
+    fut_task_t *task = fut_task_current();
+    if (task && task->net_ns) return task->net_ns;
+    return netns_get_init();
+}
+
+static fut_socket_t *fut_socket_find_inet_listener_ns(struct net_namespace *ns,
+                                                       uint32_t addr, uint16_t port) {
+    if (!ns || port == 0) return NULL;
 
     fut_spinlock_acquire(&socket_lock);
     for (int i = 0; i < FUT_SOCKET_MAX; i++) {
         fut_socket_t *s = socket_registry[i];
         if (!s || (uintptr_t)(void *)s < 0xFFFF800000000000ULL) {
             if (s) socket_registry[i] = NULL;
+            continue;
+        }
+        if (socket_netns_or_init(s) != ns) {
             continue;
         }
         if (s->magic == FUT_SOCKET_MAGIC &&
@@ -2146,18 +2170,18 @@ fut_socket_t *fut_socket_find_inet_listener(uint32_t addr, uint16_t port) {
     return NULL;
 }
 
-/**
- * Find AF_INET bound socket (BOUND or LISTENING) by address:port.
- * Used for UDP datagram delivery.
- */
-fut_socket_t *fut_socket_find_inet_bound(uint32_t addr, uint16_t port) {
-    if (port == 0) return NULL;
+static fut_socket_t *fut_socket_find_inet_bound_ns(struct net_namespace *ns,
+                                                    uint32_t addr, uint16_t port) {
+    if (!ns || port == 0) return NULL;
 
     fut_spinlock_acquire(&socket_lock);
     for (int i = 0; i < FUT_SOCKET_MAX; i++) {
         fut_socket_t *s = socket_registry[i];
         if (!s || (uintptr_t)(void *)s < 0xFFFF800000000000ULL) {
             if (s) socket_registry[i] = NULL;
+            continue;
+        }
+        if (socket_netns_or_init(s) != ns) {
             continue;
         }
         if (s->magic == FUT_SOCKET_MAGIC &&
@@ -2178,6 +2202,21 @@ fut_socket_t *fut_socket_find_inet_bound(uint32_t addr, uint16_t port) {
 }
 
 /**
+ * Find AF_INET listening socket by address:port.
+ */
+fut_socket_t *fut_socket_find_inet_listener(uint32_t addr, uint16_t port) {
+    return fut_socket_find_inet_listener_ns(socket_current_netns(), addr, port);
+}
+
+/**
+ * Find AF_INET bound socket (BOUND or LISTENING) by address:port.
+ * Used for UDP datagram delivery.
+ */
+fut_socket_t *fut_socket_find_inet_bound(uint32_t addr, uint16_t port) {
+    return fut_socket_find_inet_bound_ns(socket_current_netns(), addr, port);
+}
+
+/**
  * Bind AF_INET socket to address:port.
  */
 int fut_socket_bind_inet(fut_socket_t *socket, uint32_t addr, uint16_t port) {
@@ -2185,6 +2224,8 @@ int fut_socket_bind_inet(fut_socket_t *socket, uint32_t addr, uint16_t port) {
         return -EINVAL;
     if (socket->address_family != AF_INET)
         return -EINVAL;
+
+    struct net_namespace *ns = socket_netns_or_init(socket);
 
     /* Auto-assign ephemeral port if port == 0 — use sysctl port range */
     if (port == 0) {
@@ -2201,7 +2242,7 @@ int fut_socket_bind_inet(fut_socket_t *socket, uint32_t addr, uint16_t port) {
             }
             /* Convert to network byte order for storage */
             uint16_t try_port_net = (uint16_t)((try_port_host >> 8) | (try_port_host << 8));
-            fut_socket_t *existing = fut_socket_find_inet_bound(addr, try_port_net);
+            fut_socket_t *existing = fut_socket_find_inet_bound_ns(ns, addr, try_port_net);
             if (!existing) {
                 port = try_port_net;
                 break;
@@ -2213,7 +2254,7 @@ int fut_socket_bind_inet(fut_socket_t *socket, uint32_t addr, uint16_t port) {
 
     /* Check for address conflicts (unless SO_REUSEADDR/SO_REUSEPORT) */
     if (!(socket->so_flags & (FUT_SO_F_REUSEADDR | FUT_SO_F_REUSEPORT))) {
-        fut_socket_t *existing = fut_socket_find_inet_bound(addr, port);
+        fut_socket_t *existing = fut_socket_find_inet_bound_ns(ns, addr, port);
         if (existing) {
             fut_socket_unref(existing);
             return -EADDRINUSE;
@@ -2289,7 +2330,7 @@ int fut_socket_connect_inet(fut_socket_t *socket, uint32_t addr, uint16_t port) 
         if (rc < 0) return rc;
     }
 
-    fut_socket_t *listener = fut_socket_find_inet_listener(addr, port);
+    fut_socket_t *listener = fut_socket_find_inet_listener_ns(socket_netns_or_init(socket), addr, port);
     if (!listener) return -ECONNREFUSED;
 
     fut_socket_listener_t *queue = listener->listener;
@@ -2348,7 +2389,8 @@ ssize_t fut_socket_sendto_inet_dgram(uint32_t dest_addr, uint16_t dest_port,
     if (!data || data_len == 0) return -EINVAL;
     if (data_len > FUT_DGRAM_DATA_MAX) return -EMSGSIZE;
 
-    fut_socket_t *dest = fut_socket_find_inet_bound(dest_addr, dest_port);
+    struct net_namespace *ns = socket_current_netns();
+    fut_socket_t *dest = fut_socket_find_inet_bound_ns(ns, dest_addr, dest_port);
     if (!dest) return -ECONNREFUSED;
 
     if (!dest->dgram_queue) {
@@ -2395,6 +2437,8 @@ ssize_t fut_socket_sendto_inet_raw(uint32_t dest_addr, int protocol,
                                     const void *data, size_t data_len) {
     if (!data || data_len == 0) return -EINVAL;
     if (data_len > 65535) return -EMSGSIZE;
+
+    struct net_namespace *ns = socket_current_netns();
 
     /* For ICMP echo requests, generate a reply and deliver to raw sockets */
     if (protocol == 1 /* IPPROTO_ICMP */ && data_len >= 8) {
@@ -2451,6 +2495,7 @@ ssize_t fut_socket_sendto_inet_raw(uint32_t dest_addr, int protocol,
                 fut_socket_t *s = socket_registry[i];
                 if (!s) continue;
                 if (s->magic != FUT_SOCKET_MAGIC) continue;
+                if (socket_netns_or_init(s) != ns) continue;
                 if (s->address_family != 2 || s->socket_type != 3) continue;
                 if (s->protocol != 1) continue;
                 if (!s->dgram_queue) continue;

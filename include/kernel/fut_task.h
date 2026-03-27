@@ -16,6 +16,9 @@
 #include "signal.h"
 #include "signal_frame.h"
 
+struct net_iface;
+struct net_route;
+
 struct fut_mm;
 
 /* Maximum POSIX timers per process */
@@ -289,6 +292,11 @@ struct user_namespace {
 struct net_namespace {
     uint64_t id;
     int refcount;
+    int next_ifindex;
+    fut_spinlock_t netif_lock;
+    fut_spinlock_t route_lock;
+    struct net_iface *ifaces;
+    struct net_route *routes;
 };
 
 /* UTS namespace structure */

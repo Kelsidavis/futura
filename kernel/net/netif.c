@@ -14,6 +14,7 @@
 #include <futura/tcpip.h>
 #include <kernel/fut_memory.h>
 #include <kernel/fut_sched.h>
+#include <kernel/fut_task.h>
 #include <kernel/kprintf.h>
 #include <kernel/errno.h>
 #include <string.h>
@@ -23,11 +24,9 @@
  *   Global State
  * ============================================================ */
 
-static struct net_iface g_ifaces[NET_IFACE_MAX];
-static struct net_route g_routes[NET_ROUTE_MAX];
-static int g_next_ifindex = 1;
-static fut_spinlock_t g_netif_lock;
-static fut_spinlock_t g_route_lock;
+extern struct net_namespace *netns_get_init(void);
+static struct net_rule g_rules[NET_RULE_MAX];
+static fut_spinlock_t g_rule_lock;
 
 bool g_ip_forward_enabled = false;
 
@@ -66,89 +65,154 @@ static int lo_transmit(struct net_iface *iface, const void *pkt, size_t len) {
     return 0;
 }
 
-/* ============================================================
- *   Interface Management
- * ============================================================ */
-
-void netif_init(void) {
-    memset(g_ifaces, 0, sizeof(g_ifaces));
-    memset(g_routes, 0, sizeof(g_routes));
-    fut_spinlock_init(&g_netif_lock);
-    fut_spinlock_init(&g_route_lock);
-    g_next_ifindex = 1;
-
-    /* Create loopback interface */
-    eth_addr_t lo_mac = {0, 0, 0, 0, 0, 0};
-    int lo_idx = netif_register("lo", lo_mac, 65536, lo_transmit);
-    if (lo_idx >= 0) {
-        netif_set_addr(lo_idx, 0x7F000001 /* 127.0.0.1 */,
-                       0xFF000000 /* 255.0.0.0 */, 0x7FFFFFFF);
-        netif_set_flags(lo_idx, IFF_UP | IFF_LOOPBACK | IFF_RUNNING);
-        /* Add loopback route: 127.0.0.0/8 → lo */
-        route_add(0x7F000000, 0xFF000000, 0, lo_idx, 0);
+static struct net_namespace *netif_current_ns(void) {
+    fut_task_t *task = fut_task_current();
+    if (task && task->net_ns) {
+        return task->net_ns;
     }
-
-    fut_printf("[NETIF] Network interface subsystem initialized (lo=%d)\n", lo_idx);
+    return netns_get_init();
 }
 
-int netif_register(const char *name, const eth_addr_t mac, uint32_t mtu,
-                   int (*transmit)(struct net_iface *, const void *, size_t)) {
-    if (!name) return -EINVAL;
-
-    fut_spinlock_acquire(&g_netif_lock);
-    int slot = -1;
-    for (int i = 0; i < NET_IFACE_MAX; i++) {
-        if (!g_ifaces[i].active) { slot = i; break; }
-    }
-    if (slot < 0) {
-        fut_spinlock_release(&g_netif_lock);
-        return -ENOSPC;
-    }
-
-    struct net_iface *iface = &g_ifaces[slot];
-    memset(iface, 0, sizeof(*iface));
-    iface->active = true;
-    iface->index = g_next_ifindex++;
-    iface->mtu = mtu ? mtu : 1500;
-    iface->transmit = transmit;
-    memcpy(iface->mac, mac, ETH_ADDR_LEN);
-
-    /* Copy name safely */
-    size_t nlen = 0;
-    while (name[nlen] && nlen < NET_IFNAME_MAX - 1) nlen++;
-    memcpy(iface->name, name, nlen);
-    iface->name[nlen] = '\0';
-
-    fut_spinlock_release(&g_netif_lock);
-
-    fut_printf("[NETIF] Registered interface '%s' (idx=%d, mtu=%u)\n",
-               iface->name, iface->index, iface->mtu);
-    return iface->index;
+static struct net_namespace *netif_ns_or_init(struct net_namespace *ns) {
+    return ns ? ns : netns_get_init();
 }
 
-struct net_iface *netif_by_name(const char *name) {
+static struct net_iface *netif_by_name_ns(struct net_namespace *ns, const char *name) {
     if (!name) return NULL;
+    ns = netif_ns_or_init(ns);
+    if (!ns->ifaces) return NULL;
     for (int i = 0; i < NET_IFACE_MAX; i++) {
-        if (g_ifaces[i].active) {
-            const char *a = g_ifaces[i].name;
+        if (ns->ifaces[i].active) {
+            const char *a = ns->ifaces[i].name;
             const char *b = name;
             while (*a && *b && *a == *b) { a++; b++; }
-            if (*a == '\0' && *b == '\0') return &g_ifaces[i];
+            if (*a == '\0' && *b == '\0') return &ns->ifaces[i];
         }
     }
     return NULL;
 }
 
-struct net_iface *netif_by_index(int index) {
+static struct net_iface *netif_by_index_ns(struct net_namespace *ns, int index) {
+    ns = netif_ns_or_init(ns);
+    if (!ns->ifaces) return NULL;
     for (int i = 0; i < NET_IFACE_MAX; i++) {
-        if (g_ifaces[i].active && g_ifaces[i].index == index)
-            return &g_ifaces[i];
+        if (ns->ifaces[i].active && ns->ifaces[i].index == index) {
+            return &ns->ifaces[i];
+        }
     }
     return NULL;
 }
 
+static int netif_register_ns(struct net_namespace *ns, const char *name, const eth_addr_t mac,
+                             uint32_t mtu, int (*transmit)(struct net_iface *, const void *, size_t)) {
+    if (!name) return -EINVAL;
+    ns = netif_ns_or_init(ns);
+    if (!ns->ifaces) return -ENODEV;
+
+    fut_spinlock_acquire(&ns->netif_lock);
+    int slot = -1;
+    for (int i = 0; i < NET_IFACE_MAX; i++) {
+        if (!ns->ifaces[i].active) { slot = i; break; }
+    }
+    if (slot < 0) {
+        fut_spinlock_release(&ns->netif_lock);
+        return -ENOSPC;
+    }
+
+    struct net_iface *iface = &ns->ifaces[slot];
+    memset(iface, 0, sizeof(*iface));
+    iface->active = true;
+    iface->index = ns->next_ifindex++;
+    iface->mtu = mtu ? mtu : 1500;
+    iface->transmit = transmit;
+    memcpy(iface->mac, mac, ETH_ADDR_LEN);
+
+    size_t nlen = 0;
+    while (name[nlen] && nlen < NET_IFNAME_MAX - 1) nlen++;
+    memcpy(iface->name, name, nlen);
+    iface->name[nlen] = '\0';
+
+    fut_spinlock_release(&ns->netif_lock);
+    fut_printf("[NETIF] Registered interface '%s' (ns=%llu idx=%d, mtu=%u)\n",
+               iface->name, (unsigned long long)ns->id, iface->index, iface->mtu);
+    return iface->index;
+}
+
+int netif_netns_init(struct net_namespace *ns) {
+    ns = netif_ns_or_init(ns);
+    if (!ns->ifaces) {
+        ns->ifaces = fut_malloc(sizeof(struct net_iface) * NET_IFACE_MAX);
+        if (!ns->ifaces) return -ENOMEM;
+    }
+    if (!ns->routes) {
+        ns->routes = fut_malloc(sizeof(struct net_route) * NET_ROUTE_MAX);
+        if (!ns->routes) return -ENOMEM;
+    }
+    memset(ns->ifaces, 0, sizeof(struct net_iface) * NET_IFACE_MAX);
+    memset(ns->routes, 0, sizeof(struct net_route) * NET_ROUTE_MAX);
+    fut_spinlock_init(&ns->netif_lock);
+    fut_spinlock_init(&ns->route_lock);
+    ns->next_ifindex = 1;
+
+    eth_addr_t lo_mac = {0, 0, 0, 0, 0, 0};
+    int lo_idx = netif_register_ns(ns, "lo", lo_mac, 65536, lo_transmit);
+    if (lo_idx < 0) {
+        return lo_idx;
+    }
+
+    struct net_iface *lo = netif_by_index_ns(ns, lo_idx);
+    if (!lo) {
+        return -EIO;
+    }
+    lo->ip_addr = 0x7F000001;
+    lo->netmask = 0xFF000000;
+    lo->broadcast = 0x7FFFFFFF;
+    lo->flags = IFF_UP | IFF_LOOPBACK | IFF_RUNNING;
+
+    fut_spinlock_acquire(&ns->route_lock);
+    ns->routes[0] = (struct net_route){
+        .active = true,
+        .dest = 0x7F000000,
+        .netmask = 0xFF000000,
+        .gateway = 0,
+        .iface_idx = lo_idx,
+        .metric = 0,
+        .flags = RTF_UP,
+        .table_id = RT_TABLE_MAIN,
+    };
+    fut_spinlock_release(&ns->route_lock);
+    return 0;
+}
+
+/* ============================================================
+ *   Interface Management
+ * ============================================================ */
+
+void netif_init(void) {
+    memset(g_rules, 0, sizeof(g_rules));
+    fut_spinlock_init(&g_rule_lock);
+
+    struct net_namespace *init_ns = netns_get_init();
+    int rc = netif_netns_init(init_ns);
+    fut_printf("[NETIF] Network interface subsystem initialized (init-ns=%llu lo-rc=%d)\n",
+               (unsigned long long)init_ns->id, rc);
+}
+
+int netif_register(const char *name, const eth_addr_t mac, uint32_t mtu,
+                   int (*transmit)(struct net_iface *, const void *, size_t)) {
+    return netif_register_ns(netif_current_ns(), name, mac, mtu, transmit);
+}
+
+struct net_iface *netif_by_name(const char *name) {
+    return netif_by_name_ns(netif_current_ns(), name);
+}
+
+struct net_iface *netif_by_index(int index) {
+    return netif_by_index_ns(netif_current_ns(), index);
+}
+
 int netif_set_addr(int index, uint32_t ip, uint32_t mask, uint32_t broadcast) {
-    struct net_iface *iface = netif_by_index(index);
+    struct net_iface *iface = netif_by_index_ns(netif_current_ns(), index);
     if (!iface) return -ENODEV;
     iface->ip_addr = ip;
     iface->netmask = mask;
@@ -157,7 +221,7 @@ int netif_set_addr(int index, uint32_t ip, uint32_t mask, uint32_t broadcast) {
 }
 
 int netif_set_flags(int index, uint32_t flags) {
-    struct net_iface *iface = netif_by_index(index);
+    struct net_iface *iface = netif_by_index_ns(netif_current_ns(), index);
     if (!iface) return -ENODEV;
     iface->flags = flags;
     return 0;
@@ -165,8 +229,9 @@ int netif_set_flags(int index, uint32_t flags) {
 
 int netif_create_vlan(int parent_idx, uint16_t vlan_id) {
     if (vlan_id == 0 || vlan_id > 4094) return -EINVAL;
+    struct net_namespace *ns = netif_current_ns();
 
-    struct net_iface *parent = netif_by_index(parent_idx);
+    struct net_iface *parent = netif_by_index_ns(ns, parent_idx);
     if (!parent) return -ENODEV;
 
     /* Build name: "eth0.100" */
@@ -182,14 +247,14 @@ int netif_create_vlan(int parent_idx, uint16_t vlan_id) {
     vname[pos] = '\0';
 
     /* Check for duplicate */
-    if (netif_by_name(vname)) return -EEXIST;
+    if (netif_by_name_ns(ns, vname)) return -EEXIST;
 
     /* Register with parent's MAC, parent's MTU minus 4 (VLAN tag overhead) */
     uint32_t vlan_mtu = parent->mtu > 4 ? parent->mtu - 4 : parent->mtu;
-    int idx = netif_register(vname, parent->mac, vlan_mtu, parent->transmit);
+    int idx = netif_register_ns(ns, vname, parent->mac, vlan_mtu, parent->transmit);
     if (idx < 0) return idx;
 
-    struct net_iface *viface = netif_by_index(idx);
+    struct net_iface *viface = netif_by_index_ns(ns, idx);
     if (viface) {
         viface->vlan_id = vlan_id;
         viface->parent_idx = parent_idx;
@@ -202,16 +267,20 @@ int netif_create_vlan(int parent_idx, uint16_t vlan_id) {
 }
 
 int netif_count(void) {
+    struct net_namespace *ns = netif_current_ns();
+    if (!ns->ifaces) return 0;
     int count = 0;
     for (int i = 0; i < NET_IFACE_MAX; i++)
-        if (g_ifaces[i].active) count++;
+        if (ns->ifaces[i].active) count++;
     return count;
 }
 
 void netif_foreach(netif_iter_fn fn, void *ctx) {
+    struct net_namespace *ns = netif_current_ns();
     if (!fn) return;
+    if (!ns->ifaces) return;
     for (int i = 0; i < NET_IFACE_MAX; i++)
-        if (g_ifaces[i].active) fn(&g_ifaces[i], ctx);
+        if (ns->ifaces[i].active) fn(&ns->ifaces[i], ctx);
 }
 
 /* ============================================================
@@ -220,17 +289,19 @@ void netif_foreach(netif_iter_fn fn, void *ctx) {
 
 int route_add(uint32_t dest, uint32_t mask, uint32_t gateway,
               int iface_idx, uint32_t metric) {
-    fut_spinlock_acquire(&g_route_lock);
+    struct net_namespace *ns = netif_current_ns();
+    if (!ns->routes) return -ENODEV;
+    fut_spinlock_acquire(&ns->route_lock);
     int slot = -1;
     for (int i = 0; i < NET_ROUTE_MAX; i++) {
-        if (!g_routes[i].active) { slot = i; break; }
+        if (!ns->routes[i].active) { slot = i; break; }
     }
     if (slot < 0) {
-        fut_spinlock_release(&g_route_lock);
+        fut_spinlock_release(&ns->route_lock);
         return -ENOSPC;
     }
 
-    struct net_route *rt = &g_routes[slot];
+    struct net_route *rt = &ns->routes[slot];
     rt->active = true;
     rt->dest = dest;
     rt->netmask = mask;
@@ -242,25 +313,29 @@ int route_add(uint32_t dest, uint32_t mask, uint32_t gateway,
     if (mask == 0xFFFFFFFF) rt->flags |= RTF_HOST;
     rt->table_id = RT_TABLE_MAIN;
 
-    fut_spinlock_release(&g_route_lock);
+    fut_spinlock_release(&ns->route_lock);
     return 0;
 }
 
 int route_del(uint32_t dest, uint32_t mask) {
-    fut_spinlock_acquire(&g_route_lock);
+    struct net_namespace *ns = netif_current_ns();
+    if (!ns->routes) return -ESRCH;
+    fut_spinlock_acquire(&ns->route_lock);
     for (int i = 0; i < NET_ROUTE_MAX; i++) {
-        if (g_routes[i].active && g_routes[i].dest == dest &&
-            g_routes[i].netmask == mask) {
-            g_routes[i].active = false;
-            fut_spinlock_release(&g_route_lock);
+        if (ns->routes[i].active && ns->routes[i].dest == dest &&
+            ns->routes[i].netmask == mask) {
+            ns->routes[i].active = false;
+            fut_spinlock_release(&ns->route_lock);
             return 0;
         }
     }
-    fut_spinlock_release(&g_route_lock);
+    fut_spinlock_release(&ns->route_lock);
     return -ESRCH;
 }
 
 const struct net_route *route_lookup(uint32_t dest_ip) {
+    struct net_namespace *ns = netif_current_ns();
+    if (!ns->routes) return NULL;
     /* Longest prefix match: find the route with the most specific
      * (longest) netmask that matches the destination. */
     const struct net_route *best = NULL;
@@ -268,15 +343,15 @@ const struct net_route *route_lookup(uint32_t dest_ip) {
     uint32_t best_metric = UINT32_MAX;
 
     for (int i = 0; i < NET_ROUTE_MAX; i++) {
-        if (!g_routes[i].active) continue;
-        if ((dest_ip & g_routes[i].netmask) == g_routes[i].dest) {
+        if (!ns->routes[i].active) continue;
+        if ((dest_ip & ns->routes[i].netmask) == ns->routes[i].dest) {
             /* This route matches. Prefer longer mask, then lower metric. */
-            uint32_t mask = g_routes[i].netmask;
+            uint32_t mask = ns->routes[i].netmask;
             if (mask > best_mask ||
-                (mask == best_mask && g_routes[i].metric < best_metric)) {
-                best = &g_routes[i];
+                (mask == best_mask && ns->routes[i].metric < best_metric)) {
+                best = &ns->routes[i];
                 best_mask = mask;
-                best_metric = g_routes[i].metric;
+                best_metric = ns->routes[i].metric;
             }
         }
     }
@@ -284,30 +359,36 @@ const struct net_route *route_lookup(uint32_t dest_ip) {
 }
 
 int route_count(void) {
+    struct net_namespace *ns = netif_current_ns();
+    if (!ns->routes) return 0;
     int count = 0;
     for (int i = 0; i < NET_ROUTE_MAX; i++)
-        if (g_routes[i].active) count++;
+        if (ns->routes[i].active) count++;
     return count;
 }
 
 void route_foreach(route_iter_fn fn, void *ctx) {
+    struct net_namespace *ns = netif_current_ns();
     if (!fn) return;
+    if (!ns->routes) return;
     for (int i = 0; i < NET_ROUTE_MAX; i++)
-        if (g_routes[i].active) fn(&g_routes[i], ctx);
+        if (ns->routes[i].active) fn(&ns->routes[i], ctx);
 }
 
 int route_add_table(uint32_t dest, uint32_t mask, uint32_t gateway,
                     int iface_idx, uint32_t metric, uint8_t table_id) {
-    fut_spinlock_acquire(&g_route_lock);
+    struct net_namespace *ns = netif_current_ns();
+    if (!ns->routes) return -ENODEV;
+    fut_spinlock_acquire(&ns->route_lock);
     int slot = -1;
     for (int i = 0; i < NET_ROUTE_MAX; i++) {
-        if (!g_routes[i].active) { slot = i; break; }
+        if (!ns->routes[i].active) { slot = i; break; }
     }
     if (slot < 0) {
-        fut_spinlock_release(&g_route_lock);
+        fut_spinlock_release(&ns->route_lock);
         return -ENOSPC;
     }
-    struct net_route *rt = &g_routes[slot];
+    struct net_route *rt = &ns->routes[slot];
     rt->active = true;
     rt->dest = dest;
     rt->netmask = mask;
@@ -318,24 +399,26 @@ int route_add_table(uint32_t dest, uint32_t mask, uint32_t gateway,
     if (gateway) rt->flags |= RTF_GATEWAY;
     if (mask == 0xFFFFFFFF) rt->flags |= RTF_HOST;
     rt->table_id = table_id;
-    fut_spinlock_release(&g_route_lock);
+    fut_spinlock_release(&ns->route_lock);
     return 0;
 }
 
 const struct net_route *route_lookup_table(uint32_t dest_ip, uint8_t table_id) {
+    struct net_namespace *ns = netif_current_ns();
+    if (!ns->routes) return NULL;
     const struct net_route *best = NULL;
     uint32_t best_mask = 0;
     uint32_t best_metric = UINT32_MAX;
     for (int i = 0; i < NET_ROUTE_MAX; i++) {
-        if (!g_routes[i].active) continue;
-        if (g_routes[i].table_id != table_id) continue;
-        if ((dest_ip & g_routes[i].netmask) == g_routes[i].dest) {
-            uint32_t mask = g_routes[i].netmask;
+        if (!ns->routes[i].active) continue;
+        if (ns->routes[i].table_id != table_id) continue;
+        if ((dest_ip & ns->routes[i].netmask) == ns->routes[i].dest) {
+            uint32_t mask = ns->routes[i].netmask;
             if (mask > best_mask ||
-                (mask == best_mask && g_routes[i].metric < best_metric)) {
-                best = &g_routes[i];
+                (mask == best_mask && ns->routes[i].metric < best_metric)) {
+                best = &ns->routes[i];
                 best_mask = mask;
-                best_metric = g_routes[i].metric;
+                best_metric = ns->routes[i].metric;
             }
         }
     }
@@ -345,9 +428,6 @@ const struct net_route *route_lookup_table(uint32_t dest_ip, uint8_t table_id) {
 /* ============================================================
  *   Policy Routing Rules
  * ============================================================ */
-
-static struct net_rule g_rules[NET_RULE_MAX];
-static fut_spinlock_t g_rule_lock;
 
 int rule_add(uint32_t priority, uint32_t src, uint32_t src_mask,
              uint8_t table_id, int iface_idx) {

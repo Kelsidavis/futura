@@ -12,6 +12,7 @@
 #include <kernel/fut_memory.h>
 #include <kernel/kprintf.h>
 #include <kernel/errno.h>
+#include <futura/netif.h>
 #include <string.h>
 
 static struct net_namespace g_init_netns = {
@@ -32,6 +33,10 @@ struct net_namespace *netns_create(struct net_namespace *parent) {
     memset(ns, 0, sizeof(*ns));
     ns->id = g_next_netns_id++;
     ns->refcount = 1;
+    if (netif_netns_init(ns) != 0) {
+        fut_free(ns);
+        return NULL;
+    }
     parent->refcount++;
     fut_printf("[NETNS] Created network namespace id=%llu\n",
                (unsigned long long)ns->id);

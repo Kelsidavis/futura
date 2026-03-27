@@ -20,6 +20,8 @@
 extern "C" {
 #endif
 
+struct net_namespace;
+
 /* Maximum number of network interfaces */
 #define NET_IFACE_MAX       16
 /* Maximum number of routing table entries */
@@ -108,6 +110,9 @@ struct net_rule {
 
 /* Initialize the networking subsystem */
 void netif_init(void);
+
+/* Initialize per-network-namespace interface and route state. */
+int netif_netns_init(struct net_namespace *ns);
 
 /* Register a new interface. Returns interface index or negative error. */
 int netif_register(const char *name, const eth_addr_t mac, uint32_t mtu,

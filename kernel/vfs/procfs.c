@@ -51,6 +51,7 @@
 
 /* Global task list (defined in kernel/threading/fut_task.c) */
 extern fut_task_t *fut_task_list;
+extern struct net_namespace *netns_get_init(void);
 
 /* Hostname and domainname — writable via sethostname/setdomainname and /proc/sys/kernel */
 extern char g_hostname[];
@@ -2377,10 +2378,13 @@ static size_t gen_vmstat(char *buf, size_t cap) {
 /* Emit one AF_INET SOCK_STREAM socket row in /proc/net/tcp format.
  * Format matches Linux: sl local_address rem_address st tx:rx_q tr:when uid timeout inode
  * IPv4 address printed as raw uint32 (LE byte-order = reversed octets, matching Linux). */
-struct net_tcp_ctx { struct pbuf *b; int slot; };
+struct net_tcp_ctx { struct pbuf *b; int slot; struct net_namespace *ns; };
 static void net_tcp_emit_one(const fut_socket_t *s, void *arg) {
     struct net_tcp_ctx *ctx = (struct net_tcp_ctx *)arg;
+    struct net_namespace *sock_ns = (s && s->net_ns) ? s->net_ns : netns_get_init();
     if (s->address_family != AF_INET || s->socket_type != SOCK_STREAM)
+        return;
+    if (sock_ns != ctx->ns)
         return;
     struct pbuf *b = ctx->b;
     int sl = ctx->slot++;
@@ -2432,10 +2436,13 @@ static void net_tcp_emit_one(const fut_socket_t *s, void *arg) {
 }
 
 /* Emit one AF_INET SOCK_DGRAM socket row in /proc/net/udp format. */
-struct net_udp_ctx { struct pbuf *b; int slot; };
+struct net_udp_ctx { struct pbuf *b; int slot; struct net_namespace *ns; };
 static void net_udp_emit_one(const fut_socket_t *s, void *arg) {
     struct net_udp_ctx *ctx = (struct net_udp_ctx *)arg;
+    struct net_namespace *sock_ns = (s && s->net_ns) ? s->net_ns : netns_get_init();
     if (s->address_family != AF_INET || s->socket_type != SOCK_DGRAM)
+        return;
+    if (sock_ns != ctx->ns)
         return;
     struct pbuf *b = ctx->b;
     int sl = ctx->slot++;
@@ -2463,9 +2470,11 @@ static void net_udp_emit_one(const fut_socket_t *s, void *arg) {
 }
 
 /* Count sockets by type for /proc/net/sockstat */
-struct sockstat_ctx { int total; int tcp; int udp; };
+struct sockstat_ctx { int total; int tcp; int udp; struct net_namespace *ns; };
 static void sockstat_count_one(const fut_socket_t *s, void *arg) {
     struct sockstat_ctx *ctx = (struct sockstat_ctx *)arg;
+    struct net_namespace *sock_ns = (s && s->net_ns) ? s->net_ns : netns_get_init();
+    if (sock_ns != ctx->ns) return;
     ctx->total++;
     if (s->address_family == AF_INET && s->socket_type == SOCK_STREAM) ctx->tcp++;
     else if (s->address_family == AF_INET && s->socket_type == SOCK_DGRAM) ctx->udp++;
@@ -2548,18 +2557,22 @@ static size_t gen_net_route(char *buf, size_t cap) {
 
 static size_t gen_net_tcp(char *buf, size_t cap) {
     struct pbuf b = { buf, 0, cap };
+    fut_task_t *task = fut_task_current();
+    struct net_namespace *ns = (task && task->net_ns) ? task->net_ns : netns_get_init();
     pb_str(&b, "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt"
                "   uid  timeout inode\n");
-    struct net_tcp_ctx ctx = { &b, 0 };
+    struct net_tcp_ctx ctx = { .b = &b, .slot = 0, .ns = ns };
     fut_socket_foreach(net_tcp_emit_one, &ctx);
     return b.pos;
 }
 
 static size_t gen_net_udp(char *buf, size_t cap) {
     struct pbuf b = { buf, 0, cap };
+    fut_task_t *task = fut_task_current();
+    struct net_namespace *ns = (task && task->net_ns) ? task->net_ns : netns_get_init();
     pb_str(&b, "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when"
                " retrnsmt   uid  timeout inode ref pointer drops\n");
-    struct net_udp_ctx ctx = { &b, 0 };
+    struct net_udp_ctx ctx = { .b = &b, .slot = 0, .ns = ns };
     fut_socket_foreach(net_udp_emit_one, &ctx);
     return b.pos;
 }
@@ -2981,7 +2994,9 @@ static size_t gen_net_sockstat(char *buf, size_t cap) {
     /* /proc/net/sockstat — socket usage statistics.
      * Read by ss, netstat, systemd, and glibc resolver. */
     struct pbuf b = { buf, 0, cap };
-    struct sockstat_ctx sc = { 0, 0, 0 };
+    fut_task_t *task = fut_task_current();
+    struct net_namespace *ns = (task && task->net_ns) ? task->net_ns : netns_get_init();
+    struct sockstat_ctx sc = { .total = 0, .tcp = 0, .udp = 0, .ns = ns };
     fut_socket_foreach(sockstat_count_one, &sc);
     pb_str(&b, "sockets: used "); pb_u64(&b, (uint64_t)sc.total); pb_char(&b, '\n');
     pb_str(&b, "TCP: inuse "); pb_u64(&b, (uint64_t)sc.tcp);

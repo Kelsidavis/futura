@@ -3183,12 +3183,15 @@ static void cmd_sysinfo(int argc, char *argv[]) {
     write_str(1, "  Tests:   1955 kernel self-tests\n");
 }
 
-/* Helper: count lines, words, and bytes in a file descriptor */
+/* Helper: count lines, words, bytes, and max line length in a file descriptor */
+static long g_wc_max_line_len;  /* max line length (for -L) */
 static void wc_count_fd(int fd, long *lines, long *words, long *bytes) {
     *lines = 0;
     *words = 0;
     *bytes = 0;
+    g_wc_max_line_len = 0;
     int in_word = 0;
+    long cur_line_len = 0;
 
     char buffer[256];
     long bytes_read;
@@ -3199,9 +3202,14 @@ static void wc_count_fd(int fd, long *lines, long *words, long *bytes) {
         for (long i = 0; i < bytes_read; i++) {
             char c = buffer[i];
 
-            /* Count newlines */
+            /* Count newlines and track max line length */
             if (c == '\n') {
                 (*lines)++;
+                if (cur_line_len > g_wc_max_line_len)
+                    g_wc_max_line_len = cur_line_len;
+                cur_line_len = 0;
+            } else {
+                cur_line_len++;
             }
 
             /* Count words (whitespace-delimited) */
@@ -3213,6 +3221,9 @@ static void wc_count_fd(int fd, long *lines, long *words, long *bytes) {
             }
         }
     }
+    /* Handle last line without newline */
+    if (cur_line_len > g_wc_max_line_len)
+        g_wc_max_line_len = cur_line_len;
 }
 
 /* Helper: print wc counts */
@@ -3244,11 +3255,13 @@ static void wc_print_counts(long lines, long words, long bytes, const char *name
     write_char(1, '\n');
 }
 
-/* Built-in: wc - Count lines, words, and bytes */
+/* Built-in: wc - Count lines, words, bytes, chars, and max line length */
 static void cmd_wc(int argc, char *argv[]) {
     int show_lines = 0;
     int show_words = 0;
     int show_bytes = 0;
+    int show_chars = 0;
+    int show_max_line = 0;
     int arg_start = 1;
 
     /* Parse options */
@@ -3263,6 +3276,12 @@ static void cmd_wc(int argc, char *argv[]) {
         } else if (strcmp_simple(opt, "-c") == 0) {
             show_bytes = 1;
             arg_start++;
+        } else if (strcmp_simple(opt, "-m") == 0) {
+            show_chars = 1;  /* Same as -c for ASCII */
+            arg_start++;
+        } else if (strcmp_simple(opt, "-L") == 0) {
+            show_max_line = 1;
+            arg_start++;
         } else if (strcmp_simple(opt, "--") == 0) {
             arg_start++;
             break;
@@ -3270,13 +3289,13 @@ static void cmd_wc(int argc, char *argv[]) {
             write_str(2, "wc: unknown option: ");
             write_str(2, opt);
             write_str(2, "\n");
-            write_str(2, "Usage: wc [-l] [-w] [-c] [file...]\n");
+            write_str(2, "Usage: wc [-l] [-w] [-c] [-m] [-L] [file...]\n");
             return;
         }
     }
 
-    /* If no flags specified, show all */
-    if (!show_lines && !show_words && !show_bytes) {
+    /* If no flags specified, show all (except -L and -m) */
+    if (!show_lines && !show_words && !show_bytes && !show_chars && !show_max_line) {
         show_lines = show_words = show_bytes = 1;
     }
 
@@ -3285,7 +3304,14 @@ static void cmd_wc(int argc, char *argv[]) {
         /* Read from stdin */
         long lines, words, bytes;
         wc_count_fd(0, &lines, &words, &bytes);
-        wc_print_counts(lines, words, bytes, NULL, show_lines, show_words, show_bytes);
+        if (show_max_line) {
+            char num[32]; int_to_str(g_wc_max_line_len, num, sizeof(num));
+            write_str(1, num); write_char(1, '\n');
+        } else if (show_chars) {
+            wc_print_counts(0, 0, bytes, NULL, 0, 0, 1);
+        } else {
+            wc_print_counts(lines, words, bytes, NULL, show_lines, show_words, show_bytes);
+        }
     } else {
         /* Process each file */
         for (int file_idx = arg_start; file_idx < argc; file_idx++) {
@@ -3303,7 +3329,15 @@ static void cmd_wc(int argc, char *argv[]) {
             wc_count_fd(fd, &lines, &words, &bytes);
             sys_close(fd);
 
-            wc_print_counts(lines, words, bytes, path, show_lines, show_words, show_bytes);
+            if (show_max_line) {
+                char num[32]; int_to_str(g_wc_max_line_len, num, sizeof(num));
+                write_str(1, num); write_char(1, ' ');
+                write_str(1, path); write_char(1, '\n');
+            } else if (show_chars) {
+                wc_print_counts(0, 0, bytes, path, 0, 0, 1);
+            } else {
+                wc_print_counts(lines, words, bytes, path, show_lines, show_words, show_bytes);
+            }
         }
     }
 }

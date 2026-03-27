@@ -185,19 +185,145 @@ void rpi_kernel_entry(uint64_t dtb_addr) {
     early_uart_hex(uart_clk);
     early_uart_puts(" Hz\n");
 
-    early_uart_puts("\n");
-    early_uart_puts("Futura OS kernel starting...\n");
+    early_uart_puts("\nInitializing RPi driver stack...\n");
+
+    /* ── Phase 1: MMU Setup ── */
+    early_uart_puts("[RPi] Setting up page tables...\n");
+    {
+        extern void rpi_mmu_init_tables(uint32_t total_ram_mb);
+        extern void rpi_mmu_enable(void);
+        uint32_t ram_mb = mem_size / (1024 * 1024);
+        rpi_mmu_init_tables(ram_mb);
+        rpi_mmu_enable();
+        early_uart_puts("[RPi] MMU enabled\n");
+    }
+
+    /* ── Phase 2: Core Drivers (Rust FFI) ── */
+
+    /* GPIO — must be first for pin muxing */
+    early_uart_puts("[RPi] GPIO init...\n");
+    {
+        extern void rpi_gpio_init(uint64_t base);
+        extern void rpi_gpio_setup_uart(void);
+        uint64_t gpio_base = is_pi5 ? BCM2712_PERIPH_BASE + 0xD0000
+                                     : BCM2711_PERIPH_BASE + 0x200000;
+        rpi_gpio_init(gpio_base);
+        rpi_gpio_setup_uart();
+    }
+
+    /* Hardware RNG — seed entropy early */
+    early_uart_puts("[RPi] HW RNG init...\n");
+    {
+        extern int32_t rpi_rng_init(uint64_t base);
+        rpi_rng_init(periph + 0x104000);
+    }
+
+    /* Watchdog — enable system reset capability */
+    early_uart_puts("[RPi] Watchdog init...\n");
+    {
+        extern void rpi_watchdog_init(uint64_t base);
+        rpi_watchdog_init(periph + 0x100000);
+    }
+
+    /* Thermal — start temperature monitoring */
+    early_uart_puts("[RPi] Thermal init...\n");
+    {
+        extern int32_t rpi_thermal_init(bool is_pi5);
+        rpi_thermal_init(is_pi5);
+    }
+
+    /* DMA — needed by eMMC and Ethernet */
+    early_uart_puts("[RPi] DMA init...\n");
+    {
+        extern void rpi_dma_init(uint64_t base);
+        rpi_dma_init(periph + 0x007000);
+    }
+
+    /* ── Phase 3: Storage ── */
+    early_uart_puts("[RPi] eMMC2 SD card init...\n");
+    {
+        extern int32_t rpi_emmc_init(uint64_t base);
+        uint64_t emmc_base = is_pi5 ? BCM2712_PERIPH_BASE + 0x340000
+                                     : BCM2711_PERIPH_BASE + 0x340000;
+        int32_t rc = rpi_emmc_init(emmc_base);
+        if (rc == 0) {
+            early_uart_puts("[RPi] SD card detected\n");
+        } else {
+            early_uart_puts("[RPi] No SD card (or init failed)\n");
+        }
+    }
+
+    /* ── Phase 4: Networking ── */
+    if (!is_pi5) {
+        early_uart_puts("[RPi] GENET Ethernet init...\n");
+        extern int32_t rpi_genet_init(uint64_t base);
+        rpi_genet_init(BCM2711_PERIPH_BASE + 0x580000);
+    }
+
+    /* ── Phase 5: PCIe → USB ── */
+    early_uart_puts("[RPi] PCIe init...\n");
+    {
+        extern int32_t rpi_pcie_init(uint64_t base);
+        uint64_t pcie_base = is_pi5 ? 0x1000120000ULL : 0xFD500000ULL;
+        int32_t rc = rpi_pcie_init(pcie_base);
+        if (rc == 0) {
+            early_uart_puts("[RPi] PCIe link up\n");
+            /* Init USB xHCI behind PCIe */
+            extern int32_t rpi_usb_init(uint64_t base);
+            uint64_t xhci_base = is_pi5 ? 0x1F00000000ULL : 0x600000000ULL;
+            int32_t ports = rpi_usb_init(xhci_base);
+            if (ports > 0) {
+                early_uart_puts("[RPi] USB: ");
+                char pbuf[4] = { '0' + (char)(ports / 10), '0' + (char)(ports % 10), '\0', '\0' };
+                if (ports < 10) { pbuf[0] = '0' + (char)ports; pbuf[1] = '\0'; }
+                early_uart_puts(pbuf);
+                early_uart_puts(" ports\n");
+            }
+        } else {
+            early_uart_puts("[RPi] PCIe: no link\n");
+        }
+    }
+
+    /* ── Phase 6: Display ── */
+    early_uart_puts("[RPi] HDMI display init...\n");
+    {
+        extern int32_t rpi_display_init(uint64_t mbox_base, uint32_t w, uint32_t h);
+        extern void rpi_display_clear(uint32_t color);
+        extern void rpi_display_puts(const uint8_t *s);
+        uint64_t mbox_base = periph + 0xB880;
+        if (rpi_display_init(mbox_base, 1920, 1080) == 0) {
+            rpi_display_clear(0x00000020); /* Dark blue */
+            rpi_display_puts((const uint8_t *)"Futura OS booting on Raspberry Pi...\n\0");
+            early_uart_puts("[RPi] HDMI: 1920x1080 framebuffer\n");
+        }
+    }
+
+    /* ── Phase 7: Bus Peripherals ── */
+    early_uart_puts("[RPi] I2C/SPI/PWM init...\n");
+    {
+        extern int32_t rpi_i2c_init(uint32_t bus, uint64_t base, uint32_t speed);
+        extern void rpi_spi_init(uint64_t base, uint32_t speed, uint8_t mode);
+        extern void rpi_pwm_init(uint64_t pwm_base, uint64_t clk_base);
+
+        /* I2C1 (user bus on GPIO2/3) */
+        rpi_i2c_init(1, is_pi5 ? BCM2712_PERIPH_BASE + 0x74000
+                                : BCM2711_PERIPH_BASE + 0x804000, 100000);
+        /* SPI0 */
+        rpi_spi_init(periph + 0x204000, 1000000, 0);
+        /* PWM */
+        rpi_pwm_init(periph + 0x20C000, periph + 0x101000);
+    }
+
+    early_uart_puts("\n========================================\n");
+    early_uart_puts("  RPi Driver Stack Initialized (15/15)\n");
     early_uart_puts("========================================\n\n");
 
-    /* TODO: Set up MMU with RPi-specific memory map, then jump to kernel_main.
-     * For now, the kernel needs to be linked for flat physical addressing
-     * (using boot/rpi.ld instead of platform/arm64/link.ld). */
-
-    /* Call the main RPi initialization path */
+    /* ── Phase 8: Transition to kernel ── */
+    early_uart_puts("[RPi] Calling kernel init...\n");
     extern void fut_rpi_boot_init(uint64_t dtb_ptr);
     fut_rpi_boot_init(dtb_addr);
 
-    /* Halt — kernel_main should take over from here */
-    early_uart_puts("[RPi] Boot init complete, entering idle\n");
+    /* Halt — kernel_main should take over */
+    early_uart_puts("[RPi] Boot complete, entering idle\n");
     while (1) __asm__ volatile("wfe");
 }

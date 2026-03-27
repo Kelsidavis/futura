@@ -4387,6 +4387,17 @@ static ssize_t procfs_file_write(struct fut_vnode *vnode, const void *buf,
             return (ssize_t)size;
         }
 
+        case PROC_SYS_SCHED_CHILD_FIRST: {
+            /* Write "0" or "1" to control child-runs-first behavior */
+            extern int g_sched_child_runs_first;
+            g_sched_child_runs_first = (copy_len > 0 && kbuf[0] != '0') ? 1 : 0;
+            return (ssize_t)size;
+        }
+
+        case PROC_SYS_NET_NF_CT_MAX:
+            /* Accept nf_conntrack_max write (Docker sets this) */
+            return (ssize_t)size;
+
         case PROC_SYS_CORE_PATTERN:
         case PROC_SYS_CORE_USES_PID:
         case PROC_SYS_SUID_DUMPABLE:

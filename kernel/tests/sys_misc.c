@@ -62538,6 +62538,137 @@ __attribute__((noinline)) static void test_pty_and_cgroup(void) {
             fut_test_fail(2222);
         }
     }
+
+    /* ── Test 2224: /proc/sys/net/ipv4/ip_forward writable ── */
+    fut_printf("[MISC-TEST] Test 2224: ip_forward write\n");
+    {
+        extern long sys_open(const char *, int, int);
+        extern ssize_t sys_write(int fd, const void *buf, size_t count);
+        extern long sys_read(int, void *, size_t);
+        extern long sys_close(int);
+        /* Read current value */
+        long fd = sys_open("/proc/sys/net/ipv4/ip_forward", 0, 0);
+        static char orig[4];
+        int pass = 0;
+        if (fd >= 0) {
+            sys_read((int)fd, orig, 1); sys_close((int)fd);
+            /* Write "1" to enable */
+            fd = sys_open("/proc/sys/net/ipv4/ip_forward", 02, 0);
+            if (fd >= 0) {
+                ssize_t nw = sys_write((int)fd, "1", 1);
+                sys_close((int)fd);
+                /* Read back */
+                fd = sys_open("/proc/sys/net/ipv4/ip_forward", 0, 0);
+                if (fd >= 0) {
+                    static char buf[4];
+                    long n = sys_read((int)fd, buf, 1);
+                    sys_close((int)fd);
+                    if (n == 1 && buf[0] == '1' && nw == 1) pass = 1;
+                }
+                /* Restore original */
+                fd = sys_open("/proc/sys/net/ipv4/ip_forward", 02, 0);
+                if (fd >= 0) { sys_write((int)fd, orig, 1); sys_close((int)fd); }
+            }
+        }
+        if (pass) {
+            fut_printf("[MISC-TEST] ✓ Test 2224: ip_forward round-trip\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2224: ip_forward write failed\n");
+            fut_test_fail(2224);
+        }
+    }
+
+    /* ── Test 2225: /proc/self/comm writable ── */
+    fut_printf("[MISC-TEST] Test 2225: comm writable\n");
+    {
+        extern long sys_open(const char *, int, int);
+        extern ssize_t sys_write(int fd, const void *buf, size_t count);
+        extern long sys_read(int, void *, size_t);
+        extern long sys_close(int);
+        long fd = sys_open("/proc/self/comm", 02, 0);
+        int pass = 0;
+        if (fd >= 0) {
+            ssize_t nw = sys_write((int)fd, "testcomm", 8);
+            sys_close((int)fd);
+            if (nw == 8) {
+                fd = sys_open("/proc/self/comm", 0, 0);
+                if (fd >= 0) {
+                    static char buf[32];
+                    long n = sys_read((int)fd, buf, 31);
+                    sys_close((int)fd);
+                    if (n > 0 && buf[0] == 't' && buf[1] == 'e' && buf[2] == 's' && buf[3] == 't') {
+                        pass = 1;
+                    }
+                }
+            }
+        }
+        if (pass) {
+            fut_printf("[MISC-TEST] ✓ Test 2225: comm round-trip\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2225: comm write failed\n");
+            fut_test_fail(2225);
+        }
+    }
+
+    /* ── Test 2226: /dev/zero reads return zero bytes ── */
+    fut_printf("[MISC-TEST] Test 2226: /dev/zero\n");
+    {
+        extern long sys_open(const char *, int, int);
+        extern long sys_read(int, void *, size_t);
+        extern long sys_close(int);
+        long fd = sys_open("/dev/zero", 0, 0);
+        int pass = 0;
+        if (fd >= 0) {
+            static uint8_t buf[16];
+            buf[0] = 0xFF; buf[7] = 0xFF; buf[15] = 0xFF;
+            long n = sys_read((int)fd, buf, 16);
+            sys_close((int)fd);
+            if (n == 16 && buf[0] == 0 && buf[7] == 0 && buf[15] == 0) pass = 1;
+        }
+        if (pass) {
+            fut_printf("[MISC-TEST] ✓ Test 2226: /dev/zero ok\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2226: /dev/zero failed\n");
+            fut_test_fail(2226);
+        }
+    }
+
+    /* ── Test 2227: oom_score_adj writable and round-trip ── */
+    fut_printf("[MISC-TEST] Test 2227: oom_score_adj write\n");
+    {
+        extern long sys_open(const char *, int, int);
+        extern ssize_t sys_write(int fd, const void *buf, size_t count);
+        extern long sys_read(int, void *, size_t);
+        extern long sys_close(int);
+        long fd = sys_open("/proc/self/oom_score_adj", 02, 0);
+        int pass = 0;
+        if (fd >= 0) {
+            ssize_t nw = sys_write((int)fd, "-500", 4);
+            sys_close((int)fd);
+            if (nw == 4) {
+                fd = sys_open("/proc/self/oom_score_adj", 0, 0);
+                if (fd >= 0) {
+                    static char buf[16];
+                    long n = sys_read((int)fd, buf, 15);
+                    sys_close((int)fd);
+                    if (n > 0 && buf[0] == '-' && buf[1] == '5') pass = 1;
+                }
+                /* Restore to 0 */
+                fd = sys_open("/proc/self/oom_score_adj", 02, 0);
+                if (fd >= 0) { sys_write((int)fd, "0", 1); sys_close((int)fd); }
+            }
+        }
+        if (pass) {
+            fut_printf("[MISC-TEST] ✓ Test 2227: oom_score_adj round-trip\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2227: oom_score_adj failed\n");
+            fut_test_fail(2227);
+        }
+    }
 }
 
 /* ============================================================

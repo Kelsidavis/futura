@@ -605,6 +605,54 @@ long sys_ptrace(int request, int pid, void *addr, void *data) {
                 return ptrace_setregs(tracee, &regs);
             }
         }
+#elif defined(__aarch64__)
+        if (regset_type == 1 /* NT_PRSTATUS */) {
+            /* ARM64 user_pt_regs: x0-x30, sp, pc, pstate = 34 uint64_t */
+            if (!tracee->threads) return -ESRCH;
+            fut_cpu_context_t *ctx = &tracee->threads->context;
+            uint64_t pt_regs[34];
+            if (request == PTRACE_GETREGSET) {
+                /* Fill x0-x28 */
+                pt_regs[0] = ctx->x0; pt_regs[1] = ctx->x1;
+                pt_regs[2] = ctx->x2; pt_regs[3] = ctx->x3;
+                pt_regs[4] = ctx->x4; pt_regs[5] = ctx->x5;
+                pt_regs[6] = ctx->x6; pt_regs[7] = ctx->x7;
+                pt_regs[8] = ctx->x8; pt_regs[9] = ctx->x9;
+                pt_regs[10] = ctx->x10; pt_regs[11] = ctx->x11;
+                pt_regs[12] = ctx->x12; pt_regs[13] = ctx->x13;
+                pt_regs[14] = ctx->x14; pt_regs[15] = ctx->x15;
+                pt_regs[16] = ctx->x16; pt_regs[17] = ctx->x17;
+                pt_regs[18] = ctx->x18; pt_regs[19] = ctx->x19;
+                pt_regs[20] = ctx->x20; pt_regs[21] = ctx->x21;
+                pt_regs[22] = ctx->x22; pt_regs[23] = ctx->x23;
+                pt_regs[24] = ctx->x24; pt_regs[25] = ctx->x25;
+                pt_regs[26] = ctx->x26; pt_regs[27] = ctx->x27;
+                pt_regs[28] = ctx->x28;
+                pt_regs[29] = ctx->x29_fp; pt_regs[30] = ctx->x30_lr;
+                pt_regs[31] = ctx->sp_el0;  /* sp */
+                pt_regs[32] = ctx->pc;
+                pt_regs[33] = ctx->pstate;
+                uint64_t copy_len = iov->len < sizeof(pt_regs) ? iov->len : sizeof(pt_regs);
+                memcpy(iov->base, pt_regs, copy_len);
+                iov->len = copy_len;
+                return 0;
+            } else {
+                /* SETREGSET: write registers back */
+                uint64_t copy_len = iov->len < sizeof(pt_regs) ? iov->len : sizeof(pt_regs);
+                memset(pt_regs, 0, sizeof(pt_regs));
+                memcpy(pt_regs, iov->base, copy_len);
+                ctx->x0 = pt_regs[0]; ctx->x1 = pt_regs[1];
+                ctx->x19 = pt_regs[19]; ctx->x20 = pt_regs[20];
+                ctx->x21 = pt_regs[21]; ctx->x22 = pt_regs[22];
+                ctx->x23 = pt_regs[23]; ctx->x24 = pt_regs[24];
+                ctx->x25 = pt_regs[25]; ctx->x26 = pt_regs[26];
+                ctx->x27 = pt_regs[27]; ctx->x28 = pt_regs[28];
+                ctx->x29_fp = pt_regs[29]; ctx->x30_lr = pt_regs[30];
+                ctx->sp_el0 = pt_regs[31];
+                ctx->pc = pt_regs[32];
+                return 0;
+            }
+        }
 #endif
         return -EINVAL;
     }

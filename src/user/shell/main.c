@@ -3091,12 +3091,39 @@ static void cmd_more(int argc, char *argv[]) {
 /* Built-in: xargs — read args from stdin and execute command */
 static void cmd_xargs(int argc, char *argv[]) {
     if (argc < 2) {
-        write_str(2, "usage: xargs <command> [args...]\n");
+        write_str(2, "usage: xargs [-0] [-n N] [-I repl] <command> [args...]\n");
+        return;
+    }
+
+    int null_sep = 0;       /* -0: NUL-separated input (from find -print0) */
+    int max_args = 0;       /* -n N: max args per invocation (0=all at once) */
+    const char *repl_str = NULL;  /* -I {}: replace string mode */
+    int arg_start = 1;
+
+    while (arg_start < argc && argv[arg_start][0] == '-') {
+        if (strcmp_simple(argv[arg_start], "-0") == 0) {
+            null_sep = 1; arg_start++;
+        } else if (strcmp_simple(argv[arg_start], "-n") == 0 && arg_start + 1 < argc) {
+            arg_start++;
+            max_args = 0;
+            for (const char *s = argv[arg_start]; *s >= '0' && *s <= '9'; s++)
+                max_args = max_args * 10 + (*s - '0');
+            arg_start++;
+        } else if (strcmp_simple(argv[arg_start], "-I") == 0 && arg_start + 1 < argc) {
+            arg_start++;
+            repl_str = argv[arg_start]; arg_start++;
+        } else {
+            break;
+        }
+    }
+
+    if (arg_start >= argc) {
+        write_str(2, "xargs: no command specified\n");
         return;
     }
 
     /* Read all of stdin into a buffer */
-    char input[4096];
+    static char input[8192];
     int total = 0;
     long n;
     while ((n = sys_read(0, input + total, sizeof(input) - total - 1)) > 0) {
@@ -3105,26 +3132,76 @@ static void cmd_xargs(int argc, char *argv[]) {
     }
     input[total] = '\0';
 
-    /* Split input into words and build argv */
-    char *xargv[64];
-    int xargc = 0;
-    /* First, copy the command and its args */
-    for (int i = 1; i < argc && xargc < 60; i++) {
-        xargv[xargc++] = argv[i];
-    }
-    /* Then add words from stdin */
+    /* Collect input items */
+    char *items[256]; int nitems = 0;
     char *p = input;
-    while (*p && xargc < 63) {
-        while (*p == ' ' || *p == '\t' || *p == '\n') p++;
-        if (!*p) break;
-        xargv[xargc++] = p;
-        while (*p && *p != ' ' && *p != '\t' && *p != '\n') p++;
-        if (*p) *p++ = '\0';
-    }
-    xargv[xargc] = NULL;
+    char sep = null_sep ? '\0' : ' ';
 
-    if (xargc > 0) {
-        execute_command(xargc, xargv);
+    if (null_sep) {
+        /* NUL-separated: split on \0 bytes */
+        while (p < input + total && nitems < 255) {
+            if (*p == '\0') { p++; continue; }
+            items[nitems++] = p;
+            while (p < input + total && *p != '\0') p++;
+            if (p < input + total) p++;  /* skip NUL */
+        }
+    } else {
+        /* Whitespace-separated */
+        while (*p && nitems < 255) {
+            while (*p == ' ' || *p == '\t' || *p == '\n') p++;
+            if (!*p) break;
+            items[nitems++] = p;
+            while (*p && *p != ' ' && *p != '\t' && *p != '\n') p++;
+            if (*p) *p++ = '\0';
+        }
+    }
+    (void)sep;
+
+    if (repl_str) {
+        /* -I mode: run command once per item, replacing repl_str */
+        int rlen = 0; while (repl_str[rlen]) rlen++;
+        for (int it = 0; it < nitems; it++) {
+            char *xargv[64]; int xargc = 0;
+            for (int i = arg_start; i < argc && xargc < 63; i++) {
+                /* Check if this arg contains the replace string */
+                int found = 0;
+                for (int j = 0; argv[i][j]; j++) {
+                    int match = 1;
+                    for (int k = 0; k < rlen; k++) {
+                        if (argv[i][j+k] != repl_str[k]) { match = 0; break; }
+                    }
+                    if (match) { found = 1; break; }
+                }
+                if (found && strcmp_simple(argv[i], repl_str) == 0) {
+                    xargv[xargc++] = items[it];  /* Simple: replace whole arg */
+                } else {
+                    xargv[xargc++] = argv[i];
+                }
+            }
+            xargv[xargc] = NULL;
+            if (xargc > 0) execute_command(xargc, xargv);
+        }
+    } else if (max_args > 0) {
+        /* -n mode: run command with N args at a time */
+        int pos = 0;
+        while (pos < nitems) {
+            char *xargv[64]; int xargc = 0;
+            for (int i = arg_start; i < argc && xargc < 60; i++)
+                xargv[xargc++] = argv[i];
+            for (int j = 0; j < max_args && pos < nitems && xargc < 63; j++)
+                xargv[xargc++] = items[pos++];
+            xargv[xargc] = NULL;
+            if (xargc > 0) execute_command(xargc, xargv);
+        }
+    } else {
+        /* Default: all items at once */
+        char *xargv[64]; int xargc = 0;
+        for (int i = arg_start; i < argc && xargc < 60; i++)
+            xargv[xargc++] = argv[i];
+        for (int it = 0; it < nitems && xargc < 63; it++)
+            xargv[xargc++] = items[it];
+        xargv[xargc] = NULL;
+        if (xargc > 0) execute_command(xargc, xargv);
     }
 }
 

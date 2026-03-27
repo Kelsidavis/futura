@@ -5854,20 +5854,57 @@ static void cmd_rmdir(int argc, char *argv[]) {
 }
 
 /* Built-in: rm - Remove a file */
+/* Recursive delete helper for rm -r */
+static void rm_recursive(const char *path) {
+    int dfd = sys_open(path, O_RDONLY, 0);
+    if (dfd < 0) return;
+    static char dirbuf[2048];
+    ssize_t dn;
+    while ((dn = sys_getdents64((unsigned int)dfd, dirbuf, (unsigned int)sizeof(dirbuf))) > 0) {
+        ssize_t pos = 0;
+        while (pos < dn) {
+            uint16_t reclen = *(uint16_t *)(dirbuf + pos + 16);
+            uint8_t dtype = *(uint8_t *)(dirbuf + pos + 18);
+            char *name = dirbuf + pos + 19;
+            pos += reclen;
+            if (name[0] == '.' && (name[1] == '\0' || (name[1] == '.' && name[2] == '\0')))
+                continue;
+            static char full[512];
+            int fp = 0;
+            for (int i = 0; path[i] && fp < 500; i++) full[fp++] = path[i];
+            if (fp > 0 && full[fp-1] != '/') full[fp++] = '/';
+            for (int i = 0; name[i] && fp < 510; i++) full[fp++] = name[i];
+            full[fp] = '\0';
+            if (dtype == 4 /* DT_DIR */) {
+                rm_recursive(full);
+            } else {
+                sys_unlink(full);
+            }
+        }
+    }
+    sys_close(dfd);
+    extern long sys_rmdir(const char *);
+    sys_rmdir(path);
+}
+
 static void cmd_rm(int argc, char *argv[]) {
     int force = 0;
+    int recursive = 0;
     int arg_start = 1;
 
-    /* Parse -f option (force, suppress error messages) */
-    if (argc > 1 && strcmp_simple(argv[1], "-f") == 0) {
-        force = 1;
-        arg_start = 2;
+    /* Parse options */
+    while (arg_start < argc && argv[arg_start][0] == '-') {
+        for (int j = 1; argv[arg_start][j]; j++) {
+            if (argv[arg_start][j] == 'f') force = 1;
+            else if (argv[arg_start][j] == 'r' || argv[arg_start][j] == 'R') recursive = 1;
+        }
+        arg_start++;
     }
 
     if (arg_start >= argc) {
         if (!force) {
             write_str(2, "rm: missing operand\n");
-            write_str(2, "Usage: rm [-f] <file>...\n");
+            write_str(2, "Usage: rm [-rf] <file>...\n");
         }
         return;
     }
@@ -5875,12 +5912,21 @@ static void cmd_rm(int argc, char *argv[]) {
     /* Process each file argument */
     for (int i = arg_start; i < argc; i++) {
         const char *path = argv[i];
-        long ret = sys_unlink(path);
 
-        if (ret < 0 && !force) {
-            write_str(2, "rm: cannot remove '");
-            write_str(2, path);
-            write_str(2, "'\n");
+        if (recursive) {
+            /* Try unlink first (works for files), then try recursive delete */
+            long ret = sys_unlink(path);
+            if (ret < 0) {
+                /* Might be a directory — try recursive */
+                rm_recursive(path);
+            }
+        } else {
+            long ret = sys_unlink(path);
+            if (ret < 0 && !force) {
+                write_str(2, "rm: cannot remove '");
+                write_str(2, path);
+                write_str(2, "'\n");
+            }
         }
     }
 }

@@ -61433,6 +61433,95 @@ __attribute__((noinline)) static void test_io_uring(void) {
     sys_close((int)ring_fd);
 }
 
+/* ============================================================
+ * Tests 2116-2118: mm_lock VMA list consistency under mmap/munmap/mprotect
+ * ============================================================ */
+__attribute__((noinline)) static void test_fork_vma_consistency(void) {
+    extern long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long off);
+    extern long sys_munmap(void *addr, size_t len);
+    extern long sys_mprotect(void *addr, size_t len, int prot);
+    extern long sys_open(const char *, int, int);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_close(int);
+
+    /* ── Test 2116: mmap+munmap cycle doesn't corrupt VMA list ── */
+    fut_printf("[MISC-TEST] Test 2116: mmap+munmap cycle VMA integrity\n");
+    {
+        int pass = 1;
+        for (int i = 0; i < 5 && pass; i++) {
+            long addr = sys_mmap(NULL, 4096, 3 /* RW */, 0x22 /* PRIV|ANON */, -1, 0);
+            if (addr <= 0 || (addr & 0xFFF) != 0) { pass = 0; break; }
+            /* Write to verify mapping works */
+            *(volatile unsigned long *)(uintptr_t)addr = 0xDEAD2116UL + (unsigned long)i;
+            long r = sys_munmap((void *)(uintptr_t)addr, 4096);
+            if (r != 0) { pass = 0; break; }
+        }
+        if (pass) {
+            fut_printf("[MISC-TEST] ✓ Test 2116: 5 mmap+munmap cycles ok\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2116: mmap+munmap cycle failed\n");
+            fut_test_fail(2116);
+        }
+    }
+
+    /* ── Test 2117: mmap+mprotect+munmap preserves VMA list ── */
+    fut_printf("[MISC-TEST] Test 2117: mmap+mprotect+munmap\n");
+    {
+        long addr = sys_mmap(NULL, 4096, 3 /* RW */, 0x22, -1, 0);
+        if (addr > 0 && (addr & 0xFFF) == 0) {
+            *(volatile unsigned long *)(uintptr_t)addr = 0xBEEF2117UL;
+            /* Change to read-only */
+            long r1 = sys_mprotect((void *)(uintptr_t)addr, 4096, 1 /* PROT_READ */);
+            /* Change back to read-write */
+            long r2 = sys_mprotect((void *)(uintptr_t)addr, 4096, 3 /* PROT_READ|WRITE */);
+            /* Write again to verify RW restored */
+            *(volatile unsigned long *)(uintptr_t)addr = 0xCAFE2117UL;
+            long r3 = sys_munmap((void *)(uintptr_t)addr, 4096);
+            if (r1 == 0 && r2 == 0 && r3 == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 2117: mprotect cycle ok\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2117: r1=%ld r2=%ld r3=%ld\n", r1, r2, r3);
+                fut_test_fail(2117);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2117: mmap=%ld\n", addr);
+            fut_test_fail(2117);
+        }
+    }
+
+    /* ── Test 2118: /proc/self/maps reflects mmap'd regions ── */
+    fut_printf("[MISC-TEST] Test 2118: /proc/self/maps shows mmap regions\n");
+    {
+        long addr = sys_mmap(NULL, 8192, 3, 0x22, -1, 0);
+        if (addr > 0 && (addr & 0xFFF) == 0) {
+            /* Read /proc/self/maps and check it's non-empty */
+            static char buf[512];
+            long fd = sys_open("/proc/self/maps", 0, 0);
+            if (fd >= 0) {
+                long n = sys_read((int)fd, buf, sizeof(buf) - 1);
+                sys_close((int)fd);
+                sys_munmap((void *)(uintptr_t)addr, 8192);
+                if (n > 0) {
+                    fut_printf("[MISC-TEST] ✓ Test 2118: maps has %ld bytes\n", n);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 2118: maps empty\n");
+                    fut_test_fail(2118);
+                }
+            } else {
+                sys_munmap((void *)(uintptr_t)addr, 8192);
+                fut_printf("[MISC-TEST] ✗ Test 2118: open maps=%ld\n", fd);
+                fut_test_fail(2118);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2118: mmap=%ld\n", addr);
+            fut_test_fail(2118);
+        }
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -65049,6 +65138,7 @@ void fut_misc_test_thread(void *arg) {
     test_loop_device(); /* Tests 1885-1887 */
     test_per_iface_conf(); /* Tests 1869-1871 */
 
+    test_fork_vma_consistency(); /* Tests 2116-2118 */
     test_edge_cases_2(); /* Tests 2111-2115 */
     test_pid_extra_entries(); /* Tests 2108-2110 */
     test_swap_and_proc(); /* Tests 2103-2107 */

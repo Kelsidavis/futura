@@ -230,6 +230,10 @@ long sys_mprotect(void *addr, size_t len, int prot) {
     fut_mm_t *mm = fut_task_get_mm(task);
     if (!mm) mm = fut_mm_current();
     if (mm) {
+        /* Hold mm_lock while traversing and splitting VMAs to prevent
+         * concurrent fork() from seeing a partially-modified list. */
+        fut_spinlock_acquire(&mm->mm_lock);
+
         /* Linux returns -ENOMEM if any part of [start, end) is not mapped.
          * Track coverage to detect gaps in the VMA list. */
         int found_overlap = 0;
@@ -242,6 +246,7 @@ long sys_mprotect(void *addr, size_t len, int prot) {
             }
             /* Gap before this VMA — unmapped region in [start, end) */
             if (vma->start > coverage) {
+                fut_spinlock_release(&mm->mm_lock);
                 return -ENOMEM;
             }
             found_overlap = 1;
@@ -257,7 +262,7 @@ long sys_mprotect(void *addr, size_t len, int prot) {
             /* Split left: VMA starts before [start, end) */
             if (vma->start < start) {
                 struct fut_vma *right = fut_malloc(sizeof(*right));
-                if (!right) return -ENOMEM;
+                if (!right) { fut_spinlock_release(&mm->mm_lock); return -ENOMEM; }
                 *right = *vma;
                 right->start = start;
                 right->next = vma->next;
@@ -279,7 +284,7 @@ long sys_mprotect(void *addr, size_t len, int prot) {
             /* Split right: VMA extends past [start, end) */
             if (vma->end > end) {
                 struct fut_vma *tail = fut_malloc(sizeof(*tail));
-                if (!tail) return -ENOMEM;
+                if (!tail) { fut_spinlock_release(&mm->mm_lock); return -ENOMEM; }
                 *tail = *vma;
                 tail->start = end;
                 tail->next = vma->next;
@@ -301,15 +306,21 @@ long sys_mprotect(void *addr, size_t len, int prot) {
             vma->prot = prot;
             vma = vma->next;
         }
-        if (!found_overlap)
+        if (!found_overlap) {
+            fut_spinlock_release(&mm->mm_lock);
             return -ENOMEM;
+        }
         /* Uncovered tail — gap at the end of the range */
-        if (coverage < end)
+        if (coverage < end) {
+            fut_spinlock_release(&mm->mm_lock);
             return -ENOMEM;
+        }
 
         /* Merge adjacent VMAs that now have identical attributes.
          * This prevents VMA fragmentation from repeated split+mprotect cycles. */
         fut_mm_merge_adjacent_vmas(mm);
+
+        fut_spinlock_release(&mm->mm_lock);
 
         /* Phase 4: Update PTEs for present pages in [start, end).
          * Re-maps each demand-paged page with PTE flags derived from prot

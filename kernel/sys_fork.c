@@ -337,36 +337,17 @@
  * - Information disclosure: Child inherits wrong memory mappings
  *
  * ROOT CAUSE:
- * Lines 477-622: VMA iteration without holding mm lock
- * - Parent VMA list modified concurrently by munmap/mmap
- * - No lock protects parent_mm->vma_list during cloning
- * - clone_mm() is long-running (yields every 64 pages at line 616)
- * - Parent can modify mappings while fork holds stale VMA pointers
+ * Lines 477-622: VMA iteration during clone_mm
  *
- * DEFENSE STRATEGY:
- * [TODO] Hold parent MM lock during VMA cloning:
- *   - Acquire parent_mm->lock before line 477 (VMA iteration)
- *   - Release lock periodically (every 64 pages) and reacquire
- *   - Verify VMA list hasn't changed after reacquiring lock
- *   - Restart cloning if VMA list modified during yield
+ * [IMPLEMENTED] mm_lock spinlock protects VMA list during cloning:
+ *   - clone_mm() acquires parent_mm->mm_lock before VMA iteration
+ *   - mmap/munmap/mprotect also acquire mm_lock when modifying VMA list
+ *   - Prevents use-after-free on VMA structures (CVE-2018-17182 class)
+ *   - Lock released on all error paths via goto fail_locked
  *
- * [TODO] Use RCU for VMA list traversal:
- *   - Protect VMA list with RCU read lock
- *   - Allow concurrent readers (fork) and writers (munmap)
- *   - Delay VMA deallocation until no readers active
- *   - Prevents use-after-free on VMA structures
- *
- * [TODO] Snapshot VMA list before cloning:
- *   - Copy parent_mm->vma_list to temporary array
- *   - Increment refcount on each VMA during snapshot
- *   - Clone from snapshot instead of live list
- *   - Decrement refcount after cloning complete
- *
- * [TODO] Add VMA consistency check after cloning:
- *   - Verify child_mm->vma_list matches expected structure
- *   - Check for dangling pointers or overlapping ranges
- *   - Abort fork if inconsistency detected
- *   - Return -EAGAIN (caller can retry)
+ * Future improvements (not yet needed):
+ * - RCU for VMA list traversal (allows concurrent readers without blocking)
+ * - Read-write lock to allow parallel faults while blocking fork
  *
  * CVE REFERENCES (Similar Historical Vulnerabilities):
  * ======================================================
@@ -443,7 +424,7 @@
  * - File descriptor refcount overflow validation (Attack Scenario 2)
  * - RLIMIT_NPROC enforcement for fork bomb prevention (Attack Scenario 3)
  * - Memory exhaustion checks before fork (Attack Scenario 4)
- * - VMA list locking during cloning (Attack Scenario 5)
+ * - [DONE] VMA list locking during cloning (Attack Scenario 5) — mm_lock spinlock
  * - Fork rate limiting (100 forks/second per UID)
  * - Comprehensive fork stress tests (refcount, PID, memory, concurrency)
  *
@@ -1268,7 +1249,11 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
         return NULL;
     }
 
-    /* Copy heap settings */
+    /* Hold parent mm_lock during VMA cloning to prevent concurrent mmap/munmap
+     * from modifying the VMA list mid-iteration (CVE-2018-17182 style race). */
+    fut_spinlock_acquire(&parent_mm->mm_lock);
+
+    /* Copy heap settings under lock — brk_current can change via concurrent brk() */
     child_mm->brk_start = parent_mm->brk_start;
     child_mm->brk_current = parent_mm->brk_current;
     child_mm->heap_limit = parent_mm->heap_limit;
@@ -1276,6 +1261,7 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
 
     /* Clone VMA list from parent to child */
     if (fut_mm_clone_vmas(child_mm, parent_mm) != 0) {
+        fut_spinlock_release(&parent_mm->mm_lock);
         fut_mm_release(child_mm);
         return NULL;
     }
@@ -1325,29 +1311,22 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
 
         if (!(flags & PTE_WRITABLE)) {
             /* Read-only page (code): share physical page directly */
-            if (fut_page_ref_inc(parent_phys) != 0) {
-                fut_mm_release(child_mm);
-                return NULL;
-            }
-            if (pmap_map_user(child_ctx, page, parent_phys, FUT_PAGE_SIZE, flags) != 0) {
-                fut_mm_release(child_mm);
-                return NULL;
-            }
+            if (fut_page_ref_inc(parent_phys) != 0)
+                goto fail_locked;
+            if (pmap_map_user(child_ctx, page, parent_phys, FUT_PAGE_SIZE, flags) != 0)
+                goto fail_locked;
             code_pages_shared++;
         } else {
             /* Writable page (data/BSS): must copy since no VMA for COW */
             void *child_page = fut_pmm_alloc_page();
-            if (!child_page) {
-                fut_mm_release(child_mm);
-                return NULL;
-            }
+            if (!child_page)
+                goto fail_locked;
             void *parent_page = (void *)pmap_phys_to_virt(parent_phys);
             memcpy(child_page, parent_page, FUT_PAGE_SIZE);
             phys_addr_t child_phys = pmap_virt_to_phys((uintptr_t)child_page);
             if (pmap_map_user(child_ctx, page, child_phys, FUT_PAGE_SIZE, flags) != 0) {
                 fut_pmm_free_page(child_page);
-                fut_mm_release(child_mm);
-                return NULL;
+                goto fail_locked;
             }
             code_pages_copied++;
         }
@@ -1372,10 +1351,8 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
         }
 
         void *child_page = fut_pmm_alloc_page();
-        if (!child_page) {
-            fut_mm_release(child_mm);
-            return NULL;
-        }
+        if (!child_page)
+            goto fail_locked;
 
         phys_addr_t parent_phys = pte & PTE_PHYS_ADDR_MASK;
         void *parent_page = (void *)pmap_phys_to_virt(parent_phys);
@@ -1386,8 +1363,7 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
 
         if (pmap_map_user(child_ctx, page, child_phys, FUT_PAGE_SIZE, flags) != 0) {
             fut_pmm_free_page(child_page);
-            fut_mm_release(child_mm);
-            return NULL;
+            goto fail_locked;
         }
         stack_pages_copied++;
     }
@@ -1396,6 +1372,7 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
 
     /* If no VMAs are tracked, we're done */
     if (parent_mm->vma_list == NULL) {
+        fut_spinlock_release(&parent_mm->mm_lock);
         return child_mm;
     }
 
@@ -1444,17 +1421,14 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
                 /* MADV_WIPEONFORK: give child a fresh zero page instead of copying.
                  * The parent's page is left untouched. */
                 void *zero_page = fut_pmm_alloc_page();
-                if (!zero_page) {
-                    fut_mm_release(child_mm);
-                    return NULL;
-                }
+                if (!zero_page)
+                    goto fail_locked;
                 memset(zero_page, 0, FUT_PAGE_SIZE);
                 phys_addr_t zero_phys = pmap_virt_to_phys((uintptr_t)zero_page);
                 uint64_t flags = pte_extract_flags(pte);
                 if (pmap_map_user(child_ctx, page, zero_phys, FUT_PAGE_SIZE, flags) != 0) {
                     fut_pmm_free_page(zero_page);
-                    fut_mm_release(child_mm);
-                    return NULL;
+                    goto fail_locked;
                 }
                 page_count++;
             } else if (is_shared) {
@@ -1464,17 +1438,14 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
                 uint64_t flags = pte_extract_flags(pte);
 
                 /* Map same physical page in child (with write access) */
-                if (pmap_map_user(child_ctx, page, parent_phys, FUT_PAGE_SIZE, flags) != 0) {
-                    fut_mm_release(child_mm);
-                    return NULL;
-                }
+                if (pmap_map_user(child_ctx, page, parent_phys, FUT_PAGE_SIZE, flags) != 0)
+                    goto fail_locked;
 
                 /* Increment refcount for shared page (with overflow protection) */
                 if (fut_page_ref_inc(parent_phys) != 0) {
                     fut_printf("[FORK] Page refcount overflow at VA 0x%llx - aborting fork\n",
                                (unsigned long long)page);
-                    fut_mm_release(child_mm);
-                    return NULL;
+                    goto fail_locked;
                 }
 
                 page_count++;
@@ -1485,10 +1456,8 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
                 flags &= ~PTE_WRITABLE;
 
                 /* Map same physical page in child (read-only) */
-                if (pmap_map_user(child_ctx, page, parent_phys, FUT_PAGE_SIZE, flags) != 0) {
-                    fut_mm_release(child_mm);
-                    return NULL;
-                }
+                if (pmap_map_user(child_ctx, page, parent_phys, FUT_PAGE_SIZE, flags) != 0)
+                    goto fail_locked;
 
                 /* Mark parent page as read-only too */
                 pmap_set_page_ro(parent_ctx, page);
@@ -1553,18 +1522,15 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
                 if (fut_page_ref_inc(parent_phys) != 0) {
                     fut_printf("[FORK] COW page refcount overflow at VA 0x%llx - aborting fork\n",
                                (unsigned long long)page);
-                    fut_mm_release(child_mm);
-                    return NULL;
+                    goto fail_locked;
                 }
 
                 page_count++;
             } else {
                 /* Non-COW (e.g., shared mappings): Full copy */
                 void *child_page = fut_pmm_alloc_page();
-                if (!child_page) {
-                    fut_mm_release(child_mm);
-                    return NULL;
-                }
+                if (!child_page)
+                    goto fail_locked;
 
                 /* Copy page contents */
                 void *parent_page = (void *)pmap_phys_to_virt(parent_phys);
@@ -1576,8 +1542,7 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
 
                 if (pmap_map_user(child_ctx, page, child_phys, FUT_PAGE_SIZE, flags) != 0) {
                     fut_pmm_free_page(child_page);
-                    fut_mm_release(child_mm);
-                    return NULL;
+                    goto fail_locked;
                 }
 
                 page_count++;
@@ -1594,7 +1559,13 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
         FORK_LOG("[FORK] %s %llu pages from VMA\n", action, page_count);
     }
 
+    fut_spinlock_release(&parent_mm->mm_lock);
     return child_mm;
+
+fail_locked:
+    fut_spinlock_release(&parent_mm->mm_lock);
+    fut_mm_release(child_mm);
+    return NULL;
 }
 
 /**

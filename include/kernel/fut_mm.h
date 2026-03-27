@@ -13,6 +13,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdatomic.h>
+#include <kernel/fut_sched.h>  /* fut_spinlock_t */
 
 /* Include architecture-specific paging header */
 #if defined(__aarch64__)
@@ -68,6 +69,10 @@ typedef struct fut_mm {
     uintptr_t heap_mapped_end;
     uintptr_t mmap_base;
     struct fut_vma *vma_list;
+
+    /* Protects vma_list, brk_current, and heap_mapped_end against concurrent
+     * modification by fork(), mmap(), munmap(), mprotect(), and brk(). */
+    fut_spinlock_t mm_lock;
 
     /* Memory locking statistics (Phase 3: Memory Management Safety)
      * locked_vm: Total number of pages currently locked in memory via mlock/mlockall

@@ -227,6 +227,7 @@ fut_mm_t *fut_mm_create(void) {
     }
     mm->vma_list = NULL;
     mm->locked_vm = 0;
+    fut_spinlock_init(&mm->mm_lock);
     mm_create_printf("[MM-CREATE] Line 172: all fields set\n");
 
     /* Restore original CR3 before returning */
@@ -504,9 +505,11 @@ void *fut_mm_map_anonymous(fut_mm_t *mm, uintptr_t hint, size_t len, int prot, i
     vma->vnode = NULL;  /* Anonymous mapping */
     vma->file_offset = 0;
     vma->anon_name = NULL;
-    vma_insert_sorted(mm, vma);
 
+    fut_spinlock_acquire(&mm->mm_lock);
+    vma_insert_sorted(mm, vma);
     mm->mmap_base = end;
+    fut_spinlock_release(&mm->mm_lock);
 
     fut_free(page_cache);
     return (void *)(uintptr_t)base;
@@ -588,6 +591,7 @@ int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len) {
         return -EINVAL;
     }
 
+    fut_spinlock_acquire(&mm->mm_lock);
     fut_vmem_context_t *ctx = fut_mm_context(mm);
 
     fut_vma_t **link = &mm->vma_list;
@@ -658,7 +662,7 @@ int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len) {
             /* Case 4: Unmap middle - split VMA into two */
             fut_vma_t *right_vma = fut_malloc(sizeof(*right_vma));
             if (!right_vma) {
-                return -ENOMEM;
+                fut_spinlock_release(&mm->mm_lock); return -ENOMEM;
             }
 
             /* Create right portion */
@@ -717,7 +721,7 @@ int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len) {
         }
     }
 
-    return 0;
+    fut_spinlock_release(&mm->mm_lock); return 0;
 }
 
 /**
@@ -798,12 +802,14 @@ void *fut_mm_map_file(fut_mm_t *mm, struct fut_vnode *vnode, uintptr_t hint,
     vma->vnode = vnode;
     vma->file_offset = file_offset;
     vma->anon_name = NULL;
+
+    fut_spinlock_acquire(&mm->mm_lock);
     vma_insert_sorted(mm, vma);
+    mm->mmap_base = end;
+    fut_spinlock_release(&mm->mm_lock);
 
     /* Add reference to vnode */
     fut_vnode_ref(vnode);
-
-    mm->mmap_base = end;
 
     fut_printf("[MM-MAP-FILE] Created lazy mapping: vaddr=0x%llx-0x%llx size=%zu offset=%llu (demand paging enabled)\n",
                base, end, len, file_offset);
@@ -1098,6 +1104,7 @@ fut_mm_t *fut_mm_create(void) {
     mm->mmap_base = USER_MMAP_BASE;
     mm->vma_list = NULL;
     mm->locked_vm = 0;  /* Phase 3: Initialize locked pages counter */
+    fut_spinlock_init(&mm->mm_lock);
 
 #ifdef DEBUG_MM
     mm_create_printf("[MM-CREATE] ARM64: MM created successfully\n");
@@ -1305,9 +1312,11 @@ void *fut_mm_map_anonymous(fut_mm_t *mm, uintptr_t hint, size_t len, int prot, i
     vma->vnode = NULL;  /* Anonymous mapping */
     vma->file_offset = 0;
     vma->anon_name = NULL;
-    vma_insert_sorted(mm, vma);
 
+    fut_spinlock_acquire(&mm->mm_lock);
+    vma_insert_sorted(mm, vma);
     mm->mmap_base = end;
+    fut_spinlock_release(&mm->mm_lock);
 
     fut_printf("[MM-MAP-ANON] ARM64: Created mapping at 0x%llx-0x%llx size=%zu (lazy allocation)\n",
                base, end, len);
@@ -1376,6 +1385,7 @@ int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len) {
 
     uintptr_t unmap_start = PAGE_ALIGN_DOWN(addr);
     uintptr_t aligned = PAGE_ALIGN_UP(len);
+    fut_spinlock_acquire(&mm->mm_lock);
     uintptr_t unmap_end = unmap_start + aligned;
     if (unmap_end < unmap_start) {
         return -EINVAL;
@@ -1450,7 +1460,7 @@ int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len) {
             /* Case 4: Unmap middle - split VMA into two */
             fut_vma_t *right_vma = fut_malloc(sizeof(*right_vma));
             if (!right_vma) {
-                return -ENOMEM;
+                fut_spinlock_release(&mm->mm_lock); return -ENOMEM;
             }
 
             /* Create right portion */
@@ -1509,7 +1519,7 @@ int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len) {
         }
     }
 
-    return 0;
+    fut_spinlock_release(&mm->mm_lock); return 0;
 }
 
 /**
@@ -1589,12 +1599,14 @@ void *fut_mm_map_file(fut_mm_t *mm, struct fut_vnode *vnode, uintptr_t hint,
     vma->vnode = vnode;
     vma->file_offset = file_offset;
     vma->anon_name = NULL;
+
+    fut_spinlock_acquire(&mm->mm_lock);
     vma_insert_sorted(mm, vma);
+    mm->mmap_base = end;
+    fut_spinlock_release(&mm->mm_lock);
 
     /* Add reference to vnode */
     fut_vnode_ref(vnode);
-
-    mm->mmap_base = end;
 
     fut_printf("[MM-MAP-FILE] ARM64: Created lazy mapping: vaddr=0x%llx-0x%llx size=%zu offset=%llu (demand paging enabled)\n",
                base, end, len, file_offset);

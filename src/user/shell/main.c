@@ -119,6 +119,7 @@ static void cmd_tty(int argc, char *argv[]);
 static void cmd_nohup(int argc, char *argv[]);
 static void cmd_chroot(int argc, char *argv[]);
 static void cmd_unshare(int argc, char *argv[]);
+static void cmd_nsenter(int argc, char *argv[]);
 static void cmd_tac(int argc, char *argv[]);
 static void cmd_chgrp(int argc, char *argv[]);
 static void cmd_md5sum(int argc, char *argv[]);
@@ -10280,6 +10281,9 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "unshare") == 0) {
         cmd_unshare(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "nsenter") == 0) {
+        cmd_nsenter(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "tac") == 0) {
         cmd_tac(argc, argv);
         return 0;
@@ -10996,6 +11000,7 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "nohup") == 0 ||
             strcmp_simple(cmd, "chroot") == 0 ||
             strcmp_simple(cmd, "unshare") == 0 ||
+            strcmp_simple(cmd, "nsenter") == 0 ||
             strcmp_simple(cmd, "tac") == 0 ||
             strcmp_simple(cmd, "chgrp") == 0 ||
             strcmp_simple(cmd, "md5sum") == 0 ||
@@ -11895,6 +11900,99 @@ static void cmd_unshare(int argc, char *argv[]) {
     }
 
     /* Execute the command in the new namespace */
+    int sub_argc = argc - cmd_start;
+    char *sub_argv[64];
+    for (int i = 0; i < sub_argc && i < 63; i++)
+        sub_argv[i] = argv[cmd_start + i];
+    sub_argv[sub_argc] = NULL;
+    execute_command(sub_argc, sub_argv);
+}
+
+/* nsenter: enter namespaces of a target process (docker exec primitive) */
+static void cmd_nsenter(int argc, char *argv[]) {
+    if (argc < 3) {
+        write_str(2, "usage: nsenter -t PID [--mount] [--uts] [--ipc] [--net] [--pid] [--user] [--all] command...\n");
+        return;
+    }
+
+    int target_pid = 0;
+    int do_mount = 0, do_uts = 0, do_ipc = 0, do_net = 0;
+    int do_pid = 0, do_user = 0;
+    int cmd_start = 1;
+
+    while (cmd_start < argc && argv[cmd_start][0] == '-') {
+        const char *f = argv[cmd_start];
+        if ((strcmp_simple(f, "-t") == 0 || strcmp_simple(f, "--target") == 0) && cmd_start + 1 < argc) {
+            cmd_start++;
+            for (const char *p = argv[cmd_start]; *p >= '0' && *p <= '9'; p++)
+                target_pid = target_pid * 10 + (*p - '0');
+            cmd_start++;
+        } else if (strcmp_simple(f, "--mount") == 0 || strcmp_simple(f, "-m") == 0) {
+            do_mount = 1; cmd_start++;
+        } else if (strcmp_simple(f, "--uts") == 0 || strcmp_simple(f, "-u") == 0) {
+            do_uts = 1; cmd_start++;
+        } else if (strcmp_simple(f, "--ipc") == 0 || strcmp_simple(f, "-i") == 0) {
+            do_ipc = 1; cmd_start++;
+        } else if (strcmp_simple(f, "--net") == 0 || strcmp_simple(f, "-n") == 0) {
+            do_net = 1; cmd_start++;
+        } else if (strcmp_simple(f, "--pid") == 0 || strcmp_simple(f, "-p") == 0) {
+            do_pid = 1; cmd_start++;
+        } else if (strcmp_simple(f, "--user") == 0 || strcmp_simple(f, "-U") == 0) {
+            do_user = 1; cmd_start++;
+        } else if (strcmp_simple(f, "--all") == 0 || strcmp_simple(f, "-a") == 0) {
+            do_mount = do_uts = do_ipc = do_net = do_pid = do_user = 1;
+            cmd_start++;
+        } else {
+            break;
+        }
+    }
+
+    if (target_pid <= 0) {
+        write_str(2, "nsenter: -t PID required\n");
+        return;
+    }
+    if (cmd_start >= argc) {
+        write_str(2, "nsenter: no command specified\n");
+        return;
+    }
+
+    /* If no specific ns flags, default to --all */
+    if (!do_mount && !do_uts && !do_ipc && !do_net && !do_pid && !do_user) {
+        do_mount = do_uts = do_ipc = do_net = do_pid = do_user = 1;
+    }
+
+    /* Build /proc/<pid>/ns/<type> path and call setns for each */
+    static char ns_path[64];
+    const char *ns_types[] = { "mnt", "uts", "ipc", "net", "pid", "user" };
+    int ns_flags[] = { do_mount, do_uts, do_ipc, do_net, do_pid, do_user };
+
+    for (int i = 0; i < 6; i++) {
+        if (!ns_flags[i]) continue;
+        /* Build path: /proc/<pid>/ns/<type> */
+        int pp = 0;
+        const char *pfx = "/proc/";
+        while (*pfx) ns_path[pp++] = *pfx++;
+        { int v = target_pid; char rev[12]; int rp = 0;
+          while (v > 0) { rev[rp++] = '0' + (v % 10); v /= 10; }
+          while (rp > 0) ns_path[pp++] = rev[--rp]; }
+        ns_path[pp++] = '/'; ns_path[pp++] = 'n'; ns_path[pp++] = 's'; ns_path[pp++] = '/';
+        const char *t = ns_types[i];
+        while (*t) ns_path[pp++] = *t++;
+        ns_path[pp] = '\0';
+
+        long fd = sys_open(ns_path, O_RDONLY, 0);
+        if (fd < 0) continue;
+        /* setns(fd, 0) — auto-detect ns type */
+        long r = sys_call2(308 /* __NR_setns */, fd, 0);
+        sys_close((int)fd);
+        if (r < 0) {
+            write_str(2, "nsenter: setns(");
+            write_str(2, ns_types[i]);
+            write_str(2, ") failed\n");
+        }
+    }
+
+    /* Execute command in the new namespaces */
     int sub_argc = argc - cmd_start;
     char *sub_argv[64];
     for (int i = 0; i < sub_argc && i < 63; i++)

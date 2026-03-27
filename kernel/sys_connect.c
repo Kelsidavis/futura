@@ -412,10 +412,57 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
         return ret;
     }
 
-    /* AF_INET6: not yet wired */
+    /* AF_INET6: map to IPv4 loopback for ::1 and ::ffff:<ipv4> addresses */
     if (sa_family == AF_INET6) {
-        connect_printf("[CONNECT] connect(sockfd=%d, family=AF_INET6) -> ECONNREFUSED\n", local_sockfd);
-        return -ECONNREFUSED;
+        if (local_addrlen < 28) return -EINVAL;  /* sizeof(sockaddr_in6) = 28 */
+        struct { uint16_t family; uint16_t port; uint32_t flowinfo;
+                 uint8_t addr[16]; uint32_t scope_id; } sin6 = {0};
+        if (connect_copy_from_user(&sin6, local_addr, 28) != 0) return -EFAULT;
+
+        extern fut_socket_t *get_socket_from_fd(int fd);
+        fut_socket_t *inet6_sock = get_socket_from_fd(local_sockfd);
+        if (!inet6_sock) return -EBADF;
+
+        /* Check for ::1 (loopback) */
+        int is_loopback = 1;
+        for (int i = 0; i < 15; i++) { if (sin6.addr[i] != 0) { is_loopback = 0; break; } }
+        if (sin6.addr[15] != 1) is_loopback = 0;
+
+        /* Check for :: (any) — treat as loopback for connect */
+        int is_any = 1;
+        for (int i = 0; i < 16; i++) { if (sin6.addr[i] != 0) { is_any = 0; break; } }
+
+        /* Check for ::ffff:x.x.x.x (IPv4-mapped IPv6) */
+        int is_v4mapped = 1;
+        for (int i = 0; i < 10; i++) { if (sin6.addr[i] != 0) { is_v4mapped = 0; break; } }
+        if (sin6.addr[10] != 0xFF || sin6.addr[11] != 0xFF) is_v4mapped = 0;
+
+        uint32_t mapped_ipv4;
+        if (is_loopback || is_any) {
+            mapped_ipv4 = 0x7F000001;  /* 127.0.0.1 in host order */
+            /* Convert to network byte order */
+            mapped_ipv4 = ((mapped_ipv4 >> 24) & 0xFF) |
+                          (((mapped_ipv4 >> 16) & 0xFF) << 8) |
+                          (((mapped_ipv4 >> 8) & 0xFF) << 16) |
+                          ((mapped_ipv4 & 0xFF) << 24);
+        } else if (is_v4mapped) {
+            /* Extract IPv4 address from bytes 12-15 (already in network byte order) */
+            mapped_ipv4 = ((uint32_t)sin6.addr[12]) |
+                          ((uint32_t)sin6.addr[13] << 8) |
+                          ((uint32_t)sin6.addr[14] << 16) |
+                          ((uint32_t)sin6.addr[15] << 24);
+        } else {
+            /* Non-loopback, non-mapped IPv6: not yet supported */
+            connect_printf("[CONNECT] connect(sockfd=%d, family=AF_INET6) -> ECONNREFUSED (non-loopback IPv6)\n",
+                       local_sockfd);
+            return -ECONNREFUSED;
+        }
+
+        int ret = fut_socket_connect_inet(inet6_sock, mapped_ipv4, sin6.port);
+        connect_printf("[CONNECT] connect(sockfd=%d, family=AF_INET6, mapped_ipv4=0x%x, port=%u) -> %d\n",
+                   local_sockfd, mapped_ipv4,
+                   (unsigned)((sin6.port >> 8) | ((sin6.port & 0xFF) << 8)), ret);
+        return ret;
     }
 
     /* AF_NETLINK: connect to kernel (nl_pid=0) is a no-op; mark socket as bound */

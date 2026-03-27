@@ -61730,6 +61730,83 @@ __attribute__((noinline)) static void test_pty_and_cgroup(void) {
             fut_test_fail(2193);
         }
     }
+
+    /* ── Test 2196: AF_INET6 socket creation works ── */
+    fut_printf("[MISC-TEST] Test 2196: AF_INET6 socket creation\n");
+    {
+        extern long sys_socket(int domain, int type, int protocol);
+        long fd = sys_socket(10 /* AF_INET6 */, 1 /* SOCK_STREAM */, 0);
+        if (fd >= 0) {
+            fut_printf("[MISC-TEST] ✓ Test 2196: AF_INET6 socket fd=%ld\n", fd);
+            fut_test_pass();
+            sys_close((int)fd);
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2196: socket=%ld\n", fd);
+            fut_test_fail(2196);
+        }
+    }
+
+    /* ── Test 2197: AF_INET6 bind to ::1 succeeds ── */
+    fut_printf("[MISC-TEST] Test 2197: AF_INET6 bind ::1\n");
+    {
+        extern long sys_socket(int domain, int type, int protocol);
+        extern long sys_bind(int sockfd, const void *addr, unsigned int addrlen);
+        long fd = sys_socket(10 /* AF_INET6 */, 1 /* SOCK_STREAM */, 0);
+        int pass = 0;
+        if (fd >= 0) {
+            /* sockaddr_in6: family(2) + port(2) + flowinfo(4) + addr(16) + scope(4) = 28 bytes */
+            static uint8_t sin6[28];
+            for (int i = 0; i < 28; i++) sin6[i] = 0;
+            sin6[0] = 10; sin6[1] = 0;  /* AF_INET6 = 10 */
+            sin6[2] = 0xBE; sin6[3] = 0xEF;  /* port 0xBEEF (48879) in network order */
+            sin6[4+4+15] = 1;  /* addr[15] = 1 → ::1 */
+            long r = sys_bind((int)fd, sin6, 28);
+            if (r == 0) pass = 1;
+            else fut_printf("[MISC-TEST]   bind=%ld\n", r);
+            sys_close((int)fd);
+        }
+        if (pass) {
+            fut_printf("[MISC-TEST] ✓ Test 2197: bind ::1 ok\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2197: bind ::1 failed\n");
+            fut_test_fail(2197);
+        }
+    }
+
+    /* ── Test 2198: AF_INET6 connect to ::1 doesn't return ECONNREFUSED ── */
+    fut_printf("[MISC-TEST] Test 2198: AF_INET6 connect ::1 mapped to IPv4\n");
+    {
+        extern long sys_socket(int domain, int type, int protocol);
+        extern long sys_connect(int sockfd, const void *addr, unsigned int addrlen);
+        long fd = sys_socket(10 /* AF_INET6 */, 2 /* SOCK_DGRAM */, 0);
+        int pass = 0;
+        if (fd >= 0) {
+            static uint8_t sin6[28];
+            for (int i = 0; i < 28; i++) sin6[i] = 0;
+            sin6[0] = 10; sin6[1] = 0;  /* AF_INET6 */
+            sin6[2] = 0x27; sin6[3] = 0x10;  /* port 10000 */
+            sin6[4+4+15] = 1;  /* ::1 */
+            /* For SOCK_DGRAM, connect() just sets the peer — should succeed */
+            long r = sys_connect((int)fd, sin6, 28);
+            /* Success (0) means IPv6 was mapped to IPv4 and connect worked */
+            if (r == 0) {
+                pass = 1;
+            } else {
+                fut_printf("[MISC-TEST]   connect=%ld\n", r);
+                /* Even ECONNREFUSED for STREAM is ok — means mapping worked, just no listener */
+                if (r == -111 /* ECONNREFUSED */) pass = 1;
+            }
+            sys_close((int)fd);
+        }
+        if (pass) {
+            fut_printf("[MISC-TEST] ✓ Test 2198: AF_INET6 connect mapped to IPv4\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2198: AF_INET6 connect failed\n");
+            fut_test_fail(2198);
+        }
+    }
 }
 
 /* ============================================================

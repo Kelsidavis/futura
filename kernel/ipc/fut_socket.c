@@ -2222,7 +2222,8 @@ fut_socket_t *fut_socket_find_inet_bound(uint32_t addr, uint16_t port) {
 int fut_socket_bind_inet(fut_socket_t *socket, uint32_t addr, uint16_t port) {
     if (!socket || socket->state != FUT_SOCK_CREATED)
         return -EINVAL;
-    if (socket->address_family != AF_INET)
+    /* Accept AF_INET and AF_INET6 (IPv6 sockets use IPv4-mapped addresses for loopback) */
+    if (socket->address_family != AF_INET && socket->address_family != AF_INET6)
         return -EINVAL;
 
     struct net_namespace *ns = socket_netns_or_init(socket);

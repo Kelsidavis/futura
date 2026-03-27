@@ -450,14 +450,35 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
             return -EACCES;
         }
 
-        /* Store the bound port in the socket for getsockname() */
+        /* Map IPv6 to IPv4 for the socket registry so listeners are discoverable.
+         * Must happen BEFORE setting state to BOUND since bind_inet checks CREATED state.
+         * ::1 and :: → 0.0.0.0 (any) or 127.0.0.1; ::ffff:x.x.x.x → x.x.x.x */
         fut_socket_t *inet6_socket = get_socket_from_fd(local_sockfd);
         if (inet6_socket) {
+            int is_loopback = 1, is_any = 1, is_v4mapped = 1;
+            for (int i = 0; i < 15; i++) { if (inet6_addr.sin6_addr[i] != 0) is_loopback = 0; }
+            if (inet6_addr.sin6_addr[15] != 1) is_loopback = 0;
+            for (int i = 0; i < 16; i++) { if (inet6_addr.sin6_addr[i] != 0) is_any = 0; }
+            for (int i = 0; i < 10; i++) { if (inet6_addr.sin6_addr[i] != 0) is_v4mapped = 0; }
+            if (inet6_addr.sin6_addr[10] != 0xFF || inet6_addr.sin6_addr[11] != 0xFF) is_v4mapped = 0;
+
+            uint32_t mapped_ipv4 = 0;
+            if (is_any || is_loopback) {
+                mapped_ipv4 = is_any ? 0 : 0x0100007F;  /* INADDR_ANY or 127.0.0.1 in net order */
+            } else if (is_v4mapped) {
+                mapped_ipv4 = ((uint32_t)inet6_addr.sin6_addr[12]) |
+                              ((uint32_t)inet6_addr.sin6_addr[13] << 8) |
+                              ((uint32_t)inet6_addr.sin6_addr[14] << 16) |
+                              ((uint32_t)inet6_addr.sin6_addr[15] << 24);
+            }
+            /* Register in IPv4 socket registry (sets state to BOUND) */
+            fut_socket_bind_inet(inet6_socket, mapped_ipv4, inet6_addr.sin6_port);
+            /* Store IPv6-specific fields for getsockname() */
             inet6_socket->inet_port = inet6_addr.sin6_port;
             __builtin_memcpy(inet6_socket->inet6_addr, &inet6_addr.sin6_addr, 16);
-            inet6_socket->state = FUT_SOCK_BOUND;
         }
-        bind_printf("[BIND] bind(sockfd=%d, family=%s, port=%u [%s], addrlen=%u) -> 0 (AF_INET6 stub)\n",
+
+        bind_printf("[BIND] bind(sockfd=%d, family=%s, port=%u [%s], addrlen=%u) -> 0 (AF_INET6 → IPv4 mapped)\n",
                    local_sockfd, family_name, port, port_cat, local_addrlen);
         return 0;
     }

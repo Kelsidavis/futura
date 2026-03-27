@@ -2876,16 +2876,82 @@ static void cmd_whoami(int argc, char *argv[]) {
 
 /* Built-in: env - Show environment variables */
 static void cmd_env(int argc, char *argv[]) {
-    (void)argc;
-    (void)argv;
+    int arg_start = 1;
 
-    /* Iterate through all shell variables and print exported ones */
-    for (int i = 0; i < MAX_VARS; i++) {
-        if (shell_vars[i].used && shell_vars[i].exported) {
-            write_str(1, shell_vars[i].name);
-            write_char(1, '=');
-            write_str(1, shell_vars[i].value);
-            write_char(1, '\n');
+    /* env [VAR=val]... [command [args...]]
+     * With no args: print all exported variables
+     * With VAR=val: set variables then run command */
+
+    /* Skip -i (ignored — we don't clear env) */
+    if (arg_start < argc && strcmp_simple(argv[arg_start], "-i") == 0)
+        arg_start++;
+
+    /* Check for VAR=val assignments and command */
+    int has_cmd = 0;
+    int cmd_idx = arg_start;
+    while (cmd_idx < argc) {
+        /* Check if this arg contains '=' (it's a VAR=val) */
+        int has_eq = 0;
+        for (int j = 0; argv[cmd_idx][j]; j++) {
+            if (argv[cmd_idx][j] == '=') { has_eq = 1; break; }
+        }
+        if (!has_eq) { has_cmd = 1; break; }
+        cmd_idx++;
+    }
+
+    if (has_cmd) {
+        /* Set variables and execute command */
+        for (int i = arg_start; i < cmd_idx; i++) {
+            /* Parse VAR=val */
+            char vname[MAX_VAR_NAME];
+            char vval[MAX_VAR_VALUE];
+            int ni = 0, vi = 0;
+            const char *p = argv[i];
+            while (*p && *p != '=' && ni < MAX_VAR_NAME - 1) vname[ni++] = *p++;
+            vname[ni] = '\0';
+            if (*p == '=') p++;
+            while (*p && vi < MAX_VAR_VALUE - 1) vval[vi++] = *p++;
+            vval[vi] = '\0';
+            set_var(vname, vval, 1);  /* Set as exported */
+        }
+        /* Execute the command */
+        int sub_argc = argc - cmd_idx;
+        char *sub_argv[64];
+        for (int i = 0; i < sub_argc && i < 63; i++)
+            sub_argv[i] = argv[cmd_idx + i];
+        sub_argv[sub_argc] = NULL;
+        execute_command(sub_argc, sub_argv);
+    } else if (cmd_idx > arg_start) {
+        /* Only VAR=val assignments, no command — set and print */
+        for (int i = arg_start; i < cmd_idx; i++) {
+            char vname[MAX_VAR_NAME], vval[MAX_VAR_VALUE];
+            int ni = 0, vi = 0;
+            const char *p = argv[i];
+            while (*p && *p != '=' && ni < MAX_VAR_NAME - 1) vname[ni++] = *p++;
+            vname[ni] = '\0';
+            if (*p == '=') p++;
+            while (*p && vi < MAX_VAR_VALUE - 1) vval[vi++] = *p++;
+            vval[vi] = '\0';
+            set_var(vname, vval, 1);
+        }
+        /* Print all exported */
+        for (int i = 0; i < MAX_VARS; i++) {
+            if (shell_vars[i].used && shell_vars[i].exported) {
+                write_str(1, shell_vars[i].name);
+                write_char(1, '=');
+                write_str(1, shell_vars[i].value);
+                write_char(1, '\n');
+            }
+        }
+    } else {
+        /* No args: print all exported variables */
+        for (int i = 0; i < MAX_VARS; i++) {
+            if (shell_vars[i].used && shell_vars[i].exported) {
+                write_str(1, shell_vars[i].name);
+                write_char(1, '=');
+                write_str(1, shell_vars[i].value);
+                write_char(1, '\n');
+            }
         }
     }
 }

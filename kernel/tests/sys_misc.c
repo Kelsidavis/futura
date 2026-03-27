@@ -19541,15 +19541,20 @@ static void test_getsockopt_acceptconn(void) {
         return;
     }
 
-    /* Bind a path and listen */
-    const char *spath = "/tmp/so_acceptconn_297.sock";
+    /* Bind abstract AF_UNIX name and listen (independent of FS perms) */
     struct { unsigned short fam; char path[108]; } addr;
     addr.fam = 1;
-    size_t plen = 0; while (spath[plen]) plen++;
-    for (size_t i = 0; i < plen + 1; i++) addr.path[i] = spath[i];
+    __builtin_memset(addr.path, 0, sizeof(addr.path));
+    __builtin_memcpy(addr.path + 1, "t297_so_acceptconn", 17);
     extern long sys_bind(int sockfd, const void *addr, unsigned int addrlen);
-    sys_bind((int)s, &addr, (unsigned int)(2 + plen + 1));
-    sys_listen((int)s, 5);
+    long br = sys_bind((int)s, &addr, (unsigned int)(2 + 1 + 17));
+    long lr = (br == 0) ? sys_listen((int)s, 5) : br;
+    if (br != 0 || lr != 0) {
+        fut_printf("[MISC-TEST] ✗ SO_ACCEPTCONN setup failed: bind=%ld listen=%ld\n", br, lr);
+        sys_close((int)s);
+        fut_test_fail(1);
+        return;
+    }
 
     val = -1; vlen = sizeof(val);
     r = sys_getsockopt((int)s, 1 /*SOL_SOCKET*/, 30 /*SO_ACCEPTCONN*/,
@@ -19557,13 +19562,11 @@ static void test_getsockopt_acceptconn(void) {
     if (r != 0 || val != 1) {
         fut_printf("[MISC-TEST] ✗ SO_ACCEPTCONN after listen: r=%ld val=%d (want 1)\n", r, val);
         sys_close((int)s);
-        fut_vfs_unlink(spath);
         fut_test_fail(1);
         return;
     }
 
     sys_close((int)s);
-    fut_vfs_unlink(spath);
     fut_printf("[MISC-TEST] ✓ SO_ACCEPTCONN: 0 before listen, 1 after listen\n");
     fut_test_pass();
 }
@@ -49755,12 +49758,19 @@ static void test_so_protocol_domain_acceptconn(void) {
                 fut_printf("[MISC-TEST] ✗ Test 1554: SO_ACCEPTCONN before listen = %d (want 0)\n", val);
                 fut_test_fail(1554);
             } else {
-                /* Bind + listen */
+                /* Bind abstract AF_UNIX name + listen (avoid FS perms issues) */
                 struct { unsigned short family; char path[108]; } addr;
                 addr.family = 1;
-                __builtin_memcpy(addr.path, "/tmp/.t1554_acc", 16);
-                sys_bind((int)fd, &addr, (unsigned int)(2 + 16));
-                sys_listen((int)fd, 5);
+                __builtin_memset(addr.path, 0, sizeof(addr.path));
+                __builtin_memcpy(addr.path + 1, "t1554_acceptconn", 15);
+                long br = sys_bind((int)fd, &addr, (unsigned int)(2 + 1 + 15));
+                long lr = (br == 0) ? sys_listen((int)fd, 5) : br;
+                if (br != 0 || lr != 0) {
+                    fut_printf("[MISC-TEST] ✗ Test 1554: setup failed: bind=%ld listen=%ld\n", br, lr);
+                    fut_test_fail(1554);
+                    sys_close((int)fd);
+                    return;
+                }
 
                 val = -1;
                 len = sizeof(val);
@@ -49964,7 +49974,7 @@ static void test_accepted_socket_defaults(void) {
     extern long sys_accept(int sockfd, void *addr, unsigned int *addrlen);
     extern long sys_getsockopt(int fd, int level, int optname, void *optval, unsigned int *optlen);
 
-    /* Create a listener on a unique path */
+    /* Create a listener on a unique abstract name */
     long lfd = sys_socket(1 /* AF_UNIX */, 1 /* SOCK_STREAM */, 0);
     if (lfd < 0) {
         fut_printf("[MISC-TEST] ✗ Test 1562: socket() failed: %ld\n", lfd);
@@ -49975,13 +49985,9 @@ static void test_accepted_socket_defaults(void) {
     struct { uint16_t family; char path[108]; } addr;
     __builtin_memset(&addr, 0, sizeof(addr));
     addr.family = 1; /* AF_UNIX */
-    __builtin_memcpy(addr.path, "/tmp/.fut_accept_opts", 22);
+    __builtin_memcpy(addr.path + 1, "t1562_accept_opts", 16);
 
-    /* Remove any stale socket file */
-    extern long sys_unlink(const char *pathname);
-    sys_unlink(addr.path);
-
-    long ret = sys_bind((int)lfd, &addr, (unsigned int)(2 + 22));
+    long ret = sys_bind((int)lfd, &addr, (unsigned int)(2 + 1 + 16));
     if (ret < 0) {
         fut_printf("[MISC-TEST] ✗ Test 1562: bind() failed: %ld\n", ret);
         sys_close((int)lfd);
@@ -50003,7 +50009,7 @@ static void test_accepted_socket_defaults(void) {
         fut_test_fail(1562); fut_test_fail(1563); fut_test_fail(1564);
         return;
     }
-    ret = sys_connect((int)cfd, &addr, (unsigned int)(2 + 22));
+    ret = sys_connect((int)cfd, &addr, (unsigned int)(2 + 1 + 16));
     if (ret < 0) {
         sys_close((int)cfd);
         sys_close((int)lfd);
@@ -50059,7 +50065,6 @@ static void test_accepted_socket_defaults(void) {
     sys_close((int)afd);
     sys_close((int)cfd);
     sys_close((int)lfd);
-    sys_unlink(addr.path);
 }
 
 /**
@@ -54162,6 +54167,17 @@ __attribute__((noinline)) static void test_futurafs_flags(void) {
     extern long sys_close(int);
     extern long sys_unlink(const char *);
     extern long sys_stat(const char *, struct fut_stat *);
+    fut_task_t *task = fut_task_current();
+    uint32_t saved_uid = task ? task->uid : 0;
+    uint32_t saved_ruid = task ? task->ruid : 0;
+    uint32_t saved_gid = task ? task->gid : 0;
+    uint64_t saved_caps = task ? task->cap_effective : 0;
+    if (task) {
+        task->uid = 0;
+        task->ruid = 0;
+        task->gid = 0;
+        task->cap_effective |= (1ULL << 1) | (1ULL << 3); /* DAC override + FOWNER */
+    }
 
     /* Test 1926: O_TRUNC truncates existing file on FuturaFS */
     fut_printf("[MISC-TEST] Test 1926: FuturaFS O_TRUNC\n");
@@ -54183,12 +54199,19 @@ __attribute__((noinline)) static void test_futurafs_flags(void) {
                     fut_printf("[MISC-TEST] ✓ Test 1926: O_TRUNC shrunk to 2\n");
                     fut_test_pass();
                 } else {
-                    fut_printf("[MISC-TEST] ✗ Test 1926: size=%llu\n", (unsigned long long)st.st_size);
+                    fut_printf("[MISC-TEST] ✗ Test 1926: stat=%ld size=%llu\n",
+                               sr, (unsigned long long)st.st_size);
                     fut_test_fail(1926);
                 }
-            } else { fut_test_fail(1926); }
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 1926: reopen O_TRUNC failed: %ld\n", fd);
+                fut_test_fail(1926);
+            }
             sys_unlink("/mnt/trunc_test.txt");
-        } else { fut_test_fail(1926); }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1926: initial open failed: %ld\n", fd);
+            fut_test_fail(1926);
+        }
     }
 
     /* Test 1927: O_EXCL fails when file exists on FuturaFS */
@@ -54235,6 +54258,13 @@ __attribute__((noinline)) static void test_futurafs_flags(void) {
             sys_close((int)fd1);
             sys_unlink("/mnt/multi_test.txt");
         } else { fut_test_fail(1928); }
+    }
+
+    if (task) {
+        task->uid = saved_uid;
+        task->ruid = saved_ruid;
+        task->gid = saved_gid;
+        task->cap_effective = saved_caps;
     }
 }
 
@@ -55614,13 +55644,35 @@ __attribute__((noinline)) static void test_writable_net_sysctls(void) {
     extern long sys_read(int, void *, size_t);
     extern long sys_write(int, const void *, size_t);
     extern long sys_close(int);
+    fut_task_t *task = fut_task_current();
+    uint32_t saved_uid = task ? task->uid : 0;
+    uint32_t saved_ruid = task ? task->ruid : 0;
+    uint32_t saved_gid = task ? task->gid : 0;
+    uint64_t saved_caps = task ? task->cap_effective : 0;
+    if (task) {
+        task->uid = 0;
+        task->ruid = 0;
+        task->gid = 0;
+        task->cap_effective |= (1ULL << 1) | (1ULL << 3); /* DAC override + FOWNER */
+    }
 
     /* Helper: write string to path, then read back and compare prefix */
     /* Test 1823: write somaxconn then read back */
     fut_printf("[MISC-TEST] Test 1823: write /proc/sys/net/core/somaxconn\n");
     {
         long fd = sys_open("/proc/sys/net/core/somaxconn", 0x0001, 0);
-        if (fd >= 0) { static const char v[] = "128"; sys_write((int)fd, v, 3); sys_close((int)fd); }
+        if (fd >= 0) {
+            static const char v[] = "128";
+            long wr = sys_write((int)fd, v, 3);
+            sys_close((int)fd);
+            if (wr != 3) {
+                fut_printf("[MISC-TEST] ✗ Test 1823: write failed: %ld\n", wr);
+                fut_test_fail(1823);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1823: open(O_WRONLY) failed: %ld\n", fd);
+            fut_test_fail(1823);
+        }
         long fd2 = sys_open("/proc/sys/net/core/somaxconn", 0, 0);
         if (fd2 >= 0) {
             static char rb[32];
@@ -55697,6 +55749,13 @@ __attribute__((noinline)) static void test_writable_net_sysctls(void) {
         } else { fut_test_fail(1826); }
         long fd3 = sys_open("/proc/sys/net/ipv4/ip_unprivileged_port_start", 0x0001, 0);
         if (fd3 >= 0) { static const char d[] = "1024"; sys_write((int)fd3, d, 4); sys_close((int)fd3); }
+    }
+
+    if (task) {
+        task->uid = saved_uid;
+        task->ruid = saved_ruid;
+        task->gid = saved_gid;
+        task->cap_effective = saved_caps;
     }
 }
 

@@ -68,12 +68,16 @@ int vfs_check_write_perm(struct fut_vnode *vnode) {
         return -EINVAL;
     }
 
+    fut_task_t *task = fut_task_current();
     uint32_t uid = vfs_get_current_uid();
     uint32_t gid = vfs_get_current_gid();
     uint32_t mode = vnode->mode;
 
-    /* Root always has write permission */
-    if (uid == 0) {
+    /* Root/CAP_DAC_OVERRIDE bypasses permission checks.
+     * Treat namespace root (task->uid==0) as privileged too. */
+    if (uid == 0 ||
+        (task && task->uid == 0) ||
+        (task && (task->cap_effective & (1ULL << 1 /* CAP_DAC_OVERRIDE */)))) {
         return 0;
     }
 
@@ -118,12 +122,16 @@ int vfs_check_read_perm(struct fut_vnode *vnode) {
         return -EINVAL;
     }
 
+    fut_task_t *task = fut_task_current();
     uint32_t uid = vfs_get_current_uid();
     uint32_t gid = vfs_get_current_gid();
     uint32_t mode = vnode->mode;
 
-    /* Root always has read permission */
-    if (uid == 0) {
+    /* Root/CAP_DAC_OVERRIDE bypasses permission checks.
+     * Treat namespace root (task->uid==0) as privileged too. */
+    if (uid == 0 ||
+        (task && task->uid == 0) ||
+        (task && (task->cap_effective & (1ULL << 1 /* CAP_DAC_OVERRIDE */)))) {
         return 0;
     }
 
@@ -169,12 +177,16 @@ int vfs_check_exec_perm(struct fut_vnode *vnode) {
         return -EINVAL;
     }
 
+    fut_task_t *task = fut_task_current();
     uint32_t uid = vfs_get_current_uid();
     uint32_t gid = vfs_get_current_gid();
     uint32_t mode = vnode->mode;
 
-    /* Root always has execute permission */
-    if (uid == 0) {
+    /* Root/CAP_DAC_OVERRIDE bypasses permission checks.
+     * Treat namespace root (task->uid==0) as privileged too. */
+    if (uid == 0 ||
+        (task && task->uid == 0) ||
+        (task && (task->cap_effective & (1ULL << 1 /* CAP_DAC_OVERRIDE */)))) {
         return 0;
     }
 

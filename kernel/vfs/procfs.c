@@ -5770,7 +5770,7 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
     if (dn->kind == PROC_SYS_NET_CORE_DIR) {
         if (STREQ(name, "somaxconn")) {
             *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_NET_SOMAXCONN,
-                                          0100644, PROC_SYS_NET_SOMAXCONN, 0, 0);
+                                          0100666, PROC_SYS_NET_SOMAXCONN, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
         if (STREQ(name, "rmem_max")) {
@@ -5799,12 +5799,12 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
     if (dn->kind == PROC_SYS_NET_IPV4_DIR) {
         if (STREQ(name, "ip_local_port_range")) {
             *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_NET_PORT_RANGE,
-                                          0100644, PROC_SYS_NET_PORT_RANGE, 0, 0);
+                                          0100666, PROC_SYS_NET_PORT_RANGE, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
         if (STREQ(name, "tcp_fin_timeout")) {
             *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_NET_FIN_TIMEOUT,
-                                          0100644, PROC_SYS_NET_FIN_TIMEOUT, 0, 0);
+                                          0100666, PROC_SYS_NET_FIN_TIMEOUT, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
         if (STREQ(name, "tcp_syncookies")) {
@@ -5824,7 +5824,7 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
         }
         if (STREQ(name, "ip_forward")) {
             *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_NET_IP_FORWARD,
-                                          0100644, PROC_SYS_NET_IP_FORWARD, 0, 0);
+                                          0100666, PROC_SYS_NET_IP_FORWARD, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
         if (STREQ(name, "tcp_keepalive_time")) {
@@ -5849,12 +5849,12 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
         }
         if (STREQ(name, "ip_masquerade_dev")) {
             *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_NET_IP_MASQ_DEV,
-                                          0100644, PROC_SYS_NET_IP_MASQ_DEV, 0, 0);
+                                          0100666, PROC_SYS_NET_IP_MASQ_DEV, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
         if (STREQ(name, "ip_unprivileged_port_start")) {
             *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_NET_UNPRIV_PORT,
-                                          0100644, PROC_SYS_NET_IP_UNPRIV_PORT_START, 0, 0);
+                                          0100666, PROC_SYS_NET_IP_UNPRIV_PORT_START, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
         if (STREQ(name, "conf")) {

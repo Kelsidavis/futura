@@ -709,7 +709,7 @@ See `docs/ARM64_STATUS.md` for the historical snapshot and `docs/ARM64_REFACTORI
 **Build System**
 - Reproducible builds with `REPRO=1` flag.
 - Cross-platform Makefile supporting x86-64 and ARM64.
-- Rust driver integration (staticlib compilation) — **90 crates** across x86-64 (60 drivers incl. NVMe, AHCI, xHCI, USB HID/Storage/Hub/CDC-ECM/Audio, RTL8111/I225-V/I211/XGBE, HDA+Realtek, LAPIC/IOAPIC, UART 16550, i8042, PCIe ECAM/AER/SR-IOV, Eth PHY, EDID, DMA pool, FB console, AMD DF/NBIO/PSP/SEV/MP2/SMN/UMC/CCP/I2C/SMBus/IOMMU/GPIO/WDT/SPI/SB-TSI/P-State, Intel VT-d/HWP/LPSS/PMC/GPIO/iTCO, ACPI PM/EC/Thermal/Button, x86 TSC/MCE/CPUID, VirtIO console, VESA FB, HPET, RTC, TPM 2.0, PCI MSI-X/PM), ARM64, and VirtIO.
+- Rust driver integration (staticlib compilation) — **96 crates** across x86-64 (66 drivers incl. NVMe, AHCI, xHCI, USB HID/Storage/Hub/CDC-ECM/Audio, RTL8111/I225-V/I211/XGBE, HDA+Realtek+HDMI, LAPIC/IOAPIC, UART 16550, i8042, PCIe ECAM/AER/SR-IOV, Eth PHY, EDID, DMA pool, FB console, AMD DF/NBIO/PSP/SEV/MP2/SMN/UMC/CCP/I2C/SMBus/IOMMU/GPIO/WDT/SPI/SB-TSI/P-State, Intel VT-d/HWP/LPSS/PMC/GPIO/iTCO/MEI/TBT/Thermal/GNA/SST, ACPI PM/EC/Thermal/Button, x86 TSC/MCE/CPUID, VirtIO console, VESA FB, HPET, RTC, TPM 2.0, PCI MSI-X/PM), ARM64, and VirtIO.
 - Performance CI with baseline comparison and ±5% drift detection.
 
 **Testing**

@@ -62376,6 +62376,136 @@ __attribute__((noinline)) static void test_pty_and_cgroup(void) {
             fut_test_fail(2215);
         }
     }
+
+    /* ── Test 2218: dup2(fd, fd) returns fd without closing ── */
+    fut_printf("[MISC-TEST] Test 2218: dup2 same fd\n");
+    {
+        extern long sys_open(const char *, int, int);
+        extern long sys_dup2(int oldfd, int newfd);
+        extern long sys_close(int);
+        long fd = sys_open("/proc/version", 0, 0);
+        int pass = 0;
+        if (fd >= 0) {
+            long r = sys_dup2((int)fd, (int)fd);
+            if (r == fd) {
+                /* fd should still be valid */
+                static char buf[16];
+                long n = sys_read((int)fd, buf, 8);
+                if (n > 0) pass = 1;
+            }
+            sys_close((int)fd);
+        }
+        if (pass) {
+            fut_printf("[MISC-TEST] ✓ Test 2218: dup2(fd,fd) ok\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2218: dup2 same fd failed\n");
+            fut_test_fail(2218);
+        }
+    }
+
+    /* ── Test 2219: pipe read returns 0 (EOF) after write end closed ── */
+    fut_printf("[MISC-TEST] Test 2219: pipe EOF on write close\n");
+    {
+        extern long sys_pipe2(int pipefd[2], int flags);
+        extern long sys_close(int);
+        static int pfd[2];
+        long r = sys_pipe2(pfd, 0x800 /* O_NONBLOCK */);
+        int pass = 0;
+        if (r == 0) {
+            sys_close(pfd[1]);  /* Close write end */
+            static char buf[4];
+            long n = sys_read(pfd[0], buf, 4);
+            if (n == 0) pass = 1;  /* EOF */
+            else fut_printf("[MISC-TEST]   read=%ld\n", n);
+            sys_close(pfd[0]);
+        }
+        if (pass) {
+            fut_printf("[MISC-TEST] ✓ Test 2219: pipe EOF ok\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2219: pipe EOF failed\n");
+            fut_test_fail(2219);
+        }
+    }
+
+    /* ── Test 2220: close_range() bulk close ── */
+    fut_printf("[MISC-TEST] Test 2220: close_range\n");
+    {
+        extern long sys_close_range(unsigned int first, unsigned int last, unsigned int flags);
+        extern long sys_open(const char *, int, int);
+        /* Open some fds then close them in bulk */
+        long fd1 = sys_open("/proc/version", 0, 0);
+        long fd2 = sys_open("/proc/uptime", 0, 0);
+        int pass = 0;
+        if (fd1 >= 0 && fd2 >= 0) {
+            long r = sys_close_range((unsigned int)fd1, (unsigned int)fd2, 0);
+            if (r == 0) {
+                /* Verify fds are now invalid */
+                static char buf[4];
+                long n = sys_read((int)fd1, buf, 1);
+                if (n < 0) pass = 1;  /* EBADF expected */
+            }
+        }
+        if (pass) {
+            fut_printf("[MISC-TEST] ✓ Test 2220: close_range ok\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2220: close_range failed\n");
+            fut_test_fail(2220);
+            if (fd1 >= 0) sys_close((int)fd1);
+            if (fd2 >= 0) sys_close((int)fd2);
+        }
+    }
+
+    /* ── Test 2221: eventfd read/write roundtrip ── */
+    fut_printf("[MISC-TEST] Test 2221: eventfd roundtrip\n");
+    {
+        extern long sys_eventfd2(unsigned int initval, int flags);
+        long efd = sys_eventfd2(0, 0);
+        int pass = 0;
+        if (efd >= 0) {
+            uint64_t val = 42;
+            ssize_t nw = sys_write((int)efd, &val, sizeof(val));
+            if (nw == 8) {
+                uint64_t rval = 0;
+                long nr = sys_read((int)efd, &rval, sizeof(rval));
+                if (nr == 8 && rval == 42) pass = 1;
+                else fut_printf("[MISC-TEST]   read=%ld val=%llu\n", nr, (unsigned long long)rval);
+            }
+            sys_close((int)efd);
+        }
+        if (pass) {
+            fut_printf("[MISC-TEST] ✓ Test 2221: eventfd roundtrip ok\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2221: eventfd failed\n");
+            fut_test_fail(2221);
+        }
+    }
+
+    /* ── Test 2222: /dev/null write returns count, read returns 0 ── */
+    fut_printf("[MISC-TEST] Test 2222: /dev/null behavior\n");
+    {
+        extern long sys_open(const char *, int, int);
+        extern long sys_close(int);
+        long fd = sys_open("/dev/null", 02 /* O_RDWR */, 0);
+        int pass = 0;
+        if (fd >= 0) {
+            ssize_t nw = sys_write((int)fd, "hello", 5);
+            static char buf[4];
+            long nr = sys_read((int)fd, buf, 4);
+            if (nw == 5 && nr == 0) pass = 1;
+            sys_close((int)fd);
+        }
+        if (pass) {
+            fut_printf("[MISC-TEST] ✓ Test 2222: /dev/null ok\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2222: /dev/null broken\n");
+            fut_test_fail(2222);
+        }
+    }
 }
 
 /* ============================================================

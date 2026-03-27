@@ -5716,6 +5716,26 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0100644, PROC_SYS_SCHED_MIGCOST_NS, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "modprobe")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_SCHED_CHILD + 1,
+                                          0100644, PROC_SYS_KERNEL_NMI_WD, 0, 0); /* reuse kind for string */
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "modules_disabled")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_SCHED_CHILD + 2,
+                                          0100644, PROC_SYS_KERNEL_NMI_WD, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "kexec_load_disabled")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_SCHED_CHILD + 3,
+                                          0100644, PROC_SYS_KERNEL_NMI_WD, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "unprivileged_userns_clone")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_SCHED_CHILD + 4,
+                                          0100644, PROC_SYS_KERNEL_NMI_WD, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         return -ENOENT;
     }
 
@@ -6562,7 +6582,10 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                    "sched_latency_ns", "sched_min_granularity_ns",
                                    "sched_wakeup_granularity_ns",
                                    "sched_migration_cost_ns",
-                                   "sched_child_runs_first" };
+                                   "sched_child_runs_first",
+                                   "modprobe", "modules_disabled",
+                                   "kexec_load_disabled",
+                                   "unprivileged_userns_clone" };
         static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
@@ -6584,7 +6607,9 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
-                                     FUT_VDIR_TYPE_REG };
+                                     FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG };
         static const uint64_t i[] = { PROC_INO_SYS_KERNEL_DIR, PROC_INO_SYS_DIR,
                                       PROC_INO_SYS_OSTYPE, PROC_INO_SYS_OSRELEASE,
                                       PROC_INO_SYS_HOSTNAME, PROC_INO_SYS_PID_MAX,
@@ -6612,8 +6637,12 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                       PROC_INO_SYS_SCHED_MINGRAN,
                                       PROC_INO_SYS_SCHED_WAKEUP,
                                       PROC_INO_SYS_SCHED_MIGCOST,
-                                      PROC_INO_SYS_SCHED_CHILD };
-        if (idx < 40) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+                                      PROC_INO_SYS_SCHED_CHILD,
+                                      PROC_INO_SYS_SCHED_CHILD + 1,  /* modprobe */
+                                      PROC_INO_SYS_SCHED_CHILD + 2,  /* modules_disabled */
+                                      PROC_INO_SYS_SCHED_CHILD + 3,  /* kexec_load_disabled */
+                                      PROC_INO_SYS_SCHED_CHILD + 4 };/* unprivileged_userns_clone */
+        if (idx < 44) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
         return -ENOENT;
     }
 

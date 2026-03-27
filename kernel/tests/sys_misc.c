@@ -65768,6 +65768,38 @@ void fut_misc_test_thread(void *arg) {
     test_per_iface_conf(); /* Tests 1869-1871 */
 
     test_proc_stat_cpu(); /* Tests 2137-2140 */
+
+    /* ── Test 2141: /proc/vmstat pgfault has real data ── */
+    {
+        extern long sys_open(const char *, int, int);
+        extern long sys_read(int, void *, size_t);
+        extern long sys_close(int);
+        fut_printf("[MISC-TEST] Test 2141: /proc/vmstat pgfault > 0\n");
+        static char vbuf[1024];
+        long fd = sys_open("/proc/vmstat", 0, 0);
+        if (fd >= 0) {
+            long n = sys_read((int)fd, vbuf, sizeof(vbuf) - 1);
+            sys_close((int)fd);
+            vbuf[n > 0 ? n : 0] = '\0';
+            int found = 0;
+            for (long i = 0; i < n - 8; i++) {
+                if (vbuf[i]=='p' && vbuf[i+1]=='g' && vbuf[i+2]=='f' &&
+                    vbuf[i+3]=='a' && vbuf[i+4]=='u' && vbuf[i+5]=='l' &&
+                    vbuf[i+6]=='t' && vbuf[i+7]==' ') {
+                    long val = 0;
+                    for (long j = i+8; j < n && vbuf[j] >= '0' && vbuf[j] <= '9'; j++)
+                        val = val * 10 + (vbuf[j] - '0');
+                    if (val > 0) {
+                        fut_printf("[MISC-TEST] ✓ Test 2141: pgfault=%ld\n", val);
+                        fut_test_pass(); found = 1;
+                    }
+                    break;
+                }
+            }
+            if (!found) { fut_printf("[MISC-TEST] ✗ Test 2141: pgfault=0\n"); fut_test_fail(2141); }
+        } else { fut_printf("[MISC-TEST] ✗ Test 2141: open=%ld\n", fd); fut_test_fail(2141); }
+    }
+
     test_sock_raw(); /* Tests 2132-2136 */
     test_linux_aio(); /* Tests 2124-2131 */
     test_ptrace(); /* Tests 2119-2123 */

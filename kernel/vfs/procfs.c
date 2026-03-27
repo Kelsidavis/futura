@@ -2330,11 +2330,21 @@ static size_t gen_boot_id(char *buf, size_t cap) {
  * ============================================================ */
 static size_t gen_vmstat(char *buf, size_t cap) {
     struct pbuf b = { buf, 0, cap };
-    uint64_t total_kb  = fut_pmm_total_pages() * 4;
-    uint64_t free_kb   = fut_pmm_free_pages()  * 4;
-    uint64_t total_pg  = total_kb / 4;
-    uint64_t free_pg   = free_kb  / 4;
+    uint64_t total_pg  = fut_pmm_total_pages();
+    uint64_t free_pg   = fut_pmm_free_pages();
     uint64_t used_pg   = total_pg > free_pg ? total_pg - free_pg : 0;
+
+    /* Sum page fault counters across all tasks for real pgfault/pgmajfault */
+    uint64_t total_minflt = 0, total_majflt = 0;
+    {
+        extern fut_task_t *fut_task_list;
+        fut_task_t *t = fut_task_list;
+        while (t) {
+            total_minflt += t->minflt + t->child_minflt;
+            total_majflt += t->majflt + t->child_majflt;
+            t = t->next;
+        }
+    }
 
     pb_str(&b, "nr_free_pages ");       pb_u64(&b, free_pg);  pb_char(&b, '\n');
     pb_str(&b, "nr_inactive_anon ");    pb_u64(&b, 0);         pb_char(&b, '\n');
@@ -2348,10 +2358,14 @@ static size_t gen_vmstat(char *buf, size_t cap) {
     pb_str(&b, "nr_writeback ");        pb_u64(&b, 0);         pb_char(&b, '\n');
     pb_str(&b, "nr_slab_reclaimable "); pb_u64(&b, 0);         pb_char(&b, '\n');
     pb_str(&b, "nr_slab_unreclaimable "); pb_u64(&b, 0);       pb_char(&b, '\n');
-    pb_str(&b, "pgpgin 0\n");
-    pb_str(&b, "pgpgout 0\n");
-    pb_str(&b, "pgfault 0\n");
-    pb_str(&b, "pgmajfault 0\n");
+    pb_str(&b, "pgpgin ");  pb_u64(&b, 0); pb_char(&b, '\n');
+    pb_str(&b, "pgpgout "); pb_u64(&b, 0); pb_char(&b, '\n');
+    pb_str(&b, "pgfault "); pb_u64(&b, total_minflt); pb_char(&b, '\n');
+    pb_str(&b, "pgmajfault "); pb_u64(&b, total_majflt); pb_char(&b, '\n');
+    /* Context switch and interrupt stats */
+    pb_str(&b, "pswpin 0\npswpout 0\n");
+    pb_str(&b, "pgalloc_normal "); pb_u64(&b, total_pg - free_pg); pb_char(&b, '\n');
+    pb_str(&b, "pgfree "); pb_u64(&b, free_pg); pb_char(&b, '\n');
     return b.pos;
 }
 

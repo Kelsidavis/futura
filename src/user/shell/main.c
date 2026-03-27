@@ -8952,6 +8952,56 @@ static int execute_command(int argc, char *argv[]) {
         }
         /* Accept silently — marking vars readonly would require shell_vars changes */
         return 0;
+    } else if (strcmp_simple(argv[0], "let") == 0) {
+        /* let EXPR — evaluate arithmetic expression, set exit status */
+        if (argc < 2) return 1;
+        /* Join all args */
+        char expr[256];
+        int ep = 0;
+        for (int i = 1; i < argc && ep < 250; i++) {
+            for (const char *s = argv[i]; *s && ep < 250; s++)
+                expr[ep++] = *s;
+        }
+        expr[ep] = '\0';
+        /* Find = for assignment (VAR=EXPR) */
+        char *eq = NULL;
+        for (int i = 0; expr[i]; i++) {
+            if (expr[i] == '=' && i > 0 && expr[i-1] != '!' && expr[i-1] != '<' &&
+                expr[i-1] != '>' && (i < 2 || expr[i+1] != '=')) {
+                eq = &expr[i]; break;
+            }
+        }
+        if (eq) {
+            *eq = '\0';
+            const char *varname = expr;
+            const char *valexpr = eq + 1;
+            /* Evaluate simple arithmetic */
+            long val = simple_atoi(valexpr);
+            /* Check for + - * / */
+            const char *op = valexpr;
+            while (*op && *op != '+' && *op != '-' && *op != '*' && *op != '/' && *op != '%') op++;
+            if (*op && op > valexpr) {
+                long a = simple_atoi(valexpr);
+                long b = simple_atoi(op + 1);
+                if (*op == '+') val = a + b;
+                else if (*op == '-') val = a - b;
+                else if (*op == '*') val = a * b;
+                else if (*op == '/' && b != 0) val = a / b;
+                else if (*op == '%' && b != 0) val = a % b;
+            }
+            char vbuf[20]; int vp = 0;
+            if (val < 0) { vbuf[vp++] = '-'; val = -val; }
+            if (val == 0) vbuf[vp++] = '0';
+            else { char rv[20]; int rp = 0;
+                while (val > 0) { rv[rp++] = '0' + (char)(val % 10); val /= 10; }
+                while (rp > 0) vbuf[vp++] = rv[--rp]; }
+            vbuf[vp] = '\0';
+            set_var(varname, vbuf, 0);
+            return 0;
+        }
+        /* No assignment — evaluate and return 0 if non-zero, 1 if zero */
+        long val = simple_atoi(expr);
+        return (val != 0) ? 0 : 1;
     } else if (strcmp_simple(argv[0], "getopts") == 0) {
         /* getopts OPTSTRING NAME [ARGS...] — parse command-line options */
         if (argc < 3) {
@@ -9071,6 +9121,7 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "od") == 0 ||
             strcmp_simple(cmd, "awk") == 0 ||
             strcmp_simple(cmd, "eval") == 0 ||
+            strcmp_simple(cmd, "let") == 0 ||
             strcmp_simple(cmd, "readonly") == 0 ||
             strcmp_simple(cmd, "getopts") == 0 ||
             strcmp_simple(cmd, "find") == 0 ||
@@ -10001,7 +10052,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   128 built-in commands — type 'help'    |\n");
+    write_str(1, "|   129 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");

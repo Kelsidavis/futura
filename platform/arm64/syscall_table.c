@@ -1495,6 +1495,32 @@ static int64_t sys_bpf_wrapper(uint64_t cmd, uint64_t attr, uint64_t size,
     return sys_bpf((int)cmd, (const void *)attr, (unsigned int)size);
 }
 
+/* Keyring syscall wrappers (add_key/request_key/keyctl) */
+extern long sys_add_key(const char *type, const char *description,
+                         const void *payload, size_t plen, int keyring);
+static int64_t sys_add_key_wrapper(uint64_t type, uint64_t desc, uint64_t payload,
+                                    uint64_t plen, uint64_t keyring, uint64_t a5) {
+    (void)a5;
+    return sys_add_key((const char *)type, (const char *)desc,
+                        (const void *)payload, (size_t)plen, (int)keyring);
+}
+extern long sys_request_key(const char *type, const char *description,
+                             const char *callout_info, int dest_keyring);
+static int64_t sys_request_key_wrapper(uint64_t type, uint64_t desc, uint64_t callout,
+                                        uint64_t dest, uint64_t a4, uint64_t a5) {
+    (void)a4; (void)a5;
+    return sys_request_key((const char *)type, (const char *)desc,
+                            (const char *)callout, (int)dest);
+}
+extern long sys_keyctl(int operation, unsigned long arg2, unsigned long arg3,
+                        unsigned long arg4, unsigned long arg5);
+static int64_t sys_keyctl_wrapper(uint64_t op, uint64_t a2, uint64_t a3,
+                                   uint64_t a4, uint64_t a5, uint64_t a6) {
+    (void)a6;
+    return sys_keyctl((int)op, (unsigned long)a2, (unsigned long)a3,
+                       (unsigned long)a4, (unsigned long)a5);
+}
+
 /* Module loading stubs — return ENOEXEC/ENOENT */
 static int64_t sys_init_module_wrapper(uint64_t a, uint64_t b, uint64_t c,
                                         uint64_t d, uint64_t e, uint64_t f) {
@@ -4361,11 +4387,11 @@ static void arm64_syscall_table_init(void) {
     syscall_table[__NR_rt_tgsigqueueinfo].name = "rt_tgsigqueueinfo";
 
     /* Linux keyring stubs (Linux ARM64: 217-219) — ENOSYS, not implemented */
-    syscall_table[__NR_add_key].handler = (syscall_fn_t)sys_enosys_stub;
+    syscall_table[__NR_add_key].handler = (syscall_fn_t)sys_add_key_wrapper;
     syscall_table[__NR_add_key].name = "add_key";
-    syscall_table[__NR_request_key].handler = (syscall_fn_t)sys_enosys_stub;
+    syscall_table[__NR_request_key].handler = (syscall_fn_t)sys_request_key_wrapper;
     syscall_table[__NR_request_key].name = "request_key";
-    syscall_table[__NR_keyctl].handler = (syscall_fn_t)sys_enosys_stub;
+    syscall_table[__NR_keyctl].handler = (syscall_fn_t)sys_keyctl_wrapper;
     syscall_table[__NR_keyctl].name = "keyctl";
 
     /* Linux 5.13-5.16 — wire to real implementations */

@@ -61385,6 +61385,123 @@ __attribute__((noinline)) static void test_pty_and_cgroup(void) {
             fut_test_fail(2188);
         }
     }
+
+    /* ── Test 2189: cpuset.cpus readable, contains "0" ── */
+    fut_printf("[MISC-TEST] Test 2189: cpuset.cpus\n");
+    {
+        long fd = sys_open("/cgroup/cpuset.cpus", 0, 0);
+        if (fd >= 0) {
+            static char buf[16];
+            long n = sys_read((int)fd, buf, 15);
+            sys_close((int)fd);
+            if (n > 0 && buf[0] == '0') {
+                buf[n < 15 ? n : 14] = '\0';
+                fut_printf("[MISC-TEST] ✓ Test 2189: cpuset.cpus='%s'\n", buf);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2189: n=%ld buf[0]=%c\n", n, n > 0 ? buf[0] : '?');
+                fut_test_fail(2189);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2189: open=%ld\n", fd);
+            fut_test_fail(2189);
+        }
+    }
+
+    /* ── Test 2190: cpuset.cpus.effective readable ── */
+    fut_printf("[MISC-TEST] Test 2190: cpuset.cpus.effective\n");
+    {
+        long fd = sys_open("/cgroup/cpuset.cpus.effective", 0, 0);
+        if (fd >= 0) {
+            static char buf[16];
+            long n = sys_read((int)fd, buf, 15);
+            sys_close((int)fd);
+            if (n > 0 && buf[0] == '0') {
+                fut_printf("[MISC-TEST] ✓ Test 2190: cpus.effective ok\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2190: n=%ld\n", n);
+                fut_test_fail(2190);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2190: open=%ld\n", fd);
+            fut_test_fail(2190);
+        }
+    }
+
+    /* ── Test 2191: cpuset.mems readable, value is "0" ── */
+    fut_printf("[MISC-TEST] Test 2191: cpuset.mems\n");
+    {
+        long fd = sys_open("/cgroup/cpuset.mems", 0, 0);
+        if (fd >= 0) {
+            static char buf[16];
+            long n = sys_read((int)fd, buf, 15);
+            sys_close((int)fd);
+            if (n >= 2 && buf[0] == '0' && buf[1] == '\n') {
+                fut_printf("[MISC-TEST] ✓ Test 2191: cpuset.mems=0\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2191: n=%ld\n", n);
+                fut_test_fail(2191);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2191: open=%ld\n", fd);
+            fut_test_fail(2191);
+        }
+    }
+
+    /* ── Test 2192: cpuset.cpus.partition readable, contains "member" ── */
+    fut_printf("[MISC-TEST] Test 2192: cpuset.cpus.partition\n");
+    {
+        long fd = sys_open("/cgroup/cpuset.cpus.partition", 0, 0);
+        if (fd >= 0) {
+            static char buf[32];
+            long n = sys_read((int)fd, buf, 31);
+            sys_close((int)fd);
+            if (n > 0 && buf[0] == 'm') {
+                buf[n < 31 ? n : 30] = '\0';
+                fut_printf("[MISC-TEST] ✓ Test 2192: partition='%s'\n", buf);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2192: n=%ld\n", n);
+                fut_test_fail(2192);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2192: open=%ld\n", fd);
+            fut_test_fail(2192);
+        }
+    }
+
+    /* ── Test 2193: cgroup.controllers includes "cpuset" ── */
+    fut_printf("[MISC-TEST] Test 2193: controllers has cpuset\n");
+    {
+        long fd = sys_open("/cgroup/cgroup.controllers", 0, 0);
+        if (fd >= 0) {
+            static char buf[128];
+            long n = sys_read((int)fd, buf, 127);
+            sys_close((int)fd);
+            int found = 0;
+            if (n > 0) {
+                buf[n < 127 ? n : 126] = '\0';
+                for (long i = 0; i < n - 5; i++) {
+                    if (buf[i]=='c' && buf[i+1]=='p' && buf[i+2]=='u' &&
+                        buf[i+3]=='s' && buf[i+4]=='e' && buf[i+5]=='t') {
+                        found = 1; break;
+                    }
+                }
+            }
+            if (found) {
+                fut_printf("[MISC-TEST] ✓ Test 2193: cpuset in controllers\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2193: no cpuset\n");
+                fut_test_fail(2193);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2193: open=%ld\n", fd);
+            fut_test_fail(2193);
+        }
+    }
 }
 
 /* ============================================================

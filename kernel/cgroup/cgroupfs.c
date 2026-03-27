@@ -6,7 +6,7 @@
  * Implements a mountable cgroup2 filesystem that exposes the unified
  * hierarchy at /sys/fs/cgroup/. Provides the standard interface files:
  *
- *   cgroup.controllers     — available controllers (cpu io memory pids)
+ *   cgroup.controllers     — available controllers (cpuset cpu io memory pids)
  *   cgroup.subtree_control — enabled controllers for children
  *   cgroup.procs           — list of PIDs in this cgroup
  *   cgroup.type            — "domain" or "threaded"
@@ -21,6 +21,11 @@
  *   pids.current           — current PID count
  *   io.max                 — I/O bandwidth limit
  *   cgroup.freeze          — freeze state (0/1)
+ *   cpuset.cpus            — allowed CPU set (e.g., "0-3")
+ *   cpuset.cpus.effective  — effective CPU set
+ *   cpuset.mems            — allowed memory nodes (e.g., "0")
+ *   cpuset.mems.effective  — effective memory nodes
+ *   cpuset.cpus.partition  — partition type (member/root/isolated)
  *
  * Used by systemd, Docker, Kubernetes, containerd, and all modern
  * container runtimes that require cgroup v2 support.
@@ -58,6 +63,11 @@ enum cgroupfs_file {
     CGFS_PIDS_CURRENT,
     CGFS_IO_MAX,
     CGFS_FREEZE,
+    CGFS_CPUSET_CPUS,
+    CGFS_CPUSET_CPUS_EFF,
+    CGFS_CPUSET_MEMS,
+    CGFS_CPUSET_MEMS_EFF,
+    CGFS_CPUSET_PARTITION,
 };
 
 typedef struct {
@@ -190,6 +200,11 @@ static const struct {
     { "pids.max",               CGFS_PIDS_MAX,        0100644 },
     { "pids.current",           CGFS_PIDS_CURRENT,    0100444 },
     { "io.max",                 CGFS_IO_MAX,          0100644 },
+    { "cpuset.cpus",            CGFS_CPUSET_CPUS,     0100644 },
+    { "cpuset.cpus.effective",  CGFS_CPUSET_CPUS_EFF, 0100444 },
+    { "cpuset.mems",            CGFS_CPUSET_MEMS,     0100644 },
+    { "cpuset.mems.effective",  CGFS_CPUSET_MEMS_EFF, 0100444 },
+    { "cpuset.cpus.partition",  CGFS_CPUSET_PARTITION,0100644 },
 };
 #define CG_NUM_FILES (sizeof(cg_files) / sizeof(cg_files[0]))
 
@@ -363,13 +378,13 @@ ssize_t cgfs_file_read(struct fut_vnode *vnode, void *buf, size_t size, uint64_t
 
     switch (nd->ftype) {
     case CGFS_CONTROLLERS: {
-        const char *s = "cpu io memory pids\n";
+        const char *s = "cpuset cpu io memory pids\n";
         total = 0;
         while (s[total]) { tmp[total] = s[total]; total++; }
         break;
     }
     case CGFS_SUBTREE_CONTROL: {
-        const char *s = "cpu io memory pids\n";
+        const char *s = "cpuset cpu io memory pids\n";
         total = 0;
         while (s[total]) { tmp[total] = s[total]; total++; }
         break;
@@ -494,6 +509,46 @@ ssize_t cgfs_file_read(struct fut_vnode *vnode, void *buf, size_t size, uint64_t
         extern int freezer_get(const char *);
         int frozen = freezer_get(cg_name);
         tmp[0] = frozen ? '1' : '0'; tmp[1] = '\n'; tmp[2] = '\0'; total = 2;
+        break;
+    }
+    case CGFS_CPUSET_CPUS:
+    case CGFS_CPUSET_CPUS_EFF: {
+        /* Report available CPUs as "0-N" where N = nproc-1.
+         * Use the platform SMP count if available, else default to 1. */
+#if defined(__aarch64__)
+        extern uint32_t fut_platform_get_cpu_count(void);
+        uint32_t ncpu = fut_platform_get_cpu_count();
+#elif defined(__x86_64__)
+        extern uint32_t smp_get_cpu_count(void);
+        uint32_t ncpu = smp_get_cpu_count();
+#else
+        uint32_t ncpu = 1;
+#endif
+        if (ncpu == 0) ncpu = 1;
+        int pos = 0;
+        if (ncpu == 1) {
+            tmp[pos++] = '0';
+        } else {
+            tmp[pos++] = '0'; tmp[pos++] = '-';
+            uint32_t maxcpu = ncpu - 1;
+            char rev[12]; int rp = 0;
+            while (maxcpu > 0) { rev[rp++] = '0' + (char)(maxcpu % 10); maxcpu /= 10; }
+            while (rp > 0) tmp[pos++] = rev[--rp];
+        }
+        tmp[pos++] = '\n'; tmp[pos] = '\0';
+        total = (size_t)pos;
+        break;
+    }
+    case CGFS_CPUSET_MEMS:
+    case CGFS_CPUSET_MEMS_EFF: {
+        /* Single NUMA node: always "0" */
+        tmp[0] = '0'; tmp[1] = '\n'; tmp[2] = '\0'; total = 2;
+        break;
+    }
+    case CGFS_CPUSET_PARTITION: {
+        const char *s = "member\n";
+        total = 0;
+        while (s[total]) { tmp[total] = s[total]; total++; }
         break;
     }
     default:

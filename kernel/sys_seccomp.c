@@ -7,7 +7,7 @@
  *   SECCOMP_SET_MODE_STRICT  — allow only read/write/exit/sigreturn
  *   SECCOMP_SET_MODE_FILTER  — install cBPF program to filter syscalls
  *   SECCOMP_GET_ACTION_AVAIL — check if a seccomp action is supported
- *   SECCOMP_GET_NOTIF_SIZES  — user notification (not supported)
+ *   SECCOMP_GET_NOTIF_SIZES  — return notification structure sizes
  *
  * BPF filters are stored per-task and evaluated on every syscall.
  * Multiple filters are chained — all must return ALLOW for the
@@ -178,8 +178,24 @@ long sys_seccomp(unsigned int operation, unsigned int flags, const void *uargs) 
         }
     }
 
-    case SECCOMP_GET_NOTIF_SIZES:
-        return -EINVAL;
+    case SECCOMP_GET_NOTIF_SIZES: {
+        /* Return sizes of notification structures (Linux 5.0+).
+         * Used by container runtimes (runc, crun) to allocate user
+         * notification buffers for SECCOMP_RET_USER_NOTIF handling.
+         *
+         * struct seccomp_notif_sizes { u16 notif, notif_resp, data; } */
+        if (!uargs) return -EFAULT;
+        struct { uint16_t notif; uint16_t notif_resp; uint16_t data; } sizes;
+        sizes.notif = 80;       /* sizeof(struct seccomp_notif) on Linux */
+        sizes.notif_resp = 24;  /* sizeof(struct seccomp_notif_resp) */
+        sizes.data = 64;        /* sizeof(struct seccomp_data) */
+        /* Copy to userspace */
+        uint16_t *out = (uint16_t *)(uintptr_t)uargs;
+        out[0] = sizes.notif;
+        out[1] = sizes.notif_resp;
+        out[2] = sizes.data;
+        return 0;
+    }
 
     default:
         return -EINVAL;

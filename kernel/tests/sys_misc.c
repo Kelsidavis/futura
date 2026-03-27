@@ -66055,6 +66055,61 @@ void fut_misc_test_thread(void *arg) {
         }
     }
 
+    /* ── Test 2153: SECCOMP_GET_NOTIF_SIZES returns valid sizes ── */
+    {
+        extern long sys_seccomp(unsigned int operation, unsigned int flags,
+                                const void *uargs);
+        fut_printf("[MISC-TEST] Test 2153: SECCOMP_GET_NOTIF_SIZES\n");
+        static uint16_t sizes[3];
+        sizes[0] = sizes[1] = sizes[2] = 0;
+        long r = sys_seccomp(3 /* SECCOMP_GET_NOTIF_SIZES */, 0, (const void *)sizes);
+        if (r == 0 && sizes[0] > 0 && sizes[1] > 0 && sizes[2] > 0) {
+            fut_printf("[MISC-TEST] ✓ Test 2153: notif=%u resp=%u data=%u\n",
+                       sizes[0], sizes[1], sizes[2]);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2153: r=%ld sizes=%u/%u/%u\n",
+                       r, sizes[0], sizes[1], sizes[2]);
+            fut_test_fail(2153);
+        }
+    }
+
+    /* ── Test 2154: /proc/stat procs_running > 0 ── */
+    {
+        extern long sys_open(const char *, int, int);
+        extern long sys_read(int, void *, size_t);
+        extern long sys_close(int);
+        fut_printf("[MISC-TEST] Test 2154: /proc/stat procs_running > 0\n");
+        static char sbuf[1024];
+        long fd = sys_open("/proc/stat", 0, 0);
+        if (fd >= 0) {
+            long n = sys_read((int)fd, sbuf, sizeof(sbuf) - 1);
+            sys_close((int)fd);
+            sbuf[n > 0 ? n : 0] = '\0';
+            int found = 0;
+            for (long i = 0; i < n - 14; i++) {
+                if (sbuf[i] == 'p' && sbuf[i+1] == 'r' && sbuf[i+2] == 'o' &&
+                    sbuf[i+3] == 'c' && sbuf[i+4] == 's' && sbuf[i+5] == '_' &&
+                    sbuf[i+6] == 'r' && sbuf[i+7] == 'u' && sbuf[i+8] == 'n') {
+                    /* Parse number after "procs_running " */
+                    long j = i + 14;
+                    long val = 0;
+                    while (j < n && sbuf[j] >= '0' && sbuf[j] <= '9')
+                        val = val * 10 + (sbuf[j++] - '0');
+                    if (val > 0) { found = 1; }
+                    break;
+                }
+            }
+            if (found) {
+                fut_printf("[MISC-TEST] ✓ Test 2154: procs_running > 0\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2154: procs_running=0\n");
+                fut_test_fail(2154);
+            }
+        } else { fut_printf("[MISC-TEST] ✗ Test 2154: open=%ld\n", fd); fut_test_fail(2154); }
+    }
+
     test_advanced_aio_ptrace(); /* Tests 2142-2147 */
     test_proc_stat_cpu(); /* Tests 2137-2140 */
 

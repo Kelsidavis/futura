@@ -4014,6 +4014,267 @@ static void cmd_tr(int argc, char *argv[]) {
     }
 }
 
+/* Built-in: sed - Stream editor for basic s/pattern/replacement/ */
+static void cmd_sed(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: sed 's/pattern/replacement/[g]' [file...]\n");
+        return;
+    }
+
+    /* Parse the sed expression */
+    const char *expr = argv[1];
+    int file_start = 2;
+
+    /* Support -e expr syntax */
+    if (strcmp_simple(argv[1], "-e") == 0 && argc >= 3) {
+        expr = argv[2];
+        file_start = 3;
+    }
+
+    /* Only support s/pat/rep/[g] for now */
+    if (expr[0] != 's' || expr[1] == '\0') {
+        write_str(2, "sed: only s/pattern/replacement/[g] supported\n");
+        return;
+    }
+
+    char delim = expr[1];
+    /* Extract pattern */
+    char pat[128] = {0};
+    int pi = 0;
+    const char *p = expr + 2;
+    while (*p && *p != delim && pi < 127) pat[pi++] = *p++;
+    pat[pi] = '\0';
+    if (*p == delim) p++;
+
+    /* Extract replacement */
+    char rep[128] = {0};
+    int ri = 0;
+    while (*p && *p != delim && ri < 127) rep[ri++] = *p++;
+    rep[ri] = '\0';
+    if (*p == delim) p++;
+
+    int global = (*p == 'g');
+
+    /* Process input */
+    int fd_in = 0; /* stdin */
+    if (file_start < argc) {
+        fd_in = sys_open(argv[file_start], O_RDONLY, 0);
+        if (fd_in < 0) {
+            write_str(2, "sed: cannot open '");
+            write_str(2, argv[file_start]);
+            write_str(2, "'\n");
+            return;
+        }
+    }
+
+    char line[1024];
+    int lp = 0;
+    char ch;
+    while (sys_read(fd_in, &ch, 1) == 1) {
+        if (ch == '\n' || lp >= 1022) {
+            line[lp] = '\0';
+            /* Apply substitution */
+            char out[1024];
+            int oi = 0;
+            int replaced = 0;
+            int patlen = pi;
+            int replen = ri;
+            for (int i = 0; line[i] && oi < 1020; i++) {
+                if ((!replaced || global) && patlen > 0) {
+                    int match = 1;
+                    for (int j = 0; j < patlen; j++) {
+                        if (line[i + j] != pat[j]) { match = 0; break; }
+                    }
+                    if (match) {
+                        for (int j = 0; j < replen && oi < 1020; j++)
+                            out[oi++] = rep[j];
+                        i += patlen - 1;
+                        replaced = 1;
+                        continue;
+                    }
+                }
+                out[oi++] = line[i];
+            }
+            out[oi++] = '\n';
+            out[oi] = '\0';
+            sys_write(1, out, oi);
+            lp = 0;
+        } else {
+            line[lp++] = ch;
+        }
+    }
+    /* Handle last line without newline */
+    if (lp > 0) {
+        line[lp] = '\0';
+        char out[1024];
+        int oi = 0;
+        int replaced = 0;
+        int patlen = pi;
+        int replen = ri;
+        for (int i = 0; line[i] && oi < 1020; i++) {
+            if ((!replaced || global) && patlen > 0) {
+                int match = 1;
+                for (int j = 0; j < patlen; j++) {
+                    if (line[i + j] != pat[j]) { match = 0; break; }
+                }
+                if (match) {
+                    for (int j = 0; j < replen && oi < 1020; j++)
+                        out[oi++] = rep[j];
+                    i += patlen - 1;
+                    replaced = 1;
+                    continue;
+                }
+            }
+            out[oi++] = line[i];
+        }
+        out[oi++] = '\n';
+        sys_write(1, out, oi);
+    }
+    if (fd_in > 0) sys_close(fd_in);
+}
+
+/* Built-in: rev - Reverse lines of text */
+static void cmd_rev(int argc, char *argv[]) {
+    int fd_in = 0;
+    if (argc >= 2) {
+        fd_in = sys_open(argv[1], O_RDONLY, 0);
+        if (fd_in < 0) { write_str(2, "rev: cannot open file\n"); return; }
+    }
+    char line[1024];
+    int lp = 0;
+    char ch;
+    while (sys_read(fd_in, &ch, 1) == 1) {
+        if (ch == '\n') {
+            /* Reverse and print */
+            for (int i = lp - 1; i >= 0; i--) sys_write(1, &line[i], 1);
+            sys_write(1, "\n", 1);
+            lp = 0;
+        } else if (lp < 1022) {
+            line[lp++] = ch;
+        }
+    }
+    if (lp > 0) {
+        for (int i = lp - 1; i >= 0; i--) sys_write(1, &line[i], 1);
+        sys_write(1, "\n", 1);
+    }
+    if (fd_in > 0) sys_close(fd_in);
+}
+
+/* Built-in: nl - Number lines */
+static void cmd_nl(int argc, char *argv[]) {
+    int fd_in = 0;
+    if (argc >= 2) {
+        fd_in = sys_open(argv[1], O_RDONLY, 0);
+        if (fd_in < 0) { write_str(2, "nl: cannot open file\n"); return; }
+    }
+    char line[1024];
+    int lp = 0;
+    int lineno = 1;
+    char ch;
+    while (sys_read(fd_in, &ch, 1) == 1) {
+        if (ch == '\n') {
+            line[lp] = '\0';
+            /* Print line number and line */
+            char num[16];
+            int np = 0;
+            int n = lineno;
+            if (n == 0) { num[np++] = '0'; }
+            else { char rev[16]; int rp = 0;
+                while (n > 0) { rev[rp++] = '0' + (n % 10); n /= 10; }
+                while (rp > 0) num[np++] = rev[--rp]; }
+            /* Right-justify to 6 chars */
+            for (int i = np; i < 6; i++) sys_write(1, " ", 1);
+            sys_write(1, num, np);
+            sys_write(1, "\t", 1);
+            sys_write(1, line, lp);
+            sys_write(1, "\n", 1);
+            lineno++;
+            lp = 0;
+        } else if (lp < 1022) {
+            line[lp++] = ch;
+        }
+    }
+    if (fd_in > 0) sys_close(fd_in);
+}
+
+/* Built-in: base64 - Base64 encode/decode */
+static void cmd_base64(int argc, char *argv[]) {
+    static const char b64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    int decode = 0;
+    int file_arg = 1;
+    if (argc >= 2 && strcmp_simple(argv[1], "-d") == 0) { decode = 1; file_arg = 2; }
+
+    int fd_in = 0;
+    if (file_arg < argc) {
+        fd_in = sys_open(argv[file_arg], O_RDONLY, 0);
+        if (fd_in < 0) { write_str(2, "base64: cannot open file\n"); return; }
+    }
+
+    if (!decode) {
+        /* Encode */
+        unsigned char buf[3];
+        char out[5];
+        long n;
+        int col = 0;
+        while ((n = sys_read(fd_in, buf, 3)) > 0) {
+            out[0] = b64[buf[0] >> 2];
+            out[1] = b64[((buf[0] & 3) << 4) | (n > 1 ? (buf[1] >> 4) : 0)];
+            out[2] = n > 1 ? b64[((buf[1] & 0xF) << 2) | (n > 2 ? (buf[2] >> 6) : 0)] : '=';
+            out[3] = n > 2 ? b64[buf[2] & 0x3F] : '=';
+            sys_write(1, out, 4);
+            col += 4;
+            if (col >= 76) { sys_write(1, "\n", 1); col = 0; }
+        }
+        if (col > 0) sys_write(1, "\n", 1);
+    } else {
+        /* Decode */
+        write_str(2, "base64: decode not implemented\n");
+    }
+    if (fd_in > 0) sys_close(fd_in);
+}
+
+/* Built-in: od - Octal dump */
+static void cmd_od(int argc, char *argv[]) {
+    int fd_in = 0;
+    int file_arg = 1;
+    /* Basic: -A x for hex addresses, -t x1 for hex bytes */
+    if (argc >= 2 && argv[1][0] != '-') { file_arg = 1; }
+    else file_arg = argc > 2 ? argc - 1 : 1;
+
+    if (file_arg < argc && argv[file_arg][0] != '-') {
+        fd_in = sys_open(argv[file_arg], O_RDONLY, 0);
+        if (fd_in < 0) { write_str(2, "od: cannot open file\n"); return; }
+    }
+
+    unsigned char buf[16];
+    long n;
+    unsigned long offset = 0;
+    while ((n = sys_read(fd_in, buf, 16)) > 0) {
+        /* Print offset in octal */
+        char addr[16];
+        int ap = 0;
+        unsigned long v = offset;
+        char rev[16]; int rp = 0;
+        if (v == 0) rev[rp++] = '0';
+        else while (v > 0) { rev[rp++] = '0' + (v & 7); v >>= 3; }
+        for (int i = rp; i < 7; i++) addr[ap++] = '0';
+        while (rp > 0) addr[ap++] = rev[--rp];
+        sys_write(1, addr, ap);
+        /* Print bytes in octal */
+        for (long i = 0; i < n; i++) {
+            char oct[5];
+            oct[0] = ' ';
+            oct[1] = '0' + ((buf[i] >> 6) & 7);
+            oct[2] = '0' + ((buf[i] >> 3) & 7);
+            oct[3] = '0' + (buf[i] & 7);
+            sys_write(1, oct, 4);
+        }
+        sys_write(1, "\n", 1);
+        offset += (unsigned long)n;
+    }
+    if (fd_in > 0) sys_close(fd_in);
+}
+
 /* Built-in: tee - Read from stdin and write to stdout and files */
 static void cmd_tee(int argc, char *argv[]) {
     int append_mode = 0;
@@ -6082,6 +6343,21 @@ static int execute_command(int argc, char *argv[]) {
         return 0;
     } else if (strcmp_simple(argv[0], "diff") == 0) {
         cmd_diff(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "sed") == 0) {
+        cmd_sed(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "rev") == 0) {
+        cmd_rev(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "nl") == 0) {
+        cmd_nl(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "base64") == 0) {
+        cmd_base64(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "od") == 0) {
+        cmd_od(argc, argv);
         return 0;
     } else if (strcmp_simple(argv[0], "find") == 0) {
         cmd_find(argc, argv);
@@ -8486,6 +8762,11 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "tee") == 0 ||
             strcmp_simple(cmd, "paste") == 0 ||
             strcmp_simple(cmd, "diff") == 0 ||
+            strcmp_simple(cmd, "sed") == 0 ||
+            strcmp_simple(cmd, "rev") == 0 ||
+            strcmp_simple(cmd, "nl") == 0 ||
+            strcmp_simple(cmd, "base64") == 0 ||
+            strcmp_simple(cmd, "od") == 0 ||
             strcmp_simple(cmd, "find") == 0 ||
             strcmp_simple(cmd, "mkdir") == 0 ||
             strcmp_simple(cmd, "rmdir") == 0 ||
@@ -9316,7 +9597,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   119 built-in commands — type 'help'    |\n");
+    write_str(1, "|   124 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");

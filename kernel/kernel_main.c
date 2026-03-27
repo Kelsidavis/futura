@@ -1354,6 +1354,29 @@ void fut_kernel_main(void) {
         ETC_WRITE("/etc/shadow",
                   "root:!:19800:0:99999:7:::\n"
                   "nobody:!:19800:0:99999:7:::\n");
+        ETC_WRITE("/etc/fstab",
+                  "# /etc/fstab: static filesystem information\n"
+                  "# <device>  <mount>  <type>  <options>  <dump>  <pass>\n"
+                  "none        /        ramfs   defaults   0       0\n"
+                  "none        /proc    proc    defaults   0       0\n"
+                  "none        /sys     sysfs   defaults   0       0\n"
+                  "none        /dev     devtmpfs defaults  0       0\n"
+                  "none        /tmp     tmpfs   defaults   0       0\n"
+                  "none        /run     tmpfs   nosuid,nodev,mode=0755 0 0\n");
+        ETC_WRITE("/etc/machine-id",
+                  "f47ac10b58cc4372a5670e02b2c3d479\n");
+        ETC_WRITE("/etc/shells",
+                  "/bin/shell\n"
+                  "/bin/sh\n");
+        ETC_WRITE("/etc/ld.so.conf",
+                  "# Multilib support\n"
+                  "/lib\n"
+                  "/usr/lib\n");
+        /* /etc/mtab should be a symlink to /proc/self/mounts */
+        {
+            extern long sys_symlink(const char *, const char *);
+            sys_symlink("/proc/self/mounts", "/etc/mtab");
+        }
 #undef ETC_WRITE
 
         fut_printf("[INIT] ✓ Created /etc config files\n");
@@ -1409,7 +1432,7 @@ void fut_kernel_main(void) {
         planned_tests += 17u; /* clock_sched: getres, sched_param, sched_policy, itimer, rusage, times, getpriority, setpriority, getpriority(-who), setpriority(-who), unshare(0), unshare(invalid), rr_get_interval, clock_gettime, posix_timer_sigev_value, posix_timer_si_timer, itimer_virtual */
         planned_tests += 22u; /* vfs: O_TRUNC, O_APPEND, relpath, dir_mtime, readlink, hardlink, mount, renameat2, inotify, inotify_rename, inotify_attrib, inotify_close, inotify_access, inotify_modify, inotify_ftruncate, inotify_utimensat, inotify_truncate, inotify_delete, umount expire, dotdot, eisdir, chdir_dotdot */
         planned_tests += 17u; /* poll: file ready, eventfd not-ready, eventfd ready, POLLNVAL, select file, select pipe, pselect6 pipe, pselect6 sigmask restore, timeout-only sleep, timerfd readiness, signalfd readiness, pipe EOF, select pipe EOF, select timerfd wakeup, poll negative fd, POLLRDNORM, select timeout update */
-        planned_tests += 2148u; /* misc(2148): ..., vmstat (2141), aio_ptrace (2142-2147), thermal (2148) */
+        planned_tests += 2152u; /* misc(2152): ..., aio_ptrace (2142-2147), thermal (2148), etc_files (2149-2152) */
         // planned_tests += 1u; /* block */
         // planned_tests += 1u; /* futfs */
         // planned_tests += 1u; /* net */

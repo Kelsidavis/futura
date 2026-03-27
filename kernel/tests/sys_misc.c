@@ -65938,6 +65938,86 @@ void fut_misc_test_thread(void *arg) {
     test_loop_device(); /* Tests 1885-1887 */
     test_per_iface_conf(); /* Tests 1869-1871 */
 
+    /* ── Tests 2149-2152: /etc system config files ── */
+    {
+        extern long sys_open(const char *, int, int);
+        extern long sys_read(int, void *, size_t);
+        extern long sys_close(int);
+        extern long sys_readlink(const char *, char *, size_t);
+
+        /* Test 2149: /etc/fstab exists and has content */
+        fut_printf("[MISC-TEST] Test 2149: /etc/fstab readable\n");
+        {
+            static char buf[256];
+            long fd = sys_open("/etc/fstab", 0, 0);
+            if (fd >= 0) {
+                long n = sys_read((int)fd, buf, sizeof(buf) - 1);
+                sys_close((int)fd);
+                if (n > 10) {
+                    fut_printf("[MISC-TEST] ✓ Test 2149: fstab %ld bytes\n", n);
+                    fut_test_pass();
+                } else { fut_printf("[MISC-TEST] ✗ Test 2149: n=%ld\n", n); fut_test_fail(2149); }
+            } else { fut_printf("[MISC-TEST] ✗ Test 2149: open=%ld\n", fd); fut_test_fail(2149); }
+        }
+
+        /* Test 2150: /etc/machine-id is 33 bytes (32 hex + newline) */
+        fut_printf("[MISC-TEST] Test 2150: /etc/machine-id\n");
+        {
+            static char buf[64];
+            long fd = sys_open("/etc/machine-id", 0, 0);
+            if (fd >= 0) {
+                long n = sys_read((int)fd, buf, sizeof(buf) - 1);
+                sys_close((int)fd);
+                if (n == 33) {
+                    fut_printf("[MISC-TEST] ✓ Test 2150: machine-id %ld bytes\n", n);
+                    fut_test_pass();
+                } else { fut_printf("[MISC-TEST] ✗ Test 2150: n=%ld\n", n); fut_test_fail(2150); }
+            } else { fut_printf("[MISC-TEST] ✗ Test 2150: open=%ld\n", fd); fut_test_fail(2150); }
+        }
+
+        /* Test 2151: /etc/mtab is a symlink to /proc/self/mounts */
+        fut_printf("[MISC-TEST] Test 2151: /etc/mtab → /proc/self/mounts\n");
+        {
+            static char lbuf[128];
+            long n = sys_readlink("/etc/mtab", lbuf, sizeof(lbuf) - 1);
+            if (n > 0) {
+                lbuf[n] = '\0';
+                int match = 1;
+                const char *expect = "/proc/self/mounts";
+                for (int i = 0; expect[i]; i++) {
+                    if (lbuf[i] != expect[i]) { match = 0; break; }
+                }
+                if (match) {
+                    fut_printf("[MISC-TEST] ✓ Test 2151: mtab → %s\n", lbuf);
+                    fut_test_pass();
+                } else { fut_printf("[MISC-TEST] ✗ Test 2151: → %s\n", lbuf); fut_test_fail(2151); }
+            } else { fut_printf("[MISC-TEST] ✗ Test 2151: readlink=%ld\n", n); fut_test_fail(2151); }
+        }
+
+        /* Test 2152: /etc/shells lists /bin/shell */
+        fut_printf("[MISC-TEST] Test 2152: /etc/shells\n");
+        {
+            static char buf[128];
+            long fd = sys_open("/etc/shells", 0, 0);
+            if (fd >= 0) {
+                long n = sys_read((int)fd, buf, sizeof(buf) - 1);
+                sys_close((int)fd);
+                buf[n > 0 ? n : 0] = '\0';
+                int found = 0;
+                for (long i = 0; i < n - 10; i++) {
+                    if (buf[i] == '/' && buf[i+1] == 'b' && buf[i+2] == 'i' &&
+                        buf[i+3] == 'n' && buf[i+4] == '/' && buf[i+5] == 's') {
+                        found = 1; break;
+                    }
+                }
+                if (found) {
+                    fut_printf("[MISC-TEST] ✓ Test 2152: shells has /bin/shell\n");
+                    fut_test_pass();
+                } else { fut_printf("[MISC-TEST] ✗ Test 2152: no /bin/shell\n"); fut_test_fail(2152); }
+            } else { fut_printf("[MISC-TEST] ✗ Test 2152: open=%ld\n", fd); fut_test_fail(2152); }
+        }
+    }
+
     /* ── Test 2148: /sys/class/thermal/thermal_zone0/temp readable ── */
     {
         extern long sys_open(const char *, int, int);

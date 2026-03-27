@@ -67,29 +67,229 @@ void term_clear(struct terminal *term) {
     term->cursor_y = 0;
 }
 
+/* ANSI 16-color palette */
+static const uint32_t ansi_colors[16] = {
+    0xFF000000u, /* 0: black */
+    0xFFCC0000u, /* 1: red */
+    0xFF00CC00u, /* 2: green */
+    0xFFCCCC00u, /* 3: yellow */
+    0xFF0000CCu, /* 4: blue */
+    0xFFCC00CCu, /* 5: magenta */
+    0xFF00CCCCu, /* 6: cyan */
+    0xFFCCCCCCu, /* 7: white */
+    0xFF666666u, /* 8: bright black (gray) */
+    0xFFFF3333u, /* 9: bright red */
+    0xFF33FF33u, /* 10: bright green */
+    0xFFFFFF33u, /* 11: bright yellow */
+    0xFF3333FFu, /* 12: bright blue */
+    0xFFFF33FFu, /* 13: bright magenta */
+    0xFF33FFFFu, /* 14: bright cyan */
+    0xFFFFFFFFu, /* 15: bright white */
+};
+
+/* Parse CSI parameter numbers: ESC[n1;n2;...X */
+static int parse_csi_params(const char *buf, int len, int *params, int max_params) {
+    int count = 0, val = 0, has_val = 0;
+    for (int i = 1; i < len - 1; i++) {  /* skip [ and final char */
+        if (buf[i] >= '0' && buf[i] <= '9') {
+            val = val * 10 + (buf[i] - '0');
+            has_val = 1;
+        } else if (buf[i] == ';') {
+            if (count < max_params) params[count++] = has_val ? val : 0;
+            val = 0; has_val = 0;
+        } else if (buf[i] == '?') {
+            /* Private mode prefix — skip */
+        }
+    }
+    if (has_val || count > 0) {
+        if (count < max_params) params[count++] = val;
+    }
+    return count;
+}
+
 static void term_handle_escape(struct terminal *term) {
-    /* Simple ANSI escape sequence parser */
-    if (term->escape_len == 0) {
-        return;
-    }
+    if (term->escape_len == 0 || term->escape_buf[0] != '[') return;
 
-    /* Clear screen: ESC[2J */
-    if (term->escape_len >= 2 && term->escape_buf[0] == '[' &&
-        term->escape_buf[1] == '2' && term->escape_len >= 3 &&
-        term->escape_buf[2] == 'J') {
-        term_clear(term);
-        return;
-    }
+    char final = term->escape_buf[term->escape_len - 1];
+    int params[8] = {0};
+    int nparams = parse_csi_params(term->escape_buf, term->escape_len, params, 8);
 
-    /* Cursor home: ESC[H */
-    if (term->escape_len >= 1 && term->escape_buf[0] == '[' &&
-        term->escape_len >= 2 && term->escape_buf[1] == 'H') {
-        term->cursor_x = 0;
-        term->cursor_y = 0;
-        return;
+    switch (final) {
+    case 'A': { /* Cursor Up */
+        int n = (nparams > 0 && params[0] > 0) ? params[0] : 1;
+        term->cursor_y -= n;
+        if (term->cursor_y < 0) term->cursor_y = 0;
+        break;
     }
-
-    /* Ignore other escape sequences for now */
+    case 'B': { /* Cursor Down */
+        int n = (nparams > 0 && params[0] > 0) ? params[0] : 1;
+        term->cursor_y += n;
+        if (term->cursor_y >= TERM_ROWS) term->cursor_y = TERM_ROWS - 1;
+        break;
+    }
+    case 'C': { /* Cursor Forward (Right) */
+        int n = (nparams > 0 && params[0] > 0) ? params[0] : 1;
+        term->cursor_x += n;
+        if (term->cursor_x >= TERM_COLS) term->cursor_x = TERM_COLS - 1;
+        break;
+    }
+    case 'D': { /* Cursor Back (Left) */
+        int n = (nparams > 0 && params[0] > 0) ? params[0] : 1;
+        term->cursor_x -= n;
+        if (term->cursor_x < 0) term->cursor_x = 0;
+        break;
+    }
+    case 'H': case 'f': { /* Cursor Position: ESC[row;colH */
+        int row = (nparams > 0 && params[0] > 0) ? params[0] - 1 : 0;
+        int col = (nparams > 1 && params[1] > 0) ? params[1] - 1 : 0;
+        if (row < 0) row = 0; if (row >= TERM_ROWS) row = TERM_ROWS - 1;
+        if (col < 0) col = 0; if (col >= TERM_COLS) col = TERM_COLS - 1;
+        term->cursor_y = row;
+        term->cursor_x = col;
+        break;
+    }
+    case 'J': { /* Erase in Display */
+        int mode = (nparams > 0) ? params[0] : 0;
+        if (mode == 0) { /* Cursor to end */
+            for (int x = term->cursor_x; x < TERM_COLS; x++) {
+                term->grid[term->cursor_y][x].ch = ' ';
+                term->grid[term->cursor_y][x].fg_color = term->fg_color;
+                term->grid[term->cursor_y][x].bg_color = term->bg_color;
+            }
+            for (int y = term->cursor_y + 1; y < TERM_ROWS; y++)
+                for (int x = 0; x < TERM_COLS; x++) {
+                    term->grid[y][x].ch = ' ';
+                    term->grid[y][x].fg_color = term->fg_color;
+                    term->grid[y][x].bg_color = term->bg_color;
+                }
+        } else if (mode == 1) { /* Start to cursor */
+            for (int y = 0; y < term->cursor_y; y++)
+                for (int x = 0; x < TERM_COLS; x++) {
+                    term->grid[y][x].ch = ' ';
+                    term->grid[y][x].fg_color = term->fg_color;
+                    term->grid[y][x].bg_color = term->bg_color;
+                }
+            for (int x = 0; x <= term->cursor_x; x++) {
+                term->grid[term->cursor_y][x].ch = ' ';
+                term->grid[term->cursor_y][x].fg_color = term->fg_color;
+                term->grid[term->cursor_y][x].bg_color = term->bg_color;
+            }
+        } else if (mode == 2) { /* Entire screen */
+            term_clear(term);
+        }
+        break;
+    }
+    case 'K': { /* Erase in Line */
+        int mode = (nparams > 0) ? params[0] : 0;
+        int y = term->cursor_y;
+        if (mode == 0) { /* Cursor to end of line */
+            for (int x = term->cursor_x; x < TERM_COLS; x++) {
+                term->grid[y][x].ch = ' ';
+                term->grid[y][x].fg_color = term->fg_color;
+                term->grid[y][x].bg_color = term->bg_color;
+            }
+        } else if (mode == 1) { /* Start of line to cursor */
+            for (int x = 0; x <= term->cursor_x; x++) {
+                term->grid[y][x].ch = ' ';
+                term->grid[y][x].fg_color = term->fg_color;
+                term->grid[y][x].bg_color = term->bg_color;
+            }
+        } else if (mode == 2) { /* Entire line */
+            for (int x = 0; x < TERM_COLS; x++) {
+                term->grid[y][x].ch = ' ';
+                term->grid[y][x].fg_color = term->fg_color;
+                term->grid[y][x].bg_color = term->bg_color;
+            }
+        }
+        break;
+    }
+    case 'm': { /* SGR — Select Graphic Rendition (colors, bold, etc.) */
+        if (nparams == 0) { /* ESC[m = reset */
+            term->fg_color = COLOR_WHITE;
+            term->bg_color = COLOR_BLACK;
+            break;
+        }
+        for (int i = 0; i < nparams; i++) {
+            int p = params[i];
+            if (p == 0) { /* Reset */
+                term->fg_color = COLOR_WHITE;
+                term->bg_color = COLOR_BLACK;
+            } else if (p == 1) { /* Bold — use bright colors */
+                /* Map normal to bright: if fg is ansi 0-7, shift to 8-15 */
+                for (int c = 0; c < 8; c++) {
+                    if (term->fg_color == ansi_colors[c]) {
+                        term->fg_color = ansi_colors[c + 8];
+                        break;
+                    }
+                }
+            } else if (p == 7) { /* Reverse video */
+                uint32_t tmp = term->fg_color;
+                term->fg_color = term->bg_color;
+                term->bg_color = tmp;
+            } else if (p >= 30 && p <= 37) { /* FG color */
+                term->fg_color = ansi_colors[p - 30];
+            } else if (p >= 40 && p <= 47) { /* BG color */
+                term->bg_color = ansi_colors[p - 40];
+            } else if (p == 39) { /* Default FG */
+                term->fg_color = COLOR_WHITE;
+            } else if (p == 49) { /* Default BG */
+                term->bg_color = COLOR_BLACK;
+            } else if (p >= 90 && p <= 97) { /* Bright FG */
+                term->fg_color = ansi_colors[p - 90 + 8];
+            } else if (p >= 100 && p <= 107) { /* Bright BG */
+                term->bg_color = ansi_colors[p - 100 + 8];
+            }
+        }
+        break;
+    }
+    case 'h': { /* Set Mode */
+        /* ESC[?25h — Show cursor */
+        if (term->escape_len >= 4 && term->escape_buf[1] == '?' &&
+            term->escape_buf[2] == '2' && term->escape_buf[3] == '5') {
+            term->cursor_visible = true;
+        }
+        break;
+    }
+    case 'l': { /* Reset Mode */
+        /* ESC[?25l — Hide cursor */
+        if (term->escape_len >= 4 && term->escape_buf[1] == '?' &&
+            term->escape_buf[2] == '2' && term->escape_buf[3] == '5') {
+            term->cursor_visible = false;
+        }
+        break;
+    }
+    case 'G': { /* Cursor Horizontal Absolute */
+        int col = (nparams > 0 && params[0] > 0) ? params[0] - 1 : 0;
+        if (col >= TERM_COLS) col = TERM_COLS - 1;
+        term->cursor_x = col;
+        break;
+    }
+    case 'd': { /* Cursor Vertical Absolute */
+        int row = (nparams > 0 && params[0] > 0) ? params[0] - 1 : 0;
+        if (row >= TERM_ROWS) row = TERM_ROWS - 1;
+        term->cursor_y = row;
+        break;
+    }
+    case 'n': { /* Device Status Report */
+        if (nparams > 0 && params[0] == 6 && term->shell_stdin_fd >= 0) {
+            /* Report cursor position: ESC[row;colR */
+            char resp[16];
+            int rp = 0;
+            resp[rp++] = '\033'; resp[rp++] = '[';
+            int r = term->cursor_y + 1, c = term->cursor_x + 1;
+            if (r >= 10) resp[rp++] = '0' + (char)(r / 10);
+            resp[rp++] = '0' + (char)(r % 10);
+            resp[rp++] = ';';
+            if (c >= 10) resp[rp++] = '0' + (char)(c / 10);
+            resp[rp++] = '0' + (char)(c % 10);
+            resp[rp++] = 'R';
+            sys_write(term->shell_stdin_fd, resp, rp);
+        }
+        break;
+    }
+    default:
+        break; /* Ignore unknown sequences */
+    }
 }
 
 void term_putchar(struct terminal *term, char ch) {

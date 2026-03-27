@@ -462,6 +462,9 @@
 #include <kernel/debug_config.h>
 extern fut_interrupt_frame_t *fut_current_frame;
 
+/* Total fork count since boot (used by /proc/stat "processes" field) */
+uint64_t g_total_forks = 0;
+
 /* clone() flag bits used for thread creation (guard against sched.h redefs) */
 #ifndef CLONE_VM
 #define CLONE_VM             0x00000100ULL  /* Share virtual memory */
@@ -1224,6 +1227,9 @@ long sys_fork(void) {
                parent_memory, process_size_category,
                parent_thread->tid, child_thread->tid,
                child_task->pid);
+
+    /* Track total forks for /proc/stat */
+    g_total_forks++;
 
     /* Return child PID to parent */
     return (long)child_task->pid;

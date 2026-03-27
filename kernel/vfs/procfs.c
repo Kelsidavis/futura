@@ -3032,14 +3032,28 @@ static size_t gen_proc_stat(char *buf, size_t cap) {
                     ? g_realtime_offset_sec - uptime_sec : 0;
     pb_str(&b, "btime ");    pb_u64(&b, (uint64_t)btime); pb_char(&b, '\n');
 
-    /* processes: total tasks ever created — use running task count as approximation */
-    uint64_t nproc = 0;
-    fut_task_t *t = fut_task_list;
-    while (t) { nproc++; t = t->next; }
-    pb_str(&b, "processes "); pb_u64(&b, nproc); pb_char(&b, '\n');
+    /* processes: total forks since boot (from global counter) */
+    extern uint64_t g_total_forks;
+    pb_str(&b, "processes "); pb_u64(&b, g_total_forks > 0 ? g_total_forks : 1); pb_char(&b, '\n');
 
-    pb_str(&b, "procs_running "); pb_u64(&b, nproc > 0 ? nproc : 1); pb_char(&b, '\n');
-    pb_str(&b, "procs_blocked 0\n");
+    /* procs_running: count tasks actually in RUNNING state (not zombie/stopped) */
+    uint64_t nrunning = 0, nblocked = 0;
+    {
+        fut_task_t *t = fut_task_list;
+        while (t) {
+            if (t->state == FUT_TASK_RUNNING) {
+                /* Check if main thread is actually runnable vs sleeping */
+                fut_thread_t *mt = t->threads;
+                if (mt && (mt->state == FUT_THREAD_SLEEPING || mt->state == FUT_THREAD_BLOCKED))
+                    nblocked++;
+                else
+                    nrunning++;
+            }
+            t = t->next;
+        }
+    }
+    pb_str(&b, "procs_running "); pb_u64(&b, nrunning > 0 ? nrunning : 1); pb_char(&b, '\n');
+    pb_str(&b, "procs_blocked "); pb_u64(&b, nblocked); pb_char(&b, '\n');
     pb_str(&b, "softirq 0 0 0 0 0 0 0 0 0 0 0\n");
 
     return b.pos;

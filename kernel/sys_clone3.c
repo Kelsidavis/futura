@@ -26,6 +26,7 @@
 #include <string.h>
 
 #include <platform/platform.h>
+#include <kernel/fut_vfs.h>
 
 #include <kernel/kprintf.h>
 
@@ -125,7 +126,11 @@ long sys_clone3(const struct fut_clone_args *uargs, size_t size) {
     if ((flags & CLONE_CLEAR_SIGHAND) && (flags & CLONE_SIGHAND))
         return -EINVAL;
 
-    /* CLONE_INTO_CGROUP: no cgroup infra yet, ignore (cgroup fd not used) */
+    /* CLONE_INTO_CGROUP: place child in target cgroup.
+     * The cgroup fd is a file descriptor opened to a cgroupfs directory.
+     * After fork, we add the child's PID to the target cgroup's procs. */
+    int want_cgroup = (flags & CLONE_INTO_CGROUP) && args.cgroup;
+    uint64_t cgroup_fd = args.cgroup;
     flags &= ~CLONE_INTO_CGROUP;
 
     /* CLONE_PIDFD: create a pidfd for the child and write it to *args.pidfd */
@@ -173,6 +178,29 @@ long sys_clone3(const struct fut_clone_args *uargs, size_t size) {
             int pidfd_int = (pidfd >= 0) ? (int)pidfd : -1;
             clone3_copy_to_user((void *)(uintptr_t)args.pidfd,
                                 &pidfd_int, sizeof(pidfd_int));
+        }
+
+        /* CLONE_INTO_CGROUP: move child into target cgroup.
+         * Look up the cgroup path from the fd and add the child PID. */
+        if (want_cgroup) {
+            /* Get the file path for the cgroup fd */
+            extern struct fut_file *fut_vfs_get_file(int fd);
+            struct fut_file *cg_file = fut_vfs_get_file((int)cgroup_fd);
+            const char *cg_full_path = (cg_file && cg_file->path) ? cg_file->path : NULL;
+            if (cg_full_path) {
+                extern int memcg_add_pid(const char *path, int pid);
+                /* Strip the mount prefix (e.g., /cgroup/ → path within cgroup tree) */
+                const char *cg_path = cg_full_path;
+                if (cg_path[0]=='/' && cg_path[1]=='c' && cg_path[2]=='g' &&
+                    cg_path[3]=='r' && cg_path[4]=='o' && cg_path[5]=='u' &&
+                    cg_path[6]=='p') {
+                    cg_path += 7;
+                    if (*cg_path == '/') cg_path++;
+                }
+                memcg_add_pid(cg_path, (int)child_pid);
+                fut_printf("[CLONE3] CLONE_INTO_CGROUP: child %ld → cgroup '%s'\n",
+                           child_pid, cg_path);
+            }
         }
 
         /* CLONE_PARENT_SETTID: write child PID to parent_tid address */

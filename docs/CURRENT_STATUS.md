@@ -8,7 +8,7 @@
 |--------|-------|
 | **Syscalls** | 400+ Linux-compatible (356 x86_64 + 405 ARM64) |
 | **Kernel C files** | 293 files, ~210K lines |
-| **Automated tests** | **2269** across 11 test groups, all passing |
+| **Automated tests** | **2276** across 11 test groups, all passing |
 | **Shell commands** | **164** built-in (POSIX + networking + system admin) |
 | **Rust driver crates** | **55** (24 AMD x86_64, 15 RPi, 11 Apple Silicon, 4 VirtIO, 1 common) |
 | **CI** | GitHub Actions: x86_64 + ARM64 + RPi verification + security checks — all green |

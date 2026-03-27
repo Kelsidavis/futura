@@ -3366,10 +3366,11 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
         }
         case PROC_LOGINUID: {
             /* /proc/<pid>/loginuid — audit login UID. 4294967295 = (uint32_t)-1 means
-             * "not set" (process not created via PAM login session). Futura has no
-             * audit subsystem, so report unset for all processes. */
+             * "not set" (process not created via PAM login session). */
+            fut_task_t *luid_task = fut_task_by_pid(n->pid);
+            uint32_t luid = luid_task ? luid_task->loginuid : 0xFFFFFFFF;
             struct pbuf b = { tmp, 0, GEN_BUF };
-            pb_u64(&b, 4294967295ULL);
+            pb_u64(&b, (uint64_t)luid);
             pb_char(&b, '\n');
             total = b.pos;
             break;
@@ -4614,6 +4615,19 @@ static ssize_t procfs_file_write(struct fut_vnode *vnode, const void *buf,
             if (val < -1000) val = -1000;
             if (val >  1000) val =  1000;
             wtask->oom_score_adj = (int)val;
+            return (ssize_t)size;
+        }
+
+        case PROC_LOGINUID: {
+            /* /proc/<pid>/loginuid: write unsigned decimal UID.
+             * PAM and login programs set this once at session start.
+             * Linux requires CAP_AUDIT_CONTROL and the value can only be set once. */
+            fut_task_t *ltask = fut_task_by_pid(n->pid);
+            if (!ltask) return -ESRCH;
+            uint32_t lval = 0;
+            for (size_t i = 0; i < copy_len && kbuf[i] >= '0' && kbuf[i] <= '9'; i++)
+                lval = lval * 10 + (uint32_t)(kbuf[i] - '0');
+            ltask->loginuid = lval;
             return (ssize_t)size;
         }
 

@@ -62669,6 +62669,93 @@ __attribute__((noinline)) static void test_pty_and_cgroup(void) {
             fut_test_fail(2227);
         }
     }
+
+    /* ── Test 2228: TIOCSTI ioctl defined and returns valid result on PTY ── */
+    fut_printf("[MISC-TEST] Test 2228: TIOCSTI on PTY\n");
+    {
+        extern long sys_open(const char *, int, int);
+        extern long sys_ioctl(int fd, unsigned long request, void *argp);
+        extern long sys_read(int, void *, size_t);
+        extern long sys_close(int);
+        long master = sys_open("/dev/ptmx", 02, 0);
+        int pass = 0;
+        if (master >= 0) {
+            /* Unlock slave */
+            static int unlock;
+            unlock = 0;
+            sys_ioctl((int)master, 0x40045431UL /* TIOCSPTLCK */, &unlock);
+            /* Get slave number */
+            static int snum;
+            sys_ioctl((int)master, 0x80045430UL /* TIOCGPTN */, &snum);
+            /* Open slave */
+            static char spath[32];
+            spath[0]='/'; spath[1]='d'; spath[2]='e'; spath[3]='v';
+            spath[4]='/'; spath[5]='p'; spath[6]='t'; spath[7]='s'; spath[8]='/';
+            int sp = 9;
+            if (snum >= 10) spath[sp++] = (char)('0' + snum/10);
+            spath[sp++] = (char)('0' + snum%10); spath[sp] = '\0';
+            long slave = sys_open(spath, 02, 0);
+            if (slave >= 0) {
+                /* TIOCSTI: inject 'X' into master input */
+                static uint8_t inject_byte;
+                inject_byte = 'X';
+                long r = sys_ioctl((int)master, 0x5412UL /* TIOCSTI */, &inject_byte);
+                if (r == 0) {
+                    /* Read back from master — should get 'X' */
+                    static char rb[4];
+                    long nr = sys_read((int)master, rb, 1);
+                    if (nr == 1 && rb[0] == 'X') pass = 1;
+                    else fut_printf("[MISC-TEST]   read=%ld byte=%c\n", nr, nr>0?rb[0]:'?');
+                } else {
+                    fut_printf("[MISC-TEST]   tiocsti=%ld\n", r);
+                }
+                sys_close((int)slave);
+            }
+            sys_close((int)master);
+        }
+        if (pass) {
+            fut_printf("[MISC-TEST] ✓ Test 2228: TIOCSTI inject+read ok\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2228: TIOCSTI failed\n");
+            fut_test_fail(2228);
+        }
+    }
+
+    /* ── Test 2229: /proc/self/loginuid writable ── */
+    fut_printf("[MISC-TEST] Test 2229: loginuid writable\n");
+    {
+        extern long sys_open(const char *, int, int);
+        extern ssize_t sys_write(int fd, const void *buf, size_t count);
+        extern long sys_read(int, void *, size_t);
+        extern long sys_close(int);
+        long fd = sys_open("/proc/self/loginuid", 02, 0);
+        int pass = 0;
+        if (fd >= 0) {
+            ssize_t nw = sys_write((int)fd, "1000", 4);
+            sys_close((int)fd);
+            if (nw == 4) {
+                fd = sys_open("/proc/self/loginuid", 0, 0);
+                if (fd >= 0) {
+                    static char buf[16];
+                    long n = sys_read((int)fd, buf, 15);
+                    sys_close((int)fd);
+                    if (n > 0 && buf[0] == '1' && buf[1] == '0' && buf[2] == '0' && buf[3] == '0')
+                        pass = 1;
+                }
+                /* Restore to unset */
+                fd = sys_open("/proc/self/loginuid", 02, 0);
+                if (fd >= 0) { sys_write((int)fd, "4294967295", 10); sys_close((int)fd); }
+            }
+        }
+        if (pass) {
+            fut_printf("[MISC-TEST] ✓ Test 2229: loginuid round-trip ok\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2229: loginuid write failed\n");
+            fut_test_fail(2229);
+        }
+    }
 }
 
 /* ============================================================

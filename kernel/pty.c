@@ -306,6 +306,26 @@ static int ptmx_ioctl(void *inode, void *priv, unsigned long req, unsigned long 
             return -EFAULT;
         return 0;
     }
+    case 0x5412: { /* TIOCSTI - inject byte into input queue */
+        uint8_t byte = 0;
+        if ((uintptr_t)arg >= 0xFFFF800000000000ULL)
+            byte = *(const uint8_t *)(uintptr_t)arg;
+        else if (fut_copy_from_user(&byte, (void *)arg, 1) != 0)
+            return -EFAULT;
+        /* Inject into the read direction for this fd */
+        struct pty_ring *ring = (pp->tag == PTY_MASTER_TAG) ? &p->s2m : &p->m2s;
+        fut_spinlock_acquire(&p->lock);
+        if (ring_free(ring) > 0) {
+            ring->buf[ring->head % PTY_BUF_SIZE] = (char)byte;
+            ring->head = (ring->head + 1) % PTY_BUF_SIZE;
+        }
+        fut_spinlock_release(&p->lock);
+        if (pp->tag == PTY_MASTER_TAG && p->master_epoll_wq)
+            fut_waitq_wake_one(p->master_epoll_wq);
+        if (pp->tag == PTY_SLAVE_TAG && p->slave_epoll_wq)
+            fut_waitq_wake_one(p->slave_epoll_wq);
+        return 0;
+    }
     default:
         return -ENOTTY;
     }
@@ -655,4 +675,45 @@ void pty_init(void) {
     fut_vfs_mkdir("/dev/pts", 0755);
 
     fut_printf("[PTY] /dev/ptmx registered, /dev/pts/ created (%d max pairs)\n", PTY_MAX);
+}
+
+/**
+ * fut_pty_inject_input — TIOCSTI: inject a byte into the terminal's input queue.
+ *
+ * For a master fd: injects into s2m ring (as if the slave typed it).
+ * For a slave fd: injects into m2s ring (as if the master sent it).
+ * For non-PTY fds: returns -1.
+ */
+int fut_pty_inject_input(int fd, uint8_t byte) {
+    extern struct fut_file *fut_vfs_get_file(int fd);
+    struct fut_file *file = fut_vfs_get_file(fd);
+    if (!file || !file->chr_private) return -1;
+
+    struct pty_priv *pp = (struct pty_priv *)file->chr_private;
+    if (pp->tag != PTY_MASTER_TAG && pp->tag != PTY_SLAVE_TAG)
+        return -1;
+
+    struct pty_pair *p = pp->pair;
+    if (!p) return -1;
+
+    fut_spinlock_acquire(&p->lock);
+
+    /* Inject into the read direction for this fd:
+     * master → inject into s2m (master will read it back as if slave typed it)
+     * slave  → inject into m2s (slave will read it as if master sent it) */
+    struct pty_ring *ring = (pp->tag == PTY_MASTER_TAG) ? &p->s2m : &p->m2s;
+    if (ring_free(ring) > 0) {
+        ring->buf[ring->head % PTY_BUF_SIZE] = (char)byte;
+        ring->head = (ring->head + 1) % PTY_BUF_SIZE;
+    }
+
+    fut_spinlock_release(&p->lock);
+
+    /* Wake any waiters on this PTY */
+    if (pp->tag == PTY_MASTER_TAG && p->master_epoll_wq)
+        fut_waitq_wake_one(p->master_epoll_wq);
+    if (pp->tag == PTY_SLAVE_TAG && p->slave_epoll_wq)
+        fut_waitq_wake_one(p->slave_epoll_wq);
+
+    return 0;
 }

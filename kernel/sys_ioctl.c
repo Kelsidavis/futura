@@ -35,6 +35,7 @@
 #define TIOCSPGRP   0x5410
 #define TIOCGPGRP   0x540F
 #define TIOCSCTTY   0x540E
+#define TIOCSTI     0x5412  /* Inject character into terminal input queue */
 #define TIOCNOTTY   0x5422
 #define TIOCGSID    0x5429
 #define FIOASYNC    0x5452
@@ -627,7 +628,7 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
                                    request == TIOCGWINSZ || request == TIOCSWINSZ ||
                                    request == TCGETS || request == TCSETS ||
                                    request == TCSETSW || request == TCSETSF ||
-                                   request == TIOCGPGRP || request == TIOCGSID ||
+                                   request == TIOCGPGRP || request == TIOCGSID || request == TIOCSTI ||
                                    request == TIOCOUTQ ||
                                    request == 0x80045430 /* TIOCGPTN */ ||
                                    request == 0x40045431 /* TIOCSPTLCK */ ||
@@ -1249,6 +1250,39 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
             fut_task_t *notty_task = fut_task_current();
             if (notty_task)
                 notty_task->tty_nr = 0;
+            return 0;
+        }
+        case TIOCSTI: {
+            /* TIOCSTI - Inject a character into the terminal input queue.
+             * argp points to a single byte to inject.
+             *
+             * Security: require CAP_SYS_ADMIN or same session as the terminal.
+             * This prevents CVE-2017-5226 (container escape via terminal injection).
+             * Modern kernels (6.2+) restrict TIOCSTI with tiocsti_restrict sysctl. */
+            if (!argp)
+                return -EFAULT;
+            fut_task_t *sti_task = fut_task_current();
+            if (!sti_task)
+                return -ESRCH;
+            /* Security check: only allow if root or has CAP_SYS_ADMIN */
+            if (sti_task->uid != 0 &&
+                !(sti_task->cap_effective & (1ULL << 21 /* CAP_SYS_ADMIN */))) {
+                return -EPERM;
+            }
+            /* Read the byte from user */
+            uint8_t inject_byte = 0;
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
+                inject_byte = *(const uint8_t *)argp;
+            else
+#endif
+            if (fut_copy_from_user(&inject_byte, argp, 1) != 0)
+                return -EFAULT;
+            /* Inject into the PTY or console input ring if the fd is a terminal */
+            extern int fut_pty_inject_input(int fd, uint8_t byte);
+            int inj_rc = fut_pty_inject_input(fd, inject_byte);
+            if (inj_rc < 0)
+                return -ENOTTY;  /* Not a terminal */
             return 0;
         }
         case TIOCGSID: {

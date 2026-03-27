@@ -100,6 +100,7 @@ struct fut_task {
     uint32_t rgid;                     // Real GID (original process group)
     uint32_t suid;                     // Saved UID (backup for privilege swapping)
     uint32_t sgid;                     // Saved GID (backup for privilege swapping)
+    uint32_t loginuid;                 // Audit login UID (0xFFFFFFFF = unset)
 
     /* Supplementary groups (POSIX getgroups/setgroups) */
     int ngroups;                       // Number of supplementary groups (0-32)

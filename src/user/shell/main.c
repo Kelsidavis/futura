@@ -5531,9 +5531,29 @@ static void format_mode(unsigned int mode, char *buf) {
     buf[10] = '\0';
 }
 
+static void ls_format_human_size(long size, char *out, int outlen) {
+    if (size < 1024) {
+        int_to_str(size, out, outlen);
+    } else if (size < 1024*1024) {
+        int_to_str(size / 1024, out, outlen);
+        int l = 0; while (out[l]) l++;
+        if (l < outlen - 1) { out[l] = 'K'; out[l+1] = '\0'; }
+    } else if (size < 1024*1024*1024L) {
+        int_to_str(size / (1024*1024), out, outlen);
+        int l = 0; while (out[l]) l++;
+        if (l < outlen - 1) { out[l] = 'M'; out[l+1] = '\0'; }
+    } else {
+        int_to_str(size / (1024*1024*1024L), out, outlen);
+        int l = 0; while (out[l]) l++;
+        if (l < outlen - 1) { out[l] = 'G'; out[l+1] = '\0'; }
+    }
+}
+
 static void cmd_ls(int argc, char *argv[]) {
     int show_all = 0;
     int long_format = 0;
+    int human_readable = 0;
+    int one_per_line __attribute__((unused)) = 0;
     int arg_start = 1;
 
     /* Parse options */
@@ -5542,6 +5562,8 @@ static void cmd_ls(int argc, char *argv[]) {
         for (int j = 1; opt[j]; j++) {
             if (opt[j] == 'a') show_all = 1;
             else if (opt[j] == 'l') long_format = 1;
+            else if (opt[j] == 'h') human_readable = 1;
+            else if (opt[j] == '1') one_per_line = 1;
         }
         arg_start++;
     }
@@ -5602,7 +5624,11 @@ static void cmd_ls(int argc, char *argv[]) {
 
                     /* Size */
                     char numbuf[20];
-                    int_to_str((long)st.st_size, numbuf, 20);
+                    if (human_readable) {
+                        ls_format_human_size((long)st.st_size, numbuf, 20);
+                    } else {
+                        int_to_str((long)st.st_size, numbuf, 20);
+                    }
                     /* Right-align size in 8 chars */
                     int slen = 0;
                     while (numbuf[slen]) slen++;

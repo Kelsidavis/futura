@@ -1381,8 +1381,26 @@ void comp_render_frame(struct compositor_state *comp) {
             if (ds->has_backing) n_windows++;
         }
 
-        int dock_content_w = n_windows * (DOCK_ITEM_W + DOCK_ITEM_PAD);
-        if (dock_content_w < 200) dock_content_w = 200;  /* minimum width */
+        /* Get current time for clock display */
+        struct { long tv_sec; long tv_nsec; } clock_ts = {0, 0};
+        /* syscall 228 = clock_gettime, 0 = CLOCK_REALTIME */
+        extern long sys_call2(long nr, long a, long b);
+        sys_call2(228, 0, (long)&clock_ts);
+        long daytime = clock_ts.tv_sec % 86400;
+        int clock_hr = (int)(daytime / 3600);
+        int clock_min = (int)((daytime % 3600) / 60);
+        char clock_str[6]; /* "HH:MM" */
+        clock_str[0] = '0' + (char)(clock_hr / 10);
+        clock_str[1] = '0' + (char)(clock_hr % 10);
+        clock_str[2] = ':';
+        clock_str[3] = '0' + (char)(clock_min / 10);
+        clock_str[4] = '0' + (char)(clock_min % 10);
+        clock_str[5] = '\0';
+
+        #define CLOCK_WIDTH (5 * UI_FONT_WIDTH + 12)  /* "HH:MM" + padding */
+
+        int dock_content_w = n_windows * (DOCK_ITEM_W + DOCK_ITEM_PAD) + CLOCK_WIDTH;
+        if (dock_content_w < 200) dock_content_w = 200;
         int dock_w = dock_content_w + 2 * DOCK_ITEM_PAD;
         int dock_x = (fb_w - dock_w) / 2;
         int dock_y = fb_h - DOCK_HEIGHT - 8;  /* 8px from bottom */
@@ -1431,6 +1449,20 @@ void comp_render_frame(struct compositor_state *comp) {
                         }
                     }
                     item_x += DOCK_ITEM_W + DOCK_ITEM_PAD;
+                }
+
+                /* Draw clock at right edge of dock */
+                {
+                    int clock_x = dock_x + dock_w - CLOCK_WIDTH;
+                    int clock_y = dock_y + (DOCK_HEIGHT - UI_FONT_HEIGHT) / 2;
+                    fut_rect_t clock_rect = { clock_x, clock_y, CLOCK_WIDTH, UI_FONT_HEIGHT };
+                    fut_rect_t clock_clip;
+                    if (rect_intersection(dock_clip, clock_rect, &clock_clip)) {
+                        ui_draw_text(dst->px, dst->pitch, clock_x + 6, clock_y,
+                                     0xFFFFFFFFu, clock_str,
+                                     clock_clip.x, clock_clip.y,
+                                     clock_clip.w, clock_clip.h);
+                    }
                 }
             }
         }

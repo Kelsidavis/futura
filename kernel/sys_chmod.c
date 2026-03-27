@@ -15,6 +15,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
 #include <kernel/fut_vfs.h>
+#include <kernel/userns.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -414,9 +415,10 @@ long sys_chmod(const char *pathname, uint32_t mode) {
     /* Permission check: only owner, root, or CAP_FOWNER can chmod */
     {
         fut_task_t *task = fut_task_current();
-        if (task && task->ruid != 0 &&
+        uint32_t task_host_ruid = task ? userns_ns_to_host_uid(task->user_ns, task->ruid) : 0;
+        if (task && task_host_ruid != 0 &&
             !(task->cap_effective & (1ULL << 3 /* CAP_FOWNER */)) &&
-            task->ruid != vnode->uid) {
+            task_host_ruid != vnode->uid) {
             fut_vnode_unref(vnode);
             return -EPERM;
         }
@@ -467,7 +469,7 @@ long sys_chmod(const char *pathname, uint32_t mode) {
         if (chmod_task) {
             int has_cap_fsetid = (chmod_task->cap_effective & (1ULL << 4 /* CAP_FSETID */));
             if ((local_mode & 02000) && !has_cap_fsetid) {
-                if (chmod_task->gid != vnode->gid) {
+                if (userns_ns_to_host_gid(chmod_task->user_ns, chmod_task->gid) != vnode->gid) {
                     local_mode &= ~(uint32_t)02000;
                 }
             }

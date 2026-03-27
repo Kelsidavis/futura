@@ -15,6 +15,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
 #include <kernel/fut_vfs.h>
+#include <kernel/userns.h>
 #include <kernel/fut_fd_util.h>
 #include <fcntl.h>
 #include <stdint.h>
@@ -171,9 +172,10 @@ long sys_fchmod(int fd, uint32_t mode) {
     }
 
     /* Permission check: only owner, root, or CAP_FOWNER can fchmod */
-    if (task->ruid != 0 &&
+    uint32_t task_host_ruid = userns_ns_to_host_uid(task->user_ns, task->ruid);
+    if (task_host_ruid != 0 &&
         !(task->cap_effective & (1ULL << 3 /* CAP_FOWNER */)) &&
-        task->ruid != vnode->uid) {
+        task_host_ruid != vnode->uid) {
         return -EPERM;
     }
 
@@ -184,7 +186,7 @@ long sys_fchmod(int fd, uint32_t mode) {
         int has_cap_fsetid = (task->cap_effective & (1ULL << 4 /* CAP_FSETID */));
         /* Strip S_ISGID if caller not in file's group and no CAP_FSETID */
         if ((local_mode & 02000) && !has_cap_fsetid) {
-            if (task->gid != vnode->gid) {
+            if (userns_ns_to_host_gid(task->user_ns, task->gid) != vnode->gid) {
                 local_mode &= ~(uint32_t)02000;
             }
         }

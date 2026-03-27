@@ -15,6 +15,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
 #include <kernel/fut_vfs.h>
+#include <kernel/userns.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -257,8 +258,8 @@ long sys_truncate(const char *path, uint64_t length) {
      * - Owner checks owner write bit (0200)
      * - Group member checks group write bit (0020)
      * - Others check other write bit (0002) */
-    uint32_t task_uid = task->uid;
-    uint32_t task_gid = task->gid;
+    uint32_t task_uid = userns_ns_to_host_uid(task->user_ns, task->uid);
+    uint32_t task_gid = userns_ns_to_host_gid(task->user_ns, task->gid);
     int has_write_perm = 0;
 
     if (task_uid == 0 || (task->cap_effective & (1ULL << 1 /* CAP_DAC_OVERRIDE */))) {
@@ -274,7 +275,7 @@ long sys_truncate(const char *path, uint64_t length) {
         /* Check supplementary groups */
         int in_group = 0;
         for (int i = 0; i < task->ngroups; i++) {
-            if (task->groups[i] == vnode->gid) { in_group = 1; break; }
+            if (userns_ns_to_host_gid(task->user_ns, task->groups[i]) == vnode->gid) { in_group = 1; break; }
         }
         if (in_group) {
             has_write_perm = (vnode->mode & 0020) != 0;

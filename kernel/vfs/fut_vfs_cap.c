@@ -13,6 +13,7 @@
 #include <kernel/fut_capability.h>
 #include <kernel/fut_memory.h>
 #include <kernel/fut_task.h>
+#include <kernel/userns.h>
 #include <kernel/chrdev.h>
 #include <kernel/errno.h>
 #include <stddef.h>
@@ -380,6 +381,13 @@ int fut_vfs_fstat_cap(fut_handle_t handle, struct fut_stat *statbuf) {
         statbuf->st_atime = 0;
         statbuf->st_mtime = 0;
         statbuf->st_ctime = 0;
+    }
+
+    if (result == 0) {
+        fut_task_t *cur = fut_task_current();
+        struct user_namespace *ns = cur ? cur->user_ns : NULL;
+        statbuf->st_uid = userns_host_to_ns_uid(ns, statbuf->st_uid);
+        statbuf->st_gid = userns_host_to_ns_gid(ns, statbuf->st_gid);
     }
 
     fut_object_put(obj);

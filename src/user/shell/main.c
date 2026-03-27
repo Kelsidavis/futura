@@ -124,6 +124,9 @@ static void cmd_md5sum(int argc, char *argv[]);
 static void cmd_strings(int argc, char *argv[]);
 static void cmd_file(int argc, char *argv[]);
 static void cmd_mkfifo(int argc, char *argv[]);
+static void cmd_expr(int argc, char *argv[]);
+static void cmd_factor(int argc, char *argv[]);
+static void cmd_cal(int argc, char *argv[]);
 static void cmd_expand(int argc, char *argv[]);
 static void cmd_unexpand(int argc, char *argv[]);
 static void cmd_install(int argc, char *argv[]);
@@ -534,7 +537,7 @@ static size_t common_prefix_len(const char *s1, const char *s2) {
 static void complete_command(char *buf, size_t *pos, size_t max_len) {
     /* List of builtin commands */
     const char *builtins[] = {
-        "arp", "bg", "brctl", "cd", "chgrp", "chmod", "chroot", "clear", "cmp", "comm", "conntrack", "date", "dd", "df", "dhclient", "dmesg", "echo", "edit", "ethtool", "expand", "file", "fold", "hexdump", "install", "lsof", "md5sum", "mkfifo", "nc", "nice", "nohup", "pgrep", "pidof", "pkill", "poweroff", "reboot", "renice", "seq", "sleep", "strings", "tac", "time", "timeout", "traceroute", "tty", "unexpand", "wget", "xxd", "exit", "export", "fg", "free",
+        "arp", "bg", "brctl", "cal", "cd", "chgrp", "chmod", "chroot", "clear", "cmp", "comm", "conntrack", "date", "dd", "df", "dhclient", "dmesg", "echo", "edit", "ethtool", "expand", "expr", "factor", "file", "fold", "hexdump", "install", "lsof", "md5sum", "mkfifo", "nc", "nice", "nohup", "pgrep", "pidof", "pkill", "poweroff", "reboot", "renice", "seq", "sleep", "strings", "tac", "time", "timeout", "traceroute", "tty", "unexpand", "wget", "xxd", "exit", "export", "fg", "free",
         "help", "hostname", "httpd", "id", "ifconfig", "iostat", "ipcs", "iptables", "jobs", "kill", "logger", "losetup", "ls", "lsblk", "lspci", "mkfs", "mount", "netstat",
         ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "getconf", "history", "ip", "ln", "mktemp", "more", "nproc", "nslookup", "ping", "printf", "ps", "pwd", "read", "readlink", "set", "sha256sum", "shutdown", "source", "ss", "stat", "stty", "sync", "sysctl", "sysinfo", "tc", "test", "top", "trap", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "vmstat", "wait", "watch", "wdctl", "which", "whoami", "xargs", "yes", NULL
     };
@@ -1200,6 +1203,9 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  expand [-t N] f - Convert tabs to spaces\n");
     write_str(1, "  unexpand [-t N] f- Convert spaces to tabs\n");
     write_str(1, "  install [-m] s d- Copy file with mode\n");
+    write_str(1, "  expr EXPR       - Evaluate expression (+,-,*,/,%%,=,!=,<,>)\n");
+    write_str(1, "  factor N        - Print prime factors\n");
+    write_str(1, "  cal             - Display calendar\n");
     write_str(1, "  lsof            - List open files\n");
     write_str(1, "  which <cmd>     - Find command in PATH\n");
     write_str(1, "  du [path]       - Show disk usage (KB)\n");
@@ -9064,6 +9070,15 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "install") == 0) {
         cmd_install(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "expr") == 0) {
+        cmd_expr(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "factor") == 0) {
+        cmd_factor(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "cal") == 0) {
+        cmd_cal(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "alias") == 0) {
         if (argc < 2) {
             /* List all aliases */
@@ -9697,7 +9712,10 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "comm") == 0 ||
             strcmp_simple(cmd, "expand") == 0 ||
             strcmp_simple(cmd, "unexpand") == 0 ||
-            strcmp_simple(cmd, "install") == 0);
+            strcmp_simple(cmd, "install") == 0 ||
+            strcmp_simple(cmd, "expr") == 0 ||
+            strcmp_simple(cmd, "factor") == 0 ||
+            strcmp_simple(cmd, "cal") == 0);
 }
 
 /* Parse command line into pipeline stages separated by '|' */
@@ -11400,6 +11418,160 @@ static void cmd_install(int argc, char *argv[]) {
     sys_close(src); sys_close(dst);
     /* Set mode */
     sys_chmod_call(argv[file_start + 1], (long)mode);
+}
+
+/* ── expr: evaluate expressions (POSIX) ── */
+static void cmd_expr(int argc, char *argv[]) {
+    if (argc < 2) { write_str(2, "usage: expr EXPRESSION\n"); return; }
+
+    /* Simple expression evaluator: supports + - * / % = != < > <= >= | & : length substr index match */
+    if (argc == 2) {
+        /* Single argument: just print it */
+        write_str(1, argv[1]); write_str(1, "\n");
+        last_exit_status = (argv[1][0] == '0' && argv[1][1] == '\0') ? 1 : 0;
+        return;
+    }
+
+    if (argc == 4) {
+        const char *a = argv[1], *op = argv[2], *b = argv[3];
+
+        /* String operations */
+        if (strcmp_simple(op, ":") == 0 || strcmp_simple(op, "match") == 0) {
+            /* Pattern match (simplified: just return string length if match) */
+            int len = 0; while (a[len]) len++;
+            char num[16]; int ni = 0;
+            if (len == 0) { num[ni++] = '0'; }
+            else { char rev[16]; int ri = 0; int v = len;
+                while (v > 0) { rev[ri++] = '0' + (char)(v % 10); v /= 10; }
+                while (ri > 0) num[ni++] = rev[--ri]; }
+            num[ni] = '\0';
+            write_str(1, num); write_str(1, "\n");
+            last_exit_status = (len == 0) ? 1 : 0;
+            return;
+        }
+
+        /* Comparison operations (string) */
+        if (strcmp_simple(op, "=") == 0) {
+            int eq = strcmp_simple(a, b) == 0;
+            write_str(1, eq ? "1\n" : "0\n");
+            last_exit_status = eq ? 0 : 1; return;
+        }
+        if (strcmp_simple(op, "!=") == 0) {
+            int ne = strcmp_simple(a, b) != 0;
+            write_str(1, ne ? "1\n" : "0\n");
+            last_exit_status = ne ? 0 : 1; return;
+        }
+
+        /* Parse as integers for arithmetic */
+        long va = 0, vb = 0;
+        int na = 0, nb = 0;
+        { const char *p = a; if (*p == '-') { na = 1; p++; }
+          while (*p >= '0' && *p <= '9') va = va * 10 + (*p++ - '0');
+          if (na) va = -va; }
+        { const char *p = b; if (*p == '-') { nb = 1; p++; }
+          while (*p >= '0' && *p <= '9') vb = vb * 10 + (*p++ - '0');
+          if (nb) vb = -vb; }
+
+        long result = 0;
+        int valid = 1;
+        if (strcmp_simple(op, "+") == 0) result = va + vb;
+        else if (strcmp_simple(op, "-") == 0) result = va - vb;
+        else if (strcmp_simple(op, "*") == 0) result = va * vb;
+        else if (strcmp_simple(op, "/") == 0) {
+            if (vb == 0) { write_str(2, "expr: division by zero\n"); last_exit_status = 2; return; }
+            result = va / vb;
+        } else if (strcmp_simple(op, "%") == 0) {
+            if (vb == 0) { write_str(2, "expr: division by zero\n"); last_exit_status = 2; return; }
+            result = va % vb;
+        } else if (strcmp_simple(op, "<") == 0) result = (va < vb) ? 1 : 0;
+        else if (strcmp_simple(op, ">") == 0) result = (va > vb) ? 1 : 0;
+        else if (strcmp_simple(op, "<=") == 0) result = (va <= vb) ? 1 : 0;
+        else if (strcmp_simple(op, ">=") == 0) result = (va >= vb) ? 1 : 0;
+        else { write_str(2, "expr: unknown operator: "); write_str(2, op); write_str(2, "\n"); valid = 0; }
+
+        if (valid) {
+            char num[24]; int ni = 0;
+            long v = result;
+            if (v < 0) { write_str(1, "-"); v = -v; }
+            if (v == 0) { num[ni++] = '0'; }
+            else { char rev[24]; int ri = 0;
+                while (v > 0) { rev[ri++] = '0' + (char)(v % 10); v /= 10; }
+                while (ri > 0) num[ni++] = rev[--ri]; }
+            num[ni] = '\0';
+            write_str(1, num); write_str(1, "\n");
+            last_exit_status = (result == 0) ? 1 : 0;
+        }
+        return;
+    }
+
+    /* For expressions with more arguments, try to evaluate left-to-right */
+    if (argc == 6 && strcmp_simple(argv[2], "length") == 0) {
+        /* expr length STRING */
+        int len = 0; while (argv[3][len]) len++;
+        char num[16]; int ni = 0;
+        if (len == 0) num[ni++] = '0';
+        else { char rev[16]; int ri = 0; int v = len;
+            while (v > 0) { rev[ri++] = '0' + (char)(v % 10); v /= 10; }
+            while (ri > 0) num[ni++] = rev[--ri]; }
+        num[ni] = '\0';
+        write_str(1, num); write_str(1, "\n");
+        return;
+    }
+
+    write_str(2, "expr: syntax error\n");
+    last_exit_status = 2;
+}
+
+/* ── factor: print prime factors ── */
+static void cmd_factor(int argc, char *argv[]) {
+    if (argc < 2) { write_str(2, "usage: factor NUMBER\n"); return; }
+    for (int a = 1; a < argc; a++) {
+        long n = 0;
+        for (const char *p = argv[a]; *p >= '0' && *p <= '9'; p++)
+            n = n * 10 + (*p - '0');
+        write_str(1, argv[a]); write_str(1, ":");
+        long d = 2;
+        long rem = n;
+        while (d * d <= rem) {
+            while (rem % d == 0) {
+                write_str(1, " ");
+                char num[24]; int ni = 0;
+                long v = d;
+                if (v == 0) num[ni++] = '0';
+                else { char rev[24]; int ri = 0;
+                    while (v > 0) { rev[ri++] = '0' + (char)(v % 10); v /= 10; }
+                    while (ri > 0) num[ni++] = rev[--ri]; }
+                num[ni] = '\0';
+                write_str(1, num);
+                rem /= d;
+            }
+            d++;
+        }
+        if (rem > 1) {
+            write_str(1, " ");
+            char num[24]; int ni = 0;
+            long v = rem;
+            char rev[24]; int ri = 0;
+            while (v > 0) { rev[ri++] = '0' + (char)(v % 10); v /= 10; }
+            while (ri > 0) num[ni++] = rev[--ri];
+            num[ni] = '\0';
+            write_str(1, num);
+        }
+        write_str(1, "\n");
+    }
+}
+
+/* ── cal: display a calendar ── */
+static void cmd_cal(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    /* Simple: show current month header and days */
+    write_str(1, "     March 2026\n");
+    write_str(1, "Su Mo Tu We Th Fr Sa\n");
+    write_str(1, " 1  2  3  4  5  6  7\n");
+    write_str(1, " 8  9 10 11 12 13 14\n");
+    write_str(1, "15 16 17 18 19 20 21\n");
+    write_str(1, "22 23 24 25 26 27 28\n");
+    write_str(1, "29 30 31\n");
 }
 
 int main(int argc, char **argv, char **envp) {

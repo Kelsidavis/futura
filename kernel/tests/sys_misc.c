@@ -62261,6 +62261,104 @@ __attribute__((noinline)) static void test_pty_and_cgroup(void) {
         }
     }
 
+    /* ── Test 2216: overlayfs mount and read-through ── */
+    fut_printf("[MISC-TEST] Test 2216: overlayfs mount\n");
+    {
+        extern long sys_mkdir(const char *, unsigned int);
+        extern long sys_mount(const char *, const char *, const char *, unsigned long, const void *);
+        extern long sys_umount2(const char *, int);
+        extern long sys_open(const char *, int, int);
+        extern ssize_t sys_write(int fd, const void *buf, size_t count);
+        extern long sys_read(int, void *, size_t);
+        extern long sys_close(int);
+
+        int pass = 0;
+        /* Create lower and upper directories */
+        sys_mkdir("/tmp/ovl_lower", 0755);
+        sys_mkdir("/tmp/ovl_upper", 0755);
+        sys_mkdir("/tmp/ovl_merged", 0755);
+
+        /* Create a file in the lower layer */
+        long fd = sys_open("/tmp/ovl_lower/base.txt", 0x41 /* O_WRONLY|O_CREAT */, 0644);
+        if (fd >= 0) {
+            sys_write((int)fd, "lower", 5);
+            sys_close((int)fd);
+        }
+
+        /* Mount overlay */
+        long mr = sys_mount("overlay", "/tmp/ovl_merged", "overlay", 0,
+                             "lowerdir=/tmp/ovl_lower,upperdir=/tmp/ovl_upper");
+        if (mr == 0) {
+            /* Read the file through the overlay */
+            long rfd = sys_open("/tmp/ovl_merged/base.txt", 0 /* O_RDONLY */, 0);
+            if (rfd >= 0) {
+                static char buf[16];
+                long n = sys_read((int)rfd, buf, 15);
+                sys_close((int)rfd);
+                if (n == 5 && buf[0] == 'l' && buf[1] == 'o' && buf[2] == 'w') {
+                    pass = 1;
+                } else {
+                    fut_printf("[MISC-TEST]   read=%ld buf=%c%c%c\n", n,
+                               n > 0 ? buf[0] : '?', n > 1 ? buf[1] : '?', n > 2 ? buf[2] : '?');
+                }
+            } else {
+                fut_printf("[MISC-TEST]   open merged=%ld\n", rfd);
+            }
+            sys_umount2("/tmp/ovl_merged", 0);
+        } else {
+            fut_printf("[MISC-TEST]   mount=%ld\n", mr);
+        }
+        if (pass) {
+            fut_printf("[MISC-TEST] ✓ Test 2216: overlay read-through ok\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2216: overlay failed\n");
+            fut_test_fail(2216);
+        }
+    }
+
+    /* ── Test 2217: overlayfs write goes to upper layer ── */
+    fut_printf("[MISC-TEST] Test 2217: overlayfs write to upper\n");
+    {
+        extern long sys_mount(const char *, const char *, const char *, unsigned long, const void *);
+        extern long sys_umount2(const char *, int);
+        extern long sys_open(const char *, int, int);
+        extern ssize_t sys_write(int fd, const void *buf, size_t count);
+        extern long sys_read(int, void *, size_t);
+        extern long sys_close(int);
+
+        int pass = 0;
+        long mr = sys_mount("overlay", "/tmp/ovl_merged", "overlay", 0,
+                             "lowerdir=/tmp/ovl_lower,upperdir=/tmp/ovl_upper");
+        if (mr == 0) {
+            /* Create new file in overlay — should go to upper */
+            long wfd = sys_open("/tmp/ovl_merged/new.txt", 0x41 /* O_WRONLY|O_CREAT */, 0644);
+            if (wfd >= 0) {
+                sys_write((int)wfd, "upper", 5);
+                sys_close((int)wfd);
+
+                /* Verify file exists in upper layer directly */
+                long ufd = sys_open("/tmp/ovl_upper/new.txt", 0 /* O_RDONLY */, 0);
+                if (ufd >= 0) {
+                    static char buf[16];
+                    long n = sys_read((int)ufd, buf, 15);
+                    sys_close((int)ufd);
+                    if (n == 5 && buf[0] == 'u') pass = 1;
+                }
+            }
+            sys_umount2("/tmp/ovl_merged", 0);
+        } else {
+            fut_printf("[MISC-TEST]   mount=%ld\n", mr);
+        }
+        if (pass) {
+            fut_printf("[MISC-TEST] ✓ Test 2217: overlay write to upper ok\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2217: overlay write failed\n");
+            fut_test_fail(2217);
+        }
+    }
+
     /* ── Test 2215: alarm() + pause interaction ── */
     fut_printf("[MISC-TEST] Test 2215: alarm() schedules SIGALRM\n");
     {

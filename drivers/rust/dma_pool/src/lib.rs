@@ -28,7 +28,7 @@ use common::{alloc_page, free_page, log};
 
 unsafe extern "C" {
     fn fut_printf(fmt: *const u8, ...);
-    fn fut_virt_to_phys(vaddr: *const c_void) -> u64;
+    fn rust_virt_to_phys(vaddr: *const c_void) -> u64;
 }
 
 // ── StaticCell for safe global mutable state ──
@@ -134,7 +134,7 @@ static POOLS: StaticCell<[DmaPool; MAX_POOLS]> = StaticCell::new([
 // ── Helpers ──
 
 fn virt_to_phys(ptr: *const u8) -> u64 {
-    unsafe { fut_virt_to_phys(ptr as *const c_void) }
+    unsafe { rust_virt_to_phys(ptr as *const c_void) }
 }
 
 /// Check that a block size is a power of two within the valid range.

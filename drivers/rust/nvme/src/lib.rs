@@ -328,11 +328,11 @@ fn io_wait_completion(ctrl: &mut NvmeController, _cmd_id: u16) -> Result<u32, u1
 // ── Physical address helper ──
 
 unsafe extern "C" {
-    fn fut_virt_to_phys(vaddr: *const c_void) -> u64;
+    fn rust_virt_to_phys(vaddr: *const c_void) -> u64;
 }
 
 fn virt_to_phys(ptr: *const u8) -> u64 {
-    unsafe { fut_virt_to_phys(ptr as *const c_void) }
+    unsafe { rust_virt_to_phys(ptr as *const c_void) }
 }
 
 // ── Controller initialization ──

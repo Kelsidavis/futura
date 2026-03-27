@@ -41,7 +41,7 @@ unsafe extern "C" {
     fn fut_printf(fmt: *const u8, ...);
     fn pci_device_count() -> i32;
     fn pci_get_device(index: i32) -> *const PciDevice;
-    fn fut_virt_to_phys(vaddr: *const c_void) -> u64;
+    fn rust_virt_to_phys(vaddr: *const c_void) -> u64;
 }
 
 // -- PCI device structure (mirrors kernel/pci.h) --

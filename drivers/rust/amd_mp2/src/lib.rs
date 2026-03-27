@@ -48,7 +48,7 @@ unsafe extern "C" {
     fn fut_printf(fmt: *const u8, ...);
     fn pci_device_count() -> i32;
     fn pci_get_device(index: i32) -> *const PciDevice;
-    fn fut_virt_to_phys(vaddr: *const c_void) -> u64;
+    fn rust_virt_to_phys(vaddr: *const c_void) -> u64;
 }
 
 // ---------------------------------------------------------------------------
@@ -141,7 +141,7 @@ fn pci_write16(bus: u8, dev: u8, func: u8, offset: u8, val: u16) {
 // ---------------------------------------------------------------------------
 
 fn virt_to_phys(ptr: *const u8) -> u64 {
-    unsafe { fut_virt_to_phys(ptr as *const c_void) }
+    unsafe { rust_virt_to_phys(ptr as *const c_void) }
 }
 
 // ---------------------------------------------------------------------------

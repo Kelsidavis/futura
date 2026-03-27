@@ -49,7 +49,7 @@ use common::{
 
 unsafe extern "C" {
     fn fut_printf(fmt: *const u8, ...);
-    fn fut_virt_to_phys(vaddr: *const c_void) -> u64;
+    fn rust_virt_to_phys(vaddr: *const c_void) -> u64;
 }
 
 // ---------------------------------------------------------------------------
@@ -57,7 +57,7 @@ unsafe extern "C" {
 // ---------------------------------------------------------------------------
 
 fn virt_to_phys(ptr: *const u8) -> u64 {
-    unsafe { fut_virt_to_phys(ptr as *const c_void) }
+    unsafe { rust_virt_to_phys(ptr as *const c_void) }
 }
 
 // ---------------------------------------------------------------------------

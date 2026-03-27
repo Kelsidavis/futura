@@ -62,6 +62,19 @@ unsigned long getauxval(unsigned long type) {
 }
 
 /*
+ * Network RX shim for Rust NIC drivers.
+ *
+ * Rust drivers call: fut_net_rx_packet(iface, data, len)
+ * Kernel provides:   fut_net_provider_rx(dev, frame, len)
+ */
+#include <futura/net.h>
+void fut_net_rx_packet(void *iface, const uint8_t *data, uint32_t len) {
+    if (iface && data && len > 0) {
+        fut_net_provider_rx((fut_netdev_t *)iface, data, (size_t)len);
+    }
+}
+
+/*
  * Simplified virt-to-phys wrapper for Rust drivers.
  *
  * Rust drivers call: fut_virt_to_phys(vaddr) -> phys_addr

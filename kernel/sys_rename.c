@@ -369,6 +369,14 @@ long sys_rename(const char *oldpath, const char *newpath) {
         if (ret == 0) {
             fut_printf("[RENAME] rename(old='%s' [%s], new='%s' [%s], op=%s) -> 0 (success, same-dir)\n",
                        old_buf, old_path_type, new_buf, new_path_type, operation_type);
+            /* Dispatch inotify IN_MOVED_FROM + IN_MOVED_TO with matching cookie */
+            {
+                extern void inotify_dispatch_event(const char *, uint32_t, const char *, uint32_t);
+                static uint32_t move_cookie = 1000;
+                uint32_t cookie = move_cookie++;
+                inotify_dispatch_event(old_parent_path, 0x00000040 /* IN_MOVED_FROM */, old_name, cookie);
+                inotify_dispatch_event(old_parent_path, 0x00000080 /* IN_MOVED_TO */, new_name, cookie);
+            }
         } else {
             fut_printf("[RENAME] rename(old='%s' [%s], new='%s' [%s], op=%s) -> %d (error)\n",
                        old_buf, old_path_type, new_buf, new_path_type, operation_type, ret);
@@ -537,6 +545,16 @@ long sys_rename(const char *oldpath, const char *newpath) {
 
     fut_printf("[RENAME] rename(old='%s' [%s], new='%s' [%s], op=%s) -> 0 (success, cross-dir)\n",
                old_buf, old_path_type, new_buf, new_path_type, operation_type);
+
+    /* Dispatch inotify IN_MOVED_FROM on old dir + IN_MOVED_TO on new dir */
+    {
+        extern void inotify_dispatch_event(const char *, uint32_t, const char *, uint32_t);
+        static uint32_t xdir_cookie = 2000;
+        uint32_t cookie = xdir_cookie++;
+        inotify_dispatch_event(old_parent_path, 0x00000040 /* IN_MOVED_FROM */, old_name, cookie);
+        inotify_dispatch_event(new_parent_path, 0x00000080 /* IN_MOVED_TO */, new_name, cookie);
+    }
+
     fut_vnode_unref(old_parent);
     fut_vnode_unref(new_parent);
     return 0;

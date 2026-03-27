@@ -709,7 +709,7 @@ See `docs/ARM64_STATUS.md` for the historical snapshot and `docs/ARM64_REFACTORI
 **Build System**
 - Reproducible builds with `REPRO=1` flag.
 - Cross-platform Makefile supporting x86-64 and ARM64.
-- Rust driver integration (staticlib compilation) — **54 crates** across x86-64 (24 drivers incl. NVMe, AHCI, xHCI, USB HID/Storage, RTL8111/I225-V/I211, HDA, LAPIC/IOAPIC, UART 16550, i8042, PCIe ECAM, AMD platform drivers, HPET, RTC, TPM 2.0, MSI-X), ARM64, and VirtIO.
+- Rust driver integration (staticlib compilation) — **60 crates** across x86-64 (30 drivers incl. NVMe, AHCI, xHCI, USB HID/Storage, RTL8111/I225-V/I211, HDA, LAPIC/IOAPIC, UART 16550, i8042, PCIe ECAM, AMD SMN/UMC/CCP/SMBus/IOMMU/GPIO/WDT/SPI/SB-TSI/P-State, ACPI PM, VESA FB, HPET, RTC, TPM 2.0, PCI MSI-X/PM), ARM64, and VirtIO.
 - Performance CI with baseline comparison and ±5% drift detection.
 
 **Testing**

@@ -122,6 +122,12 @@ static void cmd_tac(int argc, char *argv[]);
 static void cmd_chgrp(int argc, char *argv[]);
 static void cmd_md5sum(int argc, char *argv[]);
 static void cmd_strings(int argc, char *argv[]);
+static void cmd_pgrep(int argc, char *argv[]);
+static void cmd_pkill(int argc, char *argv[]);
+static void cmd_pidof(int argc, char *argv[]);
+static void cmd_nice(int argc, char *argv[]);
+static void cmd_renice(int argc, char *argv[]);
+static void cmd_xxd(int argc, char *argv[]);
 
 /* Forward declaration for prompt */
 static void print_prompt(void);
@@ -203,6 +209,12 @@ static inline long sys_chroot(const char *path) {
 }
 static inline long sys_chown(const char *pathname, unsigned int uid, unsigned int gid) {
     return sys_call3(92 /* SYS_chown */, (long)pathname, uid, gid);
+}
+static inline long sys_kill(int pid, int sig) {
+    return sys_call2(62 /* SYS_kill */, pid, sig);
+}
+static inline long sys_setpriority(int which, int who, int prio) {
+    return sys_call3(141 /* SYS_setpriority */, which, who, prio);
 }
 
 /* Note: sys_read, sys_write, sys_close, sys_unlink, sys_open are provided by sys.h */
@@ -514,7 +526,7 @@ static size_t common_prefix_len(const char *s1, const char *s2) {
 static void complete_command(char *buf, size_t *pos, size_t max_len) {
     /* List of builtin commands */
     const char *builtins[] = {
-        "arp", "bg", "brctl", "cd", "chgrp", "chmod", "chroot", "clear", "conntrack", "date", "dd", "df", "dhclient", "dmesg", "echo", "edit", "ethtool", "hexdump", "lsof", "md5sum", "nc", "nohup", "poweroff", "reboot", "seq", "sleep", "strings", "tac", "time", "timeout", "traceroute", "tty", "wget", "exit", "export", "fg", "free",
+        "arp", "bg", "brctl", "cd", "chgrp", "chmod", "chroot", "clear", "conntrack", "date", "dd", "df", "dhclient", "dmesg", "echo", "edit", "ethtool", "hexdump", "lsof", "md5sum", "nc", "nice", "nohup", "pgrep", "pidof", "pkill", "poweroff", "reboot", "renice", "seq", "sleep", "strings", "tac", "time", "timeout", "traceroute", "tty", "wget", "xxd", "exit", "export", "fg", "free",
         "help", "hostname", "httpd", "id", "ifconfig", "iostat", "ipcs", "iptables", "jobs", "kill", "logger", "losetup", "ls", "lsblk", "lspci", "mkfs", "mount", "netstat",
         ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "getconf", "history", "ip", "ln", "mktemp", "more", "nproc", "nslookup", "ping", "printf", "ps", "pwd", "read", "readlink", "set", "sha256sum", "shutdown", "source", "ss", "stat", "stty", "sync", "sysctl", "sysinfo", "tc", "test", "top", "trap", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "vmstat", "wait", "watch", "wdctl", "which", "whoami", "xargs", "yes", NULL
     };
@@ -1166,6 +1178,12 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  chgrp gid file  - Change group ownership\n");
     write_str(1, "  md5sum file     - Compute file hash\n");
     write_str(1, "  strings file    - Print printable character sequences\n");
+    write_str(1, "  pgrep pattern   - Find processes by name\n");
+    write_str(1, "  pkill [-sig] pat- Kill processes by name\n");
+    write_str(1, "  pidof name      - Find PID by exact process name\n");
+    write_str(1, "  nice [-n N] cmd - Run command with altered priority\n");
+    write_str(1, "  renice prio pid - Change process priority\n");
+    write_str(1, "  xxd [-r] file   - Hex dump (or reverse with -r)\n");
     write_str(1, "  lsof            - List open files\n");
     write_str(1, "  which <cmd>     - Find command in PATH\n");
     write_str(1, "  du [path]       - Show disk usage (KB)\n");
@@ -8818,6 +8836,24 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "strings") == 0) {
         cmd_strings(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "pgrep") == 0) {
+        cmd_pgrep(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "pkill") == 0) {
+        cmd_pkill(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "pidof") == 0) {
+        cmd_pidof(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "nice") == 0) {
+        cmd_nice(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "renice") == 0) {
+        cmd_renice(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "xxd") == 0) {
+        cmd_xxd(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "alias") == 0) {
         if (argc < 2) {
             /* List all aliases */
@@ -9369,7 +9405,13 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "tac") == 0 ||
             strcmp_simple(cmd, "chgrp") == 0 ||
             strcmp_simple(cmd, "md5sum") == 0 ||
-            strcmp_simple(cmd, "strings") == 0);
+            strcmp_simple(cmd, "strings") == 0 ||
+            strcmp_simple(cmd, "pgrep") == 0 ||
+            strcmp_simple(cmd, "pkill") == 0 ||
+            strcmp_simple(cmd, "pidof") == 0 ||
+            strcmp_simple(cmd, "nice") == 0 ||
+            strcmp_simple(cmd, "renice") == 0 ||
+            strcmp_simple(cmd, "xxd") == 0);
 }
 
 /* Parse command line into pipeline stages separated by '|' */
@@ -10367,6 +10409,310 @@ static void cmd_strings(int argc, char *argv[]) {
             run[run_len] = '\0';
             write_str(1, run);
             write_str(1, "\n");
+        }
+        sys_close(fd);
+    }
+}
+
+/* ── pgrep/pkill/pidof: find/signal processes by name ── */
+static int match_proc_name(int pid, const char *pattern) {
+    /* Read /proc/<pid>/comm and check if it contains pattern */
+    char path[64], comm[64];
+    int pi = 0;
+    const char *pfx = "/proc/";
+    while (pfx[pi]) { path[pi] = pfx[pi]; pi++; }
+    /* Append PID digits */
+    char pbuf[16]; int plen = 0;
+    int tmp = pid;
+    if (tmp == 0) { pbuf[plen++] = '0'; }
+    else { while (tmp > 0) { pbuf[plen++] = '0' + (tmp % 10); tmp /= 10; } }
+    for (int i = plen - 1; i >= 0; i--) path[pi++] = pbuf[i];
+    const char *sfx = "/comm";
+    for (int i = 0; sfx[i]; i++) path[pi++] = sfx[i];
+    path[pi] = '\0';
+
+    int fd = sys_open(path, O_RDONLY, 0);
+    if (fd < 0) return 0;
+    ssize_t n = sys_read(fd, comm, sizeof(comm) - 1);
+    sys_close(fd);
+    if (n <= 0) return 0;
+    comm[n] = '\0';
+    /* Strip trailing newline */
+    if (n > 0 && comm[n-1] == '\n') comm[n-1] = '\0';
+
+    /* Simple substring match */
+    for (int i = 0; comm[i]; i++) {
+        int j = 0;
+        while (pattern[j] && comm[i+j] == pattern[j]) j++;
+        if (pattern[j] == '\0') return 1;
+    }
+    return 0;
+}
+
+static void cmd_pgrep(int argc, char *argv[]) {
+    if (argc < 2) { write_str(2, "usage: pgrep PATTERN\n"); return; }
+    const char *pattern = argv[1];
+    int proc_fd = sys_open("/proc", O_RDONLY, 0);
+    if (proc_fd < 0) return;
+    char dirbuf[2048];
+    ssize_t dn;
+    while ((dn = sys_getdents64(proc_fd, dirbuf, sizeof(dirbuf))) > 0) {
+        ssize_t pos = 0;
+        while (pos < dn) {
+            uint16_t reclen = *(uint16_t *)(dirbuf + pos + 16);
+            char *name = dirbuf + pos + 19;
+            if (name[0] >= '1' && name[0] <= '9') {
+                int pid = 0;
+                for (int i = 0; name[i] >= '0' && name[i] <= '9'; i++)
+                    pid = pid * 10 + (name[i] - '0');
+                if (match_proc_name(pid, pattern)) {
+                    char num[16]; int nl = 0;
+                    int t = pid;
+                    if (t == 0) { num[nl++] = '0'; }
+                    else { while (t > 0) { num[nl++] = '0' + (t % 10); t /= 10; } }
+                    for (int i = nl - 1; i >= 0; i--) { char c = num[i]; sys_write(1, &c, 1); }
+                    write_str(1, "\n");
+                }
+            }
+            pos += reclen;
+        }
+    }
+    sys_close(proc_fd);
+}
+
+static void cmd_pkill(int argc, char *argv[]) {
+    int sig = 15; /* SIGTERM */
+    int pat_idx = 1;
+    if (argc >= 3 && argv[1][0] == '-') {
+        sig = 0;
+        for (const char *p = argv[1] + 1; *p >= '0' && *p <= '9'; p++)
+            sig = sig * 10 + (*p - '0');
+        pat_idx = 2;
+    }
+    if (pat_idx >= argc) { write_str(2, "usage: pkill [-SIG] PATTERN\n"); return; }
+    const char *pattern = argv[pat_idx];
+    int proc_fd = sys_open("/proc", O_RDONLY, 0);
+    if (proc_fd < 0) return;
+    char dirbuf[2048];
+    ssize_t dn;
+    while ((dn = sys_getdents64(proc_fd, dirbuf, sizeof(dirbuf))) > 0) {
+        ssize_t pos = 0;
+        while (pos < dn) {
+            uint16_t reclen = *(uint16_t *)(dirbuf + pos + 16);
+            char *name = dirbuf + pos + 19;
+            if (name[0] >= '1' && name[0] <= '9') {
+                int pid = 0;
+                for (int i = 0; name[i] >= '0' && name[i] <= '9'; i++)
+                    pid = pid * 10 + (name[i] - '0');
+                if (match_proc_name(pid, pattern))
+                    sys_kill(pid, sig);
+            }
+            pos += reclen;
+        }
+    }
+    sys_close(proc_fd);
+}
+
+static void cmd_pidof(int argc, char *argv[]) {
+    if (argc < 2) { write_str(2, "usage: pidof NAME\n"); return; }
+    /* pidof matches exact process name (not substring) */
+    int proc_fd = sys_open("/proc", O_RDONLY, 0);
+    if (proc_fd < 0) return;
+    char dirbuf[2048];
+    ssize_t dn;
+    int first = 1;
+    while ((dn = sys_getdents64(proc_fd, dirbuf, sizeof(dirbuf))) > 0) {
+        ssize_t pos = 0;
+        while (pos < dn) {
+            uint16_t reclen = *(uint16_t *)(dirbuf + pos + 16);
+            char *name = dirbuf + pos + 19;
+            if (name[0] >= '1' && name[0] <= '9') {
+                int pid = 0;
+                for (int i = 0; name[i] >= '0' && name[i] <= '9'; i++)
+                    pid = pid * 10 + (name[i] - '0');
+                /* Read comm and compare exactly */
+                char path[64], comm[64];
+                int pi = 0;
+                const char *pfx = "/proc/";
+                while (pfx[pi]) { path[pi] = pfx[pi]; pi++; }
+                char pbuf[16]; int plen = 0;
+                int tmp = pid;
+                if (tmp == 0) { pbuf[plen++] = '0'; }
+                else { while (tmp > 0) { pbuf[plen++] = '0' + (tmp % 10); tmp /= 10; } }
+                for (int i = plen - 1; i >= 0; i--) path[pi++] = pbuf[i];
+                const char *sfx = "/comm";
+                for (int i = 0; sfx[i]; i++) path[pi++] = sfx[i];
+                path[pi] = '\0';
+                int fd = sys_open(path, O_RDONLY, 0);
+                if (fd >= 0) {
+                    ssize_t n = sys_read(fd, comm, sizeof(comm) - 1);
+                    sys_close(fd);
+                    if (n > 0) {
+                        comm[n] = '\0';
+                        if (n > 0 && comm[n-1] == '\n') comm[n-1] = '\0';
+                        int match = 1;
+                        for (int i = 0; argv[1][i] || comm[i]; i++) {
+                            if (argv[1][i] != comm[i]) { match = 0; break; }
+                        }
+                        if (match) {
+                            if (!first) write_str(1, " ");
+                            char num[16]; int nl = 0;
+                            int t = pid;
+                            if (t == 0) { num[nl++] = '0'; }
+                            else { while (t > 0) { num[nl++] = '0' + (t % 10); t /= 10; } }
+                            for (int i = nl - 1; i >= 0; i--) { char c = num[i]; sys_write(1, &c, 1); }
+                            first = 0;
+                        }
+                    }
+                }
+            }
+            pos += reclen;
+        }
+    }
+    sys_close(proc_fd);
+    if (!first) write_str(1, "\n");
+}
+
+/* ── nice/renice: process priority management ── */
+static void cmd_nice(int argc, char *argv[]) {
+    int niceval = 10;  /* default nice increment */
+    int cmd_start = 1;
+    if (argc >= 3 && argv[1][0] == '-' && argv[1][1] == 'n') {
+        if (argc >= 4) {
+            niceval = 0;
+            const char *p = argv[2];
+            int neg = 0;
+            if (*p == '-') { neg = 1; p++; }
+            while (*p >= '0' && *p <= '9') niceval = niceval * 10 + (*p++ - '0');
+            if (neg) niceval = -niceval;
+            cmd_start = 3;
+        }
+    }
+    if (cmd_start >= argc) {
+        write_str(2, "usage: nice [-n ADJ] COMMAND [ARGS...]\n");
+        return;
+    }
+    /* Set our nice value then exec the command */
+    sys_setpriority(0 /* PRIO_PROCESS */, 0, niceval);
+    int sub_argc = argc - cmd_start;
+    char *sub_argv[64];
+    for (int i = 0; i < sub_argc && i < 63; i++)
+        sub_argv[i] = argv[i + cmd_start];
+    sub_argv[sub_argc] = NULL;
+    execute_command(sub_argc, sub_argv);
+}
+
+static void cmd_renice(int argc, char *argv[]) {
+    if (argc < 3) {
+        write_str(2, "usage: renice PRIORITY PID\n");
+        return;
+    }
+    int prio = 0, neg = 0;
+    const char *p = argv[1];
+    if (*p == '-') { neg = 1; p++; }
+    while (*p >= '0' && *p <= '9') prio = prio * 10 + (*p++ - '0');
+    if (neg) prio = -prio;
+
+    int pid = 0;
+    for (p = argv[2]; *p >= '0' && *p <= '9'; p++)
+        pid = pid * 10 + (*p - '0');
+
+    extern long sys_setpriority(int which, int who, int prio);
+    long r = sys_setpriority(0 /* PRIO_PROCESS */, pid, prio);
+    if (r != 0) {
+        write_str(2, "renice: failed\n");
+        last_exit_status = 1;
+    }
+}
+
+/* ── xxd: hex dump with optional reverse ── */
+static void cmd_xxd(int argc, char *argv[]) {
+    int reverse = 0;
+    int file_idx = 1;
+    if (argc >= 2 && argv[1][0] == '-' && argv[1][1] == 'r') {
+        reverse = 1;
+        file_idx = 2;
+    }
+    if (file_idx >= argc) {
+        write_str(2, "usage: xxd [-r] FILE\n");
+        return;
+    }
+    int fd = sys_open(argv[file_idx], O_RDONLY, 0);
+    if (fd < 0) {
+        write_str(2, "xxd: cannot open "); write_str(2, argv[file_idx]); write_str(2, "\n");
+        return;
+    }
+
+    if (reverse) {
+        /* Reverse hex dump: parse "OFFSET: HEXBYTES" lines back to binary */
+        static char line[256];
+        ssize_t n = sys_read(fd, line, sizeof(line));
+        sys_close(fd);
+        /* Simple: just extract hex bytes from each line */
+        for (ssize_t i = 0; i < n; i++) {
+            /* Skip offset and colon */
+            while (i < n && line[i] != ':' && line[i] != ' ') i++;
+            if (i < n && line[i] == ':') i++;
+            /* Parse hex pairs */
+            while (i < n && line[i] != '\n') {
+                while (i < n && line[i] == ' ') i++;
+                if (i + 1 < n && line[i] != '\n') {
+                    int hi = 0, lo = 0;
+                    char c = line[i];
+                    if (c >= '0' && c <= '9') hi = c - '0';
+                    else if (c >= 'a' && c <= 'f') hi = c - 'a' + 10;
+                    else if (c >= 'A' && c <= 'F') hi = c - 'A' + 10;
+                    else break;
+                    i++;
+                    c = line[i];
+                    if (c >= '0' && c <= '9') lo = c - '0';
+                    else if (c >= 'a' && c <= 'f') lo = c - 'a' + 10;
+                    else if (c >= 'A' && c <= 'F') lo = c - 'A' + 10;
+                    else break;
+                    i++;
+                    char byte = (char)((hi << 4) | lo);
+                    sys_write(1, &byte, 1);
+                }
+            }
+        }
+    } else {
+        /* Forward hex dump: standard xxd format */
+        static const char hex[] = "0123456789abcdef";
+        static char buf[4096];
+        ssize_t total_offset = 0;
+        ssize_t n;
+        while ((n = sys_read(fd, buf, sizeof(buf))) > 0) {
+            for (ssize_t i = 0; i < n; i += 16) {
+                /* Offset */
+                char line[80];
+                int lp = 0;
+                uint32_t off = (uint32_t)(total_offset + i);
+                for (int j = 28; j >= 0; j -= 4)
+                    line[lp++] = hex[(off >> j) & 0xF];
+                line[lp++] = ':';
+                line[lp++] = ' ';
+                /* Hex bytes */
+                ssize_t end = i + 16;
+                if (end > n) end = n;
+                for (ssize_t j = i; j < i + 16; j++) {
+                    if (j < end) {
+                        line[lp++] = hex[((unsigned char)buf[j]) >> 4];
+                        line[lp++] = hex[((unsigned char)buf[j]) & 0xF];
+                    } else {
+                        line[lp++] = ' '; line[lp++] = ' ';
+                    }
+                    if ((j - i) % 2 == 1) line[lp++] = ' ';
+                }
+                line[lp++] = ' ';
+                /* ASCII */
+                for (ssize_t j = i; j < end; j++) {
+                    unsigned char c = (unsigned char)buf[j];
+                    line[lp++] = (c >= 32 && c < 127) ? (char)c : '.';
+                }
+                line[lp++] = '\n';
+                sys_write(1, line, lp);
+            }
+            total_offset += n;
         }
         sys_close(fd);
     }

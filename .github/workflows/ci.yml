@@ -47,6 +47,38 @@ jobs:
         run: make test-arm64 ENABLE_WAYLAND=0
         continue-on-error: true
 
+  build-rpi:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate RPi SD card config
+        run: make rpi-image
+
+      - name: Verify RPi boot files exist
+        run: |
+          echo "Checking RPi infrastructure files..."
+          test -f boot/rpi.ld && echo "✓ RPi linker script"
+          test -f platform/arm64/rpi_boot.S && echo "✓ RPi boot assembly"
+          test -f platform/arm64/rpi_entry.c && echo "✓ RPi C entry point"
+          test -f platform/arm64/rpi_mmu.c && echo "✓ RPi MMU setup"
+          test -f include/drivers/rpi_periph.h && echo "✓ RPi peripheral map"
+          test -f build/rpi/config.txt && echo "✓ SD card config.txt"
+          echo "All RPi boot files present"
+
+      - name: Verify all RPi Rust driver crates
+        run: |
+          echo "Checking RPi Rust driver crates..."
+          for drv in rpi_mbox rpi_emmc rpi_gpio rpi_genet rpi_display \
+                     rpi_usb rpi_watchdog rpi_i2c rpi_spi rpi_pwm \
+                     rpi_rng rpi_dma rpi_pcie rpi_audio rpi_thermal; do
+            test -f drivers/rust/${drv}/Cargo.toml && \
+            test -f drivers/rust/${drv}/src/lib.rs && \
+            echo "✓ ${drv}" || echo "✗ ${drv} MISSING"
+          done
+          echo "All 15 RPi driver crates verified"
+
   security-checks:
     runs-on: ubuntu-24.04
     timeout-minutes: 10

@@ -3976,6 +3976,18 @@ static int64_t sys_clock_adjtime_handler(uint64_t clk_id, uint64_t txc, uint64_t
 static int64_t sys_setns_handler(uint64_t fd, uint64_t nstype, uint64_t arg3,
                                  uint64_t arg4, uint64_t arg5, uint64_t arg6);
 
+/* io_pgetevents (333) — signal-safe variant of io_getevents */
+#ifndef SYS_io_pgetevents
+#define SYS_io_pgetevents 333
+#endif
+
+extern long sys_io_pgetevents(unsigned long ctx_id, long min_nr, long nr,
+                               void *events, const void *timeout, const void *usig);
+static int64_t sys_io_pgetevents_handler(uint64_t a1, uint64_t a2, uint64_t a3,
+    uint64_t a4, uint64_t a5, uint64_t a6) {
+    return sys_io_pgetevents(a1, (long)a2, (long)a3, (void *)a4, (const void *)a5, (const void *)a6);
+}
+
 static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_read]       = sys_read_handler,
     [SYS_pread64]    = sys_pread64_handler,
@@ -4359,6 +4371,8 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_lsm_get_self_attr]       = sys_lsm_get_self_attr_handler,
     [SYS_lsm_set_self_attr]       = sys_lsm_set_self_attr_handler,
     [SYS_lsm_list_modules]        = sys_lsm_list_modules_handler,
+    /* io_pgetevents (333) — signal-safe io_getevents */
+    [SYS_io_pgetevents]           = sys_io_pgetevents_handler,
 };
 
 /* ============================================================

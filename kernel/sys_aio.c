@@ -338,6 +338,48 @@ long sys_io_cancel(unsigned long ctx_id, void *iocb, void *result) {
     return -EAGAIN;
 }
 
+/**
+ * sys_io_pgetevents - Signal-safe variant of io_getevents (Linux 4.18+)
+ *
+ * Atomically sets the signal mask, calls io_getevents, then restores it.
+ * The signal mask allows blocking signals during the wait to prevent
+ * EINTR races in event-loop code.
+ *
+ * Syscall 333 on x86_64, 292 on ARM64.
+ */
+long sys_io_pgetevents(unsigned long ctx_id, long min_nr, long nr,
+                        void *events, const void *timeout,
+                        const void *usig) {
+    /* Apply signal mask if provided */
+    uint64_t old_mask = 0;
+    if (usig) {
+        /* usig points to { const sigset_t *sigmask; size_t sigsetsize; }
+         * For simplicity, just extract the sigmask pointer. */
+        struct { const uint64_t *ss; uint64_t ssz; } *sig = (void *)usig;
+        if (sig->ss) {
+            fut_task_t *task = fut_task_current();
+            if (task) {
+                old_mask = task->signal_mask;
+                task->signal_mask = *sig->ss;
+            }
+        }
+    }
+
+    long ret = sys_io_getevents(ctx_id, min_nr, nr, events, timeout);
+
+    /* Restore signal mask */
+    if (usig) {
+        struct { const uint64_t *ss; uint64_t ssz; } *sig = (void *)usig;
+        if (sig->ss) {
+            fut_task_t *task = fut_task_current();
+            if (task)
+                task->signal_mask = old_mask;
+        }
+    }
+
+    return ret;
+}
+
 /* ── io_uring constants (Linux ABI) ── */
 
 /* io_uring_params flags */

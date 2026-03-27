@@ -186,6 +186,18 @@ long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset) 
             return -EPERM;
         }
 
+        /* Cgroup memory limit enforcement: reject allocation if the task's
+         * cgroup has exceeded memory.max. This implements the key container
+         * resource isolation primitive. */
+        {
+            extern int memcg_check_limit(int pid);
+            int oom_pid = memcg_check_limit((int)task->pid);
+            if (oom_pid > 0) {
+                fut_printf("[MMAP] cgroup memory limit exceeded for PID %d — ENOMEM\n", oom_pid);
+                return -ENOMEM;
+            }
+        }
+
         fut_mm_t *mm = fut_task_get_mm(task);
         if (!mm) {
             /* Fall back to kernel_mm for kernel threads (same as fut_mm_current()) */

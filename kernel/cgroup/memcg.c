@@ -112,6 +112,50 @@ uint64_t memcg_get_current(const char *path) {
     return used_bytes;
 }
 
+/**
+ * memcg_check_limit — Check if a task's cgroup has exceeded memory.max.
+ * Called from the page allocator when memory is tight.
+ * Returns the PID to OOM-kill, or 0 if no limit exceeded.
+ */
+int memcg_check_limit(int pid) {
+    for (int i = 1; i < MEMCG_MAX_GROUPS; i++) {
+        if (!g_memcg[i].active || g_memcg[i].memory_max == 0)
+            continue;
+        /* Check if this PID is in this cgroup */
+        int found = 0;
+        for (int p = 0; p < g_memcg[i].pid_count; p++) {
+            if (g_memcg[i].pids[p] == pid) { found = 1; break; }
+        }
+        if (!found) continue;
+
+        /* Check if cgroup memory usage exceeds limit */
+        uint64_t current = memcg_get_current(g_memcg[i].name);
+        if (current > g_memcg[i].memory_max) {
+            fut_printf("[MEMCG] OOM: cgroup '%s' usage %llu > limit %llu — killing PID %d\n",
+                       g_memcg[i].name,
+                       (unsigned long long)current,
+                       (unsigned long long)g_memcg[i].memory_max, pid);
+            return pid;  /* This PID should be OOM-killed */
+        }
+    }
+    return 0;  /* No limit exceeded */
+}
+
+/**
+ * memcg_get_limit — Get the memory.max for a cgroup by path.
+ * Returns 0 if unlimited or not found.
+ */
+uint64_t memcg_get_limit(const char *path) {
+    for (int i = 0; i < MEMCG_MAX_GROUPS; i++) {
+        if (!g_memcg[i].active) continue;
+        const char *a = g_memcg[i].name, *b = path;
+        while (*a && *b && *a == *b) { a++; b++; }
+        if (*a == '\0' && *b == '\0')
+            return g_memcg[i].memory_max;
+    }
+    return 0;
+}
+
 int memcg_group_count(void) {
     int c = 0;
     for (int i = 0; i < MEMCG_MAX_GROUPS; i++)

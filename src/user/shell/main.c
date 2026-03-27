@@ -6677,6 +6677,297 @@ static void cp_recursive(const char *src, const char *dst) {
     sys_close(dfd);
 }
 
+/* ============================================================
+ * tar: create, extract, and list POSIX tar archives
+ *
+ * Supports:
+ *   tar cf archive.tar file1 dir1/    Create archive
+ *   tar xf archive.tar                Extract archive
+ *   tar tf archive.tar                List contents
+ *   tar xf archive.tar -C /path       Extract to directory
+ *
+ * Uses POSIX ustar 512-byte header format.
+ * ============================================================ */
+
+/* Write an octal value into a tar header field */
+static void tar_write_octal(char *field, int len, unsigned long val) {
+    int pos = len - 2;
+    field[len - 1] = '\0';
+    if (val == 0) { field[pos] = '0'; pos--; }
+    while (val > 0 && pos >= 0) {
+        field[pos--] = '0' + (char)(val & 7);
+        val >>= 3;
+    }
+    while (pos >= 0) field[pos--] = '0';
+}
+
+/* Parse an octal value from a tar header field */
+static unsigned long tar_read_octal(const char *field, int len) {
+    unsigned long val = 0;
+    for (int i = 0; i < len && field[i]; i++) {
+        if (field[i] >= '0' && field[i] <= '7')
+            val = (val << 3) | (unsigned long)(field[i] - '0');
+        else if (field[i] != ' ') break;
+    }
+    return val;
+}
+
+/* Compute tar header checksum */
+static unsigned long tar_checksum(const char *hdr) {
+    unsigned long sum = 0;
+    for (int i = 0; i < 512; i++) {
+        /* Checksum field (offset 148-155) treated as spaces */
+        if (i >= 148 && i < 156) sum += ' ';
+        else sum += (unsigned char)hdr[i];
+    }
+    return sum;
+}
+
+/* Add a single file to a tar archive fd */
+static void tar_add_file(int archive_fd, const char *path) {
+    /* Stat the file to get size and type */
+    struct stat st;
+    if (sys_call2(__NR_stat, (long)path, (long)&st) < 0) return;
+
+    /* Build 512-byte header */
+    static char hdr[512];
+    for (int i = 0; i < 512; i++) hdr[i] = '\0';
+
+    /* Name (offset 0, 100 bytes) */
+    int ni = 0;
+    while (path[ni] && ni < 99) { hdr[ni] = path[ni]; ni++; }
+    /* Add trailing / for directories */
+    int is_dir = (st.st_mode & 0170000) == 0040000;
+    if (is_dir && ni < 99 && (ni == 0 || hdr[ni-1] != '/')) hdr[ni++] = '/';
+
+    /* Mode (offset 100, 8 bytes) */
+    tar_write_octal(hdr + 100, 8, st.st_mode & 07777);
+    /* uid/gid (offset 108/116, 8 bytes each) */
+    tar_write_octal(hdr + 108, 8, st.st_uid);
+    tar_write_octal(hdr + 116, 8, st.st_gid);
+    /* Size (offset 124, 12 bytes) — 0 for directories */
+    tar_write_octal(hdr + 124, 12, is_dir ? 0 : (unsigned long)st.st_size);
+    /* Mtime (offset 136, 12 bytes) */
+    tar_write_octal(hdr + 136, 12, (unsigned long)st.st_mtim.tv_sec);
+    /* Type flag (offset 156) */
+    hdr[156] = is_dir ? '5' : '0';
+    /* Magic (offset 257) */
+    hdr[257] = 'u'; hdr[258] = 's'; hdr[259] = 't';
+    hdr[260] = 'a'; hdr[261] = 'r'; hdr[262] = '\0';
+    /* Version (offset 263) */
+    hdr[263] = '0'; hdr[264] = '0';
+
+    /* Checksum (offset 148, 8 bytes) */
+    unsigned long cksum = tar_checksum(hdr);
+    tar_write_octal(hdr + 148, 7, cksum);
+    hdr[155] = ' ';
+
+    sys_write(archive_fd, hdr, 512);
+
+    /* Write file data (rounded to 512-byte blocks) */
+    if (!is_dir && st.st_size > 0) {
+        int fd = sys_open(path, O_RDONLY, 0);
+        if (fd >= 0) {
+            static char buf[4096];
+            long remaining = st.st_size;
+            while (remaining > 0) {
+                long chunk = remaining > 4096 ? 4096 : remaining;
+                long nr = sys_read(fd, buf, chunk);
+                if (nr <= 0) break;
+                sys_write(archive_fd, buf, nr);
+                remaining -= nr;
+            }
+            sys_close(fd);
+            /* Pad to 512-byte boundary */
+            long pad = (512 - (st.st_size % 512)) % 512;
+            if (pad > 0) {
+                static char zeros[512];
+                for (int i = 0; i < 512; i++) zeros[i] = 0;
+                sys_write(archive_fd, zeros, pad);
+            }
+        }
+    }
+}
+
+/* Recursively add directory contents to tar */
+static void tar_add_recursive(int archive_fd, const char *path) {
+    tar_add_file(archive_fd, path);
+
+    /* Check if directory */
+    struct stat dst;
+    if (sys_call2(__NR_stat, (long)path, (long)&dst) < 0) return;
+    if ((dst.st_mode & 0170000) != 0040000) return;  /* Not a directory */
+
+    int fd = sys_open(path, O_RDONLY, 0);
+    if (fd < 0) return;
+
+    struct { unsigned long long d_ino; long long d_off; unsigned short d_reclen;
+             unsigned char d_type; char d_name[256]; } __attribute__((packed)) de;
+    char dbuf[4096]; long nread;
+    while ((nread = sys_getdents64(fd, dbuf, sizeof(dbuf))) > 0) {
+        char *ptr = dbuf;
+        while (ptr < dbuf + nread) {
+            __builtin_memcpy(&de, ptr, sizeof(de.d_ino) + sizeof(de.d_off) + sizeof(de.d_reclen) + sizeof(de.d_type));
+            char *name = ptr + 19;  /* d_name offset in linux_dirent64 */
+            unsigned short reclen = de.d_reclen;
+
+            if (name[0] != '.' || (name[1] != '\0' && (name[1] != '.' || name[2] != '\0'))) {
+                static char child_path[512];
+                int cp = 0;
+                const char *p = path;
+                while (*p && cp < 510) child_path[cp++] = *p++;
+                if (cp > 0 && child_path[cp-1] != '/') child_path[cp++] = '/';
+                while (*name && cp < 510) child_path[cp++] = *name++;
+                child_path[cp] = '\0';
+                tar_add_recursive(archive_fd, child_path);
+            }
+            ptr += reclen;
+        }
+    }
+    sys_close(fd);
+}
+
+static void cmd_tar(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: tar [c|x|t]f archive [files...] [-C dir]\n");
+        return;
+    }
+
+    /* Parse mode from first arg */
+    const char *mode_str = argv[1];
+    int do_create = 0, do_extract = 0, do_list = 0;
+    int need_file = 0;
+    for (int i = 0; mode_str[i]; i++) {
+        if (mode_str[i] == 'c') do_create = 1;
+        else if (mode_str[i] == 'x') do_extract = 1;
+        else if (mode_str[i] == 't') do_list = 1;
+        else if (mode_str[i] == 'f') need_file = 1;
+        else if (mode_str[i] == 'v') { /* verbose: ignored for now */ }
+        else if (mode_str[i] == 'z') { /* gzip: ignored (no compression) */ }
+    }
+
+    if (!need_file || argc < 3) {
+        write_str(2, "tar: archive file required (use f flag)\n");
+        return;
+    }
+
+    const char *archive = argv[2];
+    const char *extract_dir = NULL;
+    int file_start = 3;
+
+    /* Parse -C dir */
+    for (int i = 3; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-C") == 0 && i + 1 < argc) {
+            extract_dir = argv[i + 1];
+            /* Shift remaining args */
+            file_start = i + 2;
+            break;
+        }
+    }
+
+    if (do_create) {
+        int afd = sys_open(archive, 0x41 | 0x200 /* O_WRONLY|O_CREAT|O_TRUNC */, 0644);
+        if (afd < 0) {
+            write_str(2, "tar: cannot create "); write_str(2, archive); write_str(2, "\n");
+            return;
+        }
+        for (int i = file_start; i < argc; i++) {
+            if (argv[i][0] == '-') continue;  /* skip flags */
+            tar_add_recursive(afd, argv[i]);
+        }
+        /* Write two 512-byte zero blocks (end of archive marker) */
+        static char end_block[1024];
+        for (int i = 0; i < 1024; i++) end_block[i] = 0;
+        sys_write(afd, end_block, 1024);
+        sys_close(afd);
+    } else if (do_extract || do_list) {
+        int afd = sys_open(archive, O_RDONLY, 0);
+        if (afd < 0) {
+            write_str(2, "tar: cannot open "); write_str(2, archive); write_str(2, "\n");
+            return;
+        }
+        static char hdr[512];
+        while (sys_read(afd, hdr, 512) == 512) {
+            /* Check for end-of-archive (all zeros) */
+            int all_zero = 1;
+            for (int i = 0; i < 512 && all_zero; i++) if (hdr[i]) all_zero = 0;
+            if (all_zero) break;
+
+            /* Parse header */
+            char name[101]; for (int i = 0; i < 100; i++) name[i] = hdr[i]; name[100] = '\0';
+            /* Trim trailing nulls */
+            int nlen = 0; while (name[nlen]) nlen++;
+
+            unsigned long size = tar_read_octal(hdr + 124, 12);
+            unsigned long mode = tar_read_octal(hdr + 100, 8);
+            char type = hdr[156];
+
+            if (do_list) {
+                write_str(1, name); write_str(1, "\n");
+            }
+
+            if (do_extract) {
+                /* Build output path */
+                static char out_path[512];
+                int op = 0;
+                if (extract_dir) {
+                    const char *ep = extract_dir;
+                    while (*ep && op < 510) out_path[op++] = *ep++;
+                    if (op > 0 && out_path[op-1] != '/') out_path[op++] = '/';
+                }
+                for (int i = 0; i < nlen && op < 510; i++) out_path[op++] = name[i];
+                out_path[op] = '\0';
+
+                if (type == '5' || (nlen > 0 && name[nlen-1] == '/')) {
+                    /* Directory */
+                    extern long sys_mkdir(const char *, unsigned int);
+                    sys_mkdir(out_path, mode ? (unsigned int)mode : 0755);
+                } else {
+                    /* Regular file */
+                    int ofd = sys_open(out_path, 0x41 | 0x200, (int)mode ? (int)mode : 0644);
+                    if (ofd >= 0) {
+                        static char fbuf[4096];
+                        unsigned long remaining = size;
+                        while (remaining > 0) {
+                            unsigned long chunk = remaining > 4096 ? 4096 : remaining;
+                            long nr = sys_read(afd, fbuf, chunk);
+                            if (nr <= 0) break;
+                            sys_write(ofd, fbuf, nr);
+                            remaining -= (unsigned long)nr;
+                        }
+                        sys_close(ofd);
+                        /* Skip padding */
+                        unsigned long pad = (512 - (size % 512)) % 512;
+                        if (pad > 0) {
+                            static char skip[512];
+                            sys_read(afd, skip, pad);
+                        }
+                    } else {
+                        /* Skip data blocks */
+                        unsigned long total = size + ((512 - (size % 512)) % 512);
+                        static char skip[512];
+                        while (total > 0) {
+                            unsigned long chunk = total > 512 ? 512 : total;
+                            sys_read(afd, skip, chunk);
+                            total -= chunk;
+                        }
+                    }
+                }
+            } else {
+                /* List mode: skip data blocks */
+                unsigned long total = size + ((512 - (size % 512)) % 512);
+                static char skip[512];
+                while (total > 0) {
+                    unsigned long chunk = total > 512 ? 512 : total;
+                    sys_read(afd, skip, chunk);
+                    total -= chunk;
+                }
+            }
+        }
+        sys_close(afd);
+    }
+}
+
 static void cmd_cp(int argc, char *argv[]) {
     int recursive = 0;
     int arg_start = 1;
@@ -7727,6 +8018,9 @@ static int execute_command(int argc, char *argv[]) {
         return 0;
     } else if (strcmp_simple(argv[0], "cp") == 0) {
         cmd_cp(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "tar") == 0) {
+        cmd_tar(argc, argv);
         return 0;
     } else if (strcmp_simple(argv[0], "mv") == 0) {
         cmd_mv(argc, argv);
@@ -10590,6 +10884,7 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "stat") == 0 ||
             strcmp_simple(cmd, "chmod") == 0 ||
             strcmp_simple(cmd, "cp") == 0 ||
+            strcmp_simple(cmd, "tar") == 0 ||
             strcmp_simple(cmd, "sync") == 0 ||
             strcmp_simple(cmd, "alias") == 0 ||
             strcmp_simple(cmd, "arch") == 0 ||

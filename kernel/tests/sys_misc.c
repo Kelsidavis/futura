@@ -66155,6 +66155,22 @@ void fut_misc_test_thread(void *arg) {
         extern long sys_read(int, void *, size_t);
         extern long sys_close(int);
 
+        /* Test 2173: /etc/subuid contains root mapping */
+        fut_printf("[MISC-TEST] Test 2173: /etc/subuid\n");
+        {
+            static char buf[64];
+            long fd = sys_open("/etc/subuid", 0, 0);
+            if (fd >= 0) {
+                long n = sys_read((int)fd, buf, sizeof(buf) - 1);
+                sys_close((int)fd);
+                buf[n > 0 ? n : 0] = '\0';
+                if (buf[0] == 'r' && buf[1] == 'o' && buf[2] == 'o' && buf[3] == 't') {
+                    fut_printf("[MISC-TEST] ✓ Test 2173: subuid has root mapping\n");
+                    fut_test_pass();
+                } else { fut_printf("[MISC-TEST] ✗ Test 2173: %s\n", buf); fut_test_fail(2173); }
+            } else { fut_printf("[MISC-TEST] ✗ Test 2173: open=%ld\n", fd); fut_test_fail(2173); }
+        }
+
         /* Test 2171: /run/systemd directory exists */
         fut_printf("[MISC-TEST] Test 2171: /run/systemd exists\n");
         {

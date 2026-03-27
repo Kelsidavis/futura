@@ -1379,6 +1379,11 @@ void fut_kernel_main(void) {
                   "# Multilib support\n"
                   "/lib\n"
                   "/usr/lib\n");
+        /* Subordinate UID/GID maps for rootless containers (Podman, Docker rootless) */
+        ETC_WRITE("/etc/subuid",
+                  "root:100000:65536\n");
+        ETC_WRITE("/etc/subgid",
+                  "root:100000:65536\n");
         /* /etc/mtab should be a symlink to /proc/self/mounts */
         {
             extern long sys_symlink(const char *, const char *);
@@ -1473,7 +1478,7 @@ void fut_kernel_main(void) {
         planned_tests += 17u; /* clock_sched: getres, sched_param, sched_policy, itimer, rusage, times, getpriority, setpriority, getpriority(-who), setpriority(-who), unshare(0), unshare(invalid), rr_get_interval, clock_gettime, posix_timer_sigev_value, posix_timer_si_timer, itimer_virtual */
         planned_tests += 22u; /* vfs: O_TRUNC, O_APPEND, relpath, dir_mtime, readlink, hardlink, mount, renameat2, inotify, inotify_rename, inotify_attrib, inotify_close, inotify_access, inotify_modify, inotify_ftruncate, inotify_utimensat, inotify_truncate, inotify_delete, umount expire, dotdot, eisdir, chdir_dotdot */
         planned_tests += 17u; /* poll: file ready, eventfd not-ready, eventfd ready, POLLNVAL, select file, select pipe, pselect6 pipe, pselect6 sigmask restore, timeout-only sleep, timerfd readiness, signalfd readiness, pipe EOF, select pipe EOF, select timerfd wakeup, poll negative fd, POLLRDNORM, select timeout update */
-        planned_tests += 2172u; /* misc(2172): ..., tz (2168-2169), uts_ns (2170), dirs (2171-2172) */
+        planned_tests += 2173u; /* misc(2173): ..., uts_ns (2170), dirs (2171-2172), subuid (2173) */
         // planned_tests += 1u; /* block */
         // planned_tests += 1u; /* futfs */
         // planned_tests += 1u; /* net */

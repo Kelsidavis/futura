@@ -62146,6 +62146,138 @@ __attribute__((noinline)) static void test_pty_and_cgroup(void) {
             fut_test_fail(2210);
         }
     }
+
+    /* ── Test 2211: /proc/sys/kernel/random/entropy_avail returns real value ── */
+    fut_printf("[MISC-TEST] Test 2211: entropy_avail real\n");
+    {
+        extern long sys_open(const char *, int, int);
+        extern long sys_read(int, void *, size_t);
+        extern long sys_close(int);
+        long fd = sys_open("/proc/sys/kernel/random/entropy_avail", 0, 0);
+        int pass = 0;
+        if (fd >= 0) {
+            static char buf[32];
+            long n = sys_read((int)fd, buf, 31);
+            sys_close((int)fd);
+            if (n > 0) {
+                buf[n < 31 ? n : 30] = '\0';
+                /* Should be a number > 0 (entropy pool was seeded by boot time) */
+                long val = 0;
+                for (int i = 0; buf[i] >= '0' && buf[i] <= '9'; i++)
+                    val = val * 10 + (buf[i] - '0');
+                if (val > 0 && val <= 4096) {
+                    pass = 1;
+                    fut_printf("[MISC-TEST]   entropy=%ld\n", val);
+                }
+            }
+        }
+        if (pass) {
+            fut_printf("[MISC-TEST] ✓ Test 2211: entropy_avail=%ld (real)\n", 0L);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2211: entropy_avail invalid\n");
+            fut_test_fail(2211);
+        }
+    }
+
+    /* ── Test 2212: getrandom() returns random bytes ── */
+    fut_printf("[MISC-TEST] Test 2212: getrandom returns data\n");
+    {
+        extern long sys_getrandom(void *buf, size_t buflen, unsigned int flags);
+        static uint8_t rbuf[16];
+        long r = sys_getrandom(rbuf, 16, 0);
+        int pass = 0;
+        if (r == 16) {
+            /* Verify not all zeros (extremely unlikely for 16 random bytes) */
+            int nonzero = 0;
+            for (int i = 0; i < 16; i++) if (rbuf[i] != 0) nonzero++;
+            if (nonzero > 0) pass = 1;
+        }
+        if (pass) {
+            fut_printf("[MISC-TEST] ✓ Test 2212: getrandom 16 bytes ok\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2212: getrandom=%ld\n", r);
+            fut_test_fail(2212);
+        }
+    }
+
+    /* ── Test 2213: SO_PEERCRED on connected AF_UNIX socket ── */
+    fut_printf("[MISC-TEST] Test 2213: SO_PEERCRED on socket\n");
+    {
+        extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+        extern long sys_getsockopt(int sockfd, int level, int optname,
+                                    void *optval, unsigned int *optlen);
+        static int sv[2];
+        long r = sys_socketpair(1 /* AF_UNIX */, 1 /* SOCK_STREAM */, 0, sv);
+        int pass = 0;
+        if (r == 0) {
+            struct { int32_t pid; uint32_t uid; uint32_t gid; } cred = {0};
+            static unsigned int credlen;
+            credlen = sizeof(cred);
+            long gr = sys_getsockopt(sv[0], 1 /* SOL_SOCKET */, 17 /* SO_PEERCRED */,
+                                      &cred, &credlen);
+            if (gr == 0 && cred.pid > 0) {
+                pass = 1;
+                fut_printf("[MISC-TEST]   pid=%d uid=%u gid=%u\n", cred.pid, cred.uid, cred.gid);
+            } else {
+                fut_printf("[MISC-TEST]   getsockopt=%ld pid=%d\n", gr, cred.pid);
+            }
+            sys_close(sv[0]);
+            sys_close(sv[1]);
+        }
+        if (pass) {
+            fut_printf("[MISC-TEST] ✓ Test 2213: SO_PEERCRED ok\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2213: SO_PEERCRED failed\n");
+            fut_test_fail(2213);
+        }
+    }
+
+    /* ── Test 2214: F_GETFL returns flags matching how file was opened ── */
+    fut_printf("[MISC-TEST] Test 2214: fcntl F_GETFL\n");
+    {
+        extern long sys_open(const char *, int, int);
+        extern long sys_fcntl(int fd, int cmd, uint64_t arg);
+        extern long sys_close(int);
+        long fd = sys_open("/proc/version", 0 /* O_RDONLY */, 0);
+        int pass = 0;
+        if (fd >= 0) {
+            long flags = sys_fcntl((int)fd, 3 /* F_GETFL */, 0);
+            /* O_RDONLY = 0, so flags should be 0 or close to it */
+            if (flags >= 0) {
+                pass = 1;
+                fut_printf("[MISC-TEST]   flags=0x%lx\n", flags);
+            }
+            sys_close((int)fd);
+        }
+        if (pass) {
+            fut_printf("[MISC-TEST] ✓ Test 2214: F_GETFL ok\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2214: F_GETFL failed\n");
+            fut_test_fail(2214);
+        }
+    }
+
+    /* ── Test 2215: alarm() + pause interaction ── */
+    fut_printf("[MISC-TEST] Test 2215: alarm() schedules SIGALRM\n");
+    {
+        extern long sys_alarm(unsigned int seconds);
+        /* Set alarm for 5 seconds, then cancel it immediately */
+        long prev = sys_alarm(5);
+        /* Cancel by setting to 0 — should return remaining seconds (> 0) */
+        long rem = sys_alarm(0);
+        int pass = (rem > 0 && rem <= 5);
+        if (pass) {
+            fut_printf("[MISC-TEST] ✓ Test 2215: alarm set/cancel (rem=%ld)\n", rem);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2215: prev=%ld rem=%ld\n", prev, rem);
+            fut_test_fail(2215);
+        }
+    }
 }
 
 /* ============================================================

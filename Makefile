@@ -399,6 +399,7 @@ RUST_APPLE_I2C_DIR    := $(RUST_ROOT)/apple_i2c
 RUST_APPLE_PCIE_DIR   := $(RUST_ROOT)/apple_pcie
 RUST_APPLE_SMC_DIR    := $(RUST_ROOT)/apple_smc
 RUST_APPLE_SPI_DIR    := $(RUST_ROOT)/apple_spi
+RUST_APPLE_MCA_DIR    := $(RUST_ROOT)/apple_mca
 RUST_NVME_DIR         := $(RUST_ROOT)/nvme
 RUST_XHCI_DIR        := $(RUST_ROOT)/xhci
 RUST_RTL8111_DIR     := $(RUST_ROOT)/rtl8111
@@ -437,6 +438,7 @@ RUST_BUILD_DIR_APPLE_I2C   := $(RUST_APPLE_I2C_DIR)/target/$(RUST_TARGET)/$(RUST
 RUST_BUILD_DIR_APPLE_PCIE  := $(RUST_APPLE_PCIE_DIR)/target/$(RUST_TARGET)/$(RUST_PROFILE)
 RUST_BUILD_DIR_APPLE_SMC   := $(RUST_APPLE_SMC_DIR)/target/$(RUST_TARGET)/$(RUST_PROFILE)
 RUST_BUILD_DIR_APPLE_SPI   := $(RUST_APPLE_SPI_DIR)/target/$(RUST_TARGET)/$(RUST_PROFILE)
+RUST_BUILD_DIR_APPLE_MCA   := $(RUST_APPLE_MCA_DIR)/target/$(RUST_TARGET)/$(RUST_PROFILE)
 RUST_BUILD_DIR_NVME        := $(RUST_NVME_DIR)/target/$(RUST_TARGET)/$(RUST_PROFILE)
 RUST_BUILD_DIR_XHCI       := $(RUST_XHCI_DIR)/target/$(RUST_TARGET)/$(RUST_PROFILE)
 RUST_BUILD_DIR_RTL8111    := $(RUST_RTL8111_DIR)/target/$(RUST_TARGET)/$(RUST_PROFILE)
@@ -475,6 +477,7 @@ RUST_LIB_APPLE_I2C    := $(RUST_BUILD_DIR_APPLE_I2C)/libapple_i2c.a
 RUST_LIB_APPLE_PCIE   := $(RUST_BUILD_DIR_APPLE_PCIE)/libapple_pcie.a
 RUST_LIB_APPLE_SMC    := $(RUST_BUILD_DIR_APPLE_SMC)/libapple_smc.a
 RUST_LIB_APPLE_SPI    := $(RUST_BUILD_DIR_APPLE_SPI)/libapple_spi.a
+RUST_LIB_APPLE_MCA    := $(RUST_BUILD_DIR_APPLE_MCA)/libapple_mca.a
 RUST_LIB_NVME         := $(RUST_BUILD_DIR_NVME)/libnvme.a
 RUST_LIB_XHCI        := $(RUST_BUILD_DIR_XHCI)/libxhci.a
 RUST_LIB_RTL8111     := $(RUST_BUILD_DIR_RTL8111)/librtl8111.a
@@ -504,7 +507,7 @@ RUST_LIB_PCIE_ECAM   := $(RUST_BUILD_DIR_PCIE_ECAM)/libpcie_ecam.a
 ifeq ($(PLATFORM),x86_64)
 RUST_LIBS := $(RUST_LIB_VIRTIO_BLK) $(RUST_LIB_VIRTIO_NET) $(RUST_LIB_VIRTIO_INPUT) $(RUST_LIB_NVME) $(RUST_LIB_XHCI) $(RUST_LIB_RTL8111) $(RUST_LIB_HDA) $(RUST_LIB_AMD_SMBUS) $(RUST_LIB_AMD_IOMMU) $(RUST_LIB_AHCI) $(RUST_LIB_HPET) $(RUST_LIB_IGC) $(RUST_LIB_AMD_WDT) $(RUST_LIB_AMD_GPIO) $(RUST_LIB_CMOS_RTC) $(RUST_LIB_AMD_SPI) $(RUST_LIB_TPM_CRB) $(RUST_LIB_AMD_SBTSI) $(RUST_LIB_AMD_PSTATE) $(RUST_LIB_I211) $(RUST_LIB_PCI_MSIX) $(RUST_LIB_USB_HID) $(RUST_LIB_USB_STORAGE) $(RUST_LIB_LAPIC) $(RUST_LIB_UART16550) $(RUST_LIB_I8042) $(RUST_LIB_PCIE_ECAM)
 else ifeq ($(PLATFORM),arm64)
-RUST_LIBS := $(RUST_LIB_VIRTIO_GPU) $(RUST_LIB_VIRTIO_NET) $(RUST_LIB_VIRTIO_BLK) $(RUST_LIB_VIRTIO_INPUT) $(RUST_LIB_APPLE_UART) $(RUST_LIB_APPLE_RTKIT) $(RUST_LIB_APPLE_ANS2) $(RUST_LIB_APPLE_AIC) $(RUST_LIB_APPLE_DART) $(RUST_LIB_APPLE_GPIO) $(RUST_LIB_APPLE_I2C) $(RUST_LIB_APPLE_PCIE) $(RUST_LIB_APPLE_SMC) $(RUST_LIB_APPLE_SPI)
+RUST_LIBS := $(RUST_LIB_VIRTIO_GPU) $(RUST_LIB_VIRTIO_NET) $(RUST_LIB_VIRTIO_BLK) $(RUST_LIB_VIRTIO_INPUT) $(RUST_LIB_APPLE_UART) $(RUST_LIB_APPLE_RTKIT) $(RUST_LIB_APPLE_ANS2) $(RUST_LIB_APPLE_AIC) $(RUST_LIB_APPLE_DART) $(RUST_LIB_APPLE_GPIO) $(RUST_LIB_APPLE_I2C) $(RUST_LIB_APPLE_PCIE) $(RUST_LIB_APPLE_SMC) $(RUST_LIB_APPLE_SPI) $(RUST_LIB_APPLE_MCA)
 else
 RUST_LIBS :=
 endif
@@ -1186,6 +1189,15 @@ $(RUST_LIB_APPLE_SPI): $(RUST_SOURCES)
 	@cd $(RUST_APPLE_SPI_DIR) && RUSTFLAGS="-C panic=abort -C force-unwind-tables=no $(RUSTFLAGS)" $(CARGO) build --release --target $(RUST_TARGET)
 	@tmpdir=$$(mktemp -d); \
 	cd $$tmpdir && $(AR) x $(abspath $(RUST_LIB_APPLE_SPI)) && for obj in *.o; do $(OBJCOPY) --remove-section='.gcc_except_table*' --remove-section='.eh_frame*' $$obj >/dev/null 2>&1 || true; done && $(AR) rcs $(abspath $(RUST_LIB_APPLE_SPI)) *.o; \
+	rm -rf $$tmpdir
+
+$(RUST_LIB_APPLE_MCA): $(RUST_SOURCES)
+	@$(RUSTC) --print target-list | grep -q $(RUST_TARGET) >/dev/null || { \
+		echo "error: rust target '$(RUST_TARGET)' not installed for $(RUSTC)." >&2; exit 1; }
+	@echo "CARGO apple_mca ($(RUST_PROFILE))"
+	@cd $(RUST_APPLE_MCA_DIR) && RUSTFLAGS="-C panic=abort -C force-unwind-tables=no $(RUSTFLAGS)" $(CARGO) build --release --target $(RUST_TARGET)
+	@tmpdir=$$(mktemp -d); \
+	cd $$tmpdir && $(AR) x $(abspath $(RUST_LIB_APPLE_MCA)) && for obj in *.o; do $(OBJCOPY) --remove-section='.gcc_except_table*' --remove-section='.eh_frame*' $$obj >/dev/null 2>&1 || true; done && $(AR) rcs $(abspath $(RUST_LIB_APPLE_MCA)) *.o; \
 	rm -rf $$tmpdir
 else
 rust-drivers:

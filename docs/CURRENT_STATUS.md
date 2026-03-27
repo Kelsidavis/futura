@@ -1,8 +1,33 @@
-# Current Status — January 2026
+# Current Status — March 2026
 
-**Last Updated**: 2026-01-22
+**Last Updated**: 2026-03-27
 
-**Audit Note (2026-01-22)**: The sections below were audited against the current tree. Code presence and build wiring were verified where possible; **runtime/perf claims were not re-run** unless explicitly stated.
+## Quick Stats (March 2026)
+
+| Metric | Value |
+|--------|-------|
+| **Syscalls** | 400+ Linux-compatible (356 x86_64 + 401 ARM64) |
+| **Kernel C lines** | ~210K across 226 implementation files |
+| **Automated tests** | **2250** across 11 test groups, all passing |
+| **Shell commands** | **151** built-in (POSIX + networking + system admin) |
+| **Rust driver crates** | **55** (24 AMD x86_64, 15 RPi, 11 Apple Silicon, 4 VirtIO, 1 common) |
+| **CI** | GitHub Actions: x86_64 + ARM64 + RPi verification + security checks |
+
+## Recent Additions (Since January 2026)
+
+- **ptrace**: 20+ operations for debugger/strace support (ATTACH/DETACH, PEEK/POKE, GETREGS/SETREGS, CONT/SYSCALL, GETREGSET)
+- **Linux AIO**: io_setup/io_submit/io_getevents/io_destroy/io_pgetevents with PREAD/PWRITE/FSYNC/PREADV/PWRITEV
+- **AF_INET SOCK_RAW**: Raw sockets with ICMP echo/reply for userspace ping
+- **IP fragmentation**: Fragment forwarded packets exceeding MTU; reassemble incoming fragments
+- **mm_lock**: Per-mm spinlock protecting VMA list during concurrent fork/mmap/munmap/mprotect
+- **Real CPU time tracking**: /proc/stat user/system/idle, per-thread utime/stime in /proc/pid/stat
+- **Real /proc/vmstat**: pgfault/pgmajfault from actual task counters, pgalloc/pgfree from PMM
+- **io_uring + AIO on ARM64**: Wired io_uring_setup/enter/register and io_pgetevents into ARM64 syscall table
+- **Shell expansion**: timeout, tty, nohup, chroot, tac, chgrp, md5sum, strings, pgrep, pkill, pidof, nice, renice, xxd, file (151 total)
+
+---
+
+**Audit Note (2026-01-22)**: The sections below were audited against the January tree. Code presence and build wiring were verified where possible; **runtime/perf claims were not re-run** unless explicitly stated.
 
 ## Overview
 

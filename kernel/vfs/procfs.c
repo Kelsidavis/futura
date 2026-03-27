@@ -274,6 +274,7 @@ enum procfs_kind {
     PROC_PAGEMAP,                   /* /proc/<pid>/pagemap — physical page info (binary, 8 bytes/page) */
     PROC_KALLSYMS,                  /* /proc/kallsyms — kernel symbol table (addresses zeroed per kptr_restrict) */
     PROC_KCONFIG,                   /* /proc/config.gz — kernel configuration (text, not actually gzipped) */
+    PROC_SYSRQ_TRIGGER,             /* /proc/sysrq-trigger — Magic SysRq trigger (write-only) */
     PROC_TIMERSLACK_NS,             /* /proc/<pid>/timerslack_ns — timer expiry slack in nanoseconds */
     PROC_SYSCALL,                   /* /proc/<pid>/syscall — current syscall number and arguments */
     PROC_LOCKS,                     /* /proc/locks — POSIX and flock file lock table */
@@ -507,6 +508,7 @@ typedef struct {
 #define PROC_INO_PRESSURE_MEM            424ULL
 #define PROC_INO_PRESSURE_IO             425ULL
 #define PROC_INO_KCONFIG                 426ULL
+#define PROC_INO_SYSRQ_TRIGGER           434ULL
 /* /proc/sys/kernel/ extended range: 400-429 */
 #define PROC_INO_SYS_KERNEL_NMI_WD     400ULL
 #define PROC_INO_SYS_KERNEL_WATCHDOG   401ULL
@@ -3549,6 +3551,9 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
         case PROC_KALLSYMS:
             total = gen_kallsyms(tmp, GEN_BUF);
             break;
+        case PROC_SYSRQ_TRIGGER:
+            total = 0; /* Write-only */
+            break;
         case PROC_KCONFIG: {
             /* /proc/config.gz — kernel configuration (plain text, not gzipped).
              * Docker's check-config.sh, systemd-analyze, and container tools
@@ -4398,6 +4403,25 @@ static ssize_t procfs_file_write(struct fut_vnode *vnode, const void *buf,
             /* Accept nf_conntrack_max write (Docker sets this) */
             return (ssize_t)size;
 
+        case PROC_SYSRQ_TRIGGER: {
+            /* /proc/sysrq-trigger — handle Magic SysRq commands */
+            if (copy_len >= 1) {
+                char cmd = kbuf[0];
+                switch (cmd) {
+                case 'h':
+                    fut_printf("[SYSRQ] SysRq: HELP: b(reboot) c(crash) e(term) "
+                               "h(help) m(meminfo) s(sync) t(tasks) w(stacks)\n");
+                    break;
+                case 's': fut_printf("[SYSRQ] Emergency Sync\n"); break;
+                case 't': fut_printf("[SYSRQ] Show Tasks\n"); break;
+                case 'm': fut_printf("[SYSRQ] Show Memory\n"); break;
+                case 'w': fut_printf("[SYSRQ] Show Blocked Tasks\n"); break;
+                default:  fut_printf("[SYSRQ] Command '%c'\n", cmd); break;
+                }
+            }
+            return (ssize_t)size;
+        }
+
         case PROC_SYS_CORE_PATTERN:
         case PROC_SYS_CORE_USES_PID:
         case PROC_SYS_SUID_DUMPABLE:
@@ -4784,6 +4808,11 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
         if (STREQ(name, "config.gz")) {
             *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_KCONFIG,
                                           0100444, PROC_KCONFIG, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "sysrq-trigger")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYSRQ_TRIGGER,
+                                          0100200, PROC_SYSRQ_TRIGGER, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
         if (STREQ(name, "locks")) {
@@ -6075,7 +6104,8 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             "loadavg", "mounts", "sys", "stat", "filesystems", "vmstat", "net",
             "interrupts", "cmdline", "swaps", "devices", "misc",
             "buddyinfo", "zoneinfo", "diskstats", "partitions", "cgroups", "kallsyms",
-            "locks", "modules", "sysvipc", "pci", "pressure", "config.gz"
+            "locks", "modules", "sysvipc", "pci", "pressure", "config.gz",
+            "sysrq-trigger"
         };
         static const uint8_t fixed_type[] = {
             FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
@@ -6094,7 +6124,8 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             FUT_VDIR_TYPE_DIR,  /* sysvipc */
             FUT_VDIR_TYPE_REG,  /* pci */
             FUT_VDIR_TYPE_DIR,  /* pressure */
-            FUT_VDIR_TYPE_REG   /* config.gz */
+            FUT_VDIR_TYPE_REG,  /* config.gz */
+            FUT_VDIR_TYPE_REG   /* sysrq-trigger */
         };
         static const uint64_t fixed_ino[] = {
             PROC_INO_ROOT, PROC_INO_ROOT,
@@ -6109,9 +6140,10 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             PROC_INO_DISKSTATS, PROC_INO_PARTITIONS, PROC_INO_CGROUPS, PROC_INO_KALLSYMS,
             PROC_INO_LOCKS, PROC_INO_MODULES,
             PROC_INO_SYSVIPC_DIR, PROC_INO_PCI,
-            PROC_INO_PRESSURE_DIR, PROC_INO_KCONFIG
+            PROC_INO_PRESSURE_DIR, PROC_INO_KCONFIG,
+            PROC_INO_SYSRQ_TRIGGER
         };
-        if (idx < 32) {
+        if (idx < 33) {
             de->d_ino    = fixed_ino[idx];
             de->d_off    = idx + 1;
             de->d_type   = fixed_type[idx];
@@ -6128,9 +6160,9 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         /*
          * PID enumeration: after the 29 fixed entries, cookies encode
          * "find first task with pid > (cookie - 30)".  After returning
-         * a PID entry we set cookie = 32 + that_pid + 1.
+         * a PID entry we set cookie = 33 + that_pid + 1.
          */
-        uint64_t min_pid = idx >= 32 ? idx - 32 : 0;  /* start scanning for pid > min_pid */
+        uint64_t min_pid = idx >= 33 ? idx - 33 : 0;  /* start scanning for pid > min_pid */
         fut_task_t *best = NULL;
         uint64_t   best_pid = (uint64_t)-1;
         fut_task_t *t = fut_task_list;
@@ -6155,14 +6187,14 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         pidname[pn] = '\0';
 
         de->d_ino    = PROC_INO_PID_DIR(best->pid);
-        de->d_off    = 32 + best->pid + 1;
+        de->d_off    = 33 + best->pid + 1;
         de->d_type   = FUT_VDIR_TYPE_DIR;
         de->d_reclen = sizeof(*de);
         size_t nl = (size_t)pn;
         if (nl > FUT_VFS_NAME_MAX) nl = FUT_VFS_NAME_MAX;
         __builtin_memcpy(de->d_name, pidname, nl);
         de->d_name[nl] = '\0';
-        *cookie = 32 + best->pid + 1;  /* resume after this pid */
+        *cookie = 33 + best->pid + 1;  /* resume after this pid */
         return 1;
     }
 

@@ -15,6 +15,11 @@ SHELL := /bin/bash
 PLATFORM ?= x86_64
 export PLATFORM
 
+# Build profile: desktop (Horizon DE + Wayland) or server (headless, no GUI)
+#   make PROFILE=desktop   — full desktop with Horizon compositor
+#   make PROFILE=server    — headless server, no Wayland/GUI
+PROFILE ?= desktop
+
 # Build mode (debug, release)
 BUILD_MODE ?= debug
 
@@ -231,8 +236,13 @@ CFLAGS += -DWAYLAND_INTERACTIVE_MODE=1
 endif
 
 # Feature toggles
-# Wayland compositor + wl-term (production UI)
-ENABLE_WAYLAND ?= 1
+# Wayland compositor + Horizon DE (production UI)
+# Auto-set by PROFILE: desktop=1, server=0
+ifeq ($(PROFILE),server)
+  ENABLE_WAYLAND ?= 0
+else
+  ENABLE_WAYLAND ?= 1
+endif
 # Wayland test clients (wl-simple, wl-colorwheel) - disabled by default
 ENABLE_WAYLAND_TEST_CLIENTS ?= 0
 # Optional: fbtest framebuffer diagnostic tool

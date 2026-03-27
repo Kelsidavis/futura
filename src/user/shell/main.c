@@ -8944,6 +8944,32 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "export") == 0) {
         cmd_export(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "unset") == 0) {
+        /* unset VAR... — remove shell variables */
+        for (int i = 1; i < argc; i++) {
+            /* Find and remove the variable */
+            for (int j = 0; j < MAX_VARS; j++) {
+                if (shell_vars[j].used && strcmp_simple(shell_vars[j].name, argv[i]) == 0) {
+                    shell_vars[j].used = 0;
+                    shell_vars[j].name[0] = '\0';
+                    shell_vars[j].value[0] = '\0';
+                    break;
+                }
+            }
+        }
+        return 0;
+    } else if (strcmp_simple(argv[0], "return") == 0) {
+        /* return [N] — return from function/sourced script with exit status N */
+        if (argc >= 2) {
+            last_exit_status = simple_atoi(argv[1]);
+        }
+        return last_exit_status;
+    } else if (strcmp_simple(argv[0], "shift") == 0) {
+        /* shift [N] — shift positional parameters (no-op in our shell) */
+        /* In a full POSIX shell, shift moves $2→$1, $3→$2, etc.
+         * Our shell doesn't have positional parameters in the same way,
+         * so accept silently for script compatibility. */
+        return 0;
     } else if (strcmp_simple(argv[0], "eval") == 0) {
         /* eval — concatenate args and execute as shell command */
         if (argc >= 2) {
@@ -9135,6 +9161,9 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "od") == 0 ||
             strcmp_simple(cmd, "awk") == 0 ||
             strcmp_simple(cmd, "eval") == 0 ||
+            strcmp_simple(cmd, "unset") == 0 ||
+            strcmp_simple(cmd, "return") == 0 ||
+            strcmp_simple(cmd, "shift") == 0 ||
             strcmp_simple(cmd, "let") == 0 ||
             strcmp_simple(cmd, "readonly") == 0 ||
             strcmp_simple(cmd, "getopts") == 0 ||
@@ -10066,7 +10095,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   129 built-in commands — type 'help'    |\n");
+    write_str(1, "|   132 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");

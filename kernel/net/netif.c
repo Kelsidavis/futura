@@ -592,30 +592,125 @@ int ip_forward(const void *ip_packet, size_t len, struct net_iface *in_iface) {
         }
     }
 
-    /* Check packet size vs MTU */
+    /* Decrement TTL before fragmentation or forwarding */
+    uint8_t new_ttl = ttl - 1;
+
+    /* IP header length in bytes */
+    size_t ip_hdr_len = (pkt[0] & 0x0F) * 4;
+
+    /* Helper: recompute IP header checksum in-place */
+    #define RECOMPUTE_IP_CKSUM(buf, hlen) do { \
+        (buf)[10] = 0; (buf)[11] = 0; \
+        uint32_t _s = 0; \
+        for (size_t _i = 0; _i < (hlen); _i += 2) \
+            _s += ((uint32_t)(buf)[_i] << 8) | (buf)[_i + 1]; \
+        while (_s >> 16) _s = (_s & 0xFFFF) + (_s >> 16); \
+        uint16_t _c = ~(uint16_t)_s; \
+        (buf)[10] = (uint8_t)(_c >> 8); (buf)[11] = (uint8_t)(_c & 0xFF); \
+    } while (0)
+
+    /* Check packet size vs MTU — fragment if necessary */
     if (len > out_iface->mtu) {
-        /* Would need fragmentation — not implemented yet */
-        return -EMSGSIZE;
+        /* Check Don't Fragment flag (bit 14 of flags_fragment field) */
+        uint16_t flags_frag = ((uint16_t)pkt[6] << 8) | pkt[7];
+        if (flags_frag & 0x4000) {
+            /* DF set — send ICMP "fragmentation needed" and drop */
+            g_net_stats.ip_out_discards++;
+            return -EMSGSIZE;
+        }
+
+        /* Fragment the packet.
+         * Each fragment gets the original IP header (with modified flags/offset/length)
+         * plus a chunk of payload. Payload chunks must be 8-byte aligned (except last). */
+        size_t payload_len = len - ip_hdr_len;
+        size_t max_payload = (out_iface->mtu - ip_hdr_len) & ~7u;  /* 8-byte aligned */
+        if (max_payload == 0) return -EMSGSIZE;
+
+        uint16_t orig_id = ((uint16_t)pkt[4] << 8) | pkt[5];
+        uint16_t orig_frag_off = flags_frag & 0x1FFF;  /* original fragment offset */
+        int orig_mf = (flags_frag & 0x2000) != 0;  /* original More Fragments flag */
+        (void)orig_id;
+
+        uint8_t frag_pkt[2048];
+        size_t offset = 0;
+        int frag_count = 0;
+
+        while (offset < payload_len) {
+            size_t chunk = payload_len - offset;
+            int is_last = 1;
+            if (chunk > max_payload) {
+                chunk = max_payload;
+                is_last = 0;
+            }
+
+            /* Build fragment: copy IP header + payload chunk */
+            size_t frag_total = ip_hdr_len + chunk;
+            if (frag_total > sizeof(frag_pkt)) return -EMSGSIZE;
+
+            memcpy(frag_pkt, pkt, ip_hdr_len);
+            memcpy(frag_pkt + ip_hdr_len, pkt + ip_hdr_len + offset, chunk);
+
+            /* Update TTL */
+            frag_pkt[8] = new_ttl;
+
+            /* Update total length */
+            frag_pkt[2] = (uint8_t)(frag_total >> 8);
+            frag_pkt[3] = (uint8_t)(frag_total & 0xFF);
+
+            /* Update fragment offset and flags.
+             * Fragment offset is in 8-byte units.
+             * MF (More Fragments) = 0x2000 if not last fragment. */
+            uint16_t frag_off = orig_frag_off + (uint16_t)(offset / 8);
+            uint16_t frag_flags = 0;
+            if (!is_last || orig_mf)
+                frag_flags |= 0x2000;  /* MF flag */
+            frag_pkt[6] = (uint8_t)((frag_flags | frag_off) >> 8);
+            frag_pkt[7] = (uint8_t)((frag_flags | frag_off) & 0xFF);
+
+            /* Recompute IP header checksum */
+            RECOMPUTE_IP_CKSUM(frag_pkt, ip_hdr_len);
+
+            /* Apply NAT if needed */
+            {
+                extern int nat_masquerade_out(uint8_t *p, size_t l, struct net_iface *o);
+                nat_masquerade_out(frag_pkt, frag_total, out_iface);
+            }
+
+            /* Transmit fragment */
+            if (out_iface->transmit) {
+                int ret = out_iface->transmit(out_iface, frag_pkt, frag_total);
+                if (ret != 0) {
+                    g_net_stats.ip_out_discards++;
+                    return ret;
+                }
+                out_iface->tx_packets++;
+                out_iface->tx_bytes += frag_total;
+            }
+
+            offset += chunk;
+            frag_count++;
+        }
+
+        g_net_stats.ip_forwarded++;
+        g_net_stats.ip_out_requests += (uint64_t)frag_count;
+        if (in_iface) {
+            in_iface->rx_packets++;
+            in_iface->rx_bytes += len;
+        }
+        return 0;
     }
 
-    /* Create forwarded packet (modify TTL and recompute checksum) */
+    /* Packet fits in MTU — forward without fragmentation */
     uint8_t fwd_pkt[2048];
     if (len > sizeof(fwd_pkt)) return -EMSGSIZE;
     memcpy(fwd_pkt, pkt, len);
 
-    fwd_pkt[8] = ttl - 1;  /* Decrement TTL */
+    fwd_pkt[8] = new_ttl;  /* Decrement TTL */
 
     /* Recompute IP header checksum */
-    size_t hdr_len = (fwd_pkt[0] & 0x0F) * 4;
-    fwd_pkt[10] = 0; fwd_pkt[11] = 0;  /* Clear checksum */
-    uint32_t sum = 0;
-    for (size_t i = 0; i < hdr_len; i += 2) {
-        sum += ((uint32_t)fwd_pkt[i] << 8) | fwd_pkt[i + 1];
-    }
-    while (sum >> 16) sum = (sum & 0xFFFF) + (sum >> 16);
-    uint16_t cksum = ~(uint16_t)sum;
-    fwd_pkt[10] = (uint8_t)(cksum >> 8);
-    fwd_pkt[11] = (uint8_t)(cksum & 0xFF);
+    RECOMPUTE_IP_CKSUM(fwd_pkt, ip_hdr_len);
+
+    #undef RECOMPUTE_IP_CKSUM
 
     /* Apply NAT/masquerade if enabled for the output interface */
     {

@@ -3773,19 +3773,53 @@ static int match_pattern(const char *str, const char *pattern) {
 }
 
 /* Helper: Recursive directory traversal for find */
-static void find_recurse(const char *path, const char *name_pattern, int type_filter, int depth) {
-    /* Prevent infinite recursion */
-    if (depth > 32) {
-        return;
-    }
+/* Case-insensitive character comparison for -iname */
+static int find_tolower(int c) {
+    return (c >= 'A' && c <= 'Z') ? c + 32 : c;
+}
 
-    /* Open directory */
+static int find_match_icase(const char *name, const char *pattern) {
+    /* Same as match_pattern but case-insensitive */
+    if (!pattern) return 1;
+    const char *n = name, *p = pattern;
+    const char *n_back = 0, *p_back = 0;
+    while (*n) {
+        if (*p == '*') {
+            while (*p == '*') p++;
+            if (!*p) return 1;
+            n_back = n; p_back = p;
+        } else if (*p == '?' || find_tolower(*n) == find_tolower(*p)) {
+            n++; p++;
+        } else if (p_back) {
+            n = ++n_back; p = p_back;
+        } else {
+            return 0;
+        }
+    }
+    while (*p == '*') p++;
+    return *p == '\0';
+}
+
+/* find options passed through recursion */
+struct find_opts {
+    const char *name_pattern;
+    const char *iname_pattern;  /* case-insensitive name */
+    const char *path_pattern;   /* match against full path */
+    int type_filter;            /* 0=all, 'f'=files, 'd'=dirs, 'l'=symlinks */
+    int maxdepth;               /* -1 = unlimited */
+    int mindepth;               /* 0 = default */
+    int print0;                 /* NUL separator instead of newline */
+    int exec_argc;              /* -exec args count (0 = no exec) */
+    char **exec_argv;           /* -exec args (NULL = no exec) */
+};
+
+static void find_recurse(const char *path, struct find_opts *opts, int depth) {
+    if (depth > 32) return;
+    if (opts->maxdepth >= 0 && depth > opts->maxdepth) return;
+
     int fd = sys_open(path, O_RDONLY, 0);
-    if (fd < 0) {
-        return;  /* Silently skip directories we can't open */
-    }
+    if (fd < 0) return;
 
-    /* Define Linux dirent64 structure */
     struct linux_dirent64 {
         unsigned long long d_ino;
         long long d_off;
@@ -3802,55 +3836,62 @@ static void find_recurse(const char *path, const char *name_pattern, int type_fi
         while (ptr < buf + nread) {
             struct linux_dirent64 *d = (struct linux_dirent64 *)ptr;
 
-            /* Skip . and .. */
             if (strcmp_simple(d->d_name, ".") != 0 && strcmp_simple(d->d_name, "..") != 0) {
-                /* Build full path */
                 char full_path[1024];
                 int path_len = 0;
-
-                /* Copy directory path */
                 const char *p = path;
-                while (*p && path_len < 1023) {
-                    full_path[path_len++] = *p++;
-                }
-
-                /* Add separator if needed */
-                if (path_len > 0 && full_path[path_len - 1] != '/') {
-                    full_path[path_len++] = '/';
-                }
-
-                /* Copy entry name */
+                while (*p && path_len < 1023) full_path[path_len++] = *p++;
+                if (path_len > 0 && full_path[path_len - 1] != '/') full_path[path_len++] = '/';
                 p = d->d_name;
-                while (*p && path_len < 1023) {
-                    full_path[path_len++] = *p++;
-                }
+                while (*p && path_len < 1023) full_path[path_len++] = *p++;
                 full_path[path_len] = '\0';
 
-                /* Check if this entry matches our filters */
+                int child_depth = depth + 1;
                 int type_match = 1;
-                if (type_filter == 'f') {
-                    type_match = (d->d_type != 4);  /* DT_DIR = 4 */
-                } else if (type_filter == 'd') {
-                    type_match = (d->d_type == 4);  /* DT_DIR = 4 */
-                }
+                if (opts->type_filter == 'f') type_match = (d->d_type != 4);
+                else if (opts->type_filter == 'd') type_match = (d->d_type == 4);
+                else if (opts->type_filter == 'l') type_match = (d->d_type == 10); /* DT_LNK */
 
                 int name_match = 1;
-                if (name_pattern) {
-                    name_match = match_pattern(d->d_name, name_pattern);
+                if (opts->name_pattern) name_match = match_pattern(d->d_name, opts->name_pattern);
+                if (name_match && opts->iname_pattern) name_match = find_match_icase(d->d_name, opts->iname_pattern);
+                if (name_match && opts->path_pattern) name_match = match_pattern(full_path, opts->path_pattern);
+
+                int depth_match = (child_depth >= opts->mindepth);
+
+                if (type_match && name_match && depth_match) {
+                    if (opts->exec_argc > 0 && opts->exec_argv) {
+                        /* -exec: build argv with {} replaced by path */
+                        char *eargv[32]; int eargc = 0;
+                        for (int i = 0; i < opts->exec_argc && eargc < 31; i++) {
+                            if (strcmp_simple(opts->exec_argv[i], "{}") == 0)
+                                eargv[eargc++] = full_path;
+                            else
+                                eargv[eargc++] = opts->exec_argv[i];
+                        }
+                        eargv[eargc] = 0;
+                        /* Execute command in child process */
+                        extern long sys_fork(void);
+                        extern long sys_execve(const char *, char *const[], char *const[]);
+                        extern long sys_waitpid(int, int *, int);
+                        long pid = sys_fork();
+                        if (pid == 0) {
+                            sys_execve(eargv[0], eargv, 0);
+                            sys_exit(127);
+                        } else if (pid > 0) {
+                            int status = 0;
+                            sys_waitpid((int)pid, &status, 0);
+                        }
+                    } else {
+                        sys_write(1, full_path, path_len);
+                        sys_write(1, opts->print0 ? "\0" : "\n", 1);
+                    }
                 }
 
-                /* Print if matches all filters */
-                if (type_match && name_match) {
-                    write_str(1, full_path);
-                    write_str(1, "\n");
-                }
-
-                /* Recurse into subdirectories */
-                if (d->d_type == 4) {  /* DT_DIR = 4 */
-                    find_recurse(full_path, name_pattern, type_filter, depth + 1);
+                if (d->d_type == 4) {
+                    find_recurse(full_path, opts, child_depth);
                 }
             }
-
             ptr += d->d_reclen;
         }
     }
@@ -3861,8 +3902,16 @@ static void find_recurse(const char *path, const char *name_pattern, int type_fi
 /* Built-in: find - Search for files in directory hierarchy */
 static void cmd_find(int argc, char *argv[]) {
     const char *start_path = ".";
-    const char *name_pattern = 0;
-    int type_filter = 0;  /* 0 = all, 'f' = files, 'd' = directories */
+    struct find_opts opts;
+    opts.name_pattern = 0;
+    opts.iname_pattern = 0;
+    opts.path_pattern = 0;
+    opts.type_filter = 0;
+    opts.maxdepth = -1;
+    opts.mindepth = 0;
+    opts.print0 = 0;
+    opts.exec_argc = 0;
+    opts.exec_argv = 0;
     int arg_idx = 1;
 
     /* If first arg doesn't start with -, it's the path */
@@ -3873,46 +3922,65 @@ static void cmd_find(int argc, char *argv[]) {
 
     /* Parse options */
     while (arg_idx < argc) {
-        if (strcmp_simple(argv[arg_idx], "-name") == 0) {
-            if (arg_idx + 1 >= argc) {
-                write_str(2, "find: -name requires an argument\n");
-                return;
-            }
-            name_pattern = argv[arg_idx + 1];
+        if (strcmp_simple(argv[arg_idx], "-name") == 0 && arg_idx + 1 < argc) {
+            opts.name_pattern = argv[arg_idx + 1];
             arg_idx += 2;
-        } else if (strcmp_simple(argv[arg_idx], "-type") == 0) {
-            if (arg_idx + 1 >= argc) {
-                write_str(2, "find: -type requires an argument\n");
-                return;
-            }
-            if (strcmp_simple(argv[arg_idx + 1], "f") == 0) {
-                type_filter = 'f';
-            } else if (strcmp_simple(argv[arg_idx + 1], "d") == 0) {
-                type_filter = 'd';
-            } else {
-                write_str(2, "find: -type must be 'f' or 'd'\n");
-                return;
-            }
+        } else if (strcmp_simple(argv[arg_idx], "-iname") == 0 && arg_idx + 1 < argc) {
+            opts.iname_pattern = argv[arg_idx + 1];
             arg_idx += 2;
+        } else if (strcmp_simple(argv[arg_idx], "-path") == 0 && arg_idx + 1 < argc) {
+            opts.path_pattern = argv[arg_idx + 1];
+            arg_idx += 2;
+        } else if (strcmp_simple(argv[arg_idx], "-type") == 0 && arg_idx + 1 < argc) {
+            if (argv[arg_idx + 1][0] == 'f') opts.type_filter = 'f';
+            else if (argv[arg_idx + 1][0] == 'd') opts.type_filter = 'd';
+            else if (argv[arg_idx + 1][0] == 'l') opts.type_filter = 'l';
+            arg_idx += 2;
+        } else if (strcmp_simple(argv[arg_idx], "-maxdepth") == 0 && arg_idx + 1 < argc) {
+            opts.maxdepth = 0;
+            const char *s = argv[arg_idx + 1];
+            while (*s >= '0' && *s <= '9') opts.maxdepth = opts.maxdepth * 10 + (*s++ - '0');
+            arg_idx += 2;
+        } else if (strcmp_simple(argv[arg_idx], "-mindepth") == 0 && arg_idx + 1 < argc) {
+            opts.mindepth = 0;
+            const char *s = argv[arg_idx + 1];
+            while (*s >= '0' && *s <= '9') opts.mindepth = opts.mindepth * 10 + (*s++ - '0');
+            arg_idx += 2;
+        } else if (strcmp_simple(argv[arg_idx], "-print0") == 0) {
+            opts.print0 = 1;
+            arg_idx++;
+        } else if (strcmp_simple(argv[arg_idx], "-exec") == 0) {
+            /* Collect args until ; */
+            opts.exec_argv = &argv[arg_idx + 1];
+            opts.exec_argc = 0;
+            arg_idx++;
+            while (arg_idx < argc && strcmp_simple(argv[arg_idx], ";") != 0) {
+                opts.exec_argc++;
+                arg_idx++;
+            }
+            if (arg_idx < argc) arg_idx++; /* skip ; */
+        } else if (strcmp_simple(argv[arg_idx], "-print") == 0) {
+            arg_idx++; /* explicit -print is default */
         } else {
             write_str(2, "find: unknown option: ");
             write_str(2, argv[arg_idx]);
             write_str(2, "\n");
-            write_str(2, "Usage: find [path] [-name pattern] [-type f|d]\n");
             return;
         }
     }
 
     /* Print the starting directory if it matches filters */
-    if (type_filter == 0 || type_filter == 'd') {
-        if (!name_pattern || match_pattern(start_path, name_pattern)) {
+    if (opts.mindepth == 0 && (opts.type_filter == 0 || opts.type_filter == 'd')) {
+        int name_ok = 1;
+        if (opts.name_pattern) name_ok = match_pattern(start_path, opts.name_pattern);
+        if (name_ok && opts.iname_pattern) name_ok = find_match_icase(start_path, opts.iname_pattern);
+        if (name_ok) {
             write_str(1, start_path);
-            write_str(1, "\n");
+            write_str(1, opts.print0 ? "\0" : "\n");
         }
     }
 
-    /* Start recursive search */
-    find_recurse(start_path, name_pattern, type_filter, 0);
+    find_recurse(start_path, &opts, 0);
 }
 
 /* Built-in: uniq - Report or omit repeated lines */

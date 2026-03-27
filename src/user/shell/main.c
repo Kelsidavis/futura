@@ -9205,23 +9205,91 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "false") == 0) {
         return 1;
     } else if (strcmp_simple(argv[0], "printf") == 0) {
-        /* Simple printf: handles %s and literal text, \n \t escapes */
+        /* printf: handles %s, %d, %x, %o, %c, %%, \n, \t, \0NNN, \xNN */
         if (argc < 2) return 0;
         const char *fmt = argv[1];
         int ai = 2;
         for (int i = 0; fmt[i]; i++) {
             if (fmt[i] == '\\' && fmt[i+1]) {
                 i++;
-                if (fmt[i] == 'n') write_char(1, '\n');
-                else if (fmt[i] == 't') write_char(1, '\t');
-                else if (fmt[i] == '\\') write_char(1, '\\');
-                else { write_char(1, '\\'); write_char(1, fmt[i]); }
-            } else if (fmt[i] == '%' && fmt[i+1] == 's' && ai < argc) {
-                write_str(1, argv[ai++]);
+                switch (fmt[i]) {
+                    case 'n': write_char(1, '\n'); break;
+                    case 't': write_char(1, '\t'); break;
+                    case 'r': write_char(1, '\r'); break;
+                    case 'a': write_char(1, '\a'); break;
+                    case 'b': write_char(1, '\b'); break;
+                    case '\\': write_char(1, '\\'); break;
+                    case '0': { /* Octal escape \0NNN */
+                        int val = 0;
+                        for (int j = 0; j < 3 && fmt[i+1+j] >= '0' && fmt[i+1+j] <= '7'; j++)
+                            val = val * 8 + (fmt[i+1+j] - '0');
+                        write_char(1, (char)val);
+                        while (fmt[i+1] >= '0' && fmt[i+1] <= '7') i++;
+                        break;
+                    }
+                    case 'x': { /* Hex escape \xNN */
+                        int val = 0;
+                        for (int j = 0; j < 2 && fmt[i+1+j]; j++) {
+                            char c = fmt[i+1+j];
+                            if (c >= '0' && c <= '9') val = val * 16 + (c - '0');
+                            else if (c >= 'a' && c <= 'f') val = val * 16 + (c - 'a' + 10);
+                            else if (c >= 'A' && c <= 'F') val = val * 16 + (c - 'A' + 10);
+                            else break;
+                            i++;
+                        }
+                        write_char(1, (char)val);
+                        break;
+                    }
+                    default: write_char(1, '\\'); write_char(1, fmt[i]); break;
+                }
+            } else if (fmt[i] == '%' && fmt[i+1]) {
                 i++;
-            } else if (fmt[i] == '%' && fmt[i+1] == 'd' && ai < argc) {
-                write_str(1, argv[ai++]);
-                i++;
+                if (fmt[i] == 's' && ai < argc) {
+                    write_str(1, argv[ai++]);
+                } else if (fmt[i] == 'd' && ai < argc) {
+                    /* Parse integer and format it */
+                    long val = 0; int neg = 0;
+                    const char *p = argv[ai++];
+                    if (*p == '-') { neg = 1; p++; }
+                    while (*p >= '0' && *p <= '9') val = val * 10 + (*p++ - '0');
+                    if (neg) val = -val;
+                    char nbuf[24]; int ni = 0;
+                    if (val < 0) { write_char(1, '-'); val = -val; }
+                    if (val == 0) { write_char(1, '0'); }
+                    else {
+                        while (val > 0) { nbuf[ni++] = '0' + (char)(val % 10); val /= 10; }
+                        while (ni > 0) write_char(1, nbuf[--ni]);
+                    }
+                } else if (fmt[i] == 'x' && ai < argc) {
+                    /* Hex format */
+                    long val = 0;
+                    const char *p = argv[ai++];
+                    while (*p >= '0' && *p <= '9') val = val * 10 + (*p++ - '0');
+                    if (val == 0) { write_char(1, '0'); }
+                    else {
+                        char hbuf[20]; int hi = 0;
+                        static const char hex[] = "0123456789abcdef";
+                        while (val > 0) { hbuf[hi++] = hex[val & 0xF]; val >>= 4; }
+                        while (hi > 0) write_char(1, hbuf[--hi]);
+                    }
+                } else if (fmt[i] == 'o' && ai < argc) {
+                    /* Octal format */
+                    long val = 0;
+                    const char *p = argv[ai++];
+                    while (*p >= '0' && *p <= '9') val = val * 10 + (*p++ - '0');
+                    if (val == 0) { write_char(1, '0'); }
+                    else {
+                        char obuf[24]; int oi = 0;
+                        while (val > 0) { obuf[oi++] = '0' + (char)(val & 7); val >>= 3; }
+                        while (oi > 0) write_char(1, obuf[--oi]);
+                    }
+                } else if (fmt[i] == 'c' && ai < argc) {
+                    write_char(1, argv[ai++][0]);
+                } else if (fmt[i] == '%') {
+                    write_char(1, '%');
+                } else {
+                    write_char(1, '%'); write_char(1, fmt[i]);
+                }
             } else {
                 write_char(1, fmt[i]);
             }

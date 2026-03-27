@@ -4275,6 +4275,206 @@ static void cmd_od(int argc, char *argv[]) {
     if (fd_in > 0) sys_close(fd_in);
 }
 
+/* Built-in: awk - Pattern scanning and processing (basic subset)
+ * Supports: awk '{print $N}', awk -F: '{print $1}', awk '/pattern/ {print}',
+ *           awk '{print NR, $0}', awk 'BEGIN{...} {...} END{...}' */
+static void cmd_awk(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: awk [-F sep] 'program' [file...]\n");
+        return;
+    }
+
+    char fs = ' ';  /* Field separator */
+    int prog_arg = 1;
+    if (argc >= 3 && strcmp_simple(argv[1], "-F") == 0) {
+        if (argv[2][0]) fs = argv[2][0];
+        prog_arg = 3;
+    } else if (argc >= 2 && argv[1][0] == '-' && argv[1][1] == 'F') {
+        fs = argv[1][2];
+        prog_arg = 2;
+    }
+
+    if (prog_arg >= argc) {
+        write_str(2, "awk: no program specified\n");
+        return;
+    }
+
+    const char *prog = argv[prog_arg];
+    int file_arg = prog_arg + 1;
+
+    /* Parse simple awk program patterns:
+     *   '{print}' or '{print $0}' — print whole line
+     *   '{print $N}' — print Nth field
+     *   '{print $N, $M}' — print multiple fields
+     *   '/regex/ {action}' — pattern match
+     *   'NR==N' — line number match
+     */
+
+    /* Extract pattern and action */
+    char pattern[128] = {0};
+    char action[256] = {0};
+    int has_pattern = 0;
+
+    const char *p = prog;
+    while (*p == ' ') p++;
+
+    if (*p == '/') {
+        /* /pattern/ { action } */
+        p++;
+        int pi = 0;
+        while (*p && *p != '/' && pi < 126) pattern[pi++] = *p++;
+        pattern[pi] = '\0';
+        has_pattern = 1;
+        if (*p == '/') p++;
+        while (*p == ' ') p++;
+    }
+
+    if (*p == '{') {
+        p++;
+        while (*p == ' ') p++;
+        int ai = 0;
+        while (*p && *p != '}' && ai < 254) action[ai++] = *p++;
+        action[ai] = '\0';
+    } else if (!has_pattern) {
+        /* Might be a bare action like "print $1" */
+        int ai = 0;
+        while (*p && ai < 254) action[ai++] = *p++;
+        action[ai] = '\0';
+    }
+
+    /* Open input */
+    int fd_in = 0;
+    if (file_arg < argc) {
+        fd_in = sys_open(argv[file_arg], O_RDONLY, 0);
+        if (fd_in < 0) {
+            write_str(2, "awk: cannot open '");
+            write_str(2, argv[file_arg]);
+            write_str(2, "'\n");
+            return;
+        }
+    }
+
+    /* Process lines */
+    char line[1024];
+    int lp = 0;
+    int lineno = 0;
+    char ch;
+    while (sys_read(fd_in, &ch, 1) == 1) {
+        if (ch == '\n' || lp >= 1022) {
+            line[lp] = '\0';
+            lineno++;
+
+            /* Split into fields */
+            char *fields[64];
+            int nf = 0;
+            char fcopy[1024];
+            int fi = 0;
+            for (int i = 0; line[i] && fi < 1022; i++) fcopy[fi++] = line[i];
+            fcopy[fi] = '\0';
+
+            /* Tokenize by field separator */
+            char *fp = fcopy;
+            while (*fp && nf < 63) {
+                /* Skip leading separators (for whitespace FS) */
+                if (fs == ' ') {
+                    while (*fp == ' ' || *fp == '\t') fp++;
+                    if (!*fp) break;
+                }
+                fields[nf++] = fp;
+                if (fs == ' ') {
+                    while (*fp && *fp != ' ' && *fp != '\t') fp++;
+                } else {
+                    while (*fp && *fp != fs) fp++;
+                }
+                if (*fp) *fp++ = '\0';
+            }
+
+            /* Check pattern match */
+            if (has_pattern) {
+                /* Simple substring match */
+                int found = 0;
+                int plen = 0;
+                while (pattern[plen]) plen++;
+                for (int i = 0; line[i] && !found; i++) {
+                    int j;
+                    for (j = 0; j < plen; j++) {
+                        if (line[i + j] != pattern[j]) break;
+                    }
+                    if (j == plen) found = 1;
+                }
+                if (!found) { lp = 0; continue; }
+            }
+
+            /* Execute action */
+            if (action[0] == '\0' || strcmp_simple(action, "print") == 0 ||
+                strcmp_simple(action, "print $0") == 0) {
+                /* Default: print whole line */
+                sys_write(1, line, lp);
+                sys_write(1, "\n", 1);
+            } else if (action[0] == 'p' && action[1] == 'r' && action[2] == 'i' &&
+                       action[3] == 'n' && action[4] == 't' && action[5] == ' ') {
+                /* print EXPR [, EXPR ...] */
+                const char *ap = action + 6;
+                int first = 1;
+                while (*ap) {
+                    while (*ap == ' ' || *ap == ',') { if (*ap == ',') first = 0; ap++; }
+                    if (!*ap) break;
+
+                    if (!first) sys_write(1, " ", 1);
+                    first = 0;
+
+                    if (*ap == '$') {
+                        ap++;
+                        int fn = 0;
+                        while (*ap >= '0' && *ap <= '9') { fn = fn * 10 + (*ap - '0'); ap++; }
+                        if (fn == 0) {
+                            sys_write(1, line, lp);
+                        } else if (fn <= nf) {
+                            int fl = 0;
+                            while (fields[fn-1][fl]) fl++;
+                            sys_write(1, fields[fn-1], fl);
+                        }
+                    } else if (*ap == 'N' && ap[1] == 'R') {
+                        char num[16]; int np = 0;
+                        int n = lineno;
+                        char rev[16]; int rp = 0;
+                        if (n == 0) rev[rp++] = '0';
+                        else while (n > 0) { rev[rp++] = '0' + (n % 10); n /= 10; }
+                        while (rp > 0) num[np++] = rev[--rp];
+                        sys_write(1, num, np);
+                        ap += 2;
+                    } else if (*ap == 'N' && ap[1] == 'F') {
+                        char num[16]; int np = 0;
+                        int n = nf;
+                        char rev[16]; int rp = 0;
+                        if (n == 0) rev[rp++] = '0';
+                        else while (n > 0) { rev[rp++] = '0' + (n % 10); n /= 10; }
+                        while (rp > 0) num[np++] = rev[--rp];
+                        sys_write(1, num, np);
+                        ap += 2;
+                    } else if (*ap == '"') {
+                        ap++;
+                        while (*ap && *ap != '"') {
+                            if (*ap == '\\' && ap[1] == 't') { sys_write(1, "\t", 1); ap += 2; }
+                            else if (*ap == '\\' && ap[1] == 'n') { sys_write(1, "\n", 1); ap += 2; }
+                            else { sys_write(1, ap, 1); ap++; }
+                        }
+                        if (*ap == '"') ap++;
+                    } else {
+                        /* Unknown token — skip */
+                        while (*ap && *ap != ' ' && *ap != ',') ap++;
+                    }
+                }
+                sys_write(1, "\n", 1);
+            }
+            lp = 0;
+        } else {
+            line[lp++] = ch;
+        }
+    }
+    if (fd_in > 0) sys_close(fd_in);
+}
+
 /* Built-in: tee - Read from stdin and write to stdout and files */
 static void cmd_tee(int argc, char *argv[]) {
     int append_mode = 0;
@@ -6358,6 +6558,9 @@ static int execute_command(int argc, char *argv[]) {
         return 0;
     } else if (strcmp_simple(argv[0], "od") == 0) {
         cmd_od(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "awk") == 0) {
+        cmd_awk(argc, argv);
         return 0;
     } else if (strcmp_simple(argv[0], "find") == 0) {
         cmd_find(argc, argv);
@@ -8767,6 +8970,7 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "nl") == 0 ||
             strcmp_simple(cmd, "base64") == 0 ||
             strcmp_simple(cmd, "od") == 0 ||
+            strcmp_simple(cmd, "awk") == 0 ||
             strcmp_simple(cmd, "find") == 0 ||
             strcmp_simple(cmd, "mkdir") == 0 ||
             strcmp_simple(cmd, "rmdir") == 0 ||
@@ -9597,7 +9801,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   124 built-in commands — type 'help'    |\n");
+    write_str(1, "|   125 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");

@@ -61998,6 +61998,154 @@ __attribute__((noinline)) static void test_pty_and_cgroup(void) {
             fut_test_fail(2205);
         }
     }
+
+    /* ── Test 2206: MADV_DONTFORK sets VMA flag (madvise returns 0) ── */
+    fut_printf("[MISC-TEST] Test 2206: MADV_DONTFORK\n");
+    {
+        /* Map a page, mark DONTFORK, verify success */
+        long addr = sys_mmap(0, 4096, 0x3 /* PROT_READ|PROT_WRITE */,
+                             0x22 /* MAP_PRIVATE|MAP_ANONYMOUS */, -1, 0);
+        int pass = 0;
+        if (addr > 0) {
+            extern long sys_madvise(void *, size_t, int);
+            long r = sys_madvise((void *)addr, 4096, 10 /* MADV_DONTFORK */);
+            if (r == 0) {
+                /* Undo with MADV_DOFORK */
+                long r2 = sys_madvise((void *)addr, 4096, 11 /* MADV_DOFORK */);
+                if (r2 == 0) pass = 1;
+                else fut_printf("[MISC-TEST]   DOFORK=%ld\n", r2);
+            } else {
+                fut_printf("[MISC-TEST]   DONTFORK=%ld\n", r);
+            }
+            sys_munmap((void *)addr, 4096);
+        }
+        if (pass) {
+            fut_printf("[MISC-TEST] ✓ Test 2206: DONTFORK/DOFORK ok\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2206: DONTFORK failed\n");
+            fut_test_fail(2206);
+        }
+    }
+
+    /* ── Test 2207: MADV_WIPEONFORK on anonymous mapping succeeds ── */
+    fut_printf("[MISC-TEST] Test 2207: MADV_WIPEONFORK\n");
+    {
+        long addr = sys_mmap(0, 4096, 0x3, 0x22, -1, 0);
+        int pass = 0;
+        if (addr > 0) {
+            extern long sys_madvise(void *, size_t, int);
+            long r = sys_madvise((void *)addr, 4096, 18 /* MADV_WIPEONFORK */);
+            if (r == 0) pass = 1;
+            else fut_printf("[MISC-TEST]   WIPEONFORK=%ld\n", r);
+            /* Undo */
+            sys_madvise((void *)addr, 4096, 19 /* MADV_KEEPONFORK */);
+            sys_munmap((void *)addr, 4096);
+        }
+        if (pass) {
+            fut_printf("[MISC-TEST] ✓ Test 2207: WIPEONFORK ok\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2207: WIPEONFORK failed\n");
+            fut_test_fail(2207);
+        }
+    }
+
+    /* ── Test 2208: /proc/self/stat has real cstime field ── */
+    fut_printf("[MISC-TEST] Test 2208: /proc/self/stat cstime field\n");
+    {
+        extern long sys_open(const char *, int, int);
+        extern long sys_read(int, void *, size_t);
+        extern long sys_close(int);
+        long fd = sys_open("/proc/self/stat", 0, 0);
+        int pass = 0;
+        if (fd >= 0) {
+            static char buf[512];
+            long n = sys_read((int)fd, buf, 511);
+            sys_close((int)fd);
+            if (n > 0) {
+                buf[n < 511 ? n : 510] = '\0';
+                /* /proc/pid/stat fields are space-separated after "(comm)" */
+                /* Find closing ) then count spaces to field 16 (cstime) */
+                int pos = 0;
+                while (pos < n && buf[pos] != ')') pos++;
+                if (pos < n) pos++; /* skip ) */
+                /* Count 14 more spaces to reach cstime (fields 3-16, cstime is 16th) */
+                int spaces = 0;
+                while (pos < n && spaces < 14) {
+                    if (buf[pos] == ' ') spaces++;
+                    pos++;
+                }
+                /* Now at cstime field — should be a valid number (≥ 0) */
+                if (pos < n && (buf[pos] >= '0' && buf[pos] <= '9')) {
+                    pass = 1;
+                }
+            }
+        }
+        if (pass) {
+            fut_printf("[MISC-TEST] ✓ Test 2208: cstime field present\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2208: cstime missing\n");
+            fut_test_fail(2208);
+        }
+    }
+
+    /* ── Test 2209: /proc/self/maps is openable and readable ── */
+    fut_printf("[MISC-TEST] Test 2209: /proc/self/maps openable\n");
+    {
+        extern long sys_open(const char *, int, int);
+        extern long sys_read(int, void *, size_t);
+        extern long sys_close(int);
+        long fd = sys_open("/proc/self/maps", 0, 0);
+        int pass = 0;
+        if (fd >= 0) {
+            static char buf[256];
+            long n = sys_read((int)fd, buf, 255);
+            sys_close((int)fd);
+            /* Maps can be empty for kernel threads — just verify open+read worked */
+            if (n >= 0) pass = 1;
+        }
+        if (pass) {
+            fut_printf("[MISC-TEST] ✓ Test 2209: maps readable\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2209: maps not openable\n");
+            fut_test_fail(2209);
+        }
+    }
+
+    /* ── Test 2210: mremap can grow an anonymous mapping ── */
+    fut_printf("[MISC-TEST] Test 2210: mremap grow\n");
+    {
+        extern long sys_mremap(void *old_addr, size_t old_size, size_t new_size,
+                               int flags, void *new_addr);
+        long addr = sys_mmap(0, 4096, 0x3, 0x22, -1, 0);
+        int pass = 0;
+        if (addr > 0) {
+            /* Grow from 4096 to 8192 with MREMAP_MAYMOVE (1) */
+            long new_addr = sys_mremap((void *)addr, 4096, 8192, 1, 0);
+            if (new_addr > 0) {
+                /* Write to the new region to verify it's accessible */
+                volatile char *p = (volatile char *)new_addr;
+                p[0] = 'A';
+                p[4095] = 'B';
+                p[8191] = 'C';
+                if (p[0] == 'A' && p[8191] == 'C') pass = 1;
+                sys_munmap((void *)new_addr, 8192);
+            } else {
+                fut_printf("[MISC-TEST]   mremap=%ld\n", new_addr);
+                sys_munmap((void *)addr, 4096);
+            }
+        }
+        if (pass) {
+            fut_printf("[MISC-TEST] ✓ Test 2210: mremap grow ok\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2210: mremap failed\n");
+            fut_test_fail(2210);
+        }
+    }
 }
 
 /* ============================================================

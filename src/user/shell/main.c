@@ -4300,48 +4300,185 @@ static void cmd_tr(int argc, char *argv[]) {
 }
 
 /* Built-in: sed - Stream editor for basic s/pattern/replacement/ */
+/* sed: apply s/pat/rep/[g] substitution with & support */
+static int sed_subst(const char *line, int llen, const char *pat, int plen,
+                     const char *rep, int rlen, int global, char *out, int outsz) {
+    int oi = 0, replaced = 0;
+    for (int i = 0; i < llen && oi < outsz - 1; i++) {
+        if ((!replaced || global) && plen > 0 && i + plen <= llen) {
+            int match = 1;
+            for (int j = 0; j < plen; j++) {
+                if (line[i + j] != pat[j]) { match = 0; break; }
+            }
+            if (match) {
+                /* Apply replacement with & = matched text */
+                for (int j = 0; j < rlen && oi < outsz - 1; j++) {
+                    if (rep[j] == '&') {
+                        for (int k = 0; k < plen && oi < outsz - 1; k++) out[oi++] = line[i + k];
+                    } else if (rep[j] == '\\' && j + 1 < rlen) {
+                        j++;
+                        if (rep[j] == 'n') out[oi++] = '\n';
+                        else if (rep[j] == 't') out[oi++] = '\t';
+                        else out[oi++] = rep[j];
+                    } else {
+                        out[oi++] = rep[j];
+                    }
+                }
+                i += plen - 1;
+                replaced = 1;
+                continue;
+            }
+        }
+        out[oi++] = line[i];
+    }
+    return oi;
+}
+
+/* sed: check if a pattern matches anywhere in line */
+static int sed_pat_match(const char *line, int llen, const char *pat, int plen) {
+    if (plen == 0) return 1;
+    for (int i = 0; i <= llen - plen; i++) {
+        int j;
+        for (j = 0; j < plen; j++) if (line[i+j] != pat[j]) break;
+        if (j == plen) return 1;
+    }
+    return 0;
+}
+
+/* sed command structure */
+struct sed_cmd {
+    int addr1_type;  /* 0=none, 1=line, 2=pattern, 3=last ($) */
+    int addr2_type;  /* 0=none, 1=line, 2=pattern, 3=last ($) */
+    int addr1_line;
+    int addr2_line;
+    char addr1_pat[64];
+    char addr2_pat[64];
+    char cmd;        /* 's','d','p','q','a','i','c' */
+    char s_pat[128];
+    char s_rep[128];
+    int s_plen, s_rlen;
+    int s_global;
+    int negate;      /* ! modifier */
+};
+
+/* Parse a single sed address from string, return chars consumed */
+static int sed_parse_addr(const char *s, int *type, int *line_num, char *pat_buf) {
+    const char *start = s;
+    *type = 0; *line_num = 0; pat_buf[0] = '\0';
+    if (*s == '$') { *type = 3; return 1; }
+    if (*s >= '0' && *s <= '9') {
+        *type = 1;
+        while (*s >= '0' && *s <= '9') { *line_num = *line_num * 10 + (*s - '0'); s++; }
+        return (int)(s - start);
+    }
+    if (*s == '/' || *s == '\\') {
+        char delim = (*s == '\\') ? s[1] : '/';
+        if (*s == '\\') s += 2; else s++;
+        *type = 2;
+        int pi = 0;
+        while (*s && *s != delim && pi < 62) pat_buf[pi++] = *s++;
+        pat_buf[pi] = '\0';
+        if (*s == delim) s++;
+        return (int)(s - start);
+    }
+    return 0;
+}
+
 static void cmd_sed(int argc, char *argv[]) {
     if (argc < 2) {
-        write_str(2, "usage: sed 's/pattern/replacement/[g]' [file...]\n");
+        write_str(2, "usage: sed [-n] [-e expr]... 's/pat/rep/[g]' [file...]\n");
         return;
     }
 
-    /* Parse the sed expression */
-    const char *expr = argv[1];
-    int file_start = 2;
+    int suppress = 0;  /* -n flag */
+    /* Collect expressions */
+    const char *exprs[8]; int nexprs = 0;
+    int file_start = argc;  /* default: no files = stdin */
 
-    /* Support -e expr syntax */
-    if (strcmp_simple(argv[1], "-e") == 0 && argc >= 3) {
-        expr = argv[2];
-        file_start = 3;
+    for (int a = 1; a < argc; a++) {
+        if (strcmp_simple(argv[a], "-n") == 0) {
+            suppress = 1;
+        } else if (strcmp_simple(argv[a], "-e") == 0 && a + 1 < argc) {
+            if (nexprs < 8) exprs[nexprs++] = argv[++a];
+        } else if (argv[a][0] == '-' && argv[a][1] == 'n') {
+            suppress = 1;
+        } else if (nexprs == 0 && argv[a][0] != '-') {
+            /* First non-flag arg is the expression if no -e given yet */
+            exprs[nexprs++] = argv[a];
+            file_start = a + 1;
+            break;
+        }
+    }
+    /* Find file args after all expressions */
+    if (file_start == argc) {
+        for (int a = 1; a < argc; a++) {
+            if (strcmp_simple(argv[a], "-n") == 0) continue;
+            if (strcmp_simple(argv[a], "-e") == 0) { a++; continue; }
+            int is_expr = 0;
+            for (int e = 0; e < nexprs; e++) if (exprs[e] == argv[a]) { is_expr = 1; break; }
+            if (!is_expr) { file_start = a; break; }
+        }
     }
 
-    /* Only support s/pat/rep/[g] for now */
-    if (expr[0] != 's' || expr[1] == '\0') {
-        write_str(2, "sed: only s/pattern/replacement/[g] supported\n");
-        return;
+    if (nexprs == 0) { write_str(2, "sed: no expression\n"); return; }
+
+    /* Parse commands from expressions (support ; separated) */
+    struct sed_cmd cmds[16]; int ncmds = 0;
+    for (int e = 0; e < nexprs && ncmds < 16; e++) {
+        const char *ep = exprs[e];
+        while (*ep && ncmds < 16) {
+            while (*ep == ' ' || *ep == ';') ep++;
+            if (!*ep) break;
+
+            struct sed_cmd *c = &cmds[ncmds];
+            __builtin_memset(c, 0, sizeof(*c));
+
+            /* Parse address1 */
+            int consumed = sed_parse_addr(ep, &c->addr1_type, &c->addr1_line, c->addr1_pat);
+            ep += consumed;
+
+            /* Optional comma + address2 */
+            if (*ep == ',') {
+                ep++;
+                consumed = sed_parse_addr(ep, &c->addr2_type, &c->addr2_line, c->addr2_pat);
+                ep += consumed;
+            }
+
+            /* Negate modifier */
+            if (*ep == '!') { c->negate = 1; ep++; }
+            while (*ep == ' ') ep++;
+
+            /* Command */
+            if (*ep == 's') {
+                c->cmd = 's';
+                char delim = ep[1];
+                if (!delim) break;
+                const char *pp = ep + 2;
+                int pi = 0;
+                while (*pp && *pp != delim && pi < 127) c->s_pat[pi++] = *pp++;
+                c->s_pat[pi] = '\0'; c->s_plen = pi;
+                if (*pp == delim) pp++;
+                int ri = 0;
+                while (*pp && *pp != delim && ri < 127) c->s_rep[ri++] = *pp++;
+                c->s_rep[ri] = '\0'; c->s_rlen = ri;
+                if (*pp == delim) pp++;
+                c->s_global = (*pp == 'g'); if (*pp == 'g') pp++;
+                ep = pp;
+                ncmds++;
+            } else if (*ep == 'd') {
+                c->cmd = 'd'; ep++; ncmds++;
+            } else if (*ep == 'p') {
+                c->cmd = 'p'; ep++; ncmds++;
+            } else if (*ep == 'q') {
+                c->cmd = 'q'; ep++; ncmds++;
+            } else {
+                ep++; /* skip unknown */
+            }
+        }
     }
 
-    char delim = expr[1];
-    /* Extract pattern */
-    char pat[128] = {0};
-    int pi = 0;
-    const char *p = expr + 2;
-    while (*p && *p != delim && pi < 127) pat[pi++] = *p++;
-    pat[pi] = '\0';
-    if (*p == delim) p++;
-
-    /* Extract replacement */
-    char rep[128] = {0};
-    int ri = 0;
-    while (*p && *p != delim && ri < 127) rep[ri++] = *p++;
-    rep[ri] = '\0';
-    if (*p == delim) p++;
-
-    int global = (*p == 'g');
-
-    /* Process input */
-    int fd_in = 0; /* stdin */
+    /* Open input */
+    int fd_in = 0;
     if (file_start < argc) {
         fd_in = sys_open(argv[file_start], O_RDONLY, 0);
         if (fd_in < 0) {
@@ -4352,68 +4489,106 @@ static void cmd_sed(int argc, char *argv[]) {
         }
     }
 
+    /* Process lines */
     char line[1024];
-    int lp = 0;
+    int lp = 0, lineno = 0, quit = 0;
     char ch;
-    while (sys_read(fd_in, &ch, 1) == 1) {
+    while (!quit && sys_read(fd_in, &ch, 1) == 1) {
         if (ch == '\n' || lp >= 1022) {
             line[lp] = '\0';
-            /* Apply substitution */
-            char out[1024];
-            int oi = 0;
-            int replaced = 0;
-            int patlen = pi;
-            int replen = ri;
-            for (int i = 0; line[i] && oi < 1020; i++) {
-                if ((!replaced || global) && patlen > 0) {
-                    int match = 1;
-                    for (int j = 0; j < patlen; j++) {
-                        if (line[i + j] != pat[j]) { match = 0; break; }
-                    }
-                    if (match) {
-                        for (int j = 0; j < replen && oi < 1020; j++)
-                            out[oi++] = rep[j];
-                        i += patlen - 1;
-                        replaced = 1;
-                        continue;
+            lineno++;
+
+            int deleted = 0;
+            char work[1024];
+            int wlen = lp;
+            for (int i = 0; i < lp; i++) work[i] = line[i];
+            work[wlen] = '\0';
+
+            for (int ci = 0; ci < ncmds && !deleted; ci++) {
+                struct sed_cmd *c = &cmds[ci];
+                /* Check address match */
+                int matched = 0;
+                if (c->addr1_type == 0) {
+                    matched = 1;  /* No address = all lines */
+                } else if (c->addr1_type == 1 && c->addr2_type == 0) {
+                    matched = (lineno == c->addr1_line);
+                } else if (c->addr1_type == 3) {
+                    matched = 0; /* $ = last line, can't know yet; approximate: never */
+                } else if (c->addr1_type == 2 && c->addr2_type == 0) {
+                    int pl = 0; while (c->addr1_pat[pl]) pl++;
+                    matched = sed_pat_match(work, wlen, c->addr1_pat, pl);
+                } else if (c->addr1_type == 1 && c->addr2_type == 1) {
+                    matched = (lineno >= c->addr1_line && lineno <= c->addr2_line);
+                } else if (c->addr1_type == 1 && c->addr2_type == 2) {
+                    /* Start at line N, end at /pattern/ */
+                    if (lineno >= c->addr1_line) {
+                        int pl = 0; while (c->addr2_pat[pl]) pl++;
+                        matched = 1; /* In range until pattern found */
+                        if (sed_pat_match(work, wlen, c->addr2_pat, pl)) matched = 1; /* include this line */
                     }
                 }
-                out[oi++] = line[i];
+                if (c->negate) matched = !matched;
+                if (!matched) continue;
+
+                switch (c->cmd) {
+                    case 's': {
+                        char out[1024];
+                        int nlen = sed_subst(work, wlen, c->s_pat, c->s_plen,
+                                              c->s_rep, c->s_rlen, c->s_global, out, 1023);
+                        for (int i = 0; i < nlen; i++) work[i] = out[i];
+                        wlen = nlen; work[wlen] = '\0';
+                        break;
+                    }
+                    case 'd': deleted = 1; break;
+                    case 'p':
+                        sys_write(1, work, wlen);
+                        sys_write(1, "\n", 1);
+                        break;
+                    case 'q': quit = 1; break;
+                }
             }
-            out[oi++] = '\n';
-            out[oi] = '\0';
-            sys_write(1, out, oi);
+
+            if (!deleted && !suppress) {
+                sys_write(1, work, wlen);
+                sys_write(1, "\n", 1);
+            }
             lp = 0;
         } else {
             line[lp++] = ch;
         }
     }
     /* Handle last line without newline */
-    if (lp > 0) {
+    if (lp > 0 && !quit) {
         line[lp] = '\0';
-        char out[1024];
-        int oi = 0;
-        int replaced = 0;
-        int patlen = pi;
-        int replen = ri;
-        for (int i = 0; line[i] && oi < 1020; i++) {
-            if ((!replaced || global) && patlen > 0) {
-                int match = 1;
-                for (int j = 0; j < patlen; j++) {
-                    if (line[i + j] != pat[j]) { match = 0; break; }
-                }
-                if (match) {
-                    for (int j = 0; j < replen && oi < 1020; j++)
-                        out[oi++] = rep[j];
-                    i += patlen - 1;
-                    replaced = 1;
-                    continue;
-                }
+        lineno++;
+        int deleted = 0;
+        char work[1024];
+        int wlen = lp;
+        for (int i = 0; i < lp; i++) work[i] = line[i];
+        work[wlen] = '\0';
+        for (int ci = 0; ci < ncmds && !deleted; ci++) {
+            struct sed_cmd *c = &cmds[ci];
+            int matched = (c->addr1_type == 0) ? 1 :
+                          (c->addr1_type == 1 && lineno == c->addr1_line) ? 1 :
+                          (c->addr1_type == 3) ? 1 : 0;  /* $ matches last line */
+            if (c->addr1_type == 2) {
+                int pl = 0; while (c->addr1_pat[pl]) pl++;
+                matched = sed_pat_match(work, wlen, c->addr1_pat, pl);
             }
-            out[oi++] = line[i];
+            if (c->negate) matched = !matched;
+            if (!matched) continue;
+            switch (c->cmd) {
+                case 's': { char out[1024];
+                    int nlen = sed_subst(work, wlen, c->s_pat, c->s_plen,
+                                          c->s_rep, c->s_rlen, c->s_global, out, 1023);
+                    for (int i = 0; i < nlen; i++) work[i] = out[i];
+                    wlen = nlen; work[wlen] = '\0'; break; }
+                case 'd': deleted = 1; break;
+                case 'p': sys_write(1, work, wlen); sys_write(1, "\n", 1); break;
+                case 'q': break;
+            }
         }
-        out[oi++] = '\n';
-        sys_write(1, out, oi);
+        if (!deleted && !suppress) { sys_write(1, work, wlen); sys_write(1, "\n", 1); }
     }
     if (fd_in > 0) sys_close(fd_in);
 }

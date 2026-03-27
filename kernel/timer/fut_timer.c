@@ -263,21 +263,25 @@ void fut_timer_tick(void) {
      * which can hang the kernel on CI when the QEMU serial FIFO is full. */
     uint64_t current_ms = atomic_fetch_add_explicit(&system_ticks, 1, memory_order_relaxed);
 
-    /* Track per-category CPU ticks for /proc/stat:
+    /* Track per-category CPU ticks for /proc/stat and per-thread accounting:
      * idle:   no runnable thread
-     * user:   thread running in a user-space process (PID > 0, not init thread)
-     * system: kernel thread or kernel-mode work */
+     * user:   thread running in a user-space process (PID > 1)
+     * system: kernel thread or kernel-mode work (PID <= 1) */
     {
         extern fut_thread_t *fut_thread_current(void);
         fut_thread_t *ct = fut_thread_current();
         if (!ct || !ct->task || ct->state != 0 /* FUT_THREAD_RUNNING */) {
             atomic_fetch_add_explicit(&idle_ticks, 1, memory_order_relaxed);
         } else if (ct->task->pid > 1) {
-            /* User-space process (PID > 1 = not kernel init) */
+            /* User-space process: count as user time */
             atomic_fetch_add_explicit(&user_ticks, 1, memory_order_relaxed);
+            ct->stats.cpu_ticks++;
+            ct->stats.utime_ticks++;
         } else {
-            /* Kernel thread or init process */
+            /* Kernel thread or init process: count as system time */
             atomic_fetch_add_explicit(&kern_ticks, 1, memory_order_relaxed);
+            ct->stats.cpu_ticks++;
+            ct->stats.stime_ticks++;
         }
     }
 

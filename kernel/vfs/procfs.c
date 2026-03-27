@@ -1398,18 +1398,24 @@ static size_t gen_stat(char *buf, size_t cap, fut_task_t *task, uint64_t tid) {
     uint64_t pgrp = task->pgid;
     uint64_t session = task->sid;
 
-    /* CPU time in USER_HZ (100 Hz) ticks — sum all threads */
+    /* CPU time in USER_HZ (100 Hz) ticks — sum all threads.
+     * utime = user-space ticks, stime = kernel-space ticks.
+     * Timer tick handler classifies each tick per-thread into
+     * stats.utime_ticks (PID>1) or stats.stime_ticks (PID<=1). */
     uint64_t utime = 0, stime = 0;
     if (task->threads) {
-        /* Accumulate cpu_ticks across all threads of this task */
         fut_thread_t *t = task->threads;
         while (t) {
-            utime += t->stats.cpu_ticks;
+            utime += t->stats.utime_ticks;
+            stime += t->stats.stime_ticks;
             t = t->next;
         }
     }
+    /* Convert from ms ticks to USER_HZ centiseconds */
+    utime /= 10;
+    stime /= 10;
     /* Accumulated child times */
-    uint64_t cutime = task->child_cpu_ticks;
+    uint64_t cutime = task->child_cpu_ticks / 10;
     uint64_t cstime = 0;
 
     /* Priority in Linux terms: priority = 20 - nice (range 1..40 for SCHED_OTHER) */

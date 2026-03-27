@@ -9326,10 +9326,33 @@ static int execute_command(int argc, char *argv[]) {
         }
         return 0;
     } else if (strcmp_simple(argv[0], "basename") == 0) {
-        if (argc < 2) { write_str(2, "usage: basename <path>\n"); return 1; }
-        const char *p = argv[1], *last = p;
+        /* basename [-s SUFFIX] PATH [SUFFIX]
+         * Strip directory and optionally suffix from path */
+        if (argc < 2) { write_str(2, "usage: basename [-s suffix] path [suffix]\n"); return 1; }
+        const char *path = argv[1];
+        const char *suffix = NULL;
+        if (argc >= 4 && argv[1][0] == '-' && argv[1][1] == 's') {
+            suffix = argv[2]; path = argv[3];
+        } else if (argc >= 3 && argv[1][0] != '-') {
+            suffix = argv[2];
+        }
+        /* Strip directory */
+        const char *p = path, *last = p;
         while (*p) { if (*p == '/') last = p + 1; p++; }
-        write_str(1, last); write_char(1, '\n');
+        /* Strip trailing slashes */
+        int blen = 0; while (last[blen]) blen++;
+        while (blen > 1 && last[blen-1] == '/') blen--;
+        /* Strip suffix if specified */
+        if (suffix && suffix[0]) {
+            int slen = 0; while (suffix[slen]) slen++;
+            if (blen > slen) {
+                int match = 1;
+                for (int i = 0; i < slen; i++)
+                    if (last[blen - slen + i] != suffix[i]) { match = 0; break; }
+                if (match) blen -= slen;
+            }
+        }
+        sys_write(1, last, blen); write_char(1, '\n');
         return 0;
     } else if (strcmp_simple(argv[0], "dirname") == 0) {
         if (argc < 2) { write_str(2, "usage: dirname <path>\n"); return 1; }

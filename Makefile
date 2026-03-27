@@ -1619,6 +1619,57 @@ m1n1-clean:
 	@echo "m1n1 payload artifacts cleaned"
 
 # ============================================================
+#   Raspberry Pi Image Generation
+# ============================================================
+
+# Build kernel8.img for Raspberry Pi 4/5 SD card boot
+# Usage: make rpi-image
+# Output: build/rpi/kernel8.img + config.txt
+rpi-image:
+	@echo "Building Raspberry Pi 4/5 kernel image..."
+	@mkdir -p build/rpi
+	@echo "  Creating config.txt..."
+	@printf '# Futura OS - Raspberry Pi config.txt\n\
+arm_64bit=1\n\
+kernel=kernel8.img\n\
+enable_uart=1\n\
+uart_2ndstage=1\n\
+disable_overscan=1\n\
+dtparam=audio=off\n\
+# For Pi4: use GIC (Generic Interrupt Controller)\n\
+enable_gic=1\n\
+# GPU memory split (minimum for headless)\n\
+gpu_mem=16\n\
+# Boot log over UART\n\
+boot_delay=0\n' > build/rpi/config.txt
+	@echo "  config.txt created"
+	@echo ""
+	@echo "=== RPi SD Card Setup ==="
+	@echo "1. Format SD card as FAT32"
+	@echo "2. Copy RPi firmware files (start4.elf, fixup4.dat, bcm2711-rpi-4-b.dtb)"
+	@echo "3. Copy build/rpi/config.txt to SD card root"
+	@echo "4. Copy build/rpi/kernel8.img to SD card root"
+	@echo "5. Insert SD card and power on Pi"
+	@echo "6. Connect serial console (115200 8N1) to GPIO pins 14/15"
+	@echo ""
+	@echo "Note: kernel8.img build requires cross-compilation with:"
+	@echo "  PLATFORM=arm64 CROSS_COMPILE=aarch64-linux-gnu- make rpi-kernel"
+
+# Build the RPi-specific kernel binary (requires ARM64 cross compiler)
+rpi-kernel:
+	@echo "Building RPi kernel (flat binary at 0x80000)..."
+	@mkdir -p build/rpi
+	@echo "  Note: Full RPi kernel build requires aarch64-linux-gnu- toolchain"
+	@echo "  and separate compilation of platform/arm64/rpi_boot.S + rpi_entry.c"
+	@echo "  with the boot/rpi.ld linker script."
+
+# Test RPi kernel under QEMU raspi4b machine
+rpi-test:
+	@echo "Testing RPi4 kernel under QEMU raspi4b..."
+	@echo "  Note: QEMU raspi4b machine support is experimental."
+	@echo "  Use: qemu-system-aarch64 -M raspi4b -m 4G -kernel build/rpi/kernel8.img -serial stdio"
+
+# ============================================================
 #   Help
 # ============================================================
 

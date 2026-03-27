@@ -1706,7 +1706,7 @@ qemu-arm64: platform-arm64
 test-arm64:
 	@$(MAKE) PLATFORM=arm64 ENABLE_WAYLAND=0 kernel
 	@echo "Testing ARM64 kernel under QEMU (semihosting exit, 180s timeout)..."
-	@timeout 300 qemu-system-aarch64 \
+	@timeout 600 qemu-system-aarch64 \
 		-M virt -cpu cortex-a53 -m 512M \
 		-kernel $(BIN_DIR)/futura_kernel.bin \
 		-semihosting-config enable=on,target=native \

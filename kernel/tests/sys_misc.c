@@ -66149,6 +66149,104 @@ void fut_misc_test_thread(void *arg) {
         }
     }
 
+    /* ── Tests 2161-2165: kernel robustness verification ── */
+    {
+        extern long sys_open(const char *, int, int);
+        extern long sys_read(int, void *, size_t);
+        extern long sys_close(int);
+
+        /* Test 2161: /proc/stat has procs_blocked field */
+        fut_printf("[MISC-TEST] Test 2161: /proc/stat procs_blocked\n");
+        {
+            static char buf[1024];
+            long fd = sys_open("/proc/stat", 0, 0);
+            if (fd >= 0) {
+                long n = sys_read((int)fd, buf, sizeof(buf) - 1);
+                sys_close((int)fd);
+                buf[n > 0 ? n : 0] = '\0';
+                int found = 0;
+                for (long i = 0; i < n - 13; i++) {
+                    if (buf[i] == 'p' && buf[i+1] == 'r' && buf[i+2] == 'o' &&
+                        buf[i+3] == 'c' && buf[i+4] == 's' && buf[i+5] == '_' &&
+                        buf[i+6] == 'b' && buf[i+7] == 'l') { found = 1; break; }
+                }
+                if (found) { fut_printf("[MISC-TEST] ✓ Test 2161: procs_blocked present\n"); fut_test_pass(); }
+                else { fut_printf("[MISC-TEST] ✗ Test 2161: no procs_blocked\n"); fut_test_fail(2161); }
+            } else { fut_printf("[MISC-TEST] ✗ Test 2161: open=%ld\n", fd); fut_test_fail(2161); }
+        }
+
+        /* Test 2162: /proc/vmstat has pgalloc_normal */
+        fut_printf("[MISC-TEST] Test 2162: /proc/vmstat pgalloc_normal\n");
+        {
+            static char buf[1024];
+            long fd = sys_open("/proc/vmstat", 0, 0);
+            if (fd >= 0) {
+                long n = sys_read((int)fd, buf, sizeof(buf) - 1);
+                sys_close((int)fd);
+                buf[n > 0 ? n : 0] = '\0';
+                int found = 0;
+                for (long i = 0; i < n - 14; i++) {
+                    if (buf[i] == 'p' && buf[i+1] == 'g' && buf[i+2] == 'a' &&
+                        buf[i+3] == 'l' && buf[i+4] == 'l' && buf[i+5] == 'o' &&
+                        buf[i+6] == 'c') { found = 1; break; }
+                }
+                if (found) { fut_printf("[MISC-TEST] ✓ Test 2162: pgalloc_normal present\n"); fut_test_pass(); }
+                else { fut_printf("[MISC-TEST] ✗ Test 2162: missing\n"); fut_test_fail(2162); }
+            } else { fut_printf("[MISC-TEST] ✗ Test 2162: open=%ld\n", fd); fut_test_fail(2162); }
+        }
+
+        /* Test 2163: /proc/version contains "Futura" */
+        fut_printf("[MISC-TEST] Test 2163: /proc/version has Futura\n");
+        {
+            static char buf[256];
+            long fd = sys_open("/proc/version", 0, 0);
+            if (fd >= 0) {
+                long n = sys_read((int)fd, buf, sizeof(buf) - 1);
+                sys_close((int)fd);
+                buf[n > 0 ? n : 0] = '\0';
+                int found = 0;
+                for (long i = 0; i < n - 6; i++) {
+                    if (buf[i] == 'F' && buf[i+1] == 'u' && buf[i+2] == 't' &&
+                        buf[i+3] == 'u' && buf[i+4] == 'r' && buf[i+5] == 'a') { found = 1; break; }
+                }
+                if (found) { fut_printf("[MISC-TEST] ✓ Test 2163: version has Futura\n"); fut_test_pass(); }
+                else { fut_printf("[MISC-TEST] ✗ Test 2163: no Futura\n"); fut_test_fail(2163); }
+            } else { fut_printf("[MISC-TEST] ✗ Test 2163: open=%ld\n", fd); fut_test_fail(2163); }
+        }
+
+        /* Test 2164: /proc/version contains "0.5.0" */
+        fut_printf("[MISC-TEST] Test 2164: /proc/version has 0.5.0\n");
+        {
+            static char buf[256];
+            long fd = sys_open("/proc/version", 0, 0);
+            if (fd >= 0) {
+                long n = sys_read((int)fd, buf, sizeof(buf) - 1);
+                sys_close((int)fd);
+                buf[n > 0 ? n : 0] = '\0';
+                int found = 0;
+                for (long i = 0; i < n - 4; i++) {
+                    if (buf[i] == '0' && buf[i+1] == '.' && buf[i+2] == '5' &&
+                        buf[i+3] == '.' && buf[i+4] == '0') { found = 1; break; }
+                }
+                if (found) { fut_printf("[MISC-TEST] ✓ Test 2164: version 0.5.0\n"); fut_test_pass(); }
+                else { fut_printf("[MISC-TEST] ✗ Test 2164: no 0.5.0\n"); fut_test_fail(2164); }
+            } else { fut_printf("[MISC-TEST] ✗ Test 2164: open=%ld\n", fd); fut_test_fail(2164); }
+        }
+
+        /* Test 2165: /sys/class/thermal/thermal_zone0/type readable */
+        fut_printf("[MISC-TEST] Test 2165: thermal_zone0/type\n");
+        {
+            static char buf[64];
+            long fd = sys_open("/sys/class/thermal/thermal_zone0/type", 0, 0);
+            if (fd >= 0) {
+                long n = sys_read((int)fd, buf, sizeof(buf) - 1);
+                sys_close((int)fd);
+                if (n > 0) { fut_printf("[MISC-TEST] ✓ Test 2165: type='%.20s'\n", buf); fut_test_pass(); }
+                else { fut_printf("[MISC-TEST] ✗ Test 2165: empty\n"); fut_test_fail(2165); }
+            } else { fut_printf("[MISC-TEST] ✗ Test 2165: open=%ld\n", fd); fut_test_fail(2165); }
+        }
+    }
+
     /* ── Test 2155: /sys/kernel/security/lsm readable ── */
     {
         extern long sys_open(const char *, int, int);

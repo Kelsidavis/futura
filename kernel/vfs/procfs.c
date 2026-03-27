@@ -1257,8 +1257,9 @@ static size_t gen_smaps(char *buf, size_t cap, fut_task_t *task) {
         /* KernelPageSize / MMUPageSize: 4 kB on x86_64/arm64 */
         pb_str(&b, "KernelPageSize:        4 kB\n");
         pb_str(&b, "MMUPageSize:           4 kB\n");
-        /* Rss: for anonymous mappings all pages are resident in Futura's RAM model */
-        size_t rss = is_anon ? vma_size : 0;
+        /* Rss: ALL pages are resident in Futura's RAM-only model (no swap/pageout).
+         * Both anonymous and file-backed mappings live in RAM. */
+        size_t rss = vma_size;
         pb_str(&b, "Rss:             "); pb_u64(&b, (uint64_t)rss); pb_str(&b, " kB\n");
         /* Pss = Rss (no sharing, all private) */
         pb_str(&b, "Pss:             "); pb_u64(&b, (uint64_t)rss); pb_str(&b, " kB\n");

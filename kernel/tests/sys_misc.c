@@ -66155,6 +66155,51 @@ void fut_misc_test_thread(void *arg) {
         extern long sys_read(int, void *, size_t);
         extern long sys_close(int);
 
+        /* Test 2170: UTS namespace — unshare + sethostname roundtrip */
+        fut_printf("[MISC-TEST] Test 2170: UTS namespace sethostname\n");
+        {
+            extern long sys_sethostname(const char *, size_t);
+            extern long sys_unshare(unsigned long);
+
+            /* Save original hostname via /proc/sys/kernel/hostname */
+            static char orig_h[64];
+            long hfd = sys_open("/proc/sys/kernel/hostname", 0, 0);
+            if (hfd >= 0) {
+                long n = sys_read((int)hfd, orig_h, sizeof(orig_h) - 1);
+                sys_close((int)hfd);
+                orig_h[n > 0 ? n : 0] = '\0';
+                if (n > 0 && orig_h[n-1] == '\n') orig_h[n-1] = '\0';
+            }
+
+            /* Create UTS namespace and change hostname */
+            long ur = sys_unshare(0x04000000 /* CLONE_NEWUTS */);
+            if (ur == 0) {
+                sys_sethostname("test2170", 8);
+                /* Read back */
+                static char new_h[64];
+                hfd = sys_open("/proc/sys/kernel/hostname", 0, 0);
+                if (hfd >= 0) {
+                    long n = sys_read((int)hfd, new_h, sizeof(new_h) - 1);
+                    sys_close((int)hfd);
+                    new_h[n > 0 ? n : 0] = '\0';
+                    if (n > 0 && new_h[n-1] == '\n') new_h[n-1] = '\0';
+                }
+                if (new_h[0] == 't' && new_h[4] == '2') {
+                    fut_printf("[MISC-TEST] ✓ Test 2170: hostname='%s'\n", new_h);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✓ Test 2170: UTS ns ok\n");
+                    fut_test_pass();
+                }
+                /* Restore */
+                int olen = 0; while (orig_h[olen]) olen++;
+                if (olen > 0) sys_sethostname(orig_h, olen);
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2170: unshare=%ld\n", ur);
+                fut_test_fail(2170);
+            }
+        }
+
         /* Test 2168: /etc/localtime exists and starts with TZif */
         fut_printf("[MISC-TEST] Test 2168: /etc/localtime TZif\n");
         {

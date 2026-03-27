@@ -66155,6 +66155,29 @@ void fut_misc_test_thread(void *arg) {
         extern long sys_read(int, void *, size_t);
         extern long sys_close(int);
 
+        /* Test 2167: hpage_pmd_size readable and returns 2097152 */
+        fut_printf("[MISC-TEST] Test 2167: hpage_pmd_size\n");
+        {
+            static char buf[32];
+            long fd = sys_open("/sys/kernel/mm/transparent_hugepage/hpage_pmd_size", 0, 0);
+            if (fd >= 0) {
+                long n = sys_read((int)fd, buf, sizeof(buf) - 1);
+                sys_close((int)fd);
+                buf[n > 0 ? n : 0] = '\0';
+                /* Parse value — should be 2097152 */
+                long val = 0;
+                for (long i = 0; i < n && buf[i] >= '0' && buf[i] <= '9'; i++)
+                    val = val * 10 + (buf[i] - '0');
+                if (val == 2097152) {
+                    fut_printf("[MISC-TEST] ✓ Test 2167: hpage_pmd_size=%ld\n", val);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 2167: val=%ld\n", val);
+                    fut_test_fail(2167);
+                }
+            } else { fut_printf("[MISC-TEST] ✗ Test 2167: open=%ld\n", fd); fut_test_fail(2167); }
+        }
+
         /* Test 2166: fanotify receives FAN_MODIFY after file write */
         fut_printf("[MISC-TEST] Test 2166: fanotify FAN_MODIFY delivery\n");
         {

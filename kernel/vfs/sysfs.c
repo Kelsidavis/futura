@@ -84,6 +84,7 @@ enum sysfs_kind {
     SYSFS_THP_ENABLED,          /* file */
     SYSFS_THP_DEFRAG,           /* file */
     SYSFS_THP_ZERO_PAGES,       /* file */
+    SYSFS_THP_HPAGE_PMD_SIZE,   /* file: "2097152\n" (2MB) */
     SYSFS_KERNEL_PROFILING,     /* file */
     /* /sys/fs/ */
     SYSFS_FS_DIR,
@@ -155,6 +156,7 @@ typedef struct {
 #define SYSFS_INO_THP_ENABLED       516ULL
 #define SYSFS_INO_THP_DEFRAG        517ULL
 #define SYSFS_INO_THP_ZERO_PAGES    518ULL
+#define SYSFS_INO_THP_HPAGE_PMD    519ULL
 #define SYSFS_INO_KERNEL_PROFILING  519ULL
 #define SYSFS_INO_FS                520ULL
 #define SYSFS_INO_FS_CGROUP         521ULL
@@ -282,6 +284,10 @@ static ssize_t sysfs_file_read(struct fut_vnode *vnode, void *buf,
             break;
         case SYSFS_THP_ZERO_PAGES:
             total = sysfs_gen_str(tmp, sizeof(tmp), "0\n");
+            break;
+        case SYSFS_THP_HPAGE_PMD_SIZE:
+            /* 2MB = 2097152 bytes (standard x86_64 huge page size) */
+            total = sysfs_gen_str(tmp, sizeof(tmp), "2097152\n");
             break;
         case SYSFS_KERNEL_PROFILING:
             total = sysfs_gen_str(tmp, sizeof(tmp), "0\n");
@@ -689,6 +695,7 @@ static const sysfs_de_t thp_entries[] = {
     DE_REG("enabled",        SYSFS_INO_THP_ENABLED,    SYSFS_THP_ENABLED),
     DE_REG("defrag",         SYSFS_INO_THP_DEFRAG,     SYSFS_THP_DEFRAG),
     DE_REG("use_zero_pages", SYSFS_INO_THP_ZERO_PAGES, SYSFS_THP_ZERO_PAGES),
+    DE_REG("hpage_pmd_size", SYSFS_INO_THP_HPAGE_PMD,  SYSFS_THP_HPAGE_PMD_SIZE),
 };
 #define THP_N (sizeof(thp_entries)/sizeof(thp_entries[0]))
 

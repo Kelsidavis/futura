@@ -1027,6 +1027,23 @@ $(RUST_LIB_VIRTIO_INPUT): $(RUST_SOURCES)
 	cd $$tmpdir && $(AR) x $(abspath $(RUST_LIB_VIRTIO_INPUT)) && for obj in *.o; do $(OBJCOPY) --remove-section='.gcc_except_table*' --remove-section='.eh_frame*' $$obj >/dev/null 2>&1 || true; done && $(AR) rcs $(abspath $(RUST_LIB_VIRTIO_INPUT)) *.o; \
 	rm -rf $$tmpdir
 
+# AMD Ryzen platform drivers (x86_64 only)
+define RUST_DRIVER_RULE
+$(1): $(RUST_SOURCES)
+	@echo "CARGO $(2) ($(RUST_PROFILE))"
+	@cd $(3) && RUSTFLAGS="-C panic=abort -C force-unwind-tables=no $(RUSTFLAGS)" $(CARGO) build --release --target $(RUST_TARGET)
+	@tmpdir=$$$$(mktemp -d); \
+	cd $$$$tmpdir && $(AR) x $(abspath $(1)) && for obj in *.o; do $(OBJCOPY) --remove-section='.gcc_except_table*' --remove-section='.eh_frame*' $$$$obj >/dev/null 2>&1 || true; done && $(AR) rcs $(abspath $(1)) *.o; \
+	rm -rf $$$$tmpdir
+endef
+
+$(eval $(call RUST_DRIVER_RULE,$(RUST_LIB_NVME),nvme,$(RUST_NVME_DIR)))
+$(eval $(call RUST_DRIVER_RULE,$(RUST_LIB_XHCI),xhci,$(RUST_XHCI_DIR)))
+$(eval $(call RUST_DRIVER_RULE,$(RUST_LIB_RTL8111),rtl8111,$(RUST_RTL8111_DIR)))
+$(eval $(call RUST_DRIVER_RULE,$(RUST_LIB_HDA),hda,$(RUST_HDA_DIR)))
+$(eval $(call RUST_DRIVER_RULE,$(RUST_LIB_AMD_SMBUS),amd_smbus,$(RUST_AMD_SMBUS_DIR)))
+$(eval $(call RUST_DRIVER_RULE,$(RUST_LIB_AMD_IOMMU),amd_iommu,$(RUST_AMD_IOMMU_DIR)))
+
 $(RUST_LIB_APPLE_UART): $(RUST_SOURCES)
 	@$(RUSTC) --print target-list | grep -q $(RUST_TARGET) >/dev/null || { \
 		echo "error: rust target '$(RUST_TARGET)' not installed for $(RUSTC)." >&2; exit 1; }

@@ -1522,7 +1522,7 @@ void fut_kernel_main(void) {
         extern void pci_enumerate(void);
         pci_enumerate();  /* Scan PCI bus for all devices */
     }
-#ifdef __x86_64__
+#if defined(__x86_64__) && !defined(DRIVERS_QEMU)
     {
         extern int rust_ahci_init(void);
         rust_ahci_init();  /* AHCI SATA controller (Rust) — scans PCI for disk devices */
@@ -1533,6 +1533,7 @@ void fut_kernel_main(void) {
     fut_printf("[INIT] Initializing Rust hardware drivers...\n");
 
 #ifdef __x86_64__
+#if !defined(DRIVERS_QEMU)
     /* Early platform — CPU identification, timers, basic I/O */
     {
         extern int x86_cpuid_init(void);
@@ -1560,7 +1561,9 @@ void fut_kernel_main(void) {
         pci_msix_init();
         dma_pool_init();
     }
+#endif /* !DRIVERS_QEMU */
 
+#if defined(DRIVERS_AMD) || defined(DRIVERS_ALL)
     /* AMD chipset drivers */
     {
         extern int amd_smn_init(void);
@@ -1599,7 +1602,9 @@ void fut_kernel_main(void) {
         amd_umc_init();
         amd_xgbe_init();
     }
+#endif /* DRIVERS_AMD || DRIVERS_ALL */
 
+#if defined(DRIVERS_INTEL) || defined(DRIVERS_ALL)
     /* Intel chipset drivers */
     {
         extern int intel_vtd_init(void);
@@ -1640,7 +1645,9 @@ void fut_kernel_main(void) {
         intel_ipu_init();
         intel_hda_hdmi_init();
     }
+#endif /* DRIVERS_INTEL || DRIVERS_ALL */
 
+#if !defined(DRIVERS_QEMU)
     /* Security — TPM, MCE */
     {
         extern int tpm_crb_init(void);
@@ -1706,14 +1713,18 @@ void fut_kernel_main(void) {
         acpi_button_init();
     }
 
-    /* Display — VESA framebuffer, VirtIO console */
+    /* Display — VESA framebuffer */
     {
         extern int vesa_fb_init(void);
+        extern int edid_init(void);
+        vesa_fb_init();
+    }
+#endif /* !DRIVERS_QEMU */
+
+    /* VirtIO drivers — always initialized on x86_64 (used by QEMU) */
+    {
         extern int virtio_console_init(void);
         extern int virtio_input_rust_init(void);
-        extern int edid_init(void);
-
-        vesa_fb_init();
         virtio_console_init();
         virtio_input_rust_init();
     }

@@ -41531,20 +41531,21 @@ t1078:
             goto t1079;
         }
 
-        char buf[8192];
-        long n = sys_getdents64((unsigned int)dfd, buf, sizeof(buf));
-        fut_vfs_close(dfd);
-
+        static char buf[8192];
         bool found = false;
-        if (n > 0) {
+        long n;
+        /* Loop to drain all directory entries (may need multiple reads with many PIDs) */
+        while ((n = sys_getdents64((unsigned int)dfd, buf, sizeof(buf))) > 0) {
             long pos = 0;
             while (pos < n) {
                 struct test_dirent64 *d = (struct test_dirent64 *)(buf + pos);
-                if (d->d_reclen == 0) break;
+                if (d->d_reclen == 0) { n = 0; break; }
                 if (__builtin_strcmp(d->d_name, pid_str) == 0) { found = true; break; }
                 pos += d->d_reclen;
             }
+            if (found) break;
         }
+        fut_vfs_close(dfd);
         if (!found) {
             fut_printf("[MISC-TEST] ✗ Test 1078: PID %s not found in /proc (n=%ld)\n", pid_str, n);
             fut_test_fail(1078);

@@ -2348,6 +2348,14 @@ int fut_vfs_open(const char *path, int flags, int mode) {
             inotify_dispatch_event(dir_path, 0x00000020 /* IN_OPEN */, vnode->name, 0);
     }
 
+    /* Dispatch fanotify FAN_OPEN event for filesystem-wide monitoring */
+    {
+        extern void fanotify_notify(const char *, uint64_t, int32_t);
+        extern fut_task_t *fut_task_current(void);
+        fut_task_t *fan_task = fut_task_current();
+        fanotify_notify(path, 0x00000020 /* FAN_OPEN */, fan_task ? (int32_t)fan_task->pid : 0);
+    }
+
 #if DEBUG_VFS
     fut_printf("[VFS-OPEN] SUCCESS: opened '%s' as fd=%d (mode=0%o)\n", path, fd, vnode->mode);
 #endif
@@ -2549,8 +2557,19 @@ ssize_t fut_vfs_read(int fd, void *buf, size_t size) {
         /* Dispatch IN_ACCESS so watchers know the file was read */
         if (file->vnode->parent && file->vnode->name) {
             char dir_path[256];
-            if (fut_vnode_build_path(file->vnode->parent, dir_path, sizeof(dir_path)))
+            if (fut_vnode_build_path(file->vnode->parent, dir_path, sizeof(dir_path))) {
                 inotify_dispatch_event(dir_path, 0x00000001 /* IN_ACCESS */, file->vnode->name, 0);
+                /* fanotify FAN_ACCESS */
+                extern void fanotify_notify(const char *, uint64_t, int32_t);
+                char fpath[512];
+                int fp = 0;
+                for (int i = 0; dir_path[i] && fp < 500; i++) fpath[fp++] = dir_path[i];
+                if (fp > 1) fpath[fp++] = '/';
+                for (int i = 0; file->vnode->name[i] && fp < 510; i++) fpath[fp++] = file->vnode->name[i];
+                fpath[fp] = '\0';
+                fut_task_t *ft = fut_task_current();
+                fanotify_notify(fpath, 0x00000001 /* FAN_ACCESS */, ft ? (int32_t)ft->pid : 0);
+            }
         }
     }
 
@@ -2719,8 +2738,18 @@ ssize_t fut_vfs_write(int fd, const void *buf, size_t size) {
         /* Dispatch IN_MODIFY so inotify watchers see writes */
         if (file->vnode->parent && file->vnode->name) {
             char dir_path[256];
-            if (fut_vnode_build_path(file->vnode->parent, dir_path, sizeof(dir_path)))
+            if (fut_vnode_build_path(file->vnode->parent, dir_path, sizeof(dir_path))) {
                 inotify_dispatch_event(dir_path, 0x00000002 /* IN_MODIFY */, file->vnode->name, 0);
+                /* fanotify FAN_MODIFY */
+                extern void fanotify_notify(const char *, uint64_t, int32_t);
+                char fpath[512]; int fp = 0;
+                for (int i = 0; dir_path[i] && fp < 500; i++) fpath[fp++] = dir_path[i];
+                if (fp > 1) fpath[fp++] = '/';
+                for (int i = 0; file->vnode->name[i] && fp < 510; i++) fpath[fp++] = file->vnode->name[i];
+                fpath[fp] = '\0';
+                fut_task_t *ft = fut_task_current();
+                fanotify_notify(fpath, 0x00000002 /* FAN_MODIFY */, ft ? (int32_t)ft->pid : 0);
+            }
         }
     }
 

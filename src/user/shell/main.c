@@ -122,6 +122,7 @@ static void cmd_tac(int argc, char *argv[]);
 static void cmd_chgrp(int argc, char *argv[]);
 static void cmd_md5sum(int argc, char *argv[]);
 static void cmd_strings(int argc, char *argv[]);
+static void cmd_file(int argc, char *argv[]);
 static void cmd_pgrep(int argc, char *argv[]);
 static void cmd_pkill(int argc, char *argv[]);
 static void cmd_pidof(int argc, char *argv[]);
@@ -526,7 +527,7 @@ static size_t common_prefix_len(const char *s1, const char *s2) {
 static void complete_command(char *buf, size_t *pos, size_t max_len) {
     /* List of builtin commands */
     const char *builtins[] = {
-        "arp", "bg", "brctl", "cd", "chgrp", "chmod", "chroot", "clear", "conntrack", "date", "dd", "df", "dhclient", "dmesg", "echo", "edit", "ethtool", "hexdump", "lsof", "md5sum", "nc", "nice", "nohup", "pgrep", "pidof", "pkill", "poweroff", "reboot", "renice", "seq", "sleep", "strings", "tac", "time", "timeout", "traceroute", "tty", "wget", "xxd", "exit", "export", "fg", "free",
+        "arp", "bg", "brctl", "cd", "chgrp", "chmod", "chroot", "clear", "conntrack", "date", "dd", "df", "dhclient", "dmesg", "echo", "edit", "ethtool", "file", "hexdump", "lsof", "md5sum", "nc", "nice", "nohup", "pgrep", "pidof", "pkill", "poweroff", "reboot", "renice", "seq", "sleep", "strings", "tac", "time", "timeout", "traceroute", "tty", "wget", "xxd", "exit", "export", "fg", "free",
         "help", "hostname", "httpd", "id", "ifconfig", "iostat", "ipcs", "iptables", "jobs", "kill", "logger", "losetup", "ls", "lsblk", "lspci", "mkfs", "mount", "netstat",
         ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "getconf", "history", "ip", "ln", "mktemp", "more", "nproc", "nslookup", "ping", "printf", "ps", "pwd", "read", "readlink", "set", "sha256sum", "shutdown", "source", "ss", "stat", "stty", "sync", "sysctl", "sysinfo", "tc", "test", "top", "trap", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "vmstat", "wait", "watch", "wdctl", "which", "whoami", "xargs", "yes", NULL
     };
@@ -1184,6 +1185,7 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  nice [-n N] cmd - Run command with altered priority\n");
     write_str(1, "  renice prio pid - Change process priority\n");
     write_str(1, "  xxd [-r] file   - Hex dump (or reverse with -r)\n");
+    write_str(1, "  file FILE...    - Identify file type by magic bytes\n");
     write_str(1, "  lsof            - List open files\n");
     write_str(1, "  which <cmd>     - Find command in PATH\n");
     write_str(1, "  du [path]       - Show disk usage (KB)\n");
@@ -8854,6 +8856,9 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "xxd") == 0) {
         cmd_xxd(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "file") == 0) {
+        cmd_file(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "alias") == 0) {
         if (argc < 2) {
             /* List all aliases */
@@ -9411,7 +9416,8 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "pidof") == 0 ||
             strcmp_simple(cmd, "nice") == 0 ||
             strcmp_simple(cmd, "renice") == 0 ||
-            strcmp_simple(cmd, "xxd") == 0);
+            strcmp_simple(cmd, "xxd") == 0 ||
+            strcmp_simple(cmd, "file") == 0);
 }
 
 /* Parse command line into pipeline stages separated by '|' */
@@ -10715,6 +10721,127 @@ static void cmd_xxd(int argc, char *argv[]) {
             total_offset += n;
         }
         sys_close(fd);
+    }
+}
+
+/* ── file: identify file type by magic bytes ── */
+static void cmd_file(int argc, char *argv[]) {
+    if (argc < 2) { write_str(2, "usage: file FILE...\n"); return; }
+    for (int f = 1; f < argc; f++) {
+        write_str(1, argv[f]);
+        write_str(1, ": ");
+
+        /* Try stat first for type */
+        struct { uint64_t dev; uint64_t ino; uint64_t nlink; uint32_t mode;
+                 uint32_t uid; uint32_t gid; uint32_t pad; uint64_t rdev;
+                 int64_t size; int64_t blksize; int64_t blocks;
+                 uint64_t atime_s; uint64_t atime_ns;
+                 uint64_t mtime_s; uint64_t mtime_ns;
+                 uint64_t ctime_s; uint64_t ctime_ns; } st;
+        extern long sys_stat_call(const char *, void *);
+        long sr = sys_stat_call(argv[f], &st);
+        if (sr != 0) { write_str(1, "cannot stat\n"); continue; }
+
+        uint32_t ftype = st.mode & 0170000;
+        if (ftype == 0040000) { write_str(1, "directory\n"); continue; }
+        if (ftype == 0120000) { write_str(1, "symbolic link\n"); continue; }
+        if (ftype == 0060000) { write_str(1, "block special\n"); continue; }
+        if (ftype == 0020000) { write_str(1, "character special\n"); continue; }
+        if (ftype == 0010000) { write_str(1, "FIFO (named pipe)\n"); continue; }
+        if (ftype == 0140000) { write_str(1, "socket\n"); continue; }
+
+        /* Regular file — read magic bytes */
+        int fd = sys_open(argv[f], O_RDONLY, 0);
+        if (fd < 0) { write_str(1, "cannot open\n"); continue; }
+
+        static unsigned char magic[64];
+        ssize_t n = sys_read(fd, magic, sizeof(magic));
+        sys_close(fd);
+
+        if (n <= 0) {
+            if (st.size == 0) write_str(1, "empty\n");
+            else write_str(1, "data\n");
+            continue;
+        }
+
+        /* ELF */
+        if (n >= 16 && magic[0] == 0x7f && magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F') {
+            write_str(1, "ELF ");
+            write_str(1, magic[4] == 2 ? "64-bit " : "32-bit ");
+            write_str(1, magic[5] == 1 ? "LSB " : "MSB ");
+            uint16_t etype = magic[16] | ((uint16_t)magic[17] << 8);
+            if (etype == 2) write_str(1, "executable");
+            else if (etype == 3) write_str(1, "shared object");
+            else if (etype == 1) write_str(1, "relocatable");
+            else if (etype == 4) write_str(1, "core file");
+            else write_str(1, "unknown type");
+            write_str(1, "\n");
+            continue;
+        }
+        /* Shebang script */
+        if (n >= 2 && magic[0] == '#' && magic[1] == '!') {
+            write_str(1, "script, ");
+            /* Print interpreter */
+            int i = 2;
+            while (i < n && (magic[i] == ' ' || magic[i] == '\t')) i++;
+            while (i < n && magic[i] != '\n' && magic[i] != ' ' && magic[i] != '\0') {
+                char c = (char)magic[i++];
+                sys_write(1, &c, 1);
+            }
+            write_str(1, " script\n");
+            continue;
+        }
+        /* PNG */
+        if (n >= 8 && magic[0] == 0x89 && magic[1] == 'P' && magic[2] == 'N' && magic[3] == 'G') {
+            write_str(1, "PNG image data\n"); continue;
+        }
+        /* JPEG */
+        if (n >= 3 && magic[0] == 0xFF && magic[1] == 0xD8 && magic[2] == 0xFF) {
+            write_str(1, "JPEG image data\n"); continue;
+        }
+        /* GIF */
+        if (n >= 6 && magic[0] == 'G' && magic[1] == 'I' && magic[2] == 'F') {
+            write_str(1, "GIF image data\n"); continue;
+        }
+        /* PDF */
+        if (n >= 5 && magic[0] == '%' && magic[1] == 'P' && magic[2] == 'D' && magic[3] == 'F') {
+            write_str(1, "PDF document\n"); continue;
+        }
+        /* gzip */
+        if (n >= 2 && magic[0] == 0x1F && magic[1] == 0x8B) {
+            write_str(1, "gzip compressed data\n"); continue;
+        }
+        /* bzip2 */
+        if (n >= 3 && magic[0] == 'B' && magic[1] == 'Z' && magic[2] == 'h') {
+            write_str(1, "bzip2 compressed data\n"); continue;
+        }
+        /* XZ */
+        if (n >= 6 && magic[0] == 0xFD && magic[1] == '7' && magic[2] == 'z' && magic[3] == 'X') {
+            write_str(1, "XZ compressed data\n"); continue;
+        }
+        /* tar (ustar magic at offset 257) — read+skip to reach offset */
+        if (n >= 5 && st.size > 262) {
+            fd = sys_open(argv[f], O_RDONLY, 0);
+            if (fd >= 0) {
+                static char skip[257];
+                sys_read(fd, skip, 257);
+                char tmagic[8];
+                ssize_t tn = sys_read(fd, tmagic, 5);
+                sys_close(fd);
+                if (tn >= 5 && tmagic[0] == 'u' && tmagic[1] == 's' && tmagic[2] == 't' &&
+                    tmagic[3] == 'a' && tmagic[4] == 'r') {
+                    write_str(1, "POSIX tar archive (GNU)\n"); continue;
+                }
+            }
+        }
+        /* Check if it looks like text */
+        int textlike = 1;
+        for (ssize_t i = 0; i < n && i < 32; i++) {
+            unsigned char c = magic[i];
+            if (c < 7 || (c > 13 && c < 32 && c != 27)) { textlike = 0; break; }
+        }
+        if (textlike) write_str(1, "ASCII text\n");
+        else write_str(1, "data\n");
     }
 }
 

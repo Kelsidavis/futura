@@ -57955,6 +57955,135 @@ __attribute__((noinline)) static void test_net_procfs_devnodes(void) {
  * Tests 2061-2063: binfmt_misc
  * ============================================================ */
 /* ============================================================
+ * Tests 2092-2097: final coverage (scripts, devices, sysctls)
+ * ============================================================ */
+__attribute__((noinline)) static void test_final_coverage(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_write(int, const void *, size_t);
+    extern long sys_close(int);
+
+    /* ── Test 2092: write+readback shell script with heredoc syntax ── */
+    fut_printf("[MISC-TEST] Test 2092: heredoc script file\n");
+    {
+        long fd = sys_open("/tmp/heredoc_test.sh", O_CREAT | O_RDWR, 0755);
+        if (fd >= 0) {
+            static const char script[] =
+                "#!/bin/shell\n"
+                "cat <<EOF\n"
+                "Hello from heredoc\n"
+                "Line two\n"
+                "EOF\n";
+            sys_write((int)fd, script, sizeof(script) - 1);
+            sys_close((int)fd);
+            /* Read back and verify */
+            fd = sys_open("/tmp/heredoc_test.sh", 0, 0);
+            if (fd >= 0) {
+                static char buf[128];
+                long n = sys_read((int)fd, buf, 127);
+                sys_close((int)fd);
+                if (n > 20 && buf[0] == '#' && buf[1] == '!') {
+                    fut_printf("[MISC-TEST] ✓ Test 2092: heredoc script ok\n");
+                    fut_test_pass();
+                } else { fut_test_fail(2092); }
+            } else { fut_test_fail(2092); }
+            extern long sys_unlink(const char *);
+            sys_unlink("/tmp/heredoc_test.sh");
+        } else { fut_test_fail(2092); }
+    }
+
+    /* ── Test 2093: /dev/console is openable ── */
+    fut_printf("[MISC-TEST] Test 2093: /dev/console\n");
+    {
+        long fd = sys_open("/dev/console", 0, 0);
+        if (fd >= 0) {
+            fut_printf("[MISC-TEST] ✓ Test 2093: /dev/console fd=%ld\n", fd);
+            sys_close((int)fd);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2093: open=%ld\n", fd);
+            fut_test_fail(2093);
+        }
+    }
+
+    /* ── Test 2094: /proc/sys/kernel/printk returns 4-value format ── */
+    fut_printf("[MISC-TEST] Test 2094: /proc/sys/kernel/printk\n");
+    {
+        long fd = sys_open("/proc/sys/kernel/printk", 0, 0);
+        if (fd >= 0) {
+            static char buf[32];
+            long n = sys_read((int)fd, buf, 31);
+            sys_close((int)fd);
+            /* Should be "4\t4\t1\t7\n" */
+            if (n > 5 && buf[0] == '4') {
+                fut_printf("[MISC-TEST] ✓ Test 2094: printk format ok\n");
+                fut_test_pass();
+            } else { fut_test_fail(2094); }
+        } else { fut_test_fail(2094); }
+    }
+
+    /* ── Test 2095: /proc/sys/kernel/threads-max readable ── */
+    fut_printf("[MISC-TEST] Test 2095: threads-max\n");
+    {
+        long fd = sys_open("/proc/sys/kernel/threads-max", 0, 0);
+        if (fd >= 0) {
+            static char buf[16];
+            long n = sys_read((int)fd, buf, 15);
+            sys_close((int)fd);
+            if (n > 0 && buf[0] >= '0') {
+                fut_printf("[MISC-TEST] ✓ Test 2095: threads-max ok\n");
+                fut_test_pass();
+            } else { fut_test_fail(2095); }
+        } else { fut_test_fail(2095); }
+    }
+
+    /* ── Test 2096: /etc/os-release readable and has ID= ── */
+    fut_printf("[MISC-TEST] Test 2096: /etc/os-release\n");
+    {
+        long fd = sys_open("/etc/os-release", 0, 0);
+        if (fd >= 0) {
+            static char buf[256];
+            long n = sys_read((int)fd, buf, 255);
+            sys_close((int)fd);
+            if (n > 10) {
+                buf[n] = '\0';
+                bool found = false;
+                for (long i = 0; i < n - 2; i++) {
+                    if (buf[i] == 'I' && buf[i+1] == 'D' && buf[i+2] == '=') { found = true; break; }
+                }
+                if (found) {
+                    fut_printf("[MISC-TEST] ✓ Test 2096: os-release has ID=\n");
+                    fut_test_pass();
+                } else { fut_test_fail(2096); }
+            } else { fut_test_fail(2096); }
+        } else { fut_test_fail(2096); }
+    }
+
+    /* ── Test 2097: /proc/sys/net/core/somaxconn writable ── */
+    fut_printf("[MISC-TEST] Test 2097: write somaxconn\n");
+    {
+        long fd = sys_open("/proc/sys/net/core/somaxconn", 02, 0);
+        if (fd >= 0) {
+            long n = sys_write((int)fd, "4096\n", 5);
+            sys_close((int)fd);
+            if (n == 5) {
+                /* Read back to verify */
+                fd = sys_open("/proc/sys/net/core/somaxconn", 0, 0);
+                if (fd >= 0) {
+                    static char buf[16];
+                    long r = sys_read((int)fd, buf, 15);
+                    sys_close((int)fd);
+                    if (r > 0 && buf[0] == '4') {
+                        fut_printf("[MISC-TEST] ✓ Test 2097: somaxconn write+readback ok\n");
+                        fut_test_pass();
+                    } else { fut_test_fail(2097); }
+                } else { fut_test_fail(2097); }
+            } else { fut_test_fail(2097); }
+        } else { fut_test_fail(2097); }
+    }
+}
+
+/* ============================================================
  * Tests 2082-2091: edge case tests for new subsystems
  * ============================================================ */
 __attribute__((noinline)) static void test_edge_cases(void) {
@@ -64628,6 +64757,7 @@ void fut_misc_test_thread(void *arg) {
     test_loop_device(); /* Tests 1885-1887 */
     test_per_iface_conf(); /* Tests 1869-1871 */
 
+    test_final_coverage(); /* Tests 2092-2097 */
     test_edge_cases(); /* Tests 2082-2091 */
     test_random_vm_entries(); /* Tests 2078-2081 */
     test_net_unix_bridge(); /* Tests 2074-2077 */

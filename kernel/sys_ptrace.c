@@ -578,7 +578,7 @@ long sys_ptrace(int request, int pid, void *addr, void *data) {
             return -ESRCH;
 
         /* NT_PRSTATUS (1) = general regs, NT_PRFPREG (2) = FP regs */
-        uint64_t regset_type = (uint64_t)(uintptr_t)addr;
+        uint64_t regset_type __attribute__((unused)) = (uint64_t)(uintptr_t)addr;
 
         if (!data)
             return -EFAULT;

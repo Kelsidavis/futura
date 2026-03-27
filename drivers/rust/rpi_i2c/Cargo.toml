@@ -1,0 +1,12 @@
+[package]
+name = "rpi_i2c"
+version = "0.1.0"
+edition = "2024"
+license = "MPL-2.0"
+description = "Raspberry Pi BSC I2C controller driver"
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+common = { path = "../common" }

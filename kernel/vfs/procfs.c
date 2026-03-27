@@ -5054,6 +5054,24 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0120777, PROC_PID_ROOT, pid, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "oom_adj")) {
+            /* Legacy OOM adjustment (-17 to +15). Maps to oom_score_adj. */
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_OOM_ADJ(pid) + 50,
+                                          0100644, PROC_OOM_ADJ, pid, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "cpuset")) {
+            /* Cgroup cpuset path — returns "/" for root cgroup */
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_CGROUP(pid) + 50,
+                                          0100444, PROC_CGROUP, pid, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "autogroup")) {
+            /* CFS autogroup — static response for all processes */
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_OOM_ADJ(pid) + 51,
+                                          0100644, PROC_LOGINUID, pid, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         if (STREQ(name, "stat")) {
             *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PID_STAT(pid),
                                           0100444, PROC_STAT, pid, 0);
@@ -6398,7 +6416,8 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             "wchan", "mountinfo", "coredump_filter", "schedstat", "net", "attr",
             "smaps_rollup", "auxv", "mem",
             "uid_map", "gid_map", "setgroups",
-            "loginuid", "sessionid", "personality", "pagemap", "timerslack_ns", "syscall", "root"
+            "loginuid", "sessionid", "personality", "pagemap", "timerslack_ns", "syscall", "root",
+            "oom_adj", "cpuset", "autogroup"
         };
         static const uint8_t etypes[] = {
             FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
@@ -6419,10 +6438,13 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             FUT_VDIR_TYPE_REG,
             FUT_VDIR_TYPE_REG,      /* timerslack_ns */
             FUT_VDIR_TYPE_REG,      /* syscall */
-            FUT_VDIR_TYPE_SYMLINK   /* root */
+            FUT_VDIR_TYPE_SYMLINK,  /* root */
+            FUT_VDIR_TYPE_REG,      /* oom_adj */
+            FUT_VDIR_TYPE_REG,      /* cpuset */
+            FUT_VDIR_TYPE_REG       /* autogroup */
         };
         uint64_t pid = dn->pid;
-        if (idx < 40) {
+        if (idx < 43) {
             uint64_t ino;
             switch (idx) {
                 case 0:  ino = PROC_INO_PID_DIR(pid);        break;

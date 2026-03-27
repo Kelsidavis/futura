@@ -190,8 +190,10 @@ long sys_fchown(int fd, uint32_t uid, uint32_t gid) {
      * When only gid changes, S_ISGID is cleared if S_IXGRP is set.
      * This prevents privilege escalation via chowning setuid binaries. */
     if (vnode->type == VN_REG) {
-        int uid_changed = (local_uid != (uint32_t)-1 && host_uid != old_uid);
-        int gid_changed = (local_gid != (uint32_t)-1 && host_gid != old_gid);
+        uint32_t old_local_uid = userns_host_to_ns_uid(ns, old_uid);
+        uint32_t old_local_gid = userns_host_to_ns_gid(ns, old_gid);
+        int uid_changed = (local_uid != (uint32_t)-1 && local_uid != old_local_uid);
+        int gid_changed = (local_gid != (uint32_t)-1 && local_gid != old_local_gid);
         if (uid_changed || gid_changed) {
             if (uid_changed) {
                 vnode->mode &= ~(uint32_t)(04000 | 02000);

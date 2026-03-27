@@ -455,8 +455,10 @@ long sys_chown(const char *pathname, uint32_t uid, uint32_t gid) {
     /* POSIX/Linux: clear S_ISUID/S_ISGID on ownership change.
      * uid change clears both; gid-only change clears S_ISGID when S_IXGRP set. */
     if (vnode->type == VN_REG) {
-        int uid_changed = (local_uid != CHOWN_UNCHANGED && host_uid != old_uid);
-        int gid_changed = (local_gid != CHOWN_UNCHANGED && host_gid != old_gid);
+        uint32_t old_local_uid = userns_host_to_ns_uid(ns, old_uid);
+        uint32_t old_local_gid = userns_host_to_ns_gid(ns, old_gid);
+        int uid_changed = (local_uid != CHOWN_UNCHANGED && local_uid != old_local_uid);
+        int gid_changed = (local_gid != CHOWN_UNCHANGED && local_gid != old_local_gid);
         if (uid_changed || gid_changed) {
             if (uid_changed) {
                 vnode->mode &= ~(uint32_t)(04000 | 02000);

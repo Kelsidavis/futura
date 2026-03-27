@@ -245,8 +245,10 @@ long sys_fchownat(int dirfd, const char *pathname, uint32_t uid, uint32_t gid, i
 
         /* POSIX/Linux: clear S_ISUID/S_ISGID on ownership change */
         if (vnode->type == VN_REG) {
-            int ep_uid_changed = (uid != (uint32_t)-1 && ep_host_uid != ep_old_uid);
-            int ep_gid_changed = (gid != (uint32_t)-1 && ep_host_gid != ep_old_gid);
+            uint32_t ep_old_local_uid = userns_host_to_ns_uid(ns, ep_old_uid);
+            uint32_t ep_old_local_gid = userns_host_to_ns_gid(ns, ep_old_gid);
+            int ep_uid_changed = (uid != (uint32_t)-1 && uid != ep_old_local_uid);
+            int ep_gid_changed = (gid != (uint32_t)-1 && gid != ep_old_local_gid);
             if (ep_uid_changed || ep_gid_changed) {
                 if (ep_uid_changed) {
                     vnode->mode &= ~(uint32_t)(04000 | 02000);
@@ -450,8 +452,10 @@ long sys_fchownat(int dirfd, const char *pathname, uint32_t uid, uint32_t gid, i
 
     /* POSIX/Linux: clear S_ISUID/S_ISGID on ownership change */
     if (vnode->type == VN_REG) {
-        int uid_changed = (uid != (uint32_t)-1 && host_uid != old_uid);
-        int gid_changed = (gid != (uint32_t)-1 && host_gid != old_gid);
+        uint32_t old_local_uid = userns_host_to_ns_uid(ns, old_uid);
+        uint32_t old_local_gid = userns_host_to_ns_gid(ns, old_gid);
+        int uid_changed = (uid != (uint32_t)-1 && uid != old_local_uid);
+        int gid_changed = (gid != (uint32_t)-1 && gid != old_local_gid);
         if (uid_changed || gid_changed) {
             if (uid_changed) {
                 vnode->mode &= ~(uint32_t)(04000 | 02000);

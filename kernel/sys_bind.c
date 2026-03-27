@@ -564,44 +564,6 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
         }
     }
 
-    /* Check parent directory write permission for filesystem paths.
-     * Creating a socket file requires write access to the parent directory. */
-    if (sock_path[0] != '\0') {
-        /* Extract parent directory path */
-        char parent_path[256];
-        int last_slash = -1;
-        size_t sock_path_len = strnlen(sock_path, sizeof(sock_path) - 1);
-        for (size_t i = 0; i < sock_path_len; i++) {
-            if (sock_path[i] == '/') last_slash = (int)i;
-        }
-
-        if (last_slash >= 0) {
-            if (last_slash == 0) {
-                parent_path[0] = '/';
-                parent_path[1] = '\0';
-            } else {
-                size_t plen = (size_t)last_slash < sizeof(parent_path) - 1
-                              ? (size_t)last_slash : sizeof(parent_path) - 1;
-                memcpy(parent_path, sock_path, plen);
-                parent_path[plen] = '\0';
-            }
-
-            struct fut_vnode *parent_vnode = NULL;
-            int lookup_ret = fut_vfs_lookup(parent_path, &parent_vnode);
-            if (lookup_ret == 0 && parent_vnode) {
-                if (vfs_check_write_perm(parent_vnode) != 0) {
-                    bind_printf("[BIND] bind(sockfd=%d, path='%s') -> EACCES "
-                               "(no write permission on parent directory '%s')\n",
-                               local_sockfd, sock_path, parent_path);
-                    fut_vnode_unref(parent_vnode);
-                    return -EACCES;
-                }
-                fut_vnode_unref(parent_vnode);
-            }
-            /* If parent lookup fails, let fut_socket_bind handle the error */
-        }
-    }
-
     /* Get socket from file descriptor */
     fut_socket_t *socket = get_socket_from_fd(local_sockfd);
     if (!socket) {
@@ -663,6 +625,43 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
                 break;
         }
         return -EINVAL;
+    }
+
+    /* Check parent directory write permission for filesystem AF_UNIX paths.
+     * Keep this after fd->socket validation so non-socket fds return ENOTSOCK. */
+    if (sa_family == AF_UNIX && sock_path[0] != '\0') {
+        char parent_path[256];
+        int last_slash = -1;
+        size_t sock_path_len = strnlen(sock_path, sizeof(sock_path) - 1);
+        for (size_t i = 0; i < sock_path_len; i++) {
+            if (sock_path[i] == '/') last_slash = (int)i;
+        }
+
+        if (last_slash >= 0) {
+            if (last_slash == 0) {
+                parent_path[0] = '/';
+                parent_path[1] = '\0';
+            } else {
+                size_t plen = (size_t)last_slash < sizeof(parent_path) - 1
+                              ? (size_t)last_slash : sizeof(parent_path) - 1;
+                memcpy(parent_path, sock_path, plen);
+                parent_path[plen] = '\0';
+            }
+
+            struct fut_vnode *parent_vnode = NULL;
+            int lookup_ret = fut_vfs_lookup(parent_path, &parent_vnode);
+            if (lookup_ret == 0 && parent_vnode) {
+                if (vfs_check_write_perm(parent_vnode) != 0) {
+                    bind_printf("[BIND] bind(sockfd=%d, path='%s') -> EACCES "
+                               "(no write permission on parent directory '%s')\n",
+                               local_sockfd, sock_path, parent_path);
+                    fut_vnode_unref(parent_vnode);
+                    return -EACCES;
+                }
+                fut_vnode_unref(parent_vnode);
+            }
+            /* If parent lookup fails, let fut_socket_bind handle the error */
+        }
     }
 
     /* Bind socket to address */

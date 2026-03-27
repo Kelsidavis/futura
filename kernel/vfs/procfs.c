@@ -687,6 +687,13 @@ static struct fut_vnode *procfs_alloc_vnode(struct fut_mount *mount,
     v->mode     = mode;
     v->uid      = 0;
     v->gid      = 0;
+    if (pid != 0) {
+        fut_task_t *owner = fut_task_by_pid(pid);
+        if (owner) {
+            v->uid = userns_ns_to_host_uid(owner->user_ns, owner->uid);
+            v->gid = userns_ns_to_host_gid(owner->user_ns, owner->gid);
+        }
+    }
     v->size     = 0;
     v->nlinks   = (type == VN_DIR) ? 2 : 1;
     v->mount    = mount;

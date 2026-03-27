@@ -57960,6 +57960,93 @@ __attribute__((noinline)) static void test_net_procfs_devnodes(void) {
  * Tests 2092-2097: final coverage (scripts, devices, sysctls)
  * ============================================================ */
 /* ============================================================
+ * Tests 2103-2107: swap management and misc proc entries
+ * ============================================================ */
+__attribute__((noinline)) static void test_swap_and_proc(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_close(int);
+    extern long sys_swapon(const char *path, int swapflags);
+    extern long sys_swapoff(const char *path);
+
+    /* ── Test 2103: swapon succeeds for root ── */
+    fut_printf("[MISC-TEST] Test 2103: swapon succeeds\n");
+    {
+        long r = sys_swapon("/tmp/swapfile", 0);
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 2103: swapon ok\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2103: swapon=%ld\n", r);
+            fut_test_fail(2103);
+        }
+    }
+
+    /* ── Test 2104: /proc/swaps shows the swap area ── */
+    fut_printf("[MISC-TEST] Test 2104: /proc/swaps has entry\n");
+    {
+        long fd = sys_open("/proc/swaps", 0, 0);
+        if (fd >= 0) {
+            static char buf[512];
+            long n = sys_read((int)fd, buf, 511);
+            sys_close((int)fd);
+            if (n > 50) {
+                buf[n] = '\0';
+                bool found = false;
+                for (long i = 0; i < n - 4 && !found; i++)
+                    if (buf[i] == 's' && buf[i+1] == 'w' && buf[i+2] == 'a' && buf[i+3] == 'p')
+                        found = true;
+                if (found) {
+                    fut_printf("[MISC-TEST] ✓ Test 2104: swapfile in /proc/swaps\n");
+                    fut_test_pass();
+                } else { fut_test_fail(2104); }
+            } else { fut_test_fail(2104); }
+        } else { fut_test_fail(2104); }
+    }
+
+    /* ── Test 2105: swapoff removes the swap area ── */
+    fut_printf("[MISC-TEST] Test 2105: swapoff removes entry\n");
+    {
+        long r = sys_swapoff("/tmp/swapfile");
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 2105: swapoff ok\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2105: swapoff=%ld\n", r);
+            fut_test_fail(2105);
+        }
+    }
+
+    /* ── Test 2106: duplicate swapon returns EBUSY ── */
+    fut_printf("[MISC-TEST] Test 2106: swapon duplicate → EBUSY\n");
+    {
+        sys_swapon("/tmp/swap2", 0);
+        long r = sys_swapon("/tmp/swap2", 0);
+        if (r == -EBUSY) {
+            fut_printf("[MISC-TEST] ✓ Test 2106: duplicate → EBUSY\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2106: dup swapon=%ld\n", r);
+            fut_test_fail(2106);
+        }
+        sys_swapoff("/tmp/swap2");
+    }
+
+    /* ── Test 2107: swapon(NULL) returns EINVAL ── */
+    fut_printf("[MISC-TEST] Test 2107: swapon(NULL) → EINVAL\n");
+    {
+        long r = sys_swapon(NULL, 0);
+        if (r == -EINVAL) {
+            fut_printf("[MISC-TEST] ✓ Test 2107: NULL → EINVAL\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2107: swapon(NULL)=%ld\n", r);
+            fut_test_fail(2107);
+        }
+    }
+}
+
+/* ============================================================
  * Tests 2098-2102: /proc hardware/system entries
  * ============================================================ */
 __attribute__((noinline)) static void test_proc_hw_entries(void) {
@@ -64795,6 +64882,7 @@ void fut_misc_test_thread(void *arg) {
     test_loop_device(); /* Tests 1885-1887 */
     test_per_iface_conf(); /* Tests 1869-1871 */
 
+    test_swap_and_proc(); /* Tests 2103-2107 */
     test_proc_hw_entries(); /* Tests 2098-2102 */
     test_final_coverage(); /* Tests 2092-2097 */
     test_edge_cases(); /* Tests 2082-2091 */

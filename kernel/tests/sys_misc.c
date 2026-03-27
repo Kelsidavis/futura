@@ -62829,6 +62829,86 @@ __attribute__((noinline)) static void test_pty_and_cgroup(void) {
             fut_test_fail(2232);
         }
     }
+
+    /* ── Test 2233: /proc/net/tcp6 readable with header ── */
+    fut_printf("[MISC-TEST] Test 2233: /proc/net/tcp6\n");
+    {
+        extern long sys_open(const char *, int, int);
+        extern long sys_read(int, void *, size_t);
+        extern long sys_close(int);
+        long fd = sys_open("/proc/net/tcp6", 0, 0);
+        int pass = 0;
+        if (fd >= 0) {
+            static char buf[256];
+            long n = sys_read((int)fd, buf, 255);
+            sys_close((int)fd);
+            if (n > 10) {
+                /* Should contain "sl" header */
+                if (buf[2] == 's' && buf[3] == 'l') pass = 1;
+            }
+        }
+        if (pass) {
+            fut_printf("[MISC-TEST] ✓ Test 2233: tcp6 readable\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2233: tcp6 failed\n");
+            fut_test_fail(2233);
+        }
+    }
+
+    /* ── Test 2234: /proc/net/udp6 readable with header ── */
+    fut_printf("[MISC-TEST] Test 2234: /proc/net/udp6\n");
+    {
+        extern long sys_open(const char *, int, int);
+        extern long sys_read(int, void *, size_t);
+        extern long sys_close(int);
+        long fd = sys_open("/proc/net/udp6", 0, 0);
+        int pass = 0;
+        if (fd >= 0) {
+            static char buf[256];
+            long n = sys_read((int)fd, buf, 255);
+            sys_close((int)fd);
+            if (n > 10) {
+                if (buf[2] == 's' && buf[3] == 'l') pass = 1;
+            }
+        }
+        if (pass) {
+            fut_printf("[MISC-TEST] ✓ Test 2234: udp6 readable\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2234: udp6 failed\n");
+            fut_test_fail(2234);
+        }
+    }
+
+    /* ── Test 2235: /proc/net/if_inet6 has loopback ::1 ── */
+    fut_printf("[MISC-TEST] Test 2235: /proc/net/if_inet6 has ::1\n");
+    {
+        extern long sys_open(const char *, int, int);
+        extern long sys_read(int, void *, size_t);
+        extern long sys_close(int);
+        long fd = sys_open("/proc/net/if_inet6", 0, 0);
+        int pass = 0;
+        if (fd >= 0) {
+            static char buf[256];
+            long n = sys_read((int)fd, buf, 255);
+            sys_close((int)fd);
+            if (n > 0) {
+                buf[n < 255 ? n : 254] = '\0';
+                /* Should contain "lo" for loopback */
+                for (long i = 0; i < n - 1; i++) {
+                    if (buf[i] == 'l' && buf[i+1] == 'o') { pass = 1; break; }
+                }
+            }
+        }
+        if (pass) {
+            fut_printf("[MISC-TEST] ✓ Test 2235: if_inet6 has lo\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2235: no lo in if_inet6\n");
+            fut_test_fail(2235);
+        }
+    }
 }
 
 /* ============================================================

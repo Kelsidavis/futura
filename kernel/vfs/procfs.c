@@ -2613,11 +2613,90 @@ static size_t gen_net_if_inet6(char *buf, size_t cap) {
     return b.pos;
 }
 
+/* Emit an IPv6 address as 32 uppercase hex chars (Linux /proc/net/tcp6 format) */
+static void pb_ipv6_hex(struct pbuf *b, const uint8_t addr[16]) {
+    /* Linux /proc/net/tcp6 shows each 32-bit word in host byte order (LE on x86),
+     * so bytes within each 4-byte group appear reversed on little-endian. */
+    for (int w = 0; w < 4; w++) {
+        for (int i = 3; i >= 0; i--)
+            pb_hex2U(b, addr[w * 4 + i]);
+    }
+}
+
+static void net_tcp6_emit_one(const fut_socket_t *s, void *arg) {
+    struct net_tcp_ctx *ctx = (struct net_tcp_ctx *)arg;
+    if (s->address_family != AF_INET6 || s->socket_type != SOCK_STREAM) return;
+    struct net_namespace *sock_ns = (s && s->net_ns) ? s->net_ns : netns_get_init();
+    if (sock_ns != ctx->ns) return;
+    struct pbuf *b = ctx->b;
+    int sl = ctx->slot++;
+
+    uint8_t tcp_state;
+    switch (s->state) {
+    case FUT_SOCK_CONNECTED:  tcp_state = 0x01; break;
+    case FUT_SOCK_LISTENING:  tcp_state = 0x0A; break;
+    case FUT_SOCK_CONNECTING: tcp_state = 0x02; break;
+    default:                  tcp_state = 0x07; break;
+    }
+
+    uint16_t lport = (uint16_t)((s->inet_port >> 8) | ((s->inet_port & 0xFF) << 8));
+
+    pb_d_padded(b, (uint64_t)sl, 4);
+    pb_str(b, ": ");
+    pb_ipv6_hex(b, s->inet6_addr);
+    pb_char(b, ':');
+    pb_hex4U(b, lport);
+    pb_char(b, ' ');
+    /* Remote address — zero for now (peer tracking not per-socket for IPv6 yet) */
+    uint8_t zeros[16] = {0};
+    pb_ipv6_hex(b, zeros);
+    pb_str(b, ":0000 ");
+    pb_hex2U(b, tcp_state);
+    pb_str(b, " 00000000:00000000 00:00000000 00000000     0        0 0 1 0000000000000000\n");
+}
+
 static size_t gen_net_tcp6(char *buf, size_t cap) {
     struct pbuf b = { buf, 0, cap };
+    fut_task_t *task = fut_task_current();
+    struct net_namespace *ns = (task && task->net_ns) ? task->net_ns : netns_get_init();
     pb_str(&b, "  sl  local_address                         remote_address"
                "                        st tx_queue rx_queue tr tm->when retrnsmt"
                "   uid  timeout inode\n");
+    struct net_tcp_ctx ctx = { .b = &b, .slot = 0, .ns = ns };
+    fut_socket_foreach(net_tcp6_emit_one, &ctx);
+    return b.pos;
+}
+
+static void net_udp6_emit_one(const fut_socket_t *s, void *arg) {
+    struct net_udp_ctx *ctx = (struct net_udp_ctx *)arg;
+    if (s->address_family != AF_INET6 || s->socket_type != SOCK_DGRAM) return;
+    struct net_namespace *sock_ns = (s && s->net_ns) ? s->net_ns : netns_get_init();
+    if (sock_ns != ctx->ns) return;
+    struct pbuf *b = ctx->b;
+    int sl = ctx->slot++;
+
+    uint16_t lport = (uint16_t)((s->inet_port >> 8) | ((s->inet_port & 0xFF) << 8));
+
+    pb_d_padded(b, (uint64_t)sl, 4);
+    pb_str(b, ": ");
+    pb_ipv6_hex(b, s->inet6_addr);
+    pb_char(b, ':');
+    pb_hex4U(b, lport);
+    pb_char(b, ' ');
+    uint8_t zeros[16] = {0};
+    pb_ipv6_hex(b, zeros);
+    pb_str(b, ":0000 07 00000000:00000000 00:00000000 00000000     0        0 0 1 0000000000000000\n");
+}
+
+static size_t gen_net_udp6(char *buf, size_t cap) {
+    struct pbuf b = { buf, 0, cap };
+    fut_task_t *task = fut_task_current();
+    struct net_namespace *ns = (task && task->net_ns) ? task->net_ns : netns_get_init();
+    pb_str(&b, "  sl  local_address                         remote_address"
+               "                        st tx_queue rx_queue tr tm->when retrnsmt"
+               "   uid  timeout inode ref pointer drops\n");
+    struct net_udp_ctx ctx = { .b = &b, .slot = 0, .ns = ns };
+    fut_socket_foreach(net_udp6_emit_one, &ctx);
     return b.pos;
 }
 
@@ -3430,8 +3509,10 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             total = gen_net_udp(tmp, GEN_BUF);
             break;
         case PROC_NET_TCP6:
-        case PROC_NET_UDP6:
             total = gen_net_tcp6(tmp, GEN_BUF);
+            break;
+        case PROC_NET_UDP6:
+            total = gen_net_udp6(tmp, GEN_BUF);
             break;
         case PROC_NET_RAW:
             total = gen_net_raw(tmp, GEN_BUF);

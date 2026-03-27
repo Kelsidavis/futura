@@ -1994,6 +1994,145 @@ static void cmd_nc(int argc, char *argv[]) {
     sys_close(fd);
 }
 
+/* Built-in: curl - HTTP client with method/header/data support */
+static void cmd_curl(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "usage: curl [-s] [-o file] [-X METHOD] [-H header] [-d data] <url>\n");
+        return;
+    }
+
+    int silent = 0;
+    const char *output_file = NULL;
+    const char *method = "GET";
+    const char *post_data = NULL;
+    static char extra_headers[512];
+    int ehdr_len = 0;
+    extra_headers[0] = '\0';
+    int url_arg = 0;
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-s") == 0) { silent = 1; }
+        else if (strcmp_simple(argv[i], "-o") == 0 && i + 1 < argc) { output_file = argv[++i]; }
+        else if (strcmp_simple(argv[i], "-X") == 0 && i + 1 < argc) { method = argv[++i]; }
+        else if (strcmp_simple(argv[i], "-d") == 0 && i + 1 < argc) {
+            post_data = argv[++i];
+            if (strcmp_simple(method, "GET") == 0) method = "POST";
+        }
+        else if (strcmp_simple(argv[i], "-H") == 0 && i + 1 < argc) {
+            i++;
+            const char *h = argv[i];
+            while (*h && ehdr_len < 508) extra_headers[ehdr_len++] = *h++;
+            extra_headers[ehdr_len++] = '\r';
+            extra_headers[ehdr_len++] = '\n';
+            extra_headers[ehdr_len] = '\0';
+        }
+        else if (argv[i][0] != '-') { url_arg = i; }
+    }
+
+    if (!url_arg) { write_str(2, "curl: no URL specified\n"); return; }
+
+    /* Parse URL */
+    const char *url = argv[url_arg];
+    char host[64] = ""; char path[256] = "/"; int port = 80;
+    if (url[0]=='h' && url[1]=='t' && url[2]=='t' && url[3]=='p' &&
+        url[4]==':' && url[5]=='/' && url[6]=='/') url += 7;
+    int hi = 0;
+    while (*url && *url != '/' && *url != ':' && hi < 63) host[hi++] = *url++;
+    host[hi] = '\0';
+    if (*url == ':') { url++; port = 0; while (*url >= '0' && *url <= '9') port = port * 10 + (*url++ - '0'); }
+    if (*url == '/') { int pi = 0; while (*url && pi < 255) path[pi++] = *url++; path[pi] = '\0'; }
+
+    uint32_t ip = resolve_host(host);
+    if (ip == 0) { write_str(2, "curl: cannot resolve "); write_str(2, host); write_str(2, "\n"); return; }
+    uint32_t ip_be = ((ip >> 24) & 0xFF) | ((ip >> 8) & 0xFF00) |
+                     ((ip << 8) & 0xFF0000) | ((ip << 24) & 0xFF000000);
+
+    long fd = sys_call3(41, 2, 1, 0);
+    if (fd < 0) { write_str(2, "curl: socket failed\n"); return; }
+
+    struct { uint16_t family; uint16_t port; uint32_t addr; uint8_t pad[8]; } sa;
+    sa.family = 2;
+    sa.port = (uint16_t)(((port >> 8) & 0xFF) | ((port & 0xFF) << 8));
+    sa.addr = ip_be;
+    for (int i = 0; i < 8; i++) sa.pad[i] = 0;
+
+    if (sys_call3(42, fd, (long)&sa, 16) < 0) {
+        write_str(2, "curl: connect failed\n"); sys_close(fd); return;
+    }
+
+    /* Build HTTP request */
+    static char req[1024];
+    int rp = 0;
+    const char *m = method; while (*m && rp < 1000) req[rp++] = *m++;
+    req[rp++] = ' ';
+    const char *pp = path; while (*pp && rp < 1000) req[rp++] = *pp++;
+    const char *ver = " HTTP/1.0\r\nHost: ";
+    while (*ver && rp < 1000) req[rp++] = *ver++;
+    const char *h = host; while (*h && rp < 1000) req[rp++] = *h++;
+    req[rp++] = '\r'; req[rp++] = '\n';
+    /* Extra headers */
+    for (int i = 0; i < ehdr_len && rp < 1000; i++) req[rp++] = extra_headers[i];
+    /* Content-Length for POST */
+    if (post_data) {
+        const char *cl = "Content-Length: ";
+        while (*cl && rp < 1000) req[rp++] = *cl++;
+        int dlen = 0; const char *d = post_data; while (*d++) dlen++;
+        char num[12]; int ni = 0;
+        if (dlen == 0) num[ni++] = '0';
+        else { char rev[12]; int ri = 0; int v = dlen;
+            while (v > 0) { rev[ri++] = '0' + (v % 10); v /= 10; }
+            while (ri > 0) num[ni++] = rev[--ri]; }
+        for (int i = 0; i < ni && rp < 1000; i++) req[rp++] = num[i];
+        req[rp++] = '\r'; req[rp++] = '\n';
+        const char *ct = "Content-Type: application/x-www-form-urlencoded\r\n";
+        while (*ct && rp < 1000) req[rp++] = *ct++;
+    }
+    req[rp++] = '\r'; req[rp++] = '\n';
+    /* Append body */
+    if (post_data) { const char *d = post_data; while (*d && rp < 1020) req[rp++] = *d++; }
+
+    sys_write(fd, req, rp);
+
+    /* Read response */
+    int out_fd = 1;
+    if (output_file) {
+        out_fd = sys_open(output_file, 0x41 | 0x200 /* O_WRONLY|O_CREAT|O_TRUNC */, 0644);
+        if (out_fd < 0) { write_str(2, "curl: cannot create "); write_str(2, output_file); write_str(2, "\n"); sys_close(fd); return; }
+    }
+
+    static char buf[4096];
+    long total = 0;
+    int headers_done = 0;
+    while (1) {
+        long n = sys_read(fd, buf, sizeof(buf));
+        if (n <= 0) break;
+        if (!headers_done) {
+            /* Find \r\n\r\n end of headers */
+            for (long i = 0; i < n - 3; i++) {
+                if (buf[i]=='\r' && buf[i+1]=='\n' && buf[i+2]=='\r' && buf[i+3]=='\n') {
+                    headers_done = 1;
+                    long body_start = i + 4;
+                    long body_len = n - body_start;
+                    if (body_len > 0) {
+                        sys_write(out_fd, buf + body_start, body_len);
+                        total += body_len;
+                    }
+                    break;
+                }
+            }
+        } else {
+            sys_write(out_fd, buf, n);
+            total += n;
+        }
+    }
+    sys_close(fd);
+    if (output_file && out_fd > 0) sys_close(out_fd);
+    if (!silent && output_file) {
+        write_str(2, "curl: saved "); char num[12]; int_to_str(total, num, 12);
+        write_str(2, num); write_str(2, " bytes to "); write_str(2, output_file); write_str(2, "\n");
+    }
+}
+
 /* Built-in: wget - Fetch HTTP content */
 static void cmd_wget(int argc, char *argv[]) {
     if (argc < 2) {
@@ -7991,6 +8130,9 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "nc") == 0) {
         cmd_nc(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "curl") == 0) {
+        cmd_curl(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "wget") == 0) {
         cmd_wget(argc, argv);
         return 0;
@@ -10937,6 +11079,7 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "sleep") == 0 ||
             strcmp_simple(cmd, "hexdump") == 0 ||
             strcmp_simple(cmd, "seq") == 0 ||
+            strcmp_simple(cmd, "curl") == 0 ||
             strcmp_simple(cmd, "wget") == 0 ||
             strcmp_simple(cmd, "df") == 0 ||
             strcmp_simple(cmd, "dmesg") == 0 ||

@@ -5996,32 +5996,108 @@ static void cp_build_dest_path(char *dest_buf, size_t dest_size, const char *des
 }
 
 /* Built-in: cp */
+/* Recursive directory copy helper for cp -r */
+static void cp_recursive(const char *src, const char *dst) {
+    /* Create destination directory */
+    extern long sys_mkdir_call(const char *, long);
+    sys_mkdir_call(dst, 0755);
+
+    /* Read source directory entries */
+    int dfd = sys_open(src, O_RDONLY, 0);
+    if (dfd < 0) { write_str(2, "cp: cannot open "); write_str(2, src); write_str(2, "\n"); return; }
+
+    static char dirbuf[2048];
+    ssize_t dn;
+    while ((dn = sys_getdents64((unsigned int)dfd, dirbuf, (unsigned int)sizeof(dirbuf))) > 0) {
+        ssize_t pos = 0;
+        while (pos < dn) {
+            uint16_t reclen = *(uint16_t *)(dirbuf + pos + 16);
+            uint8_t dtype = *(uint8_t *)(dirbuf + pos + 18);
+            char *name = dirbuf + pos + 19;
+            pos += reclen;
+
+            if (name[0] == '.' && (name[1] == '\0' || (name[1] == '.' && name[2] == '\0')))
+                continue;
+
+            /* Build source and dest paths */
+            static char sp[512], dp[512];
+            int spi = 0, dpi = 0;
+            for (int i = 0; src[i] && spi < 500; i++) sp[spi++] = src[i];
+            if (spi > 0 && sp[spi-1] != '/') sp[spi++] = '/';
+            for (int i = 0; name[i] && spi < 510; i++) sp[spi++] = name[i];
+            sp[spi] = '\0';
+            for (int i = 0; dst[i] && dpi < 500; i++) dp[dpi++] = dst[i];
+            if (dpi > 0 && dp[dpi-1] != '/') dp[dpi++] = '/';
+            for (int i = 0; name[i] && dpi < 510; i++) dp[dpi++] = name[i];
+            dp[dpi] = '\0';
+
+            if (dtype == 4 /* DT_DIR */) {
+                cp_recursive(sp, dp);
+            } else {
+                cp_copy_file(sp, dp);
+            }
+        }
+    }
+    sys_close(dfd);
+}
+
 static void cmd_cp(int argc, char *argv[]) {
-    if (argc < 3) {
+    int recursive = 0;
+    int arg_start = 1;
+
+    /* Parse -r/-R flag */
+    while (arg_start < argc && argv[arg_start][0] == '-') {
+        for (int j = 1; argv[arg_start][j]; j++) {
+            if (argv[arg_start][j] == 'r' || argv[arg_start][j] == 'R')
+                recursive = 1;
+        }
+        arg_start++;
+    }
+
+    if (argc - arg_start < 2) {
         write_str(2, "cp: missing operand\n");
-        write_str(2, "Usage: cp <source>... <dest>\n");
+        write_str(2, "Usage: cp [-r] <source>... <dest>\n");
         return;
     }
 
-    /* Multiple source files: cp file1 file2 file3 destdir/ */
-    if (argc > 3) {
-        const char *dest_dir = argv[argc - 1];
+    const char *dest = argv[argc - 1];
+    int num_sources = argc - arg_start - 1;
 
-        /* Copy each source file to destination directory */
-        for (int i = 1; i < argc - 1; i++) {
-            const char *src_path = argv[i];
-            const char *basename = cp_get_basename(src_path);
+    for (int i = 0; i < num_sources; i++) {
+        const char *src = argv[arg_start + i];
 
-            static char dest_path[512];
-            cp_build_dest_path(dest_path, sizeof(dest_path), dest_dir, basename);
-
-            cp_copy_file(src_path, dest_path);
+        if (recursive) {
+            /* Check if source is a directory by trying to open it */
+            int tfd = sys_open(src, O_RDONLY, 0);
+            if (tfd >= 0) {
+                /* Try getdents to detect directory */
+                static char tbuf[32];
+                long dn = sys_getdents64((unsigned int)tfd, tbuf, (unsigned int)sizeof(tbuf));
+                sys_close(tfd);
+                if (dn > 0) {
+                    /* It's a directory — copy recursively */
+                    if (num_sources == 1) {
+                        cp_recursive(src, dest);
+                    } else {
+                        const char *bn = cp_get_basename(src);
+                        static char dp[512];
+                        cp_build_dest_path(dp, sizeof(dp), dest, bn);
+                        cp_recursive(src, dp);
+                    }
+                    continue;
+                }
+            }
         }
-    } else {
-        /* Single source file: cp source dest */
-        const char *src_path = argv[1];
-        const char *dst_path = argv[2];
-        cp_copy_file(src_path, dst_path);
+
+        /* Regular file copy */
+        if (num_sources > 1) {
+            const char *bn = cp_get_basename(src);
+            static char dp[512];
+            cp_build_dest_path(dp, sizeof(dp), dest, bn);
+            cp_copy_file(src, dp);
+        } else {
+            cp_copy_file(src, dest);
+        }
     }
 }
 

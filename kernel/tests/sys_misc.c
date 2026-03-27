@@ -57962,6 +57962,110 @@ __attribute__((noinline)) static void test_net_procfs_devnodes(void) {
 /* ============================================================
  * Tests 2108-2110: per-pid extra entries
  * ============================================================ */
+/* ============================================================
+ * Tests 2111-2115: edge cases round 2
+ * ============================================================ */
+__attribute__((noinline)) static void test_edge_cases_2(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_write(int, const void *, size_t);
+    extern long sys_close(int);
+    extern long sys_mkdir(const char *, unsigned int);
+
+    /* ── Test 2111: nested cgroup mkdir ── */
+    fut_printf("[MISC-TEST] Test 2111: nested cgroup mkdir\n");
+    {
+        long r1 = sys_mkdir("/cgroup/test_nested", 0755);
+        if (r1 == 0) {
+            long r2 = sys_mkdir("/cgroup/test_nested/child", 0755);
+            if (r2 == 0) {
+                /* Verify child has controllers file */
+                long fd = sys_open("/cgroup/test_nested/child/cgroup.controllers", 0, 0);
+                if (fd >= 0) {
+                    static char buf[64];
+                    long n = sys_read((int)fd, buf, 63);
+                    sys_close((int)fd);
+                    if (n > 0) {
+                        fut_printf("[MISC-TEST] ✓ Test 2111: nested cgroup ok\n");
+                        fut_test_pass();
+                    } else { fut_test_fail(2111); }
+                } else { fut_test_fail(2111); }
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2111: child mkdir=%ld\n", r2);
+                fut_test_fail(2111);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2111: parent mkdir=%ld\n", r1);
+            fut_test_fail(2111);
+        }
+    }
+
+    /* ── Test 2112: /proc/swaps header always present ── */
+    fut_printf("[MISC-TEST] Test 2112: /proc/swaps header\n");
+    {
+        long fd = sys_open("/proc/swaps", 0, 0);
+        if (fd >= 0) {
+            static char buf[128];
+            long n = sys_read((int)fd, buf, 127);
+            sys_close((int)fd);
+            if (n > 10 && buf[0] == 'F') { /* "Filename..." */
+                fut_printf("[MISC-TEST] ✓ Test 2112: swaps header ok\n");
+                fut_test_pass();
+            } else { fut_test_fail(2112); }
+        } else { fut_test_fail(2112); }
+    }
+
+    /* ── Test 2113: /proc/sysrq-trigger write accepted ── */
+    fut_printf("[MISC-TEST] Test 2113: sysrq-trigger write\n");
+    {
+        long fd = sys_open("/proc/sysrq-trigger", 02 /*O_RDWR*/, 0);
+        if (fd >= 0) {
+            long n = sys_write((int)fd, "h", 1);
+            sys_close((int)fd);
+            if (n == 1) {
+                fut_printf("[MISC-TEST] ✓ Test 2113: sysrq write ok\n");
+                fut_test_pass();
+            } else { fut_test_fail(2113); }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2113: open=%ld\n", fd);
+            fut_test_fail(2113);
+        }
+    }
+
+    /* ── Test 2114: /proc/sys/kernel/sysrq readable as "1" ── */
+    fut_printf("[MISC-TEST] Test 2114: sysrq enabled\n");
+    {
+        long fd = sys_open("/proc/sys/kernel/sysrq", 0, 0);
+        if (fd >= 0) {
+            static char buf[8];
+            long n = sys_read((int)fd, buf, 7);
+            sys_close((int)fd);
+            if (n > 0 && buf[0] == '1') {
+                fut_printf("[MISC-TEST] ✓ Test 2114: sysrq=1\n");
+                fut_test_pass();
+            } else { fut_test_fail(2114); }
+        } else { fut_test_fail(2114); }
+    }
+
+    /* ── Test 2115: /proc/sys/net/bridge has 3 entries ── */
+    fut_printf("[MISC-TEST] Test 2115: bridge has ip6tables entry\n");
+    {
+        long fd = sys_open("/proc/sys/net/bridge/bridge-nf-call-ip6tables", 0, 0);
+        if (fd >= 0) {
+            static char buf[8];
+            long n = sys_read((int)fd, buf, 7);
+            sys_close((int)fd);
+            if (n > 0 && (buf[0] == '0' || buf[0] == '1')) {
+                fut_printf("[MISC-TEST] ✓ Test 2115: ip6tables ok\n");
+                fut_test_pass();
+            } else { fut_test_fail(2115); }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2115: open=%ld\n", fd);
+            fut_test_fail(2115);
+        }
+    }
+}
+
 __attribute__((noinline)) static void test_pid_extra_entries(void) {
     extern long sys_open(const char *, int, int);
     extern long sys_read(int, void *, size_t);
@@ -64945,6 +65049,7 @@ void fut_misc_test_thread(void *arg) {
     test_loop_device(); /* Tests 1885-1887 */
     test_per_iface_conf(); /* Tests 1869-1871 */
 
+    test_edge_cases_2(); /* Tests 2111-2115 */
     test_pid_extra_entries(); /* Tests 2108-2110 */
     test_swap_and_proc(); /* Tests 2103-2107 */
     test_proc_hw_entries(); /* Tests 2098-2102 */

@@ -373,12 +373,14 @@ void comp_surface_update_decorations(struct comp_surface *surface) {
     surface->min_btn_h = WINDOW_BTN_HEIGHT;
     surface->btn_w = WINDOW_BTN_WIDTH;
     surface->btn_h = WINDOW_BTN_HEIGHT;
-    /* Close button: right side */
-    surface->btn_x = surface->x + surface->width - (WINDOW_BTN_WIDTH + WINDOW_BTN_PADDING);
-    surface->btn_y = surface->y + (surface->bar_height - WINDOW_BTN_HEIGHT) / 2;
-    /* Minimize button: to the left of close button */
-    surface->min_btn_x = surface->btn_x - (WINDOW_BTN_WIDTH + WINDOW_BTN_PADDING);
-    surface->min_btn_y = surface->y + (surface->bar_height - WINDOW_BTN_HEIGHT) / 2;
+    /* Traffic-light buttons: left side — close (red), minimize (yellow), maximize (green) */
+    int btn_y_center = surface->y + (surface->bar_height - WINDOW_BTN_HEIGHT) / 2;
+    /* Close button: leftmost */
+    surface->btn_x = surface->x + WINDOW_BTN_PADDING;
+    surface->btn_y = btn_y_center;
+    /* Minimize button: middle */
+    surface->min_btn_x = surface->btn_x + WINDOW_BTN_WIDTH + WINDOW_BTN_PADDING;
+    surface->min_btn_y = btn_y_center;
 
     if (surface->btn_x < surface->x + WINDOW_BTN_PADDING) {
         surface->btn_x = surface->x + WINDOW_BTN_PADDING;
@@ -644,7 +646,8 @@ static void draw_title_text(struct backbuffer *dst,
         return;
     }
 
-    int text_x = surface->x + 8;
+    /* Title text starts after the 3 traffic-light buttons */
+    int text_x = surface->x + 3 * (WINDOW_BTN_WIDTH + WINDOW_BTN_PADDING) + 8;
     int text_y = surface->y + (surface->bar_height - UI_FONT_HEIGHT) / 2;
     if (text_y < surface->y) {
         text_y = surface->y;

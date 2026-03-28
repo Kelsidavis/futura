@@ -256,11 +256,17 @@ static int ext2_vnode_readdir(struct fut_vnode *dir, uint64_t *cookie,
         dirent->d_ino = de->inode;
         dirent->d_off = pos;
         dirent->d_reclen = sizeof(*dirent);
-        /* Map file_type */
-        if (de->file_type == EXT2_FT_DIR) dirent->d_type = 4; /* DT_DIR */
-        else if (de->file_type == EXT2_FT_REG_FILE) dirent->d_type = 8; /* DT_REG */
-        else if (de->file_type == EXT2_FT_SYMLINK) dirent->d_type = 10; /* DT_LNK */
-        else dirent->d_type = 0;
+        /* Map ext2 file_type to DT_* constants */
+        switch (de->file_type) {
+        case EXT2_FT_REG_FILE: dirent->d_type = 8;  break; /* DT_REG  */
+        case EXT2_FT_DIR:      dirent->d_type = 4;  break; /* DT_DIR  */
+        case EXT2_FT_CHRDEV:   dirent->d_type = 2;  break; /* DT_CHR  */
+        case EXT2_FT_BLKDEV:   dirent->d_type = 6;  break; /* DT_BLK  */
+        case EXT2_FT_FIFO:     dirent->d_type = 1;  break; /* DT_FIFO */
+        case EXT2_FT_SOCK:     dirent->d_type = 12; break; /* DT_SOCK */
+        case EXT2_FT_SYMLINK:  dirent->d_type = 10; break; /* DT_LNK  */
+        default:               dirent->d_type = 0;  break; /* DT_UNKNOWN */
+        }
 
         size_t nlen = de->name_len;
         if (nlen > FUT_VFS_NAME_MAX) nlen = FUT_VFS_NAME_MAX;
@@ -291,6 +297,24 @@ static ssize_t ext2_vnode_readlink(struct fut_vnode *vnode, char *buf, size_t bu
     /* Long symlinks are in data blocks */
     ssize_t n = ext2_vnode_read(vnode, buf, link_size, 0);
     return n < 0 ? (int)n : (int)n;
+}
+
+static int ext2_vnode_getattr(struct fut_vnode *vnode, struct fut_stat *stat) {
+    struct ext2_vnode_info *vi = (struct ext2_vnode_info *)vnode->fs_data;
+    if (!vi || !stat) return -EINVAL;
+    memset(stat, 0, sizeof(*stat));
+    stat->st_ino = vi->ino;
+    stat->st_mode = vi->inode.i_mode;
+    stat->st_nlink = vi->inode.i_links_count;
+    stat->st_uid = vi->inode.i_uid;
+    stat->st_gid = vi->inode.i_gid;
+    stat->st_size = vi->inode.i_size;
+    stat->st_blocks = vi->inode.i_blocks;
+    stat->st_blksize = vi->mi->block_size;
+    stat->st_atime = vi->inode.i_atime;
+    stat->st_mtime = vi->inode.i_mtime;
+    stat->st_ctime = vi->inode.i_ctime;
+    return 0;
 }
 
 /* Read-only: reject all write operations */
@@ -361,7 +385,35 @@ static int ext2_mount_impl(const char *device, int flags, void *data,
         return -EINVAL;
     }
 
+    /* Validate block size (log must be 0-6, i.e. 1KB-64KB) */
+    if (sb.s_log_block_size > EXT2_MAX_LOG_BLOCK_SIZE) {
+        fut_printf("[EXT2] Invalid log_block_size: %u (max %u)\n",
+                   sb.s_log_block_size, EXT2_MAX_LOG_BLOCK_SIZE);
+        return -EINVAL;
+    }
+
     uint32_t block_size = 1024u << sb.s_log_block_size;
+
+    /* Reject zero blocks_per_group (would cause division by zero) */
+    if (sb.s_blocks_per_group == 0 || sb.s_inodes_per_group == 0) {
+        fut_printf("[EXT2] Invalid: blocks_per_group=%u inodes_per_group=%u\n",
+                   sb.s_blocks_per_group, sb.s_inodes_per_group);
+        return -EINVAL;
+    }
+
+    /* Reject incompat features we cannot handle (extents, 64-bit) */
+    uint32_t unsupported = sb.s_feature_incompat & EXT2_INCOMPAT_UNSUPPORTED;
+    if (unsupported) {
+        fut_printf("[EXT2] Unsupported incompat features: 0x%x (need ext4 driver)\n",
+                   unsupported);
+        return -EINVAL;
+    }
+
+    /* ext3 with has_journal is fine for read-only (we just ignore the journal) */
+    if (sb.s_feature_compat & EXT3_FEATURE_COMPAT_HAS_JOURNAL) {
+        fut_printf("[EXT2] ext3 journal detected (ignored for read-only mount)\n");
+    }
+
     uint32_t group_count = (sb.s_blocks_count + sb.s_blocks_per_group - 1) /
                            sb.s_blocks_per_group;
 
@@ -381,7 +433,9 @@ static int ext2_mount_impl(const char *device, int flags, void *data,
     mi->free_blocks = sb.s_free_blocks_count;
     mi->free_inodes = sb.s_free_inodes_count;
     mi->first_data_block = sb.s_first_data_block;
+    mi->feature_compat = sb.s_feature_compat;
     mi->feature_incompat = sb.s_feature_incompat;
+    mi->feature_ro_compat = sb.s_feature_ro_compat;
 
     /* Read block group descriptor table */
     uint32_t bgd_block = (block_size == 1024) ? 2 : 1;
@@ -407,8 +461,11 @@ static int ext2_mount_impl(const char *device, int flags, void *data,
 
     *mount_out = mnt;
 
-    fut_printf("[EXT2] Mounted: %u blocks, %u inodes, bs=%u, %u groups\n",
-               mi->blocks_count, mi->inodes_count, mi->block_size, mi->group_count);
+    const char *fstype = (mi->feature_compat & EXT3_FEATURE_COMPAT_HAS_JOURNAL)
+                         ? "ext3" : "ext2";
+    fut_printf("[EXT2] Mounted %s: %u blocks, %u inodes, bs=%u, %u groups\n",
+               fstype, mi->blocks_count, mi->inodes_count, mi->block_size,
+               mi->group_count);
     return 0;
 }
 
@@ -438,6 +495,7 @@ static int ext2_statfs_impl(struct fut_mount *mount, struct fut_statfs *out) {
  * ============================================================ */
 
 static struct fut_fs_type ext2_fs_type;
+static struct fut_fs_type ext3_fs_type;
 
 void ext2_init(void) {
     /* Initialize vnode ops at runtime (ARM64 relocation safety) */
@@ -450,14 +508,22 @@ void ext2_init(void) {
     ext2_vnode_ops.unlink = ext2_vnode_unlink;
     ext2_vnode_ops.mkdir = ext2_vnode_mkdir;
     ext2_vnode_ops.rename = ext2_vnode_rename;
+    ext2_vnode_ops.getattr = ext2_vnode_getattr;
 
     ext2_fs_type.name = "ext2";
     ext2_fs_type.mount = ext2_mount_impl;
     ext2_fs_type.unmount = ext2_unmount_impl;
     ext2_fs_type.statfs = ext2_statfs_impl;
 
+    /* Register ext3 as alias (same driver, journal is ignored for read-only) */
+    ext3_fs_type.name = "ext3";
+    ext3_fs_type.mount = ext2_mount_impl;
+    ext3_fs_type.unmount = ext2_unmount_impl;
+    ext3_fs_type.statfs = ext2_statfs_impl;
+
     extern int fut_vfs_register_fs(const struct fut_fs_type *);
     fut_vfs_register_fs(&ext2_fs_type);
+    fut_vfs_register_fs(&ext3_fs_type);
 
-    fut_printf("[EXT2] ext2 filesystem driver registered\n");
+    fut_printf("[EXT2] ext2/ext3 filesystem driver registered\n");
 }

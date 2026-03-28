@@ -28,8 +28,29 @@
 #define EXT2_FT_SOCK     6
 #define EXT2_FT_SYMLINK  7
 
-/* Feature flags */
-#define EXT2_FEATURE_INCOMPAT_FILETYPE  0x0002
+/* Feature compat flags */
+#define EXT3_FEATURE_COMPAT_HAS_JOURNAL  0x0004
+
+/* Feature incompat flags */
+#define EXT2_FEATURE_INCOMPAT_FILETYPE   0x0002
+#define EXT4_FEATURE_INCOMPAT_EXTENTS    0x0040
+#define EXT4_FEATURE_INCOMPAT_64BIT      0x0080
+#define EXT4_FEATURE_INCOMPAT_FLEX_BG    0x0200
+
+/* Feature ro_compat flags */
+#define EXT2_FEATURE_RO_COMPAT_SPARSE_SUPER  0x0001
+#define EXT2_FEATURE_RO_COMPAT_LARGE_FILE    0x0002
+#define EXT4_FEATURE_RO_COMPAT_HUGE_FILE     0x0008
+#define EXT4_FEATURE_RO_COMPAT_DIR_NLINK     0x0020
+#define EXT4_FEATURE_RO_COMPAT_EXTRA_ISIZE   0x0040
+
+/* Incompat features we cannot handle (require write support or extent trees) */
+#define EXT2_INCOMPAT_UNSUPPORTED ( \
+    EXT4_FEATURE_INCOMPAT_EXTENTS | \
+    EXT4_FEATURE_INCOMPAT_64BIT   )
+
+/* Maximum log_block_size: 6 means 64KB blocks (1024 << 6) */
+#define EXT2_MAX_LOG_BLOCK_SIZE  6
 
 /* On-disk superblock (at byte offset 1024) */
 struct ext2_super_block {
@@ -69,8 +90,8 @@ struct ext2_super_block {
     char     s_volume_name[16];
     char     s_last_mounted[64];
     uint32_t s_algo_bitmap;
-    /* Padding to 1024 bytes */
-    uint8_t  _pad[820 - 64];
+    /* Padding to 1024 bytes total (200 bytes of fields above) */
+    uint8_t  _pad[1024 - 200];
 };
 
 /* Block group descriptor (32 bytes) */
@@ -129,7 +150,9 @@ struct ext2_mount_info {
     uint32_t free_blocks;
     uint32_t free_inodes;
     uint32_t first_data_block;
+    uint32_t feature_compat;
     uint32_t feature_incompat;
+    uint32_t feature_ro_compat;
     struct ext2_group_desc *group_descs;
 };
 

@@ -147,6 +147,8 @@ struct compositor_state {
     bool timer_source_registered;  /* Track if timer_source is registered with event loop */
     uint64_t next_tick_ms;
     struct comp_surface *resize_surface;
+    int dock_hover_index;          /* -1 = none, -2 = desktop button */
+    bool dock_all_minimized;       /* true after "show desktop" click */
 };
 
 struct comp_surface {

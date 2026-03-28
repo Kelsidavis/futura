@@ -1424,14 +1424,18 @@ void comp_render_frame(struct compositor_state *comp) {
 
     /* ── Bottom dock panel ── */
     {
-        #define DOCK_HEIGHT 32
-        #define DOCK_MARGIN 80     /* inset from screen edges */
-        #define DOCK_COLOR  0xCC2A2A3Au  /* Semi-transparent dark panel */
-        #define DOCK_ITEM_W 100
-        #define DOCK_ITEM_H 24
-        #define DOCK_ITEM_PAD 4
-        #define DOCK_ACTIVE 0xCC4A4A5Au  /* Active window highlight */
-        #define DOCK_TEXT   0xFFCCCCCCu  /* Light text on dark dock */
+        #define DOCK_HEIGHT 36
+        #define DOCK_COLOR      0xD0222233u  /* Semi-transparent dark panel */
+        #define DOCK_ITEM_W     120
+        #define DOCK_ITEM_H     26
+        #define DOCK_ITEM_PAD   2            /* thin gap between items */
+        #define DOCK_FOCUSED    0xD0505070u  /* Focused window highlight */
+        #define DOCK_HOVER      0xD03A3A50u  /* Hover highlight */
+        #define DOCK_SEP_COLOR  0x60888899u  /* Thin separator */
+        #define DOCK_TEXT       0xFFD0D0D8u  /* Light text on dark dock */
+        #define DOCK_TEXT_DIM   0xFF909098u  /* Dimmer text for unfocused */
+        #define DOCK_CORNER_R   8            /* Corner radius for rounded look */
+        #define DOCK_DSKBTN_W   28           /* Desktop-show button width */
 
         int32_t fb_w = (int32_t)comp->fb_info.width;
         int32_t fb_h = (int32_t)comp->fb_info.height;
@@ -1443,91 +1447,322 @@ void comp_render_frame(struct compositor_state *comp) {
             if (ds->has_backing) n_windows++;
         }
 
-        /* Get current time for clock display */
+        /* Get current time and date for clock display */
         struct { long tv_sec; long tv_nsec; } clock_ts = {0, 0};
-        /* syscall 228 = clock_gettime, 0 = CLOCK_REALTIME */
         extern long sys_call2(long nr, long a, long b);
         sys_call2(228, 0, (long)&clock_ts);
-        long daytime = clock_ts.tv_sec % 86400;
+        long total_secs = clock_ts.tv_sec;
+        long daytime = total_secs % 86400;
         int clock_hr = (int)(daytime / 3600);
         int clock_min = (int)((daytime % 3600) / 60);
-        char clock_str[6]; /* "HH:MM" */
-        clock_str[0] = '0' + (char)(clock_hr / 10);
-        clock_str[1] = '0' + (char)(clock_hr % 10);
-        clock_str[2] = ':';
-        clock_str[3] = '0' + (char)(clock_min / 10);
-        clock_str[4] = '0' + (char)(clock_min % 10);
-        clock_str[5] = '\0';
 
-        #define CLOCK_WIDTH (5 * UI_FONT_WIDTH + 12)  /* "HH:MM" + padding */
+        /* Compute month and day from epoch seconds */
+        long days_since_epoch = total_secs / 86400;
+        /* Approximate year from days (good enough for date display) */
+        int year = 1970;
+        long remaining_days = days_since_epoch;
+        for (;;) {
+            int days_in_year = 365;
+            if ((year % 4 == 0 && year % 100 != 0) || year % 400 == 0)
+                days_in_year = 366;
+            if (remaining_days < days_in_year) break;
+            remaining_days -= days_in_year;
+            year++;
+        }
+        bool is_leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+        int month_days[] = {31, is_leap ? 29 : 28, 31, 30, 31, 30,
+                            31, 31, 30, 31, 30, 31};
+        int month = 0;
+        while (month < 11 && remaining_days >= month_days[month]) {
+            remaining_days -= month_days[month];
+            month++;
+        }
+        int day = (int)remaining_days + 1;
+        const char *month_names[] = {"Jan","Feb","Mar","Apr","May","Jun",
+                                     "Jul","Aug","Sep","Oct","Nov","Dec"};
 
-        int dock_content_w = n_windows * (DOCK_ITEM_W + DOCK_ITEM_PAD) + CLOCK_WIDTH;
-        if (dock_content_w < 200) dock_content_w = 200;
-        int dock_w = dock_content_w + 2 * DOCK_ITEM_PAD;
+        /* Format: "Mar 28  14:05" */
+        char clock_str[16];
+        const char *mn = month_names[month];
+        int ci = 0;
+        clock_str[ci++] = mn[0];
+        clock_str[ci++] = mn[1];
+        clock_str[ci++] = mn[2];
+        clock_str[ci++] = ' ';
+        if (day >= 10) clock_str[ci++] = '0' + (char)(day / 10);
+        clock_str[ci++] = '0' + (char)(day % 10);
+        clock_str[ci++] = ' ';
+        clock_str[ci++] = ' ';
+        clock_str[ci++] = '0' + (char)(clock_hr / 10);
+        clock_str[ci++] = '0' + (char)(clock_hr % 10);
+        clock_str[ci++] = ':';
+        clock_str[ci++] = '0' + (char)(clock_min / 10);
+        clock_str[ci++] = '0' + (char)(clock_min % 10);
+        clock_str[ci] = '\0';
+        int clock_text_len = ci;
+
+        #define CLOCK_WIDTH_NEW (13 * UI_FONT_WIDTH + 16)  /* "Mar 28  HH:MM" + padding */
+
+        /* Dock geometry: items + separators + clock + desktop button */
+        int items_w = n_windows > 0
+            ? n_windows * DOCK_ITEM_W + (n_windows - 1) * DOCK_ITEM_PAD
+            : 0;
+        int dock_content_w = 8 + items_w + 8 + CLOCK_WIDTH_NEW + 4 + DOCK_DSKBTN_W + 4;
+        if (dock_content_w < 240) dock_content_w = 240;
+        int dock_w = dock_content_w;
         int dock_x = (fb_w - dock_w) / 2;
-        int dock_y = fb_h - DOCK_HEIGHT - 8;  /* 8px from bottom */
+        int dock_y = fb_h - DOCK_HEIGHT - 6;
 
-        /* Draw dock background with rounded appearance (simple rectangle for now) */
         fut_rect_t dock_rect = { dock_x, dock_y, dock_w, DOCK_HEIGHT };
+
+        /* Alpha-blend helper: blend src (with alpha) over dst pixel */
+        #define ABLEND(src_argb, dst_px) do { \
+            uint32_t _sa = ((src_argb) >> 24) & 0xFF; \
+            if (_sa == 0xFF) { (dst_px) = (src_argb); } \
+            else if (_sa > 0) { \
+                uint32_t _da = 255u - _sa; \
+                uint32_t _sr = ((src_argb) >> 16) & 0xFF; \
+                uint32_t _sg = ((src_argb) >>  8) & 0xFF; \
+                uint32_t _sb = ((src_argb)      ) & 0xFF; \
+                uint32_t _dr = ((dst_px) >> 16) & 0xFF; \
+                uint32_t _dg = ((dst_px) >>  8) & 0xFF; \
+                uint32_t _db = ((dst_px)      ) & 0xFF; \
+                uint32_t _or = (_sr * _sa + _dr * _da) / 255u; \
+                uint32_t _og = (_sg * _sa + _dg * _da) / 255u; \
+                uint32_t _ob = (_sb * _sa + _db * _da) / 255u; \
+                (dst_px) = 0xFF000000u | (_or << 16) | (_og << 8) | _ob; \
+            } } while (0)
 
         /* Check if dock overlaps any damage region */
         for (int i = 0; i < damage->count; ++i) {
             fut_rect_t dock_clip;
-            if (rect_intersection(damage->rects[i], dock_rect, &dock_clip)) {
-                /* Draw dock background */
-                bb_fill_rect(dst, dock_clip, DOCK_COLOR);
+            if (!rect_intersection(damage->rects[i], dock_rect, &dock_clip))
+                continue;
 
-                /* Draw window items in the dock */
-                int item_x = dock_x + DOCK_ITEM_PAD;
-                int item_y = dock_y + (DOCK_HEIGHT - DOCK_ITEM_H) / 2;
-                struct comp_surface *ws;
-                wl_list_for_each(ws, &comp->surfaces, link) {
-                    if (!ws->has_backing) continue;
-                    fut_rect_t item_rect = { item_x, item_y, DOCK_ITEM_W, DOCK_ITEM_H };
-                    fut_rect_t item_clip;
-                    if (rect_intersection(dock_clip, item_rect, &item_clip)) {
-                        /* Highlight active/focused window */
-                        uint32_t item_bg = (ws == comp->focused_surface) ? DOCK_ACTIVE : DOCK_COLOR;
-                        bb_fill_rect(dst, item_clip, item_bg);
+            /* Draw dock background with rounded corners via alpha blending */
+            {
+                char *base = (char *)dst->px;
+                for (int32_t py = dock_clip.y; py < dock_clip.y + dock_clip.h; py++) {
+                    uint32_t *row = (uint32_t *)(base + (size_t)py * dst->pitch);
+                    int32_t ry = py - dock_y;                    /* row within dock */
+                    int32_t dy = ry < DOCK_HEIGHT / 2 ? ry : (DOCK_HEIGHT - 1 - ry);
+                    for (int32_t px = dock_clip.x; px < dock_clip.x + dock_clip.w; px++) {
+                        int32_t rx = px - dock_x;               /* col within dock */
+                        int32_t dx = rx < dock_w / 2 ? rx : (dock_w - 1 - rx);
 
-                        /* Draw truncated title */
-                        if (ws->title && ws->title[0]) {
-                            int max_chars = (DOCK_ITEM_W - 8) / UI_FONT_WIDTH;
-                            if (max_chars > 0) {
-                                /* Build truncated string */
-                                char dock_title[16];
-                                int ti = 0;
-                                while (ti < max_chars && ti < 15 && ws->title[ti]) {
-                                    dock_title[ti] = ws->title[ti]; ti++;
-                                }
-                                dock_title[ti] = '\0';
-                                int tx = item_x + 4;
-                                int ty = item_y + (DOCK_ITEM_H - UI_FONT_HEIGHT) / 2;
-                                ui_draw_text(dst->px, dst->pitch, tx, ty,
-                                             DOCK_TEXT, dock_title,
-                                             item_clip.x, item_clip.y,
-                                             item_clip.w, item_clip.h);
+                        /* Compute corner alpha fade for rounded appearance */
+                        uint32_t alpha = 0xD0;
+                        if (dx < DOCK_CORNER_R && dy < DOCK_CORNER_R) {
+                            int32_t cx = DOCK_CORNER_R - dx;
+                            int32_t cy = DOCK_CORNER_R - dy;
+                            int32_t dist_sq = cx * cx + cy * cy;
+                            int32_t r_sq = DOCK_CORNER_R * DOCK_CORNER_R;
+                            if (dist_sq > r_sq) {
+                                alpha = 0;   /* outside the rounded corner */
+                            } else if (dist_sq > (DOCK_CORNER_R - 2) * (DOCK_CORNER_R - 2)) {
+                                alpha = 0x60; /* anti-alias edge band */
                             }
                         }
-                    }
-                    item_x += DOCK_ITEM_W + DOCK_ITEM_PAD;
-                }
 
-                /* Draw clock at right edge of dock */
-                {
-                    int clock_x = dock_x + dock_w - CLOCK_WIDTH;
-                    int clock_y = dock_y + (DOCK_HEIGHT - UI_FONT_HEIGHT) / 2;
-                    fut_rect_t clock_rect = { clock_x, clock_y, CLOCK_WIDTH, UI_FONT_HEIGHT };
-                    fut_rect_t clock_clip;
-                    if (rect_intersection(dock_clip, clock_rect, &clock_clip)) {
-                        ui_draw_text(dst->px, dst->pitch, clock_x + 6, clock_y,
-                                     0xFFFFFFFFu, clock_str,
-                                     clock_clip.x, clock_clip.y,
-                                     clock_clip.w, clock_clip.h);
+                        if (alpha > 0) {
+                            uint32_t col = (alpha << 24) | 0x00222233u;
+                            ABLEND(col, row[px]);
+                        }
                     }
                 }
             }
+
+            /* Draw window items in the dock */
+            int item_x = dock_x + 8;
+            int item_y = dock_y + (DOCK_HEIGHT - DOCK_ITEM_H) / 2;
+            int win_idx = 0;
+            struct comp_surface *ws;
+            wl_list_for_each(ws, &comp->surfaces, link) {
+                if (!ws->has_backing) continue;
+
+                fut_rect_t item_rect = { item_x, item_y, DOCK_ITEM_W, DOCK_ITEM_H };
+                fut_rect_t item_clip;
+                if (rect_intersection(dock_clip, item_rect, &item_clip)) {
+                    /* Determine item background: focused > hovered > default */
+                    bool is_focused = (ws == comp->focused_surface);
+                    bool is_hovered = (win_idx == comp->dock_hover_index);
+                    uint32_t item_bg;
+                    if (is_focused)
+                        item_bg = DOCK_FOCUSED;
+                    else if (is_hovered)
+                        item_bg = DOCK_HOVER;
+                    else
+                        item_bg = 0x00000000u;  /* transparent — dock bg shows through */
+
+                    if (item_bg & 0xFF000000u) {
+                        /* Alpha blend the item highlight over existing dock bg */
+                        char *base = (char *)dst->px;
+                        for (int32_t py = item_clip.y; py < item_clip.y + item_clip.h; py++) {
+                            uint32_t *row = (uint32_t *)(base + (size_t)py * dst->pitch);
+                            for (int32_t px = item_clip.x; px < item_clip.x + item_clip.w; px++) {
+                                ABLEND(item_bg, row[px]);
+                            }
+                        }
+                    }
+
+                    /* Focused indicator: a 2px accent bar at the bottom of the item */
+                    if (is_focused) {
+                        fut_rect_t accent = { item_x + 8, item_y + DOCK_ITEM_H - 2,
+                                              DOCK_ITEM_W - 16, 2 };
+                        fut_rect_t accent_clip;
+                        if (rect_intersection(dock_clip, accent, &accent_clip))
+                            bb_fill_rect(dst, accent_clip, 0xFF6688CCu);
+                    }
+
+                    /* Draw window title text, centered in the item */
+                    if (ws->title[0]) {
+                        int max_chars = (DOCK_ITEM_W - 12) / UI_FONT_WIDTH;
+                        if (max_chars > 15) max_chars = 15;
+                        if (max_chars > 0) {
+                            char dock_title[16];
+                            int ti = 0;
+                            while (ti < max_chars && ws->title[ti]) {
+                                dock_title[ti] = ws->title[ti];
+                                ti++;
+                            }
+                            dock_title[ti] = '\0';
+
+                            /* Center text horizontally within item */
+                            int text_w = ti * UI_FONT_WIDTH;
+                            int tx = item_x + (DOCK_ITEM_W - text_w) / 2;
+                            int ty = item_y + (DOCK_ITEM_H - UI_FONT_HEIGHT) / 2;
+                            uint32_t text_color = is_focused ? 0xFFFFFFFFu : DOCK_TEXT;
+                            ui_draw_text(dst->px, dst->pitch, tx, ty,
+                                         text_color, dock_title,
+                                         item_clip.x, item_clip.y,
+                                         item_clip.w, item_clip.h);
+                        }
+                    } else {
+                        /* No title: show app_id or fallback "Window" */
+                        const char *label = ws->app_id[0] ? ws->app_id : "Window";
+                        int max_chars = (DOCK_ITEM_W - 12) / UI_FONT_WIDTH;
+                        if (max_chars > 15) max_chars = 15;
+                        if (max_chars > 0) {
+                            char dock_title[16];
+                            int ti = 0;
+                            while (ti < max_chars && label[ti]) {
+                                dock_title[ti] = label[ti];
+                                ti++;
+                            }
+                            dock_title[ti] = '\0';
+                            int text_w = ti * UI_FONT_WIDTH;
+                            int tx = item_x + (DOCK_ITEM_W - text_w) / 2;
+                            int ty = item_y + (DOCK_ITEM_H - UI_FONT_HEIGHT) / 2;
+                            uint32_t text_color = is_focused ? 0xFFFFFFFFu : DOCK_TEXT_DIM;
+                            ui_draw_text(dst->px, dst->pitch, tx, ty,
+                                         text_color, dock_title,
+                                         item_clip.x, item_clip.y,
+                                         item_clip.w, item_clip.h);
+                        }
+                    }
+                }
+
+                /* Thin 1px separator after this item (except the last) */
+                {
+                    int sep_x = item_x + DOCK_ITEM_W;
+                    fut_rect_t sep_rect = { sep_x, dock_y + 6, 1, DOCK_HEIGHT - 12 };
+                    fut_rect_t sep_clip;
+                    if (rect_intersection(dock_clip, sep_rect, &sep_clip)) {
+                        char *base = (char *)dst->px;
+                        for (int32_t py = sep_clip.y; py < sep_clip.y + sep_clip.h; py++) {
+                            uint32_t *row = (uint32_t *)(base + (size_t)py * dst->pitch);
+                            for (int32_t px = sep_clip.x; px < sep_clip.x + sep_clip.w; px++)
+                                ABLEND(DOCK_SEP_COLOR, row[px]);
+                        }
+                    }
+                }
+
+                item_x += DOCK_ITEM_W + DOCK_ITEM_PAD;
+                win_idx++;
+            }
+
+            /* Draw date + clock at the right side of dock (before desktop button) */
+            {
+                int cw = clock_text_len * UI_FONT_WIDTH + 12;
+                int clock_x = dock_x + dock_w - DOCK_DSKBTN_W - 4 - cw;
+                int clock_y_pos = dock_y + (DOCK_HEIGHT - UI_FONT_HEIGHT) / 2;
+                fut_rect_t crect = { clock_x, clock_y_pos, cw, UI_FONT_HEIGHT };
+                fut_rect_t cclip;
+                if (rect_intersection(dock_clip, crect, &cclip)) {
+                    int tx = clock_x + 6;
+                    ui_draw_text(dst->px, dst->pitch, tx, clock_y_pos,
+                                 0xFFFFFFFFu, clock_str,
+                                 cclip.x, cclip.y, cclip.w, cclip.h);
+                }
+
+                /* Thin separator before clock */
+                {
+                    fut_rect_t sep = { clock_x - 4, dock_y + 6, 1, DOCK_HEIGHT - 12 };
+                    fut_rect_t sc;
+                    if (rect_intersection(dock_clip, sep, &sc)) {
+                        char *base = (char *)dst->px;
+                        for (int32_t py = sc.y; py < sc.y + sc.h; py++) {
+                            uint32_t *row = (uint32_t *)(base + (size_t)py * dst->pitch);
+                            for (int32_t px = sc.x; px < sc.x + sc.w; px++)
+                                ABLEND(DOCK_SEP_COLOR, row[px]);
+                        }
+                    }
+                }
+            }
+
+            /* Desktop-show button at far right: small icon (stacked rectangles) */
+            {
+                int btn_x = dock_x + dock_w - DOCK_DSKBTN_W - 2;
+                int btn_y_pos = dock_y + (DOCK_HEIGHT - DOCK_ITEM_H) / 2;
+                fut_rect_t btn_rect = { btn_x, btn_y_pos, DOCK_DSKBTN_W, DOCK_ITEM_H };
+                fut_rect_t btn_clip;
+                if (rect_intersection(dock_clip, btn_rect, &btn_clip)) {
+                    /* Hover highlight for desktop button */
+                    if (comp->dock_hover_index == -2) {
+                        char *base = (char *)dst->px;
+                        for (int32_t py = btn_clip.y; py < btn_clip.y + btn_clip.h; py++) {
+                            uint32_t *row = (uint32_t *)(base + (size_t)py * dst->pitch);
+                            for (int32_t px = btn_clip.x; px < btn_clip.x + btn_clip.w; px++)
+                                ABLEND(DOCK_HOVER, row[px]);
+                        }
+                    }
+                    /* Separator before desktop button */
+                    {
+                        fut_rect_t sep = { btn_x - 3, dock_y + 6, 1, DOCK_HEIGHT - 12 };
+                        fut_rect_t sc;
+                        if (rect_intersection(dock_clip, sep, &sc)) {
+                            char *base = (char *)dst->px;
+                            for (int32_t py = sc.y; py < sc.y + sc.h; py++) {
+                                uint32_t *row = (uint32_t *)(base + (size_t)py * dst->pitch);
+                                for (int32_t px = sc.x; px < sc.x + sc.w; px++)
+                                    ABLEND(DOCK_SEP_COLOR, row[px]);
+                            }
+                        }
+                    }
+                    /* Draw a small "stacked windows" icon: two offset rectangles */
+                    int ix = btn_x + (DOCK_DSKBTN_W - 14) / 2;
+                    int iy = btn_y_pos + (DOCK_ITEM_H - 12) / 2;
+                    uint32_t icon_col = comp->dock_hover_index == -2 ? 0xFFFFFFFFu : DOCK_TEXT;
+                    /* Back rect (offset +3,+3) */
+                    fut_rect_t br = { ix + 3, iy, 10, 8 };
+                    fut_rect_t bc;
+                    if (rect_intersection(btn_clip, br, &bc))
+                        bb_fill_rect(dst, bc, icon_col);
+                    /* Front rect (offset 0,+3) */
+                    fut_rect_t fr = { ix, iy + 3, 10, 8 };
+                    fut_rect_t fc;
+                    if (rect_intersection(btn_clip, fr, &fc))
+                        bb_fill_rect(dst, fc, icon_col);
+                    /* Dark interior on front rect for depth */
+                    fut_rect_t fi = { ix + 1, iy + 4, 8, 6 };
+                    fut_rect_t fic;
+                    if (rect_intersection(btn_clip, fi, &fic))
+                        bb_fill_rect(dst, fic, 0xFF222233u);
+                }
+            }
         }
+
+        #undef ABLEND
     }
 
     int surface_count = 0;

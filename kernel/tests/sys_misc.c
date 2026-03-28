@@ -77696,12 +77696,14 @@ void fut_misc_test_thread(void *arg) {
     if (netif_by_name("lo")) {
         test_vlan_interfaces(); /* Tests 1861-1864 */
     }
-    test_bridge_interfaces(); /* Tests 1865-1868 */
-    test_ipv6_procfs(); /* Test 1875 */
+    if (netif_by_name("lo")) {
+        test_bridge_interfaces(); /* Tests 1865-1868 */
+        test_ipv6_procfs(); /* Test 1875 */
+        test_policy_routing(); /* Tests 1878-1881, 1884 */
+        test_gre_tunnel(); /* Tests 1872-1874 */
+    }
     test_fork_rlimit_as(); /* Tests 1876-1877 */
     test_timer_abstime_underflow(); /* Tests 1882-1883 */
-    test_policy_routing(); /* Tests 1878-1881, 1884 */
-    test_gre_tunnel(); /* Tests 1872-1874 */
     test_hwrng_console(); /* Tests 1898-1900 */
     test_mseal_fchmodat2_kcmp(); /* Tests 1892-1897 */
     test_netfilter_procfs(); /* Test 1891 */

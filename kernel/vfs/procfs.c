@@ -1568,8 +1568,8 @@ static size_t gen_stat(char *buf, size_t cap, fut_task_t *task, uint64_t tid) {
      * directly usable — tools like ps compute elapsed = (uptime_ticks - starttime). */
     uint64_t starttime = task->start_ticks;
 
-    /* Signal bitmask fields (fields 30-33 in Linux /proc/<pid>/stat):
-     * 30=signal (pending), 31=blocked, 32=sigignore, 33=sigcatch.
+    /* Signal bitmask fields (fields 31-34 in Linux /proc/<pid>/stat):
+     * 31=signal (pending), 32=blocked, 33=sigignore, 34=sigcatch.
      * When reading /proc/<pid>/task/<tid>/stat, use per-thread signal state.
      * Compute sigignore and sigcatch from the signal handler table. */
     uint64_t pending_sig  = task->pending_signals;
@@ -1652,34 +1652,34 @@ static size_t gen_stat(char *buf, size_t cap, fut_task_t *task, uint64_t tid) {
     pb_u64(&b, rss_pages); pb_char(&b, ' ');
     /* Field 25: rsslim (RLIM_INFINITY) */
     pb_str(&b, "4294967295"); pb_char(&b, ' ');
-    /* Fields 25-28: startcode endcode startstack kstkesp (0) */
+    /* Fields 26-29: startcode endcode startstack kstkesp (0) */
     pb_char(&b, '0'); pb_char(&b, ' ');
     pb_char(&b, '0'); pb_char(&b, ' ');
     pb_char(&b, '0'); pb_char(&b, ' ');
     pb_char(&b, '0'); pb_char(&b, ' ');
-    /* Field 29: kstkeip (0) */
+    /* Field 30 (kstkeip, obsolete): 0 — not meaningful for userspace parsing */
     pb_char(&b, '0'); pb_char(&b, ' ');
-    /* Fields 30-34: signal blocked sigignore sigcatch wchan */
-    pb_u64(&b, pending_sig);  pb_char(&b, ' ');  /* (30) pending signals bitmask */
-    pb_u64(&b, blocked_sig);  pb_char(&b, ' ');  /* (31) blocked signals bitmask */
-    pb_u64(&b, sigignore);    pb_char(&b, ' ');  /* (32) ignored signals (SIG_IGN) */
-    pb_u64(&b, sigcatch);     pb_char(&b, ' ');  /* (33) caught signals (registered handlers) */
-    pb_char(&b, '0');         pb_char(&b, ' ');  /* (34) wchan (wait channel address, 0) */
-    /* (35) nswap (36) cnswap: obsolete, always 0 */
+    /* Fields 31-35: signal blocked sigignore sigcatch wchan */
+    pb_u64(&b, pending_sig);  pb_char(&b, ' ');  /* (31) pending signals bitmask */
+    pb_u64(&b, blocked_sig);  pb_char(&b, ' ');  /* (32) blocked signals bitmask */
+    pb_u64(&b, sigignore);    pb_char(&b, ' ');  /* (33) ignored signals (SIG_IGN) */
+    pb_u64(&b, sigcatch);     pb_char(&b, ' ');  /* (34) caught signals (registered handlers) */
+    pb_char(&b, '0');         pb_char(&b, ' ');  /* (35) wchan (wait channel address, 0) */
+    /* (36) nswap (37) cnswap: obsolete, always 0 */
     pb_char(&b, '0'); pb_char(&b, ' ');
     pb_char(&b, '0'); pb_char(&b, ' ');
-    /* (37) exit_signal: from task's exit_signal field (SIGCHLD=17 for fork) */
+    /* (38) exit_signal: from task's exit_signal field (SIGCHLD=17 for fork) */
     { int esig = task->exit_signal; if (esig <= 0) esig = 17; pb_u64(&b, (uint64_t)esig); }
     pb_char(&b, ' ');
-    /* (38) processor: CPU 0 */
+    /* (39) processor: CPU 0 */
     pb_char(&b, '0'); pb_char(&b, ' ');
-    /* (39) rt_priority: 0 for SCHED_OTHER, 1-99 for RT */
+    /* (40) rt_priority: 0 for SCHED_OTHER, 1-99 for RT */
     {
         int rtp = 0;
         if (task->threads) rtp = task->threads->rt_priority;
         pb_u64(&b, (uint64_t)(rtp < 0 ? 0 : rtp)); pb_char(&b, ' ');
     }
-    /* (40) policy: SCHED_OTHER=0, SCHED_FIFO=1, SCHED_RR=2, SCHED_BATCH=3, SCHED_IDLE=5 */
+    /* (41) policy: SCHED_OTHER=0, SCHED_FIFO=1, SCHED_RR=2, SCHED_BATCH=3, SCHED_IDLE=5 */
     {
         int pol = 0;
         if (task->threads) pol = task->threads->sched_policy;

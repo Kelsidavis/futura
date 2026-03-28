@@ -508,9 +508,10 @@ static void test_sched_rr_get_interval(void) {
         return;
     }
 
-    /* Should be 10ms (10000000 ns) for 100 Hz timer */
-    if (interval.tv_sec != 0 || interval.tv_nsec != 10000000) {
-        fut_printf("[CLKSCHED-TEST] ✗ interval=%lld.%09lld (expected 0.010000000)\n",
+    /* Should be 100ms (100000000 ns) for nice=0 at HZ=100.
+     * nice_to_slice(0) = 10 ticks, each tick = 10ms -> 100ms quantum. */
+    if (interval.tv_sec != 0 || interval.tv_nsec != 100000000) {
+        fut_printf("[CLKSCHED-TEST] ✗ interval=%lld.%09lld (expected 0.100000000)\n",
                    (long long)interval.tv_sec, (long long)interval.tv_nsec);
         fut_test_fail(CLKSCHED_TEST_RR_INTERVAL);
         return;
@@ -524,7 +525,7 @@ static void test_sched_rr_get_interval(void) {
         return;
     }
 
-    fut_printf("[CLKSCHED-TEST] ✓ sched_rr_get_interval: quantum=10ms, ESRCH for bad PID\n");
+    fut_printf("[CLKSCHED-TEST] ✓ sched_rr_get_interval: quantum=100ms (nice=0), ESRCH for bad PID\n");
     fut_test_pass();
 }
 

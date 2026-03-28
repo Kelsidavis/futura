@@ -23651,7 +23651,8 @@ static void test_proc_tainted(void) {
 }
 
 /* ============================================================
- * Test 370: /proc/sys/kernel/version contains "Linux version"
+ * Test 370: /proc/sys/kernel/version starts with '#' (build stamp)
+ * Linux format: "#<build> SMP PREEMPT_DYNAMIC <date> <time>"
  * ============================================================ */
 static void test_proc_kernel_version(void) {
     fut_printf("[MISC-TEST] Test 370: /proc/sys/kernel/version\n");
@@ -23660,8 +23661,8 @@ static void test_proc_kernel_version(void) {
     char buf[64]; long n = fut_vfs_read(fd, buf, sizeof(buf)-1); fut_vfs_close(fd);
     if (n <= 0) { fut_printf("[MISC-TEST] ✗ Test 370: read returned %ld\n", n); fut_test_fail(370); return; }
     buf[n] = '\0';
-    if (buf[0] != 'L' || buf[1] != 'i') { fut_printf("[MISC-TEST] ✗ Test 370: no 'Linux' prefix: '%s'\n", buf); fut_test_fail(370); return; }
-    fut_printf("[MISC-TEST] ✓ Test 370: /proc/sys/kernel/version starts with 'Li'\n");
+    if (buf[0] != '#') { fut_printf("[MISC-TEST] ✗ Test 370: expected '#' prefix: '%s'\n", buf); fut_test_fail(370); return; }
+    fut_printf("[MISC-TEST] ✓ Test 370: /proc/sys/kernel/version = '%s'\n", buf);
     fut_test_pass();
 }
 

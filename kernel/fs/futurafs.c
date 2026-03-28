@@ -3867,6 +3867,11 @@ static int futurafs_vnode_rmdir(struct fut_vnode *dir, const char *name) {
         return ret;
     }
 
+    /* Update parent directory timestamps (entry removed) */
+    uint64_t now_rmdir = fut_get_time_ns();
+    dir_info->disk_inode.mtime = now_rmdir;
+    dir_info->disk_inode.ctime = now_rmdir;
+
     if (dir_info->disk_inode.nlinks > 0) {
         dir_info->disk_inode.nlinks--;
     }
@@ -4622,8 +4627,9 @@ int fut_futurafs_format(struct fut_blockdev *dev, const char *label, uint32_t in
     sb.data_bitmap_block = data_bitmap_block;
     sb.data_blocks_start = data_blocks_start;
 
-    sb.mount_time = 0;
-    sb.write_time = 0;
+    uint64_t format_now = fut_get_time_ns() / 1000000000ULL;
+    sb.mount_time = format_now;
+    sb.write_time = format_now;
     sb.mount_count = 0;
     sb.max_mount_count = 20;
 
@@ -4663,6 +4669,12 @@ int fut_futurafs_format(struct fut_blockdev *dev, const char *label, uint32_t in
     root_inode.nlinks = 2;  /* . and .. */
     root_inode.size = 0;
     root_inode.blocks = 0;
+
+    /* Set timestamps on root inode */
+    uint64_t format_time_ns = fut_get_time_ns();
+    root_inode.atime = format_time_ns;
+    root_inode.mtime = format_time_ns;
+    root_inode.ctime = format_time_ns;
 
     /* Write root inode */
     ret = fut_blockdev_write_bytes(dev, (sb.inode_table_block * FUTURAFS_BLOCK_SIZE),

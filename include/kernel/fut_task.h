@@ -272,6 +272,7 @@ struct fut_task {
     /* Namespace support (container isolation) */
     struct pid_namespace *pid_ns;      // PID namespace (NULL = init namespace)
     uint64_t ns_pid;                   // PID within the namespace (== pid for init ns)
+    int pid_ns_level;                  // PID namespace nesting depth (0 = init)
     struct mount_namespace *mnt_ns;    // Mount namespace (NULL = init namespace)
     struct uts_namespace *uts_ns;      // UTS namespace (hostname/domainname)
     struct net_namespace *net_ns;      // Network namespace

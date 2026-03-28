@@ -217,7 +217,10 @@ long sys_clone3(const struct fut_clone_args *uargs, size_t size) {
                 if (ns_flags & CLONE_NEWPID) {
                     extern struct pid_namespace *pidns_create(struct pid_namespace *);
                     struct pid_namespace *ns = pidns_create(child->pid_ns);
-                    if (ns) child->pid_ns = ns;
+                    if (ns) {
+                        child->pid_ns = ns;
+                        child->pid_ns_level = ns->level;
+                    }
                 }
                 if (ns_flags & CLONE_NEWNS) {
                     extern struct mount_namespace *mntns_create(struct mount_namespace *);

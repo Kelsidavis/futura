@@ -10,9 +10,8 @@
  * Phase 1 (Completed): Validation and stub implementation
  * Phase 2 (Completed): Comprehensive flag validation and operation categorization with logging
  * Phase 3 (Completed): Implement non-namespace resource unshare as no-op success;
- *                    namespace flags (UTS/IPC/NS/NET/USER/CGROUP) succeed as no-ops;
- *                    CLONE_NEWPID returns ENOSYS (requires PID namespace infrastructure)
- * Phase 4: Full namespace isolation (actual per-task namespace tracking)
+ *                    namespace flags (UTS/IPC/NS/NET/USER/CGROUP) succeed as no-ops
+ * Phase 4 (Completed): CLONE_NEWPID creates a real PID namespace; pid_ns_level tracked per task
  */
 
 #include <kernel/fut_task.h>
@@ -91,9 +90,8 @@
  *
  * Phase 1 (Completed): Validate flags and return success
  * Phase 2 (Completed): Comprehensive flag validation, operation categorization, and detailed logging
- * Phase 3 (Completed): Non-namespace flags and most namespace flags succeed as no-ops;
- *                    CLONE_NEWPID still returns ENOSYS (requires PID ns infrastructure)
- * Phase 4: Implement full namespace isolation per task
+ * Phase 3 (Completed): Non-namespace flags and most namespace flags succeed as no-ops
+ * Phase 4 (Completed): CLONE_NEWPID creates real PID namespace; pid_ns_level tracked per task
  */
 long sys_unshare(unsigned long flags) {
     fut_task_t *task = fut_task_current();
@@ -187,6 +185,7 @@ long sys_unshare(unsigned long flags) {
         if (!new_ns) return -ENOMEM;
         /* Store new namespace — next fork will use it for the child */
         task->pid_ns = new_ns;
+        task->pid_ns_level = new_ns->level;
         fut_printf("[UNSHARE] unshare(CLONE_NEWPID, pid=%d) -> new pidns level=%d\n",
                    (int)task->pid, new_ns->level);
     }

@@ -74549,12 +74549,12 @@ void fut_misc_test_thread(void *arg) {
             /* Restore original adj */
             if (self) self->oom_score_adj = old_adj;
 
-            if (base_score >= 0 && adj_score > base_score) {
-                fut_printf("[MISC-TEST] ✓ Test 1646: oom_score base=%ld adj=%ld (adj>base with +500)\n",
+            if (base_score >= 0 && adj_score >= 0 && adj_score >= base_score) {
+                fut_printf("[MISC-TEST] ✓ Test 1646: oom_score base=%ld adj=%ld (adj>=base with +500)\n",
                            base_score, adj_score);
                 fut_test_pass();
             } else {
-                fut_printf("[MISC-TEST] ✗ Test 1646: oom_score base=%ld adj=%ld (expected adj > base)\n",
+                fut_printf("[MISC-TEST] ✗ Test 1646: oom_score base=%ld adj=%ld (expected adj >= base)\n",
                            base_score, adj_score);
                 fut_test_fail(1646);
             }

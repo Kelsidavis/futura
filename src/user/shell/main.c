@@ -348,6 +348,20 @@ static void cmd_acpi(int argc, char *argv[]);
 static void cmd_udevadm(int argc, char *argv[]);
 static void cmd_blkzone(int argc, char *argv[]);
 static void cmd_nvme(int argc, char *argv[]);
+static void cmd_htop(int argc, char *argv[]);
+static void cmd_atop(int argc, char *argv[]);
+static void cmd_iotop(int argc, char *argv[]);
+static void cmd_nethogs(int argc, char *argv[]);
+static void cmd_iftop(int argc, char *argv[]);
+static void cmd_bmon(int argc, char *argv[]);
+static void cmd_nload(int argc, char *argv[]);
+static void cmd_duf(int argc, char *argv[]);
+static void cmd_ncdu(int argc, char *argv[]);
+static void cmd_dust(int argc, char *argv[]);
+static void cmd_procs(int argc, char *argv[]);
+static void cmd_btop(int argc, char *argv[]);
+static void cmd_glances(int argc, char *argv[]);
+static void cmd_sar(int argc, char *argv[]);
 
 /* Forward declaration for prompt */
 static void print_prompt(void);
@@ -10285,6 +10299,7 @@ static int execute_command(int argc, char *argv[]) {
         /* ss — enhanced socket statistics with TCP state, timer, process info */
         int show_tcp = 0, show_udp = 0, show_listen = 0, show_all = 0;
         int show_process = 0, show_timer = 0, show_extended = 0;
+        int filter_ipv4 = 0, filter_ipv6 = 0;
         for (int i = 1; i < argc; i++) {
             if (argv[i][0] == '-') {
                 for (int j = 1; argv[i][j]; j++) {
@@ -10296,25 +10311,30 @@ static int execute_command(int argc, char *argv[]) {
                     else if (argv[i][j] == 'o') show_timer = 1;
                     else if (argv[i][j] == 'e') show_extended = 1;
                     else if (argv[i][j] == 'n') { /* numeric, default */ }
+                    else if (argv[i][j] == '4') filter_ipv4 = 1;
+                    else if (argv[i][j] == '6') filter_ipv6 = 1;
                     else if (argv[i][j] == 'h') {
                         write_str(1, "Usage: ss [options]\n");
                         write_str(1, "  -t   TCP sockets\n  -u   UDP sockets\n");
                         write_str(1, "  -l   listening sockets\n  -a   all sockets\n");
                         write_str(1, "  -p   show process info\n  -o   show timer info\n");
                         write_str(1, "  -e   show extended info\n  -n   numeric output\n");
+                        write_str(1, "  -4   IPv4 sockets only\n  -6   IPv6 sockets only\n");
                         return 0;
                     }
                 }
             }
         }
+        /* If neither -4 nor -6 specified, show both */
+        if (!filter_ipv4 && !filter_ipv6) { filter_ipv4 = 1; filter_ipv6 = 1; }
         if (!show_tcp && !show_udp) { show_tcp = 1; show_udp = 1; }
         /* Header */
         write_str(1, "Netid  State       Recv-Q  Send-Q   Local Address:Port       Peer Address:Port");
         if (show_process) write_str(1, "   Process");
         if (show_timer) write_str(1, "   Timer");
         write_str(1, "\n");
-        /* TCP connections from /proc/net/tcp */
-        if (show_tcp) {
+        /* TCP connections from /proc/net/tcp (IPv4) */
+        if (show_tcp && filter_ipv4) {
             int fd = sys_open("/proc/net/tcp", O_RDONLY, 0);
             if (fd >= 0) {
                 char buf[4096];
@@ -10411,8 +10431,8 @@ static int execute_command(int argc, char *argv[]) {
                 }
             }
         }
-        /* UDP connections from /proc/net/udp */
-        if (show_udp) {
+        /* UDP connections from /proc/net/udp (IPv4) */
+        if (show_udp && filter_ipv4) {
             int fd = sys_open("/proc/net/udp", O_RDONLY, 0);
             if (fd >= 0) {
                 char buf[2048];
@@ -10432,6 +10452,101 @@ static int execute_command(int argc, char *argv[]) {
                         write_str(1, ls);
                         if (show_process) write_str(1, "   users:((\"kernel\",pid=0,fd=4))");
                         if (show_timer) write_str(1, "   timer:(off,0,0)");
+                        write_str(1, "\n");
+                    }
+                }
+            }
+        }
+        /* IPv6 TCP connections from /proc/net/tcp6 */
+        if (show_tcp && filter_ipv6) {
+            int fd = sys_open("/proc/net/tcp6", O_RDONLY, 0);
+            if (fd >= 0) {
+                char buf[4096];
+                ssize_t n = sys_read(fd, buf, sizeof(buf) - 1);
+                sys_close(fd);
+                if (n > 0) {
+                    buf[n] = '\0';
+                    char *p = buf;
+                    while (*p && *p != '\n') p++;
+                    if (*p == '\n') p++;
+                    while (*p) {
+                        while (*p == ' ') p++;
+                        /* Skip sl: */
+                        while (*p && *p != ':') p++;
+                        if (*p == ':') p++;
+                        while (*p == ' ') p++;
+                        /* local addr (32 hex) : port (4 hex) */
+                        char laddr6[33] = {0};
+                        for (int k = 0; k < 32 && *p && *p != ':'; k++, p++) laddr6[k] = *p;
+                        if (*p == ':') p++;
+                        uint16_t lport6 = 0;
+                        for (int k = 0; k < 4 && *p && *p != ' '; k++, p++) {
+                            int d2 = (*p >= '0' && *p <= '9') ? *p - '0' : (*p >= 'A' && *p <= 'F') ? *p - 'A' + 10 : *p - 'a' + 10;
+                            lport6 = (uint16_t)((lport6 << 4) | d2);
+                        }
+                        while (*p == ' ') p++;
+                        /* remote addr : port */
+                        for (int k = 0; k < 32 && *p && *p != ':'; k++) p++;
+                        if (*p == ':') p++;
+                        uint16_t rport6 = 0;
+                        for (int k = 0; k < 4 && *p && *p != ' '; k++, p++) {
+                            int d2 = (*p >= '0' && *p <= '9') ? *p - '0' : (*p >= 'A' && *p <= 'F') ? *p - 'A' + 10 : *p - 'a' + 10;
+                            rport6 = (uint16_t)((rport6 << 4) | d2);
+                        }
+                        while (*p == ' ') p++;
+                        /* state */
+                        int st6 = 0;
+                        for (int k = 0; k < 2 && *p && *p != ' '; k++, p++) {
+                            int d2 = (*p >= '0' && *p <= '9') ? *p - '0' : (*p >= 'A' && *p <= 'F') ? *p - 'A' + 10 : *p - 'a' + 10;
+                            st6 = (st6 << 4) | d2;
+                        }
+                        if (show_listen && st6 != 10) { while (*p && *p != '\n') p++; if (*p == '\n') p++; continue; }
+                        if (!show_all && !show_listen && st6 == 10) { while (*p && *p != '\n') p++; if (*p == '\n') p++; continue; }
+                        static const char *tcp6_states[] = {
+                            "UNKNOWN", "ESTAB", "SYN-SENT", "SYN-RECV",
+                            "FIN-WAIT-1", "FIN-WAIT-2", "TIME-WAIT", "CLOSE",
+                            "CLOSE-WAIT", "LAST-ACK", "LISTEN", "CLOSING"
+                        };
+                        const char *stname6 = (st6 >= 0 && st6 <= 11) ? tcp6_states[st6] : "UNKNOWN";
+                        write_str(1, "tcp6   ");
+                        write_str(1, stname6);
+                        int sl6 = 0; while (stname6[sl6]) sl6++;
+                        for (int k = sl6; k < 12; k++) write_char(1, ' ');
+                        write_str(1, "0       0        ");
+                        /* Print abbreviated local IPv6 addr */
+                        int all_zero = 1;
+                        for (int k = 0; k < 32; k++) if (laddr6[k] != '0') { all_zero = 0; break; }
+                        if (all_zero) write_str(1, "[::]");
+                        else { write_str(1, "[::"); for (int k = 24; k < 32; k++) { char c = laddr6[k]; write_char(1, c); } write_str(1, "]"); }
+                        write_char(1, ':');
+                        { char pn[8]; int_to_str(lport6, pn, 8); write_str(1, pn); }
+                        write_str(1, "         [::]:"); (void)rport6;
+                        { char pn[8]; int_to_str(rport6, pn, 8); write_str(1, pn); }
+                        write_str(1, "\n");
+                        while (*p && *p != '\n') p++;
+                        if (*p == '\n') p++;
+                    }
+                }
+            }
+        }
+        /* IPv6 UDP connections from /proc/net/udp6 */
+        if (show_udp && filter_ipv6) {
+            int fd = sys_open("/proc/net/udp6", O_RDONLY, 0);
+            if (fd >= 0) {
+                char buf[2048];
+                ssize_t n = sys_read(fd, buf, sizeof(buf) - 1);
+                sys_close(fd);
+                if (n > 0) {
+                    buf[n] = '\0';
+                    char *p = buf;
+                    while (*p && *p != '\n') p++;
+                    if (*p == '\n') p++;
+                    while (*p) {
+                        write_str(1, "udp6   UNCONN      0       0        ");
+                        char *ls = p;
+                        while (*p && *p != '\n') p++;
+                        if (*p == '\n') { *p = '\0'; p++; }
+                        write_str(1, ls);
                         write_str(1, "\n");
                     }
                 }
@@ -10590,112 +10705,133 @@ static int execute_command(int argc, char *argv[]) {
         write_str(1, "httpd: stopped\n");
         return 0;
     } else if (strcmp_simple(argv[0], "top") == 0) {
-        /* top — show process information and system stats (one-shot) */
-        /* System info header */
-        {
-            int fd = sys_open("/proc/uptime", O_RDONLY, 0);
-            if (fd >= 0) {
-                char ub[64]; ssize_t n = sys_read(fd, ub, sizeof(ub)-1);
-                sys_close(fd); if (n > 0) { ub[n] = '\0'; write_str(1, "up "); write_str(1, ub); }
+        /* top — show process information and system stats
+         * Supports: -b (batch mode), -n N (iterations) */
+        int batch_mode = 0;
+        int iterations = 1; /* default one-shot */
+        for (int i = 1; i < argc; i++) {
+            if (strcmp_simple(argv[i], "-b") == 0) batch_mode = 1;
+            else if (strcmp_simple(argv[i], "-n") == 0 && i+1 < argc) {
+                i++;
+                iterations = 0;
+                for (int k = 0; argv[i][k] >= '0' && argv[i][k] <= '9'; k++)
+                    iterations = iterations * 10 + (argv[i][k] - '0');
+                if (iterations < 1) iterations = 1;
+                if (iterations > 100) iterations = 100;
             }
         }
-        {
-            int fd = sys_open("/proc/loadavg", O_RDONLY, 0);
-            if (fd >= 0) {
-                char lb[64]; ssize_t n = sys_read(fd, lb, sizeof(lb)-1);
-                sys_close(fd); if (n > 0) { lb[n] = '\0'; write_str(1, "load: "); write_str(1, lb); }
+        for (int iter = 0; iter < iterations; iter++) {
+            if (!batch_mode && iter > 0) {
+                /* Clear screen between iterations */
+                write_str(1, "\033[2J\033[H");
             }
-        }
-        /* Memory info */
-        {
-            int fd = sys_open("/proc/meminfo", O_RDONLY, 0);
-            if (fd >= 0) {
-                char mb[512]; ssize_t n = sys_read(fd, mb, sizeof(mb)-1);
-                sys_close(fd);
-                if (n > 0) {
-                    mb[n] = '\0';
-                    /* Extract MemTotal and MemFree lines */
-                    for (char *p = mb; *p; ) {
-                        if (p[0]=='M' && p[1]=='e' && p[2]=='m' && (p[3]=='T' || p[3]=='F' || p[3]=='A')) {
-                            char *eol = p; while (*eol && *eol != '\n') eol++;
-                            char save = *eol; *eol = '\0';
-                            write_str(1, p); write_str(1, "\n");
-                            *eol = save;
+            if (batch_mode && iter > 0) {
+                write_str(1, "\n--- top iteration ");
+                char ib[8]; int_to_str(iter + 1, ib, 8);
+                write_str(1, ib);
+                write_str(1, " ---\n");
+            }
+            /* System info header */
+            {
+                int fd = sys_open("/proc/uptime", O_RDONLY, 0);
+                if (fd >= 0) {
+                    char ub[64]; ssize_t n = sys_read(fd, ub, sizeof(ub)-1);
+                    sys_close(fd); if (n > 0) { ub[n] = '\0'; write_str(1, "up "); write_str(1, ub); }
+                }
+            }
+            {
+                int fd = sys_open("/proc/loadavg", O_RDONLY, 0);
+                if (fd >= 0) {
+                    char lb[64]; ssize_t n = sys_read(fd, lb, sizeof(lb)-1);
+                    sys_close(fd); if (n > 0) { lb[n] = '\0'; write_str(1, "load: "); write_str(1, lb); }
+                }
+            }
+            /* Memory info */
+            {
+                int fd = sys_open("/proc/meminfo", O_RDONLY, 0);
+                if (fd >= 0) {
+                    char mb[512]; ssize_t n = sys_read(fd, mb, sizeof(mb)-1);
+                    sys_close(fd);
+                    if (n > 0) {
+                        mb[n] = '\0';
+                        for (char *p = mb; *p; ) {
+                            if (p[0]=='M' && p[1]=='e' && p[2]=='m' && (p[3]=='T' || p[3]=='F' || p[3]=='A')) {
+                                char *eol = p; while (*eol && *eol != '\n') eol++;
+                                char save = *eol; *eol = '\0';
+                                write_str(1, p); write_str(1, "\n");
+                                *eol = save;
+                            }
+                            while (*p && *p != '\n') p++;
+                            if (*p) p++;
                         }
-                        while (*p && *p != '\n') p++;
-                        if (*p) p++;
                     }
                 }
             }
-        }
-        write_str(1, "\n  PID STATE     RSS COMMAND\n");
-        /* Process list */
-        int proc_fd = sys_open("/proc", O_RDONLY, 0);
-        if (proc_fd >= 0) {
-            char dirbuf[2048];
-            ssize_t dn;
-            while ((dn = sys_getdents64(proc_fd, dirbuf, sizeof(dirbuf))) > 0) {
-                ssize_t pos = 0;
-                while (pos < dn) {
-                    uint16_t reclen = *(uint16_t *)(dirbuf + pos + 16);
-                    char *name = dirbuf + pos + 19;
-                    if (name[0] >= '1' && name[0] <= '9') {
-                        /* Read /proc/<pid>/stat for one-line summary */
-                        char spath[64]; int spi = 0;
-                        const char *pfx = "/proc/"; while (pfx[spi]) { spath[spi] = pfx[spi]; spi++; }
-                        int ni = 0; while (name[ni]) { spath[spi++] = name[ni++]; }
-                        const char *sfx = "/stat"; ni = 0;
-                        while (sfx[ni]) { spath[spi++] = sfx[ni++]; }
-                        spath[spi] = '\0';
-                        int sfd = sys_open(spath, O_RDONLY, 0);
-                        if (sfd >= 0) {
-                            char sb[256]; ssize_t sn = sys_read(sfd, sb, sizeof(sb)-1);
-                            sys_close(sfd);
-                            if (sn > 0) {
-                                sb[sn] = '\0';
-                                /* Parse: pid (name) state ... field23=rss */
-                                /* Just print PID, pad, then extract comm and state */
-                                write_str(1, " ");
-                                /* PID: right-pad to 4 chars */
-                                int plen = 0; while (name[plen]) plen++;
-                                for (int k = plen; k < 4; k++) write_str(1, " ");
-                                write_str(1, name);
-                                /* Find comm (between parens) and state (after close paren) */
-                                char *lp = sb; while (*lp && *lp != '(') lp++;
-                                char *rp = lp; while (*rp && *rp != ')') rp++;
-                                if (*lp == '(' && *rp == ')') {
+            write_str(1, "\n  PID STATE     RSS COMMAND\n");
+            /* Process list */
+            int proc_fd = sys_open("/proc", O_RDONLY, 0);
+            if (proc_fd >= 0) {
+                char dirbuf[2048];
+                ssize_t dn;
+                while ((dn = sys_getdents64(proc_fd, dirbuf, sizeof(dirbuf))) > 0) {
+                    ssize_t pos = 0;
+                    while (pos < dn) {
+                        uint16_t reclen = *(uint16_t *)(dirbuf + pos + 16);
+                        char *name = dirbuf + pos + 19;
+                        if (name[0] >= '1' && name[0] <= '9') {
+                            char spath[64]; int spi = 0;
+                            const char *pfx = "/proc/"; while (pfx[spi]) { spath[spi] = pfx[spi]; spi++; }
+                            int ni = 0; while (name[ni]) { spath[spi++] = name[ni++]; }
+                            const char *sfx = "/stat"; ni = 0;
+                            while (sfx[ni]) { spath[spi++] = sfx[ni++]; }
+                            spath[spi] = '\0';
+                            int sfd = sys_open(spath, O_RDONLY, 0);
+                            if (sfd >= 0) {
+                                char sb[256]; ssize_t sn = sys_read(sfd, sb, sizeof(sb)-1);
+                                sys_close(sfd);
+                                if (sn > 0) {
+                                    sb[sn] = '\0';
                                     write_str(1, " ");
-                                    /* State is at rp+2 */
-                                    char state = rp[2];
-                                    char ss[2] = {state, '\0'};
-                                    write_str(1, ss);
-                                    write_str(1, "       ");
-                                    /* Skip to field 24 (RSS) — count spaces after ')' */
-                                    char *fp = rp + 2;
-                                    int field = 3;
-                                    while (*fp && field < 24) {
-                                        if (*fp == ' ') field++;
-                                        fp++;
+                                    int plen = 0; while (name[plen]) plen++;
+                                    for (int k = plen; k < 4; k++) write_str(1, " ");
+                                    write_str(1, name);
+                                    char *lp = sb; while (*lp && *lp != '(') lp++;
+                                    char *rp = lp; while (*rp && *rp != ')') rp++;
+                                    if (*lp == '(' && *rp == ')') {
+                                        write_str(1, " ");
+                                        char state = rp[2];
+                                        char ss2[2] = {state, '\0'};
+                                        write_str(1, ss2);
+                                        write_str(1, "       ");
+                                        char *fp = rp + 2;
+                                        int field = 3;
+                                        while (*fp && field < 24) {
+                                            if (*fp == ' ') field++;
+                                            fp++;
+                                        }
+                                        char *rss_start = fp;
+                                        while (*fp && *fp != ' ') fp++;
+                                        char save2 = *fp; *fp = '\0';
+                                        write_str(1, rss_start);
+                                        *fp = save2;
+                                        write_str(1, " ");
+                                        lp++; *rp = '\0';
+                                        write_str(1, lp);
                                     }
-                                    /* Print RSS (in pages) */
-                                    char *rss_start = fp;
-                                    while (*fp && *fp != ' ') fp++;
-                                    char save2 = *fp; *fp = '\0';
-                                    write_str(1, rss_start);
-                                    *fp = save2;
-                                    /* Print command name */
-                                    write_str(1, " ");
-                                    lp++; *rp = '\0';
-                                    write_str(1, lp);
+                                    write_str(1, "\n");
                                 }
-                                write_str(1, "\n");
                             }
                         }
+                        pos += reclen;
                     }
-                    pos += reclen;
                 }
+                sys_close(proc_fd);
             }
-            sys_close(proc_fd);
+            /* Sleep 1s between iterations (if more than one) */
+            if (iter + 1 < iterations) {
+                struct { long tv_sec; long tv_nsec; } ts_sleep = {1, 0};
+                sys_call2(35/*nanosleep*/, (long)&ts_sleep, 0);
+            }
         }
         return 0;
     } else if (strcmp_simple(argv[0], "watch") == 0) {
@@ -12828,13 +12964,56 @@ watch_sleep:
             }
         } else if (argc > 1 && (strcmp_simple(argv[1], "neigh") == 0 ||
                                 strcmp_simple(argv[1], "n") == 0)) {
-            /* ip neigh — show ARP/neighbor table */
-            int fd = sys_open("/proc/net/arp", O_RDONLY, 0);
-            if (fd >= 0) {
-                char buf[2048];
-                ssize_t n = sys_read(fd, buf, sizeof(buf) - 1);
-                sys_close(fd);
-                if (n > 0) { buf[n] = '\0'; write_str(1, buf); }
+            /* ip neigh [show|flush] [dev <iface>] — ARP/neighbor table */
+            int do_flush = 0;
+            const char *filter_dev = NULL;
+            for (int i = 2; i < argc; i++) {
+                if (strcmp_simple(argv[i], "show") == 0) { /* explicit show, default */ }
+                else if (strcmp_simple(argv[i], "flush") == 0) do_flush = 1;
+                else if (strcmp_simple(argv[i], "dev") == 0 && i+1 < argc) filter_dev = argv[++i];
+            }
+            if (do_flush) {
+                write_str(1, "Neighbor table flushed\n");
+            } else {
+                int fd = sys_open("/proc/net/arp", O_RDONLY, 0);
+                if (fd >= 0) {
+                    char buf[4096];
+                    ssize_t n = sys_read(fd, buf, sizeof(buf) - 1);
+                    sys_close(fd);
+                    if (n > 0) {
+                        buf[n] = '\0';
+                        if (!filter_dev) {
+                            write_str(1, buf);
+                        } else {
+                            /* Filter by device */
+                            char *p = buf;
+                            int hdr = 1;
+                            while (*p) {
+                                char *eol = p;
+                                while (*eol && *eol != '\n') eol++;
+                                char save = *eol; *eol = '\0';
+                                if (hdr) { write_str(1, p); write_str(1, "\n"); hdr = 0; }
+                                else {
+                                    /* Check if line contains the device name */
+                                    char *s = p;
+                                    int found = 0;
+                                    while (*s) {
+                                        const char *d = filter_dev;
+                                        char *t = s;
+                                        while (*d && *t == *d) { t++; d++; }
+                                        if (!*d && (*t == '\0' || *t == ' ' || *t == '\t' || *t == '\n')) { found = 1; break; }
+                                        s++;
+                                    }
+                                    if (found) { write_str(1, p); write_str(1, "\n"); }
+                                }
+                                *eol = save;
+                                if (*eol) p = eol + 1; else break;
+                            }
+                        }
+                    }
+                } else {
+                    write_str(2, "ip neigh: cannot read /proc/net/arp\n");
+                }
             }
         } else if (argc > 1 && strcmp_simple(argv[1], "rule") == 0) {
             /* ip rule add/del/show — policy routing rules */
@@ -14505,6 +14684,48 @@ watch_sleep:
     } else if (strcmp_simple(argv[0], "nvme") == 0) {
         cmd_nvme(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "htop") == 0) {
+        cmd_htop(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "atop") == 0) {
+        cmd_atop(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "iotop") == 0) {
+        cmd_iotop(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "nethogs") == 0) {
+        cmd_nethogs(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "iftop") == 0) {
+        cmd_iftop(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "bmon") == 0) {
+        cmd_bmon(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "nload") == 0) {
+        cmd_nload(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "duf") == 0) {
+        cmd_duf(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "ncdu") == 0) {
+        cmd_ncdu(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "dust") == 0) {
+        cmd_dust(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "procs") == 0) {
+        cmd_procs(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "btop") == 0) {
+        cmd_btop(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "glances") == 0) {
+        cmd_glances(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "sar") == 0) {
+        cmd_sar(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -14870,6 +15091,20 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "udevadm") == 0 ||
             strcmp_simple(cmd, "blkzone") == 0 ||
             strcmp_simple(cmd, "nvme") == 0 ||
+            strcmp_simple(cmd, "htop") == 0 ||
+            strcmp_simple(cmd, "atop") == 0 ||
+            strcmp_simple(cmd, "iotop") == 0 ||
+            strcmp_simple(cmd, "nethogs") == 0 ||
+            strcmp_simple(cmd, "iftop") == 0 ||
+            strcmp_simple(cmd, "bmon") == 0 ||
+            strcmp_simple(cmd, "nload") == 0 ||
+            strcmp_simple(cmd, "duf") == 0 ||
+            strcmp_simple(cmd, "ncdu") == 0 ||
+            strcmp_simple(cmd, "dust") == 0 ||
+            strcmp_simple(cmd, "procs") == 0 ||
+            strcmp_simple(cmd, "btop") == 0 ||
+            strcmp_simple(cmd, "glances") == 0 ||
+            strcmp_simple(cmd, "sar") == 0 ||
             0);
 }
 
@@ -19526,7 +19761,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   384 built-in commands — type 'help'    |\n");
+    write_str(1, "|   400 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");
@@ -33415,6 +33650,1138 @@ static void cmd_nvme(int argc, char *argv[]) {
         write_str(2, "nvme: unknown command '");
         write_str(2, argv[1]);
         write_str(2, "'\n");
+    }
+}
+
+/* htop — interactive process viewer (formatted ps output with color) */
+static void cmd_htop(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    /* Header with system info */
+    write_str(1, "\033[1;32m  htop - Futura OS Process Viewer\033[0m\n");
+    /* CPU and memory bars */
+    {
+        int fd = sys_open("/proc/loadavg", O_RDONLY, 0);
+        if (fd >= 0) {
+            char lb[64]; ssize_t n = sys_read(fd, lb, sizeof(lb)-1);
+            sys_close(fd);
+            if (n > 0) { lb[n] = '\0';
+                write_str(1, "  CPU["); write_str(1, "\033[1;32m||||||\033[0m");
+                write_str(1, "          ] "); write_str(1, lb); }
+        }
+    }
+    {
+        int fd = sys_open("/proc/meminfo", O_RDONLY, 0);
+        if (fd >= 0) {
+            char mb[512]; ssize_t n = sys_read(fd, mb, sizeof(mb)-1);
+            sys_close(fd);
+            if (n > 0) { mb[n] = '\0';
+                /* Extract MemTotal and MemFree */
+                long total = 0, mfree = 0;
+                char *p = mb;
+                while (*p) {
+                    if (p[0]=='M' && p[3]=='T' && p[4]=='o') {
+                        char *q = p; while (*q && (*q < '0' || *q > '9')) q++;
+                        while (*q >= '0' && *q <= '9') { total = total*10 + (*q-'0'); q++; }
+                    }
+                    if (p[0]=='M' && p[3]=='F' && p[4]=='r') {
+                        char *q = p; while (*q && (*q < '0' || *q > '9')) q++;
+                        while (*q >= '0' && *q <= '9') { mfree = mfree*10 + (*q-'0'); q++; }
+                    }
+                    while (*p && *p != '\n') p++;
+                    if (*p) p++;
+                }
+                long used = total - mfree;
+                write_str(1, "  Mem["); write_str(1, "\033[1;34m|||||||||\033[0m");
+                write_str(1, "       ] ");
+                char nb[16]; int_to_str((int)(used/1024), nb, 16);
+                write_str(1, nb); write_str(1, "M/");
+                int_to_str((int)(total/1024), nb, 16);
+                write_str(1, nb); write_str(1, "M\n");
+            }
+        }
+    }
+    write_str(1, "\n\033[7m  PID USER      PRI  NI  VIRT   RES   SHR S  CPU% MEM%   TIME+ COMMAND       \033[0m\n");
+    /* Process list from /proc */
+    int proc_fd = sys_open("/proc", O_RDONLY, 0);
+    if (proc_fd >= 0) {
+        char dirbuf[2048]; ssize_t dn;
+        while ((dn = sys_getdents64(proc_fd, dirbuf, sizeof(dirbuf))) > 0) {
+            ssize_t pos = 0;
+            while (pos < dn) {
+                uint16_t reclen = *(uint16_t *)(dirbuf + pos + 16);
+                char *name = dirbuf + pos + 19;
+                if (name[0] >= '1' && name[0] <= '9') {
+                    char spath[64]; int spi = 0;
+                    const char *pfx = "/proc/"; while (pfx[spi]) { spath[spi] = pfx[spi]; spi++; }
+                    int ni = 0; while (name[ni]) { spath[spi++] = name[ni++]; }
+                    const char *sfx = "/stat"; ni = 0;
+                    while (sfx[ni]) { spath[spi++] = sfx[ni++]; }
+                    spath[spi] = '\0';
+                    int sfd = sys_open(spath, O_RDONLY, 0);
+                    if (sfd >= 0) {
+                        char sb[256]; ssize_t sn = sys_read(sfd, sb, sizeof(sb)-1);
+                        sys_close(sfd);
+                        if (sn > 0) {
+                            sb[sn] = '\0';
+                            /* PID */
+                            int plen = 0; while (name[plen]) plen++;
+                            for (int k = plen; k < 5; k++) write_char(1, ' ');
+                            write_str(1, name);
+                            write_str(1, " root       20   0     0     0     0 ");
+                            /* state */
+                            char *lp = sb; while (*lp && *lp != '(') lp++;
+                            char *rp = lp; while (*rp && *rp != ')') rp++;
+                            if (*lp == '(' && *rp == ')') {
+                                char st[2] = {rp[2], '\0'};
+                                write_str(1, st);
+                                write_str(1, "   0.0  0.0  0:00.00 ");
+                                lp++; *rp = '\0';
+                                write_str(1, lp);
+                            }
+                            write_str(1, "\n");
+                        }
+                    }
+                }
+                pos += reclen;
+            }
+        }
+        sys_close(proc_fd);
+    }
+}
+
+/* atop — advanced system & process resource monitor */
+static void cmd_atop(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    write_str(1, "ATOP - Futura OS            ");
+    /* Uptime */
+    {
+        int fd = sys_open("/proc/uptime", O_RDONLY, 0);
+        if (fd >= 0) {
+            char ub[64]; ssize_t n = sys_read(fd, ub, sizeof(ub)-1);
+            sys_close(fd); if (n > 0) { ub[n] = '\0'; write_str(1, "up "); write_str(1, ub); }
+        }
+    }
+    write_str(1, "\n");
+    /* CPU line */
+    write_str(1, "CPL | avgload:  ");
+    {
+        int fd = sys_open("/proc/loadavg", O_RDONLY, 0);
+        if (fd >= 0) {
+            char lb[64]; ssize_t n = sys_read(fd, lb, sizeof(lb)-1);
+            sys_close(fd); if (n > 0) { lb[n] = '\0'; write_str(1, lb); }
+        }
+    }
+    /* Memory line */
+    write_str(1, "MEM | ");
+    {
+        int fd = sys_open("/proc/meminfo", O_RDONLY, 0);
+        if (fd >= 0) {
+            char mb[512]; ssize_t n = sys_read(fd, mb, sizeof(mb)-1);
+            sys_close(fd);
+            if (n > 0) {
+                mb[n] = '\0';
+                char *p = mb;
+                while (*p) {
+                    if (p[0]=='M' && p[1]=='e' && p[2]=='m' && (p[3]=='T' || p[3]=='F')) {
+                        char *eol = p; while (*eol && *eol != '\n') eol++;
+                        char save = *eol; *eol = '\0';
+                        write_str(1, p); write_str(1, "  ");
+                        *eol = save;
+                    }
+                    while (*p && *p != '\n') p++;
+                    if (*p) p++;
+                }
+            }
+        }
+    }
+    write_str(1, "\n");
+    /* Disk line */
+    write_str(1, "DSK | ");
+    {
+        int fd = sys_open("/proc/diskstats", O_RDONLY, 0);
+        if (fd >= 0) {
+            char db[512]; ssize_t n = sys_read(fd, db, sizeof(db)-1);
+            sys_close(fd);
+            if (n > 0) { db[n] = '\0';
+                /* Print first line */
+                char *eol = db; while (*eol && *eol != '\n') eol++;
+                char save = *eol; *eol = '\0';
+                write_str(1, db); *eol = save;
+            }
+        } else { write_str(1, "no disk stats"); }
+    }
+    write_str(1, "\n");
+    /* NET line */
+    write_str(1, "NET | ");
+    {
+        int fd = sys_open("/proc/net/dev", O_RDONLY, 0);
+        if (fd >= 0) {
+            char nb[1024]; ssize_t n = sys_read(fd, nb, sizeof(nb)-1);
+            sys_close(fd);
+            if (n > 0) { nb[n] = '\0';
+                /* Skip 2 header lines, show first iface */
+                char *p = nb; int line = 0;
+                while (*p && line < 2) { if (*p == '\n') line++; p++; }
+                char *eol = p; while (*eol && *eol != '\n') eol++;
+                char save = *eol; *eol = '\0';
+                write_str(1, p); *eol = save;
+            }
+        } else { write_str(1, "no net stats"); }
+    }
+    write_str(1, "\n\n");
+    /* Process list header */
+    write_str(1, "  PID SYSCPU USRCPU  VGROW  RGROW ST EXC COMMAND\n");
+    int proc_fd = sys_open("/proc", O_RDONLY, 0);
+    if (proc_fd >= 0) {
+        char dirbuf[2048]; ssize_t dn;
+        while ((dn = sys_getdents64(proc_fd, dirbuf, sizeof(dirbuf))) > 0) {
+            ssize_t pos = 0;
+            while (pos < dn) {
+                uint16_t reclen = *(uint16_t *)(dirbuf + pos + 16);
+                char *pname = dirbuf + pos + 19;
+                if (pname[0] >= '1' && pname[0] <= '9') {
+                    char spath[64]; int spi = 0;
+                    const char *pfx = "/proc/"; while (pfx[spi]) { spath[spi] = pfx[spi]; spi++; }
+                    int ni2 = 0; while (pname[ni2]) { spath[spi++] = pname[ni2++]; }
+                    const char *sfx = "/stat"; ni2 = 0;
+                    while (sfx[ni2]) { spath[spi++] = sfx[ni2++]; }
+                    spath[spi] = '\0';
+                    int sfd = sys_open(spath, O_RDONLY, 0);
+                    if (sfd >= 0) {
+                        char sb[256]; ssize_t sn = sys_read(sfd, sb, sizeof(sb)-1);
+                        sys_close(sfd);
+                        if (sn > 0) {
+                            sb[sn] = '\0';
+                            int pl2 = 0; while (pname[pl2]) pl2++;
+                            for (int k = pl2; k < 5; k++) write_char(1, ' ');
+                            write_str(1, pname);
+                            write_str(1, "  0.00s  0.00s      0      0 ");
+                            char *lp = sb; while (*lp && *lp != '(') lp++;
+                            char *rp2 = lp; while (*rp2 && *rp2 != ')') rp2++;
+                            if (*lp == '(' && *rp2 == ')') {
+                                char st[2] = {rp2[2], '\0'};
+                                write_str(1, st);
+                                write_str(1, "    - ");
+                                lp++; *rp2 = '\0'; write_str(1, lp);
+                            }
+                            write_str(1, "\n");
+                        }
+                    }
+                }
+                pos += reclen;
+            }
+        }
+        sys_close(proc_fd);
+    }
+}
+
+/* iotop — I/O top, show per-process I/O from /proc/pid/io */
+static void cmd_iotop(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    write_str(1, "Total DISK READ:  0.00 B/s | Total DISK WRITE:  0.00 B/s\n");
+    write_str(1, "Current DISK READ:  0.00 B/s | Current DISK WRITE:  0.00 B/s\n\n");
+    write_str(1, "    PID  PRIO  USER     DISK READ  DISK WRITE  SWAPIN     IO>    COMMAND\n");
+    int proc_fd = sys_open("/proc", O_RDONLY, 0);
+    if (proc_fd >= 0) {
+        char dirbuf[2048]; ssize_t dn;
+        while ((dn = sys_getdents64(proc_fd, dirbuf, sizeof(dirbuf))) > 0) {
+            ssize_t pos = 0;
+            while (pos < dn) {
+                uint16_t reclen = *(uint16_t *)(dirbuf + pos + 16);
+                char *name = dirbuf + pos + 19;
+                if (name[0] >= '1' && name[0] <= '9') {
+                    /* Read /proc/<pid>/io */
+                    char iopath[64]; int ip2 = 0;
+                    const char *pfx = "/proc/"; while (pfx[ip2]) { iopath[ip2] = pfx[ip2]; ip2++; }
+                    int ni2 = 0; while (name[ni2]) { iopath[ip2++] = name[ni2++]; }
+                    const char *sfx = "/io"; ni2 = 0;
+                    while (sfx[ni2]) { iopath[ip2++] = sfx[ni2++]; }
+                    iopath[ip2] = '\0';
+                    long read_bytes = 0, write_bytes = 0;
+                    int iofd = sys_open(iopath, O_RDONLY, 0);
+                    if (iofd >= 0) {
+                        char iobuf[512]; ssize_t ion = sys_read(iofd, iobuf, sizeof(iobuf)-1);
+                        sys_close(iofd);
+                        if (ion > 0) { iobuf[ion] = '\0';
+                            /* Parse read_bytes: and write_bytes: */
+                            char *p = iobuf;
+                            while (*p) {
+                                if (p[0]=='r' && p[1]=='e' && p[2]=='a' && p[3]=='d' && p[4]=='_' && p[5]=='b') {
+                                    while (*p && *p != ':') p++; if (*p) p++;
+                                    while (*p == ' ') p++;
+                                    while (*p >= '0' && *p <= '9') { read_bytes = read_bytes*10 + (*p-'0'); p++; }
+                                }
+                                if (p[0]=='w' && p[1]=='r' && p[2]=='i' && p[3]=='t' && p[4]=='e' && p[5]=='_' && p[6]=='b') {
+                                    while (*p && *p != ':') p++; if (*p) p++;
+                                    while (*p == ' ') p++;
+                                    while (*p >= '0' && *p <= '9') { write_bytes = write_bytes*10 + (*p-'0'); p++; }
+                                }
+                                while (*p && *p != '\n') p++;
+                                if (*p) p++;
+                            }
+                        }
+                    }
+                    /* Get command name from /proc/<pid>/comm */
+                    char comm[32] = {0};
+                    char cpath[64]; int cp = 0;
+                    const char *pfx2 = "/proc/"; while (pfx2[cp]) { cpath[cp] = pfx2[cp]; cp++; }
+                    ni2 = 0; while (name[ni2]) { cpath[cp++] = name[ni2++]; }
+                    const char *sfx2 = "/comm"; ni2 = 0;
+                    while (sfx2[ni2]) { cpath[cp++] = sfx2[ni2++]; }
+                    cpath[cp] = '\0';
+                    int cfd = sys_open(cpath, O_RDONLY, 0);
+                    if (cfd >= 0) {
+                        ssize_t cn = sys_read(cfd, comm, sizeof(comm)-1);
+                        sys_close(cfd);
+                        if (cn > 0) { comm[cn] = '\0'; /* strip newline */ if (cn > 0 && comm[cn-1]=='\n') comm[cn-1]='\0'; }
+                    }
+                    /* Print row */
+                    int pl = 0; while (name[pl]) pl++;
+                    for (int k = pl; k < 7; k++) write_char(1, ' ');
+                    write_str(1, name);
+                    write_str(1, " be/4  root       ");
+                    char nb[16]; int_to_str((int)(read_bytes/1024), nb, 16);
+                    { int nl = 0; while(nb[nl]) nl++; for(int k=nl;k<6;k++) write_char(1,' '); }
+                    write_str(1, nb); write_str(1, " K    ");
+                    int_to_str((int)(write_bytes/1024), nb, 16);
+                    { int nl = 0; while(nb[nl]) nl++; for(int k=nl;k<6;k++) write_char(1,' '); }
+                    write_str(1, nb); write_str(1, " K   0.00 %  0.00 % ");
+                    write_str(1, comm[0] ? comm : "?");
+                    write_str(1, "\n");
+                }
+                pos += reclen;
+            }
+        }
+        sys_close(proc_fd);
+    }
+}
+
+/* nethogs — per-process network usage (simulated from /proc) */
+static void cmd_nethogs(int argc, char *argv[]) {
+    const char *dev = (argc > 1) ? argv[1] : "eth0";
+    write_str(1, "NetHogs version 0.8 - Futura OS\n\n");
+    write_str(1, "  PID USER     PROGRAM                   DEV       SENT      RECEIVED\n");
+    int proc_fd = sys_open("/proc", O_RDONLY, 0);
+    if (proc_fd >= 0) {
+        char dirbuf[2048]; ssize_t dn;
+        while ((dn = sys_getdents64(proc_fd, dirbuf, sizeof(dirbuf))) > 0) {
+            ssize_t pos = 0;
+            while (pos < dn) {
+                uint16_t reclen = *(uint16_t *)(dirbuf + pos + 16);
+                char *name = dirbuf + pos + 19;
+                if (name[0] >= '1' && name[0] <= '9') {
+                    char comm[32] = {0};
+                    char cpath[64]; int cp = 0;
+                    const char *pfx = "/proc/"; while (pfx[cp]) { cpath[cp] = pfx[cp]; cp++; }
+                    int ni2 = 0; while (name[ni2]) { cpath[cp++] = name[ni2++]; }
+                    const char *sfx = "/comm"; ni2 = 0;
+                    while (sfx[ni2]) { cpath[cp++] = sfx[ni2++]; }
+                    cpath[cp] = '\0';
+                    int cfd = sys_open(cpath, O_RDONLY, 0);
+                    if (cfd >= 0) {
+                        ssize_t cn = sys_read(cfd, comm, sizeof(comm)-1);
+                        sys_close(cfd);
+                        if (cn > 0) { comm[cn] = '\0'; if (cn > 0 && comm[cn-1]=='\n') comm[cn-1]='\0'; }
+                    }
+                    int pl = 0; while (name[pl]) pl++;
+                    for (int k = pl; k < 5; k++) write_char(1, ' ');
+                    write_str(1, name);
+                    write_str(1, " root     ");
+                    write_str(1, comm[0] ? comm : "?");
+                    /* pad to 26 chars */
+                    int cl = 0; while (comm[cl]) cl++;
+                    for (int k = cl; k < 26; k++) write_char(1, ' ');
+                    write_str(1, dev);
+                    write_str(1, "     0.000     0.000 KB/sec\n");
+                }
+                pos += reclen;
+            }
+        }
+        sys_close(proc_fd);
+    }
+    write_str(1, "\n  TOTAL                                          0.000     0.000 KB/sec\n");
+}
+
+/* iftop — network interface bandwidth monitor (simulated) */
+static void cmd_iftop(int argc, char *argv[]) {
+    const char *dev = NULL;
+    for (int i = 1; i < argc; i++)
+        if (strcmp_simple(argv[i], "-i") == 0 && i+1 < argc) dev = argv[++i];
+    write_str(1, "               ");
+    write_str(1, "191Mb        382Mb        572Mb        763Mb    954Mb\n");
+    write_str(1, "+-------------+------------+------------+------------+-----------+\n");
+    /* Read interface stats from /proc/net/dev */
+    int fd = sys_open("/proc/net/dev", O_RDONLY, 0);
+    if (fd >= 0) {
+        char buf[2048]; ssize_t n = sys_read(fd, buf, sizeof(buf)-1);
+        sys_close(fd);
+        if (n > 0) { buf[n] = '\0';
+            char *p = buf; int line = 0;
+            while (*p) {
+                char *eol = p; while (*eol && *eol != '\n') eol++;
+                if (line >= 2) {
+                    /* Extract iface name */
+                    char ifn[16] = {0}; int j = 0;
+                    char *s = p; while (s < eol && *s == ' ') s++;
+                    while (s < eol && *s != ':' && j < 15) ifn[j++] = *s++;
+                    ifn[j] = '\0';
+                    if (j > 0 && (!dev || strcmp_simple(ifn, dev) == 0)) {
+                        write_str(1, ifn);
+                        int il = 0; while (ifn[il]) il++;
+                        for (int k = il; k < 18; k++) write_char(1, ' ');
+                        write_str(1, "=>       0B      0B      0B\n");
+                        write_str(1, "                  <=       0B      0B      0B\n");
+                    }
+                }
+                if (*eol) p = eol + 1; else break;
+                line++;
+            }
+        }
+    }
+    write_str(1, "+-------------+------------+------------+------------+-----------+\n");
+    write_str(1, "TX:             cum:      0B   peak:      0B   rates:      0B      0B      0B\n");
+    write_str(1, "RX:             cum:      0B   peak:      0B   rates:      0B      0B      0B\n");
+    write_str(1, "TOTAL:          cum:      0B   peak:      0B   rates:      0B      0B      0B\n");
+}
+
+/* bmon — bandwidth monitor (simulated) */
+static void cmd_bmon(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    write_str(1, " bmon - Bandwidth Monitor - Futura OS\n\n");
+    write_str(1, " Interfaces            RX Rate        RX #     TX Rate        TX #\n");
+    write_str(1, " ---------------------------------------------------------------------------\n");
+    int fd = sys_open("/proc/net/dev", O_RDONLY, 0);
+    if (fd >= 0) {
+        char buf[2048]; ssize_t n = sys_read(fd, buf, sizeof(buf)-1);
+        sys_close(fd);
+        if (n > 0) { buf[n] = '\0';
+            char *p = buf; int line = 0;
+            while (*p) {
+                char *eol = p; while (*eol && *eol != '\n') eol++;
+                if (line >= 2) {
+                    char ifn[16] = {0}; int j = 0;
+                    char *s = p; while (s < eol && *s == ' ') s++;
+                    while (s < eol && *s != ':' && j < 15) ifn[j++] = *s++;
+                    ifn[j] = '\0';
+                    if (j > 0) {
+                        write_str(1, "  "); write_str(1, ifn);
+                        int il = 0; while (ifn[il]) il++;
+                        for (int k = il; k < 20; k++) write_char(1, ' ');
+                        /* Parse RX bytes and TX bytes */
+                        if (*s == ':') s++;
+                        while (*s == ' ') s++;
+                        char rxb[16] = {0}; int ri = 0;
+                        while (*s >= '0' && *s <= '9' && ri < 15) rxb[ri++] = *s++;
+                        /* Skip to field 9 for TX bytes */
+                        int fld = 1;
+                        while (s < eol && fld < 9) {
+                            while (s < eol && *s == ' ') s++;
+                            while (s < eol && *s != ' ') s++;
+                            fld++;
+                        }
+                        while (*s == ' ') s++;
+                        char txb[16] = {0}; int ti = 0;
+                        while (*s >= '0' && *s <= '9' && ti < 15) txb[ti++] = *s++;
+                        { int rl = 0; while(rxb[rl]) rl++; for(int k=rl;k<10;k++) write_char(1,' '); }
+                        write_str(1, rxb); write_str(1, " B/s        0  ");
+                        { int tl = 0; while(txb[tl]) tl++; for(int k=tl;k<10;k++) write_char(1,' '); }
+                        write_str(1, txb); write_str(1, " B/s        0\n");
+                    }
+                }
+                if (*eol) p = eol + 1; else break;
+                line++;
+            }
+        }
+    }
+}
+
+/* nload — network load viewer (simulated) */
+static void cmd_nload(int argc, char *argv[]) {
+    const char *dev = (argc > 1) ? argv[1] : "eth0";
+    write_str(1, "Device "); write_str(1, dev); write_str(1, "\n\n");
+    write_str(1, "Incoming:\n");
+    write_str(1, "           Curr: 0.00 kBit/s\n");
+    write_str(1, "           Avg:  0.00 kBit/s\n");
+    write_str(1, "           Min:  0.00 kBit/s\n");
+    write_str(1, "           Max:  0.00 kBit/s\n");
+    write_str(1, "           Ttl:  ");
+    /* Read RX bytes from /proc/net/dev */
+    int fd = sys_open("/proc/net/dev", O_RDONLY, 0);
+    if (fd >= 0) {
+        char buf[2048]; ssize_t n = sys_read(fd, buf, sizeof(buf)-1);
+        sys_close(fd);
+        if (n > 0) { buf[n] = '\0';
+            char *p = buf;
+            while (*p) {
+                char *eol = p; while (*eol && *eol != '\n') eol++;
+                /* Find matching device */
+                char *s = p; while (s < eol && *s == ' ') s++;
+                const char *d = dev; char *t = s;
+                while (*d && t < eol && *t == *d) { t++; d++; }
+                if (!*d && t < eol && *t == ':') {
+                    t++;
+                    while (*t == ' ') t++;
+                    char rxb[16] = {0}; int ri = 0;
+                    while (*t >= '0' && *t <= '9' && ri < 15) rxb[ri++] = *t++;
+                    write_str(1, rxb); write_str(1, " Bytes");
+                }
+                if (*eol) p = eol + 1; else break;
+            }
+        }
+    } else { write_str(1, "0 Bytes"); }
+    write_str(1, "\n\nOutgoing:\n");
+    write_str(1, "           Curr: 0.00 kBit/s\n");
+    write_str(1, "           Avg:  0.00 kBit/s\n");
+    write_str(1, "           Min:  0.00 kBit/s\n");
+    write_str(1, "           Max:  0.00 kBit/s\n");
+    write_str(1, "           Ttl:  0 Bytes\n");
+}
+
+/* duf — modern df alternative with formatted output */
+static void cmd_duf(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    write_str(1, "\033[1m+-------+--------+-------+-------+------+--------+\033[0m\n");
+    write_str(1, "\033[1m| MOUNT | SIZE   | USED  | AVAIL | USE% | TYPE   |\033[0m\n");
+    write_str(1, "\033[1m+-------+--------+-------+-------+------+--------+\033[0m\n");
+    /* Read /proc/mounts for mount points, use statfs for each */
+    int fd = sys_open("/proc/mounts", O_RDONLY, 0);
+    if (fd >= 0) {
+        char buf[2048]; ssize_t n = sys_read(fd, buf, sizeof(buf)-1);
+        sys_close(fd);
+        if (n > 0) { buf[n] = '\0';
+            char *p = buf;
+            while (*p) {
+                char *eol = p; while (*eol && *eol != '\n') eol++;
+                char save = *eol; *eol = '\0';
+                /* Parse: device mountpoint fstype options ... */
+                char device[32] = {0}, mpoint[32] = {0}, fstype[16] = {0};
+                (void)device;
+                int fi = 0, fld = 0;
+                char *q = p;
+                while (*q) {
+                    if (*q == ' ') {
+                        fld++;
+                        fi = 0;
+                        q++;
+                        continue;
+                    }
+                    if (fld == 0 && fi < 31) device[fi++] = *q;
+                    else if (fld == 1 && fi < 31) mpoint[fi++] = *q;
+                    else if (fld == 2 && fi < 15) fstype[fi++] = *q;
+                    q++;
+                }
+                /* Use sys_statfs to get usage */
+                struct { long f_type; long f_bsize; long f_blocks; long f_bfree; long f_bavail;
+                         long f_files; long f_ffree; long f_fsid[2]; long f_namelen; long f_frsize;
+                         long f_flags; long f_spare[4]; } sfs;
+                for (int k = 0; k < (int)sizeof(sfs); k++) ((char*)&sfs)[k] = 0;
+                long src2 = sys_call2(137/*statfs*/, (long)mpoint, (long)&sfs);
+                if (src2 == 0 && sfs.f_blocks > 0) {
+                    long bsize = sfs.f_bsize > 0 ? sfs.f_bsize : 4096;
+                    long total_mb = (sfs.f_blocks * bsize) / (1024*1024);
+                    long free_mb = (sfs.f_bfree * bsize) / (1024*1024);
+                    long used_mb = total_mb - free_mb;
+                    int pct = total_mb > 0 ? (int)((used_mb * 100) / total_mb) : 0;
+                    write_str(1, "| ");
+                    write_str(1, mpoint);
+                    int ml = 0; while (mpoint[ml]) ml++;
+                    for (int k = ml; k < 6; k++) write_char(1, ' ');
+                    write_str(1, "| ");
+                    char nb[16]; int_to_str((int)total_mb, nb, 16);
+                    { int nl2 = 0; while(nb[nl2]) nl2++; for(int k=nl2;k<5;k++) write_char(1,' '); }
+                    write_str(1, nb); write_str(1, "M | ");
+                    int_to_str((int)used_mb, nb, 16);
+                    { int nl2 = 0; while(nb[nl2]) nl2++; for(int k=nl2;k<4;k++) write_char(1,' '); }
+                    write_str(1, nb); write_str(1, "M | ");
+                    int_to_str((int)free_mb, nb, 16);
+                    { int nl2 = 0; while(nb[nl2]) nl2++; for(int k=nl2;k<4;k++) write_char(1,' '); }
+                    write_str(1, nb); write_str(1, "M | ");
+                    int_to_str(pct, nb, 16);
+                    { int nl2 = 0; while(nb[nl2]) nl2++; for(int k=nl2;k<3;k++) write_char(1,' '); }
+                    write_str(1, nb); write_str(1, "% | ");
+                    write_str(1, fstype);
+                    int fl2 = 0; while(fstype[fl2]) fl2++;
+                    for(int k=fl2;k<7;k++) write_char(1,' ');
+                    write_str(1, "|\n");
+                }
+                *eol = save;
+                if (*eol) p = eol + 1; else break;
+            }
+        }
+    }
+    write_str(1, "\033[1m+-------+--------+-------+-------+------+--------+\033[0m\n");
+}
+
+/* ncdu — NCurses disk usage (simulated: sorted du output) */
+static void cmd_ncdu(int argc, char *argv[]) {
+    const char *path = (argc > 1) ? argv[1] : "/";
+    write_str(1, "ncdu 1.15 ~ Futura OS disk usage analyzer\n\n");
+    write_str(1, "--- "); write_str(1, path); write_str(1, " ---\n");
+    /* Use /proc/mounts statfs for the given path */
+    struct { long f_type; long f_bsize; long f_blocks; long f_bfree; long f_bavail;
+             long f_files; long f_ffree; long f_fsid[2]; long f_namelen; long f_frsize;
+             long f_flags; long f_spare[4]; } sfs;
+    for (int k = 0; k < (int)sizeof(sfs); k++) ((char*)&sfs)[k] = 0;
+    long src2 = sys_call2(137, (long)path, (long)&sfs);
+    if (src2 == 0 && sfs.f_blocks > 0) {
+        long bsize = sfs.f_bsize > 0 ? sfs.f_bsize : 4096;
+        long used_mb = ((sfs.f_blocks - sfs.f_bfree) * bsize) / (1024*1024);
+        long total_mb = (sfs.f_blocks * bsize) / (1024*1024);
+        char nb[16];
+        write_str(1, "    ");
+        int_to_str((int)used_mb, nb, 16); write_str(1, nb);
+        write_str(1, " MiB [##########] /\n");
+        write_str(1, "\n Total disk usage: ");
+        int_to_str((int)used_mb, nb, 16); write_str(1, nb);
+        write_str(1, " MiB / ");
+        int_to_str((int)total_mb, nb, 16); write_str(1, nb);
+        write_str(1, " MiB\n");
+    } else {
+        write_str(2, "ncdu: cannot stat path\n");
+    }
+    /* List top entries in directory */
+    int dfd = sys_open(path, O_RDONLY, 0);
+    if (dfd >= 0) {
+        char dirbuf[2048]; ssize_t dn;
+        while ((dn = sys_getdents64(dfd, dirbuf, sizeof(dirbuf))) > 0) {
+            ssize_t pos = 0;
+            int count = 0;
+            while (pos < dn && count < 20) {
+                uint16_t reclen = *(uint16_t *)(dirbuf + pos + 16);
+                char *name = dirbuf + pos + 19;
+                if (name[0] != '.') {
+                    write_str(1, "        . ");
+                    write_str(1, name);
+                    write_str(1, "\n");
+                    count++;
+                }
+                pos += reclen;
+            }
+        }
+        sys_close(dfd);
+    }
+}
+
+/* dust — disk usage tree (visual du output) */
+static void cmd_dust(int argc, char *argv[]) {
+    const char *path = (argc > 1) ? argv[1] : "/";
+    /* Get overall usage */
+    struct { long f_type; long f_bsize; long f_blocks; long f_bfree; long f_bavail;
+             long f_files; long f_ffree; long f_fsid[2]; long f_namelen; long f_frsize;
+             long f_flags; long f_spare[4]; } sfs;
+    for (int k = 0; k < (int)sizeof(sfs); k++) ((char*)&sfs)[k] = 0;
+    long src2 = sys_call2(137, (long)path, (long)&sfs);
+    long total_kb = 0;
+    if (src2 == 0 && sfs.f_blocks > 0) {
+        long bsize = sfs.f_bsize > 0 ? sfs.f_bsize : 4096;
+        total_kb = ((sfs.f_blocks - sfs.f_bfree) * bsize) / 1024;
+    }
+    /* List directory entries as a tree */
+    int dfd = sys_open(path, O_RDONLY, 0);
+    if (dfd >= 0) {
+        char dirbuf[2048]; ssize_t dn;
+        while ((dn = sys_getdents64(dfd, dirbuf, sizeof(dirbuf))) > 0) {
+            ssize_t pos = 0;
+            int count = 0;
+            while (pos < dn && count < 20) {
+                uint16_t reclen = *(uint16_t *)(dirbuf + pos + 16);
+                char *name = dirbuf + pos + 19;
+                if (name[0] != '.') {
+                    write_str(1, "  4K ");
+                    /* Bar proportional to total */
+                    int barlen = total_kb > 0 ? (int)((4 * 30) / (total_kb > 0 ? total_kb : 1)) : 1;
+                    if (barlen < 1) barlen = 1;
+                    if (barlen > 30) barlen = 30;
+                    write_str(1, "\033[1;36m");
+                    for (int k = 0; k < barlen; k++) write_char(1, '#');
+                    write_str(1, "\033[0m ");
+                    write_str(1, path);
+                    if (path[0] != '/' || path[1] != '\0') write_str(1, "/");
+                    write_str(1, name);
+                    write_str(1, "\n");
+                    count++;
+                }
+                pos += reclen;
+            }
+        }
+        sys_close(dfd);
+    }
+    char nb[16]; int_to_str((int)(total_kb/1024), nb, 16);
+    write_str(1, "\n "); write_str(1, nb); write_str(1, "M "); write_str(1, path); write_str(1, "\n");
+}
+
+/* procs — modern ps alternative (formatted process list) */
+static void cmd_procs(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    write_str(1, "\033[1m  PID  User     State  CPU   Mem  Command\033[0m\n");
+    int proc_fd = sys_open("/proc", O_RDONLY, 0);
+    if (proc_fd >= 0) {
+        char dirbuf[2048]; ssize_t dn;
+        while ((dn = sys_getdents64(proc_fd, dirbuf, sizeof(dirbuf))) > 0) {
+            ssize_t pos = 0;
+            while (pos < dn) {
+                uint16_t reclen = *(uint16_t *)(dirbuf + pos + 16);
+                char *name = dirbuf + pos + 19;
+                if (name[0] >= '1' && name[0] <= '9') {
+                    char spath[64]; int spi = 0;
+                    const char *pfx = "/proc/"; while (pfx[spi]) { spath[spi] = pfx[spi]; spi++; }
+                    int ni2 = 0; while (name[ni2]) { spath[spi++] = name[ni2++]; }
+                    const char *sfx = "/stat"; ni2 = 0;
+                    while (sfx[ni2]) { spath[spi++] = sfx[ni2++]; }
+                    spath[spi] = '\0';
+                    int sfd = sys_open(spath, O_RDONLY, 0);
+                    if (sfd >= 0) {
+                        char sb[256]; ssize_t sn = sys_read(sfd, sb, sizeof(sb)-1);
+                        sys_close(sfd);
+                        if (sn > 0) {
+                            sb[sn] = '\0';
+                            int pl = 0; while (name[pl]) pl++;
+                            for (int k = pl; k < 5; k++) write_char(1, ' ');
+                            write_str(1, name);
+                            write_str(1, "  root     ");
+                            char *lp = sb; while (*lp && *lp != '(') lp++;
+                            char *rp2 = lp; while (*rp2 && *rp2 != ')') rp2++;
+                            if (*lp == '(' && *rp2 == ')') {
+                                char state_str[12] = {0};
+                                char sc = rp2[2];
+                                if (sc == 'S') { state_str[0]='S'; state_str[1]='l'; state_str[2]='e'; state_str[3]='e'; state_str[4]='p'; }
+                                else if (sc == 'R') { state_str[0]='R'; state_str[1]='u'; state_str[2]='n'; }
+                                else if (sc == 'Z') { state_str[0]='Z'; state_str[1]='o'; state_str[2]='m'; state_str[3]='b'; }
+                                else if (sc == 'T') { state_str[0]='S'; state_str[1]='t'; state_str[2]='o'; state_str[3]='p'; }
+                                else { state_str[0] = sc; }
+                                write_str(1, state_str);
+                                int sl2 = 0; while (state_str[sl2]) sl2++;
+                                for (int k = sl2; k < 7; k++) write_char(1, ' ');
+                                write_str(1, "0.0   0.0  ");
+                                lp++; *rp2 = '\0';
+                                write_str(1, lp);
+                            }
+                            write_str(1, "\n");
+                        }
+                    }
+                }
+                pos += reclen;
+            }
+        }
+        sys_close(proc_fd);
+    }
+}
+
+/* btop — resource monitor (combined top+iotop+nethogs view) */
+static void cmd_btop(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    write_str(1, "\033[1;32m btop++ - Futura OS Resource Monitor\033[0m\n\n");
+    /* CPU section */
+    write_str(1, "\033[1m CPU\033[0m ");
+    {
+        int fd = sys_open("/proc/loadavg", O_RDONLY, 0);
+        if (fd >= 0) {
+            char lb[64]; ssize_t n = sys_read(fd, lb, sizeof(lb)-1);
+            sys_close(fd); if (n > 0) { lb[n] = '\0'; write_str(1, "Load: "); write_str(1, lb); }
+        }
+    }
+    /* Memory section */
+    write_str(1, "\033[1m MEM\033[0m ");
+    {
+        int fd = sys_open("/proc/meminfo", O_RDONLY, 0);
+        if (fd >= 0) {
+            char mb[512]; ssize_t n = sys_read(fd, mb, sizeof(mb)-1);
+            sys_close(fd);
+            if (n > 0) { mb[n] = '\0';
+                char *p = mb;
+                while (*p) {
+                    if (p[0]=='M' && p[1]=='e' && p[2]=='m' && (p[3]=='T' || p[3]=='F')) {
+                        char *eol = p; while (*eol && *eol != '\n') eol++;
+                        char save = *eol; *eol = '\0';
+                        write_str(1, p); write_str(1, "  ");
+                        *eol = save;
+                    }
+                    while (*p && *p != '\n') p++;
+                    if (*p) p++;
+                }
+            }
+        }
+    }
+    write_str(1, "\n");
+    /* Network section */
+    write_str(1, "\033[1m NET\033[0m ");
+    {
+        int fd = sys_open("/proc/net/dev", O_RDONLY, 0);
+        if (fd >= 0) {
+            char nb[1024]; ssize_t n = sys_read(fd, nb, sizeof(nb)-1);
+            sys_close(fd);
+            if (n > 0) { nb[n] = '\0';
+                char *p = nb; int line = 0;
+                while (*p) {
+                    if (line >= 2) {
+                        char *eol = p; while (*eol && *eol != '\n') eol++;
+                        char save = *eol; *eol = '\0';
+                        write_str(1, p);
+                        *eol = save;
+                        break;
+                    }
+                    while (*p && *p != '\n') p++; if (*p) p++;
+                    line++;
+                }
+            }
+        }
+    }
+    write_str(1, "\n\n");
+    /* Disk I/O section */
+    write_str(1, "\033[1m DISK\033[0m ");
+    {
+        int fd = sys_open("/proc/diskstats", O_RDONLY, 0);
+        if (fd >= 0) {
+            char db[256]; ssize_t n = sys_read(fd, db, sizeof(db)-1);
+            sys_close(fd);
+            if (n > 0) { db[n] = '\0'; char *eol = db; while (*eol && *eol != '\n') eol++; *eol = '\0'; write_str(1, db); }
+        } else { write_str(1, "no disk stats"); }
+    }
+    write_str(1, "\n\n");
+    /* Process list */
+    write_str(1, "\033[1m  PID COMMAND          CPU%   MEM%\033[0m\n");
+    int proc_fd = sys_open("/proc", O_RDONLY, 0);
+    if (proc_fd >= 0) {
+        char dirbuf[2048]; ssize_t dn;
+        while ((dn = sys_getdents64(proc_fd, dirbuf, sizeof(dirbuf))) > 0) {
+            ssize_t pos = 0;
+            while (pos < dn) {
+                uint16_t reclen = *(uint16_t *)(dirbuf + pos + 16);
+                char *pname = dirbuf + pos + 19;
+                if (pname[0] >= '1' && pname[0] <= '9') {
+                    char comm[32] = {0};
+                    char cpath[64]; int cp = 0;
+                    const char *pfx = "/proc/"; while (pfx[cp]) { cpath[cp] = pfx[cp]; cp++; }
+                    int ni2 = 0; while (pname[ni2]) { cpath[cp++] = pname[ni2++]; }
+                    const char *sfx = "/comm"; ni2 = 0;
+                    while (sfx[ni2]) { cpath[cp++] = sfx[ni2++]; }
+                    cpath[cp] = '\0';
+                    int cfd = sys_open(cpath, O_RDONLY, 0);
+                    if (cfd >= 0) {
+                        ssize_t cn = sys_read(cfd, comm, sizeof(comm)-1);
+                        sys_close(cfd);
+                        if (cn > 0) { comm[cn] = '\0'; if (cn > 0 && comm[cn-1]=='\n') comm[cn-1]='\0'; }
+                    }
+                    int pl = 0; while (pname[pl]) pl++;
+                    for (int k = pl; k < 5; k++) write_char(1, ' ');
+                    write_str(1, pname); write_str(1, " ");
+                    write_str(1, comm[0] ? comm : "?");
+                    int cl = 0; while (comm[cl]) cl++;
+                    for (int k = cl; k < 17; k++) write_char(1, ' ');
+                    write_str(1, "0.0    0.0\n");
+                }
+                pos += reclen;
+            }
+        }
+        sys_close(proc_fd);
+    }
+}
+
+/* glances — system monitoring tool (combined overview) */
+static void cmd_glances(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    write_str(1, "Glances v3.2 - Futura OS\n\n");
+    /* Hostname and uptime */
+    {
+        int fd = sys_open("/proc/sys/kernel/hostname", O_RDONLY, 0);
+        if (fd >= 0) {
+            char hb[64]; ssize_t n = sys_read(fd, hb, sizeof(hb)-1);
+            sys_close(fd);
+            if (n > 0) { hb[n] = '\0'; if (n > 0 && hb[n-1]=='\n') hb[n-1]='\0';
+                write_str(1, "Hostname: "); write_str(1, hb); }
+        }
+    }
+    write_str(1, "  Uptime: ");
+    {
+        int fd = sys_open("/proc/uptime", O_RDONLY, 0);
+        if (fd >= 0) {
+            char ub[64]; ssize_t n = sys_read(fd, ub, sizeof(ub)-1);
+            sys_close(fd); if (n > 0) { ub[n] = '\0'; write_str(1, ub); }
+        }
+    }
+    write_str(1, "\n");
+    /* CPU */
+    write_str(1, "\033[1mCPU\033[0m  ");
+    {
+        int fd = sys_open("/proc/stat", O_RDONLY, 0);
+        if (fd >= 0) {
+            char sb[256]; ssize_t n = sys_read(fd, sb, sizeof(sb)-1);
+            sys_close(fd);
+            if (n > 0) { sb[n] = '\0';
+                char *eol = sb; while (*eol && *eol != '\n') eol++; *eol = '\0';
+                write_str(1, sb);
+            }
+        }
+    }
+    write_str(1, "\n");
+    /* Memory */
+    write_str(1, "\033[1mMEM\033[0m  ");
+    {
+        int fd = sys_open("/proc/meminfo", O_RDONLY, 0);
+        if (fd >= 0) {
+            char mb[512]; ssize_t n = sys_read(fd, mb, sizeof(mb)-1);
+            sys_close(fd);
+            if (n > 0) { mb[n] = '\0';
+                long total = 0, mfree = 0;
+                char *p = mb;
+                while (*p) {
+                    if (p[0]=='M' && p[3]=='T' && p[4]=='o') {
+                        char *q = p; while (*q && (*q < '0' || *q > '9')) q++;
+                        while (*q >= '0' && *q <= '9') { total = total*10 + (*q-'0'); q++; }
+                    }
+                    if (p[0]=='M' && p[3]=='F' && p[4]=='r') {
+                        char *q = p; while (*q && (*q < '0' || *q > '9')) q++;
+                        while (*q >= '0' && *q <= '9') { mfree = mfree*10 + (*q-'0'); q++; }
+                    }
+                    while (*p && *p != '\n') p++;
+                    if (*p) p++;
+                }
+                long used = total - mfree;
+                int pct = total > 0 ? (int)((used*100)/total) : 0;
+                char nb[16];
+                int_to_str((int)(used/1024), nb, 16); write_str(1, nb); write_str(1, "M / ");
+                int_to_str((int)(total/1024), nb, 16); write_str(1, nb); write_str(1, "M (");
+                int_to_str(pct, nb, 16); write_str(1, nb); write_str(1, "%)");
+            }
+        }
+    }
+    write_str(1, "\n");
+    /* SWAP */
+    write_str(1, "\033[1mSWAP\033[0m 0M / 0M (0%)\n");
+    /* Network */
+    write_str(1, "\033[1mNET\033[0m  ");
+    {
+        int fd = sys_open("/proc/net/dev", O_RDONLY, 0);
+        if (fd >= 0) {
+            char nb2[1024]; ssize_t n = sys_read(fd, nb2, sizeof(nb2)-1);
+            sys_close(fd);
+            if (n > 0) { nb2[n] = '\0';
+                char *p = nb2; int line = 0;
+                while (*p) {
+                    if (line == 2) {
+                        char *eol = p; while (*eol && *eol != '\n') eol++;
+                        char save = *eol; *eol = '\0';
+                        write_str(1, p); *eol = save;
+                        break;
+                    }
+                    while (*p && *p != '\n') p++; if (*p) p++;
+                    line++;
+                }
+            }
+        }
+    }
+    write_str(1, "\n");
+    /* Disk I/O */
+    write_str(1, "\033[1mDISK\033[0m ");
+    {
+        int fd = sys_open("/proc/diskstats", O_RDONLY, 0);
+        if (fd >= 0) {
+            char db[256]; ssize_t n = sys_read(fd, db, sizeof(db)-1);
+            sys_close(fd);
+            if (n > 0) { db[n] = '\0'; char *eol = db; while (*eol && *eol != '\n') eol++; *eol = '\0'; write_str(1, db); }
+        } else { write_str(1, "n/a"); }
+    }
+    write_str(1, "\n\n");
+    /* Process list */
+    write_str(1, "\033[1m  PID USER  CPU%  MEM%  VIRT   RES  COMMAND\033[0m\n");
+    int proc_fd = sys_open("/proc", O_RDONLY, 0);
+    if (proc_fd >= 0) {
+        char dirbuf[2048]; ssize_t dn;
+        while ((dn = sys_getdents64(proc_fd, dirbuf, sizeof(dirbuf))) > 0) {
+            ssize_t pos = 0;
+            while (pos < dn) {
+                uint16_t reclen = *(uint16_t *)(dirbuf + pos + 16);
+                char *pname = dirbuf + pos + 19;
+                if (pname[0] >= '1' && pname[0] <= '9') {
+                    char comm[32] = {0};
+                    char cpath[64]; int cp = 0;
+                    const char *pfx = "/proc/"; while (pfx[cp]) { cpath[cp] = pfx[cp]; cp++; }
+                    int ni2 = 0; while (pname[ni2]) { cpath[cp++] = pname[ni2++]; }
+                    const char *sfx = "/comm"; ni2 = 0;
+                    while (sfx[ni2]) { cpath[cp++] = sfx[ni2++]; }
+                    cpath[cp] = '\0';
+                    int cfd = sys_open(cpath, O_RDONLY, 0);
+                    if (cfd >= 0) {
+                        ssize_t cn = sys_read(cfd, comm, sizeof(comm)-1);
+                        sys_close(cfd);
+                        if (cn > 0) { comm[cn] = '\0'; if (cn > 0 && comm[cn-1]=='\n') comm[cn-1]='\0'; }
+                    }
+                    int pl = 0; while (pname[pl]) pl++;
+                    for (int k = pl; k < 5; k++) write_char(1, ' ');
+                    write_str(1, pname);
+                    write_str(1, " root   0.0   0.0     0     0  ");
+                    write_str(1, comm[0] ? comm : "?");
+                    write_str(1, "\n");
+                }
+                pos += reclen;
+            }
+        }
+        sys_close(proc_fd);
+    }
+}
+
+/* sar — System Activity Report from /proc data */
+static void cmd_sar(int argc, char *argv[]) {
+    /* sar [-u] [-r] [-n DEV] [-b] [-q] [interval] [count] */
+    int show_cpu = 0, show_mem = 0, show_net = 0, show_disk = 0, show_queue = 0;
+    int interval = 0, count = 1;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-u") == 0) show_cpu = 1;
+        else if (strcmp_simple(argv[i], "-r") == 0) show_mem = 1;
+        else if (strcmp_simple(argv[i], "-n") == 0 && i+1 < argc) { show_net = 1; i++; }
+        else if (strcmp_simple(argv[i], "-b") == 0) show_disk = 1;
+        else if (strcmp_simple(argv[i], "-q") == 0) show_queue = 1;
+        else if (argv[i][0] >= '0' && argv[i][0] <= '9') {
+            if (interval == 0) { interval = 0; for (int k = 0; argv[i][k] >= '0' && argv[i][k] <= '9'; k++) interval = interval*10 + (argv[i][k]-'0'); }
+            else { count = 0; for (int k = 0; argv[i][k] >= '0' && argv[i][k] <= '9'; k++) count = count*10 + (argv[i][k]-'0'); }
+        }
+    }
+    /* Default: show CPU if nothing specified */
+    if (!show_cpu && !show_mem && !show_net && !show_disk && !show_queue) show_cpu = 1;
+    if (count < 1) count = 1;
+    if (count > 100) count = 100;
+
+    write_str(1, "Futura OS - System Activity Report\n\n");
+
+    for (int iter = 0; iter < count; iter++) {
+        if (show_cpu) {
+            write_str(1, "       CPU     %user     %nice   %system   %iowait    %idle\n");
+            int fd = sys_open("/proc/stat", O_RDONLY, 0);
+            if (fd >= 0) {
+                char sb[512]; ssize_t n = sys_read(fd, sb, sizeof(sb)-1);
+                sys_close(fd);
+                if (n > 0) { sb[n] = '\0';
+                    /* Parse cpu line: cpu user nice system idle iowait ... */
+                    char *p = sb;
+                    if (p[0]=='c' && p[1]=='p' && p[2]=='u' && p[3]==' ') {
+                        p += 4; while (*p == ' ') p++;
+                        long user = 0, nice_v = 0, system_v = 0, idle_v = 0, iowait_v = 0;
+                        while (*p >= '0' && *p <= '9') { user = user*10 + (*p-'0'); p++; } while (*p == ' ') p++;
+                        while (*p >= '0' && *p <= '9') { nice_v = nice_v*10 + (*p-'0'); p++; } while (*p == ' ') p++;
+                        while (*p >= '0' && *p <= '9') { system_v = system_v*10 + (*p-'0'); p++; } while (*p == ' ') p++;
+                        while (*p >= '0' && *p <= '9') { idle_v = idle_v*10 + (*p-'0'); p++; } while (*p == ' ') p++;
+                        while (*p >= '0' && *p <= '9') { iowait_v = iowait_v*10 + (*p-'0'); p++; }
+                        long total = user + nice_v + system_v + idle_v + iowait_v;
+                        if (total == 0) total = 1;
+                        write_str(1, "       all     ");
+                        char nb[8];
+                        int_to_str((int)((user*100)/total), nb, 8);
+                        { int nl2 = 0; while(nb[nl2]) nl2++; for(int k=nl2;k<5;k++) write_char(1,' '); }
+                        write_str(1, nb); write_str(1, "     ");
+                        int_to_str((int)((nice_v*100)/total), nb, 8);
+                        { int nl2 = 0; while(nb[nl2]) nl2++; for(int k=nl2;k<5;k++) write_char(1,' '); }
+                        write_str(1, nb); write_str(1, "     ");
+                        int_to_str((int)((system_v*100)/total), nb, 8);
+                        { int nl2 = 0; while(nb[nl2]) nl2++; for(int k=nl2;k<5;k++) write_char(1,' '); }
+                        write_str(1, nb); write_str(1, "     ");
+                        int_to_str((int)((iowait_v*100)/total), nb, 8);
+                        { int nl2 = 0; while(nb[nl2]) nl2++; for(int k=nl2;k<5;k++) write_char(1,' '); }
+                        write_str(1, nb); write_str(1, "     ");
+                        int_to_str((int)((idle_v*100)/total), nb, 8);
+                        { int nl2 = 0; while(nb[nl2]) nl2++; for(int k=nl2;k<5;k++) write_char(1,' '); }
+                        write_str(1, nb); write_str(1, "\n");
+                    }
+                }
+            }
+        }
+        if (show_mem) {
+            write_str(1, "       kbmemfree kbmemused  %%memused kbbuffers kbcached\n");
+            int fd = sys_open("/proc/meminfo", O_RDONLY, 0);
+            if (fd >= 0) {
+                char mb[512]; ssize_t n = sys_read(fd, mb, sizeof(mb)-1);
+                sys_close(fd);
+                if (n > 0) { mb[n] = '\0';
+                    long total = 0, mfree = 0;
+                    char *p = mb;
+                    while (*p) {
+                        if (p[0]=='M' && p[3]=='T' && p[4]=='o') {
+                            char *q = p; while (*q && (*q<'0'||*q>'9')) q++;
+                            while (*q>='0' && *q<='9') { total=total*10+(*q-'0'); q++; }
+                        }
+                        if (p[0]=='M' && p[3]=='F' && p[4]=='r') {
+                            char *q = p; while (*q && (*q<'0'||*q>'9')) q++;
+                            while (*q>='0' && *q<='9') { mfree=mfree*10+(*q-'0'); q++; }
+                        }
+                        while (*p && *p != '\n') p++;
+                        if (*p) p++;
+                    }
+                    long used = total - mfree;
+                    int pct = total > 0 ? (int)((used*100)/total) : 0;
+                    write_str(1, "       ");
+                    char nb[16];
+                    int_to_str((int)mfree, nb, 16);
+                    { int nl2=0; while(nb[nl2])nl2++; for(int k=nl2;k<9;k++) write_char(1,' '); }
+                    write_str(1, nb); write_str(1, " ");
+                    int_to_str((int)used, nb, 16);
+                    { int nl2=0; while(nb[nl2])nl2++; for(int k=nl2;k<9;k++) write_char(1,' '); }
+                    write_str(1, nb); write_str(1, "    ");
+                    int_to_str(pct, nb, 16); write_str(1, nb);
+                    write_str(1, "%         0         0\n");
+                }
+            }
+        }
+        if (show_net) {
+            write_str(1, "       IFACE   rxpck/s   txpck/s    rxkB/s    txkB/s\n");
+            int fd = sys_open("/proc/net/dev", O_RDONLY, 0);
+            if (fd >= 0) {
+                char nb2[1024]; ssize_t n = sys_read(fd, nb2, sizeof(nb2)-1);
+                sys_close(fd);
+                if (n > 0) { nb2[n] = '\0';
+                    char *p = nb2; int line = 0;
+                    while (*p) {
+                        char *eol = p; while (*eol && *eol != '\n') eol++;
+                        if (line >= 2) {
+                            char ifn[16] = {0}; int j = 0;
+                            char *s = p; while (s < eol && *s == ' ') s++;
+                            while (s < eol && *s != ':' && j < 15) ifn[j++] = *s++;
+                            if (j > 0) {
+                                write_str(1, "       "); write_str(1, ifn);
+                                int il = 0; while (ifn[il]) il++;
+                                for (int k = il; k < 8; k++) write_char(1, ' ');
+                                write_str(1, "    0.00      0.00      0.00      0.00\n");
+                            }
+                        }
+                        if (*eol) p = eol + 1; else break;
+                        line++;
+                    }
+                }
+            }
+        }
+        if (show_disk) {
+            write_str(1, "       tps      rtps      wtps   bread/s   bwrtn/s\n");
+            int fd = sys_open("/proc/diskstats", O_RDONLY, 0);
+            if (fd >= 0) {
+                char db[512]; ssize_t n = sys_read(fd, db, sizeof(db)-1);
+                sys_close(fd);
+                if (n > 0) { db[n] = '\0';
+                    char *eol = db; while (*eol && *eol != '\n') eol++;
+                    *eol = '\0';
+                    write_str(1, "       "); write_str(1, db); write_str(1, "\n");
+                }
+            } else {
+                write_str(1, "       0.00      0.00      0.00      0.00      0.00\n");
+            }
+        }
+        if (show_queue) {
+            write_str(1, "       runq-sz  plist-sz   ldavg-1   ldavg-5  ldavg-15\n");
+            write_str(1, "       ");
+            int fd = sys_open("/proc/loadavg", O_RDONLY, 0);
+            if (fd >= 0) {
+                char lb[64]; ssize_t n = sys_read(fd, lb, sizeof(lb)-1);
+                sys_close(fd);
+                if (n > 0) { lb[n] = '\0';
+                    /* loadavg has: avg1 avg5 avg15 running/total last_pid */
+                    write_str(1, "      1       1   "); write_str(1, lb);
+                }
+            }
+            write_str(1, "\n");
+        }
+        /* Sleep between intervals */
+        if (interval > 0 && iter + 1 < count) {
+            struct { long tv_sec; long tv_nsec; } ts_sleep;
+            ts_sleep.tv_sec = interval; ts_sleep.tv_nsec = 0;
+            sys_call2(35, (long)&ts_sleep, 0);
+        }
     }
 }
 

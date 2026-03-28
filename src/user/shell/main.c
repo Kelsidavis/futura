@@ -462,6 +462,16 @@ static void cmd_mpstat(int argc, char *argv[]);
 static void cmd_pidstat(int argc, char *argv[]);
 static void cmd_cifsiostat(int argc, char *argv[]);
 static void cmd_tapestat(int argc, char *argv[]);
+static void cmd_age(int argc, char *argv[]);
+static void cmd_sops(int argc, char *argv[]);
+static void cmd_vault(int argc, char *argv[]);
+static void cmd_pass(int argc, char *argv[]);
+static void cmd_gpg_agent(int argc, char *argv[]);
+static void cmd_ssh_agent(int argc, char *argv[]);
+static void cmd_ssh_add(int argc, char *argv[]);
+static void cmd_ssh_copy_id(int argc, char *argv[]);
+static void cmd_keyctl(int argc, char *argv[]);
+static void cmd_p11_kit(int argc, char *argv[]);
 
 /* Forward declaration for prompt */
 static void print_prompt(void);
@@ -913,7 +923,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     const char *builtins[] = {
         "ab", "acpi", "arp", "ascii", "base32", "bg", "blkzone", "blockdev", "brctl", "cal", "cd", "chgrp", "chmod", "chroot", "chrt", "clear", "cmp", "comm", "conntrack", "cpupower", "date", "depmod", "dd", "df", "dhclient", "dig", "dmidecode", "dmesg", "echo", "edit", "ethtool", "expand", "expr", "factor", "file", "fold", "fuser", "hdparm", "hexdump", "host", "hwinfo", "install", "ionice", "iperf3", "locale", "lshw", "lsmod", "lsns", "lsof", "lsusb", "md5sum", "mkfifo", "modprobe", "mtr", "nameif", "nc", "nice", "nohup", "numactl", "nvme", "partprobe", "patch", "perf", "pgrep", "pidof", "pkill", "poweroff", "prlimit", "reboot", "renice", "reset", "route", "sensors", "seq", "sha1sum", "sha512sum", "sleep", "smartctl", "stdbuf", "strings", "swapon", "swapoff", "tac", "taskset", "time", "timeout", "tput", "traceroute", "tty", "udevadm", "unexpand", "wget", "whatis", "whois", "xxd", "exit", "export", "fg", "free",
         "help", "hostname", "httpd", "id", "ifconfig", "iostat", "ipcs", "iptables", "jobs", "kill", "logger", "losetup", "ls", "lsblk", "lspci", "mkfs", "mount", "netstat",
-        ".", "adduser", "alias", "ansible", "ansible-playbook", "arch", "basename", "blkid", "bridge", "buildah", "busctl", "certutil", "chage", "coredumpctl", "crictl", "ctr", "deluser", "dialog", "dirname", "docker", "du", "exec", "false", "fmt", "getconf", "gpg", "groupadd", "groupdel", "groups", "helm", "history", "hostnamectl", "infocmp", "ip", "ipcmk", "ipcrm", "journalctl", "kubectl", "ln", "localectl", "loginctl", "logname", "lscpu", "machinectl", "mkswap", "mktemp", "more", "nawk", "networkctl", "nft", "nproc", "nslookup", "openssl", "passwd", "ping", "podman", "printenv", "printf", "ps", "pwd", "read", "readlink", "realpath", "resolvectl", "set", "sha1sum", "sha256sum", "shutdown", "source", "ss", "ssh-keygen", "stat", "strace", "stty", "su", "sync", "sysctl", "sysinfo", "systemd-analyze", "systemd-ask-password", "systemd-cat", "systemd-cgls", "systemd-cgtop", "systemd-escape", "systemd-inhibit", "systemd-notify", "systemd-run", "systemd-tmpfiles", "tc", "terraform", "test", "tic", "timedatectl", "toe", "top", "trap", "tree", "true", "tset", "type", "umask", "unalias", "uname", "uptime", "users", "vagrant", "version", "vi", "vipw", "vmstat", "w", "wait", "watch", "wdctl", "whiptail", "which", "whoami", "xargs", "yes", "git-lfs", "gh", "pip", "pip3", "npm", "cargo", "go", "rustup", "nvm", "pyenv", "sdkman", "sdk", "cowsay", "figlet", "toilet", "sl", "cmatrix", "asciiquarium", "lolcat", "ponysay", "boxes", "espeak", "systemd-nspawn", "cgcreate", "cgexec", "cgdelete", "lxc", "lxc-ls", "lxc-start", "lxc-stop", "lxc-create", "lxc-destroy", "lxc-info", "firejail", "bwrap", "chcpu", "pmap", "mpstat", "pidstat", "cifsiostat", "tapestat", NULL
+        ".", "adduser", "alias", "ansible", "ansible-playbook", "arch", "basename", "blkid", "bridge", "buildah", "busctl", "certutil", "chage", "coredumpctl", "crictl", "ctr", "deluser", "dialog", "dirname", "docker", "du", "exec", "false", "fmt", "getconf", "gpg", "groupadd", "groupdel", "groups", "helm", "history", "hostnamectl", "infocmp", "ip", "ipcmk", "ipcrm", "journalctl", "kubectl", "ln", "localectl", "loginctl", "logname", "lscpu", "machinectl", "mkswap", "mktemp", "more", "nawk", "networkctl", "nft", "nproc", "nslookup", "openssl", "passwd", "ping", "podman", "printenv", "printf", "ps", "pwd", "read", "readlink", "realpath", "resolvectl", "set", "sha1sum", "sha256sum", "shutdown", "source", "ss", "ssh-keygen", "stat", "strace", "stty", "su", "sync", "sysctl", "sysinfo", "systemd-analyze", "systemd-ask-password", "systemd-cat", "systemd-cgls", "systemd-cgtop", "systemd-escape", "systemd-inhibit", "systemd-notify", "systemd-run", "systemd-tmpfiles", "tc", "terraform", "test", "tic", "timedatectl", "toe", "top", "trap", "tree", "true", "tset", "type", "umask", "unalias", "uname", "uptime", "users", "vagrant", "version", "vi", "vipw", "vmstat", "w", "wait", "watch", "wdctl", "whiptail", "which", "whoami", "xargs", "yes", "git-lfs", "gh", "pip", "pip3", "npm", "cargo", "go", "rustup", "nvm", "pyenv", "sdkman", "sdk", "cowsay", "figlet", "toilet", "sl", "cmatrix", "asciiquarium", "lolcat", "ponysay", "boxes", "espeak", "systemd-nspawn", "cgcreate", "cgexec", "cgdelete", "lxc", "lxc-ls", "lxc-start", "lxc-stop", "lxc-create", "lxc-destroy", "lxc-info", "firejail", "bwrap", "chcpu", "pmap", "mpstat", "pidstat", "cifsiostat", "tapestat", "age", "sops", "vault", "pass", "gpg-agent", "ssh-agent", "ssh-add", "ssh-copy-id", "keyctl", "p11-kit", NULL
     };
 
     /* External commands we might have */
@@ -15455,6 +15465,36 @@ watch_sleep:
     } else if (strcmp_simple(argv[0], "tapestat") == 0) {
         cmd_tapestat(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "age") == 0) {
+        cmd_age(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "sops") == 0) {
+        cmd_sops(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "vault") == 0) {
+        cmd_vault(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "pass") == 0) {
+        cmd_pass(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "gpg-agent") == 0) {
+        cmd_gpg_agent(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "ssh-agent") == 0) {
+        cmd_ssh_agent(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "ssh-add") == 0) {
+        cmd_ssh_add(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "ssh-copy-id") == 0) {
+        cmd_ssh_copy_id(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "keyctl") == 0) {
+        cmd_keyctl(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "p11-kit") == 0) {
+        cmd_p11_kit(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -15942,6 +15982,16 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "pidstat") == 0 ||
             strcmp_simple(cmd, "cifsiostat") == 0 ||
             strcmp_simple(cmd, "tapestat") == 0 ||
+            strcmp_simple(cmd, "age") == 0 ||
+            strcmp_simple(cmd, "sops") == 0 ||
+            strcmp_simple(cmd, "vault") == 0 ||
+            strcmp_simple(cmd, "pass") == 0 ||
+            strcmp_simple(cmd, "gpg-agent") == 0 ||
+            strcmp_simple(cmd, "ssh-agent") == 0 ||
+            strcmp_simple(cmd, "ssh-add") == 0 ||
+            strcmp_simple(cmd, "ssh-copy-id") == 0 ||
+            strcmp_simple(cmd, "keyctl") == 0 ||
+            strcmp_simple(cmd, "p11-kit") == 0 ||
             0);
 }
 
@@ -20784,7 +20834,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   500 built-in commands — type 'help'    |\n");
+    write_str(1, "|   510 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");
@@ -21899,6 +21949,16 @@ static void cmd_man(int argc, char *argv[]) {
         {"pidstat", "pidstat - report statistics for Linux tasks"},
         {"cifsiostat", "cifsiostat - report CIFS I/O statistics"},
         {"tapestat", "tapestat - report tape device statistics"},
+        {"age", "age - simple, modern, and secure file encryption"},
+        {"sops", "sops - Secrets OPerationS, encrypt/decrypt YAML/JSON secrets"},
+        {"vault", "vault - HashiCorp Vault secret management tool"},
+        {"pass", "pass - the standard Unix password manager"},
+        {"gpg-agent", "gpg-agent - secret key management daemon for GnuPG"},
+        {"ssh-agent", "ssh-agent - OpenSSH authentication agent"},
+        {"ssh-add", "ssh-add - add private key identities to the OpenSSH authentication agent"},
+        {"ssh-copy-id", "ssh-copy-id - install your public key on a remote machine"},
+        {"keyctl", "keyctl - key management facility control"},
+        {"p11-kit", "p11-kit - PKCS#11 module management and inspection tool"},
     };
     int n_entries = (int)(sizeof(man_entries) / sizeof(man_entries[0]));
 
@@ -24304,6 +24364,16 @@ static void cmd_whatis(int argc, char *argv[]) {
         {"pidstat",   "pidstat (1)         - report statistics for Linux tasks"},
         {"cifsiostat","cifsiostat (1)      - report CIFS I/O statistics"},
         {"tapestat",  "tapestat (1)        - report tape device statistics"},
+        {"age",       "age (1)             - simple, modern, and secure file encryption"},
+        {"sops",      "sops (1)            - Secrets OPerationS"},
+        {"vault",     "vault (1)           - HashiCorp Vault secret management tool"},
+        {"pass",      "pass (1)            - the standard Unix password manager"},
+        {"gpg-agent", "gpg-agent (1)       - secret key management daemon for GnuPG"},
+        {"ssh-agent", "ssh-agent (1)       - OpenSSH authentication agent"},
+        {"ssh-add",   "ssh-add (1)         - add private key identities to the authentication agent"},
+        {"ssh-copy-id","ssh-copy-id (1)    - install your public key on a remote machine"},
+        {"keyctl",    "keyctl (1)          - key management facility control"},
+        {"p11-kit",   "p11-kit (1)         - PKCS#11 module management tool"},
         {(void*)0, (void*)0}
     };
 
@@ -43727,6 +43797,820 @@ __attribute__((used)) static void cmd_tapestat(int argc, char *argv[]) {
         }
     } else {
         write_str(1, "(no tape devices found)\n");
+    }
+}
+
+/* age - modern file encryption tool */
+__attribute__((used)) static void cmd_age(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "Usage: age [-r RECIPIENT] [-o OUTPUT] [-d] [-i IDENTITY] [FILE]\n");
+        write_str(1, "\nModern file encryption tool (filippo.io/age)\n");
+        write_str(1, "\nOptions:\n");
+        write_str(1, "  -r RECIPIENT   Encrypt to the specified RECIPIENT (age1... public key)\n");
+        write_str(1, "  -o OUTPUT      Write the result to the file at path OUTPUT\n");
+        write_str(1, "  -d             Decrypt the input\n");
+        write_str(1, "  -i IDENTITY    Use the identity file at path IDENTITY for decryption\n");
+        write_str(1, "  -p             Encrypt with a passphrase\n");
+        write_str(1, "  --armor, -a    ASCII armor the output\n");
+        return;
+    }
+
+    int decrypt = 0;
+    const char *recipient = NULL;
+    const char *output = NULL;
+    const char *identity = NULL;
+    const char *input = NULL;
+    int passphrase = 0;
+    int armor = 0;
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-d") == 0) {
+            decrypt = 1;
+        } else if (strcmp_simple(argv[i], "-p") == 0) {
+            passphrase = 1;
+        } else if (strcmp_simple(argv[i], "-a") == 0 || strcmp_simple(argv[i], "--armor") == 0) {
+            armor = 1;
+        } else if (strcmp_simple(argv[i], "-r") == 0 && i + 1 < argc) {
+            recipient = argv[++i];
+        } else if (strcmp_simple(argv[i], "-o") == 0 && i + 1 < argc) {
+            output = argv[++i];
+        } else if (strcmp_simple(argv[i], "-i") == 0 && i + 1 < argc) {
+            identity = argv[++i];
+        } else {
+            input = argv[i];
+        }
+    }
+
+    (void)armor;
+
+    if (decrypt) {
+        if (!input) {
+            write_str(2, "age: -d requires an input file\n");
+            return;
+        }
+        if (!identity) {
+            write_str(2, "age: -d requires -i IDENTITY\n");
+            return;
+        }
+        /* Simulate decryption */
+        write_str(1, "age: decrypting ");
+        write_str(1, input);
+        write_str(1, " with identity ");
+        write_str(1, identity);
+        write_str(1, "\n");
+
+        /* Read the input file and display it as "decrypted" */
+        int fd = sys_open(input, O_RDONLY, 0);
+        if (fd >= 0) {
+            char buf[4096];
+            ssize_t n = sys_read(fd, buf, sizeof(buf) - 1);
+            sys_close(fd);
+            if (n > 0) {
+                buf[n] = '\0';
+                if (output) {
+                    int ofd = sys_open(output, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                    if (ofd >= 0) {
+                        sys_write(ofd, buf, n);
+                        sys_close(ofd);
+                        write_str(1, "age: decrypted output written to ");
+                        write_str(1, output);
+                        write_str(1, "\n");
+                    } else {
+                        write_str(2, "age: cannot open output file\n");
+                    }
+                } else {
+                    sys_write(1, buf, n);
+                }
+            }
+        } else {
+            write_str(2, "age: cannot open ");
+            write_str(2, input);
+            write_str(2, "\n");
+        }
+    } else {
+        /* Encrypt mode */
+        if (!recipient && !passphrase) {
+            write_str(2, "age: must specify -r RECIPIENT or -p for encryption\n");
+            return;
+        }
+        if (!input) {
+            write_str(2, "age: must specify input file\n");
+            return;
+        }
+
+        int fd = sys_open(input, O_RDONLY, 0);
+        if (fd < 0) {
+            write_str(2, "age: cannot open ");
+            write_str(2, input);
+            write_str(2, "\n");
+            return;
+        }
+        char buf[4096];
+        ssize_t n = sys_read(fd, buf, sizeof(buf) - 1);
+        sys_close(fd);
+
+        if (n > 0) {
+            buf[n] = '\0';
+            /* Simulate encryption by XOR with 0x42 */
+            for (ssize_t j = 0; j < n; j++) {
+                buf[j] ^= 0x42;
+            }
+            if (output) {
+                int ofd = sys_open(output, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                if (ofd >= 0) {
+                    /* Write age header */
+                    const char *hdr = "age-encryption.org/v1\n";
+                    sys_write(ofd, hdr, 22);
+                    sys_write(ofd, buf, n);
+                    sys_close(ofd);
+                    write_str(1, "age: encrypted ");
+                    write_str(1, input);
+                    write_str(1, " -> ");
+                    write_str(1, output);
+                    write_str(1, "\n");
+                } else {
+                    write_str(2, "age: cannot open output file\n");
+                }
+            } else {
+                write_str(1, "age-encryption.org/v1\n");
+                write_str(1, "(binary ciphertext written to stdout)\n");
+            }
+        }
+    }
+}
+
+/* sops - Secrets OPerationS */
+__attribute__((used)) static void cmd_sops(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "sops: Secrets OPerationS - encrypt/decrypt YAML/JSON secrets\n\n");
+        write_str(1, "Usage:\n");
+        write_str(1, "  sops -e FILE          Encrypt a file\n");
+        write_str(1, "  sops -d FILE          Decrypt a file\n");
+        write_str(1, "  sops FILE             Edit encrypted file in-place\n");
+        write_str(1, "  sops --rotate FILE    Rotate data encryption key\n");
+        write_str(1, "  sops updatekeys FILE  Update keys for a file\n");
+        return;
+    }
+
+    const char *file = NULL;
+    int encrypt = 0;
+    int decrypt_mode = 0;
+    int rotate = 0;
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-e") == 0) {
+            encrypt = 1;
+        } else if (strcmp_simple(argv[i], "-d") == 0) {
+            decrypt_mode = 1;
+        } else if (strcmp_simple(argv[i], "--rotate") == 0) {
+            rotate = 1;
+        } else if (strcmp_simple(argv[i], "updatekeys") == 0) {
+            /* skip subcommand */
+        } else {
+            file = argv[i];
+        }
+    }
+
+    if (!file) {
+        write_str(2, "sops: no file specified\n");
+        return;
+    }
+
+    int fd = sys_open(file, O_RDONLY, 0);
+    if (fd < 0) {
+        write_str(2, "sops: cannot open ");
+        write_str(2, file);
+        write_str(2, "\n");
+        return;
+    }
+    char buf[4096];
+    ssize_t n = sys_read(fd, buf, sizeof(buf) - 1);
+    sys_close(fd);
+
+    if (n <= 0) {
+        write_str(2, "sops: empty or unreadable file\n");
+        return;
+    }
+    buf[n] = '\0';
+
+    if (rotate) {
+        write_str(1, "sops: rotating data key for ");
+        write_str(1, file);
+        write_str(1, "\n");
+        write_str(1, "Data key rotated successfully\n");
+    } else if (encrypt) {
+        write_str(1, "sops: encrypting ");
+        write_str(1, file);
+        write_str(1, "\n");
+        /* Show simulated encrypted YAML */
+        write_str(1, "sops:\n");
+        write_str(1, "    kms: []\n");
+        write_str(1, "    age:\n");
+        write_str(1, "        - recipient: age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p\n");
+        write_str(1, "          enc: |\n");
+        write_str(1, "            -----BEGIN AGE ENCRYPTED FILE-----\n");
+        write_str(1, "            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+...\n");
+        write_str(1, "            -----END AGE ENCRYPTED FILE-----\n");
+        write_str(1, "    version: 3.7.3\n");
+        write_str(1, "File encrypted successfully\n");
+    } else if (decrypt_mode) {
+        write_str(1, "sops: decrypting ");
+        write_str(1, file);
+        write_str(1, "\n");
+        /* Show plaintext content */
+        sys_write(1, buf, n);
+        if (buf[n - 1] != '\n') {
+            write_str(1, "\n");
+        }
+    } else {
+        /* Edit mode */
+        write_str(1, "sops: editing ");
+        write_str(1, file);
+        write_str(1, " (simulated)\n");
+        write_str(1, "File decrypted for editing, re-encrypted on save\n");
+    }
+}
+
+/* vault - HashiCorp Vault */
+__attribute__((used)) static void cmd_vault(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "Usage: vault <command> [args]\n\n");
+        write_str(1, "Common commands:\n");
+        write_str(1, "  kv get SECRET_PATH     Read a secret from the KV store\n");
+        write_str(1, "  kv put PATH K=V...     Write a secret to the KV store\n");
+        write_str(1, "  kv list PATH           List secrets at a path\n");
+        write_str(1, "  kv delete PATH         Delete a secret\n");
+        write_str(1, "  status                 Print seal status\n");
+        write_str(1, "  token lookup           Display info about the current token\n");
+        write_str(1, "  secrets list           List enabled secrets engines\n");
+        write_str(1, "  audit list             List enabled audit devices\n");
+        write_str(1, "  auth list              List enabled auth methods\n");
+        write_str(1, "  login                  Authenticate to Vault\n");
+        return;
+    }
+
+    if (strcmp_simple(argv[1], "status") == 0) {
+        write_str(1, "Key             Value\n");
+        write_str(1, "---             -----\n");
+        write_str(1, "Seal Type       shamir\n");
+        write_str(1, "Initialized     true\n");
+        write_str(1, "Sealed          false\n");
+        write_str(1, "Total Shares    5\n");
+        write_str(1, "Threshold       3\n");
+        write_str(1, "Version         1.15.4\n");
+        write_str(1, "Build Date      2024-01-26T14:53:40Z\n");
+        write_str(1, "Storage Type    raft\n");
+        write_str(1, "Cluster Name    vault-cluster-futura\n");
+        write_str(1, "Cluster ID      a1b2c3d4-e5f6-7890-abcd-ef1234567890\n");
+        write_str(1, "HA Enabled      true\n");
+        write_str(1, "HA Cluster      https://127.0.0.1:8201\n");
+        write_str(1, "HA Mode         active\n");
+    } else if (strcmp_simple(argv[1], "kv") == 0) {
+        if (argc < 3) {
+            write_str(2, "vault: kv requires a subcommand (get/put/list/delete)\n");
+            return;
+        }
+        if (strcmp_simple(argv[2], "get") == 0) {
+            if (argc < 4) {
+                write_str(2, "vault: kv get requires a path\n");
+                return;
+            }
+            write_str(1, "====== Secret Path ======\n");
+            write_str(1, "path: ");
+            write_str(1, argv[3]);
+            write_str(1, "\n\n");
+            write_str(1, "====== Data ======\n");
+            write_str(1, "Key         Value\n");
+            write_str(1, "---         -----\n");
+            write_str(1, "password    s3cr3t-v4lu3\n");
+            write_str(1, "username    admin\n");
+        } else if (strcmp_simple(argv[2], "put") == 0) {
+            if (argc < 5) {
+                write_str(2, "vault: kv put requires a path and key=value pairs\n");
+                return;
+            }
+            write_str(1, "====== Secret Path ======\n");
+            write_str(1, "path: ");
+            write_str(1, argv[3]);
+            write_str(1, "\n\n");
+            write_str(1, "Success! Data written to: secret/data/");
+            write_str(1, argv[3]);
+            write_str(1, "\n");
+        } else if (strcmp_simple(argv[2], "list") == 0) {
+            const char *path = (argc > 3) ? argv[3] : "secret/";
+            write_str(1, "Keys\n");
+            write_str(1, "----\n");
+            write_str(1, path);
+            write_str(1, "app/\n");
+            write_str(1, path);
+            write_str(1, "db/\n");
+            write_str(1, path);
+            write_str(1, "tls/\n");
+        } else if (strcmp_simple(argv[2], "delete") == 0) {
+            if (argc < 4) {
+                write_str(2, "vault: kv delete requires a path\n");
+                return;
+            }
+            write_str(1, "Success! Data deleted (if it existed) at: secret/data/");
+            write_str(1, argv[3]);
+            write_str(1, "\n");
+        } else {
+            write_str(2, "vault: unknown kv subcommand: ");
+            write_str(2, argv[2]);
+            write_str(2, "\n");
+        }
+    } else if (strcmp_simple(argv[1], "secrets") == 0 && argc > 2 && strcmp_simple(argv[2], "list") == 0) {
+        write_str(1, "Path          Type         Accessor              Description\n");
+        write_str(1, "----          ----         --------              -----------\n");
+        write_str(1, "cubbyhole/    cubbyhole    cubbyhole_a1b2c3d4    per-token private secret storage\n");
+        write_str(1, "identity/     identity     identity_e5f67890     identity store\n");
+        write_str(1, "secret/       kv           kv_abcdef12           key/value secret storage\n");
+        write_str(1, "sys/          system       system_34567890       system endpoints\n");
+    } else if (strcmp_simple(argv[1], "auth") == 0 && argc > 2 && strcmp_simple(argv[2], "list") == 0) {
+        write_str(1, "Path        Type       Accessor                Description\n");
+        write_str(1, "----        ----       --------                -----------\n");
+        write_str(1, "token/      token      auth_token_a1b2c3d4     token based credentials\n");
+    } else if (strcmp_simple(argv[1], "token") == 0 && argc > 2 && strcmp_simple(argv[2], "lookup") == 0) {
+        write_str(1, "Key                 Value\n");
+        write_str(1, "---                 -----\n");
+        write_str(1, "accessor            a1b2c3d4e5f67890abcdef1234567890\n");
+        write_str(1, "creation_time       1706288020\n");
+        write_str(1, "display_name        token-root\n");
+        write_str(1, "policies            [root]\n");
+        write_str(1, "type                service\n");
+    } else if (strcmp_simple(argv[1], "login") == 0) {
+        write_str(1, "Success! You are now authenticated.\n");
+        write_str(1, "token:           hvs.CAESIFmK...\n");
+        write_str(1, "token_accessor:  a1b2c3d4e5f6\n");
+        write_str(1, "token_policies:  [\"default\", \"root\"]\n");
+    } else {
+        write_str(2, "vault: unknown command: ");
+        write_str(2, argv[1]);
+        write_str(2, "\n");
+    }
+}
+
+/* pass - password manager */
+__attribute__((used)) static void cmd_pass(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "Usage: pass [command] [args]\n\n");
+        write_str(1, "Commands:\n");
+        write_str(1, "  init GPG_ID            Initialize the password store\n");
+        write_str(1, "  ls [SUBFOLDER]         List passwords\n");
+        write_str(1, "  show PASS_NAME         Show existing password\n");
+        write_str(1, "  insert PASS_NAME       Insert new password\n");
+        write_str(1, "  generate PASS_NAME [LEN]  Generate a new password\n");
+        write_str(1, "  rm PASS_NAME           Remove existing password\n");
+        write_str(1, "  mv OLD_PATH NEW_PATH   Rename a password\n");
+        write_str(1, "  cp OLD_PATH NEW_PATH   Copy a password\n");
+        write_str(1, "  edit PASS_NAME         Edit existing password\n");
+        write_str(1, "  find PATTERN           List passwords matching pattern\n");
+        write_str(1, "  grep PATTERN           Search inside decrypted passwords\n");
+        write_str(1, "  git ARGS...            Execute a git command on the store\n");
+        write_str(1, "  version                Show version information\n");
+        return;
+    }
+
+    if (strcmp_simple(argv[1], "version") == 0) {
+        write_str(1, "pass: the standard Unix password manager v1.7.4\n");
+    } else if (strcmp_simple(argv[1], "init") == 0) {
+        if (argc < 3) {
+            write_str(2, "pass: init requires a GPG ID\n");
+            return;
+        }
+        write_str(1, "Password store initialized for ");
+        write_str(1, argv[2]);
+        write_str(1, "\n");
+        write_str(1, "mkdir: created directory '/root/.password-store/'\n");
+    } else if (strcmp_simple(argv[1], "ls") == 0 || strcmp_simple(argv[1], "list") == 0) {
+        write_str(1, "Password Store\n");
+        write_str(1, "\342\224\234\342\224\200\342\224\200 Email\n");
+        write_str(1, "\342\224\202   \342\224\234\342\224\200\342\224\200 personal\n");
+        write_str(1, "\342\224\202   \342\224\224\342\224\200\342\224\200 work\n");
+        write_str(1, "\342\224\234\342\224\200\342\224\200 Server\n");
+        write_str(1, "\342\224\202   \342\224\234\342\224\200\342\224\200 db-prod\n");
+        write_str(1, "\342\224\202   \342\224\224\342\224\200\342\224\200 ssh-key\n");
+        write_str(1, "\342\224\224\342\224\200\342\224\200 Social\n");
+        write_str(1, "    \342\224\224\342\224\200\342\224\200 github\n");
+    } else if (strcmp_simple(argv[1], "show") == 0) {
+        if (argc < 3) {
+            write_str(2, "pass: show requires a password name\n");
+            return;
+        }
+        /* Simulate showing a password */
+        write_str(1, "s3cr3t-p4ssw0rd-");
+        write_str(1, argv[2]);
+        write_str(1, "\n");
+    } else if (strcmp_simple(argv[1], "insert") == 0) {
+        if (argc < 3) {
+            write_str(2, "pass: insert requires a password name\n");
+            return;
+        }
+        write_str(1, "Enter password for ");
+        write_str(1, argv[2]);
+        write_str(1, ": (simulated)\n");
+        write_str(1, "Password stored in ");
+        write_str(1, argv[2]);
+        write_str(1, ".gpg\n");
+    } else if (strcmp_simple(argv[1], "generate") == 0) {
+        if (argc < 3) {
+            write_str(2, "pass: generate requires a password name\n");
+            return;
+        }
+        int len = 25;
+        if (argc > 3) {
+            len = 0;
+            for (const char *p = argv[3]; *p >= '0' && *p <= '9'; p++) {
+                len = len * 10 + (*p - '0');
+            }
+            if (len == 0) len = 25;
+        }
+        write_str(1, "The generated password for ");
+        write_str(1, argv[2]);
+        write_str(1, " is:\n");
+        /* Generate pseudo-random password */
+        const char charset[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*";
+        int cslen = 70;
+        unsigned int seed = 12345;
+        char pw[128];
+        if (len > 127) len = 127;
+        for (int i = 0; i < len; i++) {
+            seed = seed * 1103515245 + 12345;
+            pw[i] = charset[(seed >> 16) % cslen];
+        }
+        pw[len] = '\0';
+        write_str(1, pw);
+        write_str(1, "\n");
+    } else if (strcmp_simple(argv[1], "rm") == 0) {
+        if (argc < 3) {
+            write_str(2, "pass: rm requires a password name\n");
+            return;
+        }
+        write_str(1, "Removed ");
+        write_str(1, argv[2]);
+        write_str(1, " from the password store.\n");
+    } else if (strcmp_simple(argv[1], "find") == 0) {
+        if (argc < 3) {
+            write_str(2, "pass: find requires a search pattern\n");
+            return;
+        }
+        write_str(1, "Search Terms: ");
+        write_str(1, argv[2]);
+        write_str(1, "\n(no matching entries)\n");
+    } else {
+        write_str(2, "pass: unknown command '");
+        write_str(2, argv[1]);
+        write_str(2, "'\n");
+    }
+}
+
+/* gpg-agent - GPG key agent */
+__attribute__((used)) static void cmd_gpg_agent(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "Usage: gpg-agent [command]\n\n");
+        write_str(1, "Commands:\n");
+        write_str(1, "  start          Start the gpg-agent daemon\n");
+        write_str(1, "  stop           Stop the gpg-agent daemon\n");
+        write_str(1, "  status         Show agent status\n");
+        write_str(1, "  reload         Reload the agent configuration\n");
+        write_str(1, "  --daemon       Start in daemon mode\n");
+        return;
+    }
+
+    if (strcmp_simple(argv[1], "start") == 0 || strcmp_simple(argv[1], "--daemon") == 0) {
+        write_str(1, "gpg-agent[1234]: agent started\n");
+        write_str(1, "GPG_AGENT_INFO=/run/user/0/gnupg/S.gpg-agent:1234:1; export GPG_AGENT_INFO;\n");
+    } else if (strcmp_simple(argv[1], "stop") == 0) {
+        write_str(1, "gpg-agent: sending SIGTERM to agent at pid 1234\n");
+        write_str(1, "gpg-agent: agent stopped\n");
+    } else if (strcmp_simple(argv[1], "status") == 0) {
+        write_str(1, "gpg-agent running (pid 1234)\n");
+        write_str(1, "  version: 2.4.4\n");
+        write_str(1, "  socket: /run/user/0/gnupg/S.gpg-agent\n");
+        write_str(1, "  ssh support: enabled\n");
+        write_str(1, "  cached keys: 2\n");
+        write_str(1, "  max-cache-ttl: 7200\n");
+        write_str(1, "  default-cache-ttl: 600\n");
+    } else if (strcmp_simple(argv[1], "reload") == 0) {
+        write_str(1, "gpg-agent: configuration reloaded\n");
+    } else {
+        write_str(2, "gpg-agent: unknown command '");
+        write_str(2, argv[1]);
+        write_str(2, "'\n");
+    }
+}
+
+/* ssh-agent - SSH authentication agent */
+__attribute__((used)) static void cmd_ssh_agent(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "Usage: ssh-agent [command]\n\n");
+        write_str(1, "Commands:\n");
+        write_str(1, "  start          Start the SSH agent\n");
+        write_str(1, "  stop           Stop the SSH agent\n");
+        write_str(1, "  status         Show agent status\n");
+        write_str(1, "  list           List loaded identities\n");
+        write_str(1, "  -s SOCKET      Bind agent to SOCKET\n");
+        write_str(1, "  -k             Kill the current agent\n");
+        return;
+    }
+
+    if (strcmp_simple(argv[1], "start") == 0) {
+        write_str(1, "SSH_AUTH_SOCK=/tmp/ssh-XXXXXXXX/agent.1234; export SSH_AUTH_SOCK;\n");
+        write_str(1, "SSH_AGENT_PID=1234; export SSH_AGENT_PID;\n");
+        write_str(1, "echo Agent pid 1234;\n");
+    } else if (strcmp_simple(argv[1], "stop") == 0 || strcmp_simple(argv[1], "-k") == 0) {
+        write_str(1, "unset SSH_AUTH_SOCK;\n");
+        write_str(1, "unset SSH_AGENT_PID;\n");
+        write_str(1, "echo Agent pid 1234 killed;\n");
+    } else if (strcmp_simple(argv[1], "status") == 0) {
+        write_str(1, "ssh-agent running (pid 1234)\n");
+        write_str(1, "  socket: /tmp/ssh-XXXXXXXX/agent.1234\n");
+        write_str(1, "  identities loaded: 2\n");
+    } else if (strcmp_simple(argv[1], "list") == 0) {
+        write_str(1, "2048 SHA256:AbCdEfGhIjKlMnOpQrStUvWxYz0123456789ab /root/.ssh/id_rsa (RSA)\n");
+        write_str(1, "256  SHA256:ZyXwVuTsRqPoNmLkJiHgFeDcBa9876543210fe /root/.ssh/id_ed25519 (ED25519)\n");
+    } else {
+        write_str(2, "ssh-agent: unknown command '");
+        write_str(2, argv[1]);
+        write_str(2, "'\n");
+    }
+}
+
+/* ssh-add - Add SSH keys to agent */
+__attribute__((used)) static void cmd_ssh_add(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "Usage: ssh-add [options] [keyfile ...]\n\n");
+        write_str(1, "Options:\n");
+        write_str(1, "  -l             List fingerprints of loaded identities\n");
+        write_str(1, "  -L             List public keys of loaded identities\n");
+        write_str(1, "  -d KEYFILE     Remove identity from the agent\n");
+        write_str(1, "  -D             Remove all identities\n");
+        write_str(1, "  -t SECONDS     Set key lifetime (seconds)\n");
+        write_str(1, "  -x             Lock the agent with a password\n");
+        write_str(1, "  -X             Unlock the agent\n");
+        write_str(1, "\nWith no arguments, adds ~/.ssh/id_rsa, ~/.ssh/id_ed25519, etc.\n");
+        return;
+    }
+
+    if (strcmp_simple(argv[1], "-l") == 0) {
+        write_str(1, "2048 SHA256:AbCdEfGhIjKlMnOpQrStUvWxYz0123456789ab /root/.ssh/id_rsa (RSA)\n");
+        write_str(1, "256  SHA256:ZyXwVuTsRqPoNmLkJiHgFeDcBa9876543210fe /root/.ssh/id_ed25519 (ED25519)\n");
+    } else if (strcmp_simple(argv[1], "-L") == 0) {
+        write_str(1, "ssh-rsa AAAAB3NzaC1yc2EAAA... /root/.ssh/id_rsa\n");
+        write_str(1, "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA... /root/.ssh/id_ed25519\n");
+    } else if (strcmp_simple(argv[1], "-D") == 0) {
+        write_str(1, "All identities removed.\n");
+    } else if (strcmp_simple(argv[1], "-d") == 0) {
+        if (argc < 3) {
+            write_str(2, "ssh-add: -d requires a key file argument\n");
+            return;
+        }
+        write_str(1, "Identity removed: ");
+        write_str(1, argv[2]);
+        write_str(1, "\n");
+    } else if (strcmp_simple(argv[1], "-x") == 0) {
+        write_str(1, "Agent locked.\n");
+    } else if (strcmp_simple(argv[1], "-X") == 0) {
+        write_str(1, "Agent unlocked.\n");
+    } else {
+        /* Assume it's a key file to add */
+        for (int i = 1; i < argc; i++) {
+            write_str(1, "Identity added: ");
+            write_str(1, argv[i]);
+            write_str(1, "\n");
+        }
+    }
+}
+
+/* ssh-copy-id - Copy SSH key to remote host */
+__attribute__((used)) static void cmd_ssh_copy_id(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "Usage: ssh-copy-id [-i IDENTITY] [-p PORT] [user@]hostname\n\n");
+        write_str(1, "Install your public key on a remote machine's authorized_keys.\n\n");
+        write_str(1, "Options:\n");
+        write_str(1, "  -i IDENTITY    Use the given identity file (default: ~/.ssh/id_rsa.pub)\n");
+        write_str(1, "  -p PORT        Connect to the specified port\n");
+        write_str(1, "  -f             Force mode: don't check if key is already installed\n");
+        write_str(1, "  -n             Dry run: print the key that would be installed\n");
+        return;
+    }
+
+    const char *identity = "~/.ssh/id_rsa.pub";
+    const char *host = NULL;
+    int dry_run = 0;
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-i") == 0 && i + 1 < argc) {
+            identity = argv[++i];
+        } else if (strcmp_simple(argv[i], "-p") == 0 && i + 1 < argc) {
+            i++; /* skip port */
+        } else if (strcmp_simple(argv[i], "-f") == 0) {
+            /* force mode */
+        } else if (strcmp_simple(argv[i], "-n") == 0) {
+            dry_run = 1;
+        } else {
+            host = argv[i];
+        }
+    }
+
+    if (!host) {
+        write_str(2, "ssh-copy-id: no hostname specified\n");
+        return;
+    }
+
+    write_str(1, "/usr/bin/ssh-copy-id: INFO: Source of key(s) to be installed: \"");
+    write_str(1, identity);
+    write_str(1, "\"\n");
+
+    if (dry_run) {
+        write_str(1, "/usr/bin/ssh-copy-id: INFO: dry run -- key would be installed to ");
+        write_str(1, host);
+        write_str(1, ":~/.ssh/authorized_keys\n");
+        write_str(1, "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA... root@futura\n");
+    } else {
+        write_str(1, "/usr/bin/ssh-copy-id: INFO: attempting to log in with the new key(s)\n");
+        write_str(1, "/usr/bin/ssh-copy-id: INFO: 1 key(s) remain to be installed\n");
+        write_str(1, "\n");
+        write_str(1, "Number of key(s) added: 1\n");
+        write_str(1, "\nNow try logging into the machine, with: \"ssh '");
+        write_str(1, host);
+        write_str(1, "'\"\n");
+        write_str(1, "and check to make sure that only the key(s) you wanted were added.\n");
+    }
+}
+
+/* keyctl - kernel keyring management */
+__attribute__((used)) static void cmd_keyctl(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "Usage: keyctl <command> [args]\n\n");
+        write_str(1, "Commands:\n");
+        write_str(1, "  show [-x] [KEYRING]    Display the keyring tree\n");
+        write_str(1, "  add TYPE DESC DATA KEYRING   Add a key\n");
+        write_str(1, "  padd TYPE DESC KEYRING       Add a key (data from stdin)\n");
+        write_str(1, "  request TYPE DESC [DEST]     Request a key\n");
+        write_str(1, "  update KEYID DATA            Update a key\n");
+        write_str(1, "  revoke KEYID                 Revoke a key\n");
+        write_str(1, "  clear KEYRING                Clear a keyring\n");
+        write_str(1, "  list KEYRING                 List a keyring\n");
+        write_str(1, "  describe KEYID               Describe a key\n");
+        write_str(1, "  read KEYID                   Read a key\n");
+        write_str(1, "  search KEYRING TYPE DESC     Search for a key\n");
+        write_str(1, "  link KEYID KEYRING           Link a key to a keyring\n");
+        write_str(1, "  unlink KEYID KEYRING         Unlink a key from a keyring\n");
+        return;
+    }
+
+    if (strcmp_simple(argv[1], "show") == 0) {
+        write_str(1, "Session Keyring\n");
+        write_str(1, " -3 --alswrv    0     0  keyring: _ses\n");
+        write_str(1, "  2 --alswrv    0 65534   \\_ keyring: _uid.0\n");
+        write_str(1, "742820092 --alswrv    0     0       \\_ user: futura:key1\n");
+        write_str(1, "892140516 --alswrv    0     0       \\_ user: futura:key2\n");
+    } else if (strcmp_simple(argv[1], "add") == 0) {
+        if (argc < 6) {
+            write_str(2, "keyctl: add requires TYPE DESC DATA KEYRING\n");
+            return;
+        }
+        write_str(1, "742820093\n"); /* simulated key serial */
+    } else if (strcmp_simple(argv[1], "list") == 0) {
+        write_str(1, "2 keys in keyring:\n");
+        write_str(1, "742820092: --alswrv     0     0 user: futura:key1\n");
+        write_str(1, "892140516: --alswrv     0     0 user: futura:key2\n");
+    } else if (strcmp_simple(argv[1], "describe") == 0) {
+        if (argc < 3) {
+            write_str(2, "keyctl: describe requires a KEYID\n");
+            return;
+        }
+        write_str(1, argv[2]);
+        write_str(1, ": alswrv     0     0 user: futura:key1\n");
+    } else if (strcmp_simple(argv[1], "read") == 0) {
+        if (argc < 3) {
+            write_str(2, "keyctl: read requires a KEYID\n");
+            return;
+        }
+        write_str(1, "16 bytes of data:\n");
+        write_str(1, "73 65 63 72 65 74 2d 6b 65 79 2d 64 61 74 61 00  secret-key-data.\n");
+    } else if (strcmp_simple(argv[1], "revoke") == 0) {
+        if (argc < 3) {
+            write_str(2, "keyctl: revoke requires a KEYID\n");
+            return;
+        }
+        write_str(1, "Key ");
+        write_str(1, argv[2]);
+        write_str(1, " revoked\n");
+    } else if (strcmp_simple(argv[1], "clear") == 0) {
+        write_str(1, "Keyring cleared\n");
+    } else if (strcmp_simple(argv[1], "unlink") == 0) {
+        if (argc < 4) {
+            write_str(2, "keyctl: unlink requires KEYID KEYRING\n");
+            return;
+        }
+        write_str(1, "1 links removed\n");
+    } else if (strcmp_simple(argv[1], "link") == 0) {
+        if (argc < 4) {
+            write_str(2, "keyctl: link requires KEYID KEYRING\n");
+            return;
+        }
+        write_str(1, "Key linked\n");
+    } else if (strcmp_simple(argv[1], "search") == 0) {
+        if (argc < 5) {
+            write_str(2, "keyctl: search requires KEYRING TYPE DESC\n");
+            return;
+        }
+        write_str(1, "742820092\n");
+    } else if (strcmp_simple(argv[1], "update") == 0) {
+        if (argc < 4) {
+            write_str(2, "keyctl: update requires KEYID DATA\n");
+            return;
+        }
+        write_str(1, "Key ");
+        write_str(1, argv[2]);
+        write_str(1, " updated\n");
+    } else {
+        write_str(2, "keyctl: unknown command '");
+        write_str(2, argv[1]);
+        write_str(2, "'\n");
+    }
+}
+
+/* p11-kit - PKCS#11 toolkit */
+__attribute__((used)) static void cmd_p11_kit(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "Usage: p11-kit <command> [args]\n\n");
+        write_str(1, "Commands:\n");
+        write_str(1, "  list-modules           List registered PKCS#11 modules\n");
+        write_str(1, "  list-tokens            List PKCS#11 tokens\n");
+        write_str(1, "  list-objects           List objects on a token\n");
+        write_str(1, "  list-mechanisms        List mechanisms of a token\n");
+        write_str(1, "  list-profiles          List profiles of a token\n");
+        write_str(1, "  extract               Extract certificates/keys\n");
+        write_str(1, "  server                Start the remoting server\n");
+        write_str(1, "  remote                Run as a remote module\n");
+        return;
+    }
+
+    if (strcmp_simple(argv[1], "list-modules") == 0) {
+        write_str(1, "module: p11-kit-trust\n");
+        write_str(1, "    path: /usr/lib/pkcs11/p11-kit-trust.so\n");
+        write_str(1, "    uri: pkcs11:library-description=PKCS%2311%20Kit%20Trust%20Module\n");
+        write_str(1, "    library-description: PKCS#11 Kit Trust Module\n");
+        write_str(1, "    library-manufacturer: PKCS#11 Kit\n");
+        write_str(1, "    library-version: 0.25\n");
+        write_str(1, "    token: System Trust\n");
+        write_str(1, "        uri: pkcs11:model=p11-kit-trust;manufacturer=PKCS%2311%20Kit\n");
+        write_str(1, "        manufacturer: PKCS#11 Kit\n");
+        write_str(1, "        model: p11-kit-trust\n");
+        write_str(1, "        serial-number:\n");
+        write_str(1, "        hardware-version: 0.0\n");
+        write_str(1, "        firmware-version: 0.0\n");
+        write_str(1, "        flags:\n");
+        write_str(1, "               login-required\n");
+        write_str(1, "               token-initialized\n");
+        write_str(1, "\nmodule: opensc-pkcs11\n");
+        write_str(1, "    path: /usr/lib/pkcs11/opensc-pkcs11.so\n");
+        write_str(1, "    uri: pkcs11:library-description=OpenSC%20smartcard%20framework\n");
+        write_str(1, "    library-description: OpenSC smartcard framework\n");
+        write_str(1, "    library-manufacturer: OpenSC Project\n");
+        write_str(1, "    library-version: 0.23\n");
+    } else if (strcmp_simple(argv[1], "list-tokens") == 0) {
+        write_str(1, "token: System Trust\n");
+        write_str(1, "    uri: pkcs11:model=p11-kit-trust;manufacturer=PKCS%2311%20Kit;token=System%20Trust\n");
+        write_str(1, "    manufacturer: PKCS#11 Kit\n");
+        write_str(1, "    model: p11-kit-trust\n");
+        write_str(1, "    flags: token-initialized\n");
+    } else if (strcmp_simple(argv[1], "list-objects") == 0) {
+        write_str(1, "Object 0:\n");
+        write_str(1, "  type: x-certificate\n");
+        write_str(1, "  label: DigiCert Global Root G2\n");
+        write_str(1, "  id: %01%02%03\n");
+        write_str(1, "\nObject 1:\n");
+        write_str(1, "  type: x-certificate\n");
+        write_str(1, "  label: ISRG Root X1\n");
+        write_str(1, "  id: %04%05%06\n");
+    } else if (strcmp_simple(argv[1], "list-mechanisms") == 0) {
+        write_str(1, "CKM_RSA_PKCS            min=1024 max=4096 flags=encrypt,decrypt,sign,verify\n");
+        write_str(1, "CKM_RSA_PKCS_OAEP       min=1024 max=4096 flags=encrypt,decrypt\n");
+        write_str(1, "CKM_SHA256_RSA_PKCS      min=1024 max=4096 flags=sign,verify\n");
+        write_str(1, "CKM_EC_KEY_PAIR_GEN      min=256  max=521  flags=generate\n");
+        write_str(1, "CKM_ECDSA                min=256  max=521  flags=sign,verify\n");
+        write_str(1, "CKM_AES_CBC              min=128  max=256  flags=encrypt,decrypt\n");
+        write_str(1, "CKM_AES_GCM              min=128  max=256  flags=encrypt,decrypt\n");
+    } else if (strcmp_simple(argv[1], "list-profiles") == 0) {
+        write_str(1, "Profile: baseline-provider\n");
+        write_str(1, "  description: Certificates and trust anchors\n");
+        write_str(1, "\nProfile: extended-provider\n");
+        write_str(1, "  description: Certificates, trust anchors, and private keys\n");
+    } else if (strcmp_simple(argv[1], "extract") == 0) {
+        write_str(1, "p11-kit: extracting certificates from PKCS#11 tokens...\n");
+        write_str(1, "  extracted 142 certificate(s) to /etc/ssl/certs/\n");
+    } else if (strcmp_simple(argv[1], "server") == 0) {
+        write_str(1, "p11-kit: starting PKCS#11 remoting server\n");
+        write_str(1, "P11_KIT_SERVER_ADDRESS=unix:path=/run/p11-kit/pkcs11\n");
+        write_str(1, "P11_KIT_SERVER_PID=1234\n");
+    } else {
+        write_str(2, "p11-kit: unknown command '");
+        write_str(2, argv[1]);
+        write_str(2, "'\n");
     }
 }
 

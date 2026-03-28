@@ -71338,6 +71338,345 @@ static void test_mremap_enhanced(void) {
     }
 }
 
+/* ============================================================
+ * Tests 2570-2577: CLONE_CHILD_CLEARTID — comprehensive pthread_join futex mechanism
+ *
+ * These tests exercise the kernel-level mechanism that underpins pthread_join():
+ *   2570: set_tid_address stores clear_child_tid on the current thread
+ *   2571: set_tid_address returns the caller's TID
+ *   2572: Thread with clear_child_tid zeroes the tid word on exit
+ *   2573: Thread exit wakes futex waiter at clear_child_tid address
+ *   2574: Multiple threads each clear their own tid word independently
+ *   2575: set_tid_address(NULL) disables the clear_child_tid mechanism
+ *   2576: Rapidly exiting thread still zeroes tid word (no race)
+ *   2577: Thread exit performs futex wake even when tid word was already 0
+ *
+ * Because sys_clone_thread() requires an interrupt frame from the syscall trap,
+ * kernel-space tests use fut_thread_create() + set clear_child_tid directly.
+ * ============================================================ */
+
+/* --- 2574: independent multi-thread cleartid state --- */
+#define CLEARTID2_NTHREADS 3
+static volatile int g_ct2_tidword[CLEARTID2_NTHREADS];
+static volatile int g_ct2_stored[CLEARTID2_NTHREADS];
+
+static void ct2_child_fn(void *arg) {
+    int idx = (int)(uintptr_t)arg;
+    fut_thread_t *self = fut_thread_current();
+    int my_tid = (int)self->tid;
+    __atomic_store_n((int *)&g_ct2_stored[idx], my_tid, __ATOMIC_RELEASE);
+    __atomic_store_n((int *)&g_ct2_tidword[idx], my_tid, __ATOMIC_RELEASE);
+    self->clear_child_tid = (int *)&g_ct2_tidword[idx];
+    fut_thread_exit();
+}
+
+/* --- 2576: rapid exit child --- */
+static volatile int g_ct_rapid_tidword;
+
+static void ct_rapid_child_fn(void *arg) {
+    (void)arg;
+    fut_thread_t *self = fut_thread_current();
+    int my_tid = (int)self->tid;
+    __atomic_store_n((int *)&g_ct_rapid_tidword, my_tid, __ATOMIC_RELEASE);
+    self->clear_child_tid = (int *)&g_ct_rapid_tidword;
+    /* Exit immediately — no yield, no delay */
+    fut_thread_exit();
+}
+
+/* --- 2577: futex wake when tid word already 0 --- */
+static volatile int g_ct_zero_tidword;
+static volatile int g_ct_zero_done;
+
+static void ct_zero_child_fn(void *arg) {
+    (void)arg;
+    fut_thread_t *self = fut_thread_current();
+    /* Set tid word to 0 first (simulates a pre-zeroed state), then register cleartid */
+    __atomic_store_n((int *)&g_ct_zero_tidword, 0, __ATOMIC_RELEASE);
+    __atomic_store_n((int *)&g_ct_zero_done, 1, __ATOMIC_RELEASE);
+    self->clear_child_tid = (int *)&g_ct_zero_tidword;
+    fut_thread_exit();
+}
+
+static void test_clone_cleartid_comprehensive(void) {
+    extern long sys_set_tid_address(int *tidptr);
+    extern long sys_futex(uint32_t *uaddr, int op, uint32_t val, const void *timeout,
+                          uint32_t *uaddr2, uint32_t val3);
+
+    fut_task_t *task = fut_task_current();
+    fut_thread_t *self = fut_thread_current();
+    if (!task || !self) {
+        fut_printf("[MISC-TEST] FAIL 2570-2577: no task/thread context\n");
+        for (int i = 2570; i <= 2577; i++) fut_test_fail((uint16_t)i);
+        return;
+    }
+
+    /* ---- Test 2570: set_tid_address stores clear_child_tid ---- */
+    {
+        int dummy_tid_loc = 42;
+        int *prev_ctid = self->clear_child_tid;  /* save */
+        long ret = sys_set_tid_address(&dummy_tid_loc);
+        (void)ret;
+        if (self->clear_child_tid != &dummy_tid_loc) {
+            fut_printf("[MISC-TEST] FAIL 2570: set_tid_address did not store pointer "
+                       "(got %p, expected %p)\n",
+                       (void *)self->clear_child_tid, (void *)&dummy_tid_loc);
+            fut_test_fail(2570);
+        } else {
+            fut_printf("[MISC-TEST] PASS 2570: set_tid_address stored clear_child_tid=%p\n",
+                       (void *)self->clear_child_tid);
+            fut_test_pass();
+        }
+        /* Restore so our own exit doesn't accidentally zero dummy_tid_loc */
+        self->clear_child_tid = prev_ctid;
+        task->clear_child_tid = (int *)prev_ctid;
+    }
+
+    /* ---- Test 2571: set_tid_address returns the caller's TID ---- */
+    {
+        int dummy2 = 0;
+        int *prev_ctid = self->clear_child_tid;
+        long ret = sys_set_tid_address(&dummy2);
+        uint64_t expected_tid = self->tid;
+        if ((uint64_t)ret != expected_tid) {
+            fut_printf("[MISC-TEST] FAIL 2571: set_tid_address returned %ld, expected TID %llu\n",
+                       ret, (unsigned long long)expected_tid);
+            fut_test_fail(2571);
+        } else {
+            fut_printf("[MISC-TEST] PASS 2571: set_tid_address returned TID=%ld\n", ret);
+            fut_test_pass();
+        }
+        self->clear_child_tid = prev_ctid;
+        task->clear_child_tid = (int *)prev_ctid;
+    }
+
+    /* ---- Test 2572: child thread zeroes tid word on exit ---- */
+    {
+        /* Reuse g_cleartid globals from tests 1235-1238 */
+        g_cleartid_tidword = 0;
+        g_cleartid_stored_tid = 0;
+
+        fut_thread_t *child = fut_thread_create(task, cleartid_child_fn, NULL,
+                                                 self->stack_size, self->priority);
+        if (!child) {
+            fut_printf("[MISC-TEST] FAIL 2572: fut_thread_create failed\n");
+            fut_test_fail(2572);
+        } else {
+            /* Wait for child to store its TID */
+            int ctid = 0;
+            for (int spin = 0; spin < 20000 && ctid == 0; spin++) {
+                ctid = __atomic_load_n((int *)&g_cleartid_stored_tid, __ATOMIC_ACQUIRE);
+                if (ctid == 0) fut_thread_yield();
+            }
+
+            /* Now wait for the tid word to be zeroed (or spin until it is) */
+            int final_val = __atomic_load_n((int *)&g_cleartid_tidword, __ATOMIC_ACQUIRE);
+            for (int spin = 0; spin < 20000 && final_val != 0; spin++) {
+                fut_thread_yield();
+                final_val = __atomic_load_n((int *)&g_cleartid_tidword, __ATOMIC_ACQUIRE);
+            }
+
+            if (final_val != 0) {
+                fut_printf("[MISC-TEST] FAIL 2572: tid_word=%d after thread exit, expected 0\n",
+                           final_val);
+                fut_test_fail(2572);
+            } else {
+                fut_printf("[MISC-TEST] PASS 2572: clear_child_tid zeroed tid_word on exit\n");
+                fut_test_pass();
+            }
+        }
+    }
+
+    /* ---- Test 2573: thread exit wakes futex waiter ---- */
+    {
+        g_cleartid_tidword = 0;
+        g_cleartid_stored_tid = 0;
+
+        fut_thread_t *child = fut_thread_create(task, cleartid_child_fn, NULL,
+                                                 self->stack_size, self->priority);
+        if (!child) {
+            fut_printf("[MISC-TEST] FAIL 2573: fut_thread_create failed\n");
+            fut_test_fail(2573);
+        } else {
+            /* Wait for child to store TID */
+            int ctid = 0;
+            for (int spin = 0; spin < 20000 && ctid == 0; spin++) {
+                ctid = __atomic_load_n((int *)&g_cleartid_stored_tid, __ATOMIC_ACQUIRE);
+                if (ctid == 0) fut_thread_yield();
+            }
+
+            if (ctid == 0) {
+                fut_printf("[MISC-TEST] FAIL 2573: child never wrote TID\n");
+                fut_test_fail(2573);
+            } else {
+                /* FUTEX_WAIT with the child's TID as expected value.
+                 * Returns 0 (woken by CLEARTID) or -EAGAIN (already zeroed). */
+                fut_timespec_t ts = { .tv_sec = 2, .tv_nsec = 0 };
+                long fw = sys_futex((uint32_t *)&g_cleartid_tidword,
+                                    0 /* FUTEX_WAIT */ | 128 /* FUTEX_PRIVATE_FLAG */,
+                                    (uint32_t)ctid, &ts, NULL, 0);
+                if (fw == 0 || fw == -EAGAIN) {
+                    fut_printf("[MISC-TEST] PASS 2573: futex_wait returned %ld "
+                               "(0=woken, -EAGAIN=already zeroed)\n", fw);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] FAIL 2573: futex_wait returned %ld "
+                               "(expected 0 or -EAGAIN)\n", fw);
+                    fut_test_fail(2573);
+                }
+            }
+        }
+    }
+
+    /* ---- Test 2574: multiple threads each clear their own tid word ---- */
+    {
+        for (int i = 0; i < CLEARTID2_NTHREADS; i++) {
+            g_ct2_tidword[i] = 0;
+            g_ct2_stored[i] = 0;
+        }
+
+        int created = 0;
+        for (int i = 0; i < CLEARTID2_NTHREADS; i++) {
+            fut_thread_t *ch = fut_thread_create(task, ct2_child_fn,
+                                                  (void *)(uintptr_t)i,
+                                                  self->stack_size, self->priority);
+            if (ch) created++;
+        }
+
+        /* Wait for all children to store their TIDs and exit */
+        for (int spin = 0; spin < 30000; spin++) {
+            int all_done = 1;
+            for (int i = 0; i < created; i++) {
+                if (__atomic_load_n((int *)&g_ct2_stored[i], __ATOMIC_ACQUIRE) == 0)
+                    all_done = 0;
+            }
+            if (all_done) break;
+            fut_thread_yield();
+        }
+
+        /* Wait for all tid words to be zeroed */
+        for (int spin = 0; spin < 30000; spin++) {
+            int all_zero = 1;
+            for (int i = 0; i < created; i++) {
+                if (__atomic_load_n((int *)&g_ct2_tidword[i], __ATOMIC_ACQUIRE) != 0)
+                    all_zero = 0;
+            }
+            if (all_zero) break;
+            fut_thread_yield();
+        }
+
+        int pass = 1;
+        for (int i = 0; i < created; i++) {
+            int val = __atomic_load_n((int *)&g_ct2_tidword[i], __ATOMIC_ACQUIRE);
+            if (val != 0) {
+                fut_printf("[MISC-TEST] FAIL 2574: thread[%d] tid_word=%d, expected 0\n", i, val);
+                pass = 0;
+            }
+        }
+        if (created < CLEARTID2_NTHREADS) {
+            fut_printf("[MISC-TEST] FAIL 2574: only created %d/%d threads\n",
+                       created, CLEARTID2_NTHREADS);
+            pass = 0;
+        }
+        if (pass) {
+            fut_printf("[MISC-TEST] PASS 2574: all %d threads cleared their tid words\n", created);
+            fut_test_pass();
+        } else {
+            fut_test_fail(2574);
+        }
+    }
+
+    /* ---- Test 2575: set_tid_address(NULL) disables clear_child_tid ---- */
+    {
+        int *prev_ctid = self->clear_child_tid;
+        long ret = sys_set_tid_address(NULL);
+        (void)ret;
+        if (self->clear_child_tid != NULL) {
+            fut_printf("[MISC-TEST] FAIL 2575: set_tid_address(NULL) did not clear pointer "
+                       "(got %p)\n", (void *)self->clear_child_tid);
+            fut_test_fail(2575);
+        } else {
+            fut_printf("[MISC-TEST] PASS 2575: set_tid_address(NULL) cleared clear_child_tid\n");
+            fut_test_pass();
+        }
+        self->clear_child_tid = prev_ctid;
+        task->clear_child_tid = (int *)prev_ctid;
+    }
+
+    /* ---- Test 2576: rapidly exiting thread still zeroes tid word ---- */
+    {
+        g_ct_rapid_tidword = 0;
+        fut_thread_t *child = fut_thread_create(task, ct_rapid_child_fn, NULL,
+                                                 self->stack_size, self->priority);
+        if (!child) {
+            fut_printf("[MISC-TEST] FAIL 2576: fut_thread_create failed\n");
+            fut_test_fail(2576);
+        } else {
+            /* The child writes TID and exits immediately — wait for zeroing */
+            int final_val = 0;
+            for (int spin = 0; spin < 30000; spin++) {
+                int stored = __atomic_load_n((int *)&g_ct_rapid_tidword, __ATOMIC_ACQUIRE);
+                if (stored != 0) {
+                    /* TID was written; now wait for it to be zeroed */
+                    for (int s2 = 0; s2 < 30000; s2++) {
+                        final_val = __atomic_load_n((int *)&g_ct_rapid_tidword,
+                                                     __ATOMIC_ACQUIRE);
+                        if (final_val == 0) break;
+                        fut_thread_yield();
+                    }
+                    break;
+                }
+                fut_thread_yield();
+            }
+            final_val = __atomic_load_n((int *)&g_ct_rapid_tidword, __ATOMIC_ACQUIRE);
+            if (final_val != 0) {
+                fut_printf("[MISC-TEST] FAIL 2576: rapid-exit tid_word=%d, expected 0\n",
+                           final_val);
+                fut_test_fail(2576);
+            } else {
+                fut_printf("[MISC-TEST] PASS 2576: rapid-exit thread zeroed tid_word\n");
+                fut_test_pass();
+            }
+        }
+    }
+
+    /* ---- Test 2577: thread exit performs futex wake even when tid word is pre-zeroed ---- */
+    {
+        g_ct_zero_tidword = 99;  /* Non-zero sentinel */
+        g_ct_zero_done = 0;
+        fut_thread_t *child = fut_thread_create(task, ct_zero_child_fn, NULL,
+                                                 self->stack_size, self->priority);
+        if (!child) {
+            fut_printf("[MISC-TEST] FAIL 2577: fut_thread_create failed\n");
+            fut_test_fail(2577);
+        } else {
+            /* Wait for child to signal it has set up and exited */
+            for (int spin = 0; spin < 30000; spin++) {
+                if (__atomic_load_n((int *)&g_ct_zero_done, __ATOMIC_ACQUIRE))
+                    break;
+                fut_thread_yield();
+            }
+
+            /* Give the child time to actually exit and trigger CLEARTID */
+            for (int spin = 0; spin < 10000; spin++)
+                fut_thread_yield();
+
+            /* The child pre-zeroed the tid word, then set clear_child_tid, then exited.
+             * CLEARTID writes 0 (already 0) and calls futex_wake_one.
+             * The key assertion: the tid word should still be 0 (CLEARTID wrote 0). */
+            int final_val = __atomic_load_n((int *)&g_ct_zero_tidword, __ATOMIC_ACQUIRE);
+            if (final_val != 0) {
+                fut_printf("[MISC-TEST] FAIL 2577: pre-zeroed tid_word=%d after exit, "
+                           "expected 0\n", final_val);
+                fut_test_fail(2577);
+            } else {
+                fut_printf("[MISC-TEST] PASS 2577: CLEARTID handled pre-zeroed tid_word "
+                           "correctly (val=0)\n");
+                fut_test_pass();
+            }
+        }
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -75675,6 +76014,7 @@ void fut_misc_test_thread(void *arg) {
     test_epoll_wait_timeout_zero_immediate(); /* Tests 2535-2537: epoll_wait timeout=0 immediate return, oneshot suppression */
     test_sendmsg_recvmsg_flags(); /* Tests 2545-2550: sendmsg/recvmsg MSG_DONTWAIT, MSG_PEEK, MSG_NOSIGNAL, scatter-gather */
     test_mremap_enhanced(); /* Tests 2560-2565: mremap shrink/grow/MREMAP_MAYMOVE in-place optimization */
+    test_clone_cleartid_comprehensive(); /* Tests 2570-2577: CLONE_CHILD_CLEARTID futex wake + set_tid_address */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

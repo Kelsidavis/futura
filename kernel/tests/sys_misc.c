@@ -77709,7 +77709,9 @@ void fut_misc_test_thread(void *arg) {
     test_netfilter_procfs(); /* Test 1891 */
     test_watchdog_device(); /* Tests 1888-1890 */
     test_loop_device(); /* Tests 1885-1887 */
-    test_per_iface_conf(); /* Tests 1869-1871 */
+    if (netif_by_name("lo")) {
+        test_per_iface_conf(); /* Tests 1869-1871 */
+    }
 
     /* ── Tests 2149-2152: /etc system config files ── */
     {

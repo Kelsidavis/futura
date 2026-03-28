@@ -186,6 +186,16 @@ static void cmd_numfmt(int argc, char *argv[]);
 static void cmd_look(int argc, char *argv[]);
 static void cmd_colrm(int argc, char *argv[]);
 static void cmd_hd(int argc, char *argv[]);
+static void cmd_lsns(int argc, char *argv[]);
+static void cmd_prlimit(int argc, char *argv[]);
+static void cmd_taskset(int argc, char *argv[]);
+static void cmd_chrt(int argc, char *argv[]);
+static void cmd_ionice(int argc, char *argv[]);
+static void cmd_cpupower(int argc, char *argv[]);
+static void cmd_numactl(int argc, char *argv[]);
+static void cmd_perf(int argc, char *argv[]);
+static void cmd_stdbuf(int argc, char *argv[]);
+static void cmd_fuser(int argc, char *argv[]);
 static void strcpy_simple(char *dest, const char *src);
 
 /* Forward declaration for prompt */
@@ -636,7 +646,7 @@ static size_t common_prefix_len(const char *s1, const char *s2) {
 static void complete_command(char *buf, size_t *pos, size_t max_len) {
     /* List of builtin commands */
     const char *builtins[] = {
-        "arp", "ascii", "base32", "bg", "brctl", "cal", "cd", "chgrp", "chmod", "chroot", "clear", "cmp", "comm", "conntrack", "date", "dd", "df", "dhclient", "dmesg", "echo", "edit", "ethtool", "expand", "expr", "factor", "file", "fold", "hexdump", "install", "locale", "lsof", "md5sum", "mkfifo", "nc", "nice", "nohup", "patch", "pgrep", "pidof", "pkill", "poweroff", "reboot", "renice", "reset", "seq", "sha1sum", "sha512sum", "sleep", "strings", "tac", "time", "timeout", "tput", "traceroute", "tty", "unexpand", "wget", "whatis", "xxd", "exit", "export", "fg", "free",
+        "arp", "ascii", "base32", "bg", "brctl", "cal", "cd", "chgrp", "chmod", "chroot", "chrt", "clear", "cmp", "comm", "conntrack", "cpupower", "date", "dd", "df", "dhclient", "dmesg", "echo", "edit", "ethtool", "expand", "expr", "factor", "file", "fold", "fuser", "hexdump", "install", "ionice", "locale", "lsns", "lsof", "md5sum", "mkfifo", "nc", "nice", "nohup", "numactl", "patch", "perf", "pgrep", "pidof", "pkill", "poweroff", "prlimit", "reboot", "renice", "reset", "seq", "sha1sum", "sha512sum", "sleep", "stdbuf", "strings", "tac", "taskset", "time", "timeout", "tput", "traceroute", "tty", "unexpand", "wget", "whatis", "xxd", "exit", "export", "fg", "free",
         "help", "hostname", "httpd", "id", "ifconfig", "iostat", "ipcs", "iptables", "jobs", "kill", "logger", "losetup", "ls", "lsblk", "lspci", "mkfs", "mount", "netstat",
         ".", "alias", "arch", "basename", "blkid", "dirname", "du", "exec", "false", "fmt", "getconf", "groups", "history", "ip", "ln", "logname", "lscpu", "mkswap", "mktemp", "more", "nawk", "nproc", "nslookup", "passwd", "ping", "printenv", "printf", "ps", "pwd", "read", "readlink", "realpath", "set", "sha1sum", "sha256sum", "shutdown", "source", "ss", "stat", "strace", "stty", "su", "sync", "sysctl", "sysinfo", "tc", "test", "top", "trap", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "users", "version", "vi", "vmstat", "w", "wait", "watch", "wdctl", "which", "whoami", "xargs", "yes", NULL
     };
@@ -1346,6 +1356,16 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  watch [-n S] [-d] cmd - Run command repeatedly (-d highlight diffs)\n");
     write_str(1, "  timeout [-s SIG] N cmd - Run command with time limit\n");
     write_str(1, "  realpath [-e|-m] [-s] [--relative-to=DIR] path - Resolve canonical path\n");
+    write_str(1, "  lsns [-t TYPE]  - List namespaces (NS TYPE NPROCS PID COMMAND)\n");
+    write_str(1, "  prlimit [-p PID] [--nofile=N] [cmd] - Get/set resource limits\n");
+    write_str(1, "  taskset [-p] [mask] [PID|cmd] - Get/set CPU affinity\n");
+    write_str(1, "  chrt [-f|-r|-o] [prio] cmd - Set/get scheduling policy\n");
+    write_str(1, "  ionice [-c class] [-n prio] [-p PID] [cmd] - Set I/O scheduling\n");
+    write_str(1, "  cpupower        - Display CPU frequency info from /proc/cpuinfo\n");
+    write_str(1, "  numactl --show  - Display NUMA policy information\n");
+    write_str(1, "  perf stat cmd   - Basic performance counter statistics\n");
+    write_str(1, "  stdbuf [-oL|-o0] cmd - Modify stream buffering for command\n");
+    write_str(1, "  fuser [-k] file - Identify processes using files\n");
     write_str(1, "\n");
     write_str(1, "Networking:\n");
     write_str(1, "  ip addr|link|route|neigh|forward - Network configuration\n");
@@ -4515,7 +4535,7 @@ static void cmd_sysinfo(int argc, char *argv[]) {
         }
     }
     /* Shell */
-    write_str(1, "  Shell:   Futura Shell v0.5 (220 builtins)\n");
+    write_str(1, "  Shell:   Futura Shell v0.5 (230 builtins)\n");
 }
 
 /* Helper: count lines, words, bytes, and max line length in a file descriptor */
@@ -13158,6 +13178,36 @@ watch_sleep:
     } else if (strcmp_simple(argv[0], "hd") == 0) {
         cmd_hd(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "lsns") == 0) {
+        cmd_lsns(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "prlimit") == 0) {
+        cmd_prlimit(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "taskset") == 0) {
+        cmd_taskset(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "chrt") == 0) {
+        cmd_chrt(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "ionice") == 0) {
+        cmd_ionice(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "cpupower") == 0) {
+        cmd_cpupower(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "numactl") == 0) {
+        cmd_numactl(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "perf") == 0) {
+        cmd_perf(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "stdbuf") == 0) {
+        cmd_stdbuf(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "fuser") == 0) {
+        cmd_fuser(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -13362,6 +13412,16 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "look") == 0 ||
             strcmp_simple(cmd, "colrm") == 0 ||
             strcmp_simple(cmd, "hd") == 0 ||
+            strcmp_simple(cmd, "lsns") == 0 ||
+            strcmp_simple(cmd, "prlimit") == 0 ||
+            strcmp_simple(cmd, "taskset") == 0 ||
+            strcmp_simple(cmd, "chrt") == 0 ||
+            strcmp_simple(cmd, "ionice") == 0 ||
+            strcmp_simple(cmd, "cpupower") == 0 ||
+            strcmp_simple(cmd, "numactl") == 0 ||
+            strcmp_simple(cmd, "perf") == 0 ||
+            strcmp_simple(cmd, "stdbuf") == 0 ||
+            strcmp_simple(cmd, "fuser") == 0 ||
             0);
 }
 
@@ -17799,7 +17859,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   220 built-in commands — type 'help'    |\n");
+    write_str(1, "|   230 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");
@@ -18802,6 +18862,16 @@ static void cmd_man(int argc, char *argv[]) {
         {"look",      "look - display lines beginning with a given prefix string"},
         {"colrm",     "colrm - remove columns from a file (reads stdin)"},
         {"hd",        "hd - hexadecimal dump (alias for hexdump -C)"},
+        {"lsns",      "lsns - list namespaces (NS TYPE NPROCS PID COMMAND)"},
+        {"prlimit",   "prlimit - get/set process resource limits"},
+        {"taskset",   "taskset - set or retrieve a process's CPU affinity"},
+        {"chrt",      "chrt - manipulate the real-time attributes of a process"},
+        {"ionice",    "ionice - set or get process I/O scheduling class and priority"},
+        {"cpupower",  "cpupower - display CPU frequency information"},
+        {"numactl",   "numactl - control NUMA policy for processes or shared memory"},
+        {"perf",      "perf - performance analysis tools (basic stat mode)"},
+        {"stdbuf",    "stdbuf - run command with modified buffering operations"},
+        {"fuser",     "fuser - identify processes using files or sockets"},
     };
     int n_entries = (int)(sizeof(man_entries) / sizeof(man_entries[0]));
 
@@ -20902,11 +20972,13 @@ static void cmd_whatis(int argc, char *argv[]) {
         {"chgrp",     "chgrp (1)           - change group ownership"},
         {"chown",     "chown (1)           - change file owner and group"},
         {"chroot",    "chroot (8)          - run command with special root directory"},
+        {"chrt",      "chrt (1)            - manipulate real-time attributes of a process"},
         {"clear",     "clear (1)           - clear the terminal screen"},
         {"cmp",       "cmp (1)             - compare two files byte by byte"},
         {"colrm",     "colrm (1)           - remove columns from a file"},
         {"comm",      "comm (1)            - compare two sorted files line by line"},
         {"cp",        "cp (1)              - copy files and directories"},
+        {"cpupower",  "cpupower (1)        - show CPU frequency scaling information"},
         {"csplit",    "csplit (1)           - split a file into sections by context"},
         {"curl",      "curl (1)            - transfer a URL"},
         {"cut",       "cut (1)             - remove sections from each line of files"},
@@ -20929,6 +21001,7 @@ static void cmd_whatis(int argc, char *argv[]) {
         {"file",      "file (1)            - determine file type"},
         {"find",      "find (1)            - search for files in a directory hierarchy"},
         {"fold",      "fold (1)            - wrap each input line to fit in specified width"},
+        {"fuser",     "fuser (1)           - identify processes using files or sockets"},
         {"free",      "free (1)            - display amount of free and used memory"},
         {"git",       "git (1)             - the stupid content tracker"},
         {"grep",      "grep (1)            - print lines matching a pattern"},
@@ -20941,6 +21014,7 @@ static void cmd_whatis(int argc, char *argv[]) {
         {"iconv",     "iconv (1)           - convert text from one character encoding to another"},
         {"id",        "id (1)              - print real and effective user and group IDs"},
         {"ifconfig",  "ifconfig (8)        - configure a network interface"},
+        {"ionice",    "ionice (1)          - set or get process I/O scheduling class and priority"},
         {"ip",        "ip (8)              - show/manipulate routing, devices, tunnels"},
         {"jobs",      "jobs (1)            - display status of jobs in the current session"},
         {"kill",      "kill (1)            - send a signal to a process"},
@@ -20950,6 +21024,7 @@ static void cmd_whatis(int argc, char *argv[]) {
         {"ls",        "ls (1)              - list directory contents"},
         {"lsblk",     "lsblk (8)           - list information about block devices"},
         {"lscpu",     "lscpu (1)           - display information about CPU architecture"},
+        {"lsns",      "lsns (8)            - list namespaces"},
         {"make",      "make (1)            - GNU make utility to maintain groups of programs"},
         {"man",       "man (1)             - an interface to the system reference manuals"},
         {"md5sum",    "md5sum (1)          - compute and check MD5 message digest"},
@@ -20965,15 +21040,18 @@ static void cmd_whatis(int argc, char *argv[]) {
         {"nohup",     "nohup (1)           - run a command immune to hangups"},
         {"nslookup",  "nslookup (1)        - query Internet name servers interactively"},
         {"numfmt",    "numfmt (1)          - convert numbers from/to human-readable strings"},
+        {"numactl",   "numactl (8)         - control NUMA policy for processes or shared memory"},
         {"od",        "od (1)              - dump files in octal and other formats"},
         {"passwd",    "passwd (1)          - change user password"},
         {"paste",     "paste (1)           - merge lines of files"},
         {"patch",     "patch (1)           - apply a diff file to an original"},
+        {"perf",      "perf (1)            - performance analysis tools"},
         {"pgrep",     "pgrep (1)           - look up processes based on name"},
         {"pidof",     "pidof (8)           - find the process ID of a running program"},
         {"ping",      "ping (8)            - send ICMP ECHO_REQUEST to network hosts"},
         {"pkill",     "pkill (1)           - signal processes based on name"},
         {"printf",    "printf (1)          - format and print data"},
+        {"prlimit",   "prlimit (1)         - get and set process resource limits"},
         {"ps",        "ps (1)              - report a snapshot of current processes"},
         {"pwd",       "pwd (1)             - print name of current/working directory"},
         {"read",      "read (1)            - read a line from standard input"},
@@ -20995,6 +21073,7 @@ static void cmd_whatis(int argc, char *argv[]) {
         {"split",     "split (1)           - split a file into pieces"},
         {"ss",        "ss (8)              - another utility to investigate sockets"},
         {"stat",      "stat (1)            - display file or file system status"},
+        {"stdbuf",    "stdbuf (1)          - run command with modified buffering operations"},
         {"strace",    "strace (1)          - trace system calls and signals"},
         {"strings",   "strings (1)         - print the strings of printable characters in files"},
         {"su",        "su (1)              - run a command with substitute user and group ID"},
@@ -21005,6 +21084,7 @@ static void cmd_whatis(int argc, char *argv[]) {
         {"tac",       "tac (1)             - concatenate and print files in reverse"},
         {"tail",      "tail (1)            - output the last part of files"},
         {"tar",       "tar (1)             - an archiving utility"},
+        {"taskset",   "taskset (1)         - set or retrieve a process's CPU affinity"},
         {"tee",       "tee (1)             - read from stdin and write to stdout and files"},
         {"test",      "test (1)            - check file types and compare values"},
         {"timeout",   "timeout (1)         - run a command with a time limit"},
@@ -21450,5 +21530,15 @@ static void cmd_hd(int argc, char *argv[]) {
     new_argv[new_argc] = (char *)0;
     cmd_hexdump(new_argc, new_argv);
 }
+static void cmd_lsns(int argc, char *argv[]) { const char *ft=NULL; for(int i=1;i<argc;i++){if(strcmp_simple(argv[i],"-t")==0&&i+1<argc)ft=argv[++i];} write_str(1,"        NS TYPE   NPROCS   PID COMMAND\n"); int pfd=sys_open("/proc",O_RDONLY,0); if(pfd<0){write_str(2,"lsns: cannot open /proc\n");return;} struct linux_dirent64{unsigned long long d_ino;long long d_off;unsigned short d_reclen;unsigned char d_type;char d_name[256];}; char db[4096]; static const char*nn[]={"cgroup","ipc","mnt","net","pid","user","uts"}; long nr; while((nr=sys_getdents64(pfd,db,sizeof(db)))>0){char*pt=db;while(pt<db+nr){struct linux_dirent64*d=(struct linux_dirent64*)pt;pt+=d->d_reclen;if(d->d_name[0]<'1'||d->d_name[0]>'9')continue;int pid=0;for(int k=0;d->d_name[k]>='0'&&d->d_name[k]<='9';k++)pid=pid*10+(d->d_name[k]-'0');char cp[64],cm[64];int ci=0;const char*px="/proc/";while(*px)cp[ci++]=*px++;{int v=pid;char rv[12];int rp=0;if(v==0)rv[rp++]='0';else while(v>0){rv[rp++]='0'+(v%10);v/=10;}while(rp>0)cp[ci++]=rv[--rp];}const char*sf="/comm";while(*sf)cp[ci++]=*sf++;cp[ci]='\0';cm[0]='-';cm[1]='\0';int cf=sys_open(cp,O_RDONLY,0);if(cf>=0){long cr=sys_read(cf,cm,63);if(cr>0){if(cm[cr-1]=='\n')cr--;cm[cr]='\0';}sys_close(cf);}for(int ni=0;ni<7;ni++){if(ft&&strcmp_simple(ft,nn[ni])!=0)continue;char np[80];int npi=0;px="/proc/";while(*px)np[npi++]=*px++;{int v=pid;char rv[12];int rp=0;if(v==0)rv[rp++]='0';else while(v>0){rv[rp++]='0'+(v%10);v/=10;}while(rp>0)np[npi++]=rv[--rp];}const char*ns="/ns/";while(*ns)np[npi++]=*ns++;const char*t=nn[ni];while(*t)np[npi++]=*t++;np[npi]='\0';struct stat st;if(sys_call2(__NR_stat,(long)np,(long)&st)==0){char nb[20];int_to_str((long)st.st_ino,nb,20);int nl=0;while(nb[nl])nl++;for(int s=0;s<10-nl;s++)write_str(1," ");write_str(1,nb);write_str(1," ");write_str(1,nn[ni]);int tl=0;while(nn[ni][tl])tl++;for(int s=tl;s<7;s++)write_str(1," ");write_str(1,"      1 ");char pb[12];int_to_str(pid,pb,12);int pl=0;while(pb[pl])pl++;for(int s=0;s<5-pl;s++)write_str(1," ");write_str(1,pb);write_str(1," ");write_str(1,cm);write_str(1,"\n");}}}}sys_close(pfd);}
+static void cmd_prlimit(int argc, char *argv[]) { int tp=0,sn=-1,cs=-1; for(int i=1;i<argc;i++){if(strcmp_simple(argv[i],"-p")==0&&i+1<argc){const char*p=argv[++i];while(*p>='0'&&*p<='9')tp=tp*10+(*p++-'0');}else if(argv[i][0]=='-'&&argv[i][1]=='-'&&argv[i][2]=='n'&&argv[i][3]=='o'&&argv[i][4]=='f'&&argv[i][5]=='i'&&argv[i][6]=='l'&&argv[i][7]=='e'&&argv[i][8]=='='){const char*p=argv[i]+9;sn=0;while(*p>='0'&&*p<='9')sn=sn*10+(*p++-'0');}else{cs=i;break;}} if(sn>=0&&cs>=0){uint64_t rl[2];rl[0]=(uint64_t)sn;rl[1]=(uint64_t)sn;sys_call4(302,0,7,(long)rl,0);int sa=argc-cs;char*sv[64];for(int i=0;i<sa&&i<63;i++)sv[i]=argv[i+cs];sv[sa]=NULL;execute_command(sa,sv);return;} static const struct{int r;const char*n;}rl[]={{0,"RLIMIT_CPU        "},{1,"RLIMIT_FSIZE      "},{2,"RLIMIT_DATA       "},{3,"RLIMIT_STACK      "},{4,"RLIMIT_CORE       "},{5,"RLIMIT_RSS        "},{6,"RLIMIT_NPROC      "},{7,"RLIMIT_NOFILE     "},{8,"RLIMIT_MEMLOCK    "},{9,"RLIMIT_AS         "},{10,"RLIMIT_LOCKS      "},{11,"RLIMIT_SIGPENDING "},{12,"RLIMIT_MSGQUEUE   "},{15,"RLIMIT_RTPRIO     "}}; write_str(1,"RESOURCE                SOFT      HARD\n"); for(int i=0;i<(int)(sizeof(rl)/sizeof(rl[0]));i++){uint64_t rv[2]={0,0};long r=sys_call4(302,tp,rl[i].r,0,(long)rv);write_str(1,rl[i].n);if(r<0){write_str(1,"  (error)\n");continue;}char b[20];if(rv[0]==(uint64_t)-1)write_str(1," unlimited");else{int_to_str((long)rv[0],b,20);int l=0;while(b[l])l++;for(int s=0;s<10-l;s++)write_str(1," ");write_str(1,b);}if(rv[1]==(uint64_t)-1)write_str(1," unlimited");else{int_to_str((long)rv[1],b,20);int l=0;while(b[l])l++;for(int s=0;s<10-l;s++)write_str(1," ");write_str(1,b);}write_str(1,"\n");}}
+static void cmd_taskset(int argc, char *argv[]) { if(argc<2){write_str(2,"usage: taskset [-p] [mask] [PID|cmd]\n");return;} int sp=0,ag=1; if(strcmp_simple(argv[ag],"-p")==0){sp=1;ag++;} if(sp){if(ag>=argc){write_str(2,"taskset: missing PID\n");return;}int pid=0;unsigned long mk=0;int sm=0;if(ag+1<argc){const char*p=argv[ag];if(p[0]=='0'&&p[1]=='x'){p+=2;while(*p){mk<<=4;if(*p>='0'&&*p<='9')mk|=(unsigned long)(*p-'0');else if(*p>='a'&&*p<='f')mk|=(unsigned long)(*p-'a'+10);else if(*p>='A'&&*p<='F')mk|=(unsigned long)(*p-'A'+10);p++;}}else while(*p>='0'&&*p<='9')mk=mk*10+(unsigned long)(*p++-'0');sm=1;ag++;p=argv[ag];while(*p>='0'&&*p<='9')pid=pid*10+(*p++-'0');}else{const char*p=argv[ag];while(*p>='0'&&*p<='9')pid=pid*10+(*p++-'0');}if(sm){long r=sys_call3(203,pid,sizeof(mk),(long)&mk);if(r<0){write_str(2,"taskset: failed\n");return;}write_str(1,"pid ");char pb[12];int_to_str(pid,pb,12);write_str(1,pb);write_str(1,"'s new affinity mask: ");}else{write_str(1,"pid ");char pb[12];int_to_str(pid,pb,12);write_str(1,pb);write_str(1,"'s current affinity mask: ");}unsigned long gm=0;sys_call3(204,pid,sizeof(gm),(long)&gm);char hb[20];hb[0]='0';hb[1]='x';int hi=2;int st=0;for(int b=60;b>=0;b-=4){int n=(int)((gm>>b)&0xf);if(n||st||b==0){hb[hi++]=(char)(n<10?'0'+n:'a'+n-10);st=1;}}hb[hi]='\0';write_str(1,hb);write_str(1,"\n");}else{if(ag+1>=argc){write_str(2,"usage: taskset [mask] cmd\n");return;}unsigned long mk=0;const char*p=argv[ag];if(p[0]=='0'&&p[1]=='x'){p+=2;while(*p){mk<<=4;if(*p>='0'&&*p<='9')mk|=(unsigned long)(*p-'0');else if(*p>='a'&&*p<='f')mk|=(unsigned long)(*p-'a'+10);else if(*p>='A'&&*p<='F')mk|=(unsigned long)(*p-'A'+10);p++;}}else while(*p>='0'&&*p<='9')mk=mk*10+(unsigned long)(*p++-'0');ag++;sys_call3(203,0,sizeof(mk),(long)&mk);int sa=argc-ag;char*sv[64];for(int i=0;i<sa&&i<63;i++)sv[i]=argv[i+ag];sv[sa]=NULL;execute_command(sa,sv);}}
+static void cmd_chrt(int argc, char *argv[]) { if(argc<2){write_str(2,"usage: chrt [-f|-r|-o|-b] [-p] [prio] [PID|cmd]\n");return;} int po=-1,pr=0,sp=0,ag=1; while(ag<argc&&argv[ag][0]=='-'){const char*f=argv[ag];if(strcmp_simple(f,"-f")==0)po=1;else if(strcmp_simple(f,"-r")==0)po=2;else if(strcmp_simple(f,"-o")==0)po=0;else if(strcmp_simple(f,"-b")==0)po=3;else if(strcmp_simple(f,"-p")==0)sp=1;else break;ag++;} if(sp){int pid=0;if(ag<argc){const char*p=argv[ag];while(*p>='0'&&*p<='9')pid=pid*10+(*p++-'0');}long cp=sys_call1(145,pid);int pm[1]={0};sys_call2(143,pid,(long)pm);write_str(1,"pid ");char pb[12];int_to_str(pid,pb,12);write_str(1,pb);write_str(1,"'s current scheduling policy: ");if(cp==0)write_str(1,"SCHED_OTHER");else if(cp==1)write_str(1,"SCHED_FIFO");else if(cp==2)write_str(1,"SCHED_RR");else if(cp==3)write_str(1,"SCHED_BATCH");else if(cp==5)write_str(1,"SCHED_IDLE");else{char nb[12];int_to_str(cp,nb,12);write_str(1,nb);}write_str(1,"\npid ");write_str(1,pb);write_str(1,"'s current scheduling priority: ");char prb[12];int_to_str(pm[0],prb,12);write_str(1,prb);write_str(1,"\n");return;} if(ag<argc){const char*p=argv[ag];while(*p>='0'&&*p<='9')pr=pr*10+(*p++-'0');ag++;}if(ag>=argc){write_str(2,"chrt: missing command\n");return;}if(po<0)po=1;int sm[1];sm[0]=pr;long r=sys_call3(144,0,po,(long)sm);if(r<0)write_str(2,"chrt: failed to set scheduling policy\n");int sa=argc-ag;char*sv[64];for(int i=0;i<sa&&i<63;i++)sv[i]=argv[i+ag];sv[sa]=NULL;execute_command(sa,sv);}
+static void cmd_ionice(int argc, char *argv[]) { int ic=-1,ip=-1,tp=0,cs=-1; for(int i=1;i<argc;i++){if(strcmp_simple(argv[i],"-c")==0&&i+1<argc){i++;ic=0;const char*p=argv[i];while(*p>='0'&&*p<='9')ic=ic*10+(*p++-'0');}else if(argv[i][0]=='-'&&argv[i][1]=='c'&&argv[i][2]>='0')ic=argv[i][2]-'0';else if(strcmp_simple(argv[i],"-n")==0&&i+1<argc){i++;ip=0;const char*p=argv[i];while(*p>='0'&&*p<='9')ip=ip*10+(*p++-'0');}else if(argv[i][0]=='-'&&argv[i][1]=='n'&&argv[i][2]>='0')ip=argv[i][2]-'0';else if(strcmp_simple(argv[i],"-p")==0&&i+1<argc){i++;const char*p=argv[i];while(*p>='0'&&*p<='9')tp=tp*10+(*p++-'0');}else{cs=i;break;}} if(cs<0&&ic<0){long c=sys_call2(252,1,tp);if(c<0)c=0;int cl=(int)((c>>13)&0x3);int p=(int)(c&0x1fff);const char*cn[]={"none","realtime","best-effort","idle"};write_str(1,cn[cl<4?cl:0]);write_str(1,": prio ");char pb[8];int_to_str(p,pb,8);write_str(1,pb);write_str(1,"\n");return;}if(ic<0)ic=2;if(ip<0)ip=4;int io=(ic<<13)|ip;if(tp>0){sys_call3(251,1,tp,io);return;}sys_call3(251,1,0,io);if(cs>=0&&cs<argc){int sa=argc-cs;char*sv[64];for(int i=0;i<sa&&i<63;i++)sv[i]=argv[i+cs];sv[sa]=NULL;execute_command(sa,sv);}}
+static void cmd_cpupower(int argc, char *argv[]) { (void)argc;(void)argv; int fd=sys_open("/proc/cpuinfo",O_RDONLY,0);if(fd<0){write_str(2,"cpupower: cannot open /proc/cpuinfo\n");return;}char buf[4096];long nr=sys_read(fd,buf,sizeof(buf)-1);sys_close(fd);if(nr<=0)return;buf[nr]='\0';write_str(1,"analyzing CPU information:\n");int cc=0;char mn[128]={0};char mz[32]={0};char*p=buf;while(*p){if(p[0]=='p'&&p[1]=='r'&&p[2]=='o'&&p[3]=='c'&&p[4]=='e'&&p[5]=='s'&&p[6]=='s'&&p[7]=='o'&&p[8]=='r')cc++;if(p[0]=='m'&&p[1]=='o'&&p[2]=='d'&&p[3]=='e'&&p[4]=='l'&&p[5]==' '&&p[6]=='n'&&p[7]=='a'&&p[8]=='m'&&p[9]=='e'&&!mn[0]){const char*q=p;while(*q&&*q!=':')q++;if(*q==':'){q++;while(*q==' '||*q=='\t')q++;int mi=0;while(*q&&*q!='\n'&&mi<126)mn[mi++]=*q++;mn[mi]='\0';}}if(p[0]=='c'&&p[1]=='p'&&p[2]=='u'&&p[3]==' '&&p[4]=='M'&&p[5]=='H'&&p[6]=='z'&&!mz[0]){const char*q=p;while(*q&&*q!=':')q++;if(*q==':'){q++;while(*q==' '||*q=='\t')q++;int mi=0;while(*q&&*q!='\n'&&mi<30)mz[mi++]=*q++;mz[mi]='\0';}}while(*p&&*p!='\n')p++;if(*p=='\n')p++;}char nb[12];write_str(1,"  CPUs:       ");int_to_str(cc?cc:1,nb,12);write_str(1,nb);write_str(1,"\n");if(mn[0]){write_str(1,"  Model:      ");write_str(1,mn);write_str(1,"\n");}if(mz[0]){write_str(1,"  Frequency:  ");write_str(1,mz);write_str(1," MHz\n");}else write_str(1,"  Frequency:  (not available)\n");int gf=sys_open("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor",O_RDONLY,0);if(gf>=0){char gv[64];long gr=sys_read(gf,gv,sizeof(gv)-1);sys_close(gf);if(gr>0){if(gv[gr-1]=='\n')gr--;gv[gr]='\0';write_str(1,"  Governor:   ");write_str(1,gv);write_str(1,"\n");}}else write_str(1,"  Governor:   (not available)\n");}
+static void cmd_numactl(int argc, char *argv[]) { if(argc>=2&&strcmp_simple(argv[1],"--hardware")==0){write_str(1,"available: 1 node (0)\n");int fd=sys_open("/proc/meminfo",O_RDONLY,0);if(fd>=0){char buf[2048];long nr=sys_read(fd,buf,sizeof(buf)-1);sys_close(fd);if(nr>0){buf[nr]='\0';char*p=buf;while(*p){if(p[0]=='M'&&p[1]=='e'&&p[2]=='m'&&p[3]=='T'&&p[4]=='o'&&p[5]=='t'){write_str(1,"node 0 size: ");while(*p&&*p!=':')p++;if(*p==':')p++;while(*p==' ')p++;while(*p&&*p!='\n'){sys_write(1,p,1);p++;}write_str(1,"\n");break;}while(*p&&*p!='\n')p++;if(*p=='\n')p++;}}}write_str(1,"node 0 cpus: 0\n");return;}write_str(1,"policy: default\n");write_str(1,"preferred node: current\n");unsigned long mk=0;long r=sys_call3(204,0,sizeof(mk),(long)&mk);if(r>=0){write_str(1,"physcpubind: ");char nb[8];int f=1;for(int i=0;i<64;i++){if(mk&(1UL<<i)){if(!f)write_str(1," ");int_to_str(i,nb,8);write_str(1,nb);f=0;}}write_str(1,"\n");}write_str(1,"cpubind: 0\n");write_str(1,"nodebind: 0\n");write_str(1,"membind: 0\n");(void)argc;(void)argv;}
+static void cmd_perf(int argc, char *argv[]) { if(argc<3||strcmp_simple(argv[1],"stat")!=0){write_str(2,"usage: perf stat command [args...]\n");return;}long st=0;int uf=sys_open("/proc/uptime",O_RDONLY,0);if(uf>=0){char ub[64];long ur=sys_read(uf,ub,sizeof(ub)-1);sys_close(uf);if(ur>0){ub[ur]='\0';const char*p=ub;while(*p>='0'&&*p<='9')st=st*10+(*p++-'0');st*=100;if(*p=='.'){p++;if(*p>='0'&&*p<='9')st+=(*p++-'0')*10;if(*p>='0'&&*p<='9')st+=(*p++-'0');}}}int sa=argc-2;char*sv[64];for(int i=0;i<sa&&i<63;i++)sv[i]=argv[i+2];sv[sa]=NULL;execute_command(sa,sv);long et=0;uf=sys_open("/proc/uptime",O_RDONLY,0);if(uf>=0){char ub[64];long ur=sys_read(uf,ub,sizeof(ub)-1);sys_close(uf);if(ur>0){ub[ur]='\0';const char*p=ub;while(*p>='0'&&*p<='9')et=et*10+(*p++-'0');et*=100;if(*p=='.'){p++;if(*p>='0'&&*p<='9')et+=(*p++-'0')*10;if(*p>='0'&&*p<='9')et+=(*p++-'0');}}}long ec=et-st;if(ec<0)ec=0;write_str(2,"\n Performance counter stats:\n\n");int sf=sys_open("/proc/stat",O_RDONLY,0);if(sf>=0){char sb[2048];long sr=sys_read(sf,sb,sizeof(sb)-1);sys_close(sf);if(sr>0){sb[sr]='\0';char*sp=sb;while(*sp){if(sp[0]=='c'&&sp[1]=='t'&&sp[2]=='x'&&sp[3]=='t'){while(*sp&&*sp!=' ')sp++;while(*sp==' ')sp++;char nb[20];int ni=0;while(*sp>='0'&&*sp<='9'&&ni<19)nb[ni++]=*sp++;nb[ni]='\0';write_str(2,"        ");write_str(2,nb);write_str(2,"      context-switches\n");break;}while(*sp&&*sp!='\n')sp++;if(*sp=='\n')sp++;}}}char tb[20];int_to_str(ec/100,tb,20);write_str(2,"\n   ");write_str(2,tb);write_str(2,".");char cb[4];cb[0]=(char)('0'+(ec%100)/10);cb[1]=(char)('0'+(ec%10));cb[2]='\0';write_str(2,cb);write_str(2," seconds time elapsed\n\n");}
+static void cmd_stdbuf(int argc, char *argv[]) { if(argc<3){write_str(2,"usage: stdbuf [-oL|-o0] command [args...]\n");return;}int cs=1;while(cs<argc&&argv[cs][0]=='-'){char c=argv[cs][1];if(c=='o'||c=='i'||c=='e'){if(argv[cs][2]=='\0'&&cs+1<argc)cs++;}else break;cs++;}if(cs>=argc){write_str(2,"stdbuf: missing command\n");return;}int sa=argc-cs;char*sv[64];for(int i=0;i<sa&&i<63;i++)sv[i]=argv[i+cs];sv[sa]=NULL;execute_command(sa,sv);}
+static void cmd_fuser(int argc, char *argv[]) { int dk=0,fs=1;if(argc>=2&&strcmp_simple(argv[1],"-k")==0){dk=1;fs=2;}if(fs>=argc){write_str(2,"usage: fuser [-k] file...\n");return;}for(int fi=fs;fi<argc;fi++){const char*tg=argv[fi];struct stat ts;if(sys_call2(__NR_stat,(long)tg,(long)&ts)<0){write_str(2,"fuser: ");write_str(2,tg);write_str(2,": No such file\n");continue;}write_str(1,tg);write_str(1,":");struct linux_dirent64{unsigned long long d_ino;long long d_off;unsigned short d_reclen;unsigned char d_type;char d_name[256];};int pf=sys_open("/proc",O_RDONLY,0);if(pf<0)continue;char db[4096];long nr;while((nr=sys_getdents64(pf,db,sizeof(db)))>0){char*pt=db;while(pt<db+nr){struct linux_dirent64*d=(struct linux_dirent64*)pt;pt+=d->d_reclen;if(d->d_name[0]<'1'||d->d_name[0]>'9')continue;int pid=0;for(int k=0;d->d_name[k]>='0'&&d->d_name[k]<='9';k++)pid=pid*10+(d->d_name[k]-'0');char fd[64];int fp=0;const char*px="/proc/";while(*px)fd[fp++]=*px++;{int v=pid;char rv[12];int rp=0;if(v==0)rv[rp++]='0';else while(v>0){rv[rp++]='0'+(v%10);v/=10;}while(rp>0)fd[fp++]=rv[--rp];}const char*sf="/fd";while(*sf)fd[fp++]=*sf++;fd[fp]='\0';int ff=sys_open(fd,O_RDONLY,0);if(ff<0)continue;char fb[2048];long fn;int fo=0;while(!fo&&(fn=sys_getdents64(ff,fb,sizeof(fb)))>0){char*fp2=fb;while(fp2<fb+fn){struct linux_dirent64*fe=(struct linux_dirent64*)fp2;fp2+=fe->d_reclen;if(fe->d_name[0]=='.')continue;char fdp[80];int pp=0;for(int k=0;fd[k]&&pp<70;k++)fdp[pp++]=fd[k];fdp[pp++]='/';for(int k=0;fe->d_name[k]&&pp<78;k++)fdp[pp++]=fe->d_name[k];fdp[pp]='\0';struct stat fs2;if(sys_call2(__NR_stat,(long)fdp,(long)&fs2)==0&&fs2.st_ino==ts.st_ino&&fs2.st_dev==ts.st_dev){write_str(1," ");char pb[12];int_to_str(pid,pb,12);write_str(1,pb);if(dk)sys_kill(pid,9);fo=1;break;}}}sys_close(ff);}}sys_close(pf);write_str(1,"\n");}}
 
 #pragma GCC diagnostic pop

@@ -388,6 +388,8 @@ static const struct fut_fs_type *find_fs_type(const char *name) {
 /* ============================================================
  *   Mount Management
  * ============================================================ */
+static int lookup_vnode(const char *path, struct fut_vnode **vnode);
+static void release_lookup_ref(struct fut_vnode *vnode);
 
 int fut_vfs_mount(const char *device, const char *mountpoint,
                   const char *fstype, int flags, void *data, fut_handle_t block_device_handle) {
@@ -422,6 +424,51 @@ int fut_vfs_mount(const char *device, const char *mountpoint,
 
     if (mount->root && !is_root_mount) {
         fut_vnode_ref(mount->root);
+
+        /* Set mount root's parent/name so fut_vnode_build_path can reconstruct
+         * the absolute path.  Without this, inotify watches on mount roots
+         * (e.g. /tmp, /proc) fail because the path comparison can't match. */
+        if (mountpoint && !mount->root->name) {
+            /* Find last '/' to extract basename */
+            const char *base = mountpoint;
+            for (const char *p = mountpoint; *p; p++) {
+                if (*p == '/' && p[1]) base = p + 1;
+            }
+            size_t blen = 0;
+            while (base[blen]) blen++;
+            char *name_copy = fut_malloc(blen + 1);
+            if (name_copy) {
+                for (size_t k = 0; k <= blen; k++) name_copy[k] = base[k];
+                mount->root->name = name_copy;
+            }
+            /* Look up the parent directory vnode for path reconstruction */
+            if (!mount->root->parent && root_vnode) {
+                struct fut_vnode *mp_parent = NULL;
+                /* Build parent path by stripping the basename */
+                size_t mplen = 0;
+                while (mountpoint[mplen]) mplen++;
+                char *parent_path = fut_malloc(mplen + 1);
+                if (parent_path) {
+                    for (size_t k = 0; k <= mplen; k++) parent_path[k] = mountpoint[k];
+                    /* Strip trailing basename */
+                    char *last_slash = parent_path;
+                    for (char *p = parent_path; *p; p++) {
+                        if (*p == '/') last_slash = p;
+                    }
+                    if (last_slash == parent_path) {
+                        last_slash[1] = '\0';  /* parent is "/" */
+                    } else {
+                        *last_slash = '\0';
+                    }
+                    if (lookup_vnode(parent_path, &mp_parent) == 0 && mp_parent) {
+                        mount->root->parent = mp_parent;
+                        /* Don't hold a ref - parent is a weak pointer */
+                        release_lookup_ref(mp_parent);
+                    }
+                    fut_free(parent_path);
+                }
+            }
+        }
     }
 
     /* Add to mount list */

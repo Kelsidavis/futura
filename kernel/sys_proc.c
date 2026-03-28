@@ -297,9 +297,11 @@ long sys_getsid(uint64_t pid) {
         return -ESRCH;
     }
 
-    /* If pid is 0, use calling process */
+    /* If pid is 0, use calling process.
+     * If SID was never explicitly set (kernel thread), return PID as the
+     * session leader — this matches POSIX: every process belongs to a session. */
     if (pid == 0) {
-        return current->sid;
+        return current->sid ? (long)current->sid : (long)current->pid;
     }
 
     /* Look up target task */

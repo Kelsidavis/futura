@@ -653,6 +653,7 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
         }
 
         int shebang_depth = 0;
+        bool shebang_empty_interp = false;
         for (; shebang_depth < SHEBANG_MAX_DEPTH; shebang_depth++) {
             int sfd = fut_vfs_open(kernel_pathname, 0, 0); /* O_RDONLY */
             if (sfd < 0) break; /* file not found — leave kernel_pathname for later ENOENT */
@@ -673,7 +674,7 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
             while (*sp && *sp != ' ' && *sp != '\t' && *sp != '\n' && *sp != '\r' && iplen < 255)
                 ipath[iplen++] = *sp++;
             ipath[iplen] = '\0';
-            if (iplen == 0) break; /* empty interpreter */
+            if (iplen == 0) { shebang_empty_interp = true; break; } /* empty interpreter */
 
             /* Parse optional single argument (rest of first line, trimmed) */
             char iarg[256];
@@ -854,6 +855,16 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
             __builtin_memcpy(kernel_pathname, ipath, (size_t)iplen + 1);
             /* Loop continues — if ipath is itself a shebang script, we
              * parse it again up to SHEBANG_MAX_DEPTH. */
+        }
+
+        /* Shebang with empty interpreter line → ENOEXEC */
+        if (shebang_empty_interp) {
+            execve_free_argv(kernel_argv, argc);
+            if (kernel_envp) {
+                for (int i = 0; kernel_envp[i]; i++) fut_free(kernel_envp[i]);
+                fut_free(kernel_envp);
+            }
+            return -ENOEXEC;
         }
 
         /* If we exhausted the depth limit, return ELOOP (too many levels) */

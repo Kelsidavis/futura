@@ -4395,6 +4395,13 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
                 av[ai].key = 16; av[ai].val = hwcap_val;                     ai++; /* AT_HWCAP */
                 av[ai].key = 7;  av[ai].val = 0ULL;                          ai++; /* AT_BASE */
                 av[ai].key = 8;  av[ai].val = 0ULL;                          ai++; /* AT_FLAGS */
+#if defined(__x86_64__)
+                { static const char platform_str[] = "x86_64";
+                av[ai].key = 15; av[ai].val = (uint64_t)(uintptr_t)platform_str; ai++; } /* AT_PLATFORM */
+#elif defined(__aarch64__)
+                { static const char platform_str[] = "aarch64";
+                av[ai].key = 15; av[ai].val = (uint64_t)(uintptr_t)platform_str; ai++; } /* AT_PLATFORM */
+#endif
                 av[ai].key = 0;  av[ai].val = 0ULL;                          ai++; /* AT_NULL */
                 size_t n_bytes = (size_t)ai * sizeof(av[0]);
                 if (n_bytes > GEN_BUF) n_bytes = GEN_BUF;

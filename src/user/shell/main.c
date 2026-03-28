@@ -166,6 +166,11 @@ static void cmd_mkswap(int argc, char *argv[]);
 static void cmd_blkid(int argc, char *argv[]);
 static void cmd_lscpu(int argc, char *argv[]);
 static void cmd_w(int argc, char *argv[]);
+static void cmd_cksum(int argc, char *argv[]);
+static void cmd_pathchk(int argc, char *argv[]);
+static void cmd_csplit(int argc, char *argv[]);
+static void cmd_chown(int argc, char *argv[]);
+static void cmd_newgrp(int argc, char *argv[]);
 static void strcpy_simple(char *dest, const char *src);
 
 /* Forward declaration for prompt */
@@ -1612,13 +1617,27 @@ static void cmd_date(int argc, char *argv[]) {
                     char tmp[8];
                     switch (*fmt) {
                         case 'Y': int_to_str((long)y, tmp, 8); for (int i=0;tmp[i];i++) buf[p++]=tmp[i]; break;
+                        case 'y': { int yy=(int)(y%100); buf[p++]='0'+(char)(yy/10); buf[p++]='0'+(char)(yy%10); break; }
+                        case 'C': { int cc=(int)(y/100); buf[p++]='0'+(char)(cc/10); buf[p++]='0'+(char)(cc%10); break; }
                         case 'm': buf[p++]='0'+(char)((m+1)/10); buf[p++]='0'+(char)((m+1)%10); break;
                         case 'd': buf[p++]='0'+(char)(day/10); buf[p++]='0'+(char)(day%10); break;
+                        case 'e': if(day<10){buf[p++]=' ';}else{buf[p++]='0'+(char)(day/10);} buf[p++]='0'+(char)(day%10); break;
                         case 'H': buf[p++]='0'+(char)(hour/10); buf[p++]='0'+(char)(hour%10); break;
+                        case 'I': { long h12=hour%12; if(h12==0)h12=12; buf[p++]='0'+(char)(h12/10); buf[p++]='0'+(char)(h12%10); break; }
                         case 'M': buf[p++]='0'+(char)(min/10); buf[p++]='0'+(char)(min%10); break;
                         case 'S': buf[p++]='0'+(char)(sec/10); buf[p++]='0'+(char)(sec%10); break;
-                        case 'A': for (int i=0;wnames[wday][i];i++) buf[p++]=wnames[wday][i]; break;
-                        case 'B': for (int i=0;mnames[m][i];i++) buf[p++]=mnames[m][i]; break;
+                        case 'p': if(hour<12){buf[p++]='A';buf[p++]='M';}else{buf[p++]='P';buf[p++]='M';} break;
+                        case 'A': { const char *fw[]={"Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"}; int wi=(wday+3)%7; for(int i=0;fw[wi][i];i++)buf[p++]=fw[wi][i]; break; }
+                        case 'a': for (int i=0;wnames[wday][i];i++) buf[p++]=wnames[wday][i]; break;
+                        case 'B': { const char *fm[]={"January","February","March","April","May","June","July","August","September","October","November","December"}; for(int i=0;fm[m][i];i++)buf[p++]=fm[m][i]; break; }
+                        case 'b': case 'h': for (int i=0;mnames[m][i];i++) buf[p++]=mnames[m][i]; break;
+                        case 'j': { int yd=(int)days+1; for(int k=0;k<m;k++)yd+=mdays[k]; buf[p++]='0'+(char)(yd/100); buf[p++]='0'+(char)((yd/10)%10); buf[p++]='0'+(char)(yd%10); break; }
+                        case 'u': { int wd=(wday+3)%7; if(wd==0)wd=7; buf[p++]='0'+(char)wd; break; }
+                        case 'w': { int wd=(wday+3)%7; buf[p++]='0'+(char)wd; break; }
+                        case 'Z': buf[p++]='U'; buf[p++]='T'; buf[p++]='C'; break;
+                        case 'n': buf[p++]='\n'; break;
+                        case 't': buf[p++]='\t'; break;
+                        case '%': buf[p++]='%'; break;
                         case 's': { int_to_str(ts.tv_sec, tmp, 8); for (int i=0;tmp[i];i++) buf[p++]=tmp[i]; break; }
                         default: buf[p++]='%'; buf[p++]=*fmt; break;
                     }
@@ -3240,14 +3259,29 @@ static void cmd_id(int argc, char *argv[]) {
     long egid = sys_call0(108 /* getegid */);
     char buf[16];
 
-    /* Support -u (uid only) and -g (gid only) flags */
+    /* Support -u (uid only), -g (gid only), -G (groups) flags */
     if (argc > 1 && argv[1][0] == '-') {
+        int name_mode = 0;
+        /* Check for -n in later args or combined like -un, -gn, -Gn */
+        for (int i = 1; i < argc; i++)
+            if (argv[i][0] == '-') {
+                for (int j = 1; argv[i][j]; j++)
+                    if (argv[i][j] == 'n') name_mode = 1;
+            }
         if (argv[1][1] == 'u') {
-            int_to_str(uid, buf, 16); write_str(1, buf); write_char(1, '\n'); return;
-        } else if (argv[1][1] == 'g') {
-            int_to_str(gid, buf, 16); write_str(1, buf); write_char(1, '\n'); return;
+            if (name_mode) { write_str(1, "root\n"); }
+            else { int_to_str(uid, buf, 16); write_str(1, buf); write_char(1, '\n'); }
+            return;
+        } else if (argv[1][1] == 'g' && argv[1][2] != 'n') {
+            if (name_mode) { write_str(1, "root\n"); }
+            else { int_to_str(gid, buf, 16); write_str(1, buf); write_char(1, '\n'); }
+            return;
+        } else if (argv[1][1] == 'G') {
+            if (name_mode) { write_str(1, "root\n"); }
+            else { int_to_str(gid, buf, 16); write_str(1, buf); write_char(1, '\n'); }
+            return;
         } else if (argv[1][1] == 'n') {
-            /* -un or -gn: print name */
+            /* -n alone: show name for default output */
             write_str(1, "root\n"); return;
         }
     }
@@ -11662,11 +11696,26 @@ static int execute_command(int argc, char *argv[]) {
         }
         return 0;
     } else if (strcmp_simple(argv[0], "mktemp") == 0) {
-        /* mktemp — create a unique temp file */
+        /* mktemp — create a unique temp file or directory */
+        int make_dir = 0;
+        const char *parent = "/tmp";
+        int argi = 1;
+        while (argi < argc && argv[argi][0] == '-') {
+            if (argv[argi][1] == 'd') {
+                make_dir = 1;
+            } else if (argv[argi][1] == 'p' && argi + 1 < argc) {
+                argi++;
+                parent = argv[argi];
+            }
+            argi++;
+        }
         struct { long tv_sec; long tv_nsec; } ts = {0, 0};
         sys_call2(98, 1, (long)&ts);
-        char path[64] = "/tmp/tmp.";
-        int p = 9;
+        char path[128];
+        int p = 0;
+        for (int i = 0; parent[i] && p < 100; i++) path[p++] = parent[i];
+        const char *suffix = "/tmp.";
+        for (int i = 0; suffix[i]; i++) path[p++] = suffix[i];
         unsigned int r = (unsigned int)(ts.tv_nsec ^ ts.tv_sec);
         for (int i = 0; i < 8; i++) {
             r = r * 1103515245 + 12345;
@@ -11674,14 +11723,25 @@ static int execute_command(int argc, char *argv[]) {
             path[p++] = (c < 10) ? '0' + c : 'a' + c - 10;
         }
         path[p] = '\0';
-        int fd = sys_open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
-        if (fd >= 0) {
-            sys_close(fd);
-            write_str(1, path);
-            write_char(1, '\n');
+        if (make_dir) {
+            long rc = sys_mkdir(path, 0700);
+            if (rc == 0) {
+                write_str(1, path);
+                write_char(1, '\n');
+            } else {
+                write_str(2, "mktemp: failed to create directory\n");
+                return 1;
+            }
         } else {
-            write_str(2, "mktemp: failed\n");
-            return 1;
+            int fd = sys_open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+            if (fd >= 0) {
+                sys_close(fd);
+                write_str(1, path);
+                write_char(1, '\n');
+            } else {
+                write_str(2, "mktemp: failed\n");
+                return 1;
+            }
         }
         return 0;
     } else if (strcmp_simple(argv[0], "source") == 0 ||
@@ -12522,6 +12582,21 @@ static int execute_command(int argc, char *argv[]) {
         argv[0] = "awk";
         cmd_awk(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "cksum") == 0) {
+        cmd_cksum(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "pathchk") == 0) {
+        cmd_pathchk(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "csplit") == 0) {
+        cmd_csplit(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "chown") == 0) {
+        cmd_chown(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "newgrp") == 0) {
+        cmd_newgrp(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -12705,6 +12780,9 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "printenv") == 0 || strcmp_simple(cmd, "users") == 0 ||
             strcmp_simple(cmd, "logname") == 0 || strcmp_simple(cmd, "groups") == 0 ||
             strcmp_simple(cmd, "fmt") == 0 || strcmp_simple(cmd, "nawk") == 0 ||
+            strcmp_simple(cmd, "cksum") == 0 || strcmp_simple(cmd, "pathchk") == 0 ||
+            strcmp_simple(cmd, "csplit") == 0 || strcmp_simple(cmd, "chown") == 0 ||
+            strcmp_simple(cmd, "newgrp") == 0 ||
             0);
 }
 
@@ -13515,6 +13593,17 @@ static void cmd_nohup(int argc, char *argv[]) {
     sa.handler = (void *)1;  /* SIG_IGN */
     sys_sigaction(1 /* SIGHUP */, &sa, NULL);
 
+    /* Redirect stdout to nohup.out if it's a terminal */
+    int nohup_fd = sys_open("nohup.out", O_WRONLY | O_CREAT | O_APPEND, 0600);
+    int saved_stdout = -1;
+    if (nohup_fd >= 0) {
+        saved_stdout = (int)sys_dup(1);
+        sys_dup2(nohup_fd, 1);
+        sys_dup2(nohup_fd, 2);
+        sys_close(nohup_fd);
+        write_str(saved_stdout, "nohup: appending output to 'nohup.out'\n");
+    }
+
     /* Execute the command */
     int sub_argc = argc - 1;
     char *sub_argv[64];
@@ -13522,6 +13611,13 @@ static void cmd_nohup(int argc, char *argv[]) {
         sub_argv[i] = argv[i + 1];
     sub_argv[sub_argc] = NULL;
     execute_command(sub_argc, sub_argv);
+
+    /* Restore stdout/stderr */
+    if (saved_stdout >= 0) {
+        sys_dup2(saved_stdout, 1);
+        sys_dup2(saved_stdout, 2);
+        sys_close(saved_stdout);
+    }
 }
 
 /* ── chroot: change root directory ── */
@@ -14798,17 +14894,41 @@ static void cmd_unexpand(int argc, char *argv[]) {
 
 /* ── install: copy files with attributes ── */
 static void cmd_install(int argc, char *argv[]) {
-    /* Simplified install: copy file with optional -m mode */
+    /* install: copy file with -m mode, -o owner, -d (create dir) options */
     int mode = 0755;
+    int owner = -1;
+    int group = -1;
+    int dir_mode = 0;  /* -d flag: create directories */
     int file_start = 1;
-    if (argc >= 4 && argv[1][0] == '-' && argv[1][1] == 'm') {
-        mode = 0;
-        for (const char *p = argv[2]; *p >= '0' && *p <= '7'; p++)
-            mode = mode * 8 + (*p - '0');
-        file_start = 3;
+    while (file_start < argc && argv[file_start][0] == '-') {
+        if (argv[file_start][1] == 'm' && file_start + 1 < argc) {
+            file_start++;
+            mode = 0;
+            for (const char *p = argv[file_start]; *p >= '0' && *p <= '7'; p++)
+                mode = mode * 8 + (*p - '0');
+        } else if (argv[file_start][1] == 'o' && file_start + 1 < argc) {
+            file_start++;
+            owner = 0;
+            for (const char *p = argv[file_start]; *p >= '0' && *p <= '9'; p++)
+                owner = owner * 10 + (*p - '0');
+        } else if (argv[file_start][1] == 'g' && file_start + 1 < argc) {
+            file_start++;
+            group = 0;
+            for (const char *p = argv[file_start]; *p >= '0' && *p <= '9'; p++)
+                group = group * 10 + (*p - '0');
+        } else if (argv[file_start][1] == 'd') {
+            dir_mode = 1;
+        }
+        file_start++;
+    }
+    if (dir_mode) {
+        /* Create directories */
+        for (int i = file_start; i < argc; i++)
+            sys_mkdir(argv[i], (unsigned int)mode);
+        return;
     }
     if (file_start + 1 >= argc) {
-        write_str(2, "usage: install [-m MODE] SOURCE DEST\n"); return;
+        write_str(2, "usage: install [-m MODE] [-o OWNER] [-g GROUP] [-d] SOURCE DEST\n"); return;
     }
     /* Copy file */
     int src = sys_open(argv[file_start], O_RDONLY, 0);
@@ -14822,6 +14942,12 @@ static void cmd_install(int argc, char *argv[]) {
     sys_close(src); sys_close(dst);
     /* Set mode */
     sys_chmod_call(argv[file_start + 1], (long)mode);
+    /* Set ownership if specified */
+    if (owner >= 0 || group >= 0) {
+        unsigned int u = (owner >= 0) ? (unsigned int)owner : (unsigned int)-1;
+        unsigned int g = (group >= 0) ? (unsigned int)group : (unsigned int)-1;
+        sys_chown(argv[file_start + 1], u, g);
+    }
 }
 
 /* ── expr: evaluate expressions (POSIX) ── */
@@ -16824,7 +16950,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   200 built-in commands — type 'help'    |\n");
+    write_str(1, "|   210 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");
@@ -18867,5 +18993,324 @@ __attribute__((used)) static void cmd_w(int argc, char *argv[]) {
         }
     }
     sys_close(pfd);
+}
+
+/* ── cksum: print CRC-32 checksum and byte count ── */
+static void cmd_cksum(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: cksum FILE...\n");
+        return;
+    }
+    /* CRC-32 table */
+    static unsigned int crc_tab[256];
+    static int tab_init = 0;
+    if (!tab_init) {
+        for (unsigned int i = 0; i < 256; i++) {
+            unsigned int c = i;
+            for (int j = 0; j < 8; j++)
+                c = (c & 1) ? (0xEDB88320u ^ (c >> 1)) : (c >> 1);
+            crc_tab[i] = c;
+        }
+        tab_init = 1;
+    }
+    for (int f = 1; f < argc; f++) {
+        int fd = sys_open(argv[f], O_RDONLY, 0);
+        if (fd < 0) {
+            write_str(2, "cksum: ");
+            write_str(2, argv[f]);
+            write_str(2, ": No such file\n");
+            continue;
+        }
+        unsigned int crc = 0xFFFFFFFFu;
+        long total = 0;
+        char buf[4096];
+        ssize_t n;
+        while ((n = sys_read(fd, buf, sizeof(buf))) > 0) {
+            for (ssize_t i = 0; i < n; i++)
+                crc = crc_tab[(crc ^ (unsigned char)buf[i]) & 0xFF] ^ (crc >> 8);
+            total += n;
+        }
+        sys_close(fd);
+        crc ^= 0xFFFFFFFFu;
+        /* Print CRC as unsigned decimal */
+        char nbuf[16];
+        int ni = 0;
+        unsigned int v = crc;
+        if (v == 0) { nbuf[ni++] = '0'; }
+        else { while (v > 0) { nbuf[ni++] = '0' + (char)(v % 10); v /= 10; } }
+        for (int i = ni - 1; i >= 0; i--) write_char(1, nbuf[i]);
+        write_char(1, ' ');
+        char tbuf[16];
+        int_to_str(total, tbuf, 16);
+        write_str(1, tbuf);
+        write_char(1, ' ');
+        write_str(1, argv[f]);
+        write_char(1, '\n');
+    }
+}
+
+/* ── pathchk: check whether file names are valid and portable ── */
+static void cmd_pathchk(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: pathchk [-p] NAME...\n");
+        return;
+    }
+    int portable = 0;
+    int start = 1;
+    if (argc > 1 && argv[1][0] == '-' && argv[1][1] == 'p') {
+        portable = 1;
+        start = 2;
+    }
+    /* POSIX portable filename characters: A-Z a-z 0-9 . _ - */
+    for (int i = start; i < argc; i++) {
+        const char *name = argv[i];
+        int ok = 1;
+        int comp_len = 0;
+        int total_len = 0;
+        for (int j = 0; name[j]; j++) {
+            total_len++;
+            char c = name[j];
+            if (c == '/') {
+                if (comp_len > 255) {
+                    write_str(2, "pathchk: '");
+                    write_str(2, name);
+                    write_str(2, "': component too long\n");
+                    ok = 0; break;
+                }
+                comp_len = 0;
+                continue;
+            }
+            comp_len++;
+            if (portable) {
+                if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                      (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-')) {
+                    write_str(2, "pathchk: '");
+                    write_str(2, name);
+                    write_str(2, "': nonportable character '");
+                    write_char(2, c);
+                    write_str(2, "'\n");
+                    ok = 0; break;
+                }
+            }
+        }
+        if (ok && comp_len > 255) {
+            write_str(2, "pathchk: '");
+            write_str(2, name);
+            write_str(2, "': component too long\n");
+            ok = 0;
+        }
+        if (ok && total_len > 4095) {
+            write_str(2, "pathchk: '");
+            write_str(2, name);
+            write_str(2, "': path too long\n");
+            ok = 0;
+        }
+        if (ok && name[0] == '\0') {
+            write_str(2, "pathchk: '': empty file name\n");
+            ok = 0;
+        }
+        (void)ok;
+    }
+}
+
+/* ── csplit: context split — split file based on patterns/line numbers ── */
+static void cmd_csplit(int argc, char *argv[]) {
+    if (argc < 3) {
+        write_str(2, "usage: csplit FILE PATTERN/LINENO...\n");
+        return;
+    }
+    int fd = sys_open(argv[1], O_RDONLY, 0);
+    if (fd < 0) {
+        write_str(2, "csplit: cannot open ");
+        write_str(2, argv[1]);
+        write_char(2, '\n');
+        return;
+    }
+    /* Read entire file into buffer */
+    static char fbuf[65536];
+    ssize_t total = 0;
+    ssize_t n;
+    while ((n = sys_read(fd, fbuf + total, sizeof(fbuf) - (size_t)total - 1)) > 0)
+        total += n;
+    sys_close(fd);
+    fbuf[total] = '\0';
+
+    /* Identify line starts */
+    int lines[8192];
+    int nlines = 0;
+    lines[nlines++] = 0;
+    for (int i = 0; i < total; i++)
+        if (fbuf[i] == '\n' && i + 1 < total && nlines < 8191)
+            lines[nlines++] = i + 1;
+
+    int cur_line = 0;
+    int part = 0;
+    for (int a = 2; a < argc; a++) {
+        int split_at = 0;
+        if (argv[a][0] >= '0' && argv[a][0] <= '9') {
+            /* Line number split */
+            for (int j = 0; argv[a][j]; j++)
+                split_at = split_at * 10 + (argv[a][j] - '0');
+            split_at--;  /* Convert 1-based to 0-based */
+        } else if (argv[a][0] == '/' || argv[a][0] == '%') {
+            /* Pattern split: /regex/ — find line matching pattern */
+            const char *pat = argv[a] + 1;
+            int plen = 0;
+            while (pat[plen] && pat[plen] != '/' && pat[plen] != '%') plen++;
+            split_at = nlines;
+            for (int li = cur_line; li < nlines; li++) {
+                /* Simple substring match */
+                int pos = lines[li];
+                int elen = (li + 1 < nlines) ? lines[li + 1] - 1 : (int)total;
+                for (int k = pos; k <= elen - plen; k++) {
+                    int match = 1;
+                    for (int m = 0; m < plen; m++)
+                        if (fbuf[k + m] != pat[m]) { match = 0; break; }
+                    if (match) { split_at = li; break; }
+                }
+                if (split_at != nlines) break;
+            }
+        } else {
+            continue;
+        }
+        if (split_at > nlines) split_at = nlines;
+        if (split_at <= cur_line) continue;
+
+        /* Write output file xxNN */
+        char oname[16] = "xx";
+        oname[2] = '0' + (char)(part / 10);
+        oname[3] = '0' + (char)(part % 10);
+        oname[4] = '\0';
+        int start_off = lines[cur_line];
+        int end_off = (split_at < nlines) ? lines[split_at] : (int)total;
+        int ofd = sys_open(oname, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (ofd >= 0) {
+            sys_write(ofd, fbuf + start_off, (size_t)(end_off - start_off));
+            sys_close(ofd);
+            char sbuf[16];
+            int_to_str(end_off - start_off, sbuf, 16);
+            write_str(1, sbuf);
+            write_char(1, '\n');
+        }
+        cur_line = split_at;
+        part++;
+    }
+    /* Write remaining content */
+    if (cur_line < nlines) {
+        char oname[16] = "xx";
+        oname[2] = '0' + (char)(part / 10);
+        oname[3] = '0' + (char)(part % 10);
+        oname[4] = '\0';
+        int start_off = lines[cur_line];
+        int ofd = sys_open(oname, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (ofd >= 0) {
+            sys_write(ofd, fbuf + start_off, (size_t)(total - start_off));
+            sys_close(ofd);
+            char sbuf[16];
+            int_to_str((long)(total - start_off), sbuf, 16);
+            write_str(1, sbuf);
+            write_char(1, '\n');
+        }
+    }
+}
+
+/* ── chown: change file owner and group ── */
+static void cmd_chown(int argc, char *argv[]) {
+    if (argc < 3) {
+        write_str(2, "usage: chown [OWNER][:[GROUP]] FILE...\n");
+        return;
+    }
+    /* Parse owner[:group] */
+    const char *spec = argv[1];
+    int uid = -1;
+    int gid = -1;
+    int i = 0;
+
+    /* Parse UID (numeric or skip if starts with ':') */
+    if (spec[0] != ':') {
+        uid = 0;
+        while (spec[i] && spec[i] != ':') {
+            if (spec[i] >= '0' && spec[i] <= '9')
+                uid = uid * 10 + (spec[i] - '0');
+            else {
+                /* Non-numeric owner name — resolve root=0 */
+                if (spec[0] == 'r' && spec[1] == 'o' && spec[2] == 'o' && spec[3] == 't' &&
+                    (spec[4] == ':' || spec[4] == '\0')) {
+                    uid = 0;
+                    while (spec[i] && spec[i] != ':') i++;
+                    break;
+                }
+                write_str(2, "chown: invalid user\n");
+                return;
+            }
+            i++;
+        }
+    }
+
+    /* Parse GID if ':' present */
+    if (spec[i] == ':') {
+        i++;
+        if (spec[i]) {
+            gid = 0;
+            while (spec[i]) {
+                if (spec[i] >= '0' && spec[i] <= '9')
+                    gid = gid * 10 + (spec[i] - '0');
+                else {
+                    /* Non-numeric group name — resolve root=0 */
+                    if (spec[i - 1] == ':' || i == 1) {
+                        const char *gn = spec + i;
+                        (void)gn;
+                        /* Fallback: common groups */
+                        if ((spec[i]=='r') && (spec[i+1]=='o') && (spec[i+2]=='o') && (spec[i+3]=='t') && (spec[i+4]=='\0'))
+                            gid = 0;
+                        else
+                            gid = 0; /* Default to root group */
+                    }
+                    break;
+                }
+                i++;
+            }
+        } else {
+            /* Trailing colon: set group same as owner */
+            gid = uid;
+        }
+    }
+
+    for (int f = 2; f < argc; f++) {
+        unsigned int u = (uid >= 0) ? (unsigned int)uid : (unsigned int)-1;
+        unsigned int g = (gid >= 0) ? (unsigned int)gid : (unsigned int)-1;
+        long rc = sys_chown(argv[f], u, g);
+        if (rc < 0) {
+            write_str(2, "chown: cannot change ownership of '");
+            write_str(2, argv[f]);
+            write_str(2, "'\n");
+        }
+    }
+}
+
+/* ── newgrp: change primary group ── */
+static void cmd_newgrp(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: newgrp GROUP\n");
+        return;
+    }
+    int gid = 0;
+    const char *g = argv[1];
+    /* Parse numeric or named group */
+    if (g[0] >= '0' && g[0] <= '9') {
+        for (int i = 0; g[i]; i++)
+            gid = gid * 10 + (g[i] - '0');
+    } else if (g[0] == 'r' && g[1] == 'o' && g[2] == 'o' && g[3] == 't' && g[4] == '\0') {
+        gid = 0;
+    } else {
+        write_str(2, "newgrp: unknown group '");
+        write_str(2, g);
+        write_str(2, "'\n");
+        return;
+    }
+    long rc = sys_call1(106 /* setgid */, gid);
+    if (rc < 0) {
+        write_str(2, "newgrp: failed to set group\n");
+    }
 }
 #pragma GCC diagnostic pop

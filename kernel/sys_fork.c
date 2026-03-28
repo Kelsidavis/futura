@@ -942,6 +942,27 @@ long sys_fork(void) {
         return -EAGAIN;
     }
 
+    /* Memory accounting: reject fork if free memory is critically low.
+     * Reserve 10% of total RAM for root processes to allow admin recovery.
+     * This implements the memory pre-check from Attack Scenario 2 defense. */
+    {
+        extern size_t buddy_get_heap_size(void);
+        extern size_t buddy_get_total_allocated(void);
+        size_t total = buddy_get_heap_size();
+        size_t used = buddy_get_total_allocated();
+        size_t free_mem = (total > used) ? (total - used) : 0;
+        size_t reserve = total / 10;  /* 10% reserve */
+        if (free_mem < reserve &&
+            parent_task->uid != 0 &&
+            !(parent_task->cap_effective & (1ULL << 24))) {
+            FORK_LOG("[FORK] fork(parent_pid=%u, uid=%u) -> ENOMEM "
+                       "(low memory: %zu free < %zu reserve)\n",
+                       parent_task->pid, parent_task->uid,
+                       free_mem, reserve);
+            return -ENOMEM;
+        }
+    }
+
     /* Create new child task */
     fut_task_t *child_task = fut_task_create();
     if (!child_task) {

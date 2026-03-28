@@ -1490,33 +1490,42 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
                (unsigned long long)ehdr.e_phoff, ehdr.e_phentsize, ehdr.e_phnum);
 
     if (*(uint32_t *)ehdr.e_ident != ELF_MAGIC) {
-        EXEC_DEBUG("[EXEC] FAIL: Bad ELF magic 0x%08x (expected 0x%08x)\n",
-                   *(uint32_t *)ehdr.e_ident, ELF_MAGIC);
+        fut_printf("[EXEC] corrupt ELF: bad magic 0x%08x '%s'\n",
+                   *(uint32_t *)ehdr.e_ident, path);
         fut_vfs_close(fd);
         EXEC_CLEANUP_KARGS();
-        return -EINVAL;
+        return -ENOEXEC;
     }
 
     if (ehdr.e_ident[4] != ELF_CLASS_64) {
-        EXEC_DEBUG("[EXEC] FAIL: Bad ELF class %d (expected %d)\n",
-                   ehdr.e_ident[4], ELF_CLASS_64);
+        fut_printf("[EXEC] corrupt ELF: bad class %d (need ELF64) '%s'\n",
+                   ehdr.e_ident[4], path);
         fut_vfs_close(fd);
         EXEC_CLEANUP_KARGS();
-        return -EINVAL;
+        return -ENOEXEC;
     }
 
     if (ehdr.e_ident[5] != ELF_DATA_LE) {
-        EXEC_DEBUG("[EXEC] FAIL: Bad ELF data %d (expected %d)\n",
-                   ehdr.e_ident[5], ELF_DATA_LE);
+        fut_printf("[EXEC] corrupt ELF: bad data encoding %d (need LE) '%s'\n",
+                   ehdr.e_ident[5], path);
         fut_vfs_close(fd);
         EXEC_CLEANUP_KARGS();
-        return -EINVAL;
+        return -ENOEXEC;
+    }
+
+    /* Validate ELF version: must be EV_CURRENT (1) */
+    if (ehdr.e_version != 1) {
+        fut_printf("[EXEC] corrupt ELF: bad version %u (need 1) '%s'\n",
+                   ehdr.e_version, path);
+        fut_vfs_close(fd);
+        EXEC_CLEANUP_KARGS();
+        return -ENOEXEC;
     }
 
     /* Validate ELF type: must be ET_EXEC (2) or ET_DYN (3) */
     if (ehdr.e_type != 2 && ehdr.e_type != 3) {
-        EXEC_DEBUG("[EXEC] FAIL: Bad ELF type %d (expected ET_EXEC=2 or ET_DYN=3)\n",
-                   ehdr.e_type);
+        fut_printf("[EXEC] corrupt ELF: bad type %d (need ET_EXEC=2 or ET_DYN=3) '%s'\n",
+                   ehdr.e_type, path);
         fut_vfs_close(fd);
         EXEC_CLEANUP_KARGS();
         return -ENOEXEC;
@@ -1524,38 +1533,61 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
 
     /* Validate machine type: must be EM_X86_64 (0x3E) */
     if (ehdr.e_machine != 0x3E) {
-        EXEC_DEBUG("[EXEC] FAIL: Bad ELF machine 0x%x (expected EM_X86_64=0x3E)\n",
-                   ehdr.e_machine);
+        fut_printf("[EXEC] corrupt ELF: bad machine 0x%x (need EM_X86_64=0x3E) '%s'\n",
+                   ehdr.e_machine, path);
         fut_vfs_close(fd);
         EXEC_CLEANUP_KARGS();
         return -ENOEXEC;
     }
 
     if (ehdr.e_phentsize != sizeof(elf64_phdr_t)) {
-        EXEC_DEBUG("[EXEC] FAIL: Bad phentsize %d (expected %zu)\n",
-                   ehdr.e_phentsize, sizeof(elf64_phdr_t));
+        fut_printf("[EXEC] corrupt ELF: bad phentsize %d (need %zu) '%s'\n",
+                   ehdr.e_phentsize, sizeof(elf64_phdr_t), path);
         fut_vfs_close(fd);
         EXEC_CLEANUP_KARGS();
-        return -EINVAL;
+        return -ENOEXEC;
     }
 
     if (ehdr.e_phnum == 0) {
-        EXEC_DEBUG("[EXEC] FAIL: No program headers (phnum=0)\n");
+        fut_printf("[EXEC] corrupt ELF: no program headers '%s'\n", path);
         fut_vfs_close(fd);
         EXEC_CLEANUP_KARGS();
-        return -EINVAL;
+        return -ENOEXEC;
     }
 
     /* Reject unreasonable e_phnum to prevent excessive allocation */
     if (ehdr.e_phnum > 256) {
-        EXEC_DEBUG("[EXEC] FAIL: Too many program headers (phnum=%d, max=256)\n",
-                   ehdr.e_phnum);
+        fut_printf("[EXEC] corrupt ELF: too many program headers (%d, max=256) '%s'\n",
+                   ehdr.e_phnum, path);
         fut_vfs_close(fd);
         EXEC_CLEANUP_KARGS();
-        return -EINVAL;
+        return -ENOEXEC;
     }
 
+    /* Validate e_phoff: must be within the ELF header size at minimum,
+     * and the program header table must not overflow 64-bit arithmetic */
     size_t ph_size = (size_t)ehdr.e_phnum * sizeof(elf64_phdr_t);
+    if (ehdr.e_phoff < sizeof(elf64_ehdr_t) ||
+        ph_size > UINT64_MAX - ehdr.e_phoff) {
+        fut_printf("[EXEC] corrupt ELF: program header offset 0x%llx out of bounds '%s'\n",
+                   (unsigned long long)ehdr.e_phoff, path);
+        fut_vfs_close(fd);
+        EXEC_CLEANUP_KARGS();
+        return -ENOEXEC;
+    }
+
+    /* Validate section header table bounds if present */
+    if (ehdr.e_shoff != 0 && ehdr.e_shnum != 0) {
+        uint64_t sh_size = (uint64_t)ehdr.e_shnum * ehdr.e_shentsize;
+        if (ehdr.e_shentsize == 0 || sh_size / ehdr.e_shentsize != ehdr.e_shnum ||
+            sh_size > UINT64_MAX - ehdr.e_shoff) {
+            fut_printf("[EXEC] corrupt ELF: section header table overflow '%s'\n", path);
+            fut_vfs_close(fd);
+            EXEC_CLEANUP_KARGS();
+            return -ENOEXEC;
+        }
+    }
+
     elf64_phdr_t *phdrs = fut_malloc(ph_size);
     if (!phdrs) {
         fut_vfs_close(fd);
@@ -1671,7 +1703,9 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
 
     /* PT_GNU_STACK: controls stack executability (default: NX).
      * If PF_X is set, the binary needs an executable stack (libffi, nested funcs).
-     * PT_GNU_RELRO: region to mark read-only after relocation. */
+     * PT_GNU_RELRO: region to mark read-only after relocation.
+     * NOTE: PT_GNU_RELRO p_vaddr is NOT biased by the ET_DYN loop above (which
+     * only adjusts PT_LOAD and PT_PHDR), so we must add load_bias manually. */
     bool stack_exec = false;
     uint64_t relro_start = 0, relro_end = 0;
     for (uint16_t i = 0; i < ehdr.e_phnum; i++) {
@@ -1681,10 +1715,42 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
                        stack_exec ? "executable" : "non-executable");
         }
         if (phdrs[i].p_type == 0x6474e552 /* PT_GNU_RELRO */) {
-            relro_start = phdrs[i].p_vaddr;  /* already biased for ET_DYN */
+            relro_start = phdrs[i].p_vaddr + load_bias;  /* apply bias for ET_DYN */
             relro_end = relro_start + phdrs[i].p_memsz;
             EXEC_DEBUG("[EXEC] PT_GNU_RELRO: 0x%llx-0x%llx\n",
                        (unsigned long long)relro_start, (unsigned long long)relro_end);
+        }
+    }
+
+    /* Detect overlapping PT_LOAD segments: a crafted ELF could specify two
+     * LOAD segments that map the same virtual pages, leading to undefined
+     * behavior or security issues.  O(n^2) but n <= 256 and typically < 10. */
+    {
+        bool overlap_found = false;
+        for (uint16_t i = 0; i < ehdr.e_phnum && !overlap_found; i++) {
+            if (phdrs[i].p_type != PT_LOAD || phdrs[i].p_memsz == 0) continue;
+            uint64_t a_start = phdrs[i].p_vaddr & ~(PAGE_SIZE - 1ULL);
+            uint64_t a_end = (phdrs[i].p_vaddr + phdrs[i].p_memsz + PAGE_SIZE - 1ULL) & ~(PAGE_SIZE - 1ULL);
+            for (uint16_t j = i + 1; j < ehdr.e_phnum; j++) {
+                if (phdrs[j].p_type != PT_LOAD || phdrs[j].p_memsz == 0) continue;
+                uint64_t b_start = phdrs[j].p_vaddr & ~(PAGE_SIZE - 1ULL);
+                uint64_t b_end = (phdrs[j].p_vaddr + phdrs[j].p_memsz + PAGE_SIZE - 1ULL) & ~(PAGE_SIZE - 1ULL);
+                if (a_start < b_end && b_start < a_end) {
+                    fut_printf("[EXEC] corrupt ELF: overlapping PT_LOAD segments %u [0x%llx-0x%llx] and %u [0x%llx-0x%llx] '%s'\n",
+                               i, (unsigned long long)a_start, (unsigned long long)a_end,
+                               j, (unsigned long long)b_start, (unsigned long long)b_end, path);
+                    overlap_found = true;
+                    break;
+                }
+            }
+        }
+        if (overlap_found) {
+            fut_mm_release(mm);
+            fut_task_destroy(task);
+            fut_free(phdrs);
+            fut_vfs_close(fd);
+            EXEC_CLEANUP_KARGS();
+            return -ENOEXEC;
         }
     }
 
@@ -3201,19 +3267,20 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
         }
     }
 
-    /* PT_GNU_STACK / PT_GNU_RELRO parsing */
+    /* PT_GNU_STACK / PT_GNU_RELRO parsing.
+     * NOTE: PT_GNU_RELRO p_vaddr is NOT biased by the ET_DYN loop above
+     * (which only adjusts PT_LOAD and PT_PHDR), so add load_bias manually. */
     bool stack_exec = false;
     uint64_t relro_start = 0, relro_end = 0;
     for (uint16_t i = 0; i < ehdr.e_phnum; i++) {
         if (phdrs[i].p_type == 0x6474e551 /* PT_GNU_STACK */)
             stack_exec = (phdrs[i].p_flags & 1 /* PF_X */) != 0;
         if (phdrs[i].p_type == 0x6474e552 /* PT_GNU_RELRO */) {
-            relro_start = phdrs[i].p_vaddr;
+            relro_start = phdrs[i].p_vaddr + load_bias;  /* apply bias for ET_DYN */
             relro_end = relro_start + phdrs[i].p_memsz;
         }
     }
     (void)stack_exec; /* ARM64 stack setup is in a different function */
-    (void)relro_start; (void)relro_end; /* RELRO applied after segment loading */
 
     /* Reset interpreter state */
     g_exec_interp_base = 0;
@@ -3292,6 +3359,18 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
             uint64_t vma_end = (seg_end + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
             fut_mm_add_vma(mm, vma_start, vma_end, vprot, 0);
         }
+    }
+
+    /* PT_GNU_RELRO: mprotect the relocation-read-only region to PROT_READ.
+     * This makes .got, .init_array, etc. read-only after loading, preventing
+     * GOT overwrite attacks. Only applies if the region was loaded. */
+    if (relro_start && relro_end > relro_start) {
+        uintptr_t rs = relro_start & ~(PAGE_SIZE - 1ULL);
+        uintptr_t re = (relro_end + PAGE_SIZE - 1ULL) & ~(PAGE_SIZE - 1ULL);
+        extern long sys_mprotect(void *addr, size_t len, int prot);
+        (void)sys_mprotect((void *)rs, (size_t)(re - rs), PROT_READ);
+        EXEC_DEBUG("[EXEC] PT_GNU_RELRO: mprotect 0x%llx-0x%llx PROT_READ\n",
+                   (unsigned long long)rs, (unsigned long long)re);
     }
 
     /* Set heap base */

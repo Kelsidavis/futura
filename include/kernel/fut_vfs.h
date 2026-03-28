@@ -74,6 +74,17 @@ static inline uint32_t vnode_type_to_stat_mode(enum fut_vnode_type type) {
 }
 
 /* ============================================================
+ *   Generic Extended Attribute Entry (per-vnode linked list)
+ * ============================================================ */
+
+struct vnode_xattr {
+    char *name;                     /* Attribute name (heap-allocated, e.g. "user.overlay.opaque") */
+    void *value;                    /* Attribute value bytes (heap-allocated, may be NULL for size=0) */
+    size_t size;                    /* Length of value in bytes */
+    struct vnode_xattr *next;       /* Next entry in per-vnode list */
+};
+
+/* ============================================================
  *   VNode (Virtual Node) - Represents a file/directory
  * ============================================================ */
 
@@ -105,6 +116,9 @@ struct fut_vnode {
 
     /* Per-vnode write lock for O_APPEND atomicity */
     fut_spinlock_t write_lock;
+
+    /* Generic per-vnode extended attribute storage (for FSes without native xattr) */
+    struct vnode_xattr *xattrs;
 
     /* Operations for this vnode */
     const struct fut_vnode_ops *ops;
@@ -662,6 +676,31 @@ void fut_vnode_ref(struct fut_vnode *vnode);
  * @param vnode VNode to unreference
  */
 void fut_vnode_unref(struct fut_vnode *vnode);
+
+/* ============================================================
+ *   Generic Per-VNode Extended Attribute Helpers
+ *
+ *   These operate on the vnode->xattrs linked list and can be used
+ *   by any filesystem that doesn't implement native xattr storage.
+ *   Critical for container compatibility (Docker overlay xattrs).
+ * ============================================================ */
+
+/** Store or replace an xattr on a vnode's generic list. */
+int vnode_generic_setxattr(struct fut_vnode *vnode, const char *name,
+                           const void *value, size_t size, int flags);
+
+/** Retrieve an xattr value (or query size when value==NULL, size==0). */
+ssize_t vnode_generic_getxattr(struct fut_vnode *vnode, const char *name,
+                               void *value, size_t size);
+
+/** List all xattr names as NUL-separated strings (or query size). */
+ssize_t vnode_generic_listxattr(struct fut_vnode *vnode, char *list, size_t size);
+
+/** Remove an xattr by name. Returns -ENODATA if not found. */
+int vnode_generic_removexattr(struct fut_vnode *vnode, const char *name);
+
+/** Free all xattrs on a vnode (call from vnode destructor). */
+void vnode_xattr_free_all(struct fut_vnode *vnode);
 
 /* Dentry cache */
 extern uint64_t vfs_dcache_nr_dentry;

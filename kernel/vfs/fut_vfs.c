@@ -3231,6 +3231,9 @@ void fut_vnode_unref(struct fut_vnode *vnode) {
             vnode->name = NULL;
         }
 
+        /* Free generic per-vnode extended attributes */
+        vnode_xattr_free_all(vnode);
+
         /* Free filesystem-specific data if any */
         if (vnode->fs_data) {
             /* Filesystems should clean up their own fs_data */
@@ -3661,4 +3664,140 @@ struct fut_mount *fut_vfs_find_mount(const char *mountpoint) {
         }
     }
     return NULL;
+}
+
+/* ============================================================
+ *   Generic Per-VNode Extended Attribute Helpers
+ *
+ *   Operates on the vnode->xattrs linked list.  Any filesystem
+ *   that lacks native xattr storage can wire these into its
+ *   vnode_ops, or the syscall layer can fall back here when
+ *   vnode->ops->setxattr is NULL.
+ *
+ *   Critical for container compatibility — Docker's overlay
+ *   driver stores opaque/redirect xattrs on every layer.
+ * ============================================================ */
+
+/* XATTR_CREATE / XATTR_REPLACE flag values (match kernel/sys_xattr.c) */
+#define VNODE_XATTR_CREATE  0x1
+#define VNODE_XATTR_REPLACE 0x2
+
+int vnode_generic_setxattr(struct fut_vnode *vnode, const char *name,
+                           const void *value, size_t size, int flags) {
+    if (!vnode || !name) return -EINVAL;
+
+    /* Search for an existing entry */
+    struct vnode_xattr *cur = vnode->xattrs;
+    while (cur) {
+        if (strcmp(cur->name, name) == 0) break;
+        cur = cur->next;
+    }
+
+    if (cur) {
+        /* Already exists */
+        if (flags & VNODE_XATTR_CREATE) return -EEXIST;
+        /* Replace value in-place */
+        void *new_val = NULL;
+        if (size > 0) {
+            new_val = fut_malloc(size);
+            if (!new_val) return -ENOMEM;
+            memcpy(new_val, value, size);
+        }
+        if (cur->value) fut_free(cur->value);
+        cur->value = new_val;
+        cur->size = size;
+    } else {
+        /* Does not exist */
+        if (flags & VNODE_XATTR_REPLACE) return -ENODATA;
+        struct vnode_xattr *entry = fut_malloc(sizeof(struct vnode_xattr));
+        if (!entry) return -ENOMEM;
+        size_t name_len = strlen(name) + 1;
+        entry->name = fut_malloc(name_len);
+        if (!entry->name) { fut_free(entry); return -ENOMEM; }
+        memcpy(entry->name, name, name_len);
+        entry->value = NULL;
+        if (size > 0) {
+            entry->value = fut_malloc(size);
+            if (!entry->value) {
+                fut_free(entry->name);
+                fut_free(entry);
+                return -ENOMEM;
+            }
+            memcpy(entry->value, value, size);
+        }
+        entry->size = size;
+        entry->next = vnode->xattrs;
+        vnode->xattrs = entry;
+    }
+
+    return 0;
+}
+
+ssize_t vnode_generic_getxattr(struct fut_vnode *vnode, const char *name,
+                               void *value, size_t size) {
+    if (!vnode || !name) return -EINVAL;
+
+    for (struct vnode_xattr *cur = vnode->xattrs; cur; cur = cur->next) {
+        if (strcmp(cur->name, name) != 0) continue;
+        /* Found — size==0 is a query for the required length */
+        if (size == 0 || !value) return (ssize_t)cur->size;
+        if (size < cur->size) return -ERANGE;
+        if (cur->size > 0 && cur->value) memcpy(value, cur->value, cur->size);
+        return (ssize_t)cur->size;
+    }
+    return -ENODATA;
+}
+
+ssize_t vnode_generic_listxattr(struct fut_vnode *vnode, char *list, size_t size) {
+    if (!vnode) return -EINVAL;
+
+    /* Calculate total bytes needed */
+    size_t total = 0;
+    for (struct vnode_xattr *cur = vnode->xattrs; cur; cur = cur->next) {
+        total += strlen(cur->name) + 1;  /* name + NUL */
+    }
+
+    if (size == 0 || !list) return (ssize_t)total;
+    if (size < total) return -ERANGE;
+
+    char *p = list;
+    for (struct vnode_xattr *cur = vnode->xattrs; cur; cur = cur->next) {
+        size_t n = strlen(cur->name) + 1;
+        memcpy(p, cur->name, n);
+        p += n;
+    }
+    return (ssize_t)total;
+}
+
+int vnode_generic_removexattr(struct fut_vnode *vnode, const char *name) {
+    if (!vnode || !name) return -EINVAL;
+
+    struct vnode_xattr *prev = NULL;
+    struct vnode_xattr *cur = vnode->xattrs;
+    while (cur) {
+        if (strcmp(cur->name, name) == 0) {
+            if (prev) prev->next = cur->next;
+            else vnode->xattrs = cur->next;
+            if (cur->name) fut_free(cur->name);
+            if (cur->value) fut_free(cur->value);
+            fut_free(cur);
+            return 0;
+        }
+        prev = cur;
+        cur = cur->next;
+    }
+    return -ENODATA;
+}
+
+void vnode_xattr_free_all(struct fut_vnode *vnode) {
+    if (!vnode) return;
+    struct vnode_xattr *cur = vnode->xattrs;
+    while (cur) {
+        struct vnode_xattr *next = cur->next;
+        if (cur->name) fut_free(cur->name);
+        if (cur->value) fut_free(cur->value);
+        fut_free(cur);
+        cur = next;
+    }
+    vnode->xattrs = NULL;
 }

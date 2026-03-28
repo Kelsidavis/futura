@@ -460,6 +460,136 @@ static int overlay_statfs_impl(struct fut_mount *m, struct fut_statfs *out) {
 }
 
 /* ============================================================
+ *   Extended Attribute Operations (container compat)
+ *
+ *   Docker's overlay2 driver stores metadata xattrs on every layer:
+ *     - "trusted.overlay.opaque" marks opaque directories
+ *     - "trusted.overlay.redirect" stores redirect paths
+ *     - "security.selinux" for SELinux labels
+ *   These must pass through to the underlying layer vnodes.
+ * ============================================================ */
+
+/* Generic vnode xattr helpers (from kernel/vfs/fut_vfs.c) */
+extern int vnode_generic_setxattr(struct fut_vnode *vnode, const char *name,
+                                  const void *value, size_t size, int flags);
+extern ssize_t vnode_generic_getxattr(struct fut_vnode *vnode, const char *name,
+                                      void *value, size_t size);
+extern ssize_t vnode_generic_listxattr(struct fut_vnode *vnode, char *list, size_t size);
+extern int vnode_generic_removexattr(struct fut_vnode *vnode, const char *name);
+
+/**
+ * overlay_setxattr - Set xattr, writing to upper layer.
+ *
+ * If the upper vnode's FS has native xattr ops, delegate there.
+ * Otherwise use the generic per-vnode xattr storage on the overlay vnode
+ * itself (so the attribute persists for the overlay view lifetime).
+ */
+static int overlay_setxattr(struct fut_vnode *vn, const char *name,
+                             const void *value, size_t size, int flags) {
+    struct overlay_vnode_info *ovi = (struct overlay_vnode_info *)vn->fs_data;
+    if (!ovi) return -EIO;
+
+    /* Try upper layer's native xattr ops first */
+    if (ovi->upper && ovi->upper->ops && ovi->upper->ops->setxattr)
+        return ovi->upper->ops->setxattr(ovi->upper, name, value, size, flags);
+
+    /* Fall back to generic per-vnode xattr on the overlay vnode */
+    return vnode_generic_setxattr(vn, name, value, size, flags);
+}
+
+/**
+ * overlay_getxattr - Get xattr, checking upper then lower.
+ */
+static ssize_t overlay_getxattr(struct fut_vnode *vn, const char *name,
+                                 void *value, size_t size) {
+    struct overlay_vnode_info *ovi = (struct overlay_vnode_info *)vn->fs_data;
+    if (!ovi) return -EIO;
+
+    /* Check upper layer first (it shadows lower) */
+    if (ovi->upper) {
+        if (ovi->upper->ops && ovi->upper->ops->getxattr) {
+            ssize_t r = ovi->upper->ops->getxattr(ovi->upper, name, value, size);
+            if (r != -ENODATA) return r;
+        }
+    }
+
+    /* Fall through to lower layer */
+    if (ovi->lower && ovi->lower->ops && ovi->lower->ops->getxattr) {
+        ssize_t r = ovi->lower->ops->getxattr(ovi->lower, name, value, size);
+        if (r != -ENODATA) return r;
+    }
+
+    /* Check generic per-vnode storage last */
+    return vnode_generic_getxattr(vn, name, value, size);
+}
+
+/**
+ * overlay_listxattr - List xattrs from both layers (merged, upper shadows).
+ */
+static ssize_t overlay_listxattr(struct fut_vnode *vn, char *list, size_t size) {
+    struct overlay_vnode_info *ovi = (struct overlay_vnode_info *)vn->fs_data;
+    if (!ovi) return -EIO;
+
+    /* Collect from upper, then lower, then generic — simple concatenation.
+     * Duplicates are acceptable per POSIX (caller filters). */
+    size_t total = 0;
+
+    /* Upper layer xattrs */
+    if (ovi->upper && ovi->upper->ops && ovi->upper->ops->listxattr) {
+        ssize_t n = ovi->upper->ops->listxattr(ovi->upper, NULL, 0);
+        if (n > 0) total += (size_t)n;
+    }
+
+    /* Lower layer xattrs */
+    if (ovi->lower && ovi->lower->ops && ovi->lower->ops->listxattr) {
+        ssize_t n = ovi->lower->ops->listxattr(ovi->lower, NULL, 0);
+        if (n > 0) total += (size_t)n;
+    }
+
+    /* Generic per-vnode xattrs */
+    ssize_t gen = vnode_generic_listxattr(vn, NULL, 0);
+    if (gen > 0) total += (size_t)gen;
+
+    if (size == 0 || !list) return (ssize_t)total;
+    if (size < total) return -ERANGE;
+
+    char *p = list;
+    size_t remain = size;
+
+    if (ovi->upper && ovi->upper->ops && ovi->upper->ops->listxattr) {
+        ssize_t n = ovi->upper->ops->listxattr(ovi->upper, p, remain);
+        if (n > 0) { p += n; remain -= (size_t)n; }
+    }
+    if (ovi->lower && ovi->lower->ops && ovi->lower->ops->listxattr) {
+        ssize_t n = ovi->lower->ops->listxattr(ovi->lower, p, remain);
+        if (n > 0) { p += n; remain -= (size_t)n; }
+    }
+    if (gen > 0) {
+        ssize_t n = vnode_generic_listxattr(vn, p, remain);
+        if (n > 0) { p += n; }
+    }
+
+    return (ssize_t)total;
+}
+
+/**
+ * overlay_removexattr - Remove xattr from upper layer.
+ */
+static int overlay_removexattr(struct fut_vnode *vn, const char *name) {
+    struct overlay_vnode_info *ovi = (struct overlay_vnode_info *)vn->fs_data;
+    if (!ovi) return -EIO;
+
+    /* Try upper layer first */
+    if (ovi->upper && ovi->upper->ops && ovi->upper->ops->removexattr) {
+        int r = ovi->upper->ops->removexattr(ovi->upper, name);
+        if (r == 0 || r != -ENODATA) return r;
+    }
+
+    /* Fall back to generic per-vnode storage */
+    return vnode_generic_removexattr(vn, name);
+}
+
+/* ============================================================
  *   Registration
  * ============================================================ */
 
@@ -474,6 +604,10 @@ void overlayfs_init(void) {
     overlay_ops.unlink = overlay_unlink;
     overlay_ops.mkdir = overlay_mkdir;
     overlay_ops.rename = overlay_rename;
+    overlay_ops.setxattr = overlay_setxattr;
+    overlay_ops.getxattr = overlay_getxattr;
+    overlay_ops.listxattr = overlay_listxattr;
+    overlay_ops.removexattr = overlay_removexattr;
 
     overlay_fs_type.name = "overlay";
     overlay_fs_type.mount = overlay_mount_impl;
@@ -483,5 +617,5 @@ void overlayfs_init(void) {
     extern int fut_vfs_register_fs(const struct fut_fs_type *);
     fut_vfs_register_fs(&overlay_fs_type);
 
-    fut_printf("[OVERLAY] Overlay filesystem driver registered\n");
+    fut_printf("[OVERLAY] Overlay filesystem driver registered (with xattr support)\n");
 }

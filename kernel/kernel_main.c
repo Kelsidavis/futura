@@ -1288,10 +1288,10 @@ void fut_kernel_main(void) {
                   "nobody:x:65534:\n");
         ETC_WRITE("/etc/os-release",
                   "NAME=\"Futura OS\"\n"
-                  "VERSION=\"0.5.0\"\n"
+                  "VERSION=\"0.6.0\"\n"
                   "ID=futura\n"
-                  "VERSION_ID=0.5.0\n"
-                  "PRETTY_NAME=\"Futura OS 0.5.0\"\n"
+                  "VERSION_ID=0.6.0\n"
+                  "PRETTY_NAME=\"Futura OS 0.6.0\"\n"
                   "HOME_URL=\"https://github.com/netrunner-labs/futura\"\n");
         ETC_WRITE("/etc/profile",
                   "# Futura OS system profile\n"
@@ -1317,16 +1317,15 @@ void fut_kernel_main(void) {
                   "cat /etc/motd\n");
         ETC_WRITE("/etc/motd",
                   "\n"
-                  "  Welcome to Futura OS 0.5.0\n"
+                  "  Futura OS 0.6.0\n"
                   "\n"
-                  "  * 164 built-in commands — type 'help'\n"
-                  "  * Networking: ip, ifconfig, iptables, ping, traceroute,\n"
-                  "    netstat, ss, arp, wget, nc, nslookup, httpd\n"
-                  "  * Router: ip forward on, ip route add, iptables -t nat\n"
-                  "  * System: top, ps, free, df, sysctl, dmesg, lsof\n"
-                  "  * Scripting: for/while/if, pipes, redirects, globs\n"
-                  "  * Text: awk, sed, grep, sort, cut, tr, wc, diff, base64\n"
-                  "  * FuturaFS at /mnt — try: echo hello > /mnt/file\n"
+                  "  176+ built-in commands — type 'help'\n"
+                  "\n"
+                  "  Development:  vi, make, patch, bc, curl, tar, less\n"
+                  "  Networking:   ping, wget, curl, nc, netstat, ss, httpd\n"
+                  "  System:       top, ps, free, df, sysctl, dmesg, lsof\n"
+                  "  Containers:   nsenter, unshare, chroot (cgroups v2)\n"
+                  "  Text:         awk, sed, grep -r, sort, diff, sha1sum\n"
                   "\n");
         ETC_WRITE("/etc/services",
                   "# Network services\n"

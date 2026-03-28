@@ -68405,8 +68405,8 @@ void fut_misc_test_thread(void *arg) {
             } else { fut_printf("[MISC-TEST] ✗ Test 2163: open=%ld\n", fd); fut_test_fail(2163); }
         }
 
-        /* Test 2164: /proc/version contains "0.5.0" */
-        fut_printf("[MISC-TEST] Test 2164: /proc/version has 0.5.0\n");
+        /* Test 2164: /proc/version contains "0.6.0" */
+        fut_printf("[MISC-TEST] Test 2164: /proc/version has 0.6.0\n");
         {
             static char buf[256];
             long fd = sys_open("/proc/version", 0, 0);
@@ -68419,8 +68419,8 @@ void fut_misc_test_thread(void *arg) {
                     if (buf[i] == '0' && buf[i+1] == '.' && buf[i+2] == '5' &&
                         buf[i+3] == '.' && buf[i+4] == '0') { found = 1; break; }
                 }
-                if (found) { fut_printf("[MISC-TEST] ✓ Test 2164: version 0.5.0\n"); fut_test_pass(); }
-                else { fut_printf("[MISC-TEST] ✗ Test 2164: no 0.5.0\n"); fut_test_fail(2164); }
+                if (found) { fut_printf("[MISC-TEST] ✓ Test 2164: version 0.6.0\n"); fut_test_pass(); }
+                else { fut_printf("[MISC-TEST] ✗ Test 2164: no 0.6.0\n"); fut_test_fail(2164); }
             } else { fut_printf("[MISC-TEST] ✗ Test 2164: open=%ld\n", fd); fut_test_fail(2164); }
         }
 

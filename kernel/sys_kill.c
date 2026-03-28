@@ -23,11 +23,28 @@ struct pgrp_signal_data {
     int sig;
     int count;
     int error;
+    uint32_t sender_ruid;   /* Sender's real UID for permission checks */
+    uint32_t sender_uid;    /* Sender's effective UID */
+    uint64_t sender_caps;   /* Sender's effective capabilities */
 };
 
-/* Callback to send signal to each task in a process group */
+/* Callback to send signal to each task in a process group.
+ * POSIX: For kill(0) and kill(-pgid), the permission model requires that
+ * the sender's real or effective UID matches the target's real UID, or
+ * the sender is root (uid 0) or has CAP_KILL. */
 static void pgrp_signal_callback(fut_task_t *task, void *data) {
     struct pgrp_signal_data *psd = (struct pgrp_signal_data *)data;
+
+    /* Permission check: root and CAP_KILL bypass, otherwise UID must match */
+    if (psd->sender_ruid != 0 &&
+        !(psd->sender_caps & (1ULL << CAP_KILL)) &&
+        psd->sender_ruid != task->ruid &&
+        psd->sender_uid  != task->ruid) {
+        if (psd->error == 0)
+            psd->error = -EPERM;
+        return;
+    }
+
     int result = fut_signal_send(task, psd->sig);
     if (result == 0) {
         psd->count++;
@@ -232,7 +249,11 @@ long sys_kill(int pid, int sig) {
     /* Handle different PID cases */
     if (pid == 0) {
         /* Send to all processes in current process group */
-        struct pgrp_signal_data psd = { .sig = sig, .count = 0, .error = 0 };
+        struct pgrp_signal_data psd = {
+            .sig = sig, .count = 0, .error = 0,
+            .sender_ruid = current->ruid, .sender_uid = current->uid,
+            .sender_caps = current->cap_effective
+        };
 
         if (sig == 0) {
             /* Permission check only - just check if we have a process group */
@@ -259,7 +280,11 @@ long sys_kill(int pid, int sig) {
             return (count > 0) ? 0 : -ESRCH;
         }
 
-        struct pgrp_signal_data psd = { .sig = sig, .count = 0, .error = 0 };
+        struct pgrp_signal_data psd = {
+            .sig = sig, .count = 0, .error = 0,
+            .sender_ruid = current->ruid, .sender_uid = current->uid,
+            .sender_caps = current->cap_effective
+        };
         int total = fut_task_foreach_all(current->pid, pgrp_signal_callback, &psd);
 
         if (total == 0) {
@@ -273,7 +298,11 @@ long sys_kill(int pid, int sig) {
     } else if (pid < -1) {
         /* Send to process group |pid| */
         uint64_t target_pgid = (uint64_t)(-pid);
-        struct pgrp_signal_data psd = { .sig = sig, .count = 0, .error = 0 };
+        struct pgrp_signal_data psd = {
+            .sig = sig, .count = 0, .error = 0,
+            .sender_ruid = current->ruid, .sender_uid = current->uid,
+            .sender_caps = current->cap_effective
+        };
 
         if (sig == 0) {
             /* Permission check - verify process group exists */

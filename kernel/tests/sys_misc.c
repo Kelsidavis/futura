@@ -71949,6 +71949,324 @@ static void test_socketpair_cloexec_accept4_lifecycle(void) {
     }
 }
 
+/*
+ * Tests 2600-2607: execve FD_CLOEXEC closure
+ *
+ * Verify that execve properly closes all file descriptors marked with
+ * FD_CLOEXEC before running the new program, while preserving
+ * non-CLOEXEC descriptors.
+ *
+ *   2600: open(O_CLOEXEC) + execve -> CLOEXEC fd closed
+ *   2601: open() without O_CLOEXEC + execve -> fd survives
+ *   2602: pipe2(O_CLOEXEC) + execve -> both pipe fds closed
+ *   2603: socket(SOCK_CLOEXEC) + execve -> socket fd closed
+ *   2604: eventfd2(EFD_CLOEXEC) + execve -> eventfd closed
+ *   2605: dup3(O_CLOEXEC) + execve -> dup'd fd closed, original survives
+ *   2606: mixed CLOEXEC/non-CLOEXEC across multiple types
+ *   2607: fd_flags cleared after CLOEXEC closure (no stale flags)
+ */
+static void test_execve_cloexec_closure(void) {
+    extern long sys_execve(const char *, char *const *, char *const *);
+    extern long sys_fcntl(int fd, int cmd, uint64_t arg);
+    extern long sys_close(int fd);
+    extern long sys_pipe2(int pipefd[2], int flags);
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_eventfd2(unsigned int initval, int flags);
+    extern long sys_dup3(int oldfd, int newfd, int flags);
+    extern ssize_t fut_vfs_write(int fd, const void *buf, size_t size);
+    extern int fut_vfs_unlink(const char *path);
+
+    /* Create a fake ELF file that passes pre-validation (magic \x7fELF)
+     * but fails actual ELF loading, so execve returns an error AFTER
+     * the CLOEXEC closure loop has already run. */
+    const char *fake_elf = "/tmp/cloexec_test_elf_2600";
+    {
+        int tfd = fut_vfs_open(fake_elf, O_CREAT | O_RDWR, 0755);
+        if (tfd >= 0) {
+            /* Minimal ELF header: valid magic but garbage rest -> exec fails */
+            char elf_hdr[8] = {0x7f, 'E', 'L', 'F', 0, 0, 0, 0};
+            fut_vfs_write(tfd, elf_hdr, 8);
+            fut_vfs_close(tfd);
+        }
+    }
+
+    /* ---- Test 2600: open(O_CLOEXEC) fd closed by execve ---- */
+    fut_printf("[MISC-TEST] Test 2600: open(O_CLOEXEC) fd closed by execve\n");
+    {
+        int fd = fut_vfs_open("/tmp/cloexec2600.txt", O_CREAT | O_RDWR | O_CLOEXEC, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] FAIL 2600: open failed %d\n", fd);
+            fut_test_fail(2600);
+        } else {
+            /* Verify FD_CLOEXEC is set before exec */
+            long pre = sys_fcntl(fd, 1 /* F_GETFD */, 0);
+            if (!(pre & 1)) {
+                fut_printf("[MISC-TEST] FAIL 2600: FD_CLOEXEC not set pre-exec\n");
+                sys_close(fd);
+                fut_test_fail(2600);
+            } else {
+                /* execve will close CLOEXEC fds then fail on bad ELF */
+                sys_execve(fake_elf, NULL, NULL);
+                /* After failed exec, the CLOEXEC fd should be closed */
+                fut_task_t *task = fut_task_current();
+                int closed = (!task->fd_table || fd >= task->max_fds ||
+                              task->fd_table[fd] == NULL);
+                if (closed) {
+                    fut_printf("[MISC-TEST] PASS 2600: CLOEXEC fd closed by execve\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] FAIL 2600: CLOEXEC fd still open after execve\n");
+                    sys_close(fd);
+                    fut_test_fail(2600);
+                }
+            }
+            fut_vfs_unlink("/tmp/cloexec2600.txt");
+        }
+    }
+
+    /* ---- Test 2601: non-CLOEXEC fd survives execve ---- */
+    fut_printf("[MISC-TEST] Test 2601: non-CLOEXEC fd survives execve\n");
+    {
+        int fd = fut_vfs_open("/tmp/cloexec2601.txt", O_CREAT | O_RDWR, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] FAIL 2601: open failed %d\n", fd);
+            fut_test_fail(2601);
+        } else {
+            /* Verify FD_CLOEXEC is NOT set */
+            long pre = sys_fcntl(fd, 1 /* F_GETFD */, 0);
+            if (pre & 1) {
+                fut_printf("[MISC-TEST] FAIL 2601: unexpected FD_CLOEXEC\n");
+                sys_close(fd);
+                fut_test_fail(2601);
+            } else {
+                sys_execve(fake_elf, NULL, NULL);
+                /* Non-CLOEXEC fd should survive */
+                fut_task_t *task = fut_task_current();
+                int alive = (task->fd_table && fd < task->max_fds &&
+                             task->fd_table[fd] != NULL);
+                if (alive) {
+                    fut_printf("[MISC-TEST] PASS 2601: non-CLOEXEC fd survived execve\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] FAIL 2601: non-CLOEXEC fd was closed\n");
+                    fut_test_fail(2601);
+                }
+                sys_close(fd);
+            }
+            fut_vfs_unlink("/tmp/cloexec2601.txt");
+        }
+    }
+
+    /* ---- Test 2602: pipe2(O_CLOEXEC) both fds closed by execve ---- */
+    fut_printf("[MISC-TEST] Test 2602: pipe2(O_CLOEXEC) fds closed by execve\n");
+    {
+        int pipefd[2] = {-1, -1};
+        long r = sys_pipe2(pipefd, O_CLOEXEC);
+        if (r < 0) {
+            fut_printf("[MISC-TEST] FAIL 2602: pipe2 failed %ld\n", r);
+            fut_test_fail(2602);
+        } else {
+            int rfd = pipefd[0], wfd = pipefd[1];
+            sys_execve(fake_elf, NULL, NULL);
+            fut_task_t *task = fut_task_current();
+            int r_closed = (!task->fd_table || rfd >= task->max_fds ||
+                            task->fd_table[rfd] == NULL);
+            int w_closed = (!task->fd_table || wfd >= task->max_fds ||
+                            task->fd_table[wfd] == NULL);
+            if (r_closed && w_closed) {
+                fut_printf("[MISC-TEST] PASS 2602: both pipe CLOEXEC fds closed\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL 2602: pipe r=%d w=%d\n",
+                           r_closed, w_closed);
+                if (!r_closed) sys_close(rfd);
+                if (!w_closed) sys_close(wfd);
+                fut_test_fail(2602);
+            }
+        }
+    }
+
+    /* ---- Test 2603: socket(SOCK_CLOEXEC) fd closed by execve ---- */
+    fut_printf("[MISC-TEST] Test 2603: socket(SOCK_CLOEXEC) closed by execve\n");
+    {
+        long sfd = sys_socket(1 /* AF_UNIX */,
+                              1 /* SOCK_STREAM */ | 0x80000 /* SOCK_CLOEXEC */, 0);
+        if (sfd < 0) {
+            fut_printf("[MISC-TEST] FAIL 2603: socket failed %ld\n", sfd);
+            fut_test_fail(2603);
+        } else {
+            sys_execve(fake_elf, NULL, NULL);
+            fut_task_t *task = fut_task_current();
+            int closed = (!task->fd_table || (int)sfd >= task->max_fds ||
+                          task->fd_table[(int)sfd] == NULL);
+            if (closed) {
+                fut_printf("[MISC-TEST] PASS 2603: SOCK_CLOEXEC socket closed by execve\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL 2603: socket still open\n");
+                sys_close((int)sfd);
+                fut_test_fail(2603);
+            }
+        }
+    }
+
+    /* ---- Test 2604: eventfd2(EFD_CLOEXEC) fd closed by execve ---- */
+    fut_printf("[MISC-TEST] Test 2604: eventfd2(EFD_CLOEXEC) closed by execve\n");
+    {
+        long efd = sys_eventfd2(0, 02000000 /* EFD_CLOEXEC */);
+        if (efd < 0) {
+            fut_printf("[MISC-TEST] FAIL 2604: eventfd2 failed %ld\n", efd);
+            fut_test_fail(2604);
+        } else {
+            sys_execve(fake_elf, NULL, NULL);
+            fut_task_t *task = fut_task_current();
+            int closed = (!task->fd_table || (int)efd >= task->max_fds ||
+                          task->fd_table[(int)efd] == NULL);
+            if (closed) {
+                fut_printf("[MISC-TEST] PASS 2604: EFD_CLOEXEC eventfd closed by execve\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL 2604: eventfd still open\n");
+                sys_close((int)efd);
+                fut_test_fail(2604);
+            }
+        }
+    }
+
+    /* ---- Test 2605: dup3(O_CLOEXEC) closed, original survives ---- */
+    fut_printf("[MISC-TEST] Test 2605: dup3(O_CLOEXEC) closed, original survives\n");
+    {
+        int orig = fut_vfs_open("/tmp/cloexec2605.txt", O_CREAT | O_RDWR, 0644);
+        if (orig < 0) {
+            fut_printf("[MISC-TEST] FAIL 2605: open failed %d\n", orig);
+            fut_test_fail(2605);
+        } else {
+            /* dup3 to a specific high fd with O_CLOEXEC */
+            int target = orig + 5;
+            if (target >= 1024) target = orig + 1;
+            long dfd = sys_dup3(orig, target, O_CLOEXEC);
+            if (dfd < 0) {
+                fut_printf("[MISC-TEST] FAIL 2605: dup3 failed %ld\n", dfd);
+                sys_close(orig);
+                fut_test_fail(2605);
+            } else {
+                /* Verify: orig has no CLOEXEC, dup'd fd has CLOEXEC */
+                long orig_flags = sys_fcntl(orig, 1 /* F_GETFD */, 0);
+                long dup_flags = sys_fcntl((int)dfd, 1 /* F_GETFD */, 0);
+                if ((orig_flags & 1) || !(dup_flags & 1)) {
+                    fut_printf("[MISC-TEST] FAIL 2605: pre-exec flags wrong "
+                               "orig=0x%lx dup=0x%lx\n", orig_flags, dup_flags);
+                    sys_close(orig);
+                    sys_close((int)dfd);
+                    fut_test_fail(2605);
+                } else {
+                    sys_execve(fake_elf, NULL, NULL);
+                    fut_task_t *task = fut_task_current();
+                    int orig_alive = (task->fd_table && orig < task->max_fds &&
+                                      task->fd_table[orig] != NULL);
+                    int dup_closed = (!task->fd_table ||
+                                      (int)dfd >= task->max_fds ||
+                                      task->fd_table[(int)dfd] == NULL);
+                    if (orig_alive && dup_closed) {
+                        fut_printf("[MISC-TEST] PASS 2605: dup3(CLOEXEC) closed, "
+                                   "original survived\n");
+                        fut_test_pass();
+                    } else {
+                        fut_printf("[MISC-TEST] FAIL 2605: orig=%d dup=%d\n",
+                                   orig_alive, dup_closed);
+                        fut_test_fail(2605);
+                    }
+                    if (orig_alive) sys_close(orig);
+                    if (!dup_closed) sys_close((int)dfd);
+                }
+            }
+            fut_vfs_unlink("/tmp/cloexec2605.txt");
+        }
+    }
+
+    /* ---- Test 2606: mixed CLOEXEC / non-CLOEXEC across types ---- */
+    fut_printf("[MISC-TEST] Test 2606: mixed CLOEXEC/non-CLOEXEC execve\n");
+    {
+        /* Open several fds: some with CLOEXEC, some without */
+        int ce_file = fut_vfs_open("/tmp/ce2606.txt", O_CREAT | O_RDWR | O_CLOEXEC, 0644);
+        int no_file = fut_vfs_open("/tmp/no2606.txt", O_CREAT | O_RDWR, 0644);
+        long ce_sock = sys_socket(1 /* AF_UNIX */,
+                                  1 /* SOCK_STREAM */ | 0x80000 /* SOCK_CLOEXEC */, 0);
+        long no_sock = sys_socket(1 /* AF_UNIX */, 1 /* SOCK_STREAM */, 0);
+        int ok = (ce_file >= 0 && no_file >= 0 && ce_sock >= 0 && no_sock >= 0);
+        if (!ok) {
+            fut_printf("[MISC-TEST] FAIL 2606: setup failed ce_file=%d no_file=%d "
+                       "ce_sock=%ld no_sock=%ld\n", ce_file, no_file, ce_sock, no_sock);
+            if (ce_file >= 0) sys_close(ce_file);
+            if (no_file >= 0) sys_close(no_file);
+            if (ce_sock >= 0) sys_close((int)ce_sock);
+            if (no_sock >= 0) sys_close((int)no_sock);
+            fut_test_fail(2606);
+        } else {
+            sys_execve(fake_elf, NULL, NULL);
+            fut_task_t *task = fut_task_current();
+            int ce_f_closed = (!task->fd_table || ce_file >= task->max_fds ||
+                               task->fd_table[ce_file] == NULL);
+            int no_f_alive = (task->fd_table && no_file < task->max_fds &&
+                              task->fd_table[no_file] != NULL);
+            int ce_s_closed = (!task->fd_table || (int)ce_sock >= task->max_fds ||
+                               task->fd_table[(int)ce_sock] == NULL);
+            int no_s_alive = (task->fd_table && (int)no_sock < task->max_fds &&
+                              task->fd_table[(int)no_sock] != NULL);
+            if (ce_f_closed && no_f_alive && ce_s_closed && no_s_alive) {
+                fut_printf("[MISC-TEST] PASS 2606: CLOEXEC fds closed, "
+                           "non-CLOEXEC survived\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL 2606: ce_f=%d no_f=%d ce_s=%d no_s=%d\n",
+                           ce_f_closed, no_f_alive, ce_s_closed, no_s_alive);
+                fut_test_fail(2606);
+            }
+            if (no_f_alive) sys_close(no_file);
+            if (no_s_alive) sys_close((int)no_sock);
+            if (!ce_f_closed) sys_close(ce_file);
+            if (!ce_s_closed) sys_close((int)ce_sock);
+        }
+        fut_vfs_unlink("/tmp/ce2606.txt");
+        fut_vfs_unlink("/tmp/no2606.txt");
+    }
+
+    /* ---- Test 2607: fd_flags cleared after CLOEXEC closure ---- */
+    fut_printf("[MISC-TEST] Test 2607: fd_flags cleared after CLOEXEC closure\n");
+    {
+        int fd = fut_vfs_open("/tmp/cloexec2607.txt", O_CREAT | O_RDWR | O_CLOEXEC, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] FAIL 2607: open failed %d\n", fd);
+            fut_test_fail(2607);
+        } else {
+            int slot = fd;  /* Remember the fd slot */
+            sys_execve(fake_elf, NULL, NULL);
+            /* After execve, both fd_table[slot] and fd_flags[slot] should be clear */
+            fut_task_t *task = fut_task_current();
+            int table_clear = (!task->fd_table || slot >= task->max_fds ||
+                               task->fd_table[slot] == NULL);
+            int flags_clear = (!task->fd_flags || slot >= task->max_fds ||
+                               task->fd_flags[slot] == 0);
+            if (table_clear && flags_clear) {
+                fut_printf("[MISC-TEST] PASS 2607: fd_table and fd_flags both "
+                           "cleared after CLOEXEC closure\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL 2607: table=%d flags=%d "
+                           "(fd_flags[%d]=0x%x)\n",
+                           table_clear, flags_clear, slot,
+                           (task->fd_flags && slot < task->max_fds)
+                               ? task->fd_flags[slot] : -1);
+                if (!table_clear) sys_close(slot);
+                fut_test_fail(2607);
+            }
+            fut_vfs_unlink("/tmp/cloexec2607.txt");
+        }
+    }
+
+    fut_vfs_unlink(fake_elf);
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -76288,6 +76606,7 @@ void fut_misc_test_thread(void *arg) {
     test_mremap_enhanced(); /* Tests 2560-2565: mremap shrink/grow/MREMAP_MAYMOVE in-place optimization */
     test_clone_cleartid_comprehensive(); /* Tests 2570-2577: CLONE_CHILD_CLEARTID futex wake + set_tid_address */
     test_socketpair_cloexec_accept4_lifecycle(); /* Tests 2580-2587: socketpair SOCK_CLOEXEC lifecycle + accept4 flag combinations */
+    test_execve_cloexec_closure(); /* Tests 2600-2607: execve FD_CLOEXEC closure across fd types */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

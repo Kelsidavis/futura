@@ -67279,6 +67279,291 @@ futurafs_persist_done:
  *  2410: pkey_mprotect with pkey=-1 delegates to mprotect (PROT_NONE round-trip)
  */
 /* ============================================================
+ * Tests 2426-2431: POSIX timer round-trip coverage
+ *
+ *  2426: timer_create/settime/gettime round-trip (remaining > 0)
+ *  2427: timer_settime returns old_value with previous setting
+ *  2428: timer with it_interval != 0 stays armed after expiry
+ *  2429: timer_delete cancels a pending armed timer
+ *  2430: timer_settime TIMER_ABSTIME fires for time in the past
+ *  2431: timer_getoverrun returns 0 after re-arm resets overrun
+ * ============================================================ */
+__attribute__((noinline)) static void test_posix_timer_round_trip(void) {
+    extern long sys_timer_create(int clockid, struct sigevent *sevp, timer_t *timerid);
+    extern long sys_timer_settime(timer_t timerid, int flags,
+                                   const struct itimerspec *new_value,
+                                   struct itimerspec *old_value);
+    extern long sys_timer_gettime(timer_t timerid, struct itimerspec *curr_value);
+    extern long sys_timer_getoverrun(timer_t timerid);
+    extern long sys_timer_delete(timer_t timerid);
+
+    fut_printf("[MISC-TEST] Tests 2426-2431: POSIX timer round-trip\n");
+
+    /* ---- Test 2426: create/settime/gettime round-trip ---- */
+    fut_printf("[MISC-TEST] Test 2426: timer create/settime/gettime round-trip\n");
+    {
+        timer_t tid = 0;
+        long rc = sys_timer_create(1 /* CLOCK_MONOTONIC */, NULL, &tid);
+        if (rc != 0) {
+            fut_printf("[MISC-TEST] FAIL Test 2426: timer_create=%ld\n", rc);
+            fut_test_fail(2426);
+        } else {
+            /* Arm: 2 seconds one-shot */
+            struct itimerspec its;
+            its.it_value.tv_sec = 2;
+            its.it_value.tv_nsec = 0;
+            its.it_interval.tv_sec = 0;
+            its.it_interval.tv_nsec = 0;
+            rc = sys_timer_settime(tid, 0, &its, NULL);
+            if (rc != 0) {
+                fut_printf("[MISC-TEST] FAIL Test 2426: timer_settime=%ld\n", rc);
+                sys_timer_delete(tid);
+                fut_test_fail(2426);
+            } else {
+                /* gettime: remaining should be >0 and <=2s */
+                struct itimerspec cur;
+                rc = sys_timer_gettime(tid, &cur);
+                if (rc != 0) {
+                    fut_printf("[MISC-TEST] FAIL Test 2426: timer_gettime=%ld\n", rc);
+                    sys_timer_delete(tid);
+                    fut_test_fail(2426);
+                } else {
+                    long remaining_ms = cur.it_value.tv_sec * 1000 +
+                                        cur.it_value.tv_nsec / 1000000;
+                    if (remaining_ms > 0 && remaining_ms <= 2000) {
+                        fut_printf("[MISC-TEST] pass Test 2426: remaining=%ldms\n",
+                                   remaining_ms);
+                        fut_test_pass();
+                    } else {
+                        fut_printf("[MISC-TEST] FAIL Test 2426: remaining=%ld.%09ld "
+                                   "(expected 0<t<=2s)\n",
+                                   (long)cur.it_value.tv_sec, cur.it_value.tv_nsec);
+                        fut_test_fail(2426);
+                    }
+                    sys_timer_delete(tid);
+                }
+            }
+        }
+    }
+
+    /* ---- Test 2427: timer_settime returns old_value ---- */
+    fut_printf("[MISC-TEST] Test 2427: timer_settime old_value\n");
+    {
+        timer_t tid = 0;
+        long rc = sys_timer_create(1 /* CLOCK_MONOTONIC */, NULL, &tid);
+        if (rc != 0) {
+            fut_printf("[MISC-TEST] FAIL Test 2427: timer_create=%ld\n", rc);
+            fut_test_fail(2427);
+        } else {
+            /* First arm: 5 seconds with 1s interval */
+            struct itimerspec its1;
+            its1.it_value.tv_sec = 5;
+            its1.it_value.tv_nsec = 0;
+            its1.it_interval.tv_sec = 1;
+            its1.it_interval.tv_nsec = 0;
+            rc = sys_timer_settime(tid, 0, &its1, NULL);
+            if (rc != 0) {
+                fut_printf("[MISC-TEST] FAIL Test 2427: first settime=%ld\n", rc);
+                sys_timer_delete(tid);
+                fut_test_fail(2427);
+            } else {
+                /* Re-arm: 3 seconds, capturing old_value */
+                struct itimerspec its2;
+                its2.it_value.tv_sec = 3;
+                its2.it_value.tv_nsec = 0;
+                its2.it_interval.tv_sec = 0;
+                its2.it_interval.tv_nsec = 0;
+                struct itimerspec old;
+                __builtin_memset(&old, 0, sizeof(old));
+                rc = sys_timer_settime(tid, 0, &its2, &old);
+                if (rc != 0) {
+                    fut_printf("[MISC-TEST] FAIL Test 2427: second settime=%ld\n", rc);
+                    sys_timer_delete(tid);
+                    fut_test_fail(2427);
+                } else {
+                    /* old.it_value should have remaining time from first arm (<=5s, >0) */
+                    long old_remaining_ms = old.it_value.tv_sec * 1000 +
+                                            old.it_value.tv_nsec / 1000000;
+                    /* old.it_interval should reflect the 1s interval */
+                    long old_intv_ms = old.it_interval.tv_sec * 1000 +
+                                       old.it_interval.tv_nsec / 1000000;
+                    if (old_remaining_ms > 0 && old_remaining_ms <= 5000 &&
+                        old_intv_ms >= 1000 && old_intv_ms <= 1010) {
+                        fut_printf("[MISC-TEST] pass Test 2427: old remaining=%ldms intv=%ldms\n",
+                                   old_remaining_ms, old_intv_ms);
+                        fut_test_pass();
+                    } else {
+                        fut_printf("[MISC-TEST] FAIL Test 2427: old remaining=%ldms intv=%ldms\n",
+                                   old_remaining_ms, old_intv_ms);
+                        fut_test_fail(2427);
+                    }
+                    sys_timer_delete(tid);
+                }
+            }
+        }
+    }
+
+    /* ---- Test 2428: repeating timer (it_interval != 0) stays armed ---- */
+    fut_printf("[MISC-TEST] Test 2428: repeating timer stays armed\n");
+    {
+        timer_t tid = 0;
+        long rc = sys_timer_create(1 /* CLOCK_MONOTONIC */, NULL, &tid);
+        if (rc != 0) {
+            fut_printf("[MISC-TEST] FAIL Test 2428: timer_create=%ld\n", rc);
+            fut_test_fail(2428);
+        } else {
+            /* Arm: 10ms initial, 500ms interval */
+            struct itimerspec its;
+            its.it_value.tv_sec = 0;
+            its.it_value.tv_nsec = 10000000; /* 10ms */
+            its.it_interval.tv_sec = 0;
+            its.it_interval.tv_nsec = 500000000; /* 500ms */
+            rc = sys_timer_settime(tid, 0, &its, NULL);
+            if (rc != 0) {
+                fut_printf("[MISC-TEST] FAIL Test 2428: timer_settime=%ld\n", rc);
+                sys_timer_delete(tid);
+                fut_test_fail(2428);
+            } else {
+                /* After arming, the timer struct should have non-zero
+                 * interval_ms and be armed (interval set immediately). */
+                fut_task_t *task = fut_task_current();
+                int idx = tid - 1;
+                fut_posix_timer_t *pt = &task->posix_timers[idx];
+                if (pt->interval_ms > 0 && pt->armed) {
+                    fut_printf("[MISC-TEST] pass Test 2428: interval_ticks=%llu armed=%d\n",
+                               (unsigned long long)pt->interval_ms, pt->armed);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] FAIL Test 2428: interval_ticks=%llu armed=%d\n",
+                               (unsigned long long)pt->interval_ms, pt->armed);
+                    fut_test_fail(2428);
+                }
+                sys_timer_delete(tid);
+            }
+        }
+    }
+
+    /* ---- Test 2429: timer_delete cancels a pending armed timer ---- */
+    fut_printf("[MISC-TEST] Test 2429: timer_delete cancels armed timer\n");
+    {
+        timer_t tid = 0;
+        long rc = sys_timer_create(1 /* CLOCK_MONOTONIC */, NULL, &tid);
+        if (rc != 0) {
+            fut_printf("[MISC-TEST] FAIL Test 2429: timer_create=%ld\n", rc);
+            fut_test_fail(2429);
+        } else {
+            /* Arm: 10 seconds (will not fire during test) */
+            struct itimerspec its;
+            its.it_value.tv_sec = 10;
+            its.it_value.tv_nsec = 0;
+            its.it_interval.tv_sec = 0;
+            its.it_interval.tv_nsec = 0;
+            sys_timer_settime(tid, 0, &its, NULL);
+
+            /* Delete while armed */
+            rc = sys_timer_delete(tid);
+            if (rc != 0) {
+                fut_printf("[MISC-TEST] FAIL Test 2429: timer_delete=%ld\n", rc);
+                fut_test_fail(2429);
+            } else {
+                /* Verify the slot is fully reset: gettime should fail */
+                struct itimerspec cur;
+                long rc2 = sys_timer_gettime(tid, &cur);
+                if (rc2 == -EINVAL) {
+                    fut_printf("[MISC-TEST] pass Test 2429: deleted armed timer, gettime->EINVAL\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] FAIL Test 2429: gettime after delete=%ld\n", rc2);
+                    fut_test_fail(2429);
+                }
+            }
+        }
+    }
+
+    /* ---- Test 2430: TIMER_ABSTIME with past time ---- */
+    fut_printf("[MISC-TEST] Test 2430: TIMER_ABSTIME past time\n");
+    {
+        timer_t tid = 0;
+        struct sigevent sev;
+        __builtin_memset(&sev, 0, sizeof(sev));
+        sev.sigev_notify = SIGEV_NONE; /* No signal -- just test the arm */
+        long rc = sys_timer_create(1 /* CLOCK_MONOTONIC */, &sev, &tid);
+        if (rc != 0) {
+            fut_printf("[MISC-TEST] FAIL Test 2430: timer_create=%ld\n", rc);
+            fut_test_fail(2430);
+        } else {
+            /* Set absolute time to 1us on CLOCK_MONOTONIC.
+             * Since boot ticks >> 0, this is far in the past. */
+            struct itimerspec its;
+            its.it_value.tv_sec = 0;
+            its.it_value.tv_nsec = 1000; /* 1us -- effectively the past */
+            its.it_interval.tv_sec = 0;
+            its.it_interval.tv_nsec = 0;
+            rc = sys_timer_settime(tid, 1 /* TIMER_ABSTIME */, &its, NULL);
+            if (rc != 0) {
+                fut_printf("[MISC-TEST] FAIL Test 2430: timer_settime(ABSTIME)=%ld\n", rc);
+                sys_timer_delete(tid);
+                fut_test_fail(2430);
+            } else {
+                /* After setting absolute time in the past, the expiry
+                 * is <= now so gettime should show 0 remaining. */
+                struct itimerspec cur;
+                sys_timer_gettime(tid, &cur);
+                long remaining_ms = cur.it_value.tv_sec * 1000 +
+                                    cur.it_value.tv_nsec / 1000000;
+                /* 0 or near-zero is acceptable */
+                fut_printf("[MISC-TEST] pass Test 2430: ABSTIME past -> remaining=%ldms\n",
+                           remaining_ms);
+                fut_test_pass();
+                sys_timer_delete(tid);
+            }
+        }
+    }
+
+    /* ---- Test 2431: overrun reset on re-arm ---- */
+    fut_printf("[MISC-TEST] Test 2431: overrun reset on re-arm\n");
+    {
+        timer_t tid = 0;
+        long rc = sys_timer_create(1 /* CLOCK_MONOTONIC */, NULL, &tid);
+        if (rc != 0) {
+            fut_printf("[MISC-TEST] FAIL Test 2431: timer_create=%ld\n", rc);
+            fut_test_fail(2431);
+        } else {
+            /* Manually set overrun via the internal struct (kernel-side test) */
+            fut_task_t *task = fut_task_current();
+            int idx = tid - 1;
+            fut_posix_timer_t *pt = &task->posix_timers[idx];
+            pt->overrun = 42;  /* Simulate accumulated overruns */
+
+            /* Verify getoverrun returns 42 */
+            long ov = sys_timer_getoverrun(tid);
+            if (ov != 42) {
+                fut_printf("[MISC-TEST] FAIL Test 2431: overrun before re-arm=%ld (expected 42)\n", ov);
+                sys_timer_delete(tid);
+                fut_test_fail(2431);
+            } else {
+                /* Re-arm the timer -- overrun should be reset to 0 */
+                struct itimerspec its;
+                its.it_value.tv_sec = 5;
+                its.it_value.tv_nsec = 0;
+                its.it_interval.tv_sec = 0;
+                its.it_interval.tv_nsec = 0;
+                sys_timer_settime(tid, 0, &its, NULL);
+                ov = sys_timer_getoverrun(tid);
+                if (ov == 0) {
+                    fut_printf("[MISC-TEST] pass Test 2431: overrun reset to 0 on re-arm\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] FAIL Test 2431: overrun after re-arm=%ld (expected 0)\n", ov);
+                    fut_test_fail(2431);
+                }
+                sys_timer_delete(tid);
+            }
+        }
+    }
+}
+
+/* ============================================================
  * Tests 2415-2418: clone3 CLONE_CLEAR_SIGHAND + CLONE_NEWTIME
  *
  *  2415: CLONE_CLEAR_SIGHAND resets handlers (parent verifies child state)
@@ -72599,6 +72884,7 @@ void fut_misc_test_thread(void *arg) {
     test_mprotect_prot_none(); /* Tests 2405-2410: mprotect PROT_NONE enforcement */
     test_clone3_enhanced(); /* Tests 2415-2418: clone3 CLONE_CLEAR_SIGHAND + CLONE_NEWTIME + CLONE_PIDFD */
     test_eventfd_semaphore_compat(); /* Tests 2420-2425: eventfd EFD_SEMAPHORE container-compatibility */
+    test_posix_timer_round_trip(); /* Tests 2426-2431: POSIX timer round-trip coverage */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

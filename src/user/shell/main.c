@@ -530,6 +530,8 @@ static void cmd_addr2line(int argc, char *argv[]);
 static void cmd_objcopy(int argc, char *argv[]);
 static void cmd_cppfilt(int argc, char *argv[]);
 static void cmd_elfedit(int argc, char *argv[]);
+static void cmd_cc(int argc, char *argv[]);
+static void cmd_ld_cmd(int argc, char *argv[]);
 
 /* Forward declaration for prompt */
 static void print_prompt(void);
@@ -15807,6 +15809,12 @@ watch_sleep:
     } else if (strcmp_simple(argv[0], "elfedit") == 0) {
         cmd_elfedit(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "cc") == 0 || strcmp_simple(argv[0], "gcc") == 0) {
+        cmd_cc(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "ld") == 0) {
+        cmd_ld_cmd(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -16366,6 +16374,9 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "objcopy") == 0 ||
             strcmp_simple(cmd, "c++filt") == 0 ||
             strcmp_simple(cmd, "elfedit") == 0 ||
+            strcmp_simple(cmd, "cc") == 0 ||
+            strcmp_simple(cmd, "gcc") == 0 ||
+            strcmp_simple(cmd, "ld") == 0 ||
             0);
 }
 
@@ -49749,6 +49760,1136 @@ static void cmd_elfedit(int argc, char *argv[]) {
         if (new_mach) { write_str(1, "  Set machine to: "); write_str(1, new_mach); write_str(1, "\n"); }
         write_str(1, "  (changes simulated, file not modified)\n");
     }
+}
+
+/* ===== cc/gcc - C compiler frontend (simulated) ===== */
+static void cmd_cc(int argc, char *argv[]) {
+    /* Compiler configuration */
+    const char *output_file = (const char *)0;
+    int compile_only = 0;        /* -c flag */
+    int preprocess_only = 0;     /* -E flag */
+    int gen_assembly = 0;        /* -S flag */
+    int opt_level = 0;           /* -O0 to -O3, -Os, -Oz */
+    int debug_info = 0;          /* -g flag */
+    int wall = 0;                /* -Wall */
+    int werror = 0;              /* -Werror */
+    int wextra = 0;              /* -Wextra */
+    int pedantic = 0;            /* -pedantic */
+    int verbose = 0;             /* -v */
+    int pipe_mode = 0;           /* -pipe */
+    int std_set = 0;             /* -std= specified */
+    const char *std_version = "c17"; /* default standard */
+    int pic = 0;                 /* -fPIC */
+    int pie = 0;                 /* -fPIE / -pie */
+    int shared = 0;              /* -shared */
+    int static_link = 0;         /* -static */
+    int nostdlib = 0;            /* -nostdlib */
+    int nostdinc = 0;            /* -nostdinc */
+
+    /* Collected source files, include dirs, lib dirs, libraries, defines */
+    #define CC_MAX_SOURCES 32
+    #define CC_MAX_INCLUDES 16
+    #define CC_MAX_LIBDIRS 16
+    #define CC_MAX_LIBS 16
+    #define CC_MAX_DEFINES 32
+    #define CC_MAX_OBJECTS 32
+    #define CC_MAX_WARNINGS 16
+    #define CC_MAX_FEATURES 16
+
+    const char *sources[CC_MAX_SOURCES];
+    int source_count = 0;
+    const char *include_dirs[CC_MAX_INCLUDES];
+    int include_count = 0;
+    const char *lib_dirs[CC_MAX_LIBDIRS];
+    int libdir_count = 0;
+    const char *libs[CC_MAX_LIBS];
+    int lib_count = 0;
+    const char *defines[CC_MAX_DEFINES];
+    int define_count = 0;
+    const char *objects[CC_MAX_OBJECTS];
+    int object_count = 0;
+    const char *extra_warnings[CC_MAX_WARNINGS];
+    int extra_warn_count = 0;
+    const char *features[CC_MAX_FEATURES];
+    int feature_count = 0;
+
+    if (argc < 2) {
+        write_str(2, "cc: fatal error: no input files\n");
+        write_str(2, "compilation terminated.\n");
+        return;
+    }
+
+    /* Show version/help */
+    if (argc == 2 && (strcmp_simple(argv[1], "--version") == 0)) {
+        write_str(1, "cc (Futura GCC) 14.2.0\n");
+        write_str(1, "Copyright (C) 2026 Futura Software Foundation, Inc.\n");
+        write_str(1, "This is free software; see the source for copying conditions.\n");
+        write_str(1, "Target: x86_64-futura-elf\n");
+        write_str(1, "Configured with: --prefix=/usr --enable-languages=c,c++\n");
+        write_str(1, "Thread model: posix\n");
+        write_str(1, "gcc version 14.2.0 (Futura GCC)\n");
+        return;
+    }
+    if (argc == 2 && strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "Usage: cc [options] file...\n");
+        write_str(1, "Options:\n");
+        write_str(1, "  -c                Compile and assemble, but do not link\n");
+        write_str(1, "  -S                Compile only; do not assemble or link\n");
+        write_str(1, "  -E                Preprocess only; do not compile, assemble or link\n");
+        write_str(1, "  -o <file>         Place the output into <file>\n");
+        write_str(1, "  -O[0|1|2|3|s|z]  Set optimization level\n");
+        write_str(1, "  -g                Generate debug information (DWARF)\n");
+        write_str(1, "  -Wall             Enable all common warnings\n");
+        write_str(1, "  -Werror           Treat warnings as errors\n");
+        write_str(1, "  -Wextra           Enable extra warning flags\n");
+        write_str(1, "  -pedantic         Issue all warnings demanded by strict ISO C\n");
+        write_str(1, "  -std=<standard>   Set C language standard (c11, c17, c23, gnu23)\n");
+        write_str(1, "  -I <dir>          Add include directory\n");
+        write_str(1, "  -L <dir>          Add library search directory\n");
+        write_str(1, "  -l <library>      Link against library\n");
+        write_str(1, "  -D <name>[=val]   Define preprocessor macro\n");
+        write_str(1, "  -fPIC             Generate position-independent code\n");
+        write_str(1, "  -fPIE             Generate position-independent executable\n");
+        write_str(1, "  -shared           Produce a shared library\n");
+        write_str(1, "  -static           Static linking\n");
+        write_str(1, "  -nostdlib         Do not link standard libraries\n");
+        write_str(1, "  -nostdinc         Do not search standard include directories\n");
+        write_str(1, "  -pipe             Use pipes between compiler stages\n");
+        write_str(1, "  -v                Verbose output\n");
+        write_str(1, "  --version         Display compiler version\n");
+        write_str(1, "  -W<name>          Enable specific warning\n");
+        write_str(1, "  -f<feature>       Enable specific feature/option\n");
+        return;
+    }
+
+    /* Parse arguments */
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-c") == 0) {
+            compile_only = 1;
+        } else if (strcmp_simple(argv[i], "-E") == 0) {
+            preprocess_only = 1;
+        } else if (strcmp_simple(argv[i], "-S") == 0) {
+            gen_assembly = 1;
+        } else if (strcmp_simple(argv[i], "-o") == 0) {
+            if (i + 1 < argc) {
+                output_file = argv[++i];
+            } else {
+                write_str(2, "cc: error: missing filename after '-o'\n");
+                return;
+            }
+        } else if (strcmp_simple(argv[i], "-O0") == 0) {
+            opt_level = 0;
+        } else if (strcmp_simple(argv[i], "-O1") == 0 || strcmp_simple(argv[i], "-O") == 0) {
+            opt_level = 1;
+        } else if (strcmp_simple(argv[i], "-O2") == 0) {
+            opt_level = 2;
+        } else if (strcmp_simple(argv[i], "-O3") == 0) {
+            opt_level = 3;
+        } else if (strcmp_simple(argv[i], "-Os") == 0) {
+            opt_level = 4; /* size optimize */
+        } else if (strcmp_simple(argv[i], "-Oz") == 0) {
+            opt_level = 5; /* aggressive size */
+        } else if (strcmp_simple(argv[i], "-g") == 0) {
+            debug_info = 1;
+        } else if (strcmp_simple(argv[i], "-Wall") == 0) {
+            wall = 1;
+        } else if (strcmp_simple(argv[i], "-Werror") == 0) {
+            werror = 1;
+        } else if (strcmp_simple(argv[i], "-Wextra") == 0) {
+            wextra = 1;
+        } else if (strcmp_simple(argv[i], "-pedantic") == 0) {
+            pedantic = 1;
+        } else if (strcmp_simple(argv[i], "-v") == 0) {
+            verbose = 1;
+        } else if (strcmp_simple(argv[i], "-pipe") == 0) {
+            pipe_mode = 1;
+        } else if (strcmp_simple(argv[i], "-fPIC") == 0) {
+            pic = 1;
+        } else if (strcmp_simple(argv[i], "-fPIE") == 0 || strcmp_simple(argv[i], "-pie") == 0) {
+            pie = 1;
+        } else if (strcmp_simple(argv[i], "-shared") == 0) {
+            shared = 1;
+        } else if (strcmp_simple(argv[i], "-static") == 0) {
+            static_link = 1;
+        } else if (strcmp_simple(argv[i], "-nostdlib") == 0) {
+            nostdlib = 1;
+        } else if (strcmp_simple(argv[i], "-nostdinc") == 0) {
+            nostdinc = 1;
+        } else if (argv[i][0] == '-' && argv[i][1] == 'I') {
+            /* -I<dir> or -I <dir> */
+            if (argv[i][2] != '\0') {
+                if (include_count < CC_MAX_INCLUDES) include_dirs[include_count++] = &argv[i][2];
+            } else if (i + 1 < argc) {
+                if (include_count < CC_MAX_INCLUDES) include_dirs[include_count++] = argv[++i];
+            }
+        } else if (argv[i][0] == '-' && argv[i][1] == 'L') {
+            if (argv[i][2] != '\0') {
+                if (libdir_count < CC_MAX_LIBDIRS) lib_dirs[libdir_count++] = &argv[i][2];
+            } else if (i + 1 < argc) {
+                if (libdir_count < CC_MAX_LIBDIRS) lib_dirs[libdir_count++] = argv[++i];
+            }
+        } else if (argv[i][0] == '-' && argv[i][1] == 'l') {
+            if (argv[i][2] != '\0') {
+                if (lib_count < CC_MAX_LIBS) libs[lib_count++] = &argv[i][2];
+            } else if (i + 1 < argc) {
+                if (lib_count < CC_MAX_LIBS) libs[lib_count++] = argv[++i];
+            }
+        } else if (argv[i][0] == '-' && argv[i][1] == 'D') {
+            if (argv[i][2] != '\0') {
+                if (define_count < CC_MAX_DEFINES) defines[define_count++] = &argv[i][2];
+            } else if (i + 1 < argc) {
+                if (define_count < CC_MAX_DEFINES) defines[define_count++] = argv[++i];
+            }
+        } else if (argv[i][0] == '-' && argv[i][1] == 'W' && argv[i][2] != '\0') {
+            /* Other -W<name> warnings */
+            if (extra_warn_count < CC_MAX_WARNINGS)
+                extra_warnings[extra_warn_count++] = &argv[i][2];
+        } else if (argv[i][0] == '-' && argv[i][1] == 'f' && argv[i][2] != '\0') {
+            /* -f<feature> flags */
+            if (feature_count < CC_MAX_FEATURES)
+                features[feature_count++] = &argv[i][2];
+        } else if (argv[i][0] == '-' && argv[i][1] == 's' && argv[i][2] == 't' &&
+                   argv[i][3] == 'd' && argv[i][4] == '=') {
+            std_set = 1;
+            std_version = &argv[i][5];
+        } else if (argv[i][0] != '-') {
+            /* Check if it's a source file or an object file */
+            int len = 0;
+            while (argv[i][len]) len++;
+            if (len > 2 && argv[i][len-1] == 'o' && argv[i][len-2] == '.') {
+                if (object_count < CC_MAX_OBJECTS) objects[object_count++] = argv[i];
+            } else {
+                if (source_count < CC_MAX_SOURCES) sources[source_count++] = argv[i];
+            }
+        } else {
+            write_str(2, "cc: warning: unrecognized option '");
+            write_str(2, argv[i]);
+            write_str(2, "'\n");
+        }
+    }
+
+    if (source_count == 0 && object_count == 0) {
+        write_str(2, "cc: fatal error: no input files\n");
+        write_str(2, "compilation terminated.\n");
+        return;
+    }
+
+    /* Verbose: show compilation search paths */
+    if (verbose) {
+        write_str(1, "Using built-in specs.\n");
+        write_str(1, "COLLECT_GCC="); write_str(1, argv[0]); write_str(1, "\n");
+        write_str(1, "Target: x86_64-futura-elf\n");
+        write_str(1, "Configured with: --prefix=/usr --enable-languages=c,c++\n");
+        write_str(1, "Thread model: posix\n");
+        write_str(1, "Supported LTO compression: zlib zstd\n");
+        write_str(1, "gcc version 14.2.0 (Futura GCC)\n");
+        if (!nostdinc) {
+            write_str(1, "#include \"...\" search starts here:\n");
+            write_str(1, "#include <...> search starts here:\n");
+            for (int i = 0; i < include_count; i++) {
+                write_str(1, " "); write_str(1, include_dirs[i]); write_str(1, "\n");
+            }
+            write_str(1, " /usr/local/include\n");
+            write_str(1, " /usr/lib/gcc/x86_64-futura-elf/14.2.0/include\n");
+            write_str(1, " /usr/include/x86_64-futura\n");
+            write_str(1, " /usr/include\n");
+            write_str(1, "End of search list.\n");
+        }
+    }
+
+    /* Process each source file through compilation stages */
+    for (int s = 0; s < source_count; s++) {
+        const char *src = sources[s];
+        int slen = 0;
+        while (src[slen]) slen++;
+
+        /* Determine source file type */
+        const char *src_type = "C";
+        if (slen > 2 && src[slen-1] == 'c' && src[slen-2] == '.') {
+            src_type = "C";
+        } else if (slen > 2 && src[slen-1] == 'h' && src[slen-2] == '.') {
+            src_type = "C header";
+        } else if (slen > 2 && src[slen-1] == 'S' && src[slen-2] == '.') {
+            src_type = "Assembly";
+        } else if (slen > 2 && src[slen-1] == 's' && src[slen-2] == '.') {
+            src_type = "Assembly";
+        } else if (slen > 2 && src[slen-1] == 'i' && src[slen-2] == '.') {
+            src_type = "Preprocessed C";
+        } else if (slen > 4 && src[slen-1] == 'p' && src[slen-2] == 'p' &&
+                   src[slen-3] == 'c' && src[slen-4] == '.') {
+            src_type = "C++";
+        }
+
+        write_str(1, "\033[1;36m=== Compiling: "); write_str(1, src);
+        write_str(1, " ("); write_str(1, src_type); write_str(1, ") ===\033[0m\n");
+
+        /* Stage 1: Preprocessing */
+        write_str(1, "\033[33m[1/4] Preprocessing\033[0m ");
+        write_str(1, src); write_str(1, "\n");
+        if (verbose) {
+            write_str(1, "  /usr/lib/gcc/x86_64-futura-elf/14.2.0/cc1");
+            write_str(1, " -quiet");
+            if (debug_info) write_str(1, " -g");
+            write_str(1, " -D__FUTURA__ -D__x86_64__");
+        }
+        /* Show defines */
+        if (define_count > 0) {
+            write_str(1, "  Preprocessor defines:\n");
+            for (int d = 0; d < define_count; d++) {
+                write_str(1, "    -D"); write_str(1, defines[d]); write_str(1, "\n");
+            }
+        }
+        /* Show built-in defines */
+        write_str(1, "  Built-in defines: __FUTURA__=1 __x86_64__=1 __LP64__=1\n");
+        if (std_set) {
+            write_str(1, "  Language standard: ");
+            write_str(1, std_version); write_str(1, "\n");
+            /* Check for C23 features */
+            if (strcmp_simple(std_version, "c23") == 0 || strcmp_simple(std_version, "c2x") == 0 ||
+                strcmp_simple(std_version, "gnu23") == 0) {
+                write_str(1, "  Enabled C23 features: typeof, auto type inference, nullptr, constexpr\n");
+                write_str(1, "    #embed, [[attributes]], static_assert without message\n");
+            }
+        }
+        /* Process #include simulation */
+        write_str(1, "  Resolving #include directives:\n");
+        write_str(1, "    #include <stdio.h>     -> /usr/include/stdio.h\n");
+        write_str(1, "    #include <stdlib.h>    -> /usr/include/stdlib.h\n");
+        write_str(1, "    #include <string.h>    -> /usr/include/string.h\n");
+        for (int d = 0; d < include_count; d++) {
+            write_str(1, "    searching: "); write_str(1, include_dirs[d]); write_str(1, "/\n");
+        }
+        if (!nostdinc) {
+            write_str(1, "    searching: /usr/include/\n");
+            write_str(1, "    searching: /usr/local/include/\n");
+        }
+        write_str(1, "  Macro expansion complete.\n");
+        write_str(1, "  Conditional compilation (#ifdef/#ifndef) resolved.\n");
+        write_str(1, "  Trigraph/digraph replacement done.\n");
+        write_str(1, "  Line markers generated.\n");
+        if (pipe_mode) write_str(1, "  (output piped to compiler stage)\n");
+
+        if (preprocess_only) {
+            write_str(1, "\033[1;32m  Preprocessing complete.\033[0m Output written to stdout.\n");
+            continue;
+        }
+
+        /* Stage 2: Compilation (C -> assembly) */
+        write_str(1, "\033[33m[2/4] Compiling\033[0m ");
+        write_str(1, src); write_str(1, " -> assembly\n");
+
+        /* Show warnings analysis */
+        if (wall || wextra || pedantic) {
+            write_str(1, "  Warning analysis:\n");
+            if (wall) {
+                write_str(1, "    -Wall: checking for implicit declarations, unused variables,\n");
+                write_str(1, "           uninitialized values, format string mismatches,\n");
+                write_str(1, "           missing return statements, sign comparison issues\n");
+            }
+            if (wextra) {
+                write_str(1, "    -Wextra: checking for unused parameters, missing field initializers,\n");
+                write_str(1, "             empty bodies, type conversion narrowing\n");
+            }
+            if (pedantic) {
+                write_str(1, "    -pedantic: strict ISO C conformance checks enabled\n");
+            }
+            for (int w = 0; w < extra_warn_count; w++) {
+                write_str(1, "    -W"); write_str(1, extra_warnings[w]);
+                write_str(1, ": enabled\n");
+            }
+            if (werror) write_str(1, "    -Werror: all warnings treated as errors\n");
+        }
+
+        /* Show optimization passes */
+        write_str(1, "  Optimization level: -O");
+        char olev[4];
+        if (opt_level == 0) { olev[0] = '0'; olev[1] = '\0'; }
+        else if (opt_level == 1) { olev[0] = '1'; olev[1] = '\0'; }
+        else if (opt_level == 2) { olev[0] = '2'; olev[1] = '\0'; }
+        else if (opt_level == 3) { olev[0] = '3'; olev[1] = '\0'; }
+        else if (opt_level == 4) { olev[0] = 's'; olev[1] = '\0'; }
+        else if (opt_level == 5) { olev[0] = 'z'; olev[1] = '\0'; }
+        else { olev[0] = '0'; olev[1] = '\0'; }
+        write_str(1, olev); write_str(1, "\n");
+
+        if (opt_level >= 1) {
+            write_str(1, "  Optimization passes:\n");
+            write_str(1, "    - Dead code elimination\n");
+            write_str(1, "    - Constant folding and propagation\n");
+            write_str(1, "    - Common subexpression elimination\n");
+            write_str(1, "    - Basic block reordering\n");
+        }
+        if (opt_level >= 2) {
+            write_str(1, "    - Loop invariant code motion\n");
+            write_str(1, "    - Strength reduction\n");
+            write_str(1, "    - Function inlining (moderate)\n");
+            write_str(1, "    - Tail call optimization\n");
+            write_str(1, "    - Register allocation optimization\n");
+            write_str(1, "    - Instruction scheduling\n");
+            write_str(1, "    - Partial redundancy elimination\n");
+        }
+        if (opt_level >= 3) {
+            write_str(1, "    - Aggressive function inlining\n");
+            write_str(1, "    - Loop unrolling\n");
+            write_str(1, "    - Vectorization (SSE/AVX)\n");
+            write_str(1, "    - Inter-procedural optimization\n");
+            write_str(1, "    - Profile-guided devirtualization\n");
+            write_str(1, "    - Tree SLP vectorization\n");
+        }
+        if (opt_level == 4 || opt_level == 5) {
+            write_str(1, "    - Size optimization: minimizing code footprint\n");
+            write_str(1, "    - Branch probability heuristics for size\n");
+            write_str(1, "    - Section merging and alignment reduction\n");
+        }
+
+        /* Show features */
+        for (int f = 0; f < feature_count; f++) {
+            write_str(1, "  Feature -f"); write_str(1, features[f]);
+            write_str(1, ": enabled\n");
+        }
+
+        if (pic) write_str(1, "  Position-independent code generation (PIC) enabled.\n");
+        if (pie) write_str(1, "  Position-independent executable (PIE) code generation.\n");
+        if (debug_info) {
+            write_str(1, "  Debug info: DWARF v5 generation enabled.\n");
+            write_str(1, "    - Line number tables\n");
+            write_str(1, "    - Variable location tracking\n");
+            write_str(1, "    - Type information (.debug_info)\n");
+            write_str(1, "    - Call frame information (.debug_frame)\n");
+        }
+
+        write_str(1, "  Semantic analysis: type checking, scope resolution, overload resolution\n");
+        write_str(1, "  IR generation: converting AST to GIMPLE intermediate representation\n");
+        write_str(1, "  RTL generation: GIMPLE -> Register Transfer Language\n");
+        write_str(1, "  Target code generation: RTL -> x86_64 assembly\n");
+
+        if (gen_assembly) {
+            /* Derive .s output name */
+            write_str(1, "\033[1;32m  Assembly output generated.\033[0m\n");
+            continue;
+        }
+
+        /* Stage 3: Assembly (assembly -> object) */
+        write_str(1, "\033[33m[3/4] Assembling\033[0m -> object code\n");
+        write_str(1, "  Assembler: /usr/lib/gcc/x86_64-futura-elf/14.2.0/as\n");
+        write_str(1, "  Generating ELF64 relocatable object:\n");
+        write_str(1, "    .text    section: executable code\n");
+        write_str(1, "    .data    section: initialized global data\n");
+        write_str(1, "    .bss     section: uninitialized data (zero-filled)\n");
+        write_str(1, "    .rodata  section: read-only constants and string literals\n");
+        if (debug_info) {
+            write_str(1, "    .debug_info     section: DWARF debug information\n");
+            write_str(1, "    .debug_line     section: line number program\n");
+            write_str(1, "    .debug_abbrev   section: DWARF abbreviation tables\n");
+            write_str(1, "    .debug_str      section: debug string table\n");
+            write_str(1, "    .debug_frame    section: call frame information\n");
+        }
+        write_str(1, "    .symtab  section: symbol table\n");
+        write_str(1, "    .strtab  section: string table\n");
+        write_str(1, "    .rela.text section: relocation entries\n");
+        write_str(1, "  Resolving local labels and computing offsets.\n");
+        write_str(1, "  Encoding x86_64 instructions (VEX/EVEX prefix support).\n");
+        write_str(1, "  Emitting relocation records for external references.\n");
+
+        if (compile_only) {
+            /* Derive .o output name */
+            if (output_file) {
+                write_str(1, "\033[1;32m  Object file written: "); write_str(1, output_file);
+            } else {
+                /* Derive name from source */
+                char oname[256];
+                int j = 0;
+                while (src[j] && j < 250) { oname[j] = src[j]; j++; }
+                /* Replace last extension with .o */
+                int dot = j - 1;
+                while (dot > 0 && oname[dot] != '.') dot--;
+                if (dot > 0) { oname[dot+1] = 'o'; oname[dot+2] = '\0'; }
+                else { oname[j] = '.'; oname[j+1] = 'o'; oname[j+2] = '\0'; }
+                write_str(1, "\033[1;32m  Object file written: "); write_str(1, oname);
+            }
+            write_str(1, "\033[0m\n");
+            continue;
+        }
+    }
+
+    /* Stage 4: Linking (if not -c, -S, or -E) */
+    if (!compile_only && !gen_assembly && !preprocess_only) {
+        write_str(1, "\033[33m[4/4] Linking\033[0m\n");
+        if (verbose) {
+            write_str(1, "  /usr/lib/gcc/x86_64-futura-elf/14.2.0/collect2\n");
+            write_str(1, "  --sysroot=/\n");
+        }
+        write_str(1, "  Linker: /usr/bin/ld (GNU ld 2.42)\n");
+        if (shared) {
+            write_str(1, "  Mode: shared library\n");
+        } else if (static_link) {
+            write_str(1, "  Mode: static executable\n");
+        } else {
+            write_str(1, "  Mode: dynamically linked executable\n");
+        }
+
+        /* Show objects being linked */
+        if (!nostdlib) {
+            write_str(1, "  Startup files:\n");
+            if (!shared) {
+                write_str(1, "    /usr/lib/crt1.o        (C runtime startup)\n");
+            }
+            write_str(1, "    /usr/lib/crti.o        (init section prologue)\n");
+            write_str(1, "    /usr/lib/gcc/x86_64-futura-elf/14.2.0/crtbegin.o\n");
+        }
+
+        write_str(1, "  Input objects:\n");
+        for (int s = 0; s < source_count; s++) {
+            write_str(1, "    "); write_str(1, sources[s]);
+            write_str(1, " -> (compiled object)\n");
+        }
+        for (int o = 0; o < object_count; o++) {
+            write_str(1, "    "); write_str(1, objects[o]); write_str(1, "\n");
+        }
+
+        /* Library search */
+        if (lib_count > 0 || !nostdlib) {
+            write_str(1, "  Library search paths:\n");
+            for (int l = 0; l < libdir_count; l++) {
+                write_str(1, "    -L"); write_str(1, lib_dirs[l]); write_str(1, "\n");
+            }
+            if (!nostdlib) {
+                write_str(1, "    /usr/lib/gcc/x86_64-futura-elf/14.2.0/\n");
+                write_str(1, "    /usr/lib/x86_64-futura/\n");
+                write_str(1, "    /usr/lib/\n");
+                write_str(1, "    /lib/\n");
+            }
+        }
+
+        /* Linked libraries */
+        write_str(1, "  Libraries:\n");
+        for (int l = 0; l < lib_count; l++) {
+            write_str(1, "    -l"); write_str(1, libs[l]);
+            /* Simulate finding the library */
+            if (strcmp_simple(libs[l], "m") == 0) {
+                if (static_link) write_str(1, " -> /usr/lib/libm.a\n");
+                else write_str(1, " -> /usr/lib/libm.so.6\n");
+            } else if (strcmp_simple(libs[l], "pthread") == 0) {
+                if (static_link) write_str(1, " -> /usr/lib/libpthread.a\n");
+                else write_str(1, " -> /usr/lib/libpthread.so.0\n");
+            } else if (strcmp_simple(libs[l], "c") == 0) {
+                if (static_link) write_str(1, " -> /usr/lib/libc.a\n");
+                else write_str(1, " -> /usr/lib/libc.so.6\n");
+            } else if (strcmp_simple(libs[l], "dl") == 0) {
+                if (static_link) write_str(1, " -> /usr/lib/libdl.a\n");
+                else write_str(1, " -> /usr/lib/libdl.so.2\n");
+            } else if (strcmp_simple(libs[l], "rt") == 0) {
+                if (static_link) write_str(1, " -> /usr/lib/librt.a\n");
+                else write_str(1, " -> /usr/lib/librt.so.1\n");
+            } else {
+                write_str(1, " -> lib"); write_str(1, libs[l]);
+                if (static_link) write_str(1, ".a\n");
+                else write_str(1, ".so (found)\n");
+            }
+        }
+
+        if (!nostdlib) {
+            write_str(1, "    -lc -> /usr/lib/libc.so.6 (implicit)\n");
+            write_str(1, "    -lgcc -> /usr/lib/gcc/x86_64-futura-elf/14.2.0/libgcc.a\n");
+            write_str(1, "    -lgcc_s -> /usr/lib/libgcc_s.so.1\n");
+        }
+
+        /* Link stages */
+        write_str(1, "  Linker stages:\n");
+        write_str(1, "    - Merging .text sections from all objects\n");
+        write_str(1, "    - Merging .data and .rodata sections\n");
+        write_str(1, "    - Symbol resolution: binding references to definitions\n");
+        write_str(1, "    - Relocation: fixing up addresses for final layout\n");
+        if (!static_link && !shared) {
+            write_str(1, "    - Creating .dynamic section and .dynsym/.dynstr\n");
+            write_str(1, "    - Building PLT/GOT for lazy symbol binding\n");
+            write_str(1, "    - Program interpreter: /lib64/ld-linux-x86-64.so.2\n");
+        }
+        if (shared) {
+            write_str(1, "    - Creating .dynamic section for shared library\n");
+            write_str(1, "    - Building .dynsym (dynamic symbol table)\n");
+            write_str(1, "    - Generating .hash / .gnu.hash for fast symbol lookup\n");
+        }
+        if (pie) write_str(1, "    - PIE: base address is relocatable at load time\n");
+        if (debug_info) {
+            write_str(1, "    - Merging debug sections (.debug_*)\n");
+            write_str(1, "    - Generating .eh_frame for stack unwinding\n");
+        }
+
+        if (!nostdlib) {
+            write_str(1, "  Finalization files:\n");
+            write_str(1, "    /usr/lib/gcc/x86_64-futura-elf/14.2.0/crtend.o\n");
+            write_str(1, "    /usr/lib/crtn.o        (init section epilogue)\n");
+        }
+
+        /* Final output */
+        const char *out = output_file ? output_file : "a.out";
+        write_str(1, "\033[1;32m  Executable written: "); write_str(1, out);
+        write_str(1, "\033[0m\n");
+
+        /* Show summary */
+        write_str(1, "\n\033[1mBuild summary:\033[0m\n");
+        char buf[16];
+        int_to_str(source_count, buf, sizeof(buf));
+        write_str(1, "  Source files:  "); write_str(1, buf); write_str(1, "\n");
+        int_to_str(object_count, buf, sizeof(buf));
+        write_str(1, "  Object files:  "); write_str(1, buf); write_str(1, "\n");
+        int_to_str(lib_count, buf, sizeof(buf));
+        write_str(1, "  Libraries:     "); write_str(1, buf); write_str(1, "\n");
+        write_str(1, "  Output:        "); write_str(1, out); write_str(1, "\n");
+        write_str(1, "  Target:        x86_64-futura-elf\n");
+        write_str(1, "  (simulated — no actual code generated)\n");
+    }
+}
+
+/* ===== ld - Linker (simulated) ===== */
+static void cmd_ld_cmd(int argc, char *argv[]) {
+    /* Linker configuration */
+    const char *output_file = "a.out";
+    const char *entry_point = (const char *)0;
+    const char *linker_script = (const char *)0;
+    const char *soname = (const char *)0;
+    const char *rpath = (const char *)0;
+    const char *sysroot = (const char *)0;
+    int shared = 0;
+    int static_link = 0;
+    int relocatable = 0;     /* -r: produce relocatable output */
+    int pie = 0;
+    int strip_all = 0;       /* -s */
+    int strip_debug = 0;     /* -S */
+    int verbose = 0;
+    int trace = 0;           /* -t: trace file processing */
+    int as_needed = 0;       /* --as-needed */
+    int no_undefined = 0;    /* --no-undefined */
+    int gc_sections = 0;     /* --gc-sections */
+    int print_map = 0;       /* -M / --print-map */
+    int build_id = 0;        /* --build-id */
+    int eh_frame_hdr = 0;    /* --eh-frame-hdr */
+    int hash_style = 0;      /* 0=sysv, 1=gnu, 2=both */
+    int nostdlib = 0;
+    int whole_archive = 0;
+    int allow_multiple_def = 0;
+
+    #define LD_MAX_INPUTS 32
+    #define LD_MAX_LIBS 16
+    #define LD_MAX_LIBDIRS 16
+    #define LD_MAX_SECTIONS 16
+    #define LD_MAX_SYMBOLS 16
+    #define LD_MAX_UNDEFINED 8
+
+    const char *inputs[LD_MAX_INPUTS];
+    int input_count = 0;
+    const char *libs[LD_MAX_LIBS];
+    int lib_count = 0;
+    const char *lib_dirs[LD_MAX_LIBDIRS];
+    int libdir_count = 0;
+    const char *defsyms[LD_MAX_SYMBOLS];
+    int defsym_count = 0;
+    const char *undef_syms[LD_MAX_UNDEFINED];
+    int undef_count = 0;
+
+    if (argc < 2) {
+        write_str(2, "ld: no input files\n");
+        return;
+    }
+
+    /* Version / help */
+    if (argc == 2 && (strcmp_simple(argv[1], "--version") == 0 || strcmp_simple(argv[1], "-v") == 0)) {
+        write_str(1, "GNU ld (Futura Binutils) 2.42\n");
+        write_str(1, "Copyright (C) 2026 Futura Software Foundation, Inc.\n");
+        write_str(1, "This program is free software.\n");
+        write_str(1, "  Supported emulations:\n");
+        write_str(1, "   elf_x86_64\n");
+        write_str(1, "   elf_i386\n");
+        write_str(1, "   elf_aarch64\n");
+        write_str(1, "   elf32_x86_64\n");
+        return;
+    }
+    if (argc == 2 && strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "Usage: ld [options] file...\n");
+        write_str(1, "Options:\n");
+        write_str(1, "  -o <file>          Set output file name (default: a.out)\n");
+        write_str(1, "  -l <library>       Search for library\n");
+        write_str(1, "  -L <dir>           Add library search directory\n");
+        write_str(1, "  -T <script>        Use linker script\n");
+        write_str(1, "  -e <symbol>        Set entry point\n");
+        write_str(1, "  -shared            Create a shared library\n");
+        write_str(1, "  -static            Static linking (no shared libraries)\n");
+        write_str(1, "  -r                 Generate relocatable output (partial link)\n");
+        write_str(1, "  -pie               Create position-independent executable\n");
+        write_str(1, "  -s                 Strip all symbols\n");
+        write_str(1, "  -S                 Strip debug symbols only\n");
+        write_str(1, "  -t                 Trace file processing\n");
+        write_str(1, "  -M / --print-map   Print linker map\n");
+        write_str(1, "  --as-needed        Only link libraries that resolve symbols\n");
+        write_str(1, "  --no-undefined     Report unresolved symbols as errors\n");
+        write_str(1, "  --gc-sections      Remove unused sections\n");
+        write_str(1, "  --build-id[=style] Generate build ID note\n");
+        write_str(1, "  --eh-frame-hdr     Generate .eh_frame_hdr section\n");
+        write_str(1, "  --hash-style=<s>   Set hash style (sysv, gnu, both)\n");
+        write_str(1, "  -soname <name>     Set shared library SONAME\n");
+        write_str(1, "  -rpath <path>      Set runtime library search path\n");
+        write_str(1, "  --sysroot=<dir>    Set system root directory\n");
+        write_str(1, "  --defsym <sym>=<v> Define symbol with value\n");
+        write_str(1, "  -u <symbol>        Force undefined symbol\n");
+        write_str(1, "  --whole-archive    Include all objects from following archives\n");
+        write_str(1, "  --no-whole-archive Stop including all objects from archives\n");
+        write_str(1, "  --allow-multiple-definition  Allow multiple symbol definitions\n");
+        write_str(1, "  -nostdlib          Do not use standard library paths\n");
+        write_str(1, "  --verbose          Show detailed linking information\n");
+        write_str(1, "  --version / -v     Display linker version\n");
+        return;
+    }
+
+    /* Parse arguments */
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-o") == 0) {
+            if (i + 1 < argc) output_file = argv[++i];
+            else { write_str(2, "ld: error: missing filename after '-o'\n"); return; }
+        } else if (strcmp_simple(argv[i], "-e") == 0) {
+            if (i + 1 < argc) entry_point = argv[++i];
+            else { write_str(2, "ld: error: missing symbol after '-e'\n"); return; }
+        } else if (strcmp_simple(argv[i], "-T") == 0) {
+            if (i + 1 < argc) linker_script = argv[++i];
+            else { write_str(2, "ld: error: missing filename after '-T'\n"); return; }
+        } else if (strcmp_simple(argv[i], "-soname") == 0 || strcmp_simple(argv[i], "-h") == 0) {
+            if (i + 1 < argc) soname = argv[++i];
+        } else if (strcmp_simple(argv[i], "-rpath") == 0) {
+            if (i + 1 < argc) rpath = argv[++i];
+        } else if (strcmp_simple(argv[i], "-shared") == 0) {
+            shared = 1;
+        } else if (strcmp_simple(argv[i], "-static") == 0) {
+            static_link = 1;
+        } else if (strcmp_simple(argv[i], "-r") == 0 || strcmp_simple(argv[i], "--relocatable") == 0) {
+            relocatable = 1;
+        } else if (strcmp_simple(argv[i], "-pie") == 0) {
+            pie = 1;
+        } else if (strcmp_simple(argv[i], "-s") == 0) {
+            strip_all = 1;
+        } else if (strcmp_simple(argv[i], "-S") == 0) {
+            strip_debug = 1;
+        } else if (strcmp_simple(argv[i], "-t") == 0) {
+            trace = 1;
+        } else if (strcmp_simple(argv[i], "-M") == 0 || strcmp_simple(argv[i], "--print-map") == 0) {
+            print_map = 1;
+        } else if (strcmp_simple(argv[i], "--as-needed") == 0) {
+            as_needed = 1;
+        } else if (strcmp_simple(argv[i], "--no-undefined") == 0) {
+            no_undefined = 1;
+        } else if (strcmp_simple(argv[i], "--gc-sections") == 0) {
+            gc_sections = 1;
+        } else if (strcmp_simple(argv[i], "--build-id") == 0) {
+            build_id = 1;
+        } else if (strcmp_simple(argv[i], "--eh-frame-hdr") == 0) {
+            eh_frame_hdr = 1;
+        } else if (strcmp_simple(argv[i], "--verbose") == 0) {
+            verbose = 1;
+        } else if (strcmp_simple(argv[i], "-nostdlib") == 0) {
+            nostdlib = 1;
+        } else if (strcmp_simple(argv[i], "--whole-archive") == 0) {
+            whole_archive = 1;
+        } else if (strcmp_simple(argv[i], "--no-whole-archive") == 0) {
+            whole_archive = 0;
+        } else if (strcmp_simple(argv[i], "--allow-multiple-definition") == 0) {
+            allow_multiple_def = 1;
+        } else if (argv[i][0] == '-' && argv[i][1] == 'l') {
+            if (argv[i][2] != '\0') {
+                if (lib_count < LD_MAX_LIBS) libs[lib_count++] = &argv[i][2];
+            } else if (i + 1 < argc) {
+                if (lib_count < LD_MAX_LIBS) libs[lib_count++] = argv[++i];
+            }
+        } else if (argv[i][0] == '-' && argv[i][1] == 'L') {
+            if (argv[i][2] != '\0') {
+                if (libdir_count < LD_MAX_LIBDIRS) lib_dirs[libdir_count++] = &argv[i][2];
+            } else if (i + 1 < argc) {
+                if (libdir_count < LD_MAX_LIBDIRS) lib_dirs[libdir_count++] = argv[++i];
+            }
+        } else if (argv[i][0] == '-' && argv[i][1] == 'u') {
+            if (argv[i][2] != '\0') {
+                if (undef_count < LD_MAX_UNDEFINED) undef_syms[undef_count++] = &argv[i][2];
+            } else if (i + 1 < argc) {
+                if (undef_count < LD_MAX_UNDEFINED) undef_syms[undef_count++] = argv[++i];
+            }
+        } else if (strcmp_simple(argv[i], "--defsym") == 0) {
+            if (i + 1 < argc) {
+                if (defsym_count < LD_MAX_SYMBOLS) defsyms[defsym_count++] = argv[++i];
+            }
+        } else if (argv[i][0] == '-' && argv[i][1] == '-' && argv[i][2] == 'h' &&
+                   argv[i][3] == 'a' && argv[i][4] == 's' && argv[i][5] == 'h') {
+            /* --hash-style= */
+            const char *p = argv[i];
+            while (*p && *p != '=') p++;
+            if (*p == '=') {
+                p++;
+                if (strcmp_simple(p, "gnu") == 0) hash_style = 1;
+                else if (strcmp_simple(p, "both") == 0) hash_style = 2;
+                else hash_style = 0;
+            }
+        } else if (argv[i][0] == '-' && argv[i][1] == '-' && argv[i][2] == 's' &&
+                   argv[i][3] == 'y' && argv[i][4] == 's') {
+            /* --sysroot= */
+            const char *p = argv[i];
+            while (*p && *p != '=') p++;
+            if (*p == '=') sysroot = p + 1;
+        } else if (argv[i][0] != '-') {
+            if (input_count < LD_MAX_INPUTS) inputs[input_count++] = argv[i];
+        } else {
+            write_str(2, "ld: warning: unrecognized option '");
+            write_str(2, argv[i]);
+            write_str(2, "'\n");
+        }
+    }
+
+    if (input_count == 0 && lib_count == 0) {
+        write_str(2, "ld: no input files\n");
+        return;
+    }
+
+    /* Display linker configuration */
+    if (verbose) {
+        write_str(1, "GNU ld (Futura Binutils) 2.42\n");
+        write_str(1, "  using internal linker script:\n");
+        write_str(1, "  ==================================================\n");
+        write_str(1, "  OUTPUT_FORMAT(\"elf64-x86-64\", \"elf64-x86-64\", \"elf64-x86-64\")\n");
+        write_str(1, "  OUTPUT_ARCH(i386:x86-64)\n");
+        write_str(1, "  SEARCH_DIR(\"/usr/lib/x86_64-futura\")\n");
+        write_str(1, "  SEARCH_DIR(\"/usr/lib\")\n");
+        write_str(1, "  ==================================================\n");
+    }
+    write_str(1, "\033[1;36m=== GNU ld (Futura Binutils) 2.42 ===\033[0m\n");
+    write_str(1, "  Target emulation: elf_x86_64\n");
+    if (sysroot) {
+        write_str(1, "  Sysroot: "); write_str(1, sysroot); write_str(1, "\n");
+    }
+
+    /* Show output mode */
+    write_str(1, "  Output mode: ");
+    if (relocatable) write_str(1, "relocatable object (-r)\n");
+    else if (shared) write_str(1, "shared library (-shared)\n");
+    else if (pie) write_str(1, "position-independent executable (-pie)\n");
+    else if (static_link) write_str(1, "static executable (-static)\n");
+    else write_str(1, "dynamically linked executable\n");
+
+    write_str(1, "  Output file: "); write_str(1, output_file); write_str(1, "\n");
+
+    /* Linker script processing */
+    if (linker_script) {
+        write_str(1, "\n\033[33m[1/6] Processing linker script\033[0m: ");
+        write_str(1, linker_script); write_str(1, "\n");
+        write_str(1, "  Parsing MEMORY regions:\n");
+        write_str(1, "    FLASH  (rx)  : ORIGIN = 0x08000000, LENGTH = 512K\n");
+        write_str(1, "    RAM    (rwx) : ORIGIN = 0x20000000, LENGTH = 128K\n");
+        write_str(1, "  Parsing SECTIONS:\n");
+        write_str(1, "    .isr_vector  -> FLASH  (interrupt vector table)\n");
+        write_str(1, "    .text        -> FLASH  (executable code)\n");
+        write_str(1, "    .rodata      -> FLASH  (read-only data)\n");
+        write_str(1, "    .data        -> RAM AT>FLASH  (initialized data, LMA in flash)\n");
+        write_str(1, "    .bss         -> RAM    (zero-initialized data)\n");
+        write_str(1, "    ._stack      -> RAM    (stack region)\n");
+        write_str(1, "  Entry point from script: _start\n");
+        write_str(1, "  PROVIDE symbols: _etext, _sdata, _edata, _sbss, _ebss, _estack\n");
+    } else {
+        write_str(1, "\n\033[33m[1/6] Using default linker script\033[0m: /usr/lib/ldscripts/elf_x86_64.x\n");
+        write_str(1, "  Default SECTIONS layout for x86_64 ELF executable.\n");
+    }
+
+    /* Defined symbols */
+    if (defsym_count > 0) {
+        write_str(1, "  User-defined symbols (--defsym):\n");
+        for (int i = 0; i < defsym_count; i++) {
+            write_str(1, "    "); write_str(1, defsyms[i]); write_str(1, "\n");
+        }
+    }
+    if (undef_count > 0) {
+        write_str(1, "  Forced undefined symbols (-u):\n");
+        for (int i = 0; i < undef_count; i++) {
+            write_str(1, "    "); write_str(1, undef_syms[i]); write_str(1, "\n");
+        }
+    }
+
+    /* Entry point */
+    write_str(1, "  Entry point: ");
+    if (entry_point) write_str(1, entry_point);
+    else if (shared) write_str(1, "(none for shared library)");
+    else write_str(1, "_start (default)");
+    write_str(1, "\n");
+
+    /* Stage 2: Input file processing */
+    write_str(1, "\n\033[33m[2/6] Processing input files\033[0m\n");
+    for (int i = 0; i < input_count; i++) {
+        const char *inp = inputs[i];
+        int ilen = 0;
+        while (inp[ilen]) ilen++;
+
+        if (trace) {
+            write_str(1, "ld: trace: "); write_str(1, inp); write_str(1, "\n");
+        }
+
+        /* Determine file type */
+        int is_archive = (ilen > 2 && inp[ilen-1] == 'a' && inp[ilen-2] == '.');
+        int is_obj = (ilen > 2 && inp[ilen-1] == 'o' && inp[ilen-2] == '.');
+        int is_so = 0;
+        /* Check for .so extension */
+        if (ilen > 3 && inp[ilen-1] == 'o' && inp[ilen-2] == 's' && inp[ilen-3] == '.') is_so = 1;
+
+        write_str(1, "  "); write_str(1, inp); write_str(1, ": ");
+        if (is_archive) {
+            write_str(1, "archive (static library)\n");
+            write_str(1, "    Scanning archive index for referenced symbols.\n");
+            if (whole_archive) {
+                write_str(1, "    --whole-archive: including ALL members:\n");
+                write_str(1, "      module1.o  module2.o  module3.o\n");
+            } else {
+                write_str(1, "    Extracting needed members based on unresolved references.\n");
+            }
+        } else if (is_so) {
+            if (static_link) {
+                write_str(2, "ld: warning: shared library "); write_str(2, inp);
+                write_str(2, " not used in static link\n");
+            } else {
+                write_str(1, "shared library\n");
+                write_str(1, "    Recording DT_NEEDED entry for dynamic loading.\n");
+                if (as_needed) {
+                    write_str(1, "    --as-needed: will only link if symbols actually referenced.\n");
+                }
+            }
+        } else if (is_obj) {
+            write_str(1, "ELF64 relocatable object\n");
+            write_str(1, "    Sections: .text .data .bss .rodata .symtab .strtab .rela.text\n");
+            write_str(1, "    Processing relocation entries.\n");
+        } else {
+            write_str(1, "object file (assumed)\n");
+            write_str(1, "    Processing sections and relocation entries.\n");
+        }
+    }
+
+    /* Stage 3: Library resolution */
+    write_str(1, "\n\033[33m[3/6] Resolving libraries\033[0m\n");
+    if (lib_count > 0 || !nostdlib) {
+        write_str(1, "  Library search paths:\n");
+        for (int i = 0; i < libdir_count; i++) {
+            write_str(1, "    "); write_str(1, lib_dirs[i]); write_str(1, "/\n");
+        }
+        if (!nostdlib) {
+            write_str(1, "    /usr/lib/x86_64-futura/\n");
+            write_str(1, "    /usr/lib/\n");
+            write_str(1, "    /lib/x86_64-futura/\n");
+            write_str(1, "    /lib/\n");
+        }
+    }
+
+    for (int i = 0; i < lib_count; i++) {
+        write_str(1, "  -l"); write_str(1, libs[i]); write_str(1, ": ");
+        if (trace) {
+            write_str(1, "\n  ld: trace: searching for -l"); write_str(1, libs[i]);
+            write_str(1, "\n    ");
+        }
+
+        /* Simulate library resolution */
+        if (static_link) {
+            write_str(1, "found /usr/lib/lib"); write_str(1, libs[i]);
+            write_str(1, ".a\n");
+            write_str(1, "    Scanning archive for referenced symbols.\n");
+        } else {
+            write_str(1, "found /usr/lib/lib"); write_str(1, libs[i]);
+            write_str(1, ".so\n");
+            if (as_needed) {
+                write_str(1, "    Checking if any symbols are actually needed...\n");
+                write_str(1, "    Referenced symbols found; library will be linked.\n");
+            }
+            write_str(1, "    Adding DT_NEEDED: lib"); write_str(1, libs[i]);
+            write_str(1, ".so\n");
+        }
+    }
+
+    /* Stage 4: Symbol resolution */
+    write_str(1, "\n\033[33m[4/6] Symbol resolution\033[0m\n");
+    write_str(1, "  Building global symbol table from all inputs.\n");
+    write_str(1, "  Symbol categories:\n");
+    write_str(1, "    GLOBAL  - exported definitions (functions, global variables)\n");
+    write_str(1, "    LOCAL   - file-scoped symbols (static functions/variables)\n");
+    write_str(1, "    WEAK    - overridable symbols (__attribute__((weak)))\n");
+    write_str(1, "    UNDEF   - referenced but not yet defined\n");
+    write_str(1, "    COMMON  - tentative definitions (uninitialized globals)\n");
+
+    /* Simulate key symbols */
+    write_str(1, "  Key symbols resolved:\n");
+    if (!shared && entry_point) {
+        write_str(1, "    "); write_str(1, entry_point);
+        write_str(1, "        GLOBAL  entry point\n");
+    } else if (!shared) {
+        write_str(1, "    _start              GLOBAL  entry point (crt1.o)\n");
+    }
+    write_str(1, "    main                GLOBAL  user entry\n");
+    if (!nostdlib) {
+        write_str(1, "    __libc_start_main   UNDEF   -> libc.so.6\n");
+        write_str(1, "    printf              UNDEF   -> libc.so.6\n");
+        write_str(1, "    malloc              UNDEF   -> libc.so.6\n");
+        write_str(1, "    free                UNDEF   -> libc.so.6\n");
+        write_str(1, "    exit                UNDEF   -> libc.so.6\n");
+    }
+    if (allow_multiple_def) {
+        write_str(1, "  --allow-multiple-definition: duplicate symbols permitted.\n");
+    }
+    if (no_undefined) {
+        write_str(1, "  --no-undefined: all symbols must be resolved; unresolved = error.\n");
+        write_str(1, "  Checking for unresolved symbols... OK (all resolved).\n");
+    }
+
+    /* Stage 5: Relocation and section merging */
+    write_str(1, "\n\033[33m[5/6] Relocation and section layout\033[0m\n");
+    write_str(1, "  Merging input sections into output sections:\n");
+
+    /* Memory layout */
+    if (!shared && !relocatable) {
+        write_str(1, "  Virtual memory layout (x86_64):\n");
+        write_str(1, "    0x0000000000400000  .text       (executable code)\n");
+        write_str(1, "    0x0000000000600000  .rodata     (read-only data)\n");
+        write_str(1, "    0x0000000000601000  .data       (initialized read-write data)\n");
+        write_str(1, "    0x0000000000602000  .bss        (zero-initialized data)\n");
+        if (!static_link) {
+            write_str(1, "    0x0000000000603000  .dynamic    (dynamic linking info)\n");
+            write_str(1, "    0x0000000000604000  .got        (global offset table)\n");
+            write_str(1, "    0x0000000000605000  .got.plt    (PLT GOT entries)\n");
+            write_str(1, "    0x0000000000606000  .plt        (procedure linkage table)\n");
+        }
+    } else if (shared) {
+        write_str(1, "  Shared library section layout (PIC, base address 0x0):\n");
+        write_str(1, "    0x0000  .gnu.hash     (GNU hash table for symbol lookup)\n");
+        write_str(1, "    0x1000  .dynsym       (dynamic symbol table)\n");
+        write_str(1, "    0x2000  .dynstr       (dynamic string table)\n");
+        write_str(1, "    0x3000  .text         (PIC executable code)\n");
+        write_str(1, "    0x4000  .rodata       (read-only data)\n");
+        write_str(1, "    0x5000  .data.rel.ro  (relocation read-only data)\n");
+        write_str(1, "    0x6000  .dynamic      (dynamic section)\n");
+        write_str(1, "    0x7000  .got          (global offset table)\n");
+        write_str(1, "    0x8000  .data         (read-write data)\n");
+        write_str(1, "    0x9000  .bss          (zero-initialized data)\n");
+    }
+
+    /* Relocation types */
+    write_str(1, "  Processing relocations:\n");
+    write_str(1, "    R_X86_64_64      - absolute 64-bit address\n");
+    write_str(1, "    R_X86_64_PC32    - PC-relative 32-bit offset\n");
+    write_str(1, "    R_X86_64_PLT32   - PLT-relative 32-bit offset\n");
+    write_str(1, "    R_X86_64_GOTPCREL - GOT-relative PC offset\n");
+    if (shared || pie) {
+        write_str(1, "    R_X86_64_GLOB_DAT - GOT slot for global data\n");
+        write_str(1, "    R_X86_64_JUMP_SLOT - PLT/GOT lazy binding slot\n");
+        write_str(1, "    R_X86_64_RELATIVE  - base-relative fixup\n");
+    }
+    write_str(1, "  All relocations applied successfully.\n");
+
+    if (gc_sections) {
+        write_str(1, "  --gc-sections: removing unreferenced sections:\n");
+        write_str(1, "    Removed .text.unused_func (48 bytes)\n");
+        write_str(1, "    Removed .rodata.str1.unused (32 bytes)\n");
+        write_str(1, "    Total removed: 80 bytes from 2 sections.\n");
+    }
+
+    /* Stage 6: Output generation */
+    write_str(1, "\n\033[33m[6/6] Generating output\033[0m: ");
+    write_str(1, output_file); write_str(1, "\n");
+
+    /* ELF header info */
+    write_str(1, "  ELF header:\n");
+    write_str(1, "    Class:      ELF64\n");
+    write_str(1, "    Data:       2's complement, little endian\n");
+    write_str(1, "    OS/ABI:     UNIX - System V\n");
+    write_str(1, "    Type:       ");
+    if (relocatable) write_str(1, "REL (Relocatable)\n");
+    else if (shared) write_str(1, "DYN (Shared object)\n");
+    else if (pie) write_str(1, "DYN (Position-Independent Executable)\n");
+    else write_str(1, "EXEC (Executable)\n");
+    write_str(1, "    Machine:    Advanced Micro Devices X86-64\n");
+
+    /* Program headers */
+    if (!relocatable) {
+        write_str(1, "  Program headers:\n");
+        write_str(1, "    PHDR       - program header table\n");
+        write_str(1, "    INTERP     - /lib64/ld-linux-x86-64.so.2\n");
+        write_str(1, "    LOAD  [RX] - .text, .rodata (executable segment)\n");
+        write_str(1, "    LOAD  [RW] - .data, .bss (writable segment)\n");
+        write_str(1, "    DYNAMIC    - dynamic linking information\n");
+        if (eh_frame_hdr) {
+            write_str(1, "    GNU_EH_FRAME - exception handling frame header\n");
+        }
+        write_str(1, "    GNU_STACK   - stack attributes (non-executable)\n");
+        write_str(1, "    GNU_RELRO   - read-only after relocation\n");
+    }
+
+    /* Build ID */
+    if (build_id) {
+        write_str(1, "  Build ID: SHA1 = a3f2b8c901d4e5f678901234567890abcdef1234\n");
+        write_str(1, "    .note.gnu.build-id section generated.\n");
+    }
+
+    /* SONAME */
+    if (shared && soname) {
+        write_str(1, "  DT_SONAME: "); write_str(1, soname); write_str(1, "\n");
+    }
+
+    /* RPATH */
+    if (rpath) {
+        write_str(1, "  DT_RPATH: "); write_str(1, rpath); write_str(1, "\n");
+    }
+
+    /* Hash style */
+    if (!relocatable && !static_link) {
+        write_str(1, "  Hash style: ");
+        if (hash_style == 0) write_str(1, "sysv\n");
+        else if (hash_style == 1) write_str(1, "gnu\n");
+        else write_str(1, "both (sysv + gnu)\n");
+    }
+
+    /* Stripping */
+    if (strip_all) {
+        write_str(1, "  Stripping: all symbols removed (-s)\n");
+        write_str(1, "    .symtab removed, .strtab removed\n");
+        write_str(1, "    .debug_* sections removed\n");
+    } else if (strip_debug) {
+        write_str(1, "  Stripping: debug symbols removed (-S)\n");
+        write_str(1, "    .debug_* sections removed, .symtab preserved\n");
+    }
+
+    /* Linker map */
+    if (print_map) {
+        write_str(1, "\n  \033[1mLinker Map:\033[0m\n");
+        write_str(1, "  -------------------------------------------------------\n");
+        write_str(1, "  SECTION         VMA                SIZE\n");
+        write_str(1, "  -------------------------------------------------------\n");
+        write_str(1, "  .text           0x0000000000401000  0x00002a48\n");
+        write_str(1, "  .rodata         0x0000000000404000  0x00000f30\n");
+        write_str(1, "  .data           0x0000000000605000  0x00000120\n");
+        write_str(1, "  .bss            0x0000000000605120  0x00000080\n");
+        if (!static_link && !relocatable) {
+            write_str(1, "  .dynamic        0x0000000000604e00  0x00000200\n");
+            write_str(1, "  .got.plt        0x0000000000605000  0x00000048\n");
+        }
+        write_str(1, "  -------------------------------------------------------\n");
+        write_str(1, "  Total output size: ~16 KB (simulated)\n");
+    }
+
+    /* Final output */
+    write_str(1, "\n\033[1;32m  Output written: "); write_str(1, output_file);
+    write_str(1, "\033[0m\n");
+
+    /* Summary */
+    write_str(1, "\n\033[1mLink summary:\033[0m\n");
+    char buf[16];
+    int_to_str(input_count, buf, sizeof(buf));
+    write_str(1, "  Input objects: "); write_str(1, buf); write_str(1, "\n");
+    int_to_str(lib_count, buf, sizeof(buf));
+    write_str(1, "  Libraries:     "); write_str(1, buf); write_str(1, "\n");
+    write_str(1, "  Output:        "); write_str(1, output_file); write_str(1, "\n");
+    write_str(1, "  Target:        elf_x86_64\n");
+    if (shared && soname) {
+        write_str(1, "  SONAME:        "); write_str(1, soname); write_str(1, "\n");
+    }
+    if (rpath) {
+        write_str(1, "  RPATH:         "); write_str(1, rpath); write_str(1, "\n");
+    }
+    write_str(1, "  (simulated - no actual linking performed)\n");
 }
 
 #pragma GCC diagnostic pop

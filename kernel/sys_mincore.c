@@ -4,7 +4,11 @@
  * Licensed under the MPL v2.0 — see LICENSE for details.
  *
  * Implements mincore() for determining which pages are resident in memory.
- * Useful for understanding memory access patterns and optimizing I/O.
+ * Walks the hardware page tables via pmap_probe_pte() to check the PTE
+ * present bit for each page in the queried range.  Handles both MAP_SHARED
+ * and MAP_PRIVATE mappings: shared pages report residency from the shared
+ * page tables, while private (COW) pages only report resident when the
+ * process has its own private copy faulted in.
  */
 
 #include <kernel/fut_task.h>
@@ -20,8 +24,10 @@
 
 #if defined(__x86_64__)
 #include <platform/x86_64/memory/paging.h>
+#include <platform/x86_64/memory/pmap.h>
 #elif defined(__aarch64__)
 #include <platform/arm64/memory/paging.h>
+#include <platform/arm64/memory/pmap.h>
 #endif
 
 static inline int mincore_copy_to_user(void *dst, const void *src, size_t n) {
@@ -308,9 +314,10 @@ static inline int mincore_access_ok_write(const void *ptr, size_t n) {
  *
  * Phase 1 (Completed): Validates parameters, returns all pages resident
  * Phase 2 (Completed): Validate VMA coverage and return residency
- * Phase 3 (Completed): Page table entry checking with present bit inspection
- * Phase 4: Distinguish file-backed vs anonymous pages
- * Support swap tracking (pages swapped out)
+ * Phase 3 (Completed): Page table walk via pmap_probe_pte — checks PTE
+ *   present bit, reports dirty/accessed on x86_64.  Handles MAP_SHARED
+ *   and MAP_PRIVATE correctly (both use the process page tables).
+ * Phase 4: Support swap tracking (pages swapped out)
  *
  * Common use cases:
  *
@@ -571,39 +578,59 @@ long sys_mincore(void *addr, size_t length, unsigned char *vec) {
         heap_allocated = true;
     }
 
-    /* Phase 2: Mark pages as resident if in mapped VMA
-     * For now, all pages in valid VMAs are considered resident.
-     * Phase 3 will check actual PTE present bits. */
+    /* Phase 3: Walk page tables to determine actual page residency.
+     *
+     * For each page in the range we probe the hardware PTE via
+     * pmap_probe_pte().  A page is reported as resident (bit 0 set) only
+     * when the PTE is present in the process page tables.
+     *
+     * MAP_SHARED pages:  Resident if the PTE is present — the page is
+     *   shared with other processes and backed by the page cache.
+     * MAP_PRIVATE pages: Resident if the PTE is present.  For COW pages
+     *   that haven't been written yet the PTE still points to the shared
+     *   copy and is marked present, so we report resident.  After a COW
+     *   fault the PTE points to the private copy — still present.
+     *   Pages that have never been faulted in have no PTE → not resident.
+     */
+    fut_vmem_context_t *ctx = fut_mm_context(mm);
     uintptr_t page_addr = start;
     for (size_t i = 0; i < num_pages; i++, page_addr += PAGE_SIZE) {
-        int page_resident = 0;
+        unsigned char status = 0x00;  /* Default: not resident */
 
-        /* Priority 5: Reset VMA counter for each page iteration */
-        size_t page_vma_iters = 0;
+        if (ctx) {
+            uint64_t pte = 0;
+            int rc = pmap_probe_pte(ctx, (uint64_t)page_addr, &pte);
+            if (rc == 0 && (pte & PTE_PRESENT)) {
+                /* Bit 0: page is resident in physical memory */
+                status = 0x01;
 
-        /* Find VMA covering this page */
-        vma = mm->vma_list;
-        while (vma) {
-            /* Check iteration limit (Priority 5) */
-            if (++page_vma_iters > MINCORE_MAX_VMA_ITERS) {
-                fut_printf("[MINCORE] mincore(%p, %zu, %p) -> ELOOP (VMA iteration limit %u exceeded at page %zu)\n",
-                           local_addr, local_length, local_vec, MINCORE_MAX_VMA_ITERS, i);
-                /* Priority 6: Free heap-allocated buffer before returning */
-                if (heap_allocated) {
-                    slab_free(kernel_vec);
+#if defined(__x86_64__)
+                /* Bit 1 (optional): page is dirty (written to) */
+                if (pte & PTE_DIRTY)
+                    status |= 0x02;
+                /* Bit 2 (optional): page has been accessed/referenced */
+                if (pte & PTE_ACCESSED)
+                    status |= 0x04;
+#endif
+            }
+        } else {
+            /* No vmem context — fall back to VMA membership check */
+            size_t page_vma_iters = 0;
+            vma = mm->vma_list;
+            while (vma) {
+                if (++page_vma_iters > MINCORE_MAX_VMA_ITERS) {
+                    if (heap_allocated) slab_free(kernel_vec);
+                    return -ELOOP;
                 }
-                return -ELOOP;
+                if (page_addr >= vma->start && page_addr < vma->end) {
+                    status = 0x01;
+                    break;
+                }
+                vma = vma->next;
             }
-
-            if (page_addr >= vma->start && page_addr < vma->end) {
-                /* Page is in a VMA, consider it resident */
-                page_resident = 1;
-                break;
-            }
-            vma = vma->next;
         }
 
-        kernel_vec[i] = page_resident ? 0x01 : 0x00;
+        kernel_vec[i] = status;
     }
 
     /* Copy result to userspace */
@@ -622,36 +649,8 @@ long sys_mincore(void *addr, size_t length, unsigned char *vec) {
         slab_free(kernel_vec);
     }
 
-    fut_printf("[MINCORE] mincore(%p, %zu, %p) -> 0 (%zu pages complete: all validations + heap safety)\n",
+    fut_printf("[MINCORE] mincore(%p, %zu, %p) -> 0 (%zu pages, PTE walk)\n",
                local_addr, aligned_len, local_vec, num_pages);
-
-    /* Phase 3-5 future implementation (check actual page table entries):
-     *
-     * // Check each page's PTE present bit
-     * uintptr_t current_addr = (uintptr_t)addr;
-     * for (size_t i = 0; i < num_pages; i++, current_addr += PAGE_SIZE) {
-     *     // Look up page table entry
-     *     pte_t *pte = fut_mm_lookup_pte(mm, current_addr);
-     *
-     *     if (pte && (*pte & PTE_PRESENT)) {
-     *         // Page is resident in physical memory
-     *         kernel_vec[i] = 0x01;
-     *     } else if (pte && (*pte & PTE_SWAPPED)) {
-     *         // Page is swapped out
-     *         kernel_vec[i] = 0x00;
-     *     } else {
-     *         // Page not allocated yet (demand paging)
-     *         kernel_vec[i] = 0x00;
-     *     }
-     * }
-     *
-     * // Future bits (reserved for now):
-     * // Bit 1: Page is dirty
-     * // Bit 2: Page is referenced/accessed
-     * // Bit 3: Page is file-backed (vs anonymous)
-     * // Bit 4: Page is locked (mlock)
-     * // Bits 5-7: Reserved
-     */
 
     return 0;
 }

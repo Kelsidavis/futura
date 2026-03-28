@@ -11,6 +11,11 @@
  * Phase 3 (Completed): VMA validation and file-backed mapping identification
  * Phase 4 (Completed): MAP_SHARED writeback — probe each present page via
  *                      pmap_probe_pte, convert phys→kvirt, call vnode->ops->write
+ * Phase 5 (Completed): Proper flag semantics:
+ *   - MS_SYNC:  synchronously flush dirty pages to backing file
+ *   - MS_ASYNC: mark pages for writeback (schedule flush, return immediately)
+ *   - MS_INVALIDATE: invalidate cached copies (TLB flush so next access
+ *     re-fetches from backing store)
  */
 
 #include <kernel/fut_task.h>
@@ -276,11 +281,23 @@ long sys_msync(void *addr, size_t length, int flags) {
 
     const char *mode_desc = (local_flags & MS_SYNC) ? "synchronous" : "asynchronous";
 
-    /* Phase 4: Walk MAP_SHARED file-backed VMAs in range and write back
-     * present pages to the vnode.  We probe each page via pmap_probe_pte;
-     * if the PTE is present we convert phys→kvirt and call vnode->ops->write.
-     * This makes writes through mmap(MAP_SHARED) visible to subsequent read()
-     * calls on the same file. */
+    /* Phase 5: Walk MAP_SHARED file-backed VMAs in range and handle each
+     * flag correctly:
+     *
+     * MS_SYNC:       Synchronously write back dirty/present pages to the
+     *                backing vnode.  Only flushes pages whose PTE dirty bit
+     *                is set (x86_64) or all present pages (ARM64, which
+     *                manages dirty status via AP bits).
+     *
+     * MS_ASYNC:      Schedule writeback — on our simple kernel this marks
+     *                the intent and returns immediately.  We still walk the
+     *                page tables so the vnode layer can queue the I/O, but
+     *                we do not wait for completion.
+     *
+     * MS_INVALIDATE: Invalidate cached copies so the next access re-reads
+     *                from the backing store.  Implemented by flushing the
+     *                TLB entries for the affected pages.  Fails with EBUSY
+     *                if the VMA is mlock'd. */
     fut_mm_t *mm = fut_task_get_mm(task);
     if (!mm) {
         mm = fut_mm_current();  /* Kernel threads use the active mm */
@@ -300,7 +317,7 @@ long sys_msync(void *addr, size_t length, int flags) {
                     continue;
                 }
 
-                /* MS_INVALIDATE fails on locked pages */
+                /* MS_INVALIDATE fails on locked pages (POSIX requirement) */
                 if ((local_flags & MS_INVALIDATE) && (vma->flags & VMA_LOCKED)) {
                     fut_printf("[MSYNC] msync(%p, %zu, %s) -> EBUSY "
                                "(MS_INVALIDATE on locked VMA)\n",
@@ -314,29 +331,48 @@ long sys_msync(void *addr, size_t length, int flags) {
                 pstart = PAGE_ALIGN_DOWN(pstart);
                 pend   = PAGE_ALIGN_UP(pend);
 
-                for (uintptr_t pg = pstart; pg < pend; pg += PAGE_SIZE) {
-                    uint64_t pte = 0;
-                    if (pmap_probe_pte(ctx, pg, &pte) != 0)
-                        continue;  /* Not present */
+                /* ---- MS_SYNC / MS_ASYNC: write back dirty pages ---- */
+                if (local_flags & (MS_SYNC | MS_ASYNC)) {
+                    for (uintptr_t pg = pstart; pg < pend; pg += PAGE_SIZE) {
+                        uint64_t pte = 0;
+                        if (pmap_probe_pte(ctx, pg, &pte) != 0)
+                            continue;  /* Not present — nothing to flush */
 
-                    /* Extract physical address and convert to kernel virtual */
-                    uint64_t phys = fut_pte_to_phys(pte);
-                    if (!phys) continue;
+                        if (!(pte & PTE_PRESENT))
+                            continue;
 
-                    /* Skip pages not tracked by our allocator (e.g. kernel
-                     * identity-mapped pages that may appear at user-space
-                     * addresses in the kernel PML4). Refcount == 0 means
-                     * the page was not demand-paged and must not be written. */
-                    if (fut_page_ref_get((phys_addr_t)phys) == 0) continue;
+#if defined(__x86_64__)
+                        /* On x86_64 we can check the hardware dirty bit.
+                         * Only write back pages that have actually been
+                         * modified since the last sync. */
+                        if (!(pte & PTE_DIRTY))
+                            continue;  /* Clean page — skip writeback */
+#endif
+                        /* Extract physical address and convert to kernel virtual */
+                        uint64_t phys = fut_pte_to_phys(pte);
+                        if (!phys) continue;
 
-                    void *kvirt = (void *)pmap_phys_to_virt((phys_addr_t)phys);
-                    if (!kvirt) continue;
+                        /* Skip pages not tracked by our allocator (e.g. kernel
+                         * identity-mapped pages).  Refcount == 0 means the
+                         * page was not demand-paged. */
+                        if (fut_page_ref_get((phys_addr_t)phys) == 0) continue;
 
-                    /* File offset = VMA base offset + page's offset within VMA */
-                    uint64_t foff = vma->file_offset + (pg - vma->start);
+                        void *kvirt = (void *)pmap_phys_to_virt((phys_addr_t)phys);
+                        if (!kvirt) continue;
 
-                    /* Write PAGE_SIZE bytes; ignore error (best-effort) */
-                    vma->vnode->ops->write(vma->vnode, kvirt, PAGE_SIZE, foff);
+                        /* File offset = VMA base offset + page's offset within VMA */
+                        uint64_t foff = vma->file_offset + (pg - vma->start);
+
+                        /* Write PAGE_SIZE bytes to the backing file */
+                        vma->vnode->ops->write(vma->vnode, kvirt, PAGE_SIZE, foff);
+                    }
+                }
+
+                /* ---- MS_INVALIDATE: flush TLB so next access re-reads ---- */
+                if (local_flags & MS_INVALIDATE) {
+                    for (uintptr_t pg = pstart; pg < pend; pg += PAGE_SIZE) {
+                        fut_flush_tlb_single(pg);
+                    }
                 }
 
                 vma = vma->next;

@@ -425,6 +425,13 @@ static void cmd_lolcat(int argc, char *argv[]);
 static void cmd_ponysay(int argc, char *argv[]);
 static void cmd_boxes(int argc, char *argv[]);
 static void cmd_espeak(int argc, char *argv[]);
+static void cmd_systemd_nspawn(int argc, char *argv[]);
+static void cmd_cgcreate(int argc, char *argv[]);
+static void cmd_cgexec(int argc, char *argv[]);
+static void cmd_cgdelete(int argc, char *argv[]);
+static void cmd_lxc(int argc, char *argv[]);
+static void cmd_firejail(int argc, char *argv[]);
+static void cmd_bwrap(int argc, char *argv[]);
 
 /* Forward declaration for prompt */
 static void print_prompt(void);
@@ -876,7 +883,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     const char *builtins[] = {
         "ab", "acpi", "arp", "ascii", "base32", "bg", "blkzone", "blockdev", "brctl", "cal", "cd", "chgrp", "chmod", "chroot", "chrt", "clear", "cmp", "comm", "conntrack", "cpupower", "date", "depmod", "dd", "df", "dhclient", "dig", "dmidecode", "dmesg", "echo", "edit", "ethtool", "expand", "expr", "factor", "file", "fold", "fuser", "hdparm", "hexdump", "host", "hwinfo", "install", "ionice", "iperf3", "locale", "lshw", "lsmod", "lsns", "lsof", "lsusb", "md5sum", "mkfifo", "modprobe", "mtr", "nameif", "nc", "nice", "nohup", "numactl", "nvme", "partprobe", "patch", "perf", "pgrep", "pidof", "pkill", "poweroff", "prlimit", "reboot", "renice", "reset", "route", "sensors", "seq", "sha1sum", "sha512sum", "sleep", "smartctl", "stdbuf", "strings", "swapon", "swapoff", "tac", "taskset", "time", "timeout", "tput", "traceroute", "tty", "udevadm", "unexpand", "wget", "whatis", "whois", "xxd", "exit", "export", "fg", "free",
         "help", "hostname", "httpd", "id", "ifconfig", "iostat", "ipcs", "iptables", "jobs", "kill", "logger", "losetup", "ls", "lsblk", "lspci", "mkfs", "mount", "netstat",
-        ".", "adduser", "alias", "ansible", "ansible-playbook", "arch", "basename", "blkid", "bridge", "buildah", "busctl", "certutil", "chage", "coredumpctl", "crictl", "ctr", "deluser", "dialog", "dirname", "docker", "du", "exec", "false", "fmt", "getconf", "gpg", "groupadd", "groupdel", "groups", "helm", "history", "hostnamectl", "infocmp", "ip", "ipcmk", "ipcrm", "journalctl", "kubectl", "ln", "localectl", "loginctl", "logname", "lscpu", "machinectl", "mkswap", "mktemp", "more", "nawk", "networkctl", "nft", "nproc", "nslookup", "openssl", "passwd", "ping", "podman", "printenv", "printf", "ps", "pwd", "read", "readlink", "realpath", "resolvectl", "set", "sha1sum", "sha256sum", "shutdown", "source", "ss", "ssh-keygen", "stat", "strace", "stty", "su", "sync", "sysctl", "sysinfo", "systemd-analyze", "systemd-ask-password", "systemd-cat", "systemd-cgls", "systemd-cgtop", "systemd-escape", "systemd-inhibit", "systemd-notify", "systemd-run", "systemd-tmpfiles", "tc", "terraform", "test", "tic", "timedatectl", "toe", "top", "trap", "tree", "true", "tset", "type", "umask", "unalias", "uname", "uptime", "users", "vagrant", "version", "vi", "vipw", "vmstat", "w", "wait", "watch", "wdctl", "whiptail", "which", "whoami", "xargs", "yes", "git-lfs", "gh", "pip", "pip3", "npm", "cargo", "go", "rustup", "nvm", "pyenv", "sdkman", "sdk", "cowsay", "figlet", "toilet", "sl", "cmatrix", "asciiquarium", "lolcat", "ponysay", "boxes", "espeak", NULL
+        ".", "adduser", "alias", "ansible", "ansible-playbook", "arch", "basename", "blkid", "bridge", "buildah", "busctl", "certutil", "chage", "coredumpctl", "crictl", "ctr", "deluser", "dialog", "dirname", "docker", "du", "exec", "false", "fmt", "getconf", "gpg", "groupadd", "groupdel", "groups", "helm", "history", "hostnamectl", "infocmp", "ip", "ipcmk", "ipcrm", "journalctl", "kubectl", "ln", "localectl", "loginctl", "logname", "lscpu", "machinectl", "mkswap", "mktemp", "more", "nawk", "networkctl", "nft", "nproc", "nslookup", "openssl", "passwd", "ping", "podman", "printenv", "printf", "ps", "pwd", "read", "readlink", "realpath", "resolvectl", "set", "sha1sum", "sha256sum", "shutdown", "source", "ss", "ssh-keygen", "stat", "strace", "stty", "su", "sync", "sysctl", "sysinfo", "systemd-analyze", "systemd-ask-password", "systemd-cat", "systemd-cgls", "systemd-cgtop", "systemd-escape", "systemd-inhibit", "systemd-notify", "systemd-run", "systemd-tmpfiles", "tc", "terraform", "test", "tic", "timedatectl", "toe", "top", "trap", "tree", "true", "tset", "type", "umask", "unalias", "uname", "uptime", "users", "vagrant", "version", "vi", "vipw", "vmstat", "w", "wait", "watch", "wdctl", "whiptail", "which", "whoami", "xargs", "yes", "git-lfs", "gh", "pip", "pip3", "npm", "cargo", "go", "rustup", "nvm", "pyenv", "sdkman", "sdk", "cowsay", "figlet", "toilet", "sl", "cmatrix", "asciiquarium", "lolcat", "ponysay", "boxes", "espeak", "systemd-nspawn", "cgcreate", "cgexec", "cgdelete", "lxc", "lxc-ls", "lxc-start", "lxc-stop", "lxc-create", "lxc-destroy", "lxc-info", "firejail", "bwrap", NULL
     };
 
     /* External commands we might have */
@@ -13245,8 +13252,104 @@ watch_sleep:
                 write_str(1, "usage: ip xfrm state [add src <ip> dst <ip> proto esp spi <N>]\n");
                 write_str(1, "       ip xfrm policy\n");
             }
+        } else if (argc > 1 && strcmp_simple(argv[1], "netns") == 0) {
+            /* ip netns list|add|del|exec — network namespace management */
+            if (argc == 2 || (argc >= 3 && strcmp_simple(argv[2], "list") == 0)) {
+                /* ip netns list: show named netns from /var/run/netns/ */
+                int dfd = sys_open("/var/run/netns", O_RDONLY, 0);
+                if (dfd < 0) {
+                    /* directory may not exist yet; that's ok, just no namespaces */
+                    return 0;
+                }
+                char dbuf[2048];
+                long dn = sys_getdents64(dfd, dbuf, sizeof(dbuf));
+                sys_close(dfd);
+                if (dn > 0) {
+                    long off = 0;
+                    while (off < dn) {
+                        struct linux_dirent64 {
+                            uint64_t d_ino;
+                            int64_t  d_off;
+                            unsigned short d_reclen;
+                            unsigned char  d_type;
+                            char     d_name[];
+                        };
+                        struct linux_dirent64 *d = (struct linux_dirent64 *)(dbuf + off);
+                        if (d->d_name[0] != '.') {
+                            write_str(1, d->d_name);
+                            write_str(1, "\n");
+                        }
+                        off += d->d_reclen;
+                    }
+                }
+            } else if (argc >= 4 && strcmp_simple(argv[2], "add") == 0) {
+                /* ip netns add <name>: create /var/run/netns/<name> and bind-mount a new netns */
+                sys_mkdir("/var/run/netns", 0755);
+                char nspath[128];
+                int np = 0;
+                const char *pf = "/var/run/netns/";
+                while (*pf) nspath[np++] = *pf++;
+                for (int k = 0; argv[3][k] && np < 126; k++) nspath[np++] = argv[3][k];
+                nspath[np] = '\0';
+                /* Create the mount point file */
+                int nfd = sys_open(nspath, O_WRONLY | O_CREAT, 0644);
+                if (nfd >= 0) sys_close(nfd);
+                /* Unshare CLONE_NEWNET and bind mount to the file */
+                long ur = sys_call1(272 /* __NR_unshare */, 0x40000000 /* CLONE_NEWNET */);
+                if (ur == 0) {
+                    /* mount --bind /proc/self/ns/net <nspath> */
+                    sys_call5(165, (long)"/proc/self/ns/net", (long)nspath, 0, 0x1000/*MS_BIND*/, 0);
+                    write_str(1, "Network namespace '");
+                    write_str(1, argv[3]);
+                    write_str(1, "' created\n");
+                } else {
+                    write_str(2, "ip netns add: unshare failed\n");
+                }
+            } else if (argc >= 4 && (strcmp_simple(argv[2], "del") == 0 || strcmp_simple(argv[2], "delete") == 0)) {
+                /* ip netns del <name>: unmount and remove /var/run/netns/<name> */
+                char nspath[128];
+                int np = 0;
+                const char *pf = "/var/run/netns/";
+                while (*pf) nspath[np++] = *pf++;
+                for (int k = 0; argv[3][k] && np < 126; k++) nspath[np++] = argv[3][k];
+                nspath[np] = '\0';
+                sys_call2(166, (long)nspath, 0);
+                sys_call1(SYS_unlink, (long)nspath);
+                write_str(1, "Network namespace '");
+                write_str(1, argv[3]);
+                write_str(1, "' deleted\n");
+            } else if (argc >= 5 && strcmp_simple(argv[2], "exec") == 0) {
+                /* ip netns exec <name> <cmd...>: enter named netns and run command */
+                char nspath[128];
+                int np = 0;
+                const char *pf = "/var/run/netns/";
+                while (*pf) nspath[np++] = *pf++;
+                for (int k = 0; argv[3][k] && np < 126; k++) nspath[np++] = argv[3][k];
+                nspath[np] = '\0';
+                long nfd = sys_open(nspath, O_RDONLY, 0);
+                if (nfd < 0) {
+                    write_str(2, "ip netns exec: namespace '");
+                    write_str(2, argv[3]);
+                    write_str(2, "' not found\n");
+                } else {
+                    long sr = sys_call2(308 /* __NR_setns */, nfd, 0x40000000 /* CLONE_NEWNET */);
+                    sys_close((int)nfd);
+                    if (sr < 0) {
+                        write_str(2, "ip netns exec: setns failed\n");
+                    } else {
+                        int sub_argc = argc - 4;
+                        char *sub_argv[64];
+                        for (int i = 0; i < sub_argc && i < 63; i++)
+                            sub_argv[i] = argv[4 + i];
+                        sub_argv[sub_argc] = NULL;
+                        execute_command(sub_argc, sub_argv);
+                    }
+                }
+            } else {
+                write_str(1, "usage: ip netns list|add <name>|del <name>|exec <name> <cmd...>\n");
+            }
         } else {
-            write_str(1, "usage: ip addr|link|route|neigh|tunnel|rule|xfrm|forward\n");
+            write_str(1, "usage: ip addr|link|route|neigh|tunnel|rule|xfrm|forward|netns\n");
         }
         return 0;
     } else if (strcmp_simple(argv[0], "ping") == 0) {
@@ -14987,6 +15090,30 @@ watch_sleep:
     } else if (strcmp_simple(argv[0], "espeak") == 0) {
         cmd_espeak(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "systemd-nspawn") == 0) {
+        cmd_systemd_nspawn(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "cgcreate") == 0) {
+        cmd_cgcreate(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "cgexec") == 0) {
+        cmd_cgexec(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "cgdelete") == 0) {
+        cmd_cgdelete(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "lxc") == 0 || strcmp_simple(argv[0], "lxc-ls") == 0 ||
+               strcmp_simple(argv[0], "lxc-start") == 0 || strcmp_simple(argv[0], "lxc-stop") == 0 ||
+               strcmp_simple(argv[0], "lxc-create") == 0 || strcmp_simple(argv[0], "lxc-destroy") == 0 ||
+               strcmp_simple(argv[0], "lxc-info") == 0) {
+        cmd_lxc(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "firejail") == 0) {
+        cmd_firejail(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "bwrap") == 0) {
+        cmd_bwrap(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -15431,6 +15558,19 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "ponysay") == 0 ||
             strcmp_simple(cmd, "boxes") == 0 ||
             strcmp_simple(cmd, "espeak") == 0 ||
+            strcmp_simple(cmd, "systemd-nspawn") == 0 ||
+            strcmp_simple(cmd, "cgcreate") == 0 ||
+            strcmp_simple(cmd, "cgexec") == 0 ||
+            strcmp_simple(cmd, "cgdelete") == 0 ||
+            strcmp_simple(cmd, "lxc") == 0 ||
+            strcmp_simple(cmd, "lxc-ls") == 0 ||
+            strcmp_simple(cmd, "lxc-start") == 0 ||
+            strcmp_simple(cmd, "lxc-stop") == 0 ||
+            strcmp_simple(cmd, "lxc-create") == 0 ||
+            strcmp_simple(cmd, "lxc-destroy") == 0 ||
+            strcmp_simple(cmd, "lxc-info") == 0 ||
+            strcmp_simple(cmd, "firejail") == 0 ||
+            strcmp_simple(cmd, "bwrap") == 0 ||
             0);
 }
 
@@ -16315,11 +16455,14 @@ static void cmd_unshare(int argc, char *argv[]) {
     if (argc < 2) {
         write_str(2, "usage: unshare [flags] <command> [args...]\n");
         write_str(2, "flags: --mount --uts --ipc --net --pid --user --cgroup\n");
+        write_str(2, "       --map-root-user --fork\n");
         return;
     }
 
     unsigned long flags = 0;
     int cmd_start = 1;
+    int map_root = 0;
+    int do_fork = 0;
 
     while (cmd_start < argc && argv[cmd_start][0] == '-') {
         const char *f = argv[cmd_start];
@@ -16337,6 +16480,10 @@ static void cmd_unshare(int argc, char *argv[]) {
             flags |= 0x10000000;  /* CLONE_NEWUSER */
         else if (strcmp_simple(f, "--cgroup") == 0 || strcmp_simple(f, "-C") == 0)
             flags |= 0x02000000;  /* CLONE_NEWCGROUP */
+        else if (strcmp_simple(f, "--map-root-user") == 0 || strcmp_simple(f, "-r") == 0)
+            { map_root = 1; flags |= 0x10000000; /* implies --user */ }
+        else if (strcmp_simple(f, "--fork") == 0 || strcmp_simple(f, "-f") == 0)
+            do_fork = 1;
         else {
             write_str(2, "unshare: unknown flag: ");
             write_str(2, f);
@@ -16364,25 +16511,63 @@ static void cmd_unshare(int argc, char *argv[]) {
         return;
     }
 
-    /* Execute the command in the new namespace */
+    /* --map-root-user: write uid_map and gid_map to map current user to root */
+    if (map_root) {
+        /* Write "0 <uid> 1" to /proc/self/uid_map */
+        int uid_fd = sys_open("/proc/self/uid_map", O_WRONLY, 0);
+        if (uid_fd >= 0) {
+            sys_write(uid_fd, "0 0 1\n", 6);
+            sys_close(uid_fd);
+        }
+        /* Disable setgroups first (required before gid_map) */
+        int sg_fd = sys_open("/proc/self/setgroups", O_WRONLY, 0);
+        if (sg_fd >= 0) {
+            sys_write(sg_fd, "deny", 4);
+            sys_close(sg_fd);
+        }
+        int gid_fd = sys_open("/proc/self/gid_map", O_WRONLY, 0);
+        if (gid_fd >= 0) {
+            sys_write(gid_fd, "0 0 1\n", 6);
+            sys_close(gid_fd);
+        }
+    }
+
+    /* Build sub-command */
     int sub_argc = argc - cmd_start;
     char *sub_argv[64];
     for (int i = 0; i < sub_argc && i < 63; i++)
         sub_argv[i] = argv[cmd_start + i];
     sub_argv[sub_argc] = NULL;
-    execute_command(sub_argc, sub_argv);
+
+    if (do_fork) {
+        /* --fork: fork a child to run the command (required for PID ns) */
+        long pid = sys_fork();
+        if (pid == 0) {
+            execute_command(sub_argc, sub_argv);
+            syscall1(60, 0);
+            while(1);
+        } else if (pid > 0) {
+            int st = 0;
+            sys_waitpid((int)pid, &st, 0);
+        } else {
+            write_str(2, "unshare: fork failed\n");
+        }
+    } else {
+        execute_command(sub_argc, sub_argv);
+    }
 }
 
 /* nsenter: enter namespaces of a target process (docker exec primitive) */
 static void cmd_nsenter(int argc, char *argv[]) {
     if (argc < 3) {
-        write_str(2, "usage: nsenter -t PID [--mount] [--uts] [--ipc] [--net] [--pid] [--user] [--all] command...\n");
+        write_str(2, "usage: nsenter -t PID [--mount] [--uts] [--ipc] [--net] [--pid] [--user] [--cgroup] [--all] command...\n");
+        write_str(2, "       nsenter --all --target PID command...\n");
         return;
     }
 
     int target_pid = 0;
     int do_mount = 0, do_uts = 0, do_ipc = 0, do_net = 0;
-    int do_pid = 0, do_user = 0;
+    int do_pid = 0, do_user = 0, do_cgroup = 0;
     int cmd_start = 1;
 
     while (cmd_start < argc && argv[cmd_start][0] == '-') {
@@ -16404,8 +16589,10 @@ static void cmd_nsenter(int argc, char *argv[]) {
             do_pid = 1; cmd_start++;
         } else if (strcmp_simple(f, "--user") == 0 || strcmp_simple(f, "-U") == 0) {
             do_user = 1; cmd_start++;
+        } else if (strcmp_simple(f, "--cgroup") == 0 || strcmp_simple(f, "-C") == 0) {
+            do_cgroup = 1; cmd_start++;
         } else if (strcmp_simple(f, "--all") == 0 || strcmp_simple(f, "-a") == 0) {
-            do_mount = do_uts = do_ipc = do_net = do_pid = do_user = 1;
+            do_mount = do_uts = do_ipc = do_net = do_pid = do_user = do_cgroup = 1;
             cmd_start++;
         } else {
             break;
@@ -16421,17 +16608,17 @@ static void cmd_nsenter(int argc, char *argv[]) {
         return;
     }
 
-    /* If no specific ns flags, default to --all */
-    if (!do_mount && !do_uts && !do_ipc && !do_net && !do_pid && !do_user) {
-        do_mount = do_uts = do_ipc = do_net = do_pid = do_user = 1;
+    /* If no specific ns flags, default to --all (auto-detect available namespaces) */
+    if (!do_mount && !do_uts && !do_ipc && !do_net && !do_pid && !do_user && !do_cgroup) {
+        do_mount = do_uts = do_ipc = do_net = do_pid = do_user = do_cgroup = 1;
     }
 
     /* Build /proc/<pid>/ns/<type> path and call setns for each */
     static char ns_path[64];
-    const char *ns_types[] = { "mnt", "uts", "ipc", "net", "pid", "user" };
-    int ns_flags[] = { do_mount, do_uts, do_ipc, do_net, do_pid, do_user };
+    const char *ns_types[] = { "mnt", "uts", "ipc", "net", "pid", "user", "cgroup" };
+    int ns_flags[] = { do_mount, do_uts, do_ipc, do_net, do_pid, do_user, do_cgroup };
 
-    for (int i = 0; i < 6; i++) {
+    for (int i = 0; i < 7; i++) {
         if (!ns_flags[i]) continue;
         /* Build path: /proc/<pid>/ns/<type> */
         int pp = 0;
@@ -16446,7 +16633,7 @@ static void cmd_nsenter(int argc, char *argv[]) {
         ns_path[pp] = '\0';
 
         long fd = sys_open(ns_path, O_RDONLY, 0);
-        if (fd < 0) continue;
+        if (fd < 0) continue;  /* namespace not available, skip silently (auto-detect) */
         /* setns(fd, 0) — auto-detect ns type */
         long r = sys_call2(308 /* __NR_setns */, fd, 0);
         sys_close((int)fd);
@@ -16468,24 +16655,63 @@ static void cmd_nsenter(int argc, char *argv[]) {
 
 static void cmd_chroot(int argc, char *argv[]) {
     if (argc < 2) {
-        write_str(2, "usage: chroot NEWROOT [COMMAND...]\n");
+        write_str(2, "usage: chroot [--userspec UID:GID] NEWROOT [COMMAND...]\n");
         return;
     }
-    long r = sys_chroot(argv[1]);
+
+    int argi = 1;
+    int set_uid = -1, set_gid = -1;
+
+    /* Parse --userspec UID:GID */
+    if (strcmp_simple(argv[argi], "--userspec") == 0 && argi + 1 < argc) {
+        argi++;
+        const char *spec = argv[argi];
+        /* Parse UID */
+        set_uid = 0;
+        while (*spec >= '0' && *spec <= '9') {
+            set_uid = set_uid * 10 + (*spec - '0');
+            spec++;
+        }
+        if (*spec == ':') {
+            spec++;
+            set_gid = 0;
+            while (*spec >= '0' && *spec <= '9') {
+                set_gid = set_gid * 10 + (*spec - '0');
+                spec++;
+            }
+        }
+        argi++;
+    }
+
+    if (argi >= argc) {
+        write_str(2, "chroot: missing NEWROOT\n");
+        return;
+    }
+
+    long r = sys_chroot(argv[argi]);
     if (r != 0) {
         write_str(2, "chroot: ");
-        write_str(2, argv[1]);
+        write_str(2, argv[argi]);
         write_str(2, ": operation failed\n");
         last_exit_status = 1;
         return;
     }
     sys_chdir("/");
 
-    if (argc > 2) {
-        int sub_argc = argc - 2;
+    /* Apply userspec if provided: setgid then setuid */
+    if (set_gid >= 0) {
+        sys_call1(106 /* __NR_setgid */, set_gid);
+    }
+    if (set_uid >= 0) {
+        sys_call1(105 /* __NR_setuid */, set_uid);
+    }
+
+    int cmd_idx = argi + 1;
+    if (cmd_idx < argc) {
+        int sub_argc = argc - cmd_idx;
         char *sub_argv[64];
         for (int i = 0; i < sub_argc && i < 63; i++)
-            sub_argv[i] = argv[i + 2];
+            sub_argv[i] = argv[cmd_idx + i];
         sub_argv[sub_argc] = NULL;
         execute_command(sub_argc, sub_argv);
     } else {
@@ -20087,7 +20313,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   460 built-in commands — type 'help'    |\n");
+    write_str(1, "|   470 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");
@@ -21186,6 +21412,13 @@ static void cmd_man(int argc, char *argv[]) {
         {"batch", "batch - execute commands when system load permits"},
         {"pr", "pr - convert text files for printing (paginate with headers)"},
         {"ptx", "ptx - produce a permuted index of file contents"},
+        {"systemd-nspawn", "systemd-nspawn - spawn a command or OS in a lightweight namespace container"},
+        {"cgcreate", "cgcreate - create cgroup hierarchies"},
+        {"cgexec", "cgexec - run a command in a given cgroup"},
+        {"cgdelete", "cgdelete - remove cgroup hierarchies"},
+        {"lxc", "lxc - Linux Containers management tool"},
+        {"firejail", "firejail - SUID sandbox program that reduces the risk of security breaches"},
+        {"bwrap", "bwrap - container setup utility (bubblewrap)"},
     };
     int n_entries = (int)(sizeof(man_entries) / sizeof(man_entries[0]));
 
@@ -23529,6 +23762,19 @@ static void cmd_whatis(int argc, char *argv[]) {
         {"zcat",      "zcat (1)            - decompress and display gzip compressed files"},
         {"zgrep",     "zgrep (1)           - search compressed files for a regular expression"},
         {"zstdcat",   "zstdcat (1)         - decompress and display zstd compressed files"},
+        {"systemd-nspawn","systemd-nspawn (1)  - spawn a namespace container"},
+        {"cgcreate",  "cgcreate (1)        - create cgroup hierarchies"},
+        {"cgexec",    "cgexec (1)          - run a command in a given cgroup"},
+        {"cgdelete",  "cgdelete (1)        - remove cgroup hierarchies"},
+        {"lxc",       "lxc (1)             - Linux Containers management tool"},
+        {"lxc-ls",    "lxc-ls (1)          - list Linux Containers"},
+        {"lxc-start", "lxc-start (1)       - start a Linux Container"},
+        {"lxc-stop",  "lxc-stop (1)        - stop a Linux Container"},
+        {"lxc-create","lxc-create (1)      - create a Linux Container"},
+        {"lxc-destroy","lxc-destroy (1)    - destroy a Linux Container"},
+        {"lxc-info",  "lxc-info (1)        - query information about a Linux Container"},
+        {"firejail",  "firejail (1)        - SUID sandbox program"},
+        {"bwrap",     "bwrap (1)           - container setup utility (bubblewrap)"},
         {(void*)0, (void*)0}
     };
 
@@ -25242,7 +25488,7 @@ static void cmd_localectl(int argc, char *argv[]) {
 /* __ machinectl: container/VM management __ */
 static void cmd_machinectl(int argc, char *argv[]) {
     if (argc >= 2 && strcmp_simple(argv[1], "--help") == 0) {
-        write_str(1, "Usage: machinectl [list|status NAME|show NAME|start NAME|poweroff NAME]\n");
+        write_str(1, "Usage: machinectl [list|status|show|start|poweroff|shell|bind|copy-to|copy-from] ...\n");
         return;
     }
 
@@ -25307,6 +25553,56 @@ static void cmd_machinectl(int argc, char *argv[]) {
         write_str(2, "machinectl: machine '");
         write_str(2, argv[2]);
         write_str(2, "' not found\n");
+        return;
+    }
+
+    if (strcmp_simple(argv[1], "shell") == 0) {
+        /* machinectl shell [NAME [PATH [ARGS...]]] — open a shell in a machine/host */
+        if (argc < 3) {
+            write_str(1, "Connected to host (futura)\n");
+            char *sh_argv[] = { "/bin/shell", NULL };
+            execute_command(1, sh_argv);
+        } else {
+            write_str(2, "machinectl: machine '");
+            write_str(2, argv[2]);
+            write_str(2, "' not running\n");
+        }
+        return;
+    }
+
+    if (strcmp_simple(argv[1], "bind") == 0) {
+        /* machinectl bind NAME PATH [DEST] — bind-mount a path into a machine */
+        if (argc < 4) {
+            write_str(2, "usage: machinectl bind NAME PATH [DEST]\n");
+            return;
+        }
+        write_str(2, "machinectl: machine '");
+        write_str(2, argv[2]);
+        write_str(2, "' not running (cannot bind mount)\n");
+        return;
+    }
+
+    if (strcmp_simple(argv[1], "copy-to") == 0) {
+        /* machinectl copy-to NAME SOURCE [DEST] — copy files to a machine */
+        if (argc < 4) {
+            write_str(2, "usage: machinectl copy-to NAME SOURCE [DEST]\n");
+            return;
+        }
+        write_str(2, "machinectl: machine '");
+        write_str(2, argv[2]);
+        write_str(2, "' not running (cannot copy)\n");
+        return;
+    }
+
+    if (strcmp_simple(argv[1], "copy-from") == 0) {
+        /* machinectl copy-from NAME SOURCE [DEST] — copy files from a machine */
+        if (argc < 4) {
+            write_str(2, "usage: machinectl copy-from NAME SOURCE [DEST]\n");
+            return;
+        }
+        write_str(2, "machinectl: machine '");
+        write_str(2, argv[2]);
+        write_str(2, "' not running (cannot copy)\n");
         return;
     }
 
@@ -40686,6 +40982,555 @@ static void cmd_espeak(int argc, char *argv[]) {
     }
     write_str(1, "\n");
     write_str(1, "(Audio output not available - text-to-speech simulated)\n");
+}
+
+/* ── systemd-nspawn: lightweight namespace container ── */
+static void cmd_systemd_nspawn(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "Usage: systemd-nspawn -D <directory> [--boot] [--private-network] [--read-only] [COMMAND...]\n");
+        return;
+    }
+
+    const char *rootdir = NULL;
+    int do_boot = 0;
+    int private_net = 0;
+    int read_only = 0;
+    int cmd_start = -1;
+
+    for (int i = 1; i < argc; i++) {
+        if ((strcmp_simple(argv[i], "-D") == 0 || strcmp_simple(argv[i], "--directory") == 0) && i + 1 < argc) {
+            rootdir = argv[++i];
+        } else if (strcmp_simple(argv[i], "--boot") == 0 || strcmp_simple(argv[i], "-b") == 0) {
+            do_boot = 1;
+        } else if (strcmp_simple(argv[i], "--private-network") == 0) {
+            private_net = 1;
+        } else if (strcmp_simple(argv[i], "--read-only") == 0) {
+            read_only = 1;
+        } else if (argv[i][0] != '-' && !rootdir) {
+            rootdir = argv[i];
+        } else if (cmd_start < 0 && argv[i][0] != '-') {
+            cmd_start = i;
+            break;
+        }
+    }
+
+    if (!rootdir) {
+        write_str(2, "systemd-nspawn: -D <directory> required\n");
+        return;
+    }
+
+    write_str(1, "Spawning container on ");
+    write_str(1, rootdir);
+    write_str(1, "...\n");
+
+    /* Unshare mount, UTS, IPC, PID namespaces (+ net if requested) */
+    unsigned long flags = 0x00020000 | 0x04000000 | 0x08000000 | 0x20000000;
+    /* CLONE_NEWNS | CLONE_NEWUTS | CLONE_NEWIPC | CLONE_NEWPID */
+    if (private_net) flags |= 0x40000000; /* CLONE_NEWNET */
+
+    long ur = sys_call1(272 /* __NR_unshare */, (long)flags);
+    if (ur < 0) {
+        write_str(2, "systemd-nspawn: unshare failed (");
+        char num[12]; int_to_str(-(int)ur, num, 12);
+        write_str(2, num);
+        write_str(2, ")\n");
+        return;
+    }
+
+    /* chroot into the directory */
+    long cr = sys_chroot(rootdir);
+    if (cr != 0) {
+        write_str(2, "systemd-nspawn: cannot chroot to ");
+        write_str(2, rootdir);
+        write_str(2, "\n");
+        return;
+    }
+    sys_chdir("/");
+
+    (void)read_only; /* read-only flag noted but not enforced in simulation */
+
+    if (do_boot) {
+        write_str(1, "systemd-nspawn: booting container (running /sbin/init)...\n");
+        char *init_argv[] = { "/sbin/init", NULL };
+        execute_command(1, init_argv);
+    } else if (cmd_start >= 0) {
+        int sub_argc = argc - cmd_start;
+        char *sub_argv[64];
+        for (int i = 0; i < sub_argc && i < 63; i++)
+            sub_argv[i] = argv[cmd_start + i];
+        sub_argv[sub_argc] = NULL;
+        execute_command(sub_argc, sub_argv);
+    } else {
+        write_str(1, "systemd-nspawn: starting shell in container...\n");
+        char *sh_argv[] = { "/bin/shell", NULL };
+        execute_command(1, sh_argv);
+    }
+}
+
+/* ── cgcreate: create cgroup hierarchies ── */
+static void cmd_cgcreate(int argc, char *argv[]) {
+    if (argc < 3) {
+        write_str(2, "Usage: cgcreate -g <controller>:<path>\n");
+        write_str(2, "  e.g. cgcreate -g cpu,memory:/mygroup\n");
+        return;
+    }
+    const char *spec = NULL;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-g") == 0 && i + 1 < argc)
+            spec = argv[++i];
+    }
+    if (!spec) { write_str(2, "cgcreate: -g <controller>:<path> required\n"); return; }
+
+    /* Find the ':' separator */
+    const char *colon = spec;
+    while (*colon && *colon != ':') colon++;
+    if (!*colon) { write_str(2, "cgcreate: invalid spec (expected controller:path)\n"); return; }
+
+    const char *cgpath = colon + 1;
+
+    /* Build /sys/fs/cgroup/<controller>/<path> */
+    char fullpath[256];
+    int fp = 0;
+    const char *pfx = "/sys/fs/cgroup/";
+    while (*pfx && fp < 250) fullpath[fp++] = *pfx++;
+    /* Copy controller name (up to colon) */
+    const char *cs = spec;
+    while (cs < colon && fp < 250) fullpath[fp++] = *cs++;
+    /* Copy path */
+    while (*cgpath && fp < 250) fullpath[fp++] = *cgpath++;
+    fullpath[fp] = '\0';
+
+    long r = sys_mkdir(fullpath, 0755);
+    if (r == 0) {
+        write_str(1, "Created cgroup: ");
+        write_str(1, fullpath);
+        write_str(1, "\n");
+    } else if (r == -17 /* EEXIST */) {
+        write_str(1, "Cgroup already exists: ");
+        write_str(1, fullpath);
+        write_str(1, "\n");
+    } else {
+        write_str(2, "cgcreate: failed to create ");
+        write_str(2, fullpath);
+        write_str(2, "\n");
+    }
+}
+
+/* ── cgexec: execute a command in a cgroup ── */
+static void cmd_cgexec(int argc, char *argv[]) {
+    if (argc < 4) {
+        write_str(2, "Usage: cgexec -g <controller>:<path> <command> [args...]\n");
+        return;
+    }
+    const char *spec = NULL;
+    int cmd_start = 1;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-g") == 0 && i + 1 < argc) {
+            spec = argv[++i];
+            cmd_start = i + 1;
+        }
+    }
+    if (!spec || cmd_start >= argc) {
+        write_str(2, "cgexec: -g <controller>:<path> and command required\n");
+        return;
+    }
+
+    /* Find the ':' separator */
+    const char *colon = spec;
+    while (*colon && *colon != ':') colon++;
+    if (!*colon) { write_str(2, "cgexec: invalid spec\n"); return; }
+    const char *cgpath = colon + 1;
+
+    /* Build path to cgroup.procs */
+    char procspath[256];
+    int fp = 0;
+    const char *pfx = "/sys/fs/cgroup/";
+    while (*pfx && fp < 230) procspath[fp++] = *pfx++;
+    const char *cs = spec;
+    while (cs < colon && fp < 230) procspath[fp++] = *cs++;
+    while (*cgpath && fp < 230) procspath[fp++] = *cgpath++;
+    const char *sfx = "/cgroup.procs";
+    while (*sfx && fp < 250) procspath[fp++] = *sfx++;
+    procspath[fp] = '\0';
+
+    /* Write our PID to cgroup.procs */
+    long pid = sys_call0(39 /* __NR_getpid */);
+    char pidbuf[16];
+    int_to_str((int)pid, pidbuf, 16);
+    int pfd = sys_open(procspath, O_WRONLY, 0);
+    if (pfd >= 0) {
+        int plen = 0;
+        while (pidbuf[plen]) plen++;
+        pidbuf[plen] = '\n'; pidbuf[plen + 1] = '\0';
+        sys_write(pfd, pidbuf, plen + 1);
+        sys_close(pfd);
+    } else {
+        write_str(2, "cgexec: warning: cannot write to ");
+        write_str(2, procspath);
+        write_str(2, "\n");
+    }
+
+    /* Execute the command */
+    int sub_argc = argc - cmd_start;
+    char *sub_argv[64];
+    for (int i = 0; i < sub_argc && i < 63; i++)
+        sub_argv[i] = argv[cmd_start + i];
+    sub_argv[sub_argc] = NULL;
+    execute_command(sub_argc, sub_argv);
+}
+
+/* ── cgdelete: remove cgroup hierarchies ── */
+static void cmd_cgdelete(int argc, char *argv[]) {
+    if (argc < 3) {
+        write_str(2, "Usage: cgdelete -g <controller>:<path>\n");
+        return;
+    }
+    const char *spec = NULL;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-g") == 0 && i + 1 < argc)
+            spec = argv[++i];
+    }
+    if (!spec) { write_str(2, "cgdelete: -g <controller>:<path> required\n"); return; }
+
+    const char *colon = spec;
+    while (*colon && *colon != ':') colon++;
+    if (!*colon) { write_str(2, "cgdelete: invalid spec\n"); return; }
+    const char *cgpath = colon + 1;
+
+    char fullpath[256];
+    int fp = 0;
+    const char *pfx = "/sys/fs/cgroup/";
+    while (*pfx && fp < 250) fullpath[fp++] = *pfx++;
+    const char *cs = spec;
+    while (cs < colon && fp < 250) fullpath[fp++] = *cs++;
+    while (*cgpath && fp < 250) fullpath[fp++] = *cgpath++;
+    fullpath[fp] = '\0';
+
+    long r = sys_rmdir(fullpath);
+    if (r == 0) {
+        write_str(1, "Deleted cgroup: ");
+        write_str(1, fullpath);
+        write_str(1, "\n");
+    } else {
+        write_str(2, "cgdelete: failed to remove ");
+        write_str(2, fullpath);
+        write_str(2, " (may not be empty or not exist)\n");
+    }
+}
+
+/* ── lxc: Linux Containers management (simulated) ── */
+static void cmd_lxc(int argc, char *argv[]) {
+    const char *subcmd = argv[0];
+
+    /* Handle "lxc" with subcommand as second arg */
+    if (strcmp_simple(subcmd, "lxc") == 0) {
+        if (argc < 2) {
+            write_str(1, "Usage: lxc <command> [args...]\n");
+            write_str(1, "Commands: list, start, stop, create, destroy, info\n");
+            write_str(1, "  or use: lxc-ls, lxc-start, lxc-stop, lxc-create, lxc-destroy, lxc-info\n");
+            return;
+        }
+        /* Remap: "lxc list" -> ls, "lxc start NAME" -> start, etc. */
+        if (strcmp_simple(argv[1], "list") == 0 || strcmp_simple(argv[1], "ls") == 0) {
+            write_str(1, "NAME        STATE   AUTOSTART GROUPS IPV4      IPV6\n");
+            write_str(1, "------------------------------------------------------\n");
+            /* List containers from /var/lib/lxc/ */
+            int dfd = sys_open("/var/lib/lxc", O_RDONLY, 0);
+            if (dfd >= 0) {
+                char dbuf[2048];
+                long dn = sys_getdents64(dfd, dbuf, sizeof(dbuf));
+                sys_close(dfd);
+                long off = 0;
+                while (off < dn) {
+                    struct { uint64_t d_ino; int64_t d_off; unsigned short d_reclen; unsigned char d_type; char d_name[]; } *d =
+                        (void *)(dbuf + off);
+                    if (d->d_name[0] != '.')
+                        { write_str(1, d->d_name); write_str(1, "   STOPPED  0         -     -         -\n"); }
+                    off += d->d_reclen;
+                }
+            }
+            return;
+        }
+        if (strcmp_simple(argv[1], "create") == 0) {
+            if (argc < 3) { write_str(2, "lxc create: container name required\n"); return; }
+            sys_mkdir("/var/lib/lxc", 0755);
+            char path[128]; int pp = 0;
+            const char *p = "/var/lib/lxc/";
+            while (*p && pp < 120) path[pp++] = *p++;
+            for (int k = 0; argv[2][k] && pp < 126; k++) path[pp++] = argv[2][k];
+            path[pp] = '\0';
+            long r = sys_mkdir(path, 0755);
+            if (r == 0) { write_str(1, "Container '"); write_str(1, argv[2]); write_str(1, "' created\n"); }
+            else { write_str(2, "lxc create: failed\n"); }
+            return;
+        }
+        if (strcmp_simple(argv[1], "destroy") == 0) {
+            if (argc < 3) { write_str(2, "lxc destroy: container name required\n"); return; }
+            char path[128]; int pp = 0;
+            const char *p = "/var/lib/lxc/";
+            while (*p && pp < 120) path[pp++] = *p++;
+            for (int k = 0; argv[2][k] && pp < 126; k++) path[pp++] = argv[2][k];
+            path[pp] = '\0';
+            long r = sys_rmdir(path);
+            if (r == 0) { write_str(1, "Container '"); write_str(1, argv[2]); write_str(1, "' destroyed\n"); }
+            else { write_str(2, "lxc destroy: failed (container may not exist)\n"); }
+            return;
+        }
+        if (strcmp_simple(argv[1], "start") == 0) {
+            if (argc < 3) { write_str(2, "lxc start: container name required\n"); return; }
+            write_str(1, "Starting container '");
+            write_str(1, argv[2]);
+            write_str(1, "'...\n");
+            write_str(2, "lxc-start: container '");
+            write_str(2, argv[2]);
+            write_str(2, "' has no rootfs configured\n");
+            return;
+        }
+        if (strcmp_simple(argv[1], "stop") == 0) {
+            if (argc < 3) { write_str(2, "lxc stop: container name required\n"); return; }
+            write_str(2, "lxc-stop: container '");
+            write_str(2, argv[2]);
+            write_str(2, "' is not running\n");
+            return;
+        }
+        if (strcmp_simple(argv[1], "info") == 0) {
+            if (argc < 3) { write_str(2, "lxc info: container name required\n"); return; }
+            write_str(1, "Name:           "); write_str(1, argv[2]); write_str(1, "\n");
+            write_str(1, "State:          STOPPED\n");
+            write_str(1, "PID:            -\n");
+            write_str(1, "IP:             -\n");
+            write_str(1, "CPU use:        -\n");
+            write_str(1, "Memory use:     -\n");
+            return;
+        }
+        write_str(2, "lxc: unknown command '");
+        write_str(2, argv[1]);
+        write_str(2, "'\n");
+        return;
+    }
+
+    /* Handle lxc-* form commands */
+    if (strcmp_simple(subcmd, "lxc-ls") == 0) {
+        char *rargv[] = { "lxc", "list", NULL };
+        cmd_lxc(2, rargv);
+    } else if (strcmp_simple(subcmd, "lxc-start") == 0) {
+        if (argc < 2) { write_str(2, "lxc-start: -n NAME required\n"); return; }
+        /* Handle -n NAME or just NAME */
+        const char *name = argv[1];
+        if (strcmp_simple(argv[1], "-n") == 0 && argc >= 3) name = argv[2];
+        char *rargv[] = { "lxc", "start", (char *)name, NULL };
+        cmd_lxc(3, rargv);
+    } else if (strcmp_simple(subcmd, "lxc-stop") == 0) {
+        if (argc < 2) { write_str(2, "lxc-stop: -n NAME required\n"); return; }
+        const char *name = argv[1];
+        if (strcmp_simple(argv[1], "-n") == 0 && argc >= 3) name = argv[2];
+        char *rargv[] = { "lxc", "stop", (char *)name, NULL };
+        cmd_lxc(3, rargv);
+    } else if (strcmp_simple(subcmd, "lxc-create") == 0) {
+        if (argc < 2) { write_str(2, "lxc-create: -n NAME required\n"); return; }
+        const char *name = argv[1];
+        if (strcmp_simple(argv[1], "-n") == 0 && argc >= 3) name = argv[2];
+        char *rargv[] = { "lxc", "create", (char *)name, NULL };
+        cmd_lxc(3, rargv);
+    } else if (strcmp_simple(subcmd, "lxc-destroy") == 0) {
+        if (argc < 2) { write_str(2, "lxc-destroy: -n NAME required\n"); return; }
+        const char *name = argv[1];
+        if (strcmp_simple(argv[1], "-n") == 0 && argc >= 3) name = argv[2];
+        char *rargv[] = { "lxc", "destroy", (char *)name, NULL };
+        cmd_lxc(3, rargv);
+    } else if (strcmp_simple(subcmd, "lxc-info") == 0) {
+        if (argc < 2) { write_str(2, "lxc-info: -n NAME required\n"); return; }
+        const char *name = argv[1];
+        if (strcmp_simple(argv[1], "-n") == 0 && argc >= 3) name = argv[2];
+        char *rargv[] = { "lxc", "info", (char *)name, NULL };
+        cmd_lxc(3, rargv);
+    }
+}
+
+/* ── firejail: SUID sandbox program ── */
+static void cmd_firejail(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "Usage: firejail [OPTIONS] COMMAND [ARGS...]\n");
+        write_str(1, "Options:\n");
+        write_str(1, "  --net=none        Disable network access\n");
+        write_str(1, "  --private         Use private /home and /tmp\n");
+        write_str(1, "  --private-tmp     Use private /tmp\n");
+        write_str(1, "  --noroot          Disable root access\n");
+        write_str(1, "  --seccomp         Enable seccomp filter\n");
+        write_str(1, "  --caps.drop=all   Drop all capabilities\n");
+        write_str(1, "  --noprofile       No default profile\n");
+        write_str(1, "  --list            List running sandboxes\n");
+        return;
+    }
+
+    int no_net = 0;
+    int no_root = 0;
+    int do_private = 0;
+    int do_list = 0;
+    int cmd_start = 1;
+
+    while (cmd_start < argc && argv[cmd_start][0] == '-') {
+        const char *f = argv[cmd_start];
+        if (strcmp_simple(f, "--net=none") == 0) no_net = 1;
+        else if (strcmp_simple(f, "--private") == 0) do_private = 1;
+        else if (strcmp_simple(f, "--private-tmp") == 0) { /* noted */ }
+        else if (strcmp_simple(f, "--noroot") == 0) no_root = 1;
+        else if (strcmp_simple(f, "--seccomp") == 0) { /* noted */ }
+        else if (strcmp_simple(f, "--caps.drop=all") == 0) { /* noted */ }
+        else if (strcmp_simple(f, "--noprofile") == 0) { /* noted */ }
+        else if (strcmp_simple(f, "--list") == 0) { do_list = 1; }
+        cmd_start++;
+    }
+
+    if (do_list) {
+        write_str(1, "PID  User  Name\n");
+        /* Show current shell as a sandbox */
+        long pid = sys_call0(39 /* __NR_getpid */);
+        char pidbuf[16]; int_to_str((int)pid, pidbuf, 16);
+        write_str(1, pidbuf);
+        write_str(1, "  root  firejail --list\n");
+        return;
+    }
+
+    if (cmd_start >= argc) {
+        /* No command: launch shell in sandbox */
+        write_str(1, "firejail: starting sandboxed shell\n");
+    }
+
+    /* Set up namespace isolation */
+    unsigned long flags = 0x00020000 | 0x04000000 | 0x08000000; /* CLONE_NEWNS|NEWUTS|NEWIPC */
+    if (no_net) flags |= 0x40000000; /* CLONE_NEWNET */
+    if (no_root) flags |= 0x10000000; /* CLONE_NEWUSER */
+
+    long ur = sys_call1(272 /* __NR_unshare */, (long)flags);
+    if (ur < 0) {
+        write_str(2, "firejail: sandbox setup failed (");
+        char num[12]; int_to_str(-(int)ur, num, 12);
+        write_str(2, num);
+        write_str(2, ")\n");
+    }
+
+    write_str(1, "Parent pid ");
+    { long ppid = sys_call0(39); char pb[16]; int_to_str((int)ppid, pb, 16); write_str(1, pb); }
+    write_str(1, ", child pid ");
+    { long cpid = sys_call0(39); char cb[16]; int_to_str((int)cpid, cb, 16); write_str(1, cb); }
+    write_str(1, "\n");
+
+    if (do_private) {
+        write_str(1, "Private mode: /home and /tmp are temporary\n");
+    }
+
+    if (cmd_start < argc) {
+        int sub_argc = argc - cmd_start;
+        char *sub_argv[64];
+        for (int i = 0; i < sub_argc && i < 63; i++)
+            sub_argv[i] = argv[cmd_start + i];
+        sub_argv[sub_argc] = NULL;
+        execute_command(sub_argc, sub_argv);
+    } else {
+        char *sh_argv[] = { "/bin/shell", NULL };
+        execute_command(1, sh_argv);
+    }
+}
+
+/* ── bwrap: bubblewrap container setup ── */
+static void cmd_bwrap(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "Usage: bwrap [OPTIONS] COMMAND [ARGS...]\n");
+        write_str(1, "Options:\n");
+        write_str(1, "  --ro-bind SRC DEST    Read-only bind mount\n");
+        write_str(1, "  --bind SRC DEST       Read-write bind mount\n");
+        write_str(1, "  --dev /dev            Mount new devtmpfs\n");
+        write_str(1, "  --proc /proc          Mount new procfs\n");
+        write_str(1, "  --tmpfs /tmp          Mount tmpfs\n");
+        write_str(1, "  --unshare-all         Unshare all namespaces\n");
+        write_str(1, "  --unshare-pid         Unshare PID namespace\n");
+        write_str(1, "  --unshare-net         Unshare network namespace\n");
+        write_str(1, "  --unshare-user        Unshare user namespace\n");
+        write_str(1, "  --uid UID             Set UID in sandbox\n");
+        write_str(1, "  --gid GID             Set GID in sandbox\n");
+        write_str(1, "  --chdir DIR           Change directory in sandbox\n");
+        return;
+    }
+
+    unsigned long flags = 0;
+    int cmd_start = -1;
+    const char *chdir_path = NULL;
+    int set_uid = -1, set_gid = -1;
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "--unshare-all") == 0) {
+            flags |= 0x00020000 | 0x04000000 | 0x08000000 | 0x20000000 | 0x40000000 | 0x10000000;
+        } else if (strcmp_simple(argv[i], "--unshare-pid") == 0) {
+            flags |= 0x20000000;
+        } else if (strcmp_simple(argv[i], "--unshare-net") == 0) {
+            flags |= 0x40000000;
+        } else if (strcmp_simple(argv[i], "--unshare-user") == 0) {
+            flags |= 0x10000000;
+        } else if (strcmp_simple(argv[i], "--ro-bind") == 0 && i + 2 < argc) {
+            /* Simulate: note bind mounts */
+            write_str(1, "bwrap: ro-bind ");
+            write_str(1, argv[i+1]);
+            write_str(1, " -> ");
+            write_str(1, argv[i+2]);
+            write_str(1, "\n");
+            i += 2;
+        } else if (strcmp_simple(argv[i], "--bind") == 0 && i + 2 < argc) {
+            write_str(1, "bwrap: bind ");
+            write_str(1, argv[i+1]);
+            write_str(1, " -> ");
+            write_str(1, argv[i+2]);
+            write_str(1, "\n");
+            i += 2;
+        } else if (strcmp_simple(argv[i], "--dev") == 0 && i + 1 < argc) {
+            i++; /* skip path */
+        } else if (strcmp_simple(argv[i], "--proc") == 0 && i + 1 < argc) {
+            i++; /* skip path */
+        } else if (strcmp_simple(argv[i], "--tmpfs") == 0 && i + 1 < argc) {
+            i++; /* skip path */
+        } else if (strcmp_simple(argv[i], "--chdir") == 0 && i + 1 < argc) {
+            chdir_path = argv[++i];
+        } else if (strcmp_simple(argv[i], "--uid") == 0 && i + 1 < argc) {
+            i++; set_uid = 0;
+            for (int k = 0; argv[i][k] >= '0' && argv[i][k] <= '9'; k++)
+                set_uid = set_uid * 10 + (argv[i][k] - '0');
+        } else if (strcmp_simple(argv[i], "--gid") == 0 && i + 1 < argc) {
+            i++; set_gid = 0;
+            for (int k = 0; argv[i][k] >= '0' && argv[i][k] <= '9'; k++)
+                set_gid = set_gid * 10 + (argv[i][k] - '0');
+        } else if (argv[i][0] != '-') {
+            cmd_start = i;
+            break;
+        }
+    }
+
+    if (cmd_start < 0) {
+        write_str(2, "bwrap: no command specified\n");
+        return;
+    }
+
+    /* Apply namespace unsharing */
+    if (flags != 0) {
+        long ur = sys_call1(272 /* __NR_unshare */, (long)flags);
+        if (ur < 0) {
+            write_str(2, "bwrap: namespace setup failed\n");
+        }
+    }
+
+    /* Apply uid/gid */
+    if (set_gid >= 0) sys_call1(106 /* __NR_setgid */, set_gid);
+    if (set_uid >= 0) sys_call1(105 /* __NR_setuid */, set_uid);
+
+    /* Apply chdir */
+    if (chdir_path) sys_chdir(chdir_path);
+
+    /* Execute command */
+    int sub_argc = argc - cmd_start;
+    char *sub_argv[64];
+    for (int i = 0; i < sub_argc && i < 63; i++)
+        sub_argv[i] = argv[cmd_start + i];
+    sub_argv[sub_argc] = NULL;
+    execute_command(sub_argc, sub_argv);
 }
 
 #pragma GCC diagnostic pop

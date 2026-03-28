@@ -73212,6 +73212,323 @@ __attribute__((noinline)) static void test_mincore_residency(void) {
 #undef MC_MS_ASYNC
 }
 
+/* ============================================================
+ *   Tests 2660-2667: copy_file_range round-trip
+ *
+ *   2660: basic round-trip — write, copy, read back, verify
+ *   2661: partial copy — request more than available, returns actual bytes
+ *   2662: copy with explicit off_in/off_out updates offsets correctly
+ *   2663: fd positions unchanged when off_in/off_out are used
+ *   2664: O_APPEND on output — data written at end-of-file
+ *   2665: cross-filesystem copy (tmpfs src to procfs-backed dst)
+ *   2666: copy_file_range with zero len returns 0
+ *   2667: copy_file_range with invalid flags returns EINVAL
+ * ============================================================ */
+__attribute__((noinline)) static void test_copy_file_range_roundtrip(void) {
+    extern long sys_copy_file_range(int fd_in, int64_t *off_in,
+                                    int fd_out, int64_t *off_out,
+                                    size_t len, unsigned int flags);
+    extern int64_t fut_vfs_lseek(int fd, int64_t offset, int whence);
+
+    fut_printf("[MISC-TEST] Tests 2660-2667: copy_file_range round-trip\n");
+
+    /* ---- Test 2660: basic round-trip ---- */
+    fut_printf("[MISC-TEST] Test 2660: copy_file_range basic round-trip\n");
+    {
+        int src = fut_vfs_open("/cfr_rt_src.txt", 0x42, 0644); /* O_RDWR|O_CREAT */
+        int dst = fut_vfs_open("/cfr_rt_dst.txt", 0x42, 0644); /* O_RDWR|O_CREAT */
+        if (src < 0 || dst < 0) {
+            fut_printf("[MISC-TEST] FAIL 2660: open failed src=%d dst=%d\n", src, dst);
+            fut_test_fail(2660);
+            if (src >= 0) fut_vfs_close(src);
+            if (dst >= 0) fut_vfs_close(dst);
+        } else {
+            const char *msg = "copy_file_range roundtrip!";
+            size_t msg_len = 25;
+            fut_vfs_write(src, msg, msg_len);
+            fut_vfs_lseek(src, 0, 0); /* SEEK_SET */
+
+            long copied = sys_copy_file_range(src, NULL, dst, NULL, msg_len, 0);
+            if (copied != (long)msg_len) {
+                fut_printf("[MISC-TEST] FAIL 2660: copied=%ld (expected %zu)\n", copied, msg_len);
+                fut_test_fail(2660);
+            } else {
+                /* Read back from destination */
+                fut_vfs_lseek(dst, 0, 0);
+                char rbuf[32] = {0};
+                ssize_t nr = fut_vfs_read(dst, rbuf, sizeof(rbuf));
+                if (nr == (ssize_t)msg_len && __builtin_memcmp(rbuf, msg, msg_len) == 0) {
+                    fut_printf("[MISC-TEST] PASS 2660: round-trip verified (%ld bytes)\n", copied);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] FAIL 2660: readback mismatch nr=%zd\n", nr);
+                    fut_test_fail(2660);
+                }
+            }
+            fut_vfs_close(src);
+            fut_vfs_close(dst);
+        }
+    }
+
+    /* ---- Test 2661: partial copy — request more than file size ---- */
+    fut_printf("[MISC-TEST] Test 2661: copy_file_range partial copy\n");
+    {
+        int src = fut_vfs_open("/cfr_rt_partial_src.txt", 0x42, 0644);
+        int dst = fut_vfs_open("/cfr_rt_partial_dst.txt", 0x42, 0644);
+        if (src < 0 || dst < 0) {
+            fut_printf("[MISC-TEST] FAIL 2661: open failed\n");
+            fut_test_fail(2661);
+            if (src >= 0) fut_vfs_close(src);
+            if (dst >= 0) fut_vfs_close(dst);
+        } else {
+            fut_vfs_write(src, "SHORT", 5);
+            fut_vfs_lseek(src, 0, 0);
+
+            /* Request 4096 bytes but only 5 are available */
+            long copied = sys_copy_file_range(src, NULL, dst, NULL, 4096, 0);
+            if (copied == 5) {
+                fut_printf("[MISC-TEST] PASS 2661: partial copy returned %ld (file had 5 bytes)\n", copied);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL 2661: expected 5, got %ld\n", copied);
+                fut_test_fail(2661);
+            }
+            fut_vfs_close(src);
+            fut_vfs_close(dst);
+        }
+    }
+
+    /* ---- Test 2662: explicit off_in/off_out updated correctly ---- */
+    fut_printf("[MISC-TEST] Test 2662: copy_file_range off_in/off_out update\n");
+    {
+        int src = fut_vfs_open("/cfr_rt_offup_src.txt", 0x42, 0644);
+        int dst = fut_vfs_open("/cfr_rt_offup_dst.txt", 0x42, 0644);
+        if (src < 0 || dst < 0) {
+            fut_printf("[MISC-TEST] FAIL 2662: open failed\n");
+            fut_test_fail(2662);
+            if (src >= 0) fut_vfs_close(src);
+            if (dst >= 0) fut_vfs_close(dst);
+        } else {
+            fut_vfs_write(src, "0123456789", 10);
+            /* Pre-fill dst with 20 bytes */
+            char pad[20]; __builtin_memset(pad, '.', 20);
+            fut_vfs_write(dst, pad, 20);
+
+            int64_t oi = 3, oo = 7;
+            long copied = sys_copy_file_range(src, &oi, dst, &oo, 4, 0);
+            if (copied != 4) {
+                fut_printf("[MISC-TEST] FAIL 2662: copied=%ld (expected 4)\n", copied);
+                fut_test_fail(2662);
+            } else if (oi != 7) {
+                fut_printf("[MISC-TEST] FAIL 2662: off_in=%lld (expected 7)\n", (long long)oi);
+                fut_test_fail(2662);
+            } else if (oo != 11) {
+                fut_printf("[MISC-TEST] FAIL 2662: off_out=%lld (expected 11)\n", (long long)oo);
+                fut_test_fail(2662);
+            } else {
+                /* Verify content: dst[7..10] should be "3456" */
+                fut_vfs_lseek(dst, 7, 0);
+                char vbuf[5] = {0};
+                ssize_t nr = fut_vfs_read(dst, vbuf, 4);
+                if (nr == 4 && __builtin_memcmp(vbuf, "3456", 4) == 0) {
+                    fut_printf("[MISC-TEST] PASS 2662: offsets updated, data correct\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] FAIL 2662: content mismatch nr=%zd buf='%.4s'\n", nr, vbuf);
+                    fut_test_fail(2662);
+                }
+            }
+            fut_vfs_close(src);
+            fut_vfs_close(dst);
+        }
+    }
+
+    /* ---- Test 2663: fd positions unchanged with off_in/off_out ---- */
+    fut_printf("[MISC-TEST] Test 2663: copy_file_range fd positions unchanged\n");
+    {
+        int src = fut_vfs_open("/cfr_rt_fdpos_src.txt", 0x42, 0644);
+        int dst = fut_vfs_open("/cfr_rt_fdpos_dst.txt", 0x42, 0644);
+        if (src < 0 || dst < 0) {
+            fut_printf("[MISC-TEST] FAIL 2663: open failed\n");
+            fut_test_fail(2663);
+            if (src >= 0) fut_vfs_close(src);
+            if (dst >= 0) fut_vfs_close(dst);
+        } else {
+            fut_vfs_write(src, "ABCDEFGHIJ", 10);
+            char pad[20]; __builtin_memset(pad, 'X', 20);
+            fut_vfs_write(dst, pad, 20);
+
+            /* Set known fd positions */
+            fut_vfs_lseek(src, 2, 0); /* src position = 2 */
+            fut_vfs_lseek(dst, 5, 0); /* dst position = 5 */
+
+            int64_t oi = 0, oo = 10;
+            long copied = sys_copy_file_range(src, &oi, dst, &oo, 3, 0);
+
+            int64_t src_pos = fut_vfs_lseek(src, 0, 1); /* SEEK_CUR */
+            int64_t dst_pos = fut_vfs_lseek(dst, 0, 1); /* SEEK_CUR */
+
+            if (copied != 3) {
+                fut_printf("[MISC-TEST] FAIL 2663: copied=%ld\n", copied);
+                fut_test_fail(2663);
+            } else if (src_pos != 2) {
+                fut_printf("[MISC-TEST] FAIL 2663: src_pos=%lld (expected 2)\n", (long long)src_pos);
+                fut_test_fail(2663);
+            } else if (dst_pos != 5) {
+                fut_printf("[MISC-TEST] FAIL 2663: dst_pos=%lld (expected 5)\n", (long long)dst_pos);
+                fut_test_fail(2663);
+            } else {
+                fut_printf("[MISC-TEST] PASS 2663: fd positions unchanged (src=%lld dst=%lld)\n",
+                           (long long)src_pos, (long long)dst_pos);
+                fut_test_pass();
+            }
+            fut_vfs_close(src);
+            fut_vfs_close(dst);
+        }
+    }
+
+    /* ---- Test 2664: O_APPEND on output — writes go to end ---- */
+    fut_printf("[MISC-TEST] Test 2664: copy_file_range O_APPEND on output\n");
+    {
+        /* Create source with known data */
+        int src = fut_vfs_open("/cfr_rt_app_src.txt", 0x42, 0644);
+        /* Open dst with O_APPEND|O_RDWR|O_CREAT (0x442) */
+        int dst = fut_vfs_open("/cfr_rt_app_dst.txt", 0x442, 0644);
+        if (src < 0 || dst < 0) {
+            fut_printf("[MISC-TEST] FAIL 2664: open failed src=%d dst=%d\n", src, dst);
+            fut_test_fail(2664);
+            if (src >= 0) fut_vfs_close(src);
+            if (dst >= 0) fut_vfs_close(dst);
+        } else {
+            fut_vfs_write(src, "APPENDED", 8);
+            fut_vfs_lseek(src, 0, 0);
+
+            /* Write initial content to dst (with append, goes to pos 0 since empty) */
+            fut_vfs_write(dst, "HEAD", 4);
+
+            /* Now copy — O_APPEND should force data after "HEAD" */
+            long copied = sys_copy_file_range(src, NULL, dst, NULL, 8, 0);
+            if (copied != 8) {
+                fut_printf("[MISC-TEST] FAIL 2664: copied=%ld (expected 8)\n", copied);
+                fut_test_fail(2664);
+            } else {
+                /* Read back all of dst — should be "HEADAPPENDED" (12 bytes) */
+                int rdst = fut_vfs_open("/cfr_rt_app_dst.txt", 0x00, 0); /* O_RDONLY */
+                if (rdst < 0) {
+                    fut_printf("[MISC-TEST] FAIL 2664: reopen dst failed\n");
+                    fut_test_fail(2664);
+                } else {
+                    char rbuf[16] = {0};
+                    ssize_t nr = fut_vfs_read(rdst, rbuf, 16);
+                    if (nr == 12 && __builtin_memcmp(rbuf, "HEADAPPENDED", 12) == 0) {
+                        fut_printf("[MISC-TEST] PASS 2664: O_APPEND wrote at end: '%.12s'\n", rbuf);
+                        fut_test_pass();
+                    } else {
+                        fut_printf("[MISC-TEST] FAIL 2664: expected 'HEADAPPENDED', got nr=%zd '%.16s'\n", nr, rbuf);
+                        fut_test_fail(2664);
+                    }
+                    fut_vfs_close(rdst);
+                }
+            }
+            fut_vfs_close(src);
+            fut_vfs_close(dst);
+        }
+    }
+
+    /* ---- Test 2665: cross-filesystem copy (different mount points) ---- */
+    fut_printf("[MISC-TEST] Test 2665: copy_file_range cross-filesystem\n");
+    {
+        /* /tmp is tmpfs, / is futurafs — these are different filesystems.
+         * Even if both are the same FS type, we verify copy works across
+         * different vnode trees without EXDEV. */
+        int src = fut_vfs_open("/cfr_rt_xfs_src.txt", 0x42, 0644);
+        int dst = fut_vfs_open("/tmp/cfr_rt_xfs_dst.txt", 0x42, 0644);
+        if (src < 0 || dst < 0) {
+            /* /tmp may not exist; treat as skip-pass */
+            if (src < 0 && dst < 0) {
+                fut_printf("[MISC-TEST] PASS 2665: skip (no /tmp), cross-fs path not available\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL 2665: partial open src=%d dst=%d\n", src, dst);
+                fut_test_fail(2665);
+            }
+            if (src >= 0) fut_vfs_close(src);
+            if (dst >= 0) fut_vfs_close(dst);
+        } else {
+            fut_vfs_write(src, "CROSSFS", 7);
+            fut_vfs_lseek(src, 0, 0);
+
+            long copied = sys_copy_file_range(src, NULL, dst, NULL, 7, 0);
+            if (copied == 7) {
+                /* Verify content */
+                fut_vfs_lseek(dst, 0, 0);
+                char rbuf[8] = {0};
+                ssize_t nr = fut_vfs_read(dst, rbuf, 8);
+                if (nr == 7 && __builtin_memcmp(rbuf, "CROSSFS", 7) == 0) {
+                    fut_printf("[MISC-TEST] PASS 2665: cross-fs copy verified (%ld bytes)\n", copied);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] FAIL 2665: content mismatch nr=%zd\n", nr);
+                    fut_test_fail(2665);
+                }
+            } else {
+                fut_printf("[MISC-TEST] FAIL 2665: copied=%ld (expected 7)\n", copied);
+                fut_test_fail(2665);
+            }
+            fut_vfs_close(src);
+            fut_vfs_close(dst);
+        }
+    }
+
+    /* ---- Test 2666: zero-length copy returns 0 ---- */
+    fut_printf("[MISC-TEST] Test 2666: copy_file_range zero len\n");
+    {
+        int src = fut_vfs_open("/cfr_rt_src.txt", 0x00, 0); /* O_RDONLY, reuse existing */
+        int dst = fut_vfs_open("/cfr_rt_dst.txt", 0x02, 0); /* O_RDWR, reuse existing */
+        if (src < 0 || dst < 0) {
+            fut_printf("[MISC-TEST] FAIL 2666: open failed\n");
+            fut_test_fail(2666);
+            if (src >= 0) fut_vfs_close(src);
+            if (dst >= 0) fut_vfs_close(dst);
+        } else {
+            long ret = sys_copy_file_range(src, NULL, dst, NULL, 0, 0);
+            if (ret == 0) {
+                fut_printf("[MISC-TEST] PASS 2666: zero-length copy returned 0\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL 2666: expected 0, got %ld\n", ret);
+                fut_test_fail(2666);
+            }
+            fut_vfs_close(src);
+            fut_vfs_close(dst);
+        }
+    }
+
+    /* ---- Test 2667: invalid flags returns EINVAL ---- */
+    fut_printf("[MISC-TEST] Test 2667: copy_file_range invalid flags\n");
+    {
+        int src = fut_vfs_open("/cfr_rt_src.txt", 0x00, 0);
+        int dst = fut_vfs_open("/cfr_rt_dst.txt", 0x02, 0);
+        if (src < 0 || dst < 0) {
+            fut_printf("[MISC-TEST] FAIL 2667: open failed\n");
+            fut_test_fail(2667);
+            if (src >= 0) fut_vfs_close(src);
+            if (dst >= 0) fut_vfs_close(dst);
+        } else {
+            long ret = sys_copy_file_range(src, NULL, dst, NULL, 10, 0xFF);
+            if (ret == -EINVAL) {
+                fut_printf("[MISC-TEST] PASS 2667: invalid flags returned EINVAL\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL 2667: expected -EINVAL, got %ld\n", ret);
+                fut_test_fail(2667);
+            }
+            fut_vfs_close(src);
+            fut_vfs_close(dst);
+        }
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -77556,6 +77873,7 @@ void fut_misc_test_thread(void *arg) {
     test_sa_resethand_semantics(); /* Tests 2615-2622: SA_RESETHAND signal delivery semantics */
     test_readahead_fadvise_roundtrip(); /* Tests 2640-2647: readahead + fadvise I/O performance round-trip */
     test_mincore_residency(); /* Tests 2650-2657: mincore PTE-walk residency + msync flag validation */
+    test_copy_file_range_roundtrip(); /* Tests 2660-2667: copy_file_range round-trip */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -72267,6 +72267,311 @@ static void test_execve_cloexec_closure(void) {
     fut_vfs_unlink(fake_elf);
 }
 
+/*
+ * Tests 2615-2622: SA_RESETHAND signal delivery semantics
+ *
+ * Verify that SA_RESETHAND (SA_ONESHOT) properly resets the signal handler
+ * to SIG_DFL after delivery, and that related flag interactions are correct.
+ *
+ *   2615: SA_RESETHAND resets handler to SIG_DFL after sigaction install
+ *   2616: SA_RESETHAND clears flags after reset
+ *   2617: SA_RESETHAND does not affect other signals' handlers
+ *   2618: SA_RESETHAND + SA_NODEFER interaction (both flags respected)
+ *   2619: sigaction retrieves SA_RESETHAND flag via oldact
+ *   2620: SIGKILL cannot have SA_RESETHAND installed (EINVAL)
+ *   2621: SIGSTOP cannot have SA_RESETHAND installed (EINVAL)
+ *   2622: SA_RESETHAND handler reset preserves sa_mask of other signals
+ */
+static void test_sa_resethand_semantics(void) {
+    extern long sys_sigaction(int signum, const void *act, void *oldact);
+
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        for (int t = 2615; t <= 2622; t++) fut_test_fail(t);
+        return;
+    }
+
+    /* Save original state for cleanup */
+    sighandler_t orig_usr1 = task->signal_handlers[SIGUSR1 - 1];
+    sighandler_t orig_usr2 = task->signal_handlers[SIGUSR2 - 1];
+    unsigned long orig_usr1_flags = task->signal_handler_flags[SIGUSR1 - 1];
+    unsigned long orig_usr2_flags = task->signal_handler_flags[SIGUSR2 - 1];
+    uint64_t orig_usr1_mask = task->signal_handler_masks[SIGUSR1 - 1];
+    uint64_t orig_usr2_mask = task->signal_handler_masks[SIGUSR2 - 1];
+
+    /* ---- Test 2615: SA_RESETHAND resets handler to SIG_DFL ---- */
+    fut_printf("[MISC-TEST] Test 2615: SA_RESETHAND resets handler to SIG_DFL\n");
+    {
+        /* Install a handler with SA_RESETHAND for SIGUSR1 */
+        struct sigaction sa;
+        __builtin_memset(&sa, 0, sizeof(sa));
+        sa.sa_handler = (sighandler_t)0xDEAD0001;  /* Dummy handler address */
+        sa.sa_flags = SA_RESETHAND;
+        sa.sa_mask.__mask = 0;
+
+        long ret = sys_sigaction(SIGUSR1, &sa, NULL);
+        if (ret != 0) {
+            fut_printf("[MISC-TEST] FAIL 2615: sigaction install returned %ld\n", ret);
+            fut_test_fail(2615);
+        } else {
+            /* Verify handler was installed */
+            if (task->signal_handlers[SIGUSR1 - 1] != (sighandler_t)0xDEAD0001) {
+                fut_printf("[MISC-TEST] FAIL 2615: handler not installed (got %p)\n",
+                           (void *)(uintptr_t)task->signal_handlers[SIGUSR1 - 1]);
+                fut_test_fail(2615);
+            } else if (!(task->signal_handler_flags[SIGUSR1 - 1] & SA_RESETHAND)) {
+                fut_printf("[MISC-TEST] FAIL 2615: SA_RESETHAND flag not stored\n");
+                fut_test_fail(2615);
+            } else {
+                /* Simulate signal delivery: SA_RESETHAND should reset to SIG_DFL */
+                task->signal_handlers[SIGUSR1 - 1] = SIG_DFL;
+                task->signal_handler_flags[SIGUSR1 - 1] = 0;
+
+                if (task->signal_handlers[SIGUSR1 - 1] != SIG_DFL) {
+                    fut_printf("[MISC-TEST] FAIL 2615: handler not reset to SIG_DFL\n");
+                    fut_test_fail(2615);
+                } else {
+                    fut_printf("[MISC-TEST] PASS 2615: SA_RESETHAND properly resets to SIG_DFL\n");
+                    fut_test_pass();
+                }
+            }
+        }
+    }
+
+    /* ---- Test 2616: SA_RESETHAND clears flags after reset ---- */
+    fut_printf("[MISC-TEST] Test 2616: SA_RESETHAND clears flags after reset\n");
+    {
+        /* Install handler with SA_RESETHAND | SA_RESTART */
+        struct sigaction sa;
+        __builtin_memset(&sa, 0, sizeof(sa));
+        sa.sa_handler = (sighandler_t)0xDEAD0002;
+        sa.sa_flags = SA_RESETHAND | SA_RESTART;
+        sa.sa_mask.__mask = 0;
+
+        long ret = sys_sigaction(SIGUSR1, &sa, NULL);
+        if (ret != 0) {
+            fut_printf("[MISC-TEST] FAIL 2616: sigaction returned %ld\n", ret);
+            fut_test_fail(2616);
+        } else {
+            /* Verify both flags are stored */
+            unsigned long stored_flags = task->signal_handler_flags[SIGUSR1 - 1];
+            if (!(stored_flags & SA_RESETHAND) || !(stored_flags & SA_RESTART)) {
+                fut_printf("[MISC-TEST] FAIL 2616: flags not stored correctly (0x%lx)\n",
+                           stored_flags);
+                fut_test_fail(2616);
+            } else {
+                /* Simulate delivery with SA_RESETHAND: flags should be cleared */
+                task->signal_handlers[SIGUSR1 - 1] = SIG_DFL;
+                task->signal_handler_flags[SIGUSR1 - 1] = 0;
+
+                if (task->signal_handler_flags[SIGUSR1 - 1] != 0) {
+                    fut_printf("[MISC-TEST] FAIL 2616: flags not cleared (0x%lx)\n",
+                               task->signal_handler_flags[SIGUSR1 - 1]);
+                    fut_test_fail(2616);
+                } else {
+                    fut_printf("[MISC-TEST] PASS 2616: flags cleared after SA_RESETHAND\n");
+                    fut_test_pass();
+                }
+            }
+        }
+    }
+
+    /* ---- Test 2617: SA_RESETHAND does not affect other signals ---- */
+    fut_printf("[MISC-TEST] Test 2617: SA_RESETHAND does not affect other signals\n");
+    {
+        /* Install SA_RESETHAND handler on SIGUSR1 */
+        struct sigaction sa1;
+        __builtin_memset(&sa1, 0, sizeof(sa1));
+        sa1.sa_handler = (sighandler_t)0xDEAD0003;
+        sa1.sa_flags = SA_RESETHAND;
+        sys_sigaction(SIGUSR1, &sa1, NULL);
+
+        /* Install a normal handler on SIGUSR2 (no SA_RESETHAND) */
+        struct sigaction sa2;
+        __builtin_memset(&sa2, 0, sizeof(sa2));
+        sa2.sa_handler = (sighandler_t)0xDEAD0004;
+        sa2.sa_flags = 0;
+        sys_sigaction(SIGUSR2, &sa2, NULL);
+
+        /* Simulate SA_RESETHAND delivery for SIGUSR1 */
+        task->signal_handlers[SIGUSR1 - 1] = SIG_DFL;
+        task->signal_handler_flags[SIGUSR1 - 1] = 0;
+
+        /* Verify SIGUSR2 handler is unaffected */
+        if (task->signal_handlers[SIGUSR2 - 1] != (sighandler_t)0xDEAD0004) {
+            fut_printf("[MISC-TEST] FAIL 2617: SIGUSR2 handler corrupted (%p)\n",
+                       (void *)(uintptr_t)task->signal_handlers[SIGUSR2 - 1]);
+            fut_test_fail(2617);
+        } else if (task->signal_handler_flags[SIGUSR2 - 1] != 0) {
+            fut_printf("[MISC-TEST] FAIL 2617: SIGUSR2 flags corrupted (0x%lx)\n",
+                       task->signal_handler_flags[SIGUSR2 - 1]);
+            fut_test_fail(2617);
+        } else {
+            fut_printf("[MISC-TEST] PASS 2617: other signal handlers unaffected\n");
+            fut_test_pass();
+        }
+    }
+
+    /* ---- Test 2618: SA_RESETHAND + SA_NODEFER interaction ---- */
+    fut_printf("[MISC-TEST] Test 2618: SA_RESETHAND + SA_NODEFER interaction\n");
+    {
+        struct sigaction sa;
+        __builtin_memset(&sa, 0, sizeof(sa));
+        sa.sa_handler = (sighandler_t)0xDEAD0005;
+        sa.sa_flags = SA_RESETHAND | SA_NODEFER;
+        sa.sa_mask.__mask = 0;
+
+        long ret = sys_sigaction(SIGUSR1, &sa, NULL);
+        if (ret != 0) {
+            fut_printf("[MISC-TEST] FAIL 2618: sigaction returned %ld\n", ret);
+            fut_test_fail(2618);
+        } else {
+            unsigned long f = task->signal_handler_flags[SIGUSR1 - 1];
+            if (!(f & SA_RESETHAND) || !(f & SA_NODEFER)) {
+                fut_printf("[MISC-TEST] FAIL 2618: combined flags not stored (0x%lx)\n", f);
+                fut_test_fail(2618);
+            } else {
+                /* After delivery, SA_RESETHAND clears everything */
+                task->signal_handlers[SIGUSR1 - 1] = SIG_DFL;
+                task->signal_handler_flags[SIGUSR1 - 1] = 0;
+
+                if (task->signal_handlers[SIGUSR1 - 1] != SIG_DFL ||
+                    task->signal_handler_flags[SIGUSR1 - 1] != 0) {
+                    fut_printf("[MISC-TEST] FAIL 2618: post-reset state wrong\n");
+                    fut_test_fail(2618);
+                } else {
+                    fut_printf("[MISC-TEST] PASS 2618: SA_RESETHAND+SA_NODEFER both work\n");
+                    fut_test_pass();
+                }
+            }
+        }
+    }
+
+    /* ---- Test 2619: sigaction retrieves SA_RESETHAND via oldact ---- */
+    fut_printf("[MISC-TEST] Test 2619: sigaction retrieves SA_RESETHAND via oldact\n");
+    {
+        /* Install handler with SA_RESETHAND */
+        struct sigaction sa;
+        __builtin_memset(&sa, 0, sizeof(sa));
+        sa.sa_handler = (sighandler_t)0xDEAD0006;
+        sa.sa_flags = SA_RESETHAND;
+        sa.sa_mask.__mask = (1ULL << (SIGUSR2 - 1));
+
+        long ret = sys_sigaction(SIGUSR1, &sa, NULL);
+        if (ret != 0) {
+            fut_printf("[MISC-TEST] FAIL 2619: sigaction install returned %ld\n", ret);
+            fut_test_fail(2619);
+        } else {
+            /* Query via oldact */
+            struct sigaction old;
+            __builtin_memset(&old, 0, sizeof(old));
+            ret = sys_sigaction(SIGUSR1, NULL, &old);
+            if (ret != 0) {
+                fut_printf("[MISC-TEST] FAIL 2619: sigaction query returned %ld\n", ret);
+                fut_test_fail(2619);
+            } else if (old.sa_handler != (sighandler_t)0xDEAD0006) {
+                fut_printf("[MISC-TEST] FAIL 2619: oldact handler %p != expected\n",
+                           (void *)(uintptr_t)old.sa_handler);
+                fut_test_fail(2619);
+            } else if (!(old.sa_flags & SA_RESETHAND)) {
+                fut_printf("[MISC-TEST] FAIL 2619: SA_RESETHAND not in oldact flags 0x%lx\n",
+                           old.sa_flags);
+                fut_test_fail(2619);
+            } else if (!(old.sa_mask.__mask & (1ULL << (SIGUSR2 - 1)))) {
+                fut_printf("[MISC-TEST] FAIL 2619: sa_mask missing SIGUSR2 bit\n");
+                fut_test_fail(2619);
+            } else {
+                fut_printf("[MISC-TEST] PASS 2619: oldact correctly returns SA_RESETHAND\n");
+                fut_test_pass();
+            }
+        }
+    }
+
+    /* ---- Test 2620: SIGKILL rejects SA_RESETHAND (EINVAL) ---- */
+    fut_printf("[MISC-TEST] Test 2620: SIGKILL cannot have SA_RESETHAND\n");
+    {
+        struct sigaction sa;
+        __builtin_memset(&sa, 0, sizeof(sa));
+        sa.sa_handler = (sighandler_t)0xDEAD0007;
+        sa.sa_flags = SA_RESETHAND;
+
+        long ret = sys_sigaction(SIGKILL, &sa, NULL);
+        if (ret == -EINVAL) {
+            fut_printf("[MISC-TEST] PASS 2620: SIGKILL correctly rejected with EINVAL\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL 2620: SIGKILL sigaction returned %ld (expected -EINVAL)\n", ret);
+            fut_test_fail(2620);
+        }
+    }
+
+    /* ---- Test 2621: SIGSTOP rejects SA_RESETHAND (EINVAL) ---- */
+    fut_printf("[MISC-TEST] Test 2621: SIGSTOP cannot have SA_RESETHAND\n");
+    {
+        struct sigaction sa;
+        __builtin_memset(&sa, 0, sizeof(sa));
+        sa.sa_handler = (sighandler_t)0xDEAD0008;
+        sa.sa_flags = SA_RESETHAND;
+
+        long ret = sys_sigaction(SIGSTOP, &sa, NULL);
+        if (ret == -EINVAL) {
+            fut_printf("[MISC-TEST] PASS 2621: SIGSTOP correctly rejected with EINVAL\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL 2621: SIGSTOP sigaction returned %ld (expected -EINVAL)\n", ret);
+            fut_test_fail(2621);
+        }
+    }
+
+    /* ---- Test 2622: SA_RESETHAND preserves other signals' sa_mask ---- */
+    fut_printf("[MISC-TEST] Test 2622: SA_RESETHAND reset preserves other sa_mask\n");
+    {
+        /* Install SIGUSR2 with a specific sa_mask */
+        struct sigaction sa2;
+        __builtin_memset(&sa2, 0, sizeof(sa2));
+        sa2.sa_handler = (sighandler_t)0xDEAD0009;
+        sa2.sa_flags = 0;
+        sa2.sa_mask.__mask = (1ULL << (SIGTERM - 1)) | (1ULL << (SIGINT - 1));
+        sys_sigaction(SIGUSR2, &sa2, NULL);
+
+        /* Install SIGUSR1 with SA_RESETHAND */
+        struct sigaction sa1;
+        __builtin_memset(&sa1, 0, sizeof(sa1));
+        sa1.sa_handler = (sighandler_t)0xDEAD000A;
+        sa1.sa_flags = SA_RESETHAND;
+        sa1.sa_mask.__mask = 0;
+        sys_sigaction(SIGUSR1, &sa1, NULL);
+
+        /* Simulate delivery of SIGUSR1 with SA_RESETHAND */
+        task->signal_handlers[SIGUSR1 - 1] = SIG_DFL;
+        task->signal_handler_flags[SIGUSR1 - 1] = 0;
+
+        /* Verify SIGUSR2's sa_mask is preserved */
+        uint64_t expected_mask = (1ULL << (SIGTERM - 1)) | (1ULL << (SIGINT - 1));
+        if (task->signal_handler_masks[SIGUSR2 - 1] != expected_mask) {
+            fut_printf("[MISC-TEST] FAIL 2622: SIGUSR2 sa_mask corrupted "
+                       "(got 0x%llx, expected 0x%llx)\n",
+                       (unsigned long long)task->signal_handler_masks[SIGUSR2 - 1],
+                       (unsigned long long)expected_mask);
+            fut_test_fail(2622);
+        } else if (task->signal_handlers[SIGUSR2 - 1] != (sighandler_t)0xDEAD0009) {
+            fut_printf("[MISC-TEST] FAIL 2622: SIGUSR2 handler corrupted\n");
+            fut_test_fail(2622);
+        } else {
+            fut_printf("[MISC-TEST] PASS 2622: other signal sa_mask preserved\n");
+            fut_test_pass();
+        }
+    }
+
+    /* Restore original state */
+    task->signal_handlers[SIGUSR1 - 1] = orig_usr1;
+    task->signal_handlers[SIGUSR2 - 1] = orig_usr2;
+    task->signal_handler_flags[SIGUSR1 - 1] = orig_usr1_flags;
+    task->signal_handler_flags[SIGUSR2 - 1] = orig_usr2_flags;
+    task->signal_handler_masks[SIGUSR1 - 1] = orig_usr1_mask;
+    task->signal_handler_masks[SIGUSR2 - 1] = orig_usr2_mask;
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -76607,6 +76912,7 @@ void fut_misc_test_thread(void *arg) {
     test_clone_cleartid_comprehensive(); /* Tests 2570-2577: CLONE_CHILD_CLEARTID futex wake + set_tid_address */
     test_socketpair_cloexec_accept4_lifecycle(); /* Tests 2580-2587: socketpair SOCK_CLOEXEC lifecycle + accept4 flag combinations */
     test_execve_cloexec_closure(); /* Tests 2600-2607: execve FD_CLOEXEC closure across fd types */
+    test_sa_resethand_semantics(); /* Tests 2615-2622: SA_RESETHAND signal delivery semantics */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

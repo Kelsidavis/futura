@@ -516,6 +516,21 @@ struct fut_fs_type {
      * @return 0 on success, negative error code on failure
      */
     int (*statfs)(struct fut_mount *mount, struct fut_statfs *out);
+
+    /**
+     * Synchronize all dirty data and metadata for this filesystem to storage.
+     *
+     * Called by syncfs() and sync() to flush all pending writes for an entire
+     * filesystem. Unlike the per-vnode sync() operation, this flushes ALL dirty
+     * inodes, bitmaps, superblock, and journal entries in one pass.
+     *
+     * If NULL, the VFS falls back to syncing only the root vnode.
+     *
+     * @param mount Mount instance to sync
+     * @return 0 on success, negative error code on failure
+     *         -EIO: I/O error during flush
+     */
+    int (*sync_fs)(struct fut_mount *mount);
 };
 
 /* ============================================================

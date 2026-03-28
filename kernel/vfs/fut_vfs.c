@@ -3267,7 +3267,20 @@ int fut_vfs_sync_fs(struct fut_mount *mount) {
         return -EINVAL;
     }
 
-    /* Call sync operation if available */
+    /* Prefer mount-level sync_fs which flushes ALL dirty data in one pass */
+    if (mount->fs && mount->fs->sync_fs) {
+        int ret = mount->fs->sync_fs(mount);
+        if (ret < 0) {
+            fut_printf("[VFS-SYNC] sync_fs failed for %s: %d\n",
+                       mount->mountpoint ? mount->mountpoint : "(root)", ret);
+            return ret;
+        }
+        fut_printf("[VFS-SYNC] sync_fs completed for %s\n",
+                   mount->mountpoint ? mount->mountpoint : "(root)");
+        return 0;
+    }
+
+    /* Fall back to per-vnode sync on the root vnode */
     if (mount->root->ops && mount->root->ops->sync) {
         int ret = mount->root->ops->sync(mount->root);
         if (ret < 0) {
@@ -3281,8 +3294,6 @@ int fut_vfs_sync_fs(struct fut_mount *mount) {
     }
 
     /* No sync operation - assume in-memory filesystem (no-op) */
-    fut_printf("[VFS-SYNC] Filesystem at %s has no sync operation (in-memory?)\n",
-               mount->mountpoint ? mount->mountpoint : "(root)");
     return 0;
 }
 

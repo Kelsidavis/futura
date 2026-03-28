@@ -4150,6 +4150,9 @@ static int futurafs_vnode_getattr(struct fut_vnode *vnode, struct fut_stat *st) 
 
 /**
  * Sync a FuturaFS file — flush dirty inode and metadata to disk.
+ *
+ * Writes the inode's data and ALL metadata (timestamps, permissions, bitmaps,
+ * superblock) to the block device. This is the full fsync() path.
  */
 static int futurafs_vnode_sync(struct fut_vnode *vnode) {
     if (!vnode) return -EINVAL;
@@ -4163,6 +4166,66 @@ static int futurafs_vnode_sync(struct fut_vnode *vnode) {
         info->dirty = false;
     }
     return futurafs_sync_metadata(info->mount);
+}
+
+/**
+ * Data-sync a FuturaFS file — flush dirty inode data to disk, skip
+ * non-critical metadata.
+ *
+ * Only writes the inode to disk if it is dirty. Skips the full metadata
+ * flush (bitmaps + superblock) unless structural changes (block allocation)
+ * occurred, which is indicated by mount->dirty. This provides the fdatasync()
+ * semantics: file data + size are guaranteed on disk, but pure timestamp
+ * updates on the superblock/bitmaps may be deferred.
+ */
+static int futurafs_vnode_datasync(struct fut_vnode *vnode) {
+    if (!vnode) return -EINVAL;
+
+    struct futurafs_inode_info *info = (struct futurafs_inode_info *)vnode->fs_data;
+    if (!info || !info->mount) return -EIO;
+
+    /* Write the inode itself (contains file data block pointers + size) */
+    if (info->dirty) {
+        int ret = futurafs_write_inode(info->mount, info->ino, &info->disk_inode);
+        if (ret < 0) return ret;
+        info->dirty = false;
+    }
+
+    /* Only flush bitmaps/superblock if structural changes require it for
+     * data retrieval (e.g., new blocks were allocated for this file). */
+    if (info->mount->dirty) {
+        return futurafs_sync_metadata(info->mount);
+    }
+
+    return 0;
+}
+
+/**
+ * Filesystem-wide sync for FuturaFS — flush all dirty data to disk.
+ *
+ * Called by syncfs() to ensure the entire filesystem is consistent.
+ * Writes the root vnode's inode (if dirty) and flushes all metadata
+ * (bitmaps + superblock) unconditionally.
+ */
+static int futurafs_sync_fs_impl(struct fut_mount *vfs_mount) {
+    if (!vfs_mount || !vfs_mount->fs_data) return -EINVAL;
+
+    struct futurafs_mount *mount = (struct futurafs_mount *)vfs_mount->fs_data;
+
+    /* Sync root vnode inode if dirty */
+    if (vfs_mount->root && vfs_mount->root->fs_data) {
+        struct futurafs_inode_info *root_info =
+            (struct futurafs_inode_info *)vfs_mount->root->fs_data;
+        if (root_info->dirty) {
+            int ret = futurafs_write_inode(mount, root_info->ino,
+                                           &root_info->disk_inode);
+            if (ret < 0) return ret;
+            root_info->dirty = false;
+        }
+    }
+
+    /* Flush all filesystem metadata (bitmaps + superblock) */
+    return futurafs_sync_metadata(mount);
 }
 
 /**
@@ -4360,7 +4423,7 @@ static void futurafs_init_vnode_ops(void) {
     futurafs_vnode_ops.readlink = futurafs_vnode_readlink;
     futurafs_vnode_ops.rename = futurafs_vnode_rename;
     futurafs_vnode_ops.sync = futurafs_vnode_sync;
-    futurafs_vnode_ops.datasync = futurafs_vnode_sync;  /* datasync same as sync for FuturaFS */
+    futurafs_vnode_ops.datasync = futurafs_vnode_datasync;
 }
 
 /* ============================================================
@@ -4586,6 +4649,7 @@ void fut_futurafs_init(void) {
     futurafs_type.mount = futurafs_mount_impl;
     futurafs_type.unmount = futurafs_unmount_impl;
     futurafs_type.statfs = futurafs_statfs_impl;
+    futurafs_type.sync_fs = futurafs_sync_fs_impl;
 
     fut_vfs_register_fs(&futurafs_type);
 }

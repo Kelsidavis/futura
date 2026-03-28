@@ -382,6 +382,12 @@ void fut_task_destroy(fut_task_t *task) {
         task->fd_table = NULL;
     }
 
+    /* Free per-FD flags array (allocated alongside fd_table in fut_task_create) */
+    if (task->fd_flags) {
+        fut_free(task->fd_flags);
+        task->fd_flags = NULL;
+    }
+
     fut_spinlock_acquire(&task_list_lock);
     if (task->parent) {
         task_detach_child(task->parent, task);
@@ -415,6 +421,43 @@ void fut_task_destroy(fut_task_t *task) {
     if (task->auxv) {
         fut_free(task->auxv);
         task->auxv = NULL;
+    }
+
+    /* Free seccomp BPF filter chain if installed */
+    if (task->seccomp_filter) {
+        fut_free(task->seccomp_filter);
+        task->seccomp_filter = NULL;
+        task->seccomp_filter_count = 0;
+    }
+
+    /* Release namespace references (each *_unref is a no-op for the init
+     * namespace, so this is safe even for tasks that never called unshare) */
+    {
+        extern void pidns_unref(struct pid_namespace *);
+        extern void mntns_unref(struct mount_namespace *);
+        extern void utsns_unref(struct uts_namespace *);
+        extern void netns_unref(struct net_namespace *);
+        extern void userns_unref(struct user_namespace *);
+        if (task->pid_ns) {
+            pidns_unref(task->pid_ns);
+            task->pid_ns = NULL;
+        }
+        if (task->mnt_ns) {
+            mntns_unref(task->mnt_ns);
+            task->mnt_ns = NULL;
+        }
+        if (task->uts_ns) {
+            utsns_unref(task->uts_ns);
+            task->uts_ns = NULL;
+        }
+        if (task->net_ns) {
+            netns_unref(task->net_ns);
+            task->net_ns = NULL;
+        }
+        if (task->user_ns) {
+            userns_unref(task->user_ns);
+            task->user_ns = NULL;
+        }
     }
 
     fut_free(task);
@@ -579,6 +622,21 @@ fut_task_t *fut_task_find_new_parent(fut_task_t *dying_task) {
 static void task_cleanup_and_exit(fut_task_t *task, int status, int signal) {
     if (!task) {
         fut_thread_exit();
+    }
+
+    /* Disarm all timers to prevent stale SIGALRM/SIGVTALRM/SIGPROF delivery
+     * and POSIX timer signals firing after the task is a zombie. The timer
+     * tick handler checks these fields on every tick for every live task,
+     * so zeroing them here prevents use-after-free signal delivery. */
+    task->alarm_expires_ms = 0;
+    task->itimer_real_interval_ms = 0;
+    task->itimer_virt_value_ms = 0;
+    task->itimer_virt_interval_ms = 0;
+    task->itimer_prof_value_ms = 0;
+    task->itimer_prof_interval_ms = 0;
+    for (int i = 0; i < FUT_POSIX_TIMER_MAX; i++) {
+        task->posix_timers[i].armed = 0;
+        task->posix_timers[i].active = 0;
     }
 
     /* Phase 4: Implement clear_child_tid for NPTL/pthread support

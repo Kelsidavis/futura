@@ -85,6 +85,9 @@ void fut_pmm_init(uint64_t mem_size_bytes, uintptr_t phys_base) {
 }
 
 static void *pmm_alloc_page_internal(void) {
+    /* Guard: PMM must be initialized before any allocation attempt */
+    if (!pmm_bitmap || pmm_total == 0) return nullptr;
+
     // Linear scan for first free page
     for (uint64_t i = pmm_reserved_pages; i < pmm_total; ++i) {
         if (!BITMAP_TST(i)) {
@@ -136,6 +139,14 @@ void fut_pmm_free_page(void *addr) {
     // Calculate page index
     uintptr_t addr_val = (uintptr_t)addr;
 
+    /* Reject misaligned addresses — every valid page address must be
+     * page-aligned. A misaligned free indicates a corrupted pointer. */
+    if (addr_val & (FUT_PAGE_SIZE - 1)) {
+        fut_printf("[PMM] WARNING: Misaligned free rejected: %p (not %u-byte aligned)\n",
+                   addr, (unsigned)FUT_PAGE_SIZE);
+        return;
+    }
+
 #if defined(__x86_64__)
     phys_addr_t phys = pmap_virt_to_phys(addr_val);
 #else
@@ -143,22 +154,36 @@ void fut_pmm_free_page(void *addr) {
 #endif
 
     if (phys < pmm_base) {
+        fut_printf("[PMM] WARNING: Free rejected: phys %p below PMM base %p\n",
+                   (void *)(uintptr_t)phys, (void *)(uintptr_t)pmm_base);
         return;
     }
 
     uint64_t idx = (phys - pmm_base) / FUT_PAGE_SIZE;
 
-    // Validate and free
-    if (idx < pmm_total && BITMAP_TST(idx)) {
-        /* Zero the page before freeing to prevent information leakage.
-         * This ensures a subsequently allocated page doesn't contain
-         * data from a previous process (passwords, keys, etc). */
-        volatile uint8_t *p = (volatile uint8_t *)addr;
-        for (size_t i = 0; i < FUT_PAGE_SIZE; i++) p[i] = 0;
-
-        BITMAP_CLR(idx);
-        ++pmm_free;
+    /* Out-of-bounds check — reject addresses beyond managed physical memory */
+    if (idx >= pmm_total) {
+        fut_printf("[PMM] WARNING: Free rejected: phys %p beyond managed range (idx=%llu >= total=%llu)\n",
+                   (void *)(uintptr_t)phys, (unsigned long long)idx, (unsigned long long)pmm_total);
+        return;
     }
+
+    /* Double-free detection — if the bitmap bit is already clear,
+     * the page was already freed. Log and reject to prevent corruption. */
+    if (!BITMAP_TST(idx)) {
+        fut_printf("[PMM] WARNING: Double-free detected for phys %p (page idx %llu already free)\n",
+                   (void *)(uintptr_t)phys, (unsigned long long)idx);
+        return;
+    }
+
+    /* Zero the page before freeing to prevent information leakage.
+     * This ensures a subsequently allocated page doesn't contain
+     * data from a previous process (passwords, keys, etc). */
+    volatile uint8_t *p = (volatile uint8_t *)addr;
+    for (size_t i = 0; i < FUT_PAGE_SIZE; i++) p[i] = 0;
+
+    BITMAP_CLR(idx);
+    ++pmm_free;
 }
 
 uint64_t fut_pmm_total_pages(void) {
@@ -377,6 +402,11 @@ void *fut_realloc(void *ptr, size_t new_size) {
 
 void *fut_malloc_pages(size_t num_pages) {
     if (!num_pages) return nullptr;
+
+    /* Reject absurdly large allocations that would exceed physical memory.
+     * This prevents callers with corrupted size values from spinning
+     * through billions of allocation attempts before failing. */
+    if (num_pages > pmm_total) return nullptr;
 
     // Try to allocate contiguous pages from PMM
     // Note: Current PMM implementation doesn't support multi-page contiguous allocation

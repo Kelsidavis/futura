@@ -12,6 +12,7 @@
 #include <kernel/fut_lock.h>
 #include <kernel/fut_blockdev.h>
 #include <kernel/fut_timer.h>
+#include <kernel/fut_task.h>
 #include <kernel/kprintf.h>
 #include <kernel/errno.h>
 #include <string.h>
@@ -3272,8 +3273,7 @@ static ssize_t futurafs_vnode_read(struct fut_vnode *vnode, void *buf, size_t si
 
     /* Update atime on successful read (POSIX) */
     if (ret > 0) {
-        extern uint64_t fut_get_ticks(void);
-        inode_info->disk_inode.atime = fut_get_ticks() / 100;
+        inode_info->disk_inode.atime = fut_get_time_ns();
     }
     return ret;
 }
@@ -3288,9 +3288,8 @@ static ssize_t futurafs_vnode_write(struct fut_vnode *vnode, const void *buf, si
     if (ret > 0) {
         vnode->size = inode_info->disk_inode.size;
 
-        /* Update mtime/ctime (seconds since epoch from kernel ticks) */
-        extern uint64_t fut_get_ticks(void);
-        uint64_t now = fut_get_ticks() / 100;  /* ticks at 100Hz → seconds */
+        /* Update mtime/ctime (nanoseconds since epoch) */
+        uint64_t now = fut_get_time_ns();
         inode_info->disk_inode.mtime = now;
         inode_info->disk_inode.ctime = now;
     }
@@ -3527,11 +3526,20 @@ static int futurafs_vnode_create(struct fut_vnode *dir, const char *name, uint32
     if ((inode.mode & FUTURAFS_S_IFMT) == 0) {
         inode.mode |= FUTURAFS_S_IFREG;
     }
-    inode.uid = 0;
-    inode.gid = 0;
+
+    /* Inherit uid/gid from current task (POSIX) */
+    fut_task_t *task = fut_task_current();
+    inode.uid = task ? task->uid : 0;
+    inode.gid = task ? task->gid : 0;
     inode.nlinks = 1;
     inode.size = 0;
     inode.blocks = 0;
+
+    /* Set timestamps on creation */
+    uint64_t now = fut_get_time_ns();
+    inode.atime = now;
+    inode.mtime = now;
+    inode.ctime = now;
 
     ret = futurafs_write_inode(mount, new_ino, &inode);
     if (ret < 0) {
@@ -3547,6 +3555,10 @@ static int futurafs_vnode_create(struct fut_vnode *dir, const char *name, uint32
         futurafs_sync_metadata(mount);
         return ret;
     }
+
+    /* Update parent directory mtime/ctime (new entry added) */
+    dir_info->disk_inode.mtime = now;
+    dir_info->disk_inode.ctime = now;
 
     dir->size = dir_info->disk_inode.size;
     if (futurafs_write_inode(mount, dir_info->ino, &dir_info->disk_inode) < 0) {
@@ -3630,12 +3642,21 @@ static int futurafs_vnode_mkdir(struct fut_vnode *dir, const char *name, uint32_
     if ((inode.mode & FUTURAFS_S_IFMT) == 0) {
         inode.mode |= FUTURAFS_S_IFDIR;
     }
-    inode.uid = 0;
-    inode.gid = 0;
+
+    /* Inherit uid/gid from current task (POSIX) */
+    fut_task_t *task = fut_task_current();
+    inode.uid = task ? task->uid : 0;
+    inode.gid = task ? task->gid : 0;
     inode.nlinks = 2;  /* '.' and '..' */
     inode.size = 2 * sizeof(struct futurafs_dirent);
     inode.blocks = 1;
     inode.direct[0] = new_block;
+
+    /* Set timestamps on creation */
+    uint64_t now = fut_get_time_ns();
+    inode.atime = now;
+    inode.mtime = now;
+    inode.ctime = now;
 
     ret = futurafs_write_inode(mount, new_ino, &inode);
     if (ret < 0) {
@@ -3652,6 +3673,10 @@ static int futurafs_vnode_mkdir(struct fut_vnode *dir, const char *name, uint32_
         futurafs_sync_metadata(mount);
         return ret;
     }
+
+    /* Update parent directory mtime/ctime (new entry added) */
+    dir_info->disk_inode.mtime = now;
+    dir_info->disk_inode.ctime = now;
 
     dir_info->disk_inode.nlinks++;
     dir->nlinks = dir_info->disk_inode.nlinks;
@@ -3720,20 +3745,25 @@ static int futurafs_vnode_unlink(struct fut_vnode *dir, const char *name) {
         return ret;
     }
 
+    /* Update parent directory timestamps (entry removed) */
+    uint64_t now = fut_get_time_ns();
+    dir_info->disk_inode.mtime = now;
+    dir_info->disk_inode.ctime = now;
+
     dir_info->disk_inode.size = dir_info->disk_inode.blocks * FUTURAFS_BLOCK_SIZE;
     dir->size = dir_info->disk_inode.size;
+    dir_info->dirty = true;
 
-    if (dir_info->dirty) {
-        if (futurafs_write_inode(mount, dir_info->ino, &dir_info->disk_inode) < 0) {
-            dir_info->dirty = true;
-            return FUTURAFS_EIO;
-        }
-        dir_info->dirty = false;
+    if (futurafs_write_inode(mount, dir_info->ino, &dir_info->disk_inode) < 0) {
+        return FUTURAFS_EIO;
     }
+    dir_info->dirty = false;
 
     if (target_inode.nlinks > 0) {
         target_inode.nlinks--;
     }
+    /* Update ctime on link count change */
+    target_inode.ctime = now;
 
     if (target_inode.nlinks == 0) {
         /* Check if any vnodes still reference this inode (open file handles).
@@ -3905,6 +3935,15 @@ static int futurafs_vnode_symlink(struct fut_vnode *parent, const char *linkname
     inode.nlinks = 1;
     inode.size = target_len;
 
+    /* Set timestamps and inherit uid/gid */
+    uint64_t now = fut_get_time_ns();
+    inode.atime = now;
+    inode.mtime = now;
+    inode.ctime = now;
+    fut_task_t *task = fut_task_current();
+    inode.uid = task ? task->uid : 0;
+    inode.gid = task ? task->gid : 0;
+
     /* Allocate a data block for the target path */
     uint64_t block_num;
     ret = futurafs_alloc_block(mount, &block_num);
@@ -3992,7 +4031,7 @@ static ssize_t futurafs_vnode_readlink(struct fut_vnode *vnode, char *buf, size_
 
 /**
  * Truncate a FuturaFS file to the specified length.
- * Currently only supports truncation to 0 (used by O_TRUNC).
+ * Supports truncation to any size. Frees blocks beyond the new length.
  */
 static int futurafs_vnode_truncate(struct fut_vnode *vnode, uint64_t length) {
     if (!vnode || vnode->type != VN_REG) {
@@ -4005,6 +4044,7 @@ static int futurafs_vnode_truncate(struct fut_vnode *vnode, uint64_t length) {
     }
 
     struct futurafs_mount *mount = info->mount;
+    uint64_t now = fut_get_time_ns();
 
     if (length == 0) {
         /* Truncate to zero: release all data blocks */
@@ -4013,6 +4053,8 @@ static int futurafs_vnode_truncate(struct fut_vnode *vnode, uint64_t length) {
             return ret;
         }
         info->disk_inode.size = 0;
+        info->disk_inode.mtime = now;
+        info->disk_inode.ctime = now;
         info->dirty = true;
         vnode->size = 0;
 
@@ -4027,9 +4069,38 @@ static int futurafs_vnode_truncate(struct fut_vnode *vnode, uint64_t length) {
         return futurafs_sync_metadata(mount);
     }
 
-    /* Truncation to non-zero length: just update size (blocks stay allocated) */
+    /* Truncation to non-zero length */
     if (length < info->disk_inode.size) {
+        /* Free blocks beyond the new size */
+        uint64_t new_block_count = (length + FUTURAFS_BLOCK_SIZE - 1) / FUTURAFS_BLOCK_SIZE;
+        for (int i = (int)new_block_count; i < FUTURAFS_DIRECT_BLOCKS; i++) {
+            if (info->disk_inode.direct[i] != 0) {
+                futurafs_free_block(mount, info->disk_inode.direct[i]);
+                info->disk_inode.direct[i] = 0;
+                if (info->disk_inode.blocks > 0) {
+                    info->disk_inode.blocks--;
+                }
+            }
+        }
+
         info->disk_inode.size = length;
+        info->disk_inode.mtime = now;
+        info->disk_inode.ctime = now;
+        info->dirty = true;
+        vnode->size = length;
+
+        int ret = futurafs_write_inode(mount, info->ino, &info->disk_inode);
+        if (ret < 0) return ret;
+        info->dirty = false;
+
+        return futurafs_sync_metadata(mount);
+    }
+
+    /* Extending file: just update size (sparse file - unallocated blocks read as zero) */
+    if (length > info->disk_inode.size) {
+        info->disk_inode.size = length;
+        info->disk_inode.mtime = now;
+        info->disk_inode.ctime = now;
         info->dirty = true;
         vnode->size = length;
 
@@ -4061,13 +4132,13 @@ static int futurafs_vnode_getattr(struct fut_vnode *vnode, struct fut_stat *st) 
     st->st_blocks = (uint64_t)info->disk_inode.blocks * (FUTURAFS_BLOCK_SIZE / 512);
     st->st_dev = vnode->mount ? vnode->mount->st_dev : 0;
 
-    /* Timestamps from disk inode (stored as seconds since epoch) */
-    st->st_atime = info->disk_inode.atime;
-    st->st_atime_nsec = 0;
-    st->st_mtime = info->disk_inode.mtime;
-    st->st_mtime_nsec = 0;
-    st->st_ctime = info->disk_inode.ctime;
-    st->st_ctime_nsec = 0;
+    /* Timestamps from disk inode (stored as nanoseconds since epoch) */
+    st->st_atime = info->disk_inode.atime / 1000000000ULL;
+    st->st_atime_nsec = info->disk_inode.atime % 1000000000ULL;
+    st->st_mtime = info->disk_inode.mtime / 1000000000ULL;
+    st->st_mtime_nsec = info->disk_inode.mtime % 1000000000ULL;
+    st->st_ctime = info->disk_inode.ctime / 1000000000ULL;
+    st->st_ctime_nsec = info->disk_inode.ctime % 1000000000ULL;
 
     return 0;
 }
@@ -4170,9 +4241,10 @@ static int futurafs_vnode_link(struct fut_vnode *old_vnode, const char *oldpath,
     }
     dir_info->dirty = false;
 
-    /* Increment nlinks on the target inode */
+    /* Increment nlinks on the target inode and update ctime */
     old_info->disk_inode.nlinks++;
     old_vnode->nlinks++;
+    old_info->disk_inode.ctime = fut_get_time_ns();
     ret = futurafs_write_inode(mount, old_info->ino, &old_info->disk_inode);
     if (ret < 0) return ret;
 

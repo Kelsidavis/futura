@@ -17449,6 +17449,8 @@ static void cmd_screen(int argc, char *argv[]) {
     }
 }
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmisleading-indentation"
 static void cmd_split(int argc, char *argv[]) {
     int lp = 1000; const char *inf = NULL, *pfx = "x";
     for (int i = 1; i < argc; i++) { if (argv[i][0]=='-'&&argv[i][1]=='l') { if (argv[i][2]) lp=simple_atoi(&argv[i][2]); else if(i+1<argc) lp=simple_atoi(argv[++i]); } else if (!inf) inf=argv[i]; else pfx=argv[i]; }
@@ -17502,3 +17504,4 @@ static void cmd_column(int argc, char *argv[]) {
     char *s=fp;while(*fp&&*fp!=' '&&*fp!='\t')fp++;int fl=(int)(fp-s);sys_write(1,s,(size_t)fl);
     if(c<mc-1)for(int pd=fl;pd<w[c]+2;pd++)sys_write(1," ",1);c++;}sys_write(1,"\n",1);}
 }
+#pragma GCC diagnostic pop

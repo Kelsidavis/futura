@@ -903,6 +903,8 @@ static size_t gen_status(char *buf, size_t cap, fut_task_t *task, uint64_t tid) 
 
     struct pbuf b = { buf, 0, cap };
     pb_str(&b, "Name:\t");       pb_str(&b, comm_name); pb_char(&b, '\n');
+    /* Umask (Linux 4.7+): file creation mask in octal */
+    pb_str(&b, "Umask:\t");      pb_oct(&b, task->umask & 0777);       pb_char(&b, '\n');
     pb_str(&b, "State:\t");      pb_str(&b, state_str); pb_char(&b, '\n');
     pb_str(&b, "Tgid:\t");       pb_u64(&b, task->pid); pb_char(&b, '\n');
     pb_str(&b, "Pid:\t");        pb_u64(&b, tid ? tid : task->pid); pb_char(&b, '\n');
@@ -924,6 +926,12 @@ static size_t gen_status(char *buf, size_t cap, fut_task_t *task, uint64_t tid) 
         pb_u64(&b, task->groups[gi]);
     }
     pb_char(&b, '\n');
+    /* NStgid/NSpid/NSpgid/NSsid (Linux 4.1+): PID as seen in each namespace.
+     * Futura has no PID namespaces — report the same PID at all levels. */
+    pb_str(&b, "NStgid:\t"); pb_u64(&b, task->pid); pb_char(&b, '\n');
+    pb_str(&b, "NSpid:\t");  pb_u64(&b, tid ? tid : task->pid); pb_char(&b, '\n');
+    pb_str(&b, "NSpgid:\t"); pb_u64(&b, task->pgid); pb_char(&b, '\n');
+    pb_str(&b, "NSsid:\t");  pb_u64(&b, task->sid);  pb_char(&b, '\n');
     pb_str(&b, "Threads:\t");    pb_u64(&b, task->thread_count); pb_char(&b, '\n');
     /* Update high-water marks: VmPeak = peak VmSize, VmHWM = peak VmRSS.
      * In Futura pages are eagerly mapped, so VmSize ≈ VmRSS = rss_kb. */
@@ -987,21 +995,18 @@ static size_t gen_status(char *buf, size_t cap, fut_task_t *task, uint64_t tid) 
     pb_str(&b, "not vulnerable");  pb_char(&b, '\n');
     pb_str(&b, "SpeculationIndirectBranch:\t");
     pb_str(&b, "not vulnerable");  pb_char(&b, '\n');
-    /* Umask (Linux 4.7+): file creation mask in octal */
-    pb_str(&b, "Umask:\t");      pb_oct(&b, task->umask & 0777);       pb_char(&b, '\n');
-    /* NStgid/NSpid/NSpgid/NSsid (Linux 4.1+): PID as seen in each namespace.
-     * Futura has no PID namespaces — report the same PID at all levels. */
-    pb_str(&b, "NStgid:\t"); pb_u64(&b, task->pid); pb_char(&b, '\n');
-    pb_str(&b, "NSpid:\t");  pb_u64(&b, task->pid); pb_char(&b, '\n');
-    pb_str(&b, "NSpgid:\t"); pb_u64(&b, task->pgid); pb_char(&b, '\n');
-    pb_str(&b, "NSsid:\t");  pb_u64(&b, task->sid);  pb_char(&b, '\n');
     /* CPU affinity: reflect actual sched_setaffinity mask from thread */
     {
         uint64_t amask = 0;
         if (task->threads)
             amask = task->threads->cpu_affinity_mask;
-        if (amask == 0)
-            amask = 0x1;  /* Default: at least CPU 0 */
+        if (amask == 0) {
+            /* Default: all online CPUs */
+            uint32_t ncpu = fut_platform_get_cpu_count();
+            if (ncpu == 0) ncpu = 1;
+            if (ncpu >= 64) amask = ~0ULL;
+            else amask = (1ULL << ncpu) - 1;
+        }
         /* Cpus_allowed: hex bitmask in Linux "%08x,%08x" format (high,low) */
         pb_str(&b, "Cpus_allowed:\t");
         uint32_t hi = (uint32_t)(amask >> 32);
@@ -4404,10 +4409,18 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
         case PROC_SYS_FS_PROTECTED_SL:
             total = gen_sysctl_str(tmp, GEN_BUF, "0");
             break;
-        case PROC_SYS_FS_DENTRY_STATE:
+        case PROC_SYS_FS_DENTRY_STATE: {
             /* Format: nr_dentry nr_unused age_limit want_pages dummy dummy */
-            total = gen_sysctl_str(tmp, GEN_BUF, "4096\t0\t45\t0\t0\t0");
+            extern uint64_t vfs_dcache_nr_dentry;
+            extern uint64_t vfs_dcache_nr_unused;
+            struct pbuf db = { tmp, 0, GEN_BUF };
+            pb_u64(&db, vfs_dcache_nr_dentry);
+            pb_char(&db, '\t');
+            pb_u64(&db, vfs_dcache_nr_unused);
+            pb_str(&db, "\t45\t0\t0\t0\n");
+            total = db.pos;
             break;
+        }
         case PROC_SYS_FS_INODE_STATE:
             /* Format: nr_inodes nr_free_inodes preshrink dummy dummy dummy dummy */
             total = gen_sysctl_str(tmp, GEN_BUF, "2048\t64\t0\t0\t0\t0\t0");

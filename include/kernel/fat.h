@@ -90,6 +90,17 @@ struct fat_lfn_entry {
 #define FAT16_EOC   0xFFF8
 #define FAT32_EOC   0x0FFFFFF8
 
+/* LFN constants */
+#define FAT_LFN_MAX          255   /* Maximum long filename characters */
+#define FAT_LFN_CHARS_PER    13    /* UCS-2 chars per LFN entry (5+6+2) */
+#define FAT_LFN_ORDER_LAST   0x40  /* Bit set in order byte of last LFN entry */
+#define FAT_LFN_ORDER_MASK   0x3F  /* Mask to extract sequence number */
+
+/* BPB validation limits */
+#define FAT_BPB_SECTOR_MIN   512
+#define FAT_BPB_SECTOR_MAX   4096
+#define FAT_BPB_SPC_MAX      128   /* Max sectors per cluster */
+
 /* In-memory FAT mount state */
 struct fat_mount_info {
     struct fut_blockdev *dev;

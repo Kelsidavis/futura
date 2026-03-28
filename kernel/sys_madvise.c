@@ -219,13 +219,108 @@ long sys_madvise(void *addr, size_t length, int advice) {
     }
 
     case MADV_REMOVE:       /* 9: punch hole / remove pages */
-    case MADV_MERGEABLE:    /* 12: KSM may merge identical pages */
-    case MADV_UNMERGEABLE:  /* 13: KSM must not merge */
-    case MADV_HUGEPAGE:     /* 14: back with transparent hugepages */
-    case MADV_NOHUGEPAGE:   /* 15: do not back with hugepages */
-    case MADV_DONTDUMP:     /* 16: exclude from core dump */
-    case MADV_DODUMP:       /* 17: include in core dump */
         return 0;
+
+    case MADV_MERGEABLE: {  /* 12: KSM may merge identical pages */
+        fut_task_t *mg_task = fut_task_current();
+        fut_mm_t *mg_mm = mg_task ? fut_task_get_mm(mg_task) : NULL;
+        if (!mg_mm) mg_mm = fut_mm_current();
+        if (mg_mm) {
+            uintptr_t range_start = addr_aligned;
+            uintptr_t range_end   = addr_aligned + length_aligned;
+            struct fut_vma *vma = mg_mm->vma_list;
+            while (vma) {
+                if (vma->start < range_end && vma->end > range_start)
+                    vma->flags |= VMA_MERGEABLE;
+                vma = vma->next;
+            }
+        }
+        return 0;
+    }
+    case MADV_UNMERGEABLE: { /* 13: KSM must not merge */
+        fut_task_t *um_task = fut_task_current();
+        fut_mm_t *um_mm = um_task ? fut_task_get_mm(um_task) : NULL;
+        if (!um_mm) um_mm = fut_mm_current();
+        if (um_mm) {
+            uintptr_t range_start = addr_aligned;
+            uintptr_t range_end   = addr_aligned + length_aligned;
+            struct fut_vma *vma = um_mm->vma_list;
+            while (vma) {
+                if (vma->start < range_end && vma->end > range_start)
+                    vma->flags &= ~VMA_MERGEABLE;
+                vma = vma->next;
+            }
+        }
+        return 0;
+    }
+    case MADV_HUGEPAGE: {   /* 14: back with transparent hugepages */
+        fut_task_t *hp_task = fut_task_current();
+        fut_mm_t *hp_mm = hp_task ? fut_task_get_mm(hp_task) : NULL;
+        if (!hp_mm) hp_mm = fut_mm_current();
+        if (hp_mm) {
+            uintptr_t range_start = addr_aligned;
+            uintptr_t range_end   = addr_aligned + length_aligned;
+            struct fut_vma *vma = hp_mm->vma_list;
+            while (vma) {
+                if (vma->start < range_end && vma->end > range_start) {
+                    vma->flags |=  VMA_HUGEPAGE;
+                    vma->flags &= ~VMA_NOHUGEPAGE;
+                }
+                vma = vma->next;
+            }
+        }
+        return 0;
+    }
+    case MADV_NOHUGEPAGE: { /* 15: do not back with hugepages */
+        fut_task_t *nh_task = fut_task_current();
+        fut_mm_t *nh_mm = nh_task ? fut_task_get_mm(nh_task) : NULL;
+        if (!nh_mm) nh_mm = fut_mm_current();
+        if (nh_mm) {
+            uintptr_t range_start = addr_aligned;
+            uintptr_t range_end   = addr_aligned + length_aligned;
+            struct fut_vma *vma = nh_mm->vma_list;
+            while (vma) {
+                if (vma->start < range_end && vma->end > range_start) {
+                    vma->flags |=  VMA_NOHUGEPAGE;
+                    vma->flags &= ~VMA_HUGEPAGE;
+                }
+                vma = vma->next;
+            }
+        }
+        return 0;
+    }
+    case MADV_DONTDUMP: {   /* 16: exclude from core dump */
+        fut_task_t *dd_task = fut_task_current();
+        fut_mm_t *dd_mm = dd_task ? fut_task_get_mm(dd_task) : NULL;
+        if (!dd_mm) dd_mm = fut_mm_current();
+        if (dd_mm) {
+            uintptr_t range_start = addr_aligned;
+            uintptr_t range_end   = addr_aligned + length_aligned;
+            struct fut_vma *vma = dd_mm->vma_list;
+            while (vma) {
+                if (vma->start < range_end && vma->end > range_start)
+                    vma->flags |= VMA_DONTDUMP;
+                vma = vma->next;
+            }
+        }
+        return 0;
+    }
+    case MADV_DODUMP: {     /* 17: include in core dump */
+        fut_task_t *do_task = fut_task_current();
+        fut_mm_t *do_mm = do_task ? fut_task_get_mm(do_task) : NULL;
+        if (!do_mm) do_mm = fut_mm_current();
+        if (do_mm) {
+            uintptr_t range_start = addr_aligned;
+            uintptr_t range_end   = addr_aligned + length_aligned;
+            struct fut_vma *vma = do_mm->vma_list;
+            while (vma) {
+                if (vma->start < range_end && vma->end > range_start)
+                    vma->flags &= ~VMA_DONTDUMP;
+                vma = vma->next;
+            }
+        }
+        return 0;
+    }
 
     case MADV_DONTFORK: {   /* 10: don't copy VMA to child on fork */
         /* Mark VMAs in [addr, addr+len) with VMA_DONTFORK so that clone_mm()

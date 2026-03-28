@@ -56,6 +56,8 @@ enum cgroupfs_file {
     CGFS_MEM_MAX,
     CGFS_MEM_HIGH,
     CGFS_MEM_LOW,
+    CGFS_MEM_STAT,
+    CGFS_MEM_SWAP_CURRENT,
     CGFS_MEM_SWAP_MAX,
     CGFS_CPU_MAX,
     CGFS_CPU_WEIGHT,
@@ -195,6 +197,8 @@ static const struct {
     { "memory.max",             CGFS_MEM_MAX,         0100644 },
     { "memory.high",            CGFS_MEM_HIGH,        0100644 },
     { "memory.low",             CGFS_MEM_LOW,         0100644 },
+    { "memory.stat",            CGFS_MEM_STAT,        0100444 },
+    { "memory.swap.current",    CGFS_MEM_SWAP_CURRENT,0100444 },
     { "memory.swap.max",        CGFS_MEM_SWAP_MAX,    0100644 },
     { "cpu.max",                CGFS_CPU_MAX,         0100644 },
     { "cpu.weight",             CGFS_CPU_WEIGHT,      0100644 },
@@ -440,11 +444,17 @@ ssize_t cgfs_file_read(struct fut_vnode *vnode, void *buf, size_t size, uint64_t
     cgroupfs_node_t *nd = (cgroupfs_node_t *)vnode->fs_data;
     if (!nd) return -EINVAL;
 
-    char tmp[512];
+    char tmp[1024];
     size_t total = 0;
 
     extern uint64_t memcg_get_current(const char *);
-    extern uint64_t fut_pmm_get_total(void);
+    extern uint64_t memcg_get_max(const char *);
+    extern uint64_t memcg_get_high(const char *);
+    extern uint64_t memcg_get_low(const char *);
+    extern int memcg_format_stat(const char *, char *, size_t);
+    extern int memcg_set_limit(const char *, uint64_t);
+    extern int memcg_set_high(const char *, uint64_t);
+    extern int memcg_set_low(const char *, uint64_t);
 
     const char *cg_name = (nd->cgroup_idx < MAX_CGROUPS && g_cgroups[nd->cgroup_idx].active)
                           ? g_cgroups[nd->cgroup_idx].name : "";
@@ -517,13 +527,66 @@ ssize_t cgfs_file_read(struct fut_vnode *vnode, void *buf, size_t size, uint64_t
         break;
     }
     case CGFS_MEM_MAX: {
-        const char *s = "max\n";
-        total = 0;
-        while (s[total]) { tmp[total] = s[total]; total++; }
+        uint64_t limit = memcg_get_max(cg_name);
+        int pos = 0;
+        if (limit == 0) {
+            /* Unlimited */
+            tmp[pos++] = 'm'; tmp[pos++] = 'a'; tmp[pos++] = 'x';
+        } else {
+            char nbuf[20]; int np = 0;
+            char rev[20]; int rp = 0;
+            while (limit > 0) { rev[rp++] = '0' + (char)(limit % 10); limit /= 10; }
+            while (rp > 0) nbuf[np++] = rev[--rp];
+            for (int i = 0; i < np; i++) tmp[pos++] = nbuf[i];
+        }
+        tmp[pos++] = '\n'; tmp[pos] = '\0';
+        total = (size_t)pos;
         break;
     }
-    case CGFS_MEM_HIGH:
-    case CGFS_MEM_LOW:
+    case CGFS_MEM_HIGH: {
+        uint64_t high = memcg_get_high(cg_name);
+        int pos = 0;
+        if (high == 0) {
+            tmp[pos++] = 'm'; tmp[pos++] = 'a'; tmp[pos++] = 'x';
+        } else {
+            char nbuf[20]; int np = 0;
+            char rev[20]; int rp = 0;
+            while (high > 0) { rev[rp++] = '0' + (char)(high % 10); high /= 10; }
+            while (rp > 0) nbuf[np++] = rev[--rp];
+            for (int i = 0; i < np; i++) tmp[pos++] = nbuf[i];
+        }
+        tmp[pos++] = '\n'; tmp[pos] = '\0';
+        total = (size_t)pos;
+        break;
+    }
+    case CGFS_MEM_LOW: {
+        uint64_t low = memcg_get_low(cg_name);
+        int pos = 0;
+        if (low == 0) {
+            tmp[pos++] = '0';
+        } else {
+            char nbuf[20]; int np = 0;
+            char rev[20]; int rp = 0;
+            while (low > 0) { rev[rp++] = '0' + (char)(low % 10); low /= 10; }
+            while (rp > 0) nbuf[np++] = rev[--rp];
+            for (int i = 0; i < np; i++) tmp[pos++] = nbuf[i];
+        }
+        tmp[pos++] = '\n'; tmp[pos] = '\0';
+        total = (size_t)pos;
+        break;
+    }
+    case CGFS_MEM_STAT: {
+        int len = memcg_format_stat(cg_name, tmp, sizeof(tmp));
+        if (len < 0) return len;
+        total = (size_t)len;
+        break;
+    }
+    case CGFS_MEM_SWAP_CURRENT: {
+        /* No swap support — always report 0 */
+        tmp[0] = '0'; tmp[1] = '\n'; tmp[2] = '\0';
+        total = 2;
+        break;
+    }
     case CGFS_MEM_SWAP_MAX: {
         const char *s = "max\n";
         total = 0;
@@ -655,12 +718,51 @@ ssize_t cgfs_file_write(struct fut_vnode *vnode, const void *buf, size_t size, u
                           ? g_cgroups[nd->cgroup_idx].name : "/";
 
     /* Accept writes to writable files — parse and apply */
+
+    /* Helper: parse "max" or decimal byte value from buffer.
+     * Sets *out = 0 for "max", otherwise the parsed uint64. */
+    const char *cbuf = (const char *)buf;
+
     switch (nd->ftype) {
+    case CGFS_MEM_MAX: {
+        extern int memcg_set_limit(const char *, uint64_t);
+        /* Accept "max" (unlimited) or a decimal byte value */
+        if (size >= 3 && cbuf[0] == 'm' && cbuf[1] == 'a' && cbuf[2] == 'x') {
+            memcg_set_limit(cg_name, 0);
+        } else {
+            uint64_t val = 0;
+            for (size_t i = 0; i < size && cbuf[i] >= '0' && cbuf[i] <= '9'; i++)
+                val = val * 10 + (uint64_t)(cbuf[i] - '0');
+            memcg_set_limit(cg_name, val);
+        }
+        return (ssize_t)size;
+    }
+    case CGFS_MEM_HIGH: {
+        extern int memcg_set_high(const char *, uint64_t);
+        if (size >= 3 && cbuf[0] == 'm' && cbuf[1] == 'a' && cbuf[2] == 'x') {
+            memcg_set_high(cg_name, 0);
+        } else {
+            uint64_t val = 0;
+            for (size_t i = 0; i < size && cbuf[i] >= '0' && cbuf[i] <= '9'; i++)
+                val = val * 10 + (uint64_t)(cbuf[i] - '0');
+            memcg_set_high(cg_name, val);
+        }
+        return (ssize_t)size;
+    }
+    case CGFS_MEM_LOW: {
+        extern int memcg_set_low(const char *, uint64_t);
+        if (size >= 3 && cbuf[0] == 'm' && cbuf[1] == 'a' && cbuf[2] == 'x') {
+            memcg_set_low(cg_name, 0);
+        } else {
+            uint64_t val = 0;
+            for (size_t i = 0; i < size && cbuf[i] >= '0' && cbuf[i] <= '9'; i++)
+                val = val * 10 + (uint64_t)(cbuf[i] - '0');
+            memcg_set_low(cg_name, val);
+        }
+        return (ssize_t)size;
+    }
     case CGFS_SUBTREE_CONTROL:
     case CGFS_PROCS:
-    case CGFS_MEM_MAX:
-    case CGFS_MEM_HIGH:
-    case CGFS_MEM_LOW:
     case CGFS_MEM_SWAP_MAX:
     case CGFS_CPU_MAX:
     case CGFS_CPU_WEIGHT:
@@ -668,8 +770,8 @@ ssize_t cgfs_file_write(struct fut_vnode *vnode, const void *buf, size_t size, u
         /* Parse and enforce PID limit */
         extern int pidcg_set_max(const char *, uint32_t);
         uint32_t max_pids = 0;
-        for (size_t i = 0; i < size && ((const char *)buf)[i] >= '0' && ((const char *)buf)[i] <= '9'; i++)
-            max_pids = max_pids * 10 + (uint32_t)(((const char *)buf)[i] - '0');
+        for (size_t i = 0; i < size && cbuf[i] >= '0' && cbuf[i] <= '9'; i++)
+            max_pids = max_pids * 10 + (uint32_t)(cbuf[i] - '0');
         if (max_pids > 0) pidcg_set_max(cg_name, max_pids);
         return (ssize_t)size;
     }

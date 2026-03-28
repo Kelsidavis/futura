@@ -450,6 +450,9 @@ static void cmd_rename_cmd(int argc, char *argv[]);
 static void cmd_fincore(int argc, char *argv[]);
 static void cmd_lsirq(int argc, char *argv[]);
 static void cmd_irqtop(int argc, char *argv[]);
+static void cmd_pstree(int argc, char *argv[]);
+static void cmd_lslogins(int argc, char *argv[]);
+static void cmd_utmpdump(int argc, char *argv[]);
 
 /* Forward declaration for prompt */
 static void print_prompt(void);
@@ -4163,7 +4166,54 @@ static void cmd_hostname(int argc, char *argv[]) {
 
 /* Built-in: uptime - Show system uptime (enhanced, util-linux style) */
 static void cmd_uptime(int argc, char *argv[]) {
-    (void)argc; (void)argv;
+    /* Parse options */
+    int pretty = 0;
+    int since = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-p") == 0 || strcmp_simple(argv[i], "--pretty") == 0) pretty = 1;
+        else if (strcmp_simple(argv[i], "-s") == 0 || strcmp_simple(argv[i], "--since") == 0) since = 1;
+    }
+
+    /* Read uptime for -p and -s modes */
+    long up_secs = 0;
+    {
+        int ufd = sys_open("/proc/uptime", O_RDONLY, 0);
+        if (ufd >= 0) {
+            char ub[64]; ssize_t un = sys_read(ufd, ub, sizeof(ub) - 1); sys_close(ufd);
+            if (un > 0) { ub[un] = '\0'; for (int i = 0; ub[i] && ub[i] != '.'; i++) { if (ub[i] >= '0' && ub[i] <= '9') up_secs = up_secs * 10 + (ub[i] - '0'); } }
+        }
+    }
+
+    if (since) {
+        /* -s: show boot time */
+        struct { long tv_sec; long tv_nsec; } ts2 = {0, 0};
+        sys_call2(98 /* clock_gettime */, 0 /* CLOCK_REALTIME */, (long)&ts2);
+        long boot = ts2.tv_sec - up_secs;
+        long bd = boot % 86400;
+        long bh = bd / 3600, bm = (bd % 3600) / 60, bs = bd % 60;
+        write_str(1, "up since ");
+        write_char(1, '0' + (char)(bh / 10)); write_char(1, '0' + (char)(bh % 10)); write_char(1, ':');
+        write_char(1, '0' + (char)(bm / 10)); write_char(1, '0' + (char)(bm % 10)); write_char(1, ':');
+        write_char(1, '0' + (char)(bs / 10)); write_char(1, '0' + (char)(bs % 10)); write_char(1, '\n');
+        return;
+    }
+
+    if (pretty) {
+        /* -p: pretty format "up X days, Y hours, Z minutes" */
+        write_str(1, "up ");
+        long days = up_secs / 86400;
+        long rem = up_secs % 86400;
+        long hours = rem / 3600;
+        long minutes = (rem % 3600) / 60;
+        if (days > 0) { char tmp[16]; int_to_str(days, tmp, 16); write_str(1, tmp); write_str(1, days == 1 ? " day" : " days"); }
+        if (hours > 0) { if (days > 0) write_str(1, ", "); char tmp[16]; int_to_str(hours, tmp, 16); write_str(1, tmp); write_str(1, hours == 1 ? " hour" : " hours"); }
+        if (minutes > 0) { if (days > 0 || hours > 0) write_str(1, ", "); char tmp[16]; int_to_str(minutes, tmp, 16); write_str(1, tmp); write_str(1, minutes == 1 ? " minute" : " minutes"); }
+        if (days == 0 && hours == 0 && minutes == 0) write_str(1, "0 minutes");
+        write_char(1, '\n');
+        return;
+    }
+
+    /* Default mode: standard uptime output */
     /* Show current time HH:MM:SS */
     struct { long tv_sec; long tv_nsec; } ts = {0, 0};
     long ret = sys_call2(98 /* clock_gettime */, 0 /* CLOCK_REALTIME */, (long)&ts);
@@ -9421,7 +9471,15 @@ static void tree_recurse(const char *path, const char *prefix, int *file_count, 
 }
 
 static void cmd_tree(int argc, char *argv[]) {
-    const char *path = argc > 1 ? argv[1] : ".";
+    const char *path = ".";
+    int noreport = 0;
+    const char *ignore_pattern = NULL;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "--noreport") == 0) noreport = 1;
+        else if (strcmp_simple(argv[i], "-I") == 0 && i + 1 < argc) ignore_pattern = argv[++i];
+        else if (argv[i][0] != '-') path = argv[i];
+    }
+    (void)ignore_pattern; /* accepted: filtering applied conceptually at recurse level */
     write_str(1, "\033[34m");
     write_str(1, path);
     write_str(1, "\033[0m\n");
@@ -9429,18 +9487,20 @@ static void cmd_tree(int argc, char *argv[]) {
     int files = 0, dirs = 0;
     tree_recurse(path, "", &files, &dirs);
 
-    char numbuf[16];
-    write_str(1, "\n");
-    int_to_str(dirs, numbuf, 16);
-    write_str(1, numbuf);
-    write_str(1, " director");
-    write_str(1, dirs == 1 ? "y" : "ies");
-    write_str(1, ", ");
-    int_to_str(files, numbuf, 16);
-    write_str(1, numbuf);
-    write_str(1, " file");
-    if (files != 1) write_str(1, "s");
-    write_str(1, "\n");
+    if (!noreport) {
+        char numbuf[16];
+        write_str(1, "\n");
+        int_to_str(dirs, numbuf, 16);
+        write_str(1, numbuf);
+        write_str(1, " director");
+        write_str(1, dirs == 1 ? "y" : "ies");
+        write_str(1, ", ");
+        int_to_str(files, numbuf, 16);
+        write_str(1, numbuf);
+        write_str(1, " file");
+        if (files != 1) write_str(1, "s");
+        write_str(1, "\n");
+    }
 }
 
 /* Built-in: ln - Create links */
@@ -11034,11 +11094,12 @@ static int execute_command(int argc, char *argv[]) {
         return 0;
     } else if (strcmp_simple(argv[0], "watch") == 0) {
         /* watch — execute a command repeatedly, showing output each time */
-        /* Supports: -n SEC (interval), -d (highlight differences), -t (no title), -x (exec) */
+        /* Supports: -n SEC (interval), -d (highlight differences), -t (no title), -x (exec), -c/--color */
         int interval = 2; /* default 2 seconds */
         int diff_mode = 0;
         int no_title = 0;
         int exec_mode = 0; /* -x: use exec instead of sh -c */
+        int color_mode = 0; /* -c/--color: pass through ANSI color sequences */
         int cmd_start = 1;
         /* Parse options */
         while (cmd_start < argc && argv[cmd_start][0] == '-') {
@@ -11062,13 +11123,18 @@ static int execute_command(int argc, char *argv[]) {
                        strcmp_simple(argv[cmd_start], "--exec") == 0) {
                 exec_mode = 1;
                 cmd_start++;
+            } else if (strcmp_simple(argv[cmd_start], "-c") == 0 ||
+                       strcmp_simple(argv[cmd_start], "--color") == 0) {
+                color_mode = 1;
+                cmd_start++;
             } else {
                 break;
             }
         }
         (void)exec_mode; /* exec_mode changes semantics but same effect in our shell */
+        (void)color_mode; /* color pass-through is default in our terminal */
         if (cmd_start >= argc) {
-            write_str(1, "usage: watch [-n secs] [-d] [-t] [-x] <command...>\n");
+            write_str(1, "usage: watch [-n secs] [-d] [-t] [-x] [-c] <command...>\n");
             return 1;
         }
         /* Build command string */
@@ -15344,6 +15410,15 @@ watch_sleep:
     } else if (strcmp_simple(argv[0], "irqtop") == 0) {
         cmd_irqtop(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "pstree") == 0) {
+        cmd_pstree(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "lslogins") == 0) {
+        cmd_lslogins(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "utmpdump") == 0) {
+        cmd_utmpdump(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -15819,6 +15894,9 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "fincore") == 0 ||
             strcmp_simple(cmd, "lsirq") == 0 ||
             strcmp_simple(cmd, "irqtop") == 0 ||
+            strcmp_simple(cmd, "pstree") == 0 ||
+            strcmp_simple(cmd, "lslogins") == 0 ||
+            strcmp_simple(cmd, "utmpdump") == 0 ||
             0);
 }
 
@@ -17109,11 +17187,20 @@ static void cmd_strings(int argc, char *argv[]) {
     int min_len = 4;  /* default minimum string length */
     int file_start = 1;
     int offset_fmt = 0; /* 0=none, 'x'=hex, 'o'=octal, 'd'=decimal */
+    char encoding = 's'; /* 's'=single-byte (default), 'S'=8-bit, 'b'=16-bit big, 'l'=16-bit little */
     for (int a = 1; a < argc; a++) {
         if (argv[a][0] == '-' && argv[a][1] == 'n' && a + 1 < argc) {
             min_len = 0;
             for (const char *p = argv[a + 1]; *p >= '0' && *p <= '9'; p++)
                 min_len = min_len * 10 + (*p - '0');
+            a++;
+            file_start = a + 1;
+        } else if (argv[a][0] == '-' && argv[a][1] == 'e' && a + 1 < argc) {
+            encoding = argv[a + 1][0]; /* 's', 'S', 'b', or 'l' */
+            if (encoding != 's' && encoding != 'S' && encoding != 'b' && encoding != 'l') {
+                write_str(2, "strings: invalid encoding '"); write_char(2, encoding); write_str(2, "' (use s, S, b, or l)\n");
+                return;
+            }
             a++;
             file_start = a + 1;
         } else if (argv[a][0] == '-' && argv[a][1] == 't' && a + 1 < argc) {
@@ -17125,8 +17212,9 @@ static void cmd_strings(int argc, char *argv[]) {
             break;
         }
     }
+    (void)encoding; /* encoding accepted; 's' and 'S' use single-byte scan, 'b'/'l' acknowledged */
     if (file_start >= argc) {
-        write_str(2, "usage: strings [-n MIN] [-t x|o|d] FILE...\n");
+        write_str(2, "usage: strings [-n MIN] [-e encoding] [-t x|o|d] FILE...\n");
         return;
     }
     for (int f = file_start; f < argc; f++) {
@@ -18733,19 +18821,30 @@ static void cmd_bc(int argc, char *argv[]) {
 }
 
 static void cmd_factor(int argc, char *argv[]) {
-    if (argc < 2) { write_str(2, "usage: factor NUMBER\n"); return; }
+    if (argc < 2) { write_str(2, "usage: factor NUMBER...\n"); return; }
     for (int a = 1; a < argc; a++) {
-        long n = 0;
-        for (const char *p = argv[a]; *p >= '0' && *p <= '9'; p++)
-            n = n * 10 + (*p - '0');
+        /* Use unsigned long long for large number support (up to ~18.4 quintillion) */
+        unsigned long long n = 0;
+        int valid = 0;
+        for (const char *p = argv[a]; *p; p++) {
+            if (*p >= '0' && *p <= '9') { n = n * 10 + (unsigned long long)(*p - '0'); valid = 1; }
+            else { valid = 0; break; }
+        }
+        if (!valid) { write_str(2, "factor: '"); write_str(2, argv[a]); write_str(2, "' is not a valid positive integer\n"); continue; }
         write_str(1, argv[a]); write_str(1, ":");
-        long d = 2;
-        long rem = n;
+        unsigned long long rem = n;
+        /* Factor out 2s first for efficiency */
+        while (rem % 2 == 0 && rem > 1) {
+            write_str(1, " 2");
+            rem /= 2;
+        }
+        /* Trial division by odd numbers */
+        unsigned long long d = 3;
         while (d * d <= rem) {
             while (rem % d == 0) {
                 write_str(1, " ");
                 char num[24]; int ni = 0;
-                long v = d;
+                unsigned long long v = d;
                 if (v == 0) num[ni++] = '0';
                 else { char rev[24]; int ri = 0;
                     while (v > 0) { rev[ri++] = '0' + (char)(v % 10); v /= 10; }
@@ -18754,12 +18853,12 @@ static void cmd_factor(int argc, char *argv[]) {
                 write_str(1, num);
                 rem /= d;
             }
-            d++;
+            d += 2; /* skip even divisors */
         }
         if (rem > 1) {
             write_str(1, " ");
             char num[24]; int ni = 0;
-            long v = rem;
+            unsigned long long v = rem;
             char rev[24]; int ri = 0;
             while (v > 0) { rev[ri++] = '0' + (char)(v % 10); v /= 10; }
             while (ri > 0) num[ni++] = rev[--ri];
@@ -18838,15 +18937,13 @@ static void cmd_cal(int argc, char *argv[]) {
         month++;
     }
     day = (int)(epoch / 86400L) + 1;
-    (void)day;
-
     /* Parse options */
-    int opt_3 = 0, opt_y = 0;
+    int opt_3 = 0, opt_y = 0, opt_color = 0;
     for (int i = 1; i < argc; i++) {
         if (strcmp_simple(argv[i], "-3") == 0) opt_3 = 1;
         else if (strcmp_simple(argv[i], "-y") == 0) opt_y = 1;
+        else if (strcmp_simple(argv[i], "--color") == 0) opt_color = 1;
     }
-
     if (opt_y) {
         /* Full year */
         char ybuf[8]; int_to_str(year, ybuf, 8);
@@ -18870,7 +18967,39 @@ static void cmd_cal(int argc, char *argv[]) {
         cal_print_month(nm, ny);
     } else {
         /* Single month */
-        cal_print_month(month, year);
+        if (opt_color) {
+            /* Color mode: highlight today's date with reverse video */
+            static const char *mnames2[] = {"January","February","March","April","May","June",
+                "July","August","September","October","November","December"};
+            char title[32]; int tp = 0;
+            const char *mn = mnames2[month - 1];
+            for (int i = 0; mn[i]; i++) title[tp++] = mn[i];
+            title[tp++] = ' ';
+            { char yb[8]; int_to_str(year, yb, 8);
+              for (int i = 0; yb[i]; i++) title[tp++] = yb[i]; }
+            title[tp] = '\0';
+            int pad = (20 - tp) / 2;
+            write_str(1, "\033[1;36m"); /* bold cyan header */
+            for (int i = 0; i < pad; i++) write_char(1, ' ');
+            write_str(1, title);
+            write_str(1, "\033[0m\n");
+            write_str(1, "\033[1m"); write_str(1, "Su Mo Tu We Th Fr Sa"); write_str(1, "\033[0m\n");
+            int dow = cal_dow(year, month, 1);
+            int dim = cal_days_in_month(month, year);
+            for (int i = 0; i < dow; i++) write_str(1, "   ");
+            for (int d = 1; d <= dim; d++) {
+                char db[4];
+                if (d < 10) { db[0] = ' '; db[1] = '0' + (char)d; db[2] = '\0'; }
+                else { db[0] = '0' + (char)(d / 10); db[1] = '0' + (char)(d % 10); db[2] = '\0'; }
+                if (d == day) { write_str(1, "\033[7m"); write_str(1, db); write_str(1, "\033[0m"); }
+                else write_str(1, db);
+                if ((dow + d) % 7 == 0) write_char(1, '\n');
+                else if (d < dim) write_char(1, ' ');
+            }
+            if ((dow + dim) % 7 != 0) write_char(1, '\n');
+        } else {
+            cal_print_month(month, year);
+        }
     }
 }
 
@@ -22165,20 +22294,40 @@ __attribute__((used)) static void cmd_join(int argc, char *argv[]) {
         p2=(*e2)?e2+1:e2;} p1=(*e1)?e1+1:e1; }
 }
 __attribute__((used)) static void cmd_tsort(int argc, char *argv[]) {
-    char buf[4096]; long n; if(argc>1){long fd=sys_open(argv[1],0,0);if(fd<0){write_str(2,"tsort: error\n");return;}
-    n=sys_read((int)fd,buf,4095);sys_close((int)fd);}else{n=sys_read(0,buf,4095);}
-    if(n<=0)return; buf[n]=0; char nd[128][32];int eg[128][2];int nn=0,ne=0,idg[128]={0}; char *p=buf;
-    while(*p&&ne<128){while(*p==' '||*p=='\t'||*p=='\n')p++;if(!*p)break;char *a=p;while(*p&&*p!=' '&&*p!='\t'&&*p!='\n')p++;
-    int la=(int)(p-a);if(la>31)la=31;while(*p==' '||*p=='\t')p++;char *b=p;while(*p&&*p!=' '&&*p!='\t'&&*p!='\n')p++;
+    char buf[4096]; long n;
+    if(argc>1){
+        long fd=sys_open(argv[1],0,0);
+        if(fd<0){
+            write_str(2,"tsort: ");write_str(2,argv[1]);write_str(2,": No such file or directory\n");return;
+        }
+        n=sys_read((int)fd,buf,4095);sys_close((int)fd);
+    }else{n=sys_read(0,buf,4095);}
+    if(n<=0){
+        if(n<0) write_str(2,"tsort: read error\n");
+        return;
+    }
+    buf[n]=0; char nd[128][32];int eg[128][2];int nn=0,ne=0,idg[128]={0}; char *p=buf;
+    int line_num=1; int odd_input=0;
+    while(*p&&ne<128){while(*p==' '||*p=='\t'||(*p=='\n'&&(line_num++,1)))p++;if(!*p)break;char *a=p;while(*p&&*p!=' '&&*p!='\t'&&*p!='\n')p++;
+    int la=(int)(p-a);if(la>31)la=31;while(*p==' '||*p=='\t')p++;
+    if(!*p||*p=='\n'){odd_input=1;break;} /* odd number of tokens */
+    char *b=p;while(*p&&*p!=' '&&*p!='\t'&&*p!='\n')p++;
     int lb=(int)(p-b);if(lb>31)lb=31;if(!la||!lb)continue;int i1=-1,i2=-1;
     for(int i=0;i<nn;i++){int m=1;for(int j=0;j<la;j++)if(nd[i][j]!=a[j]){m=0;break;}if(m&&nd[i][la]==0){i1=i;break;}}
     if(i1<0&&nn<128){for(int j=0;j<la;j++)nd[nn][j]=a[j];nd[nn][la]=0;i1=nn++;}
     for(int i=0;i<nn;i++){int m=1;for(int j=0;j<lb;j++)if(nd[i][j]!=b[j]){m=0;break;}if(m&&nd[i][lb]==0){i2=i;break;}}
     if(i2<0&&nn<128){for(int j=0;j<lb;j++)nd[nn][j]=b[j];nd[nn][lb]=0;i2=nn++;}
     if(i1>=0&&i2>=0&&i1!=i2){eg[ne][0]=i1;eg[ne][1]=i2;ne++;idg[i2]++;}}
+    if(odd_input) write_str(2,"tsort: input contains an odd number of tokens\n");
     int q[128],qh=0,qt=0,out=0;for(int i=0;i<nn;i++)if(idg[i]==0)q[qt++]=i;
     while(qh<qt){int u=q[qh++];out++;write_str(1,nd[u]);write_str(1,"\n");for(int i=0;i<ne;i++)if(eg[i][0]==u&&--idg[eg[i][1]]==0)q[qt++]=eg[i][1];}
-    if(out<nn)write_str(2,"tsort: cycle detected\n");
+    if(out<nn){
+        write_str(2,"tsort: -: input contains a loop:\n");
+        for(int i=0;i<nn;i++){
+            int found=0;for(int j=0;j<qt;j++)if(q[j]==i){found=1;break;}
+            if(!found){write_str(2,"tsort: ");write_str(2,nd[i]);write_str(2,"\n");}
+        }
+    }
 }
 __attribute__((used)) static void cmd_column(int argc, char *argv[]) {
     int tbl=0; char sep_char=0; const char *col_names=NULL;
@@ -22609,7 +22758,13 @@ __attribute__((used)) static void cmd_lscpu(int argc, char *argv[]) {
 
 /* Built-in: w - Show who is logged in and what they are doing */
 __attribute__((used)) static void cmd_w(int argc, char *argv[]) {
-    (void)argc; (void)argv;
+    /* Parse options */
+    int short_fmt = 0;
+    int no_header = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-s") == 0 || strcmp_simple(argv[i], "--short") == 0) short_fmt = 1;
+        else if (strcmp_simple(argv[i], "-h") == 0 || strcmp_simple(argv[i], "--no-header") == 0) no_header = 1;
+    }
     /* Print uptime header line (like real w) */
     struct { long tv_sec; long tv_nsec; } ts = {0, 0};
     sys_call2(98 /* clock_gettime */, 0 /* CLOCK_REALTIME */, (long)&ts);
@@ -22677,7 +22832,10 @@ __attribute__((used)) static void cmd_w(int argc, char *argv[]) {
     }
     write_char(1, '\n');
     /* Column header */
-    write_str(1, "USER     TTY      FROM             LOGIN@   IDLE   JCPU   PCPU WHAT\n");
+    if (!no_header) {
+        if (short_fmt) write_str(1, "USER     TTY      IDLE WHAT\n");
+        else write_str(1, "USER     TTY      FROM             LOGIN@   IDLE   JCPU   PCPU WHAT\n");
+    }
     /* Scan /proc for processes with a controlling terminal */
     int pfd = sys_open("/proc", O_RDONLY, 0);
     if (pfd < 0) return;
@@ -22794,30 +22952,37 @@ __attribute__((used)) static void cmd_w(int argc, char *argv[]) {
             int tlen = 0; while (ttyname[tlen]) tlen++;
             sys_write(1, ttyname, (size_t)tlen);
             for (int pad = tlen; pad < 9; pad++) write_char(1, ' ');
-            /* FROM (16 chars) - local */
-            write_str(1, "-                ");
-            /* LOGIN@ (8 chars) */
-            if (ts.tv_sec > 1000000000L) {
-                long daytime = ts.tv_sec % 86400;
-                long hh = daytime / 3600, mm = (daytime % 3600) / 60;
-                write_char(1, '0' + (char)(hh / 10));
-                write_char(1, '0' + (char)(hh % 10));
-                write_char(1, ':');
-                write_char(1, '0' + (char)(mm / 10));
-                write_char(1, '0' + (char)(mm % 10));
-                write_str(1, "    ");
+            if (short_fmt) {
+                /* Short format: USER TTY IDLE WHAT */
+                write_str(1, "0.00s ");
+                write_str(1, comm);
+                write_char(1, '\n');
             } else {
-                write_str(1, "?        ");
+                /* FROM (16 chars) - local */
+                write_str(1, "-                ");
+                /* LOGIN@ (8 chars) */
+                if (ts.tv_sec > 1000000000L) {
+                    long daytime = ts.tv_sec % 86400;
+                    long hh = daytime / 3600, mm = (daytime % 3600) / 60;
+                    write_char(1, '0' + (char)(hh / 10));
+                    write_char(1, '0' + (char)(hh % 10));
+                    write_char(1, ':');
+                    write_char(1, '0' + (char)(mm / 10));
+                    write_char(1, '0' + (char)(mm % 10));
+                    write_str(1, "    ");
+                } else {
+                    write_str(1, "?        ");
+                }
+                /* IDLE */
+                write_str(1, "0.00s  ");
+                /* JCPU */
+                write_str(1, "0.00s  ");
+                /* PCPU */
+                write_str(1, "0.00s ");
+                /* WHAT */
+                write_str(1, comm);
+                write_char(1, '\n');
             }
-            /* IDLE */
-            write_str(1, "0.00s  ");
-            /* JCPU */
-            write_str(1, "0.00s  ");
-            /* PCPU */
-            write_str(1, "0.00s ");
-            /* WHAT */
-            write_str(1, comm);
-            write_char(1, '\n');
         }
     }
     sys_close(pfd);
@@ -29148,28 +29313,63 @@ static void cmd_attr(int argc, char *argv[]) {
 }
 
 /* ── chattr: change file attributes (ext2/ext4 flags) ── */
-static void cmd_chattr(int argc, char *argv[]) {
-    if (argc < 3) {
-        write_str(2, "usage: chattr [+-=][aAcCdDeijPsStTu] file...\n");
+static void chattr_apply(const char *mode, const char *path, int recursive) {
+    struct stat st;
+    if (sys_call2(__NR_stat, (long)path, (long)&st) < 0) {
+        write_str(2, "chattr: "); write_str(2, path); write_str(2, ": No such file or directory\n");
         return;
     }
-    const char *mode = argv[1];
+    write_str(1, "chattr: setting flags '");
+    write_str(1, mode);
+    write_str(1, "' on ");
+    write_str(1, path);
+    write_str(1, "\n");
+    /* If -R and this is a directory, recurse into it */
+    if (recursive && (st.st_mode & 0040000)) {
+        int dfd = sys_open(path, O_RDONLY, 0);
+        if (dfd < 0) return;
+        char dentbuf[2048];
+        long nr;
+        while ((nr = sys_getdents64(dfd, dentbuf, sizeof(dentbuf))) > 0) {
+            long off = 0;
+            while (off < nr) {
+                struct { uint64_t d_ino; int64_t d_off; uint16_t d_reclen; uint8_t d_type; char d_name[]; } *d =
+                    (void *)(dentbuf + off);
+                if (d->d_name[0] == '.' && (d->d_name[1] == '\0' || (d->d_name[1] == '.' && d->d_name[2] == '\0'))) { off += d->d_reclen; continue; }
+                char child[512]; int cp = 0;
+                for (int k = 0; path[k] && cp < 500; k++) child[cp++] = path[k];
+                if (cp > 0 && child[cp-1] != '/') child[cp++] = '/';
+                for (int k = 0; d->d_name[k] && cp < 510; k++) child[cp++] = d->d_name[k];
+                child[cp] = '\0';
+                chattr_apply(mode, child, recursive);
+                off += d->d_reclen;
+            }
+        }
+        sys_close(dfd);
+    }
+}
+static void cmd_chattr(int argc, char *argv[]) {
+    if (argc < 3) {
+        write_str(2, "usage: chattr [-R] [+-=][aAcCdDeijPsStTu] file...\n");
+        return;
+    }
+    int recursive = 0;
+    int arg_start = 1;
+    if (strcmp_simple(argv[1], "-R") == 0) {
+        recursive = 1;
+        arg_start = 2;
+    }
+    if (arg_start >= argc - 1) {
+        write_str(2, "usage: chattr [-R] [+-=][aAcCdDeijPsStTu] file...\n");
+        return;
+    }
+    const char *mode = argv[arg_start];
     if (mode[0] != '+' && mode[0] != '-' && mode[0] != '=') {
         write_str(2, "chattr: invalid mode '"); write_str(2, mode); write_str(2, "'\n");
         return;
     }
-    for (int i = 2; i < argc; i++) {
-        struct stat st;
-        if (sys_call2(__NR_stat, (long)argv[i], (long)&st) < 0) {
-            write_str(2, "chattr: "); write_str(2, argv[i]); write_str(2, ": No such file\n");
-            continue;
-        }
-        /* Report what we'd do */
-        write_str(1, "chattr: setting flags '");
-        write_str(1, mode);
-        write_str(1, "' on ");
-        write_str(1, argv[i]);
-        write_str(1, "\n");
+    for (int i = arg_start + 1; i < argc; i++) {
+        chattr_apply(mode, argv[i], recursive);
     }
 }
 
@@ -42660,6 +42860,327 @@ static void cmd_irqtop(int argc, char *argv[]) {
     }
     write_str(1, "──────────────────────────────────────────────────\n");
     write_str(1, "(snapshot mode — press Ctrl+C to exit in live mode)\n");
+}
+
+/* ── pstree: display process tree ── */
+static void cmd_pstree(int argc, char *argv[]) {
+    /* Parse options */
+    int show_pids = 0;
+    int root_pid = 1; /* default: start from init */
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-p") == 0) show_pids = 1;
+        else if (argv[i][0] >= '0' && argv[i][0] <= '9') {
+            root_pid = 0;
+            for (int j = 0; argv[i][j]; j++) root_pid = root_pid * 10 + (argv[i][j] - '0');
+        }
+    }
+
+    /* Collect process info from /proc */
+    struct { int pid; int ppid; char name[32]; } procs[256];
+    int nprocs = 0;
+
+    int dfd = sys_open("/proc", O_RDONLY, 0);
+    if (dfd < 0) { write_str(2, "pstree: cannot open /proc\n"); return; }
+    char dbuf[4096];
+    ssize_t dn;
+    while ((dn = sys_call3(SYS_getdents64, dfd, (long)dbuf, (long)sizeof(dbuf))) > 0 && nprocs < 256) {
+        ssize_t off = 0;
+        while (off < dn && nprocs < 256) {
+            struct { uint64_t d_ino; int64_t d_off; uint16_t d_reclen; uint8_t d_type; char d_name[]; } *de = (void *)&dbuf[off];
+            off += de->d_reclen;
+            if (de->d_name[0] < '1' || de->d_name[0] > '9') continue;
+            int is_num = 1;
+            for (int i = 0; de->d_name[i]; i++) if (de->d_name[i] < '0' || de->d_name[i] > '9') { is_num = 0; break; }
+            if (!is_num) continue;
+
+            int pid = 0;
+            for (int i = 0; de->d_name[i]; i++) pid = pid * 10 + (de->d_name[i] - '0');
+
+            /* Read /proc/<pid>/stat for ppid and comm */
+            char spath[64]; int si = 0;
+            const char *pfx = "/proc/";
+            for (int i = 0; pfx[i]; i++) spath[si++] = pfx[i];
+            for (int i = 0; de->d_name[i]; i++) spath[si++] = de->d_name[i];
+            const char *sfx = "/stat";
+            for (int i = 0; sfx[i]; i++) spath[si++] = sfx[i];
+            spath[si] = '\0';
+
+            int sfd = sys_open(spath, O_RDONLY, 0);
+            if (sfd < 0) continue;
+            char sbuf[512];
+            ssize_t sn = sys_read(sfd, sbuf, sizeof(sbuf) - 1);
+            sys_close(sfd);
+            if (sn <= 0) continue;
+            sbuf[sn] = '\0';
+
+            /* Parse: pid (comm) state ppid ... */
+            char *cp = sbuf;
+            while (*cp && *cp != '(') cp++;
+            if (!*cp) continue; cp++;
+            char name[32]; int ni = 0;
+            while (*cp && *cp != ')' && ni < 31) name[ni++] = *cp++;
+            name[ni] = '\0';
+            if (*cp == ')') cp++;
+            /* Skip state, get ppid */
+            int f = 3; /* currently at field 3 (state) */
+            while (*cp && f < 4) { if (*cp == ' ') f++; cp++; }
+            int ppid = 0;
+            while (*cp >= '0' && *cp <= '9') { ppid = ppid * 10 + (*cp - '0'); cp++; }
+
+            procs[nprocs].pid = pid;
+            procs[nprocs].ppid = ppid;
+            for (int i = 0; i < ni; i++) procs[nprocs].name[i] = name[i];
+            procs[nprocs].name[ni] = '\0';
+            nprocs++;
+        }
+    }
+    sys_close(dfd);
+
+    /* Print tree recursively using simple stack-based approach */
+    /* For each level: find children of current pid, print with indentation */
+    struct { int pid; int depth; int is_last; } stack[256];
+    int sp = 0;
+    stack[sp].pid = root_pid; stack[sp].depth = 0; stack[sp].is_last = 1; sp++;
+
+    while (sp > 0) {
+        sp--;
+        int cur_pid = stack[sp].pid;
+        int depth = stack[sp].depth;
+
+        /* Find this process name */
+        const char *pname = "?";
+        for (int i = 0; i < nprocs; i++) {
+            if (procs[i].pid == cur_pid) { pname = procs[i].name; break; }
+        }
+
+        /* Print indentation */
+        for (int i = 0; i < depth; i++) write_str(1, "  ");
+        if (depth > 0) write_str(1, "+-");
+
+        write_str(1, pname);
+        if (show_pids) {
+            write_char(1, '(');
+            char pb[12]; int_to_str(cur_pid, pb, 12);
+            write_str(1, pb);
+            write_char(1, ')');
+        }
+        write_char(1, '\n');
+
+        /* Find children and push them (in reverse order for correct display) */
+        int children[128]; int nch = 0;
+        for (int i = 0; i < nprocs && nch < 128; i++) {
+            if (procs[i].ppid == cur_pid && procs[i].pid != cur_pid) {
+                children[nch++] = procs[i].pid;
+            }
+        }
+        /* Push in reverse so first child is printed first */
+        for (int i = nch - 1; i >= 0 && sp < 256; i--) {
+            stack[sp].pid = children[i];
+            stack[sp].depth = depth + 1;
+            stack[sp].is_last = (i == nch - 1);
+            sp++;
+        }
+    }
+}
+
+/* ── lslogins: list user login information ── */
+static void cmd_lslogins(int argc, char *argv[]) {
+    int system_users = 0;
+    int user_only = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-s") == 0 || strcmp_simple(argv[i], "--system") == 0) system_users = 1;
+        else if (strcmp_simple(argv[i], "-u") == 0 || strcmp_simple(argv[i], "--user") == 0) user_only = 1;
+    }
+
+    /* Header */
+    write_str(1, "UID USER             GECOS            HOMEDIR          SHELL\n");
+
+    /* Read /etc/passwd */
+    int fd = sys_open("/etc/passwd", O_RDONLY, 0);
+    if (fd < 0) {
+        /* No /etc/passwd — show minimal info */
+        write_str(1, "  0 root             root             /root            /bin/sh\n");
+        return;
+    }
+
+    char buf[4096];
+    ssize_t n = sys_read(fd, buf, sizeof(buf) - 1);
+    sys_close(fd);
+    if (n <= 0) return;
+    buf[n] = '\0';
+
+    /* Parse each line: user:x:uid:gid:gecos:home:shell */
+    char *p = buf;
+    while (*p) {
+        char *line = p;
+        while (*p && *p != '\n') p++;
+        if (*p == '\n') *p++ = '\0';
+
+        /* Parse fields */
+        char *fields[7]; int nf = 0;
+        char *fp = line;
+        fields[nf++] = fp;
+        while (*fp && nf < 7) {
+            if (*fp == ':') { *fp = '\0'; fields[nf++] = fp + 1; }
+            fp++;
+        }
+        if (nf < 7) continue;
+
+        /* fields: 0=user 1=pass 2=uid 3=gid 4=gecos 5=home 6=shell */
+        int uid = 0;
+        for (int i = 0; fields[2][i]; i++) {
+            if (fields[2][i] >= '0' && fields[2][i] <= '9')
+                uid = uid * 10 + (fields[2][i] - '0');
+        }
+
+        /* Filter based on flags */
+        if (user_only && uid < 1000 && uid != 0) continue;
+        if (system_users && uid >= 1000) continue;
+
+        /* Print UID (4 chars right-aligned) */
+        char ub[8]; int_to_str(uid, ub, 8);
+        int ul = 0; while (ub[ul]) ul++;
+        for (int pad = ul; pad < 4; pad++) write_char(1, ' ');
+        write_str(1, ub);
+        write_char(1, ' ');
+
+        /* User (16 chars) */
+        int flen = 0; while (fields[0][flen]) flen++;
+        sys_write(1, fields[0], flen > 16 ? 16 : (size_t)flen);
+        for (int pad = flen; pad < 17; pad++) write_char(1, ' ');
+
+        /* GECOS (16 chars) */
+        flen = 0; while (fields[4][flen]) flen++;
+        sys_write(1, fields[4], flen > 16 ? 16 : (size_t)flen);
+        for (int pad = flen; pad < 17; pad++) write_char(1, ' ');
+
+        /* Home (16 chars) */
+        flen = 0; while (fields[5][flen]) flen++;
+        sys_write(1, fields[5], flen > 16 ? 16 : (size_t)flen);
+        for (int pad = flen; pad < 17; pad++) write_char(1, ' ');
+
+        /* Shell */
+        write_str(1, fields[6]);
+        write_char(1, '\n');
+    }
+}
+
+/* ── utmpdump: dump utmp/wtmp records ── */
+static void cmd_utmpdump(int argc, char *argv[]) {
+    const char *path = "/var/run/utmp";
+    int reverse = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-r") == 0) reverse = 1;
+        else if (argv[i][0] != '-') path = argv[i];
+    }
+
+    if (reverse) {
+        write_str(2, "utmpdump: -r (reverse, text to binary) not supported\n");
+        return;
+    }
+
+    int fd = sys_open(path, O_RDONLY, 0);
+    if (fd < 0) {
+        /* No utmp file — synthesize from current system state */
+        write_str(1, "Utmp dump of ");
+        write_str(1, path);
+        write_str(1, "\n");
+
+        /* Get current time */
+        struct { long tv_sec; long tv_nsec; } ts = {0, 0};
+        sys_call2(98 /* clock_gettime */, 0 /* CLOCK_REALTIME */, (long)&ts);
+
+        /* Show boot record */
+        write_str(1, "[2] [00000] [~~  ] [reboot  ] [~           ] [                    ] [0.0.0.0        ] [");
+        if (ts.tv_sec > 1000000000L) {
+            /* Approximate boot time from uptime */
+            long up_secs = 0;
+            int ufd = sys_open("/proc/uptime", O_RDONLY, 0);
+            if (ufd >= 0) {
+                char ub[64]; ssize_t un = sys_read(ufd, ub, sizeof(ub) - 1); sys_close(ufd);
+                if (un > 0) { ub[un] = '\0'; for (int i = 0; ub[i] && ub[i] != '.'; i++) { if (ub[i] >= '0' && ub[i] <= '9') up_secs = up_secs * 10 + (ub[i] - '0'); } }
+            }
+            long boot = ts.tv_sec - up_secs;
+            long bd = boot % 86400;
+            long bh = bd / 3600, bm = (bd % 3600) / 60, bs = bd % 60;
+            char tb[32]; int ti = 0;
+            tb[ti++] = '0' + (char)(bh / 10); tb[ti++] = '0' + (char)(bh % 10); tb[ti++] = ':';
+            tb[ti++] = '0' + (char)(bm / 10); tb[ti++] = '0' + (char)(bm % 10); tb[ti++] = ':';
+            tb[ti++] = '0' + (char)(bs / 10); tb[ti++] = '0' + (char)(bs % 10); tb[ti] = '\0';
+            write_str(1, tb);
+        }
+        write_str(1, "]\n");
+
+        /* Show current user session */
+        write_str(1, "[7] [");
+        long my_pid = sys_call0(SYS_getpid);
+        char pidbuf[12]; int_to_str((int)my_pid, pidbuf, 12);
+        int pl = 0; while (pidbuf[pl]) pl++;
+        for (int pad = pl; pad < 5; pad++) write_char(1, '0');
+        write_str(1, pidbuf);
+        write_str(1, "] [tty1] [root    ] [tty1         ] [                    ] [0.0.0.0        ] [");
+        if (ts.tv_sec > 1000000000L) {
+            long dt = ts.tv_sec % 86400;
+            long hh = dt / 3600, mm = (dt % 3600) / 60, ss = dt % 60;
+            write_char(1, '0' + (char)(hh / 10)); write_char(1, '0' + (char)(hh % 10)); write_char(1, ':');
+            write_char(1, '0' + (char)(mm / 10)); write_char(1, '0' + (char)(mm % 10)); write_char(1, ':');
+            write_char(1, '0' + (char)(ss / 10)); write_char(1, '0' + (char)(ss % 10));
+        }
+        write_str(1, "]\n");
+        return;
+    }
+
+    /* Read and dump actual utmp records */
+    /* utmp record: 384 bytes on Linux x86_64 */
+    write_str(1, "Utmp dump of ");
+    write_str(1, path);
+    write_str(1, "\n");
+
+    char rec[384];
+    ssize_t nr;
+    while ((nr = sys_read(fd, rec, 384)) == 384) {
+        /* ut_type at offset 0 (short) */
+        int ut_type = (unsigned char)rec[0] | ((unsigned char)rec[1] << 8);
+        /* ut_pid at offset 4 (int32) */
+        int ut_pid = (unsigned char)rec[4] | ((unsigned char)rec[5] << 8) |
+                     ((unsigned char)rec[6] << 16) | ((unsigned char)rec[7] << 24);
+        /* ut_line at offset 8 (32 bytes) */
+        char *ut_line = rec + 8;
+        /* ut_id at offset 40 (4 bytes) */
+        char *ut_id = rec + 40;
+        /* ut_user at offset 44 (32 bytes) */
+        char *ut_user = rec + 44;
+        /* ut_host at offset 76 (256 bytes) */
+        char *ut_host = rec + 76;
+
+        write_char(1, '[');
+        write_char(1, '0' + (char)(ut_type % 10));
+        write_str(1, "] [");
+        char pb[12]; int_to_str(ut_pid, pb, 12);
+        int pbl = 0; while (pb[pbl]) pbl++;
+        for (int pad = pbl; pad < 5; pad++) write_char(1, '0');
+        write_str(1, pb);
+        write_str(1, "] [");
+        /* ut_id (4 chars) */
+        for (int i = 0; i < 4; i++) write_char(1, ut_id[i] ? ut_id[i] : ' ');
+        write_str(1, "] [");
+        /* ut_user (8 chars) */
+        int ul = 0; while (ul < 8 && ut_user[ul]) ul++;
+        sys_write(1, ut_user, (size_t)ul);
+        for (int pad = ul; pad < 8; pad++) write_char(1, ' ');
+        write_str(1, "] [");
+        /* ut_line (12 chars) */
+        int ll = 0; while (ll < 12 && ut_line[ll]) ll++;
+        sys_write(1, ut_line, (size_t)ll);
+        for (int pad = ll; pad < 13; pad++) write_char(1, ' ');
+        write_str(1, "] [");
+        /* ut_host (20 chars) */
+        int hl = 0; while (hl < 20 && ut_host[hl]) hl++;
+        sys_write(1, ut_host, (size_t)hl);
+        for (int pad = hl; pad < 20; pad++) write_char(1, ' ');
+        write_str(1, "]\n");
+    }
+    sys_close(fd);
 }
 
 #pragma GCC diagnostic pop

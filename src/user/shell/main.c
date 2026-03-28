@@ -173,6 +173,9 @@ static void cmd_chown(int argc, char *argv[]);
 static void cmd_newgrp(int argc, char *argv[]);
 static void cmd_sha512sum(int argc, char *argv[]);
 static void cmd_base32(int argc, char *argv[]);
+static void cmd_mesg(int argc, char *argv[]);
+static void cmd_last(int argc, char *argv[]);
+static void cmd_dstat(int argc, char *argv[]);
 static void strcpy_simple(char *dest, const char *src);
 
 /* Forward declaration for prompt */
@@ -12753,6 +12756,15 @@ watch_sleep:
     } else if (strcmp_simple(argv[0], "base32") == 0) {
         cmd_base32(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "mesg") == 0) {
+        cmd_mesg(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "last") == 0) {
+        cmd_last(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "dstat") == 0) {
+        cmd_dstat(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -12944,6 +12956,9 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "watch") == 0 ||
             strcmp_simple(cmd, "top") == 0 ||
             strcmp_simple(cmd, "sysctl") == 0 ||
+            strcmp_simple(cmd, "mesg") == 0 ||
+            strcmp_simple(cmd, "last") == 0 ||
+            strcmp_simple(cmd, "dstat") == 0 ||
             0);
 }
 
@@ -19784,6 +19799,399 @@ static void cmd_base32(int argc, char *argv[]) {
         }
         sys_write(1, decoded, dlen);
     }
+}
+
+/* ── mesg: control write access to your terminal ── */
+__attribute__((used)) static void cmd_mesg(int argc, char *argv[]) {
+    /* Determine tty path - use /dev/console as our terminal */
+    const char *tty_path = "/dev/console";
+
+    if (argc == 1) {
+        /* No argument: show current status by stat-ing the terminal */
+        struct { uint64_t dev; uint64_t ino; uint64_t nlink; uint32_t mode;
+                 uint32_t uid; uint32_t gid; uint32_t pad; uint64_t rdev;
+                 int64_t size; int64_t blksize; int64_t blocks;
+                 uint64_t atime_s; uint64_t atime_ns;
+                 uint64_t mtime_s; uint64_t mtime_ns;
+                 uint64_t ctime_s; uint64_t ctime_ns; } st;
+        extern long sys_stat_call(const char *, void *);
+        long sr = sys_stat_call(tty_path, &st);
+        if (sr < 0) {
+            write_str(2, "mesg: cannot stat terminal\n");
+            last_exit_status = 1;
+            return;
+        }
+        /* Check group/other write bits */
+        if (st.mode & 0020) {
+            write_str(1, "is y\n");
+        } else {
+            write_str(1, "is n\n");
+        }
+        return;
+    }
+
+    if (strcmp_simple(argv[1], "y") == 0) {
+        /* Enable write access: chmod g+w on terminal */
+        struct { uint64_t dev; uint64_t ino; uint64_t nlink; uint32_t mode;
+                 uint32_t uid; uint32_t gid; uint32_t pad; uint64_t rdev;
+                 int64_t size; int64_t blksize; int64_t blocks;
+                 uint64_t atime_s; uint64_t atime_ns;
+                 uint64_t mtime_s; uint64_t mtime_ns;
+                 uint64_t ctime_s; uint64_t ctime_ns; } st;
+        extern long sys_stat_call(const char *, void *);
+        long sr = sys_stat_call(tty_path, &st);
+        if (sr < 0) { write_str(2, "mesg: cannot stat terminal\n"); last_exit_status = 1; return; }
+        unsigned int newmode = (st.mode & 07777) | 0020;
+        sys_chmod_call(tty_path, (long)newmode);
+    } else if (strcmp_simple(argv[1], "n") == 0) {
+        /* Disable write access: chmod g-w on terminal */
+        struct { uint64_t dev; uint64_t ino; uint64_t nlink; uint32_t mode;
+                 uint32_t uid; uint32_t gid; uint32_t pad; uint64_t rdev;
+                 int64_t size; int64_t blksize; int64_t blocks;
+                 uint64_t atime_s; uint64_t atime_ns;
+                 uint64_t mtime_s; uint64_t mtime_ns;
+                 uint64_t ctime_s; uint64_t ctime_ns; } st;
+        extern long sys_stat_call(const char *, void *);
+        long sr = sys_stat_call(tty_path, &st);
+        if (sr < 0) { write_str(2, "mesg: cannot stat terminal\n"); last_exit_status = 1; return; }
+        unsigned int newmode = (st.mode & 07777) & ~(unsigned int)0020;
+        sys_chmod_call(tty_path, (long)newmode);
+    } else {
+        write_str(2, "usage: mesg [y|n]\n");
+        last_exit_status = 1;
+    }
+}
+
+/* ── last: show listing of last logged-in users ── */
+__attribute__((used)) static void cmd_last(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    /* Header */
+    write_str(1, "USER     TTY        FROM             LOGIN\n");
+
+    /* Get current uptime for boot time reference */
+    int ufd = sys_open("/proc/uptime", O_RDONLY, 0);
+    long boot_secs = 0;
+    if (ufd >= 0) {
+        char ubuf[64];
+        ssize_t un = sys_read(ufd, ubuf, sizeof(ubuf) - 1);
+        sys_close(ufd);
+        if (un > 0) {
+            ubuf[un] = '\0';
+            for (int i = 0; ubuf[i] && ubuf[i] != '.'; i++) {
+                if (ubuf[i] >= '0' && ubuf[i] <= '9')
+                    boot_secs = boot_secs * 10 + (ubuf[i] - '0');
+            }
+        }
+    }
+
+    /* Scan /proc for user processes that have a terminal */
+    int pfd = sys_open("/proc", O_RDONLY, 0);
+    if (pfd < 0) {
+        write_str(1, "\nwtmp begins (unavailable)\n");
+        return;
+    }
+
+    char dbuf[4096];
+    ssize_t dn;
+    int shown = 0;
+    while ((dn = sys_call3(SYS_getdents64, pfd, (long)dbuf, (long)sizeof(dbuf))) > 0) {
+        ssize_t off = 0;
+        while (off < dn) {
+            struct { uint64_t d_ino; int64_t d_off; unsigned short d_reclen;
+                     unsigned char d_type; char d_name[]; } *de = (void *)&dbuf[off];
+            off += de->d_reclen;
+
+            /* Only numeric entries (PIDs) */
+            int is_pid = 1;
+            for (int i = 0; de->d_name[i]; i++) {
+                if (de->d_name[i] < '0' || de->d_name[i] > '9') { is_pid = 0; break; }
+            }
+            if (!is_pid) continue;
+
+            /* Read /proc/<pid>/status to get Name and PPid */
+            char path[64];
+            strcpy_simple(path, "/proc/");
+            int plen = (int)strlen_simple(path);
+            for (int i = 0; de->d_name[i]; i++) path[plen++] = de->d_name[i];
+
+            /* Check if this process has a TTY via /proc/<pid>/stat */
+            char stat_path[80];
+            __builtin_memcpy(stat_path, path, plen);
+            stat_path[plen] = '\0';
+            strncpy_simple(stat_path + plen, "/stat", 6);
+
+            int sfd = sys_open(stat_path, O_RDONLY, 0);
+            if (sfd < 0) continue;
+            char sbuf[512];
+            ssize_t sn = sys_read(sfd, sbuf, sizeof(sbuf) - 1);
+            sys_close(sfd);
+            if (sn <= 0) continue;
+            sbuf[sn] = '\0';
+
+            /* Find tty_nr: skip past "(comm) S " — field 7 (0-indexed) */
+            char *p = sbuf;
+            /* Skip past closing paren of comm field */
+            while (*p && *p != ')') p++;
+            if (*p) p++; /* skip ')' */
+            if (*p) p++; /* skip ' ' */
+            /* Now at state field; skip state, ppid, pgrp, session = fields 3-6 */
+            /* tty_nr is field 7 */
+            int field = 3; /* current field index */
+            while (*p && field < 7) {
+                if (*p == ' ') field++;
+                p++;
+            }
+            /* Parse tty_nr */
+            long tty_nr = 0;
+            while (*p >= '0' && *p <= '9') {
+                tty_nr = tty_nr * 10 + (*p - '0');
+                p++;
+            }
+            if (tty_nr == 0) continue; /* No controlling terminal */
+
+            /* Read /proc/<pid>/status for Name */
+            char status_path[80];
+            __builtin_memcpy(status_path, path, plen);
+            status_path[plen] = '\0';
+            strncpy_simple(status_path + plen, "/status", 8);
+
+            int stfd = sys_open(status_path, O_RDONLY, 0);
+            if (stfd < 0) continue;
+            char stbuf[512];
+            ssize_t stn = sys_read(stfd, stbuf, sizeof(stbuf) - 1);
+            sys_close(stfd);
+            if (stn <= 0) continue;
+            stbuf[stn] = '\0';
+
+            /* Extract Name */
+            char name[16];
+            __builtin_memset(name, 0, sizeof(name));
+            if (stbuf[0] == 'N' && stbuf[1] == 'a' && stbuf[2] == 'm' &&
+                stbuf[3] == 'e' && stbuf[4] == ':') {
+                char *np = stbuf + 5;
+                while (*np == ' ' || *np == '\t') np++;
+                int ni = 0;
+                while (*np && *np != '\n' && ni < 15) name[ni++] = *np++;
+            }
+
+            /* Format: USER     TTY        FROM             LOGIN */
+            /* Print user as "root" (single-user OS) padded to 9 */
+            write_str(1, "root     ");
+            /* Print TTY as "console" padded to 11 */
+            write_str(1, "console    ");
+            /* FROM: localhost padded to 17 */
+            write_str(1, ":0               ");
+            /* LOGIN: process name */
+            write_str(1, name);
+            write_str(1, "   still logged in\n");
+            shown++;
+            if (shown >= 10) break; /* limit output */
+        }
+        if (shown >= 10) break;
+    }
+    sys_close(pfd);
+
+    /* Boot record */
+    write_str(1, "\nreboot   system boot  futura           still running\n");
+    write_str(1, "\nwtmp begins (system boot)\n");
+}
+
+/* ── dstat: combined system resource statistics ── */
+__attribute__((used)) static void cmd_dstat(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    /* Print header */
+    write_str(1, "----total-cpu-usage---- -dsk/total- ------net/total------ ------memory-usage-----\n");
+    write_str(1, "usr sys idl wai         read  writ   recv  send          used  free  buff  cach\n");
+
+    /* === CPU stats from /proc/stat === */
+    int fd = sys_open("/proc/stat", O_RDONLY, 0);
+    if (fd >= 0) {
+        char buf[1024];
+        ssize_t n = sys_read(fd, buf, sizeof(buf) - 1);
+        sys_close(fd);
+        if (n > 0) {
+            buf[n] = '\0';
+            /* Parse "cpu  user nice system idle iowait ..." */
+            if (buf[0] == 'c' && buf[1] == 'p' && buf[2] == 'u' && buf[3] == ' ') {
+                char *p = buf + 4;
+                while (*p == ' ') p++;
+                long vals[7]; /* user nice system idle iowait irq softirq */
+                __builtin_memset(vals, 0, sizeof(vals));
+                for (int i = 0; i < 7 && *p; i++) {
+                    while (*p == ' ') p++;
+                    long v = 0;
+                    while (*p >= '0' && *p <= '9') { v = v * 10 + (*p - '0'); p++; }
+                    vals[i] = v;
+                    while (*p == ' ') p++;
+                }
+                long user = vals[0] + vals[1]; /* user + nice */
+                long sys_v = vals[2];
+                long idle = vals[3];
+                long iowait = vals[4];
+                long total = user + sys_v + idle + iowait + vals[5] + vals[6];
+                if (total == 0) total = 1;
+                long usr_pct = (user * 100) / total;
+                long sys_pct = (sys_v * 100) / total;
+                long idl_pct = (idle * 100) / total;
+                long wai_pct = (iowait * 100) / total;
+                char tmp[16];
+                int_to_str(usr_pct, tmp, 16); write_str(1, tmp); write_str(1, "  ");
+                int_to_str(sys_pct, tmp, 16); write_str(1, tmp); write_str(1, "  ");
+                int_to_str(idl_pct, tmp, 16); write_str(1, tmp); write_str(1, "  ");
+                int_to_str(wai_pct, tmp, 16); write_str(1, tmp);
+            }
+        }
+    }
+    write_str(1, "      ");
+
+    /* === Disk stats from /proc/diskstats === */
+    fd = sys_open("/proc/diskstats", O_RDONLY, 0);
+    if (fd >= 0) {
+        char buf[2048];
+        ssize_t n = sys_read(fd, buf, sizeof(buf) - 1);
+        sys_close(fd);
+        if (n > 0) {
+            buf[n] = '\0';
+            /* Sum reads and writes across all devices */
+            long total_rd = 0, total_wr = 0;
+            char *p = buf;
+            while (*p) {
+                /* Each line: major minor name rd_ios rd_merge rd_sectors rd_ticks
+                   wr_ios wr_merge wr_sectors ... */
+                /* Skip major minor name (3 fields) */
+                int fld = 0;
+                while (*p && *p != '\n' && fld < 3) {
+                    while (*p == ' ') p++;
+                    while (*p && *p != ' ' && *p != '\n') p++;
+                    fld++;
+                }
+                /* Field 4 = rd_ios */
+                while (*p == ' ') p++;
+                long rd = 0;
+                while (*p >= '0' && *p <= '9') { rd = rd * 10 + (*p - '0'); p++; }
+                total_rd += rd;
+                /* Skip rd_merge(5), rd_sectors(6), rd_ticks(7) = 3 fields */
+                for (int i = 0; i < 3 && *p && *p != '\n'; i++) {
+                    while (*p == ' ') p++;
+                    while (*p && *p != ' ' && *p != '\n') p++;
+                }
+                /* Field 8 = wr_ios */
+                while (*p == ' ') p++;
+                long wr = 0;
+                while (*p >= '0' && *p <= '9') { wr = wr * 10 + (*p - '0'); p++; }
+                total_wr += wr;
+                /* Skip to end of line */
+                while (*p && *p != '\n') p++;
+                if (*p == '\n') p++;
+            }
+            char tmp[16];
+            int_to_str(total_rd, tmp, 16); write_str(1, tmp); write_str(1, "  ");
+            int_to_str(total_wr, tmp, 16); write_str(1, tmp);
+        }
+    } else {
+        write_str(1, "  0  0");
+    }
+    write_str(1, "   ");
+
+    /* === Network stats from /proc/net/dev === */
+    fd = sys_open("/proc/net/dev", O_RDONLY, 0);
+    if (fd >= 0) {
+        char buf[2048];
+        ssize_t n = sys_read(fd, buf, sizeof(buf) - 1);
+        sys_close(fd);
+        if (n > 0) {
+            buf[n] = '\0';
+            long total_rx = 0, total_tx = 0;
+            char *p = buf;
+            /* Skip first two header lines */
+            int lines = 0;
+            while (*p && lines < 2) { if (*p == '\n') lines++; p++; }
+            /* Parse each interface line */
+            while (*p) {
+                /* Skip interface name (before ':') */
+                while (*p && *p != ':' && *p != '\n') p++;
+                if (*p == ':') p++;
+                /* Field 1 = rx_bytes */
+                while (*p == ' ') p++;
+                long rx = 0;
+                while (*p >= '0' && *p <= '9') { rx = rx * 10 + (*p - '0'); p++; }
+                total_rx += rx;
+                /* Skip rx_packets(2) .. rx_compressed(8) = 7 fields to get to tx_bytes(9) */
+                for (int i = 0; i < 7 && *p && *p != '\n'; i++) {
+                    while (*p == ' ') p++;
+                    while (*p && *p != ' ' && *p != '\n') p++;
+                }
+                /* Field 9 = tx_bytes */
+                while (*p == ' ') p++;
+                long tx = 0;
+                while (*p >= '0' && *p <= '9') { tx = tx * 10 + (*p - '0'); p++; }
+                total_tx += tx;
+                /* Skip to end of line */
+                while (*p && *p != '\n') p++;
+                if (*p == '\n') p++;
+            }
+            /* Convert to KB */
+            char tmp[16];
+            int_to_str(total_rx / 1024, tmp, 16); write_str(1, tmp); write_str(1, "K ");
+            int_to_str(total_tx / 1024, tmp, 16); write_str(1, tmp); write_str(1, "K");
+        }
+    } else {
+        write_str(1, "  0K  0K");
+    }
+    write_str(1, "   ");
+
+    /* === Memory from /proc/meminfo === */
+    fd = sys_open("/proc/meminfo", O_RDONLY, 0);
+    if (fd >= 0) {
+        char buf[2048];
+        ssize_t n = sys_read(fd, buf, sizeof(buf) - 1);
+        sys_close(fd);
+        if (n > 0) {
+            buf[n] = '\0';
+            long mem_total = 0, mem_free = 0, buffers = 0, cached = 0;
+            char *p = buf;
+            while (*p) {
+                /* Match known field names */
+                if (p[0] == 'M' && p[1] == 'e' && p[2] == 'm') {
+                    if (p[3] == 'T' && p[4] == 'o' && p[5] == 't' &&
+                        p[6] == 'a' && p[7] == 'l' && p[8] == ':') {
+                        p += 9;
+                        while (*p == ' ') p++;
+                        while (*p >= '0' && *p <= '9') { mem_total = mem_total * 10 + (*p - '0'); p++; }
+                    } else if (p[3] == 'F' && p[4] == 'r' && p[5] == 'e' &&
+                               p[6] == 'e' && p[7] == ':') {
+                        p += 8;
+                        while (*p == ' ') p++;
+                        while (*p >= '0' && *p <= '9') { mem_free = mem_free * 10 + (*p - '0'); p++; }
+                    }
+                } else if (p[0] == 'B' && p[1] == 'u' && p[2] == 'f' &&
+                           p[3] == 'f' && p[4] == 'e' && p[5] == 'r' &&
+                           p[6] == 's' && p[7] == ':') {
+                    p += 8;
+                    while (*p == ' ') p++;
+                    while (*p >= '0' && *p <= '9') { buffers = buffers * 10 + (*p - '0'); p++; }
+                } else if (p[0] == 'C' && p[1] == 'a' && p[2] == 'c' &&
+                           p[3] == 'h' && p[4] == 'e' && p[5] == 'd' &&
+                           p[6] == ':') {
+                    p += 7;
+                    while (*p == ' ') p++;
+                    while (*p >= '0' && *p <= '9') { cached = cached * 10 + (*p - '0'); p++; }
+                }
+                /* Skip to next line */
+                while (*p && *p != '\n') p++;
+                if (*p == '\n') p++;
+            }
+            long used = mem_total - mem_free - buffers - cached;
+            if (used < 0) used = mem_total - mem_free;
+            /* Print in MB */
+            char tmp[16];
+            int_to_str(used / 1024, tmp, 16); write_str(1, tmp); write_str(1, "M ");
+            int_to_str(mem_free / 1024, tmp, 16); write_str(1, tmp); write_str(1, "M ");
+            int_to_str(buffers / 1024, tmp, 16); write_str(1, tmp); write_str(1, "M ");
+            int_to_str(cached / 1024, tmp, 16); write_str(1, tmp); write_str(1, "M");
+        }
+    }
+    write_str(1, "\n");
 }
 
 #pragma GCC diagnostic pop

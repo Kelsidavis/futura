@@ -362,6 +362,9 @@ static void cmd_procs(int argc, char *argv[]);
 static void cmd_btop(int argc, char *argv[]);
 static void cmd_glances(int argc, char *argv[]);
 static void cmd_sar(int argc, char *argv[]);
+static void cmd_neofetch(int argc, char *argv[]);
+static void cmd_screenfetch(int argc, char *argv[]);
+static void cmd_fortune(int argc, char *argv[]);
 
 /* Forward declaration for prompt */
 static void print_prompt(void);
@@ -14726,6 +14729,15 @@ watch_sleep:
     } else if (strcmp_simple(argv[0], "sar") == 0) {
         cmd_sar(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "neofetch") == 0) {
+        cmd_neofetch(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "screenfetch") == 0) {
+        cmd_screenfetch(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "fortune") == 0) {
+        cmd_fortune(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -15105,6 +15117,9 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "btop") == 0 ||
             strcmp_simple(cmd, "glances") == 0 ||
             strcmp_simple(cmd, "sar") == 0 ||
+            strcmp_simple(cmd, "neofetch") == 0 ||
+            strcmp_simple(cmd, "screenfetch") == 0 ||
+            strcmp_simple(cmd, "fortune") == 0 ||
             0);
 }
 
@@ -34783,6 +34798,436 @@ static void cmd_sar(int argc, char *argv[]) {
             sys_call2(35, (long)&ts_sleep, 0);
         }
     }
+}
+
+/* Built-in: neofetch - System information display with ASCII art logo */
+static void cmd_neofetch(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+
+    /* Gather system info into buffers */
+    char os_str[128] = "Futura OS";
+    char host_str[65] = "futura";
+    char kernel_str[128] = "";
+    char uptime_str[64] = "";
+    char shell_str[32] = "fsh 0.5 (400 commands)";
+    char cpu_str[128] = "";
+    char mem_str[128] = "";
+    char arch_str[65] = "";
+
+    /* uname syscall for OS, hostname, kernel, arch */
+    struct { char sysname[65]; char nodename[65]; char release[65];
+             char version[65]; char machine[65]; char domainname[65]; } uts;
+    for (int i = 0; i < (int)sizeof(uts); i++) ((char*)&uts)[i] = 0;
+    long ret = sys_call1(63, (long)&uts);
+    if (ret >= 0) {
+        strncpy_simple(host_str, uts.nodename, 64);
+        strncpy_simple(kernel_str, uts.release, 127);
+        strncpy_simple(arch_str, uts.machine, 64);
+    }
+
+    /* Uptime from /proc/uptime */
+    {
+        int fd = sys_open("/proc/uptime", O_RDONLY, 0);
+        if (fd >= 0) {
+            char buf[64]; ssize_t n = sys_read(fd, buf, sizeof(buf)-1);
+            sys_close(fd);
+            if (n > 0) {
+                buf[n] = '\0';
+                long secs = 0;
+                for (int i = 0; buf[i] >= '0' && buf[i] <= '9'; i++)
+                    secs = secs * 10 + (buf[i] - '0');
+                long days = secs / 86400;
+                long hours = (secs % 86400) / 3600;
+                long mins = (secs % 3600) / 60;
+                char tmp[16]; int pos = 0;
+                if (days > 0) {
+                    int_to_str(days, tmp, 16);
+                    for (int i = 0; tmp[i]; i++) uptime_str[pos++] = tmp[i];
+                    uptime_str[pos++] = ' '; uptime_str[pos++] = 'd';
+                    uptime_str[pos++] = 'a'; uptime_str[pos++] = 'y';
+                    if (days != 1) uptime_str[pos++] = 's';
+                    uptime_str[pos++] = ','; uptime_str[pos++] = ' ';
+                }
+                int_to_str(hours, tmp, 16);
+                for (int i = 0; tmp[i]; i++) uptime_str[pos++] = tmp[i];
+                uptime_str[pos++] = ' '; uptime_str[pos++] = 'h';
+                uptime_str[pos++] = 'o'; uptime_str[pos++] = 'u';
+                uptime_str[pos++] = 'r'; if (hours != 1) uptime_str[pos++] = 's';
+                uptime_str[pos++] = ','; uptime_str[pos++] = ' ';
+                int_to_str(mins, tmp, 16);
+                for (int i = 0; tmp[i]; i++) uptime_str[pos++] = tmp[i];
+                uptime_str[pos++] = ' '; uptime_str[pos++] = 'm';
+                uptime_str[pos++] = 'i'; uptime_str[pos++] = 'n';
+                if (mins != 1) uptime_str[pos++] = 's';
+                uptime_str[pos] = '\0';
+            }
+        }
+    }
+
+    /* CPU from /proc/cpuinfo */
+    {
+        int fd = sys_open("/proc/cpuinfo", O_RDONLY, 0);
+        if (fd >= 0) {
+            char buf[2048]; ssize_t n = sys_read(fd, buf, sizeof(buf)-1);
+            sys_close(fd);
+            if (n > 0) {
+                buf[n] = '\0';
+                char *p = buf;
+                while (*p) {
+                    /* Look for "model name" line */
+                    if (p[0] == 'm' && p[1] == 'o' && p[2] == 'd' && p[3] == 'e' &&
+                        p[4] == 'l' && p[5] == ' ' && p[6] == 'n') {
+                        /* Skip to after ": " */
+                        while (*p && *p != ':') p++;
+                        if (*p == ':') { p++; while (*p == ' ') p++; }
+                        int ci = 0;
+                        while (*p && *p != '\n' && ci < 126) cpu_str[ci++] = *p++;
+                        cpu_str[ci] = '\0';
+                        break;
+                    }
+                    /* Also try "CPU part" (ARM) */
+                    if (p[0] == 'C' && p[1] == 'P' && p[2] == 'U' && p[3] == ' ' && p[4] == 'p') {
+                        while (*p && *p != ':') p++;
+                        if (*p == ':') { p++; while (*p == ' ') p++; }
+                        int ci = 0;
+                        while (*p && *p != '\n' && ci < 126) cpu_str[ci++] = *p++;
+                        cpu_str[ci] = '\0';
+                        break;
+                    }
+                    while (*p && *p != '\n') p++;
+                    if (*p == '\n') p++;
+                }
+            }
+        }
+        if (cpu_str[0] == '\0') strncpy_simple(cpu_str, "Unknown", 127);
+    }
+
+    /* Memory from /proc/meminfo */
+    {
+        int fd = sys_open("/proc/meminfo", O_RDONLY, 0);
+        if (fd >= 0) {
+            char buf[512]; ssize_t n = sys_read(fd, buf, sizeof(buf)-1);
+            sys_close(fd);
+            if (n > 0) {
+                buf[n] = '\0';
+                /* Parse MemTotal and MemAvailable */
+                long mem_total = 0, mem_avail = 0;
+                char *p = buf;
+                while (*p) {
+                    if (p[0] == 'M' && p[1] == 'e' && p[2] == 'm' && p[3] == 'T') {
+                        while (*p && *p != ':') p++;
+                        if (*p == ':') p++;
+                        while (*p == ' ') p++;
+                        while (*p >= '0' && *p <= '9') { mem_total = mem_total * 10 + (*p - '0'); p++; }
+                    }
+                    if (p[0] == 'M' && p[1] == 'e' && p[2] == 'm' && p[3] == 'A' && p[4] == 'v') {
+                        while (*p && *p != ':') p++;
+                        if (*p == ':') p++;
+                        while (*p == ' ') p++;
+                        while (*p >= '0' && *p <= '9') { mem_avail = mem_avail * 10 + (*p - '0'); p++; }
+                    }
+                    while (*p && *p != '\n') p++;
+                    if (*p == '\n') p++;
+                }
+                long mem_used = mem_total - mem_avail;
+                /* Format as "USED MiB / TOTAL MiB" */
+                char tmp[16]; int pos = 0;
+                int_to_str(mem_used / 1024, tmp, 16);
+                for (int i = 0; tmp[i]; i++) mem_str[pos++] = tmp[i];
+                mem_str[pos++] = ' '; mem_str[pos++] = 'M';
+                mem_str[pos++] = 'i'; mem_str[pos++] = 'B';
+                mem_str[pos++] = ' '; mem_str[pos++] = '/';
+                mem_str[pos++] = ' ';
+                int_to_str(mem_total / 1024, tmp, 16);
+                for (int i = 0; tmp[i]; i++) mem_str[pos++] = tmp[i];
+                mem_str[pos++] = ' '; mem_str[pos++] = 'M';
+                mem_str[pos++] = 'i'; mem_str[pos++] = 'B';
+                mem_str[pos] = '\0';
+            }
+        }
+        if (mem_str[0] == '\0') strncpy_simple(mem_str, "Unknown", 127);
+    }
+
+    /* Print with ASCII art logo on left, info on right */
+    /* Futura OS ASCII logo in cyan */
+    write_str(1, "\033[36m         ___        _                  \033[0m\n");
+    write_str(1, "\033[36m        / __| _  _ | |_  _  _  _ _  __ \033[0m \033[1;36m");
+    write_str(1, host_str);
+    write_str(1, "\033[0m\n");
+    write_str(1, "\033[36m       | __|| || ||  _|| || || '_|/ _`| \033[0m \033[1;36m");
+    /* Separator line */
+    {
+        int hlen = (int)strlen_simple(host_str);
+        for (int i = 0; i < hlen; i++) write_char(1, '-');
+    }
+    write_str(1, "\033[0m\n");
+    write_str(1, "\033[36m       |_|   \\_,_| \\__| \\_,_||_|  \\__,_|\033[0m \033[1mOS\033[0m:      ");
+    write_str(1, os_str);
+    write_char(1, ' ');
+    write_str(1, arch_str);
+    write_str(1, "\n");
+    write_str(1, "\033[36m        ___  ___                        \033[0m \033[1mKernel\033[0m:  ");
+    write_str(1, kernel_str);
+    write_str(1, "\n");
+    write_str(1, "\033[36m       / _ \\/ __|                       \033[0m \033[1mUptime\033[0m:  ");
+    write_str(1, uptime_str);
+    write_str(1, "\n");
+    write_str(1, "\033[36m      | (_) \\__ \\                       \033[0m \033[1mShell\033[0m:   ");
+    write_str(1, shell_str);
+    write_str(1, "\n");
+    write_str(1, "\033[36m       \\___/|___/                       \033[0m \033[1mCPU\033[0m:     ");
+    write_str(1, cpu_str);
+    write_str(1, "\n");
+    write_str(1, "\033[36m                                        \033[0m \033[1mMemory\033[0m:  ");
+    write_str(1, mem_str);
+    write_str(1, "\n");
+    /* Color blocks */
+    write_str(1, "\n ");
+    write_str(1, "\033[40m   \033[41m   \033[42m   \033[43m   \033[44m   \033[45m   \033[46m   \033[47m   \033[0m\n ");
+    write_str(1, "\033[100m   \033[101m   \033[102m   \033[103m   \033[104m   \033[105m   \033[106m   \033[107m   \033[0m\n");
+    write_str(1, "\n");
+}
+
+/* Built-in: screenfetch - System information display (screenFetch style) */
+static void cmd_screenfetch(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+
+    /* Gather system info */
+    char host_str[65] = "futura";
+    char kernel_str[128] = "";
+    char arch_str[65] = "";
+
+    struct { char sysname[65]; char nodename[65]; char release[65];
+             char version[65]; char machine[65]; char domainname[65]; } uts;
+    for (int i = 0; i < (int)sizeof(uts); i++) ((char*)&uts)[i] = 0;
+    long ret = sys_call1(63, (long)&uts);
+    if (ret >= 0) {
+        strncpy_simple(host_str, uts.nodename, 64);
+        strncpy_simple(kernel_str, uts.release, 127);
+        strncpy_simple(arch_str, uts.machine, 64);
+    }
+
+    /* Uptime */
+    char uptime_str[64] = "";
+    {
+        int fd = sys_open("/proc/uptime", O_RDONLY, 0);
+        if (fd >= 0) {
+            char buf[64]; ssize_t n = sys_read(fd, buf, sizeof(buf)-1);
+            sys_close(fd);
+            if (n > 0) {
+                buf[n] = '\0';
+                long secs = 0;
+                for (int i = 0; buf[i] >= '0' && buf[i] <= '9'; i++)
+                    secs = secs * 10 + (buf[i] - '0');
+                long days = secs / 86400;
+                long hours = (secs % 86400) / 3600;
+                long mins = (secs % 3600) / 60;
+                char tmp[16]; int pos = 0;
+                if (days > 0) {
+                    int_to_str(days, tmp, 16);
+                    for (int i = 0; tmp[i]; i++) uptime_str[pos++] = tmp[i];
+                    uptime_str[pos++] = 'd'; uptime_str[pos++] = ' ';
+                }
+                int_to_str(hours, tmp, 16);
+                for (int i = 0; tmp[i]; i++) uptime_str[pos++] = tmp[i];
+                uptime_str[pos++] = 'h'; uptime_str[pos++] = ' ';
+                int_to_str(mins, tmp, 16);
+                for (int i = 0; tmp[i]; i++) uptime_str[pos++] = tmp[i];
+                uptime_str[pos++] = 'm';
+                uptime_str[pos] = '\0';
+            }
+        }
+    }
+
+    /* CPU */
+    char cpu_str[128] = "Unknown";
+    {
+        int fd = sys_open("/proc/cpuinfo", O_RDONLY, 0);
+        if (fd >= 0) {
+            char buf[2048]; ssize_t n = sys_read(fd, buf, sizeof(buf)-1);
+            sys_close(fd);
+            if (n > 0) {
+                buf[n] = '\0';
+                char *p = buf;
+                while (*p) {
+                    if (p[0] == 'm' && p[1] == 'o' && p[2] == 'd' && p[3] == 'e' &&
+                        p[4] == 'l' && p[5] == ' ' && p[6] == 'n') {
+                        while (*p && *p != ':') p++;
+                        if (*p == ':') { p++; while (*p == ' ') p++; }
+                        int ci = 0;
+                        while (*p && *p != '\n' && ci < 126) cpu_str[ci++] = *p++;
+                        cpu_str[ci] = '\0';
+                        break;
+                    }
+                    if (p[0] == 'C' && p[1] == 'P' && p[2] == 'U' && p[3] == ' ' && p[4] == 'p') {
+                        while (*p && *p != ':') p++;
+                        if (*p == ':') { p++; while (*p == ' ') p++; }
+                        int ci = 0;
+                        while (*p && *p != '\n' && ci < 126) cpu_str[ci++] = *p++;
+                        cpu_str[ci] = '\0';
+                        break;
+                    }
+                    while (*p && *p != '\n') p++;
+                    if (*p == '\n') p++;
+                }
+            }
+        }
+    }
+
+    /* Memory */
+    char mem_str[128] = "Unknown";
+    {
+        int fd = sys_open("/proc/meminfo", O_RDONLY, 0);
+        if (fd >= 0) {
+            char buf[512]; ssize_t n = sys_read(fd, buf, sizeof(buf)-1);
+            sys_close(fd);
+            if (n > 0) {
+                buf[n] = '\0';
+                long mem_total = 0, mem_avail = 0;
+                char *p = buf;
+                while (*p) {
+                    if (p[0] == 'M' && p[1] == 'e' && p[2] == 'm' && p[3] == 'T') {
+                        while (*p && *p != ':') p++;
+                        if (*p == ':') p++;
+                        while (*p == ' ') p++;
+                        while (*p >= '0' && *p <= '9') { mem_total = mem_total * 10 + (*p - '0'); p++; }
+                    }
+                    if (p[0] == 'M' && p[1] == 'e' && p[2] == 'm' && p[3] == 'A' && p[4] == 'v') {
+                        while (*p && *p != ':') p++;
+                        if (*p == ':') p++;
+                        while (*p == ' ') p++;
+                        while (*p >= '0' && *p <= '9') { mem_avail = mem_avail * 10 + (*p - '0'); p++; }
+                    }
+                    while (*p && *p != '\n') p++;
+                    if (*p == '\n') p++;
+                }
+                long mem_used = mem_total - mem_avail;
+                char tmp[16]; int pos = 0;
+                int_to_str(mem_used / 1024, tmp, 16);
+                for (int i = 0; tmp[i]; i++) mem_str[pos++] = tmp[i];
+                mem_str[pos++] = 'M'; mem_str[pos++] = 'i'; mem_str[pos++] = 'B';
+                mem_str[pos++] = ' '; mem_str[pos++] = '/'; mem_str[pos++] = ' ';
+                int_to_str(mem_total / 1024, tmp, 16);
+                for (int i = 0; tmp[i]; i++) mem_str[pos++] = tmp[i];
+                mem_str[pos++] = 'M'; mem_str[pos++] = 'i'; mem_str[pos++] = 'B';
+                mem_str[pos] = '\0';
+            }
+        }
+    }
+
+    /* Disk usage via statfs */
+    char disk_str[64] = "";
+    {
+        struct { long f_type; long f_bsize; long f_blocks; long f_bfree;
+                 long f_bavail; long f_files; long f_ffree; long f_fsid[2];
+                 long f_namelen; long f_frsize; long f_flags; long f_spare[4]; } sfs;
+        for (int i = 0; i < (int)sizeof(sfs); i++) ((char*)&sfs)[i] = 0;
+        long sr = sys_call2(137, (long)"/", (long)&sfs);
+        if (sr >= 0 && sfs.f_blocks > 0) {
+            long total_mb = (sfs.f_blocks * sfs.f_bsize) / (1024 * 1024);
+            long free_mb = (sfs.f_bfree * sfs.f_bsize) / (1024 * 1024);
+            long used_mb = total_mb - free_mb;
+            char tmp[16]; int pos = 0;
+            int_to_str(used_mb, tmp, 16);
+            for (int i = 0; tmp[i]; i++) disk_str[pos++] = tmp[i];
+            disk_str[pos++] = 'M'; disk_str[pos++] = 'B';
+            disk_str[pos++] = ' '; disk_str[pos++] = '/'; disk_str[pos++] = ' ';
+            int_to_str(total_mb, tmp, 16);
+            for (int i = 0; tmp[i]; i++) disk_str[pos++] = tmp[i];
+            disk_str[pos++] = 'M'; disk_str[pos++] = 'B';
+            disk_str[pos] = '\0';
+        }
+    }
+
+    /* screenFetch-style output with bold logo */
+    write_str(1, "\n");
+    write_str(1, "\033[1;34m        _______              \033[0m  \033[1m");
+    write_str(1, host_str);
+    write_str(1, "\033[0m\n");
+    write_str(1, "\033[1;34m       |  _____|             \033[0m  \033[1mOS\033[0m: Futura OS ");
+    write_str(1, arch_str);
+    write_str(1, "\n");
+    write_str(1, "\033[1;34m       | |___               \033[0m   \033[1mKernel\033[0m: ");
+    write_str(1, kernel_str);
+    write_str(1, "\n");
+    write_str(1, "\033[1;34m       |  ___|              \033[0m   \033[1mUptime\033[0m: ");
+    write_str(1, uptime_str);
+    write_str(1, "\n");
+    write_str(1, "\033[1;34m       | |                  \033[0m   \033[1mShell\033[0m: fsh 0.5\n");
+    write_str(1, "\033[1;34m       |_|  \033[36mutura OS\033[0m        \033[0m   \033[1mCPU\033[0m: ");
+    write_str(1, cpu_str);
+    write_str(1, "\n");
+    write_str(1, "\033[1;34m                             \033[0m  \033[1mMemory\033[0m: ");
+    write_str(1, mem_str);
+    write_str(1, "\n");
+    if (disk_str[0]) {
+        write_str(1, "\033[1;34m                             \033[0m  \033[1mDisk\033[0m: ");
+        write_str(1, disk_str);
+        write_str(1, "\n");
+    }
+    write_str(1, "\n ");
+    write_str(1, "\033[40m   \033[41m   \033[42m   \033[43m   \033[44m   \033[45m   \033[46m   \033[47m   \033[0m\n\n");
+}
+
+/* Built-in: fortune - Display random fortune/quote */
+static void cmd_fortune(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+
+    static const char *fortunes[] = {
+        "\"Programs must be written for people to read, and only incidentally\n for machines to execute.\" -- Harold Abelson",
+        "\"There are only two hard things in Computer Science: cache invalidation\n and naming things.\" -- Phil Karlton",
+        "\"Any fool can write code that a computer can understand. Good programmers\n write code that humans can understand.\" -- Martin Fowler",
+        "\"First, solve the problem. Then, write the code.\" -- John Johnson",
+        "\"The best way to predict the future is to invent it.\" -- Alan Kay",
+        "\"Simplicity is prerequisite for reliability.\" -- Edsger W. Dijkstra",
+        "\"Talk is cheap. Show me the code.\" -- Linus Torvalds",
+        "\"The most disastrous thing that you can ever learn is your first\n programming language.\" -- Alan Kay",
+        "\"Measuring programming progress by lines of code is like measuring\n aircraft building progress by weight.\" -- Bill Gates",
+        "\"Perfection is achieved, not when there is nothing more to add, but\n when there is nothing left to take away.\" -- Antoine de Saint-Exupery",
+        "\"Before software can be reusable it first has to be usable.\"\n -- Ralph Johnson",
+        "\"The computer was born to solve problems that did not exist before.\"\n -- Bill Gates",
+        "\"In theory, there is no difference between theory and practice.\n In practice, there is.\" -- Jan L. A. van de Snepscheut",
+        "\"If debugging is the process of removing software bugs, then programming\n must be the process of putting them in.\" -- Edsger W. Dijkstra",
+        "\"The function of good software is to make the complex appear simple.\"\n -- Grady Booch",
+        "\"Walking on water and developing software from a specification are easy\n if both are frozen.\" -- Edward V. Berard",
+        "\"UNIX is basically a simple operating system, but you have to be a genius\n to understand the simplicity.\" -- Dennis Ritchie",
+        "\"A language that doesn't affect the way you think about programming\n is not worth knowing.\" -- Alan Perlis",
+        "\"It's harder to read code than to write it.\" -- Joel Spolsky",
+        "\"Debugging is twice as hard as writing the code in the first place.\n Therefore, if you write the code as cleverly as possible, you are,\n by definition, not smart enough to debug it.\" -- Brian Kernighan",
+        "\"The only way to learn a new programming language is by writing\n programs in it.\" -- Dennis Ritchie",
+        "\"Computers are good at following instructions, but not at reading\n your mind.\" -- Donald Knuth",
+        "\"People think that computer science is the art of geniuses but the\n actual reality is the opposite, just many people doing things that\n build on each other, like a wall of mini stones.\" -- Donald Knuth",
+        "\"Truth can only be found in one place: the code.\" -- Robert C. Martin",
+        "\"One of my most productive days was throwing away 1000 lines of code.\"\n -- Ken Thompson",
+    };
+    int n_fortunes = (int)(sizeof(fortunes) / sizeof(fortunes[0]));
+
+    /* Get a pseudo-random index using uptime nanoseconds and pid */
+    unsigned long seed = 0;
+    {
+        int fd = sys_open("/proc/uptime", O_RDONLY, 0);
+        if (fd >= 0) {
+            char buf[64]; ssize_t n = sys_read(fd, buf, sizeof(buf)-1);
+            sys_close(fd);
+            if (n > 0) {
+                buf[n] = '\0';
+                /* Use all digits including after decimal for more entropy */
+                for (int i = 0; buf[i] && buf[i] != ' '; i++) {
+                    if (buf[i] >= '0' && buf[i] <= '9')
+                        seed = seed * 10 + (unsigned long)(buf[i] - '0');
+                }
+            }
+        }
+    }
+    /* Mix in pid for extra variation */
+    seed ^= (unsigned long)sys_call0(39); /* getpid */
+    /* Simple LCG step */
+    seed = seed * 6364136223846793005UL + 1442695040888963407UL;
+    int idx = (int)((seed >> 16) % (unsigned long)n_fortunes);
+
+    write_str(1, "\n ");
+    write_str(1, fortunes[idx]);
+    write_str(1, "\n\n");
 }
 
 #pragma GCC diagnostic pop

@@ -874,7 +874,7 @@ static size_t gen_meminfo(char *buf, size_t cap) {
 
 static size_t gen_version(char *buf, size_t cap) {
     struct pbuf b = { buf, 0, cap };
-    pb_str(&b, "Futura version 0.6.0 ");
+    pb_str(&b, "Futura version 0.7.0 ");
     pb_str(&b, FUT_BUILD_GIT);
     pb_str(&b, " (");
     pb_str(&b, FUT_BUILD_USER);
@@ -2153,7 +2153,6 @@ static size_t gen_zoneinfo(char *buf, size_t cap) {
     struct pbuf b = { buf, 0, cap };
     uint64_t total_pages = fut_pmm_total_pages();
     uint64_t free_pages  = fut_pmm_free_pages();
-    uint64_t used_pages  = total_pages > free_pages ? total_pages - free_pages : 0;
 
     /* Compute watermarks from managed pages (similar to Linux min_free_kbytes) */
     uint64_t wmark_min  = total_pages / 64;
@@ -2161,23 +2160,50 @@ static size_t gen_zoneinfo(char *buf, size_t cap) {
     uint64_t wmark_low  = wmark_min * 5 / 4;
     uint64_t wmark_high = wmark_min * 3 / 2;
 
+    /* Get real slab stats */
+    extern void slab_get_stats(uint64_t *out_total_bytes, uint64_t *out_free_bytes);
+    uint64_t zi_slab_total = 0, zi_slab_free = 0;
+    slab_get_stats(&zi_slab_total, &zi_slab_free);
+    uint64_t zi_slab_reclaim_pg = zi_slab_free / 4096;
+    uint64_t zi_slab_unreclaim_pg = (zi_slab_total > zi_slab_free ? zi_slab_total - zi_slab_free : 0) / 4096;
+
+    /* Walk VMAs for anon/file page counts */
+    uint64_t zi_anon_pg = 0, zi_file_pg = 0, zi_mapped_pg = 0;
+    {
+        fut_task_t *t = fut_task_list;
+        while (t) {
+            fut_mm_t *mm = fut_task_get_mm(t);
+            if (mm) {
+                struct fut_vma *vma = mm->vma_list;
+                while (vma) {
+                    uint64_t vma_pg = (vma->end - vma->start) / 4096;
+                    if (vma->vnode) zi_file_pg += vma_pg;
+                    else            zi_anon_pg += vma_pg;
+                    if (vma->flags & VMA_SHARED) zi_mapped_pg += vma_pg;
+                    vma = vma->next;
+                }
+            }
+            t = t->next;
+        }
+    }
+
     pb_str(&b, "Node 0, zone   Normal\n");
     pb_str(&b, "  per-node stats\n");
     pb_str(&b, "      nr_inactive_anon 0\n");
-    pb_str(&b, "      nr_active_anon "); pb_u64(&b, used_pages); pb_char(&b, '\n');
+    pb_str(&b, "      nr_active_anon "); pb_u64(&b, zi_anon_pg); pb_char(&b, '\n');
     pb_str(&b, "      nr_inactive_file 0\n");
-    pb_str(&b, "      nr_active_file 0\n");
+    pb_str(&b, "      nr_active_file "); pb_u64(&b, zi_file_pg); pb_char(&b, '\n');
     pb_str(&b, "      nr_unevictable 0\n");
-    pb_str(&b, "      nr_slab_reclaimable 0\n");
-    pb_str(&b, "      nr_slab_unreclaimable 0\n");
+    pb_str(&b, "      nr_slab_reclaimable "); pb_u64(&b, zi_slab_reclaim_pg); pb_char(&b, '\n');
+    pb_str(&b, "      nr_slab_unreclaimable "); pb_u64(&b, zi_slab_unreclaim_pg); pb_char(&b, '\n');
     pb_str(&b, "      nr_isolated_anon 0\n");
     pb_str(&b, "      nr_isolated_file 0\n");
     pb_str(&b, "      workingset_nodes 0\n");
     pb_str(&b, "      workingset_refault_anon 0\n");
     pb_str(&b, "      workingset_refault_file 0\n");
-    pb_str(&b, "      nr_anon_pages "); pb_u64(&b, used_pages); pb_char(&b, '\n');
-    pb_str(&b, "      nr_mapped 0\n");
-    pb_str(&b, "      nr_file_pages 0\n");
+    pb_str(&b, "      nr_anon_pages "); pb_u64(&b, zi_anon_pg); pb_char(&b, '\n');
+    pb_str(&b, "      nr_mapped "); pb_u64(&b, zi_mapped_pg); pb_char(&b, '\n');
+    pb_str(&b, "      nr_file_pages "); pb_u64(&b, zi_file_pg); pb_char(&b, '\n');
     pb_str(&b, "      nr_dirty 0\n");
     pb_str(&b, "      nr_writeback 0\n");
     pb_str(&b, "      nr_writeback_temp 0\n");
@@ -2200,9 +2226,9 @@ static size_t gen_zoneinfo(char *buf, size_t cap) {
     pb_str(&b, "      nr_sec_page_table_pages 0\n");
     pb_str(&b, "      nr_shadow_call_stack 0\n");
     pb_str(&b, "      nr_zone_inactive_anon 0\n");
-    pb_str(&b, "      nr_zone_active_anon "); pb_u64(&b, used_pages); pb_char(&b, '\n');
+    pb_str(&b, "      nr_zone_active_anon "); pb_u64(&b, zi_anon_pg); pb_char(&b, '\n');
     pb_str(&b, "      nr_zone_inactive_file 0\n");
-    pb_str(&b, "      nr_zone_active_file 0\n");
+    pb_str(&b, "      nr_zone_active_file "); pb_u64(&b, zi_file_pg); pb_char(&b, '\n');
     pb_str(&b, "      nr_zone_unevictable 0\n");
     pb_str(&b, "      nr_zone_write_pending 0\n");
     pb_str(&b, "      nr_mlock 0\n");
@@ -2417,7 +2443,8 @@ static size_t gen_modules(char *buf, size_t cap) {
     /* Module descriptor: name, simulated size (based on typical .a sizes) */
     struct mod_entry { const char *name; uint32_t size; };
 
-    /* VirtIO drivers — always present on x86_64 */
+#if !defined(DRIVERS_QEMU)
+    /* VirtIO drivers — core transport, listed when hardware drivers present */
     static const struct mod_entry virtio_mods[] = {
         { "virtio_blk",     16384 },
         { "virtio_net",     20480 },
@@ -2425,7 +2452,6 @@ static size_t gen_modules(char *buf, size_t cap) {
         { "virtio_console", 12288 },
     };
 
-#if !defined(DRIVERS_QEMU)
     /* x86 platform drivers */
     static const struct mod_entry x86_platform_mods[] = {
         { "x86_cpuid",      8192  },
@@ -2537,9 +2563,8 @@ static size_t gen_modules(char *buf, size_t cap) {
     } \
 } while (0)
 
-    EMIT_MOD_ARRAY(virtio_mods);
-
 #if !defined(DRIVERS_QEMU)
+    EMIT_MOD_ARRAY(virtio_mods);
     EMIT_MOD_ARRAY(x86_platform_mods);
     EMIT_MOD_ARRAY(x86_storage_mods);
     EMIT_MOD_ARRAY(x86_net_mods);

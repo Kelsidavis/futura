@@ -62,6 +62,13 @@ extern struct net_namespace *netns_get_init(void);
 extern char g_hostname[];
 extern char g_domainname[];
 
+/* Kernel tunables — writable via /proc/sys/kernel/ */
+static int g_printk_console_loglevel = 4;  /* console_loglevel */
+static int g_printk_default_loglevel = 4;  /* default_message_loglevel */
+static int g_printk_min_loglevel     = 1;  /* minimum_console_loglevel */
+static int g_printk_boot_loglevel    = 7;  /* default_console_loglevel (boot) */
+static int g_panic_timeout           = 0;  /* seconds to wait before reboot (0=don't) */
+
 /* ============================================================
  *   Procfs Node Kind (stored in fs_data)
  * ============================================================ */
@@ -4382,9 +4389,9 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             break;
         }
         case PROC_SYS_VERSION: {
-            /* /proc/sys/kernel/version — same as /proc/version format */
+            /* /proc/sys/kernel/version — build version string with date */
             struct pbuf b = { tmp, 0, GEN_BUF };
-            pb_str(&b, "Linux version 6.8.0-futura (futura@localhost) (gcc) #1 SMP ");
+            pb_str(&b, "#1 SMP PREEMPT_DYNAMIC ");
             pb_str(&b, __DATE__); pb_char(&b, ' ');
             pb_str(&b, __TIME__); pb_char(&b, '\n');
             total = b.pos;
@@ -4886,10 +4893,16 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
         case PROC_SYS_THREADS_MAX:
             total = gen_sysctl_str(tmp, GEN_BUF, "32768");
             break;
-        case PROC_SYS_PRINTK:
-            /* current default boot-time min loglevel format */
-            total = gen_sysctl_str(tmp, GEN_BUF, "4\t4\t1\t7");
+        case PROC_SYS_PRINTK: {
+            /* console_loglevel  default_message_loglevel  minimum_console_loglevel  default_console_loglevel */
+            struct pbuf pb = { tmp, 0, GEN_BUF };
+            pb_u64(&pb, (uint64_t)g_printk_console_loglevel); pb_char(&pb, '\t');
+            pb_u64(&pb, (uint64_t)g_printk_default_loglevel); pb_char(&pb, '\t');
+            pb_u64(&pb, (uint64_t)g_printk_min_loglevel);     pb_char(&pb, '\t');
+            pb_u64(&pb, (uint64_t)g_printk_boot_loglevel);    pb_char(&pb, '\n');
+            total = pb.pos;
             break;
+        }
         case PROC_SYS_PTRACE_SCOPE:
             /* 0 = classic ptrace, no restrictions */
             total = gen_sysctl_str(tmp, GEN_BUF, "0");
@@ -5131,10 +5144,16 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
         case PROC_SYS_NET_BRIDGE_NF_CALL:
             total = gen_sysctl_str(tmp, GEN_BUF, "1");
             break;
-        case PROC_SYS_KERNEL_PANIC:
-            /* panic timeout in seconds (0 = don't reboot on panic) */
-            total = gen_sysctl_str(tmp, GEN_BUF, "0");
+        case PROC_SYS_KERNEL_PANIC: {
+            /* panic timeout in seconds (0 = don't reboot on panic, negative = immediate) */
+            struct pbuf pb = { tmp, 0, GEN_BUF };
+            int pt = g_panic_timeout;
+            if (pt < 0) { pb_char(&pb, '-'); pt = -pt; }
+            pb_u64(&pb, (uint64_t)pt);
+            pb_char(&pb, '\n');
+            total = pb.pos;
             break;
+        }
         case PROC_SYS_KERNEL_PANIC_ON_OOPS:
             /* 0 = continue on oops, 1 = panic on oops */
             total = gen_sysctl_str(tmp, GEN_BUF, "0");
@@ -5252,10 +5271,13 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
  * procfs_file_write() — handle writes to select /proc files.
  *
  * Writable files:
- *   PROC_SYS_HOSTNAME    — updates g_hostname (sethostname backing)
- *   PROC_SYS_DOMAINNAME  — updates g_domainname (setdomainname backing)
- *   PROC_OOM_ADJ         — accepted silently (oom_score_adj per-process tuning)
- *   Any PROC_SYS_*       — accepted silently (sysctl tuning no-ops)
+ *   PROC_SYS_HOSTNAME           — updates g_hostname (sethostname backing)
+ *   PROC_SYS_DOMAINNAME         — updates g_domainname (setdomainname backing)
+ *   PROC_SYS_PRINTK             — updates kernel log levels (4 tab-separated values)
+ *   PROC_SYS_SCHED_CHILD_FIRST  — updates g_sched_child_runs_first (0 or 1)
+ *   PROC_SYS_KERNEL_PANIC       — updates g_panic_timeout (seconds, 0=don't reboot)
+ *   PROC_OOM_ADJ                — accepted silently (oom_score_adj per-process tuning)
+ *   Any PROC_SYS_*              — accepted silently (sysctl tuning no-ops)
  *
  * All other /proc files return -EPERM.
  */
@@ -5512,6 +5534,47 @@ static ssize_t procfs_file_write(struct fut_vnode *vnode, const void *buf,
             return (ssize_t)size;
         }
 
+        case PROC_SYS_PRINTK: {
+            /* Parse up to 4 whitespace/tab-separated integers:
+             * console_loglevel  default_message_loglevel  minimum_console_loglevel  default_console_loglevel
+             * Values are clamped to [0, 8]. */
+            int vals[4] = { g_printk_console_loglevel, g_printk_default_loglevel,
+                            g_printk_min_loglevel, g_printk_boot_loglevel };
+            size_t ci = 0, vi = 0;
+            while (vi < 4 && ci < copy_len) {
+                while (ci < copy_len && (kbuf[ci] == ' ' || kbuf[ci] == '\t')) ci++;
+                if (ci >= copy_len || kbuf[ci] < '0' || kbuf[ci] > '9') break;
+                int v = 0;
+                while (ci < copy_len && kbuf[ci] >= '0' && kbuf[ci] <= '9')
+                    v = v * 10 + (kbuf[ci++] - '0');
+                if (v < 0) v = 0;
+                if (v > 8) v = 8;
+                vals[vi++] = v;
+            }
+            if (vi == 0) return -EINVAL;
+            g_printk_console_loglevel = vals[0];
+            g_printk_default_loglevel = vals[1];
+            g_printk_min_loglevel     = vals[2];
+            g_printk_boot_loglevel    = vals[3];
+            return (ssize_t)size;
+        }
+
+        case PROC_SYS_KERNEL_PANIC: {
+            /* Parse signed decimal: seconds to wait before reboot on panic.
+             * 0 = don't reboot. Negative values mean reboot immediately. */
+            size_t pi = 0;
+            int neg = 0;
+            if (pi < copy_len && kbuf[pi] == '-') { neg = 1; pi++; }
+            else if (pi < copy_len && kbuf[pi] == '+') { pi++; }
+            if (pi >= copy_len || kbuf[pi] < '0' || kbuf[pi] > '9') return -EINVAL;
+            int pv = 0;
+            while (pi < copy_len && kbuf[pi] >= '0' && kbuf[pi] <= '9')
+                pv = pv * 10 + (kbuf[pi++] - '0');
+            if (neg) pv = -pv;
+            g_panic_timeout = pv;
+            return (ssize_t)size;
+        }
+
         case PROC_SYS_NET_NF_CT_MAX:
             /* Accept nf_conntrack_max write (Docker sets this) */
             return (ssize_t)size;
@@ -5539,7 +5602,6 @@ static ssize_t procfs_file_write(struct fut_vnode *vnode, const void *buf,
         case PROC_SYS_CORE_USES_PID:
         case PROC_SYS_SUID_DUMPABLE:
         case PROC_SYS_TAINTED:
-        case PROC_SYS_VERSION:
         case PROC_ATTR_CURRENT:   /* LSM label write — accepted silently */
             return (ssize_t)size;  /* accept silently */
 

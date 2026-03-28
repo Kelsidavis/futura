@@ -929,7 +929,17 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
     sframe.uc.uc_mcontext.gregs.rax = f->rax;
     sframe.uc.uc_mcontext.gregs.rcx = f->rcx;
     sframe.uc.uc_mcontext.gregs.rsp = f->rsp;
-    sframe.uc.uc_mcontext.gregs.rip = f->rip;
+    /* SA_RESTART: if syscall was interrupted (rax == -EINTR) and handler
+     * has SA_RESTART, rewind RIP to the 'syscall' instruction (2 bytes back)
+     * so the syscall is transparently restarted after the handler returns. */
+    {
+        int64_t ret_val = (int64_t)f->rax;
+        if ((handler_flags_pre & SA_RESTART) && ret_val == -EINTR) {
+            sframe.uc.uc_mcontext.gregs.rip = f->rip - 2;
+        } else {
+            sframe.uc.uc_mcontext.gregs.rip = f->rip;
+        }
+    }
     sframe.uc.uc_mcontext.gregs.eflags = f->rflags;
     sframe.uc.uc_mcontext.gregs.cs = (uint16_t)f->cs;
     sframe.uc.uc_mcontext.gregs.gs = (uint16_t)f->gs;

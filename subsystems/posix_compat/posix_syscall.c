@@ -4862,9 +4862,11 @@ static bool posix_deliver_signal(fut_task_t *current, int signum,
 #endif
 
     /* Apply SA_RESETHAND flag if set:
-     * Reset handler to SIG_DFL after delivery */
-    if (signum > 0 && signum <= _NSIG && (current->signal_handler_flags[signum - 1] & SA_RESETHAND)) {
+     * Reset handler to SIG_DFL after delivery and clear flags (POSIX: the
+     * disposition is reset as if SA_RESETHAND had not been specified). */
+    if (signum > 0 && signum < _NSIG && (current->signal_handler_flags[signum - 1] & SA_RESETHAND)) {
         fut_signal_set_handler(current, signum, SIG_DFL);
+        current->signal_handler_flags[signum - 1] = 0;
         fut_printf("[SIGNAL] Applied SA_RESETHAND for signal %d\n", signum);
     }
 

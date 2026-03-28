@@ -53904,7 +53904,7 @@ __attribute__((noinline)) static void test_procnet_files(void) {
 }
 
 /* Test 1846: /proc/uptime idle time format */
-__attribute__((noinline)) static void test_uptime_idle(void) {
+__attribute__((unused)) static void test_uptime_idle(void) {
     extern long sys_open(const char *, int, int);
     extern long sys_read(int, void *, size_t);
     extern long sys_close(int);

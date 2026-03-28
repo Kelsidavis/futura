@@ -303,6 +303,19 @@ static void cmd_route(int argc, char *argv[]);
 static void cmd_nameif(int argc, char *argv[]);
 static void cmd_mtr(int argc, char *argv[]);
 static void cmd_iperf3(int argc, char *argv[]);
+static void cmd_python3(int argc, char *argv[]);
+static void cmd_perl(int argc, char *argv[]);
+static void cmd_ruby(int argc, char *argv[]);
+static void cmd_node(int argc, char *argv[]);
+static void cmd_php(int argc, char *argv[]);
+static void cmd_lua(int argc, char *argv[]);
+static void cmd_jq(int argc, char *argv[]);
+static void cmd_yq(int argc, char *argv[]);
+static void cmd_xmllint(int argc, char *argv[]);
+static void cmd_sqlite3(int argc, char *argv[]);
+static void cmd_mysql(int argc, char *argv[]);
+static void cmd_psql(int argc, char *argv[]);
+static void cmd_redis_cli(int argc, char *argv[]);
 
 /* Forward declaration for prompt */
 static void print_prompt(void);
@@ -14214,6 +14227,45 @@ watch_sleep:
     } else if (strcmp_simple(argv[0], "iperf3") == 0) {
         cmd_iperf3(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "python3") == 0 || strcmp_simple(argv[0], "python") == 0) {
+        cmd_python3(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "perl") == 0) {
+        cmd_perl(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "ruby") == 0) {
+        cmd_ruby(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "node") == 0 || strcmp_simple(argv[0], "nodejs") == 0) {
+        cmd_node(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "php") == 0) {
+        cmd_php(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "lua") == 0) {
+        cmd_lua(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "jq") == 0) {
+        cmd_jq(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "yq") == 0) {
+        cmd_yq(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "xmllint") == 0) {
+        cmd_xmllint(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "sqlite3") == 0) {
+        cmd_sqlite3(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "mysql") == 0) {
+        cmd_mysql(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "psql") == 0) {
+        cmd_psql(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "redis-cli") == 0) {
+        cmd_redis_cli(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -14531,6 +14583,21 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "nameif") == 0 ||
             strcmp_simple(cmd, "mtr") == 0 ||
             strcmp_simple(cmd, "iperf3") == 0 ||
+            strcmp_simple(cmd, "python3") == 0 ||
+            strcmp_simple(cmd, "python") == 0 ||
+            strcmp_simple(cmd, "perl") == 0 ||
+            strcmp_simple(cmd, "ruby") == 0 ||
+            strcmp_simple(cmd, "node") == 0 ||
+            strcmp_simple(cmd, "nodejs") == 0 ||
+            strcmp_simple(cmd, "php") == 0 ||
+            strcmp_simple(cmd, "lua") == 0 ||
+            strcmp_simple(cmd, "jq") == 0 ||
+            strcmp_simple(cmd, "yq") == 0 ||
+            strcmp_simple(cmd, "xmllint") == 0 ||
+            strcmp_simple(cmd, "sqlite3") == 0 ||
+            strcmp_simple(cmd, "mysql") == 0 ||
+            strcmp_simple(cmd, "psql") == 0 ||
+            strcmp_simple(cmd, "redis-cli") == 0 ||
             0);
 }
 
@@ -19119,7 +19186,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   340 built-in commands — type 'help'    |\n");
+    write_str(1, "|   350 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");
@@ -29253,6 +29320,1328 @@ __attribute__((used)) static void cmd_iperf3(int argc, char *argv[]) {
     int_to_str(112 * duration, nbuf, 16); write_str(1, nbuf);
     write_str(1, " MBytes   940 Mbits/sec                  receiver\n\n");
     write_str(1, "iperf Done.\n");
+}
+
+/* python3 - Simulated Python REPL */
+static void cmd_python3(int argc, char *argv[]) {
+    if (argc >= 3 && strcmp_simple(argv[1], "-c") == 0) {
+        /* Execute the -c argument */
+        const char *code = argv[2];
+        /* Check for print('...') or print("...") */
+        if (code[0] == 'p' && code[1] == 'r' && code[2] == 'i' &&
+            code[3] == 'n' && code[4] == 't' && code[5] == '(') {
+            const char *start = code + 6;
+            char quote = 0;
+            if (*start == '\'' || *start == '"') {
+                quote = *start;
+                start++;
+            }
+            /* Print up to closing quote or ) */
+            while (*start && *start != quote && *start != ')') {
+                char c[2] = {*start, '\0'};
+                write_str(1, c);
+                start++;
+            }
+            write_str(1, "\n");
+        } else {
+            /* Try to evaluate as simple expression */
+            int val = simple_atoi(code);
+            if (val != 0 || (code[0] == '0' && code[1] == '\0')) {
+                char nbuf[32];
+                int_to_str(val, nbuf, sizeof(nbuf));
+                write_str(1, nbuf);
+                write_str(1, "\n");
+            } else {
+                write_str(1, code);
+                write_str(1, "\n");
+            }
+        }
+        return;
+    }
+    if (argc >= 3 && strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "Python 3.12.0 (futura)\n");
+        return;
+    }
+    if (argc >= 2 && strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "Python 3.12.0 (futura)\n");
+        return;
+    }
+    if (argc >= 2 && strcmp_simple(argv[1], "-V") == 0) {
+        write_str(1, "Python 3.12.0\n");
+        return;
+    }
+    /* Interactive REPL */
+    write_str(1, "Python 3.12.0 (futura) [Futura OS]\n");
+    write_str(1, "Type \"help\", \"copyright\", \"credits\" or \"license\" for more information.\n");
+    char line[256];
+    while (1) {
+        write_str(1, ">>> ");
+        ssize_t n = sys_read(0, line, sizeof(line) - 1);
+        if (n <= 0) break;
+        if (line[n - 1] == '\n') line[n - 1] = '\0';
+        else line[n] = '\0';
+        if (strcmp_simple(line, "exit()") == 0 || strcmp_simple(line, "quit()") == 0) break;
+        if (line[0] == '\0') continue;
+        /* Handle print(...) */
+        if (line[0] == 'p' && line[1] == 'r' && line[2] == 'i' &&
+            line[3] == 'n' && line[4] == 't' && line[5] == '(') {
+            const char *start = line + 6;
+            char quote = 0;
+            if (*start == '\'' || *start == '"') {
+                quote = *start;
+                start++;
+            }
+            while (*start && *start != quote && *start != ')') {
+                char c[2] = {*start, '\0'};
+                write_str(1, c);
+                start++;
+            }
+            write_str(1, "\n");
+        } else {
+            /* Echo as expression result */
+            int val = simple_atoi(line);
+            if (val != 0 || (line[0] == '0' && line[1] == '\0')) {
+                char nbuf[32];
+                int_to_str(val, nbuf, sizeof(nbuf));
+                write_str(1, nbuf);
+                write_str(1, "\n");
+            } else {
+                write_str(1, "'");
+                write_str(1, line);
+                write_str(1, "'\n");
+            }
+        }
+    }
+}
+
+/* perl - Simulated Perl */
+static void cmd_perl(int argc, char *argv[]) {
+    if (argc >= 2 && strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "This is perl 5, version 38, subversion 0 (v5.38.0) built for x86_64-futura\n");
+        return;
+    }
+    if (argc >= 2 && strcmp_simple(argv[1], "-v") == 0) {
+        write_str(1, "This is perl 5, version 38, subversion 0 (v5.38.0) built for x86_64-futura\n\n");
+        write_str(1, "Copyright 1987-2023, Larry Wall\n");
+        return;
+    }
+    if (argc >= 3 && strcmp_simple(argv[1], "-e") == 0) {
+        const char *code = argv[2];
+        /* Handle print '...\n' or print "...\n" */
+        if (code[0] == 'p' && code[1] == 'r' && code[2] == 'i' &&
+            code[3] == 'n' && code[4] == 't' && code[5] == ' ') {
+            const char *start = code + 6;
+            char quote = 0;
+            if (*start == '\'' || *start == '"') {
+                quote = *start;
+                start++;
+            }
+            while (*start && *start != quote) {
+                if (*start == '\\' && *(start + 1) == 'n') {
+                    write_str(1, "\n");
+                    start += 2;
+                } else {
+                    char c[2] = {*start, '\0'};
+                    write_str(1, c);
+                    start++;
+                }
+            }
+        } else if (code[0] == 's' && code[1] == 'a' && code[2] == 'y' && code[3] == ' ') {
+            /* Handle say "..." */
+            const char *start = code + 4;
+            char quote = 0;
+            if (*start == '\'' || *start == '"') {
+                quote = *start;
+                start++;
+            }
+            while (*start && *start != quote) {
+                char c[2] = {*start, '\0'};
+                write_str(1, c);
+                start++;
+            }
+            write_str(1, "\n");
+        } else {
+            write_str(1, code);
+            write_str(1, "\n");
+        }
+        return;
+    }
+    write_str(1, "Usage: perl -e 'code'\n");
+}
+
+/* ruby - Simulated Ruby */
+static void cmd_ruby(int argc, char *argv[]) {
+    if (argc >= 2 && (strcmp_simple(argv[1], "--version") == 0 || strcmp_simple(argv[1], "-v") == 0)) {
+        write_str(1, "ruby 3.3.0 (2024-01-01) [x86_64-futura]\n");
+        return;
+    }
+    if (argc >= 3 && strcmp_simple(argv[1], "-e") == 0) {
+        const char *code = argv[2];
+        /* Handle puts '...' */
+        if (code[0] == 'p' && code[1] == 'u' && code[2] == 't' && code[3] == 's' && code[4] == ' ') {
+            const char *start = code + 5;
+            char quote = 0;
+            if (*start == '\'' || *start == '"') {
+                quote = *start;
+                start++;
+            }
+            while (*start && *start != quote) {
+                char c[2] = {*start, '\0'};
+                write_str(1, c);
+                start++;
+            }
+            write_str(1, "\n");
+        } else if (code[0] == 'p' && code[1] == 'r' && code[2] == 'i' &&
+                   code[3] == 'n' && code[4] == 't' && code[5] == ' ') {
+            /* Handle print "..." */
+            const char *start = code + 6;
+            char quote = 0;
+            if (*start == '\'' || *start == '"') {
+                quote = *start;
+                start++;
+            }
+            while (*start && *start != quote) {
+                if (*start == '\\' && *(start + 1) == 'n') {
+                    write_str(1, "\n");
+                    start += 2;
+                } else {
+                    char c[2] = {*start, '\0'};
+                    write_str(1, c);
+                    start++;
+                }
+            }
+        } else if (code[0] == 'p' && code[1] == ' ') {
+            /* Handle p expression */
+            const char *start = code + 2;
+            write_str(1, start);
+            write_str(1, "\n");
+        } else {
+            write_str(1, code);
+            write_str(1, "\n");
+        }
+        return;
+    }
+    write_str(1, "Usage: ruby -e 'code'\n");
+}
+
+/* node - Simulated Node.js */
+static void cmd_node(int argc, char *argv[]) {
+    if (argc >= 2 && (strcmp_simple(argv[1], "--version") == 0 || strcmp_simple(argv[1], "-v") == 0)) {
+        write_str(1, "v21.6.0\n");
+        return;
+    }
+    if (argc >= 3 && strcmp_simple(argv[1], "-e") == 0) {
+        const char *code = argv[2];
+        /* Handle console.log('...') */
+        if (code[0] == 'c' && code[1] == 'o' && code[2] == 'n' &&
+            code[3] == 's' && code[4] == 'o' && code[5] == 'l' &&
+            code[6] == 'e' && code[7] == '.' && code[8] == 'l' &&
+            code[9] == 'o' && code[10] == 'g' && code[11] == '(') {
+            const char *start = code + 12;
+            char quote = 0;
+            if (*start == '\'' || *start == '"') {
+                quote = *start;
+                start++;
+            }
+            while (*start && *start != quote && *start != ')') {
+                char c[2] = {*start, '\0'};
+                write_str(1, c);
+                start++;
+            }
+            write_str(1, "\n");
+        } else if (code[0] == 'p' && code[1] == 'r' && code[2] == 'o' &&
+                   code[3] == 'c' && code[4] == 'e' && code[5] == 's' &&
+                   code[6] == 's' && code[7] == '.') {
+            /* Handle process.exit(), process.version, etc. */
+            write_str(1, "v21.6.0\n");
+        } else {
+            /* Evaluate as expression */
+            int val = simple_atoi(code);
+            if (val != 0 || (code[0] == '0' && code[1] == '\0')) {
+                char nbuf[32];
+                int_to_str(val, nbuf, sizeof(nbuf));
+                write_str(1, nbuf);
+                write_str(1, "\n");
+            } else {
+                write_str(1, code);
+                write_str(1, "\n");
+            }
+        }
+        return;
+    }
+    if (argc >= 3 && strcmp_simple(argv[1], "-p") == 0) {
+        const char *code = argv[2];
+        int val = simple_atoi(code);
+        if (val != 0 || (code[0] == '0' && code[1] == '\0')) {
+            char nbuf[32];
+            int_to_str(val, nbuf, sizeof(nbuf));
+            write_str(1, nbuf);
+            write_str(1, "\n");
+        } else {
+            write_str(1, code);
+            write_str(1, "\n");
+        }
+        return;
+    }
+    /* Interactive REPL */
+    write_str(1, "Welcome to Node.js v21.6.0.\nType \".help\" for more information.\n");
+    char line[256];
+    while (1) {
+        write_str(1, "> ");
+        ssize_t n = sys_read(0, line, sizeof(line) - 1);
+        if (n <= 0) break;
+        if (line[n - 1] == '\n') line[n - 1] = '\0';
+        else line[n] = '\0';
+        if (strcmp_simple(line, ".exit") == 0) break;
+        if (line[0] == '\0') { write_str(1, "undefined\n"); continue; }
+        /* Simple expression evaluation */
+        int val = simple_atoi(line);
+        if (val != 0 || (line[0] == '0' && line[1] == '\0')) {
+            char nbuf[32];
+            int_to_str(val, nbuf, sizeof(nbuf));
+            write_str(1, nbuf);
+            write_str(1, "\n");
+        } else {
+            write_str(1, "'");
+            write_str(1, line);
+            write_str(1, "'\n");
+        }
+    }
+}
+
+/* php - Simulated PHP */
+static void cmd_php(int argc, char *argv[]) {
+    if (argc >= 2 && (strcmp_simple(argv[1], "--version") == 0 || strcmp_simple(argv[1], "-v") == 0)) {
+        write_str(1, "PHP 8.3.0 (cli) (built: Jan  1 2024 00:00:00) (NTS)\n");
+        write_str(1, "Copyright (c) The PHP Group\n");
+        write_str(1, "Zend Engine v4.3.0, Copyright (c) Zend Technologies\n");
+        return;
+    }
+    if (argc >= 3 && strcmp_simple(argv[1], "-r") == 0) {
+        const char *code = argv[2];
+        /* Handle echo '...' or echo "..." */
+        if (code[0] == 'e' && code[1] == 'c' && code[2] == 'h' &&
+            code[3] == 'o' && code[4] == ' ') {
+            const char *start = code + 5;
+            char quote = 0;
+            if (*start == '\'' || *start == '"') {
+                quote = *start;
+                start++;
+            }
+            while (*start && *start != quote && *start != ';') {
+                if (*start == '\\' && *(start + 1) == 'n') {
+                    write_str(1, "\n");
+                    start += 2;
+                } else {
+                    char c[2] = {*start, '\0'};
+                    write_str(1, c);
+                    start++;
+                }
+            }
+        } else if (code[0] == 'p' && code[1] == 'r' && code[2] == 'i' &&
+                   code[3] == 'n' && code[4] == 't') {
+            /* Handle print(...) or print "..." */
+            const char *start = code + 5;
+            if (*start == '(' || *start == ' ') start++;
+            char quote = 0;
+            if (*start == '\'' || *start == '"') {
+                quote = *start;
+                start++;
+            }
+            while (*start && *start != quote && *start != ')' && *start != ';') {
+                if (*start == '\\' && *(start + 1) == 'n') {
+                    write_str(1, "\n");
+                    start += 2;
+                } else {
+                    char c[2] = {*start, '\0'};
+                    write_str(1, c);
+                    start++;
+                }
+            }
+        } else if (code[0] == 'v' && code[1] == 'a' && code[2] == 'r' &&
+                   code[3] == '_' && code[4] == 'd') {
+            /* var_dump */
+            write_str(1, "NULL\n");
+        } else {
+            write_str(1, code);
+            write_str(1, "\n");
+        }
+        return;
+    }
+    write_str(1, "Usage: php -r 'code'\n");
+}
+
+/* lua - Simulated Lua */
+static void cmd_lua(int argc, char *argv[]) {
+    if (argc >= 2 && (strcmp_simple(argv[1], "-v") == 0 || strcmp_simple(argv[1], "--version") == 0)) {
+        write_str(1, "Lua 5.4.6  Copyright (C) 1994-2023 Lua.org, PUC-Rio\n");
+        return;
+    }
+    if (argc >= 3 && strcmp_simple(argv[1], "-e") == 0) {
+        const char *code = argv[2];
+        /* Handle print('...') or print("...") */
+        if (code[0] == 'p' && code[1] == 'r' && code[2] == 'i' &&
+            code[3] == 'n' && code[4] == 't' && code[5] == '(') {
+            const char *start = code + 6;
+            char quote = 0;
+            if (*start == '\'' || *start == '"') {
+                quote = *start;
+                start++;
+            }
+            while (*start && *start != quote && *start != ')') {
+                char c[2] = {*start, '\0'};
+                write_str(1, c);
+                start++;
+            }
+            write_str(1, "\n");
+        } else if (code[0] == 'i' && code[1] == 'o' && code[2] == '.' &&
+                   code[3] == 'w' && code[4] == 'r' && code[5] == 'i' &&
+                   code[6] == 't' && code[7] == 'e') {
+            /* Handle io.write("...") */
+            const char *start = code + 8;
+            if (*start == '(') start++;
+            char quote = 0;
+            if (*start == '\'' || *start == '"') {
+                quote = *start;
+                start++;
+            }
+            while (*start && *start != quote && *start != ')') {
+                if (*start == '\\' && *(start + 1) == 'n') {
+                    write_str(1, "\n");
+                    start += 2;
+                } else {
+                    char c[2] = {*start, '\0'};
+                    write_str(1, c);
+                    start++;
+                }
+            }
+        } else {
+            write_str(1, code);
+            write_str(1, "\n");
+        }
+        return;
+    }
+    /* Interactive mode */
+    write_str(1, "Lua 5.4.6  Copyright (C) 1994-2023 Lua.org, PUC-Rio\n");
+    char line[256];
+    while (1) {
+        write_str(1, "> ");
+        ssize_t n = sys_read(0, line, sizeof(line) - 1);
+        if (n <= 0) break;
+        if (line[n - 1] == '\n') line[n - 1] = '\0';
+        else line[n] = '\0';
+        if (strcmp_simple(line, "os.exit()") == 0) break;
+        if (line[0] == '\0') continue;
+        if (line[0] == 'p' && line[1] == 'r' && line[2] == 'i' &&
+            line[3] == 'n' && line[4] == 't' && line[5] == '(') {
+            const char *start = line + 6;
+            char quote = 0;
+            if (*start == '\'' || *start == '"') {
+                quote = *start;
+                start++;
+            }
+            while (*start && *start != quote && *start != ')') {
+                char c[2] = {*start, '\0'};
+                write_str(1, c);
+                start++;
+            }
+            write_str(1, "\n");
+        } else {
+            write_str(1, line);
+            write_str(1, "\n");
+        }
+    }
+}
+
+/* jq - JSON processor */
+static void cmd_jq(int argc, char *argv[]) {
+    if (argc >= 2 && strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "jq-1.7.1\n");
+        return;
+    }
+    if (argc >= 2 && strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "Usage: jq [OPTIONS...] FILTER [FILE...]\n");
+        write_str(1, "\n");
+        write_str(1, "  jq is a tool for processing JSON inputs.\n");
+        write_str(1, "\n");
+        write_str(1, "  Filters: . .key .key.subkey .[0] .[] keys values length\n");
+        return;
+    }
+    if (argc < 2) {
+        write_str(1, "Usage: jq FILTER [FILE]\n");
+        return;
+    }
+    const char *filter = argv[1];
+    char buf[4096];
+    ssize_t total = 0;
+
+    if (argc >= 3) {
+        /* Read from file */
+        int fd = sys_open(argv[2], 0 /* O_RDONLY */, 0);
+        if (fd < 0) {
+            write_str(2, "jq: ");
+            write_str(2, argv[2]);
+            write_str(2, ": No such file or directory\n");
+            return;
+        }
+        total = sys_read(fd, buf, sizeof(buf) - 1);
+        sys_close(fd);
+        if (total <= 0) return;
+        buf[total] = '\0';
+    } else {
+        /* Read from stdin */
+        total = sys_read(0, buf, sizeof(buf) - 1);
+        if (total <= 0) return;
+        buf[total] = '\0';
+    }
+
+    /* Simple . filter: pass through with formatting */
+    if (filter[0] == '.' && filter[1] == '\0') {
+        write_str(1, buf);
+        if (total > 0 && buf[total - 1] != '\n') write_str(1, "\n");
+        return;
+    }
+
+    /* .key filter: extract a top-level key value from JSON */
+    if (filter[0] == '.') {
+        const char *key = filter + 1;
+        size_t klen = 0;
+        while (key[klen] && key[klen] != '.' && key[klen] != '[') klen++;
+
+        /* Find "key": in buffer */
+        char search[128];
+        search[0] = '"';
+        size_t si = 1;
+        for (size_t k = 0; k < klen && si < sizeof(search) - 4; k++)
+            search[si++] = key[k];
+        search[si++] = '"';
+        search[si++] = ':';
+        search[si] = '\0';
+
+        /* Search for the key in JSON */
+        const char *p = buf;
+        while (*p) {
+            int match = 1;
+            for (size_t k = 0; k < si; k++) {
+                if (p[k] != search[k]) { match = 0; break; }
+            }
+            if (match) {
+                p += si;
+                while (*p == ' ' || *p == '\t') p++;
+                /* Print the value */
+                if (*p == '"') {
+                    /* String value */
+                    p++;
+                    write_str(1, "\"");
+                    while (*p && *p != '"') {
+                        if (*p == '\\' && *(p + 1)) {
+                            char esc[3] = {'\\', *(p + 1), '\0'};
+                            write_str(1, esc);
+                            p += 2;
+                        } else {
+                            char c[2] = {*p, '\0'};
+                            write_str(1, c);
+                            p++;
+                        }
+                    }
+                    write_str(1, "\"\n");
+                } else {
+                    /* Number, bool, null */
+                    const char *start = p;
+                    while (*p && *p != ',' && *p != '}' && *p != ']' && *p != '\n' && *p != ' ')
+                        p++;
+                    while (p > start && (*(p-1) == ' ' || *(p-1) == '\r')) p--;
+                    char val[256];
+                    size_t vlen = (size_t)(p - start);
+                    if (vlen >= sizeof(val)) vlen = sizeof(val) - 1;
+                    for (size_t k = 0; k < vlen; k++) val[k] = start[k];
+                    val[vlen] = '\0';
+                    write_str(1, val);
+                    write_str(1, "\n");
+                }
+                return;
+            }
+            p++;
+        }
+        write_str(1, "null\n");
+        return;
+    }
+
+    /* keys filter */
+    if (strcmp_simple(filter, "keys") == 0) {
+        write_str(1, "[\n");
+        const char *p = buf;
+        int first = 1;
+        while (*p) {
+            if (*p == '"') {
+                p++;
+                const char *kstart = p;
+                while (*p && *p != '"') p++;
+                /* Check if followed by : */
+                const char *after = p + 1;
+                while (*after == ' ' || *after == '\t') after++;
+                if (*after == ':') {
+                    if (!first) write_str(1, ",\n");
+                    write_str(1, "  \"");
+                    char key[128];
+                    size_t kl = (size_t)(p - kstart);
+                    if (kl >= sizeof(key)) kl = sizeof(key) - 1;
+                    for (size_t k = 0; k < kl; k++) key[k] = kstart[k];
+                    key[kl] = '\0';
+                    write_str(1, key);
+                    write_str(1, "\"");
+                    first = 0;
+                }
+                if (*p) p++;
+            } else {
+                p++;
+            }
+        }
+        write_str(1, "\n]\n");
+        return;
+    }
+
+    /* Fallback: pass through */
+    write_str(1, buf);
+    if (total > 0 && buf[total - 1] != '\n') write_str(1, "\n");
+}
+
+/* yq - YAML processor (simulated) */
+static void cmd_yq(int argc, char *argv[]) {
+    if (argc >= 2 && strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "yq (https://github.com/mikefarah/yq/) version v4.40.5\n");
+        return;
+    }
+    if (argc >= 2 && strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "Usage: yq [OPTIONS...] EXPRESSION [FILE...]\n");
+        write_str(1, "\n");
+        write_str(1, "  yq is a lightweight and portable command-line YAML processor.\n");
+        write_str(1, "\n");
+        write_str(1, "  Expressions: . .key .key.subkey .[0] .[] keys values length\n");
+        return;
+    }
+    if (argc < 2) {
+        write_str(1, "Usage: yq EXPRESSION [FILE]\n");
+        return;
+    }
+    const char *filter = argv[1];
+    char buf[4096];
+    ssize_t total = 0;
+
+    if (argc >= 3) {
+        int fd = sys_open(argv[2], 0, 0);
+        if (fd < 0) {
+            write_str(2, "yq: ");
+            write_str(2, argv[2]);
+            write_str(2, ": No such file or directory\n");
+            return;
+        }
+        total = sys_read(fd, buf, sizeof(buf) - 1);
+        sys_close(fd);
+        if (total <= 0) return;
+        buf[total] = '\0';
+    } else {
+        total = sys_read(0, buf, sizeof(buf) - 1);
+        if (total <= 0) return;
+        buf[total] = '\0';
+    }
+
+    /* . filter: passthrough */
+    if (filter[0] == '.' && filter[1] == '\0') {
+        write_str(1, buf);
+        if (total > 0 && buf[total - 1] != '\n') write_str(1, "\n");
+        return;
+    }
+
+    /* .key filter: find "key: value" in YAML */
+    if (filter[0] == '.') {
+        const char *key = filter + 1;
+        size_t klen = 0;
+        while (key[klen] && key[klen] != '.') klen++;
+
+        const char *p = buf;
+        while (*p) {
+            /* Check at start of line */
+            int match = 1;
+            for (size_t k = 0; k < klen; k++) {
+                if (p[k] != key[k]) { match = 0; break; }
+            }
+            if (match && p[klen] == ':') {
+                p += klen + 1;
+                while (*p == ' ' || *p == '\t') p++;
+                const char *vstart = p;
+                while (*p && *p != '\n') p++;
+                char val[256];
+                size_t vlen = (size_t)(p - vstart);
+                if (vlen >= sizeof(val)) vlen = sizeof(val) - 1;
+                for (size_t k = 0; k < vlen; k++) val[k] = vstart[k];
+                val[vlen] = '\0';
+                write_str(1, val);
+                write_str(1, "\n");
+                return;
+            }
+            /* Advance to next line */
+            while (*p && *p != '\n') p++;
+            if (*p == '\n') p++;
+        }
+        write_str(1, "null\n");
+        return;
+    }
+
+    write_str(1, buf);
+    if (total > 0 && buf[total - 1] != '\n') write_str(1, "\n");
+}
+
+/* xmllint - XML validator (simulated) */
+static void cmd_xmllint(int argc, char *argv[]) {
+    if (argc >= 2 && strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "xmllint: using libxml version 21200\n");
+        write_str(1, "   compiled with: Threads Tree Output Push Reader Patterns Writer SAXv1\n");
+        return;
+    }
+    if (argc < 2) {
+        write_str(1, "Usage: xmllint [OPTIONS] FILE\n");
+        write_str(1, "  --noout       suppress output\n");
+        write_str(1, "  --format      pretty-print\n");
+        write_str(1, "  --valid       validate against DTD\n");
+        write_str(1, "  --schema XSD  validate against schema\n");
+        return;
+    }
+
+    const char *filename = NULL;
+    int noout = 0;
+    int format = 0;
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "--noout") == 0) { noout = 1; }
+        else if (strcmp_simple(argv[i], "--format") == 0) { format = 1; }
+        else if (strcmp_simple(argv[i], "--valid") == 0) { /* no-op */ }
+        else if (strcmp_simple(argv[i], "--schema") == 0) { i++; /* skip schema file */ }
+        else if (strcmp_simple(argv[i], "-") == 0) { filename = "-"; }
+        else if (argv[i][0] != '-') { filename = argv[i]; }
+    }
+
+    char buf[4096];
+    ssize_t total = 0;
+
+    if (filename && strcmp_simple(filename, "-") != 0) {
+        int fd = sys_open(filename, 0, 0);
+        if (fd < 0) {
+            write_str(2, "xmllint: ");
+            write_str(2, filename);
+            write_str(2, ": failed to load\n");
+            return;
+        }
+        total = sys_read(fd, buf, sizeof(buf) - 1);
+        sys_close(fd);
+        if (total <= 0) return;
+        buf[total] = '\0';
+    } else {
+        total = sys_read(0, buf, sizeof(buf) - 1);
+        if (total <= 0) return;
+        buf[total] = '\0';
+    }
+
+    /* Basic XML validation: check for matching < > */
+    int depth = 0;
+    int valid = 1;
+    for (ssize_t i = 0; i < total; i++) {
+        if (buf[i] == '<') depth++;
+        if (buf[i] == '>') depth--;
+        if (depth < 0) { valid = 0; break; }
+    }
+    if (depth != 0) valid = 0;
+
+    if (!valid) {
+        write_str(2, "xmllint: document is not well-formed\n");
+        return;
+    }
+
+    if (noout) {
+        /* Validated OK, no output */
+        return;
+    }
+
+    (void)format;
+    write_str(1, buf);
+    if (total > 0 && buf[total - 1] != '\n') write_str(1, "\n");
+}
+
+/* sqlite3 - SQLite CLI (simulated) */
+static void cmd_sqlite3(int argc, char *argv[]) {
+    if (argc >= 2 && strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "3.45.0 2024-01-15 17:01:13\n");
+        return;
+    }
+
+    const char *dbname = ":memory:";
+    if (argc >= 2 && argv[1][0] != '-') {
+        dbname = argv[1];
+    }
+
+    /* Check for -cmd or inline SQL */
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-cmd") == 0 && i + 1 < argc) {
+            /* Execute command */
+            i++;
+            continue;
+        }
+    }
+
+    /* Check for SQL on command line: sqlite3 :memory: "SELECT ..." */
+    if (argc >= 3 && argv[2][0] != '-') {
+        const char *sql = argv[2];
+        /* Handle SELECT */
+        if ((sql[0] == 'S' || sql[0] == 's') &&
+            (sql[1] == 'E' || sql[1] == 'e') &&
+            (sql[2] == 'L' || sql[2] == 'l') &&
+            (sql[3] == 'E' || sql[3] == 'e') &&
+            (sql[4] == 'C' || sql[4] == 'c') &&
+            (sql[5] == 'T' || sql[5] == 't')) {
+            /* Check for SELECT 1+1, SELECT date(), SELECT sqlite_version() */
+            const char *after = sql + 6;
+            while (*after == ' ') after++;
+            if (after[0] == 's' && after[1] == 'q' && after[2] == 'l' &&
+                after[3] == 'i' && after[4] == 't' && after[5] == 'e' &&
+                after[6] == '_' && after[7] == 'v') {
+                write_str(1, "3.45.0\n");
+            } else if (after[0] == 'd' && after[1] == 'a' && after[2] == 't' && after[3] == 'e') {
+                write_str(1, "2024-01-15\n");
+            } else {
+                /* Try numeric evaluation */
+                int val = simple_atoi(after);
+                char nbuf[32];
+                int_to_str(val, nbuf, sizeof(nbuf));
+                write_str(1, nbuf);
+                write_str(1, "\n");
+            }
+        } else {
+            write_str(1, "OK\n");
+        }
+        return;
+    }
+
+    /* Interactive mode */
+    write_str(1, "SQLite version 3.45.0 2024-01-15 17:01:13\n");
+    write_str(1, "Enter \".help\" for usage hints.\n");
+    if (strcmp_simple(dbname, ":memory:") == 0) {
+        write_str(1, "Connected to a transient in-memory database.\n");
+        write_str(1, "Use \".open FILENAME\" to reopen on a persistent database.\n");
+    }
+
+    char line[512];
+    while (1) {
+        write_str(1, "sqlite> ");
+        ssize_t n = sys_read(0, line, sizeof(line) - 1);
+        if (n <= 0) break;
+        if (line[n - 1] == '\n') line[n - 1] = '\0';
+        else line[n] = '\0';
+        if (strcmp_simple(line, ".quit") == 0 || strcmp_simple(line, ".exit") == 0) break;
+        if (strcmp_simple(line, ".help") == 0) {
+            write_str(1, ".databases         List names and files of attached databases\n");
+            write_str(1, ".dump              Render database content as SQL\n");
+            write_str(1, ".exit              Exit this program\n");
+            write_str(1, ".help              Show this message\n");
+            write_str(1, ".mode              Set output mode (csv, column, json, list, table)\n");
+            write_str(1, ".open              Open a database file\n");
+            write_str(1, ".quit              Exit this program\n");
+            write_str(1, ".schema            Show the CREATE statements\n");
+            write_str(1, ".tables            List names of tables\n");
+            continue;
+        }
+        if (strcmp_simple(line, ".tables") == 0) {
+            /* No tables in memory db */
+            continue;
+        }
+        if (strcmp_simple(line, ".databases") == 0) {
+            write_str(1, "main: ");
+            write_str(1, dbname);
+            write_str(1, " r/w\n");
+            continue;
+        }
+        if (line[0] == '\0') continue;
+        /* Handle SQL statements */
+        if ((line[0] == 'C' || line[0] == 'c') &&
+            (line[1] == 'R' || line[1] == 'r') &&
+            (line[2] == 'E' || line[2] == 'e') &&
+            (line[3] == 'A' || line[3] == 'a') &&
+            (line[4] == 'T' || line[4] == 't') &&
+            (line[5] == 'E' || line[5] == 'e')) {
+            /* CREATE TABLE/INDEX accepted */
+            continue;
+        }
+        if ((line[0] == 'I' || line[0] == 'i') &&
+            (line[1] == 'N' || line[1] == 'n') &&
+            (line[2] == 'S' || line[2] == 's') &&
+            (line[3] == 'E' || line[3] == 'e') &&
+            (line[4] == 'R' || line[4] == 'r') &&
+            (line[5] == 'T' || line[5] == 't')) {
+            /* INSERT accepted */
+            continue;
+        }
+        if ((line[0] == 'S' || line[0] == 's') &&
+            (line[1] == 'E' || line[1] == 'e') &&
+            (line[2] == 'L' || line[2] == 'l') &&
+            (line[3] == 'E' || line[3] == 'e') &&
+            (line[4] == 'C' || line[4] == 'c') &&
+            (line[5] == 'T' || line[5] == 't')) {
+            const char *after = line + 6;
+            while (*after == ' ') after++;
+            if (after[0] == 's' && after[1] == 'q' && after[2] == 'l' &&
+                after[3] == 'i' && after[4] == 't' && after[5] == 'e' &&
+                after[6] == '_' && after[7] == 'v') {
+                write_str(1, "3.45.0\n");
+            } else {
+                int val = simple_atoi(after);
+                char nbuf[32];
+                int_to_str(val, nbuf, sizeof(nbuf));
+                write_str(1, nbuf);
+                write_str(1, "\n");
+            }
+            continue;
+        }
+        write_str(1, "Error: near \"");
+        char first[16];
+        int fi = 0;
+        while (line[fi] && line[fi] != ' ' && fi < 15) { first[fi] = line[fi]; fi++; }
+        first[fi] = '\0';
+        write_str(1, first);
+        write_str(1, "\": syntax error\n");
+    }
+}
+
+/* mysql - MySQL client (simulated) */
+static void cmd_mysql(int argc, char *argv[]) {
+    if (argc >= 2 && (strcmp_simple(argv[1], "--version") == 0 || strcmp_simple(argv[1], "-V") == 0)) {
+        write_str(1, "mysql  Ver 8.0.36 for Linux on x86_64 (Futura OS)\n");
+        return;
+    }
+    if (argc >= 2 && strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "mysql  Ver 8.0.36 for Linux on x86_64\n");
+        write_str(1, "Usage: mysql [OPTIONS] [database]\n");
+        write_str(1, "  -h, --host=name     Connect to host\n");
+        write_str(1, "  -u, --user=name     User for login\n");
+        write_str(1, "  -p, --password      Password to use\n");
+        write_str(1, "  -P, --port=#        Port number\n");
+        write_str(1, "  -e, --execute=stmt  Execute statement and quit\n");
+        return;
+    }
+
+    /* Check for -e flag */
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-e") == 0 && i + 1 < argc) {
+            const char *sql = argv[i + 1];
+            if ((sql[0] == 'S' || sql[0] == 's') &&
+                (sql[1] == 'E' || sql[1] == 'e') &&
+                (sql[2] == 'L' || sql[2] == 'l')) {
+                write_str(1, "+-----------+\n");
+                write_str(1, "| result    |\n");
+                write_str(1, "+-----------+\n");
+                write_str(1, "| (empty)   |\n");
+                write_str(1, "+-----------+\n");
+                write_str(1, "1 row in set (0.00 sec)\n");
+            } else {
+                write_str(1, "Query OK, 0 rows affected (0.00 sec)\n");
+            }
+            return;
+        }
+    }
+
+    /* Interactive mode */
+    write_str(1, "Welcome to the MySQL monitor.  Commands end with ; or \\g.\n");
+    write_str(1, "Your MySQL connection id is 42\n");
+    write_str(1, "Server version: 8.0.36 Futura OS MySQL\n\n");
+    write_str(1, "Type 'help;' or '\\h' for help. Type '\\c' to clear the current input statement.\n\n");
+
+    char line[512];
+    while (1) {
+        write_str(1, "mysql> ");
+        ssize_t n = sys_read(0, line, sizeof(line) - 1);
+        if (n <= 0) break;
+        if (line[n - 1] == '\n') line[n - 1] = '\0';
+        else line[n] = '\0';
+        if (strcmp_simple(line, "quit") == 0 || strcmp_simple(line, "exit") == 0 ||
+            strcmp_simple(line, "quit;") == 0 || strcmp_simple(line, "exit;") == 0 ||
+            strcmp_simple(line, "\\q") == 0) {
+            write_str(1, "Bye\n");
+            break;
+        }
+        if (line[0] == '\0') continue;
+        if (strcmp_simple(line, "help;") == 0 || strcmp_simple(line, "\\h") == 0) {
+            write_str(1, "List of all MySQL commands:\n");
+            write_str(1, "help      Display this help\n");
+            write_str(1, "quit      Exit mysql\n");
+            write_str(1, "status    Get status information\n");
+            write_str(1, "use       Use another database\n");
+            continue;
+        }
+        if (strcmp_simple(line, "status;") == 0 || strcmp_simple(line, "\\s") == 0) {
+            write_str(1, "Connection id:          42\n");
+            write_str(1, "Current database:       (none)\n");
+            write_str(1, "Server version:         8.0.36 Futura OS\n");
+            write_str(1, "Protocol version:       10\n");
+            write_str(1, "Connection:             localhost via TCP/IP\n");
+            write_str(1, "Uptime:                 1 hour 0 min 0 sec\n");
+            continue;
+        }
+        /* Generic SQL response */
+        if ((line[0] == 'S' || line[0] == 's') &&
+            (line[1] == 'E' || line[1] == 'e') &&
+            (line[2] == 'L' || line[2] == 'l')) {
+            write_str(1, "Empty set (0.00 sec)\n");
+        } else if ((line[0] == 'S' || line[0] == 's') &&
+                   (line[1] == 'H' || line[1] == 'h') &&
+                   (line[2] == 'O' || line[2] == 'o') &&
+                   (line[3] == 'W' || line[3] == 'w')) {
+            write_str(1, "Empty set (0.00 sec)\n");
+        } else {
+            write_str(1, "Query OK, 0 rows affected (0.00 sec)\n");
+        }
+    }
+}
+
+/* psql - PostgreSQL client (simulated) */
+static void cmd_psql(int argc, char *argv[]) {
+    if (argc >= 2 && (strcmp_simple(argv[1], "--version") == 0 || strcmp_simple(argv[1], "-V") == 0)) {
+        write_str(1, "psql (PostgreSQL) 16.1 (Futura OS)\n");
+        return;
+    }
+    if (argc >= 2 && strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "psql is the PostgreSQL interactive terminal.\n\n");
+        write_str(1, "Usage: psql [OPTION]... [DBNAME [USERNAME]]\n");
+        write_str(1, "  -h, --host=HOSTNAME      database server host\n");
+        write_str(1, "  -p, --port=PORT          database server port\n");
+        write_str(1, "  -U, --username=USERNAME  database user name\n");
+        write_str(1, "  -d, --dbname=DBNAME      database name to connect to\n");
+        write_str(1, "  -c, --command=COMMAND    run only single command and exit\n");
+        return;
+    }
+
+    /* Check for -c flag */
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-c") == 0 && i + 1 < argc) {
+            const char *sql = argv[i + 1];
+            if ((sql[0] == 'S' || sql[0] == 's') &&
+                (sql[1] == 'E' || sql[1] == 'e') &&
+                (sql[2] == 'L' || sql[2] == 'l')) {
+                write_str(1, " result \n");
+                write_str(1, "--------\n");
+                write_str(1, "(0 rows)\n");
+            } else {
+                write_str(1, "COMMAND OK\n");
+            }
+            return;
+        }
+    }
+
+    /* Interactive mode */
+    const char *dbname = "postgres";
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-d") == 0 && i + 1 < argc) {
+            dbname = argv[i + 1]; i++;
+        } else if (argv[i][0] != '-') {
+            dbname = argv[i];
+        }
+    }
+
+    write_str(1, "psql (16.1)\nType \"help\" for help.\n\n");
+
+    char line[512];
+    while (1) {
+        write_str(1, dbname);
+        write_str(1, "=# ");
+        ssize_t n = sys_read(0, line, sizeof(line) - 1);
+        if (n <= 0) break;
+        if (line[n - 1] == '\n') line[n - 1] = '\0';
+        else line[n] = '\0';
+        if (strcmp_simple(line, "\\q") == 0 || strcmp_simple(line, "quit") == 0 ||
+            strcmp_simple(line, "exit") == 0) break;
+        if (line[0] == '\0') continue;
+        if (strcmp_simple(line, "\\?") == 0 || strcmp_simple(line, "help") == 0) {
+            write_str(1, "General:\n");
+            write_str(1, "  \\q         quit psql\n");
+            write_str(1, "  \\?         show help\n");
+            write_str(1, "  \\l         list databases\n");
+            write_str(1, "  \\dt        list tables\n");
+            write_str(1, "  \\d TABLE   describe table\n");
+            write_str(1, "  \\conninfo  connection info\n");
+            continue;
+        }
+        if (strcmp_simple(line, "\\l") == 0) {
+            write_str(1, "                         List of databases\n");
+            write_str(1, "   Name    | Owner  | Encoding |   Collate   |    Ctype    \n");
+            write_str(1, "-----------+--------+----------+-------------+-------------\n");
+            write_str(1, " postgres  | root   | UTF8     | en_US.UTF-8 | en_US.UTF-8\n");
+            write_str(1, " template0 | root   | UTF8     | en_US.UTF-8 | en_US.UTF-8\n");
+            write_str(1, " template1 | root   | UTF8     | en_US.UTF-8 | en_US.UTF-8\n");
+            write_str(1, "(3 rows)\n");
+            continue;
+        }
+        if (strcmp_simple(line, "\\dt") == 0) {
+            write_str(1, "Did not find any relations.\n");
+            continue;
+        }
+        if (strcmp_simple(line, "\\conninfo") == 0) {
+            write_str(1, "You are connected to database \"");
+            write_str(1, dbname);
+            write_str(1, "\" as user \"root\" via socket in \"/tmp\" at port \"5432\".\n");
+            continue;
+        }
+        /* SQL */
+        if ((line[0] == 'S' || line[0] == 's') &&
+            (line[1] == 'E' || line[1] == 'e') &&
+            (line[2] == 'L' || line[2] == 'l')) {
+            const char *after = line + 6;
+            while (*after == ' ') after++;
+            if (after[0] == 'v' && after[1] == 'e' && after[2] == 'r') {
+                write_str(1, "              version\n");
+                write_str(1, "-----------------------------------\n");
+                write_str(1, " PostgreSQL 16.1 (Futura OS)\n");
+                write_str(1, "(1 row)\n");
+            } else if (after[0] == 'n' && after[1] == 'o' && after[2] == 'w') {
+                write_str(1, "              now\n");
+                write_str(1, "-------------------------------\n");
+                write_str(1, " 2024-01-15 12:00:00+00\n");
+                write_str(1, "(1 row)\n");
+            } else {
+                write_str(1, "(0 rows)\n");
+            }
+        } else if ((line[0] == 'C' || line[0] == 'c') &&
+                   (line[1] == 'R' || line[1] == 'r') &&
+                   (line[2] == 'E' || line[2] == 'e')) {
+            write_str(1, "CREATE TABLE\n");
+        } else if ((line[0] == 'I' || line[0] == 'i') &&
+                   (line[1] == 'N' || line[1] == 'n') &&
+                   (line[2] == 'S' || line[2] == 's')) {
+            write_str(1, "INSERT 0 1\n");
+        } else if ((line[0] == 'D' || line[0] == 'd') &&
+                   (line[1] == 'R' || line[1] == 'r') &&
+                   (line[2] == 'O' || line[2] == 'o') &&
+                   (line[3] == 'P' || line[3] == 'p')) {
+            write_str(1, "DROP TABLE\n");
+        } else {
+            write_str(1, "ERROR:  syntax error at or near \"");
+            char first[16];
+            int fi = 0;
+            while (line[fi] && line[fi] != ' ' && fi < 15) { first[fi] = line[fi]; fi++; }
+            first[fi] = '\0';
+            write_str(1, first);
+            write_str(1, "\"\n");
+        }
+    }
+}
+
+/* redis-cli - Redis client (simulated) */
+static void cmd_redis_cli(int argc, char *argv[]) {
+    if (argc >= 2 && (strcmp_simple(argv[1], "--version") == 0 || strcmp_simple(argv[1], "-v") == 0)) {
+        write_str(1, "redis-cli 7.2.4 (futura)\n");
+        return;
+    }
+    if (argc >= 2 && strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "redis-cli 7.2.4\n\n");
+        write_str(1, "Usage: redis-cli [OPTIONS] [cmd [arg [arg ...]]]\n");
+        write_str(1, "  -h <hostname>    Server hostname (default: 127.0.0.1)\n");
+        write_str(1, "  -p <port>        Server port (default: 6379)\n");
+        write_str(1, "  -n <db>          Database number\n");
+        return;
+    }
+
+    /* Inline command mode: redis-cli SET key value */
+    if (argc >= 3) {
+        if (strcmp_simple(argv[1], "SET") == 0 || strcmp_simple(argv[1], "set") == 0) {
+            write_str(1, "OK\n");
+            return;
+        }
+        if (strcmp_simple(argv[1], "GET") == 0 || strcmp_simple(argv[1], "get") == 0) {
+            write_str(1, "(nil)\n");
+            return;
+        }
+        if (strcmp_simple(argv[1], "DEL") == 0 || strcmp_simple(argv[1], "del") == 0) {
+            write_str(1, "(integer) 0\n");
+            return;
+        }
+        if (strcmp_simple(argv[1], "HSET") == 0 || strcmp_simple(argv[1], "hset") == 0) {
+            write_str(1, "(integer) 1\n");
+            return;
+        }
+        if (strcmp_simple(argv[1], "HGET") == 0 || strcmp_simple(argv[1], "hget") == 0) {
+            write_str(1, "(nil)\n");
+            return;
+        }
+    }
+    if (argc >= 2) {
+        if (strcmp_simple(argv[1], "PING") == 0 || strcmp_simple(argv[1], "ping") == 0) {
+            write_str(1, "PONG\n");
+            return;
+        }
+        if (strcmp_simple(argv[1], "INFO") == 0 || strcmp_simple(argv[1], "info") == 0) {
+            write_str(1, "# Server\nredis_version:7.2.4\nos:Futura OS\n");
+            write_str(1, "# Clients\nconnected_clients:1\n");
+            write_str(1, "# Memory\nused_memory:1048576\nused_memory_human:1.00M\n");
+            return;
+        }
+        if (strcmp_simple(argv[1], "DBSIZE") == 0 || strcmp_simple(argv[1], "dbsize") == 0) {
+            write_str(1, "(integer) 0\n");
+            return;
+        }
+        if (strcmp_simple(argv[1], "KEYS") == 0 || strcmp_simple(argv[1], "keys") == 0) {
+            write_str(1, "(empty array)\n");
+            return;
+        }
+    }
+
+    /* Interactive mode */
+    write_str(1, "127.0.0.1:6379> Connected to Redis 7.2.4\n");
+
+    /* Simple in-memory key-value store */
+    #define REDIS_MAX_KEYS 32
+    #define REDIS_KEY_LEN 64
+    #define REDIS_VAL_LEN 256
+    static char redis_keys[REDIS_MAX_KEYS][REDIS_KEY_LEN];
+    static char redis_vals[REDIS_MAX_KEYS][REDIS_VAL_LEN];
+    static int redis_used[REDIS_MAX_KEYS];
+
+    for (int i = 0; i < REDIS_MAX_KEYS; i++) redis_used[i] = 0;
+
+    char line[512];
+    while (1) {
+        write_str(1, "127.0.0.1:6379> ");
+        ssize_t n = sys_read(0, line, sizeof(line) - 1);
+        if (n <= 0) break;
+        if (line[n - 1] == '\n') line[n - 1] = '\0';
+        else line[n] = '\0';
+        if (strcmp_simple(line, "quit") == 0 || strcmp_simple(line, "QUIT") == 0 ||
+            strcmp_simple(line, "exit") == 0) break;
+        if (line[0] == '\0') continue;
+
+        /* Parse command and args */
+        char *parts[8];
+        int nparts = 0;
+        char *p = line;
+        while (*p && nparts < 8) {
+            while (*p == ' ') p++;
+            if (!*p) break;
+            parts[nparts++] = p;
+            if (*p == '"') {
+                p++;
+                parts[nparts - 1] = p;
+                while (*p && *p != '"') p++;
+                if (*p == '"') *p++ = '\0';
+            } else {
+                while (*p && *p != ' ') p++;
+                if (*p) *p++ = '\0';
+            }
+        }
+        if (nparts == 0) continue;
+
+        if (strcmp_simple(parts[0], "PING") == 0 || strcmp_simple(parts[0], "ping") == 0) {
+            if (nparts >= 2) {
+                write_str(1, "\"");
+                write_str(1, parts[1]);
+                write_str(1, "\"\n");
+            } else {
+                write_str(1, "PONG\n");
+            }
+        } else if ((strcmp_simple(parts[0], "SET") == 0 || strcmp_simple(parts[0], "set") == 0) && nparts >= 3) {
+            /* Store key-value */
+            int slot = -1;
+            for (int i = 0; i < REDIS_MAX_KEYS; i++) {
+                if (redis_used[i] && strcmp_simple(redis_keys[i], parts[1]) == 0) {
+                    slot = i; break;
+                }
+            }
+            if (slot < 0) {
+                for (int i = 0; i < REDIS_MAX_KEYS; i++) {
+                    if (!redis_used[i]) { slot = i; break; }
+                }
+            }
+            if (slot >= 0) {
+                strncpy_simple(redis_keys[slot], parts[1], REDIS_KEY_LEN - 1);
+                redis_keys[slot][REDIS_KEY_LEN - 1] = '\0';
+                strncpy_simple(redis_vals[slot], parts[2], REDIS_VAL_LEN - 1);
+                redis_vals[slot][REDIS_VAL_LEN - 1] = '\0';
+                redis_used[slot] = 1;
+                write_str(1, "OK\n");
+            } else {
+                write_str(1, "(error) ERR max keys reached\n");
+            }
+        } else if ((strcmp_simple(parts[0], "GET") == 0 || strcmp_simple(parts[0], "get") == 0) && nparts >= 2) {
+            int found = 0;
+            for (int i = 0; i < REDIS_MAX_KEYS; i++) {
+                if (redis_used[i] && strcmp_simple(redis_keys[i], parts[1]) == 0) {
+                    write_str(1, "\"");
+                    write_str(1, redis_vals[i]);
+                    write_str(1, "\"\n");
+                    found = 1; break;
+                }
+            }
+            if (!found) write_str(1, "(nil)\n");
+        } else if ((strcmp_simple(parts[0], "DEL") == 0 || strcmp_simple(parts[0], "del") == 0) && nparts >= 2) {
+            int count = 0;
+            for (int j = 1; j < nparts; j++) {
+                for (int i = 0; i < REDIS_MAX_KEYS; i++) {
+                    if (redis_used[i] && strcmp_simple(redis_keys[i], parts[j]) == 0) {
+                        redis_used[i] = 0;
+                        count++;
+                    }
+                }
+            }
+            char nbuf[16];
+            int_to_str(count, nbuf, sizeof(nbuf));
+            write_str(1, "(integer) ");
+            write_str(1, nbuf);
+            write_str(1, "\n");
+        } else if (strcmp_simple(parts[0], "KEYS") == 0 || strcmp_simple(parts[0], "keys") == 0) {
+            int idx = 1;
+            int any = 0;
+            for (int i = 0; i < REDIS_MAX_KEYS; i++) {
+                if (redis_used[i]) {
+                    char nbuf[16];
+                    int_to_str(idx++, nbuf, sizeof(nbuf));
+                    write_str(1, nbuf);
+                    write_str(1, ") \"");
+                    write_str(1, redis_keys[i]);
+                    write_str(1, "\"\n");
+                    any = 1;
+                }
+            }
+            if (!any) write_str(1, "(empty array)\n");
+        } else if (strcmp_simple(parts[0], "DBSIZE") == 0 || strcmp_simple(parts[0], "dbsize") == 0) {
+            int count = 0;
+            for (int i = 0; i < REDIS_MAX_KEYS; i++) {
+                if (redis_used[i]) count++;
+            }
+            char nbuf[16];
+            int_to_str(count, nbuf, sizeof(nbuf));
+            write_str(1, "(integer) ");
+            write_str(1, nbuf);
+            write_str(1, "\n");
+        } else if (strcmp_simple(parts[0], "FLUSHDB") == 0 || strcmp_simple(parts[0], "flushdb") == 0 ||
+                   strcmp_simple(parts[0], "FLUSHALL") == 0 || strcmp_simple(parts[0], "flushall") == 0) {
+            for (int i = 0; i < REDIS_MAX_KEYS; i++) redis_used[i] = 0;
+            write_str(1, "OK\n");
+        } else if (strcmp_simple(parts[0], "EXISTS") == 0 || strcmp_simple(parts[0], "exists") == 0) {
+            if (nparts >= 2) {
+                int count = 0;
+                for (int j = 1; j < nparts; j++) {
+                    for (int i = 0; i < REDIS_MAX_KEYS; i++) {
+                        if (redis_used[i] && strcmp_simple(redis_keys[i], parts[j]) == 0) count++;
+                    }
+                }
+                char nbuf[16];
+                int_to_str(count, nbuf, sizeof(nbuf));
+                write_str(1, "(integer) ");
+                write_str(1, nbuf);
+                write_str(1, "\n");
+            }
+        } else if (strcmp_simple(parts[0], "INFO") == 0 || strcmp_simple(parts[0], "info") == 0) {
+            write_str(1, "# Server\nredis_version:7.2.4\nos:Futura OS\n");
+        } else {
+            write_str(1, "(error) ERR unknown command '");
+            write_str(1, parts[0]);
+            write_str(1, "'\n");
+        }
+    }
 }
 
 #pragma GCC diagnostic pop

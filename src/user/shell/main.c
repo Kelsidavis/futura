@@ -148,6 +148,7 @@ static void cmd_xxd(int argc, char *argv[]);
 static void cmd_patch(int argc, char *argv[]);
 static void cmd_sha1sum(int argc, char *argv[]);
 static void cmd_vi(int argc, char *argv[]);
+static void cmd_make(int argc, char *argv[]);
 static void strcpy_simple(char *dest, const char *src);
 
 /* Forward declaration for prompt */
@@ -8302,6 +8303,9 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "vi") == 0) {
         cmd_vi(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "make") == 0) {
+        cmd_make(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "free") == 0) {
         cmd_free(argc, argv);
         return 0;
@@ -11355,6 +11359,7 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "locale") == 0 ||
             strcmp_simple(cmd, "reset") == 0 ||
             strcmp_simple(cmd, "tput") == 0 ||
+            strcmp_simple(cmd, "make") == 0 ||
             0);
 }
 
@@ -13970,6 +13975,300 @@ static void cmd_tput(int argc, char *argv[]) {
     } else {
         write_str(2, "tput: unknown capability: "); write_str(2, cap); write_str(2, "\n");
     }
+}
+
+/* ── make: minimal build tool ── */
+#define MAKE_MAX_TARGETS 64
+#define MAKE_MAX_DEPS    16
+#define MAKE_MAX_RECIPES 16
+#define MAKE_MAX_VARS    32
+#define MAKE_LINE_MAX    512
+
+struct make_var {
+    char name[64];
+    char value[256];
+};
+
+struct make_target {
+    char name[128];
+    char deps[MAKE_MAX_DEPS][128];
+    int ndeps;
+    char recipes[MAKE_MAX_RECIPES][MAKE_LINE_MAX];
+    int nrecipes;
+    int phony;
+};
+
+static long make_get_mtime(const char *path) {
+    struct stat st;
+    if (sys_call2(__NR_stat, (long)path, (long)&st) < 0) return -1;
+    return (long)st.st_mtim.tv_sec;
+}
+
+static void make_expand_vars(const char *src, char *dst, int dstlen,
+                             struct make_var *vars, int nvars) {
+    int si = 0, di = 0;
+    while (src[si] && di < dstlen - 1) {
+        if (src[si] == '$' && src[si + 1] == '(') {
+            si += 2;
+            char vname[64];
+            int vi = 0;
+            while (src[si] && src[si] != ')' && vi < 63)
+                vname[vi++] = src[si++];
+            vname[vi] = '\0';
+            if (src[si] == ')') si++;
+            /* Look up variable */
+            int found = 0;
+            for (int v = 0; v < nvars; v++) {
+                if (strcmp_simple(vars[v].name, vname) == 0) {
+                    for (int k = 0; vars[v].value[k] && di < dstlen - 1; k++)
+                        dst[di++] = vars[v].value[k];
+                    found = 1;
+                    break;
+                }
+            }
+            (void)found;
+        } else {
+            dst[di++] = src[si++];
+        }
+    }
+    dst[di] = '\0';
+}
+
+static int make_build(const char *target, struct make_target *targets, int ntargets,
+                      struct make_var *vars, int nvars) {
+    /* Find target */
+    int tidx = -1;
+    for (int i = 0; i < ntargets; i++) {
+        if (strcmp_simple(targets[i].name, target) == 0) { tidx = i; break; }
+    }
+    if (tidx < 0) {
+        /* Not a target — check if file exists */
+        if (make_get_mtime(target) >= 0) return 0;
+        write_str(2, "make: *** No rule to make target '");
+        write_str(2, target);
+        write_str(2, "'\n");
+        return -1;
+    }
+
+    /* Recursively build dependencies first */
+    for (int d = 0; d < targets[tidx].ndeps; d++) {
+        if (make_build(targets[tidx].deps[d], targets, ntargets, vars, nvars) < 0)
+            return -1;
+    }
+
+    /* Check if target needs rebuilding */
+    int needs_build = 0;
+    if (targets[tidx].phony) {
+        needs_build = 1;
+    } else {
+        long target_mtime = make_get_mtime(target);
+        if (target_mtime < 0) {
+            needs_build = 1;  /* Target doesn't exist */
+        } else {
+            /* Check if any dep is newer */
+            for (int d = 0; d < targets[tidx].ndeps; d++) {
+                long dep_mtime = make_get_mtime(targets[tidx].deps[d]);
+                if (dep_mtime > target_mtime) { needs_build = 1; break; }
+            }
+        }
+    }
+    if (targets[tidx].ndeps == 0 && targets[tidx].nrecipes > 0 &&
+        make_get_mtime(target) < 0)
+        needs_build = 1;
+
+    if (!needs_build) return 0;
+
+    /* Execute recipes */
+    for (int r = 0; r < targets[tidx].nrecipes; r++) {
+        char expanded[MAKE_LINE_MAX];
+        make_expand_vars(targets[tidx].recipes[r], expanded, MAKE_LINE_MAX, vars, nvars);
+
+        int silent = 0;
+        char *cmd = expanded;
+        if (cmd[0] == '@') { silent = 1; cmd++; }
+
+        if (!silent) { write_str(1, cmd); write_str(1, "\n"); }
+
+        /* Parse and execute via shell */
+        static char cmdbuf[MAKE_LINE_MAX];
+        int ci = 0;
+        while (cmd[ci]) { cmdbuf[ci] = cmd[ci]; ci++; }
+        cmdbuf[ci] = '\0';
+        char *argv[32];
+        int argc = parse_command(cmdbuf, argv, 32);
+        if (argc > 0) {
+            int ret = execute_command(argc, argv);
+            if (ret != 0) {
+                write_str(2, "make: *** Error ");
+                char nbuf[16]; int ni = 0;
+                int rv = ret < 0 ? -ret : ret;
+                if (rv == 0) nbuf[ni++] = '0';
+                else { char tmp[16]; int ti = 0; while (rv) { tmp[ti++] = '0' + rv % 10; rv /= 10; }
+                       while (ti > 0) nbuf[ni++] = tmp[--ti]; }
+                nbuf[ni] = '\0';
+                write_str(2, nbuf);
+                write_str(2, "\n");
+                return -1;
+            }
+        }
+    }
+    return 0;
+}
+
+static void cmd_make(int argc, char *argv[]) {
+    const char *makefile = "Makefile";
+    const char *goal = ((void *)0);
+
+    /* Parse arguments */
+    int i = 1;
+    while (i < argc) {
+        if (strcmp_simple(argv[i], "-f") == 0 && i + 1 < argc) {
+            makefile = argv[++i];
+        } else if (argv[i][0] != '-') {
+            goal = argv[i];
+        }
+        i++;
+    }
+
+    /* Read makefile */
+    int fd = sys_open(makefile, O_RDONLY, 0);
+    if (fd < 0) {
+        write_str(2, "make: *** No targets specified and no makefile found\n");
+        return;
+    }
+    static char buf[8192];
+    int total = 0;
+    long n;
+    while ((n = sys_read(fd, buf + total, sizeof(buf) - 1 - total)) > 0)
+        total += (int)n;
+    sys_close(fd);
+    buf[total] = '\0';
+
+    /* Parse makefile */
+    static struct make_target targets[MAKE_MAX_TARGETS];
+    static struct make_var vars[MAKE_MAX_VARS];
+    int ntargets = 0, nvars = 0;
+    static char phony_deps[1024];
+    phony_deps[0] = '\0';
+
+    char *p = buf;
+    int cur_target = -1;
+    while (*p) {
+        /* Extract line */
+        char line[MAKE_LINE_MAX];
+        int li = 0;
+        while (*p && *p != '\n' && li < MAKE_LINE_MAX - 1)
+            line[li++] = *p++;
+        line[li] = '\0';
+        if (*p == '\n') p++;
+
+        /* Skip empty lines and comments */
+        if (line[0] == '\0' || line[0] == '#') continue;
+
+        /* Recipe line (starts with tab) */
+        if (line[0] == '\t' && cur_target >= 0) {
+            if (targets[cur_target].nrecipes < MAKE_MAX_RECIPES) {
+                char *rp = line + 1;
+                while (*rp == ' ' || *rp == '\t') rp++;
+                strcpy_simple(targets[cur_target].recipes[targets[cur_target].nrecipes++], rp);
+            }
+            continue;
+        }
+
+        /* Variable assignment: VAR = value */
+        char *eq = ((void *)0);
+        for (int j = 0; line[j]; j++) {
+            if (line[j] == '=' && (j == 0 || line[j-1] != '!')) { eq = &line[j]; break; }
+            if (line[j] == ':') break;  /* It's a target line, not var */
+        }
+        if (eq && nvars < MAKE_MAX_VARS) {
+            /* Trim name */
+            char *ne = eq - 1;
+            while (ne > line && (*ne == ' ' || *ne == '\t')) ne--;
+            int nlen = (int)(ne - line) + 1;
+            if (nlen > 63) nlen = 63;
+            for (int j = 0; j < nlen; j++) vars[nvars].name[j] = line[j];
+            vars[nvars].name[nlen] = '\0';
+            /* Trim value */
+            char *vp = eq + 1;
+            while (*vp == ' ' || *vp == '\t') vp++;
+            strncpy_simple(vars[nvars].value, vp, 255);
+            nvars++;
+            cur_target = -1;
+            continue;
+        }
+
+        /* Target: deps line */
+        char *colon = ((void *)0);
+        for (int j = 0; line[j]; j++) {
+            if (line[j] == ':') { colon = &line[j]; break; }
+        }
+        if (colon && ntargets < MAKE_MAX_TARGETS) {
+            int tlen = (int)(colon - line);
+            while (tlen > 0 && (line[tlen-1] == ' ' || line[tlen-1] == '\t')) tlen--;
+            if (tlen > 127) tlen = 127;
+
+            /* Check for .PHONY */
+            if (tlen == 6 && line[0] == '.' && line[1] == 'P' && line[2] == 'H' &&
+                line[3] == 'O' && line[4] == 'N' && line[5] == 'Y') {
+                /* Save phony dep names */
+                char *dp = colon + 1;
+                while (*dp == ' ' || *dp == '\t') dp++;
+                strncpy_simple(phony_deps, dp, 1023);
+                cur_target = -1;
+                continue;
+            }
+
+            cur_target = ntargets;
+            for (int j = 0; j < tlen; j++) targets[ntargets].name[j] = line[j];
+            targets[ntargets].name[tlen] = '\0';
+            targets[ntargets].ndeps = 0;
+            targets[ntargets].nrecipes = 0;
+            targets[ntargets].phony = 0;
+
+            /* Parse deps */
+            char *dp = colon + 1;
+            while (*dp == ' ' || *dp == '\t') dp++;
+            while (*dp && targets[ntargets].ndeps < MAKE_MAX_DEPS) {
+                char *ds = dp;
+                while (*dp && *dp != ' ' && *dp != '\t') dp++;
+                int dlen = (int)(dp - ds);
+                if (dlen > 0 && dlen < 128) {
+                    for (int j = 0; j < dlen; j++)
+                        targets[ntargets].deps[targets[ntargets].ndeps][j] = ds[j];
+                    targets[ntargets].deps[targets[ntargets].ndeps][dlen] = '\0';
+                    targets[ntargets].ndeps++;
+                }
+                while (*dp == ' ' || *dp == '\t') dp++;
+            }
+            ntargets++;
+        }
+    }
+
+    /* Mark .PHONY targets */
+    if (phony_deps[0]) {
+        char *dp = phony_deps;
+        while (*dp) {
+            while (*dp == ' ' || *dp == '\t') dp++;
+            if (!*dp) break;
+            char pname[128];
+            int pi = 0;
+            while (*dp && *dp != ' ' && *dp != '\t' && pi < 127) pname[pi++] = *dp++;
+            pname[pi] = '\0';
+            for (int t = 0; t < ntargets; t++) {
+                if (strcmp_simple(targets[t].name, pname) == 0) targets[t].phony = 1;
+            }
+        }
+    }
+
+    if (ntargets == 0) {
+        write_str(2, "make: *** No targets\n");
+        return;
+    }
+
+    /* Build goal (default = first target) */
+    const char *build_target = goal ? goal : targets[0].name;
+    make_build(build_target, targets, ntargets, vars, nvars);
 }
 
 /* ── vi: minimal vi text editor ── */

@@ -394,6 +394,17 @@ static void cmd_netcat_openbsd(int argc, char *argv[]);
 static void cmd_ncat(int argc, char *argv[]);
 static void cmd_tcpdump(int argc, char *argv[]);
 static void cmd_tshark(int argc, char *argv[]);
+static void cmd_emacs(int argc, char *argv[]);
+static void cmd_nano(int argc, char *argv[]);
+static void cmd_ed(int argc, char *argv[]);
+static void cmd_ex(int argc, char *argv[]);
+static void cmd_view(int argc, char *argv[]);
+static void cmd_vimtutor(int argc, char *argv[]);
+static void cmd_diff3(int argc, char *argv[]);
+static void cmd_sdiff(int argc, char *argv[]);
+static void cmd_colordiff(int argc, char *argv[]);
+static void cmd_wdiff(int argc, char *argv[]);
+static void cmd_vimdiff(int argc, char *argv[]);
 
 /* Forward declaration for prompt */
 static void print_prompt(void);
@@ -14863,6 +14874,39 @@ watch_sleep:
     } else if (strcmp_simple(argv[0], "tshark") == 0) {
         cmd_tshark(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "emacs") == 0) {
+        cmd_emacs(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "nano") == 0) {
+        cmd_nano(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "ed") == 0) {
+        cmd_ed(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "ex") == 0) {
+        cmd_ex(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "view") == 0) {
+        cmd_view(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "vimtutor") == 0) {
+        cmd_vimtutor(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "diff3") == 0) {
+        cmd_diff3(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "sdiff") == 0) {
+        cmd_sdiff(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "colordiff") == 0) {
+        cmd_colordiff(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "wdiff") == 0) {
+        cmd_wdiff(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "vimdiff") == 0) {
+        cmd_vimdiff(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -15276,6 +15320,17 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "ncat") == 0 ||
             strcmp_simple(cmd, "tcpdump") == 0 ||
             strcmp_simple(cmd, "tshark") == 0 ||
+            strcmp_simple(cmd, "emacs") == 0 ||
+            strcmp_simple(cmd, "nano") == 0 ||
+            strcmp_simple(cmd, "ed") == 0 ||
+            strcmp_simple(cmd, "ex") == 0 ||
+            strcmp_simple(cmd, "view") == 0 ||
+            strcmp_simple(cmd, "vimtutor") == 0 ||
+            strcmp_simple(cmd, "diff3") == 0 ||
+            strcmp_simple(cmd, "sdiff") == 0 ||
+            strcmp_simple(cmd, "colordiff") == 0 ||
+            strcmp_simple(cmd, "wdiff") == 0 ||
+            strcmp_simple(cmd, "vimdiff") == 0 ||
             0);
 }
 
@@ -19932,7 +19987,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   430 built-in commands — type 'help'    |\n");
+    write_str(1, "|   440 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");
@@ -38125,6 +38180,1139 @@ static void cmd_tshark(int argc, char *argv[]) {
     write_str(1, numbuf);
     write_str(1, " packets captured\n");
     (void)tcp_entries;
+}
+
+/* ── emacs: text editor (simulated) ── */
+static void cmd_emacs(int argc, char *argv[]) {
+    if (argc < 2) { write_str(2, "Usage: emacs <file>\n"); return; }
+    const char *filename = argv[1];
+
+    /* Load file content */
+    #define EMACS_MAX_LINES 128
+    #define EMACS_MAX_COLS 128
+    static char elines[EMACS_MAX_LINES][EMACS_MAX_COLS];
+    int num_lines = 0, cur_row = 0, cur_col = 0, top_row = 0;
+    int modified = 0, running = 1;
+    for (int i = 0; i < EMACS_MAX_LINES; i++) elines[i][0] = '\0';
+
+    int fd = sys_open(filename, O_RDONLY, 0);
+    if (fd >= 0) {
+        char buf[512]; int col = 0; ssize_t n;
+        while ((n = sys_read(fd, buf, sizeof(buf))) > 0) {
+            for (int i = 0; i < n; i++) {
+                if (buf[i] == '\n') {
+                    elines[num_lines][col] = '\0'; num_lines++; col = 0;
+                    if (num_lines >= EMACS_MAX_LINES) break;
+                } else if (col < EMACS_MAX_COLS - 1) elines[num_lines][col++] = buf[i];
+            }
+            if (num_lines >= EMACS_MAX_LINES) break;
+        }
+        if (col > 0 || num_lines == 0) { elines[num_lines][col] = '\0'; num_lines++; }
+        sys_close(fd);
+    } else { num_lines = 1; elines[0][0] = '\0'; }
+
+    #define EMACS_ROWS 24
+    #define EMACS_LINELEN(r) ((int)strlen_simple(elines[(r)]))
+    #define EMACS_WRITE_INT(v) do { int _v=(v); char _b[12]; int _i=0; \
+        if(_v==0){write_char(1,'0');}else{ if(_v<0){write_char(1,'-');_v=-_v;} \
+        while(_v>0){_b[_i++]='0'+(_v%10);_v/=10;} while(_i>0)write_char(1,_b[--_i]);} }while(0)
+    #define EMACS_SCROLL() do { if(cur_row<top_row) top_row=cur_row; \
+        if(cur_row>=top_row+EMACS_ROWS-2) top_row=cur_row-EMACS_ROWS+3; }while(0)
+    #define EMACS_CLAMP() do { int _l=EMACS_LINELEN(cur_row); \
+        if(cur_col>_l)cur_col=_l; if(cur_col<0)cur_col=0; }while(0)
+    #define EMACS_REDRAW() do { \
+        write_str(1,"\033[2J\033[H"); \
+        for(int _r=0;_r<EMACS_ROWS-2;_r++){ int _line=top_row+_r; \
+            if(_line<num_lines) write_str(1,elines[_line]); \
+            write_str(1,"\r\n"); } \
+        write_str(1,"\033[7m -UUU:"); \
+        if(modified) write_str(1,"**-"); else write_str(1,"---"); \
+        write_str(1," "); write_str(1,filename); \
+        write_str(1,"  L"); EMACS_WRITE_INT(cur_row+1); \
+        write_str(1," C"); EMACS_WRITE_INT(cur_col+1); \
+        write_str(1,"   (Fundamental)                    \033[0m\r\n"); \
+        write_str(1,"\033["); EMACS_WRITE_INT(cur_row-top_row+1); \
+        write_str(1,";"); EMACS_WRITE_INT(cur_col+1); write_str(1,"H"); }while(0)
+    #define EMACS_SAVE() do { \
+        int _wfd=sys_open(filename,O_WRONLY|O_CREAT|O_TRUNC,0644); \
+        if(_wfd<0){ write_str(1,"\r\nError: cannot save\r\n"); \
+        }else{ for(int _i=0;_i<num_lines;_i++){ int _len=EMACS_LINELEN(_i); \
+            if(_len>0){sys_write(_wfd,elines[_i],_len);} sys_write(_wfd,"\n",1); } \
+            sys_close(_wfd); modified=0; } }while(0)
+
+    EMACS_REDRAW();
+    int ctrl_x = 0; /* flag: saw Ctrl-X */
+
+    while (running) {
+        char c; ssize_t nr = sys_read(0, &c, 1);
+        if (nr <= 0) break;
+
+        if (ctrl_x) {
+            ctrl_x = 0;
+            if (c == 19) { /* Ctrl-S after Ctrl-X: save */
+                EMACS_SAVE();
+            } else if (c == 3) { /* Ctrl-C after Ctrl-X: quit */
+                running = 0; continue;
+            }
+            EMACS_SCROLL(); EMACS_REDRAW(); continue;
+        }
+
+        if (c == 24) { /* Ctrl-X */
+            ctrl_x = 1; continue;
+        } else if (c == 27) { /* ESC - arrow keys */
+            char seq[2]; ssize_t s1 = sys_read(0, &seq[0], 1);
+            if (s1 > 0 && seq[0] == '[') {
+                ssize_t s2 = sys_read(0, &seq[1], 1);
+                if (s2 > 0) {
+                    if (seq[1]=='A' && cur_row>0) { cur_row--; EMACS_CLAMP(); }
+                    else if (seq[1]=='B' && cur_row<num_lines-1) { cur_row++; EMACS_CLAMP(); }
+                    else if (seq[1]=='C') { if(cur_col<EMACS_LINELEN(cur_row)) cur_col++; }
+                    else if (seq[1]=='D') { if(cur_col>0) cur_col--; }
+                }
+            }
+        } else if (c == 6) { /* Ctrl-F: forward char */
+            if (cur_col < EMACS_LINELEN(cur_row)) cur_col++;
+        } else if (c == 2) { /* Ctrl-B: backward char */
+            if (cur_col > 0) cur_col--;
+        } else if (c == 16) { /* Ctrl-P: previous line */
+            if (cur_row > 0) { cur_row--; EMACS_CLAMP(); }
+        } else if (c == 14) { /* Ctrl-N: next line */
+            if (cur_row < num_lines-1) { cur_row++; EMACS_CLAMP(); }
+        } else if (c == 1) { /* Ctrl-A: beginning of line */
+            cur_col = 0;
+        } else if (c == 5) { /* Ctrl-E: end of line */
+            cur_col = EMACS_LINELEN(cur_row);
+        } else if (c == 4) { /* Ctrl-D: delete char */
+            int len = EMACS_LINELEN(cur_row);
+            if (cur_col < len) {
+                for (int i = cur_col; i < len; i++) elines[cur_row][i] = elines[cur_row][i+1];
+                modified = 1;
+            }
+        } else if (c == 11) { /* Ctrl-K: kill to end of line */
+            elines[cur_row][cur_col] = '\0'; modified = 1;
+        } else if (c == 127 || c == 8) { /* Backspace */
+            if (cur_col > 0) {
+                int len = EMACS_LINELEN(cur_row);
+                for (int i = cur_col-1; i < len; i++) elines[cur_row][i] = elines[cur_row][i+1];
+                cur_col--; modified = 1;
+            } else if (cur_row > 0) {
+                int prev_len = EMACS_LINELEN(cur_row-1), cur_len = EMACS_LINELEN(cur_row);
+                if (prev_len + cur_len < EMACS_MAX_COLS-1) {
+                    for (int i = 0; i <= cur_len; i++) elines[cur_row-1][prev_len+i] = elines[cur_row][i];
+                    for (int i = cur_row; i < num_lines-1; i++)
+                        for (int j = 0; j < EMACS_MAX_COLS; j++) elines[i][j] = elines[i+1][j];
+                    num_lines--; cur_row--; cur_col = prev_len; modified = 1;
+                }
+            }
+        } else if (c == '\r' || c == '\n') {
+            if (num_lines < EMACS_MAX_LINES) {
+                for (int i = num_lines; i > cur_row+1; i--)
+                    for (int j = 0; j < EMACS_MAX_COLS; j++) elines[i][j] = elines[i-1][j];
+                num_lines++; int k = 0;
+                for (int i = cur_col; elines[cur_row][i]; i++) elines[cur_row+1][k++] = elines[cur_row][i];
+                elines[cur_row+1][k] = '\0'; elines[cur_row][cur_col] = '\0';
+                cur_row++; cur_col = 0; modified = 1;
+            }
+        } else if (c >= 32 || c == '\t') {
+            int len = EMACS_LINELEN(cur_row);
+            if (len < EMACS_MAX_COLS-2) {
+                for (int i = len+1; i > cur_col; i--) elines[cur_row][i] = elines[cur_row][i-1];
+                elines[cur_row][cur_col] = c; cur_col++; modified = 1;
+            }
+        }
+        EMACS_SCROLL(); EMACS_REDRAW();
+    }
+    write_str(1, "\033[2J\033[H");
+    #undef EMACS_MAX_LINES
+    #undef EMACS_MAX_COLS
+    #undef EMACS_ROWS
+    #undef EMACS_LINELEN
+    #undef EMACS_WRITE_INT
+    #undef EMACS_SCROLL
+    #undef EMACS_CLAMP
+    #undef EMACS_REDRAW
+    #undef EMACS_SAVE
+}
+
+/* ── nano: simple text editor (simulated) ── */
+static void cmd_nano(int argc, char *argv[]) {
+    if (argc < 2) { write_str(2, "Usage: nano <file>\n"); return; }
+    const char *filename = argv[1];
+
+    #define NANO_MAX_LINES 128
+    #define NANO_MAX_COLS 128
+    static char nlines[NANO_MAX_LINES][NANO_MAX_COLS];
+    int num_lines = 0, cur_row = 0, cur_col = 0, top_row = 0;
+    int modified = 0, running = 1;
+    for (int i = 0; i < NANO_MAX_LINES; i++) nlines[i][0] = '\0';
+
+    int fd = sys_open(filename, O_RDONLY, 0);
+    if (fd >= 0) {
+        char buf[512]; int col = 0; ssize_t n;
+        while ((n = sys_read(fd, buf, sizeof(buf))) > 0) {
+            for (int i = 0; i < n; i++) {
+                if (buf[i] == '\n') {
+                    nlines[num_lines][col] = '\0'; num_lines++; col = 0;
+                    if (num_lines >= NANO_MAX_LINES) break;
+                } else if (col < NANO_MAX_COLS - 1) nlines[num_lines][col++] = buf[i];
+            }
+            if (num_lines >= NANO_MAX_LINES) break;
+        }
+        if (col > 0 || num_lines == 0) { nlines[num_lines][col] = '\0'; num_lines++; }
+        sys_close(fd);
+    } else { num_lines = 1; nlines[0][0] = '\0'; }
+
+    #define NANO_ROWS 22
+    #define NANO_LINELEN(r) ((int)strlen_simple(nlines[(r)]))
+    #define NANO_WRITE_INT(v) do { int _v=(v); char _b[12]; int _i=0; \
+        if(_v==0){write_char(1,'0');}else{ if(_v<0){write_char(1,'-');_v=-_v;} \
+        while(_v>0){_b[_i++]='0'+(_v%10);_v/=10;} while(_i>0)write_char(1,_b[--_i]);} }while(0)
+    #define NANO_SCROLL() do { if(cur_row<top_row) top_row=cur_row; \
+        if(cur_row>=top_row+NANO_ROWS) top_row=cur_row-NANO_ROWS+1; }while(0)
+    #define NANO_CLAMP() do { int _l=NANO_LINELEN(cur_row); \
+        if(cur_col>_l)cur_col=_l; if(cur_col<0)cur_col=0; }while(0)
+    #define NANO_REDRAW() do { \
+        write_str(1,"\033[2J\033[H"); \
+        write_str(1,"\033[7m  GNU nano 7.2     "); write_str(1,filename); \
+        if(modified) write_str(1," (modified)"); \
+        write_str(1,"                         \033[0m\r\n"); \
+        for(int _r=0;_r<NANO_ROWS;_r++){ int _line=top_row+_r; \
+            if(_line<num_lines) write_str(1,nlines[_line]); \
+            write_str(1,"\r\n"); } \
+        write_str(1,"\033[7m ^X\033[0m Exit  \033[7m ^O\033[0m Write Out  \033[7m ^K\033[0m Cut  \033[7m ^U\033[0m Paste\r\n"); \
+        write_str(1,"\033[7m ^G\033[0m Help  \033[7m ^W\033[0m Search     \033[7m ^J\033[0m Justify  \033[7m ^T\033[0m Spell\r\n"); \
+        write_str(1,"\033["); NANO_WRITE_INT(cur_row-top_row+2); \
+        write_str(1,";"); NANO_WRITE_INT(cur_col+1); write_str(1,"H"); }while(0)
+    #define NANO_SAVE() do { \
+        int _wfd=sys_open(filename,O_WRONLY|O_CREAT|O_TRUNC,0644); \
+        if(_wfd>=0){ for(int _i=0;_i<num_lines;_i++){ int _len=NANO_LINELEN(_i); \
+            if(_len>0){sys_write(_wfd,nlines[_i],_len);} sys_write(_wfd,"\n",1); } \
+            sys_close(_wfd); modified=0; } }while(0)
+
+    NANO_REDRAW();
+
+    while (running) {
+        char c; ssize_t nr = sys_read(0, &c, 1);
+        if (nr <= 0) break;
+
+        if (c == 24) { /* Ctrl-X: exit */
+            if (modified) {
+                write_str(1, "\033[24;1H\033[2KSave modified buffer? (Y/N) ");
+                char ans; ssize_t ar = sys_read(0, &ans, 1);
+                if (ar > 0 && (ans == 'y' || ans == 'Y')) { NANO_SAVE(); }
+            }
+            running = 0; continue;
+        } else if (c == 15) { /* Ctrl-O: write out */
+            NANO_SAVE();
+            write_str(1, "\033[24;1H\033[2K[ Wrote "); NANO_WRITE_INT(num_lines);
+            write_str(1, " lines ]");
+        } else if (c == 27) { /* ESC - arrow keys */
+            char seq[2]; ssize_t s1 = sys_read(0, &seq[0], 1);
+            if (s1 > 0 && seq[0] == '[') {
+                ssize_t s2 = sys_read(0, &seq[1], 1);
+                if (s2 > 0) {
+                    if (seq[1]=='A' && cur_row>0) { cur_row--; NANO_CLAMP(); }
+                    else if (seq[1]=='B' && cur_row<num_lines-1) { cur_row++; NANO_CLAMP(); }
+                    else if (seq[1]=='C') { if(cur_col<NANO_LINELEN(cur_row)) cur_col++; }
+                    else if (seq[1]=='D') { if(cur_col>0) cur_col--; }
+                }
+            }
+        } else if (c == 11) { /* Ctrl-K: cut line */
+            if (num_lines > 1) {
+                for (int i = cur_row; i < num_lines-1; i++)
+                    for (int j = 0; j < NANO_MAX_COLS; j++) nlines[i][j] = nlines[i+1][j];
+                num_lines--;
+                if (cur_row >= num_lines) cur_row = num_lines - 1;
+                NANO_CLAMP(); modified = 1;
+            } else { nlines[0][0] = '\0'; cur_col = 0; modified = 1; }
+        } else if (c == 127 || c == 8) { /* Backspace */
+            if (cur_col > 0) {
+                int len = NANO_LINELEN(cur_row);
+                for (int i = cur_col-1; i < len; i++) nlines[cur_row][i] = nlines[cur_row][i+1];
+                cur_col--; modified = 1;
+            } else if (cur_row > 0) {
+                int prev_len = NANO_LINELEN(cur_row-1), cur_len = NANO_LINELEN(cur_row);
+                if (prev_len + cur_len < NANO_MAX_COLS-1) {
+                    for (int i = 0; i <= cur_len; i++) nlines[cur_row-1][prev_len+i] = nlines[cur_row][i];
+                    for (int i = cur_row; i < num_lines-1; i++)
+                        for (int j = 0; j < NANO_MAX_COLS; j++) nlines[i][j] = nlines[i+1][j];
+                    num_lines--; cur_row--; cur_col = prev_len; modified = 1;
+                }
+            }
+        } else if (c == '\r' || c == '\n') {
+            if (num_lines < NANO_MAX_LINES) {
+                for (int i = num_lines; i > cur_row+1; i--)
+                    for (int j = 0; j < NANO_MAX_COLS; j++) nlines[i][j] = nlines[i-1][j];
+                num_lines++; int k = 0;
+                for (int i = cur_col; nlines[cur_row][i]; i++) nlines[cur_row+1][k++] = nlines[cur_row][i];
+                nlines[cur_row+1][k] = '\0'; nlines[cur_row][cur_col] = '\0';
+                cur_row++; cur_col = 0; modified = 1;
+            }
+        } else if (c >= 32 || c == '\t') {
+            int len = NANO_LINELEN(cur_row);
+            if (len < NANO_MAX_COLS-2) {
+                for (int i = len+1; i > cur_col; i--) nlines[cur_row][i] = nlines[cur_row][i-1];
+                nlines[cur_row][cur_col] = c; cur_col++; modified = 1;
+            }
+        }
+        NANO_SCROLL(); NANO_REDRAW();
+    }
+    write_str(1, "\033[2J\033[H");
+    #undef NANO_MAX_LINES
+    #undef NANO_MAX_COLS
+    #undef NANO_ROWS
+    #undef NANO_LINELEN
+    #undef NANO_WRITE_INT
+    #undef NANO_SCROLL
+    #undef NANO_CLAMP
+    #undef NANO_REDRAW
+    #undef NANO_SAVE
+}
+
+/* ── ed: line editor ── */
+static void cmd_ed(int argc, char *argv[]) {
+    #define ED_MAX_LINES 128
+    #define ED_LINE_MAX 128
+    static char edlines[ED_MAX_LINES][ED_LINE_MAX];
+    int num_lines = 0, cur_line = 0, modified = 0;
+    const char *filename = (argc >= 2) ? argv[1] : NULL;
+
+    for (int i = 0; i < ED_MAX_LINES; i++) edlines[i][0] = '\0';
+
+    /* Load file if specified */
+    if (filename) {
+        int fd = sys_open(filename, O_RDONLY, 0);
+        if (fd >= 0) {
+            int col = 0; char c; ssize_t n;
+            while (num_lines < ED_MAX_LINES && (n = sys_read(fd, &c, 1)) > 0) {
+                if (c == '\n') { edlines[num_lines][col] = '\0'; num_lines++; col = 0; }
+                else if (col < ED_LINE_MAX-1) edlines[num_lines][col++] = c;
+            }
+            if (col > 0) { edlines[num_lines][col] = '\0'; num_lines++; }
+            sys_close(fd);
+            /* Print byte count */
+            int total = 0;
+            for (int i = 0; i < num_lines; i++) total += (int)strlen_simple(edlines[i]) + 1;
+            char nbuf[16]; int ni = 0; int tv = total;
+            if (tv == 0) { nbuf[ni++] = '0'; }
+            else { char tmp[16]; int ti = 0; while(tv>0){tmp[ti++]='0'+(tv%10);tv/=10;} while(ti>0) nbuf[ni++]=tmp[--ti]; }
+            nbuf[ni] = '\0';
+            write_str(1, nbuf); write_str(1, "\n");
+            cur_line = num_lines;
+        } else {
+            write_str(1, "?\n"); /* ed prints ? for new file */
+        }
+    }
+
+    char cmdbuf[ED_LINE_MAX];
+    int running = 1;
+
+    while (running) {
+        /* Read command line */
+        int cpos = 0; char c;
+        while (cpos < ED_LINE_MAX-1) {
+            ssize_t n = sys_read(0, &c, 1);
+            if (n <= 0) { running = 0; break; }
+            if (c == '\n') break;
+            cmdbuf[cpos++] = c;
+        }
+        if (!running) break;
+        cmdbuf[cpos] = '\0';
+        if (cpos == 0) continue;
+
+        /* Parse address + command */
+        int addr = cur_line;
+        int ci = 0;
+        if (cmdbuf[0] == '$') { addr = num_lines; ci = 1; }
+        else if (cmdbuf[0] == '.') { addr = cur_line; ci = 1; }
+        else if (cmdbuf[0] >= '1' && cmdbuf[0] <= '9') {
+            addr = 0;
+            while (cmdbuf[ci] >= '0' && cmdbuf[ci] <= '9') addr = addr * 10 + (cmdbuf[ci++] - '0');
+        }
+
+        char cmd = cmdbuf[ci];
+        if (cmd == 'q') {
+            if (modified && cmdbuf[ci+1] != '!') {
+                write_str(1, "?\n"); modified = 0; /* second q will quit */
+            } else { running = 0; }
+        } else if (cmd == 'Q') {
+            running = 0;
+        } else if (cmd == 'p') {
+            if (addr >= 1 && addr <= num_lines) {
+                cur_line = addr;
+                write_str(1, edlines[cur_line-1]); write_str(1, "\n");
+            } else { write_str(1, "?\n"); }
+        } else if (cmd == 'n') {
+            if (addr >= 1 && addr <= num_lines) {
+                cur_line = addr;
+                char nb[12]; int ni2 = 0; int v = cur_line;
+                if(v==0){nb[ni2++]='0';}else{char t2[12];int ti2=0;while(v>0){t2[ti2++]='0'+(v%10);v/=10;}while(ti2>0)nb[ni2++]=t2[--ti2];}
+                nb[ni2]='\0';
+                write_str(1, nb); write_str(1, "\t");
+                write_str(1, edlines[cur_line-1]); write_str(1, "\n");
+            } else { write_str(1, "?\n"); }
+        } else if (cmd == 'a') {
+            /* Append mode: read lines until "." on its own */
+            int ins_after = addr;
+            if (ins_after > num_lines) ins_after = num_lines;
+            char lbuf[ED_LINE_MAX]; int lp;
+            while (1) {
+                lp = 0;
+                while (lp < ED_LINE_MAX-1) {
+                    ssize_t n2 = sys_read(0, &c, 1);
+                    if (n2 <= 0) break;
+                    if (c == '\n') break;
+                    lbuf[lp++] = c;
+                }
+                lbuf[lp] = '\0';
+                if (lp == 1 && lbuf[0] == '.') break;
+                if (num_lines >= ED_MAX_LINES) { write_str(1, "?\n"); break; }
+                /* Insert after ins_after */
+                for (int i = num_lines; i > ins_after; i--)
+                    for (int j = 0; j < ED_LINE_MAX; j++) edlines[i][j] = edlines[i-1][j];
+                strncpy_simple(edlines[ins_after], lbuf, ED_LINE_MAX-1);
+                num_lines++; ins_after++; cur_line = ins_after; modified = 1;
+            }
+        } else if (cmd == 'i') {
+            /* Insert mode: like append but before current line */
+            int ins_at = addr - 1;
+            if (ins_at < 0) ins_at = 0;
+            char lbuf[ED_LINE_MAX]; int lp;
+            while (1) {
+                lp = 0;
+                while (lp < ED_LINE_MAX-1) {
+                    ssize_t n2 = sys_read(0, &c, 1);
+                    if (n2 <= 0) break;
+                    if (c == '\n') break;
+                    lbuf[lp++] = c;
+                }
+                lbuf[lp] = '\0';
+                if (lp == 1 && lbuf[0] == '.') break;
+                if (num_lines >= ED_MAX_LINES) { write_str(1, "?\n"); break; }
+                for (int i = num_lines; i > ins_at; i--)
+                    for (int j = 0; j < ED_LINE_MAX; j++) edlines[i][j] = edlines[i-1][j];
+                strncpy_simple(edlines[ins_at], lbuf, ED_LINE_MAX-1);
+                num_lines++; ins_at++; cur_line = ins_at; modified = 1;
+            }
+        } else if (cmd == 'd') {
+            if (addr >= 1 && addr <= num_lines) {
+                for (int i = addr-1; i < num_lines-1; i++)
+                    for (int j = 0; j < ED_LINE_MAX; j++) edlines[i][j] = edlines[i+1][j];
+                num_lines--;
+                if (cur_line > num_lines) cur_line = num_lines;
+                if (cur_line < 1 && num_lines > 0) cur_line = 1;
+                modified = 1;
+            } else { write_str(1, "?\n"); }
+        } else if (cmd == 'w') {
+            const char *wfn = filename;
+            if (cmdbuf[ci+1] == ' ' && cmdbuf[ci+2]) wfn = &cmdbuf[ci+2];
+            if (!wfn) { write_str(1, "?\n"); continue; }
+            int wfd = sys_open(wfn, O_WRONLY|O_CREAT|O_TRUNC, 0644);
+            if (wfd < 0) { write_str(1, "?\n"); continue; }
+            int total = 0;
+            for (int i = 0; i < num_lines; i++) {
+                int len = (int)strlen_simple(edlines[i]);
+                if (len > 0) sys_write(wfd, edlines[i], len);
+                sys_write(wfd, "\n", 1);
+                total += len + 1;
+            }
+            sys_close(wfd); modified = 0;
+            char nb[16]; int ni2 = 0; int tv2 = total;
+            if(tv2==0){nb[ni2++]='0';}else{char t2[16];int ti2=0;while(tv2>0){t2[ti2++]='0'+(tv2%10);tv2/=10;}while(ti2>0)nb[ni2++]=t2[--ti2];}
+            nb[ni2]='\0';
+            write_str(1, nb); write_str(1, "\n");
+        } else if (cmd == ',' || (cmd == '%' && cmdbuf[ci+1] == 'p')) {
+            /* ,p or %p: print all lines */
+            for (int i = 0; i < num_lines; i++) {
+                write_str(1, edlines[i]); write_str(1, "\n");
+            }
+        } else {
+            write_str(1, "?\n");
+        }
+    }
+    #undef ED_MAX_LINES
+    #undef ED_LINE_MAX
+}
+
+/* ── ex: extended line editor (vi command mode) ── */
+static void cmd_ex(int argc, char *argv[]) {
+    /* ex is vi in command mode - delegate to ed for line-editing behavior */
+    if (argc < 2) { write_str(2, "Usage: ex <file>\n"); return; }
+    const char *filename = argv[1];
+
+    #define EX_MAX_LINES 128
+    #define EX_LINE_MAX 128
+    static char exlines[EX_MAX_LINES][EX_LINE_MAX];
+    int num_lines = 0, cur_line = 0, modified = 0;
+
+    for (int i = 0; i < EX_MAX_LINES; i++) exlines[i][0] = '\0';
+
+    int fd = sys_open(filename, O_RDONLY, 0);
+    if (fd >= 0) {
+        int col = 0; char c; ssize_t n;
+        while (num_lines < EX_MAX_LINES && (n = sys_read(fd, &c, 1)) > 0) {
+            if (c == '\n') { exlines[num_lines][col] = '\0'; num_lines++; col = 0; }
+            else if (col < EX_LINE_MAX-1) exlines[num_lines][col++] = c;
+        }
+        if (col > 0) { exlines[num_lines][col] = '\0'; num_lines++; }
+        sys_close(fd);
+        write_str(1, "\""); write_str(1, filename); write_str(1, "\" ");
+        char nb[12]; int ni = 0; int v = num_lines;
+        if(v==0){nb[ni++]='0';}else{char t[12];int ti=0;while(v>0){t[ti++]='0'+(v%10);v/=10;}while(ti>0)nb[ni++]=t[--ti];}
+        nb[ni]='\0';
+        write_str(1, nb); write_str(1, " lines\n");
+        cur_line = num_lines;
+    } else {
+        write_str(1, "\""); write_str(1, filename); write_str(1, "\" [New]\n");
+    }
+
+    char cmdbuf[EX_LINE_MAX];
+    int running = 1;
+
+    while (running) {
+        write_str(1, ":");
+        int cpos = 0; char c;
+        while (cpos < EX_LINE_MAX-1) {
+            ssize_t n = sys_read(0, &c, 1);
+            if (n <= 0) { running = 0; break; }
+            if (c == '\n') break;
+            if ((c == 127 || c == 8) && cpos > 0) { cpos--; write_str(1, "\b \b"); continue; }
+            cmdbuf[cpos++] = c; write_char(1, c);
+        }
+        if (!running) break;
+        cmdbuf[cpos] = '\0';
+        write_str(1, "\n");
+
+        if (cpos == 0) continue;
+
+        /* Parse address */
+        int addr = cur_line;
+        int ci = 0;
+        if (cmdbuf[0] == '$') { addr = num_lines; ci = 1; }
+        else if (cmdbuf[0] >= '1' && cmdbuf[0] <= '9') {
+            addr = 0;
+            while (cmdbuf[ci] >= '0' && cmdbuf[ci] <= '9') addr = addr*10 + (cmdbuf[ci++]-'0');
+        }
+
+        if (strcmp_simple(cmdbuf+ci, "q") == 0 || strcmp_simple(cmdbuf+ci, "quit") == 0) {
+            if (modified) { write_str(1, "No write since last change (use q! to override)\n"); modified = 0; }
+            else running = 0;
+        } else if (strcmp_simple(cmdbuf+ci, "q!") == 0) {
+            running = 0;
+        } else if (strcmp_simple(cmdbuf+ci, "wq") == 0 || strcmp_simple(cmdbuf+ci, "x") == 0) {
+            int wfd = sys_open(filename, O_WRONLY|O_CREAT|O_TRUNC, 0644);
+            if (wfd >= 0) {
+                for (int i = 0; i < num_lines; i++) {
+                    int len = (int)strlen_simple(exlines[i]);
+                    if (len > 0) sys_write(wfd, exlines[i], len);
+                    sys_write(wfd, "\n", 1);
+                }
+                sys_close(wfd);
+            }
+            running = 0;
+        } else if (cmdbuf[ci] == 'w') {
+            int wfd = sys_open(filename, O_WRONLY|O_CREAT|O_TRUNC, 0644);
+            if (wfd >= 0) {
+                for (int i = 0; i < num_lines; i++) {
+                    int len = (int)strlen_simple(exlines[i]);
+                    if (len > 0) sys_write(wfd, exlines[i], len);
+                    sys_write(wfd, "\n", 1);
+                }
+                sys_close(wfd); modified = 0;
+                write_str(1, "\""); write_str(1, filename); write_str(1, "\" written\n");
+            }
+        } else if (cmdbuf[ci] == 'p') {
+            if (addr >= 1 && addr <= num_lines) {
+                cur_line = addr;
+                write_str(1, exlines[cur_line-1]); write_str(1, "\n");
+            }
+        } else if (strcmp_simple(cmdbuf+ci, "%p") == 0 || strcmp_simple(cmdbuf+ci, "1,$p") == 0) {
+            for (int i = 0; i < num_lines; i++) { write_str(1, exlines[i]); write_str(1, "\n"); }
+        } else if (strcmp_simple(cmdbuf+ci, "vi") == 0 || strcmp_simple(cmdbuf+ci, "visual") == 0) {
+            write_str(1, "Entering visual mode... (use ex for line editing)\n");
+        } else if (cmdbuf[ci] == 'd') {
+            if (addr >= 1 && addr <= num_lines) {
+                for (int i = addr-1; i < num_lines-1; i++)
+                    for (int j = 0; j < EX_LINE_MAX; j++) exlines[i][j] = exlines[i+1][j];
+                num_lines--; modified = 1;
+                if (cur_line > num_lines) cur_line = num_lines;
+            }
+        } else {
+            write_str(1, "Unknown ex command\n");
+        }
+    }
+    #undef EX_MAX_LINES
+    #undef EX_LINE_MAX
+}
+
+/* ── view: read-only vi ── */
+static void cmd_view(int argc, char *argv[]) {
+    if (argc < 2) { write_str(2, "Usage: view <file>\n"); return; }
+    const char *filename = argv[1];
+
+    /* Load file */
+    #define VIEW_MAX_LINES 128
+    #define VIEW_MAX_COLS 128
+    #define VIEW_ROWS 24
+    static char vlines[VIEW_MAX_LINES][VIEW_MAX_COLS];
+    int num_lines = 0, cur_row = 0, top_row = 0;
+
+    for (int i = 0; i < VIEW_MAX_LINES; i++) vlines[i][0] = '\0';
+
+    int fd = sys_open(filename, O_RDONLY, 0);
+    if (fd < 0) {
+        write_str(2, "view: "); write_str(2, filename); write_str(2, ": cannot open file\n");
+        return;
+    }
+    char buf[512]; int col = 0; ssize_t n;
+    while ((n = sys_read(fd, buf, sizeof(buf))) > 0) {
+        for (int i = 0; i < n; i++) {
+            if (buf[i] == '\n') {
+                vlines[num_lines][col] = '\0'; num_lines++; col = 0;
+                if (num_lines >= VIEW_MAX_LINES) break;
+            } else if (col < VIEW_MAX_COLS - 1) vlines[num_lines][col++] = buf[i];
+        }
+        if (num_lines >= VIEW_MAX_LINES) break;
+    }
+    if (col > 0 || num_lines == 0) { vlines[num_lines][col] = '\0'; num_lines++; }
+    sys_close(fd);
+
+    #define VIEW_WRITE_INT(v) do { int _v=(v); char _b[12]; int _i=0; \
+        if(_v==0){write_char(1,'0');}else{ if(_v<0){write_char(1,'-');_v=-_v;} \
+        while(_v>0){_b[_i++]='0'+(_v%10);_v/=10;} while(_i>0)write_char(1,_b[--_i]);} }while(0)
+    #define VIEW_REDRAW() do { \
+        write_str(1,"\033[2J\033[H"); \
+        for(int _r=0;_r<VIEW_ROWS-1;_r++){ int _line=top_row+_r; \
+            if(_line<num_lines) write_str(1,vlines[_line]); else write_char(1,'~'); \
+            if(_r<VIEW_ROWS-2) write_str(1,"\r\n"); } \
+        write_str(1,"\r\n\033[7m "); write_str(1,filename); \
+        write_str(1," [RO]  L"); VIEW_WRITE_INT(cur_row+1); \
+        write_str(1,"/"); VIEW_WRITE_INT(num_lines); \
+        write_str(1,"                              \033[0m"); \
+        write_str(1,"\033["); VIEW_WRITE_INT(cur_row-top_row+1); write_str(1,";1H"); }while(0)
+
+    VIEW_REDRAW();
+    int running = 1;
+
+    while (running) {
+        char c; ssize_t nr = sys_read(0, &c, 1);
+        if (nr <= 0) break;
+
+        if (c == 'q' || c == 'Q') { running = 0; continue; }
+        else if (c == 27) {
+            char seq[2]; ssize_t s1 = sys_read(0, &seq[0], 1);
+            if (s1 > 0 && seq[0] == '[') {
+                ssize_t s2 = sys_read(0, &seq[1], 1);
+                if (s2 > 0) {
+                    if (seq[1]=='A' && cur_row>0) cur_row--;
+                    else if (seq[1]=='B' && cur_row<num_lines-1) cur_row++;
+                }
+            }
+        } else if (c == 'j' || c == '\n') { if (cur_row < num_lines-1) cur_row++; }
+        else if (c == 'k') { if (cur_row > 0) cur_row--; }
+        else if (c == 'G') { cur_row = num_lines - 1; }
+        else if (c == 'g') { cur_row = 0; }
+        else if (c == ' ') { cur_row += VIEW_ROWS-2; if (cur_row >= num_lines) cur_row = num_lines-1; }
+        else if (c == ':') {
+            /* Read ex command */
+            write_str(1, "\033["); VIEW_WRITE_INT(VIEW_ROWS); write_str(1, ";1H\033[2K:");
+            char cb[16]; int cp = 0;
+            while (cp < 14) {
+                char cc; ssize_t rr = sys_read(0, &cc, 1);
+                if (rr <= 0) break;
+                if (cc == '\r' || cc == '\n') break;
+                if (cc == 27) { cp = 0; break; }
+                cb[cp++] = cc; write_char(1, cc);
+            }
+            cb[cp] = '\0';
+            if (cb[0] == 'q') running = 0;
+        }
+
+        /* Scroll */
+        if (cur_row < top_row) top_row = cur_row;
+        if (cur_row >= top_row + VIEW_ROWS - 1) top_row = cur_row - VIEW_ROWS + 2;
+        VIEW_REDRAW();
+    }
+    write_str(1, "\033[2J\033[H");
+    #undef VIEW_MAX_LINES
+    #undef VIEW_MAX_COLS
+    #undef VIEW_ROWS
+    #undef VIEW_WRITE_INT
+    #undef VIEW_REDRAW
+}
+
+/* ── vimtutor: Vi tutorial ── */
+static void cmd_vimtutor(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    write_str(1, "===============================================================================\n");
+    write_str(1, "=                  V I M   T U T O R   -   Futura OS                         =\n");
+    write_str(1, "===============================================================================\n\n");
+    write_str(1, "  Vim is a powerful text editor. This tutorial covers the basics.\n\n");
+    write_str(1, "  ~~~ Lesson 1: NAVIGATION ~~~\n");
+    write_str(1, "  h - move left       j - move down\n");
+    write_str(1, "  k - move up         l - move right\n");
+    write_str(1, "  Arrow keys also work for navigation.\n\n");
+    write_str(1, "  ~~~ Lesson 2: MODES ~~~\n");
+    write_str(1, "  Normal mode  - default, for navigation and commands\n");
+    write_str(1, "  Insert mode  - press 'i' to enter, ESC to leave\n");
+    write_str(1, "  Command mode - press ':' from normal mode\n\n");
+    write_str(1, "  ~~~ Lesson 3: EDITING ~~~\n");
+    write_str(1, "  i   - insert before cursor\n");
+    write_str(1, "  a   - insert after cursor\n");
+    write_str(1, "  o   - open new line below\n");
+    write_str(1, "  O   - open new line above\n");
+    write_str(1, "  x   - delete character under cursor\n");
+    write_str(1, "  dd  - delete entire line\n\n");
+    write_str(1, "  ~~~ Lesson 4: SAVING AND QUITTING ~~~\n");
+    write_str(1, "  :w    - save file\n");
+    write_str(1, "  :q    - quit (fails if unsaved changes)\n");
+    write_str(1, "  :wq   - save and quit\n");
+    write_str(1, "  :q!   - quit without saving\n");
+    write_str(1, "  ZZ    - save and quit (normal mode)\n\n");
+    write_str(1, "  ~~~ Lesson 5: NAVIGATION SHORTCUTS ~~~\n");
+    write_str(1, "  gg  - go to first line\n");
+    write_str(1, "  G   - go to last line\n");
+    write_str(1, "  0   - go to beginning of line\n");
+    write_str(1, "  $   - go to end of line\n\n");
+    write_str(1, "  ~~~ EXERCISES ~~~\n");
+    write_str(1, "  1. Open a file:       vi myfile.txt\n");
+    write_str(1, "  2. Enter insert mode:  i\n");
+    write_str(1, "  3. Type some text\n");
+    write_str(1, "  4. Press ESC to return to normal mode\n");
+    write_str(1, "  5. Save and quit:     :wq\n\n");
+    write_str(1, "===============================================================================\n");
+    write_str(1, "=  Type 'vi <filename>' to start editing.  Good luck!                        =\n");
+    write_str(1, "===============================================================================\n");
+}
+
+/* ── diff3: three-way file comparison ── */
+static void cmd_diff3(int argc, char *argv[]) {
+    if (argc < 4) {
+        write_str(2, "Usage: diff3 <myfile> <oldfile> <yourfile>\n");
+        return;
+    }
+
+    #define D3_MAX_LINES 128
+    #define D3_LINE_MAX 128
+    static char la[D3_MAX_LINES][D3_LINE_MAX];
+    static char lb[D3_MAX_LINES][D3_LINE_MAX];
+    static char lc[D3_MAX_LINES][D3_LINE_MAX];
+    int na = 0, nb = 0, nc = 0;
+
+    /* Read three files */
+    const char *files[3] = { argv[1], argv[2], argv[3] };
+    int *counts[3] = { &na, &nb, &nc };
+    char (*arrs[3])[D3_LINE_MAX] = { la, lb, lc };
+
+    for (int f = 0; f < 3; f++) {
+        int fd = sys_open(files[f], O_RDONLY, 0);
+        if (fd < 0) {
+            write_str(2, "diff3: "); write_str(2, files[f]); write_str(2, ": cannot open file\n");
+            return;
+        }
+        int col = 0; char c; ssize_t n;
+        while (*(counts[f]) < D3_MAX_LINES && (n = sys_read(fd, &c, 1)) > 0) {
+            if (c == '\n') { arrs[f][*(counts[f])][col] = '\0'; (*(counts[f]))++; col = 0; }
+            else if (col < D3_LINE_MAX-1) arrs[f][*(counts[f])][col++] = c;
+        }
+        if (col > 0) { arrs[f][*(counts[f])][col] = '\0'; (*(counts[f]))++; }
+        sys_close(fd);
+    }
+
+    /* Simple three-way comparison: find lines that differ */
+    int max_lines = na;
+    if (nb > max_lines) max_lines = nb;
+    if (nc > max_lines) max_lines = nc;
+
+    int conflicts = 0;
+    char numbuf[16];
+
+    for (int i = 0; i < max_lines; i++) {
+        const char *a = (i < na) ? la[i] : "";
+        const char *b = (i < nb) ? lb[i] : "";
+        const char *c2 = (i < nc) ? lc[i] : "";
+
+        int ab = strcmp_simple(a, b);
+        int bc = strcmp_simple(b, c2);
+        int ac = strcmp_simple(a, c2);
+
+        if (ab == 0 && bc == 0) continue; /* all same */
+
+        /* Print conflict/change indicator */
+        int line = i + 1;
+        int ni = 0; int v = line;
+        if(v==0){numbuf[ni++]='0';}else{char t[16];int ti=0;while(v>0){t[ti++]='0'+(v%10);v/=10;}while(ti>0)numbuf[ni++]=t[--ti];}
+        numbuf[ni]='\0';
+
+        if (ab != 0 && ac != 0 && bc != 0) {
+            /* Three-way conflict */
+            write_str(1, "====\n");
+            write_str(1, "1:"); write_str(1, numbuf); write_str(1, "c\n");
+            write_str(1, "  "); write_str(1, a); write_str(1, "\n");
+            write_str(1, "2:"); write_str(1, numbuf); write_str(1, "c\n");
+            write_str(1, "  "); write_str(1, b); write_str(1, "\n");
+            write_str(1, "3:"); write_str(1, numbuf); write_str(1, "c\n");
+            write_str(1, "  "); write_str(1, c2); write_str(1, "\n");
+            conflicts++;
+        } else if (ab != 0 && bc == 0) {
+            /* File 1 differs */
+            write_str(1, "====1\n");
+            write_str(1, "1:"); write_str(1, numbuf); write_str(1, "c\n");
+            write_str(1, "  "); write_str(1, a); write_str(1, "\n");
+            write_str(1, "2:"); write_str(1, numbuf); write_str(1, "c\n");
+            write_str(1, "  "); write_str(1, b); write_str(1, "\n");
+        } else if (ac == 0 && bc != 0) {
+            /* File 3 differs (same as file 1 changed from base) */
+            write_str(1, "====3\n");
+            write_str(1, "2:"); write_str(1, numbuf); write_str(1, "c\n");
+            write_str(1, "  "); write_str(1, b); write_str(1, "\n");
+            write_str(1, "3:"); write_str(1, numbuf); write_str(1, "c\n");
+            write_str(1, "  "); write_str(1, c2); write_str(1, "\n");
+        }
+    }
+
+    if (conflicts == 0 && na == nb && nb == nc) {
+        /* Check if files are identical */
+        int same = 1;
+        for (int i = 0; i < na && same; i++) {
+            if (strcmp_simple(la[i], lb[i]) != 0 || strcmp_simple(lb[i], lc[i]) != 0) same = 0;
+        }
+        (void)same;
+    }
+    #undef D3_MAX_LINES
+    #undef D3_LINE_MAX
+}
+
+/* ── sdiff: side-by-side diff ── */
+static void cmd_sdiff(int argc, char *argv[]) {
+    int width = 80;
+    int arg_start = 1;
+
+    while (arg_start < argc && argv[arg_start][0] == '-') {
+        if (strcmp_simple(argv[arg_start], "-w") == 0 && arg_start+1 < argc) {
+            arg_start++;
+            width = simple_atoi(argv[arg_start]);
+            if (width < 20) width = 20;
+            if (width > 200) width = 200;
+        }
+        arg_start++;
+    }
+
+    if (argc - arg_start < 2) {
+        write_str(2, "Usage: sdiff [-w width] <file1> <file2>\n");
+        return;
+    }
+
+    #define SDIFF_MAX_LINES 128
+    #define SDIFF_LINE_MAX 128
+    static char sla[SDIFF_MAX_LINES][SDIFF_LINE_MAX];
+    static char slb[SDIFF_MAX_LINES][SDIFF_LINE_MAX];
+    int na = 0, nb = 0;
+
+    for (int pass = 0; pass < 2; pass++) {
+        const char *fn = argv[arg_start + pass];
+        int fd = sys_open(fn, O_RDONLY, 0);
+        if (fd < 0) {
+            write_str(2, "sdiff: "); write_str(2, fn); write_str(2, ": cannot open file\n");
+            return;
+        }
+        int col = 0; char c; ssize_t n;
+        int *cnt = (pass == 0) ? &na : &nb;
+        char (*arr)[SDIFF_LINE_MAX] = (pass == 0) ? sla : slb;
+        while (*cnt < SDIFF_MAX_LINES && (n = sys_read(fd, &c, 1)) > 0) {
+            if (c == '\n') { arr[*cnt][col] = '\0'; (*cnt)++; col = 0; }
+            else if (col < SDIFF_LINE_MAX-1) arr[*cnt][col++] = c;
+        }
+        if (col > 0) { arr[*cnt][col] = '\0'; (*cnt)++; }
+        sys_close(fd);
+    }
+
+    int max_lines = (na > nb) ? na : nb;
+    int half = (width - 3) / 2; /* subtract 3 for " | " or " < " or " > " */
+
+    for (int i = 0; i < max_lines; i++) {
+        const char *a = (i < na) ? sla[i] : "";
+        const char *b = (i < nb) ? slb[i] : "";
+        int alen = (int)strlen_simple(a);
+        int blen = (int)strlen_simple(b);
+
+        /* Print left side, padded */
+        int printed = 0;
+        for (int j = 0; j < half && j < alen; j++) { write_char(1, a[j]); printed++; }
+        while (printed < half) { write_char(1, ' '); printed++; }
+
+        /* Separator */
+        if (i >= na) write_str(1, " > ");
+        else if (i >= nb) write_str(1, " < ");
+        else if (strcmp_simple(a, b) != 0) write_str(1, " | ");
+        else write_str(1, "   ");
+
+        /* Print right side */
+        for (int j = 0; j < half && j < blen; j++) write_char(1, b[j]);
+        write_str(1, "\n");
+    }
+    #undef SDIFF_MAX_LINES
+    #undef SDIFF_LINE_MAX
+}
+
+/* ── colordiff: colorized diff output ── */
+static void cmd_colordiff(int argc, char *argv[]) {
+    if (argc < 3) {
+        write_str(2, "Usage: colordiff <file1> <file2>\n");
+        return;
+    }
+
+    #define CD_MAX_LINES 128
+    #define CD_LINE_MAX 128
+    static char cla[CD_MAX_LINES][CD_LINE_MAX];
+    static char clb[CD_MAX_LINES][CD_LINE_MAX];
+    int na = 0, nb = 0;
+
+    for (int pass = 0; pass < 2; pass++) {
+        const char *fn = argv[1 + pass];
+        int fd = sys_open(fn, O_RDONLY, 0);
+        if (fd < 0) {
+            write_str(2, "colordiff: "); write_str(2, fn); write_str(2, ": cannot open file\n");
+            return;
+        }
+        int col = 0; char c; ssize_t n;
+        int *cnt = (pass == 0) ? &na : &nb;
+        char (*arr)[CD_LINE_MAX] = (pass == 0) ? cla : clb;
+        while (*cnt < CD_MAX_LINES && (n = sys_read(fd, &c, 1)) > 0) {
+            if (c == '\n') { arr[*cnt][col] = '\0'; (*cnt)++; col = 0; }
+            else if (col < CD_LINE_MAX-1) arr[*cnt][col++] = c;
+        }
+        if (col > 0) { arr[*cnt][col] = '\0'; (*cnt)++; }
+        sys_close(fd);
+    }
+
+    /* Unified diff header in cyan */
+    write_str(1, "\033[1;36m--- a/"); write_str(1, argv[1]); write_str(1, "\033[0m\n");
+    write_str(1, "\033[1;36m+++ b/"); write_str(1, argv[2]); write_str(1, "\033[0m\n");
+
+    int max_lines = (na > nb) ? na : nb;
+    int has_diff = 0;
+
+    for (int i = 0; i < max_lines; i++) {
+        const char *a = (i < na) ? cla[i] : NULL;
+        const char *b = (i < nb) ? clb[i] : NULL;
+
+        if (a && b && strcmp_simple(a, b) == 0) {
+            write_str(1, " "); write_str(1, a); write_str(1, "\n");
+        } else {
+            if (!has_diff) {
+                write_str(1, "\033[1;35m@@ diff @@\033[0m\n");
+                has_diff = 1;
+            }
+            if (a) {
+                write_str(1, "\033[1;31m-"); write_str(1, a); write_str(1, "\033[0m\n");
+            }
+            if (b) {
+                write_str(1, "\033[1;32m+"); write_str(1, b); write_str(1, "\033[0m\n");
+            }
+        }
+    }
+    #undef CD_MAX_LINES
+    #undef CD_LINE_MAX
+}
+
+/* ── wdiff: word-level diff ── */
+static void cmd_wdiff(int argc, char *argv[]) {
+    if (argc < 3) {
+        write_str(2, "Usage: wdiff <file1> <file2>\n");
+        return;
+    }
+
+    /* Read both files into flat buffers */
+    #define WDIFF_BUF 4096
+    static char buf_a[WDIFF_BUF], buf_b[WDIFF_BUF];
+    int len_a = 0, len_b = 0;
+
+    for (int pass = 0; pass < 2; pass++) {
+        const char *fn = argv[1 + pass];
+        int fd = sys_open(fn, O_RDONLY, 0);
+        if (fd < 0) {
+            write_str(2, "wdiff: "); write_str(2, fn); write_str(2, ": cannot open file\n");
+            return;
+        }
+        char *buf = (pass == 0) ? buf_a : buf_b;
+        int *len = (pass == 0) ? &len_a : &len_b;
+        ssize_t n;
+        while (*len < WDIFF_BUF - 1 && (n = sys_read(fd, buf + *len, WDIFF_BUF - 1 - *len)) > 0)
+            *len += (int)n;
+        buf[*len] = '\0';
+        sys_close(fd);
+    }
+
+    /* Tokenize into words */
+    #define WDIFF_MAX_WORDS 256
+    #define WDIFF_WORD_MAX 64
+    static char wa[WDIFF_MAX_WORDS][WDIFF_WORD_MAX];
+    static char wb[WDIFF_MAX_WORDS][WDIFF_WORD_MAX];
+    int nwa = 0, nwb = 0;
+
+    for (int pass = 0; pass < 2; pass++) {
+        const char *src = (pass == 0) ? buf_a : buf_b;
+        int slen = (pass == 0) ? len_a : len_b;
+        int *nw = (pass == 0) ? &nwa : &nwb;
+        char (*words)[WDIFF_WORD_MAX] = (pass == 0) ? wa : wb;
+        int wi = 0, si = 0;
+        while (si < slen && *nw < WDIFF_MAX_WORDS) {
+            /* Skip whitespace */
+            while (si < slen && (src[si] == ' ' || src[si] == '\t' || src[si] == '\n' || src[si] == '\r')) si++;
+            if (si >= slen) break;
+            wi = 0;
+            while (si < slen && src[si] != ' ' && src[si] != '\t' && src[si] != '\n' && src[si] != '\r') {
+                if (wi < WDIFF_WORD_MAX-1) words[*nw][wi++] = src[si];
+                si++;
+            }
+            words[*nw][wi] = '\0';
+            (*nw)++;
+        }
+    }
+
+    /* Compare words and output with markers */
+    int ia = 0, ib = 0;
+    while (ia < nwa || ib < nwb) {
+        if (ia < nwa && ib < nwb && strcmp_simple(wa[ia], wb[ib]) == 0) {
+            write_str(1, wa[ia]); write_str(1, " ");
+            ia++; ib++;
+        } else {
+            /* Find deleted words (in a but not in b) */
+            if (ia < nwa) {
+                write_str(1, "[-");
+                while (ia < nwa && (ib >= nwb || strcmp_simple(wa[ia], wb[ib]) != 0)) {
+                    write_str(1, wa[ia]);
+                    ia++;
+                    if (ia < nwa && (ib >= nwb || strcmp_simple(wa[ia], wb[ib]) != 0)) write_str(1, " ");
+                }
+                write_str(1, "-] ");
+            }
+            /* Find added words (in b but not in a) */
+            if (ib < nwb && (ia >= nwa || strcmp_simple(wa[ia], wb[ib]) != 0)) {
+                write_str(1, "{+");
+                while (ib < nwb && (ia >= nwa || strcmp_simple(wa[ia], wb[ib]) != 0)) {
+                    write_str(1, wb[ib]);
+                    ib++;
+                    if (ib < nwb && (ia >= nwa || strcmp_simple(wa[ia], wb[ib]) != 0)) write_str(1, " ");
+                }
+                write_str(1, "+} ");
+            }
+        }
+    }
+    write_str(1, "\n");
+    #undef WDIFF_BUF
+    #undef WDIFF_MAX_WORDS
+    #undef WDIFF_WORD_MAX
+}
+
+/* ── vimdiff: side-by-side diff in vi style ── */
+static void cmd_vimdiff(int argc, char *argv[]) {
+    if (argc < 3) {
+        write_str(2, "Usage: vimdiff <file1> <file2>\n");
+        return;
+    }
+
+    #define VD_MAX_LINES 256
+    #define VD_LINE_MAX 256
+    #define VD_ROWS 24
+    static char vda[VD_MAX_LINES][VD_LINE_MAX];
+    static char vdb[VD_MAX_LINES][VD_LINE_MAX];
+    int na = 0, nb = 0;
+
+    for (int pass = 0; pass < 2; pass++) {
+        const char *fn = argv[1 + pass];
+        int fd = sys_open(fn, O_RDONLY, 0);
+        if (fd < 0) {
+            write_str(2, "vimdiff: "); write_str(2, fn); write_str(2, ": cannot open file\n");
+            return;
+        }
+        int col = 0; char c; ssize_t n;
+        int *cnt = (pass == 0) ? &na : &nb;
+        char (*arr)[VD_LINE_MAX] = (pass == 0) ? vda : vdb;
+        while (*cnt < VD_MAX_LINES && (n = sys_read(fd, &c, 1)) > 0) {
+            if (c == '\n') { arr[*cnt][col] = '\0'; (*cnt)++; col = 0; }
+            else if (col < VD_LINE_MAX-1) arr[*cnt][col++] = c;
+        }
+        if (col > 0) { arr[*cnt][col] = '\0'; (*cnt)++; }
+        sys_close(fd);
+    }
+
+    int top_row = 0, running = 1;
+    int max_lines = (na > nb) ? na : nb;
+    int half = 38; /* each side width */
+
+    #define VD_WRITE_INT(v) do { int _v=(v); char _b[12]; int _i=0; \
+        if(_v==0){write_char(1,'0');}else{ if(_v<0){write_char(1,'-');_v=-_v;} \
+        while(_v>0){_b[_i++]='0'+(_v%10);_v/=10;} while(_i>0)write_char(1,_b[--_i]);} }while(0)
+    #define VD_REDRAW() do { \
+        write_str(1, "\033[2J\033[H"); \
+        for (int _r = 0; _r < VD_ROWS - 2; _r++) { \
+            int _line = top_row + _r; \
+            const char *_a = (_line < na) ? vda[_line] : "~"; \
+            const char *_b2 = (_line < nb) ? vdb[_line] : "~"; \
+            int _al = (int)strlen_simple(_a), _bl = (int)strlen_simple(_b2); \
+            int _pr = 0; \
+            for (int _j = 0; _j < half && _j < _al; _j++) { write_char(1, _a[_j]); _pr++; } \
+            while (_pr < half) { write_char(1, ' '); _pr++; } \
+            /* separator with color for diff lines */ \
+            if (_line < na && _line < nb && strcmp_simple(vda[_line], vdb[_line]) != 0) \
+                write_str(1, "\033[1;33m | \033[0m"); \
+            else if (_line >= na || _line >= nb) \
+                write_str(1, "\033[1;33m | \033[0m"); \
+            else write_str(1, " | "); \
+            for (int _j = 0; _j < half && _j < _bl; _j++) write_char(1, _b2[_j]); \
+            write_str(1, "\r\n"); \
+        } \
+        write_str(1, "\033[7m "); write_str(1, argv[1]); \
+        write_str(1, "                    | "); \
+        write_str(1, argv[2]); \
+        write_str(1, "                     \033[0m\r\n"); \
+        write_str(1, ":q to quit, j/k to scroll"); \
+        }while(0)
+
+    VD_REDRAW();
+
+    while (running) {
+        char c; ssize_t nr = sys_read(0, &c, 1);
+        if (nr <= 0) break;
+
+        if (c == 'q' || c == 'Q') { running = 0; continue; }
+        else if (c == 'j' || c == '\n') { if (top_row < max_lines - VD_ROWS + 2) top_row++; }
+        else if (c == 'k') { if (top_row > 0) top_row--; }
+        else if (c == 'G') { top_row = max_lines - VD_ROWS + 2; if (top_row < 0) top_row = 0; }
+        else if (c == 'g') { top_row = 0; }
+        else if (c == ' ') { top_row += VD_ROWS - 3; if (top_row > max_lines - VD_ROWS + 2) top_row = max_lines - VD_ROWS + 2; if (top_row < 0) top_row = 0; }
+        else if (c == 27) {
+            char seq[2]; ssize_t s1 = sys_read(0, &seq[0], 1);
+            if (s1 > 0 && seq[0] == '[') {
+                ssize_t s2 = sys_read(0, &seq[1], 1);
+                if (s2 > 0) {
+                    if (seq[1] == 'A' && top_row > 0) top_row--;
+                    else if (seq[1] == 'B' && top_row < max_lines - VD_ROWS + 2) top_row++;
+                }
+            }
+        } else if (c == ':') {
+            write_str(1, "\033["); VD_WRITE_INT(VD_ROWS); write_str(1, ";1H\033[2K:");
+            char cb[16]; int cp = 0;
+            while (cp < 14) {
+                char cc; ssize_t rr = sys_read(0, &cc, 1);
+                if (rr <= 0) break;
+                if (cc == '\r' || cc == '\n') break;
+                if (cc == 27) { cp = 0; break; }
+                cb[cp++] = cc; write_char(1, cc);
+            }
+            cb[cp] = '\0';
+            if (cb[0] == 'q') running = 0;
+        }
+        VD_REDRAW();
+    }
+    write_str(1, "\033[2J\033[H");
+    #undef VD_MAX_LINES
+    #undef VD_LINE_MAX
+    #undef VD_ROWS
+    #undef VD_WRITE_INT
+    #undef VD_REDRAW
 }
 
 #pragma GCC diagnostic pop

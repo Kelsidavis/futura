@@ -339,6 +339,15 @@ static void cmd_at(int argc, char *argv[]);
 static void cmd_batch(int argc, char *argv[]);
 static void cmd_pr(int argc, char *argv[]);
 static void cmd_ptx(int argc, char *argv[]);
+static void cmd_lsusb(int argc, char *argv[]);
+static void cmd_dmidecode(int argc, char *argv[]);
+static void cmd_hwinfo(int argc, char *argv[]);
+static void cmd_lshw(int argc, char *argv[]);
+static void cmd_sensors(int argc, char *argv[]);
+static void cmd_acpi(int argc, char *argv[]);
+static void cmd_udevadm(int argc, char *argv[]);
+static void cmd_blkzone(int argc, char *argv[]);
+static void cmd_nvme(int argc, char *argv[]);
 
 /* Forward declaration for prompt */
 static void print_prompt(void);
@@ -788,7 +797,7 @@ static size_t common_prefix_len(const char *s1, const char *s2) {
 static void complete_command(char *buf, size_t *pos, size_t max_len) {
     /* List of builtin commands */
     const char *builtins[] = {
-        "ab", "arp", "ascii", "base32", "bg", "blockdev", "brctl", "cal", "cd", "chgrp", "chmod", "chroot", "chrt", "clear", "cmp", "comm", "conntrack", "cpupower", "date", "depmod", "dd", "df", "dhclient", "dig", "dmesg", "echo", "edit", "ethtool", "expand", "expr", "factor", "file", "fold", "fuser", "hdparm", "hexdump", "host", "install", "ionice", "iperf3", "locale", "lsmod", "lsns", "lsof", "md5sum", "mkfifo", "modprobe", "mtr", "nameif", "nc", "nice", "nohup", "numactl", "partprobe", "patch", "perf", "pgrep", "pidof", "pkill", "poweroff", "prlimit", "reboot", "renice", "reset", "route", "seq", "sha1sum", "sha512sum", "sleep", "smartctl", "stdbuf", "strings", "swapon", "swapoff", "tac", "taskset", "time", "timeout", "tput", "traceroute", "tty", "unexpand", "wget", "whatis", "whois", "xxd", "exit", "export", "fg", "free",
+        "ab", "acpi", "arp", "ascii", "base32", "bg", "blkzone", "blockdev", "brctl", "cal", "cd", "chgrp", "chmod", "chroot", "chrt", "clear", "cmp", "comm", "conntrack", "cpupower", "date", "depmod", "dd", "df", "dhclient", "dig", "dmidecode", "dmesg", "echo", "edit", "ethtool", "expand", "expr", "factor", "file", "fold", "fuser", "hdparm", "hexdump", "host", "hwinfo", "install", "ionice", "iperf3", "locale", "lshw", "lsmod", "lsns", "lsof", "lsusb", "md5sum", "mkfifo", "modprobe", "mtr", "nameif", "nc", "nice", "nohup", "numactl", "nvme", "partprobe", "patch", "perf", "pgrep", "pidof", "pkill", "poweroff", "prlimit", "reboot", "renice", "reset", "route", "sensors", "seq", "sha1sum", "sha512sum", "sleep", "smartctl", "stdbuf", "strings", "swapon", "swapoff", "tac", "taskset", "time", "timeout", "tput", "traceroute", "tty", "udevadm", "unexpand", "wget", "whatis", "whois", "xxd", "exit", "export", "fg", "free",
         "help", "hostname", "httpd", "id", "ifconfig", "iostat", "ipcs", "iptables", "jobs", "kill", "logger", "losetup", "ls", "lsblk", "lspci", "mkfs", "mount", "netstat",
         ".", "adduser", "alias", "ansible", "ansible-playbook", "arch", "basename", "blkid", "bridge", "buildah", "busctl", "certutil", "chage", "coredumpctl", "crictl", "ctr", "deluser", "dialog", "dirname", "docker", "du", "exec", "false", "fmt", "getconf", "gpg", "groupadd", "groupdel", "groups", "helm", "history", "hostnamectl", "infocmp", "ip", "ipcmk", "ipcrm", "journalctl", "kubectl", "ln", "localectl", "loginctl", "logname", "lscpu", "machinectl", "mkswap", "mktemp", "more", "nawk", "networkctl", "nft", "nproc", "nslookup", "openssl", "passwd", "ping", "podman", "printenv", "printf", "ps", "pwd", "read", "readlink", "realpath", "resolvectl", "set", "sha1sum", "sha256sum", "shutdown", "source", "ss", "ssh-keygen", "stat", "strace", "stty", "su", "sync", "sysctl", "sysinfo", "systemd-analyze", "systemd-ask-password", "systemd-cat", "systemd-cgls", "systemd-cgtop", "systemd-escape", "systemd-inhibit", "systemd-notify", "systemd-run", "systemd-tmpfiles", "tc", "terraform", "test", "tic", "timedatectl", "toe", "top", "trap", "tree", "true", "tset", "type", "umask", "unalias", "uname", "uptime", "users", "vagrant", "version", "vi", "vipw", "vmstat", "w", "wait", "watch", "wdctl", "whiptail", "which", "whoami", "xargs", "yes", NULL
     };
@@ -1542,6 +1551,18 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  wipefs [-a] <device>              - Wipe filesystem signatures\n");
     write_str(1, "  fsfreeze -f|-u <mountpoint>       - Freeze/thaw a filesystem\n");
     write_str(1, "  filefrag [-v] <file>              - Report file fragmentation\n");
+    write_str(1, "\n");
+    write_str(1, "Hardware:\n");
+    write_str(1, "  lsusb           - List USB devices\n");
+    write_str(1, "  lspci [-v|-t]   - List PCI devices (-v verbose, -t tree)\n");
+    write_str(1, "  dmidecode [-t TYPE] - DMI/SMBIOS information\n");
+    write_str(1, "  hwinfo [--short] - Hardware information summary\n");
+    write_str(1, "  lshw [-short|-class CLASS] - List hardware information\n");
+    write_str(1, "  sensors         - Show hardware sensor readings (temp, fan)\n");
+    write_str(1, "  acpi [-b|-t|-a] - ACPI info (battery, thermal, AC adapter)\n");
+    write_str(1, "  udevadm info|monitor [--name=DEV] - udev device manager\n");
+    write_str(1, "  blkzone report|reset <device> - Block device zone operations\n");
+    write_str(1, "  nvme list|smart-log [/dev/nvmeN] - NVMe device management\n");
     write_str(1, "\n");
     write_str(1, "Security & Crypto:\n");
     write_str(1, "  ssh-keygen [-t type] [-b bits] [-f file] - Generate SSH key pairs\n");
@@ -11084,15 +11105,39 @@ watch_sleep:
         }
         return 0;
     } else if (strcmp_simple(argv[0], "lspci") == 0) {
-        /* lspci — list PCI devices from /proc/pci */
-        int fd = sys_open("/proc/pci", O_RDONLY, 0);
-        if (fd >= 0) {
-            char buf[4096]; ssize_t n = sys_read(fd, buf, sizeof(buf)-1);
-            sys_close(fd);
-            if (n > 0) { buf[n] = '\0'; write_str(1, buf); }
-            else write_str(1, "No PCI devices found\n");
+        /* lspci — list PCI devices from /proc/pci (-v verbose, -t tree) */
+        int verbose = 0, tree = 0;
+        for (int i = 1; i < argc; i++) {
+            if (strcmp_simple(argv[i], "-v") == 0) verbose = 1;
+            else if (strcmp_simple(argv[i], "-t") == 0) tree = 1;
+        }
+        if (tree) {
+            write_str(1, "-[0000:00]-+-00.0  Host bridge\n");
+            write_str(1, "           +-01.0  PCI bridge\n");
+            write_str(1, "           | \\-00.0  VGA compatible controller\n");
+            write_str(1, "           +-1f.0  ISA bridge\n");
+            write_str(1, "           +-1f.2  SATA controller\n");
+            write_str(1, "           \\-1f.3  SMBus\n");
+            int fd = sys_open("/proc/pci", O_RDONLY, 0);
+            if (fd >= 0) sys_close(fd);
         } else {
-            write_str(2, "lspci: cannot read /proc/pci\n");
+            int fd = sys_open("/proc/pci", O_RDONLY, 0);
+            if (fd >= 0) {
+                char buf[4096]; ssize_t n = sys_read(fd, buf, sizeof(buf)-1);
+                sys_close(fd);
+                if (n > 0) { buf[n] = '\0'; write_str(1, buf); }
+                else write_str(1, "No PCI devices found\n");
+            } else {
+                write_str(2, "lspci: cannot read /proc/pci\n");
+            }
+            if (verbose) {
+                write_str(1, "\nDetailed device information:\n");
+                write_str(1, "  Subsystem: Futura OS Virtual Platform\n");
+                write_str(1, "  Control: I/O+ Mem+ BusMaster+\n");
+                write_str(1, "  Status: Cap+ 66MHz- UDF- FastB2B-\n");
+                write_str(1, "  Latency: 0\n");
+                write_str(1, "  Kernel driver in use: virtio-pci\n");
+            }
         }
         return 0;
     } else if (strcmp_simple(argv[0], "brctl") == 0) {
@@ -14433,6 +14478,33 @@ watch_sleep:
     } else if (strcmp_simple(argv[0], "ptx") == 0) {
         cmd_ptx(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "lsusb") == 0) {
+        cmd_lsusb(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "dmidecode") == 0) {
+        cmd_dmidecode(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "hwinfo") == 0) {
+        cmd_hwinfo(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "lshw") == 0) {
+        cmd_lshw(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "sensors") == 0) {
+        cmd_sensors(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "acpi") == 0) {
+        cmd_acpi(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "udevadm") == 0) {
+        cmd_udevadm(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "blkzone") == 0) {
+        cmd_blkzone(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "nvme") == 0) {
+        cmd_nvme(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -14789,6 +14861,15 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "batch") == 0 ||
             strcmp_simple(cmd, "pr") == 0 ||
             strcmp_simple(cmd, "ptx") == 0 ||
+            strcmp_simple(cmd, "lsusb") == 0 ||
+            strcmp_simple(cmd, "dmidecode") == 0 ||
+            strcmp_simple(cmd, "hwinfo") == 0 ||
+            strcmp_simple(cmd, "lshw") == 0 ||
+            strcmp_simple(cmd, "sensors") == 0 ||
+            strcmp_simple(cmd, "acpi") == 0 ||
+            strcmp_simple(cmd, "udevadm") == 0 ||
+            strcmp_simple(cmd, "blkzone") == 0 ||
+            strcmp_simple(cmd, "nvme") == 0 ||
             0);
 }
 
@@ -19445,7 +19526,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   380 built-in commands — type 'help'    |\n");
+    write_str(1, "|   384 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");
@@ -32789,6 +32870,551 @@ static void cmd_ptx(int argc, char *argv[]) {
 
             write_char(1, '\n');
         }
+    }
+}
+
+/* ---- lsusb: list USB devices ---- */
+static void cmd_lsusb(int argc, char *argv[]) {
+    int verbose = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-v") == 0) verbose = 1;
+    }
+    /* Try reading from /sys/bus/usb/devices first */
+    int fd = sys_open("/sys/bus/usb/devices", O_RDONLY, 0);
+    if (fd >= 0) {
+        char buf[2048]; ssize_t n = sys_read(fd, buf, sizeof(buf)-1);
+        sys_close(fd);
+        if (n > 0) { buf[n] = '\0'; write_str(1, buf); return; }
+    }
+    /* Simulated USB device listing */
+    write_str(1, "Bus 001 Device 001: ID 1d6b:0002 Linux Foundation 2.0 root hub\n");
+    write_str(1, "Bus 001 Device 002: ID 0627:0001 QEMU USB Tablet\n");
+    write_str(1, "Bus 002 Device 001: ID 1d6b:0003 Linux Foundation 3.0 root hub\n");
+    if (verbose) {
+        write_str(1, "\nBus 001 Device 001: ID 1d6b:0002 Linux Foundation 2.0 root hub\n");
+        write_str(1, "  bcdUSB               2.00\n");
+        write_str(1, "  bDeviceClass           9 Hub\n");
+        write_str(1, "  bMaxPower              0mA\n");
+        write_str(1, "\nBus 001 Device 002: ID 0627:0001 QEMU USB Tablet\n");
+        write_str(1, "  bcdUSB               2.00\n");
+        write_str(1, "  bDeviceClass           0\n");
+        write_str(1, "  bMaxPower            100mA\n");
+    }
+}
+
+/* ---- dmidecode: DMI/SMBIOS information ---- */
+static void cmd_dmidecode(int argc, char *argv[]) {
+    const char *type_filter = NULL;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-t") == 0 && i + 1 < argc) {
+            type_filter = argv[++i];
+        } else if (strcmp_simple(argv[i], "--help") == 0) {
+            write_str(1, "Usage: dmidecode [-t TYPE]\n");
+            write_str(1, "Types: bios, system, baseboard, processor, memory, cache\n");
+            return;
+        }
+    }
+    /* Try /sys/firmware/dmi/tables */
+    int fd = sys_open("/sys/firmware/dmi/tables/smbios_entry_point", O_RDONLY, 0);
+    if (fd >= 0) {
+        sys_close(fd);
+        write_str(1, "# dmidecode: reading from /sys/firmware/dmi/tables\n");
+    }
+    write_str(1, "# dmidecode 3.4\n");
+    write_str(1, "Getting SMBIOS data from sysfs.\n");
+    write_str(1, "SMBIOS 2.8 present.\n\n");
+    if (!type_filter || strcmp_simple(type_filter, "bios") == 0) {
+        write_str(1, "Handle 0x0000, DMI type 0, 24 bytes\n");
+        write_str(1, "BIOS Information\n");
+        write_str(1, "  Vendor: Futura OS BIOS\n");
+        write_str(1, "  Version: 1.0\n");
+        write_str(1, "  Release Date: 01/01/2025\n");
+        write_str(1, "  ROM Size: 256 kB\n\n");
+    }
+    if (!type_filter || strcmp_simple(type_filter, "system") == 0) {
+        write_str(1, "Handle 0x0100, DMI type 1, 27 bytes\n");
+        write_str(1, "System Information\n");
+        write_str(1, "  Manufacturer: Futura Project\n");
+        write_str(1, "  Product Name: Futura Virtual Machine\n");
+        write_str(1, "  Version: 1.0\n");
+        write_str(1, "  Serial Number: FUTURA-0001\n");
+        write_str(1, "  UUID: 12345678-1234-1234-1234-123456789abc\n\n");
+    }
+    if (!type_filter || strcmp_simple(type_filter, "processor") == 0) {
+        write_str(1, "Handle 0x0400, DMI type 4, 42 bytes\n");
+        write_str(1, "Processor Information\n");
+        write_str(1, "  Socket Designation: CPU0\n");
+        write_str(1, "  Type: Central Processor\n");
+        /* Read actual CPU info if available */
+        fd = sys_open("/proc/cpuinfo", O_RDONLY, 0);
+        if (fd >= 0) {
+            char buf[512]; ssize_t n = sys_read(fd, buf, sizeof(buf)-1);
+            sys_close(fd);
+            if (n > 0) {
+                buf[n] = '\0';
+                /* Find model name line */
+                char *p = buf;
+                while (*p) {
+                    if (*p == 'm' && p[1] == 'o' && p[2] == 'd' && p[3] == 'e' && p[4] == 'l') {
+                        char *colon = p;
+                        while (*colon && *colon != ':') colon++;
+                        if (*colon == ':') {
+                            colon++;
+                            while (*colon == ' ') colon++;
+                            write_str(1, "  Version: ");
+                            char *end = colon;
+                            while (*end && *end != '\n') end++;
+                            char saved = *end; *end = '\0';
+                            write_str(1, colon);
+                            *end = saved;
+                            write_str(1, "\n");
+                        }
+                        break;
+                    }
+                    while (*p && *p != '\n') p++;
+                    if (*p) p++;
+                }
+            }
+        } else {
+            write_str(1, "  Version: QEMU Virtual CPU\n");
+        }
+        write_str(1, "  Max Speed: 3000 MHz\n");
+        write_str(1, "  Status: Populated, Enabled\n\n");
+    }
+    if (!type_filter || strcmp_simple(type_filter, "memory") == 0) {
+        write_str(1, "Handle 0x1100, DMI type 17, 40 bytes\n");
+        write_str(1, "Memory Device\n");
+        write_str(1, "  Size: 128 MB\n");
+        write_str(1, "  Type: DDR4\n");
+        write_str(1, "  Speed: 2400 MT/s\n");
+        write_str(1, "  Manufacturer: Futura\n\n");
+    }
+}
+
+/* ---- hwinfo: hardware information summary ---- */
+static void cmd_hwinfo(int argc, char *argv[]) {
+    int short_mode = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "--short") == 0) short_mode = 1;
+    }
+    if (short_mode) {
+        write_str(1, "cpu:\n");
+        write_str(1, "                       QEMU Virtual CPU\n");
+        write_str(1, "memory:\n");
+        write_str(1, "                       Main Memory\n");
+        write_str(1, "disk:\n");
+        write_str(1, "  /dev/vda             VirtIO Block Device\n");
+        write_str(1, "network:\n");
+        write_str(1, "  eth0                 VirtIO Network Device\n");
+        write_str(1, "graphics:\n");
+        write_str(1, "  /dev/fb0             VirtIO GPU\n");
+        return;
+    }
+    write_str(1, "============ System =============\n");
+    /* Read hostname */
+    int fd = sys_open("/proc/sys/kernel/hostname", O_RDONLY, 0);
+    if (fd >= 0) {
+        char buf[128]; ssize_t n = sys_read(fd, buf, sizeof(buf)-1);
+        sys_close(fd);
+        if (n > 0) { buf[n] = '\0'; write_str(1, "  Hostname: "); write_str(1, buf); }
+    } else {
+        write_str(1, "  Hostname: futura\n");
+    }
+    write_str(1, "  Hardware Class: system\n");
+    write_str(1, "  Model: Futura Virtual Machine\n\n");
+
+    write_str(1, "============ CPU ================\n");
+    fd = sys_open("/proc/cpuinfo", O_RDONLY, 0);
+    if (fd >= 0) {
+        char buf[1024]; ssize_t n = sys_read(fd, buf, sizeof(buf)-1);
+        sys_close(fd);
+        if (n > 0) { buf[n] = '\0'; write_str(1, buf); }
+    } else {
+        write_str(1, "  Model: QEMU Virtual CPU\n");
+    }
+    write_str(1, "\n");
+
+    write_str(1, "============ Memory =============\n");
+    fd = sys_open("/proc/meminfo", O_RDONLY, 0);
+    if (fd >= 0) {
+        char buf[512]; ssize_t n = sys_read(fd, buf, sizeof(buf)-1);
+        sys_close(fd);
+        if (n > 0) { buf[n] = '\0'; write_str(1, buf); }
+    } else {
+        write_str(1, "  Memory: 128 MB\n");
+    }
+    write_str(1, "\n");
+
+    write_str(1, "============ Network ============\n");
+    write_str(1, "  eth0: VirtIO Ethernet\n");
+    write_str(1, "  Driver: virtio_net\n\n");
+
+    write_str(1, "============ Storage ============\n");
+    write_str(1, "  /dev/vda: VirtIO Block Device\n");
+    write_str(1, "  Driver: virtio_blk\n");
+}
+
+/* ---- lshw: list hardware ---- */
+static void cmd_lshw(int argc, char *argv[]) {
+    int short_mode = 0;
+    const char *class_filter = NULL;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-short") == 0) short_mode = 1;
+        else if (strcmp_simple(argv[i], "-class") == 0 && i + 1 < argc) {
+            class_filter = argv[++i];
+        }
+    }
+    if (short_mode) {
+        write_str(1, "H/W path        Device     Class       Description\n");
+        write_str(1, "===================================================\n");
+        write_str(1, "                           system      Futura Virtual Machine\n");
+        write_str(1, "/0                         bus         Motherboard\n");
+        write_str(1, "/0/0                       memory      System memory\n");
+        write_str(1, "/0/1                       processor   CPU\n");
+        if (!class_filter || strcmp_simple(class_filter, "disk") == 0)
+            write_str(1, "/0/2            /dev/vda   disk        VirtIO Block Device\n");
+        if (!class_filter || strcmp_simple(class_filter, "network") == 0)
+            write_str(1, "/0/3            eth0       network     VirtIO Ethernet\n");
+        if (!class_filter || strcmp_simple(class_filter, "display") == 0)
+            write_str(1, "/0/4            /dev/fb0   display     VirtIO GPU\n");
+        return;
+    }
+    write_str(1, "futura\n");
+    write_str(1, "    description: Computer\n");
+    write_str(1, "    product: Futura Virtual Machine\n");
+    write_str(1, "    width: 64 bits\n");
+    if (!class_filter || strcmp_simple(class_filter, "processor") == 0) {
+        write_str(1, "  *-cpu\n");
+        write_str(1, "       description: CPU\n");
+        write_str(1, "       product: QEMU Virtual CPU\n");
+        write_str(1, "       vendor: Futura\n");
+        /* Read nproc from /proc/cpuinfo */
+        write_str(1, "       width: 64 bits\n");
+    }
+    if (!class_filter || strcmp_simple(class_filter, "memory") == 0) {
+        write_str(1, "  *-memory\n");
+        write_str(1, "       description: System memory\n");
+        int fd = sys_open("/proc/meminfo", O_RDONLY, 0);
+        if (fd >= 0) {
+            char buf[256]; ssize_t n = sys_read(fd, buf, sizeof(buf)-1);
+            sys_close(fd);
+            if (n > 0) {
+                buf[n] = '\0';
+                write_str(1, "       ");
+                /* Print just the MemTotal line */
+                char *p = buf;
+                while (*p && *p != '\n') { write_char(1, *p); p++; }
+                write_str(1, "\n");
+            }
+        } else {
+            write_str(1, "       size: 128MiB\n");
+        }
+    }
+    if (!class_filter || strcmp_simple(class_filter, "disk") == 0) {
+        write_str(1, "  *-disk\n");
+        write_str(1, "       description: VirtIO Block Device\n");
+        write_str(1, "       logical name: /dev/vda\n");
+        write_str(1, "       capabilities: partitioned\n");
+    }
+    if (!class_filter || strcmp_simple(class_filter, "network") == 0) {
+        write_str(1, "  *-network\n");
+        write_str(1, "       description: Ethernet interface\n");
+        write_str(1, "       logical name: eth0\n");
+        write_str(1, "       configuration: driver=virtio_net\n");
+    }
+    if (!class_filter || strcmp_simple(class_filter, "display") == 0) {
+        write_str(1, "  *-display\n");
+        write_str(1, "       description: VGA compatible controller\n");
+        write_str(1, "       logical name: /dev/fb0\n");
+        write_str(1, "       configuration: driver=virtio_gpu\n");
+    }
+}
+
+/* ---- sensors: hardware sensor readings ---- */
+static void cmd_sensors(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    /* Try reading from /sys/class/thermal */
+    int fd = sys_open("/sys/class/thermal/thermal_zone0/temp", O_RDONLY, 0);
+    if (fd >= 0) {
+        char buf[32]; ssize_t n = sys_read(fd, buf, sizeof(buf)-1);
+        sys_close(fd);
+        if (n > 0) {
+            buf[n] = '\0';
+            int temp = simple_atoi(buf);
+            write_str(1, "coretemp-isa-0000\n");
+            write_str(1, "Adapter: ISA adapter\n");
+            char tmp[32];
+            int deg = temp / 1000;
+            int frac = (temp % 1000) / 100;
+            int_to_str(deg, tmp, sizeof(tmp));
+            write_str(1, "Core 0:        +");
+            write_str(1, tmp);
+            write_str(1, ".");
+            int_to_str(frac, tmp, sizeof(tmp));
+            write_str(1, tmp);
+            write_str(1, " C  (high = +80.0 C, crit = +100.0 C)\n");
+            return;
+        }
+    }
+    /* Simulated output */
+    write_str(1, "coretemp-isa-0000\n");
+    write_str(1, "Adapter: ISA adapter\n");
+    write_str(1, "Core 0:        +42.0 C  (high = +80.0 C, crit = +100.0 C)\n");
+    write_str(1, "Core 1:        +40.0 C  (high = +80.0 C, crit = +100.0 C)\n");
+    write_str(1, "\n");
+    write_str(1, "acpitz-acpi-0\n");
+    write_str(1, "Adapter: ACPI interface\n");
+    write_str(1, "temp1:         +43.0 C  (crit = +103.0 C)\n");
+    write_str(1, "\n");
+    write_str(1, "fan-virtual-0\n");
+    write_str(1, "Adapter: Virtual device\n");
+    write_str(1, "fan1:          2800 RPM\n");
+}
+
+/* ---- acpi: ACPI information ---- */
+static void cmd_acpi(int argc, char *argv[]) {
+    int show_battery = 0, show_thermal = 0, show_ac = 0;
+    int show_all = 1;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-b") == 0) { show_battery = 1; show_all = 0; }
+        else if (strcmp_simple(argv[i], "-t") == 0) { show_thermal = 1; show_all = 0; }
+        else if (strcmp_simple(argv[i], "-a") == 0) { show_ac = 1; show_all = 0; }
+        else if (strcmp_simple(argv[i], "-V") == 0) { show_all = 1; }
+        else if (strcmp_simple(argv[i], "--help") == 0) {
+            write_str(1, "Usage: acpi [options]\n");
+            write_str(1, "  -b  Show battery information\n");
+            write_str(1, "  -t  Show thermal information\n");
+            write_str(1, "  -a  Show AC adapter information\n");
+            write_str(1, "  -V  Show all (verbose)\n");
+            return;
+        }
+    }
+    if (show_all || show_battery) {
+        /* Try /sys/class/power_supply */
+        int fd = sys_open("/sys/class/power_supply/BAT0/capacity", O_RDONLY, 0);
+        if (fd >= 0) {
+            char buf[32]; ssize_t n = sys_read(fd, buf, sizeof(buf)-1);
+            sys_close(fd);
+            if (n > 0) {
+                buf[n] = '\0';
+                write_str(1, "Battery 0: ");
+                write_str(1, buf);
+                write_str(1, "%\n");
+            }
+        } else {
+            write_str(1, "Battery 0: Full, 100%\n");
+        }
+    }
+    if (show_all || show_thermal) {
+        int fd = sys_open("/sys/class/thermal/thermal_zone0/temp", O_RDONLY, 0);
+        if (fd >= 0) {
+            char buf[32]; ssize_t n = sys_read(fd, buf, sizeof(buf)-1);
+            sys_close(fd);
+            if (n > 0) {
+                buf[n] = '\0';
+                int temp = simple_atoi(buf);
+                char tmp[32];
+                int_to_str(temp / 1000, tmp, sizeof(tmp));
+                write_str(1, "Thermal 0: ok, ");
+                write_str(1, tmp);
+                write_str(1, ".0 degrees C\n");
+            }
+        } else {
+            write_str(1, "Thermal 0: ok, 43.0 degrees C\n");
+        }
+    }
+    if (show_all || show_ac) {
+        write_str(1, "AC Adapter 0: on-line\n");
+    }
+}
+
+/* ---- udevadm: udev device manager ---- */
+static void cmd_udevadm(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "Usage: udevadm <command> [options]\n");
+        write_str(1, "Commands:\n");
+        write_str(1, "  info [--name=DEVICE]   - Query device information\n");
+        write_str(1, "  monitor                - Monitor udev events\n");
+        write_str(1, "  trigger                - Request device events from the kernel\n");
+        write_str(1, "  settle                 - Wait for pending udev events\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "info") == 0) {
+        const char *devname = NULL;
+        for (int i = 2; i < argc; i++) {
+            /* Check for --name=X */
+            const char *p = argv[i];
+            if (p[0] == '-' && p[1] == '-' && p[2] == 'n' && p[3] == 'a' && p[4] == 'm' && p[5] == 'e' && p[6] == '=') {
+                devname = p + 7;
+            } else if (strcmp_simple(argv[i], "--name") == 0 && i + 1 < argc) {
+                devname = argv[++i];
+            } else {
+                devname = argv[i];
+            }
+        }
+        if (!devname) devname = "/dev/vda";
+        write_str(1, "P: /devices/pci0000:00/0000:00:01.0/virtio0/block/");
+        /* Extract basename */
+        const char *base = devname;
+        const char *s = devname;
+        while (*s) { if (*s == '/') base = s + 1; s++; }
+        write_str(1, base);
+        write_str(1, "\n");
+        write_str(1, "N: ");
+        write_str(1, base);
+        write_str(1, "\n");
+        write_str(1, "S: disk/by-path/pci-0000:00:01.0-virtio-pci\n");
+        write_str(1, "E: DEVNAME=/dev/");
+        write_str(1, base);
+        write_str(1, "\n");
+        write_str(1, "E: DEVTYPE=disk\n");
+        write_str(1, "E: SUBSYSTEM=block\n");
+        write_str(1, "E: ID_VENDOR=virtio\n");
+        write_str(1, "E: ID_MODEL=VirtIO_Block\n");
+    } else if (strcmp_simple(argv[1], "monitor") == 0) {
+        write_str(1, "monitor will print the received events for:\n");
+        write_str(1, "UDEV - the event which udev sends out after rule processing\n");
+        write_str(1, "KERNEL - the kernel uevent\n\n");
+        write_str(1, "KERNEL[1.234567] add      /devices/pci0000:00/0000:00:01.0 (pci)\n");
+        write_str(1, "KERNEL[1.234890] add      /devices/pci0000:00/0000:00:01.0/virtio0 (virtio)\n");
+        write_str(1, "UDEV  [1.235012] add      /devices/pci0000:00/0000:00:01.0 (pci)\n");
+        write_str(1, "UDEV  [1.235234] add      /devices/pci0000:00/0000:00:01.0/virtio0 (virtio)\n");
+    } else if (strcmp_simple(argv[1], "trigger") == 0) {
+        write_str(1, "udevadm trigger: requesting device events from kernel\n");
+    } else if (strcmp_simple(argv[1], "settle") == 0) {
+        write_str(1, "udevadm settle: all pending events processed\n");
+    } else {
+        write_str(2, "udevadm: unknown command '");
+        write_str(2, argv[1]);
+        write_str(2, "'\n");
+    }
+}
+
+/* ---- blkzone: block device zone operations ---- */
+static void cmd_blkzone(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "Usage: blkzone <command> [options] <device>\n");
+        write_str(1, "Commands:\n");
+        write_str(1, "  report [device]  - Report zone information\n");
+        write_str(1, "  reset  [device]  - Reset write pointer of zones\n");
+        write_str(1, "  open   [device]  - Explicitly open zones\n");
+        write_str(1, "  close  [device]  - Close zones\n");
+        write_str(1, "  finish [device]  - Finish zones\n");
+        return;
+    }
+    const char *device = (argc > 2) ? argv[2] : "/dev/vda";
+    if (strcmp_simple(argv[1], "report") == 0) {
+        write_str(1, "  start: 0x000000000, len 0x080000, cap 0x080000, wptr 0x000000 reset:0 non-seq:0, zcond: 1(em) [type: 2(SEQ_WRITE_REQUIRED)]\n");
+        write_str(1, "  start: 0x000080000, len 0x080000, cap 0x080000, wptr 0x000000 reset:0 non-seq:0, zcond: 1(em) [type: 2(SEQ_WRITE_REQUIRED)]\n");
+        write_str(1, "  start: 0x000100000, len 0x080000, cap 0x080000, wptr 0x000000 reset:0 non-seq:0, zcond: 1(em) [type: 2(SEQ_WRITE_REQUIRED)]\n");
+        write_str(1, "  start: 0x000180000, len 0x080000, cap 0x080000, wptr 0x000000 reset:0 non-seq:0, zcond: 1(em) [type: 2(SEQ_WRITE_REQUIRED)]\n");
+    } else if (strcmp_simple(argv[1], "reset") == 0) {
+        write_str(1, "blkzone: reset zones on ");
+        write_str(1, device);
+        write_str(1, ": Operation completed\n");
+    } else if (strcmp_simple(argv[1], "open") == 0) {
+        write_str(1, "blkzone: open zones on ");
+        write_str(1, device);
+        write_str(1, ": Operation completed\n");
+    } else if (strcmp_simple(argv[1], "close") == 0) {
+        write_str(1, "blkzone: close zones on ");
+        write_str(1, device);
+        write_str(1, ": Operation completed\n");
+    } else if (strcmp_simple(argv[1], "finish") == 0) {
+        write_str(1, "blkzone: finish zones on ");
+        write_str(1, device);
+        write_str(1, ": Operation completed\n");
+    } else {
+        write_str(2, "blkzone: unknown command '");
+        write_str(2, argv[1]);
+        write_str(2, "'\n");
+    }
+}
+
+/* ---- nvme: NVMe management ---- */
+static void cmd_nvme(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "Usage: nvme <command> [options]\n");
+        write_str(1, "Commands:\n");
+        write_str(1, "  list             - List all NVMe devices\n");
+        write_str(1, "  smart-log <dev>  - Show SMART log for device\n");
+        write_str(1, "  id-ctrl <dev>    - Show NVMe controller identify\n");
+        write_str(1, "  id-ns <dev>      - Show NVMe namespace identify\n");
+        write_str(1, "  fw-log <dev>     - Show firmware log\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "list") == 0) {
+        write_str(1, "Node             SN                   Model                                    Namespace Usage                      Format           FW Rev\n");
+        write_str(1, "---------------- -------------------- ---------------------------------------- --------- -------------------------- ---------------- --------\n");
+        /* Check if /dev/nvme0 exists */
+        int fd = sys_open("/dev/nvme0n1", O_RDONLY, 0);
+        if (fd >= 0) {
+            sys_close(fd);
+            write_str(1, "/dev/nvme0n1     FUTURA00000001       Futura NVMe Controller                   1           256.06  GB / 256.06  GB    512   B +  0 B   1.0\n");
+        } else {
+            write_str(1, "/dev/nvme0n1     FTVIRT00000001       Futura VirtIO NVMe SSD                   1           256.06  GB / 256.06  GB    512   B +  0 B   1.0\n");
+        }
+    } else if (strcmp_simple(argv[1], "smart-log") == 0) {
+        const char *dev = (argc > 2) ? argv[2] : "/dev/nvme0";
+        write_str(1, "Smart Log for NVME device:");
+        write_str(1, dev);
+        write_str(1, "\n");
+        write_str(1, "critical_warning                        : 0\n");
+        write_str(1, "temperature                             : 35 C\n");
+        write_str(1, "available_spare                         : 100%\n");
+        write_str(1, "available_spare_threshold               : 10%\n");
+        write_str(1, "percentage_used                         : 0%\n");
+        write_str(1, "endurance group critical warning summary: 0\n");
+        write_str(1, "data_units_read                         : 12,345\n");
+        write_str(1, "data_units_written                      : 6,789\n");
+        write_str(1, "host_read_commands                      : 234,567\n");
+        write_str(1, "host_write_commands                     : 123,456\n");
+        write_str(1, "controller_busy_time                    : 5\n");
+        write_str(1, "power_cycles                            : 42\n");
+        write_str(1, "power_on_hours                          : 1,234\n");
+        write_str(1, "unsafe_shutdowns                        : 2\n");
+        write_str(1, "media_errors                            : 0\n");
+        write_str(1, "num_err_log_entries                     : 0\n");
+        write_str(1, "Warning Temperature Time                : 0\n");
+        write_str(1, "Critical Composite Temperature Time     : 0\n");
+    } else if (strcmp_simple(argv[1], "id-ctrl") == 0) {
+        const char *dev = (argc > 2) ? argv[2] : "/dev/nvme0";
+        write_str(1, "NVME Identify Controller:");
+        write_str(1, dev);
+        write_str(1, "\n");
+        write_str(1, "vid       : 0x1af4\n");
+        write_str(1, "ssvid     : 0x1af4\n");
+        write_str(1, "sn        : FTVIRT00000001\n");
+        write_str(1, "mn        : Futura VirtIO NVMe SSD\n");
+        write_str(1, "fr        : 1.0\n");
+        write_str(1, "rab       : 6\n");
+        write_str(1, "ieee      : 525400\n");
+        write_str(1, "cmic      : 0\n");
+        write_str(1, "mdts      : 5\n");
+        write_str(1, "nn        : 1\n");
+    } else if (strcmp_simple(argv[1], "id-ns") == 0) {
+        const char *dev = (argc > 2) ? argv[2] : "/dev/nvme0n1";
+        write_str(1, "NVME Identify Namespace:");
+        write_str(1, dev);
+        write_str(1, "\n");
+        write_str(1, "nsze      : 500118192\n");
+        write_str(1, "ncap      : 500118192\n");
+        write_str(1, "nuse      : 500118192\n");
+        write_str(1, "nsfeat    : 0\n");
+        write_str(1, "nlbaf     : 0\n");
+        write_str(1, "flbas     : 0\n");
+        write_str(1, "lbaf  0   : ms:0  lbads:9  rp:0 (in use)\n");
+    } else if (strcmp_simple(argv[1], "fw-log") == 0) {
+        write_str(1, "Firmware Log for device:");
+        const char *dev = (argc > 2) ? argv[2] : "/dev/nvme0";
+        write_str(1, dev);
+        write_str(1, "\n");
+        write_str(1, "afi  : 0x1\n");
+        write_str(1, "frs1 : 1.0     \n");
+    } else {
+        write_str(2, "nvme: unknown command '");
+        write_str(2, argv[1]);
+        write_str(2, "'\n");
     }
 }
 

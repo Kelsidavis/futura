@@ -68559,6 +68559,205 @@ __attribute__((noinline)) static void test_mmap_shared_semantics(void) {
     }
 }
 
+/* ============================================================
+ * Tests 2435-2440: waitid P_ALL with WNOHANG — proper process monitoring
+ *
+ *   2435: P_ALL | WNOHANG with no children returns -ECHILD
+ *   2436: P_ALL | WNOHANG with zombie child returns child pid, reaps it
+ *   2437: siginfo_t populated correctly (si_pid, si_uid, si_code, si_status)
+ *   2438: WNOWAIT peeks without reaping, second waitid still finds child
+ *   2439: P_PID | WNOHANG for non-child pid returns -ECHILD
+ *   2440: options without WEXITED|WSTOPPED|WCONTINUED returns -EINVAL
+ * ============================================================ */
+__attribute__((noinline)) static void test_waitid_p_all_wnohang(void) {
+    extern long sys_waitid(int idtype, int id, void *infop, int options, void *rusage);
+    extern fut_task_t *fut_task_create(void);
+
+    fut_task_t *parent = fut_task_current();
+    if (!parent) {
+        fut_printf("[MISC-TEST] Tests 2435-2440: no current task, skipping\n");
+        fut_test_fail(2435); fut_test_fail(2436); fut_test_fail(2437);
+        fut_test_fail(2438); fut_test_fail(2439); fut_test_fail(2440);
+        return;
+    }
+
+    /* ---- Test 2435: P_ALL | WNOHANG with no children -> ECHILD ---- */
+    fut_printf("[MISC-TEST] Test 2435: waitid(P_ALL, WEXITED|WNOHANG) no children\n");
+    {
+        siginfo_t info;
+        __builtin_memset(&info, 0, sizeof(info));
+        long ret = sys_waitid(0 /*P_ALL*/, 0, &info, 4 | 1 /*WEXITED|WNOHANG*/, NULL);
+        if (ret == -ECHILD) {
+            fut_printf("[MISC-TEST] pass Test 2435: no children -> ECHILD\n");
+            fut_test_pass();
+        } else if (ret == 0 && info.si_pid == 0) {
+            /* Also acceptable: 0 with zeroed siginfo means no child ready */
+            fut_printf("[MISC-TEST] pass Test 2435: no children -> 0 (si_pid=0)\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL Test 2435: expected ECHILD or 0, got %ld\n", ret);
+            fut_test_fail(2435);
+        }
+    }
+
+    /* ---- Test 2436: P_ALL | WNOHANG with zombie child returns pid ---- */
+    fut_printf("[MISC-TEST] Test 2436: waitid(P_ALL, WEXITED|WNOHANG) zombie child\n");
+    {
+        fut_task_t *child = fut_task_create();
+        if (!child) {
+            fut_printf("[MISC-TEST] FAIL Test 2436: fut_task_create failed\n");
+            fut_test_fail(2436);
+        } else {
+            int child_pid = (int)child->pid;
+            child->state = FUT_TASK_ZOMBIE;
+            child->exit_code = 42;
+            child->term_signal = 0;
+
+            siginfo_t info;
+            __builtin_memset(&info, 0, sizeof(info));
+            long ret = sys_waitid(0 /*P_ALL*/, 0, &info, 4 | 1 /*WEXITED|WNOHANG*/, NULL);
+            if (ret != 0) {
+                fut_printf("[MISC-TEST] FAIL Test 2436: waitid returned %ld (expected 0)\n", ret);
+                fut_test_fail(2436);
+            } else if (info.si_pid != child_pid) {
+                fut_printf("[MISC-TEST] FAIL Test 2436: si_pid=%ld (expected %d)\n",
+                           (long)info.si_pid, child_pid);
+                fut_test_fail(2436);
+            } else {
+                fut_printf("[MISC-TEST] pass Test 2436: zombie reaped, si_pid=%d\n", child_pid);
+                fut_test_pass();
+            }
+        }
+    }
+
+    /* ---- Test 2437: siginfo_t fields correct for normal exit ---- */
+    fut_printf("[MISC-TEST] Test 2437: waitid siginfo_t fields (CLD_EXITED, status, uid)\n");
+    {
+        fut_task_t *child = fut_task_create();
+        if (!child) {
+            fut_printf("[MISC-TEST] FAIL Test 2437: fut_task_create failed\n");
+            fut_test_fail(2437);
+        } else {
+            int child_pid = (int)child->pid;
+            child->state = FUT_TASK_ZOMBIE;
+            child->exit_code = 7;
+            child->term_signal = 0;
+            child->ruid = 1000;  /* Set a non-root UID to verify si_uid */
+
+            siginfo_t info;
+            __builtin_memset(&info, 0, sizeof(info));
+            long ret = sys_waitid(1 /*P_PID*/, child_pid, &info, 4 /*WEXITED*/, NULL);
+            if (ret != 0) {
+                fut_printf("[MISC-TEST] FAIL Test 2437: waitid returned %ld\n", ret);
+                fut_test_fail(2437);
+            } else {
+                bool ok = true;
+                if (info.si_code != 1 /* CLD_EXITED */) {
+                    fut_printf("[MISC-TEST] FAIL Test 2437: si_code=%d (expected CLD_EXITED=1)\n",
+                               info.si_code);
+                    ok = false;
+                }
+                if (info.si_status != 7) {
+                    fut_printf("[MISC-TEST] FAIL Test 2437: si_status=%d (expected 7)\n",
+                               info.si_status);
+                    ok = false;
+                }
+                if (info.si_pid != child_pid) {
+                    fut_printf("[MISC-TEST] FAIL Test 2437: si_pid=%ld (expected %d)\n",
+                               (long)info.si_pid, child_pid);
+                    ok = false;
+                }
+                if (info.si_uid != 1000) {
+                    fut_printf("[MISC-TEST] FAIL Test 2437: si_uid=%ld (expected 1000)\n",
+                               (long)info.si_uid);
+                    ok = false;
+                }
+                if (ok) {
+                    fut_printf("[MISC-TEST] pass Test 2437: CLD_EXITED, status=7, uid=1000\n");
+                    fut_test_pass();
+                } else {
+                    fut_test_fail(2437);
+                }
+            }
+        }
+    }
+
+    /* ---- Test 2438: WNOWAIT peeks without reaping ---- */
+    fut_printf("[MISC-TEST] Test 2438: waitid WNOWAIT peek then reap\n");
+    {
+        fut_task_t *child = fut_task_create();
+        if (!child) {
+            fut_printf("[MISC-TEST] FAIL Test 2438: fut_task_create failed\n");
+            fut_test_fail(2438);
+        } else {
+            int child_pid = (int)child->pid;
+            child->state = FUT_TASK_ZOMBIE;
+            child->exit_code = 99;
+            child->term_signal = 0;
+
+            /* First call: WNOWAIT -- peek without reaping */
+            siginfo_t info;
+            __builtin_memset(&info, 0, sizeof(info));
+            long ret = sys_waitid(1 /*P_PID*/, child_pid, &info,
+                                  4 | 0x01000000 /*WEXITED|WNOWAIT*/, NULL);
+            if (ret != 0 || info.si_pid != child_pid) {
+                fut_printf("[MISC-TEST] FAIL Test 2438: peek returned %ld, si_pid=%ld\n",
+                           ret, (long)info.si_pid);
+                fut_test_fail(2438);
+                /* Try to reap to clean up */
+                sys_waitid(1, child_pid, &info, 4, NULL);
+            } else {
+                /* Second call: without WNOWAIT -- should still find the child */
+                __builtin_memset(&info, 0, sizeof(info));
+                ret = sys_waitid(1 /*P_PID*/, child_pid, &info, 4 /*WEXITED*/, NULL);
+                if (ret != 0 || info.si_pid != child_pid) {
+                    fut_printf("[MISC-TEST] FAIL Test 2438: reap after peek returned %ld, si_pid=%ld\n",
+                               ret, (long)info.si_pid);
+                    fut_test_fail(2438);
+                } else if (info.si_status != 99) {
+                    fut_printf("[MISC-TEST] FAIL Test 2438: si_status=%d (expected 99)\n",
+                               info.si_status);
+                    fut_test_fail(2438);
+                } else {
+                    fut_printf("[MISC-TEST] pass Test 2438: WNOWAIT peeked, then reaped ok\n");
+                    fut_test_pass();
+                }
+            }
+        }
+    }
+
+    /* ---- Test 2439: P_PID for non-child pid -> ECHILD ---- */
+    fut_printf("[MISC-TEST] Test 2439: waitid(P_PID, 999999) -> ECHILD\n");
+    {
+        siginfo_t info;
+        __builtin_memset(&info, 0, sizeof(info));
+        long ret = sys_waitid(1 /*P_PID*/, 999999, &info, 4 | 1 /*WEXITED|WNOHANG*/, NULL);
+        if (ret == -ECHILD) {
+            fut_printf("[MISC-TEST] pass Test 2439: non-child pid -> ECHILD\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL Test 2439: expected -ECHILD, got %ld\n", ret);
+            fut_test_fail(2439);
+        }
+    }
+
+    /* ---- Test 2440: options without event type -> EINVAL ---- */
+    fut_printf("[MISC-TEST] Test 2440: waitid(P_ALL, WNOHANG only) -> EINVAL\n");
+    {
+        siginfo_t info;
+        __builtin_memset(&info, 0, sizeof(info));
+        /* WNOHANG (0x1) alone -- no WEXITED, WSTOPPED, or WCONTINUED */
+        long ret = sys_waitid(0 /*P_ALL*/, 0, &info, 1 /*WNOHANG only*/, NULL);
+        if (ret == -EINVAL) {
+            fut_printf("[MISC-TEST] pass Test 2440: no event type -> EINVAL\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL Test 2440: expected -EINVAL, got %ld\n", ret);
+            fut_test_fail(2440);
+        }
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -72885,6 +73084,7 @@ void fut_misc_test_thread(void *arg) {
     test_clone3_enhanced(); /* Tests 2415-2418: clone3 CLONE_CLEAR_SIGHAND + CLONE_NEWTIME + CLONE_PIDFD */
     test_eventfd_semaphore_compat(); /* Tests 2420-2425: eventfd EFD_SEMAPHORE container-compatibility */
     test_posix_timer_round_trip(); /* Tests 2426-2431: POSIX timer round-trip coverage */
+    test_waitid_p_all_wnohang(); /* Tests 2435-2440: waitid P_ALL WNOHANG process monitoring */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

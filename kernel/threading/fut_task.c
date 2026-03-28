@@ -757,8 +757,14 @@ void fut_task_signal_exit(int signal) {
 static int encode_wait_status(const fut_task_t *task) {
     if (task->term_signal) {
         int status = task->term_signal & SIGNAL_MASK;
-        if (signal_generates_core(task->term_signal))
-            status |= CORE_DUMP_BIT;
+        /* RLIMIT_CORE enforcement: only set WCOREDUMP bit if the signal's
+         * default action generates a core dump AND the task's RLIMIT_CORE
+         * soft limit is non-zero (RLIMIT_CORE=0 suppresses core dumps). */
+        if (signal_generates_core(task->term_signal)) {
+            uint64_t core_limit = task->rlimits[4].rlim_cur; /* RLIMIT_CORE = 4 */
+            if (core_limit > 0)
+                status |= CORE_DUMP_BIT;
+        }
         return status;
     }
     return (task->exit_code & EXIT_CODE_MASK) << WAIT_STATUS_SHIFT;

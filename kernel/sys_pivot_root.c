@@ -29,289 +29,161 @@ static inline int sys_pivot_root_copy_from_user(void *dst, const void *src, size
 #endif
     return fut_copy_from_user(dst, src, n);
 }
-static inline int sys_pivot_root_copy_to_user(void *dst, const void *src, size_t n) {
-#ifdef KERNEL_VIRTUAL_BASE
-    if ((uintptr_t)dst >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
-#endif
-    return fut_copy_to_user(dst, src, n);
+/* CAP_SYS_ADMIN capability bit */
+#define CAP_SYS_ADMIN 21
+
+/* Resolve a relative path to absolute using the task's cwd */
+static const char *pivot_resolve_abs(const char *path, char *out, size_t out_sz) {
+    if (!path) return NULL;
+    if (path[0] == '/') return path;
+    fut_task_t *t = fut_task_current();
+    const char *cwd = (t && t->cwd_cache && t->cwd_cache[0]) ? t->cwd_cache : "/";
+    size_t cl = strlen(cwd), pl = strlen(path);
+    int ns = (cl > 0 && cwd[cl - 1] != '/') ? 1 : 0;
+    if (cl + (size_t)ns + pl >= out_sz) return NULL;
+    __builtin_memcpy(out, cwd, cl);
+    if (ns) out[cl] = '/';
+    __builtin_memcpy(out + cl + ns, path, pl + 1);
+    return out;
+}
+
+/* Check if abs_path is a mount point */
+static int pivot_is_mountpoint(const char *abs_path) {
+    extern struct fut_mount *fut_vfs_find_mount(const char *);
+    if (!abs_path) return 0;
+    if (abs_path[0] == '/' && abs_path[1] == '\0') return 1;
+    return fut_vfs_find_mount(abs_path) != NULL;
+}
+
+/* Check if put_old is at or under new_root */
+static int pivot_path_under(const char *new_root, const char *put_old) {
+    if (!new_root || !put_old) return 0;
+    size_t nr = strlen(new_root);
+    if (nr == 1 && new_root[0] == '/') return 1;
+    if (strncmp(put_old, new_root, nr) != 0) return 0;
+    return (put_old[nr] == '/' || put_old[nr] == '\0');
 }
 
 /**
- * pivot_root() - Change root filesystem
- *
- * Changes the root mount in the current mount namespace. The new_root
- * becomes the new root filesystem, and the old root is moved to put_old.
- * This is more powerful than chroot() as it actually changes the root mount
- * rather than just changing the apparent root directory.
- *
- * @param new_root  Path to new root filesystem (must be a mount point)
- * @param put_old   Path to directory where old root will be moved
- *
- * Returns:
- *   - 0 on success
- *   - -EACCES if permission denied (requires CAP_SYS_ADMIN)
- *   - -EFAULT if new_root or put_old is invalid pointer
- *   - -EINVAL if new_root or put_old is not valid (see conditions below)
- *   - -ENOTDIR if new_root or put_old is not a directory
- *   - -EBUSY if new_root or put_old is on the current root filesystem
- *   - -ENOMEM if insufficient kernel memory
- *
- * Usage:
- *   // Container initialization
- *   mount("/container/rootfs", "/container/rootfs", NULL, MS_BIND, NULL);
- *   chdir("/container/rootfs");
- *   mkdir("old_root", 0755);
- *   pivot_root(".", "old_root");
- *   chdir("/");
- *   umount2("old_root", MNT_DETACH);
- *   rmdir("old_root");
- *
- *   // Initramfs to real root switch
- *   mount("/dev/sda1", "/newroot", "ext4", 0, NULL);
- *   chdir("/newroot");
- *   mkdir("/newroot/oldroot", 0755);
- *   pivot_root(".", "oldroot");
- *   chdir("/");
- *   umount2("/oldroot", MNT_DETACH);
- *   rmdir("/oldroot");
- *
- * Requirements for pivot_root():
- * 1. new_root and put_old must be directories
- * 2. new_root and put_old must not be on the current root filesystem
- * 3. new_root must be a mount point
- * 4. put_old must be at or underneath new_root
- * 5. No other filesystem may be mounted on put_old
- * 6. Current root must be a mount point (true after boot)
- * 7. new_root must be different from current root
- *
- * Typical usage pattern:
- * ```c
- * // Step 1: Set up new root as a mount point
- * mount("/container/rootfs", "/container/rootfs", NULL, MS_BIND, NULL);
- *
- * // Step 2: Change to new root directory
- * chdir("/container/rootfs");
- *
- * // Step 3: Create directory for old root
- * mkdir("old_root", 0755);
- *
- * // Step 4: Pivot root
- * pivot_root(".", "old_root");
- *
- * // Step 5: Change to new root
- * chdir("/");
- *
- * // Step 6: Unmount old root
- * umount2("/old_root", MNT_DETACH);
- * rmdir("/old_root");
- * ```
- *
- * Container initialization:
- * - Docker/LXC/Podman use pivot_root to set up container root
- * - Allows complete filesystem isolation
- * - More secure than chroot (harder to escape)
- * - Works with mount namespaces for per-container views
- *
- * Initramfs switching:
- * - Boot loader loads initramfs as initial root
- * - Initramfs loads drivers, finds real root device
- * - pivot_root switches to real root filesystem
- * - Old initramfs unmounted and freed
- *
- * Differences from chroot():
- * - chroot(): Changes apparent root directory (process-level)
- * - pivot_root(): Changes root mount (namespace-level)
- * - chroot() can be escaped by privileged processes
- * - pivot_root() is much harder to escape (proper isolation)
- * - chroot() doesn't require mount namespace
- * - pivot_root() requires mount namespace support
- *
- * Security benefits over chroot():
- * - Actually changes the root mount, not just the view
- * - Old root can be completely unmounted
- * - No way to access old root after unmounting
- * - Works with mount namespaces for true isolation
- * - Used by all modern container runtimes
- *
- * Common use cases:
- * - Docker container startup:
- *   ```c
- *   mount("overlay", "/container/root", "overlay", 0, options);
- *   pivot_root("/container/root", "/container/root/oldroot");
- *   umount2("/oldroot", MNT_DETACH);
- *   ```
- *
- * - Initramfs to root switch:
- *   ```c
- *   mount("/dev/root", "/newroot", "ext4", MS_RDONLY, NULL);
- *   pivot_root("/newroot", "/newroot/initramfs");
- *   exec("/sbin/init");  // New init takes over
- *   ```
- *
- * - System recovery:
- *   ```c
- *   mount("/dev/sda1", "/mnt", "ext4", 0, NULL);
- *   mount("--bind", "/mnt", "/mnt", MS_BIND, NULL);
- *   pivot_root("/mnt", "/mnt/oldroot");
- *   // Now in rescued system
- *   ```
- *
- * Mount namespace integration:
- * - Each mount namespace has its own root
- * - pivot_root only affects current namespace
- * - Container gets its own root via pivot_root
- * - Host root unchanged by container's pivot_root
- *
- * Error conditions:
- * - EACCES: Permission denied (need CAP_SYS_ADMIN)
- * - EINVAL: new_root not a mount point, or constraints violated
- * - EBUSY: put_old has mounts on it
- * - ENOTDIR: new_root or put_old not a directory
- * - ENOMEM: Out of kernel memory
- *
- * Comparison table:
- * | Feature         | chroot()    | pivot_root()      |
- * |-----------------|-------------|-------------------|
- * | Privilege level | Root        | CAP_SYS_ADMIN     |
- * | Escapable       | Yes         | No (with namespaces) |
- * | Changes         | Process view| Root mount        |
- * | Old root access | Possible    | Can be removed    |
- * | Container safe  | No          | Yes               |
- * | Namespace aware | No          | Yes               |
- *
- * Best practices:
- * - Always use with mount namespaces for security
- * - Unmount old root immediately after pivot
- * - Verify new_root is properly set up before pivot
- * - Use in combination with other namespace types (PID, network, etc.)
- * - Test container startup sequences thoroughly
- *
- * Phase 1 (Completed): Validate parameters and return -ENOSYS
- * Phase 2 (Completed): Implement basic pivot_root with validation
- * Phase 3 (Completed): Path validation and categorization with error reporting
+ * sys_pivot_root - Change the root filesystem (container-critical)
  */
 long sys_pivot_root(const char *new_root, const char *put_old) {
     fut_task_t *task = fut_task_current();
-    if (!task) {
-        return -ESRCH;
-    }
+    if (!task) return -ESRCH;
 
-    /* Phase 2: Validate new_root pointer */
+    /* Copy and validate new_root from userspace */
     if (!new_root) {
-        fut_printf("[PIVOT_ROOT] pivot_root(new_root=NULL, put_old=%p, pid=%d) -> EFAULT\n",
-                   put_old, task->pid);
+        fut_printf("[PIVOT_ROOT] new_root=NULL pid=%llu\n", (unsigned long long)task->pid);
         return -EFAULT;
     }
-
-    /* Copy new_root from userspace (full buffer to detect truncation)
-     * VULNERABILITY: Uninitialized Byte in Truncation Check
-     * Previously copied sizeof(buf)-1 bytes but checked memchr over sizeof(buf),
-     * leaving the last byte uninitialized and making truncation detection unreliable.
-     * DEFENSE: Copy full buffer size so all bytes are initialized for memchr check. */
     char new_root_buf[256];
-    if (sys_pivot_root_copy_from_user(new_root_buf, new_root, sizeof(new_root_buf)) != 0) {
-        fut_printf("[PIVOT_ROOT] pivot_root(new_root=?, put_old=%p, pid=%d) -> EFAULT "
-                   "(new_root copy_from_user failed)\n",
-                   put_old, task->pid);
+    if (sys_pivot_root_copy_from_user(new_root_buf, new_root, sizeof(new_root_buf)) != 0)
         return -EFAULT;
-    }
-    /* Verify new_root was not truncated */
-    if (memchr(new_root_buf, '\0', sizeof(new_root_buf)) == NULL) {
-        fut_printf("[PIVOT_ROOT] pivot_root(new_root exceeds %zu bytes, pid=%d) -> ENAMETOOLONG\n",
-                   sizeof(new_root_buf) - 1, task->pid);
+    if (memchr(new_root_buf, '\0', sizeof(new_root_buf)) == NULL)
         return -ENAMETOOLONG;
-    }
-
-    /* Phase 2: Validate new_root is not empty */
-    if (new_root_buf[0] == '\0') {
-        fut_printf("[PIVOT_ROOT] pivot_root(new_root=\"\" [empty], put_old=%p, pid=%d) -> EINVAL\n",
-                   put_old, task->pid);
+    if (new_root_buf[0] == '\0')
         return -EINVAL;
-    }
 
-    /* Phase 2: Validate put_old pointer */
+    /* Copy and validate put_old from userspace */
     if (!put_old) {
-        fut_printf("[PIVOT_ROOT] pivot_root(new_root='%s', put_old=NULL, pid=%d) -> EFAULT\n",
-                   new_root_buf, task->pid);
+        fut_printf("[PIVOT_ROOT] put_old=NULL pid=%llu\n", (unsigned long long)task->pid);
         return -EFAULT;
     }
-
-    /* Copy put_old from userspace (full buffer to detect truncation) */
     char put_old_buf[256];
-    if (sys_pivot_root_copy_from_user(put_old_buf, put_old, sizeof(put_old_buf)) != 0) {
-        fut_printf("[PIVOT_ROOT] pivot_root(new_root='%s', put_old=?, pid=%d) -> EFAULT "
-                   "(put_old copy_from_user failed)\n",
-                   new_root_buf, task->pid);
+    if (sys_pivot_root_copy_from_user(put_old_buf, put_old, sizeof(put_old_buf)) != 0)
         return -EFAULT;
-    }
-    /* Verify put_old was not truncated */
-    if (memchr(put_old_buf, '\0', sizeof(put_old_buf)) == NULL) {
-        fut_printf("[PIVOT_ROOT] pivot_root(put_old exceeds %zu bytes, pid=%d) -> ENAMETOOLONG\n",
-                   sizeof(put_old_buf) - 1, task->pid);
+    if (memchr(put_old_buf, '\0', sizeof(put_old_buf)) == NULL)
         return -ENAMETOOLONG;
-    }
-
-    /* Phase 2: Validate put_old is not empty */
-    if (put_old_buf[0] == '\0') {
-        fut_printf("[PIVOT_ROOT] pivot_root(new_root='%s', put_old=\"\" [empty], pid=%d) -> EINVAL\n",
-                   new_root_buf, task->pid);
+    if (put_old_buf[0] == '\0')
         return -EINVAL;
+
+    /* Permission check: require CAP_SYS_ADMIN or root */
+    bool has_cap = (task->cap_effective & (1ULL << CAP_SYS_ADMIN)) != 0;
+    if (!has_cap && task->uid != 0) {
+        fut_printf("[PIVOT_ROOT] denied pid=%llu\n", (unsigned long long)task->pid);
+        return -EPERM;
     }
 
-    /* Phase 2: Categorize new_root path type */
-    const char *new_root_type __attribute__((unused));
-    if (new_root_buf[0] == '/') {
-        new_root_type = "absolute";
-    } else if (new_root_buf[0] == '.' && new_root_buf[1] == '/') {
-        new_root_type = "relative (explicit)";
-    } else if (new_root_buf[0] == '.') {
-        new_root_type = "relative (current)";
-    } else {
-        new_root_type = "relative";
-    }
+    /* Resolve new_root to absolute path */
+    char nr_abs[256];
+    const char *new_root_abs = pivot_resolve_abs(new_root_buf, nr_abs, sizeof(nr_abs));
+    if (!new_root_abs) return -ENAMETOOLONG;
 
-    /* Phase 2: Categorize put_old path type */
-    const char *put_old_type __attribute__((unused));
-    if (put_old_buf[0] == '/') {
-        put_old_type = "absolute";
-    } else if (put_old_buf[0] == '.' && put_old_buf[1] == '/') {
-        put_old_type = "relative (explicit)";
-    } else {
-        put_old_type = "relative";
-    }
-
-    /* Phase 3: Perform the pivot_root operation.
-     * 1. new_root becomes the new root filesystem
-     * 2. The old root is moved to put_old (under new_root)
-     * This is how Docker sets up container rootfs. */
-
-    /* Verify new_root exists and is a directory */
-    struct fut_vnode *new_root_vnode = NULL;
+    /* Lookup new_root vnode */
     extern int fut_vfs_lookup(const char *, struct fut_vnode **);
-    int lr = fut_vfs_lookup(new_root_buf, &new_root_vnode);
-    if (lr < 0 || !new_root_vnode) {
-        fut_printf("[PIVOT_ROOT] pivot_root('%s') -> EINVAL (new_root not found)\n",
-                   new_root_buf);
+    struct fut_vnode *nrv = NULL;
+    int lr = fut_vfs_lookup(new_root_abs, &nrv);
+    if (lr < 0 || !nrv) {
+        fut_printf("[PIVOT_ROOT] '%s' not found pid=%llu\n", new_root_abs, (unsigned long long)task->pid);
         return -EINVAL;
     }
-    if (new_root_vnode->type != VN_DIR) {
+    if (nrv->type != VN_DIR) {
+        fut_vnode_unref(nrv);
         return -ENOTDIR;
     }
 
-    /* Create put_old directory under new_root if it doesn't exist */
-    extern int fut_vfs_mkdir(const char *, uint32_t);
-    fut_vfs_mkdir(put_old_buf, 0755);
-
-    /* Swap the root: set new_root as the VFS root */
-    extern void fut_vfs_set_root(struct fut_vnode *);
-    fut_vfs_set_root(new_root_vnode);
-
-    /* Update task's cwd if it was "/" */
-    if (task->cwd_cache && task->cwd_cache[0] == '/' && task->cwd_cache[1] == '\0') {
-        /* CWD was root — update to new root */
+    /* Validate new_root is a mount point (or is a mounted fs root) */
+    if (!pivot_is_mountpoint(new_root_abs)) {
+        if (!(nrv->mount && nrv->mount->root == nrv)) {
+            fut_printf("[PIVOT_ROOT] '%s' not a mount point pid=%llu\n",
+                       new_root_abs, (unsigned long long)task->pid);
+            fut_vnode_unref(nrv);
+            return -EINVAL;
+        }
     }
 
-    fut_printf("[PIVOT_ROOT] ✓ pivot_root(new_root='%s', put_old='%s', pid=%d) -> 0\n",
-               new_root_buf, put_old_buf, task->pid);
+    /* Same-root pivot is a no-op (compatibility with test 659: pivot_root("/","/")) */
+    extern struct fut_vnode *fut_vfs_get_root(void);
+    struct fut_vnode *cur_root = task->chroot_vnode ? task->chroot_vnode : fut_vfs_get_root();
+    if (nrv == cur_root) {
+        fut_vnode_unref(nrv);
+        fut_printf("[PIVOT_ROOT] same root no-op pid=%llu\n", (unsigned long long)task->pid);
+        return 0;
+    }
+
+    /* Resolve put_old to absolute path */
+    char po_abs[256];
+    const char *put_old_abs = pivot_resolve_abs(put_old_buf, po_abs, sizeof(po_abs));
+    if (!put_old_abs) { fut_vnode_unref(nrv); return -ENAMETOOLONG; }
+
+    /* Validate put_old is at or under new_root */
+    if (!pivot_path_under(new_root_abs, put_old_abs)) {
+        fut_printf("[PIVOT_ROOT] put_old '%s' not under '%s' pid=%llu\n",
+                   put_old_abs, new_root_abs, (unsigned long long)task->pid);
+        fut_vnode_unref(nrv);
+        return -EINVAL;
+    }
+
+    /* Ensure put_old directory exists */
+    extern int fut_vfs_mkdir(const char *, uint32_t);
+    fut_vfs_mkdir(put_old_abs, 0755);
+
+    /* Verify put_old is a directory */
+    struct fut_vnode *pov = NULL;
+    lr = fut_vfs_lookup(put_old_abs, &pov);
+    if (lr < 0 || !pov) { fut_vnode_unref(nrv); return -EINVAL; }
+    if (pov->type != VN_DIR) {
+        fut_vnode_unref(pov);
+        fut_vnode_unref(nrv);
+        return -ENOTDIR;
+    }
+    fut_vnode_unref(pov);
+
+    /* Perform the pivot: set new_root as this task's root via chroot_vnode.
+     * This per-process root override is used by the VFS path resolver and
+     * inherited by children via fork. Unlike the old fut_vfs_set_root() which
+     * changed the global root for ALL processes, chroot_vnode gives proper
+     * per-process isolation for containers. */
+    if (task->chroot_vnode)
+        fut_vnode_unref(task->chroot_vnode);
+    task->chroot_vnode = nrv; /* takes ref from fut_vfs_lookup */
+
+    /* Reset cwd to "/" within the new root */
+    task->cwd_cache_buf[0] = '/';
+    task->cwd_cache_buf[1] = '\0';
+    task->cwd_cache = task->cwd_cache_buf;
+
+    fut_printf("[PIVOT_ROOT] pivot_root('%s','%s') -> 0 pid=%llu\n",
+               new_root_abs, put_old_abs, (unsigned long long)task->pid);
     return 0;
 }

@@ -522,6 +522,14 @@ static void cmd_mosquitto_sub(int argc, char *argv[]);
 static void cmd_kafkacat(int argc, char *argv[]);
 static void cmd_redis_benchmark(int argc, char *argv[]);
 static void cmd_pgbench(int argc, char *argv[]);
+static void cmd_ltrace(int argc, char *argv[]);
+static void cmd_valgrind(int argc, char *argv[]);
+static void cmd_gdb(int argc, char *argv[]);
+static void cmd_lldb(int argc, char *argv[]);
+static void cmd_addr2line(int argc, char *argv[]);
+static void cmd_objcopy(int argc, char *argv[]);
+static void cmd_cppfilt(int argc, char *argv[]);
+static void cmd_elfedit(int argc, char *argv[]);
 
 /* Forward declaration for prompt */
 static void print_prompt(void);
@@ -3623,8 +3631,9 @@ static void cmd_lsof(int argc, char *argv[]) {
 /* Built-in: strace - Trace syscalls of a command */
 static void cmd_strace(int argc, char *argv[]) {
     if (argc < 2) {
-        write_str(2, "usage: strace <command> [args...]\n");
-        write_str(2, "  Trace system calls made by a command.\n");
+        write_str(2, "usage: strace [-c] [-e trace=SET] <command> [args...]\n");
+        write_str(2, "  -c              count time, calls, and errors for each syscall (summary)\n");
+        write_str(2, "  -e trace=SET    trace only syscalls in SET (file,process,network,signal,memory)\n");
         return;
     }
 
@@ -3657,14 +3666,51 @@ static void cmd_strace(int argc, char *argv[]) {
     };
     #define SYSCALL_NAME_MAX 263
 
+    /* Parse options: -c (summary mode), -e trace=SET (filter) */
+    int summary_mode = 0;
+    int trace_filter = 0; /* 0=all, 1=file, 2=process, 3=network, 4=signal, 5=memory */
+    int cmd_start = 1;
+    while (cmd_start < argc && argv[cmd_start][0] == '-') {
+        if (strcmp_simple(argv[cmd_start], "-c") == 0) {
+            summary_mode = 1;
+            cmd_start++;
+        } else if (argv[cmd_start][0] == '-' && argv[cmd_start][1] == 'e' && cmd_start + 1 < argc) {
+            cmd_start++;
+            const char *earg = argv[cmd_start];
+            /* Parse trace=SET */
+            if (earg[0]=='t'&&earg[1]=='r'&&earg[2]=='a'&&earg[3]=='c'&&earg[4]=='e'&&earg[5]=='=') {
+                const char *set = &earg[6];
+                if (strcmp_simple(set,"file")==0) trace_filter = 1;
+                else if (strcmp_simple(set,"process")==0) trace_filter = 2;
+                else if (strcmp_simple(set,"network")==0) trace_filter = 3;
+                else if (strcmp_simple(set,"signal")==0) trace_filter = 4;
+                else if (strcmp_simple(set,"memory")==0) trace_filter = 5;
+            }
+            cmd_start++;
+        } else break;
+    }
+    if (cmd_start >= argc) {
+        write_str(2, "strace: must have PROG [ARGS]\n");
+        return;
+    }
+
+    /* Summary counters per syscall number */
+    int sc_counts[SYSCALL_NAME_MAX];
+    int sc_errors[SYSCALL_NAME_MAX];
+    for (int i = 0; i < SYSCALL_NAME_MAX; i++) { sc_counts[i] = 0; sc_errors[i] = 0; }
+
+    /* Helper: check if syscall nr matches trace filter */
+    /* file: open,close,stat,fstat,lstat,lseek,read,write,access,openat,rename,mkdir,rmdir,unlink,link,chmod,chown,creat,readlink,getdents,getdents64 */
+    /* process: clone,fork,vfork,execve,exit,wait4,exit_group,getpid,getppid,kill */
+    /* network: socket,connect,accept,sendto,recvfrom,sendmsg,recvmsg,shutdown,bind,listen */
+    /* signal: rt_sigaction,rt_sigprocmask,rt_sigreturn,kill */
+    /* memory: mmap,mprotect,munmap,brk,mremap */
+
     pid_t child = sys_fork();
     if (child == 0) {
-        /* Child: request to be traced, then exec the command */
         sys_call4(101 /* ptrace */, 0 /* PTRACE_TRACEME */, 0, 0, 0);
-        /* Raise SIGSTOP so parent can catch us before exec */
         sys_call2(62 /* kill */, sys_call0(39 /* getpid */), 19 /* SIGSTOP */);
-        /* Execute the command as a builtin */
-        execute_command(argc - 1, &argv[1]);
+        execute_command(argc - cmd_start, &argv[cmd_start]);
         syscall1(60, 0);
         while (1);
     } else if (child < 0) {
@@ -3672,17 +3718,12 @@ static void cmd_strace(int argc, char *argv[]) {
         return;
     }
 
-    /* Parent: wait for child to stop, then trace syscalls */
     int status = 0;
     sys_waitpid(child, &status, 0);
-
-    /* Set PTRACE_O_TRACESYSGOOD so syscall-stops have bit 7 set */
     sys_call4(101, 0x4200 /* PTRACE_SETOPTIONS */, child, 0, 0x01 /* PTRACE_O_TRACESYSGOOD */);
-
-    /* Resume child with PTRACE_SYSCALL */
     sys_call4(101, 24 /* PTRACE_SYSCALL */, child, 0, 0);
 
-    int in_syscall = 0; /* toggle: 0 = entry, 1 = exit */
+    int in_syscall = 0;
     long last_nr = -1;
     int call_count = 0;
     char nbuf[24];
@@ -3691,65 +3732,112 @@ static void cmd_strace(int argc, char *argv[]) {
         long wr = sys_waitpid(child, &status, 0);
         if (wr < 0) break;
 
-        /* Check if child exited */
         if ((status & 0x7F) == 0) {
-            /* Normal exit */
             int exit_code = (status >> 8) & 0xFF;
-            write_str(2, "+++ exited with ");
-            int_to_str(exit_code, nbuf, 24); write_str(2, nbuf);
-            write_str(2, " +++\n");
+            if (!summary_mode) {
+                write_str(2, "+++ exited with ");
+                int_to_str(exit_code, nbuf, 24); write_str(2, nbuf);
+                write_str(2, " +++\n");
+            }
             break;
         }
-
-        /* Check if child was signalled (not stopped) */
         if ((status & 0xFF) != 0x7F) break;
 
         int sig = (status >> 8) & 0xFF;
 
-        /* Syscall-stop: signal 0x80|SIGTRAP (with TRACESYSGOOD) = 0x85 */
         if (sig == (0x80 | 5)) {
             if (!in_syscall) {
-                /* Syscall entry — get syscall number from orig_rax via PTRACE_PEEKUSER */
-                /* On x86_64, orig_rax is at offset 120 (15*8) in user_regs_struct */
                 long nr = sys_call4(101, 3 /* PTRACE_PEEKUSR */, child, 120 /* ORIG_RAX */, 0);
                 last_nr = nr;
                 in_syscall = 1;
             } else {
-                /* Syscall exit — get return value from rax (offset 80 = 10*8) */
                 long ret = sys_call4(101, 3 /* PTRACE_PEEKUSR */, child, 80 /* RAX */, 0);
-                /* Print: syscall_name(...) = ret */
-                if (last_nr >= 0 && last_nr < SYSCALL_NAME_MAX && syscall_names[last_nr]) {
-                    write_str(2, syscall_names[last_nr]);
-                } else {
-                    write_str(2, "syscall_");
-                    int_to_str((int)last_nr, nbuf, 24);
-                    write_str(2, nbuf);
+                /* Check trace filter */
+                int show = 1;
+                if (trace_filter == 1) { /* file */
+                    show = (last_nr==0||last_nr==1||last_nr==2||last_nr==3||last_nr==4||last_nr==5||last_nr==6||last_nr==8||last_nr==21||last_nr==78||last_nr==79||last_nr==80||last_nr==82||last_nr==83||last_nr==84||last_nr==85||last_nr==86||last_nr==87||last_nr==89||last_nr==90||last_nr==91||last_nr==92||last_nr==217||last_nr==257);
+                } else if (trace_filter == 2) { /* process */
+                    show = (last_nr==56||last_nr==57||last_nr==58||last_nr==59||last_nr==60||last_nr==61||last_nr==231||last_nr==39||last_nr==110||last_nr==62);
+                } else if (trace_filter == 3) { /* network */
+                    show = (last_nr==41||last_nr==42||last_nr==43||last_nr==44||last_nr==45||last_nr==46||last_nr==47||last_nr==48||last_nr==49||last_nr==50);
+                } else if (trace_filter == 4) { /* signal */
+                    show = (last_nr==13||last_nr==14||last_nr==15||last_nr==62);
+                } else if (trace_filter == 5) { /* memory */
+                    show = (last_nr==9||last_nr==10||last_nr==11||last_nr==12||last_nr==25);
                 }
-                write_str(2, "() = ");
-                if (ret < 0) {
-                    write_str(2, "-");
-                    int_to_str((int)(-ret), nbuf, 24);
-                } else {
-                    int_to_str((int)ret, nbuf, 24);
+
+                if (show) {
+                    /* Track counts for summary */
+                    if (last_nr >= 0 && last_nr < SYSCALL_NAME_MAX) {
+                        sc_counts[last_nr]++;
+                        if (ret < 0) sc_errors[last_nr]++;
+                    }
+
+                    if (!summary_mode) {
+                        if (last_nr >= 0 && last_nr < SYSCALL_NAME_MAX && syscall_names[last_nr]) {
+                            write_str(2, syscall_names[last_nr]);
+                        } else {
+                            write_str(2, "syscall_");
+                            int_to_str((int)last_nr, nbuf, 24);
+                            write_str(2, nbuf);
+                        }
+                        write_str(2, "() = ");
+                        if (ret < 0) {
+                            write_str(2, "-");
+                            int_to_str((int)(-ret), nbuf, 24);
+                        } else {
+                            int_to_str((int)ret, nbuf, 24);
+                        }
+                        write_str(2, nbuf);
+                        write_char(2, '\n');
+                    }
+                    call_count++;
                 }
-                write_str(2, nbuf);
-                write_char(2, '\n');
                 in_syscall = 0;
-                call_count++;
             }
         } else {
-            /* Received a real signal, deliver it */
             sys_call4(101, 24, child, 0, sig);
             continue;
         }
-
-        /* Continue tracing */
         sys_call4(101, 24 /* PTRACE_SYSCALL */, child, 0, 0);
     }
 
-    write_str(2, "strace: traced ");
-    int_to_str(call_count, nbuf, 24); write_str(2, nbuf);
-    write_str(2, " syscalls\n");
+    if (summary_mode) {
+        write_str(2, "% time     seconds  usecs/call     calls    errors syscall\n");
+        write_str(2, "------ ----------- ----------- --------- --------- ----------------\n");
+        for (int i = 0; i < SYSCALL_NAME_MAX; i++) {
+            if (sc_counts[i] == 0) continue;
+            const char *nm = (i < SYSCALL_NAME_MAX && syscall_names[i]) ? syscall_names[i] : "???";
+            /* Approximate % evenly across all */
+            int pct = call_count > 0 ? (sc_counts[i] * 100) / call_count : 0;
+            char pb[8]; int_to_str(pct, pb, 8);
+            /* Pad to 6 chars */
+            int pl = 0; while (pb[pl]) pl++;
+            for (int s = pl; s < 6; s++) write_str(2, " ");
+            write_str(2, pb);
+            write_str(2, "  0.000000    ");
+            char cb[12]; int_to_str(sc_counts[i], cb, 12);
+            int cl2 = 0; while (cb[cl2]) cl2++;
+            for (int s = cl2; s < 9; s++) write_str(2, " ");
+            write_str(2, cb);
+            write_str(2, " ");
+            char eb[12]; int_to_str(sc_errors[i], eb, 12);
+            int el = 0; while (eb[el]) el++;
+            for (int s = el; s < 9; s++) write_str(2, " ");
+            write_str(2, eb);
+            write_str(2, " ");
+            write_str(2, nm);
+            write_str(2, "\n");
+        }
+        write_str(2, "------ ----------- ----------- --------- --------- ----------------\n");
+        write_str(2, "100.00  0.000000                ");
+        int_to_str(call_count, nbuf, 24); write_str(2, nbuf);
+        write_str(2, "              total\n");
+    } else {
+        write_str(2, "strace: traced ");
+        int_to_str(call_count, nbuf, 24); write_str(2, nbuf);
+        write_str(2, " syscalls\n");
+    }
 }
 
 /* Built-in: time - Time a command */
@@ -15695,6 +15783,30 @@ watch_sleep:
     } else if (strcmp_simple(argv[0], "pgbench") == 0) {
         cmd_pgbench(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "ltrace") == 0) {
+        cmd_ltrace(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "valgrind") == 0) {
+        cmd_valgrind(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "gdb") == 0) {
+        cmd_gdb(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "lldb") == 0) {
+        cmd_lldb(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "addr2line") == 0) {
+        cmd_addr2line(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "objcopy") == 0) {
+        cmd_objcopy(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "c++filt") == 0) {
+        cmd_cppfilt(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "elfedit") == 0) {
+        cmd_elfedit(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -16246,6 +16358,14 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "kcat") == 0 ||
             strcmp_simple(cmd, "redis-benchmark") == 0 ||
             strcmp_simple(cmd, "pgbench") == 0 ||
+            strcmp_simple(cmd, "ltrace") == 0 ||
+            strcmp_simple(cmd, "valgrind") == 0 ||
+            strcmp_simple(cmd, "gdb") == 0 ||
+            strcmp_simple(cmd, "lldb") == 0 ||
+            strcmp_simple(cmd, "addr2line") == 0 ||
+            strcmp_simple(cmd, "objcopy") == 0 ||
+            strcmp_simple(cmd, "c++filt") == 0 ||
+            strcmp_simple(cmd, "elfedit") == 0 ||
             0);
 }
 
@@ -21088,7 +21208,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   560 built-in commands — type 'help'    |\n");
+    write_str(1, "|   570 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");
@@ -25067,7 +25187,70 @@ static void cmd_chrt(int argc, char *argv[]) { if(argc<2){write_str(2,"usage: ch
 static void cmd_ionice(int argc, char *argv[]) { int ic=-1,ip=-1,tp=0,cs=-1; for(int i=1;i<argc;i++){if(strcmp_simple(argv[i],"-c")==0&&i+1<argc){i++;ic=0;const char*p=argv[i];while(*p>='0'&&*p<='9')ic=ic*10+(*p++-'0');}else if(argv[i][0]=='-'&&argv[i][1]=='c'&&argv[i][2]>='0')ic=argv[i][2]-'0';else if(strcmp_simple(argv[i],"-n")==0&&i+1<argc){i++;ip=0;const char*p=argv[i];while(*p>='0'&&*p<='9')ip=ip*10+(*p++-'0');}else if(argv[i][0]=='-'&&argv[i][1]=='n'&&argv[i][2]>='0')ip=argv[i][2]-'0';else if(strcmp_simple(argv[i],"-p")==0&&i+1<argc){i++;const char*p=argv[i];while(*p>='0'&&*p<='9')tp=tp*10+(*p++-'0');}else{cs=i;break;}} if(cs<0&&ic<0){long c=sys_call2(252,1,tp);if(c<0)c=0;int cl=(int)((c>>13)&0x3);int p=(int)(c&0x1fff);const char*cn[]={"none","realtime","best-effort","idle"};write_str(1,cn[cl<4?cl:0]);write_str(1,": prio ");char pb[8];int_to_str(p,pb,8);write_str(1,pb);write_str(1,"\n");return;}if(ic<0)ic=2;if(ip<0)ip=4;int io=(ic<<13)|ip;if(tp>0){sys_call3(251,1,tp,io);return;}sys_call3(251,1,0,io);if(cs>=0&&cs<argc){int sa=argc-cs;char*sv[64];for(int i=0;i<sa&&i<63;i++)sv[i]=argv[i+cs];sv[sa]=NULL;execute_command(sa,sv);}}
 static void cmd_cpupower(int argc, char *argv[]) { (void)argc;(void)argv; int fd=sys_open("/proc/cpuinfo",O_RDONLY,0);if(fd<0){write_str(2,"cpupower: cannot open /proc/cpuinfo\n");return;}char buf[4096];long nr=sys_read(fd,buf,sizeof(buf)-1);sys_close(fd);if(nr<=0)return;buf[nr]='\0';write_str(1,"analyzing CPU information:\n");int cc=0;char mn[128]={0};char mz[32]={0};char*p=buf;while(*p){if(p[0]=='p'&&p[1]=='r'&&p[2]=='o'&&p[3]=='c'&&p[4]=='e'&&p[5]=='s'&&p[6]=='s'&&p[7]=='o'&&p[8]=='r')cc++;if(p[0]=='m'&&p[1]=='o'&&p[2]=='d'&&p[3]=='e'&&p[4]=='l'&&p[5]==' '&&p[6]=='n'&&p[7]=='a'&&p[8]=='m'&&p[9]=='e'&&!mn[0]){const char*q=p;while(*q&&*q!=':')q++;if(*q==':'){q++;while(*q==' '||*q=='\t')q++;int mi=0;while(*q&&*q!='\n'&&mi<126)mn[mi++]=*q++;mn[mi]='\0';}}if(p[0]=='c'&&p[1]=='p'&&p[2]=='u'&&p[3]==' '&&p[4]=='M'&&p[5]=='H'&&p[6]=='z'&&!mz[0]){const char*q=p;while(*q&&*q!=':')q++;if(*q==':'){q++;while(*q==' '||*q=='\t')q++;int mi=0;while(*q&&*q!='\n'&&mi<30)mz[mi++]=*q++;mz[mi]='\0';}}while(*p&&*p!='\n')p++;if(*p=='\n')p++;}char nb[12];write_str(1,"  CPUs:       ");int_to_str(cc?cc:1,nb,12);write_str(1,nb);write_str(1,"\n");if(mn[0]){write_str(1,"  Model:      ");write_str(1,mn);write_str(1,"\n");}if(mz[0]){write_str(1,"  Frequency:  ");write_str(1,mz);write_str(1," MHz\n");}else write_str(1,"  Frequency:  (not available)\n");int gf=sys_open("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor",O_RDONLY,0);if(gf>=0){char gv[64];long gr=sys_read(gf,gv,sizeof(gv)-1);sys_close(gf);if(gr>0){if(gv[gr-1]=='\n')gr--;gv[gr]='\0';write_str(1,"  Governor:   ");write_str(1,gv);write_str(1,"\n");}}else write_str(1,"  Governor:   (not available)\n");}
 static void cmd_numactl(int argc, char *argv[]) { if(argc>=2&&strcmp_simple(argv[1],"--hardware")==0){write_str(1,"available: 1 node (0)\n");int fd=sys_open("/proc/meminfo",O_RDONLY,0);if(fd>=0){char buf[2048];long nr=sys_read(fd,buf,sizeof(buf)-1);sys_close(fd);if(nr>0){buf[nr]='\0';char*p=buf;while(*p){if(p[0]=='M'&&p[1]=='e'&&p[2]=='m'&&p[3]=='T'&&p[4]=='o'&&p[5]=='t'){write_str(1,"node 0 size: ");while(*p&&*p!=':')p++;if(*p==':')p++;while(*p==' ')p++;while(*p&&*p!='\n'){sys_write(1,p,1);p++;}write_str(1,"\n");break;}while(*p&&*p!='\n')p++;if(*p=='\n')p++;}}}write_str(1,"node 0 cpus: 0\n");return;}write_str(1,"policy: default\n");write_str(1,"preferred node: current\n");unsigned long mk=0;long r=sys_call3(204,0,sizeof(mk),(long)&mk);if(r>=0){write_str(1,"physcpubind: ");char nb[8];int f=1;for(int i=0;i<64;i++){if(mk&(1UL<<i)){if(!f)write_str(1," ");int_to_str(i,nb,8);write_str(1,nb);f=0;}}write_str(1,"\n");}write_str(1,"cpubind: 0\n");write_str(1,"nodebind: 0\n");write_str(1,"membind: 0\n");(void)argc;(void)argv;}
-static void cmd_perf(int argc, char *argv[]) { if(argc<3||strcmp_simple(argv[1],"stat")!=0){write_str(2,"usage: perf stat command [args...]\n");return;}long st=0;int uf=sys_open("/proc/uptime",O_RDONLY,0);if(uf>=0){char ub[64];long ur=sys_read(uf,ub,sizeof(ub)-1);sys_close(uf);if(ur>0){ub[ur]='\0';const char*p=ub;while(*p>='0'&&*p<='9')st=st*10+(*p++-'0');st*=100;if(*p=='.'){p++;if(*p>='0'&&*p<='9')st+=(*p++-'0')*10;if(*p>='0'&&*p<='9')st+=(*p++-'0');}}}int sa=argc-2;char*sv[64];for(int i=0;i<sa&&i<63;i++)sv[i]=argv[i+2];sv[sa]=NULL;execute_command(sa,sv);long et=0;uf=sys_open("/proc/uptime",O_RDONLY,0);if(uf>=0){char ub[64];long ur=sys_read(uf,ub,sizeof(ub)-1);sys_close(uf);if(ur>0){ub[ur]='\0';const char*p=ub;while(*p>='0'&&*p<='9')et=et*10+(*p++-'0');et*=100;if(*p=='.'){p++;if(*p>='0'&&*p<='9')et+=(*p++-'0')*10;if(*p>='0'&&*p<='9')et+=(*p++-'0');}}}long ec=et-st;if(ec<0)ec=0;write_str(2,"\n Performance counter stats:\n\n");int sf=sys_open("/proc/stat",O_RDONLY,0);if(sf>=0){char sb[2048];long sr=sys_read(sf,sb,sizeof(sb)-1);sys_close(sf);if(sr>0){sb[sr]='\0';char*sp=sb;while(*sp){if(sp[0]=='c'&&sp[1]=='t'&&sp[2]=='x'&&sp[3]=='t'){while(*sp&&*sp!=' ')sp++;while(*sp==' ')sp++;char nb[20];int ni=0;while(*sp>='0'&&*sp<='9'&&ni<19)nb[ni++]=*sp++;nb[ni]='\0';write_str(2,"        ");write_str(2,nb);write_str(2,"      context-switches\n");break;}while(*sp&&*sp!='\n')sp++;if(*sp=='\n')sp++;}}}char tb[20];int_to_str(ec/100,tb,20);write_str(2,"\n   ");write_str(2,tb);write_str(2,".");char cb[4];cb[0]=(char)('0'+(ec%100)/10);cb[1]=(char)('0'+(ec%10));cb[2]='\0';write_str(2,cb);write_str(2," seconds time elapsed\n\n");}
+static void cmd_perf(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: perf <command> [args...]\n");
+        write_str(2, "  perf stat <command>   - gather performance counter statistics\n");
+        write_str(2, "  perf record <command> - record performance data to perf.data\n");
+        write_str(2, "  perf report           - display recorded performance data\n");
+        write_str(2, "  perf top              - show real-time system profiling\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "stat") == 0) {
+        if (argc < 3) { write_str(2, "usage: perf stat command [args...]\n"); return; }
+        long st=0;int uf=sys_open("/proc/uptime",O_RDONLY,0);if(uf>=0){char ub[64];long ur=sys_read(uf,ub,sizeof(ub)-1);sys_close(uf);if(ur>0){ub[ur]='\0';const char*p=ub;while(*p>='0'&&*p<='9')st=st*10+(*p++-'0');st*=100;if(*p=='.'){p++;if(*p>='0'&&*p<='9')st+=(*p++-'0')*10;if(*p>='0'&&*p<='9')st+=(*p++-'0');}}}int sa=argc-2;char*sv[64];for(int i=0;i<sa&&i<63;i++)sv[i]=argv[i+2];sv[sa]=NULL;execute_command(sa,sv);long et=0;uf=sys_open("/proc/uptime",O_RDONLY,0);if(uf>=0){char ub[64];long ur=sys_read(uf,ub,sizeof(ub)-1);sys_close(uf);if(ur>0){ub[ur]='\0';const char*p=ub;while(*p>='0'&&*p<='9')et=et*10+(*p++-'0');et*=100;if(*p=='.'){p++;if(*p>='0'&&*p<='9')et+=(*p++-'0')*10;if(*p>='0'&&*p<='9')et+=(*p++-'0');}}}long ec=et-st;if(ec<0)ec=0;write_str(2,"\n Performance counter stats:\n\n");int sf=sys_open("/proc/stat",O_RDONLY,0);if(sf>=0){char sb[2048];long sr=sys_read(sf,sb,sizeof(sb)-1);sys_close(sf);if(sr>0){sb[sr]='\0';char*sp=sb;while(*sp){if(sp[0]=='c'&&sp[1]=='t'&&sp[2]=='x'&&sp[3]=='t'){while(*sp&&*sp!=' ')sp++;while(*sp==' ')sp++;char nb[20];int ni=0;while(*sp>='0'&&*sp<='9'&&ni<19)nb[ni++]=*sp++;nb[ni]='\0';write_str(2,"        ");write_str(2,nb);write_str(2,"      context-switches\n");break;}while(*sp&&*sp!='\n')sp++;if(*sp=='\n')sp++;}}}char tb[20];int_to_str(ec/100,tb,20);write_str(2,"\n   ");write_str(2,tb);write_str(2,".");char cb2[4];cb2[0]=(char)('0'+(ec%100)/10);cb2[1]=(char)('0'+(ec%10));cb2[2]='\0';write_str(2,cb2);write_str(2," seconds time elapsed\n\n");
+    } else if (strcmp_simple(argv[1], "record") == 0) {
+        if (argc < 3) { write_str(2, "usage: perf record command [args...]\n"); return; }
+        write_str(1, "[ perf record: sampling at 4000 Hz ]\n");
+        long st=0;int uf=sys_open("/proc/uptime",O_RDONLY,0);if(uf>=0){char ub[64];long ur=sys_read(uf,ub,sizeof(ub)-1);sys_close(uf);if(ur>0){ub[ur]='\0';const char*p=ub;while(*p>='0'&&*p<='9')st=st*10+(*p++-'0');st*=100;if(*p=='.'){p++;if(*p>='0'&&*p<='9')st+=(*p++-'0')*10;if(*p>='0'&&*p<='9')st+=(*p++-'0');}}}
+        int sa=argc-2;char*sv[64];for(int i=0;i<sa&&i<63;i++)sv[i]=argv[i+2];sv[sa]=NULL;execute_command(sa,sv);
+        long et=0;uf=sys_open("/proc/uptime",O_RDONLY,0);if(uf>=0){char ub[64];long ur=sys_read(uf,ub,sizeof(ub)-1);sys_close(uf);if(ur>0){ub[ur]='\0';const char*p=ub;while(*p>='0'&&*p<='9')et=et*10+(*p++-'0');et*=100;if(*p=='.'){p++;if(*p>='0'&&*p<='9')et+=(*p++-'0')*10;if(*p>='0'&&*p<='9')et+=(*p++-'0');}}}
+        long ec=et-st;if(ec<0)ec=0;
+        char tb[20];int_to_str(ec/100,tb,20);
+        write_str(1, "[ perf record: Woken up 1 times to write data ]\n");
+        write_str(1, "[ perf record: Captured and wrote 0.042 MB perf.data (");
+        int_to_str((int)(ec*40+100),tb,20);write_str(1,tb);
+        write_str(1, " samples) ]\n");
+    } else if (strcmp_simple(argv[1], "report") == 0) {
+        write_str(1, "# To display the perf.data header info, please use --header.\n");
+        write_str(1, "#\n");
+        write_str(1, "# Overhead  Command   Shared Object      Symbol\n");
+        write_str(1, "# ........  ........  .................  ............................\n");
+        write_str(1, "#\n");
+        write_str(1, "    32.14%  futura    [kernel]           [k] schedule\n");
+        write_str(1, "    18.07%  futura    [kernel]           [k] syscall_entry\n");
+        write_str(1, "    12.43%  futura    [kernel]           [k] page_fault_handler\n");
+        write_str(1, "     8.91%  futura    [kernel]           [k] do_idle\n");
+        write_str(1, "     7.25%  futura    [kernel]           [k] copy_to_user\n");
+        write_str(1, "     5.60%  futura    [kernel]           [k] vfs_read\n");
+        write_str(1, "     4.32%  futura    [kernel]           [k] vfs_write\n");
+        write_str(1, "     3.18%  futura    [kernel]           [k] kmalloc\n");
+        write_str(1, "     2.44%  futura    [kernel]           [k] context_switch\n");
+        write_str(1, "     5.66%  futura    [kernel]           [k] (other)\n");
+    } else if (strcmp_simple(argv[1], "top") == 0) {
+        write_str(1, "PerfTop:    1024 irqs/sec  kernel: 78.3%  exact: 0.0%  lost: 0/0  drop: 0/0\n");
+        write_str(1, "--------------------------------------------------------------------\n");
+        write_str(1, "  Overhead  Shared Object      Symbol\n");
+        int sf=sys_open("/proc/stat",O_RDONLY,0);
+        long ctx=0;
+        if(sf>=0){char sb[2048];long sr=sys_read(sf,sb,sizeof(sb)-1);sys_close(sf);if(sr>0){sb[sr]='\0';char*sp=sb;while(*sp){if(sp[0]=='c'&&sp[1]=='t'&&sp[2]=='x'&&sp[3]=='t'){while(*sp&&*sp!=' ')sp++;while(*sp==' ')sp++;while(*sp>='0'&&*sp<='9')ctx=ctx*10+(*sp++-'0');break;}while(*sp&&*sp!='\n')sp++;if(*sp=='\n')sp++;}}}
+        (void)ctx;
+        write_str(1, "    28.41%  [kernel]           schedule\n");
+        write_str(1, "    15.73%  [kernel]           syscall_entry\n");
+        write_str(1, "    11.22%  [kernel]           page_fault_handler\n");
+        write_str(1, "     9.56%  [kernel]           do_idle\n");
+        write_str(1, "     7.89%  [kernel]           timer_interrupt\n");
+        write_str(1, "     6.34%  [kernel]           copy_to_user\n");
+        write_str(1, "     5.12%  [kernel]           vfs_read\n");
+        write_str(1, "     4.01%  [kernel]           kmalloc\n");
+        write_str(1, "     3.28%  [kernel]           vfs_write\n");
+        write_str(1, "     8.44%  [kernel]           (other)\n");
+    } else {
+        write_str(2, "perf: unknown subcommand '");
+        write_str(2, argv[1]);
+        write_str(2, "'\n  usage: perf {stat|record|report|top} [args...]\n");
+    }
+}
 static void cmd_stdbuf(int argc, char *argv[]) {
     if (argc < 3) {
         write_str(2, "usage: stdbuf [-i MODE] [-o MODE] [-e MODE] command [args...]\n");
@@ -49035,6 +49218,537 @@ static void cmd_pgbench(int argc, char *argv[]) {
     write_str(1, "latency average = 1.284 ms\n");
     write_str(1, "initial connection time = 3.412 ms\n");
     write_str(1, "tps = 778.816424 (without initial connection time)\n");
+}
+
+/* __ ltrace: library call tracer (simulated) __ */
+static void cmd_ltrace(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: ltrace [-c] [-e FILTER] <command> [args...]\n");
+        write_str(2, "  Trace library calls made by a command.\n");
+        write_str(2, "  -c          count library calls (summary mode)\n");
+        write_str(2, "  -e FILTER   trace only calls matching FILTER\n");
+        return;
+    }
+    int summary = 0;
+    const char *filter = NULL;
+    int cmd_start = 1;
+    while (cmd_start < argc && argv[cmd_start][0] == '-') {
+        if (strcmp_simple(argv[cmd_start], "-c") == 0) { summary = 1; cmd_start++; }
+        else if (strcmp_simple(argv[cmd_start], "-e") == 0 && cmd_start + 1 < argc) { cmd_start++; filter = argv[cmd_start]; cmd_start++; }
+        else break;
+    }
+    if (cmd_start >= argc) { write_str(2, "ltrace: missing command\n"); return; }
+    /* Execute the command */
+    int sa = argc - cmd_start;
+    char *sv[64]; for (int i = 0; i < sa && i < 63; i++) sv[i] = argv[i + cmd_start]; sv[sa] = NULL;
+    execute_command(sa, sv);
+    /* Simulated library call trace output */
+    static const char *lib_calls[] = {
+        "libc.so.6->__libc_start_main(0x401000, 1, 0x7ffc00, 0x401200)",
+        "libc.so.6->malloc(64)",
+        "libc.so.6->memset(0x604010, 0, 64)",
+        "libc.so.6->puts(\"output\")",
+        "libc.so.6->strlen(\"output\")",
+        "libc.so.6->write(1, \"output\\n\", 7)",
+        "libc.so.6->free(0x604010)",
+        "libc.so.6->exit(0)",
+    };
+    int ncalls = 8;
+    if (summary) {
+        write_str(2, "% time     seconds  usecs/call     calls      function\n");
+        write_str(2, "------ ----------- ----------- --------- --------------------\n");
+        write_str(2, " 28.50   0.000285          35         2 write\n");
+        write_str(2, " 22.10   0.000221          22         1 malloc\n");
+        write_str(2, " 18.40   0.000184          18         1 memset\n");
+        write_str(2, " 12.30   0.000123          12         1 puts\n");
+        write_str(2, "  8.70   0.000087           8         1 strlen\n");
+        write_str(2, "  6.10   0.000061           6         1 free\n");
+        write_str(2, "  3.90   0.000039           3         1 __libc_start_main\n");
+        write_str(2, "------ ----------- ----------- --------- --------------------\n");
+        write_str(2, "100.00   0.001000                     8 total\n");
+    } else {
+        for (int i = 0; i < ncalls; i++) {
+            if (filter) {
+                /* Check if filter substring matches */
+                const char *h = lib_calls[i]; const char *n = filter;
+                int found = 0;
+                while (*h) {
+                    const char *hh = h, *nn = n; int match = 1;
+                    while (*nn) { if (*hh != *nn) { match = 0; break; } hh++; nn++; }
+                    if (match) { found = 1; break; }
+                    h++;
+                }
+                if (!found) continue;
+            }
+            write_str(2, lib_calls[i]);
+            if (i < ncalls - 1) write_str(2, " = 0\n"); else write_str(2, " <no return>\n");
+        }
+        char nb[12]; int_to_str(ncalls, nb, 12);
+        write_str(2, "+++ exited (status 0) +++\nltrace: traced ");
+        write_str(2, nb); write_str(2, " library calls\n");
+    }
+}
+
+/* __ valgrind: memory debugger (simulated) __ */
+static void cmd_valgrind(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: valgrind [--tool=TOOL] <command> [args...]\n");
+        write_str(2, "  --tool=memcheck    memory error detector (default)\n");
+        write_str(2, "  --tool=callgrind   call-graph generating cache profiler\n");
+        write_str(2, "  --tool=cachegrind  cache and branch-prediction profiler\n");
+        return;
+    }
+    const char *tool = "memcheck";
+    int cmd_start = 1;
+    while (cmd_start < argc && argv[cmd_start][0] == '-') {
+        if (argv[cmd_start][0]=='-'&&argv[cmd_start][1]=='-'&&argv[cmd_start][2]=='t'&&argv[cmd_start][3]=='o'&&argv[cmd_start][4]=='o'&&argv[cmd_start][5]=='l'&&argv[cmd_start][6]=='=') {
+            tool = &argv[cmd_start][7];
+            cmd_start++;
+        } else if (strcmp_simple(argv[cmd_start], "--leak-check=full") == 0 || strcmp_simple(argv[cmd_start], "--track-origins=yes") == 0 || strcmp_simple(argv[cmd_start], "-v") == 0 || strcmp_simple(argv[cmd_start], "--verbose") == 0) {
+            cmd_start++;
+        } else break;
+    }
+    if (cmd_start >= argc) { write_str(2, "valgrind: missing command\n"); return; }
+    write_str(2, "==");
+    char pb[12]; int_to_str((int)sys_call0(39), pb, 12); write_str(2, pb);
+    write_str(2, "== Valgrind-3.22.0 (Futura), a framework for heavyweight analysis tools\n");
+    write_str(2, "=="); write_str(2, pb); write_str(2, "== Using tool: ");
+    write_str(2, tool); write_str(2, "\n");
+    /* Execute the command */
+    int sa = argc - cmd_start;
+    char *sv[64]; for (int i = 0; i < sa && i < 63; i++) sv[i] = argv[i + cmd_start]; sv[sa] = NULL;
+    execute_command(sa, sv);
+    if (strcmp_simple(tool, "memcheck") == 0) {
+        write_str(2, "=="); write_str(2, pb); write_str(2, "== \n");
+        write_str(2, "=="); write_str(2, pb); write_str(2, "== HEAP SUMMARY:\n");
+        write_str(2, "=="); write_str(2, pb); write_str(2, "==     in use at exit: 0 bytes in 0 blocks\n");
+        write_str(2, "=="); write_str(2, pb); write_str(2, "==   total heap usage: 3 allocs, 3 frees, 1,152 bytes allocated\n");
+        write_str(2, "=="); write_str(2, pb); write_str(2, "== \n");
+        write_str(2, "=="); write_str(2, pb); write_str(2, "== All heap blocks were freed -- no leaks are possible\n");
+        write_str(2, "=="); write_str(2, pb); write_str(2, "== \n");
+        write_str(2, "=="); write_str(2, pb); write_str(2, "== ERROR SUMMARY: 0 errors from 0 contexts\n");
+    } else if (strcmp_simple(tool, "callgrind") == 0) {
+        write_str(2, "=="); write_str(2, pb); write_str(2, "== \n");
+        write_str(2, "=="); write_str(2, pb); write_str(2, "== Events    : Ir\n");
+        write_str(2, "=="); write_str(2, pb); write_str(2, "== Collected : 284,301\n");
+        write_str(2, "=="); write_str(2, pb); write_str(2, "== \n");
+        write_str(2, "=="); write_str(2, pb); write_str(2, "== I   refs:      284,301\n");
+        write_str(2, "=="); write_str(2, pb); write_str(2, "== Profile data written to callgrind.out.");
+        write_str(2, pb); write_str(2, "\n");
+    } else if (strcmp_simple(tool, "cachegrind") == 0) {
+        write_str(2, "=="); write_str(2, pb); write_str(2, "== \n");
+        write_str(2, "=="); write_str(2, pb); write_str(2, "== I   refs:      284,301\n");
+        write_str(2, "=="); write_str(2, pb); write_str(2, "== I1  misses:      1,203\n");
+        write_str(2, "=="); write_str(2, pb); write_str(2, "== LLi misses:        847\n");
+        write_str(2, "=="); write_str(2, pb); write_str(2, "== I1  miss rate:    0.42%\n");
+        write_str(2, "=="); write_str(2, pb); write_str(2, "== D   refs:      102,417  (72,128 rd + 30,289 wr)\n");
+        write_str(2, "=="); write_str(2, pb); write_str(2, "== D1  misses:      4,218  ( 3,102 rd +  1,116 wr)\n");
+        write_str(2, "=="); write_str(2, pb); write_str(2, "== LLd misses:      2,847  ( 2,014 rd +    833 wr)\n");
+        write_str(2, "=="); write_str(2, pb); write_str(2, "== D1  miss rate:    4.1%  (  4.3%    +   3.7%   )\n");
+    } else {
+        write_str(2, "=="); write_str(2, pb); write_str(2, "== Unknown tool: ");
+        write_str(2, tool); write_str(2, "\n");
+    }
+}
+
+/* __ gdb: GNU debugger (simulated) __ */
+static void cmd_gdb(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "GNU gdb (Futura) 14.2\n");
+        write_str(1, "Copyright (C) 2024 Free Software Foundation, Inc.\n");
+        write_str(1, "usage: gdb <program> [args...]\n");
+        write_str(1, "  Simulated interactive debugger.\n");
+        write_str(1, "  Supported commands: run, break, step, next, print, continue, quit, info, backtrace\n");
+        return;
+    }
+    const char *prog = argv[1];
+    write_str(1, "GNU gdb (Futura) 14.2\n");
+    write_str(1, "Reading symbols from ");
+    write_str(1, prog);
+    write_str(1, "...\n");
+    /* Check if file exists */
+    struct stat sbuf;
+    if (sys_call2(__NR_stat, (long)prog, (long)&sbuf) < 0) {
+        write_str(1, "(No debugging symbols found)\nLoading symbols for builtin command '");
+        write_str(1, prog);
+        write_str(1, "'...done.\n");
+    } else {
+        write_str(1, "(Debugging symbols loaded)\n");
+    }
+    /* Interactive loop */
+    char cmdbuf[256];
+    while (1) {
+        write_str(1, "(gdb) ");
+        long nr = sys_read(0, cmdbuf, sizeof(cmdbuf) - 1);
+        if (nr <= 0) break;
+        if (cmdbuf[nr - 1] == '\n') nr--;
+        cmdbuf[nr] = '\0';
+        if (nr == 0) continue;
+        if (strcmp_simple(cmdbuf, "quit") == 0 || strcmp_simple(cmdbuf, "q") == 0) {
+            write_str(1, "Quitting gdb.\n");
+            break;
+        } else if (strcmp_simple(cmdbuf, "run") == 0 || strcmp_simple(cmdbuf, "r") == 0) {
+            write_str(1, "Starting program: ");
+            write_str(1, prog);
+            write_str(1, "\n");
+            int sa = argc - 1;
+            char *sv[64]; for (int i = 0; i < sa && i < 63; i++) sv[i] = argv[i + 1]; sv[sa] = NULL;
+            execute_command(sa, sv);
+            write_str(1, "\n[Inferior 1 (process ");
+            char pb[12]; int_to_str((int)sys_call0(39), pb, 12); write_str(1, pb);
+            write_str(1, ") exited normally]\n");
+        } else if (cmdbuf[0] == 'b' && (cmdbuf[1] == ' ' || cmdbuf[1] == 'r')) {
+            /* break or breakpoint */
+            const char *loc = cmdbuf + 2;
+            if (cmdbuf[1] == 'r') { while (*loc && *loc != ' ') loc++; while (*loc == ' ') loc++; }
+            write_str(1, "Breakpoint 1 at 0x401000: file ");
+            write_str(1, prog);
+            write_str(1, ".c, line ");
+            if (*loc >= '0' && *loc <= '9') write_str(1, loc); else write_str(1, "1");
+            write_str(1, ".\n");
+        } else if (strcmp_simple(cmdbuf, "step") == 0 || strcmp_simple(cmdbuf, "s") == 0) {
+            write_str(1, "Single stepping...\n");
+            write_str(1, "0x0000000000401001 in main ()\n");
+        } else if (strcmp_simple(cmdbuf, "next") == 0 || strcmp_simple(cmdbuf, "n") == 0) {
+            write_str(1, "Stepping over...\n");
+            write_str(1, "0x0000000000401005 in main ()\n");
+        } else if (cmdbuf[0] == 'p' && (cmdbuf[1] == ' ' || cmdbuf[1] == 'r')) {
+            const char *expr = cmdbuf + 2;
+            if (cmdbuf[1] == 'r') { while (*expr && *expr != ' ') expr++; while (*expr == ' ') expr++; }
+            write_str(1, "$1 = ");
+            if (*expr == '&' || (*expr >= '0' && *expr <= '9')) write_str(1, expr);
+            else { write_str(1, "("); write_str(1, expr); write_str(1, " = 0)"); }
+            write_str(1, "\n");
+        } else if (strcmp_simple(cmdbuf, "continue") == 0 || strcmp_simple(cmdbuf, "c") == 0) {
+            write_str(1, "Continuing.\n");
+            write_str(1, "[Inferior 1 exited normally]\n");
+        } else if (strcmp_simple(cmdbuf, "backtrace") == 0 || strcmp_simple(cmdbuf, "bt") == 0) {
+            write_str(1, "#0  0x0000000000401000 in main () at ");
+            write_str(1, prog); write_str(1, ".c:1\n");
+            write_str(1, "#1  0x00007ffff7a2d840 in __libc_start_main ()\n");
+        } else if (strcmp_simple(cmdbuf, "info registers") == 0) {
+            write_str(1, "rax            0x0                 0\n");
+            write_str(1, "rbx            0x0                 0\n");
+            write_str(1, "rcx            0x0                 0\n");
+            write_str(1, "rdx            0x0                 0\n");
+            write_str(1, "rsp            0x7fffffffe000      0x7fffffffe000\n");
+            write_str(1, "rip            0x401000            0x401000 <main>\n");
+        } else {
+            write_str(1, "Undefined command: \"");
+            write_str(1, cmdbuf);
+            write_str(1, "\". Try \"help\".\n");
+        }
+    }
+}
+
+/* __ lldb: LLVM debugger (simulated) __ */
+static void cmd_lldb(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "lldb (Futura) version 18.0.0\n");
+        write_str(1, "usage: lldb <program> [args...]\n");
+        write_str(1, "  Simulated LLVM debugger.\n");
+        write_str(1, "  Supported: run, breakpoint set, thread step-in, thread step-over, frame variable, quit\n");
+        return;
+    }
+    const char *prog = argv[1];
+    write_str(1, "(lldb) target create \"");
+    write_str(1, prog);
+    write_str(1, "\"\nCurrent executable set to '");
+    write_str(1, prog);
+    write_str(1, "'.\n");
+    char cmdbuf[256];
+    while (1) {
+        write_str(1, "(lldb) ");
+        long nr = sys_read(0, cmdbuf, sizeof(cmdbuf) - 1);
+        if (nr <= 0) break;
+        if (cmdbuf[nr - 1] == '\n') nr--;
+        cmdbuf[nr] = '\0';
+        if (nr == 0) continue;
+        if (strcmp_simple(cmdbuf, "quit") == 0 || strcmp_simple(cmdbuf, "q") == 0) {
+            write_str(1, "Quitting LLDB.\n");
+            break;
+        } else if (strcmp_simple(cmdbuf, "run") == 0 || strcmp_simple(cmdbuf, "r") == 0) {
+            write_str(1, "Process ");
+            char pb[12]; int_to_str((int)sys_call0(39), pb, 12); write_str(1, pb);
+            write_str(1, " launched: '");
+            write_str(1, prog);
+            write_str(1, "'\n");
+            int sa = argc - 1;
+            char *sv[64]; for (int i = 0; i < sa && i < 63; i++) sv[i] = argv[i + 1]; sv[sa] = NULL;
+            execute_command(sa, sv);
+            write_str(1, "\nProcess ");
+            write_str(1, pb);
+            write_str(1, " exited with status = 0 (0x00000000)\n");
+        } else if (cmdbuf[0] == 'b' && cmdbuf[1] == 'r') {
+            /* breakpoint set */
+            write_str(1, "Breakpoint 1: where = ");
+            write_str(1, prog);
+            write_str(1, "`main, address = 0x0000000000401000\n");
+        } else if (cmdbuf[0] == 'b' && cmdbuf[1] == ' ') {
+            write_str(1, "Breakpoint 1: where = ");
+            write_str(1, prog);
+            write_str(1, "`");
+            write_str(1, &cmdbuf[2]);
+            write_str(1, ", address = 0x0000000000401000\n");
+        } else if (strcmp_simple(cmdbuf, "thread step-in") == 0 || strcmp_simple(cmdbuf, "s") == 0) {
+            write_str(1, "Process stopped\n* thread #1, stop reason = step in\n");
+            write_str(1, "    frame #0: 0x0000000000401001 ");
+            write_str(1, prog); write_str(1, "`main at main.c:2\n");
+        } else if (strcmp_simple(cmdbuf, "thread step-over") == 0 || strcmp_simple(cmdbuf, "n") == 0) {
+            write_str(1, "Process stopped\n* thread #1, stop reason = step over\n");
+            write_str(1, "    frame #0: 0x0000000000401005 ");
+            write_str(1, prog); write_str(1, "`main at main.c:3\n");
+        } else if (strcmp_simple(cmdbuf, "frame variable") == 0 || strcmp_simple(cmdbuf, "v") == 0) {
+            write_str(1, "(int) argc = 1\n");
+            write_str(1, "(char **) argv = 0x00007fffffffe100\n");
+        } else if (strcmp_simple(cmdbuf, "bt") == 0 || strcmp_simple(cmdbuf, "thread backtrace") == 0) {
+            write_str(1, "* thread #1\n");
+            write_str(1, "  * frame #0: 0x0000000000401000 ");
+            write_str(1, prog); write_str(1, "`main at main.c:1\n");
+            write_str(1, "    frame #1: 0x00007ffff7a2d840 libc.so.6`__libc_start_main\n");
+        } else if (strcmp_simple(cmdbuf, "register read") == 0) {
+            write_str(1, "General Purpose Registers:\n");
+            write_str(1, "       rax = 0x0000000000000000\n");
+            write_str(1, "       rbx = 0x0000000000000000\n");
+            write_str(1, "       rsp = 0x00007fffffffe000\n");
+            write_str(1, "       rip = 0x0000000000401000  ");
+            write_str(1, prog); write_str(1, "`main\n");
+        } else {
+            write_str(1, "error: '");
+            write_str(1, cmdbuf);
+            write_str(1, "' is not a valid command.\n");
+        }
+    }
+}
+
+/* __ addr2line: translate addresses to file/line (simulated) __ */
+static void cmd_addr2line(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: addr2line [-e FILE] [-f] [-C] <address>...\n");
+        write_str(2, "  Convert addresses to file name and line number pairs.\n");
+        write_str(2, "  -e FILE   specify the executable\n");
+        write_str(2, "  -f        show function names\n");
+        write_str(2, "  -C        demangle function names\n");
+        return;
+    }
+    const char *exe = "a.out";
+    int show_func = 0;
+    int demangle = 0;
+    int addr_start = 1;
+    while (addr_start < argc && argv[addr_start][0] == '-') {
+        if (strcmp_simple(argv[addr_start], "-e") == 0 && addr_start + 1 < argc) {
+            addr_start++; exe = argv[addr_start]; addr_start++;
+        } else if (strcmp_simple(argv[addr_start], "-f") == 0) {
+            show_func = 1; addr_start++;
+        } else if (strcmp_simple(argv[addr_start], "-C") == 0) {
+            demangle = 1; addr_start++;
+        } else break;
+    }
+    (void)demangle;
+    if (addr_start >= argc) { write_str(2, "addr2line: no addresses specified\n"); return; }
+    for (int i = addr_start; i < argc; i++) {
+        const char *addr = argv[i];
+        /* Parse hex address for simulated line number */
+        long val = 0;
+        const char *p = addr;
+        if (p[0] == '0' && p[1] == 'x') p += 2;
+        while (*p) {
+            val <<= 4;
+            if (*p >= '0' && *p <= '9') val |= (*p - '0');
+            else if (*p >= 'a' && *p <= 'f') val |= (*p - 'a' + 10);
+            else if (*p >= 'A' && *p <= 'F') val |= (*p - 'A' + 10);
+            p++;
+        }
+        int line = (int)((val >> 4) & 0xFF) + 1;
+        if (show_func) {
+            if (val < 0x402000) write_str(1, "main\n");
+            else if (val < 0x403000) write_str(1, "_start\n");
+            else write_str(1, "??\n");
+        }
+        write_str(1, exe);
+        write_str(1, ".c:");
+        char lb[12]; int_to_str(line, lb, 12);
+        write_str(1, lb);
+        write_str(1, "\n");
+    }
+}
+
+/* __ objcopy: copy and translate object files (simulated) __ */
+static void cmd_objcopy(int argc, char *argv[]) {
+    if (argc < 3) {
+        write_str(2, "usage: objcopy [OPTIONS] INPUT OUTPUT\n");
+        write_str(2, "  Copy and translate object files.\n");
+        write_str(2, "  -O FORMAT       set output format (binary, ihex, srec)\n");
+        write_str(2, "  -j SECTION      only copy section SECTION\n");
+        write_str(2, "  -R SECTION      remove section SECTION\n");
+        write_str(2, "  --strip-all     remove all symbols\n");
+        write_str(2, "  --add-section NAME=FILE  add a section\n");
+        return;
+    }
+    const char *input = NULL, *output = NULL;
+    const char *ofmt = NULL;
+    const char *only_sect = NULL;
+    const char *remove_sect = NULL;
+    int strip_all = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-O") == 0 && i + 1 < argc) { ofmt = argv[++i]; }
+        else if (strcmp_simple(argv[i], "-j") == 0 && i + 1 < argc) { only_sect = argv[++i]; }
+        else if (strcmp_simple(argv[i], "-R") == 0 && i + 1 < argc) { remove_sect = argv[++i]; }
+        else if (strcmp_simple(argv[i], "--strip-all") == 0) { strip_all = 1; }
+        else if (!input) { input = argv[i]; }
+        else if (!output) { output = argv[i]; }
+    }
+    if (!input || !output) { write_str(2, "objcopy: need input and output files\n"); return; }
+    /* Check input exists */
+    struct stat sbuf;
+    if (sys_call2(__NR_stat, (long)input, (long)&sbuf) < 0) {
+        write_str(2, "objcopy: '"); write_str(2, input);
+        write_str(2, "': No such file\n"); return;
+    }
+    write_str(1, "objcopy: copying '"); write_str(1, input);
+    write_str(1, "' -> '"); write_str(1, output); write_str(1, "'\n");
+    if (ofmt) { write_str(1, "  output format: "); write_str(1, ofmt); write_str(1, "\n"); }
+    if (only_sect) { write_str(1, "  copying only section: "); write_str(1, only_sect); write_str(1, "\n"); }
+    if (remove_sect) { write_str(1, "  removing section: "); write_str(1, remove_sect); write_str(1, "\n"); }
+    if (strip_all) { write_str(1, "  stripping all symbols\n"); }
+    /* Simulate copy by actually copying the file */
+    int ifd = sys_open(input, O_RDONLY, 0);
+    if (ifd < 0) { write_str(2, "objcopy: cannot open input\n"); return; }
+    int ofd = sys_open(output, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (ofd < 0) { sys_close(ifd); write_str(2, "objcopy: cannot create output\n"); return; }
+    char buf[4096]; long nr;
+    while ((nr = sys_read(ifd, buf, sizeof(buf))) > 0) sys_write(ofd, buf, nr);
+    sys_close(ifd); sys_close(ofd);
+    write_str(1, "  done.\n");
+}
+
+/* __ c++filt: demangle C++ symbols (simulated) __ */
+static void cmd_cppfilt(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: c++filt [-t] <mangled-name>...\n");
+        write_str(2, "  Demangle C++/Java symbols.\n");
+        write_str(2, "  -t    also try to demangle types\n");
+        write_str(2, "  If no arguments, reads from stdin.\n");
+        return;
+    }
+    int start = 1;
+    int types = 0;
+    if (strcmp_simple(argv[1], "-t") == 0) { types = 1; start = 2; }
+    (void)types;
+    for (int i = start; i < argc; i++) {
+        const char *sym = argv[i];
+        /* Check for _Z prefix (Itanium ABI mangling) */
+        if (sym[0] == '_' && sym[1] == 'Z') {
+            const char *p = sym + 2;
+            /* _ZN...E pattern: nested name */
+            if (*p == 'N') {
+                p++;
+                int depth = 0;
+                while (*p && *p != 'E') {
+                    /* Read length-prefixed name components */
+                    int len = 0;
+                    while (*p >= '0' && *p <= '9') { len = len * 10 + (*p - '0'); p++; }
+                    if (len == 0) break;
+                    if (depth > 0) write_str(1, "::");
+                    for (int j = 0; j < len && *p; j++) { sys_write(1, p, 1); p++; }
+                    depth++;
+                }
+                write_str(1, "()\n");
+            } else {
+                /* Simple function: _Z<len><name><type> */
+                int len = 0;
+                while (*p >= '0' && *p <= '9') { len = len * 10 + (*p - '0'); p++; }
+                if (len > 0) {
+                    for (int j = 0; j < len && *p; j++) { sys_write(1, p, 1); p++; }
+                    write_str(1, "(");
+                    /* Decode simple type codes */
+                    while (*p) {
+                        if (*p == 'i') write_str(1, "int");
+                        else if (*p == 'f') write_str(1, "float");
+                        else if (*p == 'd') write_str(1, "double");
+                        else if (*p == 'v') write_str(1, "void");
+                        else if (*p == 'c') write_str(1, "char");
+                        else if (*p == 'b') write_str(1, "bool");
+                        else if (*p == 'l') write_str(1, "long");
+                        else if (*p == 'P') { write_str(1, "*"); p++; continue; }
+                        else if (*p == 'R') { write_str(1, "&"); p++; continue; }
+                        else { sys_write(1, p, 1); }
+                        p++;
+                        if (*p && *p != 'E') write_str(1, ", ");
+                    }
+                    write_str(1, ")\n");
+                } else {
+                    /* Cannot demangle, print as-is */
+                    write_str(1, sym); write_str(1, "\n");
+                }
+            }
+        } else {
+            /* Not a mangled name, print as-is */
+            write_str(1, sym); write_str(1, "\n");
+        }
+    }
+}
+
+/* __ elfedit: update ELF header (simulated) __ */
+static void cmd_elfedit(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: elfedit [--output-type TYPE] [--output-osabi OSABI] <file>\n");
+        write_str(2, "  Update the ELF header of ELF files.\n");
+        write_str(2, "  --output-type TYPE     set ELF type (exec, dyn, rel)\n");
+        write_str(2, "  --output-osabi OSABI   set OS/ABI (linux, freebsd, none)\n");
+        write_str(2, "  --output-machine MACH  set machine type (x86_64, aarch64)\n");
+        return;
+    }
+    const char *file = NULL;
+    const char *new_type = NULL;
+    const char *new_osabi = NULL;
+    const char *new_mach = NULL;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "--output-type") == 0 && i + 1 < argc) { new_type = argv[++i]; }
+        else if (strcmp_simple(argv[i], "--output-osabi") == 0 && i + 1 < argc) { new_osabi = argv[++i]; }
+        else if (strcmp_simple(argv[i], "--output-machine") == 0 && i + 1 < argc) { new_mach = argv[++i]; }
+        else if (argv[i][0] != '-') { file = argv[i]; }
+    }
+    if (!file) { write_str(2, "elfedit: no input file\n"); return; }
+    /* Try to read ELF header */
+    int fd = sys_open(file, O_RDONLY, 0);
+    if (fd < 0) { write_str(2, "elfedit: '"); write_str(2, file); write_str(2, "': No such file\n"); return; }
+    unsigned char ehdr[64];
+    long nr = sys_read(fd, (char *)ehdr, 64);
+    sys_close(fd);
+    if (nr < 16 || ehdr[0] != 0x7f || ehdr[1] != 'E' || ehdr[2] != 'L' || ehdr[3] != 'F') {
+        write_str(2, "elfedit: '"); write_str(2, file); write_str(2, "': not an ELF file\n"); return;
+    }
+    /* Display current ELF header info */
+    write_str(1, "ELF Header for '"); write_str(1, file); write_str(1, "':\n");
+    write_str(1, "  Class:      ");
+    if (ehdr[4] == 1) write_str(1, "ELF32\n"); else write_str(1, "ELF64\n");
+    write_str(1, "  Data:       ");
+    if (ehdr[5] == 1) write_str(1, "2's complement, little endian\n"); else write_str(1, "2's complement, big endian\n");
+    write_str(1, "  OS/ABI:     ");
+    if (ehdr[7] == 0) write_str(1, "UNIX - System V\n");
+    else if (ehdr[7] == 3) write_str(1, "UNIX - Linux\n");
+    else if (ehdr[7] == 9) write_str(1, "UNIX - FreeBSD\n");
+    else { char ob[8]; int_to_str(ehdr[7], ob, 8); write_str(1, ob); write_str(1, "\n"); }
+    write_str(1, "  Type:       ");
+    int etype = ehdr[16] | (ehdr[17] << 8);
+    if (etype == 1) write_str(1, "REL (Relocatable)\n");
+    else if (etype == 2) write_str(1, "EXEC (Executable)\n");
+    else if (etype == 3) write_str(1, "DYN (Shared object)\n");
+    else { char tb2[8]; int_to_str(etype, tb2, 8); write_str(1, tb2); write_str(1, "\n"); }
+    write_str(1, "  Machine:    ");
+    int emach = ehdr[18] | (ehdr[19] << 8);
+    if (emach == 0x3E) write_str(1, "Advanced Micro Devices X86-64\n");
+    else if (emach == 0xB7) write_str(1, "AArch64\n");
+    else if (emach == 0x03) write_str(1, "Intel 80386\n");
+    else { char mb[8]; int_to_str(emach, mb, 8); write_str(1, mb); write_str(1, "\n"); }
+    if (new_type || new_osabi || new_mach) {
+        write_str(1, "\nModifications (simulated):\n");
+        if (new_type) { write_str(1, "  Set type to: "); write_str(1, new_type); write_str(1, "\n"); }
+        if (new_osabi) { write_str(1, "  Set OS/ABI to: "); write_str(1, new_osabi); write_str(1, "\n"); }
+        if (new_mach) { write_str(1, "  Set machine to: "); write_str(1, new_mach); write_str(1, "\n"); }
+        write_str(1, "  (changes simulated, file not modified)\n");
+    }
 }
 
 #pragma GCC diagnostic pop

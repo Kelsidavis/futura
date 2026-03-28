@@ -39213,8 +39213,8 @@ static void cmd_vimdiff(int argc, char *argv[]) {
         return;
     }
 
-    #define VD_MAX_LINES 256
-    #define VD_LINE_MAX 256
+    #define VD_MAX_LINES 128
+    #define VD_LINE_MAX 128
     #define VD_ROWS 24
     static char vda[VD_MAX_LINES][VD_LINE_MAX];
     static char vdb[VD_MAX_LINES][VD_LINE_MAX];

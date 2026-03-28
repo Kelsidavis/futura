@@ -65881,6 +65881,156 @@ __attribute__((noinline)) static void test_vfs_file_locking(void) {
     #undef VFL_LOCK_UN
 }
 
+/* Tests 2350-2351: Pipe POSIX semantics — F_SETPIPE_SZ round-trip + atomic write */
+__attribute__((noinline)) static void test_pipe_posix_semantics(void) {
+    extern long sys_pipe(int pipefd[2]);
+    extern long sys_fcntl(int fd, int cmd, uint64_t arg);
+    extern ssize_t sys_write(int fd, const void *buf, size_t count);
+    extern ssize_t sys_read(int fd, void *buf, size_t count);
+    extern long sys_close(int fd);
+
+    #define TPS_F_GETPIPE_SZ 1032
+    #define TPS_F_SETPIPE_SZ 1033
+
+    fut_printf("[MISC-TEST] Tests 2350-2351: Pipe POSIX semantics (F_SETPIPE_SZ, atomic write)\n");
+
+    int fds[2];
+    long ret = sys_pipe(fds);
+    if (ret < 0) {
+        fut_printf("[MISC-TEST] FAIL: pipe() failed: %ld\n", ret);
+        fut_test_fail(2350);
+        fut_test_fail(2351);
+        return;
+    }
+
+    /* ----- Test 2350: F_SETPIPE_SZ / F_GETPIPE_SZ round-trip -----
+     *
+     * 1. Read default size via F_GETPIPE_SZ (should be 65536).
+     * 2. Resize to 131072 via F_SETPIPE_SZ.
+     * 3. Read back via F_GETPIPE_SZ and verify it matches.
+     * 4. Write data that fits the new capacity, read it back.
+     */
+    fut_printf("[MISC-TEST] Test 2350: F_SETPIPE_SZ / F_GETPIPE_SZ round-trip\n");
+    {
+        long orig = sys_fcntl(fds[0], TPS_F_GETPIPE_SZ, 0);
+        if (orig < 4096) {
+            fut_printf("[MISC-TEST] FAIL Test 2350: F_GETPIPE_SZ returned %ld (expected >= 4096)\n", orig);
+            fut_test_fail(2350);
+        } else {
+            /* Resize to 131072 (128KB) */
+            long new_sz = sys_fcntl(fds[1], TPS_F_SETPIPE_SZ, 131072);
+            if (new_sz < 131072) {
+                fut_printf("[MISC-TEST] FAIL Test 2350: F_SETPIPE_SZ(131072) returned %ld\n", new_sz);
+                fut_test_fail(2350);
+            } else {
+                /* Verify via F_GETPIPE_SZ on the read end */
+                long readback = sys_fcntl(fds[0], TPS_F_GETPIPE_SZ, 0);
+                if (readback != new_sz) {
+                    fut_printf("[MISC-TEST] FAIL Test 2350: F_GETPIPE_SZ after resize = %ld (expected %ld)\n",
+                               readback, new_sz);
+                    fut_test_fail(2350);
+                } else {
+                    /* Write 8KB and read back to verify the resized pipe works */
+                    char wbuf[8192];
+                    for (int i = 0; i < 8192; i++) wbuf[i] = (char)(i & 0x7f);
+                    ssize_t nw = sys_write(fds[1], wbuf, 8192);
+                    char rbuf[8192];
+                    ssize_t nr = sys_read(fds[0], rbuf, 8192);
+                    if (nw == 8192 && nr == 8192 && rbuf[0] == 0 && rbuf[8191] == (char)(8191 & 0x7f)) {
+                        fut_printf("[MISC-TEST] pass Test 2350 (default=%ld, resized=%ld, write/read 8192 ok)\n",
+                                   orig, new_sz);
+                        fut_test_pass();
+                    } else {
+                        fut_printf("[MISC-TEST] FAIL Test 2350: write=%zd read=%zd\n", nw, nr);
+                        fut_test_fail(2350);
+                    }
+                }
+            }
+        }
+    }
+
+    /* ----- Test 2351: Atomic write guarantee for <= PIPE_BUF (4096) -----
+     *
+     * POSIX requires that writes of PIPE_BUF (4096) bytes or fewer are
+     * atomic: they either succeed entirely or fail with EAGAIN/block.
+     * This test fills the pipe to within 100 bytes of capacity, then
+     * attempts a 4096-byte non-blocking write.  The write must NOT
+     * succeed partially — it must either complete fully or return -EAGAIN.
+     */
+    fut_printf("[MISC-TEST] Test 2351: Atomic write guarantee (<= PIPE_BUF)\n");
+    {
+        /* Drain any leftover data from Test 2350 */
+        char drain[8192];
+        while (1) {
+            /* Set read end to non-blocking to drain */
+            sys_fcntl(fds[0], 4 /* F_SETFL */, 0x800 /* O_NONBLOCK */);
+            ssize_t n = sys_read(fds[0], drain, sizeof(drain));
+            if (n <= 0) break;
+        }
+
+        /* Reset to blocking read */
+        sys_fcntl(fds[0], 4 /* F_SETFL */, 0);
+
+        /* Resize pipe to exactly 4096 to make the test deterministic */
+        long sz = sys_fcntl(fds[1], TPS_F_SETPIPE_SZ, 4096);
+        if (sz < 4096) {
+            fut_printf("[MISC-TEST] FAIL Test 2351: F_SETPIPE_SZ(4096) returned %ld\n", sz);
+            fut_test_fail(2351);
+        } else {
+            /* Fill pipe to (capacity - 100) bytes to create tight space */
+            size_t capacity = (size_t)sz;
+            size_t fill = capacity - 100;
+            char fillbuf[256];
+            __builtin_memset(fillbuf, 'X', sizeof(fillbuf));
+            size_t filled = 0;
+            /* Set write end non-blocking for filling */
+            sys_fcntl(fds[1], 4 /* F_SETFL */, 0x800 /* O_NONBLOCK */);
+            while (filled < fill) {
+                size_t want = fill - filled;
+                if (want > sizeof(fillbuf)) want = sizeof(fillbuf);
+                ssize_t nw = sys_write(fds[1], fillbuf, want);
+                if (nw <= 0) break;
+                filled += (size_t)nw;
+            }
+
+            /* Now attempt a 4096-byte atomic write (only ~100 bytes free).
+             * POSIX: must return -EAGAIN (not partial) because 4096 <= PIPE_BUF
+             * and there isn't room for the entire 4096 bytes. */
+            char atomic_buf[4096];
+            __builtin_memset(atomic_buf, 'A', 4096);
+            ssize_t result = sys_write(fds[1], atomic_buf, 4096);
+
+            if (result == -11 /* EAGAIN */) {
+                /* Correct: atomic write rejected because not enough space */
+                fut_printf("[MISC-TEST] pass Test 2351 (4096-byte write returned EAGAIN with %zu/%zu filled)\n",
+                           filled, capacity);
+                fut_test_pass();
+            } else if (result == 4096) {
+                /* Also acceptable if pipe somehow had room (shouldn't happen with fill) */
+                fut_printf("[MISC-TEST] pass Test 2351 (4096-byte write succeeded atomically)\n");
+                fut_test_pass();
+            } else if (result > 0 && result < 4096) {
+                /* FAILURE: partial write violates PIPE_BUF atomicity */
+                fut_printf("[MISC-TEST] FAIL Test 2351: partial write %zd/4096 (PIPE_BUF atomicity violated)\n",
+                           result);
+                fut_test_fail(2351);
+            } else {
+                fut_printf("[MISC-TEST] FAIL Test 2351: unexpected result %zd\n", result);
+                fut_test_fail(2351);
+            }
+
+            /* Reset write end to blocking */
+            sys_fcntl(fds[1], 4 /* F_SETFL */, 0);
+        }
+    }
+
+    sys_close(fds[0]);
+    sys_close(fds[1]);
+
+    #undef TPS_F_GETPIPE_SZ
+    #undef TPS_F_SETPIPE_SZ
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -70198,6 +70348,7 @@ void fut_misc_test_thread(void *arg) {
     test_elf_auxv_correctness(); /* Tests 2325-2330: auxv AT_UID/AT_EUID/AT_GID/AT_EGID/AT_PLATFORM/AT_SECURE */
     test_pgrp_session_jobctl(); /* Tests 2335-2337: setpgid new group, kill(0) group target, getsid leader */
     test_vfs_file_locking(); /* Tests 2340-2345: flock acquire/release, /proc/locks, idempotent unlock */
+    test_pipe_posix_semantics(); /* Tests 2350-2351: pipe F_SETPIPE_SZ round-trip + atomic write guarantee */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

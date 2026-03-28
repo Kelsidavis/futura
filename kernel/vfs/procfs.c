@@ -1308,6 +1308,10 @@ static size_t gen_maps(char *buf, size_t cap, fut_task_t *task) {
             path_buf[nlen++] = ']';
             path_buf[nlen] = '\0';
             pseudo = path_buf;
+        } else if (vma->flags & VMA_VVAR) {
+            pseudo = "[vvar]";
+        } else if (vma->flags & VMA_VDSO) {
+            pseudo = "[vdso]";
         } else if (vma->flags & VMA_STACK) {
             pseudo = "[stack]";
         } else if (mm->brk_start && vma->start >= mm->brk_start &&
@@ -1524,6 +1528,10 @@ static size_t gen_smaps(char *buf, size_t cap, fut_task_t *task) {
                 while (*an && nlen < sizeof(sp_buf) - 2) sp_buf[nlen++] = *an++;
                 sp_buf[nlen++] = ']'; sp_buf[nlen] = '\0';
                 sp_pseudo = sp_buf;
+            } else if (vma->flags & VMA_VVAR) {
+                sp_pseudo = "[vvar]";
+            } else if (vma->flags & VMA_VDSO) {
+                sp_pseudo = "[vdso]";
             } else if (vma->flags & VMA_STACK) {
                 sp_pseudo = "[stack]";
             } else if (mm->brk_start && vma->start >= mm->brk_start &&
@@ -1568,14 +1576,47 @@ static size_t gen_smaps(char *buf, size_t cap, fut_task_t *task) {
         pb_str(&b, "SwapPss:               0 kB\n");
         smaps_emit_field(&b, "Locked:", s.locked_kb);
         pb_str(&b, "THPeligible:           0\n");
-        /* VmFlags: encode prot/vma bits as Linux vm flags */
+        /* VmFlags: encode prot/vma bits as Linux vm flags.
+         * Full Linux flag set: rd wr ex sh mr mw me ms gd pf dw lo io
+         * sr ht sf nh mg um dd
+         *   rd/wr/ex = current readable/writable/executable
+         *   sh       = shared mapping
+         *   mr/mw/me = may read/write/execute (permission ceiling)
+         *   ms       = may share
+         *   gd       = stack grows down
+         *   pf       = pure PFN (no struct page backing)
+         *   dw       = disabled write to mapped file (copy-on-write)
+         *   lo       = pages are locked in memory
+         *   io       = memory-mapped I/O area
+         *   sr       = sequential read advised (MADV_SEQUENTIAL)
+         *   ht       = transparent hugepage advised (MADV_HUGEPAGE)
+         *   sf       = always-on hugepages (unused — static flag)
+         *   nh       = no-hugepage advised (MADV_NOHUGEPAGE)
+         *   mg       = mergeable (MADV_MERGEABLE / KSM)
+         *   um       = userfaultfd missing tracking (stub)
+         *   dd       = don't include in core dump (MADV_DONTDUMP)
+         */
         pb_str(&b, "VmFlags:");
-        if (vma->prot & PROT_READ)  pb_str(&b, " rd");
-        if (vma->prot & PROT_WRITE) pb_str(&b, " wr");
-        if (vma->prot & PROT_EXEC)  pb_str(&b, " ex");
-        if (vma->flags & VMA_SHARED) pb_str(&b, " sh");
-        if (vma->flags & VMA_LOCKED) pb_str(&b, " lo");
-        pb_str(&b, " mr mw me");  /* mapped, may_read, may_write, may_exec */
+        if (vma->prot & PROT_READ)       pb_str(&b, " rd");
+        if (vma->prot & PROT_WRITE)      pb_str(&b, " wr");
+        if (vma->prot & PROT_EXEC)       pb_str(&b, " ex");
+        if (vma->flags & VMA_SHARED)     pb_str(&b, " sh");
+        /* may_read/may_write/may_exec — permission ceiling.
+         * On Linux these reflect the maximum allowed protection; in Futura
+         * every private mapping starts with full may-flags. */
+        pb_str(&b, " mr mw me");
+        if (vma->flags & VMA_SHARED)     pb_str(&b, " ms");
+        if (vma->flags & VMA_GROWSDOWN)  pb_str(&b, " gd");
+        /* pf (pure PFN) — only for raw I/O mappings with no struct page */
+        if (vma->flags & VMA_IO)         pb_str(&b, " pf");
+        if (vma->flags & VMA_COW)        pb_str(&b, " dw");
+        if (vma->flags & VMA_LOCKED)     pb_str(&b, " lo");
+        if (vma->flags & VMA_IO)         pb_str(&b, " io");
+        if (vma->flags & VMA_SEQ_READ)   pb_str(&b, " sr");
+        if (vma->flags & VMA_HUGEPAGE)   pb_str(&b, " ht");
+        if (vma->flags & VMA_NOHUGEPAGE) pb_str(&b, " nh");
+        if (vma->flags & VMA_MERGEABLE)  pb_str(&b, " mg");
+        if (vma->flags & VMA_DONTDUMP)   pb_str(&b, " dd");
         pb_char(&b, '\n');
 
         vma = vma->next;

@@ -140,6 +140,20 @@ void fut_sched_add_thread(fut_thread_t *thread);
 void fut_sched_remove_thread(fut_thread_t *thread);
 
 /**
+ * Compute time slice (in scheduler ticks at FUT_TIMER_HZ=100) from a nice value.
+ *
+ * Nice -20 (highest priority) -> 10 ticks (100ms)
+ * Nice   0 (default)          ->  2 ticks  (20ms)
+ * Nice  19 (lowest priority)  ->  1 tick   (10ms minimum quantum)
+ *
+ * Formula: max(1, 10 - (nice / 2))
+ *
+ * @param nice  Nice value (-20 to 19)
+ * @return Time slice in ticks (1 to 10)
+ */
+int fut_sched_nice_to_slice(int nice);
+
+/**
  * Get scheduler statistics.
  *
  * @param ready_count    Output: number of ready threads

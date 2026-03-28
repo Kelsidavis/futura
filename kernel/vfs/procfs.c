@@ -288,6 +288,7 @@ enum procfs_kind {
     PROC_CONSOLES,                  /* /proc/consoles — registered console devices */
     PROC_IOMEM,                     /* /proc/iomem — I/O memory map */
     PROC_IOPORTS,                   /* /proc/ioports — I/O port allocations */
+    PROC_KMSG,                      /* /proc/kmsg — kernel log ring buffer */
     PROC_TIMERSLACK_NS,             /* /proc/<pid>/timerslack_ns — timer expiry slack in nanoseconds */
     PROC_SYSCALL,                   /* /proc/<pid>/syscall — current syscall number and arguments */
     PROC_LOCKS,                     /* /proc/locks — POSIX and flock file lock table */
@@ -529,6 +530,7 @@ typedef struct {
 #define PROC_INO_CONSOLES                437ULL
 #define PROC_INO_IOMEM                   438ULL
 #define PROC_INO_IOPORTS                 439ULL
+#define PROC_INO_KMSG                    440ULL
 #define PROC_INO_PAGETYPEINFO            441ULL
 /* /proc/sys/kernel/ extended range: 400-429 */
 #define PROC_INO_SYS_KERNEL_NMI_WD     400ULL
@@ -7193,11 +7195,11 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         /*
          * PID enumeration: after the 40 fixed entries, cookies encode
          * "find first task with pid > (cookie - 40)".  After returning
-         * a PID entry we set cookie = 39 + that_pid + 1.
+         * a PID entry we set cookie = 40 + that_pid + 1.
          */
-        /* Cookie encodes 39 + last_returned_pid + 1, so the PID to resume
-         * after is (idx - 39 - 1).  We scan for pid > that value, i.e., pid >= (idx - 39). */
-        uint64_t min_pid = idx > 39 ? idx - 39 - 1 : 0;  /* start scanning for pid > min_pid */
+        /* Cookie encodes 40 + last_returned_pid + 1, so the PID to resume
+         * after is (idx - 40 - 1).  We scan for pid > that value, i.e., pid >= (idx - 40). */
+        uint64_t min_pid = idx > 40 ? idx - 40 - 1 : 0;  /* start scanning for pid > min_pid */
         fut_task_t *best = NULL;
         uint64_t   best_pid = (uint64_t)-1;
         fut_task_t *t = fut_task_list;
@@ -7222,14 +7224,14 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         pidname[pn] = '\0';
 
         de->d_ino    = PROC_INO_PID_DIR(best->pid);
-        de->d_off    = 39 + best->pid + 1;
+        de->d_off    = 40 + best->pid + 1;
         de->d_type   = FUT_VDIR_TYPE_DIR;
         de->d_reclen = sizeof(*de);
         size_t nl = (size_t)pn;
         if (nl > FUT_VFS_NAME_MAX) nl = FUT_VFS_NAME_MAX;
         __builtin_memcpy(de->d_name, pidname, nl);
         de->d_name[nl] = '\0';
-        *cookie = 39 + best->pid + 1;  /* resume after this pid */
+        *cookie = 40 + best->pid + 1;  /* resume after this pid */
         return 1;
     }
 

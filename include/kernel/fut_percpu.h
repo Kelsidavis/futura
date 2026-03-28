@@ -105,6 +105,11 @@ typedef struct fut_percpu {
     uint64_t syscall_user_rsp;           /* Temporary storage for user RSP */
     uint64_t syscall_kernel_rsp;         /* Kernel RSP to use for syscalls */
 
+    /* Per-CPU load average (EWMA, fixed-point FSHIFT=11, FIXED_1=2048).
+     * Updated every scheduler tick.  Used by fut_sched_add_thread() to
+     * place waking tasks on the least-loaded CPU. */
+    uint64_t load_avg_fixed;             /* EWMA load average (fixed-point) */
+
     /* Padding to 128-byte cache line for alignment */
 } __attribute__((aligned(128))) fut_percpu_t;
 

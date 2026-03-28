@@ -81,6 +81,13 @@ struct fut_thread {
     bool pi_boosted;                      // Priority inheritance active
     uint64_t deadline_tick;               // Absolute deadline tick (0 = none)
 
+    /* Nice-based time slice allocation (at 100Hz timer):
+     * Nice -20 -> 10 ticks (100ms), Nice 0 -> 2 ticks (20ms), Nice 19 -> 1 tick
+     * Formula: slice_ticks = max(1, 10 - (nice / 2))
+     * slice_remaining counts down each timer tick; preemption when it hits 0. */
+    int time_slice_ticks;                 // Allocated time slice in ticks (from nice value)
+    int slice_remaining;                  // Ticks remaining in current time slice
+
     uint64_t wake_time;                   // Wake tick for sleeping threads
 
     /* CPU Affinity Configuration */
@@ -99,6 +106,11 @@ struct fut_thread {
     /* POSIX scheduling policy and RT priority */
     int sched_policy;                     // SCHED_OTHER/SCHED_FIFO/SCHED_RR/etc.
     int rt_priority;                      // RT priority: 0 for SCHED_OTHER, 1-99 for RT
+
+    /* Syscall tracking for accurate utime/stime classification.
+     * Set to 1 on syscall entry, cleared on syscall exit.
+     * Timer tick uses this to attribute ticks: in_syscall -> stime, else -> utime. */
+    int in_syscall;                       // 1 when thread is executing a syscall
 
     /* Futex support */
     void *futex_addr;                     // Address of futex we're waiting on (NULL if not waiting)

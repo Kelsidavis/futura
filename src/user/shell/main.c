@@ -25688,71 +25688,251 @@ static void cmd_vipw(int argc, char *argv[]) {
     cmd_vi(2, vi_argv);
 }
 
-/* ── apropos: search manual page names and descriptions ── */
+/* ── apropos: search whatis descriptions for keywords ── */
 static void cmd_apropos(int argc, char *argv[]) {
-    if (argc < 2) {
-        write_str(2, "usage: apropos <keyword>\n");
-        return;
+    if (argc < 2) { write_str(2, "apropos what?\n"); return; }
+    static const struct { const char *name; const char *desc; } adb[] = {
+        {"awk","awk (1)             - pattern scanning and processing language"},
+        {"base64","base64 (1)          - encode/decode data in base64"},
+        {"basename","basename (1)        - strip directory and suffix from filenames"},
+        {"bc","bc (1)              - arbitrary precision calculator language"},
+        {"cal","cal (1)             - display a calendar"},
+        {"cat","cat (1)             - concatenate files and print on stdout"},
+        {"cd","cd (1)              - change the working directory"},
+        {"chmod","chmod (1)           - change file mode bits"},
+        {"chown","chown (1)           - change file owner and group"},
+        {"clear","clear (1)           - clear the terminal screen"},
+        {"cmp","cmp (1)             - compare two files byte by byte"},
+        {"cp","cp (1)              - copy files and directories"},
+        {"curl","curl (1)            - transfer a URL"},
+        {"cut","cut (1)             - remove sections from each line of files"},
+        {"date","date (1)            - print or set the system date and time"},
+        {"dd","dd (1)              - convert and copy a file"},
+        {"df","df (1)              - report file system disk space usage"},
+        {"diff","diff (1)            - compare files line by line"},
+        {"dmesg","dmesg (1)           - print or control the kernel ring buffer"},
+        {"du","du (1)              - estimate file space usage"},
+        {"echo","echo (1)            - display a line of text"},
+        {"env","env (1)             - run a program in a modified environment"},
+        {"exit","exit (1)            - cause the shell to exit"},
+        {"export","export (1)          - set export attribute for shell variables"},
+        {"expr","expr (1)            - evaluate expressions"},
+        {"factor","factor (1)          - factor numbers"},
+        {"false","false (1)           - do nothing, unsuccessfully"},
+        {"fg","fg (1)              - move job to the foreground"},
+        {"file","file (1)            - determine file type"},
+        {"find","find (1)            - search for files in a directory hierarchy"},
+        {"free","free (1)            - display amount of free and used memory"},
+        {"getent","getent (1)          - get entries from administrative databases"},
+        {"grep","grep (1)            - print lines matching a pattern"},
+        {"head","head (1)            - output the first part of files"},
+        {"hostname","hostname (1)        - show or set the system hostname"},
+        {"id","id (1)              - print real and effective user and group IDs"},
+        {"info","info (1)            - read Info documents"},
+        {"kill","kill (1)            - send a signal to a process"},
+        {"less","less (1)            - opposite of more"},
+        {"ln","ln (1)              - make links between files"},
+        {"locale","locale (1)          - get locale-specific information"},
+        {"ls","ls (1)              - list directory contents"},
+        {"man","man (1)             - an interface to the system reference manuals"},
+        {"mkdir","mkdir (1)           - make directories"},
+        {"mount","mount (8)           - mount a filesystem"},
+        {"mv","mv (1)              - move (rename) files"},
+        {"nice","nice (1)            - run a program with modified scheduling priority"},
+        {"passwd","passwd (1)          - change user password"},
+        {"patch","patch (1)           - apply a diff file to an original"},
+        {"ping","ping (8)            - send ICMP ECHO_REQUEST to network hosts"},
+        {"ps","ps (1)              - report a snapshot of current processes"},
+        {"pwd","pwd (1)             - print name of current working directory"},
+        {"rm","rm (1)              - remove files or directories"},
+        {"sed","sed (1)             - stream editor for filtering and transforming text"},
+        {"sort","sort (1)            - sort lines of text files"},
+        {"stat","stat (1)            - display file or file system status"},
+        {"tail","tail (1)            - output the last part of files"},
+        {"tar","tar (1)             - an archiving utility"},
+        {"tee","tee (1)             - read from stdin and write to stdout and files"},
+        {"touch","touch (1)           - change file timestamps"},
+        {"tr","tr (1)              - translate or delete characters"},
+        {"true","true (1)            - do nothing, successfully"},
+        {"uname","uname (1)           - print system information"},
+        {"uniq","uniq (1)            - report or omit repeated lines"},
+        {"uptime","uptime (1)          - tell how long the system has been running"},
+        {"vi","vi (1)              - screen-oriented text editor"},
+        {"wc","wc (1)              - print newline, word, and byte counts"},
+        {"wget","wget (1)            - the non-interactive network downloader"},
+        {"whatis","whatis (1)          - display one-line manual page descriptions"},
+        {"which","which (1)           - locate a command"},
+        {"whoami","whoami (1)          - print effective userid"},
+        {"xargs","xargs (1)           - build and execute command lines from stdin"},
+        {"yes","yes (1)             - output a string repeatedly until killed"},
+        {(void*)0, (void*)0}
+    };
+    for (int a = 1; a < argc; a++) {
+        const char *kw = argv[a]; int klen = 0; while (kw[klen]) klen++;
+        int found = 0;
+        for (int i = 0; adb[i].name; i++) {
+            const char *desc = adb[i].desc; int dlen = 0; while (desc[dlen]) dlen++;
+            for (int d = 0; d <= dlen - klen; d++) {
+                int m = 1;
+                for (int k = 0; k < klen; k++) {
+                    char dc = desc[d+k], kc = kw[k];
+                    if (dc >= 'A' && dc <= 'Z') dc = (char)(dc + 32);
+                    if (kc >= 'A' && kc <= 'Z') kc = (char)(kc + 32);
+                    if (dc != kc) { m = 0; break; }
+                }
+                if (m) { write_str(1, desc); write_str(1, "\n"); found = 1; break; }
+            }
+        }
+        if (!found) { write_str(1, argv[a]); write_str(1, ": nothing appropriate.\n"); }
     }
-    const char *keyword = argv[1];
-    /* Simulated manual page search results */
-    write_str(1, keyword); write_str(1, " (1)          - "); write_str(1, keyword); write_str(1, " command\n");
-    write_str(1, keyword); write_str(1, " (7)          - "); write_str(1, keyword); write_str(1, " overview\n");
 }
 
-/* ── info: read Info documents ── */
+/* ── info: display info pages (delegates to man with info header) ── */
 static void cmd_info(int argc, char *argv[]) {
     if (argc < 2) {
-        write_str(1, "info: GNU Info document reader\n");
-        write_str(1, "usage: info <topic>\n");
+        write_str(1, "info: Usage: info <topic>\n\n");
+        write_str(1, "Info pages available for Futura OS built-in commands.\n");
+        write_str(1, "Use 'info <command>' to view documentation.\n");
+        write_str(1, "Use 'man <command>' for traditional manual pages.\n");
         return;
     }
-    write_str(1, "File: "); write_str(1, argv[1]); write_str(1, ".info\n");
-    write_str(1, "This is "); write_str(1, argv[1]); write_str(1, ", produced by Futura.\n\n");
-    write_str(1, "  No info documentation available for '");
-    write_str(1, argv[1]); write_str(1, "'. Try 'man "); write_str(1, argv[1]); write_str(1, "'.\n");
+    write_str(1, "File: *info*, Node: ");
+    write_str(1, argv[1]);
+    write_str(1, "\n\n");
+    cmd_man(argc, argv);
 }
 
 /* ── getent: get entries from administrative databases ── */
 static void cmd_getent(int argc, char *argv[]) {
     if (argc < 2) {
-        write_str(2, "usage: getent <database> [key]\n");
-        write_str(2, "  databases: passwd, group, hosts, services, protocols\n");
+        write_str(2, "Usage: getent database [key ...]\n");
+        write_str(2, "Supported databases: passwd, group, hosts, services\n");
         return;
     }
     const char *db = argv[1];
     if (strcmp_simple(db, "passwd") == 0) {
-        if (argc >= 3) {
-            write_str(1, argv[2]); write_str(1, ":x:0:0:"); write_str(1, argv[2]);
-            write_str(1, ":/root:/bin/sh\n");
-        } else {
-            write_str(1, "root:x:0:0:root:/root:/bin/sh\n");
-            write_str(1, "nobody:x:65534:65534:nobody:/nonexistent:/usr/sbin/nologin\n");
+        int fd = sys_open("/etc/passwd", O_RDONLY, 0);
+        if (fd < 0) {
+            if (argc >= 3) {
+                if (strcmp_simple(argv[2], "root") == 0)
+                    write_str(1, "root:x:0:0:root:/root:/bin/sh\n");
+                else {
+                    write_str(1, argv[2]); write_str(1, ":x:1000:1000::/home/");
+                    write_str(1, argv[2]); write_str(1, ":/bin/sh\n");
+                }
+            } else {
+                write_str(1, "root:x:0:0:root:/root:/bin/sh\n");
+                write_str(1, "daemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin\n");
+                write_str(1, "nobody:x:65534:65534:nobody:/nonexistent:/usr/sbin/nologin\n");
+            }
+            return;
+        }
+        char pbuf[2048]; long pn = sys_read(fd, pbuf, sizeof(pbuf)-1); sys_close(fd);
+        if (pn <= 0) return; pbuf[pn] = '\0';
+        if (argc < 3) { write_str(1, pbuf); }
+        else {
+            const char *key = argv[2]; int kl = 0; while (key[kl]) kl++;
+            char *ln = pbuf;
+            while (*ln) {
+                char *eol = ln; while (*eol && *eol != '\n') eol++;
+                char sv = *eol; *eol = '\0';
+                int mt = 1; for (int i = 0; i < kl; i++) if (ln[i] != key[i]) { mt=0; break; }
+                if (mt && ln[kl] == ':') { write_str(1, ln); write_str(1, "\n"); return; }
+                *eol = sv; if (*eol) ln = eol+1; else break;
+            }
+            write_str(2, "getent: key not found in passwd database\n");
         }
     } else if (strcmp_simple(db, "group") == 0) {
-        if (argc >= 3) {
-            write_str(1, argv[2]); write_str(1, ":x:0:\n");
-        } else {
-            write_str(1, "root:x:0:\n");
-            write_str(1, "nogroup:x:65534:\n");
+        int fd = sys_open("/etc/group", O_RDONLY, 0);
+        if (fd < 0) {
+            if (argc >= 3) {
+                if (strcmp_simple(argv[2], "root") == 0) write_str(1, "root:x:0:\n");
+                else { write_str(1, argv[2]); write_str(1, ":x:1000:\n"); }
+            } else {
+                write_str(1, "root:x:0:\n"); write_str(1, "daemon:x:1:\n");
+                write_str(1, "nogroup:x:65534:\n");
+            }
+            return;
+        }
+        char gbuf[2048]; long gn = sys_read(fd, gbuf, sizeof(gbuf)-1); sys_close(fd);
+        if (gn <= 0) return; gbuf[gn] = '\0';
+        if (argc < 3) { write_str(1, gbuf); }
+        else {
+            const char *key = argv[2]; int kl = 0; while (key[kl]) kl++;
+            char *ln = gbuf;
+            while (*ln) {
+                char *eol = ln; while (*eol && *eol != '\n') eol++;
+                char sv = *eol; *eol = '\0';
+                int mt = 1; for (int i = 0; i < kl; i++) if (ln[i] != key[i]) { mt=0; break; }
+                if (mt && ln[kl] == ':') { write_str(1, ln); write_str(1, "\n"); return; }
+                *eol = sv; if (*eol) ln = eol+1; else break;
+            }
+            write_str(2, "getent: key not found in group database\n");
         }
     } else if (strcmp_simple(db, "hosts") == 0) {
-        if (argc >= 3) {
-            write_str(1, "127.0.0.1       "); write_str(1, argv[2]); write_str(1, "\n");
-        } else {
+        int fd = sys_open("/etc/hosts", O_RDONLY, 0);
+        if (fd < 0) {
             write_str(1, "127.0.0.1       localhost\n");
-            write_str(1, "::1             localhost ip6-localhost\n");
+            write_str(1, "::1             localhost ip6-localhost ip6-loopback\n");
+            return;
+        }
+        char hbuf[2048]; long hn = sys_read(fd, hbuf, sizeof(hbuf)-1); sys_close(fd);
+        if (hn <= 0) return; hbuf[hn] = '\0';
+        if (argc < 3) { write_str(1, hbuf); }
+        else {
+            const char *key = argv[2]; char *ln = hbuf;
+            while (*ln) {
+                char *eol = ln; while (*eol && *eol != '\n') eol++;
+                char sv = *eol; *eol = '\0';
+                if (ln[0] != '#') {
+                    const char *p = ln;
+                    while (*p) {
+                        while (*p == ' ' || *p == '\t') p++;
+                        if (!*p) break;
+                        const char *ws = p; while (*p && *p != ' ' && *p != '\t') p++;
+                        int wl = (int)(p-ws); int kl = 0; while (key[kl]) kl++;
+                        if (wl == kl) {
+                            int m2 = 1; for (int i = 0; i < kl; i++) if (ws[i]!=key[i]) { m2=0; break; }
+                            if (m2) { write_str(1, ln); write_str(1, "\n"); *eol=sv; return; }
+                        }
+                    }
+                }
+                *eol = sv; if (*eol) ln = eol+1; else break;
+            }
+            write_str(2, "getent: key not found in hosts database\n");
         }
     } else if (strcmp_simple(db, "services") == 0) {
-        write_str(1, "ssh                 22/tcp\n");
-        write_str(1, "http                80/tcp\n");
-        write_str(1, "https               443/tcp\n");
-    } else if (strcmp_simple(db, "protocols") == 0) {
-        write_str(1, "tcp     6  TCP\n");
-        write_str(1, "udp    17  UDP\n");
-        write_str(1, "icmp    1  ICMP\n");
+        if (argc < 3) {
+            write_str(1, "echo                7/tcp\n");
+            write_str(1, "ftp                21/tcp\n");
+            write_str(1, "ssh                22/tcp\n");
+            write_str(1, "telnet             23/tcp\n");
+            write_str(1, "smtp               25/tcp\n");
+            write_str(1, "domain             53/tcp\n");
+            write_str(1, "http               80/tcp\n");
+            write_str(1, "pop3              110/tcp\n");
+            write_str(1, "imap              143/tcp\n");
+            write_str(1, "https             443/tcp\n");
+        } else {
+            const char *key = argv[2];
+            static const struct { const char *nm; const char *ent; } svcs[] = {
+                {"echo","echo                7/tcp"},{"ftp","ftp                21/tcp"},
+                {"ssh","ssh                22/tcp"},{"telnet","telnet             23/tcp"},
+                {"smtp","smtp               25/tcp"},{"domain","domain             53/tcp"},
+                {"http","http               80/tcp"},{"pop3","pop3              110/tcp"},
+                {"imap","imap              143/tcp"},{"https","https             443/tcp"},
+                {(void*)0,(void*)0}
+            };
+            int found = 0;
+            for (int i = 0; svcs[i].nm; i++)
+                if (strcmp_simple(key, svcs[i].nm) == 0) {
+                    write_str(1, svcs[i].ent); write_str(1, "\n"); found = 1; break;
+                }
+            if (!found) write_str(2, "getent: key not found in services database\n");
+        }
     } else {
-        write_str(2, "getent: unknown database: "); write_str(2, db); write_str(2, "\n");
+        write_str(2, "getent: unknown database: "); write_str(2, db);
+        write_str(2, "\nSupported: passwd group hosts services\n");
     }
 }
 

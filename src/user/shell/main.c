@@ -5009,6 +5009,33 @@ static void cmd_cut(int argc, char *argv[]) {
     }
 }
 
+/* Helper function to expand character set with ranges (e.g., a-z, A-Z, 0-9) for tr */
+static int tr_expand_set(const char *set, char *expanded, int max_len) {
+    int pos = 0;
+    for (int i = 0; set[i] && pos < max_len - 1; i++) {
+        if (set[i + 1] == '-' && set[i + 2] != '\0') {
+            /* Range: e.g., a-z */
+            unsigned char start = (unsigned char)set[i];
+            unsigned char end = (unsigned char)set[i + 2];
+            if (start <= end) {
+                for (unsigned int c = start; c <= end && pos < max_len - 1; c++) {
+                    expanded[pos++] = (char)c;
+                }
+            } else {
+                /* Reverse range: z-a */
+                for (unsigned int c = start; c >= end && pos < max_len - 1; c--) {
+                    expanded[pos++] = (char)c;
+                }
+            }
+            i += 2;  /* Skip over '-' and end char */
+        } else {
+            expanded[pos++] = set[i];
+        }
+    }
+    expanded[pos] = '\0';
+    return pos;
+}
+
 /* Helper function to process a file descriptor for tr command */
 static void tr_process_fd(int fd, const char *trans_map, int delete_mode, int squeeze_mode) {
     char read_buf[256];
@@ -5078,9 +5105,20 @@ static void cmd_tr(int argc, char *argv[]) {
         return;
     }
 
-    const char *set1 = argv[arg_start];
-    const char *set2 = delete_mode ? 0 : argv[arg_start + 1];
+    const char *set1_raw = argv[arg_start];
+    const char *set2_raw = delete_mode ? 0 : argv[arg_start + 1];
     int file_start = arg_start + required_args;
+
+    /* Expand character ranges (e.g., a-z, A-Z, 0-9) */
+    static char set1_expanded[512];
+    static char set2_expanded[512];
+    tr_expand_set(set1_raw, set1_expanded, sizeof(set1_expanded));
+    if (set2_raw) {
+        tr_expand_set(set2_raw, set2_expanded, sizeof(set2_expanded));
+    }
+
+    const char *set1 = set1_expanded;
+    const char *set2 = set2_raw ? set2_expanded : 0;
 
     /* Build translation map */
     static char trans_map[256];
@@ -16244,7 +16282,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   185 built-in commands — type 'help'    |\n");
+    write_str(1, "|   195 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");

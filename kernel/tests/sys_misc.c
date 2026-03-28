@@ -70654,6 +70654,236 @@ static void test_futex_bitset_selective_wakeup(void) {
     }
 }
 
+/* ============================================================
+ * Tests 2545-2550: sendmsg/recvmsg MSG_DONTWAIT and MSG_PEEK
+ *
+ *   2545: MSG_DONTWAIT on empty socket returns EAGAIN
+ *   2546: MSG_PEEK reads data without consuming it
+ *   2547: MSG_PEEK followed by normal recv returns same data
+ *   2548: MSG_DONTWAIT sendmsg on full socket returns EAGAIN
+ *   2549: MSG_NOSIGNAL prevents SIGPIPE on broken pipe
+ *   2550: scatter-gather recvmsg fills multiple iovecs
+ * ============================================================ */
+static void test_sendmsg_recvmsg_flags(void) {
+    extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+    extern long sys_sendmsg(int sockfd, const struct test_msghdr *msg, int flags);
+    extern long sys_recvmsg(int sockfd, struct test_msghdr *msg, int flags);
+    extern long sys_close(int fd);
+    extern long sys_write(int fd, const void *buf, size_t count);
+
+    /* ---- Test 2545: MSG_DONTWAIT recvmsg on empty socket -> EAGAIN ---- */
+    fut_printf("[MISC-TEST] Test 2545: MSG_DONTWAIT recvmsg on empty socket\n");
+    {
+        int sv[2] = {-1, -1};
+        long r = sys_socketpair(1 /*AF_UNIX*/, 1 /*SOCK_STREAM*/, 0, sv);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] FAIL 2545: socketpair: %ld\n", r);
+            fut_test_fail(2545);
+            goto t2546;
+        }
+
+        /* No data written — recvmsg with MSG_DONTWAIT should return -EAGAIN */
+        char buf[16] = {0};
+        struct iovec iov = { .iov_base = buf, .iov_len = sizeof(buf) };
+        struct test_msghdr rmsg = {
+            .msg_iov = &iov, .msg_iovlen = 1,
+        };
+        long got = sys_recvmsg(sv[1], &rmsg, 0x40 /*MSG_DONTWAIT*/);
+        if (got == -11 /*-EAGAIN*/) {
+            fut_printf("[MISC-TEST] \xe2\x9c\x93 Test 2545: MSG_DONTWAIT returned EAGAIN as expected\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL 2545: expected EAGAIN(-11), got %ld\n", got);
+            fut_test_fail(2545);
+        }
+        sys_close(sv[0]);
+        sys_close(sv[1]);
+    }
+
+t2546:
+    /* ---- Test 2546: MSG_PEEK reads data without consuming ---- */
+    fut_printf("[MISC-TEST] Test 2546: MSG_PEEK reads without consuming\n");
+    {
+        int sv[2] = {-1, -1};
+        long r = sys_socketpair(1 /*AF_UNIX*/, 1 /*SOCK_STREAM*/, 0, sv);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] FAIL 2546: socketpair: %ld\n", r);
+            fut_test_fail(2546);
+            goto t2547;
+        }
+
+        /* Write known data */
+        char data[] = "peek_test";
+        struct iovec siov = { .iov_base = data, .iov_len = 9 };
+        struct test_msghdr smsg = {
+            .msg_iov = &siov, .msg_iovlen = 1,
+        };
+        long sent = sys_sendmsg(sv[0], &smsg, 0);
+        if (sent != 9) {
+            fut_printf("[MISC-TEST] FAIL 2546: sendmsg returned %ld\n", sent);
+            sys_close(sv[0]); sys_close(sv[1]);
+            fut_test_fail(2546);
+            goto t2547;
+        }
+
+        /* Peek — data should be returned but NOT consumed */
+        char peek_buf[16] = {0};
+        struct iovec piov = { .iov_base = peek_buf, .iov_len = sizeof(peek_buf) };
+        struct test_msghdr pmsg = {
+            .msg_iov = &piov, .msg_iovlen = 1,
+        };
+        long peeked = sys_recvmsg(sv[1], &pmsg, 0x02 /*MSG_PEEK*/);
+        if (peeked == 9 && peek_buf[0] == 'p' && peek_buf[4] == '_') {
+            fut_printf("[MISC-TEST] \xe2\x9c\x93 Test 2546: MSG_PEEK returned %ld bytes correctly\n", peeked);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL 2546: peek returned %ld, buf[0]='%c'\n",
+                       peeked, peek_buf[0]);
+            fut_test_fail(2546);
+        }
+        sys_close(sv[0]);
+        sys_close(sv[1]);
+    }
+
+t2547:
+    /* ---- Test 2547: MSG_PEEK + normal recv returns same data ---- */
+    fut_printf("[MISC-TEST] Test 2547: MSG_PEEK followed by recv returns same data\n");
+    {
+        int sv[2] = {-1, -1};
+        long r = sys_socketpair(1 /*AF_UNIX*/, 1 /*SOCK_STREAM*/, 0, sv);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] FAIL 2547: socketpair: %ld\n", r);
+            fut_test_fail(2547);
+            goto t2548;
+        }
+
+        char data[] = "abcdef";
+        struct iovec siov = { .iov_base = data, .iov_len = 6 };
+        struct test_msghdr smsg = { .msg_iov = &siov, .msg_iovlen = 1 };
+        sys_sendmsg(sv[0], &smsg, 0);
+
+        /* Peek first */
+        char pbuf[16] = {0};
+        struct iovec piov = { .iov_base = pbuf, .iov_len = sizeof(pbuf) };
+        struct test_msghdr pmsg = { .msg_iov = &piov, .msg_iovlen = 1 };
+        long peeked = sys_recvmsg(sv[1], &pmsg, 0x02 /*MSG_PEEK*/);
+
+        /* Now read normally — should get same data since peek didn't consume */
+        char rbuf[16] = {0};
+        struct iovec riov = { .iov_base = rbuf, .iov_len = sizeof(rbuf) };
+        struct test_msghdr rmsg = { .msg_iov = &riov, .msg_iovlen = 1 };
+        long got = sys_recvmsg(sv[1], &rmsg, 0);
+
+        if (peeked == 6 && got == 6 &&
+            pbuf[0] == 'a' && rbuf[0] == 'a' &&
+            pbuf[5] == 'f' && rbuf[5] == 'f') {
+            fut_printf("[MISC-TEST] \xe2\x9c\x93 Test 2547: peek=%ld recv=%ld, data matches\n", peeked, got);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL 2547: peek=%ld recv=%ld\n", peeked, got);
+            fut_test_fail(2547);
+        }
+        sys_close(sv[0]);
+        sys_close(sv[1]);
+    }
+
+t2548:
+    /* ---- Test 2548: MSG_DONTWAIT sendmsg on full-ish path ---- */
+    fut_printf("[MISC-TEST] Test 2548: MSG_DONTWAIT flag accepted by sendmsg\n");
+    {
+        int sv[2] = {-1, -1};
+        long r = sys_socketpair(1 /*AF_UNIX*/, 1 /*SOCK_STREAM*/, 0, sv);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] FAIL 2548: socketpair: %ld\n", r);
+            fut_test_fail(2548);
+            goto t2549;
+        }
+
+        /* Send with MSG_DONTWAIT — should succeed when buffer is available */
+        char data[] = "dontwait_send";
+        struct iovec siov = { .iov_base = data, .iov_len = 13 };
+        struct test_msghdr smsg = { .msg_iov = &siov, .msg_iovlen = 1 };
+        long sent = sys_sendmsg(sv[0], &smsg, 0x40 /*MSG_DONTWAIT*/);
+        if (sent == 13) {
+            fut_printf("[MISC-TEST] \xe2\x9c\x93 Test 2548: MSG_DONTWAIT sendmsg sent %ld bytes\n", sent);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL 2548: sendmsg returned %ld\n", sent);
+            fut_test_fail(2548);
+        }
+        sys_close(sv[0]);
+        sys_close(sv[1]);
+    }
+
+t2549:
+    /* ---- Test 2549: MSG_NOSIGNAL does not crash on broken pipe ---- */
+    fut_printf("[MISC-TEST] Test 2549: MSG_NOSIGNAL on broken pipe returns EPIPE\n");
+    {
+        int sv[2] = {-1, -1};
+        long r = sys_socketpair(1 /*AF_UNIX*/, 1 /*SOCK_STREAM*/, 0, sv);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] FAIL 2549: socketpair: %ld\n", r);
+            fut_test_fail(2549);
+            goto t2550;
+        }
+
+        /* Close the read end to create a broken pipe */
+        sys_close(sv[1]);
+
+        /* Send with MSG_NOSIGNAL — should get EPIPE without SIGPIPE */
+        char data[] = "nosignal";
+        struct iovec siov = { .iov_base = data, .iov_len = 8 };
+        struct test_msghdr smsg = { .msg_iov = &siov, .msg_iovlen = 1 };
+        long sent = sys_sendmsg(sv[0], &smsg, 0x4000 /*MSG_NOSIGNAL*/);
+        if (sent == -32 /*-EPIPE*/) {
+            fut_printf("[MISC-TEST] \xe2\x9c\x93 Test 2549: MSG_NOSIGNAL returned EPIPE without crash\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL 2549: expected EPIPE(-32), got %ld\n", sent);
+            fut_test_fail(2549);
+        }
+        sys_close(sv[0]);
+    }
+
+t2550:
+    /* ---- Test 2550: scatter-gather recvmsg fills multiple iovecs ---- */
+    fut_printf("[MISC-TEST] Test 2550: scatter-gather recvmsg with 2 iovecs\n");
+    {
+        int sv[2] = {-1, -1};
+        long r = sys_socketpair(1 /*AF_UNIX*/, 1 /*SOCK_STREAM*/, 0, sv);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] FAIL 2550: socketpair: %ld\n", r);
+            fut_test_fail(2550);
+            return;
+        }
+
+        /* Send 8 bytes as a single message */
+        char data[] = "12345678";
+        sys_write(sv[0], data, 8);
+
+        /* Receive into two separate 4-byte buffers (scatter) */
+        char buf1[4] = {0};
+        char buf2[4] = {0};
+        struct iovec iovs[2] = {
+            { .iov_base = buf1, .iov_len = 4 },
+            { .iov_base = buf2, .iov_len = 4 },
+        };
+        struct test_msghdr rmsg = { .msg_iov = iovs, .msg_iovlen = 2 };
+        long got = sys_recvmsg(sv[1], &rmsg, 0);
+        if (got == 8 && buf1[0] == '1' && buf1[3] == '4' &&
+            buf2[0] == '5' && buf2[3] == '8') {
+            fut_printf("[MISC-TEST] \xe2\x9c\x93 Test 2550: scatter-gather recv %ld bytes into 2 iovecs\n", got);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL 2550: got=%ld buf1='%.4s' buf2='%.4s'\n",
+                       got, buf1, buf2);
+            fut_test_fail(2550);
+        }
+        sys_close(sv[0]);
+        sys_close(sv[1]);
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -74988,6 +75218,7 @@ void fut_misc_test_thread(void *arg) {
     test_dup3_fcntl_cloexec_compliance(); /* Tests 2495-2502: dup3 O_CLOEXEC and F_DUPFD_CLOEXEC POSIX compliance */
     test_sockopt_enforcement_roundtrip(); /* Tests 2510-2517: socket option enforcement round-trip */
     test_futex_bitset_selective_wakeup(); /* Tests 2525-2526: FUTEX_WAIT_BITSET / FUTEX_WAKE_BITSET selective wakeup */
+    test_sendmsg_recvmsg_flags(); /* Tests 2545-2550: sendmsg/recvmsg MSG_DONTWAIT, MSG_PEEK, MSG_NOSIGNAL, scatter-gather */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

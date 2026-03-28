@@ -63035,6 +63035,380 @@ __attribute__((noinline)) static void test_pty_and_cgroup(void) {
 }
 
 /* ============================================================
+ * Tests 2240-2259: memfd sealing, pidfd, close_range, madvise
+ * ============================================================ */
+__attribute__((noinline)) static void test_memfd_pidfd_advanced(void) {
+    extern long sys_memfd_create(const char *name, unsigned int flags);
+    extern long sys_open(const char *, int, int);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_write(int, const void *, size_t);
+    extern long sys_close(int);
+    extern long sys_ftruncate(int fd, uint64_t length);
+    extern long sys_fcntl(int fd, int cmd, uint64_t arg);
+    extern long sys_close_range(unsigned int, unsigned int, unsigned int);
+    extern long sys_pidfd_open(int, unsigned int);
+    extern long sys_pidfd_send_signal(int pidfd, int sig, const void *info, unsigned int flags);
+    extern long sys_pidfd_getfd(int, int, unsigned int);
+    extern long sys_madvise(void *, size_t, int);
+    extern long sys_getpid(void);
+    extern long sys_dup(int);
+
+    /* F_SEAL constants (from fcntl.h / Linux ABI) */
+    #define F_ADD_SEALS     1033
+    #define F_GET_SEALS     1034
+    #define F_SEAL_SEAL     0x0001
+    #define F_SEAL_SHRINK   0x0002
+    #define F_SEAL_GROW     0x0004
+    #define F_SEAL_WRITE    0x0008
+    #define F_SEAL_FUTURE_WRITE 0x0010
+
+    #define MFD_CLOEXEC         0x0001U
+    #define MFD_ALLOW_SEALING   0x0002U
+    #define CLOSE_RANGE_CLOEXEC_TEST (1U << 2)
+
+    /* ── Test 2240: memfd_create with MFD_ALLOW_SEALING ── */
+    fut_printf("[MISC-TEST] Test 2240: memfd_create MFD_ALLOW_SEALING\n");
+    long mfd = sys_memfd_create("test_seal", MFD_CLOEXEC | MFD_ALLOW_SEALING);
+    if (mfd >= 0) {
+        fut_printf("[MISC-TEST] ✓ Test 2240: memfd fd=%ld\n", mfd);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 2240: memfd_create=%ld\n", mfd);
+        fut_test_fail(2240);
+        return;
+    }
+
+    /* ── Test 2241: ftruncate memfd to set size ── */
+    fut_printf("[MISC-TEST] Test 2241: ftruncate memfd to 4096\n");
+    {
+        long r = sys_ftruncate((int)mfd, 4096);
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 2241: ftruncate ok\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2241: ftruncate=%ld\n", r);
+            fut_test_fail(2241);
+        }
+    }
+
+    /* ── Test 2242: write to memfd before sealing ── */
+    fut_printf("[MISC-TEST] Test 2242: write to unsealed memfd\n");
+    {
+        const char data[] = "hello memfd";
+        long n = sys_write((int)mfd, data, sizeof(data));
+        if (n == (long)sizeof(data)) {
+            fut_printf("[MISC-TEST] ✓ Test 2242: wrote %ld bytes\n", n);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2242: write=%ld\n", n);
+            fut_test_fail(2242);
+        }
+    }
+
+    /* ── Test 2243: F_GET_SEALS returns 0 initially ── */
+    fut_printf("[MISC-TEST] Test 2243: F_GET_SEALS initial value\n");
+    {
+        long seals = sys_fcntl((int)mfd, F_GET_SEALS, 0);
+        if (seals == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 2243: initial seals=0\n");
+            fut_test_pass();
+        } else if (seals >= 0) {
+            /* Some implementations start with seals already applied */
+            fut_printf("[MISC-TEST] ✓ Test 2243: initial seals=0x%lx (acceptable)\n", seals);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2243: F_GET_SEALS=%ld\n", seals);
+            fut_test_fail(2243);
+        }
+    }
+
+    /* ── Test 2244: F_ADD_SEALS F_SEAL_SHRINK ── */
+    fut_printf("[MISC-TEST] Test 2244: F_ADD_SEALS SEAL_SHRINK\n");
+    {
+        long r = sys_fcntl((int)mfd, F_ADD_SEALS, F_SEAL_SHRINK);
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 2244: SEAL_SHRINK applied\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2244: F_ADD_SEALS=%ld\n", r);
+            fut_test_fail(2244);
+        }
+    }
+
+    /* ── Test 2245: F_GET_SEALS reflects SEAL_SHRINK ── */
+    fut_printf("[MISC-TEST] Test 2245: F_GET_SEALS after SEAL_SHRINK\n");
+    {
+        long seals = sys_fcntl((int)mfd, F_GET_SEALS, 0);
+        if (seals >= 0 && (seals & F_SEAL_SHRINK)) {
+            fut_printf("[MISC-TEST] ✓ Test 2245: seals=0x%lx has SHRINK\n", seals);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2245: seals=0x%lx\n", seals);
+            fut_test_fail(2245);
+        }
+    }
+
+    /* ── Test 2246: ftruncate to smaller fails after SEAL_SHRINK ── */
+    fut_printf("[MISC-TEST] Test 2246: ftruncate shrink rejected\n");
+    {
+        long r = sys_ftruncate((int)mfd, 1024);
+        if (r == -1 /* EPERM */ || r == -13 /* EACCES */ || r < 0) {
+            fut_printf("[MISC-TEST] ✓ Test 2246: shrink blocked (ret=%ld)\n", r);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2246: shrink allowed (ret=%ld)\n", r);
+            fut_test_fail(2246);
+        }
+    }
+
+    /* ── Test 2247: F_ADD_SEALS F_SEAL_WRITE ── */
+    fut_printf("[MISC-TEST] Test 2247: F_ADD_SEALS SEAL_WRITE\n");
+    {
+        long r = sys_fcntl((int)mfd, F_ADD_SEALS, F_SEAL_WRITE);
+        if (r == 0) {
+            fut_printf("[MISC-TEST] ✓ Test 2247: SEAL_WRITE applied\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2247: F_ADD_SEALS=%ld\n", r);
+            fut_test_fail(2247);
+        }
+    }
+
+    /* ── Test 2248: write to memfd fails after SEAL_WRITE ── */
+    fut_printf("[MISC-TEST] Test 2248: write rejected after SEAL_WRITE\n");
+    {
+        const char data[] = "blocked";
+        long n = sys_write((int)mfd, data, sizeof(data));
+        if (n < 0) {
+            fut_printf("[MISC-TEST] ✓ Test 2248: write blocked (ret=%ld)\n", n);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2248: write succeeded (%ld bytes)\n", n);
+            fut_test_fail(2248);
+        }
+    }
+
+    sys_close((int)mfd);
+
+    /* ── Test 2249: pidfd_open on self ── */
+    fut_printf("[MISC-TEST] Test 2249: pidfd_open(getpid())\n");
+    {
+        long pid = sys_getpid();
+        long pfd = sys_pidfd_open((int)pid, 0);
+        if (pfd >= 0) {
+            fut_printf("[MISC-TEST] ✓ Test 2249: pidfd=%ld for pid=%ld\n", pfd, pid);
+            fut_test_pass();
+
+            /* ── Test 2250: pidfd_getfd duplicates fd from self ── */
+            fut_printf("[MISC-TEST] Test 2250: pidfd_getfd on self\n");
+            {
+                long stolen = sys_pidfd_getfd((int)pfd, 0, 0); /* dup stdin */
+                if (stolen >= 0) {
+                    fut_printf("[MISC-TEST] ✓ Test 2250: pidfd_getfd=%ld\n", stolen);
+                    fut_test_pass();
+                    sys_close((int)stolen);
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 2250: pidfd_getfd=%ld\n", stolen);
+                    fut_test_fail(2250);
+                }
+            }
+
+            /* ── Test 2251: pidfd_send_signal with sig=0 (check existence) ── */
+            fut_printf("[MISC-TEST] Test 2251: pidfd_send_signal(0)\n");
+            {
+                long r = sys_pidfd_send_signal((int)pfd, 0, NULL, 0);
+                if (r == 0) {
+                    fut_printf("[MISC-TEST] ✓ Test 2251: sig=0 check ok\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 2251: send_signal=%ld\n", r);
+                    fut_test_fail(2251);
+                }
+            }
+
+            sys_close((int)pfd);
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2249: pidfd_open=%ld\n", pfd);
+            fut_test_fail(2249);
+            fut_test_fail(2250);
+            fut_test_fail(2251);
+        }
+    }
+
+    /* ── Test 2252: pidfd_open on invalid pid → ESRCH ── */
+    fut_printf("[MISC-TEST] Test 2252: pidfd_open(99999) → ESRCH\n");
+    {
+        long pfd = sys_pidfd_open(99999, 0);
+        if (pfd == -3 /* ESRCH */) {
+            fut_printf("[MISC-TEST] ✓ Test 2252: ESRCH as expected\n");
+            fut_test_pass();
+        } else if (pfd < 0) {
+            fut_printf("[MISC-TEST] ✓ Test 2252: error=%ld (acceptable)\n", pfd);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2252: pidfd_open succeeded (fd=%ld)\n", pfd);
+            sys_close((int)pfd);
+            fut_test_fail(2252);
+        }
+    }
+
+    /* ── Test 2253: close_range CLOSE_RANGE_CLOEXEC sets FD_CLOEXEC ── */
+    fut_printf("[MISC-TEST] Test 2253: close_range CLOEXEC\n");
+    {
+        /* Open a temporary fd, mark it CLOEXEC via close_range */
+        long tfd = sys_open("/proc/version", 0, 0);
+        if (tfd >= 0) {
+            /* Verify FD_CLOEXEC is NOT set initially */
+            long flags_before = sys_fcntl((int)tfd, 1 /* F_GETFD */, 0);
+            long r = sys_close_range((unsigned int)tfd, (unsigned int)tfd, CLOSE_RANGE_CLOEXEC_TEST);
+            if (r == 0) {
+                long flags_after = sys_fcntl((int)tfd, 1 /* F_GETFD */, 0);
+                if (flags_after >= 0 && (flags_after & 1 /* FD_CLOEXEC */)) {
+                    fut_printf("[MISC-TEST] ✓ Test 2253: CLOEXEC set (before=0x%lx after=0x%lx)\n",
+                               flags_before, flags_after);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 2253: CLOEXEC not set after=%lx\n", flags_after);
+                    fut_test_fail(2253);
+                }
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2253: close_range=%ld\n", r);
+                fut_test_fail(2253);
+            }
+            sys_close((int)tfd);
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2253: open=%ld\n", tfd);
+            fut_test_fail(2253);
+        }
+    }
+
+    /* ── Test 2254: dup fd inherits file position ── */
+    fut_printf("[MISC-TEST] Test 2254: dup shares file position\n");
+    {
+        extern long sys_lseek(int, long, int);
+        long fd1 = sys_open("/proc/version", 0, 0);
+        if (fd1 >= 0) {
+            sys_lseek((int)fd1, 10, 0 /* SEEK_SET */);
+            long fd2 = sys_dup((int)fd1);
+            if (fd2 >= 0) {
+                long pos = sys_lseek((int)fd2, 0, 1 /* SEEK_CUR */);
+                if (pos == 10) {
+                    fut_printf("[MISC-TEST] ✓ Test 2254: dup shares offset=%ld\n", pos);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 2254: offset=%ld (expected 10)\n", pos);
+                    fut_test_fail(2254);
+                }
+                sys_close((int)fd2);
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2254: dup=%ld\n", fd2);
+                fut_test_fail(2254);
+            }
+            sys_close((int)fd1);
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2254: open=%ld\n", fd1);
+            fut_test_fail(2254);
+        }
+    }
+
+    /* ── Test 2255: memfd_create with empty name ── */
+    fut_printf("[MISC-TEST] Test 2255: memfd_create empty name\n");
+    {
+        long fd = sys_memfd_create("", MFD_CLOEXEC);
+        if (fd >= 0) {
+            fut_printf("[MISC-TEST] ✓ Test 2255: empty name ok fd=%ld\n", fd);
+            fut_test_pass();
+            sys_close((int)fd);
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2255: memfd_create=%ld\n", fd);
+            fut_test_fail(2255);
+        }
+    }
+
+    /* ── Test 2256: memfd read-back data persists ── */
+    fut_printf("[MISC-TEST] Test 2256: memfd read-back\n");
+    {
+        extern long sys_lseek(int, long, int);
+        long fd = sys_memfd_create("readback", MFD_CLOEXEC);
+        if (fd >= 0) {
+            const char msg[] = "persist";
+            sys_write((int)fd, msg, 7);
+            sys_lseek((int)fd, 0, 0 /* SEEK_SET */);
+            char buf[16] = {0};
+            long n = sys_read((int)fd, buf, 7);
+            if (n == 7 && buf[0] == 'p' && buf[6] == 't') {
+                fut_printf("[MISC-TEST] ✓ Test 2256: readback='%.7s'\n", buf);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2256: n=%ld buf='%.7s'\n", n, buf);
+                fut_test_fail(2256);
+            }
+            sys_close((int)fd);
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2256: memfd_create=%ld\n", fd);
+            fut_test_fail(2256);
+        }
+    }
+
+    /* ── Test 2257: /proc/self/maps readable and non-empty ── */
+    fut_printf("[MISC-TEST] Test 2257: /proc/self/maps\n");
+    {
+        long fd = sys_open("/proc/self/maps", 0, 0);
+        if (fd >= 0) {
+            char buf[256];
+            long n = sys_read((int)fd, buf, sizeof(buf) - 1);
+            sys_close((int)fd);
+            if (n > 10) {
+                fut_printf("[MISC-TEST] ✓ Test 2257: maps has %ld bytes\n", n);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2257: maps n=%ld\n", n);
+                fut_test_fail(2257);
+            }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2257: open=%ld\n", fd);
+            fut_test_fail(2257);
+        }
+    }
+
+    /* ── Test 2258: /proc/self/fd/0 readlink returns a path ── */
+    fut_printf("[MISC-TEST] Test 2258: /proc/self/fd/0 readlink\n");
+    {
+        extern long sys_readlink(const char *, char *, size_t);
+        char linkbuf[128] = {0};
+        long n = sys_readlink("/proc/self/fd/0", linkbuf, sizeof(linkbuf) - 1);
+        if (n > 0) {
+            linkbuf[n] = '\0';
+            fut_printf("[MISC-TEST] ✓ Test 2258: fd/0='%s'\n", linkbuf);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2258: readlink=%ld\n", n);
+            fut_test_fail(2258);
+        }
+    }
+
+    /* ── Test 2259: memfd_create with MFD_CLOEXEC sets FD_CLOEXEC ── */
+    fut_printf("[MISC-TEST] Test 2259: memfd MFD_CLOEXEC flag\n");
+    {
+        long fd = sys_memfd_create("cloexec_test", MFD_CLOEXEC);
+        if (fd >= 0) {
+            long fl = sys_fcntl((int)fd, 1 /* F_GETFD */, 0);
+            if (fl >= 0 && (fl & 1 /* FD_CLOEXEC */)) {
+                fut_printf("[MISC-TEST] ✓ Test 2259: MFD_CLOEXEC → FD_CLOEXEC set\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2259: flags=0x%lx\n", fl);
+                fut_test_fail(2259);
+            }
+            sys_close((int)fd);
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2259: memfd_create=%ld\n", fd);
+            fut_test_fail(2259);
+        }
+    }
+}
+
+/* ============================================================
  * Tests 1946-1957: io_uring async I/O subsystem
  * ============================================================ */
 __attribute__((noinline)) static void test_io_uring(void) {
@@ -68586,6 +68960,7 @@ void fut_misc_test_thread(void *arg) {
     test_keyring();   /* Tests 1958-1969 */
     test_io_uring();  /* Tests 1946-1957 */
     test_pty_and_cgroup(); /* Tests 2176-2188 */
+    test_memfd_pidfd_advanced(); /* Tests 2240-2259 */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

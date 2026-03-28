@@ -19,16 +19,19 @@
 #include <stdint.h>
 #include <string.h>
 
-/* Page cache insertion from page_fault.c */
+#ifdef __x86_64__
+#include <platform/x86_64/memory/pmap.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/pmap.h>
+#endif
+
+/* Page cache operations from page_fault.c */
 extern void shared_page_insert(struct fut_vnode *vnode, uint64_t offset, phys_addr_t phys);
 extern phys_addr_t shared_page_lookup(struct fut_vnode *vnode, uint64_t offset);
 
 /* PMM allocation */
 extern void *fut_pmm_alloc_page(void);
 extern void  fut_pmm_free_page(void *page);
-
-/* Physical address conversion */
-extern phys_addr_t pmap_virt_to_phys(uintptr_t vaddr);
 
 #ifndef PAGE_SIZE
 #define PAGE_SIZE 4096

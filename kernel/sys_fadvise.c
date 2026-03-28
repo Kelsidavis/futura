@@ -25,6 +25,12 @@
 #include <stdint.h>
 #include <string.h>
 
+#ifdef __x86_64__
+#include <platform/x86_64/memory/pmap.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/pmap.h>
+#endif
+
 /* POSIX_FADV_* constants (Linux ABI) */
 #define POSIX_FADV_NORMAL     0  /* No special treatment */
 #define POSIX_FADV_RANDOM     1  /* Expect random access */
@@ -41,9 +47,6 @@ extern void shared_page_evict(struct fut_vnode *vnode, uint64_t offset);
 /* PMM allocation */
 extern void *fut_pmm_alloc_page(void);
 extern void  fut_pmm_free_page(void *page);
-
-/* Physical address conversion */
-extern phys_addr_t pmap_virt_to_phys(uintptr_t vaddr);
 
 #ifndef PAGE_SIZE
 #define PAGE_SIZE 4096

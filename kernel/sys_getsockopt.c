@@ -9,7 +9,11 @@
  * Phase 1 (Completed): Basic validation stub
  * Phase 2 (Completed): Implement common SOL_SOCKET options (SO_TYPE, SO_ERROR, SO_SNDBUF, SO_RCVBUF)
  * Phase 3 (Completed): TCP and IP protocol options
- * Phase 4: Advanced options and full POSIX compliance
+ * Phase 4 (Completed): Per-socket option enforcement with getsockopt round-trip
+ *   - SO_REUSEADDR/SO_REUSEPORT/SO_BROADCAST: read from so_flags bitmask
+ *   - IP_TTL: returns stored value (default 64 when unset)
+ *   - IP_TOS: returns stored value
+ *   - TCP_CORK/TCP_QUICKACK: return stored per-socket values
  */
 
 #include <kernel/fut_task.h>

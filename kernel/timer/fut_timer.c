@@ -417,7 +417,9 @@ void fut_timer_tick(void) {
                 }
 
                 if (already_pending) {
-                    pt->overrun++;
+                    /* POSIX: cap at DELAYTIMER_MAX (INT_MAX) */
+                    if (pt->overrun < 2147483647)
+                        pt->overrun++;
                 } else {
                     /* POSIX: deliver SI_TIMER siginfo so SA_SIGINFO handlers get
                      * si_code=SI_TIMER, si_timerid=timer_id, si_overrun, si_value */

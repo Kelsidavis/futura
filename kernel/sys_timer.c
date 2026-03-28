@@ -19,6 +19,12 @@
 #include <kernel/kprintf.h>
 #include <platform/platform.h>
 
+/* POSIX DELAYTIMER_MAX: maximum overrun count returned by timer_getoverrun().
+ * Linux uses INT_MAX; we follow suit. */
+#ifndef DELAYTIMER_MAX
+#define DELAYTIMER_MAX 2147483647
+#endif
+
 /* Kernel-pointer bypass helpers for selftest support */
 static inline int timer_copy_to_user(void *dst, const void *src, size_t n) {
 #ifdef KERNEL_VIRTUAL_BASE
@@ -242,6 +248,7 @@ long sys_timer_settime(timer_t timerid, int flags,
         pt->armed = 0;
         pt->expiry_ms = 0;
         pt->interval_ms = 0;
+        pt->overrun = 0;  /* POSIX: re-arming/disarming resets overrun */
         return 0;
     }
 
@@ -339,7 +346,10 @@ long sys_timer_getoverrun(timer_t timerid) {
     if (!pt)
         return -EINVAL;
 
-    return (long)pt->overrun;
+    long ov = (long)pt->overrun;
+    if (ov > DELAYTIMER_MAX)
+        ov = DELAYTIMER_MAX;
+    return ov;
 }
 
 /**
@@ -356,11 +366,18 @@ long sys_timer_delete(timer_t timerid) {
     if (!pt)
         return -EINVAL;
 
-    /* Disarm and free the slot */
+    /* Disarm and fully reset the slot so no stale state leaks
+     * into a future timer_create that reuses this index. */
     pt->armed = 0;
     pt->expiry_ms = 0;
     pt->interval_ms = 0;
-    pt->active = 0;
+    pt->overrun = 0;
+    pt->signo = 0;
+    pt->notify = 0;
+    pt->sigev_value = 0;
+    pt->target_tid = 0;
+    pt->clockid = 0;
+    pt->active = 0;  /* Must be last — tick handler checks active first */
 
     return 0;
 }

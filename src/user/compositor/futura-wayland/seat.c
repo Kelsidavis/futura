@@ -719,7 +719,58 @@ static void seat_handle_key_event(struct seat_state *seat,
         if ((compositor_mods == (COMP_MOD_CTRL | COMP_MOD_ALT) && keycode == 20 /* T */) ||
             (compositor_mods == COMP_MOD_SUPER && keycode == 28 /* Enter */)) {
             compositor_launch_terminal();
-            return;  /* Don't forward to client */
+            return;
+        }
+
+        /* Alt+Tab: cycle focus to next window */
+        if ((compositor_mods & COMP_MOD_ALT) && keycode == 15 /* Tab */) {
+            if (seat->comp) {
+                struct comp_surface *current = seat->comp->focused_surface;
+                struct comp_surface *next = NULL;
+
+                if (current) {
+                    /* Find next surface after current in the list */
+                    struct comp_surface *s;
+                    bool found_current = false;
+                    wl_list_for_each(s, &seat->comp->surfaces, link) {
+                        if (!s->has_backing || s->minimized) continue;
+                        if (found_current) { next = s; break; }
+                        if (s == current) found_current = true;
+                    }
+                    /* Wrap around to first */
+                    if (!next) {
+                        wl_list_for_each(s, &seat->comp->surfaces, link) {
+                            if (s->has_backing && !s->minimized) { next = s; break; }
+                        }
+                    }
+                } else {
+                    /* No focused window — focus first */
+                    struct comp_surface *s;
+                    wl_list_for_each(s, &seat->comp->surfaces, link) {
+                        if (s->has_backing && !s->minimized) { next = s; break; }
+                    }
+                }
+
+                if (next && next != current) {
+                    comp_surface_raise(seat->comp, next);
+                    seat_focus_surface(seat, next);
+                    comp_damage_add_full(seat->comp);
+                    seat->comp->needs_repaint = true;
+                }
+            }
+            return;
+        }
+
+        /* Alt+F4: close focused window */
+        if ((compositor_mods & COMP_MOD_ALT) && keycode == 62 /* F4 */) {
+            if (seat->comp && seat->comp->focused_surface) {
+                struct comp_surface *s = seat->comp->focused_surface;
+                if (s->xdg_toplevel_resource) {
+                    extern void xdg_toplevel_send_close(struct wl_resource *);
+                    xdg_toplevel_send_close(s->xdg_toplevel_resource);
+                }
+            }
+            return;
         }
     }
 

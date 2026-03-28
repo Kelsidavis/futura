@@ -375,6 +375,16 @@ static void cmd_tldr(int argc, char *argv[]);
 static void cmd_hyperfine(int argc, char *argv[]);
 static void cmd_tokei(int argc, char *argv[]);
 static void cmd_zoxide(int argc, char *argv[]);
+static void cmd_git_lfs(int argc, char *argv[]);
+static void cmd_gh(int argc, char *argv[]);
+static void cmd_pip(int argc, char *argv[]);
+static void cmd_npm(int argc, char *argv[]);
+static void cmd_cargo(int argc, char *argv[]);
+static void cmd_go(int argc, char *argv[]);
+static void cmd_rustup(int argc, char *argv[]);
+static void cmd_nvm(int argc, char *argv[]);
+static void cmd_pyenv(int argc, char *argv[]);
+static void cmd_sdkman(int argc, char *argv[]);
 
 /* Forward declaration for prompt */
 static void print_prompt(void);
@@ -826,7 +836,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     const char *builtins[] = {
         "ab", "acpi", "arp", "ascii", "base32", "bg", "blkzone", "blockdev", "brctl", "cal", "cd", "chgrp", "chmod", "chroot", "chrt", "clear", "cmp", "comm", "conntrack", "cpupower", "date", "depmod", "dd", "df", "dhclient", "dig", "dmidecode", "dmesg", "echo", "edit", "ethtool", "expand", "expr", "factor", "file", "fold", "fuser", "hdparm", "hexdump", "host", "hwinfo", "install", "ionice", "iperf3", "locale", "lshw", "lsmod", "lsns", "lsof", "lsusb", "md5sum", "mkfifo", "modprobe", "mtr", "nameif", "nc", "nice", "nohup", "numactl", "nvme", "partprobe", "patch", "perf", "pgrep", "pidof", "pkill", "poweroff", "prlimit", "reboot", "renice", "reset", "route", "sensors", "seq", "sha1sum", "sha512sum", "sleep", "smartctl", "stdbuf", "strings", "swapon", "swapoff", "tac", "taskset", "time", "timeout", "tput", "traceroute", "tty", "udevadm", "unexpand", "wget", "whatis", "whois", "xxd", "exit", "export", "fg", "free",
         "help", "hostname", "httpd", "id", "ifconfig", "iostat", "ipcs", "iptables", "jobs", "kill", "logger", "losetup", "ls", "lsblk", "lspci", "mkfs", "mount", "netstat",
-        ".", "adduser", "alias", "ansible", "ansible-playbook", "arch", "basename", "blkid", "bridge", "buildah", "busctl", "certutil", "chage", "coredumpctl", "crictl", "ctr", "deluser", "dialog", "dirname", "docker", "du", "exec", "false", "fmt", "getconf", "gpg", "groupadd", "groupdel", "groups", "helm", "history", "hostnamectl", "infocmp", "ip", "ipcmk", "ipcrm", "journalctl", "kubectl", "ln", "localectl", "loginctl", "logname", "lscpu", "machinectl", "mkswap", "mktemp", "more", "nawk", "networkctl", "nft", "nproc", "nslookup", "openssl", "passwd", "ping", "podman", "printenv", "printf", "ps", "pwd", "read", "readlink", "realpath", "resolvectl", "set", "sha1sum", "sha256sum", "shutdown", "source", "ss", "ssh-keygen", "stat", "strace", "stty", "su", "sync", "sysctl", "sysinfo", "systemd-analyze", "systemd-ask-password", "systemd-cat", "systemd-cgls", "systemd-cgtop", "systemd-escape", "systemd-inhibit", "systemd-notify", "systemd-run", "systemd-tmpfiles", "tc", "terraform", "test", "tic", "timedatectl", "toe", "top", "trap", "tree", "true", "tset", "type", "umask", "unalias", "uname", "uptime", "users", "vagrant", "version", "vi", "vipw", "vmstat", "w", "wait", "watch", "wdctl", "whiptail", "which", "whoami", "xargs", "yes", NULL
+        ".", "adduser", "alias", "ansible", "ansible-playbook", "arch", "basename", "blkid", "bridge", "buildah", "busctl", "certutil", "chage", "coredumpctl", "crictl", "ctr", "deluser", "dialog", "dirname", "docker", "du", "exec", "false", "fmt", "getconf", "gpg", "groupadd", "groupdel", "groups", "helm", "history", "hostnamectl", "infocmp", "ip", "ipcmk", "ipcrm", "journalctl", "kubectl", "ln", "localectl", "loginctl", "logname", "lscpu", "machinectl", "mkswap", "mktemp", "more", "nawk", "networkctl", "nft", "nproc", "nslookup", "openssl", "passwd", "ping", "podman", "printenv", "printf", "ps", "pwd", "read", "readlink", "realpath", "resolvectl", "set", "sha1sum", "sha256sum", "shutdown", "source", "ss", "ssh-keygen", "stat", "strace", "stty", "su", "sync", "sysctl", "sysinfo", "systemd-analyze", "systemd-ask-password", "systemd-cat", "systemd-cgls", "systemd-cgtop", "systemd-escape", "systemd-inhibit", "systemd-notify", "systemd-run", "systemd-tmpfiles", "tc", "terraform", "test", "tic", "timedatectl", "toe", "top", "trap", "tree", "true", "tset", "type", "umask", "unalias", "uname", "uptime", "users", "vagrant", "version", "vi", "vipw", "vmstat", "w", "wait", "watch", "wdctl", "whiptail", "which", "whoami", "xargs", "yes", "git-lfs", "gh", "pip", "pip3", "npm", "cargo", "go", "rustup", "nvm", "pyenv", "sdkman", "sdk", NULL
     };
 
     /* External commands we might have */
@@ -14778,6 +14788,36 @@ watch_sleep:
     } else if (strcmp_simple(argv[0], "z") == 0) {
         cmd_zoxide(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "git-lfs") == 0) {
+        cmd_git_lfs(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "gh") == 0) {
+        cmd_gh(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "pip") == 0 || strcmp_simple(argv[0], "pip3") == 0) {
+        cmd_pip(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "npm") == 0) {
+        cmd_npm(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "cargo") == 0) {
+        cmd_cargo(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "go") == 0) {
+        cmd_go(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "rustup") == 0) {
+        cmd_rustup(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "nvm") == 0) {
+        cmd_nvm(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "pyenv") == 0) {
+        cmd_pyenv(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "sdkman") == 0 || strcmp_simple(argv[0], "sdk") == 0) {
+        cmd_sdkman(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -15170,6 +15210,18 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "hyperfine") == 0 ||
             strcmp_simple(cmd, "tokei") == 0 ||
             strcmp_simple(cmd, "z") == 0 ||
+            strcmp_simple(cmd, "git-lfs") == 0 ||
+            strcmp_simple(cmd, "gh") == 0 ||
+            strcmp_simple(cmd, "pip") == 0 ||
+            strcmp_simple(cmd, "pip3") == 0 ||
+            strcmp_simple(cmd, "npm") == 0 ||
+            strcmp_simple(cmd, "cargo") == 0 ||
+            strcmp_simple(cmd, "go") == 0 ||
+            strcmp_simple(cmd, "rustup") == 0 ||
+            strcmp_simple(cmd, "nvm") == 0 ||
+            strcmp_simple(cmd, "pyenv") == 0 ||
+            strcmp_simple(cmd, "sdkman") == 0 ||
+            strcmp_simple(cmd, "sdk") == 0 ||
             0);
 }
 
@@ -19826,7 +19878,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   410 built-in commands — type 'help'    |\n");
+    write_str(1, "|   420 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");
@@ -36278,6 +36330,926 @@ static void cmd_zoxide(int argc, char *argv[]) {
             write_str(2, query);
             write_str(2, "'\n");
         }
+    }
+}
+
+/* git-lfs - Git Large File Storage (simulated) */
+static void cmd_git_lfs(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "git-lfs/3.5.1 (Futura OS; go 1.22.0)\n");
+        write_str(1, "\nUsage: git-lfs <command> [<args>]\n\n");
+        write_str(1, "Commands:\n");
+        write_str(1, "  track    Start tracking a file pattern\n");
+        write_str(1, "  untrack  Stop tracking a file pattern\n");
+        write_str(1, "  pull     Download LFS files for current ref\n");
+        write_str(1, "  push     Push LFS files to remote\n");
+        write_str(1, "  ls-files Show LFS tracked files\n");
+        write_str(1, "  status   Show status of LFS files\n");
+        write_str(1, "  env      Show LFS environment\n");
+        write_str(1, "  install  Set up Git LFS hooks\n");
+        return;
+    }
+    const char *sub = argv[1];
+    if (strcmp_simple(sub, "track") == 0) {
+        if (argc < 3) {
+            write_str(1, "Listing tracked patterns\n");
+            write_str(1, "    *.bin (.gitattributes)\n");
+            write_str(1, "    *.iso (.gitattributes)\n");
+            write_str(1, "    *.tar.gz (.gitattributes)\n");
+        } else {
+            write_str(1, "Tracking \"");
+            write_str(1, argv[2]);
+            write_str(1, "\"\n");
+        }
+    } else if (strcmp_simple(sub, "untrack") == 0) {
+        if (argc < 3) {
+            write_str(2, "git-lfs: pattern required\n");
+        } else {
+            write_str(1, "Untracking \"");
+            write_str(1, argv[2]);
+            write_str(1, "\"\n");
+        }
+    } else if (strcmp_simple(sub, "pull") == 0) {
+        write_str(1, "Git LFS: (0 of 0 files) 0 B / 0 B\n");
+    } else if (strcmp_simple(sub, "push") == 0) {
+        write_str(1, "Git LFS: (0 of 0 files, 0 skipped) 0 B / 0 B\n");
+    } else if (strcmp_simple(sub, "ls-files") == 0) {
+        write_str(1, "(no LFS files tracked)\n");
+    } else if (strcmp_simple(sub, "status") == 0) {
+        write_str(1, "On branch main\n");
+        write_str(1, "Git LFS objects to be pushed to origin/main:\n\n");
+        write_str(1, "Git LFS objects to be committed:\n\n");
+        write_str(1, "Git LFS objects not staged for commit:\n\n");
+    } else if (strcmp_simple(sub, "env") == 0) {
+        write_str(1, "git-lfs/3.5.1 (Futura OS; go 1.22.0)\n");
+        write_str(1, "LocalWorkingDir=/home/user/project\n");
+        write_str(1, "LocalGitDir=/home/user/project/.git\n");
+        write_str(1, "LocalMediaDir=/home/user/project/.git/lfs/objects\n");
+    } else if (strcmp_simple(sub, "install") == 0) {
+        write_str(1, "Updated Git hooks.\n");
+        write_str(1, "Git LFS initialized.\n");
+    } else if (strcmp_simple(sub, "version") == 0) {
+        write_str(1, "git-lfs/3.5.1 (Futura OS; go 1.22.0)\n");
+    } else {
+        write_str(2, "git-lfs: unknown command \"");
+        write_str(2, sub);
+        write_str(2, "\"\n");
+    }
+}
+
+/* gh - GitHub CLI (simulated) */
+static void cmd_gh(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "gh version 2.62.0 (Futura OS)\n");
+        write_str(1, "https://github.com/cli/cli\n\n");
+        write_str(1, "Usage: gh <command> <subcommand> [flags]\n\n");
+        write_str(1, "Commands:\n");
+        write_str(1, "  repo     Manage repositories\n");
+        write_str(1, "  pr       Manage pull requests\n");
+        write_str(1, "  issue    Manage issues\n");
+        write_str(1, "  auth     Authenticate gh and git\n");
+        write_str(1, "  gist     Manage gists\n");
+        write_str(1, "  release  Manage releases\n");
+        write_str(1, "  workflow Manage GitHub Actions workflows\n");
+        return;
+    }
+    const char *sub = argv[1];
+    if (strcmp_simple(sub, "repo") == 0) {
+        const char *act = (argc > 2) ? argv[2] : "list";
+        if (strcmp_simple(act, "view") == 0) {
+            write_str(1, "futura-os/futura\n");
+            write_str(1, "A modern operating system kernel\n\n");
+            write_str(1, "  Stars:      1,247\n");
+            write_str(1, "  Forks:      89\n");
+            write_str(1, "  Watchers:   42\n");
+            write_str(1, "  Issues:     15\n");
+            write_str(1, "  PRs:        3\n");
+            write_str(1, "  License:    MIT\n");
+        } else if (strcmp_simple(act, "list") == 0) {
+            write_str(1, "Showing 3 of 3 repositories\n\n");
+            write_str(1, "  futura-os/futura       A modern OS kernel         public  4h ago\n");
+            write_str(1, "  futura-os/drivers      Hardware drivers (Rust)    public  1d ago\n");
+            write_str(1, "  futura-os/docs         Documentation              public  2d ago\n");
+        } else if (strcmp_simple(act, "clone") == 0) {
+            if (argc < 4) {
+                write_str(2, "gh: repository argument required\n");
+            } else {
+                write_str(1, "Cloning into '");
+                write_str(1, argv[3]);
+                write_str(1, "'...\n");
+            }
+        } else {
+            write_str(2, "gh repo: unknown command \"");
+            write_str(2, act);
+            write_str(2, "\"\n");
+        }
+    } else if (strcmp_simple(sub, "pr") == 0) {
+        const char *act = (argc > 2) ? argv[2] : "list";
+        if (strcmp_simple(act, "list") == 0) {
+            write_str(1, "Showing 3 of 3 open pull requests\n\n");
+            write_str(1, "  #142  feat: add RISC-V support       riscv-port     OPEN\n");
+            write_str(1, "  #139  fix: memory leak in VFS cache   fix/vfs-leak   OPEN\n");
+            write_str(1, "  #137  docs: update build guide        docs/build     OPEN\n");
+        } else if (strcmp_simple(act, "view") == 0) {
+            write_str(1, "#142 feat: add RISC-V support\n");
+            write_str(1, "  State:   OPEN\n");
+            write_str(1, "  Author:  contributor\n");
+            write_str(1, "  Branch:  riscv-port -> main\n");
+            write_str(1, "  +1,247 -89\n");
+        } else if (strcmp_simple(act, "create") == 0) {
+            write_str(1, "Creating pull request for current branch...\n");
+            write_str(1, "https://github.com/futura-os/futura/pull/143\n");
+        } else if (strcmp_simple(act, "status") == 0) {
+            write_str(1, "Relevant pull requests in futura-os/futura\n\n");
+            write_str(1, "  Current branch\n");
+            write_str(1, "    No pull requests for current branch\n\n");
+            write_str(1, "  Created by you\n");
+            write_str(1, "    No pull requests created by you\n");
+        } else {
+            write_str(2, "gh pr: unknown command \"");
+            write_str(2, act);
+            write_str(2, "\"\n");
+        }
+    } else if (strcmp_simple(sub, "issue") == 0) {
+        const char *act = (argc > 2) ? argv[2] : "list";
+        if (strcmp_simple(act, "list") == 0) {
+            write_str(1, "Showing 5 of 15 issues\n\n");
+            write_str(1, "  #201  bug: kernel panic on OOM          bug       OPEN\n");
+            write_str(1, "  #198  feat: USB 3.0 support             feature   OPEN\n");
+            write_str(1, "  #195  docs: missing API reference       docs      OPEN\n");
+            write_str(1, "  #192  perf: scheduler latency spikes    perf      OPEN\n");
+            write_str(1, "  #190  feat: NVMe multipath              feature   OPEN\n");
+        } else if (strcmp_simple(act, "create") == 0) {
+            write_str(1, "Creating issue...\n");
+            write_str(1, "https://github.com/futura-os/futura/issues/202\n");
+        } else if (strcmp_simple(act, "view") == 0) {
+            write_str(1, "#201 bug: kernel panic on OOM\n");
+            write_str(1, "  State:   OPEN\n");
+            write_str(1, "  Author:  user\n");
+            write_str(1, "  Labels:  bug, priority:high\n");
+        } else {
+            write_str(2, "gh issue: unknown command \"");
+            write_str(2, act);
+            write_str(2, "\"\n");
+        }
+    } else if (strcmp_simple(sub, "auth") == 0) {
+        const char *act = (argc > 2) ? argv[2] : "status";
+        if (strcmp_simple(act, "status") == 0) {
+            write_str(1, "github.com\n");
+            write_str(1, "  Logged in to github.com as futura-user\n");
+            write_str(1, "  Token: gho_****\n");
+            write_str(1, "  Token scopes: gist, read:org, repo, workflow\n");
+        } else if (strcmp_simple(act, "login") == 0) {
+            write_str(1, "! First copy your one-time code: ABCD-1234\n");
+            write_str(1, "Press Enter to open github.com in your browser...\n");
+        } else {
+            write_str(2, "gh auth: unknown command \"");
+            write_str(2, act);
+            write_str(2, "\"\n");
+        }
+    } else if (strcmp_simple(sub, "--version") == 0 || strcmp_simple(sub, "version") == 0) {
+        write_str(1, "gh version 2.62.0 (Futura OS)\n");
+    } else {
+        write_str(2, "gh: unknown command \"");
+        write_str(2, sub);
+        write_str(2, "\"\n");
+    }
+}
+
+/* pip - Python package manager (simulated) */
+static void cmd_pip(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "pip 24.3.1 from /usr/lib/python3.12/site-packages/pip (python 3.12)\n\n");
+        write_str(1, "Usage: pip <command> [options]\n\n");
+        write_str(1, "Commands:\n");
+        write_str(1, "  install     Install packages\n");
+        write_str(1, "  uninstall   Uninstall packages\n");
+        write_str(1, "  list        List installed packages\n");
+        write_str(1, "  show        Show package info\n");
+        write_str(1, "  freeze      Output installed packages in requirements format\n");
+        write_str(1, "  search      Search PyPI\n");
+        write_str(1, "  check       Verify installed packages\n");
+        return;
+    }
+    const char *sub = argv[1];
+    if (strcmp_simple(sub, "install") == 0) {
+        if (argc < 3) {
+            write_str(2, "ERROR: You must give at least one requirement to install\n");
+        } else {
+            write_str(1, "Collecting ");
+            write_str(1, argv[2]);
+            write_str(1, "\n");
+            write_str(1, "  Downloading ");
+            write_str(1, argv[2]);
+            write_str(1, "-1.0.0-py3-none-any.whl (42 kB)\n");
+            write_str(1, "Installing collected packages: ");
+            write_str(1, argv[2]);
+            write_str(1, "\n");
+            write_str(1, "Successfully installed ");
+            write_str(1, argv[2]);
+            write_str(1, "-1.0.0\n");
+        }
+    } else if (strcmp_simple(sub, "uninstall") == 0) {
+        if (argc < 3) {
+            write_str(2, "ERROR: You must give at least one requirement to uninstall\n");
+        } else {
+            write_str(1, "Found existing installation: ");
+            write_str(1, argv[2]);
+            write_str(1, " 1.0.0\n");
+            write_str(1, "Uninstalling ");
+            write_str(1, argv[2]);
+            write_str(1, "-1.0.0:\n");
+            write_str(1, "  Successfully uninstalled ");
+            write_str(1, argv[2]);
+            write_str(1, "-1.0.0\n");
+        }
+    } else if (strcmp_simple(sub, "list") == 0) {
+        write_str(1, "Package          Version\n");
+        write_str(1, "---------------- -------\n");
+        write_str(1, "pip              24.3.1\n");
+        write_str(1, "setuptools       75.6.0\n");
+        write_str(1, "wheel            0.45.1\n");
+        write_str(1, "requests         2.32.3\n");
+        write_str(1, "numpy            2.2.0\n");
+    } else if (strcmp_simple(sub, "freeze") == 0) {
+        write_str(1, "certifi==2024.12.14\n");
+        write_str(1, "charset-normalizer==3.4.0\n");
+        write_str(1, "idna==3.10\n");
+        write_str(1, "numpy==2.2.0\n");
+        write_str(1, "requests==2.32.3\n");
+        write_str(1, "urllib3==2.3.0\n");
+    } else if (strcmp_simple(sub, "show") == 0) {
+        if (argc < 3) {
+            write_str(2, "ERROR: Please provide a package name\n");
+        } else {
+            write_str(1, "Name: ");
+            write_str(1, argv[2]);
+            write_str(1, "\nVersion: 1.0.0\n");
+            write_str(1, "Summary: A Python package\n");
+            write_str(1, "Home-page: https://pypi.org/project/");
+            write_str(1, argv[2]);
+            write_str(1, "/\n");
+            write_str(1, "Author: Python Developer\n");
+            write_str(1, "License: MIT\n");
+            write_str(1, "Location: /usr/lib/python3.12/site-packages\n");
+        }
+    } else if (strcmp_simple(sub, "check") == 0) {
+        write_str(1, "No broken requirements found.\n");
+    } else if (strcmp_simple(sub, "--version") == 0 || strcmp_simple(sub, "-V") == 0) {
+        write_str(1, "pip 24.3.1 from /usr/lib/python3.12/site-packages/pip (python 3.12)\n");
+    } else {
+        write_str(2, "pip: unknown command \"");
+        write_str(2, sub);
+        write_str(2, "\"\n");
+    }
+}
+
+/* npm - Node package manager (simulated) */
+static void cmd_npm(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "npm v10.9.2\n\n");
+        write_str(1, "Usage: npm <command>\n\n");
+        write_str(1, "Commands:\n");
+        write_str(1, "  install   Install a package\n");
+        write_str(1, "  init      Create a package.json file\n");
+        write_str(1, "  list      List installed packages\n");
+        write_str(1, "  run       Run a script\n");
+        write_str(1, "  test      Run tests\n");
+        write_str(1, "  start     Start a package\n");
+        write_str(1, "  publish   Publish a package\n");
+        write_str(1, "  update    Update packages\n");
+        return;
+    }
+    const char *sub = argv[1];
+    if (strcmp_simple(sub, "install") == 0 || strcmp_simple(sub, "i") == 0) {
+        if (argc < 3) {
+            write_str(1, "up to date, audited 128 packages in 1.2s\n\n");
+            write_str(1, "24 packages are looking for funding\n");
+            write_str(1, "  run `npm fund` for details\n\n");
+            write_str(1, "found 0 vulnerabilities\n");
+        } else {
+            write_str(1, "added 1 package in 0.8s\n\n");
+            write_str(1, "+ ");
+            write_str(1, argv[2]);
+            write_str(1, "@1.0.0\n");
+        }
+    } else if (strcmp_simple(sub, "init") == 0) {
+        write_str(1, "Wrote to /home/user/project/package.json:\n\n");
+        write_str(1, "{\n");
+        write_str(1, "  \"name\": \"project\",\n");
+        write_str(1, "  \"version\": \"1.0.0\",\n");
+        write_str(1, "  \"description\": \"\",\n");
+        write_str(1, "  \"main\": \"index.js\",\n");
+        write_str(1, "  \"scripts\": {\n");
+        write_str(1, "    \"test\": \"echo \\\"Error: no test specified\\\" && exit 1\"\n");
+        write_str(1, "  },\n");
+        write_str(1, "  \"license\": \"ISC\"\n");
+        write_str(1, "}\n");
+    } else if (strcmp_simple(sub, "list") == 0 || strcmp_simple(sub, "ls") == 0) {
+        write_str(1, "project@1.0.0 /home/user/project\n");
+        write_str(1, "+-- express@4.21.1\n");
+        write_str(1, "+-- lodash@4.17.21\n");
+        write_str(1, "+-- typescript@5.7.2\n");
+        write_str(1, "`-- vitest@2.1.8\n");
+    } else if (strcmp_simple(sub, "run") == 0) {
+        if (argc < 3) {
+            write_str(1, "Lifecycle scripts included in project@1.0.0:\n");
+            write_str(1, "  test\n    echo \"no test specified\"\n");
+        } else {
+            write_str(1, "> project@1.0.0 ");
+            write_str(1, argv[2]);
+            write_str(1, "\n> echo \"running ");
+            write_str(1, argv[2]);
+            write_str(1, "\"\n\nrunning ");
+            write_str(1, argv[2]);
+            write_str(1, "\n");
+        }
+    } else if (strcmp_simple(sub, "test") == 0) {
+        write_str(1, "> project@1.0.0 test\n> vitest\n\n");
+        write_str(1, " PASS  tests/index.test.js\n\n");
+        write_str(1, "Test Files  1 passed (1)\n");
+        write_str(1, "     Tests  3 passed (3)\n");
+    } else if (strcmp_simple(sub, "start") == 0) {
+        write_str(1, "> project@1.0.0 start\n> node index.js\n\n");
+        write_str(1, "Server listening on port 3000\n");
+    } else if (strcmp_simple(sub, "update") == 0) {
+        write_str(1, "up to date, audited 128 packages in 1.5s\n\n");
+        write_str(1, "found 0 vulnerabilities\n");
+    } else if (strcmp_simple(sub, "--version") == 0 || strcmp_simple(sub, "-v") == 0) {
+        write_str(1, "10.9.2\n");
+    } else {
+        write_str(2, "npm: unknown command \"");
+        write_str(2, sub);
+        write_str(2, "\"\n");
+    }
+}
+
+/* cargo - Rust package manager (simulated) */
+static void cmd_cargo(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "Rust's package manager\n\n");
+        write_str(1, "Usage: cargo [+toolchain] [OPTIONS] [COMMAND]\n\n");
+        write_str(1, "Commands:\n");
+        write_str(1, "  build   Compile the current package\n");
+        write_str(1, "  run     Run a binary or example\n");
+        write_str(1, "  test    Run the tests\n");
+        write_str(1, "  new     Create a new Cargo package\n");
+        write_str(1, "  init    Create a new Cargo package in existing directory\n");
+        write_str(1, "  check   Check a local package for errors\n");
+        write_str(1, "  clean   Remove artifacts from target directory\n");
+        write_str(1, "  add     Add dependencies to a Cargo.toml manifest\n");
+        write_str(1, "  clippy  Check code with Clippy lints\n");
+        write_str(1, "  fmt     Format Rust source code\n");
+        return;
+    }
+    const char *sub = argv[1];
+    if (strcmp_simple(sub, "build") == 0) {
+        int release = 0;
+        for (int i = 2; i < argc; i++) {
+            if (strcmp_simple(argv[i], "--release") == 0) release = 1;
+        }
+        write_str(1, "   Compiling myproject v0.1.0 (/home/user/project)\n");
+        if (release) {
+            write_str(1, "    Finished `release` profile [optimized] target(s) in 4.32s\n");
+        } else {
+            write_str(1, "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.86s\n");
+        }
+    } else if (strcmp_simple(sub, "run") == 0) {
+        write_str(1, "   Compiling myproject v0.1.0 (/home/user/project)\n");
+        write_str(1, "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.93s\n");
+        write_str(1, "     Running `target/debug/myproject`\n");
+        write_str(1, "Hello, world!\n");
+    } else if (strcmp_simple(sub, "test") == 0) {
+        write_str(1, "   Compiling myproject v0.1.0 (/home/user/project)\n");
+        write_str(1, "    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.14s\n");
+        write_str(1, "     Running unittests src/main.rs (target/debug/deps/myproject-abc123)\n\n");
+        write_str(1, "running 3 tests\n");
+        write_str(1, "test tests::test_add ... ok\n");
+        write_str(1, "test tests::test_sub ... ok\n");
+        write_str(1, "test tests::test_mul ... ok\n\n");
+        write_str(1, "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n");
+    } else if (strcmp_simple(sub, "new") == 0) {
+        if (argc < 3) {
+            write_str(2, "error: the following required arguments were not provided:\n");
+            write_str(2, "  <path>\n");
+        } else {
+            write_str(1, "    Creating binary (application) `");
+            write_str(1, argv[2]);
+            write_str(1, "` package\n");
+            write_str(1, "note: see more `Cargo.toml` keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html\n");
+        }
+    } else if (strcmp_simple(sub, "init") == 0) {
+        write_str(1, "    Creating binary (application) package\n");
+        write_str(1, "note: see more `Cargo.toml` keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html\n");
+    } else if (strcmp_simple(sub, "check") == 0) {
+        write_str(1, "    Checking myproject v0.1.0 (/home/user/project)\n");
+        write_str(1, "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.56s\n");
+    } else if (strcmp_simple(sub, "clean") == 0) {
+        write_str(1, "     Removed 42 files, 128.4MiB total\n");
+    } else if (strcmp_simple(sub, "add") == 0) {
+        if (argc < 3) {
+            write_str(2, "error: the following required arguments were not provided:\n");
+            write_str(2, "  <DEP>...\n");
+        } else {
+            write_str(1, "    Updating crates.io index\n");
+            write_str(1, "      Adding ");
+            write_str(1, argv[2]);
+            write_str(1, " v1.0.0 to dependencies\n");
+        }
+    } else if (strcmp_simple(sub, "clippy") == 0) {
+        write_str(1, "    Checking myproject v0.1.0 (/home/user/project)\n");
+        write_str(1, "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.78s\n");
+    } else if (strcmp_simple(sub, "fmt") == 0) {
+        write_str(1, "(no files changed)\n");
+    } else if (strcmp_simple(sub, "--version") == 0 || strcmp_simple(sub, "-V") == 0) {
+        write_str(1, "cargo 1.83.0 (5ffbef321 2024-10-29)\n");
+    } else {
+        write_str(2, "cargo: unknown command \"");
+        write_str(2, sub);
+        write_str(2, "\"\n");
+    }
+}
+
+/* go - Go toolchain (simulated) */
+static void cmd_go(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "Go is a tool for managing Go source code.\n\n");
+        write_str(1, "Usage: go <command> [arguments]\n\n");
+        write_str(1, "Commands:\n");
+        write_str(1, "  build    Compile packages and dependencies\n");
+        write_str(1, "  run      Compile and run Go program\n");
+        write_str(1, "  test     Test packages\n");
+        write_str(1, "  mod      Module maintenance\n");
+        write_str(1, "  fmt      Gofmt (reformat) package sources\n");
+        write_str(1, "  get      Add dependencies to current module\n");
+        write_str(1, "  vet      Report likely mistakes in packages\n");
+        write_str(1, "  install  Compile and install packages\n");
+        write_str(1, "  version  Print Go version\n");
+        return;
+    }
+    const char *sub = argv[1];
+    if (strcmp_simple(sub, "build") == 0) {
+        if (argc > 2) {
+            write_str(1, "Building ");
+            write_str(1, argv[2]);
+            write_str(1, "...\n");
+        }
+        /* go build produces no output on success */
+    } else if (strcmp_simple(sub, "run") == 0) {
+        if (argc < 3) {
+            write_str(2, "go: no go files listed\n");
+        } else {
+            write_str(1, "Hello, World!\n");
+        }
+    } else if (strcmp_simple(sub, "test") == 0) {
+        const char *pkg = (argc > 2) ? argv[2] : "./...";
+        int verbose = 0;
+        for (int i = 2; i < argc; i++) {
+            if (strcmp_simple(argv[i], "-v") == 0) verbose = 1;
+        }
+        if (verbose) {
+            write_str(1, "=== RUN   TestMain\n");
+            write_str(1, "--- PASS: TestMain (0.00s)\n");
+            write_str(1, "=== RUN   TestAdd\n");
+            write_str(1, "--- PASS: TestAdd (0.00s)\n");
+        }
+        write_str(1, "ok  \t");
+        write_str(1, pkg);
+        write_str(1, "\t0.003s\n");
+    } else if (strcmp_simple(sub, "mod") == 0) {
+        const char *act = (argc > 2) ? argv[2] : "";
+        if (strcmp_simple(act, "init") == 0) {
+            if (argc < 4) {
+                write_str(2, "go: cannot determine module path\n");
+            } else {
+                write_str(1, "go: creating new go.mod: module ");
+                write_str(1, argv[3]);
+                write_str(1, "\n");
+            }
+        } else if (strcmp_simple(act, "tidy") == 0) {
+            /* produces no output on success */
+        } else if (strcmp_simple(act, "download") == 0) {
+            write_str(1, "go: downloading dependencies...\n");
+        } else if (strcmp_simple(act, "verify") == 0) {
+            write_str(1, "all modules verified\n");
+        } else {
+            write_str(1, "Usage: go mod <command>\n\n");
+            write_str(1, "Commands:\n");
+            write_str(1, "  init      Initialize new module\n");
+            write_str(1, "  tidy      Add missing and remove unused modules\n");
+            write_str(1, "  download  Download modules to local cache\n");
+            write_str(1, "  verify    Verify dependencies\n");
+        }
+    } else if (strcmp_simple(sub, "fmt") == 0) {
+        /* produces no output when files are already formatted */
+    } else if (strcmp_simple(sub, "get") == 0) {
+        if (argc < 3) {
+            write_str(2, "go: 'go get' requires a package argument\n");
+        } else {
+            write_str(1, "go: downloading ");
+            write_str(1, argv[2]);
+            write_str(1, " v1.0.0\n");
+            write_str(1, "go: added ");
+            write_str(1, argv[2]);
+            write_str(1, " v1.0.0\n");
+        }
+    } else if (strcmp_simple(sub, "vet") == 0) {
+        /* produces no output when no issues found */
+    } else if (strcmp_simple(sub, "version") == 0) {
+        write_str(1, "go version go1.23.4 futura/amd64\n");
+    } else if (strcmp_simple(sub, "env") == 0) {
+        write_str(1, "GO111MODULE=\"on\"\n");
+        write_str(1, "GOARCH=\"amd64\"\n");
+        write_str(1, "GOOS=\"futura\"\n");
+        write_str(1, "GOPATH=\"/home/user/go\"\n");
+        write_str(1, "GOROOT=\"/usr/local/go\"\n");
+        write_str(1, "GOVERSION=\"go1.23.4\"\n");
+    } else {
+        write_str(2, "go: unknown command \"");
+        write_str(2, sub);
+        write_str(2, "\"\n");
+    }
+}
+
+/* rustup - Rust toolchain manager (simulated) */
+static void cmd_rustup(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "rustup 1.27.1 (2024-03-12)\n\n");
+        write_str(1, "Usage: rustup [OPTIONS] [COMMAND]\n\n");
+        write_str(1, "Commands:\n");
+        write_str(1, "  show       Show the active and installed toolchains\n");
+        write_str(1, "  update     Update Rust toolchains and rustup\n");
+        write_str(1, "  default    Set the default toolchain\n");
+        write_str(1, "  target     Modify a toolchain's supported targets\n");
+        write_str(1, "  component Modify a toolchain's installed components\n");
+        write_str(1, "  toolchain  Modify or query installed toolchains\n");
+        write_str(1, "  self       Modify the rustup installation\n");
+        return;
+    }
+    const char *sub = argv[1];
+    if (strcmp_simple(sub, "show") == 0) {
+        write_str(1, "Default host: x86_64-unknown-futura\n\n");
+        write_str(1, "installed toolchains\n");
+        write_str(1, "--------------------\n");
+        write_str(1, "stable-x86_64-unknown-futura (default)\n");
+        write_str(1, "nightly-x86_64-unknown-futura\n\n");
+        write_str(1, "active toolchain\n");
+        write_str(1, "----------------\n");
+        write_str(1, "stable-x86_64-unknown-futura (default)\n");
+        write_str(1, "rustc 1.83.0 (90b35a623 2024-11-26)\n");
+    } else if (strcmp_simple(sub, "update") == 0) {
+        write_str(1, "info: syncing channel updates for 'stable-x86_64-unknown-futura'\n");
+        write_str(1, "info: latest update on 2024-11-28, rust version 1.83.0 (90b35a623 2024-11-26)\n");
+        write_str(1, "info: downloading component 'cargo'\n");
+        write_str(1, "info: downloading component 'rust-std'\n");
+        write_str(1, "info: downloading component 'rustc'\n\n");
+        write_str(1, "  stable-x86_64-unknown-futura unchanged - rustc 1.83.0 (90b35a623 2024-11-26)\n\n");
+        write_str(1, "info: cleaning up downloads & tmp directories\n");
+    } else if (strcmp_simple(sub, "default") == 0) {
+        if (argc < 3) {
+            write_str(1, "stable-x86_64-unknown-futura (default)\n");
+        } else {
+            write_str(1, "info: default toolchain set to '");
+            write_str(1, argv[2]);
+            write_str(1, "'\n");
+        }
+    } else if (strcmp_simple(sub, "target") == 0) {
+        const char *act = (argc > 2) ? argv[2] : "list";
+        if (strcmp_simple(act, "list") == 0) {
+            write_str(1, "aarch64-unknown-futura\n");
+            write_str(1, "x86_64-unknown-futura (installed)\n");
+            write_str(1, "riscv64gc-unknown-futura\n");
+            write_str(1, "wasm32-unknown-unknown\n");
+        } else if (strcmp_simple(act, "add") == 0) {
+            if (argc < 4) {
+                write_str(2, "rustup: target required\n");
+            } else {
+                write_str(1, "info: downloading component 'rust-std' for '");
+                write_str(1, argv[3]);
+                write_str(1, "'\ninfo: installing component 'rust-std' for '");
+                write_str(1, argv[3]);
+                write_str(1, "'\n");
+            }
+        } else {
+            write_str(2, "rustup target: unknown command \"");
+            write_str(2, act);
+            write_str(2, "\"\n");
+        }
+    } else if (strcmp_simple(sub, "toolchain") == 0) {
+        const char *act = (argc > 2) ? argv[2] : "list";
+        if (strcmp_simple(act, "list") == 0) {
+            write_str(1, "stable-x86_64-unknown-futura (default)\n");
+            write_str(1, "nightly-x86_64-unknown-futura\n");
+        } else if (strcmp_simple(act, "install") == 0) {
+            if (argc < 4) {
+                write_str(2, "rustup: toolchain name required\n");
+            } else {
+                write_str(1, "info: installing toolchain '");
+                write_str(1, argv[3]);
+                write_str(1, "'\ninfo: toolchain '");
+                write_str(1, argv[3]);
+                write_str(1, "' installed\n");
+            }
+        } else {
+            write_str(2, "rustup toolchain: unknown command \"");
+            write_str(2, act);
+            write_str(2, "\"\n");
+        }
+    } else if (strcmp_simple(sub, "--version") == 0) {
+        write_str(1, "rustup 1.27.1 (2024-03-12)\n");
+    } else {
+        write_str(2, "rustup: unknown command \"");
+        write_str(2, sub);
+        write_str(2, "\"\n");
+    }
+}
+
+/* nvm - Node Version Manager (simulated) */
+static void cmd_nvm(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "Node Version Manager (v0.40.1)\n\n");
+        write_str(1, "Usage: nvm <command> [<version>]\n\n");
+        write_str(1, "Commands:\n");
+        write_str(1, "  ls          List installed versions\n");
+        write_str(1, "  ls-remote   List remote versions available for install\n");
+        write_str(1, "  install     Download and install a <version>\n");
+        write_str(1, "  use         Modify PATH to use <version>\n");
+        write_str(1, "  current     Display currently activated version\n");
+        write_str(1, "  alias       Set an alias\n");
+        write_str(1, "  uninstall   Uninstall a version\n");
+        return;
+    }
+    const char *sub = argv[1];
+    if (strcmp_simple(sub, "ls") == 0 || strcmp_simple(sub, "list") == 0) {
+        write_str(1, "->     v22.12.0\n");
+        write_str(1, "       v20.18.1\n");
+        write_str(1, "       v18.20.5\n");
+        write_str(1, "default -> 22 (-> v22.12.0)\n");
+        write_str(1, "node -> stable (-> v22.12.0) (default)\n");
+        write_str(1, "stable -> 22.12 (-> v22.12.0)\n");
+        write_str(1, "lts/* -> lts/jod (-> v22.12.0)\n");
+    } else if (strcmp_simple(sub, "ls-remote") == 0) {
+        write_str(1, "       v20.18.0   (LTS: Iron)\n");
+        write_str(1, "       v20.18.1   (Latest LTS: Iron)\n");
+        write_str(1, "       v22.11.0   (LTS: Jod)\n");
+        write_str(1, "       v22.12.0   (Latest LTS: Jod)\n");
+        write_str(1, "       v23.3.0\n");
+        write_str(1, "       v23.4.0    (Latest Current)\n");
+    } else if (strcmp_simple(sub, "install") == 0) {
+        const char *ver = (argc > 2) ? argv[2] : "node";
+        write_str(1, "Downloading and installing node ");
+        write_str(1, ver);
+        write_str(1, "...\n");
+        write_str(1, "Downloading https://nodejs.org/dist/");
+        write_str(1, ver);
+        write_str(1, "/node-");
+        write_str(1, ver);
+        write_str(1, "-futura-x64.tar.xz...\n");
+        write_str(1, "Now using node ");
+        write_str(1, ver);
+        write_str(1, "\n");
+    } else if (strcmp_simple(sub, "use") == 0) {
+        if (argc < 3) {
+            write_str(2, "nvm: version required\n");
+        } else {
+            write_str(1, "Now using node ");
+            write_str(1, argv[2]);
+            write_str(1, "\n");
+        }
+    } else if (strcmp_simple(sub, "current") == 0) {
+        write_str(1, "v22.12.0\n");
+    } else if (strcmp_simple(sub, "alias") == 0) {
+        if (argc < 4) {
+            write_str(1, "default -> 22 (-> v22.12.0)\n");
+            write_str(1, "node -> stable (-> v22.12.0) (default)\n");
+            write_str(1, "stable -> 22.12 (-> v22.12.0)\n");
+        } else {
+            write_str(1, argv[2]);
+            write_str(1, " -> ");
+            write_str(1, argv[3]);
+            write_str(1, "\n");
+        }
+    } else if (strcmp_simple(sub, "uninstall") == 0) {
+        if (argc < 3) {
+            write_str(2, "nvm: version required\n");
+        } else {
+            write_str(1, "Uninstalled node ");
+            write_str(1, argv[2]);
+            write_str(1, "\n");
+        }
+    } else if (strcmp_simple(sub, "--version") == 0) {
+        write_str(1, "0.40.1\n");
+    } else {
+        write_str(2, "nvm: unknown command \"");
+        write_str(2, sub);
+        write_str(2, "\"\n");
+    }
+}
+
+/* pyenv - Python version manager (simulated) */
+static void cmd_pyenv(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "pyenv 2.4.22\n\n");
+        write_str(1, "Usage: pyenv <command> [<args>]\n\n");
+        write_str(1, "Commands:\n");
+        write_str(1, "  versions   List all Python versions available to pyenv\n");
+        write_str(1, "  install    Install a Python version\n");
+        write_str(1, "  uninstall  Uninstall a Python version\n");
+        write_str(1, "  global     Set the global Python version\n");
+        write_str(1, "  local      Set the local application-specific Python version\n");
+        write_str(1, "  shell      Set a shell-specific Python version\n");
+        write_str(1, "  version    Show the current Python version\n");
+        return;
+    }
+    const char *sub = argv[1];
+    if (strcmp_simple(sub, "versions") == 0) {
+        write_str(1, "  system\n");
+        write_str(1, "  3.11.11\n");
+        write_str(1, "* 3.12.8 (set by /home/user/.pyenv/version)\n");
+        write_str(1, "  3.13.1\n");
+    } else if (strcmp_simple(sub, "install") == 0) {
+        if (argc < 3) {
+            write_str(2, "pyenv: version required\n");
+        } else {
+            write_str(1, "Installing ");
+            write_str(1, argv[2]);
+            write_str(1, "...\n");
+            write_str(1, "Downloading Python-");
+            write_str(1, argv[2]);
+            write_str(1, ".tar.xz...\n");
+            write_str(1, "Installing Python-");
+            write_str(1, argv[2]);
+            write_str(1, "...\n");
+            write_str(1, "Installed Python-");
+            write_str(1, argv[2]);
+            write_str(1, " to /home/user/.pyenv/versions/");
+            write_str(1, argv[2]);
+            write_str(1, "\n");
+        }
+    } else if (strcmp_simple(sub, "uninstall") == 0) {
+        if (argc < 3) {
+            write_str(2, "pyenv: version required\n");
+        } else {
+            write_str(1, "pyenv: remove /home/user/.pyenv/versions/");
+            write_str(1, argv[2]);
+            write_str(1, "? (y/n) y\n");
+        }
+    } else if (strcmp_simple(sub, "global") == 0) {
+        if (argc < 3) {
+            write_str(1, "3.12.8\n");
+        } else {
+            write_str(1, "Global Python version set to ");
+            write_str(1, argv[2]);
+            write_str(1, "\n");
+        }
+    } else if (strcmp_simple(sub, "local") == 0) {
+        if (argc < 3) {
+            write_str(1, "3.12.8\n");
+        } else {
+            write_str(1, "Local Python version set to ");
+            write_str(1, argv[2]);
+            write_str(1, "\n");
+        }
+    } else if (strcmp_simple(sub, "shell") == 0) {
+        if (argc < 3) {
+            write_str(1, "3.12.8\n");
+        } else {
+            write_str(1, "Shell Python version set to ");
+            write_str(1, argv[2]);
+            write_str(1, "\n");
+        }
+    } else if (strcmp_simple(sub, "version") == 0) {
+        write_str(1, "3.12.8 (set by /home/user/.pyenv/version)\n");
+    } else if (strcmp_simple(sub, "--version") == 0) {
+        write_str(1, "pyenv 2.4.22\n");
+    } else {
+        write_str(2, "pyenv: unknown command \"");
+        write_str(2, sub);
+        write_str(2, "\"\n");
+    }
+}
+
+/* sdkman - SDK Manager (simulated) */
+static void cmd_sdkman(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "\n");
+        write_str(1, "SDKMAN! 5.18.2\n\n");
+        write_str(1, "Usage: sdk <command> [candidate] [version]\n\n");
+        write_str(1, "Commands:\n");
+        write_str(1, "  list       List available candidates or versions\n");
+        write_str(1, "  install    Install a candidate version\n");
+        write_str(1, "  uninstall  Uninstall a candidate version\n");
+        write_str(1, "  use        Use a candidate version in current shell\n");
+        write_str(1, "  default    Set the default candidate version\n");
+        write_str(1, "  current    Display current candidate version\n");
+        write_str(1, "  env        Manage .sdkmanrc environment\n");
+        write_str(1, "  version    Display SDKMAN version\n");
+        return;
+    }
+    const char *sub = argv[1];
+    if (strcmp_simple(sub, "list") == 0) {
+        if (argc < 3) {
+            write_str(1, "Available Candidates\n");
+            write_str(1, "================================================================================\n");
+            write_str(1, "  Candidate    | Description\n");
+            write_str(1, "  -------------|--------------------------------------------------------------\n");
+            write_str(1, "  java         | Java Platform, Standard Edition\n");
+            write_str(1, "  gradle       | Gradle Build Tool\n");
+            write_str(1, "  maven        | Apache Maven\n");
+            write_str(1, "  kotlin       | Kotlin Programming Language\n");
+            write_str(1, "  scala        | Scala Programming Language\n");
+            write_str(1, "  groovy       | Apache Groovy\n");
+            write_str(1, "  springboot   | Spring Boot CLI\n");
+        } else {
+            write_str(1, "Available ");
+            write_str(1, argv[2]);
+            write_str(1, " Versions\n");
+            write_str(1, "================================================================================\n");
+            write_str(1, "  Vendor       | Version      | Status     | Identifier\n");
+            write_str(1, "  -------------|--------------|------------|------------------\n");
+            write_str(1, "  Corretto     | 21.0.5       |            | 21.0.5-amzn\n");
+            write_str(1, "  Temurin      | 21.0.5       | installed  | 21.0.5-tem\n");
+            write_str(1, "  Temurin      | 17.0.13      |            | 17.0.13-tem\n");
+            write_str(1, "  GraalVM      | 21.0.5       |            | 21.0.5-graal\n");
+        }
+    } else if (strcmp_simple(sub, "install") == 0) {
+        if (argc < 3) {
+            write_str(2, "sdk: candidate required\n");
+        } else {
+            const char *ver = (argc > 3) ? argv[3] : "latest";
+            write_str(1, "Downloading ");
+            write_str(1, argv[2]);
+            write_str(1, " ");
+            write_str(1, ver);
+            write_str(1, "...\n");
+            write_str(1, "Installing ");
+            write_str(1, argv[2]);
+            write_str(1, " ");
+            write_str(1, ver);
+            write_str(1, "...\n");
+            write_str(1, "Done installing!\n\n");
+            write_str(1, "Setting ");
+            write_str(1, argv[2]);
+            write_str(1, " ");
+            write_str(1, ver);
+            write_str(1, " as default.\n");
+        }
+    } else if (strcmp_simple(sub, "uninstall") == 0) {
+        if (argc < 4) {
+            write_str(2, "sdk: candidate and version required\n");
+        } else {
+            write_str(1, "Uninstalling ");
+            write_str(1, argv[2]);
+            write_str(1, " ");
+            write_str(1, argv[3]);
+            write_str(1, "...\n");
+        }
+    } else if (strcmp_simple(sub, "use") == 0) {
+        if (argc < 4) {
+            write_str(2, "sdk: candidate and version required\n");
+        } else {
+            write_str(1, "Using ");
+            write_str(1, argv[2]);
+            write_str(1, " version ");
+            write_str(1, argv[3]);
+            write_str(1, " in this shell.\n");
+        }
+    } else if (strcmp_simple(sub, "default") == 0) {
+        if (argc < 4) {
+            if (argc > 2) {
+                write_str(1, "Default ");
+                write_str(1, argv[2]);
+                write_str(1, " version: 21.0.5-tem\n");
+            } else {
+                write_str(2, "sdk: candidate required\n");
+            }
+        } else {
+            write_str(1, "Default ");
+            write_str(1, argv[2]);
+            write_str(1, " version set to ");
+            write_str(1, argv[3]);
+            write_str(1, "\n");
+        }
+    } else if (strcmp_simple(sub, "current") == 0) {
+        if (argc > 2) {
+            write_str(1, "Using ");
+            write_str(1, argv[2]);
+            write_str(1, " version 21.0.5-tem\n");
+        } else {
+            write_str(1, "Using:\n");
+            write_str(1, "  java: 21.0.5-tem\n");
+            write_str(1, "  gradle: 8.11.1\n");
+            write_str(1, "  maven: 3.9.9\n");
+        }
+    } else if (strcmp_simple(sub, "env") == 0) {
+        write_str(1, "Using sdkman env config: .sdkmanrc\n");
+        write_str(1, "java=21.0.5-tem\n");
+    } else if (strcmp_simple(sub, "version") == 0) {
+        write_str(1, "SDKMAN! 5.18.2\n");
+    } else {
+        write_str(2, "sdk: unknown command \"");
+        write_str(2, sub);
+        write_str(2, "\"\n");
     }
 }
 

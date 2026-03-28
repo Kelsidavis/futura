@@ -66031,6 +66031,129 @@ __attribute__((noinline)) static void test_pipe_posix_semantics(void) {
     #undef TPS_F_SETPIPE_SZ
 }
 
+/* Tests 2355-2357: /proc/self/io real per-process I/O accounting (extended) */
+__attribute__((noinline)) static void test_proc_io_accounting(void) {
+    extern long sys_open(const char *, int, int);
+    extern ssize_t sys_read(int, void *, size_t);
+    extern long sys_close(int);
+
+    fut_printf("[MISC-TEST] Tests 2355-2357: /proc/self/io per-process I/O accounting\n");
+
+    /* ── Test 2355: /proc/self/io is readable and contains rchar field ── */
+    fut_printf("[MISC-TEST] Test 2355: /proc/self/io readable with rchar > 0\n");
+
+    long fd = sys_open("/proc/self/io", 0 /* O_RDONLY */, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] FAIL Test 2355: open(/proc/self/io) returned %ld\n", fd);
+        fut_test_fail(2355);
+        fut_test_fail(2356);
+        fut_test_fail(2357);
+        return;
+    }
+
+    char buf[512];
+    __builtin_memset(buf, 0, sizeof(buf));
+    ssize_t nr = sys_read((int)fd, buf, sizeof(buf) - 1);
+    sys_close((int)fd);
+
+    if (nr <= 0) {
+        fut_printf("[MISC-TEST] FAIL Test 2355: read returned %zd (expected > 0)\n", nr);
+        fut_test_fail(2355);
+        fut_test_fail(2356);
+        fut_test_fail(2357);
+        return;
+    }
+
+    /* Parse rchar value: find "rchar: " and extract the number */
+    uint64_t rchar_val = 0;
+    int found_rchar = 0;
+    for (ssize_t i = 0; i < nr - 7; i++) {
+        if (buf[i] == 'r' && buf[i+1] == 'c' && buf[i+2] == 'h' &&
+            buf[i+3] == 'a' && buf[i+4] == 'r' && buf[i+5] == ':' && buf[i+6] == ' ') {
+            /* Parse decimal number after "rchar: " */
+            ssize_t j = i + 7;
+            while (j < nr && buf[j] >= '0' && buf[j] <= '9') {
+                rchar_val = rchar_val * 10 + (uint64_t)(buf[j] - '0');
+                j++;
+            }
+            found_rchar = 1;
+            break;
+        }
+    }
+
+    if (!found_rchar) {
+        fut_printf("[MISC-TEST] FAIL Test 2355: rchar field not found in /proc/self/io\n");
+        fut_test_fail(2355);
+    } else if (rchar_val == 0) {
+        fut_printf("[MISC-TEST] FAIL Test 2355: rchar = 0 (expected > 0 after reads)\n");
+        fut_test_fail(2355);
+    } else {
+        fut_printf("[MISC-TEST] pass Test 2355: rchar = %lu\n", (unsigned long)rchar_val);
+        fut_test_pass();
+    }
+
+    /* ── Test 2356: syscr > 0 (we just performed read syscalls) ── */
+    fut_printf("[MISC-TEST] Test 2356: /proc/self/io syscr > 0\n");
+    {
+        uint64_t syscr_val = 0;
+        int found_syscr = 0;
+        for (ssize_t i = 0; i < nr - 6; i++) {
+            if (buf[i] == 's' && buf[i+1] == 'y' && buf[i+2] == 's' &&
+                buf[i+3] == 'c' && buf[i+4] == 'r' && buf[i+5] == ':' && buf[i+6] == ' ') {
+                ssize_t j = i + 7;
+                while (j < nr && buf[j] >= '0' && buf[j] <= '9') {
+                    syscr_val = syscr_val * 10 + (uint64_t)(buf[j] - '0');
+                    j++;
+                }
+                found_syscr = 1;
+                break;
+            }
+        }
+
+        if (!found_syscr) {
+            fut_printf("[MISC-TEST] FAIL Test 2356: syscr field not found\n");
+            fut_test_fail(2356);
+        } else if (syscr_val == 0) {
+            fut_printf("[MISC-TEST] FAIL Test 2356: syscr = 0 (expected > 0)\n");
+            fut_test_fail(2356);
+        } else {
+            fut_printf("[MISC-TEST] pass Test 2356: syscr = %lu\n", (unsigned long)syscr_val);
+            fut_test_pass();
+        }
+    }
+
+    /* ── Test 2357: all 7 expected fields present ── */
+    fut_printf("[MISC-TEST] Test 2357: /proc/self/io contains all 7 expected fields\n");
+    {
+        /* Check for presence of all required fields */
+        int found = 0;
+        const char *fields[] = {
+            "rchar:", "wchar:", "syscr:", "syscw:",
+            "read_bytes:", "write_bytes:", "cancelled_write_bytes:"
+        };
+        for (int f = 0; f < 7; f++) {
+            const char *needle = fields[f];
+            int nlen = 0;
+            while (needle[nlen]) nlen++;
+            for (ssize_t i = 0; i <= nr - nlen; i++) {
+                int match = 1;
+                for (int k = 0; k < nlen; k++) {
+                    if (buf[i + k] != needle[k]) { match = 0; break; }
+                }
+                if (match) { found++; break; }
+            }
+        }
+
+        if (found == 7) {
+            fut_printf("[MISC-TEST] pass Test 2357: all 7 /proc/self/io fields present\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL Test 2357: only %d/7 fields found\n", found);
+            fut_test_fail(2357);
+        }
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -70349,6 +70472,7 @@ void fut_misc_test_thread(void *arg) {
     test_pgrp_session_jobctl(); /* Tests 2335-2337: setpgid new group, kill(0) group target, getsid leader */
     test_vfs_file_locking(); /* Tests 2340-2345: flock acquire/release, /proc/locks, idempotent unlock */
     test_pipe_posix_semantics(); /* Tests 2350-2351: pipe F_SETPIPE_SZ round-trip + atomic write guarantee */
+    test_proc_io_accounting(); /* Tests 2355-2357: /proc/self/io per-process I/O accounting */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

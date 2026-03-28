@@ -679,5 +679,11 @@ ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) 
      * Zero-copy optimization for page-aligned buffers
      */
 
+    /* I/O accounting for /proc/<pid>/io */
+    if (total_read > 0) {
+        task->io_rchar += (uint64_t)total_read;
+        task->io_syscr++;
+    }
+
     return total_read;
 }

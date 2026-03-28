@@ -405,6 +405,16 @@ static void cmd_sdiff(int argc, char *argv[]);
 static void cmd_colordiff(int argc, char *argv[]);
 static void cmd_wdiff(int argc, char *argv[]);
 static void cmd_vimdiff(int argc, char *argv[]);
+static void cmd_cpio(int argc, char *argv[]);
+static void cmd_rpm(int argc, char *argv[]);
+static void cmd_dpkg(int argc, char *argv[]);
+static void cmd_apt(int argc, char *argv[]);
+static void cmd_yum(int argc, char *argv[]);
+static void cmd_dnf(int argc, char *argv[]);
+static void cmd_pacman(int argc, char *argv[]);
+static void cmd_snap(int argc, char *argv[]);
+static void cmd_flatpak(int argc, char *argv[]);
+static void cmd_apk(int argc, char *argv[]);
 
 /* Forward declaration for prompt */
 static void print_prompt(void);
@@ -14907,6 +14917,36 @@ watch_sleep:
     } else if (strcmp_simple(argv[0], "vimdiff") == 0) {
         cmd_vimdiff(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "cpio") == 0) {
+        cmd_cpio(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "rpm") == 0) {
+        cmd_rpm(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "dpkg") == 0) {
+        cmd_dpkg(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "apt") == 0) {
+        cmd_apt(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "yum") == 0) {
+        cmd_yum(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "dnf") == 0) {
+        cmd_dnf(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "pacman") == 0) {
+        cmd_pacman(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "snap") == 0) {
+        cmd_snap(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "flatpak") == 0) {
+        cmd_flatpak(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "apk") == 0) {
+        cmd_apk(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -15331,6 +15371,16 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "colordiff") == 0 ||
             strcmp_simple(cmd, "wdiff") == 0 ||
             strcmp_simple(cmd, "vimdiff") == 0 ||
+            strcmp_simple(cmd, "cpio") == 0 ||
+            strcmp_simple(cmd, "rpm") == 0 ||
+            strcmp_simple(cmd, "dpkg") == 0 ||
+            strcmp_simple(cmd, "apt") == 0 ||
+            strcmp_simple(cmd, "yum") == 0 ||
+            strcmp_simple(cmd, "dnf") == 0 ||
+            strcmp_simple(cmd, "pacman") == 0 ||
+            strcmp_simple(cmd, "snap") == 0 ||
+            strcmp_simple(cmd, "flatpak") == 0 ||
+            strcmp_simple(cmd, "apk") == 0 ||
             0);
 }
 
@@ -19987,7 +20037,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   440 built-in commands — type 'help'    |\n");
+    write_str(1, "|   450 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");
@@ -39313,6 +39363,901 @@ static void cmd_vimdiff(int argc, char *argv[]) {
     #undef VD_ROWS
     #undef VD_WRITE_INT
     #undef VD_REDRAW
+}
+
+/* ── cpio: archive copy-in/copy-out ── */
+static void cmd_cpio(int argc, char *argv[]) {
+    if (argc < 2 || strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "Usage: cpio -i [PATTERN]          Extract files from stdin archive\n");
+        write_str(1, "       cpio -o                    Create archive on stdout\n");
+        write_str(1, "       cpio -t                    List archive contents\n");
+        write_str(1, "       cpio -p DIRECTORY          Copy files to DIRECTORY\n\n");
+        write_str(1, "Options:\n");
+        write_str(1, "  -d    Create leading directories where needed\n");
+        write_str(1, "  -m    Retain previous file modification time\n");
+        write_str(1, "  -v    Verbose\n");
+        write_str(1, "  --version  Show version\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "cpio (Futura coreutils) 2.14\n");
+        return;
+    }
+    int cpio_mode = 0; /* 1=extract, 2=create, 3=list, 4=pass */
+    int cpio_verbose = 0;
+    const char *cpio_dest = (void*)0;
+    for (int i = 1; i < argc; i++) {
+        if (argv[i][0] == '-') {
+            for (int j = 1; argv[i][j]; j++) {
+                if (argv[i][j] == 'i') cpio_mode = 1;
+                else if (argv[i][j] == 'o') cpio_mode = 2;
+                else if (argv[i][j] == 't') cpio_mode = 3;
+                else if (argv[i][j] == 'p') {
+                    cpio_mode = 4;
+                    if (i + 1 < argc) cpio_dest = argv[++i];
+                }
+                else if (argv[i][j] == 'v') cpio_verbose = 1;
+                else if (argv[i][j] == 'd' || argv[i][j] == 'm') { /* accepted */ }
+            }
+        }
+    }
+    if (cpio_mode == 0) { write_str(2, "cpio: must specify -i, -o, -t, or -p\n"); return; }
+    if (cpio_mode == 2) {
+        char cn[256];
+        while (1) {
+            int ni = 0; char c;
+            while (ni < 255) {
+                ssize_t r = sys_read(0, &c, 1);
+                if (r <= 0) { if (ni == 0) goto cpio_out_done; break; }
+                if (c == '\n') break;
+                cn[ni++] = c;
+            }
+            cn[ni] = '\0';
+            if (ni == 0) continue;
+            int fd = sys_open(cn, O_RDONLY, 0);
+            if (fd < 0) { write_str(2, "cpio: "); write_str(2, cn); write_str(2, ": cannot open\n"); continue; }
+            static char cfb[8192];
+            int tot = 0; ssize_t n;
+            while ((n = sys_read(fd, cfb + tot, (int)sizeof(cfb) - tot)) > 0 && tot < (int)sizeof(cfb))
+                tot += (int)n;
+            sys_close(fd);
+            write_str(1, "070701");
+            char hb[9];
+            for (int b = 7; b >= 0; b--) {
+                int nib = (tot >> (b * 4)) & 0xF;
+                hb[7 - b] = (char)((nib < 10) ? ('0' + nib) : ('A' - 10 + nib));
+            }
+            hb[8] = '\0'; write_str(1, hb);
+            for (int b = 7; b >= 0; b--) {
+                int nib = (ni >> (b * 4)) & 0xF;
+                hb[7 - b] = (char)((nib < 10) ? ('0' + nib) : ('A' - 10 + nib));
+            }
+            write_str(1, hb);
+            sys_write(1, cn, ni); write_char(1, '\0');
+            sys_write(1, cfb, tot);
+            if (cpio_verbose) { write_str(2, cn); write_str(2, "\n"); }
+        }
+        cpio_out_done:
+        write_str(1, "07070100000000"); write_str(1, "0000000B");
+        write_str(1, "TRAILER!!!"); write_char(1, '\0');
+        return;
+    }
+    if (cpio_mode == 1 || cpio_mode == 3) {
+        char cm[7];
+        while (1) {
+            ssize_t r = sys_read(0, cm, 6);
+            if (r < 6) break;
+            cm[6] = '\0';
+            if (strcmp_simple(cm, "070701") != 0) { write_str(2, "cpio: bad magic\n"); return; }
+            char hx[9]; r = sys_read(0, hx, 8);
+            if (r < 8) break; hx[8] = '\0';
+            int fsz = 0;
+            for (int k = 0; k < 8; k++) {
+                fsz <<= 4;
+                if (hx[k] >= '0' && hx[k] <= '9') fsz |= hx[k] - '0';
+                else if (hx[k] >= 'A' && hx[k] <= 'F') fsz |= hx[k] - 'A' + 10;
+                else if (hx[k] >= 'a' && hx[k] <= 'f') fsz |= hx[k] - 'a' + 10;
+            }
+            r = sys_read(0, hx, 8);
+            if (r < 8) break; hx[8] = '\0';
+            int nsz = 0;
+            for (int k = 0; k < 8; k++) {
+                nsz <<= 4;
+                if (hx[k] >= '0' && hx[k] <= '9') nsz |= hx[k] - '0';
+                else if (hx[k] >= 'A' && hx[k] <= 'F') nsz |= hx[k] - 'A' + 10;
+                else if (hx[k] >= 'a' && hx[k] <= 'f') nsz |= hx[k] - 'a' + 10;
+            }
+            char en[256]; int tr = nsz + 1; if (tr > 255) tr = 255;
+            r = sys_read(0, en, tr); if (r < tr) break;
+            en[nsz] = '\0';
+            if (strcmp_simple(en, "TRAILER!!!") == 0) break;
+            if (cpio_mode == 3) { write_str(1, en); write_str(1, "\n"); }
+            static char db[8192]; int rem = fsz; int ofd = -1;
+            if (cpio_mode == 1 && nsz > 0) {
+                ofd = sys_open(en, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                if (ofd < 0) { write_str(2, "cpio: cannot create: "); write_str(2, en); write_str(2, "\n"); }
+                if (cpio_verbose) { write_str(2, en); write_str(2, "\n"); }
+            }
+            while (rem > 0) {
+                int ch = rem > (int)sizeof(db) ? (int)sizeof(db) : rem;
+                r = sys_read(0, db, ch); if (r <= 0) break;
+                if (ofd >= 0) sys_write(ofd, db, (int)r);
+                rem -= (int)r;
+            }
+            if (ofd >= 0) sys_close(ofd);
+        }
+        return;
+    }
+    if (cpio_mode == 4) {
+        if (!cpio_dest) { write_str(2, "cpio -p: destination required\n"); return; }
+        char pn[256]; int cnt = 0;
+        while (1) {
+            int ni = 0; char c;
+            while (ni < 255) {
+                ssize_t r = sys_read(0, &c, 1);
+                if (r <= 0) { if (ni == 0) goto cpio_p_done; break; }
+                if (c == '\n') break;
+                pn[ni++] = c;
+            }
+            pn[ni] = '\0'; if (ni == 0) continue;
+            char dp[512]; int di = 0;
+            for (int k = 0; cpio_dest[k] && di < 255; k++) dp[di++] = cpio_dest[k];
+            dp[di++] = '/';
+            for (int k = 0; pn[k] && di < 510; k++) dp[di++] = pn[k];
+            dp[di] = '\0';
+            int sf = sys_open(pn, O_RDONLY, 0);
+            if (sf < 0) { write_str(2, "cpio: "); write_str(2, pn); write_str(2, ": cannot open\n"); continue; }
+            int df = sys_open(dp, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            if (df < 0) { sys_close(sf); write_str(2, "cpio: cannot create "); write_str(2, dp); write_str(2, "\n"); continue; }
+            static char cb[4096]; ssize_t n;
+            while ((n = sys_read(sf, cb, (int)sizeof(cb))) > 0) sys_write(df, cb, (int)n);
+            sys_close(sf); sys_close(df);
+            if (cpio_verbose) { write_str(2, dp); write_str(2, "\n"); }
+            cnt++;
+        }
+        cpio_p_done:;
+        char nb[12]; int ci = 0; int cv = cnt;
+        if (cv == 0) nb[ci++] = '0';
+        else { while (cv > 0) { nb[ci++] = (char)('0' + cv % 10); cv /= 10; } }
+        while (ci > 0) write_char(1, nb[--ci]);
+        write_str(1, " blocks\n");
+    }
+}
+
+/* ── rpm: RPM package manager (simulated) ── */
+static void cmd_rpm(int argc, char *argv[]) {
+    if (argc < 2 || strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "Usage: rpm [OPTION...]\n\n");
+        write_str(1, "  -q, --query       Query mode\n");
+        write_str(1, "  -V, --verify      Verify mode\n");
+        write_str(1, "  -i, --install     Install package\n");
+        write_str(1, "  -e, --erase       Erase (remove) package\n");
+        write_str(1, "  -U, --upgrade     Upgrade package\n");
+        write_str(1, "  -qa               Query all installed packages\n");
+        write_str(1, "  -qi PACKAGE       Query package info\n");
+        write_str(1, "  -ql PACKAGE       List files in package\n");
+        write_str(1, "  --version         Show version\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "RPM version 4.19.1 (futura)\n"); return;
+    }
+    if (strcmp_simple(argv[1], "-qa") == 0) {
+        write_str(1, "bash-5.2.21-1.fc40.x86_64\n");
+        write_str(1, "coreutils-9.4-2.fc40.x86_64\n");
+        write_str(1, "glibc-2.39-7.fc40.x86_64\n");
+        write_str(1, "kernel-6.8.5-301.fc40.x86_64\n");
+        write_str(1, "systemd-255.4-1.fc40.x86_64\n");
+        write_str(1, "openssl-3.2.1-2.fc40.x86_64\n");
+        write_str(1, "python3-3.12.3-1.fc40.x86_64\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "-qi") == 0) {
+        if (argc < 3) { write_str(2, "rpm: no package specified\n"); return; }
+        write_str(1, "Name        : "); write_str(1, argv[2]); write_str(1, "\n");
+        write_str(1, "Version     : 1.0.0\nRelease     : 1.fc40\nArchitecture: x86_64\n");
+        write_str(1, "Install Date: Mon 01 Jan 2026 12:00:00 AM UTC\n");
+        write_str(1, "Size        : 1048576\nLicense     : GPLv2+\n");
+        write_str(1, "Signature   : RSA/SHA256, Key ID abcdef1234567890\n");
+        write_str(1, "Summary     : "); write_str(1, argv[2]); write_str(1, " package\n");
+        write_str(1, "Description : A package managed by RPM.\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "-ql") == 0) {
+        if (argc < 3) { write_str(2, "rpm: no package specified\n"); return; }
+        write_str(1, "/usr/bin/"); write_str(1, argv[2]); write_str(1, "\n");
+        write_str(1, "/usr/share/doc/"); write_str(1, argv[2]); write_str(1, "/README\n");
+        write_str(1, "/usr/share/man/man1/"); write_str(1, argv[2]); write_str(1, ".1.gz\n");
+        write_str(1, "/usr/lib64/lib"); write_str(1, argv[2]); write_str(1, ".so.1\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "-q") == 0) {
+        if (argc < 3) { write_str(2, "rpm: no package specified\n"); return; }
+        write_str(1, argv[2]); write_str(1, "-1.0.0-1.fc40.x86_64\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "-i") == 0 || strcmp_simple(argv[1], "-U") == 0) {
+        if (argc < 3) { write_str(2, "rpm: no packages given for install\n"); return; }
+        write_str(1, "Preparing...                ################################# [100%]\n");
+        write_str(1, "Updating / installing...\n");
+        write_str(1, "   1:"); write_str(1, argv[2]); write_str(1, "       ################################# [100%]\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "-e") == 0) {
+        if (argc < 3) { write_str(2, "rpm: no packages given for erase\n"); return; }
+        write_str(1, "Preparing...                ################################# [100%]\n");
+        write_str(1, "Cleaning up / removing...\n");
+        write_str(1, "   1:"); write_str(1, argv[2]); write_str(1, "       ################################# [100%]\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "-V") == 0 || strcmp_simple(argv[1], "--verify") == 0) {
+        if (argc >= 3) { write_str(1, argv[2]); write_str(1, ": verification OK\n"); }
+        else { write_str(1, ".......T.    /usr/bin/bash\nS.5....T.    /etc/resolv.conf\n"); }
+        return;
+    }
+    write_str(2, "rpm: unknown option: "); write_str(2, argv[1]); write_str(2, "\n");
+}
+
+/* ── dpkg: Debian package manager (simulated) ── */
+static void cmd_dpkg(int argc, char *argv[]) {
+    if (argc < 2 || strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "Usage: dpkg [OPTION...] ACTION\n\n");
+        write_str(1, "  -i, --install PACKAGE.deb   Install a package\n");
+        write_str(1, "  -r, --remove PACKAGE        Remove a package\n");
+        write_str(1, "  -l, --list [PATTERN]        List packages\n");
+        write_str(1, "  -s, --status PACKAGE        Report status of package\n");
+        write_str(1, "  -L, --listfiles PACKAGE     List files owned by package\n");
+        write_str(1, "  -S, --search FILE           Find package owning file\n");
+        write_str(1, "  --configure PACKAGE         Configure an unpacked package\n");
+        write_str(1, "  --version                   Show version\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "Debian 'dpkg' package management program version 1.22.6 (futura).\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "-l") == 0 || strcmp_simple(argv[1], "--list") == 0) {
+        write_str(1, "Desired=Unknown/Install/Remove/Purge/Hold\n");
+        write_str(1, "| Status=Not/Inst/Conf-files/Unpacked/halF-conf/Half-inst\n");
+        write_str(1, "||/ Name              Version            Arch   Description\n");
+        write_str(1, "+++-=================-==================-======-=================\n");
+        write_str(1, "ii  apt               2.7.14             amd64  commandline package manager\n");
+        write_str(1, "ii  bash              5.2.21-2           amd64  GNU Bourne Again SHell\n");
+        write_str(1, "ii  coreutils         9.4-3              amd64  GNU core utilities\n");
+        write_str(1, "ii  libc6             2.38-13            amd64  GNU C Library\n");
+        write_str(1, "ii  systemd           255.4-1            amd64  system and service manager\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "-s") == 0 || strcmp_simple(argv[1], "--status") == 0) {
+        if (argc < 3) { write_str(2, "dpkg: --status needs a package name\n"); return; }
+        write_str(1, "Package: "); write_str(1, argv[2]); write_str(1, "\n");
+        write_str(1, "Status: install ok installed\nPriority: optional\nSection: utils\n");
+        write_str(1, "Installed-Size: 1024\nArchitecture: amd64\nVersion: 1.0.0-1\n");
+        write_str(1, "Description: "); write_str(1, argv[2]); write_str(1, " package\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "-L") == 0 || strcmp_simple(argv[1], "--listfiles") == 0) {
+        if (argc < 3) { write_str(2, "dpkg: --listfiles needs a package name\n"); return; }
+        write_str(1, "/.\n/usr\n/usr/bin\n/usr/bin/"); write_str(1, argv[2]); write_str(1, "\n");
+        write_str(1, "/usr/share/doc/"); write_str(1, argv[2]); write_str(1, "/copyright\n");
+        write_str(1, "/usr/share/man/man1/"); write_str(1, argv[2]); write_str(1, ".1.gz\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "-S") == 0 || strcmp_simple(argv[1], "--search") == 0) {
+        if (argc < 3) { write_str(2, "dpkg: --search needs a file name pattern\n"); return; }
+        write_str(1, "coreutils: "); write_str(1, argv[2]); write_str(1, "\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "-i") == 0 || strcmp_simple(argv[1], "--install") == 0) {
+        if (argc < 3) { write_str(2, "dpkg: --install needs a .deb filename\n"); return; }
+        write_str(1, "Selecting previously unselected package.\n");
+        write_str(1, "(Reading database ... 45678 files and directories currently installed.)\n");
+        write_str(1, "Preparing to unpack "); write_str(1, argv[2]); write_str(1, " ...\n");
+        write_str(1, "Unpacking "); write_str(1, argv[2]); write_str(1, " ...\n");
+        write_str(1, "Setting up "); write_str(1, argv[2]); write_str(1, " ...\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "-r") == 0 || strcmp_simple(argv[1], "--remove") == 0) {
+        if (argc < 3) { write_str(2, "dpkg: --remove needs a package name\n"); return; }
+        write_str(1, "(Reading database ... 45678 files and directories.)\n");
+        write_str(1, "Removing "); write_str(1, argv[2]); write_str(1, " ...\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--configure") == 0) {
+        if (argc < 3) { write_str(2, "dpkg: --configure needs a package name\n"); return; }
+        write_str(1, "Setting up "); write_str(1, argv[2]); write_str(1, " ...\n");
+        return;
+    }
+    write_str(2, "dpkg: unknown option: "); write_str(2, argv[1]); write_str(2, "\n");
+}
+
+/* ── apt: Advanced Package Tool (simulated) ── */
+static void cmd_apt(int argc, char *argv[]) {
+    if (argc < 2 || strcmp_simple(argv[1], "--help") == 0 || strcmp_simple(argv[1], "help") == 0) {
+        write_str(1, "apt 2.7.14 (futura)\nUsage: apt [options] command\n\n");
+        write_str(1, "Most used commands:\n");
+        write_str(1, "  list       - list packages based on package names\n");
+        write_str(1, "  search     - search in package descriptions\n");
+        write_str(1, "  show       - show package details\n");
+        write_str(1, "  install    - install packages\n");
+        write_str(1, "  remove     - remove packages\n");
+        write_str(1, "  autoremove - remove unused dependencies\n");
+        write_str(1, "  update     - update list of available packages\n");
+        write_str(1, "  upgrade    - upgrade the system\n");
+        write_str(1, "  policy     - show policy settings\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "apt 2.7.14 (futura-amd64)\n"); return;
+    }
+    if (strcmp_simple(argv[1], "update") == 0) {
+        write_str(1, "Hit:1 http://deb.futura.org/futura stable InRelease\n");
+        write_str(1, "Hit:2 http://security.futura.org stable-security InRelease\n");
+        write_str(1, "Reading package lists... Done\nBuilding dependency tree... Done\n");
+        write_str(1, "All packages are up to date.\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "upgrade") == 0 || strcmp_simple(argv[1], "full-upgrade") == 0) {
+        write_str(1, "Reading package lists... Done\nBuilding dependency tree... Done\n");
+        write_str(1, "Calculating upgrade... Done\n");
+        write_str(1, "0 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "install") == 0) {
+        if (argc < 3) { write_str(2, "E: Unable to locate package\n"); return; }
+        write_str(1, "Reading package lists... Done\nBuilding dependency tree... Done\n");
+        write_str(1, "The following NEW packages will be installed:\n");
+        write_str(1, "  "); write_str(1, argv[2]); write_str(1, "\n");
+        write_str(1, "0 upgraded, 1 newly installed, 0 to remove.\n");
+        write_str(1, "Get:1 http://deb.futura.org stable/main amd64 ");
+        write_str(1, argv[2]); write_str(1, " 1.0.0-1 [256 kB]\n");
+        write_str(1, "Fetched 256 kB in 0s (1024 kB/s)\n");
+        write_str(1, "Unpacking "); write_str(1, argv[2]); write_str(1, " (1.0.0-1) ...\n");
+        write_str(1, "Setting up "); write_str(1, argv[2]); write_str(1, " (1.0.0-1) ...\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "remove") == 0) {
+        if (argc < 3) { write_str(2, "E: Unable to locate package\n"); return; }
+        write_str(1, "Reading package lists... Done\nBuilding dependency tree... Done\n");
+        write_str(1, "The following packages will be REMOVED:\n");
+        write_str(1, "  "); write_str(1, argv[2]); write_str(1, "\n");
+        write_str(1, "Removing "); write_str(1, argv[2]); write_str(1, " (1.0.0-1) ...\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "autoremove") == 0) {
+        write_str(1, "Reading package lists... Done\nBuilding dependency tree... Done\n");
+        write_str(1, "0 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "search") == 0) {
+        if (argc < 3) { write_str(2, "E: You must give at least one search pattern\n"); return; }
+        write_str(1, "Sorting... Done\nFull Text Search... Done\n");
+        write_str(1, argv[2]); write_str(1, "/stable 1.0.0-1 amd64\n");
+        write_str(1, "  "); write_str(1, argv[2]); write_str(1, " package\n\n");
+        write_str(1, "lib"); write_str(1, argv[2]); write_str(1, "-dev/stable 1.0.0-1 amd64\n");
+        write_str(1, "  Development files for "); write_str(1, argv[2]); write_str(1, "\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "show") == 0) {
+        if (argc < 3) { write_str(2, "E: You must give at least one package name\n"); return; }
+        write_str(1, "Package: "); write_str(1, argv[2]); write_str(1, "\n");
+        write_str(1, "Version: 1.0.0-1\nPriority: optional\nSection: utils\n");
+        write_str(1, "Installed-Size: 1024 kB\nDownload-Size: 256 kB\n");
+        write_str(1, "Description: "); write_str(1, argv[2]); write_str(1, " package\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "list") == 0) {
+        write_str(1, "Listing...\n");
+        write_str(1, "apt/stable,now 2.7.14 amd64 [installed]\n");
+        write_str(1, "bash/stable,now 5.2.21-2 amd64 [installed]\n");
+        write_str(1, "coreutils/stable,now 9.4-3 amd64 [installed]\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "policy") == 0) {
+        write_str(1, "Package files:\n 100 /var/lib/dpkg/status\n");
+        write_str(1, " 500 http://deb.futura.org stable/main amd64 Packages\n");
+        return;
+    }
+    write_str(2, "E: Invalid operation "); write_str(2, argv[1]); write_str(2, "\n");
+}
+
+/* ── yum: Yellowdog Updater Modified (simulated) ── */
+static void cmd_yum(int argc, char *argv[]) {
+    if (argc < 2 || strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "Usage: yum [options] COMMAND\n\n");
+        write_str(1, "Commands:\n");
+        write_str(1, "  install        Install a package\n");
+        write_str(1, "  update         Update packages\n");
+        write_str(1, "  remove         Remove a package\n");
+        write_str(1, "  search         Search package details\n");
+        write_str(1, "  list           List packages\n");
+        write_str(1, "  info           Display package info\n");
+        write_str(1, "  check-update   Check for updates\n");
+        write_str(1, "  clean          Remove cached data\n");
+        write_str(1, "  --version      Display version\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "yum 4.19.0 (futura)\n  Installed: yum-4.19.0-1.fc40.noarch\n"); return;
+    }
+    if (strcmp_simple(argv[1], "install") == 0) {
+        if (argc < 3) { write_str(2, "Error: install requires a package name\n"); return; }
+        write_str(1, "Last metadata expiration check: 0:30:00 ago.\n");
+        write_str(1, "Dependencies resolved.\n");
+        write_str(1, "================================================================================\n");
+        write_str(1, " Package       Arch      Version          Repository   Size\n");
+        write_str(1, "================================================================================\n");
+        write_str(1, "Installing:\n "); write_str(1, argv[2]);
+        write_str(1, "        x86_64    1.0.0-1.fc40     fedora      256 k\n\n");
+        write_str(1, "Transaction Summary\n");
+        write_str(1, "================================================================================\n");
+        write_str(1, "Install  1 Package\n\nRunning transaction\n");
+        write_str(1, "  Installing : "); write_str(1, argv[2]); write_str(1, "-1.0.0-1.fc40.x86_64    1/1\n");
+        write_str(1, "  Verifying  : "); write_str(1, argv[2]); write_str(1, "-1.0.0-1.fc40.x86_64    1/1\n\n");
+        write_str(1, "Installed:\n  "); write_str(1, argv[2]); write_str(1, "-1.0.0-1.fc40.x86_64\n\nComplete!\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "update") == 0) {
+        write_str(1, "Last metadata expiration check: 0:30:00 ago.\n");
+        write_str(1, "Dependencies resolved.\nNothing to do.\nComplete!\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "remove") == 0) {
+        if (argc < 3) { write_str(2, "Error: remove requires a package name\n"); return; }
+        write_str(1, "Dependencies resolved.\nRemoving:\n "); write_str(1, argv[2]);
+        write_str(1, "   x86_64   1.0.0-1.fc40   @fedora   1.0 M\n\n");
+        write_str(1, "Removed:\n  "); write_str(1, argv[2]); write_str(1, "-1.0.0-1.fc40.x86_64\n\nComplete!\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "search") == 0) {
+        if (argc < 3) { write_str(2, "Error: search requires a keyword\n"); return; }
+        write_str(1, "Last metadata expiration check: 0:30:00 ago.\n");
+        write_str(1, "===== Name Exactly Matched: "); write_str(1, argv[2]); write_str(1, " =====\n");
+        write_str(1, argv[2]); write_str(1, ".x86_64 : "); write_str(1, argv[2]); write_str(1, " package\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "list") == 0) {
+        write_str(1, "Last metadata expiration check: 0:30:00 ago.\nInstalled Packages\n");
+        write_str(1, "bash.x86_64                5.2.21-1.fc40          @anaconda\n");
+        write_str(1, "coreutils.x86_64           9.4-2.fc40             @anaconda\n");
+        write_str(1, "glibc.x86_64               2.39-7.fc40            @anaconda\n");
+        write_str(1, "kernel.x86_64              6.8.5-301.fc40         @updates\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "info") == 0) {
+        if (argc < 3) { write_str(2, "Error: info requires a package name\n"); return; }
+        write_str(1, "Name         : "); write_str(1, argv[2]); write_str(1, "\n");
+        write_str(1, "Version      : 1.0.0\nRelease      : 1.fc40\nArch         : x86_64\n");
+        write_str(1, "Size         : 1.0 M\nRepository   : @System\n");
+        write_str(1, "Summary      : "); write_str(1, argv[2]); write_str(1, " package\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "check-update") == 0) {
+        write_str(1, "Last metadata expiration check: 0:30:00 ago.\n"); return;
+    }
+    if (strcmp_simple(argv[1], "clean") == 0) {
+        write_str(1, "Cleaning repos: fedora updates\n12 files removed\n"); return;
+    }
+    write_str(2, "Error: No such command: "); write_str(2, argv[1]); write_str(2, "\n");
+}
+
+/* ── dnf: Dandified YUM (simulated) ── */
+static void cmd_dnf(int argc, char *argv[]) {
+    if (argc < 2 || strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "usage: dnf5 [options] <command> [<args>...]\n\n");
+        write_str(1, "Commands:\n");
+        write_str(1, "  install       Install packages\n");
+        write_str(1, "  upgrade       Upgrade packages\n");
+        write_str(1, "  remove        Remove packages\n");
+        write_str(1, "  search        Search for packages\n");
+        write_str(1, "  info          Show package details\n");
+        write_str(1, "  list          List packages\n");
+        write_str(1, "  check-update  Check for updates\n");
+        write_str(1, "  clean         Remove cached data\n");
+        write_str(1, "  --version     Show version\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "dnf5 version 5.2.0 (futura)\n"); return;
+    }
+    if (strcmp_simple(argv[1], "install") == 0) {
+        if (argc < 3) { write_str(2, "dnf: install requires a package\n"); return; }
+        write_str(1, "Updating and loading repositories:\nRepositories loaded.\n");
+        write_str(1, "Package              Arch     Version          Repository   Size\n");
+        write_str(1, "Installing:\n "); write_str(1, argv[2]);
+        write_str(1, "           x86_64   1.0.0-1.fc40     fedora  256.0 KiB\n\n");
+        write_str(1, "Transaction Summary:\n Installing: 1 package\n\n");
+        write_str(1, "[1/1] Install "); write_str(1, argv[2]); write_str(1, "-1.0.0-1.fc40.x86_64   100%\nComplete!\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "upgrade") == 0) {
+        write_str(1, "Updating and loading repositories:\nRepositories loaded.\nNothing to do.\n"); return;
+    }
+    if (strcmp_simple(argv[1], "remove") == 0) {
+        if (argc < 3) { write_str(2, "dnf: remove requires a package\n"); return; }
+        write_str(1, "Removing:\n "); write_str(1, argv[2]);
+        write_str(1, "           x86_64   1.0.0-1.fc40   @System   1.0 MiB\n\n");
+        write_str(1, "Transaction Summary:\n Removing: 1 package\n\nComplete!\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "search") == 0) {
+        if (argc < 3) { write_str(2, "dnf: search requires a keyword\n"); return; }
+        write_str(1, "Updating and loading repositories:\nRepositories loaded.\n");
+        write_str(1, "Matched fields: name (exact)\n");
+        write_str(1, " "); write_str(1, argv[2]); write_str(1, ".x86_64: ");
+        write_str(1, argv[2]); write_str(1, " package\n");
+        write_str(1, " "); write_str(1, argv[2]); write_str(1, "-devel.x86_64: Development files for ");
+        write_str(1, argv[2]); write_str(1, "\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "info") == 0) {
+        if (argc < 3) { write_str(2, "dnf: info requires a package name\n"); return; }
+        write_str(1, "Installed packages\n");
+        write_str(1, "Name         : "); write_str(1, argv[2]); write_str(1, "\n");
+        write_str(1, "Version      : 1.0.0\nRelease      : 1.fc40\nArch         : x86_64\n");
+        write_str(1, "Installed size: 1.0 MiB\nLicense      : GPL-2.0-or-later\n");
+        write_str(1, "Description  : "); write_str(1, argv[2]); write_str(1, " managed by DNF.\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "list") == 0) {
+        write_str(1, "Installed packages\n");
+        write_str(1, "bash.x86_64                5.2.21-1.fc40          @anaconda\n");
+        write_str(1, "coreutils.x86_64           9.4-2.fc40             @anaconda\n");
+        write_str(1, "dnf5.x86_64                5.2.0-1.fc40           @anaconda\n");
+        write_str(1, "glibc.x86_64               2.39-7.fc40            @anaconda\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "check-update") == 0) {
+        write_str(1, "Updating and loading repositories:\nRepositories loaded.\n"); return;
+    }
+    if (strcmp_simple(argv[1], "clean") == 0) {
+        write_str(1, "Cleaning up Everything\n15 files removed.\n"); return;
+    }
+    write_str(2, "Unknown argument \""); write_str(2, argv[1]); write_str(2, "\" for command \"dnf5\"\n");
+}
+
+/* ── pacman: Arch Linux package manager (simulated) ── */
+static void cmd_pacman(int argc, char *argv[]) {
+    if (argc < 2 || strcmp_simple(argv[1], "--help") == 0 || strcmp_simple(argv[1], "-h") == 0) {
+        write_str(1, "usage:  pacman <operation> [...]\noperations:\n");
+        write_str(1, "    pacman -Q  [options] [package(s)]  Query the package database\n");
+        write_str(1, "    pacman -R  [options] <package(s)>  Remove packages\n");
+        write_str(1, "    pacman -S  [options] [package(s)]  Synchronize packages\n");
+        write_str(1, "    pacman -U  [options] <file(s)>     Upgrade from file\n");
+        write_str(1, "    pacman -V, --version               Display version\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "-V") == 0 || strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "\n .--.                  Pacman v6.1.0 - libalpm v14.0.0\n");
+        write_str(1, "/ _.-' .-.  .-.  .-.   Copyright (C) 2006-2024 Pacman Dev Team\n");
+        write_str(1, "\\  '-. '-'  '-'  '-'   (futura)\n '--'\n");
+        return;
+    }
+    if (argv[1][0] == '-' && argv[1][1] == 'S') {
+        if (argv[1][2] == 's') {
+            if (argc < 3) { write_str(2, "error: no search pattern specified\n"); return; }
+            write_str(1, "core/"); write_str(1, argv[2]); write_str(1, " 1.0.0-1\n");
+            write_str(1, "    "); write_str(1, argv[2]); write_str(1, " package\n");
+            write_str(1, "extra/"); write_str(1, argv[2]); write_str(1, "-utils 1.0.0-1\n");
+            write_str(1, "    Utilities for "); write_str(1, argv[2]); write_str(1, "\n");
+            return;
+        }
+        if (argv[1][2] == 'i') {
+            if (argc < 3) { write_str(2, "error: no targets specified\n"); return; }
+            write_str(1, "Repository      : core\n");
+            write_str(1, "Name            : "); write_str(1, argv[2]); write_str(1, "\n");
+            write_str(1, "Version         : 1.0.0-1\n");
+            write_str(1, "Description     : "); write_str(1, argv[2]); write_str(1, " package\n");
+            write_str(1, "Architecture    : x86_64\nDownload Size   : 256.00 KiB\n");
+            return;
+        }
+        if (argv[1][2] == 'y') {
+            write_str(1, ":: Synchronizing package databases...\n");
+            write_str(1, " core        133.5 KiB  [############] 100%\n");
+            write_str(1, " extra      8.5 MiB  [############] 100%\n");
+            write_str(1, ":: Starting full system upgrade...\n there is nothing to do\n");
+            return;
+        }
+        if (argc < 3) { write_str(2, "error: no targets specified\n"); return; }
+        write_str(1, "resolving dependencies...\nlooking for conflicting packages...\n\n");
+        write_str(1, "Packages (1) "); write_str(1, argv[2]); write_str(1, "-1.0.0-1\n\n");
+        write_str(1, "Total Download Size:  0.25 MiB\nTotal Installed Size: 1.00 MiB\n\n");
+        write_str(1, ":: Retrieving packages...\n");
+        write_str(1, " "); write_str(1, argv[2]); write_str(1, "-1.0.0-1  256.0 KiB [############] 100%\n");
+        write_str(1, "(1/1) checking keys in keyring    [############] 100%\n");
+        write_str(1, "(1/1) installing "); write_str(1, argv[2]); write_str(1, "           [############] 100%\n");
+        return;
+    }
+    if (argv[1][0] == '-' && argv[1][1] == 'Q') {
+        if (argv[1][2] == 's') {
+            if (argc >= 3) {
+                write_str(1, "local/"); write_str(1, argv[2]); write_str(1, " 1.0.0-1\n");
+                write_str(1, "    "); write_str(1, argv[2]); write_str(1, " package\n");
+            } else {
+                write_str(1, "local/bash 5.2.21-1\n    The GNU Bourne Again shell\n");
+                write_str(1, "local/coreutils 9.4-3\n    Basic file, shell and text utilities\n");
+                write_str(1, "local/glibc 2.39-2\n    GNU C Library\n");
+                write_str(1, "local/pacman 6.1.0-3\n    A library-based package manager\n");
+            }
+            return;
+        }
+        if (argv[1][2] == 'i') {
+            if (argc < 3) { write_str(2, "error: no targets specified\n"); return; }
+            write_str(1, "Name            : "); write_str(1, argv[2]); write_str(1, "\n");
+            write_str(1, "Version         : 1.0.0-1\nDescription     : ");
+            write_str(1, argv[2]); write_str(1, " package\n");
+            write_str(1, "Architecture    : x86_64\nInstalled Size  : 1024.00 KiB\n");
+            return;
+        }
+        if (argv[1][2] == 'l') {
+            if (argc < 3) { write_str(2, "error: no targets specified\n"); return; }
+            write_str(1, argv[2]); write_str(1, " /usr/bin/"); write_str(1, argv[2]); write_str(1, "\n");
+            write_str(1, argv[2]); write_str(1, " /usr/share/doc/"); write_str(1, argv[2]); write_str(1, "/\n");
+            return;
+        }
+        write_str(1, "bash 5.2.21-1\ncoreutils 9.4-3\nfilesystem 2024.01.19-1\n");
+        write_str(1, "glibc 2.39-2\nlinux 6.8.5.arch1-1\npacman 6.1.0-3\n");
+        return;
+    }
+    if (argv[1][0] == '-' && argv[1][1] == 'R') {
+        if (argc < 3) { write_str(2, "error: no targets specified\n"); return; }
+        write_str(1, "checking dependencies...\n\n");
+        write_str(1, "Packages (1) "); write_str(1, argv[2]); write_str(1, "-1.0.0-1\n\n");
+        write_str(1, "Total Removed Size: 1.00 MiB\n\n");
+        write_str(1, "(1/1) removing "); write_str(1, argv[2]); write_str(1, "           [############] 100%\n");
+        return;
+    }
+    write_str(2, "error: no operation specified (use -h for help)\n");
+}
+
+/* ── snap: Snap package manager (simulated) ── */
+static void cmd_snap(int argc, char *argv[]) {
+    if (argc < 2 || strcmp_simple(argv[1], "--help") == 0 || strcmp_simple(argv[1], "help") == 0) {
+        write_str(1, "Usage: snap <command> [<options>...]\n\n");
+        write_str(1, "Commands:\n");
+        write_str(1, "  find      Find packages to install\n");
+        write_str(1, "  info      Show detailed info about snaps\n");
+        write_str(1, "  install   Install snaps\n");
+        write_str(1, "  list      List installed snaps\n");
+        write_str(1, "  refresh   Refresh (update) snaps\n");
+        write_str(1, "  remove    Remove snaps\n");
+        write_str(1, "  run       Run a snap command\n");
+        write_str(1, "  version   Show version\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "version") == 0 || strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "snap    2.63 (futura)\nsnapd   2.63\nseries  16\nkernel  6.8.5-futura\n"); return;
+    }
+    if (strcmp_simple(argv[1], "list") == 0) {
+        write_str(1, "Name             Version     Rev   Tracking       Publisher   Notes\n");
+        write_str(1, "bare             1.0         5     latest/stable  canonical*  base\n");
+        write_str(1, "core22           20240111    1380  latest/stable  canonical*  base\n");
+        write_str(1, "firefox          124.0.2-1   4173  latest/stable  mozilla*    -\n");
+        write_str(1, "snapd            2.63        21465 latest/stable  canonical*  snapd\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "find") == 0) {
+        if (argc < 3) { write_str(2, "error: the required argument '<query>' was not provided\n"); return; }
+        write_str(1, "Name             Version  Publisher  Notes  Summary\n");
+        write_str(1, argv[2]); write_str(1, "           1.0.0    futura     -      ");
+        write_str(1, argv[2]); write_str(1, " snap package\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "install") == 0) {
+        if (argc < 3) { write_str(2, "error: please provide snap name\n"); return; }
+        write_str(1, argv[2]); write_str(1, " 1.0.0 from 'futura' installed\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "remove") == 0) {
+        if (argc < 3) { write_str(2, "error: please provide snap name\n"); return; }
+        write_str(1, argv[2]); write_str(1, " removed\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "info") == 0) {
+        if (argc < 3) { write_str(2, "error: please provide snap name\n"); return; }
+        write_str(1, "name:      "); write_str(1, argv[2]); write_str(1, "\n");
+        write_str(1, "summary:   "); write_str(1, argv[2]); write_str(1, " snap package\n");
+        write_str(1, "publisher: futura\nstore-url: https://snapcraft.io/");
+        write_str(1, argv[2]); write_str(1, "\n");
+        write_str(1, "channels:\n  latest/stable:  1.0.0  2026-01-01  64MB\n");
+        write_str(1, "  latest/beta:    1.0.1  2026-02-01  64MB\n");
+        write_str(1, "  latest/edge:    1.0.2  2026-03-01  65MB\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "refresh") == 0) {
+        if (argc >= 3) {
+            write_str(1, "snap \""); write_str(1, argv[2]); write_str(1, "\" has no updates available\n");
+        } else { write_str(1, "All snaps up to date.\n"); }
+        return;
+    }
+    if (strcmp_simple(argv[1], "run") == 0) {
+        if (argc < 3) { write_str(2, "error: please provide snap to run\n"); return; }
+        write_str(2, "cannot find "); write_str(2, argv[2]); write_str(2, " (not installed)\n");
+        return;
+    }
+    write_str(2, "error: unknown command \""); write_str(2, argv[1]); write_str(2, "\"\n");
+}
+
+/* ── flatpak: Flatpak package manager (simulated) ── */
+static void cmd_flatpak(int argc, char *argv[]) {
+    if (argc < 2 || strcmp_simple(argv[1], "--help") == 0 || strcmp_simple(argv[1], "help") == 0) {
+        write_str(1, "Usage: flatpak [OPTION...] COMMAND\n\n");
+        write_str(1, "Commands:\n");
+        write_str(1, "  install       Install an application or runtime\n");
+        write_str(1, "  update        Update an application or runtime\n");
+        write_str(1, "  uninstall     Uninstall an application or runtime\n");
+        write_str(1, "  list          List installed apps and runtimes\n");
+        write_str(1, "  info          Show info for installed application\n");
+        write_str(1, "  run           Run an application\n");
+        write_str(1, "  search        Search for remote applications\n");
+        write_str(1, "  remote-add    Add a new remote repository\n");
+        write_str(1, "  remote-list   List configured remotes\n");
+        write_str(1, "  --version     Show version\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "Flatpak 1.15.6 (futura)\n"); return;
+    }
+    if (strcmp_simple(argv[1], "list") == 0) {
+        write_str(1, "Name              Application ID                Version  Branch Origin\n");
+        write_str(1, "Firefox           org.mozilla.firefox           124.0.2  stable flathub\n");
+        write_str(1, "GIMP              org.gimp.GIMP                 2.10.36  stable flathub\n");
+        write_str(1, "VLC               org.videolan.VLC              3.0.20   stable flathub\n");
+        write_str(1, "LibreOffice       org.libreoffice.LibreOffice   24.2.1   stable flathub\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "install") == 0) {
+        if (argc < 3) { write_str(2, "error: RUNTIME/APP must be specified\n"); return; }
+        write_str(1, "Looking for matches...\n");
+        write_str(1, "Found ref(s) for '"); write_str(1, argv[2]); write_str(1, "' in remote 'flathub'.\n");
+        write_str(1, "  1) app/"); write_str(1, argv[2]); write_str(1, "/x86_64/stable\n\n");
+        write_str(1, "Installation complete.\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "uninstall") == 0) {
+        if (argc < 3) { write_str(2, "error: must specify RUNTIME/APP\n"); return; }
+        write_str(1, "Uninstalling: "); write_str(1, argv[2]); write_str(1, "\nUninstall complete.\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "update") == 0) {
+        write_str(1, "Looking for updates...\nNothing to do.\n"); return;
+    }
+    if (strcmp_simple(argv[1], "info") == 0) {
+        if (argc < 3) { write_str(2, "error: must specify an application\n"); return; }
+        write_str(1, "          ID: "); write_str(1, argv[2]); write_str(1, "\n");
+        write_str(1, "         Ref: app/"); write_str(1, argv[2]); write_str(1, "/x86_64/stable\n");
+        write_str(1, "        Arch: x86_64\n      Branch: stable\n      Origin: flathub\n");
+        write_str(1, "  Inst. size: 64.0 MB\n");
+        write_str(1, "     Runtime: org.freedesktop.Platform/x86_64/23.08\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "run") == 0) {
+        if (argc < 3) { write_str(2, "error: must specify an application\n"); return; }
+        write_str(2, "error: app/"); write_str(2, argv[2]); write_str(2, "/x86_64/stable not installed\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "search") == 0) {
+        if (argc < 3) { write_str(2, "error: must specify a search term\n"); return; }
+        write_str(1, "Name          Description              Application ID          Version Remotes\n");
+        write_str(1, argv[2]); write_str(1, "        "); write_str(1, argv[2]);
+        write_str(1, " application     org.example."); write_str(1, argv[2]);
+        write_str(1, "   1.0.0   flathub\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "remote-list") == 0) {
+        write_str(1, "Name    Options\nflathub system\n"); return;
+    }
+    if (strcmp_simple(argv[1], "remote-add") == 0) {
+        if (argc < 4) { write_str(2, "error: NAME and URL must be specified\n"); return; }
+        write_str(1, "Remote '"); write_str(1, argv[2]); write_str(1, "' added.\n");
+        return;
+    }
+    write_str(2, "error: Unknown command '"); write_str(2, argv[1]); write_str(2, "'\n");
+}
+
+/* ── apk: Alpine Package Keeper (simulated) ── */
+static void cmd_apk(int argc, char *argv[]) {
+    if (argc < 2 || strcmp_simple(argv[1], "--help") == 0 || strcmp_simple(argv[1], "help") == 0) {
+        write_str(1, "apk-tools 2.14.0 (futura)\n");
+        write_str(1, "usage: apk [<OPTIONS>...] COMMAND [<ARGUMENTS>...]\n\n");
+        write_str(1, "Package installation and removal:\n");
+        write_str(1, "  add      Add or update packages\n");
+        write_str(1, "  del      Remove packages\n\n");
+        write_str(1, "System maintenance:\n");
+        write_str(1, "  fix      Check and repair packages\n");
+        write_str(1, "  update   Update repository indexes\n");
+        write_str(1, "  upgrade  Install upgrades\n\n");
+        write_str(1, "Querying:\n");
+        write_str(1, "  info     Detailed package information\n");
+        write_str(1, "  list     List packages matching a pattern\n");
+        write_str(1, "  search   Search for packages\n");
+        write_str(1, "  stats    Show installation statistics\n");
+        write_str(1, "  policy   Show repository policy\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "apk-tools 2.14.0, compiled for x86_64 (futura).\n"); return;
+    }
+    if (strcmp_simple(argv[1], "add") == 0) {
+        if (argc < 3) { write_str(2, "ERROR: missing package name\n"); return; }
+        write_str(1, "fetch https://dl-cdn.alpinelinux.org/alpine/v3.19/main/x86_64/APKINDEX.tar.gz\n");
+        write_str(1, "(1/1) Installing "); write_str(1, argv[2]); write_str(1, " (1.0.0-r0)\n");
+        write_str(1, "Executing busybox-1.36.1-r15.trigger\nOK: 256 MiB in 48 packages\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "del") == 0) {
+        if (argc < 3) { write_str(2, "ERROR: missing package name\n"); return; }
+        write_str(1, "(1/1) Purging "); write_str(1, argv[2]); write_str(1, " (1.0.0-r0)\n");
+        write_str(1, "Executing busybox-1.36.1-r15.trigger\nOK: 240 MiB in 47 packages\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "update") == 0) {
+        write_str(1, "fetch https://dl-cdn.alpinelinux.org/alpine/v3.19/main/x86_64/APKINDEX.tar.gz\n");
+        write_str(1, "fetch https://dl-cdn.alpinelinux.org/alpine/v3.19/community/x86_64/APKINDEX.tar.gz\n");
+        write_str(1, "v3.19.1-86-ga1b2c3d4e5 [/alpine/v3.19/main]\n");
+        write_str(1, "v3.19.1-88-gf6e5d4c3b2 [/alpine/v3.19/community]\n");
+        write_str(1, "OK: 20417 distinct packages available\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "upgrade") == 0) {
+        write_str(1, "OK: 256 MiB in 48 packages (0 upgraded)\n"); return;
+    }
+    if (strcmp_simple(argv[1], "info") == 0) {
+        if (argc < 3) {
+            write_str(1, "alpine-baselayout-3.4.3-r2 description:\n");
+            write_str(1, "Alpine base dir structure and target env settings\n\n");
+            write_str(1, "busybox-1.36.1-r15 description:\n");
+            write_str(1, "Size optimized toolbox of many common UNIX utilities\n\n");
+            write_str(1, "musl-1.2.5-r0 description:\nthe musl c library implementation\n");
+            return;
+        }
+        write_str(1, argv[2]); write_str(1, "-1.0.0-r0 description:\n");
+        write_str(1, argv[2]); write_str(1, " package\n\n");
+        write_str(1, argv[2]); write_str(1, "-1.0.0-r0 webpage:\nhttps://futura.org\n\n");
+        write_str(1, argv[2]); write_str(1, "-1.0.0-r0 installed size:\n1024 KiB\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "search") == 0) {
+        if (argc < 3) { write_str(2, "ERROR: missing search pattern\n"); return; }
+        write_str(1, argv[2]); write_str(1, "-1.0.0-r0\n");
+        write_str(1, argv[2]); write_str(1, "-dev-1.0.0-r0\n");
+        write_str(1, argv[2]); write_str(1, "-doc-1.0.0-r0\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "list") == 0) {
+        if (argc >= 3 && strcmp_simple(argv[2], "--installed") == 0) {
+            write_str(1, "alpine-baselayout-3.4.3-r2 x86_64 {alpine-baselayout} [installed]\n");
+            write_str(1, "busybox-1.36.1-r15 x86_64 {busybox} [installed]\n");
+            write_str(1, "musl-1.2.5-r0 x86_64 {musl} [installed]\n");
+            write_str(1, "apk-tools-2.14.0-r5 x86_64 {apk-tools} [installed]\n");
+        } else {
+            write_str(1, "WARNING: use --installed for installed only\n");
+            write_str(1, "20417 packages available.\n");
+        }
+        return;
+    }
+    if (strcmp_simple(argv[1], "stats") == 0) {
+        write_str(1, "packages:   48\ndirs:       324\nfiles:      4096\n");
+        write_str(1, "bytes:      268435456\ntriggers:   2\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "fix") == 0) {
+        write_str(1, "OK: 0 errors, 48 packages verified\n"); return;
+    }
+    if (strcmp_simple(argv[1], "cache") == 0) {
+        if (argc >= 3 && strcmp_simple(argv[2], "clean") == 0)
+            write_str(1, "Purging cache...\nOK: 0 files removed\n");
+        else write_str(1, "Usage: apk cache [clean|download]\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "policy") == 0) {
+        if (argc < 3) { write_str(2, "ERROR: specify package name\n"); return; }
+        write_str(1, argv[2]); write_str(1, " policy:\n  1.0.0-r0:\n");
+        write_str(1, "    lib/apk/db/installed\n");
+        write_str(1, "    https://dl-cdn.alpinelinux.org/alpine/v3.19/main\n");
+        return;
+    }
+    write_str(2, "apk: unrecognized command '"); write_str(2, argv[1]); write_str(2, "'\n");
 }
 
 #pragma GCC diagnostic pop

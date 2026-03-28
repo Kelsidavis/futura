@@ -1227,6 +1227,11 @@ void __attribute__((weak)) fut_isr_handler(void *regs_ptr) {
     fut_serial_puts("\nSystem halted.\n");
     fut_serial_puts("========================================\n");
 
+    /* Trigger QEMU debug-exit so CI doesn't time out on kernel crash.
+     * The isa-debug-exit device at port 0xf4 causes QEMU to exit with
+     * code (value << 1) | 1.  We use 0x1F → exit code 63. */
+    __asm__ volatile("outb %0, %1" :: "a"((unsigned char)0x1F), "Nd"((unsigned short)0xf4));
+
     while (1) {
         __asm__ volatile("cli; hlt");
     }
@@ -1248,6 +1253,9 @@ void fut_platform_panic(const char *message) {
     fut_serial_puts("\n");
     fut_serial_puts("System halted.\n");
     fut_serial_puts("========================================\n");
+
+    /* Trigger QEMU debug-exit so CI doesn't time out */
+    __asm__ volatile("outb %0, %1" :: "a"((unsigned char)0x1F), "Nd"((unsigned short)0xf4));
 
     /* Halt forever */
     while (1) {

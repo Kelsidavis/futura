@@ -814,6 +814,7 @@ KERNEL_SOURCES := \
     kernel/net/tun.c \
     kernel/crypto/fut_hmac.c \
     kernel/vfs/fut_vfs.c \
+    kernel/vfs/vfs_dcache.c \
     kernel/vfs/fut_vfs_cap.c \
     kernel/vfs/ramfs.c \
     kernel/vfs/procfs.c \

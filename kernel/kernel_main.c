@@ -1489,7 +1489,7 @@ void fut_kernel_main(void) {
         planned_tests += 17u; /* clock_sched: getres, sched_param, sched_policy, itimer, rusage, times, getpriority, setpriority, getpriority(-who), setpriority(-who), unshare(0), unshare(invalid), rr_get_interval, clock_gettime, posix_timer_sigev_value, posix_timer_si_timer, itimer_virtual */
         planned_tests += 22u; /* vfs: O_TRUNC, O_APPEND, relpath, dir_mtime, readlink, hardlink, mount, renameat2, inotify(10), umount, dotdot, eisdir, chdir_dotdot */
         planned_tests += 17u; /* poll: file ready, eventfd not-ready, eventfd ready, POLLNVAL, select file, select pipe, pselect6 pipe, pselect6 sigmask restore, timeout-only sleep, timerfd readiness, signalfd readiness, pipe EOF, select pipe EOF, select timerfd wakeup, poll negative fd, POLLRDNORM, select timeout update */
-        planned_tests += 2262u; /* misc(2262): ..., memfd_seal+pidfd+close_range+dup (2240-2259), socket_opt_enforcement (2270-2272) */
+        planned_tests += 2266u; /* misc(2266): ..., memfd_seal+pidfd+close_range+dup (2240-2259), socket_opt_enforcement (2270-2272), pty_winsize_ctty (2285-2288) */
         // planned_tests += 1u; /* block */
         // planned_tests += 1u; /* futfs */
         // planned_tests += 1u; /* net */

@@ -90,6 +90,7 @@ struct fut_vnode {
     void *fs_data;                  /* Filesystem-specific data */
 
     uint32_t refcount;              /* Reference count */
+    uint32_t generation;            /* Generation counter for dentry cache safety */
     struct fut_vnode *parent;       /* Parent directory vnode (for path reconstruction) */
     char *name;                     /* Filename/basename in parent directory (for getcwd) */
 
@@ -659,6 +660,16 @@ void fut_vnode_ref(struct fut_vnode *vnode);
  */
 void fut_vnode_unref(struct fut_vnode *vnode);
 
+/* Dentry cache */
+extern uint64_t vfs_dcache_nr_dentry;
+extern uint64_t vfs_dcache_nr_unused;
+extern uint64_t vfs_dcache_hits;
+extern uint64_t vfs_dcache_misses;
+void vfs_dcache_init(void);
+struct fut_vnode *vfs_dcache_lookup(const char *path);
+void vfs_dcache_insert(const char *path, struct fut_vnode *vnode);
+void fut_dcache_invalidate_vnode(struct fut_vnode *vnode);
+void vfs_dcache_invalidate_path(const char *path);
 /**
  * Register a filesystem type.
  *

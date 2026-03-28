@@ -2268,6 +2268,9 @@ static void ramfs_free_vnode(struct fut_vnode *vnode) {
     ramfs_cleanup_vnode(vnode);
 
     /* Free the vnode structure itself */
+    /* Invalidate dentry cache entries before direct free */
+    fut_dcache_invalidate_vnode(vnode);
+    vnode->type = VN_INVALID;
     fut_free(vnode);
 }
 

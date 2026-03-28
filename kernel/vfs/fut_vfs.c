@@ -329,6 +329,8 @@ void fut_vfs_init(void) {
     /* Initialize root vnode */
     root_vnode = NULL;
     root_vnode_base = NULL;
+    /* Initialize dentry cache */
+    vfs_dcache_init();
 }
 
 void fut_vfs_set_root(struct fut_vnode *vnode) {
@@ -881,6 +883,15 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
         return 0;
     }
 
+    /* Dentry cache fast path (non-chroot only) */
+    if (effective_root == root_vnode) {
+        struct fut_vnode *cached = vfs_dcache_lookup(path);
+        if (cached) {
+            *vnode = cached;
+            return 0;
+        }
+    }
+
 #if DEBUG_VFS
     const char *orig_path = path;
 #endif
@@ -1006,6 +1017,8 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
                 VFSDBG("[vfs] lookup_vnode done vnode=%p ino=%llu (mount root)\n",
                        (void *)current,
                        current ? (unsigned long long)current->ino : 0ULL);
+                if (effective_root == root_vnode)
+                    vfs_dcache_insert(path, current);
                 fut_free(components);
                 return 0;
             }
@@ -1151,6 +1164,8 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
     VFSDBG("[vfs] lookup_vnode done vnode=%p ino=%llu\n",
            (void *)current,
            current ? (unsigned long long)current->ino : 0ULL);
+    if (effective_root == root_vnode)
+        vfs_dcache_insert(path, current);
     VFSDBG("[vfs-heap] lookup_vnode freeing %p\n", (void*)components);
     fut_free(components);
     VFSDBG("[vfs-heap] lookup_vnode freed %p OK\n", (void*)components);
@@ -1437,6 +1452,7 @@ int fut_vfs_unlink(const char *path) {
     }
 
     ret = parent->ops->unlink(parent, leaf);
+    if (ret == 0) vfs_dcache_invalidate_path(path);
     release_lookup_ref(parent);
     return ret;
 }
@@ -1476,6 +1492,7 @@ int fut_vfs_rmdir(const char *path) {
     }
 
     ret = parent->ops->rmdir(parent, leaf);
+    if (ret == 0) vfs_dcache_invalidate_path(path);
     release_lookup_ref(parent);
     return ret;
 }
@@ -3206,6 +3223,10 @@ void fut_vnode_unref(struct fut_vnode *vnode) {
     if (remaining == 0) {
         VFSDBG("[vnode-unref] freeing vnode ino=%llu type=%d\n", vnode->ino, vnode->type);
 
+        /* Invalidate dentry cache entries before freeing */
+        fut_dcache_invalidate_vnode(vnode);
+        vnode->type = VN_INVALID;
+
         /* vnode->parent is a weak traversal pointer only — no refcount is held
          * on the parent.  Calling fut_vnode_unref(vnode->parent) here would
          * spuriously decrement the parent's refcount because no matching
@@ -3391,6 +3412,7 @@ int fut_vfs_symlink(const char *target, const char *linkpath) {
     }
 
     ret = parent->ops->symlink(parent, leaf, target);
+    if (ret == 0) vfs_dcache_invalidate_path(linkpath);
     release_lookup_ref(parent);
     return ret;
 }
@@ -3507,6 +3529,7 @@ int fut_vfs_link(const char *oldpath, const char *newpath) {
     }
 
     ret = old_vnode->ops->link(old_vnode, oldpath, newpath);
+    if (ret == 0) vfs_dcache_invalidate_path(newpath);
     fut_vnode_unref(old_vnode);
     return ret;
 }
@@ -3602,6 +3625,7 @@ int fut_vfs_rename(const char *oldpath, const char *newpath) {
     /* Same parent: simple rename */
     if (strcmp(old_parent_buf, new_parent_buf) == 0) {
         ret = old_parent->ops->rename(old_parent, old_name, new_name);
+        if (ret == 0) { vfs_dcache_invalidate_path(oldpath); vfs_dcache_invalidate_path(newpath); }
         fut_vnode_unref(old_parent);
         return ret;
     }
@@ -3622,6 +3646,7 @@ int fut_vfs_rename(const char *oldpath, const char *newpath) {
 
     /* Use new parent's rename with full paths for cross-directory move */
     ret = new_parent->ops->rename(old_parent, old_name, new_name);
+    if (ret == 0) { vfs_dcache_invalidate_path(oldpath); vfs_dcache_invalidate_path(newpath); }
     fut_vnode_unref(old_parent);
     fut_vnode_unref(new_parent);
     return ret;

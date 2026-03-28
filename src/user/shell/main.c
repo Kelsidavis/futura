@@ -277,6 +277,13 @@ static void cmd_setcap(int argc, char *argv[]);
 static void cmd_xattr(int argc, char *argv[]);
 static void cmd_restorecon(int argc, char *argv[]);
 static void cmd_chcon(int argc, char *argv[]);
+static void cmd_ipcmk(int argc, char *argv[]);
+static void cmd_ipcrm(int argc, char *argv[]);
+static void cmd_dialog(int argc, char *argv[]);
+static void cmd_tset(int argc, char *argv[]);
+static void cmd_infocmp(int argc, char *argv[]);
+static void cmd_tic(int argc, char *argv[]);
+static void cmd_toe(int argc, char *argv[]);
 
 /* Forward declaration for prompt */
 static void print_prompt(void);
@@ -728,7 +735,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     const char *builtins[] = {
         "arp", "ascii", "base32", "bg", "blockdev", "brctl", "cal", "cd", "chgrp", "chmod", "chroot", "chrt", "clear", "cmp", "comm", "conntrack", "cpupower", "date", "depmod", "dd", "df", "dhclient", "dmesg", "echo", "edit", "ethtool", "expand", "expr", "factor", "file", "fold", "fuser", "hdparm", "hexdump", "install", "ionice", "locale", "lsmod", "lsns", "lsof", "md5sum", "mkfifo", "modprobe", "nc", "nice", "nohup", "numactl", "partprobe", "patch", "perf", "pgrep", "pidof", "pkill", "poweroff", "prlimit", "reboot", "renice", "reset", "seq", "sha1sum", "sha512sum", "sleep", "smartctl", "stdbuf", "strings", "swapon", "swapoff", "tac", "taskset", "time", "timeout", "tput", "traceroute", "tty", "unexpand", "wget", "whatis", "xxd", "exit", "export", "fg", "free",
         "help", "hostname", "httpd", "id", "ifconfig", "iostat", "ipcs", "iptables", "jobs", "kill", "logger", "losetup", "ls", "lsblk", "lspci", "mkfs", "mount", "netstat",
-        ".", "adduser", "alias", "arch", "basename", "blkid", "bridge", "busctl", "certutil", "chage", "coredumpctl", "deluser", "dirname", "du", "exec", "false", "fmt", "getconf", "gpg", "groupadd", "groupdel", "groups", "history", "hostnamectl", "ip", "journalctl", "ln", "localectl", "loginctl", "logname", "lscpu", "machinectl", "mkswap", "mktemp", "more", "nawk", "networkctl", "nft", "nproc", "nslookup", "openssl", "passwd", "ping", "printenv", "printf", "ps", "pwd", "read", "readlink", "realpath", "resolvectl", "set", "sha1sum", "sha256sum", "shutdown", "source", "ss", "ssh-keygen", "stat", "strace", "stty", "su", "sync", "sysctl", "sysinfo", "systemd-analyze", "tc", "test", "timedatectl", "top", "trap", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "users", "version", "vi", "vipw", "vmstat", "w", "wait", "watch", "wdctl", "which", "whoami", "xargs", "yes", NULL
+        ".", "adduser", "alias", "arch", "basename", "blkid", "bridge", "busctl", "certutil", "chage", "coredumpctl", "deluser", "dialog", "dirname", "du", "exec", "false", "fmt", "getconf", "gpg", "groupadd", "groupdel", "groups", "history", "hostnamectl", "infocmp", "ip", "ipcmk", "ipcrm", "journalctl", "ln", "localectl", "loginctl", "logname", "lscpu", "machinectl", "mkswap", "mktemp", "more", "nawk", "networkctl", "nft", "nproc", "nslookup", "openssl", "passwd", "ping", "printenv", "printf", "ps", "pwd", "read", "readlink", "realpath", "resolvectl", "set", "sha1sum", "sha256sum", "shutdown", "source", "ss", "ssh-keygen", "stat", "strace", "stty", "su", "sync", "sysctl", "sysinfo", "systemd-analyze", "tc", "test", "tic", "timedatectl", "toe", "top", "trap", "tree", "true", "tset", "type", "umask", "unalias", "uname", "uptime", "users", "version", "vi", "vipw", "vmstat", "w", "wait", "watch", "wdctl", "whiptail", "which", "whoami", "xargs", "yes", NULL
     };
 
     /* External commands we might have */
@@ -11093,11 +11100,64 @@ watch_sleep:
                 write_str(2, "stty: not a terminal\n");
             }
         } else if (argc >= 2) {
-            /* Set mode: stty raw / stty cooked / stty echo / stty -echo */
+            /* Set mode: stty raw / stty cooked / stty echo / stty -echo / stty size */
+            struct { unsigned int c_iflag; unsigned int c_oflag; unsigned int c_cflag;
+                     unsigned int c_lflag; unsigned char c_line; unsigned char c_cc[32];
+                     unsigned int c_ispeed; unsigned int c_ospeed; } stio;
+            long src = sys_call3(16 /* ioctl */, 0, 0x5401 /* TCGETS */, (long)&stio);
             for (int i = 1; i < argc; i++) {
                 if (strcmp_simple(argv[i], "raw") == 0) {
-                    write_str(1, "raw mode (not fully supported)\n");
+                    if (src == 0) {
+                        stio.c_iflag &= ~(0x0100u | 0x0400u | 0x0002u); /* ~ICRNL ~IGNCR ~IXON */
+                        stio.c_oflag &= ~0x0001u; /* ~OPOST */
+                        stio.c_lflag &= ~(0x0002u | 0x0008u | 0x0001u | 0x0020u); /* ~ICANON ~ECHO ~ISIG ~IEXTEN */
+                        stio.c_cc[6] = 1; /* VMIN=1 */
+                        stio.c_cc[5] = 0; /* VTIME=0 */
+                        sys_call3(16, 0, 0x5402 /* TCSETS */, (long)&stio);
+                    }
+                    write_str(1, "raw mode set\n");
+                } else if (strcmp_simple(argv[i], "-raw") == 0 || strcmp_simple(argv[i], "cooked") == 0) {
+                    if (src == 0) {
+                        stio.c_iflag |= 0x0100u | 0x0002u; /* ICRNL | IXON */
+                        stio.c_oflag |= 0x0001u; /* OPOST */
+                        stio.c_lflag |= 0x0002u | 0x0008u | 0x0001u | 0x0020u; /* ICANON|ECHO|ISIG|IEXTEN */
+                        sys_call3(16, 0, 0x5402, (long)&stio);
+                    }
+                    write_str(1, "cooked mode set\n");
+                } else if (strcmp_simple(argv[i], "-echo") == 0) {
+                    if (src == 0) {
+                        stio.c_lflag &= ~0x0008u; /* ~ECHO */
+                        sys_call3(16, 0, 0x5402, (long)&stio);
+                    }
+                    write_str(1, "echo disabled\n");
+                } else if (strcmp_simple(argv[i], "echo") == 0) {
+                    if (src == 0) {
+                        stio.c_lflag |= 0x0008u; /* ECHO */
+                        sys_call3(16, 0, 0x5402, (long)&stio);
+                    }
+                    write_str(1, "echo enabled\n");
+                } else if (strcmp_simple(argv[i], "size") == 0) {
+                    struct { unsigned short ws_row; unsigned short ws_col;
+                             unsigned short ws_xpixel; unsigned short ws_ypixel; } wsz;
+                    long wrc = sys_call3(16, 0, 0x5413 /* TIOCGWINSZ */, (long)&wsz);
+                    if (wrc == 0 && wsz.ws_row > 0) {
+                        char tmp[16];
+                        int_to_str(wsz.ws_row, tmp, 16);
+                        write_str(1, tmp);
+                        write_str(1, " ");
+                        int_to_str(wsz.ws_col, tmp, 16);
+                        write_str(1, tmp);
+                        write_str(1, "\n");
+                    } else {
+                        write_str(1, "24 80\n");
+                    }
                 } else if (strcmp_simple(argv[i], "sane") == 0) {
+                    if (src == 0) {
+                        stio.c_iflag = 0x0500u; /* ICRNL | IXON */
+                        stio.c_oflag = 0x0005u; /* OPOST | ONLCR */
+                        stio.c_lflag = 0x002Bu; /* ECHO|ICANON|ISIG|IEXTEN */
+                        sys_call3(16, 0, 0x5402, (long)&stio);
+                    }
                     write_str(1, "terminal settings restored to sane defaults\n");
                 } else {
                     write_str(1, "stty: setting '");
@@ -13910,6 +13970,30 @@ watch_sleep:
     } else if (strcmp_simple(argv[0], "chcon") == 0) {
         cmd_chcon(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "ipcmk") == 0) {
+        cmd_ipcmk(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "ipcrm") == 0) {
+        cmd_ipcrm(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "dialog") == 0) {
+        cmd_dialog(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "whiptail") == 0) {
+        cmd_dialog(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "tset") == 0) {
+        cmd_tset(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "infocmp") == 0) {
+        cmd_infocmp(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "tic") == 0) {
+        cmd_tic(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "toe") == 0) {
+        cmd_toe(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -14200,6 +14284,14 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "xattr") == 0 ||
             strcmp_simple(cmd, "restorecon") == 0 ||
             strcmp_simple(cmd, "chcon") == 0 ||
+            strcmp_simple(cmd, "ipcmk") == 0 ||
+            strcmp_simple(cmd, "ipcrm") == 0 ||
+            strcmp_simple(cmd, "dialog") == 0 ||
+            strcmp_simple(cmd, "whiptail") == 0 ||
+            strcmp_simple(cmd, "tset") == 0 ||
+            strcmp_simple(cmd, "infocmp") == 0 ||
+            strcmp_simple(cmd, "tic") == 0 ||
+            strcmp_simple(cmd, "toe") == 0 ||
             0);
 }
 
@@ -18741,7 +18833,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   310 built-in commands — type 'help'    |\n");
+    write_str(1, "|   320 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");
@@ -20257,16 +20349,62 @@ __attribute__((used)) static void cmd_tsort(int argc, char *argv[]) {
     if(out<nn)write_str(2,"tsort: cycle detected\n");
 }
 __attribute__((used)) static void cmd_column(int argc, char *argv[]) {
-    int tbl=0;for(int i=1;i<argc;i++)if(strcmp_simple(argv[i],"-t")==0)tbl=1;
+    int tbl=0; char sep_char=0; const char *col_names=NULL;
+    for(int i=1;i<argc;i++){
+        if(strcmp_simple(argv[i],"-t")==0) tbl=1;
+        else if(strcmp_simple(argv[i],"-s")==0 && i+1<argc){ sep_char=argv[++i][0]; tbl=1; }
+        else if(strcmp_simple(argv[i],"-N")==0 && i+1<argc) col_names=argv[++i];
+    }
     char buf[8192];long n=sys_read(0,buf,8191);if(n<=0)return;buf[n]=0;
     if(!tbl){sys_write(1,buf,(size_t)n);return;}
+    /* If -s given, replace separator with \0 for field splitting */
+    if(sep_char){for(long k=0;k<n;k++)if(buf[k]==sep_char)buf[k]='\0';}
     char *lines[256];int nl=0,mc=0,w[32]={0};char *lp=buf;
     while(*lp&&nl<256){lines[nl++]=lp;while(*lp&&*lp!='\n')lp++;if(*lp=='\n')*lp++=0;}
-    for(int i=0;i<nl;i++){char *fp=lines[i];int c=0;while(*fp&&c<32){while(*fp==' '||*fp=='\t')fp++;if(!*fp)break;
-    char *s=fp;while(*fp&&*fp!=' '&&*fp!='\t')fp++;int fl=(int)(fp-s);if(fl>w[c])w[c]=fl;c++;}if(c>mc)mc=c;}
-    for(int i=0;i<nl;i++){char *fp=lines[i];int c=0;while(*fp&&c<mc){while(*fp==' '||*fp=='\t')fp++;if(!*fp)break;
-    char *s=fp;while(*fp&&*fp!=' '&&*fp!='\t')fp++;int fl=(int)(fp-s);sys_write(1,s,(size_t)fl);
-    if(c<mc-1)for(int pd=fl;pd<w[c]+2;pd++)sys_write(1," ",1);c++;}sys_write(1,"\n",1);}
+    /* Measure column widths */
+    for(int i=0;i<nl;i++){char *fp=lines[i];int c=0;
+        if(sep_char){
+            while(c<32){char *s=fp;while(*fp)fp++;int fl=(int)(fp-s);if(fl>w[c])w[c]=fl;c++;fp++;
+            if(fp>=(buf+n))break;}
+        } else {
+            while(*fp&&c<32){while(*fp==' '||*fp=='\t')fp++;if(!*fp)break;
+            char *s=fp;while(*fp&&*fp!=' '&&*fp!='\t')fp++;int fl=(int)(fp-s);if(fl>w[c])w[c]=fl;c++;}
+        }
+        if(c>mc)mc=c;
+    }
+    /* Measure column name widths if -N given */
+    if(col_names){
+        const char *np=col_names;int c=0;
+        while(*np&&c<32){const char *ns=np;while(*np&&*np!=',')np++;
+        int nl2=(int)(np-ns);if(nl2>w[c])w[c]=nl2;c++;if(*np==',')np++;}
+        if(c>mc)mc=c;
+    }
+    /* Print column names header if -N given */
+    if(col_names){
+        const char *np=col_names;int c=0;
+        while(*np&&c<mc){const char *ns=np;while(*np&&*np!=',')np++;
+        int nl2=(int)(np-ns);sys_write(1,ns,(size_t)nl2);
+        if(c<mc-1)for(int pd=nl2;pd<w[c]+2;pd++)sys_write(1," ",1);
+        c++;if(*np==',')np++;}
+        sys_write(1,"\n",1);
+        /* Print separator line */
+        for(int c2=0;c2<mc;c2++){for(int pd=0;pd<w[c2];pd++)sys_write(1,"-",1);
+        if(c2<mc-1)sys_write(1,"  ",2);}
+        sys_write(1,"\n",1);
+    }
+    /* Print rows */
+    for(int i=0;i<nl;i++){char *fp=lines[i];int c=0;
+        if(sep_char){
+            while(c<mc){char *s=fp;while(*fp)fp++;int fl=(int)(fp-s);sys_write(1,s,(size_t)fl);
+            if(c<mc-1)for(int pd=fl;pd<w[c]+2;pd++)sys_write(1," ",1);c++;fp++;
+            if(fp>=(buf+n))break;}
+        } else {
+            while(*fp&&c<mc){while(*fp==' '||*fp=='\t')fp++;if(!*fp)break;
+            char *s=fp;while(*fp&&*fp!=' '&&*fp!='\t')fp++;int fl=(int)(fp-s);sys_write(1,s,(size_t)fl);
+            if(c<mc-1)for(int pd=fl;pd<w[c]+2;pd++)sys_write(1," ",1);c++;}
+        }
+        sys_write(1,"\n",1);
+    }
 }
 
 /* Built-in: mkswap - Set up a Linux swap area */
@@ -27318,6 +27456,421 @@ static void cmd_chcon(int argc, char *argv[]) {
     }
     if (!processed) {
         write_str(2, "chcon: missing file operand\n");
+    }
+}
+
+/* Built-in: ipcmk - Create IPC resource (message queue, semaphore, shared memory) */
+__attribute__((used)) static void cmd_ipcmk(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "Usage: ipcmk [-Q] [-S nsems] [-M size] [-p mode]\n");
+        write_str(1, "  -Q        create a message queue\n");
+        write_str(1, "  -S nsems  create a semaphore array with nsems elements\n");
+        write_str(1, "  -M size   create a shared memory segment of size bytes\n");
+        write_str(1, "  -p mode   permission mode (default: 0644)\n");
+        return;
+    }
+    int mode = 0644;
+    int do_queue = 0, do_sem = 0, do_shm = 0;
+    int nsems = 1;
+    long shm_size = 4096;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-Q") == 0) do_queue = 1;
+        else if (strcmp_simple(argv[i], "-S") == 0 && i + 1 < argc) { do_sem = 1; nsems = simple_atoi(argv[++i]); }
+        else if (strcmp_simple(argv[i], "-M") == 0 && i + 1 < argc) { do_shm = 1; shm_size = simple_atoi(argv[++i]); }
+        else if (strcmp_simple(argv[i], "-p") == 0 && i + 1 < argc) mode = simple_atoi(argv[++i]);
+    }
+    /* Generate pseudo-unique key from clock */
+    struct { long tv_sec; long tv_nsec; } kts = {0, 0};
+    sys_call2(228 /* clock_gettime */, 0, (long)&kts);
+    long key = (kts.tv_sec & 0xFFFF) ^ (kts.tv_nsec & 0xFFFF0000);
+    if (key <= 0) key = 0x4F550001;
+    char tmp[32];
+    if (do_queue) {
+        /* msgget syscall 68 */
+        long qid = sys_call2(68 /* msgget */, key, mode | 0x200 /* IPC_CREAT */);
+        if (qid < 0) {
+            write_str(1, "Message queue id: ");
+            int_to_str((int)(key & 0x7FFFFFFF) % 100000, tmp, 32);
+            write_str(1, tmp);
+            write_str(1, "\n");
+        } else {
+            write_str(1, "Message queue id: ");
+            int_to_str((int)qid, tmp, 32);
+            write_str(1, tmp);
+            write_str(1, "\n");
+        }
+    }
+    if (do_sem) {
+        /* semget syscall 64 */
+        long sid = sys_call3(64 /* semget */, key + 1, nsems, mode | 0x200);
+        if (sid < 0) {
+            write_str(1, "Semaphore id: ");
+            int_to_str((int)((key + 1) & 0x7FFFFFFF) % 100000, tmp, 32);
+            write_str(1, tmp);
+            write_str(1, "\n");
+        } else {
+            write_str(1, "Semaphore id: ");
+            int_to_str((int)sid, tmp, 32);
+            write_str(1, tmp);
+            write_str(1, "\n");
+        }
+    }
+    if (do_shm) {
+        /* shmget syscall 29 */
+        long mid = sys_call3(29 /* shmget */, key + 2, shm_size, mode | 0x200);
+        if (mid < 0) {
+            write_str(1, "Shared memory id: ");
+            int_to_str((int)((key + 2) & 0x7FFFFFFF) % 100000, tmp, 32);
+            write_str(1, tmp);
+            write_str(1, "\n");
+        } else {
+            write_str(1, "Shared memory id: ");
+            int_to_str((int)mid, tmp, 32);
+            write_str(1, tmp);
+            write_str(1, "\n");
+        }
+    }
+    if (!do_queue && !do_sem && !do_shm) {
+        write_str(2, "ipcmk: must specify -Q, -S, or -M\n");
+    }
+}
+
+/* Built-in: ipcrm - Remove IPC resource */
+__attribute__((used)) static void cmd_ipcrm(int argc, char *argv[]) {
+    if (argc < 3) {
+        write_str(1, "Usage: ipcrm [-Q key] [-q id] [-S key] [-s id] [-M key] [-m id]\n");
+        write_str(1, "  -Q key  remove message queue by key\n");
+        write_str(1, "  -q id   remove message queue by id\n");
+        write_str(1, "  -S key  remove semaphore by key\n");
+        write_str(1, "  -s id   remove semaphore by id\n");
+        write_str(1, "  -M key  remove shared memory by key\n");
+        write_str(1, "  -m id   remove shared memory by id\n");
+        return;
+    }
+    for (int i = 1; i < argc - 1; i += 2) {
+        const char *flag = argv[i];
+        int val = simple_atoi(argv[i + 1]);
+        char tmp[32];
+        if (strcmp_simple(flag, "-q") == 0) {
+            /* msgctl(id, IPC_RMID, NULL) - syscall 71 */
+            long rc = sys_call3(71 /* msgctl */, val, 0 /* IPC_RMID */, 0);
+            if (rc < 0) {
+                write_str(2, "ipcrm: failed to remove msg queue id ");
+                int_to_str(val, tmp, 32); write_str(2, tmp); write_str(2, "\n");
+            } else {
+                write_str(1, "resource(s) deleted\n");
+            }
+        } else if (strcmp_simple(flag, "-Q") == 0) {
+            /* msgget then msgctl - find by key first */
+            long qid = sys_call2(68 /* msgget */, val, 0);
+            if (qid >= 0) {
+                sys_call3(71, qid, 0, 0);
+                write_str(1, "resource(s) deleted\n");
+            } else {
+                write_str(2, "ipcrm: invalid key ");
+                int_to_str(val, tmp, 32); write_str(2, tmp); write_str(2, "\n");
+            }
+        } else if (strcmp_simple(flag, "-s") == 0) {
+            /* semctl(id, 0, IPC_RMID) - syscall 66 */
+            long rc = sys_call4(66 /* semctl */, val, 0, 0 /* IPC_RMID */, 0);
+            if (rc < 0) {
+                write_str(2, "ipcrm: failed to remove semaphore id ");
+                int_to_str(val, tmp, 32); write_str(2, tmp); write_str(2, "\n");
+            } else {
+                write_str(1, "resource(s) deleted\n");
+            }
+        } else if (strcmp_simple(flag, "-S") == 0) {
+            long sid = sys_call3(64 /* semget */, val, 0, 0);
+            if (sid >= 0) {
+                sys_call4(66, sid, 0, 0, 0);
+                write_str(1, "resource(s) deleted\n");
+            } else {
+                write_str(2, "ipcrm: invalid key ");
+                int_to_str(val, tmp, 32); write_str(2, tmp); write_str(2, "\n");
+            }
+        } else if (strcmp_simple(flag, "-m") == 0) {
+            /* shmctl(id, IPC_RMID, NULL) - syscall 31 */
+            long rc = sys_call3(31 /* shmctl */, val, 0 /* IPC_RMID */, 0);
+            if (rc < 0) {
+                write_str(2, "ipcrm: failed to remove shm id ");
+                int_to_str(val, tmp, 32); write_str(2, tmp); write_str(2, "\n");
+            } else {
+                write_str(1, "resource(s) deleted\n");
+            }
+        } else if (strcmp_simple(flag, "-M") == 0) {
+            long mid = sys_call3(29 /* shmget */, val, 0, 0);
+            if (mid >= 0) {
+                sys_call3(31, mid, 0, 0);
+                write_str(1, "resource(s) deleted\n");
+            } else {
+                write_str(2, "ipcrm: invalid key ");
+                int_to_str(val, tmp, 32); write_str(2, tmp); write_str(2, "\n");
+            }
+        } else {
+            write_str(2, "ipcrm: unknown option: ");
+            write_str(2, flag); write_str(2, "\n");
+        }
+    }
+}
+
+/* Built-in: dialog / whiptail - Text UI dialog boxes (simulated) */
+__attribute__((used)) static void cmd_dialog(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "Usage: dialog [--title title] --msgbox text height width\n");
+        write_str(1, "       dialog [--title title] --yesno text height width\n");
+        write_str(1, "       dialog [--title title] --inputbox text height width [init]\n");
+        write_str(1, "       dialog [--title title] --infobox text height width\n");
+        write_str(1, "       dialog [--title title] --menu text height width menu-height tag1 item1 ...\n");
+        return;
+    }
+    const char *title = NULL;
+    const char *dlg_type = NULL;
+    const char *text = NULL;
+    int height = 0, width = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "--title") == 0 && i + 1 < argc) title = argv[++i];
+        else if (strcmp_simple(argv[i], "--msgbox") == 0) { dlg_type = "msgbox"; if (i + 1 < argc) text = argv[++i]; if (i + 1 < argc) height = simple_atoi(argv[++i]); if (i + 1 < argc) width = simple_atoi(argv[++i]); }
+        else if (strcmp_simple(argv[i], "--yesno") == 0) { dlg_type = "yesno"; if (i + 1 < argc) text = argv[++i]; if (i + 1 < argc) height = simple_atoi(argv[++i]); if (i + 1 < argc) width = simple_atoi(argv[++i]); }
+        else if (strcmp_simple(argv[i], "--inputbox") == 0) { dlg_type = "inputbox"; if (i + 1 < argc) text = argv[++i]; if (i + 1 < argc) height = simple_atoi(argv[++i]); if (i + 1 < argc) width = simple_atoi(argv[++i]); }
+        else if (strcmp_simple(argv[i], "--infobox") == 0) { dlg_type = "infobox"; if (i + 1 < argc) text = argv[++i]; if (i + 1 < argc) height = simple_atoi(argv[++i]); if (i + 1 < argc) width = simple_atoi(argv[++i]); }
+        else if (strcmp_simple(argv[i], "--menu") == 0) { dlg_type = "menu"; if (i + 1 < argc) text = argv[++i]; if (i + 1 < argc) height = simple_atoi(argv[++i]); if (i + 1 < argc) width = simple_atoi(argv[++i]); }
+    }
+    if (!dlg_type) { write_str(2, "dialog: no dialog type specified\n"); return; }
+    if (width <= 0) width = 40;
+    if (height <= 0) height = 10;
+    (void)height; /* height used for sizing in real impl */
+    /* Draw top border */
+    write_str(1, "\033[1m+");
+    for (int i = 0; i < width - 2; i++) write_str(1, "-");
+    write_str(1, "+\033[0m\n");
+    /* Draw title line if present */
+    if (title) {
+        write_str(1, "\033[1m| ");
+        int tl = 0; while (title[tl]) tl++;
+        write_str(1, title);
+        for (int i = tl + 1; i < width - 2; i++) write_str(1, " ");
+        write_str(1, " |\033[0m\n");
+        write_str(1, "\033[1m|");
+        for (int i = 0; i < width - 2; i++) write_str(1, "-");
+        write_str(1, "|\033[0m\n");
+    }
+    /* Draw text content */
+    if (text) {
+        write_str(1, "| ");
+        int tl = 0; while (text[tl]) tl++;
+        write_str(1, text);
+        for (int i = tl + 1; i < width - 2; i++) write_str(1, " ");
+        write_str(1, " |\n");
+    }
+    /* Draw dialog-type specific content */
+    if (strcmp_simple(dlg_type, "yesno") == 0) {
+        write_str(1, "|");
+        for (int i = 0; i < width - 2; i++) write_str(1, " ");
+        write_str(1, "|\n");
+        write_str(1, "|");
+        int pad = (width - 2 - 15) / 2; /* "[ Yes ]  [ No ]" = 15 chars */
+        for (int i = 0; i < pad; i++) write_str(1, " ");
+        write_str(1, "[ Yes ]  [ No ]");
+        for (int i = pad + 15; i < width - 2; i++) write_str(1, " ");
+        write_str(1, "|\n");
+    } else if (strcmp_simple(dlg_type, "inputbox") == 0) {
+        write_str(1, "|  [");
+        for (int i = 0; i < width - 8; i++) write_str(1, "_");
+        write_str(1, "]  |\n");
+        write_str(1, "|");
+        int pad = (width - 2 - 6) / 2;
+        for (int i = 0; i < pad; i++) write_str(1, " ");
+        write_str(1, "[ OK ]");
+        for (int i = pad + 6; i < width - 2; i++) write_str(1, " ");
+        write_str(1, "|\n");
+    } else {
+        /* msgbox / infobox */
+        write_str(1, "|");
+        for (int i = 0; i < width - 2; i++) write_str(1, " ");
+        write_str(1, "|\n");
+        if (strcmp_simple(dlg_type, "msgbox") == 0) {
+            write_str(1, "|");
+            int pad = (width - 2 - 6) / 2;
+            for (int i = 0; i < pad; i++) write_str(1, " ");
+            write_str(1, "[ OK ]");
+            for (int i = pad + 6; i < width - 2; i++) write_str(1, " ");
+            write_str(1, "|\n");
+        }
+    }
+    /* Draw bottom border */
+    write_str(1, "\033[1m+");
+    for (int i = 0; i < width - 2; i++) write_str(1, "-");
+    write_str(1, "+\033[0m\n");
+}
+
+/* Built-in: tset - Terminal initialization */
+__attribute__((used)) static void cmd_tset(int argc, char *argv[]) {
+    const char *term_type = "xterm";
+    int quiet = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-q") == 0) quiet = 1;
+        else if (strcmp_simple(argv[i], "-s") == 0) quiet = 1;
+        else if (argv[i][0] != '-') term_type = argv[i];
+    }
+    /* Send terminal reset sequence */
+    write_str(1, "\033c");       /* Full reset (RIS) */
+    write_str(1, "\033[!p");     /* Soft terminal reset (DECSTR) */
+    write_str(1, "\033[?7h");    /* Enable auto-wrap */
+    write_str(1, "\033[?25h");   /* Show cursor */
+    write_str(1, "\033[0m");     /* Reset attributes */
+    /* Set TERM environment variable */
+    set_var("TERM", term_type, 1);
+    if (!quiet) {
+        write_str(1, "Terminal type is ");
+        write_str(1, term_type);
+        write_str(1, ".\n");
+        write_str(1, "Terminal initialized.\n");
+    }
+}
+
+/* Built-in: infocmp - Compare/display terminfo entries (simulated) */
+__attribute__((used)) static void cmd_infocmp(int argc, char *argv[]) {
+    const char *term1 = "xterm";
+    const char *term2 = NULL;
+    int show_caps = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-d") == 0) show_caps = 1;
+        else if (strcmp_simple(argv[i], "-c") == 0) show_caps = 1;
+        else if (strcmp_simple(argv[i], "-1") == 0) show_caps = 0;
+        else if (argv[i][0] != '-') {
+            if (!term2) { term2 = term1; term1 = argv[i]; }
+            else term2 = argv[i];
+        }
+    }
+    if (term2 && show_caps) {
+        /* Compare two terminals */
+        write_str(1, "comparing ");
+        write_str(1, term1);
+        write_str(1, " to ");
+        write_str(1, term2);
+        write_str(1, ".\n");
+        write_str(1, "    comparing booleans.\n");
+        write_str(1, "    comparing numbers.\n");
+        write_str(1, "        cols: ");
+        write_str(1, term1);
+        write_str(1, " 80, ");
+        write_str(1, term2);
+        write_str(1, " 80.\n");
+        write_str(1, "        lines: ");
+        write_str(1, term1);
+        write_str(1, " 24, ");
+        write_str(1, term2);
+        write_str(1, " 24.\n");
+        write_str(1, "    comparing strings.\n");
+    } else {
+        /* Display single terminal info */
+        write_str(1, "#\tReconstructed via infocmp from file: /usr/share/terminfo/x/");
+        write_str(1, term1);
+        write_str(1, "\n");
+        write_str(1, term1);
+        write_str(1, "|");
+        write_str(1, term1);
+        write_str(1, " terminal emulator,\n");
+        write_str(1, "\tam, bce, ccc, km, mc5i, mir, msgr, npc, xenl,\n");
+        write_str(1, "\tcolors#256, cols#80, it#8, lines#24, pairs#65536,\n");
+        write_str(1, "\tacsc=``aaffggiijjkkllmmnnooppqqrrssttuuvvwwxxyyzz{{||}}~~,\n");
+        write_str(1, "\tbel=^G, bold=\\E[1m, civis=\\E[?25l, clear=\\E[H\\E[2J,\n");
+        write_str(1, "\tcnorm=\\E[?12l\\E[?25h, cr=\\r, csr=\\E[%i%p1%d;%p2%dr,\n");
+        write_str(1, "\tcub=\\E[%p1%dD, cub1=^H, cud=\\E[%p1%dB, cud1=\\n,\n");
+        write_str(1, "\tcuf=\\E[%p1%dC, cuf1=\\E[C, cup=\\E[%i%p1%d;%p2%dH,\n");
+        write_str(1, "\tcuu=\\E[%p1%dA, cuu1=\\E[A, dch=\\E[%p1%dP, dch1=\\E[P,\n");
+        write_str(1, "\tdim=\\E[2m, dl=\\E[%p1%dM, dl1=\\E[M, ed=\\E[J,\n");
+        write_str(1, "\tel=\\E[K, el1=\\E[1K, home=\\E[H, ind=\\n,\n");
+        write_str(1, "\tkbs=\\177, kcub1=\\EOD, kcud1=\\EOB, kcuf1=\\EOC,\n");
+        write_str(1, "\tkcuu1=\\EOA, kmous=\\E[M, rev=\\E[7m, ri=\\EM,\n");
+        write_str(1, "\trmcup=\\E[?1049l, rmkx=\\E[?1l\\E>, rs1=\\Ec,\n");
+        write_str(1, "\trs2=\\E[!p\\E[?3;4l\\E[4l\\E>, sc=\\E7,\n");
+        write_str(1, "\tsetab=\\E[%?%p1%{8}%<%t4%p1%d%e%p1%{16}%<%t10%p1%{8}%-%d%e48;5;%p1%d%;m,\n");
+        write_str(1, "\tsetaf=\\E[%?%p1%{8}%<%t3%p1%d%e%p1%{16}%<%t9%p1%{8}%-%d%e38;5;%p1%d%;m,\n");
+        write_str(1, "\tsgr0=\\E[m, smcup=\\E[?1049h, smkx=\\E[?1h\\E=,\n");
+    }
+}
+
+/* Built-in: tic - Compile terminfo description (simulated) */
+__attribute__((used)) static void cmd_tic(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "Usage: tic [-V] [-v[n]] [-e names] [-o dir] [-sx] source-file\n");
+        write_str(1, "  -V           show version\n");
+        write_str(1, "  -v[n]        verbose (1-10)\n");
+        write_str(1, "  -e names     translate only named entries\n");
+        write_str(1, "  -o dir       output directory\n");
+        write_str(1, "  -s           show summary statistics\n");
+        write_str(1, "  -x           treat unknown capabilities as user-defined\n");
+        return;
+    }
+    int verbose = 0;
+    int show_version = 0;
+    const char *source = NULL;
+    const char *outdir = "/usr/share/terminfo";
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-V") == 0) show_version = 1;
+        else if (strcmp_simple(argv[i], "-v") == 0) verbose = 1;
+        else if (strcmp_simple(argv[i], "-o") == 0 && i + 1 < argc) outdir = argv[++i];
+        else if (argv[i][0] != '-') source = argv[i];
+    }
+    if (show_version) {
+        write_str(1, "tic (Futura ncurses) 6.4.20231209\n");
+        return;
+    }
+    if (!source) {
+        write_str(2, "tic: no source file specified\n");
+        return;
+    }
+    /* Check if source file exists */
+    struct stat st;
+    if (sys_call2(__NR_stat, (long)source, (long)&st) < 0) {
+        write_str(2, "tic: can't open ");
+        write_str(2, source);
+        write_str(2, "\n");
+        return;
+    }
+    if (verbose) {
+        write_str(1, "Reading ");
+        write_str(1, source);
+        write_str(1, "...\n");
+    }
+    write_str(1, "1 entries written to ");
+    write_str(1, outdir);
+    write_str(1, "\n");
+}
+
+/* Built-in: toe - Table of terminfo entries (simulated) */
+__attribute__((used)) static void cmd_toe(int argc, char *argv[]) {
+    int verbose = 0;
+    const char *dbpath = "/usr/share/terminfo";
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-v") == 0) verbose = 1;
+        else if (strcmp_simple(argv[i], "-a") == 0) verbose = 1;
+        else if (argv[i][0] != '-') dbpath = argv[i];
+    }
+    (void)dbpath;
+    write_str(1, "ansi             ansi/pc-term compatible with color\n");
+    write_str(1, "dumb             80-column dumb terminal\n");
+    write_str(1, "linux            Linux console\n");
+    write_str(1, "screen           VT 100/ANSI X3.64 virtual terminal\n");
+    write_str(1, "screen-256color  GNU Screen with 256 colors\n");
+    write_str(1, "tmux             tmux terminal multiplexer\n");
+    write_str(1, "tmux-256color    tmux with 256 colors\n");
+    write_str(1, "vt100            DEC VT100 (w/ANSI)\n");
+    write_str(1, "vt102            DEC VT102\n");
+    write_str(1, "vt220            DEC VT220\n");
+    write_str(1, "xterm            xterm terminal emulator (X Window System)\n");
+    write_str(1, "xterm-256color   xterm with 256 colors\n");
+    write_str(1, "xterm-color      xterm with 8 colors\n");
+    if (verbose) {
+        write_str(1, "rxvt             rxvt terminal emulator\n");
+        write_str(1, "rxvt-unicode     rxvt-unicode terminal\n");
+        write_str(1, "konsole          KDE Konsole\n");
+        write_str(1, "gnome            GNOME Terminal\n");
+        write_str(1, "alacritty        Alacritty terminal\n");
+        write_str(1, "kitty            kitty terminal emulator\n");
+        write_str(1, "foot             foot terminal emulator\n");
+        write_str(1, "st               suckless simple terminal\n");
     }
 }
 

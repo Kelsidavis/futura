@@ -7174,6 +7174,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                    "nmi_watchdog", "watchdog",
                                    "watchdog_thresh", "hung_task_timeout_secs",
                                    "panic", "panic_on_oops",
+                                   "oops_count",
                                    "sched_latency_ns", "sched_min_granularity_ns",
                                    "sched_wakeup_granularity_ns",
                                    "sched_migration_cost_ns",
@@ -7202,8 +7203,10 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG,
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG };  /* sysrq */
@@ -7230,6 +7233,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                       PROC_INO_SYS_KERNEL_HUNG_TASK,
                                       PROC_INO_SYS_KERNEL_PANIC,
                                       PROC_INO_SYS_KERNEL_PANIC_OOPS,
+                                      PROC_INO_SYS_KERNEL_OOPS_COUNT,
                                       PROC_INO_SYS_SCHED_LAT,
                                       PROC_INO_SYS_SCHED_MINGRAN,
                                       PROC_INO_SYS_SCHED_WAKEUP,
@@ -7240,7 +7244,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                       PROC_INO_SYS_SCHED_CHILD + 3,  /* kexec_load_disabled */
                                       PROC_INO_SYS_SCHED_CHILD + 4,  /* unprivileged_userns_clone */
                                       PROC_INO_SYS_SCHED_CHILD + 5 };/* sysrq */
-        if (idx < 45) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+        if (idx < 46) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
         return -ENOENT;
     }
 

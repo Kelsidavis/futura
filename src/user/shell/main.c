@@ -415,6 +415,16 @@ static void cmd_pacman(int argc, char *argv[]);
 static void cmd_snap(int argc, char *argv[]);
 static void cmd_flatpak(int argc, char *argv[]);
 static void cmd_apk(int argc, char *argv[]);
+static void cmd_cowsay(int argc, char *argv[]);
+static void cmd_figlet(int argc, char *argv[]);
+static void cmd_toilet(int argc, char *argv[]);
+static void cmd_sl(int argc, char *argv[]);
+static void cmd_cmatrix(int argc, char *argv[]);
+static void cmd_asciiquarium(int argc, char *argv[]);
+static void cmd_lolcat(int argc, char *argv[]);
+static void cmd_ponysay(int argc, char *argv[]);
+static void cmd_boxes(int argc, char *argv[]);
+static void cmd_espeak(int argc, char *argv[]);
 
 /* Forward declaration for prompt */
 static void print_prompt(void);
@@ -866,7 +876,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     const char *builtins[] = {
         "ab", "acpi", "arp", "ascii", "base32", "bg", "blkzone", "blockdev", "brctl", "cal", "cd", "chgrp", "chmod", "chroot", "chrt", "clear", "cmp", "comm", "conntrack", "cpupower", "date", "depmod", "dd", "df", "dhclient", "dig", "dmidecode", "dmesg", "echo", "edit", "ethtool", "expand", "expr", "factor", "file", "fold", "fuser", "hdparm", "hexdump", "host", "hwinfo", "install", "ionice", "iperf3", "locale", "lshw", "lsmod", "lsns", "lsof", "lsusb", "md5sum", "mkfifo", "modprobe", "mtr", "nameif", "nc", "nice", "nohup", "numactl", "nvme", "partprobe", "patch", "perf", "pgrep", "pidof", "pkill", "poweroff", "prlimit", "reboot", "renice", "reset", "route", "sensors", "seq", "sha1sum", "sha512sum", "sleep", "smartctl", "stdbuf", "strings", "swapon", "swapoff", "tac", "taskset", "time", "timeout", "tput", "traceroute", "tty", "udevadm", "unexpand", "wget", "whatis", "whois", "xxd", "exit", "export", "fg", "free",
         "help", "hostname", "httpd", "id", "ifconfig", "iostat", "ipcs", "iptables", "jobs", "kill", "logger", "losetup", "ls", "lsblk", "lspci", "mkfs", "mount", "netstat",
-        ".", "adduser", "alias", "ansible", "ansible-playbook", "arch", "basename", "blkid", "bridge", "buildah", "busctl", "certutil", "chage", "coredumpctl", "crictl", "ctr", "deluser", "dialog", "dirname", "docker", "du", "exec", "false", "fmt", "getconf", "gpg", "groupadd", "groupdel", "groups", "helm", "history", "hostnamectl", "infocmp", "ip", "ipcmk", "ipcrm", "journalctl", "kubectl", "ln", "localectl", "loginctl", "logname", "lscpu", "machinectl", "mkswap", "mktemp", "more", "nawk", "networkctl", "nft", "nproc", "nslookup", "openssl", "passwd", "ping", "podman", "printenv", "printf", "ps", "pwd", "read", "readlink", "realpath", "resolvectl", "set", "sha1sum", "sha256sum", "shutdown", "source", "ss", "ssh-keygen", "stat", "strace", "stty", "su", "sync", "sysctl", "sysinfo", "systemd-analyze", "systemd-ask-password", "systemd-cat", "systemd-cgls", "systemd-cgtop", "systemd-escape", "systemd-inhibit", "systemd-notify", "systemd-run", "systemd-tmpfiles", "tc", "terraform", "test", "tic", "timedatectl", "toe", "top", "trap", "tree", "true", "tset", "type", "umask", "unalias", "uname", "uptime", "users", "vagrant", "version", "vi", "vipw", "vmstat", "w", "wait", "watch", "wdctl", "whiptail", "which", "whoami", "xargs", "yes", "git-lfs", "gh", "pip", "pip3", "npm", "cargo", "go", "rustup", "nvm", "pyenv", "sdkman", "sdk", NULL
+        ".", "adduser", "alias", "ansible", "ansible-playbook", "arch", "basename", "blkid", "bridge", "buildah", "busctl", "certutil", "chage", "coredumpctl", "crictl", "ctr", "deluser", "dialog", "dirname", "docker", "du", "exec", "false", "fmt", "getconf", "gpg", "groupadd", "groupdel", "groups", "helm", "history", "hostnamectl", "infocmp", "ip", "ipcmk", "ipcrm", "journalctl", "kubectl", "ln", "localectl", "loginctl", "logname", "lscpu", "machinectl", "mkswap", "mktemp", "more", "nawk", "networkctl", "nft", "nproc", "nslookup", "openssl", "passwd", "ping", "podman", "printenv", "printf", "ps", "pwd", "read", "readlink", "realpath", "resolvectl", "set", "sha1sum", "sha256sum", "shutdown", "source", "ss", "ssh-keygen", "stat", "strace", "stty", "su", "sync", "sysctl", "sysinfo", "systemd-analyze", "systemd-ask-password", "systemd-cat", "systemd-cgls", "systemd-cgtop", "systemd-escape", "systemd-inhibit", "systemd-notify", "systemd-run", "systemd-tmpfiles", "tc", "terraform", "test", "tic", "timedatectl", "toe", "top", "trap", "tree", "true", "tset", "type", "umask", "unalias", "uname", "uptime", "users", "vagrant", "version", "vi", "vipw", "vmstat", "w", "wait", "watch", "wdctl", "whiptail", "which", "whoami", "xargs", "yes", "git-lfs", "gh", "pip", "pip3", "npm", "cargo", "go", "rustup", "nvm", "pyenv", "sdkman", "sdk", "cowsay", "figlet", "toilet", "sl", "cmatrix", "asciiquarium", "lolcat", "ponysay", "boxes", "espeak", NULL
     };
 
     /* External commands we might have */
@@ -14947,6 +14957,36 @@ watch_sleep:
     } else if (strcmp_simple(argv[0], "apk") == 0) {
         cmd_apk(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "cowsay") == 0) {
+        cmd_cowsay(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "figlet") == 0) {
+        cmd_figlet(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "toilet") == 0) {
+        cmd_toilet(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "sl") == 0) {
+        cmd_sl(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "cmatrix") == 0) {
+        cmd_cmatrix(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "asciiquarium") == 0) {
+        cmd_asciiquarium(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "lolcat") == 0) {
+        cmd_lolcat(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "ponysay") == 0) {
+        cmd_ponysay(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "boxes") == 0) {
+        cmd_boxes(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "espeak") == 0) {
+        cmd_espeak(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -15381,6 +15421,16 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "snap") == 0 ||
             strcmp_simple(cmd, "flatpak") == 0 ||
             strcmp_simple(cmd, "apk") == 0 ||
+            strcmp_simple(cmd, "cowsay") == 0 ||
+            strcmp_simple(cmd, "figlet") == 0 ||
+            strcmp_simple(cmd, "toilet") == 0 ||
+            strcmp_simple(cmd, "sl") == 0 ||
+            strcmp_simple(cmd, "cmatrix") == 0 ||
+            strcmp_simple(cmd, "asciiquarium") == 0 ||
+            strcmp_simple(cmd, "lolcat") == 0 ||
+            strcmp_simple(cmd, "ponysay") == 0 ||
+            strcmp_simple(cmd, "boxes") == 0 ||
+            strcmp_simple(cmd, "espeak") == 0 ||
             0);
 }
 
@@ -20037,7 +20087,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   450 built-in commands — type 'help'    |\n");
+    write_str(1, "|   460 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");
@@ -40258,6 +40308,384 @@ static void cmd_apk(int argc, char *argv[]) {
         return;
     }
     write_str(2, "apk: unrecognized command '"); write_str(2, argv[1]); write_str(2, "'\n");
+}
+
+/* cowsay - ASCII art cow says a message */
+static void cmd_cowsay(int argc, char *argv[]) {
+    char msg[256];
+    msg[0] = '\0';
+    if (argc < 2) {
+        strcpy_simple(msg, "Moo!");
+    } else {
+        strcpy_simple(msg, argv[1]);
+        for (int i = 2; i < argc; i++) {
+            int len = 0;
+            while (msg[len]) len++;
+            msg[len] = ' ';
+            msg[len + 1] = '\0';
+            strcat_simple(msg, argv[i]);
+        }
+    }
+    /* Calculate message length */
+    int mlen = 0;
+    while (msg[mlen]) mlen++;
+    /* Top border */
+    write_str(1, " ");
+    for (int i = 0; i < mlen + 2; i++) write_str(1, "_");
+    write_str(1, "\n");
+    /* Message line */
+    write_str(1, "< ");
+    write_str(1, msg);
+    write_str(1, " >\n");
+    /* Bottom border */
+    write_str(1, " ");
+    for (int i = 0; i < mlen + 2; i++) write_str(1, "-");
+    write_str(1, "\n");
+    /* Cow */
+    write_str(1, "        \\   ^__^\n");
+    write_str(1, "         \\  (oo)\\_______\n");
+    write_str(1, "            (__)\\       )\\/\\\n");
+    write_str(1, "                ||----w |\n");
+    write_str(1, "                ||     ||\n");
+}
+
+/* figlet - render text in large block letters */
+static void cmd_figlet(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "Usage: figlet <text>\n");
+        return;
+    }
+    /* Simple block letter font for A-Z, a-z, 0-9 */
+    /* Each character is 5 lines tall, up to 6 columns wide */
+    static const char *font_upper[][5] = {
+        /* A */ {"  ##  ", " #  # ", " #### ", " #  # ", " #  # "},
+        /* B */ {" ###  ", " #  # ", " ###  ", " #  # ", " ###  "},
+        /* C */ {"  ### ", " #    ", " #    ", " #    ", "  ### "},
+        /* D */ {" ###  ", " #  # ", " #  # ", " #  # ", " ###  "},
+        /* E */ {" #### ", " #    ", " ###  ", " #    ", " #### "},
+        /* F */ {" #### ", " #    ", " ###  ", " #    ", " #    "},
+        /* G */ {"  ### ", " #    ", " # ## ", " #  # ", "  ### "},
+        /* H */ {" #  # ", " #  # ", " #### ", " #  # ", " #  # "},
+        /* I */ {" ### ", "  #  ", "  #  ", "  #  ", " ### "},
+        /* J */ {"   ## ", "    # ", "    # ", " #  # ", "  ##  "},
+        /* K */ {" #  # ", " # #  ", " ##   ", " # #  ", " #  # "},
+        /* L */ {" #    ", " #    ", " #    ", " #    ", " #### "},
+        /* M */ {" #   # ", " ## ## ", " # # # ", " #   # ", " #   # "},
+        /* N */ {" #   # ", " ##  # ", " # # # ", " #  ## ", " #   # "},
+        /* O */ {"  ##  ", " #  # ", " #  # ", " #  # ", "  ##  "},
+        /* P */ {" ###  ", " #  # ", " ###  ", " #    ", " #    "},
+        /* Q */ {"  ##  ", " #  # ", " #  # ", " # #  ", "  # # "},
+        /* R */ {" ###  ", " #  # ", " ###  ", " # #  ", " #  # "},
+        /* S */ {"  ### ", " #    ", "  ##  ", "    # ", " ###  "},
+        /* T */ {" #### ", "  #   ", "  #   ", "  #   ", "  #   "},
+        /* U */ {" #  # ", " #  # ", " #  # ", " #  # ", "  ##  "},
+        /* V */ {" #  # ", " #  # ", " #  # ", "  ##  ", "  ##  "},
+        /* W */ {" #   # ", " #   # ", " # # # ", " ## ## ", " #   # "},
+        /* X */ {" #  # ", " #  # ", "  ##  ", " #  # ", " #  # "},
+        /* Y */ {" #  # ", " #  # ", "  ##  ", "  #   ", "  #   "},
+        /* Z */ {" #### ", "    # ", "  ##  ", " #    ", " #### "},
+    };
+    static const char *font_digit[][5] = {
+        /* 0 */ {"  ##  ", " #  # ", " #  # ", " #  # ", "  ##  "},
+        /* 1 */ {"  #  ", " ##  ", "  #  ", "  #  ", " ### "},
+        /* 2 */ {"  ##  ", " #  # ", "   #  ", "  #   ", " #### "},
+        /* 3 */ {" ###  ", "    # ", "  ##  ", "    # ", " ###  "},
+        /* 4 */ {" #  # ", " #  # ", " #### ", "    # ", "    # "},
+        /* 5 */ {" #### ", " #    ", " ###  ", "    # ", " ###  "},
+        /* 6 */ {"  ##  ", " #    ", " ###  ", " #  # ", "  ##  "},
+        /* 7 */ {" #### ", "    # ", "   #  ", "  #   ", "  #   "},
+        /* 8 */ {"  ##  ", " #  # ", "  ##  ", " #  # ", "  ##  "},
+        /* 9 */ {"  ##  ", " #  # ", "  ### ", "    # ", "  ##  "},
+    };
+    static const char *font_space[] = {"      ", "      ", "      ", "      ", "      "};
+    static const char *font_bang[] = {" # ", " # ", " # ", "   ", " # "};
+    /* Build the full text from args */
+    char text[256];
+    text[0] = '\0';
+    strcpy_simple(text, argv[1]);
+    for (int i = 2; i < argc; i++) {
+        int len = 0; while (text[len]) len++;
+        text[len] = ' '; text[len + 1] = '\0';
+        strcat_simple(text, argv[i]);
+    }
+    /* Render line by line */
+    for (int row = 0; row < 5; row++) {
+        for (int i = 0; text[i]; i++) {
+            char c = text[i];
+            const char *segment = font_space[row];
+            if (c >= 'A' && c <= 'Z') {
+                segment = font_upper[c - 'A'][row];
+            } else if (c >= 'a' && c <= 'z') {
+                segment = font_upper[c - 'a'][row];
+            } else if (c >= '0' && c <= '9') {
+                segment = font_digit[c - '0'][row];
+            } else if (c == '!') {
+                segment = font_bang[row];
+            } else {
+                segment = font_space[row];
+            }
+            write_str(1, segment);
+        }
+        write_str(1, "\n");
+    }
+}
+
+/* toilet - colored ASCII art text (colorized figlet) */
+static void cmd_toilet(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "Usage: toilet <text>\n");
+        return;
+    }
+    /* Use ANSI colors for each character rendered via figlet-style output */
+    static const char *colors[] = {
+        "\033[31m", "\033[33m", "\033[32m", "\033[36m",
+        "\033[34m", "\033[35m", "\033[91m", "\033[93m",
+    };
+    /* Build the full text from args */
+    char text[256];
+    text[0] = '\0';
+    strcpy_simple(text, argv[1]);
+    for (int i = 2; i < argc; i++) {
+        int len = 0; while (text[len]) len++;
+        text[len] = ' '; text[len + 1] = '\0';
+        strcat_simple(text, argv[i]);
+    }
+    /* Simple large block style: each char becomes a 3-line colored block */
+    for (int row = 0; row < 3; row++) {
+        for (int i = 0; text[i]; i++) {
+            write_str(1, colors[i % 8]);
+            char c = text[i];
+            if (c == ' ') {
+                write_str(1, "   ");
+            } else {
+                if (row == 0) write_str(1, " _ ");
+                else if (row == 1) { write_str(1, "|"); char s[2] = {c, 0}; write_str(1, s); write_str(1, "|"); }
+                else write_str(1, "|_|");
+            }
+        }
+        write_str(1, "\033[0m\n");
+    }
+}
+
+/* sl - steam locomotive animation */
+static void cmd_sl(__attribute__((unused)) int argc, __attribute__((unused)) char *argv[]) {
+    write_str(1, "\033[2J\033[H");  /* clear screen */
+    write_str(1, "                          (  ) (@@) ( )  (@)  ()    @@    O     @     O\n");
+    write_str(1, "                     (@@@)\n");
+    write_str(1, "                 (    )\n");
+    write_str(1, "              (@@@@)\n");
+    write_str(1, "            (   )\n");
+    write_str(1, "        ====        ________                ___________\n");
+    write_str(1, "    _D _|  |_______/        \\__I_I_____===__|_________|_\n");
+    write_str(1, "     |(_)---  |   H\\________/ |   |        =|___ ___|  \n");
+    write_str(1, "     /     |  |   H  |  |     |   |         ||_| |_||  \n");
+    write_str(1, "    |      |  |   H  |__--------------------| [___] |  \n");
+    write_str(1, "    | ________|___H__/__|_____/[][]~\\_______|       |  \n");
+    write_str(1, "    |/ |   |-----------I_____I [][] []  D   |=======|__\n");
+    write_str(1, "__/ =| o |=-~~\\  /~~\\  /~~\\  /~~\\ ____Y___________|__\n");
+    write_str(1, " |/-=|___|=    ||    ||    ||    |_____/~\\___/        \n");
+    write_str(1, "  \\_/      \\O=====O=====O=====O_/      \\_/            \n");
+    write_str(1, "\n");
+    write_str(1, "You have been punished for typing 'sl' instead of 'ls'.\n");
+}
+
+/* cmatrix - Matrix digital rain (one frame) */
+static void cmd_cmatrix(__attribute__((unused)) int argc, __attribute__((unused)) char *argv[]) {
+    write_str(1, "\033[32m");  /* green text */
+    /* Simple pseudo-random digital rain using a static seed pattern */
+    static const char *rain[] = {
+        "  1 0   0 1 1   0   1 0 0   1   0 1   1 0   0 1 0   1",
+        "0   1 1   0   0 1   1   0 1   0 1   0   1 1   0   1 0",
+        "  0   1 0   1 0   1   0 1   1 0   1   0   0 1   1 0  ",
+        "1   0   1   0 1   0 1   0   1   0 1   1 0   1 0   1 0",
+        "  1 0 1   1   0 1   0   1 0   0 1   0 1   0   1   0 1",
+        "0   1   0 1   1   0   1   0 1   1   0   1 0   1 0   0",
+        "  0 1   0   1 0   1 0   1   0 1   0   1 0   0   1 1  ",
+        "1 0   1   0   1   0 1   0 1   0   1 0   1   0 1   0 1",
+        "  1   0 1   0 1   1   0   1 0   1   0 1   0 1   1   0",
+        "0   1 0   1   0   0 1   1   0 1   0   1   0   1 0   1",
+        "  0   1   0 1   0 1   0 1   1   0 1   0 1   0   0 1  ",
+        "1   0 1   0   1   1 0   0   1   0   1 0   1   0 1   0",
+        "  1   0   1 0   0 1   1 0   0 1   0   1   0 1   1 0  ",
+        "0 1   0 1   0   1   0   1 0   1   1 0   1 0   0   1 0",
+        "  0 1   1 0   1   0 1   0   1 0   0   1   0 1   0   1",
+        "1   0   0   1   0 1   1 0   1   0 1   0 1   1 0   0 1",
+    };
+    for (int i = 0; i < 16; i++) {
+        write_str(1, rain[i]);
+        write_str(1, "\n");
+    }
+    write_str(1, "\033[0m");
+    write_str(1, "\nPress Ctrl+C to exit the Matrix.\n");
+}
+
+/* asciiquarium - aquarium scene (one frame) */
+static void cmd_asciiquarium(__attribute__((unused)) int argc, __attribute__((unused)) char *argv[]) {
+    write_str(1, "\033[34m");  /* blue background text */
+    write_str(1, "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n");
+    write_str(1, "~~                                                 ~~\n");
+    write_str(1, "~~    ><>          o          ><(((*>              ~~\n");
+    write_str(1, "~~                   o                             ~~\n");
+    write_str(1, "~~        <><             ><>          o           ~~\n");
+    write_str(1, "~~                  ><(((*>                        ~~\n");
+    write_str(1, "~~   o        ><>                   <><            ~~\n");
+    write_str(1, "~~                        o                ><>     ~~\n");
+    write_str(1, "~~       ><(((*>                 ><>               ~~\n");
+    write_str(1, "~~                   <><                    o      ~~\n");
+    write_str(1, "~~  ><>                       ><(((*>              ~~\n");
+    write_str(1, "~~              o                          ><>     ~~\n");
+    write_str(1, "~~  ._____. ._____.  ._____.  ._____.  ._____.\033[32m   ~~\n");
+    write_str(1, "~~  |     | | ._. |  |  _  |  | ._. |  |     |   ~~\n");
+    write_str(1, "~~\033[33m/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\~~\n");
+    write_str(1, "\033[0m\n");
+}
+
+/* lolcat - rainbow colored text output */
+static void cmd_lolcat(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "Usage: lolcat <text>\n");
+        return;
+    }
+    static const char *rainbow[] = {
+        "\033[31m", "\033[91m", "\033[33m", "\033[93m",
+        "\033[32m", "\033[92m", "\033[36m", "\033[96m",
+        "\033[34m", "\033[94m", "\033[35m", "\033[95m",
+    };
+    int color_idx = 0;
+    for (int i = 1; i < argc; i++) {
+        if (i > 1) write_str(1, " ");
+        const char *s = argv[i];
+        while (*s) {
+            write_str(1, rainbow[color_idx % 12]);
+            char ch[2] = {*s, 0};
+            write_str(1, ch);
+            if (*s != ' ') color_idx++;
+            s++;
+        }
+    }
+    write_str(1, "\033[0m\n");
+}
+
+/* ponysay - pony says a message */
+static void cmd_ponysay(int argc, char *argv[]) {
+    char msg[256];
+    msg[0] = '\0';
+    if (argc < 2) {
+        strcpy_simple(msg, "Friendship is magic!");
+    } else {
+        strcpy_simple(msg, argv[1]);
+        for (int i = 2; i < argc; i++) {
+            int len = 0; while (msg[len]) len++;
+            msg[len] = ' '; msg[len + 1] = '\0';
+            strcat_simple(msg, argv[i]);
+        }
+    }
+    int mlen = 0;
+    while (msg[mlen]) mlen++;
+    /* Speech bubble */
+    write_str(1, " ");
+    for (int i = 0; i < mlen + 2; i++) write_str(1, "_");
+    write_str(1, "\n");
+    write_str(1, "< ");
+    write_str(1, msg);
+    write_str(1, " >\n");
+    write_str(1, " ");
+    for (int i = 0; i < mlen + 2; i++) write_str(1, "-");
+    write_str(1, "\n");
+    /* Pony */
+    write_str(1, "  \\\n");
+    write_str(1, "   \\            ,/) \n");
+    write_str(1, "    \\      ___//   \n");
+    write_str(1, "     \\   `~~   ~~`  \n");
+    write_str(1, "      )  /o    o\\   \n");
+    write_str(1, "     (  /        \\  \n");
+    write_str(1, "      \\\\ \\  __  / \\\\\n");
+    write_str(1, "       ''-\\____/--' \n");
+    write_str(1, "          /   \\     \n");
+    write_str(1, "         /     \\    \n");
+    write_str(1, "        (_     _)   \n");
+    write_str(1, "         ''   ''    \n");
+}
+
+/* boxes - draw a box around text */
+static void cmd_boxes(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "Usage: boxes <text>\n");
+        return;
+    }
+    char text[256];
+    text[0] = '\0';
+    strcpy_simple(text, argv[1]);
+    for (int i = 2; i < argc; i++) {
+        int len = 0; while (text[len]) len++;
+        text[len] = ' '; text[len + 1] = '\0';
+        strcat_simple(text, argv[i]);
+    }
+    int tlen = 0;
+    while (text[tlen]) tlen++;
+    /* Top border */
+    write_str(1, "/");
+    for (int i = 0; i < tlen + 2; i++) write_str(1, "*");
+    write_str(1, "\\\n");
+    /* Content */
+    write_str(1, "/* ");
+    write_str(1, text);
+    write_str(1, " */\n");
+    /* Bottom border */
+    write_str(1, "\\");
+    for (int i = 0; i < tlen + 2; i++) write_str(1, "*");
+    write_str(1, "/\n");
+}
+
+/* espeak - text to speech (simulated: phonetic output) */
+static void cmd_espeak(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "Usage: espeak <text>\n");
+        return;
+    }
+    write_str(1, "espeak: simulating speech synthesis\n");
+    write_str(1, "Phonetic output: ");
+    for (int i = 1; i < argc; i++) {
+        if (i > 1) write_str(1, " ");
+        const char *w = argv[i];
+        while (*w) {
+            char c = *w;
+            /* Convert to phonetic approximations */
+            if (c == 'a' || c == 'A') write_str(1, "AE");
+            else if (c == 'b' || c == 'B') write_str(1, "BEE");
+            else if (c == 'c' || c == 'C') write_str(1, "SEE");
+            else if (c == 'd' || c == 'D') write_str(1, "DEE");
+            else if (c == 'e' || c == 'E') write_str(1, "EE");
+            else if (c == 'f' || c == 'F') write_str(1, "EF");
+            else if (c == 'g' || c == 'G') write_str(1, "JEE");
+            else if (c == 'h' || c == 'H') write_str(1, "AYch");
+            else if (c == 'i' || c == 'I') write_str(1, "AY");
+            else if (c == 'j' || c == 'J') write_str(1, "JAY");
+            else if (c == 'k' || c == 'K') write_str(1, "KAY");
+            else if (c == 'l' || c == 'L') write_str(1, "EL");
+            else if (c == 'm' || c == 'M') write_str(1, "EM");
+            else if (c == 'n' || c == 'N') write_str(1, "EN");
+            else if (c == 'o' || c == 'O') write_str(1, "OH");
+            else if (c == 'p' || c == 'P') write_str(1, "PEE");
+            else if (c == 'q' || c == 'Q') write_str(1, "KYU");
+            else if (c == 'r' || c == 'R') write_str(1, "AR");
+            else if (c == 's' || c == 'S') write_str(1, "ES");
+            else if (c == 't' || c == 'T') write_str(1, "TEE");
+            else if (c == 'u' || c == 'U') write_str(1, "YU");
+            else if (c == 'v' || c == 'V') write_str(1, "VEE");
+            else if (c == 'w' || c == 'W') write_str(1, "DUB");
+            else if (c == 'x' || c == 'X') write_str(1, "EKS");
+            else if (c == 'y' || c == 'Y') write_str(1, "WAY");
+            else if (c == 'z' || c == 'Z') write_str(1, "ZEE");
+            else {
+                char s[2] = {c, 0};
+                write_str(1, s);
+            }
+            w++;
+        }
+    }
+    write_str(1, "\n");
+    write_str(1, "(Audio output not available - text-to-speech simulated)\n");
 }
 
 #pragma GCC diagnostic pop

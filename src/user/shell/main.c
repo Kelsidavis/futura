@@ -156,6 +156,7 @@ static void cmd_systemctl(int argc, char *argv[]);
 static void cmd_crontab(int argc, char *argv[]);
 static void cmd_scp(int argc, char *argv[]);
 static void cmd_pkg(int argc, char *argv[]);
+static void cmd_man(int argc, char *argv[]);
 static void strcpy_simple(char *dest, const char *src);
 
 /* Forward declaration for prompt */
@@ -11436,6 +11437,9 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "pkg") == 0) {
         cmd_pkg(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "man") == 0) {
+        cmd_man(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -11609,6 +11613,7 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "crontab") == 0 ||
             strcmp_simple(cmd, "scp") == 0 ||
             strcmp_simple(cmd, "pkg") == 0 ||
+            strcmp_simple(cmd, "man") == 0 ||
             0);
 }
 
@@ -16597,4 +16602,141 @@ static void cmd_pkg(int argc, char *argv[]) {
         write_str(2, "pkg: unknown command '"); write_str(2, argv[1]);
         write_str(2, "' (use install/remove/list/search/info)\n");
     }
+}
+
+/* man - manual page viewer */
+static void cmd_man(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "Usage: man <command>\n");
+        write_str(2, "Display manual page for a command.\n");
+        return;
+    }
+
+    const char *command = argv[1];
+
+    /* Try to open man page file at /usr/share/man/<command>.txt */
+    char path[256];
+    int pi = 0;
+    const char *prefix = "/usr/share/man/";
+    for (int i = 0; prefix[i] && pi < 230; i++) path[pi++] = prefix[i];
+    for (int i = 0; command[i] && pi < 248; i++) path[pi++] = command[i];
+    path[pi++] = '.'; path[pi++] = 't'; path[pi++] = 'x'; path[pi++] = 't';
+    path[pi] = '\0';
+
+    int fd = sys_open(path, O_RDONLY, 0);
+    if (fd >= 0) {
+        sys_close(fd);
+        /* Pipe through less */
+        char *less_argv[3];
+        less_argv[0] = "less";
+        less_argv[1] = path;
+        less_argv[2] = (char *)0;
+        cmd_less(2, less_argv);
+        return;
+    }
+
+    /* Built-in one-line descriptions for common commands */
+    static const struct { const char *name; const char *desc; } man_entries[] = {
+        {"ls",        "ls - list directory contents"},
+        {"cd",        "cd - change the working directory"},
+        {"pwd",       "pwd - print name of current working directory"},
+        {"cat",       "cat - concatenate files and print on standard output"},
+        {"echo",      "echo - display a line of text"},
+        {"grep",      "grep - print lines that match patterns (-i, -v, -n, -c, -r)"},
+        {"find",      "find - search for files in a directory hierarchy"},
+        {"cp",        "cp - copy files and directories (-r recursive)"},
+        {"mv",        "mv - move (rename) files"},
+        {"rm",        "rm - remove files or directories (-r, -f)"},
+        {"mkdir",     "mkdir - make directories (-p create parents)"},
+        {"rmdir",     "rmdir - remove empty directories"},
+        {"chmod",     "chmod - change file mode bits"},
+        {"touch",     "touch - change file timestamps or create empty files"},
+        {"head",      "head - output the first part of files (-n lines, -c bytes)"},
+        {"tail",      "tail - output the last part of files (-n lines, -f follow)"},
+        {"wc",        "wc - print newline, word, and byte counts (-l, -w, -c, -L)"},
+        {"sort",      "sort - sort lines of text files (-r, -n, -u)"},
+        {"uniq",      "uniq - report or omit repeated lines (-c, -d, -u)"},
+        {"cut",       "cut - remove sections from each line (-d delimiter, -f fields)"},
+        {"tr",        "tr - translate or delete characters"},
+        {"sed",       "sed - stream editor for filtering and transforming text"},
+        {"awk",       "awk - pattern scanning and processing language"},
+        {"diff",      "diff - compare files line by line"},
+        {"less",      "less - opposite of more, pager with backward movement"},
+        {"vi",        "vi - text editor with normal/insert/command modes"},
+        {"make",      "make - build tool with dependency resolution"},
+        {"git",       "git - version control (init/add/status/commit/log)"},
+        {"curl",      "curl - HTTP client (-X method, -d data, -H header, -o file)"},
+        {"tar",       "tar - archive utility (-c create, -x extract, -t list, -f file)"},
+        {"ps",        "ps - report a snapshot of current processes"},
+        {"kill",      "kill - send a signal to a process (-9, -TERM, -HUP)"},
+        {"df",        "df - report file system disk space usage"},
+        {"du",        "du - estimate file space usage (-s summary, -h human)"},
+        {"mount",     "mount - mount a filesystem"},
+        {"uname",     "uname - print system information (-a all, -r release)"},
+        {"whoami",    "whoami - print effective userid"},
+        {"id",        "id - print real and effective user and group IDs"},
+        {"env",       "env - run a program in a modified environment"},
+        {"export",    "export - set environment variables for child processes"},
+        {"history",   "history - display command history"},
+        {"alias",     "alias - define or display command aliases"},
+        {"xargs",     "xargs - build and execute command lines from standard input"},
+        {"tee",       "tee - read from stdin and write to stdout and files"},
+        {"ln",        "ln - make links between files (-s symbolic)"},
+        {"stat",      "stat - display file or file system status"},
+        {"dd",        "dd - convert and copy a file (if=, of=, bs=, count=)"},
+        {"ping",      "ping - send ICMP ECHO_REQUEST to network hosts"},
+        {"nc",        "nc - netcat, arbitrary TCP and UDP connections"},
+        {"ss",        "ss - socket statistics, show network connections"},
+        {"ip",        "ip - show/manipulate routing, devices, and tunnels"},
+        {"free",      "free - display amount of free and used memory"},
+        {"uptime",    "uptime - tell how long the system has been running"},
+        {"dmesg",     "dmesg - print kernel ring buffer messages"},
+        {"date",      "date - print or set the system date and time"},
+        {"sleep",     "sleep - delay for a specified amount of time"},
+        {"seq",       "seq - print a sequence of numbers"},
+        {"base64",    "base64 - encode/decode data in base64 (-d decode)"},
+        {"xxd",       "xxd - make a hexdump or reverse (-r reverse)"},
+        {"md5sum",    "md5sum - compute and check MD5 message digest"},
+        {"sha256sum", "sha256sum - compute and check SHA256 message digest"},
+        {"tree",      "tree - list directory contents in a tree-like format"},
+        {"yes",       "yes - output a string repeatedly until killed"},
+        {"cal",       "cal - display a calendar"},
+        {"bc",        "bc - arbitrary precision calculator language"},
+        {"expr",      "expr - evaluate expressions"},
+        {"hostname",  "hostname - show or set the system hostname"},
+        {"nslookup",  "nslookup - query DNS name servers"},
+        {"ifconfig",  "ifconfig - configure a network interface"},
+        {"man",       "man - display manual pages for commands"},
+    };
+    int n_entries = (int)(sizeof(man_entries) / sizeof(man_entries[0]));
+
+    for (int i = 0; i < n_entries; i++) {
+        if (strcmp_simple(command, man_entries[i].name) == 0) {
+            /* NAME section */
+            write_str(1, "\n");
+            write_str(1, "NAME\n");
+            write_str(1, "       ");
+            write_str(1, man_entries[i].desc);
+            write_str(1, "\n\n");
+
+            /* SYNOPSIS section */
+            write_str(1, "SYNOPSIS\n");
+            write_str(1, "       ");
+            write_str(1, man_entries[i].name);
+            write_str(1, " [OPTION]... [ARG]...\n\n");
+
+            /* DESCRIPTION section */
+            write_str(1, "DESCRIPTION\n");
+            write_str(1, "       ");
+            write_str(1, man_entries[i].desc);
+            write_str(1, ".\n");
+            write_str(1, "       This is a built-in command provided by the Futura OS shell.\n");
+            write_str(1, "       For full documentation, install man pages to /usr/share/man/.\n\n");
+            return;
+        }
+    }
+
+    write_str(2, "No manual entry for ");
+    write_str(2, command);
+    write_str(2, "\n");
 }

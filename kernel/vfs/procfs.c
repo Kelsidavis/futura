@@ -1560,10 +1560,14 @@ static size_t gen_stat(char *buf, size_t cap, fut_task_t *task, uint64_t tid) {
         }
     }
 
-    /* Starttime: ticks since boot at task creation (FUT_TIMER_HZ ticks per second = USER_HZ=100) */
+    /* Starttime: clock ticks since boot when the process was created.
+     * Recorded in fut_task_create() via fut_get_ticks().  Since the kernel
+     * timer fires at FUT_TIMER_HZ=100 (== USER_HZ), the raw value is
+     * directly usable — tools like ps compute elapsed = (uptime_ticks - starttime). */
     uint64_t starttime = task->start_ticks;
 
-    /* Signal bitmask fields (fields 31-34):
+    /* Signal bitmask fields (fields 30-33 in Linux /proc/<pid>/stat):
+     * 30=signal (pending), 31=blocked, 32=sigignore, 33=sigcatch.
      * When reading /proc/<pid>/task/<tid>/stat, use per-thread signal state.
      * Compute sigignore and sigcatch from the signal handler table. */
     uint64_t pending_sig  = task->pending_signals;
@@ -1619,11 +1623,11 @@ static size_t gen_stat(char *buf, size_t cap, fut_task_t *task, uint64_t tid) {
     pb_u64(&b, task->child_minflt);  pb_char(&b, ' ');
     pb_u64(&b, task->majflt);        pb_char(&b, ' ');
     pb_u64(&b, task->child_majflt);  pb_char(&b, ' ');
-    /* Fields 13-16: utime stime cutime cstime */
-    pb_u64(&b, utime);  pb_char(&b, ' ');
-    pb_u64(&b, stime);  pb_char(&b, ' ');
-    pb_u64(&b, cutime); pb_char(&b, ' ');
-    pb_u64(&b, cstime); pb_char(&b, ' ');
+    /* Fields 14-17: utime stime cutime cstime (USER_HZ=100 ticks) */
+    pb_u64(&b, utime);  pb_char(&b, ' ');  /* (14) user-mode CPU time */
+    pb_u64(&b, stime);  pb_char(&b, ' ');  /* (15) kernel-mode CPU time */
+    pb_u64(&b, cutime); pb_char(&b, ' ');  /* (16) waited-for children's user CPU time */
+    pb_u64(&b, cstime); pb_char(&b, ' ');  /* (17) waited-for children's system CPU time */
     /* Field 17: priority */
     if (priority < 0) { pb_char(&b, '-'); pb_u64(&b, (uint64_t)(-priority)); }
     else pb_u64(&b, (uint64_t)priority);
@@ -1632,8 +1636,10 @@ static size_t gen_stat(char *buf, size_t cap, fut_task_t *task, uint64_t tid) {
     if (nice < 0) { pb_char(&b, '-'); pb_u64(&b, (uint64_t)(-nice)); }
     else pb_u64(&b, (uint64_t)nice);
     pb_char(&b, ' ');
-    /* Field 19: num_threads */
-    pb_u64(&b, task->thread_count ? task->thread_count : 1); pb_char(&b, ' ');
+    /* Field 19: num_threads — use the thread count we computed above
+     * by walking the thread list, which is authoritative even if
+     * task->thread_count is stale after thread creation races. */
+    pb_u64(&b, num_threads); pb_char(&b, ' ');
     /* Field 20: itrealvalue (obsolete, 0) */
     pb_char(&b, '0'); pb_char(&b, ' ');
     /* Field 21: starttime */
@@ -1651,12 +1657,12 @@ static size_t gen_stat(char *buf, size_t cap, fut_task_t *task, uint64_t tid) {
     pb_char(&b, '0'); pb_char(&b, ' ');
     /* Field 29: kstkeip (0) */
     pb_char(&b, '0'); pb_char(&b, ' ');
-    /* Fields 31-35: signal blocked sigignore sigcatch wchan */
-    pb_u64(&b, pending_sig);  pb_char(&b, ' ');
-    pb_u64(&b, blocked_sig);  pb_char(&b, ' ');
-    pb_u64(&b, sigignore);    pb_char(&b, ' ');
-    pb_u64(&b, sigcatch);     pb_char(&b, ' ');
-    pb_char(&b, '0');         pb_char(&b, ' ');  /* (35) wchan */
+    /* Fields 30-34: signal blocked sigignore sigcatch wchan */
+    pb_u64(&b, pending_sig);  pb_char(&b, ' ');  /* (30) pending signals bitmask */
+    pb_u64(&b, blocked_sig);  pb_char(&b, ' ');  /* (31) blocked signals bitmask */
+    pb_u64(&b, sigignore);    pb_char(&b, ' ');  /* (32) ignored signals (SIG_IGN) */
+    pb_u64(&b, sigcatch);     pb_char(&b, ' ');  /* (33) caught signals (registered handlers) */
+    pb_char(&b, '0');         pb_char(&b, ' ');  /* (34) wchan (wait channel address, 0) */
     /* (36) nswap (37) cnswap: obsolete, always 0 */
     pb_char(&b, '0'); pb_char(&b, ' ');
     pb_char(&b, '0'); pb_char(&b, ' ');

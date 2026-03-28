@@ -444,8 +444,8 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
      * - Added generic optlen range validation (line 284-288) ✓
      * - Added per-option exact optlen validation (all handlers) ✓
      * - All copy_from_user use exact sizeof(), not user optlen ✓
-     * - Phase 4 TODO: Implement enforcement of option values (currently accepted but not enforced)
-     * - Phase 4 TODO: Add protocol-specific options (IPPROTO_TCP, IPPROTO_IP)
+     * - Phase 4 DONE: Option values stored per-socket and enforced in bind/send paths
+     * - Phase 4 DONE: Protocol-specific options (IPPROTO_TCP, IPPROTO_IP) with validation
      * - See Linux kernel: net/core/sock.c sock_setsockopt() for reference
      */
 

@@ -46,6 +46,9 @@
 #define VFS_TEST_INOTIFY_UTIMENS 20
 #define VFS_TEST_INOTIFY_TRUNC   21
 #define VFS_TEST_INOTIFY_DELETE  22
+#define VFS_TEST_LINK_NLINK      2280
+#define VFS_TEST_SYMLINK_READLINK 2281
+#define VFS_TEST_UNLINK_HARDLINK 2282
 
 /* Use kernel-level VFS functions (no copy_from_user) */
 #define sys_mkdir(path, mode)           fut_vfs_mkdir(path, (uint32_t)(mode))
@@ -1617,6 +1620,256 @@ static void test_inotify_delete(void) {
     fut_test_pass();
 }
 
+/* ------------------------------------------------------------------ */
+/* Test 2280: Hard link creation + stat shows nlink=2                  */
+/* ------------------------------------------------------------------ */
+static void test_link_nlink(void) {
+    fut_printf("[VFS-TEST] Test 2280: hard link nlink=2\n");
+
+    const char *orig = "/vfs_t2280_orig.txt";
+    const char *lnk  = "/vfs_t2280_link.txt";
+
+    /* Cleanup from any previous run */
+    fut_vfs_unlink(lnk);
+    fut_vfs_unlink(orig);
+
+    /* Create original file */
+    int fd = fut_vfs_open(orig, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) {
+        fut_printf("[VFS-TEST] x Test 2280: create orig failed (%d)\n", fd);
+        fut_test_fail(VFS_TEST_LINK_NLINK);
+        return;
+    }
+    const char *data = "nlink-test";
+    fut_vfs_write(fd, data, 10);
+    fut_vfs_close(fd);
+
+    /* Verify nlink=1 before linking */
+    struct fut_stat st;
+    if (fut_vfs_stat(orig, &st) < 0) {
+        fut_printf("[VFS-TEST] x Test 2280: stat orig failed\n");
+        fut_test_fail(VFS_TEST_LINK_NLINK);
+        return;
+    }
+    if (st.st_nlink != 1) {
+        fut_printf("[VFS-TEST] x Test 2280: initial nlink=%u expected 1\n", st.st_nlink);
+        fut_test_fail(VFS_TEST_LINK_NLINK);
+        return;
+    }
+
+    /* Create hard link */
+    long ret = sys_link(orig, lnk);
+    if (ret < 0) {
+        fut_printf("[VFS-TEST] x Test 2280: link() failed (%ld)\n", ret);
+        fut_test_fail(VFS_TEST_LINK_NLINK);
+        return;
+    }
+
+    /* Stat both paths -- nlink must be 2 */
+    struct fut_stat st_orig, st_link;
+    if (fut_vfs_stat(orig, &st_orig) < 0 || fut_vfs_stat(lnk, &st_link) < 0) {
+        fut_printf("[VFS-TEST] x Test 2280: stat after link failed\n");
+        fut_test_fail(VFS_TEST_LINK_NLINK);
+        return;
+    }
+
+    if (st_orig.st_nlink != 2) {
+        fut_printf("[VFS-TEST] x Test 2280: orig nlink=%u expected 2\n", st_orig.st_nlink);
+        fut_test_fail(VFS_TEST_LINK_NLINK);
+        return;
+    }
+    if (st_link.st_nlink != 2) {
+        fut_printf("[VFS-TEST] x Test 2280: link nlink=%u expected 2\n", st_link.st_nlink);
+        fut_test_fail(VFS_TEST_LINK_NLINK);
+        return;
+    }
+    if (st_orig.st_ino != st_link.st_ino) {
+        fut_printf("[VFS-TEST] x Test 2280: inodes differ (%llu vs %llu)\n",
+                   (unsigned long long)st_orig.st_ino, (unsigned long long)st_link.st_ino);
+        fut_test_fail(VFS_TEST_LINK_NLINK);
+        return;
+    }
+
+    fut_printf("[VFS-TEST] ok Test 2280: hard link nlink=2, same inode\n");
+    fut_test_pass();
+
+    /* Cleanup */
+    fut_vfs_unlink(lnk);
+    fut_vfs_unlink(orig);
+}
+
+/* ------------------------------------------------------------------ */
+/* Test 2281: Symlink creation + readlink returns target               */
+/* ------------------------------------------------------------------ */
+static void test_symlink_readlink(void) {
+    fut_printf("[VFS-TEST] Test 2281: symlink creation + readlink\n");
+
+    const char *target   = "/vfs_t2281_target.txt";
+    const char *linkpath = "/vfs_t2281_symlink";
+
+    /* Cleanup */
+    fut_vfs_unlink(linkpath);
+    fut_vfs_unlink(target);
+
+    /* Create target file (symlink target need not exist, but create for completeness) */
+    int fd = fut_vfs_open(target, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) {
+        fut_printf("[VFS-TEST] x Test 2281: create target failed (%d)\n", fd);
+        fut_test_fail(VFS_TEST_SYMLINK_READLINK);
+        return;
+    }
+    fut_vfs_close(fd);
+
+    /* Create symlink */
+    long ret = sys_symlink(target, linkpath);
+    if (ret < 0) {
+        fut_printf("[VFS-TEST] x Test 2281: symlink() failed (%ld)\n", ret);
+        fut_test_fail(VFS_TEST_SYMLINK_READLINK);
+        return;
+    }
+
+    /* Read back the symlink target */
+    char buf[256];
+    long r = sys_readlink(linkpath, buf, sizeof(buf) - 1);
+    if (r < 0) {
+        fut_printf("[VFS-TEST] x Test 2281: readlink failed (%ld)\n", r);
+        fut_test_fail(VFS_TEST_SYMLINK_READLINK);
+        return;
+    }
+    buf[r] = '\0';
+
+    /* Verify the readlink result matches */
+    size_t tlen = 0;
+    while (target[tlen]) tlen++;
+
+    if ((size_t)r != tlen) {
+        fut_printf("[VFS-TEST] x Test 2281: readlink length %ld expected %zu\n", r, tlen);
+        fut_test_fail(VFS_TEST_SYMLINK_READLINK);
+        return;
+    }
+
+    for (size_t i = 0; i < tlen; i++) {
+        if (buf[i] != target[i]) {
+            fut_printf("[VFS-TEST] x Test 2281: mismatch at byte %zu\n", i);
+            fut_test_fail(VFS_TEST_SYMLINK_READLINK);
+            return;
+        }
+    }
+
+    /* Verify lstat shows VN_LNK (S_IFLNK = 0120000) */
+    struct fut_stat lst;
+    if (fut_vfs_lstat(linkpath, &lst) == 0) {
+        if ((lst.st_mode & 0170000) != 0120000) {
+            fut_printf("[VFS-TEST] x Test 2281: lstat mode=0%o not symlink\n", lst.st_mode);
+            fut_test_fail(VFS_TEST_SYMLINK_READLINK);
+            return;
+        }
+    }
+
+    fut_printf("[VFS-TEST] ok Test 2281: symlink '%s' -> '%s'\n", linkpath, target);
+    fut_test_pass();
+
+    /* Cleanup */
+    fut_vfs_unlink(linkpath);
+    fut_vfs_unlink(target);
+}
+
+/* ------------------------------------------------------------------ */
+/* Test 2282: Unlink one hard link, other still accessible             */
+/* ------------------------------------------------------------------ */
+static void test_unlink_hardlink(void) {
+    fut_printf("[VFS-TEST] Test 2282: unlink one hard link, other survives\n");
+
+    const char *file_a = "/vfs_t2282_a.txt";
+    const char *file_b = "/vfs_t2282_b.txt";
+
+    /* Cleanup */
+    fut_vfs_unlink(file_b);
+    fut_vfs_unlink(file_a);
+
+    /* Create file_a with content */
+    int fd = fut_vfs_open(file_a, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) {
+        fut_printf("[VFS-TEST] x Test 2282: create failed (%d)\n", fd);
+        fut_test_fail(VFS_TEST_UNLINK_HARDLINK);
+        return;
+    }
+    const char *content = "survive-unlink";
+    fut_vfs_write(fd, content, 14);
+    fut_vfs_close(fd);
+
+    /* Create hard link file_b -> same inode */
+    long ret = sys_link(file_a, file_b);
+    if (ret < 0) {
+        fut_printf("[VFS-TEST] x Test 2282: link() failed (%ld)\n", ret);
+        fut_test_fail(VFS_TEST_UNLINK_HARDLINK);
+        return;
+    }
+
+    /* Unlink the original name */
+    ret = fut_vfs_unlink(file_a);
+    if (ret < 0) {
+        fut_printf("[VFS-TEST] x Test 2282: unlink orig failed (%ld)\n", ret);
+        fut_test_fail(VFS_TEST_UNLINK_HARDLINK);
+        return;
+    }
+
+    /* file_a should be gone */
+    struct fut_stat st_gone;
+    if (fut_vfs_stat(file_a, &st_gone) != -ENOENT) {
+        fut_printf("[VFS-TEST] x Test 2282: orig still exists after unlink\n");
+        fut_test_fail(VFS_TEST_UNLINK_HARDLINK);
+        return;
+    }
+
+    /* file_b should still be accessible with nlink=1 */
+    struct fut_stat st_b;
+    if (fut_vfs_stat(file_b, &st_b) < 0) {
+        fut_printf("[VFS-TEST] x Test 2282: stat link after unlink failed\n");
+        fut_test_fail(VFS_TEST_UNLINK_HARDLINK);
+        return;
+    }
+    if (st_b.st_nlink != 1) {
+        fut_printf("[VFS-TEST] x Test 2282: nlink=%u expected 1\n", st_b.st_nlink);
+        fut_test_fail(VFS_TEST_UNLINK_HARDLINK);
+        return;
+    }
+
+    /* Read content through surviving link */
+    fd = fut_vfs_open(file_b, O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[VFS-TEST] x Test 2282: open surviving link failed (%d)\n", fd);
+        fut_test_fail(VFS_TEST_UNLINK_HARDLINK);
+        return;
+    }
+    char buf[20];
+    ssize_t bytes = fut_vfs_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+
+    if (bytes != 14) {
+        fut_printf("[VFS-TEST] x Test 2282: read %zd bytes expected 14\n", bytes);
+        fut_test_fail(VFS_TEST_UNLINK_HARDLINK);
+        return;
+    }
+    buf[bytes] = '\0';
+
+    int match = 1;
+    for (int i = 0; i < 14; i++) {
+        if (buf[i] != content[i]) { match = 0; break; }
+    }
+    if (!match) {
+        fut_printf("[VFS-TEST] x Test 2282: content mismatch '%s'\n", buf);
+        fut_test_fail(VFS_TEST_UNLINK_HARDLINK);
+        return;
+    }
+
+    fut_printf("[VFS-TEST] ok Test 2282: surviving link readable, nlink=1\n");
+    fut_test_pass();
+
+    /* Cleanup */
+    fut_vfs_unlink(file_b);
+}
+
 void fut_vfs_test_thread(void *arg) {
     (void)arg;
 
@@ -1644,6 +1897,9 @@ void fut_vfs_test_thread(void *arg) {
     test_dotdot();
     test_read_dir_eisdir();
     test_chdir_with_dotdot();
+    test_link_nlink();
+    test_symlink_readlink();
+    test_unlink_hardlink();
 
     fut_printf("[VFS-TEST] VFS correctness tests complete\n");
 }

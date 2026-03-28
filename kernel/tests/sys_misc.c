@@ -63407,6 +63407,209 @@ __attribute__((noinline)) static void test_memfd_pidfd_advanced(void) {
 }
 
 /* ============================================================
+ * Tests 2275-2280: SO_LINGER round-trip and shutdown() behavior
+ * ============================================================ */
+__attribute__((noinline)) static void test_linger_shutdown(void) {
+    extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+    extern long sys_setsockopt(int fd, int level, int optname,
+                               const void *optval, unsigned int optlen);
+    extern long sys_getsockopt(int fd, int level, int optname,
+                               void *optval, unsigned int *optlen);
+    extern long sys_shutdown(int sockfd, int how);
+    extern ssize_t sys_write(int fd, const void *buf, size_t count);
+    extern ssize_t sys_read(int fd, void *buf, size_t count);
+    extern long sys_close(int fd);
+
+    int sv[2];
+
+    /* ── Test 2275: SO_LINGER setsockopt/getsockopt round-trip (l_onoff=1, l_linger=10) ── */
+    fut_printf("[MISC-TEST] Test 2275: SO_LINGER round-trip (1, 10)\n");
+    {
+        long r = sys_socketpair(1 /* AF_UNIX */, 1 /* SOCK_STREAM */, 0, sv);
+        if (r < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 2275: socketpair=%ld\n", r);
+            fut_test_fail(2275);
+        } else {
+            struct { int l_onoff; int l_linger; } ling = {1, 10};
+            r = sys_setsockopt(sv[0], 1 /* SOL_SOCKET */, 13 /* SO_LINGER */,
+                               &ling, sizeof(ling));
+            if (r != 0) {
+                fut_printf("[MISC-TEST] ✗ Test 2275: setsockopt=%ld\n", r);
+                fut_test_fail(2275);
+            } else {
+                struct { int l_onoff; int l_linger; } got = {0, 0};
+                unsigned int glen = sizeof(got);
+                r = sys_getsockopt(sv[0], 1, 13, &got, &glen);
+                if (r == 0 && got.l_onoff == 1 && got.l_linger == 10) {
+                    fut_printf("[MISC-TEST] ✓ Test 2275: SO_LINGER(1,10) round-trip OK\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 2275: getsockopt r=%ld onoff=%d linger=%d\n",
+                               r, got.l_onoff, got.l_linger);
+                    fut_test_fail(2275);
+                }
+            }
+            sys_close(sv[0]);
+            sys_close(sv[1]);
+        }
+    }
+
+    /* ── Test 2276: SO_LINGER clear (l_onoff=0) returns zeroed values ── */
+    fut_printf("[MISC-TEST] Test 2276: SO_LINGER clear round-trip\n");
+    {
+        long r = sys_socketpair(1, 1, 0, sv);
+        if (r < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 2276: socketpair=%ld\n", r);
+            fut_test_fail(2276);
+        } else {
+            /* First set, then clear */
+            struct { int l_onoff; int l_linger; } ling = {1, 30};
+            sys_setsockopt(sv[0], 1, 13, &ling, sizeof(ling));
+            ling.l_onoff = 0; ling.l_linger = 0;
+            sys_setsockopt(sv[0], 1, 13, &ling, sizeof(ling));
+
+            struct { int l_onoff; int l_linger; } got = {99, 99};
+            unsigned int glen = sizeof(got);
+            r = sys_getsockopt(sv[0], 1, 13, &got, &glen);
+            if (r == 0 && got.l_onoff == 0 && got.l_linger == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 2276: SO_LINGER cleared to (0,0)\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2276: getsockopt r=%ld onoff=%d linger=%d\n",
+                           r, got.l_onoff, got.l_linger);
+                fut_test_fail(2276);
+            }
+            sys_close(sv[0]);
+            sys_close(sv[1]);
+        }
+    }
+
+    /* ── Test 2277: shutdown(SHUT_RD) causes recv() to return 0 (EOF) ── */
+    fut_printf("[MISC-TEST] Test 2277: shutdown(SHUT_RD) → recv returns 0\n");
+    {
+        long r = sys_socketpair(1, 1, 0, sv);
+        if (r < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 2277: socketpair=%ld\n", r);
+            fut_test_fail(2277);
+        } else {
+            /* Write some data from sv[1] first */
+            sys_write(sv[1], "hello", 5);
+            /* Shutdown read on sv[0] */
+            r = sys_shutdown(sv[0], 0 /* SHUT_RD */);
+            if (r != 0) {
+                fut_printf("[MISC-TEST] ✗ Test 2277: shutdown(SHUT_RD)=%ld\n", r);
+                fut_test_fail(2277);
+            } else {
+                char buf[16];
+                ssize_t nr = sys_read(sv[0], buf, sizeof(buf));
+                if (nr == 0) {
+                    fut_printf("[MISC-TEST] ✓ Test 2277: recv after SHUT_RD = 0 (EOF)\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 2277: recv after SHUT_RD = %zd (expected 0)\n", nr);
+                    fut_test_fail(2277);
+                }
+            }
+            sys_close(sv[0]);
+            sys_close(sv[1]);
+        }
+    }
+
+    /* ── Test 2278: shutdown(SHUT_WR) sends EOF to peer ── */
+    fut_printf("[MISC-TEST] Test 2278: shutdown(SHUT_WR) → peer recv returns 0\n");
+    {
+        long r = sys_socketpair(1, 1, 0, sv);
+        if (r < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 2278: socketpair=%ld\n", r);
+            fut_test_fail(2278);
+        } else {
+            /* Send data then shutdown write channel */
+            sys_write(sv[0], "data", 4);
+            r = sys_shutdown(sv[0], 1 /* SHUT_WR */);
+            if (r != 0) {
+                fut_printf("[MISC-TEST] ✗ Test 2278: shutdown(SHUT_WR)=%ld\n", r);
+                fut_test_fail(2278);
+            } else {
+                /* Peer reads data first, then should get EOF */
+                char buf[16];
+                ssize_t nr = sys_read(sv[1], buf, sizeof(buf));
+                ssize_t nr2 = sys_read(sv[1], buf, sizeof(buf));
+                if (nr == 4 && nr2 == 0) {
+                    fut_printf("[MISC-TEST] ✓ Test 2278: SHUT_WR → data then EOF\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 2278: nr=%zd nr2=%zd (expected 4, 0)\n", nr, nr2);
+                    fut_test_fail(2278);
+                }
+            }
+            sys_close(sv[0]);
+            sys_close(sv[1]);
+        }
+    }
+
+    /* ── Test 2279: shutdown(SHUT_RDWR) disables both directions ── */
+    fut_printf("[MISC-TEST] Test 2279: shutdown(SHUT_RDWR) both directions\n");
+    {
+        long r = sys_socketpair(1, 1, 0, sv);
+        if (r < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 2279: socketpair=%ld\n", r);
+            fut_test_fail(2279);
+        } else {
+            r = sys_shutdown(sv[0], 2 /* SHUT_RDWR */);
+            if (r != 0) {
+                fut_printf("[MISC-TEST] ✗ Test 2279: shutdown(SHUT_RDWR)=%ld\n", r);
+                fut_test_fail(2279);
+            } else {
+                char buf[16];
+                ssize_t nr = sys_read(sv[0], buf, sizeof(buf));
+                ssize_t nw = sys_write(sv[0], "x", 1);
+                /* recv should return 0 (EOF), send should return -EPIPE */
+                if (nr == 0 && (nw == -32 /* EPIPE */ || nw < 0)) {
+                    fut_printf("[MISC-TEST] ✓ Test 2279: SHUT_RDWR recv=0 send=%zd\n", nw);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] ✗ Test 2279: recv=%zd send=%zd\n", nr, nw);
+                    fut_test_fail(2279);
+                }
+            }
+            sys_close(sv[0]);
+            sys_close(sv[1]);
+        }
+    }
+
+    /* ── Test 2280: SO_LINGER l_linger>0 close delivers buffered data to peer ── */
+    fut_printf("[MISC-TEST] Test 2280: SO_LINGER(1,5) close delivers data\n");
+    {
+        long r = sys_socketpair(1, 1, 0, sv);
+        if (r < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 2280: socketpair=%ld\n", r);
+            fut_test_fail(2280);
+        } else {
+            /* Set SO_LINGER with 5 second timeout */
+            struct { int l_onoff; int l_linger; } ling = {1, 5};
+            sys_setsockopt(sv[0], 1, 13, &ling, sizeof(ling));
+
+            /* Write data on sv[0], then close (with linger) */
+            sys_write(sv[0], "linger-data", 11);
+
+            /* Read from peer BEFORE close — data should be present */
+            char buf[32];
+            ssize_t nr = sys_read(sv[1], buf, sizeof(buf));
+            if (nr == 11) {
+                buf[nr] = '\0';
+                fut_printf("[MISC-TEST] ✓ Test 2280: linger close delivered %zd bytes\n", nr);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2280: read=%zd (expected 11)\n", nr);
+                fut_test_fail(2280);
+            }
+            sys_close(sv[0]);
+            sys_close(sv[1]);
+        }
+    }
+}
+
+/* ============================================================
  * Tests 1946-1957: io_uring async I/O subsystem
  * ============================================================ */
 __attribute__((noinline)) static void test_io_uring(void) {
@@ -68959,6 +69162,7 @@ void fut_misc_test_thread(void *arg) {
     test_io_uring();  /* Tests 1946-1957 */
     test_pty_and_cgroup(); /* Tests 2176-2188 */
     test_memfd_pidfd_advanced(); /* Tests 2240-2259 */
+    test_linger_shutdown(); /* Tests 2275-2280: SO_LINGER round-trip and shutdown() behavior */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

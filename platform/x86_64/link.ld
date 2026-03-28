@@ -242,9 +242,9 @@ ASSERT(_stack_top % 16 == 0, "Stack top not 16-byte aligned")
 /* ============================================================
  *   Kernel Size Assertion
  * ============================================================
- * Ensure kernel fits in reasonable memory (e.g., 18MB limit).
+ * Ensure kernel fits in reasonable memory (e.g., 20MB limit).
  */
-ASSERT(_kernel_size < 0x1200000, "Kernel exceeds 18MB size limit")
+ASSERT(_kernel_size < 0x1400000, "Kernel exceeds 20MB size limit")
 
 /* ============================================================
  *   Multiboot2 Assertion

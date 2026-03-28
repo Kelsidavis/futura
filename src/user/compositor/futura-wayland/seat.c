@@ -546,6 +546,10 @@ static void seat_handle_button(struct seat_state *seat,
 #ifdef DEBUG_WAYLAND
                 WLOG("[WAYLAND] deco: press minimize win=%p\n", (void *)hit_surface);
 #endif
+            } else if (role == HIT_MAXIMIZE && hit_surface && seat->comp->deco_enabled) {
+                hit_surface->max_btn_pressed = true;
+                comp_damage_add_rect(seat->comp, comp_max_btn_rect(hit_surface));
+                comp_surface_mark_damage(hit_surface);
             } else if (role == HIT_RESIZE && hit_surface && edge != RSZ_NONE) {
                 comp_start_resize(seat->comp, hit_surface, edge);
             }
@@ -588,6 +592,17 @@ static void seat_handle_button(struct seat_state *seat,
                     WLOG("[WAYLAND] deco: toggle minimize win=%p\n", (void *)pressed_surface);
 #endif
                     comp_surface_toggle_minimize(pressed_surface);
+                }
+            }
+
+            if (pressed_surface && pressed_role == HIT_MAXIMIZE && seat->comp->deco_enabled) {
+                if (pressed_surface->max_btn_pressed) {
+                    pressed_surface->max_btn_pressed = false;
+                    comp_damage_add_rect(seat->comp, comp_max_btn_rect(pressed_surface));
+                    comp_surface_mark_damage(pressed_surface);
+                }
+                if (pressed_surface == hit_surface && role == HIT_MAXIMIZE) {
+                    comp_surface_toggle_maximize(pressed_surface);
                 }
             }
 

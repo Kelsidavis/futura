@@ -381,6 +381,11 @@ void comp_surface_update_decorations(struct comp_surface *surface) {
     /* Minimize button: middle */
     surface->min_btn_x = surface->btn_x + WINDOW_BTN_WIDTH + WINDOW_BTN_PADDING;
     surface->min_btn_y = btn_y_center;
+    /* Maximize button: rightmost of the three */
+    surface->max_btn_x = surface->min_btn_x + WINDOW_BTN_WIDTH + WINDOW_BTN_PADDING;
+    surface->max_btn_y = btn_y_center;
+    surface->max_btn_w = WINDOW_BTN_WIDTH;
+    surface->max_btn_h = WINDOW_BTN_HEIGHT;
 
     if (surface->btn_x < surface->x + WINDOW_BTN_PADDING) {
         surface->btn_x = surface->x + WINDOW_BTN_PADDING;
@@ -491,6 +496,39 @@ static void draw_minimize_button(struct backbuffer *dst,
     uint32_t btn_color = focused ? COLOR_BTN_MINIMIZE : COLOR_BTN_INACTIVE;
     if (surface->min_btn_pressed) btn_color = 0xFFE09B13u;
     else if (surface->min_btn_hover) btn_color = 0xFFFDD44Bu;
+
+    int32_t cx = btn.x + btn.w / 2;
+    int32_t cy = btn.y + btn.h / 2;
+    int32_t r = (btn.w < btn.h ? btn.w : btn.h) / 2 - 1;
+
+    char *base_ptr = (char *)dst->px;
+    for (int32_t y = 0; y < clip.h; ++y) {
+        int32_t gy = clip.y + y;
+        uint32_t *row = (uint32_t *)(base_ptr + (size_t)gy * dst->pitch);
+        uint32_t *px = row + clip.x;
+        for (int32_t x = 0; x < clip.w; ++x) {
+            int32_t gx = clip.x + x;
+            int32_t dx = gx - cx, dy = gy - cy;
+            if (dx * dx + dy * dy <= r * r) {
+                px[x] = btn_color;
+            }
+        }
+    }
+}
+
+static void draw_maximize_button(struct backbuffer *dst,
+                                 const struct comp_surface *surface,
+                                 fut_rect_t clip) {
+    if (!dst || (uintptr_t)dst < 0x10000) return;
+    if (!dst->px || (uintptr_t)dst->px < 0x10000 || clip.w <= 0 || clip.h <= 0) return;
+
+    fut_rect_t btn = comp_max_btn_rect(surface);
+    if (btn.w <= 0 || btn.h <= 0) return;
+
+    bool focused = (surface->comp && surface == surface->comp->focused_surface);
+    uint32_t btn_color = focused ? COLOR_BTN_MAXIMIZE : COLOR_BTN_INACTIVE;
+    if (surface->max_btn_pressed) btn_color = 0xFF1E9E30u;
+    else if (surface->max_btn_hover) btn_color = 0xFF3BD555u;
 
     int32_t cx = btn.x + btn.w / 2;
     int32_t cy = btn.y + btn.h / 2;
@@ -1533,6 +1571,14 @@ void comp_render_frame(struct compositor_state *comp) {
                     touched = true;
                 }
 
+                fut_rect_t max_btn_rect = comp_max_btn_rect(surface);
+                fut_rect_t max_btn_clip;
+                if (max_btn_rect.w > 0 && max_btn_rect.h > 0 &&
+                    rect_intersection(damage->rects[i], max_btn_rect, &max_btn_clip)) {
+                    draw_maximize_button(dst, surface, max_btn_clip);
+                    touched = true;
+                }
+
                 fut_rect_t btn_rect = comp_btn_rect(surface);
                 fut_rect_t btn_clip;
                 if (btn_rect.w > 0 && btn_rect.h > 0 &&
@@ -2482,6 +2528,12 @@ hit_role_t comp_hit_test(struct compositor_state *comp,
         fut_rect_t min_btn = comp_min_btn_rect(surface);
         if (min_btn.w > 0 && min_btn.h > 0 && rect_contains(&min_btn, px, py)) {
             return HIT_MINIMIZE;
+        }
+
+        /* Check maximize button */
+        fut_rect_t max_btn = comp_max_btn_rect(surface);
+        if (max_btn.w > 0 && max_btn.h > 0 && rect_contains(&max_btn, px, py)) {
+            return HIT_MAXIMIZE;
         }
 
         /* Check close button */

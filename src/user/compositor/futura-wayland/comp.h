@@ -85,6 +85,7 @@ typedef enum hit_role {
     HIT_NONE = 0,
     HIT_BAR,
     HIT_MINIMIZE,
+    HIT_MAXIMIZE,
     HIT_CLOSE,
     HIT_CONTENT,
     HIT_RESIZE,
@@ -177,6 +178,12 @@ struct comp_surface {
     int32_t min_btn_h;
     bool min_btn_hover;
     bool min_btn_pressed;
+    int32_t max_btn_x;
+    int32_t max_btn_y;
+    int32_t max_btn_w;
+    int32_t max_btn_h;
+    bool max_btn_hover;
+    bool max_btn_pressed;
     int32_t btn_x;
     int32_t btn_y;
     int32_t btn_w;
@@ -317,6 +324,16 @@ static inline fut_rect_t comp_min_btn_rect(const struct comp_surface *surface) {
         .y = surface->min_btn_y,
         .w = surface->min_btn_w,
         .h = surface->min_btn_h,
+    };
+    return r;
+}
+
+static inline fut_rect_t comp_max_btn_rect(const struct comp_surface *surface) {
+    fut_rect_t r = {
+        .x = surface->max_btn_x,
+        .y = surface->max_btn_y,
+        .w = surface->max_btn_w,
+        .h = surface->max_btn_h,
     };
     return r;
 }

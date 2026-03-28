@@ -2825,6 +2825,11 @@ int fut_vfs_close(int fd) {
      * This prevents other threads from accessing the FD during cleanup. */
     if (task->fd_table && fd >= 0 && fd < task->max_fds) {
         task->fd_table[fd] = NULL;
+        /* Clear per-FD flags (FD_CLOEXEC) so stale flags don't leak to
+         * a future FD reusing this slot.  alloc_fd_for_task() also clears
+         * fd_flags on allocation, but clearing here is defense-in-depth. */
+        if (task->fd_flags)
+            task->fd_flags[fd] = 0;
     }
 
     /* Clear socket tracking table so stale socket pointers don't pollute

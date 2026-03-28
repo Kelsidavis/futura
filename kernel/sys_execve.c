@@ -953,13 +953,13 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
         }
     }
 
-    /* Close all FDs marked with FD_CLOEXEC before executing new binary */
+    /* Close all FDs marked with FD_CLOEXEC before executing new binary.
+     * fut_vfs_close() sets fd_table[i]=NULL and fd_flags[i]=0, so there
+     * is no risk of stale FD_CLOEXEC flags leaking to reused slots. */
     if (task->fd_table && task->fd_flags) {
         for (int i = 0; i < task->max_fds; i++) {
             if (task->fd_table[i] != NULL && (task->fd_flags[i] & FD_CLOEXEC)) {
-                /* Close this FD (CLOEXEC means "close on exec") */
                 fut_vfs_close(i);
-                /* Note: fut_vfs_close will remove from task's FD table */
             }
         }
     }

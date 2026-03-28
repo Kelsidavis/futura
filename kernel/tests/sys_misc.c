@@ -69268,6 +69268,504 @@ __attribute__((noinline)) static void test_execve_shebang_comprehensive(void) {
     }
 }
 
+/* ============================================================
+ * Tests 2464-2471: SCM_RIGHTS comprehensive FD passing
+ *
+ * Verifies:
+ *   2464: Pass multiple FDs via single SCM_RIGHTS message
+ *   2465: Received FDs are new numbers in receiver's table
+ *   2466: Passed FDs share the same underlying file (shared offset)
+ *   2467: SCM_RIGHTS with invalid FD returns EBADF
+ *   2468: Passing a pipe FD via SCM_RIGHTS
+ *   2469: SCM_RIGHTS + SCM_CREDENTIALS coexist in same recvmsg
+ *   2470: Received FDs survive sender closing original FDs
+ *   2471: MSG_CTRUNC when control buffer too small for SCM_RIGHTS
+ * ============================================================ */
+static void test_scm_rights_comprehensive(void) {
+    extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+    extern long sys_sendmsg(int sockfd, const struct test_msghdr *msg, int flags);
+    extern long sys_recvmsg(int sockfd, struct test_msghdr *msg, int flags);
+    extern long sys_write(int fd, const void *buf, size_t count);
+    extern long sys_read(int fd, void *buf, size_t count);
+    extern long sys_lseek(int fd, long offset, int whence);
+    extern long sys_close(int fd);
+    extern long sys_pipe2(int pipefd[2], int flags);
+    extern long sys_setsockopt(int fd, int level, int optname, const void *optval, unsigned int optlen);
+
+    /* ---- Test 2464: Pass multiple FDs via single SCM_RIGHTS ---- */
+    fut_printf("[MISC-TEST] Test 2464: SCM_RIGHTS pass multiple FDs\n");
+    {
+        int sv[2] = {-1, -1};
+        long r = sys_socketpair(1 /*AF_UNIX*/, 1 /*SOCK_STREAM*/, 0, sv);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] FAIL 2464: socketpair: %ld\n", r);
+            fut_test_fail(2464); goto t2465;
+        }
+
+        int fa = fut_vfs_open("/scm_multi_a.txt", 0x42 /*O_RDWR|O_CREAT*/, 0644);
+        int fb = fut_vfs_open("/scm_multi_b.txt", 0x42 /*O_RDWR|O_CREAT*/, 0644);
+        if (fa < 0 || fb < 0) {
+            fut_printf("[MISC-TEST] FAIL 2464: open files: fa=%d fb=%d\n", fa, fb);
+            if (fa >= 0) fut_vfs_close(fa);
+            if (fb >= 0) fut_vfs_close(fb);
+            sys_close(sv[0]); sys_close(sv[1]);
+            fut_test_fail(2464); goto t2465;
+        }
+        sys_write(fa, "fileA", 5);
+        sys_write(fb, "fileB", 5);
+        sys_lseek(fa, 0, 0);
+        sys_lseek(fb, 0, 0);
+
+        char data[] = "hi";
+        struct iovec siov = { .iov_base = data, .iov_len = 2 };
+        char sctrl[TEST_CMSG_SPACE(2 * sizeof(int))];
+        __builtin_memset(sctrl, 0, sizeof(sctrl));
+        struct test_cmsghdr *sc = (struct test_cmsghdr *)sctrl;
+        sc->cmsg_len   = TEST_CMSG_LEN(2 * sizeof(int));
+        sc->cmsg_level = TEST_SOL_SOCKET;
+        sc->cmsg_type  = TEST_SCM_RIGHTS;
+        int *sfd = (int *)TEST_CMSG_DATA(sc);
+        sfd[0] = fa; sfd[1] = fb;
+
+        struct test_msghdr smsg = {
+            .msg_iov = &siov, .msg_iovlen = 1,
+            .msg_control = sctrl, .msg_controllen = sizeof(sctrl),
+        };
+        long sent = sys_sendmsg(sv[0], &smsg, 0);
+        if (sent < 0) {
+            fut_printf("[MISC-TEST] FAIL 2464: sendmsg: %ld\n", sent);
+            fut_vfs_close(fa); fut_vfs_close(fb);
+            sys_close(sv[0]); sys_close(sv[1]);
+            fut_test_fail(2464); goto t2465;
+        }
+
+        char rdata[4] = {0};
+        char rctrl[TEST_CMSG_SPACE(2 * sizeof(int))];
+        __builtin_memset(rctrl, 0, sizeof(rctrl));
+        struct iovec riov = { .iov_base = rdata, .iov_len = sizeof(rdata) };
+        struct test_msghdr rmsg = {
+            .msg_iov = &riov, .msg_iovlen = 1,
+            .msg_control = rctrl, .msg_controllen = sizeof(rctrl),
+        };
+        long rcvd = sys_recvmsg(sv[1], &rmsg, 0);
+        if (rcvd < 0) {
+            fut_printf("[MISC-TEST] FAIL 2464: recvmsg: %ld\n", rcvd);
+            fut_vfs_close(fa); fut_vfs_close(fb);
+            sys_close(sv[0]); sys_close(sv[1]);
+            fut_test_fail(2464); goto t2465;
+        }
+
+        struct test_cmsghdr *rc = (struct test_cmsghdr *)rctrl;
+        int *rfd = (int *)TEST_CMSG_DATA(rc);
+        int rfa = rfd[0], rfb = rfd[1];
+
+        char buf_a[8] = {0}, buf_b[8] = {0};
+        long na = sys_read(rfa, buf_a, 5);
+        long nb = sys_read(rfb, buf_b, 5);
+
+        int ok = (na == 5 && nb == 5);
+        if (ok) {
+            for (int i = 0; i < 5; i++) {
+                if (buf_a[i] != "fileA"[i] || buf_b[i] != "fileB"[i]) { ok = 0; break; }
+            }
+        }
+
+        sys_close(rfa); sys_close(rfb);
+        fut_vfs_close(fa); fut_vfs_close(fb);
+        sys_close(sv[0]); sys_close(sv[1]);
+
+        if (ok) {
+            fut_printf("[MISC-TEST] pass Test 2464: two FDs passed and verified\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL 2464: na=%ld nb=%ld\n", na, nb);
+            fut_test_fail(2464);
+        }
+    }
+
+t2465:
+    /* ---- Test 2465: Received FDs are new numbers ---- */
+    fut_printf("[MISC-TEST] Test 2465: SCM_RIGHTS received FDs are new numbers\n");
+    {
+        int sv[2] = {-1, -1};
+        long r = sys_socketpair(1, 1, 0, sv);
+        if (r != 0) { fut_test_fail(2465); goto t2466; }
+
+        int f = fut_vfs_open("/scm_newfd.txt", 0x42, 0644);
+        if (f < 0) { sys_close(sv[0]); sys_close(sv[1]); fut_test_fail(2465); goto t2466; }
+        sys_write(f, "x", 1);
+        sys_lseek(f, 0, 0);
+
+        char d[] = "x";
+        struct iovec si = { .iov_base = d, .iov_len = 1 };
+        char sc_b[TEST_CMSG_SPACE(sizeof(int))];
+        __builtin_memset(sc_b, 0, sizeof(sc_b));
+        struct test_cmsghdr *cm = (struct test_cmsghdr *)sc_b;
+        cm->cmsg_len = TEST_CMSG_LEN(sizeof(int));
+        cm->cmsg_level = TEST_SOL_SOCKET;
+        cm->cmsg_type  = TEST_SCM_RIGHTS;
+        *(int *)TEST_CMSG_DATA(cm) = f;
+
+        struct test_msghdr sm = { .msg_iov = &si, .msg_iovlen = 1,
+                                  .msg_control = sc_b, .msg_controllen = sizeof(sc_b) };
+        long sent = sys_sendmsg(sv[0], &sm, 0);
+        if (sent < 0) { fut_vfs_close(f); sys_close(sv[0]); sys_close(sv[1]); fut_test_fail(2465); goto t2466; }
+
+        char rd[2] = {0};
+        char rc_b[TEST_CMSG_SPACE(sizeof(int))];
+        __builtin_memset(rc_b, 0, sizeof(rc_b));
+        struct iovec ri = { .iov_base = rd, .iov_len = sizeof(rd) };
+        struct test_msghdr rm = { .msg_iov = &ri, .msg_iovlen = 1,
+                                  .msg_control = rc_b, .msg_controllen = sizeof(rc_b) };
+        sys_recvmsg(sv[1], &rm, 0);
+
+        int recv_fd = *(int *)TEST_CMSG_DATA((struct test_cmsghdr *)rc_b);
+        int different = (recv_fd != f && recv_fd >= 0);
+
+        sys_close(recv_fd);
+        fut_vfs_close(f);
+        sys_close(sv[0]); sys_close(sv[1]);
+
+        if (different) {
+            fut_printf("[MISC-TEST] pass Test 2465: sent fd=%d, received fd=%d (different)\n", f, recv_fd);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL 2465: sent fd=%d, received fd=%d\n", f, recv_fd);
+            fut_test_fail(2465);
+        }
+    }
+
+t2466:
+    /* ---- Test 2466: Passed FDs share the same file (shared file offset) ---- */
+    fut_printf("[MISC-TEST] Test 2466: SCM_RIGHTS FDs share same file description\n");
+    {
+        int sv[2] = {-1, -1};
+        long r = sys_socketpair(1, 1, 0, sv);
+        if (r != 0) { fut_test_fail(2466); goto t2467; }
+
+        int f = fut_vfs_open("/scm_shared.txt", 0x42, 0644);
+        if (f < 0) { sys_close(sv[0]); sys_close(sv[1]); fut_test_fail(2466); goto t2467; }
+        sys_write(f, "ABCDE", 5);
+        sys_lseek(f, 0, 0);
+
+        char tmp[2];
+        sys_read(f, tmp, 2); /* advance offset to 2 */
+
+        char d[] = "z";
+        struct iovec si = { .iov_base = d, .iov_len = 1 };
+        char sc_b[TEST_CMSG_SPACE(sizeof(int))];
+        __builtin_memset(sc_b, 0, sizeof(sc_b));
+        struct test_cmsghdr *cm = (struct test_cmsghdr *)sc_b;
+        cm->cmsg_len = TEST_CMSG_LEN(sizeof(int));
+        cm->cmsg_level = TEST_SOL_SOCKET;
+        cm->cmsg_type  = TEST_SCM_RIGHTS;
+        *(int *)TEST_CMSG_DATA(cm) = f;
+
+        struct test_msghdr sm = { .msg_iov = &si, .msg_iovlen = 1,
+                                  .msg_control = sc_b, .msg_controllen = sizeof(sc_b) };
+        sys_sendmsg(sv[0], &sm, 0);
+
+        char rd[2] = {0};
+        char rc_b[TEST_CMSG_SPACE(sizeof(int))];
+        __builtin_memset(rc_b, 0, sizeof(rc_b));
+        struct iovec ri = { .iov_base = rd, .iov_len = sizeof(rd) };
+        struct test_msghdr rm = { .msg_iov = &ri, .msg_iovlen = 1,
+                                  .msg_control = rc_b, .msg_controllen = sizeof(rc_b) };
+        sys_recvmsg(sv[1], &rm, 0);
+
+        int recv_fd = *(int *)TEST_CMSG_DATA((struct test_cmsghdr *)rc_b);
+
+        char buf[4] = {0};
+        long n = sys_read(recv_fd, buf, 3);
+        int shared = (n == 3 && buf[0] == 'C' && buf[1] == 'D' && buf[2] == 'E');
+
+        sys_close(recv_fd);
+        fut_vfs_close(f);
+        sys_close(sv[0]); sys_close(sv[1]);
+
+        if (shared) {
+            fut_printf("[MISC-TEST] pass Test 2466: received fd shares file offset\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL 2466: n=%ld buf[0]=%c\n", n, buf[0]);
+            fut_test_fail(2466);
+        }
+    }
+
+t2467:
+    /* ---- Test 2467: SCM_RIGHTS with invalid FD returns EBADF ---- */
+    fut_printf("[MISC-TEST] Test 2467: SCM_RIGHTS invalid FD -> EBADF\n");
+    {
+        int sv[2] = {-1, -1};
+        long r = sys_socketpair(1, 1, 0, sv);
+        if (r != 0) { fut_test_fail(2467); goto t2468; }
+
+        char d[] = "x";
+        struct iovec si = { .iov_base = d, .iov_len = 1 };
+        char sc_b[TEST_CMSG_SPACE(sizeof(int))];
+        __builtin_memset(sc_b, 0, sizeof(sc_b));
+        struct test_cmsghdr *cm = (struct test_cmsghdr *)sc_b;
+        cm->cmsg_len = TEST_CMSG_LEN(sizeof(int));
+        cm->cmsg_level = TEST_SOL_SOCKET;
+        cm->cmsg_type  = TEST_SCM_RIGHTS;
+        *(int *)TEST_CMSG_DATA(cm) = 9999;  /* Invalid FD */
+
+        struct test_msghdr sm = { .msg_iov = &si, .msg_iovlen = 1,
+                                  .msg_control = sc_b, .msg_controllen = sizeof(sc_b) };
+        long sent = sys_sendmsg(sv[0], &sm, 0);
+        sys_close(sv[0]); sys_close(sv[1]);
+
+        if (sent == -9 /* -EBADF */) {
+            fut_printf("[MISC-TEST] pass Test 2467: sendmsg with bad fd -> EBADF\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL 2467: sendmsg returned %ld (expected -9)\n", sent);
+            fut_test_fail(2467);
+        }
+    }
+
+t2468:
+    /* ---- Test 2468: Passing a pipe FD via SCM_RIGHTS ---- */
+    fut_printf("[MISC-TEST] Test 2468: SCM_RIGHTS pass pipe FD\n");
+    {
+        int sv[2] = {-1, -1};
+        long r = sys_socketpair(1, 1, 0, sv);
+        if (r != 0) { fut_test_fail(2468); goto t2469; }
+
+        int pfd[2] = {-1, -1};
+        r = sys_pipe2(pfd, 0);
+        if (r != 0) { sys_close(sv[0]); sys_close(sv[1]); fut_test_fail(2468); goto t2469; }
+
+        sys_write(pfd[1], "pipe!", 5);
+
+        char d[] = "p";
+        struct iovec si = { .iov_base = d, .iov_len = 1 };
+        char sc_b[TEST_CMSG_SPACE(sizeof(int))];
+        __builtin_memset(sc_b, 0, sizeof(sc_b));
+        struct test_cmsghdr *cm = (struct test_cmsghdr *)sc_b;
+        cm->cmsg_len = TEST_CMSG_LEN(sizeof(int));
+        cm->cmsg_level = TEST_SOL_SOCKET;
+        cm->cmsg_type  = TEST_SCM_RIGHTS;
+        *(int *)TEST_CMSG_DATA(cm) = pfd[0];
+
+        struct test_msghdr sm = { .msg_iov = &si, .msg_iovlen = 1,
+                                  .msg_control = sc_b, .msg_controllen = sizeof(sc_b) };
+        long sent = sys_sendmsg(sv[0], &sm, 0);
+        if (sent < 0) {
+            sys_close(pfd[0]); sys_close(pfd[1]);
+            sys_close(sv[0]); sys_close(sv[1]);
+            fut_test_fail(2468); goto t2469;
+        }
+
+        char rd[2] = {0};
+        char rc_b[TEST_CMSG_SPACE(sizeof(int))];
+        __builtin_memset(rc_b, 0, sizeof(rc_b));
+        struct iovec ri = { .iov_base = rd, .iov_len = sizeof(rd) };
+        struct test_msghdr rm = { .msg_iov = &ri, .msg_iovlen = 1,
+                                  .msg_control = rc_b, .msg_controllen = sizeof(rc_b) };
+        sys_recvmsg(sv[1], &rm, 0);
+
+        int recv_pipe = *(int *)TEST_CMSG_DATA((struct test_cmsghdr *)rc_b);
+
+        char buf[8] = {0};
+        long n = sys_read(recv_pipe, buf, 5);
+        int ok = (n == 5);
+        if (ok) {
+            const char *exp = "pipe!";
+            for (int i = 0; i < 5; i++) {
+                if (buf[i] != exp[i]) { ok = 0; break; }
+            }
+        }
+
+        sys_close(recv_pipe);
+        sys_close(pfd[0]); sys_close(pfd[1]);
+        sys_close(sv[0]); sys_close(sv[1]);
+
+        if (ok) {
+            fut_printf("[MISC-TEST] pass Test 2468: pipe FD passed via SCM_RIGHTS\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL 2468: n=%ld\n", n);
+            fut_test_fail(2468);
+        }
+    }
+
+t2469:
+    /* ---- Test 2469: SCM_RIGHTS + SCM_CREDENTIALS coexist ---- */
+    fut_printf("[MISC-TEST] Test 2469: SCM_RIGHTS + SCM_CREDENTIALS coexist\n");
+    {
+        int sv[2] = {-1, -1};
+        long r = sys_socketpair(1, 1, 0, sv);
+        if (r != 0) { fut_test_fail(2469); goto t2470; }
+
+        int enable = 1;
+        sys_setsockopt(sv[1], 1, 16 /*SO_PASSCRED*/, &enable, sizeof(int));
+
+        int f = fut_vfs_open("/scm_coexist.txt", 0x42, 0644);
+        if (f < 0) { sys_close(sv[0]); sys_close(sv[1]); fut_test_fail(2469); goto t2470; }
+        sys_write(f, "coex", 4);
+        sys_lseek(f, 0, 0);
+
+        char d[] = "c";
+        struct iovec si = { .iov_base = d, .iov_len = 1 };
+        char sc_b[TEST_CMSG_SPACE(sizeof(int))];
+        __builtin_memset(sc_b, 0, sizeof(sc_b));
+        struct test_cmsghdr *cm = (struct test_cmsghdr *)sc_b;
+        cm->cmsg_len = TEST_CMSG_LEN(sizeof(int));
+        cm->cmsg_level = TEST_SOL_SOCKET;
+        cm->cmsg_type  = TEST_SCM_RIGHTS;
+        *(int *)TEST_CMSG_DATA(cm) = f;
+
+        struct test_msghdr sm = { .msg_iov = &si, .msg_iovlen = 1,
+                                  .msg_control = sc_b, .msg_controllen = sizeof(sc_b) };
+        sys_sendmsg(sv[0], &sm, 0);
+
+        char rd[4] = {0};
+        char rctrl[TEST_CMSG_SPACE(sizeof(int)) + TEST_CMSG_SPACE(12)];
+        __builtin_memset(rctrl, 0, sizeof(rctrl));
+        struct iovec ri = { .iov_base = rd, .iov_len = sizeof(rd) };
+        struct test_msghdr rm = { .msg_iov = &ri, .msg_iovlen = 1,
+                                  .msg_control = rctrl, .msg_controllen = sizeof(rctrl) };
+        long rcvd = sys_recvmsg(sv[1], &rm, 0);
+
+        int got_rights = 0, got_creds = 0;
+        int recv_fd = -1;
+        if (rcvd > 0 && rm.msg_controllen > 0) {
+            struct test_cmsghdr *c1 = (struct test_cmsghdr *)rctrl;
+            if (c1->cmsg_level == TEST_SOL_SOCKET && c1->cmsg_type == TEST_SCM_RIGHTS) {
+                got_rights = 1;
+                recv_fd = *(int *)TEST_CMSG_DATA(c1);
+            }
+            size_t first_len = TEST_CMSG_ALIGN(c1->cmsg_len);
+            if (first_len + sizeof(struct test_cmsghdr) <= rm.msg_controllen) {
+                struct test_cmsghdr *c2 = (struct test_cmsghdr *)((char *)rctrl + first_len);
+                if (c2->cmsg_level == TEST_SOL_SOCKET && c2->cmsg_type == 2 /*SCM_CREDENTIALS*/)
+                    got_creds = 1;
+            }
+        }
+
+        if (recv_fd >= 0) sys_close(recv_fd);
+        fut_vfs_close(f);
+        sys_close(sv[0]); sys_close(sv[1]);
+
+        if (got_rights && got_creds) {
+            fut_printf("[MISC-TEST] pass Test 2469: both SCM_RIGHTS and SCM_CREDENTIALS received\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL 2469: rights=%d creds=%d\n", got_rights, got_creds);
+            fut_test_fail(2469);
+        }
+    }
+
+t2470:
+    /* ---- Test 2470: Received FDs survive sender closing originals ---- */
+    fut_printf("[MISC-TEST] Test 2470: SCM_RIGHTS received FDs survive sender close\n");
+    {
+        int sv[2] = {-1, -1};
+        long r = sys_socketpair(1, 1, 0, sv);
+        if (r != 0) { fut_test_fail(2470); goto t2471; }
+
+        int f = fut_vfs_open("/scm_survive.txt", 0x42, 0644);
+        if (f < 0) { sys_close(sv[0]); sys_close(sv[1]); fut_test_fail(2470); goto t2471; }
+        sys_write(f, "survive", 7);
+        sys_lseek(f, 0, 0);
+
+        char d[] = "s";
+        struct iovec si = { .iov_base = d, .iov_len = 1 };
+        char sc_b[TEST_CMSG_SPACE(sizeof(int))];
+        __builtin_memset(sc_b, 0, sizeof(sc_b));
+        struct test_cmsghdr *cm = (struct test_cmsghdr *)sc_b;
+        cm->cmsg_len = TEST_CMSG_LEN(sizeof(int));
+        cm->cmsg_level = TEST_SOL_SOCKET;
+        cm->cmsg_type  = TEST_SCM_RIGHTS;
+        *(int *)TEST_CMSG_DATA(cm) = f;
+        struct test_msghdr sm = { .msg_iov = &si, .msg_iovlen = 1,
+                                  .msg_control = sc_b, .msg_controllen = sizeof(sc_b) };
+        sys_sendmsg(sv[0], &sm, 0);
+
+        /* Sender closes the original FD before receiver reads */
+        fut_vfs_close(f);
+
+        char rd[2] = {0};
+        char rc_b[TEST_CMSG_SPACE(sizeof(int))];
+        __builtin_memset(rc_b, 0, sizeof(rc_b));
+        struct iovec ri = { .iov_base = rd, .iov_len = sizeof(rd) };
+        struct test_msghdr rm = { .msg_iov = &ri, .msg_iovlen = 1,
+                                  .msg_control = rc_b, .msg_controllen = sizeof(rc_b) };
+        sys_recvmsg(sv[1], &rm, 0);
+
+        int recv_fd = *(int *)TEST_CMSG_DATA((struct test_cmsghdr *)rc_b);
+
+        char buf[8] = {0};
+        long n = sys_read(recv_fd, buf, 7);
+        int ok = (n == 7);
+        if (ok) {
+            const char *exp = "survive";
+            for (int i = 0; i < 7; i++) {
+                if (buf[i] != exp[i]) { ok = 0; break; }
+            }
+        }
+
+        sys_close(recv_fd);
+        sys_close(sv[0]); sys_close(sv[1]);
+
+        if (ok) {
+            fut_printf("[MISC-TEST] pass Test 2470: received fd survives sender close\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL 2470: n=%ld\n", n);
+            fut_test_fail(2470);
+        }
+    }
+
+t2471:
+    /* ---- Test 2471: MSG_CTRUNC when control buffer too small ---- */
+    fut_printf("[MISC-TEST] Test 2471: SCM_RIGHTS MSG_CTRUNC on small buffer\n");
+    {
+        int sv[2] = {-1, -1};
+        long r = sys_socketpair(1, 1, 0, sv);
+        if (r != 0) { fut_test_fail(2471); goto t_scm_done; }
+
+        int f = fut_vfs_open("/scm_ctrunc.txt", 0x42, 0644);
+        if (f < 0) { sys_close(sv[0]); sys_close(sv[1]); fut_test_fail(2471); goto t_scm_done; }
+
+        char d[] = "t";
+        struct iovec si = { .iov_base = d, .iov_len = 1 };
+        char sc_b[TEST_CMSG_SPACE(sizeof(int))];
+        __builtin_memset(sc_b, 0, sizeof(sc_b));
+        struct test_cmsghdr *cm = (struct test_cmsghdr *)sc_b;
+        cm->cmsg_len = TEST_CMSG_LEN(sizeof(int));
+        cm->cmsg_level = TEST_SOL_SOCKET;
+        cm->cmsg_type  = TEST_SCM_RIGHTS;
+        *(int *)TEST_CMSG_DATA(cm) = f;
+        struct test_msghdr sm = { .msg_iov = &si, .msg_iovlen = 1,
+                                  .msg_control = sc_b, .msg_controllen = sizeof(sc_b) };
+        sys_sendmsg(sv[0], &sm, 0);
+
+        char rd[2] = {0};
+        char rc_b[4]; /* Too small for cmsghdr + int */
+        __builtin_memset(rc_b, 0, sizeof(rc_b));
+        struct iovec ri = { .iov_base = rd, .iov_len = sizeof(rd) };
+        struct test_msghdr rm = { .msg_iov = &ri, .msg_iovlen = 1,
+                                  .msg_control = rc_b, .msg_controllen = sizeof(rc_b) };
+        long rcvd = sys_recvmsg(sv[1], &rm, 0);
+
+        fut_vfs_close(f);
+        sys_close(sv[0]); sys_close(sv[1]);
+
+        if (rcvd > 0 && (rm.msg_flags & 0x08 /*MSG_CTRUNC*/)) {
+            fut_printf("[MISC-TEST] pass Test 2471: MSG_CTRUNC set on small buffer\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL 2471: rcvd=%ld flags=0x%x\n", rcvd, rm.msg_flags);
+            fut_test_fail(2471);
+        }
+    }
+
+t_scm_done:
+    (void)0;
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -73597,6 +74095,7 @@ void fut_misc_test_thread(void *arg) {
     test_waitid_p_all_wnohang(); /* Tests 2435-2440: waitid P_ALL WNOHANG process monitoring */
     test_rlimit_nofile_enforcement(); /* Tests 2441-2446: RLIMIT_NOFILE enforcement deep coverage */
     test_execve_shebang_comprehensive(); /* Tests 2455-2463: shebang #! comprehensive coverage */
+    test_scm_rights_comprehensive(); /* Tests 2464-2471: SCM_RIGHTS comprehensive FD passing */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

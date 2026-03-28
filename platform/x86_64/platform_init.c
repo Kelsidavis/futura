@@ -1057,6 +1057,12 @@ void __attribute__((weak)) fut_isr_handler(void *regs_ptr) {
     }
     fut_serial_puts("\n");
 
+    /* Show current task info for debugging */
+    {
+        extern void fut_crash_print_task(void);
+        fut_crash_print_task();
+    }
+
     /* For page faults (#14), display additional information */
     if (regs->vector == 14) {
         fut_serial_puts("Fault Address (CR2): 0x");

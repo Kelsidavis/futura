@@ -655,6 +655,19 @@ void fut_task_exit_current(int status) {
     task_cleanup_and_exit(fut_task_current(), status, 0);
 }
 
+/* Called from exception handler to print task info during kernel crash */
+void fut_crash_print_task(void) {
+    fut_task_t *t = fut_task_current();
+    if (!t) return;
+    fut_printf("Task: PID=%llu comm=%s",
+               (unsigned long long)t->pid,
+               t->comm[0] ? t->comm : "(unnamed)");
+    const char *ep = t->exe_path;
+    if (ep && ep[0])
+        fut_printf(" exe=%s", ep);
+    fut_printf("\n");
+}
+
 void fut_task_signal_exit(int signal) {
     fut_task_t *task = fut_task_current();
     if (task) {

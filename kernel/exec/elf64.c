@@ -1807,6 +1807,14 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
         }
     }
 
+    /* Resolve the file vnode for the ELF binary so PT_LOAD VMAs can be
+     * recorded as file-backed (shown with pathname in /proc/<pid>/maps). */
+    struct fut_vnode *elf_vnode = NULL;
+    {
+        struct fut_file *elf_file = fut_vfs_get_file(fd);
+        if (elf_file) elf_vnode = elf_file->vnode;
+    }
+
     EXEC_DEBUG("[EXEC] Mapping %u segments...\n", ehdr.e_phnum);
     for (uint16_t i = 0; i < ehdr.e_phnum; ++i) {
         /* Cache p_type locally to prevent potential compiler optimization issues
@@ -1831,6 +1839,21 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
         uint64_t seg_end = phdrs[i].p_vaddr + phdrs[i].p_memsz;
         if (seg_end > heap_base_candidate) {
             heap_base_candidate = (uintptr_t)seg_end;
+        }
+
+        /* Create a VMA for this PT_LOAD segment so /proc/<pid>/maps shows it
+         * with the correct permissions, file offset, and pathname. */
+        {
+            /* PROT_READ=1, PROT_WRITE=2, PROT_EXEC=4 */
+            int vprot = 0;
+            if (phdrs[i].p_flags & PF_R) vprot |= 1;
+            if (phdrs[i].p_flags & PF_W) vprot |= 2;
+            if (phdrs[i].p_flags & PF_X) vprot |= 4;
+            uint64_t vma_start = phdrs[i].p_vaddr & ~(PAGE_SIZE - 1);
+            uint64_t vma_end = (seg_end + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+            uint64_t foff = phdrs[i].p_offset & ~(PAGE_SIZE - 1);
+            fut_mm_add_vma_file(mm, vma_start, vma_end, vprot, 0,
+                                elf_vnode, foff);
         }
     }
 

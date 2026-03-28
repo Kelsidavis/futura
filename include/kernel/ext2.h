@@ -90,9 +90,9 @@ struct ext2_super_block {
     char     s_volume_name[16];
     char     s_last_mounted[64];
     uint32_t s_algo_bitmap;
-    /* Padding to 1024 bytes total (200 bytes of fields above) */
+    /* Padding to 1024 bytes total */
     uint8_t  _pad[1024 - 200];
-};
+} __attribute__((packed));
 
 /* Block group descriptor (32 bytes) */
 struct ext2_group_desc {

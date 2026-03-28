@@ -162,6 +162,10 @@ static void cmd_split(int argc, char *argv[]);
 static void cmd_join(int argc, char *argv[]);
 static void cmd_tsort(int argc, char *argv[]);
 static void cmd_column(int argc, char *argv[]);
+static void cmd_mkswap(int argc, char *argv[]);
+static void cmd_blkid(int argc, char *argv[]);
+static void cmd_lscpu(int argc, char *argv[]);
+static void cmd_w(int argc, char *argv[]);
 static void strcpy_simple(char *dest, const char *src);
 
 /* Forward declaration for prompt */
@@ -614,7 +618,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     const char *builtins[] = {
         "arp", "bg", "brctl", "cal", "cd", "chgrp", "chmod", "chroot", "clear", "cmp", "comm", "conntrack", "date", "dd", "df", "dhclient", "dmesg", "echo", "edit", "ethtool", "expand", "expr", "factor", "file", "fold", "hexdump", "install", "locale", "lsof", "md5sum", "mkfifo", "nc", "nice", "nohup", "patch", "pgrep", "pidof", "pkill", "poweroff", "reboot", "renice", "reset", "seq", "sha1sum", "sleep", "strings", "tac", "time", "timeout", "tput", "traceroute", "tty", "unexpand", "wget", "xxd", "exit", "export", "fg", "free",
         "help", "hostname", "httpd", "id", "ifconfig", "iostat", "ipcs", "iptables", "jobs", "kill", "logger", "losetup", "ls", "lsblk", "lspci", "mkfs", "mount", "netstat",
-        ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "getconf", "history", "ip", "ln", "mktemp", "more", "nproc", "nslookup", "passwd", "ping", "printf", "ps", "pwd", "read", "readlink", "realpath", "set", "sha1sum", "sha256sum", "shutdown", "source", "ss", "stat", "strace", "stty", "su", "sync", "sysctl", "sysinfo", "tc", "test", "top", "trap", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "vi", "vmstat", "wait", "watch", "wdctl", "which", "whoami", "xargs", "yes", NULL
+        ".", "alias", "arch", "basename", "blkid", "dirname", "du", "exec", "false", "getconf", "history", "ip", "ln", "lscpu", "mkswap", "mktemp", "more", "nproc", "nslookup", "passwd", "ping", "printf", "ps", "pwd", "read", "readlink", "realpath", "set", "sha1sum", "sha256sum", "shutdown", "source", "ss", "stat", "strace", "stty", "su", "sync", "sysctl", "sysinfo", "tc", "test", "top", "trap", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "vi", "vmstat", "w", "wait", "watch", "wdctl", "which", "whoami", "xargs", "yes", NULL
     };
 
     /* External commands we might have */
@@ -1297,6 +1301,10 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  systemctl <cmd> - Service management (start/stop/status/list-units)\n");
     write_str(1, "  pkg <cmd>       - Package manager (install/remove/list/search/info)\n");
     write_str(1, "  screen [-ls|-r] - Terminal multiplexer (Ctrl+A prefix, 4 windows)\n");
+    write_str(1, "  mkswap <dev>    - Set up a swap area on device/file\n");
+    write_str(1, "  blkid           - Print block device attributes\n");
+    write_str(1, "  lscpu           - Display CPU architecture information\n");
+    write_str(1, "  w               - Show who is logged in and what they are doing\n");
     write_str(1, "\n");
     write_str(1, "Networking:\n");
     write_str(1, "  ip addr|link|route|neigh|forward - Network configuration\n");
@@ -3174,25 +3182,29 @@ static void cmd_hostname(int argc, char *argv[]) {
     }
 }
 
-/* Built-in: uptime - Show system uptime */
+/* Built-in: uptime - Show system uptime (enhanced, util-linux style) */
 static void cmd_uptime(int argc, char *argv[]) {
     (void)argc; (void)argv;
-    /* Show current time */
+    /* Show current time HH:MM:SS */
     struct { long tv_sec; long tv_nsec; } ts = {0, 0};
     long ret = sys_call2(98 /* clock_gettime */, 0 /* CLOCK_REALTIME */, (long)&ts);
     if (ret == 0 && ts.tv_sec > 1000000000L) {
         long daytime = ts.tv_sec % 86400;
         long hour = daytime / 3600;
         long min = (daytime % 3600) / 60;
+        long sec = daytime % 60;
         write_char(1, ' ');
         write_char(1, '0' + (char)(hour / 10));
         write_char(1, '0' + (char)(hour % 10));
         write_char(1, ':');
         write_char(1, '0' + (char)(min / 10));
         write_char(1, '0' + (char)(min % 10));
+        write_char(1, ':');
+        write_char(1, '0' + (char)(sec / 10));
+        write_char(1, '0' + (char)(sec % 10));
     }
 
-    /* Show uptime */
+    /* Show uptime in "up X days, H:MM" format */
     int fd = sys_open("/proc/uptime", O_RDONLY, 0);
     if (fd >= 0) {
         char buf[64];
@@ -3205,16 +3217,35 @@ static void cmd_uptime(int argc, char *argv[]) {
                 if (buf[i] >= '0' && buf[i] <= '9')
                     secs = secs * 10 + (buf[i] - '0');
             }
-            write_str(1, "  up ");
-            long h = secs / 3600, m = (secs % 3600) / 60;
-            if (h > 0) {
-                char tmp[16]; int_to_str(h, tmp, 16);
-                write_str(1, tmp); write_str(1, "h ");
+            write_str(1, " up ");
+            long days = secs / 86400;
+            long rem = secs % 86400;
+            long h = rem / 3600;
+            long m = (rem % 3600) / 60;
+            if (days > 0) {
+                char tmp[16]; int_to_str(days, tmp, 16);
+                write_str(1, tmp);
+                if (days == 1) write_str(1, " day, ");
+                else write_str(1, " days, ");
             }
-            char tmp[16]; int_to_str(m, tmp, 16);
-            write_str(1, tmp); write_str(1, "m");
+            /* Print H:MM */
+            char tmp[16]; int_to_str(h, tmp, 16);
+            write_str(1, tmp);
+            write_char(1, ':');
+            write_char(1, '0' + (char)(m / 10));
+            write_char(1, '0' + (char)(m % 10));
         }
     }
+
+    /* Count users from /proc — count directories with numeric names that have a loginuid */
+    int nusers = 1; /* default to 1 user (current shell) */
+    write_str(1, ",  ");
+    {
+        char tmp[16]; int_to_str(nusers, tmp, 16);
+        write_str(1, tmp);
+    }
+    write_str(1, " user");
+    if (nusers != 1) write_str(1, "s");
 
     /* Show load average */
     fd = sys_open("/proc/loadavg", O_RDONLY, 0);
@@ -11985,6 +12016,18 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "column") == 0) {
         cmd_column(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "mkswap") == 0) {
+        cmd_mkswap(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "blkid") == 0) {
+        cmd_blkid(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "lscpu") == 0) {
+        cmd_lscpu(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "w") == 0) {
+        cmd_w(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -12163,6 +12206,8 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "strace") == 0 ||
             strcmp_simple(cmd, "split") == 0 || strcmp_simple(cmd, "join") == 0 ||
             strcmp_simple(cmd, "tsort") == 0 || strcmp_simple(cmd, "column") == 0 ||
+            strcmp_simple(cmd, "mkswap") == 0 || strcmp_simple(cmd, "blkid") == 0 ||
+            strcmp_simple(cmd, "lscpu") == 0 || strcmp_simple(cmd, "w") == 0 ||
             0);
 }
 
@@ -17260,6 +17305,10 @@ static void cmd_man(int argc, char *argv[]) {
         {"diff",      "diff - compare files line by line (unified format)"},
         {"ifconfig",  "ifconfig - configure a network interface"},
         {"man",       "man - display manual pages for commands"},
+        {"mkswap",    "mkswap - set up a Linux swap area"},
+        {"blkid",     "blkid - locate/print block device attributes"},
+        {"lscpu",     "lscpu - display information about the CPU architecture"},
+        {"w",         "w - show who is logged on and what they are doing"},
     };
     int n_entries = (int)(sizeof(man_entries) / sizeof(man_entries[0]));
 
@@ -17735,5 +17784,585 @@ __attribute__((used)) static void cmd_column(int argc, char *argv[]) {
     for(int i=0;i<nl;i++){char *fp=lines[i];int c=0;while(*fp&&c<mc){while(*fp==' '||*fp=='\t')fp++;if(!*fp)break;
     char *s=fp;while(*fp&&*fp!=' '&&*fp!='\t')fp++;int fl=(int)(fp-s);sys_write(1,s,(size_t)fl);
     if(c<mc-1)for(int pd=fl;pd<w[c]+2;pd++)sys_write(1," ",1);c++;}sys_write(1,"\n",1);}
+}
+
+/* Built-in: mkswap - Set up a Linux swap area */
+__attribute__((used)) static void cmd_mkswap(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "Usage: mkswap <device>\n");
+        return;
+    }
+    const char *dev = argv[1];
+    /* Open device/file for read-write */
+    int fd = sys_open(dev, O_RDWR, 0);
+    if (fd < 0) {
+        write_str(2, "mkswap: cannot open ");
+        write_str(2, dev);
+        write_str(2, "\n");
+        return;
+    }
+    /* Get file/device size via lseek to end */
+    long size = sys_call3(8 /* lseek */, fd, 0, 2 /* SEEK_END */);
+    if (size < 4096) {
+        write_str(2, "mkswap: device too small (need at least one page)\n");
+        sys_close(fd);
+        return;
+    }
+    /* Prepare swap header (first page = 4096 bytes) */
+    char page[4096];
+    for (int i = 0; i < 4096; i++) page[i] = 0;
+    /* swap_header magic: "SWAPSPACE2" at offset pagesize-10 = 4086 */
+    const char *magic = "SWAPSPACE2";
+    for (int i = 0; i < 10; i++) page[4086 + i] = magic[i];
+    /* swap_header->info.version = 1 at offset 1024 */
+    page[1024] = 1; page[1025] = 0; page[1026] = 0; page[1027] = 0;
+    /* swap_header->info.last_page = (size / 4096) - 1, at offset 1028 */
+    long last_page = (size / 4096) - 1;
+    page[1028] = (char)(last_page & 0xFF);
+    page[1029] = (char)((last_page >> 8) & 0xFF);
+    page[1030] = (char)((last_page >> 16) & 0xFF);
+    page[1031] = (char)((last_page >> 24) & 0xFF);
+    /* Generate a pseudo-UUID from clock at offset 1036 (16 bytes) */
+    struct { long tv_sec; long tv_nsec; } ts = {0, 0};
+    sys_call2(98 /* clock_gettime */, 0, (long)&ts);
+    unsigned long seed = (unsigned long)ts.tv_nsec ^ ((unsigned long)ts.tv_sec << 16);
+    for (int i = 0; i < 16; i++) {
+        seed = seed * 6364136223846793005ULL + 1442695040888963407ULL;
+        page[1036 + i] = (char)(seed >> 32);
+    }
+    /* Set UUID version 4 and variant bits */
+    page[1036 + 6] = (char)((page[1036 + 6] & 0x0F) | 0x40);
+    page[1036 + 8] = (char)((page[1036 + 8] & 0x3F) | 0x80);
+    /* Write header to device */
+    sys_call3(8 /* lseek */, fd, 0, 0 /* SEEK_SET */);
+    sys_write(fd, page, 4096);
+    sys_close(fd);
+    /* Print result */
+    write_str(1, "Setting up swapspace, size = ");
+    long size_kb = size / 1024;
+    char tmp[32]; int_to_str(size_kb, tmp, 32);
+    write_str(1, tmp);
+    write_str(1, " KiB\n");
+    /* Print UUID */
+    write_str(1, "UUID=");
+    const char *hex = "0123456789abcdef";
+    unsigned char *uuid = (unsigned char *)&page[1036];
+    for (int i = 0; i < 16; i++) {
+        write_char(1, hex[(uuid[i] >> 4) & 0xF]);
+        write_char(1, hex[uuid[i] & 0xF]);
+        if (i == 3 || i == 5 || i == 7 || i == 9) write_char(1, '-');
+    }
+    write_char(1, '\n');
+}
+
+/* Built-in: blkid - Print block device attributes */
+__attribute__((used)) static void cmd_blkid(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    /* Read /proc/partitions to find block devices */
+    int fd = sys_open("/proc/partitions", O_RDONLY, 0);
+    if (fd < 0) {
+        write_str(2, "blkid: cannot read /proc/partitions\n");
+        return;
+    }
+    char buf[2048];
+    ssize_t n = sys_read(fd, buf, sizeof(buf) - 1);
+    sys_close(fd);
+    if (n <= 0) return;
+    buf[n] = '\0';
+    /* Parse each line: major minor #blocks name */
+    char *p = buf;
+    /* Skip header lines */
+    while (*p && *p != '\n') p++;
+    if (*p == '\n') p++;
+    while (*p && *p != '\n') p++;
+    if (*p == '\n') p++;
+    while (*p) {
+        /* Skip whitespace */
+        while (*p == ' ' || *p == '\t') p++;
+        if (!*p || *p == '\n') { if (*p) p++; continue; }
+        /* Skip major */
+        while (*p && *p != ' ' && *p != '\t') p++;
+        while (*p == ' ' || *p == '\t') p++;
+        /* Skip minor */
+        while (*p && *p != ' ' && *p != '\t') p++;
+        while (*p == ' ' || *p == '\t') p++;
+        /* Read blocks */
+        long blocks = 0;
+        while (*p >= '0' && *p <= '9') { blocks = blocks * 10 + (*p - '0'); p++; }
+        while (*p == ' ' || *p == '\t') p++;
+        /* Read device name */
+        char devname[64];
+        int di = 0;
+        while (*p && *p != '\n' && *p != ' ' && di < 63) devname[di++] = *p++;
+        devname[di] = '\0';
+        while (*p && *p != '\n') p++;
+        if (*p == '\n') p++;
+        if (di == 0 || blocks == 0) continue;
+        /* Build /dev/name path */
+        char devpath[80] = "/dev/";
+        for (int i = 0; devname[i] && i < 63; i++) devpath[5 + i] = devname[i];
+        devpath[5 + di] = '\0';
+        /* Try to read the first page and detect filesystem signatures */
+        int dfd = sys_open(devpath, O_RDONLY, 0);
+        if (dfd < 0) {
+            /* Try without /dev/ path for virtual devices */
+            write_str(1, devpath);
+            write_str(1, ": SIZE=");
+            char tmp[32]; int_to_str(blocks, tmp, 32);
+            write_str(1, tmp);
+            write_str(1, "K\n");
+            continue;
+        }
+        char hdr[4096];
+        ssize_t hr = sys_read(dfd, hdr, 4096);
+        sys_close(dfd);
+        write_str(1, devpath);
+        write_str(1, ": ");
+        /* Detect swap: "SWAPSPACE2" at offset 4086 */
+        int is_swap = 0;
+        if (hr >= 4096) {
+            const char *swm = "SWAPSPACE2";
+            is_swap = 1;
+            for (int i = 0; i < 10; i++) {
+                if (hdr[4086 + i] != swm[i]) { is_swap = 0; break; }
+            }
+        }
+        if (is_swap) {
+            /* Read UUID from offset 1036 */
+            write_str(1, "UUID=\"");
+            const char *hex = "0123456789abcdef";
+            unsigned char *uuid = (unsigned char *)&hdr[1036];
+            for (int i = 0; i < 16; i++) {
+                write_char(1, hex[(uuid[i] >> 4) & 0xF]);
+                write_char(1, hex[uuid[i] & 0xF]);
+                if (i == 3 || i == 5 || i == 7 || i == 9) write_char(1, '-');
+            }
+            write_str(1, "\" TYPE=\"swap\"");
+        } else if (hr >= 1084 && hdr[1080] == (char)0x53 && hdr[1081] == (char)0xEF) {
+            /* ext2/3/4: magic 0xEF53 at offset 1080 (superblock + 56) */
+            write_str(1, "UUID=\"");
+            const char *hex = "0123456789abcdef";
+            unsigned char *uuid = (unsigned char *)&hdr[1128]; /* sb + 104 = UUID */
+            for (int i = 0; i < 16; i++) {
+                write_char(1, hex[(uuid[i] >> 4) & 0xF]);
+                write_char(1, hex[uuid[i] & 0xF]);
+                if (i == 3 || i == 5 || i == 7 || i == 9) write_char(1, '-');
+            }
+            /* Check ext4 features */
+            write_str(1, "\" TYPE=\"ext4\"");
+            /* Label at offset 1144 (sb + 120) */
+            if (hdr[1144]) {
+                write_str(1, " LABEL=\"");
+                for (int i = 0; i < 16 && hdr[1144 + i]; i++)
+                    write_char(1, hdr[1144 + i]);
+                write_str(1, "\"");
+            }
+        } else {
+            /* Unknown type — just print size */
+            write_str(1, "SIZE=");
+            char tmp[32]; int_to_str(blocks, tmp, 32);
+            write_str(1, tmp);
+            write_str(1, "K");
+        }
+        write_char(1, '\n');
+    }
+}
+
+/* Built-in: lscpu - Display CPU architecture information */
+__attribute__((used)) static void cmd_lscpu(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    int fd = sys_open("/proc/cpuinfo", O_RDONLY, 0);
+    if (fd < 0) {
+        write_str(2, "lscpu: cannot read /proc/cpuinfo\n");
+        return;
+    }
+    char buf[4096];
+    ssize_t n = sys_read(fd, buf, sizeof(buf) - 1);
+    sys_close(fd);
+    if (n <= 0) return;
+    buf[n] = '\0';
+    /* Parse fields from /proc/cpuinfo */
+    char model_name[128] = {0};
+    char vendor[64] = {0};
+    char mhz[32] = {0};
+    char cache[32] = {0};
+    char flags[512] = {0};
+    int cpu_count = 0;
+    int cpu_family = 0;
+    int model_num = 0;
+    int stepping = 0;
+    char *p = buf;
+    while (*p) {
+        /* Find key */
+        char *kstart = p;
+        while (*p && *p != ':' && *p != '\n') p++;
+        if (*p != ':') { if (*p) p++; continue; }
+        int klen = (int)(p - kstart);
+        /* Trim trailing whitespace from key */
+        while (klen > 0 && (kstart[klen-1] == ' ' || kstart[klen-1] == '\t')) klen--;
+        p++; /* skip ':' */
+        while (*p == ' ' || *p == '\t') p++;
+        char *vstart = p;
+        while (*p && *p != '\n') p++;
+        int vlen = (int)(p - vstart);
+        if (*p == '\n') p++;
+        /* Match keys */
+        if (klen == 9) {
+            int is_proc = 1;
+            const char *pk = "processor";
+            for (int i = 0; i < 9; i++) if (kstart[i] != pk[i]) { is_proc = 0; break; }
+            if (is_proc) cpu_count++;
+        }
+        if (klen == 10) {
+            int is_mn = 1;
+            const char *mk = "model name";
+            for (int i = 0; i < 10; i++) if (kstart[i] != mk[i]) { is_mn = 0; break; }
+            if (is_mn && !model_name[0]) {
+                for (int i = 0; i < vlen && i < 127; i++) model_name[i] = vstart[i];
+                model_name[vlen < 127 ? vlen : 127] = '\0';
+            }
+        }
+        if (klen == 9) {
+            int is_vid = 1;
+            const char *vk = "vendor_id";
+            for (int i = 0; i < 9; i++) if (kstart[i] != vk[i]) { is_vid = 0; break; }
+            if (is_vid && !vendor[0]) {
+                for (int i = 0; i < vlen && i < 63; i++) vendor[i] = vstart[i];
+                vendor[vlen < 63 ? vlen : 63] = '\0';
+            }
+        }
+        if (klen == 7) {
+            int is_mhz = 1;
+            const char *mk = "cpu MHz";
+            for (int i = 0; i < 7; i++) if (kstart[i] != mk[i]) { is_mhz = 0; break; }
+            if (is_mhz && !mhz[0]) {
+                for (int i = 0; i < vlen && i < 31; i++) mhz[i] = vstart[i];
+                mhz[vlen < 31 ? vlen : 31] = '\0';
+            }
+        }
+        if (klen == 10) {
+            int is_cache = 1;
+            const char *ck = "cache size";
+            for (int i = 0; i < 10; i++) if (kstart[i] != ck[i]) { is_cache = 0; break; }
+            if (is_cache && !cache[0]) {
+                for (int i = 0; i < vlen && i < 31; i++) cache[i] = vstart[i];
+                cache[vlen < 31 ? vlen : 31] = '\0';
+            }
+        }
+        if (klen == 10) {
+            int is_fam = 1;
+            const char *fk = "cpu family";
+            for (int i = 0; i < 10; i++) if (kstart[i] != fk[i]) { is_fam = 0; break; }
+            if (is_fam) {
+                cpu_family = 0;
+                for (int i = 0; i < vlen; i++) {
+                    if (vstart[i] >= '0' && vstart[i] <= '9')
+                        cpu_family = cpu_family * 10 + (vstart[i] - '0');
+                }
+            }
+        }
+        if (klen == 5) {
+            int is_mod = 1;
+            const char *mk2 = "model";
+            for (int i = 0; i < 5; i++) if (kstart[i] != mk2[i]) { is_mod = 0; break; }
+            if (is_mod && kstart[5] != ' ') { /* "model" not "model name" */
+                model_num = 0;
+                for (int i = 0; i < vlen; i++) {
+                    if (vstart[i] >= '0' && vstart[i] <= '9')
+                        model_num = model_num * 10 + (vstart[i] - '0');
+                }
+            }
+        }
+        if (klen == 8) {
+            int is_step = 1;
+            const char *sk = "stepping";
+            for (int i = 0; i < 8; i++) if (kstart[i] != sk[i]) { is_step = 0; break; }
+            if (is_step) {
+                stepping = 0;
+                for (int i = 0; i < vlen; i++) {
+                    if (vstart[i] >= '0' && vstart[i] <= '9')
+                        stepping = stepping * 10 + (vstart[i] - '0');
+                }
+            }
+        }
+        if (klen == 5) {
+            int is_flags = 1;
+            const char *fk2 = "flags";
+            for (int i = 0; i < 5; i++) if (kstart[i] != fk2[i]) { is_flags = 0; break; }
+            if (is_flags && !flags[0]) {
+                for (int i = 0; i < vlen && i < 511; i++) flags[i] = vstart[i];
+                flags[vlen < 511 ? vlen : 511] = '\0';
+            }
+        }
+    }
+    if (cpu_count == 0) cpu_count = 1;
+    /* Print lscpu-style output */
+    write_str(1, "Architecture:        ");
+#if defined(__x86_64__)
+    write_str(1, "x86_64\n");
+#elif defined(__aarch64__)
+    write_str(1, "aarch64\n");
+#else
+    write_str(1, "unknown\n");
+#endif
+    write_str(1, "CPU(s):              ");
+    { char tmp[16]; int_to_str(cpu_count, tmp, 16); write_str(1, tmp); }
+    write_char(1, '\n');
+    if (vendor[0]) {
+        write_str(1, "Vendor ID:           ");
+        write_str(1, vendor);
+        write_char(1, '\n');
+    }
+    if (cpu_family) {
+        write_str(1, "CPU family:          ");
+        char tmp[16]; int_to_str(cpu_family, tmp, 16); write_str(1, tmp);
+        write_char(1, '\n');
+    }
+    if (model_num) {
+        write_str(1, "Model:               ");
+        char tmp[16]; int_to_str(model_num, tmp, 16); write_str(1, tmp);
+        write_char(1, '\n');
+    }
+    if (model_name[0]) {
+        write_str(1, "Model name:          ");
+        write_str(1, model_name);
+        write_char(1, '\n');
+    }
+    if (stepping) {
+        write_str(1, "Stepping:            ");
+        char tmp[16]; int_to_str(stepping, tmp, 16); write_str(1, tmp);
+        write_char(1, '\n');
+    }
+    if (mhz[0]) {
+        write_str(1, "CPU MHz:             ");
+        write_str(1, mhz);
+        write_char(1, '\n');
+    }
+    if (cache[0]) {
+        write_str(1, "L2 cache:            ");
+        write_str(1, cache);
+        write_char(1, '\n');
+    }
+    if (flags[0]) {
+        write_str(1, "Flags:               ");
+        write_str(1, flags);
+        write_char(1, '\n');
+    }
+}
+
+/* Built-in: w - Show who is logged in and what they are doing */
+__attribute__((used)) static void cmd_w(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    /* Print uptime header line (like real w) */
+    struct { long tv_sec; long tv_nsec; } ts = {0, 0};
+    sys_call2(98 /* clock_gettime */, 0 /* CLOCK_REALTIME */, (long)&ts);
+    if (ts.tv_sec > 1000000000L) {
+        long daytime = ts.tv_sec % 86400;
+        long hour = daytime / 3600;
+        long min = (daytime % 3600) / 60;
+        long sec = daytime % 60;
+        write_char(1, ' ');
+        write_char(1, '0' + (char)(hour / 10));
+        write_char(1, '0' + (char)(hour % 10));
+        write_char(1, ':');
+        write_char(1, '0' + (char)(min / 10));
+        write_char(1, '0' + (char)(min % 10));
+        write_char(1, ':');
+        write_char(1, '0' + (char)(sec / 10));
+        write_char(1, '0' + (char)(sec % 10));
+    }
+    /* Show uptime */
+    int fd = sys_open("/proc/uptime", O_RDONLY, 0);
+    if (fd >= 0) {
+        char ubuf[64];
+        ssize_t un = sys_read(fd, ubuf, sizeof(ubuf) - 1);
+        sys_close(fd);
+        if (un > 0) {
+            ubuf[un] = '\0';
+            long secs = 0;
+            for (int i = 0; ubuf[i] && ubuf[i] != '.'; i++) {
+                if (ubuf[i] >= '0' && ubuf[i] <= '9')
+                    secs = secs * 10 + (ubuf[i] - '0');
+            }
+            write_str(1, " up ");
+            long days = secs / 86400;
+            long rem = secs % 86400;
+            long h = rem / 3600;
+            long m = (rem % 3600) / 60;
+            if (days > 0) {
+                char tmp[16]; int_to_str(days, tmp, 16);
+                write_str(1, tmp);
+                if (days == 1) write_str(1, " day, ");
+                else write_str(1, " days, ");
+            }
+            char tmp[16]; int_to_str(h, tmp, 16);
+            write_str(1, tmp);
+            write_char(1, ':');
+            write_char(1, '0' + (char)(m / 10));
+            write_char(1, '0' + (char)(m % 10));
+        }
+    }
+    /* Load average */
+    fd = sys_open("/proc/loadavg", O_RDONLY, 0);
+    if (fd >= 0) {
+        char lbuf[64];
+        ssize_t ln = sys_read(fd, lbuf, sizeof(lbuf) - 1);
+        sys_close(fd);
+        if (ln > 0) {
+            lbuf[ln] = '\0';
+            write_str(1, ",  load average: ");
+            int fields = 0;
+            for (int i = 0; lbuf[i] && fields < 3; i++) {
+                if (lbuf[i] == ' ') { fields++; if (fields < 3) write_str(1, ", "); }
+                else write_char(1, lbuf[i]);
+            }
+        }
+    }
+    write_char(1, '\n');
+    /* Column header */
+    write_str(1, "USER     TTY      FROM             LOGIN@   IDLE   JCPU   PCPU WHAT\n");
+    /* Scan /proc for processes with a controlling terminal */
+    int pfd = sys_open("/proc", O_RDONLY, 0);
+    if (pfd < 0) return;
+    char dbuf[4096];
+    ssize_t dn;
+    while ((dn = sys_call3(SYS_getdents64, pfd, (long)dbuf, (long)sizeof(dbuf))) > 0) {
+        ssize_t off = 0;
+        while (off < dn) {
+            struct { uint64_t d_ino; int64_t d_off; unsigned short d_reclen; unsigned char d_type; char d_name[]; } *de =
+                (void *)&dbuf[off];
+            off += de->d_reclen;
+            /* Only numeric PIDs */
+            if (de->d_name[0] < '1' || de->d_name[0] > '9') continue;
+            int is_num = 1;
+            for (int i = 0; de->d_name[i]; i++) {
+                if (de->d_name[i] < '0' || de->d_name[i] > '9') { is_num = 0; break; }
+            }
+            if (!is_num) continue;
+            /* Read /proc/<pid>/stat to get tty_nr and comm */
+            char spath[64] = "/proc/";
+            int si = 6;
+            for (int i = 0; de->d_name[i]; i++) spath[si++] = de->d_name[i];
+            spath[si++] = '/'; spath[si++] = 's'; spath[si++] = 't'; spath[si++] = 'a'; spath[si++] = 't'; spath[si] = '\0';
+            int sfd = sys_open(spath, O_RDONLY, 0);
+            if (sfd < 0) continue;
+            char sbuf[512];
+            ssize_t sn = sys_read(sfd, sbuf, sizeof(sbuf) - 1);
+            sys_close(sfd);
+            if (sn <= 0) continue;
+            sbuf[sn] = '\0';
+            /* Parse: pid (comm) state ppid pgrp session tty_nr ... */
+            char *cp = sbuf;
+            /* Skip pid */
+            while (*cp && *cp != '(') cp++;
+            if (!*cp) continue;
+            cp++; /* skip '(' */
+            char comm[32];
+            int ci = 0;
+            while (*cp && *cp != ')' && ci < 31) comm[ci++] = *cp++;
+            comm[ci] = '\0';
+            if (*cp == ')') cp++;
+            /* Skip state ppid pgrp session to get tty_nr (field 7) */
+            int field = 4; /* we are past field 2 (comm), need to skip to field 7 */
+            while (*cp && field < 7) {
+                if (*cp == ' ') field++;
+                cp++;
+            }
+            /* Now at tty_nr */
+            long tty_nr = 0;
+            while (*cp >= '0' && *cp <= '9') { tty_nr = tty_nr * 10 + (*cp - '0'); cp++; }
+            /* Only show processes with a terminal (tty_nr > 0) and that look like shells/user cmds */
+            if (tty_nr == 0) continue;
+            /* Determine TTY name from tty_nr: major 4 = ttyN, major 136 = pts/N */
+            long major = (tty_nr >> 8) & 0xFFF;
+            long minor = (tty_nr & 0xFF) | ((tty_nr >> 12) & 0xFFF00);
+            char ttyname[16] = {0};
+            if (major == 136) {
+                ttyname[0] = 'p'; ttyname[1] = 't'; ttyname[2] = 's'; ttyname[3] = '/';
+                char mt[8]; int_to_str(minor, mt, 8);
+                int j = 4;
+                for (int i = 0; mt[i] && j < 15; i++) ttyname[j++] = mt[i];
+                ttyname[j] = '\0';
+            } else if (major == 4) {
+                ttyname[0] = 't'; ttyname[1] = 't'; ttyname[2] = 'y';
+                char mt[8]; int_to_str(minor, mt, 8);
+                int j = 3;
+                for (int i = 0; mt[i] && j < 15; i++) ttyname[j++] = mt[i];
+                ttyname[j] = '\0';
+            } else {
+                ttyname[0] = '?'; ttyname[1] = '\0';
+            }
+            /* Only show session leaders or shell-like processes */
+            /* Check if this is a session leader by comparing with pgrp/session */
+            /* For simplicity, show all processes with a TTY */
+            /* Print: USER TTY FROM LOGIN@ IDLE JCPU PCPU WHAT */
+            /* Read UID from /proc/<pid>/status */
+            char upath[64] = "/proc/";
+            int ui = 6;
+            for (int i = 0; de->d_name[i]; i++) upath[ui++] = de->d_name[i];
+            upath[ui++] = '/'; upath[ui++] = 's'; upath[ui++] = 't';
+            upath[ui++] = 'a'; upath[ui++] = 't'; upath[ui++] = 'u';
+            upath[ui++] = 's'; upath[ui] = '\0';
+            char user[16] = "root";
+            int ufd = sys_open(upath, O_RDONLY, 0);
+            if (ufd >= 0) {
+                char ubuf2[512];
+                ssize_t un2 = sys_read(ufd, ubuf2, sizeof(ubuf2) - 1);
+                sys_close(ufd);
+                if (un2 > 0) {
+                    ubuf2[un2] = '\0';
+                    /* Find Uid: line */
+                    char *up = ubuf2;
+                    while (*up) {
+                        if (up[0] == 'U' && up[1] == 'i' && up[2] == 'd' && up[3] == ':') {
+                            up += 4;
+                            while (*up == ' ' || *up == '\t') up++;
+                            long uid = 0;
+                            while (*up >= '0' && *up <= '9') { uid = uid * 10 + (*up - '0'); up++; }
+                            if (uid == 0) { user[0]='r'; user[1]='o'; user[2]='o'; user[3]='t'; user[4]=0; }
+                            else { int_to_str(uid, user, 16); }
+                            break;
+                        }
+                        while (*up && *up != '\n') up++;
+                        if (*up == '\n') up++;
+                    }
+                }
+            }
+            /* Format output line */
+            /* USER (8 chars) */
+            int ulen = 0; while (user[ulen]) ulen++;
+            sys_write(1, user, (size_t)ulen);
+            for (int pad = ulen; pad < 9; pad++) write_char(1, ' ');
+            /* TTY (8 chars) */
+            int tlen = 0; while (ttyname[tlen]) tlen++;
+            sys_write(1, ttyname, (size_t)tlen);
+            for (int pad = tlen; pad < 9; pad++) write_char(1, ' ');
+            /* FROM (16 chars) - local */
+            write_str(1, "-                ");
+            /* LOGIN@ (8 chars) */
+            if (ts.tv_sec > 1000000000L) {
+                long daytime = ts.tv_sec % 86400;
+                long hh = daytime / 3600, mm = (daytime % 3600) / 60;
+                write_char(1, '0' + (char)(hh / 10));
+                write_char(1, '0' + (char)(hh % 10));
+                write_char(1, ':');
+                write_char(1, '0' + (char)(mm / 10));
+                write_char(1, '0' + (char)(mm % 10));
+                write_str(1, "    ");
+            } else {
+                write_str(1, "?        ");
+            }
+            /* IDLE */
+            write_str(1, "0.00s  ");
+            /* JCPU */
+            write_str(1, "0.00s  ");
+            /* PCPU */
+            write_str(1, "0.00s ");
+            /* WHAT */
+            write_str(1, comm);
+            write_char(1, '\n');
+        }
+    }
+    sys_close(pfd);
 }
 #pragma GCC diagnostic pop

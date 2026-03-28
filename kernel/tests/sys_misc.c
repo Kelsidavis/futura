@@ -73705,6 +73705,335 @@ __attribute__((noinline)) static void test_sync_fsync_fdatasync(void) {
     }
 }
 
+/* ============================================================
+ *   Tests 2680-2687: truncate/ftruncate POSIX semantics
+ *
+ *   2680: truncate extend fills new area with zeros
+ *   2681: truncate shrink discards data beyond new size
+ *   2682: ftruncate extend fills new area with zeros
+ *   2683: ftruncate shrink preserves data before new size
+ *   2684: ftruncate on O_RDONLY fd returns EBADF
+ *   2685: truncate clears setuid bit (unless CAP_FSETID)
+ *   2686: ftruncate on directory fd returns EISDIR
+ *   2687: truncate on directory returns EISDIR
+ * ============================================================ */
+__attribute__((noinline)) static void test_truncate_posix_semantics(void) {
+    extern long sys_truncate(const char *path, uint64_t length);
+    extern long sys_ftruncate(int fd, uint64_t length);
+    extern long sys_fstat(int fd, struct fut_stat *statbuf);
+    extern long sys_lseek(int fd, int64_t offset, int whence);
+    extern long sys_chmod(const char *path, uint32_t mode);
+
+    fut_printf("[MISC-TEST] Tests 2680-2687: truncate/ftruncate POSIX semantics\n");
+
+    /* ---- Test 2680: truncate extend fills new area with zeros ---- */
+    fut_printf("[MISC-TEST] Test 2680: truncate extend zero-fills\n");
+    {
+        const char *path = "/trunc_extend_test.txt";
+        fut_vfs_unlink(path);
+        int fd = fut_vfs_open(path, O_CREAT | O_RDWR, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] FAIL 2680: create failed %d\n", fd);
+            fut_test_fail(2680);
+        } else {
+            /* Write 5 bytes */
+            fut_vfs_write(fd, "HELLO", 5);
+            fut_vfs_close(fd);
+
+            /* Extend to 10 bytes via truncate (path-based) */
+            long ret = sys_truncate(path, 10);
+            if (ret != 0) {
+                fut_printf("[MISC-TEST] FAIL 2680: truncate(10) returned %ld\n", ret);
+                fut_test_fail(2680);
+            } else {
+                fd = fut_vfs_open(path, O_RDONLY, 0);
+                unsigned char buf[10]; __builtin_memset(buf, 0xFF, 10);
+                ssize_t nr = fut_vfs_read(fd, buf, 10);
+                fut_vfs_close(fd);
+
+                int ok = (nr == 10);
+                /* First 5 bytes should be "HELLO" */
+                if (ok) ok = (buf[0] == 'H' && buf[4] == 'O');
+                /* Bytes 5-9 should be zero-filled */
+                if (ok) {
+                    for (int i = 5; i < 10; i++) {
+                        if (buf[i] != 0) { ok = 0; break; }
+                    }
+                }
+                if (ok) {
+                    fut_printf("[MISC-TEST] PASS 2680: extend zero-filled bytes 5-9\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] FAIL 2680: nr=%zd buf[5..9]=%02x%02x%02x%02x%02x\n",
+                               nr, (unsigned char)buf[5], (unsigned char)buf[6],
+                               (unsigned char)buf[7], (unsigned char)buf[8],
+                               (unsigned char)buf[9]);
+                    fut_test_fail(2680);
+                }
+            }
+            fut_vfs_unlink(path);
+        }
+    }
+
+    /* ---- Test 2681: truncate shrink discards data beyond new size ---- */
+    fut_printf("[MISC-TEST] Test 2681: truncate shrink\n");
+    {
+        const char *path = "/trunc_shrink_test.txt";
+        fut_vfs_unlink(path);
+        int fd = fut_vfs_open(path, O_CREAT | O_RDWR, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] FAIL 2681: create failed %d\n", fd);
+            fut_test_fail(2681);
+        } else {
+            fut_vfs_write(fd, "0123456789", 10);
+            fut_vfs_close(fd);
+
+            /* Shrink to 4 bytes */
+            long ret = sys_truncate(path, 4);
+            if (ret != 0) {
+                fut_printf("[MISC-TEST] FAIL 2681: truncate(4) returned %ld\n", ret);
+                fut_test_fail(2681);
+            } else {
+                /* Verify size via stat */
+                fd = fut_vfs_open(path, O_RDONLY, 0);
+                struct fut_stat st = {0};
+                sys_fstat(fd, &st);
+                char buf[16] = {0};
+                ssize_t nr = fut_vfs_read(fd, buf, sizeof(buf));
+                fut_vfs_close(fd);
+
+                if (st.st_size == 4 && nr == 4 && buf[0] == '0' && buf[3] == '3') {
+                    fut_printf("[MISC-TEST] PASS 2681: shrunk to 4, data='%.4s'\n", buf);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] FAIL 2681: size=%llu nr=%zd\n",
+                               (unsigned long long)st.st_size, nr);
+                    fut_test_fail(2681);
+                }
+            }
+            fut_vfs_unlink(path);
+        }
+    }
+
+    /* ---- Test 2682: ftruncate extend fills new area with zeros ---- */
+    fut_printf("[MISC-TEST] Test 2682: ftruncate extend zero-fills\n");
+    {
+        const char *path = "/ftrunc_extend_test.txt";
+        fut_vfs_unlink(path);
+        int fd = fut_vfs_open(path, O_CREAT | O_RDWR, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] FAIL 2682: create failed %d\n", fd);
+            fut_test_fail(2682);
+        } else {
+            fut_vfs_write(fd, "ABC", 3);
+
+            /* Extend to 8 bytes via ftruncate */
+            long ret = sys_ftruncate(fd, 8);
+            if (ret != 0) {
+                fut_printf("[MISC-TEST] FAIL 2682: ftruncate(8) returned %ld\n", ret);
+                fut_vfs_close(fd);
+                fut_test_fail(2682);
+            } else {
+                /* Seek back and read all 8 bytes */
+                sys_lseek(fd, 0, 0 /* SEEK_SET */);
+                unsigned char buf[8]; __builtin_memset(buf, 0xFF, 8);
+                ssize_t nr = fut_vfs_read(fd, buf, 8);
+                fut_vfs_close(fd);
+
+                int ok = (nr == 8);
+                if (ok) ok = (buf[0] == 'A' && buf[1] == 'B' && buf[2] == 'C');
+                if (ok) {
+                    for (int i = 3; i < 8; i++) {
+                        if (buf[i] != 0) { ok = 0; break; }
+                    }
+                }
+                if (ok) {
+                    fut_printf("[MISC-TEST] PASS 2682: ftruncate extend zero-filled bytes 3-7\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] FAIL 2682: nr=%zd buf[3..7]=%02x%02x%02x%02x%02x\n",
+                               nr, (unsigned char)buf[3], (unsigned char)buf[4],
+                               (unsigned char)buf[5], (unsigned char)buf[6],
+                               (unsigned char)buf[7]);
+                    fut_test_fail(2682);
+                }
+            }
+            fut_vfs_unlink(path);
+        }
+    }
+
+    /* ---- Test 2683: ftruncate shrink preserves data before new size ---- */
+    fut_printf("[MISC-TEST] Test 2683: ftruncate shrink preserves prefix\n");
+    {
+        const char *path = "/ftrunc_shrink_test.txt";
+        fut_vfs_unlink(path);
+        int fd = fut_vfs_open(path, O_CREAT | O_RDWR, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] FAIL 2683: create failed %d\n", fd);
+            fut_test_fail(2683);
+        } else {
+            fut_vfs_write(fd, "ABCDEFGHIJ", 10);
+
+            /* Shrink to 6 bytes */
+            long ret = sys_ftruncate(fd, 6);
+            if (ret != 0) {
+                fut_printf("[MISC-TEST] FAIL 2683: ftruncate(6) returned %ld\n", ret);
+                fut_vfs_close(fd);
+                fut_test_fail(2683);
+            } else {
+                struct fut_stat st = {0};
+                sys_fstat(fd, &st);
+                sys_lseek(fd, 0, 0 /* SEEK_SET */);
+                char buf[16] = {0};
+                ssize_t nr = fut_vfs_read(fd, buf, sizeof(buf));
+                fut_vfs_close(fd);
+
+                if (st.st_size == 6 && nr == 6 &&
+                    buf[0] == 'A' && buf[5] == 'F') {
+                    fut_printf("[MISC-TEST] PASS 2683: shrunk to 6, data='%.6s'\n", buf);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] FAIL 2683: size=%llu nr=%zd\n",
+                               (unsigned long long)st.st_size, nr);
+                    fut_test_fail(2683);
+                }
+            }
+            fut_vfs_unlink(path);
+        }
+    }
+
+    /* ---- Test 2684: ftruncate on O_RDONLY fd returns EBADF ---- */
+    fut_printf("[MISC-TEST] Test 2684: ftruncate O_RDONLY -> EBADF\n");
+    {
+        const char *path = "/ftrunc_rdonly_test.txt";
+        fut_vfs_unlink(path);
+        /* Create file first */
+        int wfd = fut_vfs_open(path, O_CREAT | O_WRONLY, 0644);
+        if (wfd >= 0) {
+            fut_vfs_write(wfd, "data", 4);
+            fut_vfs_close(wfd);
+        }
+        int fd = fut_vfs_open(path, O_RDONLY, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] FAIL 2684: open rdonly failed %d\n", fd);
+            fut_test_fail(2684);
+        } else {
+            long ret = sys_ftruncate(fd, 0);
+            fut_vfs_close(fd);
+
+            if (ret == -EBADF) {
+                fut_printf("[MISC-TEST] PASS 2684: ftruncate(O_RDONLY) returned EBADF\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL 2684: expected -EBADF, got %ld\n", ret);
+                fut_test_fail(2684);
+            }
+        }
+        fut_vfs_unlink(path);
+    }
+
+    /* ---- Test 2685: truncate clears setuid bit ---- */
+    fut_printf("[MISC-TEST] Test 2685: truncate clears setuid\n");
+    {
+        const char *path = "/trunc_suid_test.txt";
+        fut_vfs_unlink(path);
+        int fd = fut_vfs_open(path, O_CREAT | O_RDWR, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] FAIL 2685: create failed %d\n", fd);
+            fut_test_fail(2685);
+        } else {
+            fut_vfs_write(fd, "suid test data", 14);
+            fut_vfs_close(fd);
+
+            /* Set the setuid bit */
+            sys_chmod(path, 04755);
+
+            /* Verify setuid bit is set */
+            fd = fut_vfs_open(path, O_RDONLY, 0);
+            struct fut_stat st = {0};
+            sys_fstat(fd, &st);
+            fut_vfs_close(fd);
+
+            if (!(st.st_mode & 04000)) {
+                fut_printf("[MISC-TEST] FAIL 2685: chmod failed to set suid (mode=0%o)\n",
+                           st.st_mode);
+                fut_test_fail(2685);
+            } else {
+                /* Truncate should clear setuid (we run as root but without CAP_FSETID
+                 * if the test environment clears it; on most kernels root has it.
+                 * We temporarily clear CAP_FSETID for this test.) */
+                fut_task_t *t = fut_task_current();
+                uint64_t old_caps = t->cap_effective;
+                t->cap_effective &= ~(1ULL << 4 /* CAP_FSETID */);
+
+                long ret = sys_truncate(path, 7);
+
+                /* Restore caps */
+                t->cap_effective = old_caps;
+
+                if (ret != 0) {
+                    fut_printf("[MISC-TEST] FAIL 2685: truncate(7) returned %ld\n", ret);
+                    fut_test_fail(2685);
+                } else {
+                    fd = fut_vfs_open(path, O_RDONLY, 0);
+                    struct fut_stat st2 = {0};
+                    sys_fstat(fd, &st2);
+                    fut_vfs_close(fd);
+
+                    if (st2.st_mode & 04000) {
+                        fut_printf("[MISC-TEST] FAIL 2685: setuid NOT cleared (mode=0%o)\n",
+                                   st2.st_mode);
+                        fut_test_fail(2685);
+                    } else {
+                        fut_printf("[MISC-TEST] PASS 2685: setuid cleared after truncate (mode=0%o)\n",
+                                   st2.st_mode);
+                        fut_test_pass();
+                    }
+                }
+            }
+            fut_vfs_unlink(path);
+        }
+    }
+
+    /* ---- Test 2686: ftruncate on directory fd returns EISDIR ---- */
+    fut_printf("[MISC-TEST] Test 2686: ftruncate directory -> EISDIR\n");
+    {
+        int fd = fut_vfs_open("/proc", O_RDONLY | 0200000 /* O_DIRECTORY */, 0);
+        if (fd < 0) {
+            /* Try root dir */
+            fd = fut_vfs_open("/", O_RDONLY | 0200000, 0);
+        }
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] FAIL 2686: cannot open directory fd=%d\n", fd);
+            fut_test_fail(2686);
+        } else {
+            long ret = sys_ftruncate(fd, 0);
+            fut_vfs_close(fd);
+
+            if (ret == -EISDIR) {
+                fut_printf("[MISC-TEST] PASS 2686: ftruncate(dir) returned EISDIR\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL 2686: expected -EISDIR, got %ld\n", ret);
+                fut_test_fail(2686);
+            }
+        }
+    }
+
+    /* ---- Test 2687: truncate on directory returns EISDIR ---- */
+    fut_printf("[MISC-TEST] Test 2687: truncate directory -> EISDIR\n");
+    {
+        long ret = sys_truncate("/proc", 0);
+        if (ret == -EISDIR) {
+            fut_printf("[MISC-TEST] PASS 2687: truncate('/proc') returned EISDIR\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL 2687: expected -EISDIR, got %ld\n", ret);
+            fut_test_fail(2687);
+        }
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -78051,6 +78380,7 @@ void fut_misc_test_thread(void *arg) {
     test_mincore_residency(); /* Tests 2650-2657: mincore PTE-walk residency + msync flag validation */
     test_copy_file_range_roundtrip(); /* Tests 2660-2667: copy_file_range round-trip */
     test_sync_fsync_fdatasync(); /* Tests 2670-2677: sync/fsync/fdatasync/syncfs return values */
+    test_truncate_posix_semantics(); /* Tests 2680-2687: truncate/ftruncate POSIX semantics */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

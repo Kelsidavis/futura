@@ -303,8 +303,12 @@ long sys_truncate(const char *path, uint64_t length) {
         return -EACCES;
     }
 
-    /* Enforce RLIMIT_FSIZE: extending beyond the soft limit → EFBIG + SIGXFSZ */
-    {
+    /* Phase 2: Store current size for before/after comparison */
+    uint64_t current_size = vnode->size;
+
+    /* Enforce RLIMIT_FSIZE: only when extending beyond the soft limit → EFBIG + SIGXFSZ.
+     * Shrinking is always permitted regardless of the limit (POSIX). */
+    if (local_length > current_size) {
         uint64_t fsize_limit = task->rlimits[1].rlim_cur; /* RLIMIT_FSIZE = 1 */
         if (fsize_limit != (uint64_t)-1 && fsize_limit != 0 &&
                 local_length > fsize_limit) {
@@ -314,9 +318,6 @@ long sys_truncate(const char *path, uint64_t length) {
             return -EFBIG;
         }
     }
-
-    /* Phase 2: Store current size for before/after comparison */
-    uint64_t current_size = vnode->size;
 
     /* Phase 2: Determine operation type */
     const char *operation;
@@ -418,6 +419,31 @@ long sys_truncate(const char *path, uint64_t length) {
                path_buf, path_type, (unsigned long)path_len, vnode->ino,
                (unsigned long long)local_length, length_category, operation,
                (unsigned long long)current_size, (unsigned long long)local_length);
+
+    /* POSIX/Linux: clear setuid/setgid bits on truncate (fallback path) */
+    if (vnode->type == VN_REG) {
+        uint32_t mode = vnode->mode;
+        int needs_clear = 0;
+        if (mode & 04000) needs_clear = 1;
+        if ((mode & 02000) && (mode & 00010)) needs_clear = 1;
+        if (needs_clear) {
+            int has_cap_fsetid = task &&
+                (task->cap_effective & (1ULL << 4 /* CAP_FSETID */));
+            if (!has_cap_fsetid) {
+                if (mode & 04000)
+                    vnode->mode &= ~(uint32_t)04000;
+                if ((mode & 02000) && (mode & 00010))
+                    vnode->mode &= ~(uint32_t)02000;
+            }
+        }
+    }
+
+    /* Dispatch IN_MODIFY: truncation changes file contents (fallback path) */
+    if (vnode->parent && vnode->name) {
+        char dir_path[256];
+        if (fut_vnode_build_path(vnode->parent, dir_path, sizeof(dir_path)))
+            inotify_dispatch_event(dir_path, 0x00000002 /* IN_MODIFY */, vnode->name, 0);
+    }
 
     fut_vnode_unref(vnode);
     return 0;

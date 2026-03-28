@@ -143,21 +143,6 @@ long sys_ftruncate(int fd, uint64_t length) {
     if (file->flags & O_PATH)
         return -EBADF;
 
-    /* Enforce RLIMIT_FSIZE: extending beyond the soft limit returns EFBIG and
-     * sends SIGXFSZ.  Shrinking is always allowed regardless of the limit. */
-    {
-        uint64_t fsize_limit = task->rlimits[1].rlim_cur; /* RLIMIT_FSIZE = 1 */
-        if (fsize_limit != (uint64_t)-1 && fsize_limit != 0 &&
-                length > fsize_limit) {
-            extern int fut_signal_send(struct fut_task *t, int sig);
-            fut_signal_send(task, 25 /* SIGXFSZ */);
-            fut_printf("[FTRUNCATE] ftruncate(fd=%d, length=%llu) -> EFBIG "
-                       "(exceeds RLIMIT_FSIZE=%llu)\n",
-                       fd, length, fsize_limit);
-            return -EFBIG;
-        }
-    }
-
     /* Enforce file seals (applies to memfd chr_ops files and vnode files alike) */
     if (file->seals & 0x0008 /* F_SEAL_WRITE */) {
         return -EPERM;
@@ -208,6 +193,15 @@ long sys_ftruncate(int fd, uint64_t length) {
                    "(cannot truncate directory)\n",
                    fd, fd_category, length, length_category);
         return -EISDIR;
+    }
+
+    /* POSIX: ftruncate only works on regular files.
+     * Reject symlinks, devices, FIFOs, sockets — same as truncate(). */
+    if (vnode->type != VN_REG) {
+        fut_printf("[FTRUNCATE] ftruncate(fd=%d [%s], length=%llu [%s]) -> EINVAL "
+                   "(not a regular file, type=%d)\n",
+                   fd, fd_category, length, length_category, vnode->type);
+        return -EINVAL;
     }
 
     /* Verify file was opened with write permission
@@ -273,6 +267,21 @@ long sys_ftruncate(int fd, uint64_t length) {
                    "(length exceeds maximum file size)\n",
                    fd, fd_category, length, length_category);
         return -ERANGE;
+    }
+
+    /* Enforce RLIMIT_FSIZE: only when extending beyond the soft limit → EFBIG + SIGXFSZ.
+     * Shrinking is always allowed regardless of the limit (POSIX). */
+    if (length > vnode->size) {
+        uint64_t fsize_limit = task->rlimits[1].rlim_cur; /* RLIMIT_FSIZE = 1 */
+        if (fsize_limit != (uint64_t)-1 && fsize_limit != 0 &&
+                length > fsize_limit) {
+            extern int fut_signal_send(struct fut_task *t, int sig);
+            fut_signal_send(task, 25 /* SIGXFSZ */);
+            fut_printf("[FTRUNCATE] ftruncate(fd=%d, length=%llu) -> EFBIG "
+                       "(exceeds RLIMIT_FSIZE=%llu)\n",
+                       fd, length, fsize_limit);
+            return -EFBIG;
+        }
     }
 
     if (length == vnode->size) {
@@ -353,5 +362,33 @@ long sys_ftruncate(int fd, uint64_t length) {
      *   - Lazy allocation for extends (reduce immediate I/O cost)
      */
     vnode->size = length;
+
+    /* POSIX/Linux: clear setuid/setgid bits on truncate (fallback path).
+     * Same semantics as write: S_ISUID cleared unconditionally,
+     * S_ISGID cleared only when S_IXGRP is set. CAP_FSETID bypasses. */
+    if (vnode->type == VN_REG) {
+        uint32_t mode = vnode->mode;
+        int needs_clear = 0;
+        if (mode & 04000) needs_clear = 1;
+        if ((mode & 02000) && (mode & 00010)) needs_clear = 1;
+        if (needs_clear) {
+            int has_cap_fsetid = task &&
+                (task->cap_effective & (1ULL << 4 /* CAP_FSETID */));
+            if (!has_cap_fsetid) {
+                if (mode & 04000)
+                    vnode->mode &= ~(uint32_t)04000;
+                if ((mode & 02000) && (mode & 00010))
+                    vnode->mode &= ~(uint32_t)02000;
+            }
+        }
+    }
+
+    /* Dispatch IN_MODIFY: truncation changes file contents (fallback path) */
+    if (vnode->parent && vnode->name) {
+        char dir_path[256];
+        if (fut_vnode_build_path(vnode->parent, dir_path, sizeof(dir_path)))
+            inotify_dispatch_event(dir_path, 0x00000002 /* IN_MODIFY */, vnode->name, 0);
+    }
+
     return 0;
 }

@@ -128,53 +128,30 @@ long sys_syncfs(int fd) {
 
     fut_task_t *task = fut_task_current();
     if (!task) {
-        fut_printf("[SYNCFS] syncfs(fd=%d) -> ESRCH (no current task)\n", local_fd);
         return -ESRCH;
     }
 
-    /* Validate file descriptor */
-    if (local_fd < 0) {
-        fut_printf("[SYNCFS] syncfs(fd=%d) -> EBADF (invalid fd)\n", local_fd);
+    /* Validate file descriptor range */
+    if (local_fd < 0 || local_fd >= task->max_fds) {
         return -EBADF;
     }
 
-    /* Validate FD upper bound to prevent OOB array access */
-    if (local_fd >= task->max_fds) {
-        fut_printf("[SYNCFS] syncfs(fd=%d, max_fds=%d) -> EBADF "
-                   "(fd exceeds max_fds, FD bounds validation)\n",
-                   local_fd, task->max_fds);
-        return -EBADF;
-    }
-
-    /* Resolve FD to file and get mount point */
+    /* Resolve FD to file structure */
     struct fut_file *file = vfs_get_file_from_task(task, local_fd);
-    if (!file) {
-        fut_printf("[SYNCFS] syncfs(fd=%d) -> EBADF (fd not open)\n", local_fd);
+    if (!file || !file->vnode) {
         return -EBADF;
     }
 
-    /* Get the vnode for this file */
-    if (!file->vnode) {
-        fut_printf("[SYNCFS] syncfs(fd=%d) -> EBADF (no vnode for fd)\n", local_fd);
-        return -EBADF;
-    }
-
-    /* Get the mount point for this vnode */
+    /* Get the mount point for this vnode's filesystem */
     struct fut_mount *mount = file->vnode->mount;
     if (!mount) {
-        fut_printf("[SYNCFS] syncfs(fd=%d) -> EINVAL (no mount point for vnode)\n", local_fd);
         return -EINVAL;
     }
 
-    /* Sync the specific filesystem */
-    int ret = fut_vfs_sync_fs(mount);
-    if (ret < 0) {
-        fut_printf("[SYNCFS] syncfs(fd=%d) -> %d (filesystem sync failed)\n",
-                   local_fd, ret);
-        return ret;
-    }
-
-    fut_printf("[SYNCFS] syncfs(fd=%d) -> 0 (filesystem synced)\n",
-               local_fd);
-    return 0;
+    /* Flush all dirty buffers for this specific filesystem.
+     * Uses sync_fs on the mount if available (flushes all dirty inodes,
+     * bitmaps, superblock in one pass), otherwise falls back to
+     * syncing the root vnode only.
+     * For ramfs this is a no-op (data already in RAM). */
+    return fut_vfs_sync_fs(mount);
 }

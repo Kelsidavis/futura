@@ -112,25 +112,16 @@
 long sys_sync(void) {
     fut_task_t *task = fut_task_current();
     if (!task) {
-        fut_printf("[SYNC] sync() -> ESRCH (no current task)\n");
         return -ESRCH;
     }
 
-    /* Phase 2: Call VFS to sync all mounted filesystems
-     * This iterates the mount list and calls the sync operation on each filesystem.
-     * Filesystems with a sync() operation will flush dirty pages and commit journals.
-     * In-memory filesystems (RamFS) typically have no sync operation (no-op). */
+    /* Flush all dirty buffers across every mounted filesystem.
+     * VFS iterates the mount list, calling sync_fs (or root-vnode sync)
+     * on each mount.  For ramfs this is a no-op; for FuturaFS/ext2/FAT
+     * it writes dirty inodes, bitmaps and superblocks to the block device. */
+    (void)fut_vfs_sync_all();
 
-    int ret = fut_vfs_sync_all();
-
-    if (ret < 0) {
-        fut_printf("[SYNC] sync() -> %d (Phase 2: some filesystems failed to sync)\n", ret);
-        /* Per POSIX, sync() doesn't return errors - always returns 0 */
-        return 0;
-    }
-
-    fut_printf("[SYNC] sync() -> 0 (Phase 2: all filesystems synced successfully)\n");
-
-    /* Always returns 0 (success) per POSIX spec */
+    /* Per POSIX, sync() always returns 0 even if individual filesystems
+     * encountered I/O errors. */
     return 0;
 }

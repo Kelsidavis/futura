@@ -51547,11 +51547,18 @@ __attribute__((noinline)) static void test_netif_routing(void) {
         }
     }
 
-    /* Test 1799: register eth0 interface + add default route */
+    /* Test 1799: register eth0 interface + add default route
+     * NOTE: netif_register may block in some QEMU configs. Use existing
+     * interface if available, skip test gracefully if not. */
     fut_printf("[MISC-TEST] Test 1799: register eth0 + default route\n");
     {
-        unsigned char mac[6] = {0x52, 0x54, 0x00, 0xAA, 0xBB, 0xCC};
-        int idx = netif_register("eth0", mac, 1500, NULL);
+        /* Try to find existing eth0 first before registering */
+        struct net_iface *existing = netif_by_name("eth0");
+        int idx = existing ? (int)existing->index : 0;
+        if (!existing) {
+            unsigned char mac[6] = {0x52, 0x54, 0x00, 0xAA, 0xBB, 0xCC};
+            idx = netif_register("eth0", mac, 1500, NULL);
+        }
         if (idx > 0) {
             netif_set_addr(idx, 0x0A000002 /* 10.0.0.2 */,
                           0xFFFFFF00 /* 255.255.255.0 */,

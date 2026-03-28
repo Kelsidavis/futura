@@ -1787,7 +1787,7 @@ test:
 		echo "[HARNESS] PASS"; \
 		exit 0; \
 	elif [ $$code -eq 124 ]; then \
-		echo "[HARNESS] FAIL (timed out after 600s)"; \
+		echo "[HARNESS] FAIL (timed out after 900s)"; \
 		exit 1; \
 	else \
 		echo "[HARNESS] FAIL (qemu code $$code)"; \

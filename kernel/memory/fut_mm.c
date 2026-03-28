@@ -642,7 +642,25 @@ int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len) {
 
         if (overlap_start == vma->start && overlap_end < vma->end) {
             /* Case 2: Unmap left part - shrink VMA from the left */
+            /* Writeback shared pages in the unmapped portion before freeing */
+            if ((vma->flags & 0x01) && vma->vnode && vma->vnode->ops &&
+                vma->vnode->ops->write && ctx) {
+                for (uintptr_t pg = vma->start; pg < overlap_end; pg += PAGE_SIZE) {
+                    uint64_t wb_pte = 0;
+                    if (pmap_probe_pte(ctx, pg, &wb_pte) != 0) continue;
+                    uint64_t wb_phys = fut_pte_to_phys(wb_pte);
+                    if (!wb_phys || fut_page_ref_get((phys_addr_t)wb_phys) == 0) continue;
+                    void *wb_kvirt = (void *)pmap_phys_to_virt((phys_addr_t)wb_phys);
+                    if (!wb_kvirt) continue;
+                    uint64_t wb_foff = vma->file_offset + (pg - vma->start);
+                    vma->vnode->ops->write(vma->vnode, wb_kvirt, PAGE_SIZE, wb_foff);
+                }
+            }
             mm_unmap_and_free(mm, vma->start, overlap_end);
+            /* Adjust file_offset when shrinking from the left */
+            if (vma->vnode) {
+                vma->file_offset += (overlap_end - vma->start);
+            }
             vma->start = overlap_end;
             link = &vma->next;
             vma = next;
@@ -651,6 +669,20 @@ int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len) {
 
         if (overlap_start > vma->start && overlap_end == vma->end) {
             /* Case 3: Unmap right part - shrink VMA from the right */
+            /* Writeback shared pages in the unmapped portion before freeing */
+            if ((vma->flags & 0x01) && vma->vnode && vma->vnode->ops &&
+                vma->vnode->ops->write && ctx) {
+                for (uintptr_t pg = overlap_start; pg < vma->end; pg += PAGE_SIZE) {
+                    uint64_t wb_pte = 0;
+                    if (pmap_probe_pte(ctx, pg, &wb_pte) != 0) continue;
+                    uint64_t wb_phys = fut_pte_to_phys(wb_pte);
+                    if (!wb_phys || fut_page_ref_get((phys_addr_t)wb_phys) == 0) continue;
+                    void *wb_kvirt = (void *)pmap_phys_to_virt((phys_addr_t)wb_phys);
+                    if (!wb_kvirt) continue;
+                    uint64_t wb_foff = vma->file_offset + (pg - vma->start);
+                    vma->vnode->ops->write(vma->vnode, wb_kvirt, PAGE_SIZE, wb_foff);
+                }
+            }
             mm_unmap_and_free(mm, overlap_start, vma->end);
             vma->end = overlap_start;
             link = &vma->next;
@@ -663,6 +695,21 @@ int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len) {
             fut_vma_t *right_vma = fut_malloc(sizeof(*right_vma));
             if (!right_vma) {
                 fut_spinlock_release(&mm->mm_lock); return -ENOMEM;
+            }
+
+            /* Writeback shared pages in the unmapped middle before freeing */
+            if ((vma->flags & 0x01) && vma->vnode && vma->vnode->ops &&
+                vma->vnode->ops->write && ctx) {
+                for (uintptr_t pg = overlap_start; pg < overlap_end; pg += PAGE_SIZE) {
+                    uint64_t wb_pte = 0;
+                    if (pmap_probe_pte(ctx, pg, &wb_pte) != 0) continue;
+                    uint64_t wb_phys = fut_pte_to_phys(wb_pte);
+                    if (!wb_phys || fut_page_ref_get((phys_addr_t)wb_phys) == 0) continue;
+                    void *wb_kvirt = (void *)pmap_phys_to_virt((phys_addr_t)wb_phys);
+                    if (!wb_kvirt) continue;
+                    uint64_t wb_foff = vma->file_offset + (pg - vma->start);
+                    vma->vnode->ops->write(vma->vnode, wb_kvirt, PAGE_SIZE, wb_foff);
+                }
             }
 
             /* Create right portion */
@@ -1440,7 +1487,25 @@ int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len) {
 
         if (overlap_start == vma->start && overlap_end < vma->end) {
             /* Case 2: Unmap left part - shrink VMA from the left */
+            /* Writeback shared pages in the unmapped portion before freeing */
+            if ((vma->flags & 0x01) && vma->vnode && vma->vnode->ops &&
+                vma->vnode->ops->write && ctx) {
+                for (uintptr_t pg = vma->start; pg < overlap_end; pg += PAGE_SIZE) {
+                    uint64_t wb_pte = 0;
+                    if (pmap_probe_pte(ctx, pg, &wb_pte) != 0) continue;
+                    uint64_t wb_phys = fut_pte_to_phys(wb_pte);
+                    if (!wb_phys || fut_page_ref_get((phys_addr_t)wb_phys) == 0) continue;
+                    void *wb_kvirt = (void *)pmap_phys_to_virt((phys_addr_t)wb_phys);
+                    if (!wb_kvirt) continue;
+                    uint64_t wb_foff = vma->file_offset + (pg - vma->start);
+                    vma->vnode->ops->write(vma->vnode, wb_kvirt, PAGE_SIZE, wb_foff);
+                }
+            }
             mm_unmap_and_free(mm, vma->start, overlap_end);
+            /* Adjust file_offset when shrinking from the left */
+            if (vma->vnode) {
+                vma->file_offset += (overlap_end - vma->start);
+            }
             vma->start = overlap_end;
             link = &vma->next;
             vma = next;
@@ -1449,6 +1514,20 @@ int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len) {
 
         if (overlap_start > vma->start && overlap_end == vma->end) {
             /* Case 3: Unmap right part - shrink VMA from the right */
+            /* Writeback shared pages in the unmapped portion before freeing */
+            if ((vma->flags & 0x01) && vma->vnode && vma->vnode->ops &&
+                vma->vnode->ops->write && ctx) {
+                for (uintptr_t pg = overlap_start; pg < vma->end; pg += PAGE_SIZE) {
+                    uint64_t wb_pte = 0;
+                    if (pmap_probe_pte(ctx, pg, &wb_pte) != 0) continue;
+                    uint64_t wb_phys = fut_pte_to_phys(wb_pte);
+                    if (!wb_phys || fut_page_ref_get((phys_addr_t)wb_phys) == 0) continue;
+                    void *wb_kvirt = (void *)pmap_phys_to_virt((phys_addr_t)wb_phys);
+                    if (!wb_kvirt) continue;
+                    uint64_t wb_foff = vma->file_offset + (pg - vma->start);
+                    vma->vnode->ops->write(vma->vnode, wb_kvirt, PAGE_SIZE, wb_foff);
+                }
+            }
             mm_unmap_and_free(mm, overlap_start, vma->end);
             vma->end = overlap_start;
             link = &vma->next;
@@ -1461,6 +1540,21 @@ int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len) {
             fut_vma_t *right_vma = fut_malloc(sizeof(*right_vma));
             if (!right_vma) {
                 fut_spinlock_release(&mm->mm_lock); return -ENOMEM;
+            }
+
+            /* Writeback shared pages in the unmapped middle before freeing */
+            if ((vma->flags & 0x01) && vma->vnode && vma->vnode->ops &&
+                vma->vnode->ops->write && ctx) {
+                for (uintptr_t pg = overlap_start; pg < overlap_end; pg += PAGE_SIZE) {
+                    uint64_t wb_pte = 0;
+                    if (pmap_probe_pte(ctx, pg, &wb_pte) != 0) continue;
+                    uint64_t wb_phys = fut_pte_to_phys(wb_pte);
+                    if (!wb_phys || fut_page_ref_get((phys_addr_t)wb_phys) == 0) continue;
+                    void *wb_kvirt = (void *)pmap_phys_to_virt((phys_addr_t)wb_phys);
+                    if (!wb_kvirt) continue;
+                    uint64_t wb_foff = vma->file_offset + (pg - vma->start);
+                    vma->vnode->ops->write(vma->vnode, wb_kvirt, PAGE_SIZE, wb_foff);
+                }
             }
 
             /* Create right portion */

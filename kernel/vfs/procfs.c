@@ -4353,12 +4353,42 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
         }
         case PROC_AUXV: {
             /* /proc/<pid>/auxv — ELF auxiliary vector in binary {key,val} uint64_t pairs.
-             * The kernel saves a copy of the auxv into the task struct during exec. */
+             * The kernel saves a copy of the auxv into the task struct during exec.
+             * For kernel threads (no exec), synthesize a minimal vector. */
             fut_task_t *task = fut_task_by_pid(n->pid);
             if (task && task->auxv && task->auxv_size > 0) {
                 size_t n_bytes = task->auxv_size;
                 if (n_bytes > GEN_BUF) n_bytes = GEN_BUF;
                 __builtin_memcpy(tmp, task->auxv, n_bytes);
+                total = n_bytes;
+            } else if (task) {
+                /* Kernel thread with no exec — synthesize minimal auxv
+                 * (matches PR_GET_AUXV behavior in sys_prctl.c). */
+                struct { uint64_t key; uint64_t val; } av[16];
+                int ai = 0;
+                uint64_t hwcap_val = 0;
+#ifdef __x86_64__
+                { uint32_t ea, eb, ec, ed;
+                  __asm__ volatile("cpuid" : "=a"(ea),"=b"(eb),"=c"(ec),"=d"(ed) : "a"(1));
+                  hwcap_val = ed; }
+#elif defined(__aarch64__)
+                hwcap_val = 0x3; /* HWCAP_FP | HWCAP_ASIMD */
+#endif
+                av[ai].key = 6;  av[ai].val = PAGE_SIZE;                     ai++; /* AT_PAGESZ */
+                av[ai].key = 11; av[ai].val = (uint64_t)task->ruid;          ai++; /* AT_UID */
+                av[ai].key = 12; av[ai].val = (uint64_t)task->uid;           ai++; /* AT_EUID */
+                av[ai].key = 13; av[ai].val = (uint64_t)task->rgid;          ai++; /* AT_GID */
+                av[ai].key = 14; av[ai].val = (uint64_t)task->gid;           ai++; /* AT_EGID */
+                uint64_t secure = (task->uid != task->ruid || task->gid != task->rgid) ? 1 : 0;
+                av[ai].key = 23; av[ai].val = secure;                        ai++; /* AT_SECURE */
+                av[ai].key = 17; av[ai].val = 100;                           ai++; /* AT_CLKTCK */
+                av[ai].key = 16; av[ai].val = hwcap_val;                     ai++; /* AT_HWCAP */
+                av[ai].key = 7;  av[ai].val = 0ULL;                          ai++; /* AT_BASE */
+                av[ai].key = 8;  av[ai].val = 0ULL;                          ai++; /* AT_FLAGS */
+                av[ai].key = 0;  av[ai].val = 0ULL;                          ai++; /* AT_NULL */
+                size_t n_bytes = (size_t)ai * sizeof(av[0]);
+                if (n_bytes > GEN_BUF) n_bytes = GEN_BUF;
+                __builtin_memcpy(tmp, av, n_bytes);
                 total = n_bytes;
             }
             break;

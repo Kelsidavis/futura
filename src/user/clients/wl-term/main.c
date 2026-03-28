@@ -575,16 +575,36 @@ static void redraw(struct client_state *state) {
     state->needs_redraw = false;
 }
 
+/* Monotonic tick counter (incremented each main loop iteration, ~10ms each) */
+static uint64_t tick_ms = 0;
+
 /* Main loop iteration */
 static bool main_loop_iteration(struct client_state *state) {
+    tick_ms += 10;  /* Each iteration is ~10ms (matches nanosleep below) */
+
     /* Read from shell if available */
     int n = term_read_shell(&state->term);
     if (n > 0) {
         state->needs_redraw = true;
+        /* Any new output resets cursor blink to visible phase */
+        state->term.cursor_blink_on = true;
+        state->term.cursor_blink_time = tick_ms;
     } else if (n < 0) {
         /* Shell closed */
         WLTERM_LOG("[WL-TERM] Shell exited\n");
         return false;
+    }
+
+    /* Update cursor blink */
+    if (term_update_blink(&state->term, tick_ms)) {
+        state->needs_redraw = true;
+    }
+
+    /* Check if shell set a new window title via OSC 0/2 */
+    if (state->term.title_changed && state->toplevel) {
+        xdg_toplevel_set_title(state->toplevel, term_get_title(&state->term));
+        state->term.title_changed = false;
+        wl_surface_commit(state->surface);
     }
 
     /* Redraw if needed and frame is ready */
@@ -740,6 +760,7 @@ int main(void) {
     if (state.term.shell_stdout_fd >= 0) {
         sys_close(state.term.shell_stdout_fd);
     }
+    term_destroy(&state.term);
 
     if (state.frame_cb) {
         wl_callback_destroy(state.frame_cb);
@@ -755,6 +776,9 @@ int main(void) {
         fut_shm_unlink(shm_name);
     }
 
+    if (state.pointer) {
+        wl_pointer_destroy(state.pointer);
+    }
     if (state.keyboard) {
         wl_keyboard_destroy(state.keyboard);
     }

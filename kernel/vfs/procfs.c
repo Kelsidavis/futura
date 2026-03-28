@@ -1485,8 +1485,10 @@ static size_t gen_cmdline(char *buf, size_t cap, fut_task_t *task) {
  *
  * Key fields consumed by ps/top/glibc:
  *   1=pid, 2=(comm), 3=state, 4=ppid, 5=pgrp, 6=session,
- *   13/14=utime/stime (USER_HZ=100 ticks), 17=priority, 18=nice,
- *   19=num_threads, 21=starttime, 22=vsize (bytes), 23=rss (pages)
+ *   14/15=utime/stime (USER_HZ=100 ticks), 16/17=cutime/cstime,
+ *   18=priority, 19=nice, 20=num_threads, 22=starttime,
+ *   23=vsize (bytes), 24=rss (pages),
+ *   30=signal, 31=blocked, 32=sigignore, 33=sigcatch
  */
 /* tid: when non-zero, this is /proc/<pid>/task/<tid>/stat — show tid as field 1 */
 static size_t gen_stat(char *buf, size_t cap, fut_task_t *task, uint64_t tid) {

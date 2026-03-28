@@ -661,6 +661,19 @@ static int build_user_stack(fut_mm_t *mm,
             sp -= sizeof(uint64_t);
             exec_copy_to_user(mm, sp, &auxv[ai].key, sizeof(uint64_t));
         }
+
+        /* Save a copy of the auxv in the task struct for /proc/<pid>/auxv */
+        if (auxv_task) {
+            size_t auxv_bytes = sizeof(auxv);
+            if (auxv_task->auxv) fut_free(auxv_task->auxv);
+            auxv_task->auxv = fut_malloc(auxv_bytes);
+            if (auxv_task->auxv) {
+                __builtin_memcpy(auxv_task->auxv, auxv, auxv_bytes);
+                auxv_task->auxv_size = auxv_bytes;
+            } else {
+                auxv_task->auxv_size = 0;
+            }
+        }
     }
 
     /* Push envp terminator (NULL pointer) */
@@ -2617,6 +2630,22 @@ static int build_user_stack(fut_mm_t *mm,
             if (envp_ptrs) fut_free(envp_ptrs);
             fut_free(argv_ptrs);
             return -EFAULT;
+        }
+    }
+
+    /* Save a copy of the auxv in the task struct for /proc/<pid>/auxv */
+    {
+        fut_task_t *auxv_task = fut_task_current();
+        if (auxv_task) {
+            size_t auxv_bytes = auxv_count * sizeof(auxv_entries[0]);
+            if (auxv_task->auxv) fut_free(auxv_task->auxv);
+            auxv_task->auxv = fut_malloc(auxv_bytes);
+            if (auxv_task->auxv) {
+                __builtin_memcpy(auxv_task->auxv, auxv_entries, auxv_bytes);
+                auxv_task->auxv_size = auxv_bytes;
+            } else {
+                auxv_task->auxv_size = 0;
+            }
         }
     }
 

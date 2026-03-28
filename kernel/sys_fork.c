@@ -1054,6 +1054,15 @@ long sys_fork(void) {
         child_task->proc_cmdline_len = parent_task->proc_cmdline_len;
     }
 
+    /* Inherit ELF auxiliary vector (Linux: child has same auxv until exec) */
+    if (parent_task->auxv && parent_task->auxv_size > 0) {
+        child_task->auxv = fut_malloc(parent_task->auxv_size);
+        if (child_task->auxv) {
+            __builtin_memcpy(child_task->auxv, parent_task->auxv, parent_task->auxv_size);
+            child_task->auxv_size = parent_task->auxv_size;
+        }
+    }
+
     /* Inherit alternate signal stack (Linux: child inherits parent's sigaltstack) */
     child_task->sig_altstack = parent_task->sig_altstack;
 

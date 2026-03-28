@@ -1517,35 +1517,47 @@ static size_t gen_stat(char *buf, size_t cap, fut_task_t *task, uint64_t tid) {
 
     /* CPU time in USER_HZ (100 Hz) ticks — sum all threads.
      * utime = user-space ticks, stime = kernel-space ticks.
-     * Timer tick handler classifies each tick per-thread into
-     * stats.utime_ticks (PID>1) or stats.stime_ticks (PID<=1). */
+     * The timer tick handler (fut_timer_tick at FUT_TIMER_HZ=100) classifies
+     * each tick per-thread: in_syscall or PID<=1 -> stime_ticks, else -> utime_ticks.
+     * Since FUT_TIMER_HZ == USER_HZ == 100, the raw tick counts are already
+     * in the correct units for /proc/<pid>/stat — no conversion needed. */
     uint64_t utime = 0, stime = 0;
+    uint64_t num_threads = 0;
     if (task->threads) {
         fut_thread_t *t = task->threads;
         while (t) {
             utime += t->stats.utime_ticks;
             stime += t->stats.stime_ticks;
+            num_threads++;
             t = t->next;
         }
     }
-    /* Convert from ms ticks to USER_HZ centiseconds */
-    utime /= 10;
-    stime /= 10;
-    /* Accumulated child times (cutime = total child ticks minus stime; cstime = child stime) */
-    uint64_t cstime = task->child_stime_ticks / 10;
-    uint64_t cutime = task->child_cpu_ticks / 10;
+    if (num_threads == 0) num_threads = 1;
+    /* Accumulated child times from reaped children (waitpid accumulates these).
+     * child_cpu_ticks = total (user+system) ticks of all reaped children.
+     * child_stime_ticks = system-only ticks of all reaped children.
+     * cutime = child user ticks only = child_cpu_ticks - child_stime_ticks. */
+    uint64_t cstime = task->child_stime_ticks;
+    uint64_t cutime = task->child_cpu_ticks;
     if (cutime > cstime) cutime -= cstime;  /* cutime = child user ticks only */
 
     /* Priority in Linux terms: priority = 20 - nice (range 1..40 for SCHED_OTHER) */
     int nice = task->nice;
     long priority = (long)(20 - nice);  /* maps nice -20..19 → priority 40..1 */
 
-    /* Virtual memory size in bytes; RSS in pages */
+    /* Virtual memory size in bytes; RSS in pages.
+     * Futura uses an eagerly-mapped RAM-only model (no swap/pageout),
+     * so all VMA-backed pages are resident.  Walk the VMA list once to
+     * accumulate both vsize (bytes) and rss (pages). */
     uint64_t vsize = 0, rss_pages = 0;
     if (task->mm) {
         struct fut_vma *vma = task->mm->vma_list;
-        while (vma) { vsize += vma->end - vma->start; vma = vma->next; }
-        rss_pages = vsize / 4096;
+        while (vma) {
+            uint64_t sz = vma->end - vma->start;
+            vsize += sz;
+            rss_pages += sz / 4096;
+            vma = vma->next;
+        }
     }
 
     /* Starttime: ticks since boot at task creation (FUT_TIMER_HZ ticks per second = USER_HZ=100) */
@@ -4024,43 +4036,13 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
         }
         case PROC_AUXV: {
             /* /proc/<pid>/auxv — ELF auxiliary vector in binary {key,val} uint64_t pairs.
-             * The kernel pushes auxv onto the user stack during exec (elf64.c), but does
-             * not store a per-task copy.  We reconstruct the minimal set of entries that
-             * debuggers and getauxval() callers care about most. */
+             * The kernel saves a copy of the auxv into the task struct during exec. */
             fut_task_t *task = fut_task_by_pid(n->pid);
-            if (task) {
-                struct { uint64_t key; uint64_t val; } *av =
-                    (void *)tmp;
-                int ai = 0;
-#define AUXV_PUSH(k, v) do { av[ai].key = (k); av[ai].val = (v); ai++; } while(0)
-                AUXV_PUSH(6,  PAGE_SIZE);               /* AT_PAGESZ */
-                AUXV_PUSH(11, (uint64_t)task->ruid);    /* AT_UID */
-                AUXV_PUSH(12, (uint64_t)task->uid);     /* AT_EUID */
-                AUXV_PUSH(13, (uint64_t)task->rgid);    /* AT_GID */
-                AUXV_PUSH(14, (uint64_t)task->gid);     /* AT_EGID */
-                /* AT_SECURE: 1 if effective credentials differ from real */
-                uint64_t secure = (task->uid != task->ruid || task->gid != task->rgid) ? 1 : 0;
-                AUXV_PUSH(23, secure);                  /* AT_SECURE */
-                /* AT_HWCAP — CPU feature flags from CPUID (x86_64) or defaults */
-                {
-                    uint64_t hwcap = 0;
-#ifdef __x86_64__
-                    uint32_t hc_eax, hc_ebx, hc_ecx, hc_edx;
-                    __asm__ volatile("cpuid"
-                                     : "=a"(hc_eax), "=b"(hc_ebx), "=c"(hc_ecx), "=d"(hc_edx)
-                                     : "a"(1));
-                    hwcap = hc_edx;
-#elif defined(__aarch64__)
-                    hwcap = 0x3; /* HWCAP_FP | HWCAP_ASIMD */
-#endif
-                    AUXV_PUSH(16, hwcap);
-                }
-                AUXV_PUSH(17, 100ULL);                  /* AT_CLKTCK */
-                AUXV_PUSH(7,  0ULL);                    /* AT_BASE — interpreter base (0=static) */
-                AUXV_PUSH(8,  0ULL);                    /* AT_FLAGS */
-                AUXV_PUSH(0,  0ULL);                    /* AT_NULL — terminator */
-#undef AUXV_PUSH
-                total = (size_t)ai * sizeof(av[0]);
+            if (task && task->auxv && task->auxv_size > 0) {
+                size_t n_bytes = task->auxv_size;
+                if (n_bytes > GEN_BUF) n_bytes = GEN_BUF;
+                __builtin_memcpy(tmp, task->auxv, n_bytes);
+                total = n_bytes;
             }
             break;
         }

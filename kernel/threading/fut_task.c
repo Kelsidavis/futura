@@ -411,6 +411,12 @@ void fut_task_destroy(fut_task_t *task) {
         task->chroot_vnode = NULL;
     }
 
+    /* Free ELF auxiliary vector copy */
+    if (task->auxv) {
+        fut_free(task->auxv);
+        task->auxv = NULL;
+    }
+
     fut_free(task);
 }
 

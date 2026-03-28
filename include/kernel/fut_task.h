@@ -163,6 +163,8 @@ struct fut_task {
     uint16_t proc_cmdline_len;         // Number of valid bytes in proc_cmdline
     char proc_environ[2048];           // /proc/self/environ: null-separated envp (Linux format)
     uint16_t proc_environ_len;         // Number of valid bytes in proc_environ
+    void *auxv;                        // ELF auxiliary vector copy ({key,val} uint64_t pairs, AT_NULL terminated)
+    size_t auxv_size;                  // Byte length of auxv data
     int pdeathsig;                     // Signal to send on parent death (PR_SET_PDEATHSIG, 0=none)
     unsigned long no_new_privs;        // PR_SET_NO_NEW_PRIVS flag (sticky, prevents execve setuid)
     int dumpable;                      // PR_SET_DUMPABLE (1=dumpable, 0=not, default 1)

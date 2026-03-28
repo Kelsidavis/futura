@@ -153,6 +153,8 @@ static void cmd_git(int argc, char *argv[]);
 static void cmd_su(int argc, char *argv[]);
 static void cmd_passwd(int argc, char *argv[]);
 static void cmd_systemctl(int argc, char *argv[]);
+static void cmd_crontab(int argc, char *argv[]);
+static void cmd_scp(int argc, char *argv[]);
 static void strcpy_simple(char *dest, const char *src);
 
 /* Forward declaration for prompt */
@@ -11423,6 +11425,12 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "systemctl") == 0) {
         cmd_systemctl(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "crontab") == 0) {
+        cmd_crontab(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "scp") == 0) {
+        cmd_scp(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -11593,6 +11601,8 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "su") == 0 ||
             strcmp_simple(cmd, "passwd") == 0 ||
             strcmp_simple(cmd, "systemctl") == 0 ||
+            strcmp_simple(cmd, "crontab") == 0 ||
+            strcmp_simple(cmd, "scp") == 0 ||
             0);
 }
 
@@ -16088,4 +16098,243 @@ static int execute_full_line(char *line) {
     expand_variables(expanded, line, sizeof(expanded));
 
     return execute_command_chain(expanded);
+}
+
+/* ---- crontab: simple cron-like task scheduler ---- */
+static void cmd_crontab(int argc, char *argv[]) {
+    const char *crontab_path = "/etc/crontab";
+
+    if (argc < 2) {
+        write_str(2, "Usage: crontab [-l | -e | <file>]\n");
+        write_str(2, "  -l        List scheduled tasks\n");
+        write_str(2, "  -e        Edit crontab in vi\n");
+        write_str(2, "  <file>    Install crontab from file\n");
+        write_str(2, "Format: M H * * * command\n");
+        return;
+    }
+
+    if (strcmp_simple(argv[1], "-l") == 0) {
+        /* List current crontab */
+        int fd = sys_open(crontab_path, O_RDONLY, 0);
+        if (fd < 0) {
+            write_str(2, "crontab: no crontab for user\n");
+            return;
+        }
+        char buf[512];
+        ssize_t n;
+        while ((n = sys_read(fd, buf, sizeof(buf))) > 0)
+            sys_write(1, buf, n);
+        sys_close(fd);
+    } else if (strcmp_simple(argv[1], "-e") == 0) {
+        /* Ensure /etc/crontab exists before editing */
+        int fd = sys_open(crontab_path, O_RDONLY, 0);
+        if (fd < 0) {
+            fd = sys_open(crontab_path, O_WRONLY | O_CREAT, 0644);
+            if (fd >= 0) {
+                const char *hdr = "# Futura crontab — M H * * * command\n";
+                sys_write(fd, hdr, strlen_simple(hdr));
+                sys_close(fd);
+            }
+        } else {
+            sys_close(fd);
+        }
+        /* Launch vi on the crontab file */
+        char *vi_argv[3];
+        vi_argv[0] = "vi";
+        vi_argv[1] = (char *)crontab_path;
+        vi_argv[2] = NULL;
+        cmd_vi(2, vi_argv);
+        write_str(1, "crontab: installing new crontab\n");
+    } else {
+        /* Install crontab from file */
+        const char *src = argv[1];
+        int sfd = sys_open(src, O_RDONLY, 0);
+        if (sfd < 0) {
+            write_str(2, "crontab: cannot open ");
+            write_str(2, src);
+            write_str(2, "\n");
+            return;
+        }
+        int dfd = sys_open(crontab_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (dfd < 0) {
+            write_str(2, "crontab: cannot write to ");
+            write_str(2, crontab_path);
+            write_str(2, "\n");
+            sys_close(sfd);
+            return;
+        }
+        char buf[512];
+        ssize_t n;
+        while ((n = sys_read(sfd, buf, sizeof(buf))) > 0)
+            sys_write(dfd, buf, n);
+        sys_close(sfd);
+        sys_close(dfd);
+        write_str(1, "crontab: installed from ");
+        write_str(1, src);
+        write_str(1, "\n");
+    }
+}
+
+/* ---- scp: simplified file copy over network ---- */
+static void cmd_scp(int argc, char *argv[]) {
+    if (argc < 3) {
+        write_str(2, "Usage: scp <file> <host>:<path>   — upload\n");
+        write_str(2, "       scp <host>:<path> <file>   — download\n");
+        return;
+    }
+
+    /* Determine direction by finding ':' in arguments */
+    const char *arg1 = argv[1], *arg2 = argv[2];
+    const char *colon1 = NULL, *colon2 = NULL;
+    for (const char *p = arg1; *p; p++) { if (*p == ':') { colon1 = p; break; } }
+    for (const char *p = arg2; *p; p++) { if (*p == ':') { colon2 = p; break; } }
+
+    if (!colon1 && !colon2) {
+        write_str(2, "scp: must specify host:path in source or destination\n");
+        return;
+    }
+    if (colon1 && colon2) {
+        write_str(2, "scp: remote-to-remote copy not supported\n");
+        return;
+    }
+
+    /* Parse host and port (default 2222) */
+    char host_buf[64];
+    const char *remote_path;
+    const char *local_path;
+    int upload;
+
+    if (colon2) {
+        /* Upload: scp <local> <host>:<path> */
+        upload = 1;
+        local_path = arg1;
+        int hlen = (int)(colon2 - arg2);
+        if (hlen > 63) hlen = 63;
+        for (int i = 0; i < hlen; i++) host_buf[i] = arg2[i];
+        host_buf[hlen] = '\0';
+        remote_path = colon2 + 1;
+    } else {
+        /* Download: scp <host>:<path> <local> */
+        upload = 0;
+        local_path = arg2;
+        int hlen = (int)(colon1 - arg1);
+        if (hlen > 63) hlen = 63;
+        for (int i = 0; i < hlen; i++) host_buf[i] = arg1[i];
+        host_buf[hlen] = '\0';
+        remote_path = colon1 + 1;
+    }
+
+    /* Parse dotted-quad IP */
+    uint32_t ip = 0;
+    int octet = 0, shift = 24;
+    for (int i = 0; host_buf[i]; i++) {
+        if (host_buf[i] == '.') {
+            ip |= (octet & 0xFF) << shift;
+            shift -= 8;
+            octet = 0;
+        } else {
+            octet = octet * 10 + (host_buf[i] - '0');
+        }
+    }
+    ip |= (octet & 0xFF) << shift;
+    uint32_t ip_be = ((ip >> 24) & 0xFF) | ((ip >> 8) & 0xFF00) |
+                     ((ip << 8) & 0xFF0000) | ((ip << 24) & 0xFF000000);
+
+    int port = 2222;
+
+    /* Create TCP socket and connect */
+    long sock = sys_call3(41 /* socket */, 2 /* AF_INET */, 1 /* SOCK_STREAM */, 0);
+    if (sock < 0) { write_str(2, "scp: socket failed\n"); return; }
+
+    struct { uint16_t family; uint16_t port; uint32_t addr; uint8_t pad[8]; } sa;
+    __builtin_memset(&sa, 0, sizeof(sa));
+    sa.family = 2; /* AF_INET */
+    sa.port = (uint16_t)(((port >> 8) & 0xFF) | ((port & 0xFF) << 8));
+    sa.addr = ip_be;
+
+    if (sys_call3(42 /* connect */, sock, (long)&sa, 16) < 0) {
+        write_str(2, "scp: connect to ");
+        write_str(2, host_buf);
+        write_str(2, " failed\n");
+        sys_close(sock);
+        return;
+    }
+
+    if (upload) {
+        /* Open local file */
+        int lfd = sys_open(local_path, O_RDONLY, 0);
+        if (lfd < 0) {
+            write_str(2, "scp: cannot open "); write_str(2, local_path); write_str(2, "\n");
+            sys_close(sock); return;
+        }
+        /* Get file size via lseek */
+        long size = sys_call3(8 /* lseek */, lfd, 0, 2 /* SEEK_END */);
+        sys_call3(8, lfd, 0, 0 /* SEEK_SET */);
+        if (size < 0) size = 0;
+
+        /* Send header: "PUT <path> <size>\n" */
+        char hdr[256];
+        int hp = 0;
+        const char *put = "PUT ";
+        for (int i = 0; put[i]; i++) hdr[hp++] = put[i];
+        for (int i = 0; remote_path[i] && hp < 200; i++) hdr[hp++] = remote_path[i];
+        hdr[hp++] = ' ';
+        char sb[20]; int_to_str(size, sb, 20);
+        for (int i = 0; sb[i]; i++) hdr[hp++] = sb[i];
+        hdr[hp++] = '\n';
+        sys_write(sock, hdr, hp);
+
+        /* Send file data */
+        char buf[512];
+        ssize_t n;
+        long sent = 0;
+        while ((n = sys_read(lfd, buf, sizeof(buf))) > 0) {
+            sys_write(sock, buf, n);
+            sent += n;
+        }
+        sys_close(lfd);
+        write_str(1, "scp: uploaded ");
+        write_str(1, local_path);
+        write_str(1, " -> ");
+        write_str(1, host_buf);
+        write_str(1, ":");
+        write_str(1, remote_path);
+        char ssb[20]; int_to_str(sent, ssb, 20);
+        write_str(1, " ("); write_str(1, ssb); write_str(1, " bytes)\n");
+    } else {
+        /* Send header: "GET <path>\n" */
+        char hdr[256];
+        int hp = 0;
+        const char *get = "GET ";
+        for (int i = 0; get[i]; i++) hdr[hp++] = get[i];
+        for (int i = 0; remote_path[i] && hp < 250; i++) hdr[hp++] = remote_path[i];
+        hdr[hp++] = '\n';
+        sys_write(sock, hdr, hp);
+
+        /* Open local file for writing */
+        int lfd = sys_open(local_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (lfd < 0) {
+            write_str(2, "scp: cannot create "); write_str(2, local_path); write_str(2, "\n");
+            sys_close(sock); return;
+        }
+
+        /* Receive data and write to file */
+        char buf[512];
+        ssize_t n;
+        long total = 0;
+        while ((n = sys_read(sock, buf, sizeof(buf))) > 0) {
+            sys_write(lfd, buf, n);
+            total += n;
+        }
+        sys_close(lfd);
+        write_str(1, "scp: downloaded ");
+        write_str(1, host_buf);
+        write_str(1, ":");
+        write_str(1, remote_path);
+        write_str(1, " -> ");
+        write_str(1, local_path);
+        char tsb[20]; int_to_str(total, tsb, 20);
+        write_str(1, " ("); write_str(1, tsb); write_str(1, " bytes)\n");
+    }
+    sys_close(sock);
 }

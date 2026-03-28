@@ -71677,6 +71677,278 @@ static void test_clone_cleartid_comprehensive(void) {
     }
 }
 
+/* ============================================================
+ * Tests 2580-2587: socketpair SOCK_CLOEXEC lifecycle + accept4 flag combinations
+ *
+ * Comprehensive coverage for socket flag lifecycle:
+ *   2580: socketpair(SOCK_STREAM|SOCK_CLOEXEC) — FD_CLOEXEC on both, no O_NONBLOCK
+ *   2581: socketpair(SOCK_DGRAM|SOCK_CLOEXEC) — FD_CLOEXEC on DGRAM pair
+ *   2582: socketpair(SOCK_DGRAM|SOCK_NONBLOCK) — O_NONBLOCK + EAGAIN on empty recv
+ *   2583: socketpair(SOCK_STREAM|SOCK_CLOEXEC) — bidirectional data still works
+ *   2584: accept4(SOCK_CLOEXEC|SOCK_NONBLOCK) — both flags set on accepted fd
+ *   2585: accept4(0) — no flags set on accepted fd (plain accept)
+ *   2586: accept4(invalid flags) — EINVAL returned
+ *   2587: accept4(SOCK_CLOEXEC) — FD_CLOEXEC set, O_NONBLOCK NOT set
+ * ============================================================ */
+static void test_socketpair_cloexec_accept4_lifecycle(void) {
+    extern long sys_socketpair(int domain, int type, int protocol, int *sv);
+    extern long sys_fcntl(int fd, int cmd, uint64_t arg);
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_bind(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_listen(int sockfd, int backlog);
+    extern long sys_connect(int sockfd, const void *addr, unsigned int addrlen);
+    extern long sys_accept4(int sockfd, void *addr, unsigned int *addrlen, int flags);
+    extern long sys_close(int fd);
+    extern ssize_t sys_read(int fd, void *buf, size_t count);
+    extern ssize_t sys_write(int fd, const void *buf, size_t count);
+
+    /* ---- Test 2580: socketpair(SOCK_STREAM|SOCK_CLOEXEC) — FD_CLOEXEC yes, O_NONBLOCK no ---- */
+    fut_printf("[MISC-TEST] Test 2580: socketpair(SOCK_STREAM|SOCK_CLOEXEC) flags\n");
+    {
+        int sv[2] = {-1, -1};
+        long r = sys_socketpair(1 /* AF_UNIX */, 1 /* SOCK_STREAM */ | 0x80000 /* SOCK_CLOEXEC */, 0, sv);
+        if (r < 0) {
+            fut_printf("[MISC-TEST] FAIL 2580: socketpair returned %ld\n", r);
+            fut_test_fail(2580);
+        } else {
+            long fd0 = sys_fcntl(sv[0], 1 /* F_GETFD */, 0);
+            long fd1 = sys_fcntl(sv[1], 1 /* F_GETFD */, 0);
+            long fl0 = sys_fcntl(sv[0], 3 /* F_GETFL */, 0);
+            long fl1 = sys_fcntl(sv[1], 3 /* F_GETFL */, 0);
+            int ok = (fd0 >= 0 && (fd0 & 1 /* FD_CLOEXEC */)) &&
+                     (fd1 >= 0 && (fd1 & 1 /* FD_CLOEXEC */)) &&
+                     (fl0 >= 0 && !(fl0 & 0x800 /* O_NONBLOCK */)) &&
+                     (fl1 >= 0 && !(fl1 & 0x800 /* O_NONBLOCK */));
+            if (ok) {
+                fut_printf("[MISC-TEST] PASS 2580: SOCK_CLOEXEC sets FD_CLOEXEC on both, "
+                           "no O_NONBLOCK\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL 2580: fd0=0x%lx fd1=0x%lx fl0=0x%lx fl1=0x%lx\n",
+                           fd0, fd1, fl0, fl1);
+                fut_test_fail(2580);
+            }
+            sys_close(sv[0]);
+            sys_close(sv[1]);
+        }
+    }
+
+    /* ---- Test 2581: socketpair(SOCK_DGRAM|SOCK_CLOEXEC) — FD_CLOEXEC on DGRAM pair ---- */
+    fut_printf("[MISC-TEST] Test 2581: socketpair(SOCK_DGRAM|SOCK_CLOEXEC) flags\n");
+    {
+        int sv[2] = {-1, -1};
+        long r = sys_socketpair(1 /* AF_UNIX */, 2 /* SOCK_DGRAM */ | 0x80000 /* SOCK_CLOEXEC */, 0, sv);
+        if (r < 0) {
+            fut_printf("[MISC-TEST] FAIL 2581: socketpair(DGRAM|CLOEXEC) returned %ld\n", r);
+            fut_test_fail(2581);
+        } else {
+            long fd0 = sys_fcntl(sv[0], 1 /* F_GETFD */, 0);
+            long fd1 = sys_fcntl(sv[1], 1 /* F_GETFD */, 0);
+            if (fd0 >= 0 && (fd0 & 1) && fd1 >= 0 && (fd1 & 1)) {
+                fut_printf("[MISC-TEST] PASS 2581: DGRAM+SOCK_CLOEXEC → FD_CLOEXEC on both\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL 2581: fd0=0x%lx fd1=0x%lx\n", fd0, fd1);
+                fut_test_fail(2581);
+            }
+            sys_close(sv[0]);
+            sys_close(sv[1]);
+        }
+    }
+
+    /* ---- Test 2582: socketpair(SOCK_DGRAM|SOCK_NONBLOCK) — recv on empty → EAGAIN ---- */
+    fut_printf("[MISC-TEST] Test 2582: socketpair(SOCK_DGRAM|SOCK_NONBLOCK) EAGAIN\n");
+    {
+        int sv[2] = {-1, -1};
+        long r = sys_socketpair(1 /* AF_UNIX */, 2 /* SOCK_DGRAM */ | 0x800 /* SOCK_NONBLOCK */, 0, sv);
+        if (r < 0) {
+            fut_printf("[MISC-TEST] FAIL 2582: socketpair(DGRAM|NONBLOCK) returned %ld\n", r);
+            fut_test_fail(2582);
+        } else {
+            long fl0 = sys_fcntl(sv[0], 3 /* F_GETFL */, 0);
+            long fl1 = sys_fcntl(sv[1], 3 /* F_GETFL */, 0);
+            char buf[16];
+            ssize_t nr = sys_read(sv[1], buf, sizeof(buf));
+            if (fl0 >= 0 && (fl0 & 0x800) && fl1 >= 0 && (fl1 & 0x800) &&
+                nr == -11 /* -EAGAIN */) {
+                fut_printf("[MISC-TEST] PASS 2582: DGRAM+NONBLOCK → O_NONBLOCK on both, "
+                           "empty recv=-EAGAIN\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL 2582: fl0=0x%lx fl1=0x%lx recv=%ld\n",
+                           fl0, fl1, (long)nr);
+                fut_test_fail(2582);
+            }
+            sys_close(sv[0]);
+            sys_close(sv[1]);
+        }
+    }
+
+    /* ---- Test 2583: socketpair(SOCK_STREAM|SOCK_CLOEXEC) — bidirectional data ---- */
+    fut_printf("[MISC-TEST] Test 2583: socketpair(SOCK_CLOEXEC) bidirectional data\n");
+    {
+        int sv[2] = {-1, -1};
+        long r = sys_socketpair(1, 1 | 0x80000 /* SOCK_CLOEXEC */, 0, sv);
+        if (r < 0) {
+            fut_printf("[MISC-TEST] FAIL 2583: socketpair returned %ld\n", r);
+            fut_test_fail(2583);
+        } else {
+            /* Direction 1: sv[0] → sv[1] */
+            sys_write(sv[0], "AB", 2);
+            char b1[4] = {0};
+            ssize_t n1 = sys_read(sv[1], b1, sizeof(b1));
+            /* Direction 2: sv[1] → sv[0] */
+            sys_write(sv[1], "CD", 2);
+            char b2[4] = {0};
+            ssize_t n2 = sys_read(sv[0], b2, sizeof(b2));
+            if (n1 == 2 && b1[0] == 'A' && b1[1] == 'B' &&
+                n2 == 2 && b2[0] == 'C' && b2[1] == 'D') {
+                fut_printf("[MISC-TEST] PASS 2583: SOCK_CLOEXEC pair bidirectional data OK\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL 2583: n1=%ld n2=%ld b1=%c%c b2=%c%c\n",
+                           (long)n1, (long)n2, b1[0], b1[1], b2[0], b2[1]);
+                fut_test_fail(2583);
+            }
+            sys_close(sv[0]);
+            sys_close(sv[1]);
+        }
+    }
+
+    /* ---- Tests 2584-2587: accept4 flag combinations ---- */
+
+    /* Setup: create a listening server socket with abstract address */
+    struct {
+        unsigned short sun_family;
+        char sun_path[108];
+    } a4_addr;
+    a4_addr.sun_family = 1; /* AF_UNIX */
+    for (int i = 0; i < 108; i++) a4_addr.sun_path[i] = 0;
+    {
+        const char *name = "a4lifecycle";
+        size_t n = 0;
+        while (name[n] && (n + 1) < sizeof(a4_addr.sun_path)) {
+            a4_addr.sun_path[n + 1] = name[n];
+            n++;
+        }
+        (void)n;
+    }
+    unsigned int a4_addrlen = 2u + 1u + 11u; /* "a4lifecycle" */
+
+    long a4_server = sys_socket(1, 1, 0);
+    long a4_br = (a4_server >= 0) ? sys_bind((int)a4_server, &a4_addr, a4_addrlen) : -1;
+    long a4_lr = (a4_br == 0) ? sys_listen((int)a4_server, 8) : -1;
+    if (a4_server < 0 || a4_br != 0 || a4_lr != 0) {
+        fut_printf("[MISC-TEST] FAIL 2584-2587: server setup failed "
+                   "(server=%ld bind=%ld listen=%ld)\n", a4_server, a4_br, a4_lr);
+        for (int t = 2584; t <= 2587; t++) fut_test_fail((uint16_t)t);
+        if (a4_server >= 0) sys_close((int)a4_server);
+    } else {
+        /* Pre-connect 4 clients so we have connections to accept */
+        long clients[4];
+        int clients_ok = 1;
+        for (int i = 0; i < 4; i++) {
+            clients[i] = sys_socket(1, 1, 0);
+            if (clients[i] < 0 || sys_connect((int)clients[i], &a4_addr, a4_addrlen) != 0) {
+                fut_printf("[MISC-TEST] FAIL 2584-2587: client[%d] connect failed\n", i);
+                clients_ok = 0;
+            }
+        }
+        if (!clients_ok) {
+            for (int t = 2584; t <= 2587; t++) fut_test_fail((uint16_t)t);
+        } else {
+            /* Test 2584: accept4(SOCK_CLOEXEC|SOCK_NONBLOCK) → both flags */
+            fut_printf("[MISC-TEST] Test 2584: accept4(SOCK_CLOEXEC|SOCK_NONBLOCK)\n");
+            {
+                long conn = sys_accept4((int)a4_server, 0, 0,
+                                        0x80000 /* SOCK_CLOEXEC */ | 0x800 /* SOCK_NONBLOCK */);
+                if (conn < 0) {
+                    fut_printf("[MISC-TEST] FAIL 2584: accept4 returned %ld\n", conn);
+                    fut_test_fail(2584);
+                } else {
+                    long fd_fl = sys_fcntl((int)conn, 1 /* F_GETFD */, 0);
+                    long st_fl = sys_fcntl((int)conn, 3 /* F_GETFL */, 0);
+                    if (fd_fl >= 0 && (fd_fl & 1) && st_fl >= 0 && (st_fl & 0x800)) {
+                        fut_printf("[MISC-TEST] PASS 2584: accept4(CLOEXEC|NONBLOCK) → "
+                                   "FD_CLOEXEC + O_NONBLOCK\n");
+                        fut_test_pass();
+                    } else {
+                        fut_printf("[MISC-TEST] FAIL 2584: fd_fl=0x%lx st_fl=0x%lx\n",
+                                   fd_fl, st_fl);
+                        fut_test_fail(2584);
+                    }
+                    sys_close((int)conn);
+                }
+            }
+
+            /* Test 2585: accept4(0) → no extra flags set */
+            fut_printf("[MISC-TEST] Test 2585: accept4(flags=0) → no flags\n");
+            {
+                long conn = sys_accept4((int)a4_server, 0, 0, 0);
+                if (conn < 0) {
+                    fut_printf("[MISC-TEST] FAIL 2585: accept4(0) returned %ld\n", conn);
+                    fut_test_fail(2585);
+                } else {
+                    long fd_fl = sys_fcntl((int)conn, 1 /* F_GETFD */, 0);
+                    long st_fl = sys_fcntl((int)conn, 3 /* F_GETFL */, 0);
+                    if (fd_fl >= 0 && !(fd_fl & 1) && st_fl >= 0 && !(st_fl & 0x800)) {
+                        fut_printf("[MISC-TEST] PASS 2585: accept4(0) → no CLOEXEC, "
+                                   "no NONBLOCK\n");
+                        fut_test_pass();
+                    } else {
+                        fut_printf("[MISC-TEST] FAIL 2585: fd_fl=0x%lx st_fl=0x%lx\n",
+                                   fd_fl, st_fl);
+                        fut_test_fail(2585);
+                    }
+                    sys_close((int)conn);
+                }
+            }
+
+            /* Test 2586: accept4(invalid flags) → EINVAL */
+            fut_printf("[MISC-TEST] Test 2586: accept4(invalid flags) → EINVAL\n");
+            {
+                long conn = sys_accept4((int)a4_server, 0, 0, 0x1 /* invalid flag */);
+                if (conn == -22 /* -EINVAL */) {
+                    fut_printf("[MISC-TEST] PASS 2586: accept4(0x1) → -EINVAL\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] FAIL 2586: accept4(0x1) = %ld (want -22)\n", conn);
+                    if (conn >= 0) sys_close((int)conn);
+                    fut_test_fail(2586);
+                }
+            }
+
+            /* Test 2587: accept4(SOCK_CLOEXEC only) → FD_CLOEXEC yes, O_NONBLOCK no */
+            fut_printf("[MISC-TEST] Test 2587: accept4(SOCK_CLOEXEC) → CLOEXEC only\n");
+            {
+                long conn = sys_accept4((int)a4_server, 0, 0, 0x80000 /* SOCK_CLOEXEC */);
+                if (conn < 0) {
+                    fut_printf("[MISC-TEST] FAIL 2587: accept4(CLOEXEC) returned %ld\n", conn);
+                    fut_test_fail(2587);
+                } else {
+                    long fd_fl = sys_fcntl((int)conn, 1 /* F_GETFD */, 0);
+                    long st_fl = sys_fcntl((int)conn, 3 /* F_GETFL */, 0);
+                    if (fd_fl >= 0 && (fd_fl & 1) && st_fl >= 0 && !(st_fl & 0x800)) {
+                        fut_printf("[MISC-TEST] PASS 2587: accept4(CLOEXEC) → FD_CLOEXEC set, "
+                                   "no O_NONBLOCK\n");
+                        fut_test_pass();
+                    } else {
+                        fut_printf("[MISC-TEST] FAIL 2587: fd_fl=0x%lx st_fl=0x%lx\n",
+                                   fd_fl, st_fl);
+                        fut_test_fail(2587);
+                    }
+                    sys_close((int)conn);
+                }
+            }
+        }
+
+        for (int i = 0; i < 4; i++) {
+            if (clients[i] >= 0) sys_close((int)clients[i]);
+        }
+        sys_close((int)a4_server);
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -76015,6 +76287,7 @@ void fut_misc_test_thread(void *arg) {
     test_sendmsg_recvmsg_flags(); /* Tests 2545-2550: sendmsg/recvmsg MSG_DONTWAIT, MSG_PEEK, MSG_NOSIGNAL, scatter-gather */
     test_mremap_enhanced(); /* Tests 2560-2565: mremap shrink/grow/MREMAP_MAYMOVE in-place optimization */
     test_clone_cleartid_comprehensive(); /* Tests 2570-2577: CLONE_CHILD_CLEARTID futex wake + set_tid_address */
+    test_socketpair_cloexec_accept4_lifecycle(); /* Tests 2580-2587: socketpair SOCK_CLOEXEC lifecycle + accept4 flag combinations */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

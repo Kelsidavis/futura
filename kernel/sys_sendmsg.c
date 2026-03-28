@@ -517,6 +517,13 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
                             int nfds = (int)(payload_len / sizeof(int));
                             int *fds = (int *)CMSG_DATA(cmsg);
 
+                            /* POSIX limits SCM_RIGHTS to a reasonable count.
+                             * Linux uses sysctl_optmem_max / sizeof(int); we cap at 253 like BSD. */
+                            if (nfds > 253) {
+                                fut_free(kcontrol);
+                                return -EINVAL;
+                            }
+
                             /* Validate all fds BEFORE queuing any (Linux rejects the
                              * entire sendmsg with EBADF if any fd is invalid). */
                             int scm_err = 0;
@@ -530,11 +537,17 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
                                 return -EBADF;
                             }
 
+                            /* Check that the queue has room for all the FDs.
+                             * Reject atomically rather than queuing a partial set. */
                             fut_spinlock_acquire(&sock->pair->lock);
+                            if (sock->pair->fd_queue_count + (uint32_t)nfds > FUT_SOCKET_FD_QUEUE_MAX) {
+                                fut_spinlock_release(&sock->pair->lock);
+                                fut_free(kcontrol);
+                                SENDMSG_LOG("[SENDMSG] SCM_RIGHTS: fd queue full (%u + %d > %d)\n",
+                                           sock->pair->fd_queue_count, nfds, FUT_SOCKET_FD_QUEUE_MAX);
+                                return -ENOBUFS;
+                            }
                             for (int fi = 0; fi < nfds; fi++) {
-                                if (sock->pair->fd_queue_count >= FUT_SOCKET_FD_QUEUE_MAX) {
-                                    break;  /* Queue full */
-                                }
                                 /* Look up the file in the sender's FD table */
                                 struct fut_file *file = vfs_get_file_from_task(
                                     (struct fut_task *)task, fds[fi]);

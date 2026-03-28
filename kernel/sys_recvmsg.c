@@ -551,14 +551,18 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
                     if (newfd >= 0) {
                         new_fds[nfds++] = newfd;
                         /* MSG_CMSG_CLOEXEC: set FD_CLOEXEC on received fds (per-FD) */
-                        if ((local_flags & 0x40000000) && task->fd_flags) {  /* MSG_CMSG_CLOEXEC */
+                        if ((local_flags & MSG_CMSG_CLOEXEC) && task->fd_flags) {
                             task->fd_flags[newfd] |= FD_CLOEXEC;
                         }
                         RECVMSG_LOG("[RECVMSG] SCM_RIGHTS: installed file=%p as fd=%d in receiver\n",
                                    file, newfd);
                     } else {
-                        /* Failed to allocate FD - drop the file ref */
-                        if (file->refcount > 0) __atomic_sub_fetch(&file->refcount, 1, __ATOMIC_ACQ_REL);
+                        /* Failed to allocate FD — drop the in-flight reference
+                         * that was added by sendmsg when it queued this file.
+                         * Use the same atomic pattern as vfs_file_ref() in reverse. */
+                        RECVMSG_LOG("[RECVMSG] SCM_RIGHTS: fd table full, dropping file=%p\n", file);
+                        if (file->refcount > 0)
+                            __atomic_sub_fetch(&file->refcount, 1, __ATOMIC_ACQ_REL);
                     }
                 }
             }
@@ -599,8 +603,10 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
                         fut_free(kcontrol);
                     }
                 } else {
-                    /* Buffer too small - set MSG_CTRUNC */
-                    kmsg.msg_flags |= 0x8;  /* MSG_CTRUNC */
+                    /* Buffer too small - set MSG_CTRUNC to indicate
+                     * control data was truncated (FDs were installed but
+                     * their numbers could not be reported to userspace). */
+                    kmsg.msg_flags |= MSG_CTRUNC;
                 }
             }
         }
@@ -608,15 +614,27 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
 
     /* SO_PASSCRED: attach SCM_CREDENTIALS cmsg when credential passing is enabled.
      * Each received message gets a ucred {pid, uid, gid} from the sending process.
-     * For AF_UNIX connected sockets, use the current task's credentials as the peer. */
+     * For AF_UNIX connected sockets, use the peer credentials captured at
+     * connect/accept time (stored in sock->peer_pid/uid/gid).  This correctly
+     * identifies the *sender*, not the receiver.  Fallback to the current task's
+     * credentials only when the peer creds are unset (e.g. socketpair in the
+     * same process where peer_pid is 0). */
     if (total_received > 0 && kmsg.msg_control != NULL) {
         extern fut_socket_t *get_socket_from_fd(int fd);
         fut_socket_t *passcred_sock = get_socket_from_fd(local_sockfd);
         if (passcred_sock && passcred_sock->passcred) {
             struct ucred_t { int32_t pid; uint32_t uid; uint32_t gid; } cred;
-            cred.pid = task ? (int32_t)task->pid : 0;
-            cred.uid = task ? task->uid : 0;
-            cred.gid = task ? task->gid : 0;
+            if (passcred_sock->peer_pid != 0) {
+                /* Use the peer credentials set at connect/accept time */
+                cred.pid = (int32_t)passcred_sock->peer_pid;
+                cred.uid = passcred_sock->peer_uid;
+                cred.gid = passcred_sock->peer_gid;
+            } else {
+                /* Fallback for socketpair (same-process): use current task */
+                cred.pid = task ? (int32_t)task->pid : 0;
+                cred.uid = task ? task->uid : 0;
+                cred.gid = task ? task->gid : 0;
+            }
 
             size_t cred_cmsg_size = CMSG_SPACE(sizeof(struct ucred_t));
             /* Read original control buffer size to check available space */

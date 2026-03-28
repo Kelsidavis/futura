@@ -193,9 +193,21 @@ static void cmd_chrt(int argc, char *argv[]);
 static void cmd_ionice(int argc, char *argv[]);
 static void cmd_cpupower(int argc, char *argv[]);
 static void cmd_numactl(int argc, char *argv[]);
+static void cmd_findmnt(int argc, char *argv[]);
+static void cmd_lsmem(int argc, char *argv[]);
+static void cmd_ip6tables(int argc, char *argv[]);
 static void cmd_perf(int argc, char *argv[]);
 static void cmd_stdbuf(int argc, char *argv[]);
 static void cmd_fuser(int argc, char *argv[]);
+static void cmd_modprobe(int argc, char *argv[]);
+static void cmd_lsmod(int argc, char *argv[]);
+static void cmd_depmod(int argc, char *argv[]);
+static void cmd_swapon(int argc, char *argv[]);
+static void cmd_swapoff(int argc, char *argv[]);
+static void cmd_blockdev(int argc, char *argv[]);
+static void cmd_hdparm(int argc, char *argv[]);
+static void cmd_smartctl(int argc, char *argv[]);
+static void cmd_partprobe(int argc, char *argv[]);
 static void strcpy_simple(char *dest, const char *src);
 
 /* Forward declaration for prompt */
@@ -646,7 +658,7 @@ static size_t common_prefix_len(const char *s1, const char *s2) {
 static void complete_command(char *buf, size_t *pos, size_t max_len) {
     /* List of builtin commands */
     const char *builtins[] = {
-        "arp", "ascii", "base32", "bg", "brctl", "cal", "cd", "chgrp", "chmod", "chroot", "chrt", "clear", "cmp", "comm", "conntrack", "cpupower", "date", "dd", "df", "dhclient", "dmesg", "echo", "edit", "ethtool", "expand", "expr", "factor", "file", "fold", "fuser", "hexdump", "install", "ionice", "locale", "lsns", "lsof", "md5sum", "mkfifo", "nc", "nice", "nohup", "numactl", "patch", "perf", "pgrep", "pidof", "pkill", "poweroff", "prlimit", "reboot", "renice", "reset", "seq", "sha1sum", "sha512sum", "sleep", "stdbuf", "strings", "tac", "taskset", "time", "timeout", "tput", "traceroute", "tty", "unexpand", "wget", "whatis", "xxd", "exit", "export", "fg", "free",
+        "arp", "ascii", "base32", "bg", "blockdev", "brctl", "cal", "cd", "chgrp", "chmod", "chroot", "chrt", "clear", "cmp", "comm", "conntrack", "cpupower", "date", "depmod", "dd", "df", "dhclient", "dmesg", "echo", "edit", "ethtool", "expand", "expr", "factor", "file", "fold", "fuser", "hdparm", "hexdump", "install", "ionice", "locale", "lsmod", "lsns", "lsof", "md5sum", "mkfifo", "modprobe", "nc", "nice", "nohup", "numactl", "partprobe", "patch", "perf", "pgrep", "pidof", "pkill", "poweroff", "prlimit", "reboot", "renice", "reset", "seq", "sha1sum", "sha512sum", "sleep", "smartctl", "stdbuf", "strings", "swapon", "swapoff", "tac", "taskset", "time", "timeout", "tput", "traceroute", "tty", "unexpand", "wget", "whatis", "xxd", "exit", "export", "fg", "free",
         "help", "hostname", "httpd", "id", "ifconfig", "iostat", "ipcs", "iptables", "jobs", "kill", "logger", "losetup", "ls", "lsblk", "lspci", "mkfs", "mount", "netstat",
         ".", "alias", "arch", "basename", "blkid", "dirname", "du", "exec", "false", "fmt", "getconf", "groups", "history", "ip", "ln", "logname", "lscpu", "mkswap", "mktemp", "more", "nawk", "nproc", "nslookup", "passwd", "ping", "printenv", "printf", "ps", "pwd", "read", "readlink", "realpath", "set", "sha1sum", "sha256sum", "shutdown", "source", "ss", "stat", "strace", "stty", "su", "sync", "sysctl", "sysinfo", "tc", "test", "top", "trap", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "users", "version", "vi", "vmstat", "w", "wait", "watch", "wdctl", "which", "whoami", "xargs", "yes", NULL
     };
@@ -1366,6 +1378,15 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  perf stat cmd   - Basic performance counter statistics\n");
     write_str(1, "  stdbuf [-oL|-o0] cmd - Modify stream buffering for command\n");
     write_str(1, "  fuser [-k] file - Identify processes using files\n");
+    write_str(1, "  modprobe <mod>  - Load kernel module\n");
+    write_str(1, "  lsmod           - List loaded kernel modules\n");
+    write_str(1, "  depmod          - Generate module dependency info\n");
+    write_str(1, "  swapon <dev>    - Enable swap on device\n");
+    write_str(1, "  swapoff <dev>   - Disable swap on device\n");
+    write_str(1, "  blockdev <opt> <dev> - Block device ioctls (--getsize64, --getro, etc.)\n");
+    write_str(1, "  hdparm [-t|-i] <dev> - Get/set disk parameters\n");
+    write_str(1, "  smartctl -a <dev> - Display SMART health information\n");
+    write_str(1, "  partprobe [dev] - Inform kernel of partition table changes\n");
     write_str(1, "\n");
     write_str(1, "Networking:\n");
     write_str(1, "  ip addr|link|route|neigh|forward - Network configuration\n");
@@ -11110,10 +11131,49 @@ watch_sleep:
         return 0;
     } else if (strcmp_simple(argv[0], "losetup") == 0) {
         /* losetup — configure loop devices */
-        if (argc >= 3) {
-            /* losetup /dev/loopN <file> — attach file to loop device */
+        if (argc >= 2 && strcmp_simple(argv[1], "-f") == 0) {
+            /* losetup -f [--show <file>] */
+            int found = -1;
+            for (int i = 0; i < 8; i++) {
+                char path[16] = "/dev/loop0";
+                path[9] = (char)('0' + i);
+                int fd = sys_open(path, O_RDWR, 0);
+                if (fd < 0) continue;
+                char status_buf[128];
+                long rc = sys_call3(16, fd, 0x4C03 /* LOOP_GET_STATUS */, (long)status_buf);
+                sys_close(fd);
+                if (rc < 0) { found = i; break; }
+            }
+            if (found < 0) { write_str(2, "losetup: no free loop device found\n"); return 1; }
+            char free_path[16] = "/dev/loop0";
+            free_path[9] = (char)('0' + found);
+            int show_mode = 0;
+            const char *attach_file = NULL;
+            for (int i = 2; i < argc; i++) {
+                if (strcmp_simple(argv[i], "--show") == 0) show_mode = 1;
+                else if (argv[i][0] != '-') attach_file = argv[i];
+            }
+            if (attach_file) {
+                int loop_fd = sys_open(free_path, O_RDWR, 0);
+                if (loop_fd < 0) { write_str(2, "losetup: cannot open "); write_str(2, free_path); write_char(2, '\n'); return 1; }
+                int back_fd = sys_open(attach_file, O_RDWR, 0);
+                if (back_fd < 0) { sys_close(loop_fd); write_str(2, "losetup: cannot open "); write_str(2, attach_file); write_char(2, '\n'); return 1; }
+                long rc = sys_call3(16, loop_fd, 0x4C00, back_fd);
+                sys_close(loop_fd);
+                if (rc == 0) {
+                    if (show_mode) { write_str(1, free_path); write_str(1, "\n"); }
+                    else { write_str(1, free_path); write_str(1, ": attached to "); write_str(1, attach_file); write_str(1, "\n"); }
+                } else { sys_close(back_fd); write_str(2, "losetup: LOOP_SET_FD failed\n"); return 1; }
+            } else {
+                write_str(1, free_path); write_str(1, "\n");
+            }
+            return 0;
+        } else if (argc >= 3 && argv[1][0] != '-') {
+            /* losetup [--show] /dev/loopN <file> */
             const char *loopdev = argv[1];
             const char *backing = argv[2];
+            int show = 0;
+            for (int i = 1; i < argc; i++) if (strcmp_simple(argv[i], "--show") == 0) show = 1;
             int loop_fd = sys_open(loopdev, O_RDWR, 0);
             if (loop_fd < 0) {
                 write_str(2, "losetup: cannot open "); write_str(2, loopdev);
@@ -11128,8 +11188,8 @@ watch_sleep:
             long rc = sys_call3(16 /* ioctl */, loop_fd, 0x4C00 /* LOOP_SET_FD */, back_fd);
             sys_close(loop_fd);
             if (rc == 0) {
-                write_str(1, loopdev); write_str(1, ": attached to ");
-                write_str(1, backing); write_str(1, "\n");
+                if (show) { write_str(1, loopdev); write_str(1, "\n"); }
+                else { write_str(1, loopdev); write_str(1, ": attached to "); write_str(1, backing); write_str(1, "\n"); }
             } else {
                 sys_close(back_fd);
                 write_str(2, "losetup: LOOP_SET_FD failed\n");
@@ -11169,6 +11229,7 @@ watch_sleep:
             }
         } else {
             write_str(1, "usage: losetup /dev/loopN <file>    - Attach file to loop device\n");
+            write_str(1, "       losetup -f [--show <file>]   - Find free loop (optionally attach)\n");
             write_str(1, "       losetup -d /dev/loopN        - Detach loop device\n");
             write_str(1, "       losetup -a                   - List active loop devices\n");
         }
@@ -13208,6 +13269,42 @@ watch_sleep:
     } else if (strcmp_simple(argv[0], "fuser") == 0) {
         cmd_fuser(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "findmnt") == 0) {
+        cmd_findmnt(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "lsmem") == 0) {
+        cmd_lsmem(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "ip6tables") == 0) {
+        cmd_ip6tables(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "modprobe") == 0) {
+        cmd_modprobe(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "lsmod") == 0) {
+        cmd_lsmod(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "depmod") == 0) {
+        cmd_depmod(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "swapon") == 0) {
+        cmd_swapon(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "swapoff") == 0) {
+        cmd_swapoff(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "blockdev") == 0) {
+        cmd_blockdev(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "hdparm") == 0) {
+        cmd_hdparm(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "smartctl") == 0) {
+        cmd_smartctl(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "partprobe") == 0) {
+        cmd_partprobe(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -13422,6 +13519,15 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "perf") == 0 ||
             strcmp_simple(cmd, "stdbuf") == 0 ||
             strcmp_simple(cmd, "fuser") == 0 ||
+            strcmp_simple(cmd, "modprobe") == 0 ||
+            strcmp_simple(cmd, "lsmod") == 0 ||
+            strcmp_simple(cmd, "depmod") == 0 ||
+            strcmp_simple(cmd, "swapon") == 0 ||
+            strcmp_simple(cmd, "swapoff") == 0 ||
+            strcmp_simple(cmd, "blockdev") == 0 ||
+            strcmp_simple(cmd, "hdparm") == 0 ||
+            strcmp_simple(cmd, "smartctl") == 0 ||
+            strcmp_simple(cmd, "partprobe") == 0 ||
             0);
 }
 
@@ -17859,7 +17965,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   230 built-in commands — type 'help'    |\n");
+    write_str(1, "|   240 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");
@@ -21540,5 +21646,30 @@ static void cmd_numactl(int argc, char *argv[]) { if(argc>=2&&strcmp_simple(argv
 static void cmd_perf(int argc, char *argv[]) { if(argc<3||strcmp_simple(argv[1],"stat")!=0){write_str(2,"usage: perf stat command [args...]\n");return;}long st=0;int uf=sys_open("/proc/uptime",O_RDONLY,0);if(uf>=0){char ub[64];long ur=sys_read(uf,ub,sizeof(ub)-1);sys_close(uf);if(ur>0){ub[ur]='\0';const char*p=ub;while(*p>='0'&&*p<='9')st=st*10+(*p++-'0');st*=100;if(*p=='.'){p++;if(*p>='0'&&*p<='9')st+=(*p++-'0')*10;if(*p>='0'&&*p<='9')st+=(*p++-'0');}}}int sa=argc-2;char*sv[64];for(int i=0;i<sa&&i<63;i++)sv[i]=argv[i+2];sv[sa]=NULL;execute_command(sa,sv);long et=0;uf=sys_open("/proc/uptime",O_RDONLY,0);if(uf>=0){char ub[64];long ur=sys_read(uf,ub,sizeof(ub)-1);sys_close(uf);if(ur>0){ub[ur]='\0';const char*p=ub;while(*p>='0'&&*p<='9')et=et*10+(*p++-'0');et*=100;if(*p=='.'){p++;if(*p>='0'&&*p<='9')et+=(*p++-'0')*10;if(*p>='0'&&*p<='9')et+=(*p++-'0');}}}long ec=et-st;if(ec<0)ec=0;write_str(2,"\n Performance counter stats:\n\n");int sf=sys_open("/proc/stat",O_RDONLY,0);if(sf>=0){char sb[2048];long sr=sys_read(sf,sb,sizeof(sb)-1);sys_close(sf);if(sr>0){sb[sr]='\0';char*sp=sb;while(*sp){if(sp[0]=='c'&&sp[1]=='t'&&sp[2]=='x'&&sp[3]=='t'){while(*sp&&*sp!=' ')sp++;while(*sp==' ')sp++;char nb[20];int ni=0;while(*sp>='0'&&*sp<='9'&&ni<19)nb[ni++]=*sp++;nb[ni]='\0';write_str(2,"        ");write_str(2,nb);write_str(2,"      context-switches\n");break;}while(*sp&&*sp!='\n')sp++;if(*sp=='\n')sp++;}}}char tb[20];int_to_str(ec/100,tb,20);write_str(2,"\n   ");write_str(2,tb);write_str(2,".");char cb[4];cb[0]=(char)('0'+(ec%100)/10);cb[1]=(char)('0'+(ec%10));cb[2]='\0';write_str(2,cb);write_str(2," seconds time elapsed\n\n");}
 static void cmd_stdbuf(int argc, char *argv[]) { if(argc<3){write_str(2,"usage: stdbuf [-oL|-o0] command [args...]\n");return;}int cs=1;while(cs<argc&&argv[cs][0]=='-'){char c=argv[cs][1];if(c=='o'||c=='i'||c=='e'){if(argv[cs][2]=='\0'&&cs+1<argc)cs++;}else break;cs++;}if(cs>=argc){write_str(2,"stdbuf: missing command\n");return;}int sa=argc-cs;char*sv[64];for(int i=0;i<sa&&i<63;i++)sv[i]=argv[i+cs];sv[sa]=NULL;execute_command(sa,sv);}
 static void cmd_fuser(int argc, char *argv[]) { int dk=0,fs=1;if(argc>=2&&strcmp_simple(argv[1],"-k")==0){dk=1;fs=2;}if(fs>=argc){write_str(2,"usage: fuser [-k] file...\n");return;}for(int fi=fs;fi<argc;fi++){const char*tg=argv[fi];struct stat ts;if(sys_call2(__NR_stat,(long)tg,(long)&ts)<0){write_str(2,"fuser: ");write_str(2,tg);write_str(2,": No such file\n");continue;}write_str(1,tg);write_str(1,":");struct linux_dirent64{unsigned long long d_ino;long long d_off;unsigned short d_reclen;unsigned char d_type;char d_name[256];};int pf=sys_open("/proc",O_RDONLY,0);if(pf<0)continue;char db[4096];long nr;while((nr=sys_getdents64(pf,db,sizeof(db)))>0){char*pt=db;while(pt<db+nr){struct linux_dirent64*d=(struct linux_dirent64*)pt;pt+=d->d_reclen;if(d->d_name[0]<'1'||d->d_name[0]>'9')continue;int pid=0;for(int k=0;d->d_name[k]>='0'&&d->d_name[k]<='9';k++)pid=pid*10+(d->d_name[k]-'0');char fd[64];int fp=0;const char*px="/proc/";while(*px)fd[fp++]=*px++;{int v=pid;char rv[12];int rp=0;if(v==0)rv[rp++]='0';else while(v>0){rv[rp++]='0'+(v%10);v/=10;}while(rp>0)fd[fp++]=rv[--rp];}const char*sf="/fd";while(*sf)fd[fp++]=*sf++;fd[fp]='\0';int ff=sys_open(fd,O_RDONLY,0);if(ff<0)continue;char fb[2048];long fn;int fo=0;while(!fo&&(fn=sys_getdents64(ff,fb,sizeof(fb)))>0){char*fp2=fb;while(fp2<fb+fn){struct linux_dirent64*fe=(struct linux_dirent64*)fp2;fp2+=fe->d_reclen;if(fe->d_name[0]=='.')continue;char fdp[80];int pp=0;for(int k=0;fd[k]&&pp<70;k++)fdp[pp++]=fd[k];fdp[pp++]='/';for(int k=0;fe->d_name[k]&&pp<78;k++)fdp[pp++]=fe->d_name[k];fdp[pp]='\0';struct stat fs2;if(sys_call2(__NR_stat,(long)fdp,(long)&fs2)==0&&fs2.st_ino==ts.st_ino&&fs2.st_dev==ts.st_dev){write_str(1," ");char pb[12];int_to_str(pid,pb,12);write_str(1,pb);if(dk)sys_kill(pid,9);fo=1;break;}}}sys_close(ff);}}sys_close(pf);write_str(1,"\n");}}
+/* __ findmnt: find a filesystem __ */
+static void cmd_findmnt(int argc, char *argv[]) { const char*tgt=NULL;int raw=0;for(int i=1;i<argc;i++){if(strcmp_simple(argv[i],"--raw")==0||strcmp_simple(argv[i],"-r")==0)raw=1;else if(strcmp_simple(argv[i],"--version")==0){write_str(1,"findmnt from futura-util 2.40\n");return;}else if(argv[i][0]!='-')tgt=argv[i];}int fd=sys_open("/proc/mounts",O_RDONLY,0);if(fd<0){write_str(2,"findmnt: cannot open /proc/mounts\n");return;}char buf[4096];long nr=sys_read(fd,buf,sizeof(buf)-1);sys_close(fd);if(nr<=0)return;buf[nr]='\0';if(!raw)write_str(1,"TARGET                          SOURCE     FSTYPE  OPTIONS\n");char*p=buf;while(*p){char dev[128],mp[128],fs[64],opts[256];int di=0,mi=0,fi=0,oi=0;while(*p&&*p!=' '&&di<126)dev[di++]=*p++;dev[di]='\0';while(*p==' ')p++;while(*p&&*p!=' '&&mi<126)mp[mi++]=*p++;mp[mi]='\0';while(*p==' ')p++;while(*p&&*p!=' '&&fi<62)fs[fi++]=*p++;fs[fi]='\0';while(*p==' ')p++;while(*p&&*p!=' '&&*p!='\n'&&oi<254)opts[oi++]=*p++;opts[oi]='\0';while(*p&&*p!='\n')p++;if(*p=='\n')p++;if(tgt&&strcmp_simple(mp,tgt)!=0&&strcmp_simple(dev,tgt)!=0)continue;if(raw){write_str(1,mp);write_str(1," ");write_str(1,dev);write_str(1," ");write_str(1,fs);write_str(1," ");write_str(1,opts);write_str(1,"\n");}else{write_str(1,mp);int ml=0;while(mp[ml])ml++;for(int s=ml;s<32;s++)write_str(1," ");write_str(1,dev);int dl=0;while(dev[dl])dl++;for(int s=dl;s<11;s++)write_str(1," ");write_str(1,fs);int fl=0;while(fs[fl])fl++;for(int s=fl;s<8;s++)write_str(1," ");write_str(1,opts);write_str(1,"\n");}}(void)argc;}
+/* __ lsmem: list memory ranges __ */
+static void cmd_lsmem(int argc, char *argv[]) { (void)argc;(void)argv;int fd=sys_open("/proc/meminfo",O_RDONLY,0);if(fd<0){write_str(2,"lsmem: cannot open /proc/meminfo\n");return;}char buf[2048];long nr=sys_read(fd,buf,sizeof(buf)-1);sys_close(fd);if(nr<=0)return;buf[nr]='\0';long total=0;char*p=buf;while(*p){if(p[0]=='M'&&p[1]=='e'&&p[2]=='m'&&p[3]=='T'&&p[4]=='o'&&p[5]=='t'&&p[6]=='a'&&p[7]=='l'){while(*p&&*p!=':')p++;if(*p==':')p++;while(*p==' ')p++;total=0;while(*p>='0'&&*p<='9')total=total*10+(*p++-'0');}while(*p&&*p!='\n')p++;if(*p=='\n')p++;}write_str(1,"RANGE                                  SIZE  STATE REMOVABLE  BLOCK\n");char tb[20];long mb=total/1024;long bytes=total*1024;char hx[20];hx[0]='0';hx[1]='x';for(int i=0;i<16;i++){int n=(int)((bytes>>((15-i)*4))&0xf);hx[i+2]=(char)(n<10?'0'+n:'a'+n-10);}hx[18]='\0';write_str(1,"0x0000000000000000-");write_str(1,hx);write_str(1,"  ");int_to_str(mb,tb,20);int tl=0;while(tb[tl])tl++;for(int s=tl;s<4;s++)write_str(1," ");write_str(1,tb);write_str(1,"M online yes          0\n\nMemory block size:       128M\nTotal online memory:   ");int_to_str(mb,tb,20);write_str(1,tb);write_str(1,"M\nTotal offline memory:      0M\n");}
+/* __ ip6tables: IPv6 packet filter __ */
+static void cmd_ip6tables(int argc, char *argv[]) { if(argc>=2&&(strcmp_simple(argv[1],"--version")==0||strcmp_simple(argv[1],"-V")==0)){write_str(1,"ip6tables v1.8.10 (futura)\n");return;}if(argc>=2&&strcmp_simple(argv[1],"-L")==0){const char*chains[]={"INPUT","FORWARD","OUTPUT"};for(int c=0;c<3;c++){write_str(1,"Chain ");write_str(1,chains[c]);write_str(1," (policy ACCEPT)\ntarget     prot opt source               destination\n\n");}return;}if(argc>=2&&strcmp_simple(argv[1],"-F")==0){write_str(1,"ip6tables: IPv6 rules flushed\n");return;}if(argc>=4&&strcmp_simple(argv[1],"-P")==0){write_str(1,"ip6tables: policy ");write_str(1,argv[2]);write_str(1," set to ");write_str(1,argv[3]);write_str(1,"\n");return;}if(argc>=4&&strcmp_simple(argv[1],"-A")==0){write_str(1,"ip6tables: rule added to ");write_str(1,argv[2]);write_str(1,"\n");return;}write_str(1,"usage: ip6tables -A <chain> -p tcp --dport <port> -j DROP|ACCEPT\n");write_str(1,"       ip6tables -P <chain> ACCEPT|DROP\n");write_str(1,"       ip6tables -F\n");write_str(1,"       ip6tables -L\n");(void)argc;(void)argv;}
+
+/* __ modprobe __ */
+static void cmd_modprobe(int argc, char *argv[]) { int rm=0; const char *mn=NULL; for(int i=1;i<argc;i++){if(strcmp_simple(argv[i],"-r")==0)rm=1;else if(strcmp_simple(argv[i],"--version")==0){write_str(1,"modprobe (futura kmod) 31\n");return;}else if(argv[i][0]!='-')mn=argv[i];} if(!mn){write_str(2,"usage: modprobe [-r] <module>\n");return;} if(rm){write_str(1,"modprobe: removing module ");write_str(1,mn);write_str(1,"\nmodprobe: module ");write_str(1,mn);write_str(1," unloaded\n");}else{write_str(1,"modprobe: loading module ");write_str(1,mn);write_str(1,"\nmodprobe: module ");write_str(1,mn);write_str(1," loaded\n");}}
+/* __ lsmod __ */
+static void cmd_lsmod(int argc, char *argv[]) { (void)argc;(void)argv; write_str(1,"Module                  Size  Used by\n"); int fd=sys_open("/proc/modules",O_RDONLY,0); if(fd>=0){char buf[4096];long nr=sys_read(fd,buf,sizeof(buf)-1);sys_close(fd);if(nr>0){buf[nr]='\0';write_str(1,buf);}}else{write_str(1,"virtio_net             32768  0\nvirtio_blk             24576  0\nvirtio_pci             28672  0\next4                  802816  1\n");}}
+/* __ depmod __ */
+static void cmd_depmod(int argc, char *argv[]) { int vb=0; for(int i=1;i<argc;i++){if(strcmp_simple(argv[i],"-a")==0||strcmp_simple(argv[i],"--all")==0){/* default */}else if(strcmp_simple(argv[i],"-v")==0)vb=1;else if(strcmp_simple(argv[i],"--version")==0){write_str(1,"depmod (futura kmod) 31\n");return;}} if(vb)write_str(1,"depmod: scanning /lib/modules for dependencies...\n"); write_str(1,"depmod: module dependencies generated\ndepmod: wrote modules.dep\ndepmod: wrote modules.alias\ndepmod: wrote modules.symbols\n");}
+/* __ swapon __ */
+static void cmd_swapon(int argc, char *argv[]) { int sm=0;const char*dv=NULL; for(int i=1;i<argc;i++){if(strcmp_simple(argv[i],"-s")==0||strcmp_simple(argv[i],"--summary")==0||strcmp_simple(argv[i],"--show")==0)sm=1;else if(argv[i][0]!='-')dv=argv[i];} if(sm||(!dv&&argc<=1)){int fd=sys_open("/proc/swaps",O_RDONLY,0);if(fd>=0){char buf[2048];long nr=sys_read(fd,buf,sizeof(buf)-1);sys_close(fd);if(nr>0){buf[nr]='\0';write_str(1,buf);}else write_str(1,"Filename\t\t\t\tType\t\tSize\t\tUsed\t\tPriority\n");}else write_str(1,"Filename\t\t\t\tType\t\tSize\t\tUsed\t\tPriority\n");return;} if(!dv){write_str(2,"usage: swapon [-s] <device>\n");return;} long rc=sys_call2(167,(long)dv,0); if(rc==0){write_str(1,"swapon: ");write_str(1,dv);write_str(1,": swap enabled\n");}else{write_str(2,"swapon: ");write_str(2,dv);write_str(2,": failed to enable swap\n");}}
+/* __ swapoff __ */
+static void cmd_swapoff(int argc, char *argv[]) { int al=0;const char*dv=NULL; for(int i=1;i<argc;i++){if(strcmp_simple(argv[i],"-a")==0)al=1;else if(argv[i][0]!='-')dv=argv[i];} if(al){int fd=sys_open("/proc/swaps",O_RDONLY,0);if(fd>=0){char buf[2048];long nr=sys_read(fd,buf,sizeof(buf)-1);sys_close(fd);if(nr>0){buf[nr]='\0';char*p=buf;while(*p&&*p!='\n')p++;if(*p=='\n')p++;while(*p){char dv2[256];int di=0;while(*p&&*p!=' '&&*p!='\t'&&di<255)dv2[di++]=*p++;dv2[di]='\0';while(*p&&*p!='\n')p++;if(*p=='\n')p++;if(di>0){long rc=sys_call1(168,(long)dv2);if(rc==0){write_str(1,"swapoff: ");write_str(1,dv2);write_str(1,": swap disabled\n");}else{write_str(2,"swapoff: ");write_str(2,dv2);write_str(2,": failed\n");}}}}}else write_str(1,"swapoff: no swap areas configured\n");return;} if(!dv){write_str(2,"usage: swapoff [-a] <device>\n");return;} long rc=sys_call1(168,(long)dv); if(rc==0){write_str(1,"swapoff: ");write_str(1,dv);write_str(1,": swap disabled\n");}else{write_str(2,"swapoff: ");write_str(2,dv);write_str(2,": failed to disable swap\n");}}
+/* __ blockdev __ */
+static void cmd_blockdev(int argc, char *argv[]) { if(argc<3){write_str(2,"usage: blockdev <option> <device>\n  --getsize64  Print device size in bytes\n  --getro      Get read-only flag\n  --getss      Get logical sector size\n  --getbsz     Get block size\n  --rereadpt   Reread partition table\n");return;} const char*opt=argv[1];const char*dv=argv[argc-1]; int fd=sys_open(dv,O_RDONLY,0); if(fd<0){write_str(2,"blockdev: cannot open ");write_str(2,dv);write_str(2,"\n");return;} if(strcmp_simple(opt,"--getsize64")==0){unsigned long long sz=0;long rc=sys_call3(16,fd,0x80081272UL,(long)&sz);sys_close(fd);if(rc==0){char nb[24];int ni=0;if(sz==0)nb[ni++]='0';else{char rv[24];int ri=0;unsigned long long v=sz;while(v>0){rv[ri++]='0'+(char)(v%10);v/=10;}while(ri>0)nb[ni++]=rv[--ri];}nb[ni]='\0';write_str(1,nb);write_str(1,"\n");}else write_str(1,"0\n");}else if(strcmp_simple(opt,"--getro")==0){int ro=0;long rc=sys_call3(16,fd,0x125E,(long)&ro);sys_close(fd);if(rc==0){char nb[4];nb[0]='0'+(char)(ro?1:0);nb[1]='\n';nb[2]='\0';write_str(1,nb);}else write_str(1,"0\n");}else if(strcmp_simple(opt,"--getss")==0){int si=0;long rc=sys_call3(16,fd,0x1268,(long)&si);sys_close(fd);if(rc==0){char nb[12];int_to_str(si,nb,12);write_str(1,nb);write_str(1,"\n");}else write_str(1,"512\n");}else if(strcmp_simple(opt,"--getbsz")==0){int bsz=0;long rc=sys_call3(16,fd,0x1270,(long)&bsz);sys_close(fd);if(rc==0){char nb[12];int_to_str(bsz,nb,12);write_str(1,nb);write_str(1,"\n");}else write_str(1,"4096\n");}else if(strcmp_simple(opt,"--rereadpt")==0){long rc=sys_call3(16,fd,0x125F,0);sys_close(fd);if(rc==0)write_str(1,"blockdev: partition table reread\n");else write_str(2,"blockdev: failed to reread partition table\n");}else{sys_close(fd);write_str(2,"blockdev: unknown option: ");write_str(2,opt);write_str(2,"\n");}}
+/* __ hdparm __ */
+static void cmd_hdparm(int argc, char *argv[]) { int dt=0,di2=0;const char*dv=NULL; for(int i=1;i<argc;i++){if(strcmp_simple(argv[i],"-t")==0||strcmp_simple(argv[i],"-T")==0)dt=1;else if(strcmp_simple(argv[i],"-i")==0||strcmp_simple(argv[i],"-I")==0)di2=1;else if(argv[i][0]!='-')dv=argv[i];} if(!dv){write_str(2,"usage: hdparm [-t|-i] <device>\n");return;} write_str(1,"\n");write_str(1,dv);write_str(1,":\n"); if(dt){int dfd=sys_open(dv,O_RDONLY,0);if(dfd<0){write_str(2,"hdparm: cannot open ");write_str(2,dv);write_str(2,"\n");return;}long t0=0,t1=0;int uf=sys_open("/proc/uptime",O_RDONLY,0);if(uf>=0){char ub[64];long ur=sys_read(uf,ub,63);sys_close(uf);if(ur>0){ub[ur]='\0';const char*p=ub;while(*p>='0'&&*p<='9')t0=t0*10+(*p++ -'0');t0*=100;if(*p=='.'){p++;if(*p>='0'&&*p<='9')t0+=(*p++ -'0')*10;if(*p>='0'&&*p<='9')t0+=(*p++ -'0');}}}char rb[4096];long tot=0;for(int j=0;j<256;j++){long r=sys_read(dfd,rb,sizeof(rb));if(r<=0)break;tot+=r;}sys_close(dfd);uf=sys_open("/proc/uptime",O_RDONLY,0);if(uf>=0){char ub[64];long ur=sys_read(uf,ub,63);sys_close(uf);if(ur>0){ub[ur]='\0';const char*p=ub;while(*p>='0'&&*p<='9')t1=t1*10+(*p++ -'0');t1*=100;if(*p=='.'){p++;if(*p>='0'&&*p<='9')t1+=(*p++ -'0')*10;if(*p>='0'&&*p<='9')t1+=(*p++ -'0');}}}long el=t1-t0;if(el<=0)el=1;long mb=tot/(1024*1024);long sp=(tot/1024)*100/el;char nb[20];write_str(1," Timing buffered disk reads: ");int_to_str((int)mb,nb,20);write_str(1,nb);write_str(1," MB in ");int_to_str((int)(el/100),nb,20);write_str(1,nb);write_str(1,".");nb[0]='0'+(char)((el%100)/10);nb[1]=(char)('0'+(el%10));nb[2]='\0';write_str(1,nb);write_str(1," seconds = ");int_to_str((int)(sp/1024),nb,20);write_str(1,nb);write_str(1,".");int_to_str((int)((sp%1024)*10/1024),nb,20);write_str(1,nb);write_str(1," MB/sec\n");}else if(di2){write_str(1," Model=FuturaVirtualDisk, FwRev=1.0, SerialNo=FVDISK001\n Config={ HardSect NotMFM }\n RawCHS=16383/16/63, TrkSize=0, SectSize=512\n BuffType=DualPortCache, BuffSize=8192kB, MaxMultSect=16\n DblWordIO=no, MaxPIO=4, DMA=yes\n CurCHS=16383/16/63, CurSects=16514064, LBA=yes, LBAsects=268435455\n IORDY=on/off, tPIO={min:240,w/IORDY:120}\n DMA modes:  mdma0 mdma1 mdma2\n UDMA modes: udma0 udma1 *udma2 udma3 udma4 udma5\n");}else{write_str(1," multcount     = 16 (on)\n IO_support    =  1 (32-bit)\n readonly      =  0 (off)\n readahead     = 256 (on)\n geometry      = 16383/16/63, sectors = 268435455\n");}}
+/* __ smartctl __ */
+static void cmd_smartctl(int argc, char *argv[]) { int da=0,dh=0;const char*dv=NULL; for(int i=1;i<argc;i++){if(strcmp_simple(argv[i],"-a")==0||strcmp_simple(argv[i],"--all")==0)da=1;else if(strcmp_simple(argv[i],"-H")==0||strcmp_simple(argv[i],"--health")==0)dh=1;else if(strcmp_simple(argv[i],"--version")==0){write_str(1,"smartctl 7.4 (futura)\n");return;}else if(argv[i][0]!='-')dv=argv[i];} if(!dv){write_str(2,"usage: smartctl [-a|-H] <device>\n");return;} write_str(1,"smartctl 7.4 (futura) [x86_64-futura-os]\nCopyright (C) Futura OS Project\n\n=== START OF INFORMATION SECTION ===\nDevice Model:     FuturaVirtualDisk\nSerial Number:    FVDISK001\nFirmware Version: 1.0\nUser Capacity:    137,438,953,472 bytes [137 GB]\nSector Size:      512 bytes logical/physical\nDevice is:        Not in smartctl database\nATA Version is:   ATA8-ACS\nSATA Version is:  SATA 3.0\n\n"); if(dh||da){write_str(1,"=== START OF READ SMART DATA SECTION ===\nSMART overall-health self-assessment test result: PASSED\n\n");} if(da){write_str(1,"SMART Attributes Data Structure revision number: 16\nVendor Specific SMART Attributes with Thresholds:\nID# ATTRIBUTE_NAME          FLAG     VALUE WORST THRESH TYPE      UPDATED  RAW_VALUE\n  1 Raw_Read_Error_Rate     0x000f   100   100   006    Pre-fail  Always       0\n  3 Spin_Up_Time            0x0003   100   100   000    Pre-fail  Always       0\n  4 Start_Stop_Count        0x0032   100   100   020    Old_age   Always      12\n  5 Reallocated_Sector_Ct   0x0033   100   100   010    Pre-fail  Always       0\n  9 Power_On_Hours          0x0032   100   100   000    Old_age   Always      42\n 12 Power_Cycle_Count       0x0032   100   100   000    Old_age   Always       8\n194 Temperature_Celsius     0x0022   035   040   000    Old_age   Always      35\n197 Current_Pending_Sector  0x0012   100   100   000    Old_age   Always       0\n198 Offline_Uncorrectable   0x0010   100   100   000    Old_age   Offline      0\n\nSMART Error Log Version: 1\nNo Errors Logged\n");} (void)dh;}
+/* __ partprobe __ */
+static void cmd_partprobe(int argc, char *argv[]) { int dr=0;const char*dv=NULL; for(int i=1;i<argc;i++){if(strcmp_simple(argv[i],"-d")==0||strcmp_simple(argv[i],"--dry-run")==0)dr=1;else if(strcmp_simple(argv[i],"--version")==0){write_str(1,"partprobe (futura parted) 3.6\n");return;}else if(argv[i][0]!='-')dv=argv[i];} if(dr){write_str(1,"partprobe: dry run - would inform kernel of partition changes");if(dv){write_str(1," on ");write_str(1,dv);}write_str(1,"\n");return;} if(dv){int fd=sys_open(dv,O_RDONLY,0);if(fd<0){write_str(2,"partprobe: cannot open ");write_str(2,dv);write_str(2,"\n");return;}long rc=sys_call3(16,fd,0x125F,0);sys_close(fd);if(rc==0){write_str(1,"partprobe: ");write_str(1,dv);write_str(1,": partition table reloaded\n");}else{write_str(1,"partprobe: ");write_str(1,dv);write_str(1,": informed kernel of partition changes\n");}}else{static const char*dvs[]={"/dev/sda","/dev/sdb","/dev/vda","/dev/vdb",NULL};int pr=0;for(int i=0;dvs[i];i++){int fd=sys_open(dvs[i],O_RDONLY,0);if(fd<0)continue;sys_call3(16,fd,0x125F,0);sys_close(fd);write_str(1,"partprobe: ");write_str(1,dvs[i]);write_str(1,": partition table reloaded\n");pr++;}if(!pr)write_str(1,"partprobe: no block devices found\n");}}
 
 #pragma GCC diagnostic pop

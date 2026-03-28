@@ -178,9 +178,31 @@ int fut_signal_send(struct fut_task *task, int signum) {
         qi->si_timerid = 0;
     }
 
+    /* POSIX: SIGCONT clears pending stop signals; stop signals clear pending SIGCONT.
+     * "When SIGCONT is generated for a process that is stopped, the pending SIGSTOP,
+     *  SIGTSTP, SIGTTIN, and SIGTTOU signals shall be discarded for that process."
+     * Conversely, sending a stop signal discards any pending SIGCONT. */
+    if (signum == SIGCONT) {
+        uint64_t stop_bits = (1ULL << (SIGSTOP - 1)) | (1ULL << (SIGTSTP - 1)) |
+                             (1ULL << (SIGTTIN - 1)) | (1ULL << (SIGTTOU - 1));
+        __atomic_and_fetch(&task->pending_signals, ~stop_bits, __ATOMIC_ACQ_REL);
+    } else if (signum == SIGSTOP || signum == SIGTSTP ||
+               signum == SIGTTIN || signum == SIGTTOU) {
+        uint64_t cont_bit = (1ULL << (SIGCONT - 1));
+        __atomic_and_fetch(&task->pending_signals, ~cont_bit, __ATOMIC_ACQ_REL);
+    }
+
     /* Atomic OR to queue the signal. pending_signals can be read/cleared
      * by the target task on another CPU during signal delivery. */
     __atomic_or_fetch(&task->pending_signals, signal_bit, __ATOMIC_RELEASE);
+
+    /* SIGCONT: always resume a stopped task, even if SIGCONT is caught or ignored.
+     * POSIX: "If SIGCONT is generated for a process that is stopped, the process
+     *  shall be continued, even if the signal action is set to be ignored." */
+    if (signum == SIGCONT && task->state == FUT_TASK_STOPPED) {
+        extern void fut_task_do_cont(struct fut_task *t);
+        fut_task_do_cont(task);
+    }
 
     /* Handle default signal actions for unblocked, uncaught signals.
      * SIGKILL and SIGSTOP cannot be caught or blocked.

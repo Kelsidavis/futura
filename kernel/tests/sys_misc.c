@@ -66154,6 +66154,269 @@ __attribute__((noinline)) static void test_proc_io_accounting(void) {
     }
 }
 
+/* ============================================================
+ * Tests 2360-2367: seccomp-BPF filter enforcement (container security)
+ *
+ * Validates that installed BPF filters are actually enforced on
+ * syscall entry, with correct action semantics for ALLOW, ERRNO,
+ * LOG, TRACE, and multi-filter chaining (most restrictive wins).
+ * ============================================================ */
+__attribute__((noinline)) static void test_seccomp_bpf_enforcement(void) {
+    extern long sys_seccomp(unsigned int operation, unsigned int flags,
+                             const void *uargs);
+    extern long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
+                           unsigned long arg4, unsigned long arg5);
+    extern uint32_t seccomp_check_syscall(void *, int, uint64_t *);
+
+    /* BPF instruction macros */
+    #define ENF_BPF_LD_W_ABS(off)      { 0x20, 0, 0, (off) }
+    #define ENF_BPF_JEQ_K(val,jt,jf)   { 0x15, (jt), (jf), (val) }
+    #define ENF_BPF_RET_K(val)          { 0x06, 0, 0, (val) }
+
+    /* Ensure no_new_privs is set (sticky, may already be set from earlier tests) */
+    sys_prctl(38 /*PR_SET_NO_NEW_PRIVS*/, 1, 0, 0, 0);
+
+    /* Save current seccomp state so we can restore at the end */
+    fut_task_t *task = fut_task_current();
+    int orig_seccomp_mode = task->seccomp_mode;
+    void *orig_seccomp_filter = task->seccomp_filter;
+    int orig_filter_count = task->seccomp_filter_count;
+
+    /* Reset seccomp state for a clean test environment */
+    task->seccomp_mode = 0;
+    task->seccomp_filter = (void *)0;
+    task->seccomp_filter_count = 0;
+
+    fut_printf("[MISC-TEST] Tests 2360-2367: seccomp-BPF filter enforcement\n");
+
+    /* ── Test 2360: RET_ERRNO filter blocks specific syscall ──
+     * Install a filter that returns SECCOMP_RET_ERRNO(EPERM=1) for
+     * syscall 999 (unused), and ALLOW for everything else.
+     * Then call seccomp_check_syscall() directly and verify the action. */
+    fut_printf("[MISC-TEST] Test 2360: RET_ERRNO filter blocks syscall 999\n");
+    {
+        struct { uint16_t code; uint8_t jt; uint8_t jf; uint32_t k; } prog[] = {
+            ENF_BPF_LD_W_ABS(0),               /* A = nr (offset 0 in seccomp_data) */
+            ENF_BPF_JEQ_K(999, 0, 1),          /* if nr == 999 goto ret_errno */
+            ENF_BPF_RET_K(0x00050001),          /* SECCOMP_RET_ERRNO | EPERM(1) */
+            ENF_BPF_RET_K(0x7fff0000),          /* SECCOMP_RET_ALLOW */
+        };
+        struct { uint16_t len; uint16_t _p; uint32_t _p2; void *filter; } fprog;
+        fprog.len = 4; fprog._p = 0; fprog._p2 = 0;
+        fprog.filter = prog;
+
+        long r = sys_seccomp(1 /*SET_MODE_FILTER*/, 0, &fprog);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] FAIL Test 2360: install returned %ld\n", r);
+            fut_test_fail(2360);
+        } else {
+            /* Verify filter blocks syscall 999 */
+            uint64_t args[6] = {0};
+            uint32_t action = seccomp_check_syscall(task, 999, args);
+            uint32_t act = action & 0xFFFF0000U;
+            uint32_t data = action & 0x0000FFFFU;
+            if (act == 0x00050000U && data == 1) {
+                fut_printf("[MISC-TEST] pass Test 2360: nr=999 -> RET_ERRNO(EPERM)\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL Test 2360: action=0x%x (want 0x00050001)\n", action);
+                fut_test_fail(2360);
+            }
+        }
+    }
+
+    /* ── Test 2361: same filter allows other syscalls ── */
+    fut_printf("[MISC-TEST] Test 2361: RET_ERRNO filter allows getpid (nr=39)\n");
+    {
+        uint64_t args[6] = {0};
+        uint32_t action = seccomp_check_syscall(task, 39 /* getpid */, args);
+        if ((action & 0xFFFF0000U) == 0x7fff0000U) {
+            fut_printf("[MISC-TEST] pass Test 2361: nr=39 -> RET_ALLOW\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL Test 2361: action=0x%x (want ALLOW)\n", action);
+            fut_test_fail(2361);
+        }
+    }
+
+    /* ── Test 2362: chained filters — most restrictive wins ──
+     * Add a second filter that returns RET_ERRNO(EACCES=13) for nr=39 (getpid)
+     * but ALLOW for everything else. Combined with filter 1, syscall 39 should
+     * be blocked (ERRNO) and syscall 1 (write) should be allowed by both. */
+    fut_printf("[MISC-TEST] Test 2362: chained filters — most restrictive wins\n");
+    {
+        struct { uint16_t code; uint8_t jt; uint8_t jf; uint32_t k; } prog2[] = {
+            ENF_BPF_LD_W_ABS(0),               /* A = nr */
+            ENF_BPF_JEQ_K(39, 0, 1),           /* if nr == 39 goto ret_errno */
+            ENF_BPF_RET_K(0x0005000D),          /* SECCOMP_RET_ERRNO | EACCES(13) */
+            ENF_BPF_RET_K(0x7fff0000),          /* SECCOMP_RET_ALLOW */
+        };
+        struct { uint16_t len; uint16_t _p; uint32_t _p2; void *filter; } fprog2;
+        fprog2.len = 4; fprog2._p = 0; fprog2._p2 = 0;
+        fprog2.filter = prog2;
+
+        long r = sys_seccomp(1, 0, &fprog2);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] FAIL Test 2362: second install returned %ld\n", r);
+            fut_test_fail(2362);
+        } else {
+            /* nr=39 should be blocked by filter 2 (ERRNO/EACCES is more restrictive than ALLOW) */
+            uint64_t args[6] = {0};
+            uint32_t action = seccomp_check_syscall(task, 39, args);
+            uint32_t act = action & 0xFFFF0000U;
+            if (act == 0x00050000U) {
+                fut_printf("[MISC-TEST] pass Test 2362: nr=39 blocked by chain (action=0x%x)\n", action);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL Test 2362: action=0x%x (want RET_ERRNO)\n", action);
+                fut_test_fail(2362);
+            }
+        }
+    }
+
+    /* ── Test 2363: chained filters — both ALLOW means ALLOW ── */
+    fut_printf("[MISC-TEST] Test 2363: chained filters both allow write (nr=1)\n");
+    {
+        uint64_t args[6] = {0};
+        uint32_t action = seccomp_check_syscall(task, 1 /* write */, args);
+        if ((action & 0xFFFF0000U) == 0x7fff0000U) {
+            fut_printf("[MISC-TEST] pass Test 2363: nr=1 -> RET_ALLOW from chain\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL Test 2363: action=0x%x (want ALLOW)\n", action);
+            fut_test_fail(2363);
+        }
+    }
+
+    /* ── Test 2364: RET_LOG filter allows but is recognized ──
+     * Reset filters and install a LOG filter for all syscalls. */
+    fut_printf("[MISC-TEST] Test 2364: RET_LOG filter action\n");
+    {
+        /* Reset filter state for this test */
+        task->seccomp_mode = 0;
+        task->seccomp_filter = (void *)0;
+        task->seccomp_filter_count = 0;
+
+        struct { uint16_t code; uint8_t jt; uint8_t jf; uint32_t k; } prog[] = {
+            ENF_BPF_RET_K(0x7ffc0000),          /* SECCOMP_RET_LOG */
+        };
+        struct { uint16_t len; uint16_t _p; uint32_t _p2; void *filter; } fprog;
+        fprog.len = 1; fprog._p = 0; fprog._p2 = 0;
+        fprog.filter = prog;
+
+        long r = sys_seccomp(1, 0, &fprog);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] FAIL Test 2364: install returned %ld\n", r);
+            fut_test_fail(2364);
+        } else {
+            uint64_t args[6] = {0};
+            uint32_t action = seccomp_check_syscall(task, 39, args);
+            if ((action & 0xFFFF0000U) == 0x7ffc0000U) {
+                fut_printf("[MISC-TEST] pass Test 2364: RET_LOG action recognized\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL Test 2364: action=0x%x (want 0x7ffc0000)\n", action);
+                fut_test_fail(2364);
+            }
+        }
+    }
+
+    /* ── Test 2365: RET_TRACE filter action ── */
+    fut_printf("[MISC-TEST] Test 2365: RET_TRACE filter action\n");
+    {
+        /* Reset filter state */
+        task->seccomp_mode = 0;
+        task->seccomp_filter = (void *)0;
+        task->seccomp_filter_count = 0;
+
+        struct { uint16_t code; uint8_t jt; uint8_t jf; uint32_t k; } prog[] = {
+            ENF_BPF_RET_K(0x7ff00000),          /* SECCOMP_RET_TRACE */
+        };
+        struct { uint16_t len; uint16_t _p; uint32_t _p2; void *filter; } fprog;
+        fprog.len = 1; fprog._p = 0; fprog._p2 = 0;
+        fprog.filter = prog;
+
+        long r = sys_seccomp(1, 0, &fprog);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] FAIL Test 2365: install returned %ld\n", r);
+            fut_test_fail(2365);
+        } else {
+            uint64_t args[6] = {0};
+            uint32_t action = seccomp_check_syscall(task, 39, args);
+            if ((action & 0xFFFF0000U) == 0x7ff00000U) {
+                fut_printf("[MISC-TEST] pass Test 2365: RET_TRACE action recognized\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL Test 2365: action=0x%x (want 0x7ff00000)\n", action);
+                fut_test_fail(2365);
+            }
+        }
+    }
+
+    /* ── Test 2366: BPF validation rejects program without RET ── */
+    fut_printf("[MISC-TEST] Test 2366: BPF validation rejects no-RET program\n");
+    {
+        /* Reset filter state */
+        task->seccomp_mode = 0;
+        task->seccomp_filter = (void *)0;
+        task->seccomp_filter_count = 0;
+
+        /* Program that ends with a LD instead of RET — should be rejected */
+        struct { uint16_t code; uint8_t jt; uint8_t jf; uint32_t k; } bad_prog[] = {
+            ENF_BPF_LD_W_ABS(0),               /* A = nr — not a RET */
+        };
+        struct { uint16_t len; uint16_t _p; uint32_t _p2; void *filter; } fprog;
+        fprog.len = 1; fprog._p = 0; fprog._p2 = 0;
+        fprog.filter = bad_prog;
+
+        long r = sys_seccomp(1, 0, &fprog);
+        if (r == -EINVAL) {
+            fut_printf("[MISC-TEST] pass Test 2366: no-RET program rejected\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL Test 2366: r=%ld (want -EINVAL)\n", r);
+            fut_test_fail(2366);
+        }
+    }
+
+    /* ── Test 2367: BPF validation rejects out-of-bounds jump ── */
+    fut_printf("[MISC-TEST] Test 2367: BPF validation rejects OOB jump\n");
+    {
+        /* Reset filter state */
+        task->seccomp_mode = 0;
+        task->seccomp_filter = (void *)0;
+        task->seccomp_filter_count = 0;
+
+        /* Program with a conditional jump whose jt target goes past end */
+        struct { uint16_t code; uint8_t jt; uint8_t jf; uint32_t k; } oob_prog[] = {
+            ENF_BPF_LD_W_ABS(0),               /* A = nr */
+            { 0x15, 10, 0, 39 },               /* JEQ nr==39, jt=+10 (OOB!), jf=+0 */
+            ENF_BPF_RET_K(0x7fff0000),          /* ALLOW */
+        };
+        struct { uint16_t len; uint16_t _p; uint32_t _p2; void *filter; } fprog;
+        fprog.len = 3; fprog._p = 0; fprog._p2 = 0;
+        fprog.filter = oob_prog;
+
+        long r = sys_seccomp(1, 0, &fprog);
+        if (r == -EINVAL) {
+            fut_printf("[MISC-TEST] pass Test 2367: OOB jump rejected\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL Test 2367: r=%ld (want -EINVAL)\n", r);
+            fut_test_fail(2367);
+        }
+    }
+
+    #undef ENF_BPF_LD_W_ABS
+    #undef ENF_BPF_JEQ_K
+    #undef ENF_BPF_RET_K
+
+    /* Restore original seccomp state so subsequent tests are unaffected */
+    task->seccomp_mode = orig_seccomp_mode;
+    task->seccomp_filter = orig_seccomp_filter;
+    task->seccomp_filter_count = orig_filter_count;
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -70473,6 +70736,7 @@ void fut_misc_test_thread(void *arg) {
     test_vfs_file_locking(); /* Tests 2340-2345: flock acquire/release, /proc/locks, idempotent unlock */
     test_pipe_posix_semantics(); /* Tests 2350-2351: pipe F_SETPIPE_SZ round-trip + atomic write guarantee */
     test_proc_io_accounting(); /* Tests 2355-2357: /proc/self/io per-process I/O accounting */
+    test_seccomp_bpf_enforcement(); /* Tests 2360-2367: seccomp-BPF filter enforcement for container security */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

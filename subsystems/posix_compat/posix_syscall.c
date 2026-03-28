@@ -4515,22 +4515,31 @@ int64_t posix_syscall_dispatch(uint64_t syscall_num,
             if (act == 0x7fff0000U) {
                 /* SECCOMP_RET_ALLOW — proceed */
             } else if (act == 0x7ffc0000U) {
-                /* SECCOMP_RET_LOG — allow but log */
+                /* SECCOMP_RET_LOG — allow but log the syscall */
+                fut_printf("[seccomp] LOG pid=%d nr=%lu\n",
+                           sec_task->pid, syscall_num);
+            } else if (act == 0x7ff00000U) {
+                /* SECCOMP_RET_TRACE — notify tracer; no ptrace, so allow with log */
+                fut_printf("[seccomp] TRACE pid=%d nr=%lu (no tracer, allowing)\n",
+                           sec_task->pid, syscall_num);
             } else if (act == 0x00050000U) {
                 /* SECCOMP_RET_ERRNO — return -errno from data field */
                 return -(int64_t)(action & 0xFFFFU);
             } else if (act == 0x80000000U || act == 0x00000000U) {
                 /* SECCOMP_RET_KILL_PROCESS/THREAD */
                 extern int fut_signal_send(struct fut_task *t, int sig);
+                fut_printf("[seccomp] KILL pid=%d nr=%lu action=0x%x\n",
+                           sec_task->pid, syscall_num, action);
                 fut_signal_send(sec_task, 9 /* SIGKILL */);
                 return -1;
             } else if (act == 0x00030000U) {
                 /* SECCOMP_RET_TRAP — send SIGSYS */
                 extern int fut_signal_send(struct fut_task *t, int sig);
+                fut_printf("[seccomp] TRAP pid=%d nr=%lu\n",
+                           sec_task->pid, syscall_num);
                 fut_signal_send(sec_task, 31 /* SIGSYS */);
                 return -(int64_t)(action & 0xFFFFU);
             }
-            /* SECCOMP_RET_TRACE: fall through (no ptrace support) */
         }
     }
 

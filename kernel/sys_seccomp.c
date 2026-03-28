@@ -92,6 +92,82 @@ struct seccomp_filter_chain {
 extern uint32_t bpf_run(const struct sock_filter *insns, uint32_t n_insns,
                           const struct seccomp_data *sd);
 
+/* BPF instruction class/mode extraction */
+#define BPF_CLASS(code) ((code) & 0x07)
+#define BPF_OP(code)    ((code) & 0xf0)
+
+/* BPF instruction classes */
+#define SECCOMP_BPF_LD    0x00
+#define SECCOMP_BPF_LDX   0x01
+#define SECCOMP_BPF_ST    0x02
+#define SECCOMP_BPF_STX   0x03
+#define SECCOMP_BPF_ALU   0x04
+#define SECCOMP_BPF_JMP   0x05
+#define SECCOMP_BPF_RET   0x06
+#define SECCOMP_BPF_MISC  0x07
+#define SECCOMP_BPF_JA    0x00
+
+/**
+ * seccomp_validate_bpf() - Validate a cBPF program before installation.
+ *
+ * Checks:
+ *  - No backward jumps (guarantees termination)
+ *  - All jump targets are within program bounds
+ *  - Last instruction must be a RET (every path must terminate)
+ *  - No division by zero in immediate-mode ALU ops
+ *
+ * @param insns   BPF instruction array
+ * @param n_insns Number of instructions
+ * @return 0 if valid, -EINVAL if the program is rejected
+ */
+static long seccomp_validate_bpf(const struct sock_filter *insns, uint32_t n_insns) {
+    if (!insns || n_insns == 0)
+        return -EINVAL;
+
+    for (uint32_t i = 0; i < n_insns; i++) {
+        const struct sock_filter *f = &insns[i];
+        uint16_t cls = BPF_CLASS(f->code);
+
+        switch (cls) {
+        case SECCOMP_BPF_JMP: {
+            if (BPF_OP(f->code) == SECCOMP_BPF_JA) {
+                /* Unconditional jump: pc += k, then pc++ in loop */
+                uint32_t target = i + 1 + f->k;
+                if (target >= n_insns)
+                    return -EINVAL;
+                /* No backward jumps (k is unsigned, so i+1+k > i always holds) */
+            } else {
+                /* Conditional jump: jt/jf offsets */
+                uint32_t target_t = i + 1 + f->jt;
+                uint32_t target_f = i + 1 + f->jf;
+                if (target_t >= n_insns || target_f >= n_insns)
+                    return -EINVAL;
+            }
+            break;
+        }
+        case SECCOMP_BPF_RET:
+            /* Valid — termination point */
+            break;
+        case SECCOMP_BPF_ALU: {
+            /* Check for division/modulo by immediate zero */
+            uint16_t op = BPF_OP(f->code);
+            bool is_imm = (f->code & 0x08) == 0; /* BPF_K = 0x00 */
+            if (is_imm && (op == 0x30 /* DIV */ || op == 0x90 /* MOD */) && f->k == 0)
+                return -EINVAL;
+            break;
+        }
+        default:
+            break;
+        }
+    }
+
+    /* Last instruction must be a RET to guarantee termination */
+    if (BPF_CLASS(insns[n_insns - 1].code) != SECCOMP_BPF_RET)
+        return -EINVAL;
+
+    return 0;
+}
+
 /* ── Syscall implementation ── */
 
 long sys_seccomp(unsigned int operation, unsigned int flags, const void *uargs) {
@@ -131,6 +207,11 @@ long sys_seccomp(unsigned int operation, unsigned int flags, const void *uargs) 
 
         if (prog_len == 0 || prog_len > MAX_SECCOMP_INSNS) return -EINVAL;
         if (!prog_filter) return -EFAULT;
+
+        /* Validate BPF program: no backward jumps, bounds-checked, must end with RET */
+        long validate_err = seccomp_validate_bpf(prog_filter, prog_len);
+        if (validate_err)
+            return validate_err;
 
         /* Allocate or grow filter chain */
         struct seccomp_filter_chain *chain =
@@ -206,8 +287,22 @@ long sys_seccomp(unsigned int operation, unsigned int flags, const void *uargs) 
  * seccomp_check_syscall() - Evaluate seccomp filters for a syscall.
  *
  * Called from the syscall dispatch path. Returns the seccomp action.
- * If the task has BPF filters installed (mode 2), runs each filter
- * and returns the most restrictive result.
+ *
+ * Mode 1 (strict): only read(0)/write(1)/exit(60)/exit_group(231)/
+ *                   rt_sigreturn(15) are allowed; everything else is KILL.
+ *
+ * Mode 2 (filter): runs each installed BPF filter against the syscall's
+ *                   seccomp_data and returns the most restrictive result
+ *                   across the entire filter chain.
+ *
+ * Supported return actions (most to least restrictive):
+ *   SECCOMP_RET_KILL_THREAD  (0x00000000) — kill the calling thread
+ *   SECCOMP_RET_KILL_PROCESS (0x80000000) — kill the entire process
+ *   SECCOMP_RET_TRAP         (0x00030000) — send SIGSYS
+ *   SECCOMP_RET_ERRNO        (0x00050000) — return -errno (data field)
+ *   SECCOMP_RET_TRACE        (0x7ff00000) — notify tracer (allow if no tracer)
+ *   SECCOMP_RET_LOG          (0x7ffc0000) — allow but log the syscall
+ *   SECCOMP_RET_ALLOW        (0x7fff0000) — allow unconditionally
  *
  * @param task    Current task
  * @param nr      Syscall number
@@ -215,7 +310,20 @@ long sys_seccomp(unsigned int operation, unsigned int flags, const void *uargs) 
  * @return SECCOMP_RET_ALLOW if permitted, else the action to take
  */
 uint32_t seccomp_check_syscall(fut_task_t *task, int nr, uint64_t args[6]) {
-    if (!task || task->seccomp_mode != 2 || !task->seccomp_filter)
+    if (!task || task->seccomp_mode == 0)
+        return SECCOMP_RET_ALLOW;
+
+    /* Mode 1 (strict): whitelist of essential syscalls only */
+    if (task->seccomp_mode == 1) {
+        if (nr == 0 /* read */ || nr == 1 /* write */ ||
+            nr == 60 /* exit */ || nr == 231 /* exit_group */ ||
+            nr == 15 /* rt_sigreturn */)
+            return SECCOMP_RET_ALLOW;
+        return SECCOMP_RET_KILL_THREAD;
+    }
+
+    /* Mode 2 (filter): evaluate BPF filter chain */
+    if (!task->seccomp_filter)
         return SECCOMP_RET_ALLOW;
 
     struct seccomp_filter_chain *chain =
@@ -235,7 +343,10 @@ uint32_t seccomp_check_syscall(fut_task_t *task, int nr, uint64_t args[6]) {
     for (int i = 0; i < 6; i++)
         sd.args[i] = args ? args[i] : 0;
 
-    /* Run all filters — most restrictive action wins */
+    /* Run all filters — most restrictive action wins.
+     * Per Linux semantics, the action value with the lowest
+     * upper 16 bits takes priority. If two filters disagree,
+     * the more restrictive (lower action code) prevails. */
     uint32_t result = SECCOMP_RET_ALLOW;
     for (int i = 0; i < chain->count; i++) {
         struct seccomp_filter_prog *fp = &chain->filters[i];

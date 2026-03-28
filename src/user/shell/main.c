@@ -502,6 +502,16 @@ static void cmd_syncthing(int argc, char *argv[]);
 static void cmd_rsyncd(int argc, char *argv[]);
 static void cmd_croc(int argc, char *argv[]);
 static void cmd_magic_wormhole(int argc, char *argv[]);
+static void cmd_task(int argc, char *argv[]);
+static void cmd_todo_sh(int argc, char *argv[]);
+static void cmd_calcurse(int argc, char *argv[]);
+static void cmd_remind(int argc, char *argv[]);
+static void cmd_ledger(int argc, char *argv[]);
+static void cmd_hledger(int argc, char *argv[]);
+static void cmd_sc_im(int argc, char *argv[]);
+static void cmd_pandoc(int argc, char *argv[]);
+static void cmd_asciidoctor(int argc, char *argv[]);
+static void cmd_groff(int argc, char *argv[]);
 
 /* Forward declaration for prompt */
 static void print_prompt(void);
@@ -15615,6 +15625,36 @@ watch_sleep:
     } else if (strcmp_simple(argv[0], "magic-wormhole") == 0 || strcmp_simple(argv[0], "wormhole") == 0) {
         cmd_magic_wormhole(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "task") == 0) {
+        cmd_task(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "todo.sh") == 0) {
+        cmd_todo_sh(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "calcurse") == 0) {
+        cmd_calcurse(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "remind") == 0) {
+        cmd_remind(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "ledger") == 0) {
+        cmd_ledger(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "hledger") == 0) {
+        cmd_hledger(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "sc-im") == 0) {
+        cmd_sc_im(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "pandoc") == 0) {
+        cmd_pandoc(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "asciidoctor") == 0) {
+        cmd_asciidoctor(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "groff") == 0) {
+        cmd_groff(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -16144,6 +16184,16 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "croc") == 0 ||
             strcmp_simple(cmd, "magic-wormhole") == 0 ||
             strcmp_simple(cmd, "wormhole") == 0 ||
+            strcmp_simple(cmd, "task") == 0 ||
+            strcmp_simple(cmd, "todo.sh") == 0 ||
+            strcmp_simple(cmd, "calcurse") == 0 ||
+            strcmp_simple(cmd, "remind") == 0 ||
+            strcmp_simple(cmd, "ledger") == 0 ||
+            strcmp_simple(cmd, "hledger") == 0 ||
+            strcmp_simple(cmd, "sc-im") == 0 ||
+            strcmp_simple(cmd, "pandoc") == 0 ||
+            strcmp_simple(cmd, "asciidoctor") == 0 ||
+            strcmp_simple(cmd, "groff") == 0 ||
             0);
 }
 
@@ -20986,7 +21036,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   540 built-in commands — type 'help'    |\n");
+    write_str(1, "|   550 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");
@@ -47738,6 +47788,568 @@ static void cmd_magic_wormhole(int argc, char *argv[]) {
     write_str(2, "wormhole: unknown command '");
     write_str(2, argv[1]);
     write_str(2, "'\n");
+}
+
+static void cmd_task(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "task - Taskwarrior CLI task manager\n\n");
+        write_str(1, "Usage:\n");
+        write_str(1, "  task add [description]   Add a new task\n");
+        write_str(1, "  task list                List pending tasks\n");
+        write_str(1, "  task done [id]           Mark task as done\n");
+        write_str(1, "  task modify [id] [desc]  Modify a task\n");
+        write_str(1, "  task delete [id]         Delete a task\n");
+        write_str(1, "  task info [id]           Show task details\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "task 3.1.0\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "add") == 0) {
+        write_str(1, "Created task ");
+        if (argc >= 3) {
+            write_str(1, "1: '");
+            for (int i = 2; i < argc; i++) {
+                if (i > 2) write_str(1, " ");
+                write_str(1, argv[i]);
+            }
+            write_str(1, "'\n");
+        } else {
+            write_str(1, "1: '(empty)'\n");
+        }
+        return;
+    }
+    if (strcmp_simple(argv[1], "list") == 0) {
+        write_str(1, "\033[4mID  Age  Description          Status \033[0m\n");
+        write_str(1, " 1  2h   Review pull request   Pending\n");
+        write_str(1, " 2  1d   Write documentation   Pending\n");
+        write_str(1, " 3  3d   Fix memory leak       Pending\n");
+        write_str(1, "\n3 tasks\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "done") == 0) {
+        if (argc < 3) {
+            write_str(2, "task done: missing task ID\n");
+            return;
+        }
+        write_str(1, "Completed task ");
+        write_str(1, argv[2]);
+        write_str(1, ".\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "modify") == 0) {
+        if (argc < 4) {
+            write_str(2, "task modify: need task ID and new description\n");
+            return;
+        }
+        write_str(1, "Modifying task ");
+        write_str(1, argv[2]);
+        write_str(1, ".\n");
+        write_str(1, "Modified 1 task.\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "delete") == 0) {
+        if (argc < 3) {
+            write_str(2, "task delete: missing task ID\n");
+            return;
+        }
+        write_str(1, "Deleting task ");
+        write_str(1, argv[2]);
+        write_str(1, ".\n");
+        write_str(1, "Deleted 1 task.\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "info") == 0) {
+        if (argc < 3) {
+            write_str(2, "task info: missing task ID\n");
+            return;
+        }
+        write_str(1, "Name          Value\n");
+        write_str(1, "ID            ");
+        write_str(1, argv[2]);
+        write_str(1, "\n");
+        write_str(1, "Description   Review pull request\n");
+        write_str(1, "Status        Pending\n");
+        write_str(1, "Entered       2026-03-28 10:00:00\n");
+        write_str(1, "Urgency       4.2\n");
+        return;
+    }
+    write_str(2, "task: unknown command '");
+    write_str(2, argv[1]);
+    write_str(2, "'\n");
+}
+
+static void cmd_todo_sh(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "todo.sh - Todo.txt CLI manager\n\n");
+        write_str(1, "Usage:\n");
+        write_str(1, "  todo.sh add \"task text\"   Add a new task\n");
+        write_str(1, "  todo.sh list              List all tasks\n");
+        write_str(1, "  todo.sh do [number]       Mark task as done\n");
+        write_str(1, "  todo.sh pri [num] [A-Z]   Set priority\n");
+        write_str(1, "  todo.sh listpri           List prioritized tasks\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "TODO.TXT Command Line Interface v2.12.0\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "add") == 0 || strcmp_simple(argv[1], "a") == 0) {
+        if (argc < 3) {
+            write_str(2, "usage: todo.sh add \"task description\"\n");
+            return;
+        }
+        write_str(1, "1 ");
+        for (int i = 2; i < argc; i++) {
+            if (i > 2) write_str(1, " ");
+            write_str(1, argv[i]);
+        }
+        write_str(1, "\nTODO: 1 added.\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "list") == 0 || strcmp_simple(argv[1], "ls") == 0) {
+        write_str(1, "1 (A) Write unit tests +project @coding\n");
+        write_str(1, "2 (B) Update README +docs @writing\n");
+        write_str(1, "3 Buy groceries @errands\n");
+        write_str(1, "--\n");
+        write_str(1, "TODO: 3 of 3 tasks shown\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "do") == 0) {
+        if (argc < 3) {
+            write_str(2, "usage: todo.sh do ITEM#\n");
+            return;
+        }
+        write_str(1, "TODO: ");
+        write_str(1, argv[2]);
+        write_str(1, " marked as done.\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "pri") == 0) {
+        if (argc < 4) {
+            write_str(2, "usage: todo.sh pri ITEM# PRIORITY\n");
+            return;
+        }
+        write_str(1, "TODO: ");
+        write_str(1, argv[2]);
+        write_str(1, " prioritized (");
+        write_str(1, argv[3]);
+        write_str(1, ").\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "listpri") == 0 || strcmp_simple(argv[1], "lsp") == 0) {
+        write_str(1, "1 (A) Write unit tests +project @coding\n");
+        write_str(1, "2 (B) Update README +docs @writing\n");
+        write_str(1, "--\n");
+        write_str(1, "TODO: 2 of 3 tasks shown\n");
+        return;
+    }
+    write_str(2, "todo.sh: unknown command '");
+    write_str(2, argv[1]);
+    write_str(2, "'\n");
+}
+
+static void cmd_calcurse(int argc, char *argv[]) {
+    if (argc >= 2 && strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "calcurse 4.8.1\n");
+        return;
+    }
+    if (argc >= 2 && strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "calcurse - text-based calendar and scheduling application\n\n");
+        write_str(1, "Usage: calcurse [-a] [-t] [-D path] [--status]\n");
+        write_str(1, "  -a         Print appointments for today\n");
+        write_str(1, "  -t         Print todos\n");
+        write_str(1, "  --status   Show calendar status\n");
+        return;
+    }
+    int show_appts = 0, show_todos = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-a") == 0) show_appts = 1;
+        else if (strcmp_simple(argv[i], "-t") == 0) show_todos = 1;
+        else if (strcmp_simple(argv[i], "--status") == 0) {
+            write_str(1, "calcurse: 3 appointments, 2 todos\n");
+            return;
+        }
+    }
+    if (!show_appts && !show_todos) {
+        show_appts = 1;
+        show_todos = 1;
+    }
+    if (show_appts) {
+        write_str(1, "\033[1mAppointments for today:\033[0m\n");
+        write_str(1, "  09:00 - 10:00  Team standup\n");
+        write_str(1, "  14:00 - 15:30  Code review session\n");
+        write_str(1, "  17:00 - 17:30  Quick sync\n");
+    }
+    if (show_todos) {
+        write_str(1, "\033[1mTODO:\033[0m\n");
+        write_str(1, "  [1] Update build scripts\n");
+        write_str(1, "  [2] Review PR #42\n");
+    }
+}
+
+static void cmd_remind(int argc, char *argv[]) {
+    if (argc >= 2 && strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "Remind version 04.02.07\n");
+        return;
+    }
+    if (argc < 2) {
+        write_str(1, "remind - a sophisticated calendar and alarm program\n\n");
+        write_str(1, "Usage:\n");
+        write_str(1, "  remind [options] [file]    Process reminder file\n");
+        write_str(1, "  remind -s [file]           Simple calendar output\n");
+        write_str(1, "  remind -c [file]           Produce calendar for current month\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "-c") == 0) {
+        write_str(1, "\033[1m        March 2026\033[0m\n");
+        write_str(1, " Su Mo Tu We Th Fr Sa\n");
+        write_str(1, "  1  2  3  4  5  6  7\n");
+        write_str(1, "  8  9 10 11 12 13 14\n");
+        write_str(1, " 15 16 17 18 19 20 21\n");
+        write_str(1, " 22 23 24 25 26 27\033[7m 28\033[0m\n");
+        write_str(1, " 29 30 31\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "-s") == 0) {
+        write_str(1, "2026/03/28 Team meeting at 10am\n");
+        write_str(1, "2026/03/28 Submit expense report\n");
+        write_str(1, "2026/03/30 Project deadline\n");
+        return;
+    }
+    /* Default: process file-like output */
+    write_str(1, "Reminders for today (2026-03-28):\n\n");
+    write_str(1, "  * Team meeting at 10am\n");
+    write_str(1, "  * Submit expense report by EOD\n");
+}
+
+static void cmd_ledger(int argc, char *argv[]) {
+    if (argc >= 2 && strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "Ledger 3.3.2\n");
+        return;
+    }
+    if (argc < 2) {
+        write_str(1, "ledger - command-line double-entry accounting\n\n");
+        write_str(1, "Usage:\n");
+        write_str(1, "  ledger balance           Show account balances\n");
+        write_str(1, "  ledger register          Show register of transactions\n");
+        write_str(1, "  ledger print             Print transactions in ledger format\n");
+        write_str(1, "  ledger accounts          List accounts\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "balance") == 0 || strcmp_simple(argv[1], "bal") == 0) {
+        write_str(1, "          $1,500.00  Assets:Checking\n");
+        write_str(1, "          $3,200.00  Assets:Savings\n");
+        write_str(1, "         $-2,100.00  Expenses\n");
+        write_str(1, "           $-800.00    Expenses:Food\n");
+        write_str(1, "           $-500.00    Expenses:Rent\n");
+        write_str(1, "           $-800.00    Expenses:Utilities\n");
+        write_str(1, "         $-2,600.00  Income:Salary\n");
+        write_str(1, "--------------------\n");
+        write_str(1, "                  0\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "register") == 0 || strcmp_simple(argv[1], "reg") == 0) {
+        write_str(1, "26-Mar-01 Opening Balance    Assets:Checking      $2,600.00  $2,600.00\n");
+        write_str(1, "26-Mar-05 Grocery Store      Expenses:Food          $120.00  $2,720.00\n");
+        write_str(1, "                             Assets:Checking       $-120.00  $2,600.00\n");
+        write_str(1, "26-Mar-15 Rent               Expenses:Rent          $500.00  $3,100.00\n");
+        write_str(1, "                             Assets:Checking       $-500.00  $2,600.00\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "print") == 0) {
+        write_str(1, "2026-03-01 Opening Balance\n");
+        write_str(1, "    Assets:Checking                    $2,600.00\n");
+        write_str(1, "    Equity:Opening Balances\n\n");
+        write_str(1, "2026-03-05 Grocery Store\n");
+        write_str(1, "    Expenses:Food                        $120.00\n");
+        write_str(1, "    Assets:Checking\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "accounts") == 0) {
+        write_str(1, "Assets:Checking\n");
+        write_str(1, "Assets:Savings\n");
+        write_str(1, "Expenses:Food\n");
+        write_str(1, "Expenses:Rent\n");
+        write_str(1, "Expenses:Utilities\n");
+        write_str(1, "Income:Salary\n");
+        return;
+    }
+    write_str(2, "ledger: unknown command '");
+    write_str(2, argv[1]);
+    write_str(2, "'\n");
+}
+
+static void cmd_hledger(int argc, char *argv[]) {
+    if (argc >= 2 && strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "hledger 1.32.3\n");
+        return;
+    }
+    if (argc < 2) {
+        write_str(1, "hledger - robust, friendly plain text accounting\n\n");
+        write_str(1, "Usage:\n");
+        write_str(1, "  hledger balance            Show account balances\n");
+        write_str(1, "  hledger register           Show transaction register\n");
+        write_str(1, "  hledger incomestatement    Show income statement\n");
+        write_str(1, "  hledger balancesheet       Show balance sheet\n");
+        write_str(1, "  hledger print              Print transactions\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "balance") == 0 || strcmp_simple(argv[1], "bal") == 0) {
+        write_str(1, "              $4,700  Assets\n");
+        write_str(1, "              $1,500    Checking\n");
+        write_str(1, "              $3,200    Savings\n");
+        write_str(1, "             $-2,100  Expenses\n");
+        write_str(1, "               $-800    Food\n");
+        write_str(1, "               $-500    Rent\n");
+        write_str(1, "               $-800    Utilities\n");
+        write_str(1, "             $-2,600  Income:Salary\n");
+        write_str(1, "--------------------\n");
+        write_str(1, "                   0\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "register") == 0 || strcmp_simple(argv[1], "reg") == 0) {
+        write_str(1, "2026-03-01 Opening Balance   Assets:Checking       $2,600   $2,600\n");
+        write_str(1, "2026-03-05 Groceries         Expenses:Food           $120   $2,720\n");
+        write_str(1, "2026-03-15 Monthly Rent      Expenses:Rent           $500   $3,220\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "incomestatement") == 0 || strcmp_simple(argv[1], "is") == 0) {
+        write_str(1, "\033[1mIncome Statement 2026-03-01..2026-03-28\033[0m\n\n");
+        write_str(1, "Revenues:\n");
+        write_str(1, "  Income:Salary              $2,600\n");
+        write_str(1, "                       -----------\n");
+        write_str(1, "                             $2,600\n\n");
+        write_str(1, "Expenses:\n");
+        write_str(1, "  Expenses:Food                $800\n");
+        write_str(1, "  Expenses:Rent                $500\n");
+        write_str(1, "  Expenses:Utilities           $800\n");
+        write_str(1, "                       -----------\n");
+        write_str(1, "                             $2,100\n\n");
+        write_str(1, "Net:                           $500\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "balancesheet") == 0 || strcmp_simple(argv[1], "bs") == 0) {
+        write_str(1, "\033[1mBalance Sheet 2026-03-28\033[0m\n\n");
+        write_str(1, "Assets:\n");
+        write_str(1, "  Assets:Checking            $1,500\n");
+        write_str(1, "  Assets:Savings             $3,200\n");
+        write_str(1, "                       -----------\n");
+        write_str(1, "                             $4,700\n\n");
+        write_str(1, "Liabilities:\n");
+        write_str(1, "                       -----------\n");
+        write_str(1, "                                 0\n\n");
+        write_str(1, "Net:                         $4,700\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "print") == 0) {
+        write_str(1, "2026-03-01 Opening Balance\n");
+        write_str(1, "    Assets:Checking            $2,600\n");
+        write_str(1, "    Equity:Opening Balances   $-2,600\n\n");
+        return;
+    }
+    write_str(2, "hledger: unknown command '");
+    write_str(2, argv[1]);
+    write_str(2, "'\n");
+}
+
+static void cmd_sc_im(int argc, char *argv[]) {
+    if (argc >= 2 && strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "sc-im 0.8.3\n");
+        return;
+    }
+    if (argc >= 2 && strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "sc-im - Spreadsheet Calculator Improvised\n\n");
+        write_str(1, "Usage: sc-im [file.sc]\n\n");
+        write_str(1, "Options:\n");
+        write_str(1, "  --version    Show version\n");
+        write_str(1, "  --help       Show this help\n");
+        return;
+    }
+    write_str(1, "\033[1msc-im: Spreadsheet Calculator\033[0m\n\n");
+    write_str(1, "        A          B          C          D\n");
+    write_str(1, "  +----------+----------+----------+----------+\n");
+    write_str(1, "1 |  Item    |  Qty     |  Price   |  Total   |\n");
+    write_str(1, "  +----------+----------+----------+----------+\n");
+    write_str(1, "2 |  Widget  |       10 |    $5.00 |   $50.00 |\n");
+    write_str(1, "3 |  Gadget  |        5 |   $12.50 |   $62.50 |\n");
+    write_str(1, "4 |  Gizmo   |        3 |    $8.75 |   $26.25 |\n");
+    write_str(1, "  +----------+----------+----------+----------+\n");
+    write_str(1, "5 |          |          |   Total: |  $138.75 |\n");
+    write_str(1, "  +----------+----------+----------+----------+\n");
+    write_str(1, "\n(simulated display - interactive mode not available)\n");
+}
+
+static void cmd_pandoc(int argc, char *argv[]) {
+    if (argc >= 2 && strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "pandoc 3.1.12\n");
+        write_str(1, "Features: +server +lua\n");
+        return;
+    }
+    if (argc < 2) {
+        write_str(1, "pandoc - universal document converter\n\n");
+        write_str(1, "Usage:\n");
+        write_str(1, "  pandoc [options] [input-file]\n");
+        write_str(1, "  pandoc -f FORMAT -t FORMAT [file]\n\n");
+        write_str(1, "Options:\n");
+        write_str(1, "  -f FORMAT    Input format (markdown, html, latex, ...)\n");
+        write_str(1, "  -t FORMAT    Output format (html, plain, latex, ...)\n");
+        write_str(1, "  -o FILE      Output file\n");
+        write_str(1, "  --list-input-formats   List supported input formats\n");
+        write_str(1, "  --list-output-formats  List supported output formats\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--list-input-formats") == 0) {
+        write_str(1, "commonmark\ncsv\ndocx\nepub\nhtml\njson\nlatex\nmarkdown\nrst\ntextile\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--list-output-formats") == 0) {
+        write_str(1, "asciidoc\nbeamer\ncommonmark\ndocx\nepub\nhtml\njson\nlatex\nman\nmarkdown\nplain\nrst\n");
+        return;
+    }
+    /* Simulate conversion - check for -t flag */
+    const char *to_fmt = NULL;
+    const char *input = NULL;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-t") == 0 && i + 1 < argc) {
+            to_fmt = argv[++i];
+        } else if (strcmp_simple(argv[i], "-f") == 0 && i + 1 < argc) {
+            i++; /* skip format arg */
+        } else if (strcmp_simple(argv[i], "-o") == 0 && i + 1 < argc) {
+            i++; /* skip output arg */
+        } else if (argv[i][0] != '-') {
+            input = argv[i];
+        }
+    }
+    if (to_fmt && strcmp_simple(to_fmt, "html") == 0) {
+        write_str(1, "<h1>Document</h1>\n");
+        write_str(1, "<p>This is a <strong>converted</strong> document.</p>\n");
+        write_str(1, "<ul>\n<li>Item one</li>\n<li>Item two</li>\n</ul>\n");
+    } else if (to_fmt && strcmp_simple(to_fmt, "plain") == 0) {
+        write_str(1, "Document\n\nThis is a converted document.\n\n* Item one\n* Item two\n");
+    } else if (to_fmt && strcmp_simple(to_fmt, "latex") == 0) {
+        write_str(1, "\\section{Document}\n\nThis is a \\textbf{converted} document.\n\n\\begin{itemize}\n\\item Item one\n\\item Item two\n\\end{itemize}\n");
+    } else {
+        /* Default: markdown to HTML */
+        write_str(1, "<h1>Document</h1>\n");
+        write_str(1, "<p>This is a <strong>converted</strong> document from ");
+        write_str(1, input ? input : "stdin");
+        write_str(1, ".</p>\n");
+    }
+}
+
+static void cmd_asciidoctor(int argc, char *argv[]) {
+    if (argc >= 2 && strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "Asciidoctor 2.0.23\n");
+        write_str(1, "Runtime Environment (ruby 3.2.0)\n");
+        return;
+    }
+    if (argc < 2) {
+        write_str(1, "asciidoctor - converts AsciiDoc to HTML and other formats\n\n");
+        write_str(1, "Usage:\n");
+        write_str(1, "  asciidoctor [options] FILE...\n\n");
+        write_str(1, "Options:\n");
+        write_str(1, "  -b BACKEND   Backend output format (html5, docbook5, manpage)\n");
+        write_str(1, "  -o FILE      Output file\n");
+        write_str(1, "  -a KEY=VAL   Set document attribute\n");
+        write_str(1, "  -s           Suppress enclosing document structure\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "See: asciidoctor (no args) for usage\n");
+        return;
+    }
+    const char *backend = "html5";
+    const char *input = NULL;
+    int suppress = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-b") == 0 && i + 1 < argc) {
+            backend = argv[++i];
+        } else if (strcmp_simple(argv[i], "-o") == 0 && i + 1 < argc) {
+            i++; /* skip */
+        } else if (strcmp_simple(argv[i], "-s") == 0) {
+            suppress = 1;
+        } else if (strcmp_simple(argv[i], "-a") == 0 && i + 1 < argc) {
+            i++; /* skip */
+        } else if (argv[i][0] != '-') {
+            input = argv[i];
+        }
+    }
+    if (strcmp_simple(backend, "docbook5") == 0) {
+        write_str(1, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+        write_str(1, "<article xmlns=\"http://docbook.org/ns/docbook\">\n");
+        write_str(1, "  <title>Document</title>\n");
+        write_str(1, "  <simpara>Converted from AsciiDoc.</simpara>\n");
+        write_str(1, "</article>\n");
+    } else if (strcmp_simple(backend, "manpage") == 0) {
+        write_str(1, ".TH \"DOCUMENT\" \"1\"\n");
+        write_str(1, ".SH \"NAME\"\n");
+        write_str(1, "document \\- AsciiDoc converted manpage\n");
+    } else {
+        if (!suppress) {
+            write_str(1, "<!DOCTYPE html>\n<html>\n<head>\n<title>Document</title>\n</head>\n<body>\n");
+        }
+        write_str(1, "<div class=\"sect1\">\n");
+        write_str(1, "<h2>Document</h2>\n");
+        write_str(1, "<div class=\"paragraph\"><p>Converted from ");
+        write_str(1, input ? input : "AsciiDoc input");
+        write_str(1, ".</p></div>\n");
+        write_str(1, "</div>\n");
+        if (!suppress) {
+            write_str(1, "</body>\n</html>\n");
+        }
+    }
+    (void)suppress;
+}
+
+static void cmd_groff(int argc, char *argv[]) {
+    if (argc >= 2 && strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "GNU groff version 1.23.0\n");
+        return;
+    }
+    if (argc < 2) {
+        write_str(1, "groff - front-end for the groff document formatting system\n\n");
+        write_str(1, "Usage:\n");
+        write_str(1, "  groff [options] [file]\n\n");
+        write_str(1, "Options:\n");
+        write_str(1, "  -man         Process with man macros\n");
+        write_str(1, "  -ms          Process with ms macros\n");
+        write_str(1, "  -T device    Set output device (ascii, utf8, html, ps, pdf)\n");
+        write_str(1, "  -t           Preprocess with tbl\n");
+        write_str(1, "  -p           Preprocess with pic\n");
+        return;
+    }
+    const char *macros = NULL;
+    const char *device = "ascii";
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-man") == 0) macros = "man";
+        else if (strcmp_simple(argv[i], "-ms") == 0) macros = "ms";
+        else if (strcmp_simple(argv[i], "-T") == 0 && i + 1 < argc) device = argv[++i];
+    }
+    if (macros && strcmp_simple(macros, "man") == 0) {
+        if (strcmp_simple(device, "ascii") == 0 || strcmp_simple(device, "utf8") == 0) {
+            write_str(1, "DOCUMENT(1)              User Commands             DOCUMENT(1)\n\n");
+            write_str(1, "NAME\n");
+            write_str(1, "       document - example formatted manpage\n\n");
+            write_str(1, "SYNOPSIS\n");
+            write_str(1, "       document [options] [file...]\n\n");
+            write_str(1, "DESCRIPTION\n");
+            write_str(1, "       Formatted with groff -man macros.\n");
+        } else if (strcmp_simple(device, "html") == 0) {
+            write_str(1, "<html><body>\n<h2>DOCUMENT(1)</h2>\n");
+            write_str(1, "<h3>NAME</h3><p>document - example</p>\n</body></html>\n");
+        }
+    } else if (macros && strcmp_simple(macros, "ms") == 0) {
+        write_str(1, "                         Document Title\n\n");
+        write_str(1, "1.  Introduction\n\n");
+        write_str(1, "    This document was formatted using groff -ms macros.\n\n");
+        write_str(1, "2.  Conclusion\n\n");
+        write_str(1, "    End of formatted output.\n");
+    } else {
+        write_str(1, "This is formatted troff output.\n");
+        write_str(1, "Processed by GNU groff.\n");
+    }
 }
 
 #pragma GCC diagnostic pop

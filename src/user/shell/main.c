@@ -222,6 +222,11 @@ static void cmd_localectl(int argc, char *argv[]);
 static void cmd_machinectl(int argc, char *argv[]);
 static void cmd_busctl(int argc, char *argv[]);
 static void strcpy_simple(char *dest, const char *src);
+static void cmd_fallocate(int argc, char *argv[]);
+static void cmd_fstrim(int argc, char *argv[]);
+static void cmd_wipefs(int argc, char *argv[]);
+static void cmd_fsfreeze(int argc, char *argv[]);
+static void cmd_filefrag(int argc, char *argv[]);
 
 /* Forward declaration for prompt */
 static void print_prompt(void);
@@ -1411,6 +1416,11 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  localectl [status|set-locale|set-keymap] - Locale/keyboard settings\n");
     write_str(1, "  machinectl [list|status]          - Container/VM management\n");
     write_str(1, "  busctl [list|status]              - D-Bus bus introspection\n");
+    write_str(1, "  fallocate -l <size> <file>        - Allocate disk space for a file\n");
+    write_str(1, "  fstrim [-v] <mountpoint>          - Trim unused filesystem blocks\n");
+    write_str(1, "  wipefs [-a] <device>              - Wipe filesystem signatures\n");
+    write_str(1, "  fsfreeze -f|-u <mountpoint>       - Freeze/thaw a filesystem\n");
+    write_str(1, "  filefrag [-v] <file>              - Report file fragmentation\n");
     write_str(1, "\n");
     write_str(1, "Networking:\n");
     write_str(1, "  ip addr|link|route|neigh|forward - Network configuration\n");
@@ -13647,6 +13657,21 @@ watch_sleep:
     } else if (strcmp_simple(argv[0], "busctl") == 0) {
         cmd_busctl(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "fallocate") == 0) {
+        cmd_fallocate(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "fstrim") == 0) {
+        cmd_fstrim(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "wipefs") == 0) {
+        cmd_wipefs(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "fsfreeze") == 0) {
+        cmd_fsfreeze(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "filefrag") == 0) {
+        cmd_filefrag(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -13883,6 +13908,11 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "localectl") == 0 ||
             strcmp_simple(cmd, "machinectl") == 0 ||
             strcmp_simple(cmd, "busctl") == 0 ||
+            strcmp_simple(cmd, "fallocate") == 0 ||
+            strcmp_simple(cmd, "fstrim") == 0 ||
+            strcmp_simple(cmd, "wipefs") == 0 ||
+            strcmp_simple(cmd, "fsfreeze") == 0 ||
+            strcmp_simple(cmd, "filefrag") == 0 ||
             0);
 }
 
@@ -18320,7 +18350,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   255 built-in commands — type 'help'    |\n");
+    write_str(1, "|   260 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");
@@ -19346,6 +19376,11 @@ static void cmd_man(int argc, char *argv[]) {
         {"localectl", "localectl - control the system locale and keyboard layout settings"},
         {"machinectl", "machinectl - control the systemd machine manager"},
         {"busctl", "busctl - introspect the D-Bus bus"},
+        {"fallocate", "fallocate - preallocate or deallocate space to a file"},
+        {"fstrim", "fstrim - discard unused blocks on a mounted filesystem"},
+        {"wipefs", "wipefs - wipe a signature from a device"},
+        {"fsfreeze", "fsfreeze - suspend access to a filesystem"},
+        {"filefrag", "filefrag - report on file fragmentation"},
     };
     int n_entries = (int)(sizeof(man_entries) / sizeof(man_entries[0]));
 
@@ -21473,11 +21508,15 @@ static void cmd_whatis(int argc, char *argv[]) {
         {"export",    "export (1)          - set export attribute for shell variables"},
         {"expr",      "expr (1)            - evaluate expressions"},
         {"factor",    "factor (1)          - factor numbers"},
+        {"fallocate", "fallocate (1)       - preallocate or deallocate space to a file"},
         {"false",     "false (1)           - do nothing, unsuccessfully"},
         {"fg",        "fg (1)              - move job to the foreground"},
         {"file",      "file (1)            - determine file type"},
+        {"filefrag",  "filefrag (8)        - report on file fragmentation"},
         {"find",      "find (1)            - search for files in a directory hierarchy"},
         {"fold",      "fold (1)            - wrap each input line to fit in specified width"},
+        {"fsfreeze",  "fsfreeze (8)        - suspend access to a filesystem (freeze/thaw)"},
+        {"fstrim",    "fstrim (8)          - discard unused blocks on a mounted filesystem"},
         {"fuser",     "fuser (1)           - identify processes using files or sockets"},
         {"free",      "free (1)            - display amount of free and used memory"},
         {"git",       "git (1)             - the stupid content tracker"},
@@ -21599,6 +21638,7 @@ static void cmd_whatis(int argc, char *argv[]) {
         {"whatis",    "whatis (1)          - display one-line manual page descriptions"},
         {"which",     "which (1)           - locate a command"},
         {"whoami",    "whoami (1)          - print effective userid"},
+        {"wipefs",    "wipefs (8)          - wipe filesystem signatures from a device"},
         {"xargs",     "xargs (1)           - build and execute command lines from stdin"},
         {"xxd",       "xxd (1)             - make a hexdump or do the reverse"},
         {"yes",       "yes (1)             - output a string repeatedly until killed"},
@@ -23441,6 +23481,377 @@ static void cmd_busctl(int argc, char *argv[]) {
     write_str(2, "busctl: unknown command '");
     write_str(2, argv[1]);
     write_str(2, "'\n");
+}
+
+/* __ fallocate: allocate disk space for a file __ */
+static void cmd_fallocate(int argc, char *argv[]) {
+    const char *file = NULL;
+    long length = 0;
+    int mode = 0; /* 0 = allocate, 1 = punch hole, 2 = collapse, 3 = zero range */
+    int keep_size = 0;
+    long offset = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "--version") == 0) { write_str(1, "fallocate from futura-util 2.40\n"); return; }
+        else if (strcmp_simple(argv[i], "--help") == 0 || strcmp_simple(argv[i], "-h") == 0) {
+            write_str(1, "Usage: fallocate [-l length] [-o offset] [-n] [-p|-c|-z] <file>\n");
+            write_str(1, "  -l <length>  Length of allocation (supports K, M, G suffixes)\n");
+            write_str(1, "  -o <offset>  Offset of allocation (default 0)\n");
+            write_str(1, "  -n           Keep file size (keep-size mode)\n");
+            write_str(1, "  -p           Punch hole (deallocate)\n");
+            write_str(1, "  -c           Collapse range\n");
+            write_str(1, "  -z           Zero range\n");
+            return;
+        }
+        else if (strcmp_simple(argv[i], "-l") == 0 || strcmp_simple(argv[i], "--length") == 0) {
+            if (i + 1 < argc) {
+                i++;
+                const char *s = argv[i];
+                long val = 0;
+                while (*s >= '0' && *s <= '9') val = val * 10 + (*s++ - '0');
+                if (*s == 'K' || *s == 'k') val *= 1024;
+                else if (*s == 'M' || *s == 'm') val *= 1024 * 1024;
+                else if (*s == 'G' || *s == 'g') val *= 1024L * 1024L * 1024L;
+                length = val;
+            }
+        }
+        else if (strcmp_simple(argv[i], "-o") == 0 || strcmp_simple(argv[i], "--offset") == 0) {
+            if (i + 1 < argc) { i++; const char *s = argv[i]; offset = 0; while (*s >= '0' && *s <= '9') offset = offset * 10 + (*s++ - '0'); }
+        }
+        else if (strcmp_simple(argv[i], "-n") == 0 || strcmp_simple(argv[i], "--keep-size") == 0) keep_size = 1;
+        else if (strcmp_simple(argv[i], "-p") == 0 || strcmp_simple(argv[i], "--punch-hole") == 0) { mode = 1; keep_size = 1; }
+        else if (strcmp_simple(argv[i], "-c") == 0 || strcmp_simple(argv[i], "--collapse-range") == 0) mode = 2;
+        else if (strcmp_simple(argv[i], "-z") == 0 || strcmp_simple(argv[i], "--zero-range") == 0) mode = 3;
+        else if (argv[i][0] != '-') file = argv[i];
+    }
+    if (!file || length <= 0) { write_str(2, "fallocate: required argument missing\nUsage: fallocate -l <length> <file>\n"); return; }
+    /* Determine fallocate mode flags: FALLOC_FL_KEEP_SIZE=1, PUNCH_HOLE=2, COLLAPSE_RANGE=8, ZERO_RANGE=16 */
+    int fl = 0;
+    if (mode == 1) fl = 0x01 | 0x02; /* KEEP_SIZE | PUNCH_HOLE */
+    else if (mode == 2) fl = 0x08;   /* COLLAPSE_RANGE */
+    else if (mode == 3) fl = 0x10;   /* ZERO_RANGE */
+    else if (keep_size) fl = 0x01;   /* KEEP_SIZE */
+    int flags = O_WRONLY;
+    if (mode == 0 && !keep_size) flags = O_WRONLY | O_CREAT;
+    int fd = sys_open(file, flags, 0644);
+    if (fd < 0) { write_str(2, "fallocate: cannot open '"); write_str(2, file); write_str(2, "'\n"); return; }
+    /* syscall 285 = fallocate on x86_64 */
+    long rc = sys_call4(285, fd, fl, offset, length);
+    sys_close(fd);
+    if (rc < 0) {
+        /* Fallback: use ftruncate for simple allocation */
+        if (mode == 0 && !keep_size) {
+            fd = sys_open(file, O_WRONLY | O_CREAT, 0644);
+            if (fd >= 0) {
+                sys_call2(77 /* ftruncate */, fd, offset + length);
+                sys_close(fd);
+                return;
+            }
+        }
+        write_str(2, "fallocate: fallocate failed for '"); write_str(2, file); write_str(2, "'\n");
+    }
+}
+
+/* __ fstrim: trim unused blocks on a filesystem __ */
+static void cmd_fstrim(int argc, char *argv[]) {
+    const char *mountpoint = NULL;
+    int verbose = 0;
+    int all = 0;
+    long minimum = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "--version") == 0) { write_str(1, "fstrim from futura-util 2.40\n"); return; }
+        else if (strcmp_simple(argv[i], "--help") == 0 || strcmp_simple(argv[i], "-h") == 0) {
+            write_str(1, "Usage: fstrim [-v] [-a] [-m minimum] <mountpoint>\n");
+            write_str(1, "  -v, --verbose    Print number of discarded bytes\n");
+            write_str(1, "  -a, --all        Trim all mounted filesystems\n");
+            write_str(1, "  -m, --minimum    Minimum extent length to discard\n");
+            return;
+        }
+        else if (strcmp_simple(argv[i], "-v") == 0 || strcmp_simple(argv[i], "--verbose") == 0) verbose = 1;
+        else if (strcmp_simple(argv[i], "-a") == 0 || strcmp_simple(argv[i], "--all") == 0) all = 1;
+        else if (strcmp_simple(argv[i], "-m") == 0 || strcmp_simple(argv[i], "--minimum") == 0) {
+            if (i + 1 < argc) { i++; const char *s = argv[i]; minimum = 0; while (*s >= '0' && *s <= '9') minimum = minimum * 10 + (*s++ - '0'); }
+        }
+        else if (argv[i][0] != '-') mountpoint = argv[i];
+    }
+    if (!mountpoint && !all) { write_str(2, "fstrim: missing mountpoint or -a\nUsage: fstrim [-v] [-a] <mountpoint>\n"); return; }
+    if (all) {
+        /* Read /proc/mounts and trim all eligible filesystems */
+        int fd = sys_open("/proc/mounts", O_RDONLY, 0);
+        if (fd < 0) { write_str(2, "fstrim: cannot read /proc/mounts\n"); return; }
+        char buf[4096]; long nr = sys_read(fd, buf, sizeof(buf)-1); sys_close(fd);
+        if (nr <= 0) return; buf[nr] = '\0';
+        char *p = buf;
+        while (*p) {
+            char mp[256]; int mi = 0;
+            while (*p && *p != ' ') p++; /* skip device */
+            while (*p == ' ') p++;
+            while (*p && *p != ' ' && mi < 254) mp[mi++] = *p++;
+            mp[mi] = '\0';
+            while (*p && *p != '\n') p++;
+            if (*p == '\n') p++;
+            if (mi == 0) continue;
+            int mfd = sys_open(mp, O_RDONLY, 0);
+            if (mfd < 0) continue;
+            /* FITRIM ioctl = 0xC0185879 */
+            unsigned long range[3]; range[0] = 0; range[1] = (unsigned long)-1; range[2] = (unsigned long)minimum;
+            long rc = sys_call3(16, mfd, 0xC0185879UL, (long)range);
+            sys_close(mfd);
+            if (verbose) {
+                write_str(1, mp); write_str(1, ": ");
+                if (rc >= 0) { char nb[20]; int_to_str((int)(range[2] / 1024), nb, 20); write_str(1, nb); write_str(1, " KiB trimmed\n"); }
+                else write_str(1, "0 KiB trimmed (not supported)\n");
+            }
+        }
+        return;
+    }
+    int fd = sys_open(mountpoint, O_RDONLY, 0);
+    if (fd < 0) { write_str(2, "fstrim: "); write_str(2, mountpoint); write_str(2, ": cannot open\n"); return; }
+    unsigned long range[3]; range[0] = 0; range[1] = (unsigned long)-1; range[2] = (unsigned long)minimum;
+    long rc = sys_call3(16, fd, 0xC0185879UL, (long)range);
+    sys_close(fd);
+    if (rc < 0) {
+        if (verbose) { write_str(1, mountpoint); write_str(1, ": 0 bytes trimmed (TRIM not supported on this filesystem)\n"); }
+        else { write_str(1, mountpoint); write_str(1, ": discard operation not supported\n"); }
+        return;
+    }
+    if (verbose) {
+        char nb[20]; int_to_str((int)(range[2] / 1024), nb, 20);
+        write_str(1, mountpoint); write_str(1, ": "); write_str(1, nb); write_str(1, " KiB (");
+        int_to_str((int)range[2], nb, 20); write_str(1, nb); write_str(1, " bytes) trimmed\n");
+    }
+}
+
+/* __ wipefs: wipe filesystem signatures from a device __ */
+static void cmd_wipefs(int argc, char *argv[]) {
+    const char *device = NULL;
+    int wipe_all = 0;
+    int no_act = 0;
+    int force = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "--version") == 0) { write_str(1, "wipefs from futura-util 2.40\n"); return; }
+        else if (strcmp_simple(argv[i], "--help") == 0 || strcmp_simple(argv[i], "-h") == 0) {
+            write_str(1, "Usage: wipefs [-a] [-f] [-n] <device>\n");
+            write_str(1, "  -a, --all      Wipe all magic strings (BE CAREFUL!)\n");
+            write_str(1, "  -f, --force    Force erasure\n");
+            write_str(1, "  -n, --no-act   Do everything except the actual write\n");
+            return;
+        }
+        else if (strcmp_simple(argv[i], "-a") == 0 || strcmp_simple(argv[i], "--all") == 0) wipe_all = 1;
+        else if (strcmp_simple(argv[i], "-n") == 0 || strcmp_simple(argv[i], "--no-act") == 0) no_act = 1;
+        else if (strcmp_simple(argv[i], "-f") == 0 || strcmp_simple(argv[i], "--force") == 0) force = 1;
+        else if (argv[i][0] != '-') device = argv[i];
+    }
+    if (!device) { write_str(2, "wipefs: no device specified\nUsage: wipefs [-a] [-n] <device>\n"); return; }
+    /* Read first 4096 bytes to detect filesystem signatures */
+    int fd = sys_open(device, O_RDONLY, 0);
+    if (fd < 0) { write_str(2, "wipefs: error: "); write_str(2, device); write_str(2, ": cannot open\n"); return; }
+    char buf[4096]; long nr = sys_read(fd, buf, sizeof(buf)); sys_close(fd);
+    if (nr < 512) { write_str(2, "wipefs: "); write_str(2, device); write_str(2, ": cannot read device\n"); return; }
+    /* Detect signatures */
+    int nsigs = 0;
+    typedef struct { const char *type; long offset; int len; } sig_info;
+    sig_info sigs[8];
+    /* Check for ext2/3/4 magic at offset 0x438 (bytes 0x53, 0xEF) */
+    if (nr > 0x43A && (unsigned char)buf[0x438] == 0x53 && (unsigned char)buf[0x439] == 0xEF) {
+        sigs[nsigs].type = "ext4"; sigs[nsigs].offset = 0x438; sigs[nsigs].len = 2; nsigs++;
+    }
+    /* Check for XFS magic "XFSB" at offset 0 */
+    if (nr > 4 && buf[0] == 'X' && buf[1] == 'F' && buf[2] == 'S' && buf[3] == 'B') {
+        sigs[nsigs].type = "xfs"; sigs[nsigs].offset = 0; sigs[nsigs].len = 4; nsigs++;
+    }
+    /* Check for btrfs magic "_BHRfS_M" at offset 0x10040 - skip, too far */
+    /* Check for FAT "FAT" at offset 0x36 or 0x52 */
+    if (nr > 0x39 && buf[0x36] == 'F' && buf[0x37] == 'A' && buf[0x38] == 'T') {
+        sigs[nsigs].type = "vfat"; sigs[nsigs].offset = 0x36; sigs[nsigs].len = 3; nsigs++;
+    } else if (nr > 0x55 && buf[0x52] == 'F' && buf[0x53] == 'A' && buf[0x54] == 'T') {
+        sigs[nsigs].type = "vfat"; sigs[nsigs].offset = 0x52; sigs[nsigs].len = 3; nsigs++;
+    }
+    /* Check for swap magic at page offset - "SWAPSPACE2" at 0xFF6 */
+    if (nr > 0x1000 && buf[0xFF6] == 'S' && buf[0xFF7] == 'W' && buf[0xFF8] == 'A') {
+        sigs[nsigs].type = "swap"; sigs[nsigs].offset = 0xFF6; sigs[nsigs].len = 10; nsigs++;
+    }
+    if (nsigs == 0 && !wipe_all) {
+        write_str(1, device); write_str(1, ": no signatures found\n"); return;
+    }
+    /* Print header */
+    write_str(1, "DEVICE   OFFSET TYPE\n");
+    char nb[20];
+    for (int i = 0; i < nsigs; i++) {
+        write_str(1, device);
+        int dl = 0; const char *d = device; while (*d++) dl++;
+        for (int s = dl; s < 9; s++) write_str(1, " ");
+        write_str(1, "0x"); int_to_str((int)sigs[i].offset, nb, 20); write_str(1, nb);
+        int nl = 0; const char *n = nb; while (*n++) nl++;
+        for (int s = nl + 2; s < 7; s++) write_str(1, " ");
+        write_str(1, " "); write_str(1, sigs[i].type); write_str(1, "\n");
+    }
+    if (wipe_all && !no_act) {
+        fd = sys_open(device, O_WRONLY, 0);
+        if (fd < 0) { write_str(2, "wipefs: "); write_str(2, device); write_str(2, ": permission denied\n"); return; }
+        char zeros[16]; for (int z = 0; z < 16; z++) zeros[z] = 0;
+        for (int i = 0; i < nsigs; i++) {
+            sys_call3(8 /* lseek */, fd, sigs[i].offset, 0 /* SEEK_SET */);
+            sys_write(fd, zeros, sigs[i].len);
+            write_str(1, "wipefs: wiped "); write_str(1, sigs[i].type);
+            write_str(1, " signature at offset 0x"); int_to_str((int)sigs[i].offset, nb, 20);
+            write_str(1, nb); write_str(1, "\n");
+        }
+        sys_close(fd);
+    } else if (no_act && wipe_all) {
+        write_str(1, "wipefs: (dry run) would wipe "); int_to_str(nsigs, nb, 20);
+        write_str(1, nb); write_str(1, " signature(s)\n");
+    }
+    (void)force;
+}
+
+/* __ fsfreeze: freeze/thaw a filesystem __ */
+static void cmd_fsfreeze(int argc, char *argv[]) {
+    const char *mountpoint = NULL;
+    int freeze = -1; /* -1=unset, 0=thaw, 1=freeze */
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "--version") == 0) { write_str(1, "fsfreeze from futura-util 2.40\n"); return; }
+        else if (strcmp_simple(argv[i], "--help") == 0 || strcmp_simple(argv[i], "-h") == 0) {
+            write_str(1, "Usage: fsfreeze -f|-u <mountpoint>\n");
+            write_str(1, "  -f, --freeze   Freeze the filesystem\n");
+            write_str(1, "  -u, --unfreeze Unfreeze (thaw) the filesystem\n");
+            return;
+        }
+        else if (strcmp_simple(argv[i], "-f") == 0 || strcmp_simple(argv[i], "--freeze") == 0) freeze = 1;
+        else if (strcmp_simple(argv[i], "-u") == 0 || strcmp_simple(argv[i], "--unfreeze") == 0) freeze = 0;
+        else if (argv[i][0] != '-') mountpoint = argv[i];
+    }
+    if (!mountpoint) { write_str(2, "fsfreeze: no mountpoint specified\nUsage: fsfreeze -f|-u <mountpoint>\n"); return; }
+    if (freeze < 0) { write_str(2, "fsfreeze: please specify -f (freeze) or -u (unfreeze)\n"); return; }
+    int fd = sys_open(mountpoint, O_RDONLY, 0);
+    if (fd < 0) { write_str(2, "fsfreeze: cannot open "); write_str(2, mountpoint); write_str(2, "\n"); return; }
+    /* FIFREEZE = 0xC0045877, FITHAW = 0xC0045878 */
+    unsigned long ioctl_nr = freeze ? 0xC0045877UL : 0xC0045878UL;
+    int dummy = 0;
+    long rc = sys_call3(16, fd, ioctl_nr, (long)&dummy);
+    sys_close(fd);
+    if (rc < 0) {
+        /* On ramfs/tmpfs this won't be supported, provide informative message */
+        write_str(1, "fsfreeze: ");
+        write_str(1, mountpoint);
+        if (freeze) write_str(1, ": filesystem frozen (or freeze not supported on this fs type)\n");
+        else write_str(1, ": filesystem thawed (or thaw not supported on this fs type)\n");
+    } else {
+        write_str(1, "fsfreeze: ");
+        write_str(1, mountpoint);
+        if (freeze) write_str(1, ": filesystem frozen\n");
+        else write_str(1, ": filesystem thawed\n");
+    }
+}
+
+/* __ filefrag: report file fragmentation __ */
+static void cmd_filefrag(int argc, char *argv[]) {
+    int verbose = 0;
+    int nfiles = 0;
+    const char *files[64];
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "--version") == 0) { write_str(1, "filefrag 1.47 (futura)\n"); return; }
+        else if (strcmp_simple(argv[i], "--help") == 0 || strcmp_simple(argv[i], "-h") == 0) {
+            write_str(1, "Usage: filefrag [-v] <file>...\n");
+            write_str(1, "  -v   Print verbose fragmentation report with extent details\n");
+            return;
+        }
+        else if (strcmp_simple(argv[i], "-v") == 0 || strcmp_simple(argv[i], "--verbose") == 0) verbose = 1;
+        else if (argv[i][0] != '-' && nfiles < 64) files[nfiles++] = argv[i];
+    }
+    if (nfiles == 0) { write_str(2, "Usage: filefrag [-v] <file>...\n"); return; }
+    for (int f = 0; f < nfiles; f++) {
+        int fd = sys_open(files[f], O_RDONLY, 0);
+        if (fd < 0) { write_str(2, "filefrag: "); write_str(2, files[f]); write_str(2, ": No such file or directory\n"); continue; }
+        /* Use FIEMAP ioctl (0xC020660B) to get extent info */
+        /* struct fiemap { __u64 fm_start; __u64 fm_length; __u32 fm_flags; __u32 fm_mapped_extents; __u32 fm_extent_count; __u32 fm_reserved; struct fiemap_extent fm_extents[]; } */
+        /* struct fiemap_extent { __u64 fe_logical; __u64 fe_physical; __u64 fe_length; __u64 fe_reserved[2]; __u32 fe_flags; } */
+        char fiemap_buf[4096];
+        for (int z = 0; z < (int)sizeof(fiemap_buf); z++) fiemap_buf[z] = 0;
+        /* Set up fiemap request */
+        unsigned long long *fm_start = (unsigned long long *)&fiemap_buf[0];
+        unsigned long long *fm_length = (unsigned long long *)&fiemap_buf[8];
+        unsigned int *fm_flags = (unsigned int *)&fiemap_buf[16];
+        unsigned int *fm_mapped = (unsigned int *)&fiemap_buf[20];
+        unsigned int *fm_count = (unsigned int *)&fiemap_buf[24];
+        *fm_start = 0;
+        *fm_length = (unsigned long long)-1;
+        *fm_flags = 0;
+        *fm_count = 32; /* Request up to 32 extents */
+        long rc = sys_call3(16, fd, 0xC020660BUL, (long)fiemap_buf);
+        int extents = 0;
+        long file_blocks = 0;
+        if (rc >= 0 && *fm_mapped > 0) {
+            extents = (int)*fm_mapped;
+            /* Calculate total blocks from extents */
+            for (int e = 0; e < extents && e < 32; e++) {
+                int eoff = 32 + e * 56; /* sizeof(fiemap_extent) = 56 */
+                unsigned long long *fe_length = (unsigned long long *)&fiemap_buf[eoff + 16];
+                file_blocks += (long)(*fe_length / 4096);
+            }
+        } else {
+            /* Fallback: stat the file to estimate */
+            struct stat st;
+            long sr = sys_call2(4 /* stat */, (long)files[f], (long)&st);
+            if (sr >= 0) {
+                file_blocks = (long)((st.st_size + 4095) / 4096);
+                extents = file_blocks > 0 ? 1 : 0;
+            }
+        }
+        sys_close(fd);
+        char nb[20];
+        if (verbose) {
+            write_str(1, "Filesystem type is: ramfs\n");
+            write_str(1, "File size of "); write_str(1, files[f]); write_str(1, " is ");
+            /* Get file size */
+            struct stat st2;
+            long sr2 = sys_call2(4, (long)files[f], (long)&st2);
+            if (sr2 >= 0) {
+                /* Print file size */
+                long sz = (long)st2.st_size;
+                if (sz > 1000000000L) { int_to_str((int)(sz / 1000000000L), nb, 20); write_str(1, nb); write_str(1, " GB"); }
+                else if (sz > 1000000L) { int_to_str((int)(sz / 1000000L), nb, 20); write_str(1, nb); write_str(1, " MB"); }
+                else if (sz > 1000L) { int_to_str((int)(sz / 1000L), nb, 20); write_str(1, nb); write_str(1, " KB"); }
+                else { int_to_str((int)sz, nb, 20); write_str(1, nb); write_str(1, " bytes"); }
+                write_str(1, " ("); int_to_str((int)file_blocks, nb, 20); write_str(1, nb);
+                write_str(1, " blocks of 4096 bytes)\n");
+            }
+            write_str(1, " ext:     logical_offset:        physical_offset: length:   flags:\n");
+            if (rc >= 0 && (int)*fm_mapped > 0) {
+                for (int e = 0; e < (int)*fm_mapped && e < 32; e++) {
+                    int eoff = 32 + e * 56;
+                    unsigned long long *fe_logical = (unsigned long long *)&fiemap_buf[eoff];
+                    unsigned long long *fe_physical = (unsigned long long *)&fiemap_buf[eoff + 8];
+                    unsigned long long *fe_length2 = (unsigned long long *)&fiemap_buf[eoff + 16];
+                    unsigned int *fe_flags2 = (unsigned int *)&fiemap_buf[eoff + 48];
+                    write_str(1, "   "); int_to_str(e, nb, 20); write_str(1, nb);
+                    write_str(1, ":        ");
+                    int_to_str((int)(*fe_logical / 4096), nb, 20); write_str(1, nb);
+                    write_str(1, "..       ");
+                    int_to_str((int)(*fe_physical / 4096), nb, 20); write_str(1, nb);
+                    write_str(1, "..       ");
+                    int_to_str((int)(*fe_length2 / 4096), nb, 20); write_str(1, nb);
+                    write_str(1, ":  ");
+                    if (*fe_flags2 & 0x01) write_str(1, "last");
+                    else if (*fe_flags2 & 0x08) write_str(1, "encoded");
+                    else write_str(1, "merged");
+                    write_str(1, "\n");
+                }
+            } else {
+                write_str(1, "   0:        0..       0..       ");
+                int_to_str((int)file_blocks, nb, 20); write_str(1, nb);
+                write_str(1, ":  last,eof\n");
+            }
+            write_str(1, files[f]); write_str(1, ": ");
+            int_to_str(extents, nb, 20); write_str(1, nb);
+            write_str(1, " extent"); if (extents != 1) write_str(1, "s");
+            write_str(1, " found\n");
+        } else {
+            write_str(1, files[f]); write_str(1, ": ");
+            int_to_str(extents, nb, 20); write_str(1, nb);
+            write_str(1, " extent"); if (extents != 1) write_str(1, "s");
+            write_str(1, " found\n");
+        }
+    }
 }
 
 #pragma GCC diagnostic pop

@@ -216,6 +216,11 @@ static void cmd_journalctl(int argc, char *argv[]);
 static void cmd_loginctl(int argc, char *argv[]);
 static void cmd_resolvectl(int argc, char *argv[]);
 static void cmd_networkctl(int argc, char *argv[]);
+static void cmd_systemd_analyze(int argc, char *argv[]);
+static void cmd_coredumpctl(int argc, char *argv[]);
+static void cmd_localectl(int argc, char *argv[]);
+static void cmd_machinectl(int argc, char *argv[]);
+static void cmd_busctl(int argc, char *argv[]);
 static void strcpy_simple(char *dest, const char *src);
 
 /* Forward declaration for prompt */
@@ -668,7 +673,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     const char *builtins[] = {
         "arp", "ascii", "base32", "bg", "blockdev", "brctl", "cal", "cd", "chgrp", "chmod", "chroot", "chrt", "clear", "cmp", "comm", "conntrack", "cpupower", "date", "depmod", "dd", "df", "dhclient", "dmesg", "echo", "edit", "ethtool", "expand", "expr", "factor", "file", "fold", "fuser", "hdparm", "hexdump", "install", "ionice", "locale", "lsmod", "lsns", "lsof", "md5sum", "mkfifo", "modprobe", "nc", "nice", "nohup", "numactl", "partprobe", "patch", "perf", "pgrep", "pidof", "pkill", "poweroff", "prlimit", "reboot", "renice", "reset", "seq", "sha1sum", "sha512sum", "sleep", "smartctl", "stdbuf", "strings", "swapon", "swapoff", "tac", "taskset", "time", "timeout", "tput", "traceroute", "tty", "unexpand", "wget", "whatis", "xxd", "exit", "export", "fg", "free",
         "help", "hostname", "httpd", "id", "ifconfig", "iostat", "ipcs", "iptables", "jobs", "kill", "logger", "losetup", "ls", "lsblk", "lspci", "mkfs", "mount", "netstat",
-        ".", "alias", "arch", "basename", "blkid", "bridge", "dirname", "du", "exec", "false", "fmt", "getconf", "groups", "history", "hostnamectl", "ip", "journalctl", "ln", "loginctl", "logname", "lscpu", "mkswap", "mktemp", "more", "nawk", "networkctl", "nft", "nproc", "nslookup", "passwd", "ping", "printenv", "printf", "ps", "pwd", "read", "readlink", "realpath", "resolvectl", "set", "sha1sum", "sha256sum", "shutdown", "source", "ss", "stat", "strace", "stty", "su", "sync", "sysctl", "sysinfo", "tc", "test", "timedatectl", "top", "trap", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "users", "version", "vi", "vmstat", "w", "wait", "watch", "wdctl", "which", "whoami", "xargs", "yes", NULL
+        ".", "alias", "arch", "basename", "blkid", "bridge", "busctl", "coredumpctl", "dirname", "du", "exec", "false", "fmt", "getconf", "groups", "history", "hostnamectl", "ip", "journalctl", "ln", "localectl", "loginctl", "logname", "lscpu", "machinectl", "mkswap", "mktemp", "more", "nawk", "networkctl", "nft", "nproc", "nslookup", "passwd", "ping", "printenv", "printf", "ps", "pwd", "read", "readlink", "realpath", "resolvectl", "set", "sha1sum", "sha256sum", "shutdown", "source", "ss", "stat", "strace", "stty", "su", "sync", "sysctl", "sysinfo", "systemd-analyze", "tc", "test", "timedatectl", "top", "trap", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "users", "version", "vi", "vmstat", "w", "wait", "watch", "wdctl", "which", "whoami", "xargs", "yes", NULL
     };
 
     /* External commands we might have */
@@ -1401,6 +1406,11 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  loginctl [list-sessions|show-session] - Show login sessions\n");
     write_str(1, "  resolvectl [status]              - DNS resolver information\n");
     write_str(1, "  networkctl [list|status]          - Network interface status\n");
+    write_str(1, "  systemd-analyze [blame|critical-chain] - Boot time analysis\n");
+    write_str(1, "  coredumpctl [list|info]           - List/inspect core dumps\n");
+    write_str(1, "  localectl [status|set-locale|set-keymap] - Locale/keyboard settings\n");
+    write_str(1, "  machinectl [list|status]          - Container/VM management\n");
+    write_str(1, "  busctl [list|status]              - D-Bus bus introspection\n");
     write_str(1, "\n");
     write_str(1, "Networking:\n");
     write_str(1, "  ip addr|link|route|neigh|forward - Network configuration\n");
@@ -13622,6 +13632,21 @@ watch_sleep:
     } else if (strcmp_simple(argv[0], "networkctl") == 0) {
         cmd_networkctl(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "systemd-analyze") == 0) {
+        cmd_systemd_analyze(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "coredumpctl") == 0) {
+        cmd_coredumpctl(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "localectl") == 0) {
+        cmd_localectl(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "machinectl") == 0) {
+        cmd_machinectl(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "busctl") == 0) {
+        cmd_busctl(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -13853,6 +13878,11 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "loginctl") == 0 ||
             strcmp_simple(cmd, "resolvectl") == 0 ||
             strcmp_simple(cmd, "networkctl") == 0 ||
+            strcmp_simple(cmd, "systemd-analyze") == 0 ||
+            strcmp_simple(cmd, "coredumpctl") == 0 ||
+            strcmp_simple(cmd, "localectl") == 0 ||
+            strcmp_simple(cmd, "machinectl") == 0 ||
+            strcmp_simple(cmd, "busctl") == 0 ||
             0);
 }
 
@@ -18290,7 +18320,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   250 built-in commands — type 'help'    |\n");
+    write_str(1, "|   255 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");
@@ -19311,6 +19341,11 @@ static void cmd_man(int argc, char *argv[]) {
         {"loginctl",   "loginctl - control the systemd login manager"},
         {"resolvectl", "resolvectl - resolve domain names, manage DNS settings"},
         {"networkctl", "networkctl - query the status of network links"},
+        {"systemd-analyze", "systemd-analyze - analyze and debug system manager"},
+        {"coredumpctl", "coredumpctl - retrieve and process saved core dumps and metadata"},
+        {"localectl", "localectl - control the system locale and keyboard layout settings"},
+        {"machinectl", "machinectl - control the systemd machine manager"},
+        {"busctl", "busctl - introspect the D-Bus bus"},
     };
     int n_entries = (int)(sizeof(man_entries) / sizeof(man_entries[0]));
 
@@ -21405,6 +21440,7 @@ static void cmd_whatis(int argc, char *argv[]) {
         {"bg",        "bg (1)              - move jobs to the background"},
         {"blkid",     "blkid (8)           - locate/print block device attributes"},
         {"bridge",    "bridge (8)          - show/manipulate bridge addresses and devices"},
+        {"busctl",    "busctl (1)          - introspect the D-Bus bus"},
         {"cal",       "cal (1)             - display a calendar"},
         {"cat",       "cat (1)             - concatenate files and print on stdout"},
         {"cd",        "cd (1)              - change the working directory"},
@@ -21417,6 +21453,7 @@ static void cmd_whatis(int argc, char *argv[]) {
         {"cmp",       "cmp (1)             - compare two files byte by byte"},
         {"colrm",     "colrm (1)           - remove columns from a file"},
         {"comm",      "comm (1)            - compare two sorted files line by line"},
+        {"coredumpctl","coredumpctl (1)    - retrieve and process saved core dumps"},
         {"cp",        "cp (1)              - copy files and directories"},
         {"cpupower",  "cpupower (1)        - show CPU frequency scaling information"},
         {"csplit",    "csplit (1)           - split a file into sections by context"},
@@ -21462,12 +21499,14 @@ static void cmd_whatis(int argc, char *argv[]) {
         {"kill",      "kill (1)            - send a signal to a process"},
         {"less",      "less (1)            - opposite of more"},
         {"ln",        "ln (1)              - make links between files"},
+        {"localectl", "localectl (1)       - control the system locale and keyboard layout"},
         {"loginctl",  "loginctl (1)        - control the systemd login manager"},
         {"look",      "look (1)            - display lines beginning with a given string"},
         {"ls",        "ls (1)              - list directory contents"},
         {"lsblk",     "lsblk (8)           - list information about block devices"},
         {"lscpu",     "lscpu (1)           - display information about CPU architecture"},
         {"lsns",      "lsns (8)            - list namespaces"},
+        {"machinectl","machinectl (1)      - control the systemd machine manager"},
         {"make",      "make (1)            - GNU make utility to maintain groups of programs"},
         {"man",       "man (1)             - an interface to the system reference manuals"},
         {"md5sum",    "md5sum (1)          - compute and check MD5 message digest"},
@@ -21527,6 +21566,7 @@ static void cmd_whatis(int argc, char *argv[]) {
         {"sysctl",    "sysctl (8)          - configure kernel parameters at runtime"},
         {"sysinfo",   "sysinfo (1)         - display comprehensive system information"},
         {"systemctl", "systemctl (1)       - control the systemd system and service manager"},
+        {"systemd-analyze","systemd-analyze (1) - analyze and debug system manager"},
         {"tac",       "tac (1)             - concatenate and print files in reverse"},
         {"tail",      "tail (1)            - output the last part of files"},
         {"tar",       "tar (1)             - an archiving utility"},
@@ -23049,6 +23089,356 @@ static void cmd_networkctl(int argc, char *argv[]) {
     }
 
     write_str(2, "networkctl: unknown command '");
+    write_str(2, argv[1]);
+    write_str(2, "'\n");
+}
+
+/* __ systemd-analyze: boot time analysis __ */
+static void cmd_systemd_analyze(int argc, char *argv[]) {
+    if (argc >= 2 && strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "Usage: systemd-analyze [blame|critical-chain|time]\n");
+        return;
+    }
+
+    /* Read /proc/uptime for total uptime */
+    int fd = sys_open("/proc/uptime", 0, 0);
+    char ubuf[128];
+    long total_sec = 0;
+    long total_frac = 0;
+    if (fd >= 0) {
+        ssize_t n = sys_read(fd, ubuf, sizeof(ubuf) - 1);
+        if (n > 0) {
+            ubuf[n] = '\0';
+            /* Parse "seconds.fraction idle" */
+            int i = 0;
+            while (ubuf[i] >= '0' && ubuf[i] <= '9') {
+                total_sec = total_sec * 10 + (ubuf[i] - '0');
+                i++;
+            }
+            if (ubuf[i] == '.') {
+                i++;
+                int frac_digits = 0;
+                while (ubuf[i] >= '0' && ubuf[i] <= '9' && frac_digits < 3) {
+                    total_frac = total_frac * 10 + (ubuf[i] - '0');
+                    i++;
+                    frac_digits++;
+                }
+                while (frac_digits < 3) { total_frac *= 10; frac_digits++; }
+            }
+        }
+        sys_close(fd);
+    }
+
+    /* Estimate kernel vs userspace split: kernel ~70%, userspace ~30% */
+    long total_ms = total_sec * 1000 + total_frac;
+    long kernel_ms = (total_ms * 70) / 100;
+    long userspace_ms = total_ms - kernel_ms;
+
+    if (argc < 2 || strcmp_simple(argv[1], "time") == 0) {
+        write_str(1, "Startup finished in ");
+        write_num((int)(kernel_ms / 1000)); write_char(1, '.'); write_num((int)(kernel_ms % 1000));
+        write_str(1, "s (kernel) + ");
+        write_num((int)(userspace_ms / 1000)); write_char(1, '.'); write_num((int)(userspace_ms % 1000));
+        write_str(1, "s (userspace) = ");
+        write_num((int)(total_ms / 1000)); write_char(1, '.'); write_num((int)(total_ms % 1000));
+        write_str(1, "s\n");
+        return;
+    }
+
+    if (strcmp_simple(argv[1], "blame") == 0) {
+        write_str(1, "          ");
+        write_num((int)(kernel_ms)); write_str(1, "ms kernel\n");
+        write_str(1, "          ");
+        long init_ms = (userspace_ms * 40) / 100;
+        long vfs_ms  = (userspace_ms * 25) / 100;
+        long net_ms  = (userspace_ms * 20) / 100;
+        long misc_ms = userspace_ms - init_ms - vfs_ms - net_ms;
+        write_num((int)init_ms); write_str(1, "ms init.scope\n");
+        write_str(1, "          ");
+        write_num((int)vfs_ms); write_str(1, "ms vfs-mount.service\n");
+        write_str(1, "          ");
+        write_num((int)net_ms); write_str(1, "ms network-setup.service\n");
+        write_str(1, "          ");
+        write_num((int)misc_ms); write_str(1, "ms other\n");
+        return;
+    }
+
+    if (strcmp_simple(argv[1], "critical-chain") == 0) {
+        write_str(1, "The time when unit became active or started is printed after the \"@\" character.\n");
+        write_str(1, "The time the unit took to start is printed after the \"+\" character.\n\n");
+        write_str(1, "multi-user.target @");
+        write_num((int)(total_ms / 1000)); write_char(1, '.'); write_num((int)(total_ms % 1000));
+        write_str(1, "s\n");
+        write_str(1, "  basic.target @");
+        write_num((int)(kernel_ms / 1000)); write_char(1, '.'); write_num((int)(kernel_ms % 1000));
+        write_str(1, "s\n");
+        write_str(1, "    sysinit.target @0.001s\n");
+        write_str(1, "      kernel-modules.target @0.000s\n");
+        return;
+    }
+
+    write_str(2, "systemd-analyze: unknown verb '");
+    write_str(2, argv[1]);
+    write_str(2, "'\n");
+}
+
+/* __ coredumpctl: list/inspect core dumps __ */
+static void cmd_coredumpctl(int argc, char *argv[]) {
+    if (argc >= 2 && strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "Usage: coredumpctl [list|info|dump] [PID]\n");
+        return;
+    }
+
+    if (argc < 2 || strcmp_simple(argv[1], "list") == 0) {
+        write_str(1, "TIME                            PID   UID   GID SIG COREFILE  EXE\n");
+        /* Check /proc for crashed processes - show simulated entries */
+        write_str(1, "No coredumps found.\n");
+        return;
+    }
+
+    if (strcmp_simple(argv[1], "info") == 0) {
+        if (argc < 3) {
+            write_str(1, "           PID: (none)\n");
+            write_str(1, "           UID: 0 (root)\n");
+            write_str(1, "           GID: 0 (root)\n");
+            write_str(1, "        Signal: 11 (SEGV)\n");
+            write_str(1, "     Timestamp: (unknown)\n");
+            write_str(1, "  Command Line: (none)\n");
+            write_str(1, "    Executable: (none)\n");
+            write_str(1, "   Storage: none\n");
+            write_str(1, "\nNo coredumps found.\n");
+        } else {
+            write_str(1, "           PID: ");
+            write_str(1, argv[2]);
+            write_str(1, "\n");
+            write_str(1, "           UID: 0 (root)\n");
+            write_str(1, "           GID: 0 (root)\n");
+            write_str(1, "        Signal: 11 (SEGV)\n");
+            write_str(1, "     Timestamp: (unavailable)\n");
+            write_str(1, "  Command Line: (unknown)\n");
+            write_str(1, "    Executable: (unknown)\n");
+            write_str(1, "       Storage: none\n");
+            write_str(1, "       Message: No coredump found for PID ");
+            write_str(1, argv[2]);
+            write_str(1, "\n");
+        }
+        return;
+    }
+
+    if (strcmp_simple(argv[1], "dump") == 0) {
+        write_str(2, "coredumpctl: no coredumps found\n");
+        return;
+    }
+
+    write_str(2, "coredumpctl: unknown command '");
+    write_str(2, argv[1]);
+    write_str(2, "'\n");
+}
+
+/* __ localectl: locale and keyboard settings __ */
+static void cmd_localectl(int argc, char *argv[]) {
+    if (argc >= 2 && strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "Usage: localectl [status|set-locale LOCALE|set-keymap MAP|list-locales|list-keymaps]\n");
+        return;
+    }
+
+    if (argc < 2 || strcmp_simple(argv[1], "status") == 0) {
+        write_str(1, "   System Locale: LANG=C.UTF-8\n");
+        write_str(1, "       VC Keymap: us\n");
+        write_str(1, "      X11 Layout: us\n");
+        write_str(1, "       X11 Model: pc105\n");
+        return;
+    }
+
+    if (strcmp_simple(argv[1], "set-locale") == 0) {
+        if (argc < 3) {
+            write_str(2, "localectl: requires locale argument\n");
+            return;
+        }
+        write_str(1, "Locale set to: ");
+        write_str(1, argv[2]);
+        write_str(1, "\n");
+        return;
+    }
+
+    if (strcmp_simple(argv[1], "set-keymap") == 0) {
+        if (argc < 3) {
+            write_str(2, "localectl: requires keymap argument\n");
+            return;
+        }
+        write_str(1, "VC keymap set to: ");
+        write_str(1, argv[2]);
+        write_str(1, "\n");
+        return;
+    }
+
+    if (strcmp_simple(argv[1], "list-locales") == 0) {
+        write_str(1, "C\n");
+        write_str(1, "C.UTF-8\n");
+        write_str(1, "POSIX\n");
+        write_str(1, "en_US.UTF-8\n");
+        return;
+    }
+
+    if (strcmp_simple(argv[1], "list-keymaps") == 0) {
+        write_str(1, "us\n");
+        write_str(1, "uk\n");
+        write_str(1, "de\n");
+        write_str(1, "fr\n");
+        write_str(1, "es\n");
+        write_str(1, "jp\n");
+        return;
+    }
+
+    write_str(2, "localectl: unknown command '");
+    write_str(2, argv[1]);
+    write_str(2, "'\n");
+}
+
+/* __ machinectl: container/VM management __ */
+static void cmd_machinectl(int argc, char *argv[]) {
+    if (argc >= 2 && strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "Usage: machinectl [list|status NAME|show NAME|start NAME|poweroff NAME]\n");
+        return;
+    }
+
+    if (argc < 2 || strcmp_simple(argv[1], "list") == 0) {
+        write_str(1, "MACHINE                          CLASS     SERVICE        OS     VERSION ADDRESSES\n");
+        write_str(1, "\n0 machines listed.\n");
+        return;
+    }
+
+    if (strcmp_simple(argv[1], "status") == 0) {
+        if (argc < 3) {
+            /* Show host status */
+            write_str(1, "futura\n");
+            write_str(1, "           Since: (boot)\n");
+            write_str(1, "          Leader: 1 (init)\n");
+            write_str(1, "         Service: shell; class host\n");
+            write_str(1, "            Unit: -.slice\n");
+            /* Read uptime */
+            int fd = sys_open("/proc/uptime", 0, 0);
+            if (fd >= 0) {
+                char ubuf[64];
+                ssize_t n = sys_read(fd, ubuf, sizeof(ubuf) - 1);
+                if (n > 0) {
+                    ubuf[n] = '\0';
+                    write_str(1, "          Uptime: ");
+                    /* Print just the integer seconds */
+                    for (int i = 0; ubuf[i] && ubuf[i] != '.' && ubuf[i] != ' '; i++)
+                        write_char(1, ubuf[i]);
+                    write_str(1, "s\n");
+                }
+                sys_close(fd);
+            }
+            write_str(1, "              OS: Futura OS\n");
+        } else {
+            write_str(2, "machinectl: machine '");
+            write_str(2, argv[2]);
+            write_str(2, "' not found\n");
+        }
+        return;
+    }
+
+    if (strcmp_simple(argv[1], "show") == 0) {
+        if (argc < 3) {
+            write_str(1, "Name=futura\n");
+            write_str(1, "Class=host\n");
+            write_str(1, "Service=shell\n");
+            write_str(1, "RootDirectory=/\n");
+            write_str(1, "State=running\n");
+        } else {
+            write_str(2, "machinectl: machine '");
+            write_str(2, argv[2]);
+            write_str(2, "' not found\n");
+        }
+        return;
+    }
+
+    if (strcmp_simple(argv[1], "start") == 0 || strcmp_simple(argv[1], "poweroff") == 0) {
+        if (argc < 3) {
+            write_str(2, "machinectl: machine name required\n");
+            return;
+        }
+        write_str(2, "machinectl: machine '");
+        write_str(2, argv[2]);
+        write_str(2, "' not found\n");
+        return;
+    }
+
+    write_str(2, "machinectl: unknown command '");
+    write_str(2, argv[1]);
+    write_str(2, "'\n");
+}
+
+/* __ busctl: D-Bus introspection __ */
+static void cmd_busctl(int argc, char *argv[]) {
+    if (argc >= 2 && strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "Usage: busctl [list|status [SERVICE]|tree [SERVICE]|introspect SERVICE PATH]\n");
+        return;
+    }
+
+    if (argc < 2 || strcmp_simple(argv[1], "list") == 0) {
+        write_str(1, "NAME                                   PID PROCESS         USER             CONNECTION    UNIT                      SESSION    DESCRIPTION\n");
+        write_str(1, "org.freedesktop.systemd1                 1 init            root             :1.0          init.scope                -          The systemd System Manager\n");
+        write_str(1, "org.freedesktop.login1                   1 init            root             :1.1          init.scope                -          The systemd Login Manager\n");
+        write_str(1, "org.freedesktop.hostname1                1 init            root             :1.2          init.scope                -          The systemd Hostname Manager\n");
+        write_str(1, "org.freedesktop.locale1                  1 init            root             :1.3          init.scope                -          The systemd Locale Manager\n");
+        write_str(1, "org.freedesktop.timedate1                1 init            root             :1.4          init.scope                -          The systemd Timedate Manager\n");
+        write_str(1, "org.freedesktop.resolve1                 1 init            root             :1.5          init.scope                -          The systemd Resolver Manager\n");
+        write_str(1, "org.freedesktop.network1                 1 init            root             :1.6          init.scope                -          The systemd Network Manager\n");
+        write_str(1, "org.freedesktop.machine1                 1 init            root             :1.7          init.scope                -          The systemd Machine Manager\n");
+        write_str(1, "\n8 names listed.\n");
+        return;
+    }
+
+    if (strcmp_simple(argv[1], "status") == 0) {
+        if (argc < 3) {
+            /* Show bus status */
+            write_str(1, "BusID=futura-system-bus\n");
+            write_str(1, "OwnerUID=0\n");
+            write_str(1, "NNames=8\n");
+            write_str(1, "NConnections=8\n");
+        } else {
+            write_str(1, "Service: ");
+            write_str(1, argv[2]);
+            write_str(1, "\n");
+            write_str(1, "PID: 1\n");
+            write_str(1, "User: root\n");
+            write_str(1, "UniqueName: :1.0\n");
+        }
+        return;
+    }
+
+    if (strcmp_simple(argv[1], "tree") == 0) {
+        const char *svc = argc >= 3 ? argv[2] : "org.freedesktop.systemd1";
+        write_str(1, svc);
+        write_str(1, "\n");
+        write_str(1, "  /org\n");
+        write_str(1, "    /org/freedesktop\n");
+        write_str(1, "      /org/freedesktop/systemd1\n");
+        return;
+    }
+
+    if (strcmp_simple(argv[1], "introspect") == 0) {
+        if (argc < 4) {
+            write_str(2, "busctl: service and object path required\n");
+            return;
+        }
+        write_str(1, "NAME                                TYPE      SIGNATURE RESULT/VALUE FLAGS\n");
+        write_str(1, "org.freedesktop.DBus.Introspectable interface -         -            -\n");
+        write_str(1, ".Introspect                         method    -         s            -\n");
+        write_str(1, "org.freedesktop.DBus.Peer           interface -         -            -\n");
+        write_str(1, ".GetMachineId                       method    -         s            -\n");
+        write_str(1, ".Ping                               method    -         -            -\n");
+        write_str(1, "org.freedesktop.DBus.Properties     interface -         -            -\n");
+        write_str(1, ".Get                                method    ss        v            -\n");
+        write_str(1, ".GetAll                             method    s         a{sv}        -\n");
+        write_str(1, ".Set                                method    ssv       -            -\n");
+        return;
+    }
+
+    write_str(2, "busctl: unknown command '");
     write_str(2, argv[1]);
     write_str(2, "'\n");
 }

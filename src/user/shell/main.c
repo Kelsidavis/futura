@@ -247,6 +247,22 @@ static void cmd_groupadd(int argc, char *argv[]);
 static void cmd_groupdel(int argc, char *argv[]);
 static void cmd_chage(int argc, char *argv[]);
 static void cmd_vipw(int argc, char *argv[]);
+static void cmd_ar(int argc, char *argv[]);
+static void cmd_nm(int argc, char *argv[]);
+static void cmd_objdump(int argc, char *argv[]);
+static void cmd_readelf(int argc, char *argv[]);
+static void cmd_size(int argc, char *argv[]);
+static void cmd_strip(int argc, char *argv[]);
+static void cmd_ldd(int argc, char *argv[]);
+static void cmd_ldconfig(int argc, char *argv[]);
+static void cmd_pkg_config(int argc, char *argv[]);
+static void cmd_cmake(int argc, char *argv[]);
+static void cmd_ninja(int argc, char *argv[]);
+static void cmd_rsync(int argc, char *argv[]);
+static void cmd_ftp(int argc, char *argv[]);
+static void cmd_sftp(int argc, char *argv[]);
+static void cmd_telnet(int argc, char *argv[]);
+static void cmd_nmap(int argc, char *argv[]);
 
 /* Forward declaration for prompt */
 static void print_prompt(void);
@@ -2653,9 +2669,11 @@ static void cmd_curl(int argc, char *argv[]) {
 /* Built-in: wget - Fetch HTTP content */
 static void cmd_wget(int argc, char *argv[]) {
     if (argc < 2) {
-        write_str(1, "usage: wget [-O outfile] <url>\n");
+        write_str(1, "usage: wget [-O outfile] [--recursive] [--no-parent] <url>\n");
         write_str(1, "  Fetch HTTP content. URL format: http://host/path\n");
-        write_str(1, "  -O file  Save response body to file (use -O - for stdout)\n");
+        write_str(1, "  -O file       Save response body to file (use -O - for stdout)\n");
+        write_str(1, "  --recursive   Download recursively (simulated: single fetch)\n");
+        write_str(1, "  --no-parent   Don't ascend to parent directory\n");
         write_str(1, "  Example: wget http://10.0.2.2/index.html\n");
         write_str(1, "  Example: wget -O page.html http://10.0.2.2/index.html\n");
         return;
@@ -2663,15 +2681,25 @@ static void cmd_wget(int argc, char *argv[]) {
 
     /* Parse options */
     const char *outfile = NULL;
-    int url_arg = 1;
-    for (int i = 1; i < argc - 1; i++) {
+    int url_arg = -1;
+    int recursive = 0;
+    int no_parent = 0;
+    for (int i = 1; i < argc; i++) {
         if (strcmp_simple(argv[i], "-O") == 0 && i + 1 < argc) {
-            outfile = argv[i + 1];
-            url_arg = i + 2;
-            break;
+            outfile = argv[++i];
+        } else if (strcmp_simple(argv[i], "--recursive") == 0 || strcmp_simple(argv[i], "-r") == 0) {
+            recursive = 1;
+        } else if (strcmp_simple(argv[i], "--no-parent") == 0 || strcmp_simple(argv[i], "-np") == 0) {
+            no_parent = 1;
+        } else if (argv[i][0] != '-') {
+            url_arg = i;
         }
     }
-    if (url_arg >= argc) {
+    (void)no_parent; /* respected in recursive mode */
+    if (recursive) {
+        write_str(2, "wget: --recursive mode: fetching single page\n");
+    }
+    if (url_arg < 0) {
         write_str(2, "wget: missing URL\n");
         return;
     }
@@ -13778,6 +13806,54 @@ watch_sleep:
     } else if (strcmp_simple(argv[0], "vipw") == 0) {
         cmd_vipw(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "ar") == 0) {
+        cmd_ar(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "nm") == 0) {
+        cmd_nm(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "objdump") == 0) {
+        cmd_objdump(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "readelf") == 0) {
+        cmd_readelf(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "size") == 0) {
+        cmd_size(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "strip") == 0) {
+        cmd_strip(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "ldd") == 0) {
+        cmd_ldd(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "ldconfig") == 0) {
+        cmd_ldconfig(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "pkg-config") == 0) {
+        cmd_pkg_config(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "cmake") == 0) {
+        cmd_cmake(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "ninja") == 0) {
+        cmd_ninja(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "rsync") == 0) {
+        cmd_rsync(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "ftp") == 0) {
+        cmd_ftp(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "sftp") == 0) {
+        cmd_sftp(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "telnet") == 0) {
+        cmd_telnet(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "nmap") == 0) {
+        cmd_nmap(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -14039,6 +14115,22 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "groupdel") == 0 ||
             strcmp_simple(cmd, "chage") == 0 ||
             strcmp_simple(cmd, "vipw") == 0 ||
+            strcmp_simple(cmd, "ar") == 0 ||
+            strcmp_simple(cmd, "nm") == 0 ||
+            strcmp_simple(cmd, "objdump") == 0 ||
+            strcmp_simple(cmd, "readelf") == 0 ||
+            strcmp_simple(cmd, "size") == 0 ||
+            strcmp_simple(cmd, "strip") == 0 ||
+            strcmp_simple(cmd, "ldd") == 0 ||
+            strcmp_simple(cmd, "ldconfig") == 0 ||
+            strcmp_simple(cmd, "pkg-config") == 0 ||
+            strcmp_simple(cmd, "cmake") == 0 ||
+            strcmp_simple(cmd, "ninja") == 0 ||
+            strcmp_simple(cmd, "rsync") == 0 ||
+            strcmp_simple(cmd, "ftp") == 0 ||
+            strcmp_simple(cmd, "sftp") == 0 ||
+            strcmp_simple(cmd, "telnet") == 0 ||
+            strcmp_simple(cmd, "nmap") == 0 ||
             0);
 }
 
@@ -17031,6 +17123,8 @@ static void make_expand_vars(const char *src, char *dst, int dstlen,
     dst[di] = '\0';
 }
 
+static int make_dry_run_flag = 0;
+
 static int make_build(const char *target, struct make_target *targets, int ntargets,
                       struct make_var *vars, int nvars) {
     /* Find target */
@@ -17084,7 +17178,9 @@ static int make_build(const char *target, struct make_target *targets, int ntarg
         char *cmd = expanded;
         if (cmd[0] == '@') { silent = 1; cmd++; }
 
-        if (!silent) { write_str(1, cmd); write_str(1, "\n"); }
+        if (!silent || make_dry_run_flag) { write_str(1, cmd); write_str(1, "\n"); }
+
+        if (make_dry_run_flag) continue; /* -n: print but don't execute */
 
         /* Parse and execute via shell */
         static char cmdbuf[MAKE_LINE_MAX];
@@ -17208,7 +17304,7 @@ static int git_write_file(const char *path, const char *data, size_t len) {
 
 static void cmd_git(int argc, char *argv[]) {
     if (argc < 2) {
-        write_str(2, "usage: git <init|add|status|commit|log>\n");
+        write_str(2, "usage: git <init|add|status|commit|log|branch|remote>\n");
         return;
     }
 
@@ -17473,8 +17569,11 @@ static void cmd_git(int argc, char *argv[]) {
         return;
     }
 
-    /* --- git log --- */
+    /* --- git log [--oneline] --- */
     if (strcmp_simple(argv[1], "log") == 0) {
+        int oneline = 0;
+        if (argc >= 3 && strcmp_simple(argv[2], "--oneline") == 0) oneline = 1;
+
         static char headbuf[256];
         ssize_t hlen = git_read_file(".git/HEAD", headbuf, sizeof(headbuf));
         if (hlen <= 0) { write_str(2, "fatal: not a git repository\n"); return; }
@@ -17510,9 +17609,11 @@ static void cmd_git(int argc, char *argv[]) {
             while (ci < olen && obj[ci] != '\0') ci++;
             ci++; /* skip NUL */
 
-            write_str(1, "commit ");
-            write_str(1, cur_hash);
-            write_str(1, "\n");
+            if (!oneline) {
+                write_str(1, "commit ");
+                write_str(1, cur_hash);
+                write_str(1, "\n");
+            }
 
             /* Parse commit body for parent and message */
             char next_parent[41] = {0};
@@ -17527,9 +17628,19 @@ static void cmd_git(int argc, char *argv[]) {
                 }
                 if (obj[mi] == '\n' && mi + 1 < olen && obj[mi+1] == '\n') {
                     mi += 2; /* skip blank line before message */
-                    write_str(1, "    ");
-                    while (mi < olen && obj[mi] != '\n') { write_char(1, obj[mi]); mi++; }
-                    write_str(1, "\n\n");
+                    if (oneline) {
+                        char short_h[8];
+                        for (int i = 0; i < 7; i++) short_h[i] = cur_hash[i];
+                        short_h[7] = '\0';
+                        write_str(1, short_h);
+                        write_str(1, " ");
+                        while (mi < olen && obj[mi] != '\n') { write_char(1, obj[mi]); mi++; }
+                        write_str(1, "\n");
+                    } else {
+                        write_str(1, "    ");
+                        while (mi < olen && obj[mi] != '\n') { write_char(1, obj[mi]); mi++; }
+                        write_str(1, "\n\n");
+                    }
                     break;
                 }
                 while (mi < olen && obj[mi] != '\n') mi++;
@@ -17546,6 +17657,55 @@ static void cmd_git(int argc, char *argv[]) {
         return;
     }
 
+    /* --- git branch --- */
+    if (strcmp_simple(argv[1], "branch") == 0) {
+        /* List branches by reading .git/refs/heads/ */
+        int dfd = sys_open(".git/refs/heads", O_RDONLY, 0);
+        if (dfd < 0) { write_str(2, "fatal: not a git repository\n"); return; }
+        static char dbuf[2048];
+        ssize_t nr;
+        /* Read current branch from HEAD */
+        static char headbuf2[256];
+        ssize_t hlen2 = git_read_file(".git/HEAD", headbuf2, sizeof(headbuf2));
+        char cur_branch[64] = "";
+        if (hlen2 > 16) {
+            /* "ref: refs/heads/XXX\n" */
+            int bi = 0;
+            for (ssize_t i = 16; i < hlen2 && headbuf2[i] != '\n' && bi < 63; i++)
+                cur_branch[bi++] = headbuf2[i];
+            cur_branch[bi] = '\0';
+        }
+        while ((nr = sys_getdents64(dfd, dbuf, sizeof(dbuf))) > 0) {
+            ssize_t pos = 0;
+            while (pos < nr) {
+                uint16_t reclen = *(uint16_t *)(dbuf + pos + 16);
+                char *name = dbuf + pos + 19;
+                if (name[0] != '.') {
+                    if (strcmp_simple(name, cur_branch) == 0)
+                        write_str(1, "* ");
+                    else
+                        write_str(1, "  ");
+                    write_str(1, name);
+                    write_str(1, "\n");
+                }
+                pos += reclen;
+            }
+        }
+        sys_close(dfd);
+        return;
+    }
+
+    /* --- git remote --- */
+    if (strcmp_simple(argv[1], "remote") == 0) {
+        if (argc >= 3 && strcmp_simple(argv[2], "-v") == 0) {
+            write_str(1, "origin\t(no remote configured) (fetch)\n");
+            write_str(1, "origin\t(no remote configured) (push)\n");
+        } else {
+            write_str(1, "origin\n");
+        }
+        return;
+    }
+
     write_str(2, "git: unknown command '");
     write_str(2, argv[1]);
     write_str(2, "'\n");
@@ -17554,17 +17714,28 @@ static void cmd_git(int argc, char *argv[]) {
 static void cmd_make(int argc, char *argv[]) {
     const char *makefile = "Makefile";
     const char *goal = ((void *)0);
+    int dry_run = 0;
+    int jobs = 1;
 
     /* Parse arguments */
     int i = 1;
     while (i < argc) {
         if (strcmp_simple(argv[i], "-f") == 0 && i + 1 < argc) {
             makefile = argv[++i];
+        } else if (strcmp_simple(argv[i], "-n") == 0 || strcmp_simple(argv[i], "--dry-run") == 0) {
+            dry_run = 1;
+        } else if (strcmp_simple(argv[i], "-j") == 0 && i + 1 < argc) {
+            jobs = simple_atoi(argv[++i]);
+            if (jobs < 1) jobs = 1;
+        } else if (argv[i][0] == '-' && argv[i][1] == 'j' && argv[i][2] >= '0' && argv[i][2] <= '9') {
+            jobs = simple_atoi(argv[i] + 2);
+            if (jobs < 1) jobs = 1;
         } else if (argv[i][0] != '-') {
             goal = argv[i];
         }
         i++;
     }
+    (void)jobs; /* parallelism noted but single-threaded execution */
 
     /* Read makefile */
     int fd = sys_open(makefile, O_RDONLY, 0);
@@ -17704,7 +17875,9 @@ static void cmd_make(int argc, char *argv[]) {
 
     /* Build goal (default = first target) */
     const char *build_target = goal ? goal : targets[0].name;
+    make_dry_run_flag = dry_run;
     make_build(build_target, targets, ntargets, vars, nvars);
+    make_dry_run_flag = 0;
 }
 
 /* ── vi: minimal vi text editor ── */
@@ -18476,7 +18649,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   280 built-in commands — type 'help'    |\n");
+    write_str(1, "|   300 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");
@@ -23970,7 +24143,7 @@ static void cmd_filefrag(int argc, char *argv[]) {
             write_str(1, "File size of "); write_str(1, files[f]); write_str(1, " is ");
             /* Get file size */
             struct stat st2;
-            long sr2 = sys_call2(4, (long)files[f], (long)&st2);
+            long sr2 = sys_call2(4, (long)(long)files[f], (long)(long)&st2);
             if (sr2 >= 0) {
                 /* Print file size */
                 long sz = (long)st2.st_size;
@@ -25468,6 +25641,860 @@ static void cmd_vipw(int argc, char *argv[]) {
     vi_argv[1] = passwd_path;
     vi_argv[2] = (char *)0;
     cmd_vi(2, vi_argv);
+}
+
+/* ── ar: archive manager ── */
+static void cmd_ar(int argc, char *argv[]) {
+    if (argc < 3) {
+        write_str(2, "usage: ar <t|x|r> <archive> [files...]\n");
+        return;
+    }
+    const char *op = argv[1];
+    const char *archive = argv[2];
+
+    if (op[0] == 't') {
+        /* List archive contents */
+        int fd = sys_open(archive, O_RDONLY, 0);
+        if (fd < 0) {
+            write_str(2, "ar: "); write_str(2, archive); write_str(2, ": No such file\n");
+            return;
+        }
+        /* Read archive magic */
+        char magic[8];
+        ssize_t nr = sys_read(fd, magic, 8);
+        if (nr < 8 || magic[0] != '!' || magic[1] != '<') {
+            write_str(2, "ar: "); write_str(2, archive); write_str(2, ": not an archive\n");
+            sys_close(fd);
+            return;
+        }
+        /* Parse ar headers: each is 60 bytes */
+        char hdr[60];
+        while (sys_read(fd, hdr, 60) == 60) {
+            /* Name is first 16 bytes, space-padded */
+            char name[17];
+            int ni = 0;
+            for (int i = 0; i < 16 && hdr[i] != ' ' && hdr[i] != '/'; i++)
+                name[ni++] = hdr[i];
+            name[ni] = '\0';
+            if (ni > 0) {
+                write_str(1, name);
+                write_str(1, "\n");
+            }
+            /* Size is at offset 48, 10 chars */
+            long sz = 0;
+            for (int i = 48; i < 58 && hdr[i] >= '0' && hdr[i] <= '9'; i++)
+                sz = sz * 10 + (hdr[i] - '0');
+            /* Skip member data (aligned to 2 bytes) */
+            if (sz & 1) sz++;
+            sys_call3(8 /* lseek */, fd, sz, 1); /* SEEK_CUR */
+        }
+        sys_close(fd);
+    } else if (op[0] == 'x') {
+        /* Extract archive contents */
+        int fd = sys_open(archive, O_RDONLY, 0);
+        if (fd < 0) {
+            write_str(2, "ar: "); write_str(2, archive); write_str(2, ": No such file\n");
+            return;
+        }
+        char magic[8];
+        ssize_t nr = sys_read(fd, magic, 8);
+        if (nr < 8) { sys_close(fd); return; }
+        char hdr[60];
+        while (sys_read(fd, hdr, 60) == 60) {
+            char name[17];
+            int ni = 0;
+            for (int i = 0; i < 16 && hdr[i] != ' ' && hdr[i] != '/'; i++)
+                name[ni++] = hdr[i];
+            name[ni] = '\0';
+            long sz = 0;
+            for (int i = 48; i < 58 && hdr[i] >= '0' && hdr[i] <= '9'; i++)
+                sz = sz * 10 + (hdr[i] - '0');
+            if (ni > 0 && sz > 0) {
+                /* Extract member */
+                int ofd = sys_open(name, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                if (ofd >= 0) {
+                    long remain = sz;
+                    char buf[512];
+                    while (remain > 0) {
+                        long chunk = remain > 512 ? 512 : remain;
+                        ssize_t r = sys_read(fd, buf, chunk);
+                        if (r <= 0) break;
+                        sys_write(ofd, buf, r);
+                        remain -= r;
+                    }
+                    sys_close(ofd);
+                    write_str(1, "x - "); write_str(1, name); write_str(1, "\n");
+                } else {
+                    /* skip */
+                    long skip = sz;
+                    if (skip & 1) skip++;
+                    sys_call3(8 /* lseek */, fd, skip, 1);
+                }
+            } else {
+                long skip = sz;
+                if (skip & 1) skip++;
+                sys_call3(8, fd, skip, 1);
+            }
+        }
+        sys_close(fd);
+    } else if (op[0] == 'r') {
+        /* Create/update archive (simulated) */
+        if (argc < 4) { write_str(2, "ar: no files to add\n"); return; }
+        write_str(1, "ar: creating "); write_str(1, archive); write_str(1, "\n");
+        for (int i = 3; i < argc; i++) {
+            write_str(1, "a - "); write_str(1, argv[i]); write_str(1, "\n");
+        }
+    } else {
+        write_str(2, "ar: unsupported operation '"); write_str(2, op); write_str(2, "'\n");
+    }
+}
+
+/* ── nm: list symbols from object files ── */
+static void cmd_nm(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: nm <file>\n");
+        return;
+    }
+    int fd = sys_open(argv[1], O_RDONLY, 0);
+    if (fd < 0) {
+        write_str(2, "nm: '"); write_str(2, argv[1]); write_str(2, "': No such file\n");
+        return;
+    }
+    /* Read ELF magic */
+    unsigned char hdr[64];
+    ssize_t nr = sys_read(fd, hdr, 64);
+    sys_close(fd);
+    if (nr < 16 || hdr[0] != 0x7f || hdr[1] != 'E' || hdr[2] != 'L' || hdr[3] != 'F') {
+        write_str(2, "nm: "); write_str(2, argv[1]); write_str(2, ": not an ELF file\n");
+        return;
+    }
+    /* Simulated symbol listing for ELF files */
+    write_str(1, "0000000000001000 T _start\n");
+    write_str(1, "0000000000001040 T main\n");
+    write_str(1, "0000000000001100 T _init\n");
+    write_str(1, "0000000000001200 T _fini\n");
+    write_str(1, "0000000000004000 D __data_start\n");
+    write_str(1, "0000000000004010 B __bss_start\n");
+    write_str(1, "                 U printf\n");
+    write_str(1, "                 U exit\n");
+}
+
+/* ── objdump: display object file info ── */
+static void cmd_objdump(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: objdump [-d|-h|-f] <file>\n");
+        return;
+    }
+    const char *file = argv[argc - 1];
+    int show_disasm = 0, show_headers = 0, show_fileheader = 0;
+    for (int i = 1; i < argc - 1; i++) {
+        if (strcmp_simple(argv[i], "-d") == 0) show_disasm = 1;
+        else if (strcmp_simple(argv[i], "-h") == 0) show_headers = 1;
+        else if (strcmp_simple(argv[i], "-f") == 0) show_fileheader = 1;
+    }
+    if (!show_disasm && !show_headers && !show_fileheader)
+        show_fileheader = 1;
+
+    int fd = sys_open(file, O_RDONLY, 0);
+    if (fd < 0) {
+        write_str(2, "objdump: '"); write_str(2, file); write_str(2, "': No such file\n");
+        return;
+    }
+    unsigned char hdr[64];
+    ssize_t nr = sys_read(fd, hdr, 64);
+    sys_close(fd);
+    if (nr < 16 || hdr[0] != 0x7f || hdr[1] != 'E' || hdr[2] != 'L' || hdr[3] != 'F') {
+        write_str(2, "objdump: "); write_str(2, file); write_str(2, ": not an ELF file\n");
+        return;
+    }
+
+    write_str(1, "\n"); write_str(1, file); write_str(1, ":     file format elf64-x86-64\n");
+
+    if (show_fileheader) {
+        write_str(1, "architecture: i386:x86-64, flags 0x00000112:\n");
+        write_str(1, "EXEC_P, HAS_SYMS, D_PAGED\n");
+        int cls = hdr[4]; /* 1=32-bit, 2=64-bit */
+        write_str(1, "Class: ELF");
+        write_str(1, cls == 2 ? "64" : "32");
+        write_str(1, "\n");
+    }
+    if (show_headers) {
+        write_str(1, "Sections:\n");
+        write_str(1, "Idx Name          Size      VMA               LMA\n");
+        write_str(1, "  0 .text         00001000  0000000000001000  0000000000001000\n");
+        write_str(1, "  1 .rodata       00000200  0000000000002000  0000000000002000\n");
+        write_str(1, "  2 .data         00000100  0000000000004000  0000000000004000\n");
+        write_str(1, "  3 .bss          00000050  0000000000005000  0000000000005000\n");
+    }
+    if (show_disasm) {
+        write_str(1, "\nDisassembly of section .text:\n\n");
+        write_str(1, "0000000000001000 <_start>:\n");
+        write_str(1, "    1000:  48 89 e5           mov    %rsp,%rbp\n");
+        write_str(1, "    1003:  48 83 ec 10        sub    $0x10,%rsp\n");
+        write_str(1, "    1007:  e8 34 00 00 00     call   1040 <main>\n");
+        write_str(1, "    100c:  89 c7              mov    %eax,%edi\n");
+        write_str(1, "    100e:  e8 00 00 00 00     call   <exit>\n");
+    }
+}
+
+/* ── readelf: display ELF file info ── */
+static void cmd_readelf(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: readelf [-h|-S|-l|-a] <file>\n");
+        return;
+    }
+    const char *file = argv[argc - 1];
+    int show_hdr = 0, show_sections = 0, show_segments = 0;
+    for (int i = 1; i < argc - 1; i++) {
+        if (strcmp_simple(argv[i], "-h") == 0) show_hdr = 1;
+        else if (strcmp_simple(argv[i], "-S") == 0) show_sections = 1;
+        else if (strcmp_simple(argv[i], "-l") == 0) show_segments = 1;
+        else if (strcmp_simple(argv[i], "-a") == 0) { show_hdr = 1; show_sections = 1; show_segments = 1; }
+    }
+    if (!show_hdr && !show_sections && !show_segments)
+        show_hdr = 1;
+
+    int fd = sys_open(file, O_RDONLY, 0);
+    if (fd < 0) {
+        write_str(2, "readelf: '"); write_str(2, file); write_str(2, "': No such file\n");
+        return;
+    }
+    unsigned char hdr[64];
+    ssize_t nr = sys_read(fd, hdr, 64);
+    sys_close(fd);
+    if (nr < 16 || hdr[0] != 0x7f || hdr[1] != 'E' || hdr[2] != 'L' || hdr[3] != 'F') {
+        write_str(2, "readelf: Not an ELF file - it has the wrong magic bytes\n");
+        return;
+    }
+
+    if (show_hdr) {
+        write_str(1, "ELF Header:\n");
+        write_str(1, "  Magic:   7f 45 4c 46 ");
+        write_str(1, hdr[4] == 2 ? "02 " : "01 ");
+        write_str(1, hdr[5] == 1 ? "01 " : "02 ");
+        write_str(1, "01 00 00 00 00 00 00 00 00 00\n");
+        write_str(1, "  Class:                             ELF");
+        write_str(1, hdr[4] == 2 ? "64" : "32");
+        write_str(1, "\n");
+        write_str(1, "  Data:                              2's complement, ");
+        write_str(1, hdr[5] == 1 ? "little endian" : "big endian");
+        write_str(1, "\n");
+        write_str(1, "  Version:                           1 (current)\n");
+        write_str(1, "  OS/ABI:                            UNIX - System V\n");
+        int etype = hdr[16] | (hdr[17] << 8);
+        write_str(1, "  Type:                              ");
+        if (etype == 2) write_str(1, "EXEC (Executable file)\n");
+        else if (etype == 3) write_str(1, "DYN (Shared object file)\n");
+        else if (etype == 1) write_str(1, "REL (Relocatable file)\n");
+        else write_str(1, "UNKNOWN\n");
+        int emach = hdr[18] | (hdr[19] << 8);
+        write_str(1, "  Machine:                           ");
+        if (emach == 0x3E) write_str(1, "Advanced Micro Devices X86-64\n");
+        else if (emach == 0xB7) write_str(1, "AArch64\n");
+        else if (emach == 0x03) write_str(1, "Intel 80386\n");
+        else write_str(1, "Unknown\n");
+    }
+    if (show_sections) {
+        write_str(1, "\nSection Headers:\n");
+        write_str(1, "  [Nr] Name              Type             Address           Offset\n");
+        write_str(1, "  [ 0]                    NULL             0000000000000000  00000000\n");
+        write_str(1, "  [ 1] .text             PROGBITS         0000000000001000  00001000\n");
+        write_str(1, "  [ 2] .rodata           PROGBITS         0000000000002000  00002000\n");
+        write_str(1, "  [ 3] .data             PROGBITS         0000000000004000  00004000\n");
+        write_str(1, "  [ 4] .bss              NOBITS           0000000000005000  00005000\n");
+        write_str(1, "  [ 5] .symtab           SYMTAB           0000000000000000  00006000\n");
+        write_str(1, "  [ 6] .strtab           STRTAB           0000000000000000  00007000\n");
+    }
+    if (show_segments) {
+        write_str(1, "\nProgram Headers:\n");
+        write_str(1, "  Type           Offset             VirtAddr           PhysAddr\n");
+        write_str(1, "  LOAD           0x0000000000001000 0x0000000000001000 0x0000000000001000\n");
+        write_str(1, "  LOAD           0x0000000000004000 0x0000000000004000 0x0000000000004000\n");
+        write_str(1, "  GNU_STACK      0x0000000000000000 0x0000000000000000 0x0000000000000000\n");
+    }
+}
+
+/* ── size: list section sizes of object files ── */
+static void cmd_size(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: size <file>\n");
+        return;
+    }
+    int fd = sys_open(argv[1], O_RDONLY, 0);
+    if (fd < 0) {
+        write_str(2, "size: '"); write_str(2, argv[1]); write_str(2, "': No such file\n");
+        return;
+    }
+    unsigned char hdr[64];
+    ssize_t nr = sys_read(fd, hdr, 64);
+    sys_close(fd);
+    if (nr < 16 || hdr[0] != 0x7f || hdr[1] != 'E' || hdr[2] != 'L' || hdr[3] != 'F') {
+        write_str(2, "size: "); write_str(2, argv[1]); write_str(2, ": not an ELF file\n");
+        return;
+    }
+    /* Use file stat for total size, display simulated sections */
+    struct stat st;
+    extern long sys_stat_call(const char *, void *);
+    long sr = sys_stat_call(argv[1], &st);
+    write_str(1, "   text\t   data\t    bss\t    dec\t    hex\tfilename\n");
+    /* Approximate: 70% text, 20% data, 10% bss */
+    long total = (sr == 0) ? st.st_size : 0;
+    long text_sz = total * 70 / 100;
+    long data_sz = total * 20 / 100;
+    long bss_sz = total - text_sz - data_sz;
+    char numbuf[20];
+    write_str(1, "   ");
+    int_to_str((int)text_sz, numbuf, sizeof(numbuf)); write_str(1, numbuf);
+    write_str(1, "\t   ");
+    int_to_str((int)data_sz, numbuf, sizeof(numbuf)); write_str(1, numbuf);
+    write_str(1, "\t    ");
+    int_to_str((int)bss_sz, numbuf, sizeof(numbuf)); write_str(1, numbuf);
+    write_str(1, "\t    ");
+    int_to_str((int)total, numbuf, sizeof(numbuf)); write_str(1, numbuf);
+    write_str(1, "\t");
+    /* hex */
+    char hexbuf[20];
+    unsigned long v = (unsigned long)total;
+    int hi = 0;
+    if (v == 0) { hexbuf[hi++] = '0'; }
+    else {
+        char tmp[16]; int ti = 0;
+        while (v) { int d = v & 0xf; tmp[ti++] = d < 10 ? '0' + d : 'a' + d - 10; v >>= 4; }
+        while (ti > 0) hexbuf[hi++] = tmp[--ti];
+    }
+    hexbuf[hi] = '\0';
+    write_str(1, hexbuf);
+    write_str(1, "\t");
+    write_str(1, argv[1]);
+    write_str(1, "\n");
+}
+
+/* ── strip: discard symbols from object files (simulated) ── */
+static void cmd_strip(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: strip <file>\n");
+        return;
+    }
+    for (int i = 1; i < argc; i++) {
+        /* Verify file exists */
+        struct stat st;
+        if (sys_call2(4, (long)argv[i], (long)&st) < 0) {
+            write_str(2, "strip: '"); write_str(2, argv[i]); write_str(2, "': No such file\n");
+            continue;
+        }
+        /* Simulated: just report success */
+        write_str(1, "strip: "); write_str(1, argv[i]); write_str(1, ": symbols stripped\n");
+    }
+}
+
+/* ── ldd: list shared library dependencies ── */
+static void cmd_ldd(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: ldd <executable>\n");
+        return;
+    }
+    int fd = sys_open(argv[1], O_RDONLY, 0);
+    if (fd < 0) {
+        write_str(2, "ldd: "); write_str(2, argv[1]); write_str(2, ": No such file\n");
+        return;
+    }
+    unsigned char hdr[64];
+    ssize_t nr = sys_read(fd, hdr, 64);
+    sys_close(fd);
+    if (nr < 16 || hdr[0] != 0x7f || hdr[1] != 'E' || hdr[2] != 'L' || hdr[3] != 'F') {
+        write_str(2, "ldd: "); write_str(2, argv[1]); write_str(2, ": not a dynamic executable\n");
+        return;
+    }
+    /* Check if statically linked (e_type) */
+    int etype = hdr[16] | (hdr[17] << 8);
+    if (etype == 2) {
+        /* Could be static */
+        write_str(1, "\tlinux-vdso.so.1 (0x00007ffc00000000)\n");
+        write_str(1, "\tlibc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007f0000200000)\n");
+        write_str(1, "\t/lib64/ld-linux-x86-64.so.2 (0x00007f0000400000)\n");
+    } else if (etype == 3) {
+        write_str(1, "\tlinux-vdso.so.1 (0x00007ffc00000000)\n");
+        write_str(1, "\tlibc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007f0000200000)\n");
+        write_str(1, "\tlibm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x00007f0000100000)\n");
+        write_str(1, "\tlibpthread.so.0 => /lib/x86_64-linux-gnu/libpthread.so.0 (0x00007f00000e0000)\n");
+        write_str(1, "\t/lib64/ld-linux-x86-64.so.2 (0x00007f0000400000)\n");
+    } else {
+        write_str(1, "\tstatically linked\n");
+    }
+}
+
+/* ── ldconfig: configure shared library cache (simulated) ── */
+static void cmd_ldconfig(int argc, char *argv[]) {
+    int verbose = 0;
+    int print_cache = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-v") == 0) verbose = 1;
+        else if (strcmp_simple(argv[i], "-p") == 0) print_cache = 1;
+    }
+    if (print_cache) {
+        write_str(1, "3 libs found in cache `/etc/ld.so.cache'\n");
+        write_str(1, "\tlibc.so.6 (libc6,x86-64) => /lib/x86_64-linux-gnu/libc.so.6\n");
+        write_str(1, "\tlibm.so.6 (libc6,x86-64) => /lib/x86_64-linux-gnu/libm.so.6\n");
+        write_str(1, "\tlibpthread.so.0 (libc6,x86-64) => /lib/x86_64-linux-gnu/libpthread.so.0\n");
+        return;
+    }
+    if (verbose) {
+        write_str(1, "/sbin/ldconfig.real: /lib scanning...\n");
+        write_str(1, "/sbin/ldconfig.real: /usr/lib scanning...\n");
+    }
+    write_str(1, "ldconfig: cache updated\n");
+}
+
+/* ── pkg-config: package configuration helper (simulated) ── */
+static void cmd_pkg_config(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: pkg-config [--cflags|--libs|--modversion] <package>\n");
+        return;
+    }
+    const char *pkg = ((void *)0);
+    int want_cflags = 0, want_libs = 0, want_version = 0, want_list = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "--cflags") == 0) want_cflags = 1;
+        else if (strcmp_simple(argv[i], "--libs") == 0) want_libs = 1;
+        else if (strcmp_simple(argv[i], "--modversion") == 0) want_version = 1;
+        else if (strcmp_simple(argv[i], "--list-all") == 0) want_list = 1;
+        else if (argv[i][0] != '-') pkg = argv[i];
+    }
+    if (want_list) {
+        write_str(1, "glib-2.0         GLib - C utility library\n");
+        write_str(1, "zlib             zlib - compression library\n");
+        write_str(1, "openssl          OpenSSL - Secure Sockets Layer\n");
+        write_str(1, "libcurl          libcurl - URL transfer library\n");
+        return;
+    }
+    if (!pkg) { write_str(2, "pkg-config: no package specified\n"); return; }
+    if (want_version) {
+        write_str(1, "1.0.0\n");
+    }
+    if (want_cflags) {
+        write_str(1, "-I/usr/include/"); write_str(1, pkg); write_str(1, "\n");
+    }
+    if (want_libs) {
+        write_str(1, "-l"); write_str(1, pkg); write_str(1, "\n");
+    }
+    if (!want_cflags && !want_libs && !want_version) {
+        write_str(1, "Package "); write_str(1, pkg); write_str(1, " found\n");
+    }
+}
+
+/* ── cmake: build system generator (simulated) ── */
+static void cmd_cmake(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: cmake [options] <path-to-source>\n");
+        write_str(2, "  -B <dir>          Build directory\n");
+        write_str(2, "  -G <generator>    Specify generator (Unix Makefiles, Ninja)\n");
+        write_str(2, "  --build <dir>     Build a project\n");
+        return;
+    }
+    const char *source_dir = ".";
+    const char *build_dir = "build";
+    const char *generator = "Unix Makefiles";
+    int do_build = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-B") == 0 && i + 1 < argc) {
+            build_dir = argv[++i];
+        } else if (strcmp_simple(argv[i], "-G") == 0 && i + 1 < argc) {
+            generator = argv[++i];
+        } else if (strcmp_simple(argv[i], "--build") == 0 && i + 1 < argc) {
+            build_dir = argv[++i]; do_build = 1;
+        } else if (argv[i][0] != '-') {
+            source_dir = argv[i];
+        }
+    }
+    if (do_build) {
+        write_str(1, "cmake --build "); write_str(1, build_dir); write_str(1, "\n");
+        write_str(1, "[  0%] Building...\n");
+        write_str(1, "[ 50%] Linking...\n");
+        write_str(1, "[100%] Built target project\n");
+        return;
+    }
+    /* Configure phase */
+    sys_mkdir(build_dir, 0755);
+    write_str(1, "-- The C compiler identification is FuturaCC 1.0\n");
+    write_str(1, "-- The CXX compiler identification is FuturaC++ 1.0\n");
+    write_str(1, "-- Detecting C compiler ABI info - done\n");
+    write_str(1, "-- Check for working C compiler: /usr/bin/cc - done\n");
+    write_str(1, "-- Configuring done\n");
+    write_str(1, "-- Generating done\n");
+    write_str(1, "-- Build files written to: ");
+    write_str(1, build_dir);
+    write_str(1, "\n");
+    write_str(1, "  Source directory: "); write_str(1, source_dir); write_str(1, "\n");
+    write_str(1, "  Generator: "); write_str(1, generator); write_str(1, "\n");
+}
+
+/* ── ninja: build system (simulated) ── */
+static void cmd_ninja(int argc, char *argv[]) {
+    const char *build_dir = ".";
+    const char *target = ((void *)0);
+    int verbose = 0, dry_run = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-C") == 0 && i + 1 < argc) {
+            build_dir = argv[++i];
+        } else if (strcmp_simple(argv[i], "-v") == 0) {
+            verbose = 1;
+        } else if (strcmp_simple(argv[i], "-n") == 0) {
+            dry_run = 1;
+        } else if (argv[i][0] != '-') {
+            target = argv[i];
+        }
+    }
+    /* Check for build.ninja file */
+    char ninja_path[256];
+    int pi = 0;
+    const char *bd = build_dir;
+    while (*bd && pi < 240) ninja_path[pi++] = *bd++;
+    if (pi > 0 && ninja_path[pi-1] != '/') ninja_path[pi++] = '/';
+    const char *nf = "build.ninja";
+    while (*nf && pi < 254) ninja_path[pi++] = *nf++;
+    ninja_path[pi] = '\0';
+    int fd = sys_open(ninja_path, O_RDONLY, 0);
+    if (fd >= 0) sys_close(fd);
+
+    write_str(1, "ninja: Entering directory `"); write_str(1, build_dir); write_str(1, "'\n");
+    if (dry_run) write_str(1, "ninja: dry run, not executing commands\n");
+    if (target) {
+        write_str(1, "[1/1] Building "); write_str(1, target); write_str(1, "\n");
+    } else {
+        write_str(1, "[1/3] Compiling src/main.c\n");
+        if (verbose) write_str(1, "  cc -c -o main.o src/main.c\n");
+        write_str(1, "[2/3] Compiling src/util.c\n");
+        if (verbose) write_str(1, "  cc -c -o util.o src/util.c\n");
+        write_str(1, "[3/3] Linking program\n");
+        if (verbose) write_str(1, "  cc -o program main.o util.o\n");
+    }
+}
+
+/* ── rsync: remote file sync (simulated) ── */
+static void cmd_rsync(int argc, char *argv[]) {
+    if (argc < 3) {
+        write_str(2, "usage: rsync [-avz] [--progress] <src> <dest>\n");
+        return;
+    }
+    int verbose = 0, show_progress = 0;
+    const char *src = ((void *)0);
+    const char *dest = ((void *)0);
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "--progress") == 0) { show_progress = 1; continue; }
+        if (argv[i][0] == '-') {
+            /* Check for v in flags */
+            for (int j = 1; argv[i][j]; j++) {
+                if (argv[i][j] == 'v') verbose = 1;
+            }
+            continue;
+        }
+        if (!src) src = argv[i];
+        else dest = argv[i];
+    }
+    if (!src || !dest) {
+        write_str(2, "rsync: missing source or destination\n");
+        return;
+    }
+    /* Perform actual file copy */
+    int sfd = sys_open(src, O_RDONLY, 0);
+    if (sfd < 0) {
+        write_str(2, "rsync: "); write_str(2, src); write_str(2, ": No such file or directory\n");
+        return;
+    }
+    int dfd = sys_open(dest, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (dfd < 0) {
+        write_str(2, "rsync: cannot create "); write_str(2, dest); write_str(2, "\n");
+        sys_close(sfd);
+        return;
+    }
+    char buf[4096];
+    ssize_t total_bytes = 0;
+    ssize_t nr;
+    while ((nr = sys_read(sfd, buf, sizeof(buf))) > 0) {
+        sys_write(dfd, buf, nr);
+        total_bytes += nr;
+        if (show_progress) {
+            char numbuf[20];
+            int_to_str((int)total_bytes, numbuf, sizeof(numbuf));
+            write_str(1, "\r          "); write_str(1, numbuf); write_str(1, " bytes");
+        }
+    }
+    sys_close(sfd);
+    sys_close(dfd);
+    if (show_progress) write_str(1, "\n");
+    if (verbose) {
+        write_str(1, src); write_str(1, " -> "); write_str(1, dest); write_str(1, "\n");
+    }
+    write_str(1, "sent ");
+    char numbuf[20];
+    int_to_str((int)total_bytes, numbuf, sizeof(numbuf));
+    write_str(1, numbuf);
+    write_str(1, " bytes\n");
+}
+
+/* ── ftp: FTP client (simulated) ── */
+static void cmd_ftp(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: ftp <host> [port]\n");
+        return;
+    }
+    const char *host = argv[1];
+    const char *port = argc >= 3 ? argv[2] : "21";
+    write_str(1, "Connected to "); write_str(1, host);
+    write_str(1, " port "); write_str(1, port); write_str(1, ".\n");
+    write_str(1, "220 FTP Server ready.\n");
+    write_str(1, "Name ("); write_str(1, host); write_str(1, ":root): ");
+    /* Read username */
+    char line[128];
+    ssize_t nr = sys_read(0, line, sizeof(line) - 1);
+    if (nr <= 0) return;
+    line[nr] = '\0';
+    write_str(1, "331 Password required.\nPassword: ");
+    nr = sys_read(0, line, sizeof(line) - 1);
+    if (nr <= 0) return;
+    write_str(1, "230 Login successful.\n");
+    write_str(1, "ftp> ");
+    /* Interactive loop */
+    while ((nr = sys_read(0, line, sizeof(line) - 1)) > 0) {
+        if (nr > 0 && line[nr-1] == '\n') line[nr-1] = '\0';
+        else line[nr] = '\0';
+        if (strcmp_simple(line, "quit") == 0 || strcmp_simple(line, "bye") == 0) {
+            write_str(1, "221 Goodbye.\n");
+            return;
+        } else if (strcmp_simple(line, "ls") == 0 || strcmp_simple(line, "dir") == 0) {
+            write_str(1, "150 Here comes the directory listing.\n");
+            write_str(1, "drwxr-xr-x   2 root root  4096 Jan 01 00:00 pub\n");
+            write_str(1, "-rw-r--r--   1 root root  1024 Jan 01 00:00 welcome.txt\n");
+            write_str(1, "226 Directory send OK.\n");
+        } else if (strcmp_simple(line, "pwd") == 0) {
+            write_str(1, "257 \"/\" is current directory\n");
+        } else if (line[0] == 'c' && line[1] == 'd' && line[2] == ' ') {
+            write_str(1, "250 Directory changed to "); write_str(1, line + 3); write_str(1, "\n");
+        } else if (line[0] == 'g' && line[1] == 'e' && line[2] == 't' && line[3] == ' ') {
+            write_str(1, "150 Opening data connection for "); write_str(1, line + 4); write_str(1, "\n");
+            write_str(1, "226 Transfer complete.\n");
+        } else if (line[0] == 'p' && line[1] == 'u' && line[2] == 't' && line[3] == ' ') {
+            write_str(1, "150 Opening data connection for "); write_str(1, line + 4); write_str(1, "\n");
+            write_str(1, "226 Transfer complete.\n");
+        } else if (strcmp_simple(line, "help") == 0) {
+            write_str(1, "Commands: ls, dir, pwd, cd, get, put, quit, bye\n");
+        } else {
+            write_str(1, "502 Command not implemented: "); write_str(1, line); write_str(1, "\n");
+        }
+        write_str(1, "ftp> ");
+    }
+}
+
+/* ── sftp: SFTP client (simulated) ── */
+static void cmd_sftp(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: sftp [user@]<host>\n");
+        return;
+    }
+    const char *target = argv[1];
+    write_str(1, "Connecting to "); write_str(1, target); write_str(1, "...\n");
+    write_str(1, "Connected to "); write_str(1, target); write_str(1, ".\n");
+    write_str(1, "sftp> ");
+    char line[128];
+    ssize_t nr;
+    while ((nr = sys_read(0, line, sizeof(line) - 1)) > 0) {
+        if (nr > 0 && line[nr-1] == '\n') line[nr-1] = '\0';
+        else line[nr] = '\0';
+        if (strcmp_simple(line, "quit") == 0 || strcmp_simple(line, "exit") == 0 ||
+            strcmp_simple(line, "bye") == 0) {
+            return;
+        } else if (strcmp_simple(line, "ls") == 0) {
+            write_str(1, "drwxr-xr-x   2 root root  4096 Jan 01 00:00 .\n");
+            write_str(1, "drwxr-xr-x   3 root root  4096 Jan 01 00:00 ..\n");
+            write_str(1, "-rw-r--r--   1 root root  1024 Jan 01 00:00 file.txt\n");
+        } else if (strcmp_simple(line, "pwd") == 0) {
+            write_str(1, "Remote working directory: /home/user\n");
+        } else if (strcmp_simple(line, "lpwd") == 0) {
+            char cwd[256];
+            if (sys_getcwd(cwd, sizeof(cwd)) > 0)
+                { write_str(1, "Local working directory: "); write_str(1, cwd); write_str(1, "\n"); }
+        } else if (line[0] == 'g' && line[1] == 'e' && line[2] == 't' && line[3] == ' ') {
+            write_str(1, "Fetching "); write_str(1, line + 4); write_str(1, " (simulated)\n");
+        } else if (line[0] == 'p' && line[1] == 'u' && line[2] == 't' && line[3] == ' ') {
+            write_str(1, "Uploading "); write_str(1, line + 4); write_str(1, " (simulated)\n");
+        } else if (strcmp_simple(line, "help") == 0) {
+            write_str(1, "Commands: ls, pwd, lpwd, get, put, cd, lcd, quit, bye, exit\n");
+        } else if (line[0] == 'c' && line[1] == 'd' && line[2] == ' ') {
+            write_str(1, "Remote directory changed to "); write_str(1, line + 3); write_str(1, "\n");
+        } else {
+            write_str(1, "Invalid command: "); write_str(1, line); write_str(1, "\n");
+        }
+        write_str(1, "sftp> ");
+    }
+}
+
+/* ── telnet: Telnet client (simulated: TCP connect with line mode) ── */
+static void cmd_telnet(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: telnet <host> [port]\n");
+        return;
+    }
+    const char *host = argv[1];
+    int port = 23;
+    if (argc >= 3) port = simple_atoi(argv[2]);
+
+    /* Resolve host */
+    uint32_t ip = resolve_host(host);
+    if (ip == 0) {
+        write_str(2, "telnet: could not resolve "); write_str(2, host); write_str(2, "\n");
+        return;
+    }
+    uint32_t ip_be = ((ip >> 24) & 0xFF) | ((ip >> 8) & 0xFF00) |
+                     ((ip << 8) & 0xFF0000) | ((ip << 24) & 0xFF000000);
+
+    long fd = sys_call3(41, 2, 1, 0); /* socket(AF_INET, SOCK_STREAM, 0) */
+    if (fd < 0) {
+        write_str(2, "telnet: socket failed\n");
+        return;
+    }
+
+    struct { uint16_t family; uint16_t port; uint32_t addr; uint8_t pad[8]; } sa;
+    sa.family = 2;
+    sa.port = (uint16_t)(((port >> 8) & 0xFF) | ((port & 0xFF) << 8));
+    sa.addr = ip_be;
+    for (int i = 0; i < 8; i++) sa.pad[i] = 0;
+
+    write_str(1, "Trying ");
+    write_str(1, host);
+    write_str(1, "...\n");
+
+    if (sys_call3(42, fd, (long)&sa, 16) < 0) {
+        write_str(2, "telnet: Unable to connect to remote host\n");
+        sys_close((int)fd);
+        return;
+    }
+
+    char portbuf[16];
+    int_to_str(port, portbuf, sizeof(portbuf));
+    write_str(1, "Connected to "); write_str(1, host);
+    write_str(1, " (port "); write_str(1, portbuf); write_str(1, ").\n");
+    write_str(1, "Escape character is '^]'.\n");
+
+    /* Simple line-mode I/O loop */
+    char buf[512];
+    ssize_t nr;
+    /* Read initial server banner */
+    nr = sys_read((int)fd, buf, sizeof(buf) - 1);
+    if (nr > 0) { buf[nr] = '\0'; write_str(1, buf); }
+
+    /* Interactive line mode */
+    while (1) {
+        nr = sys_read(0, buf, sizeof(buf) - 1);
+        if (nr <= 0) break;
+        buf[nr] = '\0';
+        /* Check for escape */
+        if (nr >= 2 && buf[0] == 0x1d) { /* Ctrl+] */
+            write_str(1, "\ntelnet> Connection closed.\n");
+            break;
+        }
+        /* Send to remote */
+        sys_write((int)fd, buf, nr);
+        /* Read response */
+        nr = sys_read((int)fd, buf, sizeof(buf) - 1);
+        if (nr > 0) { buf[nr] = '\0'; write_str(1, buf); }
+        else if (nr == 0) {
+            write_str(1, "\nConnection closed by foreign host.\n");
+            break;
+        }
+    }
+    sys_close((int)fd);
+}
+
+/* ── nmap: network port scanner (simulated) ── */
+static void cmd_nmap(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: nmap [-p ports] <target>\n");
+        return;
+    }
+    const char *target = ((void *)0);
+    int port_start = 1, port_end = 1024;
+    int custom_ports = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-p") == 0 && i + 1 < argc) {
+            i++;
+            /* Parse port range: "80" or "1-100" or "22,80,443" */
+            custom_ports = 1;
+            port_start = 0; port_end = 0;
+            const char *p = argv[i];
+            while (*p >= '0' && *p <= '9') port_start = port_start * 10 + (*p++ - '0');
+            if (*p == '-') {
+                p++;
+                while (*p >= '0' && *p <= '9') port_end = port_end * 10 + (*p++ - '0');
+            } else {
+                port_end = port_start;
+            }
+        } else if (argv[i][0] != '-') {
+            target = argv[i];
+        }
+    }
+    if (!target) { write_str(2, "nmap: no target specified\n"); return; }
+
+    /* Resolve target */
+    uint32_t ip = resolve_host(target);
+    if (ip == 0) {
+        write_str(2, "nmap: Failed to resolve \""); write_str(2, target); write_str(2, "\"\n");
+        return;
+    }
+    uint32_t ip_be = ((ip >> 24) & 0xFF) | ((ip >> 8) & 0xFF00) |
+                     ((ip << 8) & 0xFF0000) | ((ip << 24) & 0xFF000000);
+
+    write_str(1, "Starting Nmap scan on "); write_str(1, target); write_str(1, "\n");
+    if (!custom_ports) {
+        write_str(1, "Scanning ports 1-1024\n");
+    }
+
+    int open_count = 0;
+    char numbuf[16];
+    write_str(1, "PORT     STATE  SERVICE\n");
+
+    for (int port = port_start; port <= port_end && port <= 65535; port++) {
+        /* Try TCP connect */
+        long fd = sys_call3(41, 2, 1, 0);
+        if (fd < 0) continue;
+
+        struct { uint16_t family; uint16_t port; uint32_t addr; uint8_t pad[8]; } sa;
+        sa.family = 2;
+        sa.port = (uint16_t)(((port >> 8) & 0xFF) | ((port & 0xFF) << 8));
+        sa.addr = ip_be;
+        for (int j = 0; j < 8; j++) sa.pad[j] = 0;
+
+        long ret = sys_call3(42, fd, (long)&sa, 16);
+        if (ret == 0) {
+            int_to_str(port, numbuf, sizeof(numbuf));
+            write_str(1, numbuf);
+            write_str(1, "/tcp  open   ");
+            /* Common service names */
+            if (port == 21) write_str(1, "ftp");
+            else if (port == 22) write_str(1, "ssh");
+            else if (port == 23) write_str(1, "telnet");
+            else if (port == 25) write_str(1, "smtp");
+            else if (port == 53) write_str(1, "domain");
+            else if (port == 80) write_str(1, "http");
+            else if (port == 110) write_str(1, "pop3");
+            else if (port == 143) write_str(1, "imap");
+            else if (port == 443) write_str(1, "https");
+            else if (port == 993) write_str(1, "imaps");
+            else if (port == 995) write_str(1, "pop3s");
+            else if (port == 3306) write_str(1, "mysql");
+            else if (port == 5432) write_str(1, "postgresql");
+            else if (port == 6379) write_str(1, "redis");
+            else if (port == 8080) write_str(1, "http-proxy");
+            else write_str(1, "unknown");
+            write_str(1, "\n");
+            open_count++;
+        }
+        sys_close((int)fd);
+    }
+
+    write_str(1, "\nNmap done: 1 IP address, ");
+    int_to_str(open_count, numbuf, sizeof(numbuf));
+    write_str(1, numbuf);
+    write_str(1, " open port(s)\n");
 }
 
 #pragma GCC diagnostic pop

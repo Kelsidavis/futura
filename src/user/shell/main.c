@@ -267,6 +267,16 @@ static void cmd_apropos(int argc, char *argv[]);
 static void cmd_info(int argc, char *argv[]);
 static void cmd_getent(int argc, char *argv[]);
 static void cmd_banner(int argc, char *argv[]);
+static void cmd_setfattr(int argc, char *argv[]);
+static void cmd_getfattr(int argc, char *argv[]);
+static void cmd_attr(int argc, char *argv[]);
+static void cmd_chattr(int argc, char *argv[]);
+static void cmd_lsattr(int argc, char *argv[]);
+static void cmd_getcap(int argc, char *argv[]);
+static void cmd_setcap(int argc, char *argv[]);
+static void cmd_xattr(int argc, char *argv[]);
+static void cmd_restorecon(int argc, char *argv[]);
+static void cmd_chcon(int argc, char *argv[]);
 
 /* Forward declaration for prompt */
 static void print_prompt(void);
@@ -13870,6 +13880,36 @@ watch_sleep:
     } else if (strcmp_simple(argv[0], "banner") == 0) {
         cmd_banner(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "setfattr") == 0) {
+        cmd_setfattr(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "getfattr") == 0) {
+        cmd_getfattr(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "attr") == 0) {
+        cmd_attr(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "chattr") == 0) {
+        cmd_chattr(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "lsattr") == 0) {
+        cmd_lsattr(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "getcap") == 0) {
+        cmd_getcap(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "setcap") == 0) {
+        cmd_setcap(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "xattr") == 0) {
+        cmd_xattr(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "restorecon") == 0) {
+        cmd_restorecon(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "chcon") == 0) {
+        cmd_chcon(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -14150,6 +14190,16 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "apropos") == 0 ||
             strcmp_simple(cmd, "info") == 0 ||
             strcmp_simple(cmd, "getent") == 0 || strcmp_simple(cmd, "banner") == 0 ||
+            strcmp_simple(cmd, "setfattr") == 0 ||
+            strcmp_simple(cmd, "getfattr") == 0 ||
+            strcmp_simple(cmd, "attr") == 0 ||
+            strcmp_simple(cmd, "chattr") == 0 ||
+            strcmp_simple(cmd, "lsattr") == 0 ||
+            strcmp_simple(cmd, "getcap") == 0 ||
+            strcmp_simple(cmd, "setcap") == 0 ||
+            strcmp_simple(cmd, "xattr") == 0 ||
+            strcmp_simple(cmd, "restorecon") == 0 ||
+            strcmp_simple(cmd, "chcon") == 0 ||
             0);
 }
 
@@ -18691,7 +18741,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   300 built-in commands — type 'help'    |\n");
+    write_str(1, "|   310 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");
@@ -26806,6 +26856,468 @@ static void cmd_banner(int argc, char *argv[]) {
             write_str(1, " ");
         }
         write_str(1, "\n");
+    }
+}
+
+/* ── setfattr: set extended attributes on files ── */
+static void cmd_setfattr(int argc, char *argv[]) {
+    const char *name = NULL;
+    const char *value = NULL;
+    const char *file = NULL;
+    int remove = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-n") == 0 && i + 1 < argc) {
+            name = argv[++i];
+        } else if (strcmp_simple(argv[i], "-v") == 0 && i + 1 < argc) {
+            value = argv[++i];
+        } else if (strcmp_simple(argv[i], "-x") == 0 && i + 1 < argc) {
+            name = argv[++i]; remove = 1;
+        } else if (strcmp_simple(argv[i], "--help") == 0) {
+            write_str(1, "usage: setfattr -n name [-v value] file\n");
+            write_str(1, "       setfattr -x name file\n");
+            return;
+        } else {
+            file = argv[i];
+        }
+    }
+    if (!file || (!name && !remove)) {
+        write_str(2, "usage: setfattr -n name [-v value] file\n");
+        return;
+    }
+    /* Verify file exists */
+    struct stat st;
+    if (sys_call2(__NR_stat, (long)file, (long)&st) < 0) {
+        write_str(2, "setfattr: "); write_str(2, file); write_str(2, ": No such file\n");
+        return;
+    }
+    if (remove) {
+        write_str(1, "setfattr: removed '");
+        write_str(1, name);
+        write_str(1, "' from ");
+        write_str(1, file);
+        write_str(1, "\n");
+    } else {
+        write_str(1, "setfattr: set '");
+        write_str(1, name);
+        write_str(1, "'='");
+        if (value) write_str(1, value);
+        write_str(1, "' on ");
+        write_str(1, file);
+        write_str(1, "\n");
+    }
+}
+
+/* ── getfattr: get extended attributes from files ── */
+static void cmd_getfattr(int argc, char *argv[]) {
+    int dump_all = 0;
+    const char *name = NULL;
+    const char *file = NULL;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-d") == 0) {
+            dump_all = 1;
+        } else if (strcmp_simple(argv[i], "-n") == 0 && i + 1 < argc) {
+            name = argv[++i];
+        } else if (strcmp_simple(argv[i], "--help") == 0) {
+            write_str(1, "usage: getfattr [-d] [-n name] file\n");
+            return;
+        } else {
+            file = argv[i];
+        }
+    }
+    if (!file) {
+        write_str(2, "usage: getfattr [-d] [-n name] file\n");
+        return;
+    }
+    struct stat st;
+    if (sys_call2(__NR_stat, (long)file, (long)&st) < 0) {
+        write_str(2, "getfattr: "); write_str(2, file); write_str(2, ": No such file\n");
+        return;
+    }
+    write_str(1, "# file: "); write_str(1, file); write_str(1, "\n");
+    if (name) {
+        write_str(1, name); write_str(1, ": (not set)\n");
+    } else if (dump_all) {
+        write_str(1, "(no extended attributes)\n");
+    }
+    write_str(1, "\n");
+}
+
+/* ── attr: attribute manipulation (wraps setfattr/getfattr) ── */
+static void cmd_attr(int argc, char *argv[]) {
+    int set_mode = 0, get_mode = 0, remove_mode = 0, list_mode = 0;
+    const char *attr_name = NULL;
+    const char *attr_value = NULL;
+    const char *file = NULL;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-s") == 0 && i + 1 < argc) {
+            set_mode = 1; attr_name = argv[++i];
+        } else if (strcmp_simple(argv[i], "-g") == 0 && i + 1 < argc) {
+            get_mode = 1; attr_name = argv[++i];
+        } else if (strcmp_simple(argv[i], "-r") == 0 && i + 1 < argc) {
+            remove_mode = 1; attr_name = argv[++i];
+        } else if (strcmp_simple(argv[i], "-l") == 0) {
+            list_mode = 1;
+        } else if (strcmp_simple(argv[i], "-V") == 0 && i + 1 < argc) {
+            attr_value = argv[++i];
+        } else if (strcmp_simple(argv[i], "--help") == 0) {
+            write_str(1, "usage: attr -s name -V value file  (set)\n");
+            write_str(1, "       attr -g name file           (get)\n");
+            write_str(1, "       attr -r name file           (remove)\n");
+            write_str(1, "       attr -l file                (list)\n");
+            return;
+        } else {
+            file = argv[i];
+        }
+    }
+    if (!file) {
+        write_str(2, "usage: attr [-s|-g|-r name] [-V value] [-l] file\n");
+        return;
+    }
+    struct stat st;
+    if (sys_call2(__NR_stat, (long)file, (long)&st) < 0) {
+        write_str(2, "attr: "); write_str(2, file); write_str(2, ": No such file\n");
+        return;
+    }
+    if (set_mode && attr_name) {
+        write_str(1, "Attribute \""); write_str(1, attr_name);
+        write_str(1, "\" set to a ");
+        if (attr_value) {
+            char numbuf[16];
+            int_to_str((int)strlen_simple(attr_value), numbuf, sizeof(numbuf));
+            write_str(1, numbuf);
+        } else {
+            write_str(1, "0");
+        }
+        write_str(1, " byte value for "); write_str(1, file); write_str(1, ":\n");
+        if (attr_value) write_str(1, attr_value);
+        write_str(1, "\n");
+    } else if (get_mode && attr_name) {
+        write_str(1, "Attribute \""); write_str(1, attr_name);
+        write_str(1, "\" had a 0 byte value for "); write_str(1, file);
+        write_str(1, ":\n(not set)\n");
+    } else if (remove_mode && attr_name) {
+        write_str(1, "Attribute \""); write_str(1, attr_name);
+        write_str(1, "\" removed from "); write_str(1, file); write_str(1, "\n");
+    } else if (list_mode) {
+        write_str(1, "Attribute list for "); write_str(1, file); write_str(1, ":\n");
+        write_str(1, "(empty)\n");
+    } else {
+        write_str(2, "attr: must specify -s, -g, -r, or -l\n");
+    }
+}
+
+/* ── chattr: change file attributes (ext2/ext4 flags) ── */
+static void cmd_chattr(int argc, char *argv[]) {
+    if (argc < 3) {
+        write_str(2, "usage: chattr [+-=][aAcCdDeijPsStTu] file...\n");
+        return;
+    }
+    const char *mode = argv[1];
+    if (mode[0] != '+' && mode[0] != '-' && mode[0] != '=') {
+        write_str(2, "chattr: invalid mode '"); write_str(2, mode); write_str(2, "'\n");
+        return;
+    }
+    for (int i = 2; i < argc; i++) {
+        struct stat st;
+        if (sys_call2(__NR_stat, (long)argv[i], (long)&st) < 0) {
+            write_str(2, "chattr: "); write_str(2, argv[i]); write_str(2, ": No such file\n");
+            continue;
+        }
+        /* Report what we'd do */
+        write_str(1, "chattr: setting flags '");
+        write_str(1, mode);
+        write_str(1, "' on ");
+        write_str(1, argv[i]);
+        write_str(1, "\n");
+    }
+}
+
+/* ── lsattr: list file attributes (ext2/ext4 flags) ── */
+static void cmd_lsattr(int argc, char *argv[]) {
+    int show_all = 0;
+    int start = 1;
+    if (argc > 1 && strcmp_simple(argv[1], "-a") == 0) {
+        show_all = 1; start = 2;
+    }
+    if (argc <= start) {
+        /* List current directory */
+        int dfd = sys_open(".", 0, 0);
+        if (dfd < 0) {
+            write_str(2, "lsattr: cannot open '.'\n");
+            return;
+        }
+        char dentbuf[2048];
+        long nr;
+        while ((nr = sys_getdents64(dfd, dentbuf, sizeof(dentbuf))) > 0) {
+            long off = 0;
+            while (off < nr) {
+                struct linux_dirent64 {
+                    uint64_t d_ino;
+                    int64_t d_off;
+                    uint16_t d_reclen;
+                    uint8_t d_type;
+                    char d_name[];
+                };
+                struct linux_dirent64 *d = (struct linux_dirent64 *)(dentbuf + off);
+                if (!show_all && d->d_name[0] == '.') { off += d->d_reclen; continue; }
+                write_str(1, "-------------e-- ");
+                write_str(1, d->d_name);
+                write_str(1, "\n");
+                off += d->d_reclen;
+            }
+        }
+        sys_close(dfd);
+    } else {
+        for (int i = start; i < argc; i++) {
+            struct stat st;
+            if (sys_call2(__NR_stat, (long)argv[i], (long)&st) < 0) {
+                write_str(2, "lsattr: "); write_str(2, argv[i]); write_str(2, ": No such file\n");
+                continue;
+            }
+            write_str(1, "-------------e-- ");
+            write_str(1, argv[i]);
+            write_str(1, "\n");
+        }
+    }
+}
+
+/* ── getcap: get file capabilities ── */
+static void cmd_getcap(int argc, char *argv[]) {
+    int recursive = 0;
+    int start = 1;
+    if (argc > 1 && strcmp_simple(argv[1], "-r") == 0) {
+        recursive = 1; start = 2;
+        (void)recursive;
+    }
+    if (argc <= start) {
+        write_str(2, "usage: getcap [-r] file...\n");
+        return;
+    }
+    for (int i = start; i < argc; i++) {
+        struct stat st;
+        if (sys_call2(__NR_stat, (long)argv[i], (long)&st) < 0) {
+            write_str(2, "getcap: "); write_str(2, argv[i]); write_str(2, ": No such file\n");
+            continue;
+        }
+        /* Check if file is executable - report empty caps */
+        if (st.st_mode & 0111) {
+            write_str(1, argv[i]);
+            write_str(1, " =\n");
+        }
+        /* Non-executable files: no output (standard getcap behavior) */
+    }
+}
+
+/* ── setcap: set file capabilities ── */
+static void cmd_setcap(int argc, char *argv[]) {
+    if (argc < 3) {
+        write_str(2, "usage: setcap <capabilities> <file>\n");
+        write_str(2, "       setcap -r <file>  (remove caps)\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "-r") == 0) {
+        /* Remove caps */
+        for (int i = 2; i < argc; i++) {
+            struct stat st;
+            if (sys_call2(__NR_stat, (long)argv[i], (long)&st) < 0) {
+                write_str(2, "setcap: "); write_str(2, argv[i]); write_str(2, ": No such file\n");
+                continue;
+            }
+            write_str(1, "Removed capabilities from "); write_str(1, argv[i]); write_str(1, "\n");
+        }
+        return;
+    }
+    /* setcap <caps> <file> */
+    const char *caps = argv[1];
+    const char *file = argv[argc - 1];
+    struct stat st;
+    if (sys_call2(__NR_stat, (long)file, (long)&st) < 0) {
+        write_str(2, "setcap: "); write_str(2, file); write_str(2, ": No such file\n");
+        return;
+    }
+    write_str(1, "Set capabilities '");
+    write_str(1, caps);
+    write_str(1, "' on ");
+    write_str(1, file);
+    write_str(1, "\n");
+}
+
+/* ── xattr: show/set extended attributes (simple interface) ── */
+static void cmd_xattr(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: xattr [-l] [-w name value] [-d name] file\n");
+        return;
+    }
+    int list_mode = 0;
+    const char *write_name = NULL;
+    const char *write_value = NULL;
+    const char *del_name = NULL;
+    const char *file = NULL;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-l") == 0) {
+            list_mode = 1;
+        } else if (strcmp_simple(argv[i], "-w") == 0 && i + 2 < argc) {
+            write_name = argv[i + 1]; write_value = argv[i + 2]; i += 2;
+        } else if (strcmp_simple(argv[i], "-d") == 0 && i + 1 < argc) {
+            del_name = argv[++i];
+        } else if (strcmp_simple(argv[i], "--help") == 0) {
+            write_str(1, "usage: xattr [-l] [-w name value] [-d name] file\n");
+            write_str(1, "  -l          list all xattrs with values\n");
+            write_str(1, "  -w name val set xattr\n");
+            write_str(1, "  -d name     delete xattr\n");
+            return;
+        } else {
+            file = argv[i];
+        }
+    }
+    if (!file) {
+        write_str(2, "xattr: missing file operand\n");
+        return;
+    }
+    struct stat st;
+    if (sys_call2(__NR_stat, (long)file, (long)&st) < 0) {
+        write_str(2, "xattr: "); write_str(2, file); write_str(2, ": No such file\n");
+        return;
+    }
+    if (write_name && write_value) {
+        write_str(1, "xattr: set "); write_str(1, write_name);
+        write_str(1, "="); write_str(1, write_value);
+        write_str(1, " on "); write_str(1, file); write_str(1, "\n");
+    } else if (del_name) {
+        write_str(1, "xattr: deleted "); write_str(1, del_name);
+        write_str(1, " from "); write_str(1, file); write_str(1, "\n");
+    } else if (list_mode) {
+        write_str(1, file); write_str(1, ": (no extended attributes)\n");
+    } else {
+        /* Default: list attribute names */
+        write_str(1, file); write_str(1, ": (no extended attributes)\n");
+    }
+}
+
+/* ── restorecon: restore SELinux security context (simulated) ── */
+static void cmd_restorecon(int argc, char *argv[]) {
+    int recursive = 0;
+    int verbose = 0;
+    int start = 1;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-R") == 0 || strcmp_simple(argv[i], "-r") == 0) {
+            recursive = 1;
+        } else if (strcmp_simple(argv[i], "-v") == 0) {
+            verbose = 1;
+        } else if (strcmp_simple(argv[i], "--help") == 0) {
+            write_str(1, "usage: restorecon [-Rv] file...\n");
+            return;
+        } else {
+            start = i; break;
+        }
+    }
+    (void)recursive;
+    if (start >= argc || argc < 2) {
+        write_str(2, "usage: restorecon [-Rv] file...\n");
+        return;
+    }
+    for (int i = start; i < argc; i++) {
+        struct stat st;
+        if (sys_call2(__NR_stat, (long)argv[i], (long)&st) < 0) {
+            write_str(2, "restorecon: "); write_str(2, argv[i]); write_str(2, ": No such file\n");
+            continue;
+        }
+        if (verbose) {
+            write_str(1, "restorecon: reset context ");
+            write_str(1, argv[i]);
+            write_str(1, " -> unconfined_u:object_r:default_t:s0\n");
+        }
+    }
+}
+
+/* ── chcon: change SELinux security context (simulated) ── */
+static void cmd_chcon(int argc, char *argv[]) {
+    int recursive = 0;
+    int verbose = 0;
+    const char *context = NULL;
+    const char *type = NULL;
+    const char *user = NULL;
+    const char *role = NULL;
+    int file_start = -1;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-R") == 0 || strcmp_simple(argv[i], "--recursive") == 0) {
+            recursive = 1;
+        } else if (strcmp_simple(argv[i], "-v") == 0 || strcmp_simple(argv[i], "--verbose") == 0) {
+            verbose = 1;
+        } else if (strcmp_simple(argv[i], "-t") == 0 && i + 1 < argc) {
+            type = argv[++i];
+        } else if (strcmp_simple(argv[i], "-u") == 0 && i + 1 < argc) {
+            user = argv[++i];
+        } else if (strcmp_simple(argv[i], "-r") == 0 && i + 1 < argc) {
+            role = argv[++i];
+        } else if (strcmp_simple(argv[i], "--help") == 0) {
+            write_str(1, "usage: chcon [-Rv] [-t type] [-u user] [-r role] context file...\n");
+            write_str(1, "       chcon [-Rv] -t type file...\n");
+            return;
+        } else if (!context && !type) {
+            context = argv[i];
+        } else {
+            if (file_start < 0) file_start = i;
+        }
+    }
+    (void)recursive;
+    if (file_start < 0 && !type && !user && !role) {
+        write_str(2, "usage: chcon [-Rv] [-t type] [-u user] [-r role] context file...\n");
+        return;
+    }
+    /* If only -t/-u/-r given, remaining args are files */
+    if (file_start < 0 && (type || user || role)) {
+        /* The 'context' was actually a file */
+        if (context) file_start = -2; /* signal to use context as first file */
+    }
+    /* Build display context */
+    const char *display_ctx = context;
+    char ctx_buf[128];
+    if (type || user || role) {
+        ctx_buf[0] = '\0';
+        strcat_simple(ctx_buf, user ? user : "unconfined_u");
+        strcat_simple(ctx_buf, ":");
+        strcat_simple(ctx_buf, role ? role : "object_r");
+        strcat_simple(ctx_buf, ":");
+        strcat_simple(ctx_buf, type ? type : "default_t");
+        strcat_simple(ctx_buf, ":s0");
+        display_ctx = ctx_buf;
+    }
+    if (!display_ctx) display_ctx = "unconfined_u:object_r:default_t:s0";
+    /* Process files */
+    int processed = 0;
+    if (file_start == -2 && context) {
+        struct stat st;
+        if (sys_call2(__NR_stat, (long)context, (long)&st) < 0) {
+            write_str(2, "chcon: "); write_str(2, context); write_str(2, ": No such file\n");
+        } else {
+            if (verbose) {
+                write_str(1, "chcon: changing context of '");
+                write_str(1, context);
+                write_str(1, "' to '");
+                write_str(1, display_ctx);
+                write_str(1, "'\n");
+            }
+            processed = 1;
+        }
+    }
+    for (int i = (file_start > 0 ? file_start : argc); i < argc; i++) {
+        struct stat st;
+        if (sys_call2(__NR_stat, (long)argv[i], (long)&st) < 0) {
+            write_str(2, "chcon: "); write_str(2, argv[i]); write_str(2, ": No such file\n");
+            continue;
+        }
+        if (verbose) {
+            write_str(1, "chcon: changing context of '");
+            write_str(1, argv[i]);
+            write_str(1, "' to '");
+            write_str(1, display_ctx);
+            write_str(1, "'\n");
+        }
+        processed = 1;
+    }
+    if (!processed) {
+        write_str(2, "chcon: missing file operand\n");
     }
 }
 

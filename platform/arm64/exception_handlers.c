@@ -13,7 +13,9 @@
 #include <kernel/kprintf.h>
 /* Forward declarations to avoid header conflicts */
 typedef struct fut_task fut_task_t;
+typedef struct fut_thread fut_thread_t;
 extern fut_task_t *fut_task_current(void);
+extern fut_thread_t *fut_thread_current(void);
 extern void fut_task_exit_current(int status);
 extern void fut_schedule(void);
 
@@ -137,16 +139,8 @@ static void handle_svc(fut_interrupt_frame_t *frame) {
 
     /* (debug removed) */
 
-    /* Mark thread as inside syscall for accurate utime/stime accounting */
-    extern struct fut_thread *fut_thread_current(void);
-    struct fut_thread *_svc_thread = fut_thread_current();
-    if (_svc_thread) _svc_thread->in_syscall = 1;
-
     /* Dispatch to syscall handler */
     int64_t result = arm64_syscall_dispatch(syscall_num, arg0, arg1, arg2, arg3, arg4, arg5);
-
-    /* Clear in_syscall before returning to userspace */
-    if (_svc_thread) _svc_thread->in_syscall = 0;
 
     /* Store return value in x0.  The ARM64 syscall ABI preserves x1-x7
      * across system calls (only x0 is the return value).  Clearing them

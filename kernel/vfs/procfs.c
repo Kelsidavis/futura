@@ -1308,9 +1308,9 @@ static size_t gen_maps(char *buf, size_t cap, fut_task_t *task) {
             path_buf[nlen++] = ']';
             path_buf[nlen] = '\0';
             pseudo = path_buf;
-        } else if (vma->flags & VMA_VVAR) {
+        } else if (vma->flags & 0x10000) {
             pseudo = "[vvar]";
-        } else if (vma->flags & VMA_VDSO) {
+        } else if (vma->flags & 0x20000) {
             pseudo = "[vdso]";
         } else if (vma->flags & VMA_STACK) {
             pseudo = "[stack]";
@@ -1528,9 +1528,9 @@ static size_t gen_smaps(char *buf, size_t cap, fut_task_t *task) {
                 while (*an && nlen < sizeof(sp_buf) - 2) sp_buf[nlen++] = *an++;
                 sp_buf[nlen++] = ']'; sp_buf[nlen] = '\0';
                 sp_pseudo = sp_buf;
-            } else if (vma->flags & VMA_VVAR) {
+            } else if (vma->flags & 0x10000) {
                 sp_pseudo = "[vvar]";
-            } else if (vma->flags & VMA_VDSO) {
+            } else if (vma->flags & 0x20000) {
                 sp_pseudo = "[vdso]";
             } else if (vma->flags & VMA_STACK) {
                 sp_pseudo = "[stack]";

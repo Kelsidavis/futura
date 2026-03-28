@@ -295,6 +295,7 @@ enum procfs_kind {
     PROC_SYS_NET_NF_CT_COUNT,       /* /proc/sys/net/netfilter/nf_conntrack_count */
     PROC_SYS_KERNEL_PANIC,          /* /proc/sys/kernel/panic */
     PROC_SYS_KERNEL_PANIC_ON_OOPS,  /* /proc/sys/kernel/panic_on_oops */
+    PROC_SYS_KERNEL_OOPS_COUNT,     /* /proc/sys/kernel/oops_count */
     PROC_NET_XFRM_STAT,             /* /proc/net/xfrm_stat */
     PROC_NET_IPV6_ROUTE,            /* /proc/net/ipv6_route */
     PROC_SYS_SCHED_CHILD_FIRST,     /* /proc/sys/kernel/sched_child_runs_first */
@@ -505,6 +506,7 @@ typedef struct {
 #define PROC_INO_SYS_NET_NF_CT_COUNT     419ULL
 #define PROC_INO_SYS_KERNEL_PANIC        420ULL
 #define PROC_INO_SYS_KERNEL_PANIC_OOPS   421ULL
+#define PROC_INO_SYS_KERNEL_OOPS_COUNT   440ULL
 #define PROC_INO_SYS_SCHED_LAT          427ULL
 #define PROC_INO_SYS_SCHED_MINGRAN      428ULL
 #define PROC_INO_SYS_SCHED_WAKEUP       429ULL
@@ -2099,37 +2101,45 @@ static size_t gen_zoneinfo(char *buf, size_t cap) {
 /*
  * gen_diskstats() — /proc/diskstats
  *
- * Block device I/O statistics. Futura has no block devices; emit an empty
- * file so iostat/iotop don't fail with ENOENT.
+ * Block device I/O statistics in Linux format (14 fields per device):
+ *   major minor name
+ *   reads_completed reads_merged sectors_read ms_reading
+ *   writes_completed writes_merged sectors_written ms_writing
+ *   ios_in_progress ms_io weighted_ms_io
+ *
+ * Reads real counters from the block device subsystem (reads, writes,
+ * sectors, timing).  Merged I/O is always 0 because Futura does not
+ * coalesce adjacent requests yet.
  */
 static size_t gen_diskstats(char *buf, size_t cap) {
     struct pbuf b = { buf, 0, cap };
-    /*
-     * Linux /proc/diskstats format (11 fields per device):
-     *  major minor name
-     *  reads_completed reads_merged sectors_read ms_reading
-     *  writes_completed writes_merged sectors_written ms_writing
-     *  ios_in_progress ms_io weighted_ms_io
-     */
     int minor = 0;
     for (struct fut_blockdev *dev = fut_blockdev_first(); dev; dev = dev->next) {
-        uint64_t sectors_read = dev->reads * (dev->block_size / 512);
-        uint64_t sectors_written = dev->writes * (dev->block_size / 512);
         pb_str(&b, "   ");
-        pb_u64(&b, 253);  /* major: 253 = virtblk/ramdisk */
+        pb_d_padded(&b, 253, 4);          /* major: 253 = virtblk/ramdisk */
         pb_str(&b, "       ");
         pb_u64(&b, (uint64_t)minor);
         pb_str(&b, " ");
         pb_str(&b, dev->name);
         pb_str(&b, " ");
-        pb_u64(&b, dev->reads);          /* reads completed */
-        pb_str(&b, " 0 ");               /* reads merged */
-        pb_u64(&b, sectors_read);         /* sectors read */
-        pb_str(&b, " 0 ");               /* ms reading */
+        pb_u64(&b, dev->reads);           /* reads completed */
+        pb_str(&b, " 0 ");                /* reads merged (no coalescing) */
+        pb_u64(&b, dev->sectors_read);    /* sectors read (512-byte) */
+        pb_str(&b, " ");
+        pb_u64(&b, dev->read_time_ms);    /* ms spent reading */
+        pb_str(&b, " ");
         pb_u64(&b, dev->writes);          /* writes completed */
-        pb_str(&b, " 0 ");               /* writes merged */
-        pb_u64(&b, sectors_written);      /* sectors written */
-        pb_str(&b, " 0 0 0 0\n");        /* ms writing, ios_in_progress, ms_io, weighted */
+        pb_str(&b, " 0 ");                /* writes merged */
+        pb_u64(&b, dev->sectors_written); /* sectors written (512-byte) */
+        pb_str(&b, " ");
+        pb_u64(&b, dev->write_time_ms);   /* ms spent writing */
+        pb_str(&b, " ");
+        pb_u64(&b, dev->io_in_progress);  /* I/Os currently in flight */
+        pb_str(&b, " ");
+        pb_u64(&b, dev->io_time_ms);      /* ms spent doing I/O */
+        pb_str(&b, " ");
+        pb_u64(&b, dev->weighted_io_ms);  /* weighted ms doing I/O */
+        pb_str(&b, "\n");
         minor++;
     }
     return b.pos;
@@ -2138,8 +2148,8 @@ static size_t gen_diskstats(char *buf, size_t cap) {
 /*
  * gen_partitions() — /proc/partitions
  *
- * Block device partition table header. No partitions in futura; emit the
- * standard header so lsblk/blkid don't fail with ENOENT.
+ * Block device partition table. Lists all registered block devices with
+ * their major/minor numbers and size in 1024-byte blocks.
  */
 static size_t gen_partitions(char *buf, size_t cap) {
     struct pbuf b = { buf, 0, cap };
@@ -3159,6 +3169,31 @@ static size_t gen_proc_stat(char *buf, size_t cap) {
     pb_str(&b, "procs_running "); pb_u64(&b, nrunning > 0 ? nrunning : 1); pb_char(&b, '\n');
     pb_str(&b, "procs_blocked "); pb_u64(&b, nblocked); pb_char(&b, '\n');
     pb_str(&b, "softirq 0 0 0 0 0 0 0 0 0 0 0\n");
+
+    /* disk_io: per-disk I/O stats — disk_io: (major,minor):(noinfo,reads,read_blks,writes,write_blks) ... */
+    {
+        struct fut_blockdev *dev = fut_blockdev_first();
+        if (dev) {
+            int minor = 0;
+            pb_str(&b, "disk_io:");
+            for (; dev; dev = dev->next, minor++) {
+                pb_str(&b, " (253,");
+                pb_u64(&b, (uint64_t)minor);
+                pb_str(&b, "):(");
+                pb_u64(&b, dev->reads + dev->writes);  /* noinfo (total ops) */
+                pb_char(&b, ',');
+                pb_u64(&b, dev->reads);
+                pb_char(&b, ',');
+                pb_u64(&b, dev->sectors_read);
+                pb_char(&b, ',');
+                pb_u64(&b, dev->writes);
+                pb_char(&b, ',');
+                pb_u64(&b, dev->sectors_written);
+                pb_char(&b, ')');
+            }
+            pb_char(&b, '\n');
+        }
+    }
 
     return b.pos;
 }
@@ -4455,6 +4490,16 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             /* 0 = continue on oops, 1 = panic on oops */
             total = gen_sysctl_str(tmp, GEN_BUF, "0");
             break;
+        case PROC_SYS_KERNEL_OOPS_COUNT: {
+            /* Live oops counter from kernel/oops.c */
+            extern _Atomic uint64_t g_oops_count;
+            uint64_t cnt = atomic_load_explicit(&g_oops_count, memory_order_relaxed);
+            struct pbuf ob = { tmp, 0, GEN_BUF };
+            pb_u64(&ob, cnt);
+            pb_char(&ob, '\n');
+            total = ob.pos;
+            break;
+        }
         case PROC_SYS_SCHED_CHILD_FIRST: {
             extern int g_sched_child_runs_first;
             total = gen_sysctl_str(tmp, GEN_BUF,
@@ -6209,6 +6254,11 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
         if (STREQ(name, "panic_on_oops")) {
             *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_KERNEL_PANIC_OOPS,
                                           0100644, PROC_SYS_KERNEL_PANIC_ON_OOPS, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
+        if (STREQ(name, "oops_count")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_SYS_KERNEL_OOPS_COUNT,
+                                          0100444, PROC_SYS_KERNEL_OOPS_COUNT, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
         if (STREQ(name, "sched_child_runs_first")) {

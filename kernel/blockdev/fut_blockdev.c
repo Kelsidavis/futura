@@ -10,6 +10,7 @@
 #include <kernel/fut_memory.h>
 #include <kernel/fut_thread.h>
 #include <kernel/fut_waitq.h>
+#include <kernel/fut_timer.h>
 #include <kernel/kprintf.h>
 #include <kernel/errno.h>
 #include <stddef.h>
@@ -132,6 +133,13 @@ int fut_blockdev_register_compat(const char *name, uint32_t block_size,
     dev->reads = 0;
     dev->writes = 0;
     dev->errors = 0;
+    dev->sectors_read = 0;
+    dev->sectors_written = 0;
+    dev->read_time_ms = 0;
+    dev->write_time_ms = 0;
+    dev->io_in_progress = 0;
+    dev->io_time_ms = 0;
+    dev->weighted_io_ms = 0;
     dev->next = NULL;
 
     return fut_blockdev_register(dev);
@@ -160,6 +168,13 @@ int fut_blockdev_register(struct fut_blockdev *dev) {
     dev->reads = 0;
     dev->writes = 0;
     dev->errors = 0;
+    dev->sectors_read = 0;
+    dev->sectors_written = 0;
+    dev->read_time_ms = 0;
+    dev->write_time_ms = 0;
+    dev->io_in_progress = 0;
+    dev->io_time_ms = 0;
+    dev->weighted_io_ms = 0;
 
     /* Add to device list */
     dev->next = device_list;
@@ -226,12 +241,25 @@ int fut_blockdev_read(struct fut_blockdev *dev, uint64_t block_num, uint64_t num
         return BLOCKDEV_EIO;
     }
 
+    /* Track I/O in progress and timing */
+    dev->io_in_progress++;
+    uint64_t t0 = fut_get_ticks();
+
     /* Perform read */
     int ret = dev->ops->read(dev, block_num, num_blocks, buffer);
+
+    uint64_t elapsed = fut_get_ticks() - t0;
+    dev->io_in_progress--;
 
     /* Update statistics */
     if (ret == 0) {
         dev->reads++;
+        uint64_t sectors = num_blocks * (dev->block_size / 512);
+        if (sectors == 0) sectors = num_blocks;  /* block_size < 512 fallback */
+        dev->sectors_read += sectors;
+        dev->read_time_ms += elapsed;
+        dev->io_time_ms += elapsed;
+        dev->weighted_io_ms += elapsed * (dev->io_in_progress + 1);
     } else {
         dev->errors++;
     }
@@ -259,12 +287,25 @@ int fut_blockdev_write(struct fut_blockdev *dev, uint64_t block_num, uint64_t nu
         return BLOCKDEV_EIO;
     }
 
+    /* Track I/O in progress and timing */
+    dev->io_in_progress++;
+    uint64_t t0 = fut_get_ticks();
+
     /* Perform write */
     int ret = dev->ops->write(dev, block_num, num_blocks, buffer);
+
+    uint64_t elapsed = fut_get_ticks() - t0;
+    dev->io_in_progress--;
 
     /* Update statistics */
     if (ret == 0) {
         dev->writes++;
+        uint64_t sectors = num_blocks * (dev->block_size / 512);
+        if (sectors == 0) sectors = num_blocks;  /* block_size < 512 fallback */
+        dev->sectors_written += sectors;
+        dev->write_time_ms += elapsed;
+        dev->io_time_ms += elapsed;
+        dev->weighted_io_ms += elapsed * (dev->io_in_progress + 1);
     } else {
         dev->errors++;
     }

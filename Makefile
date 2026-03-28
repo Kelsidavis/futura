@@ -1017,6 +1017,7 @@ KERNEL_SOURCES := \
     drivers/tty/tty_ldisc.c \
     drivers/tty/kbd_console.c \
     drivers/video/fb_console.c \
+    kernel/oops.c \
     kernel/rust/rustffi.c
 
 # Platform-specific and architecture-specific kernel sources

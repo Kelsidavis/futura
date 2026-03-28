@@ -66,6 +66,13 @@ struct fut_blockdev {
     uint64_t reads;                     /* Number of read operations */
     uint64_t writes;                    /* Number of write operations */
     uint64_t errors;                    /* Number of I/O errors */
+    uint64_t sectors_read;              /* Total 512-byte sectors read */
+    uint64_t sectors_written;           /* Total 512-byte sectors written */
+    uint64_t read_time_ms;              /* Cumulative read time in milliseconds */
+    uint64_t write_time_ms;             /* Cumulative write time in milliseconds */
+    uint64_t io_in_progress;            /* Number of I/Os currently in flight */
+    uint64_t io_time_ms;                /* Time spent doing I/O (ms) */
+    uint64_t weighted_io_ms;            /* Weighted I/O time (ms) */
 
     /* List linkage */
     struct fut_blockdev *next;          /* Next device in global list */

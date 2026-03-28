@@ -325,7 +325,9 @@ enum procfs_kind {
     PROC_PRESSURE_IO,               /* /proc/pressure/io */
 };
 
+#define PROCFS_MAGIC 0x50524F43U  /* "PROC" */
 typedef struct {
+    uint32_t magic; /* PROCFS_MAGIC for use-after-free detection */
     enum procfs_kind kind;
     uint64_t pid;   /* relevant PID (0 for global nodes) */
     int fd;         /* fd index for PROC_FD_ENTRY */
@@ -699,6 +701,7 @@ static struct fut_vnode *procfs_alloc_vnode(struct fut_mount *mount,
     procfs_node_t *n = fut_malloc(sizeof(procfs_node_t));
     if (!n) { fut_free(v); return NULL; }
 
+    n->magic = PROCFS_MAGIC;
     n->kind = kind;
     n->pid  = pid;
     n->fd   = fd;
@@ -4192,6 +4195,12 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
     if (!vnode || !buf) return -EINVAL;
     procfs_node_t *n = (procfs_node_t *)vnode->fs_data;
     if (!n) return -EIO;
+    /* Detect use-after-free: if magic doesn't match, the node was freed */
+    if (n->magic != PROCFS_MAGIC) {
+        fut_printf("[PROCFS] ERROR: use-after-free detected in procfs_file_read "
+                   "(magic=0x%x expected 0x%x)\n", (unsigned)n->magic, PROCFS_MAGIC);
+        return -EIO;
+    }
 
     /*
      * /proc/<pid>/mem: offset is a virtual address; read directly.

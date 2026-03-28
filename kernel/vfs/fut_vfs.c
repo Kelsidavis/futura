@@ -3239,12 +3239,12 @@ void fut_vnode_unref(struct fut_vnode *vnode) {
         /* Free generic per-vnode extended attributes */
         vnode_xattr_free_all(vnode);
 
-        /* Free filesystem-specific data if any */
+        /* Free filesystem-specific data — procfs, sysfs, etc. allocate fs_data
+         * via fut_malloc in their alloc_vnode functions. Free it here to prevent
+         * leaks and use-after-free when slab reuses the memory. */
         if (vnode->fs_data) {
-            /* Filesystems should clean up their own fs_data */
-            /* For now, just warn if there's orphaned data */
-            VFSDBG("[vnode-unref] warning: vnode has fs_data=%p, filesystem must clean up\n",
-                   vnode->fs_data);
+            fut_free(vnode->fs_data);
+            vnode->fs_data = NULL;
         }
 
         fut_free(vnode);

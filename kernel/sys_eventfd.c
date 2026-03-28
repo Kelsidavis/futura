@@ -321,7 +321,7 @@
  * [DONE] Poll support with spinlock (lines 364-371):
  *   - fut_eventfd_poll acquires ctx->lock before reading counter
  *   - Returns EPOLLIN if counter > 0 (readable)
- *   - Returns EPOLLOUT if counter < UINT64_MAX (writable)
+ *   - Returns EPOLLOUT if counter < UINT64_MAX-1 (writable)
  *   - Prevents race between poll check and read/write
  *
  * [TODO] Add concurrency stress tests:
@@ -739,6 +739,9 @@ static ssize_t eventfd_read(void *inode, void *priv, void *u_buf, size_t len, of
     }
 
     fut_waitq_wake_one(&ctx->write_waitq);
+    /* Wake any epoll instance monitoring this eventfd (POLLOUT may now be ready) */
+    if (ctx->epoll_notify)
+        fut_waitq_wake_one(ctx->epoll_notify);
     return (ssize_t)sizeof(value);
 }
 
@@ -908,7 +911,7 @@ bool fut_eventfd_poll(struct fut_file *file, uint32_t requested, uint32_t *ready
     if (ctx->counter > 0 && (requested & (EPOLLIN | EPOLLRDNORM))) {
         ready |= (EPOLLIN | EPOLLRDNORM);
     }
-    if (ctx->counter < UINT64_MAX && (requested & (EPOLLOUT | EPOLLWRNORM))) {
+    if (ctx->counter < (UINT64_MAX - 1) && (requested & (EPOLLOUT | EPOLLWRNORM))) {
         ready |= (EPOLLOUT | EPOLLWRNORM);
     }
     fut_spinlock_release(&ctx->lock);

@@ -12,7 +12,15 @@
  *   - Thread: CLONE_VM | CLONE_THREAD | CLONE_SIGHAND set
  *
  * Supports namespace flags (CLONE_NEWPID, CLONE_NEWNS, CLONE_NEWUTS,
- * CLONE_NEWNET, CLONE_NEWUSER) by creating new namespaces for the child.
+ * CLONE_NEWNET, CLONE_NEWUSER, CLONE_NEWTIME) by creating new namespaces
+ * for the child.
+ *
+ * Additional flags:
+ *   - CLONE_PIDFD: return a pidfd for the child in parent
+ *   - CLONE_INTO_CGROUP: place child in target cgroup
+ *   - CLONE_CLEAR_SIGHAND: reset all signal handlers to SIG_DFL in child
+ *   - CLONE_PARENT: child gets same parent as caller
+ *   - CLONE_FS / CLONE_FILES: accepted for thread creation path
  *
  * Syscall number (Linux x86_64 / ARM64): 435
  */
@@ -68,6 +76,8 @@ struct fut_clone_args {
 
 #define CLONE_THREAD         0x00010000
 #define CLONE_VM             0x00000100
+#define CLONE_FS             0x00000200      /* Linux: share filesystem info (cwd, root, umask) */
+#define CLONE_FILES          0x00000400      /* Linux: share file descriptor table */
 #define CLONE_SIGHAND        0x00000800
 #define CLONE_PIDFD          0x00001000
 #define CLONE_PARENT_SETTID  0x00100000
@@ -133,8 +143,13 @@ long sys_clone3(const struct fut_clone_args *uargs, size_t size) {
     uint64_t cgroup_fd = args.cgroup;
     flags &= ~CLONE_INTO_CGROUP;
 
-    /* CLONE_PIDFD: create a pidfd for the child and write it to *args.pidfd */
-    int want_pidfd = (flags & CLONE_PIDFD) && args.pidfd;
+    /* CLONE_PIDFD: create a pidfd for the child and write it to *args.pidfd.
+     * Linux requires a valid output address when CLONE_PIDFD is set.
+     * CLONE_PIDFD conflicts with CLONE_PARENT_SETTID (both write to parent_tid
+     * in the original clone(), but clone3 has a separate pidfd field). */
+    int want_pidfd = !!(flags & CLONE_PIDFD);
+    if (want_pidfd && !args.pidfd)
+        return -EINVAL;  /* CLONE_PIDFD requires valid output address */
     flags &= ~(uint64_t)CLONE_PIDFD;  /* Don't pass to lower layers */
 
     /* Thread creation path */
@@ -247,7 +262,14 @@ long sys_clone3(const struct fut_clone_args *uargs, size_t size) {
                     struct user_namespace *ns = userns_create(child->user_ns);
                     if (ns) child->user_ns = ns;
                 }
-                /* CLONE_NEWIPC, CLONE_NEWCGROUP, CLONE_NEWTIME: accept as no-ops */
+                if (ns_flags & CLONE_NEWTIME) {
+                    /* Time namespace: increment nesting level for the child.
+                     * This allows containers to have isolated CLOCK_MONOTONIC
+                     * and CLOCK_BOOTTIME offsets (Linux 5.6+). */
+                    child->time_ns_level = (child->time_ns_level > 0
+                                            ? child->time_ns_level : 0) + 1;
+                }
+                /* CLONE_NEWIPC, CLONE_NEWCGROUP: accept as no-ops */
             }
         }
     } else if (child_pid == 0) {

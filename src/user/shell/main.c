@@ -453,6 +453,15 @@ static void cmd_irqtop(int argc, char *argv[]);
 static void cmd_pstree(int argc, char *argv[]);
 static void cmd_lslogins(int argc, char *argv[]);
 static void cmd_utmpdump(int argc, char *argv[]);
+static void cmd_logname(int argc, char *argv[]);
+static void cmd_nproc(int argc, char *argv[]);
+static void cmd_chcpu(int argc, char *argv[]);
+static void cmd_ipcs(int argc, char *argv[]);
+static void cmd_pmap(int argc, char *argv[]);
+static void cmd_mpstat(int argc, char *argv[]);
+static void cmd_pidstat(int argc, char *argv[]);
+static void cmd_cifsiostat(int argc, char *argv[]);
+static void cmd_tapestat(int argc, char *argv[]);
 
 /* Forward declaration for prompt */
 static void print_prompt(void);
@@ -904,7 +913,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     const char *builtins[] = {
         "ab", "acpi", "arp", "ascii", "base32", "bg", "blkzone", "blockdev", "brctl", "cal", "cd", "chgrp", "chmod", "chroot", "chrt", "clear", "cmp", "comm", "conntrack", "cpupower", "date", "depmod", "dd", "df", "dhclient", "dig", "dmidecode", "dmesg", "echo", "edit", "ethtool", "expand", "expr", "factor", "file", "fold", "fuser", "hdparm", "hexdump", "host", "hwinfo", "install", "ionice", "iperf3", "locale", "lshw", "lsmod", "lsns", "lsof", "lsusb", "md5sum", "mkfifo", "modprobe", "mtr", "nameif", "nc", "nice", "nohup", "numactl", "nvme", "partprobe", "patch", "perf", "pgrep", "pidof", "pkill", "poweroff", "prlimit", "reboot", "renice", "reset", "route", "sensors", "seq", "sha1sum", "sha512sum", "sleep", "smartctl", "stdbuf", "strings", "swapon", "swapoff", "tac", "taskset", "time", "timeout", "tput", "traceroute", "tty", "udevadm", "unexpand", "wget", "whatis", "whois", "xxd", "exit", "export", "fg", "free",
         "help", "hostname", "httpd", "id", "ifconfig", "iostat", "ipcs", "iptables", "jobs", "kill", "logger", "losetup", "ls", "lsblk", "lspci", "mkfs", "mount", "netstat",
-        ".", "adduser", "alias", "ansible", "ansible-playbook", "arch", "basename", "blkid", "bridge", "buildah", "busctl", "certutil", "chage", "coredumpctl", "crictl", "ctr", "deluser", "dialog", "dirname", "docker", "du", "exec", "false", "fmt", "getconf", "gpg", "groupadd", "groupdel", "groups", "helm", "history", "hostnamectl", "infocmp", "ip", "ipcmk", "ipcrm", "journalctl", "kubectl", "ln", "localectl", "loginctl", "logname", "lscpu", "machinectl", "mkswap", "mktemp", "more", "nawk", "networkctl", "nft", "nproc", "nslookup", "openssl", "passwd", "ping", "podman", "printenv", "printf", "ps", "pwd", "read", "readlink", "realpath", "resolvectl", "set", "sha1sum", "sha256sum", "shutdown", "source", "ss", "ssh-keygen", "stat", "strace", "stty", "su", "sync", "sysctl", "sysinfo", "systemd-analyze", "systemd-ask-password", "systemd-cat", "systemd-cgls", "systemd-cgtop", "systemd-escape", "systemd-inhibit", "systemd-notify", "systemd-run", "systemd-tmpfiles", "tc", "terraform", "test", "tic", "timedatectl", "toe", "top", "trap", "tree", "true", "tset", "type", "umask", "unalias", "uname", "uptime", "users", "vagrant", "version", "vi", "vipw", "vmstat", "w", "wait", "watch", "wdctl", "whiptail", "which", "whoami", "xargs", "yes", "git-lfs", "gh", "pip", "pip3", "npm", "cargo", "go", "rustup", "nvm", "pyenv", "sdkman", "sdk", "cowsay", "figlet", "toilet", "sl", "cmatrix", "asciiquarium", "lolcat", "ponysay", "boxes", "espeak", "systemd-nspawn", "cgcreate", "cgexec", "cgdelete", "lxc", "lxc-ls", "lxc-start", "lxc-stop", "lxc-create", "lxc-destroy", "lxc-info", "firejail", "bwrap", NULL
+        ".", "adduser", "alias", "ansible", "ansible-playbook", "arch", "basename", "blkid", "bridge", "buildah", "busctl", "certutil", "chage", "coredumpctl", "crictl", "ctr", "deluser", "dialog", "dirname", "docker", "du", "exec", "false", "fmt", "getconf", "gpg", "groupadd", "groupdel", "groups", "helm", "history", "hostnamectl", "infocmp", "ip", "ipcmk", "ipcrm", "journalctl", "kubectl", "ln", "localectl", "loginctl", "logname", "lscpu", "machinectl", "mkswap", "mktemp", "more", "nawk", "networkctl", "nft", "nproc", "nslookup", "openssl", "passwd", "ping", "podman", "printenv", "printf", "ps", "pwd", "read", "readlink", "realpath", "resolvectl", "set", "sha1sum", "sha256sum", "shutdown", "source", "ss", "ssh-keygen", "stat", "strace", "stty", "su", "sync", "sysctl", "sysinfo", "systemd-analyze", "systemd-ask-password", "systemd-cat", "systemd-cgls", "systemd-cgtop", "systemd-escape", "systemd-inhibit", "systemd-notify", "systemd-run", "systemd-tmpfiles", "tc", "terraform", "test", "tic", "timedatectl", "toe", "top", "trap", "tree", "true", "tset", "type", "umask", "unalias", "uname", "uptime", "users", "vagrant", "version", "vi", "vipw", "vmstat", "w", "wait", "watch", "wdctl", "whiptail", "which", "whoami", "xargs", "yes", "git-lfs", "gh", "pip", "pip3", "npm", "cargo", "go", "rustup", "nvm", "pyenv", "sdkman", "sdk", "cowsay", "figlet", "toilet", "sl", "cmatrix", "asciiquarium", "lolcat", "ponysay", "boxes", "espeak", "systemd-nspawn", "cgcreate", "cgexec", "cgdelete", "lxc", "lxc-ls", "lxc-start", "lxc-stop", "lxc-create", "lxc-destroy", "lxc-info", "firejail", "bwrap", "chcpu", "pmap", "mpstat", "pidstat", "cifsiostat", "tapestat", NULL
     };
 
     /* External commands we might have */
@@ -15419,6 +15428,33 @@ watch_sleep:
     } else if (strcmp_simple(argv[0], "utmpdump") == 0) {
         cmd_utmpdump(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "logname") == 0) {
+        cmd_logname(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "nproc") == 0) {
+        cmd_nproc(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "chcpu") == 0) {
+        cmd_chcpu(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "ipcs") == 0) {
+        cmd_ipcs(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "pmap") == 0) {
+        cmd_pmap(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "mpstat") == 0) {
+        cmd_mpstat(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "pidstat") == 0) {
+        cmd_pidstat(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "cifsiostat") == 0) {
+        cmd_cifsiostat(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "tapestat") == 0) {
+        cmd_tapestat(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -15897,6 +15933,15 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "pstree") == 0 ||
             strcmp_simple(cmd, "lslogins") == 0 ||
             strcmp_simple(cmd, "utmpdump") == 0 ||
+            strcmp_simple(cmd, "logname") == 0 ||
+            strcmp_simple(cmd, "nproc") == 0 ||
+            strcmp_simple(cmd, "chcpu") == 0 ||
+            strcmp_simple(cmd, "ipcs") == 0 ||
+            strcmp_simple(cmd, "pmap") == 0 ||
+            strcmp_simple(cmd, "mpstat") == 0 ||
+            strcmp_simple(cmd, "pidstat") == 0 ||
+            strcmp_simple(cmd, "cifsiostat") == 0 ||
+            strcmp_simple(cmd, "tapestat") == 0 ||
             0);
 }
 
@@ -21845,6 +21890,15 @@ static void cmd_man(int argc, char *argv[]) {
         {"lxc", "lxc - Linux Containers management tool"},
         {"firejail", "firejail - SUID sandbox program that reduces the risk of security breaches"},
         {"bwrap", "bwrap - container setup utility (bubblewrap)"},
+        {"logname", "logname - print current login name"},
+        {"nproc", "nproc - print the number of processing units available"},
+        {"chcpu", "chcpu - configure CPUs (enable/disable/rescan)"},
+        {"ipcs", "ipcs - show information on IPC facilities (shared memory, semaphores, message queues)"},
+        {"pmap", "pmap - report memory map of a process"},
+        {"mpstat", "mpstat - report per-CPU statistics"},
+        {"pidstat", "pidstat - report statistics for Linux tasks"},
+        {"cifsiostat", "cifsiostat - report CIFS I/O statistics"},
+        {"tapestat", "tapestat - report tape device statistics"},
     };
     int n_entries = (int)(sizeof(man_entries) / sizeof(man_entries[0]));
 
@@ -24241,6 +24295,15 @@ static void cmd_whatis(int argc, char *argv[]) {
         {"lxc-info",  "lxc-info (1)        - query information about a Linux Container"},
         {"firejail",  "firejail (1)        - SUID sandbox program"},
         {"bwrap",     "bwrap (1)           - container setup utility (bubblewrap)"},
+        {"logname",   "logname (1)         - print current login name"},
+        {"nproc",     "nproc (1)           - print the number of processing units available"},
+        {"chcpu",     "chcpu (8)           - configure CPUs"},
+        {"ipcs",      "ipcs (1)            - show information on IPC facilities"},
+        {"pmap",      "pmap (1)            - report memory map of a process"},
+        {"mpstat",    "mpstat (1)          - report per-CPU statistics"},
+        {"pidstat",   "pidstat (1)         - report statistics for Linux tasks"},
+        {"cifsiostat","cifsiostat (1)      - report CIFS I/O statistics"},
+        {"tapestat",  "tapestat (1)        - report tape device statistics"},
         {(void*)0, (void*)0}
     };
 
@@ -43181,6 +43244,490 @@ static void cmd_utmpdump(int argc, char *argv[]) {
         write_str(1, "]\n");
     }
     sys_close(fd);
+}
+
+/* logname - print login name */
+__attribute__((used)) static void cmd_logname(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    /* Try LOGNAME env var, then USER, fallback to "root" */
+    const char *name = NULL;
+    for (int i = 0; i < MAX_VARS; i++) {
+        if (shell_vars[i].used) {
+            if (strcmp_simple(shell_vars[i].name, "LOGNAME") == 0) {
+                name = shell_vars[i].value;
+                break;
+            }
+        }
+    }
+    if (!name) {
+        for (int i = 0; i < MAX_VARS; i++) {
+            if (shell_vars[i].used && strcmp_simple(shell_vars[i].name, "USER") == 0) {
+                name = shell_vars[i].value;
+                break;
+            }
+        }
+    }
+    if (!name) name = "root";
+    write_str(1, name);
+    write_str(1, "\n");
+}
+
+/* nproc - print number of processing units available */
+__attribute__((used)) static void cmd_nproc(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    int all = 0;
+    if (argc > 1 && strcmp_simple(argv[1], "--all") == 0) all = 1;
+    (void)all;
+    int fd = sys_open("/proc/cpuinfo", O_RDONLY, 0);
+    if (fd < 0) {
+        write_str(1, "1\n");
+        return;
+    }
+    char buf[4096];
+    ssize_t n = sys_read(fd, buf, sizeof(buf) - 1);
+    sys_close(fd);
+    if (n <= 0) { write_str(1, "1\n"); return; }
+    buf[n] = '\0';
+    int cpu_count = 0;
+    char *p = buf;
+    while (*p) {
+        /* Look for "processor" at start of line */
+        if (p[0] == 'p' && p[1] == 'r' && p[2] == 'o' && p[3] == 'c' &&
+            p[4] == 'e' && p[5] == 's' && p[6] == 's' && p[7] == 'o' && p[8] == 'r') {
+            cpu_count++;
+        }
+        while (*p && *p != '\n') p++;
+        if (*p) p++;
+    }
+    if (cpu_count == 0) cpu_count = 1;
+    char nb[16];
+    int_to_str(cpu_count, nb, 16);
+    write_str(1, nb);
+    write_str(1, "\n");
+}
+
+/* chcpu - configure CPUs (simulated) */
+__attribute__((used)) static void cmd_chcpu(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "Usage: chcpu [-e cpu-list] [-d cpu-list] [-r] [-h]\n");
+        write_str(1, "  -e  enable CPUs\n");
+        write_str(1, "  -d  disable CPUs\n");
+        write_str(1, "  -r  rescan CPUs\n");
+        write_str(1, "  -h  display help\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "-h") == 0 || strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "Usage: chcpu [-e cpu-list] [-d cpu-list] [-r] [-h]\n");
+        write_str(1, "Configure CPUs in a multi-processor system.\n");
+        write_str(1, "  -e cpu-list   enable CPUs\n");
+        write_str(1, "  -d cpu-list   disable CPUs\n");
+        write_str(1, "  -r            rescan CPUs\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "-r") == 0 || strcmp_simple(argv[1], "--rescan") == 0) {
+        write_str(1, "CPU rescan completed\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "-e") == 0 || strcmp_simple(argv[1], "--enable") == 0) {
+        if (argc < 3) { write_str(2, "chcpu: missing CPU list\n"); return; }
+        write_str(1, "CPU ");
+        write_str(1, argv[2]);
+        write_str(1, " enabled\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "-d") == 0 || strcmp_simple(argv[1], "--disable") == 0) {
+        if (argc < 3) { write_str(2, "chcpu: missing CPU list\n"); return; }
+        write_str(1, "CPU ");
+        write_str(1, argv[2]);
+        write_str(1, " disabled\n");
+        return;
+    }
+    write_str(2, "chcpu: invalid option\n");
+}
+
+/* ipcs - show IPC facilities status */
+__attribute__((used)) static void cmd_ipcs(int argc, char *argv[]) {
+    int show_shm = 1, show_sem = 1, show_msg = 1;
+    if (argc > 1) {
+        if (strcmp_simple(argv[1], "-m") == 0) { show_shm = 1; show_sem = 0; show_msg = 0; }
+        else if (strcmp_simple(argv[1], "-s") == 0) { show_shm = 0; show_sem = 1; show_msg = 0; }
+        else if (strcmp_simple(argv[1], "-q") == 0) { show_shm = 0; show_sem = 0; show_msg = 1; }
+        else if (strcmp_simple(argv[1], "-a") == 0) { show_shm = 1; show_sem = 1; show_msg = 1; }
+        else if (strcmp_simple(argv[1], "-h") == 0 || strcmp_simple(argv[1], "--help") == 0) {
+            write_str(1, "Usage: ipcs [-a] [-m] [-q] [-s]\n");
+            write_str(1, "  -a  show all IPC facilities\n");
+            write_str(1, "  -m  show shared memory segments\n");
+            write_str(1, "  -q  show message queues\n");
+            write_str(1, "  -s  show semaphore arrays\n");
+            return;
+        }
+    }
+    if (show_shm) {
+        write_str(1, "\n------ Shared Memory Segments --------\n");
+        write_str(1, "key        shmid      owner      perms      bytes      nattch     status\n");
+    }
+    if (show_sem) {
+        write_str(1, "\n------ Semaphore Arrays --------\n");
+        write_str(1, "key        semid      owner      perms      nsems\n");
+    }
+    if (show_msg) {
+        write_str(1, "\n------ Message Queues --------\n");
+        write_str(1, "key        msqid      owner      perms      used-bytes   messages\n");
+    }
+    write_str(1, "\n");
+}
+
+/* pmap - report memory map of a process */
+__attribute__((used)) static void cmd_pmap(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "Usage: pmap [-x] <pid>\n");
+        return;
+    }
+    int extended = 0;
+    const char *pid_str = argv[1];
+    if (strcmp_simple(argv[1], "-x") == 0 || strcmp_simple(argv[1], "-X") == 0) {
+        extended = 1;
+        if (argc < 3) { write_str(2, "pmap: missing pid\n"); return; }
+        pid_str = argv[2];
+    }
+    /* Build /proc/<pid>/maps path */
+    char path[64] = "/proc/";
+    int pi = 6;
+    const char *ps = pid_str;
+    while (*ps && pi < 50) path[pi++] = *ps++;
+    path[pi++] = '/'; path[pi++] = 'm'; path[pi++] = 'a'; path[pi++] = 'p'; path[pi++] = 's'; path[pi] = '\0';
+    int fd = sys_open(path, O_RDONLY, 0);
+    if (fd < 0) {
+        write_str(2, "pmap: cannot open ");
+        write_str(2, path);
+        write_str(2, "\n");
+        return;
+    }
+    write_str(1, pid_str);
+    write_str(1, ":   ");
+    /* Try to read /proc/<pid>/comm for process name */
+    {
+        char cpath[64] = "/proc/";
+        int ci = 6;
+        ps = pid_str;
+        while (*ps && ci < 50) cpath[ci++] = *ps++;
+        cpath[ci++] = '/'; cpath[ci++] = 'c'; cpath[ci++] = 'o'; cpath[ci++] = 'm'; cpath[ci++] = 'm'; cpath[ci] = '\0';
+        int cfd = sys_open(cpath, O_RDONLY, 0);
+        if (cfd >= 0) {
+            char cbuf[64];
+            ssize_t cn = sys_read(cfd, cbuf, sizeof(cbuf) - 1);
+            sys_close(cfd);
+            if (cn > 0) {
+                if (cbuf[cn - 1] == '\n') cn--;
+                cbuf[cn] = '\0';
+                write_str(1, cbuf);
+            }
+        } else {
+            write_str(1, "[unknown]");
+        }
+    }
+    write_str(1, "\n");
+    if (extended) {
+        write_str(1, "Address           Kbytes     RSS   Dirty Mode  Mapping\n");
+    } else {
+        write_str(1, "Address           Kbytes Mode  Mapping\n");
+    }
+    char buf[4096];
+    long total_kb = 0;
+    ssize_t n;
+    while ((n = sys_read(fd, buf, sizeof(buf) - 1)) > 0) {
+        buf[n] = '\0';
+        char *p = buf;
+        while (*p) {
+            /* Parse a line: start-end perms offset dev inode [pathname] */
+            char *line_start = p;
+            while (*p && *p != '\n') p++;
+            char saved = *p;
+            if (*p) { *p = '\0'; p++; }
+            /* Extract start address */
+            char *dash = line_start;
+            while (*dash && *dash != '-') dash++;
+            if (!*dash) { if (saved) continue; else break; }
+            /* start addr */
+            char addr_start[20] = {0};
+            int ai = 0;
+            char *s = line_start;
+            while (s < dash && ai < 18) addr_start[ai++] = *s++;
+            /* end addr */
+            char *eaddr = dash + 1;
+            char *space = eaddr;
+            while (*space && *space != ' ') space++;
+            /* Parse start/end as hex for size */
+            unsigned long va_start = 0, va_end = 0;
+            for (s = line_start; s < dash; s++) {
+                va_start <<= 4;
+                if (*s >= '0' && *s <= '9') va_start += (unsigned long)(*s - '0');
+                else if (*s >= 'a' && *s <= 'f') va_start += (unsigned long)(*s - 'a' + 10);
+            }
+            for (s = dash + 1; s < space; s++) {
+                va_end <<= 4;
+                if (*s >= '0' && *s <= '9') va_end += (unsigned long)(*s - '0');
+                else if (*s >= 'a' && *s <= 'f') va_end += (unsigned long)(*s - 'a' + 10);
+            }
+            long kb = (long)((va_end - va_start) / 1024);
+            total_kb += kb;
+            /* perms */
+            char *perms = space;
+            while (*perms == ' ') perms++;
+            char perm_str[6] = {0};
+            for (int i = 0; i < 4 && perms[i] && perms[i] != ' '; i++) perm_str[i] = perms[i];
+            /* Find pathname (last field) */
+            char *mapping = "";
+            char *last = line_start + (int)strlen_simple(line_start);
+            /* Scan backwards to find the last field */
+            while (last > line_start && *(last-1) != ' ' && *(last-1) != '\t') last--;
+            if (last > line_start) mapping = last;
+            /* Print formatted output */
+            /* Pad address to 16 chars */
+            int alen = (int)strlen_simple(addr_start);
+            for (int pad = alen; pad < 16; pad++) write_char(1, '0');
+            write_str(1, addr_start);
+            write_str(1, " ");
+            char kb_str[16];
+            int_to_str(kb, kb_str, 16);
+            int klen = (int)strlen_simple(kb_str);
+            for (int pad = klen; pad < 8; pad++) write_char(1, ' ');
+            write_str(1, kb_str);
+            if (extended) {
+                /* RSS and Dirty columns (estimated) */
+                write_str(1, "       0       0 ");
+            } else {
+                write_str(1, " ");
+            }
+            write_str(1, perm_str);
+            write_str(1, "  ");
+            write_str(1, mapping);
+            write_str(1, "\n");
+        }
+    }
+    sys_close(fd);
+    /* Total line */
+    char total_str[16];
+    int_to_str(total_kb, total_str, 16);
+    write_str(1, " total");
+    int tlen = (int)strlen_simple(total_str);
+    for (int pad = tlen; pad < 25; pad++) write_char(1, ' ');
+    write_str(1, total_str);
+    write_str(1, "K\n");
+}
+
+/* mpstat - report per-CPU statistics */
+__attribute__((used)) static void cmd_mpstat(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    int fd = sys_open("/proc/stat", O_RDONLY, 0);
+    if (fd < 0) {
+        write_str(2, "mpstat: cannot read /proc/stat\n");
+        return;
+    }
+    char buf[4096];
+    ssize_t n = sys_read(fd, buf, sizeof(buf) - 1);
+    sys_close(fd);
+    if (n <= 0) return;
+    buf[n] = '\0';
+    write_str(1, "Linux (futura)\n\n");
+    write_str(1, "CPU    %%usr   %%nice    %%sys %%iowait    %%irq  %%soft  %%steal  %%guest  %%gnice   %%idle\n");
+    char *p = buf;
+    while (*p) {
+        char *line = p;
+        while (*p && *p != '\n') p++;
+        if (*p == '\n') { *p = '\0'; p++; }
+        /* Only process lines starting with "cpu" */
+        if (line[0] != 'c' || line[1] != 'p' || line[2] != 'u') continue;
+        /* Parse CPU name */
+        char cpu_name[8] = {0};
+        int ci = 0;
+        char *q = line;
+        while (*q && *q != ' ' && ci < 7) cpu_name[ci++] = *q++;
+        while (*q == ' ') q++;
+        /* Parse values: user nice system idle iowait irq softirq steal guest guest_nice */
+        long vals[10] = {0};
+        for (int i = 0; i < 10 && *q; i++) {
+            while (*q == ' ') q++;
+            long v = 0;
+            while (*q >= '0' && *q <= '9') { v = v * 10 + (*q - '0'); q++; }
+            vals[i] = v;
+        }
+        long total = 0;
+        for (int i = 0; i < 10; i++) total += vals[i];
+        if (total == 0) total = 1;
+        /* Print: CPU %usr %nice %sys %iowait %irq %soft %steal %guest %gnice %idle */
+        /* Pad CPU name to 6 chars */
+        int nlen = (int)strlen_simple(cpu_name);
+        if (nlen == 3) write_str(1, "all");
+        else write_str(1, cpu_name);
+        for (int pad = nlen; pad < 6; pad++) write_char(1, ' ');
+        char nb[16];
+        /* user */
+        int_to_str((int)(vals[0] * 100 / total), nb, 16);
+        int vl = (int)strlen_simple(nb); for (int pad = vl; pad < 6; pad++) write_char(1, ' ');
+        write_str(1, nb);
+        /* nice */
+        int_to_str((int)(vals[1] * 100 / total), nb, 16);
+        vl = (int)strlen_simple(nb); for (int pad = vl; pad < 7; pad++) write_char(1, ' ');
+        write_str(1, nb);
+        /* system */
+        int_to_str((int)(vals[2] * 100 / total), nb, 16);
+        vl = (int)strlen_simple(nb); for (int pad = vl; pad < 7; pad++) write_char(1, ' ');
+        write_str(1, nb);
+        /* iowait */
+        int_to_str((int)(vals[4] * 100 / total), nb, 16);
+        vl = (int)strlen_simple(nb); for (int pad = vl; pad < 8; pad++) write_char(1, ' ');
+        write_str(1, nb);
+        /* irq */
+        int_to_str((int)(vals[5] * 100 / total), nb, 16);
+        vl = (int)strlen_simple(nb); for (int pad = vl; pad < 7; pad++) write_char(1, ' ');
+        write_str(1, nb);
+        /* softirq */
+        int_to_str((int)(vals[6] * 100 / total), nb, 16);
+        vl = (int)strlen_simple(nb); for (int pad = vl; pad < 7; pad++) write_char(1, ' ');
+        write_str(1, nb);
+        /* steal */
+        int_to_str((int)(vals[7] * 100 / total), nb, 16);
+        vl = (int)strlen_simple(nb); for (int pad = vl; pad < 8; pad++) write_char(1, ' ');
+        write_str(1, nb);
+        /* guest */
+        int_to_str((int)(vals[8] * 100 / total), nb, 16);
+        vl = (int)strlen_simple(nb); for (int pad = vl; pad < 8; pad++) write_char(1, ' ');
+        write_str(1, nb);
+        /* guest_nice */
+        int_to_str((int)(vals[9] * 100 / total), nb, 16);
+        vl = (int)strlen_simple(nb); for (int pad = vl; pad < 8; pad++) write_char(1, ' ');
+        write_str(1, nb);
+        /* idle */
+        int_to_str((int)(vals[3] * 100 / total), nb, 16);
+        vl = (int)strlen_simple(nb); for (int pad = vl; pad < 7; pad++) write_char(1, ' ');
+        write_str(1, nb);
+        write_str(1, "\n");
+    }
+}
+
+/* pidstat - report statistics for Linux tasks */
+__attribute__((used)) static void cmd_pidstat(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    write_str(1, "Linux (futura)\n\n");
+    write_str(1, "   UID       PID    %%usr %%system  %%guest   %%wait    %%CPU   CPU  Command\n");
+    /* Read /proc/self/stat for current process as a demo */
+    int fd = sys_open("/proc/self/stat", O_RDONLY, 0);
+    if (fd < 0) {
+        write_str(2, "pidstat: cannot read /proc/self/stat\n");
+        return;
+    }
+    char buf[512];
+    ssize_t n = sys_read(fd, buf, sizeof(buf) - 1);
+    sys_close(fd);
+    if (n <= 0) return;
+    buf[n] = '\0';
+    /* Parse PID (first field) */
+    char *p = buf;
+    long pid = 0;
+    while (*p >= '0' && *p <= '9') { pid = pid * 10 + (*p - '0'); p++; }
+    /* Skip to after the closing ')' for comm */
+    char *comm_start = NULL;
+    while (*p && *p != '(') p++;
+    if (*p == '(') { p++; comm_start = p; }
+    while (*p && *p != ')') p++;
+    char comm[32] = {0};
+    if (comm_start) {
+        int ci = 0;
+        while (comm_start < p && ci < 31) comm[ci++] = *comm_start++;
+    }
+    /* Skip past ')' and space to get to fields */
+    if (*p == ')') p++;
+    if (*p == ' ') p++;
+    /* Field 3 = state, then skip to fields 14,15 (utime, stime) */
+    /* state(3), ppid(4), pgrp(5), session(6), tty_nr(7), tpgid(8), flags(9), */
+    /* minflt(10), cminflt(11), majflt(12), cmajflt(13), utime(14), stime(15) */
+    int field = 3;
+    long utime = 0, stime = 0;
+    while (*p && field <= 15) {
+        while (*p == ' ') p++;
+        long v = 0;
+        while (*p >= '0' && *p <= '9') { v = v * 10 + (*p - '0'); p++; }
+        if (field == 14) utime = v;
+        if (field == 15) stime = v;
+        field++;
+        while (*p && *p != ' ') p++;
+    }
+    char nb[16];
+    write_str(1, "     0   ");
+    int_to_str(pid, nb, 16);
+    int pl = (int)strlen_simple(nb);
+    for (int pad = pl; pad < 6; pad++) write_char(1, ' ');
+    write_str(1, nb);
+    write_str(1, "   ");
+    int_to_str(utime, nb, 16);
+    pl = (int)strlen_simple(nb); for (int pad = pl; pad < 5; pad++) write_char(1, ' ');
+    write_str(1, nb);
+    write_str(1, "   ");
+    int_to_str(stime, nb, 16);
+    pl = (int)strlen_simple(nb); for (int pad = pl; pad < 5; pad++) write_char(1, ' ');
+    write_str(1, nb);
+    write_str(1, "       0       0   ");
+    int_to_str(utime + stime, nb, 16);
+    pl = (int)strlen_simple(nb); for (int pad = pl; pad < 5; pad++) write_char(1, ' ');
+    write_str(1, nb);
+    write_str(1, "     0  ");
+    write_str(1, comm);
+    write_str(1, "\n");
+}
+
+/* cifsiostat - report CIFS I/O statistics */
+__attribute__((used)) static void cmd_cifsiostat(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    write_str(1, "Linux (futura)\n\n");
+    write_str(1, "Filesystem          rB/s         wB/s    rops/s    wops/s         fo/s         fc/s         fd/s\n");
+    /* Try to read /proc/fs/cifs/Stats */
+    int fd = sys_open("/proc/fs/cifs/Stats", O_RDONLY, 0);
+    if (fd >= 0) {
+        char buf[2048];
+        ssize_t n = sys_read(fd, buf, sizeof(buf) - 1);
+        sys_close(fd);
+        if (n > 0) {
+            buf[n] = '\0';
+            write_str(1, buf);
+        }
+    } else {
+        write_str(1, "(no CIFS mounts)\n");
+    }
+}
+
+/* tapestat - report tape device statistics */
+__attribute__((used)) static void cmd_tapestat(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    write_str(1, "Linux (futura)\n\n");
+    write_str(1, "Tape          r/s     w/s   ");
+    write_str(1, "kB_read/s   kB_wrtn/s   %%Rd    %%Wr   %%Oa    Rs/s    Ot/s\n");
+    /* Try to read /proc/scsi/st */
+    int fd = sys_open("/proc/scsi/scsi", O_RDONLY, 0);
+    if (fd >= 0) {
+        char buf[2048];
+        ssize_t n = sys_read(fd, buf, sizeof(buf) - 1);
+        sys_close(fd);
+        if (n > 0) {
+            buf[n] = '\0';
+            /* Look for tape devices (Type: Sequential) */
+            int found = 0;
+            char *p = buf;
+            while (*p) {
+                if (p[0] == 'S' && p[1] == 'e' && p[2] == 'q') {
+                    found = 1;
+                    break;
+                }
+                while (*p && *p != '\n') p++;
+                if (*p) p++;
+            }
+            if (!found) {
+                write_str(1, "(no tape devices found)\n");
+            }
+        }
+    } else {
+        write_str(1, "(no tape devices found)\n");
+    }
 }
 
 #pragma GCC diagnostic pop

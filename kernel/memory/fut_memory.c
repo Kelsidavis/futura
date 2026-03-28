@@ -8,6 +8,7 @@
  */
 
 #include "../../include/kernel/fut_memory.h"
+#include "../../include/kernel/oom_kill.h"
 #include <platform/platform.h>
 #include <kernel/errno.h>
 #include <kernel/kprintf.h>
@@ -83,7 +84,7 @@ void fut_pmm_init(uint64_t mem_size_bytes, uintptr_t phys_base) {
     pmm_free = (pmm_total > bitmap_pages) ? (pmm_total - bitmap_pages) : 0;
 }
 
-void *fut_pmm_alloc_page(void) {
+static void *pmm_alloc_page_internal(void) {
     // Linear scan for first free page
     for (uint64_t i = pmm_reserved_pages; i < pmm_total; ++i) {
         if (!BITMAP_TST(i)) {
@@ -108,6 +109,25 @@ void *fut_pmm_alloc_page(void) {
     }
 
     return nullptr;  // Out of memory
+}
+
+void *fut_pmm_alloc_page(void) {
+    void *page = pmm_alloc_page_internal();
+    if (page)
+        return page;
+
+    /* Allocation failed — invoke the OOM killer if memory is critically low.
+     * oom_kill_process() checks the free-page threshold internally and sends
+     * SIGKILL to the highest-scoring process.  If it kills a victim, retry
+     * the allocation once (the victim's pages will be reclaimed asynchronously
+     * when it exits). */
+    if (oom_kill_process()) {
+        page = pmm_alloc_page_internal();
+        if (page)
+            return page;
+    }
+
+    return nullptr;  // Truly out of memory — no reclaimable processes
 }
 
 void fut_pmm_free_page(void *addr) {

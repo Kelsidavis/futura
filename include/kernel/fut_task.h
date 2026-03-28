@@ -280,6 +280,9 @@ struct fut_task {
     struct net_namespace *net_ns;      // Network namespace
     struct user_namespace *user_ns;    // User namespace (UID/GID mapping)
 
+    /* Cgroup v2 membership (index into global cgroup table; 0 = root "/") */
+    int cgroup_idx;
+
     fut_task_t *next;                  // Next task in system list
 };
 

@@ -46,6 +46,7 @@
 #include <kernel/errno.h>
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
+#include <kernel/oom_kill.h>
 #include <sys/mman.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -4377,28 +4378,12 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             break;
         }
         case PROC_OOM_SCORE: {
-            /* OOM score: (task RSS / total RAM) * 1000 + oom_score_adj,
-             * clamped to [0, 1000].  oom_score_adj == -1000 → OOM-exempt (0). */
+            /* OOM score: uses shared oom_score_for_task() which accounts for
+             * RSS, oom_score_adj, and nice value.  Clamped to [0, 1000].
+             * oom_score_adj == -1000 means OOM-exempt (score = 0). */
             struct pbuf b = { tmp, 0, GEN_BUF };
             fut_task_t *otask = fut_task_by_pid(n->pid);
-            long score = 0;
-            if (otask) {
-                int adj = otask->oom_score_adj;
-                if (adj != -1000) {
-                    /* Compute RSS in pages from VMAs */
-                    uint64_t rss_pages = 0;
-                    if (otask->mm) {
-                        struct fut_vma *v = otask->mm->vma_list;
-                        while (v) { rss_pages += (v->end - v->start) / 4096; v = v->next; }
-                    }
-                    uint64_t total_pages = fut_pmm_total_pages();
-                    if (total_pages > 0)
-                        score = (long)((rss_pages * 1000) / total_pages);
-                    score += adj;
-                    if (score < 0) score = 0;
-                    if (score > 1000) score = 1000;
-                }
-            }
+            long score = otask ? oom_score_for_task(otask) : 0;
             pb_u64(&b, (uint64_t)score);
             pb_char(&b, '\n');
             total = b.pos;
@@ -4420,9 +4405,19 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             break;
         }
         case PROC_CGROUP: {
-            /* Minimal cgroup v1 format: "hierarchy:subsystems:path" */
+            /* cgroup v2 unified hierarchy: "0::<path>\n" */
+            extern size_t cgroup_get_path(int idx, char *buf, size_t cap);
             struct pbuf b = { tmp, 0, GEN_BUF };
-            pb_str(&b, "0::/\n");  /* cgroup v2 unified hierarchy, root */
+            fut_task_t *cgtask = fut_task_by_pid(n->pid);
+            char cgpath[128];
+            int cg_idx = cgtask ? cgtask->cgroup_idx : 0;
+            size_t plen = cgroup_get_path(cg_idx, cgpath, sizeof(cgpath));
+            pb_str(&b, "0::");
+            if (plen > 0)
+                pb_str(&b, cgpath);
+            else
+                pb_char(&b, '/');
+            pb_char(&b, '\n');
             total = b.pos;
             break;
         }

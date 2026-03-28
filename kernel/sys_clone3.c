@@ -198,6 +198,11 @@ long sys_clone3(const struct fut_clone_args *uargs, size_t size) {
                     if (*cg_path == '/') cg_path++;
                 }
                 memcg_add_pid(cg_path, (int)child_pid);
+                /* Update child's cgroup_idx so /proc/<pid>/cgroup reflects the move */
+                extern int cgroup_find_idx(const char *);
+                extern int cgroup_move_pid(int, uint64_t);
+                int cg_i = cgroup_find_idx(cg_path);
+                cgroup_move_pid(cg_i, (uint64_t)child_pid);
                 fut_printf("[CLONE3] CLONE_INTO_CGROUP: child %ld → cgroup '%s'\n",
                            child_pid, cg_path);
             }

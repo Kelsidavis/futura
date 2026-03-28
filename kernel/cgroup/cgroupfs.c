@@ -135,6 +135,76 @@ static void cgfs_ensure_init(void) {
     g_cgfs_initialized = true;
 }
 
+/* ── Public helpers for /proc/<pid>/cgroup ── */
+
+/*
+ * cgroup_get_path — Build the full cgroup v2 hierarchy path for a cgroup index.
+ *
+ * @idx   Cgroup index (0 = root)
+ * @buf   Output buffer
+ * @cap   Buffer capacity
+ * @return Number of bytes written (excluding NUL), or 0 on error.
+ *
+ * Root cgroup produces "/", non-root produces "/<name>" (e.g., "/user.slice/session-1.scope").
+ */
+size_t cgroup_get_path(int idx, char *buf, size_t cap) {
+    cgfs_ensure_init();
+
+    if (cap == 0) return 0;
+
+    /* Validate index */
+    if (idx < 0 || idx >= MAX_CGROUPS || !g_cgroups[idx].active) {
+        buf[0] = '/'; buf[1] = '\0';
+        return 1;
+    }
+
+    /* Root cgroup: name is empty → path is "/" */
+    if (g_cgroups[idx].name[0] == '\0') {
+        buf[0] = '/'; buf[1] = '\0';
+        return 1;
+    }
+
+    /* Non-root: path is "/" + name (name is e.g. "docker/abc") */
+    size_t pos = 0;
+    if (pos < cap - 1) buf[pos++] = '/';
+    const char *n = g_cgroups[idx].name;
+    while (*n && pos < cap - 1) buf[pos++] = *n++;
+    buf[pos] = '\0';
+    return pos;
+}
+
+/*
+ * cgroup_move_pid — Move a task into a specific cgroup by index.
+ *
+ * Called when a PID is written to cgroup.procs.
+ * Returns 0 on success, -ESRCH if PID not found.
+ */
+int cgroup_move_pid(int cg_idx, uint64_t pid) {
+    cgfs_ensure_init();
+    if (cg_idx < 0 || cg_idx >= MAX_CGROUPS || !g_cgroups[cg_idx].active)
+        return -EINVAL;
+    fut_task_t *t = fut_task_by_pid(pid);
+    if (!t) return -ESRCH;
+    t->cgroup_idx = cg_idx;
+    return 0;
+}
+
+/*
+ * cgroup_find_idx — Find the cgroup index for a given name.
+ *
+ * @name  Cgroup name (e.g., "docker/abc", or "" for root)
+ * @return Cgroup index, or 0 (root) if not found.
+ */
+int cgroup_find_idx(const char *name) {
+    cgfs_ensure_init();
+    if (!name || name[0] == '\0') return 0;
+    for (int i = 0; i < MAX_CGROUPS; i++) {
+        if (!g_cgroups[i].active) continue;
+        if (strcmp(g_cgroups[i].name, name) == 0) return i;
+    }
+    return 0;
+}
+
 /* ── Vnode allocation ── */
 
 static struct fut_vnode *cgfs_alloc_vnode(struct fut_mount *mnt, int type,
@@ -473,11 +543,14 @@ ssize_t cgfs_file_read(struct fut_vnode *vnode, void *buf, size_t size, uint64_t
         break;
     }
     case CGFS_PROCS: {
-        /* List PIDs — enumerate by scanning PID range */
+        /* List PIDs belonging to this specific cgroup */
+        int cg_idx = nd->cgroup_idx;
         int pos = 0;
         for (uint64_t pid = 1; pid <= 64 && pos < 480; pid++) {
             fut_task_t *t = fut_task_by_pid(pid);
             if (!t) continue;
+            /* Only show tasks whose cgroup_idx matches this cgroup */
+            if (t->cgroup_idx != cg_idx) continue;
             char nbuf[16]; int np = 0;
             uint64_t p = pid;
             if (p == 0) { nbuf[np++] = '0'; }
@@ -761,8 +834,16 @@ ssize_t cgfs_file_write(struct fut_vnode *vnode, const void *buf, size_t size, u
         }
         return (ssize_t)size;
     }
+    case CGFS_PROCS: {
+        /* Writing a PID to cgroup.procs moves that task into this cgroup */
+        uint64_t pid = 0;
+        for (size_t i = 0; i < size && cbuf[i] >= '0' && cbuf[i] <= '9'; i++)
+            pid = pid * 10 + (uint64_t)(cbuf[i] - '0');
+        if (pid > 0)
+            cgroup_move_pid(nd->cgroup_idx, pid);
+        return (ssize_t)size;
+    }
     case CGFS_SUBTREE_CONTROL:
-    case CGFS_PROCS:
     case CGFS_MEM_SWAP_MAX:
     case CGFS_CPU_MAX:
     case CGFS_CPU_WEIGHT:

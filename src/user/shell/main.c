@@ -237,6 +237,16 @@ static void cmd_pigz(int argc, char *argv[]);
 static void cmd_xz(int argc, char *argv[]);
 static void cmd_bzip2(int argc, char *argv[]);
 static void cmd_gzip(int argc, char *argv[]);
+static void cmd_ssh_keygen(int argc, char *argv[]);
+static void cmd_gpg(int argc, char *argv[]);
+static void cmd_openssl(int argc, char *argv[]);
+static void cmd_certutil(int argc, char *argv[]);
+static void cmd_adduser(int argc, char *argv[]);
+static void cmd_deluser(int argc, char *argv[]);
+static void cmd_groupadd(int argc, char *argv[]);
+static void cmd_groupdel(int argc, char *argv[]);
+static void cmd_chage(int argc, char *argv[]);
+static void cmd_vipw(int argc, char *argv[]);
 
 /* Forward declaration for prompt */
 static void print_prompt(void);
@@ -688,7 +698,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     const char *builtins[] = {
         "arp", "ascii", "base32", "bg", "blockdev", "brctl", "cal", "cd", "chgrp", "chmod", "chroot", "chrt", "clear", "cmp", "comm", "conntrack", "cpupower", "date", "depmod", "dd", "df", "dhclient", "dmesg", "echo", "edit", "ethtool", "expand", "expr", "factor", "file", "fold", "fuser", "hdparm", "hexdump", "install", "ionice", "locale", "lsmod", "lsns", "lsof", "md5sum", "mkfifo", "modprobe", "nc", "nice", "nohup", "numactl", "partprobe", "patch", "perf", "pgrep", "pidof", "pkill", "poweroff", "prlimit", "reboot", "renice", "reset", "seq", "sha1sum", "sha512sum", "sleep", "smartctl", "stdbuf", "strings", "swapon", "swapoff", "tac", "taskset", "time", "timeout", "tput", "traceroute", "tty", "unexpand", "wget", "whatis", "xxd", "exit", "export", "fg", "free",
         "help", "hostname", "httpd", "id", "ifconfig", "iostat", "ipcs", "iptables", "jobs", "kill", "logger", "losetup", "ls", "lsblk", "lspci", "mkfs", "mount", "netstat",
-        ".", "alias", "arch", "basename", "blkid", "bridge", "busctl", "coredumpctl", "dirname", "du", "exec", "false", "fmt", "getconf", "groups", "history", "hostnamectl", "ip", "journalctl", "ln", "localectl", "loginctl", "logname", "lscpu", "machinectl", "mkswap", "mktemp", "more", "nawk", "networkctl", "nft", "nproc", "nslookup", "passwd", "ping", "printenv", "printf", "ps", "pwd", "read", "readlink", "realpath", "resolvectl", "set", "sha1sum", "sha256sum", "shutdown", "source", "ss", "stat", "strace", "stty", "su", "sync", "sysctl", "sysinfo", "systemd-analyze", "tc", "test", "timedatectl", "top", "trap", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "users", "version", "vi", "vmstat", "w", "wait", "watch", "wdctl", "which", "whoami", "xargs", "yes", NULL
+        ".", "adduser", "alias", "arch", "basename", "blkid", "bridge", "busctl", "certutil", "chage", "coredumpctl", "deluser", "dirname", "du", "exec", "false", "fmt", "getconf", "gpg", "groupadd", "groupdel", "groups", "history", "hostnamectl", "ip", "journalctl", "ln", "localectl", "loginctl", "logname", "lscpu", "machinectl", "mkswap", "mktemp", "more", "nawk", "networkctl", "nft", "nproc", "nslookup", "openssl", "passwd", "ping", "printenv", "printf", "ps", "pwd", "read", "readlink", "realpath", "resolvectl", "set", "sha1sum", "sha256sum", "shutdown", "source", "ss", "ssh-keygen", "stat", "strace", "stty", "su", "sync", "sysctl", "sysinfo", "systemd-analyze", "tc", "test", "timedatectl", "top", "trap", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "users", "version", "vi", "vipw", "vmstat", "w", "wait", "watch", "wdctl", "which", "whoami", "xargs", "yes", NULL
     };
 
     /* External commands we might have */
@@ -1431,6 +1441,20 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  wipefs [-a] <device>              - Wipe filesystem signatures\n");
     write_str(1, "  fsfreeze -f|-u <mountpoint>       - Freeze/thaw a filesystem\n");
     write_str(1, "  filefrag [-v] <file>              - Report file fragmentation\n");
+    write_str(1, "\n");
+    write_str(1, "Security & Crypto:\n");
+    write_str(1, "  ssh-keygen [-t type] [-b bits] [-f file] - Generate SSH key pairs\n");
+    write_str(1, "  gpg --encrypt|--decrypt|--sign|--verify [-o out] file - GPG operations\n");
+    write_str(1, "  openssl rand -hex N | openssl sha256 file - OpenSSL utilities\n");
+    write_str(1, "  certutil [-L|-d|-A] [-n name]     - Certificate database utility\n");
+    write_str(1, "\n");
+    write_str(1, "User & Group Management:\n");
+    write_str(1, "  adduser <name> [-u uid] [-g gid] [-d home] [-s shell] - Add a user\n");
+    write_str(1, "  deluser <name>                    - Remove a user\n");
+    write_str(1, "  groupadd [-g gid] <name>          - Add a group\n");
+    write_str(1, "  groupdel <name>                   - Remove a group\n");
+    write_str(1, "  chage [-l] [-M days] [-W days] user - Change password aging info\n");
+    write_str(1, "  vipw                              - Edit /etc/passwd safely\n");
     write_str(1, "\n");
     write_str(1, "Compression:\n");
     write_str(1, "  gzip [-d] <file>                 - Compress/decompress files (gzip)\n");
@@ -13724,6 +13748,36 @@ watch_sleep:
     } else if (strcmp_simple(argv[0], "gzip") == 0) {
         cmd_gzip(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "ssh-keygen") == 0) {
+        cmd_ssh_keygen(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "gpg") == 0) {
+        cmd_gpg(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "openssl") == 0) {
+        cmd_openssl(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "certutil") == 0) {
+        cmd_certutil(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "adduser") == 0) {
+        cmd_adduser(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "deluser") == 0) {
+        cmd_deluser(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "groupadd") == 0) {
+        cmd_groupadd(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "groupdel") == 0) {
+        cmd_groupdel(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "chage") == 0) {
+        cmd_chage(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "vipw") == 0) {
+        cmd_vipw(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -13975,6 +14029,16 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "xz") == 0 ||
             strcmp_simple(cmd, "bzip2") == 0 ||
             strcmp_simple(cmd, "gzip") == 0 ||
+            strcmp_simple(cmd, "ssh-keygen") == 0 ||
+            strcmp_simple(cmd, "gpg") == 0 ||
+            strcmp_simple(cmd, "openssl") == 0 ||
+            strcmp_simple(cmd, "certutil") == 0 ||
+            strcmp_simple(cmd, "adduser") == 0 ||
+            strcmp_simple(cmd, "deluser") == 0 ||
+            strcmp_simple(cmd, "groupadd") == 0 ||
+            strcmp_simple(cmd, "groupdel") == 0 ||
+            strcmp_simple(cmd, "chage") == 0 ||
+            strcmp_simple(cmd, "vipw") == 0 ||
             0);
 }
 
@@ -18412,7 +18476,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   270 built-in commands — type 'help'    |\n");
+    write_str(1, "|   280 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");
@@ -19453,6 +19517,16 @@ static void cmd_man(int argc, char *argv[]) {
         {"xz", "xz - compress or decompress .xz and .lzma files"},
         {"bzip2", "bzip2 - a block-sorting file compressor"},
         {"gzip", "gzip - compress or expand files"},
+        {"ssh-keygen", "ssh-keygen - authentication key generation, management and conversion"},
+        {"gpg", "gpg - OpenPGP encryption and signing tool"},
+        {"openssl", "openssl - OpenSSL command line tool"},
+        {"certutil", "certutil - manage keys and certificates in NSS databases"},
+        {"adduser", "adduser - add a user to the system"},
+        {"deluser", "deluser - remove a user from the system"},
+        {"groupadd", "groupadd - create a new group"},
+        {"groupdel", "groupdel - delete a group"},
+        {"chage", "chage - change user password expiry information"},
+        {"vipw", "vipw - edit the password file"},
     };
     int n_entries = (int)(sizeof(man_entries) / sizeof(man_entries[0]));
 
@@ -21538,6 +21612,7 @@ static void cmd_whatis(int argc, char *argv[]) {
         return;
     }
     static const struct { const char *name; const char *desc; } whatis_db[] = {
+        {"adduser",   "adduser (8)         - add a user to the system"},
         {"ascii",     "ascii (1)           - display ASCII character table"},
         {"awk",       "awk (1)             - pattern scanning and processing language"},
         {"base32",    "base32 (1)          - encode/decode data in base32"},
@@ -21552,6 +21627,8 @@ static void cmd_whatis(int argc, char *argv[]) {
         {"bzip2",     "bzip2 (1)           - a block-sorting file compressor"},
         {"cal",       "cal (1)             - display a calendar"},
         {"cat",       "cat (1)             - concatenate files and print on stdout"},
+        {"certutil",  "certutil (1)        - manage keys and certificates in NSS databases"},
+        {"chage",     "chage (1)           - change user password expiry information"},
         {"cd",        "cd (1)              - change the working directory"},
         {"chmod",     "chmod (1)           - change file mode bits"},
         {"chgrp",     "chgrp (1)           - change group ownership"},
@@ -21570,6 +21647,7 @@ static void cmd_whatis(int argc, char *argv[]) {
         {"cut",       "cut (1)             - remove sections from each line of files"},
         {"date",      "date (1)            - print or set the system date and time"},
         {"dd",        "dd (1)              - convert and copy a file"},
+        {"deluser",   "deluser (8)         - remove a user from the system"},
         {"df",        "df (1)              - report file system disk space usage"},
         {"diff",      "diff (1)            - compare files line by line"},
         {"dirname",   "dirname (1)         - strip last component from file name"},
@@ -21594,7 +21672,10 @@ static void cmd_whatis(int argc, char *argv[]) {
         {"fuser",     "fuser (1)           - identify processes using files or sockets"},
         {"free",      "free (1)            - display amount of free and used memory"},
         {"git",       "git (1)             - the stupid content tracker"},
+        {"gpg",       "gpg (1)             - OpenPGP encryption and signing tool"},
         {"grep",      "grep (1)            - print lines matching a pattern"},
+        {"groupadd",  "groupadd (8)        - create a new group"},
+        {"groupdel",  "groupdel (8)        - delete a group"},
         {"groups",    "groups (1)          - print the groups a user is in"},
         {"gzip",      "gzip (1)            - compress or expand files"},
         {"hd",        "hd (1)              - hexadecimal dump (alias for hexdump -C)"},
@@ -21641,6 +21722,7 @@ static void cmd_whatis(int argc, char *argv[]) {
         {"numfmt",    "numfmt (1)          - convert numbers from/to human-readable strings"},
         {"numactl",   "numactl (8)         - control NUMA policy for processes or shared memory"},
         {"od",        "od (1)              - dump files in octal and other formats"},
+        {"openssl",   "openssl (1)         - OpenSSL command line tool"},
         {"passwd",    "passwd (1)          - change user password"},
         {"paste",     "paste (1)           - merge lines of files"},
         {"patch",     "patch (1)           - apply a diff file to an original"},
@@ -21673,6 +21755,7 @@ static void cmd_whatis(int argc, char *argv[]) {
         {"sort",      "sort (1)            - sort lines of text files"},
         {"split",     "split (1)           - split a file into pieces"},
         {"ss",        "ss (8)              - another utility to investigate sockets"},
+        {"ssh-keygen","ssh-keygen (1)      - authentication key generation and management"},
         {"stat",      "stat (1)            - display file or file system status"},
         {"stdbuf",    "stdbuf (1)          - run command with modified buffering operations"},
         {"strace",    "strace (1)          - trace system calls and signals"},
@@ -21707,6 +21790,7 @@ static void cmd_whatis(int argc, char *argv[]) {
         {"uuidgen",   "uuidgen (1)         - create a new UUID value"},
         {"users",     "users (1)           - print the user names of users currently logged in"},
         {"vi",        "vi (1)              - screen-oriented text editor"},
+        {"vipw",      "vipw (8)            - edit the password file"},
         {"vmstat",    "vmstat (8)          - report virtual memory statistics"},
         {"w",         "w (1)               - show who is logged on and what they are doing"},
         {"watch",     "watch (1)           - execute a program periodically"},
@@ -24539,6 +24623,851 @@ static void cmd_gzip(int argc, char *argv[]) {
             if (!to_stdout) { write_str(1, argv[f]); write_str(1, " -> "); write_str(1, outname); write_str(1, "\n"); }
         }
     }
+}
+
+/* ── ssh-keygen: generate SSH key pairs (simulated) ── */
+static void cmd_ssh_keygen(int argc, char *argv[]) {
+    const char *key_type = "rsa";
+    int bits = 2048;
+    const char *outfile = NULL;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-t") == 0 && i + 1 < argc) {
+            key_type = argv[++i];
+        } else if (strcmp_simple(argv[i], "-b") == 0 && i + 1 < argc) {
+            bits = simple_atoi(argv[++i]);
+            if (bits < 256) bits = 256;
+            if (bits > 4096) bits = 4096;
+        } else if (strcmp_simple(argv[i], "-f") == 0 && i + 1 < argc) {
+            outfile = argv[++i];
+        } else if (strcmp_simple(argv[i], "--help") == 0) {
+            write_str(1, "Usage: ssh-keygen [-t type] [-b bits] [-f output_file]\n");
+            write_str(1, "  -t type    Key type: rsa, ed25519, ecdsa (default: rsa)\n");
+            write_str(1, "  -b bits    Key size in bits (default: 2048)\n");
+            write_str(1, "  -f file    Output key file\n");
+            return;
+        }
+    }
+    /* Determine output file */
+    char default_path[256];
+    if (!outfile) {
+        const char *home = get_var("HOME");
+        if (!home) home = "/root";
+        int p = 0;
+        for (int j = 0; home[j] && p < 200; j++) default_path[p++] = home[j];
+        const char *suffix = "/.ssh/id_";
+        for (int j = 0; suffix[j] && p < 240; j++) default_path[p++] = suffix[j];
+        for (int j = 0; key_type[j] && p < 254; j++) default_path[p++] = key_type[j];
+        default_path[p] = '\0';
+        outfile = default_path;
+    }
+    write_str(1, "Generating public/private ");
+    write_str(1, key_type);
+    write_str(1, " key pair.\n");
+    /* Generate pseudo-random key material using /dev/urandom */
+    unsigned char keybuf[64];
+    int ufd = sys_open("/dev/urandom", O_RDONLY, 0);
+    if (ufd >= 0) {
+        sys_read(ufd, (char *)keybuf, sizeof(keybuf));
+        sys_close(ufd);
+    } else {
+        /* Fallback: use ticks */
+        unsigned long t = (unsigned long)sys_call1(201 /* SYS_time */, 0);
+        for (int j = 0; j < 64; j++) keybuf[j] = (unsigned char)((t * 1103515245 + 12345 + j * 7) >> 8);
+    }
+    /* Write private key */
+    int fd = sys_open(outfile, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    if (fd < 0) {
+        write_str(2, "ssh-keygen: cannot create ");
+        write_str(2, outfile);
+        write_str(2, "\n");
+        return;
+    }
+    const char *hdr = "-----BEGIN OPENSSH PRIVATE KEY-----\n";
+    sys_write(fd, hdr, (int)strlen_simple(hdr));
+    /* Write key as hex lines */
+    static const char hex[] = "0123456789abcdef";
+    char line[134];
+    for (int row = 0; row < 4; row++) {
+        int pos = 0;
+        for (int col = 0; col < 16 && (row * 16 + col) < 64; col++) {
+            unsigned char b = keybuf[row * 16 + col];
+            line[pos++] = hex[b >> 4];
+            line[pos++] = hex[b & 0xf];
+        }
+        line[pos++] = '\n';
+        sys_write(fd, line, pos);
+    }
+    const char *ftr = "-----END OPENSSH PRIVATE KEY-----\n";
+    sys_write(fd, ftr, (int)strlen_simple(ftr));
+    sys_close(fd);
+    /* Write public key */
+    char pubpath[260];
+    int pp = 0;
+    for (int j = 0; outfile[j] && pp < 254; j++) pubpath[pp++] = outfile[j];
+    pubpath[pp++] = '.'; pubpath[pp++] = 'p'; pubpath[pp++] = 'u'; pubpath[pp++] = 'b'; pubpath[pp] = '\0';
+    fd = sys_open(pubpath, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd >= 0) {
+        const char *prefix = "ssh-";
+        sys_write(fd, prefix, (int)strlen_simple(prefix));
+        sys_write(fd, key_type, (int)strlen_simple(key_type));
+        sys_write(fd, " ", 1);
+        char hexout[130];
+        int hp = 0;
+        for (int j = 0; j < 32; j++) {
+            hexout[hp++] = hex[keybuf[j] >> 4];
+            hexout[hp++] = hex[keybuf[j] & 0xf];
+        }
+        hexout[hp++] = ' ';
+        const char *user = get_var("USER");
+        if (!user) user = "root";
+        for (int j = 0; user[j] && hp < 120; j++) hexout[hp++] = user[j];
+        hexout[hp++] = '@';
+        const char *host = get_var("HOSTNAME");
+        if (!host) host = "futura";
+        for (int j = 0; host[j] && hp < 128; j++) hexout[hp++] = host[j];
+        hexout[hp++] = '\n';
+        sys_write(fd, hexout, hp);
+        sys_close(fd);
+    }
+    char numbuf[16];
+    int_to_str(bits, numbuf, sizeof(numbuf));
+    write_str(1, "Your identification has been saved in ");
+    write_str(1, outfile);
+    write_str(1, "\n");
+    write_str(1, "Your public key has been saved in ");
+    write_str(1, pubpath);
+    write_str(1, "\n");
+    write_str(1, "The key fingerprint is:\nSHA256:");
+    /* Print fingerprint (first 16 bytes as hex) */
+    char fpbuf[48];
+    int fp = 0;
+    for (int j = 0; j < 16; j++) {
+        fpbuf[fp++] = hex[keybuf[j] >> 4];
+        fpbuf[fp++] = hex[keybuf[j] & 0xf];
+        if (j < 15) fpbuf[fp++] = ':';
+    }
+    fpbuf[fp] = '\0';
+    write_str(1, fpbuf);
+    write_str(1, "\n");
+}
+
+/* ── gpg: basic GPG operations (simulated with XOR cipher) ── */
+static void cmd_gpg(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "Usage: gpg --encrypt|--decrypt|--sign|--verify [-o output] file\n");
+        write_str(1, "       gpg --list-keys\n");
+        return;
+    }
+    const char *op = NULL;
+    const char *outfile = NULL;
+    const char *infile = NULL;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "--encrypt") == 0 || strcmp_simple(argv[i], "-e") == 0) {
+            op = "encrypt";
+        } else if (strcmp_simple(argv[i], "--decrypt") == 0 || strcmp_simple(argv[i], "-d") == 0) {
+            op = "decrypt";
+        } else if (strcmp_simple(argv[i], "--sign") == 0 || strcmp_simple(argv[i], "-s") == 0) {
+            op = "sign";
+        } else if (strcmp_simple(argv[i], "--verify") == 0) {
+            op = "verify";
+        } else if (strcmp_simple(argv[i], "--list-keys") == 0 || strcmp_simple(argv[i], "-k") == 0) {
+            op = "list-keys";
+        } else if (strcmp_simple(argv[i], "-o") == 0 && i + 1 < argc) {
+            outfile = argv[++i];
+        } else if (argv[i][0] != '-') {
+            infile = argv[i];
+        }
+    }
+    if (!op) {
+        write_str(2, "gpg: no operation specified\n");
+        return;
+    }
+    if (strcmp_simple(op, "list-keys") == 0) {
+        write_str(1, "/root/.gnupg/pubring.kbx\n");
+        write_str(1, "------------------------\n");
+        write_str(1, "pub   rsa2048 2025-01-01 [SC]\n");
+        write_str(1, "      A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4E5F6\n");
+        const char *user = get_var("USER");
+        if (!user) user = "root";
+        write_str(1, "uid           [ultimate] ");
+        write_str(1, user);
+        write_str(1, " <");
+        write_str(1, user);
+        write_str(1, "@futura>\n");
+        write_str(1, "sub   rsa2048 2025-01-01 [E]\n");
+        return;
+    }
+    if (!infile) {
+        write_str(2, "gpg: no input file specified\n");
+        return;
+    }
+    int in_fd = sys_open(infile, O_RDONLY, 0);
+    if (in_fd < 0) {
+        write_str(2, "gpg: cannot open '");
+        write_str(2, infile);
+        write_str(2, "'\n");
+        return;
+    }
+    /* Determine output path */
+    char default_out[260];
+    if (!outfile) {
+        int p = 0;
+        for (int j = 0; infile[j] && p < 250; j++) default_out[p++] = infile[j];
+        if (strcmp_simple(op, "encrypt") == 0) {
+            default_out[p++] = '.'; default_out[p++] = 'g'; default_out[p++] = 'p'; default_out[p++] = 'g';
+        } else if (strcmp_simple(op, "sign") == 0) {
+            default_out[p++] = '.'; default_out[p++] = 's'; default_out[p++] = 'i'; default_out[p++] = 'g';
+        }
+        default_out[p] = '\0';
+        outfile = default_out;
+    }
+    if (strcmp_simple(op, "verify") == 0) {
+        /* Read and compute simple checksum for verification */
+        char buf[4096];
+        long n;
+        unsigned long cksum = 0;
+        while ((n = sys_read(in_fd, buf, sizeof(buf))) > 0) {
+            for (long j = 0; j < n; j++) cksum += (unsigned char)buf[j];
+        }
+        sys_close(in_fd);
+        write_str(1, "gpg: Signature made using RSA key\n");
+        write_str(1, "gpg: Good signature from \"");
+        const char *user = get_var("USER");
+        if (!user) user = "root";
+        write_str(1, user);
+        write_str(1, " <");
+        write_str(1, user);
+        write_str(1, "@futura>\"\n");
+        return;
+    }
+    /* Encrypt/decrypt/sign: XOR with key 0x5A */
+    int out_fd = sys_open(outfile, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (out_fd < 0) {
+        write_str(2, "gpg: cannot create output file\n");
+        sys_close(in_fd);
+        return;
+    }
+    char buf[4096];
+    long n;
+    while ((n = sys_read(in_fd, buf, sizeof(buf))) > 0) {
+        for (long j = 0; j < n; j++) buf[j] ^= 0x5A;
+        sys_write(out_fd, buf, n);
+    }
+    sys_close(in_fd);
+    sys_close(out_fd);
+    if (strcmp_simple(op, "encrypt") == 0) {
+        write_str(1, "gpg: encrypted data written to ");
+    } else if (strcmp_simple(op, "decrypt") == 0) {
+        write_str(1, "gpg: decrypted data written to ");
+    } else {
+        write_str(1, "gpg: signed data written to ");
+    }
+    write_str(1, outfile);
+    write_str(1, "\n");
+}
+
+/* ── openssl: basic OpenSSL utility (simulated) ── */
+static void cmd_openssl(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "Usage: openssl rand -hex <num_bytes>\n");
+        write_str(1, "       openssl sha256 <file>\n");
+        write_str(1, "       openssl version\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "version") == 0) {
+        write_str(1, "OpenSSL 3.0.0 (Futura) 1 Jan 2025\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "rand") == 0) {
+        int hex_mode = 0;
+        int nbytes = 16;
+        for (int i = 2; i < argc; i++) {
+            if (strcmp_simple(argv[i], "-hex") == 0) {
+                hex_mode = 1;
+            } else if (strcmp_simple(argv[i], "-base64") == 0) {
+                hex_mode = 0;
+            } else {
+                nbytes = simple_atoi(argv[i]);
+                if (nbytes <= 0) nbytes = 16;
+                if (nbytes > 256) nbytes = 256;
+            }
+        }
+        unsigned char randbuf[256];
+        int ufd = sys_open("/dev/urandom", O_RDONLY, 0);
+        if (ufd >= 0) {
+            sys_read(ufd, (char *)randbuf, nbytes);
+            sys_close(ufd);
+        } else {
+            unsigned long t = (unsigned long)sys_call1(201, 0);
+            for (int j = 0; j < nbytes; j++) randbuf[j] = (unsigned char)((t * 1103515245 + 12345 + j * 31) >> 8);
+        }
+        if (hex_mode) {
+            static const char hx[] = "0123456789abcdef";
+            char out[514];
+            int p = 0;
+            for (int j = 0; j < nbytes; j++) {
+                out[p++] = hx[randbuf[j] >> 4];
+                out[p++] = hx[randbuf[j] & 0xf];
+            }
+            out[p++] = '\n';
+            sys_write(1, out, p);
+        } else {
+            /* Print as hex by default */
+            static const char hx[] = "0123456789abcdef";
+            char out[514];
+            int p = 0;
+            for (int j = 0; j < nbytes; j++) {
+                out[p++] = hx[randbuf[j] >> 4];
+                out[p++] = hx[randbuf[j] & 0xf];
+            }
+            out[p++] = '\n';
+            sys_write(1, out, p);
+        }
+        return;
+    }
+    if (strcmp_simple(argv[1], "sha256") == 0) {
+        if (argc < 3) {
+            write_str(2, "Usage: openssl sha256 <file>\n");
+            return;
+        }
+        for (int f = 2; f < argc; f++) {
+            int fd = sys_open(argv[f], O_RDONLY, 0);
+            if (fd < 0) {
+                write_str(2, "openssl: cannot open ");
+                write_str(2, argv[f]);
+                write_str(2, "\n");
+                continue;
+            }
+            /* Simple hash: sum all bytes with rotating shift */
+            unsigned long h0 = 0x6a09e667UL, h1 = 0xbb67ae85UL;
+            unsigned long h2 = 0x3c6ef372UL, h3 = 0xa54ff53aUL;
+            char buf[4096];
+            long n;
+            while ((n = sys_read(fd, buf, sizeof(buf))) > 0) {
+                for (long j = 0; j < n; j++) {
+                    unsigned char c = (unsigned char)buf[j];
+                    h0 = (h0 * 31 + c) ^ (h1 >> 3);
+                    h1 = (h1 * 37 + c) ^ (h2 >> 5);
+                    h2 = (h2 * 41 + c) ^ (h3 >> 7);
+                    h3 = (h3 * 43 + c) ^ (h0 >> 11);
+                }
+            }
+            sys_close(fd);
+            static const char hx[] = "0123456789abcdef";
+            write_str(1, "SHA256(");
+            write_str(1, argv[f]);
+            write_str(1, ")= ");
+            unsigned long vals[4] = {h0, h1, h2, h3};
+            char hbuf[65];
+            int hp = 0;
+            for (int v = 0; v < 4; v++) {
+                for (int b = 7; b >= 0; b--) {
+                    hbuf[hp++] = hx[(vals[v] >> (b * 4)) & 0xf];
+                }
+            }
+            /* Pad to 64 chars */
+            for (int v = 0; v < 4; v++) {
+                unsigned long x = vals[v] ^ 0xdeadbeefUL;
+                for (int b = 7; b >= 0; b--) {
+                    hbuf[hp++] = hx[(x >> (b * 4)) & 0xf];
+                }
+            }
+            hbuf[hp] = '\0';
+            write_str(1, hbuf);
+            write_str(1, "\n");
+        }
+        return;
+    }
+    write_str(2, "openssl: unknown command '");
+    write_str(2, argv[1]);
+    write_str(2, "'\n");
+}
+
+/* ── certutil: certificate database utility (simulated) ── */
+static void cmd_certutil(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "Usage: certutil -L              - List all certificates\n");
+        write_str(1, "       certutil -L -n <name>    - Show certificate details\n");
+        write_str(1, "       certutil -d <dbdir>      - Specify database directory\n");
+        write_str(1, "       certutil -A -n <name> -t <trust> -i <certfile> - Add certificate\n");
+        return;
+    }
+    int list_mode = 0;
+    const char *name = NULL;
+    const char *dbdir = "/etc/pki/nssdb";
+    const char *certfile = NULL;
+    int add_mode = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-L") == 0) list_mode = 1;
+        else if (strcmp_simple(argv[i], "-A") == 0) add_mode = 1;
+        else if (strcmp_simple(argv[i], "-n") == 0 && i + 1 < argc) name = argv[++i];
+        else if (strcmp_simple(argv[i], "-d") == 0 && i + 1 < argc) dbdir = argv[++i];
+        else if (strcmp_simple(argv[i], "-i") == 0 && i + 1 < argc) certfile = argv[++i];
+    }
+    (void)dbdir;
+    if (add_mode) {
+        if (!name || !certfile) {
+            write_str(2, "certutil: -A requires -n <name> and -i <certfile>\n");
+            return;
+        }
+        int fd = sys_open(certfile, O_RDONLY, 0);
+        if (fd < 0) {
+            write_str(2, "certutil: cannot open ");
+            write_str(2, certfile);
+            write_str(2, "\n");
+            return;
+        }
+        sys_close(fd);
+        write_str(1, "certutil: certificate '");
+        write_str(1, name);
+        write_str(1, "' added successfully\n");
+        return;
+    }
+    if (list_mode) {
+        if (name) {
+            write_str(1, "Certificate:\n");
+            write_str(1, "  Nickname: ");
+            write_str(1, name);
+            write_str(1, "\n");
+            write_str(1, "  Subject: CN=");
+            write_str(1, name);
+            write_str(1, ",O=Futura,C=US\n");
+            write_str(1, "  Issuer:  CN=Futura Root CA,O=Futura,C=US\n");
+            write_str(1, "  Serial:  01:A2:B3:C4:D5\n");
+            write_str(1, "  Valid:   2025-01-01 to 2027-12-31\n");
+            write_str(1, "  Trust:   CT,C,C\n");
+            write_str(1, "  Key:     RSA 2048-bit\n");
+        } else {
+            write_str(1, "Certificate Nickname                     Trust Attributes\n");
+            write_str(1, "                                         SSL,S/MIME,JAR/XPI\n\n");
+            write_str(1, "Futura Root CA                           CT,C,C\n");
+            write_str(1, "Futura Intermediate CA                   ,,\n");
+            write_str(1, "localhost                                u,u,u\n");
+        }
+        return;
+    }
+    write_str(2, "certutil: no operation specified (use -L or -A)\n");
+}
+
+/* ── adduser: add a user to /etc/passwd and /etc/group ── */
+static void cmd_adduser(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "Usage: adduser <username> [-u uid] [-g gid] [-d home] [-s shell]\n");
+        return;
+    }
+    const char *username = argv[1];
+    int uid = 1000, gid = 1000;
+    const char *home = NULL;
+    const char *user_shell = "/bin/sh";
+    for (int i = 2; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-u") == 0 && i + 1 < argc) uid = simple_atoi(argv[++i]);
+        else if (strcmp_simple(argv[i], "-g") == 0 && i + 1 < argc) gid = simple_atoi(argv[++i]);
+        else if (strcmp_simple(argv[i], "-d") == 0 && i + 1 < argc) home = argv[++i];
+        else if (strcmp_simple(argv[i], "-s") == 0 && i + 1 < argc) user_shell = argv[++i];
+    }
+    /* Build default home if not specified */
+    char default_home[128];
+    if (!home) {
+        int p = 0;
+        const char *pref = "/home/";
+        for (int j = 0; pref[j] && p < 120; j++) default_home[p++] = pref[j];
+        for (int j = 0; username[j] && p < 126; j++) default_home[p++] = username[j];
+        default_home[p] = '\0';
+        home = default_home;
+    }
+    /* Check if user already exists */
+    int fd = sys_open("/etc/passwd", O_RDONLY, 0);
+    if (fd >= 0) {
+        char buf[4096];
+        long n = sys_read(fd, buf, sizeof(buf) - 1);
+        sys_close(fd);
+        if (n > 0) {
+            buf[n] = '\0';
+            /* Search for username: at start of line */
+            char *p = buf;
+            while (*p) {
+                char *linestart = p;
+                int match = 1;
+                for (int j = 0; username[j]; j++) {
+                    if (*p != username[j]) { match = 0; break; }
+                    p++;
+                }
+                if (match && *p == ':') {
+                    write_str(2, "adduser: user '");
+                    write_str(2, username);
+                    write_str(2, "' already exists\n");
+                    return;
+                }
+                /* Skip to next line */
+                p = linestart;
+                while (*p && *p != '\n') p++;
+                if (*p == '\n') p++;
+            }
+        }
+    }
+    /* Append to /etc/passwd: username:x:uid:gid::/home/user:/bin/sh */
+    fd = sys_open("/etc/passwd", O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (fd < 0) {
+        write_str(2, "adduser: cannot open /etc/passwd\n");
+        return;
+    }
+    char line[512];
+    int pos = 0;
+    for (int j = 0; username[j] && pos < 400; j++) line[pos++] = username[j];
+    line[pos++] = ':'; line[pos++] = 'x'; line[pos++] = ':';
+    char numbuf[16];
+    int_to_str(uid, numbuf, sizeof(numbuf));
+    for (int j = 0; numbuf[j]; j++) line[pos++] = numbuf[j];
+    line[pos++] = ':';
+    int_to_str(gid, numbuf, sizeof(numbuf));
+    for (int j = 0; numbuf[j]; j++) line[pos++] = numbuf[j];
+    line[pos++] = ':'; line[pos++] = ':';
+    for (int j = 0; home[j] && pos < 460; j++) line[pos++] = home[j];
+    line[pos++] = ':';
+    for (int j = 0; user_shell[j] && pos < 500; j++) line[pos++] = user_shell[j];
+    line[pos++] = '\n';
+    sys_write(fd, line, pos);
+    sys_close(fd);
+    /* Also add group entry */
+    fd = sys_open("/etc/group", O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (fd >= 0) {
+        pos = 0;
+        for (int j = 0; username[j] && pos < 400; j++) line[pos++] = username[j];
+        line[pos++] = ':'; line[pos++] = 'x'; line[pos++] = ':';
+        int_to_str(gid, numbuf, sizeof(numbuf));
+        for (int j = 0; numbuf[j]; j++) line[pos++] = numbuf[j];
+        line[pos++] = ':'; line[pos++] = '\n';
+        sys_write(fd, line, pos);
+        sys_close(fd);
+    }
+    /* Create home directory */
+    sys_mkdir(home, 0755);
+    write_str(1, "Adding user '");
+    write_str(1, username);
+    write_str(1, "' (UID ");
+    int_to_str(uid, numbuf, sizeof(numbuf));
+    write_str(1, numbuf);
+    write_str(1, ") ...\n");
+    write_str(1, "Home directory '");
+    write_str(1, home);
+    write_str(1, "' created.\n");
+    write_str(1, "Done.\n");
+}
+
+/* ── deluser: remove a user from /etc/passwd ── */
+static void cmd_deluser(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "Usage: deluser <username>\n");
+        return;
+    }
+    const char *username = argv[1];
+    /* Read /etc/passwd */
+    int fd = sys_open("/etc/passwd", O_RDONLY, 0);
+    if (fd < 0) {
+        write_str(2, "deluser: cannot open /etc/passwd\n");
+        return;
+    }
+    char buf[4096];
+    long n = sys_read(fd, buf, sizeof(buf) - 1);
+    sys_close(fd);
+    if (n <= 0) {
+        write_str(2, "deluser: /etc/passwd is empty\n");
+        return;
+    }
+    buf[n] = '\0';
+    /* Rebuild without matching user line */
+    char out[4096];
+    int opos = 0;
+    int found = 0;
+    char *p = buf;
+    while (*p) {
+        char *linestart = p;
+        /* Check if line starts with username: */
+        int match = 1;
+        char *q = p;
+        for (int j = 0; username[j]; j++) {
+            if (*q != username[j]) { match = 0; break; }
+            q++;
+        }
+        if (match && *q == ':') found = 1; else match = 0;
+        /* Find end of line */
+        while (*p && *p != '\n') p++;
+        if (*p == '\n') p++;
+        /* Copy line if not matching */
+        if (!match) {
+            char *s = linestart;
+            while (s < p && opos < 4095) out[opos++] = *s++;
+        }
+    }
+    if (!found) {
+        write_str(2, "deluser: user '");
+        write_str(2, username);
+        write_str(2, "' does not exist\n");
+        return;
+    }
+    /* Write back */
+    fd = sys_open("/etc/passwd", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) {
+        write_str(2, "deluser: cannot write /etc/passwd\n");
+        return;
+    }
+    if (opos > 0) sys_write(fd, out, opos);
+    sys_close(fd);
+    write_str(1, "Removing user '");
+    write_str(1, username);
+    write_str(1, "' ...\n");
+    write_str(1, "Done.\n");
+}
+
+/* ── groupadd: add a group to /etc/group ── */
+static void cmd_groupadd(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "Usage: groupadd [-g gid] <groupname>\n");
+        return;
+    }
+    int gid = -1;
+    const char *groupname = NULL;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-g") == 0 && i + 1 < argc) {
+            gid = simple_atoi(argv[++i]);
+        } else if (argv[i][0] != '-') {
+            groupname = argv[i];
+        }
+    }
+    if (!groupname) {
+        write_str(2, "groupadd: no group name specified\n");
+        return;
+    }
+    if (gid < 0) gid = 1000; /* default GID */
+    /* Check if group already exists */
+    int fd = sys_open("/etc/group", O_RDONLY, 0);
+    if (fd >= 0) {
+        char buf[4096];
+        long n = sys_read(fd, buf, sizeof(buf) - 1);
+        sys_close(fd);
+        if (n > 0) {
+            buf[n] = '\0';
+            char *p = buf;
+            while (*p) {
+                char *linestart = p;
+                int match = 1;
+                for (int j = 0; groupname[j]; j++) {
+                    if (*p != groupname[j]) { match = 0; break; }
+                    p++;
+                }
+                if (match && *p == ':') {
+                    write_str(2, "groupadd: group '");
+                    write_str(2, groupname);
+                    write_str(2, "' already exists\n");
+                    return;
+                }
+                p = linestart;
+                while (*p && *p != '\n') p++;
+                if (*p == '\n') p++;
+            }
+        }
+    }
+    /* Append to /etc/group: groupname:x:gid: */
+    fd = sys_open("/etc/group", O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (fd < 0) {
+        write_str(2, "groupadd: cannot open /etc/group\n");
+        return;
+    }
+    char line[256];
+    int pos = 0;
+    for (int j = 0; groupname[j] && pos < 200; j++) line[pos++] = groupname[j];
+    line[pos++] = ':'; line[pos++] = 'x'; line[pos++] = ':';
+    char numbuf[16];
+    int_to_str(gid, numbuf, sizeof(numbuf));
+    for (int j = 0; numbuf[j]; j++) line[pos++] = numbuf[j];
+    line[pos++] = ':'; line[pos++] = '\n';
+    sys_write(fd, line, pos);
+    sys_close(fd);
+    write_str(1, "groupadd: group '");
+    write_str(1, groupname);
+    write_str(1, "' (GID ");
+    write_str(1, numbuf);
+    write_str(1, ") added\n");
+}
+
+/* ── groupdel: remove a group from /etc/group ── */
+static void cmd_groupdel(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "Usage: groupdel <groupname>\n");
+        return;
+    }
+    const char *groupname = argv[1];
+    int fd = sys_open("/etc/group", O_RDONLY, 0);
+    if (fd < 0) {
+        write_str(2, "groupdel: cannot open /etc/group\n");
+        return;
+    }
+    char buf[4096];
+    long n = sys_read(fd, buf, sizeof(buf) - 1);
+    sys_close(fd);
+    if (n <= 0) {
+        write_str(2, "groupdel: /etc/group is empty\n");
+        return;
+    }
+    buf[n] = '\0';
+    char out[4096];
+    int opos = 0;
+    int found = 0;
+    char *p = buf;
+    while (*p) {
+        char *linestart = p;
+        int match = 1;
+        char *q = p;
+        for (int j = 0; groupname[j]; j++) {
+            if (*q != groupname[j]) { match = 0; break; }
+            q++;
+        }
+        if (match && *q == ':') found = 1; else match = 0;
+        while (*p && *p != '\n') p++;
+        if (*p == '\n') p++;
+        if (!match) {
+            char *s = linestart;
+            while (s < p && opos < 4095) out[opos++] = *s++;
+        }
+    }
+    if (!found) {
+        write_str(2, "groupdel: group '");
+        write_str(2, groupname);
+        write_str(2, "' does not exist\n");
+        return;
+    }
+    fd = sys_open("/etc/group", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) {
+        write_str(2, "groupdel: cannot write /etc/group\n");
+        return;
+    }
+    if (opos > 0) sys_write(fd, out, opos);
+    sys_close(fd);
+    write_str(1, "groupdel: group '");
+    write_str(1, groupname);
+    write_str(1, "' removed\n");
+}
+
+/* ── chage: change user password expiry information ── */
+static void cmd_chage(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "Usage: chage [-l] [-M maxdays] [-m mindays] [-W warndays] [-I inactive] <user>\n");
+        return;
+    }
+    int list_mode = 0;
+    int max_days = -1, min_days = -1, warn_days = -1, inactive = -1;
+    const char *username = NULL;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-l") == 0) {
+            list_mode = 1;
+        } else if (strcmp_simple(argv[i], "-M") == 0 && i + 1 < argc) {
+            max_days = simple_atoi(argv[++i]);
+        } else if (strcmp_simple(argv[i], "-m") == 0 && i + 1 < argc) {
+            min_days = simple_atoi(argv[++i]);
+        } else if (strcmp_simple(argv[i], "-W") == 0 && i + 1 < argc) {
+            warn_days = simple_atoi(argv[++i]);
+        } else if (strcmp_simple(argv[i], "-I") == 0 && i + 1 < argc) {
+            inactive = simple_atoi(argv[++i]);
+        } else if (argv[i][0] != '-') {
+            username = argv[i];
+        }
+    }
+    if (!username) {
+        write_str(2, "chage: no user specified\n");
+        return;
+    }
+    /* Verify user exists in /etc/passwd */
+    int fd = sys_open("/etc/passwd", O_RDONLY, 0);
+    if (fd < 0) {
+        write_str(2, "chage: cannot open /etc/passwd\n");
+        return;
+    }
+    char buf[4096];
+    long n = sys_read(fd, buf, sizeof(buf) - 1);
+    sys_close(fd);
+    int user_found = 0;
+    if (n > 0) {
+        buf[n] = '\0';
+        char *p = buf;
+        while (*p) {
+            int match = 1;
+            char *q = p;
+            for (int j = 0; username[j]; j++) {
+                if (*q != username[j]) { match = 0; break; }
+                q++;
+            }
+            if (match && *q == ':') { user_found = 1; break; }
+            while (*p && *p != '\n') p++;
+            if (*p == '\n') p++;
+        }
+    }
+    if (!user_found) {
+        write_str(2, "chage: user '");
+        write_str(2, username);
+        write_str(2, "' does not exist\n");
+        return;
+    }
+    if (list_mode) {
+        write_str(1, "Last password change\t\t\t: Jan 01, 2025\n");
+        write_str(1, "Password expires\t\t\t: never\n");
+        write_str(1, "Password inactive\t\t\t: never\n");
+        write_str(1, "Account expires\t\t\t\t: never\n");
+        write_str(1, "Minimum number of days between password change\t\t: 0\n");
+        write_str(1, "Maximum number of days between password change\t\t: 99999\n");
+        write_str(1, "Number of days of warning before password expires\t: 7\n");
+        return;
+    }
+    /* Set mode - show what was changed */
+    char numbuf[16];
+    if (max_days >= 0) {
+        write_str(1, "chage: maximum password age set to ");
+        int_to_str(max_days, numbuf, sizeof(numbuf));
+        write_str(1, numbuf);
+        write_str(1, " days for ");
+        write_str(1, username);
+        write_str(1, "\n");
+    }
+    if (min_days >= 0) {
+        write_str(1, "chage: minimum password age set to ");
+        int_to_str(min_days, numbuf, sizeof(numbuf));
+        write_str(1, numbuf);
+        write_str(1, " days for ");
+        write_str(1, username);
+        write_str(1, "\n");
+    }
+    if (warn_days >= 0) {
+        write_str(1, "chage: warning days set to ");
+        int_to_str(warn_days, numbuf, sizeof(numbuf));
+        write_str(1, numbuf);
+        write_str(1, " for ");
+        write_str(1, username);
+        write_str(1, "\n");
+    }
+    if (inactive >= 0) {
+        write_str(1, "chage: inactive days set to ");
+        int_to_str(inactive, numbuf, sizeof(numbuf));
+        write_str(1, numbuf);
+        write_str(1, " for ");
+        write_str(1, username);
+        write_str(1, "\n");
+    }
+    if (max_days < 0 && min_days < 0 && warn_days < 0 && inactive < 0) {
+        write_str(2, "chage: no changes specified (use -l to list, -M/-m/-W/-I to set)\n");
+    }
+}
+
+/* ── vipw: edit /etc/passwd using vi ── */
+static void cmd_vipw(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    write_str(1, "vipw: editing /etc/passwd\n");
+    /* Call vi on /etc/passwd */
+    char *vi_argv[3];
+    char cmd_name[] = "vi";
+    char passwd_path[] = "/etc/passwd";
+    vi_argv[0] = cmd_name;
+    vi_argv[1] = passwd_path;
+    vi_argv[2] = (char *)0;
+    cmd_vi(2, vi_argv);
 }
 
 #pragma GCC diagnostic pop

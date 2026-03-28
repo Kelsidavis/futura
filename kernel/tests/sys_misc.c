@@ -68416,7 +68416,7 @@ void fut_misc_test_thread(void *arg) {
                 buf[n > 0 ? n : 0] = '\0';
                 int found = 0;
                 for (long i = 0; i < n - 4; i++) {
-                    if (buf[i] == '0' && buf[i+1] == '.' && buf[i+2] == '5' &&
+                    if (buf[i] == '0' && buf[i+1] == '.' && buf[i+2] == '6' &&
                         buf[i+3] == '.' && buf[i+4] == '0') { found = 1; break; }
                 }
                 if (found) { fut_printf("[MISC-TEST] ✓ Test 2164: version 0.6.0\n"); fut_test_pass(); }

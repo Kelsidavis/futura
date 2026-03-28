@@ -1797,9 +1797,276 @@ static void cmd_dmesg(int argc, char *argv[]) {
     }
 }
 
+/* ---- DNS resolver with cache, CNAME following, /etc/resolv.conf ---- */
+
+/* 16-entry DNS cache with 60-second TTL */
+#define DNS_CACHE_SIZE 16
+#define DNS_CACHE_TTL  60
+#define DNS_MAX_NAME   128
+
+struct dns_cache_entry {
+    char name[DNS_MAX_NAME];
+    uint32_t ip;           /* host byte order, 0 = unused */
+    long     expire;       /* clock_gettime CLOCK_REALTIME seconds */
+};
+
+static struct dns_cache_entry dns_cache[DNS_CACHE_SIZE];
+static int dns_cache_next = 0; /* round-robin insert index */
+
+/* Get current wall-clock seconds (0 on failure) */
+static long dns_now(void) {
+    struct { long tv_sec; long tv_nsec; } ts = {0, 0};
+    long r = sys_call2(98 /* clock_gettime */, 0 /* CLOCK_REALTIME */, (long)&ts);
+    return (r == 0) ? ts.tv_sec : 0;
+}
+
+/* Case-insensitive comparison for DNS names */
+static int dns_strcasecmp(const char *a, const char *b) {
+    while (*a && *b) {
+        char ca = *a, cb = *b;
+        if (ca >= 'A' && ca <= 'Z') ca += 32;
+        if (cb >= 'A' && cb <= 'Z') cb += 32;
+        if (ca != cb) return ca - cb;
+        a++; b++;
+    }
+    return (unsigned char)*a - (unsigned char)*b;
+}
+
+/* Look up a name in the DNS cache; returns IP (host order) or 0 */
+static uint32_t dns_cache_lookup(const char *name) {
+    long now = dns_now();
+    for (int i = 0; i < DNS_CACHE_SIZE; i++) {
+        if (dns_cache[i].ip && dns_cache[i].expire > now &&
+            dns_strcasecmp(dns_cache[i].name, name) == 0)
+            return dns_cache[i].ip;
+    }
+    return 0;
+}
+
+/* Insert into the DNS cache */
+static void dns_cache_insert(const char *name, uint32_t ip) {
+    if (!ip) return;
+    long now = dns_now();
+    /* Overwrite if name already present */
+    for (int i = 0; i < DNS_CACHE_SIZE; i++) {
+        if (dns_cache[i].ip && dns_strcasecmp(dns_cache[i].name, name) == 0) {
+            dns_cache[i].ip = ip;
+            dns_cache[i].expire = now + DNS_CACHE_TTL;
+            return;
+        }
+    }
+    /* Use next round-robin slot */
+    int idx = dns_cache_next % DNS_CACHE_SIZE;
+    dns_cache_next++;
+    strncpy_simple(dns_cache[idx].name, name, DNS_MAX_NAME - 1);
+    dns_cache[idx].name[DNS_MAX_NAME - 1] = '\0';
+    dns_cache[idx].ip = ip;
+    dns_cache[idx].expire = now + DNS_CACHE_TTL;
+}
+
+/* Read nameserver from /etc/resolv.conf; returns network-byte-order IP.
+ * Falls back to 10.0.2.3 (QEMU) if file cannot be read. */
+static uint32_t dns_get_nameserver(void) {
+    int fd = sys_open("/etc/resolv.conf", O_RDONLY, 0);
+    if (fd < 0) return 0x0302000A; /* 10.0.2.3 */
+    char buf[256];
+    ssize_t n = sys_read(fd, buf, sizeof(buf) - 1);
+    sys_close(fd);
+    if (n <= 0) return 0x0302000A;
+    buf[n] = '\0';
+    /* Scan for "nameserver x.x.x.x" */
+    const char *p = buf;
+    while (*p) {
+        /* Skip leading whitespace */
+        while (*p == ' ' || *p == '\t') p++;
+        /* Check for "nameserver " prefix */
+        const char *ns = "nameserver";
+        const char *q = ns;
+        const char *lp = p;
+        while (*q && *lp == *q) { lp++; q++; }
+        if (*q == '\0' && (*lp == ' ' || *lp == '\t')) {
+            lp++;
+            while (*lp == ' ' || *lp == '\t') lp++;
+            /* Parse dotted-decimal IP */
+            uint32_t ip = 0; int octet = 0, shift = 24; int valid = 0;
+            while ((*lp >= '0' && *lp <= '9') || *lp == '.') {
+                if (*lp == '.') { ip |= ((uint32_t)octet & 0xFF) << shift; shift -= 8; octet = 0; }
+                else octet = octet * 10 + (*lp - '0');
+                lp++; valid = 1;
+            }
+            if (valid) {
+                ip |= ((uint32_t)octet & 0xFF) << shift;
+                /* Convert host-order to network-order */
+                return ((ip >> 24) & 0xFF) | ((ip >> 8) & 0xFF00) |
+                       ((ip << 8) & 0xFF0000) | ((ip << 24) & 0xFF000000u);
+            }
+        }
+        /* Skip to next line */
+        while (*p && *p != '\n') p++;
+        if (*p == '\n') p++;
+    }
+    return 0x0302000A; /* fallback: 10.0.2.3 */
+}
+
+/* Skip over a DNS name in a response packet (handles compression pointers).
+ * Returns new offset, or -1 on error. */
+static int dns_skip_name(const uint8_t *pkt, int off, int len) {
+    while (off < len) {
+        uint8_t label = pkt[off];
+        if (label == 0) { off++; break; }
+        if ((label & 0xC0) == 0xC0) { off += 2; break; }
+        off += label + 1;
+    }
+    return off;
+}
+
+/* Decode a DNS name with compression into buf (max bufsize).
+ * Returns number of bytes consumed from pkt starting at off,
+ * or -1 on error. Decoded name written to buf. */
+static int dns_decode_name(const uint8_t *pkt, int off, int pktlen,
+                           char *buf, int bufsize) {
+    int orig_off = off;
+    int bpos = 0;
+    int jumped = 0, first_jump_off = -1;
+    int max_jumps = 15;
+    while (off < pktlen && max_jumps > 0) {
+        uint8_t label = pkt[off];
+        if (label == 0) { off++; break; }
+        if ((label & 0xC0) == 0xC0) {
+            if (!jumped) first_jump_off = off + 2;
+            jumped = 1; max_jumps--;
+            off = ((label & 0x3F) << 8) | pkt[off + 1];
+            continue;
+        }
+        int llen = label;
+        off++;
+        if (bpos > 0 && bpos < bufsize - 1) buf[bpos++] = '.';
+        for (int i = 0; i < llen && off < pktlen && bpos < bufsize - 1; i++)
+            buf[bpos++] = (char)pkt[off++];
+    }
+    buf[bpos < bufsize ? bpos : bufsize - 1] = '\0';
+    /* Return bytes consumed from original position */
+    return jumped ? (first_jump_off - orig_off) : (off - orig_off);
+}
+
+/* Core DNS query: send query for qtype (1=A, 28=AAAA) to nameserver,
+ * parse response, follow CNAME chains (up to 8 hops).
+ * Returns IPv4 address in host byte order, or 0 on failure. */
+static uint32_t dns_query(const char *hostname, int qtype) {
+    uint32_t ns_addr = dns_get_nameserver();
+    /* Retry with CNAME following -- up to 8 hops */
+    char qname[DNS_MAX_NAME];
+    strncpy_simple(qname, hostname, DNS_MAX_NAME - 1);
+    qname[DNS_MAX_NAME - 1] = '\0';
+
+    for (int hop = 0; hop < 8; hop++) {
+        long sock = sys_call3(41, 2 /* AF_INET */, 2 /* SOCK_DGRAM */, 0);
+        if (sock < 0) return 0;
+
+        /* Build DNS query packet */
+        static uint8_t pkt[512];
+        int pos = 0;
+        /* Header: ID, Flags (QR=0, OPCODE=0, RD=1), QDCOUNT=1 */
+        uint16_t txid = (uint16_t)(dns_now() & 0xFFFF) ^ (uint16_t)(hop * 0x1111);
+        pkt[pos++] = (uint8_t)(txid >> 8); pkt[pos++] = (uint8_t)(txid & 0xFF);
+        pkt[pos++] = 0x01; pkt[pos++] = 0x00; /* Flags: RD=1 */
+        pkt[pos++] = 0x00; pkt[pos++] = 0x01; /* QDCOUNT=1 */
+        pkt[pos++] = 0x00; pkt[pos++] = 0x00; /* ANCOUNT=0 */
+        pkt[pos++] = 0x00; pkt[pos++] = 0x00; /* NSCOUNT=0 */
+        pkt[pos++] = 0x00; pkt[pos++] = 0x00; /* ARCOUNT=0 */
+
+        /* Encode question name in wire format */
+        const char *d = qname;
+        while (*d) {
+            const char *dot = d;
+            while (*dot && *dot != '.') dot++;
+            int len = (int)(dot - d);
+            if (len > 63) len = 63;
+            pkt[pos++] = (uint8_t)len;
+            for (int i = 0; i < len; i++) pkt[pos++] = (uint8_t)d[i];
+            d = dot;
+            if (*d == '.') d++;
+        }
+        pkt[pos++] = 0; /* root label */
+        pkt[pos++] = (uint8_t)(qtype >> 8); pkt[pos++] = (uint8_t)(qtype & 0xFF);
+        pkt[pos++] = 0x00; pkt[pos++] = 0x01; /* QCLASS=IN */
+
+        /* Send to nameserver:53 */
+        struct { uint16_t family; uint16_t port; uint32_t addr; uint8_t pad[8]; } sa;
+        sa.family = 2;
+        sa.port = (53 >> 8) | ((53 & 0xFF) << 8); /* htons(53) */
+        sa.addr = ns_addr;
+        for (int i = 0; i < 8; i++) sa.pad[i] = 0;
+
+        sys_call6(44 /* sendto */, sock, (long)pkt, pos, 0, (long)&sa, 16);
+
+        /* Receive with 3-second timeout */
+        struct { long tv_sec; long tv_usec; } tv = {3, 0};
+        sys_call6(54 /* setsockopt */, sock, 1 /* SOL_SOCKET */,
+                  20 /* SO_RCVTIMEO */, (long)&tv, (long)sizeof(tv), 0);
+        static uint8_t reply[512];
+        ssize_t rn = sys_read(sock, reply, sizeof(reply));
+        sys_close(sock);
+
+        if (rn < 12) return 0;
+
+        /* Verify this is a response (QR=1) */
+        if ((reply[2] & 0x80) == 0) continue;
+
+        uint16_t qdcount = ((uint16_t)reply[4] << 8) | reply[5];
+        uint16_t ancount = ((uint16_t)reply[6] << 8) | reply[7];
+        if (ancount == 0) return 0;
+
+        /* Skip question section */
+        int rpos = 12;
+        for (int q = 0; q < qdcount && rpos < rn; q++) {
+            rpos = dns_skip_name(reply, rpos, (int)rn);
+            if (rpos < 0) return 0;
+            rpos += 4; /* QTYPE + QCLASS */
+        }
+
+        /* Parse answer records -- look for A/AAAA, follow CNAMEs */
+        int found_cname = 0;
+        for (int a = 0; a < ancount && rpos + 10 <= (int)rn; a++) {
+            /* Skip name */
+            rpos = dns_skip_name(reply, rpos, (int)rn);
+            if (rpos < 0) return 0;
+
+            if (rpos + 10 > (int)rn) return 0;
+            uint16_t rtype = ((uint16_t)reply[rpos] << 8) | reply[rpos + 1]; rpos += 2;
+            rpos += 2; /* CLASS */
+            rpos += 4; /* TTL */
+            uint16_t rdlen = ((uint16_t)reply[rpos] << 8) | reply[rpos + 1]; rpos += 2;
+
+            if (rtype == 1 && rdlen == 4 && rpos + 4 <= (int)rn) {
+                /* A record -- return IPv4 in host byte order */
+                return ((uint32_t)reply[rpos] << 24) | ((uint32_t)reply[rpos + 1] << 16) |
+                       ((uint32_t)reply[rpos + 2] << 8) | reply[rpos + 3];
+            }
+            if (rtype == 5 /* CNAME */) {
+                /* Decode the canonical name and re-query */
+                char cname[DNS_MAX_NAME];
+                int consumed = dns_decode_name(reply, rpos, (int)rn,
+                                               cname, DNS_MAX_NAME);
+                if (consumed > 0 && cname[0]) {
+                    strncpy_simple(qname, cname, DNS_MAX_NAME - 1);
+                    qname[DNS_MAX_NAME - 1] = '\0';
+                    found_cname = 1;
+                }
+            }
+            rpos += rdlen;
+        }
+        /* If we got a CNAME but no A record in the same response,
+         * loop to re-query with the canonical name */
+        if (!found_cname) return 0;
+    }
+    return 0; /* too many CNAME hops */
+}
+
 /* Resolve hostname or IP string to uint32_t (host byte order).
  * Returns 0 on failure. If str is numeric (e.g., "10.0.2.2"), parses directly.
- * If str is a hostname, sends DNS query to 10.0.2.3 (QEMU DNS) via UDP. */
+ * Otherwise performs DNS lookup with caching and CNAME following.
+ * Reads nameserver from /etc/resolv.conf (falls back to 10.0.2.3). */
 static uint32_t resolve_host(const char *str) {
     if (!str || !str[0]) return 0;
     /* Check if it's a numeric IP (all digits and dots) */
@@ -1814,69 +2081,15 @@ static uint32_t resolve_host(const char *str) {
         }
         return ip | (((uint32_t)octet & 0xFF) << shift);
     }
-    /* DNS resolution via UDP to 10.0.2.3:53 (QEMU default DNS) */
-    long sock = sys_call3(41, 2, 2, 17);
-    if (sock < 0) return 0;
-    /* Build DNS query */
-    static uint8_t pkt[512]; int pos = 0;
-    pkt[pos++] = 0xAB; pkt[pos++] = 0xCD; /* ID */
-    pkt[pos++] = 0x01; pkt[pos++] = 0x00; /* RD=1 */
-    pkt[pos++] = 0; pkt[pos++] = 1; /* QDCOUNT=1 */
-    pkt[pos++] = 0; pkt[pos++] = 0; pkt[pos++] = 0; pkt[pos++] = 0; pkt[pos++] = 0; pkt[pos++] = 0;
-    /* Encode domain */
-    const char *d = str;
-    while (*d) {
-        const char *dot = d; while (*dot && *dot != '.') dot++;
-        int len = (int)(dot - d);
-        pkt[pos++] = (uint8_t)len;
-        for (int i = 0; i < len; i++) pkt[pos++] = (uint8_t)d[i];
-        d = dot; if (*d == '.') d++;
-    }
-    pkt[pos++] = 0; /* root */
-    pkt[pos++] = 0; pkt[pos++] = 1; /* QTYPE=A */
-    pkt[pos++] = 0; pkt[pos++] = 1; /* QCLASS=IN */
-    /* Send to 10.0.2.3:53 */
-    struct { uint16_t family; uint16_t port; uint32_t addr; uint8_t pad[8]; } sa;
-    sa.family = 2; sa.port = (53 >> 8) | ((53 & 0xFF) << 8);
-    sa.addr = 0x0302000A; /* 10.0.2.3 in network order */
-    for (int i = 0; i < 8; i++) sa.pad[i] = 0;
-    sys_call6(44, sock, (long)pkt, pos, 0, (long)&sa, 16);
-    /* Recv with 3s timeout */
-    struct { long tv_sec; long tv_usec; } tv = {3, 0};
-    sys_call6(54, sock, 1, 20, (long)&tv, sizeof(tv), 0);
-    static uint8_t reply[512];
-    ssize_t rn = sys_read(sock, reply, sizeof(reply));
-    sys_close(sock);
-    if (rn < 12) return 0;
-    /* Parse answer: skip header (12) + question section */
-    int rpos = 12;
-    /* Skip question */
-    uint16_t qdcount = ((uint16_t)reply[4] << 8) | reply[5];
-    for (int q = 0; q < qdcount && rpos < rn; q++) {
-        while (rpos < rn && reply[rpos] != 0) {
-            if ((reply[rpos] & 0xC0) == 0xC0) { rpos += 2; break; }
-            rpos += reply[rpos] + 1;
-        }
-        if (rpos < rn && reply[rpos] == 0) rpos++;
-        rpos += 4; /* QTYPE + QCLASS */
-    }
-    /* Parse first answer */
-    uint16_t ancount = ((uint16_t)reply[6] << 8) | reply[7];
-    for (int a = 0; a < ancount && rpos + 12 <= rn; a++) {
-        /* Skip name (may be compressed) */
-        if ((reply[rpos] & 0xC0) == 0xC0) rpos += 2;
-        else { while (rpos < rn && reply[rpos] != 0) rpos += reply[rpos] + 1; rpos++; }
-        uint16_t rtype = ((uint16_t)reply[rpos] << 8) | reply[rpos+1]; rpos += 2;
-        rpos += 2; /* class */ rpos += 4; /* TTL */
-        uint16_t rdlen = ((uint16_t)reply[rpos] << 8) | reply[rpos+1]; rpos += 2;
-        if (rtype == 1 && rdlen == 4 && rpos + 4 <= rn) {
-            /* A record: 4-byte IPv4 address (network byte order → host order) */
-            return ((uint32_t)reply[rpos] << 24) | ((uint32_t)reply[rpos+1] << 16) |
-                   ((uint32_t)reply[rpos+2] << 8) | reply[rpos+3];
-        }
-        rpos += rdlen;
-    }
-    return 0;
+
+    /* Check DNS cache first */
+    uint32_t cached = dns_cache_lookup(str);
+    if (cached) return cached;
+
+    /* Perform DNS query (A record) */
+    uint32_t ip = dns_query(str, 1 /* A */);
+    if (ip) dns_cache_insert(str, ip);
+    return ip;
 }
 
 /* Built-in: ping - Send ICMP echo requests */
@@ -9210,20 +9423,21 @@ static int execute_command(int argc, char *argv[]) {
         cmd_stat(argc, argv);
         return 0;
     } else if (strcmp_simple(argv[0], "nslookup") == 0) {
-        /* DNS lookup via UDP socket to DNS server */
+        /* DNS lookup via UDP socket to DNS server (reads /etc/resolv.conf) */
         if (argc < 2) { write_str(2, "usage: nslookup [-aaaa] <domain>\n"); return 1; }
         /* Check for -aaaa flag */
-        int qtype_hi = 0x00, qtype_lo = 0x01; /* default: A record (type 1) */
+        int nsl_qtype = 1; /* default: A record (type 1) */
         int domain_arg = 1;
         if (argc >= 3 && strcmp_simple(argv[1], "-aaaa") == 0) {
-            qtype_hi = 0x00; qtype_lo = 0x1C; /* AAAA record (type 28) */
+            nsl_qtype = 28; /* AAAA record (type 28) */
             domain_arg = 2;
         }
         /* Build DNS query packet */
         uint8_t pkt[512];
         int pos = 0;
-        /* Header: ID=0x1234, flags=0x0100 (standard query), qdcount=1 */
-        pkt[pos++] = 0x12; pkt[pos++] = 0x34; /* ID */
+        /* Header: ID, Flags (QR=0, OPCODE=0, RD=1), QDCOUNT=1 */
+        uint16_t nsl_txid = (uint16_t)(dns_now() & 0xFFFF) ^ 0x1234;
+        pkt[pos++] = (uint8_t)(nsl_txid >> 8); pkt[pos++] = (uint8_t)(nsl_txid & 0xFF);
         pkt[pos++] = 0x01; pkt[pos++] = 0x00; /* Flags: RD=1 */
         pkt[pos++] = 0x00; pkt[pos++] = 0x01; /* QDCOUNT=1 */
         pkt[pos++] = 0x00; pkt[pos++] = 0x00; /* ANCOUNT=0 */
@@ -9235,69 +9449,66 @@ static int execute_command(int argc, char *argv[]) {
             const char *dot = d;
             while (*dot && *dot != '.') dot++;
             int len = (int)(dot - d);
+            if (len > 63) len = 63;
             pkt[pos++] = (uint8_t)len;
-            for (int i = 0; i < len; i++) pkt[pos++] = d[i];
+            for (int i = 0; i < len; i++) pkt[pos++] = (uint8_t)d[i];
             d = dot;
             if (*d == '.') d++;
         }
         pkt[pos++] = 0; /* Root label */
-        pkt[pos++] = (uint8_t)qtype_hi; pkt[pos++] = (uint8_t)qtype_lo; /* QTYPE */
+        pkt[pos++] = (uint8_t)(nsl_qtype >> 8); pkt[pos++] = (uint8_t)(nsl_qtype & 0xFF);
         pkt[pos++] = 0x00; pkt[pos++] = 0x01; /* QCLASS=IN */
 
-        /* Try DNS servers: 127.0.0.53 (systemd-resolved), then 10.0.2.3 (QEMU) */
-        static const uint32_t dns_servers[] = {
-            0x3500007F,  /* 127.0.0.53 in network byte order */
-            0x0302000A,  /* 10.0.2.3  in network byte order */
-        };
-        static const char *dns_names[] = { "127.0.0.53", "10.0.2.3" };
-        int dns_count = 2;
-        long rn = -1;
+        /* Read nameserver from /etc/resolv.conf */
+        uint32_t nsl_ns = dns_get_nameserver();
+
+        long fd = sys_call3(41, 2 /* AF_INET */, 2 /* SOCK_DGRAM */, 0);
+        if (fd < 0) { write_str(2, "nslookup: socket error\n"); return 1; }
+
+        struct { uint16_t family; uint16_t port; uint32_t addr; uint8_t pad[8]; } sa;
+        sa.family = 2;
+        sa.port = (53 >> 8) | ((53 & 0xFF) << 8); /* htons(53) */
+        sa.addr = nsl_ns;
+        for (int i = 0; i < 8; i++) sa.pad[i] = 0;
+
+        /* Set 3s receive timeout */
+        struct { long tv_sec; long tv_usec; } tv = {3, 0};
+        sys_call6(54 /* setsockopt */, fd, 1 /* SOL_SOCKET */, 20 /* SO_RCVTIMEO */,
+                  (long)&tv, (long)sizeof(tv), 0);
+
+        sys_call6(44 /* sendto */, fd, (long)pkt, pos, 0, (long)&sa, 16);
         uint8_t resp[512];
-        int used_server = 0;
-
-        for (int si = 0; si < dns_count; si++) {
-            long fd = sys_call3(41, 2 /* AF_INET */, 2 /* SOCK_DGRAM */, 0);
-            if (fd < 0) continue;
-
-            struct { uint16_t family; uint16_t port; uint32_t addr; uint8_t pad[8]; } sa;
-            sa.family = 2;
-            sa.port = (53 >> 8) | ((53 & 0xFF) << 8); /* htons(53) */
-            sa.addr = dns_servers[si];
-            for (int i = 0; i < 8; i++) sa.pad[i] = 0;
-
-            /* Set 2s receive timeout */
-            struct { long tv_sec; long tv_usec; } tv = {2, 0};
-            sys_call6(54 /* setsockopt */, fd, 1 /* SOL_SOCKET */, 20 /* SO_RCVTIMEO */,
-                      (long)&tv, (long)sizeof(tv), 0);
-
-            sys_call6(44 /* sendto */, fd, (long)pkt, pos, 0, (long)&sa, 16);
-            rn = sys_call6(45 /* recvfrom */, fd, (long)resp, 512, 0, 0, 0);
-            sys_close(fd);
-            if (rn > 12) { used_server = si; break; }
-        }
+        long rn = sys_read(fd, resp, 512);
+        sys_close(fd);
 
         if (rn > 12) {
             int ancount = (resp[6] << 8) | resp[7];
             if (ancount > 0) {
-                /* Skip query section to find answer */
+                /* Skip question section using dns_skip_name */
                 int rp = 12;
-                /* Skip QNAME */
-                while (rp < (int)rn && resp[rp] != 0) {
-                    if ((resp[rp] & 0xC0) == 0xC0) { rp += 2; break; }
-                    rp += resp[rp] + 1;
+                uint16_t nsl_qdcount = ((uint16_t)resp[4] << 8) | resp[5];
+                for (int q = 0; q < nsl_qdcount && rp < (int)rn; q++) {
+                    rp = dns_skip_name(resp, rp, (int)rn);
+                    rp += 4; /* QTYPE + QCLASS */
                 }
-                if (resp[rp] == 0) rp++; /* null terminator */
-                rp += 4; /* QTYPE + QCLASS */
 
-                /* Print header */
-                write_str(1, "Server:  "); write_str(1, dns_names[used_server]);
+                /* Print server address */
+                write_str(1, "Server:  ");
+                {
+                    /* Convert network-order nsl_ns back to dotted-decimal */
+                    char nb[8];
+                    int_to_str(nsl_ns & 0xFF, nb, 8); write_str(1, nb); write_char(1, '.');
+                    int_to_str((nsl_ns >> 8) & 0xFF, nb, 8); write_str(1, nb); write_char(1, '.');
+                    int_to_str((nsl_ns >> 16) & 0xFF, nb, 8); write_str(1, nb); write_char(1, '.');
+                    int_to_str((nsl_ns >> 24) & 0xFF, nb, 8); write_str(1, nb);
+                }
                 write_str(1, "\nName:    "); write_str(1, argv[domain_arg]); write_char(1, '\n');
 
-                /* Parse all answer records */
-                for (int ans = 0; ans < ancount && rp + 12 <= (int)rn; ans++) {
-                    /* Skip NAME (may be pointer) */
-                    if ((resp[rp] & 0xC0) == 0xC0) rp += 2;
-                    else { while (rp < (int)rn && resp[rp] != 0) rp += resp[rp] + 1; rp++; }
+                /* Parse all answer records with CNAME display */
+                for (int ans = 0; ans < ancount && rp + 10 <= (int)rn; ans++) {
+                    /* Skip NAME using dns_skip_name */
+                    rp = dns_skip_name(resp, rp, (int)rn);
+                    if (rp < 0 || rp + 10 > (int)rn) break;
                     int atype = (resp[rp] << 8) | resp[rp+1]; rp += 2;
                     rp += 2; /* CLASS */ rp += 4; /* TTL */
                     int rdlen = (resp[rp] << 8) | resp[rp+1]; rp += 2;
@@ -9323,6 +9534,11 @@ static int execute_command(int argc, char *argv[]) {
                             if (g < 14) write_char(1, ':');
                         }
                         write_char(1, '\n');
+                    } else if (atype == 5 /* CNAME */) {
+                        /* Display CNAME record */
+                        char cname_buf[DNS_MAX_NAME];
+                        dns_decode_name(resp, rp, (int)rn, cname_buf, DNS_MAX_NAME);
+                        write_str(1, "CNAME:   "); write_str(1, cname_buf); write_char(1, '\n');
                     }
                     rp += rdlen;
                 }

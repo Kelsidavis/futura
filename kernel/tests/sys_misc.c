@@ -76917,6 +76917,7 @@ void fut_misc_test_thread(void *arg) {
     test_socketpair_cloexec_accept4_lifecycle(); /* Tests 2580-2587: socketpair SOCK_CLOEXEC lifecycle + accept4 flag combinations */
     test_execve_cloexec_closure(); /* Tests 2600-2607: execve FD_CLOEXEC closure across fd types */
     test_sa_resethand_semantics(); /* Tests 2615-2622: SA_RESETHAND signal delivery semantics */
+    test_pmm_task_hardening();     /* Tests 2630-2637: PMM robustness + task cleanup */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

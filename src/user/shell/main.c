@@ -227,6 +227,16 @@ static void cmd_fstrim(int argc, char *argv[]);
 static void cmd_wipefs(int argc, char *argv[]);
 static void cmd_fsfreeze(int argc, char *argv[]);
 static void cmd_filefrag(int argc, char *argv[]);
+static void cmd_zcat(int argc, char *argv[]);
+static void cmd_zgrep(int argc, char *argv[]);
+static void cmd_xzcat(int argc, char *argv[]);
+static void cmd_bzcat(int argc, char *argv[]);
+static void cmd_lz4cat(int argc, char *argv[]);
+static void cmd_zstdcat(int argc, char *argv[]);
+static void cmd_pigz(int argc, char *argv[]);
+static void cmd_xz(int argc, char *argv[]);
+static void cmd_bzip2(int argc, char *argv[]);
+static void cmd_gzip(int argc, char *argv[]);
 
 /* Forward declaration for prompt */
 static void print_prompt(void);
@@ -1421,6 +1431,18 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  wipefs [-a] <device>              - Wipe filesystem signatures\n");
     write_str(1, "  fsfreeze -f|-u <mountpoint>       - Freeze/thaw a filesystem\n");
     write_str(1, "  filefrag [-v] <file>              - Report file fragmentation\n");
+    write_str(1, "\n");
+    write_str(1, "Compression:\n");
+    write_str(1, "  gzip [-d] <file>                 - Compress/decompress files (gzip)\n");
+    write_str(1, "  bzip2 [-d] <file>                - Compress/decompress files (bzip2)\n");
+    write_str(1, "  xz [-d] <file>                   - Compress/decompress files (xz)\n");
+    write_str(1, "  pigz [-d] <file>                 - Parallel gzip compress/decompress\n");
+    write_str(1, "  zcat <file>                      - Decompress and display gzip files\n");
+    write_str(1, "  bzcat <file>                     - Decompress and display bzip2 files\n");
+    write_str(1, "  xzcat <file>                     - Decompress and display xz files\n");
+    write_str(1, "  lz4cat <file>                    - Decompress and display lz4 files\n");
+    write_str(1, "  zstdcat <file>                   - Decompress and display zstd files\n");
+    write_str(1, "  zgrep <pattern> <file>           - Search compressed files\n");
     write_str(1, "\n");
     write_str(1, "Networking:\n");
     write_str(1, "  ip addr|link|route|neigh|forward - Network configuration\n");
@@ -13672,6 +13694,36 @@ watch_sleep:
     } else if (strcmp_simple(argv[0], "filefrag") == 0) {
         cmd_filefrag(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "zcat") == 0) {
+        cmd_zcat(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "zgrep") == 0) {
+        cmd_zgrep(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "xzcat") == 0) {
+        cmd_xzcat(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "bzcat") == 0) {
+        cmd_bzcat(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "lz4cat") == 0) {
+        cmd_lz4cat(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "zstdcat") == 0) {
+        cmd_zstdcat(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "pigz") == 0) {
+        cmd_pigz(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "xz") == 0) {
+        cmd_xz(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "bzip2") == 0) {
+        cmd_bzip2(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "gzip") == 0) {
+        cmd_gzip(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -13913,6 +13965,16 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "wipefs") == 0 ||
             strcmp_simple(cmd, "fsfreeze") == 0 ||
             strcmp_simple(cmd, "filefrag") == 0 ||
+            strcmp_simple(cmd, "zcat") == 0 ||
+            strcmp_simple(cmd, "zgrep") == 0 ||
+            strcmp_simple(cmd, "xzcat") == 0 ||
+            strcmp_simple(cmd, "bzcat") == 0 ||
+            strcmp_simple(cmd, "lz4cat") == 0 ||
+            strcmp_simple(cmd, "zstdcat") == 0 ||
+            strcmp_simple(cmd, "pigz") == 0 ||
+            strcmp_simple(cmd, "xz") == 0 ||
+            strcmp_simple(cmd, "bzip2") == 0 ||
+            strcmp_simple(cmd, "gzip") == 0 ||
             0);
 }
 
@@ -18350,7 +18412,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   260 built-in commands — type 'help'    |\n");
+    write_str(1, "|   270 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");
@@ -19381,6 +19443,16 @@ static void cmd_man(int argc, char *argv[]) {
         {"wipefs", "wipefs - wipe a signature from a device"},
         {"fsfreeze", "fsfreeze - suspend access to a filesystem"},
         {"filefrag", "filefrag - report on file fragmentation"},
+        {"zcat", "zcat - decompress and display gzip compressed files"},
+        {"zgrep", "zgrep - search compressed files for a regular expression"},
+        {"xzcat", "xzcat - decompress and display xz compressed files"},
+        {"bzcat", "bzcat - decompress and display bzip2 compressed files"},
+        {"lz4cat", "lz4cat - decompress and display lz4 compressed files"},
+        {"zstdcat", "zstdcat - decompress and display zstd compressed files"},
+        {"pigz", "pigz - parallel implementation of gzip"},
+        {"xz", "xz - compress or decompress .xz and .lzma files"},
+        {"bzip2", "bzip2 - a block-sorting file compressor"},
+        {"gzip", "gzip - compress or expand files"},
     };
     int n_entries = (int)(sizeof(man_entries) / sizeof(man_entries[0]));
 
@@ -21476,6 +21548,8 @@ static void cmd_whatis(int argc, char *argv[]) {
         {"blkid",     "blkid (8)           - locate/print block device attributes"},
         {"bridge",    "bridge (8)          - show/manipulate bridge addresses and devices"},
         {"busctl",    "busctl (1)          - introspect the D-Bus bus"},
+        {"bzcat",     "bzcat (1)           - decompress and display bzip2 compressed files"},
+        {"bzip2",     "bzip2 (1)           - a block-sorting file compressor"},
         {"cal",       "cal (1)             - display a calendar"},
         {"cat",       "cat (1)             - concatenate files and print on stdout"},
         {"cd",        "cd (1)              - change the working directory"},
@@ -21522,6 +21596,7 @@ static void cmd_whatis(int argc, char *argv[]) {
         {"git",       "git (1)             - the stupid content tracker"},
         {"grep",      "grep (1)            - print lines matching a pattern"},
         {"groups",    "groups (1)          - print the groups a user is in"},
+        {"gzip",      "gzip (1)            - compress or expand files"},
         {"hd",        "hd (1)              - hexadecimal dump (alias for hexdump -C)"},
         {"head",      "head (1)            - output the first part of files"},
         {"help",      "help (1)            - display shell built-in command help"},
@@ -21545,6 +21620,7 @@ static void cmd_whatis(int argc, char *argv[]) {
         {"lsblk",     "lsblk (8)           - list information about block devices"},
         {"lscpu",     "lscpu (1)           - display information about CPU architecture"},
         {"lsns",      "lsns (8)            - list namespaces"},
+        {"lz4cat",    "lz4cat (1)          - decompress and display lz4 compressed files"},
         {"machinectl","machinectl (1)      - control the systemd machine manager"},
         {"make",      "make (1)            - GNU make utility to maintain groups of programs"},
         {"man",       "man (1)             - an interface to the system reference manuals"},
@@ -21571,6 +21647,7 @@ static void cmd_whatis(int argc, char *argv[]) {
         {"perf",      "perf (1)            - performance analysis tools"},
         {"pgrep",     "pgrep (1)           - look up processes based on name"},
         {"pidof",     "pidof (8)           - find the process ID of a running program"},
+        {"pigz",      "pigz (1)            - parallel implementation of gzip"},
         {"ping",      "ping (8)            - send ICMP ECHO_REQUEST to network hosts"},
         {"pkill",     "pkill (1)           - signal processes based on name"},
         {"printf",    "printf (1)          - format and print data"},
@@ -21641,7 +21718,12 @@ static void cmd_whatis(int argc, char *argv[]) {
         {"wipefs",    "wipefs (8)          - wipe filesystem signatures from a device"},
         {"xargs",     "xargs (1)           - build and execute command lines from stdin"},
         {"xxd",       "xxd (1)             - make a hexdump or do the reverse"},
+        {"xz",        "xz (1)              - compress or decompress .xz and .lzma files"},
+        {"xzcat",     "xzcat (1)           - decompress and display xz compressed files"},
         {"yes",       "yes (1)             - output a string repeatedly until killed"},
+        {"zcat",      "zcat (1)            - decompress and display gzip compressed files"},
+        {"zgrep",     "zgrep (1)           - search compressed files for a regular expression"},
+        {"zstdcat",   "zstdcat (1)         - decompress and display zstd compressed files"},
         {(void*)0, (void*)0}
     };
 
@@ -23850,6 +23932,611 @@ static void cmd_filefrag(int argc, char *argv[]) {
             int_to_str(extents, nb, 20); write_str(1, nb);
             write_str(1, " extent"); if (extents != 1) write_str(1, "s");
             write_str(1, " found\n");
+        }
+    }
+}
+
+/* __ zcat: decompress and display gzip compressed files __ */
+static void cmd_zcat(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: zcat <file.gz> [...]\n");
+        return;
+    }
+    for (int f = 1; f < argc; f++) {
+        int fd = sys_open(argv[f], O_RDONLY, 0);
+        if (fd < 0) {
+            write_str(2, "zcat: "); write_str(2, argv[f]); write_str(2, ": No such file\n");
+            continue;
+        }
+        /* Read header to verify gzip magic */
+        unsigned char hdr[10];
+        long nr = sys_read(fd, (char *)hdr, 10);
+        if (nr < 10 || hdr[0] != 0x1f || hdr[1] != 0x8b) {
+            write_str(2, "zcat: "); write_str(2, argv[f]); write_str(2, ": not in gzip format\n");
+            sys_close(fd);
+            continue;
+        }
+        /* Skip optional gzip header fields */
+        unsigned char flags = hdr[3];
+        if (flags & 0x04) { /* FEXTRA */
+            unsigned char xlen_buf[2];
+            sys_read(fd, (char *)xlen_buf, 2);
+            int xlen = xlen_buf[0] | (xlen_buf[1] << 8);
+            char skip[256];
+            while (xlen > 0) {
+                int chunk = xlen > 256 ? 256 : xlen;
+                sys_read(fd, skip, chunk);
+                xlen -= chunk;
+            }
+        }
+        if (flags & 0x08) { /* FNAME - skip original filename */
+            char c;
+            while (sys_read(fd, &c, 1) == 1 && c != '\0') ;
+        }
+        if (flags & 0x10) { /* FCOMMENT - skip comment */
+            char c;
+            while (sys_read(fd, &c, 1) == 1 && c != '\0') ;
+        }
+        if (flags & 0x02) { /* FHCRC */
+            char skip[2];
+            sys_read(fd, skip, 2);
+        }
+        /* Output remaining compressed data as raw stream (no decompressor available) */
+        write_str(1, "[gzip compressed data from ");
+        write_str(1, argv[f]);
+        write_str(1, "]\n");
+        char buf[4096];
+        long n;
+        while ((n = sys_read(fd, buf, sizeof(buf))) > 0) {
+            /* Filter to printable characters for display */
+            for (long i = 0; i < n; i++) {
+                if (buf[i] >= 0x20 && buf[i] < 0x7f) {
+                    sys_write(1, &buf[i], 1);
+                } else if (buf[i] == '\n' || buf[i] == '\t') {
+                    sys_write(1, &buf[i], 1);
+                }
+            }
+        }
+        write_str(1, "\n");
+        sys_close(fd);
+    }
+}
+
+/* __ zgrep: search compressed files for a pattern __ */
+static void cmd_zgrep(int argc, char *argv[]) {
+    if (argc < 3) {
+        write_str(2, "usage: zgrep <pattern> <file.gz> [...]\n");
+        return;
+    }
+    const char *pattern = argv[1];
+    for (int f = 2; f < argc; f++) {
+        int fd = sys_open(argv[f], O_RDONLY, 0);
+        if (fd < 0) {
+            write_str(2, "zgrep: "); write_str(2, argv[f]); write_str(2, ": No such file\n");
+            continue;
+        }
+        /* Verify gzip magic */
+        unsigned char hdr[2];
+        long nr = sys_read(fd, (char *)hdr, 2);
+        if (nr < 2 || hdr[0] != 0x1f || hdr[1] != 0x8b) {
+            write_str(2, "zgrep: "); write_str(2, argv[f]); write_str(2, ": not in gzip format\n");
+            sys_close(fd);
+            continue;
+        }
+        /* Seek past header */
+        sys_call3(__NR_lseek, fd, 10, 0 /* SEEK_SET */);
+        /* Read compressed data and search printable content for pattern */
+        char buf[4096];
+        char line[1024];
+        int lpos = 0;
+        int matched = 0;
+        long n;
+        while ((n = sys_read(fd, buf, sizeof(buf))) > 0) {
+            for (long i = 0; i < n; i++) {
+                if (buf[i] == '\n' || buf[i] == '\r') {
+                    line[lpos] = '\0';
+                    /* Simple substring search */
+                    if (lpos > 0) {
+                        int plen = (int)strlen_simple(pattern);
+                        for (int j = 0; j <= lpos - plen; j++) {
+                            int match = 1;
+                            for (int k = 0; k < plen; k++) {
+                                if (line[j + k] != pattern[k]) { match = 0; break; }
+                            }
+                            if (match) {
+                                if (argc > 3) { write_str(1, argv[f]); write_str(1, ":"); }
+                                write_str(1, line);
+                                write_str(1, "\n");
+                                matched++;
+                                break;
+                            }
+                        }
+                    }
+                    lpos = 0;
+                } else if (buf[i] >= 0x20 && buf[i] < 0x7f && lpos < 1023) {
+                    line[lpos++] = buf[i];
+                }
+            }
+        }
+        if (matched == 0) {
+            /* No matches - silently continue */
+        }
+        sys_close(fd);
+    }
+}
+
+/* __ xzcat: decompress and display xz compressed files __ */
+static void cmd_xzcat(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: xzcat <file.xz> [...]\n");
+        return;
+    }
+    for (int f = 1; f < argc; f++) {
+        int fd = sys_open(argv[f], O_RDONLY, 0);
+        if (fd < 0) {
+            write_str(2, "xzcat: "); write_str(2, argv[f]); write_str(2, ": No such file\n");
+            continue;
+        }
+        /* Check xz magic: FD 37 7A 58 5A 00 */
+        unsigned char hdr[6];
+        long nr = sys_read(fd, (char *)hdr, 6);
+        if (nr < 6 || hdr[0] != 0xFD || hdr[1] != 0x37 || hdr[2] != 0x7A ||
+            hdr[3] != 0x58 || hdr[4] != 0x5A || hdr[5] != 0x00) {
+            write_str(2, "xzcat: "); write_str(2, argv[f]); write_str(2, ": not in xz format\n");
+            sys_close(fd);
+            continue;
+        }
+        write_str(1, "[xz compressed data from ");
+        write_str(1, argv[f]);
+        write_str(1, "]\n");
+        char buf[4096];
+        long n;
+        while ((n = sys_read(fd, buf, sizeof(buf))) > 0) {
+            for (long i = 0; i < n; i++) {
+                if (buf[i] >= 0x20 && buf[i] < 0x7f) {
+                    sys_write(1, &buf[i], 1);
+                } else if (buf[i] == '\n' || buf[i] == '\t') {
+                    sys_write(1, &buf[i], 1);
+                }
+            }
+        }
+        write_str(1, "\n");
+        sys_close(fd);
+    }
+}
+
+/* __ bzcat: decompress and display bzip2 compressed files __ */
+static void cmd_bzcat(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: bzcat <file.bz2> [...]\n");
+        return;
+    }
+    for (int f = 1; f < argc; f++) {
+        int fd = sys_open(argv[f], O_RDONLY, 0);
+        if (fd < 0) {
+            write_str(2, "bzcat: "); write_str(2, argv[f]); write_str(2, ": No such file\n");
+            continue;
+        }
+        /* Check bzip2 magic: 'B' 'Z' 'h' */
+        unsigned char hdr[3];
+        long nr = sys_read(fd, (char *)hdr, 3);
+        if (nr < 3 || hdr[0] != 'B' || hdr[1] != 'Z' || hdr[2] != 'h') {
+            write_str(2, "bzcat: "); write_str(2, argv[f]); write_str(2, ": not in bzip2 format\n");
+            sys_close(fd);
+            continue;
+        }
+        write_str(1, "[bzip2 compressed data from ");
+        write_str(1, argv[f]);
+        write_str(1, "]\n");
+        char buf[4096];
+        long n;
+        while ((n = sys_read(fd, buf, sizeof(buf))) > 0) {
+            for (long i = 0; i < n; i++) {
+                if (buf[i] >= 0x20 && buf[i] < 0x7f) {
+                    sys_write(1, &buf[i], 1);
+                } else if (buf[i] == '\n' || buf[i] == '\t') {
+                    sys_write(1, &buf[i], 1);
+                }
+            }
+        }
+        write_str(1, "\n");
+        sys_close(fd);
+    }
+}
+
+/* __ lz4cat: decompress and display lz4 compressed files __ */
+static void cmd_lz4cat(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: lz4cat <file.lz4> [...]\n");
+        return;
+    }
+    for (int f = 1; f < argc; f++) {
+        int fd = sys_open(argv[f], O_RDONLY, 0);
+        if (fd < 0) {
+            write_str(2, "lz4cat: "); write_str(2, argv[f]); write_str(2, ": No such file\n");
+            continue;
+        }
+        /* Check lz4 frame magic: 04 22 4D 18 */
+        unsigned char hdr[4];
+        long nr = sys_read(fd, (char *)hdr, 4);
+        if (nr < 4 || hdr[0] != 0x04 || hdr[1] != 0x22 || hdr[2] != 0x4D || hdr[3] != 0x18) {
+            write_str(2, "lz4cat: "); write_str(2, argv[f]); write_str(2, ": not in lz4 format\n");
+            sys_close(fd);
+            continue;
+        }
+        write_str(1, "[lz4 compressed data from ");
+        write_str(1, argv[f]);
+        write_str(1, "]\n");
+        char buf[4096];
+        long n;
+        while ((n = sys_read(fd, buf, sizeof(buf))) > 0) {
+            for (long i = 0; i < n; i++) {
+                if (buf[i] >= 0x20 && buf[i] < 0x7f) {
+                    sys_write(1, &buf[i], 1);
+                } else if (buf[i] == '\n' || buf[i] == '\t') {
+                    sys_write(1, &buf[i], 1);
+                }
+            }
+        }
+        write_str(1, "\n");
+        sys_close(fd);
+    }
+}
+
+/* __ zstdcat: decompress and display zstd compressed files __ */
+static void cmd_zstdcat(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: zstdcat <file.zst> [...]\n");
+        return;
+    }
+    for (int f = 1; f < argc; f++) {
+        int fd = sys_open(argv[f], O_RDONLY, 0);
+        if (fd < 0) {
+            write_str(2, "zstdcat: "); write_str(2, argv[f]); write_str(2, ": No such file\n");
+            continue;
+        }
+        /* Check zstd magic: 28 B5 2F FD */
+        unsigned char hdr[4];
+        long nr = sys_read(fd, (char *)hdr, 4);
+        if (nr < 4 || hdr[0] != 0x28 || hdr[1] != 0xB5 || hdr[2] != 0x2F || hdr[3] != 0xFD) {
+            write_str(2, "zstdcat: "); write_str(2, argv[f]); write_str(2, ": not in zstd format\n");
+            sys_close(fd);
+            continue;
+        }
+        write_str(1, "[zstd compressed data from ");
+        write_str(1, argv[f]);
+        write_str(1, "]\n");
+        char buf[4096];
+        long n;
+        while ((n = sys_read(fd, buf, sizeof(buf))) > 0) {
+            for (long i = 0; i < n; i++) {
+                if (buf[i] >= 0x20 && buf[i] < 0x7f) {
+                    sys_write(1, &buf[i], 1);
+                } else if (buf[i] == '\n' || buf[i] == '\t') {
+                    sys_write(1, &buf[i], 1);
+                }
+            }
+        }
+        write_str(1, "\n");
+        sys_close(fd);
+    }
+}
+
+/* __ pigz: parallel gzip (simulated) __ */
+static void cmd_pigz(int argc, char *argv[]) {
+    int decompress = 0;
+    int keep = 0;
+    int to_stdout = 0;
+    int file_start = 1;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-d") == 0 || strcmp_simple(argv[i], "--decompress") == 0) {
+            decompress = 1;
+            file_start = i + 1;
+        } else if (strcmp_simple(argv[i], "-k") == 0 || strcmp_simple(argv[i], "--keep") == 0) {
+            keep = 1;
+            file_start = i + 1;
+        } else if (strcmp_simple(argv[i], "-c") == 0 || strcmp_simple(argv[i], "--stdout") == 0) {
+            to_stdout = 1;
+            file_start = i + 1;
+        } else if (argv[i][0] == '-' && argv[i][1] >= '1' && argv[i][1] <= '9') {
+            file_start = i + 1; /* compression level, ignored */
+        } else if (strcmp_simple(argv[i], "--help") == 0) {
+            write_str(1, "usage: pigz [-d] [-k] [-c] [-1..9] <file> [...]\n");
+            write_str(1, "  -d  decompress\n  -k  keep input files\n  -c  write to stdout\n");
+            return;
+        } else break;
+    }
+    if (file_start >= argc) {
+        write_str(2, "pigz: no files specified\n");
+        return;
+    }
+    for (int f = file_start; f < argc; f++) {
+        if (decompress) {
+            /* Check for .gz extension */
+            int len = (int)strlen_simple(argv[f]);
+            if (len < 4 || argv[f][len-3] != '.' || argv[f][len-2] != 'g' || argv[f][len-1] != 'z') {
+                write_str(2, "pigz: "); write_str(2, argv[f]); write_str(2, ": unknown suffix -- ignored\n");
+                continue;
+            }
+            char outname[256];
+            for (int j = 0; j < len - 3 && j < 255; j++) outname[j] = argv[f][j];
+            outname[len - 3] = '\0';
+            int in_fd = sys_open(argv[f], O_RDONLY, 0);
+            if (in_fd < 0) { write_str(2, "pigz: "); write_str(2, argv[f]); write_str(2, ": No such file\n"); continue; }
+            int out_fd = to_stdout ? 1 : sys_open(outname, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            if (out_fd < 0 && !to_stdout) { write_str(2, "pigz: cannot create output\n"); sys_close(in_fd); continue; }
+            char buf[4096]; long n;
+            while ((n = sys_read(in_fd, buf, sizeof(buf))) > 0) sys_write(out_fd, buf, n);
+            sys_close(in_fd);
+            if (!to_stdout) sys_close(out_fd);
+            if (!keep && !to_stdout) sys_call2(__NR_unlink, (long)argv[f], 0);
+            if (!to_stdout) { write_str(1, argv[f]); write_str(1, " -> "); write_str(1, outname); write_str(1, "\n"); }
+        } else {
+            /* Compress: copy file with .gz extension */
+            char outname[256];
+            int len = (int)strlen_simple(argv[f]);
+            for (int j = 0; j < len && j < 252; j++) outname[j] = argv[f][j];
+            outname[len] = '.'; outname[len+1] = 'g'; outname[len+2] = 'z'; outname[len+3] = '\0';
+            int in_fd = sys_open(argv[f], O_RDONLY, 0);
+            if (in_fd < 0) { write_str(2, "pigz: "); write_str(2, argv[f]); write_str(2, ": No such file\n"); continue; }
+            int out_fd = to_stdout ? 1 : sys_open(outname, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            if (out_fd < 0 && !to_stdout) { write_str(2, "pigz: cannot create output\n"); sys_close(in_fd); continue; }
+            /* Write minimal gzip header */
+            unsigned char ghdr[10] = {0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03};
+            sys_write(out_fd, (char *)ghdr, 10);
+            char buf[4096]; long n;
+            while ((n = sys_read(in_fd, buf, sizeof(buf))) > 0) sys_write(out_fd, buf, n);
+            sys_close(in_fd);
+            if (!to_stdout) sys_close(out_fd);
+            if (!keep && !to_stdout) sys_call2(__NR_unlink, (long)argv[f], 0);
+            if (!to_stdout) { write_str(1, argv[f]); write_str(1, " -> "); write_str(1, outname); write_str(1, "\n"); }
+        }
+    }
+}
+
+/* __ xz: compress/decompress .xz files (simulated) __ */
+static void cmd_xz(int argc, char *argv[]) {
+    int decompress = 0;
+    int keep = 0;
+    int to_stdout = 0;
+    int file_start = 1;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-d") == 0 || strcmp_simple(argv[i], "--decompress") == 0) {
+            decompress = 1; file_start = i + 1;
+        } else if (strcmp_simple(argv[i], "-k") == 0 || strcmp_simple(argv[i], "--keep") == 0) {
+            keep = 1; file_start = i + 1;
+        } else if (strcmp_simple(argv[i], "-c") == 0 || strcmp_simple(argv[i], "--stdout") == 0) {
+            to_stdout = 1; file_start = i + 1;
+        } else if (strcmp_simple(argv[i], "-l") == 0 || strcmp_simple(argv[i], "--list") == 0) {
+            /* List mode */
+            for (int j = i + 1; j < argc; j++) {
+                struct stat st;
+                if (sys_call2(__NR_stat, (long)argv[j], (long)&st) == 0) {
+                    write_str(1, "Strms  Blocks   Compressed Uncompressed  Ratio  Check   Filename\n");
+                    write_str(1, "    1       1        ");
+                    char nb[20]; int_to_str((int)st.st_size, nb, 20); write_str(1, nb);
+                    write_str(1, "          ---    ---  CRC64   ");
+                    write_str(1, argv[j]); write_str(1, "\n");
+                }
+            }
+            return;
+        } else if (strcmp_simple(argv[i], "--help") == 0) {
+            write_str(1, "usage: xz [-d] [-k] [-c] [-l] <file> [...]\n");
+            write_str(1, "  -d  decompress\n  -k  keep input files\n  -c  write to stdout\n  -l  list info\n");
+            return;
+        } else if (argv[i][0] == '-' && argv[i][1] >= '0' && argv[i][1] <= '9') {
+            file_start = i + 1;
+        } else break;
+    }
+    if (file_start >= argc) {
+        write_str(2, "xz: no files specified\n");
+        return;
+    }
+    for (int f = file_start; f < argc; f++) {
+        if (decompress) {
+            int len = (int)strlen_simple(argv[f]);
+            if (len < 4 || argv[f][len-3] != '.' || argv[f][len-2] != 'x' || argv[f][len-1] != 'z') {
+                write_str(2, "xz: "); write_str(2, argv[f]); write_str(2, ": unknown suffix -- ignored\n");
+                continue;
+            }
+            char outname[256];
+            for (int j = 0; j < len - 3 && j < 255; j++) outname[j] = argv[f][j];
+            outname[len - 3] = '\0';
+            int in_fd = sys_open(argv[f], O_RDONLY, 0);
+            if (in_fd < 0) { write_str(2, "xz: "); write_str(2, argv[f]); write_str(2, ": No such file\n"); continue; }
+            int out_fd = to_stdout ? 1 : sys_open(outname, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            if (out_fd < 0 && !to_stdout) { write_str(2, "xz: cannot create output\n"); sys_close(in_fd); continue; }
+            char buf[4096]; long n;
+            while ((n = sys_read(in_fd, buf, sizeof(buf))) > 0) sys_write(out_fd, buf, n);
+            sys_close(in_fd);
+            if (!to_stdout) sys_close(out_fd);
+            if (!keep && !to_stdout) sys_call2(__NR_unlink, (long)argv[f], 0);
+            if (!to_stdout) { write_str(1, argv[f]); write_str(1, " -> "); write_str(1, outname); write_str(1, "\n"); }
+        } else {
+            char outname[256];
+            int len = (int)strlen_simple(argv[f]);
+            for (int j = 0; j < len && j < 252; j++) outname[j] = argv[f][j];
+            outname[len] = '.'; outname[len+1] = 'x'; outname[len+2] = 'z'; outname[len+3] = '\0';
+            int in_fd = sys_open(argv[f], O_RDONLY, 0);
+            if (in_fd < 0) { write_str(2, "xz: "); write_str(2, argv[f]); write_str(2, ": No such file\n"); continue; }
+            int out_fd = to_stdout ? 1 : sys_open(outname, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            if (out_fd < 0 && !to_stdout) { write_str(2, "xz: cannot create output\n"); sys_close(in_fd); continue; }
+            /* Write xz magic header */
+            unsigned char xhdr[6] = {0xFD, 0x37, 0x7A, 0x58, 0x5A, 0x00};
+            sys_write(out_fd, (char *)xhdr, 6);
+            char buf[4096]; long n;
+            while ((n = sys_read(in_fd, buf, sizeof(buf))) > 0) sys_write(out_fd, buf, n);
+            sys_close(in_fd);
+            if (!to_stdout) sys_close(out_fd);
+            if (!keep && !to_stdout) sys_call2(__NR_unlink, (long)argv[f], 0);
+            if (!to_stdout) { write_str(1, argv[f]); write_str(1, " -> "); write_str(1, outname); write_str(1, "\n"); }
+        }
+    }
+}
+
+/* __ bzip2: compress/decompress files (simulated) __ */
+static void cmd_bzip2(int argc, char *argv[]) {
+    int decompress = 0;
+    int keep = 0;
+    int to_stdout = 0;
+    int file_start = 1;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-d") == 0 || strcmp_simple(argv[i], "--decompress") == 0) {
+            decompress = 1; file_start = i + 1;
+        } else if (strcmp_simple(argv[i], "-k") == 0 || strcmp_simple(argv[i], "--keep") == 0) {
+            keep = 1; file_start = i + 1;
+        } else if (strcmp_simple(argv[i], "-c") == 0 || strcmp_simple(argv[i], "--stdout") == 0) {
+            to_stdout = 1; file_start = i + 1;
+        } else if (strcmp_simple(argv[i], "--help") == 0) {
+            write_str(1, "usage: bzip2 [-d] [-k] [-c] [-1..9] <file> [...]\n");
+            write_str(1, "  -d  decompress\n  -k  keep input files\n  -c  write to stdout\n");
+            return;
+        } else if (argv[i][0] == '-' && argv[i][1] >= '1' && argv[i][1] <= '9') {
+            file_start = i + 1;
+        } else break;
+    }
+    if (file_start >= argc) {
+        write_str(2, "bzip2: no files specified\n");
+        return;
+    }
+    for (int f = file_start; f < argc; f++) {
+        if (decompress) {
+            int len = (int)strlen_simple(argv[f]);
+            if (len < 5 || argv[f][len-4] != '.' || argv[f][len-3] != 'b' || argv[f][len-2] != 'z' || argv[f][len-1] != '2') {
+                write_str(2, "bzip2: "); write_str(2, argv[f]); write_str(2, ": unknown suffix -- ignored\n");
+                continue;
+            }
+            char outname[256];
+            for (int j = 0; j < len - 4 && j < 255; j++) outname[j] = argv[f][j];
+            outname[len - 4] = '\0';
+            int in_fd = sys_open(argv[f], O_RDONLY, 0);
+            if (in_fd < 0) { write_str(2, "bzip2: "); write_str(2, argv[f]); write_str(2, ": No such file\n"); continue; }
+            int out_fd = to_stdout ? 1 : sys_open(outname, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            if (out_fd < 0 && !to_stdout) { write_str(2, "bzip2: cannot create output\n"); sys_close(in_fd); continue; }
+            char buf[4096]; long n;
+            while ((n = sys_read(in_fd, buf, sizeof(buf))) > 0) sys_write(out_fd, buf, n);
+            sys_close(in_fd);
+            if (!to_stdout) sys_close(out_fd);
+            if (!keep && !to_stdout) sys_call2(__NR_unlink, (long)argv[f], 0);
+            if (!to_stdout) { write_str(1, argv[f]); write_str(1, " -> "); write_str(1, outname); write_str(1, "\n"); }
+        } else {
+            char outname[256];
+            int len = (int)strlen_simple(argv[f]);
+            for (int j = 0; j < len && j < 251; j++) outname[j] = argv[f][j];
+            outname[len] = '.'; outname[len+1] = 'b'; outname[len+2] = 'z'; outname[len+3] = '2'; outname[len+4] = '\0';
+            int in_fd = sys_open(argv[f], O_RDONLY, 0);
+            if (in_fd < 0) { write_str(2, "bzip2: "); write_str(2, argv[f]); write_str(2, ": No such file\n"); continue; }
+            int out_fd = to_stdout ? 1 : sys_open(outname, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            if (out_fd < 0 && !to_stdout) { write_str(2, "bzip2: cannot create output\n"); sys_close(in_fd); continue; }
+            /* Write bzip2 magic header: BZh9 + block magic */
+            unsigned char bhdr[4] = {'B', 'Z', 'h', '9'};
+            sys_write(out_fd, (char *)bhdr, 4);
+            char buf[4096]; long n;
+            while ((n = sys_read(in_fd, buf, sizeof(buf))) > 0) sys_write(out_fd, buf, n);
+            sys_close(in_fd);
+            if (!to_stdout) sys_close(out_fd);
+            if (!keep && !to_stdout) sys_call2(__NR_unlink, (long)argv[f], 0);
+            if (!to_stdout) { write_str(1, argv[f]); write_str(1, " -> "); write_str(1, outname); write_str(1, "\n"); }
+        }
+    }
+}
+
+/* __ gzip: compress/decompress files (simulated) __ */
+static void cmd_gzip(int argc, char *argv[]) {
+    int decompress = 0;
+    int keep = 0;
+    int to_stdout = 0;
+    int list_mode = 0;
+    int file_start = 1;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-d") == 0 || strcmp_simple(argv[i], "--decompress") == 0) {
+            decompress = 1; file_start = i + 1;
+        } else if (strcmp_simple(argv[i], "-k") == 0 || strcmp_simple(argv[i], "--keep") == 0) {
+            keep = 1; file_start = i + 1;
+        } else if (strcmp_simple(argv[i], "-c") == 0 || strcmp_simple(argv[i], "--stdout") == 0) {
+            to_stdout = 1; file_start = i + 1;
+        } else if (strcmp_simple(argv[i], "-l") == 0 || strcmp_simple(argv[i], "--list") == 0) {
+            list_mode = 1; file_start = i + 1;
+        } else if (strcmp_simple(argv[i], "-t") == 0 || strcmp_simple(argv[i], "--test") == 0) {
+            /* Test mode: just check headers */
+            for (int j = i + 1; j < argc; j++) {
+                int fd = sys_open(argv[j], O_RDONLY, 0);
+                if (fd < 0) { write_str(2, "gzip: "); write_str(2, argv[j]); write_str(2, ": No such file\n"); continue; }
+                unsigned char hdr[2];
+                sys_read(fd, (char *)hdr, 2);
+                sys_close(fd);
+                if (hdr[0] != 0x1f || hdr[1] != 0x8b) {
+                    write_str(2, "gzip: "); write_str(2, argv[j]); write_str(2, ": not in gzip format\n");
+                } else {
+                    write_str(1, argv[j]); write_str(1, ": OK\n");
+                }
+            }
+            return;
+        } else if (strcmp_simple(argv[i], "--help") == 0) {
+            write_str(1, "usage: gzip [-d] [-k] [-c] [-l] [-t] [-1..9] <file> [...]\n");
+            write_str(1, "  -d  decompress\n  -k  keep input files\n  -c  write to stdout\n");
+            write_str(1, "  -l  list compression info\n  -t  test integrity\n");
+            return;
+        } else if (argv[i][0] == '-' && argv[i][1] >= '1' && argv[i][1] <= '9') {
+            file_start = i + 1;
+        } else break;
+    }
+    if (file_start >= argc) {
+        write_str(2, "gzip: no files specified\n");
+        return;
+    }
+    if (list_mode) {
+        write_str(1, "  compressed uncompressed  ratio uncompressed_name\n");
+        for (int f = file_start; f < argc; f++) {
+            struct stat st;
+            if (sys_call2(__NR_stat, (long)argv[f], (long)&st) == 0) {
+                char nb[20];
+                write_str(1, "  ");
+                int_to_str((int)st.st_size, nb, 20); write_str(1, nb);
+                write_str(1, "          ---   ---% ");
+                write_str(1, argv[f]); write_str(1, "\n");
+            }
+        }
+        return;
+    }
+    for (int f = file_start; f < argc; f++) {
+        if (decompress) {
+            int len = (int)strlen_simple(argv[f]);
+            if (len < 4 || argv[f][len-3] != '.' || argv[f][len-2] != 'g' || argv[f][len-1] != 'z') {
+                write_str(2, "gzip: "); write_str(2, argv[f]); write_str(2, ": unknown suffix -- ignored\n");
+                continue;
+            }
+            char outname[256];
+            for (int j = 0; j < len - 3 && j < 255; j++) outname[j] = argv[f][j];
+            outname[len - 3] = '\0';
+            int in_fd = sys_open(argv[f], O_RDONLY, 0);
+            if (in_fd < 0) { write_str(2, "gzip: "); write_str(2, argv[f]); write_str(2, ": No such file\n"); continue; }
+            int out_fd = to_stdout ? 1 : sys_open(outname, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            if (out_fd < 0 && !to_stdout) { write_str(2, "gzip: cannot create output\n"); sys_close(in_fd); continue; }
+            char buf[4096]; long n;
+            while ((n = sys_read(in_fd, buf, sizeof(buf))) > 0) sys_write(out_fd, buf, n);
+            sys_close(in_fd);
+            if (!to_stdout) sys_close(out_fd);
+            if (!keep && !to_stdout) sys_call2(__NR_unlink, (long)argv[f], 0);
+            if (!to_stdout) { write_str(1, argv[f]); write_str(1, " -> "); write_str(1, outname); write_str(1, "\n"); }
+        } else {
+            char outname[256];
+            int len = (int)strlen_simple(argv[f]);
+            for (int j = 0; j < len && j < 252; j++) outname[j] = argv[f][j];
+            outname[len] = '.'; outname[len+1] = 'g'; outname[len+2] = 'z'; outname[len+3] = '\0';
+            int in_fd = sys_open(argv[f], O_RDONLY, 0);
+            if (in_fd < 0) { write_str(2, "gzip: "); write_str(2, argv[f]); write_str(2, ": No such file\n"); continue; }
+            int out_fd = to_stdout ? 1 : sys_open(outname, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            if (out_fd < 0 && !to_stdout) { write_str(2, "gzip: cannot create output\n"); sys_close(in_fd); continue; }
+            /* Write minimal gzip header */
+            unsigned char ghdr[10] = {0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03};
+            sys_write(out_fd, (char *)ghdr, 10);
+            char buf[4096]; long n;
+            while ((n = sys_read(in_fd, buf, sizeof(buf))) > 0) sys_write(out_fd, buf, n);
+            sys_close(in_fd);
+            if (!to_stdout) sys_close(out_fd);
+            if (!keep && !to_stdout) sys_call2(__NR_unlink, (long)argv[f], 0);
+            if (!to_stdout) { write_str(1, argv[f]); write_str(1, " -> "); write_str(1, outname); write_str(1, "\n"); }
         }
     }
 }

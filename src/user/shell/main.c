@@ -158,6 +158,10 @@ static void cmd_scp(int argc, char *argv[]);
 static void cmd_pkg(int argc, char *argv[]);
 static void cmd_man(int argc, char *argv[]);
 static void cmd_screen(int argc, char *argv[]);
+static void cmd_split(int argc, char *argv[]);
+static void cmd_join(int argc, char *argv[]);
+static void cmd_tsort(int argc, char *argv[]);
+static void cmd_column(int argc, char *argv[]);
 static void strcpy_simple(char *dest, const char *src);
 
 /* Forward declaration for prompt */
@@ -11925,6 +11929,8 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "man") == 0 ||
             strcmp_simple(cmd, "screen") == 0 ||
             strcmp_simple(cmd, "strace") == 0 ||
+            strcmp_simple(cmd, "split") == 0 || strcmp_simple(cmd, "join") == 0 ||
+            strcmp_simple(cmd, "tsort") == 0 || strcmp_simple(cmd, "column") == 0 ||
             0);
 }
 
@@ -17441,4 +17447,58 @@ static void cmd_screen(int argc, char *argv[]) {
         s->used = 0;
         write_str(1, "[screen session ended]\n");
     }
+}
+
+static void cmd_split(int argc, char *argv[]) {
+    int lp = 1000; const char *inf = NULL, *pfx = "x";
+    for (int i = 1; i < argc; i++) { if (argv[i][0]=='-'&&argv[i][1]=='l') { if (argv[i][2]) lp=simple_atoi(&argv[i][2]); else if(i+1<argc) lp=simple_atoi(argv[++i]); } else if (!inf) inf=argv[i]; else pfx=argv[i]; }
+    if (!inf) { write_str(2, "usage: split [-l N] file [prefix]\n"); return; }
+    long fd = sys_open(inf, 0, 0); if (fd<0) { write_str(2,"split: cannot open\n"); return; }
+    char buf[512]; int ln=0, fn=0; long ofd=-1;
+    while (1) { long n=sys_read((int)fd,buf,511); if(n<=0) break;
+        for(long i=0;i<n;i++) { if(ofd<0||ln>=lp) { if(ofd>=0)sys_close((int)ofd); char nm[64]; int ni=0;
+            for(const char *p=pfx;*p&&ni<50;p++) nm[ni++]=*p; nm[ni++]=(char)('a'+(fn/26)); nm[ni++]=(char)('a'+(fn%26)); nm[ni]=0; fn++;
+            ofd=sys_open(nm,0x41,0644); if(ofd<0){sys_close((int)fd);return;} ln=0; }
+            sys_write((int)ofd,&buf[i],1); if(buf[i]=='\n') ln++; } }
+    if(ofd>=0) sys_close((int)ofd); sys_close((int)fd);
+}
+static void cmd_join(int argc, char *argv[]) {
+    if (argc<3) { write_str(2,"usage: join file1 file2\n"); return; }
+    char b1[4096],b2[4096]; long fd=sys_open(argv[1],0,0); if(fd<0){write_str(2,"join: error\n");return;}
+    long n1=sys_read((int)fd,b1,4095); sys_close((int)fd); if(n1<0)n1=0; b1[n1]=0;
+    fd=sys_open(argv[2],0,0); if(fd<0){write_str(2,"join: error\n");return;}
+    long n2=sys_read((int)fd,b2,4095); sys_close((int)fd); if(n2<0)n2=0; b2[n2]=0;
+    char *p1=b1; while(*p1) { char *e1=p1; while(*e1&&*e1!='\n')e1++; char *s1=p1; while(s1<e1&&*s1!=' '&&*s1!='\t')s1++;
+        int k1=(int)(s1-p1); char *p2=b2; while(*p2) { char *e2=p2; while(*e2&&*e2!='\n')e2++; char *s2=p2; while(s2<e2&&*s2!=' '&&*s2!='\t')s2++;
+        int k2=(int)(s2-p2); if(k1==k2){int m=1;for(int j=0;j<k1;j++)if(p1[j]!=p2[j]){m=0;break;}
+        if(m){sys_write(1,p1,(size_t)k1);if(s1<e1)sys_write(1,s1,(size_t)(e1-s1));if(s2<e2)sys_write(1,s2,(size_t)(e2-s2));sys_write(1,"\n",1);}}
+        p2=(*e2)?e2+1:e2;} p1=(*e1)?e1+1:e1; }
+}
+static void cmd_tsort(int argc, char *argv[]) {
+    char buf[4096]; long n; if(argc>1){long fd=sys_open(argv[1],0,0);if(fd<0){write_str(2,"tsort: error\n");return;}
+    n=sys_read((int)fd,buf,4095);sys_close((int)fd);}else{n=sys_read(0,buf,4095);}
+    if(n<=0)return; buf[n]=0; char nd[128][32];int eg[128][2];int nn=0,ne=0,idg[128]={0}; char *p=buf;
+    while(*p&&ne<128){while(*p==' '||*p=='\t'||*p=='\n')p++;if(!*p)break;char *a=p;while(*p&&*p!=' '&&*p!='\t'&&*p!='\n')p++;
+    int la=(int)(p-a);if(la>31)la=31;while(*p==' '||*p=='\t')p++;char *b=p;while(*p&&*p!=' '&&*p!='\t'&&*p!='\n')p++;
+    int lb=(int)(p-b);if(lb>31)lb=31;if(!la||!lb)continue;int i1=-1,i2=-1;
+    for(int i=0;i<nn;i++){int m=1;for(int j=0;j<la;j++)if(nd[i][j]!=a[j]){m=0;break;}if(m&&nd[i][la]==0){i1=i;break;}}
+    if(i1<0&&nn<128){for(int j=0;j<la;j++)nd[nn][j]=a[j];nd[nn][la]=0;i1=nn++;}
+    for(int i=0;i<nn;i++){int m=1;for(int j=0;j<lb;j++)if(nd[i][j]!=b[j]){m=0;break;}if(m&&nd[i][lb]==0){i2=i;break;}}
+    if(i2<0&&nn<128){for(int j=0;j<lb;j++)nd[nn][j]=b[j];nd[nn][lb]=0;i2=nn++;}
+    if(i1>=0&&i2>=0&&i1!=i2){eg[ne][0]=i1;eg[ne][1]=i2;ne++;idg[i2]++;}}
+    int q[128],qh=0,qt=0,out=0;for(int i=0;i<nn;i++)if(idg[i]==0)q[qt++]=i;
+    while(qh<qt){int u=q[qh++];out++;write_str(1,nd[u]);write_str(1,"\n");for(int i=0;i<ne;i++)if(eg[i][0]==u&&--idg[eg[i][1]]==0)q[qt++]=eg[i][1];}
+    if(out<nn)write_str(2,"tsort: cycle detected\n");
+}
+static void cmd_column(int argc, char *argv[]) {
+    int tbl=0;for(int i=1;i<argc;i++)if(strcmp_simple(argv[i],"-t")==0)tbl=1;
+    char buf[8192];long n=sys_read(0,buf,8191);if(n<=0)return;buf[n]=0;
+    if(!tbl){sys_write(1,buf,(size_t)n);return;}
+    char *lines[256];int nl=0,mc=0,w[32]={0};char *lp=buf;
+    while(*lp&&nl<256){lines[nl++]=lp;while(*lp&&*lp!='\n')lp++;if(*lp=='\n')*lp++=0;}
+    for(int i=0;i<nl;i++){char *fp=lines[i];int c=0;while(*fp&&c<32){while(*fp==' '||*fp=='\t')fp++;if(!*fp)break;
+    char *s=fp;while(*fp&&*fp!=' '&&*fp!='\t')fp++;int fl=(int)(fp-s);if(fl>w[c])w[c]=fl;c++;}if(c>mc)mc=c;}
+    for(int i=0;i<nl;i++){char *fp=lines[i];int c=0;while(*fp&&c<mc){while(*fp==' '||*fp=='\t')fp++;if(!*fp)break;
+    char *s=fp;while(*fp&&*fp!=' '&&*fp!='\t')fp++;int fl=(int)(fp-s);sys_write(1,s,(size_t)fl);
+    if(c<mc-1)for(int pd=fl;pd<w[c]+2;pd++)sys_write(1," ",1);c++;}sys_write(1,"\n",1);}
 }

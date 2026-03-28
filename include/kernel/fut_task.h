@@ -279,6 +279,7 @@ struct fut_task {
     struct uts_namespace *uts_ns;      // UTS namespace (hostname/domainname)
     struct net_namespace *net_ns;      // Network namespace
     struct user_namespace *user_ns;    // User namespace (UID/GID mapping)
+    int time_ns_level;                 // Time namespace nesting depth (0 = init)
 
     /* Cgroup v2 membership (index into global cgroup table; 0 = root "/") */
     int cgroup_idx;

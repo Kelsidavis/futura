@@ -80,16 +80,14 @@ static ssize_t full_write(void *inode, void *priv, const void *buf, size_t n, of
 
 static struct fut_file_ops full_fops;
 
-/* Check if RDRAND is supported via CPUID.01H:ECX.RDRAND[bit 30] */
-static int __attribute__((unused)) hwrng_has_rdrand(void) {
 #ifdef __x86_64__
+/* Check if RDRAND is supported via CPUID.01H:ECX.RDRAND[bit 30] */
+static int hwrng_has_rdrand(void) {
     uint32_t eax, ebx, ecx, edx;
     __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(1));
     return (ecx >> 30) & 1;
-#else
-    return 0;
-#endif
 }
+#endif
 
 /* /dev/hwrng: hardware random number generator backed by RDRAND (x86_64) */
 static ssize_t hwrng_read(void *inode, void *priv, void *buf, size_t n, off_t *pos) {

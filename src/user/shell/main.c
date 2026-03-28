@@ -176,6 +176,8 @@ static void cmd_base32(int argc, char *argv[]);
 static void cmd_mesg(int argc, char *argv[]);
 static void cmd_last(int argc, char *argv[]);
 static void cmd_dstat(int argc, char *argv[]);
+static void cmd_ascii(int argc, char *argv[]);
+static void cmd_whatis(int argc, char *argv[]);
 static void strcpy_simple(char *dest, const char *src);
 
 /* Forward declaration for prompt */
@@ -626,7 +628,7 @@ static size_t common_prefix_len(const char *s1, const char *s2) {
 static void complete_command(char *buf, size_t *pos, size_t max_len) {
     /* List of builtin commands */
     const char *builtins[] = {
-        "arp", "base32", "bg", "brctl", "cal", "cd", "chgrp", "chmod", "chroot", "clear", "cmp", "comm", "conntrack", "date", "dd", "df", "dhclient", "dmesg", "echo", "edit", "ethtool", "expand", "expr", "factor", "file", "fold", "hexdump", "install", "locale", "lsof", "md5sum", "mkfifo", "nc", "nice", "nohup", "patch", "pgrep", "pidof", "pkill", "poweroff", "reboot", "renice", "reset", "seq", "sha1sum", "sha512sum", "sleep", "strings", "tac", "time", "timeout", "tput", "traceroute", "tty", "unexpand", "wget", "xxd", "exit", "export", "fg", "free",
+        "arp", "ascii", "base32", "bg", "brctl", "cal", "cd", "chgrp", "chmod", "chroot", "clear", "cmp", "comm", "conntrack", "date", "dd", "df", "dhclient", "dmesg", "echo", "edit", "ethtool", "expand", "expr", "factor", "file", "fold", "hexdump", "install", "locale", "lsof", "md5sum", "mkfifo", "nc", "nice", "nohup", "patch", "pgrep", "pidof", "pkill", "poweroff", "reboot", "renice", "reset", "seq", "sha1sum", "sha512sum", "sleep", "strings", "tac", "time", "timeout", "tput", "traceroute", "tty", "unexpand", "wget", "whatis", "xxd", "exit", "export", "fg", "free",
         "help", "hostname", "httpd", "id", "ifconfig", "iostat", "ipcs", "iptables", "jobs", "kill", "logger", "losetup", "ls", "lsblk", "lspci", "mkfs", "mount", "netstat",
         ".", "alias", "arch", "basename", "blkid", "dirname", "du", "exec", "false", "fmt", "getconf", "groups", "history", "ip", "ln", "logname", "lscpu", "mkswap", "mktemp", "more", "nawk", "nproc", "nslookup", "passwd", "ping", "printenv", "printf", "ps", "pwd", "read", "readlink", "realpath", "set", "sha1sum", "sha256sum", "shutdown", "source", "ss", "stat", "strace", "stty", "su", "sync", "sysctl", "sysinfo", "tc", "test", "top", "trap", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "users", "version", "vi", "vmstat", "w", "wait", "watch", "wdctl", "which", "whoami", "xargs", "yes", NULL
     };
@@ -1295,12 +1297,14 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  install [-m] s d- Copy file with mode\n");
     write_str(1, "  expr EXPR       - Evaluate expression (+,-,*,/,%%,=,!=,<,>)\n");
     write_str(1, "  factor N        - Print prime factors\n");
-    write_str(1, "  cal             - Display calendar\n");
+    write_str(1, "  cal [-3] [-y]   - Display calendar (-3 three months, -y year)\n");
     write_str(1, "  locale          - Display locale settings\n");
     write_str(1, "  reset           - Reset terminal\n");
     write_str(1, "  tput cap        - Query terminal capabilities\n");
     write_str(1, "  lsof [-p pid]   - List open files\n");
     write_str(1, "  strace <cmd>    - Trace syscalls of a command\n");
+    write_str(1, "  ascii           - Display ASCII character table (0-127)\n");
+    write_str(1, "  whatis <cmd>    - One-line description of a command\n");
     write_str(1, "  which <cmd>     - Find command in PATH\n");
     write_str(1, "  du [path]       - Show disk usage (KB)\n");
     write_str(1, "  tree [path]     - Show directory tree\n");
@@ -1713,11 +1717,55 @@ static void cmd_mount(int argc, char *argv[]) {
     (void)argc; (void)argv;
     int fd = sys_open("/proc/mounts", O_RDONLY, 0);
     if (fd >= 0) {
-        char buf[1024];
+        char buf[2048];
         ssize_t n = sys_read(fd, buf, sizeof(buf) - 1);
         if (n > 0) {
             buf[n] = '\0';
-            write_str(1, buf);
+            /* Parse each line: device mountpoint fstype options dump pass
+             * Reformat as: device on mountpoint type fstype (options) */
+            char *p = buf;
+            while (*p) {
+                /* Parse device */
+                char device[128] = {0};
+                int di = 0;
+                while (*p && *p != ' ' && di < 126) device[di++] = *p++;
+                device[di] = '\0';
+                while (*p == ' ') p++;
+
+                /* Parse mountpoint */
+                char mpoint[128] = {0};
+                int mi = 0;
+                while (*p && *p != ' ' && mi < 126) mpoint[mi++] = *p++;
+                mpoint[mi] = '\0';
+                while (*p == ' ') p++;
+
+                /* Parse fstype */
+                char fstype[64] = {0};
+                int fi = 0;
+                while (*p && *p != ' ' && fi < 62) fstype[fi++] = *p++;
+                fstype[fi] = '\0';
+                while (*p == ' ') p++;
+
+                /* Parse options */
+                char opts[256] = {0};
+                int oi = 0;
+                while (*p && *p != ' ' && *p != '\n' && oi < 254) opts[oi++] = *p++;
+                opts[oi] = '\0';
+
+                /* Skip dump and pass fields */
+                while (*p && *p != '\n') p++;
+                if (*p == '\n') p++;
+
+                /* Print formatted output */
+                write_str(1, device);
+                write_str(1, " on ");
+                write_str(1, mpoint);
+                write_str(1, " type ");
+                write_str(1, fstype);
+                write_str(1, " (");
+                write_str(1, opts);
+                write_str(1, ")\n");
+            }
         } else {
             write_str(1, "mount: cannot read /proc/mounts\n");
         }
@@ -2651,28 +2699,79 @@ static void cmd_wget(int argc, char *argv[]) {
 /* Built-in: seq - Print sequence of numbers */
 static void cmd_seq(int argc, char *argv[]) {
     int start = 1, end_val = 0, step = 1;
-    if (argc == 2) {
-        end_val = 0;
-        for (int i = 0; argv[1][i]; i++)
-            end_val = end_val * 10 + (argv[1][i] - '0');
-    } else if (argc == 3) {
-        start = 0;
-        for (int i = 0; argv[1][i]; i++)
-            start = start * 10 + (argv[1][i] - '0');
-        end_val = 0;
-        for (int i = 0; argv[2][i]; i++)
-            end_val = end_val * 10 + (argv[2][i] - '0');
+    const char *sep = "\n";
+    int equal_width = 0;
+    int argi = 1;
+
+    /* Parse options */
+    while (argi < argc && argv[argi][0] == '-' && argv[argi][1] != '\0') {
+        if (argv[argi][1] == 's' && argv[argi][2] == '\0' && argi + 1 < argc) {
+            argi++;
+            sep = argv[argi];
+        } else if (argv[argi][1] == 'w' && argv[argi][2] == '\0') {
+            equal_width = 1;
+        } else {
+            break; /* not an option, might be a negative number */
+        }
+        argi++;
+    }
+
+    int remaining = argc - argi;
+    if (remaining == 1) {
+        end_val = simple_atoi(argv[argi]);
+    } else if (remaining == 2) {
+        start = simple_atoi(argv[argi]);
+        end_val = simple_atoi(argv[argi + 1]);
+    } else if (remaining == 3) {
+        start = simple_atoi(argv[argi]);
+        step = simple_atoi(argv[argi + 1]);
+        end_val = simple_atoi(argv[argi + 2]);
+        if (step == 0) { write_str(2, "seq: zero increment\n"); return; }
     } else {
-        write_str(1, "usage: seq [start] end\n");
+        write_str(1, "usage: seq [-s SEP] [-w] [start [step]] end\n");
         return;
     }
 
-    char buf[16];
-    for (int i = start; i <= end_val; i += step) {
-        int_to_str(i, buf, 16);
-        write_str(1, buf);
-        write_char(1, '\n');
+    /* Calculate width for -w option */
+    int width = 0;
+    if (equal_width) {
+        char tmp[16];
+        int_to_str(end_val < 0 ? -end_val : end_val, tmp, 16);
+        width = (int)strlen_simple(tmp);
+        if (end_val < 0) width++;
+        char tmp2[16];
+        int_to_str(start < 0 ? -start : start, tmp2, 16);
+        int w2 = (int)strlen_simple(tmp2);
+        if (start < 0) w2++;
+        if (w2 > width) width = w2;
     }
+
+    char buf[16];
+    int first = 1;
+    if (step > 0) {
+        for (int i = start; i <= end_val; i += step) {
+            if (!first) write_str(1, sep);
+            int_to_str(i, buf, 16);
+            if (equal_width) {
+                int len = (int)strlen_simple(buf);
+                for (int p = len; p < width; p++) write_char(1, '0');
+            }
+            write_str(1, buf);
+            first = 0;
+        }
+    } else {
+        for (int i = start; i >= end_val; i += step) {
+            if (!first) write_str(1, sep);
+            int_to_str(i, buf, 16);
+            if (equal_width) {
+                int len = (int)strlen_simple(buf);
+                for (int p = len; p < width; p++) write_char(1, '0');
+            }
+            write_str(1, buf);
+            first = 0;
+        }
+    }
+    write_char(1, '\n');
 }
 
 
@@ -4229,33 +4328,62 @@ static void cmd_history(int argc, char *argv[]) {
 /* Built-in: sysinfo — show comprehensive system summary */
 static void cmd_sysinfo(int argc, char *argv[]) {
     (void)argc; (void)argv;
-    /* Kernel version */
     write_str(1, "\033[1mSystem Information\033[0m\n");
+
+    /* Hostname */
+    {
+        int hfd = sys_open("/proc/sys/kernel/hostname", O_RDONLY, 0);
+        if (hfd >= 0) {
+            char hbuf[64]; ssize_t hn = sys_read(hfd, hbuf, sizeof(hbuf)-1);
+            sys_close(hfd);
+            if (hn > 0) {
+                if (hbuf[hn-1] == '\n') hn--;
+                hbuf[hn] = '\0';
+                write_str(1, "  Hostname: ");
+                write_str(1, hbuf);
+                write_str(1, "\n");
+            }
+        }
+    }
+
+    /* Kernel version */
     int fd = sys_open("/proc/version", O_RDONLY, 0);
     if (fd >= 0) {
         char buf[256]; ssize_t n = sys_read(fd, buf, 255);
         sys_close(fd); if (n > 0) { buf[n] = '\0'; write_str(1, "  Kernel:  "); write_str(1, buf); }
     }
-    /* CPU — show model name */
+    /* CPU — show model name and count CPUs */
     fd = sys_open("/proc/cpuinfo", O_RDONLY, 0);
     if (fd >= 0) {
-        char buf[1024]; ssize_t n = sys_read(fd, buf, sizeof(buf)-1);
+        char buf[2048]; ssize_t n = sys_read(fd, buf, sizeof(buf)-1);
         sys_close(fd);
         if (n > 0) {
             buf[n] = '\0';
             char *p = buf;
+            int cpu_count = 0;
+            int model_shown = 0;
             while (*p) {
+                /* Count "processor" lines for CPU count */
+                if (p[0] == 'p' && p[1] == 'r' && p[2] == 'o' && p[3] == 'c' &&
+                    p[4] == 'e' && p[5] == 's' && p[6] == 's' && p[7] == 'o' && p[8] == 'r')
+                    cpu_count++;
                 /* Match "model name" or "CPU part" */
-                if ((p[0] == 'm' && p[1] == 'o' && p[2] == 'd' && p[3] == 'e' && p[4] == 'l' && p[5] == ' ' && p[6] == 'n') ||
-                    (p[0] == 'C' && p[1] == 'P' && p[2] == 'U' && p[3] == ' ' && p[4] == 'p')) {
+                if (!model_shown &&
+                    ((p[0] == 'm' && p[1] == 'o' && p[2] == 'd' && p[3] == 'e' && p[4] == 'l' && p[5] == ' ' && p[6] == 'n') ||
+                     (p[0] == 'C' && p[1] == 'P' && p[2] == 'U' && p[3] == ' ' && p[4] == 'p'))) {
                     write_str(1, "  ");
                     while (*p && *p != '\n') { write_char(1, *p++); }
                     write_char(1, '\n');
-                    break;
+                    model_shown = 1;
                 }
                 while (*p && *p != '\n') p++;
                 if (*p == '\n') p++;
             }
+            if (cpu_count == 0) cpu_count = 1;
+            write_str(1, "  CPUs:    ");
+            char cbuf[8]; int_to_str(cpu_count, cbuf, 8);
+            write_str(1, cbuf);
+            write_str(1, "\n");
         }
     }
     /* Memory */
@@ -4268,12 +4396,34 @@ static void cmd_sysinfo(int argc, char *argv[]) {
             write_char(1, '\n');
         }
     }
-    /* Uptime */
+    /* Uptime — formatted as days, hours, minutes, seconds */
     fd = sys_open("/proc/uptime", O_RDONLY, 0);
     if (fd >= 0) {
-        char buf[32]; ssize_t n = sys_read(fd, buf, 31);
+        char buf[64]; ssize_t n = sys_read(fd, buf, 63);
         sys_close(fd);
-        if (n > 0) { buf[n] = '\0'; write_str(1, "  Uptime:  "); write_str(1, buf); }
+        if (n > 0) {
+            buf[n] = '\0';
+            /* Parse seconds (integer part before '.') */
+            long secs = 0;
+            const char *sp = buf;
+            while (*sp >= '0' && *sp <= '9') { secs = secs * 10 + (*sp - '0'); sp++; }
+            long days = secs / 86400;
+            long hours = (secs % 86400) / 3600;
+            long mins = (secs % 3600) / 60;
+            long s = secs % 60;
+            write_str(1, "  Uptime:  ");
+            char tbuf[16];
+            if (days > 0) {
+                int_to_str((int)days, tbuf, 16); write_str(1, tbuf);
+                write_str(1, "d ");
+            }
+            int_to_str((int)hours, tbuf, 16); write_str(1, tbuf);
+            write_str(1, "h ");
+            int_to_str((int)mins, tbuf, 16); write_str(1, tbuf);
+            write_str(1, "m ");
+            int_to_str((int)s, tbuf, 16); write_str(1, tbuf);
+            write_str(1, "s\n");
+        }
     }
     /* Process count */
     int pcount = 0;
@@ -4327,8 +4477,7 @@ static void cmd_sysinfo(int argc, char *argv[]) {
         }
     }
     /* Shell */
-    write_str(1, "  Shell:   Futura Shell v0.5 (105 builtins)\n");
-    write_str(1, "  Tests:   1955 kernel self-tests\n");
+    write_str(1, "  Shell:   Futura Shell v0.5 (220 builtins)\n");
 }
 
 /* Helper: count lines, words, bytes, and max line length in a file descriptor */
@@ -10285,13 +10434,69 @@ watch_sleep:
         return 0;
     } else if (strcmp_simple(argv[0], "lsblk") == 0) {
         /* lsblk — list block devices */
-        write_str(1, "NAME MAJ:MIN RM  SIZE RO TYPE MOUNTPOINTS\n");
-        /* Read from /proc/partitions if available */
-        int fd = sys_open("/proc/partitions", O_RDONLY, 0);
-        if (fd >= 0) {
-            char buf[512]; ssize_t n = sys_read(fd, buf, sizeof(buf)-1);
-            sys_close(fd);
-            if (n > 0) { buf[n] = '\0'; write_str(1, buf); }
+        int opt_f = 0;
+        const char *opt_o = (void*)0;
+        for (int i = 1; i < argc; i++) {
+            if (strcmp_simple(argv[i], "-f") == 0) opt_f = 1;
+            else if (strcmp_simple(argv[i], "-o") == 0 && i + 1 < argc) {
+                opt_o = argv[++i];
+            }
+        }
+
+        if (opt_o) {
+            /* Custom output columns — show header from user's column list */
+            write_str(1, opt_o);
+            write_str(1, "\n");
+            int fd = sys_open("/proc/partitions", O_RDONLY, 0);
+            if (fd >= 0) {
+                char buf[1024]; ssize_t n = sys_read(fd, buf, sizeof(buf)-1);
+                sys_close(fd);
+                if (n > 0) { buf[n] = '\0'; write_str(1, buf); }
+            }
+        } else if (opt_f) {
+            /* -f: filesystem info mode */
+            write_str(1, "NAME   FSTYPE FSVER LABEL UUID                                 FSAVAIL FSUSE% MOUNTPOINTS\n");
+            int fd = sys_open("/proc/mounts", O_RDONLY, 0);
+            if (fd >= 0) {
+                char buf[2048]; ssize_t n = sys_read(fd, buf, sizeof(buf)-1);
+                sys_close(fd);
+                if (n > 0) { buf[n] = '\0';
+                    char *p = buf;
+                    while (*p) {
+                        char dev[64] = {0}; int di = 0;
+                        while (*p && *p != ' ' && di < 62) dev[di++] = *p++;
+                        dev[di] = '\0'; while (*p == ' ') p++;
+                        char mnt[64] = {0}; int mi = 0;
+                        while (*p && *p != ' ' && mi < 62) mnt[mi++] = *p++;
+                        mnt[mi] = '\0'; while (*p == ' ') p++;
+                        char fstype[32] = {0}; int fi = 0;
+                        while (*p && *p != ' ' && fi < 30) fstype[fi++] = *p++;
+                        fstype[fi] = '\0';
+                        while (*p && *p != '\n') p++;
+                        if (*p == '\n') p++;
+                        const char *short_dev = dev;
+                        for (const char *s = dev; *s; s++) {
+                            if (*s == '/') short_dev = s + 1;
+                        }
+                        write_str(1, short_dev);
+                        int pad = 7 - (int)strlen_simple(short_dev);
+                        while (pad-- > 0) write_char(1, ' ');
+                        write_str(1, fstype);
+                        pad = 32 - (int)strlen_simple(fstype);
+                        while (pad-- > 0) write_char(1, ' ');
+                        write_str(1, mnt);
+                        write_str(1, "\n");
+                    }
+                }
+            }
+        } else {
+            write_str(1, "NAME MAJ:MIN RM  SIZE RO TYPE MOUNTPOINTS\n");
+            int fd = sys_open("/proc/partitions", O_RDONLY, 0);
+            if (fd >= 0) {
+                char buf[1024]; ssize_t n = sys_read(fd, buf, sizeof(buf)-1);
+                sys_close(fd);
+                if (n > 0) { buf[n] = '\0'; write_str(1, buf); }
+            }
         }
         return 0;
     } else if (strcmp_simple(argv[0], "lspci") == 0) {
@@ -10359,32 +10564,111 @@ watch_sleep:
         }
         return 0;
     } else if (strcmp_simple(argv[0], "vmstat") == 0) {
-        /* vmstat — virtual memory statistics from /proc/vmstat + /proc/meminfo */
-        write_str(1, "procs -----------memory---------- ---swap-- -----io---- -system--\n");
-        write_str(1, " r  b   swpd   free   buff  cache   si   so    bi    bo   in   cs\n");
-        /* Read meminfo for free memory */
+        /* vmstat — virtual memory statistics */
+        int opt_s = 0, opt_d = 0, opt_w = 0;
+        for (int i = 1; i < argc; i++) {
+            if (strcmp_simple(argv[i], "-s") == 0) opt_s = 1;
+            else if (strcmp_simple(argv[i], "-d") == 0) opt_d = 1;
+            else if (strcmp_simple(argv[i], "-w") == 0) opt_w = 1;
+        }
+
+        if (opt_s) {
+            /* -s: event counter mode — dump /proc/vmstat key=value */
+            int fd = sys_open("/proc/vmstat", O_RDONLY, 0);
+            if (fd >= 0) {
+                char buf[4096]; ssize_t n = sys_read(fd, buf, sizeof(buf)-1);
+                sys_close(fd);
+                if (n > 0) { buf[n] = '\0';
+                    /* Print each line as "     VALUE EVENT" */
+                    char *p = buf;
+                    while (*p) {
+                        char key[64] = {0}; int ki = 0;
+                        while (*p && *p != ' ' && *p != '\n' && ki < 62) key[ki++] = *p++;
+                        key[ki] = '\0';
+                        while (*p == ' ') p++;
+                        char val[24] = {0}; int vi = 0;
+                        while (*p && *p != '\n' && vi < 22) val[vi++] = *p++;
+                        val[vi] = '\0';
+                        if (*p == '\n') p++;
+                        if (ki > 0 && vi > 0) {
+                            int pad = 12 - vi; while (pad-- > 0) write_char(1, ' ');
+                            write_str(1, val); write_str(1, " "); write_str(1, key); write_str(1, "\n");
+                        }
+                    }
+                }
+            } else {
+                /* Fallback: read meminfo for summary counters */
+                int mfd = sys_open("/proc/meminfo", O_RDONLY, 0);
+                if (mfd >= 0) {
+                    char buf[2048]; ssize_t n = sys_read(mfd, buf, sizeof(buf)-1);
+                    sys_close(mfd);
+                    if (n > 0) { buf[n] = '\0'; write_str(1, buf); }
+                }
+            }
+            return 0;
+        }
+
+        if (opt_d) {
+            /* -d: disk statistics from /proc/diskstats */
+            write_str(1, "disk- ------------reads------------ ------------writes----------- -----IO------\n");
+            write_str(1, "       total merged sectors      ms  total merged sectors      ms    cur    sec\n");
+            int fd = sys_open("/proc/diskstats", O_RDONLY, 0);
+            if (fd >= 0) {
+                char buf[2048]; ssize_t n = sys_read(fd, buf, sizeof(buf)-1);
+                sys_close(fd);
+                if (n > 0) { buf[n] = '\0'; write_str(1, buf); }
+            }
+            return 0;
+        }
+
+        /* Default mode: memory summary */
+        if (opt_w) {
+            write_str(1, "procs -----------------------memory---------------------- ---swap-- -----io---- -system--\n");
+            write_str(1, " r  b         swpd         free         buff        cache   si   so    bi    bo   in   cs\n");
+        } else {
+            write_str(1, "procs -----------memory---------- ---swap-- -----io---- -system--\n");
+            write_str(1, " r  b   swpd   free   buff  cache   si   so    bi    bo   in   cs\n");
+        }
+        /* Read meminfo for free/buff/cache memory */
         int fd = sys_open("/proc/meminfo", O_RDONLY, 0);
         if (fd >= 0) {
             char buf[2048]; ssize_t n = sys_read(fd, buf, sizeof(buf)-1);
             sys_close(fd);
             if (n > 0) { buf[n] = '\0';
-                /* Parse MemFree line */
-                long free_kb = 0;
-                for (int i = 0; i < n - 8; i++) {
+                long free_kb = 0, buffers_kb = 0, cached_kb = 0;
+                /* Parse MemFree, Buffers, Cached */
+                for (int i = 0; i < n - 6; i++) {
+                    long *target = (void*)0;
+                    int skip = 0;
                     if (buf[i]=='M' && buf[i+1]=='e' && buf[i+2]=='m' &&
-                        buf[i+3]=='F' && buf[i+4]=='r' && buf[i+5]=='e' && buf[i+6]=='e') {
-                        int j = i+7; while (j < n && (buf[j] < '0' || buf[j] > '9')) j++;
+                        buf[i+3]=='F' && buf[i+4]=='r' && buf[i+5]=='e' && buf[i+6]=='e')
+                        { target = &free_kb; skip = 7; }
+                    else if (buf[i]=='B' && buf[i+1]=='u' && buf[i+2]=='f' &&
+                             buf[i+3]=='f' && buf[i+4]=='e' && buf[i+5]=='r' && buf[i+6]=='s')
+                        { target = &buffers_kb; skip = 7; }
+                    else if (buf[i]=='C' && buf[i+1]=='a' && buf[i+2]=='c' &&
+                             buf[i+3]=='h' && buf[i+4]=='e' && buf[i+5]=='d' && buf[i+6]==':')
+                        { target = &cached_kb; skip = 7; }
+                    if (target) {
+                        int j = i + skip;
+                        while (j < n && (buf[j] < '0' || buf[j] > '9')) j++;
                         while (j < n && buf[j] >= '0' && buf[j] <= '9')
-                            { free_kb = free_kb * 10 + (buf[j] - '0'); j++; }
-                        break;
+                            { *target = *target * 10 + (buf[j] - '0'); j++; }
                     }
                 }
                 char num[16];
+                int col_w = opt_w ? 12 : 6;
                 write_str(1, " 1  0      0 ");
                 int_to_str((int)(free_kb), num, 16);
-                int pad = 6 - (int)strlen_simple(num); while (pad-- > 0) write_char(1, ' ');
+                { int pad = col_w - (int)strlen_simple(num); while (pad-- > 0) write_char(1, ' '); }
                 write_str(1, num);
-                write_str(1, "      0      0    0    0     0     0    0    0\n");
+                int_to_str((int)(buffers_kb), num, 16);
+                { int pad = col_w - (int)strlen_simple(num); while (pad-- > 0) write_char(1, ' '); }
+                write_str(1, num);
+                int_to_str((int)(cached_kb), num, 16);
+                { int pad = col_w - (int)strlen_simple(num); while (pad-- > 0) write_char(1, ' '); }
+                write_str(1, num);
+                write_str(1, "    0    0     0     0    0    0\n");
             }
         }
         return 0;
@@ -11841,11 +12125,21 @@ watch_sleep:
         cmd_ping(argc, argv);
         return 0;
     } else if (strcmp_simple(argv[0], "yes") == 0) {
-        /* yes [string] — repeatedly output a line */
-        const char *s = argc > 1 ? argv[1] : "y";
-        for (int i = 0; i < 100; i++) {  /* limit to avoid infinite */
-            write_str(1, s);
-            write_char(1, '\n');
+        /* yes [string...] — repeatedly output a line with all args joined by spaces */
+        if (argc <= 1) {
+            for (int i = 0; i < 100; i++) write_str(1, "y\n");
+        } else {
+            /* Build output string: join all args with spaces */
+            char yes_buf[512];
+            int yp = 0;
+            for (int a = 1; a < argc && yp < 500; a++) {
+                if (a > 1) yes_buf[yp++] = ' ';
+                for (int j = 0; argv[a][j] && yp < 500; j++)
+                    yes_buf[yp++] = argv[a][j];
+            }
+            yes_buf[yp++] = '\n';
+            yes_buf[yp] = '\0';
+            for (int i = 0; i < 100; i++) write_str(1, yes_buf);
         }
         return 0;
     } else if (strcmp_simple(argv[0], "mktemp") == 0) {
@@ -12765,6 +13059,12 @@ watch_sleep:
     } else if (strcmp_simple(argv[0], "dstat") == 0) {
         cmd_dstat(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "ascii") == 0) {
+        cmd_ascii(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "whatis") == 0) {
+        cmd_whatis(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -12959,6 +13259,8 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "mesg") == 0 ||
             strcmp_simple(cmd, "last") == 0 ||
             strcmp_simple(cmd, "dstat") == 0 ||
+            strcmp_simple(cmd, "ascii") == 0 ||
+            strcmp_simple(cmd, "whatis") == 0 ||
             0);
 }
 
@@ -15570,16 +15872,107 @@ static void cmd_factor(int argc, char *argv[]) {
 }
 
 /* ── cal: display a calendar ── */
-static void cmd_cal(int argc, char *argv[]) {
-    (void)argc; (void)argv;
-    /* Simple: show current month header and days */
-    write_str(1, "     March 2026\n");
+/* Calendar helpers */
+static int cal_is_leap(int y) {
+    return (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);
+}
+static int cal_days_in_month(int m, int y) {
+    static const int dm[] = {31,28,31,30,31,30,31,31,30,31,30,31};
+    if (m == 2 && cal_is_leap(y)) return 29;
+    return dm[m - 1];
+}
+/* Zeller's / Tomohiko Sakamoto's day-of-week: 0=Sun,1=Mon,...,6=Sat */
+static int cal_dow(int y, int m, int d) {
+    static const int t[] = {0,3,2,5,0,3,5,1,4,6,2,4};
+    if (m < 3) y--;
+    return (y + y/4 - y/100 + y/400 + t[m-1] + d) % 7;
+}
+static void cal_print_month(int month, int year) {
+    static const char *mnames[] = {"January","February","March","April","May","June",
+        "July","August","September","October","November","December"};
+    /* Center the title in 20 chars */
+    char title[32]; int tp = 0;
+    const char *mn = mnames[month - 1];
+    for (int i = 0; mn[i]; i++) title[tp++] = mn[i];
+    title[tp++] = ' ';
+    { char yb[8]; int_to_str(year, yb, 8);
+      for (int i = 0; yb[i]; i++) title[tp++] = yb[i]; }
+    title[tp] = '\0';
+    int pad = (20 - tp) / 2;
+    for (int i = 0; i < pad; i++) write_char(1, ' ');
+    write_str(1, title);
+    write_char(1, '\n');
     write_str(1, "Su Mo Tu We Th Fr Sa\n");
-    write_str(1, " 1  2  3  4  5  6  7\n");
-    write_str(1, " 8  9 10 11 12 13 14\n");
-    write_str(1, "15 16 17 18 19 20 21\n");
-    write_str(1, "22 23 24 25 26 27 28\n");
-    write_str(1, "29 30 31\n");
+    int dow = cal_dow(year, month, 1);
+    int dim = cal_days_in_month(month, year);
+    for (int i = 0; i < dow; i++) write_str(1, "   ");
+    for (int d = 1; d <= dim; d++) {
+        char db[4];
+        if (d < 10) { db[0] = ' '; db[1] = '0' + (char)d; db[2] = '\0'; }
+        else { db[0] = '0' + (char)(d / 10); db[1] = '0' + (char)(d % 10); db[2] = '\0'; }
+        write_str(1, db);
+        if ((dow + d) % 7 == 0) write_char(1, '\n');
+        else if (d < dim) write_char(1, ' ');
+    }
+    if ((dow + dim) % 7 != 0) write_char(1, '\n');
+}
+
+static void cmd_cal(int argc, char *argv[]) {
+    /* Get current date from kernel clock */
+    struct { long tv_sec; long tv_nsec; } ts = {0, 0};
+    sys_call2(228 /* clock_gettime */, 0 /* CLOCK_REALTIME */, (long)&ts);
+    /* Convert epoch seconds to year/month/day */
+    long epoch = ts.tv_sec;
+    int year = 1970, month = 1, day = 1;
+    /* Advance by years */
+    while (1) {
+        int yd = cal_is_leap(year) ? 366 : 365;
+        if (epoch < yd * 86400L) break;
+        epoch -= yd * 86400L;
+        year++;
+    }
+    /* Advance by months */
+    while (1) {
+        int md = cal_days_in_month(month, year);
+        if (epoch < md * 86400L) break;
+        epoch -= md * 86400L;
+        month++;
+    }
+    day = (int)(epoch / 86400L) + 1;
+    (void)day;
+
+    /* Parse options */
+    int opt_3 = 0, opt_y = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-3") == 0) opt_3 = 1;
+        else if (strcmp_simple(argv[i], "-y") == 0) opt_y = 1;
+    }
+
+    if (opt_y) {
+        /* Full year */
+        char ybuf[8]; int_to_str(year, ybuf, 8);
+        write_str(1, "                               ");
+        write_str(1, ybuf);
+        write_str(1, "\n\n");
+        for (int m = 1; m <= 12; m++) {
+            cal_print_month(m, year);
+            write_char(1, '\n');
+        }
+    } else if (opt_3) {
+        /* Previous, current, next month */
+        int pm = month - 1, py = year;
+        if (pm < 1) { pm = 12; py--; }
+        int nm = month + 1, ny = year;
+        if (nm > 12) { nm = 1; ny++; }
+        cal_print_month(pm, py);
+        write_char(1, '\n');
+        cal_print_month(month, year);
+        write_char(1, '\n');
+        cal_print_month(nm, ny);
+    } else {
+        /* Single month */
+        cal_print_month(month, year);
+    }
 }
 
 /* ── locale: display locale settings ── */
@@ -17167,7 +17560,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   210 built-in commands — type 'help'    |\n");
+    write_str(1, "|   220 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");
@@ -18160,6 +18553,8 @@ static void cmd_man(int argc, char *argv[]) {
         {"watch",     "watch - execute a program periodically (-n interval, -d differences)"},
         {"timeout",   "timeout - run a command with a time limit (-s signal)"},
         {"realpath",  "realpath - print resolved canonical path (-e existing, -m missing OK)"},
+        {"ascii",     "ascii - display ASCII character table (decimal, hex, octal, char)"},
+        {"whatis",    "whatis - display one-line manual page descriptions"},
     };
     int n_entries = (int)(sizeof(man_entries) / sizeof(man_entries[0]));
 
@@ -20192,6 +20587,217 @@ __attribute__((used)) static void cmd_dstat(int argc, char *argv[]) {
         }
     }
     write_str(1, "\n");
+}
+
+/* ── ascii: display ASCII character table ── */
+static void cmd_ascii(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    write_str(1, "Dec Hex Oct Char  |  Dec Hex Oct Char  |  Dec Hex Oct Char  |  Dec Hex Oct Char\n");
+    write_str(1, "----+---+---+-----+------+---+---+-----+------+---+---+-----+------+---+---+----\n");
+    /* Control character names */
+    static const char *ctrl[] = {
+        "NUL","SOH","STX","ETX","EOT","ENQ","ACK","BEL",
+        "BS ","TAB","LF ","VT ","FF ","CR ","SO ","SI ",
+        "DLE","DC1","DC2","DC3","DC4","NAK","SYN","ETB",
+        "CAN","EM ","SUB","ESC","FS ","GS ","RS ","US "
+    };
+    char num[8];
+    for (int row = 0; row < 32; row++) {
+        for (int col = 0; col < 4; col++) {
+            int c = row + col * 32;
+            if (col > 0) write_str(1, "  |  ");
+            /* Decimal (3 digits right-aligned) */
+            int_to_str(c, num, 8);
+            int len = (int)strlen_simple(num);
+            for (int p = len; p < 3; p++) write_char(1, ' ');
+            write_str(1, num);
+            write_char(1, ' ');
+            /* Hex (2 digits) */
+            { const char *hx = "0123456789abcdef";
+              char hb[3]; hb[0] = hx[(c >> 4) & 0xf]; hb[1] = hx[c & 0xf]; hb[2] = '\0';
+              write_str(1, hb); }
+            write_char(1, ' ');
+            /* Octal (3 digits) */
+            { char ob[4]; ob[0] = '0' + (char)((c >> 6) & 7);
+              ob[1] = '0' + (char)((c >> 3) & 7);
+              ob[2] = '0' + (char)(c & 7); ob[3] = '\0';
+              write_str(1, ob); }
+            write_char(1, ' ');
+            /* Character */
+            if (c < 32) write_str(1, ctrl[c]);
+            else if (c == 32) write_str(1, "SPC");
+            else if (c == 127) write_str(1, "DEL");
+            else { write_char(1, (char)c); write_str(1, "  "); }
+        }
+        write_char(1, '\n');
+    }
+}
+
+/* ── whatis: one-line command descriptions ── */
+static void cmd_whatis(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "whatis what?\n");
+        return;
+    }
+    static const struct { const char *name; const char *desc; } whatis_db[] = {
+        {"ascii",     "ascii (1)           - display ASCII character table"},
+        {"awk",       "awk (1)             - pattern scanning and processing language"},
+        {"base32",    "base32 (1)          - encode/decode data in base32"},
+        {"base64",    "base64 (1)          - encode/decode data in base64"},
+        {"basename",  "basename (1)        - strip directory and suffix from filenames"},
+        {"bc",        "bc (1)              - arbitrary precision calculator language"},
+        {"bg",        "bg (1)              - move jobs to the background"},
+        {"blkid",     "blkid (8)           - locate/print block device attributes"},
+        {"cal",       "cal (1)             - display a calendar"},
+        {"cat",       "cat (1)             - concatenate files and print on stdout"},
+        {"cd",        "cd (1)              - change the working directory"},
+        {"chmod",     "chmod (1)           - change file mode bits"},
+        {"chgrp",     "chgrp (1)           - change group ownership"},
+        {"chown",     "chown (1)           - change file owner and group"},
+        {"chroot",    "chroot (8)          - run command with special root directory"},
+        {"clear",     "clear (1)           - clear the terminal screen"},
+        {"cmp",       "cmp (1)             - compare two files byte by byte"},
+        {"comm",      "comm (1)            - compare two sorted files line by line"},
+        {"cp",        "cp (1)              - copy files and directories"},
+        {"csplit",    "csplit (1)           - split a file into sections by context"},
+        {"curl",      "curl (1)            - transfer a URL"},
+        {"cut",       "cut (1)             - remove sections from each line of files"},
+        {"date",      "date (1)            - print or set the system date and time"},
+        {"dd",        "dd (1)              - convert and copy a file"},
+        {"df",        "df (1)              - report file system disk space usage"},
+        {"diff",      "diff (1)            - compare files line by line"},
+        {"dirname",   "dirname (1)         - strip last component from file name"},
+        {"dmesg",     "dmesg (1)           - print or control the kernel ring buffer"},
+        {"du",        "du (1)              - estimate file space usage"},
+        {"echo",      "echo (1)            - display a line of text"},
+        {"env",       "env (1)             - run a program in a modified environment"},
+        {"exit",      "exit (1)            - cause the shell to exit"},
+        {"expand",    "expand (1)          - convert tabs to spaces"},
+        {"export",    "export (1)          - set export attribute for shell variables"},
+        {"expr",      "expr (1)            - evaluate expressions"},
+        {"factor",    "factor (1)          - factor numbers"},
+        {"false",     "false (1)           - do nothing, unsuccessfully"},
+        {"fg",        "fg (1)              - move job to the foreground"},
+        {"file",      "file (1)            - determine file type"},
+        {"find",      "find (1)            - search for files in a directory hierarchy"},
+        {"fold",      "fold (1)            - wrap each input line to fit in specified width"},
+        {"free",      "free (1)            - display amount of free and used memory"},
+        {"git",       "git (1)             - the stupid content tracker"},
+        {"grep",      "grep (1)            - print lines matching a pattern"},
+        {"groups",    "groups (1)          - print the groups a user is in"},
+        {"head",      "head (1)            - output the first part of files"},
+        {"help",      "help (1)            - display shell built-in command help"},
+        {"history",   "history (1)         - display command history"},
+        {"hostname",  "hostname (1)        - show or set the system hostname"},
+        {"id",        "id (1)              - print real and effective user and group IDs"},
+        {"ifconfig",  "ifconfig (8)        - configure a network interface"},
+        {"ip",        "ip (8)              - show/manipulate routing, devices, tunnels"},
+        {"jobs",      "jobs (1)            - display status of jobs in the current session"},
+        {"kill",      "kill (1)            - send a signal to a process"},
+        {"less",      "less (1)            - opposite of more"},
+        {"ln",        "ln (1)              - make links between files"},
+        {"ls",        "ls (1)              - list directory contents"},
+        {"lsblk",     "lsblk (8)           - list information about block devices"},
+        {"lscpu",     "lscpu (1)           - display information about CPU architecture"},
+        {"make",      "make (1)            - GNU make utility to maintain groups of programs"},
+        {"man",       "man (1)             - an interface to the system reference manuals"},
+        {"md5sum",    "md5sum (1)          - compute and check MD5 message digest"},
+        {"mkdir",     "mkdir (1)           - make directories"},
+        {"mkfifo",    "mkfifo (1)          - make FIFOs (named pipes)"},
+        {"mktemp",    "mktemp (1)          - create a temporary file or directory"},
+        {"more",      "more (1)            - file perusal filter for crt viewing"},
+        {"mount",     "mount (8)           - mount a filesystem"},
+        {"mv",        "mv (1)              - move (rename) files"},
+        {"nc",        "nc (1)              - arbitrary TCP and UDP connections and listens"},
+        {"nice",      "nice (1)            - run a program with modified scheduling priority"},
+        {"nl",        "nl (1)              - number lines of files"},
+        {"nohup",     "nohup (1)           - run a command immune to hangups"},
+        {"nslookup",  "nslookup (1)        - query Internet name servers interactively"},
+        {"od",        "od (1)              - dump files in octal and other formats"},
+        {"passwd",    "passwd (1)          - change user password"},
+        {"paste",     "paste (1)           - merge lines of files"},
+        {"patch",     "patch (1)           - apply a diff file to an original"},
+        {"pgrep",     "pgrep (1)           - look up processes based on name"},
+        {"pidof",     "pidof (8)           - find the process ID of a running program"},
+        {"ping",      "ping (8)            - send ICMP ECHO_REQUEST to network hosts"},
+        {"pkill",     "pkill (1)           - signal processes based on name"},
+        {"printf",    "printf (1)          - format and print data"},
+        {"ps",        "ps (1)              - report a snapshot of current processes"},
+        {"pwd",       "pwd (1)             - print name of current/working directory"},
+        {"read",      "read (1)            - read a line from standard input"},
+        {"readlink",  "readlink (1)        - print resolved symbolic links"},
+        {"realpath",  "realpath (1)        - print the resolved path"},
+        {"renice",    "renice (1)          - alter priority of running processes"},
+        {"reset",     "reset (1)           - terminal initialization"},
+        {"rev",       "rev (1)             - reverse lines characterwise"},
+        {"rm",        "rm (1)              - remove files or directories"},
+        {"rmdir",     "rmdir (1)           - remove empty directories"},
+        {"sed",       "sed (1)             - stream editor for filtering and transforming text"},
+        {"seq",       "seq (1)             - print a sequence of numbers"},
+        {"sha1sum",   "sha1sum (1)         - compute and check SHA1 message digest"},
+        {"sha256sum", "sha256sum (1)       - compute and check SHA256 message digest"},
+        {"sha512sum", "sha512sum (1)       - compute and check SHA512 message digest"},
+        {"sleep",     "sleep (1)           - delay for a specified amount of time"},
+        {"sort",      "sort (1)            - sort lines of text files"},
+        {"split",     "split (1)           - split a file into pieces"},
+        {"ss",        "ss (8)              - another utility to investigate sockets"},
+        {"stat",      "stat (1)            - display file or file system status"},
+        {"strace",    "strace (1)          - trace system calls and signals"},
+        {"strings",   "strings (1)         - print the strings of printable characters in files"},
+        {"su",        "su (1)              - run a command with substitute user and group ID"},
+        {"sync",      "sync (8)            - synchronize cached writes to persistent storage"},
+        {"sysctl",    "sysctl (8)          - configure kernel parameters at runtime"},
+        {"sysinfo",   "sysinfo (1)         - display comprehensive system information"},
+        {"systemctl", "systemctl (1)       - control the systemd system and service manager"},
+        {"tac",       "tac (1)             - concatenate and print files in reverse"},
+        {"tail",      "tail (1)            - output the last part of files"},
+        {"tar",       "tar (1)             - an archiving utility"},
+        {"tee",       "tee (1)             - read from stdin and write to stdout and files"},
+        {"test",      "test (1)            - check file types and compare values"},
+        {"timeout",   "timeout (1)         - run a command with a time limit"},
+        {"top",       "top (1)             - display Linux processes"},
+        {"touch",     "touch (1)           - change file timestamps"},
+        {"tr",        "tr (1)              - translate or delete characters"},
+        {"tree",      "tree (1)            - list contents of directories in a tree-like format"},
+        {"true",      "true (1)            - do nothing, successfully"},
+        {"tty",       "tty (1)             - print the file name of the terminal"},
+        {"type",      "type (1)            - display information about command type"},
+        {"umask",     "umask (1)           - set file mode creation mask"},
+        {"uname",     "uname (1)           - print system information"},
+        {"unexpand",  "unexpand (1)        - convert spaces to tabs"},
+        {"uniq",      "uniq (1)            - report or omit repeated lines"},
+        {"uptime",    "uptime (1)          - tell how long the system has been running"},
+        {"users",     "users (1)           - print the user names of users currently logged in"},
+        {"vi",        "vi (1)              - screen-oriented text editor"},
+        {"vmstat",    "vmstat (8)          - report virtual memory statistics"},
+        {"w",         "w (1)               - show who is logged on and what they are doing"},
+        {"watch",     "watch (1)           - execute a program periodically"},
+        {"wc",        "wc (1)              - print newline, word, and byte counts for each file"},
+        {"wget",      "wget (1)            - the non-interactive network downloader"},
+        {"whatis",    "whatis (1)          - display one-line manual page descriptions"},
+        {"which",     "which (1)           - locate a command"},
+        {"whoami",    "whoami (1)          - print effective userid"},
+        {"xargs",     "xargs (1)           - build and execute command lines from stdin"},
+        {"xxd",       "xxd (1)             - make a hexdump or do the reverse"},
+        {"yes",       "yes (1)             - output a string repeatedly until killed"},
+        {(void*)0, (void*)0}
+    };
+
+    for (int a = 1; a < argc; a++) {
+        int found = 0;
+        for (int i = 0; whatis_db[i].name; i++) {
+            if (strcmp_simple(argv[a], whatis_db[i].name) == 0) {
+                write_str(1, whatis_db[i].desc);
+                write_str(1, "\n");
+                found = 1;
+                break;
+            }
+        }
+        if (!found) {
+            write_str(1, argv[a]);
+            write_str(1, ": nothing appropriate.\n");
+        }
+    }
 }
 
 #pragma GCC diagnostic pop

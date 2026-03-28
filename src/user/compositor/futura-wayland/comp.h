@@ -29,12 +29,14 @@
 
 #define XDG_CFG_STATE_RESIZING   (1u << 0)
 #define XDG_CFG_STATE_MAXIMIZED  (1u << 1)
+#define XDG_CFG_STATE_FULLSCREEN (1u << 2)
 
 #define WINDOW_BAR_HEIGHT 24
 #define WINDOW_BTN_WIDTH 16
 #define WINDOW_BTN_HEIGHT 16
 #define WINDOW_BTN_PADDING 4
 #define WINDOW_TITLE_MAX 128
+#define WINDOW_APP_ID_MAX 128
 #define WINDOW_SHADOW_DEFAULT 10
 
 struct seat_state;
@@ -221,6 +223,14 @@ struct comp_surface {
     bool have_saved_geom;
     char title[WINDOW_TITLE_MAX];
     bool title_dirty;
+    char app_id[WINDOW_APP_ID_MAX];
+    bool fullscreen;
+    int32_t pre_fs_x;
+    int32_t pre_fs_y;
+    int32_t pre_fs_w;
+    int32_t pre_fs_h;
+    fut_rect_t window_geometry;
+    bool has_window_geometry;
 };
 
 int comp_state_init(struct compositor_state *comp);
@@ -385,6 +395,9 @@ static inline uint32_t comp_surface_state_flags(const struct comp_surface *surfa
     }
     if (surface->maximized) {
         flags |= XDG_CFG_STATE_MAXIMIZED;
+    }
+    if (surface->fullscreen) {
+        flags |= XDG_CFG_STATE_FULLSCREEN;
     }
     if (surface->resizing != RSZ_NONE) {
         flags |= XDG_CFG_STATE_RESIZING;

@@ -371,11 +371,16 @@ static void xdg_surface_set_window_geometry(struct wl_client *client,
                                             int32_t width,
                                             int32_t height) {
     (void)client;
-    (void)resource;
-    (void)x;
-    (void)y;
-    (void)width;
-    (void)height;
+    struct xdg_surface_state *state = wl_resource_get_user_data(resource);
+    if (!state || !state->surface) {
+        return;
+    }
+    struct comp_surface *surface = state->surface;
+    surface->window_geometry.x = x;
+    surface->window_geometry.y = y;
+    surface->window_geometry.w = width > 0 ? width : 0;
+    surface->window_geometry.h = height > 0 ? height : 0;
+    surface->has_window_geometry = true;
 }
 
 static void xdg_surface_ack_configure(struct wl_client *client,
@@ -440,6 +445,12 @@ static void xdg_surface_issue_configure(struct xdg_surface_state *state,
         uint32_t *entry = wl_array_add(&states, sizeof(uint32_t));
         if (entry) {
             *entry = XDG_TOPLEVEL_STATE_MAXIMIZED;
+        }
+    }
+    if (state_flags & XDG_CFG_STATE_FULLSCREEN) {
+        uint32_t *entry = wl_array_add(&states, sizeof(uint32_t));
+        if (entry) {
+            *entry = XDG_TOPLEVEL_STATE_FULLSCREEN;
         }
     }
     if (state_flags & XDG_CFG_STATE_RESIZING) {
@@ -671,9 +682,22 @@ static void xdg_toplevel_set_app_id(struct wl_client *client,
                                     struct wl_resource *resource,
                                     const char *app_id) {
     (void)client;
-    (void)resource;
-    (void)app_id;
-    /* Stub: app_id not used */
+    struct xdg_surface_state *state = wl_resource_get_user_data(resource);
+    if (!state || !state->surface) {
+        return;
+    }
+    struct comp_surface *surface = state->surface;
+    if (!app_id) {
+        app_id = "";
+    }
+    int len = 0;
+    while (len < (WINDOW_APP_ID_MAX - 1) && app_id[len] != '\0') {
+        surface->app_id[len] = app_id[len];
+        ++len;
+    }
+    for (int i = len; i < WINDOW_APP_ID_MAX; ++i) {
+        surface->app_id[i] = '\0';
+    }
 }
 
 static void xdg_toplevel_show_window_menu(struct wl_client *client,
@@ -683,12 +707,18 @@ static void xdg_toplevel_show_window_menu(struct wl_client *client,
                                           int32_t x,
                                           int32_t y) {
     (void)client;
-    (void)resource;
     (void)seat;
     (void)serial;
-    (void)x;
-    (void)y;
-    /* Stub: window menu not implemented */
+    struct xdg_surface_state *state = wl_resource_get_user_data(resource);
+    if (!state || !state->surface) {
+        return;
+    }
+    struct comp_surface *surface = state->surface;
+    surface->pend_x = surface->x + x;
+    surface->pend_y = surface->y + y;
+    surface->have_pending_pos = true;
+    xdg_surface_issue_configure(state, state->size.width, state->size.height,
+                                comp_surface_state_flags(surface));
 }
 
 static void xdg_toplevel_move(struct wl_client *client,
@@ -696,10 +726,30 @@ static void xdg_toplevel_move(struct wl_client *client,
                               struct wl_resource *seat,
                               uint32_t serial) {
     (void)client;
-    (void)resource;
     (void)seat;
     (void)serial;
-    /* Stub: interactive move not implemented */
+    struct xdg_surface_state *state = wl_resource_get_user_data(resource);
+    if (!state || !state->surface || !state->comp) {
+        return;
+    }
+    comp_start_drag(state->comp, state->surface);
+}
+
+static resize_edge_t xdg_edge_to_resize_edge(uint32_t edges) {
+    resize_edge_t result = RSZ_NONE;
+    if (edges & XDG_TOPLEVEL_RESIZE_EDGE_TOP) {
+        result |= RSZ_TOP;
+    }
+    if (edges & XDG_TOPLEVEL_RESIZE_EDGE_BOTTOM) {
+        result |= RSZ_BOTTOM;
+    }
+    if (edges & XDG_TOPLEVEL_RESIZE_EDGE_LEFT) {
+        result |= RSZ_LEFT;
+    }
+    if (edges & XDG_TOPLEVEL_RESIZE_EDGE_RIGHT) {
+        result |= RSZ_RIGHT;
+    }
+    return result;
 }
 
 static void xdg_toplevel_resize(struct wl_client *client,
@@ -708,34 +758,85 @@ static void xdg_toplevel_resize(struct wl_client *client,
                                 uint32_t serial,
                                 uint32_t edges) {
     (void)client;
-    (void)resource;
     (void)seat;
     (void)serial;
-    (void)edges;
-    /* Stub: interactive resize not implemented */
+    struct xdg_surface_state *state = wl_resource_get_user_data(resource);
+    if (!state || !state->surface || !state->comp) {
+        return;
+    }
+    resize_edge_t edge = xdg_edge_to_resize_edge(edges);
+    if (edge == RSZ_NONE) {
+        return;
+    }
+    comp_start_resize(state->comp, state->surface, edge);
 }
 
 static void xdg_toplevel_set_fullscreen(struct wl_client *client,
                                         struct wl_resource *resource,
                                         struct wl_resource *output) {
     (void)client;
-    (void)resource;
     (void)output;
-    /* Stub: fullscreen not implemented */
+    struct xdg_surface_state *state = wl_resource_get_user_data(resource);
+    if (!state || !state->surface || !state->comp) {
+        return;
+    }
+    struct comp_surface *surface = state->surface;
+    if (surface->fullscreen) {
+        return;
+    }
+    /* Save current geometry for restore */
+    surface->pre_fs_x = surface->x;
+    surface->pre_fs_y = surface->y;
+    surface->pre_fs_w = surface->width;
+    surface->pre_fs_h = surface->content_height;
+    surface->fullscreen = true;
+    /* Position at origin, resize to fill screen */
+    const struct fut_fb_info *fb = comp_get_fb_info(state->comp);
+    int32_t fs_w = (int32_t)fb->width;
+    int32_t fs_h = (int32_t)fb->height;
+    surface->pend_x = 0;
+    surface->pend_y = 0;
+    surface->have_pending_pos = true;
+    surface->bar_height = 0;
+    surface->shadow_px = 0;
+    xdg_surface_issue_configure(state, fs_w, fs_h,
+                                comp_surface_state_flags(surface));
 }
 
 static void xdg_toplevel_unset_fullscreen(struct wl_client *client,
                                           struct wl_resource *resource) {
     (void)client;
-    (void)resource;
-    /* Stub: fullscreen not implemented */
+    struct xdg_surface_state *state = wl_resource_get_user_data(resource);
+    if (!state || !state->surface || !state->comp) {
+        return;
+    }
+    struct comp_surface *surface = state->surface;
+    if (!surface->fullscreen) {
+        return;
+    }
+    surface->fullscreen = false;
+    /* Restore saved geometry */
+    surface->pend_x = surface->pre_fs_x;
+    surface->pend_y = surface->pre_fs_y;
+    surface->have_pending_pos = true;
+    if (state->comp->deco_enabled) {
+        surface->bar_height = WINDOW_BAR_HEIGHT;
+    }
+    if (state->comp->shadow_enabled) {
+        surface->shadow_px = state->comp->shadow_radius;
+    }
+    xdg_surface_issue_configure(state, surface->pre_fs_w, surface->pre_fs_h,
+                                comp_surface_state_flags(surface));
 }
 
 static void xdg_toplevel_set_minimized(struct wl_client *client,
                                        struct wl_resource *resource) {
     (void)client;
-    (void)resource;
-    /* Stub: minimize not implemented */
+    struct xdg_surface_state *state = wl_resource_get_user_data(resource);
+    if (!state || !state->surface) {
+        return;
+    }
+    comp_surface_toggle_minimize(state->surface);
 }
 
 void xdg_shell_surface_send_configure(struct comp_surface *surface,

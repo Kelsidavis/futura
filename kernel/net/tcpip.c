@@ -308,9 +308,9 @@ static int arp_lookup_cache(uint32_t ip, eth_addr_t *mac) {
 }
 
 static void arp_handle_packet(const uint8_t *frame, size_t len) {
-    fut_printf("[ARP-DEBUG] arp_handle_packet called, len=%u\n", (unsigned)len);
+    TCPIP_DEBUG("[ARP] arp_handle_packet called, len=%u\n", (unsigned)len);
     if (len < ETH_HEADER_LEN + sizeof(arp_packet_t)) {
-        fut_printf("[ARP-DEBUG] Packet too short\n");
+        TCPIP_DEBUG("[ARP] Packet too short\n");
         return;
     }
 
@@ -320,17 +320,17 @@ static void arp_handle_packet(const uint8_t *frame, size_t len) {
     uint16_t proto_type = ntohs(arp->protocol_type);
     uint16_t op = ntohs(arp->operation);
 
-    fut_printf("[ARP-DEBUG] hw_type=%u proto_type=%u op=%u\n", hw_type, proto_type, op);
+    TCPIP_DEBUG("[ARP] hw_type=%u proto_type=%u op=%u\n", hw_type, proto_type, op);
 
     if (hw_type != ARP_HARDWARE_ETHERNET || proto_type != ARP_PROTOCOL_IP) {
-        fut_printf("[ARP-DEBUG] Wrong hardware or protocol type\n");
+        TCPIP_DEBUG("[ARP] Wrong hardware or protocol type\n");
         return;
     }
 
     /* Validate hardware/protocol address lengths match expected sizes.
      * The packed arp_packet_t struct layout assumes ETH_ADDR_LEN and 4-byte IP. */
     if (arp->hardware_len != ETH_ADDR_LEN || arp->protocol_len != 4) {
-        fut_printf("[ARP-DEBUG] Unexpected address lengths: hw=%u proto=%u\n",
+        TCPIP_DEBUG("[ARP] Unexpected address lengths: hw=%u proto=%u\n",
                    arp->hardware_len, arp->protocol_len);
         return;
     }
@@ -338,47 +338,37 @@ static void arp_handle_packet(const uint8_t *frame, size_t len) {
     uint32_t sender_ip = ntohl(arp->sender_ip);
     uint32_t target_ip = ntohl(arp->target_ip);
 
-    fut_printf("[ARP-DEBUG] sender_ip=0x%x target_ip=0x%x\n", sender_ip, target_ip);
+    TCPIP_DEBUG("[ARP] sender_ip=0x%x target_ip=0x%x\n", sender_ip, target_ip);
 
     /* Only update ARP cache if (a) the ARP is targeted at us, or
      * (b) we already have an entry for this sender IP.  This mitigates
      * unsolicited ARP cache poisoning from arbitrary hosts. */
     if (target_ip == g_tcpip.ip_address) {
-        fut_printf("[ARP-DEBUG] About to call arp_add_static for sender 0x%x\n", sender_ip);
         arp_add_static(sender_ip, arp->sender_mac);
-        fut_printf("[ARP-DEBUG] arp_add_static returned, added sender 0x%x to cache\n", sender_ip);
+        TCPIP_DEBUG("[ARP] Added sender 0x%x to cache\n", sender_ip);
     } else {
         /* Only update if we already have an entry for this IP (RFC 826) */
         eth_addr_t existing_mac;
         if (arp_lookup_cache(sender_ip, &existing_mac) == 0) {
             arp_add_static(sender_ip, arp->sender_mac);
-            fut_printf("[ARP-DEBUG] Updated existing ARP entry for sender 0x%x\n", sender_ip);
-        } else {
-            fut_printf("[ARP-DEBUG] Ignoring unsolicited ARP from 0x%x (not targeted at us)\n", sender_ip);
+            TCPIP_DEBUG("[ARP] Updated existing ARP entry for sender 0x%x\n", sender_ip);
         }
     }
 
-    fut_printf("[ARP-DEBUG] Checking if ARP request: op=%u, target_ip=0x%x, our_ip=0x%x\n",
-               op, target_ip, g_tcpip.ip_address);
-
     /* Handle ARP request */
     if (op == ARP_OP_REQUEST && target_ip == g_tcpip.ip_address) {
-        fut_printf("[ARP-DEBUG] This is a request for our IP\n");
         TCPIP_DEBUG("[ARP] Request for our IP, sending reply\n");
 
-        fut_printf("[ARP-DEBUG] Building ARP reply\n");
         /* Build ARP reply */
         uint8_t reply[ETH_HEADER_LEN + sizeof(arp_packet_t)];
         eth_header_t *eth_hdr = (eth_header_t *)reply;
         arp_packet_t *arp_reply = (arp_packet_t *)(reply + ETH_HEADER_LEN);
 
-        fut_printf("[ARP-DEBUG] Filling Ethernet header\n");
         /* Ethernet header */
         memcpy(eth_hdr->dest, arp->sender_mac, ETH_ADDR_LEN);
         memcpy(eth_hdr->src, g_tcpip.mac_address, ETH_ADDR_LEN);
         eth_hdr->type = htons(ETHERTYPE_ARP);
 
-        fut_printf("[ARP-DEBUG] Filling ARP reply fields\n");
         /* ARP reply */
         arp_reply->hardware_type = htons(ARP_HARDWARE_ETHERNET);
         arp_reply->protocol_type = htons(ARP_PROTOCOL_IP);
@@ -390,24 +380,16 @@ static void arp_handle_packet(const uint8_t *frame, size_t len) {
         memcpy(arp_reply->target_mac, arp->sender_mac, ETH_ADDR_LEN);
         arp_reply->target_ip = arp->sender_ip;
 
-        fut_printf("[ARP-DEBUG] About to send ARP reply\n");
         /* Send reply */
         fut_status_t ret = fut_net_send(g_tcpip.raw_socket, reply, sizeof(reply));
         if (ret != 0) {
             fut_printf("[ARP] WARNING: Failed to send ARP reply (error %d)\n", ret);
-        } else {
-            fut_printf("[ARP-DEBUG] ARP reply sent\n");
         }
-    } else {
-        fut_printf("[ARP-DEBUG] Not a request for us, skipping reply\n");
     }
 
     /* Handle ARP reply */
     if (op == ARP_OP_REPLY && target_ip == g_tcpip.ip_address) {
-        TCPIP_DEBUG("[ARP] Received reply from ");
-        char ip_str[16];
-        tcpip_format_ip(sender_ip, ip_str, sizeof(ip_str));
-        TCPIP_DEBUG("%s\n", ip_str);
+        TCPIP_DEBUG("[ARP] Received reply for our IP\n");
     }
 }
 
@@ -1580,6 +1562,35 @@ int tcpip_init(void) {
 
     /* Initialize underlying network layer */
     fut_net_init();
+
+    /* Register eth0 in the netif layer so ifconfig/route/etc. can see
+     * the VirtIO-net interface.  The transmit callback is NULL because
+     * we route through the raw fut_net layer which fans out to all
+     * registered devices (including the VirtIO-net driver). */
+    {
+        eth_addr_t eth0_mac;
+        memcpy(eth0_mac, g_tcpip.mac_address, ETH_ADDR_LEN);
+        int eth0_idx = netif_register("eth0", eth0_mac, 1500, NULL);
+        if (eth0_idx >= 0) {
+            /* Configure IP address on the interface */
+            netif_set_addr(eth0_idx,
+                           TCPIP_DEFAULT_IP,    /* 10.0.2.15 */
+                           TCPIP_DEFAULT_MASK,   /* 255.255.255.0 */
+                           (TCPIP_DEFAULT_IP & TCPIP_DEFAULT_MASK) | ~TCPIP_DEFAULT_MASK);
+            netif_set_flags(eth0_idx,
+                            IFF_UP | IFF_BROADCAST | IFF_RUNNING | IFF_MULTICAST);
+
+            /* Add default route via the QEMU gateway */
+            route_add(0, 0, TCPIP_DEFAULT_GW, eth0_idx, 100);
+            /* Add local subnet route (10.0.2.0/24) */
+            route_add(TCPIP_DEFAULT_IP & TCPIP_DEFAULT_MASK,
+                      TCPIP_DEFAULT_MASK, 0, eth0_idx, 0);
+
+            fut_printf("[TCP/IP] Registered eth0 (idx=%d) with IP 10.0.2.15\n", eth0_idx);
+        } else {
+            fut_printf("[TCP/IP] WARNING: Failed to register eth0 (rc=%d)\n", eth0_idx);
+        }
+    }
 
     /* Create raw socket for sending/receiving frames */
     int rc = fut_net_listen(0, &g_tcpip.raw_socket);

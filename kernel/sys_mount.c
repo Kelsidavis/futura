@@ -614,18 +614,18 @@ long sys_mount(const char *source, const char *target, const char *filesystemtyp
         if (mnt) mnt->fstype_display = "fuse";
         return 0;
     } else if (strcmp(fstype_buf, "overlay") == 0) {
-        /* Overlay filesystem: needs lowerdir= and upperdir= in mount data */
+        /* Overlay filesystem: needs lowerdir= and upperdir= in mount data.
+         * mount -t overlay overlay -o lowerdir=/lower,upperdir=/upper,workdir=/work /merged */
         extern int fut_vfs_mkdir(const char *, uint32_t);
         fut_vfs_mkdir(target_buf, 0755);
         size_t target_len = strlen(target_buf) + 1;
         char *mountpoint = fut_malloc(target_len);
         if (!mountpoint) return -ENOMEM;
         memcpy(mountpoint, target_buf, target_len);
-        /* Pass mount data (options string) through */
-        char data_buf[256] = {0};
-        if (data) mount_copy_from_user(data_buf, data, sizeof(data_buf) - 1);
+        /* Use already-validated mount_data (copied from user space above) */
         int ret = fut_vfs_mount("overlay", mountpoint, "overlay",
-                                (int)(mountflags & 0x7fffffff), data_buf, FUT_INVALID_HANDLE);
+                                (int)(mountflags & 0x7fffffff),
+                                mount_data, FUT_INVALID_HANDLE);
         if (ret < 0) { fut_free(mountpoint); return ret; }
         extern struct fut_mount *fut_vfs_find_mount(const char *);
         struct fut_mount *mnt = fut_vfs_find_mount(mountpoint);

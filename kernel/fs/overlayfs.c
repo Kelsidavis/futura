@@ -9,10 +9,11 @@
  *
  * Mount options: lowerdir=<path>,upperdir=<path>,workdir=<path>
  *
- * Lookup: check upper first, fall back to lower
- * Read: from whichever layer has the file
+ * Lookup: check upper first, fall back to lower; whiteouts hide lower entries
+ * Read: from whichever layer has the file (upper preferred)
  * Write: copy-up to upper layer (creates in upper if not there)
- * Readdir: merged view of both layers (upper entries shadow lower)
+ * Delete: removes from upper, creates whiteout to hide lower entry
+ * Readdir: merged view of both layers (upper shadows lower, whiteouts filtered)
  */
 
 #include <kernel/fut_vfs.h>
@@ -22,11 +23,17 @@
 #include <stddef.h>
 #include <string.h>
 
+/* Whiteout prefix: files named ".wh.<name>" in upperdir mark deleted entries.
+ * This is the standard Linux overlayfs whiteout convention. */
+#define WHITEOUT_PREFIX     ".wh."
+#define WHITEOUT_PREFIX_LEN 4
+
 struct overlay_mount_info {
     struct fut_vnode *lower_root;    /* Read-only base layer */
     struct fut_vnode *upper_root;    /* Writable layer */
-    char lower_path[64];
-    char upper_path[64];
+    char lower_path[256];
+    char upper_path[256];
+    char work_path[256];            /* Workdir for atomic operations */
 };
 
 struct overlay_vnode_info {
@@ -34,6 +41,53 @@ struct overlay_vnode_info {
     struct fut_vnode *upper;         /* Upper layer vnode (may be NULL) */
     struct overlay_mount_info *omi;
 };
+
+/* ============================================================
+ *   Whiteout helpers
+ * ============================================================ */
+
+/* Check if a name is a whiteout marker (starts with ".wh.") */
+static bool is_whiteout_name(const char *name) {
+    return name[0] == '.' && name[1] == 'w' && name[2] == 'h' && name[3] == '.';
+}
+
+/* Build whiteout name: ".wh.<name>" into buf. Returns false if it won't fit. */
+static bool make_whiteout_name(const char *name, char *buf, size_t buflen) {
+    size_t nlen = strlen(name);
+    if (WHITEOUT_PREFIX_LEN + nlen + 1 > buflen) return false;
+    memcpy(buf, WHITEOUT_PREFIX, WHITEOUT_PREFIX_LEN);
+    memcpy(buf + WHITEOUT_PREFIX_LEN, name, nlen + 1);
+    return true;
+}
+
+/* Check if a whiteout exists for the given name in the upper layer */
+static bool has_whiteout(struct fut_vnode *upper_dir, const char *name) {
+    if (!upper_dir || !upper_dir->ops || !upper_dir->ops->lookup) return false;
+    char wh_name[FUT_VFS_NAME_MAX + 1];
+    if (!make_whiteout_name(name, wh_name, sizeof(wh_name))) return false;
+    struct fut_vnode *wh = NULL;
+    if (upper_dir->ops->lookup(upper_dir, wh_name, &wh) == 0 && wh) {
+        return true;
+    }
+    return false;
+}
+
+/* Create a whiteout marker in the upper layer for the given name */
+static int create_whiteout(struct fut_vnode *upper_dir, const char *name) {
+    if (!upper_dir || !upper_dir->ops || !upper_dir->ops->create) return -EROFS;
+    char wh_name[FUT_VFS_NAME_MAX + 1];
+    if (!make_whiteout_name(name, wh_name, sizeof(wh_name))) return -ENAMETOOLONG;
+    struct fut_vnode *wh = NULL;
+    return upper_dir->ops->create(upper_dir, wh_name, 0, &wh);
+}
+
+/* Remove a whiteout marker in the upper layer (when re-creating a deleted file) */
+static void remove_whiteout(struct fut_vnode *upper_dir, const char *name) {
+    if (!upper_dir || !upper_dir->ops || !upper_dir->ops->unlink) return;
+    char wh_name[FUT_VFS_NAME_MAX + 1];
+    if (!make_whiteout_name(name, wh_name, sizeof(wh_name))) return;
+    upper_dir->ops->unlink(upper_dir, wh_name);
+}
 
 /* ============================================================
  *   VFS operations
@@ -77,8 +131,13 @@ static int overlay_lookup(struct fut_vnode *dir, const char *name,
         }
     }
 
-    /* Check lower layer */
-    if (ovi->lower && ovi->lower->ops && ovi->lower->ops->lookup) {
+    /* Check for whiteout: if upper has ".wh.<name>", the file is deleted */
+    if (!upper_child && has_whiteout(ovi->upper, name)) {
+        return -ENOENT;  /* Whiteout hides this entry */
+    }
+
+    /* Check lower layer (only if no upper shadow) */
+    if (!upper_child && ovi->lower && ovi->lower->ops && ovi->lower->ops->lookup) {
         if (ovi->lower->ops->lookup(ovi->lower, name, &lower_child) == 0) {
             /* Found in lower */
         }
@@ -89,11 +148,18 @@ static int overlay_lookup(struct fut_vnode *dir, const char *name,
     *result = overlay_alloc_vnode(lower_child, upper_child, ovi->omi, dir->mount);
     if (!*result) return -ENOMEM;
     (*result)->parent = dir;
-    size_t nl = 0; while (name[nl]) nl++;
+    size_t nl = strlen(name);
     char *ndup = fut_malloc(nl + 1);
     if (ndup) { memcpy(ndup, name, nl); ndup[nl] = '\0'; }
     (*result)->name = ndup;
     return 0;
+}
+
+/* Check if a name exists in the upper layer (for readdir dedup) */
+static bool upper_has_entry(struct fut_vnode *upper_dir, const char *name) {
+    if (!upper_dir || !upper_dir->ops || !upper_dir->ops->lookup) return false;
+    struct fut_vnode *child = NULL;
+    return (upper_dir->ops->lookup(upper_dir, name, &child) == 0 && child);
 }
 
 static int overlay_readdir(struct fut_vnode *dir, uint64_t *cookie,
@@ -101,16 +167,23 @@ static int overlay_readdir(struct fut_vnode *dir, uint64_t *cookie,
     struct overlay_vnode_info *ovi = (struct overlay_vnode_info *)dir->fs_data;
     if (!ovi) return -EIO;
 
-    /* Simple strategy: enumerate upper first, then lower.
-     * Use high bit of cookie to distinguish layers. */
+    /* Strategy: enumerate upper first, then lower.
+     * Use high bit of cookie to distinguish layers.
+     * Skip whiteout entries and deduplicate lower entries that are
+     * shadowed by (or whited-out from) the upper layer. */
     uint64_t layer = (*cookie >> 32) & 1;
     uint64_t sub_cookie = *cookie & 0xFFFFFFFF;
 
     if (layer == 0) {
-        /* Upper layer */
+        /* Upper layer — skip whiteout marker files */
         if (ovi->upper && ovi->upper->ops && ovi->upper->ops->readdir) {
-            int rc = ovi->upper->ops->readdir(ovi->upper, &sub_cookie, dirent);
-            if (rc > 0) {
+            while (1) {
+                int rc = ovi->upper->ops->readdir(ovi->upper, &sub_cookie, dirent);
+                if (rc <= 0) break;  /* No more entries in upper */
+                /* Filter out whiteout markers from user-visible listing */
+                if (is_whiteout_name(dirent->d_name)) {
+                    continue;  /* Skip, try next upper entry */
+                }
                 *cookie = sub_cookie;  /* Stay in upper */
                 return rc;
             }
@@ -120,9 +193,19 @@ static int overlay_readdir(struct fut_vnode *dir, uint64_t *cookie,
         sub_cookie = 0;
     }
 
+    /* Lower layer — skip entries that are shadowed or whited-out by upper */
     if (layer == 1 && ovi->lower && ovi->lower->ops && ovi->lower->ops->readdir) {
-        int rc = ovi->lower->ops->readdir(ovi->lower, &sub_cookie, dirent);
-        if (rc > 0) {
+        while (1) {
+            int rc = ovi->lower->ops->readdir(ovi->lower, &sub_cookie, dirent);
+            if (rc <= 0) return -ENOENT;  /* No more entries */
+            /* Skip if upper already has this name (shadowed) */
+            if (upper_has_entry(ovi->upper, dirent->d_name)) {
+                continue;
+            }
+            /* Skip if upper has a whiteout for this name (deleted) */
+            if (has_whiteout(ovi->upper, dirent->d_name)) {
+                continue;
+            }
             *cookie = (1ULL << 32) | sub_cookie;
             return rc;
         }
@@ -135,33 +218,85 @@ static int overlay_create(struct fut_vnode *dir, const char *name,
                           uint32_t mode, struct fut_vnode **result) {
     struct overlay_vnode_info *ovi = (struct overlay_vnode_info *)dir->fs_data;
     if (!ovi || !ovi->upper) return -EROFS;
-    if (ovi->upper->ops && ovi->upper->ops->create)
-        return ovi->upper->ops->create(ovi->upper, name, mode, result);
-    return -EROFS;
+    if (!ovi->upper->ops || !ovi->upper->ops->create) return -EROFS;
+    /* If there was a whiteout for this name, remove it since we're re-creating */
+    remove_whiteout(ovi->upper, name);
+    return ovi->upper->ops->create(ovi->upper, name, mode, result);
 }
 
 static int overlay_unlink(struct fut_vnode *dir, const char *name) {
     struct overlay_vnode_info *ovi = (struct overlay_vnode_info *)dir->fs_data;
     if (!ovi || !ovi->upper) return -EROFS;
-    if (ovi->upper->ops && ovi->upper->ops->unlink)
-        return ovi->upper->ops->unlink(ovi->upper, name);
-    return -EROFS;
+
+    /* Check if file exists in the upper layer */
+    bool in_upper = false;
+    if (ovi->upper->ops && ovi->upper->ops->lookup) {
+        struct fut_vnode *child = NULL;
+        if (ovi->upper->ops->lookup(ovi->upper, name, &child) == 0 && child)
+            in_upper = true;
+    }
+
+    /* Check if file exists in the lower layer */
+    bool in_lower = false;
+    if (ovi->lower && ovi->lower->ops && ovi->lower->ops->lookup) {
+        struct fut_vnode *child = NULL;
+        if (ovi->lower->ops->lookup(ovi->lower, name, &child) == 0 && child)
+            in_lower = true;
+    }
+
+    if (!in_upper && !in_lower) return -ENOENT;
+
+    /* Remove from upper if present */
+    if (in_upper && ovi->upper->ops && ovi->upper->ops->unlink) {
+        ovi->upper->ops->unlink(ovi->upper, name);
+    }
+
+    /* If file existed in lower, create a whiteout so it stays hidden */
+    if (in_lower) {
+        int wret = create_whiteout(ovi->upper, name);
+        if (wret < 0) {
+            fut_printf("[OVERLAY] warning: whiteout creation failed for '%s': %d\n", name, wret);
+            /* Non-fatal: file is still removed from upper, but lower will show through.
+             * Callers will see the old lower version reappear — not ideal but not data loss. */
+        }
+    }
+
+    return 0;
 }
 
 static int overlay_mkdir(struct fut_vnode *dir, const char *name, uint32_t mode) {
     struct overlay_vnode_info *ovi = (struct overlay_vnode_info *)dir->fs_data;
     if (!ovi || !ovi->upper) return -EROFS;
-    if (ovi->upper->ops && ovi->upper->ops->mkdir)
-        return ovi->upper->ops->mkdir(ovi->upper, name, mode);
-    return -EROFS;
+    if (!ovi->upper->ops || !ovi->upper->ops->mkdir) return -EROFS;
+    /* Remove whiteout if re-creating a previously deleted directory */
+    remove_whiteout(ovi->upper, name);
+    return ovi->upper->ops->mkdir(ovi->upper, name, mode);
 }
 
 static int overlay_rename(struct fut_vnode *dir, const char *old, const char *new) {
     struct overlay_vnode_info *ovi = (struct overlay_vnode_info *)dir->fs_data;
     if (!ovi || !ovi->upper) return -EROFS;
-    if (ovi->upper->ops && ovi->upper->ops->rename)
-        return ovi->upper->ops->rename(ovi->upper, old, new);
-    return -EROFS;
+    if (!ovi->upper->ops || !ovi->upper->ops->rename) return -EROFS;
+
+    /* Check if old name exists in lower — if so, we need a whiteout after rename */
+    bool old_in_lower = false;
+    if (ovi->lower && ovi->lower->ops && ovi->lower->ops->lookup) {
+        struct fut_vnode *child = NULL;
+        if (ovi->lower->ops->lookup(ovi->lower, old, &child) == 0 && child)
+            old_in_lower = true;
+    }
+
+    int ret = ovi->upper->ops->rename(ovi->upper, old, new);
+    if (ret < 0) return ret;
+
+    /* Whiteout the old name if it was in lower, so it doesn't reappear */
+    if (old_in_lower)
+        create_whiteout(ovi->upper, old);
+
+    /* Remove any whiteout on the new name since we just placed a file there */
+    remove_whiteout(ovi->upper, new);
+
+    return 0;
 }
 
 static struct fut_vnode_ops overlay_ops;
@@ -234,13 +369,14 @@ static int overlay_mount_impl(const char *device, int flags, void *data,
                                fut_handle_t bh, struct fut_mount **mount_out) {
     (void)device; (void)flags; (void)bh;
 
-    char lower_path[64] = {0}, upper_path[64] = {0};
+    char lower_path[256] = {0}, upper_path[256] = {0}, work_path[256] = {0};
 
     /* Parse mount options from data string */
     const char *opts = (const char *)data;
     if (opts) {
         overlay_parse_opt(opts, "lowerdir", lower_path, sizeof(lower_path));
         overlay_parse_opt(opts, "upperdir", upper_path, sizeof(upper_path));
+        overlay_parse_opt(opts, "workdir", work_path, sizeof(work_path));
     }
 
     if (!lower_path[0] || !upper_path[0]) {
@@ -250,6 +386,7 @@ static int overlay_mount_impl(const char *device, int flags, void *data,
 
     /* Lookup lower and upper root vnodes */
     extern int fut_vfs_lookup(const char *, struct fut_vnode **);
+    extern int fut_vfs_mkdir(const char *, uint32_t);
     struct fut_vnode *lower_vn = NULL, *upper_vn = NULL;
 
     int lr = fut_vfs_lookup(lower_path, &lower_vn);
@@ -264,13 +401,34 @@ static int overlay_mount_impl(const char *device, int flags, void *data,
         return -ENOENT;
     }
 
+    /* Create workdir if specified and doesn't exist */
+    if (work_path[0]) {
+        fut_vfs_mkdir(work_path, 0755);
+    }
+
     struct overlay_mount_info *omi = fut_malloc(sizeof(struct overlay_mount_info));
     if (!omi) return -ENOMEM;
     memset(omi, 0, sizeof(*omi));
     omi->lower_root = lower_vn;
     omi->upper_root = upper_vn;
-    size_t ll = 0; while (lower_path[ll] && ll < 63) { omi->lower_path[ll] = lower_path[ll]; ll++; }
-    size_t ul = 0; while (upper_path[ul] && ul < 63) { omi->upper_path[ul] = upper_path[ul]; ul++; }
+    {
+        size_t ll = strlen(lower_path);
+        if (ll > sizeof(omi->lower_path) - 1) ll = sizeof(omi->lower_path) - 1;
+        memcpy(omi->lower_path, lower_path, ll);
+        omi->lower_path[ll] = '\0';
+    }
+    {
+        size_t ul = strlen(upper_path);
+        if (ul > sizeof(omi->upper_path) - 1) ul = sizeof(omi->upper_path) - 1;
+        memcpy(omi->upper_path, upper_path, ul);
+        omi->upper_path[ul] = '\0';
+    }
+    {
+        size_t wl = strlen(work_path);
+        if (wl > sizeof(omi->work_path) - 1) wl = sizeof(omi->work_path) - 1;
+        memcpy(omi->work_path, work_path, wl);
+        omi->work_path[wl] = '\0';
+    }
 
     struct fut_mount *mnt = fut_malloc(sizeof(struct fut_mount));
     if (!mnt) { fut_free(omi); return -ENOMEM; }
@@ -282,7 +440,9 @@ static int overlay_mount_impl(const char *device, int flags, void *data,
     mnt->root = root;
 
     *mount_out = mnt;
-    fut_printf("[OVERLAY] Mounted: lower=%s upper=%s\n", lower_path, upper_path);
+    fut_printf("[OVERLAY] Mounted: lower=%s upper=%s%s%s\n",
+               lower_path, upper_path,
+               work_path[0] ? " work=" : "", work_path);
     return 0;
 }
 

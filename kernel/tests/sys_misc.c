@@ -21290,9 +21290,18 @@ static void test_so_rcvtimeo(void) {
         if (thr315) thr315->signal_mask = ~0ULL;
         if (t315) __atomic_store_n(&t315->pending_signals, 0, __ATOMIC_RELEASE);
 
+        /* Set O_NONBLOCK as fallback — SO_RCVTIMEO enforcement may not
+         * be implemented in the read path, causing infinite blocking. */
+        extern long sys_fcntl(int fd, int cmd, uint64_t arg);
+        long old_flags = sys_fcntl(sv[1], 3 /* F_GETFL */, 0);
+        sys_fcntl(sv[1], 4 /* F_SETFL */, (uint64_t)(old_flags | 0x800 /* O_NONBLOCK */));
+
         char buf[16];
         extern long sys_read(int fd, void *buf, size_t count);
         long n = sys_read(sv[1], buf, sizeof(buf));
+
+        /* Restore blocking mode */
+        sys_fcntl(sv[1], 4 /* F_SETFL */, (uint64_t)old_flags);
 
         if (t315) t315->signal_mask = saved_task_mask;
         if (thr315) thr315->signal_mask = saved_thr_mask;

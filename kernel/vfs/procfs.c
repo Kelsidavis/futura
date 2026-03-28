@@ -1337,15 +1337,141 @@ static size_t gen_maps(char *buf, size_t cap, fut_task_t *task) {
 }
 
 /*
+ * smaps_vma_stats — per-VMA memory counters derived from page-table walk.
+ *
+ * pmap_probe_pte() returns the hardware PTE for each page in the VMA.
+ * We classify pages using:
+ *   - PTE_PRESENT: page is resident (counts toward RSS)
+ *   - PTE_DIRTY (x86) / DBM (arm64): page has been written to
+ *   - fut_page_ref_get() > 1: page is shared with another address space
+ * These counters mirror the Linux /proc/<pid>/smaps fields.
+ */
+struct smaps_vma_stats {
+    uint64_t size_kb;           /* VMA size */
+    uint64_t rss_kb;            /* resident pages */
+    uint64_t pss_kb;            /* proportional share (rss / sharing count) */
+    uint64_t shared_clean_kb;   /* shared pages without dirty bit */
+    uint64_t shared_dirty_kb;   /* shared pages with dirty bit */
+    uint64_t private_clean_kb;  /* private pages without dirty bit */
+    uint64_t private_dirty_kb;  /* private pages with dirty bit */
+    uint64_t referenced_kb;     /* pages with accessed bit */
+    uint64_t anonymous_kb;      /* anonymous (non-file-backed) resident pages */
+    uint64_t locked_kb;         /* pages in a VMA_LOCKED region */
+};
+
+/*
+ * smaps_walk_vma() — walk page tables for a single VMA, filling stats.
+ *
+ * For each 4 kB page in [vma->start, vma->end) we probe the PTE via
+ * pmap_probe_pte().  Present pages contribute to RSS; the dirty bit and
+ * page refcount determine the Shared/Private Clean/Dirty split.
+ * PSS is accumulated as (page_size / refcount) for each present page so
+ * that shared pages are attributed proportionally.
+ */
+static void smaps_walk_vma(struct fut_vma *vma, fut_vmem_context_t *ctx,
+                           struct smaps_vma_stats *s)
+{
+    __builtin_memset(s, 0, sizeof(*s));
+    s->size_kb = (vma->end - vma->start) / 1024;
+
+    int is_anon  = (vma->vnode == NULL);
+    int is_locked = (vma->flags & VMA_LOCKED) != 0;
+
+    /* Accumulate PSS in bytes to avoid rounding every page to 0 */
+    uint64_t pss_bytes = 0;
+
+    for (uintptr_t pg = vma->start; pg < vma->end; pg += 4096) {
+        uint64_t pte = 0;
+        if (pmap_probe_pte(ctx, pg, &pte) != 0)
+            continue;
+        if ((pte & PTE_PRESENT) == 0)
+            continue;
+
+        /* Page is resident */
+        s->rss_kb += 4;  /* 4 kB per page */
+
+        /* Determine dirty state.
+         * On x86_64 the hardware sets PTE bit 6.  ARM64 uses the DBM
+         * mechanism (bit 51) or software-managed dirty; we approximate
+         * writable-mapped pages as dirty there. */
+        int dirty = 0;
+#ifdef __x86_64__
+        dirty = (pte & PTE_DIRTY) != 0;
+#else
+        /* ARM64: treat writable pages as dirty (no hw dirty bit on
+         * all cores; DBM is optional). */
+        dirty = (pte & PTE_WRITABLE) != 0;
+#endif
+
+        /* Accessed bit — counts toward Referenced */
+        int accessed = 0;
+#ifdef __x86_64__
+        accessed = (pte & PTE_ACCESSED) != 0;
+#else
+        /* ARM64: AF bit (PTE_AF_BIT = 1<<10) is always set on mapped
+         * pages by Futura's page allocator, so all present pages are
+         * considered referenced. */
+        accessed = 1;
+#endif
+        if (accessed)
+            s->referenced_kb += 4;
+
+        /* Shared vs Private — determined by page reference count.
+         * refcount > 1 means the physical frame is mapped in more than
+         * one address space (COW fork, shared mmap). */
+        phys_addr_t phys = pte & PTE_PHYS_ADDR_MASK;
+        int refcount = fut_page_ref_get(phys);
+        int shared = (refcount > 1);
+
+        if (shared) {
+            if (dirty) s->shared_dirty_kb += 4;
+            else       s->shared_clean_kb += 4;
+        } else {
+            if (dirty) s->private_dirty_kb += 4;
+            else       s->private_clean_kb += 4;
+        }
+
+        /* PSS: attribute 1/N of each shared page, full credit for private */
+        if (shared && refcount > 0)
+            pss_bytes += 4096 / (uint64_t)refcount;
+        else
+            pss_bytes += 4096;
+
+        /* Anonymous: resident page in a non-file-backed VMA */
+        if (is_anon)
+            s->anonymous_kb += 4;
+    }
+
+    s->pss_kb = pss_bytes / 1024;
+
+    /* Locked: if the VMA has VMA_LOCKED, all resident pages are locked */
+    if (is_locked)
+        s->locked_kb = s->rss_kb;
+}
+
+/* Helper: emit a single "Label:  <right-aligned value> kB\n" smaps line.
+ * The label (including colon) is emitted, then the value is right-aligned
+ * so the number + " kB" end at column 24 (matching Linux formatting). */
+static void smaps_emit_field(struct pbuf *b, const char *label, uint64_t val_kb)
+{
+    pb_str(b, label);
+    /* Pad label to 16 characters (Linux uses fixed-width labels) */
+    size_t llen = 0;
+    for (const char *p = label; *p; p++) llen++;
+    while (llen < 24) { pb_char(b, ' '); llen++; }
+    pb_u64(b, val_kb);
+    pb_str(b, " kB\n");
+}
+
+/*
  * gen_smaps() — /proc/<pid>/smaps
  *
  * Extended memory map with per-VMA statistics, compatible with Linux
  * /proc/pid/smaps format. Used by Go runtime (RSS/GC), Python tracemalloc,
  * Valgrind, heaptrack, and many system monitoring tools.
  *
- * For Futura (ramfs, all pages in RAM): RSS = Size for anonymous mappings;
- * file-backed mappings report RSS = 0 (no page-tracking infrastructure yet).
- * All pages are Private_Clean (no swap, no shared dirty).
+ * Each VMA is reported with a header line (same as /proc/maps) followed
+ * by per-VMA counters derived from actual page-table walks.
  */
 static size_t gen_smaps(char *buf, size_t cap, fut_task_t *task) {
     if (!task) return 0;
@@ -1353,10 +1479,14 @@ static size_t gen_smaps(char *buf, size_t cap, fut_task_t *task) {
     if (!mm) return 0;
 
     struct pbuf b = { buf, 0, cap };
+    fut_vmem_context_t *ctx = fut_mm_context(mm);
     struct fut_vma *vma = mm->vma_list;
     while (vma) {
-        size_t vma_size = (vma->end - vma->start) / 1024;  /* kB */
         int is_anon = (vma->vnode == NULL);
+
+        /* Walk page tables for this VMA */
+        struct smaps_vma_stats s;
+        smaps_walk_vma(vma, ctx, &s);
 
         /* Header line: same format as /proc/maps */
         size_t sline_start = b.pos;
@@ -1414,43 +1544,37 @@ static size_t gen_smaps(char *buf, size_t cap, fut_task_t *task) {
         }
         pb_char(&b, '\n');
 
-        /* Size: total VMA size in kB */
-        pb_str(&b, "Size:            "); pb_u64(&b, (uint64_t)vma_size); pb_str(&b, " kB\n");
-        /* KernelPageSize / MMUPageSize: 4 kB on x86_64/arm64 */
+        /* Per-VMA statistics from page-table walk */
+        smaps_emit_field(&b, "Size:", s.size_kb);
         pb_str(&b, "KernelPageSize:        4 kB\n");
         pb_str(&b, "MMUPageSize:           4 kB\n");
-        /* Rss: ALL pages are resident in Futura's RAM-only model (no swap/pageout).
-         * Both anonymous and file-backed mappings live in RAM. */
-        size_t rss = vma_size;
-        pb_str(&b, "Rss:             "); pb_u64(&b, (uint64_t)rss); pb_str(&b, " kB\n");
-        /* Pss = Rss (no sharing, all private) */
-        pb_str(&b, "Pss:             "); pb_u64(&b, (uint64_t)rss); pb_str(&b, " kB\n");
-        pb_str(&b, "Pss_Dirty:             0 kB\n");
-        pb_str(&b, "Shared_Clean:          0 kB\n");
-        pb_str(&b, "Shared_Dirty:          0 kB\n");
-        /* Private_Clean = rss for anon (all pages writable but unmodified by model) */
-        pb_str(&b, "Private_Clean:   "); pb_u64(&b, (uint64_t)rss); pb_str(&b, " kB\n");
-        pb_str(&b, "Private_Dirty:         0 kB\n");
-        pb_str(&b, "Referenced:      "); pb_u64(&b, (uint64_t)rss); pb_str(&b, " kB\n");
-        /* Anonymous: size of anonymous portion */
-        pb_str(&b, "Anonymous:       "); pb_u64(&b, is_anon ? (uint64_t)vma_size : 0ULL);
-        pb_str(&b, " kB\n");
+        smaps_emit_field(&b, "Rss:", s.rss_kb);
+        smaps_emit_field(&b, "Pss:", s.pss_kb);
+        smaps_emit_field(&b, "Pss_Dirty:", s.shared_dirty_kb + s.private_dirty_kb);
+        smaps_emit_field(&b, "Shared_Clean:", s.shared_clean_kb);
+        smaps_emit_field(&b, "Shared_Dirty:", s.shared_dirty_kb);
+        smaps_emit_field(&b, "Private_Clean:", s.private_clean_kb);
+        smaps_emit_field(&b, "Private_Dirty:", s.private_dirty_kb);
+        smaps_emit_field(&b, "Referenced:", s.referenced_kb);
+        smaps_emit_field(&b, "Anonymous:", is_anon ? s.rss_kb : 0);
         pb_str(&b, "KSM:                   0 kB\n");
-        pb_str(&b, "LazyFree:              0 kB\n");
-        pb_str(&b, "AnonHugePages:         0 kB\n");
-        pb_str(&b, "ShmemPmdMapped:        0 kB\n");
+        smaps_emit_field(&b, "LazyFree:", 0);
+        smaps_emit_field(&b, "AnonHugePages:", 0);
+        smaps_emit_field(&b, "ShmemPmdMapped:", 0);
         pb_str(&b, "FilePmdMapped:         0 kB\n");
         pb_str(&b, "Shared_Hugetlb:        0 kB\n");
         pb_str(&b, "Private_Hugetlb:       0 kB\n");
         pb_str(&b, "Swap:                  0 kB\n");
         pb_str(&b, "SwapPss:               0 kB\n");
-        pb_str(&b, "Locked:                0 kB\n");
+        smaps_emit_field(&b, "Locked:", s.locked_kb);
         pb_str(&b, "THPeligible:           0\n");
-        /* VmFlags: encode prot bits as Linux vm flags */
+        /* VmFlags: encode prot/vma bits as Linux vm flags */
         pb_str(&b, "VmFlags:");
         if (vma->prot & PROT_READ)  pb_str(&b, " rd");
         if (vma->prot & PROT_WRITE) pb_str(&b, " wr");
         if (vma->prot & PROT_EXEC)  pb_str(&b, " ex");
+        if (vma->flags & VMA_SHARED) pb_str(&b, " sh");
+        if (vma->flags & VMA_LOCKED) pb_str(&b, " lo");
         pb_str(&b, " mr mw me");  /* mapped, may_read, may_write, may_exec */
         pb_char(&b, '\n');
 
@@ -1465,50 +1589,76 @@ static size_t gen_smaps(char *buf, size_t cap, fut_task_t *task) {
  * Single synthetic entry aggregating Rss/Pss/etc. across all VMAs.
  * Used by Go runtime, Rust allocators, and tools that want total RSS
  * without iterating every mapping.
+ *
+ * Walks page tables for every VMA via smaps_walk_vma() and sums the
+ * per-VMA counters into process-wide totals.  Pss_Anon and Pss_File
+ * are split by VMA type (anonymous vs file-backed).
  */
 static size_t gen_smaps_rollup(char *buf, size_t cap, fut_task_t *task) {
     if (!task) return 0;
     fut_mm_t *mm = task->mm ? task->mm : fut_mm_current();
     if (!mm) return 0;
 
-    uint64_t total_size = 0, total_rss = 0, total_anon = 0;
+    fut_vmem_context_t *ctx = fut_mm_context(mm);
+
+    /* Accumulators for all VMAs */
+    uint64_t total_size = 0, total_rss = 0, total_pss = 0;
+    uint64_t total_shared_clean = 0, total_shared_dirty = 0;
+    uint64_t total_private_clean = 0, total_private_dirty = 0;
+    uint64_t total_referenced = 0, total_anonymous = 0;
+    uint64_t total_locked = 0;
+    uint64_t pss_anon = 0, pss_file = 0;
+
     struct fut_vma *vma = mm->vma_list;
     while (vma) {
-        uint64_t vma_kb = (vma->end - vma->start) / 1024;
-        total_size += vma_kb;
-        total_rss  += vma_kb;  /* All pages resident in Futura's RAM model */
-        if (vma->vnode == NULL) {   /* anonymous mapping */
-            total_anon += vma_kb;
-        }
+        struct smaps_vma_stats s;
+        smaps_walk_vma(vma, ctx, &s);
+
+        int is_anon = (vma->vnode == NULL);
+
+        total_size          += s.size_kb;
+        total_rss           += s.rss_kb;
+        total_pss           += s.pss_kb;
+        total_shared_clean  += s.shared_clean_kb;
+        total_shared_dirty  += s.shared_dirty_kb;
+        total_private_clean += s.private_clean_kb;
+        total_private_dirty += s.private_dirty_kb;
+        total_referenced    += s.referenced_kb;
+        total_anonymous     += s.anonymous_kb;
+        total_locked        += s.locked_kb;
+
+        if (is_anon) pss_anon += s.pss_kb;
+        else         pss_file += s.pss_kb;
+
         vma = vma->next;
     }
 
     struct pbuf b = { buf, 0, cap };
     /* Header: synthetic [rollup] range covering all user space */
     pb_str(&b, "00400000-ffffffffffffffff ---p 00000000 00:00 0 [rollup]\n");
-    pb_str(&b, "Size:            "); pb_u64(&b, total_size); pb_str(&b, " kB\n");
+    smaps_emit_field(&b, "Size:", total_size);
     pb_str(&b, "KernelPageSize:        4 kB\n");
     pb_str(&b, "MMUPageSize:           4 kB\n");
-    pb_str(&b, "Rss:             "); pb_u64(&b, total_rss);  pb_str(&b, " kB\n");
-    pb_str(&b, "Pss:             "); pb_u64(&b, total_rss);  pb_str(&b, " kB\n");
-    pb_str(&b, "Pss_Anon:        "); pb_u64(&b, total_anon); pb_str(&b, " kB\n");
-    pb_str(&b, "Pss_File:              0 kB\n");
-    pb_str(&b, "Pss_Shmem:             0 kB\n");
-    pb_str(&b, "Shared_Clean:          0 kB\n");
-    pb_str(&b, "Shared_Dirty:          0 kB\n");
-    pb_str(&b, "Private_Clean:   "); pb_u64(&b, total_rss);  pb_str(&b, " kB\n");
-    pb_str(&b, "Private_Dirty:         0 kB\n");
-    pb_str(&b, "Referenced:      "); pb_u64(&b, total_rss);  pb_str(&b, " kB\n");
-    pb_str(&b, "Anonymous:       "); pb_u64(&b, total_anon); pb_str(&b, " kB\n");
-    pb_str(&b, "LazyFree:              0 kB\n");
-    pb_str(&b, "AnonHugePages:         0 kB\n");
-    pb_str(&b, "ShmemPmdMapped:        0 kB\n");
+    smaps_emit_field(&b, "Rss:", total_rss);
+    smaps_emit_field(&b, "Pss:", total_pss);
+    smaps_emit_field(&b, "Pss_Anon:", pss_anon);
+    smaps_emit_field(&b, "Pss_File:", pss_file);
+    smaps_emit_field(&b, "Pss_Shmem:", 0);
+    smaps_emit_field(&b, "Shared_Clean:", total_shared_clean);
+    smaps_emit_field(&b, "Shared_Dirty:", total_shared_dirty);
+    smaps_emit_field(&b, "Private_Clean:", total_private_clean);
+    smaps_emit_field(&b, "Private_Dirty:", total_private_dirty);
+    smaps_emit_field(&b, "Referenced:", total_referenced);
+    smaps_emit_field(&b, "Anonymous:", total_anonymous);
+    smaps_emit_field(&b, "LazyFree:", 0);
+    smaps_emit_field(&b, "AnonHugePages:", 0);
+    smaps_emit_field(&b, "ShmemPmdMapped:", 0);
     pb_str(&b, "FilePmdMapped:         0 kB\n");
     pb_str(&b, "Shared_Hugetlb:        0 kB\n");
     pb_str(&b, "Private_Hugetlb:       0 kB\n");
     pb_str(&b, "Swap:                  0 kB\n");
     pb_str(&b, "SwapPss:               0 kB\n");
-    pb_str(&b, "Locked:                0 kB\n");
+    smaps_emit_field(&b, "Locked:", total_locked);
     return b.pos;
 }
 
